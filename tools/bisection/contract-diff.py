@@ -2968,6 +2968,11 @@ def _write_user_conf(k):
 # literal is written. A conforming marker must retain the trained/imported
 # state, while a non-conforming one follows check_format's wipe.
 def _user_conf_values(k):
+    """Read the available format-version integers from the cell's table.conf.
+
+    Later occurrences replace earlier ones; absent keys are omitted and malformed
+    integer values raise ValueError.
+    """
     values = {}
     for line in Path(k.data, 'table.conf').read_text().splitlines():
         for key in ('binary format version:', 'model data version:'):
@@ -2977,11 +2982,21 @@ def _user_conf_values(k):
 
 
 def _replace_conf_value(data, key, value):
+    """Replace the first complete byte line beginning with key.
+
+    The replacement is the encoded key followed by str(value); a missing key
+    leaves data unchanged.
+    """
     pattern = rb'(?m)^' + re.escape(key.encode()) + rb'.*$'
     return re.sub(pattern, key.encode() + str(value).encode(), data, count=1)
 
 
 def _edit_user_conf_versions(k, extra):
+    """Return user.conf bytes with each table version increased by 2**32 + extra.
+
+    Read the reference versions from this cell's table.conf; do not write either
+    file. Both reference version keys must exist.
+    """
     data = Path(k.user, 'user.conf').read_bytes()
     values = _user_conf_values(k)
     for key in ('binary format version:', 'model data version:'):
@@ -2990,11 +3005,16 @@ def _edit_user_conf_versions(k, extra):
 
 
 def _edit_user_conf_counter(k, value):
+    """Return user.conf bytes with the first open-counter line replaced."""
     return _replace_conf_value(
         Path(k.user, 'user.conf').read_bytes(), 'open counter:', value)
 
 
 def _edit_user_conf_nul(k):
+    """Insert a NUL and junk after the first database-format value in copied bytes.
+
+    Read user.conf without modifying it; leave unmatched input unchanged.
+    """
     data = Path(k.user, 'user.conf').read_bytes()
     return re.sub(
         rb'(?m)^(database format:)([^\r\n\x00]+)',
@@ -3003,17 +3023,23 @@ def _edit_user_conf_nul(k):
 
 
 def _edit_user_conf_missing_database(k):
+    """Return user.conf bytes with database-format and open-counter lines removed."""
     data = Path(k.user, 'user.conf').read_bytes()
     data = re.sub(rb'(?m)^database format:.*$', b'', data)
     return re.sub(rb'(?m)^open counter:.*$', b'', data)
 
 
 def _edit_user_conf_missing_counter(k):
+    """Return user.conf bytes with every open-counter line removed."""
     data = Path(k.user, 'user.conf').read_bytes()
     return re.sub(rb'(?m)^open counter:.*$', b'', data)
 
 
 def _edit_user_conf_negative_overflow(k):
+    """Return user.conf bytes with both version fields set to signed 64-bit minimum.
+
+    Only existing first occurrences are replaced; the file is not written.
+    """
     data = Path(k.user, 'user.conf').read_bytes()
     for key in ('binary format version:', 'model data version:'):
         data = _replace_conf_value(data, key, -9223372036854775808)
@@ -3021,7 +3047,20 @@ def _edit_user_conf_negative_overflow(k):
 
 
 def _user_conf_920_session(edit, keep_state):
+    """Build a saved-profile reopen case with an edited user.conf.
+
+    The callback edit(k) supplies replacement bytes. keep_state asserts retained
+    frequencies only if reopening succeeds; the result still records a failed
+    reopen. This exercises check_format at 074a2219 pinyin.cpp:172-218 and
+    zhuyin.cpp:126-163.
+    """
     def probe(k):
+        """Train and import, save, replace the marker, and observe the reopened profile.
+
+        Close the old instance and context before writing. Assert save success and,
+        when requested and reopen succeeds, unchanged trained/imported frequencies;
+        return those observations and the resulting user-file inventory.
+        """
         training = token_unigram_trained(k)
         imported = token_unigram_user(k, add_frequency=False)
         saved = k.fn('save', B, P)(k.ctx)
@@ -3046,6 +3085,11 @@ def _user_conf_920_session(edit, keep_state):
 
 
 def _user_conf_920_case(name, edit, keep_state, control):
+    """Register the edited-marker case for both facades under issue 920.
+
+    Append -zhuyin to that facade's case name and pass control through to the
+    registry; both cases share the requested edit and state-retention check.
+    """
     for mode in ('pinyin', 'zhuyin'):
         suffix = '-zhuyin' if mode == 'zhuyin' else ''
         case('user-conf-920-' + name + suffix, mode=mode, issues=('920',),
@@ -12413,6 +12457,11 @@ RELOAD_WATCH = ('礙', '龘龘')
 
 
 def _reload_pron_keys(k, token):
+    """Read a token's pronunciation count and hex-encoded two-byte key arrays.
+
+    Return [count-call success, count, ...readings], skipping the reading calls
+    on failure. Each reading allocates a GArray that this helper does not free.
+    """
     new = k.glib.g_array_new
     new.restype, new.argtypes = P, [I, I, U]
     count = U(UNTOUCHED)
@@ -12454,6 +12503,11 @@ def _reload_candidates(k, text):
 
 
 def _reload_snapshot(k, phrases, inputs):
+    """Collect token, unigram, reading and candidate observations for a reload step.
+
+    Clear the cached instance before querying; per-token keys include hexadecimal
+    token IDs and candidate keys use decoded input bytes.
+    """
     k._inst = None
     out = {}
     for phrase in phrases:
@@ -12468,7 +12522,18 @@ def _reload_snapshot(k, phrases, inputs):
 
 
 def _reload_probe(change, library, save_first):
+    """Build a before/change/reload probe with an optional save before unloading.
+
+    change(k, False) supplies phrases and inputs; change(k, True) mutates the
+    session. The system-library reload path reads the saved log in
+    _load_phrase_library at 074a2219 pinyin.cpp:264-277 and zhuyin.cpp:208-221.
+    """
     def probe(k):
+        """Snapshot the session around a change and a library unload/load pair.
+
+        Record save, unload and load results without requiring success; clear the
+        cached instance between library calls and return all three snapshots.
+        """
         phrases, inputs = change(k, False)
         out = {'before': _reload_snapshot(k, phrases, inputs)}
         change(k, True)
@@ -12485,7 +12550,13 @@ def _reload_probe(change, library, save_first):
 
 
 def _reload_train(phrase, token_library, reading):
+    """Build a reload change that selects and trains a phrase in one library.
+
+    The returned callback reports the watched phrase and input when apply is
+    false; applying it requires the entire reading to parse and a matching token.
+    """
     def change(k, apply):
+        """Return the watched inputs, or parse the reading and train the selected token."""
         if not apply:
             return [phrase], [reading]
         parse = 'parse_more_full_pinyins' if k.mode == 'pinyin' else 'parse_more_chewings'
@@ -12496,7 +12567,9 @@ def _reload_train(phrase, token_library, reading):
 
 
 def _reload_import(library, rows, phrases, inputs):
+    """Build a reload change that imports rows and exposes its watched inputs."""
     def change(k, apply):
+        """Return the supplied watch lists, or import rows into the requested library."""
         if not apply:
             return phrases, inputs
         import_rows(k, library, rows)
@@ -12539,7 +12612,18 @@ for _mode, _table in (('pinyin', _RELOAD_PINYIN), ('zhuyin', _RELOAD_ZHUYIN)):
 # token stays in the phrase table, so no input is walked for it (class (b),
 # policy row 102).
 def _reload_user(setup, change, phrases, inputs, save_setup, save_change):
+    """Build a user-library reload probe with independent setup/change saves.
+
+    setup and change are import rows for library 7. Snapshots follow the supplied
+    phrases and inputs. The USER_FILE load path reads user.bin or creates an
+    empty sub-index at 074a2219 zhuyin.cpp:247-265 and pinyin.cpp:303-321.
+    """
     def probe(k):
+        """Import the optional baseline, change it, and record user-library reload state.
+
+        Require the setup save to succeed when requested; record the later save and
+        unload/load results, clearing cached instances before fresh snapshots.
+        """
         if setup:
             import_rows(k, 7, setup)
             if save_setup:
@@ -12592,6 +12676,11 @@ for _mode, (_readings, _input) in _RELOAD_USER.items():
 # the kept index entry for the old reading now finds it; the same phrase meets
 # its own token in the phrase table (zhuyin.cpp:447-468).
 def _reload_reuse_setup(k):
+    """Import an unsaved zhuyin user phrase, then unload and reload its library.
+
+    Return import and reload results with the cached instance cleared, leaving
+    the fixture ready for a second import.
+    """
     out = {'first': import_rows(k, 7, [('好你', 'ㄏㄠˇ ㄋㄧˇ', 50)])}
     out['unload'] = k.fn('unload_phrase_library', B, P, U)(k.ctx, 7)
     k._inst = None
@@ -12602,6 +12691,11 @@ def _reload_reuse_setup(k):
 
 @case('reload-user-zhuyin-reuse-other', mode='zhuyin', issues=('805',))
 def _(k):
+    """Import a different phrase after user-library reload and inspect both readings.
+
+    Exercise token reuse through _add_phrase at 074a2219 zhuyin.cpp:470-485;
+    return both import results and the resulting phrase/candidate snapshot.
+    """
     out = _reload_reuse_setup(k)
     out['again'] = import_rows(k, 7, [('你好', 'ㄋㄧˇ ㄏㄠˇ', 50)])
     out['after'] = _reload_snapshot(k, ['好你', '你好'], [b'cl3su3', b'su3cl3'])
@@ -12618,6 +12712,11 @@ _REUSE_INPUTS = [b'cl3su3', b'su3cl3', b'cl3cl3']
 
 @case('reload-user-zhuyin-reuse-other-save-reopen', mode='zhuyin', issues=('805',))
 def _(k):
+    """Save and reopen a second phrase imported after user-library reload.
+
+    Observe both old and new readings after closing the context, so the snapshot
+    includes persisted index entries rather than only the live session.
+    """
     out = _reload_reuse_setup(k)
     out['again'] = import_rows(k, 7, [('你好', 'ㄋㄧˇ ㄏㄠˇ', 50)])
     out['save'] = bool(k.fn('save', B, P)(k.ctx))
@@ -12630,6 +12729,11 @@ def _(k):
 
 @case('reload-user-zhuyin-reuse-other-mask', mode='zhuyin', issues=('805',))
 def _(k):
+    """Mask the reused user-library range before importing a third phrase.
+
+    Return the import and mask results plus snapshots of all three phrases and
+    readings; mask 0xFF000000 selects library 7.
+    """
     out = _reload_reuse_setup(k)
     out['again'] = import_rows(k, 7, [('你好', 'ㄋㄧˇ ㄏㄠˇ', 50)])
     out['mask'] = k.fn('mask_out', B, P, U, U)(k.ctx, 0xFF000000, 0x07000000)
@@ -12645,6 +12749,11 @@ def _(k):
 # other two asserts (`:440`, `:457`) already answer.
 @case('reload-user-zhuyin-reuse-same', mode='zhuyin', abort=False, issues=('805',))
 def _(k):
+    """Re-import the same phrase after dropping its unsaved user-library item.
+
+    Return the add result at the missing-item assertion site in _add_phrase,
+    074a2219 zhuyin.cpp:447-457; the iterator remains open for worker teardown.
+    """
     _reload_reuse_setup(k)
     it = k.fn('begin_add_phrases', P, P, U)(k.ctx, 7)
     return {'ret': k.fn('iterator_add_phrase', B, P, S, S, I)(
@@ -12655,7 +12764,17 @@ def _(k):
 # answer false, and a candidate walk over it is the pin's SIGSEGV
 # (class (b)); the subject adds no candidate for it, as for a missing item.
 def _reload_dangling(walk, reading):
+    """Build a candidate walk over an imported token after its library reload.
+
+    The import goes into library 2 without saving; report retained token lookup,
+    item reads and candidates after unloading and loading that library.
+    """
     def probe(k):
+        """Import a watched phrase, reload library 2, and inspect its token and candidates.
+
+        Require the import to expose a library-2 token; clear cached instances between
+        library changes before reading the same token again.
+        """
         import_rows(k, 2, [('龘龘', reading, 50)])
         k._inst = None
         token = [t for t in tokens_of(k, '龘龘') if t >> 24 == 2][0]
@@ -12680,9 +12799,19 @@ case('reload-dangling-token-candidates-zhuyin', mode='zhuyin',
 # sentence and candidate order divide by the smaller total, and the reload
 # puts the saved state's share back.
 def _reload_total_window(k):
+    """Record sentence and candidate order across import, unload and reload.
+
+    Add two large-frequency library-2 items before unloading. The total removed
+    by FacadePhraseIndex::unload includes that library's current mass
+    (074a2219 phrase_index.cpp:261-268).
+    """
     out = {}
 
     def look(tag):
+        """Append four fresh-instance sentence and candidate snapshots under tag.
+
+        Keep only the first twelve candidates and free each temporary instance.
+        """
         k._inst = None
         for text in (b'nihao', b'women', b'xian', b'zhongguo'):
             inst = k.alloc()
@@ -12716,7 +12845,19 @@ case('reload-total-while-unloaded', issues=('805',))(_reload_total_window)
 # case and misses it in the second; one that keeps the load-time offset
 # through the mask misses the first.
 def mask_out_reload(compact):
+    """Build a mask-out probe with or without compaction after a saved-log reload.
+
+    Use an imported count chosen to expose the reload offset in the facade total;
+    the relevant merge and replacement paths are SubPhraseIndex::merge and
+    FacadePhraseIndex::merge_with_mask at 074a2219 phrase_index.cpp:453-459,
+    phrase_index.cpp:503-514 and phrase_index.cpp:301-332.
+    """
     def probe(k):
+        """Save and reopen a large import, optionally compact, then mask its exact token.
+
+        Assert the chosen count fits the stored library total; report the import,
+        save, optional compaction-triggering import, mask and facade observations.
+        """
         count = (2 ** 32 + 1900001 - FACADE_TOTAL) // 3
         assert _stored_library_total(k, 'gb_char.bin') + 3 * count <= 0xFFFFFFFF
         out = {'added': import_rows(k, 1, [('龘龘', "da3'da3", count)])}
@@ -12749,7 +12890,19 @@ _STORED_GAP = 5000000
 
 
 def stored_total_overflow(refused, after_save):
+    """Build a unigram-overflow case against a planted near-wrap stored total.
+
+    refused chooses an overshooting delta; after_save repeats it after a save
+    that compacts the index. SubPhraseIndex::add_unigram_frequency checks the
+    stored total at 074a2219 phrase_index.cpp:170-171, loaded at
+    phrase_index.cpp:345.
+    """
     def probe(k):
+        """Replace the saved log, add the chosen delta, and observe item and facade totals.
+
+        Close the original context before planting the header. If requested, import
+        a user phrase to mark it modified, save, and repeat the same increment.
+        """
         total = _stored_library_total(k, 'gb_char.bin')
         k.fn('fini', None, P)(k.ctx)
         k._ctx = None
@@ -12792,7 +12945,18 @@ case('stored-total-overflow-below-saved', control=True, issues=('802',))(stored_
 # headers from the same old total: the second stops the merge. A chained pair:
 # both apply. Either way the pin's final total wraps the facade to 2000000.
 def log_headers(chained):
+    """Build a reload case with two chained or conflicting MODIFY_HEADER records.
+
+    SubPhraseIndex::merge requires each old total to equal the running total
+    (074a2219 phrase_index.cpp:503-514); both layouts use the same net shift.
+    """
     def probe(k):
+        """Write two total-changing log records and observe their effect after reopening.
+
+        With chained true the second record starts from the first's new total;
+        otherwise both claim the original total. Return the original stored total
+        and facade-ranking observations.
+        """
         total = _stored_library_total(k, 'gb_char.bin')
         shift = (2 ** 32 + 2000000 - FACADE_TOTAL) % 2 ** 32
         if chained:
@@ -12869,6 +13033,11 @@ def _replace_system_start_row(k, value):
 
 
 def _guess_out(k, text=b'nihao'):
+    """Parse the input and return guess status plus all final-step sentences.
+
+    For zhuyin, first require the full-pinyin option word to be accepted; use the
+    cached instance for both parse and guess.
+    """
     if k.mode == 'zhuyin':
         # The zhuyin facade parses full pinyin under this option word, as
         # the d18 merge cases do.
@@ -12880,6 +13049,11 @@ def _guess_out(k, text=b'nihao'):
 
 
 def _dynamic_adjust_out(k, text=b'nihao'):
+    """Enable dynamic adjustment and return parse length with facade-specific rows.
+
+    Require option word 0x38a to succeed and guess from offset zero on the
+    cached instance.
+    """
     assert k.fn('set_options', B, P, U)(k.ctx, 0x18a | (1 << 9))
     inst = k.inst
     parsed = k.fn('parse_more_full_pinyins', Z, P, S)(inst, text)
@@ -12888,6 +13062,11 @@ def _dynamic_adjust_out(k, text=b'nihao'):
 
 
 def _segment_out(k, texts):
+    """Segment each UTF-8 text and return its status and resulting token list.
+
+    Reuse the cached instance. An untouched count produces an empty list;
+    token output slots retain the sentinel if their getters do not write them.
+    """
     segment = k.fn('phrase_segment', B, P, S)
     n_phrase = k.fn('get_n_phrase', B, P, C.POINTER(U))
     token = k.fn('get_phrase_token', B, P, U, C.POINTER(U))
@@ -12906,11 +13085,22 @@ def _segment_out(k, texts):
 
 
 def _system_start_tokens(k):
+    """Read stored successor tokens from the system bigram's sentence-start row.
+
+    Decode the row without sorting or deduplicating its items.
+    """
     raw = d18_bigram_db(k, Path(k.data, 'bigram.db'), read_keys=(b'\x01\x00\x00\x00',))[0]
     return [token for token, _ in _gram_items(raw)[1]]
 
 
 def _pin_lower_bound(at, length, token):
+    """Return the index reached by libstdc++'s halving lower-bound search.
+
+    Read values through at(index) over [0, length), preserving the search path
+    even for unsorted input. This models the std::lower_bound call used by
+    SingleGram::get_freq at 074a2219 ngram.cpp:239, exposed through stl_lite.h:29;
+    it does not sort or validate the sequence.
+    """
     # libstdc++'s __lower_bound, as SingleGram's std_lite::lower_bound runs.
     first = 0
     while length > 0:
@@ -12950,7 +13140,18 @@ def _interleave_miss_layout(system, token):
 # boost would put it first for a reader that met it. A boosted 今天 splits
 # 今天天气 off the start of 今天天气很好.
 def user_gram_lookup(kind, operation):
+    """Build a lookup case using an unsorted or duplicate user sentence-start gram.
+
+    operation selects sentence guessing, dynamic adjustment or segmentation.
+    The fixture distinguishes stored-order merging in merge_single_gram at
+    074a2219 ngram.cpp:308-349 from sorting or combining duplicates first.
+    """
     def probe(k):
+        """Replace the user bigram and perform the selected lookup with a boosted token.
+
+        Use an interleave-miss layout for unsorted segmentation; otherwise plant the
+        standard unsorted/duplicate layout and return the operation's observations.
+        """
         boosted = tokens_of(k, '今天' if operation == 'phrase-segment' else '尼')[0]
         if operation == 'phrase-segment' and kind == 'unsorted':
             # The phrase segmenter reads each pair, so a gram get_freq
@@ -12988,6 +13189,12 @@ for _kind in ('unsorted', 'duplicate'):
 # summed, so a reader that sorts and sums the gram does not boost T.
 @case('user-gram-unsorted-range-boundary', issues=('757',))
 def _(k):
+    """Plant a user gram whose merged range yields duplicated lower tokens.
+
+    Choose a ni reading below the token for 你 and observe sentence guessing.
+    SingleGram::search checks only the upper bound while walking at
+    074a2219 ngram.cpp:167-173.
+    """
     ni = tokens_of(k, '你')[0]
     below = next(token for token in (tokens_of(k, text)[0] for text in '泥拟逆腻妮倪匿溺尼')
                  if token + 1 < ni)
@@ -13000,7 +13207,12 @@ def _(k):
 # 'duplicate' holds 尼 at 1 and then at the boost: search yields both items,
 # so the boosted one steps; a reader that keeps the first match does not.
 def system_gram_lookup(kind):
+    """Build a sentence-guess case with an unsorted or duplicate system start row.
+
+    Replace the row only in a private system-table copy; no user gram is planted.
+    """
     def probe(k):
+        """Boost 尼 in a copied system gram and return the nihao sentence observations."""
         ni2 = tokens_of(k, '尼')[0]
         value = (_start_gram(kind, ni2) if kind == 'unsorted'
                  else _gram_bytes(_BOOST + 1, [(ni2, 1), (ni2, _BOOST)]))
@@ -13023,6 +13235,11 @@ for _kind in ('unsorted', 'duplicate'):
 # drops zero counts answers it once.
 @case('user-gram-zero-count-guess', issues=('757',))
 def _(k):
+    """Plant a zero-count user item for the best one-syllable sentence and guess again.
+
+    First replace the system start row with an out-of-range token. The zero item
+    remains visible to SingleGram::search at 074a2219 ngram.cpp:167-173.
+    """
     _replace_system_start_row(k, _gram_bytes(1, [(_PAST_RANGES, 1)]))
     best = _guess_out(k, b'a')['sentences'][0]
     _replace_user_bigram(k, [(1, _gram_bytes(0, [(tokens_of(k, best)[0], 0)]))])
@@ -13039,6 +13256,7 @@ _SHORT = b'\x07\x00\x00'
 
 
 def short_start_guess(k):
+    """Guess with a three-byte user start gram and return only the guess status."""
     _replace_user_bigram(k, [(1, _SHORT)])
     return {'ret': _guess_out(k)['guessed']}
 
@@ -13050,7 +13268,13 @@ for _mode in ('pinyin', 'zhuyin'):
 
 @case('abort-guess-sentence-short-user-gram-no-system-row', abort=False, issues=('757',))
 def _(k):
+    """Guess with an imported phrase prefix whose user gram lacks a complete total.
+
+    Require nihao to parse completely, then call guess_sentence_with_prefix with
+    the imported phrase; report its return value.
+    """
     def grams(system, users):
+        """Place the short gram under the first imported user token, ignoring system rows."""
         return [(users[0], _SHORT)]
     _plant_user_grams(k, [_DALONG], grams)
     inst = k.inst
@@ -13059,6 +13283,7 @@ def _(k):
 
 
 def short_start_dynamic_adjust(k):
+    """Request dynamically adjusted candidates with a three-byte user start gram."""
     _replace_user_bigram(k, [(1, _SHORT)])
     return {'ret': _dynamic_adjust_out(k)['ret']}
 
@@ -13072,6 +13297,10 @@ for _mode in ('pinyin', 'zhuyin'):
 # parse merges no gram (pinyin.cpp:1497-1520, zhuyin.cpp:1017-1043), so the
 # parse answers its full length.
 def short_start_dynamic_adjust_parse(k):
+    """Parse with dynamic adjustment enabled and a short start gram, without guessing.
+
+    Return the parser's consumed byte count and the stored parsed-input length.
+    """
     _replace_user_bigram(k, [(1, _SHORT)])
     assert k.fn('set_options', B, P, U)(k.ctx, 0x18a | (1 << 9))
     inst = k.inst
@@ -13086,6 +13315,7 @@ for _mode in ('pinyin', 'zhuyin'):
 
 @case('abort-phrase-segment-short-user-gram', abort=False, issues=('757',))
 def _(k):
+    """Segment a fixed phrase after replacing the user start gram with three bytes."""
     _replace_user_bigram(k, [(1, _SHORT)])
     return {'ret': k.fn('phrase_segment', B, P, S)(k.inst, '今天天气很好'.encode())}
 
@@ -13096,13 +13326,27 @@ def _(k):
 # and asserts at memory_chunk.h:390. The sound twin reaches final_step:
 # false, two zero tokens, no diagnostic. No whole-store preflight.
 def phrase_prefix_gram(short, *, before=False, unrelated=False):
+    """Build a segmentation case varying where a short predecessor gram is reachable.
+
+    short selects a truncated total; before moves the surrogate before the scalar
+    span, and unrelated places the gram under another predecessor. The reachable
+    prefix search is PhraseLookup::get_best_match at
+    074a2219 phrase_lookup.cpp:135-146.
+    """
     def probe(k):
+        """Seed an old segmentation result and check the selected surrogate/gram case.
+
+        Assert either the exact short-gram diagnostic and report old-result retention,
+        or two null tokens and no diagnostics. The returned status is the segmenter's
+        actual result, not a predicted success value.
+        """
         predecessor = tokens_of(k, '好')[0] if unrelated else 1
         value = b'\x01\x00\x00' if short else _gram_bytes(1, [])
         _replace_user_bigram(k, [(predecessor, value)])
         inst = k.inst
 
         def result():
+            """Read all phrase tokens and require the first out-of-range slot to become zero."""
             count = U(0xABCDEF)
             assert k.fn('get_n_phrase', B, P, C.POINTER(U))(inst, C.byref(count))
             tokens = []
@@ -13154,6 +13398,12 @@ for _mode in ('pinyin', 'zhuyin'):
 # item make `phrase_segment("\xed\xa0\x80")` return true with that token;
 # no `char` or `str` exists for the word on either side.
 def phrase_segment_nonscalar_raw_key(k):
+    """Install a private raw-surrogate phrase key and observe segmentation of it.
+
+    Replace private library/index links with a one-character item and raw UCS-4
+    key 0xd800, seed an earlier failed result, then return status and tokens for
+    the matching UTF-8 byte sequence. No Python Unicode scalar represents the key.
+    """
     system = private_system(k)
     word = 0xd800
     token = 0x01000001
@@ -13201,12 +13451,17 @@ for _mode in ('pinyin', 'zhuyin'):
 # (pinyin.cpp:2207-2216).
 @case('guess-unrelated-short-user-gram', control=True, issues=('757',))
 def _(k):
+    """Guess nihao with a short user gram attached to the unrelated token for 我."""
     _replace_user_bigram(k, [(tokens_of(k, '我')[0], _SHORT)])
     return _guess_out(k)
 
 
 @case('guess-candidates-short-user-gram-dynamic-adjust-off', control=True, issues=('757',))
 def _(k):
+    """Guess candidates with a short start gram while dynamic adjustment is disabled.
+
+    Require option word 0x18a to succeed and return the parse length and rows.
+    """
     _replace_user_bigram(k, [(1, _SHORT)])
     assert k.fn('set_options', B, P, U)(k.ctx, 0x18a)
     inst = k.inst
@@ -13244,7 +13499,13 @@ def zy_strv(k, pointer):
 
 
 def parse_chewing_probe(schemes, texts):
+    """Build a single-key parser probe across the supplied schemes and byte strings.
+
+    A None scheme preserves the current setting. Record the boolean result and
+    the output key initialized to the low sixteen bits of UNTOUCHED.
+    """
     def probe(k):
+        """Set each requested scheme and collect parse_chewing results with fresh sentinels."""
         out = {}
         for scheme in schemes:
             if scheme is not None:
@@ -13271,7 +13532,13 @@ case('zhuyin-parse-chewing-key', mode='zhuyin', control=True, issues=('563',))(
 
 
 def in_chewing_probe(scheme, options, keys):
+    """Build a keyboard-membership probe with optional scheme and option changes.
+
+    Return each byte's status and decoded symbol vector, preserving untouched and
+    null outputs distinctly and freeing returned vectors through zy_strv.
+    """
     def probe(k):
+        """Apply optional keyboard settings and record every requested byte's symbols."""
         if scheme is not None:
             k.fn('set_chewing_scheme', B, P, I)(k.ctx, scheme)
         if options is not None:
@@ -13299,12 +13566,23 @@ for _zyscheme in (2, 3, 4, 5, 6, 8, 9):
 
 
 def key_rest_positions_probe(text, offsets):
+    """Build a probe of key-rest offsets and all optional begin/end combinations.
+
+    Only call the position accessor after a successful non-null rest lookup.
+    zhuyin_get_zhuyin_key_rest_positions permits either output to be null at
+    074a2219 zhuyin.cpp:1930-1939.
+    """
     # `zhuyin_get_zhuyin_key_rest` on an empty matrix aborts the pin (a
     # registered class (c) site held by `abort-zhuyin-get-zhuyin-key-rest-
     # empty-matrix`), so the accessor is only reachable on a parsed instance;
     # this case takes a key-rest pointer from the getter the pin's own call
     # returns, then exercises the optional `begin`/`end`.
     def probe(k):
+        """Parse the chewing text and record rest lookup and optional position outputs.
+
+        Set option word 0x1aa; distinguish untouched, null and set rest pointers for
+        each offset and initialize each numeric output to 0xABCD.
+        """
         k.fn('set_options', B, P, U)(k.ctx, 0x1aa)
         inst = k.inst
         k.fn('parse_more_chewings', Z, P, S)(inst, text.encode())
@@ -13336,13 +13614,24 @@ case('zhuyin-key-rest-positions-out', mode='zhuyin', control=True, issues=('563'
 
 
 def phrase_tokens_probe(texts):
+    """Build a phrase-result probe covering empty, segmented and reset instances.
+
+    Record count/token results plus end and UINT_MAX reads. The getters write
+    their outputs as shown at 074a2219 zhuyin.cpp:2227-2245.
+    """
     def probe(k):
+        """Observe each segmentation and a final reset on the same instance."""
         inst = k.inst
         segment = k.fn('phrase_segment', B, P, S)
         n_phrase = k.fn('get_n_phrase', B, P, C.POINTER(U))
         token = k.fn('get_phrase_token', B, P, U, C.POINTER(U))
 
         def read(prefix):
+            """Read count, in-range tokens and two out-of-range slots under prefixed keys.
+
+            An untouched count suppresses the in-range loop; return call results together
+            with numeric output values so unchanged sentinels remain visible.
+            """
             count = U(UNTOUCHED)
             n_ret = n_phrase(inst, C.byref(count))
             rows, index = [], 0
@@ -13384,6 +13673,12 @@ case('zhuyin-phrase-result-tokens', mode='zhuyin', control=True, issues=('563',)
 # refused zero key leaves NULL, not the caller's sentinel.
 @case('zhuyin-string-getters', mode='zhuyin', control=True, issues=('563',))
 def _(k):
+    """Compare zhuyin and pinyin string outputs for a parsed key and a zero key.
+
+    Try the current scheme and schemes 1-3, decoding and freeing owned strings.
+    The getters clear the output before refusing a zero key at
+    074a2219 zhuyin.cpp:1732-1766.
+    """
     inst = k.inst
     key = C.c_ushort(0)
     assert k.fn('parse_chewing', B, P, S, C.POINTER(C.c_ushort))(inst, b'su3', C.byref(key))
@@ -13409,6 +13704,7 @@ def _(k):
 # The past-matrix cursor lives in `zhuyin-cursor-neighbours`.
 @case('zhuyin-cursor-offset-range', mode='zhuyin', control=True, issues=('563',))
 def _(k):
+    """Read five cursor offsets from a parsed zhuyin instance with sentinel outputs."""
     inst = zhuyin_chewing(k)
     fn = k.fn('get_zhuyin_offset', B, P, Z, C.POINTER(Z))
     out = {}
@@ -13428,6 +13724,12 @@ def _(k):
 # defined call there, so the subject answers what the pin answers.
 @case('zhuyin-null-instance-defined-getters', mode='zhuyin', issues=('563',))
 def _(k):
+    """Call five instance-independent zhuyin getters with a null instance.
+
+    Obtain real key, rest and candidate pointers first. These getters do not read
+    the instance at 074a2219 zhuyin.cpp:1732-1741, zhuyin.cpp:1858-1870 and
+    zhuyin.cpp:1930-1946; return their statuses and output values.
+    """
     inst = k.inst
     k.fn('parse_more_chewings', Z, P, S)(inst, b'su3cl3')
     key = C.c_ushort(0)
@@ -13465,6 +13767,12 @@ def _(k):
 # that is refused before either write.
 @case('zhuyin-token-get-phrase-optional-out', mode='zhuyin', issues=('563',))
 def _(k):
+    """Exercise all optional phrase length/text outputs for known and unknown tokens.
+
+    Preserve untouched markers and release returned text. _token_get_phrase checks
+    each output pointer only after finding the item at
+    074a2219 zhuyin.cpp:1096-1113.
+    """
     fn = k.fn('token_get_phrase', B, P, U, C.POINTER(U), C.POINTER(P))
     out = {}
     for label, token in (('known', tokens_of(k, '你好')[0]), ('unknown', 0xFFFFFFFF)):
@@ -13545,7 +13853,18 @@ def phrase_text_bytes(k, ptr, *, owned=True):
 
 
 def phrase_text_probe(variant, surface):
+    """Build a phrase-text observation for an isolated raw-word fixture.
+
+    surface selects export, sentence or candidate output. Keep text as byte hex
+    so invalid UTF-8 is not replaced; for zhuyin export, report symbol availability
+    because that facade has no export iterator.
+    """
     def probe(k):
+        """Install the chosen word variant and return its text through the selected API.
+
+        Bound pinyin export to two rows, release owned text, and leave candidate text
+        borrowed. Sentence/candidate observations include parse and guess results.
+        """
         phrase_text_system(k, variant)
         if surface == 'export' and k.mode == 'zhuyin':
             # zhuyin.h/libzhuyin.ver export no iterator. Never borrow a
@@ -13612,7 +13931,20 @@ for _mode in ('pinyin', 'zhuyin'):
 # (074a2219 phrase_index.cpp:180-205). Neither getter decodes text or keys
 # (pinyin.cpp:2786-2798; zhuyin.cpp:1778-1790).
 def stored_count_headers(user):
+    """Build a pronunciation-count probe using only planted item headers.
+
+    Choose a private system library or user.bin, with invalid offsets, alias
+    slots and malformed payloads. SubPhraseIndex::get_phrase_item reads only the
+    offset and two header bytes before constructing a view at
+    074a2219 phrase_index.cpp:180-205; the count getter reads that header at
+    zhuyin.cpp:1778-1790.
+    """
     def probe(k):
+        """Write the header fixture and record count outputs for slots, tags and a missing library.
+
+        Require a fresh context, initialize counts to UNTOUCHED, and close the instance
+        and context after collecting the results.
+        """
         item = bytes([1, 3]) + (9).to_bytes(4, 'little') + (0xd800).to_bytes(4, 'little') + b'\xff' * 18
         content = b'\0' * 8 + item + b'\x01'
         offsets = [0, 8, len(content) - 1, 0, len(content), 8]
@@ -13671,6 +14003,11 @@ _WRAP_PHRASES = {1: '龘', 2: '龖', 3: '龗', 4: '鬱', 5: '鑫', 6: '靐', 7: 
 
 
 def _wrap_pinyin_readings():
+    """Enumerate candidate pinyin syllable bytes in initial/final/tone product order.
+
+    Include tones 1-4 and an empty initial; parsing and reading deduplication are
+    left to the caller.
+    """
     initials = ['b', 'p', 'm', 'f', 'd', 't', 'n', 'l', 'g', 'k', 'h', 'j', 'q', 'x', 'zh', 'ch', 'sh',
                 'r', 'z', 'c', 's', 'y', 'w', '']
     finals = ['a', 'o', 'e', 'ai', 'ei', 'ao', 'ou', 'an', 'en', 'ang', 'eng', 'i', 'u', 'ia', 'ie',
@@ -13679,6 +14016,11 @@ def _wrap_pinyin_readings():
 
 
 def _wrap_zhuyin_readings():
+    """Enumerate UTF-8 zhuyin reading candidates in initial/final/tone product order.
+
+    Try second, third, fourth and unmarked tones for each listed combination;
+    the returned combinations are not prevalidated as syllables.
+    """
     initials = 'ㄅㄆㄇㄈㄉㄊㄋㄌㄍㄎㄏㄐㄑㄒㄓㄔㄕㄖㄗㄘㄙ'
     finals = ['ㄚ', 'ㄛ', 'ㄜ', 'ㄞ', 'ㄟ', 'ㄠ', 'ㄡ', 'ㄢ', 'ㄣ', 'ㄤ', 'ㄥ', 'ㄧ', 'ㄨ', 'ㄩ', 'ㄧㄚ', 'ㄧㄝ',
               'ㄧㄠ', 'ㄧㄡ', 'ㄧㄢ', 'ㄧㄣ', 'ㄧㄤ', 'ㄧㄥ', 'ㄨㄚ', 'ㄨㄛ', 'ㄨㄞ', 'ㄨㄟ', 'ㄨㄢ', 'ㄨㄣ',
@@ -13743,7 +14085,13 @@ def _wrap_item_reads(k, lib, text, rows, result, label):
 
 
 def _wrap_export_rows(k, lib):
+    """Build a reader that exports one phrase's readings from a pinyin library."""
     def rows(text):
+        """Walk the whole export iterator and retain [reading, frequency] rows for text.
+
+        Decode and free each returned phrase/reading string and close the iterator;
+        preserve export order, including repeated readings.
+        """
         out = k.fn('begin_get_phrases', P, P, U)(k.ctx, lib)
         has = k.fn('iterator_has_next_phrase', B, P)
         nxt = k.fn('iterator_get_next_phrase', B, P, C.POINTER(P), C.POINTER(P), C.POINTER(I))
@@ -13760,6 +14108,15 @@ def _wrap_export_rows(k, lib):
 
 
 def wrap_256th_reading(k, readings, same_iterator):
+    """Observe the 256th and 257th reading additions across all configured libraries.
+
+    Filter candidate readings on a scratch profile, fill each available item to
+    255 readings, then observe live, end-of-import and saved/reopened states.
+    same_iterator chooses where the 257th add occurs. This exercises the guint8
+    count in PhraseItem::add_pronunciation at
+    074a2219 phrase_index.cpp:56-91 and phrase_index.cpp:28-30. Exhausting readings
+    propagates StopIteration; unavailable libraries are recorded and skipped.
+    """
     readings = _wrap_distinct(k, readings)
     add = k.fn('iterator_add_phrase', B, P, S, S, I)
     begin = k.fn('begin_add_phrases', P, P, U)
@@ -13775,6 +14132,11 @@ def wrap_256th_reading(k, readings, same_iterator):
             continue
 
         def step(frequency):
+            """Consume one reading, add it at frequency, and return status and current count.
+
+            Group add, token lookup and count retrieval in one per-call step; return
+            zero for the count if the phrase has no token in this library.
+            """
             reading = next(pending)
             with k.per_call_step():
                 ret = add(iterator, text.encode(), reading, frequency)
@@ -13824,21 +14186,25 @@ def wrap_256th_reading(k, readings, same_iterator):
 
 @case('wrap-256th-reading', issues=('804',))
 def _(k):
+    """Observe pinyin reading-count wrap with the 257th add in a new iterator."""
     return wrap_256th_reading(k, _wrap_pinyin_readings(), same_iterator=False)
 
 
 @case('wrap-256th-reading-same-iterator', issues=('804',))
 def _(k):
+    """Observe pinyin reading-count wrap with the 257th add in the same iterator."""
     return wrap_256th_reading(k, _wrap_pinyin_readings(), same_iterator=True)
 
 
 @case('wrap-256th-reading-zhuyin', mode='zhuyin', issues=('804',))
 def _(k):
+    """Observe zhuyin reading-count wrap with the 257th add in a new iterator."""
     return wrap_256th_reading(k, _wrap_zhuyin_readings(), same_iterator=False)
 
 
 @case('wrap-256th-reading-zhuyin-same-iterator', mode='zhuyin', issues=('804',))
 def _(k):
+    """Observe zhuyin reading-count wrap with the 257th add in the same iterator."""
     return wrap_256th_reading(k, _wrap_zhuyin_readings(), same_iterator=True)
 
 
@@ -13846,7 +14212,12 @@ def _(k):
 # NULL argument and dies of SIGSEGV, the subject's guard answers. One case
 # per site so the pin dies at the site under test.
 def null_argument_case(call):
+    """Adapt a single call result to the registry's ret observation dictionary.
+
+    Exceptions and native process failures propagate to the worker boundary.
+    """
     def probe(k):
+        """Invoke the supplied case callback and wrap its result under ret."""
         return {'ret': call(k)}
     return probe
 
@@ -13856,29 +14227,59 @@ _ZY_NULL_TRUE = {'ret': True, 'logs': []}
 
 
 def zy_parse_chewing_null_instance(k):
+    """Call the one-key parser with a valid text/output but no instance.
+
+    Return its status if it survives the instance dereference at
+    074a2219 zhuyin.cpp:1048 (zhuyin_parse_chewing).
+    """
     key = C.c_ushort(0)
     return k.fn('parse_chewing', B, P, S, C.POINTER(C.c_ushort))(None, b'su3', C.byref(key))
 
 
 def zy_parse_chewing_null_text(k):
+    """Call the one-key parser with a null text and an initialized key output.
+
+    Return its status if it survives strlen in zhuyin_parse_chewing at
+    074a2219 zhuyin.cpp:1052.
+    """
     key = C.c_ushort(0)
     return k.fn('parse_chewing', B, P, S, C.POINTER(C.c_ushort))(k.inst, None, C.byref(key))
 
 
 def zy_parse_chewing_null_key(k):
+    """Pass a null key output for su3 and return the parser status if it survives.
+
+    The output is dereferenced by zhuyin_parse_chewing at
+    074a2219 zhuyin.cpp:1053-1054.
+    """
     return k.fn('parse_chewing', B, P, S, C.POINTER(C.c_ushort))(k.inst, b'su3', None)
 
 
 def zy_in_chewing_null_instance(k):
+    """Query keyboard membership for s with no instance and a real output slot.
+
+    Return the status if the call survives zhuyin_in_chewing_keyboard's instance
+    dereference at 074a2219 zhuyin.cpp:1089.
+    """
     symbols = P(UNTOUCHED)
     return k.fn('in_chewing_keyboard', B, P, C.c_char, C.POINTER(P))(None, b's', C.byref(symbols))
 
 
 def zy_in_chewing_null_symbols(k):
+    """Query keyboard membership for s with a null symbol-vector output.
+
+    Return the status if it survives the output dereference in
+    zhuyin_in_chewing_keyboard at 074a2219 zhuyin.cpp:1092-1093.
+    """
     return k.fn('in_chewing_keyboard', B, P, C.c_char, C.POINTER(P))(k.inst, b's', None)
 
 
 def zy_pinyin_string_null_instance(k):
+    """Parse a real key, then request its pinyin spelling without an instance.
+
+    Return the getter status if it survives the context access in
+    zhuyin_get_pinyin_string at 074a2219 zhuyin.cpp:1746-1747.
+    """
     key = C.c_ushort(0)
     k.fn('parse_chewing', B, P, S, C.POINTER(C.c_ushort))(k.inst, b'su3', C.byref(key))
     string = P(UNTOUCHED)
@@ -13886,41 +14287,79 @@ def zy_pinyin_string_null_instance(k):
 
 
 def zy_zhuyin_string_null_key(k):
+    """Request a zhuyin spelling for a null key using a real output slot.
+
+    Return the status if it survives the key access in zhuyin_get_zhuyin_string
+    at 074a2219 zhuyin.cpp:1735-1736.
+    """
     string = P(UNTOUCHED)
     return k.fn('get_zhuyin_string', B, P, C.POINTER(C.c_ushort), C.POINTER(P))(k.inst, None, C.byref(string))
 
 
 def zy_zhuyin_string_null_out(k):
+    """Parse a real key, then request its zhuyin spelling with no output slot.
+
+    Return the status if it survives zhuyin_get_zhuyin_string's output write
+    at 074a2219 zhuyin.cpp:1735.
+    """
     key = C.c_ushort(0)
     k.fn('parse_chewing', B, P, S, C.POINTER(C.c_ushort))(k.inst, b'su3', C.byref(key))
     return k.fn('get_zhuyin_string', B, P, C.POINTER(C.c_ushort), C.POINTER(P))(k.inst, C.byref(key), None)
 
 
 def zy_key_rest_positions_null_rest(k):
+    """Request both positions from a null rest pointer using real numeric outputs.
+
+    Return the status if it survives zhuyin_get_zhuyin_key_rest_positions at
+    074a2219 zhuyin.cpp:1933-1937.
+    """
     begin, end = C.c_ushort(0), C.c_ushort(0)
     return k.fn('get_zhuyin_key_rest_positions', B, P, P, C.POINTER(C.c_ushort), C.POINTER(C.c_ushort))(
         k.inst, None, C.byref(begin), C.byref(end))
 
 
 def zy_n_phrase_null_instance(k):
+    """Read the phrase count without an instance, retaining only the call status.
+
+    zhuyin_get_n_phrase reads the instance at 074a2219 zhuyin.cpp:2229.
+    """
     count = U(0)
     return k.fn('get_n_phrase', B, P, C.POINTER(U))(None, C.byref(count))
 
 
 def zy_n_phrase_null_out(k):
+    """Read the cached instance's phrase count with a null output pointer.
+
+    Return the status if it survives zhuyin_get_n_phrase's output write at
+    074a2219 zhuyin.cpp:2229.
+    """
     return k.fn('get_n_phrase', B, P, C.POINTER(U))(k.inst, None)
 
 
 def zy_phrase_token_null_instance(k):
+    """Read token zero without an instance, using a real output slot.
+
+    Return the status if it survives the instance access in
+    zhuyin_get_phrase_token at 074a2219 zhuyin.cpp:2236.
+    """
     slot = U(0)
     return k.fn('get_phrase_token', B, P, U, C.POINTER(U))(None, 0, C.byref(slot))
 
 
 def zy_phrase_token_null_out(k):
+    """Request token zero with a null output pointer and retain only the call status.
+
+    zhuyin_get_phrase_token writes the null token before checking range at
+    074a2219 zhuyin.cpp:2238-2241.
+    """
     return k.fn('get_phrase_token', B, P, U, C.POINTER(U))(k.inst, 0, None)
 
 
 def zy_first_rest(k):
+    """Parse su3cl3 and return the instance with its first borrowed key-rest pointer.
+
+    Require the rest lookup to succeed and produce a non-null pointer.
+    """
     inst = k.inst
     k.fn('parse_more_chewings', Z, P, S)(inst, b'su3cl3')
     rest = P(UNTOUCHED)
@@ -13929,6 +14368,10 @@ def zy_first_rest(k):
 
 
 def zy_first_candidate(k):
+    """Parse and guess su3cl3, returning the instance and first borrowed candidate.
+
+    Require guessing and candidate lookup to succeed with a non-null pointer.
+    """
     inst = k.inst
     k.fn('parse_more_chewings', Z, P, S)(inst, b'su3cl3')
     assert k.fn('guess_candidates_after_cursor', B, P, Z)(inst, 0)
@@ -13938,34 +14381,64 @@ def zy_first_candidate(k):
 
 
 def zy_key_rest_length_null_rest(k):
+    """Prepare a parsed instance, then request length from a null key rest.
+
+    Return the status if it survives zhuyin_get_zhuyin_key_rest_length at
+    074a2219 zhuyin.cpp:1945.
+    """
     inst, _ = zy_first_rest(k)
     length = C.c_ushort(0)
     return k.fn('get_zhuyin_key_rest_length', B, P, P, C.POINTER(C.c_ushort))(inst, None, C.byref(length))
 
 
 def zy_key_rest_length_null_length(k):
+    """Request a real key rest's length with no output slot.
+
+    Return the status if it survives zhuyin_get_zhuyin_key_rest_length's write
+    at 074a2219 zhuyin.cpp:1945.
+    """
     inst, rest = zy_first_rest(k)
     return k.fn('get_zhuyin_key_rest_length', B, P, P, C.POINTER(C.c_ushort))(inst, rest, None)
 
 
 def zy_candidate_type_null_candidate(k):
+    """Prepare candidate state, then read a null candidate's type into a real slot.
+
+    Return the status if it survives zhuyin_get_candidate_type at
+    074a2219 zhuyin.cpp:1861.
+    """
     inst, _ = zy_first_candidate(k)
     kind = I(0)
     return k.fn('get_candidate_type', B, P, P, C.POINTER(I))(inst, None, C.byref(kind))
 
 
 def zy_candidate_type_null_out(k):
+    """Request the first candidate's type with a null output pointer.
+
+    Return the status if it survives zhuyin_get_candidate_type's write at
+    074a2219 zhuyin.cpp:1861.
+    """
     inst, cand = zy_first_candidate(k)
     return k.fn('get_candidate_type', B, P, P, C.POINTER(I))(inst, cand, None)
 
 
 def zy_candidate_string_null_candidate(k):
+    """Prepare candidate state, then request a null candidate's text with a real slot.
+
+    Return the status if it survives zhuyin_get_candidate_string at
+    074a2219 zhuyin.cpp:1868.
+    """
     inst, _ = zy_first_candidate(k)
     text = P(UNTOUCHED)
     return k.fn('get_candidate_string', B, P, P, C.POINTER(P))(inst, None, C.byref(text))
 
 
 def zy_candidate_string_null_out(k):
+    """Request the first candidate's text with a null output pointer.
+
+    Return the status if it survives zhuyin_get_candidate_string's write at
+    074a2219 zhuyin.cpp:1868.
+    """
     inst, cand = zy_first_candidate(k)
     return k.fn('get_candidate_string', B, P, P, C.POINTER(P))(inst, cand, None)
 
@@ -13980,6 +14453,13 @@ def zy_candidate_string_null_out(k):
 # The pinyin twin's index is not part of the row (the audit recorded library
 # 255 accepted there, so that side has no stable crash to hold).
 def zy_import_index_out_of_range(k):
+    """Attempt an import through library index 16 and return its add result.
+
+    Return 'no-iterator' if begin refuses; otherwise close the iterator after
+    adding. The pin's zhuyin_begin_add_phrases stores that index unchecked at
+    074a2219 zhuyin.cpp:392-398, and _add_phrase passes it to get_range at
+    zhuyin.cpp:475.
+    """
     it = k.fn('begin_add_phrases', P, P, U)(k.ctx, 16)
     if not it:
         return 'no-iterator'
@@ -14041,8 +14521,10 @@ def encode_sentence_tie(row, guessed, sentences, nbest, residual_sentences, resi
     texts = list(dict.fromkeys(sentences + residual_sentences))
     ids = {text: index for index, text in enumerate(texts)}
     def indexed(items):
+        """Encode texts as comma-separated IDs from the enclosing row's shared pool."""
         return ','.join(str(ids[text]) for text in items)
     def displayed(items):
+        """Encode displayed (index, text) pairs as index:pooled-ID entries in row order."""
         return ','.join(f'{index}:{ids[text]}' for index, text in items)
     return '\t'.join(row[:3] + [str(int(guessed)), '\x01'.join(texts),
                                 indexed(sentences), displayed(nbest),
@@ -14060,6 +14542,11 @@ def regenerate_sentence_ties(prefix, fixture):
     suspend_offset = time.clock_gettime(time.CLOCK_BOOTTIME) - time.clock_gettime(time.CLOCK_MONOTONIC)
 
     def fields(path):
+        """Read key=value lines, ignoring empty, comment and separator-free lines.
+
+        Split only the first equals sign and let later duplicate keys replace earlier
+        values; propagate file-read errors.
+        """
         return dict(line.split('=', 1) for line in path.read_text().splitlines()
                     if line and not line.startswith('#') and '=' in line)
 
@@ -14237,7 +14724,17 @@ def axis_c_surface(k, parser, text, instance=None):
 
 
 def axis_c_options(word, texts):
+    """Build an option-word probe with each text observed in a separate fork.
+
+    Reuse a never-parsed instance snapshot unless AXIS_C_ALLOCATE_EACH is '1';
+    return the setter status and observations keyed by input position.
+    """
     def probe(k):
+        """Set the option word and isolate each full-pinyin input observation.
+
+        Allocate the shared snapshot before forking unless per-input allocation is
+        explicitly selected; the parent does not parse it.
+        """
         set_ok = k.fn('set_options', B, P, U)(k.ctx, word)
         # Every fork gets an independent, never-parsed instance snapshot.
         # The parent never parses it; constructor work is independent of input.
@@ -14251,6 +14748,10 @@ def axis_c_options(word, texts):
 
 
 def axis_c_lookup(k, text):
+    """Look up UTF-8 phrase bytes and return status plus raw token values.
+
+    Allocate a four-byte-element GArray and free it even if observation fails.
+    """
     new = k.glib.g_array_new
     new.argtypes, new.restype = [I, I, U], P
     arr = new(0, 0, 4)
@@ -14264,6 +14765,13 @@ def axis_c_lookup(k, text):
 
 
 def axis_c_import(k, operation, text):
+    """Import supplied phrase or reading bytes, save, and export through a new process.
+
+    Use library 7 with frequency 1 and a fixed counterpart for the chosen input.
+    Require an iterator, close the context, then reopen the saved user directory
+    through AXIS_C_COMPANION_PINYIN. Return worker status, decoded export and
+    diagnostics with that directory replaced by USER.
+    """
     phrase = text if operation == 'import-phrase' else '你好'.encode()
     reading = text if operation == 'import-reading' else (
         b"ni'hao" if k.mode == 'pinyin' else 'ㄋㄧˇ ㄏㄠˇ'.encode())
@@ -14289,12 +14797,26 @@ def axis_c_import(k, operation, text):
 
 @case('axis-c-export-user')
 def axis_c_export_user(k):
+    """Export the user profile named by AXIS_C_REOPEN_USER through this worker's kit.
+
+    Replace k.user before accessing the context and return the export rows.
+    """
     k.user = os.environ['AXIS_C_REOPEN_USER']
     return dict(rows=d18_export_phrases(k))
 
 
 def axis_c_encoding(operation, text):
+    """Build an encoding probe for parser, lookup, segmentation or import entry points.
+
+    Each callback sets options to 0x28 and returns operation-specific outputs;
+    remember_user_input first parses nihao and also exports the resulting rows.
+    """
     def probe(k):
+        """Dispatch the supplied bytes through the chosen encoding-sensitive operation.
+
+        For surrogate segmentation, also observe token outputs and boundary reads,
+        bounding the token walk by the input byte length.
+        """
         k.fn('set_options', B, P, U)(k.ctx, 0x28)
         if operation.startswith('parse_more_'):
             return axis_c_surface(k, operation, text)
@@ -14313,6 +14835,7 @@ def axis_c_encoding(operation, text):
             if b'\xed\xa0\x80' in text:
                 token = k.fn('get_phrase_token', B, P, U, C.POINTER(U))
                 def read(index):
+                    """Return token-call status and the numeric output, including an untouched sentinel."""
                     slot = U(UNTOUCHED)
                     return [token(k.inst, index, C.byref(slot)), slot.value]
                 out['tokens'] = ([read(index) for index in range(count.value)]
@@ -14328,6 +14851,11 @@ def axis_c_encoding(operation, text):
 
 
 def axis_c_keyboard(k, byte):
+    """Map one integer byte through the chewing keyboard and release its symbol vector.
+
+    Return status with symbols as a decoded list, None or 'untouched'; invalid
+    byte values and invalid UTF-8 propagate conversion errors.
+    """
     out = P(UNTOUCHED)
     ret = k.fn('in_chewing_keyboard', B, P, C.c_char, C.POINTER(P))(
         k.inst, bytes([byte]), C.byref(out))
@@ -14346,9 +14874,19 @@ def axis_c_keyboard(k, byte):
 
 
 def axis_c_layout(scheme, word, definition):
+    """Build isolated keyboard and parse observations for one layout/option pair.
+
+    Read byte and text inputs from definition; set the facade-specific scheme in
+    each child and skip its observation if the setter refuses.
+    """
     def probe(k):
+        """Set options and fork each registered byte/text layout observation independently."""
         k.fn('set_options', B, P, U)(k.ctx, word)
         def configured(fn):
+            """Set this facade's scheme and call fn only when the setter succeeds.
+
+            Return the setter status and either the observation or None.
+            """
             setter = 'set_zhuyin_scheme' if k.mode == 'pinyin' else 'set_chewing_scheme'
             ret = k.fn(setter, B, P, I)(k.ctx, scheme)
             return dict(set_scheme=ret, observation=fn() if ret else None)
@@ -14391,6 +14929,7 @@ for _mode in ('pinyin', 'zhuyin'):
 
 
 def axis_c_canonical(value):
+    """Serialize a JSON-compatible value to compact ASCII bytes with sorted keys."""
     return json.dumps(value, sort_keys=True, ensure_ascii=True, separators=(',', ':')).encode()
 
 
@@ -14406,6 +14945,12 @@ def axis_c_normalize_diagnostics(value, scratch, field=''):
 
 
 def check_axis_c_snapshots(args):
+    """Compare fresh allocation with forked instance snapshots for six word/library pairs.
+
+    Temporarily toggle AXIS_C_ALLOCATE_EACH, restore its caller value even on
+    failure, and assert equal exit/result/stderr envelopes. Print progress and
+    return zero; reject suspend-offset movement of at least 0.01 seconds.
+    """
     names = ['axis-c-options-single-00000008', 'axis-c-options-pair-00000060',
              'axis-c-options-boundary-ffffffff']
     offset = time.clock_gettime(time.CLOCK_BOOTTIME) - time.clock_gettime(time.CLOCK_MONOTONIC)
@@ -14500,6 +15045,13 @@ def axis_c_covered_residual(pin, subject, covered_keys):
 
 
 def axis_c_first_difference(left, right, path=''):
+    """Describe the first unequal descendant reached in dictionaries or paired list items.
+
+    Use sorted dictionary keys and index order for lists, extending path with
+    .key or [index]. Missing dictionary entries are read as None; a length-only
+    list difference or scalar comparison is reported at the current path. Values
+    with repr length at least 300 are represented by its first 300 characters.
+    """
     if type(left) is type(right) and isinstance(left, dict):
         for key in sorted(set(left) | set(right)):
             if left.get(key) != right.get(key):
@@ -14521,6 +15073,11 @@ def run_axis_c(args, names):
     differences, examples = Counter(), {}
     case_verdicts = {}
     def record_difference(name, key, left, right):
+        """Count a difference signature and retain its first case/row example.
+
+        For a nonzero pin exit, group by exits and diagnostics; otherwise group by
+        the first differing field. Mutate the enclosing counters and example map.
+        """
         first = axis_c_first_difference(left, right)
         pin_exit = left.get('exit') if isinstance(left, dict) else None
         subject_exit = right.get('exit') if isinstance(right, dict) else None
@@ -14536,6 +15093,11 @@ def run_axis_c(args, names):
         differences[signature] += 1
         examples.setdefault(signature, dict(case=name, row=key, first=first))
     def observe(name, subject, companion):
+        """Run one case in a private scratch directory and normalize its diagnostics.
+
+        Pass the companion pinyin library through the worker environment and retain
+        only exit, result and stderr before cleaning up the directory.
+        """
         spec = CASES[name]
         # Each simultaneous observation owns its scratch/profile inventory.
         # The existing cleanup helper must never see another worker's files.
@@ -14914,6 +15476,12 @@ bool pc_lookup_loop(lookup_fn f, void *p, const char *s, void *a, unsigned n) {
 
 
 def per_call_helper(scratch):
+    """Compile the native per-call helper and verify its calibration instruction prefix.
+
+    Write calls.c and calls.so under scratch, invoking cc and objdump. Return the
+    library path; raise ValueError on compilation failure or when pc_noop does
+    not start with mov, nop, ret. Subprocess launch/read errors propagate.
+    """
     source, library = Path(scratch) / 'calls.c', Path(scratch) / 'calls.so'
     source.write_text(PER_CALL_NATIVE)
     compiled = subprocess.run(['cc', '-O2', '-shared', '-fPIC', '-fcf-protection=none',
@@ -14930,6 +15498,11 @@ def per_call_helper(scratch):
 
 
 def per_call_native(library, profile):
+    """Load the per-call helper, bind its ctypes signatures and reset its counters.
+
+    profile selects instruction collection rather than native wall timing;
+    return the configured CDLL, propagating load or symbol errors.
+    """
     native = C.CDLL(str(library))
     for name in ('pc_start', 'pc_stop'):
         getattr(native, name).argtypes, getattr(native, name).restype = [], None
@@ -14946,12 +15519,27 @@ def per_call_native(library, profile):
 
 
 class PerCallKit(Kit):
+    """Wrap selected C API calls for measurement inside explicit per-call steps.
+
+    Unselected calls keep their original bindings. Selected calls use the native
+    wrapper only while active; outside a step they stop collection and call the
+    original function.
+    """
     def __init__(self, mode, so, data, scratch, native, operations):
+        """Initialize ordinary kit state and retain the native helper and selected operations.
+
+        Measurement begins inactive; operations names are resolved through
+        PER_CALL_NAMES when a function binding is requested.
+        """
         super().__init__(mode, so, data, scratch)
         self.native, self.operations, self.active = native, operations, False
 
     @contextlib.contextmanager
     def per_call_step(self):
+        """Start native collection and mark calls active until the context exits.
+
+        The finally block clears the active flag; it does not itself call pc_stop.
+        """
         self.active = True
         self.native.pc_start()
         try:
@@ -14960,6 +15548,11 @@ class PerCallKit(Kit):
             self.active = False
 
     def fn(self, name, res, *args):
+        """Bind an API function and conditionally wrap selected measurement operations.
+
+        Requesting an unselected binding while inactive stops collection immediately;
+        selected bindings defer the active-state check until invocation.
+        """
         original = super().fn(name, res, *args)
         operation = next((op for op in self.operations if PER_CALL_NAMES[op] == name), None)
         if operation is None:
@@ -14968,6 +15561,7 @@ class PerCallKit(Kit):
             return original
         wrapped = getattr(self.native, 'pc_' + operation)
         def call(*values):
+            """Measure the original call while active, otherwise stop collection and call directly."""
             if self.active:
                 return wrapped(C.cast(original, P), *values)
             self.native.pc_stop()
@@ -14976,6 +15570,13 @@ class PerCallKit(Kit):
 
 
 def per_call_worker(mode, so, data, name, library, metric, operations):
+    """Execute one per-call workload and print its observation and native counters as JSON.
+
+    Disable core dumps. Calibration makes 1000 calls; lookup-only makes 10000
+    native-loop lookups; other names invoke registered cases with a PerCallKit
+    using TMPDIR. Stop collection before reporting calls and nanoseconds per
+    operation; failures propagate to the worker process.
+    """
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     native = per_call_native(library, metric == 'ir')
     if name == 'calibrate':
@@ -15003,6 +15604,11 @@ def per_call_worker(mode, so, data, name, library, metric, operations):
 
 
 def per_call_ir(stderr):
+    """Extract one positive Ir total from Callgrind text.
+
+    Require exactly one events line containing only Ir and one decimal totals
+    line; raise ValueError for missing, duplicate, mixed or nonpositive totals.
+    """
     events = re.findall(r'^events:\s*(.*?)\s*$', stderr, re.M)
     totals = re.findall(r'^totals:\s*(.*?)\s*$', stderr, re.M)
     if events != ['Ir'] or len(totals) != 1 or not re.fullmatch(r'\d+', totals[0]):
@@ -15036,6 +15642,10 @@ def per_call_profile(stderr):
                 table[compressed[1]] = compressed[2]
 
     def resolve(kind, value):
+        """Resolve a compressed Callgrind name using the shared namespace table.
+
+        Return uncompressed names unchanged and raise ValueError for unresolved IDs.
+        """
         compressed = re.fullmatch(r'\((\d+)\)(?: (.*))?', value)
         if not compressed:
             return value
@@ -15100,6 +15710,7 @@ def per_call_attribution(profile, calls, limit):
     Inclusive edges can overlap. Never sum them as exclusive phase costs.
     """
     def identity(key):
+        """Represent an (object, function) profile key as named JSON fields."""
         return dict(object=key[0], function=key[1])
     functions = [dict(**identity(key), ir_per_call=value / calls)
                  for key, value in sorted(profile['exclusive'].items(), key=lambda item: (-item[1], item[0]))
@@ -15129,6 +15740,14 @@ def per_call_attribution(profile, calls, limit):
 
 
 def per_call_run(mode, so, data, name, helper, metric, operations, scratch, cpu, attribution=False):
+    """Run one CPU-pinned measurement worker in a disposable sample directory.
+
+    Use Callgrind for metric 'ir', optionally retaining an in-memory parsed
+    profile. Check cancellation while waiting up to 900 seconds and terminate
+    the process group on interruption or timeout. Require one JSON document and
+    a zero exit; return observations, native counters and optional instruction
+    data before removing the directory.
+    """
     with tempfile.TemporaryDirectory(prefix='sample-', dir=scratch) as sample:
         command = ['taskset', '-c', str(cpu)]
         if metric == 'ir':
@@ -15178,6 +15797,11 @@ def per_call_run(mode, so, data, name, helper, metric, operations, scratch, cpu,
 
 
 def per_call_checked(spec, reference, sample, operations):
+    """Require a matching observation and positive, equal attempt counts for each operation.
+
+    Use the normal verdict evaluator with parent expectations disabled; raise
+    ValueError on any non-MATCH verdict, unexpected result or count discrepancy.
+    """
     verdict, expected, same = verdict_for(spec, reference['observation'], sample['observation'], False)
     if verdict != 'MATCH' or not expected or not same:
         raise ValueError('per-call observation failed: ' + verdict)
@@ -15188,12 +15812,26 @@ def per_call_checked(spec, reference, sample, operations):
 
 
 def per_call_calibration(total, calls=1000):
+    """Return wrapper instructions per call after subtracting the three-instruction callee.
+
+    Require exactly 1000 calls, a positive integral per-call total exceeding three
+    instructions, and raise ValueError if calibration violates those constraints.
+    """
     if calls != 1000 or total % calls or total <= 3 * calls:
         raise ValueError('invalid three-instruction callee calibration')
     return total // calls - 3
 
 
 def run_per_call(args, parser):
+    """Validate and run the selected per-call comparison, emitting JSON measurements.
+
+    Reject incompatible selectors, invalid operations, missing libraries and a
+    CPU outside the current affinity via parser.error. Compile a temporary helper,
+    calibrate wrapper Ir, compare three rotated wall rounds and per-operation Ir,
+    and require matching observations/counts. Print nanoseconds and calibrated
+    instructions per call, ratios to the pin and optional attribution; return
+    zero on success and propagate measurement failures.
+    """
     if args.cases or args.issue or args.family or args.expect_parent or args.observations or args.plan_only or \
             args.regenerate_sentence_ties or args.axis_c_replacement or args.axis_c_mutation or args.axis_c_snapshot_check:
         parser.error('--per-call cannot be combined with contract selectors, captures or other modes')
@@ -15326,6 +15964,14 @@ def platform_skips(spec):
 
 
 def run_main():
+    """Parse driver options and dispatch listing, planning or the requested execution mode.
+
+    Validate selectors and pinned inputs, setting CONTRACT_DIFF_CELL after parsing.
+    Ordinary runs print verdicts and timing summaries, optionally replace/append
+    the observation capture, and return one for unexpected results or zero
+    otherwise. Specialized modes return their own status; invalid arguments and
+    input assertions abort before ordinary case execution.
+    """
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     FUNCTION_ORDER['add_arguments'](parser)
     parser.add_argument('--teardown', action='store_true', help='native teardown measurement workload')
@@ -15546,6 +16192,11 @@ def timing_summary(names, compare_seconds, total):
 
 
 def main():
+    """Run the CLI under cancellation handlers and translate cancellation to status one.
+
+    Check once more after the driver returns, print cancellation diagnostics to
+    stderr, and allow other errors to propagate.
+    """
     with cancellation_handlers():
         try:
             status = run_main()
