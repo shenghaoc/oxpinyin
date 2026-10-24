@@ -65,6 +65,11 @@ class CliTests(unittest.TestCase):
                     run.assert_called_once_with(selection)
         self.launch.assert_not_called()
 
+    def test_tools_dispatches_to_shared_harness_runner(self):
+        with mock.patch.object(cli.test_runner, 'run_tools', return_value=1) as run:
+            self.assertEqual(cli.main(['test-tools']), 1)
+        run.assert_called_once_with()
+
     def test_coverage_forwards_raw_arguments_before_argparse(self):
         args = ['--locked', '-p', 'oxpinyin-chewing', '--', '', '/path with spaces', 'literal;$value']
         with mock.patch.object(cli.coverage, 'run', return_value=77) as run:

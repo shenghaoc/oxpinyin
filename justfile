@@ -36,6 +36,11 @@ test *args:
 test *args:
     @uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -m tools.dev test @args; exit $LASTEXITCODE
 
+# Run the CI Python harness discovery and exclusions (Linux and macOS).
+[unix]
+test-tools:
+    @uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -m tools.dev test-tools
+
 # Run doctests separately; nextest does not run them.
 [unix]
 test-doc *args:

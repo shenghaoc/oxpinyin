@@ -4,6 +4,7 @@ from pathlib import Path
 import contextlib
 import io
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -14,6 +15,57 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from tools.dev import host, slot, test_runner
+
+
+class HarnessTests(unittest.TestCase):
+    def legacy_files(self, root):
+        found = subprocess.run(['find', 'tools', '-type', 'f', '-name', '*.test.py'],
+                               cwd=root, capture_output=True, check=True)
+        return subprocess.run(['sort'], input=found.stdout, env=dict(os.environ, LC_ALL='C'),
+                              capture_output=True, check=True).stdout.decode().splitlines()
+
+    def test_discovery_matches_ci_find_and_sort_on_the_checkout(self):
+        self.assertEqual(test_runner.harness_files(), self.legacy_files(ROOT))
+        self.assertEqual(test_runner.HARNESS_EXCLUDED, {'tools/bisection/internal-ledger.test.py'})
+
+    def test_discovery_includes_hidden_files_but_not_symlinks_or_directories(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for name in ('z.test.py', 'A.test.py', '.hidden.test.py', 'a space.test.py',
+                         'nested/é.test.py', 'nested/a.test.py', 'other.py'):
+                path = root / 'tools' / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.touch()
+            (root / 'tools/directory.test.py').mkdir()
+            (root / 'tools/link.test.py').symlink_to('A.test.py')
+            (root / 'tools/link-dir').symlink_to('nested', target_is_directory=True)
+            with mock.patch.object(test_runner, 'ROOT', root):
+                found = test_runner.harness_files()
+            self.assertEqual(found, self.legacy_files(root))
+            self.assertEqual(len(found), 6)
+
+    def test_runner_keeps_commands_exclusion_order_and_runs_after_failures(self):
+        files = ['tools/a.test.py', 'tools/bisection/internal-ledger.test.py', 'tools/z.test.py']
+        for results, expected in (([0, 0], 0), ([1, 0], 1), ([0, -15], 1),
+                                  ([OSError('missing uv'), 0], 1)):
+            with self.subTest(results=results):
+                replies = [value if isinstance(value, OSError) else subprocess.CompletedProcess([], value)
+                           for value in results]
+                out, err = io.StringIO(), io.StringIO()
+                with mock.patch.object(test_runner, 'harness_files', return_value=files), \
+                        mock.patch.object(test_runner.subprocess, 'run', side_effect=replies) as run, \
+                        contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                    self.assertEqual(test_runner.run_tools(), expected)
+                prefix = ['uv', 'run', '--no-project', '--managed-python', '--python',
+                          'cpython@3.15+gil', 'python', '-X', 'lazy_imports=normal']
+                self.assertEqual(run.call_args_list, [mock.call(prefix + [path], cwd=ROOT)
+                                                      for path in (files[0], files[2])])
+                self.assertEqual(out.getvalue().splitlines(), [
+                    'tools harness: tools/a.test.py',
+                    'tools harness excluded (missing CI input): tools/bisection/internal-ledger.test.py',
+                    'tools harness: tools/z.test.py'])
+                self.assertEqual('::error::one or more tools/ Python harness tests failed' in err.getvalue(),
+                                 bool(expected))
 
 
 class MappingTests(unittest.TestCase):

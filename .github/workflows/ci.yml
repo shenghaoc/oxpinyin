@@ -29,6 +29,7 @@
 #     dependency or feature change reaches lint, test and deny
 #   - deny.toml — the deny job reads this directly
 #   - rust-toolchain.toml — a toolchain change affects every job
+#   - justfile / uv.toml / .python-version — tooling commands and managed Python
 #   - .github/workflows/ci.yml — the workflow file itself
 #   - .github/scripts/lint-crate-cfg-placement.sh and
 #     tests/lint-crate-cfg-placement.test.sh — the lint job runs the
@@ -141,7 +142,7 @@ jobs:
             echo 'run=true' >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          changed=$(git diff --name-only "$base" HEAD --             crates fuzz tools             Cargo.toml Cargo.lock rust-toolchain.toml deny.toml clippy.toml             .github/workflows/ci.yml             .github/scripts/lint-crate-cfg-placement.sh             tests/lint-crate-cfg-placement.test.sh             fixtures tests/parity .github/actions .config/nextest.toml)
+          changed=$(git diff --name-only "$base" HEAD --             crates fuzz tools             Cargo.toml Cargo.lock rust-toolchain.toml deny.toml clippy.toml             justfile uv.toml .python-version             .github/workflows/ci.yml             .github/scripts/lint-crate-cfg-placement.sh             tests/lint-crate-cfg-placement.test.sh             fixtures tests/parity .github/actions .config/nextest.toml)
           if [ -n "$changed" ]; then
             echo 'run=true' >> "$GITHUB_OUTPUT"
           else
@@ -292,46 +293,24 @@ jobs:
               text=True).strip()
           assert Path(sys.executable).resolve() == Path(managed).resolve()
           PYTHON
+      - name: Install pinned just
+        run: |
+          # Exact on purpose (#1074): a checksum is only known for a known version.
+          ver=1.59.0
+          # Published in https://github.com/casey/just/releases/download/1.59.0/SHA256SUMS.
+          target=x86_64-unknown-linux-musl
+          sum=409044617b6f06517c1035e55ca38c8c856ff8b650e41bc2aa1ef82d5903a23e
+          curl -sSfL -o just.tar.gz "https://github.com/casey/just/releases/download/${ver}/just-${ver}-${target}.tar.gz"
+          echo "${sum}  just.tar.gz" | sha256sum -c -
+          tar xzf just.tar.gz just
+          mkdir -p ~/.local/bin
+          install -m755 just ~/.local/bin
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          ~/.local/bin/just --version
+          test "$(~/.local/bin/just --version)" = "just ${ver}"
       - name: Run tools Python harness tests
         shell: bash
-        run: |
-          set -uo pipefail
-          # Tests that need inputs CI never has stay out of this discovery
-          # loop rather than self-skipping (docs/testing/README.md). The list
-          # is deliberately explicit: a new *.test.py is picked up by find,
-          # and every listed exclusion needs a comment naming its missing
-          # input. A failure in any non-excluded file fails this step.
-          excluded=(
-            # Compiler-backed J-ledger checks require clang++, LLVM tools and
-            # a discoverable libclang. These jobs do not provision that
-            # toolchain.
-            tools/bisection/internal-ledger.test.py
-          )
-          is_excluded() {
-            local candidate="$1" item
-            for item in "${excluded[@]}"; do
-              if [ "$candidate" = "$item" ]; then
-                return 0
-              fi
-            done
-            return 1
-          }
-          status=0
-          while IFS= read -r test_file; do
-            if is_excluded "$test_file"; then
-              printf 'tools harness excluded (missing CI input): %s\n' "$test_file"
-              continue
-            fi
-            printf 'tools harness: %s\n' "$test_file"
-            if ! uv run --no-project --managed-python --python cpython@3.15+gil \
-                python -X lazy_imports=normal "$test_file"; then
-              status=1
-            fi
-          done < <(find tools -type f -name '*.test.py' | LC_ALL=C sort)
-          if [ "$status" -ne 0 ]; then
-            echo '::error::one or more tools/ Python harness tests failed' >&2
-          fi
-          exit "$status"
+        run: just test-tools
       # The w3 fixture manifest is a byte-identity gate that nothing
       # consumed: no job, test or script checked it, which is how a stale
       # row survived two members of the stack that produced this step.
@@ -459,46 +438,35 @@ jobs:
               text=True).strip()
           assert Path(sys.executable).resolve() == Path(managed).resolve()
           PYTHON
+      - name: Install pinned just
+        run: |
+          # Exact on purpose (#1074): a checksum is only known for a known version.
+          ver=1.59.0
+          # Published in https://github.com/casey/just/releases/download/1.59.0/SHA256SUMS.
+          arch=$(uname -m)
+          case "$arch" in
+            arm64)
+              target=aarch64-apple-darwin
+              sum=6574cea774ed4cae12e24b6aa11857de33e80dab4667cf628fd5840df96a2a9d
+              ;;
+            x86_64)
+              target=x86_64-apple-darwin
+              sum=036ead9df9bc31dbae9934ae3b4236ed124d0bafcffd33439460ae084d5c9cb7
+              ;;
+            *) echo "unsupported macOS architecture: $arch" >&2; exit 1 ;;
+          esac
+          printf 'just runner architecture: %s; archive target: %s\n' "$arch" "$target"
+          curl -sSfL -o just.tar.gz "https://github.com/casey/just/releases/download/${ver}/just-${ver}-${target}.tar.gz"
+          echo "${sum}  just.tar.gz" | shasum -a 256 -c -
+          tar xzf just.tar.gz just
+          mkdir -p ~/.local/bin
+          install -m755 just ~/.local/bin
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          ~/.local/bin/just --version
+          test "$(~/.local/bin/just --version)" = "just ${ver}"
       - name: Run tools Python harness tests
         shell: bash
-        run: |
-          set -uo pipefail
-          # Tests that need inputs CI never has stay out of this discovery
-          # loop rather than self-skipping (docs/testing/README.md). The list
-          # is deliberately explicit: a new *.test.py is picked up by find,
-          # and every listed exclusion needs a comment naming its missing
-          # input. A failure in any non-excluded file fails this step.
-          excluded=(
-            # Compiler-backed J-ledger checks require clang++, LLVM tools and
-            # a discoverable libclang. These jobs do not provision that
-            # toolchain, so the test fails before its assertions can run.
-            tools/bisection/internal-ledger.test.py
-          )
-          is_excluded() {
-            local candidate="$1" item
-            for item in "${excluded[@]}"; do
-              if [ "$candidate" = "$item" ]; then
-                return 0
-              fi
-            done
-            return 1
-          }
-          status=0
-          while IFS= read -r test_file; do
-            if is_excluded "$test_file"; then
-              printf 'tools harness excluded (missing CI input): %s\n' "$test_file"
-              continue
-            fi
-            printf 'tools harness: %s\n' "$test_file"
-            if ! uv run --no-project --managed-python --python cpython@3.15+gil \
-                python -X lazy_imports=normal "$test_file"; then
-              status=1
-            fi
-          done < <(find tools -type f -name '*.test.py' | LC_ALL=C sort)
-          if [ "$status" -ne 0 ]; then
-            echo '::error::one or more tools/ Python harness tests failed' >&2
-          fi
-          exit "$status"
+        run: just test-tools
       # The macOS reference backend uses the same libdb release as Linux;
       # tkrzw stays covered on Linux. Homebrew's keg-only berkeley-db@5
       # needs explicit include and library paths, as documented in README.md.
