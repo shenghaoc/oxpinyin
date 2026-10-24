@@ -85,7 +85,7 @@ pub fn begin_add_phrases_impl(context: *mut PinyinContext, index: u8) -> *mut Im
 ///                                              guint8 index);
 /// ```
 ///
-/// Body and handle contract: [`begin_add_phrases_impl`].
+/// Body and handle contract: `begin_add_phrases_impl`.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_begin_add_phrases(
     context: *mut PinyinContext,

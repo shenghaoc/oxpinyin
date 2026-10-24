@@ -2277,7 +2277,8 @@ impl Runtime {
     /// they share the table handles.
     ///
     /// Configuration arrives per call (`oxpinyin-capi` passes its layered
-    /// `Config`; simple embedders pass [`EmptyConfigSource`]), because the
+    /// `Config`; simple embedders pass
+    /// [`EmptyConfigSource`](oxpinyin_engine::EmptyConfigSource)), because the
     /// session reads it once at construction.
     ///
     /// # Errors

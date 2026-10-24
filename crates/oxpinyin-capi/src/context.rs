@@ -283,7 +283,7 @@ pub fn save_context(context: *mut PinyinContext) -> bool {
 /// bool pinyin_save(pinyin_context_t * context);
 /// ```
 ///
-/// Body and §4 semantics: [`save_context`].
+/// Body and §4 semantics: `save_context`.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_save(context: *mut PinyinContext) -> bool {
     save_context(context)

@@ -9,7 +9,7 @@
 //!
 //! # Layering
 //!
-//! Everything except [`live`] and its private `ffi` block is pure and always compiled, so the protocol rules
+//! Everything except `live` and its private `ffi` block is pure and always compiled, so the protocol rules
 //! stay under test on every platform with no oracle present:
 //!
 //! - [`pin`] decides whether a prefix is the frozen oracle;
@@ -17,7 +17,7 @@
 //! - [`observation`] is what the oracle reported for one input;
 //! - [`model_cache`] locates the checksum-pinned model20 text export after
 //!   `tools/model/fetch-model.sh` has populated the build cache;
-//! - [`live`] is the FFI producer, behind the non-default `oracle-ffi` feature.
+//! - `live` is the FFI producer, behind the non-default `oracle-ffi` feature.
 //!
 //! Because a replayed capture fixture and a live FFI run both yield an
 //! [`OracleObservation`], the comparison logic can be exercised in portable CI
