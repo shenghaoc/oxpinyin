@@ -12,6 +12,8 @@ import time
 import json
 import signal
 import tempfile
+import threading
+from types import SimpleNamespace
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -1053,13 +1055,237 @@ class PlatformExclusionTests(DriverFixtureCase):
         self.assertEqual(run.call_count, 4)
 
 
+class ParallelCaseTests(DriverFixtureCase):
+    def setUp(self):
+        super().setUp()
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        (self.root / 'lib').mkdir()
+        for name in ('libpinyin.so', 'libzhuyin.so', 'subject.so'):
+            (self.root / 'lib' / name).touch()
+        self.scratch = self.root / 'scratch'
+        self.scratch.mkdir()
+        self.args = SimpleNamespace(cell='bdb', prefix=self.root,
+                                    pinyin_so=self.root / 'lib/subject.so',
+                                    zhuyin_so=self.root / 'lib/subject.so', case_timeout=2)
+        self.cases = {name: driver.case_spec(control=True) for name in ('first', 'second', 'third')}
+        self.names = list(self.cases)
+
+    def results(self, jobs):
+        with patch.object(driver, 'CASES', self.cases), \
+                driver.case_results(self.args, self.names, self.root, str(self.scratch), jobs) as results:
+            return list(results)
+
+    def test_out_of_order_completion_retains_order_and_isolates_case_scratch(self):
+        completed, paths = [], []
+        active = peak = 0
+        lock = threading.Lock()
+        barrier = threading.Barrier(2)
+        def run(spec, pin, subject, data, name, scratch, timeout):
+            nonlocal active, peak
+            with lock:
+                active += 1
+                peak = max(peak, active)
+                paths.append(scratch)
+            try:
+                # A shared scratch root fails here, even if unique user-profile
+                # names happen to hide the cleanup race.
+                with (Path(scratch) / 'same-name').open('x') as output:
+                    output.write(name)
+                if name in ('first', 'second'):
+                    barrier.wait(timeout=3)
+                if name == 'first':
+                    time.sleep(.05)
+                completed.append(name)
+                return [observation(result={'ret': name})] * 2
+            finally:
+                with lock:
+                    active -= 1
+        with patch.object(driver, 'run_case', side_effect=run):
+            results = self.results(2)
+        self.assertEqual([name for name, _ in results], self.names)
+        self.assertEqual(completed[0], 'second')
+        self.assertEqual(peak, 2)
+        self.assertEqual(len(set(paths)), 3)
+        self.assertEqual(list(self.scratch.iterdir()), [])
+
+    def test_real_workers_keep_profiles_and_side_timings_separate(self):
+        worker = self.root / 'worker.py'
+        worker.write_text(
+            'import json, os, sys, time\nfrom pathlib import Path\n'
+            "scratch = Path(os.environ['TMPDIR'])\n"
+            "(scratch / 'sys-leftover').mkdir(exist_ok=True)\n"
+            "user = scratch / 'user-fixed'\nuser.mkdir()\n"
+            "(user / 'profile.bin').write_bytes(b'profile')\n"
+            "time.sleep(.03 if sys.argv[-1] == 'first' else .01)\n"
+            "print('T {\"execute\": 0.001}')\n"
+            "print(json.dumps({'ret': sys.argv[-1]}))\n")
+        with patch.object(driver, 'WORKER', worker), patch.object(driver, 'TIMINGS', []):
+            serial = self.results(1)
+            parallel = self.results(2)
+            timings = list(driver.TIMINGS)
+        self.assertEqual(serial, parallel)
+        for name, pair in parallel:
+            self.assertEqual(pair[0]['result'], {'ret': name})
+            self.assertEqual(pair[0], pair[1])
+            self.assertEqual(set(pair[0]['userfiles']), {'profile.bin'})
+        self.assertEqual(len(timings), 12)
+        for timing in timings:
+            expected = ('subject' if Path(timing['so']).resolve() == self.args.pinyin_so.resolve()
+                        else 'pin')
+            self.assertEqual(timing['side'], expected)
+        self.assertEqual(list(self.scratch.iterdir()), [])
+
+    def test_parallel_timeout_preserves_later_cases_and_cleans_scratch(self):
+        worker = self.root / 'timeout-worker.py'
+        worker.write_text(
+            'import json, sys, threading\n'
+            "if sys.argv[-1] == 'first': threading.Event().wait()\n"
+            "print(json.dumps({'ret': sys.argv[-1]}))\n")
+        # The hung case waits on an event nobody sets, so it always reaches its
+        # deadline, and a short one is enough. Every other case gets a long
+        # deadline, so a loaded host cannot turn a healthy case into a TIMEOUT.
+        self.args.case_timeout = 30
+        run_case = driver.run_case
+        def run(spec, pin, subject, data, name, scratch, timeout):
+            return run_case(spec, pin, subject, data, name, scratch, 1 if name == 'first' else timeout)
+        with patch.object(driver, 'WORKER', worker), patch.object(driver, 'TIMINGS', []), \
+                patch.object(driver, 'run_case', run):
+            results = self.results(2)
+        self.assertEqual([side['exit'] for side in results[0][1]], ['TIMEOUT', 'NOT-RUN'])
+        for name, pair in results[1:]:
+            self.assertEqual(pair[0]['result'], {'ret': name})
+            self.assertEqual(pair[0]['exit'], 0)
+            self.assertEqual(pair[1]['exit'], 0)
+        self.assertEqual(list(self.scratch.iterdir()), [])
+
+    def test_skip_does_not_start_either_side(self):
+        self.cases['second']['cells'] = ('kc',)
+        with patch.object(driver, 'run_case', return_value=[observation(result={'ret': True})] * 2) as run:
+            results = self.results(2)
+        self.assertIsNone(results[1][1])
+        self.assertEqual(run.call_count, 2)
+        self.assertEqual([name for name, _ in results], self.names)
+
+    def test_invalid_jobs_fail_before_any_input_is_opened(self):
+        for value in ('0', '-1', '1.5', 'nan'):
+            with self.subTest(value=value), contextlib.redirect_stderr(io.StringIO()), \
+                    patch.object(sys, 'argv', ['driver', '--jobs', value]), \
+                    self.assertRaises(SystemExit) as error:
+                driver.main()
+            self.assertEqual(error.exception.code, 2)
+
+    def run_main(self, argv, environment, **patches):
+        data = self.root / 'lib/libpinyin/data'
+        data.mkdir(parents=True, exist_ok=True)
+        (data / 'bigram.db').touch()
+        (self.root / 'oracle-pin.txt').write_text(
+            'libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99+dbm-bdb\n')
+        args = ['driver', *argv]
+        if '--list-tags' not in argv:
+            args[1:1] = ['bdb', str(self.root), str(self.args.pinyin_so)]
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with patch.dict(os.environ, environment), patch.object(sys, 'argv', args), \
+                patch.multiple(driver, **{'check_tkrzw': driver.check_tkrzw, **patches}), \
+                contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            try:
+                status = driver.main()
+            except SystemExit as error:
+                status = error.code
+        return status, stdout.getvalue(), stderr.getvalue()
+
+    def test_environment_jobs_do_not_apply_to_serial_only_modes(self):
+        teardown = SimpleNamespace(run=lambda *args: 0)
+        for argv, patches in ((['--list-tags'], {}),
+                              (['--per-call', 'lookup-only'], dict(run_per_call=lambda *args: 0)),
+                              (['--teardown'], {})):
+            with self.subTest(argv=argv), patch.dict(sys.modules, {'teardown': teardown, driver.__name__: driver}):
+                status, _, stderr = self.run_main(argv, dict(OXPINYIN_CONTRACT_JOBS='4'), **patches)
+                self.assertEqual(status, 0, stderr)
+
+    def test_invalid_environment_jobs_fail_only_ordinary_runs(self):
+        for value in ('0', '-1', 'two', '1.5'):
+            with self.subTest(value=value):
+                status, output, stderr = self.run_main(['--list-tags'], dict(OXPINYIN_CONTRACT_JOBS=value))
+                self.assertEqual(status, 0, stderr)
+                self.assertIn('"tags"', output)
+                status, _, stderr = self.run_main(['--cases', 'default-option-parse'],
+                                                  dict(OXPINYIN_CONTRACT_JOBS=value))
+                self.assertEqual(status, 2)
+                self.assertIn('Invalid OXPINYIN_CONTRACT_JOBS: use a positive integer', stderr)
+
+    def test_explicit_jobs_are_refused_for_serial_only_modes(self):
+        for argv in (['--jobs', '4', '--teardown'], ['--jobs', '4', '--per-call', 'lookup-only']):
+            with self.subTest(argv=argv):
+                status, _, stderr = self.run_main(argv, {})
+                self.assertEqual(status, 2)
+                self.assertIn('--jobs applies to ordinary contract cases only', stderr)
+
+    def invoke_main(self, jobs, parent=False):
+        data = self.root / 'lib/libpinyin/data'
+        data.mkdir(parents=True, exist_ok=True)
+        (data / 'bigram.db').touch()
+        (self.root / 'oracle-pin.txt').write_text(
+            'libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99+dbm-bdb\n')
+        self.cases['first'].update(control=False, host_scanf=('1e',))
+        self.cases['second']['cells'] = ('kc',)
+        def run(spec, pin, subject, data, name, scratch, timeout):
+            if name == 'first':
+                time.sleep(.03)
+                return [observation(result={'ret': 'pin'}), observation(result={'ret': 'subject'})]
+            return [observation(result={'ret': name})] * 2
+        capture = self.root / 'observations.jsonl'
+        args = ['driver', 'bdb', str(self.root), str(self.args.pinyin_so),
+                '--jobs', str(jobs), '--cases', ','.join(self.names), '--observations', str(capture)]
+        if parent:
+            args.append('--expect-parent')
+        output = io.StringIO()
+        with patch.object(driver, 'CASES', self.cases), patch.object(sys, 'argv', args), \
+                patch.object(driver, 'run_case', side_effect=run), \
+                patch.object(driver, 'case_jobs', return_value=contextlib.nullcontext(jobs)), \
+                patch.object(driver, 'host_scanf_accepts', return_value=True), \
+                patch.object(driver, 'pin_loaded_subject_refused_table_conf', return_value=True), \
+                contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()):
+            status = driver.main()
+        rows = [json.loads(line) for line in output.getvalue().splitlines() if line.startswith('{')]
+        return status, [row for row in rows if 'case' in row], capture.read_text()
+
+    def test_observation_order_skip_and_host_dependent_are_serial_equivalent(self):
+        serial = self.invoke_main(1)
+        parallel = self.invoke_main(2)
+        self.assertEqual(serial, parallel)
+        self.assertEqual(parallel[0], 0)
+        self.assertEqual([row['verdict'] for row in parallel[1]], ['HOST-DEPENDENT', 'SKIP', 'MATCH'])
+        self.assertEqual([json.loads(line)['case'] for line in parallel[2].splitlines()], ['first', 'third'])
+
+    def test_parent_mode_remains_serial_equivalent(self):
+        serial = self.invoke_main(1, parent=True)
+        parallel = self.invoke_main(2, parent=True)
+        self.assertEqual(serial, parallel)
+        self.assertEqual(parallel[0], 0)
+        self.assertEqual([row['verdict'] for row in parallel[1]], ['DIFFER', 'SKIP', 'MATCH'])
+
+
 class CancellationTests(DriverFixtureCase):
     """Cancel a real driver while its worker and a descendant ignore TERM."""
 
     def children(self, pid):
         children_path = Path(f'/proc/{pid}/task/{pid}/children')
         try:
-            return [int(item) for item in children_path.read_text().split()]
+            found = [int(item) for item in children_path.read_text().split()]
+            # A child is listed under the thread that started it, and the
+            # parallel driver starts workers from pool threads.
+            try:
+                threads = [thread for thread in os.listdir(f'/proc/{pid}/task') if thread != str(pid)]
+            except OSError:
+                threads = []
+            for thread in threads:
+                try:
+                    found += [int(item) for item in Path(f'/proc/{pid}/task/{thread}/children').read_text().split()]
+                except OSError:
+                    continue  # The thread exited while the tree was read.
+            return found
         except OSError as children_error:
             # CONFIG_PROC_CHILDREN is optional; still observe the entire tree.
             try:
@@ -1093,7 +1319,7 @@ class CancellationTests(DriverFixtureCase):
         except FileNotFoundError:
             return False
 
-    def cancel(self, signum, through_runner=False, leader_exits=False, per_call=False):
+    def cancel(self, signum, through_runner=False, leader_exits=False, per_call=False, jobs=1):
         # Fail before spawning if neither process-observation source is available.
         self.children(os.getpid())
         with tempfile.TemporaryDirectory() as scratch:
@@ -1111,6 +1337,11 @@ class CancellationTests(DriverFixtureCase):
                               '    signal.signal(signal.SIGTERM, signal.SIG_DFL)\n'
                               'time.sleep(60)\n')
             setup = "module.WORKER = pathlib.Path(sys.argv.pop(2)); "
+            if jobs > 1:
+                setup = (f"sys.path.insert(0, {str(Path(driver.__file__).resolve().parents[2])!r}); "
+                         "from tools.dev import host; "
+                         "host.resource_snapshot = lambda: dict(available_mib=16000, total_mib=16384, "
+                         "cpus=4, cargo_cpus=4, notes=[]); " + setup)
             if per_call:
                 # Keep this process-group test independent of compiler and profiler tools.
                 setup = ("module.__file__ = sys.argv.pop(2); "
@@ -1126,15 +1357,20 @@ class CancellationTests(DriverFixtureCase):
                        str(worker), 'bdb', str(prefix), str(prefix / 'lib/libpinyin.so'),
                        *(['--per-call', 'lookup-only', '--per-call-facades', 'pinyin',
                           '--unordered-arm', 'subject'] if per_call else
-                         ['--cases', 'default-option-parse'])]
+                         ['--cases', 'default-option-parse' + (',explicit-use-tone-parse' if jobs > 1 else ''),
+                          '--jobs', str(jobs)])]
             env = os.environ.copy()
-            if through_runner:
+            owned_scratch = prefix / 'scratch'
+            owned_scratch.mkdir()
+            env['TMPDIR'] = str(owned_scratch)
+            if through_runner or jobs > 1:
                 # Exercise real slot admission and cancellation without host resources
                 # or caller settings delaying the worker past the startup deadline.
                 env.update(OXPINYIN_LOCK_DIR=str(prefix / 'locks'), OXPINYIN_HEAVY_SLOTS='1',
                            OXPINYIN_RESOURCE_WAIT_SECONDS='0', CARGO_BUILD_JOBS='1',
                            RUST_TEST_THREADS='1')
                 env.pop('OXPINYIN_HEAVY_SLOT_HELD', None)
+            if through_runner:
                 runner_code = (
                     "import importlib.util, sys; "
                     "spec = importlib.util.spec_from_file_location('run_all', sys.argv.pop(1)); "
@@ -1148,6 +1384,7 @@ class CancellationTests(DriverFixtureCase):
             proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                     start_new_session=True, env=env)
             worker_pid = descendant = None
+            workers = {}
             try:
                 deadline = time.monotonic() + 20
                 while time.monotonic() < deadline:
@@ -1159,25 +1396,30 @@ class CancellationTests(DriverFixtureCase):
                         if len(argv) > 1 and argv[1] == os.fsencode(worker):
                             children = self.children(pid)
                             if children:
-                                worker_pid, descendant = pid, children[0]
-                                break
-                    if descendant is not None or proc.poll() is not None:
+                                workers[pid] = children[0]
+                    if len(workers) == jobs or proc.poll() is not None:
                         break
                     time.sleep(0.02)
+                if workers:
+                    worker_pid, descendant = next(iter(workers.items()))
                 self.assertIsNotNone(descendant, 'worker and descendant did not start')
-                self.assertTrue(self.running(worker_pid))
-                self.assertTrue(self.running(descendant))
+                self.assertEqual(len(workers), jobs)
+                for leader, child in workers.items():
+                    self.assertTrue(self.running(leader))
+                    self.assertTrue(self.running(child))
                 proc.send_signal(signum)
                 stdout, stderr = proc.communicate(timeout=10)
                 self.assertNotEqual(proc.returncode, 0, stderr.decode(errors='replace'))
                 self.assertFalse(any(word in stdout for word in (b'MATCH', b'DIFFER', b'TIMEOUT')))
                 deadline = time.monotonic() + 2
-                while any(self.running(pid) for pid in (worker_pid, descendant)) and time.monotonic() < deadline:
+                pids = [pid for pair in workers.items() for pid in pair]
+                while any(self.running(pid) for pid in pids) and time.monotonic() < deadline:
                     time.sleep(0.02)
-                self.assertFalse(self.running(worker_pid), 'worker survived cancellation')
-                self.assertFalse(self.running(descendant), 'descendant survived cancellation')
-                # The direct worker must be reaped, not left as a zombie.
-                self.assertFalse(Path(f'/proc/{worker_pid}').exists())
+                for leader, child in workers.items():
+                    self.assertFalse(self.running(leader), 'worker survived cancellation')
+                    self.assertFalse(self.running(child), 'descendant survived cancellation')
+                    self.assertFalse(Path(f'/proc/{leader}').exists(), 'worker was not reaped')
+                self.assertEqual(list(owned_scratch.iterdir()), [])
             finally:
                 # Also clean up groups created before startup detection succeeds.
                 for pid in reversed(self.tree(proc.pid)):
@@ -1211,6 +1453,19 @@ class CancellationTests(DriverFixtureCase):
                          'requires Linux /proc process observation')
     def test_sigterm_through_run_all(self):
         self.cancel(signal.SIGTERM, through_runner=True)
+
+    @unittest.skipUnless(sys.platform.startswith('linux'),
+                         'requires Linux /proc process observation')
+    def test_parallel_signals_reap_every_group_before_releasing_scratch(self):
+        for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+            with self.subTest(signum=signum):
+                self.cancel(signum, jobs=2)
+        self.cancel(signal.SIGTERM, jobs=2, leader_exits=True)
+
+    @unittest.skipUnless(sys.platform.startswith('linux'),
+                         'requires Linux /proc process observation')
+    def test_parallel_sigterm_through_run_all(self):
+        self.cancel(signal.SIGTERM, through_runner=True, jobs=2)
 
     @unittest.skipUnless(sys.platform.startswith('linux'),
                          'requires Linux /proc process observation')

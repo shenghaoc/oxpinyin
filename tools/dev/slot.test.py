@@ -284,6 +284,33 @@ class SlotTests(unittest.TestCase):
                 with slot.HeavySlot('relative', out=io.StringIO()):
                     self.fail('the relative lock directory was accepted')
 
+    def test_contract_workers_fit_after_other_live_reservations(self):
+        self.hold(1, 4096)
+        env = dict(self.env, CARGO_BUILD_JOBS='1', RUST_TEST_THREADS='1',
+                   OXPINYIN_CONTRACT_JOBS='4', OXPINYIN_RESOURCE_WAIT_SECONDS='0')
+        with mock.patch.object(host, 'process_tree_use_mib', return_value=0):
+            admission = slot.HeavyAdmission(
+                'parallel contracts', env, runner=True, out=io.StringIO(),
+                resource_snapshot=lambda: dict(available_mib=8000, total_mib=16384,
+                                               cpus=4, cargo_cpus=4, notes=[]))
+            with admission:
+                self.assertEqual(admission.env['OXPINYIN_CONTRACT_JOBS'], '2')
+                self.assertEqual(admission.estimate, 2048)
+                record = host.read_holder(Path(self.temp.name) / 'heavy-slot-0')
+                self.assertEqual(record['estimate_mib'], 2048)
+
+    def test_no_contract_worker_starts_when_even_one_cannot_fit(self):
+        env = dict(self.env, CARGO_BUILD_JOBS='1', RUST_TEST_THREADS='1',
+                   OXPINYIN_CONTRACT_JOBS='4', OXPINYIN_RESOURCE_WAIT_SECONDS='0')
+        admission = slot.HeavyAdmission(
+            'parallel contracts', env, runner=True, out=io.StringIO(),
+            resource_snapshot=lambda: dict(available_mib=2661, total_mib=16384,
+                                           cpus=4, cargo_cpus=4, notes=[]))
+        with self.assertRaisesRegex(host.ResourceBlocked, '1024 MiB needed, 1023 MiB available'):
+            with admission:
+                self.fail('an unadmitted worker could start')
+        self.assertEqual((Path(self.temp.name) / 'heavy-slot-0').read_text(), '')
+
 
 if __name__ == '__main__':
     unittest.main()
