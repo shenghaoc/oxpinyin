@@ -1,10 +1,13 @@
 # tkrzw concrete-class shim: correctness work (#1125)
 
-Recorded 2026-10-24T04:04:52Z. Branch `wip/1125-tkrzw-shim`, based directly on
+Initial record 2026-10-24T04:04:52Z. Branch `wip/1125-tkrzw-shim` was based directly on
 `wip/1114-tkrzw-record-copy` at `838dabc2fb86c9b221ba3bde914584596de075da`.
 Source checkpoint `58566b3c56c738981bdf5a199e954eb9598a0651` is an unfinished
 prototype. The cloud checks below supersede its original uncompiled status.
 No performance result exists for this prototype.
+The authorized rebase now places implementation commit `bceb13c0` directly
+on verified #1114 head `1dfd3e52e6fb02155c014856075aaf3955c8ab29`.
+The own implementation diff is unchanged; the rebase verification is below.
 The original local prototype `af357bdef8b993169f829a52583a7a7fe367db0e`
 is preserved under `local/1125-unvalidated-af357bde`.
 
@@ -219,8 +222,83 @@ The maintainer supplied replacement parent
 Its actual diff from `838dabc2` changes only KC's include override from
 push to insert(0) in build.rs, plus two findings documents. There is no
 tkrzw, BDB or differential change. Rebase and the consequent native
-checks remain the next checkpoint. No measurements have started and no
+checks are recorded below. No measurements have started and no
 adoption conclusion is made.
+
+### Verified rebase and final cloud checkpoint
+
+Recorded 2026-10-24T05:07:22Z. The green pre-rebase checkpoint is
+`be997c1782a3f7103dfb4733a69425f440bf0c3d`. Before rebasing, both the full
+own patch and the non-Markdown implementation patch were saved as normal
+local `git diff --binary 838dabc2 HEAD` outputs. The remote parent branch
+was checked to be exactly `1dfd3e52e6fb02155c014856075aaf3955c8ab29`.
+Only this branch's four own commits were replayed:
+
+```sh
+git -c user.name='Shenghao Chen' -c user.email='shenghaoc@outlook.com' \
+  rebase --onto 1dfd3e52e6fb02155c014856075aaf3955c8ab29 \
+  838dabc2fb86c9b221ba3bde914584596de075da wip/1125-tkrzw-shim
+git diff --binary 1dfd3e52 HEAD
+git log --format='%H %an <%ae> / %cn <%ce> %s' 1dfd3e52..HEAD
+```
+
+The rebase was conflict-free. The resulting checkpoint is `eccacefd`:
+implementation `bceb13c0`, followed by own findings commits `98147792`,
+`104114e3` and `eccacefd`. All retain Shenghao Chen
+<shenghaoc@outlook.com> as both author and committer. The log contains no
+old #1114 copies. The parent branch was not rewritten by this lane.
+The own full-patch stable ID before and after is
+`e5de3ab2cfccc46dff0683877a44f37c53e1aa37`; the implementation-patch ID is
+`49e90d72f20b1bb801d991508acf4cd043e46f29`. Direct normalized-hunk
+comparison also passed for both patches, removing only blob-ID lines
+and hunk coordinates. No own change was lost or shadowed, including
+#1114's Set path, #1110's guards and the shim functions.
+
+The rewritten checkpoint was pushed with the exact lease
+`--force-with-lease=refs/heads/wip/1125-tkrzw-shim:be997c1782a3f7103dfb4733a69425f440bf0c3d`.
+This final findings update is documentation only; the own implementation
+patch retains the ID above.
+
+Rule 7: the rebase brings the KC header-precedence fix into build.rs,
+a file this lane touches. Native clippy (`--all-targets -- -D warnings`)
+and `cargo test -p oxpinyin-store` were rerun through `just heavy` for
+default/BDB, tkrzw, and kyotocabinet. Results: 57 / 59 / 50 tests passed,
+respectively; BDB has four existing ignored real-data tests. All clippy
+runs and fmt passed. The tkrzw test binaries passed the certified-runtime
+guard before execution. The two status getters are allocation-free;
+the common guarded boundary and best-effort reporting checked earlier
+are unchanged by the rebase.
+
+Both facades were rebuilt in debug opt-level 1 for every cell through
+`cell-artifacts.sh`. The pinyin rebuild and same-data rerun used the full
+command above with `--runners same-data-dir-diff` and
+`--log-dir /tmp/oxpinyin-1125-post-rebase-same-data-output`. The zhuyin
+rebuild used, per cell, `just heavy -- bash
+tools/bisection/cell-artifacts.sh --artifacts zhuyin-capi`. The appropriate
+PINYIN_ORACLE_DBM and CARGO_TARGET_DIR were set in each shell.
+Same-data passed again on all three cells, all 15 drivers each.
+
+All six rebuilt debug facade SHA-256s equal their fully gated pre-rebase
+values (`sha256sum --check /tmp/oxpinyin-1125-debug-before-rebase.sha256`,
+six OK). Values, pinyin / zhuyin:
+
+| cell | libpinyin_capi.so | libzhuyin_capi.so |
+| --- | --- | --- |
+| bdb | c85a28bc7f7400e1d247bebd2d2c75a29f0a8be9a499329b6103524a991ac03a | 8b14812a5d726e0d12a85c0b7ee66cf52776b2ebde09636686c6c90fd9e841aa |
+| kc | 9829730bf31b11ede42964528a0444bcf933dcb43d0b08918cd414e849ace025 | 9ee18ada0372acefe9d48e04f385a63f926af97971bc58b1b4cf2ddbac8c29c0 |
+| tkrzw | bb4284919eb9026769f92a5b00af9dda9811cc7266ba05f43d2bec608f9bba6c | a04867f582e4bf6d1acbe5d3d2f452e56d932eaa8087e3b30355f93f6d2cbe5a |
+
+Both tkrzw facades on both sides were checked again with runtime.sh and
+resolve to the same certified libtkrzw.so.1.77.0. Full contracts were not
+repeated: the rebuilt artifacts have exactly the same SHA-256s as those
+that passed all three full suites, so the table above applies to the
+rebased source's debug outputs. Revert-and-check and mutation were not
+repeated; neither the implementation diff nor differential changed.
+
+Cloud correctness is complete. Stop for the Ubuntu slot. Function-order
+regeneration remains its first step, with policies folded into the code
+commit before measurements. No policy resolution, ordered shipping
+relink, performance result, adoption decision or PR is claimed here.
 
 ## Source inspection
 
