@@ -102,6 +102,17 @@ UNTOUCHED = 0xABCDEF  # out-param sentinel
 CELL = os.environ.get('CONTRACT_DIFF_CELL', 'bdb')
 check_tkrzw = runpy.run_path(str(Path(__file__).resolve().parents[1] / 'tkrzw/runtime.py'))['check']
 
+
+def host_oracle_platform():
+    """The platform key used by oracle-pin.txt, or None off Linux."""
+    if sys.platform != 'linux':
+        return None
+    return {'x86_64': 'linux/amd64', 'amd64': 'linux/amd64',
+            'aarch64': 'linux/arm64', 'arm64': 'linux/arm64'}.get(os.uname().machine)
+
+
+HOST_ORACLE_PLATFORM = host_oracle_platform()
+
 CASES = {}
 
 # Every worker is a fresh process started from this stub, which loads this
@@ -12715,6 +12726,42 @@ def run_per_call(args, parser):
 FUNCTION_ORDER = runpy.run_path(str(Path(__file__).resolve().parents[1] / 'packaging/function_order.py'))
 
 
+# The pin crashes (SIGBUS/SIGTRAP) or orders candidates differently on
+# arm64 for these cases; the amd64 pin is the reference and still runs them.
+# Diagnosis: #1137. The contract gate excludes them on arm64 only.
+ARM64_DIAGNOSIS_ISSUE = 1137
+ARM64_EXCLUDED_CASES = (
+    'fini-twice',
+    'zhuyin-fini-twice',
+    'replay-modify-header-overlong-pinyin',
+    'replay-modify-header-overlong-zhuyin',
+    'replay-touched-duplicate-invalid-pinyin',
+    'replay-touched-duplicate-invalid-zhuyin',
+    'replay-touched-many-invalid-pinyin',
+    'replay-touched-many-invalid-zhuyin',
+    'row58-unsigned-score-off',
+    'row58-unsigned-score-on',
+    'table-conf-lambda-million-zhuyin',
+    'table-conf-lambda-one-and-a-half-zhuyin',
+    'table-conf-lambda-two-zhuyin',
+)
+ARM64_EXCLUSION_REASON = (
+    '#1137: the pin crashes or orders candidates differently on arm64; '
+    'excluded there only, amd64 still runs the case'
+)
+for _excluded in ARM64_EXCLUDED_CASES:
+    if _excluded not in CASES:
+        raise RuntimeError('arm64 exclusion names an unregistered case: ' + _excluded)
+    CASES[_excluded] = dict(CASES[_excluded], platforms=('linux/amd64',),
+                            platform_skip_reason=ARM64_EXCLUSION_REASON)
+
+
+def platform_skips(spec):
+    """True when the case is registered away from this host's platform."""
+    platforms = spec.get('platforms')
+    return bool(platforms) and HOST_ORACLE_PLATFORM is not None and HOST_ORACLE_PLATFORM not in platforms
+
+
 def run_main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     FUNCTION_ORDER['add_arguments'](parser)
@@ -12843,6 +12890,12 @@ def run_main():
         for n in names:
             check_cancelled()
             spec = CASES[n]
+            if platform_skips(spec):
+                print(json.dumps(dict(cell=args.cell, case=n, verdict='SKIP',
+                                      expected_ok=True, exit=[0, 0], stderr_lines=[0, 0],
+                                      reason=spec['platform_skip_reason']), sort_keys=True),
+                      flush=True)
+                continue
             if args.cell not in spec['cells']:
                 # The case crafts a fixture in another cell's storage format
                 # (e.g. a Berkeley DB btree); neither side can reach the site
