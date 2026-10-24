@@ -4576,7 +4576,11 @@ def _(k):
 # search starts at `offset` (`:2229`), so an offset no span starts on — and
 # the reserved slot past the parse — answers the LONGER row alone.
 def candidate_rows(k, inst):
-    """The instance's full candidate list as ordered [type, string] rows."""
+    """Return the candidate list in native order as [type, text] rows.
+
+    Use None when fetching a candidate fails and replace invalid UTF-8 while
+    decoding its borrowed string. Count, type and string getter flags are not
+    checked; a successful fetch is expected to provide a non-NULL string."""
     count = U()
     k.fn('get_n_candidate', B, P, C.POINTER(U))(inst, C.byref(count))
     rows = []
@@ -4592,13 +4596,17 @@ def candidate_rows(k, inst):
 
 
 def guess_rows(k, inst, offset, sort):
-    """One `pinyin_guess_candidates` call: the return and the full list."""
+    """Guess pinyin candidates with the supplied byte offset and sort word.
+
+    Return the native flag and complete current candidate list, even on failure."""
     ret = k.fn('guess_candidates', B, P, Z, U)(inst, offset, sort)
     return {'ret': ret, 'rows': candidate_rows(k, inst)}
 
 
 def zhuyin_guess_rows(k, inst, offset):
-    """One `zhuyin_guess_candidates_after_cursor` call: return and list."""
+    """Guess zhuyin candidates after the supplied byte offset and return the flag and rows.
+
+    Read the complete current candidate list even when the guess returns false."""
     ret = k.fn('guess_candidates_after_cursor', B, P, Z)(inst, offset)
     return {'ret': ret, 'rows': candidate_rows(k, inst)}
 
@@ -4623,6 +4631,10 @@ GUESS_CANDIDATE_SORTS = (0, 0x1c, 0x1e)
 
 @case('guess-candidates-lookup-offset', issues=('696', 'row:65'))
 def _(k):
+    """Collect ordered pinyin candidate lists across inputs, sort words and byte offsets.
+
+    For each fresh parse, optionally guess a sentence first, then query offsets
+    zero through parsed length plus one without reparsing between guesses."""
     out = {}
     for text in GUESS_CANDIDATE_INPUTS:
         for previous in (0, 1):
@@ -4651,6 +4663,10 @@ GUESS_CANDIDATE_ZHUYIN_INPUTS = (b'su3', b'su', b'su3cl3', b'su3cl',
 
 @case('guess-candidates-lookup-offset-zhuyin', mode='zhuyin', control=True, issues=('696', 'row:65'))
 def _(k):
+    """Collect zhuyin candidate lists through each parse's reserved final column.
+
+    Compare fresh parses with and without a preceding sentence guess; offsets
+    run from zero through the returned consumed length, inclusive."""
     out = {}
     for text in GUESS_CANDIDATE_ZHUYIN_INPUTS:
         for previous in (0, 1):
@@ -4669,6 +4685,7 @@ def _(k):
 # list is compared, not the return alone.
 @case('guess-candidates-past-the-reserved-slot', issues=('696', 'row:65'))
 def _(k):
+    """Record nihao candidate lists at byte offsets five and six with sort word zero."""
     out = {}
     inst = full_inst(k, b'nihao')
     for offset in (5, 6):
@@ -4678,7 +4695,11 @@ def _(k):
 
 # batch2 group 13: directory names that are not UTF-8 (PR 13, #587)
 def non_utf8_dirs(k, bad_system, bad_user):
-    """Opens a context whose system and/or user directory name holds a 0xFF byte."""
+    """Exercise pinyin initialization and saving through directory names containing 0xFF.
+
+    Optionally create a system symlink and a new user directory under scratch.
+    If init succeeds, parse, guess, train and save, then list non-hidden user
+    files using filesystem decoding. Leave the native context and instance live."""
     tag = str(os.getpid()).encode()
     scratch = os.fsencode(k.scratch)
     system = os.path.join(scratch, b'system-\xff' + tag) if bad_system else os.fsencode(k.data)
@@ -4706,6 +4727,11 @@ for _label, _system, _user in (('system', True, False), ('user', False, True), (
 
 @case('non-utf8-directory-zhuyin-both', mode='zhuyin', issues=('587',))
 def _(k):
+    """Exercise zhuyin training and saving with 0xFF in both directory names.
+
+    Create a system symlink and user directory under scratch, returning init
+    and successful-init operation flags plus non-hidden filenames. Leave the
+    context and instance live."""
     tag = str(os.getpid()).encode()
     scratch = os.fsencode(k.scratch)
     system = os.path.join(scratch, b'system-\xff' + tag)
@@ -4729,6 +4755,11 @@ def _(k):
 # refuses index 7; zhuyin unloads it and its phrase-item reads fail until reload
 # (074a2219 pinyin.cpp:466-474, zhuyin.cpp:378-388, phrase_index.h:646-657).
 def user_library_token_unload(k):
+    """Snapshot a populated library-7 token before unloading and after reloading it.
+
+    Import 你好 with the facade's reading, assert one user token, save, and
+    record phrase and pronunciation getters around unload/load. Lookup arrays
+    remain allocated; the kit retains its context and instance."""
     it = k.fn('begin_add_phrases', P, P, U)(k.ctx, 7)
     reading = b"ni3'hao3" if k.mode == 'pinyin' else 'ㄋㄧˇ ㄏㄠˇ'.encode()
     added = k.fn('iterator_add_phrase', B, P, S, S, I)(it, '你好'.encode(), reading, 1)
@@ -4740,6 +4771,10 @@ def user_library_token_unload(k):
     new.restype, new.argtypes = P, [I, I, U]
 
     def reads():
+        """Read the seeded token's phrase and pronunciation outputs, retaining sentinels.
+
+        Copy 16-bit pronunciation keys as hex and decode/free returned phrase text.
+        The pronunciation GArray is not freed."""
         keys = new(0, 0, 2)
         ret = k.fn('token_get_nth_pronunciation', B, P, U, U, P)(k.inst, token, 0, keys)
         view = C.cast(keys, C.POINTER(Arr)).contents
@@ -4768,6 +4803,9 @@ case('user-library-token-unload-zhuyin', mode='zhuyin', issues=('542',))(user_li
 
 
 def zhuyin_sentence_out(k, inst):
+    """Read a zhuyin sentence, distinguishing an untouched output from NULL.
+
+    Return [native flag, text or sentinel]; decode and free any returned string."""
     out = P(UNTOUCHED)
     ret = k.fn('get_sentence', B, P, C.POINTER(P))(inst, C.byref(out))
     if out.value == UNTOUCHED:
@@ -4777,6 +4815,7 @@ def zhuyin_sentence_out(k, inst):
 
 @case('zhuyin-sentence-before-guess', mode='zhuyin', issues=('542',))
 def _(k):
+    """Compare zhuyin sentence outputs before parse, after guess, after reset and on a keyless parse."""
     out = {}
     inst = k.alloc()
     out['fresh'] = zhuyin_sentence_out(k, inst)
@@ -4794,6 +4833,7 @@ def _(k):
 
 @case('zhuyin-character-offset-out', mode='zhuyin', issues=('542',))
 def _(k):
+    """Record zhuyin character-offset flags and output sentinels for the listed parse/phrase pairs."""
     fn = k.fn('get_character_offset', B, P, S, Z, C.POINTER(Z))
     out = {}
     for label, text, phrase, offset in (
@@ -4810,6 +4850,9 @@ def _(k):
 
 @case('zhuyin-token-get-phrase-out', mode='zhuyin', issues=('542',))
 def _(k):
+    """Read zhuyin phrase outputs for three invalid tokens, preserving untouched sentinels.
+
+    Decode and free any string actually returned."""
     out = {}
     for token in (0xFFFFFFFF, 0x0DEADBEE, 0x01000000):
         length, text = U(UNTOUCHED), P(UNTOUCHED)
@@ -4822,6 +4865,10 @@ def _(k):
 
 @case('zhuyin-nth-pronunciation-range', mode='zhuyin', issues=('542',))
 def _(k):
+    """Observe zhuyin pronunciation bounds and an unknown-token call on a seeded array.
+
+    Compare returned key bytes only for in-range indices; retain other bytes
+    under diagnostic-only keys. The allocated GArrays remain live."""
     new = k.glib.g_array_new
     new.restype, new.argtypes = P, [I, I, U]
     arr = new(0, 0, 4)
@@ -4851,6 +4898,9 @@ def _(k):
 
 @case('zhuyin-static-key-slots', mode='zhuyin', issues=('542',))
 def _(k):
+    """Compare key/rest pointers across two zhuyin instances and read them after freeing the first.
+
+    Copy two key bytes and four rest bytes without taking ownership of either pointer."""
     first, second = k.alloc(), k.alloc()
     k.fn('parse_more_chewings', Z, P, S)(first, b'su3')
     k.fn('parse_more_chewings', Z, P, S)(second, b'cl3')
@@ -4871,6 +4921,7 @@ def _(k):
 
 @case('zhuyin-key-rest-length', mode='zhuyin', issues=('542',))
 def _(k):
+    """Record 16-bit zhuyin rest lengths for forward, reversed and boundary endpoint pairs."""
     fn = k.fn('get_zhuyin_key_rest_length', B, P, C.POINTER(Rest), C.POINTER(C.c_ushort))
     out = {}
     for begin, end in ((0, 2), (5, 2), (2, 2), (0, 65535), (65535, 0), (1, 65535)):
@@ -4882,11 +4933,16 @@ def _(k):
 
 @case('zhuyin-unload-phrase-library-repeat', mode='zhuyin', issues=('542',))
 def _(k):
+    """Record zhuyin unload results for libraries zero through fifteen, then library two twice."""
     unload = k.fn('unload_phrase_library', B, P, U)
     return {'unload': [unload(k.ctx, i) for i in range(0, 16)] + [unload(k.ctx, i) for i in (2, 2)]}
 
 
 def zhuyin_candidates_at_start(k):
+    """Return the reported candidate count after guessing at the start of su3cl3.
+
+    Allocate a fresh parsed zhuyin instance and leave it live; getter flags are
+    not checked."""
     inst = zhuyin_chewing(k)
     k.fn('guess_candidates_after_cursor', B, P, Z)(inst, 0)
     count = U()
@@ -4896,6 +4952,7 @@ def zhuyin_candidates_at_start(k):
 
 @case('zhuyin-unload-phrase-library-effect', mode='zhuyin', issues=('542',))
 def _(k):
+    """Compare fresh zhuyin candidate counts around unloading and reloading libraries 3, 2 and 4."""
     unload = k.fn('unload_phrase_library', B, P, C.c_ubyte)
     load = k.fn('load_phrase_library', B, P, C.c_ubyte)
     out = {'before': zhuyin_candidates_at_start(k)}
@@ -4908,6 +4965,10 @@ def _(k):
 
 @case('zhuyin-alloc-instance-after-fini', mode='zhuyin', issues=('542',))
 def _(k):
+    """Attempt zhuyin instance allocation after finalizing its context.
+
+    Record the live allocation flag and keep the post-finalization result under
+    a diagnostic-only key; the attempted allocation's pointer is not freed."""
     # As the pinyin case: the pin reads the freed context and survives by
     # chance, the ruled answer is NULL (class (b)); the case holds the exit
     # status and leaves the answer out.
@@ -4921,6 +4982,11 @@ def _(k):
 
 # batch2 group 15: the pin's stderr and the save report (PR 15, #545)
 def save_after_training(k, remove_dir, parse='parse_more_full_pinyins', text=b'nihao', train_args=(C.c_ubyte,)):
+    """Train a guessed sentence and return training and save flags.
+
+    Use the specified parser and training signature, passing rank zero when
+    train_args is nonempty. If remove_dir is true, delete the user directory
+    before saving. Leave the context and allocated instance live."""
     ctx = k.ctx
     inst = k.alloc()
     k.fn(parse, Z, P, S)(inst, text)
@@ -4933,8 +4999,12 @@ def save_after_training(k, remove_dir, parse='parse_more_full_pinyins', text=b'n
 
 
 def blocked_save(k, blocked, parse='parse_more_full_pinyins', text=b'nihao', train_args=(C.c_ubyte,)):
-    """A second, modified save with one path of the file set blocked by a
-    non-empty directory: what each side prints and which files it updates."""
+    """Compare two trained saves with a profile path replaced by a nonempty directory.
+
+    Move an existing blocked path to .moved, then classify each remaining
+    post-save entry as new, changed or same using directory names or a short
+    content hash. Missing post-save entries are omitted. Return both save flags;
+    leave the modified filesystem and native objects for worker cleanup."""
     import hashlib
     ctx = k.ctx
     inst = k.alloc()
@@ -4945,6 +5015,7 @@ def blocked_save(k, blocked, parse='parse_more_full_pinyins', text=b'nihao', tra
     out = {'first': k.fn('save', B, P)(ctx)}
 
     def snapshot():
+        """Snapshot immediate user entries as sorted directory contents or eight MD5 hex digits."""
         files = {}
         for name in sorted(os.listdir(k.user)):
             path = os.path.join(k.user, name)
@@ -4970,16 +5041,19 @@ def blocked_save(k, blocked, parse='parse_more_full_pinyins', text=b'nihao', tra
 # profile mixes two saves.
 @case('stderr-save-one-tmp-blocked', stderr=True, issues=('545',))
 def _(k):
+    """Save with user_pinyin_index.bin.tmp blocked by a nonempty directory."""
     return blocked_save(k, 'user_pinyin_index.bin.tmp')
 
 
 @case('stderr-save-one-final-blocked', stderr=True, issues=('545',))
 def _(k):
+    """Save with the final user_phrase_index.bin path blocked by a nonempty directory."""
     return blocked_save(k, 'user_phrase_index.bin')
 
 
 @case('stderr-save-one-tmp-blocked-zhuyin', mode='zhuyin', stderr=True, issues=('545',))
 def _(k):
+    """Repeat the blocked temporary pinyin-index save through the zhuyin facade."""
     return blocked_save(k, 'user_pinyin_index.bin.tmp', 'parse_more_chewings', b'su3cl3', ())
 
 
@@ -4989,6 +5063,10 @@ def _(k):
 # one failure the pin does not carry past: oxpinyin fails the call and logs
 # one warning in the facade's own domain.
 def _dirty_for_save(k, parse='parse_more_full_pinyins', text=b'nihao', train_args=(C.c_ubyte,)):
+    """Parse, guess and train the configured input, returning the cached context.
+
+    Use rank zero for a nonempty training signature. Ignore operation flags
+    and leave the newly allocated instance live."""
     ctx = k.ctx
     inst = k.alloc()
     k.fn(parse, Z, P, S)(inst, text)
@@ -4999,18 +5077,22 @@ def _dirty_for_save(k, parse='parse_more_full_pinyins', text=b'nihao', train_arg
 
 
 def save_header_dev_full(k, parse='parse_more_full_pinyins', text=b'nihao', train_args=(C.c_ubyte,)):
-    """`user.bin.tmp` symlinked to `/dev/full`: its every write fails, so the
-    very first header word does (`memory_chunk.h:543`,
-    `ret_len == sizeof(length)`)."""
+    """Attempt a trained save with user.bin.tmp linked to /dev/full.
+
+    Leave the symlink in place and return the save flag if the call returns.
+    This targets the length-word write in MemoryChunk::save in
+    src/include/memory_chunk.h at pin 074a2219."""
     ctx = _dirty_for_save(k, parse, text, train_args)
     Path(k.user, 'user.bin.tmp').symlink_to('/dev/full')
     return {'ret': k.fn('save', B, P)(ctx)}
 
 
 def save_header_rlimit(k, parse='parse_more_full_pinyins', text=b'nihao', train_args=(C.c_ubyte,)):
-    """`RLIMIT_FSIZE` of one header word: the length word fits (file size 4)
-    and the checksum word past it is refused (`memory_chunk.h:547`,
-    `ret_len == sizeof(checksum)`)."""
+    """Attempt a trained save after limiting this process's file size to four bytes.
+
+    Ignore SIGXFSZ and set both RLIMIT_FSIZE limits without restoring them.
+    This targets the checksum-word write in MemoryChunk::save in
+    src/include/memory_chunk.h at pin 074a2219; return the save flag if reached."""
     ctx = _dirty_for_save(k, parse, text, train_args)
     signal.signal(signal.SIGXFSZ, signal.SIG_IGN)
     resource.setrlimit(resource.RLIMIT_FSIZE, (4, 4))
@@ -5019,26 +5101,31 @@ def save_header_rlimit(k, parse='parse_more_full_pinyins', text=b'nihao', train_
 
 @case('abort-save-chunk-header-length', abort=False, issues=('525',))
 def _(k):
+    """Attempt a pinyin save whose first chunk-header write targets /dev/full."""
     return save_header_dev_full(k)
 
 
 @case('abort-save-chunk-header-checksum', abort=False, issues=('525',))
 def _(k):
+    """Attempt a pinyin save with a four-byte process file-size limit."""
     return save_header_rlimit(k)
 
 
 @case('abort-zhuyin-save-chunk-header-length', mode='zhuyin', abort=False, issues=('525',))
 def _(k):
+    """Attempt a zhuyin save whose first chunk-header write targets /dev/full."""
     return save_header_dev_full(k, 'parse_more_chewings', b'su3cl3', ())
 
 
 @case('abort-zhuyin-save-chunk-header-checksum', mode='zhuyin', abort=False, issues=('525',))
 def _(k):
+    """Attempt a zhuyin save with a four-byte process file-size limit."""
     return save_header_rlimit(k, 'parse_more_chewings', b'su3cl3', ())
 
 
 @case('stderr-fresh-user-dir', stderr=True, issues=('545',))
 def _(k):
+    """Initialize and finalize a fresh pinyin profile, returning the original context's truth value."""
     ctx = k.ctx
     k.fn('fini', None, P)(ctx)
     return {'init': bool(ctx)}
@@ -5046,6 +5133,7 @@ def _(k):
 
 @case('stderr-fresh-user-dir-zhuyin', mode='zhuyin', stderr=True, issues=('545',))
 def _(k):
+    """Initialize and finalize a fresh zhuyin profile, returning the original context's truth value."""
     ctx = k.ctx
     k.fn('fini', None, P)(ctx)
     return {'init': bool(ctx)}
@@ -5053,32 +5141,38 @@ def _(k):
 
 @case('stderr-init-missing-system-dir', stderr=True, issues=('545',))
 def _(k):
+    """Record pinyin initialization with /nonexistent-system-dir as the system path."""
     return {'ctx': bool(k.init(system='/nonexistent-system-dir'))}
 
 
 @case('stderr-init-missing-system-dir-zhuyin', mode='zhuyin', stderr=True, issues=('545',))
 def _(k):
+    """Record zhuyin initialization with /nonexistent-system-dir as the system path."""
     return {'ctx': bool(k.init(system='/nonexistent-system-dir'))}
 
 
 @case('stderr-init-system-dir-without-table-conf', stderr=True, issues=('545',))
 def _(k):
+    """Initialize against an empty scratch system directory with two trailing slashes."""
     empty = tempfile.mkdtemp(prefix='sys-', dir=k.scratch)
     return {'ctx': bool(k.init(system=empty + '//'))}
 
 
 @case('stderr-save-dir-removed', stderr=True, issues=('545',))
 def _(k):
+    """Train pinyin, remove the user directory and record the save result."""
     return save_after_training(k, True)
 
 
 @case('stderr-save-dir-removed-zhuyin', mode='zhuyin', stderr=True, issues=('545',))
 def _(k):
+    """Train zhuyin, remove the user directory and record the save result."""
     return save_after_training(k, True, 'parse_more_chewings', b'su3cl3', ())
 
 
 @case('stderr-fini-dir-removed', stderr=True, issues=('545',))
 def _(k):
+    """Remove a fresh pinyin profile directory before finalizing its cached context."""
     ctx = k.ctx
     shutil.rmtree(k.user)
     k.fn('fini', None, P)(ctx)
@@ -5087,6 +5181,7 @@ def _(k):
 
 @case('stderr-fini-dir-removed-zhuyin', mode='zhuyin', stderr=True, issues=('545',))
 def _(k):
+    """Remove a fresh zhuyin profile directory before finalizing its cached context."""
     ctx = k.ctx
     shutil.rmtree(k.user)
     k.fn('fini', None, P)(ctx)
@@ -5098,6 +5193,9 @@ def _(k):
 # Paths in the pin's lines are the caller's bytes, not text.
 @case('stderr-non-utf8-user-dir', stderr=True, issues=('545',))
 def _(k):
+    """Train in a user directory containing 0xFF, remove it, then save and finalize.
+
+    Return training and save flags while leaving diagnostics to the worker."""
     user = os.path.join(os.fsencode(k.scratch), b'user-\xff' + os.path.basename(k.user.encode())[5:])
     os.mkdir(user)
     ctx = k.init(user=user)
@@ -5113,6 +5211,10 @@ def _(k):
 
 @case('stderr-quiet-saves', stderr=True, issues=('545',))
 def _(k):
+    """Record unmodified and trained saves, then reopen and save the persisted profile.
+
+    Finalize both contexts on the normal path; the kit's cached pointers are
+    not cleared."""
     ctx = k.ctx
     out = {'unmodified save': k.fn('save', B, P)(ctx)}
     out.update(save_after_training(k, False))
@@ -5126,6 +5228,7 @@ def _(k):
 
 @case('stderr-unmodified-save-dir-removed', stderr=True, issues=('545',))
 def _(k):
+    """Remove an unmodified pinyin profile directory and record its save result."""
     ctx = k.ctx
     shutil.rmtree(k.user)
     return {'save': k.fn('save', B, P)(ctx)}
@@ -5140,6 +5243,10 @@ def _(k):
 # (every file a link back to it) with one library broken; the oracle's own
 # files are never touched.
 def private_system(k):
+    """Create a scratch system directory whose immediate entries symlink to k.data.
+
+    Return its path; callers may replace individual links without modifying the
+    source files. The directory is not removed here."""
     system = tempfile.mkdtemp(prefix='sys-', dir=k.scratch)
     for entry in os.listdir(k.data):
         os.symlink(os.path.join(k.data, entry), os.path.join(system, entry))
@@ -5150,14 +5257,12 @@ SPARSE_CHUNK_SIZE = (1 << 32) + 8
 
 
 def sparse_chunk(path):
-    """The 2^32+8 chunk `MemoryChunk::mmap` truncates to a zero payload.
+    """Create an exclusive sparse chunk of 4 GiB plus eight bytes with a zero header.
 
-    `guint32 data_len = file_size - header` (`memory_chunk.h:499`) turns
-    2^32 into 0, so the length word and the checksum word both read 0 and
-    the pin accepts the all-zero payload. Only the 8-byte header block is
-    allocated: the rest is a hole, so the fixture is 4 GiB logically and
-    one file-system block physically, and no copy or read materialises it.
-    """
+    Close the descriptor even on failure. Assert its logical size and at most
+    1 MiB allocated, using st_blocks in 512-byte units. Existing paths fail.
+    MemoryChunk::mmap in src/include/memory_chunk.h at pin 074a2219 truncates
+    this payload length to zero when checking the header and checksum."""
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
     try:
         os.write(fd, b'\0' * 8)  # length word 0, checksum 0
@@ -5171,11 +5276,17 @@ def sparse_chunk(path):
 
 
 def chunk_stats(path):
+    """Return logical and allocated file sizes in bytes, converting st_blocks from 512-byte units."""
     stat = os.stat(path)
     return {'fixture_size': stat.st_size, 'fixture_allocated': stat.st_blocks * 512}
 
 
 def nonzero_layout_chunk():
+    """Encode a chunk with total 123 and an invalid second sub-index separator.
+
+    Wrap the 32-byte payload in a valid length/checksum header. The offsets
+    follow SubPhraseIndex::load in src/storage/phrase_index.cpp at pin 074a2219;
+    its total is read before the separator check."""
     # A valid header and checksum with total_freq 123 and an in-bounds
     # second-separator fault. The pin reads 123 into the sub-index's local
     # total and does not add it to the facade aggregate
@@ -5191,12 +5302,15 @@ def nonzero_layout_chunk():
 
 
 def break_library(k, system, name, how):
-    """Replaces the link to library `name` with a file `MemoryChunk::mmap`
-    refuses: none (`missing`), empty (`empty`), shorter than the 8-byte
-    header (`short`), a wrong length word (`bad-length`), or a payload whose
-    checksum does not verify (`checksum`) — or with the header-only 8-byte
-    chunk (`header-only`) or the sparse 2^32+8 chunk (`sparse`), which both
-    map but whose sub-index the pin refuses while main refuses the chunk."""
+    """Replace one private system-library link with the selected broken-file fixture.
+
+    Unlink first. how selects missing, empty, short, bad-length, header-only,
+    sparse, oob-layout, short-chunk, nonzero-layout, second-separator,
+    third-separator, checksum, dir-long or dir-short. Unknown values assert
+    only after unlinking. Checksum corruption copies the source bytes; layout
+    fixtures use MemoryChunk::mmap in src/include/memory_chunk.h and
+    SubPhraseIndex::load in src/storage/phrase_index.cpp at pin 074a2219.
+    Directories contain one file; sparse fixtures retain their holes."""
     path = os.path.join(system, name)
     os.unlink(path)
     if how == 'empty':
@@ -5265,6 +5379,10 @@ def break_library(k, system, name, how):
 
 
 def train_once(k, ctx, parse, text, train_args):
+    """Allocate an instance, parse and guess, then return one training call's flag.
+
+    Use rank zero when train_args is nonempty. Ignore parse/guess flags and
+    leave the instance live on the caller's context."""
     inst = k.fn('alloc_instance', P, P)(ctx)
     k.fn(parse, Z, P, S)(inst, text)
     k.fn('guess_sentence', B, P)(inst)
@@ -5280,7 +5398,16 @@ LIBRARY_FACADES = {
 
 
 def library_probe(site, how):
+    """Build a case that breaks a private library before the selected native operation.
+
+    site selects init, init-fresh, init-nonconform, load, addon, save or mask-out;
+    how is passed to break_library. The returned callable performs all I/O."""
     def probe(k):
+        """Prepare the selected profile state and collect flags around the broken library.
+
+        Init variants optionally train/save a conforming profile or change its
+        model version to 999. Other sites initialize first, then break the library
+        before loading, saving or masking it. Leave contexts live."""
         name, index, parse, text, train_args = LIBRARY_FACADES[k.mode]
         system = private_system(k)
         if site in ('init', 'init-fresh', 'init-nonconform'):
@@ -5328,9 +5455,11 @@ def library_probe(site, how):
 
 
 def library_expected(site, how, mode):
-    """What the subject answers at a site where the pin dies: its answers
-    from before the lines were added, held unchanged. An init that fails on a
-    library logs one warning in its own domain and answers NULL."""
+    """Return the registered subject observation for a broken-library crash case.
+
+    Init with a missing library expects success without logs; other init faults
+    expect NULL and a facade warning. Other sites use fixed result dictionaries
+    and no logs. Unsupported non-init sites or required warning modes raise KeyError."""
     if site.startswith('init'):
         failed = how != 'missing'
         return {'ctx': not failed, 'logs': [[WARNING_DOMAIN[mode], 16]] if failed else []}
@@ -5366,9 +5495,11 @@ LIBRARY_FINAL = {'init': 'ctx', 'load': 'load', 'save': 'save', 'mask-out': 'mas
 
 
 def library_directory_probe(site, how):
+    """Wrap a library-failure case so its final operation is also exposed as ret."""
     inner = library_probe(site, how)
 
     def probe(k):
+        """Run the configured library fault and alias the site's final flag as ret."""
         out = inner(k)
         out['ret'] = out[LIBRARY_FINAL[site]]
         return out
@@ -5386,7 +5517,15 @@ for _mode in ('pinyin', 'zhuyin'):
 
 
 def library_directory_guard(site, guard):
+    """Build a save or mask case with a directory at a reserved or unloaded library.
+
+    The callable rewrites a private table.conf and trains before applying the
+    fault. site='save' saves; other site values mask library four."""
     def probe(k):
+        """Prepare the guarded library, replace its link with a directory and record the operation.
+
+        For guard='reserved', configure index zero; for 'unloaded', unload index two.
+        Assert initialization and training and leave the private context live."""
         system = private_system(k)
         conf = Path(system, 'table.conf')
         text = conf.read_text()
@@ -5425,7 +5564,15 @@ for _mode in ('pinyin', 'zhuyin'):
 # save and a mask-out skip it), nothing is modified (a save writes nothing),
 # or it is whole (a reload maps it).
 def library_control(site):
+    """Build a control case for a loaded, unloaded, unmodified or intact system library.
+
+    Supported site names select repeated load/addon load, whole reload,
+    unmodified save, or trained save/mask after unloading."""
     def probe(k):
+        """Apply the control's library state, record operation flags and finalize the context.
+
+        Use checksum corruption where a broken file is needed; initialization must
+        succeed. Unsupported fallback sites assert."""
         name, index, parse, text, train_args = LIBRARY_FACADES[k.mode]
         system = private_system(k)
         ctx = k.init(system=system)
@@ -5481,6 +5628,10 @@ for _mode in ('pinyin', 'zhuyin'):
 # merged.bin, gbk_char.bin (the one unloadable system library) or art.bin
 # (the pinyin facade's addon entry; the zhuyin facade has none).
 def chunk_limits():
+    """Limit this worker to 12 GiB address space and 60 CPU seconds and disable core dumping.
+
+    Set soft and hard resource limits without restoration and assert Linux
+    PR_SET_DUMPABLE succeeds. These settings are not restored."""
     # The pin's init maps 2^32+8 and its save/mask/reinit map it again while
     # the earlier mapping is still held (freemem unmaps only 8 bytes). 8 GiB
     # makes those calls fail on `mmap` — a limit artifact, not pin behaviour.
@@ -5497,7 +5648,15 @@ def chunk_limits():
 
 
 def chunk_init_probe(site, how):
+    """Build an initialization case with a malformed merged.bin and optional saved profile.
+
+    site='init-settled' trains and saves first; other values use a fresh profile.
+    The callable applies chunk_limits and reports fixture sizes in bytes."""
     def probe(k):
+        """Install the merged.bin fixture, initialize and report context truth and file sizes.
+
+        For a settled profile, assert its initial training/save and finalize that
+        context before the tested init. Leave the final context live."""
         chunk_limits()
         system = private_system(k)
         if site == 'init-settled':
@@ -5518,7 +5677,12 @@ def chunk_init_probe(site, how):
 
 
 def chunk_addon_probe(how, reload):
+    """Build an addon-load case with a malformed art.bin and optional unload/reload."""
     def probe(k):
+        """Apply worker limits, replace art.bin and record addon load flags and fixture sizes.
+
+        Assert initial context creation; reload controls a second load after unload.
+        The context remains live."""
         chunk_limits()
         system = private_system(k)
         ctx = k.init(system=system)
@@ -5535,7 +5699,11 @@ def chunk_addon_probe(how, reload):
 
 
 def chunk_load_probe(how):
+    """Build a case that unloads library two and reloads it from a malformed gbk_char.bin."""
     def probe(k):
+        """Apply worker limits and record unload/load flags after replacing gbk_char.bin.
+
+        Assert context initialization and leave the context live."""
         chunk_limits()
         system = private_system(k)
         ctx = k.init(system=system)
@@ -5550,7 +5718,12 @@ def chunk_load_probe(how):
 
 
 def chunk_save_probe(how):
+    """Build a trained-save case whose merged.bin is malformed before initialization."""
     def probe(k):
+        """Install the chunk fixture and, if initialization succeeds, train and save.
+
+        Apply worker limits and always include fixture sizes in bytes. Leave any
+        successful context live."""
         chunk_limits()
         system = private_system(k)
         path = os.path.join(system, 'merged.bin')
@@ -5567,7 +5740,11 @@ def chunk_save_probe(how):
 
 
 def chunk_mask_probe(how):
+    """Build a library-four mask case with merged.bin malformed before initialization."""
     def probe(k):
+        """Install the chunk fixture and, if initialization succeeds, train and mask library four.
+
+        Apply worker limits and include fixture sizes in bytes on either return path."""
         chunk_limits()
         system = private_system(k)
         path = os.path.join(system, 'merged.bin')
@@ -5584,7 +5761,11 @@ def chunk_mask_probe(how):
 
 
 def chunk_reinit_probe():
+    """Build a case that initializes twice against a sparse merged.bin."""
     def probe(k):
+        """Apply worker limits, initialize twice, and finalize each non-NULL context.
+
+        Return both context truth values and sparse fixture sizes in bytes."""
         chunk_limits()
         system = private_system(k)
         path = os.path.join(system, 'merged.bin')
@@ -5601,7 +5782,13 @@ def chunk_reinit_probe():
 
 
 def chunk_candidates_probe():
+    """Build a candidate-observation case with a sparse merged.bin."""
     def probe(k):
+        """Guess through the sparse-library context and capture at most eight candidate rows.
+
+        Apply worker limits; return early on NULL init. Otherwise record parse,
+        sentence/candidate flags, total count and [type, text] rows, replacing
+        invalid UTF-8 and treating a missing or empty string as None."""
         chunk_limits()
         system = private_system(k)
         break_library(k, system, 'merged.bin', 'sparse')
@@ -5633,7 +5820,13 @@ def chunk_candidates_probe():
 
 
 def chunk_token_probe():
+    """Build a token-getter case for the first two items of a sparse library four."""
     def probe(k):
+        """Read phrase, pronunciation count and unigram outputs after sparse-library init.
+
+        Apply worker limits and return early on NULL init. For pinyin, also open
+        and close an export iterator to record whether library four has a next row.
+        Decode/free returned phrase strings; leave the instance and context live."""
         chunk_limits()
         system = private_system(k)
         break_library(k, system, 'merged.bin', 'sparse')
@@ -5691,7 +5884,13 @@ case('header-only-library-save', stderr=True, userdir=True)(chunk_save_probe('he
 
 
 def nonzero_total_candidates_probe():
+    """Build a candidate guess with a nonzero-total malformed sub-index and attempted total wrap."""
     def probe(k):
+        """Derive the wrap delta from three intact libraries and guess with malformed merged.bin.
+
+        Apply worker limits and assert initialization. Sum stored totals modulo
+        2**32, attempt the compensating token update, and return parse/guess flags;
+        do not assume the update succeeded."""
         chunk_limits()
         system = private_system(k)
         break_library(k, system, 'merged.bin', 'nonzero-layout')
@@ -5718,7 +5917,12 @@ def nonzero_total_candidates_probe():
 
 
 def nonzero_total_save_probe():
+    """Build a save case that observes the log header from a malformed sub-index with total 123."""
     def probe(k):
+        """Train and save with nonzero-layout merged.bin, then read two fixed log-header totals.
+
+        Apply worker limits and assert init. Return training/save flags plus file
+        length in bytes and the two little-endian words, without validating the log."""
         chunk_limits()
         system = private_system(k)
         break_library(k, system, 'merged.bin', 'nonzero-layout')
@@ -5746,7 +5950,9 @@ for _mode in ('pinyin', 'zhuyin'):
 
 
 def crash_layout_init_probe(how, library='gbk_char.bin'):
+    """Build an initialization case for the selected broken library and layout."""
     def probe(k):
+        """Apply worker limits, replace the private library and return initialization truth."""
         chunk_limits()
         system = private_system(k)
         break_library(k, system, library, how)
@@ -5754,10 +5960,17 @@ def crash_layout_init_probe(how, library='gbk_char.bin'):
     return probe
 
 def log_walk(data):
-    """The `.dbin` chunk's first MODIFY_HEADER totals and record counts.
-    Record layout: type(4), token(4), then ADD/REMOVE len(2)+data,
-    MODIFY oldlen(2)+newlen(2)+old+new, MODIFY_HEADER len(2)+old+new
-    (`phrase_index_logger.h`, `next_record`)."""
+    """Return the first MODIFY_HEADER totals and counts of recognized log records.
+
+    Skip the eight-byte chunk header without validating it. Decode little-endian
+    fields following PhraseIndexLogger::next_record in
+    src/storage/phrase_index_logger.h at pin 074a2219: type/token are four bytes,
+    lengths two bytes. ADD/REMOVE carry length/data; MODIFY carries old/new
+    lengths then old/new data; MODIFY_HEADER carries one length then both
+    totals. Stop on unknown types, fewer than ten remaining bytes,
+    or an incomplete header record. ADD/REMOVE/MODIFY counts can include a
+    truncated final record; only header payload bounds are checked. Return
+    None for totals if no complete header record was seen."""
     payload = data[8:]
     pos = 0
     header = None
@@ -5788,7 +6001,16 @@ def log_walk(data):
 
 
 def save_replacement_probe(initial, replacement):
+    """Build a save case with merged.bin replaced after its original bytes were loaded.
+
+    initial='invalid' installs a malformed layout before init. replacement is
+    same, invalid, valid, or any other value to use gbk_char.bin as the replacement.
+    The callable reports the saved log's byte length, SHA-256, totals and counts."""
     def probe(k):
+        """Train, atomically replace the private merged.bin when requested, and inspect its saved log.
+
+        Apply worker limits and assert init. Replacement uses a .new sibling and
+        os.replace; native training/save flags are recorded rather than asserted."""
         chunk_limits()
         system = private_system(k)
         if initial == 'invalid':
@@ -5820,10 +6042,19 @@ def save_replacement_probe(initial, replacement):
 
 
 def save_changed_with_override_probe():
-    """A loaded user override of a gb_char item plus a different valid gb_char
-    chunk on disk: the save diff must union the disk, the loaded original and
-    the user override (`diff_records_against`)."""
+    """Build a save comparison combining a loaded user override and a replaced system chunk.
+
+    The callable changes token 0x01001225 from 你 to 龘 in a user log, loads it,
+    then replaces gb_char.bin with gbk_char.bin before saving. It records the
+    new log bytes by length/hash and its decoded header and record counts."""
     def probe(k):
+        """Write the single-character override, train, replace the system chunk and summarize the saved log.
+
+        Assert the fixed token names 你 and initialization succeeds. Use the layouts
+        from SubPhraseIndex::load and PhraseItem::get_phrase_string in
+        src/storage/phrase_index.cpp and PhraseIndexLogger::next_record in
+        src/storage/phrase_index_logger.h at pin 074a2219. Apply worker limits and
+        replace only private system links."""
         chunk_limits()
         system = private_system(k)
         payload = Path(k.data, 'gb_char.bin').read_bytes()[8:]
@@ -5895,11 +6126,14 @@ for _mode in ('pinyin', 'zhuyin'):
 
 
 def save_missing_system_probe():
-    """A modified save after the first system chunk is removed. The pin
-    prints `mmap %s failed!` and dies in the empty chunk's
-    SubPhraseIndex::load (row 76); the subject prints the line and saves,
-    the registered row 76 answer."""
+    """Build a trained-save case that removes gb_char.bin after initialization.
+
+    Record training and save flags if native calls return; crash expectations
+    are supplied separately by the case registration."""
     def probe(k):
+        """Apply worker limits, train a private context, unlink gb_char.bin and record save.
+
+        Assert initialization; leave the context live for the isolated worker."""
         chunk_limits()
         system = private_system(k)
         ctx = k.init(system=system)
@@ -5919,11 +6153,16 @@ for _mode in ('pinyin', 'zhuyin'):
 
 
 def save_unloaded_replacement_probe():
-    """Unload a system library, replace its file with a different valid
-    chunk, then save. `_write_files` skips a library whose `get_range` has no
-    sub-index (`pinyin.cpp:928-933`, `zhuyin.cpp:563-568`), so the pin never
-    remaps the unloaded library; the subject must answer `Keep` for it."""
+    """Build a save case that replaces an unloaded system library with another valid chunk.
+
+    At pin 074a2219, _write_files in src/pinyin.cpp and zhuyin_save in
+    src/zhuyin.cpp skip libraries with no sub-index. The callable records flags
+    after unloading library two and replacing its private gbk_char.bin."""
     def probe(k):
+        """Train, unload library two, replace gbk_char.bin with merged.bin and save.
+
+        Apply worker limits, assert init, and use a .new sibling plus os.replace.
+        Record operation flags without asserting unload, train or save."""
         chunk_limits()
         system = private_system(k)
         ctx = k.init(system=system)
@@ -5954,10 +6193,11 @@ for _mode in ('pinyin', 'zhuyin'):
 # --------------------------------------------------------------------------
 
 def remember_export(k, library, phrase, adjacent=False):
-    """The export rows of `phrase` in `library`. `adjacent=True` stops at the
-    first row of another phrase after the phrase's own: one item's readings
-    are consecutive, so for a text held by one token this is the same list
-    without walking the rest of a 93,000-item library in Python."""
+    """Return matching phrase export rows and release the iterator and returned strings.
+
+    Rows contain [flag, phrase, reading, count]. Return 'NO EXPORT API' for
+    zhuyin. adjacent stops at the first different phrase after a match; this
+    can omit later matching tokens if the same text is not contiguous."""
     if k.mode == 'zhuyin':
         return 'NO EXPORT API'
     it=k.fn('begin_get_phrases',P,P,U)(k.ctx,library)
@@ -5973,6 +6213,11 @@ def remember_export(k, library, phrase, adjacent=False):
 
 
 def remember_tones(k):
+    """Check remember/export API presence and, for pinyin, remember a toned imported phrase.
+
+    Import 你好你好, parse its toned spelling, guess, remember with count three
+    and export its rows. Free the cached instance and finalize the context on
+    the pinyin path without clearing the kit's pointers."""
     out={'remember_api':hasattr(k.lib,k.mode+'_remember_user_input'),
          'export_api':hasattr(k.lib,k.mode+'_begin_get_phrases')}
     if k.mode=='zhuyin':return out
@@ -5993,6 +6238,12 @@ case('remember-api-absent-zhuyin', mode='zhuyin', control=True)(remember_tones)
 
 # #643: g_build_filename drops empty elements, but stops at NULL.
 def init_system_argument(k, form):
+    """Initialize with a literal empty, NULL, dot or absolute system argument in a temporary cwd.
+
+    form='empty-missing' omits system links; other forms link regular data files.
+    On successful init, cache the context, parse and guess, then free/finalize
+    without clearing caches. Return user filenames and switch cwd to scratch
+    on the normal path; exceptions do not restore cwd."""
     with tempfile.TemporaryDirectory(prefix='sys-', dir=k.scratch) as cwd:
         if form != 'empty-missing':
             # Read-only system files; only the separate user directory is writable.
@@ -6025,6 +6276,11 @@ for _mode in ('pinyin', 'zhuyin'):
 
 
 def remember_review(k, double=False):
+    """Observe remembered readings after clearing tones or using the double-pinyin parser.
+
+    Use count three, export the target phrase, then free/finalize cached native
+    objects without clearing their pointers. The full-pinyin path clears options
+    after guessing; the double-pinyin path retains the tone option."""
     k.fn('set_options', B, P, U)(k.ctx, 0x20)
     parse = 'parse_more_double_pinyins' if double else 'parse_more_full_pinyins'
     phrase = '你' if double else '你好'
@@ -6043,11 +6299,22 @@ case('remember-double-tone-pinyin')(lambda k: remember_review(k, True))
 # #642: NULL is transient state, not an absent user index. Snapshot both
 # filesystem destinations at every step, including a pre-existing canary.
 def transient_files(root):
+    """Snapshot recursive file entries as relative-path keys with mode bits and raw bytes.
+
+    Follow is_file/stat/read_bytes behavior for symlinks; omit directories and
+    let filesystem errors propagate."""
     return {str(p.relative_to(root)): (p.stat().st_mode, p.read_bytes())
             for p in Path(root).rglob('*') if p.is_file()}
 
 
 def null_user_session(k):
+    """Exercise a literal NULL user directory while checking cwd and TMPDIR for file changes.
+
+    Create two canary directories, change cwd and TMPDIR, then record training,
+    imports, lookup, save and mutation outputs. Compare a second NULL-user
+    context's tokens before masking the first. Finalize successful contexts on
+    the normal path; TMPDIR and cached pointers are not reset. A failed first
+    init returns with cwd still changed; successful completion returns to scratch."""
     cwd = tempfile.mkdtemp(prefix='cwd-', dir=k.scratch)
     tmp = tempfile.mkdtemp(prefix='tmp-', dir=k.scratch)
     for directory in (cwd, tmp):
@@ -6058,6 +6325,9 @@ def null_user_session(k):
     out = {}
 
     def checkpoint(label):
+        """Record sorted file names whose mode or contents differ from each canary baseline.
+
+        Include creations and deletions in cwd and the configured temporary directory."""
         out['files-' + label] = [sorted(n for n in before.keys() | after.keys()
                                        if before.get(n) != after.get(n))
                                 for before, after in zip(baseline, (transient_files(d) for d in (cwd, tmp)))]
@@ -6144,6 +6414,11 @@ for _mode in ('pinyin', 'zhuyin'):
 
 
 def transient_library(k,library,null):
+    """Import 你好 into the chosen library with either a literal NULL or ordinary user path.
+
+    Switch cwd to scratch and replace the cached context. Return init/import
+    flags, matching library tokens and exported rows, then free/finalize without
+    clearing cached pointers. Native import flags are not asserted."""
     os.chdir(k.scratch)
     k._ctx=k.init(k.data, None if null else k.user, literal=True)
     out={'init':bool(k._ctx)}
@@ -6173,6 +6448,11 @@ for _mode in ('pinyin', 'zhuyin'):
 # a reading merged into the item under the cursor, and a token appended
 # past it. The parent buffered each probed item's rows at the probe.
 def export_rows(k, it, limit=None):
+    """Consume up to limit export rows without closing the caller's iterator.
+
+    Return [flag, phrase, reading, count] rows and decode/free the returned
+    strings. None consumes to exhaustion; even a reached limit still calls
+    has_next first. Native getter failure does not stop iteration."""
     rows = []
     while k.fn('iterator_has_next_phrase', B, P)(it) and (limit is None or len(rows) < limit):
         ph, py, n = P(), P(), I(UNTOUCHED)
@@ -6183,6 +6463,10 @@ def export_rows(k, it, limit=None):
 
 
 def import_rows(k, library, rows):
+    """Import (phrase, reading, count) rows into the cached context and return add flags.
+
+    UTF-8 encode both strings and end the iterator on the normal path; begin/add
+    results are not asserted and exceptions do not guarantee iterator cleanup."""
     it = k.fn('begin_add_phrases', P, P, U)(k.ctx, library)
     added = [k.fn('iterator_add_phrase', B, P, S, S, I)(it, phrase.encode(), reading.encode(), count)
              for phrase, reading, count in rows]
@@ -6191,6 +6475,12 @@ def import_rows(k, library, rows):
 
 
 def export_open_across_import_system(k):
+    """Keep a system export cursor open while importing another reading for its next token.
+
+    Use library one's first two tokens and assert their getter results. Consume
+    the first token's rows, add the second token's tone-one reading, then read
+    its original count plus one. Close the iterator and free/finalize cached
+    objects on success; the pronunciation array remains allocated."""
     # Library 1's first two tokens: their reading counts, and the second's
     # text and first reading through the token getters.
     new = k.glib.g_array_new
@@ -6229,6 +6519,11 @@ def export_open_across_import_system(k):
 
 
 def export_open_across_import_user(k):
+    """Observe a live user export cursor across insertion of a new token and reading.
+
+    Seed 你好, open/probe the iterator, import 好你 and a toned 你好 reading,
+    then consume remaining rows. Close the iterator and finalize the context
+    without clearing the cached pointer."""
     out = {'seed': import_rows(k, 7, [('你好', "ni'hao", 5)])}
     it = k.fn('begin_get_phrases', P, P, U)(k.ctx, 7)
     out['has_next'] = k.fn('iterator_has_next_phrase', B, P)(it)
@@ -6244,6 +6539,12 @@ def export_open_across_import_user(k):
 # phonetic_lookup.h:925-929; phrase_index.cpp:114-143). Export reads it on
 # each call (pinyin.cpp:707-739), before save or a library reload.
 def issue790_export(k, action='train'):
+    """Compare exports of 你 around the selected training and persistence sequence.
+
+    Actions no-train and unconstrained only guess or train without selection;
+    others train the selected token. open-before keeps an export cursor live;
+    save-reopen and replayed-train finalize and clear caches, with the latter
+    training again after lazy reopening. Return before/after rows and call results."""
     phrase, token = '你', tokens_of(k, '你')[0]
     out = {'before': remember_export(k, 1, phrase)}
     iterator = (k.fn('begin_get_phrases', P, P, U)(k.ctx, 1)
@@ -6281,8 +6582,16 @@ for _action in ('no-train', 'unconstrained', 'open-before', 'save-reopen', 'repl
 
 
 def issue790_readings(k, phrase, readings, unigram=None):
-    """Replay a system-item MODIFY using the existing logger fixture
-    helpers; only the named item's readings and optional unigram change."""
+    """Replace one library-one character's stored readings through a user MODIFY log.
+
+    readings contains (pinyin spelling, count) pairs encoded as 16-bit keys and
+    32-bit counts. Keep the unigram unless supplied; wrap the changed library
+    total modulo 2**32. Assert the token's library and single-character length,
+    free/finalize cached objects, clear caches, write the marker/log and return
+    the token; reopening is deferred. Layouts follow PhraseItem::get_nth_pronunciation
+    in src/storage/phrase_index.cpp, PhraseItem::get_unigram_frequency in
+    src/storage/phrase_index.h and PhraseIndexLogger::next_record in
+    src/storage/phrase_index_logger.h at pin 074a2219."""
     token = tokens_of(k, phrase)[0]
     assert token >> 24 == 1
     packed = [(key_out(k, text.encode())[1], count) for text, count in readings]
@@ -6309,6 +6618,9 @@ def issue790_readings(k, phrase, readings, unigram=None):
 
 
 def issue790_bounded_counts(k, count):
+    """Seed 你 with the supplied ni3 count and two zero-count readings, then compare exports after training.
+
+    Assert ni parses and train its selected token after the rewritten log reopens."""
     token = issue790_readings(k, '你', [('ni3', count), ('ni2', 0), ('na4', 0)])
     out = {'before': remember_export(k, 1, '你')}
     assert k.fn('parse_more_full_pinyins', Z, P, S)(k.inst, b'ni')
@@ -6324,6 +6636,10 @@ case('issue790-export-prefix-overflow-system', issues=('790',))(
 
 
 def issue790_imported(k, appended=False):
+    """Import a system reading or appended four-character phrase and compare exports around training.
+
+    appended chooses 你你你你; otherwise add ni2 to 你. Parse the imported
+    reading and train the first matching token, recording import and training outputs."""
     phrase, reading = ('你你你你', "ni'ni'ni'ni") if appended else ('你', 'ni2')
     out = {'imported': import_rows(k, 1, [(phrase, reading, 5)]),
            'before': remember_export(k, 1, phrase)}
@@ -6340,6 +6656,10 @@ case('issue790-export-appended-system', issues=('790',))(lambda k: issue790_impo
 
 @case('issue790-guess-after-train-system', issues=('790',))
 def _(k):
+    """Compare ni guesses before and after training a low-mass reading of 尼.
+
+    Rewrite its pronunciation counts and system/user start rows, train the selected
+    token, clear the constraint and collect a fresh guess without saving."""
     # The first ni reading has 1/100 of 尼's pronunciation mass. A large
     # unrelated start-row total makes the new bigram too small to explain
     # the ranking change: only reading the trained pronunciation can do it.
@@ -6356,6 +6676,10 @@ def _(k):
 
 @case('issue790-character-offset-after-train-system', issues=('790',))
 def _(k):
+    """Compare character-offset output before and after training an initially zero-count na reading.
+
+    Seed 哪 with na3/nei3, train through incomplete n, clear its constraint,
+    and query again without saving or reopening."""
     # Both readings have shipped index entries. An incomplete n path
     # trains na (initially zero) and nei; the public offset call then tests
     # na without saving/reopening. An unindexed positive reading would
@@ -6364,6 +6688,7 @@ def _(k):
     assert k.fn('set_options', B, P, U)(k.ctx, 0x18a)
     get = k.fn('get_character_offset', B, P, S, Z, C.POINTER(Z))
     def offset():
+        """Parse na and return the offset-call flag and sentinel-initialized output for 哪 at byte one."""
         assert k.fn('parse_more_full_pinyins', Z, P, S)(k.inst, b'na')
         value = Z(UNTOUCHED)
         return [get(k.inst, '哪'.encode(), 1, C.byref(value)), value.value]
@@ -6381,6 +6706,12 @@ case('issue759-export-open-across-import-user', issues=('759',))(export_open_acr
 
 # #525: reduce_tokens asserts on the sixth add, with five existing tokens.
 def combined_import_bound(k, guard=True):
+    """Import the same phrase into five libraries, optionally attempting a sixth with state checks.
+
+    Assert the first five adds. With guard false, return their flags immediately.
+    Otherwise save a baseline, attempt library six, then compare fixed fixture
+    tokens, frequencies, exports, dirty/save status and files. Finalize native
+    objects after the guarded attempt; the fixture assumes the listed token IDs."""
     phrase = '你好'
     reading = b"ni3'hao3" if k.mode == 'pinyin' else 'ㄋㄧˇ ㄏㄠˇ'.encode()
     added = []
@@ -6418,6 +6749,11 @@ for _mode in ('pinyin', 'zhuyin'):
 
 
 def import_review(k, invalid=False):
+    """Attempt an invalid-reading or unused-library import after populating five libraries.
+
+    invalid selects a one-syllable reading for 你好 in library six; otherwise
+    use its complete reading in library eight. Record the add flag and
+    free/finalize cached native objects without clearing their pointers."""
     out = combined_import_bound(k, guard=False)
     it = k.fn('begin_add_phrases', P, P, U)(k.ctx, 6 if invalid else 8)
     reading = b'ni3' if invalid else b"ni3'hao3"
@@ -6442,6 +6778,11 @@ for _mode in ('pinyin', 'zhuyin'):
 # equal unigram and pronunciation possibility: the n-best tie goes to the
 # phrase the trellis walk meets first (phonetic_lookup.h:560-572).
 def nbest_user_table_order(k):
+    """Compare sentence ordering for two equally counted user phrases inserted opposite to reading order.
+
+    Assert unique increasing library-seven tokens for 龘龘 and 靐靐. Parse
+    toneless dada; record three pinyin sentence ranks or one zhuyin sentence.
+    Zhuyin options retain USE_TONE without FORCE_TONE."""
     phrases = (('龘龘', "da3'da3", 'ㄉㄚˇ ㄉㄚˇ'), ('靐靐', "da2'da2", 'ㄉㄚˊ ㄉㄚˊ'))
     it = k.fn('begin_add_phrases', P, P, U)(k.ctx, 7)
     assert it
@@ -6474,12 +6815,14 @@ for _mode in ('pinyin', 'zhuyin'):
 
 
 def user_dir_listing(scratch, before):
-    """What the run left in the user directories it created under `scratch`:
-    every file by name, `user.conf` by text, chunk logs and their `.tmp`
-    siblings by size and SHA-256, DBM containers by size. The directories
-    are removed. The chunk hashes make a save's `.dbin` bytes and its
-    partial writes exact comparisons; the DBM containers are value-level in
-    this implementation, so only their size is held."""
+    """Summarize and remove newly created user directories beneath scratch.
+
+    before is the set of scratch entries from before the worker. Scan new
+    user-* directories in sorted order, flattening by filename so later entries
+    overwrite earlier names. Render user.conf with newlines replaced by '|';
+    record byte size and SHA-256 for regular .tmp files and non-user_ .bin/.dbin
+    files, size alone for other files, and None for non-files. Remove each
+    scanned directory with cleanup errors ignored; read/stat errors propagate."""
     listing = {}
     for entry in sorted(set(os.listdir(scratch)) - before):
         path = os.path.join(scratch, entry)
@@ -6513,6 +6856,9 @@ def user_dir_listing(scratch, before):
 # choosing a displayed NBEST row. No forged candidate or context is needed.
 @case('j-choose-nbest-diff-result', control=True)
 def _(k):
+    """Choose a displayed NBEST row and record its rank output and signed selection result.
+
+    Assert a row exists and initialize rank to 0xff without asserting getter success."""
     inst = guessed(k)
     candidate = row_of(k, inst, 1)
     assert candidate, 'no displayed NBEST candidate'
@@ -6527,7 +6873,11 @@ def _(k):
 # constructs ZhuyinDaChenCP26Parser2. Batch parse goes through their parse
 # virtuals (pinyin.cpp:1595 / zhuyin.cpp:1068), rather than one-key parsing.
 def j_multi_chewing(scheme):
+    """Build a multi-key chewing parse case for the selected facade scheme number."""
     def probe(k):
+        """Select the facade's scheme, parse abc and record consumed and reported input lengths.
+
+        Record selection failure rather than asserting it; lengths are byte counts."""
         setter = 'set_zhuyin_scheme' if k.mode == 'pinyin' else 'set_chewing_scheme'
         selected = k.fn(setter, B, P, I)(k.ctx, scheme)
         parsed = k.fn('parse_more_chewings', Z, P, S)(k.inst, b'abc')
@@ -6562,18 +6912,24 @@ class Cancelled(Exception):
 
 
 def check_cancelled():
+    """Raise Cancelled when the controller's shared cancellation flag is set."""
     if CANCELLED:
         raise Cancelled('cancelled; worker group terminated and reaped')
 
 
 @contextlib.contextmanager
 def cancellation_handlers():
-    """Defer signals until the active worker can be stopped and reaped."""
+    """Temporarily convert SIGTERM, SIGINT and SIGHUP into a shared cancellation flag.
+
+    Reset CANCELLED on entry and restore previous handlers on exit. Handling
+    only marks cancellation; worker code must check it and reap processes.
+    Signal installation requires Python's main thread."""
     global CANCELLED
     CANCELLED = False
     previous = {}
 
     def cancel(signum, frame):
+        """Mark controller cancellation without performing process cleanup in the signal handler."""
         global CANCELLED
         CANCELLED = True
 
@@ -6588,7 +6944,11 @@ def cancellation_handlers():
 
 
 def terminate_group(proc):
-    """Stop descendants even if the group leader exits during the grace period."""
+    """Terminate the worker's process group and reap its leader.
+
+    Send SIGTERM, wait up to half a second for the leader, then send SIGKILL
+    even if it exited. Ignore missing process groups; other errors propagate.
+    proc must have been started as the group leader."""
     with contextlib.suppress(ProcessLookupError):
         os.killpg(proc.pid, signal.SIGTERM)
     try:
@@ -6601,6 +6961,21 @@ def terminate_group(proc):
 
 
 def run_worker(mode, so, data, name, scratch, extra_env=None, timeout=None, entry=None):
+    """Run an isolated worker and return its normalized observation.
+
+    Use the current interpreter with entry (script plus leading arguments) or
+    WORKER, inherited environment plus WORKER_ENV/extra_env, scratch as TMPDIR,
+    and WORKER_FDS. Check cancellation and the tkrzw guard before spawning a
+    new process session. timeout is seconds from pre-spawn setup; expiry kills
+    the group, drains pipes and raises TimeoutExpired with captured bytes.
+    None disables the deadline.
+
+    Use the last stdout JSON object, replace invalid stdout UTF-8, preserve
+    invalid stderr bytes with surrogateescape, normalize scratch paths, and
+    summarize/remove new user directories. Include measurement marker fields
+    without interpreting them. On post-spawn exit close pipes and append phase,
+    wall and teardown seconds to TIMINGS; errors before completion terminate
+    and reap the process group. Malformed JSON and filesystem errors propagate."""
     env = dict(os.environ, **WORKER_ENV)
     env['TMPDIR'] = str(scratch)
     env.update(extra_env or {})
@@ -6670,7 +7045,17 @@ def run_worker(mode, so, data, name, scratch, extra_env=None, timeout=None, entr
 
 
 def run_case(spec, pin_so, subject_so, data, name, scratch, timeout):
-    """One deadline for both sides; incomplete observations cannot be a match."""
+    """Run pin then subject under one timeout in seconds and return two observations.
+
+    Pass fatal-criticals when requested and track the worker side per thread.
+    A timeout becomes TIMEOUT and prevents later ordinary execution; an absent
+    second result becomes NOT-RUN. Other errors propagate.
+
+    For the two issue1114 collision cases, retain separate profiles, compare
+    saved bigram bytes with only the timestamp normalized, and cross-reload
+    both donor profiles in fresh workers under the same deadline. Mismatch or
+    reload failure updates the corresponding observation; successful reloads
+    add filtered cross_reload results. Profile cleanup belongs to the caller."""
     deadline = time.monotonic() + timeout
     results = []
     fatal_env = {'G_DEBUG': 'fatal-criticals'} if spec['fatal'] else None
@@ -6737,6 +7122,10 @@ def run_case(spec, pin_so, subject_so, data, name, scratch, timeout):
 
 
 def positive_jobs(value):
+    """Convert value with int and reject nonpositive worker counts.
+
+    Nonpositive values raise ArgumentTypeError; conversion failures propagate
+    from int rather than being wrapped here."""
     number = int(value)
     if number <= 0:
         raise argparse.ArgumentTypeError('--jobs must be a positive integer')
@@ -6744,11 +7133,12 @@ def positive_jobs(value):
 
 
 def ordinary_jobs(parser, requested):
-    """The case count of an ordinary run: --jobs, else the validated environment, else serial.
+    """Choose ordinary-run concurrency from the explicit value, environment or serial default.
 
-    Only ordinary contract runs read OXPINYIN_CONTRACT_JOBS, so a bad value
-    in the environment cannot break --list-tags, --teardown or --per-call.
-    """
+    Return requested unchanged when supplied. Otherwise validate
+    OXPINYIN_CONTRACT_JOBS through tools.dev.host and report invalid settings
+    with parser.error; importing the validator may prepend the repository to
+    sys.path. Return one when the environment setting is absent."""
     if requested is not None:
         return requested
     value = os.environ.get('OXPINYIN_CONTRACT_JOBS')
@@ -6767,13 +7157,13 @@ def ordinary_jobs(parser, requested):
 
 @contextlib.contextmanager
 def case_jobs(requested):
-    """Admit the entire case pool before making scratch or starting workers.
+    """Admit a case pool and temporarily publish its worker environment and inherited descriptors.
 
-    Aggregate runners already hold a slot; use its normal validated inheritance
-    and update its reservation under the admission lock. A direct parallel
-    driver acquires its own slot. Direct serial calls stay light; nested
-    serial calls also pass their parent's slot descriptor to the worker.
-    """
+    Direct serial work yields one without admission. Parallel or inherited-slot
+    work acquires HeavyAdmission, checks cancellation while waiting, prints
+    requested/admitted counts and yields the effective count. Restore WORKER_ENV
+    and WORKER_FDS and close admission on exit. The caller must join case threads
+    and reap worker groups before leaving this context."""
     global WORKER_ENV, WORKER_FDS
     if requested == 1 and 'OXPINYIN_HEAVY_SLOT_HELD' not in os.environ:
         yield 1
@@ -6812,10 +7202,19 @@ PLATFORM_SKIP = object()  # a case registered away from this host's platform
 
 @contextlib.contextmanager
 def case_results(args, names, data, scratch, jobs):
-    """Isolate cases and consume their results in the original selection order."""
+    """Yield case observations in selection order, using isolated scratch directories.
+
+    Serial execution is a lazy map; parallel execution schedules a thread pool.
+    Each item is (name, result), with PLATFORM_SKIP for excluded platforms and
+    None for excluded cells. On a parallel-body exception mark cancellation;
+    always wait for pool shutdown and cancel pending futures before returning."""
     global CANCELLED
     lib = args.prefix / 'lib'
     def observe(name):
+        """Check case eligibility and run both libraries within a temporary per-case directory.
+
+        Honor run_platform_excluded, assert zhuyin library availability when needed,
+        and remove the isolated directory on exit. Propagate run_case failures."""
         check_cancelled()
         spec = CASES[name]
         if platform_skips(spec) and not getattr(args, 'run_platform_excluded', False):
@@ -6851,18 +7250,36 @@ def case_results(args, names, data, scratch, jobs):
 # #640 leading separators, #698 retained before-cursor windows, #681 zero keys.
 # Calls reuse the existing isolated worker and distinguish NULL from untouched.
 def borrowed_text(pointer):
+    """Decode a borrowed C string without freeing it, preserving untouched and NULL outputs.
+
+    Return 'untouched' for the sentinel and None for NULL; invalid UTF-8 raises."""
     if pointer.value==UNTOUCHED:
         return 'untouched'
     return C.string_at(pointer.value).decode() if pointer.value else None
 
 
 def owned_text(k,pointer):
+    """Decode/free an owned GLib string unless untouched, returning None for NULL.
+
+    Delegate decoding with UTF-8 replacement and release to Kit.text."""
     return 'untouched' if pointer.value==UNTOUCHED else k.text(pointer.value)
 
 
 def separator_case(text, op, off, options=0x18a):
+    """Build a parse-and-query case for a full-pinyin string and byte offset.
+
+    options is passed to set_options. op selects parse, sentence, candidates,
+    before, left, right, offset, character, rest or render; other values query
+    a key. The returned callable records output sentinels and borrowed data."""
 
     def probe(k):
+        """Parse with the selected options and collect the requested operation's outputs.
+
+        Guess a sentence unless op is parse. Preserve numeric and pointer sentinels,
+        record candidate type/text/rank where available, and copy key/rest bytes.
+        Render operations decode/free owned strings; candidate strings are borrowed.
+        Character queries choose 阿, 你好 or 你 from the input. No native objects
+        are finalized here."""
         inst = k.inst
         k.fn('set_options', B, P, U)(k.ctx, options)
         parsed = k.fn('parse_more_full_pinyins', Z, P, S)(inst, text.encode())
@@ -7117,7 +7534,15 @@ case("allocator-zero/zhuyin/xi1'an1/key/4",mode='zhuyin',abort=False, issues=('6
 # is the 0xABCDEF sentinel, `null` a NULL write); the control calls the same
 # getter on a real key.
 def alloc_register_case(mode, text, offset, which):
+    """Build a key-to-string getter case at the selected full-pinyin byte offset.
+
+    mode names the key accessor; which='strings' requests separate pinyin
+    initial/final strings, otherwise it names one rendering accessor."""
     def probe(k):
+        """Parse and guess, then record raw key bytes and owned string outputs.
+
+        Return early when the key getter fails or writes NULL. Use option word
+        0x1aa and preserve untouched output sentinels; free returned strings."""
         inst = k.inst
         k.fn('set_options', B, P, U)(k.ctx, 0x1aa)
         k.fn('parse_more_full_pinyins', Z, P, S)(inst, text.encode())
@@ -7153,7 +7578,11 @@ for _mode, _text, _zero, _real, _names in (
 # #695, row 54: parse replaces the matrix even for empty input; every
 # candidate guess searches the currently loaded libraries without a reparse.
 def row54_empty(parse_name, text):
+    """Build a case that guesses after the original, empty and restored byte input."""
     def probe(k):
+        """Set tone options and record three parse/guess pairs on one instance.
+
+        Use the supplied parse entry point and retain native failure flags."""
         k.fn('set_options', B, P, U)(k.ctx, 1 << 5)
         inst = k.inst
         parse = k.fn(parse_name, Z, P, S)
@@ -7168,12 +7597,24 @@ def row54_empty(parse_name, text):
 
 
 def row54_unload(direction, reparse):
+    """Build a candidate-list comparison around unloading library two.
+
+    Optionally reparse nihao before collecting two post-unload lists. direction
+    selects the zhuyin cursor side; pinyin always guesses at offset zero."""
     def probe(k):
+        """Parse nihao, collect candidates, unload library two and collect two more lists.
+
+        Use tone options and optional reparse; keep the cached context and instance live."""
         k.fn('set_options', B, P, U)(k.ctx, 1 << 5)
         inst = k.inst
         parse = k.fn('parse_more_full_pinyins', Z, P, S)
         out = {'parse': parse(inst, b'nihao')}
         def rows():
+            """Guess and return flags, count and ordered candidate strings for the selected cursor side.
+
+            Zhuyin before-cursor uses byte five, after-cursor byte zero; pinyin uses
+            sort word 0x1e at zero. Assert each candidate/string fetch and decode UTF-8
+            strictly without freeing borrowed strings."""
             if k.mode == 'pinyin':
                 ret = k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0x1e)
             else:
@@ -7213,12 +7654,21 @@ case('row54-unload-zhuyin-before', mode='zhuyin', control=True, issues=('695', '
 # PR #709 review: keep a non-first NORMAL choice through an empty parse
 # until a sentence guess validates the constraints against that empty matrix.
 def row54_forcing(sequence, restored=b'nihao'):
+    """Build a constraint-retention case choosing non-first NORMAL 泥 before reparsing.
+
+    sequence='no-empty' omits the empty parse; 'empty-guess' guesses after it;
+    other values parse empty without guessing. restored is the final byte input."""
     def probe(k):
+        """Choose displayed 泥, perform the requested empty-parse sequence and record the restored sentence.
+
+        Assert candidate getters and that 泥 is a non-first NORMAL row. Use tone
+        options and return initial, choice and restored parse/guess observations."""
         k.fn('set_options', B, P, U)(k.ctx, 1 << 5)
         inst = k.inst
         parse = k.fn('parse_more_full_pinyins', Z, P, S)
         guess = k.fn('guess_sentence', B, P)
         def sentence():
+            """Return the current first sentence and flag, preserving untouched output and freeing returned text."""
             text = P(UNTOUCHED)
             if k.mode == 'pinyin':
                 ret = k.fn('get_sentence', B, P, U, C.POINTER(P))(inst, 0, C.byref(text))
@@ -7267,12 +7717,21 @@ for _mode in ('pinyin', 'zhuyin'):
 # matrix. get_nbest_match returns false before clearing sentence rows
 # (074a2219, phonetic_lookup.h:743-748), including the prefix-seeded path.
 def zero_consumption_sentence(parser, text, with_prefix):
+    """Build a fresh-versus-stale sentence comparison after a zero-consumption parse.
+
+    parser is the parse_more_ suffix; text is bytes. with_prefix chooses a
+    sentence guess seeded by 你. The callable asserts zero consumption."""
     def probe(k):
+        """Compare fresh instances with ones holding a nihao sentence before the zero-consumption parse.
+
+        Set tone options, record parsing/guessing and sentence outputs, and leave
+        both allocated instances live."""
         assert k.fn('set_options', B, P, U)(k.ctx, 1 << 5)
         out = {}
         for stale in (False, True):
             inst = k.alloc()
             def sentence():
+                """Read the active instance's first sentence, preserving the sentinel and freeing owned text."""
                 value = P(UNTOUCHED)
                 if k.mode == 'pinyin':
                     ret = k.fn('get_sentence', B, P, U, C.POINTER(P))(inst, 0, C.byref(value))
@@ -7316,13 +7775,24 @@ for _mode in ('pinyin', 'zhuyin'):
 # Compare complete sentence text, not just guess success or a prefix.
 def changed_parse_constraints(initial, choices, replacement, sequence,
                               intermediate=None):
+    """Build a sentence comparison across selected constraints and replacement parses.
+
+    choices contains (byte offset, NORMAL-candidate text) pairs. sequence may
+    guess after choosing, parse empty with or without guessing, or guess an
+    optional intermediate input. Always guess the replacement, record its
+    sentence, then clear each chosen offset."""
     def probe(k):
+        """Choose the requested rows, perform the parse sequence and record full sentence outputs.
+
+        Assert tone options and candidate lookup, encode input strings as UTF-8,
+        and record native parse/guess/clear flags without asserting success."""
         assert k.fn('set_options', B, P, U)(k.ctx, 1 << 5)
         inst = k.inst
         parse = k.fn('parse_more_full_pinyins', Z, P, S)
         guess = k.fn('guess_sentence', B, P)
 
         def sentence():
+            """Read and free the current first sentence, distinguishing untouched output from NULL."""
             text = P(UNTOUCHED)
             if k.mode == 'pinyin':
                 ret = k.fn('get_sentence', B, P, U, C.POINTER(P))(inst, 0, C.byref(text))
@@ -7331,6 +7801,10 @@ def changed_parse_constraints(initial, choices, replacement, sequence,
             return [ret, 'untouched' if text.value == UNTOUCHED else k.text(text.value)]
 
         def choose(offset, wanted):
+            """Choose the first NORMAL row matching wanted at the given byte offset.
+
+            Assert candidate generation and getters; return [wanted, signed selection
+            result] or raise AssertionError when no matching row is displayed."""
             if k.mode == 'pinyin':
                 assert k.fn('guess_candidates', B, P, Z, U)(inst, offset, 0x1e)
             else:
@@ -7399,6 +7873,10 @@ for _mode in ('pinyin', 'zhuyin'):
 
 # #697, row 58: capture the entire list, including row types and order.
 def row58_rows(k, prefix):
+    """Guess predictions for a Unicode prefix and return the flag and ordered [type, text] rows.
+
+    Assert count and candidate getters, decode borrowed strings as strict UTF-8,
+    and read the list even if the prediction call returns false."""
     inst = k.inst
     ret = k.fn('guess_predicted_candidates', B, P, S)(inst, prefix.encode())
     n = U()
@@ -7414,6 +7892,11 @@ def row58_rows(k, prefix):
 
 
 def row58_seed_bigrams(k):
+    """Seed competing Beijing and Shanghai prediction statistics and return their unigram outputs.
+
+    Train constrained 我北京 once and 我上海 three times with dynamic options,
+    reset after each phrase, then add 100000 to Beijing's unigram. Assert parses,
+    guesses, choices, training, resets and the frequency update; leave live state changed."""
     # Constrain valid n-best results before training, following the existing
     # training cases. Shanghai has more bigram observations; independently
     # boost Beijing's unigram so those two proposed sort keys disagree.
@@ -7435,7 +7918,9 @@ def row58_seed_bigrams(k):
 
 
 def row58_scoring(dynamic):
+    """Build a prediction-order case with seeded competing counts and the chosen dynamic option."""
     def probe(k):
+        """Seed bigrams, set the dynamic option and return unigrams plus predictions after 我."""
         counts = row58_seed_bigrams(k)
         assert k.fn('set_options', B, P, U)(k.ctx, 0x18a | ((1 << 9) if dynamic else 0))
         return dict(unigrams=counts, prediction=row58_rows(k, '我'))
@@ -7447,6 +7932,12 @@ for _dynamic in (False, True):
 
 
 def row58_choose(k, kind, text, times):
+    """Repeatedly choose the first current predicted row matching kind and text.
+
+    Make times selections. Assert getters, reuse the borrowed row pointer
+    without regenerating the list, and return each selection flag.
+    Raise AssertionError if the row is absent;
+    nonpositive times returns an empty list once a matching row is found."""
     n = U()
     assert k.fn('get_n_candidate', B, P, C.POINTER(U))(k.inst, C.byref(n))
     for i in range(n.value):
@@ -7460,7 +7951,15 @@ def row58_choose(k, kind, text, times):
 
 
 def row58_prefix(dynamic, text, times):
+    """Build a repeated PREFIX-row choice case with before/after counts and predictions.
+
+    text is the suffix after 我; times controls consecutive choices and dynamic
+    sets the prediction option."""
     def probe(k):
+        """Select the requested type-5 suffix repeatedly and snapshot its full-phrase unigram.
+
+        Look up 我 plus text before predicting; return before/after lists and all
+        selection flags without saving."""
         assert k.fn('set_options', B, P, U)(k.ctx, 0x18a | ((1 << 9) if dynamic else 0))
         token = tokens_of(k, '我' + text)[0]
         before = row58_rows(k, '我')
@@ -7472,7 +7971,12 @@ def row58_prefix(dynamic, text, times):
 
 
 def row58_bigram_choices(dynamic):
+    """Build a live BIGRAM-row ranking case with successive batches of Shanghai selections."""
     def probe(k):
+        """Seed competing counts and select 上海 in batches of one, twenty and two hundred.
+
+        Set the requested dynamic option and snapshot predictions after each batch;
+        selections accumulate rather than restarting from the seed."""
         counts = row58_seed_bigrams(k)
         assert k.fn('set_options', B, P, U)(k.ctx, 0x18a | ((1 << 9) if dynamic else 0))
         out = dict(unigrams=counts, before=row58_rows(k, '我'))
@@ -7486,6 +7990,10 @@ def row58_bigram_choices(dynamic):
 
 
 def row58_import(k, rows):
+    """Import UTF-8 (phrase, reading, count) rows into user library seven.
+
+    Assert iterator creation and every add; close the iterator only on normal
+    completion. Leave imported state live and unsaved."""
     it = k.fn('begin_add_phrases', P, P, U)(k.ctx, 7)
     assert it
     for text, reading, count in rows:
@@ -7494,7 +8002,12 @@ def row58_import(k, rows):
 
 
 def row58_conversion(dynamic):
+    """Build prediction fixtures around score ties and integer-to-float count boundaries."""
     def probe(k):
+        """Import equal-count 乙乙 before 甲甲, then compare tie and large-count prediction lists.
+
+        Use import counts 33/33/1/2, followed by 5592405/5592406, and report the last
+        two full-phrase unigrams. Apply the requested dynamic option without saving."""
         assert k.fn('set_options', B, P, U)(k.ctx, 0x18a | ((1 << 9) if dynamic else 0))
         # Unigram = import count * 3. Counts 3/6 quantize to the same
         # amplified integer; 99 ties a baked 100 after amplification.
@@ -7515,7 +8028,12 @@ def row58_conversion(dynamic):
 
 
 def row58_lambda(dynamic):
+    """Build a prediction-order case with lambda one and a boosted competing phrase."""
     def probe(k):
+        """Replace a private table.conf lambda with one, initialize and boost 我是谁 by 100000.
+
+        Cache the new context, assert setup and return predictions after 我 under
+        the requested dynamic option. Leave the private directory and context live."""
         system = private_system(k)
         conf = Path(system, 'table.conf')
         text = conf.read_text()
@@ -7542,7 +8060,12 @@ for _dynamic in (False, True):
 
 
 def row58_prefix_overflow(dynamic):
+    """Build a PREFIX-choice case near the user library's 32-bit total limit."""
     def probe(k):
+        """Import 我 and a high-count suffix phrase, choose it once and compare counts and rows.
+
+        Use import counts 1 and 1431655631 with the requested dynamic option. Return
+        selection flags and live observations without assuming the update succeeded."""
         assert k.fn('set_options', B, P, U)(k.ctx, 0x18a | ((1 << 9) if dynamic else 0))
         # Library 7 has only 399 left before guint32::MAX. The next 483
         # cannot fit, but the facade total still advances and wraps. An
@@ -7564,7 +8087,17 @@ for _dynamic in (False, True):
 
 
 def row58_signed_score(dynamic, duplicate=False, denominator=20000000):
+    """Build a large-score prediction case using a fixed-fixture total and requested denominator.
+
+    duplicate selects the existing phrase 我的心 instead of 我甲甲. The callable
+    uses a modulo-2**32 absent-token update derived from base total 51051831."""
     def probe(k):
+        """Import the high-count phrase, attempt the compensating total update and collect predictions.
+
+        Set the dynamic option and record the absent-token add flag. The delta
+        assumes import count 1431655631 contributes three times that count to the
+        fixed system total; it is not recalculated from live library files.
+        The factor follows _add_phrase in src/pinyin.cpp at pin 074a2219."""
         assert k.fn('set_options', B, P, U)(k.ctx, 0x18a | ((1 << 9) if dynamic else 0))
         phrase = ('我的心', "wo3'de5'xin1") if duplicate else ('我甲甲', "wo3'jia3'jia3")
         row58_import(k, [(*phrase, 1431655631)])
@@ -7587,7 +8120,13 @@ for _dynamic in (False, True):
 
 
 def row58_zero_total(dynamic, punct=False):
+    """Build a zero-total bigram prediction case, optionally including punctuation candidates."""
     def probe(k):
+        """Seed bigrams, derive the three trained phrases' live delta and attempt to wrap the total.
+
+        Use FACADE_TOTAL plus that delta and an absent-token update modulo 2**32.
+        Record the selected prediction flag and whether its list is empty; assert
+        that a false prediction has no rows. Do not return candidate contents."""
         tokens = {token for text in ('我', '北京', '上海') for token in tokens_of(k, text)}
         before = sum(unigram_of(k, token)[1] for token in tokens)
         row58_seed_bigrams(k)
@@ -7615,7 +8154,9 @@ for _dynamic in (False, True):
 
 
 def row58_prefix_zero_total(dynamic):
+    """Build a PREFIX prediction case after attempting to wrap the facade total to zero."""
     def probe(k):
+        """Set the dynamic option, apply wrap_total_to_zero and return the complete prediction list."""
         assert k.fn('set_options', B, P, U)(k.ctx, 0x18a | ((1 << 9) if dynamic else 0))
         added = wrap_total_to_zero(k, k.inst)
         # Prefix rows bypass pinyin.cpp:1859. The pin's invalid conversion
@@ -7630,7 +8171,12 @@ for _dynamic in (False, True):
 
 
 def row58_lambda_rounding(dynamic):
+    """Build a prediction case with a decimal lambda just below the binary32 midpoint beneath one."""
     def probe(k):
+        """Write lambda 0.9999999701976776123036 into a private config and predict with a large user count.
+
+        Cache and assert the new context, apply the dynamic option and import
+        我甲甲 with count 1431655631. Leave the context and private files live."""
         system = private_system(k)
         conf = Path(system, 'table.conf')
         text = conf.read_text()
@@ -7656,7 +8202,18 @@ for _dynamic in (False, True):
 # #712 review 4232017129: an imported system-library item has a complete
 # override count, whereas an immutable item still needs its store delta.
 def row58_system_import(library, dynamic=False, existing=False):
+    """Build a prediction/count case for an imported system-library phrase.
+
+    existing selects 我是谁 and its first token's library, ignoring library;
+    otherwise import 我甲甲 into library. dynamic affects pinyin only; zhuyin
+    records import/count outputs without prediction calls."""
     def probe(k):
+        """Import count 33 into a validated system library and observe live count changes.
+
+        Assert the expected token presence and one resulting token. For a new
+        pinyin phrase, adjust 我是谁 as a competitor; select the imported PREFIX
+        row once then twice, snapshotting counts and complete lists after each
+        batch. For zhuyin, stop after the import observations."""
         phrase = '我是谁' if existing else '我甲甲'
         prefix, suffix = '我', ('是谁' if existing else '甲甲')
         if k.mode == 'pinyin':
@@ -7727,7 +8284,15 @@ MATRIX_RESPLIT_INPUTS = (
 
 
 def matrix_resplit_windows(text, options):
+    """Build a full-input candidate-window comparison under the supplied option word.
+
+    text is intended to be ASCII pinyin: the callable compares consumed bytes
+    with len(text) and visits offsets through that length, inclusive."""
     def run(k):
+        """Assert a complete parse and collect ordered candidates at every input offset.
+
+        Use pinyin sort word 0x1e or zhuyin after-cursor guesses without a preceding
+        sentence guess. Return consumed length and the list of window observations."""
         assert k.fn('set_options', B, P, U)(k.ctx, options)
         inst = k.inst
         parsed = k.fn('parse_more_full_pinyins', Z, P, S)(inst, text.encode())
