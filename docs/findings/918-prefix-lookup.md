@@ -1,6 +1,6 @@
 # #918 — G1 prefix processing before a non-scalar
 
-Status: implemented; compatibility gates pending · 2026-10-24 UTC.
+Status: implemented; bdb gate and named mutation passed · 2026-10-24 UTC.
 This is G1 coverage under existing class (c), not a new discrepancy or
 POLICY-ACCEPTED runtime quirk. The source-supported result is **identical
 under class (c)**: the pin aborts; oxpinyin refuses with the ordinary
@@ -92,11 +92,14 @@ cardinality; all cases check out-of-range getter zeroing. The ordinary
 scalar pinyin case remains `abort-phrase-segment-short-user-gram`.
 
 Native tests passed for `oxpinyin-engine`, `oxpinyin-capi` and
-`oxpinyin-zhuyin-capi`; fmt/clippy passed. The engine checks both the
-short-gram refusal and competing faults whose span/predecessor orders
-differ. The 141 Python driver tests passed. Compatibility execution,
-the named `skip-prefix-processing` mutation, and shipping-size checks
-remain pending; no runtime MATCH/POLICY-ACCEPTED result is claimed.
+`oxpinyin-zhuyin-capi`; fmt and clippy passed. The engine checks both
+the short-gram refusal and competing faults whose span/predecessor
+orders differ. On the bdb reference cell (linux/amd64) the eight
+registered cases ran 8/8 MATCH. The named `skip-prefix-processing`
+mutation made both corrupt-prefix cases DIFFER and the six controls
+MATCH; after the two calls were restored and both libraries rebuilt, the
+same eight cases returned 8/8 MATCH. Shipping sizes are recorded in the
+PR.
 
 Reproduction after provisioning the documented toolchain:
 
@@ -104,11 +107,16 @@ Reproduction after provisioning the documented toolchain:
 just heavy -- cargo test -p oxpinyin-engine -p oxpinyin-capi -p oxpinyin-zhuyin-capi
 cargo fmt --all -- --check
 just heavy -- cargo clippy -p oxpinyin-engine -p oxpinyin-capi -p oxpinyin-zhuyin-capi --all-targets -- -D warnings
-uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal tools/bisection/contract-diff.test.py
-bash tools/oracle/compat.sh --runtime docker --cell bdb --issue 918
+bash tools/cloud/setup.sh --cells bdb
+. ~/.oxpinyin-oracle.env
+export CARGO_TARGET_DIR=target-bdb
+just heavy -- cargo build -p oxpinyin-capi -p oxpinyin-zhuyin-capi
+just heavy -- bash tools/bisection/run-contract-diff.sh bdb "$PINYIN_ORACLE_PREFIX" \
+    "$CARGO_TARGET_DIR/debug/libpinyin_capi.so" \
+    "$CARGO_TARGET_DIR/debug/libzhuyin_capi.so" -- --issue 918
 ```
 
-The named mutation must skip both facade calls to `check_phrase_prefix`,
-keep the final zero-token return, and make both corrupt-prefix cases
-DIFFER while sound controls remain MATCH. Restore it before the final
-build. This describes the pending mutation gate, not an executed result.
+The named mutation replaced both facade calls to `check_phrase_prefix`
+with `&prefix[..0]`, kept the final zero-token return, and ran the same
+command with `-- --issue 918 --expect-parent`; it was removed before the
+final build and is not committed.

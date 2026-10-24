@@ -1,6 +1,6 @@
 # #918 — phrase-segment input boundary, source investigation
 
-Status: **bounded source audit; row-85 prefix fix implemented, gates pending** ·
+Status: **bounded source audit; row-85 prefix fix implemented, bdb gate passed** ·
 2026-10-24 UTC · [#918](https://github.com/shenghaoc/oxpinyin/issues/918),
 parent [#915](https://github.com/shenghaoc/oxpinyin/issues/915).
 The baseline derivations below read oxpinyin `1c5d96b9` and exact pin
@@ -42,8 +42,8 @@ Relevant GLib source:
   `glib/gmacros.h:931-939` supplies the compiler-dependent `G_STRFUNC`.
 
 The source derivation used no oracle execution or exploratory tests.
-Native tests for the new prefix implementation are reported in its G1
-record; compatibility gates remain pending. The conversion/over-read
+Native tests and the bdb compatibility gate for the new prefix
+implementation are reported in its G1 record. The conversion/over-read
 questions were checked with
 `objdump -dlS -C --no-show-raw-insn` and `readelf` on the hash-matching
 bdb pin libraries from `tools/oracle/oracle-pin.txt` and the snapshot's
@@ -120,9 +120,9 @@ read it and preserve the pin's out-of-range zeroing law for valid pointers.
 | Accepted non-scalar encoding with sound scalar-only phrase keys/items, sound grams and successful backing-store reads | Identical in the requested observable channels: false, character-count-sized null result, getter outputs, no diagnostic, no observable session or persistent mutation beyond replacing the result. Prefix consultation only changes private scratch/cache state. | Bounded source proof below, including both facades and three backend read paths. Inherited tests exercise surrogate placement in `nihao`, not all non-scalars or state combinations; no fresh tests. |
 | Truncated multibyte sequence, or a lead-byte skip crossing the C terminator | `g_utf8_strlen(-1)` does not validate continuations: it advances by the lead-byte width before testing the next byte. For a two-byte allocation `c2 00`, its next test is outside that allocation. Avoiding that illegal load is class (b). | Out-of-allocation load established in source and both compiled architectures; undefined execution has no single return/result/diagnostic to reproduce. Do not claim uniformly “one critical, false, old result preserved.” |
 | Accepted non-scalar plus a bounded matching raw phrase key/item | Pin can return true/a token; Rust returns false/zeros. [Separate proposed runtime quirk](918-nonscalar-token-result.md), not an admission by analogy with #894. | Complete bounded source path; admission/gates not completed. |
-| Accepted non-scalar after a matching scalar prefix; reached predecessor has a sound system gram and a user value of 1–3 bytes | Pin asserts while reading the user's total before finalizing the result. Rust now processes the prefix and uses the ordinary warning/false/old-result refusal: identical under existing class-(c) row 85, not a new runtime quirk. | Source-established in [the G1 prefix entry](918-prefix-lookup.md), both facades/all backend wrappers; contract cases registered, gates pending. |
+| Accepted non-scalar after a matching scalar prefix; reached predecessor has a sound system gram and a user value of 1–3 bytes | Pin asserts while reading the user's total before finalizing the result. Rust now processes the prefix and uses the ordinary warning/false/old-result refusal: identical under existing class-(c) row 85, not a new runtime quirk. | Source-established in [the G1 prefix entry](918-prefix-lookup.md), both facades/all backend wrappers; bdb contract gate 8/8 MATCH and named mutation passed. |
 | Other malformed grams, backend read failures or damaged backend state during that prefix consultation | Normal-data equivalence does not cover these paths. [Follow-through](918-boundary-follow-through.md) separates existing safety/availability obligations, silent returned failures, and bdb diagnostic/handle-state differences. | Source traces and verdicts for the named fault classes complete; no deterministic claim for arbitrary undefined execution or whole-process resource failure. |
-| NULL/dangling pointers, extreme lengths/narrowing, allocation failure, other malformed tables/grams | Outside the bounded conclusions above; existing independent records keep their scope. | Unverified here. No new “needs ruling” label or exception admission. |
+| NULL/dangling pointers, extreme lengths/narrowing, allocation failure, other malformed tables/grams | Outside the bounded conclusions above. NULL/dangling and unterminated pointers keep row 41's independent scope; extreme lengths/narrowing, allocation failure and corrupt item/token bounds are classified in the [G1 closure](918-boundary-follow-through.md#g1-partition-closure). Other malformed tables keep their independent rows. | Source-complete for the named partitions; no new “needs ruling” label or exception admission. |
 
 The matching-key boundary follows `storage/facade_phrase_table3.h:111-138`
 and `PhraseLargeTable3::search`: bdb
@@ -239,8 +239,9 @@ no diagnostic, then recovery through `你好` and rejection of `ff fe` with
 old **count** two and exact critical. They do not compare every old token
 value after rejection. The existing contract driver has the six axis-C
 surrogate cases, `issue542-phrase-segment-invalid-utf8-{pinyin,zhuyin}`,
-`zhuyin-phrase-result-tokens`, and separate malformed-gram cases. The new prefix record separately reports native checks and pending
-compatibility gates; these historical cases are not new executions.
+`zhuyin-phrase-result-tokens`, and separate malformed-gram cases. The
+new prefix record separately reports native checks and the executed bdb
+compatibility gate; these historical cases are not new executions.
 
 To reproduce the reading, use the named revisions/packages rather than
 host headers. Source archives are under the
@@ -266,14 +267,12 @@ for the second architecture. Match both pin-library hashes against
 they execute neither library. No captures or disassembly dumps belong
 in the repository.
 
-Before a change: finish the unresolved partitions and any remaining
-source-triggered binary questions, decide each independent difference under the
-policy, use a discrepancy record only where a difference is established,
-and update the landed shared ledger for all affected families/callers.
-Then add narrowly scoped lifecycle cases to the existing contract driver
-and focused tests for both facades, covering old token values and warning
-behavior, and run the applicable gates. Keep both expected observations
-for any admitted POLICY-ACCEPTED case. No removal is authorized by this
-audit alone. Known differences and the unrun behavior gates still prevent
-a completed #918 implementation PR. The resolved row-85 scope itself
-is no longer a STOP; verification and the independent limits remain.
+The phrase-segment partitions and source-triggered binary questions are
+now resolved; the [G1 closure](918-boundary-follow-through.md#g1-partition-closure)
+records each verdict. The independent differences (non-scalar raw key,
+backend error lifecycle, bdb format error, kc second read) remain
+separate and are not admitted by this audit. The bdb contract gate
+(8/8 MATCH) and the named skip-prefix mutation passed, and the touched
+crates' tests, clippy and fmt passed. No removal is authorized by this
+audit alone; the resolved row-85 scope is no longer a STOP, and the
+independent limits remain.

@@ -20,12 +20,12 @@ pin's `int` lookup interface unless the row explicitly says otherwise.
 | The lead-byte walk leaves the supplied allocation | Pin's load is out of bounds; no deterministic return/result/stderr can be assigned. Avoiding that walk is class (b), not an unclassified runtime quirk. | Source and amd64/arm64 instructions establish the illegal load. Possible process outcomes are undefined, not an unread policy question. No new crash probe. |
 | GLib-accepted non-scalar, sound consistent scalar-only keys/items and grams | False/all-zero length-sized result, no warning or observable prefix state; identical. | Complete bounded source argument in the entry audit. |
 | GLib-accepted non-scalar with a bounded matching raw phrase key and item | The pin can return true and a token; Rust returns false/zeros. | [Independent token-result discrepancy](918-nonscalar-token-result.md), source established; proposed runtime-quirk treatment requires its own admission/gates, not #894 by analogy. |
-| Reached user gram shorter than a total, with a system gram | Defined assert; existing class-(c) rule. New prefix processing uses the ordinary warning/false/old-result refusal, identical under class (c). | [G1 prefix entry](918-prefix-lookup.md), both facades/all three wrappers; native checks passed, contract gates pending. |
+| Reached user gram shorter than a total, with a system gram | Defined assert; existing class-(c) rule. New prefix processing uses the ordinary warning/false/old-result refusal, identical under class (c). | [G1 prefix entry](918-prefix-lookup.md), both facades/all three wrappers; native checks passed; bdb contract gate 8/8 MATCH and named mutation passed. |
 | Reached partial gram item, or sub-total row without a system gram | The merge/get-frequency walk can read outside the row. Existing row 98 explicitly covers these lookup sites; class (b), not a new quirk. The new prefix walk routes reached `UnsafeLookupPredecessor` through its existing one-warning refusal. | Exact unsafe shapes and safe early exits are already source-traced by row 98 and `single_gram.rs::{checked_get_freq,checked_search}`. The new prefix check can encounter these existing Rust refusals; this audit claims no new runtime witness for them. No deterministic pin result is claimed. |
 | Structurally bounded but unsorted/duplicate/zero-total/wrapping-frequency grams | They can change prefix scores, but cannot create a path across a non-scalar when keys/items remain scalar and consistent. No persistent update occurs. | Same final-step proof applies provided the actual merge/search walk stays in bounds and no assert is reached; unsafe/asserting shapes belong to the preceding rows. |
 | Inconsistent key/item length, truncated item storage or malformed token-array bounds | `PhraseTableEntry::search` walks four-byte tokens to the raw byte end (`storage/phrase_large_table3.cpp:29-51`); `get_phrase_item` creates a view using declared length (`phrase_index.cpp:180-208`); `save_next_step` indexes by that length (`phrase_lookup.cpp:348-377`). Out-of-range accesses are class (b); an in-range mismatched length can manufacture a complete path and a different token result, an unadmitted difference under limb 4. | Source hazards established. Not admitted by the bounded non-scalar record, which requires matching lengths and valid storage. Exact output of arbitrary corrupt lengths is deliberately not normalized. |
 | NULL/dangling/unterminated pointers | Existing row 41 governs NULL guards; dangling or unterminated pointers violate the C input lifetime/allocation precondition. | No new compatibility promise or fabricated deterministic output for invalid pointers. |
-| Extreme lengths or allocation failure | The pin narrows `glong` to `int` and adds one for step count (`phrase_lookup.cpp:120-127`); allocations elsewhere may assert/abort. Rust has its own allocation failure paths. | Excluded from bounded equivalence. A whole-process OOM/oversized-input equivalence is not established by this audit; no removal may rely on it. |
+| Extreme lengths or allocation failure | The pin narrows `glong` to `int` and adds one for step count (`phrase_lookup.cpp:120-127`); allocations elsewhere may assert/abort. Rust has its own allocation failure paths. | Classified in the [G1 closure](#g1-partition-closure): narrowing is class (b); OOM is host-dependent with no single shared behavior. Excluded from bounded equivalence; no removal may rely on it. |
 
 The converter accepts canonical historical encodings through `0x7fffffff`,
 including surrogates, above-Unicode scalars and five/six-byte encodings
@@ -121,15 +121,121 @@ arm64 counterpart; no execution was used.
 Tkrzw's phrase system/user stores are TreeDBM/BabyDBM, not the gram
 HashDBM/TinyDBM pair. Their lookup scratch constructors copy the key
 (`tkrzw_dbm_tree_impl.cc:68-75,111-118`,
-`tkrzw_dbm_baby.cc:275-283`). A NULL source to `memcpy`, even with zero
-size, does not establish a portable defined output. Source identifies
-the invalid library precondition; exact compiled outcomes of these
-NULL/zero copy calls and their resolved libc implementations remain
-unverified. No deterministic diagnostic/return is assigned to them,
-and the ordinary non-NULL empty-key path is kept separate. This narrow
-remaining binary question blocks a complete shared-helper replacement
-proof, not the sound-data segment-prefix conclusion. No relevant
-artifact is claimed unavailable.
+`tkrzw_dbm_baby.cc:275-283`). The compiled NULL/zero-length outcome is
+closed in the G1 closure below. The ordinary non-NULL empty-key path is
+kept separate; this source question blocked a complete shared-helper
+replacement proof, not the sound-data segment-prefix conclusion.
+
+## G1 partition closure
+
+Read at `074a2219`; the binary claims are reads of the pin-built bdb,
+kc and tkrzw libraries named in `tools/oracle/oracle-pin.txt` and the
+dependency objects they resolve, not executions. These rows close the
+source questions; they do not clear removal of the GLib conversion.
+
+### Token lookup with a NULL, zero-length key
+
+A GLib-rejected `*_lookup_tokens` call leaves `ucs4_len` zero and
+`ucs4_phrase` NULL (`pinyin.cpp:2652-2667`, `zhuyin.cpp:1678-1693`)
+and still calls `FacadePhraseTable3::search(0, NULL, tokens)`
+(`storage/facade_phrase_table3.h:111-138`). Each cell resolves that
+call without dereferencing the NULL key:
+
+| Cell | Pin path and compiled outcome |
+| --- | --- |
+| bdb | `PhraseLargeTable3::search` sets `db_key.data = phrase` and `db_key.size = 0` and calls `DB->get` (`storage/phrase_large_table3_bdb.cpp:180-207`). db5.3's get accepts a zero-sized DBT (`src/db/db_iface.c:825-950,2879-2940`), and `__bam_defcmp` bounds its byte loop by the smaller size (`src/btree/bt_compare.c:155-181`); a zero-sized key executes no comparison byte and dereferences no pointer. |
+| kc | `ProtoTreeDB` is `ProtoDB<std::map<std::string,std::string>,17>`; `BasicDB::check` forwards the key to `accept` (amd64 `BasicDB::check+0x29`). The compiled `ProtoDB::accept` tests the pointer at `+0xe5` and the size at `+0x310`; a NULL pointer with size zero reaches the empty-string path without a copy, while a NULL pointer with nonzero size reaches the `logic_error` throw at `+0x319`. `check` returns -1 and `search` returns `SEARCH_NONE`. |
+| tkrzw | `PhraseLargeTable3::search` builds `std::string_view(NULL, 0)` and calls `DBM::Get` (`storage/phrase_large_table3_tkrzwdb.cpp:124-153`). The lookup scratch constructor copies the key with an unconditional `memcpy` (amd64 `TreeRecordOnStack::TreeRecordOnStack+0x38`). The glibc 2.43-3 source of `__memcpy_avx_unaligned_erms` routes a zero length through `L(less_vec)` to `L(copy_0)` without a load (`sysdeps/x86_64/multiarch/memmove-vec-unaligned-erms.S:295-325`, branch at `:317`); the host's resolved amd64 implementation matches. The tree lookup is a miss and returns `SEARCH_NONE`. |
+
+The pin therefore returns `SEARCH_NONE` with no tokens for both facade
+exports; `reduce_tokens` leaves the caller's real GArray empty and the
+export answers false. Rust's `tokens_for_text("")` returns no tokens,
+clears the same real GArray and answers false (`capi/src/dict.rs`,
+`*_lookup_tokens`). An empty C string with a live allocation also
+reaches a zero-length key at the pin; an empty-key row is malformed
+table state (the import paths refuse `phrase_length == 0`,
+`pinyin.cpp:643`, `zhuyin.cpp:528`), and Rust's system-table
+empty-text skip differs from the pin only there. The pinned bdb phrase
+table has no empty-key row (`db5.3_dump`), and the other cells are
+generated from the same table text.
+
+### Extreme lengths, narrowing and allocation failure
+
+Both entries count and convert in `glong` and pass the result to
+`PhraseLookup::get_best_match(int)` (`pinyin.cpp:1450-1456`,
+`zhuyin.cpp:969-975`, `lookup/phrase_lookup.cpp:120-127`). That call
+narrows the count to `int`; inside, `int nstep = m_sentence_length + 1`
+overflows for `INT_MAX` and `init_steps`/`final_step` then index with
+the wrapped or negative length (`lookup/phrase_lookup.cpp:55-73,382-428`).
+Counts above `INT_MAX` therefore enter implementation-defined or
+undefined arithmetic, and the later step access is class (b), not a
+defined return/result. Reaching it needs a successful conversion
+allocation of more than four bytes per code point, so allocation failure
+can intervene first.
+
+The pin's conversion allocation is `try_malloc_n` -> `g_try_malloc_n`
+(`glib/gutf8.c:905-912,977`); on failure it returns NULL, sets no error
+(the pin passes NULL), and leaves `items_written` zero. For a nonempty
+input that is the ordinary `num_of_chars == ucs4_len` critical, false
+return and preserved old result; it does not abort. The pin's later
+step/container allocations use the aborting `g_malloc`/`g_realloc`
+family. Rust's conversion and engine allocations use the Rust allocator,
+which aborts on failure; only the invalid-UTF-8 branch reuses the GLib
+conversion and therefore has the pin's conversion refusal. Whole-process
+allocation failure therefore has no single shared behavior: some pin
+conversion failures refuse while later container failures abort, and
+the Rust valid-text copy can abort where the pin's conversion refuses.
+This is host-dependent resource failure, not a deterministic C result;
+it is outside the bounded equivalence and no removal may rely on it.
+
+### Arbitrary corrupt item and token bounds
+
+`PhraseTableEntry::search` walks four-byte tokens to the raw value end
+(`storage/phrase_large_table3.cpp:29-51`); a value whose length is not a
+multiple of four reads a partial tail, class (b), as recorded by row 101.
+`get_phrase_item` builds a view from the declared `phrase_length` and
+`n_prons` without checking it fits the mapped content
+(`storage/phrase_index.cpp:180-208`), and `save_next_step` indexes by the
+phrase length (`lookup/phrase_lookup.cpp:348-377`). An out-of-range
+shape is class (b) (row 107 for the replay form). An in-range
+inconsistent length can return following bytes and manufacture a
+complete path or token that the validating Rust reader refuses; that is
+an unadmitted difference under limb 4, not normalized and not cleared
+by the eight-case gate. The new prefix walk reports a reached unsafe
+lookup through the existing one-warning refusal.
+
+### The broad values/items/readings partition outside #894
+
+- Stored phrase values `>= 0x80000000`: `PhraseItem::get_phrase_string`
+  copies raw words (`storage/phrase_index.cpp:103-111`);
+  `_token_get_phrase` returns true with the declared length and the NULL
+  from `g_ucs4_to_utf8` (`pinyin.cpp:1627-1645`,
+  `zhuyin.cpp:1096-1113`), which GLib rejects. Rust's
+  `PhraseItemView::phrase_chars` uses `char::from_u32` and the getter
+  returns false with outputs untouched. This is a distinct malformed-item
+  difference, not admitted by #894's bounded surrogate/above-Unicode
+  record and not a new exception. Phrase segmentation renders no item
+  text, so #918's gate does not depend on it.
+- Truncated, empty, overlong or inconsistent items: the pin trusts the
+  declared length. Reads that stay inside the content return following
+  bytes; reads past it are class (b). Rust validates or refuses the
+  item. Existing rows 101 and 107 keep their scope; no new equivalence
+  is claimed.
+- Invalid readings: `PhraseItem::get_nth_pronunciation`
+  (`storage/phrase_index.cpp:33-44`) returns stored `ChewingKey` values
+  without validating them; `pinyin.cpp:2801-2819` and
+  `zhuyin.cpp:1793-1811` append `phrase_length` keys and ignore the
+  getter's failure. Past the last reading that is the uninitialised-key
+  class (b) recorded by rows 51 and 70. #918's segment path selects
+  tokens and never renders a reading, so no #918 removal relies on it;
+  the independent records keep their scope.
+- Allocation failure: the conversion/later-allocation split above leaves
+  no single shared behavior; it is host-dependent and outside the
+  bounded equivalence.
+
+The phrase-segment family's G1 partitions are source-complete with these
+verdicts. G1 as a whole remains partial for the other families in the
+ledger, and this closure is not a removal clearance.
 
 ## Current prefix implementation and remaining gates
 
@@ -165,9 +271,16 @@ raw non-scalar dictionary keys or the other neighboring callers. These
 are not grounds to remove the GLib call. Named baseline store-error
 paths and all listed caller boundaries have been traced; the adjacent
 NULL/zero-copy compiled outcome and whole-process allocation/extreme-size
-behavior remain unverified. No unavailable artifact is asserted.
+behavior are closed in the G1 section above. No unavailable artifact is
+asserted.
 
-Native touched-crate tests, fmt/clippy and 141 Python harness tests pass.
-Compatibility cases, the named skip-prefix mutation and shipping-size
-checks are pending. Full affected-family removal coverage is not claimed,
-and no PR is opened while the compatibility gate is blocked.
+Completion gate (2026-10-24 UTC, linux/amd64): the bdb reference cell
+selected by `cells-for-diff.py` (no backend check fired) ran 8/8 MATCH.
+The named `skip-prefix-processing` mutation made both corrupt-prefix
+cases DIFFER and the six controls MATCH; after restoring the two calls
+and rebuilding, the same eight cases returned 8/8 MATCH. `cargo test -p`
+for the three touched crates, clippy on those crates and
+`cargo fmt --all -- --check` passed. Stripped shipping-library sizes are
+recorded in the PR. These results do not certify the separate
+error-lifecycle differences above, and full affected-family removal
+coverage is not claimed.
