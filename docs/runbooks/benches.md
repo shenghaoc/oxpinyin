@@ -829,6 +829,8 @@ The audit of which existing records sit where is
 machine-generated, and unreviewable in a diff — and in at least one case
 the bulk of the file is a part the document itself records as unusable.
 
+A campaign keeps the per-sample timing output and the profiler totals until they are attached to the PR.
+
 What the document carries instead:
 
 1. **The command that produced each figure.** Not each class of figure —
