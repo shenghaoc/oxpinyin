@@ -125,7 +125,87 @@ just clippy --locked -p oxpinyin-core --all-targets -- -D warnings
 just fmt --all --check
 ```
 
-On Linux, admission takes the smallest known memory room from `MemAvailable`
+### Heavy-work admission
+
+`AGENTS.md`, "Verification cells", rule 8 (maintainer ruling 2026-10-19 UTC)
+keeps the principles and the list of what is heavy. This section holds the
+mechanics, as `tools/dev/slot.py` and `tools/dev/host.py` implement them;
+`tools/bisection/run-all.py` applies them to cell builds and heavy runners.
+They apply on Linux and macOS. The native slot is not validated on Windows.
+
+**Slot, descriptor and signals.** The slot is an `flock` on
+`heavy-slot-<n>` in the lock directory. The heavy child receives an
+inheritable slot descriptor through `pass_fds` and runs in its own session.
+The slot stays held until the child and its descendants close their copies.
+The parent keeps its copy until it reaps the child. It closes that copy
+without unlocking the shared file description. On SIGTERM, SIGINT, or SIGHUP,
+terminate each child process group: SIGTERM to the group, five seconds to
+exit, then SIGKILL to the group. Reap the child before releasing checkout
+locks or the slot. `just heavy` exits 130 on cancellation, 1 on any other
+admission error (a refusal or an expired wait included), and otherwise with
+the child's status (128 plus the signal number for a child killed by a
+signal). Cancellation, expiry, and an OOM-killed child never count as PASS or
+SKIP.
+
+**Nested work.** The child's environment carries `OXPINYIN_HEAVY_SLOT_HELD`,
+a JSON object with the resolved `lock_dir`, the `slot` index, the holder
+`pid` and the descriptor `fd`. Nested work uses it to identify the slot and
+holder pid. Three outcomes are distinct:
+
+- A malformed marker is a hard error, `Invalid OXPINYIN_HEAVY_SLOT_HELD`:
+  it does not parse as JSON, is not an object with exactly the keys
+  `lock_dir`, `slot`, `pid` and optionally `fd`, or has a `lock_dir` that is
+  not an absolute string, a `slot` that is not a nonnegative integer, a `pid`
+  that is not a positive integer, or an `fd` that is not a nonnegative
+  integer.
+- A well-formed marker that fails the ownership and liveness checks is
+  reported stale (`stale OXPINYIN_HEAVY_SLOT_HELD: ...`), and the slot is
+  acquired normally. The checks are: the marker's lock directory is this
+  host's lock directory, the slot record names that pid, the pid is alive,
+  and the pid is an ancestor.
+- A marker that passes those checks is inherited, and valid nested work does
+  not acquire another slot. If its optional descriptor does not name the slot
+  file (or cannot be read), only the descriptor is discarded; the slot is
+  still inherited (`HeavySlot._inherit`).
+
+**Slot count.** Two slots are the default when total memory is at least
+15 GiB; one below that or when total memory is unknown. `OXPINYIN_HEAVY_SLOTS`
+sets the slot count; a value below one, or one that is not an integer, gives
+one slot.
+
+**Lock directory.** `OXPINYIN_LOCK_DIR` must name an absolute directory.
+Reject a relative value with a clear message (`OXPINYIN_LOCK_DIR must be an
+absolute path`); an empty value counts as unset. The default is
+`$XDG_CACHE_HOME/oxpinyin/locks`, with `~/.cache` when `XDG_CACHE_HOME` is
+unset, or `%LOCALAPPDATA%\oxpinyin\locks` on Windows. Resolve the default
+directory once. Pass the resolved path in each heavy child's environment as
+`OXPINYIN_LOCK_DIR`. Nested calls use that path after a directory change.
+`python -m tools.dev slot status` prints the directory and the slot count.
+
+**Job and thread variables.** The slot limits concurrent heavy tasks. The
+defaults limit processes inside each task. Leave `CARGO_BUILD_JOBS`,
+`RUST_TEST_THREADS`, and `--jobs` unset unless a measurement needs fixed
+values. An explicit setting has one of two meanings, and the rest of this
+section uses the same two:
+
+- `CARGO_BUILD_JOBS` and `RUST_TEST_THREADS`: an explicit value is kept
+  unchanged, and admission needs room for its full process count. (`--jobs` of
+  `run-all.py` counts concurrent runner rows; each row is admitted on its
+  own.)
+- Contract-case concurrency, which is `OXPINYIN_CONTRACT_JOBS`,
+  `contract-diff.py --jobs` and `run-all.py --contract-jobs`: a requested
+  maximum that admission may reduce (#1143; `docs/runbooks/oracle.md`). It is
+  reduced to the cases that fit, at 1,024 MiB each, in the room left after
+  headroom and other reservations. It never forces a worker when none fits:
+  one worker's estimate is kept, so admission can refuse the work instead of
+  launching it.
+
+Cargo job counts accept positive integers, negative integers, and `default`;
+zero and values outside the signed 32-bit range are rejected. Test thread
+counts and `OXPINYIN_CONTRACT_JOBS` must be positive integers. Invalid values
+cause a clear failure before a slot is taken.
+
+**Memory and CPU readers.** On Linux, admission takes the smallest known memory room from `MemAvailable`
 and the current cgroup's visible ancestors. It reads v2 `memory.max` and
 `memory.current` with the existing clean-cache accounting. For v1 it finds
 the memory and CPU controller mounts through `/proc/self/mountinfo`, including
@@ -143,6 +223,105 @@ combined with v2 `cpu.max` or v1 `cpu.cfs_quota_us` / `cpu.cfs_period_us`;
 a v1 quota of `-1` is unlimited. Hybrid hosts use the controllers present in
 each hierarchy. Unreadable values stay unknown in the admission notes; only
 known room participates in the minimum, and no known memory means no admission.
+
+macOS reads available memory as the Mach `host_statistics64` free plus
+inactive pages and total memory from `hw.memsize`. Windows reads both from
+`GlobalMemoryStatusEx`. Neither reads cgroups; the CPU count there is
+`os.cpu_count()`, where Linux combines affinity with the cgroup quotas as
+above. Report unreadable limits as unknown. Use the limits that can be read.
+If no memory reading is available, treat the capacity as zero. Use no fixed
+fallback for heavy work. An explicit setting does not bypass this check: a
+kept `CARGO_BUILD_JOBS` or `RUST_TEST_THREADS` needs room for its full
+process count, and a requested contract-case maximum is reduced to what fits.
+
+**Admission sequence.** The plan before admission is provisional: it reads
+resources, prints them and the default settings, and takes no slot. Take the
+slot and read resources again. Print the effective settings and any change
+(`defaults changed after admission`). Take the short host-wide
+`heavy-admission` lock before the final resource read and decision. The lock
+is attempted without blocking; if another process holds it, release a newly
+acquired slot and retry. Within that lock:
+
+- Charge each live holder in another locked slot its estimate less the
+  current use of its process tree (summed Pss on Linux, physical footprint on
+  macOS, working sets on Windows), at least zero; charge the full estimate
+  when any process's use cannot be read. A holder with no recorded estimate is
+  charged nothing, because its record is provisional: `HeavySlot.try_acquire`
+  writes the holder record (pid, checkout, command, start time, token) without
+  `estimate_mib`. The estimate is published under the `heavy-admission` lock
+  only when the work fits, and no heavy child starts before that. A live
+  holder without an estimate therefore cannot launch without taking the same
+  lock and accounting for every reservation made meanwhile.
+- Subtract container memory reservations (the `container-memory-*.json`
+  records of the compatibility container launcher) as well. An invalid record
+  makes available memory unknown.
+- Record this holder's estimate in its slot file before releasing the
+  admission lock. An inherited holder keeps the larger of its previous and new
+  estimates. Ignore records whose pid is dead.
+
+**Headroom and estimates.** The headroom is 10% of total memory, at most
+2,048 MiB, and 2,048 MiB when total memory is unknown. It is 0 only for a
+compatibility-container guest (`OXPINYIN_COMPAT_CONTAINER=1`) with a known hard
+memory limit. The host already applies desktop headroom when it reserves the
+container's full limit (`ContainerReservation.acquire`), so the guest charges
+it once (#978). Admission inside the guest still applies: its memory
+measurements, other reservations and the explicit-setting checks above. The cell build requires its build estimate plus the headroom.
+The build estimate is the largest of one rustc (600 MiB), the Cargo job count
+times 600 MiB, and the test thread count times 64 MiB. A Cargo job count of
+`default` counts the CPUs and a negative count is subtracted from them, at
+least one. The minimum build estimate is one rustc. Heavy runners require the
+larger of `RUNNER_PEAK_MIB` (1,024 MiB) and their build estimate. Unset
+values default to a per-slot share of the room after headroom: Cargo jobs at
+most the CPU count and a rustc each, test threads at most the CPU count and
+64 MiB each; one process is the minimum while it fits the whole room. A kept
+`CARGO_BUILD_JOBS` or `RUST_TEST_THREADS` requires room for its full process
+count; a requested contract-case maximum is instead reduced to what fits,
+with one worker's estimate kept (see the job and thread variables above).
+
+**Waiting and refusal.** Under an inherited slot, insufficient memory causes
+immediate FAIL:
+`resource-blocked: inherited slot; <estimate> MiB needed, <available> MiB available`.
+Unknown memory under an inherited slot also causes immediate FAIL:
+`resource-blocked: available memory unknown`.
+Do not wait for memory while an ancestor holds that slot.
+
+If memory is insufficient or unknown, release this task's acquired slot
+before waiting. Hold no checkout lock during this wait (checkout locks are
+taken after admission). Print the estimate, available memory after headroom,
+and `no process started` (`waiting for memory: estimate ... MiB, ... MiB
+available after headroom; no process started: <command>`, at the start and
+every 30 seconds). While every slot is held, print who holds them
+(`waiting for a heavy slot ...; held by: ...`) on the same schedule. Retry slot
+acquisition and resource checks, every half second, until admission or expiry.
+`OXPINYIN_RESOURCE_WAIT_SECONDS` limits admission waits; its default is 1800
+seconds. It must be finite and nonnegative; zero permits one immediate
+attempt. One limit covers the slot wait, the admission-mutex wait and the
+memory wait.
+
+Expiry gives FAIL with the cause of the last attempt, and the wrapper exits
+nonzero. The available figure below is after headroom and after the other
+reservations:
+
+- Memory was the cause: `resource-blocked: <estimate> MiB needed, <available> MiB available`,
+  from the figures of that memory decision, after a `memory refused:` line
+  that shows what the decision subtracted.
+- Memory stays unknown: `resource-blocked: available memory unknown`.
+- The slot was still held: the reason starts `slot-wait-expired:`, gives the
+  time waited and the limit, and names each slot's holder from its slot record
+  (`slot <n>: pid <pid> in <checkout> since <time>: <command>`), with no memory
+  figures.
+- The admission mutex was held elsewhere:
+  `admission-wait-expired: heavy-admission mutex; no process started`.
+
+**Runner scheduling and reporting.** The runner timeout starts after
+admission. Heavy rows wait before entering the worker pool. Light rows can
+start while heavy rows wait; the pool keeps the requested size. Acquire the
+slot before sorted checkout locks. Report slot wait in `slot_wait_seconds`,
+checkout lock wait in `lock_wait_seconds`, and cell build slot wait in
+`build_slot_wait_seconds`. Report build and runner memory wait in
+`memory_wait_seconds`.
+
+### Registry listing and test entry points
 
 `just list` reads `tools/bisection/runners.json`. Use `--issue 541`,
 `--kind gate` or `--heavy` to filter its static rows. `just plan` requires

@@ -586,10 +586,11 @@ always".
    per cell and reuse it; do not delete target directories between
    issues. Clean once, at the end of the lane.
    On Linux and macOS, heavy work uses the host-wide slot and the
-   memory admission check (maintainer ruling 2026-10-19 UTC). Run direct
-   cargo build, test and clippy commands through `just heavy`. The native
-   slot is not validated on Windows. Heavy work includes cell builds
-   and runners that `tools/bisection/runners.json` marks `"heavy": true`.
+   memory admission check (maintainer ruling 2026-10-19 UTC). The native
+   slot is not validated on Windows. Run direct cargo build, test and
+   clippy commands through `just heavy`. Cell builds and runners that
+   `tools/bisection/runners.json` marks `"heavy": true` are heavy work and
+   go through the slot too.
    The bisect, contract-diff, open-counter-diff, and transformed-options-sweep
    runners are heavy at every selection size. Direct `cargo build`,
    `cargo test`, and `cargo clippy` commands are heavy because they compile.
@@ -597,85 +598,17 @@ always".
    release builds, and LTO builds are also heavy. `run-all.py` applies
    both checks to cell builds and heavy runners. Start other heavy work
    with `just heavy -- <command>`.
-   The heavy child receives an inheritable slot descriptor through
-   `pass_fds`. The slot stays held until the child and its descendants
-   close their copies. The parent keeps its copy until it reaps the child.
-   It closes that copy without unlocking the shared file description.
-   On SIGTERM, SIGINT, or SIGHUP, terminate each child process group.
-   Reap the child before releasing checkout locks or the slot. Nested work
-   uses `OXPINYIN_HEAVY_SLOT_HELD` to identify the slot and holder pid.
-   Inherit only when the slot record names that pid, the pid is alive,
-   and the pid is an ancestor. Report a stale marker and acquire normally
-   if this check fails. Valid nested work does not acquire another slot.
-   Two slots are the default when total memory is at least 15 GiB; one
-   below that or when total memory is unknown. `OXPINYIN_HEAVY_SLOTS` sets
-   the slot count.
-   `OXPINYIN_LOCK_DIR` must name an absolute directory. Reject a relative
-   value with a clear message. Resolve the default directory once. Pass
-   the resolved path in each heavy child's environment. Nested calls use
-   that path after a directory change. The slot limits concurrent
-   heavy tasks. The defaults limit processes inside each task. Keep
-   `CARGO_BUILD_JOBS`, `RUST_TEST_THREADS`, and `--jobs` unset unless a
-   measurement needs fixed values. Explicit child settings stay unchanged.
-   Cargo job counts accept positive integers, negative integers, and
-   `default`. Test thread counts must be positive integers. Invalid values
-   cause a clear failure. On Linux, read MemAvailable and each visible
-   cgroup v2 ancestor's `memory.max` and `memory.current`, and each visible
-   cgroup v1 memory ancestor's `memory.limit_in_bytes`,
-   `memory.usage_in_bytes` and `memory.stat`.
-   Use the smallest known memory room. Read CPU affinity and each v2
-   ancestor's `cpu.max`, and each v1 CPU ancestor's `cpu.cfs_quota_us` and
-   `cpu.cfs_period_us`.
-   Report unreadable limits as unknown. Use the limits that can be read.
-   macOS and Windows keep their platform memory readers. If no memory
-   reading is available, treat the capacity as zero. Use no fixed fallback
-   for heavy work. Explicit caller settings do not bypass this check.
-   The plan before admission is provisional. Take the slot and read
-   resources again. Print the effective settings and any change. Take the short host-wide
-   `heavy-admission` lock before the final resource read and decision.
-   Charge each live holder in another locked slot its estimate less the
-   current use of its process tree (summed Pss on Linux, physical
-   footprint on macOS, working sets on Windows), at least zero; charge the
-   full estimate when any process's use cannot be read.
-   Record this holder's estimate in its slot file before releasing the
-   admission lock. Ignore records whose pid is dead. The cell build
-   requires its build estimate plus the headroom: 10% of total memory, at
-   most 2,048 MiB, and 2,048 MiB when total memory is unknown. Heavy runners
-   require the larger of `RUNNER_PEAK_MIB` and their build estimate.
-   The minimum build estimate is one rustc.
-   Explicit settings require room for their full process counts.
-   Under an inherited slot, insufficient memory causes immediate FAIL:
-   `resource-blocked: inherited slot; <estimate> MiB needed, <available> MiB available`.
-   Unknown memory under an inherited slot also causes immediate FAIL:
-   `resource-blocked: available memory unknown`.
-   Do not wait for memory while an ancestor holds that slot.
-   If memory is insufficient or unknown, release this task's acquired
-   slot before waiting. Hold no checkout lock during this wait. Print the
-   estimate, available memory after headroom, and `no process started`.
-   Retry slot acquisition and resource checks until admission or expiry.
-   `OXPINYIN_RESOURCE_WAIT_SECONDS` limits admission waits; its default
-   is 1800 seconds. One limit covers the slot wait and the memory wait.
-   Expiry gives FAIL with the cause of the last attempt. When memory was
-   the cause, the reason is
-   `resource-blocked: <estimate> MiB needed, <available> MiB available`,
-   from the figures of that memory decision. If memory stays unknown, the
-   reason is `resource-blocked: available memory unknown`. When the slot
-   was still held, the reason starts `slot-wait-expired:` and names the
-   holder of each slot (pid and checkout, from the slot record), the time
-   waited and the limit, with no memory figures. The wrapper exits nonzero.
-   `admission-wait-expired: heavy-admission mutex; no process started` applies when the shared wait limit passes while the heavy-admission mutex is held elsewhere.
-   Cancellation, expiry, and an OOM-killed child never count as PASS or SKIP. The runner timeout starts after
-   admission. Heavy rows wait before entering the worker pool. Light rows
-   can start while heavy rows wait; the pool keeps the requested size.
-   Acquire the slot before sorted checkout locks. Report slot wait in
-   `slot_wait_seconds`, checkout lock wait in `lock_wait_seconds`, and
-   cell build slot wait in `build_slot_wait_seconds`. Report build and
-   runner memory wait in `memory_wait_seconds`. Light work includes
-   `cargo fmt`, plans, listings, and harness tests. It also includes
-   `contract-diff.py --cases` against built artifacts and registry runners
-   that are not marked heavy. Light work runs without resource admission.
-   Runner scripts that need Cargo builds start them through
-   `just heavy --`.
+   Light work includes `cargo fmt`, plans, listings, and harness tests. It
+   also includes `contract-diff.py --cases` against built artifacts and
+   registry runners that are not marked heavy. Light work runs without
+   resource admission. Runner scripts that need Cargo builds start them
+   through `just heavy --`.
+   Leave `CARGO_BUILD_JOBS`, `RUST_TEST_THREADS` and `--jobs` unset unless
+   a measurement needs fixed values.
+   Cancellation, expiry, and an OOM-killed child never count as PASS or SKIP.
+   The mechanics (slot inheritance, signals, settings, memory readers,
+   estimates, waits and refusal reasons) are in `docs/runbooks/setup.md`,
+   "Heavy-work admission".
 9. The tkrzw cell runs only against a sound libtkrzw: one that
    `tools/tkrzw/distro-probe.sh` reports healthy, which
    `tools/cloud/setup.sh` provides on hosts whose packaged library is
