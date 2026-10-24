@@ -1,6 +1,6 @@
 # tkrzw concrete-class shim: evaluation (#1125)
 
-## Combined build: superseded attempt; adoption STOP
+## Combined build: measured results; adoption STOP
 
 Recorded 2026-10-24T14:20:15.605566+00:00. No PR. The measured source is base
 `f9257eae495e06677d74026e93c285b42c6c34e8` and prototype code
@@ -9,15 +9,20 @@ Both source arms include #1157 and lock cc **1.9.0** (find-msvc-tools
 0.1.15). The tkrzw policies were regenerated twice under that lockfile
 before measurement and matched byte-for-byte. No stale-cc result is claimed.
 
-The attempt completed before cancellation could be delivered. It is
-**superseded**, following the maintainer's instruction for an already-started
-attempt. Its base install was in the preceding heavy job; the PR install and
-all four-arm measurements were in one later heavy job. It does not satisfy
-the literal requirement that both installs occur inside the same job.
-The retained figures below describe this superseded attempt only. They are
-not an accepted final-build result and must not be mixed with a later run.
-No replacement run was started because the retained results also trigger
-the adoption STOP conditions:
+Both cc 1.9.0 arms were measured together in one campaign. The base facade
+build/install occurred in the preceding heavy job; the PR facade build/install
+and all measurements occurred in the following heavy job. No relevant build
+input changed between them. Both source arms satisfied the current-main and
+#1157 input requirement at the measurement freeze. The literal requirement
+that both facade builds occur inside one heavy job was not met, so this is
+not fully compliant with the requested build grouping.
+
+The earlier **superseded** label was a reporting error. The instruction's
+stale-cc condition did not apply; message arrival did not invalidate these
+measured observations. The figures below remain measurements of the stated
+sources and artifacts, rather than an accepted final adoption result. This
+correction changes no acceptance criterion and authorizes no rerun. The
+adoption STOP remains for these measured results and controls:
 
 - All four-arm cold/warm init and first-candidate wall controls are
   INCONCLUSIVE. Cold pinyin cost cannot be compared reliably with the
@@ -78,7 +83,7 @@ First candidate has 131 constant unresolved object+offset entries totaling
 matched each sample's unique executable loader mapping; none varied or
 was unmatched. Raw profiles and loader records remain local.
 
-### Superseded four-arm results
+### Four-arm measured results
 
 M1 total Pss, KiB; paired differences and 95% bootstrap intervals.
 
@@ -290,8 +295,9 @@ all other bytes, ordered bucket chains and both reload directions stay exact.
 Use the pinned revisions above, the provisioned environment from
 `tools/cloud/setup.sh --cells "bdb kc tkrzw"`, an owned ext4 TMPDIR and
 separate targets/stages. Run builds and measurements through `just heavy`.
-A replacement accepted campaign would put **both** installs in the same
-heavy job. No replacement is authorized by this STOP report.
+A future campaign, if separately authorized, must put **both** facade builds
+and installs in the same heavy job to satisfy the build-grouping requirement.
+No new campaign is authorized by this reporting correction.
 
 ```sh
 R=/home/sheng/Documents/Codex/2026-10-24/task-3
@@ -404,7 +410,7 @@ profile schema and C worker input. This describes source-input identity,
 not a new binary-hash or performance result. The measured source remains
 08e17882 under the new source-only tag. No further build, policy generation
 or measurement followed the STOP. A future adoption decision must resolve
-the superseded run and failed guardrails; no PR is opened.
+the build-grouping limitation and failed guardrails; no PR is opened.
 
 ## Cold-page diagnosis: records absent; same-setup one-pass entry point blocked
 
