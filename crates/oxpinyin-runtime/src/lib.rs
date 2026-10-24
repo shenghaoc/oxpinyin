@@ -253,6 +253,14 @@ impl AddonSet {
         self.dict.lookup_into(syllables, out)
     }
 
+    fn lookup_candidates_into(
+        &self,
+        syllables: &[SyllableKey],
+        out: &mut Vec<PhraseEntry>,
+    ) -> Result<(), DictError> {
+        self.dict.lookup_candidates_into(syllables, out)
+    }
+
     fn prefix_exists(&self, syllables: &[SyllableKey]) -> Result<bool, DictError> {
         self.dict.prefix_exists(syllables)
     }
@@ -469,6 +477,46 @@ pub struct RuntimeDict {
 }
 
 impl RuntimeDict {
+    /// Shared lookup keeps search side effects and visibility identical;
+    /// candidate collection omits only the pronunciation prices it discards.
+    fn fill_lookup(
+        &self,
+        syllables: &[SyllableKey],
+        out: &mut Vec<PhraseEntry>,
+        price: bool,
+    ) -> Result<bool, DictError> {
+        let unreadable = if price {
+            self.system.lookup_into_flagged(syllables, out)?
+        } else {
+            self.system.lookup_candidates_into(syllables, out)?
+        };
+        let user = self.user_lookup()?;
+        #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+        self.note_user_search(syllables, &user);
+        out.extend(user.lookup(syllables));
+        // 074a2219 phrase_index.h:136-163 uses wrapping guint32 sums;
+        // pinyin_lookup2.cpp:437-466 reads pronunciation possibility from
+        // the current item even when the match came from the shipped index.
+        if price && let Some(query) = self.effective_query(syllables) {
+            for entry in out.iter_mut() {
+                if let Some((matched, total)) =
+                    self.effective_possibility(&query, entry.token().value())
+                {
+                    *entry = entry
+                        .clone()
+                        .with_pronunciation_possibility(u64::from(matched), u64::from(total));
+                }
+            }
+        }
+        if self.token_filter_active() {
+            // An unloaded library's phrases leave every read: upstream
+            // frees the sub-index (`phrase_index.cpp:260-268`), the
+            // mask keeps the monolithic tables resident but invisible.
+            out.retain(|entry| self.library_visible_token(entry.token().value()));
+        }
+        Ok(unreadable)
+    }
+
     /// The user pinyin table's search for `syllables`, as the pin's
     /// `ChewingLargeTable2::search` runs it: the table entry it leaves
     /// behind is what a later `mask_out` walk starts from (#785).
@@ -1434,32 +1482,15 @@ impl Dictionary for RuntimeDict {
         syllables: &[Self::Syllable],
         out: &mut Vec<Self::Entry>,
     ) -> Result<bool, Self::Error> {
-        let unreadable = self.system.lookup_into_flagged(syllables, out)?;
-        let user = self.user_lookup()?;
-        #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
-        self.note_user_search(syllables, &user);
-        out.extend(user.lookup(syllables));
-        // 074a2219 phrase_index.h:136-163 uses wrapping guint32 sums;
-        // pinyin_lookup2.cpp:437-466 reads pronunciation possibility from
-        // the current item even when the match came from the shipped index.
-        if let Some(query) = self.effective_query(syllables) {
-            for entry in out.iter_mut() {
-                if let Some((matched, total)) =
-                    self.effective_possibility(&query, entry.token().value())
-                {
-                    *entry = entry
-                        .clone()
-                        .with_pronunciation_possibility(u64::from(matched), u64::from(total));
-                }
-            }
-        }
-        if self.token_filter_active() {
-            // An unloaded library's phrases leave every read: upstream
-            // frees the sub-index (`phrase_index.cpp:260-268`), the
-            // mask keeps the monolithic tables resident but invisible.
-            out.retain(|entry| self.library_visible_token(entry.token().value()));
-        }
-        Ok(unreadable)
+        self.fill_lookup(syllables, out, true)
+    }
+
+    fn lookup_candidates_into(
+        &self,
+        syllables: &[Self::Syllable],
+        out: &mut Vec<Self::Entry>,
+    ) -> Result<bool, Self::Error> {
+        self.fill_lookup(syllables, out, false)
     }
 
     fn phrase_prefix_exists(&self, syllables: &[Self::Syllable]) -> Result<bool, Self::Error> {
@@ -1560,6 +1591,18 @@ impl Dictionary for RuntimeDict {
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         addons.lookup_into(syllables, out)
+    }
+
+    fn lookup_addon_candidates_into(
+        &self,
+        syllables: &[Self::Syllable],
+        out: &mut Vec<Self::Entry>,
+    ) -> Result<(), Self::Error> {
+        let addons = self
+            .addons
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        addons.lookup_candidates_into(syllables, out)
     }
 
     fn phrase_prefix_exists_addon(
@@ -2703,6 +2746,66 @@ mod tests {
             .join("fixtures")
             .join("w3")
             .join(oxpinyin_data::DEFAULT_STORE_EXT)
+    }
+
+    #[test]
+    fn candidate_lookup_omits_prices_without_changing_live_priced_reads() {
+        let runtime = Runtime::open(&w3_dir(), None).unwrap();
+        let dict = Arc::new(runtime.dict());
+        let ni = SyllableKey::from_text("ni").unwrap();
+        let token = dict.system().tokens_for_text("你").unwrap()[0];
+        let mut store = runtime.user_store().unwrap();
+        let keys = [oxpinyin_user::toned_key(ni.index(), 3).unwrap()];
+        store
+            .add_system_phrase_in(1, Some(token), "你", &keys, Some(5))
+            .unwrap();
+        let mut candidates = Vec::new();
+        assert!(!dict.lookup_candidates_into(&[ni], &mut candidates).unwrap());
+        assert!(!candidates.is_empty());
+        assert!(
+            candidates
+                .iter()
+                .all(|entry| entry.pronunciation_possibility().is_none())
+        );
+        let priced = dict.lookup(&[ni]).unwrap();
+        let rows = |entries: &[PhraseEntry]| {
+            entries
+                .iter()
+                .map(|entry| (entry.token(), entry.text().to_owned()))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(rows(&candidates), rows(&priced));
+        assert!(
+            priced
+                .iter()
+                .find(|entry| entry.token().value() == token)
+                .unwrap()
+                .pronunciation_possibility()
+                .is_some()
+        );
+        assert!(
+            dict.trellis_records(&[ni], &[3])
+                .unwrap()
+                .iter()
+                .find(|entry| entry.token().value() == token)
+                .unwrap()
+                .pronunciation_possibility()
+                .is_some()
+        );
+        assert!(dict.unload_library(1));
+        dict.lookup_candidates_into(&[ni], &mut candidates).unwrap();
+        assert!(
+            candidates
+                .iter()
+                .all(|entry| entry.token().value() != token)
+        );
+        assert!(dict.load_library(1));
+        dict.lookup_candidates_into(&[ni], &mut candidates).unwrap();
+        assert!(
+            candidates
+                .iter()
+                .any(|entry| entry.token().value() == token)
+        );
     }
 
     #[test]

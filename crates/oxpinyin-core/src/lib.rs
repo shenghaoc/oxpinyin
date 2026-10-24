@@ -331,6 +331,35 @@ pub trait Dictionary {
         Ok(false)
     }
 
+    /// Candidate-window lookup: preserves tokens, text, order and the
+    /// unreadable-item flag, but need not compute pronunciation prices.
+    /// Only candidate collection may use this; scoring and pronunciation
+    /// validation use the priced lookup/trellis operations.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::lookup_into_flagged`].
+    fn lookup_candidates_into(
+        &self,
+        syllables: &[Self::Syllable],
+        out: &mut Vec<Self::Entry>,
+    ) -> Result<bool, Self::Error> {
+        self.lookup_into_flagged(syllables, out)
+    }
+
+    /// Addon candidate-window lookup, with the same pricing distinction.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::lookup_addon_into`].
+    fn lookup_addon_candidates_into(
+        &self,
+        syllables: &[Self::Syllable],
+        out: &mut Vec<Self::Entry>,
+    ) -> Result<(), Self::Error> {
+        self.lookup_addon_into(syllables, out)
+    }
+
     /// Whether a stored phrase's pinyin can extend `syllables`.
     ///
     /// This is libpinyin's `SEARCH_CONTINUED` probe: the phrase index reports
@@ -664,6 +693,22 @@ impl<D: Dictionary + ?Sized> Dictionary for &D {
         out: &mut Vec<Self::Entry>,
     ) -> Result<bool, Self::Error> {
         (**self).lookup_into_flagged(syllables, out)
+    }
+
+    fn lookup_candidates_into(
+        &self,
+        syllables: &[Self::Syllable],
+        out: &mut Vec<Self::Entry>,
+    ) -> Result<bool, Self::Error> {
+        (**self).lookup_candidates_into(syllables, out)
+    }
+
+    fn lookup_addon_candidates_into(
+        &self,
+        syllables: &[Self::Syllable],
+        out: &mut Vec<Self::Entry>,
+    ) -> Result<(), Self::Error> {
+        (**self).lookup_addon_candidates_into(syllables, out)
     }
 
     fn phrase_prefix_exists(&self, syllables: &[Self::Syllable]) -> Result<bool, Self::Error> {
