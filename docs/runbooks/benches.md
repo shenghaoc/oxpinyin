@@ -110,11 +110,14 @@ Native verification compares U1–U6, the full script, witness answers,
 save/reopen observations, stderr, the user filename set and raw non-database
 file bytes. It never reads database rows. Python hashes the worker's exact
 canonical U1–U6 record including the final newline. The parent reads stopped
-child memory at every checkpoint. macOS supplies RSS and virtual size only;
-other memory metrics stay unavailable. macOS virtual size includes the shared
-region (about 488 GB), so the residency band would pass any change: it is
-reported `unavailable`, as not informative, and RSS is the macOS memory
-metric. Memory-run timings are excluded.
+child memory at every checkpoint. Linux reads `/proc`; macOS reads the shared
+Darwin libproc binding and reports Darwin-named fields: resident size and its
+peak, physical footprint and its interval/lifetime maxima, faults, page-ins,
+and disk bytes read and written. Memory sizes are KiB and counts stay counts;
+Linux-named fields stay unavailable on macOS. The worker reports its own
+resident peak at each handshake; a controller-side task-port read is only a
+fallback. A value neither source provides is unavailable, never zero.
+Memory-run timings are excluded.
 
 `--stage verify` stops after verification and separate hostile probes.
 `--stage instrument` also checks Linux Callgrind Ir. Init uses two fresh

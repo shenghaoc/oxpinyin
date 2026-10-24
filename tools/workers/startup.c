@@ -25,13 +25,17 @@
  *                              names handshake points. At each point the
  *                              worker writes "point NAME\n" and blocks until
  *                              it reads "\n", so the parent can read this
- *                              process's memory (§7.8 item 2).
+ *                              process's memory (§7.8 item 2). On macOS the
+ *                              line also carries the worker's getrusage
+ *                              resident peak in bytes: "point NAME PEAK\n".
  *
  * Output: one JSON record per line. The "units" record is the canonical
  * U1–U6 record; the controller hashes it (§7.8 item 3), so it carries no
  * time, address or path. Every record is buffered and written only when the
  * run succeeds. process_wall is the controller's: it spans the process,
- * which this worker cannot observe from inside.
+ * which this worker cannot observe from inside. When OXPINYIN_STARTUP_LOADER
+ * is set, Linux emits "loaded_object" records with segment mappings and macOS
+ * emits "loaded_image" records with name, slide and Mach-O UUID.
  *
  * Exit: 0 success; 1 refusal (missing library, a file that is not a
  * loadable shared library, a missing symbol, a missing input) or a failed
@@ -66,6 +70,9 @@
  * _XOPEN_SOURCE and _POSIX_C_SOURCE itself under _GNU_SOURCE (glibc 2.42
  * sets 800 and 202405L); a later definition is a -Werror redefinition. */
 #include <link.h>
+#else
+#include <mach-o/dyld.h>
+#include <mach-o/loader.h>
 #endif
 #if !defined(CLOCK_MONOTONIC_RAW)
 #define CLOCK_MONOTONIC_RAW CLOCK_MONOTONIC
@@ -289,8 +296,18 @@ static struct clock_pair between(struct clock_pair start, struct clock_pair end)
 
 static void reach(enum point point) {
     if (!handshake[point]) return;
-    char message[64];
+    char message[96];
+#if defined(__APPLE__)
+    /* The parent cannot read another process's resident peak without a task
+     * port, so the worker reports its own getrusage high-water mark. */
+    struct rusage usage;
+    int length = getrusage(RUSAGE_SELF, &usage) == 0 ?
+        snprintf(message, sizeof message, "point %s %llu\n", POINT_NAMES[point],
+                 (unsigned long long)usage.ru_maxrss) :
+        snprintf(message, sizeof message, "point %s\n", POINT_NAMES[point]);
+#else
     int length = snprintf(message, sizeof message, "point %s\n", POINT_NAMES[point]);
+#endif
     for (int written = 0; written < length;) {
         ssize_t n = write(handshake_write, message + written, (size_t)(length - written));
         if (n < 0 && errno == EINTR) continue;
@@ -436,7 +453,56 @@ void startup_fini_unit(void *context) {
 
 static void emit_candidates(void *instance, unsigned count, unsigned *max_rank);
 
-#if !defined(__APPLE__)
+#if defined(__APPLE__)
+static bool image_uuid(const struct mach_header *header, uint8_t uuid[16]) {
+    const uint8_t *commands;
+    uint32_t count;
+    if (header->magic == MH_MAGIC_64) {
+        const struct mach_header_64 *header64 = (const struct mach_header_64 *)header;
+        commands = (const uint8_t *)(header64 + 1);
+        count = header64->ncmds;
+    } else if (header->magic == MH_MAGIC) {
+        commands = (const uint8_t *)(header + 1);
+        count = header->ncmds;
+    } else {
+        return false;
+    }
+    for (uint32_t i = 0; i < count; ++i) {
+        const struct load_command *command = (const struct load_command *)commands;
+        if (command->cmdsize < sizeof *command) return false;
+        if (command->cmd == LC_UUID && command->cmdsize >= sizeof(struct uuid_command)) {
+            memcpy(uuid, ((const struct uuid_command *)command)->uuid, 16);
+            return true;
+        }
+        commands += command->cmdsize;
+    }
+    return false;
+}
+
+static void emit_uuid(const uint8_t uuid[16]) {
+    char text[37];
+    snprintf(text, sizeof text,
+             "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-"
+             "%02x%02x%02x%02x%02x%02x",
+             uuid[0], uuid[1], uuid[2], uuid[3], uuid[4], uuid[5], uuid[6], uuid[7],
+             uuid[8], uuid[9], uuid[10], uuid[11], uuid[12], uuid[13], uuid[14], uuid[15]);
+    emit_string(text);
+}
+
+static void emit_loaded_images(void) {
+    uint32_t count = _dyld_image_count();
+    for (uint32_t i = 0; i < count; ++i) {
+        const struct mach_header *header = _dyld_get_image_header(i);
+        uint8_t uuid[16];
+        emit("{\"startup\":\"loaded_image\",\"pid\":%ld,\"name\":", (long)getpid());
+        emit_string(_dyld_get_image_name(i));
+        emit(",\"slide\":%lld,\"uuid\":", (long long)_dyld_get_image_vmaddr_slide(i));
+        if (header && image_uuid(header, uuid)) emit_uuid(uuid);
+        else emit("null");
+        emit("}\n");
+    }
+}
+#else
 static int emit_loaded_object(struct dl_phdr_info *info, size_t size, void *data) {
     (void)size;
     (void)data;
@@ -840,9 +906,13 @@ int main(int argc, char **argv) {
         finish();
     }
     run_units(path, flags, data, user, stop, !strcmp(mode, "verify"));
-#if !defined(__APPLE__)
-    if (getenv("OXPINYIN_STARTUP_LOADER")) dl_iterate_phdr(emit_loaded_object, NULL);
+    if (getenv("OXPINYIN_STARTUP_LOADER")) {
+#if defined(__APPLE__)
+        emit_loaded_images();
+#else
+        dl_iterate_phdr(emit_loaded_object, NULL);
 #endif
+    }
     emit_units();
     if (!strcmp(mode, "measure")) emit_times();
     if (!strcmp(mode, "verify")) transcript(data, user, witness);

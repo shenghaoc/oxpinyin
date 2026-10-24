@@ -20,6 +20,8 @@ PROFILES = ('empty', 'modest', 'phrases', 'journals')
 ARMS = ('base', 'pr', 'control')
 TIMING_METRICS = ('lib_load', 'init', 'config', 'alloc', 'first_candidate_phase', 'ttfc',
                   'setup_plus_first_candidate', 'drop_instance', 'fini', 'process_wall')
+DIAGNOSTIC_METRICS = ('minor_faults', 'major_faults', 'faults', 'pageins',
+                      'disk_bytes_read', 'disk_bytes_written')
 SAMPLE_SCHEMA = 'oxpinyin-initbench-sample-v1'
 OBSERVATION_SCHEMA = 'oxpinyin-initbench-observation-v1'
 
@@ -221,8 +223,9 @@ def describe(values):
 def report_values(kind, values, **context):
     """Emit a distribution report with the appropriate PR/control stability rule.
 
-    Timing uses paired ratios; residency uses KiB differences. Fault counts
-    are diagnostic and macOS virtual size is unavailable. Missing values
+    Timing uses paired ratios; residency uses KiB differences. Fault, page-in
+    and disk-I/O counts are diagnostic. macOS reports resident and physical
+    footprint metrics; the Linux names stay unavailable there. Missing values
     produce unavailable reports; PR/base ratios require stable controls and
     positive base samples.
     """
@@ -231,15 +234,16 @@ def report_values(kind, values, **context):
         return
     if kind == 'timing':
         control = stats.stable_control(values['pr'], values['control'])
-    elif context['metric'] in ('minor_faults', 'major_faults'):
-        # Fault counts are observations, not deterministic instruction/heap accounting
+    elif context['metric'] in DIAGNOSTIC_METRICS:
+        # Counts are observations, not deterministic instruction/heap accounting
         # or residency levels. Report their distributions without a ratio gate.
         emit(kind, **context, verdict='diagnostic', summaries={a: describe(v) for a, v in values.items()},
              pr_base_ratio=None)
         return
     elif sys.platform == 'darwin' and context['metric'] == 'virtual_size':
-        # macOS virtual size includes the shared region (about 488 GB), so the residency band, 1% of
-        # the median (about 4.7 GiB), passes any change. RSS is the macOS memory metric (§7.7).
+        # The macOS reader reports Darwin-named resident and footprint fields;
+        # virtual size is unavailable there. Retained or synthetic Linux-shaped
+        # samples still get the old refusal rather than a misleading verdict.
         emit(kind, **context, verdict='unavailable', summaries=None, pr_base_ratio=None,
              reason='not informative on macOS: virtual size includes the shared region')
         return
@@ -536,13 +540,21 @@ def campaign_run(args, profiles, work, admission):
                             if index >= warmups:
                                 samples[arm].append(row)
                     if memory:
+                        def memory_value(row, point, metric):
+                            """Return one checkpoint metric, deriving Linux rss_delta only when both RSS values exist."""
+                            if metric == 'rss_delta':
+                                current = row['checkpoints'][point].get('rss')
+                                start = row['checkpoints']['start'].get('rss')
+                                return None if current is None or start is None else current - start
+                            return row['checkpoints'][point].get(metric)
                         for point in worker.POINTS:
                             for metric in native.MEMORY_FIELDS:
-                                values = {a: [r['checkpoints'][point][metric] if metric != 'rss_delta' else
-                                              r['checkpoints'][point]['rss'] - r['checkpoints']['start']['rss'] for r in rows]
+                                values = {a: [memory_value(r, point, metric) for r in rows]
                                           for a, rows in samples.items()}
-                                report_values('memory', values, facade=facade, profile=name, point=point, metric=metric,
-                                              unit='count' if metric.endswith('_faults') else 'KiB')
+                                unit = ('count' if metric in ('minor_faults', 'major_faults', 'faults', 'pageins')
+                                        else 'bytes' if metric.startswith('disk_') else 'KiB')
+                                report_values('memory', values, facade=facade, profile=name, point=point,
+                                              metric=metric, unit=unit)
                     else:
                         for metric in TIMING_METRICS:
                             def timing(row):

@@ -100,11 +100,10 @@ class ControllerTests(unittest.TestCase):
         library = self.root / 'base/lib/libpinyin.dylib'
         library.parent.mkdir()
         library.write_bytes(b'oxpinyin')
-        # Exercise every metadata/memory command, including both otool options.
+        # Exercise every metadata command, including both otool options.
         calls = [
             ('darwin', native.subprocess, 'check_output', lambda: native.filesystem(self.root), ['df']),
             ('darwin', native.subprocess, 'run', lambda: native.filesystem(self.root), ['diskutil']),
-            ('darwin', native.subprocess, 'check_output', lambda: native.read_memory(123), ['ps']),
             ('darwin', st.subprocess, 'check_output', lambda: st.library(self.root / 'base', 'pinyin'), ['nm']),
             ('darwin', st.subprocess, 'check_output', lambda: st.artifact(library), ['otool', '-L']),
             ('darwin', st.subprocess, 'check_output', lambda: st.artifact(library), ['otool', '-D']),
@@ -495,17 +494,27 @@ class ControllerTests(unittest.TestCase):
                 self.assertNotIn('STABLE', line)
                 self.assertEqual(len(line.splitlines()), 1)
 
-    def test_macos_rss_verdicts_are_unchanged(self):
-        # RSS stays the macOS memory metric: STABLE with a PR/base ratio inside the band, INCONCLUSIVE
-        # without one outside it, and the record the controller prints on Linux for the same samples.
-        for metric in ('rss', 'rss_delta'):
-            for change, verdict, ratio in ((50, 'STABLE', {'ci95': [1.0, 1.0], 'median': 1.0}), (200, 'INCONCLUSIVE', None)):
+    def test_macos_resident_and_footprint_verdicts_use_darwin_names(self):
+        # The Darwin reader reports these metrics; the PR/base ratio and control
+        # rules are the same residency rules Linux uses for its own names.
+        for metric in ('resident_kib', 'physical_footprint_kib',
+                       'physical_footprint_lifetime_max_kib'):
+            for change, verdict, ratio in ((50, 'STABLE', {'ci95': [1.0, 1.0], 'median': 1.0}),
+                                           (200, 'INCONCLUSIVE', None)):
                 with self.subTest(metric=metric, change=change):
                     line = self.memory_line('darwin', metric, 10_000, change)
                     record = json.loads(line)
                     self.assertEqual((record['verdict'], record['pr_base_ratio']), (verdict, ratio))
                     self.assertEqual(record['control']['stable'], verdict == 'STABLE')
                     self.assertEqual(line, self.memory_line('linux', metric, 10_000, change))
+
+    def test_darwin_counts_are_diagnostic_without_a_ratio(self):
+        for metric in ('faults', 'pageins', 'disk_bytes_read', 'disk_bytes_written'):
+            with self.subTest(metric=metric), mock.patch.object(st, 'emit') as emit:
+                st.report_values('memory', {'base': [1] * 4, 'pr': [1] * 4, 'control': [2] * 4},
+                                 metric=metric)
+            self.assertEqual(emit.call_args.kwargs['verdict'], 'diagnostic')
+            self.assertIsNone(emit.call_args.kwargs['pr_base_ratio'])
 
     def test_linux_virtual_size_output_is_byte_identical_to_before(self):
         # Linux reads VmSize, so virtual size keeps its residency verdict. The digests are SHA-256 of the lines
@@ -551,17 +560,55 @@ class ControllerTests(unittest.TestCase):
                          (10, 100, 3, 2, 6))
         self.assertIsNone(memory['rss_delta'])
 
-    def test_macos_parent_memory_is_ps_rss_and_virtual_size_only(self):
-        # §7.7: on macOS the parent reads RSS and virtual size with ps; every other field stays unavailable.
+    def test_darwin_binding_fields_map_to_darwin_names_in_kib(self):
+        usage = SimpleNamespace(
+            ri_resident_size=8 * 1024,
+            ri_phys_footprint=10 * 1024,
+            ri_interval_max_phys_footprint=11 * 1024,
+            ri_lifetime_max_phys_footprint=12 * 1024,
+            ri_diskio_bytesread=13,
+            ri_diskio_byteswritten=14,
+        )
+        info = SimpleNamespace(pti_faults=15, pti_pageins=16)
         with mock.patch.object(native.sys, 'platform', 'darwin'), \
-                mock.patch.object(native.subprocess, 'check_output', return_value=' 8 100\n') as ps:
+                mock.patch.object(native.darwin, 'rusage', return_value=usage), \
+                mock.patch.object(native.darwin, 'taskinfo', return_value=info), \
+                mock.patch.object(native.darwin, 'resident_peak', return_value=9 * 1024), \
+                mock.patch.object(native.subprocess, 'check_output') as ps:
             memory = native.read_memory(123)
-        self.assertEqual(ps.call_args.args[0], ['ps', '-o', 'rss=', '-o', 'vsz=', '-p', '123'])
-        self.assertEqual((memory['rss'], memory['virtual_size']), (8, 100))
-        self.assertTrue(all(memory[k] is None for k in native.MEMORY_FIELDS if k not in ('rss', 'virtual_size')))
+            self_observed = native.read_memory(123, resident_peak_bytes=20 * 1024)
+        ps.assert_not_called()
+        self.assertEqual(self_observed['resident_peak_kib'], 20)
+        self.assertEqual((memory['resident_kib'], memory['resident_peak_kib']), (8, 9))
+        self.assertEqual((memory['physical_footprint_kib'],
+                          memory['physical_footprint_interval_max_kib'],
+                          memory['physical_footprint_lifetime_max_kib']), (10, 11, 12))
+        self.assertEqual((memory['faults'], memory['pageins']), (15, 16))
+        self.assertEqual((memory['disk_bytes_read'], memory['disk_bytes_written']), (13, 14))
+        for field in native.LINUX_MEMORY_FIELDS:
+            self.assertIsNone(memory[field], field)
+
+    def test_darwin_unavailable_call_reports_none_not_zero(self):
         with mock.patch.object(native.sys, 'platform', 'darwin'), \
-                mock.patch.object(native.subprocess, 'check_output', return_value='\n'), self.assertRaises(ValueError):
-            native.read_memory(123)
+                mock.patch.object(native.darwin, 'rusage', side_effect=OSError(2, 'gone')), \
+                mock.patch.object(native.darwin, 'taskinfo', side_effect=OSError(2, 'gone')), \
+                mock.patch.object(native.darwin, 'resident_peak', return_value=None):
+            memory = native.read_memory(123)
+        self.assertTrue(all(memory[field] is None for field in native.DARWIN_MEMORY_FIELDS))
+        self.assertTrue(all(memory[field] is None for field in native.LINUX_MEMORY_FIELDS))
+
+    @unittest.skipUnless(sys.platform == 'darwin', 'Darwin libproc binding')
+    def test_darwin_binding_reads_this_process(self):
+        observed = native.darwin.observation(os.getpid())
+        self.assertGreater(observed['resident_bytes'], 0)
+        self.assertGreater(observed['physical_footprint_bytes'], 0)
+        self.assertGreater(observed['physical_footprint_lifetime_max_bytes'], 0)
+        self.assertGreaterEqual(observed['faults'], 0)
+        self.assertGreaterEqual(observed['pageins'], 0)
+        self.assertGreaterEqual(observed['disk_bytes_read'], 0)
+        self.assertGreaterEqual(observed['disk_bytes_written'], 0)
+        self.assertTrue(observed['resident_peak_bytes'] is None
+                        or isinstance(observed['resident_peak_bytes'], int))
 
     def test_raw_files_are_not_normalized_and_database_rows_are_not_read(self):
         (self.root / 'user.bin').write_bytes(b'1234timestamp')
@@ -594,10 +641,11 @@ class WorkerIntegration(unittest.TestCase):
         self.enterContext(mock.patch.object(worker, 'exports', self.stub_exports))
 
     def test_parent_reads_live_stopped_child_at_every_handshake(self):
-        pids = []
-        def read(pid):
+        pids, peaks = [], []
+        def read(pid, **kwargs):
             os.kill(pid, 0)
             pids.append(pid)
+            peaks.append(kwargs.get('resident_peak_bytes'))
             return dict(rss=10)
         with mock.patch.object(native, 'read_memory', side_effect=read):
             row = self.campaign.run(self.stub, 'pinyin', self.profile, memory=True)
@@ -605,25 +653,35 @@ class WorkerIntegration(unittest.TestCase):
         self.assertEqual(len(pids), 7)
         self.assertEqual(len(set(pids)), 1)
         self.assertNotEqual(pids[0], os.getpid())
+        if sys.platform == 'darwin':
+            self.assertTrue(all(isinstance(peak, int) and peak > 0 for peak in peaks))
+        else:
+            self.assertEqual(peaks, [None] * len(worker.POINTS))
         verify = self.campaign.run(self.stub, 'pinyin', self.profile, mode='verify')
         self.assertEqual(verify['digest'], row['digest'])
         self.assertFalse((self.root / 'sample').exists())
 
     def test_parent_reads_the_live_stopped_child_memory_at_each_handshake(self):
-        # No mock: the host reader (/proc on Linux, ps on macOS, §7.7) runs against the worker
-        # while it blocks on each handshake, and must return that process's residency.
+        # No mock: /proc on Linux and the shared Darwin libproc binding on macOS
+        # run against the worker while it blocks on each handshake.
         row = self.campaign.run(self.stub, 'pinyin', self.profile, memory=True)
         self.assertEqual(tuple(row['checkpoints']), worker.POINTS)
         for point, memory in row['checkpoints'].items():
             with self.subTest(point=point):
                 self.assertEqual(set(memory), set(native.MEMORY_FIELDS))
-                self.assertGreater(memory['rss'], 0)
-                self.assertGreater(memory['virtual_size'], 0)
-                unavailable = sorted(k for k in native.MEMORY_FIELDS if memory[k] is None)
                 if sys.platform == 'darwin':
-                    self.assertEqual(unavailable, sorted(k for k in native.MEMORY_FIELDS if k not in ('rss', 'virtual_size')))
+                    self.assertGreater(memory['resident_kib'], 0)
+                    self.assertGreater(memory['resident_peak_kib'], 0)
+                    self.assertGreater(memory['physical_footprint_kib'], 0)
+                    self.assertGreaterEqual(memory['faults'], 0)
+                    self.assertGreaterEqual(memory['pageins'], 0)
+                    for field in native.LINUX_MEMORY_FIELDS:
+                        self.assertIsNone(memory[field], field)
                 else:
-                    self.assertEqual(unavailable, ['rss_delta'])
+                    self.assertGreater(memory['rss'], 0)
+                    self.assertGreater(memory['virtual_size'], 0)
+                    self.assertEqual(sorted(k for k in native.MEMORY_FIELDS if memory[k] is None),
+                                     sorted(['rss_delta', *native.DARWIN_MEMORY_FIELDS]))
 
     def test_sequential_copies_use_identical_user_path_without_stderr_normalization(self):
         paths = []
