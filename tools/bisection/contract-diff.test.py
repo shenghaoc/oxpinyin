@@ -1016,7 +1016,7 @@ class PlatformExclusionTests(DriverFixtureCase):
                 self.assertIn('#1137', spec['platform_skip_reason'])
         self.assertIn('#1137', contract['ARM64_EXCLUSION_REASON'])
 
-    def invoke(self, host_platform):
+    def invoke(self, host_platform, extra_args=(), cells=None, observations=False):
         with tempfile.TemporaryDirectory() as scratch:
             prefix = Path(scratch)
             (prefix / 'lib/libpinyin/data').mkdir(parents=True)
@@ -1028,31 +1028,78 @@ class PlatformExclusionTests(DriverFixtureCase):
                                 platforms=('linux/amd64',),
                                 platform_skip_reason='#1137: arm64 exclusion')
                      for name in ('slow', 'next')}
+            for name, allowed in (cells or {}).items():
+                cases[name]['cells'] = allowed
             args = ['driver', 'bdb', str(prefix), str(prefix / 'lib/libpinyin.so'),
-                    '--cases', 'slow,next']
-            output = io.StringIO()
+                    '--cases', 'slow,next', *extra_args]
+            capture = Path(scratch, 'observations.jsonl')
+            if observations:
+                args += ['--observations', str(capture)]
+            output, errors = io.StringIO(), io.StringIO()
             with patch.object(driver, 'HOST_ORACLE_PLATFORM', host_platform), \
                     patch.object(driver, 'CASES', cases), \
                     patch.object(driver, 'run_worker', return_value=observation(result={'ret': True})) as run, \
-                    patch.object(driver.sys, 'argv', args), contextlib.redirect_stdout(output):
+                    patch.object(driver.sys, 'argv', args), contextlib.redirect_stdout(output), \
+                    contextlib.redirect_stderr(errors):
                 status = driver.main()
             rows = [json.loads(line) for line in output.getvalue().splitlines()
                     if line.startswith('{') and 'case' in json.loads(line)]
-            return status, rows, run
+            overrides = [json.loads(line) for line in errors.getvalue().splitlines()
+                         if line.startswith('{') and 'override' in json.loads(line)]
+            captured = capture.read_text() if observations else None
+            return status, rows, run, overrides, captured
 
     def test_arm64_verdict_is_skip_with_reason_and_starts_no_worker(self):
-        status, rows, run = self.invoke('linux/arm64')
+        status, rows, run, overrides, captured = self.invoke('linux/arm64')
         self.assertEqual(status, 0)
         self.assertEqual([row['verdict'] for row in rows], ['SKIP', 'SKIP'])
         self.assertEqual({row['reason'] for row in rows}, {'#1137: arm64 exclusion'})
         self.assertEqual(run.call_count, 0)
+        self.assertEqual(overrides, [])
+        self.assertIsNone(captured)
 
     def test_amd64_still_runs_and_reports_match(self):
-        status, rows, run = self.invoke('linux/amd64')
+        status, rows, run, overrides, captured = self.invoke('linux/amd64')
         self.assertEqual(status, 0)
         self.assertEqual([row['verdict'] for row in rows], ['MATCH', 'MATCH'])
         self.assertNotIn('reason', rows[0])
         self.assertEqual(run.call_count, 4)
+        self.assertEqual(overrides, [])
+        self.assertIsNone(captured)
+
+    def test_arm64_override_runs_cases_and_writes_observations(self):
+        status, rows, run, overrides, captured = self.invoke(
+            'linux/arm64', ['--run-platform-excluded'], observations=True)
+        self.assertEqual(status, 0)
+        self.assertEqual([row['verdict'] for row in rows], ['MATCH', 'MATCH'])
+        self.assertEqual(run.call_count, 4)
+        self.assertEqual({item['case'] for item in overrides}, {'slow', 'next'})
+        self.assertEqual({item['reason'] for item in overrides}, {'#1137: arm64 exclusion'})
+        self.assertTrue(all(item['override'] == 'platform-excluded' for item in overrides))
+        self.assertTrue(all(item['note'] == 'not an ordinary gate' for item in overrides))
+        observations = [json.loads(line) for line in captured.splitlines()]
+        self.assertEqual([item['case'] for item in observations], ['slow', 'next'])
+        self.assertEqual({item['cell'] for item in observations}, {'bdb'})
+
+    def test_override_flag_changes_nothing_on_amd64(self):
+        status, rows, run, overrides, captured = self.invoke(
+            'linux/amd64', ['--run-platform-excluded'])
+        self.assertEqual(status, 0)
+        self.assertEqual([row['verdict'] for row in rows], ['MATCH', 'MATCH'])
+        self.assertEqual(run.call_count, 4)
+        self.assertEqual(overrides, [])
+        self.assertIsNone(captured)
+
+    def test_override_flag_does_not_bypass_cell_skip(self):
+        status, rows, run, overrides, captured = self.invoke(
+            'linux/arm64', ['--run-platform-excluded'],
+            cells={'slow': ('kc',), 'next': ('bdb', 'kc', 'tkrzw')})
+        self.assertEqual(status, 0)
+        self.assertEqual([row['verdict'] for row in rows], ['SKIP', 'MATCH'])
+        self.assertNotIn('reason', rows[0])
+        self.assertEqual(run.call_count, 2)
+        self.assertEqual({item['case'] for item in overrides}, {'slow', 'next'})
+        self.assertIsNone(captured)
 
 
 class ParallelCaseTests(DriverFixtureCase):
