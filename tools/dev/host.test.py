@@ -523,7 +523,7 @@ class CgroupV1Tests(unittest.TestCase):
 
     def test_v1_session_room_below_host_memory_from_nondefault_mount(self):
         snapshot = self.snapshot()
-        self.assertEqual(snapshot['available_mib'], 1536)
+        self.assert_budget(snapshot, 1536, 2)
         self.assertEqual(snapshot['memory_limit_mib'], 4096)
         self.assertEqual(snapshot['cpus'], 4)
         self.assertIn(f'cgroup v1 /session memory.limit_in_bytes={4096 * 1024**2}',
@@ -551,7 +551,7 @@ class CgroupV1Tests(unittest.TestCase):
         # Partial hierarchical fields cannot replace any of the local set.
         (self.memory / 'session/memory.stat').write_text(
             self.stat_rows(stats, '') + f'total_inactive_file {512 * 1024**2}\n')
-        self.assertEqual(self.snapshot()['available_mib'], 1152)
+        self.assert_budget(self.snapshot(), 1152, 1)
 
     def test_pending_dirty_and_writeback_pages_reduce_room(self):
         for prefix in ('total_', ''):
@@ -569,7 +569,7 @@ class CgroupV1Tests(unittest.TestCase):
                 stats = dict(cache=512, shmem=0, active_file=512, inactive_file=0,
                              dirty=0, writeback=0)
                 (self.memory / 'session/memory.stat').write_text(self.stat_rows(stats, prefix))
-                self.assertEqual(self.snapshot()['available_mib'], 1536)
+                self.assert_budget(self.snapshot(), 1536, 2)
 
     def test_cache_candidates_exclude_shmem_and_are_bounded_by_file_lists(self):
         for prefix in ('total_', ''):
@@ -596,14 +596,43 @@ class CgroupV1Tests(unittest.TestCase):
                         rows += (self.stat_rows(stats, '') if prefix else
                                  self.stat_rows({missing: stats[missing]}))
                     (self.memory / 'session/memory.stat').write_text(rows)
-                    self.assert_unknown_room()
+                    self.assert_conservative_room()
 
-    def assert_unknown_room(self):
+    def assert_budget(self, snapshot, room, jobs):
+        self.assertEqual(snapshot['available_mib'], room)
+        # A finite compatibility guest uses the cgroup room without desktop
+        # headroom. Fix the slot count so host settings cannot hide the budget.
+        with slot_setting('1'):
+            child, chosen, estimate = host.prepare_heavy_env(
+                {'OXPINYIN_COMPAT_CONTAINER': '1'}, snapshot)
+        self.assertEqual(child['CARGO_BUILD_JOBS'], str(jobs))
+        self.assertEqual(chosen['CARGO_BUILD_JOBS'][0], jobs)
+        self.assertIn(f'{room} MiB available - 0 MiB headroom', chosen['CARGO_BUILD_JOBS'][1])
+        self.assertEqual(estimate, max(1, jobs) * host.RUSTC_PEAK_MIB)
+
+    def assert_conservative_room(self, room=1024, jobs=1):
         snapshot = self.snapshot()
-        self.assertTrue(any('cgroup v1 /session memory room=unknown' in note
+        self.assertTrue(any('cgroup v1 /session' in note and 'memory.stat unusable' in note
+                            and 'reclaimable cache=unknown' in note
+                            and f'memory room={room} MiB' in note
                             for note in snapshot['notes']))
-        self.assertEqual(snapshot['available_mib'], 16000)
-        self.assertFalse(any('memory room=16000' in note for note in snapshot['notes']))
+        self.assert_budget(snapshot, room, jobs)
+
+    def test_missing_or_unreadable_stats_retain_limit_minus_usage(self):
+        (self.proc / 'meminfo').write_text(
+            'MemTotal: 33554432 kB\nMemAvailable: 33554432 kB\n')
+        for usage, room in ((768, 256), (1024, 0), (1280, 0)):
+            for unreadable in (False, True):
+                with self.subTest(usage=usage, unreadable=unreadable):
+                    self.write_memory(self.memory / 'session', str(1024 * 1024**2), usage, 512)
+                    path = self.memory / 'session/memory.stat'
+                    path.unlink()
+                    if unreadable:
+                        # A directory also fails to read when tests run as root.
+                        path.mkdir()
+                    self.assert_conservative_room(room, 0)
+                    if unreadable:
+                        path.rmdir()
 
     def test_room_is_clamped_between_zero_and_limit(self):
         for usage, inactive, room in ((5000, 0, 0), (100, 200, 4096)):
@@ -665,7 +694,7 @@ class CgroupV1Tests(unittest.TestCase):
                 self.assertIsNone(snapshot['memory_limit_mib'])
 
     def test_unreadable_memory_values_are_unknown_never_host_room(self):
-        for filename in ('memory.limit_in_bytes', 'memory.usage_in_bytes', 'memory.stat'):
+        for filename in ('memory.limit_in_bytes', 'memory.usage_in_bytes'):
             with self.subTest(filename=filename):
                 path = self.memory / 'session' / filename
                 content = path.read_text()
@@ -688,7 +717,7 @@ class CgroupV1Tests(unittest.TestCase):
                       'total_inactive_file 1\ntotal_inactive_file 2', 'inactive_file 1 extra'):
             with self.subTest(stats=stats):
                 (self.memory / 'session/memory.stat').write_text(stats)
-                self.assert_unknown_room()
+                self.assert_conservative_room()
 
     def test_each_selected_stat_must_be_numeric_nonnegative_and_unique(self):
         stats = dict(cache=512, shmem=0, active_file=0, inactive_file=512, dirty=0, writeback=0)
@@ -700,7 +729,7 @@ class CgroupV1Tests(unittest.TestCase):
                                                if name != key}, prefix)
                         rows += f'{prefix}{key} {invalid}\n'
                         (self.memory / 'session/memory.stat').write_text(rows)
-                        self.assert_unknown_room()
+                        self.assert_conservative_room()
 
     def test_shmem_dirty_and_writeback_cannot_exceed_cache(self):
         for prefix in ('total_', ''):
@@ -710,7 +739,7 @@ class CgroupV1Tests(unittest.TestCase):
                                  dirty=0, writeback=0)
                     stats[key] = 513
                     (self.memory / 'session/memory.stat').write_text(self.stat_rows(stats, prefix))
-                    self.assert_unknown_room()
+                    self.assert_conservative_room()
 
     def test_unreadable_cpu_files_are_unknown(self):
         (self.cpu / 'session/cpu.cfs_quota_us').write_text('200000')

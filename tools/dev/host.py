@@ -351,6 +351,10 @@ def _cgroup_v1_memory(directory, label, notes, memories, limits):
         current = int((directory / 'memory.usage_in_bytes').read_text().strip())
         if current < 0:
             raise ValueError('negative memory usage')
+    except (OSError, ValueError) as exc:
+        notes.append(f'{label} memory room=unknown ({exc})')
+        return
+    try:
         required = ('cache', 'shmem', 'active_file', 'inactive_file', 'dirty', 'writeback')
         rows = []
         for line in (directory / 'memory.stat').read_text().splitlines():
@@ -379,13 +383,16 @@ def _cgroup_v1_memory(directory, label, notes, memories, limits):
         reserved = min(candidates, dirty + writeback)
         reclaimable = candidates - reserved
         used = max(0, current - reclaimable)
-        room = max(0, maximum - used) // (1024 * 1024)
-        memories.append(room)
         fields_note = ' '.join(f'{key}={value}' for key, value in stats.items())
-        notes.append(f'{label} memory.usage_in_bytes={current}; '
-                     f'memory.stat {fields_note}; used={used}; memory room={room} MiB')
     except (OSError, ValueError) as exc:
-        notes.append(f'{label} memory room=unknown ({exc})')
+        # As in v2, unusable cache stats retain the conservative limit - usage room.
+        used = current
+        fields_note = (f'unusable; reclaimable cache=unknown ({exc}); '
+                       f'fallback to memory.usage_in_bytes={current}')
+    room = max(0, maximum - used) // (1024 * 1024)
+    memories.append(room)
+    notes.append(f'{label} memory.usage_in_bytes={current}; '
+                 f'memory.stat {fields_note}; used={used}; memory room={room} MiB')
 
 
 def _cgroup_v1_cpu(directory, label, notes, cpus):

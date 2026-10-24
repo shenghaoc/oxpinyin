@@ -135,7 +135,9 @@ cache from `memory.usage_in_bytes`. The cache candidates are the smaller of
 `cache` minus `shmem` and `active_file` plus `inactive_file`; reserve `dirty`
 plus `writeback`, capped at those candidates. Use all six `total_*` counters
 from `memory.stat` when `total_cache` is present, otherwise all six local
-counters. Missing, duplicate, invalid or inconsistent fields make room unknown.
+counters. Missing, unreadable, malformed, incomplete, duplicate or inconsistent
+statistics leave the reclaimable-cache allowance unknown; readable limit and
+usage retain the conservative room `max(0, limit - usage)`.
 Near-maximum v1 sentinel limits are unlimited. CPU affinity is
 combined with v2 `cpu.max` or v1 `cpu.cfs_quota_us` / `cpu.cfs_period_us`;
 a v1 quota of `-1` is unlimited. Hybrid hosts use the controllers present in
