@@ -1276,6 +1276,11 @@ def _(k):
 
 # batch2 group 7: the sub-index unigram total guard (PR 7, #540)
 def choose_text(k, inst, offset, wanted):
+    """Generate candidates at offset and choose the first whose UTF-8 text matches wanted.
+
+    Use sort option zero and return the native selection result, or None if
+    no text matches. Candidate-generation and accessor flags are not checked;
+    the candidate list and selection state of inst can change."""
     k.fn('guess_candidates', B, P, Z, U)(inst, offset, 0)
     count = U()
     k.fn('get_n_candidate', B, P, C.POINTER(U))(inst, C.byref(count))
@@ -1289,6 +1294,10 @@ def choose_text(k, inst, offset, wanted):
 
 
 def unigram_of(k, token):
+    """Return the unigram lookup flag and raw unsigned frequency for a token.
+
+    Seed the output with UNTOUCHED and retain that numeric value if unwritten.
+    Use the kit's cached instance without changing the frequency here."""
     freq = U(UNTOUCHED)
     ret = k.fn('token_get_unigram_frequency', B, P, U, C.POINTER(U))(k.inst, token, C.byref(freq))
     return [ret, freq.value]
@@ -1298,6 +1307,11 @@ def unigram_of(k, token):
 # stored unigram, including generation-time +1 and the in-memory overlay.
 # e2853126 already ported the getter; keep the pinyin twin as a control.
 def token_unigram_system(k):
+    """Record a fixed system token's unigram before and after adding seven.
+
+    Use token 0x01001225 from the oracle fixture, retain the add return flag,
+    and also query the fixture's absent-item and absent-library IDs. The
+    frequency update affects the same context used for all observations."""
     token = 0x01001225  # 你; the stored system field is 52887, not 52888.
     out = {'token': hex(token), 'before': unigram_of(k, token)}
     out['add'] = k.fn('token_add_unigram_frequency', B, P, U, U)(k.inst, token, 7)
@@ -1308,6 +1322,12 @@ def token_unigram_system(k):
 
 
 def token_unigram_user(k, *, add_frequency=True):
+    """Import a phrase into library 7 and observe its unigram, optionally adding seven.
+
+    Use the facade's reading syntax and import count nine. Assert iterator
+    creation, successful addition and exactly one matching library-7 token.
+    Close the add iterator, then return the token and before/after lookups;
+    include an add flag only when add_frequency is true."""
     phrase = '你好你好'
     reading = "ni3'hao3'ni3'hao3" if k.mode == 'pinyin' else 'ㄋㄧˇ ㄏㄠˇ ㄋㄧˇ ㄏㄠˇ'
     iterator = k.fn('begin_add_phrases', P, P, U)(k.ctx, 7)
@@ -1339,6 +1359,14 @@ ZHUYIN_ONLY_WORDS = ['龘鱻', '麤靐', '驫齉', '爨馕', '鬻厵', '龘麤',
 
 
 def zhuyin_only_readings(k, libraries):
+    """Import plain and third-tone readings for each zhuyin-only syllable and library.
+
+    Use facade-specific spellings and count five, closing each add iterator.
+    Return add flags, matching token IDs and up to four raw pronunciations as
+    hex-encoded two-byte keys. Count and pronunciation keys share one row per
+    library/syllable and are overwritten as matching tokens are visited.
+    Accessor failures remain in the observations; allocated native arrays
+    are not freed here."""
     out = {}
     new = k.glib.g_array_new
     new.restype, new.argtypes = P, [I, I, U]
@@ -1382,6 +1410,12 @@ for _mode in ('pinyin', 'zhuyin'):
 # with 0 for an id that owns no item. The pinyin getter used to read the addon
 # facade for 5 and 6 and never checked the item for 7.
 def token_unigram_user_libraries(k):
+    """Plant phrases in libraries 5, 6 and 7 and observe unigram updates and nearby IDs.
+
+    Assert each import succeeds and yields exactly one token in its requested
+    library. Record that token's lookup, three presumed-absent neighbors, the
+    return flag from adding seven and the subsequent lookup. Imports use
+    count nine and close their add iterators; all libraries share the context."""
     out = {}
     plants = {5: '你好你好', 6: '再见再见', 7: '你好你好呀'}
     readings = {
@@ -1416,6 +1450,19 @@ def train_selected_top(k, wanted, token, guess_before_choose=False):
     This test-only sequence preserves the runbook's train_top precondition:
     a candidate list alone cannot be trained. The normal selection also
     installs the OneStep constraint that train_result3 needs to write counts.
+
+    Require a parsed cached instance with the wanted normal candidate and
+    a user profile for training. Assert candidate/accessor success, positive
+    selection cursor, a successful sentence guess and successful training;
+    raise AssertionError if no matching kind-2 row exists. Return selection
+    and training details plus the token's unigram immediately after choosing.
+    With guess_before_choose, also guess and snapshot sentences before the
+    selection, using forked sentence reads for pinyin. Selection and training
+    mutate the cached instance and its context without resetting them.
+
+    The constraint path is pinyin_choose_candidate in src/pinyin.cpp and
+    zhuyin_choose_candidate in src/zhuyin.cpp at pin 074a2219; the count
+    updates are in PhoneticLookup::train_result3 in src/lookup/phonetic_lookup.h.
     """
     inst = k.inst
     if k.mode == 'pinyin':
@@ -1461,6 +1508,13 @@ def train_selected_top(k, wanted, token, guess_before_choose=False):
 
 
 def token_unigram_trained(k):
+    """Record a fixed phrase's unigram around one constrained training operation.
+
+    Require the oracle token for 癫痫 and a complete parse of the facade's
+    input bytes. Select its normal candidate and train result zero through
+    train_selected_top, asserting that selection alone did not alter the
+    unigram. Return the consumed byte count, training details and before/after
+    lookups; training modifies the context's learned state."""
     token = 0x01003e57  # 癫痫: one constrained train adds 69 * 7 = 483.
     assert tokens_of(k, '癫痫') == [token]
     parse = 'parse_more_full_pinyins' if k.mode == 'pinyin' else 'parse_more_chewings'
@@ -1488,6 +1542,13 @@ for _mode in ('pinyin', 'zhuyin'):
 
 @case('train-unigram-total', issues=('540',))
 def _(k):
+    """Record unigram growth and training return flags at cumulative training checkpoints.
+
+    Parse nihao, choose 你 and 好 where available, and guess again on the
+    cached instance. Train result zero 30,000 times without resetting, recording
+    at 1, 10,000, 20,000 and 30,000 calls. Each checkpoint stores sorted distinct
+    return flags and both unigram lookups; selection results are recorded
+    rather than asserted."""
     # Once the library's guint32 total would overflow the item stops growing:
     # at the pin 你 freezes at 2122897296 after about 20000 trainings.
     inst = k.inst
@@ -1508,6 +1569,15 @@ def _(k):
 
 @case('predicted-unigram-overflow', issues=('540',))
 def _(k):
+    """Count repeated predicted-candidate acceptances after 20,000 training calls.
+
+    Seed the cached instance with nihao, choose 你 and 好 where available and
+    train result zero. Generate predictions for 你 and find the first kind-5
+    row whose first text token belongs to library 1. Return chosen offsets
+    and whether a row was found; if found, count successful selections up to
+    the first false return or 1,000 successes. The reported count can therefore
+    be capped without observing a refusal. Training and selection mutate the
+    shared context, and the same candidate pointer is reused."""
     # Training 你 and 好 fills library 1 to within one seed of its guint32
     # total; accepted predicted candidates (483 each) then run it out, and
     # the pin answers false from the call that no longer fits.
@@ -1545,7 +1615,12 @@ def _(k):
 
 # batch2 group 8: choose_predicted_candidate's return table (PR 8, #542, #540)
 def predicted_rows(k, inst, prefix, limit=12):
-    """The first rows of a predicted list: (type, text)."""
+    """Generate predictions including punctuation and return leading rows plus total count.
+
+    UTF-8 encode prefix and replace inst's candidate list. Return a pair of
+    [type, decoded text] rows and the full native count, limiting rows to
+    limit (none when limit is nonpositive). Native success flags are not
+    checked, and text decoding is strict UTF-8."""
     k.fn('guess_predicted_candidates_with_punctuations', B, P, S)(inst, prefix.encode())
     count = U()
     k.fn('get_n_candidate', B, P, C.POINTER(U))(inst, C.byref(count))
@@ -1560,6 +1635,11 @@ def predicted_rows(k, inst, prefix, limit=12):
 
 
 def choose_predicted_of(k, inst, want_kind, skip=0):
+    """Choose a matching kind from the existing candidate list and return its boolean result.
+
+    Skip the first skip matching rows; return None if no eligible row remains.
+    A negative skip keeps skipping all matches. This helper does not regenerate
+    the list or check accessor flags; choosing can update learned state."""
     count = U()
     k.fn('get_n_candidate', B, P, C.POINTER(U))(inst, C.byref(count))
     for i in range(count.value):
@@ -1576,6 +1656,10 @@ def choose_predicted_of(k, inst, want_kind, skip=0):
 
 @case('choose-predicted-types', issues=('542', '540'))
 def _(k):
+    """Record predictions for 我, then select punctuation twice and a prefix row.
+
+    Keep the initial rows/count and each selection result. All selections
+    reuse the cached instance's generated candidate list, with kinds 8 and 5."""
     # The return table: a punctuation row has no frequency and answers true,
     # a prefix row answers true. (The prefix row's bigram is not compared:
     # the pin trains its unigram only.)
@@ -1589,7 +1673,16 @@ def _(k):
 
 
 def remember_negative(count):
+    """Build a phrase-remembering case with the supplied signed count, including controls.
+
+    Pass count as a C signed int; negative and positive controls share the
+    same sequence."""
     def run(k):
+        """Remember 你好世界 after parsing its input and enumerate library 7.
+
+        Return the remember flag and phrase/reading/count rows after the attempt.
+        Decode and free exported strings; leave the get iterator allocated and
+        the cached instance's parse and user-library changes in place."""
         inst = k.inst
         k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'nihaoshijie')
         out = {'remember': k.fn('remember_user_input', B, P, S, I)(inst, '你好世界'.encode(), count)}
@@ -1615,6 +1708,11 @@ case('remember-count-seven', control=True)(remember_negative(7))
 # batch2 group 9: the input length cap (PR 9, #540)
 @case('input-length-cap', issues=('540',))
 def _(k):
+    """Record parser and stored lengths for six ASCII inputs around size boundaries.
+
+    Create a fresh instance for each byte length from 4,096 through 65,537
+    listed in the fixture. Repeat ni and truncate to that byte length, then
+    return both native byte counts under its decimal label."""
     out = {}
     for length in (4096, 4097, 32766, 32767, 32768, 65537):
         inst = k.alloc()
@@ -1626,6 +1724,12 @@ def _(k):
 
 @case('long-input-sentence', issues=('540',))
 def _(k):
+    """Parse 4,800 bytes of repeated ni and record guessing and sentence-length outputs.
+
+    Use a fresh instance and sentence index zero. Return parsed bytes, the
+    guess flag, and the sentence-accessor flag plus Python string length or
+    None. Any string returned by sentence_out, including its untouched marker,
+    is reduced to a length; decoded lengths count code points, not UTF-8 bytes."""
     # A decode past the old cap: the sentence is as long as the pin's.
     inst = k.alloc()
     text = b'ni' * 2400
@@ -1639,6 +1743,15 @@ def _(k):
 # batch2 group 10: pinyin_alloc_instance on a finalised context (PR 10, #528)
 @case('alloc-instance-after-fini', issues=('528',))
 def _(k):
+    """Observe a native allocation attempt after freeing an instance and finalizing its context.
+
+    Create an independent context and record whether its initial instance was
+    non-NULL. Keep the post-finalization pointer's truth value only under a
+    tilde-prefixed diagnostic key, excluded by observed. Do not free that
+    second pointer. This is an isolated-worker case: the invalid lifetime
+    access can terminate the process before an observation is returned.
+    The pin path is pinyin_alloc_instance after pinyin_fini in src/pinyin.cpp
+    at 074a2219."""
     # The pin reads the freed context (pinyin.cpp:1322) and survives by
     # chance; the ruled answer here is NULL (class (b)), so the answer itself
     # is left out of the comparison and the case holds the exit status: the
@@ -1653,6 +1766,12 @@ def _(k):
 
 # #573 (B battery): a second pinyin_fini / zhuyin_fini on one context
 def fini_twice(k):
+    """Finalize one independently initialized context twice and report only if both calls return.
+
+    Allocate and free a live instance before finalization. This deliberately
+    reuses the context address and can terminate the isolated worker. The
+    lifetime violation targets pinyin_fini in src/pinyin.cpp and zhuyin_fini
+    in src/zhuyin.cpp at pin 074a2219, both of which delete the context."""
     # The pin reads and deletes the freed context again (pinyin.cpp:1194-1222,
     # zhuyin.cpp:741-757) and dies of SIGSEGV, with stderr bytes read from
     # freed memory; the ruled answer is a silent return (class (b), row 105).
@@ -1673,7 +1792,14 @@ FACADE_TOTAL = 51051831   # the oracle data's loaded libraries, summed
 
 
 def wrap_total_to_zero(k, inst):
-    """Adds the delta that wraps the facade `guint32` total to zero."""
+    """Add the fixture-derived delta intended to wrap the facade's 32-bit total to zero.
+
+    Use token (1 << 24) | 1 and return the native add flag. Assume the loaded
+    context total equals FACADE_TOTAL; do not measure it or verify the result.
+    FacadePhraseIndex::add_unigram_frequency in src/storage/phrase_index.h
+    at pin 074a2219 updates its unsigned total before delegating to
+    SubPhraseIndex::add_unigram_frequency in src/storage/phrase_index.cpp,
+    so sub-index refusal need not undo the facade-total change."""
     add = k.fn('token_add_unigram_frequency', B, P, U, U)
     return add(inst, (1 << 24) | 1, (2 ** 32 - FACADE_TOTAL) % 2 ** 32)
 
@@ -1684,7 +1810,13 @@ def wrap_total_to_zero(k, inst):
 # One case each, since the wrapped total is the context's.
 for _label, _offset, _sort in (('end-sort-3', 5, 3), ('mid-key-sort-3', 3, 3), ('end-sort-2', 5, 2)):
     def _no_rank(offset, sort):
+        """Capture the byte offset and sort options for a zero-total candidate case."""
         def run(k):
+            """Attempt candidate guessing after parsing nihao and applying the total-wrap delta.
+
+            Allocate a fresh instance, ignore the add flag, and return the guess flag
+            and candidate count for the captured offset and sort. The context's
+            frequency state is changed and the instance is not freed here."""
             inst = k.alloc()
             k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'nihao')
             wrap_total_to_zero(k, inst)
@@ -1698,6 +1830,12 @@ for _label, _offset, _sort in (('end-sort-3', 5, 3), ('mid-key-sort-3', 3, 3), (
 
 @case('facade-total-zero', abort=False, issues=('540',))
 def _(k):
+    """Apply the total-wrap delta and record candidate guessing at byte offset zero.
+
+    Return the add and guess flags if the native calls return. The selected
+    window reaches _compute_frequency_of_items in src/pinyin.cpp at pin
+    074a2219, where a zero total asserts; the registered comparison expects
+    SIGABRT from the pin and a false guess result from the subject."""
     # `assert(0 < total_freq)` while ranking a candidate (pinyin.cpp:1859).
     inst = k.inst
     added = wrap_total_to_zero(k, inst)
