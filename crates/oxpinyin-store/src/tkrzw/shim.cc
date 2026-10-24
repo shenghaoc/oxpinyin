@@ -39,7 +39,15 @@ void fail(const char* message) noexcept {
 
 bool finish(tkrzw::Status status) {
   last_code = status.GetCode();
-  last_message = status.GetMessage();
+  // Most successful record operations return a status without a message.
+  // Preserve an empty message without constructing and move-assigning a
+  // temporary std::string. Nonempty messages still take the original path;
+  // every caller remains inside guarded(), including allocation failures.
+  if (status.HasMessage()) {
+    last_message = status.GetMessage();
+  } else {
+    last_message.clear();
+  }
   return last_code == OXTKRZW_STATUS_SUCCESS;
 }
 
