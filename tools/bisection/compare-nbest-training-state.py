@@ -26,6 +26,15 @@ def unigram_fields(path):
     # storage/phrase_index.h:124-125. Mirrors
     # oxpinyin-data/user_files.rs::decode_log_records, after MemoryChunk's
     # {u32 length, u32 XOR checksum} frame.
+    """Extract sorted unigram-state bytes and write a sibling .unigrams file.
+
+    Validate the little-endian length/checksum frame and record lengths;
+    normalize item tokens with the library selected by the log filename.
+    Invalid framing or record shapes raise ValueError. Follow MemoryChunk::load
+    and get_check_sum in src/include/memory_chunk.h, PhraseIndexLogger::next_record
+    in src/storage/phrase_index_logger.h, and PhraseItem::get_unigram_frequency
+    in src/storage/phrase_index.h at pin 074a2219.
+    """
     data = path.read_bytes()
     length, checksum = struct.unpack_from("<II", data)
     if length != len(data) - 8:
@@ -40,6 +49,7 @@ def unigram_fields(path):
     offset, fields = 0, []
 
     def take(size):
+        """Consume size payload bytes, raising ValueError if they extend past the log."""
         nonlocal offset
         end = offset + size
         if end > len(payload):
@@ -49,6 +59,7 @@ def unigram_fields(path):
         return value
 
     def u16():
+        """Consume a little-endian unsigned 16-bit payload field."""
         return int.from_bytes(take(2), "little")
 
     while offset < len(payload):
@@ -85,7 +96,15 @@ def unigram_fields(path):
 
 
 def pronunciation_fields(path):
-    """Decode every old/new pronunciation field; raw logs are checked too."""
+    """Extract token-slot, side-index, key-byte, and frequency-byte tuples.
+
+    Skip the eight-byte frame without verifying its checksum. Enumerate stored
+    item images in record order; additions and removals each use side index
+    zero. Reject unknown record kinds or inconsistent item extents. Read the
+    layout of PhraseIndexLogger::next_record in src/storage/phrase_index_logger.h
+    and PhraseItem::get_pronunciation_possibility in src/storage/phrase_index.h
+    at pin 074a2219; retain raw key and frequency bytes.
+    """
     payload = path.read_bytes()[8:]
     offset, rows = 0, []
     while offset < len(payload):
@@ -120,6 +139,14 @@ def pronunciation_fields(path):
 
 
 def bigrams(cell, profile):
+    """Dump and sort saved bigram key/value pairs with the selected backend tool.
+
+    Write bigram.records beside the database; Tkrzw also leaves bigram.tsv.
+    BDB and KC return decoded bytes, while Tkrzw returns escaped TSV fields.
+    KC loads the snapshot used by Bigram::load_db and save_db in
+    src/storage/ngram_kyotodb.cpp at pin 074a2219 into a temporary database,
+    removed after a successful dump. Malformed rows and tool failures propagate.
+    """
     path = profile / "user_bigram.db"
     if cell == "bdb":
         raw = subprocess.check_output(["db5.3_dump", str(path)])
@@ -159,11 +186,12 @@ def bigrams(cell, profile):
 
 
 def read_unigrams(so, data, profile, tokens):
-    """Read the saved profile back through the exported pinyin API.
+    """Write sorted token/frequency pairs as little-endian u32 fields to stdout.
 
-    Use a separate process per library to avoid ELF symbol interposition.
-    Both facade saves use the same storage format, so the pinyin accessor
-    verifies zhuyin's saved data as well.
+    Load the library and saved profile through the pinyin API, freeing the
+    instance and context after reading. Initialization or accessor failure
+    raises ValueError. Callers must isolate libraries in separate processes
+    to avoid ELF interposition; the pinyin reader also checks zhuyin saves.
     """
     check_tkrzw("auto", "compare-nbest-training-state.py", "subject", so)
     lib = ctypes.CDLL(so)
@@ -198,6 +226,13 @@ def read_unigrams(so, data, profile, tokens):
 
 
 def main():
+    """Compare matching saved-profile cases and return 2 for any state difference.
+
+    Reject empty or mismatched case/log coverage. Compare bigram records,
+    unigram and pronunciation fields, full logs, and user chunks; optionally
+    reopen each side in a separate API worker. Write normalized dumps beside
+    the inputs and print per-case results; return zero if all agree.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("cell", choices=["bdb", "kc", "tkrzw"])
     parser.add_argument("pin", type=Path)

@@ -14,6 +14,7 @@ import sys
 
 
 def load_jsonl(path):
+    """Read UTF-8 JSON records, skipping blank lines and propagating decode errors."""
     rows = []
     with open(path, encoding="utf-8") as stream:
         for line in stream:
@@ -24,27 +25,37 @@ def load_jsonl(path):
 
 
 def median(values):
+    """Return the median, or NaN for an empty sequence."""
     return statistics.median(values) if values else float("nan")
 
 
 def ms(values_ns):
+    """Convert nanosecond observations to a list of millisecond values."""
     return [value / 1_000_000.0 for value in values_ns]
 
 
 def fmt_ms(values_ns):
+    """Format a nonempty nanosecond sequence as median and range in milliseconds."""
     vals = ms(values_ns)
     return f"{median(vals):.3f} ms [{min(vals):.3f}, {max(vals):.3f}]"
 
 
 def fmt_kib(values):
+    """Format a nonempty KiB sequence as rounded median and range."""
     return f"{median(values):.0f} KiB [{min(values):.0f}, {max(values):.0f}]"
 
 
 def ratio(oxp, oracle):
+    """Divide the oxpinyin median by the oracle median, using NaN for empty data or zero divisor."""
     return median(oxp) / median(oracle) if median(oracle) else float("nan")
 
 
 def summarize_speed(rows):
+    """Print per-backend timing medians and ranges in milliseconds.
+
+    Separate initialization, allocation, first cycle, and pooled remaining
+    cycles from the supplied captures.
+    """
     print("## Execution speed — C-ABI to C-ABI (per process, CPU-pinned)")
     print()
     print("Each process reports one `pinyin_init`, one `pinyin_alloc_instance`,")
@@ -82,6 +93,7 @@ def summarize_speed(rows):
 
 
 def summarize_ram(init_rows, cycle_rows):
+    """Print KiB summaries and median ratios for separate init and cycle captures."""
     print("## RAM — /proc/self/status (same harness, both backends)")
     print()
     print("VmHWM is monotonic per process, so after-last HWM is the lifetime")
@@ -116,6 +128,11 @@ def summarize_ram(init_rows, cycle_rows):
 
 
 def classify_size(prefix, backend):
+    """Inventory installed file bytes by backend-specific data and code paths.
+
+    Count symlinks by lstat size separately from regular files. Return file
+    lists and totals; runtime bytes include shared objects and runtime data.
+    """
     regular = []
     symlink_bytes = 0
     for path in pathlib.Path(prefix).rglob("*"):
@@ -161,10 +178,12 @@ def classify_size(prefix, backend):
 
 
 def human(nbytes):
+    """Format bytes with separators and their equivalent in MiB."""
     return f"{nbytes:,} bytes ({nbytes / 1024 / 1024:.2f} MiB)"
 
 
 def summarize_size(oracle_prefix, oxpinyin_prefix):
+    """Print installed-size categories, ratios, and runtime-data file sizes."""
     oracle = classify_size(oracle_prefix, "oracle")
     oxpinyin = classify_size(oxpinyin_prefix, "oxpinyin")
     print("## Size on disk — installed prefixes only")
@@ -203,6 +222,7 @@ def summarize_size(oracle_prefix, oxpinyin_prefix):
 
 
 def main(argv):
+    """Dispatch capture and installed-size summaries from CLI arguments; return zero."""
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
     speed = sub.add_parser("summarize-speed")

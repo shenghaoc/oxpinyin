@@ -78,11 +78,17 @@ def load(paths):
 
 
 def pooled(runs, metric):
+    """Flatten one metric across runs, preserving run and sample order."""
     return [v for run in runs for v in run[metric]]
 
 
 def bootstrap_ci(runs, metric, resamples, seed, alpha=0.05):
-    """Percentile bootstrap of the median, resampling whole runs."""
+    """Estimate a median percentile interval by resampling whole runs.
+
+    Return point, lower bound, upper bound, and pooled sample count; the first
+    three retain input units. Use a local seeded generator. Missing observations
+    give NaN estimates; fewer than two runs or no resamples give NaN bounds.
+    """
     observed = pooled(runs, metric)
     if not observed:
         return float("nan"), float("nan"), float("nan"), 0
@@ -108,6 +114,11 @@ def bootstrap_ci(runs, metric, resamples, seed, alpha=0.05):
 
 
 def main(argv=None):
+    """Print run-bootstrap timing intervals in milliseconds and return zero.
+
+    Select repeat counts from JSONL captures; reject nonpositive resamples or
+    an empty cell selection through SystemExit.
+    """
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("captures", nargs="+",
                         help="speed.jsonl files from bisect --perf")

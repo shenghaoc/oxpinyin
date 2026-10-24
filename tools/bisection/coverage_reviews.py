@@ -49,6 +49,11 @@ def measurement_limit(names, reason):
 
 
 def review(file, lines, targets, reason, status="COUNTERPART"):
+    """Register a source-site review for every listed line.
+
+    Store status, Rust targets, and reason in REVIEWS; raise ValueError on a
+    duplicate site. Entries registered before a duplicate remain registered.
+    """
     for line in lines:
         key = (file, line)
         if key in REVIEWS:
@@ -73,6 +78,10 @@ from pathlib import Path
 
 
 def load_rules():
+    """Import sorted rule batches so their module-level registrations populate the registries.
+
+    Already imported batches are reused by Python without re-executing them.
+    """
     for batch in sorted(Path(__file__).with_name("coverage_review_rules").glob("*.py")):
         importlib.import_module("coverage_review_rules." + batch.stem)
 

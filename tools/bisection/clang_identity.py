@@ -6,27 +6,42 @@ from pathlib import Path
 
 
 class Cursor(C.Structure):
+    """Represent libclang CXCursor values passed by value through ctypes."""
     _fields_ = [("kind", C.c_uint), ("xdata", C.c_int), ("data", C.c_void_p * 3)]
 
 
 class String(C.Structure):
+    """Represent a libclang CXString whose storage needs clang_disposeString."""
     _fields_ = [("data", C.c_void_p), ("flags", C.c_uint)]
 
 
 class Location(C.Structure):
+    """Represent a libclang CXSourceLocation for spelling-location queries."""
     _fields_ = [("data", C.c_void_p * 2), ("int_data", C.c_uint)]
 
 
 class Type(C.Structure):
+    """Represent a libclang CXType for canonical-type and declaration queries."""
     _fields_ = [("kind", C.c_int), ("data", C.c_void_p * 2)]
 
 
 class Range(C.Structure):
+    """Represent a libclang CXSourceRange for function-body extent queries."""
     _fields_ = [("data", C.c_void_p * 2), ("begin", C.c_uint), ("end", C.c_uint)]
 
 
 class Clang:
+    """Extract compiler identities and call relationships through libclang.
+
+    Cursors and types belong to their translation unit; extract converts them
+    to Python records before disposing that unit.
+    """
     def __init__(self, library=None):
+        """Load libclang and bind the C entry points with their ctypes signatures.
+
+        Use the supplied library path or ctypes library discovery. Loader and
+        missing-symbol errors propagate.
+        """
         self.lib = C.CDLL(library or C.util.find_library("clang"))
         self.visit_type = C.CFUNCTYPE(C.c_uint, Cursor, Cursor, C.c_void_p)
         signatures = {
@@ -76,24 +91,29 @@ class Clang:
             setattr(self, name, fn)
 
     def string(self, value):
+        """Decode a CXString as UTF-8, dispose it, and return the text or an empty string."""
         result = self.getCString(value)
         text = result.decode() if result else ""
         self.disposeString(value)
         return text
 
     def location(self, cursor):
+        """Return the cursor spelling location as filename, line, and column."""
         return self.source_location(self.getCursorLocation(cursor))
 
     def source_location(self, location):
+        """Return spelling filename, line, and column; use an empty filename without a file."""
         file, line, col, offset = C.c_void_p(), C.c_uint(), C.c_uint(), C.c_uint()
         self.getSpellingLocation(location, C.byref(file), C.byref(line), C.byref(col), C.byref(offset))
         return (self.string(self.getFileName(file)) if file.value else "", line.value, col.value)
 
     def children(self, cursor):
+        """Collect immediate child cursors in libclang visitation order."""
         result = []
 
         @self.visit_type
         def visit(child, parent, context):
+            """Append this child and continue sibling visitation without descending."""
             result.append(child)
             return 1
 
@@ -101,7 +121,13 @@ class Clang:
         return result
 
     def extract(self, source, flags, pin):
-        """Return source definitions, exact USR calls, override relations and fields."""
+        """Parse one translation unit and collect identities and calls within the pin.
+
+        Return nodes, call edges, concrete virtual methods, override pairs, field
+        call sites, and class/receiver metadata. Flags supply the compilation
+        configuration. Raise RuntimeError for parse failure or error diagnostics;
+        dispose the parsed translation unit and index after extraction.
+        """
         index = self.createIndex(0, 0)
         argv = (C.c_char_p * len(flags))(*(x.encode() for x in flags))
         tu = self.parseTranslationUnit(index, str(source).encode(), argv, len(flags), None, 0, 0)
@@ -120,6 +146,7 @@ class Clang:
             function_kinds = {8, 21, 24, 25, 26, 30}
 
             def info(c):
+                """Build a USR and source/signature record, or return no record outside the pin."""
                 usr = self.string(self.getCursorUSR(c))
                 file, line, col = self.location(c)
                 try:
@@ -139,12 +166,14 @@ class Clang:
                 return usr, {"usr": usr, "signature": signature, "file": file, "line": line, "col": col, "symbol": self.string(self.Cursor_getMangling(c)), "name": self.string(self.getCursorSpelling(c)), "owner_usr": self.string(self.getCursorUSR(self.getCursorSemanticParent(c))), "canonical_type": self.string(self.getTypeSpelling(self.getCanonicalType(self.getCursorType(c)))), "function_kind": c.kind, "template_usr": self.string(self.getCursorUSR(template)), "template_owner_usr": self.string(self.getCursorUSR(primary_owner)), "is_static": bool(self.CXXMethod_isStatic(c)) if c.kind == 21 else False}
 
             def type_class(c):
+                """Find the declaration of the canonical type, unwrapping one pointer or reference."""
                 typ = self.getCanonicalType(self.getCursorType(c))
                 if typ.kind in {101, 103, 104}:  # pointer/lvalue/rvalue reference
                     typ = self.getCanonicalType(self.getPointeeType(typ))
                 return self.getTypeDeclaration(typ)
 
             def receiver_class(call):
+                """Return the member-call receiver class USR, or an empty string when unresolved."""
                 children = self.children(call)
                 if not children:
                     return ""
@@ -159,6 +188,11 @@ class Clang:
                 return self.string(self.getCursorUSR(type_class(operands[0])))
 
             def walk(c, current=None, owner=None):
+                """Accumulate pin-local definitions, calls, inheritance, and dispatch metadata.
+
+                Prefer definition records over declarations; carry the enclosing function
+                and class through recursion and stop at cursors outside the pin.
+                """
                 file, _, _ = self.location(c)
                 if file and not Path(file).is_relative_to(pin):
                     return

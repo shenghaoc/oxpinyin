@@ -16,7 +16,11 @@ CHAR_LITERAL = re.compile(r"'(?:\\(?:u\{[^}]*\}|x[0-9a-fA-F]{2}|.)|[^'\\\n])'")
 
 
 def lexical_mask(source):
-    """Hide strings/comments while retaining offsets and newlines."""
+    """Mask Rust strings and comments while preserving character offsets and newlines.
+
+    Return the mask and comment spans/text; merge comments separated only by
+    whitespace. Handle nested block comments, raw strings, and character literals.
+    """
     chars = list(source)
     comments = []
     i = 0
@@ -75,6 +79,10 @@ def lexical_mask(source):
 
 
 def brace_end(mask, start):
+    """Return the offset after the closing brace matching start in a lexical mask.
+
+    Raise ValueError if the body remains open at end of input.
+    """
     depth = 0
     for i in range(start, len(mask)):
         if mask[i] == "{":
@@ -87,6 +95,12 @@ def brace_end(mask, start):
 
 
 def rust_items(path, root):
+    """Yield function-associated Rust comment records with source locations.
+
+    Use lexical masking and item patterns, excluding recognized test modules,
+    test attributes, and declarations without bodies. One function can yield
+    several records; this is not a Rust compiler parse.
+    """
     source = path.read_text()
     mask, comments = lexical_mask(source)
     test_spans = []
@@ -138,6 +152,7 @@ CITATION_LIMITS = {
 
 
 def pin_function_name(node):
+    """Return a USR-backed name or strip signature qualifiers and template arguments."""
     name = node["name"]
     if node.get("usr"):
         return name
@@ -172,6 +187,13 @@ def shipping_crates(root):
 
 
 def cited_items(root, pin, nodes, tightened=False):
+    """Find one eligible Rust citation per pin function body.
+
+    Require an unambiguous pin filename and a citation range inside the body.
+    Tightened mode also requires the function name; role mode restricts the
+    shipping dependency closure and counterpart claims. Choose the first
+    match in source order for each identity.
+    """
     files = {str(p.relative_to(pin)) for p in (pin / "src").rglob("*") if p.suffix in {".cpp", ".h"}}
     by_suffix = {}
     for file in files:
@@ -221,6 +243,7 @@ def cited_items(root, pin, nodes, tightened=False):
 
 
 def sample_rows(rows, seed):
+    """Select a seeded sample of sorted identities, rounding five percent upward."""
     keys = sorted(rows)
     return random.Random(seed).sample(keys, math.ceil(len(keys) * 0.05))
 
@@ -255,6 +278,7 @@ FACILITIES = {
 
 
 def facility(node):
+    """Return the reviewed facility family for an exact pin site, or None."""
     file, line = node["file"], node["line"]
     if file == "src/include/memory_chunk.h" and line != 136:
         return "chunk-storage"

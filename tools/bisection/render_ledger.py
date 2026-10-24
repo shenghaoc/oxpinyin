@@ -77,10 +77,16 @@ def align(nodes, measurements, symbol_base):
 
 
 def citation(file, line):
+    """Format a repository-relative Markdown link to a source line."""
     return f'[{file}:{line}](../../{file}#L{line})'
 
 
 def anchors(root, targets):
+    """Resolve Rust anchor substrings to citations, requiring one match per target.
+
+    Read each file beneath root and raise RuntimeError for missing or repeated
+    anchors; return semicolon-separated links.
+    """
     rendered = []
     for file, anchor in targets:
         lines = (root / file).read_text().splitlines()
@@ -92,6 +98,7 @@ def anchors(root, targets):
 
 
 def labels_text(labels):
+    """Render sorted evidence labels, abbreviating multiple contract cases to one plus a count."""
     groups = defaultdict(list)
     for label in sorted(labels):
         if label.startswith('contract/'):
@@ -122,9 +129,15 @@ def baseline_rows(text):
 
 
 def annotate_comparison(text, previous, reference):
-    """Every differing cell is explicit in the existing table; no report file."""
+    """Append prior values to changed table rows and return the annotated Markdown.
+
+    Match functions by compiler identity and boundaries by kind/site/identity.
+    Raise RuntimeError if a previous row disappeared; print change counts
+    without writing a separate report.
+    """
     from finish_ledger import table_rows
     def identity(row):
+        """Key function rows by compiler identity and other rows by kind, site, and identity."""
         return ('function', row[3]) if row[0].startswith('function/') else (row[0], row[1], row[3])
     old = {identity(row): row for row in table_rows(previous)}
     names = ['kind', 'pin source', 'signature', 'identity', 'export', 'path/resolution',
@@ -157,6 +170,14 @@ def annotate_comparison(text, previous, reference):
 
 def render(args, state, contract_results, gate_receipt=None):
     # Import after internal-ledger has initialized: no compiler work at import.
+    """Build the bdb coverage table from fresh identities and measured or supplied attribution.
+
+    Guard the reviewed Rust tree and samples, verify oracle provenance, and
+    run or resume contract, gate, and other workload stages. Combine execution
+    and source tiers, check deletion/restoration, and write or compare the
+    ledger. Print limits and hashes; require_complete rejects unresolved
+    coverage. Supplied results may wait for a private parallel-stage stream.
+    """
     import importlib
     ledger = importlib.import_module('internal-ledger')
     # A resumed long measurement process may have imported the builder before

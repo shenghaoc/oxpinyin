@@ -4,6 +4,11 @@ from collections import Counter, defaultdict
 
 
 def function_cells(ledger, state, key):
+    """Build six compiler-owned table cells for one function identity.
+
+    Prefer a direct witness, then a pinned-virtual witness, then a conservative
+    path; retained baseline identities without a path are marked UNPROVEN.
+    """
     nodes = state['nodes']
     node = nodes[key]
     for mode, preferred in [('direct', state['direct_paths']),
@@ -20,6 +25,11 @@ def function_cells(ledger, state, key):
 
 
 def boundary_cells(ledger, state, executed=None):
+    """Build boundary rows for indirect, virtual, callback, and external calls.
+
+    Optional executed labels annotate callers without resolving additional
+    static targets.
+    """
     from render_ledger import labels_text
     executed = executed or {}
     nodes, paths = state['nodes'], state['paths']
@@ -54,6 +64,7 @@ def boundary_cells(ledger, state, executed=None):
 
 
 def projections(ledger, state, inventory):
+    """Count the expected compiler projections, retaining duplicate row multiplicity."""
     rows = [function_cells(ledger, state, key) for key in inventory]
     # Boundary explanation/type leads and resolution status are compiler owned.
     rows += [compiler_projection(row) for row in boundary_cells(ledger, state)]
@@ -61,6 +72,7 @@ def projections(ledger, state, inventory):
 
 
 def compiler_projection(row):
+    """Extract static fields from a table row, excluding behavioral and review-delta text."""
     if row[0].startswith('function/'):
         return row[:6]
     reason = row[8].split('; Review delta from ', 1)[0]
@@ -68,6 +80,10 @@ def compiler_projection(row):
 
 
 def validate(ledger, state, inventory, rows):
+    """Compare rendered compiler cells with fresh projections and return the row count.
+
+    Raise RuntimeError for missing or extra projections, including multiplicity.
+    """
     expected = projections(ledger, state, inventory)
     actual = Counter(tuple(compiler_projection(row)) for row in rows)
     missing, extra = expected - actual, actual - expected
