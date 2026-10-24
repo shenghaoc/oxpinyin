@@ -254,5 +254,35 @@ class LoaderTests(unittest.TestCase):
             self.assertEqual((result.returncode, result.stdout, result.stderr), (0, 'RESULT\n', ''))
 
 
+@unittest.skipUnless(sys.platform == 'darwin', 'Darwin dyld override refusal')
+class DarwinLoaderOverrideTests(unittest.TestCase):
+    def test_tkrzw_so_refuses_both_dyld_overrides(self):
+        script = Path(runtime.__file__).parents[1] / 'cloud/env.sh'
+        for name in ('DYLD_LIBRARY_PATH', 'DYLD_FALLBACK_LIBRARY_PATH'):
+            with self.subTest(name=name):
+                result = subprocess.run(
+                    ['bash', '-c', f'{name}=/tmp/override; source "$1"; tkrzw_so /bin/true',
+                     'fixture', str(script)],
+                    capture_output=True, text=True)
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIn('REFUSED: otool -L reports the recorded libtkrzw install name',
+                              result.stderr)
+                self.assertIn('which DYLD_LIBRARY_PATH or DYLD_FALLBACK_LIBRARY_PATH can bypass',
+                              result.stderr)
+
+    def test_tkrzw_check_refuses_both_dyld_overrides(self):
+        script = Path(runtime.__file__).with_suffix('.sh')
+        for name in ('DYLD_LIBRARY_PATH', 'DYLD_FALLBACK_LIBRARY_PATH'):
+            with self.subTest(name=name):
+                result = subprocess.run(
+                    ['bash', '-c',
+                     f'{name}=/tmp/override; source "$1"; _tkrzw_check runner subject /bin/true',
+                     'fixture', str(script)],
+                    capture_output=True, text=True)
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIn('REFUSED: runner: subject:', result.stderr)
+                self.assertIn('otool -L recorded install name', result.stderr)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -19,7 +19,8 @@ oxpinyin-core = { path = "../crates/oxpinyin-core" }
 # dict-loader: hostile bytes through the table decoder (audit F-3 class).
 oxpinyin-data = { path = "../crates/oxpinyin-data" }
 # capi-commands: stateful session fuzzer over the C ABI (libchewing
-# fuzzer.rs shape). Linux-only, like the nightly fuzz soak — as is capi.
+# fuzzer.rs shape). The facade links natively on macOS with Homebrew GLib
+# and Berkeley DB 5.3; the nightly CI soak still runs on Linux.
 oxpinyin-capi = { path = "../crates/oxpinyin-capi", features = ["fuzz-api"] }
 # fixture-model: the fixture Dictionary/LanguageModel doubles live in the
 # test-support crate, not oxpinyin-core (core defines the traits; testsupport

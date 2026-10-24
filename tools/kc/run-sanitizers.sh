@@ -6,13 +6,15 @@
 # caller-owned region that must be released with kcfree (kclangc.h:577,
 # :923, :942) -- so the failure modes are a leak, a double free, or a
 # free through the wrong allocator, and all three are exactly what ASan
-# and its LeakSanitizer see.
+# and its LeakSanitizer see. LeakSanitizer runs with ASan on Linux; on
+# Darwin leak detection is off, and standalone LSan is refused on arm64.
+# ThreadSanitizer runs the same Rust tests with thread instrumentation.
 #
 # rustc has no `undefined` sanitizer -- `-Zsanitizer=` accepts address,
 # cfi, dataflow, hwaddress, kcfi, kernel-address, kernel-hwaddress, leak,
 # memory, memtag, safestack, shadow-call-stack, thread and realtime, and
 # nothing else. UBSan is a C/C++ instrumentation and cannot be applied to
-# Rust code.
+# Rust code; this backend has no C harness here.
 #
 # NOT covered: libkyotocabinet's own internals. The system library is
 # not rebuilt, so UB or a leak inside it is invisible here.
@@ -26,6 +28,38 @@ cd "$(dirname "$0")/../.."
 # Named once, in tools/sanitize.sh.
 NIGHTLY=${OXPINYIN_SANITIZER_TOOLCHAIN:-$(sed -n 's/^NIGHTLY=//p' tools/sanitize.sh)}
 TARGET=${OXPINYIN_SANITIZER_TARGET:-$(rustc -vV | sed -n 's/^host: //p')}
+SANITIZER=${OXPINYIN_SANITIZER:-address}
+case $SANITIZER in
+address)
+	RUST_SANITIZER_FLAGS="-Zsanitizer=address"
+	;;
+thread)
+	RUST_SANITIZER_FLAGS="-Zsanitizer=thread -Cunsafe-allow-abi-mismatch=sanitizer"
+	;;
+leak)
+	RUST_SANITIZER_FLAGS="-Zsanitizer=leak -Cunsafe-allow-abi-mismatch=sanitizer"
+	;;
+*)
+	printf 'unknown sanitizer: %s\n' "$SANITIZER" >&2
+	exit 2
+	;;
+esac
+case $SANITIZER in
+thread)
+	# On Darwin, Kyoto Cabinet holds more locks than the TSan deadlock
+	# detector tracks (128). Turn off only the auxiliary detector there and
+	# keep race reports. Linux keeps the TSan default; it was not run here.
+	if [ "$(uname -s)" = Darwin ]; then
+		export TSAN_OPTIONS=${TSAN_OPTIONS:-detect_deadlocks=0:abort_on_error=1}
+	else
+		export TSAN_OPTIONS=${TSAN_OPTIONS:-abort_on_error=1}
+	fi
+	;;
+leak) export LSAN_OPTIONS=${LSAN_OPTIONS:-abort_on_error=1} ;;
+esac
+if [ "$(uname -s)" = Darwin ] && [ "$SANITIZER" = address ]; then
+	export ASAN_OPTIONS=${ASAN_OPTIONS:-detect_leaks=0:abort_on_error=1}
+fi
 
 if ! rustup toolchain list | grep -q "^$NIGHTLY"; then
 	echo "$NIGHTLY is not installed."
@@ -39,8 +73,21 @@ if ! rustup toolchain list | grep -q "^$NIGHTLY"; then
 	exit 1
 fi
 
-echo "--- Rust under AddressSanitizer (+ LeakSanitizer) ---"
-RUSTFLAGS="-Zsanitizer=address" \
+case $SANITIZER in
+address) display=AddressSanitizer ;;
+thread) display=ThreadSanitizer ;;
+leak) display=LeakSanitizer ;;
+esac
+if [ "$SANITIZER" = address ]; then
+	if [ "$(uname -s)" = Darwin ]; then
+		echo "--- Rust under $display (LeakSanitizer off on Darwin) ---"
+	else
+		echo "--- Rust under $display (+ LeakSanitizer) ---"
+	fi
+else
+	echo "--- Rust under $display ---"
+fi
+RUSTFLAGS="$RUST_SANITIZER_FLAGS" \
 	cargo "+$NIGHTLY" test -p oxpinyin-store --no-default-features --features kyotocabinet --target "$TARGET"
 
 echo

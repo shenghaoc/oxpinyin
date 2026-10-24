@@ -5,19 +5,14 @@
 # system bigram.db is BDB and every session opens it through this FFI,
 # not only users who have trained.
 #
-# Two halves, because they cover different code:
+# AddressSanitizer (default):
 #
 #   1. Rust under AddressSanitizer. Covers this backend's own FFI — the
 #      DBT plumbing, the cursor buffers, the write-transaction apply —
 #      plus, through ASan's malloc interposition, heap misuse of any
-#      memory libdb hands back. LeakSanitizer runs with it by default
-#      on Linux.
-#
-#      rustc has no `undefined` sanitizer (`-Zsanitizer=` accepts address,
-#      cfi, dataflow, hwaddress, kcfi, kernel-address, kernel-hwaddress,
-#      leak, memory, memtag, safestack, shadow-call-stack, thread,
-#      realtime), so UBSan cannot be applied to Rust code at all. It is a
-#      C/C++ instrumentation.
+#      memory libdb hands back. LeakSanitizer runs with it on Linux; on
+#      Darwin leak detection is off, and standalone LSan is refused on
+#      arm64.
 #
 #   2. A C harness under -fsanitize=address,undefined, driving libdb with
 #      the same call sequence and the same chunk arithmetic this backend
@@ -29,6 +24,16 @@
 #      example), so the write direction is checked with no Rust in the
 #      reader; when a real libpinyin data dir is present it is walked
 #      too.
+#
+# ThreadSanitizer runs only the Rust half. The C harness is a
+# single-threaded call-pattern probe, and libdb itself is not
+# instrumented, so TSan has nothing to intersect there.
+#
+# rustc has no `undefined` sanitizer (`-Zsanitizer=` accepts address,
+# cfi, dataflow, hwaddress, kcfi, kernel-address, kernel-hwaddress, leak,
+# memory, memtag, safestack, shadow-call-stack, thread, realtime), so
+# UBSan cannot be applied to Rust code at all. It is a C/C++
+# instrumentation, run only in the address gate.
 #
 # What NEITHER half covers: libdb's own internals. The system library is
 # not instrumented, so UB inside Berkeley DB is invisible to both. Saying
@@ -44,6 +49,29 @@ cd "$(dirname "$0")/../.."
 # Named once, in tools/sanitize.sh.
 NIGHTLY=${OXPINYIN_SANITIZER_TOOLCHAIN:-$(sed -n 's/^NIGHTLY=//p' tools/sanitize.sh)}
 TARGET=${OXPINYIN_SANITIZER_TARGET:-$(rustc -vV | sed -n 's/^host: //p')}
+SANITIZER=${OXPINYIN_SANITIZER:-address}
+case $SANITIZER in
+address)
+	RUST_SANITIZER_FLAGS="-Zsanitizer=address -Cdebuginfo=1"
+	;;
+thread)
+	RUST_SANITIZER_FLAGS="-Zsanitizer=thread -Cdebuginfo=1 -Cunsafe-allow-abi-mismatch=sanitizer"
+	;;
+leak)
+	RUST_SANITIZER_FLAGS="-Zsanitizer=leak -Cdebuginfo=1 -Cunsafe-allow-abi-mismatch=sanitizer"
+	;;
+*)
+	printf 'unknown sanitizer: %s\n' "$SANITIZER" >&2
+	exit 2
+	;;
+esac
+case $SANITIZER in
+thread) export TSAN_OPTIONS=${TSAN_OPTIONS:-abort_on_error=1} ;;
+leak) export LSAN_OPTIONS=${LSAN_OPTIONS:-abort_on_error=1} ;;
+esac
+if [ "$(uname -s)" = Darwin ] && [ "$SANITIZER" = address ]; then
+	export ASAN_OPTIONS=${ASAN_OPTIONS:-detect_leaks=0:abort_on_error=1}
+fi
 
 if ! rustup toolchain list | grep -q "^$NIGHTLY"; then
 	printf '%s is not installed.\n' "$NIGHTLY" >&2
@@ -57,20 +85,43 @@ if ! rustup toolchain list | grep -q "^$NIGHTLY"; then
 	exit 1
 fi
 
-printf '%s\n' "--- 1/2: Rust under AddressSanitizer (+ LeakSanitizer) ---"
-RUSTFLAGS="-Zsanitizer=address -Cdebuginfo=1" \
+case $SANITIZER in
+address) display=AddressSanitizer ;;
+thread) display=ThreadSanitizer ;;
+leak) display=LeakSanitizer ;;
+esac
+if [ "$SANITIZER" = address ]; then
+	if [ "$(uname -s)" = Darwin ]; then
+		printf '%s\n' "--- 1/2: Rust under $display (LeakSanitizer off on Darwin) ---"
+	else
+		printf '%s\n' "--- 1/2: Rust under $display (+ LeakSanitizer) ---"
+	fi
+else
+	printf '%s\n' "--- 1/2: Rust under $display ---"
+fi
+RUSTFLAGS="$RUST_SANITIZER_FLAGS" \
 	cargo "+$NIGHTLY" test -p oxpinyin-store --no-default-features --features bdb --target "$TARGET"
+
+if [ "$SANITIZER" != address ]; then
+	printf '%s\n' "" "sanitizers: clean (libdb's own internals are NOT instrumented)"
+	exit 0
+fi
 
 printf '%s\n' ""
 printf '%s\n' "--- 2/2: the libdb call pattern under ASan + UBSan (C) ---"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 SAN_FLAGS=(-fsanitize=address,undefined -fno-sanitize-recover=all)
+compile=(gcc -Wall -Wextra -Werror -O1 -g "${SAN_FLAGS[@]}")
+if [ -n "${OXPINYIN_BDB_INCLUDE_DIR:-}" ]; then
+	compile+=("-I$OXPINYIN_BDB_INCLUDE_DIR")
+fi
+if [ -n "${OXPINYIN_BDB_LIB_DIR:-}" ]; then
+	compile+=("-L$OXPINYIN_BDB_LIB_DIR")
+fi
 
-gcc -Wall -Wextra -Werror -O1 -g "${SAN_FLAGS[@]}" \
-	-o "$work/hash-walk" tools/bdb/hash-walk.c -ldb
-gcc -Wall -Wextra -Werror -O1 -g "${SAN_FLAGS[@]}" \
-	-o "$work/btree-order" tools/bdb/btree-order.c -ldb
+"${compile[@]}" -o "$work/hash-walk" tools/bdb/hash-walk.c -ldb
+"${compile[@]}" -o "$work/btree-order" tools/bdb/btree-order.c -ldb
 
 # The write direction: a file this backend created, checked by a reader
 # with no Rust in it.

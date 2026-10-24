@@ -111,11 +111,16 @@ bench-smoke:
 fuzz *args:
     @just heavy -- setarch "$(uname -m)" -R cargo +nightly-2026-08-01 fuzz run "$@"
 
-# The fuzz workspace links the Linux-only C ABI, even for portable targets.
+# cargo-fuzz supports Darwin. Homebrew supplies the facade's GLib and the
+# default store backend; the paths are selected explicitly, as in CI.
 [macos]
 fuzz *args:
-    @echo "fuzz is unsupported on macOS: the fuzz workspace requires the Linux-only C ABI."
-    @exit 1
+    @just heavy -- env \
+        OXPINYIN_BDB_INCLUDE_DIR="$(brew --prefix berkeley-db@5)/include" \
+        OXPINYIN_BDB_LIB_DIR="$(brew --prefix berkeley-db@5)/lib" \
+        PKG_CONFIG_PATH="$(brew --prefix glib)/lib/pkgconfig:$(brew --prefix berkeley-db@5)/lib/pkgconfig" \
+        LIBRARY_PATH="$(brew --prefix berkeley-db@5)/lib" \
+        cargo +nightly-2026-08-01 fuzz run "$@"
 
 # Windows transport is unverified (#950); setarch is Linux-only.
 [windows]
@@ -132,21 +137,30 @@ coverage *args:
 coverage *args:
     @just heavy -- uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -m tools.dev coverage @args; exit $LASTEXITCODE
 
-# Run one store backend's sanitizer gate (bdb, kc or tkrzw), or all three.
+# Run one store backend's sanitizer gate (bdb, kc or tkrzw), or all three,
+# with address (default), thread, leak or memory instrumentation.
 [linux]
-sanitize backend="bdb":
-    @just heavy -- bash tools/sanitize.sh "$1"
+sanitize backend="bdb" sanitizer="address":
+    @just heavy -- bash tools/sanitize.sh "$1" "$2"
 
-# The gates need Linux: libdb 5.3, a loadable Kyoto Cabinet and setarch.
+# Darwin uses Homebrew's Berkeley DB 5.3, Kyoto Cabinet and tkrzw. The wrapper
+# selects Darwin paths and omits Linux setarch. The tkrzw gate certifies the
+# host library through distro-probe.sh; put Homebrew's tkrzw_dbm_util on PATH.
 [macos]
-sanitize backend="bdb":
-    @echo "sanitize is unsupported on macOS: the sanitizer gates need Linux (libdb 5.3, Kyoto Cabinet, setarch)."
-    @exit 1
+sanitize backend="bdb" sanitizer="address":
+    @just heavy -- env \
+        OXPINYIN_BDB_INCLUDE_DIR="$(brew --prefix berkeley-db@5)/include" \
+        OXPINYIN_BDB_LIB_DIR="$(brew --prefix berkeley-db@5)/lib" \
+        PKG_CONFIG_PATH="$(brew --prefix glib)/lib/pkgconfig:$(brew --prefix kyoto-cabinet)/lib/pkgconfig:$(brew --prefix tkrzw)/lib/pkgconfig:$(brew --prefix berkeley-db@5)/lib/pkgconfig" \
+        LIBRARY_PATH="$(brew --prefix berkeley-db@5)/lib:$(brew --prefix kyoto-cabinet)/lib:$(brew --prefix tkrzw)/lib:$(brew --prefix lz4)/lib:$(brew --prefix xz)/lib:$(brew --prefix zstd)/lib" \
+        CPATH="$(brew --prefix berkeley-db@5)/include:$(brew --prefix kyoto-cabinet)/include" \
+        PATH="$(brew --prefix tkrzw)/bin:$PATH" \
+        bash tools/sanitize.sh "$1" "$2"
 
-# The gates are Linux bash scripts; Windows transport is unverified (#950).
+# The gates are Linux/Darwin bash scripts; Windows transport is unverified (#950).
 [windows]
-sanitize backend="bdb":
-    @echo "sanitize is unsupported on Windows: the sanitizer gates are Linux bash scripts."
+sanitize backend="bdb" sanitizer="address":
+    @echo "sanitize is unsupported on Windows: the sanitizer gates are Linux/Darwin bash scripts."
     @exit 1
 
 # Read registry metadata, optionally filtered by issue or kind.

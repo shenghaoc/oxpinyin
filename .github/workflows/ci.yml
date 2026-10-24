@@ -363,7 +363,8 @@ jobs:
 
   # macOS links a C store backend: Homebrew's keg-only berkeley-db@5 (the
   # path README.md documents), selected explicitly. #501 removed redb. The
-  # job excludes the two C-ABI crates (glib and cargo-c, Linux-only) and the
+  # job excludes the two C-ABI crates (their facade tests are Linux-first;
+  # GLib and cargo-c themselves are available from Homebrew) and the
   # backend-independent corpus, KMM, punctuation, and word tools. The
   # combined training package remains in the lane because its
   # segment/eval/train modules use the backend. oxpinyin-dictool stays

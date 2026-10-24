@@ -84,9 +84,9 @@ Layer 5 schedules the old-to-new handoffs.
 | `just bench [args ...]` | Run the workspace benches through the heavy wrapper: `cargo bench --workspace --benches <args>`. | `cargo bench` | Implemented, #1038 (maintainer ruling 2026-10-22 UTC). `--benches` skips the four `required-features` targets: `backend_matrix_kyotocabinet`, `backend_matrix_tkrzw` and `kyotocabinet_bnum` (oxpinyin-store), and `dbm_bench` (pinyin-oracle). |
 | `just bench-smoke` | Build every selected bench harness without running it: `just bench --no-run`. | `cargo bench --no-run` | Implemented, #1038 (maintainer ruling 2026-10-22 UTC). On a host with model20, `just bench -- --test` is the full start-up check. |
 | `just measure <recipe>` / `just initbench` | Enter native oxpinyin-only measurement; `initbench` is `measure startup`. Pin rows are refused. | Native startup controller and worker (layer 5 §7.8) | Implemented under the 2026-10-22 UTC ruling; Linux KC empty-profile smoke completed on 2026-10-24 UTC at controller `1cea405c`, retained shipping `ebc9d4f5`, via recheck plus separate continuation (both exit 0; benches runbook); macOS acceptance pending. |
-| `just fuzz <target> [args ...]` | Run one native fuzz target through the heavy wrapper. | `setarch "$(uname -m)" -R cargo +nightly-2026-08-01 fuzz run <args>` from `verify-nightly.yml`'s `fuzz-soak` job. | Implemented (maintainer ruling 2026-10-23 UTC). Linux execution; macOS exits 1 because the fuzz workspace links the Linux-only C ABI. Windows transport unverified (#950). |
+| `just fuzz <target> [args ...]` | Run one native fuzz target through the heavy wrapper. | `setarch "$(uname -m)" -R cargo +nightly-2026-08-01 fuzz run <args>` on Linux from `verify-nightly.yml`'s `fuzz-soak` job; the macOS recipe supplies Homebrew GLib and Berkeley DB paths. | Implemented (maintainer ruling 2026-10-23 UTC; macOS native path added by #1180). All ten targets run on Linux and macOS. Windows transport unverified (#950). |
 | `just coverage [args ...]` | Run native coverage through the heavy wrapper; the tool owns crate, backend and report selection. | `tools.dev coverage` runs `cargo llvm-cov <args>` from `coverage.yml`'s `coverage` job with temporary per-invocation state. | Implemented (maintainer ruling 2026-10-23 UTC). Run and report in one invocation; pass the desired workflow scope, report and floor options together. macOS execution unverified; Windows transport unverified (#950). |
-| `just sanitize [bdb\|kc\|tkrzw\|all]` | Run one store backend's sanitizer gate, or all three, through the heavy wrapper: `tools/sanitize.sh <backend>`, default `bdb`. | `tools/bdb/run-sanitizers.sh`, `tools/kc/run-sanitizers.sh`, and `tools/tkrzw/run-sanitizers.sh` (moved from `store-backends.yml`'s inline `tkrzw-sanitizers` command). | Implemented (maintainer approval 2026-10-23 UTC, #1085). Linux execution; macOS and Windows exit 1. `store-backends.yml`'s three sanitizer jobs call the same dispatcher. |
+| `just sanitize [bdb\|kc\|tkrzw\|all] [address\|thread\|leak\|memory]` | Run one store backend's sanitizer gate, or all three, through the heavy wrapper: `tools/sanitize.sh <backend> [sanitizer]`, default `bdb address`. | `tools/bdb/run-sanitizers.sh`, `tools/kc/run-sanitizers.sh`, and `tools/tkrzw/run-sanitizers.sh` (moved from `store-backends.yml`'s inline `tkrzw-sanitizers` command). | Implemented (maintainer approval 2026-10-23 UTC, #1085; macOS and thread selection added by #1180). Linux and macOS select address and thread; only macOS thread has been run. macOS refuses MemorySanitizer and standalone LSan on arm64; tkrzw leak is refused on every host. Windows exits 1. `store-backends.yml`'s three sanitizer jobs call the same dispatcher. |
 | `just ci <job>` | Select an approved native job. | Workflow-specific commands | Proposed. |
 
 `just check` keeps `check.sh`'s backend selection and selected crate sets.
@@ -112,10 +112,11 @@ Native recipes do not acquire pin or cell semantics from that vocabulary.
 The fuzz and coverage wrappers forward raw arguments, including `--`, without
 adding target, crate, backend or report selection. Their `not-a-gate` registry
 rows name `legacy:justfile` and call that exact justfile; compatibility
-aggregate gates do not execute them. Fuzz uses the pinned nightly and Linux
-ASLR wrapper from [verify-nightly.yml](../../.github/workflows/verify-nightly.yml),
-job `fuzz-soak`, step `Soak each target`. The targets and Linux-only C ABI
-dependency are in [fuzz/Cargo.toml](../../fuzz/Cargo.toml).
+aggregate gates do not execute them. Fuzz uses the pinned nightly and, on
+Linux, the ASLR wrapper from [verify-nightly.yml](../../.github/workflows/verify-nightly.yml),
+job `fuzz-soak`, step `Soak each target`. The nightly CI soak remains
+Linux-only; the macOS recipe runs the targets natively with Homebrew facade
+paths. The targets and facade dependency are in [fuzz/Cargo.toml](../../fuzz/Cargo.toml).
 Coverage delegates to the existing tool from
 [coverage.yml](../../.github/workflows/coverage.yml), job `coverage`:
 
@@ -164,23 +165,28 @@ paths and `--`) and statuses 0, 1 and 77 also passed with a temporary Cargo
 substitute through the real heavy slot. These bounded results close neither
 other recipes' acceptance nor T2N's fresh-install/offline checks.
 
-The macOS fuzz refusal body returned 1 when exercised on Linux. Native macOS
-fuzz/coverage recipe execution was not run; fuzz remains unsupported there
-because the workspace links the Linux-only C ABI. Windows transport and runtime
-remain unverified (#950).
+The macOS fuzz refusal has been removed: all ten targets now run natively
+with Homebrew GLib and Berkeley DB paths, and the C-ABI target links there as
+well. Native macOS coverage recipe execution remains unverified. Windows
+transport and runtime remain unverified (#950).
 
 These recipes do not change either workflow.
 
-`just sanitize` selects only. `tools/sanitize.sh <bdb|kc|tkrzw|all>` runs the
-backend's own script, which keeps its instrumentation, flags and pass
+`just sanitize` selects only. `tools/sanitize.sh <bdb|kc|tkrzw|all> [address|thread|leak|memory]`
+runs the backend's own script, which keeps its instrumentation, flags and pass
 criteria; the three share the nightly that the `NIGHTLY` line in
 `tools/sanitize.sh` names. `all` runs the three in turn and exits 1 if any
-gate failed. The tkrzw script carries the command `tkrzw-sanitizers` used to
-inline, with its flags, sanitizer options and ASLR wrapper unchanged, and adds
-one precondition, checked by `tools/tkrzw/runtime.sh`: every test binary must
-load the verified libtkrzw, the one `tools/cloud/setup.sh`'s environment file
-names or a host library that passes `tools/tkrzw/distro-probe.sh`. Ubuntu's
-packaged libtkrzw fails that probe.
+gate failed. Linux and macOS select address and thread; only macOS thread
+has been run. macOS refuses MemorySanitizer and standalone LSan on arm64, and
+tkrzw leak is refused on every host because its harness retains
+process-lifetime allocations. The tkrzw script carries the command
+`tkrzw-sanitizers` used to inline, with its flags, sanitizer options and
+Linux address-gate ASLR wrapper unchanged, and adds one precondition, checked
+by `tools/tkrzw/runtime.sh`: every test binary must load the verified
+libtkrzw, the one `tools/cloud/setup.sh`'s environment file names or a host
+library that passes `tools/tkrzw/distro-probe.sh`. On macOS the just recipe
+puts Homebrew's `tkrzw_dbm_util` on PATH, and `probe_host` certifies the
+Homebrew dylib. Ubuntu's packaged libtkrzw fails that probe.
 
 `store-backends.yml` runs the same entry point (maintainer approval
 2026-10-23 UTC, #1085): `tkrzw-sanitizers`, `bdb-sanitizers` and
