@@ -1,7 +1,7 @@
 # #918 — skipped prefix read hides a Berkeley DB format error
 
 - **Status:** source-established difference; no exception admitted ·
-  2026-10-24 UTC · #918. The early return is unchanged.
+  2026-10-24 UTC · #918. The bypass described below is the `1c5d96b9` baseline.
 - **Disposition/classification:** defect under decision-order limb 4.
   This is backend error handling with a surviving session consequence,
   not a GLib/glibc/C++ incidental conversion detail. The bounded witness
@@ -78,8 +78,7 @@ OS signal faults and arbitrary corrupt-pointer execution are different
 partitions. Healthy backing data cannot reach this format-error branch.
 
 Conclusion: **the general prefix path is not identical on faulting
-stores**. Preserve the separate normal-data equivalence, retain the early
-return as instructed, and do not grant removal clearance or label this
+stores**. Preserve the separate normal-data equivalence, do not grant removal clearance or label this
 diagnostic/state difference POLICY-ACCEPTED. No new ruling is needed to
 identify the unadmitted difference; accepting it would need a separate
 policy basis.

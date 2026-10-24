@@ -1,8 +1,9 @@
 # #918 — skipped prefix read hides Kyoto Cabinet's second-read assert
 
 Source-established conditional fault path · 2026-10-24 UTC · #918.
-**Class (c); current shortcut omits its required warning.** No exception
-admission, implementation change or executed fault injection.
+**Class (c); the `1c5d96b9` shortcut omits its required warning.** No exception
+admission or executed fault injection. The current prefix implementation
+is discussed in the follow-through; it is not certified by this baseline witness.
 
 At libpinyin `074a2219`, both phrase-segment exports reach
 `lookup/phrase_lookup.cpp:255-276` for a matching scalar prefix before a
@@ -41,9 +42,9 @@ path. The analogous two-call phrase-table check is at
 bigram consultation; it is not a successful prefix lookup.
 
 Class (c) takes precedence over any malformed-text quirk admission.
-Returning false silently does not meet its warning rule. Keep the early
-return unchanged under the current instruction; this record neither
-waives the warning nor chooses a new refusal lifecycle.
+Returning false silently does not meet its warning rule. The row-85 prefix fix does not admit this independent two-read failure
+schedule; this record neither waives its warning nor selects a new
+backend refusal lifecycle.
 
 Reproduce the derivation with `git show
 074a2219:src/storage/ngram_kyotodb.cpp` and the cited patched kc source.

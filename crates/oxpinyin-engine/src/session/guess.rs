@@ -137,6 +137,16 @@ where
         crate::phrase::phrase_segment(&self.dictionary, &self.model, sentence)
     }
 
+    /// Processes the scalar prefix before a non-scalar phrase input in
+    /// the pin's span/predecessor order, without publishing a result.
+    ///
+    /// # Errors
+    ///
+    /// Returns the ordinary phrase lookup refusal for a reached bad gram.
+    pub fn check_phrase_prefix(&self, prefix: &str) -> Result<(), EngineError> {
+        crate::phrase::check_phrase_prefix(&self.dictionary, &self.model, prefix)
+    }
+
     /// Guesses a sentence seeded with prefix tokens — upstream
     /// `pinyin_guess_sentence_with_prefix` (`pinyin.cpp:1426-1441`):
     /// the prefix tokens join the virtual start as zero-cost initial

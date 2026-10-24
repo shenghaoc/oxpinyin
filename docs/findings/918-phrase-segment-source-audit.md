@@ -1,17 +1,14 @@
 # #918 — phrase-segment input boundary, source investigation
 
-Status: **bounded source audit; no removal cleared** · 2026-10-24 UTC ·
-[#918](https://github.com/shenghaoc/oxpinyin/issues/918), parent
-[#915](https://github.com/shenghaoc/oxpinyin/issues/915).
-Source baseline: oxpinyin `1c5d96b9605a3e5f1caef3a79fbb653707fd031f`;
-rebased onto `ae516625` with no intervening runtime changes in the cited paths.
-This is an investigation checkpoint, not a discrepancy admission or a
-claim that the child is complete. No production behavior changes. The
-non-scalar early return is retained. The prefix audit found a
-[missing class-(c) warning](918-prefix-short-gram-discrepancy.md).
-The [follow-through](918-boundary-follow-through.md) resolves the
-previously unread caller boundaries and returning store-error paths,
-and consolidates the precise remaining limits.
+Status: **bounded source audit; row-85 prefix fix implemented, gates pending** ·
+2026-10-24 UTC · [#918](https://github.com/shenghaoc/oxpinyin/issues/918),
+parent [#915](https://github.com/shenghaoc/oxpinyin/issues/915).
+The baseline derivations below read oxpinyin `1c5d96b9` and exact pin
+`074a2219`. The new [G1 prefix path](918-prefix-lookup.md) processes the
+scalar prefix before a non-scalar, using the existing class-(c) warning
+and refusal for a reached short user gram. GLib conversion is retained;
+no removal is cleared. The [follow-through](918-boundary-follow-through.md)
+keeps unaffected callers and distinct faulting-store limits separate.
 
 The shared coverage ledger landed via [#1156](https://github.com/shenghaoc/oxpinyin/pull/1156).
 The integrated G1 entries are updated here; no code may be removed before
@@ -44,8 +41,10 @@ Relevant GLib source:
   precondition invokes `g_return_if_fail_warning`, logging a critical.
   `glib/gmacros.h:931-939` supplies the compiler-dependent `G_STRFUNC`.
 
-No oracle execution, exploratory test, build or measurement has been
-performed. The conversion/over-read questions were checked with
+The source derivation used no oracle execution or exploratory tests.
+Native tests for the new prefix implementation are reported in its G1
+record; compatibility gates remain pending. The conversion/over-read
+questions were checked with
 `objdump -dlS -C --no-show-raw-insn` and `readelf` on the hash-matching
 bdb pin libraries from `tools/oracle/oracle-pin.txt` and the snapshot's
 GLib 2.89.4-2 libraries, on amd64 and arm64. amd64 is the reference.
@@ -95,7 +94,7 @@ index, otherwise writes the stored token and returns true
 (`pinyin.cpp:3277-3288`, `zhuyin.cpp:2233-2244`). NULL pointer cases
 remain subject to the existing row-41 contract record, not a new quirk.
 
-In Rust, each facade's `phrase.rs::segment_text` has one production
+At the baseline, each facade's `phrase.rs::segment_text` has one production
 caller: its `*_phrase_segment` export. The helpers are duplicated, not
 shared between crates. Valid `str` goes to
 `engine/src/session/guess.rs::Session::phrase_segment`, then
@@ -103,8 +102,11 @@ shared between crates. Valid `str` goes to
 `facade/src/instance.rs::InstanceCore::phrase_result`; `Err` logs through
 `sentence.rs::refuse_lookup_gram` and preserves the old result. A failed
 GLib conversion emits the exact precondition critical and preserves the
-old result. A GLib-accepted non-scalar instead replaces it immediately
+old result. The baseline GLib-accepted non-scalar branch replaces it immediately
 with a length-sized null-token vector and returns false, without lookup.
+The new implementation first checks the scalar prefix, preserving the
+old vector on the ordinary row-85 refusal; a successful check retains
+the baseline full-length zero-token result.
 `InstanceCore::reset` clears the vector. The two getter implementations
 read it and preserve the pin's out-of-range zeroing law for valid pointers.
 
@@ -118,7 +120,7 @@ read it and preserve the pin's out-of-range zeroing law for valid pointers.
 | Accepted non-scalar encoding with sound scalar-only phrase keys/items, sound grams and successful backing-store reads | Identical in the requested observable channels: false, character-count-sized null result, getter outputs, no diagnostic, no observable session or persistent mutation beyond replacing the result. Prefix consultation only changes private scratch/cache state. | Bounded source proof below, including both facades and three backend read paths. Inherited tests exercise surrogate placement in `nihao`, not all non-scalars or state combinations; no fresh tests. |
 | Truncated multibyte sequence, or a lead-byte skip crossing the C terminator | `g_utf8_strlen(-1)` does not validate continuations: it advances by the lead-byte width before testing the next byte. For a two-byte allocation `c2 00`, its next test is outside that allocation. Avoiding that illegal load is class (b). | Out-of-allocation load established in source and both compiled architectures; undefined execution has no single return/result/diagnostic to reproduce. Do not claim uniformly “one critical, false, old result preserved.” |
 | Accepted non-scalar plus a bounded matching raw phrase key/item | Pin can return true/a token; Rust returns false/zeros. [Separate proposed runtime quirk](918-nonscalar-token-result.md), not an admission by analogy with #894. | Complete bounded source path; admission/gates not completed. |
-| Accepted non-scalar after a matching scalar prefix; reached predecessor has a sound system gram and a user value of 1–3 bytes | Pin asserts while reading the user's total before finalizing the result; Rust returns false with a null vector and no warning. Existing class-(c) row 85 applies; the omitted warning is a defect, not an accepted runtime quirk. | Source-established in [the separate discrepancy record](918-prefix-short-gram-discrepancy.md), both facades/all backend wrappers; no new runtime witness. |
+| Accepted non-scalar after a matching scalar prefix; reached predecessor has a sound system gram and a user value of 1–3 bytes | Pin asserts while reading the user's total before finalizing the result. Rust now processes the prefix and uses the ordinary warning/false/old-result refusal: identical under existing class-(c) row 85, not a new runtime quirk. | Source-established in [the G1 prefix entry](918-prefix-lookup.md), both facades/all backend wrappers; contract cases registered, gates pending. |
 | Other malformed grams, backend read failures or damaged backend state during that prefix consultation | Normal-data equivalence does not cover these paths. [Follow-through](918-boundary-follow-through.md) separates existing safety/availability obligations, silent returned failures, and bdb diagnostic/handle-state differences. | Source traces and verdicts for the named fault classes complete; no deterministic claim for arbitrary undefined execution or whole-process resource failure. |
 | NULL/dangling pointers, extreme lengths/narrowing, allocation failure, other malformed tables/grams | Outside the bounded conclusions above; existing independent records keep their scope. | Unverified here. No new “needs ruling” label or exception admission. |
 
@@ -157,7 +159,8 @@ path reaches the final step, irrespective of prefix scores. `final_step`
 `*_phrase_segment` has no direct output pointer; its observable array is
 the phrase result, subsequently exposed by the two getters traced above.
 Both facades therefore have the same return, length, token values,
-out-of-range zeroing, and silence as Rust's immediate `Unmatched` branch.
+out-of-range zeroing, and silence as the zero-result branch after a
+successful Rust prefix check.
 
 There **are internal mutations**: steps, cached item, merged gram and
 backend read buffers/cache/error slots. They are not new phrase results
@@ -187,11 +190,11 @@ read-only and loads the user gram into memory (`pinyin.cpp:393-401`,
 | kc | `storage/ngram_kyotodb.cpp:124-142` first checks size, then gets into a scratch chunk. `kcdb.h:1985-2041` uses read-only visitors returning `NOP`; no gram update. `kcstashdb.h:313-314,348-374,610-620` and `kchashdb.h:514-522,556-600,768-780` keep private error state; loggers default to NULL and the pin never installs one. A missing row is silent, although its private error slot changes. HashDB's default defrag unit is zero. A BROKEN/SYSTEM error can set `FFATAL`; the [follow-through](918-boundary-follow-through.md) proves that this private flag is neither exposed nor persisted by the read-only system handle. A successful size check followed by a failed/different-sized get reaches the pin's `check_result` assertion at `ngram_kyotodb.cpp:138-139`. The [second-read record](918-prefix-kc-read-assert.md) specifies the failure schedule and class-(c) obligation. |
 | tkrzw | `storage/ngram_tkrzwdb.cpp:102-121` returns no gram for non-OK `Get`, otherwise copies into scratch. `tkrzw_dbm.h:132-163,1038-1046`, `tkrzw_dbm_tiny.cc:279-285,628-683` and `tkrzw_dbm_hash.cc:396-414,1427-1480,2427-2435` implement `Get` with a `NOOP` record processor and `writable=false`. The traced status-return branches do not invoke an update logger or write a row. The [follow-through](918-boundary-follow-through.md) traces metadata/body/file Status failures; process signal faults and invalid memory are separate from returned errors. |
 
-The short user-value discrepancy is stronger than these remaining
+The short user-value assertion is more direct than these remaining
 fault questions: all three wrappers can deliver those raw bytes, and
 the common merge necessarily asserts when a system gram is also present.
-Its [record](918-prefix-short-gram-discrepancy.md) classifies the current
-silent early return as a defect under the existing class-(c) obligation.
+The [G1 prefix entry](918-prefix-lookup.md) documents the implementation
+that now processes this prefix and meets the ordinary class-(c) refusal.
 No binary was needed to settle that source-defined assertion or the
 normal prefix's state changes. The runtime-quirk limb cannot override it.
 
@@ -236,8 +239,8 @@ no diagnostic, then recovery through `你好` and rejection of `ff fe` with
 old **count** two and exact critical. They do not compare every old token
 value after rejection. The existing contract driver has the six axis-C
 surrogate cases, `issue542-phrase-segment-invalid-utf8-{pinyin,zhuyin}`,
-`zhuyin-phrase-result-tokens`, and separate malformed-gram cases. This
-checkpoint claims no fresh gate results.
+`zhuyin-phrase-result-tokens`, and separate malformed-gram cases. The new prefix record separately reports native checks and pending
+compatibility gates; these historical cases are not new executions.
 
 To reproduce the reading, use the named revisions/packages rather than
 host headers. Source archives are under the
@@ -272,4 +275,5 @@ and focused tests for both facades, covering old token values and warning
 behavior, and run the applicable gates. Keep both expected observations
 for any admitted POLICY-ACCEPTED case. No removal is authorized by this
 audit alone. Known differences and the unrun behavior gates still prevent
-a completed #918 implementation PR.
+a completed #918 implementation PR. The resolved row-85 scope itself
+is no longer a STOP; verification and the independent limits remain.

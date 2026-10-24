@@ -2,10 +2,10 @@
 
 Source investigation · 2026-10-24 UTC. This extends the
 [entry/result audit](918-phrase-segment-source-audit.md), retaining its
-exact pin, dependency versions and Rust baseline. No runtime code changes
-or new experiments. The early return remains unchanged. This is a
-decision record for retaining the current GLib conversion while the
-identified differences are resolved, not removal clearance.
+exact pin, dependency versions and Rust baseline. Baseline conclusions
+are distinguished below from the new row-85 prefix processing. The GLib
+conversion and neighboring shared helpers remain; this is not removal
+clearance. No exploratory oracle execution or fault injection was used.
 
 ## Segment input and backing-data partition closure
 
@@ -20,8 +20,8 @@ pin's `int` lookup interface unless the row explicitly says otherwise.
 | The lead-byte walk leaves the supplied allocation | Pin's load is out of bounds; no deterministic return/result/stderr can be assigned. Avoiding that walk is class (b), not an unclassified runtime quirk. | Source and amd64/arm64 instructions establish the illegal load. Possible process outcomes are undefined, not an unread policy question. No new crash probe. |
 | GLib-accepted non-scalar, sound consistent scalar-only keys/items and grams | False/all-zero length-sized result, no warning or observable prefix state; identical. | Complete bounded source argument in the entry audit. |
 | GLib-accepted non-scalar with a bounded matching raw phrase key and item | The pin can return true and a token; Rust returns false/zeros. | [Independent token-result discrepancy](918-nonscalar-token-result.md), source established; proposed runtime-quirk treatment requires its own admission/gates, not #894 by analogy. |
-| Reached user gram shorter than a total, with a system gram | Defined assert; existing class-(c) rule. Current shortcut omits the required warning. | [Recorded defect](918-prefix-short-gram-discrepancy.md), both facades/all three wrappers. |
-| Reached partial gram item, or sub-total row without a system gram | The merge/get-frequency walk can read outside the row. Existing row 98 explicitly covers these lookup sites; class (b), not a new quirk. Its existing one-warning refusal is also skipped by the shortcut. | Exact unsafe shapes and safe early exits are already source-traced by row 98 and `single_gram.rs::{checked_get_freq,checked_search}`. The shortcut cannot encounter either Rust refusal. No deterministic pin result is claimed. |
+| Reached user gram shorter than a total, with a system gram | Defined assert; existing class-(c) rule. New prefix processing uses the ordinary warning/false/old-result refusal, identical under class (c). | [G1 prefix entry](918-prefix-lookup.md), both facades/all three wrappers; native checks passed, contract gates pending. |
+| Reached partial gram item, or sub-total row without a system gram | The merge/get-frequency walk can read outside the row. Existing row 98 explicitly covers these lookup sites; class (b), not a new quirk. The new prefix walk routes reached `UnsafeLookupPredecessor` through its existing one-warning refusal. | Exact unsafe shapes and safe early exits are already source-traced by row 98 and `single_gram.rs::{checked_get_freq,checked_search}`. The new prefix check can encounter these existing Rust refusals; this audit claims no new runtime witness for them. No deterministic pin result is claimed. |
 | Structurally bounded but unsorted/duplicate/zero-total/wrapping-frequency grams | They can change prefix scores, but cannot create a path across a non-scalar when keys/items remain scalar and consistent. No persistent update occurs. | Same final-step proof applies provided the actual merge/search walk stays in bounds and no assert is reached; unsafe/asserting shapes belong to the preceding rows. |
 | Inconsistent key/item length, truncated item storage or malformed token-array bounds | `PhraseTableEntry::search` walks four-byte tokens to the raw byte end (`storage/phrase_large_table3.cpp:29-51`); `get_phrase_item` creates a view using declared length (`phrase_index.cpp:180-208`); `save_next_step` indexes by that length (`phrase_lookup.cpp:348-377`). Out-of-range accesses are class (b); an in-range mismatched length can manufacture a complete path and a different token result, an unadmitted difference under limb 4. | Source hazards established. Not admitted by the bounded non-scalar record, which requires matching lengths and valid storage. Exact output of arbitrary corrupt lengths is deliberately not normalized. |
 | NULL/dangling/unterminated pointers | Existing row 41 governs NULL guards; dangling or unterminated pointers violate the C input lifetime/allocation precondition. | No new compatibility promise or fabricated deterministic output for invalid pointers. |
@@ -37,7 +37,7 @@ the token-result partition.
 
 ## Backend failures during prefix consultation
 
-These rows concern a reachable scalar prefix followed by a non-scalar,
+These baseline rows concern a reachable scalar prefix followed by a non-scalar,
 with consistent scalar phrase keys/items. They distinguish a returned
 read failure from process faults or invalid memory. The wrappers never
 write a gram during segmentation.
@@ -131,23 +131,43 @@ remaining binary question blocks a complete shared-helper replacement
 proof, not the sound-data segment-prefix conclusion. No relevant
 artifact is claimed unavailable.
 
-## Decision and remaining gates
+## Current prefix implementation and remaining gates
 
-Retain the direct GLib call and the non-scalar early return for this
-authorized audit. Ordinary-path equivalence is proven within its stated
-scope; it does not clear the known diagnostic, token-result and store-fault
-differences. The source record is decision-ready for those differences.
-There is no missing backend binary or source package: both architectures'
-required BDB panic branch was read; source settled the named returning
-gram-error paths. The adjacent NULL/zero-copy question above remains
-separate. No decompiler or host-library substitution was needed.
+The new prefix check removes the unconditional bypass for the scalar
+prefix. The bounded row-85 path is implemented as identical under class
+(c), with the normal false/warning/old-result refusal. Sound completion
+still publishes the full-length zero-token result silently. The
+[entry](918-prefix-lookup.md) names tests and pending gates.
 
-Still **not completed**: behavior gates for proposed quirks/fixes,
-whole-process allocation-failure/extreme-length behavior, the adjacent
-NULL/zero-copy binary outcome, and a full G1-family removal proof beyond
-this input/caller audit. These are not policy questions disguised as
-unread code. No removal or warning fix is made. The row-85
-[implementation STOP](918-prefix-short-gram-discrepancy.md#partition-and-classification)
-identifies the actual conflict: the ordinary path already warns, while
-the requested unchanged shortcut is the path with the missing warning.
-No claim of new MATCH or POLICY-ACCEPTED runtime results is made.
+Returned backend failures need separate treatment from that proved path.
+The pin wrappers above leave a failed gram NULL and continue. In Rust,
+`runtime/src/lib.rs::RuntimeLm::merged_row` first reads the user value,
+then `data/src/lm/mod.rs::BigramLanguageModel::load_merged_row` reads the
+system value. `data/src/bigram_table.rs::BigramTable::load_raw_successors`
+propagates backend errors and also rejects empty/partial system values.
+`store/src/bdb/ffi.rs::Db::get` maps every status except DB_NOTFOUND to
+an error; `kyotocabinet/ffi.rs::Db::get` uses one read-only accept and
+returns its error; `tkrzw/mod.rs::db_get` also propagates its status.
+The new `engine/src/phrase.rs::step_costs` call converts that failure to
+`EngineError::Scoring`. The facade's ordinary warning helper recognizes
+only the two lookup-gram refusal variants, so this error returns false
+silently and preserves the old result. The pin can instead continue to
+its length-sized zero result. This is a **source-established, unadmitted
+error-lifecycle difference**, not silent-failure equivalence for the new
+implementation. The same-data backend diagnostic/handle-state details
+are not certified by an eight-case short-gram gate. KC's second-read
+schedule is particularly separate: the Rust wrapper makes one visit.
+
+The row-85 warning does not require a new policy exception; the earlier
+scope conflict was resolved by the explicit prefix-processing ruling.
+No blanket ruling is inferred for the error-lifecycle differences above,
+raw non-scalar dictionary keys or the other neighboring callers. These
+are not grounds to remove the GLib call. Named baseline store-error
+paths and all listed caller boundaries have been traced; the adjacent
+NULL/zero-copy compiled outcome and whole-process allocation/extreme-size
+behavior remain unverified. No unavailable artifact is asserted.
+
+Native touched-crate tests, fmt/clippy and 141 Python harness tests pass.
+Compatibility cases, the named skip-prefix mutation and shipping-size
+checks are pending. Full affected-family removal coverage is not claimed,
+and no PR is opened while the compatibility gate is blocked.
