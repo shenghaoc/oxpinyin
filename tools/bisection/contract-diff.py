@@ -2934,6 +2934,113 @@ def _write_user_conf(k):
         user_conf.write('open counter:0\n')
 
 
+
+# #920: user.conf integer-overflow and state-preservation cases. The fixtures
+# derive every value from the running cell's table.conf; no database-format
+# literal is written. A conforming marker must retain the trained/imported
+# state, while a non-conforming one follows check_format's wipe.
+def _user_conf_values(k):
+    values = {}
+    for line in Path(k.data, 'table.conf').read_text().splitlines():
+        for key in ('binary format version:', 'model data version:'):
+            if line.startswith(key):
+                values[key] = int(line[len(key):].strip())
+    return values
+
+
+def _replace_conf_value(data, key, value):
+    pattern = rb'(?m)^' + re.escape(key.encode()) + rb'.*$'
+    return re.sub(pattern, key.encode() + str(value).encode(), data, count=1)
+
+
+def _edit_user_conf_versions(k, extra):
+    data = Path(k.user, 'user.conf').read_bytes()
+    values = _user_conf_values(k)
+    for key in ('binary format version:', 'model data version:'):
+        data = _replace_conf_value(data, key, values[key] + (1 << 32) + extra)
+    return data
+
+
+def _edit_user_conf_counter(k, value):
+    return _replace_conf_value(
+        Path(k.user, 'user.conf').read_bytes(), 'open counter:', value)
+
+
+def _edit_user_conf_nul(k):
+    data = Path(k.user, 'user.conf').read_bytes()
+    return re.sub(
+        rb'(?m)^(database format:)([^\r\n\x00]+)',
+        lambda match: match.group(1) + match.group(2) + b'\x00junk',
+        data, count=1)
+
+
+def _edit_user_conf_missing_database(k):
+    data = Path(k.user, 'user.conf').read_bytes()
+    data = re.sub(rb'(?m)^database format:.*$', b'', data)
+    return re.sub(rb'(?m)^open counter:.*$', b'', data)
+
+
+def _edit_user_conf_missing_counter(k):
+    data = Path(k.user, 'user.conf').read_bytes()
+    return re.sub(rb'(?m)^open counter:.*$', b'', data)
+
+
+def _edit_user_conf_negative_overflow(k):
+    data = Path(k.user, 'user.conf').read_bytes()
+    for key in ('binary format version:', 'model data version:'):
+        data = _replace_conf_value(data, key, -9223372036854775808)
+    return data
+
+
+def _user_conf_920_session(edit, keep_state):
+    def probe(k):
+        training = token_unigram_trained(k)
+        imported = token_unigram_user(k, add_frequency=False)
+        saved = k.fn('save', B, P)(k.ctx)
+        assert saved, 'the trained profile must save'
+        k.fn('free_instance', None, P)(k.inst)
+        k.fn('fini', None, P)(k.ctx)
+        k._ctx = k._inst = None
+        Path(k.user, 'user.conf').write_bytes(edit(k))
+        ctx = k.init()
+        out = {'reopen': bool(ctx), 'training': training, 'import': imported,
+               'save': saved}
+        if ctx:
+            k._ctx = ctx
+            out['trained-after'] = unigram_of(k, int(training['token'], 16))
+            out['import-after'] = unigram_of(k, int(imported['token'], 16))
+            if keep_state:
+                assert out['trained-after'] == training['after'], 'trained state was wiped'
+                assert out['import-after'] == imported['after'], 'imported state was wiped'
+        out['files'] = user_listing(k)
+        return out
+    return probe
+
+
+def _user_conf_920_case(name, edit, keep_state, control):
+    for mode in ('pinyin', 'zhuyin'):
+        suffix = '-zhuyin' if mode == 'zhuyin' else ''
+        case('user-conf-920-' + name + suffix, mode=mode, issues=('920',),
+             control=control)(_user_conf_920_session(edit, keep_state))
+
+
+_user_conf_920_case('nul-database-token', _edit_user_conf_nul, True, False)
+_user_conf_920_case('version-overflow-conforms',
+                     lambda k: _edit_user_conf_versions(k, 0), True, True)
+_user_conf_920_case('version-overflow-nonconforms',
+                     lambda k: _edit_user_conf_versions(k, 1), False, True)
+_user_conf_920_case('counter-overflow-conforms',
+                     lambda k: _edit_user_conf_counter(k, 1 << 32), True, True)
+_user_conf_920_case('counter-overflow-nonconforms',
+                     lambda k: _edit_user_conf_counter(k, (1 << 32) + 7), False, True)
+_user_conf_920_case('negative-overflow-nonconforms',
+                     _edit_user_conf_negative_overflow, False, True)
+_user_conf_920_case('database-missing-at-eof',
+                     _edit_user_conf_missing_database, False, True)
+_user_conf_920_case('counter-missing',
+                     _edit_user_conf_missing_counter, True, True)
+
+
 def overlong_index_context(k, parse=None, rows=None, options=None):
     """Replace the user pinyin index and return an independently reopened context.
 
