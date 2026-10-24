@@ -2,7 +2,9 @@
 
 Recorded 2026-10-23 (UTC). The maintainer approved the shim as a PR on
 2026-10-23, including `cc` as a build-dependency of `oxpinyin-store` under
-the `kyotocabinet` feature. Scope: #1118.
+the `kyotocabinet` feature. Scope: #1118. Revised 2026-10-24 (UTC) for
+#1124: the SKIP description, the after-init headline and the carry-forward
+statement. No measurement was repeated.
 
 ## Question
 
@@ -75,7 +77,16 @@ on `main` at `d1f9d42` plus this change, against the pin at 074a2219:
 | kc | 2,872 MATCH, 0 DIFFER, 13 SKIP, 4 HOST-DEPENDENT | IDENTICAL on 15 drivers |
 | tkrzw | 2,872 MATCH, 0 DIFFER, 13 SKIP, 4 HOST-DEPENDENT | IDENTICAL on 15 drivers |
 
-- SKIP: fixtures in another backend's format.
+- SKIP: a case that the registry (`cells=` in `tools/bisection/contract-diff.py`
+  at `d1f9d42`) scopes away from that cell. These are backend-scoped coverage
+  exclusions, not fixtures the cell cannot read. On kc and tkrzw the 13 are the
+  cases registered for bdb alone. In nine of them the behaviour was verified on
+  Berkeley DB only. The four `issue762-token-reuse-stale-bigram*` cases need
+  the harness's BDB row comparison of the saved bigram. On bdb the one SKIP is
+  `issue785-pinyin-tails-kept-entry-zhuyin`, then registered for kc and tkrzw
+  alone. Since then, #1117 has recorded the reason beside each exclusion and
+  enabled bdb for that case, and #1122 has enabled kc and tkrzw for eight of
+  the 13.
 - HOST-DEPENDENT: the four
   `table-conf-lambda{,-hex}-exponent-without-digits{,-zhuyin}` cases. They are
   registered `host_scanf` cases: this host's glibc scanner accepts a spelling
@@ -99,8 +110,15 @@ policies:
 `tools/packaging/function_order.py` verified both shim facades as ordered
 over all 330 / 310 paths. Both relinks printed `function ordering: 0 of 51
 C++ policy paths are not in this build; skipped`, then "using measured
-policy". The measured shim was built from a checkpoint whose crates,
-policies and tools are byte-identical to the PR's.
+policy". The measured shim was built from a checkpoint on `d1f9d42`. Its
+Kyoto Cabinet shipping inputs (the adapter, the shim, `build.rs`'s Kyoto
+Cabinet module and the facades) and its KC policies are unchanged in the
+merged PR, and so is the measurement-tool code these runs used. The PR's
+rebase onto `2a0f574` brought in
+two changes, and neither reaches these measurements. #1110 changed
+`build.rs`'s tkrzw module and the tkrzw adapter, which no KC build compiles.
+#1117 changed contract-case registrations in `tools/bisection/contract-diff.py`
+(comments, and one case's cells), not the teardown code these runs use.
 
 The job ran in three parts:
 
@@ -325,9 +343,13 @@ run in this campaign.
 - With its C++ functions in the ordering, the KC code compiled into the
   facade costs +40 KiB of text, +32 of read-only and +4 of writable. Facade
   text after init is 548 / 560 KiB, against the pin's 716 / 676.
-- Total Pss after init falls by 466–600 KiB and ends 142–562 KiB below the
-  pin in all four cells. At M1 it ends 140–636 KiB below the pin, with every
-  shim-run control inside its bound.
+- Total Pss after init: the observed median reduction is 466–600 KiB, ending
+  142–562 KiB below the pin's median in all four cells. These are differences
+  of per-arm medians from the interleaved run. `tools/measure-function-order.py`
+  computes no paired control difference or interval for them, so the
+  same-bytes rule (`docs/runbooks/benches.md`) does not qualify them. The
+  separately qualified evidence is the warm-teardown M1 result, where every
+  shim-run control is inside its bound: 140–636 KiB below the pin.
 - Instructions: init −0.23 to −0.30% against an exact control. Per store
   operation, 0.980–1.004× base, all with exact controls. No first-candidate
   or steady gain is claimed.
