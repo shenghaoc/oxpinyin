@@ -1,5 +1,277 @@
 # tkrzw concrete-class shim: evaluation (#1125)
 
+## Cold-page diagnosis: records absent; same-setup one-pass entry point blocked
+
+Recorded 2026-10-24T11:03:31.939909+00:00. STOP remains. This is diagnosis only
+from findings head 0e7f98ac785b81837b74a4015eaebc6d63223241 and the exact
+measured base/prototype artifacts below. No subject worker was launched;
+no build, source/policy change, regeneration, rebase or new driver was made.
+The two additional major-fault events are **not identified to pages** by
+this investigation. Unknown page sets are not reported as empty sets.
+
+### Retained page evidence and checkpoint scope
+
+The 176 original cold native pinyin timing workers (phrases/journals,
+22 rounds including warmups, four arms) retain their stdout resource
+counts but no per-file mincore vectors or page-index runs at M0/M1.
+The original measure-function-order.py cache_pages function constructs a
+mincore vector but returns only `(resident_count, total_pages)`; its
+cold precondition validates zero residency **before launch**, not a bitmap
+at either checkpoint. The vector is discarded. This aggregate cannot
+identify which pages became resident later.
+
+The companion memory workers retained smaps and rollup snapshots, not
+mincore vectors. As established above, those workers used warmed facade
+copies despite the wrapper's stale `cold=true` context label. Their
+segment RSS/Pss totals and address maps cannot reconstruct a per-file
+cache bitmap. The campaign's Callgrind executed-page records are not
+file-cache residency records either. There are no retained cold page
+sets from which to calculate PR-only M0-to-M1 pages.
+
+Checkpoint names also matter. In the measured memory workload, M0 follows
+dlopen/resolve, and M1 follows init **plus configuration, allocation and
+first candidate**. M0-to-M1 would therefore not isolate init even if its
+bitmaps had survived. The existing native worker's `init` mode instead
+pauses at M0 and **I1**, immediately after the init export, before those
+later operations. No retained init-mode run exists in this campaign.
+
+The additional two major faults are process-wide getrusage events. They
+do not name a file, segment or instruction. Newly resident mincore pages
+would include cache population/readahead, not necessarily executed code
+or the faulting addresses. A page difference is not a one-to-one mapping
+to major-fault events. Across different base/prototype ELF layouts, equal
+page indices are equal file offsets, not necessarily equal functions.
+
+### Existing-worker capability and exact blocker
+
+The low-level pieces exist: teardown.py resident_pages(fd, ranges=True)
+returns page-index runs; residency uses that option for SUBJECT in init
+mode; Campaign.run(mode='init') can read them at paused M0/I1. That does
+not mean the requested one-pass invocation exists as a supported entry
+point with the required cache and binary constraints.
+
+- The original measure-function-order.py CLI runs the >=20-round campaign,
+  with time-mode cold facade copies and warm memory workers. It exposes no
+  one-pass init bitmap-retention option.
+- contract-diff.py exposes teardown cache choices `warm` and `cold` only.
+  Its `cold` path evicts the facade, resolved dependencies, system data and
+  user files via cold_files/evict_files. That is broader than this fixed
+  campaign's **cold facade only** setup.
+- Its teardown startup calls build_worker and provisioning; there is no
+  CLI switch to reuse the exact retained worker and existing fixtures for
+  one sample. The init-attribute stage runs the full hardcoded multiple-
+  probe schedule (including 30 count rounds plus warmup, sampling, fault
+  tracing, syscall tracing and Lackey), not one permitted residency pass.
+  Pilot/confirm memory samples retain aggregate per-file residency through
+  file_residency, not per-page facade runs, and also run multiple samples.
+
+**Blocked action:** a single existing-worker pass which retains M0/init-end
+per-page facade residency, reuses the fixed measured artifacts and worker,
+and applies only the original cold-library setup. It was **not attempted**,
+not denied by an approval system. Composing a bespoke pause/evict/mincore
+controller, monkeypatching the eviction scope or round schedule, or adding
+a driver option would cross the explicit no-new-driver/source-capability
+boundary. Running the broader cold CLI or full attribution campaign would
+silently change the experiment and exceed one pass. None was done.
+
+### Static placement from the exact measured ELF and policy records
+
+This independent static result does not need a new subject execution. The
+files match their published completed-campaign hashes. Policy bytes are
+those used by the campaign, not current-main policies. The existing linked
+object verifier was read-only and passed for both objects.
+
+| arm | measured facade SHA256 | policy SHA256 | init-tier virtual-address span [start,end) | whole ordered init+steady span |
+| --- | --- | --- | --- | --- |
+| base | 92a769b8d4c57a61c6190e7e50699deb44f022d87228cb5f96ac00dd16b0031e | d82dedd278c029f5ca1453802ebaf01e134e3e31298724f86a538c2458d6dab9 | 0x11060,0x79ebf | 0x11060,0x7bba7 |
+| pr | d040918c1da19056ef4e8646cb82be7e7151884766025610e83bad08ba5d2837 | 419b2c2b130d2013267ed953deb01142370c5ef220dbaddb680bd2c069f92bec | 0x111c0,0x7ac1f | 0x111c0,0x7c9b7 |
+
+The tier spans are derived separately from actual policy tiers and sized
+linked symbols. They must not be confused with teardown.py policy_prefix,
+which obtains **all** policy names, including the steady tier. A function
+outside the init tier can still be correctly ordered in the steady tier.
+
+PT_LOAD mappings from readelf on these exact files:
+
+| arm | file offset | ELF virtual address | file bytes | memory bytes | flags |
+| --- | ---: | ---: | ---: | ---: | --- |
+| base | 0x0 | 0x0 | 0x103c8 | 0x103c8 | R |
+| base | 0x11000 | 0x11000 | 0x1e9ea5 | 0x1e9ea5 | R E |
+| base | 0x1fb000 | 0x1fb000 | 0x5606c | 0x5606c | R |
+| base | 0x251cb0 | 0x252cb0 | 0xcd50 | 0xce00 | RW |
+| pr | 0x0 | 0x0 | 0x10b40 | 0x10b40 | R |
+| pr | 0x11000 | 0x11000 | 0x1ebdb5 | 0x1ebdb5 | R E |
+| pr | 0x1fd000 | 0x1fd000 | 0x56c80 | 0x56c80 | R |
+| pr | 0x254c10 | 0x254c10 | 0xce98 | 0xcf48 | RW |
+
+For a file-backed symbol byte at ELF virtual address v within one of those
+segments, file offset is p_offset + (v - p_vaddr). Every span below was
+checked to fit its file-backed segment. Both objects happen to have equal
+virtual/file offsets for these spans; that equality was verified, not
+assumed from a process address. Host page size is 4096 bytes. Page indices
+below are **file** indices, with half-open file-byte and symbol intervals.
+ASLR addresses are not divided by 4096 to infer file pages.
+
+#### All three C++ policy rows
+
+| C++ row / tier | exact raw policy identity | symbol VA span | file-byte span | file pages | placement |
+| --- | --- | --- | --- | --- | --- |
+| ProcessFull / init | `_ZN12_GLOBAL__N_19Processor11ProcessFullESt17basic_string_viewIcSt11char_traitsIcEES4_` | 0x49ed0,0x49f75 | 0x49ed0,0x49f75 | 73 | inside init span |
+| finish / init | `_ZN12_GLOBAL__N_1L6finishEN5tkrzw6StatusE.isra.0` | 0x49f80,0x4a2f1 | 0x49f80,0x4a2f1 | 73,74 | inside init span |
+| ProcessEmpty / steady | `_ZN12_GLOBAL__N_19Processor12ProcessEmptyESt17basic_string_viewIcSt11char_traitsIcEE` | 0x7ae80,0x7af25 | 0x7ae80,0x7af25 | 122 | outside init span; inside ordered steady span |
+
+The measured init span ends at 0x7ac1f, **within file page 122**
+[0x7a000,0x7b000). ProcessEmpty's body [0x7ae80,0x7af25) is outside that
+span but on the **same boundary page**. The page intersects init-tier
+functions and steady-tier functions. The other two C++ rows are inside
+the init span on pages 73 and 74. Thus none of the three specified C++
+rows occupies a file page wholly outside the init span's page coverage.
+This is static coverage, not evidence those pages became resident in
+init, nor a claim that page 122 is PR-only or caused a major fault.
+
+The retained proto-pinyin-resolved.txt includes the exact .text section
+for **each of these three rows**. The as-run ordered-build record says
+`0 of 3 C++ policy paths are not in this build; skipped`, meaning **zero
+were skipped**, not three. The measured linked-object verification also
+passed with 274 policy paths. Base reports 0 of 0 C++ rows. Placement in a
+steady tier is not a missing/skipped row.
+
+#### Other emitted shim C++ bodies
+
+These are additional static symbols, not inferred newly resident pages.
+No separate policy row names the cold clones, fail, or destructors below;
+that is different from a specified policy row being skipped as missing.
+Aliases at the same address are retained in the symbol-table interpretation.
+
+| symbol | VA span | file pages | inside init | inside whole ordered span |
+| --- | --- | --- | --- | --- |
+| (anonymous namespace)::Processor::ProcessFull(std::basic_string_view<char, std::char_traits<char> >, std::basic_string_view<char, std::char_traits<char> >) [clone .cold] | 0x8b88c,0x8b8ff | 139 | False | False |
+| (anonymous namespace)::Processor::ProcessEmpty(std::basic_string_view<char, std::char_traits<char> >) [clone .cold] | 0x8b900,0x8b973 | 139 | False | False |
+| (anonymous namespace)::fail(char const*) [clone .cold] | 0x8b973,0x8b985 | 139 | False | False |
+| (anonymous namespace)::Processor::~Processor() | 0x1fc3a0,0x1fc3a5 | 508 | False | False |
+| (anonymous namespace)::Processor::~Processor() | 0x1fc3b0,0x1fc3be | 508 | False | False |
+| (anonymous namespace)::fail(char const*) | 0x1fc420,0x1fc50e | 508 | False | False |
+
+Cold/error bodies are on file page 139; the out-of-prefix fail/destructor
+bodies are on page 508. Static symbol presence proves neither execution
+nor cache population. There is no retained evidence here that those
+pages became resident during cold init or incurred either extra fault.
+C-linkage shim wrappers also have separate normal/cold bodies; a C linkage
+name does not mean the implementation is C or that a C++ policy row for
+it was skipped. Nothing about their residency is inferred from their names.
+
+#### Functions intersecting the pages of the three specified C++ rows
+
+The following is a complete sized-text-symbol intersection listing for
+pages 73, 74 and 122, **not a list of PR-only resident pages**. Rust crate
+disambiguator hashes are suppressed for readability; address spans retain
+which body is meant. The exact nm names remain in the local analysis.
+Only symbol-covered bytes can be attributed: padding or bytes without a
+sized text symbol are not silently assigned to the nearest function.
+
+File page 73 [0x49000,0x4a000):
+
+- `0x48c20..0x492c2`: <pinyin::aux_matrix::SharedMatrix>::of_keys
+- `0x492d0..0x4947d`: <std::fs::OpenOptions>::_open
+- `0x49480..0x49606`: <std::hash::random::RandomState as core::hash::BuildHasher>::hash_one::<&alloc[24b8200b0946867]::string::String>
+- `0x49610..0x49782`: <std::hash::random::RandomState as core::hash::BuildHasher>::hash_one::<&u32>
+- `0x49790..0x49902`: <std::path::Path>::_join
+- `0x49910..0x499d8`: <std::path::Path>::is_file
+- `0x499e0..0x49a2c`: <std::path::Path>::join::<alloc[24b8200b0946867]::string::String>
+- `0x49a30..0x49a73`: <std::sync::once::Once>::call_once_force::<<std::sync::once_lock::OnceLock<alloc[24b8200b0946867]::sync::Arc<oxpinyin_core::graph::SegmentGraph>>>::initialize<<std::sync::once_lock::OnceLock<alloc[24b8200b0946867]::sync::Arc<oxpinyin_core::graph::SegmentGraph>>>::get_or_init<<std::sync::once_lock::OnceLock<alloc[24b8200b0946867]::sync::Arc<oxpinyin_core::graph::SegmentGraph>>>::try_insert::{closure#0}>::{closure#0}, !>::{closure#0}>::{closure#0}
+- `0x49a73..0x49ab1`: <std::sync::once_lock::OnceLock<alloc[24b8200b0946867]::sync::Arc<oxpinyin_core::graph::SegmentGraph>>>::initialize::<<std::sync::once_lock::OnceLock<alloc[24b8200b0946867]::sync::Arc<oxpinyin_core::graph::SegmentGraph>>>::get_or_init<<std::sync::once_lock::OnceLock<alloc[24b8200b0946867]::sync::Arc<oxpinyin_core::graph::SegmentGraph>>>::try_insert::{closure#0}>::{closure#0}, !>
+- `0x49ac0..0x49c5c`: <std::sys::fs::unix::File>::open_c
+- `0x49c60..0x49dc9`: <std::sys::sync::once::futex::Once>::call
+- `0x49dd0..0x49eca`: <u32 as core::fmt::Display>::fmt
+- `0x49ed0..0x49f75`: (anonymous namespace)::Processor::ProcessFull(std::basic_string_view<char, std::char_traits<char> >, std::basic_string_view<char, std::char_traits<char> >)
+- `0x49f80..0x4a2f1`: (anonymous namespace)::finish(tkrzw::Status) [clone .isra.0]
+
+File page 74 [0x4a000,0x4b000):
+
+- `0x49f80..0x4a2f1`: (anonymous namespace)::finish(tkrzw::Status) [clone .isra.0]
+- `0x4a300..0x4a341`: __rustc::__rust_alloc
+- `0x4a350..0x4a3d9`: __rustc::__rust_realloc
+- `0x4a3e0..0x4a49e`: __udivti3
+- `0x4a4a0..0x4a565`: __umodti3
+- `0x4a570..0x4a58e`: alloc[24b8200b0946867]::boxed::box_new_uninit
+- `0x4a590..0x4a5bb`: alloc[24b8200b0946867]::boxed::box_new_uninit
+- `0x4a5c0..0x4a740`: alloc[24b8200b0946867]::fmt::format::format_inner
+- `0x4a740..0x4a900`: core::fmt::write
+- `0x4a900..0x4a9bb`: core::ptr::drop_glue::<alloc[24b8200b0946867]::collections::btree::dedup_sorted_iter::DedupSortedIter<alloc[24b8200b0946867]::string::String, oxpinyin_engine::config::ConfigValue, alloc[24b8200b0946867]::vec::into_iter::IntoIter<(alloc[24b8200b0946867]::string::String, oxpinyin_engine::config::ConfigValue)>>>
+- `0x4a9c0..0x4ad58`: core::ptr::drop_glue::<alloc[24b8200b0946867]::collections::btree::map::BTreeMap<u32, alloc[24b8200b0946867]::vec::Vec<oxpinyin_user::phrase::UserPronunciation>>>
+- `0x4ad60..0x4b128`: core::ptr::drop_glue::<alloc[24b8200b0946867]::collections::btree::map::BTreeMap<u32, core::option::Option<oxpinyin_data::chunk_write::ChunkItem>>>
+
+File page 122 [0x7a000,0x7b000):
+
+- `0x79dd0..0x7a393`: std::fs::read::inner
+- `0x7a3a0..0x7a499`: std::io::default_read_to_end::small_probe_read::<std::fs::File>
+- `0x7a4a0..0x7a4a1`: std::sys::args::unix::imp::ARGV_INIT_ARRAY::init_wrapper
+- `0x7a4b0..0x7a6cd`: std::sys::fs::metadata
+- `0x7a6d0..0x7a998`: std::sys::fs::unix::try_statx
+- `0x7a9a0..0x7ac1f`: std::sys::random::linux::hashmap_random_keys
+- `0x7ac20..0x7ac70`: <alloc[24b8200b0946867]::sync::Arc<oxpinyin_core::graph::SegmentGraph>>::drop_slow
+- `0x7ac70..0x7adde`: <oxpinyin_engine::session::buffer::InputBuffer>::clear
+- `0x7ade0..0x7ae7b`: <oxpinyin_user::lookup::UserLookup>::phrase_prefix_exists
+- `0x7ae80..0x7af25`: (anonymous namespace)::Processor::ProcessEmpty(std::basic_string_view<char, std::char_traits<char> >)
+- `0x7af30..0x7b00d`: core::slice::sort::shared::pivot::median3_rec::<oxpinyin_engine::candidate::Candidate, <[oxpinyin_engine::candidate::Candidate]>::sort_by_key<u32, oxpinyin_engine::session::order_window_tail::{closure#0}>::{closure#0}>
+
+### Result and supported proposal
+
+**Demonstrated:** no retained cold per-page set is available for the
+requested set subtraction. Both init C++ rows are correctly inside the
+init span. ProcessEmpty is a live, resolved steady row outside the init
+span but shares its final page. All three specified C++ rows resolved;
+none was skipped. Some other emitted cold/error/destructor bodies are
+outside the whole ordered span, as the static tables show.
+
+**Not demonstrated:** which facade pages were PR-only M0-to-init-end
+resident additions, whether either extra major fault belonged to the
+facade at all, which function incurred one, or whether any emitted
+out-of-prefix C++ body was read/executed during this cold init. A mincore
+bitmap alone would still not make a fault-to-page/function attribution.
+No missing-row or C++ placement explanation for the two events is proved.
+
+**Supported proposal:** extend the existing diagnostic controller, only
+after explicit authorization, with a one-pass path that reuses the exact
+retained worker/fixtures/artifacts, applies the same private-facade-only
+cold preparation, and preserves the existing mincore page-index runs at
+M0 and the worker's init-only I1 checkpoint. That would enable the page
+set and symbol-intersection question without inventing a new worker
+capability. If M1 is also retained, label its later first-candidate scope
+separately. Fault IP/address evidence would be a further, separately
+authorized requirement to identify the two major-fault events themselves.
+No such controller extension or fault capture was implemented here.
+
+There is **no supported shim/policy fix yet**. In particular, adding
+already-resolved C++ rows again, relabeling ProcessEmpty as init, or moving
+cold/error functions on the assumption they caused two faults is not
+justified by these records. The missing page evidence and unavailable
+same-setup single-pass entry point are the blocker. STOP; no PR or review.
+
+### Read-only tools and commands
+
+```sh
+export R=/home/sheng/Documents/Codex/2026-10-24/task-3
+export PY=/home/sheng/.local/share/uv/python/cpython-3.15.0-linux-x86_64-gnu/bin/python3.15
+cd "$R/worktree"
+python3 "$R/page-diagnosis-1125/records.py"
+$PY -X lazy_imports=normal "$R/page-diagnosis-1125/static.py"
+readelf -lW "$R/campaign-finish/base-stage/lib/libpinyin.so.15.0.0"
+readelf -lW "$R/campaign-finish/proto-stage/lib/libpinyin.so.15.0.0"
+readelf -SW "$R/campaign-finish/proto-stage/lib/libpinyin.so.15.0.0"
+nm -S -n --defined-only -C "$R/campaign-finish/proto-stage/lib/libpinyin.so.15.0.0"
+# Static verifier used the same policies and sized nm records as the as-run resolver.
+# Retained inputs: campaign-finish/records/{proto,base}-pinyin-resolved.txt,
+# ordered-build.txt, measurement-campaign.txt and measurement-originals/.
+git diff --check
+```
+
+The local scripts only inspect existing records/ELFs and existing policy
+verification code. They do not launch subject workers, modify policies,
+regenerate order, or constitute a new measurement driver. Derived JSON
+and all captures remain local. Only this findings update is committed.
+
+
 ## Retained cold-init diagnosis; STOP remains
 
 Recorded 2026-10-24T10:51:52.840413+00:00. Diagnosis only, on findings
