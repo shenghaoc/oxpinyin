@@ -128,7 +128,8 @@ with the best historical yield for an IME:
    trust boundary documented in `../safety/oxpinyin-audit.md` F-6). This exercises
    the FFI conversion/ownership layer that the parser target cannot
    reach. Implementation note: lives in the existing nightly `fuzz/`
-   workspace (Linux-only, like the nightly fuzz soak); the harness itself is
+   workspace; the nightly CI soak is Linux-only, and the macOS recipe runs
+   the same targets with Homebrew GLib and Berkeley DB paths. The harness is
    the one place where fuzz code legitimately links capi. Sanitizers:
    the pinned cargo-fuzz 0.13.2 builds targets with its default
    instrumentation, selected as `-s address` (Sanitizer::Address) — the

@@ -6,29 +6,35 @@
 # records to Rust fn pointers valid only for the callback. Panic-unwinding
 # across that FFI boundary and borrow-escape of those records are the live
 # hazards, so the feature's own test surface runs under AddressSanitizer
-# and any finding fails the gate. There are no compiled C/C++ translation
-# units — the backend is pure bindgen over tkrzw_langc.h — so ASan
-# instruments the Rust side of the FFI.
+# or ThreadSanitizer and any finding fails the gate. There are no compiled
+# C/C++ translation units — the backend is pure bindgen over
+# tkrzw_langc.h — so the sanitizers instrument the Rust side of the FFI.
 #
 # rustc has no `undefined` sanitizer -- `-Zsanitizer=` accepts address,
 # cfi, dataflow, hwaddress, kcfi, kernel-address, kernel-hwaddress, leak,
 # memory, memtag, safestack, shadow-call-stack, thread and realtime, and
 # nothing else. With no C targets, UBSan has nothing to instrument here.
 #
-# LeakSanitizer is off by documented choice: the Rust harness holds
-# deliberate process-lifetime allocations whose ownership crosses the
-# boundary, which LSan misclassifies, and the hazards under test, misuse
-# of BORROWED records and unwinding, both stay fatal. abort_on_error=1
-# closes the loophole where a report could print yet the run still pass.
-# setarch -R disables ASLR for the process tree: GitHub runner kernels'
-# mmap entropy exceeds what ASan's shadow mapping assumes, and an
-# unprivileged container cannot lower vm.mmap_rnd_bits itself.
+# LeakSanitizer is off in the address gate by documented choice: the Rust
+# harness holds deliberate process-lifetime allocations whose ownership
+# crosses the boundary, which LSan misclassifies, and the hazards under
+# test, misuse of BORROWED records and unwinding, both stay fatal.
+# tools/sanitize.sh refuses standalone tkrzw leak for that reason.
+# abort_on_error=1 closes the loophole where a report could print yet the
+# run still pass. On Linux, the address gate wraps the test command in
+# setarch -R: GitHub runner kernels' mmap entropy exceeds what ASan's shadow
+# mapping assumes, and an unprivileged container cannot lower
+# vm.mmap_rnd_bits itself. That is an ASan workaround and is not applied to
+# ThreadSanitizer, which can fail to set up its shadow memory with address
+# randomisation off. Darwin has no setarch and does not need it.
 #
 # The explicit --target keeps RUSTFLAGS off host build scripts and proc
 # macros, which otherwise came out as unloadable sanitized dylibs (E0463);
 # only the target graph is sanitized. The prebuilt standard library stays
 # uninstrumented: -Zbuild-std is heavier than this gate warrants
-# (docs/findings/upstream-divergences.md).
+# (docs/findings/upstream-divergences.md). ThreadSanitizer names the
+# sanitizer ABI mismatch explicitly, because the prebuilt standard library
+# is not instrumented.
 #
 # The library must be sound. Ubuntu's packaged libtkrzw cannot read files
 # it writes (docs/findings/tkrzw-distro-compat.md), so a run against it is
@@ -37,9 +43,10 @@
 # enforcement"): the library setup.sh's environment file names or, with none
 # configured, a host libtkrzw that passes tools/tkrzw/distro-probe.sh. Every
 # test binary must resolve libtkrzw to it before a test runs.
-# oracle_cell_library_path() snapshots the inherited LD_LIBRARY_PATH before
+# oracle_cell_library_path() snapshots the inherited loader path before
 # any directory change, because cargo runs each test binary from the package
-# directory.
+# directory. On macOS the just recipe puts Homebrew's tkrzw_dbm_util on
+# PATH, and this probe certifies the Homebrew dylib.
 #
 # NOT covered: libtkrzw's own internals. The library is not rebuilt with
 # the sanitizer, so UB inside it is invisible here.
@@ -63,6 +70,7 @@ cd "$REPO_ROOT"
 
 # Named once, in tools/sanitize.sh.
 NIGHTLY=${OXPINYIN_SANITIZER_TOOLCHAIN:-$(sed -n 's/^NIGHTLY=//p' tools/sanitize.sh)}
+SANITIZER=${OXPINYIN_SANITIZER:-address}
 
 if ! rustup toolchain list | grep -q "^$NIGHTLY"; then
 	printf '%s is not installed.\n' "$NIGHTLY" >&2
@@ -98,12 +106,37 @@ if [ -z "${OXPINYIN_TKRZW_LIBRARY:-}${OXPINYIN_TKRZW_PREFIX:-}${OXPINYIN_TKRZW_P
 	export OXPINYIN_TKRZW_LIBRARY
 fi
 
-export RUSTFLAGS="-D warnings -Zsanitizer=address -Cdebuginfo=1"
-export ASAN_OPTIONS=detect_leaks=0:abort_on_error=1
-test_command=(setarch "$(uname -m)" -R cargo "+$NIGHTLY" test --locked --target "$TARGET"
-	-p oxpinyin-store --no-default-features --features tkrzw)
+case $SANITIZER in
+address)
+	export RUSTFLAGS="-D warnings -Zsanitizer=address -Cdebuginfo=1"
+	export ASAN_OPTIONS=detect_leaks=0:abort_on_error=1
+	;;
+thread)
+	export RUSTFLAGS="-D warnings -Zsanitizer=thread -Cdebuginfo=1 -Cunsafe-allow-abi-mismatch=sanitizer"
+	export TSAN_OPTIONS=abort_on_error=1
+	;;
+leak)
+	export RUSTFLAGS="-D warnings -Zsanitizer=leak -Cdebuginfo=1 -Cunsafe-allow-abi-mismatch=sanitizer"
+	export LSAN_OPTIONS=abort_on_error=1
+	;;
+*)
+	printf 'unknown sanitizer: %s\n' "$SANITIZER" >&2
+	exit 2
+	;;
+esac
 
-printf '%s\n' "--- building the tkrzw feature tests under AddressSanitizer ---"
+test_command=(cargo "+$NIGHTLY" test --locked --target "$TARGET"
+	-p oxpinyin-store --no-default-features --features tkrzw)
+if [ "$(uname -s)" = Linux ] && [ "$SANITIZER" = address ]; then
+	test_command=(setarch "$(uname -m)" -R "${test_command[@]}")
+fi
+
+case $SANITIZER in
+address) display=AddressSanitizer ;;
+thread) display=ThreadSanitizer ;;
+leak) display=LeakSanitizer ;;
+esac
+printf '%s\n' "--- building the tkrzw feature tests under $display ---"
 artifacts=$("${test_command[@]}" --no-run --message-format=json-render-diagnostics)
 # Checked where cargo runs them, in the package directory; a binary with
 # no tkrzw dependency prints no path.
@@ -125,7 +158,11 @@ if [ "$checked" -eq 0 ]; then
 fi
 printf 'libtkrzw: %d test binaries resolve it to %s\n' "$checked" "$library"
 
-printf '%s\n' "" "--- Rust under AddressSanitizer (LeakSanitizer off) ---"
+if [ "$SANITIZER" = address ]; then
+	printf '%s\n' "" "--- Rust under $display (LeakSanitizer off) ---"
+else
+	printf '%s\n' "" "--- Rust under $display ---"
+fi
 "${test_command[@]}"
 
 printf '%s\n' "" "sanitizers: clean (libtkrzw's own internals are NOT instrumented)"

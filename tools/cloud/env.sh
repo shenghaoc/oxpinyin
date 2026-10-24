@@ -1,10 +1,28 @@
 #!/usr/bin/env bash
 # Shared oracle verification, host probes and environment writer for setup.sh.
 
-# tkrzw_so FILE: where ldd, in the caller's environment, resolves FILE's
-# libtkrzw.so.1 (empty if it does not).
+# tkrzw_so FILE: where the platform loader, in the caller's environment,
+# resolves FILE's libtkrzw (empty if it does not). Linux uses ldd; Darwin
+# uses otool -L and the Homebrew dylib's install name.
 tkrzw_so() {
-	ldd "$1" 2>/dev/null | sed -n 's/^[[:space:]]*libtkrzw\.so\.1 => \(\/[^ ]*\).*/\1/p'
+	case $(uname -s) in
+	Darwin)
+		# otool reports the recorded install name; a dyld override can change
+		# which library the process actually loads, so refuse to certify it.
+		if [ -n "${DYLD_LIBRARY_PATH:-}" ] || [ -n "${DYLD_FALLBACK_LIBRARY_PATH:-}" ]; then
+			printf '%s\n' "REFUSED: otool -L reports the recorded libtkrzw install name, which DYLD_LIBRARY_PATH or DYLD_FALLBACK_LIBRARY_PATH can bypass; unset both to probe the host library." >&2
+			return 1
+		fi
+		otool -L "$1" 2>/dev/null | awk '
+			/^[[:space:]]*\/.*libtkrzw[^[:space:]]*[.]dylib[[:space:]]+[(]compatibility version/ {
+				print $1
+				exit
+			}'
+		;;
+	*)
+		ldd "$1" 2>/dev/null | sed -n 's/^[[:space:]]*libtkrzw\.so\.1 => \(\/[^ ]*\).*/\1/p'
+		;;
+	esac
 }
 
 # tkrzw_env_prefix [FILE]: the cache runtime named by an environment file.
@@ -46,18 +64,21 @@ without_prefix() {
 	printf '%s' "${out[*]}"
 }
 
-# probe_host: the probe against the host's own libtkrzw, and an ldd check
-# that the probe's tkrzw_dbm_util resolved libtkrzw.so.1 outside the cache.
+# probe_host: the probe against the host's own libtkrzw, and a loader
+# check that the probe's tkrzw_dbm_util resolved libtkrzw outside the cache.
 probe_host() {
-	local host_path host_ld util so
+	local host_path host_ld util so libname=libtkrzw.so.1
 	tkrzw_host_library=
+	if [ "$(uname -s)" = Darwin ]; then libname=libtkrzw.dylib; fi
 	host_path=$(without_prefix "$PATH")
 	host_ld=$(without_prefix "${LD_LIBRARY_PATH:-}")
 	# Intentional: the host probe must exclude every inherited cache runtime.
 	env PATH="$host_path" LD_LIBRARY_PATH="$host_ld" sh "$probe" || return 1
 	util=$(PATH=$host_path command -v tkrzw_dbm_util) || return 1
-	so=$(LD_LIBRARY_PATH=$host_ld tkrzw_so "$util")
-	printf 'host check: %s resolves libtkrzw.so.1 to %s\n' "$util" "${so:-nothing}"
+	if ! so=$(LD_LIBRARY_PATH=$host_ld tkrzw_so "$util"); then
+		return 1
+	fi
+	printf 'host check: %s resolves %s to %s\n' "$util" "$libname" "${so:-nothing}"
 	[[ -n $so && -f $so && $(without_prefix "$so") == "$so" ]] || return 1
 	so=$(readlink -f -- "$so") || return 1
 	[[ $(without_prefix "$so") == "$so" ]] || return 1

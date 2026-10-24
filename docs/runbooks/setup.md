@@ -294,6 +294,29 @@ so its lz4/lzma/zstd dependencies link, and select
 `export CARGO_TARGET_DIR=target/tkrzw` followed by `just check tkrzw`.
 Keep each backend's target and user-data directories separate.
 
+Fuzzing and the backend sanitizer gates run natively on macOS. The recipes
+select Homebrew's Berkeley DB 5.3, Kyoto Cabinet and tkrzw and use the pinned
+nightlies; no Linux `setarch`:
+
+```bash
+brew install kyoto-cabinet tkrzw
+rustup toolchain install nightly-2026-08-01 --profile minimal
+rustup toolchain install nightly-2026-09-07 --profile minimal
+just fuzz parser -- -runs=100
+just sanitize bdb address
+just sanitize bdb thread
+just sanitize kc address
+just sanitize kc thread
+just sanitize tkrzw address
+just sanitize tkrzw thread
+```
+
+`capi-commands` also runs natively; the fuzz recipe supplies the facade's
+GLib and Berkeley DB paths. AddressSanitizer runs with leak detection off on
+Darwin. Standalone LeakSanitizer is refused on macOS arm64, and
+MemorySanitizer has no Darwin target; both refusals name the host. Linux
+keeps its existing sanitizer commands and paths.
+
 ## Native Windows
 
 This is native Windows Rust development, not Linux under WSL. Install Git
