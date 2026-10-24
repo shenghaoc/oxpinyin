@@ -285,14 +285,22 @@ def lock_file(file, operation):
 
 
 @contextlib.contextmanager
-def admission_lock(directory):
+def admission_lock(directory, *, blocking=True, deadline=None):
     """Hold the directory's heavy-admission lock until the context exits.
 
-    Open or create the file and block for exclusive ownership; closing the
-    private descriptor releases it even if the body raises.
+    Default to blocking ownership for existing record operations. Admission
+    attempts use non-blocking ownership and recheck cancellation and their
+    monotonic deadline before entering the body. Closing releases ownership.
     """
     with (directory / 'heavy-admission').open('a+') as file:
-        lock_file(file, LOCK_EX)
+        try:
+            lock_file(file, LOCK_EX if blocking else LOCK_EX | LOCK_NB)
+        except BlockingIOError as error:
+            raise AdmissionMutexBusy from error
+        if not blocking:
+            check_cancelled()
+            if deadline is not None and time.monotonic() >= deadline:
+                raise AdmissionWaitExpired('admission-wait-expired: heavy-admission mutex; no process started')
         yield
         # Closing this unshared descriptor releases the admission lock.
 
@@ -769,16 +777,19 @@ class ContainerReservation:
             self.path.with_suffix('.guard').unlink(missing_ok=True)
 
 
-def reserve_heavy_env(slot, env, *, runner=False, resource_snapshot=None, prepare_heavy_env=None):
+def reserve_heavy_env(slot, env, *, runner=False, resource_snapshot=None, prepare_heavy_env=None,
+                      deadline=None):
     """Serialize the resource read, reservation check, and holder estimate update.
 
     Return resources, child environment, chosen budgets, estimate in MiB,
     and the admission boolean. Update the holder only when admitted; an
     inherited holder retains the larger of its previous and new estimates.
+    A busy mutex raises BlockingIOError; an elapsed deadline or cancellation
+    raises before reading resources or changing the holder estimate.
     """
     read = resource_snapshot or host.resource_snapshot
     prepare = prepare_heavy_env or host.prepare_heavy_env
-    with admission_lock(slot.lock_dir):
+    with admission_lock(slot.lock_dir, blocking=False, deadline=deadline):
         resources = budget_resources(slot.lock_dir, slot.slot, read=read)
         child, chosen, estimate = prepare(env, resources, runner=runner)
         headroom = host.memory_headroom(env, resources)
@@ -799,6 +810,14 @@ class SlotWaitExpired(host.ResourceBlocked):
     """The wait limit passed with every heavy slot held: a slot wait, not a memory refusal."""
 
 
+class AdmissionWaitExpired(host.ResourceBlocked):
+    """The shared wait limit passed while waiting for the admission mutex."""
+
+
+class AdmissionMutexBusy(BlockingIOError):
+    """A non-blocking attempt found the admission mutex held elsewhere."""
+
+
 def _mib(value):
     """Format a memory quantity with MiB, or unknown when the value is None."""
     return 'unknown' if value is None else f'{value} MiB'
@@ -807,9 +826,10 @@ def _mib(value):
 class HeavyAdmission:
     """Take the slot, then read resources before starting heavy work.
 
-    One wait limit covers both waits. When it passes, the error names what
-    blocked the last attempt: a held slot (SlotWaitExpired), or the memory
-    decision that attempt made (ResourceBlocked, with that decision's figures)."""
+    One wait limit covers slot, mutex and memory waits. Expiry names the last
+    obstacle: a held slot (SlotWaitExpired), a held admission mutex
+    (AdmissionWaitExpired), or the memory decision (ResourceBlocked with
+    that decision's figures)."""
 
     def __init__(self, command, env, out=sys.stderr, poll=0.5, *, runner=False,
                  resource_snapshot=None, prepare_heavy_env=None):
@@ -831,7 +851,7 @@ class HeavyAdmission:
         self.memory_since = None
         self.retry_at = 0.0
         self.announced = None
-        # What the last attempt met: 'slot' (held) or 'memory' (refused). The
+        # Last obstacle: 'slot', 'admission' mutex, or 'memory'. The
         # figures below describe the last memory decision, and only that.
         self.blocked_by = None
         self.reservations = (None, None)
@@ -869,6 +889,8 @@ class HeavyAdmission:
         # which no decision used: a held slot must not be reported as a memory refusal.
         if self.blocked_by == 'slot':
             return self._slot_wait_expired(now)
+        if self.blocked_by == 'admission':
+            return AdmissionWaitExpired('admission-wait-expired: heavy-admission mutex; no process started')
         return self._blocked()
 
     def _finish_memory_wait(self, now):
@@ -881,8 +903,9 @@ class HeavyAdmission:
         """Attempt slot acquisition and a serialized memory reservation without sleeping.
 
         Return True with the admitted child environment, or False while waiting.
-        Release a newly acquired slot on memory refusal; inherited slots fail
-        immediately. Expiry raises the last refusal, and cancellation propagates.
+        Release a newly acquired slot on mutex contention or memory refusal;
+        inherited slots fail immediately on memory refusal. Expiry raises the
+        last refusal, and cancellation propagates.
         """
         check_cancelled()
         now = time.monotonic()
@@ -903,7 +926,9 @@ class HeavyAdmission:
             resources, child, chosen, self.estimate, admitted = reserve_heavy_env(
                 self.slot, self.base_env, runner=self.runner,
                 resource_snapshot=self.resource_snapshot,
-                prepare_heavy_env=self.prepare_heavy_env)
+                prepare_heavy_env=self.prepare_heavy_env,
+                # Zero wait permits one immediate attempt, never a blocking wait.
+                deadline=self.started + self.limit if self.limit > 0 else None)
             self.available = resources['available_mib']
             self.headroom = host.memory_headroom(self.base_env, resources)
             self.reservations = (resources.get('slot_reserved_mib'), resources.get('container_reserved_mib'))
@@ -934,6 +959,19 @@ class HeavyAdmission:
             host.plan_defaults(chosen, self.out, 'effective defaults')
             self.env = self.slot.child_env(child)
             return True
+        except AdmissionWaitExpired:
+            # No new resource decision was made. Preserve the last obstacle
+            # when an uncontended retry crosses the deadline during acquisition.
+            self.close()
+            if self.blocked_by is not None:
+                raise self._expired(time.monotonic()) from None
+            raise
+        except AdmissionMutexBusy:
+            self.blocked_by = 'admission'
+            self.close()
+            if not self.slot.inherited:
+                self.slot = HeavySlot(self.command, out=self.out, poll=self.poll)
+            return False
         except BaseException:
             self.close()
             raise
@@ -951,7 +989,7 @@ class HeavyAdmission:
         try:
             while not self.try_acquire():
                 remaining = max(0, self.limit - (time.monotonic() - self.started))
-                time.sleep(min(self.poll, remaining))
+                CANCELLED.wait(min(self.poll, remaining))
         except BaseException:
             self.close()
             raise
