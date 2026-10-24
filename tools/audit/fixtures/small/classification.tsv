@@ -1,0 +1,5 @@
+pin_site	pin_call	family	facade	backend	child	reach
+src/pinyin.cpp:2	g_utf8_get_char	fixture	both	all	#900	
+src/pinyin.cpp:4	g_strdup	fixture	both	all	#900	
+src/pinyin.cpp:6	fscanf	fixture	both	all	#900	manual
+src/storage/tag_utility.cpp:2	g_free	fixture	both	all	#900	
