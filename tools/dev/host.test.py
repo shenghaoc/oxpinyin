@@ -475,5 +475,325 @@ class CgroupMemoryTests(unittest.TestCase):
         self.assertEqual(self.snapshot()['available_mib'], 2432)
 
 
+class CgroupV1Tests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.proc = self.root / 'proc'
+        self.unified = self.root / 'sys/fs/cgroup/unified'
+        # Deliberately outside the default /sys/fs/cgroup/memory location.
+        self.memory = self.root / 'controllers/memory mount'
+        self.cpu = self.root / 'controllers/cpu,cpuacct'
+        (self.proc / 'self').mkdir(parents=True)
+        (self.proc / 'self/cgroup').write_text(
+            '9:name=systemd:/unrelated\n7:cpuacct,cpu:/session\n3:memory:/session\n')
+        (self.proc / 'meminfo').write_text('MemAvailable: 16384000 kB\n')
+        self.mounts = [self.mount(self.memory, 'memory'), self.mount(self.cpu, 'cpu,cpuacct')]
+        (self.proc / 'self/mountinfo').write_text(''.join(self.mounts))
+        for directory in (self.memory, self.memory / 'session'):
+            directory.mkdir(parents=True)
+            self.write_memory(directory, '9223372036854771712', 0, 0)
+        for directory in (self.cpu, self.cpu / 'session'):
+            directory.mkdir(parents=True)
+            (directory / 'cpu.cfs_quota_us').write_text('-1')
+            (directory / 'cpu.cfs_period_us').write_text('100000')
+        self.write_memory(self.memory / 'session', str(4096 * 1024**2), 3072, 512)
+
+    def mount(self, directory, controllers, root='/'):
+        escaped = str(directory).replace('\\', r'\134').replace(' ', r'\040')
+        return f'30 20 0:27 {root} {escaped} rw,nosuid - cgroup cgroup rw,{controllers}\n'
+
+    def write_memory(self, directory, limit, usage, inactive):
+        (directory / 'memory.limit_in_bytes').write_text(limit)
+        (directory / 'memory.usage_in_bytes').write_text(str(usage * 1024**2))
+        (directory / 'memory.stat').write_text(
+            self.stat_rows(dict(cache=64, shmem=0, active_file=0, inactive_file=64,
+                                dirty=0, writeback=0), '')
+            + self.stat_rows(dict(cache=inactive, shmem=0, active_file=0,
+                                  inactive_file=inactive, dirty=0, writeback=0)))
+
+    def stat_rows(self, stats, prefix='total_'):
+        return ''.join(f'{prefix}{key} {value * 1024**2}\n' for key, value in stats.items())
+
+    def snapshot(self):
+        with mock.patch.object(sys, 'platform', 'linux'), \
+                mock.patch.object(os, 'sched_getaffinity', return_value={0, 1, 2, 3}):
+            return host.resource_snapshot(self.proc, self.unified)
+
+    def test_v1_session_room_below_host_memory_from_nondefault_mount(self):
+        snapshot = self.snapshot()
+        self.assert_budget(snapshot, 1536, 2)
+        self.assertEqual(snapshot['memory_limit_mib'], 4096)
+        self.assertEqual(snapshot['cpus'], 4)
+        self.assertIn(f'cgroup v1 /session memory.limit_in_bytes={4096 * 1024**2}',
+                      snapshot['notes'])
+        self.assertTrue(any('total_inactive_file=536870912' in note
+                            and 'memory room=1536 MiB' in note for note in snapshot['notes']))
+
+    def test_unlimited_sentinels_do_not_count_as_finite_limits(self):
+        for limit in ('9223372036854771712', str((1 << 63) - 1)):
+            with self.subTest(limit=limit):
+                (self.memory / 'session/memory.limit_in_bytes').write_text(limit)
+                snapshot = self.snapshot()
+                self.assertEqual(snapshot['available_mib'], 16000)
+                self.assertIsNone(snapshot['memory_limit_mib'])
+                self.assertIn(f'cgroup v1 /session memory.limit_in_bytes={limit} (unlimited)',
+                              snapshot['notes'])
+
+    def test_tighter_ancestor_constrains_room(self):
+        self.write_memory(self.memory, str(2048 * 1024**2), 1536, 0)
+        self.assertEqual(self.snapshot()['available_mib'], 512)
+        self.assertEqual(self.snapshot()['memory_limit_mib'], 2048)
+
+    def test_local_fields_are_used_without_total_cache(self):
+        stats = dict(cache=128, shmem=0, active_file=64, inactive_file=64, dirty=0, writeback=0)
+        # Partial hierarchical fields cannot replace any of the local set.
+        (self.memory / 'session/memory.stat').write_text(
+            self.stat_rows(stats, '') + f'total_inactive_file {512 * 1024**2}\n')
+        self.assert_budget(self.snapshot(), 1152, 1)
+
+    def test_pending_dirty_and_writeback_pages_reduce_room(self):
+        for prefix in ('total_', ''):
+            for dirty, writeback, room in ((128, 0, 1408), (0, 128, 1408),
+                                           (128, 128, 1280), (400, 400, 1024)):
+                with self.subTest(prefix=prefix, dirty=dirty, writeback=writeback):
+                    stats = dict(cache=512, shmem=0, active_file=0, inactive_file=512,
+                                 dirty=dirty, writeback=writeback)
+                    (self.memory / 'session/memory.stat').write_text(self.stat_rows(stats, prefix))
+                    self.assertEqual(self.snapshot()['available_mib'], room)
+
+    def test_active_clean_cache_is_reclaimable(self):
+        for prefix in ('total_', ''):
+            with self.subTest(prefix=prefix):
+                stats = dict(cache=512, shmem=0, active_file=512, inactive_file=0,
+                             dirty=0, writeback=0)
+                (self.memory / 'session/memory.stat').write_text(self.stat_rows(stats, prefix))
+                self.assert_budget(self.snapshot(), 1536, 2)
+
+    def test_cache_candidates_exclude_shmem_and_are_bounded_by_file_lists(self):
+        for prefix in ('total_', ''):
+            for shmem, active, inactive, room in ((128, 512, 512, 1408),
+                                                  (0, 128, 128, 1280),
+                                                  (512, 512, 512, 1024)):
+                with self.subTest(prefix=prefix, shmem=shmem, active=active, inactive=inactive):
+                    stats = dict(cache=512, shmem=shmem, active_file=active,
+                                 inactive_file=inactive, dirty=0, writeback=0)
+                    (self.memory / 'session/memory.stat').write_text(self.stat_rows(stats, prefix))
+                    self.assertEqual(self.snapshot()['available_mib'], room)
+
+    def test_missing_fields_never_mix_hierarchical_and_local_counters(self):
+        stats = dict(cache=512, shmem=0, active_file=0, inactive_file=512, dirty=0, writeback=0)
+        for prefix in ('total_', ''):
+            for missing in stats:
+                with self.subTest(prefix=prefix, missing=missing):
+                    rows = self.stat_rows({key: value for key, value in stats.items()
+                                           if key != missing}, prefix)
+                    # Even a complete local set cannot fill a missing total.
+                    # Do not introduce total_cache for local cases: that
+                    # selects a different set.
+                    if missing != 'cache':
+                        rows += (self.stat_rows(stats, '') if prefix else
+                                 self.stat_rows({missing: stats[missing]}))
+                    (self.memory / 'session/memory.stat').write_text(rows)
+                    self.assert_conservative_room()
+
+    def assert_budget(self, snapshot, room, jobs):
+        self.assertEqual(snapshot['available_mib'], room)
+        # A finite compatibility guest uses the cgroup room without desktop
+        # headroom. Fix the slot count so host settings cannot hide the budget.
+        with slot_setting('1'):
+            child, chosen, estimate = host.prepare_heavy_env(
+                {'OXPINYIN_COMPAT_CONTAINER': '1'}, snapshot)
+        self.assertEqual(child['CARGO_BUILD_JOBS'], str(jobs))
+        self.assertEqual(chosen['CARGO_BUILD_JOBS'][0], jobs)
+        self.assertIn(f'{room} MiB available - 0 MiB headroom', chosen['CARGO_BUILD_JOBS'][1])
+        self.assertEqual(estimate, max(1, jobs) * host.RUSTC_PEAK_MIB)
+
+    def assert_conservative_room(self, room=1024, jobs=1):
+        snapshot = self.snapshot()
+        self.assertTrue(any('cgroup v1 /session' in note and 'memory.stat unusable' in note
+                            and 'reclaimable cache=unknown' in note
+                            and f'memory room={room} MiB' in note
+                            for note in snapshot['notes']))
+        self.assert_budget(snapshot, room, jobs)
+
+    def test_missing_or_unreadable_stats_retain_limit_minus_usage(self):
+        (self.proc / 'meminfo').write_text(
+            'MemTotal: 33554432 kB\nMemAvailable: 33554432 kB\n')
+        for usage, room in ((768, 256), (1024, 0), (1280, 0)):
+            for unreadable in (False, True):
+                with self.subTest(usage=usage, unreadable=unreadable):
+                    self.write_memory(self.memory / 'session', str(1024 * 1024**2), usage, 512)
+                    path = self.memory / 'session/memory.stat'
+                    path.unlink()
+                    if unreadable:
+                        # A directory also fails to read when tests run as root.
+                        path.mkdir()
+                    self.assert_conservative_room(room, 0)
+                    if unreadable:
+                        path.rmdir()
+
+    def test_room_is_clamped_between_zero_and_limit(self):
+        for usage, inactive, room in ((5000, 0, 0), (100, 200, 4096)):
+            with self.subTest(usage=usage, inactive=inactive):
+                self.write_memory(self.memory / 'session', str(4096 * 1024**2), usage, inactive)
+                self.assertEqual(self.snapshot()['available_mib'], room)
+
+    def test_cpu_quota_combines_with_affinity_and_ancestors(self):
+        for quota, cpus, cargo_cpus in ((200000, 2, 2), (250000, 2, 3), (50000, 1, 1),
+                                       (800000, 4, 4), (-1, 4, 4)):
+            with self.subTest(quota=quota):
+                (self.cpu / 'session/cpu.cfs_quota_us').write_text(str(quota))
+                snapshot = self.snapshot()
+                self.assertEqual((snapshot['cpus'], snapshot['cargo_cpus']), (cpus, cargo_cpus))
+        (self.cpu / 'cpu.cfs_quota_us').write_text('100000')
+        self.assertEqual(self.snapshot()['cpus'], 1)
+
+    def test_hybrid_empty_unified_hierarchy_adds_no_capacity(self):
+        self.unified.mkdir(parents=True)
+        (self.unified / 'cgroup.controllers').write_text('')
+        (self.proc / 'self/cgroup').write_text('0::/\n7:cpuacct,cpu:/session\n3:memory:/session\n')
+        with (self.proc / 'self/mountinfo').open('a') as stream:
+            stream.write(f'40 20 0:30 / {self.unified} rw - cgroup2 cgroup rw\n')
+        snapshot = self.snapshot()
+        self.assertEqual(snapshot['available_mib'], 1536)
+        self.assertEqual(snapshot['cpus'], 4)
+
+    def test_hybrid_combines_v2_cpu_with_v1_memory(self):
+        self.unified.mkdir(parents=True)
+        (self.proc / 'self/cgroup').write_text('0::/\n3:memory:/session\n')
+        (self.unified / 'cpu.max').write_text('200000 100000')
+        snapshot = self.snapshot()
+        self.assertEqual(snapshot['available_mib'], 1536)
+        self.assertEqual(snapshot['cpus'], 2)
+
+    def test_mount_root_limits_the_visible_ancestor_walk(self):
+        (self.proc / 'self/cgroup').write_text('3:memory:/tenant/session\n')
+        (self.proc / 'self/mountinfo').write_text(self.mount(self.memory, 'memory', '/tenant'))
+        # A tighter file outside the mount is not a visible ancestor.
+        self.write_memory(self.memory.parent, '0', 0, 0)
+        directories = host.linux_cgroup_dirs(self.proc, controller='memory')
+        self.assertEqual(directories, [self.memory / 'session', self.memory])
+        self.assertEqual(self.snapshot()['available_mib'], 1536)
+        # A process at the mount root reads exactly that one visible level.
+        (self.proc / 'self/cgroup').write_text('3:memory:/tenant\n')
+        self.write_memory(self.memory, str(1024 * 1024**2), 256, 0)
+        self.assertEqual(host.linux_cgroup_dirs(self.proc, controller='memory'), [self.memory])
+        self.assertEqual(self.snapshot()['available_mib'], 768)
+
+    def test_inaccessible_or_invalid_mounts_remain_unknown(self):
+        for entry, mountinfo in (('/outside', self.mount(self.memory, 'memory', '/tenant')),
+                                  ('/tenant/../session', self.mounts[0]),
+                                  ('/session', ''), ('/session', 'invalid')):
+            with self.subTest(entry=entry, mountinfo=mountinfo):
+                (self.proc / 'self/cgroup').write_text(f'3:memory:{entry}\n')
+                (self.proc / 'self/mountinfo').write_text(mountinfo)
+                snapshot = self.snapshot()
+                self.assertIn('cgroup v1 memory limits=unknown', snapshot['notes'])
+                self.assertIsNone(snapshot['memory_limit_mib'])
+
+    def test_unreadable_memory_values_are_unknown_never_host_room(self):
+        for filename in ('memory.limit_in_bytes', 'memory.usage_in_bytes'):
+            with self.subTest(filename=filename):
+                path = self.memory / 'session' / filename
+                content = path.read_text()
+                path.unlink()
+                # A directory produces a read error even when tests run as root.
+                path.mkdir()
+                snapshot = self.snapshot()
+                self.assertEqual(snapshot['available_mib'], 16000)
+                self.assertTrue(any('cgroup v1 /session' in note and 'unknown' in note
+                                    for note in snapshot['notes']))
+                self.assertFalse(any('memory room=16000' in note for note in snapshot['notes']))
+                (self.proc / 'meminfo').write_text('')
+                self.assertIsNone(self.snapshot()['available_mib'])
+                (self.proc / 'meminfo').write_text('MemAvailable: 16384000 kB\n')
+                path.rmdir()
+                path.write_text(content)
+
+    def test_bad_stats_do_not_fall_back_to_local_cache_or_host_room(self):
+        for stats in ('', 'inactive_file -1', 'total_inactive_file invalid\ninactive_file 0',
+                      'total_inactive_file 1\ntotal_inactive_file 2', 'inactive_file 1 extra'):
+            with self.subTest(stats=stats):
+                (self.memory / 'session/memory.stat').write_text(stats)
+                self.assert_conservative_room()
+
+    def test_each_selected_stat_must_be_numeric_nonnegative_and_unique(self):
+        stats = dict(cache=512, shmem=0, active_file=0, inactive_file=512, dirty=0, writeback=0)
+        for prefix in ('total_', ''):
+            for key in stats:
+                for invalid in ('-1', 'invalid', '1.5', '0\n' + prefix + key + ' 0'):
+                    with self.subTest(prefix=prefix, key=key, invalid=invalid):
+                        rows = self.stat_rows({name: value for name, value in stats.items()
+                                               if name != key}, prefix)
+                        rows += f'{prefix}{key} {invalid}\n'
+                        (self.memory / 'session/memory.stat').write_text(rows)
+                        self.assert_conservative_room()
+
+    def test_shmem_dirty_and_writeback_cannot_exceed_cache(self):
+        for prefix in ('total_', ''):
+            for key in ('shmem', 'dirty', 'writeback'):
+                with self.subTest(prefix=prefix, key=key):
+                    stats = dict(cache=512, shmem=0, active_file=0, inactive_file=512,
+                                 dirty=0, writeback=0)
+                    stats[key] = 513
+                    (self.memory / 'session/memory.stat').write_text(self.stat_rows(stats, prefix))
+                    self.assert_conservative_room()
+
+    def test_unreadable_cpu_files_are_unknown(self):
+        (self.cpu / 'session/cpu.cfs_quota_us').write_text('200000')
+        for filename in ('cpu.cfs_quota_us', 'cpu.cfs_period_us'):
+            with self.subTest(filename=filename):
+                path = self.cpu / 'session' / filename
+                content = path.read_text()
+                path.unlink()
+                snapshot = self.snapshot()
+                self.assertEqual(snapshot['cpus'], 4)
+                self.assertIn('cgroup v1 /session CPU quota=unknown', snapshot['notes'])
+                path.write_text(content)
+
+
+class ContractWorkerEstimates(unittest.TestCase):
+    def prepare(self, available):
+        env = dict(CARGO_BUILD_JOBS='1', RUST_TEST_THREADS='1',
+                   OXPINYIN_CONTRACT_JOBS='8')
+        resources = dict(available_mib=available, total_mib=16384,
+                         cpus=4, cargo_cpus=4)
+        return host.prepare_heavy_env(env, resources, runner=True)
+
+    def test_requested_workers_are_charged_individually(self):
+        with slot_setting('3'):
+            child, chosen, estimate = self.prepare(1638 + 8 * host.RUNNER_PEAK_MIB)
+        self.assertEqual(child['OXPINYIN_CONTRACT_JOBS'], '8')
+        self.assertEqual(chosen['OXPINYIN_CONTRACT_JOBS'][0], 8)
+        self.assertEqual(estimate, 8 * host.RUNNER_PEAK_MIB)
+
+    def test_short_memory_reduces_the_requested_maximum(self):
+        child, chosen, estimate = self.prepare(1638 + 2 * host.RUNNER_PEAK_MIB)
+        self.assertEqual(child['OXPINYIN_CONTRACT_JOBS'], '2')
+        self.assertEqual(chosen['OXPINYIN_CONTRACT_JOBS'][0], 2)
+        self.assertEqual(estimate, 2 * host.RUNNER_PEAK_MIB)
+
+    def test_unknown_or_insufficient_room_does_not_claim_capacity(self):
+        for available in (None, 1638 + host.RUNNER_PEAK_MIB - 1):
+            with self.subTest(available=available):
+                _, chosen, estimate = self.prepare(available)
+                self.assertEqual(chosen['OXPINYIN_CONTRACT_JOBS'][0], 0)
+                self.assertEqual(estimate, host.RUNNER_PEAK_MIB)
+
+    def test_worker_budget_does_not_replace_explicit_build_budget(self):
+        child, _, estimate = host.prepare_heavy_env(
+            dict(CARGO_BUILD_JOBS='8', RUST_TEST_THREADS='1', OXPINYIN_CONTRACT_JOBS='1'),
+            dict(available_mib=16000, total_mib=16384, cpus=4, cargo_cpus=4), runner=True)
+        self.assertEqual(child['CARGO_BUILD_JOBS'], '8')
+        self.assertEqual(estimate, 8 * host.RUSTC_PEAK_MIB)
+
+    def test_invalid_worker_counts_are_rejected(self):
+        for value in ('', '0', '-1', '1.5', 'default', 'nan'):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, 'OXPINYIN_CONTRACT_JOBS'):
+                host.validate_settings({'OXPINYIN_CONTRACT_JOBS': value})
+
+
 if __name__ == '__main__':
     unittest.main()

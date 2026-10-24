@@ -4,7 +4,7 @@
 //!
 //! The pin reads the file with `fscanf` over one stream: five header
 //! directives in order, then rows of six white-space separated words.
-//! This module is that sequence, not a line parser — [`Scan`] follows the C
+//! This module is that sequence, not a line parser — `Scan` follows the C
 //! library's rules for the directives the pin uses (a space in a directive
 //! matches any run of white space, an empty one included; `%255s` skips
 //! white space across newlines and takes at most 255 bytes; a directive that

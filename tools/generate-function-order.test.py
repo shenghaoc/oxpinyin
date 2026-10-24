@@ -9,6 +9,7 @@ import ast
 import contextlib
 import hashlib
 import io
+import json
 from pathlib import Path
 import re
 import runpy
@@ -36,6 +37,31 @@ def profile(body, total):
 
 
 class MeasurementTests(unittest.TestCase):
+    def test_optional_samples_keep_original_order_values_and_missing_fields(self):
+        records = [dict(function_order_sample="timing", arm=arm, round=round_no,
+                        warmup=round_no < 0, order=["pr", "control", "pin", "base"],
+                        times={"init_ns": {"wall_ns": 2**53 + 1, "minflt": 0}})
+                   for arm, round_no in (("pr", -1), ("base", -1), ("pr", 0))]
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            for record in records:
+                MEASUREMENT["emit_sample"](True, **record)
+        restored = [json.loads(line) for line in output.getvalue().splitlines()]
+        self.assertEqual(restored, records)
+        self.assertNotIn("majflt", restored[0]["times"]["init_ns"])
+        self.assertEqual(restored[0]["times"]["init_ns"]["minflt"], 0)
+
+    def test_disabled_sample_output_does_not_serialize_or_write(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            MEASUREMENT["emit_sample"](False, unrecorded=object())
+        self.assertEqual(output.getvalue(), "")
+
+    def test_sample_output_write_failure_is_not_silenced(self):
+        with mock.patch("builtins.print", side_effect=OSError("sample write failed")):
+            with self.assertRaisesRegex(OSError, "sample write failed"):
+                MEASUREMENT["emit_sample"](True, function_order_sample="memory", reading={})
+
     def steady_campaign(self, guard):
         tree = ast.parse((HERE / 'measure-function-order.py').read_text())
         loops = [node for node in ast.walk(tree)
@@ -55,9 +81,10 @@ class MeasurementTests(unittest.TestCase):
             return b'{"cycles_ns":[1,1,1,1,1,1,1,1],"workload_checksum":"same"}', b''
         run = mock.Mock(side_effect=launch)
         scope = {**MEASUREMENT, 'libraries': libraries, 'check_tkrzw': guard, 'run': run,
+                 'hashes': {key: 'fixture-hash' for key in libraries},
                  'env': {'LD_LIBRARY_PATH': '/verified/runtime'},
                  'args': SimpleNamespace(cpu=2, bisect='/fixture/bisect',
-                                         system_dir=Path('/tables'), rounds=1)}
+                                         system_dir=Path('/tables'), rounds=1, emit_samples=False)}
         code = compile(ast.Module(body=loops, type_ignores=[]), str(HERE / 'measure-function-order.py'), 'exec')
         with contextlib.redirect_stdout(io.StringIO()):
             exec(code, scope)

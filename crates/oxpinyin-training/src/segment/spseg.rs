@@ -2,7 +2,7 @@
 //! (`utils/segment/spseg.cpp`).
 //!
 //! Same line framing and character-run grouping as `ngseg`
-//! ([`crate::segment::driver`]) — three-state INIT/SEGMENTABLE/UNKNOWN grouping by
+//! (`crate::segment::driver`) — three-state INIT/SEGMENTABLE/UNKNOWN grouping by
 //! [`PhraseLexicon::is_char_segmentable`], the same `null_token` output
 //! grammar, the same trailing file-tail enter and `--generate-extra-enter`
 //! — but a *segmentable* run is split by an O(n²) dynamic program that

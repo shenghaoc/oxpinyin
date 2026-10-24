@@ -8,10 +8,14 @@ name: oracle-image
 #
 # (<tag> is printed by tools/oracle/image-tag.sh: the libpinyin commit, the
 # base image digest, the apt snapshot and a hash of the recipe, so it changes
-# whenever the library hashes can; an existing tag is never overwritten), for
-# linux/amd64 only, with the library hashes in the image labels. The build is reproducible (tools/oracle/build-oracle.sh), so the
-# job also checks every hash against tools/oracle/oracle-pin.txt before
-# anything is pushed.
+# whenever the library hashes can; an existing tag is never overwritten).
+# Native linux/amd64 and linux/arm64 jobs build separately. The amd64 job
+# keeps its historical <tag> and <tag>-deps tags; the arm64 job publishes the
+# sibling <tag>-arm64 and <tag>-deps-arm64 tags. The library hashes are in each
+# platform's image labels.
+# The build is reproducible (tools/oracle/build-oracle.sh), so each job checks
+# its platform's hashes against tools/oracle/oracle-pin.txt before anything is
+# pushed.
 #
 # The image carries NO model20-derived data: the model is not redistributable
 # (docs/findings/model-provenance.md) and no job here fetches it. Lanes
@@ -30,6 +34,8 @@ on:
       - tools/oracle/oracle-pin.txt
       - tools/oracle/verify-oracle-image.sh
       - tools/oracle/image-tag.sh
+      - tools/oracle/pin.sh
+      - tools/oracle/check-reproducible.sh
       - .github/workflows/oracle-image.yml
       - tools/oracle/Dockerfile.compat
       - tools/oracle/compat.sh
@@ -45,6 +51,8 @@ on:
       - tools/oracle/oracle-pin.txt
       - tools/oracle/verify-oracle-image.sh
       - tools/oracle/image-tag.sh
+      - tools/oracle/pin.sh
+      - tools/oracle/check-reproducible.sh
       - .github/workflows/oracle-image.yml
       - tools/oracle/Dockerfile.compat
       - tools/oracle/compat.sh
@@ -80,7 +88,7 @@ jobs:
             oracle=true
           else
             changed=$(git diff --name-only "$BASE" HEAD)
-            if grep -E '^(tools/oracle/(build-oracle.sh|Dockerfile.oracle|oracle-pin.txt|verify-oracle-image.sh|image-tag.sh)|.github/workflows/oracle-image.yml)$' <<< "$changed" >/dev/null; then
+            if grep -E '^(tools/oracle/(build-oracle.sh|check-reproducible.sh|Dockerfile.oracle|oracle-pin.txt|pin.sh|verify-oracle-image.sh|image-tag.sh)|.github/workflows/oracle-image.yml)$' <<< "$changed" >/dev/null; then
               oracle=true
             fi
           fi
@@ -241,6 +249,131 @@ jobs:
           fi
           docker tag oxpinyin-oracle-deps:candidate "$image"
           docker push "$image"
+
+  oracle-image-arm64:
+    needs: changes
+    if: needs.changes.outputs.oracle == 'true'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Derive the arm64 tag and labels from oracle-pin.txt
+        id: meta
+        run: |
+          set -euo pipefail
+          pin=tools/oracle/oracle-pin.txt
+          platform=linux/arm64
+          source tools/oracle/pin.sh
+          field() { sed -n "s/^$1=//p" "$pin"; }
+          pfield() { pin_platform_field "$pin" "$platform" "$1"; }
+          commit=$(field libpinyin_commit)
+          base=$(field base_image)
+          {
+            echo "tag=$(tools/oracle/image-tag.sh)"
+            echo 'labels<<LABELS_EOF'
+            echo "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}"
+            echo "org.opencontainers.image.revision=${GITHUB_SHA}"
+            echo "org.opencontainers.image.description=Reproducible pin-built libpinyin/libzhuyin oracle libraries (no model data), linux/arm64"
+            echo "io.github.shenghaoc.oxpinyin.platform=${platform}"
+            echo "io.github.shenghaoc.oxpinyin.libpinyin-commit=${commit}"
+            echo "io.github.shenghaoc.oxpinyin.base-image=${base}"
+            for dbm in bdb kc tkrzw; do
+              echo "io.github.shenghaoc.oxpinyin.${dbm}.libpinyin-sha256=$(pfield "libpinyin_sha256_${dbm}")"
+              echo "io.github.shenghaoc.oxpinyin.${dbm}.libzhuyin-sha256=$(pfield "libzhuyin_sha256_${dbm}")"
+            done
+            echo 'LABELS_EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build the arm64 oracle image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: tools/oracle
+          file: tools/oracle/Dockerfile.oracle
+          platforms: linux/arm64
+          build-args: ORACLE_PLATFORM=linux/arm64
+          load: true
+          provenance: false
+          tags: oxpinyin-oracle:candidate-arm64
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Verify the arm64 library hashes and the absence of model data
+        run: tools/oracle/verify-oracle-image.sh --engine docker --platform linux/arm64 oxpinyin-oracle:candidate-arm64
+
+      - name: Build the pinned arm64 oracle build environment
+        id: deps
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: tools/oracle
+          file: tools/oracle/Dockerfile.oracle
+          target: deps
+          platforms: linux/arm64
+          build-args: ORACLE_PLATFORM=linux/arm64
+          load: true
+          provenance: false
+          tags: oxpinyin-oracle-deps:candidate-arm64
+
+      - name: Verify the arm64 deps stage is exactly the pinned build stage
+        env:
+          BUILT_STAGE_ID: ${{ steps.deps.outputs.imageid }}
+        run: |
+          set -euo pipefail
+          test "$(docker image inspect --format '{{.Id}}' oxpinyin-oracle-deps:candidate-arm64)" = "$BUILT_STAGE_ID"
+          base=$(sed -n 's/^base_image=//p' tools/oracle/oracle-pin.txt)
+          snapshot=$(sed -n 's/^apt_snapshot=//p' tools/oracle/oracle-pin.txt)
+          grep -Fq "$base AS deps" tools/oracle/Dockerfile.oracle
+          grep -Fq "/archive/debian/$snapshot " tools/oracle/Dockerfile.oracle
+          sed '/^FROM deps AS build/,$d' tools/oracle/Dockerfile.oracle | \
+            grep -q '^FROM .*debian:testing@sha256:'
+          ! sed '/^FROM deps AS build/,$d' tools/oracle/Dockerfile.oracle | grep -qE '^(COPY|ADD|ENV) '
+          docker run --rm oxpinyin-oracle-deps:candidate-arm64 sh -ec '
+            test ! -e /opt/pinyin-oracle
+            test ! -e /root/.docker/config.json
+            test ! -e /root/.aws
+            test ! -e /state
+            test ! -e /run/secrets/cacert
+            test -z "$(find / -name "*model20*" -print -quit 2>/dev/null)"
+            command -v cc; command -v pkg-config; command -v python3'
+
+      - name: Check arm64 reproducibility against the frozen hashes
+        run: tools/oracle/check-reproducible.sh --engine docker --platform linux/arm64 --image oxpinyin-oracle-deps:candidate-arm64
+
+      - name: Log in to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.oracle == 'true'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push arm64 images
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.oracle == 'true'
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          set -euo pipefail
+          push_one() {
+            local target=$1 source=$2 out
+            if out=$(docker manifest inspect "$target" 2>&1); then
+              echo "::notice::${target} already exists; not overwriting it"
+              return 0
+            elif ! grep -qiE 'no such manifest|manifest unknown|not found' <<<"$out"; then
+              echo "::error::cannot tell whether ${target} exists: ${out}"
+              return 1
+            fi
+            docker tag "$source" "$target"
+            docker push "$target"
+          }
+          push_one "ghcr.io/shenghaoc/oxpinyin-oracle:${TAG}-arm64" oxpinyin-oracle:candidate-arm64
+          push_one "ghcr.io/shenghaoc/oxpinyin-oracle:${TAG}-deps-arm64" oxpinyin-oracle-deps:candidate-arm64
+
 
   compatibility-environment:
     needs: changes

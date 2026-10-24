@@ -19,7 +19,9 @@ it neither installs nor requires Valgrind.
 
 ## Host requirements
 
-Full setup requires Linux x86_64. This is a limit of `tools/cloud/setup.sh`.
+Full setup requires Linux on a platform with frozen oracle hashes:
+linux/amd64 or linux/arm64. `tools/cloud/setup.sh` selects the platform from
+`uname -m` and refuses any other architecture.
 The script also requires:
 
 - Cargo on `PATH`, rustup and the installed toolchain/components selected by
@@ -95,7 +97,7 @@ bdb prefix=<dir> libpinyin=<sha256> libzhuyin=<sha256> data manifest OK
 
 ### Python-only tools.dev sessions
 
-For a Linux x86_64 session that only needs `tools.dev`, provision Python
+For a Linux x86_64 or arm64 session that only needs `tools.dev`, provision Python
 without the oracle setup:
 
 ```sh
@@ -104,7 +106,7 @@ export PATH="${UV_INSTALL_DIR:-$HOME/.local/bin}:$PATH"
 uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -m tools.dev doctor
 ```
 
-This mode runs the existing argument and Linux x86_64 checks, then the
+This mode runs the existing Linux and frozen-platform checks, then the
 same uv and managed CPython (3.15 series, GIL build) provisioning and
 interpreter verification as full setup. Neither is installed when it is
 already present at or above its minimum; `just doctor` reports both. It
@@ -173,7 +175,9 @@ environment and run from the repository root:
 (
     source tools/cloud/env.sh
     pin=tools/oracle/oracle-pin.txt
-    pinval() { sed -n "s/^$1=//p" "$pin"; }
+    source tools/oracle/pin.sh
+    platform=$(oracle_platform)
+    pinval_platform() { pin_platform_field "$pin" "$platform" "$1"; }
     data_ok "$PINYIN_ORACLE_DBM" "$PINYIN_ORACLE_PREFIX"
 )
 ```
@@ -281,9 +285,10 @@ uv run --no-project --managed-python --python cpython@3.15.0+gil python -B -X la
    (`debian:testing@sha256:dab11cdb…`) only when an uncached local fallback
    build needs it. Published artifacts/cached stages avoid that pull. Registry
    retries retain the existing 2, 4, 8 and 16 s backoff.
-3. Gets the libraries for bdb, kc and tkrzw (linux/amd64, the platform
-   the recorded hashes are for). If
-   `ghcr.io/shenghaoc/oxpinyin-oracle:<tag>` exists, with `<tag>` printed by
+3. Gets the libraries for bdb, kc and tkrzw (the host platform, linux/amd64 or linux/arm64, whose
+   frozen hashes the pin records). If
+   `ghcr.io/shenghaoc/oxpinyin-oracle:<tag>` exists for amd64, or
+   `<tag>-arm64` for arm64, with `<tag>` printed by
    `tools/oracle/image-tag.sh` (pin, base digest, apt snapshot and a hash
    of the recipe), it is pulled and the cells are copied out of it. A cell
    whose pulled hashes do not match `oracle-pin.txt` is discarded and built
@@ -363,8 +368,9 @@ model20 must not be mirrored or published by the project.
 toolchain is installed from it, and `--regen-data` compiles the pin's data
 build, so both the library build and the data step need the `deps` image.
 The normal image workflow now also publishes that exact `deps` stage as
-`ghcr.io/shenghaoc/oxpinyin-oracle:<oracle-tag>-deps`. Setup tries it before
-building locally, so a successful pull removes the snapshot cold-start
+`ghcr.io/shenghaoc/oxpinyin-oracle:<oracle-tag>-deps` on amd64 and
+`<oracle-tag>-deps-arm64` on arm64. Setup tries the host platform's tag
+before building locally, so a successful pull removes the snapshot cold-start
 requirement. If unavailable, the existing snapshot build remains the fallback;
 its pull stderr is retained in `<cache>/pull-deps.err`. Anonymous access to
 this newly published tag must be checked after normal publication. Historical

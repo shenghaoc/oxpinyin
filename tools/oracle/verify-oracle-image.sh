@@ -9,11 +9,14 @@ set -euo pipefail
 # lib/libpinyin/data directory and no *.bin, *.table, *.text or bigram.db
 # file anywhere under /opt/pinyin-oracle.
 #
-# Usage: verify-oracle-image.sh [--engine docker|podman] IMAGE
+# Usage: verify-oracle-image.sh [--engine docker|podman] [--platform PLATFORM] IMAGE
 
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+# shellcheck source=pin.sh
+source "$repo/tools/oracle/pin.sh"
 engine=
 image=
+platform=linux/amd64
 
 while (($#)); do
 	case $1 in
@@ -21,8 +24,12 @@ while (($#)); do
 		engine=$2
 		shift 2
 		;;
+	--platform)
+		platform=$2
+		shift 2
+		;;
 	-h | --help)
-		sed -n '4,13p' "${BASH_SOURCE[0]}"
+		sed -n '4,14p' "${BASH_SOURCE[0]}"
 		exit 0
 		;;
 	-*)
@@ -36,9 +43,16 @@ while (($#)); do
 	esac
 done
 [[ -n $image ]] || {
-	printf 'usage: verify-oracle-image.sh [--engine docker|podman] IMAGE\n' >&2
+	printf 'usage: verify-oracle-image.sh [--engine docker|podman] [--platform PLATFORM] IMAGE\n' >&2
 	exit 2
 }
+case $platform in
+linux/amd64 | linux/arm64) ;;
+*)
+	printf 'unsupported platform: %s (use linux/amd64 or linux/arm64)\n' "$platform" >&2
+	exit 2
+	;;
+esac
 if [[ -z $engine ]]; then
 	for e in docker podman; do
 		command -v "$e" >/dev/null 2>&1 && engine=$e && break
@@ -54,13 +68,13 @@ cid=
 trap '[[ -z $cid ]] || "$engine" rm -f "$cid" >/dev/null 2>&1 || true; rm -rf "$scratch"' EXIT
 
 # The image is FROM scratch: it has no command, so give create a dummy one.
-cid=$("$engine" create --platform linux/amd64 "$image" /none)
+cid=$("$engine" create --platform "$platform" "$image" /none)
 "$engine" cp "$cid:/opt/pinyin-oracle" "$scratch/oracle" >/dev/null
 
 status=0
 for dbm in bdb kc tkrzw; do
 	for lib in libpinyin libzhuyin; do
-		recorded=$(sed -n "s/^${lib}_sha256_$dbm=//p" "$repo/tools/oracle/oracle-pin.txt")
+		recorded=$(pin_platform_field "$repo/tools/oracle/oracle-pin.txt" "$platform" "${lib}_sha256_$dbm")
 		actual=$(sha256sum "$scratch/oracle/$dbm/lib/$lib.so" | cut -d' ' -f1)
 		printf '%s %s %s\n' "$dbm" "$lib" "$actual"
 		if [[ -z $recorded || $recorded != "$actual" ]]; then

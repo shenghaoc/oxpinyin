@@ -724,7 +724,7 @@ const fn token_of(nibble: u8, slot: u32) -> u32 {
 ///
 /// Returns [`PersistenceError::UnknownDatabaseFormat`] for the
 /// `database format:` abort point — the class-(c) refusal, raised before
-/// any judgement, wipe or write (see [`parse_user_conf`]) — and otherwise
+/// any judgement, wipe or write (see `parse_user_conf`) — and otherwise
 /// only when the `user.conf` write itself fails; unparsable profile files
 /// degrade per-file (see [`Loaded::skipped`]), as upstream's do.
 pub fn load(

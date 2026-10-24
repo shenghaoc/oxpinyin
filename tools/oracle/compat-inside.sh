@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Invoked only by compat.sh, inside the controlled image and Linux volume.
 set -euo pipefail
-[[ ${OXPINYIN_COMPAT_CONTAINER:-} == 1 && $(uname -sm) == 'Linux x86_64' ]] || {
-	echo 'FAIL: compatibility requires the controlled Linux amd64 image' >&2; exit 2;
+[[ ${OXPINYIN_COMPAT_CONTAINER:-} == 1 && $(uname -s) == Linux &&
+	($(uname -m) == x86_64 || $(uname -m) == aarch64 || $(uname -m) == arm64) ]] || {
+	echo 'FAIL: compatibility requires a controlled Linux amd64 or arm64 image' >&2; exit 2;
 }
 cell=${1:?cell}; identity=${2:?image identity}; run_id=${3:?run id}; reference_id=${4:?reference identity}
 input_identity=${5:?input content identity}; shift 5

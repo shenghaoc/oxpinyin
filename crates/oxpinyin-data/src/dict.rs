@@ -114,14 +114,14 @@ fn open_phrase_table(path: &Path) -> Result<PhraseTable, DictError> {
 /// the pin's candidate listing goes on to compare the string it never set.
 fn resolve_items(
     libraries: &PhraseLibraries,
-    keys: &[ChewingKey],
+    pricing_keys: Option<&[ChewingKey]>,
     items: &[PinyinIndexItem],
     out: &mut Vec<PhraseEntry>,
     user_nibbles: u32,
 ) -> bool {
     let mut unreadable = false;
     for item in items {
-        let Some(entry) = resolve_item(libraries, keys, item.token) else {
+        let Some(entry) = resolve_item(libraries, pricing_keys, item.token) else {
             unreadable |= library_loaded(libraries, user_nibbles, item.token);
             continue;
         };
@@ -140,7 +140,7 @@ fn resolve_items(
 /// one owned `String` it needs ([`PhraseItemView::phrase_text_into`]).
 fn resolve_item(
     libraries: &PhraseLibraries,
-    keys: &[ChewingKey],
+    pricing_keys: Option<&[ChewingKey]>,
     token: u32,
 ) -> Option<PhraseEntry> {
     let library = libraries.library(token)?;
@@ -150,7 +150,9 @@ fn resolve_item(
         Cow::Borrowed(text) => PhraseEntry::new(PhraseToken::new(token), text),
         Cow::Owned(text) => PhraseEntry::new(PhraseToken::new(token), text),
     };
-    if let Some((matched, total)) = libraries.pronunciation_possibility(token, keys) {
+    if let Some(keys) = pricing_keys
+        && let Some((matched, total)) = libraries.pronunciation_possibility(token, keys)
+    {
         entry = entry.with_pronunciation_possibility(matched, total);
     }
     Some(entry)
@@ -429,7 +431,7 @@ impl SystemDictionary {
     /// rows **after** it, so the query-length row itself never yields a
     /// token, and each record is kept under the suggestion filter
     /// `pinyin_compare_with_tones(query, stored, prefix_len) == 0`
-    /// ([`prefix_keys_match`]). A DBM key that starts with the query's
+    /// (`prefix_keys_match`). A DBM key that starts with the query's
     /// index-key bytes and is longer than it passes the pin's
     /// `pinyin_exact_compare2` gate by construction — both projections
     /// agree on the shared bytes — so the byte-prefix walk needs no
@@ -605,6 +607,7 @@ impl SystemDictionary {
         &self,
         syllables: &[SyllableKey],
         out: &mut Vec<PhraseEntry>,
+        price: bool,
     ) -> Result<bool, DictError> {
         out.clear();
         if syllables.is_empty() {
@@ -616,7 +619,7 @@ impl SystemDictionary {
         let items = self.pinyin.search(&keys)?;
         Ok(resolve_items(
             &self.libraries,
-            &keys,
+            price.then_some(keys.as_slice()),
             &items,
             out,
             self.user_nibbles,
@@ -632,7 +635,7 @@ impl Dictionary for SystemDictionary {
 
     fn lookup(&self, syllables: &[SyllableKey]) -> Result<Vec<PhraseEntry>, DictError> {
         let mut entries = Vec::new();
-        self.fill_lookup(syllables, &mut entries)?;
+        self.fill_lookup(syllables, &mut entries, true)?;
         Ok(entries)
     }
 
@@ -648,7 +651,7 @@ impl Dictionary for SystemDictionary {
         self.trellis_ranges(syllables, tones, &mut ranges)?;
         Ok(ranges
             .walk_tokens()
-            .filter_map(|(token, ())| resolve_item(&self.libraries, &keys, token))
+            .filter_map(|(token, ())| resolve_item(&self.libraries, Some(&keys), token))
             .collect())
     }
 
@@ -700,7 +703,7 @@ impl Dictionary for SystemDictionary {
         syllables: &[SyllableKey],
         out: &mut Vec<PhraseEntry>,
     ) -> Result<(), DictError> {
-        self.fill_lookup(syllables, out).map(|_| ())
+        self.fill_lookup(syllables, out, true).map(|_| ())
     }
 
     fn lookup_into_flagged(
@@ -708,7 +711,15 @@ impl Dictionary for SystemDictionary {
         syllables: &[SyllableKey],
         out: &mut Vec<PhraseEntry>,
     ) -> Result<bool, DictError> {
-        self.fill_lookup(syllables, out)
+        self.fill_lookup(syllables, out, true)
+    }
+
+    fn lookup_candidates_into(
+        &self,
+        syllables: &[SyllableKey],
+        out: &mut Vec<PhraseEntry>,
+    ) -> Result<bool, DictError> {
+        self.fill_lookup(syllables, out, false)
     }
 
     fn phrase_index_item_count(&self) -> Result<u64, DictError> {
@@ -780,7 +791,7 @@ impl Dictionary for SystemDictionary {
 
     /// The DBM double-indexes each row under both incomplete and complete
     /// keyspaces (`crates/oxpinyin-data/src/table_entries.rs:95-98`), and
-    /// [`super::chewing_table::ChewingTable::search`] dispatches on
+    /// `super::chewing_table::ChewingTable::search` dispatches on
     /// `contains_incomplete` — so a partial-key query answers in one probe.
     fn handles_partial_keys(&self) -> bool {
         true
@@ -1047,6 +1058,28 @@ impl AddonDictionary {
         syllables: &[SyllableKey],
         out: &mut Vec<PhraseEntry>,
     ) -> Result<(), DictError> {
+        self.fill_lookup(syllables, out, true)
+    }
+
+    /// Candidate text/token rows, without unused pronunciation pricing.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::lookup_into`].
+    pub fn lookup_candidates_into(
+        &self,
+        syllables: &[SyllableKey],
+        out: &mut Vec<PhraseEntry>,
+    ) -> Result<(), DictError> {
+        self.fill_lookup(syllables, out, false)
+    }
+
+    fn fill_lookup(
+        &self,
+        syllables: &[SyllableKey],
+        out: &mut Vec<PhraseEntry>,
+        price: bool,
+    ) -> Result<(), DictError> {
         out.clear();
         let Some(pinyin) = self.pinyin.as_ref() else {
             return Ok(());
@@ -1058,7 +1091,13 @@ impl AddonDictionary {
             return Ok(());
         };
         let items = pinyin.search(&keys)?;
-        resolve_items(&self.libraries, &keys, &items, out, 0);
+        resolve_items(
+            &self.libraries,
+            price.then_some(keys.as_slice()),
+            &items,
+            out,
+            0,
+        );
         Ok(())
     }
 

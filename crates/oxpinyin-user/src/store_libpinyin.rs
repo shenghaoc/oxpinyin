@@ -359,12 +359,14 @@ impl GenericUserStore<DefaultStore> {
         Self::open_session(None, originals, versions, law, None)
     }
 
-    /// [`UserStore::open_libpinyin`] for a profile [`UserStore::check_profile`]
-    /// already judged: the profile is read, not judged again.
+    /// [`open_libpinyin`](Self::open_libpinyin) for a profile
+    /// [`check_profile`](Self::check_profile) already judged: the profile is
+    /// read, not judged again.
     ///
     /// # Errors
     ///
-    /// As [`UserStore::open_libpinyin`], less the `user.conf` judgement.
+    /// As [`open_libpinyin`](Self::open_libpinyin), less the `user.conf`
+    /// judgement.
     pub fn open_libpinyin_checked(
         user_dir: &Path,
         originals: impl Into<SystemOriginals>,

@@ -22,9 +22,9 @@ use crate::store::{UserStore, UserStoreError};
 /// its incomplete-projected and its complete keyspaces so a query with an
 /// incomplete syllable answers in one probe:
 ///
-/// - [`exact`](Self::exact) — complete-index: full apostrophe-joined pinyin
+/// - `exact` — complete-index: full apostrophe-joined pinyin
 ///   text → the phrases stored under it, token-ascending.
-/// - [`by_initial`](Self::by_initial) — incomplete-projected index: the
+/// - `by_initial` — incomplete-projected index: the
 ///   pinyin's initial-only projection (each syllable reduced to its
 ///   `syllable_initial`) → `(stored full pinyin, entry)` pairs, so
 ///   [`Self::lookup`] on a query whose keys mix complete and incomplete
@@ -176,7 +176,7 @@ impl UserLookup {
     /// when the query syllable is incomplete.
     ///
     /// A query with any incomplete syllable is routed through the
-    /// initial-projected index [`Self::by_initial`], the same "one
+    /// initial-projected index `by_initial`, the same "one
     /// incomplete-index probe per key path" upstream's
     /// `ChewingLargeTable2::search` (`chewing_large_table2.cpp:161-172` at
     /// pin `074a2219`) uses — so the scan never needs to enumerate the

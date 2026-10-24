@@ -92,7 +92,7 @@ PYTHON
 
 The installer digest comes from its `digest` field in the official
 [uv 0.13.1 release API](https://api.github.com/repos/astral-sh/uv/releases/tags/0.13.1).
-Automated Linux x86_64 setup verifies the release archive against the pinned
+Automated Linux setup on x86_64 and arm64 verifies the release archive against the pinned
 [published checksum](https://github.com/astral-sh/uv/releases/download/0.13.1/sha256.sum).
 
 The `+gil` request requires the GIL-enabled build. uv 0.13.1 has no separate
@@ -124,6 +124,25 @@ just build --locked -p oxpinyin-core
 just clippy --locked -p oxpinyin-core --all-targets -- -D warnings
 just fmt --all --check
 ```
+
+On Linux, admission takes the smallest known memory room from `MemAvailable`
+and the current cgroup's visible ancestors. It reads v2 `memory.max` and
+`memory.current` with the existing clean-cache accounting. For v1 it finds
+the memory and CPU controller mounts through `/proc/self/mountinfo`, including
+mounts outside `/sys/fs/cgroup` and mounts exposing only a subtree.
+V1 room is `memory.limit_in_bytes` minus usage after subtracting reclaimable
+cache from `memory.usage_in_bytes`. The cache candidates are the smaller of
+`cache` minus `shmem` and `active_file` plus `inactive_file`; reserve `dirty`
+plus `writeback`, capped at those candidates. Use all six `total_*` counters
+from `memory.stat` when `total_cache` is present, otherwise all six local
+counters. Missing, unreadable, malformed, incomplete, duplicate or inconsistent
+statistics leave the reclaimable-cache allowance unknown; readable limit and
+usage retain the conservative room `max(0, limit - usage)`.
+Near-maximum v1 sentinel limits are unlimited. CPU affinity is
+combined with v2 `cpu.max` or v1 `cpu.cfs_quota_us` / `cpu.cfs_period_us`;
+a v1 quota of `-1` is unlimited. Hybrid hosts use the controllers present in
+each hierarchy. Unreadable values stay unknown in the admission notes; only
+known room participates in the minimum, and no known memory means no admission.
 
 `just list` reads `tools/bisection/runners.json`. Use `--issue 541`,
 `--kind gate` or `--heavy` to filter its static rows. `just plan` requires
@@ -353,26 +372,27 @@ compatibility runtime without replacing the native Windows workflow.
 
 ## Contribution checks
 
-From the native repository root, run fmt, tests and Clippy for each touched
-package. For a changed file under `crates/`, find the containing package's
+From the native repository root, use `just` for fmt, tests and Clippy for each
+touched package. For a changed file under `crates/`, find the containing package's
 `Cargo.toml` and copy its `[package]` → `name` value into the `-p` argument.
 Repeat the package commands for each affected package; the example below
-uses `oxpinyin-core`. For documentation-only edits, run fmt and check the
-changed instructions/links; Rust tests need not be repeated. For repository
-build/config changes, identify affected packages or ask the maintainer when
+uses `oxpinyin-core`. For documentation-only edits, check the changed text,
+instructions/links and `git diff --check`; no Rust formatter, build, tests,
+Clippy or backend selection is needed. Source-comment edits also run fmt.
+For repository build/config changes, identify affected packages or ask the maintainer when
 scope is unclear; CI owns the full workspace sweep:
 
 ```bash
-cargo fmt --all --check
-cargo clippy --locked -p oxpinyin-core --all-targets -- -D warnings
-cargo test --locked -p oxpinyin-core
+just fmt --all --check
+just clippy --locked -p oxpinyin-core --all-targets -- -D warnings
+just heavy -- cargo test --locked -p oxpinyin-core
 ```
 
 For a storage-dependent macOS package, use the explicit backend arguments:
 
 ```bash
-cargo clippy --locked -p oxpinyin-store --all-targets --no-default-features --features bdb -- -D warnings
-cargo test --locked -p oxpinyin-store --no-default-features --features bdb
+just clippy --locked -p oxpinyin-store --all-targets --no-default-features --features bdb -- -D warnings
+just heavy -- cargo test --locked -p oxpinyin-store --no-default-features --features bdb
 ```
 
 `--no-default-features` turns off the default Berkeley DB selection;
@@ -395,6 +415,11 @@ apparent rather than guessing that ordinary unit tests establish parity. The nor
 path rules in [oracle](oracle.md); they do not require every ordinary
 contributor to provision all backends. Packaging and performance tools belong
 to their existing task runbooks.
+
+Report the applicable checks and final outcomes under
+[results and reproduction](../../CONTRIBUTING.md#results-and-reproduction).
+Stop after the required checks; full logs and evidence uploads are not part
+of completing a contribution.
 
 ## Troubleshooting and resumption
 
@@ -434,8 +459,18 @@ to their existing task runbooks.
   exception is not a contributor default.
 - Canonical pinned Debian/Linux amd64: BDB `same-data-dir-diff` and cache/
   environment-isolation resume passed on rootless Podman. Other runtime
-  interoperability and arm64-host emulation were not executed. Apple's
-  volume-reader result retrieval is source-verified only, not runtime-tested.
+  interoperability was not executed. Apple's volume-reader result retrieval
+  is source-verified only, not runtime-tested.
+- Native Linux arm64: Apple container, Debian 13 arm64, 4 CPUs, 16 GiB,
+  ext4, no emulation. Two independent builds of each cell produced identical
+  arm64 library hashes. `tools/cloud/setup.sh --in-container --cells
+  "bdb kc tkrzw"` verified all three cells against the arm64 pin fields,
+  regenerated the recorded data manifests, and replaced the host's broken
+  libtkrzw with the healthy upstream build. The full gate then reported
+  0 DIFFER on every cell: bdb 2,880 MATCH / 15 SKIP / 4 HOST-DEPENDENT, kc
+  2,875 / 20 / 4, tkrzw 2,877 / 18 / 4. Each cell's SKIPs include the 13
+  arm64-only #1137 exclusions; same-data was identical on 15/15 drivers.
+  See [the arm64 oracle finding](../findings/oracle-arm64-1132.md).
 - Anonymous oracle artifact retrieval/hash verification passed. Anonymous
   `-deps` retrieval awaits normal publication. See the PR for final-head CI
   and the current cloud-provisioning/compatibility smoke status.

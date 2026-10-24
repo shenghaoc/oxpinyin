@@ -1789,7 +1789,7 @@ impl<S: WriteStore> GenericUserStore<S> {
 
     /// `Bigram::load(prev)`: the raw gram stored under `prev` — one lock
     /// and one point read, of the pin's container on a libpinyin session
-    /// and of the [`BIGRAM_GRAM`] row on any other store. `None` when
+    /// and of the `BIGRAM_GRAM` row on any other store. `None` when
     /// `prev` has no gram.
     ///
     /// # Errors
@@ -3388,8 +3388,9 @@ impl<S: WriteStore> GenericUserStore<S> {
     }
 
     /// Current phrase generation: moves only when a phrase or
-    /// pronunciation row was added, imported, or removed. [`UserLookup`]
-    /// rebuilds when this changes and on nothing else.
+    /// pronunciation row was added, imported, or removed.
+    /// [`UserLookup`](crate::UserLookup) rebuilds when this changes and on
+    /// nothing else.
     #[must_use]
     pub fn phrase_generation(&self) -> u64 {
         self.inner.phrase_generation.load(Ordering::Acquire)

@@ -13,9 +13,11 @@ file wins on any conflict.
 ## Constitution
 
 1. Broad appeal only — no niche features at cost to everyone.
-2. Binary size (ruling 2026-10-18 UTC): record stripped shipping-library
-   file sizes and note increases over base in the PR; minor decreases need
-   no mention. No pin +10% cap. Details: `docs/perf/ci-perf-size-gate-proposal-2026-09-09.md`.
+2. Binary size (ruling 2026-10-18 UTC): for changes affecting shipping
+   libraries, record stripped shipping-library file sizes and note increases
+   over base in the PR; minor decreases need no mention. Documentation-only
+   changes need no size build or report. No pin +10% cap.
+   Details: `docs/perf/ci-perf-size-gate-proposal-2026-09-09.md`.
 3. No local AI (no client neural/LLM inference).
 4. Nothing panics on any input; public APIs return `Result`.
 5. `unsafe`: `forbid` in oxpinyin-core/user/engine; `deny` in data (the
@@ -66,28 +68,64 @@ small PRs), so §2 governs it outside the runtime time/space trade rule.
 The target is a smaller binary, faster execution and much lower RAM than
 libpinyin. Internal freedom exists to serve that, not to erode it.
 
-Rust-mechanism divergences: where upstream behavior cannot be reproduced
-because of a language-mechanism difference, record it in
-docs/findings/upstream-divergences.md, move on, and do not chase it. These
-notes are collected to report back to libpinyin once the rewrite is complete.
+Language and runtime-library divergences follow one decision order,
+stated in full in `docs/findings/compatibility-policy.md` under "The
+language/runtime-quirk exception":
 
-**Before recording one, read `docs/findings/compatibility-policy.md`.** The
-goal is a drop-in replacement: rename the built object to `libpinyin.so.15`,
-put it on the library path, and unmodified consumers work against the data
-already on the system. oxpinyin is built on one of the three backends
-libpinyin is built on (Berkeley DB, Kyoto Cabinet, tkrzw), one per
-build, and handles that backend's system and user files natively,
-exactly as a libpinyin build on the same backend does. Switching backend
-starts fresh, for libpinyin and oxpinyin alike (maintainer ruling
-2026-09-09). Do not re-raise either as an open trade-off. Reproducing the pin is
-therefore the default, and
-divergence is an exception that must be argued into one of exactly three
-classes — (a) math, (b) memory safety, (c) availability. (Class (d),
+1. **The C-facing contract is never a quirk.** The C ABI and its layout,
+   ownership and lifetime (real `GArray`, `g_free`, every other
+   GLib-owned structure and allocation), the on-disk system and user
+   formats, data ownership, and observable behaviour on valid supported
+   input are preserved exactly, except where class (a), (b) or (c)
+   applies. Otherwise a proposed change there is a defect to revert, or
+   a Stage 3 departure; the quirk limb below cannot admit it.
+2. **If it is class (a), (b) or (c)**, classify it there and follow that
+   class's rules.
+3. **A GLib, glibc or C++ language/runtime quirk may be accepted**
+   instead of emulated in Rust. oxpinyin uses normal Rust functions in
+   place of GLib-conformity code. The exception is admitted only by a
+   discrepancy record
+   (`docs/findings/language-runtime-discrepancy-template.md`) after the
+   whole reachable path is traced; it must be confined to malformed,
+   non-scalar, host-dependent or otherwise undefined input, or to a
+   diagnostic/comparator detail with no valid-input consequence, and it
+   must preserve every item in limb 1. Register it by name in
+   `docs/findings/upstream-divergences.md`; one record does not admit
+   another by analogy, though the category itself is
+   maintainer-authorized.
+4. **Anything else is a defect to revert.** An intentional departure
+   that changes valid behaviour or the contract is Stage 3, behind an
+   opt-in feature.
+5. **An earlier maintainer ruling is not reversed by this exception.**
+   `LC_NUMERIC` (policy row 39, #923) needs a new human ruling before it
+   changes.
+
+A differential that intentionally differs under a recorded exception is
+reported as `POLICY-ACCEPTED`, never as `MATCH`; its case and pin
+evidence are kept.
+
+**Math rule (maintainer direction 2026-10-19 UTC).** oxpinyin uses
+Rust's standard maths at full speed: `f64::ln`, `exp`, `powf` and every
+other `std` float method. It never slows code down to imitate glibc,
+libm, GLib `gfloat` or any other C behaviour. A last-bit difference from
+the pin that follows from using Rust's maths is class (a): record it and
+do not chase it.
+
+**Before recording a divergence, read
+`docs/findings/compatibility-policy.md`.** The goal is a drop-in
+replacement: rename the built object to `libpinyin.so.15`, put it on the
+library path, and unmodified consumers work against the data already on
+the system. oxpinyin is built on one of the three backends libpinyin is
+built on (Berkeley DB, Kyoto Cabinet, tkrzw), one per build, and handles
+that backend's system and user files natively, exactly as a libpinyin
+build on the same backend does. Switching backend starts fresh, for
+libpinyin and oxpinyin alike (maintainer ruling 2026-09-09). Do not
+re-raise either as an open trade-off. Reproducing the pin is therefore
+the default, and a divergence is an exception argued into class (a), (b)
+or (c) or into the language/runtime-quirk exception. (Class (d),
 consumer scope, was retired 2026-09-06; the policy doc is authoritative
-on the current set.)
-Anything outside those three is a defect to be reverted, not a divergence to
-be recorded. The policy carries the classes, their citations, and a
-classification of every existing register entry.
+on the current set.) The policy carries the classes, the exception, their
+citations, and a classification of every existing register entry.
 
 ## External interfaces
 
@@ -162,7 +200,8 @@ The behaviour target is what the pinned libpinyin does, not what it
 should do.
 An observable pin defect is reproduced and recorded as an upstream
 defect, not fixed. Matching the pin is the default; departing from it
-still needs one of the three classes above.
+still needs one of the three classes above or a recorded
+language/runtime-quirk exception.
 
 Derive the pin's behaviour by reading its code, never by running it:
 
@@ -225,25 +264,54 @@ Every requirement, spec line and finding belongs to exactly one side:
   `.kiro/specs/drop-in/`, `.kiro/specs/bug-for-bug/` (Requirements 1–3).
 - **oxpinyin improvements** — everything oxpinyin does that the pin does
   not: the classes (a)–(c) and the log line (c) owes, the registered
-  standing divergences, the constitution's no-panic, `unsafe` and
-  determinism rules, internal architecture and crate decoupling,
-  performance, and the Stage 3 departures. Kiro:
+  standing divergences and recorded language/runtime-quirk
+  discrepancies, the constitution's no-panic, `unsafe` and determinism
+  rules, internal architecture and crate decoupling, performance, and
+  the Stage 3 departures. Kiro:
   `.kiro/steering/oxpinyin-improvements.md`,
-  `.kiro/specs/bug-for-bug/` (Requirements 4–5),
+  `.kiro/specs/bug-for-bug/` (Requirements 4–6),
   `.kiro/specs/stage3-departures/`.
 
 An improvement that changes nothing observable is internal. It is
 allowed in Stage 2 under the Source policy, performance included. An
 improvement that changes observable output, the files on disk or the
-ABI is one of two things. It is a class (a)–(c) exception, or it is a
-Stage 3 departure behind an opt-in cargo feature. The default build is
-always the bug-for-bug binary.
+ABI is one of three things: a class (a)–(c) exception, a recorded
+language/runtime-quirk discrepancy, or a Stage 3 departure behind an
+opt-in cargo feature. The default build is always the bug-for-bug
+binary under those recorded exceptions.
 
 ## Contributor responsibility
 
 Every contributor remains responsible for understanding, reviewing, testing,
 and maintaining the changes they submit, including changes produced with
 assistance from any tool.
+
+`README.md` and `README.中文.md` state the same content. A PR that changes
+the content of either updates the other in the same PR. A correction to
+Chinese wording alone that does not change content needs no English change.
+
+## Results and reproduction
+
+Follow [the shared reporting policy](CONTRIBUTING.md#results-and-reproduction).
+Deliver the software, maintained Python/`just` tooling, and a concise final
+result with reproducible commands. One command may reproduce an entire table.
+Keep only the revision, input and environment details needed to interpret and
+reproduce it; a separate findings document is optional.
+
+Raw verification output is disposable local working data. Do not commit,
+attach, upload, archive or mirror logs, captures or tar/zip evidence bundles
+unless the maintainer explicitly requests specific diagnostic material.
+Never initiate a browser sign-in, account-setup or upload request to publish
+verification output. Missing captures are not a blocker and require no
+replacement manifest, checksum inventory or "evidence unavailable" statement.
+Functional fixtures, pins and release packages are governed by their own
+procedures; this rule concerns verification reporting.
+
+A broken reproduction command or a result that contradicts the claim beyond
+the method's expected variability is a bug to investigate. Fix the software,
+tooling or documented assumptions and correct the claim. Do not replace that
+investigation with an evidence package. This policy supersedes older reporting
+requirements in runbooks, findings and lane instructions.
 
 ## Pull request descriptions
 
@@ -258,9 +326,9 @@ assistance from any tool.
   report at the end.
 - For a stacked PR, describe only that PR's own diff and name its direct
   parent PR.
-- Use about 150–300 words for an ordinary PR. Technical evidence can make
-  it longer. Put bulk evidence in a linked findings document. The existing
-  "Findings documents commit no captures" rule still applies.
+- Keep an ordinary PR brief; 150–300 words is a guide, not a minimum.
+  Report final results and reproducible commands under "Results and
+  reproduction" above. Add detail only when it helps assess the change.
 - The verification rules elsewhere in this file stay authoritative. This
   section changes only the format.
 
@@ -441,19 +509,17 @@ always".
    there and nowhere else by default.
 2. Run all three cells (bdb, kc, tkrzw) only when the diff touches
    backend code. Decide by path check, not by judgement — any of three:
-   - `git diff --name-only origin/main...HEAD` lists a file under
-     `crates/oxpinyin-store/`;
+   - the diff lists a file under `crates/oxpinyin-store/`;
    - a changed non-Markdown file contains `feature = "bdb"`,
-     `feature = "tkrzw"` or `feature = "kyotocabinet"`
-     (`git diff --name-only origin/main...HEAD -- ':!*.md' | xargs -r
-     grep -lE 'feature *= *"(bdb|tkrzw|kyotocabinet)"'` — Markdown is
+     `feature = "tkrzw"` or `feature = "kyotocabinet"` (Markdown is
      excluded because docs, this file included, quote the pattern);
-   - the diff changes a line naming a backend in any Cargo.toml
-     (`git diff -U0 origin/main...HEAD -- '*Cargo.toml' | grep -E
-     '^[+-][^+-].*(bdb|tkrzw|kyotocabinet)'`).
-   State the check's output in the PR body. A result you believe is
-   backend-dependent but that fails the check is a finding to report,
-   not a licence to run three cells.
+   - the diff changes a line naming a backend in any Cargo.toml.
+   `tools/bisection/cells-for-diff.py [base]` runs the three checks on
+   `base...HEAD` (`base` defaults to `origin/main`) and prints the cells
+   they select, which check fired and the matching paths and lines.
+   Rule 7's docs/comments-only case needs no backend-selection run.
+   A result you believe is backend-dependent but that fails the check
+   is a finding to report, not a licence to run three cells.
 3. Every differential runs on all three cells once at the start of each
    sweep and once before a release. That run, not the per-change gate,
    is what covers kc and tkrzw.
@@ -467,11 +533,26 @@ always".
 6. No new bespoke driver plus runner per issue where an existing driver
    can take a case file. Add cases to the existing driver; a new driver
    needs a line in the PR body saying why none could.
+
+   **Unified tooling.** Use the repository's `just` recipes and in-tree
+   Python tooling under `tools/`, with managed CPython via `uv`, for
+   builds, gates, differentials and measurements. The migration plan is
+   `docs/findings/tooling-consolidation-python-just.md`; existing documented
+   shell entry points remain supported until migrated. Put new repeatable
+   orchestration in the shared Python tooling and expose it through `just`.
+   No ad-hoc drivers, private "operators" or out-of-tree controllers.
+   Add only the missing capability needed for the task, with proportionate
+   tests; do not expand an unrelated tooling migration or build reporting
+   infrastructure. If a required check remains unavailable, report it as
+   not run and state the blocker. Never substitute a private procedure or
+   claim an unrun check passed.
 7. Re-verification is proportional to what changed since the last
    green gate:
-   - Docs, comments or findings only: fmt, then push. No builds. This
-     case overrides rule 2. If a diff changes only comments in a backend
-     file, rule 2's check fires, but do not run the three cells.
+   - Docs, comments or findings only: review changed text and links,
+     run `git diff --check`, then push. Run fmt when source comments
+     change; Markdown-only edits need no Rust formatter. No builds,
+     tests, clippy, differentials or backend-selection checks. This case
+     overrides rule 2, including comments-only edits in backend files.
    - A review fix in code: fmt, clippy, `cargo test -p` for the touched
      crates, and only the differential(s) belonging to that issue, on
      the reference cell.
@@ -481,8 +562,11 @@ always".
      touches needs no local re-gate; CI covers it.
    - In a stack, re-gate only the commit that changed and those above
      it that touch the same files.
-   The report states which of these cases applied and why, so the
-   maintainer can check the call.
+   Stop once the applicable checks pass and concrete failures are
+   addressed. Additional runs need a changed relevant input, a specific
+   unresolved failure or an explicit
+   maintainer request; do not rerun merely to collect more evidence.
+   Repetitions prescribed by the measurement method remain required.
    Rules 5 and 7 describe the **completion gate** (maintainer ruling
    2026-10-19 UTC): what runs when a coherent fix is ready, before a
    push that asks for review. Between two such points, while a fix is
@@ -493,10 +577,10 @@ always".
    neighbours, named by case ID (`tools/bisection/run-contract-diff.sh
    ... -- --cases default-option-parse,default-option-single-key`),
    never the default suite.
-   Iteration feedback is not a gate result and is not reported as one:
-   the report names the completion gate that ran, and the intermediate
-   selections only when a DIFFER they found shaped the fix. A fix that
-   never reaches a completion gate is not ready to push for review;
+   Iteration feedback is not a gate result and is not reported as one.
+   Report the final results and reproduction commands, with failed or
+   unrun required checks as limitations. A fix that never reaches a
+   completion gate is not ready to push for review;
    a `wip/` checkpoint push does not need one.
 8. Differentials build debug, never release. Keep one target directory
    per cell and reuse it; do not delete target directories between
@@ -536,8 +620,12 @@ always".
    Cargo job counts accept positive integers, negative integers, and
    `default`. Test thread counts must be positive integers. Invalid values
    cause a clear failure. On Linux, read MemAvailable and each visible
-   cgroup v2 ancestor's `memory.max` and `memory.current`. Use the smallest
-   known memory room. Read CPU affinity and each ancestor's `cpu.max`.
+   cgroup v2 ancestor's `memory.max` and `memory.current`, and each visible
+   cgroup v1 memory ancestor's `memory.limit_in_bytes`,
+   `memory.usage_in_bytes` and `memory.stat`.
+   Use the smallest known memory room. Read CPU affinity and each v2
+   ancestor's `cpu.max`, and each v1 CPU ancestor's `cpu.cfs_quota_us` and
+   `cpu.cfs_period_us`.
    Report unreadable limits as unknown. Use the limits that can be read.
    macOS and Windows keep their platform memory readers. If no memory
    reading is available, treat the capacity as zero. Use no fixed fallback
@@ -612,9 +700,6 @@ points at them:
   `pinyin_train` directly: `docs/runbooks/oracle.md`.
 - **Backend-specific benches** carry `required-features`; run one with
   `--bench <name>`: `docs/runbooks/benches.md`.
-- **Findings documents commit no captures.** The document records the
-  command that produced each figure; bulk evidence is attached to the PR
-  and linked from the document: `docs/runbooks/benches.md`. Where the
-  capture environment is ephemeral and the raw cannot be retained
-  anywhere, the document says so at the point of use rather than pointing
-  at a path that no longer exists.
+- **Report results and reproduction commands**, under "Results and
+  reproduction" above. Measurement-specific interpretation belongs in
+  `docs/runbooks/benches.md`; raw captures are not submission requirements.

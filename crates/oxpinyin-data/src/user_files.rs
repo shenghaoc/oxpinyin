@@ -272,7 +272,7 @@ pub struct UserTableInfo {
     pub model_data_version: u32,
     /// `database format:` — `None` when the third directive ran off the
     /// end of the file before it converted anything (`UNKNOWN_FORMAT`).
-    /// Upstream recognises exactly [`UPSTREAM_DB_FORMATS`]; any other
+    /// Upstream recognises exactly `UPSTREAM_DB_FORMATS`; any other
     /// token reaches `to_table_database_format_type`'s `abort()`, which
     /// [`UserTableInfo::parse`] answers with
     /// [`UserConfError::UnknownDatabaseFormat`] instead.

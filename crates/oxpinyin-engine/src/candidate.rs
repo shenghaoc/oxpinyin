@@ -29,7 +29,7 @@ pub enum CandidateKind {
 /// Sized to need (48 bytes): the three span counts are `u16` because an
 /// input is at most [`MAX_INPUT_BYTES`](crate::MAX_INPUT_BYTES) bytes
 /// long and a key is at least one byte, and the n-best rank is a byte
-/// with [`NO_ROW`] for "not a row", the pin's own `gint8 m_nbest_index`
+/// with `NO_ROW` for "not a row", the pin's own `gint8 m_nbest_index`
 /// width (`pinyin.cpp:102` at 074a2219). A window of a hundred-odd rows
 /// is retained per instance, so each byte here is a hundred-odd bytes of
 /// instance heap.

@@ -2,7 +2,6 @@ oxpinyin-function-order-v1	libzhuyin.so.15
 init	<&[u8] as <alloc::ffi::c_str::CString>::new::SpecNewImpl>::spec_new_impl
 init	<alloc::collections::btree::map::BTreeMap<alloc::string::String, oxpinyin_engine::config::ConfigValue>>::insert [instantiating crate: oxpinyin_facade]
 init	<alloc::collections::btree::map::BTreeMap<alloc::vec::Vec<u8>, core::option::Option<alloc::vec::Vec<u8>>>>::insert [instantiating crate: oxpinyin_store]
-init	<alloc::collections::btree::map::BTreeMap<u32, oxpinyin_data::chunk_write::ChunkItem>>::insert [instantiating crate: oxpinyin_user]
 init	<alloc::collections::btree::map::BTreeMap<u8, u32>>::insert [instantiating crate: oxpinyin_user]
 init	<alloc::collections::btree::map::IntoIter<(u32, alloc::vec::Vec<u16>), alloc::collections::btree::set_val::SetValZST>>::dying_next [instantiating crate: oxpinyin_user]
 init	<alloc::collections::btree::map::IntoIter<alloc::vec::Vec<u8>, alloc::collections::btree::set_val::SetValZST>>::dying_next [instantiating crate: oxpinyin_user]
@@ -64,6 +63,7 @@ init	<oxpinyin_core::vocab::SyllableKey>::from_option_text_with_distance
 init	<oxpinyin_data::chewing_table::ChewingTable>::key_exists
 init	<oxpinyin_data::chewing_table::ChewingTable>::search
 init	<oxpinyin_data::dict::AddonDictionary>::without_indexes
+init	<oxpinyin_data::dict::SystemDictionary>::fill_lookup
 init	<oxpinyin_data::lm::BigramLanguageModel>::open_with_mask
 init	<oxpinyin_data::phrase_libraries::PhraseLibraries>::unigram_count
 init	<oxpinyin_data::phrase_library::PhraseContent>::as_slice
@@ -104,11 +104,10 @@ init	<oxpinyin_runtime::FacadeBumps as core::default::Default>::default
 init	<oxpinyin_runtime::FacadeBumps>::token
 init	<oxpinyin_runtime::Runtime>::dict
 init	<oxpinyin_runtime::Runtime>::open_with_law
-init	<oxpinyin_runtime::RuntimeDict as oxpinyin_core::Dictionary>::lookup_addon_into
-init	<oxpinyin_runtime::RuntimeDict as oxpinyin_core::Dictionary>::lookup_into_flagged
+init	<oxpinyin_runtime::RuntimeDict as oxpinyin_core::Dictionary>::lookup_addon_candidates_into
 init	<oxpinyin_runtime::RuntimeDict as oxpinyin_core::Dictionary>::phrase_prefix_exists
 init	<oxpinyin_runtime::RuntimeDict as oxpinyin_core::Dictionary>::phrase_prefix_exists_addon
-init	<oxpinyin_runtime::RuntimeDict>::effective_possibility
+init	<oxpinyin_runtime::RuntimeDict>::fill_lookup
 init	<oxpinyin_runtime::RuntimeDict>::user_lookup
 init	<oxpinyin_runtime::RuntimeLm as oxpinyin_core::LanguageModel>::addon_unigram_total
 init	<oxpinyin_runtime::RuntimeLm as oxpinyin_core::LanguageModel>::unigram_freq
@@ -134,7 +133,6 @@ init	<oxpinyin_user::store::GenericUserStore<oxpinyin_store::bdb::BdbStore>>::op
 init	<oxpinyin_user::store::GenericUserStore<oxpinyin_store::bdb::BdbStore>>::open_session::<oxpinyin_user::persistence::SystemOriginals>::{closure#0} [instantiating crate: oxpinyin_runtime]
 init	<oxpinyin_user::store::GenericUserStore<oxpinyin_store::bdb::BdbStore>>::unigram_delta [instantiating crate: oxpinyin_runtime]
 init	<oxpinyin_user::store::GenericUserStore<oxpinyin_store::bdb::BdbStore>>::unigram_total [instantiating crate: oxpinyin_runtime]
-init	<oxpinyin_user::system_items::SystemItems>::get
 init	<phf::map::Map<&str, u16>>::get_entry::<str> [instantiating crate: oxpinyin_core]
 init	<std::fs::OpenOptions>::_open
 init	<std::hash::random::RandomState as core::hash::BuildHasher>::hash_one::<&&str> [instantiating crate: oxpinyin_engine]
@@ -172,10 +170,8 @@ init	core::slice::sort::stable::driftsort_main::<oxpinyin_engine::candidate::Can
 init	core::slice::sort::unstable::ipnsort::<u32, <u32 as core::cmp::PartialOrd>::lt> [instantiating crate: oxpinyin_user]
 init	core::str::converts::from_utf8
 init	oxpinyin_data::chunk_format::chunk_checksum
-init	oxpinyin_data::chunk_write::decode_phrase_item
 init	oxpinyin_data::dict::resolve_items
 init	oxpinyin_data::dict::syllables_to_chewing_keys
-init	oxpinyin_data::phrase_libraries::item_possibility
 init	oxpinyin_data::phrase_library::directory_reads_as_a_chunk
 init	oxpinyin_data::phrase_library::map_chunk
 init	oxpinyin_data::row_format::pinyin_index::decode_items

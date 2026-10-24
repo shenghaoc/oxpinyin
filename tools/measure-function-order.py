@@ -3,6 +3,9 @@
 
 Run through just heavy. No observations or profiler dumps are saved. The only
 scratch files are private library/profile copies, deleted on exit and signals.
+Pass --emit-samples to print original timing, memory and steady readings as
+JSON on stdout, including warmups and their round/arm order. This does not
+change worker arguments, timing scopes or cache preparation.
 The worker is tools/bisection/bisect.c in its teardown mode: native timing uses
 its time stop, memory uses its parent-observed checkpoints, and Callgrind uses
 toggles around the load constructors and the generator's startup toggles:
@@ -255,6 +258,12 @@ def summarize(rows):
                   min(row[key] for row in rows), max(row[key] for row in rows)) for key in rows[0]}
 
 
+def emit_sample(enabled, **record):
+    """Optional original controller readings; called after the worker has exited."""
+    if enabled:
+        print(json.dumps(record, sort_keys=True), flush=True)
+
+
 def meets_residency_target(pr_kib, pin_kib, control_spread_kib):
     """The target is no excess above the pin beyond the 48 KiB ceiling.
 
@@ -299,6 +308,8 @@ def main():
     parser.add_argument("--system-identity", required=True)
     parser.add_argument("--cpu", type=int, required=True)
     parser.add_argument("--rounds", type=int, default=20)
+    parser.add_argument("--emit-samples", action="store_true",
+                        help="print original timing/memory/steady samples as JSON, including warmups")
     args = parser.parse_args()
     if args.rounds < 20 or PAGE != 4096:
         parser.error("campaign requires >=20 rounds and a 4 KiB host page")
@@ -371,6 +382,10 @@ def main():
                                     "first_candidate_ns": timing["first_candidate_ns"]["wall_ns"],
                                     "lifecycle_ns": timing["lifecycle_ns"]["wall_ns"],
                                 }
+                                emit_sample(args.emit_samples, function_order_sample="timing",
+                                            facade=facade, profile=profile, arm=arm, round=round_no,
+                                            warmup=round_no < 0, order=order, cold=cold,
+                                            library_sha256=hashes[arm, facade], times=timing)
                                 if round_no >= 0:
                                     rows[arm, "cold" if cold else "warm"].append(reading)
                                     cold_proofs += cold
@@ -380,6 +395,10 @@ def main():
                         try:
                             prepare_cache(library, False)
                             reading = teardown_memory(memory_child(facade, library, user), library, env)
+                            emit_sample(args.emit_samples, function_order_sample="memory",
+                                        facade=facade, profile=profile, arm=arm, round=round_no,
+                                        warmup=round_no < 0, order=order, cold=False,
+                                        library_sha256=hashes[arm, facade], reading=reading)
                             if round_no >= 0:
                                 rows[arm, "memory"].append(reading)
                         finally:
@@ -472,6 +491,9 @@ def main():
                     if len(row["cycles_ns"]) != 8:
                         raise ValueError("steady cycle count differs")
                     checksums.add(row["workload_checksum"])
+                    emit_sample(args.emit_samples, function_order_sample="steady",
+                                facade=facade, arm=arm, round=round_no, warmup=round_no < 0,
+                                order=order, library_sha256=hashes[arm, facade], reading=row)
                     if round_no >= 0:
                         measurements[arm].append(statistics.median(row["cycles_ns"][1:]))
             if len(checksums) != 1:

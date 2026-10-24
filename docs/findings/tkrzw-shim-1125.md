@@ -1,5 +1,150 @@
 # tkrzw concrete-class shim: evaluation (#1125)
 
+## Adoption preparation on current main: validation pending
+
+The maintainer authorized adoption as a documented trade only if the final
+combined build meets the stated gates and guardrails. Prior STOP results
+below remain historical at their cited measured SHAs and artifact hashes;
+they are not carried forward as final-build results. No final adoption or
+PR decision is made at this checkpoint.
+
+Before rewriting, the source-only annotated tag
+`provenance/tkrzw-shim-measured-2026-10-24` was pushed and fetched back from
+origin. Its peeled anchor is `c0078254fc9c706fd2e7778601e6888689b747c9`. The anchor's tree
+is exactly pre-adoption findings head `9d81c9e29e3714f2836a295174a768318136560f`;
+its multiple parents retain the disjoint historical graphs rather than
+claiming a tag on one old tip covers rewritten commits. This is not a
+merge of source changes into the implementation branch. It also retains
+the two cited upstream source-pin graphs. An ancestry check against the
+**fetched remote tag** passed for every commit listed below. The audit
+conservatively includes non-measured commit citations too. Build IDs,
+artifact hashes, patch IDs and tree IDs were distinguished from commits.
+All pre-existing measured SHA and artifact-hash text below is preserved.
+The tag retains source objects, **not binaries**; artifact hashes identify
+the original local measured outputs and do not recreate or preserve them.
+
+| cited source commit covered by remote tag |
+| --- |
+| `06195c1a6ceb6e2ea97d0679ca2b8fe0f26fb1c2` |
+| `074a2219c90feaf962d0d24f034514033ece5f99` |
+| `0e7f98ac785b81837b74a4015eaebc6d63223241` |
+| `104114e3fbf7a303dcfc69eadd0f002fc14e11a1` |
+| `1dfd3e52e6fb02155c014856075aaf3955c8ab29` |
+| `20dc2615055ea4bae2fc86f253a03966414de6d1` |
+| `2b188ae85a0e0d037e6235e10cbe9cb48aba4a9c` |
+| `2d1b7ade67b861e95da9e402a996dffaffb6aa52` |
+| `41816464a3d360df023c343a87074d05d40d1871` |
+| `49ea0fc9340b1d8f9dd625a4de6929664feca088` |
+| `58566b3c56c738981bdf5a199e954eb9598a0651` |
+| `5bfdd4a5e9728ab84eb738358c23b93ad532b0f8` |
+| `6755fc5a257cf68da58f3743e450aa02cad212b9` |
+| `6e50b77ef9b380f36ca0cd6d3fb76732c094baaf` |
+| `7fdab25fa29b6b2a48820f5b82c0a629f93f4bb3` |
+| `838dabc2fb86c9b221ba3bde914584596de075da` |
+| `92b7d61bb60a46c41cc85a0ffed70cf7c354e702` |
+| `974f98bc57eff6d47e89834cecf4582c5f354632` |
+| `9814779235a91ae621f5b79e8605b48e1d19e0fc` |
+| `9d81c9e29e3714f2836a295174a768318136560f` |
+| `9ee84164cf45e441aa8186418c03a02c9b89f08b` |
+| `af357bdef8b993169f829a52583a7a7fe367db0e` |
+| `b3018335cce3e1d080f7790716bf88a4726247a2` |
+| `b9b8a31bee471b940fdaecc4c0cc10ebea0c93b2` |
+| `bb43abcd900aac7be409be82160d063b6493aed5` |
+| `bceb13c0039ca1d902c81758a68825a81f88a6a5` |
+| `be997c1782a3f7103dfb4733a69425f440bf0c3d` |
+| `c4cc6d0ca1063704ca2905966a481647b8bf164b` |
+| `d7788072d3b8078aaa500cb5fcb98e0542fe7278` |
+| `eccacefd61a04db3fdf8e031dbd86960fc464ce6` |
+| `ef12b1134ef160b6085b7ea1c4f02e561a83565d` |
+
+The new baseline is current main
+`f9257eae495e06677d74026e93c285b42c6c34e8`. The own shim patch applied
+cleanly, retaining main's changed files and all regression tests. Its own
+shipping changes remain the store adapter/FFI, handwritten C++ shim and
+header, cc build integration and tkrzw-only C++ relink. The empty-message
+fast path remains removed, and #1110's health/record-section guards and
+#1114's single-record Set load path remain. No new shim optimization or
+fault investigation was introduced. The tkrzw policies were regenerated twice
+on this combined tree, from fresh unordered shipping inputs. Both passes
+matched byte-for-byte. These are freshly derived combined-tree policies,
+not copied historical files. The seven own source/build/adapter files are
+byte-identical to the historically measured 9d81c9e2 tree; main's changes
+around them and the fresh policies are the combined-tree differences.
+
+Since old baseline d7788072, main changed candidate collection to omit
+unused pronunciation pricing (#1140), with Dictionary candidate lookup
+interfaces and implementations in core/data/user, engine lookup callers
+and regression tests. Main also regenerated tkrzw policies, changed Rust
+documentation/cfg-doc attributes, and added/updated verification, native
+startup measurement, platform/oracle selection and documentation tooling.
+These surrounding changes are main's, not attributed to the shim. Hence
+old facade performance is not a measurement of this combined source.
+The old store table will stand only if both timed benchmark binaries,
+runtime, fixture inputs and build flags match; otherwise it stays explicitly
+historical. Current preparation has no such binary-equivalence result yet.
+
+Fmt, clippy and store tests (default and tkrzw) passed on the same
+shipping source. Main then added cgroup-v1 admission accounting only; the
+clean rebase did not change shipping source. Main's subsequent bilingual
+README and contributor documentation change also leaves shipping source and
+profiling inputs unchanged. Current rule-2 checks 1, 2
+and 3 all select bdb,kc,tkrzw. The combined code commit is `08e178829f991469c864b98a980286a2f2a899d3`. The regenerated policies
+are folded into that code commit. Generated policy SHA256 values are
+`c1ddbcde97704e10b82c7671fc501f1d4adfd15cc8b34472b8e9b341c8321660`
+(pinyin) and
+`1713876b7cf3faf03c7695fdd2746a5318ad40083627e835d0e58dcf474d299b`
+(zhuyin). Selected-cell differentials passed as described below. The remaining check is one Ubuntu
+final-build campaign against this main plus the pin. Essential guardrails
+must be conclusive under their existing exact/range/timing rules. No new
+cold-init tolerance is assumed. A worse/uncertain trade or essential
+INCONCLUSIVE guardrail means STOP with no PR. A draft PR is permitted only
+after all conditions pass; no review request or merge is authorized.
+
+The maintained four-arm controller now has optional `--emit-samples` JSON
+output, after each worker exits, retaining original timing/resource,
+memory and steady readings with round, arm order and library identity.
+It changes neither worker scopes nor cache preparation, and defaults off.
+The controller's 44 tests pass, including original-value/order retention,
+missing fields versus zero, disabled output and write failures. This
+allows the final timing controls to use paired original samples instead
+of independently sorted summaries. No private measurement controller is
+used. The runbook documents the option.
+
+Same-data differentials passed in bdb, kc and tkrzw. Full contract results
+cover all 2,899 registered cases at the unchanged shipping checkpoint:
+bdb 2,897 MATCH / 2 expected SKIP; kc 2,892 MATCH / 7 expected SKIP;
+tkrzw 2,894 MATCH / 5 expected SKIP. No case TIMEOUT or failing verdict was
+recorded. These use the supported two-case pool, the unchanged 300-second
+per-case deadline and a 3,600-second aggregate runner deadline. The original
+full job survived loss of its transport and completed; its final records,
+rather than an incomplete console view, establish the result. A subsequent
+full retry was cancelled and reaped after 19 completed cases. Exact
+reconciliation against the default registry leaves zero unfinished or
+timed-out IDs, so no selected case needs to be repeated.
+
+The final clean rebase also includes main's #894 contract fixtures and
+recorded-discrepancy verifier, and conservative cgroup-v1 admission fixes.
+It changes no shipping, build, profile, worker or policy-generation input.
+The completed gates stand under the proportional re-verification rule;
+this lane does not claim to have rerun main's new #894 cases.
+
+Main then upgraded cc 1.4.3 → 1.9.0 and find-msvc-tools 0.1.11 → 0.1.15.
+Both tkrzw policies were regenerated twice again under that lockfile; the
+two new passes matched and are the committed policies identified above.
+Their Rust instantiating-crate identities differ from the earlier policies,
+so the earlier files were not carried forward. Each facade still selects
+all three C++ paths (two init and one steady). The cc archive member name
+changed, but the extracted shim object is byte-identical: 44,056 bytes,
+SHA256 `f2a5243806846d5e2df0562d95f7be5aa388a407c4ae1e72c3c74a9276e2b6bb`.
+This is object identity, not a facade performance claim. Fmt, both clippy
+configurations and store tests passed again: tkrzw 52 unit + 7 integration,
+default 50 unit + 7 integration, with four existing ignored fixture tests.
+Both exact current-main shipping facades also built with their own checked-in
+policies and no unordered fallback. Final linked-object ordering checks and
+the final campaign remain pending.
+
+
+
 ## Cold-page diagnosis: records absent; same-setup one-pass entry point blocked
 
 Recorded 2026-10-24T11:03:31.939909+00:00. STOP remains. This is diagnosis only

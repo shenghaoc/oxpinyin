@@ -86,10 +86,9 @@ __pycache__/
 /target-dbg/
 /target-fp/
 
-# Capture output from the measurement harnesses. Findings documents commit
-# no captures: they record the command that produced each figure, and bulk
-# evidence is attached to the PR (docs/runbooks/benches.md). These patterns
-# exist so a stray capture cannot be swept in by `git add -A`.
+# Measurement captures are disposable local working data. Reports give final
+# results and reproduction commands (CONTRIBUTING.md). These patterns prevent
+# accidental commits; captures are not routine attachments or upload tasks.
 /tools/bisection/*.out
 /tools/bisection/massif.*
 /tools/bisection/dhat.*

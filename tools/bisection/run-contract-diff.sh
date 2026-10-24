@@ -9,6 +9,8 @@
 #   ... -- --family zero-key     # every zero-key/... case
 #   ... -- --issue 640 --plan-only   # print the selection plan and stop
 #   ... -- --expect-parent      # against the parent build: fixes must differ
+#   ... -- --jobs 4             # maximum cases at once, within heavy admission
+#   ... -- --run-platform-excluded --cases ...  # run host-excluded cases; reasons on stderr
 # Needs uv 0.13.1 or newer, managed CPython 3.15+gil and libglib-2.0.so.0. The case list, the tag index
 # (`contract-diff.py --list-tags`) and the comparison rules are in
 # contract-diff.py; an unknown tag or an empty selection is an error, never

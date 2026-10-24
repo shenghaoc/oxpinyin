@@ -9,13 +9,15 @@ compatibility. This spec contains requirements from both sides:
 
 - Requirements 1–3 are pinned behaviour
   (`.kiro/steering/pinned-behaviour.md`).
-- Requirements 4–5 are oxpinyin rules, not behaviours of the pin
+- Requirements 4–6 are oxpinyin rules, not behaviours of the pin
   (`.kiro/steering/oxpinyin-improvements.md`). Requirement 4 sets a
   performance floor and no ceiling. Requirement 5 sets the measurement
-  method.
+  method. Requirement 6 bounds language/runtime quirks and the math
+  rule.
 
 Where oxpinyin may differ from the pin, the rule is in
-`.kiro/steering/oxpinyin-improvements.md`. Intentional departures
+`.kiro/steering/oxpinyin-improvements.md` and the decision order in
+`docs/findings/compatibility-policy.md`. Intentional departures
 from the pin are Stage 3 (`.kiro/specs/stage3-departures/`).
 
 ## Glossary
@@ -50,9 +52,10 @@ built against libpinyin's actual behaviour keep working.
 2. WHEN the pin's behaviour is a pin defect THEN oxpinyin SHALL
    reproduce it and record it as an upstream defect
    (`docs/findings/upstream-report-drafts.md`), unless the policy places
-   it in class (a), (b) or (c).
+   it in class (a), (b) or (c), or admits it under the
+   language/runtime-quirk exception with a discrepancy record.
 3. Matching the pin SHALL be the default; a departure SHALL name its
-   class and SHALL NOT create a new one.
+   class or its record and SHALL NOT create a new class or exception.
 4. THE `errno` a successful call leaves behind SHALL NOT be compared
    unless the API specifies it (ruling 2026-10-08 UTC).
 
@@ -117,8 +120,9 @@ compatibility stays.
    Constitution §2, review and verification).
 5. A performance change that needs an observable or on-disk change
    SHALL NOT land in Stage 2, unless a registered class (a)–(c)
-   exception in `docs/findings/compatibility-policy.md` covers that
-   change. Otherwise the change is a Stage 3 departure.
+   exception or a recorded language/runtime-quirk exception in
+   `docs/findings/compatibility-policy.md` covers that change.
+   Otherwise the change is a Stage 3 departure.
 
 ### Requirement 5: Performance measured the same way on both sides
 
@@ -137,3 +141,29 @@ reproducible and like-for-like.
    before it is accepted.
 4. Performance SHALL NOT be a PR gate. The nightly snapshot series is
    the tracking surface (`docs/perf/ci-perf-size-gate-proposal-2026-09-09.md`).
+
+### Requirement 6: Language/runtime quirks and the math rule
+
+**User Story:** As the maintainer, I want GLib/glibc/C++ quirks handled as
+normal Rust without losing the C contract, so that the port is idiomatic
+without becoming incompatible.
+
+#### Acceptance Criteria
+
+1. A language/runtime difference SHALL be decided in the policy's order:
+   the C-facing contract first, then classes (a)–(c), then a recorded
+   quirk, otherwise a defect or a Stage 3 departure.
+2. A quirk exception SHALL preserve the C ABI and layout, ownership and
+   lifetime (real `GArray`, `g_free`, other GLib-owned structures), the
+   on-disk formats, data ownership and behaviour on valid supported
+   input, and SHALL be recorded with
+   `docs/findings/language-runtime-discrepancy-template.md`, registered
+   by name, and carried by a `POLICY-ACCEPTED` differential case.
+3. A valid-input change, an untraceable path, or a conflict with an
+   earlier maintainer ruling SHALL STOP for a human decision.
+4. EVERY math function SHALL use Rust's standard maths at full speed —
+   `f64::ln`, `exp`, `powf` and every other `std` float method — in
+   every crate, training and word included. oxpinyin SHALL NOT slow code
+   down to imitate glibc, libm, GLib `gfloat` or any other C behaviour.
+   A last-bit difference from the pin that follows from using Rust's
+   maths SHALL be recorded as class (a) and SHALL NOT be chased.

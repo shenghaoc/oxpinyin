@@ -38,7 +38,7 @@ const MINI_ART_KEYS: &[&str] = &["er'huang", "bo'cai", "ban'she"];
 pub enum Subset {
     /// Every addon library.
     Full,
-    /// Only art, restricted to [`MINI_ART_KEYS`] — the reproducible recipe
+    /// Only art, restricted to `MINI_ART_KEYS` — the reproducible recipe
     /// for `fixtures/w3/addon_4_*`.
     MiniFixture,
 }

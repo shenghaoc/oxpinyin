@@ -66,22 +66,26 @@ The script writes a manifest the differential runners compare against
 The oracle libraries build reproducibly: inside the pinned image
 (`tools/oracle/Dockerfile.oracle`: `debian:testing` by digest, apt from
 a dated snapshot) `build-oracle.sh --libs-only` produces byte-identical
-`libpinyin.so` and `libzhuyin.so` wherever it runs, so their hashes are
-recorded once in `tools/oracle/oracle-pin.txt`
-(`libpinyin_sha256_<dbm>`, `libzhuyin_sha256_<dbm>`) rather than per
-machine of the same architecture: the recorded hashes are for
-**linux/amd64** only (`platform=` in `oracle-pin.txt`; the Dockerfile,
-the workflow and the checks pin `--platform=linux/amd64`). This is the
-reference platform for the pin's results, not a support limit. CI
-(`oracle-image.yml`) builds the bdb, kc and tkrzw cells and publishes them
-as
+`libpinyin.so` and `libzhuyin.so` wherever it runs on the same platform, so
+their hashes are recorded once per platform in
+`tools/oracle/oracle-pin.txt` (`libpinyin_sha256_<dbm>`,
+`libzhuyin_sha256_<dbm>`). The historical unqualified fields are
+**linux/amd64**; linux/arm64 adds the same fields with a `_linux_arm64`
+suffix. `tools/oracle/pin.sh` selects them; `tools/cloud/setup.sh` derives
+the platform from `uname -m` and refuses an architecture with no frozen
+hashes. The Dockerfile and the checks take `--platform`. CI
+(`oracle-image.yml`) builds the bdb, kc and tkrzw cells on native amd64 and
+arm64 runners. The amd64 tags are the historical
 
     ghcr.io/shenghaoc/oxpinyin-oracle:<tag>
 
-where `<tag>` is printed by `tools/oracle/image-tag.sh`: the libpinyin
+and arm64 publishes the siblings `<tag>-arm64` and `<tag>-deps-arm64`.
+`<tag>` is printed by `tools/oracle/image-tag.sh`: the libpinyin
 commit, the base image digest, the apt snapshot timestamp (all from
 `oracle-pin.txt`) and a hash of `Dockerfile.oracle` and `build-oracle.sh`,
-so it changes whenever the library hashes can. A published tag is
+so it changes whenever the library hashes can. The arm64 contract gate
+excludes the 13 cases diagnosed in #1137 and reports 0 DIFFER; amd64 still
+runs them. See [the arm64 finding](../findings/oracle-arm64-1132.md). A published tag is
 immutable (the workflow never overwrites one), and `tools/cloud/setup.sh`
 and the commands below derive it the same way. The hashes are also in the
 image labels. The
@@ -91,8 +95,12 @@ image holds `/opt/pinyin-oracle/{bdb,kc,tkrzw}` with `lib/`, `include/`,
 step below before any differential can use it.
 
 ```sh
-img=ghcr.io/shenghaoc/oxpinyin-oracle:$(tools/oracle/image-tag.sh)
-docker pull --platform linux/amd64 "$img"    # podman, or your runtime's equivalent
+tag=$(tools/oracle/image-tag.sh)
+platform=linux/amd64                       # or linux/arm64
+suffix=
+[[ $platform == linux/amd64 ]] || suffix=-arm64
+img=ghcr.io/shenghaoc/oxpinyin-oracle:$tag$suffix
+docker pull --platform "$platform" "$img"   # podman, or your runtime's equivalent
 ```
 
 Copy the cells out of the image (a `FROM scratch` image has no command, so
@@ -104,7 +112,7 @@ rerun give the same tree:
 ```sh
 dest=$HOME/.local/opt/pinyin-oracle        # any directory
 mkdir -p "$dest"
-cid=$(docker create --platform linux/amd64 "$img" /none)
+cid=$(docker create --platform "$platform" "$img" /none)
 docker cp "$cid:/opt/pinyin-oracle/." "$dest"
 docker rm "$cid"
 for cell in bdb kc tkrzw; do
@@ -116,8 +124,9 @@ Check the libraries against the recorded recipe hashes (a mismatch means
 the image is not this repository's recipe — stop and report it):
 
 ```sh
+source tools/oracle/pin.sh
 for lib in libpinyin libzhuyin; do
-    want=$(sed -n "s/^${lib}_sha256_bdb=//p" tools/oracle/oracle-pin.txt)
+    want=$(pin_platform_field tools/oracle/oracle-pin.txt "$platform" "${lib}_sha256_bdb")
     echo "$want  $dest/bdb/lib/$lib.so" | sha256sum --check
 done
 ```
@@ -163,11 +172,12 @@ local manifest before the pre-release real-installation checks below.
 
 ### Reproducing the libraries
 
-`tools/oracle/check-reproducible.sh` builds each cell twice in the pinned
-image, from different work directories and prefixes, and fails unless the
-two builds agree with each other and with `oracle-pin.txt`. Run it when
-the recipe, the base image or the apt snapshot changes, and update the
-recorded hashes in the same commit. The recipe is
+`tools/oracle/check-reproducible.sh --platform linux/arm64` builds each
+cell twice in the pinned image, from different work directories and
+prefixes, and fails unless the two builds agree with each other and with
+the platform's `oracle-pin.txt` fields. The default platform is
+`linux/amd64`; run it when the recipe, the base image or the apt snapshot
+changes, and update the recorded hashes in the same commit. The recipe is
 `SOURCE_DATE_EPOCH` = the pin's commit time, `-ffile-prefix-map` and
 `-fdebug-prefix-map` on the source path, and `-Wl,--build-id=none`; the
 `.la` and `.pc` files still record the install prefix and are not part
@@ -251,8 +261,8 @@ The input identity authority is `tools/oracle/oracle-pin.txt`:
 | Input | Identity |
 | --- | --- |
 | Pin source | `libpinyin_commit` (`074a2219c90feaf962d0d24f034514033ece5f99`) |
-| Pin build, each cell | `libpinyin_sha256_bdb`, `libpinyin_sha256_kc`, `libpinyin_sha256_tkrzw`; the matching prefix's `oracle-pin.txt` records `shared_object_sha256` |
-| Real data, each cell | `data_manifest_sha256_bdb`, `data_manifest_sha256_kc`, `data_manifest_sha256_tkrzw`, plus the prefix's own `data_unstable_manifest_sha256`; use the shared [data verification](cloud.md#data-verification) |
+| Pin build, each cell | `libpinyin_sha256_<cell>` and `libzhuyin_sha256_<cell>` for the host platform (`_linux_arm64` for arm64; unqualified for amd64); the matching prefix's `oracle-pin.txt` records `shared_object_sha256` |
+| Real data, each cell | `data_manifest_sha256_<cell>` for the host platform, plus the prefix's own `data_unstable_manifest_sha256`; use the shared [data verification](cloud.md#data-verification) |
 | Model20 archive | `model_archive_sha256` (`59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155`); use its verified extraction for `PINYIN_MODEL_DIR` |
 
 For each selected cell, run the read-only command in cloud setup's
@@ -342,6 +352,35 @@ whenever a case is registered, so report the count from the run. Add
 `plan: <N> cases (default suite: every registered non-axis-C case)`. Two
 runs that report different counts ran different registries. For example,
 2,865 is the registry at `b587d599`, before `074f0b36` added cases.
+
+Ordinary cases remain serial by default. Add `-- --jobs N` to request
+at most N active cases in the existing contract driver. Each case has its
+own scratch directory, its pin and subject share the same deadline, and
+verdicts and `--observations` remain in selection order. Parallel calls
+use the existing heavy slot, including validated slot inheritance from
+`just heavy`. Admission charges 1,024 MiB per active case, or the larger
+build estimate, and reduces the requested case count when memory is short.
+If one case cannot fit, admission waits or fails before starting workers.
+Admission limits workers by memory, not CPU, so a `--jobs` well above the
+host's CPU count can make a case hit its wall-clock deadline and report
+TIMEOUT; keep `--jobs` at or below the CPU count.
+The deadline starts when the case starts, after admission and queueing.
+
+The aggregate runner already schedules cells independently, with private
+oracle environments and cell targets. Select `--contract-jobs N` for its
+per-cell case maximum. Its `--jobs` still counts concurrent runner rows;
+the host's heavy slots and memory reservations also limit concurrent cells.
+An explicit three-slot example, using already built cell artifacts, is:
+
+```sh
+OXPINYIN_HEAVY_SLOTS=3 tools/bisection/run-all.py \
+    --runners contract-diff --cells bdb,kc,tkrzw --no-build \
+    --jobs 3 --contract-jobs 4 --runner-timeout contract-diff=7200 \
+    --oracle-root "$OXPINYIN_CLOUD_CACHE/oracle"
+```
+
+Neither case concurrency nor the host's slot count changes by default.
+The final timing record reports the effective per-cell case count as `jobs`.
 
 Five `table-conf-abort-*` cases (`dir_chunk` in `contract-diff.py`, #1011)
 take a different pin path depending on the file system of `TMPDIR`, where

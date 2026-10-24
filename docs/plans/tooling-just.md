@@ -83,7 +83,7 @@ Layer 5 schedules the old-to-new handoffs.
 | `just clippy [args ...]` | Run lints through the heavy wrapper. | `cargo clippy` | Implemented, #948. |
 | `just bench [args ...]` | Run the workspace benches through the heavy wrapper: `cargo bench --workspace --benches <args>`. | `cargo bench` | Implemented, #1038 (maintainer ruling 2026-10-22 UTC). `--benches` skips the four `required-features` targets: `backend_matrix_kyotocabinet`, `backend_matrix_tkrzw` and `kyotocabinet_bnum` (oxpinyin-store), and `dbm_bench` (pinyin-oracle). |
 | `just bench-smoke` | Build every selected bench harness without running it: `just bench --no-run`. | `cargo bench --no-run` | Implemented, #1038 (maintainer ruling 2026-10-22 UTC). On a host with model20, `just bench -- --test` is the full start-up check. |
-| `just measure <recipe>` / `just initbench` | Enter native oxpinyin-only measurement; `initbench` is `measure startup`. Pin rows are refused. | Native startup controller and worker (layer 5 §7.8) | Proposed for T2N (maintainer ruling 2026-10-22 UTC). |
+| `just measure <recipe>` / `just initbench` | Enter native oxpinyin-only measurement; `initbench` is `measure startup`. Pin rows are refused. | Native startup controller and worker (layer 5 §7.8) | Implemented under the 2026-10-22 UTC ruling; Linux KC empty-profile smoke completed on 2026-10-24 UTC at controller `1cea405c`, retained shipping `ebc9d4f5`, via recheck plus separate continuation (both exit 0; benches runbook); macOS acceptance pending. |
 | `just fuzz <target> [args ...]` | Run one native fuzz target through the heavy wrapper. | `setarch "$(uname -m)" -R cargo +nightly-2026-08-01 fuzz run <args>` from `verify-nightly.yml`'s `fuzz-soak` job. | Implemented (maintainer ruling 2026-10-23 UTC). Linux execution; macOS exits 1 because the fuzz workspace links the Linux-only C ABI. Windows transport unverified (#950). |
 | `just coverage [args ...]` | Run native coverage through the heavy wrapper; the tool owns crate, backend and report selection. | `tools.dev coverage` runs `cargo llvm-cov <args>` from `coverage.yml`'s `coverage` job with temporary per-invocation state. | Implemented (maintainer ruling 2026-10-23 UTC). Run and report in one invocation; pass the desired workflow scope, report and floor options together. macOS execution unverified; Windows transport unverified (#950). |
 | `just sanitize [bdb\|kc\|tkrzw\|all]` | Run one store backend's sanitizer gate, or all three, through the heavy wrapper: `tools/sanitize.sh <backend>`, default `bdb`. | `tools/bdb/run-sanitizers.sh`, `tools/kc/run-sanitizers.sh`, and `tools/tkrzw/run-sanitizers.sh` (moved from `store-backends.yml`'s inline `tkrzw-sanitizers` command). | Implemented (maintainer approval 2026-10-23 UTC, #1085). Linux execution; macOS and Windows exit 1. `store-backends.yml`'s three sanitizer jobs call the same dispatcher. |
@@ -219,8 +219,8 @@ Do not weaken byte-exact fixtures or wire formats. Record untested cases.
 The #905/#906/#903 stack is merged. `run-all.py --heavy-slot --` remains
 available through #941's adapter to the shared core. PR #942 changed
 AGENTS.md to use `just heavy --` for direct heavy commands and runner builds.
-Layer 1 limits the native slot to its environment. The recipe migrations above
-that remain open are measure/initbench and ci;
+Layer 1 limits the native slot to its environment. The recipe migration above
+that remains open is ci;
 the `ci.yml` Linux and macOS test cutover landed in #968 (merge `c017ebee`).
 This reconciliation changes no production rule.
 

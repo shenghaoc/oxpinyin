@@ -3,7 +3,7 @@
 
 Usage: contract-diff.py CELL PREFIX PINYIN_SO [--zhuyin-so PATH]
                         [--cases a,b,...] [--issue N]... [--family F]...
-                        [--expect-parent] [--plan-only] [--case-timeout SECONDS]
+                        [--expect-parent] [--plan-only] [--case-timeout SECONDS] [--jobs N]
        contract-diff.py CELL PREFIX PINYIN_SO --zhuyin-so PATH
                         --per-call wrap|lookup-only [--base-pinyin-so PATH]
                         [--base-zhuyin-so PATH] [--per-call-cpu N]
@@ -35,6 +35,14 @@ does not crash, wrote the same stderr bytes and answers the declared fields.
 The pin's bytes are compared up to the crash; the invalid read is never
 reproduced.
 
+A policy-accepted language/runtime difference is neither MATCH nor an
+unclassified DIFFER. A current discrepancy record
+(`docs/findings/language-runtime-discrepancy-template.md`) names the case and
+its expected non-MATCH; the disposition is POLICY-ACCEPTED. The case keeps
+its pin and subject observations, and it is never deleted or relabelled
+MATCH. `policy_record=` links a registered, current record whose
+`contract-diff-policy` JSON block specifies both complete observations.
+
 --expect-parent runs the same cases against a parent build: a case marked
 `control` must still match, every other case must differ.
 
@@ -52,6 +60,11 @@ removed even on failure.
 Ordinary cases share a 300-second deadline across pin and subject.
 --case-timeout overrides it. A timeout reports TIMEOUT and fails in both
 modes. Later cases still run.
+
+--jobs N requests at most N concurrent ordinary cases. The default is serial.
+Heavy admission reserves memory for every active case and can reduce N.
+Each case owns its scratch directory. Its two sides still run in sequence
+with one deadline; verdicts and observations stay in selection order.
 
 Selection. --cases names case IDs. --issue N (repeatable; `#N`, `W11` and
 `row:54` forms as the registry uses them) selects every case registered with
@@ -91,6 +104,7 @@ import statistics
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
 _ENTERED = time.monotonic()  # the module body starts here: worker startup ends, load begins
@@ -101,6 +115,17 @@ UNTOUCHED = 0xABCDEF  # out-param sentinel
 # fixtures that craft a user table write it in that backend's own format.
 CELL = os.environ.get('CONTRACT_DIFF_CELL', 'bdb')
 check_tkrzw = runpy.run_path(str(Path(__file__).resolve().parents[1] / 'tkrzw/runtime.py'))['check']
+
+
+def host_oracle_platform():
+    """The platform key used by oracle-pin.txt, or None off Linux."""
+    if sys.platform != 'linux':
+        return None
+    return {'x86_64': 'linux/amd64', 'amd64': 'linux/amd64',
+            'aarch64': 'linux/arm64', 'arm64': 'linux/arm64'}.get(os.uname().machine)
+
+
+HOST_ORACLE_PLATFORM = host_oracle_platform()
 
 CASES = {}
 
@@ -118,13 +143,15 @@ WARNING_DOMAIN = {'pinyin': 'libpinyin', 'zhuyin': 'libzhuyin'}
 
 def case_spec(mode='pinyin', control=False, abort=NO_ABORT, stderr=False, crash=None, userdir=False,
               cells=('bdb', 'kc', 'tkrzw'), either=False, host_scanf=(), dir_chunk=None, stderr_varies=False,
-              abort_logs=None, fatal=False, both_abort=False, strjoinv_over_read=False, issues=(), *, fn=None):
+              abort_logs=None, fatal=False, both_abort=False, strjoinv_over_read=False, issues=(), *, fn=None,
+              policy_record=None, case_id=None):
     """Build a complete spec from the defaults shared by registration and tests."""
     return dict(fn=fn, mode=mode, control=control, abort=abort, stderr=stderr or crash is not None,
                 crash=crash, userdir=userdir, cells=cells, either=either, host_scanf=tuple(host_scanf),
                 dir_chunk=dir_chunk, stderr_varies=stderr_varies, abort_logs=abort_logs, fatal=fatal,
                 both_abort=both_abort, strjoinv_over_read=strjoinv_over_read,
-                issues=tuple(normal_tag(tag) for tag in issues))
+                issues=tuple(normal_tag(tag) for tag in issues),
+                policy_record=policy_record, case_id=case_id)
 
 
 def case(name, *args, **kwargs):
@@ -194,10 +221,14 @@ def case(name, *args, **kwargs):
     case's family for `--family` is the text before the first `/` of its
     ID, when it has one."""
     def register(fn):
-        spec = case_spec(*args, fn=fn, **kwargs)
+        spec = case_spec(*args, fn=fn, case_id=name, **kwargs)
         assert not spec['either'] or (spec['abort'] is not NO_ABORT and spec['crash'] is not None), name
         assert not spec['both_abort'] or spec['fatal'], name
         assert spec['dir_chunk'] in (None, 'user', 'system') and (spec['dir_chunk'] is None or spec['abort'] is not NO_ABORT), name
+        if spec['policy_record'] is not None:
+            assert not (spec['abort'] is not NO_ABORT or spec['crash'] is not None
+                        or spec['both_abort'] or spec['strjoinv_over_read']
+                        or spec['host_scanf'] or spec['dir_chunk'] or spec['userdir']), name
         CASES[name] = spec
         return fn
     return register
@@ -2155,7 +2186,7 @@ def _(k):
 # same switch (`chewing_large_table2_kyotodb.cpp:498`, `:268`;
 # `chewing_large_table2_tkrzwdb.cpp:465`, `:251`), so each cell's pin dies at
 # its own line.
-def _craft_db(path, rows, dbtype, keep=False):
+def _craft_db(path, rows, dbtype, keep=False, *, system_index=False):
     """A user-table container of raw `key -> value` records in the running
     cell's own format: a Berkeley DB `dbtype` container on bdb, the Kyoto
     Cabinet snapshot the pin's `load_db` reads on kc (every user table
@@ -2168,19 +2199,24 @@ def _craft_db(path, rows, dbtype, keep=False):
     2 hash); the rows are the same records in every cell. `keep=True` is
     the fixture that adds rows to the copied system index: a native attached
     TreeDB on kc (`chewing_large_table2_kyotodb.cpp:87-89`), a TreeDBM on
-    tkrzw (`chewing_large_table2_tkrzwdb.cpp:87-88`), and a btree on bdb."""
+    tkrzw (`chewing_large_table2_tkrzwdb.cpp:87-88`), and a btree on bdb.
+    `system_index=True` also selects that native format for a fresh index;
+    with `keep=False` it replaces the file instead of writing a KC snapshot."""
     if CELL == 'kc':
-        assert not keep or dbtype == 1, 'retained KC fixtures are system btrees'
+        assert not (keep or system_index) or dbtype == 1, 'KC system indexes are btrees'
+        if system_index:
+            return _craft_kc(path, rows, keep=keep, system_index=True)
         return _craft_kc(path, rows, keep=keep)
     if CELL == 'tkrzw':
         return _craft_tkrzw(path, rows, 'HashDBM' if dbtype == 2 else 'TreeDBM', keep=keep)
     return _craft_bdb(path, rows, dbtype, keep=keep)
 
 
-def _craft_kc(path, rows, keep=False):
+def _craft_kc(path, rows, keep=False, *, system_index=False):
     """A Kyoto Cabinet snapshot of the records (`BasicDB::dump_snapshot`),
     written through the C API from an in-memory database. `keep=True`
-    instead adds to the native TreeDB the pin attaches as a system index."""
+    instead adds to the native TreeDB the pin attaches as a system index.
+    `system_index=True` creates that native format even with `keep=False`."""
     kc = C.CDLL('libkyotocabinet.so.16')
     kc.kcdbnew.restype = C.c_void_p
     kc.kcdbdel.argtypes = [C.c_void_p]
@@ -2193,13 +2229,14 @@ def _craft_kc(path, rows, keep=False):
     db = kc.kcdbnew()
     assert db
     # Existing system TreeDB: KCOWRITER, explicit type because its suffix
-    # is .bin. User snapshot: KCOWRITER | KCOCREATE on the memory database.
-    target = (path + '#type=kct').encode() if keep else b'-'
+    # is .bin. Fresh system TreeDB and user memory DB: also KCOCREATE.
+    native = keep or system_index
+    target = (path + '#type=kct').encode() if native else b'-'
     mode = (1 << 1) if keep else (1 << 1) | (1 << 2)
     assert kc.kcdbopen(db, target, mode)
     for key, value in rows:
         assert kc.kcdbset(db, key, len(key), value, len(value))
-    if not keep:
+    if not native:
         assert kc.kcdbdumpsnap(db, path.encode())
     assert kc.kcdbclose(db)
     kc.kcdbdel(db)
@@ -5745,10 +5782,16 @@ for _j_mode in ('pinyin', 'zhuyin'):
              control=True)(j_multi_chewing(_j_scheme))
 
 
-# Phase timings of the workers the driver ran, in order (`T` lines plus the
+# Phase timings of the workers in completion order (`T` lines plus the
 # driver's own wall and teardown), kept apart from the observations so a
 # captured observation is the same bytes from run to run.
 TIMINGS = []
+WORKER_STATE = threading.local()
+# Set once by the controller before starting a pool; never mutate the
+# process environment from a case thread. Keep the slot descriptor alive
+# in workers, including when the controller itself is killed.
+WORKER_ENV = {}
+WORKER_FDS = ()
 
 
 CANCELLED = False
@@ -5798,7 +5841,8 @@ def terminate_group(proc):
 
 
 def run_worker(mode, so, data, name, scratch, extra_env=None, timeout=None, entry=None):
-    env = dict(os.environ, TMPDIR=str(scratch))
+    env = dict(os.environ, **WORKER_ENV)
+    env['TMPDIR'] = str(scratch)
     env.update(extra_env or {})
     before = set(os.listdir(scratch))
     spawned = time.monotonic()
@@ -5810,7 +5854,7 @@ def run_worker(mode, so, data, name, scratch, extra_env=None, timeout=None, entr
     check_tkrzw(env.get('CONTRACT_DIFF_CELL', CELL), 'contract-diff.py',
                 env.get('OXPINYIN_RUNTIME_SIDE', 'subject'), so, env=env)
     proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            env=env, start_new_session=True)
+                            env=env, start_new_session=True, pass_fds=WORKER_FDS)
     stdout, stderr = b'', b''
     completed = False
     deadline = None if timeout is None else spawned + timeout
@@ -5859,6 +5903,9 @@ def run_worker(mode, so, data, name, scratch, extra_env=None, timeout=None, entr
         timing = dict(case=name, so=str(so), **(phases[-1] if phases else {}))
         timing['wall'] = time.monotonic() - spawned
         timing['teardown'] = timing['wall'] - sum(timing.get(k, 0.0) for k in ('startup', 'load', 'fixture', 'execute'))
+        side = getattr(WORKER_STATE, 'side', None)
+        if side is not None:
+            timing['side'] = side
         TIMINGS.append(timing)
 
 
@@ -5873,7 +5920,8 @@ def run_case(spec, pin_so, subject_so, data, name, scratch, timeout):
         for side in ('pin', 'subject'):
             profiles[side] = tempfile.mkdtemp(prefix='handoff-' + side + '-', dir=scratch)
     for side, so in (('pin', pin_so), ('subject', subject_so)):
-        before = len(TIMINGS)
+        previous_side = getattr(WORKER_STATE, 'side', None)
+        WORKER_STATE.side = side
         remaining = deadline - time.monotonic()
         try:
             if remaining <= 0:
@@ -5890,8 +5938,7 @@ def run_case(spec, pin_so, subject_so, data, name, scratch, timeout):
                                 stderr=(error.stderr or b'').decode('utf-8', 'surrogateescape')))
             break
         finally:
-            for timing in TIMINGS[before:]:
-                timing['side'] = side
+            WORKER_STATE.side = previous_side
         results.append(result)
     if len(results) == 1:
         results.append(dict(exit='NOT-RUN', result=None, userfiles=[], stderr_lines=0, stderr=''))
@@ -5906,7 +5953,8 @@ def run_case(spec, pin_so, subject_so, data, name, scratch, timeout):
         # directions under the same case deadline, retaining donor files.
         for index, (donor, receiver, so) in enumerate((('pin', 'subject', subject_so),
                                                      ('subject', 'pin', pin_so))):
-            before = len(TIMINGS)
+            previous_side = getattr(WORKER_STATE, 'side', None)
+            WORKER_STATE.side = receiver
             try:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
@@ -5919,14 +5967,125 @@ def run_case(spec, pin_so, subject_so, data, name, scratch, timeout):
                 results[index].update(exit='TIMEOUT', result=None)
                 break
             finally:
-                for timing in TIMINGS[before:]:
-                    timing['side'] = receiver
+                WORKER_STATE.side = previous_side
             if reload['exit'] != 0 or reload['result'] is None:
                 results[index].update(exit=reload['exit'] or 1, result=None,
                                       stderr=reload['stderr'], stderr_lines=reload['stderr_lines'])
             else:
                 results[index]['result']['cross_reload'] = observed(reload['result'])
     return results
+
+
+def positive_jobs(value):
+    number = int(value)
+    if number <= 0:
+        raise argparse.ArgumentTypeError('--jobs must be a positive integer')
+    return number
+
+
+def ordinary_jobs(parser, requested):
+    """The case count of an ordinary run: --jobs, else the validated environment, else serial.
+
+    Only ordinary contract runs read OXPINYIN_CONTRACT_JOBS, so a bad value
+    in the environment cannot break --list-tags, --teardown or --per-call.
+    """
+    if requested is not None:
+        return requested
+    value = os.environ.get('OXPINYIN_CONTRACT_JOBS')
+    if value is None:
+        return 1
+    root = str(Path(__file__).resolve().parents[2])
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    from tools.dev import host
+    try:
+        host.validate_settings({'OXPINYIN_CONTRACT_JOBS': value})
+    except ValueError as error:
+        parser.error(str(error))
+    return int(value)
+
+
+@contextlib.contextmanager
+def case_jobs(requested):
+    """Admit the entire case pool before making scratch or starting workers.
+
+    Aggregate runners already hold a slot; use its normal validated inheritance
+    and update its reservation under the admission lock. A direct parallel
+    driver acquires its own slot. Direct serial calls stay light; nested
+    serial calls also pass their parent's slot descriptor to the worker.
+    """
+    global WORKER_ENV, WORKER_FDS
+    if requested == 1 and 'OXPINYIN_HEAVY_SLOT_HELD' not in os.environ:
+        yield 1
+        return
+    root = str(Path(__file__).resolve().parents[2])
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    from tools.dev import slot
+    env = dict(os.environ, OXPINYIN_CONTRACT_JOBS=str(requested))
+    admission = slot.HeavyAdmission('contract-diff case pool', env, runner=True)
+    previous_env, previous_fds = WORKER_ENV, WORKER_FDS
+    try:
+        # Keep the driver's signal handlers installed. They cancel both an
+        # admission wait and active case workers, without nested handlers
+        # hiding the driver's cancellation flag.
+        while not admission.try_acquire():
+            check_cancelled()
+            time.sleep(.05)
+        check_cancelled()
+        WORKER_ENV = admission.env
+        WORKER_FDS = admission.slot.pass_fds()
+        admission.slot.handoff()
+        effective = int(admission.env['OXPINYIN_CONTRACT_JOBS'])
+        print(f'contract case workers: requested {requested}, admitted {effective}',
+              file=sys.stderr, flush=True)
+        yield effective
+    finally:
+        # The caller joins all case threads and reaps their process groups
+        # before leaving this context and releasing its reservation.
+        WORKER_ENV, WORKER_FDS = previous_env, previous_fds
+        admission.close()
+
+
+PLATFORM_SKIP = object()  # a case registered away from this host's platform
+
+
+@contextlib.contextmanager
+def case_results(args, names, data, scratch, jobs):
+    """Isolate cases and consume their results in the original selection order."""
+    global CANCELLED
+    lib = args.prefix / 'lib'
+    def observe(name):
+        check_cancelled()
+        spec = CASES[name]
+        if platform_skips(spec) and not getattr(args, 'run_platform_excluded', False):
+            return name, PLATFORM_SKIP
+        if args.cell not in spec['cells']:
+            return name, None
+        if spec['mode'] == 'zhuyin':
+            assert args.zhuyin_so and args.zhuyin_so.is_file() and (lib / 'libzhuyin.so').is_file(), \
+                'zhuyin case %s needs --zhuyin-so and the pin libzhuyin' % name
+            pin_so, subject_so = lib / 'libzhuyin.so', args.zhuyin_so
+        else:
+            pin_so, subject_so = lib / 'libpinyin.so', args.pinyin_so
+        # user_dir_listing removes profiles it discovers. Sharing this directory
+        # across active cases would let one worker remove another's live files.
+        with tempfile.TemporaryDirectory(prefix='case-', dir=scratch) as isolated:
+            return name, run_case(spec, pin_so, subject_so, data, name, isolated, args.case_timeout)
+    if jobs == 1:
+        yield map(observe, names)
+        return
+    from concurrent.futures import ThreadPoolExecutor
+    pool = ThreadPoolExecutor(max_workers=jobs)
+    try:
+        # map schedules the pool concurrently but yields in input order. Only
+        # the controller writes observations, verdicts and diagnostics.
+        yield pool.map(observe, names)
+    except BaseException:
+        CANCELLED = True
+        raise
+    finally:
+        pool.shutdown(wait=True, cancel_futures=True)
 
 
 # #640 leading separators, #698 retained before-cursor windows, #681 zero keys.
@@ -11096,6 +11255,133 @@ def _(k):
     return out
 
 
+# #894: source-derived, isolated SYSTEM_FILE words. See the two discrepancy
+# records for the complete producer/consumer trace, GLib 2.89.4-2 citations,
+# and the binding observations. No pin output is used to generate expectations.
+PHRASE_TEXT_WORDS = dict(valid=0x4e01, surrogate=0xd800, **{'above-unicode': 0x110000}, nul=0)
+
+
+def phrase_text_system(k, variant):
+    """Two native items: 甲<word>乙 / da1'da1'da1, then 丙 / ba1.
+
+    Layout: phrase_index.cpp's SubPhraseIndex; PinyinIndexItem2<L> at
+    pinyin_phrase3.h:181-197 (four-byte aligned token then packed keys).
+    ChewingKey at chewing_key.h:41-47 has tone at bit 12; da = 4|1<<7,
+    ba = 1|1<<7 (chewing_enum.h:16,19,65). No API import repairs the words.
+    """
+    system = private_system(k)
+    word = PHRASE_TEXT_WORDS[variant]
+    texts = ((0x7532, word, 0x4e59), (0x4e19,))
+    keys = ((0x1084,) * 3, (0x1081,))
+    content, offsets = bytearray(8), [0]
+    phonetic, phrases = {}, {}
+    for slot, (text, reading) in enumerate(zip(texts, keys), 1):
+        token = 0x01000000 | slot
+        raw_text = b''.join(value.to_bytes(4, 'little') for value in text)
+        raw_keys = b''.join(value.to_bytes(2, 'little') for value in reading)
+        offsets.append(len(content))
+        content += bytes((len(text), 1)) + (100).to_bytes(4, 'little') + raw_text
+        content += raw_keys + (10).to_bytes(4, 'little')
+        index = b''.join((value & 0x0fff).to_bytes(2, 'little') for value in reading)
+        for end in range(2, len(index), 2):
+            phonetic.setdefault(index[:end], b'')
+        item = token.to_bytes(4, 'little') + raw_keys
+        phonetic[index] = item + bytes((-len(item)) % 4)
+        for end in range(4, len(raw_text), 4):
+            phrases.setdefault(raw_text[:end], b'')
+        phrases[raw_text] = token.to_bytes(4, 'little')
+    index_two = 17 + len(offsets) * 4 + 1
+    payload = b''.join(value.to_bytes(4, 'little') for value in
+                       (200, 17, index_two, index_two + len(content) + 1))
+    payload += b'#' + b''.join(value.to_bytes(4, 'little') for value in offsets)
+    payload += b'#' + content + b'#'
+    path = Path(system, 'gb_char.bin')
+    path.unlink()  # replace the private symlink, never the oracle's file
+    path.write_bytes(_chunk(payload))
+    for name, rows in (('pinyin_index.bin', phonetic), ('phrase_index.bin', phrases)):
+        path = Path(system, name)
+        path.unlink()
+        _craft_db(str(path), list(rows.items()), 1, system_index=True)
+    _write_user_conf(k)
+    k.data = system
+
+
+def phrase_text_bytes(k, ptr, *, owned=True):
+    """Lossless text observation: never replace malformed UTF-8 with U+FFFD."""
+    if ptr == UNTOUCHED:
+        return 'untouched'
+    if not ptr:
+        return None
+    value = C.string_at(ptr).hex()
+    if owned:
+        k.glib.g_free(ptr)
+    return value
+
+
+def phrase_text_probe(variant, surface):
+    def probe(k):
+        phrase_text_system(k, variant)
+        if surface == 'export' and k.mode == 'zhuyin':
+            # zhuyin.h/libzhuyin.ver export no iterator. Never borrow a
+            # pinyin context or invent an unsupported zhuyin C function.
+            return {'exports': {name: hasattr(k.lib, 'zhuyin_' + name) for name in
+                                ('begin_get_phrases', 'iterator_has_next_phrase',
+                                 'iterator_get_next_phrase', 'end_get_phrases')}}
+        assert k.fn('set_options', B, P, U)(k.ctx, 1 << 5)
+        if surface == 'export':
+            it = k.fn('begin_get_phrases', P, P, U)(k.ctx, 1)
+            rows = []
+            while k.fn('iterator_has_next_phrase', B, P)(it):
+                assert len(rows) < 2, 'fixture exported an unexpected extra row'
+                text, reading, count = P(UNTOUCHED), P(UNTOUCHED), I(UNTOUCHED)
+                ret = k.fn('iterator_get_next_phrase', B, P, C.POINTER(P), C.POINTER(P), C.POINTER(I))(
+                    it, C.byref(text), C.byref(reading), C.byref(count))
+                rows.append([ret, phrase_text_bytes(k, text.value),
+                             phrase_text_bytes(k, reading.value), count.value])
+            k.fn('end_get_phrases', None, P)(it)
+            return {'rows': rows}
+        spelling = b'da1da1da1' + (b'ba1' if surface == 'sentence' else b'')
+        parsed = k.fn('parse_more_full_pinyins', Z, P, S)(k.inst, spelling)
+        if surface == 'sentence':
+            guessed = k.fn('guess_sentence', B, P)(k.inst)
+            text = P(UNTOUCHED)
+            if k.mode == 'pinyin':
+                ret = k.fn('get_sentence', B, P, C.c_ubyte, C.POINTER(P))(k.inst, 0, C.byref(text))
+            else:
+                ret = k.fn('get_sentence', B, P, C.POINTER(P))(k.inst, C.byref(text))
+            return {'parsed': parsed, 'guessed': guessed, 'ret': ret,
+                    'text': phrase_text_bytes(k, text.value)}
+        if k.mode == 'pinyin':
+            ret = k.fn('guess_candidates', B, P, Z, U)(k.inst, 0, 0x1f)
+        else:
+            ret = k.fn('guess_candidates_after_cursor', B, P, Z)(k.inst, 0)
+        count = U(UNTOUCHED)
+        assert k.fn('get_n_candidate', B, P, C.POINTER(U))(k.inst, C.byref(count))
+        rows = []
+        for index in range(count.value):
+            candidate, text, kind = P(), P(UNTOUCHED), I(UNTOUCHED)
+            assert k.fn('get_candidate', B, P, U, C.POINTER(P))(k.inst, index, C.byref(candidate))
+            assert k.fn('get_candidate_string', B, P, P, C.POINTER(P))(
+                k.inst, candidate, C.byref(text))
+            assert k.fn('get_candidate_type', B, P, P, C.POINTER(I))(
+                k.inst, candidate, C.byref(kind))
+            rows.append([kind.value, phrase_text_bytes(k, text.value, owned=False)])
+        return {'parsed': parsed, 'ret': ret, 'rows': rows}
+    return probe
+
+
+for _mode in ('pinyin', 'zhuyin'):
+    for _variant in PHRASE_TEXT_WORDS:
+        for _surface in ('candidate', 'sentence', 'export'):
+            _record = None
+            if _variant != 'valid' and not (_mode == 'zhuyin' and _surface == 'export'):
+                _record = ('894-nul-phrase-text.md' if _variant == 'nul'
+                           else '894-non-scalar-phrase-text.md')
+            case(f'phrase-text/{_mode}-{_variant}-{_surface}', mode=_mode,
+                 control=True, issues=('894',), policy_record=_record)(
+                     phrase_text_probe(_variant, _surface))
+
+
 # #882: get_phrase_item checks the offset and two header bytes only
 # (074a2219 phrase_index.cpp:180-205). Neither getter decodes text or keys
 # (pinyin.cpp:2786-2798; zhuyin.cpp:1778-1790).
@@ -12165,6 +12451,53 @@ def valid_observation(spec, side):
     return registered_termination(spec) or (side['exit'] == 0 and side['result'] is not None)
 
 
+POLICY_ROOT = Path(__file__).resolve().parents[2] / 'docs/findings'
+
+
+def policy_expectations(spec):
+    """Read the current registered record, never a cached exemption.
+
+    Each case lists complete exit/result/stderr observations for both sides.
+    No wildcards, ignored result fields or partial-dict matching are allowed.
+    Rejected metadata is INVALID, including under --expect-parent.
+    """
+    name = spec['policy_record']
+    if not isinstance(name, str) or Path(name).name != name or not name.endswith('.md'):
+        raise ValueError('policy_record must name a findings Markdown record')
+    path = POLICY_ROOT / name
+    if path.resolve().parent != POLICY_ROOT.resolve():
+        raise ValueError('policy record escapes findings directory')
+    register = (POLICY_ROOT / 'upstream-divergences.md').read_text()
+    if f']({name})' not in register:
+        raise ValueError('policy record is not registered')
+    blocks = re.findall(r'^```contract-diff-policy\n(.*?)\n```$', path.read_text(), re.M | re.S)
+    if len(blocks) != 1:
+        raise ValueError('policy record needs exactly one observations block')
+    record = json.loads(blocks[0])
+    if (not isinstance(record, dict) or type(record.get('schema')) is not int or record.get('schema') != 1
+            or record.get('record') != path.stem or record.get('status') != 'current'
+            or record.get('disposition') != 'POLICY-ACCEPTED'):
+        raise ValueError('policy record is not current or has incompatible metadata')
+    pair = record['cases'][spec['case_id']]
+    if not isinstance(pair, dict) or set(pair) != {'pin', 'subject'}:
+        raise ValueError('policy case must specify both observations')
+    for side in pair.values():
+        if (not isinstance(side, dict) or set(side) != {'exit', 'result', 'stderr'}
+                or type(side['exit']) is not int or side['exit'] != 0
+                or not isinstance(side['result'], dict) or 'logs' not in side['result']
+                or any(key.startswith('~') for key in side['result'])
+                or not isinstance(side['stderr'], str)):
+            raise ValueError('policy observation must be complete and normally terminated')
+    if pair['pin'] == pair['subject']:
+        raise ValueError('policy case must record a difference, not parity')
+    return pair
+
+
+def policy_observation(side):
+    """The full stable observation, excluding worker timings only."""
+    return {key: side[key] for key in ('exit', 'result', 'stderr')}
+
+
 def verdict_for(spec, pin, subject, expect_parent):
     """The driver's decision for one case: (verdict, expected_ok, same).
 
@@ -12173,6 +12506,19 @@ def verdict_for(spec, pin, subject, expect_parent):
     case's held pin fault (`strjoinv_fault`) counts as valid. Otherwise MATCH or
     DIFFER by `matches`, and expected when it is what the mode asks for: a
     MATCH, or under --expect-parent a DIFFER from a non-control case."""
+    if spec['policy_record'] is not None:
+        try:
+            expected_pair = policy_expectations(spec)
+            actual = dict(pin=policy_observation(pin), subject=policy_observation(subject))
+        except (OSError, ValueError, KeyError, TypeError):
+            return 'INVALID', False, False
+        if not all(valid_observation(spec, side) for side in (pin, subject)):
+            return 'INVALID', False, False
+        if json.dumps(actual, sort_keys=True) == json.dumps(expected_pair, sort_keys=True):
+            # An existing accepted quirk is a control on its parent too.
+            return 'POLICY-ACCEPTED', True, False
+        # A bad record observation is never an expected parent difference.
+        return 'DIFFER', False, False
     same = matches(spec, pin, subject)
     held_fault = spec['strjoinv_over_read'] and strjoinv_fault(pin, subject)
     if not held_fault and not all(valid_observation(spec, side) for side in (pin, subject)):
@@ -12225,6 +12571,8 @@ def strjoinv_fault(pin, subject):
 
 def matches(spec, pin, subject):
     """The verdict predicate shared by the driver and gcov measurement tier."""
+    if spec['policy_record'] is not None:
+        return False  # accepted differences must never enter MATCH totals
     short_dir = short_dir_chunk(spec)
     as_abort = spec['abort'] is not NO_ABORT and not short_dir and (not spec['either'] or pin['exit'] == -6)
     if spec['both_abort']:
@@ -12715,6 +13063,42 @@ def run_per_call(args, parser):
 FUNCTION_ORDER = runpy.run_path(str(Path(__file__).resolve().parents[1] / 'packaging/function_order.py'))
 
 
+# The pin crashes (SIGBUS/SIGTRAP) or orders candidates differently on
+# arm64 for these cases; the amd64 pin is the reference and still runs them.
+# Diagnosis: #1137. The contract gate excludes them on arm64 only.
+ARM64_DIAGNOSIS_ISSUE = 1137
+ARM64_EXCLUDED_CASES = (
+    'fini-twice',
+    'zhuyin-fini-twice',
+    'replay-modify-header-overlong-pinyin',
+    'replay-modify-header-overlong-zhuyin',
+    'replay-touched-duplicate-invalid-pinyin',
+    'replay-touched-duplicate-invalid-zhuyin',
+    'replay-touched-many-invalid-pinyin',
+    'replay-touched-many-invalid-zhuyin',
+    'row58-unsigned-score-off',
+    'row58-unsigned-score-on',
+    'table-conf-lambda-million-zhuyin',
+    'table-conf-lambda-one-and-a-half-zhuyin',
+    'table-conf-lambda-two-zhuyin',
+)
+ARM64_EXCLUSION_REASON = (
+    '#1137: the pin crashes or orders candidates differently on arm64; '
+    'excluded there only, amd64 still runs the case'
+)
+for _excluded in ARM64_EXCLUDED_CASES:
+    if _excluded not in CASES:
+        raise RuntimeError('arm64 exclusion names an unregistered case: ' + _excluded)
+    CASES[_excluded] = dict(CASES[_excluded], platforms=('linux/amd64',),
+                            platform_skip_reason=ARM64_EXCLUSION_REASON)
+
+
+def platform_skips(spec):
+    """True when the case is registered away from this host's platform."""
+    platforms = spec.get('platforms')
+    return bool(platforms) and HOST_ORACLE_PLATFORM is not None and HOST_ORACLE_PLATFORM not in platforms
+
+
 def run_main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     FUNCTION_ORDER['add_arguments'](parser)
@@ -12748,11 +13132,17 @@ def run_main():
     parser.add_argument('--plan-only', action='store_true', help='print the selection plan and exit')
     parser.add_argument('--case-timeout', type=float, default=300,
                         help='wall-clock seconds per ordinary case, pin and subject combined (default: 300)')
+    parser.add_argument('--jobs', type=positive_jobs,
+                        help='maximum concurrent ordinary cases, reduced by memory admission '
+                             '(default: OXPINYIN_CONTRACT_JOBS, else serial)')
     parser.add_argument('--expect-parent', action='store_true')
     parser.add_argument('--regenerate-sentence-ties', type=Path,
                         help='regenerate pin expectations in the supplementary #747 source fixture')
     parser.add_argument('--observations', type=Path, default=os.environ.get('CONTRACT_DIFF_OBSERVATIONS'),
                         help='retain both complete observations as JSONL (also CONTRACT_DIFF_OBSERVATIONS)')
+    parser.add_argument('--run-platform-excluded', action='store_true',
+                        help='run cases whose registered platform excludes this host; each '
+                             'override reason is printed to stderr (not an ordinary gate)')
     axis_c_mode = parser.add_mutually_exclusive_group()
     axis_c_mode.add_argument('--axis-c-replacement', choices=['options', 'encoding', 'layouts', 'all'])
     axis_c_mode.add_argument('--axis-c-mutation', choices=['C-m1-r', 'C-m3-r'])
@@ -12762,6 +13152,9 @@ def run_main():
     args = parser.parse_args()
     if not 0 < args.case_timeout < float('inf'):
         parser.error('--case-timeout must be a positive finite number of seconds')
+    if args.jobs not in (None, 1) and (args.teardown or args.per_call or args.axis_c_replacement or
+                           args.axis_c_mutation or args.axis_c_snapshot_check or args.regenerate_sentence_ties):
+        parser.error('--jobs applies to ordinary contract cases only')
     if args.list_tags:
         print(json.dumps(dict(tags=tag_index(), modes={name: spec['mode'] for name, spec in CASES.items()
                                                        if not name.startswith('axis-c-')}), indent=1))
@@ -12823,6 +13216,7 @@ def run_main():
             'fixture regeneration cannot be combined with differential or capture modes'
         regenerate_sentence_ties(args.prefix, args.regenerate_sentence_ties)
         return 0
+    requested_jobs = ordinary_jobs(parser, args.jobs)
     # The whole set only when no selector is given: an explicit list that
     # names nothing (`--cases ,`), an unknown tag or a tag that matches
     # nothing is an error, never a request for everything.
@@ -12834,65 +13228,77 @@ def run_main():
         print(line, file=sys.stderr, flush=True)
     if args.plan_only:
         return 0
-    started = time.monotonic()
-    compare_seconds = 0.0
-    failures = 0
-    if args.observations:
-        args.observations.write_text('')
-    with tempfile.TemporaryDirectory(prefix='contract-diff-') as scratch:
-        for n in names:
-            check_cancelled()
-            spec = CASES[n]
-            if args.cell not in spec['cells']:
-                # The case crafts a fixture in another cell's storage format
-                # (e.g. a Berkeley DB btree); neither side can reach the site
-                # here, so there is nothing to compare.
-                print(json.dumps(dict(cell=args.cell, case=n, verdict='SKIP',
-                                      expected_ok=True, exit=[0, 0], stderr_lines=[0, 0]),
+    with case_jobs(requested_jobs) as jobs:
+        started = time.monotonic()
+        compare_seconds = 0.0
+        failures = 0
+        verdict_counts = {}
+        if args.observations:
+            args.observations.write_text('')
+        with tempfile.TemporaryDirectory(prefix='contract-diff-') as scratch, \
+                case_results(args, names, data, scratch, jobs) as results:
+            for n, pair in results:
+                check_cancelled()
+                spec = CASES[n]
+                if platform_skips(spec) and getattr(args, 'run_platform_excluded', False):
+                    print(json.dumps(dict(cell=args.cell, case=n, override='platform-excluded',
+                                          reason=spec['platform_skip_reason'],
+                                          note='not an ordinary gate'), sort_keys=True),
+                          file=sys.stderr, flush=True)
+                if pair is PLATFORM_SKIP:
+                    verdict_counts['SKIP'] = verdict_counts.get('SKIP', 0) + 1
+                    print(json.dumps(dict(cell=args.cell, case=n, verdict='SKIP',
+                                          expected_ok=True, exit=[0, 0], stderr_lines=[0, 0],
+                                          reason=spec['platform_skip_reason']), sort_keys=True),
+                          flush=True)
+                    continue
+                if pair is None:
+                    verdict_counts['SKIP'] = verdict_counts.get('SKIP', 0) + 1
+                    print(json.dumps(dict(cell=args.cell, case=n, verdict='SKIP',
+                                          expected_ok=True, exit=[0, 0], stderr_lines=[0, 0]),
+                                     sort_keys=True), flush=True)
+                    continue
+                pin, subject = pair
+                check_cancelled()
+                if args.observations:
+                    with args.observations.open('a') as capture:
+                        capture.write(json.dumps(dict(cell=args.cell,case=n,pin=pin,subject=subject),ensure_ascii=True)+'\n')
+                compared = time.monotonic()
+                if any(side['exit'] == 'TIMEOUT' for side in (pin, subject)):
+                    verdict, expected, same = 'TIMEOUT', False, False
+                else:
+                    verdict, expected, same = verdict_for(spec, pin, subject, args.expect_parent)
+                compare_seconds += time.monotonic() - compared
+                host_dependent = (verdict == 'DIFFER' and not args.expect_parent
+                                  and any(map(host_scanf_accepts, spec['host_scanf']))
+                                  and pin_loaded_subject_refused_table_conf(pin, subject))
+                if host_dependent:
+                    verdict = 'HOST-DEPENDENT'
+                    expected = True
+                verdict_counts[verdict] = verdict_counts.get(verdict, 0) + 1
+                row = dict(cell=args.cell, case=n, verdict=verdict, expected_ok=expected,
+                           exit=[pin['exit'], subject['exit']],
+                           stderr_lines=[pin['stderr_lines'], subject['stderr_lines']])
+                if spec['policy_record'] is not None:
+                    row.update(record=spec['policy_record'], pin=pin, subject=subject)
+                print(json.dumps(row,
                                  sort_keys=True), flush=True)
-                continue
-            if spec['mode'] == 'zhuyin':
-                assert args.zhuyin_so and args.zhuyin_so.is_file() and (lib / 'libzhuyin.so').is_file(), \
-                    'zhuyin case %s needs --zhuyin-so and the pin libzhuyin' % n
-                pin_so, subject_so = lib / 'libzhuyin.so', args.zhuyin_so
-            else:
-                pin_so, subject_so = lib / 'libpinyin.so', args.pinyin_so
-            pin, subject = run_case(spec, pin_so, subject_so, data, n, scratch, args.case_timeout)
-            check_cancelled()
-            if args.observations:
-                with args.observations.open('a') as capture:
-                    capture.write(json.dumps(dict(cell=args.cell,case=n,pin=pin,subject=subject),ensure_ascii=True)+'\n')
-            compared = time.monotonic()
-            if any(side['exit'] == 'TIMEOUT' for side in (pin, subject)):
-                verdict, expected, same = 'TIMEOUT', False, False
-            else:
-                verdict, expected, same = verdict_for(spec, pin, subject, args.expect_parent)
-            compare_seconds += time.monotonic() - compared
-            host_dependent = (verdict == 'DIFFER' and not args.expect_parent
-                              and any(map(host_scanf_accepts, spec['host_scanf']))
-                              and pin_loaded_subject_refused_table_conf(pin, subject))
-            if host_dependent:
-                verdict = 'HOST-DEPENDENT'
-                expected = True
-            print(json.dumps(dict(cell=args.cell, case=n, verdict=verdict, expected_ok=expected,
-                                  exit=[pin['exit'], subject['exit']],
-                                  stderr_lines=[pin['stderr_lines'], subject['stderr_lines']]),
-                             sort_keys=True), flush=True)
-            if host_dependent:
-                continue
-            if not expected or (not same and not args.expect_parent):
-                failures += 1
-                if not same:
-                    for side, r in (('pin', pin), ('subject', subject)):
-                        print('  %s exit=%s %s' % (side, r['exit'], json.dumps(
-                            r['result'] and observed(r['result']), sort_keys=True, ensure_ascii=False)))
-                        if spec['userdir']:
-                            print('  %s userfiles=%s' % (side, json.dumps(r['userfiles'], sort_keys=True)))
-                        if spec['stderr']:
-                            print('  %s stderr=%r' % (side, r['stderr']))
-    print(json.dumps(dict(timing=timing_summary(names, compare_seconds, time.monotonic() - started)),
-                     sort_keys=True), flush=True)
-    return 1 if failures else 0
+                if host_dependent:
+                    continue
+                if not expected:
+                    failures += 1
+                    if not same:
+                        for side, r in (('pin', pin), ('subject', subject)):
+                            print('  %s exit=%s %s' % (side, r['exit'], json.dumps(
+                                r['result'] and observed(r['result']), sort_keys=True, ensure_ascii=False)))
+                            if spec['userdir']:
+                                print('  %s userfiles=%s' % (side, json.dumps(r['userfiles'], sort_keys=True)))
+                            if spec['stderr']:
+                                print('  %s stderr=%r' % (side, r['stderr']))
+        print(json.dumps(dict(verdict_counts=verdict_counts), sort_keys=True), flush=True)
+        print(json.dumps(dict(timing=dict(timing_summary(names, compare_seconds, time.monotonic() - started), jobs=jobs)),
+                         sort_keys=True), flush=True)
+        return 1 if failures else 0
 
 
 def timing_summary(names, compare_seconds, total):

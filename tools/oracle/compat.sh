@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Native development stays native. This launcher runs selected registry gates
-# wholly inside the pinned Linux amd64 environment, without a nested runtime.
+# wholly inside the pinned Linux environment for the host architecture, without a nested runtime.
 set -euo pipefail
 umask 077
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
@@ -56,6 +56,12 @@ while (($#)); do
 	esac
 done
 case $cell in bdb|kc|tkrzw) ;; *) echo 'cell must be bdb, kc or tkrzw' >&2; exit 2 ;; esac
+case $(uname -m) in
+x86_64) platform=linux/amd64 ;;
+aarch64 | arm64) platform=linux/arm64 ;;
+*) die "no compatibility platform for architecture $(uname -m)" ;;
+esac
+platform_args=(--platform "$platform")
 [[ $jobs =~ ^[1-9][0-9]*$ ]] || { echo '--jobs must be positive' >&2; exit 2; }
 [[ $memory =~ ^[1-9][0-9]*$ ]] || { echo '--memory-mib must be a positive integer in MiB' >&2; exit 2; }
 ((selected || memory_smoke || list_only)) || { echo 'select --runners or --issue (use --list to discover gates)' >&2; exit 2; }
@@ -88,8 +94,16 @@ else
 	"$runtime" info >/dev/null || die "$runtime capability unavailable; check its installation/access (no daemon or host packages are installed by this launcher)"
 fi
 reference_tag=$(bash tools/oracle/image-tag.sh)
-reference=ghcr.io/shenghaoc/oxpinyin-oracle:$reference_tag
-deps=$reference-deps
+case $platform in
+linux/amd64)
+	reference=ghcr.io/shenghaoc/oxpinyin-oracle:$reference_tag
+	deps=$reference-deps
+	;;
+linux/arm64)
+	reference=ghcr.io/shenghaoc/oxpinyin-oracle:$reference_tag-arm64
+	deps=ghcr.io/shenghaoc/oxpinyin-oracle:$reference_tag-deps-arm64
+	;;
+esac
 ca_identity=no-custom-ca
 if [[ -n ${OXPINYIN_PROXY_CA:-} ]]; then
 	[[ -s $OXPINYIN_PROXY_CA ]] || die "custom CA file missing: $OXPINYIN_PROXY_CA"
@@ -108,7 +122,7 @@ if ((memory_smoke)); then
 	launcher=''
 	trap 'if [[ -n $launcher ]]; then kill -TERM "$launcher" 2>/dev/null || true; wait "$launcher" || true; fi' EXIT
 	trap 'exit 130' INT TERM HUP
-	reserved_run "oxpinyin-memory-smoke-$$" --remove --smoke -- --platform linux/amd64 --cpus "$jobs" -- "$image" &
+	reserved_run "oxpinyin-memory-smoke-$$" --remove --smoke -- "${platform_args[@]}" --cpus "$jobs" -- "$image" &
 	launcher=$!
 	status=0
 	wait "$launcher" || status=$?
@@ -162,12 +176,12 @@ results=$result_root/transport
 exported_results=$result_root/result
 mkdir -p "$results" "$exported_results"
 volume=oxpinyin-compat-$(printf '%s' "$repo" | hash | cut -c1-16)
-platform=(--platform linux/amd64)
 relabel=
 [[ $(basename "$runtime") == podman ]] && relabel=,z
 # Only explicit proxy settings cross the boundary; ordinary proxies need no
 # Claude files. Registry/daemon trust remains the runtime owner's configuration.
 build_flags=() run_env=(--cpus "$jobs" -e "CARGO_BUILD_JOBS=$jobs" -e "RUST_TEST_THREADS=$jobs")
+[[ $platform == linux/amd64 ]] || build_flags+=(--build-arg "ORACLE_PLATFORM=$platform")
 if [[ $(basename "$runtime") == podman ]]; then
 	build_flags+=(--cpu-period 100000 --cpu-quota "$((jobs * 100000))" --jobs 1)
 elif [[ $(basename "$runtime") == container ]]; then
@@ -200,16 +214,16 @@ pull_or_build() {
 	local wanted=$1 target=$2 error=$results/pull-$2.log
 	image_present "$wanted" && return 0
 	if [[ $(basename "$runtime") == container ]]; then
-		if "$runtime" image pull "${platform[@]}" "$wanted" 2>"$error"; then return 0; fi
+		if "$runtime" image pull "${platform_args[@]}" "$wanted" 2>"$error"; then return 0; fi
 	else
-		if "$runtime" pull "${platform[@]}" "$wanted" 2>"$error"; then return 0; fi
+		if "$runtime" pull "${platform_args[@]}" "$wanted" 2>"$error"; then return 0; fi
 	fi
 	cat "$error" >&2
 	if ! grep -Eiq 'manifest unknown|name unknown|manifest.*not found|404[[:space:]]+not found' "$error"; then
 		die "reference image access/network/proxy failure: $wanted (retained $error); no silent fallback"
 	fi
 	printf 'Image tag absent; building %s from the pinned source recipe\n' "$wanted" >&2
-	build_image "${platform[@]}" "${build_flags[@]}" --target "$target" \
+	build_image "${platform_args[@]}" "${build_flags[@]}" --target "$target" \
 		-f tools/oracle/Dockerfile.oracle -t "$wanted" tools/oracle
 }
 # The unchanged oracle final stage has no name; use a private build stage name
@@ -218,13 +232,13 @@ if ! image_present "$image"; then
 	pull_or_build "$deps" deps
 	if ! image_present "$reference"; then
 		if [[ $(basename "$runtime") == container ]]; then pull_command=("$runtime" image pull); else pull_command=("$runtime" pull); fi
-		if ! "${pull_command[@]}" "${platform[@]}" "$reference" 2>"$results/pull-reference.log"; then
+		if ! "${pull_command[@]}" "${platform_args[@]}" "$reference" 2>"$results/pull-reference.log"; then
 			cat "$results/pull-reference.log" >&2
 			grep -Eiq 'manifest unknown|name unknown|manifest.*not found|404[[:space:]]+not found' "$results/pull-reference.log" || die 'reference access/network/proxy failure; see retained pull-reference.log'
-			build_image "${platform[@]}" "${build_flags[@]}" -f tools/oracle/Dockerfile.oracle -t "$reference" tools/oracle
+			build_image "${platform_args[@]}" "${build_flags[@]}" -f tools/oracle/Dockerfile.oracle -t "$reference" tools/oracle
 		fi
 	fi
-	build_image "${platform[@]}" "${build_flags[@]}" \
+	build_image "${platform_args[@]}" "${build_flags[@]}" \
 		--build-arg "DEPS_IMAGE=$deps" --build-arg "REFERENCE_IMAGE=$reference" \
 		--build-arg "CA_IDENTITY=$ca_identity" \
 		-f tools/oracle/Dockerfile.compat -t "$image" .
@@ -234,9 +248,9 @@ if [[ $(basename "$runtime") == container ]]; then
 else
 	"$runtime" volume inspect "$volume" >/dev/null 2>&1 || "$runtime" volume create "$volume"
 fi
-printf 'Compatibility: Linux amd64; non-amd64 hosts require emulation. No native performance claims.\nVolume: %s\nResults: %s\n' "$volume" "$result_root"
+printf 'Compatibility: %s; native execution. No native performance claims.\nVolume: %s\nResults: %s\n' "$platform" "$volume" "$result_root"
 set +e
-reserved_run "$name" --console "$results/console.log" --exit-confirmed "$input/exit-confirmed" -- "${platform[@]}" "${run_env[@]}" \
+reserved_run "$name" --console "$results/console.log" --exit-confirmed "$input/exit-confirmed" -- "${platform_args[@]}" "${run_env[@]}" \
 	-v "$volume:/state" -v "$input:/input:ro$relabel" \
 	-w / -- "$image" bash /input/inside.sh "$cell" "$key" "$run_id" "$reference_tag" \
 	"$input_identity" "${selection[@]}" --jobs "$jobs" &
@@ -250,7 +264,7 @@ set -e
 [[ -f $input/exit-confirmed ]] || die 'main container exit unconfirmed; no result reader started'
 if [[ $(basename "$runtime") == container ]]; then
 	# Apple copy requires a running container; read the persisted volume instead.
-	(reserved_run "$name-results" --remove -- "${platform[@]}" --cpus "$jobs" -v "$volume:/state:ro" -w / -- "$image" \
+	(reserved_run "$name-results" --remove -- "${platform_args[@]}" --cpus "$jobs" -v "$volume:/state:ro" -w / -- "$image" \
 		tar -C "/state/results/container/$source_identity/$run_id" -cf - . | tar -C "$exported_results" -xf -
 	)
 else

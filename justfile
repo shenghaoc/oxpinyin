@@ -63,6 +63,10 @@ fmt *args:
 fmt *args:
     @cargo fmt @args; exit $LASTEXITCODE
 
+# Regenerate the GLib/libc call-site TSV from a pinned libpinyin checkout.
+audit-glib-call-sites pin:
+    @uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal tools/audit/glib_call_sites.py {{pin}}
+
 # Lint with the native heavy slot and memory admission.
 [unix]
 clippy *args:
@@ -151,3 +155,21 @@ plan *args:
 [windows]
 plan *args:
     @uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -m tools.dev plan @args; exit $LASTEXITCODE
+
+# Measure native oxpinyin startup; the controller holds the heavy slot.
+[unix]
+measure recipe *args:
+    @uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -m tools.dev measure "$@"
+
+# Startup measurement alias (Windows deferred, #950).
+[unix]
+initbench *args:
+    @uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -m tools.dev measure startup "$@"
+
+[windows]
+measure recipe *args:
+    @uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -m tools.dev measure @args; exit $LASTEXITCODE
+
+[windows]
+initbench *args:
+    @uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -m tools.dev measure startup @args; exit $LASTEXITCODE

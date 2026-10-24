@@ -2,10 +2,10 @@
 //!
 //! Reproduces two libpinyin trainer stages, in order:
 //!
-//! 1. [`held_out`] — `gen_deleted_ngram`
+//! 1. `held_out` — `gen_deleted_ngram`
 //!    (`utils/training/gen_deleted_ngram.cpp`): held-out bigram counting
 //!    into `DELETED_BIGRAM`, no unigram, no freq-1 floor.
-//! 2. [`interpolation`] — `estimate_interpolation`
+//! 2. `interpolation` — `estimate_interpolation`
 //!    (`utils/training/estimate_interpolation.cpp`): the deleted-
 //!    interpolation EM (seed λ = 0.6, ε = 0.001, per-context update) and
 //!    the cross-context arithmetic mean that yields the single system λ.
@@ -19,9 +19,9 @@
 //! This crate makes λ *derived*; it does **not** change the decode path.
 //! See `docs/findings/lambda-port.md`.
 //!
-//! Float boundary: counts are integers throughout ([`held_out`],
+//! Float boundary: counts are integers throughout (`held_out`,
 //! [`crate::counter`]); floating point (`parameter_t = double`) appears
-//! only inside the EM ([`interpolation`]). Never ships with the engine.
+//! only inside the EM (`interpolation`). Never ships with the engine.
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 // Constitution §4, mechanically: library builds may not unwrap, expect,

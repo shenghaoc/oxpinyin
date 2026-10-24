@@ -46,8 +46,11 @@ onto the landing tip before every push and before any merge
 ## Output contract
 
 E2E I/O is what the pin produces given the same inputs and state
-(`pinned-behaviour.md`), except the classes (a)–(c) and the registered
-standing divergences in `oxpinyin-improvements.md`. Nothing panics on
+(`pinned-behaviour.md`), except the classes (a)–(c) and the recorded
+language/runtime-quirk discrepancies in `oxpinyin-improvements.md`. A
+quirk change needs its discrepancy record before code; it never changes
+the C ABI, ownership, the on-disk formats, data ownership or valid-input
+behaviour. Nothing panics on
 any input, and public APIs return `Result` (constitution §4 — the broad
 rule stands on its own). Class (c) is narrower: where the pin asserts or
 aborts on input a caller or file can supply, the C ABI returns

@@ -34,6 +34,7 @@ The measurement inventory (arm names are command-line names):
 
 | Tool | Shipping expectations and build route |
 | --- | --- |
+| `just measure startup` / `just initbench` | Both facades of native `base`, `pr`, and byte-identical `control`; supplied oxpinyin installed prefixes. Every Linux arm is ordered; pin rows are refused. |
 | `tools/measure-function-order.py` | Both facades of `base`, `pr`, `control`; supplied installed prefixes. `pin` is the reference. |
 | `tools/bisection/contract-diff.py --teardown` / `teardown.py` | Selected facades of `ox` and its byte-identical `control`; supplied libraries, copied then checked before building a worker. `pin` is the reference. This includes the provision stage. |
 | `tools/bisection/contract-diff.py --per-call` | Selected facades of `subject` and optional `base`; supplied libraries. `pin` is the reference. Ordinary behavioral differentials have no shipping-layout requirement. |
@@ -72,14 +73,180 @@ uv run --no-project --managed-python --python cpython@3.15+gil \
   --arm subject --library "pinyin=$SUBJECT_PREFIX/lib/libpinyin.so.15.0.0"
 ```
 
+For the four-arm Linux `tools/measure-function-order.py` campaign,
+`--emit-samples` additionally prints original timing, memory and steady
+readings as JSON on stdout. Each record retains its arm, round, warmup
+status, library hash and rotating arm order. Timing records include the
+worker's original clock/resource fields; memory records identify their
+warm cache state. This supports paired controls without reconstructing
+samples from independently sorted summaries. Redirect stdout to an owned
+local results file when retention is needed; the controller writes no
+capture files itself and changes no worker scope or cache preparation.
+
 `tools/generate-function-order.py` intentionally profiles unordered inputs to
 derive policies; its output is a policy, not shipping performance figures.
 `tools/profile/run-w8-cycle.sh` uses the thin-LTO `profiling` recipe and makes
-no shipping-performance claim. `tools/workers/startup.c` is a native worker;
-there is no startup measurement controller in this tree. Packaging's
+no shipping-performance claim. `tools/workers/startup.c` is the native worker
+for `tools.dev.measure.startup`. Packaging's
 `release-stage.sh` and `check-pc-metadata.sh` call `install.sh` for release or
 behavioral smoke checks, not measurements. Their ordinary fallback stays
 unchanged.
+
+## Native startup measurement
+
+The 2026-10-22 UTC ruling (§7.8 in the tooling consolidation findings) places
+oxpinyin-only startup in `just measure startup`, also available as
+`just initbench`. Supply installed unstripped oxpinyin base and PR prefixes,
+one system directory and pin-provisioned profiles from
+[Regeneration](../packaging.md#regeneration). Native measurement only verifies
+these inputs; populated profiles need nonempty `witness.txt` files.
+
+```sh
+TMPDIR="$HOME/owned-startup-tmp" just initbench \
+  --base "$BASE" --pr "$PR" --system-dir "$DATA" --profiles-dir "$PROFILES"
+```
+
+Create the owned temporary parent first. Linux requires ext4 for every
+library, system file, profile and work path; macOS requires one APFS volume.
+The controller acquires `tools.dev.slot` for its worker build and whole run.
+It uses private, equal-length base/PR/control library paths and fresh user
+copies, checks each Linux arm with the shared function-order verifier, and
+removes temporary inputs even after failure. It writes no profiler capture.
+Do not overlap measurement with builds; use the existing host-wide slot.
+The PR control is always a byte-for-byte copy. Explicit policy overrides
+use `--function-order ARM/FACADE=POLICY`; there is no unordered bypass.
+
+Native verification compares U1–U6, the full script, witness answers,
+save/reopen observations, stderr, the user filename set and raw non-database
+file bytes. It never reads database rows. Python hashes the worker's exact
+canonical U1–U6 record including the final newline. The parent reads stopped
+child memory at every checkpoint. macOS supplies RSS and virtual size only;
+other memory metrics stay unavailable. macOS virtual size includes the shared
+region (about 488 GB), so the residency band would pass any change: it is
+reported `unavailable`, as not informative, and RSS is the macOS memory
+metric. Memory-run timings are excluded.
+
+`--stage verify` stops after verification and separate hostile probes.
+`--stage instrument` also checks Linux Callgrind Ir. Init uses two fresh
+processes per arm and remains exact: any same-bytes variation returns 3.
+Under the 2026-10-24 UTC maintainer ruling (§7.5), first-candidate and steady
+Ir use five fresh processes per base/PR/control arm. Steady repeats the same
+candidate request on the initialized instance, in a separate profiler process.
+The control and PR min–max ranges must overlap. The further 2026-10-24 UTC
+ruling removes the span limit entirely. Claims are bounds: base min minus
+PR max through base max minus PR min, never a point or exact difference. Every PR/control exclusive function count is checked
+against the single `tools.dev.measure.instructions::RANDOMSTATE_ALLOWLIST`
+definition. Under the additional 2026-10-24 UTC attribution ruling, init
+passes on exact totals alone and does not require complete function naming.
+For range metrics, unresolved sites use full object identity plus an offset
+from the object's load base, never raw ASLR addresses. The same-process worker
+reports loader PT_LOAD segments and load biases via `dl_iterate_phdr` after
+the units. The lowest runtime PT_LOAD address is the base; each unresolved
+object-relative instruction position plus its recorded load bias must map uniquely into an executable segment.
+Constant unresolved entries present in every PR/control process are allowed
+and reported by count and summed Ir. Varying or unmatched entries, missing
+or ambiguous loader mappings, other named variation, profiler identity
+failure, or unreconciled exclusive totals are INVALID (status 3). Raw loader
+records and profiler instruction positions remain in the output. The
+[Callgrind format](https://valgrind.org/docs/manual/cl-format.html#cl-format.reference.header)
+specifies object-relative instruction positions for identified objects; the
+loader bias is added before checking the executable segment. Callgrind's
+anonymous `???` object has zero bias (`fn.c::new_obj_node`), and
+`dump.c::get_debug_pos` emits runtime address minus that bias. Its instruction
+position is therefore checked directly against same-process executable
+segments. In both cases the uniquely proven object's load base is subtracted
+to form the key. Unknown object names alone do not cause rejection; missing
+or ambiguous mappings still do. Failed parsing retains the sample PID, raw
+stdout/profile bytes and loader records in the INVALID report, even when no
+parsed function table exists. No earlier failure is retroactively attributed.
+Accepted metrics report RANGE-QUALIFIED and their bounds, never exact.
+Every original timing sample, scoped total, per-function count and raw
+profile is reported; no normalization, hash reseeding or retrospective
+attribution of earlier phase-total-only differences is allowed.
+Re-evaluate retained controller JSONL before repeating covered scopes:
+
+```sh
+just measure startup --recheck-instructions "$RETAINED_JSONL"
+# Then use the original initbench inputs and selection, adding:
+just initbench --base "$BASE" --pr "$PR" --system-dir "$DATA" \
+  --profiles-dir "$PROFILES" --instructions-from "$RETAINED_JSONL"
+```
+
+Replay requires one original start record, complete raw init profiles and
+complete range profiles with raw data, PIDs and loader records. It reparses
+originals and reports all counts and the new bounds; duplicate scopes/range
+PIDs or incomplete provenance refuse. Continuation additionally matches input
+digests, library hashes, worker source, binding and cache mode. Each qualified
+retained scope is skipped, while uncovered scopes (including zhuyin) still run.
+Fresh behavioral verification is a preflight; subsequent timing/memory are a
+separate measurement segment linked by the retained file SHA-256. Retained
+and new samples are never pooled or claimed as one original run.
+
+The default `--stage run` checks these counts before timing. Native macOS
+instruction counts are unavailable. Valgrind output stays in memory.
+The default run has 60 timing rounds plus 3 warm-ups and 30 memory rounds
+plus 2 warm-ups (`--bind lazy` defaults to 30 timing rounds). Subjects rotate
+within each round. `--rounds`, `--warmups`, `--memory-rounds` and
+`--memory-warmups` permit an explicitly reported smoke selection.
+
+Timing and residency use the 2026-10-21 UTC control rules and shared
+`tools.dev.measure.stats` helpers. An unstable metric is INCONCLUSIVE and
+gets no PR/base ratio. Fault counts are diagnostic, not residency ratios.
+The statuses are 0 completed (including INCONCLUSIVE), 1 failure/refusal,
+2 usage error, 3 NOT COMPARABLE or INVALID exact control, 130 cancelled.
+Pin rows require the Layer 4 container path; Windows stays deferred (#950).
+Cold mode is refused on both hosts in this change. Its rejection limit needs
+approval before implementation or sampling.
+
+Linux KC smoke acceptance completed on 2026-10-24 UTC at 08:23 with controller
+`1cea405cf297e68da8ca3caf97594de45f467ef8` and retained shipping build
+`ebc9d4f5bf3edc6d08f254de39a6db46bb75c9b3`, not moving main. This was a
+retained-profile recheck followed by a separate continuation, both exit 0:
+
+```sh
+INPUT=/home/sheng/Documents/Codex/2026-10-23/task-9/kc-parser-smoke
+RETAINED=/home/sheng/Documents/Codex/2026-10-23/task-9/kc-loader-smoke/measurements.jsonl
+just measure startup --recheck-instructions "$RETAINED"
+TMPDIR=/home/sheng/Documents/Codex/2026-10-23/task-9/kc-continuation/tmp \
+  just initbench --base "$INPUT/stage" --pr "$INPUT/stage" \
+  --system-dir /home/sheng/.cache/oxpinyin/oracle/kc/lib/libpinyin/data \
+  --profiles-dir "$INPUT/provision/profiles" --profiles empty \
+  --rounds 3 --warmups 1 --memory-rounds 2 --memory-warmups 1 \
+  --instructions-from "$RETAINED"
+```
+
+The continuation skipped all three covered pinyin profiler scopes. Init was
+exact across base/PR/control (two processes each): pinyin 6,922,434 Ir;
+zhuyin 3,472,152 Ir. All four first/steady metrics were RANGE-QUALIFIED:
+
+| Facade | Scope | Base minus PR bounds (Ir) |
+| --- | --- | --- |
+| pinyin | first candidate | −187 to 95 |
+| pinyin | steady | −468 to 341 |
+| zhuyin | first candidate | −166 to 132 |
+| zhuyin | steady | −375 to 149 |
+
+Every range overlapped its control; no named variation outside the allowlist
+or invalid unresolved entry was found. Each facade's first-candidate scope
+had 58 constant unresolved sites totalling 3,006 Ir; steady had 39 / 1,874 Ir.
+Both facade observations and digests were COMPARABLE, all 72 hostile probes
+returned 0, and all six arms passed ordering (326 pinyin / 306 zhuyin paths).
+The continuation reported 42 original timing/memory samples including warmups.
+All 20 timing metrics were INCONCLUSIVE with ratios withheld: no timing gain
+is established. Memory: pinyin 51 STABLE, five INCONCLUSIVE and 14 diagnostic;
+zhuyin 56 STABLE and 14 diagnostic. Pinyin's inconclusive metrics were
+lib_load RSS, RSS delta, peak RSS, file-backed and end file-backed.
+Child RSS and virtual size were positive at all seven handshakes.
+Raw records remain local and are not published. These segments do not prove
+one uninterrupted session or retrospectively attribute earlier failed captures.
+BDB instruction counts are diagnostic only
+(`libdb` seeds `srandom_r`); they are not reproducible exact controls.
+The maintainer reports bounded native macOS checks at `d4e9f54d`: initbench
+returned 0 with ELF ordering unavailable, four refusals returned 1, and
+parent memory reads were nonzero at all seven child handshakes. The macOS
+reader uses `ps` for RSS and virtual size (§7.7).
+[CI run 39892909515](https://github.com/shenghaoc/oxpinyin/actions/runs/39892909515)
+is green at that head. Unit tests and verification are not performance results.
 
 ## Native teardown workload
 
@@ -433,9 +600,9 @@ favourable, on an upstream report drafted from
 [`upstream-report-drafts.md`](../findings/upstream-report-drafts.md)) —
 not in this repo's shipping open path.
 
-**No capture committed.** The recipe above is what regenerates every
-figure; run output belongs on the issue or in the upstream-report
-draft, not in-tree.
+**Report the result and recipe.** The recipe above regenerates the figures.
+An issue or upstream-report draft needs the conclusion and relevant numbers,
+not the raw run output; follow [results and reproduction](../../CONTRIBUTING.md#results-and-reproduction).
 
 ## BDB guess, training, and import profiles (#757–#759)
 
@@ -734,12 +901,14 @@ keystroke cycle with `samply`, falling back to `cargo flamegraph` or
 
 ## Writing it up
 
-A snapshot records the container image, the host, the pin, the exact
-commands, and the controls (`docs/perf/perf-stage2-harness-2026-08.md`
-is the template; `docs/findings/perf-keycost-first-alloc-2026-09-07.md`
-a recent full example with confidence intervals and an acceptance
-gate). A change that trades time for space or the reverse must say so
-and justify it (AGENTS.md, "Source policy").
+Follow [results and reproduction](../../CONTRIBUTING.md#results-and-reproduction):
+state the conclusion, final measurements and reproduction commands. Include
+the revisions, workload, backend, build recipe, host/container and controls
+needed to interpret the comparison. One invocation may reproduce a whole
+table. Link existing setup procedures; a separate findings file is optional.
+A change that trades time for space or the reverse must say so and justify
+it (AGENTS.md, "Source policy"). Historical reports are examples of results,
+not templates requiring their full provenance sections to be copied.
 
 ### Measure base, PR and pin in one run
 
@@ -751,8 +920,9 @@ PR and pin artifacts run by run, and reports only those figures and the
 ratios between them. Interleaving all three is a requirement of the
 measurement, not a property of `tools/bisection/run-perf-same-data.sh`,
 which interleaves two pin-built backends and two artifacts of the current
-tree and does not run a base artifact; a measuring PR that needs the
-base/PR/pin triple arranges that itself.
+tree and does not run a base artifact. If the needed base/PR/pin selection is
+missing, extend the maintained in-tree tooling and its `just` entry point;
+do not supply an out-of-tree measurement controller.
 No absolute figure from an earlier run, another host or another CPU is a
 baseline: callgrind `Ir` and wall time both move with the CPU (glibc picks
 `memcpy` and friends at run time), so a baseline taken elsewhere cannot be
@@ -785,11 +955,15 @@ contributions.
 
 ### State the build recipe, per artifact
 
-**Which artifact was timed is part of the measurement, not a detail of it.**
-Name the exact cargo command line for every timed oxpinyin artifact, and give
-its `sha256`, `NEEDED` list and byte size.
-`docs/findings/perf-steady-cycle-cross-host-2026-09-07.md:155` is the worked
-example.
+Identify each timed subject by revision, backend and build recipe, including
+the profile and relevant flags. A maintained recipe and its arguments can
+provide the build command; do not duplicate it for every figure. Report
+shipping-library sizes when applicable under AGENTS.md Constitution 2.
+Hashes and loaded-library checks needed by the tools remain tool-internal
+checks; a report needs the results and reproduction recipe, not a checklist
+of their verdicts, checksum manifest or full `NEEDED` inventory. Include a
+specific hash or dependency only when it explains a concrete build-identity
+or loader discrepancy.
 
 This is not bookkeeping. `cargo cinstall` is the shipping path
 (`.github/workflows/release-packages.yml` → `tools/packaging/install.sh`;
@@ -824,51 +998,25 @@ The audit of which existing records sit where is
 
 ### Evidence: what is committed and what is not
 
-**A findings document commits no captures.** Not DHAT JSON, not `/proc`
-`smaps` dumps, not callgrind out-files, not `perf` data. They are large,
-machine-generated, and unreviewable in a diff — and in at least one case
-the bulk of the file is a part the document itself records as unusable.
+Publish the final result and a working reproduction procedure. Use one
+command for figures produced together; identify different inputs, options or
+runs where they affect the comparison. Keep shared readers and calculations
+in the repository's Python tooling so another contributor can regenerate
+and interpret the results without an author's scripts or old captures.
 
-A campaign keeps the per-sample timing output and the profiler totals until they are attached to the PR.
+Raw logs, DHAT JSON, `smaps` dumps, Callgrind/perf output and evidence archives
+are local working data, governed by
+[the reporting policy](../../CONTRIBUTING.md#results-and-reproduction).
+Do not publish or retain them as a submission requirement. Their absence
+needs no disclaimer or replacement manifest. Existing historical attachments
+do not create a requirement for new work.
 
-What the document carries instead:
-
-1. **The command that produced each figure.** Not each class of figure —
-   each figure. Where two numbers come from different commands, different
-   inputs, or different runs, they get separate entries, because a shared
-   heading is exactly how one of them ends up with no provenance at all.
-   That is what makes a number regenerable once the capture is gone, and
-   it is the substitute for a path on a machine.
-2. **The capture bundle, attached to the pull request**, with its URL *in
-   the document* and not only in the PR description — a document that says
-   "evidence is attached to the PR" without a link has the same problem as
-   one pointing at `/tmp`. Record the bundle's SHA-256 alongside the link.
-   A release asset is an **additional** mirror if you want one, never a
-   substitute for the PR attachment.
-3. **An explicit note where a figure cannot be regenerated**, *at the
-   point of use*, so a weaker claim reads as one. Do not point at a path
-   that no longer exists.
-
-**The one exception to (2), and it is narrow.** If the capture environment
-was ephemeral and the bundle could not be retained anywhere — no
-attachment, no mirror, nothing to link — the document says so plainly, in
-place of the link, and (1) carries the whole reproduction burden. Keep the
-SHA-256 even then, so anyone still holding a copy can verify it. This is
-not a licence to skip the attachment when attaching is possible: it exists
-because it happened, in the record that prompted this rule, and a rule its
-own founding case violates is worse than no rule. When it applies, (1) is
-not "a Provenance section" but a complete recipe — toolchain, packages,
-builds, measurement commands, and the reader invocations that turn the
-captures into the document's tables.
-
-Small, human-readable, directly-cited artifacts are the exception that
-proves the rule — a SHA manifest, a pin file — and
-`docs/findings/oracle-pin-074a221-evidence/` is what that looks like.
-The line is bulk machine output, not evidence as such.
-
-Derived readers stay in `tools/bisection/` (`rss-smaps.py`,
-`cg-calls.py`): they are tools, not evidence, and they are what makes the
-pipeline reproducible for anyone holding the bundle.
+If a reproduction command is incomplete or the result contradicts the claim
+beyond the method's expected variability, investigate and fix the software,
+tooling or documented assumptions and correct or withdraw the claim. State
+an actual unresolved limitation beside the affected result; discarded raw
+output is not such a limitation. Keep existing measurement controls and
+rejection rules, including exact checks where the method requires them.
 
 
 ## Per-call C-API costs

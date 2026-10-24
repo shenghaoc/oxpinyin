@@ -286,15 +286,128 @@ def memory_available_mib():
     return None
 
 
-def linux_cgroup_dirs(proc=Path('/proc'), root=Path('/sys/fs/cgroup')):
-    """Find the current cgroup and its visible ancestors."""
-    entry = next(line[3:] for line in (proc / 'self/cgroup').read_text().splitlines()
-                 if line.startswith('0::'))
+def linux_cgroup_dirs(proc=Path('/proc'), root=Path('/sys/fs/cgroup'), *, controller=None):
+    """Find the current cgroup and ancestors up to the visible mount root.
+
+    The default retains the v2 unified path. V1 controller mounts can live
+    anywhere and can expose only a subtree of the controller hierarchy.
+    """
+    entries = {}
+    for line in (proc / 'self/cgroup').read_text().splitlines():
+        hierarchy, controllers, entry = line.split(':', 2)
+        for name in controllers.split(','):
+            if name or hierarchy == '0':
+                entries[name] = entry
+    entry = entries.get(controller or '')
+    if entry is None:
+        return []
     relative = Path(entry)
     if not relative.is_absolute() or '..' in relative.parts:
         raise ValueError('invalid cgroup path')
-    current = root / entry.lstrip('/')
+    if controller is not None:
+        mounts = []
+        for line in (proc / 'self/mountinfo').read_text().splitlines():
+            before, after = line.split(' - ', 1)
+            fields, filesystem = before.split(), after.split()
+            if filesystem[0] != 'cgroup' or controller not in filesystem[2].split(','):
+                continue
+            # mountinfo escapes whitespace and backslashes with octal codes.
+            mount_root, mount_point = (Path(re.sub(r'\\([0-7]{3})',
+                                                  lambda match: chr(int(match[1], 8)), field))
+                                       for field in fields[3:5])
+            if (not mount_root.is_absolute() or not mount_point.is_absolute()
+                    or '..' in mount_root.parts or '..' in mount_point.parts):
+                raise ValueError('invalid cgroup mount path')
+            if relative.is_relative_to(mount_root):
+                mounts.append((mount_root, mount_point))
+        if not mounts:
+            raise ValueError(f'no visible {controller} cgroup mount')
+        # Prefer the mount exposing the most ancestors if bind mounts overlap.
+        mount_root, root = min(mounts, key=lambda mount: len(mount[0].parts))
+        relative = relative.relative_to(mount_root)
+    else:
+        relative = relative.relative_to('/')
+    current = root / relative
     return [current, *list(current.parents)[:len(current.relative_to(root).parts)]]
+
+
+def _cgroup_v1_memory(directory, label, notes, memories, limits):
+    try:
+        maximum = int((directory / 'memory.limit_in_bytes').read_text().strip())
+        if maximum < 0:
+            raise ValueError('negative memory limit')
+        # PAGE_COUNTER_MAX on 64-bit Linux is LONG_MAX rounded down to
+        # a page boundary. Values near that sentinel are not a real cap.
+        unlimited = maximum >= (1 << 63) - (1 << 20)
+        notes.append(f'{label} memory.limit_in_bytes={maximum}'
+                     + (' (unlimited)' if unlimited else ''))
+        if unlimited:
+            return
+        limits.append(maximum)
+    except (OSError, ValueError):
+        notes.append(f'{label} memory.limit_in_bytes=unknown')
+        return
+    try:
+        current = int((directory / 'memory.usage_in_bytes').read_text().strip())
+        if current < 0:
+            raise ValueError('negative memory usage')
+    except (OSError, ValueError) as exc:
+        notes.append(f'{label} memory room=unknown ({exc})')
+        return
+    try:
+        required = ('cache', 'shmem', 'active_file', 'inactive_file', 'dirty', 'writeback')
+        rows = []
+        for line in (directory / 'memory.stat').read_text().splitlines():
+            key, value = line.split()
+            rows.append((key, value))
+        # A hierarchical cache counter selects the entire hierarchical set.
+        # Missing fields must never be filled with local-only charges.
+        prefix = 'total_' if any(key == 'total_cache' for key, _ in rows) else ''
+        fields = tuple(prefix + key for key in required)
+        stats = {}
+        for key, value in rows:
+            if key in fields:
+                if key in stats or not re.fullmatch(r'[0-9]+', value):
+                    raise ValueError(f'invalid memory.stat {key}')
+                stats[key] = int(value)
+        missing = [key for key in fields if key not in stats]
+        if missing:
+            raise ValueError('missing memory.stat fields: ' + ', '.join(missing))
+        cache, shmem, active, inactive, dirty, writeback = (stats[key] for key in fields)
+        for key in ('shmem', 'dirty', 'writeback'):
+            if stats[prefix + key] > cache:
+                raise ValueError(f'memory.stat {prefix + key} exceeds {prefix}cache')
+        candidates = min(cache - shmem, active + inactive)
+        # As in v2, reserve the bounded sum: dirty and writeback can overlap,
+        # but taking their maximum would underreserve disjoint pages.
+        reserved = min(candidates, dirty + writeback)
+        reclaimable = candidates - reserved
+        used = max(0, current - reclaimable)
+        fields_note = ' '.join(f'{key}={value}' for key, value in stats.items())
+    except (OSError, ValueError) as exc:
+        # As in v2, unusable cache stats retain the conservative limit - usage room.
+        used = current
+        fields_note = (f'unusable; reclaimable cache=unknown ({exc}); '
+                       f'fallback to memory.usage_in_bytes={current}')
+    room = max(0, maximum - used) // (1024 * 1024)
+    memories.append(room)
+    notes.append(f'{label} memory.usage_in_bytes={current}; '
+                 f'memory.stat {fields_note}; used={used}; memory room={room} MiB')
+
+
+def _cgroup_v1_cpu(directory, label, notes, cpus):
+    try:
+        quota = int((directory / 'cpu.cfs_quota_us').read_text().strip())
+        if quota == -1:
+            notes.append(f'{label} cpu.cfs_quota_us=-1 (unlimited)')
+            return
+        period = int((directory / 'cpu.cfs_period_us').read_text().strip())
+        if quota <= 0 or period <= 0:
+            raise ValueError('invalid CPU quota or period')
+        cpus.append(quota / period)
+        notes.append(f'{label} cpu.cfs_quota_us={quota}; cpu.cfs_period_us={period}')
+    except (OSError, ValueError):
+        notes.append(f'{label} CPU quota=unknown')
 
 
 def _memory_min(directory):
@@ -458,6 +571,19 @@ def resource_snapshot(proc=Path('/proc'), cgroup_root=Path('/sys/fs/cgroup')):
                     notes.append(f'cgroup {label} CPU quota={quota}/{period}')
             except (OSError, ValueError):
                 notes.append(f'cgroup {label} CPU quota=unknown')
+        for controller in ('memory', 'cpu'):
+            try:
+                directories = linux_cgroup_dirs(proc, cgroup_root, controller=controller)
+            except (OSError, ValueError, IndexError):
+                notes.append(f'cgroup v1 {controller} limits=unknown')
+                continue
+            for directory in directories:
+                relative = directory.relative_to(directories[-1])
+                label = 'cgroup v1 /' + (str(relative) if relative.parts else '')
+                if controller == 'memory':
+                    _cgroup_v1_memory(directory, label, notes, memories, limits)
+                else:
+                    _cgroup_v1_cpu(directory, label, notes, cpus)
     else:
         memory = memory_available_mib()
         if memory is not None:
@@ -506,6 +632,9 @@ def validate_settings(env):
     threads = env.get('RUST_TEST_THREADS')
     if threads is not None and (not re.fullmatch(r'[+]?[0-9]+', threads) or int(threads) <= 0):
         raise ValueError('Invalid RUST_TEST_THREADS: use a positive integer')
+    cases = env.get('OXPINYIN_CONTRACT_JOBS')
+    if cases is not None and (not re.fullmatch(r'[+]?[0-9]+', cases) or int(cases) <= 0):
+        raise ValueError('Invalid OXPINYIN_CONTRACT_JOBS: use a positive integer')
 
 
 def memory_defaults(env, explicit_jobs, cpus=None, available_mib=READ_HOST, *, memory_limit_mib=None,
@@ -566,6 +695,24 @@ def prepare_heavy_env(env, resources, *, runner=False):
         count = max(1, resources['cargo_cpus'] + count)
     estimate = max(RUNNER_PEAK_MIB if runner else RUSTC_PEAK_MIB, count * RUSTC_PEAK_MIB,
                    int(child['RUST_TEST_THREADS']) * TEST_THREAD_PEAK_MIB)
+    if 'OXPINYIN_CONTRACT_JOBS' in env:
+        # A case runs pin then subject, so at most one worker per active
+        # case is live. Charge the existing runner estimate for EACH case.
+        # This explicit setting is a requested maximum: reduce it against
+        # the room left after other live reservations and headroom, before
+        # the admission lock publishes the estimate or any worker starts.
+        requested = int(env['OXPINYIN_CONTRACT_JOBS'])
+        available = resources['available_mib']
+        headroom = memory_headroom(env, resources)
+        workers = 0 if available is None else fit(available, RUNNER_PEAK_MIB, requested, headroom)
+        reason = (f'requested maximum {requested}; available memory unknown' if available is None else
+                  f'requested maximum {requested}; {available} MiB available - {headroom} MiB headroom; '
+                  f'{RUNNER_PEAK_MIB} MiB per contract case')
+        chosen['OXPINYIN_CONTRACT_JOBS'] = (workers, reason, False)
+        # Zero capacity still needs one worker's estimate. Admission refuses
+        # it; no zero-sized pool or unaccounted worker can be launched.
+        child['OXPINYIN_CONTRACT_JOBS'] = str(max(1, workers))
+        estimate = max(estimate, max(1, workers) * RUNNER_PEAK_MIB)
     return child, chosen, estimate
 
 

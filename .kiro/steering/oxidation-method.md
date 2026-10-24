@@ -31,18 +31,30 @@ output moves towards the pin's is Stage 2 work, not a departure.
 ## Bug for bug
 
 The default build behaves as the pinned libpinyin does, bugs included,
-measured against the pin-built oracle. Where a Rust language mechanism
-makes a pin behaviour impossible to reproduce, record it in
-`docs/findings/upstream-divergences.md` as `/AGENTS.md` says and stop
-working on that area.
+measured against the pin-built oracle. A language/runtime quirk is
+decided in the policy's order: the C-facing contract first, then classes
+(a)–(c), then a record-admitted quirk, then a defect or Stage 3. A quirk
+that meets the record's conditions is accepted and is implemented with
+normal Rust functions; one that does not is a defect to revert, or a
+STOP. Never improvise a new exception. Record an accepted quirk in
+`docs/findings/upstream-divergences.md` with its discrepancy record and
+`POLICY-ACCEPTED` case.
 
 **Floating point is not, by itself, a Rust language limitation.**
 Rust's `f32` and `f64` are the same IEEE formats as `gfloat` and
-`gdouble`. Reproduce the pin's types, conversion points and operation
-order. Verify the relevant compiler transformations (multiply-add
-contraction, constant folding) and the resolved logarithm
-implementation for the identified artifacts. Investigate any remaining
-discrepancy; do not classify it automatically as a host difference.
+`gdouble`. For the IEEE-exact operations — basic arithmetic, `sqrt`,
+`abs`, rounding and comparisons — reproduce the pin's types, conversion
+points and operation order, and verify the relevant compiler
+transformations (multiply-add contraction, constant folding). Those
+operations are bit-reproducible and must match.
+
+**Transcendentals come from Rust's standard maths.** `log`, `exp`,
+`pow`, the trigonometric and hyperbolic functions, and the rest use
+`std` at full speed. oxpinyin never slows code down to imitate glibc,
+libm, GLib `gfloat` or any other C behaviour. A last-bit difference from
+the pin that follows from using Rust's maths is class (a): record it and
+do not chase it. Investigate any remaining discrepancy; do not classify
+it automatically as a host difference.
 
 ## The source is the specification
 

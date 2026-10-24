@@ -46,9 +46,11 @@ dbm=BerkeleyDB
 # builds match each other and these values. A pin component, the base image,
 # the apt snapshot or the recipe changing changes them: update them in the
 # same commit.
-# The hashes below are for linux/amd64 only: native shared objects differ
-# across architectures, so the image, the Dockerfile and the checks pin
-# --platform=linux/amd64. Another architecture would need its own hashes.
+# The unqualified fields below are the historical linux/amd64 entries and
+# stay byte-identical. Native shared objects differ across architectures, so
+# other platforms add the same fields with a platform suffix
+# (_linux_arm64); tools/oracle/pin.sh selects them. The image, the
+# Dockerfile and the checks take their platform from the build request.
 platform=linux/amd64
 base_image=debian:testing@sha256:dab11cdb0a9dcf4bbd68f671635b35f1f726b452b92396875b69bb2c7daa42a9
 apt_snapshot=20260831T000000Z
@@ -65,3 +67,16 @@ libzhuyin_sha256_tkrzw=adbcc8c8c3dec00a488ea89413a525f57fdccf280a8ca44e6c2ad6765
 data_manifest_sha256_bdb=a050c357e5b80eac1d83204822d246fbe66f7049d25e7085ee1bc4fdc9e3c8f2
 data_manifest_sha256_kc=91e906bd42ddebe5070b8bfe3cf48a9104286c22fbe8d8acb90df18ed431c8ba
 data_manifest_sha256_tkrzw=4a03fce6eec26916bc5bd0f0f18cba24492f334698e1d9b14b83e9c50c58e281
+
+# linux/arm64: the same pin, base image, apt snapshot, recipe and model data
+# on native arm64 Linux. Only the native shared objects differ.
+platform_linux_arm64=linux/arm64
+libpinyin_sha256_bdb_linux_arm64=473187d8d040b8a5763a188509d6be031e224a712ad9b7716defdb4ff1293a2f
+libzhuyin_sha256_bdb_linux_arm64=e90429560584cf9dfee345d41e608092032d3a1c7248e04feeedc899dcfd24b5
+libpinyin_sha256_kc_linux_arm64=d2672b94ec8fe15c86062ca9e400a0df8b52b9b1f8be196a71e27e545de50e2d
+libzhuyin_sha256_kc_linux_arm64=644cc0edb5080925bb574445deac5425c7fca729bcd9032d8b4858ffe22e6df7
+libpinyin_sha256_tkrzw_linux_arm64=062caa79982cb2024666666e5c0da1914808b9d2eba55c9ae95acc6827d8d32a
+libzhuyin_sha256_tkrzw_linux_arm64=43b884cbaa74b170a3a4b4cd254fff7d2939b9442d07c6190f51a643610c67c3
+data_manifest_sha256_bdb_linux_arm64=a050c357e5b80eac1d83204822d246fbe66f7049d25e7085ee1bc4fdc9e3c8f2
+data_manifest_sha256_kc_linux_arm64=91e906bd42ddebe5070b8bfe3cf48a9104286c22fbe8d8acb90df18ed431c8ba
+data_manifest_sha256_tkrzw_linux_arm64=4a03fce6eec26916bc5bd0f0f18cba24492f334698e1d9b14b83e9c50c58e281

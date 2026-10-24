@@ -33,7 +33,9 @@ name: Store backends
 #     combination plus the zero-backend build is refused by the
 #     exactly-one-backend `compile_error!` guards. This is what replaced
 #     the old "cross-backend conformance in one binary" job, which is
-#     architecturally impossible under exactly-one-backend.
+#     architecturally impossible under exactly-one-backend. It then runs
+#     `cargo doc --no-deps --workspace` once per peer, rustdoc warnings
+#     denied.
 #   - store-backends-gate is this workflow's aggregate status check. It runs
 #     no tests; it only fails unless every backend child, the backend-matrix
 #     job AND all three sanitizer jobs succeeded. Its display name tracks the
@@ -348,6 +350,24 @@ jobs:
           start=$EPOCHSECONDS
           tools/store/backend-matrix.sh
           echo "elapsed=$((EPOCHSECONDS - start))" >> "$GITHUB_OUTPUT"
+
+      # Rustdoc for the whole workspace under each backend with every warning
+      # denied. The store's crate docs linked all three backend types, and
+      # each exists under only its own feature, so every build had two
+      # broken intra-doc links while no job built rustdoc with warnings
+      # denied (#1129). This job installs every peer's build-time C
+      # dependencies. The workspace's remaining diagnostics were fixed in
+      # #1136, so the step covers every crate, not just the store. The loop
+      # runs a closed set of repository-controlled feature names.
+      - name: Document the workspace under each backend (rustdoc warnings denied)
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: |
+          set -euo pipefail
+          for backend in bdb kyotocabinet tkrzw; do
+            echo "--- cargo doc: ${backend} ---"
+            cargo doc --locked --no-deps --workspace --no-default-features --features "${backend}"
+          done
 
       - name: Report
         if: always()
