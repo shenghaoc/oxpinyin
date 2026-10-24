@@ -236,6 +236,20 @@ invalid read. The four existing `host_scanf` cases remain HOST-DEPENDENT
 on glibc 2.39 (`1e`, `0x1p`); the reference cell is the oracle image's
 glibc 2.43-3.
 
+The #920 `user.conf` walk uses the same scanner: version and counter
+`%d` values take LP64 `strtol` saturation followed by the low 32 bits of
+the `int` store, so `4294967303` reads as 7 and `-9223372036854775808` as
+0; the marker's conformance, counter raise/lower and wipe/write sequence
+then decide user state. The one difference found was a NUL inside the
+`database format:` token: `%255s` keeps the bytes, but the pin compares
+with `strcmp`, so a known token followed by NUL+bytes still conforms. The
+reader now truncates at the first NUL; contract cases retain trained and
+imported state for wrapped conforming markers and compare the wipe for
+non-conforming ones, with every fixture value read from the cell's
+`table.conf` (no backend literal). The signed `%d` writer from #1178
+round-trips the integer fields. The 24,687-string `%d` corpus from #919
+is confirmation only here; it is not the basis.
+
 ### G12 — file I/O
 
 `MemoryChunk` maps the file, checks the 8-byte header, the length word
