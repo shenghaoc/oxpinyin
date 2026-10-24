@@ -1,11 +1,209 @@
-# tkrzw concrete-class shim: correctness work (#1125)
+# tkrzw concrete-class shim: evaluation (#1125)
+
+## Ubuntu results: STOP on store-operation instructions
+
+Recorded 2026-10-24T07:16:00Z. The facade campaign completed; the store-operation
+campaign was canceled under the requested no-time-for-residency STOP rule.
+`get_raw.tree.miss` executes 4,215.77705 Ir/call against base/control
+4,211.21235: +0.108394%, with exactly equal base/control whole counts.
+`get_raw.tree.retain`, already in flight during cancellation, also completed
+with an exact-control increase. No source tuning or rerun followed.
+The heavy-slot supervisor reported `cancelled; child process groups
+terminated and reaped`, exit 130. This is neither PASS nor SKIP for the
+incomplete store campaign. Remaining operations have no result.
+No PR, review request or artifact upload was made. Adoption is undecided.
+
+### Source, policies and build provenance
+
+The authoritative fetched checkpoint was `b9b8a31bee471b940fdaecc4c0cc10ebea0c93b2`,
+with implementation `2b188ae85a0e0d037e6235e10cbe9cb48aba4a9c` directly on
+base `d7788072d3b8078aaa500cb5fcb98e0542fe7278` (#1114 included).
+The earlier handoff `2d1b7ade` was not substituted for it. Explicit diff
+showed equal source/test, build inputs, shipping tools and policy trees;
+only #1114 findings and the benches retention rule differed. Those external
+changes were preserved. No rebase onto later main was made. The inspected
+later main (`7fdab25f`) changes tools, workflow, documentation, Rust comments
+and doc attributes; it changes no shipping code. It is not the baseline.
+
+Regeneration ran twice using the same unordered shipping libraries and
+static archives, with the existing teardown profiles and generator on ext4.
+Both facade policy files were byte-identical between passes. The generated
+policies were folded into the current implementation, producing
+`b3018335cce3e1d080f7790716bf88a4726247a2`, still directly on `d7788072`.
+The four existing findings commits were replayed without content changes;
+checkpoint `20dc2615055ea4bae2fc86f253a03966414de6d1` was pushed with the exact
+`b9b8a31b` lease and remote=head verified. The tree difference from `b9b8a31b`
+is exactly the two tkrzw policies. These policies were not present at `b9b8a31b`.
+Both identities are Shenghao Chen <shenghaoc@outlook.com>.
+
+The linked-object verifier reports ordered base pinyin/zhuyin over 260/240
+paths and ordered prototype/control over 274/254 paths. Both prototype
+policies include three measured C++ paths. Every resolver reports zero
+missing C++ paths (0 of 3 for the prototype); no shipping measurement uses
+an unordered fallback. Ordering was explicitly disabled only for the
+regeneration inputs. Prototype dynamic imports include all four concrete
+constructors and no PolyDBM or tkrzw_dbm_* C entry point. Base imports
+`tkrzw_dbm_set`, confirming the #1114 load path in the baseline.
+
+Ubuntu Linux x86-64, Rust 1.97.1, GCC 15.3.0, GNU ld 2.47, cargo-c
+0.10.24, Valgrind 3.27.1. The existing cargo-c installation was selected
+from `/home/sheng/.cache/oxpinyin/fo-1018/cargo-c/bin`; none was installed.
+The selected linker supports section ordering, so a compatibility-image
+build was unnecessary. Setup verified all three oracle hashes and data
+manifests, and the cached tkrzw probe passed. Both pin and subject facades,
+controls, store binaries and private measured copies used the certified
+runtime guard. The runtime's before/after SHA-256 is
+`36c6aa4d77edb3bd6a628f02fc456f0a67096bdd451c04999141d7144f144d0e`.
+
+Separate base/prototype targets and stages, measured libraries, runtime,
+system-data/profile paths, work paths and TMPDIR were checked with findmnt
+on `/dev/nvme0n1p2`, ext4. Normal host-wide heavy admission covered setup,
+regeneration, shipping builds and the single measuring job sequentially;
+no private slot lock was introduced. The facade campaign confirms all
+fixture manifests and library hashes unchanged at completion. No shipping
+source changed after the cloud correctness gates: only policy files did.
+The cloud correctness results below remain recorded at their actual SHAs.
+
+### Same-run M1 memory
+
+Base / prototype / same-bytes prototype control / pin, KiB. Twenty paired
+rounds per facade/profile after two warm-ups, rotating four-arm order.
+The delta columns are paired medians with 95% bootstrap intervals, not
+subtractions of independent medians. The control rule is teardown.py's
+median and whole interval inside ±max(64 KiB, 1% of prototype median).
+
+| facade/profile | base | prototype | control | pin | prototype − base [95%] | prototype − pin [95%] |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| pinyin/phrases | 9383 | 9118.5 | 9118.5 | 9272.5 | -264 [-265, -264] | -157.5 [-210.5, -113] |
+| pinyin/journals | 9327 | 9065 | 9066 | 9132 | -261.5 [-263, -259] | -69 [-179.5, -65.5] |
+| zhuyin/phrases | 8395 | 8075 | 8075 | 8105 | -320.5 [-322.5, -318.5] | -30 [-33, -30] |
+| zhuyin/journals | 8447 | 8127 | 8127 | 8118 | -320.5 [-322, -317.5] | 8.5 [4.5, 11.5] |
+
+Total-Pss control − prototype, paired median [95%], and bound, KiB:
+
+- pinyin/phrases: 0 [-1.5, 1.5], bound ±91.185; VALID.
+- pinyin/journals: 0 [-3, 3], bound ±90.65; VALID.
+- zhuyin/phrases: 0 [-2.5, 1.5], bound ±80.75; VALID.
+- zhuyin/journals: 1 [-1.5, 4], bound ±81.27; VALID.
+
+Resident executable text, Rss KiB, at the same M1 checkpoints:
+
+| facade/profile | facade base / prototype / pin | libtkrzw base / prototype / pin |
+| --- | ---: | ---: |
+| pinyin/phrases | 508 / 508 / 464 | 1048 / 732 / 782 |
+| pinyin/journals | 508 / 508 / 464 | 1084 / 768 / 768 |
+| zhuyin/phrases | 520 / 520 / 448 | 1084 / 768 / 892 |
+| zhuyin/journals | 520 / 520 / 448 | 1084 / 768 / 888 |
+
+Prototype/control text readings are identical in every pair. libtkrzw text
+falls by 316 KiB in all four cells; facade text stays equal to base.
+This is the same-run page-residency observation, independent of the older
+#1098 attribution run. No gain is claimed against that older run's numbers.
+
+### Same-run instructions and stripped size
+
+Init Ir is the existing coordinator's constructors/init scope, excluding
+its first-candidate toggles. Every prototype init control is exact.
+
+| facade/profile | base Ir | prototype Ir | control Ir | pin Ir | prototype/base |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| pinyin/phrases | 10,406,235 | 10,207,527 | 10,207,527 | 338,876,836 | 0.980905 |
+| pinyin/journals | 10,437,692 | 10,238,312 | 10,238,312 | 338,949,787 | 0.980898 |
+| zhuyin/phrases | 10,018,978 | 9,889,759 | 9,889,759 | 338,538,947 | 0.987103 |
+| zhuyin/journals | 10,048,609 | 9,918,512 | 9,918,512 | 338,613,938 | 0.987053 |
+
+First-candidate control differences are −26, −144, −88 and +110 Ir;
+steady differences are −6,935, +4,889, +7,405 and −12,122 Ir, respectively.
+All are INVALID under the exact-count rule; no comparison is claimed for
+those scopes. All eight warm/cold init wall-time controls fail the existing
+[0.95, 1.05] stability rule, so wall-time effects remain inconclusive.
+The coordinator's cold samples evict the private facade copy only; no
+whole-data cold-time result is claimed. Original timing samples were retained.
+
+| stripped shipping library | base B | prototype/control B | pin B | increase over base |
+| --- | ---: | ---: | ---: | ---: |
+| libpinyin | 2,487,016 | 2,499,472 | 867,216 | +12,456 (+0.501%) |
+| libzhuyin | 2,245,352 | 2,249,616 | 838,520 | +4,264 (+0.190%) |
+
+### Store operations: partial, STOP
+
+The existing store-ops runner compares base, a same-bytes base control,
+and prototype against the same verified tkrzw system data. It has no pin
+store-trait arm; pin figures above cover the facade workloads and size.
+Every completed Callgrind row below has exactly equal base/control totals.
+No timing result is inferred from the profile-only worker's clocks.
+
+| operation | Ir/call base = control | prototype | prototype/base |
+| --- | ---: | ---: | ---: |
+| contains_raw.tree | 2561.40900000 | 2543.83920000 | 0.99314057 |
+| get_raw.tree.empty | 2568.47270000 | 2566.24065000 | 0.99913098 |
+| get_raw.tree.small | 2625.72620000 | 2621.84375000 | 0.99852138 |
+| get_raw.tree.medium | 2764.90380000 | 2746.36380000 | 0.99329452 |
+| get_raw.tree.large | 7850.43090000 | 7823.69900000 | 0.99659485 |
+| get_raw.tree.miss | 4211.21235000 | 4215.77705000 | 1.00108394 |
+| get_raw.tree.retain | 2885.38634375 | 2891.65478125 | 1.00217248 |
+
+The first detected increase, tree.miss, is 91,294 additional instructions
+over 20,000 calls. tree.retain completed while cancellation was in progress:
+200,590 additional instructions over 32,000 calls. The paired controls
+are exact in each case. These instruction increases accompany lower
+resident memory, triggering the task's explicit STOP. Later operations
+were not completed, and no attempt was made to explain away, tune or rerun
+the increases. No adoption or PR decision is made here.
+
+### Commands and retained local outputs
+
+Task root `R=/home/sheng/Documents/Codex/2026-10-24/task-3`.
+The exact orchestration and retention scripts are retained locally under
+`$R/campaign/records`, alongside their original output. No capture is
+committed or uploaded. Retention wrappers delegate to the existing
+coordinators without changing workloads, arguments, counters or statistics;
+they preserve original stdout/stderr, paused-worker smaps and DHAT files.
+The stock facade tool's final "no raw records retained" line describes
+its own scratch cleanup; the local wrappers retained originals separately.
+
+```sh
+export TMPDIR="$R/tmp"
+OXPINYIN_ORACLE_ENV="$R/setup.env" just heavy -- tools/cloud/setup.sh --cells 'bdb kc tkrzw'
+# Source only the task-owned setup output in each campaign shell.
+source "$R/setup.env"
+export PATH=/home/sheng/.cache/oxpinyin/fo-1018/cargo-c/bin:$PATH
+just heavy -- "$R/prepare-policies.sh"
+# install.sh with OXPINYIN_FUNCTION_ORDER_POLICY= builds unordered inputs;
+# contract-diff.py --teardown-stage provision prepares the pin fixtures;
+# generate-function-order.py runs twice, followed by cmp on both facades.
+just heavy -- bash "$R/build-ordered.sh"
+just heavy -- bash "$R/run-measurements.sh"
+# The last command invokes measure-function-order.py through its local
+# retention wrapper with --subject base=... --subject pr=...
+# --subject control=... --subject pin=..., both explicit base policies,
+# --cpu 2 --rounds 20, the generator's system identity and pinned profiles.
+# Then store-ops.py through its retention wrapper uses --profile-only
+# --keep-profiles --cpu 2, with isolated base/prototype bench binaries.
+```
+
+The exact measuring script SHA-256 is
+`64ca422a84e339cf88a8b8c682d48640831567620b67066a516347cbbe44d4a8`.
+Source/build-input/staged-library hashes, original profiler totals, timing
+samples and the exact as-run scripts remain in `$R/campaign/records`.
+Store Callgrind files remain in `$R/campaign/store-work/callgrind`.
+No archive was created. The kernel-notification watcher detected the STOP;
+SIGTERM went to the verified tools.dev slot supervisor, which reaped its
+owned process groups. No further heavy job was started.
+
+One initial inspection batch containing
+`cat /home/sheng/.oxpinyin-oracle.env` was denied by automatic approval
+review for possible credential/session-material exposure. The batch did
+not execute; that read was omitted. Supported setup wrote a task-owned
+environment file instead. No private environment content was printed.
+
 
 Initial record 2026-10-24T04:04:52Z. Branch `wip/1125-tkrzw-shim` was based directly on
 `wip/1114-tkrzw-record-copy` at `838dabc2fb86c9b221ba3bde914584596de075da`.
 Source checkpoint `58566b3c56c738981bdf5a199e954eb9598a0651` is an unfinished
 prototype. The cloud checks below supersede its original uncompiled status.
-No performance result exists for this prototype.
-The authorized rebase now places implementation commit `bceb13c0` directly
+At that cloud checkpoint, no performance result existed for this prototype.
+The cloud-era authorized rebase placed implementation commit `bceb13c0` directly
 on verified #1114 head `1dfd3e52e6fb02155c014856075aaf3955c8ab29`.
 The own implementation diff is unchanged; the rebase verification is below.
 The original local prototype `af357bdef8b993169f829a52583a7a7fe367db0e`
@@ -387,7 +585,9 @@ At the original local prototype, the final three checks exited 0. An initial fmt
 differences; cargo fmt corrected them before the passing check. These are
 light checks, not a completion gate.
 
-## Pending Ubuntu work
+## Cloud handoff before Ubuntu campaign (historical)
+
+Superseded by the Ubuntu results above; retained for checkpoint provenance.
 
 The checked-in tkrzw policies have not been regenerated for this prototype.
 Regeneration is the first Ubuntu-slot step, before measurement; fold those
