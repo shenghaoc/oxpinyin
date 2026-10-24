@@ -21,7 +21,8 @@ ARMS = ('base', 'pr', 'control')
 TIMING_METRICS = ('lib_load', 'init', 'config', 'alloc', 'first_candidate_phase', 'ttfc',
                   'setup_plus_first_candidate', 'drop_instance', 'fini', 'process_wall')
 DIAGNOSTIC_METRICS = ('minor_faults', 'major_faults', 'faults', 'pageins',
-                      'disk_bytes_read', 'disk_bytes_written')
+                      'disk_bytes_read', 'disk_bytes_written', 'instructions', 'cycles',
+                      'instructions_available', 'cycles_available')
 SAMPLE_SCHEMA = 'oxpinyin-initbench-sample-v1'
 OBSERVATION_SCHEMA = 'oxpinyin-initbench-observation-v1'
 
@@ -547,11 +548,17 @@ def campaign_run(args, profiles, work, admission):
                                 start = row['checkpoints']['start'].get('rss')
                                 return None if current is None or start is None else current - start
                             return row['checkpoints'][point].get(metric)
+                        fields = list(native.MEMORY_FIELDS)
+                        if sys.platform == 'darwin':
+                            fields.extend(native.DARWIN_COUNTER_FIELDS)
+                            fields.extend(native.DARWIN_AVAILABILITY_FIELDS)
                         for point in worker.POINTS:
-                            for metric in native.MEMORY_FIELDS:
+                            for metric in fields:
                                 values = {a: [memory_value(r, point, metric) for r in rows]
                                           for a, rows in samples.items()}
-                                unit = ('count' if metric in ('minor_faults', 'major_faults', 'faults', 'pageins')
+                                unit = ('count' if metric in ('minor_faults', 'major_faults', 'faults',
+                                                              'pageins', 'instructions', 'cycles')
+                                        else 'flag' if metric.endswith('_available')
                                         else 'bytes' if metric.startswith('disk_') else 'KiB')
                                 report_values('memory', values, facade=facade, profile=name, point=point,
                                               metric=metric, unit=unit)

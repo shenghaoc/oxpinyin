@@ -9,9 +9,14 @@ Sources: <sys/resource.h> (rusage_info_v4), <sys/proc_info.h>
 (proc_taskinfo and PROC_PIDTASKINFO), and <mach/task_info.h>
 (MACH_TASK_BASIC_INFO resident_size_max). resident_size_max is only readable
 with a task port, so a controller without one reports it unavailable instead
-of using another metric.
+of using another metric. XNU's fill_task_rusage copies ri_instructions and
+ri_cycles from task_power_info_extra, which is filled only under
+CONFIG_PERVASIVE_CPI; a host probe requires each counter to advance and
+reports an unpopulated one unavailable rather than zero.
 """
 import ctypes
+import os
+import time
 
 RUSAGE_INFO_V4 = 4
 PROC_PIDTASKINFO = 4
@@ -27,6 +32,10 @@ OBSERVATION_FIELDS = (
     'pageins',
     'disk_bytes_read',
     'disk_bytes_written',
+    'instructions',
+    'cycles',
+    'instructions_available',
+    'cycles_available',
 )
 
 
@@ -98,6 +107,7 @@ class MachTaskBasicInfo(ctypes.Structure):
 
 
 _libc = None
+_counter_availability = None
 
 
 def _system():
@@ -181,15 +191,50 @@ def resident_peak(pid):
         libc.mach_port_deallocate(libc.mach_task_self(), task)
 
 
+def _probe_counters():
+    """Return whether instructions and cycles advance across a forced context switch.
+
+    XNU's fill_task_rusage copies ri_instructions and ri_cycles from
+    task_power_info_extra, and task_power_info_locked fills that extra only
+    under CONFIG_PERVASIVE_CPI; otherwise the zero-initialised extra leaves
+    both counters at zero. The fields carry no separate "unsupported" marker.
+    A process that executes code must advance a backed counter, and Recount
+    publishes instructions and cycles at a context switch, so require an
+    increase across real work and a sleep. Both counters are probed
+    separately; an unchanged zero is unavailable, not a valid zero.
+    """
+    try:
+        before = rusage(os.getpid())
+        sum(range(20000))
+        time.sleep(0.02)
+        after = rusage(os.getpid())
+    except (OSError, AttributeError):
+        return (False, False)
+    return (int(after.ri_instructions) > int(before.ri_instructions),
+            int(after.ri_cycles) > int(before.ri_cycles))
+
+
+def counter_availability():
+    """Return cached (instructions, cycles) availability for this host."""
+    global _counter_availability
+    if _counter_availability is None:
+        _counter_availability = _probe_counters()
+    return _counter_availability
+
+
 def observation(pid):
     """Return every available Darwin observation, with None for a failed call.
 
-    rusage_info_v4 supplies resident and footprint sizes, disk I/O and the
-    footprint maxima. proc_taskinfo supplies the fault and page-in counts.
-    A failed source leaves only its own fields unavailable; no zero is
-    manufactured for a missing value.
+    rusage_info_v4 supplies resident and footprint sizes, disk I/O, the
+    footprint maxima, and the instruction/cycle counters. proc_taskinfo
+    supplies the fault and page-in counts. Counter availability is probed once
+    per host; a failed source leaves only its own fields unavailable, and no
+    zero is manufactured for a missing value.
     """
     result = dict.fromkeys(OBSERVATION_FIELDS)
+    instructions_available, cycles_available = counter_availability()
+    result['instructions_available'] = False
+    result['cycles_available'] = False
     try:
         usage = rusage(pid)
     except (OSError, AttributeError):
@@ -203,6 +248,12 @@ def observation(pid):
             disk_bytes_read=int(usage.ri_diskio_bytesread),
             disk_bytes_written=int(usage.ri_diskio_byteswritten),
         )
+        if instructions_available:
+            result['instructions'] = int(usage.ri_instructions)
+            result['instructions_available'] = True
+        if cycles_available:
+            result['cycles'] = int(usage.ri_cycles)
+            result['cycles_available'] = True
     try:
         info = taskinfo(pid)
     except (OSError, AttributeError):

@@ -4,14 +4,18 @@
 # Continues `tools/bisection/run-perf-baseline.sh`: same 20-input parse +
 # guess + count cycle (`bisect --perf`), now sampled with debug info.
 #
-# Prefers `samply record` (2026). Falls back to `cargo flamegraph` / the
-# `flamegraph` wrapper, then to `perf record`. Artifacts land under
-# `target/profile/`.
+# Linux prefers `samply record` (2026) and falls back to `cargo flamegraph` /
+# the `flamegraph` wrapper, then `perf record`, then Valgrind Callgrind. On
+# macOS samply is required: taskset/PERF_CPU, perf and its
+# perf_event_paranoid hint are Linux-only, and the Linux fallbacks are not
+# attempted. Artifacts land under `target/profile/`.
 #
 # Requirements:
 #   - exported tables (`PINYIN_EXPORT_DIR` or /tmp/oxpinyin-export)
 #   - pinned model20 cache (`tools/model/fetch-model.sh`)
 #   - cargo-c (`cargo cinstall --profile profiling`)
+#   - macOS: samply and `OXPINYIN_TKRZW_PREFIX` or `OXPINYIN_TKRZW_LIBRARY`
+#     so tools/tkrzw/runtime.sh can verify the staged dylib's libtkrzw
 #
 # Environment:
 #   PINYIN_EXPORT_DIR   tkrzw export (default /tmp/oxpinyin-export);
@@ -19,13 +23,18 @@
 #                       this cycle compares against is tkrzw)
 #   PINYIN_MODEL_DIR    extracted model20 (default target/model20/extracted)
 #   PERF_CYCLES         bisect cycles (default 32; drown pinyin_init)
-#   PERF_CPU            taskset CPU (optional)
+#   PERF_CPU            taskset CPU (Linux only; refused on macOS)
 #   PROFILE_REUSE_STAGE=1  reuse a previous cargo-c staging tree
+#   OXPINYIN_PROFILE_OS test override for the host name; native runs use uname
+#   OXPINYIN_TKRZW_PREFIX  Homebrew prefix for libtkrzw on macOS
 
 set -euo pipefail
 cd "$(dirname "$0")"
 SCRIPT_DIR="$(pwd)"
 REPO_ROOT="$(cd ../.. && pwd)"
+HOST_OS=${OXPINYIN_PROFILE_OS:-$(uname -s)}
+CHECK_ONLY=0
+[ "${1:-}" = --check ] && CHECK_ONLY=1
 source "$REPO_ROOT/tools/tkrzw/runtime.sh"
 BISECT_SRC="$REPO_ROOT/tools/bisection/bisect.c"
 
@@ -51,6 +60,34 @@ elif [ -n "${PINYIN_MODEL_CACHE:-}" ]; then
     MODEL_DIR="$PINYIN_MODEL_CACHE/extracted"
 else
     MODEL_DIR="$REPO_ROOT/target/model20/extracted"
+fi
+
+if [ "$HOST_OS" = Darwin ] && [ -n "${PERF_CPU:-}" ]; then
+    echo "fatal: PERF_CPU is unsupported on macOS: Mach affinity is a cache hint, not CPU pinning; unset PERF_CPU." >&2
+    exit 2
+fi
+if [ "$HOST_OS" = Darwin ] && ! command -v samply >/dev/null 2>&1; then
+    echo "fatal: samply is required on macOS; install it (for example: cargo install samply) or put it on PATH." >&2
+    exit 1
+fi
+if [ "$CHECK_ONLY" = 1 ]; then
+    if [ "$HOST_OS" = Darwin ]; then
+        echo "profile platform: Darwin; profiler=samply"
+        echo "note: taskset and PERF_CPU are unsupported on macOS: Mach affinity is a cache hint, not CPU pinning" >&2
+        echo "note: perf record and the perf_event_paranoid hint are Linux-only; skipped on macOS" >&2
+    else
+        echo "profile platform: $HOST_OS; profiler fallback chain: samply, flamegraph, perf, valgrind"
+    fi
+    exit 0
+fi
+if [ "$HOST_OS" = Darwin ] && ! cargo cinstall --version >/dev/null 2>&1; then
+    echo "fatal: cargo-c is required on macOS; install cargo-cinstall or put it on PATH." >&2
+    exit 1
+fi
+if [ "$HOST_OS" = Darwin ] && [ -z "${OXPINYIN_TKRZW_PREFIX:-}" ] && \
+   [ -z "${OXPINYIN_TKRZW_LIBRARY:-}" ]; then
+    echo "fatal: set OXPINYIN_TKRZW_PREFIX or OXPINYIN_TKRZW_LIBRARY so runtime.sh can verify libtkrzw." >&2
+    exit 1
 fi
 
 file_sha256() {
@@ -128,47 +165,96 @@ echo "  cycles: $CYCLES"
 
 # ── cargo-c install with the profiling profile ──────────────────────────
 
-if [ -f "$STAGE/usr/lib64/pkgconfig/oxpinyin.pc" ] && \
-   [ -f "$STAGE/usr/lib64/libpinyin_capi.so" ] && \
-   [ "${PROFILE_REUSE_STAGE:-0}" = "1" ]; then
-    echo "--- reusing stage: $STAGE ---"
+if [ "$HOST_OS" = Darwin ]; then
+    if [ -f "$STAGE/usr/lib/pkgconfig/libpinyin.pc" ] && \
+       ls "$STAGE"/usr/lib/libpinyin*.dylib >/dev/null 2>&1 && \
+       [ "${PROFILE_REUSE_STAGE:-0}" = "1" ]; then
+        echo "--- reusing stage: $STAGE ---"
+    else
+        echo "--- cargo cinstall --profile profiling -> $STAGE ---"
+        rm -rf "$STAGE"
+        # Homebrew's native libraries are outside the shared cache; opt the
+        # profiling dylib out so the linker can bind them.
+        export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }-C link-arg=-Wl,-not_for_dyld_shared_cache"
+        cargo cinstall --locked --profile profiling --no-default-features --features tkrzw \
+            -p oxpinyin-capi --destdir="$STAGE" --prefix=/usr \
+            --manifest-path "$REPO_ROOT/Cargo.toml"
+    fi
+    export PKG_CONFIG_PATH="$STAGE/usr/lib/pkgconfig:$STAGE/usr/lib64/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+    export PKG_CONFIG_SYSROOT_DIR="$STAGE"
+    CAPI_LIBDIR=$(pkg-config --variable=libdir libpinyin)
+    [ -n "$CAPI_LIBDIR" ] || CAPI_LIBDIR=$(pkg-config --variable=libdir oxpinyin)
+    CAPI_SO=
+    for candidate in libpinyin.dylib libpinyin.15.dylib libpinyin.15.0.0.dylib libpinyin_capi.dylib; do
+        if [ -f "$CAPI_LIBDIR/$candidate" ]; then
+            CAPI_SO="$CAPI_LIBDIR/$candidate"
+            break
+        fi
+    done
 else
-    echo "--- cargo cinstall --profile profiling -> $STAGE ---"
-    rm -rf "$STAGE"
-    cargo cinstall --locked --profile profiling -p oxpinyin-capi \
-        --destdir="$STAGE" --prefix=/usr \
-        --manifest-path "$REPO_ROOT/Cargo.toml"
+    if [ -f "$STAGE/usr/lib64/pkgconfig/oxpinyin.pc" ] && \
+       [ -f "$STAGE/usr/lib64/libpinyin_capi.so" ] && \
+       [ "${PROFILE_REUSE_STAGE:-0}" = "1" ]; then
+        echo "--- reusing stage: $STAGE ---"
+    else
+        echo "--- cargo cinstall --profile profiling -> $STAGE ---"
+        rm -rf "$STAGE"
+        cargo cinstall --locked --profile profiling -p oxpinyin-capi \
+            --destdir="$STAGE" --prefix=/usr \
+            --manifest-path "$REPO_ROOT/Cargo.toml"
+    fi
+    export PKG_CONFIG_PATH="$STAGE/usr/lib64/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+    export PKG_CONFIG_SYSROOT_DIR="$STAGE"
+    CAPI_LIBDIR=$(pkg-config --variable=libdir oxpinyin)
+    CAPI_SO="$CAPI_LIBDIR/libpinyin_capi.so"
 fi
-
-export PKG_CONFIG_PATH="$STAGE/usr/lib64/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
-export PKG_CONFIG_SYSROOT_DIR="$STAGE"
-CAPI_LIBDIR=$(pkg-config --variable=libdir oxpinyin)
-CAPI_SO="$CAPI_LIBDIR/libpinyin_capi.so"
 CAPI_DATA="$STAGE/usr/share/oxpinyin"
 [ -f "$CAPI_SO" ] || { echo "fatal: $CAPI_SO not found" >&2; exit 1; }
 
 # cargo-c does not install data files; this is the documented packager step.
 mkdir -p "$CAPI_DATA"
-cp -L "$EXPORT_DIR/pinyin_index.bin" \
-      "$EXPORT_DIR/phrase_index.bin" \
-      "$EXPORT_DIR/bigram.db" "$CAPI_DATA/"
+if [ "$HOST_OS" = Darwin ]; then
+    # The native engine resolves the remaining character, merged and table
+    # files from the same directory; copy the export's data set, not only the
+    # three files the validation above requires.
+    cp -L "$EXPORT_DIR"/*.bin "$CAPI_DATA/"
+    cp -L "$EXPORT_DIR/bigram.db" "$CAPI_DATA/"
+    [ ! -f "$EXPORT_DIR/table.conf" ] || cp -L "$EXPORT_DIR/table.conf" "$CAPI_DATA/"
+else
+    cp -L "$EXPORT_DIR/pinyin_index.bin" \
+          "$EXPORT_DIR/phrase_index.bin" \
+          "$EXPORT_DIR/bigram.db" "$CAPI_DATA/"
+fi
 cp -L "$MODEL_DIR/interpolation2.text" "$CAPI_DATA/interpolation2.text"
-echo "installed capi .so:  $CAPI_SO"
+if [ "$HOST_OS" = Darwin ]; then
+    echo "installed capi dylib: $CAPI_SO"
+else
+    echo "installed capi .so:  $CAPI_SO"
+fi
 echo "installed capi data: $CAPI_DATA"
 
 # ── Harness ─────────────────────────────────────────────────────────────
 
 echo "--- building bisect --perf harness ---"
-gcc -std=gnu11 -Wall -Wextra -Werror -O2 -g \
-    -o "$PROFILE_DIR/bisect" "$BISECT_SRC" -ldl
+if [ "$HOST_OS" = Darwin ]; then
+    cc -std=gnu11 -Wall -Wextra -Werror -O2 -g \
+        -o "$PROFILE_DIR/bisect" "$BISECT_SRC"
+else
+    gcc -std=gnu11 -Wall -Wextra -Werror -O2 -g \
+        -o "$PROFILE_DIR/bisect" "$BISECT_SRC" -ldl
+fi
 
-export LD_LIBRARY_PATH="$CAPI_LIBDIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+if [ "$HOST_OS" != Darwin ]; then
+    export LD_LIBRARY_PATH="$CAPI_LIBDIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
 export PERF_BACKEND=oxpinyin
 export PERF_MODE=speed
 export PERF_CYCLES="$CYCLES"
 
 run_pinned() {
-    if [ -n "${PERF_CPU:-}" ] && command -v taskset >/dev/null 2>&1; then
+    if [ "$HOST_OS" = Darwin ]; then
+        "$@"
+    elif [ -n "${PERF_CPU:-}" ] && command -v taskset >/dev/null 2>&1; then
         taskset -c "$PERF_CPU" "$@"
     else
         "$@"
@@ -206,11 +292,21 @@ if command -v samply >/dev/null 2>&1; then
         echo "samply profile: $PROFILE_JSON"
         recorded=1
     else
-        echo "warning: samply failed (often /proc/sys/kernel/perf_event_paranoid > 1); falling back" >&2
+        if [ "$HOST_OS" = Darwin ]; then
+            echo "error: samply failed; macOS has no perf or Callgrind fallback." >&2
+            exit 1
+        else
+            echo "warning: samply failed (often /proc/sys/kernel/perf_event_paranoid > 1); falling back" >&2
+        fi
     fi
 fi
 
-if [ "$recorded" -eq 0 ] && command -v flamegraph >/dev/null 2>&1; then
+if [ "$HOST_OS" = Darwin ]; then
+    echo "note: perf record and the perf_event_paranoid hint are Linux-only; skipped on macOS" >&2
+    echo "note: flamegraph and Valgrind/Callgrind fallbacks are not used on macOS; samply is required" >&2
+fi
+
+if [ "$HOST_OS" != Darwin ] && [ "$recorded" -eq 0 ] && command -v flamegraph >/dev/null 2>&1; then
     echo "--- flamegraph wrapper (cargo-flamegraph) ---"
     if run_pinned flamegraph -o "$FLAMEGRAPH_SVG" -- \
         "${CYCLE_CMD[@]}" | tee "$TIMING_JSON"
@@ -222,7 +318,7 @@ if [ "$recorded" -eq 0 ] && command -v flamegraph >/dev/null 2>&1; then
     fi
 fi
 
-if [ "$recorded" -eq 0 ] && command -v perf >/dev/null 2>&1; then
+if [ "$HOST_OS" != Darwin ] && [ "$recorded" -eq 0 ] && command -v perf >/dev/null 2>&1; then
     echo "--- perf record ---"
     if run_pinned perf record --call-graph dwarf -F 999 -o "$PERF_DATA" -- \
         "${CYCLE_CMD[@]}" | tee "$TIMING_JSON"
@@ -240,7 +336,7 @@ if [ "$recorded" -eq 0 ] && command -v perf >/dev/null 2>&1; then
     fi
 fi
 
-if [ "$recorded" -eq 0 ] && command -v valgrind >/dev/null 2>&1; then
+if [ "$HOST_OS" != Darwin ] && [ "$recorded" -eq 0 ] && command -v valgrind >/dev/null 2>&1; then
     echo "--- valgrind callgrind (no perf_events needed) ---"
     CALLGRIND_OUT="$PROFILE_DIR/callgrind.out"
     run_pinned valgrind --tool=callgrind --error-exitcode=0 \
