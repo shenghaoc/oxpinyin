@@ -8605,6 +8605,9 @@ def conf_guess_rows(k, inst, limit=12):
 
 
 def conf_sentence(k, inst):
+    """Read the first sentence, returning None for both untouched output and NULL.
+
+    Ignore the native flag; decode/free returned text with Kit.text."""
     out = P(UNTOUCHED)
     if k.mode == 'pinyin':
         k.fn('get_sentence', B, P, C.c_ubyte, C.POINTER(P))(inst, 0, C.byref(out))
@@ -8676,6 +8679,12 @@ def conf_session(k, system):
 # system chunks, user chunks and journals. The store trait laws also
 # exercise '#' in actual TreeDB/HashDB filenames, without a symlink.
 def hash_path_fixture(k, placement):
+    """Put literal #type=kct text into the selected private directory or configured filename.
+
+    placement selects system-directory, user-directory, system-filename or
+    user-filename; otherwise raise ValueError. Rename directories or replace
+    the private table.conf link, update k.data and optionally k.user, and return
+    (system chunk name, journal name, user chunk name). Do not initialize a context."""
     system = private_system(k)
     system_name, journal_name, user_name = 'gb_char.bin', 'gb_char.dbin', 'user.bin'
     if placement == 'system-directory':
@@ -8705,7 +8714,14 @@ def hash_path_fixture(k, placement):
 
 
 def hash_path_session(placement):
+    """Build a training/import/save/reopen case using the selected literal-hash path placement."""
     def probe(k):
+        """Assert trained and imported counts survive saving through the renamed paths.
+
+        Check expected files and absence of replaced names, reopen after clearing
+        cached pointers, and compare unigram outputs. Close again, then launch the
+        companion pinyin library's export worker with AXIS_C_REOPEN_USER. Require
+        zero exit and nonempty JSON export rows; the subprocess has no timeout here."""
         system_name, journal_name, user_name = hash_path_fixture(k, placement)
         out = {'training': token_unigram_trained(k),
                'import': token_unigram_user(k, add_frequency=False)}
@@ -8779,8 +8795,14 @@ CONF_ZHUYIN_CHANGED = {'lambda-zero', 'lambda-one', 'lambda-tiny'}
 
 def conf_case(name, *edits, modes=('pinyin', 'zhuyin'), session=conf_session,
               issues=('694', '525'), **options):
+    """Register edited-config session cases for the selected facades.
+
+    Compute control status from the named control sets, allowing options to
+    override it. Each registered callable builds a private system when run;
+    registration itself does not initialize native state."""
     for mode in modes:
         def probe(k, edits=edits):
+            """Apply the captured config edits and return the selected session's observations."""
             return session(k, conf_system(k, *edits))
         control = name in CONF_CONTROLS and not (mode == 'zhuyin' and name in CONF_ZHUYIN_CHANGED)
         case('table-conf-' + name + ('-zhuyin' if mode == 'zhuyin' else ''), mode=mode,
@@ -8847,8 +8869,17 @@ conf_case('addon-duplicate-row', ('+', 'addon 4 culture.table culture.bin NULL D
 # warning; `userdir` holds the profile the pin has written by then.
 def conf_abort(name, *edits, call='init', userdir=True, modes=('pinyin', 'zhuyin'), ret=False,
                dir_chunk=None, control=False, issues=('694', '525')):
+    """Register expected-abort config cases for initialization or a library load.
+
+    call='init' tests initialization; otherwise unpack (kind, index), using
+    'load' for a normal library and any other kind for an addon. Forward expected
+    ret, userdir, directory-chunk and control metadata to case registration."""
     for mode in modes:
         def probe(k, edits=edits):
+            """Initialize with the captured config edits and perform the selected load if requested.
+
+            Return its truth/flag as ret; loads require successful initialization and
+            leave the context live."""
             system = conf_system(k, *edits)
             if call == 'init':
                 return {'ret': bool(k.init(system=system))}
@@ -8878,6 +8909,9 @@ conf_abort('addon-index-negative', ('+', 'addon -1 x.table x.bin NULL DICTIONARY
 # converter above.
 @case('user-conf-abort-database-format-unknown', abort=False, userdir=True, issues=('694', '525'))
 def _(k):
+    """Write an LMDB database-format marker into user.conf and record initialization truth.
+
+    Assert the replacement matched before overwriting the profile marker."""
     _write_user_conf(k)
     path = os.path.join(k.user, 'user.conf')
     with open(path) as user_conf:
@@ -8939,7 +8973,11 @@ conf_abort('source-format-line-missing', ('-', 'source table format'))
 # The pin's ordinary `false`: a header directive that does not match answers
 # NULL with the raw `load %s failed!` line and no warning.
 def header_probe(*edits, issues=('694', '525')):
+    """Build an initialization-only probe with text config edits.
+
+    The issues argument is unused here; registration owns issue metadata."""
     def probe(k):
+        """Create the edited private system and return the new context's truth value."""
         return {'ctx': bool(k.init(system=conf_system(k, *edits)))}
     return probe
 
@@ -8970,14 +9008,21 @@ for _name, _spelling in (('hex', '0x1p-1'), ('hex-fraction', '0x.8'), ('hex-uppe
 # spellings the stock file uses. `control=True` cases already agree with the
 # parent; the three incomplete-exponent spellings are the mutation targets.
 def conf_919_case(name, mutate, **options):
+    """Register both facade sessions with a raw-byte config mutation under issue 919.
+
+    Forward options to case registration; each callable applies mutate only when run."""
     for mode in ('pinyin', 'zhuyin'):
         def probe(k, mutate=mutate):
+            """Apply the captured byte mutation to private table.conf and run the standard config session."""
             return conf_session(k, conf_system_bytes(k, mutate))
         case('table-conf-919-' + name + ('-zhuyin' if mode == 'zhuyin' else ''),
              mode=mode, issues=('919',), **options)(probe)
 
 
 def one_line_conf(data):
+    """Join the first six newline-delimited config fields with spaces and retain the remaining bytes.
+
+    Insert two newlines before the remainder; fewer than six newlines raises IndexError."""
     parts = data.split(b'\n', 6)
     return b' '.join(parts[:6]) + b'\n\n' + parts[6]
 
@@ -8996,6 +9041,7 @@ conf_919_case('word-nul-truncates',
 
 
 def header_919(name, *edits, control=True, host_scanf=()):
+    """Register initialization-only header cases for both facades with stderr and scanner metadata."""
     for mode in ('pinyin', 'zhuyin'):
         case('table-conf-919-' + name + ('-zhuyin' if mode == 'zhuyin' else ''),
              mode=mode, stderr=True, issues=('919',), control=control,
@@ -9077,6 +9123,10 @@ conf_abort('919-addon-positive-overflow',
 # A file name never leaves its directory: `g_build_filename(user_dir,
 # "/abs/u.bin")` is `<user_dir>/abs/u.bin`, not `/abs/u.bin`.
 def absolute_user_file(k):
+    """Observe where a configured absolute-looking user filename is written.
+
+    Create both the named nested directory and its user-root-prefixed counterpart,
+    run a trained config session and return listings of both destinations."""
     nested = k.user + '/nest'
     os.makedirs(nested)
     os.makedirs(k.user + nested)
@@ -9104,8 +9154,10 @@ conf_case('user-file-not-utf8', ('user.bin USER_FILE', 'u\udcff.bin USER_FILE'))
 # of the set is given two roles one name, the later writer's contents are what
 # the first rename moves into place, and the second rename fails.
 def stderr_conf_case(name, *edits):
+    """Register both facade config sessions with stderr comparison enabled."""
     for mode in ('pinyin', 'zhuyin'):
         def probe(k, edits=edits):
+            """Build the captured edited system and return the standard session's observations."""
             return conf_session(k, conf_system(k, *edits))
         case('table-conf-' + name + ('-zhuyin' if mode == 'zhuyin' else ''), mode=mode, stderr=True, issues=('694', '525'))(probe)
 
@@ -9120,7 +9172,12 @@ stderr_conf_case('log-named-like-a-library', ('gb_char.dbin SYSTEM_FILE', 'user.
 # candidate listing at items that are not there; the pin's duplicate removal
 # compares a string it never set (`pinyin.cpp:1635-1637`, `:2053`, SIGSEGV).
 def candidates_probe(*edits):
+    """Build a candidate-guess case against the supplied config edits."""
     def probe(k):
+        """Initialize the edited system, parse its first configured input and record sentence/candidate flags.
+
+        Assert init and collect candidate rows through conf_guess_rows even though
+        only its flag is returned. Leave the instance and context live."""
         ctx = k.init(system=conf_system(k, *edits))
         assert ctx, 'init failed'
         inst = k.fn('alloc_instance', P, P)(ctx)
@@ -9149,6 +9206,12 @@ for _mode in ('pinyin', 'zhuyin'):
 # exposes up to three indexed sentences; zhuyin exposes its <1, 1> result
 # and has no SORT_WITHOUT_SENTENCE_CANDIDATE argument. Keep complete lists.
 def final_step_sentences(k, inst):
+    """Read available sentence texts without letting a missing pinyin rank abort this worker.
+
+    Zhuyin reads once directly. Pinyin forks for ranks zero through two, silences
+    child stderr, receives JSON through a pipe and reaps each child. Stop on
+    SIGABRT or a false getter; assert other exits are successful with a payload.
+    There is no per-child timeout here; returned strings are freed in the reader."""
     if k.mode == 'zhuyin':
         ret, text = zhuyin_sentence_out(k, inst)
         return [text] if ret else []
@@ -9186,7 +9249,13 @@ def final_step_sentences(k, inst):
 
 
 def final_step_surface(text, options, imported=False):
+    """Build a complete sentence/candidate observation with optional user phrase 罢跨."""
     def probe(k):
+        """Apply options, optionally import 罢跨, then parse, guess and collect available sentence ranks.
+
+        Pinyin records six sort-word lists and each displayed NBEST row's original
+        rank; zhuyin records one after-cursor list. Assert setup and rank getters;
+        leave the cached native objects live."""
         assert k.fn('set_options', B, P, U)(k.ctx, options)
         if imported:
             # USER_DICTIONARY; the zhuyin importer takes zhuyin spelling.
@@ -9242,6 +9311,9 @@ for _mode in ('pinyin', 'zhuyin'):
 # zhuyin.cpp:788-820). The separate phrase table keeps the imported token,
 # so token_get_phrase, rather than lookup_tokens, observes the reload.
 def token_phrase_of(k, token):
+    """Return a token's phrase getter flag, length and decoded owned text.
+
+    Initialize outputs to zero, ignore failure for decoding, and free non-NULL text."""
     length, text = U(), P()
     ret = k.fn('token_get_phrase', B, P, U, C.POINTER(U), C.POINTER(P))(
         k.inst, token, C.byref(length), C.byref(text))
@@ -9250,6 +9322,14 @@ def token_phrase_of(k, token):
 
 def mask_out_system_reload(k, saved, mask=0xFFFFFFFF, selected=False, atomic=False,
                            headerless=False, dropped=False):
+    """Observe an imported system item across save/log rewriting and mask-out.
+
+    Import 龘龘 into library one and assert its unique token. saved writes a
+    baseline; headerless strips its leading 18-byte MODIFY_HEADER. selected
+    uses the token's low bits as mask value. atomic also imports an unsaved
+    library-two item and checks files, tokens and a bumped frequency afterward.
+    dropped additionally observes a unigram add and sentence lookup. Return
+    native flags and before/after observations without closing cached objects."""
     phrase = '龘龘'
     assert not tokens_of(k, phrase), 'the setup phrase already exists'
     it = k.fn('begin_add_phrases', P, P, U)(k.ctx, 1)
@@ -9331,6 +9411,14 @@ for _mode in ('pinyin', 'zhuyin'):
 
 
 def mask_out_system_modify(k, header=True, disk=False):
+    """Replace 你 with 龘 in a journal or private system chunk, then observe mask-out.
+
+    Assert the fixed library-one item is a single 你. disk initializes a private
+    system first and replaces its chunk; otherwise write a MODIFY log with an
+    optional header. Retain item size/unigram using SubPhraseIndex::get_phrase_item
+    in src/storage/phrase_index.cpp:180-205 and PhraseIndexLogger::next_record in
+    src/storage/phrase_index_logger.h:158-211 at pin 074a2219. Return phrase and table
+    observations before/after; leave the context live."""
     # MODIFY passes both non-null pointers supplied by _mask_out_records;
     # ADD does not (phrase_index_logger.h:245, :267-268). Keep the item
     # size and unigram unchanged, replacing only 你's one-character text.
@@ -9410,6 +9498,7 @@ def _modify_header(token, old_total, new_total):
 
 
 def _write_log(k, payload, name='gb_char.dbin'):
+    """Overwrite the named user log with payload framed by the chunk length and checksum."""
     Path(k.user, name).write_bytes(_chunk(payload))
 
 
@@ -9587,10 +9676,16 @@ def _flip(item):
 
 
 def _item_text(item):
+    """Decode the item's counted four-byte little-endian character fields.
+
+    Use PhraseItem::get_phrase_string's layout in src/storage/phrase_index.cpp:103-105
+    at pin 074a2219. Do not validate total extent; chr rejects values above
+    Unicode's maximum and an absent count byte raises IndexError."""
     return ''.join(chr(int.from_bytes(item[6 + 4 * i:10 + 4 * i], 'little')) for i in range(item[0]))
 
 
 def _observe_system_item(k, watched, phrase):
+    """Collect watched tokens' phrase/unigram outputs plus phrase-table matches and library-one exports."""
     out = {name: [token_phrase_of(k, token), unigram_of(k, token)] for name, token in watched.items()}
     # The phrase table keeps the token whatever the sub-index holds.
     out['phrase-table'] = list(tokens_of(k, phrase))
@@ -9653,6 +9748,10 @@ def system_replay(k, build, reopen=False, unigram_add=True, observe_add=False, o
 
 def _replay_case(name, build, reopen=False, unigram_add=True, observe_add=False, observe=None,
                  observe_saved=False, extra_issues=(), **options):
+    """Register both facade replay cases with the supplied builder and observation options.
+
+    Enable stderr comparison and combine the replay issue IDs with extra_issues;
+    the lambdas defer file mutation and native work until case execution."""
     for mode in ('pinyin', 'zhuyin'):
         case('replay-' + name + '-' + mode, mode=mode, stderr=True,
              issues=('851', '850', '870') + tuple(extra_issues), **options)(
@@ -9661,6 +9760,7 @@ def _replay_case(name, build, reopen=False, unigram_add=True, observe_add=False,
 
 
 def _watch(p):
+    """Return the standard watched-token mapping for the existing one and fresh fixture items."""
     return {'one': p['one'][0], 'fresh': p['fresh'][0]}
 
 
@@ -9677,6 +9777,14 @@ _replay_case('unigram-add-overridden-item-reopen', lambda p: (
 # :237-269, :392-436, :648-675; pinyin.cpp:956, :1132-1145,
 # :1253-1285, and phonetic_lookup.h:925-929 at 074a2219.
 def unigram_lifecycle(k, variant):
+    """Observe a system unigram through the selected mutation, dirty save and reopen sequence.
+
+    Work on private system links and a single-character item (你 for import-system).
+    Variants prepare removed, wrapping, overflowing or missing items, repeat adds,
+    reload/mask a library, replace its disk bytes, import a system reading or train.
+    Record clean/dirty save flags, journal size/hash/records and post-reopen adds.
+    timing additionally performs 1000 increments and emits diagnostic nanoseconds;
+    repeat performs a second dirty save/reopen. Leave the final context live."""
     system = private_system(k)
     k.data = system
     name = 'gbk_char.bin' if variant == 'reload' else 'gb_char.bin'
@@ -9787,6 +9895,11 @@ for _mode in ('pinyin', 'zhuyin'):
 
 
 def unigram_null_user_save(k):
+    """Exercise unigram updates around a save with a literal NULL user directory.
+
+    Replace a private library's stored total with 0xfffffffb, initialize and
+    attempt increments of two and four around save. Return count and dynamic
+    pricing observations without assuming either update succeeds."""
     # The pin's save guards precede compact (pinyin.cpp:1132-1145,
     # zhuyin.cpp:547-554). Both C facades already enforce those guards;
     # direct reporting-helper coverage is a user-store unit test.
@@ -9831,6 +9944,7 @@ _replay_case('unigram-refused-changed-reading-reopen', lambda p: (
 
 
 def _add_fresh(p):
+    """Encode an ADD for the builder's fresh token and item bytes."""
     return _log_record(_LOG_ADD, p['fresh'][0], new=p['fresh'][1])
 
 
@@ -9841,6 +9955,7 @@ _replay_case('unigram-add-appended-item-reopen', lambda p: (
 
 
 def _matched_remove(p):
+    """Build a matching REMOVE followed by a fresh ADD and return the standard watched tokens."""
     return [_log_record(_LOG_REMOVE, p['one'][0], old=p['one'][1]), _add_fresh(p)], _watch(p)
 
 
@@ -9873,6 +9988,10 @@ def _compare_case(name, build, **options):
 # ascending slots (074a2219 phrase_index.cpp:392-436,439-517). Repeated,
 # out-of-order writes leave each slot's final value, including after reopen.
 def _touched_order(p):
+    """Build descending-token MODIFY records and a repeated update to the lower token.
+
+    Set last pronunciation frequencies to 77 then 99 and watch both source items
+    plus the fresh token; do not execute a replay."""
     rows = sorted((p['one'], p['two']), reverse=True, key=lambda row: row[0])
     records = [_log_record(_LOG_MODIFY, token, old=item, new=_item_with(item, freq=77))
                for token, item in rows]
@@ -9888,6 +10007,10 @@ _compare_case('touched-order-duplicates-reopen', _touched_order, reopen=True)
 # #870: unigram candidates are per slot, not a whole-library zero-change
 # proof. Counts stay absolute in the pin's mapped items (phrase_index.h:124-126).
 def _seed_mixed(p):
+    """Build one frequency override and two successive unigram overrides on the other item.
+
+    Encode 77 for one's last frequency and 71 then 93 for two's unigram;
+    return the records and watched tokens."""
     token, item = p['two']
     return [
         _log_record(_LOG_MODIFY, p['one'][0], old=p['one'][1],
@@ -9925,6 +10048,10 @@ _compare_case('seed-stale-storage-unigram-reopen', lambda p: ([
 
 
 def _touched_sparse_edits(p):
+    """Build relocation, replacement and sparse-slot add/remove records in a fixed sequence.
+
+    Use high token 0x01040000, retain a trailing-byte growth fixture, and return
+    records plus watched tokens without touching files."""
     token, item = p['one']
     moved = _item_with(item, freq=77)
     high = 0x01040000  # sparse slot 262144; no full-token-range fixture
@@ -9959,7 +10086,15 @@ _compare_case('modify-trailing-old', lambda p: ([
 # the growing path stores all of it, and the item is still its header's
 # length, so the next record compares against the header-length bytes.
 def _modify_grow(stored_old=False):
+    """Build a record factory for growing an item with trailing bytes before modifying it again.
+
+    stored_old decides whether the second record compares those trailing bytes
+    or only the first replacement's header-sized content."""
     def build(p):
+        """Encode two modifications of one followed by a fresh ADD.
+
+        Set the first unigram to the original low unigram byte plus 500, append three
+        bytes, then change its last frequency from five to nine. Return watched tokens."""
         token, item = p['one']
         new = _item_with(item, unigram=item[2] + 500, freq=5)
         trailing = b'\x01\x02\x03'
@@ -9981,7 +10116,13 @@ _compare_case('modify-trailing-new-grow-stored-old', _modify_grow(True))
 # gives a shorter item, so the second record compares against that, and not
 # against the bytes the memmove left behind it.
 def _modify_in_place(stored_old=False):
+    """Build a record factory that drops one reading but stores four trailing bytes.
+
+    stored_old includes those bytes in the second record's expected old payload."""
     def build(p):
+        """Shorten two by six bytes, append a four-byte tail and encode a second frequency update.
+
+        Assert the new header size, append a fresh ADD, and return records and watched tokens."""
         token, item = p['two']
         new = bytes((item[0], item[1] - 1)) + item[2:-6]
         assert _item_size(new) == len(item) - 6
@@ -10000,6 +10141,9 @@ _compare_case('modify-trailing-new-in-place-stored-old', _modify_in_place(True))
 # An empty phrase is an item of `6 + 4n` bytes. In place, then once more
 # against the shorter item.
 def _modify_empty(p):
+    """Encode two replacements of one with a six-byte empty-phrase item, then a fresh ADD.
+
+    Keep its initial unigram for the first record and use three for the second."""
     token, item = p['one']
     empty = bytes((0, 0)) + item[2:6]
     return ([_log_record(_LOG_MODIFY, token, old=item, new=empty),
@@ -10030,6 +10174,7 @@ _compare_case('failed-remove', lambda p: ([
 # the failure and compares a stale `item` (`:478-483`), the default one with no
 # earlier MODIFY, else the last item a MODIFY fetched.
 def _watch_absent(p):
+    """Extend the standard watched-token mapping with the absent fixture token."""
     return dict(_watch(p), absent=p['absent'][0])
 
 
@@ -10051,7 +10196,14 @@ _compare_case('modify-absent', lambda p: ([
 # new chunk is `memmove`d over `two` (`:495-500`), the growing one meets the
 # NULL of REMOVE's assert (`:486-491`).
 def _modify_absent_stale(grow):
+    """Build records that modify two, then address an absent token using two's replacement bytes.
+
+    grow appends one byte to the absent-token replacement; both forms finish
+    with a fresh ADD and the absent-token watch set."""
     def build(p):
+        """Encode frequency 21 on two, then frequency 22 through the absent-token record.
+
+        Optionally grow that replacement by one byte; return records without replaying them."""
         token, item = p['two']
         first = _item_with(item, freq=21)
         new = _item_with(first, freq=22)
@@ -10089,7 +10241,11 @@ _ZERO_ITEM = bytes(6)
 
 
 def _modify_absent_default(twice=False):
+    """Build an absent-token MODIFY sequence beginning with a six-zero-byte expected item.
+
+    twice adds a second six-byte replacement before the trailing fresh ADD."""
     def build(p):
+        """Encode absent-token unigram 50 and optionally 60, then return a fresh ADD and watches."""
         first = bytes((0, 0)) + (50).to_bytes(4, 'little')
         records = [_log_record(_LOG_MODIFY, p['absent'][0], old=_ZERO_ITEM, new=first)]
         if twice:
@@ -10153,6 +10309,10 @@ def _cross_item_pair(p):
 
 
 def _cross_item_records(p):
+    """Encode a 30-byte claimed A item whose second MODIFY changes B's overlapping unigram.
+
+    Assert the borrowed extent fits B, choose 170 or 171 to differ from its
+    original value, append a fresh ADD and watch all three tokens."""
     token_a, item_a, token_b, item_b = _cross_item_pair(p)
     expanded = bytes((2, 2)) + (200).to_bytes(4, 'little')
     claimed = _item_size(expanded[:2])
@@ -10173,6 +10333,11 @@ def _cross_item_records(p):
 
 
 def _cross_item_records_past_area(p):
+    """Encode an ADD followed by two A modifications claiming a 38-byte cross-item view.
+
+    Assemble the comparison bytes from A, all of B and a fresh-item prefix;
+    assert the resulting extent. Change the overlapping B unigram to 170 or
+    171 and return A/B/fresh watches without replaying records."""
     token_a, item_a, token_b, item_b = _cross_item_pair(p)
     expanded = bytes((2, 3)) + (200).to_bytes(4, 'little')
     claimed = _item_size(expanded[:2])
@@ -10194,6 +10359,10 @@ def _cross_item_records_past_area(p):
 
 
 def _observe_replayed_item(k, token):
+    """Collect a replayed token's phrase, pronunciation keys, unigram and matching export rows.
+
+    Render the token as eight hexadecimal digits; use 'NO PHRASE' when its
+    phrase getter fails or yields empty text."""
     phrase = token_phrase_of(k, token)
     text = phrase[2] if phrase[0] else None
     return {'token': '0x%08x' % token,
@@ -10204,6 +10373,7 @@ def _observe_replayed_item(k, token):
 
 
 def _observe_cross_item(k):
+    """Select the adjacent fixture pair from the original system bytes and observe both live tokens."""
     _total, items, offsets = _system_items(k)
     token_a, _item_a, token_b, _item_b = _cross_item_pair({'items': items, 'offsets': offsets})
     return {'a': _observe_replayed_item(k, token_a), 'b': _observe_replayed_item(k, token_b)}
@@ -10226,6 +10396,7 @@ _compare_case('cross-item-unigram-unrecorded-past-area', _cross_item_records_pas
 # SIGSEGV at the first read. The subject keeps its safe answer: it applies the
 # write and the ADD, and the over-read item is unreadable at the finish.
 def _watch_last(p):
+    """Extend standard watched tokens with the item at the highest content offset."""
     return dict(_watch(p), last=p['last'][0])
 
 
@@ -10255,10 +10426,18 @@ _compare_case('touched-duplicate-invalid', lambda p: ([
 # valid touch. Finalization must emit each diagnostic once in ascending order;
 # membership and item reads fall back to the original for every rejected slot.
 def touched_many_invalid(k):
+    """Replay repeated invalidating writes to the last 256 system items in reverse offset order.
+
+    For each selected slot, change its last frequency then write a six-byte
+    header claiming 255 characters/readings. Append a fresh ADD and observe/save
+    through system_replay with unigram increments disabled."""
     _, items, offsets = _system_items(k)
     slots = sorted(offsets, key=offsets.get)[-256:]
 
     def build(p):
+        """Encode paired frequency and oversized-header modifications for the captured slots.
+
+        Return those records plus a fresh ADD and the last-item watch mapping."""
         records = []
         for slot in reversed(slots):
             token, item = 0x01000000 | slot, items[slot]
@@ -10290,7 +10469,9 @@ for _mode in ('pinyin', 'zhuyin'):
 # oxpinyin stops that library's replay at the record, keeps the earlier
 # records and logs one warning; init succeeds.
 def _short_add(payload):
+    """Build a replay case with a supplied ADD payload between a valid MODIFY and ADD."""
     def build(p):
+        """Encode frequency 77 on one, the supplied fresh ADD payload, and a valid fresh ADD."""
         return ([
             _log_record(_LOG_MODIFY, p['one'][0], old=p['one'][1],
                         new=_item_with(p['one'][1], freq=77)),
@@ -10298,6 +10479,7 @@ def _short_add(payload):
             _add_fresh(p)], _watch(p))
 
     def probe(k):
+        """Replay the short-payload sequence without a unigram add and alias init truth as ret."""
         out = system_replay(k, build, unigram_add=False)
         out['ret'] = out['ctx']
         return out
@@ -10337,7 +10519,12 @@ def _pron_entries(item, entries):
 
 
 def _pron_shape(entries, unigram=None):
+    """Build an item transformer replacing readings and optionally its unigram.
+
+    Each (keys, frequency) pair uses the original first reading's keys when keys
+    is None. Preserve entry order and duplicates."""
     def new_item(item):
+        """Rebuild captured pronunciation entries, substituting the item's first keys for None."""
         keys = item[6 + 4 * item[0]:6 + 4 * item[0] + 2 * item[0]]
         built = _pron_entries(item, [(keys if name is None else name, freq) for name, freq in entries])
         return _item_with(built, unigram=unigram) if unigram is not None else built
@@ -10370,18 +10557,22 @@ def pron_lifecycle(k, new_item_of, steps):
     imported = "dian3'xian4" if pinyin else 'ㄉㄧㄢˇ ㄒㄧㄢˋ'
 
     def look(tag):
+        """Store adjacent export rows, unigram and phrase outputs under the requested checkpoint tag."""
         out[tag] = {'export': remember_export(k, 1, _PRON_PHRASE, adjacent=True), 'unigram': unigram_of(k, token),
                     'phrase': token_phrase_of(k, token)}
 
     def train():
+        """Assert complete parsing of 癫痫's facade input and train its selected token."""
         assert k.fn(parse, Z, P, S)(k.inst, typed) == len(typed)
         return train_selected_top(k, _PRON_PHRASE, token)
 
     def save(tag):
+        """Record the save flag and complete gb_char.dbin bytes as hex under tag-derived keys."""
         out[tag + '-save'] = k.fn('save', B, P)(k.ctx)
         out[tag + '-dbin'] = Path(k.user, 'gb_char.dbin').read_bytes().hex()
 
     def reopen(tag):
+        """Free/finalize cached objects, clear their pointers and observe the lazily reopened profile."""
         k.fn('free_instance', None, P)(k.inst)
         k.fn('fini', None, P)(k.ctx)
         k._ctx = k._inst = None
@@ -10469,6 +10660,12 @@ for _shape, (_entries, _unigram) in _PRON_SHAPES.items():
 # imported into library 7, and 癫痫 is trained, which also trains a gram.
 # Each save is followed by a reopen; the second round trains again.
 def pron_mixed(k):
+    """Replay mixed system-item overrides and a fresh ADD, then train/import/save twice.
+
+    Use the fixed 癫痫 token with last frequency 250 and low unigram byte plus
+    400, a fresh item at max slot plus two, and a library-seven 龘龘 import.
+    Record live exports/counts and complete gb_char.dbin/user.bin hex around
+    both reopens; leave final native state cached."""
     total, items, _offsets = _system_items(k)
     token = _PRON_TOKEN
     item = items[token & 0xFFFFFF]
@@ -10487,6 +10684,9 @@ def pron_mixed(k):
     user_row = ('龘龘', "da2'da2" if pinyin else 'ㄉㄚˊ ㄉㄚˊ', 20)
 
     def look(tag):
+        """Record system/user exports and unigram outputs for the overridden and appended items.
+
+        Scan all rows for the appended item's shared phrase text."""
         out[tag] = {'export': remember_export(k, 1, _PRON_PHRASE, adjacent=True),
                     'user-export': remember_export(k, 7, user_row[0], adjacent=True),
                     'unigram': unigram_of(k, token), 'fresh': unigram_of(k, fresh),
@@ -10495,15 +10695,18 @@ def pron_mixed(k):
                     'fresh-export': remember_export(k, 1, token_phrase_of(k, fresh)[2])}
 
     def train():
+        """Assert complete facade parsing of 癫痫 and train its selected token."""
         assert k.fn(parse, Z, P, S)(k.inst, typed) == len(typed)
         return train_selected_top(k, _PRON_PHRASE, token)
 
     def save(tag):
+        """Save and record complete system-journal and user-library bytes as hex."""
         out[tag + '-save'] = k.fn('save', B, P)(k.ctx)
         for name in ('gb_char.dbin', 'user.bin'):
             out[tag + '-' + name] = Path(k.user, name).read_bytes().hex()
 
     def reopen(tag):
+        """Close cached native objects, clear pointers and record observations after lazy reopening."""
         k.fn('free_instance', None, P)(k.inst)
         k.fn('fini', None, P)(k.ctx)
         k._ctx = k._inst = None
@@ -10540,9 +10743,21 @@ for _mode in ('pinyin', 'zhuyin'):
 # candidate list of the prefix. The pin lists the removed token itself through
 # a stale item (a SIGSEGV), so no candidate list is taken where it is one.
 def _removed_extension(k, candidates, labels=('exact', 'longer', 'prefix'), before=False):
+    """Remove a four-character system phrase by journal and observe its search paths.
+
+    Choose a single-reading merged item whose key sequence prefixes no longer
+    phrase in four system libraries. Obtain its rendered reading, close/reset
+    caches, write a REMOVE log and reopen. labels selects exact, longer or
+    prefix input; candidates optionally records lists, with before selecting
+    zhuyin's before-cursor path. Free per-input instances but retain the context
+    and lookup GArray. Missing fixture shapes raise through next/assertions."""
     total, items, _offsets = _system_items(k, 'merged.bin')
 
     def readings(item):
+        """Slice raw pronunciation key sequences using the item's character count and entry stride.
+
+        Follow PhraseItem::get_nth_pronunciation in src/storage/phrase_index.cpp:33-43 at
+        pin 074a2219; do not validate slice lengths."""
         length, prons = item[0], item[1]
         start = 6 + 4 * length
         stride = 2 * length + 4
@@ -10618,6 +10833,10 @@ for _mode in ('pinyin', 'zhuyin'):
 # stays in the phrase table, so a search over its reading lists it. oxpinyin
 # lists no candidate for an item that does not exist.
 def _removed_candidate(k, before=False):
+    """Flatten exact-reading observations after removal, retaining candidate rows as diagnostic-only data.
+
+    Delegate fixture setup and optional zhuyin before-cursor lookup to
+    _removed_extension; omit its exact sentence field from the returned mapping."""
     out = _removed_extension(k, True, ('exact',), before)
     exact = out.pop('exact')
     out['exact-parsed'] = exact['parsed']
@@ -10649,11 +10868,20 @@ case('removed-candidate-before-cursor-zhuyin', mode='zhuyin', stderr=True, crash
 # (`phrase_large_table3_kyotodb.cpp:109`) and a tkrzw `TreeDBM` file on tkrzw
 # (`phrase_large_table3_tkrzwdb.cpp:83`).
 def _ucs4_key(text):
+    """Encode each Python character as an unsigned four-byte little-endian phrase-table key unit.
+
+    Add no terminator and perform no scalar validation. This is the key layout
+    used by PhraseLargeTable3::search in src/storage/phrase_large_table3_bdb.cpp:180-192
+    at pin 074a2219."""
     return b''.join(ord(character).to_bytes(4, 'little') for character in text)
 
 
 @case('abort-zhuyin-add-phrase-duplicate-library-token', mode='zhuyin', abort=False, issues=('525',))
 def _(k):
+    """Plant two library-seven tokens for 你好, reopen zhuyin and attempt importing that phrase.
+
+    Replace the user phrase index and marker; assert both initializations and
+    leave the final import iterator/context live if the call returns."""
     # Two tokens for 你好, both in library 7 (the target): the pin's second
     # in-index candidate asserts at `:440`.
     ctx = k.init()
@@ -10671,6 +10899,10 @@ def _(k):
 
 @case('abort-zhuyin-add-phrase-index-text-mismatch', mode='zhuyin', abort=False, issues=('525',))
 def _(k):
+    """Persist 你們, redirect 你好 to its user token and attempt zhuyin import after reopening.
+
+    Assert setup import/save, replace the phrase index and marker, and free the
+    cached instance before finalizing. Leave the final iterator/context live."""
     # Persist 你們, then point 你好's phrase-table row at 你們's token: the
     # lone in-library match names an item whose text differs, `:457`.
     ctx = k.ctx
@@ -10729,6 +10961,7 @@ def _add_pinyin_phrase_after_index(k, value):
 
 @case('abort-add-phrase-duplicate-library-token', abort=False, userdir=True, issues=('525',))
 def _(k):
+    """Initialize/finalize, plant two library-seven tokens for 你好 and attempt importing it."""
     ctx = k.init()
     assert ctx, 'the first init failed'
     k.fn('fini', None, P)(ctx)
@@ -10738,12 +10971,14 @@ def _(k):
 
 @case('abort-add-phrase-index-length-mismatch', abort=False, userdir=True, issues=('525',))
 def _(k):
+    """Persist 你好嗷, redirect 你好 to its token and attempt an import with a shorter phrase."""
     token = _persist_pinyin_phrase(k, '你好嗷', "ni'hao'ao")
     return _add_pinyin_phrase_after_index(k, token.to_bytes(4, 'little'))
 
 
 @case('abort-add-phrase-index-item-missing', abort=False, userdir=True, issues=('525',))
 def _(k):
+    """Plant a phrase-table token without a library item and attempt importing 你好 after reopening."""
     # The phrase table names library 7's token, but user.bin has no item:
     # get_phrase_item leaves a zero-length PhraseItem, so :568 asserts.
     ctx = k.init()
@@ -10754,6 +10989,7 @@ def _(k):
 
 @case('abort-add-phrase-index-text-mismatch', abort=False, userdir=True, issues=('525',))
 def _(k):
+    """Persist 你們, redirect 你好 to its token and attempt an equal-length mismatched-text import."""
     token = _persist_pinyin_phrase(k, '你們', "ni'men")
     return _add_pinyin_phrase_after_index(k, token.to_bytes(4, 'little'))
 
@@ -10763,6 +10999,10 @@ def _(k):
 # shrink its length. Compare complete phrase records, independently of the
 # still-unported chewing-table half of #785.
 def phrase_table_lookup(k, text):
+    """Look up a Unicode phrase and return [native flag, token list] in native order.
+
+    Allocate a four-byte-element GArray and free it on normal completion,
+    including when lookup returns false. Preserve duplicate tokens."""
     new = k.glib.g_array_new
     new.restype, new.argtypes = P, [I, I, U]
     k.glib.g_array_free.restype, k.glib.g_array_free.argtypes = P, [P, I]
@@ -10775,6 +11015,10 @@ def phrase_table_lookup(k, text):
 
 
 def phrase_table_reopen(k):
+    """Free any cached instance, finalize the cached context and assert lazy reopening succeeds.
+
+    Clear cached pointers before reopening; pass the existing context pointer
+    to fini even when it is NULL."""
     if k._inst:
         k.fn('free_instance', None, P)(k._inst)
         k._inst = None
@@ -10784,7 +11028,16 @@ def phrase_table_reopen(k):
 
 
 def phrase_table_mask_records(duplicates, remove_middle=False):
+    """Build a raw phrase-table mask/save/reopen case with long and short token records.
+
+    duplicates repeats the first token; remove_middle masks the second token
+    rather than a nonmatching token. Key order is raw UTF-32LE byte order."""
     def probe(k):
+        """Persist four phrases, replace the raw phrase index, mask and compare saved/reopened records.
+
+        Close/reset before writing, preserve deliberately reassigned key/token pairs,
+        and use an unconstrained wo training call before save. Return exports,
+        lookups and sorted raw rows; leave the reopened context live."""
         phrases = TOKEN_REUSE_PHRASES[:4]
         for text, reading, _ in phrases:
             _add_user_phrase(k, text, [reading.encode()], 100)
@@ -10839,6 +11092,10 @@ case('phrase-table-mask-post-removal-shrink', issues=('759', '785'))(
 
 @case('phrase-table-add-search-remove-roundtrip', control=True, issues=('759', '785'))
 def _(k):
+    """Observe 龘龘 through add, repeated add, save/reopen, candidate removal and re-add.
+
+    Assert complete dada parsing and a displayed user candidate, then save/reopen
+    again and export the final library-seven rows."""
     text, reading = '龘龘', b"da2'da2"
     out = {'absent': phrase_table_lookup(k, text)}
     out['added'] = _add_user_phrase(k, text, [reading], 100)
@@ -10868,6 +11125,10 @@ def _(k):
 # NULL arrays (storage/phrase_large_table3.cpp:40-42).
 @case('phrase-table-never-loaded-library-filter', issues=('799',))
 def _(k):
+    """Plant phrase-table rows for an unloaded library-fifteen token and record lookup/prediction outputs.
+
+    Write a conforming marker before lazy initialization and retain an empty
+    prefix record alongside the two token records."""
     token = (15 << 24) | 1  # No library 15 is loaded by this fixture.
     value = token.to_bytes(4, 'little')
     prefix = '你'.encode('utf-32-le')
@@ -10880,7 +11141,14 @@ def _(k):
 
 
 def phrase_table_raw_key_prediction(nonunicode):
+    """Build a prediction case whose phrase-table prefix differs from the live item's text.
+
+    nonunicode selects raw suffix 0x110000; otherwise use 好 after prefix 你."""
     def probe(k):
+        """Persist 龘龘, replace its phrase index with the selected raw key and predict after 你.
+
+        Close/reset cached objects before writing the index and marker; reopening is
+        lazy. Record the resulting prediction list without decoding the raw suffix."""
         _add_user_phrase(k, '龘龘', [b"da2'da2"], 100)
         token = next(t for t in tokens_of(k, '龘龘') if t >> 24 == 7)
         assert k.fn('save', B, P)(k.ctx)
@@ -10913,6 +11181,10 @@ case('phrase-table-predict-mismatched-live-prefix', control=True)(
 # pinyin_parser2.cpp:274-360; ngram.cpp:277-358; pinyin.cpp:520-605,
 # 896-911, 2597-2650; phonetic_lookup.h:880-929.
 def d18_export_phrases(k):
+    """Export all library-seven rows as [flag, phrase, reading, count] in iterator order.
+
+    Decode/free returned strings and end the iterator on normal completion;
+    getter failure flags do not stop the loop."""
     it = k.fn('begin_get_phrases', P, P, U)(k.ctx, 7)
     rows = []
     while k.fn('iterator_has_next_phrase', B, P)(it):
@@ -10925,7 +11197,11 @@ def d18_export_phrases(k):
 
 
 def d18_remember(deltas):
+    """Build successive remember-user-input updates for 你好世界 with the supplied signed deltas."""
     def probe(k):
+        """Parse nihaoshijie once, then record each remember flag, user export and resulting unigram.
+
+        Require a matching library-seven token after each call; next raises if none exists."""
         out = {'parsed': consumed(k, 'parse_more_full_pinyins', b'nihaoshijie', fresh=False)}
         rows = []
         for delta in deltas:
@@ -10949,7 +11225,12 @@ for _count in (715827882, 715827883, 1431655765, 1431655766):
 # 074a2219 pinyin.cpp:3115-3121, 3688-3694 refuses a character with no token;
 # bytes after the first NUL cannot change the visible phrase.
 def remember_nul(parse_name, input_text, phrase):
+    """Build a remember-input case using the supplied parser bytes and possibly NUL-containing phrase."""
     def probe(k):
+        """Configure the parser, assert complete input consumption and remember phrase with count one.
+
+        Use options 0x28 and scheme two for double pinyin or one for chewing.
+        Return parse length, remember flag and user exports; pass phrase bytes unchanged."""
         k.fn('set_options', B, P, U)(k.ctx, 0x28)
         if parse_name == 'parse_more_double_pinyins':
             assert k.fn('set_double_pinyin_scheme', B, P, I)(k.ctx, 2)
@@ -10972,7 +11253,17 @@ case('remember-known-nul-suffix-pinyin', control=True, stderr=True, issues=('752
 
 
 def d18_unigram(boundary, text='你'):
+    """Build a unigram-increment sequence for the first token matching text.
+
+    boundary derives increments from the token's actual system-library total;
+    otherwise use fixed maximum/signed-boundary increments."""
     def probe(k):
+        """Record unigram outputs after each increment, checking the derived boundary sequence when requested.
+
+        Resolve the library's system filename from table.conf and read its stored
+        total when boundary is true. Require the 丠 control to use library two and
+        assert boundary flags True, True, False, False with counts unchanged after
+        refusal. Leave the context modified by the attempted calls."""
         token = tokens_of(k, text)[0]
         if text == '丠':
             assert token >> 24 == 2, 'the alternate-sub-index control must use library 2'
@@ -11003,6 +11294,10 @@ def d18_unigram(boundary, text='你'):
 
 
 def d18_input(k):
+    """Compare consumed and retained byte lengths for long pinyin inputs and a subsequent short parse.
+
+    Set tone options, use the listed 4096..65537-byte lengths and four tail shapes,
+    and free each temporary instance after reading its outputs."""
     assert k.fn('set_options', B, P, U)(k.ctx, 1 << 5)
     out = {}
     parse = k.fn('parse_more_full_pinyins', Z, P, S)
@@ -11104,10 +11399,21 @@ def d18_bigram_db(k, path, rows=None, read_keys=(), allow_missing=False):
 
 
 def d18_gram(total, token, count):
+    """Encode one SingleGram total/token/count triple as unsigned 32-bit little-endian words.
+
+    Follow SingleGram::get_total_freq and ::retrieve_all in src/storage/ngram.cpp:48-50,133-151
+    at pin 074a2219; out-of-range integers fail through to_bytes."""
     return b''.join(n.to_bytes(4, 'little') for n in (total, token, count))
 
 
 def d18_bigram_fixture(k, system, user, current='号', empty_system=False, extra_successor=False):
+    """Replace bigram fixtures and return predecessor/current tokens after closing cached objects.
+
+    system and user are (total, count) pairs. A non-None system or empty_system
+    copies the whole data tree to scratch and replaces bigram.db; otherwise
+    retain the current system tree. Write two user predecessors with sorted
+    successors, an empty start row and a conforming marker. extra_successor adds
+    我 with count one. Reopening is deferred."""
     prev, cur, other = (tokens_of(k, text)[0] for text in ('你', current, '我'))
     k.fn('free_instance', None, P)(k._inst)
     k._inst = None
@@ -11133,6 +11439,11 @@ def d18_bigram_fixture(k, system, user, current='号', empty_system=False, extra
 
 
 def d18_merge_observation(k):
+    """Collect sentence and candidate observations before/after constraining nihao to 你.
+
+    Enable tone/dynamic options, assert a NORMAL predecessor row, choose at byte
+    zero and list NORMAL rows at byte two. Assert a nonempty final normal list;
+    read sentence ranks through final_step_sentences."""
     assert k.fn('set_options', B, P, U)(k.ctx, (1 << 5) | (1 << 9))
     parsed = k.fn('parse_more_full_pinyins', Z, P, S)(k.inst, b'nihao')
     guessed = k.fn('guess_sentence', B, P)(k.inst)
@@ -11152,7 +11463,12 @@ def d18_merge_observation(k):
 
 
 def d18_merge(system, user, current='号', empty_system=False, extra_successor=False, lam=None):
+    """Build a merged-bigram observation with optional system/user fixture and lambda override.
+
+    When lam is supplied, the callable overwrites k.data/table.conf; callers
+    must choose a fixture that copies the system tree before that edit."""
     def probe(k):
+        """Install the captured bigram fixtures, optionally rewrite lambda and collect constrained guesses."""
         d18_bigram_fixture(k, system, user, current=current, empty_system=empty_system,
                           extra_successor=extra_successor)
         if lam is not None:
@@ -11164,7 +11480,11 @@ def d18_merge(system, user, current='号', empty_system=False, extra_successor=F
 
 
 def d18_bigram_export(count):
+    """Build a one-row bigram export observation with equal supplied total and item count."""
     def probe(k):
+        """Plant the 好 successor, record has-next and fetch one export row regardless of that flag.
+
+        Decode/free both returned strings and end the bigram iterator on normal completion."""
         d18_bigram_fixture(k, None, (count, count), current='好')
         it = k.fn('begin_get_bigram_phrases', P, P)(k.ctx)
         out = {'has': k.fn('bigram_iterator_has_next_phrase', B, P)(it)}
@@ -11178,7 +11498,17 @@ def d18_bigram_export(count):
 
 
 def d18_bigram_update(count, predicted=False, user_only=False):
+    """Build a bigram update/save/reopen case using training or a predicted selection.
+
+    user_only empties system bigrams, uses 嚎 and adds a second user successor;
+    otherwise use 好. count seeds the user's item count."""
     def probe(k):
+        """Plant the gram, choose/train as configured and observe the saved predecessor record.
+
+        Predicted mode chooses a BIGRAM row then guesses wo before training;
+        ordinary mode constrains nihao to 你 and 好. Record unigram and save flags,
+        close/reset caches, read raw total/items and lazily reopen for a final count.
+        user_only also records a reopened constrained guess."""
         current = '嚎' if user_only else '好'
         prev, cur = d18_bigram_fixture(k, None, (count + int(user_only), count), current=current,
                                      empty_system=user_only, extra_successor=user_only)
@@ -11276,12 +11606,19 @@ case('d18-review-predicted-user-only-zero-total', issues=('540',))(
 # prevents that rename. Both facades and all destination variants are
 # verified on bdb, kc and tkrzw (#1120).
 def stale_index_tmp(k, index):
+    """Record save results with a stale temporary index directory and three destination shapes.
+
+    Use a fresh user directory for each absent, empty-directory or live-file
+    destination, train before saving and preserve a marker in index + '.tmp'.
+    Report marker movement, live-file preservation and copied log messages;
+    free the instance and close/reset the context after each destination."""
     out = {}
     for destination in ('absent', 'empty-directory', 'live-file'):
         k.user = tempfile.mkdtemp(prefix='user-', dir=k.scratch)
         inst = k.inst
         parse, text = ('parse_more_full_pinyins', b'nihao') if k.mode == 'pinyin' else ('parse_more_chewings', b'su3cl3')
         def train():
+            """Assert parsing and guessing of the facade's nihao input, then return its training flag."""
             assert k.fn(parse, Z, P, S)(inst, text)
             assert k.fn('guess_sentence', B, P)(inst)
             return (k.fn('train', B, P, C.c_ubyte)(inst, 0) if k.mode == 'pinyin'
@@ -11322,11 +11659,16 @@ for _mode in ('pinyin', 'zhuyin'):
 
 # #542's remaining named audit inputs, kept in the existing isolated worker.
 def phrase_segment_invalid_utf8(k):
+    """Segment two invalid UTF-8 bytes and return the flag with the kit's live log-message list."""
     ret = k.fn('phrase_segment', B, P, S)(k.inst, b'\xff\xfe')
     return {'ret': ret, 'messages': k.log_messages}
 
 
 def train_no_choose_save(k):
+    """Parse, guess, train without choosing a row, then report save and immediate user filenames.
+
+    Use nihao for pinyin or su3cl3 for zhuyin; record flags without asserting
+    success and leave the cached context and instance live."""
     inst = k.inst
     parse, text = ('parse_more_full_pinyins', b'nihao') if k.mode == 'pinyin' else ('parse_more_chewings', b'su3cl3')
     out = {'parse': k.fn(parse, Z, P, S)(inst, text),
@@ -11349,6 +11691,12 @@ for _mode in ('pinyin', 'zhuyin'):
 
 @case('issue542-alias-prefix-borrowed', issues=('542',))
 def _(k):
+    """Reuse a borrowed candidate string as a guess prefix and record subsequent outputs.
+
+    For each prefix API, allocate a nihao instance and borrow its first candidate's
+    text. Record three sentence ranks and, for prediction, candidate counts
+    before and after retrying with caller-owned 你好 bytes. Assert candidate
+    getters; leave the allocated instances live."""
     out = {}
     for predicted_call in (False, True):
         inst = full_inst(k, b'nihao')
@@ -11381,7 +11729,18 @@ def _(k):
 # pinyin.cpp:1230,3766; zhuyin.cpp:765). Read persisted rows after save
 # and again after reopen so the live container and export paths agree.
 def removal_bigram(total, survivor_counts, removed_count, operation, multiple=False, unchanged_total=17):
+    """Build a removal/save/reopen case with independently supplied bigram totals and counts.
+
+    Pair survivor_counts with 好 and 号 by zip. multiple adds token + 1 and
+    makes mask-out target all of library seven; operation='remove-candidate'
+    uses candidate removal instead. unchanged_total seeds a second predecessor."""
     def probe(k):
+        """Import 龘龘, replace user grams, perform removal and compare persisted bytes across reopen.
+
+        Sort the planted successor records, mark the context modified by an
+        unconstrained wo training call, and record operation/save flags plus raw
+        hex rows. Close and reset cached objects around file access, require reopen
+        to succeed and close it again before the second read."""
         reading = b"da2'da2" if k.mode == 'pinyin' else 'ㄉㄚˊ ㄉㄚˊ'.encode()
         _add_user_phrase(k, '龘龘', [reading])
         token = next(t for t in tokens_of(k, '龘龘') if t >> 24 == 7)
@@ -11465,11 +11824,23 @@ for _mode, _operation in (('pinyin', 'mask-out'), ('pinyin', 'remove-candidate')
 # ngram_bdb.cpp:217-254 and twins), export (pinyin.cpp:775-787, 885-890) and
 # prediction (pinyin.cpp:2321-2341) all run over that raw array.
 def _gram_bytes(total, items):
+    """Encode a stored SingleGram total and ordered token/count pairs as unsigned 32-bit words.
+
+    Use little endian and retain duplicates and supplied order without checking
+    the total against the items. This is the layout read by SingleGram::get_total_freq
+    and ::retrieve_all in src/storage/ngram.cpp:48-50,133-151 at pin 074a2219. Integer range
+    errors propagate from to_bytes."""
     return total.to_bytes(4, 'little') + b''.join(
         t.to_bytes(4, 'little') + c.to_bytes(4, 'little') for t, c in items)
 
 
 def _gram_items(raw):
+    """Decode a raw SingleGram into [total, [[token, count], ...]], preserving stored order.
+
+    Return None for None; read little-endian words, tolerate a short total and
+    ignore any trailing partial item. Follow SingleGram::get_total_freq and
+    ::retrieve_all in src/storage/ngram.cpp:48-50,133-151 at pin 074a2219 without validating
+    framing, sorting or consistency."""
     if raw is None:
         return None
     return [int.from_bytes(raw[:4], 'little'),
@@ -11501,6 +11872,10 @@ def _plant_user_grams(k, phrases, grams):
 
 
 def _close_and_read_grams(k, keys):
+    """Close/reset cached objects and decode the requested persisted user-gram rows in key order.
+
+    Pass keys as database bytes; map failed lookups to None. Do not save pending
+    changes or reopen the native context."""
     k.fn('free_instance', None, P)(k._inst)
     k._inst = None
     k.fn('fini', None, P)(k._ctx)
@@ -11510,6 +11885,10 @@ def _close_and_read_grams(k, keys):
 
 
 def _mark_modified_by_unconstrained_train(k):
+    """Train an unconstrained wo guess to make a subsequent save observable.
+
+    Assert tone-option setup, the two-byte parse and sentence guessing, then
+    return the facade's training flag. Leave cached objects live."""
     # Neither removal call sets m_modified; an unconstrained train marks it
     # without changing a bigram, so the save that follows is observable.
     assert k.fn('set_options', B, P, U)(k.ctx, 1 << 5)
@@ -11528,6 +11907,7 @@ def user_gram_layout(kind, operation):
     order. `kind` 'duplicate': it holds 好 twice and 龘龘 twice, sorted.
     Every count passes the export threshold (68) and the predicted filter."""
     def grams(system, users):
+        """Encode the captured layout under 你, retaining item order and storing the sum of counts."""
         hao, hao2, dalong = system['好'], system['号'], users[0]
         if kind == 'unsorted':
             items = sorted([(dalong, 90), (hao2, 80), (hao, 70)], reverse=True)
@@ -11537,6 +11917,12 @@ def user_gram_layout(kind, operation):
         return [(system['你'], _gram_bytes(total, items))]
 
     def probe(k):
+        """Plant the captured gram, perform the selected operation and return its observations.
+
+        Save after training or removal, then close/reset caches and decode persisted
+        rows. Export instead records at most sixteen iterator steps, stopping after
+        two consecutive false has-next results; it closes the iterator but leaves
+        the context live."""
         system, users, keys = _plant_user_grams(k, [_DALONG], grams)
         out = {}
         if operation == 'train-save':
@@ -11601,6 +11987,7 @@ def user_gram_predicted(kind):
     in descending token order; 'duplicate' plants 龘龘 twice, the first above
     the filter (10) and the second below it."""
     def grams(system, users):
+        """Encode the captured user-token order with a stored total equal to its item-count sum."""
         dalong, bingbing = users
         if kind == 'unsorted':
             items = sorted([(dalong, 20), (bingbing, 20)], reverse=True)
@@ -11609,6 +11996,10 @@ def user_gram_predicted(kind):
         return [(system['你'], _gram_bytes(sum(c for _, c in items), items))]
 
     def probe(k):
+        """Plant the gram, predict after 你 and return the flag plus candidate type/text rows.
+
+        Getter flags are unchecked; empty or NULL text becomes None and other text
+        must decode as UTF-8. Leave the reopened context and instance live."""
         _plant_user_grams(k, [_DALONG, _BINGBING], grams)
         out = {'ret': k.fn('guess_predicted_candidates', B, P, S)(k.inst, '你'.encode())}
         rows = []
@@ -11642,7 +12033,14 @@ for _kind in ('unsorted', 'duplicate'):
 # larger token, so check_result(user->set_freq(token, freq + seed)) dies
 # (074a2219 phonetic_lookup.h:888-903; ngram.cpp:178-205, 252-271).
 def train_unsorted_set_freq_miss(k):
+    """Train a constrained 你好 guess against a deliberately unsorted sentence-start gram.
+
+    Assert setup and positive choices of NORMAL rows at byte offsets zero and
+    two. Return the training flag if the native call returns; do not save."""
     def grams(system, users):
+        """Encode five count-one successors around 你 in relative order -4, -3, -2, +1, -1.
+
+        Use sentence-start predecessor one and stored total five; users is unused."""
         ni = system['你']
         items = [(ni - 4, 1), (ni - 3, 1), (ni - 2, 1), (ni + 1, 1), (ni - 1, 1)]
         return [(1, _gram_bytes(5, items))]
@@ -11677,11 +12075,18 @@ for _mode in ('pinyin', 'zhuyin'):
 # — whatever its total; register row 88 records that the pin completes the
 # mask and leaves the state.
 def itemless_gram_untouched(operation, total):
+    """Build a removal/save case with a separate itemless 我 gram carrying the supplied total."""
     def grams(system, users):
+        """Encode the removable 你 successors and an independent four-byte 我 total with no items."""
         return [(system['你'], _gram_bytes(140, [(system['好'], 70), (users[0], 70)])),
                 (system['我'], total.to_bytes(4, 'little'))]
 
     def probe(k):
+        """Remove the imported phrase, train wo, save and decode both persisted gram rows.
+
+        operation='remove-candidate' removes the first user candidate for dada;
+        otherwise mask the imported token. Record flags, then close/reset cached
+        objects before reading the database."""
         system, users, keys = _plant_user_grams(k, [_DALONG], grams)
         out = {}
         if operation == 'remove-candidate':
@@ -11716,7 +12121,17 @@ for _name, _operation, _mode in (('pinyin', 'mask-out', 'pinyin'),
 # the control. `texts` replaces the guess inputs; `plant=False` leaves the user
 # bigram out and keeps the close-and-reopen around it.
 def itemless_user_total(operation, texts=(b'nihaoshijie', b'womenshizhongguoren'), plant=True):
+    """Build a segmentation or sentence-guess observation with an optional itemless user start gram.
+
+    Choose its total as (1 - system start total) modulo 2**32. plant=False skips
+    the database replacement but still closes the context and writes its marker.
+    texts supplies guess inputs only; segmentation uses two fixed Chinese strings."""
     def probe(k):
+        """Install the captured start-total fixture and record segmentation tokens or three sentence ranks.
+
+        Finalize/reset cached pointers before writing. Segment on the cached instance,
+        ignoring getter flags but avoiding iteration over an untouched count; for
+        guessing, allocate and free an instance per input. Leave the context open."""
         system_total = int.from_bytes(
             d18_bigram_db(k, Path(k.data, 'bigram.db'), read_keys=(b'\x01\x00\x00\x00',))[0][:4],
             'little')
@@ -11788,7 +12203,13 @@ case('itemless-user-total-guess-above-one-control', control=True, issues=('791',
 # phrase_index.cpp:169-175). `total` is the facade total the import leaves,
 # before the guint32 wraps it; the user library's own total stays under 2^32.
 def import_facade_total(total):
+    """Build an import-and-guess case whose import count is derived from total minus FACADE_TOTAL."""
     def probe(k):
+        """Import 妈 at the derived count and record ni3'hao3 guesses and 你好 segmentation.
+
+        Require the difference to be divisible by three, three times the count to
+        fit below 2**32 and count to be below 2**31. These assertions impose no
+        lower bound; leave the modified context live."""
         count, rest = divmod(total - FACADE_TOTAL, 3)
         assert rest == 0 and 3 * count <= 0xFFFFFFFF and count < 2 ** 31, total
         out = {'count': count, 'added': import_rows(k, 7, [('妈', 'ma1', count)])}
@@ -11817,7 +12238,14 @@ case('import-facade-total-below-wrap', control=True, issues=('798',))(import_fac
 # compacts first (pinyin.cpp:1139), which rebuilds each library's total from
 # its items (phrase_index.cpp:648-675) and leaves the facade's alone.
 def stored_header_total(header):
+    """Build a save/reopen case that replaces the user library's stored total with header."""
     def probe(k):
+        """Save an imported 你好, overwrite its chunk total, reopen and record guesses and a second save.
+
+        Encode header as an unsigned 32-bit little-endian value and rebuild chunk
+        framing. Record the original total, segmentation, a subsequent 好你 import
+        and the resaved header. Reset cached pointers before editing the file;
+        leave the reopened context live."""
         out = {'added': import_rows(k, 7, [('你好', "ni3'hao3", 5)])}
         out['saved'] = k.fn('save', B, P)(k.ctx)
         k.fn('fini', None, P)(k.ctx)
@@ -11851,7 +12279,12 @@ case('stored-header-facade-total-small', control=True)(stored_header_total(7))
 # facade counts its unigram twice. The count makes the doubled total wrap
 # to 2000003.
 def system_add_reload(count):
+    """Build an import/save/reopen observation for 龘龘 in system library one at the supplied count."""
     def probe(k):
+        """Import and save the captured system phrase, then reopen lazily for guesses and segmentation.
+
+        Record flags without asserting success, finalize/reset cached pointers
+        after saving and leave the reopened context live."""
         out = {'added': import_rows(k, 1, [('龘龘', "da3'da3", count)])}
         out['saved'] = k.fn('save', B, P)(k.ctx)
         k.fn('fini', None, P)(k.ctx)
@@ -11878,6 +12311,10 @@ def _stored_library_total(k, name):
 
 
 def _facade_total_out(k):
+    """Return ni3'hao3 sentence observations, up to eight leading candidates and 你好 segmentation.
+
+    Use the cached instance for candidate guessing with sort flags 0x1e;
+    this observes ranking rather than returning a numeric facade total."""
     out = _guess_out(k, b"ni3'hao3")
     out['candidates'] = guess_rows(k, k.inst, 0, 0x1e)['rows'][:8]
     out['segment'] = _segment_out(k, ('你好',))
@@ -11885,6 +12322,10 @@ def _facade_total_out(k):
 
 
 def bumped_item_guess(k):
+    """Add five million to library one's first 号 token and record unigram and ranking observations.
+
+    Require a matching token through list indexing; record the add flag and
+    leave the modified context live without saving."""
     token = [t for t in tokens_of(k, '号') if t >> 24 == 1][0]
     out = {'before': unigram_of(k, token)}
     out['add'] = k.fn('token_add_unigram_frequency', B, P, U, U)(k.inst, token, 5000000)
@@ -11900,6 +12341,12 @@ case('token-add-unigram-numerator-guess', issues=('801',))(bumped_item_guess)
 # each time (pinyin.cpp:2521-2530). Two thousand choices of 你们 for `ni`
 # make the pin read 跟你们 as 根你们.
 def longer_choices_guess(k):
+    """Choose a LONGER row for ni up to two thousand times, then observe guesses and segmentation.
+
+    Stop early if no row exists or choose does not return one. Allocate separate
+    instances for gennimen and nimen, recording sentence ranks and up to six
+    candidates. Discard the cached instance pointer before segmentation without
+    freeing it or the separately allocated instances."""
     inst = k.inst
     k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'ni')
     chosen = 0
@@ -11929,6 +12376,12 @@ case('longer-choices-numerator-guess', issues=('801',))(longer_choices_guess)
 # (phrase_index.cpp:261-269, :237-248). The bump on a GBK token wraps the
 # facade total to 2000000 while the library is loaded.
 def unload_accepted_bump(k):
+    """Bump a library-two token, then compare ranking before unload and after reload.
+
+    Derive the unsigned increment from FACADE_TOTAL to target a wrapped total
+    of two million. Record operation flags and token frequencies; discard cached
+    instance pointers between library operations without freeing them. Leave
+    the reloaded context live and do not save."""
     token = 0x02000001
     out = {'gbk': _stored_library_total(k, 'gbk_char.bin'), 'before': unigram_of(k, token)}
     delta = (2 ** 32 + 2000000 - FACADE_TOTAL) % 2 ** 32
