@@ -1,5 +1,339 @@
 # tkrzw concrete-class shim: evaluation (#1125)
 
+## Completed fixed-base full-finish campaign; STOP for maintainer decision
+
+Recorded 2026-10-24T10:09:47.898417+00:00. **STOP: a controlled
+cold-library pinyin init slowdown trades time for residency.** The paired
+prototype/base ratios are 1.073206 [1.047978, 1.090068] for phrases and
+1.076421 [1.012480, 1.116484] for journals. Those two init timing controls
+pass; no time improvement is claimed. All other init/first-candidate wall
+cells are INCONCLUSIVE. The coordinator's separate steady maximum-spread
+guard did not fire; that does not cancel these controlled init regressions.
+
+All 30 store timing controls and all 60 store profiler controls pass.
+Seven store timing intervals are wholly above 1; all rows, including
+regressions, are below. Three store VmHWM controls are INCONCLUSIVE.
+M1 total-Pss controls pass in all four cells, with paired prototype-base
+medians -260, -256, -317.5 and -316 KiB. Resident libtkrzw executable text
+falls by 312 KiB in every cell; facade text is unchanged. Exact init Ir
+falls 1.37%-1.96%; first/steady Ir controls fail and are withheld.
+Stripped shipping size increases by 12,456 B (pinyin) and 4,264 B (zhuyin).
+No adoption recommendation or PR follows from this run.
+
+This section reports the new single Ubuntu campaign from checkpoint
+c4cc6d0ca1063704ca2905966a481647b8bf164b (shipping source identical to
+6e50b77e), against fixed base d7788072 and the pin. The empty-message
+fast path remains removed. Fresh regenerated policies match the existing
+code-commit policy bytes; both independent passes matched. Ordered builds
+resolved all C++ paths and the linked-object verifier rejected no subject.
+No rebase onto main was performed. Original campaign results below retain
+their own provenance and are not substituted into these tables.
+
+All 30 operations from the existing store harness ran in this campaign.
+Store timing uses 30 rounds plus three warmups, rotating base / same-bytes
+base control / prototype, one fresh process per sample. Checksums and
+units must match. Ir and DHAT figures require exact controls; invalid
+figures are withheld. The existing runner has no pin implementation of
+these store-operation entry points: pin store cells are unavailable, not
+zero or a substitute from a different workload. Pin is included in the
+same-campaign facade init/first-candidate/memory and size measurements.
+No new copy/alignment experiment or further memcmp investigation occurred.
+
+### Every store operation: wall time and instructions
+
+Wall medians are ns/store call. The ratio and whole 95% bootstrap interval
+are shown only if the same-bytes timing control passes [0.95, 1.05].
+INCONCLUSIVE rows support no timing claim. Ir/call is shown only when
+base/control whole counts match exactly. No range qualification is used
+to rescue an unexplained mismatch.
+
+| operation | wall base | wall prototype | wall control | timing status | prototype/base [95%] | base Ir/call | prototype Ir/call | Ir control |
+| --- | ---: | ---: | ---: | --- | ---: | ---: | ---: | --- |
+| contains_raw.tree | 486.9420425 | 482.34269 | 487.820645 | STABLE | 0.984333429761 [0.976431499065, 0.992387590274] | 2578.17745 | 2539.1663 | VALID |
+| get_raw.tree.empty | 482.8851025 | 482.70931 | 483.4542425 | STABLE | 1.00035988454 [0.991258567741, 1.01106918783] | 2566.1371 | 2568.72165 | VALID |
+| get_raw.tree.small | 502.113505 | 496.413185 | 500.42715 | STABLE | 0.990375872356 [0.985935255648, 0.999758184918] | 2621.41835 | 2623.10775 | VALID |
+| get_raw.tree.medium | 519.745135 | 523.28208 | 525.300985 | STABLE | 1.0021562783 [0.997483772166, 1.01673764976] | 2743.2518 | 2744.4776 | VALID |
+| get_raw.tree.large | 1602.230075 | 1599.47083 | 1596.45666 | STABLE | 0.99885960974 [0.99401401971, 1.00098686548] | 7821.2533 | 7825.0239 | VALID |
+| get_raw.tree.miss | 488.157285 | 488.606135 | 488.0711125 | STABLE | 0.998425035781 [0.993993129305, 1.00473926017] | 4211.72685 | 4215.3682 | VALID |
+| get_raw.tree.retain | 547.130567187 | 543.694284375 | 551.451617188 | STABLE | 0.999558466185 [0.979651417658, 1.01080101517] | 2885.77559375 | 2891.7811875 | VALID |
+| get_raw.hash | 444.2603475 | 445.5053625 | 443.226715 | STABLE | 1.00353403721 [0.999276752855, 1.00790448646] | 2555.8313 | 2556.0516 | VALID |
+| get_raw.hash.small | 220.1956 | 221.0675675 | 218.8631375 | STABLE | 1.00523636533 [1.00014571689, 1.01023667509] | 1591.44375 | 1590.713 | VALID |
+| get_raw.hash.medium | 632.0536825 | 632.6762775 | 633.0595125 | STABLE | 1.00067585593 [0.997835649438, 1.00520052189] | 3440.87835 | 3439.87275 | VALID |
+| get_raw.hash.large | 12500.95274 | 12479.30396 | 12506.09896 | STABLE | 0.998943353366 [0.996540292351, 1.0005605415] | 67543.6014 | 67557.7532 | VALID |
+| get_raw.hash.miss | 123.2226925 | 125.3353425 | 122.862555 | STABLE | 1.01890849755 [1.0124125517, 1.02619365191] | 817.05385 | 818.02655 | VALID |
+| scan_raw.suggestion | 9657.775 | 9820.45 | 9875.15 | STABLE | 1.01217213849 [0.992975393124, 1.03555364559] | 137656 | 137901.5 | VALID |
+| scan_raw.full.tree | 92871754.8 | 92729299.2 | 92970908 | STABLE | 0.99672112423 [0.991828736619, 1.00564813428] | 621719025 | 623792408 | VALID |
+| scan_raw.full.hash | 113723993.75 | 114116874.5 | 113975563.25 | STABLE | 1.00194021275 [0.997687833331, 1.00552738529] | 553027451 | 553646119 | VALID |
+| framed.get | 298.91284 | 298.1472775 | 296.158585 | STABLE | 0.988755539263 [0.980073885994, 1.00404140642] | 1884.88355 | 1874.9424 | VALID |
+| framed.scan | 6794.91197 | 6917.83712 | 6820.49071 | STABLE | 1.01655034457 [1.01286929854, 1.02194742071] | 48058.6604 | 47766.5742 | VALID |
+| framed.txn_scan | 2943.74325 | 3004.787625 | 2928.13125 | STABLE | 1.01835243745 [1.01135861969, 1.02785771051] | 24994.105 | 24801.6575 | VALID |
+| framed.is_empty | 345.505 | 329.8350775 | 342.097725 | STABLE | 0.957287123027 [0.949625566821, 0.964925928971] | 2925.07385 | 2782.06065 | VALID |
+| user_bigram.get | 301.51268 | 302.605445 | 300.21247 | STABLE | 1.0063899985 [1.00084141574, 1.01141637013] | 1432.1947 | 1432.77625 | VALID |
+| user_bigram.get.small | 108.0541025 | 110.44466 | 108.0045775 | STABLE | 1.02293302906 [1.01897075866, 1.02765523843] | 677.6992 | 678.4709 | VALID |
+| user_bigram.get.large | 11721.61485 | 11766.74933 | 11734.8552 | STABLE | 1.00320353524 [1.00176100767, 1.00604236791] | 56578.954 | 56573.0212 | VALID |
+| user_bigram.miss | 70.29714 | 69.9054475 | 70.4830025 | STABLE | 0.993409041327 [0.989249589492, 0.997252832339] | 420.4697 | 421.4697 | VALID |
+| user_bigram.store | 323.677385 | 319.694835 | 322.96787 | STABLE | 0.986963568435 [0.98444786592, 0.989064366375] | 2371.6074 | 2347.20215 | VALID |
+| user_bigram.remove_store | 314.5012375 | 310.7064125 | 314.7648125 | STABLE | 0.989284401243 [0.986316644591, 0.991372925274] | 2296.7516 | 2271.13805 | VALID |
+| user_bigram.keys | 32040975.125 | 32050589.365 | 32041804.46 | STABLE | 1.00020456191 [0.998454874067, 1.00240297524] | 66185953.9 | 66215685.4 | VALID |
+| lifecycle.open_system | 59171.405 | 51656.9808333 | 60702.4516667 | STABLE | 0.886876498831 [0.860570018397, 0.934084940637] | 188071.716667 | 166285.225 | VALID |
+| lifecycle.user_load | 46522029.68 | 46684877.785 | 46785478.825 | STABLE | 1.00143036866 [0.994415724466, 1.0085627754] | 176837405.8 | 176805659.5 | VALID |
+| lifecycle.user_save | 28159634.92 | 28234879.63 | 28182354.51 | STABLE | 0.996007056094 [0.985794123466, 1.01019002741] | 51742465.7 | 51689074.2 | VALID |
+| session.typing_training | 722910.658986 | 712434.624424 | 699678.391705 | STABLE | 0.992818830813 [0.982361349521, 1.00360808533] | 1963296.16129 | 1962357.34101 | VALID |
+
+### Every store operation: heap accounting
+
+DHAT blocks and bytes are full-minus-setup per store call; peak is the
+whole process in bytes. A small negative full-minus-setup value is the
+runner's subtraction result, not negative allocation or a clamped zero. All three counters require exact base/control
+values. INVALID rows are retained without a comparison.
+
+| operation | blocks/call base / prototype | bytes/call base / prototype | peak B base / prototype | control |
+| --- | ---: | ---: | ---: | --- |
+| contains_raw.tree | 0.03235 / 0.03235 | 2.3229 / 2.3229 | 21877916 / 21877828 | VALID |
+| get_raw.tree.empty | 0.03235 / 0.03235 | 2.3229 / 2.3229 | 25825965 / 25825893 | VALID |
+| get_raw.tree.small | 0.0324 / 0.0324 | 2.3231 / 2.3231 | 29635149 / 29635077 | VALID |
+| get_raw.tree.medium | 0.04995 / 0.04995 | 3.02605 / 3.02605 | 25611086 / 25611014 | VALID |
+| get_raw.tree.large | 0.1001 / 0.1001 | 9.7681 / 9.7681 | 24719143 / 24719071 | VALID |
+| get_raw.tree.miss | 4.9971 / 4.9971 | 321.9979 / 321.9979 | 3090228 / 3090156 | VALID |
+| get_raw.tree.retain | 1.0624375 / 1.0624375 | 65.692375 / 65.692375 | 7902975 / 7902903 | VALID |
+| get_raw.hash | 0.49645 / 0.49645 | 216.2225 / 216.2225 | 18472648 / 18472560 | VALID |
+| get_raw.hash.small | 0.18455 / 0.18455 | 9.7977 / 9.7977 | 19393478 / 19393406 | VALID |
+| get_raw.hash.medium | 1.0002 / 1.0002 | 397.4545 / 397.4545 | 19358039 / 19357967 | VALID |
+| get_raw.hash.large | 1.0004 / 1.0004 | 12097.0258 / 12097.0258 | 18491261 / 18491189 | VALID |
+| get_raw.hash.miss | -5e-05 / -5e-05 | -0.0013 / -0.0013 | 20397525 / 20397453 | VALID |
+| scan_raw.suggestion | 93 / 92 | 6380.5 / 6364.5 | 21877914 / 21877826 | VALID |
+| scan_raw.full.tree | 217188 / 217187 | 14324506 / 14324490 | 6493605 / 6493517 | VALID |
+| scan_raw.full.hash | 87469 / 87468 | 18247082 / 18247066 | 475018 / 474930 | VALID |
+| framed.get | 2 / 2 | 31.9991 / 31.9991 | 1886038 / 1885966 | VALID |
+| framed.scan | 5.9998 / 4.9998 | 247.9946 / 231.9946 | 1886038 / 1885966 | VALID |
+| framed.txn_scan | 4 / 3.5 | 135.95 / 127.95 | 1886041 / 1885969 | VALID |
+| framed.is_empty | 5.99995 / 4.99995 | 240.9987 / 224.9987 | 1886043 / 1885971 | VALID |
+| user_bigram.get | 0.00025 / 0.00025 | 0.5571 / 0.5571 | 18472651 / 18472563 | VALID |
+| user_bigram.get.small | 0.00015 / 0.00015 | 0.0055 / 0.0055 | 18472657 / 18472569 | VALID |
+| user_bigram.get.large | 0 / 0 | 19.0082 / 19.0082 | 18472656 / 18472568 | VALID |
+| user_bigram.miss | -5e-05 / -5e-05 | -0.0013 / -0.0013 | 18472652 / 18472564 | VALID |
+| user_bigram.store | 10.99995 / 10.99995 | 422.0947 / 422.0947 | 18472653 / 18472565 | VALID |
+| user_bigram.remove_store | 10.99995 / 10.99995 | 429.23365 / 429.23365 | 18472660 / 18472572 | VALID |
+| user_bigram.keys | 7.9 / 6.9 | 20797.1 / 20781.1 | 18472649 / 18472561 | VALID |
+| lifecycle.open_system | 330.675 / 304.333333333 | 161703.458333 / 159870.525 | 1010146 / 1009778 | VALID |
+| lifecycle.user_load | 6490.5 / 6458.5 | 5590298.7 / 5587977.7 | 27522423 / 27522311 | VALID |
+| lifecycle.user_save | 30553.4 / 30533.9 | 2180531 / 2179321 | 27555359 / 27555247 | VALID |
+| session.typing_training | 230.35483871 / 228.98156682 | 60406.235023 / 60325.4976959 | 28932748 / 28932660 | VALID |
+
+### Every store operation: process VmHWM
+
+KiB; paired differences are shown only with a valid residency control.
+
+| operation | base | prototype | control | prototype-base [95%] | control |
+| --- | ---: | ---: | ---: | ---: | --- |
+| contains_raw.tree | 40962 | 40720 | 40982 | -248 [-286, -200] | VALID |
+| get_raw.tree.empty | 44802 | 44530 | 44784 | -252 [-318, -224] | VALID |
+| get_raw.tree.small | 48536 | 48276 | 48484 | -270 [-298, -236] | VALID |
+| get_raw.tree.medium | 45962 | 45710 | 45930 | -238 [-286, -160] | VALID |
+| get_raw.tree.large | 45068 | 44824 | 45048 | -220 [-294, -172] | VALID |
+| get_raw.tree.miss | 15384 | 15096 | 15372 | -290 [-308, -208] | VALID |
+| get_raw.tree.retain | 23884 | 23626 | 23890 | -238 [-296, -184] | VALID |
+| get_raw.hash | 46676 | 46490 | 46670 | -222 [-254, -166] | VALID |
+| get_raw.hash.small | 48492 | 48274 | 48478 | -242 [-300, -198] | VALID |
+| get_raw.hash.medium | 48104 | 47866 | 48074 | -208 [-274, -170] | VALID |
+| get_raw.hash.large | 46688 | 46454 | 46672 | -214 [-270, -170] | VALID |
+| get_raw.hash.miss | 49034 | 48848 | 49020 | -210 [-248, -182] | VALID |
+| scan_raw.suggestion | 40964 | 40712 | 40944 | -236 [-280, -214] | VALID |
+| scan_raw.full.tree | 20310 | 20106 | 20286 | -192 [-238, -150] | VALID |
+| scan_raw.full.hash | 27002 | 26768 | 26984 | -232 [-278, -192] | VALID |
+| framed.get | 9494 | 8992 | 9410 | withheld | INCONCLUSIVE |
+| framed.scan | 9506 | 8966 | 9410 | withheld | INCONCLUSIVE |
+| framed.txn_scan | 9488 | 8980 | 9456 | -514 [-544, -472] | VALID |
+| framed.is_empty | 9466 | 8990 | 9460 | -496 [-526, -432] | VALID |
+| user_bigram.get | 46676 | 46458 | 46692 | -222 [-264, -192] | VALID |
+| user_bigram.get.small | 46700 | 46474 | 46652 | -228 [-258, -208] | VALID |
+| user_bigram.get.large | 46688 | 46498 | 46654 | -200 [-228, -162] | VALID |
+| user_bigram.miss | 46682 | 46444 | 46664 | -228 [-242, -174] | VALID |
+| user_bigram.store | 46708 | 46426 | 46676 | -254 [-292, -226] | VALID |
+| user_bigram.remove_store | 46678 | 46434 | 46658 | -224 [-254, -182] | VALID |
+| user_bigram.keys | 46682 | 46450 | 46676 | -220 [-290, -166] | VALID |
+| lifecycle.open_system | 8362 | 8088 | 8316 | withheld | INCONCLUSIVE |
+| lifecycle.user_load | 48940 | 48714 | 48898 | -192 [-284, -164] | VALID |
+| lifecycle.user_save | 47306 | 47096 | 47286 | -212 [-268, -150] | VALID |
+| session.typing_training | 55316 | 55080 | 55294 | -246 [-308, -192] | VALID |
+
+### Same-run facade M1 memory
+
+Twenty paired rounds after two warmups. KiB; paired deltas have 95%
+bootstrap intervals. Total Pss uses the usual residency control bound
+±max(64 KiB, 1% of the prototype median).
+
+| facade/profile | total Pss base / prototype / control / pin | paired prototype-base [95%] | paired prototype-pin [95%] | control |
+| --- | ---: | ---: | ---: | --- |
+| pinyin/phrases | 9396 / 9132.5 / 9135 / 9258.5 | -260 [-262, -260] | -124.5 [-134, -59.5] | VALID |
+| pinyin/journals | 9003 / 8748 / 8744 / 8754 | -256 [-257, -253] | -8.5 [-14, -1.5] | VALID |
+| zhuyin/phrases | 8484.5 / 8168 / 8168 / 8159 | -317.5 [-320, -315.5] | 6 [6, 10] | VALID |
+| zhuyin/journals | 8548 / 8232 / 8232 / 8162 | -316 [-317, -314.5] | 70 [67, 72.5] | VALID |
+
+Resident executable text Rss at M1, KiB:
+
+| facade/profile | facade base / prototype / pin | libtkrzw base / prototype / pin |
+| --- | ---: | ---: |
+| pinyin/phrases | 508 / 508 / 464 | 1080 / 768 / 896 |
+| pinyin/journals | 508 / 508 / 464 | 1080 / 768 / 896 |
+| zhuyin/phrases | 520 / 520 / 448 | 1080 / 768 / 896 |
+| zhuyin/journals | 520 / 520 / 448 | 1080 / 768 / 896 |
+
+### Same-run facade instructions
+
+Exact prototype/control equality is required separately for each scope. INVALID scopes have no comparative figures.
+
+| facade/profile/scope | base Ir | prototype Ir | control Ir | pin Ir | control |
+| --- | ---: | ---: | ---: | ---: | --- |
+| pinyin/phrases/init | 10450483 | 10246177 | 10246177 | 338885707 | VALID |
+| pinyin/phrases/first | withheld | withheld | withheld | withheld | INVALID |
+| pinyin/phrases/steady | withheld | withheld | withheld | withheld | INVALID |
+| pinyin/journals/init | 10441064 | 10236215 | 10236215 | 338945747 | VALID |
+| pinyin/journals/first | withheld | withheld | withheld | withheld | INVALID |
+| pinyin/journals/steady | withheld | withheld | withheld | withheld | INVALID |
+| zhuyin/phrases/init | 10061080 | 9923053 | 9923053 | 338543130 | VALID |
+| zhuyin/phrases/first | withheld | withheld | withheld | withheld | INVALID |
+| zhuyin/phrases/steady | withheld | withheld | withheld | withheld | INVALID |
+| zhuyin/journals/init | 10054711 | 9916995 | 9916995 | 338613850 | VALID |
+| zhuyin/journals/first | withheld | withheld | withheld | withheld | INVALID |
+| zhuyin/journals/steady | withheld | withheld | withheld | withheld | INVALID |
+
+### Init and first-candidate wall time
+
+Medians ns; warm/cold refers to the facade-library cache only. No wall comparison is claimed when the same-bytes control fails.
+
+| facade/profile/cache/scope | base | prototype | control | pin | status | prototype/base [95%] |
+| --- | ---: | ---: | ---: | ---: | --- | ---: |
+| pinyin/journals/warm/first_candidate_ns | 181529.5 | 182855 | 195585 | 232676 | INCONCLUSIVE | withheld |
+| pinyin/journals/warm/init_ns | 3151563 | 3179906.5 | 3200376 | 100788830 | INCONCLUSIVE | withheld |
+| pinyin/journals/cold/first_candidate_ns | 185987 | 193888 | 186888.5 | 690787.5 | INCONCLUSIVE | withheld |
+| pinyin/journals/cold/init_ns | 4717971.5 | 5104584 | 5105308.5 | 97656006.5 | VALID | 1.07642061251 [1.01247968893, 1.11648355685] |
+| pinyin/phrases/warm/first_candidate_ns | 206603 | 191393.5 | 193191.5 | 239654 | INCONCLUSIVE | withheld |
+| pinyin/phrases/warm/init_ns | 3181335 | 2984598 | 3062570.5 | 99162290 | INCONCLUSIVE | withheld |
+| pinyin/phrases/cold/first_candidate_ns | 194951.5 | 200957 | 207222 | 643260 | INCONCLUSIVE | withheld |
+| pinyin/phrases/cold/init_ns | 4702780 | 4990178 | 5134082.5 | 98610162.5 | VALID | 1.07320645775 [1.04797839574, 1.09006840835] |
+| zhuyin/journals/warm/first_candidate_ns | 157664.5 | 150365.5 | 156755 | 155377.5 | INCONCLUSIVE | withheld |
+| zhuyin/journals/warm/init_ns | 2851748.5 | 2661742.5 | 2813724.5 | 96380274.5 | INCONCLUSIVE | withheld |
+| zhuyin/journals/cold/first_candidate_ns | 160757.5 | 162627 | 166229 | 521332.5 | INCONCLUSIVE | withheld |
+| zhuyin/journals/cold/init_ns | 4658114 | 4279491.5 | 4479559 | 99377720.5 | INCONCLUSIVE | withheld |
+| zhuyin/phrases/warm/first_candidate_ns | 157811 | 154652 | 157722 | 155510.5 | INCONCLUSIVE | withheld |
+| zhuyin/phrases/warm/init_ns | 2780328.5 | 2723135 | 2622975.5 | 97934758 | INCONCLUSIVE | withheld |
+| zhuyin/phrases/cold/first_candidate_ns | 170481 | 164866 | 172011.5 | 4222286.5 | INCONCLUSIVE | withheld |
+| zhuyin/phrases/cold/init_ns | 4678914 | 4355857.5 | 4348793.5 | 104213583 | INCONCLUSIVE | withheld |
+
+### Steady wall samples and facade peak heap
+
+Steady wall medians are ns/cycle; the coordinator applies its existing same-bytes paired maximum-spread guard. These medians alone imply no timing claim.
+
+| facade | base median | prototype median | control median | pin median |
+| --- | ---: | ---: | ---: | ---: |
+| pinyin | 28065255.5 | 28364684.5 | 28550312.5 | 29164286 |
+| zhuyin | 26801839 | 26553382.5 | 26877426 | 26124780 |
+
+Facade whole-process DHAT peak bytes (exact prototype/control required):
+
+| facade/profile | base | prototype | control | pin | control |
+| --- | ---: | ---: | ---: | ---: | --- |
+| pinyin/phrases | 9554551 | 9554355 | 9554355 | 9492130 | VALID |
+| pinyin/journals | 9549521 | 9549325 | 9549325 | 9492130 | VALID |
+| zhuyin/phrases | 8995382 | 8995306 | 8995306 | 8915329 | VALID |
+| zhuyin/journals | 8990352 | 8990276 | 8990276 | 8915329 | VALID |
+
+### Timed-artifact provenance
+
+SHA256, file size, and ELF NEEDED were read from each actual timed source
+artifact after the successful unchanged-hash campaign check. Base is
+`d7788072d3b8078aaa500cb5fcb98e0542fe7278`; prototype shipping source is
+`6e50b77ef9b380f36ca0cd6d3fb76732c094baaf`, built at docs-only checkpoint
+`c4cc6d0ca1063704ca2905966a481647b8bf164b`. The runtime SHA256 remains
+`36c6aa4d77edb3bd6a628f02fc456f0a67096bdd451c04999141d7144f144d0e`.
+
+| artifact | SHA256 | bytes | ELF NEEDED |
+| --- | --- | ---: | --- |
+| base/pinyin | 92a769b8d4c57a61c6190e7e50699deb44f022d87228cb5f96ac00dd16b0031e | 5199952 | libglib-2.0.so.0, libtkrzw.so.1, libc.so.6, ld-linux-x86-64.so.2, libgcc_s.so.1 |
+| base/zhuyin | 2eb6d48a03f91587aecad9fc7268dc9a7efc9a1debd29d60f11c782bc4236aee | 4926152 | libglib-2.0.so.0, libtkrzw.so.1, libc.so.6, ld-linux-x86-64.so.2, libgcc_s.so.1 |
+| prototype/pinyin | d040918c1da19056ef4e8646cb82be7e7151884766025610e83bad08ba5d2837 | 5218192 | libglib-2.0.so.0, libtkrzw.so.1, libstdc++.so.6, libc.so.6, ld-linux-x86-64.so.2, libgcc_s.so.1 |
+| prototype/zhuyin | 267f459a5932f0ca71ee39daca18dfcfd01fb9c9bc4db02f449df192ffe2dbab | 4935752 | libglib-2.0.so.0, libtkrzw.so.1, libstdc++.so.6, libc.so.6, ld-linux-x86-64.so.2, libgcc_s.so.1 |
+| control/pinyin | d040918c1da19056ef4e8646cb82be7e7151884766025610e83bad08ba5d2837 | 5218192 | libglib-2.0.so.0, libtkrzw.so.1, libstdc++.so.6, libc.so.6, ld-linux-x86-64.so.2, libgcc_s.so.1 |
+| control/zhuyin | 267f459a5932f0ca71ee39daca18dfcfd01fb9c9bc4db02f449df192ffe2dbab | 4935752 | libglib-2.0.so.0, libtkrzw.so.1, libstdc++.so.6, libc.so.6, ld-linux-x86-64.so.2, libgcc_s.so.1 |
+| pin/pinyin | d78a91676af43ad5075c20ab4ae014a8bc6e03b7a5f5ab656d014087f18ff7b8 | 5773096 | libglib-2.0.so.0, libtkrzw.so.1, libstdc++.so.6, libm.so.6, libc.so.6, libgcc_s.so.1 |
+| pin/zhuyin | adbcc8c8c3dec00a488ea89413a525f57fdccf280a8ca44e6c2ad6765fd24c3d | 5643440 | libglib-2.0.so.0, libtkrzw.so.1, libstdc++.so.6, libm.so.6, libc.so.6, libgcc_s.so.1 |
+
+Store benchmark subjects (the control is a byte-identical base copy):
+
+- base: `/home/sheng/Documents/Codex/2026-10-24/task-3/campaign-finish/base-build/release/deps/backend_matrix_tkrzw-6df5c85cf36edf5d`, SHA256 `b31e10856b2428aca9235886fcb70796a42a171ea86ff436907dfdacebee6d28`, 3071968 B; NEEDED libtkrzw.so.1, libm.so.6, libc.so.6, libgcc_s.so.1.
+- prototype: `/home/sheng/Documents/Codex/2026-10-24/task-3/campaign-finish/proto-build/release/deps/backend_matrix_tkrzw-6d7c8325b0fda4f3`, SHA256 `f36d8b52777fb13b096f2897e51f0f258a6589b8d41d3002b42e610f7cd53e2a`, 3089144 B; NEEDED libtkrzw.so.1, libstdc++.so.6, libm.so.6, libc.so.6, ld-linux-x86-64.so.2, libgcc_s.so.1.
+
+Canonical driver arguments used by the local retention wrappers (the
+wrappers retain original outputs without changing driver arguments):
+
+```sh
+export R=/home/sheng/Documents/Codex/2026-10-24/task-3
+cd "$R/worktree"
+source "$R/setup-followup.env"
+export TMPDIR="$R/tmp-finish"
+PIN="$OXPINYIN_ORACLE_PREFIX_TKRZW"
+DATA="$OXPINYIN_ORACLE_DATA_TKRZW"
+BASE="$R/campaign-finish/base-stage"
+PR="$R/campaign-finish/proto-stage"
+CONTROL="$R/campaign-finish/control-stage"
+PROFILES="$R/campaign-finish/teardown/profiles"
+BASE_BENCH="/home/sheng/Documents/Codex/2026-10-24/task-3/campaign-finish/base-build/release/deps/backend_matrix_tkrzw-6df5c85cf36edf5d"
+PR_BENCH="/home/sheng/Documents/Codex/2026-10-24/task-3/campaign-finish/proto-build/release/deps/backend_matrix_tkrzw-6d7c8325b0fda4f3"
+DATA_ID=$(tools/generate-function-order.py --print-identity "$DATA")
+# Each pass uses the freshly installed unordered inputs and their static archives.
+for pass in a b; do
+tools/generate-function-order.py --library "pinyin=$R/campaign-finish/proto-unordered/lib/libpinyin.so.15.0.0" --library "zhuyin=$R/campaign-finish/proto-unordered/lib/libzhuyin.so.15.0.0" --staticlib "pinyin=$R/campaign-finish/proto-build/x86_64-unknown-linux-gnu/release/libpinyin.a" --staticlib "zhuyin=$R/campaign-finish/proto-build/x86_64-unknown-linux-gnu/release/libzhuyin.a" --bisect "$R/campaign-finish/bisect" --system-dir "$DATA" --system-identity "$DATA_ID" --profiles-dir "$PROFILES" --work-dir "$R/campaign-finish/generation-work" --cpu 2 --output-dir "$R/campaign-finish/policy-$pass"
+done
+# Store driver (base/prototype paths identify the hashed benchmarks above):
+tools/bisection/store-ops.py --base "$BASE_BENCH" --candidate "$PR_BENCH" --data "$DATA" --work "$R/campaign-finish/store-work" --profile --keep-profiles --cpu 2 --out "$R/campaign-finish/records/store-operation.jsonl"
+# Four-arm facade driver:
+tools/measure-function-order.py --subject "base=$BASE" --subject "pr=$PR" --subject "control=$CONTROL" --subject "pin=$PIN" --function-order "base/pinyin=$R/base/tools/packaging/function-order/tkrzw/libpinyin.order" --function-order "base/zhuyin=$R/base/tools/packaging/function-order/tkrzw/libzhuyin.order" --bisect "$R/campaign-finish/bisect" --system-dir "$DATA" --system-identity "$DATA_ID" --profiles-dir "$PROFILES" --work-dir "$R/campaign-finish/measure-work" --cpu 2 --rounds 20
+```
+
+The as-run store profiler divisor is 10 (minimum one iteration); the
+runner uses its published per-operation iteration defaults. The facade
+native phase uses 20 rounds plus two warmups with rotating four-arm order.
+
+All three phases ran sequentially through the normal heavy admission
+wrapper, not concurrently. `$DATA_ID` is the existing generator's
+`--print-identity "$DATA"` result. The shell wrappers above provide the
+exact uv-managed interpreter invocation and the ordered install commands;
+they remain local. No new workload is run by producing this report.
+
+### Stripped sizes and exact reproduction commands
+
+- stripped bytes base pinyin 2487016
+- stripped bytes base zhuyin 2245352
+- stripped bytes pr pinyin 2499472
+- stripped bytes pr zhuyin 2249616
+- stripped bytes control pinyin 2499472
+- stripped bytes control zhuyin 2249616
+- stripped bytes pin pinyin 867216
+- stripped bytes pin zhuyin 838520
+
+All libraries, profiles, system data, work paths and TMPDIR were verified
+ext4. The certified runtime was checked before each launch. Separate
+base/prototype targets and stages prevented stale installed artifacts;
+prototype imports concrete DBM constructors, no PolyDBM/C API, while base
+imports the #1114 tkrzw_dbm_set path. Normal heavy admission covered each
+sequential phase. Raw profiler outputs, individual timings and exact
+commands remain local under $R/campaign-finish/records; none is committed,
+attached, archived or uploaded. Only findings are published.
+
+```sh
+just heavy -- bash "$R/prepare-policies-finish.sh"
+just heavy -- bash "$R/build-ordered-finish.sh"
+just heavy -- bash "$R/run-measurements-finish.sh"
+$PY -X lazy_imports=normal "$R/summarize-measurement-finish.py"
+$PY -X lazy_imports=normal "$R/summarize-counters-finish.py"
+```
+
+STOP for the maintainer's decision. No PR or review. Before any future
+approved PR, rebase onto then-current main and regenerate tkrzw policies
+on the combined tree, including #1140; that step was not performed here.
+
+
 ## Full-finish campaign: restored-source policies regenerated
 
 The maintainer released the full evaluation from source checkpoint
