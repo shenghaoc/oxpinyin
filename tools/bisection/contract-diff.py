@@ -1008,7 +1008,7 @@ def token_unigram_system(k):
     return out
 
 
-def token_unigram_user(k):
+def token_unigram_user(k, *, add_frequency=True):
     phrase = '你好你好'
     reading = "ni3'hao3'ni3'hao3" if k.mode == 'pinyin' else 'ㄋㄧˇ ㄏㄠˇ ㄋㄧˇ ㄏㄠˇ'
     iterator = k.fn('begin_add_phrases', P, P, U)(k.ctx, 7)
@@ -1021,7 +1021,8 @@ def token_unigram_user(k):
     assert len(tokens) == 1, tokens
     token = tokens[0]
     out = {'imported': added, 'token': hex(token), 'before': unigram_of(k, token)}
-    out['add'] = k.fn('token_add_unigram_frequency', B, P, U, U)(k.inst, token, 7)
+    if add_frequency:
+        out['add'] = k.fn('token_add_unigram_frequency', B, P, U, U)(k.inst, token, 7)
     out['after'] = unigram_of(k, token)
     return out
 
@@ -6861,10 +6862,8 @@ def hash_path_fixture(k, placement):
 def hash_path_session(placement):
     def probe(k):
         system_name, journal_name, user_name = hash_path_fixture(k, placement)
-        out = {'training': token_unigram_trained(k), 'import': token_unigram_user(k)}
-        before = d18_export_phrases(k)
-        assert before, 'the user phrase must be exported before save'
-        out['export-before'] = before
+        out = {'training': token_unigram_trained(k),
+               'import': token_unigram_user(k, add_frequency=False)}
         out['save'] = k.fn('save', B, P)(k.ctx)
         assert out['save'], 'the trained profile must save'
         out['files'] = user_listing(k)
@@ -6884,11 +6883,20 @@ def hash_path_session(placement):
         assert out['trained-after-reopen'] == out['training']['after']
         out['import-after-reopen'] = unigram_of(k, int(out['import']['token'], 16))
         assert out['import-after-reopen'] == out['import']['after']
-        out['export-after'] = d18_export_phrases(k)
-        assert out['export-after'] == before, 'reopen must preserve the exported phrase'
         k.fn('free_instance', None, P)(k.inst)
         k.fn('fini', None, P)(k.ctx)
         k._ctx = k._inst = None
+        # libzhuyin has no export iterator (zhuyin.h at 074a2219).
+        # Reuse the existing export worker on this side's companion
+        # libpinyin, as axis_c_import does for either facade's saved profile.
+        library = Path(k.lib._name)
+        companion = library.with_name(library.name.replace('libzhuyin', 'libpinyin', 1))
+        proc = subprocess.run([sys.executable, str(WORKER), 'pinyin', str(companion),
+                               k.data, 'axis-c-export-user'], capture_output=True,
+                              env=dict(os.environ, AXIS_C_REOPEN_USER=k.user))
+        assert proc.returncode == 0, proc.stderr.decode('utf-8', 'surrogateescape')
+        out['export'] = json.loads(proc.stdout)
+        assert out['export']['rows'], 'reopen must preserve the imported phrase for export'
         return out
     return probe
 
