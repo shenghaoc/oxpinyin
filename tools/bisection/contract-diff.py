@@ -103,6 +103,12 @@ import signal
 import statistics
 import subprocess
 import sys
+
+if sys.flags.optimize != 0:
+    print('contract-diff: optimised Python is unsupported; unset PYTHONOPTIMIZE and remove -O/-OO',
+          file=sys.stderr)
+    raise SystemExit(2)
+
 import tempfile
 import threading
 import time

@@ -2,7 +2,11 @@
 """Tests for the GLib/libc call-site generator."""
 import csv
 import importlib.util
+import json
+import os
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -32,6 +36,23 @@ EXPECTED = (
 
 
 class CallSiteTests(unittest.TestCase):
+    def test_just_recipe_preserves_a_pin_path_with_spaces(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            pin = root / 'pin checkout with spaces'
+            pin.mkdir()
+            uv = root / 'uv'
+            uv.write_text(f'#!{sys.executable}\nimport json, sys\nprint(json.dumps(sys.argv[1:]))\n')
+            uv.chmod(0o755)
+            result = subprocess.run(
+                ['just', '--justfile', str(ROOT / 'justfile'), 'audit-glib-call-sites', str(pin)],
+                env=dict(os.environ, PATH=str(root) + os.pathsep + os.environ['PATH']),
+                capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(json.loads(result.stdout), [
+                'run', '--no-project', '--managed-python', '--python', 'cpython@3.15+gil',
+                'python', '-X', 'lazy_imports=normal', 'tools/audit/glib_call_sites.py', str(pin)])
+
     def test_the_fixture_is_reproduced_byte_for_byte(self):
         rows = driver.build_rows(
             FIXTURE, driver.read_classification(FIXTURE / "classification.tsv"))
