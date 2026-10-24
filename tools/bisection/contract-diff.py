@@ -11376,6 +11376,112 @@ def _(k):
     return {'ret': k.fn('phrase_segment', B, P, S)(k.inst, '今天天气很好'.encode())}
 
 
+# #918: 074a2219 phrase_lookup.cpp:137-149 searches the scalar span and
+# reads its predecessor before the later surrogate prevents a full path.
+# ngram.cpp:303-304 reads the three-byte user's total beside the system row
+# and asserts at memory_chunk.h:390. The sound twin reaches final_step:
+# false, two zero tokens, no diagnostic. No whole-store preflight.
+def phrase_prefix_gram(short, *, before=False, unrelated=False):
+    def probe(k):
+        predecessor = tokens_of(k, '好')[0] if unrelated else 1
+        value = b'\x01\x00\x00' if short else _gram_bytes(1, [])
+        _replace_user_bigram(k, [(predecessor, value)])
+        inst = k.inst
+
+        def result():
+            count = U(0xABCDEF)
+            assert k.fn('get_n_phrase', B, P, C.POINTER(U))(inst, C.byref(count))
+            tokens = []
+            for index in range(count.value):
+                token = U(0xABCDEF)
+                assert k.fn('get_phrase_token', B, P, U, C.POINTER(U))(
+                    inst, index, C.byref(token))
+                tokens.append(token.value)
+            token = U(0xABCDEF)
+            assert not k.fn('get_phrase_token', B, P, U, C.POINTER(U))(
+                inst, count.value, C.byref(token))
+            assert token.value == 0
+            return tokens
+
+        # No scalar span is reachable: seed a distinguishable old result
+        # without reading the corrupt start gram on either implementation.
+        assert not k.fn('phrase_segment', B, P, S)(inst, b'\xed\xa0\x80' * 3)
+        old = result()
+        assert old == [0, 0, 0]
+        surrogate = b'\xed\xa0\x80'
+        text = surrogate + '你'.encode() if before else '你'.encode() + surrogate
+        ret = k.fn('phrase_segment', B, P, S)(inst, text)
+        tokens = result()
+        if short and not before and not unrelated:
+            assert k.log_messages == [
+                f'{k.mode}_phrase_segment: a user bigram value is shorter than a guint32 '
+                'total_freq (upstream aborts, memory_chunk.h:390)'
+            ]
+            return dict(ret=ret, untouched_phrase_result=tokens == old)
+        assert tokens == [0, 0]
+        assert not k.log_messages
+        return dict(ret=ret, tokens=tokens)
+    return probe
+
+
+for _mode in ('pinyin', 'zhuyin'):
+    case(f'abort-phrase-segment-prefix-short-user-gram-{_mode}', mode=_mode,
+         abort=False, issues=('918',))(phrase_prefix_gram(True))
+    case(f'phrase-segment-prefix-sound-user-gram-{_mode}', mode=_mode,
+         control=True, stderr=True, issues=('918',))(phrase_prefix_gram(False))
+    case(f'phrase-segment-nonscalar-before-short-user-gram-{_mode}', mode=_mode,
+         control=True, stderr=True, issues=('918',))(phrase_prefix_gram(True, before=True))
+    case(f'phrase-segment-prefix-unrelated-short-user-gram-{_mode}', mode=_mode,
+         control=True, stderr=True, issues=('918',))(phrase_prefix_gram(True, unrelated=True))
+
+
+# #918 ruling: the phrase table compares the raw UCS-4 words the pin's
+# converter produces. A table key `[0xd800]` and a bounded one-character
+# item make `phrase_segment("\xed\xa0\x80")` return true with that token;
+# no `char` or `str` exists for the word on either side.
+def phrase_segment_nonscalar_raw_key(k):
+    system = private_system(k)
+    word = 0xd800
+    token = 0x01000001
+    raw_text = word.to_bytes(4, 'little')
+    reading = (0x1084).to_bytes(2, 'little')
+    content = bytearray(8)
+    offsets = [0, 8]
+    content += bytes((1, 1)) + (100).to_bytes(4, 'little') + raw_text
+    content += reading + (10).to_bytes(4, 'little')
+    index_two = 17 + len(offsets) * 4 + 1
+    payload = b''.join(value.to_bytes(4, 'little') for value in
+                       (200, 17, index_two, index_two + len(content) + 1))
+    payload += b'#' + b''.join(value.to_bytes(4, 'little') for value in offsets)
+    payload += b'#' + content + b'#'
+    path = Path(system, 'gb_char.bin')
+    path.unlink()
+    path.write_bytes(_chunk(payload))
+    path = Path(system, 'phrase_index.bin')
+    path.unlink()
+    _craft_db(str(path), [(raw_text, token.to_bytes(4, 'little'))], 1,
+              system_index=True)
+    _write_user_conf(k)
+    k.data = system
+    inst = k.inst
+    assert not k.fn('phrase_segment', B, P, S)(inst, b'\xed\xbf\xbf' * 3)
+    ret = k.fn('phrase_segment', B, P, S)(inst, b'\xed\xa0\x80')
+    count = U(0xABCDEF)
+    assert k.fn('get_n_phrase', B, P, C.POINTER(U))(inst, C.byref(count))
+    tokens = []
+    for index in range(count.value):
+        value = U(0xABCDEF)
+        assert k.fn('get_phrase_token', B, P, U, C.POINTER(U))(
+            inst, index, C.byref(value))
+        tokens.append(value.value)
+    return dict(ret=ret, tokens=tokens)
+
+
+for _mode in ('pinyin', 'zhuyin'):
+    case(f'phrase-segment-nonscalar-raw-key-{_mode}', mode=_mode,
+         stderr=True, issues=('918',))(phrase_segment_nonscalar_raw_key)
+
+
 # Controls: a short gram the lookup never loads. 我 never precedes a phrase
 # of `nihao`; with DYNAMIC_ADJUST clear the candidate list merges nothing
 # (pinyin.cpp:2207-2216).

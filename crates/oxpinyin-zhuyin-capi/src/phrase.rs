@@ -192,28 +192,63 @@ mod tests {
         }
     }
 
-    struct LogHandler(u32);
+    struct LogHandler {
+        default: u32,
+        facade: u32,
+    }
     impl LogHandler {
         fn new() -> Self {
             LOGS.with(|logs| *logs.borrow_mut() = Some(Vec::new()));
             // SAFETY: The callback lives for the process, has no borrowed
             // user data, and is removed by Drop before the capture ends.
-            Self(unsafe {
+            let default = unsafe {
                 glib_sys::g_log_set_handler(
                     std::ptr::null(),
                     glib_sys::G_LOG_LEVEL_MASK,
                     Some(capture_log),
                     std::ptr::null_mut(),
                 )
-            })
+            };
+            // SAFETY: Same callback and lifetime; the facade domain is the
+            // one `ffi::log_warning` writes.
+            let facade = unsafe {
+                glib_sys::g_log_set_handler(
+                    c"libzhuyin".as_ptr(),
+                    glib_sys::G_LOG_LEVEL_MASK,
+                    Some(capture_log),
+                    std::ptr::null_mut(),
+                )
+            };
+            Self { default, facade }
         }
     }
     impl Drop for LogHandler {
         fn drop(&mut self) {
-            // SAFETY: This is the handler id for the default domain above.
-            unsafe { glib_sys::g_log_remove_handler(std::ptr::null(), self.0) };
+            // SAFETY: These are the handler ids installed above.
+            unsafe {
+                glib_sys::g_log_remove_handler(std::ptr::null(), self.default);
+                glib_sys::g_log_remove_handler(c"libzhuyin".as_ptr(), self.facade);
+            }
             LOGS.with(|logs| *logs.borrow_mut() = None);
         }
+    }
+
+    #[test]
+    fn read_after_check_emits_one_class_c_warning() {
+        let _logs = LogHandler::new();
+        let error = oxpinyin_engine::EngineError::ReadAfterCheck { token: 0x0100_0001 };
+        assert!(crate::sentence::refuse_lookup_gram(
+            "zhuyin_phrase_segment",
+            &error
+        ));
+        LOGS.with(|logs| {
+            let logs = logs.borrow();
+            let logs = logs.as_ref().expect("capture active");
+            assert_eq!(logs.len(), 1);
+            assert_eq!(logs[0].0.as_deref(), Some("libzhuyin"));
+            assert_eq!(logs[0].1, glib_sys::G_LOG_LEVEL_WARNING);
+            assert!(logs[0].2.contains("ngram_kyotodb.cpp:138-139"));
+        });
     }
 
     #[test]

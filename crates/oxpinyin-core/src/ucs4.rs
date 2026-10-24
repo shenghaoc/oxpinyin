@@ -65,3 +65,59 @@ pub fn decode(bytes: &[u8]) -> Result<Vec<u32>, Ucs4Error> {
     }
     Ok(words)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::decode;
+
+    #[test]
+    fn accepts_scalars_and_surrogates() {
+        assert_eq!(decode(b"nihao").unwrap(), [0x6e, 0x69, 0x68, 0x61, 0x6f]);
+        assert_eq!(decode("你".as_bytes()).unwrap(), [0x4f60]);
+        assert_eq!(decode(&[0xed, 0xa0, 0x80]).unwrap(), [0xd800]);
+        assert_eq!(decode(&[0xed, 0xbf, 0xbf]).unwrap(), [0xdfff]);
+    }
+
+    #[test]
+    fn accepts_above_unicode_and_historical_widths() {
+        assert_eq!(decode(&[0xf4, 0x90, 0x80, 0x80]).unwrap(), [0x11_0000]);
+        assert_eq!(decode(&[0xf5, 0x80, 0x80, 0x80]).unwrap(), [0x14_0000]);
+        assert_eq!(
+            decode(&[0xf8, 0x88, 0x80, 0x80, 0x80]).unwrap(),
+            [0x20_0000]
+        );
+        assert_eq!(
+            decode(&[0xfc, 0x84, 0x80, 0x80, 0x80, 0x80]).unwrap(),
+            [0x400_0000]
+        );
+        assert_eq!(
+            decode(&[0xfd, 0xbf, 0xbf, 0xbf, 0xbf, 0xbf]).unwrap(),
+            [0x7fff_ffff]
+        );
+    }
+
+    #[test]
+    fn rejects_malformed_and_overlong_forms() {
+        for bytes in [
+            &[0x80][..],
+            &[0xc0, 0x80],
+            &[0xc1, 0xbf],
+            &[0xe0, 0x80, 0x80],
+            &[0xf0, 0x80, 0x80, 0x80],
+            &[0xf8, 0x80, 0x80, 0x80, 0x80],
+            &[0xfc, 0x80, 0x80, 0x80, 0x80, 0x80],
+            &[0xfe],
+            &[0xff],
+            &[0xed, 0xa0],
+            &[0xe4, 0xbd],
+        ] {
+            assert!(decode(bytes).is_err(), "accepted {bytes:02x?}");
+        }
+    }
+
+    #[test]
+    fn preserves_mixed_text_before_a_non_scalar() {
+        let bytes = [0xe4, 0xbd, 0xa0, 0xed, 0xa0, 0x80];
+        assert_eq!(decode(&bytes).unwrap(), [0x4f60, 0xd800]);
+    }
+}
