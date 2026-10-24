@@ -353,26 +353,27 @@ compatibility runtime without replacing the native Windows workflow.
 
 ## Contribution checks
 
-From the native repository root, run fmt, tests and Clippy for each touched
-package. For a changed file under `crates/`, find the containing package's
+From the native repository root, use `just` for fmt, tests and Clippy for each
+touched package. For a changed file under `crates/`, find the containing package's
 `Cargo.toml` and copy its `[package]` → `name` value into the `-p` argument.
 Repeat the package commands for each affected package; the example below
-uses `oxpinyin-core`. For documentation-only edits, run fmt and check the
-changed instructions/links; Rust tests need not be repeated. For repository
-build/config changes, identify affected packages or ask the maintainer when
+uses `oxpinyin-core`. For documentation-only edits, check the changed text,
+instructions/links and `git diff --check`; no Rust formatter, build, tests,
+Clippy or backend selection is needed. Source-comment edits also run fmt.
+For repository build/config changes, identify affected packages or ask the maintainer when
 scope is unclear; CI owns the full workspace sweep:
 
 ```bash
-cargo fmt --all --check
-cargo clippy --locked -p oxpinyin-core --all-targets -- -D warnings
-cargo test --locked -p oxpinyin-core
+just fmt --all --check
+just clippy --locked -p oxpinyin-core --all-targets -- -D warnings
+just heavy -- cargo test --locked -p oxpinyin-core
 ```
 
 For a storage-dependent macOS package, use the explicit backend arguments:
 
 ```bash
-cargo clippy --locked -p oxpinyin-store --all-targets --no-default-features --features bdb -- -D warnings
-cargo test --locked -p oxpinyin-store --no-default-features --features bdb
+just clippy --locked -p oxpinyin-store --all-targets --no-default-features --features bdb -- -D warnings
+just heavy -- cargo test --locked -p oxpinyin-store --no-default-features --features bdb
 ```
 
 `--no-default-features` turns off the default Berkeley DB selection;
@@ -395,6 +396,11 @@ apparent rather than guessing that ordinary unit tests establish parity. The nor
 path rules in [oracle](oracle.md); they do not require every ordinary
 contributor to provision all backends. Packaging and performance tools belong
 to their existing task runbooks.
+
+Report the applicable checks and final outcomes under
+[results and reproduction](../../CONTRIBUTING.md#results-and-reproduction).
+Stop after the required checks; full logs and evidence uploads are not part
+of completing a contribution.
 
 ## Troubleshooting and resumption
 

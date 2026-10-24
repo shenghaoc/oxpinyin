@@ -13,9 +13,11 @@ file wins on any conflict.
 ## Constitution
 
 1. Broad appeal only — no niche features at cost to everyone.
-2. Binary size (ruling 2026-10-18 UTC): record stripped shipping-library
-   file sizes and note increases over base in the PR; minor decreases need
-   no mention. No pin +10% cap. Details: `docs/perf/ci-perf-size-gate-proposal-2026-09-09.md`.
+2. Binary size (ruling 2026-10-18 UTC): for changes affecting shipping
+   libraries, record stripped shipping-library file sizes and note increases
+   over base in the PR; minor decreases need no mention. Documentation-only
+   changes need no size build or report. No pin +10% cap.
+   Details: `docs/perf/ci-perf-size-gate-proposal-2026-09-09.md`.
 3. No local AI (no client neural/LLM inference).
 4. Nothing panics on any input; public APIs return `Result`.
 5. `unsafe`: `forbid` in oxpinyin-core/user/engine; `deny` in data (the
@@ -284,6 +286,29 @@ Every contributor remains responsible for understanding, reviewing, testing,
 and maintaining the changes they submit, including changes produced with
 assistance from any tool.
 
+## Results and reproduction
+
+Follow [the shared reporting policy](CONTRIBUTING.md#results-and-reproduction).
+Deliver the software, maintained Python/`just` tooling, and a concise final
+result with reproducible commands. One command may reproduce an entire table.
+Keep only the revision, input and environment details needed to interpret and
+reproduce it; a separate findings document is optional.
+
+Raw verification output is disposable local working data. Do not commit,
+attach, upload, archive or mirror logs, captures or tar/zip evidence bundles
+unless the maintainer explicitly requests specific diagnostic material.
+Never initiate a browser sign-in, account-setup or upload request to publish
+verification output. Missing captures are not a blocker and require no
+replacement manifest, checksum inventory or "evidence unavailable" statement.
+Functional fixtures, pins and release packages are governed by their own
+procedures; this rule concerns verification reporting.
+
+A broken reproduction command or a result that contradicts the claim beyond
+the method's expected variability is a bug to investigate. Fix the software,
+tooling or documented assumptions and correct the claim. Do not replace that
+investigation with an evidence package. This policy supersedes older reporting
+requirements in runbooks, findings and lane instructions.
+
 ## Pull request descriptions
 
 - Use [.github/PULL_REQUEST_TEMPLATE.md](.github/PULL_REQUEST_TEMPLATE.md)
@@ -297,9 +322,9 @@ assistance from any tool.
   report at the end.
 - For a stacked PR, describe only that PR's own diff and name its direct
   parent PR.
-- Use about 150–300 words for an ordinary PR. Technical evidence can make
-  it longer. Put bulk evidence in a linked findings document. The existing
-  "Findings documents commit no captures" rule still applies.
+- Keep an ordinary PR brief; 150–300 words is a guide, not a minimum.
+  Report final results and reproducible commands under "Results and
+  reproduction" above. Add detail only when it helps assess the change.
 - The verification rules elsewhere in this file stay authoritative. This
   section changes only the format.
 
@@ -488,9 +513,9 @@ always".
    `tools/bisection/cells-for-diff.py [base]` runs the three checks on
    `base...HEAD` (`base` defaults to `origin/main`) and prints the cells
    they select, which check fired and the matching paths and lines.
-   State its output in the PR body. A result you believe is
-   backend-dependent but that fails the check is a finding to report,
-   not a licence to run three cells.
+   Rule 7's docs/comments-only case needs no backend-selection run.
+   A result you believe is backend-dependent but that fails the check
+   is a finding to report, not a licence to run three cells.
 3. Every differential runs on all three cells once at the start of each
    sweep and once before a release. That run, not the per-change gate,
    is what covers kc and tkrzw.
@@ -504,11 +529,26 @@ always".
 6. No new bespoke driver plus runner per issue where an existing driver
    can take a case file. Add cases to the existing driver; a new driver
    needs a line in the PR body saying why none could.
+
+   **Unified tooling.** Use the repository's `just` recipes and in-tree
+   Python tooling under `tools/`, with managed CPython via `uv`, for
+   builds, gates, differentials and measurements. The migration plan is
+   `docs/findings/tooling-consolidation-python-just.md`; existing documented
+   shell entry points remain supported until migrated. Put new repeatable
+   orchestration in the shared Python tooling and expose it through `just`.
+   No ad-hoc drivers, private "operators" or out-of-tree controllers.
+   Add only the missing capability needed for the task, with proportionate
+   tests; do not expand an unrelated tooling migration or build reporting
+   infrastructure. If a required check remains unavailable, report it as
+   not run and state the blocker. Never substitute a private procedure or
+   claim an unrun check passed.
 7. Re-verification is proportional to what changed since the last
    green gate:
-   - Docs, comments or findings only: fmt, then push. No builds. This
-     case overrides rule 2. If a diff changes only comments in a backend
-     file, rule 2's check fires, but do not run the three cells.
+   - Docs, comments or findings only: review changed text and links,
+     run `git diff --check`, then push. Run fmt when source comments
+     change; Markdown-only edits need no Rust formatter. No builds,
+     tests, clippy, differentials or backend-selection checks. This case
+     overrides rule 2, including comments-only edits in backend files.
    - A review fix in code: fmt, clippy, `cargo test -p` for the touched
      crates, and only the differential(s) belonging to that issue, on
      the reference cell.
@@ -518,8 +558,11 @@ always".
      touches needs no local re-gate; CI covers it.
    - In a stack, re-gate only the commit that changed and those above
      it that touch the same files.
-   The report states which of these cases applied and why, so the
-   maintainer can check the call.
+   Stop once the applicable checks pass and concrete failures are
+   addressed. Additional runs need a changed relevant input, a specific
+   unresolved failure or an explicit
+   maintainer request; do not rerun merely to collect more evidence.
+   Repetitions prescribed by the measurement method remain required.
    Rules 5 and 7 describe the **completion gate** (maintainer ruling
    2026-10-19 UTC): what runs when a coherent fix is ready, before a
    push that asks for review. Between two such points, while a fix is
@@ -530,10 +573,10 @@ always".
    neighbours, named by case ID (`tools/bisection/run-contract-diff.sh
    ... -- --cases default-option-parse,default-option-single-key`),
    never the default suite.
-   Iteration feedback is not a gate result and is not reported as one:
-   the report names the completion gate that ran, and the intermediate
-   selections only when a DIFFER they found shaped the fix. A fix that
-   never reaches a completion gate is not ready to push for review;
+   Iteration feedback is not a gate result and is not reported as one.
+   Report the final results and reproduction commands, with failed or
+   unrun required checks as limitations. A fix that never reaches a
+   completion gate is not ready to push for review;
    a `wip/` checkpoint push does not need one.
 8. Differentials build debug, never release. Keep one target directory
    per cell and reuse it; do not delete target directories between
@@ -649,9 +692,6 @@ points at them:
   `pinyin_train` directly: `docs/runbooks/oracle.md`.
 - **Backend-specific benches** carry `required-features`; run one with
   `--bench <name>`: `docs/runbooks/benches.md`.
-- **Findings documents commit no captures.** The document records the
-  command that produced each figure; bulk evidence is attached to the PR
-  and linked from the document: `docs/runbooks/benches.md`. Where the
-  capture environment is ephemeral and the raw cannot be retained
-  anywhere, the document says so at the point of use rather than pointing
-  at a path that no longer exists.
+- **Report results and reproduction commands**, under "Results and
+  reproduction" above. Measurement-specific interpretation belongs in
+  `docs/runbooks/benches.md`; raw captures are not submission requirements.
