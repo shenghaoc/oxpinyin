@@ -489,6 +489,10 @@ const fn is_c_space(byte: u8) -> bool {
 /// the token that function `abort()`s on, which [`UserTableInfo::parse`]
 /// answers with [`UserConfError::UnknownDatabaseFormat`].
 fn upstream_db_format(token: &[u8]) -> Option<&'static str> {
+    // `%255s` writes the token into a `char str[256]`; the pin compares it
+    // with `strcmp`, so a NUL ends the token even though the conversion
+    // kept reading the rest of the word.
+    let token = token.split(|&byte| byte == 0).next().unwrap_or_default();
     UPSTREAM_DB_FORMATS
         .into_iter()
         .find(|known| known.as_bytes() == token)
@@ -1440,6 +1444,31 @@ mod tests {
                 "{body:?}"
             );
         }
+    }
+
+    /// `%255s` keeps reading through a NUL into the rest of the word, but
+    /// `to_table_database_format_type` compares a C string: the NUL ends
+    /// the token. A known format followed by NUL+bytes therefore loads and
+    /// conforms, exactly as the pin's `strcmp` reads it.
+    #[test]
+    fn a_nul_ends_the_database_format_token() {
+        let head = "binary format version:7\nmodel data version:14\n";
+        for known in UPSTREAM_DB_FORMATS {
+            let body = format!("database format:{known}\0junk\nopen counter:5\n");
+            let info = UserTableInfo::parse(format!("{head}{body}").as_bytes()).expect("parse");
+            assert_eq!(info.database_format, Some(known.to_owned()), "{known}");
+            assert_eq!(info.open_counter, 5);
+            assert!(
+                info.to_text()
+                    .contains(&format!("database format:{known}\n"))
+            );
+        }
+        assert!(matches!(
+            UserTableInfo::parse(
+                format!("{head}database format:NotADbm\0Tkrzw\nopen counter:5\n").as_bytes()
+            ),
+            Err(UserConfError::UnknownDatabaseFormat)
+        ));
     }
 
     /// The counter directive reads from where the `database format:` call
