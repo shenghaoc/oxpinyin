@@ -117,10 +117,16 @@ def execute(command, *, env, pass_fds=(), memory=False, cpu=None, timeout=120):
                                 while b'\n' in buffered:
                                     line, _, rest = buffered.partition(b'\n')
                                     buffered[:] = rest
-                                    expected = ('point ' + POINTS[len(checkpoints)]).encode() if len(checkpoints) < len(POINTS) else b''
-                                    if line != expected:
+                                    expected = (POINTS[len(checkpoints)].encode()
+                                                if len(checkpoints) < len(POINTS) else None)
+                                    parts = line.split()
+                                    if (expected is None or len(parts) not in (2, 3) or
+                                            parts[0] != b'point' or parts[1] != expected or
+                                            (len(parts) == 3 and sys.platform != 'darwin')):
                                         raise ValueError('worker checkpoint sequence changed: ' + repr(line))
-                                    checkpoints[POINTS[len(checkpoints)]] = native.read_memory(process.pid)
+                                    peak = int(parts[2]) if len(parts) == 3 else None
+                                    checkpoints[POINTS[len(checkpoints)]] = native.read_memory(
+                                        process.pid, resident_peak_bytes=peak)
                                     os.write(ack_write, b'\n')
                     process.wait()
                     slot.check_cancelled()

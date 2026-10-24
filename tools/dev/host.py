@@ -13,6 +13,8 @@ import re
 import subprocess
 import sys
 
+from . import darwin
+
 # The Linux cgroup reader and its tests use os.sched_getaffinity. macOS has no
 # such syscall; the all-CPU set is the equivalent native answer, and it keeps
 # the Linux-shaped reader testable on the development host.
@@ -995,52 +997,19 @@ def _linux_tree_pss(pid, proc):
 def _macos_tree_footprint(pid):
     """Physical footprint bytes of PID and its descendants, from libproc.
 
-    proc_pid_rusage's ri_phys_footprint leaves out shared file-backed pages,
-    so pages that several processes map (rustc's libraries) are not counted
-    in each. A zombie reports zero. A process whose footprint cannot be read
-    raises, which makes the use unknown.
+    The shared Darwin binding reads ri_phys_footprint, which leaves out
+    shared file-backed pages, so pages that several processes map (rustc's
+    libraries) are not counted in each. A zombie reports zero. A process
+    whose footprint or child list cannot be read raises, which makes the use
+    unknown.
     """
-    libc = ctypes.CDLL('/usr/lib/libSystem.B.dylib', use_errno=True)
-    libc.proc_listchildpids.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_int]
-    libc.proc_listchildpids.restype = ctypes.c_int
-    libc.proc_pid_rusage.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_void_p]
-    libc.proc_pid_rusage.restype = ctypes.c_int
-
-    class RusageInfo(ctypes.Structure):
-        """Represent rusage_info_v0, including the physical footprint in bytes."""
-        # struct rusage_info_v0, <sys/resource.h>
-        _fields_ = [('ri_uuid', ctypes.c_uint8 * 16),
-                    *[(name, ctypes.c_uint64) for name in (
-                        'ri_user_time', 'ri_system_time', 'ri_pkg_idle_wkups',
-                        'ri_interrupt_wkups', 'ri_pageins', 'ri_wired_size',
-                        'ri_resident_size', 'ri_phys_footprint',
-                        'ri_proc_start_abstime', 'ri_proc_exit_abstime')]]
-
-    def footprint(target):
-        """Read one process's physical footprint in bytes; raise OSError if unavailable."""
-        info = RusageInfo()
-        if libc.proc_pid_rusage(target, 0, ctypes.byref(info)) != 0:  # RUSAGE_INFO_V0
-            raise OSError(ctypes.get_errno(), f'proc_pid_rusage failed for pid {target}')
-        return info.ri_phys_footprint
-
-    def children(target):
-        """Read child PIDs through libproc; raise OSError for a failed enumeration."""
-        capacity = libc.proc_listchildpids(target, None, 0)
-        if capacity < 0:
-            raise OSError(ctypes.get_errno(), 'proc_listchildpids failed')
-        buffer = (ctypes.c_int * max(1, capacity))()
-        count = libc.proc_listchildpids(target, buffer, ctypes.sizeof(buffer))
-        if count < 0:
-            raise OSError(ctypes.get_errno(), 'proc_listchildpids failed')
-        return buffer[:count]
-
     total, pending, seen = 0, [pid], set()
     while pending:
         current = pending.pop()
         if current not in seen:
             seen.add(current)
-            total += footprint(current)
-            pending.extend(children(current))
+            total += darwin.footprint(current)
+            pending.extend(darwin.children(current))
     return total
 
 

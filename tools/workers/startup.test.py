@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import signal
 import subprocess
 import sys
@@ -367,6 +368,29 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(self.ok('measure', bind='lazy')[0],
                          dict(startup='run', mode='measure', facade='pinyin', bind='lazy'))
 
+    def test_loader_observation_uses_each_platform_record(self):
+        rows = self.ok('measure', env=self.env(OXPINYIN_STARTUP_LOADER='1'))
+        if sys.platform == 'darwin':
+            images = [row for row in rows if row.get('startup') == 'loaded_image']
+            self.assertTrue(images)
+            self.assertFalse([row for row in rows if row.get('startup') == 'loaded_object'])
+            self.assertTrue(any(row['name'] and row['name'].endswith('/startup') for row in images))
+            self.assertEqual(len({row['pid'] for row in images}), 1)
+            self.assertNotEqual(images[0]['pid'], os.getpid())
+            uuids = [row['uuid'] for row in images if row['uuid'] is not None]
+            self.assertTrue(uuids)
+            for row in images:
+                self.assertIsInstance(row['slide'], int)
+                if row['uuid'] is not None:
+                    self.assertRegex(row['uuid'], r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-'
+                                                r'[0-9a-f]{4}-[0-9a-f]{12}$')
+        else:
+            objects = [row for row in rows if row.get('startup') == 'loaded_object']
+            self.assertTrue(objects)
+            self.assertFalse([row for row in rows if row.get('startup') == 'loaded_image'])
+            self.assertTrue(any(row['object'] == str(self.stub) for row in objects))
+            self.assertTrue(all(row['segments'] for row in objects))
+
     def test_times_carry_every_metric_and_ttfc_spans_the_phases(self):
         rows = self.ok('measure')
         times = rows[2]
@@ -478,7 +502,14 @@ class WorkerTests(unittest.TestCase):
             seen = []
             for _ in POINTS:
                 line = reader.readline()
-                point = line.removeprefix('point ').strip()
+                parts = line.split()
+                self.assertEqual(parts[0], 'point')
+                point = parts[1]
+                if sys.platform == 'darwin':
+                    self.assertEqual(len(parts), 3)
+                    self.assertGreater(int(parts[2]), 0)
+                else:
+                    self.assertEqual(len(parts), 2)
                 seen.append(point)
                 calls = self.calls()
                 self.assertEqual(calls[-1] if calls else None, last_call[point])

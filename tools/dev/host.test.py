@@ -70,6 +70,16 @@ class HostTests(unittest.TestCase):
         with mock.patch.object(host.ctypes, 'CDLL', return_value=libc):
             self.assertIsNone(host._macos_available_mib())
 
+    def test_macos_tree_footprint_uses_the_shared_darwin_binding(self):
+        footprints, children = {1: 100, 2: 30}, {1: [2], 2: []}
+        with mock.patch.object(host.darwin, 'footprint',
+                               side_effect=lambda pid: footprints[pid]) as footprint, \
+                mock.patch.object(host.darwin, 'children',
+                                  side_effect=lambda pid: children[pid]) as child:
+            self.assertEqual(host._macos_tree_footprint(1), 130)
+        self.assertEqual([call.args[0] for call in footprint.call_args_list], [1, 2])
+        self.assertEqual([call.args[0] for call in child.call_args_list], [1, 2])
+
     def test_resource_snapshot_reports_available_memory_and_cpus(self):
         snapshot = host.resource_snapshot()
         self.assertIsInstance(snapshot['cpus'], int)

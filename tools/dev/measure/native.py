@@ -5,10 +5,17 @@ import re
 import subprocess
 import sys
 
+from .. import darwin
+
 COMMAND_TIMEOUT_SECONDS = 30
 
-MEMORY_FIELDS = ('rss', 'rss_delta', 'peak_rss', 'anonymous', 'file_backed',
-                 'private_dirty', 'pss', 'virtual_size', 'minor_faults', 'major_faults')
+LINUX_MEMORY_FIELDS = ('rss', 'rss_delta', 'peak_rss', 'anonymous', 'file_backed',
+                       'private_dirty', 'pss', 'virtual_size', 'minor_faults', 'major_faults')
+DARWIN_MEMORY_FIELDS = ('resident_kib', 'resident_peak_kib', 'physical_footprint_kib',
+                        'physical_footprint_interval_max_kib',
+                        'physical_footprint_lifetime_max_kib', 'faults', 'pageins',
+                        'disk_bytes_read', 'disk_bytes_written')
+MEMORY_FIELDS = LINUX_MEMORY_FIELDS + DARWIN_MEMORY_FIELDS
 
 
 def filesystem(path):
@@ -65,20 +72,45 @@ def check_filesystems(paths, *, recursive=True):
     return volumes
 
 
-def read_memory(pid, *, proc_root=Path('/proc')):
+def _kib(value):
+    """Convert a byte count to whole KiB, preserving None for an unavailable value."""
+    return None if value is None else int(value) // 1024
+
+
+def read_memory(pid, *, proc_root=Path('/proc'), resident_peak_bytes=None):
     """Read memory observations for a child paused at a checkpoint.
 
-    Sizes are KiB and faults are counts. Linux reads /proc status,
-    smaps_rollup, and stat; macOS uses ps for RSS and virtual size.
-    Unavailable fields, including rss_delta, remain None. Read/parse errors
-    propagate rather than returning partial Linux observations.
+    Sizes are KiB and counts are counts. Linux reads /proc status,
+    smaps_rollup, and stat. macOS reads the shared Darwin libproc binding and
+    reports only Darwin-named fields: resident and its peak, physical
+    footprint and its interval/lifetime maxima, faults, page-ins, and disk
+    bytes read and written. The worker supplies its own resident peak at the
+    handshake because another process's task port is normally unavailable;
+    without that value the binding's task-port attempt decides. Unavailable
+    fields, including rss_delta, remain None. Read/parse errors propagate
+    rather than returning partial Linux observations.
     """
     result = dict.fromkeys(MEMORY_FIELDS)
     if sys.platform == 'darwin':
-        values = subprocess.check_output(['ps', '-o', 'rss=', '-o', 'vsz=', '-p', str(pid)], text=True, timeout=COMMAND_TIMEOUT_SECONDS).split()
-        if len(values) != 2:
-            raise ValueError('ps did not return the stopped child RSS and virtual size')
-        result.update(rss=int(values[0]), virtual_size=int(values[1]))
+        try:
+            observed = darwin.observation(pid)
+        except (OSError, AttributeError, ValueError):
+            observed = dict.fromkeys(darwin.OBSERVATION_FIELDS)
+        resident_peak = (resident_peak_bytes if resident_peak_bytes is not None
+                         else observed.get('resident_peak_bytes'))
+        result.update(
+            resident_kib=_kib(observed.get('resident_bytes')),
+            resident_peak_kib=_kib(resident_peak),
+            physical_footprint_kib=_kib(observed.get('physical_footprint_bytes')),
+            physical_footprint_interval_max_kib=_kib(
+                observed.get('physical_footprint_interval_max_bytes')),
+            physical_footprint_lifetime_max_kib=_kib(
+                observed.get('physical_footprint_lifetime_max_bytes')),
+            faults=observed.get('faults'),
+            pageins=observed.get('pageins'),
+            disk_bytes_read=observed.get('disk_bytes_read'),
+            disk_bytes_written=observed.get('disk_bytes_written'),
+        )
         return result
     proc = proc_root / str(pid)
     status = {}
