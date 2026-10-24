@@ -1,5 +1,18 @@
 # tkrzw concrete-class shim: evaluation (#1125)
 
+## Not adopted
+
+Issue #1125 is [closed as not adopted](https://github.com/shenghaoc/oxpinyin/issues/1125#issuecomment-6385523022).
+Compatibility was retained, but the controlled 243–304 KiB M1 Pss saving
+came with a recurring pinyin steady-workload wall-time increase of +1.163%
+[+0.655%, +1.503%] and range-qualified steady instruction regressions.
+That recurring typing cost fails the agreed guardrail; the accepted trade
+concerned a mainly one-time startup cost. The combined-build slowdown's
+cause remains unestablished; the earlier tree-read memcmp fallback finding
+does not prove its cause. No evidence-backed change or further experiment
+is planned. The prototype and findings remain on `wip/1125-tkrzw-shim`,
+with source history preserved under `measured/1125`. No PR is planned.
+
 ## Combined build: measured results; adoption STOP
 
 Recorded 2026-10-24T14:20:15.605566+00:00. No PR. The measured source is base
