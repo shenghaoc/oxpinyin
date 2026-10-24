@@ -24,6 +24,189 @@ spec.loader.exec_module(driver)
 contract = vars(driver)
 
 
+class PolicyAcceptedTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.patch = patch.object(driver, 'POLICY_ROOT', self.root)
+        self.patch.start()
+        self.addCleanup(self.patch.stop)
+        self.name = 'phrase-text/pinyin-nul-candidate'
+        self.spec = driver.case_spec(policy_record='test-record.md', case_id=self.name, control=True)
+        self.pin = dict(exit=0, result={'ret': True, 'rows': [[2, 'e794b2']], 'logs': []}, stderr='')
+        self.subject = dict(exit=0, result={'ret': True, 'rows': [], 'logs': []}, stderr='')
+        self.record = dict(schema=1, record='test-record', status='current',
+                           disposition='POLICY-ACCEPTED',
+                           cases={self.name: dict(pin=self.pin, subject=self.subject)})
+        (self.root / 'upstream-divergences.md').write_text('[record](test-record.md)\n')
+        self.write_record()
+
+    def write_record(self):
+        (self.root / 'test-record.md').write_text(
+            '# Test record\n\n```contract-diff-policy\n' + json.dumps(self.record) + '\n```\n')
+
+    def verdict(self, pin=None, subject=None, parent=False):
+        return driver.verdict_for(self.spec, self.pin if pin is None else pin,
+                                  self.subject if subject is None else subject, parent)
+
+    def test_both_recorded_observations_are_accepted_but_never_match(self):
+        self.assertEqual(self.verdict(), ('POLICY-ACCEPTED', True, False))
+        self.assertEqual(self.verdict(parent=True), ('POLICY-ACCEPTED', True, False))
+        self.assertFalse(driver.matches(self.spec, self.pin, self.subject))
+        self.assertEqual(self.pin['result']['rows'], [[2, 'e794b2']])
+        self.assertEqual(self.subject['result']['rows'], [])
+
+    def test_changed_pin_or_subject_or_extra_or_missing_result_field_fails(self):
+        for side in ('pin', 'subject'):
+            for change in ('ret', 'type', 'extra', 'missing', 'stderr', 'logs'):
+                with self.subTest(side=side, change=change):
+                    changed = copy.deepcopy(getattr(self, side))
+                    if change == 'ret':
+                        changed['result']['ret'] = False
+                    elif change == 'type':
+                        changed['result']['ret'] = 1  # JSON true and 1 are distinct
+                    elif change == 'extra':
+                        changed['result']['unexpected'] = 1
+                    elif change == 'missing':
+                        del changed['result']['rows']
+                    elif change == 'stderr':
+                        changed['stderr'] = 'unexpected diagnostic'
+                    else:
+                        changed['result']['logs'] = [['libpinyin', 16]]
+                    for parent in (False, True):
+                        self.assertEqual(self.verdict(**{side: changed}, parent=parent),
+                                         ('DIFFER', False, False))
+
+    def test_even_equal_observations_do_not_hide_a_broken_policy_case(self):
+        self.assertEqual(self.verdict(subject=self.pin), ('DIFFER', False, False))
+
+    def test_missing_record_or_registration_is_invalid(self):
+        (self.root / 'test-record.md').unlink()
+        self.assertEqual(self.verdict(), ('INVALID', False, False))
+        self.write_record()
+        (self.root / 'upstream-divergences.md').write_text('')
+        self.assertEqual(self.verdict(), ('INVALID', False, False))
+
+    def test_incorrect_or_stale_record_metadata_is_invalid(self):
+        for key, value in (('schema', 2), ('record', 'other'), ('status', 'superseded'),
+                           ('disposition', 'MATCH'), ('cases', {})):
+            with self.subTest(key=key):
+                record = copy.deepcopy(self.record)
+                self.record[key] = value
+                self.write_record()
+                self.assertEqual(self.verdict(parent=True), ('INVALID', False, False))
+                self.record = record
+
+    def test_record_requires_complete_distinct_observations(self):
+        for missing in ('pin', 'subject', 'exit', 'result', 'stderr', 'logs'):
+            with self.subTest(missing=missing):
+                record = copy.deepcopy(self.record)
+                pair = self.record['cases'][self.name]
+                if missing in ('pin', 'subject'):
+                    del pair[missing]
+                elif missing == 'logs':
+                    del pair['subject']['result']['logs']
+                else:
+                    del pair['subject'][missing]
+                self.write_record()
+                self.assertEqual(self.verdict(), ('INVALID', False, False))
+                self.record = record
+        self.record['cases'][self.name]['subject'] = self.pin
+        self.write_record()
+        self.assertEqual(self.verdict(), ('INVALID', False, False))
+
+    def test_failed_worker_cannot_be_accepted(self):
+        for value in (None, -signal.SIGSEGV, 1):
+            changed = copy.deepcopy(self.subject)
+            if value is None:
+                changed['result'] = None
+            else:
+                changed['exit'] = value
+            self.assertEqual(self.verdict(subject=changed), ('INVALID', False, False))
+
+    def test_missing_marker_uses_ordinary_comparison(self):
+        self.spec['policy_record'] = None
+        self.assertEqual(self.verdict(), ('DIFFER', False, False))
+
+    def test_no_path_traversal_or_duplicate_observations_block(self):
+        self.spec['policy_record'] = '../test-record.md'
+        self.assertEqual(self.verdict(), ('INVALID', False, False))
+        self.spec['policy_record'] = 'test-record.md'
+        path = self.root / 'test-record.md'
+        path.write_text(path.read_text() * 2)
+        self.assertEqual(self.verdict(), ('INVALID', False, False))
+
+
+class FixtureCrafterTests(unittest.TestCase):
+    def test_kc_system_index_replaces_file_with_native_tree_not_snapshot(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            path = Path(scratch, 'pinyin_index.bin')
+            path.write_bytes(b'old snapshot')
+            kc = MagicMock()
+            kc.kcdbnew.return_value = 123
+
+            def open_fresh(handle, target, mode):
+                self.assertFalse(path.exists(), 'old file must be unlinked before TreeDB open')
+                return True
+
+            kc.kcdbopen.side_effect = open_fresh
+            with patch.object(driver, 'CELL', 'kc'), patch.object(driver.C, 'CDLL', return_value=kc):
+                driver._craft_db(str(path), [(b'key', b'value')], 1, system_index=True)
+            kc.kcdbopen.assert_called_once_with(123, (str(path) + '#type=kct').encode(), 6)
+            kc.kcdbset.assert_called_once_with(123, b'key', 3, b'value', 5)
+            kc.kcdbdumpsnap.assert_not_called()
+            kc.kcdbclose.assert_called_once_with(123)
+            kc.kcdbdel.assert_called_once_with(123)
+
+    def test_kc_default_snapshot_and_retained_native_index_are_unchanged(self):
+        for keep in (False, True):
+            with self.subTest(keep=keep), tempfile.TemporaryDirectory() as scratch:
+                path = Path(scratch, 'index.bin')
+                path.write_bytes(b'existing file')
+                kc = MagicMock()
+                kc.kcdbnew.return_value = 123
+                with patch.object(driver, 'CELL', 'kc'), patch.object(driver.C, 'CDLL', return_value=kc):
+                    driver._craft_db(str(path), [], 1, keep=keep)
+                self.assertEqual(path.exists(), keep)
+                if keep:
+                    kc.kcdbopen.assert_called_once_with(123, (str(path) + '#type=kct').encode(), 2)
+                    kc.kcdbdumpsnap.assert_not_called()
+                else:
+                    kc.kcdbopen.assert_called_once_with(123, b'-', 6)
+                    kc.kcdbdumpsnap.assert_called_once_with(123, str(path).encode())
+
+    def test_system_index_keeps_bdb_and_tkrzw_crafter_arguments(self):
+        for cell in ('bdb', 'tkrzw'):
+            for keep in (False, True):
+                with self.subTest(cell=cell, keep=keep), patch.object(driver, 'CELL', cell), \
+                        patch.object(driver, '_craft_bdb') as bdb, patch.object(driver, '_craft_kc') as kc, \
+                        patch.object(driver, '_craft_tkrzw') as tkrzw:
+                    driver._craft_db('probe', [(b'key', b'value')], 1, keep=keep, system_index=True)
+                    if cell == 'bdb':
+                        bdb.assert_called_once_with('probe', [(b'key', b'value')], 1, keep=keep)
+                        tkrzw.assert_not_called()
+                    else:
+                        tkrzw.assert_called_once_with('probe', [(b'key', b'value')], 'TreeDBM', keep=keep)
+                        bdb.assert_not_called()
+                    kc.assert_not_called()
+
+
+class PhraseTextRecordTests(unittest.TestCase):
+    def test_all_marked_cases_have_their_own_current_registered_observations(self):
+        names, _ = driver.select_cases(None, ['894'], [])
+        self.assertEqual(len(names), 24)
+        accepted = 0
+        for name in names:
+            spec = driver.CASES[name]
+            if spec['policy_record']:
+                pair = driver.policy_expectations(spec)
+                self.assertEqual(driver.verdict_for(spec, pair['pin'], pair['subject'], False),
+                                 ('POLICY-ACCEPTED', True, False))
+                accepted += 1
+        self.assertEqual(accepted, 15)
+
+
 class TkrzwSavedBigramTests(unittest.TestCase):
     def setUp(self):
         # Synthetic bytes, never a generated oracle file. The comparator
@@ -163,6 +346,42 @@ class DriverFixtureCase(unittest.TestCase):
         guard = patch.object(driver, 'check_tkrzw')
         self.runtime_guard = guard.start()
         self.addCleanup(guard.stop)
+
+
+class PolicyReportingTests(DriverFixtureCase):
+    def test_main_retains_observations_and_counts_policy_separately(self):
+        name = 'phrase-text/pinyin-nul-candidate'
+        spec = driver.CASES[name]
+        pair = driver.policy_expectations(spec)
+        pin = observation(result=pair['pin']['result'])
+        subject = observation(result=pair['subject']['result'])
+        for broken in (False, True):
+            with self.subTest(broken=broken), tempfile.TemporaryDirectory() as scratch:
+                prefix = Path(scratch)
+                (prefix / 'lib/libpinyin/data').mkdir(parents=True)
+                (prefix / 'lib/libpinyin.so').touch()
+                (prefix / 'lib/libpinyin/data/bigram.db').touch()
+                (prefix / 'oracle-pin.txt').write_text(
+                    'libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99+dbm-bdb\n')
+                args = ['driver', 'bdb', str(prefix), str(prefix / 'lib/libpinyin.so'),
+                        '--cases', name]
+                actual_subject = copy.deepcopy(subject)
+                if broken:
+                    actual_subject['result']['ret'] = False
+                output = io.StringIO()
+                with patch.object(driver, 'run_case', return_value=(pin, actual_subject)), \
+                        patch.object(driver.sys, 'argv', args), \
+                        contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()):
+                    status = driver.main()
+                rows = [json.loads(line) for line in output.getvalue().splitlines() if line.startswith('{')]
+                verdict = 'DIFFER' if broken else 'POLICY-ACCEPTED'
+                self.assertEqual(status, int(broken))
+                self.assertEqual(rows[0]['verdict'], verdict)
+                self.assertEqual(rows[0]['record'], spec['policy_record'])
+                self.assertEqual(rows[0]['pin'], pin)
+                self.assertEqual(rows[0]['subject'], actual_subject)
+                self.assertEqual(next(row['verdict_counts'] for row in rows if 'verdict_counts' in row),
+                                 {verdict: 1})
 
 
 class HashPathFixtureTests(DriverFixtureCase):
