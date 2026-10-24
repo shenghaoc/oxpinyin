@@ -10,11 +10,11 @@
 //! Usage:
 //!   oxpinyin-train --text-dir DIR --model-dir DIR --final-dir DIR \
 //!                  --index corpus.index --held-out held.segmented \
-//!                  --evals evals2.text --pinyin-index `pinyin_index`.<ext> \
-//!                  --phrase-index `phrase_index`.<ext> \
-//!                  [--bigram bigram.<ext> --interpolation2 interpolation2.text \
-//!                   --table-conf table.conf] \
-//!                  [--merge N] [-k N] [--CDF F] [--fast] [--skip-pi-gram] NAME
+//!                  --evals evals2.text --pinyin-index `pinyin_index`.\<ext\> \
+//!                  --phrase-index `phrase_index`.\<ext\> \
+//!                  \[--bigram bigram.\<ext\> --interpolation2 interpolation2.text \
+//!                   --table-conf table.conf\] \
+//!                  \[--merge N\] \[-k N\] \[--CDF F\] \[--fast\] \[--skip-pi-gram\] NAME
 //!
 //! The segmenter model (phrase index + bigram + interpolation2 + λ) is
 //! discovered from the system-table export unless the `--phrase-index` /

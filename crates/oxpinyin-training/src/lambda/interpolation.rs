@@ -170,7 +170,7 @@ fn compute_interpolation(
 /// phrase-index unigram frequencies + grand total (freq-1 floor included —
 /// `training-algorithm.md` §6, and this is exactly [`crate::counter`]'s
 /// full-corpus [`Counts`]). `deleted` is the held-out counting from
-/// [`crate::lambda::held_out`].
+/// `crate::lambda::held_out`.
 ///
 /// # Errors
 ///

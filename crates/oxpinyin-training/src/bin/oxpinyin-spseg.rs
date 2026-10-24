@@ -1,6 +1,6 @@
 //! `spseg`-compatible CLI: fewest-words shortest-path segmentation.
 //!
-//! Usage: oxpinyin-spseg [--generate-extra-enter] [-o outputfile] [inputfile]
+//! Usage: oxpinyin-spseg \[--generate-extra-enter\] \[-o outputfile\] \[inputfile\]
 //!
 //! Consults only the phrase table (`phrase_index`), so it needs an export
 //! directory (`--export-dir` / `PINYIN_EXPORT_DIR` / `/tmp/oxpinyin-export`)

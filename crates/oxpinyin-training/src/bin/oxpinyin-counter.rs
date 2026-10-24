@@ -1,6 +1,6 @@
 //! `gen_ngram`-compatible CLI over the Rust counter.
 //!
-//! Usage: oxpinyin-counter [--skip-pi-gram-training] [-o outputfile] [inputfile]
+//! Usage: oxpinyin-counter \[--skip-pi-gram-training\] \[-o outputfile\] \[inputfile\]
 //!
 //! Reads the ngseg segmented-token stream (T1's output) and emits the
 //! canonical integer-count dump. The freq-1 floor comes from
