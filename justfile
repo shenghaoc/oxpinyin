@@ -10,6 +10,12 @@ set shell := ["powershell.exe", "-NoLogo", "-NoProfile", "-Command"]
 
 default: doctor
 
+# Data-only transport target for the real-just smoke tests; never starts work.
+[unix]
+[private]
+_test-argv status *args:
+    @uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -c 'import json, sys; print(json.dumps(sys.argv[2:])); sys.exit(int(sys.argv[1]))' "$@"
+
 # Report native capabilities and the managed interpreter identity.
 doctor:
     @uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -m tools.dev doctor
