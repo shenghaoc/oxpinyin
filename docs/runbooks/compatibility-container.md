@@ -5,12 +5,12 @@ every gate. This container procedure is a second supported route. First
 [develop and test natively](setup.md). Use this procedure only when a
 change requires comparison with the pinned upstream implementation. It
 executes **subject** (oxpinyin), **reference** (the oracle) and the existing
-comparison **harness** together in the existing canonical pinned **Debian Linux amd64** environment.
-This is the reference platform for the pin's results, not a support limit.
-Its base digest, dated package snapshot and reference hashes remain defined
-by [oracle-pin.txt](../../tools/oracle/oracle-pin.txt) and the existing
-[oracle recipe](../../tools/oracle/Dockerfile.oracle). Every host uses this
-same reference environment; there are no host-specific reference images.
+comparison **harness** together in the existing canonical pinned **Debian
+Linux** environment for the host platform. The pin, base digest and dated
+package snapshot remain defined by
+[oracle-pin.txt](../../tools/oracle/oracle-pin.txt) and the existing
+[oracle recipe](../../tools/oracle/Dockerfile.oracle); the reference hashes
+are selected by platform. There are no host-specific reference recipes.
 A passing differential covers its selected behavior/reference environment;
 it does not prove native Windows/macOS ABI behavior. Native tests provide
 separate platform evidence.
@@ -121,8 +121,9 @@ inputs. The default is platform-native first, then Podman, then Docker: Windows
 The selected runtime/version is printed before provisioning; none available
 is an error naming the candidates. `wslc` has no verified adapter here and
 stops with an explicit not-yet-verified message instead of silently falling
-back. Apple interoperability and amd64 emulation on arm64 are also not yet
-verified. For an exercised Linux route, use rootless Podman and its [official installation
+back. Apple container now runs the arm64 oracle path natively; amd64
+emulation is not used for that path. For an exercised Linux route, use
+rootless Podman and its [official installation
 instructions](https://podman.io/docs/installation). In this host terminal:
 
 ```bash
@@ -146,14 +147,14 @@ The launcher diagnoses Git Bash and directs it to WSL rather than treating
 MSYS paths as Linux mounts. Native Windows work still needs neither WSL nor
 a container.
 
-The reference is fixed at Linux amd64 and its recorded hashes remain
-mandatory. On an arm64 host, configure a runtime capable of running/building
-Linux amd64 images first; this is **emulated**, not native performance
-evidence. Apple `container`'s command interfaces are source-checked, but its
-amd64 build/run and restart behavior were not executed in this task. If its
-installed version cannot execute this platform, use an appropriate Linux
-amd64 VM/environment with Docker/Podman rather than changing pins or loading
-Linux libraries on macOS.
+The reference platform is the host's frozen platform: linux/amd64 or
+linux/arm64. Both have mandatory recorded hashes. Use a runtime that can
+build and run images for this platform; an arm64 host uses native arm64
+images, not amd64 emulation. Apple `container`'s arm64 oracle path is
+exercised natively; its restart behavior and the full compatibility smoke
+are not claimed here. If the installed runtime cannot execute the platform,
+use an appropriate Linux VM/environment with Docker/Podman rather than
+changing pins or loading Linux libraries on macOS.
 
 ## Select and run a check
 
@@ -311,7 +312,7 @@ recipe and verified external inputs.
 ## Network and failure diagnostics
 
 - Runtime unavailable: check its `info` (Docker/Podman) or service status
-  (Apple), permissions and Linux amd64 execution capability. Ordinary native
+  (Apple), permissions and Linux amd64/arm64 execution capability. Ordinary native
   development remains available without it. No host daemon is started for you.
 - Image absent: the launcher reports the missing tag and uses the existing
   pinned recipe. Network/auth/proxy errors retain the registry's own message

@@ -92,7 +92,7 @@ PYTHON
 
 The installer digest comes from its `digest` field in the official
 [uv 0.13.1 release API](https://api.github.com/repos/astral-sh/uv/releases/tags/0.13.1).
-Automated Linux x86_64 setup verifies the release archive against the pinned
+Automated Linux setup on x86_64 and arm64 verifies the release archive against the pinned
 [published checksum](https://github.com/astral-sh/uv/releases/download/0.13.1/sha256.sum).
 
 The `+gil` request requires the GIL-enabled build. uv 0.13.1 has no separate
@@ -434,8 +434,18 @@ to their existing task runbooks.
   exception is not a contributor default.
 - Canonical pinned Debian/Linux amd64: BDB `same-data-dir-diff` and cache/
   environment-isolation resume passed on rootless Podman. Other runtime
-  interoperability and arm64-host emulation were not executed. Apple's
-  volume-reader result retrieval is source-verified only, not runtime-tested.
+  interoperability was not executed. Apple's volume-reader result retrieval
+  is source-verified only, not runtime-tested.
+- Native Linux arm64: Apple container, Debian 13 arm64, 4 CPUs, 16 GiB,
+  ext4, no emulation. Two independent builds of each cell produced identical
+  arm64 library hashes. `tools/cloud/setup.sh --in-container --cells
+  "bdb kc tkrzw"` verified all three cells against the arm64 pin fields,
+  regenerated the recorded data manifests, and replaced the host's broken
+  libtkrzw with the healthy upstream build. The full gate then reported
+  0 DIFFER on every cell: bdb 2,880 MATCH / 15 SKIP / 4 HOST-DEPENDENT, kc
+  2,875 / 20 / 4, tkrzw 2,877 / 18 / 4. Each cell's SKIPs include the 13
+  arm64-only #1137 exclusions; same-data was identical on 15/15 drivers.
+  See [the arm64 oracle finding](../findings/oracle-arm64-1132.md).
 - Anonymous oracle artifact retrieval/hash verification passed. Anonymous
   `-deps` retrieval awaits normal publication. See the PR for final-head CI
   and the current cloud-provisioning/compatibility smoke status.
