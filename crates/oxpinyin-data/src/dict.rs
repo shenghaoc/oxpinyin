@@ -429,7 +429,7 @@ impl SystemDictionary {
     /// rows **after** it, so the query-length row itself never yields a
     /// token, and each record is kept under the suggestion filter
     /// `pinyin_compare_with_tones(query, stored, prefix_len) == 0`
-    /// ([`prefix_keys_match`]). A DBM key that starts with the query's
+    /// (`prefix_keys_match`). A DBM key that starts with the query's
     /// index-key bytes and is longer than it passes the pin's
     /// `pinyin_exact_compare2` gate by construction — both projections
     /// agree on the shared bytes — so the byte-prefix walk needs no
@@ -780,7 +780,7 @@ impl Dictionary for SystemDictionary {
 
     /// The DBM double-indexes each row under both incomplete and complete
     /// keyspaces (`crates/oxpinyin-data/src/table_entries.rs:95-98`), and
-    /// [`super::chewing_table::ChewingTable::search`] dispatches on
+    /// `super::chewing_table::ChewingTable::search` dispatches on
     /// `contains_incomplete` — so a partial-key query answers in one probe.
     fn handles_partial_keys(&self) -> bool {
         true

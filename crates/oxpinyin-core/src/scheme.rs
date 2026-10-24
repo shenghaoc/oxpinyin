@@ -94,11 +94,11 @@ impl DoublePinyinParse {
 
 /// `FullPinyinScheme` from `src/storage/pinyin_custom2.h:98-104`.
 ///
-/// HANYU (the frozen [`crate::parser`] surface) stays the default —
+/// HANYU (the frozen `crate::parser` surface) stays the default —
 /// `FULL_PINYIN_DEFAULT = FULL_PINYIN_HANYU` and the parser constructor
 /// calls `set_scheme(FULL_PINYIN_DEFAULT)` (`pinyin_parser2.cpp:158-165,
 /// 383-401`). LUOMA and `SECONDARY_ZHUYIN` switch the parser onto their
-/// pinned indexes in [`crate::full_pinyin_index`]; the out-of-enum
+/// pinned indexes in `crate::full_pinyin_index`; the out-of-enum
 /// `abort()` slot is deliberately not modelled here (contract-lock
 /// workstream).
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -759,7 +759,7 @@ impl DoublePinyinParser {
     /// `FORCE_TONE` without `USE_TONE` consumes nothing at all. The
     /// one-byte incomplete probe runs under `PINYIN_INCOMPLETE`
     /// (`:418-421`). Correction and ambiguity bits never cross: the
-    /// two-key lookup is [`lookup_pinyin`]'s forced-`UE_VE`/`V_U` law
+    /// two-key lookup is `lookup_pinyin`'s forced-`UE_VE`/`V_U` law
     /// whatever the word carries (`:409, :434-436`).
     #[must_use]
     pub fn parse_with_options(&self, input: &[u8], options: u32) -> DoublePinyinParse {
@@ -828,7 +828,7 @@ impl DoublePinyinParser {
     /// (`:412`); the one-byte incomplete probe runs under
     /// `PINYIN_INCOMPLETE` (`:418-421`); and the two/three-byte probe
     /// masks the incomplete bits and forces the `UE_VE`/`V_U`
-    /// corrections (`:433-436` — already [`lookup_pinyin`]'s law), with
+    /// corrections (`:433-436` — already `lookup_pinyin`'s law), with
     /// a three-byte input's trailing `1..=5` riding the key as the tone
     /// under `USE_TONE` (`:439-451`). A two-byte match carries tone
     /// zero. `None` is the upstream `false`.
@@ -1627,7 +1627,7 @@ fn search_zhuyin_index(
 
 /// `ZhuyinDirectParser2::parse` (`zhuyin_parser2.cpp:914-958`): the input
 /// splits at every `' '` and `'\''`, each segment must be one whole key
-/// ([`parse_zhuyin_direct_key`]), and the parse stops at the first segment
+/// (`parse_zhuyin_direct_key`), and the parse stops at the first segment
 /// that is not — the keys before it are the result. Returns the keys as
 /// `(syllable, tone)`.
 #[must_use]
@@ -1700,7 +1700,7 @@ enum Keyboard {
 /// Stateless parser for one Zhuyin keyboard.
 ///
 /// The Simple keyboards (STANDARD, IBM, GINYIEH, ETEN) are implemented
-/// table-driven over the shared [`crate::zhuyin_map`] index; the
+/// table-driven over the shared `crate::zhuyin_map` index; the
 /// Discrete keyboards (HSU, ETEN26, `HSU_DVORAK`) probe initial/middle/
 /// final/tone positions against their own tables and indexes; CP26 and
 /// the `STANDARD_DVORAK` abort slot parse nothing and their setters
@@ -2077,7 +2077,7 @@ impl ZhuyinParser {
     /// (`src/storage/zhuyin_parser2.cpp:162-210`) for the Simple
     /// keyboards, `ZhuyinDiscreteParser2` (`:335-405`) for the Discrete
     /// keyboards, and `ZhuyinDaChenCP26Parser2` (`:573-716`) for CP26 —
-    /// through this scheme's [`Keyboard`] probe.
+    /// through this scheme's `Keyboard` probe.
     ///
     /// `options` is the caller's option word with the ABI layer's
     /// `ZHUYIN_CORRECT_ALL` strip already applied (`pinyin.cpp:1621`).
