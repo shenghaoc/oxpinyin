@@ -8667,8 +8667,9 @@ def _(k):
 # The pinyin import iterator's `_add_phrase` walks the same phrase table
 # (`pinyin.cpp:533-571`): two tokens in the target library trip the assert at
 # `:554`; a lone one whose phrase-index item has another length trips `:568`,
-# one with the same length and other text `:571`. The crafted
-# `user_phrase_index.bin` is a Berkeley DB btree, so the cases are bdb only.
+# one with the same length and other text `:571`. `_craft_db` writes
+# `user_phrase_index.bin` in the running cell's format: a BDB btree, KC
+# snapshot or tkrzw TreeDBM. All three cells are verified (#1120).
 def _persist_pinyin_phrase(k, text, reading):
     """Adds `text` to library 7, saves, and returns its token; the context
     is closed."""
@@ -8697,10 +8698,7 @@ def _add_pinyin_phrase_after_index(k, value):
     return {'ret': k.fn('iterator_add_phrase', B, P, S, S, I)(it, '你好'.encode(), b"ni'hao", 1)}
 
 
-# BDB-only coverage from 432a83d7: this malformed phrase-table fixture was
-# verified at pinyin.cpp:554 on bdb. _craft_db now supports kc/tkrzw,
-# but this pinyin import case has not been verified on those cells.
-@case('abort-add-phrase-duplicate-library-token', abort=False, userdir=True, cells=('bdb',), issues=('525',))
+@case('abort-add-phrase-duplicate-library-token', abort=False, userdir=True, issues=('525',))
 def _(k):
     ctx = k.init()
     assert ctx, 'the first init failed'
@@ -8709,19 +8707,13 @@ def _(k):
     return _add_pinyin_phrase_after_index(k, value)
 
 
-# BDB-only coverage from 432a83d7: this malformed phrase-table fixture was
-# verified at pinyin.cpp:568 on bdb. _craft_db now supports kc/tkrzw,
-# but this pinyin import case has not been verified on those cells.
-@case('abort-add-phrase-index-length-mismatch', abort=False, userdir=True, cells=('bdb',), issues=('525',))
+@case('abort-add-phrase-index-length-mismatch', abort=False, userdir=True, issues=('525',))
 def _(k):
     token = _persist_pinyin_phrase(k, '你好嗷', "ni'hao'ao")
     return _add_pinyin_phrase_after_index(k, token.to_bytes(4, 'little'))
 
 
-# BDB-only coverage from 432a83d7: this malformed phrase-table fixture was
-# verified at pinyin.cpp:568 on bdb. _craft_db now supports kc/tkrzw,
-# but this pinyin import case has not been verified on those cells.
-@case('abort-add-phrase-index-item-missing', abort=False, userdir=True, cells=('bdb',), issues=('525',))
+@case('abort-add-phrase-index-item-missing', abort=False, userdir=True, issues=('525',))
 def _(k):
     # The phrase table names library 7's token, but user.bin has no item:
     # get_phrase_item leaves a zero-length PhraseItem, so :568 asserts.
@@ -8731,10 +8723,7 @@ def _(k):
     return _add_pinyin_phrase_after_index(k, (0x07000001).to_bytes(4, 'little'))
 
 
-# BDB-only coverage from 432a83d7: this malformed phrase-table fixture was
-# verified at pinyin.cpp:571 on bdb. _craft_db now supports kc/tkrzw,
-# but this pinyin import case has not been verified on those cells.
-@case('abort-add-phrase-index-text-mismatch', abort=False, userdir=True, cells=('bdb',), issues=('525',))
+@case('abort-add-phrase-index-text-mismatch', abort=False, userdir=True, issues=('525',))
 def _(k):
     token = _persist_pinyin_phrase(k, '你們', "ni'men")
     return _add_pinyin_phrase_after_index(k, token.to_bytes(4, 'little'))
@@ -9249,10 +9238,14 @@ case('d18-review-predicted-user-only-zero-total', issues=('540',))(
     d18_bigram_update(0xffffffff - 69, predicted=True, user_only=True))
 
 
-# #739 review: BDB save_db refuses unlinking a directory, but zhuyin_save
-# still renames the untouched temporary directory (074a2219
-# chewing_large_table2_bdb.cpp:138-140, phrase_large_table3_bdb.cpp:153-155;
-# zhuyin.cpp:650-679). A regular live index prevents that rename.
+# #739 review: save_db refuses removing a directory on all three cells
+# (074a2219 chewing_large_table2_bdb.cpp:138-140,
+# phrase_large_table3_bdb.cpp:153-155; chewing_large_table2_kyotodb.cpp:125-127,
+# phrase_large_table3_kyotodb.cpp:140-142; chewing_large_table2_tkrzwdb.cpp:115-118,
+# phrase_large_table3_tkrzwdb.cpp:106-109), but zhuyin_save still renames the
+# untouched temporary directory (zhuyin.cpp:650-679). A regular live index
+# prevents that rename. Both facades and all destination variants are
+# verified on bdb, kc and tkrzw (#1120).
 def stale_index_tmp(k, index):
     out = {}
     for destination in ('absent', 'empty-directory', 'live-file'):
@@ -9291,15 +9284,10 @@ def stale_index_tmp(k, index):
     return out
 
 
-# BDB-only verification scope: #739 checked the save_db directory failure
-# and exact stderr on bdb (the sites above). KC also unlinks before its
-# snapshot write; tkrzw uses RemoveFile before opening a TreeDBM. Those
-# paths' diagnostics and retained-directory results are not verified here,
-# so their exclusion records a coverage limit, not a BDB-only input format.
 for _mode in ('pinyin', 'zhuyin'):
     for _index in ('user_pinyin_index.bin', 'user_phrase_index.bin'):
         case(f'issue542-stale-{_index}-{_mode}', mode=_mode, stderr=True,
-             control=_mode == 'pinyin', cells=('bdb',), issues=('542',))(
+             control=_mode == 'pinyin', issues=('542',))(
             lambda k, index=_index: stale_index_tmp(k, index))
 
 
