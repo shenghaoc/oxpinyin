@@ -6045,7 +6045,7 @@ def case_results(args, names, data, scratch, jobs):
     def observe(name):
         check_cancelled()
         spec = CASES[name]
-        if platform_skips(spec):
+        if platform_skips(spec) and not getattr(args, 'run_platform_excluded', False):
             return name, PLATFORM_SKIP
         if args.cell not in spec['cells']:
             return name, None
@@ -12938,6 +12938,9 @@ def run_main():
                         help='regenerate pin expectations in the supplementary #747 source fixture')
     parser.add_argument('--observations', type=Path, default=os.environ.get('CONTRACT_DIFF_OBSERVATIONS'),
                         help='retain both complete observations as JSONL (also CONTRACT_DIFF_OBSERVATIONS)')
+    parser.add_argument('--run-platform-excluded', action='store_true',
+                        help='run cases whose registered platform excludes this host; each '
+                             'override reason is printed to stderr (not an ordinary gate)')
     axis_c_mode = parser.add_mutually_exclusive_group()
     axis_c_mode.add_argument('--axis-c-replacement', choices=['options', 'encoding', 'layouts', 'all'])
     axis_c_mode.add_argument('--axis-c-mutation', choices=['C-m1-r', 'C-m3-r'])
@@ -13034,6 +13037,11 @@ def run_main():
             for n, pair in results:
                 check_cancelled()
                 spec = CASES[n]
+                if platform_skips(spec) and getattr(args, 'run_platform_excluded', False):
+                    print(json.dumps(dict(cell=args.cell, case=n, override='platform-excluded',
+                                          reason=spec['platform_skip_reason'],
+                                          note='not an ordinary gate'), sort_keys=True),
+                          file=sys.stderr, flush=True)
                 if pair is PLATFORM_SKIP:
                     print(json.dumps(dict(cell=args.cell, case=n, verdict='SKIP',
                                           expected_ok=True, exit=[0, 0], stderr_lines=[0, 0],
