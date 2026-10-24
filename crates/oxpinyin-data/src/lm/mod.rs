@@ -100,6 +100,22 @@ impl From<DictError> for LmError {
     }
 }
 
+impl LmError {
+    /// Whether this is the checked-read failure: a record the size check
+    /// found and the body read then failed or sized differently. Kyoto
+    /// Cabinet's `Bigram::load` asserts there (`ngram_kyotodb.cpp:131-139`
+    /// at 074a2219); the engine substitutes a class-(c) refusal.
+    #[must_use]
+    pub fn is_read_after_check(&self) -> bool {
+        matches!(
+            self,
+            Self::Table(TableError::Store(
+                oxpinyin_store::StoreError::ReadAfterCheck
+            ))
+        )
+    }
+}
+
 /// Divides empty-history unigram surprisal so it ranks by frequency without
 /// overpowering `phrase_key_bonus`.
 ///

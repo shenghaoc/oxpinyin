@@ -158,6 +158,14 @@ pub enum EngineError {
         /// The predecessor token whose gram the read leaves.
         token: u32,
     },
+    /// A checked backend read found a record, then failed to read its
+    /// value or read a different size. Kyoto Cabinet's `Bigram::load`
+    /// asserts at that point (`ngram_kyotodb.cpp:131-139` at 074a2219);
+    /// the engine answers an error instead.
+    ReadAfterCheck {
+        /// The predecessor token whose bigram read failed.
+        token: u32,
+    },
     /// A training step's `set_freq` would miss the item its `insert_freq`
     /// just added to the predecessor's unsorted gram: the pin's
     /// `check_result(user->set_freq(token, freq + seed))` asserts
@@ -277,6 +285,12 @@ impl fmt::Display for EngineError {
                     "reading the predecessor {token:#010x}'s bigram leaves its value"
                 )
             }
+            Self::ReadAfterCheck { token } => {
+                write!(
+                    formatter,
+                    "the predecessor {token:#010x}'s bigram read failed after its size check"
+                )
+            }
             Self::TrainingSetFreqMiss { token } => {
                 write!(
                     formatter,
@@ -330,6 +344,7 @@ impl std::error::Error for EngineError {
             | Self::TrainingSetFreqMiss { .. }
             | Self::ShortLookupPredecessor { .. }
             | Self::UnsafeLookupPredecessor { .. }
+            | Self::ReadAfterCheck { .. }
             | Self::OverlongUserIndexKey { .. }
             | Self::UserModel(_) => None,
         }

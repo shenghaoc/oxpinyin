@@ -51,6 +51,10 @@ pub(crate) fn refuse_lookup_gram(name: &str, error: &oxpinyin_engine::EngineErro
         oxpinyin_engine::EngineError::UnsafeLookupPredecessor { .. } => {
             "a user bigram value would be read past its end (upstream reads past it)"
         }
+        oxpinyin_engine::EngineError::ReadAfterCheck { .. } => {
+            "a user bigram check found a value, then its read failed \
+             (upstream aborts, ngram_kyotodb.cpp:138-139)"
+        }
         _ => return false,
     };
     crate::ffi::log_warning(&format!("{name}: {message}"));

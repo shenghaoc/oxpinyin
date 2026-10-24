@@ -107,6 +107,11 @@ pub enum StoreError {
     ReadOnly,
     /// A public input cannot be represented by the selected backend.
     InvalidInput(&'static str),
+    /// A checked record read found the record, then the value read failed
+    /// or returned a different size. Kyoto Cabinet's `Bigram::load` checks
+    /// the size and then reads the body, and asserts when the two disagree
+    /// (`ngram_kyotodb.cpp:131-139` at the pin).
+    ReadAfterCheck,
 }
 
 /// A non-I/O failure the storage backend reported: its message, and the
@@ -176,6 +181,7 @@ impl fmt::Display for StoreError {
             Self::Backend(e) => write!(f, "store error: {e}"),
             Self::ReadOnly => f.write_str("store is read-only"),
             Self::InvalidInput(message) => write!(f, "invalid store input: {message}"),
+            Self::ReadAfterCheck => f.write_str("store read failed after its size check"),
         }
     }
 }
@@ -185,7 +191,7 @@ impl std::error::Error for StoreError {
         match self {
             Self::Io(e) => Some(e),
             Self::Backend(e) => Some(e),
-            Self::ReadOnly | Self::InvalidInput(_) => None,
+            Self::ReadOnly | Self::InvalidInput(_) | Self::ReadAfterCheck => None,
         }
     }
 }
@@ -706,6 +712,22 @@ pub trait RawReadStore: ReadStore {
     ///
     /// Returns [`StoreError`] when the backend read fails.
     fn get_raw(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError>;
+
+    /// Read a raw bigram row the way libpinyin's `Bigram::load` does: a
+    /// size check followed by the body read. The default is one
+    /// [`Self::get_raw`]; KC overrides it with its two visits and reports
+    /// a body failure after a successful check as
+    /// [`StoreError::ReadAfterCheck`], the point where the pin asserts
+    /// (`ngram_kyotodb.cpp:131-139` at 074a2219). A failed check stays a
+    /// miss, as the pin's `Bigram::load` returns false for it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the checked body read disagrees with
+    /// the check; other backend failures follow [`Self::get_raw`].
+    fn get_bigram_raw(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError> {
+        self.get_raw(key, value)
+    }
 
     /// Whether a raw key exists, an empty value included, with no value
     /// bytes copied — libpinyin's existence check before its suggestion

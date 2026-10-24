@@ -388,6 +388,10 @@ impl crate::RawReadStore for KcStore {
         self.db.get(key, value)
     }
 
+    fn get_bigram_raw(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, crate::StoreError> {
+        self.db.get_bigram(key, value)
+    }
+
     fn contains_raw(&self, key: &[u8]) -> Result<bool, crate::StoreError> {
         self.db.check(key)
     }

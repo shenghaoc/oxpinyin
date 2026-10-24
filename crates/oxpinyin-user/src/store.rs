@@ -3368,6 +3368,19 @@ impl<S: WriteStore> GenericUserStore<S> {
         Ok(phrase_table::search(&*self.database(), text)?.tokens)
     }
 
+    /// The pin's user phrase-table search over raw UCS-4 words, preserving
+    /// stored token multiplicity. No `char` or `str` is built from a
+    /// non-scalar word.
+    ///
+    /// # Errors
+    /// Returns an error when the record cannot be read.
+    pub fn phrase_table_tokens_for_ucs4(
+        &self,
+        words: &[u32],
+    ) -> Result<Vec<Token>, UserStoreError> {
+        Ok(phrase_table::search_ucs4(&*self.database(), words)?.tokens)
+    }
+
     pub(crate) fn phrase_table_records(
         &self,
     ) -> Result<std::collections::BTreeMap<Vec<u8>, Vec<u8>>, UserStoreError> {

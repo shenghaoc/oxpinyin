@@ -1575,6 +1575,33 @@ impl Dictionary for RuntimeDict {
         tokens
     }
 
+    /// [`Self::tokens_for_text`] over raw UCS-4 spans, including
+    /// surrogate or above-Unicode words. The system and user phrase
+    /// tables compare the stored raw keys; no `char` or `str` is built
+    /// from a non-scalar. The rare non-scalar path reads the user row
+    /// directly rather than through the text cache.
+    fn tokens_for_ucs4(&self, ucs4: &[u32]) -> Vec<PhraseToken> {
+        let mut tokens: Vec<PhraseToken> = self
+            .system
+            .tokens_for_ucs4(ucs4)
+            .unwrap_or_default()
+            .into_iter()
+            .map(PhraseToken::new)
+            .collect();
+        if let Some(store) = self.user.as_ref() {
+            tokens.extend(
+                store
+                    .phrase_table_tokens_for_ucs4(ucs4)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(PhraseToken::new),
+            );
+        }
+        tokens.retain(|token| self.phrase_table_token_enabled(token.value()));
+        tokens.sort_by_key(|token| token.value() >> 24);
+        tokens
+    }
+
     fn lookup_addon(&self, syllables: &[Self::Syllable]) -> Result<Vec<Self::Entry>, Self::Error> {
         let mut entries = Vec::new();
         self.lookup_addon_into(syllables, &mut entries)?;
@@ -1822,6 +1849,10 @@ impl LanguageModel for RuntimeLm {
     /// per candidate. The n-best and phrase paths load the same row.
     fn merged_successors(&self, prev: &Self::Token) -> Result<Option<MergedGram>, Self::Error> {
         self.merged_row(prev.value())
+    }
+
+    fn is_read_after_check(&self, error: &Self::Error) -> bool {
+        error.is_read_after_check()
     }
 
     fn unigram_freq(&self, token: &Self::Token) -> Result<Option<u64>, Self::Error> {

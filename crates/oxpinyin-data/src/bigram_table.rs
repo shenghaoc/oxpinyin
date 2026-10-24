@@ -83,7 +83,7 @@ impl<D: ChewingDbm> BigramTable<D> {
     pub fn load_raw_successors(&self, prev_token: u32) -> Result<Option<Vec<u8>>, DictError> {
         let key = encode_token_key(prev_token);
         let mut value = Vec::new();
-        if !self.dbm.get(&key, &mut value)? {
+        if !self.dbm.get_bigram(&key, &mut value)? {
             return Ok(None);
         }
         if value.is_empty() {

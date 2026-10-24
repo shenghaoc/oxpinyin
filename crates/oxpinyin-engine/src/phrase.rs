@@ -119,7 +119,15 @@ where
     L: LanguageModel<Token = PhraseToken>,
     L::Error: core::fmt::Display,
 {
-    let lm = |error: L::Error| EngineError::Scoring(ScoringError::LanguageModel(error.to_string()));
+    let lm = |error: L::Error| {
+        if model.is_read_after_check(&error) {
+            EngineError::ReadAfterCheck {
+                token: prev.value(),
+            }
+        } else {
+            EngineError::Scoring(ScoringError::LanguageModel(error.to_string()))
+        }
+    };
     let item = match model.nbest_successors_in_row(&prev, row).map_err(lm)? {
         None => return model.nbest_step_costs(&prev, &token).map_err(lm),
         Some(NbestSuccessors::Miss) => None,
@@ -160,6 +168,44 @@ where
 {
     let chars: Vec<char> = sentence.chars().collect();
     let n = chars.len();
+    segment(model, n, |start, end| {
+        dictionary.tokens_for_text(&chars[start..end].iter().collect::<String>())
+    })
+}
+
+/// [`phrase_segment`] over raw UCS-4 words, including surrogate or
+/// above-Unicode values. The phrase table compares the stored raw keys;
+/// no `char` or `str` is built from a non-scalar word.
+///
+/// # Errors
+///
+/// Propagates the model's step-cost failures.
+pub fn phrase_segment_ucs4<D, L>(
+    dictionary: &D,
+    model: &L,
+    sentence: &[u32],
+) -> Result<(bool, Vec<PhraseToken>), EngineError>
+where
+    D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
+    D::Error: core::fmt::Display,
+    L: LanguageModel<Token = PhraseToken>,
+    L::Error: core::fmt::Display,
+{
+    segment(model, sentence.len(), |start, end| {
+        dictionary.tokens_for_ucs4(&sentence[start..end])
+    })
+}
+
+fn segment<L, F>(
+    model: &L,
+    n: usize,
+    mut tokens_for: F,
+) -> Result<(bool, Vec<PhraseToken>), EngineError>
+where
+    L: LanguageModel<Token = PhraseToken>,
+    L::Error: core::fmt::Display,
+    F: FnMut(usize, usize) -> Vec<PhraseToken>,
+{
     let null = PhraseToken::new(0);
     let mut result = vec![null; n];
 
@@ -179,43 +225,53 @@ where
         // once per step (stable during the step's own span walk —
         // relaxations write to later steps only).
         let uni_from = steps[i].best().cloned();
-        for (prev, node) in steps[i]
-            .content
-            .iter()
-            .map(|node| (node.token, node.clone()))
-            .collect::<Vec<_>>()
-        {
-            // The predecessor's merged row, loaded at its first phrase:
-            // `search_bigram2` loads and merges it on every `SEARCH_OK`
-            // (`phrase_lookup.cpp:268-276`), and nothing writes the grams
-            // within the call, so one load serves the step.
-            let mut row = NbestStepRow::default();
-            let upper = n.min(i + MAX_PHRASE_LENGTH);
-            for end in (i + 1)..=upper {
-                let text: String = chars[i..end].iter().collect();
-                for token in dictionary.tokens_for_text(&text) {
-                    let costs = step_costs(model, prev, token, &mut row)?;
+        let predecessors = steps[i].content.clone();
+        let upper = n.min(i + MAX_PHRASE_LENGTH);
+        // Spans precede predecessor rows, and all bigram branches precede
+        // the span's unigram branch (`phrase_lookup.cpp:137-149,
+        // 255-302`). A later span's bad gram must not hide an earlier
+        // span's refusal.
+        for (end, step) in steps.iter_mut().enumerate().take(upper + 1).skip(i + 1) {
+            let tokens = tokens_for(i, end);
+            if tokens.is_empty() {
+                continue;
+            }
+            let mut unigrams = Vec::new();
+            for node in &predecessors {
+                // The predecessor's merged row, loaded at its first phrase
+                // in this span: `search_bigram2` loads and merges it on
+                // every `SEARCH_OK` (`phrase_lookup.cpp:268-276`), and
+                // nothing writes the grams within the call, so one load
+                // serves the span.
+                let mut row = NbestStepRow::default();
+                for &token in &tokens {
+                    let costs = step_costs(model, node.token, token, &mut row)?;
                     // Bigram branch: every node of the from-step.
                     if let Some(blended) = costs.blended {
-                        steps[end].relax(Node {
+                        step.relax(Node {
                             token,
-                            prev,
+                            prev: node.token,
                             last_step: i,
                             cost: node.cost + blended,
                         });
                     }
                     // Unigram branch: the from-step's best node only.
                     if let Some(from) = &uni_from
-                        && from.token == prev
+                        && from.token == node.token
                         && let Some(unigram) = costs.unigram
                     {
-                        steps[end].relax(Node {
-                            token,
-                            prev,
-                            last_step: i,
-                            cost: from.cost + unigram,
-                        });
+                        unigrams.push((token, unigram));
                     }
+                }
+            }
+            for (token, cost) in unigrams {
+                if let Some(from) = &uni_from {
+                    step.relax(Node {
+                        token,
+                        prev: from.token,
+                        last_step: i,
+                        cost: from.cost + cost,
+                    });
                 }
             }
         }

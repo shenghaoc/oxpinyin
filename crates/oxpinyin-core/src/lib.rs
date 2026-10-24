@@ -21,6 +21,7 @@ mod parser;
 mod scheme;
 pub mod scoring;
 pub mod single_gram;
+pub mod ucs4;
 mod string_tables {
     use crate::options::{
         ZHUYIN_CORRECT_ETEN26, ZHUYIN_CORRECT_HSU, ZHUYIN_CORRECT_SHUFFLE, ZHUYIN_INCOMPLETE,
@@ -400,6 +401,23 @@ pub trait Dictionary {
         Vec::new()
     }
 
+    /// The phrase tokens stored for an exact raw UCS-4 span — the
+    /// non-scalar counterpart of [`Self::tokens_for_text`]. The span may
+    /// contain surrogate code points or values above U+10FFFF, so the
+    /// default converts only an all-scalar span to text; a span with a
+    /// non-scalar is empty, and a table-backed dictionary overrides this
+    /// with a raw key read.
+    fn tokens_for_ucs4(&self, ucs4: &[u32]) -> Vec<PhraseToken> {
+        let mut text = String::with_capacity(ucs4.len());
+        for &word in ucs4 {
+            let Some(character) = char::from_u32(word) else {
+                return Vec::new();
+            };
+            text.push(character);
+        }
+        self.tokens_for_text(&text)
+    }
+
     /// Addon-facade lookup pass, empty for every existing implementor.
     ///
     /// W11: the default facade stays on [`Dictionary::lookup`]; the addon
@@ -717,6 +735,10 @@ impl<D: Dictionary + ?Sized> Dictionary for &D {
 
     fn tokens_for_text(&self, text: &str) -> Vec<PhraseToken> {
         (**self).tokens_for_text(text)
+    }
+
+    fn tokens_for_ucs4(&self, ucs4: &[u32]) -> Vec<PhraseToken> {
+        (**self).tokens_for_ucs4(ucs4)
     }
 
     fn lookup_addon(&self, syllables: &[Self::Syllable]) -> Result<Vec<Self::Entry>, Self::Error> {
@@ -1548,6 +1570,14 @@ pub trait LanguageModel {
         Ok(None)
     }
 
+    /// Whether `error` is a backend read that failed after its size check
+    /// succeeded — the point where Kyoto Cabinet's `Bigram::load` asserts
+    /// (`ngram_kyotodb.cpp:131-139` at 074a2219). Defaulted to `false` for
+    /// models whose errors never carry that shape.
+    fn is_read_after_check(&self, _error: &Self::Error) -> bool {
+        false
+    }
+
     /// The `gfloat` λ of the install's `table.conf` — the weight the pin's
     /// candidate frequency (`(λ·bigram + (1−λ)·unigram)·2²⁴`,
     /// `pinyin.cpp:1862-1866`, `zhuyin.cpp:1236-1280`) is computed with.
@@ -1650,6 +1680,10 @@ impl<L: LanguageModel + ?Sized> LanguageModel for &L {
         row: &'a mut NbestStepRow,
     ) -> Result<Option<NbestSuccessors<'a>>, Self::Error> {
         (**self).nbest_successors_in_row(prev, row)
+    }
+
+    fn is_read_after_check(&self, error: &Self::Error) -> bool {
+        (**self).is_read_after_check(error)
     }
 
     fn amplification_lambda(&self) -> f32 {

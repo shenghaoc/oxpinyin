@@ -381,6 +381,16 @@ impl SystemDictionary {
         self.phrase.search(text)
     }
 
+    /// Tokens whose raw UCS-4 span is exactly `words` — the non-scalar
+    /// counterpart of [`Self::tokens_for_text`], compared as stored keys.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DictError`] when the DBM read or the value decode fails.
+    pub fn tokens_for_ucs4(&self, words: &[u32]) -> Result<Vec<u32>, DictError> {
+        self.phrase.search_ucs4(words)
+    }
+
     /// Tokens whose phrase text starts with `prefix` and is longer, when
     /// `prefix` itself is a stored key — `PhraseLargeTable3::search_suggestion`
     /// resolved to `(token, text)` rows, tokens without a loaded item
