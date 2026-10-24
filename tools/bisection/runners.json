@@ -2101,5 +2101,43 @@
       "{root}/tools/tkrzw/run-sanitizers.sh"
     ],
     "reason": "native sanitizer recipe; caller selects the backend; excluded from compatibility aggregate gates"
+  },
+  {
+    "name": "native-startup",
+    "kind": "not-a-gate",
+    "cells": [
+      "native"
+    ],
+    "heavy": true,
+    "command": [
+      "uv",
+      "run",
+      "--no-project",
+      "--managed-python",
+      "--python",
+      "cpython@3.15+gil",
+      "python",
+      "-X",
+      "lazy_imports=normal",
+      "-m",
+      "tools.dev",
+      "measure",
+      "startup"
+    ],
+    "implementation": "python:tools.dev",
+    "issues": [
+      "T2N"
+    ],
+    "required_inputs": [
+      "oxpinyin base and PR installed prefixes",
+      "system directory",
+      "pin-provisioned startup profiles"
+    ],
+    "reason": "native Linux/macOS oxpinyin-only information; pin rows require T11C container",
+    "artifacts": [],
+    "oracle": false,
+    "env": {},
+    "timeout": 1800,
+    "exclusive_resources": []
   }
 ]

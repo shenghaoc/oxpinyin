@@ -36,6 +36,40 @@ class PureTests(unittest.TestCase):
                     td.run(args, None, None)
                 worker.assert_not_called()
 
+    @unittest.skipUnless(sys.platform.startswith('linux'), 'Linux measurement controller')
+    def test_zhuyin_only_provision_prepares_witnesses_with_the_pinyin_provisioner(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'lib/libpinyin/data').mkdir(parents=True)
+            (root / 'lib/libpinyin/data/table.conf').write_bytes(b'table')
+            (root / 'lib/libpinyin.so').write_bytes(b'pin pinyin')
+            (root / 'lib/libzhuyin.so').write_bytes(b'pin zhuyin')
+            (root / 'ox-libzhuyin.so').write_bytes(b'ox zhuyin')
+            args = SimpleNamespace(cell='bdb', teardown_stage='provision', per_call=None, cases='', issue=[],
+                                   family=[], expect_parent=False, observations=None, plan_only=False,
+                                   axis_c_replacement=None, axis_c_mutation=None,
+                                   axis_c_snapshot_check=False, regenerate_sentence_ties=None,
+                                   teardown_work_dir=root, teardown_cases='empty',
+                                   teardown_cpu=min(os.sched_getaffinity(0)), teardown_facades='zhuyin',
+                                   pinyin_so=None, zhuyin_so=root / 'ox-libzhuyin.so', prefix=root)
+            profiles = dict(empty=root / 'profiles/empty/user')
+            with patch.object(td, 'filesystem', return_value='ext4'), \
+                    patch.dict(td.FUNCTION_ORDER, check_arms=lambda *a, **k: None), \
+                    patch.object(td, 'build_worker', return_value=(Path('worker'), {})), \
+                    patch.object(td, 'Campaign', lambda *a, **k: SimpleNamespace()), \
+                    patch.object(td, 'print_record'), \
+                    patch.object(td, 'provision', return_value=profiles) as provision, \
+                    patch.object(td, 'prepare_witnesses', return_value={'empty': None}) as witnesses, \
+                    patch.object(td, 'execute', side_effect=AssertionError('provision returns before execute')):
+                self.assertEqual(td.run(args, None, None), 0)
+            # No pinyin subject: the pin's pinyin library is copied in as the provisioner,
+            # and both the profiles and the witnesses come from that handle.
+            provisioner = root / 'libraries/pinlibs/libpinyin.so'
+            self.assertEqual(provisioner.read_bytes(), b'pin pinyin')
+            self.assertEqual(provision.call_args.args[1], provisioner)
+            self.assertEqual(witnesses.call_args.args[1], provisioner)
+            self.assertIs(witnesses.call_args.args[0], provision.call_args.args[0])
+
     def refusal(self, **overrides):
         """What `run` refuses with. The defaults pass every scope check, so the
         refusal is then the missing work directory."""

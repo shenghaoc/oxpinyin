@@ -506,9 +506,18 @@ Provision the profiles with the in-tree teardown provisioner against the
 same-cell oracle: `$PIN` is the prefix that `tools/cloud/setup.sh` verified
 (`$OXPINYIN_ORACLE_PREFIX_<CELL>` in its environment file), and
 `$TEARDOWN` is an empty directory on ext4. The provisioner populates the
-profiles through the pin and writes each `profile.manifest`. Every teardown
-stage runs on `bdb`, `kc` and `tkrzw` (`docs/runbooks/benches.md`, "Native
-teardown workload"). Then compute the system-data identity:
+profiles through the pin and writes each `profile.manifest`. Before the
+provision stage returns, `teardown.prepare_witnesses` observes the candidate
+inputs against the pin with empty and reopened populated profiles. It writes
+the discriminating inputs to each populated `witness.txt` and prints a
+`witness` record with the exact inputs and their SHA-256. Read those records
+from stdout; no capture file is needed. Reuse checks each manifest; a missing
+or empty populated witness is never accepted by the native controller.
+Every teardown stage runs on `bdb`, `kc` and `tkrzw`
+(`docs/runbooks/benches.md`, "Native teardown workload"). This is Linux
+provisioning, separate from the native measurement command. Keep provisioning
+inputs in an owned ext4 location under `TMPDIR` and use the same host-wide slot
+as other heavy work. Then compute the system-data identity:
 
 ```sh
 just heavy -- uv run --no-project --managed-python --python cpython@3.15+gil \

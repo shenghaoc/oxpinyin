@@ -34,6 +34,7 @@ The measurement inventory (arm names are command-line names):
 
 | Tool | Shipping expectations and build route |
 | --- | --- |
+| `just measure startup` / `just initbench` | Both facades of native `base`, `pr`, and byte-identical `control`; supplied oxpinyin installed prefixes. Every Linux arm is ordered; pin rows are refused. |
 | `tools/measure-function-order.py` | Both facades of `base`, `pr`, `control`; supplied installed prefixes. `pin` is the reference. |
 | `tools/bisection/contract-diff.py --teardown` / `teardown.py` | Selected facades of `ox` and its byte-identical `control`; supplied libraries, copied then checked before building a worker. `pin` is the reference. This includes the provision stage. |
 | `tools/bisection/contract-diff.py --per-call` | Selected facades of `subject` and optional `base`; supplied libraries. `pin` is the reference. Ordinary behavioral differentials have no shipping-layout requirement. |
@@ -75,11 +76,164 @@ uv run --no-project --managed-python --python cpython@3.15+gil \
 `tools/generate-function-order.py` intentionally profiles unordered inputs to
 derive policies; its output is a policy, not shipping performance figures.
 `tools/profile/run-w8-cycle.sh` uses the thin-LTO `profiling` recipe and makes
-no shipping-performance claim. `tools/workers/startup.c` is a native worker;
-there is no startup measurement controller in this tree. Packaging's
+no shipping-performance claim. `tools/workers/startup.c` is the native worker
+for `tools.dev.measure.startup`. Packaging's
 `release-stage.sh` and `check-pc-metadata.sh` call `install.sh` for release or
 behavioral smoke checks, not measurements. Their ordinary fallback stays
 unchanged.
+
+## Native startup measurement
+
+The 2026-10-22 UTC ruling (§7.8 in the tooling consolidation findings) places
+oxpinyin-only startup in `just measure startup`, also available as
+`just initbench`. Supply installed unstripped oxpinyin base and PR prefixes,
+one system directory and pin-provisioned profiles from
+[Regeneration](../packaging.md#regeneration). Native measurement only verifies
+these inputs; populated profiles need nonempty `witness.txt` files.
+
+```sh
+TMPDIR="$HOME/owned-startup-tmp" just initbench \
+  --base "$BASE" --pr "$PR" --system-dir "$DATA" --profiles-dir "$PROFILES"
+```
+
+Create the owned temporary parent first. Linux requires ext4 for every
+library, system file, profile and work path; macOS requires one APFS volume.
+The controller acquires `tools.dev.slot` for its worker build and whole run.
+It uses private, equal-length base/PR/control library paths and fresh user
+copies, checks each Linux arm with the shared function-order verifier, and
+removes temporary inputs even after failure. It writes no profiler capture.
+Do not overlap measurement with builds; use the existing host-wide slot.
+The PR control is always a byte-for-byte copy. Explicit policy overrides
+use `--function-order ARM/FACADE=POLICY`; there is no unordered bypass.
+
+Native verification compares U1–U6, the full script, witness answers,
+save/reopen observations, stderr, the user filename set and raw non-database
+file bytes. It never reads database rows. Python hashes the worker's exact
+canonical U1–U6 record including the final newline. The parent reads stopped
+child memory at every checkpoint. macOS supplies RSS and virtual size only;
+other memory metrics stay unavailable. Memory-run timings are excluded.
+
+`--stage verify` stops after verification and separate hostile probes.
+`--stage instrument` also checks Linux Callgrind Ir. Init uses two fresh
+processes per arm and remains exact: any same-bytes variation returns 3.
+Under the 2026-10-24 UTC maintainer ruling (§7.5), first-candidate and steady
+Ir use five fresh processes per base/PR/control arm. Steady repeats the same
+candidate request on the initialized instance, in a separate profiler process.
+The control and PR min–max ranges must overlap. The further 2026-10-24 UTC
+ruling removes the span limit entirely. Claims are bounds: base min minus
+PR max through base max minus PR min, never a point or exact difference. Every PR/control exclusive function count is checked
+against the single `tools.dev.measure.instructions::RANDOMSTATE_ALLOWLIST`
+definition. Under the additional 2026-10-24 UTC attribution ruling, init
+passes on exact totals alone and does not require complete function naming.
+For range metrics, unresolved sites use full object identity plus an offset
+from the object's load base, never raw ASLR addresses. The same-process worker
+reports loader PT_LOAD segments and load biases via `dl_iterate_phdr` after
+the units. The lowest runtime PT_LOAD address is the base; each unresolved
+object-relative instruction position plus its recorded load bias must map uniquely into an executable segment.
+Constant unresolved entries present in every PR/control process are allowed
+and reported by count and summed Ir. Varying or unmatched entries, missing
+or ambiguous loader mappings, other named variation, profiler identity
+failure, or unreconciled exclusive totals are INVALID (status 3). Raw loader
+records and profiler instruction positions remain in the output. The
+[Callgrind format](https://valgrind.org/docs/manual/cl-format.html#cl-format.reference.header)
+specifies object-relative instruction positions for identified objects; the
+loader bias is added before checking the executable segment. Callgrind's
+anonymous `???` object has zero bias (`fn.c::new_obj_node`), and
+`dump.c::get_debug_pos` emits runtime address minus that bias. Its instruction
+position is therefore checked directly against same-process executable
+segments. In both cases the uniquely proven object's load base is subtracted
+to form the key. Unknown object names alone do not cause rejection; missing
+or ambiguous mappings still do. Failed parsing retains the sample PID, raw
+stdout/profile bytes and loader records in the INVALID report, even when no
+parsed function table exists. No earlier failure is retroactively attributed.
+Accepted metrics report RANGE-QUALIFIED and their bounds, never exact.
+Every original timing sample, scoped total, per-function count and raw
+profile is reported; no normalization, hash reseeding or retrospective
+attribution of earlier phase-total-only differences is allowed.
+Re-evaluate retained controller JSONL before repeating covered scopes:
+
+```sh
+just measure startup --recheck-instructions "$RETAINED_JSONL"
+# Then use the original initbench inputs and selection, adding:
+just initbench --base "$BASE" --pr "$PR" --system-dir "$DATA" \
+  --profiles-dir "$PROFILES" --instructions-from "$RETAINED_JSONL"
+```
+
+Replay requires one original start record, complete raw init profiles and
+complete range profiles with raw data, PIDs and loader records. It reparses
+originals and reports all counts and the new bounds; duplicate scopes/range
+PIDs or incomplete provenance refuse. Continuation additionally matches input
+digests, library hashes, worker source, binding and cache mode. Each qualified
+retained scope is skipped, while uncovered scopes (including zhuyin) still run.
+Fresh behavioral verification is a preflight; subsequent timing/memory are a
+separate measurement segment linked by the retained file SHA-256. Retained
+and new samples are never pooled or claimed as one original run.
+
+The default `--stage run` checks these counts before timing. Native macOS
+instruction counts are unavailable. Valgrind output stays in memory.
+The default run has 60 timing rounds plus 3 warm-ups and 30 memory rounds
+plus 2 warm-ups (`--bind lazy` defaults to 30 timing rounds). Subjects rotate
+within each round. `--rounds`, `--warmups`, `--memory-rounds` and
+`--memory-warmups` permit an explicitly reported smoke selection.
+
+Timing and residency use the 2026-10-21 UTC control rules and shared
+`tools.dev.measure.stats` helpers. An unstable metric is INCONCLUSIVE and
+gets no PR/base ratio. Fault counts are diagnostic, not residency ratios.
+The statuses are 0 completed (including INCONCLUSIVE), 1 failure/refusal,
+2 usage error, 3 NOT COMPARABLE or INVALID exact control, 130 cancelled.
+Pin rows require the Layer 4 container path; Windows stays deferred (#950).
+Cold mode is refused on both hosts in this change. Its rejection limit needs
+approval before implementation or sampling.
+
+Linux KC smoke acceptance completed on 2026-10-24 UTC at 08:23 with controller
+`1cea405cf297e68da8ca3caf97594de45f467ef8` and retained shipping build
+`ebc9d4f5bf3edc6d08f254de39a6db46bb75c9b3`, not moving main. This was a
+retained-profile recheck followed by a separate continuation, both exit 0:
+
+```sh
+INPUT=/home/sheng/Documents/Codex/2026-10-23/task-9/kc-parser-smoke
+RETAINED=/home/sheng/Documents/Codex/2026-10-23/task-9/kc-loader-smoke/measurements.jsonl
+just measure startup --recheck-instructions "$RETAINED"
+TMPDIR=/home/sheng/Documents/Codex/2026-10-23/task-9/kc-continuation/tmp \
+  just initbench --base "$INPUT/stage" --pr "$INPUT/stage" \
+  --system-dir /home/sheng/.cache/oxpinyin/oracle/kc/lib/libpinyin/data \
+  --profiles-dir "$INPUT/provision/profiles" --profiles empty \
+  --rounds 3 --warmups 1 --memory-rounds 2 --memory-warmups 1 \
+  --instructions-from "$RETAINED"
+```
+
+The continuation skipped all three covered pinyin profiler scopes. Init was
+exact across base/PR/control (two processes each): pinyin 6,922,434 Ir;
+zhuyin 3,472,152 Ir. All four first/steady metrics were RANGE-QUALIFIED:
+
+| Facade | Scope | Base minus PR bounds (Ir) |
+| --- | --- | --- |
+| pinyin | first candidate | −187 to 95 |
+| pinyin | steady | −468 to 341 |
+| zhuyin | first candidate | −166 to 132 |
+| zhuyin | steady | −375 to 149 |
+
+Every range overlapped its control; no named variation outside the allowlist
+or invalid unresolved entry was found. Each facade's first-candidate scope
+had 58 constant unresolved sites totalling 3,006 Ir; steady had 39 / 1,874 Ir.
+Both facade observations and digests were COMPARABLE, all 72 hostile probes
+returned 0, and all six arms passed ordering (326 pinyin / 306 zhuyin paths).
+The continuation reported 42 original timing/memory samples including warmups.
+All 20 timing metrics were INCONCLUSIVE with ratios withheld: no timing gain
+is established. Memory: pinyin 51 STABLE, five INCONCLUSIVE and 14 diagnostic;
+zhuyin 56 STABLE and 14 diagnostic. Pinyin's inconclusive metrics were
+lib_load RSS, RSS delta, peak RSS, file-backed and end file-backed.
+Child RSS and virtual size were positive at all seven handshakes.
+Raw records remain local and are not published. These segments do not prove
+one uninterrupted session or retrospectively attribute earlier failed captures.
+BDB instruction counts are diagnostic only
+(`libdb` seeds `srandom_r`); they are not reproducible exact controls.
+The maintainer reports bounded native macOS checks at `d4e9f54d`: initbench
+returned 0 with ELF ordering unavailable, four refusals returned 1, and
+parent memory reads were nonzero at all seven child handshakes. The macOS
+reader uses `ps` for RSS and virtual size (§7.7).
+[CI run 39892909515](https://github.com/shenghaoc/oxpinyin/actions/runs/39892909515)
+is green at that head. Unit tests and verification are not performance results.
 
 ## Native teardown workload
 

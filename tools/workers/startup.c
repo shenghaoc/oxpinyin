@@ -45,6 +45,9 @@
 #define _DARWIN_C_SOURCE
 #endif
 #define _DEFAULT_SOURCE
+#if !defined(__APPLE__)
+#define _GNU_SOURCE
+#endif
 #define _XOPEN_SOURCE 700
 #define _POSIX_C_SOURCE 200809L
 #include <dlfcn.h>
@@ -58,6 +61,12 @@
 #include <sys/resource.h>
 #include <time.h>
 #include <unistd.h>
+#if !defined(__APPLE__)
+/* After every feature macro: link.h includes features.h, which defines
+ * _XOPEN_SOURCE and _POSIX_C_SOURCE itself under _GNU_SOURCE (glibc 2.42
+ * sets 800 and 202405L); a later definition is a -Werror redefinition. */
+#include <link.h>
+#endif
 #if !defined(CLOCK_MONOTONIC_RAW)
 #define CLOCK_MONOTONIC_RAW CLOCK_MONOTONIC
 #endif
@@ -406,6 +415,13 @@ void startup_first_candidate_unit(void *instance) {
     if (units.read) strcpy(units.text, text);
 }
 
+/* A second identical request on the same initialized instance; profiler only. */
+__attribute__((noinline))
+void startup_steady_unit(void *instance) {
+    startup_first_candidate_unit(instance);
+    __asm__ volatile ("" ::: "memory");
+}
+
 __attribute__((noinline))
 void startup_drop_instance_unit(void *instance) {
     api.free_instance(instance);
@@ -419,6 +435,27 @@ void startup_fini_unit(void *context) {
 }
 
 static void emit_candidates(void *instance, unsigned count, unsigned *max_rank);
+
+#if !defined(__APPLE__)
+static int emit_loaded_object(struct dl_phdr_info *info, size_t size, void *data) {
+    (void)size;
+    (void)data;
+    emit("{\"startup\":\"loaded_object\",\"pid\":%ld,\"object\":", (long)getpid());
+    emit_string(info->dlpi_name[0] ? info->dlpi_name : "/proc/self/exe");
+    emit(",\"load_bias\":%llu,\"segments\":[", (unsigned long long)info->dlpi_addr);
+    bool comma = false;
+    for (size_t i = 0; i < info->dlpi_phnum; ++i) {
+        const ElfW(Phdr) *ph = &info->dlpi_phdr[i];
+        if (ph->p_type != PT_LOAD || !ph->p_memsz) continue;
+        emit("%s{\"start\":%llu,\"end\":%llu,\"flags\":%u}", comma ? "," : "",
+             (unsigned long long)(info->dlpi_addr + ph->p_vaddr),
+             (unsigned long long)(info->dlpi_addr + ph->p_vaddr + ph->p_memsz), (unsigned)ph->p_flags);
+        comma = true;
+    }
+    emit("]}\n");
+    return 0;
+}
+#endif
 
 /* U1–U6 in order, stopping after `stop`. `after_units` reads the first
  * candidate state between U5 and U6, untimed; verify mode only. */
@@ -478,6 +515,13 @@ static void run_units(const char *path, int flags, const char *data, const char 
     units.stopped_at = FIRST_CANDIDATE;
     reach(FIRST_CANDIDATE);
     if (stop == FIRST_CANDIDATE) return;
+
+    if (getenv("OXPINYIN_STARTUP_STEADY")) {
+        startup_steady_unit(units.instance);
+        if (units.consumed != 5 || units.parsed != 5 || !units.guessed ||
+            !units.counted || !units.count || !units.read || !units.text[0])
+            die("steady candidate contract failed");
+    }
 
     if (after_units) {
         emit("{\"startup\":\"after_units\",\"counted\":%s,\"count\":%u,\"candidates\":",
@@ -796,6 +840,9 @@ int main(int argc, char **argv) {
         finish();
     }
     run_units(path, flags, data, user, stop, !strcmp(mode, "verify"));
+#if !defined(__APPLE__)
+    if (getenv("OXPINYIN_STARTUP_LOADER")) dl_iterate_phdr(emit_loaded_object, NULL);
+#endif
     emit_units();
     if (!strcmp(mode, "measure")) emit_times();
     if (!strcmp(mode, "verify")) transcript(data, user, witness);
