@@ -300,9 +300,8 @@ marked otherwise.
 | Consumer mapping: system/user versions, addon index, λ `f32` bits, library names/types and file-type roles reach the same dictionary load/save and candidate results. | Contract. Source: the conversions above (`vfscanf-internal.c`/`strtod_l.c`); no additional scanner path. | Complete: the 68 #919 cases plus the existing 88 valid `table-conf-*` cases; the version writer fix is above. |
 | Training λ reader: the old line-based `parse_table_conf_lambda` accepted only a line-prefixed plain decimal; it now parses the same full `table.conf` stream as the pin through `TableConf::parse` (hex, leading whitespace, one-line headers, incomplete-exponent rejection). The file is read as bytes. | Tool-only contract with the pin’s loader; no C-ABI change. Source: it reuses the full `TableConf` stream and therefore the scanner citations above; no independent scanner. | Complete: `training/src/segment/model.rs::the_lambda_reader_follows_the_pin_stream`, `paths::load_lambda` reads bytes; no facades entry. |
 | Process `LC_NUMERIC`: the pin sets it to `C` and early returns skip the restore; oxpinyin leaves it at `C` and does not reproduce the process side effect. | **Needs a ruling to reverse**, [policy row 39](compatibility-policy.md), #923; retain. Not a scanner verdict: pin `table_info.cpp:197`; #923. | Not changed; real policy STOP, not an unread path. |
-| `user.conf` parsing: the four `fscanf` directives are #920; this entry changes only the writer’s signed version formatting required by the table.conf `%d` range. | #920 owns the full user.conf parse; the #919 writer fix is contract. Not this scanner: #920 owns the user.conf parse. | Partial #920; #919 writer cases complete. |
 
-Completion gate (2026-10-25 UTC, linux/amd64, bdb): `cargo test -p
+Completion gate (2026-10-24 UTC, linux/amd64, bdb): `cargo test -p
 oxpinyin-data -p oxpinyin-training` passed, clippy and fmt passed, and
 `--issue 919` ran **68/68 MATCH**. The named
 `unsigned-user-conf-versions` mutation (the writer back to `%u`) made the
@@ -319,6 +318,38 @@ After the database-format-value fixture was made backend-independent
 (match `database format:` and any following value), the same 68 cases ran
 once on each cell: **bdb 68/68, kc 68/68, tkrzw 68/68**. This is a
 targeted rerun for the fixture, not a three-cell gate.
+
+
+### `user.conf` — #920
+
+Pin: `storage/table_info.cpp:325-397` (`UserTableInfo::load` four
+`fscanf`s at `:338,344,352,357`; `save` at `:372-397`;
+`is_conform` at `:399-413`; `get_open_counter` at `:422-426`). Rust:
+`data/src/user_files.rs` (`UserTableInfo`, `Scan::int`, `upstream_db_format`)
+and `user/src/persistence.rs` (`check_format`, `write_marker`,
+`clean_user_files`). The fixture helpers read the running cell's
+`table.conf` values; no backend name is written into a case.
+
+| Partition | Verdict / record | Completion |
+| --- | --- | --- |
+| Version `%d`: C white space, optional `+`/`-`, every ASCII digit; `strtol` saturates at LP64 `LONG_MIN`/`LONG_MAX` and the store through `int *` keeps the low 32 bits, so `2147483648` is `-2147483648`, `4294967303` is `7`, `9223372036854775808` is `-1`, and `-9223372036854775808` is `0`. | Contract; the pin's signed `int` bits are preserved. Source: `stdio-common/vfscanf-internal.c:1452-1500`, `stdlib/strtol_l.c:483-519`, `vfscanf-internal.c:1983-1984`. | Complete: `user-conf-920-version-overflow-{conforms,nonconforms}`, `user-conf-920-negative-overflow-nonconforms`; unit `the_version_directives_read_as_fscanfs_percent_d`. |
+| Open counter `%d`: the same conversion into `int`; a missing/failed directive reads 0; a counter above `OPEN_COUNTER_LIMIT` is non-conforming and `get_open_counter` turns it into 0; negative/zero counters conform; the load raises `get_open_counter(existing) + 1` and fini lowers it. | Contract; state-preserving on conforming wraps, wiping on non-conforming ones. Source: `vfscanf-internal.c:1452-1500`, `strtol_l.c:483-519`; pin `table_info.cpp:357-359,422-426`. | Complete: `user-conf-920-counter-overflow-{conforms,nonconforms}`, `user-conf-920-counter-missing`; unit `the_counter_reads_as_fscanfs_percent_d`. |
+| `database format:%255s`: a known C string selects the backend; an unknown token aborts (`to_table_database_format_type`); an EOF before the conversion leaves `UNKNOWN_FORMAT`; a missing literal or matching failure reaches the mapper on `str` that no conversion wrote (class (b)/(c)); a NUL ends the C string even though `%s` kept reading the word. | Contract for known/EOF; class (c) for unknown, class (b) for the unwritten `str`. Source: `vfscanf-internal.c:1076-1259` (`%s`); pin `table_info.cpp:350-354` and `strcmp` at `:122-131`. | Complete: `user-conf-920-nul-database-token`, `user-conf-920-database-missing-at-eof`; existing unknown-format abort case. |
+| Missing/malformed version directive: the pin's `load` returns `false`, leaves the reset defaults (`0/0/UNKNOWN/0`), `check_format` sees a non-conforming marker and wipes the profile; a `%d` with no digit after an optional sign is that failure; a foreign byte after a version is what the next directive meets. | Contract; the wipe is the pin's, not a Rust error policy. Source: `vfscanf-internal.c:452-486` (literal/EOF) and `:1452-1500`; pin `table_info.cpp:338-348`. | Complete: existing `user-conf-abort-database-format-unknown` is the class-(c) neighbour; the #920 cases `version-overflow-nonconforms` and `negative-overflow-nonconforms` cover the wipe. |
+| State preservation and conformance: a conforming marker (including a wrapped version equal to the system's, `7 + 2^32`, or a counter wrapping to 0) retains every user file and learned count; a non-conforming marker follows `_clean_user_files`, and `write_marker` writes the system versions with the raised/lowered counter. | Contract; #920's guard. | Complete: all eight `#920` cases assert the trained and imported unigrams after reopen; `user_listing` compares the files and canonical `user.conf`. |
+| Round-trip writer: `UserTableInfo::save` writes versions with `%d` (signed), the database format canonically, and the counter signed; a marker read from a version outside `int` writes back the same signed values the pin does. | Contract; builds on #1178. Source: pin `table_info.cpp:372-397`; `user.conf` writer uses `i32` in `data/src/user_files.rs`. | Complete: `user-conf-920-version-overflow-*`, `user-conf-920-counter-*`, `user_files::tests::an_out_of_int_version_is_written_signed`. |
+| Backend identity: the same four directives are used on bdb, kc and tkrzw; only the `database format:` value changes, and it is read from the cell's `table.conf`. | Contract; fixtures are backend-independent. | Complete: every #920 fixture derives binary/model/counter values from the cell and edits the database token generically; no literal backend name. |
+| Process `LC_NUMERIC`: unchanged from #919/#923; the pin sets it to `C` and early returns skip the restore, oxpinyin leaves it at `C`. | **Needs a ruling to reverse**, policy row 39/#923. | Not changed. |
+
+Completion gate (2026-10-24 UTC, linux/amd64, bdb):
+`user-conf-920-*` **16/16 MATCH**. The named
+`nul-database-token` mutation (remove the C-string truncation in
+`upstream_db_format`) made the two NUL cases DIFFER and the other 14
+controls MATCH; restored and rebuilt, **16/16 MATCH**. Because the
+fixtures read the cell's own `table.conf`, the same 16 cases also ran once
+on kc and tkrzw: **kc 16/16, tkrzw 16/16** (a targeted validation, not a
+three-cell gate). The 24,687-case `%d` corpus from #919 is confirmation
+only; it is not the basis of these verdicts and is not committed.
 
 ## G12 — File I/O and MemoryChunk
 
