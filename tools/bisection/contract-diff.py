@@ -1008,7 +1008,7 @@ def token_unigram_system(k):
     return out
 
 
-def token_unigram_user(k):
+def token_unigram_user(k, *, add_frequency=True):
     phrase = '你好你好'
     reading = "ni3'hao3'ni3'hao3" if k.mode == 'pinyin' else 'ㄋㄧˇ ㄏㄠˇ ㄋㄧˇ ㄏㄠˇ'
     iterator = k.fn('begin_add_phrases', P, P, U)(k.ctx, 7)
@@ -1021,7 +1021,8 @@ def token_unigram_user(k):
     assert len(tokens) == 1, tokens
     token = tokens[0]
     out = {'imported': added, 'token': hex(token), 'before': unigram_of(k, token)}
-    out['add'] = k.fn('token_add_unigram_frequency', B, P, U, U)(k.inst, token, 7)
+    if add_frequency:
+        out['add'] = k.fn('token_add_unigram_frequency', B, P, U, U)(k.inst, token, 7)
     out['after'] = unigram_of(k, token)
     return out
 
@@ -6833,6 +6834,90 @@ def conf_session(k, system):
     k.fn('fini', None, P)(ctx)
     out['files'] = user_listing(k)
     return out
+
+
+# #1119: direct KC classes open literal paths (074a2219
+# ngram_kyotodb.cpp:117-119; chewing_large_table2_kyotodb.cpp:87-89).
+# table_info.cpp:255-284 preserves '#' in filename fields; pinyin.cpp:
+# 250-276, 303-319, 939-988, 1042-1084 loads/saves those literal names.
+# The DBM filenames are fixed by the facade; table.conf can rename the
+# system chunks, user chunks and journals. The store trait laws also
+# exercise '#' in actual TreeDB/HashDB filenames, without a symlink.
+def hash_path_fixture(k, placement):
+    system = private_system(k)
+    system_name, journal_name, user_name = 'gb_char.bin', 'gb_char.dbin', 'user.bin'
+    if placement == 'system-directory':
+        renamed = system + '#type=kct'
+        os.rename(system, renamed)
+        system = renamed
+    elif placement == 'user-directory':
+        renamed = k.user + '#type=kct'
+        os.rename(k.user, renamed)
+        k.user = renamed
+    elif placement in ('system-filename', 'user-filename'):
+        conf = Path(system, 'table.conf')
+        text = conf.read_text()
+        if placement == 'system-filename':
+            system_name = 'gb#type=kct.bin'
+            Path(system, 'gb_char.bin').rename(Path(system, system_name))
+            text = text.replace('gb_char.bin', system_name)
+        else:
+            journal_name, user_name = 'gb#type=kct.dbin', 'user#type=kct.bin'
+            text = text.replace('gb_char.dbin', journal_name).replace('user.bin', user_name)
+        conf.unlink()  # private_system linked this file to the immutable pin data
+        conf.write_text(text)
+    else:
+        raise ValueError('unknown hash path placement: ' + placement)
+    k.data = system
+    return system_name, journal_name, user_name
+
+
+def hash_path_session(placement):
+    def probe(k):
+        system_name, journal_name, user_name = hash_path_fixture(k, placement)
+        out = {'training': token_unigram_trained(k),
+               'import': token_unigram_user(k, add_frequency=False)}
+        out['save'] = k.fn('save', B, P)(k.ctx)
+        assert out['save'], 'the trained profile must save'
+        out['files'] = user_listing(k)
+        assert Path(k.data, system_name).is_file(), 'the configured system file must exist'
+        assert Path(k.user, journal_name).is_file(), 'the trained journal must be written'
+        assert Path(k.user, user_name).is_file(), 'the imported library must be written'
+        if placement == 'system-filename':
+            assert not Path(k.data, 'gb_char.bin').exists()
+        if placement == 'user-filename':
+            assert not Path(k.user, 'gb_char.dbin').exists()
+            assert not Path(k.user, 'user.bin').exists()
+        k.fn('free_instance', None, P)(k.inst)
+        k.fn('fini', None, P)(k.ctx)
+        k._ctx = k._inst = None
+        out['reopen'] = bool(k.ctx)
+        out['trained-after-reopen'] = unigram_of(k, int(out['training']['token'], 16))
+        assert out['trained-after-reopen'] == out['training']['after']
+        out['import-after-reopen'] = unigram_of(k, int(out['import']['token'], 16))
+        assert out['import-after-reopen'] == out['import']['after']
+        k.fn('free_instance', None, P)(k.inst)
+        k.fn('fini', None, P)(k.ctx)
+        k._ctx = k._inst = None
+        # libzhuyin has no export iterator (zhuyin.h at 074a2219).
+        # Reuse the existing export worker on this side's companion
+        # libpinyin, as axis_c_import does for either facade's saved profile.
+        library = Path(k.lib._name)
+        companion = library.with_name(library.name.replace('libzhuyin', 'libpinyin', 1))
+        proc = subprocess.run([sys.executable, str(WORKER), 'pinyin', str(companion),
+                               k.data, 'axis-c-export-user'], capture_output=True,
+                              env=dict(os.environ, AXIS_C_REOPEN_USER=k.user))
+        assert proc.returncode == 0, proc.stderr.decode('utf-8', 'surrogateescape')
+        out['export'] = json.loads(proc.stdout)
+        assert out['export']['rows'], 'reopen must preserve the imported phrase for export'
+        return out
+    return probe
+
+
+for _mode in ('pinyin', 'zhuyin'):
+    for _placement in ('system-directory', 'user-directory', 'system-filename', 'user-filename'):
+        case('hash-path/' + _placement + '-' + _mode, mode=_mode, stderr=True,
+             issues=('1119',))(hash_path_session(_placement))
 
 
 def addon_session(k, system, indexes=(0, 3, 4, 5, 15)):
