@@ -8,17 +8,23 @@ behaviour is in `pinned-behaviour.md`; this file is the complete list of
 where oxpinyin may differ from it and the rule that admits each
 difference. Canonical policy text: `docs/findings/compatibility-policy.md`.
 
-## Observable differences — three classes, nothing else
+## Observable differences — three classes and one recorded exception
 
 Anything observable outside these is a defect to revert, not an
-improvement to record. A new entry is argued into a class; none is
-admitted by analogy.
+improvement to record. The decision order is in
+`docs/findings/compatibility-policy.md`: the C-facing contract first,
+then classes (a)–(c), then a recorded language/runtime quirk, then a
+defect or Stage 3. A new entry is argued into a class or admitted by its
+own discrepancy record; none is admitted by analogy.
 
 - **(a) MATH** — platform-dependent floating-point accumulation: a
   transcendental in the accumulation, not merely a float in the call
   graph. The sentence surface's remaining difference lives here — six
   rows, after lane D ported the trellis selection rules bug for bug
-  (policy row 11, #535).
+  (policy row 11, #535). The math rule is part of this class: oxpinyin
+  uses Rust's standard maths at full speed; a last-bit difference from
+  the pin that follows from using it is class (a), recorded and not
+  chased.
 - **(b) MEMORY SAFETY** — the pin's behaviour is undefined and Rust
   structurally prevents reproducing it.
 - **(c) AVAILABILITY** — the pin asserts or aborts on input a caller or a
@@ -29,11 +35,22 @@ admitted by analogy.
   first. There is no fourth "tolerate and warn" class.
 - **(d) CONSUMER SCOPE** — retired 2026-09-06.
 
-**Registered standing divergences** sit outside the classes, one by
-name each, with its ruling (the language-quirk exception — tkrzw's
-`SYSTEM_ERROR`/`UNKNOWN_ERROR` collapse through its C API). Rust-mechanism
-residue goes to `docs/findings/upstream-divergences.md` and is reported
-upstream after the rewrite.
+**Language/runtime-quirk exception.** A GLib/glibc/C++ quirk that normal
+Rust does not reproduce may be accepted without changing the C ABI,
+ownership (including real `GArray` and `g_free`), the on-disk formats,
+data ownership or behaviour on valid input. It is outside the classes
+and is admitted only by a discrepancy record from
+`docs/findings/language-runtime-discrepancy-template.md`, registered by
+name in `docs/findings/upstream-divergences.md` and carried by a
+`POLICY-ACCEPTED` differential case. One record admits no other by
+analogy. A valid-input difference or a reversal of a prior ruling is a
+STOP.
+
+**Registered standing divergences** are individual entries under that
+exception (tkrzw's `SYSTEM_ERROR`/`UNKNOWN_ERROR` collapse through its C
+API is the existing one). The register is
+`docs/findings/upstream-divergences.md`; the notes are reported upstream
+after the rewrite.
 
 ## Internal improvements — no observable change
 

@@ -1,9 +1,16 @@
 # Upstream divergences
 
 Purpose: a register of behaviours that oxpinyin cannot or deliberately does
-not reproduce because of a Rust language mechanism. Source policy permits
+not reproduce because of a Rust language mechanism or a policy-accepted
+GLib/glibc/C++ runtime quirk. Source policy permits
 reading and copying upstream; this file is for the residue. Once the rewrite
 is complete, these notes are collected to report back to libpinyin.
+
+A new language/runtime-quirk entry also needs the full record from
+`docs/findings/language-runtime-discrepancy-template.md`; this register
+keeps the short entry and links the record. Class (a)–(c) entries keep
+their existing shape. No existing entry is rewritten by a later policy
+change.
 
 ## Entry template
 
@@ -14,6 +21,9 @@ is complete, these notes are collected to report back to libpinyin.
 - **Mechanism:** what the C++ does.
 - **What oxpinyin does instead:** the Rust behaviour.
 - **Externally observable:** yes/no and how a caller would see it.
+- **Record and disposition (quirk entries only):**
+  `docs/findings/<record>.md`; contract-diff case `<id>`, disposition
+  `POLICY-ACCEPTED`.
 ```
 
 ## Register

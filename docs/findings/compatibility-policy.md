@@ -33,6 +33,13 @@ audit, #573):** five human rulings are recorded with their sources in
 "Amendment — rulings recorded" at the end of this document; the
 reference build, the drop-in version, class (c)'s obligations, the
 `LC_NUMERIC` side effect and the evidence standard follow from them.
+**Amended 2026-10-24 UTC (#915/#916):** one decision order now governs
+language and runtime-library divergences; the language/runtime-quirk
+exception is defined below, outside the three numbered classes, with a
+discrepancy-record template and the `POLICY-ACCEPTED` differential
+disposition. The math rule — Rust's standard maths at full speed, with a
+last-bit difference from the pin recorded as class (a) — is added under
+class (a). Existing dated records and register rows are not rewritten.
 
 ## External interfaces: C only
 
@@ -158,15 +165,18 @@ unchanged and unaware.
 That goal sets the default: **oxpinyin reproduces the pin.** Divergence
 is not a design freedom to be exercised where the Rust is nicer. It is
 an exception that has to be argued into one of the three live classes
-below, (a)–(c), and everything outside them is a defect to be reverted.
+below, (a)–(c), or into the recorded language/runtime-quirk exception
+(outside the classes); everything else is a defect to be reverted.
 Class (d) was retired on 2026-09-06; its text is kept below as a record
 and no entry may be classified under it.
 
 ## The exception classes — three live, (a)–(c)
 
 There are three live classes, (a) math, (b) memory safety and (c)
-availability, and no others. A fourth, (d) consumer scope, was retired
-by maintainer decision on 2026-09-06 (banner under its heading below).
+availability, and no others. The language/runtime-quirk exception is
+outside this set, not a fourth class. A fourth, (d) consumer scope, was
+retired by maintainer decision on 2026-09-06 (banner under its heading
+below).
 A **registered standing divergence** — "Registered standing
 divergences" below — is not a class: it records a ruled-accepted
 difference that no class covers, one by one, and never admits a new
@@ -195,6 +205,13 @@ the accumulation does.
 **Example:** the n-best trellis (`phonetic_lookup.h:663,692`) does
 `m_poss += log(...)` per step into a `gfloat`, and near-ties among the
 top-3 survivors are decided down to the ULP.
+
+**Math rule (maintainer direction 2026-10-19 UTC; recorded 2026-10-24
+UTC, #915/#916).** oxpinyin uses Rust's standard maths at full speed:
+`f64::ln`, `exp`, `powf` and every other `std` float method. It never
+slows code down to imitate glibc, libm, GLib `gfloat` or any other C
+behaviour. A last-bit difference from the pin that follows from using
+Rust's maths is class (a): record it and do not chase it.
 
 ### (b) MEMORY SAFETY — upstream is UB and Rust structurally prevents it
 
@@ -296,13 +313,104 @@ inside `#if 0`, is not even an upstream export, so a live call would
 not link). The reference for the exported set and per-symbol
 signatures is `docs/findings/abi-reference.md`.
 
+## The language/runtime-quirk exception — outside the classes
+
+Maintainer direction 2026-10-19 UTC, recorded 2026-10-24 UTC
+(#915/#916). Language and runtime-library quirks of GLib, glibc and C++
+are a permitted exception to bug-for-bug parity. oxpinyin uses normal
+Rust functions in place of GLib-conformity code. The exception is
+outside the numbered classes: it changes no C-facing contract and no
+valid-input behaviour, so it is neither (a), (b) nor (c), and it is not
+a freedom to depart from the pin where the Rust is nicer.
+
+**Preserved exactly, with no quirk exception:** the C ABI and ABI
+layout, ownership and lifetime (real `GArray`/`g_free` conventions and
+every other GLib-owned structure or allocation), every exported symbol,
+the on-disk system and user formats, data ownership, and observable
+behaviour on valid supported input. A proposed change to any of these
+is not a quirk.
+
+**Decision order.** Every proposed difference is decided in this order;
+the first matching limb wins:
+
+1. **Contract.** The C ABI, ownership, on-disk formats, data ownership
+   and behaviour on valid supported input are the default. A change
+   there is not a quirk: it is a defect to revert, a class (a), (b) or
+   (c) case (limb 2), or a Stage 3 departure behind an opt-in feature.
+   The quirk limb below cannot admit it.
+2. **Class (a), (b) or (c).** If it is math, memory safety or
+   availability, classify it in that class and follow the class's
+   obligations.
+3. **Language/runtime quirk.** A GLib/glibc/C++ behaviour that ordinary
+   Rust does not reproduce, confined to malformed, non-scalar,
+   host-dependent or otherwise undefined input, or to a
+   diagnostic/comparator detail with no valid-input consequence. It is
+   admitted only by a discrepancy record
+   (`docs/findings/language-runtime-discrepancy-template.md`) that
+   traces the whole reachable path forwards and backwards, partitions
+   valid from malformed input, and proves every preserved item above.
+   The record is registered by name in
+   `docs/findings/upstream-divergences.md`. The category itself is
+   maintainer-authorized; an individual entry is admitted only by its
+   own record and review, and one record does not admit another by
+   analogy.
+4. **Anything else.** A defect to revert. A Stage 3 departure if it
+   changes valid behaviour and is opted into behind a feature.
+
+**Prior rulings stand.** The exception does not reverse an earlier
+maintainer decision. `LC_NUMERIC` (row 39, #539/#618) is to be revisited
+under #923, not changed; it needs a new human ruling. A valid-input
+change or a conflicting prior ruling is a STOP, not a judgement call.
+
+**What it is not.** "The Rust is cleaner", "the GLib code is ugly", "no
+frontend sees it", "it is only a warning" and "it is only a byte" are
+not arguments by themselves. The record must show the input class and
+the absence of a valid-input difference.
+
+### Discrepancy records and the `POLICY-ACCEPTED` disposition
+
+A language/runtime-quirk exception is recorded with
+`docs/findings/language-runtime-discrepancy-template.md`. The record is
+linked from the register entry and from the contract-diff case. It
+requires the pin citation, the Rust counterpart, the forward and
+backward paths, the input partition, the exact triggering input, why
+the difference is a runtime quirk rather than a defect, the preserved
+contract elements, the valid-input proof, and the tests and controls.
+
+The differential disposition vocabulary is:
+
+- **`MATCH`** — for an ordinary parity case, identical observations on
+  both sides. A registered class (b) or (c) case keeps the comparison
+  its declaration specifies: when the pin crashes and oxpinyin returns
+  the prescribed result, that is still a `MATCH`, because the case is
+  compared against its declared semantics, not raw equality. Existing
+  cases are not reclassified.
+- **`DIFFER`** — a difference with no current record. It is a defect
+  until classified.
+- **`POLICY-ACCEPTED`** — a non-`MATCH` that a current discrepancy record
+  admits. The case is kept with its pin and subject observations; it is
+  never deleted, never renamed `MATCH`, and never counted as an
+  exact-parity match. An accepted difference satisfies its test when
+  both sides behave as its record specifies, and it is reported
+  separately from exact matches. The driver reports this verdict once
+  the child that first needs it adds the case marker; until then the
+  case is selected by ID and judged against the record, not against
+  `MATCH`.
+- **`HOST-DEPENDENT`** — the narrower existing disposition for the four
+  host-libc `%f` cases (row 78).
+- **`SKIP`**, **`INVALID`**, **`TIMEOUT`** — unchanged.
+
+Historical case evidence is never removed when a disposition changes;
+the case keeps its observations and gains the record ID.
+
 ## Registered standing divergences — outside the classes
 
 A standing divergence is a difference the maintainer ruled accepted
-under the language-quirk exception: a consequence of the Rust/C++
-language boundary that no (a)–(c) class describes (maintainer ruling,
-2026-10-03). It is registered by name, with its ruling; it is not a
-numbered class, it admits nothing by analogy, and it is counted apart
+under the language/runtime-quirk exception: a consequence of the
+Rust/C++ language boundary that no (a)–(c) class describes (maintainer
+ruling, 2026-10-03). It is registered by name, with its ruling, and a
+new entry also carries a discrepancy record. It is not a numbered
+class; one entry admits no other by analogy, and it is counted apart
 from the classes in the totals.
 
 - **tkrzw `SYSTEM_ERROR`/`UNKNOWN_ERROR` collapse** (row 40; ruled
@@ -327,9 +435,10 @@ from the classes in the totals.
 
 ## (e) The E2E I/O compatibility rule
 
-The three live exception classes say when divergence is permitted. This
+The three live exception classes and the recorded
+language/runtime-quirk exception say when divergence is permitted. This
 says what compliance *means* everywhere else, and it is the rule those
-classes are exceptions to.
+exceptions apply to.
 
 > **E2E I/O COMPATIBILITY RULE:** For every exported symbol, given
 > the same inputs and state, oxpinyin MUST return
@@ -337,10 +446,11 @@ classes are exceptions to.
 > (the pin since 2026-09-06; the rule was written at 2.11.91 / `0c5e80e`,
 > against which the candidate surface is byte-identical —
 > `docs/testing/oracle-environment.md`) —
-> except where one of the named exceptions (a)/(b)/(c) ((d) retired 2026-09-06)
-> explicitly applies. Exporting a symbol that returns a wrong value is
-> worse than not exporting it: the consumer gets a silent wrong answer
-> instead of a link error. **A stub returning `false` is not compliance —
+> except where one of the named exceptions (a)/(b)/(c) ((d) retired
+> 2026-09-06) or a recorded language/runtime-quirk exception explicitly
+> applies. Exporting a symbol that returns a wrong value is worse than
+> not exporting it: the consumer gets a silent wrong answer instead of a
+> link error. **A stub returning `false` is not compliance —
 > it is a defect.**
 >
 > **Corollary:** if implementing a symbol correctly requires an engine
@@ -714,17 +824,35 @@ Stated so the classes are not read as broader than they are:
   while the consumer-union contract stood; with (d) retired it is at
   most a reason to schedule a port later, never to skip it.
 - **"A float is involved."** Not class (a) unless a transcendental is
-  in the accumulation.
+  in the accumulation. A result that differs because Rust's standard
+  maths was used is class (a): record the last-bit difference and do not
+  chase it.
 - **"Upstream returns something useless."** Not class (c) unless
   upstream *aborts*. A wrong-but-defined answer is reproducible.
+- **"It is only GLib/glibc/C++."** Not an exception by itself. The
+  decision order above must be walked, and a valid-input difference is
+  never a quirk.
+- **"It only affects malformed input."** Necessary, not sufficient: the
+  path must be traced end to end, the C contract must be preserved, and
+  the record must name the case and its controls.
+- **"It is only a warning."** Diagnostics are observable. Class (c)
+  fixes exact warning obligations; outside them, a changed diagnostic
+  needs its own record and a reason.
+- **"The libm answer differs."** Class (a) admits the difference:
+  record it and do not chase it. Rust's standard maths is used at full
+  speed.
 
 ## Consequences for the register
 
 `upstream-divergences.md` keeps its stated purpose — the residue of
-what a Rust mechanism prevents — but the three live classes are narrower than
-what the register accumulated. Class (c) entries in particular are not
+what a Rust mechanism prevents and the language/runtime quirks the
+policy accepts — but the three live classes are narrower than what the
+register accumulated. Class (c) entries in particular are not
 language-mechanism residue at all; they are product decisions, and the
-register should say so where it currently implies Rust forced them.
+register should say so where it currently implies Rust forced them. A
+new quirk entry carries a discrepancy record and a
+`POLICY-ACCEPTED` case; an existing entry keeps its wording and gains
+the record only when its own issue revisits it.
 
 The work order (`revert-plan.md`) flips each REVERT TARGET's
 differential probe from "recorded divergence" to "must be IDENTICAL" as
@@ -877,3 +1005,34 @@ Amended 2026-10-09 UTC, #709: row 54 items 2 and 3 closed in code; item 1 alread
 Maintainer ruling 1 of 2026-10-08 UTC on #545, recorded here at 2026-10-09T09:57:00Z (`date -u`). The compatibility goal does not extend to the `errno` a call leaves behind when it succeeds. A successful call may change `errno`, and reading it afterwards is not undefined; the difference is observable and reproducible (row 68: after `pinyin_init` on a fresh user directory `errno` is 2, `ENOENT`, left by the failed `fopen` of `user.conf`, at the pin on all three cells, and 0 here on bdb and tkrzw, 2 on kc). The project chooses not to reproduce the incidental `errno` the pin's internal syscalls leave, unless an API specifies a meaning for it. This is a **scope choice**, not an exception class: it needs no argument under (a)–(c), it widens none of them, and it registers no row. The absence of a known consumer is not the reason for it. Row 68 records the measurement it rests on.
 
 Amended 2026-10-09 UTC, #545: row 76 registered, class (b) — the raw `mmap %s failed!` writers of the pin's library loaders, the SIGSEGV on the empty chunk after each line, and the two sites no public call reaches. The lines are written by oxpinyin at every reachable site, on both facades, with the answers it had. (b) 9 → 10 and 78 → 79 rows; row 68's "other raw writers … not measured" is now row 76.
+
+## Amendment — language/runtime-quirk exception, discrepancy records and the math rule (2026-10-24 UTC, #915/#916)
+
+Maintainer direction 2026-10-19 UTC, recorded here at
+2026-10-24T07:38:05Z (`date -u`). The direction is that language and
+runtime-library quirks of GLib, glibc and C++ are a permitted exception
+to bug-for-bug parity; oxpinyin uses normal Rust functions in place of
+GLib-conformity code. The C ABI, real `GArray`/`g_free` ownership and
+other GLib-owned structures, on-disk formats, behaviour on valid input
+and data ownership remain exact.
+
+This amendment makes the decision order authoritative: contract, then
+classes (a)–(c), then a recorded language/runtime quirk, then a defect
+or Stage 3. The quirk exception is outside the classes and is admitted
+only by a discrepancy record; the record template is
+`docs/findings/language-runtime-discrepancy-template.md`, and the
+contract-diff disposition for an accepted non-MATCH is `POLICY-ACCEPTED`.
+The category is maintainer-authorized; no record admits another by
+analogy.
+
+The amendment also adds the math rule under class (a): oxpinyin uses
+Rust's standard maths at full speed — `f64::ln`, `exp`, `powf` and every
+other `std` float method — and never slows code down to imitate glibc,
+libm, GLib `gfloat` or any other C behaviour. A last-bit difference from
+the pin that follows from using Rust's maths is class (a), recorded and
+not chased.
+
+No register row is added or reclassified by this amendment, and no
+dated row above is rewritten. `LC_NUMERIC` (row 39) remains ruled
+bug-for-bug; #923 is the place where a reversal is to be laid out for a
+new human ruling, not made.

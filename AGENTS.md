@@ -66,28 +66,64 @@ small PRs), so §2 governs it outside the runtime time/space trade rule.
 The target is a smaller binary, faster execution and much lower RAM than
 libpinyin. Internal freedom exists to serve that, not to erode it.
 
-Rust-mechanism divergences: where upstream behavior cannot be reproduced
-because of a language-mechanism difference, record it in
-docs/findings/upstream-divergences.md, move on, and do not chase it. These
-notes are collected to report back to libpinyin once the rewrite is complete.
+Language and runtime-library divergences follow one decision order,
+stated in full in `docs/findings/compatibility-policy.md` under "The
+language/runtime-quirk exception":
 
-**Before recording one, read `docs/findings/compatibility-policy.md`.** The
-goal is a drop-in replacement: rename the built object to `libpinyin.so.15`,
-put it on the library path, and unmodified consumers work against the data
-already on the system. oxpinyin is built on one of the three backends
-libpinyin is built on (Berkeley DB, Kyoto Cabinet, tkrzw), one per
-build, and handles that backend's system and user files natively,
-exactly as a libpinyin build on the same backend does. Switching backend
-starts fresh, for libpinyin and oxpinyin alike (maintainer ruling
-2026-09-09). Do not re-raise either as an open trade-off. Reproducing the pin is
-therefore the default, and
-divergence is an exception that must be argued into one of exactly three
-classes — (a) math, (b) memory safety, (c) availability. (Class (d),
+1. **The C-facing contract is never a quirk.** The C ABI and its layout,
+   ownership and lifetime (real `GArray`, `g_free`, every other
+   GLib-owned structure and allocation), the on-disk system and user
+   formats, data ownership, and observable behaviour on valid supported
+   input are preserved exactly, except where class (a), (b) or (c)
+   applies. Otherwise a proposed change there is a defect to revert, or
+   a Stage 3 departure; the quirk limb below cannot admit it.
+2. **If it is class (a), (b) or (c)**, classify it there and follow that
+   class's rules.
+3. **A GLib, glibc or C++ language/runtime quirk may be accepted**
+   instead of emulated in Rust. oxpinyin uses normal Rust functions in
+   place of GLib-conformity code. The exception is admitted only by a
+   discrepancy record
+   (`docs/findings/language-runtime-discrepancy-template.md`) after the
+   whole reachable path is traced; it must be confined to malformed,
+   non-scalar, host-dependent or otherwise undefined input, or to a
+   diagnostic/comparator detail with no valid-input consequence, and it
+   must preserve every item in limb 1. Register it by name in
+   `docs/findings/upstream-divergences.md`; one record does not admit
+   another by analogy, though the category itself is
+   maintainer-authorized.
+4. **Anything else is a defect to revert.** An intentional departure
+   that changes valid behaviour or the contract is Stage 3, behind an
+   opt-in feature.
+5. **An earlier maintainer ruling is not reversed by this exception.**
+   `LC_NUMERIC` (policy row 39, #923) needs a new human ruling before it
+   changes.
+
+A differential that intentionally differs under a recorded exception is
+reported as `POLICY-ACCEPTED`, never as `MATCH`; its case and pin
+evidence are kept.
+
+**Math rule (maintainer direction 2026-10-19 UTC).** oxpinyin uses
+Rust's standard maths at full speed: `f64::ln`, `exp`, `powf` and every
+other `std` float method. It never slows code down to imitate glibc,
+libm, GLib `gfloat` or any other C behaviour. A last-bit difference from
+the pin that follows from using Rust's maths is class (a): record it and
+do not chase it.
+
+**Before recording a divergence, read
+`docs/findings/compatibility-policy.md`.** The goal is a drop-in
+replacement: rename the built object to `libpinyin.so.15`, put it on the
+library path, and unmodified consumers work against the data already on
+the system. oxpinyin is built on one of the three backends libpinyin is
+built on (Berkeley DB, Kyoto Cabinet, tkrzw), one per build, and handles
+that backend's system and user files natively, exactly as a libpinyin
+build on the same backend does. Switching backend starts fresh, for
+libpinyin and oxpinyin alike (maintainer ruling 2026-09-09). Do not
+re-raise either as an open trade-off. Reproducing the pin is therefore
+the default, and a divergence is an exception argued into class (a), (b)
+or (c) or into the language/runtime-quirk exception. (Class (d),
 consumer scope, was retired 2026-09-06; the policy doc is authoritative
-on the current set.)
-Anything outside those three is a defect to be reverted, not a divergence to
-be recorded. The policy carries the classes, their citations, and a
-classification of every existing register entry.
+on the current set.) The policy carries the classes, the exception, their
+citations, and a classification of every existing register entry.
 
 ## External interfaces
 
@@ -162,7 +198,8 @@ The behaviour target is what the pinned libpinyin does, not what it
 should do.
 An observable pin defect is reproduced and recorded as an upstream
 defect, not fixed. Matching the pin is the default; departing from it
-still needs one of the three classes above.
+still needs one of the three classes above or a recorded
+language/runtime-quirk exception.
 
 Derive the pin's behaviour by reading its code, never by running it:
 
@@ -225,19 +262,21 @@ Every requirement, spec line and finding belongs to exactly one side:
   `.kiro/specs/drop-in/`, `.kiro/specs/bug-for-bug/` (Requirements 1–3).
 - **oxpinyin improvements** — everything oxpinyin does that the pin does
   not: the classes (a)–(c) and the log line (c) owes, the registered
-  standing divergences, the constitution's no-panic, `unsafe` and
-  determinism rules, internal architecture and crate decoupling,
-  performance, and the Stage 3 departures. Kiro:
+  standing divergences and recorded language/runtime-quirk
+  discrepancies, the constitution's no-panic, `unsafe` and determinism
+  rules, internal architecture and crate decoupling, performance, and
+  the Stage 3 departures. Kiro:
   `.kiro/steering/oxpinyin-improvements.md`,
-  `.kiro/specs/bug-for-bug/` (Requirements 4–5),
+  `.kiro/specs/bug-for-bug/` (Requirements 4–6),
   `.kiro/specs/stage3-departures/`.
 
 An improvement that changes nothing observable is internal. It is
 allowed in Stage 2 under the Source policy, performance included. An
 improvement that changes observable output, the files on disk or the
-ABI is one of two things. It is a class (a)–(c) exception, or it is a
-Stage 3 departure behind an opt-in cargo feature. The default build is
-always the bug-for-bug binary.
+ABI is one of three things: a class (a)–(c) exception, a recorded
+language/runtime-quirk discrepancy, or a Stage 3 departure behind an
+opt-in cargo feature. The default build is always the bug-for-bug
+binary under those recorded exceptions.
 
 ## Contributor responsibility
 

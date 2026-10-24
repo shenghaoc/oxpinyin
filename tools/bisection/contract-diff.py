@@ -35,6 +35,13 @@ does not crash, wrote the same stderr bytes and answers the declared fields.
 The pin's bytes are compared up to the crash; the invalid read is never
 reproduced.
 
+A policy-accepted language/runtime difference is neither MATCH nor an
+unclassified DIFFER. A current discrepancy record
+(`docs/findings/language-runtime-discrepancy-template.md`) names the case and
+its expected non-MATCH; the disposition is POLICY-ACCEPTED. The case keeps
+its pin and subject observations, and it is never deleted or relabelled
+MATCH. The case marker is added by the child that first needs it.
+
 --expect-parent runs the same cases against a parent build: a case marked
 `control` must still match, every other case must differ.
 
