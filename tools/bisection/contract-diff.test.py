@@ -1002,6 +1002,57 @@ class DriverVerdictTests(DriverFixtureCase):
             self.assertEqual(caught.exception.code, 2)
 
 
+class PlatformExclusionTests(DriverFixtureCase):
+    """#1137: the arm64-only exclusions are registered, reasoned and skipped."""
+
+    def test_arm64_exclusions_are_thirteen_reasoned_cases(self):
+        self.assertEqual(len(contract['ARM64_EXCLUDED_CASES']), 13)
+        for name in contract['ARM64_EXCLUDED_CASES']:
+            with self.subTest(name=name):
+                spec = contract['CASES'][name]
+                self.assertEqual(spec['platforms'], ('linux/amd64',))
+                self.assertIn('#1137', spec['platform_skip_reason'])
+        self.assertIn('#1137', contract['ARM64_EXCLUSION_REASON'])
+
+    def invoke(self, host_platform):
+        with tempfile.TemporaryDirectory() as scratch:
+            prefix = Path(scratch)
+            (prefix / 'lib/libpinyin/data').mkdir(parents=True)
+            (prefix / 'lib/libpinyin.so').touch()
+            (prefix / 'lib/libpinyin/data/bigram.db').touch()
+            (prefix / 'oracle-pin.txt').write_text(
+                'libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99+dbm-bdb\n')
+            cases = {name: dict(driver.CASES['default-option-parse'], control=True,
+                                platforms=('linux/amd64',),
+                                platform_skip_reason='#1137: arm64 exclusion')
+                     for name in ('slow', 'next')}
+            args = ['driver', 'bdb', str(prefix), str(prefix / 'lib/libpinyin.so'),
+                    '--cases', 'slow,next']
+            output = io.StringIO()
+            with patch.object(driver, 'HOST_ORACLE_PLATFORM', host_platform), \
+                    patch.object(driver, 'CASES', cases), \
+                    patch.object(driver, 'run_worker', return_value=observation(result={'ret': True})) as run, \
+                    patch.object(driver.sys, 'argv', args), contextlib.redirect_stdout(output):
+                status = driver.main()
+            rows = [json.loads(line) for line in output.getvalue().splitlines()
+                    if line.startswith('{') and 'case' in json.loads(line)]
+            return status, rows, run
+
+    def test_arm64_verdict_is_skip_with_reason_and_starts_no_worker(self):
+        status, rows, run = self.invoke('linux/arm64')
+        self.assertEqual(status, 0)
+        self.assertEqual([row['verdict'] for row in rows], ['SKIP', 'SKIP'])
+        self.assertEqual({row['reason'] for row in rows}, {'#1137: arm64 exclusion'})
+        self.assertEqual(run.call_count, 0)
+
+    def test_amd64_still_runs_and_reports_match(self):
+        status, rows, run = self.invoke('linux/amd64')
+        self.assertEqual(status, 0)
+        self.assertEqual([row['verdict'] for row in rows], ['MATCH', 'MATCH'])
+        self.assertNotIn('reason', rows[0])
+        self.assertEqual(run.call_count, 4)
+
+
 class CancellationTests(DriverFixtureCase):
     """Cancel a real driver while its worker and a descendant ignore TERM."""
 
