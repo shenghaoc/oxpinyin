@@ -73,7 +73,11 @@ Examples already ruled:
 - Predicted-candidate ranking and training follow the pin's own rules,
   derived from its source — not tuned until examples agree.
 
-The only departures are the classes in `oxpinyin-improvements.md`.
+The only departures are the classes and the recorded
+language/runtime-quirk exception in `oxpinyin-improvements.md`. That
+exception preserves the C ABI and ownership, the on-disk formats, data
+ownership and behaviour on valid input exactly; it covers incidental
+GLib/glibc/C++ runtime behaviour only.
 
 ## How the pin's behaviour is known
 

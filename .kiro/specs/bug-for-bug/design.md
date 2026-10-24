@@ -46,7 +46,23 @@ If the ladder runs out, STOP (Requirement 2.4).
 - A pin defect reproduced on purpose gets an upstream-report entry in
   `docs/findings/upstream-report-drafts.md`.
 - A departure is argued into a class in
-  `docs/findings/compatibility-policy.md`, with a register row.
+  `docs/findings/compatibility-policy.md`, with a register row, or into
+  the language/runtime-quirk exception with a full record from
+  `docs/findings/language-runtime-discrepancy-template.md` and a
+  register entry. The record walks the path forwards and backwards and
+  proves the C contract and valid-input behaviour unchanged.
+- A quirk admitted by a record carries a `POLICY-ACCEPTED`
+  contract-diff case, never `MATCH`; the case keeps its pin and subject
+  evidence.
+
+## Math
+
+Read the pin's arithmetic and operation order where it decides
+behaviour. oxpinyin uses Rust's standard maths at full speed — `ln`,
+`exp`, `powf` and every other `std` float method — and never slows code
+down to imitate glibc, libm, GLib `gfloat` or any other C behaviour. A
+last-bit difference from the pin that follows from using Rust's maths
+is class (a): record it, do not chase it.
 
 ## Complexity (axis L)
 
