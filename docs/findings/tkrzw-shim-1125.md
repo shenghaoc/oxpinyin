@@ -1,5 +1,146 @@
 # tkrzw concrete-class shim: evaluation (#1125)
 
+## Retained exclusive attribution and queued status fast path
+
+Recorded 2026-10-24T07:33:36Z, against the original measured base/prototype benchmarks
+from the Ubuntu campaign above, before rebuilding or running another case.
+The human cleared the earlier STOP for bounded completion; it remains the
+result of that original run. Base remains fixed at `d7788072`.
+
+The six retained Callgrind files are
+`$R/campaign/store-work/callgrind/get_raw.tree.{miss,retain}.{base,control,candidate}.out`.
+The local analysis script `$R/analysis/exclusive.py` resolves compressed
+function/object IDs, keeps inline source rows under their enclosing function,
+and excludes the cost row following each calls= association. For each file,
+the sum of exclusive function costs equals its totals: field exactly.
+Base/control maps match function by function after normalizing the binary
+pathname and identifying unresolved stubs by their unique outgoing callee.
+That outgoing edge supplies identity only; no inclusive edge cost is added.
+
+The profiles call PLT entries "???" with a runtime address. Entries leading
+to __tls_get_addr and memcmp are independently checked against the retained
+runtime ELF's .plt.sec disassembly: static offsets 0x6a7a0 and 0x66ce0,
+respectively. They establish the same load bias within each arm
+(0x4ad8000 base, 0x4adc000 prototype). Each normal stub is endbr64 plus an
+indirect jump. Other stubs below are labeled by their unique outgoing
+callee, without claiming that their exclusive instructions belong to that
+callee's body.
+
+All nonzero exclusive deltas follow. Counts are whole profiled-region Ir;
+all omitted functions have delta zero. This reconciles the entire increase,
+including loader/allocator effects, without overlapping inclusive totals.
+
+### get_raw.tree.miss: 20,000 calls
+
+| exclusive function / object | base Ir | prototype Ir | delta |
+| --- | ---: | ---: | ---: |
+| finish(tkrzw::Status) [clone .isra.0] / bench | 0 | 1,160,000 | +1,160,000 |
+| tkrzw_dbm_process / libtkrzw.so.1.77.0 | 880,000 | 0 | -880,000 |
+| oxtkrzw_dbm_process / bench | 0 | 640,000 | +640,000 |
+| Processor::ProcessEmpty(string_view) / bench | 0 | 600,000 | +600,000 |
+| RecordProcessorWrapper::ProcessEmpty(string_view) / libtkrzw.so.1.77.0 | 500,000 | 0 | -500,000 |
+| __tls_get_addr / ld-linux-x86-64.so.2 | 480,000 | 0 | -480,000 |
+| tkrzw::PolyDBM::Process(string_view, tkrzw::DBM::RecordProcessor*, bool) / libtkrzw.so.1.77.0 | 400,000 | 0 | -400,000 |
+| stub -> __tls_get_addr / ??? | 80,000 | 0 | -80,000 |
+| __memcmp_avx2_movbe / libc.so.6 | 8,431,677 | 8,501,700 | +70,023 |
+| stub -> free / ??? | 173,732 | 133,732 | -40,000 |
+| do_lookup_x / ld-linux-x86-64.so.2 | 11,592 | 12,106 | +514 |
+| _dl_lookup_symbol_x / ld-linux-x86-64.so.2 | 23,378 | 23,512 | +134 |
+| sbrk / libc.so.6 | 955 | 1,075 | +120 |
+| _dl_fixup / ld-linux-x86-64.so.2 | 4,692 | 4,799 | +107 |
+| strcmp / ld-linux-x86-64.so.2 | 196 | 294 | +98 |
+| check_match / ld-linux-x86-64.so.2 | 2,351 | 2,418 | +67 |
+| __glibc_morecore / libc.so.6 | 400 | 460 | +60 |
+| systrim.constprop.0 / libc.so.6 | 204 | 250 | +46 |
+| _int_free_maybe_trim / libc.so.6 | 19,068 | 19,110 | +42 |
+| _dl_runtime_resolve_xsave / ld-linux-x86-64.so.2 | 1,886 | 1,927 | +41 |
+| bcmp / libc.so.6 | 0 | 25 | +25 |
+| brk / libc.so.6 | 306 | 324 | +18 |
+| __memcpy_avx_unaligned_erms / libc.so.6 | 888,245 | 888,239 | -6 |
+| stub -> __memcmp_avx2_movbe / ??? | 755,356 | 755,361 | +5 |
+
+Sum of exclusive deltas: +91,294 Ir.
+
+### get_raw.tree.retain: 32,000 calls
+
+| exclusive function / object | base Ir | prototype Ir | delta |
+| --- | ---: | ---: | ---: |
+| finish(tkrzw::Status) [clone .isra.0] / bench | 0 | 1,856,000 | +1,856,000 |
+| tkrzw_dbm_process / libtkrzw.so.1.77.0 | 1,408,000 | 0 | -1,408,000 |
+| oxtkrzw_dbm_process / bench | 0 | 1,024,000 | +1,024,000 |
+| Processor::ProcessFull(string_view, string_view) / bench | 0 | 992,000 | +992,000 |
+| RecordProcessorWrapper::ProcessFull(string_view, string_view) / libtkrzw.so.1.77.0 | 832,000 | 0 | -832,000 |
+| __tls_get_addr / ld-linux-x86-64.so.2 | 768,000 | 0 | -768,000 |
+| tkrzw::PolyDBM::Process(string_view, tkrzw::DBM::RecordProcessor*, bool) / libtkrzw.so.1.77.0 | 640,000 | 0 | -640,000 |
+| __memcmp_avx2_movbe / libc.so.6 | 13,018,822 | 13,187,264 | +168,442 |
+| stub -> __tls_get_addr / ??? | 128,000 | 0 | -128,000 |
+| stub -> free / ??? | 256,300 | 192,300 | -64,000 |
+| _int_malloc / libc.so.6 | 1,071,760 | 1,071,881 | +121 |
+| __libc_malloc2 / libc.so.6 | 159,114 | 159,137 | +23 |
+| __memcpy_avx_unaligned_erms / libc.so.6 | 1,259,994 | 1,260,006 | +12 |
+| malloc / libc.so.6 | 964,437 | 964,429 | -8 |
+
+Sum of exclusive deltas: +200,590 Ir.
+
+### What the counts establish
+
+Status conversion in finish costs 58 Ir per record: 1,160,000 for miss and
+1,856,000 for retain. The direct wrapper costs 32 per record, and its
+Processor callback adapter costs 30 (empty) or 31 (full). The removed C
+wrapper costs 44, its processor 25/26, PolyDBM::Process 20, TLS lookup 24,
+and the removed TLS/free stubs another 6 per record. Their net is +1 Ir
+per record: +20,000 / +32,000 respectively. These are exclusive rows,
+not a subtraction of overlapping call-tree totals.
+
+The libc byte-comparison function __memcmp_avx2_movbe accounts for another
++70,023 / +168,442 Ir. Calls enter it through the same runtime's memcmp
+stub; source lines in that assembly routine have different exclusive
+execution counts. The retained line profiles do not record the comparison
+operand addresses, so an address-alignment or cache-layout cause is not
+proved and is not asserted. Its exact instruction-path/operand cause needs
+a queued scoped capture with instruction positions and operand-address
+observations if still material after the safe status change.
+
+Rust get_value/callback and Vec growth/copy functions have unchanged
+exclusive counts. libc memcpy changes only −6 / +12 Ir total, so the extra
+Ir is not a material record-buffer copy. The remaining miss +1,271 and
+retain +148 Ir are fully named loader/allocator/stub residuals in the tables.
+No __cxa_throw or unwind routine contributes recorded Ir. The wrapper's
+32 instructions include ordinary setup, virtual invocation and Status
+cleanup; the line-only profile cannot charge them separately to exception
+landing-pad scaffolding. They are not labeled "exception handling cost".
+
+Existing-binary disassembly of finish (symbol offset 0x26d440 in the
+prototype bench) shows construction and move assignment of the temporary
+string returned by Status::GetMessage even when message_ is null. The
+installed tkrzw_lib_common.h GetMessage returns an empty string in that
+case; HasMessage tests non-null and a non-NUL first byte. This is source
+and existing-object inspection, not a new runtime probe.
+
+The only source edit adds a HasMessage branch in finish: copy a nonempty
+message as before; otherwise clear the thread-local string directly.
+An empty message is preserved for both null and empty-string message
+storage, including failures with no message. Nonempty success/error
+messages are preserved. guarded still surrounds every call, both catches
+are unchanged, and fail still contains any exception while recording one.
+No exception boundary, callback validation, Status code or ownership rule
+was weakened; no dependency was added. This is an unbuilt change with no
+new performance or compatibility claim. Its actual gain and any residual
+memcmp delta await the authorized Ubuntu campaign and exact controls.
+
+```sh
+# No build, policy regeneration or runtime workload in this analysis step.
+$PY "$R/analysis/exclusive.py"
+objdump -d -C --no-show-raw-insn "$PR_BENCH"
+objdump -d -C --no-show-raw-insn -j .plt.sec "$CERTIFIED_LIBTKRZW"
+```
+
+Before any later PR, rebase onto main including #1140 and regenerate the
+tkrzw policies on the combined tree; carrying these order files through a
+textual rebase is insufficient. The fixed-base evaluation does not rebase
+first. No PR or review is authorized by this checkpoint.
+
+
 ## Ubuntu results: STOP on store-operation instructions
 
 Recorded 2026-10-24T07:16:00Z. The facade campaign completed; the store-operation
