@@ -74,6 +74,10 @@ relevant diagnostic when useful. Omit inventories of passed or inapplicable
 checks. This reporting policy supersedes older capture-retention and
 publication instructions.
 
+`README.md` and `README.中文.md` state the same content. A PR that changes
+the content of either updates the other in the same PR. A correction to
+Chinese wording alone that does not change content needs no English change.
+
 Every contributor remains responsible for understanding, reviewing, testing
 and maintaining their submitted changes. [ROADMAP.md](ROADMAP.md) describes
 the current compatibility stage and remaining work.

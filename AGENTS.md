@@ -286,6 +286,10 @@ Every contributor remains responsible for understanding, reviewing, testing,
 and maintaining the changes they submit, including changes produced with
 assistance from any tool.
 
+`README.md` and `README.中文.md` state the same content. A PR that changes
+the content of either updates the other in the same PR. A correction to
+Chinese wording alone that does not change content needs no English change.
+
 ## Results and reproduction
 
 Follow [the shared reporting policy](CONTRIBUTING.md#results-and-reproduction).
