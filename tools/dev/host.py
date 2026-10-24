@@ -173,49 +173,54 @@ def remove_created_container(record):
         return False
 
 
-def _macos_available_mib():
-    """Return free, inactive, and speculative Mach pages as whole MiB.
+class _VMStatistics64(ctypes.Structure):
+    """Represent Mach VM statistics, including page counts used for available memory."""
+    _fields_ = [
+        ('free_count', ctypes.c_uint),
+        ('active_count', ctypes.c_uint),
+        ('inactive_count', ctypes.c_uint),
+        ('wire_count', ctypes.c_uint),
+        ('zero_fill_count', ctypes.c_ulonglong),
+        ('reactivations', ctypes.c_ulonglong),
+        ('pageins', ctypes.c_ulonglong),
+        ('pageouts', ctypes.c_ulonglong),
+        ('faults', ctypes.c_ulonglong),
+        ('cow_faults', ctypes.c_ulonglong),
+        ('lookups', ctypes.c_ulonglong),
+        ('hits', ctypes.c_ulonglong),
+        ('purges', ctypes.c_ulonglong),
+        ('purgeable_count', ctypes.c_uint),
+        ('speculative_count', ctypes.c_uint),
+        ('decompressions', ctypes.c_ulonglong),
+        ('compressions', ctypes.c_ulonglong),
+        ('swapins', ctypes.c_ulonglong),
+        ('swapouts', ctypes.c_ulonglong),
+        ('compressor_page_count', ctypes.c_uint),
+        ('throttled_count', ctypes.c_uint),
+        ('external_page_count', ctypes.c_uint),
+        ('internal_page_count', ctypes.c_uint),
+        ('total_uncompressed_pages_in_compressor', ctypes.c_ulonglong),
+    ]
 
-    Return None when the required system calls or ctypes bindings fail.
+
+def _macos_available_mib():
+    """Return free plus inactive Mach pages as whole MiB.
+
+    XNU's host_statistics64 HOST_VM_INFO64 path (osfmk/kern/host.c, vm_stats)
+    stores vm_page_free_count + vm_page_speculative_count in free_count, and
+    vm_stat prints "Pages free" as free_count - speculative_count. Speculative
+    pages are therefore already in free_count; adding speculative_count here
+    counts them twice. Return None when a system call or ctypes binding fails.
     """
     try:
         libc = ctypes.CDLL('/usr/lib/libSystem.B.dylib')
         libc.mach_host_self.restype = ctypes.c_uint
         host = libc.mach_host_self()
 
-        class VMStatistics64(ctypes.Structure):
-            """Represent Mach VM statistics, including page counts used for available memory."""
-            _fields_ = [
-                ('free_count', ctypes.c_uint),
-                ('active_count', ctypes.c_uint),
-                ('inactive_count', ctypes.c_uint),
-                ('wire_count', ctypes.c_uint),
-                ('zero_fill_count', ctypes.c_ulonglong),
-                ('reactivations', ctypes.c_ulonglong),
-                ('pageins', ctypes.c_ulonglong),
-                ('pageouts', ctypes.c_ulonglong),
-                ('faults', ctypes.c_ulonglong),
-                ('cow_faults', ctypes.c_ulonglong),
-                ('lookups', ctypes.c_ulonglong),
-                ('hits', ctypes.c_ulonglong),
-                ('purges', ctypes.c_ulonglong),
-                ('purgeable_count', ctypes.c_uint),
-                ('speculative_count', ctypes.c_uint),
-                ('decompressions', ctypes.c_ulonglong),
-                ('compressions', ctypes.c_ulonglong),
-                ('swapins', ctypes.c_ulonglong),
-                ('swapouts', ctypes.c_ulonglong),
-                ('compressor_page_count', ctypes.c_uint),
-                ('throttled_count', ctypes.c_uint),
-                ('external_page_count', ctypes.c_uint),
-                ('internal_page_count', ctypes.c_uint),
-                ('total_uncompressed_pages_in_compressor', ctypes.c_ulonglong),
-            ]
-
-        stats = VMStatistics64()
+        stats = _VMStatistics64()
         count = ctypes.c_uint(ctypes.sizeof(stats) // ctypes.sizeof(ctypes.c_int))
         libc.host_statistics64.argtypes = [ctypes.c_uint, ctypes.c_int,
-                                           ctypes.POINTER(VMStatistics64),
+                                           ctypes.POINTER(_VMStatistics64),
                                            ctypes.POINTER(ctypes.c_uint)]
         libc.host_statistics64.restype = ctypes.c_int
         if libc.host_statistics64(host, 4, ctypes.byref(stats), ctypes.byref(count)) != 0:
@@ -225,7 +230,7 @@ def _macos_available_mib():
         libc.host_page_size.restype = ctypes.c_int
         if libc.host_page_size(host, ctypes.byref(page_size)) != 0:
             return None
-        pages = stats.free_count + stats.inactive_count + stats.speculative_count
+        pages = stats.free_count + stats.inactive_count
         return pages * page_size.value // (1024 * 1024)
     except (OSError, ValueError, AttributeError):
         return None
@@ -277,7 +282,8 @@ def total_memory_mib(proc=Path('/proc')):
 def memory_available_mib():
     """Memory the host can give new processes now, in MiB, or None.
     Linux: MemAvailable from /proc/meminfo. macOS: Mach host_statistics64
-    free + inactive + speculative pages. Windows: GlobalMemoryStatusEx."""
+    free + inactive pages (speculative pages are already in free_count).
+    Windows: GlobalMemoryStatusEx."""
     try:
         if sys.platform.startswith('linux'):
             for line in Path('/proc/meminfo').read_text().splitlines():
@@ -517,9 +523,11 @@ def resource_snapshot(proc=Path('/proc'), cgroup_root=Path('/sys/fs/cgroup')):
     combine affinity and quotas: cpus floors and cargo_cpus ceils the minimum,
     with a lower bound of one.
 
-    Unusable cgroup cache statistics retain conservative limit-minus-usage
-    room when the limit and usage are readable; that room still constrains
-    the minimum instead of dropping the cgroup from the calculation.
+    On macOS, available memory is host_statistics64 free + inactive pages;
+    free_count already includes speculative pages. Unusable cgroup cache
+    statistics retain conservative limit-minus-usage room when the limit and
+    usage are readable; that room still constrains the minimum instead of
+    dropping the cgroup from the calculation.
     """
     notes, memories, limits, cpus = [], [], [], []
     if sys.platform.startswith('linux'):
