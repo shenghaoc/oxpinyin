@@ -412,6 +412,9 @@ def run_main():
     parser.add_argument('--list', action='store_true', help='list gate and not-a-gate metadata; do not build')
     parser.add_argument('--jobs', type=positive, default=None,
                         help='concurrent runner jobs (default: from available memory, at most 2)')
+    parser.add_argument('--contract-jobs', type=positive,
+                        help='maximum concurrent cases per contract-diff cell, reduced by memory admission '
+                             '(default: serial)')
     parser.add_argument('--timeout', type=positive, help='override the registry default for every runner')
     parser.add_argument('--runner-timeout', action='append', default=[], metavar='RUNNER=SECONDS')
     parser.add_argument('--allow-skipped', action='append', default=[], metavar='RUNNER[:CELL]',
@@ -656,6 +659,8 @@ def run_main():
             substitutions = dict(substitutions, work=str(work))
             env = base.copy()
             env.update({key: value.format_map(substitutions) for key, value in row.get('env', {}).items()})
+            if row['name'] == 'contract-diff' and args.contract_jobs is not None:
+                env['OXPINYIN_CONTRACT_JOBS'] = str(args.contract_jobs)
             env['TMPDIR'] = str(work)
             substitutions['env'] = env
             absent = [name for name in row.get('required_env', []) if not env.get(name)]

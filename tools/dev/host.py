@@ -506,6 +506,9 @@ def validate_settings(env):
     threads = env.get('RUST_TEST_THREADS')
     if threads is not None and (not re.fullmatch(r'[+]?[0-9]+', threads) or int(threads) <= 0):
         raise ValueError('Invalid RUST_TEST_THREADS: use a positive integer')
+    cases = env.get('OXPINYIN_CONTRACT_JOBS')
+    if cases is not None and (not re.fullmatch(r'[+]?[0-9]+', cases) or int(cases) <= 0):
+        raise ValueError('Invalid OXPINYIN_CONTRACT_JOBS: use a positive integer')
 
 
 def memory_defaults(env, explicit_jobs, cpus=None, available_mib=READ_HOST, *, memory_limit_mib=None,
@@ -566,6 +569,24 @@ def prepare_heavy_env(env, resources, *, runner=False):
         count = max(1, resources['cargo_cpus'] + count)
     estimate = max(RUNNER_PEAK_MIB if runner else RUSTC_PEAK_MIB, count * RUSTC_PEAK_MIB,
                    int(child['RUST_TEST_THREADS']) * TEST_THREAD_PEAK_MIB)
+    if 'OXPINYIN_CONTRACT_JOBS' in env:
+        # A case runs pin then subject, so at most one worker per active
+        # case is live. Charge the existing runner estimate for EACH case.
+        # This explicit setting is a requested maximum: reduce it against
+        # the room left after other live reservations and headroom, before
+        # the admission lock publishes the estimate or any worker starts.
+        requested = int(env['OXPINYIN_CONTRACT_JOBS'])
+        available = resources['available_mib']
+        headroom = memory_headroom(env, resources)
+        workers = 0 if available is None else fit(available, RUNNER_PEAK_MIB, requested, headroom)
+        reason = (f'requested maximum {requested}; available memory unknown' if available is None else
+                  f'requested maximum {requested}; {available} MiB available - {headroom} MiB headroom; '
+                  f'{RUNNER_PEAK_MIB} MiB per contract case')
+        chosen['OXPINYIN_CONTRACT_JOBS'] = (workers, reason, False)
+        # Zero capacity still needs one worker's estimate. Admission refuses
+        # it; no zero-sized pool or unaccounted worker can be launched.
+        child['OXPINYIN_CONTRACT_JOBS'] = str(max(1, workers))
+        estimate = max(estimate, max(1, workers) * RUNNER_PEAK_MIB)
     return child, chosen, estimate
 
 

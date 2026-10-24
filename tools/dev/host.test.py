@@ -475,5 +475,46 @@ class CgroupMemoryTests(unittest.TestCase):
         self.assertEqual(self.snapshot()['available_mib'], 2432)
 
 
+class ContractWorkerEstimates(unittest.TestCase):
+    def prepare(self, available):
+        env = dict(CARGO_BUILD_JOBS='1', RUST_TEST_THREADS='1',
+                   OXPINYIN_CONTRACT_JOBS='8')
+        resources = dict(available_mib=available, total_mib=16384,
+                         cpus=4, cargo_cpus=4)
+        return host.prepare_heavy_env(env, resources, runner=True)
+
+    def test_requested_workers_are_charged_individually(self):
+        with slot_setting('3'):
+            child, chosen, estimate = self.prepare(1638 + 8 * host.RUNNER_PEAK_MIB)
+        self.assertEqual(child['OXPINYIN_CONTRACT_JOBS'], '8')
+        self.assertEqual(chosen['OXPINYIN_CONTRACT_JOBS'][0], 8)
+        self.assertEqual(estimate, 8 * host.RUNNER_PEAK_MIB)
+
+    def test_short_memory_reduces_the_requested_maximum(self):
+        child, chosen, estimate = self.prepare(1638 + 2 * host.RUNNER_PEAK_MIB)
+        self.assertEqual(child['OXPINYIN_CONTRACT_JOBS'], '2')
+        self.assertEqual(chosen['OXPINYIN_CONTRACT_JOBS'][0], 2)
+        self.assertEqual(estimate, 2 * host.RUNNER_PEAK_MIB)
+
+    def test_unknown_or_insufficient_room_does_not_claim_capacity(self):
+        for available in (None, 1638 + host.RUNNER_PEAK_MIB - 1):
+            with self.subTest(available=available):
+                _, chosen, estimate = self.prepare(available)
+                self.assertEqual(chosen['OXPINYIN_CONTRACT_JOBS'][0], 0)
+                self.assertEqual(estimate, host.RUNNER_PEAK_MIB)
+
+    def test_worker_budget_does_not_replace_explicit_build_budget(self):
+        child, _, estimate = host.prepare_heavy_env(
+            dict(CARGO_BUILD_JOBS='8', RUST_TEST_THREADS='1', OXPINYIN_CONTRACT_JOBS='1'),
+            dict(available_mib=16000, total_mib=16384, cpus=4, cargo_cpus=4), runner=True)
+        self.assertEqual(child['CARGO_BUILD_JOBS'], '8')
+        self.assertEqual(estimate, 8 * host.RUSTC_PEAK_MIB)
+
+    def test_invalid_worker_counts_are_rejected(self):
+        for value in ('', '0', '-1', '1.5', 'default', 'nan'):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, 'OXPINYIN_CONTRACT_JOBS'):
+                host.validate_settings({'OXPINYIN_CONTRACT_JOBS': value})
+
+
 if __name__ == '__main__':
     unittest.main()

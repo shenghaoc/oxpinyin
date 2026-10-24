@@ -1,9 +1,17 @@
 #!/usr/bin/env -S uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal
 """Regressions for run-all.py's issue resolution, runner timing and artifact selection."""
 import json
+import contextlib
+import io
+import os
 from pathlib import Path
 import runpy
+import sys
+import tempfile
+import threading
+import time
 import unittest
+from unittest import mock
 
 run_all = runpy.run_path(str(Path(__file__).with_name('run-all.py')))
 
@@ -98,6 +106,73 @@ class TimingColumnsTests(unittest.TestCase):
         self.assertEqual(columns[6:9], ('slot_wait_seconds', 'build_slot_wait_seconds', 'memory_wait_seconds'))
         self.assertNotIn('build_wait_seconds', columns)
         self.assertNotIn('resource_wait_seconds', columns)
+
+
+class ConcurrentContractCellsTests(unittest.TestCase):
+    def run_cells(self, available, expected_overlap):
+        namespace = run_all['main'].__globals__
+        original = Path.read_text
+        row = next(r for r in json.loads(original(Path(__file__).with_name('runners.json')))
+                   if r['name'] == 'contract-diff')
+        row = dict(row, oracle=False, artifacts=[], input_paths=[], required_env=[],
+                   command=['synthetic-contract-worker'])
+        def read(path, *args, **kwargs):
+            return json.dumps([row]) if path.name == 'runners.json' else original(path, *args, **kwargs)
+        lock = threading.Lock()
+        barrier = threading.Barrier(expected_overlap)
+        active, peak, seen = 0, 0, []
+        def execute(command, env, cwd, timeout, output, slot=None):
+            nonlocal active, peak
+            cell = env['PINYIN_ORACLE_DBM']
+            marker = json.loads(env['OXPINYIN_HEAVY_SLOT_HELD'])
+            record = json.loads(original(Path(marker['lock_dir']) / f"heavy-slot-{marker['slot']}"))
+            workers = int(env['OXPINYIN_CONTRACT_JOBS'])
+            self.assertGreaterEqual(record['estimate_mib'], workers * 1024)
+            self.assertEqual(Path(env['CARGO_TARGET_DIR']).name, cell)
+            self.assertEqual(Path(env['PINYIN_ORACLE_PREFIX']).name, cell)
+            self.assertIn(marker['fd'], slot.pass_fds())
+            with lock:
+                active += 1
+                peak = max(peak, active)
+                seen.append((cell, workers, env['CARGO_TARGET_DIR'], env['TMPDIR']))
+            try:
+                barrier.wait(timeout=5)
+                time.sleep(.05)
+                return 0, .05, json.dumps({'timing': {'jobs': workers}}), False
+            finally:
+                with lock:
+                    active -= 1
+        with tempfile.TemporaryDirectory() as directory:
+            env = dict(os.environ, OXPINYIN_HEAVY_SLOTS='3', OXPINYIN_LOCK_DIR=directory,
+                       OXPINYIN_RESOURCE_WAIT_SECONDS='5', CARGO_BUILD_JOBS='1', RUST_TEST_THREADS='1')
+            for key in ('OXPINYIN_HEAVY_SLOT_HELD', 'CARGO_TARGET_DIR', 'OXPINYIN_CONTRACT_JOBS'):
+                env.pop(key, None)
+            resources = dict(available_mib=available, total_mib=16384, cpus=4, cargo_cpus=4, notes=[])
+            args = ['run-all.py', '--runners', 'contract-diff', '--cells', 'bdb,kc,tkrzw',
+                    '--no-build', '--jobs', '3', '--contract-jobs', '4',
+                    '--target-root', directory + '/targets', '--oracle-root', directory + '/oracles']
+            output = io.StringIO()
+            with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(Path, 'read_text', read), \
+                    mock.patch.object(sys, 'argv', args), \
+                    mock.patch.dict(namespace, execute=execute,
+                                    resource_snapshot=lambda: dict(resources, notes=[])), \
+                    mock.patch.object(namespace['_host'], 'process_tree_use_mib', return_value=0), \
+                    contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(run_all['main'](), 0)
+            self.assertEqual(resources['available_mib'], available)
+            self.assertEqual(resources['notes'], [])
+            self.assertEqual(output.getvalue().count(' | PASS | '), 3)
+        self.assertEqual({item[0] for item in seen}, {'bdb', 'kc', 'tkrzw'})
+        self.assertEqual(len({item[2] for item in seen}), 3)
+        self.assertEqual(len({item[3] for item in seen}), 3)
+        self.assertEqual(peak, expected_overlap)
+        return seen
+
+    def test_three_cells_overlap_with_private_inputs_and_full_worker_reservations(self):
+        self.assertEqual({item[1] for item in self.run_cells(16000, 3)}, {4})
+
+    def test_short_memory_reduces_workers_and_serializes_cells(self):
+        self.assertEqual({item[1] for item in self.run_cells(5000, 1)}, {3})
 
 
 if __name__ == '__main__':
