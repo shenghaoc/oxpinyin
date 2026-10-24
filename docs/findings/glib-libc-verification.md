@@ -273,14 +273,52 @@ Pin: `storage/table_info.cpp:160,197-291,328-394` (scanner sites
 `:208,214,220,228,232,255,338,344,352,357`; locale
 `:197,291,328,372,378,394`). Rust: `data/src/table_info.rs`, `Scan`,
 `strtol_digits`, `atoi_guint8`, `hex_float`; `data/src/user_files.rs`,
-`Scan::int`; both facade `locale.rs::pin_table_info_locale`.
+`Scan::int` and `UserTableInfo::to_text`; both facade
+`locale.rs::pin_table_info_locale`; `training/src/segment/model.rs`,
+`parse_table_conf_lambda`.
 
-| Partition | Verdict / record | Investigation |
+The reference scanner is glibc **2.43-3** from the Debian
+`glibc-source` package: `stdio-common/vfscanf-internal.c` for the
+`%d`/`%f`/`%255s` state machines and `stdlib/strtod_l.c` for the float
+value. The source walk below is the basis for each verdict; the corpus
+runs are confirmation only. “Complete” means the behaviour has a contract
+case or a unit test; every case named below runs on both facades unless
+marked otherwise.
+
+| Partition | Verdict / record | Completion |
 | --- | --- | --- |
-| Valid table.conf versions, library mapping and lambda bits | Inventory source conclusion: same values; contract. | Partial #919; no complete scanner-removal proof. |
-| Valid user.conf versions/state | Inventory source conclusion: same values; contract. | Partial #920; preservation of user state must be traced. |
-| Overflow/saturation, signed/truncated integers, `atoi` index narrowing, hexadecimal floats, incomplete/non-backtracking exponents, missing/malformed fields | Pending per-partition classification #919/#920. Existing four `host_scanf` HOST-DEPENDENT cases do not admit arbitrary parser changes. | Unverified complete scanner/consumer audit; G6's lambda frequency issue is distinct. |
-| Process LC_NUMERIC left at C, including early returns | **Needs a ruling to reverse**, [policy row 39](compatibility-policy.md), #923. Retain current behavior. | Established earlier human ruling; this is a real policy STOP, not an unread-path placeholder. |
+| Directive literals and whitespace: a format space or `\n` matches any run of C white space, including none; leading bytes before the first literal do not match; one-line headers, indented `lambda`, CRLF and a missing final newline are accepted. | Contract; no exception. Source: `stdio-common/vfscanf-internal.c:452-486` (literal and white-space loop). | Complete: `table-conf-919-header-{one-line,crlf,indented-lambda,no-final-newline,leading-space}` and the missing-line cases. |
+| Header order and missing fields: a missing `binary`/`model`/`lambda` directive is the pin’s ordinary `false`; a missing `database format:` line reuses the `source` word and aborts; an empty source or database value makes the next word the value and aborts at the converter; a missing `source` line reads an uninitialised `char str[256]` (class (b), not reproduced); a missing user-file row is the existing directory-read split. | Contract, except the missing-source class (b) refusal and the class (c) converter abort sites. Source: `stdio-common/vfscanf-internal.c:452-486` and `:1076-1259` (`%255s`); the missing-source class (b) is the pin's uninitialised `str` at `table_info.cpp:228-229`, not a glibc rule. | Complete: `table-conf-919-{binary-version,model-version}-line-missing`, `table-conf-abort-919-{database-format-line,database-format-value,source-format-value}-missing`, `table-conf-abort-919-source-format-line-missing`, existing `table-conf-abort-source-format-line-missing`. |
+| `%d` grammar: leading white space, optional `+`/`-`, at least one ASCII decimal digit, stop at the first non-digit; no digits is a conversion failure; base 10 leaves `x` after `0x`; a truncated line leaves the same bytes. | Contract. Source: `stdio-common/vfscanf-internal.c:1452-1500` (sign/digit lexer); `stdlib/strtol_l.c:401-435` (digit loop). | Complete: `table-conf-919-versions-{plus-sign,no-digits}`, existing `versions-negative-overflow`, unit `integers_saturate_at_long_min_like_strtol`. |
+| `%d` and `atoi` range: `strtol` saturates at `LONG_MIN`/`LONG_MAX`, the store into `int` is the low 32 bits on amd64/arm64, and an addon index is cut to `guint8`; `UserTableInfo::save` formats the two system versions with `%d`, so a `table.conf` value outside `int` is written back signed. | Contract; the writer was fixed here. Source: `stdlib/strtol_l.c:483-519` (overflow/saturation); `stdio-common/vfscanf-internal.c:1963-1984` (`int` store). | Complete: `table-conf-919-versions-{positive-overflow,int-wrap,negative}`, `table-conf-919-addon-atoi-nondigit`, `table-conf-abort-919-addon-positive-overflow`; `user_files::tests::an_out_of_int_version_is_written_signed`. |
+| `%f` decimal grammar: optional sign; digits with an optional dot on either side; at least one digit; `e`/`E` exponent with optional sign and digits; a bare exponent mark, a second dot, or no digit is rejected because the scanner’s `got_digit` is cleared; the scan is non-backtracking. | Contract. Source: `stdio-common/vfscanf-internal.c:2006-2320` (lexer); `stdlib/strtod_l.c:607-940` (sign, digits, fraction, exponent). | Complete: `table-conf-919-lambda-{dot-leading,dot-only,positive-sign,exponent-plus,exponent-sign-without-digits,decimal-underflow}`, existing `table-conf-lambda-{exponent-without-digits,hex-exponent-without-digits}` and `float_spellings_read_like_glibc`. |
+| `%f` hexadecimal: `0x`/`0X`; hex digits with an optional dot; at least one hex digit; optional `p`/`P` exponent with optional sign and digits; `e` is a hex digit, not the exponent; `0x`, `0x.`, `0x.p1` and a `p` without digits fail; the Rust `hex_float` rounds to nearest even, including subnormals and overflow. | Contract. Source: `stdio-common/vfscanf-internal.c:2140-2320`; `stdlib/strtod_l.c:684-700,732-756,850-940`; rounding at `strtod_l.c:213-357`. | Complete: `table-conf-919-lambda-{hex-no-exponent,hex-overflow,hex-dot-without-digits,hex-exponent-sign-without-digits,hex-exponent-minus-without-digits}`, existing `lambda-hex*`, unit `hex_floats_round_like_strtof`. |
+| `%f` specials: case-insensitive `inf`, `infinity`, `nan`, and `nan(n-char-sequence)`; an incomplete `infin`, an unclosed `nan(`, or an invalid payload fails; the payload bits are not retained by Rust’s `f32::NAN`, but λ is only consumed in NaN arithmetic whose result is zero frequency/NaN costs, so the payload is not observable. | Contract; NaN payload is an unobservable internal difference, not an exception. Source: `stdio-common/vfscanf-internal.c:2034-2160`; `stdlib/strtod_l.c:640-684`. | Complete: `table-conf-919-lambda-{infinity,nan-payload,nan-unclosed}`, existing `lambda-inf`, unit `float_spellings_read_like_glibc`. |
+| `%f` range and host libc: decimal overflow/underflow, hex subnormal/overflow and rounding match the reference; glibc 2.39 on Ubuntu 24.04 accepts `1e` and `0x1p` where 2.43-3 rejects them, and the four existing `host_scanf` cases report HOST-DEPENDENT rather than DIFFER. | Contract; host-libc dependent only for the registered spellings. Source: `stdlib/strtod_l.c:213-357` (round/overflow) and `:878-940` (exponent); `stdio-common/vfscanf-internal.c:2567-2576` (`got_digit`). | Complete: `table-conf-919-lambda-{hex-overflow,decimal-underflow}`, existing four `host_scanf` cases; the reference is the oracle image’s glibc 2.43-3. |
+| `%255s` words: skip white space across newlines, take at most 255 bytes, retain NUL and non-UTF-8 bytes, then the C string stops at the first NUL; EOF after white space is an input failure; a 256th byte starts the next word. | Contract. Source: `stdio-common/vfscanf-internal.c:533-539` (width) and `:1076-1259` (`%s`). | Complete: `table-conf-919-word-{nul-truncates}`, `table-conf-abort-919-word-width-overlong`, existing `short-row-dropped`/`extra-word-dropped`; file names already cover non-UTF-8. |
+| Six-word rows: words group across line boundaries; a final short row is dropped; a five-word row followed by the next row’s first word forms a six-word row; a merged row that mismatches the library and table makes the pin read a NULL item and die of SIGSEGV, while the subject returns the declared result (class (b)). | Contract on defined rows; the merged-row crash is class (b). Source: `stdio-common/vfscanf-internal.c:1076-1259` (`%s` stops at white space); the six-word loop is pin `table_info.cpp:254-287`. | Complete: `table-conf-919-short-row-merged` (declared class-(b) result), existing `short-row-dropped`, `extra-word-dropped`, `comment-dropped`. |
+| Consumer mapping: system/user versions, addon index, λ `f32` bits, library names/types and file-type roles reach the same dictionary load/save and candidate results. | Contract. Source: the conversions above (`vfscanf-internal.c`/`strtod_l.c`); no additional scanner path. | Complete: the 68 #919 cases plus the existing 88 valid `table-conf-*` cases; the version writer fix is above. |
+| Training λ reader: the old line-based `parse_table_conf_lambda` accepted only a line-prefixed plain decimal; it now parses the same full `table.conf` stream as the pin through `TableConf::parse` (hex, leading whitespace, one-line headers, incomplete-exponent rejection). The file is read as bytes. | Tool-only contract with the pin’s loader; no C-ABI change. Source: it reuses the full `TableConf` stream and therefore the scanner citations above; no independent scanner. | Complete: `training/src/segment/model.rs::the_lambda_reader_follows_the_pin_stream`, `paths::load_lambda` reads bytes; no facades entry. |
+| Process `LC_NUMERIC`: the pin sets it to `C` and early returns skip the restore; oxpinyin leaves it at `C` and does not reproduce the process side effect. | **Needs a ruling to reverse**, [policy row 39](compatibility-policy.md), #923; retain. Not a scanner verdict: pin `table_info.cpp:197`; #923. | Not changed; real policy STOP, not an unread path. |
+| `user.conf` parsing: the four `fscanf` directives are #920; this entry changes only the writer’s signed version formatting required by the table.conf `%d` range. | #920 owns the full user.conf parse; the #919 writer fix is contract. Not this scanner: #920 owns the user.conf parse. | Partial #920; #919 writer cases complete. |
+
+Completion gate (2026-10-25 UTC, linux/amd64, bdb): `cargo test -p
+oxpinyin-data -p oxpinyin-training` passed, clippy and fmt passed, and
+`--issue 919` ran **68/68 MATCH**. The named
+`unsigned-user-conf-versions` mutation (the writer back to `%u`) made the
+three version partitions DIFFER on both facades (**6 DIFFER / 62 MATCH**);
+restored and rebuilt, the same 68 cases returned **68/68 MATCH**.
+
+Confirmation only, not the basis of the verdicts: the glibc differential
+corpus (2,648,804 mixed strings, 90,031 valid decimal/hex spellings,
+24,687 `%d` strings) agreed with the source-derived lexers on values and
+consumed bytes; the only differences were four NaN payload bits, which are
+unobservable. The corpus is local test data and is not committed.
+
+After the database-format-value fixture was made backend-independent
+(match `database format:` and any following value), the same 68 cases ran
+once on each cell: **bdb 68/68, kc 68/68, tkrzw 68/68**. This is a
+targeted rerun for the fixture, not a three-cell gate.
 
 ## G12 — File I/O and MemoryChunk
 

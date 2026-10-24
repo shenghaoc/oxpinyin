@@ -87,7 +87,7 @@ for libpinyin and libzhuyin, `pinyin` for the prediction-only surfaces;
 | G8 | diagnostics: `g_return_val_if_fail`, 6 sites (`pinyin.cpp:1454`, `zhuyin.cpp:973`, `phrase_index.cpp:354-356,361`); `g_warning` only in the tool-only tag utility | both; all | `capi/src/ffi.rs` `log_warning` / `log_critical`; `capi/src/phrase.rs` `g_log` / `g_return_if_fail_warning`; zhuyin twin | valid: class (c) sites keep one warning at warning level and the pin's domain. malformed: a GLib conversion failure logs the critical. | (c) where the pin aborts; #924 for the channel; #918 for the segment gate | #918, #924 |
 | G9 | allocation/free and real GArray ABI: `g_free` 155, `g_strdup` 39, `g_strdup_printf` 14; C `malloc`/`free`/`realloc` 6; `g_array_set_size`/`g_array_append_vals` into caller arrays in `pinyin.cpp:2805,2817` and `zhuyin.cpp:1797,1809` | both; all | `capi/src/ffi.rs` `owned_cstr` / `owned_cstr_list` (C `malloc`/`g_free` contract); `capi/src/dict.rs` and zhuyin twin on `glib_sys`; `libpinyin.alloc` / `libzhuyin.alloc` | valid: caller may `g_free` / `g_strfreev`; the real `GArray` keeps GLib's private metadata. malformed: NULL or OOM paths. | contract; MUST RETAIN | #924 |
 | G10 | rename and sync: `g_rename` 10 (`pinyin.cpp:1059,1078,1094,1108,1121`; `zhuyin.cpp:609,635,655,672,687`); `g_fsync` 1 (`memory_chunk.h:555`) | both; all | `user/src/persistence.rs` `save_with_bigram_reporting`, `pin_rename_order`; `data/src/phrase_library.rs` chunk save | valid: same file order and bytes. failure: per-file write/rename failures and the save's return. | contract on valid profiles; #929 for failure ordering | #929 |
-| G11 | numeric parsing and locale: `fscanf` 10 (`table_info.cpp:208,214,220,228,232,255,338,344,352,357`); `atoi` 1 (`:160`); `setlocale` 6 (`:197,291,328,372,378,394`) | both; all | `data/src/table_info.rs` `Scan`, `strtol_digits`, `atoi_guint8`, `hex_float`; `data/src/user_files.rs` `Scan::int`; `capi/src/locale.rs` | valid: same table values, versions, λ bits and library mapping. malformed/host: glibc `%d`/`%f` saturation and non-backtracking exponents; process `LC_NUMERIC` is left at `"C"`. | valid: contract. malformed: quirk (#919, #920). process side effect: ruling STOPS (#923) | #919, #920, #923 |
+| G11 | numeric parsing and locale: `fscanf` 10 (`table_info.cpp:208,214,220,228,232,255,338,344,352,357`); `atoi` 1 (`:160`); `setlocale` 6 (`:197,291,328,372,378,394`) | both; all | `data/src/table_info.rs` `Scan`, `strtol_digits`, `atoi_guint8`, `hex_float`; `data/src/user_files.rs` `Scan::int`; `capi/src/locale.rs` | valid: same table values, versions, λ bits and library mapping. malformed/host: glibc 2.43-3 `%d`/`%f`/`%255s` grammar, saturation, signed user.conf versions, hex/NaN/Inf, incomplete exponents, NUL/width and row grouping; class (b): missing source buffer and merged-row SIGSEGV. | valid: contract. malformed: contract except the class (b) refusals; host scanner (#919/#920); process side effect ruling (#923) | #919, #920, #923 |
 | G12 | file I/O and `MemoryChunk`: `mmap` 10, `munmap` 2, `lseek` 4, `read` 5, `write` 3, `open` 3, `close` 12, `unlink` 22, `fopen` 3, `fclose` 8, `fprintf` 36 | both; all | `data/src/phrase_library.rs` `map_chunk`, `MappedFile`, chunk header; `user/src/persistence.rs`; `data/src/pin_stderr.rs` raw bytes | valid: same mapped extent, header check and file bytes. malformed: short/truncated/directory chunk; write failures. | contract on valid files. malformed: class (b) rows 76/96/109; #929 for writes | rows 76, 96, 109; #929 |
 | G13 | C primitives: `memset` 124, `memcpy` 28, `strlen` 18, `strcmp` 18, `memcmp` 10, `memmove` 7, `strchr` 2 | both; all | Rust slices/`str`; `data/src/row_format.rs`, `core/src/single_gram.rs`, `capi/src/ffi.rs` | valid: same bytes. malformed: NULL/unreadable phrase strings and out-of-range walks are class (b) rows. | contract; class (b) at the registered NULL/over-read rows | rows 80, 106 |
 | G14 | libm: `log` 7 (`phonetic_lookup.h:39,250,663,693`; `phrase_lookup.cpp:40,321,342`) | both; all | `core/src/cost.rs` `cost_of_probability` / `surprisal` (fixed-point `log2_fixed`); `engine/src/nbest.rs` `poss` | valid: class (a) last-bit differences are accepted. | class (a), row 11; record only | no child (math record) |
@@ -197,12 +197,44 @@ pin's own answers after a failed write or rename.
 `SystemTableInfo2::load` and `UserTableInfo::load` read their fields with
 `fscanf`; `atoi` cuts an addon index to `guint8`; `setlocale(LC_NUMERIC,
 "C")`'s return is the new name, and every early return skips the
-restore. The valid file surface is #919/#920. The process-wide locale is
-row 39 and #923: **STOP for a ruling**, do not remove it.
+restore. The valid file surface is #919 (table.conf) and #920
+(user.conf). The process-wide locale is row 39 and #923: **STOP for a
+ruling**, do not remove it.
 
-`Scan::float` reproduces glibc's `%f` spellings, including hexadecimal
-floats, and does not back up from a bare exponent mark; the four
-`host_scanf` cases are the host-libc `HOST-DEPENDENT` disposition.
+The #919 source walk reads glibc **2.43-3**'s
+`stdio-common/vfscanf-internal.c`, `stdlib/strtod_l.c` and
+`stdlib/strtol_l.c`. The scanner reproduces its `%d` grammar (sign,
+decimal digits, `strtol` saturation and the `int`/`guint8` cuts), its
+`%f` lexer (decimal and hexadecimal spellings,
+`inf`/`infinity`/`nan(payload)`, non-backtracking incomplete exponents,
+overflow/subnormal rounding), and `%255s` (cross-line words, 255-byte
+width, raw NUL/non-UTF-8 bytes). Confirmation only, not the basis of
+these verdicts: a differential corpus over 2,648,804 mixed strings and
+90,031 valid decimal/hex spellings found no value or consumed-byte
+difference; only four NaN payload bits differed, and λ's NaN consumers
+cannot observe the payload. The corpus is local test data and is not
+committed.
+
+Two differences were found and fixed; the user.conf writer is the only
+shipping one. `UserTableInfo::save`
+wrote the version fields as unsigned; the pin's `int` fields and `%d`
+format write a `table.conf` value outside `int` back signed (for example
+`-1`, not `4294967295`). `UserTableInfo::to_text` now formats the two
+fields through `i32`, so the marker round-trips and the open-counter rules
+are unchanged. The training segmenter's λ reader was a line-only
+`parse_table_conf_lambda`; it now parses the full stream through
+`TableConf::parse`, so hexadecimal λ, indented/one-line headers and the
+incomplete-exponent rejection follow the pin instead of a local
+approximation.
+
+Two class (b) refusals remain: a missing `source table format:` line
+reads the pin's uninitialised `char str[256]`, and a five-word row merged
+with the next row's first word can make the pin read a NULL item and
+SIGSEGV. The subject refuses the first deterministically and answers the
+second with the declared result; neither reproduces the uninitialised or
+invalid read. The four existing `host_scanf` cases remain HOST-DEPENDENT
+on glibc 2.39 (`1e`, `0x1p`); the reference cell is the oracle image's
+glibc 2.43-3.
 
 ### G12 — file I/O
 
