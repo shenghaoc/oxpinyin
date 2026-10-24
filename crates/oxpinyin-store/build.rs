@@ -148,8 +148,12 @@ mod kyotocabinet {
         if let Some(cflags) = super::pkg_config("--cflags", "kyotocabinet") {
             clang_args.extend(cflags);
         }
+        // The override goes ahead of pkg-config's directories, as for BDB.
+        // The shim compiles Kyoto Cabinet's headers into the facade, so they
+        // must come from the installation OXPINYIN_KC_LIB_DIR links, whose
+        // link-search path is likewise emitted first (docs/packaging.md).
         if let Ok(dir) = std::env::var("OXPINYIN_KC_INCLUDE_DIR") {
-            clang_args.push(format!("-I{dir}"));
+            clang_args.insert(0, format!("-I{dir}"));
         }
 
         // A `rustc-link-search` reaches every later link in the graph, but a
