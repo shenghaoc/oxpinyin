@@ -22,6 +22,133 @@ spec.loader.exec_module(driver)
 contract = vars(driver)
 
 
+class TkrzwSavedBigramTests(unittest.TestCase):
+    def setUp(self):
+        # Synthetic bytes, never a generated oracle file. The comparator
+        # must preserve even invalid metadata/payload mutations as differences.
+        self.raw = bytes(range(256)) * 2
+        self.chains = ((74121, (b'\xd8\x4d\0\1', b'\x46\x0d\0\1', b'\x04\x44\0\1')),)
+
+    def matches(self, other, chains=None):
+        return driver.tkrzw_saved_bigram_equal(
+            self.raw, other, self.chains, self.chains if chains is None else chains)
+
+    def test_META_OFFSET_TIMESTAMP_is_exactly_zero_based_bytes_48_through_55(self):
+        self.assertEqual(driver.META_OFFSET_TIMESTAMP, 48)
+        self.assertEqual(driver.TKRZW_TIMESTAMP_WIDTH, 8)
+        changed = bytearray(self.raw)
+        for offset in range(48, 56):
+            changed[offset] ^= 0xff
+        self.assertTrue(self.matches(bytes(changed)))
+
+    def test_every_bit_outside_META_OFFSET_TIMESTAMP_is_compared(self):
+        for offset in range(len(self.raw)):
+            if 48 <= offset <= 55:
+                continue
+            for bit in range(8):
+                with self.subTest(offset=offset, bit=bit):
+                    changed = bytearray(self.raw)
+                    changed[offset] ^= 1 << bit
+                    self.assertFalse(self.matches(bytes(changed)))
+
+    def test_byte_56_db_type_and_both_cyclic_magic_bytes_stay_exact(self):
+        for offset in (9, 47, 56, 127):
+            with self.subTest(offset=offset):
+                changed = bytearray(self.raw)
+                changed[offset] ^= 0xff
+                self.assertFalse(self.matches(bytes(changed)))
+
+    def test_length_differences_stay_exact(self):
+        self.assertFalse(self.matches(self.raw[:-1]))
+        self.assertFalse(self.matches(self.raw + b'\0'))
+
+    def test_truncated_metadata_is_rejected_even_when_both_sides_are_equal(self):
+        for length in (0, 48, 55, 56, 127):
+            with self.subTest(length=length), self.assertRaisesRegex(ValueError, 'metadata'):
+                driver.tkrzw_saved_bigram_equal(
+                    self.raw[:length], self.raw[:length], self.chains, self.chains)
+
+    def test_bucket_chain_order_cannot_be_replaced_by_logical_row_equality(self):
+        bucket, chain = self.chains[0]
+        for reordered in (tuple(reversed(chain)), tuple(sorted(chain)), chain[1:] + chain[:1]):
+            with self.subTest(chain=reordered):
+                self.assertEqual(set(chain), set(reordered))
+                self.assertFalse(self.matches(self.raw, ((bucket, reordered),)))
+        self.assertTrue(self.matches(self.raw))
+        self.assertFalse(self.matches(self.raw, ((bucket + 1, chain),)))
+
+
+class TkrzwHandoffTests(unittest.TestCase):
+    def run_handoff(self, replies, changed_offset=None):
+        replies = iter(replies)
+
+        def worker(*args, **kwargs):
+            env = kwargs['extra_env']
+            if 'CONTRACT_1114_RELOAD' not in env:
+                raw = bytearray(bytes(range(256)) * 2)
+                if changed_offset is not None and args[1] == Path('/pr'):
+                    raw[changed_offset] ^= 1
+                Path(env['CONTRACT_1114_PROFILE'], 'user_bigram.db').write_bytes(raw)
+            reply = next(replies)
+            if isinstance(reply, Exception):
+                raise reply
+            return reply
+
+        with tempfile.TemporaryDirectory() as scratch, \
+             patch.object(driver, 'run_worker', side_effect=worker) as run:
+            results = driver.run_case(dict(mode='pinyin', fatal=False), Path('/pin'), Path('/pr'),
+                                      Path('/data'), 'issue1114-collision-load-save-pinyin', scratch, 20)
+        return results, run.call_args_list
+
+    def test_both_directions_reopen_the_donors_exact_directory(self):
+        replies = [observation(result={'saved_bigram': [1]}) for _ in range(4)]
+        results, calls = self.run_handoff(replies)
+        self.assertEqual([call.args[1] for call in calls], list(map(Path, ('/pin', '/pr', '/pr', '/pin'))))
+        environments = [call.kwargs['extra_env'] for call in calls]
+        for donor, receiver in ((0, 2), (1, 3)):
+            self.assertEqual(environments[donor]['CONTRACT_1114_PROFILE'],
+                             environments[receiver]['CONTRACT_1114_PROFILE'])
+            self.assertNotIn('CONTRACT_1114_RELOAD', environments[donor])
+            self.assertEqual(environments[receiver]['CONTRACT_1114_RELOAD'], '1')
+        self.assertNotEqual(environments[0]['CONTRACT_1114_PROFILE'], environments[1]['CONTRACT_1114_PROFILE'])
+        self.assertEqual(results[0]['result'], results[1]['result'])
+        self.assertIn('cross_reload', results[0]['result'])
+
+    def test_donor_byte_difference_is_rejected_before_handoff(self):
+        for offset in (0, 47, 56, 127, 511):
+            with self.subTest(offset=offset):
+                replies = [observation(result={'saved_bigram': [1]}) for _ in range(2)]
+                results, calls = self.run_handoff(replies, changed_offset=offset)
+                self.assertEqual(len(calls), 2)
+                self.assertEqual(results[0]['exit'], 1)
+                self.assertIn('META_OFFSET_TIMESTAMP', results[0]['result']['error'])
+
+    def test_donor_timestamp_difference_allows_both_handoffs(self):
+        for offset in (48, 55):
+            with self.subTest(offset=offset):
+                replies = [observation(result={'saved_bigram': [1]}) for _ in range(4)]
+                results, calls = self.run_handoff(replies, changed_offset=offset)
+                self.assertEqual(len(calls), 4)
+                self.assertEqual([result['exit'] for result in results], [0, 0])
+
+    def test_receiver_failure_cannot_be_a_match(self):
+        for failed in (2, 3):
+            with self.subTest(failed=failed):
+                replies = [observation(result={'saved_bigram': [1]}) for _ in range(4)]
+                replies[failed] = observation(exit=1, result=None)
+                results, calls = self.run_handoff(replies)
+                self.assertEqual(len(calls), 4)
+                self.assertEqual(results[failed - 2]['exit'], 1)
+                self.assertIsNone(results[failed - 2]['result'])
+
+    def test_cross_reload_timeout_cannot_be_a_match(self):
+        replies = [observation(result={'saved_bigram': [1]}) for _ in range(2)]
+        replies.append(subprocess.TimeoutExpired('receiver', 20))
+        results, calls = self.run_handoff(replies)
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(results[0]['exit'], 'TIMEOUT')
+
+
 def worker_process(stdout=b'{}\n', stderr=b''):
     return MagicMock(returncode=0, communicate=MagicMock(return_value=(stdout, stderr)))
 
@@ -682,7 +809,9 @@ class SelectionTests(DriverFixtureCase):
         with self.assertRaises(contract['SelectionError']) as caught:
             contract['select_cases'](issues=['9999'])
         self.assertIn('registered tags: ', str(caught.exception))
-        self.assertIn('525', str(caught.exception).split('registered tags: ', 1)[1].split(', '))
+        available = str(caught.exception).split('registered tags: ', 1)[1].split(', ')
+        self.assertIn('525', available)
+        self.assertIn('1114', available)
         self.assertNotIn('family/', str(caught.exception))
         with self.assertRaises(contract['SelectionError']) as caught:
             contract['select_cases'](families=['nope'])
