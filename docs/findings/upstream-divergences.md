@@ -3707,3 +3707,100 @@ previous token's gram).
   (the audit saw SIGSEGV on one pin run and SIGABRT on another). A
   registry of live instances would worsen time and space on every
   alloc/free, so there is no case and no change.
+
+## Pin portability defects found on arm64 (#1137, 2026-10-24 UTC)
+
+These entries are not oxpinyin divergences. On amd64 oxpinyin reproduces
+the pin byte for byte; on arm64 the pin itself departs from that
+reference because it assigns an out-of-range `float` expression to a
+`guint32`. The amd64 answer is the Stage 2 target and policy row 83
+already records the deliberate `cvttss2si` store, so no class (a), (b)
+or (c) exception applies and no oxpinyin change is owed. They are
+recorded here for the upstream report-back batch, one entry per
+independent defect. The full diagnosis, the instruction sequences and
+the proposed issue texts are in
+[`arm64-pin-portability-1137.md`](arm64-pin-portability-1137.md).
+
+### Pinyin candidate frequency: out-of-range `float`-to-`guint32` store (#1137; pin portability, not an oxpinyin divergence)
+
+- **Upstream source cite:** `src/pinyin.cpp:1813-1826` (predicted-prefix
+  branch), `:1829-1843` (addon branch) and `:1855-1868` (ordinary branch)
+  at `074a2219c90feaf962d0d24f034514033ece5f99`; the conversions are the
+  `guint32 freq = ...` initializations at `:1821-1823`, `:1838-1840` and
+  `:1862-1865`, and the stores are `item->m_freq = freq` at `:1824`,
+  `:1841` and `:1866`.
+- **Mechanism:** each branch computes a `gfloat` candidate frequency and
+  assigns it to `guint32`. When the value is negative or at least 2³²,
+  the conversion is undefined (C++ [conv.fpint]/1). GCC 15.3.0 emits
+  `cvttss2si` to a 64-bit register plus a 32-bit store for x86-64 and
+  `fcvtzu` for arm64; the latter saturates, so a negative value becomes 0
+  and a value at least 2³² becomes `0xffffffff`. For the observed case
+  the arm64 conversion is `libpinyin.so.15.0.0+0x72644`
+  (predicted-prefix) and the shared store is `+0x72530`; the amd64
+  conversion is `+0x8fcce` and the store is `+0x8fb6e`.
+- **What oxpinyin does instead:** `oxpinyin_capi::predict::amplified_frequency`
+  reproduces the amd64 `cvttss2si` result (`score as i64 as u32`, with
+  non-finite and 64-bit-out-of-range scores as 0), and
+  `oxpinyin_engine::session::guint32_of_score` is the same law for the
+  ordinary candidate lists. Both architectures therefore get the amd64
+  key; `oxpinyin_engine::session::glib_rank_sort` and
+  `RankKey::pin_compare` reproduce the pin's `guint32` comparator and
+  GLib's merge.
+- **Externally observable:** yes, on arm64 only, in the candidate order.
+  `row58-unsigned-score-off` and `row58-unsigned-score-on` of
+  `contract-diff.py`: import `我甲甲` with count 1431655631, bring the
+  facade total to 10000000 through the absent-token delta, then call
+  `pinyin_guess_predicted_candidates("我")`. The frequency is
+  `4952525312.0f`; amd64 stores `0x27318a00 = 657558016` and lists `甲甲`
+  first, arm64 stores `0xffffffff` and lists it last among the
+  two-character rows. The amd64 pin and the amd64 subject are
+  byte-identical; the arm64 subject also matches the amd64 pin.
+- **Classification:** pin portability defect to report upstream; not an
+  oxpinyin divergence and no class (a)/(b)/(c) exception. The observed
+  amd64 behaviour is the Stage 2 target (policy row 83); the arm64 pin is
+  the outlier.
+- **Held by:** `row58-unsigned-score-off` and `row58-unsigned-score-on`
+  (arm64-excluded by #1137; amd64 MATCH on bdb, kc and tkrzw).
+- **Proposed upstream report:** issue A in
+  `arm64-pin-portability-1137.md` ("pinyin candidate frequency:
+  undefined float-to-`guint32` conversion is target-dependent").
+
+### Zhuyin candidate frequency: negative `float`-to-`guint32` store at λ > 1 (#1137; pin portability, not an oxpinyin divergence)
+
+- **Upstream source cite:** `src/zhuyin.cpp:1229-1270`
+  (`_compute_frequency_of_items`), the conversion in the
+  `guint32 freq = ...` initialization at `:1264-1267` and the store at
+  `:1268`, at `074a2219c90feaf962d0d24f034514033ece5f99`.
+- **Mechanism:** with the default options `DYNAMIC_ADJUST` is clear, so
+  the frequency is `(1 - lambda) * unigram / (gfloat) total_freq *
+  256 * 256 * 256`. For λ > 1 the coefficient is negative, every
+  positive-unigram candidate gets a negative `float`, and the assignment
+  to `guint32` is undefined. GCC 15.3.0 emits `cvttss2si` plus a 32-bit
+  store for x86-64 (`libzhuyin.so.15.0.0+0x8e06d`, store `+0x8e072`) and
+  `fcvtzu` for arm64 (`+0x70938`, store `+0x7093c`). amd64 keeps the
+  low 32 bits of `-k` (for `0 < k < 2³²`, that is `2³² - k`); arm64
+  stores 0, so every negative key is equal.
+- **What oxpinyin does instead:** the shared engine law
+  `oxpinyin_engine::session::amplified_frequency_with_bigram` and
+  `guint32_of_score` produces the amd64 low-32 key on both
+  architectures, and `glib_rank_sort` / `RankKey::pin_compare` order the
+  rows with the pin's `guint32` comparator. The arm64 subject therefore
+  matches the amd64 pin row for row.
+- **Externally observable:** yes, on arm64 only, in
+  `zhuyin_guess_candidates_after_cursor`. With
+  `lambda parameter:1.5`, `2` and `1e6` in `table.conf`, the arm64 pin's
+  candidate rows 3–12 are the collection order within the length-1 group
+  `疒 祢 禰 妳 呢 堄 逆 猊 霓 儗` and are identical for all three λ
+  values; the amd64 pin orders them by the wrapped key and differs per
+  λ. The sentences are identical on both targets. The λ < 0, `inf` and
+  `nan` cases match because their keys are in range or equal on both
+  architectures.
+- **Classification:** pin portability defect to report upstream; not an
+  oxpinyin divergence and no class (a)/(b)/(c) exception (policy row 83).
+- **Held by:** `table-conf-lambda-million-zhuyin`,
+  `table-conf-lambda-one-and-a-half-zhuyin` and
+  `table-conf-lambda-two-zhuyin` (arm64-excluded by #1137; amd64 MATCH
+  on bdb, kc and tkrzw).
+- **Proposed upstream report:** issue B in
+  `arm64-pin-portability-1137.md` ("libzhuyin candidate frequency: λ > 1
+  orders candidates differently on arm64").

@@ -132,15 +132,16 @@ The arm64 side used the driver's `--observations` for each cell. The arm64
 subject observations were hashed as
 `sha256(json.dumps(observation, sort_keys=True, separators=(',', ':'),
 ensure_ascii=True))[:12]`, the same canonical form as the amd64 table. The
-capture invoked the driver through a two-line wrapper that only sets
-`HOST_ORACLE_PLATFORM = 'linux/amd64'` so the #1137 skip does not suppress
-the excluded cases:
+maintained way to reproduce that capture uses `--run-platform-excluded`,
+which runs the cases the host registry would skip and prints each case's
+reason on stderr; it replaces the session-only wrapper that overrode
+`HOST_ORACLE_PLATFORM`:
 
 ```sh
-uv run --no-project --managed-python --python cpython@3.15+gil \
-  python -X lazy_imports=normal /work/capture-arm64.py "$cell" \
-  /work/cache/oracle/$cell /work/targets-final/$cell/debug/libpinyin_capi.so \
-  --zhuyin-so /work/targets-final/$cell/debug/libzhuyin_capi.so \
+tools/bisection/run-contract-diff.sh "$cell" /work/cache/oracle/$cell \
+  /work/targets-final/$cell/debug/libpinyin_capi.so \
+  /work/targets-final/$cell/debug/libzhuyin_capi.so \
+  -- --run-platform-excluded \
   --cases fini-twice,... --observations /work/arm64-13-$cell.jsonl
 ```
 
