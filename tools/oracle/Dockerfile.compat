@@ -30,9 +30,14 @@ RUN --mount=type=secret,id=cacert,required=false,mode=0444 \
       update-ca-certificates; \
       export UV_SYSTEM_CERTS=true; \
     fi; \
-    [ "$(uname -s)-$(uname -m)" = Linux-x86_64 ]; \
-    uv_target=x86_64-unknown-linux-gnu; \
-    uv_sha256=eadd9d27c134ab5ac1ffd4473b97a741407f3ea238288f03121fc4deddf90220; \
+    [ "$(uname -s)" = Linux ]; \
+    case $(uname -m) in \
+      x86_64) uv_target=x86_64-unknown-linux-gnu; \
+              uv_sha256=eadd9d27c134ab5ac1ffd4473b97a741407f3ea238288f03121fc4deddf90220 ;; \
+      aarch64 | arm64) uv_target=aarch64-unknown-linux-gnu; \
+              uv_sha256=9041c73c99fdc5892cf128140beb354eca9231d502068cc36e6cb53a8e59ad14 ;; \
+      *) printf 'no uv target for architecture %s\n' "$(uname -m)" >&2; exit 1 ;; \
+    esac; \
     uv_payload=$(curl --fail --location --retry 3 "https://github.com/astral-sh/uv/releases/download/0.13.1/uv-$uv_target.tar.gz" | base64); \
     uv_actual=$(printf '%s' "$uv_payload" | base64 -d | sha256sum); \
     [ "${uv_actual%% *}" = "$uv_sha256" ] || { printf 'uv archive checksum mismatch\n' >&2; exit 1; }; \
@@ -65,8 +70,13 @@ RUN --mount=type=secret,id=cacert,required=false,mode=0444 \
       update-ca-certificates; \
     fi; \
     rustup_version=1.28.2; \
-    rustup_target=x86_64-unknown-linux-gnu; \
-    rustup_sha256=20a06e644b0d9bd2fbdbfd52d42540bdde820ea7df86e92e533c073da0cdd43c; \
+    case $(uname -m) in \
+      x86_64) rustup_target=x86_64-unknown-linux-gnu; \
+              rustup_sha256=20a06e644b0d9bd2fbdbfd52d42540bdde820ea7df86e92e533c073da0cdd43c ;; \
+      aarch64 | arm64) rustup_target=aarch64-unknown-linux-gnu; \
+              rustup_sha256=e3853c5a252fca15252d07cb23a1bdd9377a8c6f3efa01531109281ae47f841c ;; \
+      *) printf 'no rustup target for architecture %s\n' "$(uname -m)" >&2; exit 1 ;; \
+    esac; \
     curl --fail --location --retry 3 \
       "https://static.rust-lang.org/rustup/archive/$rustup_version/$rustup_target/rustup-init" \
       -o /tmp/rustup-init; \

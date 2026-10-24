@@ -31,6 +31,6 @@ oxpinyin_select_runtime() {
 	version=$("$ctr" --version) || { echo "FAIL: cannot query runtime version: $ctr" >&2; return 1; }
 	printf 'Runtime: %s; %s\n' "$ctr" "$version"
 	if [[ $(basename "$ctr") == container ]]; then
-		echo 'Apple container interoperability and amd64 emulation are not yet verified by the compat smoke.' >&2
+		echo 'Apple container interoperability and native-platform execution are not yet verified by the compat smoke.' >&2
 	fi
 }
