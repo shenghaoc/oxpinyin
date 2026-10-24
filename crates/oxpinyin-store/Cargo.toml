@@ -28,7 +28,7 @@ criterion = "0.8"
 
 [build-dependencies]
 bindgen = { workspace = true, optional = true }
-# Compiles the Kyoto Cabinet C++ shim (#1118).
+# Compiles the Kyoto Cabinet and tkrzw C++ shims (#1118, #1125).
 cc = { version = "1.4.3", optional = true }
 
 [features]
@@ -44,7 +44,7 @@ cc = { version = "1.4.3", optional = true }
 # which is what "default" means here — select any peer explicitly with
 # `--no-default-features --features {kyotocabinet|tkrzw|bdb}`.
 default = ["bdb"]
-tkrzw = ["dep:bindgen"]
+tkrzw = ["dep:bindgen", "dep:cc"]
 # Kyoto Cabinet backend. bindgen is build-time only (it needs libclang);
 # the runtime dependency is the system libkyotocabinet the distro already
 # ships.

@@ -1,158 +1,49 @@
-//! tkrzw backend for the store capability tiers, over the plain-C API.
+//! tkrzw backend over a minimal C ABI to concrete C++ DBMs (#1125 prototype).
 //!
-//! Enabled by the `tkrzw` cargo feature. Mirrors libpinyin at `0c5e80e`
-//! (`src/storage/tkrzwdb_utils.h`, `chewing_large_table2_tkrzwdb.cpp`,
-//! `ngram_tkrzwdb.cpp`): the database is tkrzw's `TreeDBM`. The binding
-//! reaches it through `tkrzw_langc.h` — `tkrzw_dbm_open` with `dbm=tree`
-//! selects `TreeDBM`, and passing no comparator parameter leaves its
-//! default `LexicalKeyComparator` in place, so records sort by plain
-//! unsigned byte order and oxpinyin's big-endian key codec keeps the
-//! ordering the byte-order contract demands. No C++ header, class, or
-//! exception ever crosses the ABI.
+//! `shim.cc` constructs `HashDBM`, `TreeDBM`, `TinyDBM` and `BabyDBM` with
+//! default tuning, as libpinyin does at 074a2219 (`ngram_tkrzwdb.cpp:48-80`,
+//! `chewing_large_table2_tkrzwdb.cpp:87-126`). It bypasses PolyDBM and the
+//! C API's parameter parsing. Bindgen reads only the plain-C `shim.h`.
 //!
-//! # Zero-copy reads
+//! # Borrowed records and errors
 //!
-//! Reads borrow tkrzw's record memory instead of copying it, the way
-//! libpinyin's own tkrzw code does — its `KeyCollectProcessor` walks
-//! records through `ProcessEach` reading in-place `string_view`s. Here
-//! the C API's callback plumbing does the same job:
-//! `tkrzw_dbm_process` drives one record and `tkrzw_dbm_iter_process`
-//! drives the walk, handing every key and value to a Rust callback as a
-//! `(pointer, size)` pair into tkrzw's record buffer: no intermediary
-//! buffer, no per-record allocation. A borrow lasts only for the
-//! callback's duration; a visitor that wants to keep a row copies
-//! exactly what it retains, and a point `get` makes the one owned copy
-//! a result that outlives the call requires. Carrying a borrowed slice
-//! past its callback is the one thing the design forbids.
+//! Point reads and iterator walks process borrowed record buffers valid
+//! only for the callback. A retained value is copied into Rust storage;
+//! callback results are copied by tkrzw before the call returns. No C++
+//! allocation crosses into Rust ownership. Every shim entry point contains
+//! C++ exceptions and returns failure; recording their SYSTEM_ERROR message
+//! is best effort. This keeps the existing exception classification
+//! (`docs/findings/tkrzw-langc-exception-classification.md`). The status
+//! channel is thread-local; a failed call's message is copied immediately.
+//! Rust callbacks must not unwind through C++.
 //!
-//! # Errors and status
+//! # Keyspace and writes
 //!
-//! The C API is exception-free: every C++ exception is caught inside
-//! libtkrzw and reported through a thread-local "last status",
-//! retrieved with `tkrzw_get_last_status` and copied immediately — its
-//! message region is valid only until the next tkrzw call on the same
-//! thread. Statuses map as this backend always has: success to `Ok`,
-//! `SYSTEM_ERROR` to [`StoreError::Io`], everything else to a backend
-//! error carrying the code and message verbatim. One registered
-//! divergence: exceptions caught inside the C wrapper report
-//! `SYSTEM_ERROR` — so an allocation failure classifies as
-//! [`StoreError::Io`] — where the retired cxx shim reported
-//! `UNKNOWN_ERROR` (a backend error); the C ABI cannot distinguish the
-//! two `SYSTEM_ERROR` origins. Ruled accepted 2026-08-28; the register
-//! entry with the full analysis is
-//! `docs/findings/tkrzw-langc-exception-classification.md`.
+//! TreeDBM's default lexical comparator orders unsigned bytes. Trait records
+//! use the prefix-free `table-name || NUL || key` framing; raw records use
+//! the backend's native keys. A transaction buffers mutations and applies
+//! them in one ProcessMulti batch, then synchronizes with hard=false. A
+//! failed closure applies nothing. Compact rebuilds and synchronizes with
+//! hard=true. A process crash after soft sync preserves the committed file;
+//! a crash during ProcessMulti can tear a batch because TreeDBM has no WAL.
+//! The session's BabyDBM has no file; user profiles are written separately
+//! by save_db and write_user_index, soft-synced as at the pin.
 //!
-//! # One keyspace, many tables
+//! # Platform and library build
 //!
-//! A `TreeDBM` file is a single flat keyspace, while [`ReadStore`] and
-//! [`WriteStore`] are addressed by `(table, key)`. Records are therefore
-//! stored under `table-name || 0x00 || key`. The framing is
-//! prefix-free — table names are validated NUL-free, so no framed
-//! prefix is a prefix of another — which makes each table a contiguous
-//! run whose internal order is the caller's key order, and makes
-//! `for_each`, `range` and `is_empty` prefix scans. The framing is
-//! internal: nothing outside this module sees it, and no file written
-//! by another backend is readable here or vice versa.
-//!
-//! # Atomicity
-//!
-//! [`WriteStore::write`] buffers the closure's puts and removes,
-//! answers in-closure reads from that buffer over the database, and on
-//! `Ok` applies the whole buffer in one `ProcessMulti` batch (through
-//! `tkrzw_dbm_process_multi`); on `Err` the buffer is dropped and
-//! nothing is written. `ProcessMulti` locks every named record for the
-//! duration, so the batch lands as a unit against any other reader or
-//! writer.
-//!
-//! Every commit then calls `Synchronize(hard=false)`: on a file-backed
-//! store buffered data is flushed to the operating system, so once the
-//! call returns the file is consistent and visible to any reader, and
-//! the write survives a process crash. It is not yet on the device.
-//! [`WriteStore::compact`] is the hard sync (`Synchronize(hard=true)`),
-//! the one point at which a file-backed store reaches stable storage.
-//!
-//! **That split is measured, not assumed.** `hard=true` on every commit
-//! costs +1.18–1.85 ms per commit here, because `TreeDBM` is mmap-backed
-//! and the sync is two `msync(MS_SYNC)` calls over the whole mapped
-//! region (~539 KiB) however few records the batch touched — a 13–31×
-//! per-commit regression on a path the C ABI runs synchronously from a
-//! keystroke. `docs/findings/perf-train-commit-fsync-2026-09-09.md`
-//! carries the measurement and the decision.
-//!
-//! `compact` is no longer where `pinyin_save` reaches storage, though.
-//! `UserStore::save` still calls it, but since the libpinyin session
-//! moved into memory (#621) the store it compacts is the `BabyDBM` of
-//! [`WriteStore::create_in_memory`], which has no file: a session's
-//! commits stay in process memory until a save, and that store's
-//! rebuild and synchronize have nothing to act on. The profile
-//! `pinyin_save` writes goes out through `write_user_index` and the
-//! user bigram's `save_db`, which synchronize soft (`hard=false`)
-//! before closing — the level the pin's own `save_db` uses
-//! (`chewing_large_table2_tkrzwdb.cpp:126`,
-//! `phrase_large_table3_tkrzwdb.cpp:117`, `ngram_tkrzwdb.cpp:80` at
-//! `074a2219`).
-//!
-//! What `TreeDBM` cannot give at any sync level is crash-*atomic*
-//! application: it has no write-ahead log, so a crash *during* the
-//! `ProcessMulti` apply can leave part of a batch on disk.
-//! This backend can tear mid-batch. That residual is the documented
-//! contract difference — recorded here rather than papered over,
-//! because closing it would need a WAL tkrzw does not offer without
-//! changing the file format libpinyin installs must share.
-//!
-//! # Platform and the library build
-//!
-//! Linux-first, like the other evaluation backend: paths are handed to
-//! tkrzw as bytes. The library must be discoverable via `pkg-config`
-//! and must ship `tkrzw_langc.h`; `build.rs` says as much when it is
-//! missing.
-//!
-//! The old C++ binding had to warn against distro tkrzw builds that
-//! break the `RecordProcessor::NOOP`/`REMOVE` pointer-identity
-//! protocol, because the shim's own processor objects had to match
-//! sentinel addresses across the ABI (the bisect is recorded in
-//! `docs/findings/store-key-ordering.md`). The C API removes that
-//! failure mode by construction: a callback's return value is compared
-//! against the `TKRZW_REC_PROC_NOOP`/`TKRZW_REC_PROC_REMOVE` values
-//! *inside* libtkrzw, and this module returns those values by reading
-//! the library's own globals, so client and library cannot disagree
-//! about what a sentinel is.
-//!
-//! What the C API cannot remove is a libtkrzw that disagrees with
-//! *itself*. Past the wrapper's comparison the sentinel is the C++
-//! `string_view` again, recognised by the address of its backing bytes,
-//! and a library built with GCC's LTO before tkrzw 1.0.34 holds several
-//! copies of those bytes (Ubuntu's 1.0.27 and 1.0.32 packages; a source
-//! build under Arch's default flags). Against such a library this
-//! backend opens and writes without an error and is wrong three ways:
-//! removing an absent record stores one, removing a stored record
-//! leaves it in place — each carrying the sentinel's five bytes as its
-//! value — and on the two file classes the rebuild behind
-//! [`WriteStore::compact`] fails with status 6 (`CANCELED_ERROR`).
-//! The in-memory container of [`WriteStore::create_in_memory`] shares
-//! the first two and not the third: `BabyDBM`'s rebuild does nothing,
-//! so compacting a libpinyin session cannot fail this way, and what is
-//! left there is the two removal faults, whose writes report success.
-//! tkrzw 1.0.34 backs each sentinel with one named array and is sound
-//! under the same flags; the C API's two values and its callback
-//! contract are the same before and after. Nothing here checks for the
-//! fault at open. The store suite's
-//! `tkrzw_library_honours_its_sentinel_protocol` names it, and
-//! `docs/findings/tkrzw-distro-compat.md` carries the measurements.
+//! The shim needs a C++17 compiler and tkrzw headers matching the linked
+//! library's C++ ABI. The probe-certified runtime is mandatory for every
+//! build and launch (`tools/tkrzw/runtime.sh`). Ubuntu's defective LTO and
+//! Bsymbolic builds can break sentinel or comparator identity; the shim
+//! still uses the library's own RecordProcessor sentinel objects and does
+//! not repair a defective library (`docs/findings/tkrzw-distro-compat.md`).
 //!
 //! # Unsafe waiver
 //!
-//! This module and its `ffi` each carry an explicit
-//! `expect(unsafe_code)`: bindgen's declarations are unsafe by nature,
-//! and the callback plumbing needs a handful of hand-written `unsafe`
-//! blocks (raw token derefs, documented at each site). This module
-//! needs its own, unlike the Kyoto Cabinet backend's safe wrapper — the
-//! `unsafe extern "C"` record callbacks (`walk_row`, `get_value`,
-//! `apply_one`) and the `unsafe impl Send`/`Sync` for `Db` live here,
-//! not in `ffi`. That waiver is scoped to the tkrzw
-//! backend by decision — the workspace outside it stays `deny` — and it
-//! waives safety ceremony, not correctness: the shared read and write
-//! suites gate this backend like any other.
+//! Unsafe declarations and record callbacks remain scoped to this backend
+//! and its ffi module. Each block states its lifetime/pointer invariant.
+//! Database operations are internally synchronized; Open completes before
+//! sharing and Drop closes exclusively after all local iterators are gone.
 #![expect(
     unsafe_code,
     reason = "FFI shim over libtkrzw; every block carries a SAFETY comment"
@@ -173,24 +64,23 @@ use std::ptr::NonNull;
 use crate::common::{fill_buffered, framed, in_bounds, table_prefix, validate_path};
 use crate::{Flow, ReadStore, StoreError, WriteStore, WriteTxn};
 
-/// `TKRZW_STATUS_SUCCESS` — pinned by number so an upstream renumbering
+/// `OXTKRZW_STATUS_SUCCESS` — pinned by number so an upstream renumbering
 /// fails the build instead of silently misclassifying statuses.
 const STATUS_SUCCESS: i32 = 0;
-/// `TKRZW_STATUS_SYSTEM_ERROR` — the codes that came from the operating
+/// `OXTKRZW_STATUS_SYSTEM_ERROR` — the codes that came from the operating
 /// system, reported as [`StoreError::Io`] so callers can branch on I/O
 /// failures the way they do for the other backends.
 const STATUS_SYSTEM_ERROR: i32 = 2;
-/// `TKRZW_STATUS_NOT_FOUND_ERROR` — how the ordered walk signals that
+/// `OXTKRZW_STATUS_NOT_FOUND_ERROR` — how the ordered walk signals that
 /// the records ran out, which ends a scan successfully rather than
 /// failing it.
 const STATUS_NOT_FOUND_ERROR: i32 = 7;
 
-// The C enum in tkrzw_langc.h is the ABI (numbering identical to the
-// C++ Status::Code it casts from); the generated constants must agree
-// with the pinned numbers above or every mapping below is wrong.
-const _: () = assert!(ffi::TKRZW_STATUS_SUCCESS == STATUS_SUCCESS as u32);
-const _: () = assert!(ffi::TKRZW_STATUS_SYSTEM_ERROR == STATUS_SYSTEM_ERROR as u32);
-const _: () = assert!(ffi::TKRZW_STATUS_NOT_FOUND_ERROR == STATUS_NOT_FOUND_ERROR as u32);
+// The shim checks these codes against C++ Status::Code; its generated
+// constants must also agree with the pinned numbers above.
+const _: () = assert!(ffi::OXTKRZW_STATUS_SUCCESS == STATUS_SUCCESS as u32);
+const _: () = assert!(ffi::OXTKRZW_STATUS_SYSTEM_ERROR == STATUS_SYSTEM_ERROR as u32);
+const _: () = assert!(ffi::OXTKRZW_STATUS_NOT_FOUND_ERROR == STATUS_NOT_FOUND_ERROR as u32);
 
 // ── errors ────────────────────────────────────────────────────────
 
@@ -211,14 +101,14 @@ fn status_message(code: i32, message: &str) -> String {
 /// UTF-8, so they are taken lossily: no input can panic (constitution
 /// §4), and a mangled message must not turn into one.
 fn last_status() -> (i32, String) {
-    // SAFETY: `tkrzw_get_last_status` only reads thread-local state
+    // SAFETY: `oxtkrzw_get_last_status` only reads thread-local state
     // this thread owns and returns the struct by value.
-    let status = unsafe { ffi::tkrzw_get_last_status() };
+    let status = unsafe { ffi::oxtkrzw_get_last_status() };
     let message = if status.message.is_null() {
         Vec::new()
     } else {
         // SAFETY: the message pointer is non-null (checked above) and
-        // points into libtkrzw's thread-local NUL-terminated buffer; the
+        // points into the shim's thread-local NUL-terminated buffer; the
         // copy below happens before any other tkrzw call on this thread
         // can overwrite that buffer.
         unsafe { CStr::from_ptr(status.message) }
@@ -249,7 +139,7 @@ fn check(ok: bool) -> Result<(), StoreError> {
     if ok { Ok(()) } else { Err(status_error()) }
 }
 
-/// Like [`check`], but `TKRZW_STATUS_NOT_FOUND_ERROR` means "the walk
+/// Like [`check`], but `OXTKRZW_STATUS_NOT_FOUND_ERROR` means "the walk
 /// ended" (or, for an existence check, "no such record"), so it comes
 /// back as `Ok(true)` instead of an error. The code alone decides; the
 /// message is copied only when the status is a failure.
@@ -257,29 +147,29 @@ fn check_end(ok: bool) -> Result<bool, StoreError> {
     if ok {
         return Ok(false);
     }
-    // SAFETY: `tkrzw_get_last_status_code` only reads thread-local state
+    // SAFETY: `oxtkrzw_get_last_status_code` only reads thread-local state
     // this thread owns; it leaves the message region untouched, so
     // `status_error` below still reads this call's message.
-    if unsafe { ffi::tkrzw_get_last_status_code() } == STATUS_NOT_FOUND_ERROR {
+    if unsafe { ffi::oxtkrzw_get_last_status_code() } == STATUS_NOT_FOUND_ERROR {
         return Ok(true);
     }
     Err(status_error())
 }
 
-/// The `TKRZW_REC_PROC_NOOP` sentinel, read from the library's own
-/// global so the value this module returns is the value libtkrzw
-/// compares against — by construction, never by assumption.
+/// The `OXTKRZW_REC_PROC_NOOP` sentinel, read from the shim's own
+/// global. The shim translates this tag to the library's C++ NOOP object
+/// before returning from its RecordProcessor.
 fn rec_proc_noop() -> *const c_char {
-    // SAFETY: the global is initialised when libtkrzw is loaded and is
+    // SAFETY: the shim global has a constant pointer-tag value and is
     // never written afterwards; reading the pointer value is a plain
     // load of constant data.
-    unsafe { std::ptr::addr_of!(ffi::TKRZW_REC_PROC_NOOP).read() }
+    unsafe { std::ptr::addr_of!(ffi::OXTKRZW_REC_PROC_NOOP).read() }
 }
 
-/// The `TKRZW_REC_PROC_REMOVE` sentinel, read as [`rec_proc_noop`] is.
+/// The `OXTKRZW_REC_PROC_REMOVE` sentinel, read as [`rec_proc_noop`] is.
 fn rec_proc_remove() -> *const c_char {
     // SAFETY: as `rec_proc_noop` — a load of a constant global.
-    unsafe { std::ptr::addr_of!(ffi::TKRZW_REC_PROC_REMOVE).read() }
+    unsafe { std::ptr::addr_of!(ffi::OXTKRZW_REC_PROC_REMOVE).read() }
 }
 
 /// A key or value length as the C API's `int32_t`. tkrzw sizes records
@@ -303,33 +193,33 @@ fn past_upper(key: &[u8], hi: Bound<&[u8]>) -> bool {
 
 // ── handles ───────────────────────────────────────────────────────
 
-/// An open database, closed and freed exactly once when dropped.
-struct Db(NonNull<ffi::TkrzwDBM>);
+/// A database, closed if opened and freed exactly once when dropped.
+struct Db(NonNull<ffi::OxTkrzwDBM>);
 
 impl Drop for Db {
     fn drop(&mut self) {
-        // SAFETY: `self.0` came from `tkrzw_dbm_open`, has not been
-        // passed to `tkrzw_dbm_close` before (this Drop is its only
+        // SAFETY: `self.0` came from `oxtkrzw_dbm_open`, has not been
+        // passed to `oxtkrzw_dbm_close` before (this Drop is its only
         // call site, and it runs once), and no iterator can still hold
         // a position into it: iterators never escape `scan`, which
         // returns before the store holding this handle can drop.
         // Close's own status is ignored — Drop cannot propagate it, and
         // every write commit has already synchronized explicitly.
-        unsafe { ffi::tkrzw_dbm_close(self.0.as_ptr()) };
+        unsafe { ffi::oxtkrzw_dbm_close(self.0.as_ptr()) };
     }
 }
 
-// SAFETY: the handle wraps a PolyDBM, whose documented contract is that
+// SAFETY: each concrete DBM documents that
 // all operations except Open and Close are thread-safe — the database
 // carries its own locking — so a handle can be moved between threads
 // and shared by reference (which is also what lets the store keep `get`
 // and `write` on `&self`). The two excluded operations cannot race
-// here: `tkrzw_dbm_open` completes before the handle exists to share,
-// and `tkrzw_dbm_close` runs in Drop, which holds the handle
+// here: `oxtkrzw_dbm_open` completes before the handle exists to share,
+// and `oxtkrzw_dbm_close` runs in Drop, which holds the handle
 // exclusively. The last-status channel the error mapping reads is
 // thread-local, so calls from other threads cannot interleave with it.
 unsafe impl Send for Db {}
-// SAFETY: same argument as Send — PolyDBM operations (other than Open/Close,
+// SAFETY: same argument as Send — concrete DBM operations (other than Open/Close,
 // which cannot race here) are internally synchronised.
 unsafe impl Sync for Db {}
 
@@ -339,15 +229,15 @@ unsafe impl Sync for Db {}
 /// and destroyed before the database handle can go away, so the
 /// DBM-outlives-iterator invariant holds by construction. The raw
 /// pointer keeps it `!Send`/`!Sync`, which nothing here needs.
-struct Iter(NonNull<ffi::TkrzwDBMIter>);
+struct Iter(NonNull<ffi::OxTkrzwDBMIter>);
 
 impl Drop for Iter {
     fn drop(&mut self) {
-        // SAFETY: `self.0` came from `tkrzw_dbm_make_iterator` on a
+        // SAFETY: `self.0` came from `oxtkrzw_dbm_make_iterator` on a
         // database this thread still holds open, and has not been
-        // passed to `tkrzw_dbm_iter_free` before (this Drop is its only
+        // passed to `oxtkrzw_dbm_iter_free` before (this Drop is its only
         // call site, and it runs once).
-        unsafe { ffi::tkrzw_dbm_iter_free(self.0.as_ptr()) };
+        unsafe { ffi::oxtkrzw_dbm_iter_free(self.0.as_ptr()) };
     }
 }
 
@@ -365,12 +255,11 @@ pub struct TkrzwStore {
 
 fn open_hash(path: &Path) -> Result<TkrzwStore, StoreError> {
     validate_path(path)?;
-    let params = c"dbm=hash,no_create=true";
     let path = CString::new(path.as_os_str().as_encoded_bytes())
         .map_err(|_| StoreError::InvalidInput("path contains NUL"))?;
-    // SAFETY: both strings outlive the call; the returned handle is
+    // SAFETY: the path string outlives the call; the returned handle is
     // NULL on failure, taken as an error immediately.
-    let db = unsafe { ffi::tkrzw_dbm_open(path.as_ptr(), false, params.as_ptr()) };
+    let db = unsafe { ffi::oxtkrzw_dbm_open(ffi::OXTKRZW_HASH as i32, path.as_ptr(), false, true) };
     let Some(db) = NonNull::new(db) else {
         return Err(status_error());
     };
@@ -382,12 +271,11 @@ fn open_hash(path: &Path) -> Result<TkrzwStore, StoreError> {
 
 fn open_hash_create(path: &Path) -> Result<TkrzwStore, StoreError> {
     validate_path(path)?;
-    let params = c"dbm=hash";
     let path = CString::new(path.as_os_str().as_encoded_bytes())
         .map_err(|_| StoreError::InvalidInput("path contains NUL"))?;
-    // SAFETY: both strings outlive the call; the returned handle is
+    // SAFETY: the path string outlives the call; the returned handle is
     // NULL on failure, taken as an error immediately.
-    let db = unsafe { ffi::tkrzw_dbm_open(path.as_ptr(), true, params.as_ptr()) };
+    let db = unsafe { ffi::oxtkrzw_dbm_open(ffi::OXTKRZW_HASH as i32, path.as_ptr(), true, false) };
     let Some(db) = NonNull::new(db) else {
         return Err(status_error());
     };
@@ -397,14 +285,12 @@ fn open_hash_create(path: &Path) -> Result<TkrzwStore, StoreError> {
     })
 }
 
-/// `BabyDBM`, tkrzw's on-memory ordered container, through PolyDBM's
-/// empty-path form (the same form the user bigram's `TinyDBM` takes
-/// below): ordered like `TreeDBM`, so the table framing's prefix walks
-/// and `jump`s hold, and bound to no file.
+/// A directly constructed `BabyDBM`, ordered like `TreeDBM` and bound to
+/// no file, so framed prefix walks and lower-bound jumps still hold.
 fn open_in_memory() -> Result<TkrzwStore, StoreError> {
-    // SAFETY: both strings outlive the call; the returned handle is
+    // SAFETY: the path string outlives the call; the returned handle is
     // NULL on failure, taken as an error immediately.
-    let db = unsafe { ffi::tkrzw_dbm_open(c"".as_ptr(), true, c"dbm=baby".as_ptr()) };
+    let db = unsafe { ffi::oxtkrzw_dbm_open(ffi::OXTKRZW_BABY as i32, c"".as_ptr(), true, false) };
     let Some(db) = NonNull::new(db) else {
         return Err(status_error());
     };
@@ -416,20 +302,15 @@ fn open_in_memory() -> Result<TkrzwStore, StoreError> {
 
 fn open(path: &Path, writable: bool) -> Result<TkrzwStore, StoreError> {
     validate_path(path)?;
-    // `dbm=tree` selects TreeDBM; `no_create=true` reproduces
-    // OPEN_NO_CREATE, by which a read-only open fails when the file is
-    // missing instead of creating it.
-    let params = if writable {
-        c"dbm=tree"
-    } else {
-        c"dbm=tree,no_create=true"
-    };
+    // Default TreeDBM tuning; read-only opens require an existing file.
     let path = CString::new(path.as_os_str().as_encoded_bytes())
         .map_err(|_| StoreError::InvalidInput("path contains NUL"))?;
-    // SAFETY: both strings outlive the call; the returned handle is
+    // SAFETY: the path string outlives the call; the returned handle is
     // NULL on failure, taken as an error immediately — the failure's
     // status is already set by the call.
-    let db = unsafe { ffi::tkrzw_dbm_open(path.as_ptr(), writable, params.as_ptr()) };
+    let db = unsafe {
+        ffi::oxtkrzw_dbm_open(ffi::OXTKRZW_TREE as i32, path.as_ptr(), writable, !writable)
+    };
     let Some(db) = NonNull::new(db) else {
         return Err(status_error());
     };
@@ -464,7 +345,7 @@ struct ScanCtx<'a, F> {
     row: F,
 }
 
-/// The `tkrzw_dbm_iter_process` record callback: assembles the borrowed
+/// The `oxtkrzw_dbm_iter_process` record callback: assembles the borrowed
 /// key and value slices, frames out the table prefix, and dispatches to
 /// the visitor. The slices borrow tkrzw's record memory and are valid
 /// only until this returns; `row` copies whatever it must retain.
@@ -499,7 +380,7 @@ where
     // SAFETY: `arg` is the address of the `ScanCtx<F>` local in `scan_rows`,
     // passed as the callback argument together with `walk_row::<F>`, so
     // the cast names the type it was made from. Only this callback receives it,
-    // only the one `tkrzw_dbm_iter_process` call that took the argument
+    // only the one `oxtkrzw_dbm_iter_process` call that took the argument
     // can invoke the callback, and that call returns before `scan_rows`
     // drops its context — so the reference lives for every invocation.
     // Nothing else aliases the context: the walk is single-threaded and
@@ -544,7 +425,7 @@ struct Fill<'a> {
     found: bool,
 }
 
-/// The `tkrzw_dbm_process` record callback for a point read: assembles
+/// The `oxtkrzw_dbm_process` record callback for a point read: assembles
 /// the borrowed value slice and copies it into the caller's buffer. This
 /// is the single copy a point read whose result outlives the call needs.
 /// A missing record invokes the callback with a null value pointer (the
@@ -572,7 +453,7 @@ unsafe extern "C" fn get_value(
         };
         // SAFETY: `arg` is the address of the `Fill` local in the
         // calling `db_get`, passed as the callback argument. Only this
-        // callback receives it, only the one `tkrzw_dbm_process` call that
+        // callback receives it, only the one `oxtkrzw_dbm_process` call that
         // took the argument can invoke the callback, and that call returns
         // before the local is read or dropped.
         let fill = unsafe { &mut *(arg.cast::<Fill<'_>>()) };
@@ -596,7 +477,7 @@ struct Mutation {
     remove: bool,
 }
 
-/// The `tkrzw_dbm_process_multi` record callback: writes this
+/// The `oxtkrzw_dbm_process_multi` record callback: writes this
 /// mutation's value, or removes the record. A removal of a record that
 /// exists returns the REMOVE sentinel; a removal of an absent record —
 /// signalled by the null `existing_value`, exactly as in
@@ -614,7 +495,7 @@ unsafe extern "C" fn apply_one(
 ) -> *const c_char {
     // SAFETY: `arg` is the address of a `Mutation` in the caller's
     // batch, passed as the callback argument; the batch outlives the
-    // one `tkrzw_dbm_process_multi` call that can invoke this.
+    // one `oxtkrzw_dbm_process_multi` call that can invoke this.
     let mutation = unsafe { &*(arg.cast::<Mutation>()) };
     if mutation.remove {
         if existing_value.is_null() {
@@ -633,13 +514,13 @@ unsafe extern "C" fn apply_one(
 
 // ── engine-level operations ───────────────────────────────────────
 
-/// The record count — `tkrzw_dbm_count`, which returns it or -1 on
+/// The record count — `oxtkrzw_dbm_count`, which returns it or -1 on
 /// failure (the failure reason lands in the thread-local last status,
 /// like every other call).
 fn db_count(db: &Db) -> Result<u64, StoreError> {
     // SAFETY: the handle is open; the call only reads the database's
     // record counter and touches no borrowed buffers.
-    let count = unsafe { ffi::tkrzw_dbm_count(db.0.as_ptr()) };
+    let count = unsafe { ffi::oxtkrzw_dbm_count(db.0.as_ptr()) };
     if count >= 0 {
         return Ok(u64::try_from(count).unwrap_or(0));
     }
@@ -656,12 +537,12 @@ fn holds_no_record(db: &Db, path: &Path) -> bool {
     is_healthy(db) && matches!(db_count(db), Ok(0)) && ends_before_records(path)
 }
 
-/// `tkrzw_dbm_is_healthy`: whether the open file was closed cleanly and
+/// `oxtkrzw_dbm_is_healthy`: whether the open file was closed cleanly and
 /// its size agrees with its metadata (`HashDBMImpl::OpenImpl`).
 fn is_healthy(db: &Db) -> bool {
     // SAFETY: the handle is open; the call only reads the database's
     // health flag and touches no borrowed buffers.
-    unsafe { ffi::tkrzw_dbm_is_healthy(db.0.as_ptr()) }
+    unsafe { ffi::oxtkrzw_dbm_is_healthy(db.0.as_ptr()) }
 }
 
 /// The size of a HashDBM file's metadata, its first bytes
@@ -724,7 +605,7 @@ fn db_get(db: &Db, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError> 
     // length; the callback argument is `&mut fill`, which outlives the
     // call; writable=false makes this a pure read.
     let ok = unsafe {
-        ffi::tkrzw_dbm_process(
+        ffi::oxtkrzw_dbm_process(
             db.0.as_ptr(),
             key.as_ptr().cast::<c_char>(),
             c_len(key)?,
@@ -738,7 +619,7 @@ fn db_get(db: &Db, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError> 
 }
 
 /// Whether `key` exists, an empty value included, copying nothing:
-/// `tkrzw_dbm_check`, which is `Get(key)` with no value string
+/// `oxtkrzw_dbm_check`, which is `Get(key)` with no value string
 /// (`tkrzw_langc.cc:608-620` at tkrzw 9ee8416) — the call libpinyin's
 /// suggestion walk opens with, `m_db->Get(query_key, nullptr)`
 /// (`phrase_large_table3_tkrzwdb.cpp:166` at 074a2219). A miss leaves
@@ -746,8 +627,9 @@ fn db_get(db: &Db, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError> 
 fn db_check(db: &Db, key: &[u8]) -> Result<bool, StoreError> {
     // SAFETY: the handle is open; `key` outlives the call with a true
     // length; nothing is copied out.
-    let ok =
-        unsafe { ffi::tkrzw_dbm_check(db.0.as_ptr(), key.as_ptr().cast::<c_char>(), c_len(key)?) };
+    let ok = unsafe {
+        ffi::oxtkrzw_dbm_check(db.0.as_ptr(), key.as_ptr().cast::<c_char>(), c_len(key)?)
+    };
     check_end(ok).map(|missing| !missing)
 }
 
@@ -798,7 +680,7 @@ where
 fn drive_scan(
     db: &Db,
     shared: &ScanShared<'_>,
-    walk: ffi::tkrzw_record_processor,
+    walk: ffi::oxtkrzw_record_processor,
     arg: *mut c_void,
 ) -> Result<(), StoreError> {
     let prefix = shared.prefix;
@@ -813,7 +695,7 @@ fn drive_scan(
     // SAFETY: the handle is open. The returned iterator is freed by
     // `Iter`'s Drop at the end of this scope, before the database can
     // close, so no iterator can outlive its DBM.
-    let iter = unsafe { ffi::tkrzw_dbm_make_iterator(db.0.as_ptr()) };
+    let iter = unsafe { ffi::oxtkrzw_dbm_make_iterator(db.0.as_ptr()) };
     let Some(iter) = NonNull::new(iter) else {
         return Err(status_error());
     };
@@ -829,9 +711,9 @@ fn drive_scan(
     // `start` outlives the call with a true length.
     let positioned = unsafe {
         if start.is_empty() {
-            ffi::tkrzw_dbm_iter_first(iter.0.as_ptr())
+            ffi::oxtkrzw_dbm_iter_first(iter.0.as_ptr())
         } else {
-            ffi::tkrzw_dbm_iter_jump(
+            ffi::oxtkrzw_dbm_iter_jump(
                 iter.0.as_ptr(),
                 start.as_ptr().cast::<c_char>(),
                 c_len(&start)?,
@@ -849,7 +731,7 @@ fn drive_scan(
         // are the pair `scan_rows` made, the argument outliving this call,
         // and the callback honours the contract documented at `walk_row`.
         // writable=false keeps the walk a pure read.
-        let ok = unsafe { ffi::tkrzw_dbm_iter_process(iter.0.as_ptr(), walk, arg, false) };
+        let ok = unsafe { ffi::oxtkrzw_dbm_iter_process(iter.0.as_ptr(), walk, arg, false) };
         // The records ran out: the walk ended successfully.
         if check_end(ok)? {
             break;
@@ -860,7 +742,7 @@ fn drive_scan(
         // SAFETY: as above. Next past the last record reports
         // NOT_FOUND_ERROR, which `check_end` turns into a successful
         // end of walk.
-        let ok = unsafe { ffi::tkrzw_dbm_iter_next(iter.0.as_ptr()) };
+        let ok = unsafe { ffi::oxtkrzw_dbm_iter_next(iter.0.as_ptr()) };
         if check_end(ok)? {
             break;
         }
@@ -875,9 +757,9 @@ fn drive_scan(
 /// Every mutation's C-side sizes were validated when the batch was
 /// built, so the pairs carry them without rewrapping.
 fn db_apply(db: &Db, mutations: &[Mutation]) -> Result<(), StoreError> {
-    let mut pairs: Vec<ffi::TkrzwKeyProcPair> = mutations
+    let mut pairs: Vec<ffi::OxTkrzwKeyProcPair> = mutations
         .iter()
-        .map(|mutation| ffi::TkrzwKeyProcPair {
+        .map(|mutation| ffi::OxTkrzwKeyProcPair {
             key_ptr: mutation.key.as_ptr().cast::<c_char>(),
             key_size: mutation.key_size,
             proc_: Some(apply_one),
@@ -899,8 +781,9 @@ fn db_apply(db: &Db, mutations: &[Mutation]) -> Result<(), StoreError> {
     // outlives the call, and the callback honours the contract
     // documented at `apply_one`. writable=true is what applies the
     // batch.
-    let ok =
-        unsafe { ffi::tkrzw_dbm_process_multi(db.0.as_ptr(), pairs.as_mut_ptr(), num_pairs, true) };
+    let ok = unsafe {
+        ffi::oxtkrzw_dbm_process_multi(db.0.as_ptr(), pairs.as_mut_ptr(), num_pairs, true)
+    };
     check(ok)
 }
 
@@ -913,26 +796,14 @@ fn db_apply(db: &Db, mutations: &[Mutation]) -> Result<(), StoreError> {
 /// [`WriteStore::compact`] the latter — see the module docs for why the
 /// split is where it is.
 fn db_synchronize(db: &Db, hard: bool) -> Result<(), StoreError> {
-    // SAFETY: the handle is open; the empty params string satisfies the
-    // non-null assertion the C wrapper makes; no file processor is
-    // wanted, so both its slots are null.
-    check(unsafe {
-        ffi::tkrzw_dbm_synchronize(
-            db.0.as_ptr(),
-            hard,
-            None,
-            std::ptr::null_mut(),
-            c"".as_ptr(),
-        )
-    })
+    // SAFETY: the handle is open and outlives the synchronization call.
+    check(unsafe { ffi::oxtkrzw_dbm_synchronize(db.0.as_ptr(), hard) })
 }
 
 /// Rebuilds the database file, reclaiming space.
 fn db_rebuild(db: &Db) -> Result<(), StoreError> {
-    // SAFETY: the handle is open; the empty params string satisfies the
-    // non-null assertion the C wrapper makes and selects tkrzw's
-    // default rebuild tuning.
-    check(unsafe { ffi::tkrzw_dbm_rebuild(db.0.as_ptr(), c"".as_ptr()) })
+    // SAFETY: the handle is open; Rebuild uses the class's default tuning.
+    check(unsafe { ffi::oxtkrzw_dbm_rebuild(db.0.as_ptr()) })
 }
 
 impl crate::RawReadStore for TkrzwStore {
@@ -1271,7 +1142,7 @@ fn db_set_record(db: &Db, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
     // call, with validated lengths. Set copies their bytes before returning;
     // it retains neither pointer. overwrite=true matches the pin's Set.
     let ok = unsafe {
-        ffi::tkrzw_dbm_set(
+        ffi::oxtkrzw_dbm_set(
             db.0.as_ptr(),
             key.as_ptr().cast::<c_char>(),
             key_size,
@@ -1311,10 +1182,11 @@ fn visit_db(
 impl crate::UserBigramDb for TkrzwUserBigramDb {
     fn empty() -> Result<Self, StoreError> {
         // `m_db = new TinyDBM;` — an in-memory database at the default
-        // bucket count; the empty path is PolyDBM's on-memory form.
-        // SAFETY: both strings outlive the call; the returned handle is
+        // bucket count, constructed without opening a file as at the pin.
+        // SAFETY: the path string outlives the call; the returned handle is
         // NULL on failure, taken as an error immediately.
-        let db = unsafe { ffi::tkrzw_dbm_open(c"".as_ptr(), true, c"dbm=tiny".as_ptr()) };
+        let db =
+            unsafe { ffi::oxtkrzw_dbm_open(ffi::OXTKRZW_TINY as i32, c"".as_ptr(), true, false) };
         let Some(db) = NonNull::new(db) else {
             return Err(status_error());
         };
