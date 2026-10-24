@@ -1,5 +1,118 @@
 # tkrzw concrete-class shim: evaluation (#1125)
 
+## Caller boundary: key-search memcmp contribution; STOP for ruling
+
+Recorded 2026-10-24T07:49:15Z. This section supersedes the queued follow-up status
+below. The new human boundary requires reporting key-search attribution
+and pin construction/tuning comparison before proceeding further.
+Key search contributes, so no further build, regeneration or measurement
+will start until a ruling.
+
+### Exact category split from retained original call graph
+
+| original operation | memcmp base/control exclusive Ir | prototype exclusive Ir | key-search delta | status/message delta |
+| --- | ---: | ---: | ---: | ---: |
+| get_raw.tree.miss | 8,431,677 | 8,501,700 | +70,023 | 0 |
+| get_raw.tree.retain | 13,018,822 | 13,187,264 | +168,442 | 0 |
+
+__memcmp_avx2_movbe is a leaf in each retained profile: it has no outgoing
+call edge. Its sole incoming edge, from libtkrzw's memcmp PLT stub, equals
+the leaf's exclusive cost exactly. That stub has only two incoming callers:
+tkrzw::LexicalKeyComparator and tkrzw::HashDBMImpl::ProcessImpl, the hash
+page-record key lookup below TreeDBM. There is no status/message caller.
+The script verifies that the sum of incoming stub-edge costs equals the
+stub's exclusive cost plus its outgoing descendant costs in every file.
+Base/control match. Thus the category split above accounts for all the
+leaf cost without assigning any of it to finish or its string temporary.
+
+For graph reconciliation only, these are the incoming edge costs, which
+include the stub and descendants and MUST NOT be added to the exclusive
+Ir table:
+
+| operation / edge caller | base/control | prototype |
+| --- | ---: | ---: |
+| miss / LexicalKeyComparator | 9,181,675 | 9,251,698 |
+| miss / HashDBMImpl::ProcessImpl | 5,358 | 6,217 |
+| retain / LexicalKeyComparator | 14,217,624 | 14,386,066 |
+| retain / HashDBMImpl::ProcessImpl | 174 | 174 |
+
+The miss graph has an extra lazy resolver traversal below the shared stub.
+Because the capture merges callers at that stub, these inclusive edges
+alone are not used to invent an exact leaf split between the two key-search
+parents. No operand-address/alignment explanation is proved. If required
+after the ruling, a scoped instruction-position capture with separated
+caller contexts and operand-address observations would resolve that finer
+question. No diagnostic runtime capture was run under this new boundary.
+
+### Source comparison with libpinyin 074a2219
+
+The pin was read with git show, not from the checkout's current HEAD:
+ChewingLargeTable2::attach at src/storage/chewing_large_table2_tkrzwdb.cpp:75-88;
+its load_db/save_db at :92-126; PhraseLargeTable3::attach at
+src/storage/phrase_large_table3_tkrzwdb.cpp:65-79 and load_db/save_db at
+:83-117; attach_options at src/storage/tkrzwdb_utils.h:32-45.
+
+| input | pin 074a2219 | shim / existing Rust adapter |
+| --- | --- | --- |
+| TreeDBM constructor | new TreeDBM for attach; automatic TreeDBM for file-copy temporary | std::make_unique<TreeDBM>(); no constructor arguments |
+| file implementation | default TreeDBM constructor | same default constructor: MemoryMapParallelFile |
+| read-only existing file | Open(path, false, OPEN_NO_CREATE) | Open(path, false, OPEN_NO_CREATE) |
+| writable/create file | Open(path, true, OPEN_DEFAULT) | Open(path, true, OPEN_DEFAULT) |
+| writable existing without create | attach_options can select true, OPEN_NO_CREATE | shim independently accepts writable=true, no_create=true; trait create uses true,false |
+| open tuning | Open's default OpenAdvanced TuningParameters() | same Open default; no tuning setter |
+| comparator input | no explicit comparator | no explicit comparator; key_comparator=nullptr default |
+| tree tuning supplied | max_page_size, max_branches, max_cached_pages = -1; page_update_mode=PAGE_UPDATE_DEFAULT | identical defaults |
+| inherited hash tuning supplied | update_mode/CRC/compression/restore = DEFAULT; offset_width, align_pow, num_buckets, fbp_capacity, min_read_size, cache_buckets = -1 | identical defaults |
+
+The installed tree header documents the MemoryMapParallelFile default and
+Open -> OpenAdvanced delegation. Its comparator default is lexical;
+existing files restore the stored comparator through the same library
+metadata path. The exact certified upstream
+[TreeDBM implementation at 9ee84164](https://raw.githubusercontent.com/estraier/tkrzw/9ee84164cf45e441aa8186418c03a02c9b89f08b/tkrzw_dbm_tree.cc)
+confirms the constructor and metadata comparator selection. No custom file,
+cache, page, comparator or hash tuning is supplied by this shim. OPEN_DEFAULT
+is 0 and OPEN_NO_CREATE is 2 in the installed file header.
+
+The pin's attach allocation is on the heap, as is the shim's. The pin's
+load/save temporary is automatic storage while the shim always owns its
+handle on the heap. This is an ownership/allocation-shape distinction,
+not a supplied tuning or file-option difference, and is not claimed to
+explain the memcmp counts. Matching parameters does not establish their
+runtime instruction-path cause. No constructor/tuning discrepancy was
+found that can be corrected from this source comparison.
+
+### Work already completed before the new boundary
+
+Under the prior explicit release, fast-path source checkpoint `974f98bc`
+was pushed before heavy work. The fast path was already compiled for
+clippy, 59 tkrzw tests, the standalone actual-shim status/exception check,
+and unordered shipping inputs. These passed; standard/nonstandard throws
+and allocation failure during error recording remained contained. Policy
+regeneration completed twice; the outputs matched each other and the
+checked-in policies byte-for-byte, with zero missing C++ paths.
+
+The status edit was folded into implementation
+`bb43abcd900aac7be409be82160d063b6493aed5`, directly on unchanged base
+`d7788072`. The complete tree stayed identical to the pre-fold checkpoint
+(tree `95541cd379d6a4aedd5d08a575a2444aa2a61b48`). All findings content was
+preserved. Checkpoint `5bfdd4a5e9728ab84eb738358c23b93ad532b0f8` was pushed
+and remote=head verified. No ordered follow-up build or follow-up
+measurement had started when the new boundary arrived. The completed
+validation/generation job exited normally; no heavy job remains owned by
+this lane. The prepared follow-up scripts were not launched further.
+The status change has no measured performance result.
+
+```sh
+$PY "$R/analysis/memcmp-callers.py"
+git -C /home/sheng/repos/libpinyin show 074a2219:src/storage/chewing_large_table2_tkrzwdb.cpp
+git -C /home/sheng/repos/libpinyin show 074a2219:src/storage/phrase_large_table3_tkrzwdb.cpp
+git -C /home/sheng/repos/libpinyin show 074a2219:src/storage/tkrzwdb_utils.h
+```
+
+The original profiles, follow-up validation output and exact scripts remain
+local; no raw capture is committed or uploaded. No PR or review action.
+
+
 ## Retained exclusive attribution and queued status fast path
 
 Recorded 2026-10-24T07:33:36Z, against the original measured base/prototype benchmarks
