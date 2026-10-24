@@ -404,9 +404,16 @@ impl UserTableInfo {
     #[must_use]
     pub fn to_text(&self) -> String {
         let database_format = self.database_format.as_deref().unwrap_or("UNKNOWN");
+        // `UserTableInfo::save` uses `%d`, not `%u`: the pin's fields are
+        // `int m_binary_format_version` / `int m_model_data_version`
+        // (`table_info.h:99-100`). A `table.conf` value outside `int` is
+        // stored as its C cast and written back signed.
         format!(
             "binary format version:{}\nmodel data version:{}\ndatabase format:{}\nopen counter:{}\n",
-            self.binary_format_version, self.model_data_version, database_format, self.open_counter
+            i32::from_ne_bytes(self.binary_format_version.to_ne_bytes()),
+            i32::from_ne_bytes(self.model_data_version.to_ne_bytes()),
+            database_format,
+            self.open_counter
         )
     }
 
@@ -1496,6 +1503,20 @@ mod tests {
             UserTableInfo::parse(negative.to_text().as_bytes()).expect("parse"),
             negative
         );
+    }
+
+    #[test]
+    fn an_out_of_int_version_is_written_signed() {
+        // The pin reads `%d` into an `int` and writes `%d`; a value past
+        // `INT_MAX` therefore appears as its two's-complement value.
+        let versions = SystemVersions::for_this_build(u32::MAX, 0x8000_0000);
+        let info = UserTableInfo::conform_to(&versions);
+        let text = info.to_text();
+        assert!(
+            text.starts_with("binary format version:-1\nmodel data version:-2147483648\n"),
+            "{text}"
+        );
+        assert_eq!(UserTableInfo::parse(text.as_bytes()).expect("parse"), info);
     }
 
     fn conform_with(token: &str) -> UserTableInfo {
