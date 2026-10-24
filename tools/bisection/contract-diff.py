@@ -588,11 +588,20 @@ def observed(result):
 # --------------------------------------------------------------------------
 
 def consumed(kit, parse_name, text, fresh=True):
+    """Parse a byte string and return the native parser's consumed byte count.
+
+    Allocate a new instance by default; with fresh=False, mutate the kit's
+    cached instance instead. The caller retains responsibility for freeing
+    new instances. parse_name selects a size_t-returning facade parser."""
     inst = kit.alloc() if fresh else kit.inst
     return kit.fn(parse_name, Z, P, S)(inst, text)
 
 
 def key_out(kit, text):
+    """Return the full-pinyin parser's success flag and raw 16-bit output key.
+
+    Use the cached instance and seed the key with the low 16 bits of
+    UNTOUCHED, retaining that numeric sentinel if the parser leaves it alone."""
     key = C.c_ushort(UNTOUCHED & 0xFFFF)
     ret = kit.fn('parse_full_pinyin', B, P, S, C.POINTER(C.c_ushort))(kit.inst, text, C.byref(key))
     return [ret, key.value]
@@ -601,17 +610,24 @@ def key_out(kit, text):
 # lane C, #532: the option word `pinyin_init` seeds is USE_TONE.
 @case('default-option-parse', issues=('532',))
 def _(k):
+    """Record consumed bytes for complete, incomplete and invalid default-option inputs.
+
+    Parse each spelling on a fresh instance without changing context options."""
     return {t.decode(): consumed(k, 'parse_more_full_pinyins', t)
             for t in (b'su3cl3', b'ni2hao', b'n', b'zzz', b'nihao', b'ni3')}
 
 
 @case('default-option-single-key', issues=('532',))
 def _(k):
+    """Record single-key return flags and raw keys under the initial context options.
+
+    Reuse the cached instance for the tone, incomplete and invalid spellings."""
     return {t.decode(): key_out(k, t) for t in (b'n', b'ni3', b'ni', b'a1', b'zhang', b'zzz')}
 
 
 @case('explicit-use-tone-parse', control=True, issues=('532',))
 def _(k):
+    """Set only USE_TONE and record consumed bytes for each spelling on a fresh instance."""
     k.fn('set_options', B, P, U)(k.ctx, 1 << 5)
     return {t.decode(): consumed(k, 'parse_more_full_pinyins', t)
             for t in (b'su3cl3', b'ni2hao', b'n', b'zzz', b'nihao')}
@@ -619,6 +635,7 @@ def _(k):
 
 @case('explicit-incomplete-parse', control=True, issues=('532',))
 def _(k):
+    """Set only PINYIN_INCOMPLETE and record consumed bytes on fresh instances."""
     k.fn('set_options', B, P, U)(k.ctx, 1 << 3)
     return {t.decode(): consumed(k, 'parse_more_full_pinyins', t)
             for t in (b'su3cl3', b'ni2hao', b'n', b'zzz', b'nihao')}
@@ -627,24 +644,34 @@ def _(k):
 # lane C, #587: valid pinyin followed by invalid UTF-8 keeps the prefix.
 @case('bytes-parse-more-full', issues=('587',))
 def _(k):
+    """Record full-pinyin byte consumption with invalid UTF-8 at several positions.
+
+    Use a fresh instance per byte string and repr(text) as the result key."""
     return {repr(t): consumed(k, 'parse_more_full_pinyins', t)
             for t in (b'ni\xffhao', b'nihao\xff', b'\xffnihao', b'ni\xe4\xbd', b'ni\xc0\x80hao')}
 
 
 @case('bytes-parse-more-double', issues=('587',))
 def _(k):
+    """Record double-pinyin byte consumption with invalid UTF-8 before, within and after input."""
     return {repr(t): consumed(k, 'parse_more_double_pinyins', t)
             for t in (b'ni\xffhk', b'nihk\xff', b'\xffnihk')}
 
 
 @case('bytes-parse-more-chewing', issues=('587',))
 def _(k):
+    """Record chewing byte consumption with invalid UTF-8 before, within and after input."""
     return {repr(t): consumed(k, 'parse_more_chewings', t)
             for t in (b'su\xff3', b'su3\xff', b'\xffsu3')}
 
 
 @case('bytes-add-phrase-pinyin', issues=('587',))
 def _(k):
+    """Add phrases with invalid pinyin bytes and enumerate the resulting library rows.
+
+    Write through an add iterator for library 7, then return its two success
+    flags and the phrase, reading and count from each exported row. Decode
+    and free exported strings; leave the get iterator allocated."""
     rows = []
     it = k.fn('begin_add_phrases', P, P, U)(k.ctx, 7)
     add = k.fn('iterator_add_phrase', B, P, S, S, I)
@@ -662,6 +689,12 @@ def _(k):
 
 @case('bytes-whole-argument', control=True, issues=('587',))
 def _(k):
+    """Collect whole-argument API results for invalid UTF-8 in readings or phrases.
+
+    Reuse the cached instance for single-key parsing, token lookup, a valid
+    multi-key parse and remembering input. Also attempt a library-7 phrase
+    addition, closing its add iterator. Return the flags, key and parsed byte
+    count; the allocated token array is not freed here."""
     # Entries that hand the whole argument to the pin keep refusing it.
     out = {'parse_full_pinyin': key_out(k, b'ni\xff')}
     arr = k.glib.g_array_new
@@ -680,6 +713,9 @@ def _(k):
 
 @case('bytes-zhuyin-parse-more', mode='zhuyin', issues=('587',))
 def _(k):
+    """Record zhuyin-facade full-pinyin and chewing consumption around invalid bytes.
+
+    Use a fresh instance per spelling and label results by parser and byte repr."""
     out = {}
     for name, texts in (('parse_more_full_pinyins', (b'ni3\xffhao3', b'ni3hao3\xff', b'\xffni3')),
                         ('parse_more_chewings', (b'su\xff3', b'su3\xff', b'\xffsu3'))):
@@ -692,6 +728,10 @@ def _(k):
 # with an invalid byte in its last token is refused whole: unchanged.
 @case('bytes-zhuyin-add-phrase', mode='zhuyin', control=True, issues=('587',))
 def _(k):
+    """Compare phrase-add return flags for valid, trailing-invalid and middle-invalid zhuyin.
+
+    Attempt each addition to library 7 with its own add iterator, closing it
+    before the next attempt; all attempts share the same context."""
     out = {}
     for label, reading in (('whole', 'ㄋㄧˇ ㄏㄠˇ'.encode()), ('tail-invalid', 'ㄋㄧˇ ㄏㄠˇ'.encode() + b'\xff'),
                            ('mid-invalid', 'ㄋㄧˇ'.encode() + b'\xff' + 'ㄏㄠˇ'.encode())):
@@ -702,6 +742,11 @@ def _(k):
 
 
 def sentence_out(k, inst, index):
+    """Return a sentence lookup flag and decoded text, None or an untouched marker.
+
+    Call the pinyin facade's indexed sentence accessor with an 8-bit index.
+    Free a returned non-NULL string through the kit, but never dereference
+    the seeded UNTOUCHED pointer."""
     out = P(UNTOUCHED)
     ret = k.fn('get_sentence', B, P, C.c_ubyte, C.POINTER(P))(inst, index, C.byref(out))
     if out.value == UNTOUCHED:
@@ -717,7 +762,20 @@ def sentence_out(k, inst, index):
 # 2193-2196; zhuyin.cpp:1468-1471,1548-1551). Observe each export separately,
 # both fresh and after a successful guess, including its subsequent state.
 def zero_key_guess_case(text, options, operation):
+    """Build a case comparing a guess operation on fresh and previously guessed instances.
+
+    Capture the input bytes, optional context options and operation name.
+    The returned case supports sentence guesses and the facade-specific
+    candidate guesses used by the registrations below."""
     def probe(k):
+        """Record parse, guess, sentence and candidate state for both seeding conditions.
+
+        Assert an explicitly requested option update and the seed sentence guess.
+        Parse text on a new instance for each condition, then call the selected
+        guess export at offset zero or with the prefix 你. Return consumed and
+        parsed lengths in bytes, the guess flag, and the sentence/count accessor
+        outputs, preserving untouched sentinels and freeing returned sentence text.
+        Neither instance is freed here."""
         if options is not None:
             assert k.fn('set_options', B, P, U)(k.ctx, options)
         out = {}
@@ -770,6 +828,10 @@ for _mode in ('pinyin', 'zhuyin'):
 # lane C, #542 rows 2, 6, 7, 20: out-params the pin leaves alone, or writes.
 @case('empty-parse-sentence', issues=('542',))
 def _(k):
+    """Record sentence access after empty or invalid parsing and on an unparsed instance.
+
+    Attempt a sentence guess in each state and retain its return flag plus
+    sentence output; parsed states also include the consumed byte count."""
     out = {}
     for t in (b'', b'!'):
         inst = k.alloc()
@@ -783,6 +845,11 @@ def _(k):
 
 @case('character-offset-out', issues=('542',))
 def _(k):
+    """Record character-offset return flags and whether the output length was written.
+
+    Use fresh full- or double-pinyin parses for matching, missing, empty and
+    keyless phrase queries. Seed each length with UNTOUCHED and replace only
+    an unchanged sentinel with the string "untouched" in the returned mapping."""
     fn = k.fn('get_character_offset', B, P, S, Z, C.POINTER(Z))
     out = {}
     full, double = 'parse_more_full_pinyins', 'parse_more_double_pinyins'
@@ -802,6 +869,10 @@ def _(k):
 
 @case('token-get-phrase-out', issues=('542',))
 def _(k):
+    """Query selected token IDs and preserve independent length and text sentinels.
+
+    Return each lookup flag, length output and decoded phrase; free any
+    returned non-NULL phrase without dereferencing an untouched pointer."""
     out = {}
     for token in (0xFFFFFFFF, 0x0DEADBEE, 0x01000000):
         length, text = U(UNTOUCHED), P(UNTOUCHED)
@@ -813,10 +884,16 @@ def _(k):
 
 
 class Arr(C.Structure):
+    """View GLib's public GArray data pointer and unsigned element count via ctypes."""
     _fields_ = [('data', P), ('len', U)]
 
 
 def tokens_of(k, phrase):
+    """Copy phrase-token IDs from a newly allocated four-byte-element GArray.
+
+    UTF-8 encode phrase and perform lookup on the cached instance. Ignore the
+    lookup return flag and copy the array's reported contents into a Python
+    list; the native array remains allocated."""
     new = k.glib.g_array_new
     new.restype, new.argtypes = P, [I, I, U]
     arr = new(0, 0, 4)
@@ -827,6 +904,14 @@ def tokens_of(k, phrase):
 
 @case('nth-pronunciation-range', issues=('542',))
 def _(k):
+    """Record pronunciation-array results at valid, boundary and out-of-range indices.
+
+    Use the first token for 你好 and report its pronunciation count. Include
+    raw two-byte key contents in ordinary observations only for in-range
+    indices; retain every content dump under a tilde-prefixed diagnostic key,
+    which observed excludes from comparison. Finally query an unknown token
+    using a seeded array and record the resulting length. Native arrays are
+    not freed here."""
     token = tokens_of(k, '你好')[0]
     new = k.glib.g_array_new
     new.restype, new.argtypes = P, [I, I, U]
@@ -857,6 +942,14 @@ def _(k):
 # lane C, #542 rows 14 and 19: the pin's function-static slots and u16 length.
 @case('static-key-slots', issues=('542',))
 def _(k):
+    """Observe key-pointer sharing and contents across two instances and one free.
+
+    Parse ni and hao separately, fetch both key and rest pointers, compare
+    addresses and snapshot the first pointers after the second lookup. Free
+    the first instance and read those pointers again. This exercises the
+    function-static slots in pinyin_get_pinyin_key and pinyin_get_pinyin_key_rest
+    in src/pinyin.cpp at pin 074a2219; it assumes the returned pointers can
+    be read for two and four bytes respectively."""
     first, second = k.alloc(), k.alloc()
     k.fn('parse_more_full_pinyins', Z, P, S)(first, b'ni')
     k.fn('parse_more_full_pinyins', Z, P, S)(second, b'hao')
@@ -876,11 +969,21 @@ def _(k):
 
 
 class Rest(C.Structure):
+    """Mirror the two unsigned 16-bit raw-input offsets of ChewingKeyRest.
+
+    The layout is _ChewingKeyRest in src/storage/chewing_key.h at pin
+    074a2219; begin and end measure byte positions in the parsed input."""
     _fields_ = [('begin', C.c_ushort), ('end', C.c_ushort)]
 
 
 @case('key-rest-length', issues=('542',))
 def _(k):
+    """Record return flags and 16-bit lengths for ordered, reversed and extreme offsets.
+
+    Seed each length with 0xBEEF before calling get_pinyin_key_rest_length.
+    The tested native calculation is _ChewingKeyRest::length in
+    src/storage/chewing_key.h, exposed by pinyin_get_pinyin_key_rest_length
+    in src/pinyin.cpp at pin 074a2219."""
     fn = k.fn('get_pinyin_key_rest_length', B, P, C.POINTER(Rest), C.POINTER(C.c_ushort))
     out = {}
     for begin, end in ((0, 2), (5, 2), (2, 2), (0, 65535), (65535, 0), (1, 65535)):
@@ -893,6 +996,10 @@ def _(k):
 # lane C, #542 rows 1, 3, 10, 21: return values of sentence and unload.
 @case('sentence-before-guess', issues=('542',))
 def _(k):
+    """Observe sentence outputs as one instance is parsed, guessed, reset and reparsed.
+
+    Query indices zero and 255 before the first guess, then index zero after
+    each later transition, including a new parse following a guess."""
     out = {}
     inst = k.alloc()
     out['fresh'] = [sentence_out(k, inst, 0), sentence_out(k, inst, 255)]
@@ -913,6 +1020,9 @@ def _(k):
 
 @case('sentence-before-guess-schemes', issues=('542',))
 def _(k):
+    """Read sentence zero after double-pinyin and chewing parses without guessing.
+
+    Use a separate new instance for each parsing scheme."""
     out = {}
     inst = k.alloc()
     k.fn('parse_more_double_pinyins', Z, P, S)(inst, b'nihk')
@@ -925,6 +1035,11 @@ def _(k):
 
 @case('guess-sentence-keyless', issues=('542',))
 def _(k):
+    """Record sentence guesses and outputs for separators, invalid input and a valid prefix.
+
+    Use fresh instances for initial cases, then separately observe keyless
+    reparsing after a guess and keyless guessing with the prefix 你. Return
+    consumed byte counts for initial cases and preserve sentence sentinels."""
     out = {}
     for t in (b"'", b"''", b'', b'!', b"nihao'"):
         inst = k.alloc()
@@ -948,6 +1063,12 @@ def _(k):
 
 @case('guess-candidates-keyless', issues=('542',))
 def _(k):
+    """Record candidate-guess flags and whether any candidates remain after parsing.
+
+    For each separator, invalid, empty or valid-prefix input, compare a fresh
+    instance with one that has already parsed ni and attempted a sentence
+    guess. Guess at byte offset zero with option mask 0x1E; reduce the returned
+    candidate count to a nonzero boolean."""
     # `0 == matrix.size()`: the candidates are freed and the answer is
     # false, whatever sentence rows an earlier guess left.
     out = {}
@@ -967,12 +1088,19 @@ def _(k):
 
 @case('unload-phrase-library-repeat', issues=('542',))
 def _(k):
+    """Return unload flags for repeated library 2 requests interleaved with other IDs.
+
+    Issue all requests against the same cached context in the listed order."""
     unload = k.fn('unload_phrase_library', B, P, U)
     return {'unload': [unload(k.ctx, i) for i in (2, 2, 2, 1, 3, 15, 2)]}
 
 
 @case('sentence-with-prefix-bytes', issues=('542',))
 def _(k):
+    """Observe prefix-based guessing with valid, empty and invalid UTF-8 prefixes.
+
+    Parse nihao on a fresh instance for each prefix, then return the guess
+    flag and sentence outputs at indices zero and one."""
     out = {}
     for label, prefix in (('invalid', b'\xff\xfe'), ('valid', '你'.encode()), ('empty', b''),
                           ('tail-invalid', '你'.encode() + b'\xff')):
@@ -985,6 +1113,12 @@ def _(k):
 
 # lane C, #542 rows 8 and 9: auxiliary text renders from the shared parse.
 def aux_matrix(k, parse_name, text, cursors):
+    """Collect all three auxiliary renderers at each byte cursor after the chosen parse.
+
+    Allocate and parse a separate instance for each renderer/cursor pair.
+    Return labels of the form renderer@cursor mapped to a flag and text,
+    None or "untouched"; decode and free returned strings. cursors must be
+    reiterable to visit the same positions for each renderer."""
     out = {}
     for fname in ('full_pinyin', 'double_pinyin', 'chewing'):
         for cursor in cursors:
@@ -998,6 +1132,11 @@ def aux_matrix(k, parse_name, text, cursors):
 
 @case('aux-text-full-parse', issues=('542',))
 def _(k):
+    """Render nihao with all auxiliary renderers at boundaries, mid-key and past-end cursors.
+
+    The selected byte cursors keep double-pinyin mid-key positions within
+    its supported one- or two-byte split in pinyin_get_double_pinyin_auxiliary_text
+    in src/pinyin.cpp at pin 074a2219."""
     # Mid-key cursors stay at one or two bytes into a key: the pin aborts on
     # a longer mid-key cursor of the double-pinyin renderer.
     return aux_matrix(k, 'parse_more_full_pinyins', b'nihao', (0, 1, 2, 3, 4, 5, 9))
@@ -1005,21 +1144,28 @@ def _(k):
 
 @case('aux-text-full-parse-apostrophe', issues=('542',))
 def _(k):
+    """Collect all auxiliary renderers around the apostrophe in a full-pinyin xi'an parse."""
     return aux_matrix(k, 'parse_more_full_pinyins', b"xi'an", (0, 1, 2, 4, 5))
 
 
 @case('aux-text-double-parse', issues=('542',))
 def _(k):
+    """Collect all auxiliary renderers at boundary, mid-key and past-end cursors for nihk."""
     return aux_matrix(k, 'parse_more_double_pinyins', b'nihk', (0, 1, 2, 3, 4, 9))
 
 
 @case('aux-text-chewing-parse', issues=('542',))
 def _(k):
+    """Collect all auxiliary renderers across and beyond the chewing input su3cl3."""
     return aux_matrix(k, 'parse_more_chewings', b'su3cl3', (0, 1, 2, 3, 4, 5, 6, 9))
 
 
 @case('aux-text-tones', issues=('542',))
 def _(k):
+    """Render tone-bearing full- and double-pinyin parses with all three auxiliary APIs.
+
+    Return each flag/text pair under a label containing the parser, renderer
+    and byte cursor, using a fresh instance for each observation."""
     # Tone digits ride the keys: the pinyin spelling appends them, the double
     # renderer appends them after a cut key, the zhuyin spelling marks them.
     out = {}
@@ -1031,7 +1177,12 @@ def _(k):
 
 
 def aux_cursors(k, text, cursors, functions=('full_pinyin', 'double_pinyin', 'chewing')):
-    """The listed aux functions at the listed cursors, after a full parse."""
+    """Collect selected auxiliary renderers at byte cursors after a full-pinyin parse.
+
+    Allocate a separate instance per renderer/cursor pair. Key the mapping
+    by decoded input, renderer and cursor; values contain the return flag
+    and decoded/freed text, None or "untouched". text must also decode as
+    UTF-8 for labels, and cursors must be reiterable across renderers."""
     out = {}
     for fname in functions:
         for cursor in cursors:
@@ -1045,9 +1196,14 @@ def aux_cursors(k, text, cursors, functions=('full_pinyin', 'double_pinyin', 'ch
 
 
 def aux_options(k, word, texts):
-    """The three aux functions under one option word. The double renderer
-    aborts the pin three bytes into a key (`pinyin.cpp:3488`), so it is read
-    at the cursors that stay within two."""
+    """Set context options and collect auxiliary text over each supplied byte string.
+
+    For full-pinyin and chewing renderers, visit every byte cursor from zero
+    through one past the input length. For double-pinyin, visit only zero,
+    one, two, end and one past end. pinyin_get_double_pinyin_auxiliary_text
+    in src/pinyin.cpp at pin 074a2219 aborts for mid-key splits beyond two
+    bytes; the restricted cursors avoid those splits for the registered
+    fixtures. Leave the option word set and merge the labelled observations."""
     k.fn('set_options', B, P, U)(k.ctx, word)
     out = {}
     for text in texts:
@@ -1061,26 +1217,36 @@ def aux_options(k, word, texts):
 # options; the pin's renderers read the first (`get_item(column, 0)`).
 @case('aux-text-divided-table', issues=('542',))
 def _(k):
+    """Render the selected full-pinyin inputs with tone and divided-syllable options enabled."""
     return aux_options(k, (1 << 5) | (1 << 7), (b'xian', b'jiangnan', b'xianan', b'tiananmen'))
 
 
 @case('aux-text-resplit-table', issues=('542',))
 def _(k):
+    """Render the selected full-pinyin inputs with tone and resplit options enabled."""
     return aux_options(k, (1 << 5) | (1 << 8), (b'zhengfu', b'xianan', b'dianxin', b'changan'))
 
 
 @case('aux-text-divided-and-resplit', issues=('542',))
 def _(k):
+    """Render ambiguous full-pinyin inputs with tone, divided and resplit options together."""
     return aux_options(k, (1 << 5) | (1 << 7) | (1 << 8), (b'xian', b'zhengfu', b'xianan'))
 
 
 @case('aux-text-fuzzy-keys', issues=('542',))
 def _(k):
+    """Render spellings with tone and Z/ZH, L/N and AN/ANG ambiguities enabled.
+
+    Set the options through aux_options, retaining its restricted
+    double-pinyin cursor set."""
     return aux_options(k, (1 << 5) | (1 << 12) | (1 << 15) | (1 << 17), (b'zongguo', b'nan', b'lan', b'zi', b'banggan'))
 
 
 @case('aux-text-no-parse', control=True, issues=('542',))
 def _(k):
+    """Record all auxiliary renderers at cursor zero on separate unparsed instances.
+
+    Preserve untouched output pointers and decode/free any returned text."""
     out = {}
     for fname in ('full_pinyin', 'double_pinyin', 'chewing'):
         inst = k.alloc()
@@ -1092,6 +1258,10 @@ def _(k):
 
 @case('aux-text-mixed-parses', issues=('542',))
 def _(k):
+    """Render one instance after double-pinyin parsing followed by full-pinyin parsing.
+
+    At byte cursor two, return each auxiliary renderer's flag and text,
+    None or untouched marker; decode and free returned strings."""
     # The matrix is the last parse, whatever mode made it.
     out = {}
     inst = k.alloc()
