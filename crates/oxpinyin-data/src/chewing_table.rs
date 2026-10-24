@@ -42,6 +42,13 @@ pub trait ChewingDbm {
     /// allocates only when a value outgrows it.
     fn get(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, DictError>;
 
+    /// Read one bigram row with the pin's checked-read shape. The default
+    /// is [`Self::get`]; a backend whose library checks the size and then
+    /// reads the body overrides it.
+    fn get_bigram(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, DictError> {
+        self.get(key, value)
+    }
+
     /// Whether `key` exists, an empty marker included, with no value bytes
     /// copied — the `SEARCH_CONTINUED` probe and the suggestion walk's
     /// opening check (`m_db->check`, `phrase_large_table3_kyotodb.cpp:206`
@@ -100,6 +107,12 @@ impl<S: oxpinyin_store::RawReadStore + Send + Sync> ChewingDbm for RawChewingDbm
     fn get(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, DictError> {
         self.store
             .get_raw(key, value)
+            .map_err(|e| DictError::Table(e.into()))
+    }
+
+    fn get_bigram(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, DictError> {
+        self.store
+            .get_bigram_raw(key, value)
             .map_err(|e| DictError::Table(e.into()))
     }
 

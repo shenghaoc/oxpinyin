@@ -25,7 +25,7 @@ use crate::dict::DictError;
 // `oxpinyin-datagen`'s writer: one written copy (`crate::row_format`).
 #[cfg(test)]
 use crate::row_format::phrase_index::encode_tokens;
-use crate::row_format::phrase_index::{decode_tokens, encode_ucs4_key};
+use crate::row_format::phrase_index::{decode_tokens, encode_ucs4_key, encode_ucs4_key_scalars};
 
 // ── PhraseTable ──────────────────────────────────────────────────
 
@@ -55,9 +55,22 @@ impl<D: ChewingDbm> PhraseTable<D> {
         if text.is_empty() {
             return Ok(Vec::new());
         }
-        let key = encode_ucs4_key(text);
+        self.search_key(&encode_ucs4_key(text))
+    }
+
+    /// [`Self::search`] over raw UCS-4 words, including surrogate or
+    /// above-Unicode values. The key is compared as stored, without
+    /// building a `char` or `str` from a non-scalar.
+    pub(crate) fn search_ucs4(&self, words: &[u32]) -> Result<Vec<u32>, DictError> {
+        if words.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.search_key(&encode_ucs4_key_scalars(words))
+    }
+
+    fn search_key(&self, key: &[u8]) -> Result<Vec<u32>, DictError> {
         let mut value = Vec::new();
-        if !self.dbm.get(&key, &mut value)? {
+        if !self.dbm.get(key, &mut value)? {
             return Ok(Vec::new());
         }
         decode_tokens(&value)

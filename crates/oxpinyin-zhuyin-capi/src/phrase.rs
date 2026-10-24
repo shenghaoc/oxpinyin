@@ -6,19 +6,21 @@ use std::os::raw::c_char;
 use crate::state::{instance_mut, instance_ref};
 use crate::types::{GUint, PhraseTokenT, ZhuyinInstance};
 
-/// Text accepted by the pin's UCS4 gate, or an unmatchable UCS4 span.
+/// Text accepted by the pin's UCS-4 gate: ordinary Rust text, or the raw
+/// UCS-4 words of a GLib-accepted non-scalar sequence.
 enum SegmentText {
     Unicode(String),
-    Unmatched(usize),
+    Ucs4(Vec<u32>),
 }
 
-/// 074a2219 pinyin.cpp:1450-1454 / zhuyin.cpp:969-973 compare the
-/// byte-walking `g_utf8_strlen` with `g_utf8_to_ucs4`'s written length.
-/// GLib 2.90.0 gutf8.c uses `g_utf8_get_char_extended`, not the scalar
-/// validity check in `g_utf8_get_char_validated`: surrogates and values
-/// above U+10FFFF pass, while malformed, partial and overlong bytes fail.
-/// Successful conversion walks the same complete sequences as strlen.
-/// A failed conversion leaves length zero, unequal to any nonempty input.
+/// Decode the C input at the pin's conversion boundary.
+///
+/// 074a2219 pinyin.cpp:1450-1454 / zhuyin.cpp:969-973 convert with GLib
+/// and require the byte-walked length to equal the converted length. The
+/// outward result is: valid scalar text stays text; a canonical
+/// historical sequence (surrogate, above-U+10FFFF or a five/six-byte
+/// form) becomes raw `u32` words; a malformed, partial or overlong
+/// sequence is the failed-conversion critical.
 fn segment_text(sentence: *const c_char) -> Option<SegmentText> {
     // SAFETY: The entry point checked for NULL; its C contract requires
     // a live NUL-terminated string for the duration of the call.
@@ -26,28 +28,9 @@ fn segment_text(sentence: *const c_char) -> Option<SegmentText> {
     if let Ok(text) = bytes.to_str() {
         return Some(SegmentText::Unicode(text.to_owned()));
     }
-    let mut length = 0;
-    // SAFETY: `sentence` is the live NUL-terminated string above; length
-    // is writable. NULL items_read rejects a trailing partial sequence;
-    // NULL error suppresses conversion errors, as at the pin.
-    let ucs4 = unsafe {
-        glib_sys::g_utf8_to_ucs4(
-            sentence,
-            -1,
-            std::ptr::null_mut(),
-            &raw mut length,
-            std::ptr::null_mut(),
-        )
-    };
-    if ucs4.is_null() {
-        return None;
-    }
-    // SAFETY: Successful conversion returns a GLib allocation, freed once.
-    unsafe { glib_sys::g_free(ucs4.cast()) };
-    // Rust-invalid bytes accepted by this converter contain a non-scalar
-    // UCS4 value. No Unicode dictionary phrase can span it, so final_step
-    // returns false with a character-sized all-null result (:382-397).
-    usize::try_from(length).ok().map(SegmentText::Unmatched)
+    oxpinyin_core::ucs4::decode(bytes.to_bytes())
+        .ok()
+        .map(SegmentText::Ucs4)
 }
 
 /// Segment an arbitrary sentence string into phrase tokens.
@@ -86,14 +69,11 @@ pub extern "C" fn zhuyin_phrase_segment(
         }
         return false;
     };
-    let text = match text {
-        SegmentText::Unicode(text) => text,
-        SegmentText::Unmatched(length) => {
-            inst.core.phrase_result = vec![oxpinyin_core::PhraseToken::new(0); length];
-            return false;
-        }
+    let outcome = match text {
+        SegmentText::Unicode(text) => inst.core.session.phrase_segment(&text),
+        SegmentText::Ucs4(words) => inst.core.session.phrase_segment_ucs4(&words),
     };
-    match inst.core.session.phrase_segment(&text) {
+    match outcome {
         Ok((matched, tokens)) => {
             inst.core.phrase_result = tokens;
             matched

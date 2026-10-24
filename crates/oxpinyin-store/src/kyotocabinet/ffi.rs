@@ -627,16 +627,39 @@ impl Db {
     /// Kyoto Cabinet 1.2.80). libpinyin's suggestion walk opens with the
     /// same call (`phrase_large_table3_kyotodb.cpp:206` at 074a2219).
     pub(crate) fn check(&self, key: &[u8]) -> Result<bool, StoreError> {
+        self.check_size(key).map(|size| size.is_some())
+    }
+
+    /// `kcdbcheck`'s value size, or `None` for a missing record. A
+    /// backend failure is a miss, as `Bigram::load` treats a failed
+    /// first read (`ngram_kyotodb.cpp:131-134` at 074a2219).
+    fn check_size(&self, key: &[u8]) -> Result<Option<usize>, StoreError> {
         // SAFETY: the handle is live and `key` outlives the call; the
         // call copies nothing out.
         let size = unsafe { sys::oxkc_db_check(self.handle, c_ptr(key), key.len()) };
         if size >= 0 {
-            return Ok(true);
+            return Ok(usize::try_from(size).ok());
         }
         if self.last_was_no_record() {
-            return Ok(false);
+            return Ok(None);
         }
         Err(self.error("kcdbcheck"))
+    }
+
+    /// `Bigram::load`'s checked read: the size check, then the body read
+    /// into exactly that size. A check that finds no record (or fails) is
+    /// a silent miss; a body read that fails or returns a different size
+    /// after the check succeeded is [`StoreError::ReadAfterCheck`], the
+    /// pin's `check_result(vsiz == get(...))` assert
+    /// (`ngram_kyotodb.cpp:131-139`).
+    pub(crate) fn get_bigram(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError> {
+        let Some(size) = self.check_size(key).unwrap_or(None) else {
+            return Ok(false);
+        };
+        match self.get(key, value) {
+            Ok(true) if value.len() == size => Ok(true),
+            _ => Err(StoreError::ReadAfterCheck),
+        }
     }
 
     /// Every record, copied out by one read-only `kcdbiterate`, in the

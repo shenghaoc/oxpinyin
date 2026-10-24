@@ -45,6 +45,13 @@ pub fn key(text: &str) -> Vec<u8> {
         .collect()
 }
 
+/// Encode raw UCS-4 words as the pin's little-endian key. No `char` or
+/// `str` is built, so a surrogate or above-Unicode word survives.
+#[must_use]
+pub fn key_ucs4(words: &[u32]) -> Vec<u8> {
+    words.iter().flat_map(|word| word.to_le_bytes()).collect()
+}
+
 /// A raw token-array entry, without sorting or deduplication.
 #[derive(Debug, Default)]
 pub struct PhraseTableEntry {
@@ -179,8 +186,22 @@ fn decode(bytes: &[u8]) -> u32 {
 /// Returns an incomplete-token error. Backend read failure is `SEARCH_NONE`,
 /// as at `phrase_large_table3_bdb.cpp:196-198` (pin 074a2219).
 pub fn search(db: &impl ReadStore, text: &str) -> Result<SearchResult, StoreError> {
+    search_key(db, &key(text))
+}
+
+/// Search an exact raw UCS-4 key with every library enabled — the
+/// non-scalar counterpart of [`search`].
+///
+/// # Errors
+/// Returns an incomplete-token error. Backend read failure is `SEARCH_NONE`,
+/// as at `phrase_large_table3_bdb.cpp:196-198` (pin 074a2219).
+pub fn search_ucs4(db: &impl ReadStore, words: &[u32]) -> Result<SearchResult, StoreError> {
+    search_key(db, &key_ucs4(words))
+}
+
+fn search_key(db: &impl ReadStore, key: &[u8]) -> Result<SearchResult, StoreError> {
     let mut result = SearchResult::default();
-    let Ok(Some(searched)) = db.read_with(TABLE, &key(text), |bytes| {
+    let Ok(Some(searched)) = db.read_with(TABLE, key, |bytes| {
         search_bytes(bytes, &mut result.tokens, |_| true)
     }) else {
         return Ok(SearchResult::default());

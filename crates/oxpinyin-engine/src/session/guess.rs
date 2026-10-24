@@ -137,6 +137,20 @@ where
         crate::phrase::phrase_segment(&self.dictionary, &self.model, sentence)
     }
 
+    /// [`Self::phrase_segment`] over raw UCS-4 words, including
+    /// surrogate or above-Unicode values. The dictionary compares stored
+    /// raw phrase keys; no `char` or `str` is built from a non-scalar.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the model's step-cost failures.
+    pub fn phrase_segment_ucs4(
+        &self,
+        sentence: &[u32],
+    ) -> Result<(bool, Vec<PhraseToken>), EngineError> {
+        crate::phrase::phrase_segment_ucs4(&self.dictionary, &self.model, sentence)
+    }
+
     /// Guesses a sentence seeded with prefix tokens — upstream
     /// `pinyin_guess_sentence_with_prefix` (`pinyin.cpp:1426-1441`):
     /// the prefix tokens join the virtual start as zero-cost initial
