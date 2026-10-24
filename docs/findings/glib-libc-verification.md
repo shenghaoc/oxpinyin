@@ -80,8 +80,31 @@ and `zhuyin-capi/src/sentence.rs`; `facade/src/export_rows.rs`,
 | Stored surrogates / above-Unicode values below `0x80000000`, with otherwise sound item/readings | Accepted runtime quirk, [non-scalar][non-scalar]. GLib emits extended UTF-8; Rust refuses the item. | Complete recorded source classification for the bounded text mechanism. Exercised U+D800 and U+110000 only: ten marked candidate/sentence/pinyin-export cases. Direct token getters, addon/prediction alternatives and journals are source-traced, not separate exercised witnesses. |
 | Embedded U+0000 in a declared phrase body | Accepted runtime quirk, [NUL][nul]. GLib stops per item; Rust retains zero until C marshalling refuses it. | Complete recorded source classification. Five marked candidate/sentence/pinyin-export cases. Dedup, prefix slices and NULL-output variants have source reasoning, not separate exercised controls. |
 | Values >= `0x80000000`; truncated, empty, overlong or inconsistent items; invalid readings; allocation failure | Pending classification here; outside #894's exact observations. Existing independent records retain their own scope. | Unverified as this partition set; no extension of #894 by analogy. |
-| `phrase_segment`: valid, empty, malformed UTF-8 accepted by GLib as non-scalars, rejected conversion, prior result preservation and diagnostics | Pending whole-boundary classification; direct GLib behavior currently retained. #918. | Partial inventory/issue trace, not completed by #894. Both facades' `phrase.rs::segment_text`, `ffi.rs::{cstr_to_parsed_prefix,cstr_to_strict,cstr_to_string}` and neighboring callers still need the full audit. |
+| `phrase_segment`: empty; well-bounded rejected `ff fe`; valid scalar conversion | Identical for the entry/result lifecycle described in [#918's audit](918-phrase-segment-source-audit.md); existing independent lookup/math records retain their scope. | Source established, both facades; inherited tests only, no new gate. Not a proof of every valid decoder path. |
+| `phrase_segment`: GLib-accepted non-scalar, consistent scalar-only keys/items, sound grams and successful backing-store reads, including a matching scalar prefix | Identical return/result/getter/diagnostic behavior; no observable session or persistent change from prefix consultation. | Complete bounded source argument in [#918's audit](918-phrase-segment-source-audit.md), three backend read paths. Inherited surrogate-in-`nihao` tests do not exercise every non-scalar or store state. |
+| `phrase_segment`: matching prefix, reached sound system gram plus 1–3-byte user gram, later GLib-accepted non-scalar | Defect: early return omits row 85's class-(c) warning. [Discrepancy](918-prefix-short-gram-discrepancy.md); not POLICY-ACCEPTED. | Source-established, both facades/all three wrappers; no fresh runtime test; early return unchanged. |
+| `phrase_segment`: bounded matching raw non-scalar key/item | Pin true/token vs Rust false/zeros; [proposed separate runtime quirk](918-nonscalar-token-result.md), not admitted. | Bounded source path complete; no new case/gate. |
+| `phrase_segment`: over-skipping byte walk, partial/short unsafe gram reads | Existing class (b) governs illegal reads; no fabricated deterministic pin output. Row 98's lookup warning is skipped on the non-scalar shortcut. | Source and applicable inherited safety records; length-walk instructions read on amd64/arm64. |
+| `phrase_segment`: faulting prefix stores | [bdb format error](918-prefix-bdb-format-error.md) is an unadmitted diagnostic/state difference; [kc second-read assertion](918-prefix-kc-read-assert.md) owes class-(c) warning. Silent kc first-check/tkrzw returned errors have bounded equivalence. | Named paths traced in [follow-through](918-boundary-follow-through.md), including conditional bdb binary branch on both architectures. No runtime fault probes. |
+| Neighboring string helpers; other corrupt bounds, extreme lengths and allocation failure | Caller-specific outcomes and defects in [follow-through](918-boundary-follow-through.md); no blanket quirk admission or whole-process resource-failure equivalence. | Caller boundaries traced; the adjacent NULL/zero-copy binary outcome and extreme-length/allocation paths remain unverified. Full G1 removal and new behavior gates remain incomplete. |
 | Auxiliary UTF-8 substrings, tool Unicode categories, stored punctuation | Pending under G2/#925, G16/#926, G15/#1144 respectively. | Unverified outside their separately stated evidence; not covered by stored phrase text. |
+
+#918 source follow-through (oxpinyin `ae516625`, unchanged runtime from
+its `1c5d96b9` reading baseline): both `phrase.rs::segment_text` and
+`*_phrase_segment`; neighboring `ffi.rs` helper callers are listed in
+[the source audit](918-phrase-segment-source-audit.md#neighboring-helpers-and-shared-callers).
+Its pin citations include `pinyin.cpp:1446-1460`, `zhuyin.cpp:965-979`,
+`lookup/phrase_lookup.cpp:120-157,255-428`, and GLib
+`glib/gutf8.c:117-128,237-273,665-747,940-997`. Unlike the initial
+ledger pass, this follow-through reads the exact amd64/arm64 binaries
+where source left length-walk/conversion or BDB abort configuration
+unsettled; symbols and instruction offsets are in the linked records.
+No new runtime tests or measurements were performed. The ordinary
+scalar path already emits row 85's warning on `ShortLookupPredecessor`;
+the [implementation STOP](918-prefix-short-gram-discrepancy.md#partition-and-classification)
+concerns the requested unchanged non-scalar shortcut with a reached
+short gram. Sound-data equivalence is a length-sized zero-token result,
+not a zero-length result. No removal is cleared.
 
 GLib source evidence in #894 is `glib/gutf8.c:1035-1047,1054-1060`
 (`g_ucs4_to_utf8`), `:549-607` (`g_unichar_to_utf8`) and `:940-990`
