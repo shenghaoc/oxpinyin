@@ -113,11 +113,20 @@ canonical U1–U6 record including the final newline. The parent reads stopped
 child memory at every checkpoint. Linux reads `/proc`; macOS reads the shared
 Darwin libproc binding and reports Darwin-named fields: resident size and its
 peak, physical footprint and its interval/lifetime maxima, faults, page-ins,
-and disk bytes read and written. Memory sizes are KiB and counts stay counts;
-Linux-named fields stay unavailable on macOS. The worker reports its own
-resident peak at each handshake; a controller-side task-port read is only a
-fallback. A value neither source provides is unavailable, never zero.
-Memory-run timings are excluded.
+disk bytes read and written, and the host instruction and cycle counters.
+Memory sizes are KiB and counts stay counts; Linux-named fields stay
+unavailable on macOS, and Linux output is unchanged. The counters are
+`instructions` and `cycles`, each with
+`instructions_available` and `cycles_available`; they are raw XNU
+`rusage_info_v4` counts, not Valgrind Ir, and are never written to a
+Linux-named field. XNU fills them only when `CONFIG_PERVASIVE_CPI` is built
+and the host backs them; otherwise they are zero with no separate marker.
+Before trusting either one, the adapter probes the host by requiring the
+counter to advance across real work and a forced context switch. A counter
+that does not advance is reported unavailable, never as zero. The worker
+reports its own resident peak at each handshake; a controller-side task-port
+read is only a fallback. A value neither source provides is unavailable, never
+zero. Memory-run timings are excluded.
 
 `--stage verify` stops after verification and separate hostile probes.
 `--stage instrument` also checks Linux Callgrind Ir. Init uses two fresh
@@ -882,15 +891,33 @@ off, and forced frame pointers.
 ## Profiles
 
 ```sh
-tools/profile/run-w8-cycle.sh
+PINYIN_EXPORT_DIR="$EXPORT" PINYIN_MODEL_DIR="$MODEL" just profile-w8
 ```
 
-Stages oxpinyin-capi through `cargo cinstall --profile profiling` (the
-`profiling` profile keeps line tables and thin LTO) and samples the
-keystroke cycle with `samply`, falling back to `cargo flamegraph` or
-`perf`. Artifacts land in `target/profile/`;
-`tools/profile/extract-hot-stacks.py` summarises them.
-`PROFILE_REUSE_STAGE=1` skips the restage.
+The launcher stages oxpinyin-capi from the tkrzw cell through
+`cargo cinstall --profile profiling` (the `profiling` profile keeps line
+tables and thin LTO) and samples the keystroke cycle. It needs the exported
+tables, the pinned model20 cache, cargo-c, and a profiler. `PROFILE_REUSE_STAGE=1`
+skips the restage. Artifacts land in `target/profile/`;
+`tools/profile/extract-hot-stacks.py` summarises them. The save-only profile
+is unsymbolicated; the extractor reports raw frame addresses, and `samply load`
+can supply symbols interactively. Raw profiles are not committed.
+
+On Linux the profiler chain is unchanged: samply, then the flamegraph wrapper,
+then perf record, then Valgrind Callgrind. On macOS samply is required and the
+recipe supplies Homebrew's GLib, Berkeley DB, tkrzw and codec paths. The
+launcher stages the tkrzw C ABI and uses `tools/tkrzw/runtime.sh`'s `otool`
+resolution for the staged dylib; set `OXPINYIN_TKRZW_PREFIX` (the recipe does)
+when running the script directly. There is no `setarch`, `taskset` or
+`DYLD_LIBRARY_PATH`: disabling ASLR is unnecessary, Mach affinity is a cache
+hint rather than pinning, and the dylib's dependencies are absolute.
+
+`PERF_CPU` is refused on macOS for that affinity reason. `perf record` and
+its `perf_event_paranoid` hint are Linux-only and are skipped with a stated
+reason; the flamegraph and Valgrind fallbacks are likewise not used. A missing
+samply, cargo-c, export or model is a refusal, not a timing-only run. This
+macOS path has been exercised on arm64 only; the Linux launcher and its output
+are unchanged.
 
 ## Writing it up
 

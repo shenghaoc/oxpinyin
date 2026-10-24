@@ -11,6 +11,8 @@ COMMAND_TIMEOUT_SECONDS = 30
 
 LINUX_MEMORY_FIELDS = ('rss', 'rss_delta', 'peak_rss', 'anonymous', 'file_backed',
                        'private_dirty', 'pss', 'virtual_size', 'minor_faults', 'major_faults')
+DARWIN_COUNTER_FIELDS = ('instructions', 'cycles')
+DARWIN_AVAILABILITY_FIELDS = ('instructions_available', 'cycles_available')
 DARWIN_MEMORY_FIELDS = ('resident_kib', 'resident_peak_kib', 'physical_footprint_kib',
                         'physical_footprint_interval_max_kib',
                         'physical_footprint_lifetime_max_kib', 'faults', 'pageins',
@@ -83,8 +85,10 @@ def read_memory(pid, *, proc_root=Path('/proc'), resident_peak_bytes=None):
     Sizes are KiB and counts are counts. Linux reads /proc status,
     smaps_rollup, and stat. macOS reads the shared Darwin libproc binding and
     reports only Darwin-named fields: resident and its peak, physical
-    footprint and its interval/lifetime maxima, faults, page-ins, and disk
-    bytes read and written. The worker supplies its own resident peak at the
+    footprint and its interval/lifetime maxima, faults, page-ins, disk bytes
+    read and written, and the host instruction/cycle counters with their
+    availability flags. The counters are not Valgrind Ir and are never written
+    to a Linux-named field. The worker supplies its own resident peak at the
     handshake because another process's task port is normally unavailable;
     without that value the binding's task-port attempt decides. Unavailable
     fields, including rss_delta, remain None. Read/parse errors propagate
@@ -110,6 +114,10 @@ def read_memory(pid, *, proc_root=Path('/proc'), resident_peak_bytes=None):
             pageins=observed.get('pageins'),
             disk_bytes_read=observed.get('disk_bytes_read'),
             disk_bytes_written=observed.get('disk_bytes_written'),
+            instructions=observed.get('instructions'),
+            cycles=observed.get('cycles'),
+            instructions_available=bool(observed.get('instructions_available')),
+            cycles_available=bool(observed.get('cycles_available')),
         )
         return result
     proc = proc_root / str(pid)

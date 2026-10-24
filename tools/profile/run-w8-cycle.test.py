@@ -2,6 +2,7 @@
 
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -18,7 +19,7 @@ class LaunchTests(unittest.TestCase):
         setup = source[source.index('run_pinned() {'):source.index('TIMING_JSON=')]
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            environment = dict(os.environ, PROFILE_DIR=str(root),
+            environment = dict(os.environ, PROFILE_DIR=str(root), HOST_OS='Linux',
                                CAPI_SO=str(root / 'subject.so'),
                                CAPI_DATA=str(root / 'data'),
                                TKRZW_RUNTIME=str(SCRIPT.parent.parent / 'tkrzw/runtime.sh'))
@@ -42,6 +43,58 @@ class LaunchTests(unittest.TestCase):
         result, _ = self.launch_setup(23)
         self.assertEqual(result.returncode, 23, result.stderr)
         self.assertNotIn('PROFILER', result.stdout)
+
+    def check_darwin(self, *, path=None, perf_cpu=None):
+        environment = dict(os.environ, OXPINYIN_PROFILE_OS='Darwin')
+        environment.pop('PERF_CPU', None)
+        if perf_cpu is not None:
+            environment['PERF_CPU'] = perf_cpu
+        if path is not None:
+            environment['PATH'] = path
+        return subprocess.run(['bash', str(SCRIPT), '--check'], env=environment,
+                              capture_output=True, text=True)
+
+    def test_darwin_refuses_perf_cpu_with_the_affinity_reason(self):
+        result = self.check_darwin(perf_cpu='0')
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn('PERF_CPU is unsupported on macOS', result.stderr)
+        self.assertIn('Mach affinity is a cache hint, not CPU pinning', result.stderr)
+
+    def test_darwin_refuses_missing_samply(self):
+        result = self.check_darwin(path='/usr/bin:/bin')
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn('samply is required on macOS', result.stderr)
+
+    def test_darwin_check_names_the_linux_only_parts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            samply = Path(directory) / 'samply'
+            samply.write_text('#!/bin/sh\nexit 0\n')
+            samply.chmod(0o755)
+            result = self.check_darwin(path=f"{directory}:{os.environ['PATH']}")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('profile platform: Darwin; profiler=samply', result.stdout)
+        self.assertIn('perf record', result.stderr)
+        self.assertIn('perf_event_paranoid', result.stderr)
+        self.assertIn('taskset and PERF_CPU', result.stderr)
+
+    def test_darwin_refuses_missing_cargo_c_before_reading_inputs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            bin_dir = Path(directory)
+            for name in ('bash', 'uname', 'grep', 'sed', 'awk', 'readlink', 'pkg-config'):
+                source = shutil.which(name)
+                if source:
+                    (bin_dir / name).symlink_to(source)
+            samply = bin_dir / 'samply'
+            samply.write_text('#!/bin/sh\nexit 0\n')
+            samply.chmod(0o755)
+            environment = dict(os.environ, OXPINYIN_PROFILE_OS='Darwin',
+                               PATH=f'{directory}:/usr/bin:/bin')
+            environment.pop('PERF_CPU', None)
+            environment.pop('PINYIN_EXPORT_DIR', None)
+            result = subprocess.run(['/bin/bash', str(SCRIPT)], env=environment,
+                                    capture_output=True, text=True)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn('cargo-c is required on macOS', result.stderr)
 
 
 if __name__ == '__main__':

@@ -241,7 +241,7 @@ def main() -> int:
         print("no samples")
         return 1
     print(f"# hottest stacks in {path}")
-    for rank, (count, stack) in enumerate(rows, start=1):
+    for rank, (stack, count) in enumerate(rows, start=1):
         pct = 100.0 * count / total if total else 0.0
         leaf = stack[-1] if stack else "?"
         print(f"{rank:2d}. {count:6d}  ({pct:5.1f}%)  {leaf}")

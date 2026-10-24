@@ -568,12 +568,15 @@ class ControllerTests(unittest.TestCase):
             ri_lifetime_max_phys_footprint=12 * 1024,
             ri_diskio_bytesread=13,
             ri_diskio_byteswritten=14,
+            ri_instructions=17,
+            ri_cycles=18,
         )
         info = SimpleNamespace(pti_faults=15, pti_pageins=16)
         with mock.patch.object(native.sys, 'platform', 'darwin'), \
                 mock.patch.object(native.darwin, 'rusage', return_value=usage), \
                 mock.patch.object(native.darwin, 'taskinfo', return_value=info), \
                 mock.patch.object(native.darwin, 'resident_peak', return_value=9 * 1024), \
+                mock.patch.object(native.darwin, 'counter_availability', return_value=(True, True)), \
                 mock.patch.object(native.subprocess, 'check_output') as ps:
             memory = native.read_memory(123)
             self_observed = native.read_memory(123, resident_peak_bytes=20 * 1024)
@@ -585,6 +588,9 @@ class ControllerTests(unittest.TestCase):
                           memory['physical_footprint_lifetime_max_kib']), (10, 11, 12))
         self.assertEqual((memory['faults'], memory['pageins']), (15, 16))
         self.assertEqual((memory['disk_bytes_read'], memory['disk_bytes_written']), (13, 14))
+        self.assertEqual((memory['instructions'], memory['cycles']), (17, 18))
+        self.assertTrue(memory['instructions_available'])
+        self.assertTrue(memory['cycles_available'])
         for field in native.LINUX_MEMORY_FIELDS:
             self.assertIsNone(memory[field], field)
 
@@ -592,10 +598,52 @@ class ControllerTests(unittest.TestCase):
         with mock.patch.object(native.sys, 'platform', 'darwin'), \
                 mock.patch.object(native.darwin, 'rusage', side_effect=OSError(2, 'gone')), \
                 mock.patch.object(native.darwin, 'taskinfo', side_effect=OSError(2, 'gone')), \
-                mock.patch.object(native.darwin, 'resident_peak', return_value=None):
+                mock.patch.object(native.darwin, 'resident_peak', return_value=None), \
+                mock.patch.object(native.darwin, 'counter_availability', return_value=(True, True)):
             memory = native.read_memory(123)
         self.assertTrue(all(memory[field] is None for field in native.DARWIN_MEMORY_FIELDS))
         self.assertTrue(all(memory[field] is None for field in native.LINUX_MEMORY_FIELDS))
+        self.assertIsNone(memory['instructions'])
+        self.assertIsNone(memory['cycles'])
+        self.assertFalse(memory['instructions_available'])
+        self.assertFalse(memory['cycles_available'])
+
+    def test_darwin_unavailable_counters_are_none_not_zero(self):
+        usage = SimpleNamespace(
+            ri_resident_size=8 * 1024, ri_phys_footprint=10 * 1024,
+            ri_interval_max_phys_footprint=11 * 1024,
+            ri_lifetime_max_phys_footprint=12 * 1024,
+            ri_diskio_bytesread=13, ri_diskio_byteswritten=14,
+            ri_instructions=0, ri_cycles=0,
+        )
+        info = SimpleNamespace(pti_faults=15, pti_pageins=16)
+        with mock.patch.object(native.sys, 'platform', 'darwin'), \
+                mock.patch.object(native.darwin, 'rusage', return_value=usage), \
+                mock.patch.object(native.darwin, 'taskinfo', return_value=info), \
+                mock.patch.object(native.darwin, 'resident_peak', return_value=None), \
+                mock.patch.object(native.darwin, 'counter_availability', return_value=(False, False)):
+            memory = native.read_memory(123)
+        self.assertIsNone(memory['instructions'])
+        self.assertIsNone(memory['cycles'])
+        self.assertFalse(memory['instructions_available'])
+        self.assertFalse(memory['cycles_available'])
+
+    def test_darwin_counter_probe_requires_each_counter_to_advance(self):
+        def usage(instructions, cycles):
+            return SimpleNamespace(ri_instructions=instructions, ri_cycles=cycles)
+
+        cases = (
+            ((10, 20), (30, 40), (True, True)),
+            ((0, 0), (0, 0), (False, False)),
+            ((10, 0), (30, 0), (True, False)),
+            ((0, 20), (0, 40), (False, True)),
+        )
+        for before, after, expected in cases:
+            with self.subTest(before=before, after=after):
+                with mock.patch.object(native.darwin, 'rusage',
+                                       side_effect=[usage(*before), usage(*after)]), \
+                        mock.patch.object(native.darwin.time, 'sleep'):
+                    self.assertEqual(native.darwin._probe_counters(), expected)
 
     @unittest.skipUnless(sys.platform == 'darwin', 'Darwin libproc binding')
     def test_darwin_binding_reads_this_process(self):
@@ -609,6 +657,12 @@ class ControllerTests(unittest.TestCase):
         self.assertGreaterEqual(observed['disk_bytes_written'], 0)
         self.assertTrue(observed['resident_peak_bytes'] is None
                         or isinstance(observed['resident_peak_bytes'], int))
+        self.assertIsInstance(observed['instructions_available'], bool)
+        self.assertIsInstance(observed['cycles_available'], bool)
+        self.assertTrue(observed['instructions'] is None
+                        or isinstance(observed['instructions'], int))
+        self.assertTrue(observed['cycles'] is None
+                        or isinstance(observed['cycles'], int))
 
     def test_raw_files_are_not_normalized_and_database_rows_are_not_read(self):
         (self.root / 'user.bin').write_bytes(b'1234timestamp')
@@ -668,13 +722,23 @@ class WorkerIntegration(unittest.TestCase):
         self.assertEqual(tuple(row['checkpoints']), worker.POINTS)
         for point, memory in row['checkpoints'].items():
             with self.subTest(point=point):
-                self.assertEqual(set(memory), set(native.MEMORY_FIELDS))
+                expected = set(native.MEMORY_FIELDS)
+                if sys.platform == 'darwin':
+                    expected |= set(native.DARWIN_COUNTER_FIELDS)
+                    expected |= set(native.DARWIN_AVAILABILITY_FIELDS)
+                self.assertEqual(set(memory), expected)
                 if sys.platform == 'darwin':
                     self.assertGreater(memory['resident_kib'], 0)
                     self.assertGreater(memory['resident_peak_kib'], 0)
                     self.assertGreater(memory['physical_footprint_kib'], 0)
                     self.assertGreaterEqual(memory['faults'], 0)
                     self.assertGreaterEqual(memory['pageins'], 0)
+                    self.assertIsInstance(memory['instructions_available'], bool)
+                    self.assertIsInstance(memory['cycles_available'], bool)
+                    if memory['instructions_available']:
+                        self.assertIsInstance(memory['instructions'], int)
+                    if memory['cycles_available']:
+                        self.assertIsInstance(memory['cycles'], int)
                     for field in native.LINUX_MEMORY_FIELDS:
                         self.assertIsNone(memory[field], field)
                 else:

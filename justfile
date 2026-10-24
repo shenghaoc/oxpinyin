@@ -105,6 +105,26 @@ bench-smoke:
 bench-smoke:
     @just bench --no-run; exit $LASTEXITCODE
 
+# Profile the W8 keystroke cycle with samply. macOS uses Homebrew's native
+# build inputs; the script refuses Linux-only pinning and fallbacks there.
+[linux]
+profile-w8 *args:
+    @just heavy -- bash tools/profile/run-w8-cycle.sh "$@"
+
+[macos]
+profile-w8 *args:
+    @just heavy -- env \
+        OXPINYIN_BDB_INCLUDE_DIR="$(brew --prefix berkeley-db@5)/include" \
+        OXPINYIN_BDB_LIB_DIR="$(brew --prefix berkeley-db@5)/lib" \
+        PKG_CONFIG_PATH="$(brew --prefix glib)/lib/pkgconfig:$(brew --prefix kyoto-cabinet)/lib/pkgconfig:$(brew --prefix tkrzw)/lib/pkgconfig:$(brew --prefix berkeley-db@5)/lib/pkgconfig" \
+        LIBRARY_PATH="$(brew --prefix berkeley-db@5)/lib:$(brew --prefix kyoto-cabinet)/lib:$(brew --prefix tkrzw)/lib:$(brew --prefix lz4)/lib:$(brew --prefix xz)/lib:$(brew --prefix zstd)/lib" \
+        OXPINYIN_TKRZW_PREFIX="$(brew --prefix tkrzw)" \
+        bash tools/profile/run-w8-cycle.sh "$@"
+
+[windows]
+profile-w8 *args:
+    @echo "profile-w8: native macOS and Linux only; Windows is unsupported." >&2; exit 1
+
 # Run one caller-selected fuzz target with the nightly workflow's ASLR wrapper.
 # Exact on purpose (#1074): a nightly is identified only by its date.
 [linux]
