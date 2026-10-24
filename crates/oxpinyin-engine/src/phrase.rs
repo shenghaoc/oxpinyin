@@ -246,9 +246,75 @@ where
     Ok((true, result))
 }
 
+/// Process the scalar prefix before an unmatchable non-scalar, without
+/// publishing a phrase result. At 074a2219 `phrase_lookup.cpp:137-149`,
+/// spans precede predecessor rows, and all bigram branches precede the
+/// unigram branch. Keep that order here: a later span's bad gram must
+/// not hide an earlier span's refusal. No row is read for an unmatched
+/// span or an unreachable step (`:255-276`).
+pub(crate) fn check_phrase_prefix<D, L>(
+    dictionary: &D,
+    model: &L,
+    prefix: &str,
+) -> Result<(), EngineError>
+where
+    D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
+    D::Error: core::fmt::Display,
+    L: LanguageModel<Token = PhraseToken>,
+    L::Error: core::fmt::Display,
+{
+    let chars: Vec<char> = prefix.chars().collect();
+    let mut steps = vec![Step::default(); chars.len() + 1];
+    steps[0].relax(Node {
+        token: PhraseToken::new(SENTENCE_START),
+        prev: PhraseToken::new(0),
+        last_step: START_SENTINEL,
+        cost: 0,
+    });
+    for start in 0..chars.len() {
+        let Some(best) = steps[start].best().cloned() else {
+            continue;
+        };
+        let predecessors = steps[start].content.clone();
+        for end in start + 1..=chars.len().min(start + MAX_PHRASE_LENGTH) {
+            let text: String = chars[start..end].iter().collect();
+            let tokens = dictionary.tokens_for_text(&text);
+            let mut unigrams = Vec::new();
+            for node in &predecessors {
+                let mut row = NbestStepRow::default();
+                for &token in &tokens {
+                    let costs = step_costs(model, node.token, token, &mut row)?;
+                    if let Some(cost) = costs.blended {
+                        steps[end].relax(Node {
+                            token,
+                            prev: node.token,
+                            last_step: start,
+                            cost: node.cost + cost,
+                        });
+                    }
+                    if node.token == best.token
+                        && let Some(cost) = costs.unigram
+                    {
+                        unigrams.push((token, cost));
+                    }
+                }
+            }
+            for (token, cost) in unigrams {
+                steps[end].relax(Node {
+                    token,
+                    prev: best.token,
+                    last_step: start,
+                    cost: best.cost + cost,
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::phrase_segment;
+    use super::{check_phrase_prefix, phrase_segment};
 
     use oxpinyin_core::{
         Dictionary, LanguageModel, NbestStepCosts, PhraseEntry, PhraseToken, SyllableKey,
@@ -351,6 +417,50 @@ mod tests {
         let (matched, result) = phrase_segment(&dictionary, &model, "").expect("infallible model");
         assert!(matched);
         assert!(result.is_empty());
+    }
+
+    #[test]
+    fn prefix_faults_follow_spans_before_predecessors() {
+        struct Ordered(std::cell::RefCell<Vec<(u32, u32)>>);
+        impl LanguageModel for Ordered {
+            type Token = PhraseToken;
+            type Error = &'static str;
+
+            fn score(
+                &self,
+                _: &[PhraseToken],
+                _: &PhraseToken,
+                _: i64,
+            ) -> Result<i64, Self::Error> {
+                Ok(0)
+            }
+
+            fn nbest_step_costs(
+                &self,
+                prev: &PhraseToken,
+                token: &PhraseToken,
+            ) -> Result<NbestStepCosts, Self::Error> {
+                let pair = (prev.value(), token.value());
+                self.0.borrow_mut().push(pair);
+                match pair {
+                    (4, 5) => Err("first span's second predecessor"),
+                    (3, 6) => Err("later span's first predecessor"),
+                    _ => Ok(NbestStepCosts {
+                        blended: Some(1),
+                        unigram: Some(1),
+                    }),
+                }
+            }
+        }
+        let dictionary = Dict::parse(&[("a", 3), ("a", 4), ("b", 5), ("bc", 6)]);
+        let model = Ordered(std::cell::RefCell::default());
+        let error = check_phrase_prefix(&dictionary, &model, "abc").unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("first span's second predecessor")
+        );
+        assert_eq!(*model.0.borrow(), [(1, 3), (1, 4), (3, 5), (4, 5)]);
     }
 
     #[test]
@@ -473,6 +583,14 @@ mod tests {
                 token: SENTENCE_START
             }
         );
+        assert_eq!(
+            check_phrase_prefix(&dictionary, &short_merge, "你").unwrap_err(),
+            EngineError::ShortLookupPredecessor {
+                token: SENTENCE_START
+            }
+        );
+        assert!(check_phrase_prefix(&dictionary, &short_merge, "").is_ok());
+        assert!(check_phrase_prefix(&dictionary, &short_merge, "无").is_ok());
         let short_alone = Rows {
             row: MergedGram::merge(None, Some(vec![0, 0])).unwrap(),
         };

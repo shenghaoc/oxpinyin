@@ -9,12 +9,12 @@ use crate::types::{GUint, PhraseTokenT, ZhuyinInstance};
 /// Text accepted by the pin's UCS4 gate, or an unmatchable UCS4 span.
 enum SegmentText {
     Unicode(String),
-    Unmatched(usize),
+    Unmatched { prefix: String, length: usize },
 }
 
 /// 074a2219 pinyin.cpp:1450-1454 / zhuyin.cpp:969-973 compare the
 /// byte-walking `g_utf8_strlen` with `g_utf8_to_ucs4`'s written length.
-/// GLib 2.90.0 gutf8.c uses `g_utf8_get_char_extended`, not the scalar
+/// GLib 2.89.4-2 gutf8.c uses `g_utf8_get_char_extended`, not the scalar
 /// validity check in `g_utf8_get_char_validated`: surrogates and values
 /// above U+10FFFF pass, while malformed, partial and overlong bytes fail.
 /// Successful conversion walks the same complete sequences as strlen.
@@ -23,9 +23,10 @@ fn segment_text(sentence: *const c_char) -> Option<SegmentText> {
     // SAFETY: The entry point checked for NULL; its C contract requires
     // a live NUL-terminated string for the duration of the call.
     let bytes = unsafe { std::ffi::CStr::from_ptr(sentence) };
-    if let Ok(text) = bytes.to_str() {
-        return Some(SegmentText::Unicode(text.to_owned()));
-    }
+    let invalid = match bytes.to_str() {
+        Ok(text) => return Some(SegmentText::Unicode(text.to_owned())),
+        Err(invalid) => invalid,
+    };
     let mut length = 0;
     // SAFETY: `sentence` is the live NUL-terminated string above; length
     // is writable. NULL items_read rejects a trailing partial sequence;
@@ -47,7 +48,15 @@ fn segment_text(sentence: *const c_char) -> Option<SegmentText> {
     // Rust-invalid bytes accepted by this converter contain a non-scalar
     // UCS4 value. No Unicode dictionary phrase can span it, so final_step
     // returns false with a character-sized all-null result (:382-397).
-    usize::try_from(length).ok().map(SegmentText::Unmatched)
+    // The first Rust-invalid sequence is a GLib-accepted non-scalar.
+    // Process only its scalar prefix before publishing the failed result.
+    let prefix = std::str::from_utf8(&bytes.to_bytes()[..invalid.valid_up_to()])
+        .ok()?
+        .to_owned();
+    Some(SegmentText::Unmatched {
+        prefix,
+        length: usize::try_from(length).ok()?,
+    })
 }
 
 /// Segment an arbitrary sentence string into phrase tokens.
@@ -88,7 +97,13 @@ pub extern "C" fn zhuyin_phrase_segment(
     };
     let text = match text {
         SegmentText::Unicode(text) => text,
-        SegmentText::Unmatched(length) => {
+        SegmentText::Unmatched { prefix, length } => {
+            // Row 85: the prefix's reached gram is read before final_step.
+            // Refuse through the ordinary path and preserve the old result.
+            if let Err(error) = inst.core.session.check_phrase_prefix(&prefix) {
+                crate::sentence::refuse_lookup_gram("zhuyin_phrase_segment", &error);
+                return false;
+            }
             inst.core.phrase_result = vec![oxpinyin_core::PhraseToken::new(0); length];
             return false;
         }
