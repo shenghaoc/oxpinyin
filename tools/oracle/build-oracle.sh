@@ -562,9 +562,17 @@ mv "$out_dir/oracle-pin.txt.new" "$out_dir/oracle-pin.txt"
 # recorded value is a pure function of the pin (see above), so a mismatch is
 # a wrong model, a wrong pin or a broken build — never host noise.
 if [[ $mode == data ]]; then
-	recorded=$(sed -n "s/^data_manifest_sha256_$dbm=//p" "$(dirname "${BASH_SOURCE[0]}")/oracle-pin.txt")
+	case $(uname -m) in
+	x86_64) platform_suffix= ;;
+	aarch64 | arm64) platform_suffix=_linux_arm64 ;;
+	*)
+		printf 'FAIL: no frozen oracle data for architecture %s\n' "$(uname -m)" >&2
+		exit 1
+		;;
+	esac
+	recorded=$(sed -n "s/^data_manifest_sha256_$dbm${platform_suffix}=//p" "$(dirname "${BASH_SOURCE[0]}")/oracle-pin.txt")
 	if [[ -z $recorded ]]; then
-		printf 'FAIL: tools/oracle/oracle-pin.txt records no data_manifest_sha256_%s\n' "$dbm" >&2
+		printf 'FAIL: tools/oracle/oracle-pin.txt records no data_manifest_sha256_%s%s\n' "$dbm" "$platform_suffix" >&2
 		exit 1
 	fi
 	if [[ $recorded != "$data_manifest_sha256" ]]; then
