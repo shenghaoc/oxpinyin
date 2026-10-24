@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import re
 import shlex
+import stat
 import subprocess
 import sys
 import tomllib
@@ -14,6 +15,45 @@ import tomllib
 from . import host, slot
 
 ROOT = Path(__file__).resolve().parents[2]
+
+# Compiler-backed J-ledger checks need clang++, LLVM tools and a discoverable
+# libclang, which the CI harness jobs do not provision (docs/testing/README.md).
+HARNESS_EXCLUDED = {'tools/bisection/internal-ledger.test.py'}
+
+
+def harness_files():
+    """Discover regular tools/**/*.test.py files in LC_ALL=C path order.
+
+    Like CI's find -type f, do not follow directory or file symlinks.
+    """
+    files = []
+    for directory, _, names in os.walk(ROOT / 'tools'):
+        for name in names:
+            path = Path(directory, name)
+            if name.endswith('.test.py') and stat.S_ISREG(path.lstat().st_mode):
+                files.append(path.relative_to(ROOT).as_posix())
+    return sorted(files, key=os.fsencode)
+
+
+def run_tools():
+    """Run every non-excluded harness in order, returning 1 if any fails."""
+    status = 0
+    for path in harness_files():
+        if path in HARNESS_EXCLUDED:
+            print(f'tools harness excluded (missing CI input): {path}', flush=True)
+            continue
+        print(f'tools harness: {path}', flush=True)
+        command = ['uv', 'run', '--no-project', '--managed-python', '--python',
+                   'cpython@3.15+gil', 'python', '-X', 'lazy_imports=normal', path]
+        try:
+            if subprocess.run(command, cwd=ROOT).returncode:
+                status = 1
+        except OSError as error:
+            print(error, file=sys.stderr)
+            status = 1
+    if status:
+        print('::error::one or more tools/ Python harness tests failed', file=sys.stderr)
+    return status
 
 
 def _strip_separator(args):

@@ -49,6 +49,11 @@ def test_doc_command(args):
     return test_runner.run_doc(args.args)
 
 
+def test_tools_command(args):
+    """Run the same Python harness discovery and exclusions as CI."""
+    return test_runner.run_tools()
+
+
 def coverage_command(args):
     """Run llvm-cov with disposable coverage state and return its shell status."""
     return coverage.run(args.args)
@@ -144,6 +149,9 @@ def build_parser():
     p = sub.add_parser('test-doc', help='run cargo test --doc through the heavy slot')
     p.add_argument('args', nargs=argparse.REMAINDER)
     p.set_defaults(func=test_doc_command)
+
+    p = sub.add_parser('test-tools', help='run the CI Python harness suite')
+    p.set_defaults(func=test_tools_command)
 
     p = sub.add_parser('coverage', help='run cargo llvm-cov with temporary per-invocation state')
     p.add_argument('args', nargs=argparse.REMAINDER)
