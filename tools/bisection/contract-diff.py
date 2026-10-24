@@ -7792,6 +7792,17 @@ def conf_system(k, *edits):
 CONF_TEXTS = {'pinyin': (b'nihao', b'yishu'), 'zhuyin': (b'ni3hao3', b'yi4shu4')}
 
 
+def conf_system_bytes(k, mutate):
+    """A private system copy whose table.conf is `mutate` of the raw stock
+    bytes. Bytes and NUL are preserved, unlike `conf_system`'s text edits."""
+    system = private_system(k)
+    path = os.path.join(system, 'table.conf')
+    data = Path(k.data, 'table.conf').read_bytes()
+    os.unlink(path)
+    Path(path).write_bytes(mutate(data))
+    return system
+
+
 def conf_guess_rows(k, inst, limit=12):
     """`guess_candidates` at offset 0: the call's answer and the first rows."""
     if k.mode == 'pinyin':
@@ -7982,13 +7993,14 @@ CONF_CONTROLS = {'addon-duplicate-row', 'addon-files-swapped', 'comment-dropped'
 CONF_ZHUYIN_CHANGED = {'lambda-zero', 'lambda-one', 'lambda-tiny'}
 
 
-def conf_case(name, *edits, modes=('pinyin', 'zhuyin'), session=conf_session, **options):
+def conf_case(name, *edits, modes=('pinyin', 'zhuyin'), session=conf_session,
+              issues=('694', '525'), **options):
     for mode in modes:
         def probe(k, edits=edits):
             return session(k, conf_system(k, *edits))
         control = name in CONF_CONTROLS and not (mode == 'zhuyin' and name in CONF_ZHUYIN_CHANGED)
         case('table-conf-' + name + ('-zhuyin' if mode == 'zhuyin' else ''), mode=mode,
-             **{'control': control, **options}, issues=('694', '525'))(probe)
+             **{'control': control, **options}, issues=issues)(probe)
 
 
 # Valid files that are not the stock one: the pin follows the rows.
@@ -8049,7 +8061,8 @@ conf_case('addon-duplicate-row', ('+', 'addon 4 culture.table culture.bin NULL D
 
 # Class (c): the rows the pin dies on. The triggering call fails with one
 # warning; `userdir` holds the profile the pin has written by then.
-def conf_abort(name, *edits, call='init', userdir=True, modes=('pinyin', 'zhuyin'), ret=False, dir_chunk=None):
+def conf_abort(name, *edits, call='init', userdir=True, modes=('pinyin', 'zhuyin'), ret=False,
+               dir_chunk=None, control=False, issues=('694', '525')):
     for mode in modes:
         def probe(k, edits=edits):
             system = conf_system(k, *edits)
@@ -8062,7 +8075,7 @@ def conf_abort(name, *edits, call='init', userdir=True, modes=('pinyin', 'zhuyin
                 return {'ret': k.fn('load_phrase_library', B, P, C.c_ubyte)(ctx, index)}
             return {'ret': k.fn('load_addon_phrase_library', B, P, C.c_ubyte)(ctx, index)}
         case('table-conf-abort-' + name + ('-zhuyin' if mode == 'zhuyin' else ''), mode=mode,
-             abort=ret, userdir=userdir, dir_chunk=dir_chunk, issues=('694', '525'))(probe)
+             abort=ret, userdir=userdir, dir_chunk=dir_chunk, control=control, issues=issues)(probe)
 
 
 # `table_info.cpp` aborts inside `SystemTableInfo2::load`, before
@@ -8141,7 +8154,7 @@ conf_abort('source-format-line-missing', ('-', 'source table format'))
 
 # The pin's ordinary `false`: a header directive that does not match answers
 # NULL with the raw `load %s failed!` line and no warning.
-def header_probe(*edits):
+def header_probe(*edits, issues=('694', '525')):
     def probe(k):
         return {'ctx': bool(k.init(system=conf_system(k, *edits)))}
     return probe
@@ -8166,6 +8179,116 @@ for _name, _spelling in (('hex', '0x1p-1'), ('hex-fraction', '0x.8'), ('hex-uppe
     conf_case('lambda-' + _name, ('lambda parameter:0.312699', 'lambda parameter:' + _spelling),
               modes=('pinyin', 'zhuyin'))
 
+
+
+# #919: table.conf scanner partitions. The reference glibc is 2.43-3; the
+# cases cover every partition the source walk distinguishes, not only the
+# spellings the stock file uses. `control=True` cases already agree with the
+# parent; the three incomplete-exponent spellings are the mutation targets.
+def conf_919_case(name, mutate, **options):
+    for mode in ('pinyin', 'zhuyin'):
+        def probe(k, mutate=mutate):
+            return conf_session(k, conf_system_bytes(k, mutate))
+        case('table-conf-919-' + name + ('-zhuyin' if mode == 'zhuyin' else ''),
+             mode=mode, issues=('919',), **options)(probe)
+
+
+def one_line_conf(data):
+    parts = data.split(b'\n', 6)
+    return b' '.join(parts[:6]) + b'\n\n' + parts[6]
+
+
+conf_919_case('header-one-line', one_line_conf, control=True)
+conf_919_case('header-crlf', lambda data: data.replace(b'\n', b'\r\n'), control=True)
+conf_919_case('header-no-final-newline', lambda data: data.rstrip(b'\n'), control=True)
+conf_919_case('header-indented-lambda',
+              lambda data: data.replace(b'\nlambda parameter:', b'\n   lambda parameter:'),
+              control=True)
+conf_919_case('word-nul-truncates',
+              lambda data: data.replace(
+                  b'gb_char.table gb_char.bin gb_char.dbin',
+                  b'gb_char.table gb_char.bin\x00junk gb_char.dbin'),
+              control=True)
+
+
+def header_919(name, *edits, control=True, host_scanf=()):
+    for mode in ('pinyin', 'zhuyin'):
+        case('table-conf-919-' + name + ('-zhuyin' if mode == 'zhuyin' else ''),
+             mode=mode, stderr=True, issues=('919',), control=control,
+             host_scanf=host_scanf)(header_probe(*edits))
+
+
+header_919('lambda-dot-only', ('lambda parameter:0.312699', 'lambda parameter:.'))
+header_919('header-leading-space', ('re', r'\Abinary', ' binary'))
+header_919('binary-version-line-missing', ('-', 'binary format version'))
+header_919('model-version-line-missing', ('-', 'model data version'))
+
+conf_abort('919-database-format-line-missing', ('-', 'database format'), issues=('919',), control=True)
+conf_abort('919-source-format-value-missing',
+           ('re', r'source table format:\w+', 'source table format:'), issues=('919',), control=True)
+conf_abort('919-database-format-value-missing',
+           ('re', r'database format:\w+', 'database format:'), issues=('919',), control=True)
+conf_abort('919-source-format-line-missing', ('-', 'source table format'), issues=('919',), control=True)
+conf_abort('919-word-width-overlong', ('+', 'x' * 300 + ' x.table x.bin x.dbin SYSTEM_FILE'),
+           issues=('919',), control=True)
+
+conf_case('919-versions-positive-overflow',
+          ('binary format version:7', 'binary format version:9223372036854775808'),
+          ('model data version:14', 'model data version:99999999999999999999'),
+          issues=('919',), control=False)
+conf_case('919-versions-int-wrap',
+          ('binary format version:7', 'binary format version:4294967296'),
+          ('model data version:14', 'model data version:2147483648'),
+          issues=('919',), control=False)
+conf_case('919-versions-plus-sign',
+          ('binary format version:7', 'binary format version:+7'),
+          ('model data version:14', 'model data version:+14'),
+          issues=('919',), control=True)
+conf_case('919-versions-negative',
+          ('binary format version:7', 'binary format version:-1'),
+          ('model data version:14', 'model data version:-2'),
+          issues=('919',), control=False)
+header_919('versions-no-digits', ('binary format version:7', 'binary format version:x'))
+
+for _name, _spelling in (
+        ('lambda-hex-no-exponent', '0x1'),
+        ('lambda-dot-leading', '.5'),
+        ('lambda-exponent-plus', '1e-1'),
+        ('lambda-infinity', 'infinity'),
+        ('lambda-nan-payload', 'nan(1)'),
+        ('lambda-hex-overflow', '0x1p9999'),
+        ('lambda-decimal-underflow', '1e-5000'),
+        ('lambda-positive-sign', '+0.5')):
+    conf_case('919-' + _name, ('lambda parameter:0.312699', 'lambda parameter:' + _spelling),
+              issues=('919',), control=True)
+
+for _name, _spelling, _control, _host in (
+        ('lambda-exponent-sign-without-digits', '1e+', True, ('1e+',)),
+        ('lambda-hex-exponent-sign-without-digits', '0x1p+', True, ('0x1p+',)),
+        ('lambda-hex-exponent-minus-without-digits', '0x1p-', True, ('0x1p-',)),
+        ('lambda-hex-dot-without-digits', '0x.', True, ()),
+        ('lambda-nan-unclosed', 'nan(', True, ())):
+    for _mode in ('pinyin', 'zhuyin'):
+        _suffix = '-zhuyin' if _mode == 'zhuyin' else ''
+        case('table-conf-919-' + _name + _suffix, mode=_mode, stderr=True,
+             issues=('919',), control=_control, host_scanf=_host)(
+                 header_probe(('lambda parameter:0.312699', 'lambda parameter:' + _spelling)))
+
+# The five-word row plus the next row's first word form a valid six-word
+# row with a library/table mismatch; the pin then reads a NULL item and
+# SIGSEGVs. The subject answers the same request without the invalid read:
+# class (b), recorded as the declared result rather than reproduced.
+conf_case('919-short-row-merged',
+          ('+', 'default GB_DICTIONARY gbk_char.table gbk_char.bin gbk_char.dbin'),
+          ('+', 'SYSTEM_FILE default RESERVED NULL NULL NULL'),
+          issues=('919',), control=True, crash={'train': True, 'save': True},
+          stderr_varies=True)
+conf_case('919-addon-atoi-nondigit',
+          ('+', 'addon abc art.table art.bin NULL DICTIONARY'),
+          modes=('pinyin',), session=addon_session, issues=('919',), control=True)
+conf_abort('919-addon-positive-overflow',
+           ('+', 'addon 99999999999999999999 art.table art.bin NULL DICTIONARY'),
+           modes=('pinyin',), issues=('919',), control=True)
 
 # A file name never leaves its directory: `g_build_filename(user_dir,
 # "/abs/u.bin")` is `<user_dir>/abs/u.bin`, not `/abs/u.bin`.
