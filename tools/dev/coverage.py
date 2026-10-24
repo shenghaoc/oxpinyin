@@ -12,6 +12,12 @@ from . import slot
 
 
 def run(args):
+    """Run cargo llvm-cov under admission with temporary build and target paths.
+
+    Forward args unchanged and remove the temporary directory on exit. Return
+    the child shell status, 130 on cancellation, or 1 for reported OS/value
+    errors; print the temporary target path and failures to stderr.
+    """
     try:
         with tempfile.TemporaryDirectory(prefix='oxpinyin-coverage-') as scratch:
             target = os.path.join(scratch, 'target')

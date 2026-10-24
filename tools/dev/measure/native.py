@@ -12,6 +12,12 @@ MEMORY_FIELDS = ('rss', 'rss_delta', 'peak_rss', 'anonymous', 'file_backed',
 
 
 def filesystem(path):
+    """Return the filesystem type and volume identity for an existing path.
+
+    On macOS, query df and diskutil; otherwise select the longest matching
+    /proc/self/mountinfo mount. Raise ValueError when no mount matches;
+    path and subprocess errors propagate.
+    """
     path = Path(path).resolve(strict=True)
     if sys.platform == 'darwin':
         import plistlib
@@ -33,7 +39,12 @@ def filesystem(path):
 
 
 def check_filesystems(paths, *, recursive=True):
-    """Check roots and, by default, their files (nested mounts count)."""
+    """Validate filesystem roots and, by default, all recursively found entries.
+
+    Resolve symlink targets and require ext4 on Linux or one APFS volume
+    on macOS. Return the volume identities; raise ValueError for wrong or
+    unknown filesystems/volumes and propagate filesystem read errors.
+    """
     volumes = set()
     for root in paths:
         root = Path(root)
@@ -55,6 +66,13 @@ def check_filesystems(paths, *, recursive=True):
 
 
 def read_memory(pid, *, proc_root=Path('/proc')):
+    """Read memory observations for a child paused at a checkpoint.
+
+    Sizes are KiB and faults are counts. Linux reads /proc status,
+    smaps_rollup, and stat; macOS uses ps for RSS and virtual size.
+    Unavailable fields, including rss_delta, remain None. Read/parse errors
+    propagate rather than returning partial Linux observations.
+    """
     result = dict.fromkeys(MEMORY_FIELDS)
     if sys.platform == 'darwin':
         values = subprocess.check_output(['ps', '-o', 'rss=', '-o', 'vsz=', '-p', str(pid)], text=True, timeout=COMMAND_TIMEOUT_SECONDS).split()
@@ -83,6 +101,12 @@ def read_memory(pid, *, proc_root=Path('/proc')):
 
 
 def pin_cpu(cpu):
+    """Select an allowed CPU index without changing affinity.
+
+    On Linux, default to the smallest allowed index and reject an index
+    outside the affinity set. Elsewhere return None, rejecting explicit
+    pinning with ValueError.
+    """
     if sys.platform.startswith('linux'):
         allowed = os.sched_getaffinity(0)
         cpu = min(allowed) if cpu is None else cpu

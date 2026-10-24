@@ -18,6 +18,10 @@ import sys
 # the Linux-shaped reader testable on the development host.
 if not hasattr(os, 'sched_getaffinity'):
     def _sched_getaffinity_fallback(_pid):
+        """Return all reported CPU indices, or {0} when the CPU count is unknown.
+
+        Ignore the PID; this substitutes for platforms without sched_getaffinity.
+        """
         return set(range(os.cpu_count() or 1))
     os.sched_getaffinity = _sched_getaffinity_fallback
 
@@ -37,6 +41,10 @@ CONTAINER_MEMORY_MIB = 2560
 
 
 def container_memory_mib(value):
+    """Parse a positive decimal memory cap in MiB, defaulting when value is None.
+
+    Reject nonstrings, leading zeros, and nonpositive values with ValueError.
+    """
     if value is None:
         return CONTAINER_MEMORY_MIB
     if not isinstance(value, str) or not re.fullmatch(r'[1-9][0-9]*', value):
@@ -166,13 +174,17 @@ def remove_created_container(record):
 
 
 def _macos_available_mib():
-    """Free + inactive + speculative pages from Mach host_statistics64."""
+    """Return free, inactive, and speculative Mach pages as whole MiB.
+
+    Return None when the required system calls or ctypes bindings fail.
+    """
     try:
         libc = ctypes.CDLL('/usr/lib/libSystem.B.dylib')
         libc.mach_host_self.restype = ctypes.c_uint
         host = libc.mach_host_self()
 
         class VMStatistics64(ctypes.Structure):
+            """Represent Mach VM statistics, including page counts used for available memory."""
             _fields_ = [
                 ('free_count', ctypes.c_uint),
                 ('active_count', ctypes.c_uint),
@@ -220,6 +232,7 @@ def _macos_available_mib():
 
 
 def _macos_total_mib():
+    """Read hw.memsize through sysctl and return whole MiB, or None on failure."""
     try:
         libc = ctypes.CDLL('/usr/lib/libSystem.B.dylib')
         value = ctypes.c_ulonglong()
@@ -247,6 +260,7 @@ def total_memory_mib(proc=Path('/proc')):
             return _macos_total_mib()
         elif sys.platform == 'win32':
             class Status(ctypes.Structure):
+                """Represent GlobalMemoryStatusEx counters, whose memory sizes are bytes."""
                 _fields_ = [('dwLength', ctypes.c_ulong), ('dwMemoryLoad', ctypes.c_ulong),
                             ('ullTotalPhys', ctypes.c_ulonglong), ('ullAvailPhys', ctypes.c_ulonglong),
                             ('ullTotalPageFile', ctypes.c_ulonglong), ('ullAvailPageFile', ctypes.c_ulonglong),
@@ -273,6 +287,7 @@ def memory_available_mib():
             return _macos_available_mib()
         elif sys.platform == 'win32':
             class Status(ctypes.Structure):
+                """Represent GlobalMemoryStatusEx counters, including available physical bytes."""
                 _fields_ = [('dwLength', ctypes.c_ulong), ('dwMemoryLoad', ctypes.c_ulong),
                             ('ullTotalPhys', ctypes.c_ulonglong), ('ullAvailPhys', ctypes.c_ulonglong),
                             ('ullTotalPageFile', ctypes.c_ulonglong), ('ullAvailPageFile', ctypes.c_ulonglong),
@@ -332,6 +347,14 @@ def linux_cgroup_dirs(proc=Path('/proc'), root=Path('/sys/fs/cgroup'), *, contro
 
 
 def _cgroup_v1_memory(directory, label, notes, memories, limits):
+    """Append a v1 memory limit in bytes and known available room in MiB.
+
+    Mutate limits, memories, and diagnostic notes. Ignore unlimited limits.
+    Unreadable or invalid limits or usage leave room unknown. With a valid
+    finite limit and usage, append max(0, limit - usage) in whole MiB when
+    memory.stat is unusable; discount reclaimable file cache from usage
+    only when its statistics validate. Record the fallback in notes.
+    """
     try:
         maximum = int((directory / 'memory.limit_in_bytes').read_text().strip())
         if maximum < 0:
@@ -396,6 +419,10 @@ def _cgroup_v1_memory(directory, label, notes, memories, limits):
 
 
 def _cgroup_v1_cpu(directory, label, notes, cpus):
+    """Append a finite v1 quota/period CPU capacity and diagnostic notes.
+
+    Treat -1 as unlimited and record unreadable or invalid values as unknown.
+    """
     try:
         quota = int((directory / 'cpu.cfs_quota_us').read_text().strip())
         if quota == -1:
@@ -483,7 +510,17 @@ def _cgroup_memory_used(directory, current):
 
 
 def resource_snapshot(proc=Path('/proc'), cgroup_root=Path('/sys/fs/cgroup')):
-    """Read known limits. Report each unreadable limit as unknown."""
+    """Return known memory and CPU budgets with diagnostics for unreadable limits.
+
+    Use the smallest known host/cgroup memory room in MiB, or None when none
+    is readable. Preserve total and hard-limit MiB separately. CPU budgets
+    combine affinity and quotas: cpus floors and cargo_cpus ceils the minimum,
+    with a lower bound of one.
+
+    Unusable cgroup cache statistics retain conservative limit-minus-usage
+    room when the limit and usage are readable; that room still constrains
+    the minimum instead of dropping the cgroup from the calculation.
+    """
     notes, memories, limits, cpus = [], [], [], []
     if sys.platform.startswith('linux'):
         try:
@@ -610,14 +647,17 @@ def desktop_headroom_mib(total_mib):
 
 
 def memory_headroom(env, resources):
-    """The host keeps desktop room; a hard-limited compatibility guest does not."""
+    """Return desktop headroom in MiB, except for a known hard-limited compat guest."""
     if env.get('OXPINYIN_COMPAT_CONTAINER') == '1' and resources.get('memory_limit_mib') is not None:
         return 0
     return desktop_headroom_mib(resources.get('total_mib'))
 
 
 def fit(available_mib, per_process_mib, ceiling, headroom_mib=HEADROOM_MIB):
-    """Return zero when no process fits after the headroom."""
+    """Cap a process count by the ceiling and MiB available after headroom.
+
+    Expect a positive per-process MiB estimate; return zero when none fits.
+    """
     return max(0, min(ceiling, (available_mib - headroom_mib) // per_process_mib))
 
 
@@ -625,6 +665,11 @@ READ_HOST = object()
 
 
 def validate_settings(env):
+    """Reject invalid Cargo, Rust test, and contract-worker environment budgets.
+
+    Cargo accepts default or a nonzero signed 32-bit integer; thread and
+    contract-job counts must be positive integers. Raise ValueError on failure.
+    """
     build = env.get('CARGO_BUILD_JOBS')
     if build is not None and build != 'default':
         if not re.fullmatch(r'[+-]?[0-9]+', build) or int(build) == 0 or not -(2**31) <= int(build) < 2**31:
@@ -656,6 +701,11 @@ def memory_defaults(env, explicit_jobs, cpus=None, available_mib=READ_HOST, *, m
     slots = heavy_slot_count(total_mib)
     chosen = {}
     def choose(name, explicit, per_process, ceiling, unit):
+        """Record a caller value or a memory-limited default with its explanation.
+
+        Use a per-slot share, allowing one process if it fits the whole room;
+        unknown available memory gives zero capacity. Update chosen in place.
+        """
         if explicit is not None:
             chosen[name] = (explicit, 'set by the caller', True)
         elif available_mib is None:
@@ -678,12 +728,19 @@ def memory_defaults(env, explicit_jobs, cpus=None, available_mib=READ_HOST, *, m
 
 
 def plan_defaults(chosen, out=sys.stderr, phase='defaults'):
+    """Print each chosen resource value, its source, and its reasoning to out."""
     for name, (value, reason, explicit) in chosen.items():
         print(f"{phase}: {name}={value} ({'explicit: ' if explicit else ''}{reason})", file=out, flush=True)
 
 
 def prepare_heavy_env(env, resources, *, runner=False):
-    """Prepare one child environment and its admission estimate."""
+    """Return a copied child environment, chosen budgets, and an estimate in MiB.
+
+    Preserve explicit build/test settings and resolve defaults against the
+    resource snapshot. Cap an explicit contract-case maximum to available
+    room while reserving at least one worker. This estimates but does not
+    admit work or mutate the caller's environment.
+    """
     chosen = memory_defaults(env, None, cpus=resources['cpus'], available_mib=resources['available_mib'],
                              memory_limit_mib=resources.get('memory_limit_mib'),
                              total_mib=resources.get('total_mib'))
@@ -717,6 +774,11 @@ def prepare_heavy_env(env, resources, *, runner=False):
 
 
 def resource_wait_limit(env):
+    """Read the admission wait limit in seconds, defaulting to 1800.
+
+    Raise ValueError unless OXPINYIN_RESOURCE_WAIT_SECONDS is finite and
+    nonnegative; zero permits only an immediate attempt.
+    """
     try:
         limit = float(env.get('OXPINYIN_RESOURCE_WAIT_SECONDS', '1800'))
         if not math.isfinite(limit) or limit < 0:
@@ -727,13 +789,17 @@ def resource_wait_limit(env):
 
 
 class ResourceBlocked(ValueError):
+    """Indicate that resource admission cannot proceed within its wait policy."""
     pass
 
 
 def host_lock_dir():
-    """Where the host-wide locks live: $OXPINYIN_LOCK_DIR, else
-    $XDG_CACHE_HOME/oxpinyin/locks, else ~/.cache/oxpinyin/locks (the cache
-    tools/cloud/setup.sh already uses). Shared by every worktree and agent."""
+    """Create and return the absolute directory shared by host-wide locks.
+
+    Prefer OXPINYIN_LOCK_DIR, which must be absolute. Otherwise use
+    LOCALAPPDATA/oxpinyin/locks on Windows when set, or
+    XDG_CACHE_HOME/oxpinyin/locks with ~/.cache as the cache fallback.
+    """
     root = os.environ.get('OXPINYIN_LOCK_DIR')
     if not root:
         if sys.platform == 'win32' and os.environ.get('LOCALAPPDATA'):
@@ -764,6 +830,11 @@ def heavy_slot_count(total_mib=READ_HOST):
 
 
 def pid_alive(pid):
+    """Check whether a PID exists, treating access denial as evidence of existence.
+
+    Use the Windows exit code or a POSIX signal-zero check; unexpected OS
+    errors propagate on POSIX.
+    """
     if sys.platform == 'win32':
         import ctypes
         from ctypes import wintypes
@@ -789,6 +860,10 @@ def pid_alive(pid):
 
 
 def read_holder(path):
+    """Read a JSON holder record, returning None for empty, unreadable, or invalid data.
+
+    The decoded value is returned without validating its shape.
+    """
     try:
         return json.loads(path.read_text() or 'null')
     except (OSError, ValueError):
@@ -796,6 +871,7 @@ def read_holder(path):
 
 
 def describe_holder(holder):
+    """Format advisory holder fields, or report that no object record is available."""
     if not isinstance(holder, dict):
         return 'no holder recorded'
     return (f"pid {holder.get('pid')} in {holder.get('worktree')} since {holder.get('since')}: "
@@ -803,6 +879,7 @@ def describe_holder(holder):
 
 
 def write_holder(file, holder):
+    """Replace and flush a holder file with JSON, leaving locking to the caller."""
     file.seek(0)
     file.truncate()
     file.write(json.dumps(holder))
@@ -815,6 +892,7 @@ def _windows_processes():
     from ctypes import wintypes
 
     class ENTRY(ctypes.Structure):
+        """Represent a PROCESSENTRY32W row for PID and parent-PID discovery."""
         _fields_ = [('dwSize', wintypes.DWORD), ('cntUsage', wintypes.DWORD),
                     ('th32ProcessID', wintypes.DWORD), ('th32DefaultHeapID', ctypes.c_size_t),
                     ('th32ModuleID', wintypes.DWORD), ('cntThreads', wintypes.DWORD),
@@ -844,10 +922,12 @@ def _windows_processes():
 
 
 def _windows_parent(pid):
+    """Return the parent PID from a Toolhelp snapshot, or None if absent."""
     return next((parent for child, parent in _windows_processes() if child == pid), None)
 
 
 def process_parent(pid):
+    """Read a parent PID via the platform process API, returning None on failure."""
     try:
         if sys.platform == 'win32':
             return _windows_parent(pid)
@@ -861,6 +941,7 @@ def process_parent(pid):
 
 
 def is_ancestor(pid):
+    """Walk this process's parent chain for a PID, stopping on unknown parents or cycles."""
     current, seen = os.getppid(), set()
     while current and current not in seen:
         if current == pid:
@@ -918,6 +999,7 @@ def _macos_tree_footprint(pid):
     libc.proc_pid_rusage.restype = ctypes.c_int
 
     class RusageInfo(ctypes.Structure):
+        """Represent rusage_info_v0, including the physical footprint in bytes."""
         # struct rusage_info_v0, <sys/resource.h>
         _fields_ = [('ri_uuid', ctypes.c_uint8 * 16),
                     *[(name, ctypes.c_uint64) for name in (
@@ -927,12 +1009,14 @@ def _macos_tree_footprint(pid):
                         'ri_proc_start_abstime', 'ri_proc_exit_abstime')]]
 
     def footprint(target):
+        """Read one process's physical footprint in bytes; raise OSError if unavailable."""
         info = RusageInfo()
         if libc.proc_pid_rusage(target, 0, ctypes.byref(info)) != 0:  # RUSAGE_INFO_V0
             raise OSError(ctypes.get_errno(), f'proc_pid_rusage failed for pid {target}')
         return info.ri_phys_footprint
 
     def children(target):
+        """Read child PIDs through libproc; raise OSError for a failed enumeration."""
         capacity = libc.proc_listchildpids(target, None, 0)
         if capacity < 0:
             raise OSError(ctypes.get_errno(), 'proc_listchildpids failed')
@@ -962,6 +1046,7 @@ def _windows_tree_working_set(pid):
     from ctypes import wintypes
 
     class COUNTERS(ctypes.Structure):
+        """Represent process memory counters, including working-set sizes in bytes."""
         _fields_ = [('cb', wintypes.DWORD), ('PageFaultCount', wintypes.DWORD),
                     *[(name, ctypes.c_size_t) for name in (
                         'PeakWorkingSetSize', 'WorkingSetSize', 'QuotaPeakPagedPoolUsage',

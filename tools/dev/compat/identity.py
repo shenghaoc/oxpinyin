@@ -15,15 +15,21 @@ import tarfile
 
 
 def digest_file(path):
+    """Return the hexadecimal SHA-256 of file bytes; read errors propagate."""
     with Path(path).open('rb') as stream:
         return hashlib.file_digest(stream, 'sha256').hexdigest()
 
 
 def digest_record(record):
+    """Hash a record encoded as sorted, compact JSON with UTF-8."""
     return hashlib.sha256(json.dumps(record, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
 
 def read_record(path):
+    """Read a JSON object with schema 1, rejecting other shapes or schemas.
+
+    Return the object; file and JSON parsing errors propagate.
+    """
     record = json.loads(Path(path).read_text())
     if not isinstance(record, dict) or record.get('schema') != 1:
         raise ValueError(f'missing or unsupported container identity: {path}')
@@ -31,6 +37,7 @@ def read_record(path):
 
 
 def write_record(path, record):
+    """Overwrite a file with sorted, indented JSON and one trailing newline."""
     Path(path).write_text(json.dumps(record, sort_keys=True, indent=2) + '\n')
 
 
@@ -52,12 +59,21 @@ def unredirected(path, base, *, message=None):
 
 
 def result_directory(repo, source, run_id):
+    """Return a result path for a SHA-256 source and timestamp/PID run ID.
+
+    Reject invalid identifiers or symlinks below repo; do not create directories.
+    """
     if not re.fullmatch(r'[a-f0-9]{64}', source) or not re.fullmatch(r'[0-9]{8}T[0-9]{6}Z-[0-9]+', run_id):
         raise ValueError('invalid container result namespace')
     return unredirected(Path(repo) / '.oxpinyin-container/results' / source / run_id, repo)
 
 
 def verify_state(image, source, cell, run_id, root=STATE_ROOT):
+    """Validate container namespace identifiers and reject redirected state paths.
+
+    Check paths below root before writes; raise ValueError for invalid names
+    or symlinks, without creating the paths.
+    """
     # The cell and run patterns are compat-inside.sh's; this runs before its first write.
     if (not re.fullmatch(r'[a-f0-9]{16}', image) or not re.fullmatch(r'[a-f0-9]{64}', source)
             or not re.fullmatch(r'(bdb|kc|tkrzw)', cell)
@@ -81,6 +97,11 @@ def state_paths(inputs):
 
 
 def inner_state(inputs):
+    """Validate image-owned environment paths and interpreter, then return them.
+
+    Raise ValueError if any expected variable differs or the resolved
+    interpreter is outside /opt/uv/python.
+    """
     expected = state_paths(inputs)
     for name, value in expected.items():
         if os.environ.get(name) != value:
@@ -129,6 +150,12 @@ def archive_content(archive):
 
 
 def seal_inputs(directory, image, reference, head):
+    """Validate staged source/helpers and write their container input identity.
+
+    Hash source.tar, model.tar.gz, inside.sh, and identity.py; a nonempty model
+    must match the archived oracle pin. Write identity.json and return its
+    SHA-256. Raise ValueError for mismatches; read/archive errors propagate.
+    """
     directory = Path(directory)
     files = archive_content(directory / 'source.tar')
     model = directory / 'model.tar.gz'
@@ -154,6 +181,11 @@ def seal_inputs(directory, image, reference, head):
 
 
 def verify_inputs(directory, expected, image=None, reference=None):
+    """Return the input identity after checking its digest and all staged content.
+
+    Optionally require the image and reference namespaces. Raise ValueError
+    for identity/content mismatches; file and archive errors propagate.
+    """
     directory = Path(directory)
     if digest_file(directory / 'identity.json') != expected:
         raise ValueError('container input identity mismatch')
@@ -175,6 +207,12 @@ def verify_inputs(directory, expected, image=None, reference=None):
 
 
 def verify_tree(root, files):
+    """Check recorded files and symlinks against an extracted source tree.
+
+    Verify file bytes/modes and link targets, rejecting escaping regular
+    files with ValueError. Directory records and unlisted entries are not
+    checked; read errors propagate.
+    """
     root = Path(root).resolve()
     for name, info in files.items():
         path = root / name
@@ -189,6 +227,11 @@ def verify_tree(root, files):
 
 
 def current_inputs():
+    """Verify /input using the digest and namespace IDs from the environment.
+
+    Raise ValueError for a missing digest or failed verification; missing
+    namespace variables raise KeyError.
+    """
     expected = os.environ.get('OXPINYIN_COMPAT_INPUT_SHA256')
     if not expected:
         raise ValueError('missing container input identity')
@@ -197,6 +240,11 @@ def current_inputs():
 
 
 def artifact_content(artifacts, target):
+    """Return artifact paths and SHA-256 hashes within the container target.
+
+    Reject target namespace symlinks or artifacts resolving outside it with
+    ValueError. Read errors propagate.
+    """
     target = unredirected(target, STATE_ROOT)
     result = {}
     for name, info in artifacts.items():
@@ -208,6 +256,11 @@ def artifact_content(artifacts, target):
 
 
 def seal_artifacts(record, target):
+    """Return a container provenance record for built artifacts and source.
+
+    Verify current inputs and the recorded worktree before hashing artifacts
+    under target. This returns the record without writing it.
+    """
     inputs = current_inputs()
     verify_tree(record['worktree'], inputs['files'])
     return dict(schema=1, environment='container', source_sha256=inputs['source_sha256'],
@@ -217,6 +270,11 @@ def seal_artifacts(record, target):
 
 
 def verify_artifacts(record, root, needed):
+    """Return sealed artifact provenance after checking inputs, source, and needed files.
+
+    Require matching cell, profile, and toolchain plus each requested path
+    and digest under OXPINYIN_TARGET_ROOT; raise ValueError on mismatch.
+    """
     inputs = current_inputs()
     verify_tree(root, inputs['files'])
     sealed = record.get('container')
@@ -238,6 +296,12 @@ def verify_artifacts(record, root, needed):
 
 
 def seal_results(directory, target, cell):
+    """Write provenance.json binding result files to container inputs and state.
+
+    Verify any existing artifact identity and reject PASS rows whose required
+    artifacts are absent. Hash result files, excluding provenance.json itself;
+    invalid identities raise ValueError and file/catalog errors propagate.
+    """
     inputs = current_inputs()
     directory = Path(directory)
     rows = json.loads((directory / 'results.json').read_text())
@@ -266,6 +330,11 @@ def seal_results(directory, target, cell):
 
 
 def verify_results(directory, expected):
+    """Validate exported provenance against the expected input digest and result files.
+
+    Check recorded state paths, interpreter namespace, artifact-record digest,
+    and every result file hash. Raise ValueError for a mismatch.
+    """
     directory = Path(directory)
     record = read_record(directory / 'provenance.json')
     if record.get('environment') != 'container' or record.get('input_sha256') != expected:
@@ -293,6 +362,10 @@ def verify_results(directory, expected):
 
 
 def result_files(directory):
+    """Hash every regular result file except the top-level provenance.json.
+
+    Return relative-path keys and reject any encountered symlink with ValueError.
+    """
     files = {}
     for path in Path(directory).rglob('*'):
         if path.is_symlink():
@@ -303,6 +376,11 @@ def result_files(directory):
 
 
 def main(argv=None):
+    """Dispatch container identity actions, printing returned digests or paths.
+
+    Return zero on success or print FAIL and return 2 for handled input,
+    filesystem, and archive errors; argument parsing may exit separately.
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument('action', choices=('seal-inputs', 'verify-inputs', 'seal-results', 'verify-results',
                                            'result-directory', 'verify-state'))

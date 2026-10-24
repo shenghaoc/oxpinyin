@@ -14,11 +14,16 @@ IMPLEMENTATION_FORMS = ('legacy', 'python', 'instrument')
 
 
 class RegistryError(ValueError):
+    """Indicate an unreadable catalog, invalid row, or invalid runner selection."""
     pass
 
 
 def load(path=None):
-    """Return the registry rows in file order, after checking their shape."""
+    """Return registry rows in file order after validating their shape and commands.
+
+    Read the checkout catalog unless path is supplied. Raise RegistryError
+    for read/JSON errors, duplicate names, or invalid implementation metadata.
+    """
     path = Path(path) if path is not None else REGISTRY
     try:
         rows = json.loads(path.read_text())
@@ -99,6 +104,7 @@ def _command_path(part):
 
 
 def by_name(rows):
+    """Index rows by name, keeping the last row if names repeat."""
     return {row['name']: row for row in rows}
 
 
@@ -118,11 +124,21 @@ def names(value):
 
 
 def normal_issue(value):
+    """Normalize issue selectors by trimming, lowercasing, and canonicalizing row tags.
+
+    Remove leading # characters and rewrite an initial row plus spaces or
+    colons to row:; numeric issue text otherwise stays unchanged.
+    """
     return re.sub(r'^row[ :]*', 'row:', value.strip().lstrip('#').lower())
 
 
 def select(rows, names=None, cells=None, issues=None, kind=None, require_selection=False):
-    """Filter static rows only. Explicit empty or unknown selectors always fail."""
+    """Return rows matching all supplied filter categories, preserving input order.
+
+    Values within one category are alternatives; issue tags are normalized.
+    Raise RegistryError for empty or unknown selectors, no matches, or no
+    selector when require_selection is true.
+    """
     selectors = {'runner': names, 'cell': cells, 'issue': issues,
                  'kind': None if kind is None else [kind]}
     if require_selection and all(value is None for value in selectors.values()):

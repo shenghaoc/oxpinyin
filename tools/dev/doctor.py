@@ -41,6 +41,7 @@ UV_MINIMUM = '0.13.1'
 
 
 class DoctorError(RuntimeError):
+    """Indicate an unsupported interpreter or an unacceptable tool version."""
     pass
 
 
@@ -86,6 +87,7 @@ def _semver_format(program):
     line = re.compile(rf'{re.escape(program)} (\S+)')
 
     def parse(text):
+        """Read the leading program/version pair, returning None for malformed versions."""
         match = line.match(text)
         if match is None:
             return None
@@ -119,6 +121,7 @@ _GNU_LD = re.compile(r'GNU ld (?:\(.*?\)|version)\s+(\d+(?:\.\d+)+)')
 
 
 def _parse_gnu_ld(text):
+    """Parse GNU ld numeric version components, or return None for another format."""
     match = _GNU_LD.match(text)
     return None if match is None else Version(_dotted_key(match.group(1)), match.group(1))
 
@@ -135,6 +138,7 @@ _GCOV = re.compile(r'gcov \(.*?\)\s+(\d+(?:\.\d+)+)(.*)')
 
 
 def _parse_gcov(text):
+    """Read gcov numeric ordering and its development phase, or None for no match."""
     match = _GCOV.match(text)
     if match is None:
         return None
@@ -152,6 +156,7 @@ _VALGRIND = re.compile(r'valgrind-(\d+(?:\.\d+)*)(?:\.(GIT|SVN))?(?![\w.])')
 
 
 def _parse_valgrind(text):
+    """Read Valgrind numeric ordering and GIT/SVN display suffix, or None for no match."""
     match = _VALGRIND.match(text)
     if match is None:
         return None
@@ -207,6 +212,7 @@ def reject_overrides(environ=None):
 
 
 def _run(command, environ):
+    """Capture a command with the supplied environment; return None on spawn errors."""
     try:
         return subprocess.run(command, capture_output=True, text=True, env=environ, check=False)
     except OSError as exc:
@@ -214,6 +220,7 @@ def _run(command, environ):
 
 
 def _numbers(text):
+    """Convert dot-separated integer components to a tuple; invalid components raise."""
     return tuple(int(part) for part in text.split('.'))
 
 
@@ -225,6 +232,10 @@ def _at_least(found, minimum):
 
 
 def uv_version(environ=None):
+    """Check uv against the minimum and return its stripped version output.
+
+    Raise DoctorError when uv cannot run, prints an unknown format, or is too old.
+    """
     environ = os.environ if environ is None else environ
     result = _run(['uv', '--version'], environ)
     if result is None or result.returncode != 0:
@@ -240,7 +251,12 @@ def uv_version(environ=None):
 
 
 def check_python(numbers=None, releaselevel=None):
-    """Accept a final CPython release of the managed series: 3.15.0 or newer, below 3.16."""
+    """Require a final version in the managed 3.15 series.
+
+    Default to the running version and release level. Raise DoctorError for
+    a prerelease, a version below 3.15.0, or a version at least 3.16; this
+    helper does not check interpreter implementation or ownership.
+    """
     numbers = tuple(sys.version_info[:3]) if numbers is None else tuple(numbers)
     releaselevel = sys.version_info.releaselevel if releaselevel is None else releaselevel
     if (releaselevel != 'final' or not _at_least(numbers, _numbers(PYTHON_MINIMUM))
@@ -251,7 +267,12 @@ def check_python(numbers=None, releaselevel=None):
 
 
 def identity(environ=None):
-    """Check the running interpreter and return its identity record."""
+    """Validate the running managed CPython and return its identity record.
+
+    Reject interpreter overrides, unsupported versions, disabled GIL, or a
+    resolved executable differing from uv python find. Run uv subprocesses
+    and raise DoctorError when these acceptance checks fail.
+    """
     environ = os.environ if environ is None else environ
     reject_overrides(environ)
     uv_version(environ)
@@ -280,6 +301,10 @@ def identity(environ=None):
 
 
 def _first_line(result):
+    """Return the first nonblank output line, preferring stdout to stderr.
+
+    Return None for an absent result or empty selected stream.
+    """
     if result is None:
         return None
     text = (result.stdout or result.stderr).strip()
@@ -326,6 +351,11 @@ def tool_lines(environ=None):
 
 
 def host_lines(environ=None):
+    """Collect OS, architecture, compiler, and available utility descriptions.
+
+    Run version queries with environ; executable discovery uses the current
+    process PATH. Return lines without printing or provisioning.
+    """
     environ = os.environ if environ is None else environ
     lines = [f'os: {platform.system()} {platform.release()}',
              f'architecture: {platform.machine()}']
@@ -375,6 +405,10 @@ def collect(environ=None):
 
 
 def main(argv=None):
+    """Print the collected capability report and return its aggregate status.
+
+    The argv parameter is unused.
+    """
     lines, status = collect()
     for line in lines:
         print(line)
