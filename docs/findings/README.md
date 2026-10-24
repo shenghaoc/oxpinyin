@@ -1,5 +1,10 @@
 # Findings
 
+New reports follow [results and reproduction](../../CONTRIBUTING.md#results-and-reproduction):
+final conclusions, relevant results and maintained reproduction commands.
+Historical capture links and verification procedures below record their
+original work; they impose no new retention, upload or repeat-run requirement.
+
 Decisions, divergence records and the audit trail — one file per
 finding, dated in the file. This index carries a status so a reader can
 tell a frozen SPEC from a measurement from a note the architecture has

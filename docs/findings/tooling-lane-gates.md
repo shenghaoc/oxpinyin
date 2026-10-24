@@ -477,7 +477,8 @@ superseded by the row-1 ruling above.
 3. The requested repeated runs are the changed differentials’ proportional
    checks. No revert or expected-output adjustment is made.
 4. Findings/runbook changes belong to #675: docs-only, format/diff checks, no
-   extra runtime re-gate. Captures remain attached to the PR and outside Git.
+   extra runtime re-gate. Captures stay outside Git; nothing is attached,
+   uploaded or published.
 5. The final all-cell sweep is explicitly requested and runs once. A subsequent
    conflict-free restack with an unchanged landing tip requires no repeat;
    descendants that change none of these files retain their earlier verification.

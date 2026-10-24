@@ -15,6 +15,11 @@ on native Linux, macOS and Windows. Keep pinned compatibility work separate.
 Each layer owns one plan. References below import that owner's rule; they do
 not create a second implementation or acceptance contract.
 
+Identities, digests and captures below support tool execution, cache validity
+and local diagnosis. Published results follow
+[results and reproduction](../../CONTRIBUTING.md#results-and-reproduction);
+they do not require retained captures, uploaded bundles or manual manifests.
+
 | Layer | Plan | Owns |
 | --- | --- | --- |
 | 1, native | [tooling-python](../plans/tooling-python.md) | Host CPython/uv, tools.dev, doctor and portable slot semantics. |

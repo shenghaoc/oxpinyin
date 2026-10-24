@@ -13,16 +13,14 @@ If you add a new driver, state why no existing driver could take the case
 (Verification cells, rule 6).
 -->
 
-## Verification
+## Results
 
 <!--
-Give the exact commands, host, backend cells, and results.
-State the output of all three rule 2 path checks.
-Name the rule 7 re-verification case and explain why it applies.
-Mark each check that did not run as "not run". Mark each pending check
-as "pending".
-Identify the verified head. Keep results for the current head separate
-from historical results.
+State the results and the command or just recipe that reproduces them.
+Disclose any required check that failed or could not run as a limitation.
+Omit checks that do not apply. Keep historical results clearly identified.
+Follow CONTRIBUTING.md#results-and-reproduction: no raw logs, captures,
+evidence archives, upload requests or separate findings document by default.
 -->
 
 ## Compatibility and impact
@@ -31,9 +29,10 @@ from historical results.
 State the effects on the C ABI, pinned behaviour, persistent data,
 performance, and memory.
 For a measuring PR, report base / PR / pin from one run on one host,
-with ratios.
-Record stripped shipping-library file sizes. Note each increase over base
-(Constitution 2).
+with ratios and the command needed to reproduce the comparison. One command
+may cover the whole table; include inputs/build/environment details that matter.
+For changes affecting shipping libraries, record stripped library file sizes and
+note increases over base (Constitution 2); docs-only work needs no size build.
 Justify each time/space trade-off (Source policy).
 Write "None" when nothing applies.
 -->

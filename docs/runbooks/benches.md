@@ -590,9 +590,9 @@ favourable, on an upstream report drafted from
 [`upstream-report-drafts.md`](../findings/upstream-report-drafts.md)) —
 not in this repo's shipping open path.
 
-**No capture committed.** The recipe above is what regenerates every
-figure; run output belongs on the issue or in the upstream-report
-draft, not in-tree.
+**Report the result and recipe.** The recipe above regenerates the figures.
+An issue or upstream-report draft needs the conclusion and relevant numbers,
+not the raw run output; follow [results and reproduction](../../CONTRIBUTING.md#results-and-reproduction).
 
 ## BDB guess, training, and import profiles (#757–#759)
 
@@ -891,12 +891,14 @@ keystroke cycle with `samply`, falling back to `cargo flamegraph` or
 
 ## Writing it up
 
-A snapshot records the container image, the host, the pin, the exact
-commands, and the controls (`docs/perf/perf-stage2-harness-2026-08.md`
-is the template; `docs/findings/perf-keycost-first-alloc-2026-09-07.md`
-a recent full example with confidence intervals and an acceptance
-gate). A change that trades time for space or the reverse must say so
-and justify it (AGENTS.md, "Source policy").
+Follow [results and reproduction](../../CONTRIBUTING.md#results-and-reproduction):
+state the conclusion, final measurements and reproduction commands. Include
+the revisions, workload, backend, build recipe, host/container and controls
+needed to interpret the comparison. One invocation may reproduce a whole
+table. Link existing setup procedures; a separate findings file is optional.
+A change that trades time for space or the reverse must say so and justify
+it (AGENTS.md, "Source policy"). Historical reports are examples of results,
+not templates requiring their full provenance sections to be copied.
 
 ### Measure base, PR and pin in one run
 
@@ -908,8 +910,9 @@ PR and pin artifacts run by run, and reports only those figures and the
 ratios between them. Interleaving all three is a requirement of the
 measurement, not a property of `tools/bisection/run-perf-same-data.sh`,
 which interleaves two pin-built backends and two artifacts of the current
-tree and does not run a base artifact; a measuring PR that needs the
-base/PR/pin triple arranges that itself.
+tree and does not run a base artifact. If the needed base/PR/pin selection is
+missing, extend the maintained in-tree tooling and its `just` entry point;
+do not supply an out-of-tree measurement controller.
 No absolute figure from an earlier run, another host or another CPU is a
 baseline: callgrind `Ir` and wall time both move with the CPU (glibc picks
 `memcpy` and friends at run time), so a baseline taken elsewhere cannot be
@@ -942,11 +945,15 @@ contributions.
 
 ### State the build recipe, per artifact
 
-**Which artifact was timed is part of the measurement, not a detail of it.**
-Name the exact cargo command line for every timed oxpinyin artifact, and give
-its `sha256`, `NEEDED` list and byte size.
-`docs/findings/perf-steady-cycle-cross-host-2026-09-07.md:155` is the worked
-example.
+Identify each timed subject by revision, backend and build recipe, including
+the profile and relevant flags. A maintained recipe and its arguments can
+provide the build command; do not duplicate it for every figure. Report
+shipping-library sizes when applicable under AGENTS.md Constitution 2.
+Hashes and loaded-library checks needed by the tools remain tool-internal
+checks; a report needs the results and reproduction recipe, not a checklist
+of their verdicts, checksum manifest or full `NEEDED` inventory. Include a
+specific hash or dependency only when it explains a concrete build-identity
+or loader discrepancy.
 
 This is not bookkeeping. `cargo cinstall` is the shipping path
 (`.github/workflows/release-packages.yml` → `tools/packaging/install.sh`;
@@ -981,51 +988,25 @@ The audit of which existing records sit where is
 
 ### Evidence: what is committed and what is not
 
-**A findings document commits no captures.** Not DHAT JSON, not `/proc`
-`smaps` dumps, not callgrind out-files, not `perf` data. They are large,
-machine-generated, and unreviewable in a diff — and in at least one case
-the bulk of the file is a part the document itself records as unusable.
+Publish the final result and a working reproduction procedure. Use one
+command for figures produced together; identify different inputs, options or
+runs where they affect the comparison. Keep shared readers and calculations
+in the repository's Python tooling so another contributor can regenerate
+and interpret the results without an author's scripts or old captures.
 
-A campaign keeps the per-sample timing output and the profiler totals until they are attached to the PR.
+Raw logs, DHAT JSON, `smaps` dumps, Callgrind/perf output and evidence archives
+are local working data, governed by
+[the reporting policy](../../CONTRIBUTING.md#results-and-reproduction).
+Do not publish or retain them as a submission requirement. Their absence
+needs no disclaimer or replacement manifest. Existing historical attachments
+do not create a requirement for new work.
 
-What the document carries instead:
-
-1. **The command that produced each figure.** Not each class of figure —
-   each figure. Where two numbers come from different commands, different
-   inputs, or different runs, they get separate entries, because a shared
-   heading is exactly how one of them ends up with no provenance at all.
-   That is what makes a number regenerable once the capture is gone, and
-   it is the substitute for a path on a machine.
-2. **The capture bundle, attached to the pull request**, with its URL *in
-   the document* and not only in the PR description — a document that says
-   "evidence is attached to the PR" without a link has the same problem as
-   one pointing at `/tmp`. Record the bundle's SHA-256 alongside the link.
-   A release asset is an **additional** mirror if you want one, never a
-   substitute for the PR attachment.
-3. **An explicit note where a figure cannot be regenerated**, *at the
-   point of use*, so a weaker claim reads as one. Do not point at a path
-   that no longer exists.
-
-**The one exception to (2), and it is narrow.** If the capture environment
-was ephemeral and the bundle could not be retained anywhere — no
-attachment, no mirror, nothing to link — the document says so plainly, in
-place of the link, and (1) carries the whole reproduction burden. Keep the
-SHA-256 even then, so anyone still holding a copy can verify it. This is
-not a licence to skip the attachment when attaching is possible: it exists
-because it happened, in the record that prompted this rule, and a rule its
-own founding case violates is worse than no rule. When it applies, (1) is
-not "a Provenance section" but a complete recipe — toolchain, packages,
-builds, measurement commands, and the reader invocations that turn the
-captures into the document's tables.
-
-Small, human-readable, directly-cited artifacts are the exception that
-proves the rule — a SHA manifest, a pin file — and
-`docs/findings/oracle-pin-074a221-evidence/` is what that looks like.
-The line is bulk machine output, not evidence as such.
-
-Derived readers stay in `tools/bisection/` (`rss-smaps.py`,
-`cg-calls.py`): they are tools, not evidence, and they are what makes the
-pipeline reproducible for anyone holding the bundle.
+If a reproduction command is incomplete or the result contradicts the claim
+beyond the method's expected variability, investigate and fix the software,
+tooling or documented assumptions and correct or withdraw the claim. State
+an actual unresolved limitation beside the affected result; discarded raw
+output is not such a limitation. Keep existing measurement controls and
+rejection rules, including exact checks where the method requires them.
 
 
 ## Per-call C-API costs
