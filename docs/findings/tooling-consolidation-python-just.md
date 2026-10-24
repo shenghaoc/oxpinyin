@@ -611,7 +611,11 @@ current claims about `main`:
 - Use only libc and the subject's own libraries for the new startup worker.
   Read Linux process memory through `/proc`, in the container and on the
   native Linux path. On macOS the parent reads RSS and virtual size with
-  `ps`.
+  `ps`. macOS virtual size includes the shared region (about 488 GB), so the
+  §7.5 residency band, 1% of the median, is about 4.7 GiB wide and passes any
+  change. The controller reports it as not informative (verdict
+  `unavailable`) and prints no STABLE or INCONCLUSIVE for it. RSS is the macOS
+  memory metric.
 - Python `measure` owns profiles, verification orchestration, comparability,
   statistics, report and the same-run base/PR/pin interleaving.
 - The native C worker (`tools/workers/startup.c`, tests in
