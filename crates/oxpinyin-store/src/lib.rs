@@ -4,8 +4,15 @@
 //! capability tiers — [`ReadStore`] (point get, ranged scan, full scan,
 //! emptiness check) and [`WriteStore`] (creation, atomic multi-table
 //! writes, compaction) — and provides the peer implementations behind
-//! it: [`KcStore`] on Kyoto Cabinet, [`TkrzwStore`] on tkrzw, and
-//! [`BdbStore`] on Berkeley DB.
+//! it:
+// Each peer's type exists only under its own feature, so a build links the one
+// it compiles and names the other two in code spans (#1129).
+#![cfg_attr(feature = "kyotocabinet", doc = " [`KcStore`] on Kyoto Cabinet,")]
+#![cfg_attr(not(feature = "kyotocabinet"), doc = " `KcStore` on Kyoto Cabinet,")]
+#![cfg_attr(feature = "tkrzw", doc = " [`TkrzwStore`] on tkrzw, and")]
+#![cfg_attr(not(feature = "tkrzw"), doc = " `TkrzwStore` on tkrzw, and")]
+#![cfg_attr(feature = "bdb", doc = " [`BdbStore`] on Berkeley DB.")]
+#![cfg_attr(not(feature = "bdb"), doc = " `BdbStore` on Berkeley DB.")]
 //! All are first-class and interchangeable: any oxpinyin binary
 //! picks exactly one at compile time via the cargo features and calls it
 //! through the same trait surface, and a table produced by any of them
