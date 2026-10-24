@@ -3,8 +3,11 @@
 Source preparation, 2026-10-23 UTC; reconciliation 2026-10-24 UTC
 (`date -u` on this host). Parent PR #1110 merged with final head
 `d9227a32c55f7be5b24c24e8fbc463d164ad3986`; its branch was deleted.
-The two owned commits were rebased onto landing tip
-`2a0f5748646b9fdaa5bac22a350670794deb1319`, which contains that parent.
+The work was first rebased onto landing tip
+`2a0f5748646b9fdaa5bac22a350670794deb1319`, which contains that parent,
+then onto `6755fc5a257cf68da58f3743e450aa02cad212b9` before publication.
+The latter brings KC shim and ordering-tool changes; all native results
+below precede that second rebase and are not current-head gate results.
 The maintainer clarified that normal tool-created local files are allowed;
 only publication of logs, captures, archives and evidence files is forbidden.
 Setup ran unchanged for all three cells and passed their pinned library
@@ -22,6 +25,12 @@ and native tests do contain `db_set_record`. The putative PR libraries
 therefore do not certify this source, and their instruction results are
 invalid as PR measurements. No savings or performance ratios are claimed.
 Separate-target rebuilding and new source-identity checks are required.
+The queued rebuild admission request was canceled before it started a
+container when the maintainer restored #1031's priority. The running
+attribution batch finished normally, including both facades and all four
+fixtures, with three exact same-bytes repeats per comparison. Its slot
+was released; no further #1114 heavy job is queued. The putative PR arm
+remains invalid despite those equal-byte controls. No control was relaxed.
 
 All six base/PR/control library copies passed the layout checker (260
 policy paths for pinyin, 240 for zhuyin), and the runtime checks passed.
