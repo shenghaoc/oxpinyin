@@ -11,16 +11,13 @@ import ctypes
 import hashlib
 import importlib.util
 import json
-import math
 import os
 from pathlib import Path
-import random
 import re
 import runpy
 import selectors
 import shutil
 import stat
-import statistics
 import subprocess
 import sys
 import threading
@@ -28,13 +25,16 @@ import time
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from tools.dev.measure.stats import (
+    CONTROL_INTERVAL, RESIDENCY_FLOOR_KIB, RESIDENCY_FRACTION, percentile, summary,
+    paired_bootstrap, paired_ratio, paired_difference, within, stable_control,
+    stable_residency, exact_control,
+)
 FIELDS = ('Rss', 'Pss', 'Anonymous', 'Private_Clean', 'Private_Dirty', 'Shared_Clean')
 PROFILES = ('empty', 'modest', 'phrases', 'journals')
 CASES = (*PROFILES, 'modest-unsaved', 'modest-saved')
-# Accepted before the first sample. Do not tune these from campaign output.
-CONTROL_INTERVAL = (0.95, 1.05)
-RESIDENCY_FLOOR_KIB = 64
-RESIDENCY_FRACTION = 0.01
 # The control is the subject's bytes at a second path. With `libraries/ox`
 # against `libraries/control`, #1030 measured the control at 15 B more heap and
 # 12-354 more Ir, consistent with its 5-byte longer path (the loader and the
@@ -210,65 +210,6 @@ def memory_deltas(checkpoints):
         if left['allocator'] is not None and right['allocator'] is not None:
             result[label]['allocator'] = signed_delta(left['allocator'], right['allocator'])
     return result
-
-
-def percentile(values, fraction):
-    ordered = sorted(values)
-    position = (len(ordered) - 1) * fraction
-    lo, hi = math.floor(position), math.ceil(position)
-    return ordered[lo] + (ordered[hi] - ordered[lo]) * (position - lo)
-
-
-def summary(values):
-    if not values or any(not math.isfinite(value) for value in values):
-        raise ValueError('missing or nonfinite observations')
-    middle = statistics.median(values)
-    return dict(n=len(values), median=middle, minimum=min(values), maximum=max(values),
-                p25=percentile(values, .25), p75=percentile(values, .75),
-                range_over_median=(max(values) - min(values)) / abs(middle) if middle else None)
-
-
-def paired_bootstrap(values):
-    generator = random.Random(0x074A2219)
-    resamples = [statistics.median(generator.choices(values, k=len(values))) for _ in range(4000)]
-    return dict(median=statistics.median(values), ci95=[percentile(resamples, .025), percentile(resamples, .975)])
-
-
-def paired_ratio(numerator, denominator):
-    if len(numerator) != len(denominator) or not numerator or any(value <= 0 for value in denominator):
-        raise ValueError('paired ratios require equal, positive-denominator samples')
-    return paired_bootstrap([a / b for a, b in zip(numerator, denominator)])
-
-
-def paired_difference(minuend, subtrahend):
-    if len(minuend) != len(subtrahend) or not minuend:
-        raise ValueError('paired differences require equal, nonempty samples')
-    return paired_bootstrap([a - b for a, b in zip(minuend, subtrahend)])
-
-
-def within(estimate, lo, hi):
-    return lo <= estimate['ci95'][0] <= estimate['median'] <= estimate['ci95'][1] <= hi
-
-
-def stable_control(ox, control):
-    ratio = paired_ratio(control, ox)
-    return dict(ratio=ratio, stable=within(ratio, *CONTROL_INTERVAL), rule=list(CONTROL_INTERVAL))
-
-
-def stable_residency(ox, control):
-    # §7.5 item 2: d = control - ox in KiB; the median and the whole
-    # interval lie within +-max(64 KiB, 1% of |median(ox)|), inclusive.
-    difference = paired_difference(control, ox)
-    band = max(RESIDENCY_FLOOR_KIB, RESIDENCY_FRACTION * abs(statistics.median(ox)))
-    return dict(difference=difference, stable=within(difference, -band, band), bound_kib=band,
-                rule=dict(floor_kib=RESIDENCY_FLOOR_KIB, fraction=RESIDENCY_FRACTION))
-
-
-def exact_control(ox, control):
-    # §7.5 item 3: scoped instruction counts and deterministic heap
-    # accounting must be equal. No tolerance: any difference is INVALID.
-    return dict(rule='exact', ox=ox, control=control, difference=control - ox,
-                verdict='VALID' if control == ox else 'INVALID')
 
 
 def filesystem(path):
@@ -855,7 +796,7 @@ def file_offset(address, maps, library):
     return None
 
 
-def callgrind_costs(text, library):
+def callgrind_costs(text, library, *, preserve_objects=False):
     """Exclusive costs of every collected event, by object and function, from
     one in-memory Callgrind profile. The cost line after `calls=` is the
     callee's inclusive cost and is skipped; the exclusive sums must equal the
@@ -908,7 +849,7 @@ def callgrind_costs(text, library):
     if sums != total or 'Ir' not in names or not total[names.index('Ir')]:
         raise ValueError('Callgrind exclusive costs do not reconcile with totals')
     def label(path):
-        return 'SUBJECT' if Path(path) == Path(library) else Path(path).name
+        return 'SUBJECT' if Path(path) == Path(library) else (path if preserve_objects else Path(path).name)
     objects = {}
     for (path, _), costs in exclusive.items():
         target = objects.setdefault(label(path), [0] * len(names))
@@ -1313,6 +1254,7 @@ def run(args, driver, parser):
         shutil.copyfile(args.prefix / 'lib' / 'libpinyin.so', campaign.provisioner)
     profiles = provision(campaign, campaign.provisioner, work / 'profiles')
     if args.teardown_stage == 'provision':
+        prepare_witnesses(campaign, campaign.provisioner, profiles)
         return 0
     return execute(campaign, args, subjects, profiles, cases, facades, driver)
 
@@ -1348,7 +1290,7 @@ def execute(campaign, args, subjects, profiles, cases, facades, driver):
     # is an observation to report, never permission to repair shipping behavior.
     if not all(comparable.values()):
         print_record('checkpoint', status='equivalence-blocked', comparable=[list(key) for key, value in comparable.items() if value])
-        return 2
+        return 3
     if args.teardown_stage == 'verify':
         return 0
     if args.teardown_stage in ('pilot', 'confirm'):

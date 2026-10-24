@@ -4,6 +4,7 @@ import json
 import sys
 
 from . import check, coverage, doctor, host, registry, slot, test_runner
+from .measure import startup
 
 
 def _selected(args, *, required=False):
@@ -128,6 +129,11 @@ def build_parser():
     p = sub.add_parser('plan', help='show the selected registry rows, read-only')
     _selection_arguments(p)
     p.set_defaults(func=plan_command)
+
+    p = sub.add_parser('measure', help='native oxpinyin-only measurement')
+    p.add_argument('recipe', choices=('startup',))
+    p.add_argument('args', nargs=argparse.REMAINDER)
+    p.set_defaults(func=lambda args: startup.main(args.args))
 
     p = sub.add_parser('slot', help='inspect or run under the host-wide heavy slot')
     slot_sub = p.add_subparsers(dest='action', required=True)
