@@ -10,7 +10,7 @@
 //!
 //! * `kyotocabinet` — the C entry points (`shim.h`) of a C++ shim over
 //!   Kyoto Cabinet's classes, which this script also compiles with `cc`.
-//! * `tkrzw` — the tkrzw C API (`tkrzw_langc.h`).
+//! * `tkrzw` — a C++ shim over concrete tkrzw classes (`tkrzw/shim.h`).
 //! * `bdb` — the Berkeley DB C API (`db.h`), from the system libdb, on by
 //!   default.
 
@@ -238,11 +238,9 @@ mod kyotocabinet {
 
 #[cfg(feature = "tkrzw")]
 mod tkrzw {
-    /// Locates `tkrzw_langc.h` under the discovered include path, falling
-    /// back to the compiler's default include directory. The C API is the
-    /// only header this build may bind: no C++ header and no other tkrzw
-    /// API crosses the ABI.
-    fn langc_header(cflags: &[String]) -> Option<std::path::PathBuf> {
+    /// Locates the C++ development headers used by the shim. Bindgen reads
+    /// only our plain-C shim.h; no C++ declarations cross the Rust ABI.
+    fn dbm_header(cflags: &[String]) -> Option<std::path::PathBuf> {
         let mut dirs: Vec<std::path::PathBuf> = cflags
             .iter()
             .filter_map(|flag| flag.strip_prefix("-I"))
@@ -250,7 +248,7 @@ mod tkrzw {
             .collect();
         dirs.push(std::path::PathBuf::from("/usr/include"));
         dirs.into_iter()
-            .map(|dir| dir.join("tkrzw_langc.h"))
+            .map(|dir| dir.join("tkrzw_dbm.h"))
             .find(|path| path.is_file())
     }
 
@@ -288,10 +286,10 @@ mod tkrzw {
             // LD_LIBRARY_PATH or its own rpath.
             println!("cargo:rustc-link-arg=-Wl,-rpath,{dir}");
         }
-        let Some(header) = langc_header(&cflags) else {
+        let Some(header) = dbm_header(&cflags) else {
             panic!(
                 "libtkrzw required: the `tkrzw` feature needs the tkrzw library with its \
-                 C API header tkrzw_langc.h, which was found neither under \
+                 C++ API header tkrzw_dbm.h, which was found neither under \
                  `pkg-config --cflags tkrzw` nor via OXPINYIN_TKRZW_INCLUDE_DIR. Build \
                  tkrzw from source (https://dbmx.net/tkrzw/: POSIX: ./configure \
                  --prefix=DIR && make && make install; Windows: nmake -f VCMakefile && \
@@ -317,39 +315,30 @@ mod tkrzw {
         };
         println!("cargo:rerun-if-changed={}", header.display());
 
-        // Exactly the entry points the backend's safe wrapper calls, and
-        // the types they traffic in. Anything else in tkrzw_langc.h — the
-        // async adapter, the index API, the string utilities — stays
-        // unbound: an unbound API cannot be misused.
+        println!("cargo:rerun-if-changed=src/tkrzw/shim.h");
+        println!("cargo:rerun-if-changed=src/tkrzw/shim.cc");
+        let mut shim = cc::Build::new();
+        shim.cpp(true)
+            .std("c++17")
+            .file("src/tkrzw/shim.cc")
+            .opt_level(2)
+            .flag_if_supported("-fvisibility=hidden")
+            .flag_if_supported("-fvisibility-inlines-hidden");
+        // Share pkg-config's complete compiler flags with the C++ build;
+        // the explicit include override stays first, as for bindgen.
+        for arg in &cflags {
+            shim.flag(arg);
+        }
+        shim.compile("oxpinyin_tkrzw_shim");
+
         let mut builder = bindgen::Builder::default()
-            .header(header.to_string_lossy())
-            .allowlist_function("tkrzw_dbm_open")
-            .allowlist_function("tkrzw_dbm_close")
-            .allowlist_function("tkrzw_dbm_check")
-            .allowlist_function("tkrzw_dbm_process")
-            .allowlist_function("tkrzw_dbm_process_multi")
-            .allowlist_function("tkrzw_dbm_count")
-            .allowlist_function("tkrzw_dbm_is_healthy")
-            .allowlist_function("tkrzw_dbm_synchronize")
-            .allowlist_function("tkrzw_dbm_rebuild")
-            .allowlist_function("tkrzw_dbm_make_iterator")
-            .allowlist_function("tkrzw_dbm_iter_free")
-            .allowlist_function("tkrzw_dbm_iter_jump")
-            .allowlist_function("tkrzw_dbm_iter_first")
-            .allowlist_function("tkrzw_dbm_iter_process")
-            .allowlist_function("tkrzw_dbm_iter_next")
-            .allowlist_function("tkrzw_get_last_status")
-            .allowlist_function("tkrzw_get_last_status_code")
-            .allowlist_type("TkrzwDBM")
-            .allowlist_type("TkrzwDBMIter")
-            .allowlist_type("TkrzwStatus")
-            .allowlist_type("TkrzwKeyProcPair")
-            .allowlist_type("tkrzw_record_processor")
-            .allowlist_var("TKRZW_REC_PROC_NOOP")
-            .allowlist_var("TKRZW_REC_PROC_REMOVE")
-            .allowlist_var("TKRZW_STATUS_SUCCESS")
-            .allowlist_var("TKRZW_STATUS_SYSTEM_ERROR")
-            .allowlist_var("TKRZW_STATUS_NOT_FOUND_ERROR")
+            .header("src/tkrzw/shim.h")
+            .allowlist_function("oxtkrzw_.*")
+            .allowlist_type("OxTkrzw.*")
+            .allowlist_type("oxtkrzw_record_processor")
+            .allowlist_var("OXTKRZW_.*")
+            .layout_tests(false)
+            .derive_debug(false)
             .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()));
 
         for arg in &cflags {
@@ -358,10 +347,10 @@ mod tkrzw {
 
         let bindings = builder
             .generate()
-            .expect("bindgen over tkrzw_langc.h must succeed");
+            .expect("bindgen over tkrzw/shim.h must succeed");
         let out_dir = std::env::var("OUT_DIR").unwrap();
         bindings
-            .write_to_file(std::path::Path::new(&out_dir).join("tkrzw_langc.rs"))
+            .write_to_file(std::path::Path::new(&out_dir).join("tkrzw_shim.rs"))
             .expect("writing the generated tkrzw bindings must succeed");
 
         if let Ok(name) = std::env::var("OXPINYIN_TKRZW_LIB_NAME") {
