@@ -1,7 +1,7 @@
 //! Corpus front-end for the W9 training chain.
 //!
 //! Converts a Chinese-Wikipedia XML dump into the line-oriented raw Han
-//! text that [`oxpinyin_segment`] (the `ngseg` reproduction) consumes:
+//! text that `oxpinyin_segment` (the `ngseg` reproduction) consumes:
 //!
 //! 1. extract `<page>` wikitext (XML layer),
 //! 2. strip wiki markup,

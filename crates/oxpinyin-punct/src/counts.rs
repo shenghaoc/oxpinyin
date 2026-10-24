@@ -153,8 +153,9 @@ impl PunctCounts {
         out
     }
 
-    /// Parses a `token word punct freq` table (the inverse of [`to_table`],
-    /// for reading per-index intermediates back in the merge stage).
+    /// Parses a `token word punct freq` table (the inverse of
+    /// [`to_table`](Self::to_table), for reading per-index intermediates back
+    /// in the merge stage).
     ///
     /// # Errors
     ///
