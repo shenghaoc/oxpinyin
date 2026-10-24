@@ -6,6 +6,8 @@ import json
 import os
 from pathlib import Path
 import sys
+import subprocess
+import tempfile
 import unittest
 from unittest import mock
 
@@ -17,6 +19,34 @@ from tools.dev import cli, host, registry, slot
 
 IMPLEMENTATION = 'legacy:tools/bisection/run-bisect.sh'
 COMMAND = ['bash', '{root}/tools/bisection/run-bisect.sh']
+
+
+class RealJustSmokeTests(unittest.TestCase):
+    """Use CI's pinned real just and managed Python; no command mocks."""
+
+    def invoke(self, *args):
+        return subprocess.run(['just', '--justfile', str(ROOT / 'justfile'), *args],
+                              cwd=ROOT, capture_output=True, text=True, timeout=30)
+
+    def test_real_justfile_lists_its_public_recipes(self):
+        result = self.invoke('--list')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('test-tools', result.stdout)
+        self.assertIn('audit-glib-call-sites', result.stdout)
+        self.assertNotIn('_test-argv', result.stdout)
+
+    def test_real_recipe_preserves_arguments_and_nonzero_exit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            marker = Path(directory) / 'must-not-exist'
+            values = ['path with spaces', '', 'literal;$HOME', '*?[abc]',
+                      'double" and single\' quotes', r'back\slash', 'line\nbreak',
+                      f'$(touch "{marker}")', f'`touch "{marker}"', '--flag']
+            for status in (0, 23):
+                with self.subTest(status=status):
+                    result = self.invoke('_test-argv', str(status), *values)
+                    self.assertEqual(result.returncode, status, result.stderr)
+                    self.assertEqual(json.loads(result.stdout), values)
+                    self.assertFalse(marker.exists(), 'shell expanded a literal argument')
 
 
 class CliTests(unittest.TestCase):
