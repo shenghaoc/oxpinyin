@@ -17,10 +17,17 @@ LINE = re.compile(r'([0-9]+)\t([0-9a-f]{64})\t(.+)')
 
 
 def manifest(directory):
+    """Describe regular files by byte size, SHA-256, and relative path.
+
+    Return schema-prefixed text with a final newline, in path-component order.
+    Reject symlinks, special files, and paths containing tabs or newlines with
+    ValueError; filesystem errors propagate.
+    """
     directory = Path(directory)
     rows = [SCHEMA]
 
     def walk(parent):
+        """Append sorted file records recursively, rejecting unsupported entries and paths."""
         for path in sorted(parent.iterdir(), key=lambda entry: entry.name):
             if path.is_symlink():
                 raise ValueError(f'manifest input contains a symlink: {path}')

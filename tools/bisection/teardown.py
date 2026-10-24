@@ -59,6 +59,7 @@ INIT_CACHE_SIM = ('--I1=32768,8,64', '--D1=32768,8,64', '--LL=8388608,16,64')
 
 
 def sibling(name):
+    """Execute a sibling Python file as an imported module and return it."""
     spec = importlib.util.spec_from_file_location(name.replace('-', '_'), HERE / (name + '.py'))
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -71,15 +72,22 @@ FUNCTION_ORDER = runpy.run_path(str(ROOT / 'tools/packaging/function_order.py'))
 
 
 def digest_bytes(value):
+    """Return the SHA-256 hex digest of the supplied bytes."""
     return hashlib.sha256(value).hexdigest()
 
 
 def file_set(directory):
+    """Map relative file paths to byte sizes and SHA-256 digests.
+
+    Walk recursively in sorted order; is_file follows file symlinks and
+    non-file entries are omitted.
+    """
     return {str(path.relative_to(directory)): (path.stat().st_size, digest_bytes(path.read_bytes()))
             for path in sorted(Path(directory).rglob('*')) if path.is_file()}
 
 
 def identity(files):
+    """Hash a value's compact, sorted-key JSON representation for stable comparison."""
     return digest_bytes(json.dumps(files, sort_keys=True, separators=(',', ':')).encode())
 
 
@@ -87,7 +95,7 @@ def profile_contents(driver, directory, *, library=None, cell=None):
     """Reuse contract-diff's DB row/padding rules, retaining every file/row.
 
     BDB page headers include random file identities and LSNs; Bigram::save_db
-    recreates the container (src/storage/ngram_bdb.cpp:81-105 at 074a2219).
+    recreates the container (src/storage/ngram_bdb.cpp at pin 074a2219).
     KC user containers are snapshots, tkrzw indexes are TreeDBM and the
     user bigram is HashDBM. Read peer records in the existing isolated worker
     so backend CDLLs do not stay mapped in the controller. Raw input identities
@@ -134,11 +142,18 @@ def profile_contents(driver, directory, *, library=None, cell=None):
 
 
 def exports(facade):
+    """Read facade-prefixed export names from the corresponding subject version script."""
     crate, version = ('oxpinyin-capi', 'libpinyin.ver') if facade == 'pinyin' else ('oxpinyin-zhuyin-capi', 'libzhuyin.ver')
     return re.findall(r'\b' + facade + r'_\w+(?=\s*;)', (ROOT / 'crates' / crate / version).read_text())
 
 
 def build_worker(work, instrumentation=None):
+    """Compile a native teardown executable in work and return its build identity.
+
+    Accept optional Massif or Memcheck instrumentation; reject other values
+    with ValueError. Return the executable and command, byte size, and source/
+    executable hashes; compiler failures propagate.
+    """
     if instrumentation not in (None, 'massif', 'memcheck'):
         raise ValueError('unknown worker instrumentation')
     executable = work / ('bisect-teardown' + ('-' + instrumentation if instrumentation else ''))
@@ -156,6 +171,11 @@ def build_worker(work, instrumentation=None):
 
 
 def mapping_group(row, library, data):
+    """Classify a smaps mapping by subject, data, library, anonymous, or other role.
+
+    Append text/writable/readonly access to file-backed groups; normalize
+    deleted-path suffixes when matching the subject and data.
+    """
     name, perms = row['name'], row['perms']
     if not name or name.startswith('[anon') or name in ('[heap]', '[stack]'):
         return 'ANON:' + (name or '[anonymous]')
@@ -171,6 +191,12 @@ def mapping_group(row, library, data):
 
 
 def read_memory(pid, library, data, *, proc_root=Path('/proc')):
+    """Read a child's mapping counters in KiB and count its mappings and file descriptors.
+
+    Derive totals and role groups from one smaps read. Keep the later rollup
+    and its signed difference as diagnostics; the sequential reads are not
+    an atomic snapshot.
+    """
     proc = proc_root / str(pid)
     with (proc / 'smaps').open() as handle:
         rows = SMAPS.parse_lines(handle, fields=FIELDS)
@@ -200,6 +226,12 @@ def signed_delta(a, b):
 
 
 def memory_deltas(checkpoints):
+    """Compute signed M1-M2, M2-M3, and M3-M0 checkpoint differences.
+
+    Retain disappearing groups and subtract mapping/fd counts. Memory fields
+    keep their KiB units; allocator fields are included only when both
+    checkpoints provide them and retain their original units.
+    """
     result = {}
     for label, a, b in (('M1-M2', 'M1', 'M2'), ('M2-M3', 'M2', 'M3'), ('M3-M0', 'M3', 'M0')):
         left, right = checkpoints[a], checkpoints[b]
@@ -275,6 +307,11 @@ def cold_files(library, data, user, rows=None):
     # Include every regular data/profile file, not a hard-coded stock filename
     # list: table.conf and non-stock library layouts are valid inputs too.
     # Dirty scenarios also read their rows file inside the lifecycle.
+    """List the facade, non-runtime dependencies, data, private user files, and optional rows.
+
+    Resolve dependencies before eviction; recursively include regular files
+    from data and user rather than a fixed filename list.
+    """
     return [Path(library), *library_dependencies(library),
             *(path for root in (data, user) for path in sorted(root.rglob('*')) if path.is_file()),
             *([Path(rows)] if rows else [])]
@@ -302,11 +339,13 @@ def file_residency(files, library, data, user):
 
 
 def resident_pages(fd, ranges=False):
-    """Linux mincore over an unfaulted PROT_NONE mapping; no file bytes read.
-    With `ranges`, also the resident page indices as [start, end) runs.
+    """Count resident file pages with Linux mincore over an unfaulted PROT_NONE mapping.
 
-    Linux can conservatively report all pages resident when the caller lacks
-    mincore permissions. That must refuse a sample, never count as eviction.
+    Read no file bytes. With ranges, include half-open resident page-index runs
+    for a nonempty file; an empty file returns just zero pages/resident counts.
+    Unmap on exit and propagate syscall failures as OSError. Linux may report
+    all pages resident without sufficient permissions, so eviction callers
+    must reject that result rather than infer success.
     """
     size = os.fstat(fd).st_size
     if not size:
@@ -349,6 +388,7 @@ def page_ranges(indices):
 
 
 def range_pages(runs):
+    """Expand half-open page-index runs into a set of individual indices."""
     return {index for start, end in runs for index in range(start, end)}
 
 
@@ -406,6 +446,11 @@ def evict_files(files):
 
 
 def select_rows(exported, balanced=False):
+    """Choose 10,000 distinct phrases in export order with frequency 20,000.
+
+    Balanced mode requires library quotas 3000/3000/3000/1000 and groups the
+    result by library. Raise ValueError if the export cannot fill the recipe.
+    """
     seen, selected, counts = set(), [], [0, 0, 0, 0]
     quotas = (3000, 3000, 3000, 1000)
     for library, phrase, pinyin, _ in exported:
@@ -423,15 +468,18 @@ def select_rows(exported, balanced=False):
 
 
 def modest_rows():
+    """Build the repeated two-phrase fixture recipe for all four libraries at frequency 5."""
     return [(library, phrase, pinyin, 5) for library in range(1, 5) for _ in range(10)
             for phrase, pinyin in (('测试', "ce4'shi4"), ('测侧', "ce4'ce4"))]
 
 
 def row_text(rows):
+    """Serialize library, phrase, pronunciation, and count rows as newline-terminated TSV."""
     return ''.join(f'{library}\t{phrase}\t{pinyin}\t{count}\n' for library, phrase, pinyin, count in rows)
 
 
 def witness_inputs(rows):
+    """Select up to 400 distinct tone-free readings of at most 24 encoded bytes."""
     found = []
     for _, _, pronunciation, _ in rows:
         value = re.sub(r'[0-9]', '', pronunciation)
@@ -489,6 +537,7 @@ def init_trace(text, marker, names):
     tracer's (ptrace stops included), so they bound, not measure, kernel time.
     """
     def name_paths(value):
+        """Replace the longest matching path prefix with its sample-independent role."""
         for original, role in sorted(names.items(), key=lambda item: -len(item[0])):
             if value == original or value.startswith(original + '/'):
                 return role + value[len(original):]
@@ -569,6 +618,7 @@ def kernel_symbols(path=Path('/proc/kallsyms')):
 
 
 def kernel_symbol(symbols, address):
+    """Resolve an address to its nearest preceding kernel symbol, or hexadecimal text."""
     index = bisect.bisect_right(symbols[0], address) - 1
     return symbols[1][index] if index >= 0 else hex(address)
 
@@ -595,6 +645,10 @@ def kernel_category(sample, symbols):
 
 
 def user_object(address, maps, library, worker):
+    """Name the executable mapping holding an address by subject, worker, or path.
+
+    Return unmapped when no executable range contains it.
+    """
     for start, end, perms, path, *_ in maps:
         if 'x' in perms and start <= address < end:
             if path == str(library):
@@ -629,8 +683,12 @@ def elf_symbols(path):
 
 
 def user_function(address, maps):
-    """The function holding a user IP. A shared object's lowest mapping is
-    its load base: its segments map in address order from file offset 0."""
+    """Resolve a user IP to the nearest preceding symbol in its executable mapping.
+
+    Use the object's lowest mapped address as load base. Return a relative hex
+    address without a preceding symbol, a non-file mapping name, or unmapped
+    when no executable mapping contains the IP; symbol size is not checked.
+    """
     for start, end, perms, path, *_ in maps:
         if 'x' in perms and start <= address < end:
             if not path.startswith('/'):
@@ -661,6 +719,7 @@ def init_faults(records, before, library, data, user):
     """Attribute each fault to the mapping that held its address when it
     happened: M0's mappings, then the init's own mmaps, latest first."""
     def access(text=None, prot=0):
+        """Classify permissions or Linux protection bits, preferring text over writable."""
         executable, writable = ('x' in text, 'w' in text) if text is not None else (prot & 4, prot & 2)
         return 'text' if executable else 'writable' if writable else 'readonly'
     regions = [(start, end, region_label(path, access(perms), library, data, user))
@@ -687,10 +746,16 @@ class LackeyAccesses:
     distinct instruction addresses and distinct 64-byte data lines."""
 
     def __init__(self):
+        """Initialize an empty streaming parser before the begin marker."""
         self.state, self.rest, self.lines = 'before', b'', 0
         self.code, self.data = set(), set()
 
     def feed(self, block):
+        """Consume complete trace lines between begin/end markers and retain an incomplete tail.
+
+        Accumulate distinct instruction addresses and 64-byte data-line indices;
+        ignore bytes before the begin marker and after the end marker.
+        """
         text = self.rest + block
         cut = text.rfind(b'\n') + 1
         self.rest, text = text[cut:], text[:cut]
@@ -713,6 +778,7 @@ class LackeyAccesses:
             self.state = 'after'
 
     def result(self):
+        """Return marker completion, access count, and sorted instruction/data-line identities."""
         return dict(window=self.state == 'after', lines=self.lines, code=sorted(self.code), data_lines=sorted(self.data))
 
 
@@ -740,6 +806,7 @@ def library_layout(path):
 
 
 def section_at(layout, offset):
+    """Return the first ELF section containing a file byte offset, or None."""
     return next((section['name'] for section in layout['sections']
                  if section['offset'] <= offset < section['offset'] + section['size']), None)
 
@@ -754,7 +821,11 @@ def page_section(layout, page, page_size):
 
 
 def symbol_span(layout, address):
-    """(start, size, name) of the sized symbol holding a virtual address."""
+    """Find a sized ELF symbol covering a virtual address, or return None.
+
+    Inspect at most eight preceding sorted symbols and return start, byte
+    size, and name for the first covering span.
+    """
     symbols = layout['symbols']
     index = bisect.bisect_right(symbols, (address, float('inf')))
     for start, size, _, name in reversed(symbols[max(0, index - 8):index]):
@@ -764,6 +835,7 @@ def symbol_span(layout, address):
 
 
 def symbol_at(layout, address):
+    """Return the sized symbol found for a virtual address, or None."""
     span = symbol_span(layout, address)
     return span[2] if span else None
 
@@ -790,6 +862,7 @@ def policy_prefix(library, facade):
 
 
 def file_offset(address, maps, library):
+    """Translate an address in a facade mapping to a file byte offset, or return None."""
     for start, end, perms, path, offset in maps:
         if path == str(library) and start <= address < end:
             return address - start + offset
@@ -849,6 +922,7 @@ def callgrind_costs(text, library, *, preserve_objects=False):
     if sums != total or 'Ir' not in names or not total[names.index('Ir')]:
         raise ValueError('Callgrind exclusive costs do not reconcile with totals')
     def label(path):
+        """Name the subject specially and preserve other paths or reduce them to basenames."""
         return 'SUBJECT' if Path(path) == Path(library) else (path if preserve_objects else Path(path).name)
     objects = {}
     for (path, _), costs in exclusive.items():
@@ -864,13 +938,32 @@ def callgrind_costs(text, library, *, preserve_objects=False):
 
 
 class Campaign:
+    """Control native teardown samples using private profile copies and in-memory observations.
+
+    Own the sample serial counter and paths/settings shared by launches.
+    Measured native work runs in child processes, with driver-provided
+    cancellation, runtime certification, and process-group cleanup.
+    """
     def __init__(self, worker, data, work, cpu, driver, cache='warm'):
+        """Store sample settings and resolve system data; initialize the sample serial counter."""
         self.worker, self.data, self.work, self.cpu, self.driver = worker, data.resolve(), work, cpu, driver
         self.serial = 0
         self.cache = cache
 
     def run(self, facade, library, profile, *, mode='time', save=False, scenario='first-candidate',
             rows=None, instances=1, cycles=1, inputs=None, reopen=False, profiler=None, probe=None):
+        """Run one native workload against a disposable copy of the profile.
+
+        Return observations, timings, checkpoints, command, and final raw-profile
+        identity. Timing fields use ns and counters retain their event units;
+        mapping memory uses KiB. Optional profilers/probes stream through pipes,
+        and cold mode evicts and verifies the measured file set before launch.
+        Validate lifecycle boundaries, totals, and unchanged input profile; reject
+        invalid options or observations with ValueError. Use a response deadline
+        of 120 s, or 1800 s for profiler/page tracing, and terminate the group
+        on collection errors. The guarded launch removes sample scratch on exit;
+        earlier setup failures can leave it behind. Reopen launches another sample.
+        """
         cold = self.cache == 'cold' and mode in ('time', 'memory', 'init')
         if cold and (cycles != 1 or profiler):
             raise ValueError('cold samples require one native lifecycle without a profiler')
@@ -960,6 +1053,7 @@ class Campaign:
                     os.close(value)
                 trace_write = marker = None
                 def drain():
+                    """Drain child stderr into the shared byte buffer until EOF."""
                     while block := process.stderr.read(65536):
                         errors.extend(block)
                 reader = threading.Thread(target=drain)
@@ -967,6 +1061,7 @@ class Campaign:
                 tracer = None
                 if trace_read is not None:
                     def drain_trace():
+                        """Drain the trace pipe into the Lackey parser or in-memory trace buffer."""
                         while block := os.read(trace_read, 1 << 20):
                             if accesses is not None:
                                 accesses.feed(block)
@@ -1117,10 +1212,17 @@ class Campaign:
 
 
 def print_record(kind, **values):
+    """Print one sorted, ASCII-escaped JSON teardown record and flush stdout."""
     print(json.dumps(dict(teardown=kind, **values), sort_keys=True, ensure_ascii=True), flush=True)
 
 
 def provision(campaign, pin, root):
+    """Create pin-populated fixture profiles, or validate existing profile manifests.
+
+    Write recipes, manifests, and empty witness inputs under root; print
+    fixture identities for newly generated profiles and return name-to-user
+    paths. Existing roots must contain every expected verified profile.
+    """
     if root.exists():
         profiles = {name: root / name / 'user' for name in PROFILES}
         for user in profiles.values():
@@ -1160,6 +1262,12 @@ def provision(campaign, pin, root):
 def populate_user(campaign, pin, user, rows):
     # Fixture generation is untimed. This is the same native executable and
     # facade machinery, with no external workload dependency.
+    """Populate and save a fixture through the pin's native pinyin worker.
+
+    Modify user from the TSV rows, certify the runtime, and allow 300 seconds.
+    Check cancellation while waiting and terminate the process group on
+    errors; reject unsuccessful or unexpected JSON output with ValueError.
+    """
     command = [str(campaign.worker), '--teardown', 'pinyin', str(pin), str(campaign.data), str(user),
                'populate', '1', '1', '1', 'first-candidate', str(rows)]
     env = dict(os.environ, OXPINYIN_TEARDOWN_EXPORTS=','.join(exports('pinyin')))
@@ -1188,6 +1296,12 @@ def populate_user(campaign, pin, user, rows):
 
 
 def run(args, driver, parser):
+    """Validate teardown CLI settings, stage library copies, and provision native fixtures.
+
+    Require owned ext4 work storage, allowed affinity, and compatible modes.
+    Build the worker and record provenance; provision-only returns zero,
+    otherwise return the selected campaign stage's status.
+    """
     if args.per_call or args.cases or args.issue or args.family or args.expect_parent or args.observations or args.plan_only or args.axis_c_replacement or args.axis_c_mutation or args.axis_c_snapshot_check or args.regenerate_sentence_ties:
         parser.error('--teardown is a separate workload; contract/profiler modes cannot be combined')
     cache = getattr(args, 'teardown_cache', 'warm')
@@ -1263,6 +1377,13 @@ def execute(campaign, args, subjects, profiles, cases, facades, driver):
     # zhuyin.cpp:515-526 at 074a2219 uses ZhuyinDirectParser2, not
     # pinyin's romanized importer. Subjects receive identical inputs within
     # each facade, with the same phrase, library and frequency on both.
+    """Verify side-by-side workload equivalence before running the requested stage.
+
+    Write facade-specific dirty rows, prepare witnesses, and print results.
+    Return 3 for inequivalence, 1 for invalid exact profiler controls, or zero
+    for a completed stage. Changed observations or unsupported stages raise
+    ValueError; timing and profiling stages launch fresh native samples.
+    """
     dirty_rows = {}
     for facade, reading in (('pinyin', "ce4'shi4"), ('zhuyin', 'ㄘㄜˋ ㄕˋ')):
         dirty_rows[facade] = campaign.work / ('dirty-' + facade + '.tsv')
@@ -1387,6 +1508,7 @@ def execute(campaign, args, subjects, profiles, cases, facades, driver):
 
 
 def rotation(index):
+    """Rotate ox, control, and pin execution order by the round index modulo three."""
     order = ['ox', 'control', 'pin']
     return order[index % 3:] + order[:index % 3]
 
@@ -1447,6 +1569,11 @@ def init_attribute(campaign, subjects, profiles, cases, facades, references, dir
 
 
 def report_init_counts(facade, case, rows, cache):
+    """Print init resource, performance-event, and residency summaries from completed samples.
+
+    Keep refused events as NOT RUN. Report duration in ns, RSS growth in KiB,
+    and file residency in pages, with paired differences where applicable.
+    """
     values = {side: {field: [row['samples'][0]['times']['init_ns'][field] for row in samples]
                      for field in CLOCK_FIELDS} for side, samples in rows.items()}
     print_record('init-resources', facade=facade, case=case, cache=cache, rounds=len(rows['ox']),
@@ -1492,6 +1619,11 @@ def report_init_counts(facade, case, rows, cache):
 
 
 def report_init_samples(facade, case, rows, symbols, subjects, worker, cache, probe='sample'):
+    """Print init CPU-clock sample attribution by executable object and kernel category.
+
+    Resolve user functions and kernel frames; retain lost/throttled/invalid
+    status and print NOT RUN when any probe reports an errno.
+    """
     for side, samples in rows.items():
         library = subjects[side][facade].resolve()
         user, kernel, leaves, functions = collections.Counter(), collections.Counter(), {}, {}
@@ -1531,6 +1663,10 @@ def report_init_samples(facade, case, rows, symbols, subjects, worker, cache, pr
 
 
 def report_init_faults(facade, case, rows, subjects, campaign, cache):
+    """Print fault counts by faulted region and executing code across diagnostic rounds.
+
+    Preserve probe validity/loss flags; an errno makes the side NOT RUN.
+    """
     for side, samples in rows.items():
         library = subjects[side][facade].resolve()
         regions, code, status = {}, {}, dict(lost=0, throttled=0, valid=True, errno=[])
@@ -1555,6 +1691,7 @@ def report_init_faults(facade, case, rows, subjects, campaign, cache):
                          errno=sorted(set(status['errno'])))
             continue
         def shown(table):
+            """Summarize each fault-kind count series, ordering regions by descending total."""
             return {kind: {key: summary(counts) for key, counts in sorted(values.items(), key=lambda item: -sum(item[1]))}
                     for kind, values in sorted(table.items())}
         print_record('init-faults', facade=facade, case=case, side=side, cache=cache, rounds=len(samples),
@@ -1573,6 +1710,7 @@ def report_init_pages(facade, case, rows, bitmaps, subjects, cache):
         layout = library_layout(library)
         prefix = policy_prefix(library, facade) if side != 'pin' else None
         def address_offset(address):
+            """Translate a virtual address through its allocated ELF section to a file offset."""
             section = next((value for value in layout['sections']
                             if value['address'] <= address < value['address'] + value['size']), None)
             return address - section['address'] + section['offset'] if section else None
@@ -1667,6 +1805,11 @@ def report_init_pages(facade, case, rows, bitmaps, subjects, cache):
 
 
 def report_init_trace(facade, case, rows, cache):
+    """Print syscall-count and traced-time summaries for completed init windows.
+
+    Require every trace to contain the marker window; show the first target
+    breakdown and whether all rounds agree. Traced times are in seconds.
+    """
     for side, samples in rows.items():
         traces = [row['init']['trace'] for row in samples]
         if not all(trace['window'] for trace in traces):
@@ -1686,6 +1829,11 @@ def report_init_trace(facade, case, rows, cache):
 
 
 def report_init_ir(cell, facade, case, costs):
+    """Print init instruction-count controls and attribution; return whether control is invalid.
+
+    Require exact repeated ox/control Ir outside bdb. Bdb is diagnostic only;
+    an invalid exact control withholds pin and ox attribution rows.
+    """
     readings = {side: [value['totals']['Ir'] for value in values] for side, values in costs.items()}
     exact = cell != 'bdb'
     equal = len(set(readings['ox'])) == 1 and set(readings['ox']) == set(readings['control'])
@@ -1703,17 +1851,27 @@ def report_init_ir(cell, facade, case, costs):
 
 
 def case_options(case, profiles, dirty_rows):
+    """Map a case name to its base profile, dirty rows, scenario, and save flag."""
     return dict(profile=profiles[case.split('-')[0]], scenario='dirty' if '-' in case else 'first-candidate',
                 rows=dirty_rows if '-' in case else None, save=case.endswith('-saved'))
 
 
 def require_profile_controls(row, reference):
+    """Require instrumented samples and final userfiles to match the reference.
+
+    Compare every sample with the first reference sample; raise ValueError
+    on disagreement, leaving profiler stderr outside the comparison.
+    """
     if (any(sample != reference['samples'][0] for sample in row['observation']['samples']) or
             row['observation']['userfiles'] != reference['userfiles']):
         raise ValueError('NOT COMPARABLE: instrumented workload observation changed')
 
 
 def massif_snapshots(text):
+    """Parse Massif byte counters and up to twenty allocation-tree lines per snapshot.
+
+    Raise ValueError if a snapshot lacks time, heap, extra-heap, or stack fields.
+    """
     snapshots = []
     for block in re.split(r'^snapshot=\d+\s*$', text, flags=re.M)[1:]:
         values = {name: int(value) for name, value in re.findall(
@@ -1726,6 +1884,12 @@ def massif_snapshots(text):
 
 
 def massif_profile(text):
+    """Extract exact checkpoint heaps and sampled teardown/lifecycle peak heaps.
+
+    Require one snapshot at each M0-M3 marker, otherwise raise ValueError.
+    Return signed freed bytes and sampled peaks; the latter do not establish
+    an exact transient maximum.
+    """
     checkpoints = {}
     for point, block in re.findall(r'TEARDOWN_HEAP (M[0-3]) BEGIN\n(.*?)TEARDOWN_HEAP \1 END', text, re.S):
         values = massif_snapshots(block)
@@ -1745,6 +1909,11 @@ def massif_profile(text):
 
 
 def memcheck_sites(text, point, cycle):
+    """Return up to twenty largest allocation sites from one marked live-heap report.
+
+    Require exactly one report and at least one parsed site. Bytes and blocks
+    from overlapping loss records are not an additive partition.
+    """
     marker = f'TEARDOWN_LEAK {point} {cycle}'
     matches = re.findall(re.escape(marker + ' BEGIN\n') + r'(.*?)' + re.escape(marker + ' END'), text, re.S)
     if len(matches) != 1:
@@ -1763,10 +1932,16 @@ def memcheck_sites(text, point, cycle):
 
 
 def workload_observation(row):
+    """Select samples, stderr, and final userfiles for workload-equivalence checks."""
     return {key: row['observation'][key] for key in ('samples', 'stderr', 'userfiles')}
 
 
 def first_difference(left, right, path='$'):
+    """Locate the first unequal nested value and return its path and both observations.
+
+    Check exact types, dictionary keys, sequence elements, then lengths;
+    return None if equal. Dictionary traversal follows left insertion order.
+    """
     if type(left) is not type(right):
         return dict(path=path, pin=left, subject=right)
     if isinstance(left, dict):
@@ -1787,6 +1962,13 @@ def first_difference(left, right, path='$'):
 
 
 def prepare_witnesses(campaign, pin, profiles):
+    """Fill empty witness files with inputs whose pin answers change after training.
+
+    Probe candidate readings against empty and populated profiles, selecting
+    up to forty sorted differing inputs. Reuse nonempty witness files, leave
+    the empty-profile witness unchanged, and print identities; raise ValueError
+    if a populated profile changes no candidate answer.
+    """
     result = {}
     for name in PROFILES:
         path = profiles[name].parent / 'witness.txt'
@@ -1804,6 +1986,7 @@ def prepare_witnesses(campaign, pin, profiles):
             empty = campaign.run('pinyin', pin, profiles['empty'], mode='observe', inputs=candidate_file)
             populated = campaign.run('pinyin', pin, profiles[name], mode='observe', inputs=candidate_file)
             def by_input(row):
+                """Index full-parser transcript observations by input, keeping the last duplicate."""
                 return {value['transcript']: value for value in row['observation']['documents']
                         if value.get('parser') == 'full'}
             a, b = by_input(empty), by_input(populated)
@@ -1817,6 +2000,11 @@ def prepare_witnesses(campaign, pin, profiles):
 
 
 def report_times(facade, case, samples, pilot):
+    """Print nanosecond timing summaries and ratios only when same-bytes controls are stable.
+
+    Report major-fault event counts separately without ratios or a timing
+    control rule.
+    """
     for metric in samples['ox'][0]['samples'][0]['times']:
         for clock in ('wall_ns', 'cpu_ns'):
             values = {side: [row['samples'][0]['times'][metric][clock] for row in rows]
@@ -1839,6 +2027,11 @@ def report_memory(facade, case, samples, pilot):
     # Absolute checkpoint levels have meaningful positive-denominator ratios.
     # Signed release/residual deltas are reported in KiB, never divided by a
     # negative/zero baseline. No VmHWM observation enters this path.
+    """Print KiB checkpoint summaries, signed deltas, and control-qualified level ratios.
+
+    Require positive pin levels for ratios. Include mapping/fd counts, available
+    allocator counters, rollup diagnostics, and cold-file page residency.
+    """
     for point in ('M0', 'M1', 'M2', 'M3'):
         for metric in FIELDS:
             values = {side: [row['checkpoints'][0 if point == 'M0' else 1][point]['totals'][metric] for row in rows]
@@ -1881,17 +2074,20 @@ def report_memory(facade, case, samples, pilot):
 
 
 def callgrind_counts(shown):
+    """Select scoped instruction count for exact-control comparison."""
     return dict(scoped_ir=shown['scoped_ir'])
 
 
 def massif_counts(heap):
     # The ABI-boundary snapshots are exact; the sampled peaks are not
     # deterministic accounting and stay out of the comparison.
+    """Select ABI-checkpoint heap bytes for exact controls, excluding sampled peaks."""
     return {point + '.mem_heap_B': value['mem_heap_B'] for point, value in heap['checkpoints'].items()}
 
 
 def live_heap_counts(live):
     # Memcheck's four leak classes partition the live blocks.
+    """Sum Memcheck leak classes into live bytes and blocks at each checkpoint/cycle."""
     counts = {}
     for point in live['points']:
         label = f"{point['point']}.{point['cycle']}"

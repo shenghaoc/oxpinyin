@@ -32,10 +32,10 @@ def parse(path):
 
 
 def parse_lines(lines, fields=FIELDS):
-    """Parse an iterable in memory; the historical file/CLI schema is unchanged.
+    """Parse mapping names, permissions, and selected smaps counters in KiB.
 
-    A paused native child's parent can supply /proc/PID/smaps lines and request
-    Pss as well, without creating a capture or importing Python into the child.
+    Initialize missing counters to zero and ignore fields not ending in kB.
+    Accept an iterable of text lines; fields may include Pss for a paused child.
     """
     rows = []
     cur = None
@@ -75,6 +75,7 @@ def group_key(row):
 
 
 def totals(path):
+    """Sum Rss in KiB by mapping identity from a smaps file."""
     out = collections.Counter()
     for row in parse(path):
         out[group_key(row)] += row['Rss']
@@ -82,6 +83,7 @@ def totals(path):
 
 
 def table(path):
+    """Print nonzero-Rss mapping groups in descending Rss order, with KiB counters."""
     rows = parse(path)
     agg = {}
     for row in rows:
@@ -102,6 +104,7 @@ def table(path):
 
 
 def diff(path_a, path_b):
+    """Print B minus A Rss in KiB, ordered by absolute change, including missing groups."""
     a, b = totals(path_a), totals(path_b)
     print(f'{"mapping":<44}{"A":>9}{"B":>9}{"B-A":>9}')
     for name in sorted(set(a) | set(b), key=lambda k: -abs(b[k] - a[k])):
@@ -111,6 +114,7 @@ def diff(path_a, path_b):
 
 
 def main(argv):
+    """Print smaps tables or a two-file difference; return 2 for missing or invalid arity."""
     if len(argv) > 1 and argv[0] == '--diff':
         if len(argv) != 3:
             print(__doc__, file=sys.stderr)

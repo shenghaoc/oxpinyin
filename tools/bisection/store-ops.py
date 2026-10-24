@@ -56,10 +56,15 @@ OUT = sys.stdout
 
 
 class WriteFailed(Exception):
+    """Signal an OS error while writing or synchronizing the result stream."""
     pass
 
 
 def record(kind, **values):
+    """Write and flush a sorted JSON result, fsyncing non-stdout output.
+
+    Wrap write, flush, or sync OSErrors in WriteFailed.
+    """
     line = json.dumps(dict(kind=kind, **values), sort_keys=True) + '\n'
     try:
         OUT.write(line)
@@ -72,6 +77,11 @@ def record(kind, **values):
 
 
 def parse(text):
+    """Read key=value benchmark fields into operation, checksum, and numeric counters.
+
+    Require a reported VmHWM in KiB; return elapsed ns plus iterations and
+    units. Missing fields or invalid integers propagate as errors.
+    """
     values = dict(line.split('=', 1) for line in text.splitlines() if '=' in line)
     if values.get('vmhwm_kib') in (None, 'unavailable'):
         raise ValueError('worker printed no VmHWM')
@@ -80,6 +90,11 @@ def parse(text):
 
 
 def run(binary, op, iters, data, cpu, prefix=()):
+    """Execute a benchmark operation with optional profiler and CPU affinity.
+
+    Certify the Tkrzw runtime first. Capture text output; return the completed
+    process or raise RuntimeError with stderr on a nonzero exit.
+    """
     command = [*prefix, str(binary), '--op', op, '--iters', str(iters), '--data', str(data)]
     if cpu is not None:
         command = ['taskset', '-c', str(cpu), *command]
@@ -91,6 +106,11 @@ def run(binary, op, iters, data, cpu, prefix=()):
 
 
 def callgrind_ir(binary, op, iters, data, work, keep=None):
+    """Run the measured region under Callgrind and return its instruction count.
+
+    Read totals or summary from the output file; raise ValueError if absent.
+    After a successful run, delete the profile unless a keep path was supplied.
+    """
     out = keep or work / f'cg-{os.getpid()}.out'
     run(binary, op, iters, data, None, ('valgrind', '--tool=callgrind', '--toggle-collect=*ops::measured*',
                                         f'--callgrind-out-file={out}'))
@@ -105,6 +125,10 @@ def callgrind_ir(binary, op, iters, data, work, keep=None):
 
 
 def dhat_totals(binary, op, iters, data, work):
+    """Run DHAT and return summed allocation blocks, bytes, and global-peak bytes.
+
+    Delete the JSON profile after reading it; process and decode errors propagate.
+    """
     out = work / f'dhat-{os.getpid()}.json'
     run(binary, op, iters, data, None, ('valgrind', '--tool=dhat', f'--dhat-out-file={out}'))
     try:
@@ -117,7 +141,11 @@ def dhat_totals(binary, op, iters, data, work):
 
 
 def compare_profiles(op, iters, units, values):
-    """`values[side]` holds the exact counts per side; each must equal base's in the control."""
+    """Emit profiler values only when base/control counts agree exactly.
+
+    Always emit the control verdict. For valid controls, divide non-peak
+    counts by units and retain peak bytes unchanged; do not return a status.
+    """
     control = {key: td.exact_control(values['base'][key], values['control'][key]) for key in values['base']}
     valid = all(check['verdict'] == 'VALID' for check in control.values())
     shown = dict(per_call={side: {key: value if key.startswith('peak') else value / units
@@ -129,6 +157,11 @@ def compare_profiles(op, iters, units, values):
 check_tkrzw = runpy.run_path(str(Path(__file__).resolve().parents[1] / "tkrzw/runtime.py"))["check"]
 
 def main():
+    """Open the optional result stream, run comparisons, and return their status.
+
+    An output-open error returns 3; a later WriteFailed prints an error and
+    exits immediately with status 3 to avoid flushing the failed stream again.
+    """
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--base', type=Path, required=True)
     parser.add_argument('--candidate', type=Path, required=True)
@@ -171,6 +204,12 @@ def main():
 
 
 def compare(args, parser):
+    """Stage equal-path-length binaries and run rotating benchmark/control comparisons.
+
+    Create work files and emit JSON records. Reject operation names through
+    the parser; return 2 on checksum/unit disagreement and zero after reporting
+    completed timing and optional profiler controls, including invalid controls.
+    """
     work = args.work.resolve()
     work.mkdir(parents=True, exist_ok=True)
     binaries = {}
@@ -234,6 +273,11 @@ def compare(args, parser):
 
 
 def profile(args, binaries, op, iters, units, work):
+    """Measure instruction and heap counts for each side and emit control comparisons.
+
+    Normalize by operation units; subtract zero-iteration DHAT allocation
+    counts but retain the full run's peak. Optionally retain Callgrind files.
+    """
     profiled = max(1, iters // args.profile_divisor)
     units_profiled = units * profiled // iters
     kept = work / 'callgrind'

@@ -183,6 +183,7 @@ def report(base, merge_base, head, results, limit):
 
 
 def non_negative(value):
+    """Convert a CLI integer, rejecting negative values with ArgumentTypeError."""
     number = int(value)
     if number < 0:
         raise argparse.ArgumentTypeError('must not be negative')
@@ -190,6 +191,10 @@ def non_negative(value):
 
 
 def main(argv=None):
+    """Print verification cells selected by checks on the requested Git diff; return zero.
+
+    Git and filesystem errors propagate to the CLI error handler.
+    """
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument('base', nargs='?', default='origin/main',
                         help='base ref of the diff BASE...HEAD (default: origin/main)')

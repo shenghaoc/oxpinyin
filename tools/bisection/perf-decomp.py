@@ -88,6 +88,11 @@ def ratio_from(cells, rounds, num, den):
 
 
 def main(argv=None):
+    """Print the paired-round bootstrap decomposition of backend and implementation ratios.
+
+    Read matched steady-cycle captures, resample common round indices across
+    cells with the chosen seed, and return zero after the report.
+    """
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("captures", nargs="+")
     parser.add_argument("--l", required=True, help="denominator cell label")
@@ -107,6 +112,7 @@ def main(argv=None):
 
     # Point estimates, in milliseconds and as ratios.
     def med(backend):
+        """Return the pooled steady-cycle median for this backend in milliseconds."""
         return statistics.median([v for r in cells[backend] for v in r]) / 1e6
 
     r_x = ratio_from(cells, all_rounds, args.x, args.l)
@@ -128,6 +134,7 @@ def main(argv=None):
         recipes.append(bz - by)
 
     def ci(values):
+        """Return rounded-index 2.5th and 97.5th percentiles of nonempty resamples."""
         values = sorted(values)
         lo = values[max(0, int(round(0.025 * (len(values) - 1))))]
         hi = values[min(len(values) - 1, int(round(0.975 * (len(values) - 1))))]

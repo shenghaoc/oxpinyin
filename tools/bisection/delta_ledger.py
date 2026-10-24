@@ -58,14 +58,20 @@ def parse_rows(text):
 
 
 def digest(keys):
+    """Hash sorted newline-delimited identity strings, including a final newline."""
     return hashlib.sha256(('\n'.join(sorted(keys)) + '\n').encode()).hexdigest()
 
 
 def base_identity(identity):
+    """Remove one trailing LLVM link-local clone suffix from an identity."""
     return CLONE.sub('', identity)
 
 
 def recorded_provenance(text):
+    """Read the two recorded oracle digests, requiring one match and the expected pin.
+
+    Raise RuntimeError when the ledger does not uniquely establish provenance.
+    """
     matches = re.findall(PROVENANCE, text)
     if len(matches) != 1 or f'Pin `{measure.PIN}`' not in text:
         raise RuntimeError('the ledger does not record both oracle binary digests')
@@ -125,10 +131,12 @@ def conditional_files(pin, cell):
 
 
 def identity(nodes, key):
+    """Use a node's nonempty USR as its identity, falling back to the graph key."""
     return nodes[key].get('usr') or key
 
 
 def definitions(nodes):
+    """List defined pin-node keys, treating an omitted pin flag as true."""
     return [key for key, node in nodes.items() if node.get('pin', True) and node.get('definition')]
 
 
@@ -222,6 +230,10 @@ def carrier(state, bdb, bdb_files, ident):
 
 
 def path_steps(path):
+    """Parse every rendered witness step into signature, file, line, and edge kind.
+
+    Raise RuntimeError on a step that does not match the ledger path syntax.
+    """
     steps = []
     for step in path.split(' → '):
         match = re.fullmatch(r'(.+) @ (\S+):(\d+) \(([\w/-]+)\)', step)
@@ -253,6 +265,11 @@ def break_point(state, reachable, row, families=frozenset()):
 
 
 def reviewed(ledger, cell, key, node):
+    """Return a reviewed classification and cited mapping, or None without a rule.
+
+    Prefer explicit mappings, then cell identities, shared identities, and
+    source sites. Export-absence statuses receive T2-UNREACHABLE.
+    """
     if key in ledger.MAPPINGS:
         return 'T5-REVIEWED', ledger.counterpart(key)
     review = CELL_IDENTITY_REVIEWS[cell].get(key) or IDENTITY_REVIEWS.get(key) or REVIEWS.get((node['file'], node['line']))
@@ -279,6 +296,13 @@ def emitted_inventory(out, pin):
 
 
 def measure_cell(args, ledger, state, provenance):
+    """Run cell measurements and align credited, failed, and limited compiler identities.
+
+    Resolve required paths on args, require committed Rust sources, build
+    instrumented libraries, and run contract, surface, user-store, and Rust
+    gates. Remove registered measurement-limit credit and return attribution
+    plus provenance/configuration and verdict records.
+    """
     cell = args.cell
     nodes, roots = state['nodes'], state['roots']
     required = ['measurement_build', 'measurement_config', 'pinyin_so', 'zhuyin_so', 'rust_target', 'export', 'model']
@@ -345,6 +369,11 @@ def evidence(key, node, executed):
 
 
 def classify(ledger, cell, key, node, measured):
+    """Choose a row's tier and explanation from defects, execution, reviews, and facilities.
+
+    Known defects override execution credit; unresolved rows remain open
+    findings with any counter or reachability limits described.
+    """
     defect = KNOWN_DEFECTS.get((node['file'], node['line']))
     if defect:
         excluded = sum(label.startswith(defect['excluded']) for label in measured['executed'].get(key, set()))
@@ -388,6 +417,10 @@ def split_verdicts(records):
 
 
 def toolchain():
+    """Collect compiler and gcov version descriptions from subprocess stdout.
+
+    Use the first version line, falling back to the first line or command name.
+    """
     versions = []
     for argv in (['clang++', '--version'], ['opt', '--version'], ['g++', '--version'], ['gcov', '--version']):
         text = subprocess.run(argv, capture_output=True, text=True).stdout.strip().splitlines()
@@ -396,6 +429,13 @@ def toolchain():
 
 
 def render_delta(args, state, provenance):
+    """Measure a peer cell and write or compare its delta from the authorized bdb ledger.
+
+    Validate provenance and one-to-one identity matching before measurements;
+    re-read review rules, classify rows, and test deletion/restoration in
+    memory. Print results and hashes. Raise on inconsistent output or, with
+    require_complete, remaining open rows, defects, or non-MATCH results.
+    """
     import importlib
     ledger = importlib.import_module('internal-ledger')
     cell = args.cell

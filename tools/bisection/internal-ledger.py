@@ -74,6 +74,11 @@ MAPPINGS = {
 
 
 def counterpart(key):
+    """Render an explicit Rust role mapping, or a GAP when none is registered.
+
+    Read the mapped file and require exactly one anchor match, otherwise
+    raise RuntimeError.
+    """
     if key not in MAPPINGS:
         return "GAP — semantic counterpart/absence has not been source-reviewed"
     file, anchor, reason = MAPPINGS[key]
@@ -86,6 +91,7 @@ def counterpart(key):
 
 
 def run(args, **kwargs):
+    """Capture command text and return stdout, raising RuntimeError on nonzero exit."""
     p = subprocess.run([str(x) for x in args], capture_output=True, text=True, **kwargs)
     if p.returncode:
         raise RuntimeError(f"{args[0]} failed ({p.returncode}): {p.stderr.strip()}")
@@ -93,10 +99,12 @@ def run(args, **kwargs):
 
 
 def globals_in(path):
+    """Read pinyin/zhuyin export names from semicolon-terminated version-script entries."""
     return set(re.findall(r"^\s*((?:pinyin|zhuyin)_\w+)\s*;", path.read_text(), re.M))
 
 
 def exported(prefix, library):
+    """Read defined facade-prefixed dynamic symbols with nm, stripping symbol versions."""
     text = run(["nm", "-D", "--defined-only", prefix / "lib" / f"lib{library}.so.15"])
     return {s.split("@", 1)[0] for s in re.findall(r"\b[TwW]\s+(\S+)", text) if s.startswith(library + "_")}
 
@@ -108,20 +116,28 @@ def sources(pin, cell="bdb"):
 
 def symbol_base(symbol):
     # C1/C2 and D0/D1/D2 are ABI entry variants of one source function.
+    """Normalize constructor/destructor ABI variants to one source-function spelling."""
     return re.sub(r"([CD])[012](?=E)", r"\1X", symbol)
 
 
 def normalized_type(text):
+    """Remove whitespace and canonicalize a leading const before pointer/reference types."""
     text = re.sub(r"\s+", "", text)
     return re.sub(r"const([A-Za-z_][A-Za-z_0-9:]*(?:<[^<>]*>)?)([&*])", r"\1const\2", text)
 
 
 def callback_prototypes(signature):
+    """Extract normalized bool/int/void function-pointer prototypes from a signature."""
     return {normalized_type(m.group(1) + "(" + m.group(2) + ")") for m in re.finditer(r"\b(bool|int|void)\s*\(\*\)\s*\(([^()]*)\)", signature)}
 
 
 def internal_callback_pool(nodes, edges):
-    """Only explicit function-address bindings, using complete C++ types."""
+    """Group explicit function-address bindings by complete normalized C++ type.
+
+    Return the candidate pool and unresolved identity set. Ignore nonstatic
+    member pointers; incomplete function-kind or template/type information
+    keeps a binding unresolved.
+    """
     pool, unknown = defaultdict(set), set()
     for caller, target, kind in edges:
         if kind != "LLVM-address/callback" or target not in nodes or not nodes[target].get("pin", True):
@@ -145,6 +161,11 @@ def internal_callback_pool(nodes, edges):
 
 
 def singleton_callback(node, pool, unknown, roots_have_no_callbacks):
+    """Resolve one private typed callback only when all binding guards hold.
+
+    Require an external-header caller, one pinyin prototype and candidate, no
+    unknown bindings, and no callback inputs at export roots; otherwise return None.
+    """
     prototypes = callback_prototypes(node["signature"])
     if not roots_have_no_callbacks or unknown or not node["file"].startswith("external-header/") or len(prototypes) != 1:
         return None
@@ -156,7 +177,13 @@ def singleton_callback(node, pool, unknown, roots_have_no_callbacks):
 
 
 def llvm(pin, bc, ast):
-    """Exact LLVM symbols + compiler source metadata; no basename resolution."""
+    """Combine LLVM symbols, source metadata, and exact libclang identities.
+
+    Run llvm-dis, llvm-cxxfilt, and opt without saving their text. Return
+    definitions, symbol-to-key bindings, direct/address edges, external calls,
+    and indirect call sites. Normalize ABI variants and resolve aliases;
+    retain full signatures and translation units when USR matching is unavailable.
+    """
     ir = run(["llvm-dis", bc, "-o", "-"])
     meta = {m.group(1): m.group(2) for m in re.finditer(r"^!(\d+) = (.*)$", ir, re.M)}
     defs, by_symbol, bodies = {}, {}, {}
@@ -288,6 +315,11 @@ def llvm(pin, bc, ast):
 
 
 def witness(nodes, edges, roots):
+    """Find deterministic breadth-first witness paths from sorted export roots.
+
+    Return node -> (export, path of node/edge-kind pairs), ignoring edges with
+    endpoints absent from nodes.
+    """
     graph = defaultdict(set)
     for a, b, kind in edges:
         if a in nodes and b in nodes:
@@ -307,10 +339,12 @@ def witness(nodes, edges, roots):
 
 
 def format_path(nodes, path):
+    """Render a witness with each node's full signature, source site, and edge kind."""
     return " → ".join(f"{nodes[k]['signature']} @ {nodes[k]['file']}:{nodes[k]['line']} ({kind})" for k, kind in path)
 
 
 def check_rows(expected, actual):
+    """Return whether identity key sets agree, plus missing and extra key sets."""
     missing, extra = set(expected) - set(actual), set(actual) - set(expected)
     return not missing and not extra, missing, extra
 
@@ -340,10 +374,12 @@ def mutation_check(rows, nodes):
 
 
 def escape(s):
+    """Make a value fit one Markdown table cell by escaping pipes and flattening newlines."""
     return str(s).replace("|", "&#124;").replace("\n", " ")
 
 
 def pin_link(node):
+    """Link a pin node to its immutable source site; leave external locations as text."""
     loc = f"{node['file']}:{node['line']}"
     if not node.get("pin", True):
         return loc
@@ -351,6 +387,14 @@ def pin_link(node):
 
 
 def main(contract_results=None, gate_receipt=None):
+    """Compile a fresh pin call graph and dispatch ledger generation or validation.
+
+    Validate pin, cell, exports, and oracle provenance; write lane-owned LLVM
+    intermediates. Static preview returns graph locals; inventory/tier modes
+    avoid behavioral campaigns. Other modes measure or reconcile and write
+    or compare the requested ledger. Optional in-memory results require a
+    gate receipt, read from stdin if omitted; invalid prerequisites fail.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--pin", type=Path, required=True)
     parser.add_argument("--cell", choices=sorted(gcov_measure.CELLS), default="bdb", help="the pin's DBM cell: its Makefile.am conditional and config.h")
@@ -471,6 +515,7 @@ def main(contract_results=None, gate_receipt=None):
         derived[base].add(child)
 
     def subclass(child, parent):
+        """Test reflexive or transitive inheritance in the extracted class graph."""
         pending, seen = [child], set()
         while pending:
             c = pending.pop()
@@ -483,6 +528,7 @@ def main(contract_results=None, gate_receipt=None):
         return False
 
     def targets(usr):
+        """Collect concrete virtual methods reachable through the override chain."""
         result, pending = set(), [usr]
         visited = set()
         while pending:

@@ -32,16 +32,23 @@ UNKNOWN_POPULATION_SHA = 'd68020f5642a5cd41b0e840782455d09dfd357a2495d4b392103bc
 
 
 def digest(keys):
+    """Hash sorted newline-delimited identity strings, including a final newline."""
     return hashlib.sha256(('\n'.join(sorted(keys)) + '\n').encode()).hexdigest()
 
 
 def table_rows(text):
+    """Extract and HTML-unescape ledger table cells, omitting the header and separator."""
     return [[html.unescape(c.strip()) for c in line.strip('|').split('|')]
             for line in text.splitlines() if line.startswith('| ') and not line.startswith('| ---')
             and not line.startswith('| Kind |')]
 
 
 def manual_sample(rows):
+    """Recover the guarded manual population and deterministic twenty-identity sample.
+
+    Prefer explicit population marks, falling back to T5-REVIEWED rows.
+    Raise RuntimeError if the population count or either identity hash changes.
+    """
     marked = [row[3] for row in rows if POPULATION_MARK in row[-1]]
     population = marked or [row[3] for row in rows if row[6] == 'T5-REVIEWED']
     if len(population) != 178 or digest(population) != MANUAL_POPULATION_SHA:
@@ -53,6 +60,11 @@ def manual_sample(rows):
 
 
 def source_mapping(ledger, key, node):
+    """Return an explicit or registered source-review tier and mapping, or None.
+
+    Resolve Rust anchors for registered reviews and classify bdb export absence
+    as T2-UNREACHABLE.
+    """
     if key in ledger.MAPPINGS:
         return 'T5-REVIEWED', ledger.counterpart(key)
     review = IDENTITY_REVIEWS.get(key, REVIEWS.get((node['file'], node['line'])))
@@ -104,6 +116,14 @@ def verify_implicit_objects(nodes, out, symbol_base):
 
 
 def refresh(args, state):
+    """Reconcile retained ledger evidence with fresh identities and targeted contract replays.
+
+    Require guarded Rust-tree, population, and sample identities before
+    retaining published MATCH evidence. Build measurement libraries and replay
+    registered aborts/J controls; update or compare args.output and print
+    results. Reject changed provenance, invalid flushes, or requested complete
+    closure with remaining static or measurement limits.
+    """
     ledger = importlib.import_module('internal-ledger')
     original = args.output.read_text()
     rows = table_rows(original)
@@ -179,6 +199,10 @@ def refresh(args, state):
     compiled_records, abort_receipts, counter_limits = set(), [], set()
 
     def receipt(name, reference, subject, measurement, counters, verdict):
+        """Accumulate compiled identities and abort/counter-limit receipts from each replay.
+
+        Print a limit when a measured SIGABRT lacks a completed counter flush.
+        """
         compiled_records.update(counters)
         if measurement.get('counter_limit'): counter_limits.add(name)
         if reference['exit'] == -6:

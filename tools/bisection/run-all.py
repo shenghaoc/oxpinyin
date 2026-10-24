@@ -80,6 +80,7 @@ class HeavyAdmission(_slot.HeavyAdmission):
     """Adapter: resolve the resource reader through this module's globals."""
 
     def __init__(self, *args, **kwargs):
+        """Default admission callbacks to late-bound readers in this module."""
         kwargs.setdefault('resource_snapshot', lambda: resource_snapshot())
         kwargs.setdefault('prepare_heavy_env',
                           lambda *a, **k: prepare_heavy_env(*a, **k))
@@ -99,6 +100,11 @@ COLUMNS = ('runner', 'cell', 'status', 'seconds', 'build_seconds', 'lock_wait_se
 
 @contextlib.contextmanager
 def scratch_directory(log_dir):
+    """Yield a temporary scratch path and remove it on exit.
+
+    When log_dir is set, copy .log files there with their relative paths before
+    cleanup, including on exceptional exits.
+    """
     with tempfile.TemporaryDirectory(prefix='oxpinyin-gates-') as name:
         try:
             yield name
@@ -111,6 +117,7 @@ def scratch_directory(log_dir):
 
 
 def positive(value):
+    """Convert a CLI integer, rejecting zero or negative values with ArgumentTypeError."""
     number = int(value)
     if number <= 0:
         raise argparse.ArgumentTypeError('must be positive')
@@ -118,6 +125,10 @@ def positive(value):
 
 
 def assignments(values, allowed, parser):
+    """Parse allowed KEY=VALUE overrides, with the last duplicate key winning.
+
+    Call parser.error for missing values, separators, or disallowed keys.
+    """
     result = {}
     for value in values:
         key, sep, item = value.partition('=')
@@ -148,6 +159,10 @@ def execute(command, env, cwd, timeout, output, slot=None):
 def reason_for(rc, output, timeout, expired=False):
     # Only the aggregate deadline is a timeout here; a runner that wraps its own
     # processes in timeout(1) and exits 124 is reported by its own output.
+    """Summarize an exit with its deadline or last diagnostic, capped at 400 characters.
+
+    Only expired marks an aggregate timeout; a successful exit says completed.
+    """
     if expired:
         return f'timeout after {timeout}s (exit {rc})'
     lines = [line.strip() for line in output.splitlines() if line.strip()]
@@ -160,7 +175,11 @@ def reason_for(rc, output, timeout, expired=False):
 
 
 def normal_tag(tag):
-    """`#640`, `640`, `W11`, `row:54` and `Row 54` are the same selector (as contract-diff.py)."""
+    """Trim issue selectors, remove leading # characters, and lowercase them.
+
+    Canonicalize an initial row plus spaces or colons to row:, so Row 54 and
+    row:54 agree; numeric issue tags and W tags remain distinct.
+    """
     tag = str(tag).strip().lstrip('#').lower()
     return re.sub(r'^row[ :]*', 'row:', tag)
 
@@ -175,8 +194,11 @@ def contract_tag_index():
 
 
 def contract_cases_for(requested, index):
-    """The contract case IDs the requested tags select, in registration order,
-    with the tag(s) that selected each: {case ID: [tag, ...]}."""
+    """Map selected case IDs to the normalized tags that selected them.
+
+    Visit requested tags in sorted order and each tag's cases in index order;
+    retain the first insertion position of a case selected by multiple tags.
+    """
     chosen = {}
     for tag in sorted(requested):
         for name in index['tags'].get(tag, []):
@@ -381,6 +403,11 @@ def run_in_heavy_slot(command):
 
 
 def cell_config(cell, target_root, env):
+    """Read a cell's artifact configuration through cell-artifacts.sh --describe.
+
+    Set the cell and target root in a copied environment. Return decoded JSON
+    or raise ValueError on a nonzero shell exit.
+    """
     configured = env.copy()
     configured['PINYIN_ORACLE_DBM'] = cell
     configured['OXPINYIN_TARGET_ROOT'] = str(target_root)
@@ -392,6 +419,10 @@ def cell_config(cell, target_root, env):
 
 
 def oracle_config(prefix, variant, env):
+    """Read an oracle variant's configuration as JSON through cell-artifacts.sh.
+
+    Raise ValueError on a nonzero shell exit; launch and JSON errors propagate.
+    """
     command = ['bash', str(HERE / 'cell-artifacts.sh'), '--describe-oracle',
                str(prefix), variant]
     result = subprocess.run(command, env=env, cwd=ROOT, capture_output=True, text=True)
@@ -401,6 +432,13 @@ def oracle_config(prefix, variant, env):
 
 
 def run_main():
+    """Select registry gates, build their artifacts, and execute admitted runner jobs.
+
+    List mode only prints metadata. Execution validates cell identities, uses
+    heavy admission and checkout resource locks, and prints a result table
+    with optional JSON and retained logs. Return nonzero for failed gates or
+    unallowed skips; heavy-child and heavy-slot modes return their child status.
+    """
     if fcntl is None:
         raise ValueError("run-all.py needs POSIX fcntl; Windows support requires #895 Stage 2 (`just heavy`)")
     parser = argparse.ArgumentParser(description=__doc__)
@@ -683,6 +721,11 @@ def run_main():
                                  timeout=timeout, work=work, admission=admission))
 
         def run(job):
+            """Run one admitted job under its sorted checkout resource locks.
+
+            Update and return its result with timing, status, and failure reason.
+            Treat required SKIP output on an otherwise successful exit as skipped.
+            """
             row, result = job['row'], job['result']
             admission = job['admission']
             env = admission.env if admission else job['env']
@@ -729,6 +772,7 @@ def run_main():
     if args.json:
         args.json.write_text(json.dumps(results, indent=2, ensure_ascii=False) + '\n')
     def allowed(row):
+        """Accept a skip covered by a wildcard, runner, or runner:cell allowance."""
         return any(item in args.allow_skipped for item in
                    ('*', row['runner'], row['runner'] + ':' + row['cell']))
     return int(any(row['status'] == 'FAIL' or row['status'] == 'SKIPPED' and not allowed(row)
@@ -736,6 +780,7 @@ def run_main():
 
 
 def main():
+    """Install cancellation handlers for the aggregate run and return its status."""
     with cancellation_handlers():
         return run_main()
 

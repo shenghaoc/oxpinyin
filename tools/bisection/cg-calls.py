@@ -20,11 +20,18 @@ BasicDB::get. Identity here is the triple, as callgrind itself uses.
 import re,sys,collections
 
 def parse(path):
+    """Count Callgrind calls by caller and callee object/file/function triples.
+
+    Resolve compressed IDs in separate object, file, and function namespaces.
+    Ignore lines outside the recognized call/name records; read and integer
+    conversion errors propagate.
+    """
     obn,fln,fnn={},{},{}
     cur_ob=cur_fl=cur_fn=None
     c_ob=c_fl=c_fn=None
     edges=collections.Counter()
     def name(tbl,num,txt):
+        """Remember a nonempty ID definition or resolve it, using ?ID if unknown."""
         if txt: tbl[num]=txt
         return tbl.get(num,f'?{num}')
     for line in open(path):

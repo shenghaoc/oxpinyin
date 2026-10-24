@@ -78,6 +78,11 @@ __attribute__((constructor)) static void install_abort_flush() {
 
 
 def command(argv, **kwargs):
+    """Capture command output as bytes and return decoded stdout.
+
+    Convert argv entries to strings and forward subprocess options. Raise
+    RuntimeError with the stderr tail on a nonzero exit; decoding errors propagate.
+    """
     result = subprocess.run([str(x) for x in argv], capture_output=True, **kwargs)
     if result.returncode:
         raise RuntimeError(f"{argv[0]} failed ({result.returncode}): " + result.stderr.decode(errors="replace")[-4000:])
@@ -88,6 +93,11 @@ def contract_module(cell='bdb'):
     # The driver snapshots CELL at import and uses it in fixture registration:
     # the requested cell is set explicitly here, never inherited from the
     # environment, so a stray CONTRACT_DIFF_CELL cannot select another cell.
+    """Import a fresh contract driver with the requested DBM fixture cell.
+
+    Set process-wide CONTRACT_DIFF_CELL before import and verify the driver
+    selected it. Raise RuntimeError for an unknown or mismatched cell.
+    """
     if cell not in CELLS:
         raise RuntimeError('unknown DBM cell: ' + repr(cell))
     os.environ['CONTRACT_DIFF_CELL'] = cell
@@ -144,6 +154,11 @@ def recorded_prefix_hashes(cell='bdb'):
 
 
 def oracle_hashes(prefix, provenance=None, cell='bdb'):
+    """Verify installed facade digests against manifest and recorded provenance.
+
+    Use explicit provenance or the cell ledger, including its fallback zhuyin
+    digest. Return actual SHA-256 strings; raise RuntimeError on disagreement.
+    """
     fields = dict(line.split('=', 1) for line in (prefix / 'oracle-pin.txt').read_text().splitlines()
                   if '=' in line and not line.startswith('#'))
     recorded = provenance if provenance is not None else recorded_prefix_hashes(cell)
@@ -160,7 +175,12 @@ def oracle_hashes(prefix, provenance=None, cell='bdb'):
 
 
 def verify_prefix(prefix, provenance=None, cell='bdb'):
-    """Read-only pin, cell, library and full data-manifest hash cross-check."""
+    """Verify pin/cell provenance and facade/data hashes without modifying the prefix.
+
+    Return the number of files checked across both data manifests. Raise
+    RuntimeError on a provenance or digest mismatch; malformed or missing
+    manifest fields and filesystem failures propagate.
+    """
     fields = lambda path: dict(line.split('=', 1) for line in path.read_text().splitlines() if '=' in line and not line.startswith('#'))
     actual = fields(prefix / 'oracle-pin.txt')
     expected = fields(REPO / 'tools/oracle/oracle-pin.txt')
@@ -183,12 +203,13 @@ def verify_prefix(prefix, provenance=None, cell='bdb'):
 
 
 def build(pin, config, out, oracle, cell='bdb', provenance=None):
-    """Reproduce the configured autoconf shared-library recipe without log files.
+    """Build instrumented pin facades from the selected autoconf configuration.
 
-    config.h is the unchanged configure output of the selected cell. Only
-    CXXFLAGS is replaced by -g -O0 --coverage. Makefile.am supplies the
-    conditional TU lists; the installed config.status guards the other
-    original configure flags and supplies the configured DBM link input.
+    Require a clean pinned checkout and matching oracle/configuration. Read
+    translation units from src/Makefile.am and link inputs from config.status;
+    replace CXXFLAGS with -g -O0 --coverage. Clear counters and write config,
+    objects, a flush shim, version scripts, and shared libraries beneath out,
+    which must be outside pin/oracle. Verify exports and return configure text.
     """
     revision = command(["git", "-C", pin, "rev-parse", "HEAD"]).strip()
     if revision != PIN:
@@ -239,12 +260,19 @@ def build(pin, config, out, oracle, cell='bdb', provenance=None):
 
 
 def clear(out):
+    """Delete the measurement directory's immediate .gcda counter files."""
     for path in out.glob("*.gcda"):
         path.unlink()
 
 
 def counters(out, pin):
-    """Return exact GCC symbol/source extents; never save a gcov report."""
+    """Read gcov JSON into exact function-identity execution counts without saving reports.
+
+    Keys contain mangled symbol, pin-relative source, start/end lines, and
+    translation unit object. Use the maximum repeated count; omit sources
+    outside pin and return empty without .gcda files. Require JSON format 2,
+    otherwise raise RuntimeError.
+    """
     counts = {}
     decoder = json.JSONDecoder()
     paths = sorted(out.glob("*.gcda"))
@@ -277,7 +305,10 @@ def counters(out, pin):
 
 
 def measured_worker(module, mode, so, data, name, scratch, cell='bdb'):
-    """Keep the existing observation parser and isolated-worker semantics."""
+    """Run the tracing worker with an explicit fixture cell and the shared observation parser.
+
+    Use bounded_worker's fixed timeout and TIMEOUT observation on expiry.
+    """
     # Start this file's tracing `--worker`, not the driver's ordinary entry.
     # The measurement worker selects its fixture cell from this explicit
     # variable, not from an inherited default.
@@ -286,6 +317,11 @@ def measured_worker(module, mode, so, data, name, scratch, cell='bdb'):
 
 
 def bounded_worker(module, mode, so, data, name, scratch, **options):
+    """Run an isolated contract worker with the fixed timeout in seconds.
+
+    Convert TimeoutExpired to an empty TIMEOUT observation; other failures
+    propagate. Forward optional entry and environment settings to the driver.
+    """
     try:
         return module.run_worker(mode, so, data, name, scratch, timeout=WORKER_TIMEOUT, **options)
     except subprocess.TimeoutExpired:
@@ -294,13 +330,21 @@ def bounded_worker(module, mode, so, data, name, scratch, **options):
 
 
 def worker(mode, so, data, name):
+    """Run a contract worker with root-call tracing and an optional gcov exit hook.
+
+    Select the cell from J_MEASUREMENT_CELL, load the library, and replace
+    Kit.fn and os._exit in this process. Each bound call prints its export
+    name; instrumented exits dump counters before terminating.
+    """
     module = contract_module(os.environ['J_MEASUREMENT_CELL'])
     check_tkrzw("auto", "gcov_measure.py", "subject", so)
     library = ctypes.CDLL(so)
     original_fn = module.Kit.fn
     def traced_fn(kit, function, result, *args):
+        """Bind a native function and wrap it with flushed export-root tracing."""
         native = original_fn(kit, function, result, *args)
         def call(*values):
+            """Print the facade export name before forwarding arguments to the native function."""
             print('J-ROOT ' + kit.mode + '_' + function, flush=True)
             return native(*values)
         return call
@@ -310,6 +354,7 @@ def worker(mode, so, data, name):
         dump.argtypes, dump.restype = [], None
         original_exit = os._exit
         def exit_with_counters(status):
+            """Dump instrumented counters, then terminate without interpreter cleanup."""
             dump()
             original_exit(status)
         os._exit = exit_with_counters
@@ -322,6 +367,12 @@ def matches(module, spec, pin, subject):
 
 
 def same_reference(module, spec, pin, measurement):
+    """Check that instrumentation preserved the reference observation.
+
+    Reject timeouts; compare exits, observed results, and requested profile
+    state. Compare stderr only when requested and outside the registered
+    abort arm.
+    """
     if pin['exit'] == 'TIMEOUT' or measurement['exit'] == 'TIMEOUT': return False
     as_abort = spec['abort'] is not module.NO_ABORT and (not spec['either'] or pin['exit'] == -6)
     # The existing abort matcher compares signal and requested profile state,
@@ -332,6 +383,14 @@ def same_reference(module, spec, pin, measurement):
 
 
 def contracts(prefix, pinyin, zhuyin, out, pin, progress=None, names=None, cell='bdb', provenance=None):
+    """Run reference, subject, and instrumented workers and attribute only MATCH execution.
+
+    Verify the prefix, create temporary profiles, and clear counters per case.
+    Default to registered non-axis-c cases; skip unsupported cells. Return
+    attributed identities, nonmatching identities, incomplete labels, and
+    case verdicts. Invoke progress with each measured observation and decoded
+    counts before attribution; counter/flush limits withhold affected credit.
+    """
     verify_prefix(prefix, provenance, cell)
     module = contract_module(cell)
     assert module.CELL == cell
@@ -389,6 +448,12 @@ def contracts(prefix, pinyin, zhuyin, out, pin, progress=None, names=None, cell=
 
 
 def checksum_limit(out, name, measurement, incomplete):
+    """Recognize four-byte counter truncation in the two checksum-save cases.
+
+    Call while handling a decoder exception. Mark measurement and incomplete
+    in place and return no counts only for the expected footprint; otherwise
+    re-raise the active exception.
+    """
     if name not in {'abort-save-chunk-header-checksum', 'abort-zhuyin-save-chunk-header-checksum'}:
         raise  # unexpected decoder failures must remain visible
     truncated = list(out.glob('*.gcda'))
@@ -470,7 +535,14 @@ def limit_roots(prefix, out, incomplete, verdicts, pin, cell='bdb'):
 
 
 def same_data(prefix, pinyin, out, pin, cell='bdb', provenance=None):
-    """The exact seven preregistered drivers; fresh writable state per side."""
+    """Compile and compare the seven registered same-data drivers with fresh writable state.
+
+    Run reference, subject, and instrumented libraries in separate processes,
+    disabling core dumps in the controller. Attribute counters only when all
+    three exit successfully with identical stdout; return credited identities,
+    nonmatches, incomplete labels, and verdicts. Remove temporary drivers and
+    profiles on exit.
+    """
     verify_prefix(prefix, provenance, cell)
     names = ['key-surface-diff', 'dict-surface-diff', 'phrase-surface-diff',
              'pred-order-diff', 'predict-diff', 'punct-diff', 'import-diff']
@@ -532,7 +604,13 @@ def declared_residuals(root=REPO):
 
 
 def surface_worker(so, data, group, cell='bdb'):
-    """Replay the existing C-ABI sentence call order, output through stdout only."""
+    """Replay a sentence, tie, or corpus fixture through the C API and print JSON rows.
+
+    Disable core dumps, select the explicit fixture cell, and optionally read
+    a subset of inputs from stdin. Use a temporary profile and reset between
+    inputs. Dump counters when available, including before replaced os._exit
+    calls; normal completion exits the process directly with status zero.
+    """
     module = contract_module(cell)
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     check_tkrzw("auto", "gcov_measure.py", "subject", so)
@@ -542,6 +620,7 @@ def surface_worker(so, data, group, cell='bdb'):
         dump.argtypes, dump.restype = [], None
         original_exit = os._exit
         def exit_with_counters(status):
+            """Dump instrumented counters, then terminate without interpreter cleanup."""
             dump()
             original_exit(status)
         os._exit = exit_with_counters
@@ -593,7 +672,11 @@ def surface_worker(so, data, group, cell='bdb'):
 
 
 def surface_records(stdout):
-    """Known shim framing is separate from the existing JSON observations."""
+    """Parse six-field JSON observations and paired abort-flush markers from stdout bytes.
+
+    Return observation rows and completed abort count. Raise RuntimeError for
+    unknown output, malformed rows, nested markers, or incomplete flush framing.
+    """
     rows, pending, aborts = [], 0, 0
     for line in stdout.splitlines():
         if line == b'J-GCOV-ABORT-BEGIN':
@@ -682,6 +765,10 @@ def surfaces(prefix, pinyin, out, pin, cell='bdb', provenance=None, excused=None
 
 
 def gate_summary(stdout, name):
+    """Require stdout to report exactly one successful execution of the named Rust test.
+
+    Return 1 on success and raise RuntimeError for any different summary or name.
+    """
     summaries = re.findall(r'test result: ok\. (\d+) passed; (\d+) failed; (\d+) ignored; (\d+) measured;', stdout)
     if summaries != [('1', '0', '0', '0')] or not re.search(r'(?m)^test ' + re.escape(name) + r' \.\.\. ok$', stdout):
         raise RuntimeError('Rust gate must execute exactly the selected test successfully: ' + name)
@@ -689,6 +776,12 @@ def gate_summary(stdout, name):
 
 
 def gates(target, export, model, receipt=None):
+    """Execute the four exact sentence-surface Rust gates from one prebuilt test binary.
+
+    Require successful single-test summaries. Optionally fill an in-memory
+    receipt with observations, crates-tree identity, and binary hash; return
+    a human-readable success description or raise RuntimeError.
+    """
     tests = target / 'j-tests' if (target / 'j-tests').exists() else target
     binaries = list((tests / 'debug/deps').glob('sentence_surface_parity-*'))
     binaries = [path for path in binaries if path.is_file() and os.access(path, os.X_OK)]
@@ -735,7 +828,14 @@ def preserved_gate(receipt, target):
 
 
 def user_store(prefix, target, out, pin, cell='bdb', provenance=None, libraries=('-ldb',)):
-    """Existing four-phase user-dir differential, with dump/expected data in pipes."""
+    """Run the four-phase user-directory differential through reference and measured drivers.
+
+    Verify the prefix, compile temporary C drivers, and invoke the prebuilt
+    Rust round-trip test. Compare saved state through pipes and credit counters
+    only when both driver observations agree. Return attribution, nonmatches,
+    incomplete labels, and verdicts; temporary profiles are removed on exit.
+    Create a measurement SONAME symlink if absent.
+    """
     verify_prefix(prefix, provenance, cell)
     tests = target / 'j-tests' if (target / 'j-tests').exists() else target
     binaries = [path for path in (tests / 'debug/deps').glob('user_dir_round_trip-*') if path.is_file() and os.access(path, os.X_OK)]
@@ -798,17 +898,25 @@ def user_store(prefix, target, out, pin, cell='bdb', provenance=None, libraries=
 
 
 def identity_guard(prefix, pinyin, zhuyin, config, surface_pinyin=None):
+    """Verify the bdb prefix and hash the seven inputs used by parallel measurement.
+
+    Return digests for the manifest, reference facades, subject facades,
+    configuration, and optional surface facade in that order.
+    """
     verify_prefix(prefix)
     return tuple(hashlib.sha256(path.read_bytes()).hexdigest() for path in
                  [prefix / 'oracle-pin.txt', prefix / 'lib/libpinyin.so', prefix / 'lib/libzhuyin.so', pinyin, zhuyin, config, surface_pinyin or pinyin])
 
 
 def prepare_parallel(prefix, pinyin, zhuyin, target, main_out, pin, config, address, surface_pinyin=None):
-    """Separate lane-owned counters, result transfer through a Unix stream only.
+    """Run parallel-lane stages and serve their results once through a private Unix socket.
 
-    No result file is created. The socket inode carries no observations; all
-    attribution remains in process memory until the renderer consumes it.
-    Normal regeneration uses the sequential functions directly.
+    Create gcov-parallel beside main_out with links to measurement inputs,
+    and set process-wide GCOV_PREFIX/GCOV_PREFIX_STRIP for its counters.
+    Run same-data, user-store, and surface stages, then block for one client
+    to receive pickled input hashes, results, and compiled identities. Reject
+    an existing socket path and unlink the socket after a successful transfer;
+    observations remain in memory rather than result files.
     """
     out = main_out.with_name('gcov-parallel')
     out.mkdir(exist_ok=True)
@@ -840,6 +948,12 @@ def prepare_parallel(prefix, pinyin, zhuyin, target, main_out, pin, config, addr
 
 
 def consume_parallel(address, expected_guard):
+    """Receive in-memory stage results from a trusted task-owned Unix socket.
+
+    Unpickle the local stream, require its input hashes to match expected_guard,
+    and return results and compiled identities. The socket must not be supplied
+    by an untrusted peer; a mismatched guard raises RuntimeError.
+    """
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
         connection.connect(str(address))
         guard, results, compiled = pickle.load(connection.makefile('rb'))

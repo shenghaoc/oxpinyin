@@ -74,15 +74,19 @@ def load(paths, wanted, repeats):
 
 
 def pooled(runs, metric):
+    """Flatten one metric across runs, preserving run and sample order."""
     return [v for run in runs for v in run[metric]]
 
 
 def bootstrap_ratio(num_runs, den_runs, metric, resamples, seed, alpha=0.05):
-    """Percentile bootstrap of median(num)/median(den), resampling whole
-    runs independently within each cell. Cycles inside one process share a
-    warm cache, a page-table state and a CPU migration history, so they are
-    not independent draws (`perf-ci.py`'s argument, verbatim); the process
-    is the resampling unit for both terms."""
+    """Estimate a ratio interval by independently resampling whole runs per cell.
+
+    Cycles within a process share cache and execution state, so the process
+    is the resampling unit. Return numerator and denominator medians in input
+    units, their ratio, and its percentile bounds. Use a local seeded generator.
+    Raise SystemExit for missing samples, fewer than two runs per cell, or no
+    valid resamples; a zero denominator median raises ZeroDivisionError.
+    """
     num = pooled(num_runs, metric)
     den = pooled(den_runs, metric)
     if not num or not den:
@@ -114,6 +118,11 @@ def bootstrap_ratio(num_runs, den_runs, metric, resamples, seed, alpha=0.05):
 
 
 def main(argv=None):
+    """Print timing medians and bootstrap ratio intervals for two selected cells.
+
+    Read JSONL captures, validate selection and resample count, and return zero
+    after printing the report and seed metadata.
+    """
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("captures", nargs="+",
                         help="speed.jsonl files from bisect --perf")

@@ -16,6 +16,7 @@ import sys
 
 
 def load_jsonl(path):
+    """Read UTF-8 JSON records, skipping blank lines and propagating decode errors."""
     rows = []
     with open(path, encoding="utf-8") as f:
         for line in f:
@@ -26,10 +27,15 @@ def load_jsonl(path):
 
 
 def median(values):
+    """Return the median, or NaN for an empty sequence."""
     return statistics.median(values) if values else float("nan")
 
 
 def cv_pct(values):
+    """Return sample standard deviation divided by mean as a percentage.
+
+    Use NaN for fewer than two observations or a zero mean.
+    """
     if len(values) < 2:
         return float("nan")
     m = statistics.mean(values)
@@ -37,23 +43,28 @@ def cv_pct(values):
 
 
 def ms(ns_values):
+    """Convert nanosecond observations to a list of millisecond values."""
     return [v / 1_000_000.0 for v in ns_values]
 
 
 def fmt_ms(ns_values):
+    """Format nonempty nanosecond observations as a millisecond median and range."""
     vals = ms(ns_values)
     return f"{median(vals):.3f} ms [{min(vals):.3f}, {max(vals):.3f}]"
 
 
 def fmt_ms_short(ns_values):
+    """Format the nanosecond median in milliseconds to three decimal places."""
     return f"{median(ms(ns_values)):.3f}"
 
 
 def fmt_kib(values):
+    """Format the KiB median as a comma-separated whole number."""
     return f"{median(values):,.0f}"
 
 
 def ratio(a, b):
+    """Divide the two medians, returning NaN for empty data or a zero divisor."""
     ma, mb = median(a), median(b)
     if mb == 0 or math.isnan(mb):
         return float("nan")
@@ -61,10 +72,12 @@ def ratio(a, b):
 
 
 def human(nbytes):
+    """Format a byte count in MiB to two decimal places."""
     return f"{nbytes / 1024 / 1024:.2f} MiB"
 
 
 def group_by_backend(rows):
+    """Group records by backend label, preserving their order within each group."""
     g = {}
     for r in rows:
         g.setdefault(r["backend"], []).append(r)
@@ -74,6 +87,7 @@ def group_by_backend(rows):
 # ── Speed extraction ─────────────────────────────────────────────────
 
 def extract_speed(rows):
+    """Collect init, alloc, first-cycle, and pooled later-cycle timings in nanoseconds."""
     return {
         "init": [r["init_ns"] for r in rows],
         "alloc": [r["alloc_ns"] for r in rows],
@@ -85,6 +99,7 @@ def extract_speed(rows):
 # ── RAM extraction ───────────────────────────────────────────────────
 
 def extract_ram_init(rows):
+    """Collect post-init RSS, high-water, anonymous, and file memory in KiB."""
     return {
         "rss": [r["after_init"]["rss_kib"] for r in rows],
         "hwm": [r["after_init"]["hwm_kib"] for r in rows],
@@ -94,6 +109,7 @@ def extract_ram_init(rows):
 
 
 def extract_ram_cycle(rows):
+    """Collect the first and last cycle high-water observations in KiB."""
     return {
         "hwm_first": [r["after_first"]["hwm_kib"] for r in rows],
         "hwm_last": [r["after_last"]["hwm_kib"] for r in rows],
@@ -103,6 +119,12 @@ def extract_ram_cycle(rows):
 # ── Size measurement ─────────────────────────────────────────────────
 
 def measure_size(prefix, data_dir):
+    """Count installed shared-object, data, other-file, and symlink bytes.
+
+    Read data separately and exclude its subtree from the prefix walk. Count
+    symlink sizes with lstat; return category totals and data files by size.
+    Raise FileNotFoundError if a requested prefix or data directory is absent.
+    """
     so_bytes = 0
     data_bytes = 0
     other_bytes = 0
@@ -166,6 +188,10 @@ CELL_MATRIX_ORDER = [
 
 
 def report_speed(speed_groups):
+    """Print timing and variation tables; return each fixed cell's nanosecond samples.
+
+    Each cell needs nonempty init, cold, and steady observations for the ranges.
+    """
     print("## Execution speed")
     print()
     print("Per-process, CPU-pinned. Each process: pinyin_init, pinyin_alloc_instance,")
@@ -192,6 +218,7 @@ def report_speed(speed_groups):
 
 
 def report_ram(init_groups, cycle_groups):
+    """Print KiB residency tables and return each fixed cell's extracted samples."""
     print()
     print("## RAM")
     print()
@@ -222,6 +249,11 @@ def report_ram(init_groups, cycle_groups):
 
 
 def report_size(labels, size_prefixes, data_dirs):
+    """Print installed byte-size inventories and return them keyed by label.
+
+    Pair labels, prefixes, and data directories with zip; unmatched trailing
+    entries are ignored.
+    """
     print()
     print("## Installed size (all .so stripped)")
     print()
@@ -245,6 +277,7 @@ def report_size(labels, size_prefixes, data_dirs):
 
 
 def _size_val(size_cells, label, key):
+    """Look up a cell's size metric, using NaN for an absent cell or value."""
     cell = size_cells.get(label)
     if cell is None:
         return float("nan")
@@ -253,6 +286,11 @@ def _size_val(size_cells, label, key):
 
 
 def report_factorial(speed_cells, ram_cells, size_cells):
+    """Print median backend, implementation, and interaction ratios for four cells.
+
+    Timing inputs are nanoseconds, memory inputs KiB, and size inputs bytes.
+    Timing and memory ratio denominators must be nonzero.
+    """
     print()
     print("## Factorial analysis")
     print()
@@ -382,6 +420,7 @@ def report_factorial(speed_cells, ram_cells, size_cells):
 
 
 def main(argv):
+    """Read capture and installed-size inputs, print the matrix report, and return zero."""
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
     s = sub.add_parser("summarize")

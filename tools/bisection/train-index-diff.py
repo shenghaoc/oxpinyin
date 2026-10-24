@@ -22,12 +22,20 @@ import tempfile
 check_tkrzw = runpy.run_path(str(Path(__file__).resolve().parents[1] / 'tkrzw/runtime.py'))['check']
 
 def worker(mode, so, data, profile, case):
+    """Exercise one training-index case in a native-library worker process.
+
+    Disable core dumps, install a GLib warning callback, and print JSON
+    observations. Seed mode writes a saved profile; other modes inspect or
+    train the chosen sentence row. Assertions enforce setup assumptions, and
+    native failures may terminate the process.
+    """
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     check_tkrzw("auto", "train-index-diff.py", "subject", so)
     lib = C.CDLL(so)
     ptr, uint, boolean = C.c_void_p, C.c_uint, C.c_bool
 
     def api(name, result, *args):
+        """Bind a facade-prefixed export with the requested ctypes result and argument types."""
         fn = getattr(lib, mode + '_' + name)
         fn.restype, fn.argtypes = result, list(args)
         return fn
@@ -36,6 +44,7 @@ def worker(mode, so, data, profile, case):
     callback_type = C.CFUNCTYPE(None, C.c_char_p, uint, C.c_char_p, ptr)
 
     def warning(domain, level, message, unused):
+        """Append a decoded GLib warning and flush its JSON record to stderr."""
         record = dict(domain=domain.decode(), level=level, message=message.decode())
         warnings.append(record)
         print(json.dumps(record), file=sys.stderr, flush=True)
@@ -122,6 +131,12 @@ def worker(mode, so, data, profile, case):
 
 
 def main():
+    """Run isolated pin/subject training-index cases against temporary profile copies.
+
+    Validate oracle manifests and fixture rows, assert the expected return or
+    abort observations, and compare saved state. Print the case summary and
+    remove the temporary profiles on exit; failed checks raise AssertionError.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('cell', choices=['bdb', 'kc', 'tkrzw'])
     parser.add_argument('prefix', type=Path)
@@ -200,6 +215,11 @@ def main():
                     assert actual['saved'] == results[0][1][-1]['saved']
                     assert not actual['warnings']
                 def records(profile):
+                    """Collect raw saved files and normalized DB records for one profile.
+
+                    Recreate the temporary index-dump directory for each index database and
+                    use the bigram dumper, which writes normalized reports beside its inputs.
+                    """
                     result = {}
                     for path in profile.glob('*.dbin'):
                         result[path.name] = path.read_bytes()
