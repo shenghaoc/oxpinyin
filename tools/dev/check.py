@@ -19,11 +19,21 @@ USAGE = 'usage: tools/dev/check.sh [bdb|tkrzw|kyotocabinet]'
 
 
 def _run(command, *, input_text=None):
+    """Run a command at the checkout root and capture both text streams.
+
+    Return the completed process even on a nonzero exit; spawn errors propagate.
+    """
     return subprocess.run(command, input=input_text, text=True, capture_output=True, cwd=ROOT)
 
 
 def run(backend=None, out=sys.stdout, err=sys.stderr, env=None):
-    """Run one native setup check and return its exit status."""
+    """Check native prerequisites, then build and run the selected backend tests.
+
+    Default to Berkeley DB and include the C API tests on Linux. Print tool
+    and backend diagnostics; return 2 for an unknown backend, 1 for missing
+    tools or slot errors, or the failing child status. The optional env is
+    used only for the Cargo child admitted through the heavy slot.
+    """
     backend = backend or 'bdb'
     if backend not in BACKENDS:
         print(USAGE, file=err, flush=True)

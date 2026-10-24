@@ -16,6 +16,33 @@ from unittest import mock
 run_all = runpy.run_path(str(Path(__file__).with_name('run-all.py')))
 
 
+class RunnerSelectionTests(unittest.TestCase):
+    def test_absent_runners_lists_the_default_registry(self):
+        expected = json.loads(Path(__file__).with_name('runners.json').read_text())
+        output = io.StringIO()
+        namespace = run_all['main'].__globals__
+        with mock.patch.object(sys, 'argv', ['run-all.py', '--list']), \
+                mock.patch.dict(namespace, resource_snapshot=mock.Mock(side_effect=AssertionError('scheduled work'))), \
+                contextlib.redirect_stdout(output):
+            self.assertEqual(run_all['main'](), 0)
+        self.assertEqual([json.loads(line) for line in output.getvalue().splitlines()], expected)
+
+    def test_empty_runners_exit_two_before_scheduling_even_with_an_issue(self):
+        namespace = run_all['main'].__globals__
+        for value in ('', ' ', ',', 'contract-diff,', ',contract-diff'):
+            for extra in ([], ['--issue', '532'], ['--list']):
+                with self.subTest(value=value, extra=extra):
+                    error = io.StringIO()
+                    schedule = mock.Mock(side_effect=AssertionError('scheduled work'))
+                    with mock.patch.object(sys, 'argv', ['run-all.py', '--runners', value, *extra]), \
+                            mock.patch.dict(namespace, resource_snapshot=schedule, execute=schedule), \
+                            contextlib.redirect_stderr(error), self.assertRaises(SystemExit) as caught:
+                        run_all['main']()
+                    self.assertEqual(caught.exception.code, 2)
+                    self.assertIn('--runners must not contain an empty value', error.getvalue())
+                    schedule.assert_not_called()
+
+
 class IssueResolutionTests(unittest.TestCase):
     index = {'tags': {'532': ['default-option-parse', 'explicit-use-tone-parse'], '640': ['separator/pinyin/0/parse/0'],
                       'family/separator': ['separator/pinyin/0/parse/0']},

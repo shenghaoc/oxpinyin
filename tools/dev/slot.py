@@ -47,15 +47,21 @@ class WindowsJob:
     """
 
     def __init__(self):
+        """Create a non-inheritable Job Object configured to kill members on close.
+
+        Raise OSError off Windows or when a required Windows API call fails.
+        """
         if sys.platform != 'win32':
             raise OSError('WindowsJob is available only on Windows')
         import ctypes
         from ctypes import wintypes
 
         class LARGE_INTEGER(ctypes.Structure):
+            """Represent a signed 64-bit value in the Windows job-limit layout."""
             _fields_ = [('QuadPart', ctypes.c_longlong)]
 
         class BASIC(ctypes.Structure):
+            """Represent basic Job Object limits, including flags and working-set bounds."""
             _fields_ = [
                 ('PerProcessUserTimeLimit', LARGE_INTEGER),
                 ('PerJobUserTimeLimit', LARGE_INTEGER),
@@ -69,6 +75,7 @@ class WindowsJob:
             ]
 
         class IO_COUNTERS(ctypes.Structure):
+            """Represent Job Object operation counts and transferred-byte counters."""
             _fields_ = [
                 ('ReadOperationCount', ctypes.c_ulonglong),
                 ('WriteOperationCount', ctypes.c_ulonglong),
@@ -79,6 +86,7 @@ class WindowsJob:
             ]
 
         class EXTENDED(ctypes.Structure):
+            """Represent extended Job Object limits and memory-use counters in bytes."""
             _fields_ = [
                 ('BasicLimitInformation', BASIC),
                 ('IoInfo', IO_COUNTERS),
@@ -116,23 +124,28 @@ class WindowsJob:
             raise OSError(code, 'SetInformationJobObject failed')
 
     def assign(self, process_handle):
+        """Add a process handle to this job; raise OSError if Windows refuses it."""
         if not self._kernel32.AssignProcessToJobObject(
                 self._wintypes.HANDLE(self.handle), self._wintypes.HANDLE(process_handle)):
             raise OSError(self._ctypes.get_last_error(), 'AssignProcessToJobObject failed')
 
     def terminate(self, code=1):
+        """Request termination of all job members with code when a handle is open."""
         if self.handle:
             self._kernel32.TerminateJobObject(self._wintypes.HANDLE(self.handle), code)
 
     def close(self):
+        """Close this job handle once, triggering its kill-on-close policy."""
         if self.handle:
             self._kernel32.CloseHandle(self._wintypes.HANDLE(self.handle))
             self.handle = None
 
     def __enter__(self):
+        """Return the already-created job for context-managed cleanup."""
         return self
 
     def __exit__(self, *exc):
+        """Close the job without suppressing an exception from the context body."""
         self.close()
         return False
 
@@ -141,16 +154,26 @@ CANCELLED = threading.Event()
 
 
 class Cancelled(ValueError):
+    """Signal that a cooperative cancellation check observed a pending request."""
     pass
 
 
 def check_cancelled():
+    """Raise Cancelled when the shared cancellation event is set.
+
+    This check itself does not terminate or reap processes.
+    """
     if CANCELLED.is_set():
         raise Cancelled('cancelled; child process groups terminated and reaped')
 
 
 @contextlib.contextmanager
 def cancellation_handlers():
+    """Clear cancellation state and temporarily handle termination signals.
+
+    SIGTERM, SIGINT, and SIGHUP set the shared event where available. Restore
+    previous handlers on exit; signal installation requires the main thread.
+    """
     CANCELLED.clear()
     previous = {}
     for name in ('SIGTERM', 'SIGINT', 'SIGHUP'):
@@ -187,6 +210,11 @@ def terminate_group(process):
 
 
 def wait_child(process, timeout=None):
+    """Wait for a child status while checking cancellation and an optional timeout.
+
+    Timeout is in seconds. On any exception, terminate the process group and
+    reap the leader before propagating the error.
+    """
     deadline = None if timeout is None else time.monotonic() + timeout
     try:
         while True:
@@ -212,6 +240,7 @@ def _windows_lock(file, operation):
     import msvcrt
 
     class OVERLAPPED(ctypes.Structure):
+        """Represent the byte offset and event fields passed to LockFileEx."""
         _fields_ = [('Internal', ctypes.c_size_t), ('InternalHigh', ctypes.c_size_t),
                     ('Offset', wintypes.DWORD), ('OffsetHigh', wintypes.DWORD),
                     ('hEvent', wintypes.HANDLE)]
@@ -257,6 +286,11 @@ def lock_file(file, operation):
 
 @contextlib.contextmanager
 def admission_lock(directory):
+    """Hold the directory's heavy-admission lock until the context exits.
+
+    Open or create the file and block for exclusive ownership; closing the
+    private descriptor releases it even if the body raises.
+    """
     with (directory / 'heavy-admission').open('a+') as file:
         lock_file(file, LOCK_EX)
         yield
@@ -300,7 +334,8 @@ class HeavySlot:
 
     Acquisition tries every slot without blocking, then waits, polling, and
     prints who holds the slots once at the start of the wait and every 30 s;
-    the wait never fails or skips the work. `waited` is the seconds spent
+    the bare wait has no deadline, but cancellation and lock errors raise.
+    `waited` is the seconds spent
     waiting, for the caller's timing row. `reclaimed` names a dead holder
     whose record this acquisition replaced, if any. A step that ends with
     nothing holding the slot clears its record, handed off or not, so a record
@@ -308,6 +343,7 @@ class HeavySlot:
     descendant holding the slot."""
 
     def __init__(self, command, out=sys.stderr, poll=0.5):
+        """Initialize acquisition state without taking a slot; poll is in seconds."""
         self.command, self.out, self.poll = command, out, poll
         self.waited, self.reclaimed, self.slot, self._file = 0.0, None, None, None
         self.started, self.announced = None, None
@@ -317,6 +353,10 @@ class HeavySlot:
         self.token = None
 
     def _try(self, index):
+        """Open and nonblockingly lock a slot file, returning None when it is busy.
+
+        Return the open locked file on success; close it before propagating errors.
+        """
         file = (self.lock_dir / f'{HEAVY_SLOT}-{index}').open('a+')
         try:
             lock_file(file, LOCK_EX | LOCK_NB)
@@ -329,6 +369,11 @@ class HeavySlot:
         return file
 
     def _inherit(self):
+        """Adopt a validated ancestor slot marker and report the inherited holder.
+
+        Resolve/create the host lock directory. Return False when no valid
+        marker remains; retain an optional descriptor only if it names the slot file.
+        """
         self.lock_dir = host.host_lock_dir().absolute()
         held = inherited_slot_marker(self.lock_dir, self.out)
         if held is None:
@@ -348,7 +393,12 @@ class HeavySlot:
         return True
 
     def try_acquire(self):
-        """Try once. Do not block a worker while the slot is busy."""
+        """Try to acquire or inherit a slot once without waiting for a busy lock.
+
+        Return True when held and False when all slots are busy. Record the
+        holder, report reclaimed dead records, and update waited in seconds;
+        cancellation and lock errors propagate.
+        """
         check_cancelled()
         if self._file is not None or self.inherited:
             return True
@@ -388,11 +438,20 @@ class HeavySlot:
         return True
 
     def __enter__(self):
+        """Wait until a slot is acquired or inherited and return this holder.
+
+        Check cancellation on each attempt; this bare slot wait has no deadline.
+        """
         while not self.try_acquire():
             time.sleep(self.poll)
         return self
 
     def pass_fds(self):
+        """Mark the held descriptor inheritable and return it for subprocess pass_fds.
+
+        Return an empty tuple when an inherited marker has no usable descriptor;
+        a locally acquired slot must already be held.
+        """
         fd = self.inherited_fd if self.inherited else self._file.fileno()
         if fd is None:
             return ()
@@ -408,6 +467,7 @@ class HeavySlot:
         return dict(env, OXPINYIN_LOCK_DIR=str(self.lock_dir), **{HEAVY_SLOT_HELD: json.dumps(marker)})
 
     def handoff(self):
+        """Mark the lock description as shared so cleanup preserves descendant ownership."""
         # The child shares this open file description. Never unlock it here.
         # Keep our copy until the child is reaped. Descendants keep theirs.
         self._handed_off = True
@@ -443,6 +503,11 @@ class HeavySlot:
                         probe.flush()
 
     def __exit__(self, *exc):
+        """Close this holder's descriptor without explicitly unlocking shared ownership.
+
+        Clear an unshared record immediately; after handoff, clear only this
+        token's record if the slot is now unheld. Never suppress body exceptions.
+        """
         if self._file is None:
             return False
         handed_off, index, token = self._handed_off, self.slot, self.token
@@ -568,7 +633,12 @@ def container_reservations(directory, out=sys.stderr):
 
 
 def budget_resources(directory, own_slot=None, *, read=None, out=sys.stderr):
-    """One budget calculation for native heavy work and container transport."""
+    """Read host resources and subtract other slot and container reservations in MiB.
+
+    Return the resource mapping with diagnostic notes and reservation totals;
+    invalid container records make available_mib unknown. The caller must
+    hold heavy-admission because container recovery can remove records.
+    """
     # Read the holders' use before live memory: growth between the two reads
     # is then counted in both, never credited.
     holders = []
@@ -587,9 +657,17 @@ def budget_resources(directory, own_slot=None, *, read=None, out=sys.stderr):
 
 
 class ContainerReservation:
-    """Native memory only: no heavy slot, PID ownership or inner lock state."""
+    """Reserve a container memory cap in the native host budget.
+
+    Keep a persistent record and an inherited creation guard until runtime
+    exit is confirmed; this reservation does not take a heavy slot.
+    """
 
     def __init__(self, runtime, kind, name, memory_mib, out=sys.stderr, poll=0.5):
+        """Prepare a uniquely named reservation and validate its memory cap in MiB.
+
+        Create the host lock directory but do not yet acquire the guard or budget.
+        """
         self.directory = host.host_lock_dir()
         token = uuid.uuid4().hex
         self.path = self.directory / f'container-memory-{token}.json'
@@ -600,6 +678,12 @@ class ContainerReservation:
                            since=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()))
 
     def acquire(self):
+        """Hold the creation guard and wait for enough native memory to reserve.
+
+        Serialize each budget decision with heavy-admission, then write the
+        creating record and return self. Raise ResourceBlocked on wait expiry;
+        close the guard on any failure. The native heavy-slot count is unchanged.
+        """
         started, announced = time.monotonic(), None
         limit = host.resource_wait_limit(os.environ)
         self.guard = self.path.with_suffix('.guard').open('a+')
@@ -635,14 +719,20 @@ class ContainerReservation:
             raise
 
     def pass_fds(self):
+        """Return the acquired guard descriptor for runtime clients to inherit."""
         return (self.guard.fileno(),)
 
     def created(self):
+        """Persist the settled created phase while holding the admission lock."""
         with admission_lock(self.directory):
             self.record['phase'] = 'created'
             write_container_record(self.path, self.record)
 
     def create_failed(self):
+        """Record a completed failed-create request, then attempt confirmed release.
+
+        Return whether recovery proved the reservation could be removed.
+        """
         # Persist that the client returned normally. A crash after this write
         # can recover from a complete token listing, unlike an in-flight create.
         with admission_lock(self.directory):
@@ -651,6 +741,11 @@ class ContainerReservation:
         return self.release()
 
     def release(self):
+        """Remove reservation and guard paths only after recovery confirms exit.
+
+        Hold the admission lock, report the outcome, and return False while
+        runtime state remains uncertain. The open guard is closed separately.
+        """
         with admission_lock(self.directory):
             if container_recovery_state(self.record) != 'gone':
                 print(f'container reservation retained: {self.record["name"]}; exit unconfirmed',
@@ -663,6 +758,10 @@ class ContainerReservation:
             return True
 
     def close(self):
+        """Close this launcher's guard without deleting an outstanding reservation.
+
+        Remove the guard pathname only when no reservation record remains.
+        """
         if self.guard is not None:
             self.guard.close()
             self.guard = None
@@ -671,7 +770,12 @@ class ContainerReservation:
 
 
 def reserve_heavy_env(slot, env, *, runner=False, resource_snapshot=None, prepare_heavy_env=None):
-    """Serialize the resource read, reservation check, and holder update."""
+    """Serialize the resource read, reservation check, and holder estimate update.
+
+    Return resources, child environment, chosen budgets, estimate in MiB,
+    and the admission boolean. Update the holder only when admitted; an
+    inherited holder retains the larger of its previous and new estimates.
+    """
     read = resource_snapshot or host.resource_snapshot
     prepare = prepare_heavy_env or host.prepare_heavy_env
     with admission_lock(slot.lock_dir):
@@ -696,6 +800,7 @@ class SlotWaitExpired(host.ResourceBlocked):
 
 
 def _mib(value):
+    """Format a memory quantity with MiB, or unknown when the value is None."""
     return 'unknown' if value is None else f'{value} MiB'
 
 
@@ -708,6 +813,11 @@ class HeavyAdmission:
 
     def __init__(self, command, env, out=sys.stderr, poll=0.5, *, runner=False,
                  resource_snapshot=None, prepare_heavy_env=None):
+        """Validate settings and print a provisional resource plan without taking a slot.
+
+        Copy env, read resources, and initialize the combined wait limit in seconds;
+        optional reader/preparer callbacks supply resource and budget policy.
+        """
         self.resource_snapshot = resource_snapshot or host.resource_snapshot
         self.prepare_heavy_env = prepare_heavy_env or host.prepare_heavy_env
         host.validate_settings(env)
@@ -754,6 +864,7 @@ class HeavyAdmission:
                                f'(limit {self.limit:g}s); no process started; held by: {held}')
 
     def _expired(self, now):
+        """Build the error for the last refusal, distinguishing slot and memory waits."""
         # Before the first memory decision the figures are the provisional reading,
         # which no decision used: a held slot must not be reported as a memory refusal.
         if self.blocked_by == 'slot':
@@ -761,11 +872,18 @@ class HeavyAdmission:
         return self._blocked()
 
     def _finish_memory_wait(self, now):
+        """Accumulate an active memory-wait interval in seconds and clear its start."""
         if self.memory_since is not None:
             self.memory_wait += now - self.memory_since
             self.memory_since = None
 
     def try_acquire(self):
+        """Attempt slot acquisition and a serialized memory reservation without sleeping.
+
+        Return True with the admitted child environment, or False while waiting.
+        Release a newly acquired slot on memory refusal; inherited slots fail
+        immediately. Expiry raises the last refusal, and cancellation propagates.
+        """
         check_cancelled()
         now = time.monotonic()
         if self.started is None:
@@ -821,10 +939,15 @@ class HeavyAdmission:
             raise
 
     def record(self, result):
+        """Add rounded slot and memory wait seconds to a result mapping in place."""
         result['slot_wait_seconds'] = round(self.slot_wait + (self.slot.waited if self.env is None else 0), 3)
         result['memory_wait_seconds'] = round(result.get('memory_wait_seconds', 0.0) + self.memory_wait, 3)
 
     def __enter__(self):
+        """Retry admission up to the shared wait limit and return the admitted context.
+
+        Release local slot ownership before propagating any failure.
+        """
         try:
             while not self.try_acquire():
                 remaining = max(0, self.limit - (time.monotonic() - self.started))
@@ -835,15 +958,23 @@ class HeavyAdmission:
         return self
 
     def close(self):
+        """Release this context's local slot ownership, preserving inherited ownership."""
         self.slot.__exit__()
 
     def __exit__(self, *exc):
+        """Release local slot ownership without suppressing the body's exception."""
         self.close()
         return False
 
 
 def run_admitted(jobs, workers, run):
-    """Submit only admitted jobs. Keep the pool at the requested size."""
+    """Run admitted jobs in a fixed-size thread pool and return result mappings.
+
+    A job supplies admission, result, and the data consumed by run(job).
+    Admission failures become FAIL rows, while light jobs may bypass waiting
+    heavy jobs. Record waits and close admissions after completion or errors;
+    worker exceptions propagate.
+    """
     import concurrent.futures
     pending, active, results = list(jobs), {}, []
     try:
@@ -891,7 +1022,13 @@ def run_admitted(jobs, workers, run):
 
 def run_command(command, env=None, out=sys.stderr, poll=0.5, *,
                 prepare_heavy_env=None, on_admitted=None):
-    """Run COMMAND under one heavy slot, for the tools.dev slot command."""
+    """Run a child after heavy-slot and memory admission, returning its raw status.
+
+    Copy the supplied environment or os.environ; invoke on_admitted with
+    final settings before spawning. Install cancellation handlers, supervise
+    the child group/job, and reap it before releasing local slot ownership.
+    Admission, spawn, and cancellation errors propagate.
+    """
     command = list(command)
     with cancellation_handlers():
         with HeavyAdmission(' '.join(command), dict(os.environ if env is None else env), out=out,

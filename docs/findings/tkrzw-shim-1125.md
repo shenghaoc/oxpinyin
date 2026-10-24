@@ -1,12 +1,341 @@
 # tkrzw concrete-class shim: evaluation (#1125)
 
-## Adoption preparation on current main: validation pending
+## Combined build: measured results; adoption STOP
 
-The maintainer authorized adoption as a documented trade only if the final
-combined build meets the stated gates and guardrails. Prior STOP results
-below remain historical at their cited measured SHAs and artifact hashes;
-they are not carried forward as final-build results. No final adoption or
-PR decision is made at this checkpoint.
+Recorded 2026-10-24T14:20:15.605566+00:00. No PR. The measured source is base
+`f9257eae495e06677d74026e93c285b42c6c34e8` and prototype code
+`08e178829f991469c864b98a980286a2f2a899d3`, plus the pin, on the same Ubuntu host.
+Both source arms include #1157 and lock cc **1.9.0** (find-msvc-tools
+0.1.15). The tkrzw policies were regenerated twice under that lockfile
+before measurement and matched byte-for-byte. No stale-cc result is claimed.
+
+Both cc 1.9.0 arms were measured together in one campaign. The base facade
+build/install occurred in the preceding heavy job; the PR facade build/install
+and all measurements occurred in the following heavy job. No relevant build
+input changed between them. Both source arms satisfied the current-main and
+#1157 input requirement at the measurement freeze. The literal requirement
+that both facade builds occur inside one heavy job was not met, so this is
+not fully compliant with the requested build grouping.
+
+The earlier **superseded** label was a reporting error. The instruction's
+stale-cc condition did not apply; message arrival did not invalidate these
+measured observations. The figures below remain measurements of the stated
+sources and artifacts, rather than an accepted final adoption result. This
+correction changes no acceptance criterion and authorizes no rerun. The
+adoption STOP remains for these measured results and controls:
+
+- All four-arm cold/warm init and first-candidate wall controls are
+  INCONCLUSIVE. Cold pinyin cost cannot be compared reliably with the
+  accepted phrases +7.32% [4.80%, 9.01%] and journals +7.64%
+  [1.25%, 11.65%]. No tolerance or equivalence claim is invented.
+- Native pinyin/phrases first-candidate-phase wall is INCONCLUSIVE.
+- Range-qualified steady Ir regresses on phrases: pinyin adds 188–671
+  instructions and zhuyin adds 179–507, from the conservative base-minus-PR
+  bounds below. The allowed variation was fully attributed; qualification
+  does not mean an improvement.
+- Four-arm pinyin steady wall is +1.163% [0.655%, 1.503%] with a stable
+  same-bytes control. Zhuyin steady wall has no established change.
+
+Controlled M1 total Pss is lower by a paired median 243–304 KiB across the
+four cells, with positive intervals. This gain does not clear the other
+STOPs. Fault locations remain unresolved. Warm equivalence and how often
+real starts are cold are not established. The historical store effects are
+mixed; their table stays historical because the benchmark hashes changed.
+
+### Method and scope
+
+Ubuntu x86_64, Intel i7-9750H, Linux 7.3.0-9-generic, CPU 2; Rust 1.97.1,
+GCC 15.3.0, GNU BFD ld 2.47 and glibc 2.44. Library, system data, profiles,
+build/work directories and TMPDIR were verified ext4. Normal shared heavy
+admission held one campaign; builds preceded the timed workers. Both arms
+used the certified libtkrzw below. PR/control libraries were byte-identical.
+All six oxpinyin linked objects passed their own function-order expectations;
+base used its own main policies. Neither prototype facade skipped any of its
+three C++ rows. Symbols confirm all four concrete DBM classes, no PolyDBM or
+tkrzw C API in the PR, and the baseline's single-record tkrzw_dbm_set path.
+
+Four-arm sampling used 20 rotating paired rounds after two warmups per arm,
+facade, profile and cache state. Cold means **cold copied facade only**:
+fsync, POSIX_FADV_DONTNEED and mincore proving zero resident facade pages
+before each launch. Dependencies and system data are not fully cold. Each
+cell has 80 measured cold samples across base/PR/control/pin, and all four
+answer traces match. M1 is after first candidate; memory samples are warm.
+Steady wall is the existing perf workload, per-process median of cycles 2–8.
+
+Timing controls use the deterministic paired-bootstrap median and whole
+95% interval within [0.95, 1.05]. Unstable controls withhold PR/base claims.
+Pss controls use paired control-minus-PR median and interval inside
+±max(64 KiB, 1% of median PR Pss). Differences and ratios are computed from
+original same-round samples, never independently sorted values. All
+original timing/resource and memory readings remain local.
+
+The maintained native tool is a separate worker and scope: warm,
+LD_BIND_NOW, 60 timed rounds after three warmups and 30 memory rounds after
+two warmups. Its pin rows are unsupported; pin timing/Pss and diagnostic
+phase Ir are supplied only by the four-arm worker. Absolute figures from
+the two workers are not pooled. Native init Ir is exact across two fresh
+processes per base/PR/control arm. First-candidate and steady use five fresh
+processes per arm, no span cap, overlapping PR/control ranges and exclusive
+attribution. Every varying PR/control function was one of
+`dedup_ranked_by_text`, `order_window_tail`, `__memcmp_avx2_movbe`.
+First candidate has 131 constant unresolved object+offset entries totaling
+5,830 Ir; steady has 53 totaling 694 Ir in every PR/control sample. They
+matched each sample's unique executable loader mapping; none varied or
+was unmatched. Raw profiles and loader records remain local.
+
+### Four-arm measured results
+
+M1 total Pss, KiB; paired differences and 95% bootstrap intervals.
+
+| facade/profile | base | PR | pin | same-bytes control−PR KiB [CI] | base−PR [CI] | band KiB |
+|---|---:|---:|---:|---|---:|---:|
+| pinyin/phrases | 9443.000 | 9199.000 | 9584.500 | STABLE +0.000 [-0.500, +4.000] | +244.000 [+243.000, +245.000] | 91.990 |
+| pinyin/journals | 9323.000 | 9076.000 | 9028.000 | STABLE +0.000 [-4.000, +3.000] | +243.000 [+241.000, +247.000] | 90.760 |
+| zhuyin/phrases | 8647.000 | 8343.500 | 8341.000 | STABLE +0.000 [-2.000, +4.000] | +304.000 [+300.500, +307.000] | 83.435 |
+| zhuyin/journals | 8711.000 | 8408.000 | 8338.000 | STABLE +1.500 [-0.500, +3.000] | +303.000 [+301.000, +307.500] | 84.080 |
+
+Four-arm timing: medians µs; paired PR/base percent and 95% intervals.
+
+| facade/profile/cache/metric | base | PR | pin | control | control/PR % [CI] | PR/base % [CI] |
+|---|---:|---:|---:|---|---:|---:|
+| pinyin/phrases/warm/init_ns | 2710.695 | 2740.318 | 79291.807 | INCONCLUSIVE | +5.419 [-1.740, +13.853] | withheld |
+| pinyin/phrases/warm/load_ns | 1885.146 | 1858.458 | 2571.535 | INCONCLUSIVE | +4.418 [-2.029, +15.255] | withheld |
+| pinyin/phrases/warm/load_plus_init | 4601.158 | 4591.781 | 81477.159 | INCONCLUSIVE | +6.197 [-2.162, +12.350] | withheld |
+| pinyin/phrases/warm/first_candidate_ns | 131.982 | 151.160 | 170.197 | INCONCLUSIVE | +4.717 [-14.417, +17.099] | withheld |
+| pinyin/phrases/warm/lifecycle_ns | 5880.100 | 6166.274 | 82726.361 | INCONCLUSIVE | +5.963 [-2.255, +12.435] | withheld |
+| pinyin/phrases/cold-library/init_ns | 4593.087 | 5123.588 | 77825.098 | INCONCLUSIVE | +4.291 [-3.749, +14.044] | withheld |
+| pinyin/phrases/cold-library/load_ns | 3337.235 | 3487.682 | 3348.155 | INCONCLUSIVE | +3.806 [-5.685, +11.767] | withheld |
+| pinyin/phrases/cold-library/load_plus_init | 7846.006 | 8580.976 | 81157.950 | INCONCLUSIVE | +6.134 [-2.563, +12.235] | withheld |
+| pinyin/phrases/cold-library/first_candidate_ns | 149.154 | 191.933 | 605.982 | INCONCLUSIVE | +12.495 [-1.234, +21.368] | withheld |
+| pinyin/phrases/cold-library/lifecycle_ns | 10983.171 | 12956.649 | 81641.220 | INCONCLUSIVE | +8.014 [-1.427, +11.869] | withheld |
+| pinyin/journals/warm/init_ns | 2784.981 | 2701.068 | 78319.750 | INCONCLUSIVE | +1.524 [-3.096, +12.749] | withheld |
+| pinyin/journals/warm/load_ns | 1860.441 | 1816.591 | 2035.285 | INCONCLUSIVE | -0.475 [-1.813, +10.515] | withheld |
+| pinyin/journals/warm/load_plus_init | 4657.985 | 4468.163 | 80345.782 | INCONCLUSIVE | +0.550 [-1.161, +10.217] | withheld |
+| pinyin/journals/warm/first_candidate_ns | 143.264 | 149.915 | 176.488 | INCONCLUSIVE | +5.411 [-2.123, +18.517] | withheld |
+| pinyin/journals/warm/lifecycle_ns | 5929.435 | 5894.085 | 81841.141 | INCONCLUSIVE | +1.223 [+0.389, +11.786] | withheld |
+| pinyin/journals/cold-library/init_ns | 4400.941 | 4707.225 | 79100.383 | INCONCLUSIVE | +3.861 [-2.159, +12.183] | withheld |
+| pinyin/journals/cold-library/load_ns | 3125.055 | 3124.060 | 3353.559 | INCONCLUSIVE | +2.843 [-1.633, +5.389] | withheld |
+| pinyin/journals/cold-library/load_plus_init | 7529.032 | 7993.088 | 82432.896 | INCONCLUSIVE | +3.469 [+0.612, +7.595] | withheld |
+| pinyin/journals/cold-library/first_candidate_ns | 155.699 | 163.911 | 620.600 | INCONCLUSIVE | +8.484 [-8.576, +17.454] | withheld |
+| pinyin/journals/cold-library/lifecycle_ns | 10422.059 | 11917.332 | 83008.722 | INCONCLUSIVE | +2.930 [-2.505, +7.613] | withheld |
+| zhuyin/phrases/warm/init_ns | 2348.315 | 2373.811 | 78772.845 | INCONCLUSIVE | +4.822 [-4.470, +16.219] | withheld |
+| zhuyin/phrases/warm/load_ns | 1810.557 | 1829.247 | 2215.218 | INCONCLUSIVE | +2.321 [-8.203, +13.352] | withheld |
+| zhuyin/phrases/warm/load_plus_init | 4176.362 | 4165.619 | 80807.591 | INCONCLUSIVE | +3.625 [-2.058, +17.351] | withheld |
+| zhuyin/phrases/warm/first_candidate_ns | 111.061 | 127.433 | 118.769 | INCONCLUSIVE | +5.898 [-1.169, +9.081] | withheld |
+| zhuyin/phrases/warm/lifecycle_ns | 5350.194 | 5417.431 | 81932.348 | INCONCLUSIVE | +3.806 [-2.344, +17.719] | withheld |
+| zhuyin/phrases/cold-library/init_ns | 3933.057 | 4019.375 | 77375.542 | INCONCLUSIVE | -0.037 [-12.797, +5.290] | withheld |
+| zhuyin/phrases/cold-library/load_ns | 2940.085 | 2895.360 | 3453.233 | INCONCLUSIVE | +5.163 [-6.561, +16.986] | withheld |
+| zhuyin/phrases/cold-library/load_plus_init | 6953.385 | 6760.354 | 81729.152 | INCONCLUSIVE | +3.531 [-8.815, +13.795] | withheld |
+| zhuyin/phrases/cold-library/first_candidate_ns | 138.417 | 145.326 | 514.636 | INCONCLUSIVE | -0.492 [-19.174, +17.004] | withheld |
+| zhuyin/phrases/cold-library/lifecycle_ns | 10090.703 | 11052.550 | 81006.961 | INCONCLUSIVE | +1.645 [-6.382, +5.848] | withheld |
+| zhuyin/journals/warm/init_ns | 2407.861 | 2831.709 | 77232.970 | INCONCLUSIVE | +4.776 [-1.676, +24.370] | withheld |
+| zhuyin/journals/warm/load_ns | 1823.993 | 2111.524 | 2209.099 | INCONCLUSIVE | +8.074 [-1.387, +22.721] | withheld |
+| zhuyin/journals/warm/load_plus_init | 4226.268 | 4943.233 | 79855.457 | INCONCLUSIVE | +4.616 [-0.953, +23.662] | withheld |
+| zhuyin/journals/warm/first_candidate_ns | 113.124 | 153.607 | 117.169 | INCONCLUSIVE | +13.237 [-3.953, +22.456] | withheld |
+| zhuyin/journals/warm/lifecycle_ns | 5419.770 | 6676.926 | 80443.196 | INCONCLUSIVE | +4.502 [-3.639, +23.437] | withheld |
+| zhuyin/journals/cold-library/init_ns | 4595.045 | 6565.457 | 76354.835 | INCONCLUSIVE | +7.550 [-5.116, +54.951] | withheld |
+| zhuyin/journals/cold-library/load_ns | 4417.204 | 5001.413 | 3433.753 | INCONCLUSIVE | +13.791 [-18.444, +69.758] | withheld |
+| zhuyin/journals/cold-library/load_plus_init | 10274.031 | 11866.106 | 79524.611 | INCONCLUSIVE | +13.139 [-20.218, +74.079] | withheld |
+| zhuyin/journals/cold-library/first_candidate_ns | 172.729 | 257.966 | 542.106 | INCONCLUSIVE | +17.316 [-7.278, +66.219] | withheld |
+| zhuyin/journals/cold-library/lifecycle_ns | 12219.963 | 17852.717 | 79847.005 | INCONCLUSIVE | +8.667 [-4.434, +46.540] | withheld |
+
+Four-arm steady wall: per-process median of cycles 2–8; medians µs.
+
+| facade | base | PR | pin | control | control/PR % [CI] | PR/base % [CI] |
+|---|---:|---:|---:|---|---:|---:|
+| pinyin | 19721.412 | 19898.644 | 22460.036 | STABLE | -0.365 [-0.734, +0.096] | +1.163 [+0.655, +1.503] |
+| zhuyin | 18935.473 | 19011.741 | 21298.865 | STABLE | +0.221 [-0.326, +0.362] | +0.576 [-0.194, +1.071] |
+
+### Native instruction guardrails: every scoped count
+
+Positive base−PR bounds mean fewer PR instructions; negative bounds mean more.
+
+| facade/profile/scope | base counts | PR counts | control counts | verdict | base−PR exact or bounds |
+|---|---|---|---|---|---|
+| pinyin/phrases/init | 10448745, 10448745 | 10234249, 10234249 | 10234249, 10234249 | VALID | 214496 |
+| pinyin/phrases/first_candidate | 644245, 644223, 644512, 644400, 644286 | 644568, 644486, 644709, 644600, 644686 | 644611, 644404, 644574, 644541, 644874 | RANGE-QUALIFIED | [-486, 26] |
+| pinyin/phrases/steady | 427133, 427232, 427208, 427113, 427188 | 427510, 427420, 427784, 427527, 427523 | 427454, 427579, 427458, 427579, 427471 | RANGE-QUALIFIED | [-671, -188] |
+| pinyin/journals/init | 10440106, 10440106 | 10227710, 10227710 | 10227710, 10227710 | VALID | 212396 |
+| pinyin/journals/first_candidate | 644951, 645003, 645132, 644987, 645007 | 644074, 644238, 644186, 644317, 644539 | 644229, 644535, 644130, 644180, 644310 | RANGE-QUALIFIED | [412, 1058] |
+| pinyin/journals/steady | 427587, 427856, 427897, 427807, 427874 | 427419, 427557, 427783, 427493, 427370 | 427719, 427451, 427452, 427396, 427594 | RANGE-QUALIFIED | [-196, 527] |
+| zhuyin/phrases/init | 10018995, 10018995 | 9881598, 9881598 | 9881598, 9881598 | VALID | 137397 |
+| zhuyin/phrases/first_candidate | 636317, 636117, 635882, 636095, 636138 | 636346, 636593, 636442, 636518, 636225 | 636395, 636699, 636449, 636551, 636307 | RANGE-QUALIFIED | [-711, 92] |
+| zhuyin/phrases/steady | 419855, 419885, 419874, 419762, 419818 | 420083, 420226, 420064, 420269, 420077 | 420251, 420176, 420358, 420051, 420228 | RANGE-QUALIFIED | [-507, -179] |
+| zhuyin/journals/init | 10048074, 10048074 | 9910306, 9910306 | 9910306, 9910306 | VALID | 137768 |
+| zhuyin/journals/first_candidate | 637044, 637145, 637024, 637262, 637311 | 637032, 636982, 636920, 636864, 637419 | 637077, 637015, 637058, 636981, 636946 | RANGE-QUALIFIED | [-395, 447] |
+| zhuyin/journals/steady | 419927, 420028, 420114, 420015, 419946 | 420371, 420304, 420346, 420104, 420278 | 420340, 420407, 420328, 420196, 420239 | RANGE-QUALIFIED | [-444, 10] |
+
+### Native wall guardrails
+
+Medians in ms; ratios are paired PR/base percent with 95% intervals.
+
+| facade/profile/metric | base | PR | control | control verdict | PR/base % [CI] |
+|---|---:|---:|---:|---|---:|
+| pinyin/phrases/init | 2.561789 | 2.497155 | 2.464087 | STABLE | -2.220 [-4.051, -0.075] |
+| pinyin/phrases/first_candidate_phase | 0.142348 | 0.145494 | 0.141435 | INCONCLUSIVE | withheld |
+| pinyin/phrases/ttfc | 4.636790 | 4.473450 | 4.394165 | STABLE | -3.648 [-4.672, -2.798] |
+| pinyin/journals/init | 2.675733 | 2.648778 | 2.659848 | STABLE | -2.747 [-4.148, -1.606] |
+| pinyin/journals/first_candidate_phase | 0.150999 | 0.151229 | 0.149530 | STABLE | -0.271 [-1.993, +2.311] |
+| pinyin/journals/ttfc | 4.810764 | 4.696384 | 4.719138 | STABLE | -3.891 [-4.691, -2.374] |
+| zhuyin/phrases/init | 2.275354 | 2.200425 | 2.186521 | STABLE | -2.955 [-4.150, -0.700] |
+| zhuyin/phrases/first_candidate_phase | 0.115030 | 0.112346 | 0.113188 | STABLE | -2.315 [-3.630, -0.364] |
+| zhuyin/phrases/ttfc | 4.316577 | 4.094654 | 4.115896 | STABLE | -3.780 [-4.821, -2.844] |
+| zhuyin/journals/init | 2.359911 | 2.261098 | 2.225031 | STABLE | -3.548 [-5.955, -1.970] |
+| zhuyin/journals/first_candidate_phase | 0.117456 | 0.116693 | 0.112929 | STABLE | -0.855 [-1.779, +1.112] |
+| zhuyin/journals/ttfc | 4.406593 | 4.173537 | 4.146871 | STABLE | -4.407 [-6.220, -2.464] |
+
+### Four-arm diagnostic instruction totals
+
+These are one process per arm/profile and use the older worker's phase
+scopes. They are diagnostic totals only, including the pin; they receive
+neither exact-repeat nor range qualification. Adoption instruction
+guardrails use the native repeated counts above, not these point values.
+
+| facade/profile/arm | init Ir | first-candidate Ir | steady Ir |
+|---|---:|---:|---:|
+| pinyin/phrases/base | 10450238 | 677230 | 466315289 |
+| pinyin/phrases/pr | 10245838 | 676699 | 466384240 |
+| pinyin/phrases/control | 10245838 | 676741 | 466381981 |
+| pinyin/phrases/pin | 338884907 | 685465 | 536473213 |
+| pinyin/journals/base | 10440909 | 676776 | 466325665 |
+| pinyin/journals/pr | 10235960 | 676877 | 466386394 |
+| pinyin/journals/control | 10235960 | 676836 | 466377108 |
+| pinyin/journals/pin | 338945683 | 685488 | 536473213 |
+| zhuyin/phrases/base | 10060695 | 670714 | 431328253 |
+| zhuyin/phrases/pr | 9922710 | 670303 | 431387799 |
+| zhuyin/phrases/control | 9922710 | 670296 | 431379923 |
+| zhuyin/phrases/pin | 338543226 | 474590 | 530385358 |
+| zhuyin/journals/base | 10054288 | 670366 | 431331508 |
+| zhuyin/journals/pr | 9916606 | 669562 | 431373330 |
+| zhuyin/journals/control | 9916606 | 669887 | 431386714 |
+| zhuyin/journals/pin | 338610046 | 478869 | 530385358 |
+
+### Stripped size and artifact identification
+
+| facade | base bytes | PR bytes | increase | pin bytes |
+|---|---:|---:|---:|---:|
+| pinyin | 2,487,016 | 2,499,472 | +12,456 | 867,216 |
+| zhuyin | 2,245,352 | 2,249,616 | +4,264 | 838,520 |
+
+These SHA256s identify the unstripped measured artifacts; they do not
+preserve binaries or promise their availability. Controls equal the PR.
+
+| arm/facade | SHA256 |
+|---|---|
+| base/pinyin | `46cddb0239ed7e66b7e85b50279859c9bfa94a63830a6f00a33ff0ee19da42e9` |
+| base/zhuyin | `a287967dc94510992309f63e7c177734ebc79b884a0d6956a277ad9ff0eddc2c` |
+| pr/pinyin | `84acd4316b65b792703573f65f64dc6605515cec9612d3a768fd09c02ea9e223` |
+| pr/zhuyin | `7657b7c48548e6b8d6b6412318e965c5b86fca20e08b9ecd7aead7d22a976fac` |
+| pin/pinyin | `d78a91676af43ad5075c20ab4ae014a8bc6e03b7a5f5ab656d014087f18ff7b8` |
+| pin/zhuyin | `adbcc8c8c3dec00a488ea89413a525f57fdccf280a8ca44e6c2ad6765fd24c3d` |
+
+Certified libtkrzw SHA256: `36c6aa4d77edb3bd6a628f02fc456f0a67096bdd451c04999141d7144f144d0e`.
+
+The existing store-operation table is **historical**, not a table for this
+combined build. Both freshly built benchmark hashes differ:
+
+| arm | historical SHA256 | current SHA256 |
+|---|---|---|
+| base | `b31e10856b2428aca9235886fcb70796a42a171ea86ff436907dfdacebee6d28` | `0d5bba56915e5cf7a4f65e54cf7705d9d45cabb8732da7a413b0d4d214b352b7` |
+| pr | `f36d8b52777fb13b096f2897e51f0f258a6589b8d41d3002b42e610f7cd53e2a` | `3ca6c69218571109e162b90a1b1168d9723e2b43b78ec2f71888d1fb316bffdf` |
+
+No store operation was re-timed in this attempt. Cargo used the pinned
+release profile (fat LTO, one codegen unit), no RUSTFLAGS/CFLAGS/CXXFLAGS/
+LDFLAGS overrides, tkrzw-only benches, pinyin `tkrzw,shipped` and zhuyin
+`tkrzw` shipping features. Runtime and profile fixtures were unchanged;
+the cc build input changed as described below. Hash inequality alone
+prevents carrying the old timed table forward.
+
+### Source relation, policies and gates
+
+The seven own adapter/build/FFI/shim/relink files are byte-identical to
+historically measured findings tree 9d81c9e2. The shim directly constructs
+HashDBM, TreeDBM, TinyDBM and BabyDBM through handwritten cc/C ABI code;
+exception containment and best-effort error recording remain intact. The
+empty-message fast path remains removed. #1110's health/record-section
+checks and #1114's single-record Set path remain.
+
+Since historical base d7788072, main added #1140's omission of unused
+pronunciation pricing, Dictionary candidate lookup interfaces and their
+core/data/user implementations, engine callers and tests; it also changed
+Rust documentation/cfg-doc attributes, tooling and documentation. #1157
+then upgraded cc to 1.9.0 and find-msvc-tools to 0.1.15. These surrounding
+changes are main's. The final measured source therefore differs from the
+historical facade build even though the own shim source files match.
+
+Current-lockfile policies were generated twice from fresh unordered inputs
+and folded into code commit 08e17882. SHA256s:
+pinyin `c1ddbcde97704e10b82c7671fc501f1d4adfd15cc8b34472b8e9b341c8321660`;
+zhuyin `1713876b7cf3faf03c7695fdd2746a5318ad40083627e835d0e58dcf474d299b`.
+Each selects two init and one steady C++ paths. The new policies changed
+Rust instantiating-crate identities compared with the earlier generation;
+old policy files were not carried forward. The extracted C++ object itself
+is byte-identical across the cc upgrade: 44,056 bytes, SHA256
+`f2a5243806846d5e2df0562d95f7be5aa388a407c4ae1e72c3c74a9276e2b6bb`.
+Archive member filenames differ; archive identity is not claimed.
+
+Fmt and both clippy configurations pass. Under cc 1.9.0, store tests pass:
+tkrzw 52 unit + 7 integration; default 50 unit + 7 integration, with four
+existing ignored fixture tests. The optional sample-retention controller
+has 44 passing tests; it changes no worker scope/cache preparation.
+
+Rule 2 selected bdb, kc and tkrzw. Same-data passed in all three. Complete
+contracts at the unchanged shipping checkpoint cover all 2,899 cases:
+bdb 2,897 MATCH / 2 expected SKIP; kc 2,892 MATCH / 7 expected SKIP;
+tkrzw 2,894 MATCH / 5 expected SKIP. Exact retained-record reconciliation
+leaves zero unfinished or timed-out IDs. No further selected run is needed;
+no case deadline/assertion/verdict rule was relaxed. The C++ object identity
+across the later cc upgrade supports keeping these completed results, as
+instructed. The lane does not claim to have rerun main's new #894 cases.
+Saved-byte checks retain the strict 48–55-only timestamp mask: byte 56 and
+all other bytes, ordered bucket chains and both reload directions stay exact.
+
+### Reproduction
+
+Use the pinned revisions above, the provisioned environment from
+`tools/cloud/setup.sh --cells "bdb kc tkrzw"`, an owned ext4 TMPDIR and
+separate targets/stages. Run builds and measurements through `just heavy`.
+A future campaign, if separately authorized, must put **both** facade builds
+and installs in the same heavy job to satisfy the build-grouping requirement.
+No new campaign is authorized by this reporting correction.
+
+```sh
+R=/home/sheng/Documents/Codex/2026-10-24/task-3
+A="$R/adoption-1125"
+BASE_SOURCE="$A/base"  # detached f9257eae
+PR_SOURCE="$R/worktree"  # detached measured source 08e17882
+BASE="$A/base-stage"
+PR="$A/proto-stage"
+CONTROL="$A/control-stage"  # byte-for-byte copy of PR
+PROFILES="$A/provision/profiles"  # pin-provisioned per docs/packaging.md
+BISECT="$A/bisect"  # cc -std=gnu11 -Wall -Wextra -Werror -O2 tools/bisection/bisect.c -ldl
+WORK="$A/measure-work"
+NATIVE_WORK="$A/native-work"
+source "$A/setup.env"
+export TMPDIR="$A/tmp"
+export PATH="$HOME/.cache/oxpinyin/fo-1018/cargo-c/bin:$PATH"
+test "$(git -C "$BASE_SOURCE" rev-parse HEAD)" = f9257eae495e06677d74026e93c285b42c6c34e8
+test "$(git -C "$PR_SOURCE" rev-parse HEAD)" = 08e178829f991469c864b98a980286a2f2a899d3
+(cd "$BASE_SOURCE" && CARGO_TARGET_DIR="$A/base-build" tools/packaging/install.sh libpinyin --prefix="$BASE" -- --locked --release --no-default-features --features tkrzw,shipped)
+(cd "$BASE_SOURCE" && CARGO_TARGET_DIR="$A/base-build" tools/packaging/install.sh libzhuyin --prefix="$BASE" -- --locked --release --no-default-features --features tkrzw)
+(cd "$PR_SOURCE" && CARGO_TARGET_DIR="$A/proto-build" tools/packaging/install.sh libpinyin --prefix="$PR" -- --locked --release --no-default-features --features tkrzw,shipped)
+(cd "$PR_SOURCE" && CARGO_TARGET_DIR="$A/proto-build" tools/packaging/install.sh libzhuyin --prefix="$PR" -- --locked --release --no-default-features --features tkrzw)
+# Unordered policy inputs use OXPINYIN_FUNCTION_ORDER_POLICY= on both PR installs.
+BUILD="$A/proto-build"
+UNORDERED="$A/proto-unordered"
+POLICY_OUTPUT="$A/policy-c"  # then policy-d; cmp both generated facade files
+cd "$PR_SOURCE"
+DATA_ID=$(uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal tools/generate-function-order.py --print-identity "$OXPINYIN_ORACLE_DATA_TKRZW")
+# Generate twice with the two matching staticlibs, then cmp both facade files:
+uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal tools/generate-function-order.py --library "pinyin=$UNORDERED/lib/libpinyin.so.15.0.0" --library "zhuyin=$UNORDERED/lib/libzhuyin.so.15.0.0" --staticlib "pinyin=$BUILD/x86_64-unknown-linux-gnu/release/libpinyin.a" --staticlib "zhuyin=$BUILD/x86_64-unknown-linux-gnu/release/libzhuyin.a" --bisect "$BISECT" --system-dir "$OXPINYIN_ORACLE_DATA_TKRZW" --system-identity "$DATA_ID" --profiles-dir "$PROFILES" --work-dir "$WORK" --cpu 2 --output-dir "$POLICY_OUTPUT"
+uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal tools/measure-function-order.py --subject "base=$BASE" --subject "pr=$PR" --subject "control=$CONTROL" --subject "pin=$OXPINYIN_ORACLE_PREFIX_TKRZW" --function-order "base/pinyin=$BASE_SOURCE/tools/packaging/function-order/tkrzw/libpinyin.order" --function-order "base/zhuyin=$BASE_SOURCE/tools/packaging/function-order/tkrzw/libzhuyin.order" --bisect "$BISECT" --system-dir "$OXPINYIN_ORACLE_DATA_TKRZW" --system-identity "$DATA_ID" --profiles-dir "$PROFILES" --work-dir "$WORK" --cpu 2 --rounds 20 --emit-samples
+just initbench --base "$BASE" --pr "$PR" --system-dir "$OXPINYIN_ORACLE_DATA_TKRZW" --profiles-dir "$PROFILES" --work-dir "$NATIVE_WORK" --facades both --profiles phrases,journals --cpu 2 --stage run --bind now --cache warm --rounds 60 --warmups 3 --memory-rounds 30 --memory-warmups 2 --function-order "base/pinyin=$BASE_SOURCE/tools/packaging/function-order/tkrzw/libpinyin.order" --function-order "base/zhuyin=$BASE_SOURCE/tools/packaging/function-order/tkrzw/libzhuyin.order"
+# Completed contracts: run-all.py --runners contract-diff --cells bdb,kc,tkrzw
+# --contract-jobs 2 --runner-timeout contract-diff=3600, explicit cell prefixes/data.
+# Current exact remaining --cases selection: empty; do not invoke an empty selector.
+```
+
+### Historical source preservation
 
 Before rewriting, the source-only annotated tag
 `provenance/tkrzw-shim-measured-2026-10-24` was pushed and fetched back from
@@ -57,93 +386,31 @@ the original local measured outputs and do not recreate or preserve them.
 | `eccacefd61a04db3fdf8e031dbd86960fc464ce6` |
 | `ef12b1134ef160b6085b7ea1c4f02e561a83565d` |
 
-The new baseline is current main
-`f9257eae495e06677d74026e93c285b42c6c34e8`. The own shim patch applied
-cleanly, retaining main's changed files and all regression tests. Its own
-shipping changes remain the store adapter/FFI, handwritten C++ shim and
-header, cc build integration and tkrzw-only C++ relink. The empty-message
-fast path remains removed, and #1110's health/record-section guards and
-#1114's single-record Set load path remain. No new shim optimization or
-fault investigation was introduced. The tkrzw policies were regenerated twice
-on this combined tree, from fresh unordered shipping inputs. Both passes
-matched byte-for-byte. These are freshly derived combined-tree policies,
-not copied historical files. The seven own source/build/adapter files are
-byte-identical to the historically measured 9d81c9e2 tree; main's changes
-around them and the fresh policies are the combined-tree differences.
 
-Since old baseline d7788072, main changed candidate collection to omit
-unused pronunciation pricing (#1140), with Dictionary candidate lookup
-interfaces and implementations in core/data/user, engine lookup callers
-and regression tests. Main also regenerated tkrzw policies, changed Rust
-documentation/cfg-doc attributes, and added/updated verification, native
-startup measurement, platform/oracle selection and documentation tooling.
-These surrounding changes are main's, not attributed to the shim. Hence
-old facade performance is not a measurement of this combined source.
-The old store table will stand only if both timed benchmark binaries,
-runtime, fixture inputs and build flags match; otherwise it stays explicitly
-historical. Current preparation has no such binary-equivalence result yet.
+### Combined-source preservation and checkpoint relation
 
-Fmt, clippy and store tests (default and tkrzw) passed on the same
-shipping source. Main then added cgroup-v1 admission accounting only; the
-clean rebase did not change shipping source. Main's subsequent bilingual
-README and contributor documentation change also leaves shipping source and
-profiling inputs unchanged. Current rule-2 checks 1, 2
-and 3 all select bdb,kc,tkrzw. The combined code commit is `08e178829f991469c864b98a980286a2f2a899d3`. The regenerated policies
-are folded into that code commit. Generated policy SHA256 values are
-`c1ddbcde97704e10b82c7671fc501f1d4adfd15cc8b34472b8e9b341c8321660`
-(pinyin) and
-`1713876b7cf3faf03c7695fdd2746a5318ad40083627e835d0e58dcf474d299b`
-(zhuyin). Selected-cell differentials passed as described below. The remaining check is one Ubuntu
-final-build campaign against this main plus the pin. Essential guardrails
-must be conclusive under their existing exact/range/timing rules. No new
-cold-init tolerance is assumed. A worse/uncertain trade or essential
-INCONCLUSIVE guardrail means STOP with no PR. A draft PR is permitted only
-after all conditions pass; no review request or merge is authorized.
+The original source tag above predates measured source 08e17882; an explicit
+ancestry check confirms it cannot reach that commit. Before the findings
+checkpoint's further rebase, one necessary additional source-only tag,
+`provenance/tkrzw-shim-combined-2026-10-24`, was pushed and fetched back. Its tag object is
+`f75ac4e4d0d8021e7e4ff570fb31f56bb85829f9` and peeled anchor is `b46a2a414c486e16410ab5e4cfd8d1f40ea029f9`.
+`git ls-remote --tags origin` confirms both exact tag names and their peeled
+anchors. The new fetched tag reaches all 31 historical citations above,
+new measured code `08e178829f991469c864b98a980286a2f2a899d3` and checkpoint
+`933cb05be76703f4a578a73fb34b11f40e00947d`: 33 ancestry checks pass.
+The older tag was neither deleted nor moved. Neither tag preserves binaries.
+No `measured/1125-*` name is claimed.
 
-The maintained four-arm controller now has optional `--emit-samples` JSON
-output, after each worker exits, retaining original timing/resource,
-memory and steady readings with round, arm order and library identity.
-It changes neither worker scopes nor cache preparation, and defaults off.
-The controller's 44 tests pass, including original-value/order retention,
-missing fields versus zero, disabled output and write failures. This
-allows the final timing controls to use paired original samples instead
-of independently sorted summaries. No private measurement controller is
-used. The runbook documents the option.
-
-Same-data differentials passed in bdb, kc and tkrzw. Full contract results
-cover all 2,899 registered cases at the unchanged shipping checkpoint:
-bdb 2,897 MATCH / 2 expected SKIP; kc 2,892 MATCH / 7 expected SKIP;
-tkrzw 2,894 MATCH / 5 expected SKIP. No case TIMEOUT or failing verdict was
-recorded. These use the supported two-case pool, the unchanged 300-second
-per-case deadline and a 3,600-second aggregate runner deadline. The original
-full job survived loss of its transport and completed; its final records,
-rather than an incomplete console view, establish the result. A subsequent
-full retry was cancelled and reaped after 19 completed cases. Exact
-reconciliation against the default registry leaves zero unfinished or
-timed-out IDs, so no selected case needs to be repeated.
-
-The final clean rebase also includes main's #894 contract fixtures and
-recorded-discrepancy verifier, and conservative cgroup-v1 admission fixes.
-It changes no shipping, build, profile, worker or policy-generation input.
-The completed gates stand under the proportional re-verification rule;
-this lane does not claim to have rerun main's new #894 cases.
-
-Main then upgraded cc 1.4.3 → 1.9.0 and find-msvc-tools 0.1.11 → 0.1.15.
-Both tkrzw policies were regenerated twice again under that lockfile; the
-two new passes matched and are the committed policies identified above.
-Their Rust instantiating-crate identities differ from the earlier policies,
-so the earlier files were not carried forward. Each facade still selects
-all three C++ paths (two init and one steady). The cc archive member name
-changed, but the extracted shim object is byte-identical: 44,056 bytes,
-SHA256 `f2a5243806846d5e2df0562d95f7be5aa388a407c4ae1e72c3c74a9276e2b6bb`.
-This is object identity, not a facade performance claim. Fmt, both clippy
-configurations and store tests passed again: tkrzw 52 unit + 7 integration,
-default 50 unit + 7 integration, with four existing ignored fixture tests.
-Both exact current-main shipping facades also built with their own checked-in
-policies and no unordered fallback. Final linked-object ordering checks and
-the final campaign remain pending.
-
-
+The findings checkpoint has one code commit `e273a9d7f20acd69bce6ca4fce67bfdc1b5276f9` plus one docs
+commit on current main `ae516625d69676ece702b1ec59bf77e537ff05df`. Main's post-measurement changes are
+selector validation, tooling contracts/docstrings and documentation. An
+explicit diff against measured code 08e17882 is empty for every crate,
+Cargo manifest/lockfile, toolchain, packaging policy/build file, generator,
+profile schema and C worker input. This describes source-input identity,
+not a new binary-hash or performance result. The measured source remains
+08e17882 under the new source-only tag. No further build, policy generation
+or measurement followed the STOP. A future adoption decision must resolve
+the build-grouping limitation and failed guardrails; no PR is opened.
 
 ## Cold-page diagnosis: records absent; same-setup one-pass entry point blocked
 

@@ -11,6 +11,11 @@ RANDOMSTATE_ALLOWLIST = frozenset((
 
 
 def allowed(function):
+    """Recognize an exact RandomState allowlisted name after Rust-path normalization.
+
+    Remove a trailing Rust hash and the engine session prefix; clone suffixes
+    and arbitrary substring matches remain rejected.
+    """
     # Accept complete demangled Rust paths, never a substring or a clone suffix.
     name = re.sub(r'::h[0-9a-f]{16}$', '', function)
     if name.startswith('oxpinyin_engine::session::'):
@@ -100,6 +105,12 @@ def resolve_unmapped(text, documents, pid, executable):
 
 
 def total_profile(raw, executable, pid):
+    """Validate Callgrind identity and return the reconciled Ir summary.
+
+    Decode raw as strict UTF-8. Require unique creator, PID, command, and
+    Ir-only events records plus equal summary/totals; mismatches raise
+    ValueError. Return total, creator, PID, and decoded raw text.
+    """
     text = raw.decode('utf-8', errors='strict')
     for field in ('creator', 'pid', 'cmd', 'events'):
         if len(re.findall(r'^' + field + r':.*$', text, re.M)) != 1:
@@ -118,6 +129,13 @@ def total_profile(raw, executable, pid):
 
 
 def profile(raw, library, executable, pid, documents=()):
+    """Resolve and reconcile exclusive Callgrind instruction attribution.
+
+    Validate profiler identity, resolve unknown sites through loader records,
+    and require unique object/function rows summing to the summary. Return
+    counts, raw text, and loader metadata; mark offset-resolved sites as
+    unresolved. Invalid or ambiguous attribution raises ValueError.
+    """
     identity = total_profile(raw, executable, pid)
     text = identity['raw']
     attributed = resolve_unmapped(text, documents, pid, executable)
@@ -140,7 +158,13 @@ def profile(raw, library, executable, pid, documents=()):
 
 
 def qualify(counts, profiles):
-    """Every PR/control function must be stable or explicitly allowlisted."""
+    """Qualify instruction-count ranges using same-bytes PR/control attribution.
+
+    Require at least five counts per arm and one profiler identity, otherwise
+    raise ValueError. A positive PR median, overlapping PR/control ranges,
+    allowlisted variation, and constant unresolved sites yield RANGE-QUALIFIED;
+    otherwise return INVALID with the offending sites and observed bounds.
+    """
     if any(len(counts[arm]) < 5 for arm in ('base', 'pr', 'control')):
         raise ValueError('range qualification requires five fresh processes per arm')
     median = statistics.median(counts['pr'])

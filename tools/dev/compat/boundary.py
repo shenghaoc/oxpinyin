@@ -31,6 +31,12 @@ STATE_SETTINGS = frozenset({
 
 
 def validate_environment(environ):
+    """Reject host settings that could select or redirect container state.
+
+    Ignore empty values. Raise ValueError for interpreter overrides, forbidden
+    state paths, undeclared prefixed settings, a relative lock directory, or
+    a missing/empty proxy CA file. Filesystem errors can propagate.
+    """
     try:
         doctor.reject_overrides(environ)
     except doctor.DoctorError as exc:
@@ -51,6 +57,10 @@ def validate_environment(environ):
 
 
 def positive(value):
+    """Parse a positive decimal integer without leading zeros for argparse.
+
+    Raise ArgumentTypeError for every other spelling.
+    """
     if not re.fullmatch(r'[1-9][0-9]*', value):
         raise argparse.ArgumentTypeError('expected a positive integer')
     return int(value)
@@ -67,6 +77,13 @@ def contract_issues():
 
 
 def validate(argv, environ=None):
+    """Parse and validate launcher inputs without accessing a container runtime.
+
+    Check environment, result namespace, gate selection, timeouts, and any
+    model archive digest against tools/oracle/oracle-pin.txt. Return the
+    parsed namespace. Read the registry and, when needed, run the contract
+    tag listing; reject invalid inputs with parser exits or value errors.
+    """
     environ = os.environ if environ is None else environ
     validate_environment(environ)
     parser = argparse.ArgumentParser(allow_abbrev=False)
@@ -131,6 +148,7 @@ def validate(argv, environ=None):
 
 
 def main(argv=None):
+    """Validate launcher arguments and return zero, or report a failure as status 2."""
     try:
         validate(sys.argv[1:] if argv is None else argv)
     except (OSError, ValueError, doctor.DoctorError, argparse.ArgumentTypeError) as exc:

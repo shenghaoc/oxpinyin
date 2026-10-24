@@ -25,10 +25,12 @@ OBSERVATION_SCHEMA = 'oxpinyin-initbench-observation-v1'
 
 
 class NotResult(ValueError):
+    """Indicate incomparable observations or invalid controls, mapped to CLI status 3."""
     pass
 
 
 def module(path, name):
+    """Load and execute a Python file under a supplied module name and return it."""
     spec = importlib.util.spec_from_file_location(name, path)
     result = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(result)
@@ -39,10 +41,12 @@ PROFILE = module(ROOT / 'tools/bisection/startup_profile.py', 'startup_profile')
 
 
 def emit(kind, **values):
+    """Print and flush one sorted JSON record with the given startup event kind."""
     print(json.dumps(dict(startup=kind, **values), sort_keys=True), flush=True)
 
 
 def parser():
+    """Build the native startup CLI, including retained-instruction recheck options."""
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--base', type=Path, help='base installed prefix (oxpinyin only)')
     p.add_argument('--pr', type=Path, help='PR installed prefix (oxpinyin only)')
@@ -68,6 +72,7 @@ def parser():
 
 
 def nonnegative(text):
+    """Parse a nonnegative integer for argparse; reject invalid or negative values."""
     try:
         value = int(text)
     except ValueError as error:
@@ -78,6 +83,7 @@ def nonnegative(text):
 
 
 def positive(text):
+    """Parse a strictly positive integer for argparse; zero and invalid values fail."""
     value = nonnegative(text)
     if not value:
         raise argparse.ArgumentTypeError('expected a positive integer')
@@ -85,6 +91,12 @@ def positive(text):
 
 
 def validate(args):
+    """Validate native startup options and return selected profile user directories.
+
+    Reject pin/cold-cache requests, unsupported platforms, missing inputs,
+    unknown/repeated profiles, and invalid manifests or witnesses. Read input
+    files without provisioning or modifying them; validation errors propagate.
+    """
     if args.pin is not None:
         raise ValueError('native pin rows require the Layer 4 container path: just container run (T11C)')
     if sys.platform not in ('linux', 'darwin'):
@@ -118,6 +130,11 @@ def validate(args):
 
 
 def library(prefix, facade):
+    """Resolve an installed facade library under prefix or raise ValueError.
+
+    On macOS, run nm and require an unstripped oxpinyin symbol; Linux expects
+    the versioned .so.15.0.0 file. Read and subprocess errors propagate.
+    """
     if sys.platform == 'darwin':
         candidates = [prefix / 'lib' / ('lib' + facade + '.dylib'),
                       prefix / 'lib' / ('lib' + facade + '.15.dylib')]
@@ -134,6 +151,10 @@ def library(prefix, facade):
 
 
 def artifact(path):
+    """Describe a library by path, SHA-256, byte size, and dynamic loader metadata.
+
+    Run otool on macOS or readelf elsewhere; subprocess and file errors propagate.
+    """
     if sys.platform == 'darwin':
         metadata = {key: subprocess.check_output(['otool', option, str(path)], text=True,
                                                  timeout=native.COMMAND_TIMEOUT_SECONDS).splitlines()[1:]
@@ -146,16 +167,27 @@ def artifact(path):
 
 
 def order(round_index):
+    """Rotate the base, PR, and control execution order by the round index."""
     offset = round_index % len(ARMS)
     return ARMS[offset:] + ARMS[:offset]
 
 
 def observation(row):
+    """Extract comparable documents, exact stderr bytes, and user-file observations.
+
+    Exclude run and timing records; encode stderr as hex.
+    """
     return dict(documents=[d for d in row['documents'] if d.get('startup') not in ('run', 'times')],
                 stderr_hex=row['stderr'].hex(), userfiles=row['userfiles'])
 
 
 def first_difference(left, right, path='$'):
+    """Find the first recursive difference between JSON-like values.
+
+    Return a path and differing values, keys, or lengths; return None when
+    equal. Traverse dictionaries in left-hand insertion order and lists in
+    index order; differing Python types count as differences.
+    """
     if type(left) is not type(right):
         return dict(path=path, base=left, subject=right)
     if isinstance(left, dict):
@@ -176,15 +208,24 @@ def first_difference(left, right, path='$'):
 
 
 def require_digest(row, reference):
+    """Raise NotResult when a timed units digest differs from its verification reference."""
     if row['digest'] != reference['digest']:
         raise NotResult('NOT COMPARABLE: timed U1–U6 digest differs from native verification')
 
 
 def describe(values):
+    """Combine finite-sample summaries with a deterministic median bootstrap interval."""
     return dict(stats.summary(values), ci95=stats.paired_bootstrap(values)['ci95'])
 
 
 def report_values(kind, values, **context):
+    """Emit a distribution report with the appropriate PR/control stability rule.
+
+    Timing uses paired ratios; residency uses KiB differences. Fault counts
+    are diagnostic and macOS virtual size is unavailable. Missing values
+    produce unavailable reports; PR/base ratios require stable controls and
+    positive base samples.
+    """
     if any(any(value is None for value in rows) for rows in values.values()):
         emit(kind, **context, verdict='unavailable', summaries=None, pr_base_ratio=None)
         return
@@ -211,6 +252,13 @@ def report_values(kind, values, **context):
 
 
 def verify(campaign, libraries, facade, name, profiles):
+    """Compare base, PR, and control verification, persistence, and units observations.
+
+    Run workers on private profiles, check populated witnesses against an
+    empty profile, and emit equivalence results. Raise NotResult on changed
+    digests or unequal observations. After comparability passes, emit twelve
+    hostile probes per arm and return the verification rows.
+    """
     user = profiles[name]
     witness = user.parent / 'witness.txt'
     witness = witness if witness.is_file() else None
@@ -230,6 +278,7 @@ def verify(campaign, libraries, facade, name, profiles):
                 baseline = campaign.run(libraries[arm][facade], facade, Path(empty), mode='verify', witness=witness)
             witnesses = set(witness.read_text().splitlines())
             def answers(row):
+                """Select transcript records whose inputs belong to the captured witness set."""
                 return [r for r in row['documents'] if r.get('startup') == 'transcript' and r.get('input') in witnesses]
             if answers(baseline) == answers(rows[arm]):
                 raise NotResult('NOT COMPARABLE: populated profile changes no witness answer: ' + name)
@@ -250,6 +299,13 @@ def verify(campaign, libraries, facade, name, profiles):
 
 
 def instrument(campaign, libraries, facade, name, user, references, *, completed=None):
+    """Run or reuse qualified instruction scopes and emit their control results.
+
+    On Linux, take two init samples and five first-candidate/steady samples
+    per arm, requiring verified units digests and exact or range controls.
+    Report unavailable on macOS. Emit invalid evidence and raise NotResult
+    when a required control or attribution check fails.
+    """
     if sys.platform == 'darwin':
         emit('instructions', facade=facade, profile=name, verdict='unavailable', reason='native macOS Callgrind unavailable')
         return
@@ -321,6 +377,12 @@ def instrument(campaign, libraries, facade, name, user, references, *, completed
 
 
 def recheck_instructions(path):
+    """Re-evaluate retained profiler records without launching workers.
+
+    Return original start metadata, scope results, and source identity.
+    Normalize malformed-record key/type/index/attribute failures to ValueError;
+    other validation, comparability, and read errors propagate.
+    """
     try:
         return _recheck_instructions(path)
     except (KeyError, TypeError, IndexError, AttributeError) as error:
@@ -328,6 +390,13 @@ def recheck_instructions(path):
 
 
 def _recheck_instructions(path):
+    """Parse one retained run and rebuild exact or range qualification results.
+
+    Require one start record, unique scopes, consistent counts, and complete
+    profiler samples. Invalid exact controls raise NotResult; invalid range
+    controls remain result verdicts. Return source SHA-256 with the start and
+    scope records; no workers or profilers are executed.
+    """
     raw = path.read_bytes()
     documents = [json.loads(line) for line in raw.splitlines() if line.strip()]
     starts = [d for d in documents if d.get('startup') == 'start']
@@ -384,6 +453,14 @@ def _recheck_instructions(path):
 
 
 def campaign_run(args, profiles, work, admission):
+    """Execute the selected native campaign inside an admitted work directory.
+
+    Validate filesystems, copy libraries, build the worker, and verify every
+    facade/profile before instrumentation or timed/memory sampling. Emit JSON
+    records and return zero on success. Temporarily narrow CPU affinity when
+    requested; restore it and check source input identities on exit. Work
+    files are left for the caller's temporary-directory cleanup.
+    """
     facades = ('pinyin', 'zhuyin') if args.facades == 'both' else (args.facades,)
     original = {arm: {facade: library(getattr(args, arm), facade) for facade in facades} for arm in ('base', 'pr')}
     native.check_filesystems([work, args.system_dir, args.profiles_dir, *[p for arm in original.values() for p in arm.values()]])
@@ -469,6 +546,11 @@ def campaign_run(args, profiles, work, admission):
                     else:
                         for metric in TIMING_METRICS:
                             def timing(row):
+                                """Extract the captured metric's wall time in ms from a worker row.
+
+                                Use process_wall directly for whole-process time; otherwise require one
+                                times record and convert its wall_ns value.
+                                """
                                 if metric == 'process_wall':
                                     return row['process_wall'] / 1e6
                                 clocks = [d for d in row['documents'] if d.get('startup') == 'times']
@@ -487,6 +569,12 @@ def campaign_run(args, profiles, work, admission):
 
 
 def run(args):
+    """Validate inputs and run a startup campaign under heavy admission.
+
+    Fill default rounds and CPU on args, require suitable filesystems, and
+    create a temporary work directory removed on exit. Return the campaign
+    status; input, admission, and worker errors propagate.
+    """
     profiles = validate(args)
     if args.rounds is None:
         args.rounds = 30 if args.bind == 'lazy' else 60
@@ -505,6 +593,12 @@ def run(args):
 
 
 def main(argv=None):
+    """Run a native campaign or retained-instruction recheck and return CLI status.
+
+    Emit rechecked scopes without workers when requested. Return 130 for
+    cancellation, 3 for invalid/incomparable results, or 1 for reported
+    filesystem, value, and subprocess errors; argument errors exit separately.
+    """
     args = parser().parse_args(argv)
     try:
         if args.recheck_instructions:
