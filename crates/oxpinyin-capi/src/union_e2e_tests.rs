@@ -217,7 +217,8 @@ fn chosen_addon_candidate_is_promoted_into_default_nibble_5() {
         lookup
             .lookup(&keys)
             .iter()
-            .any(|entry| entry.token().value() == promoted && entry.text() == text),
+            .any(|entry| entry.token().value() == promoted
+                && entry.text().as_str() == Some(text.as_str())),
         "promoted phrase is found through the default-facade lookup"
     );
 

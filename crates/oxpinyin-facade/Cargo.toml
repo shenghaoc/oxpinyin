@@ -21,6 +21,7 @@ must_use_candidate = "warn"
 
 [dependencies]
 oxpinyin-core.workspace = true
+oxpinyin-capi-marshal = { path = "../oxpinyin-capi-marshal" }
 oxpinyin-engine.workspace = true
 # The workspace table carries default-features = false for the
 # store-reaching edges; the [features] block below forwards the backend

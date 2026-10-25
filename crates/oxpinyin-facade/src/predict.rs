@@ -2,6 +2,7 @@
 //! `guess_sentence_with_prefix`, and the merged suggestion rows
 //! `_compute_predicted_prefix_candidates` ranks.
 
+use oxpinyin_core::PhraseText;
 use oxpinyin_runtime::RuntimeDict;
 use oxpinyin_user::{UserLookup, UserStore};
 
@@ -52,8 +53,8 @@ pub fn merged_suggestions(
     dict: &RuntimeDict,
     user: Option<&UserStore>,
     prefix: &str,
-) -> Vec<(u32, String)> {
-    let system: Vec<(u32, String)> = dict
+) -> Vec<(u32, PhraseText)> {
+    let system: Vec<(u32, PhraseText)> = dict
         .system()
         .suggest_after(prefix)
         .unwrap_or_default()

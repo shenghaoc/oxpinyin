@@ -18,15 +18,16 @@
 //! would otherwise leave a stale `committed` set — and the next compatible
 //! re-parse would start fresh and silently drop it.
 
-use compact_str::CompactString;
-
-use oxpinyin_core::PhraseToken;
+use oxpinyin_core::{PhraseText, PhraseTextConcat, PhraseToken};
 
 /// The user's selections in this composition.
 #[derive(Clone, Debug, Default)]
 pub(super) struct SelectionRecord {
-    /// The text chosen so far — the selected span of the preedit.
-    selected: String,
+    /// The text chosen so far — the selected span of the preedit. A
+    /// chosen phrase keeps its [`PhraseText`], stored words included, and
+    /// each part is cut at its own first zero when joined (the pin converts
+    /// every phrase separately, `src/lookup/lookup.cpp:39-68` at 074a2219).
+    selected: PhraseText,
     /// Bytes of the raw input the selections consumed: the composition
     /// offset the candidate lookup is anchored at and the store's
     /// coordinate origin. Never past the raw input's length.
@@ -47,13 +48,13 @@ impl SelectionRecord {
     }
 
     /// The text chosen so far.
-    pub(super) fn selected(&self) -> &str {
+    pub(super) const fn selected(&self) -> &PhraseText {
         &self.selected
     }
 
     /// Moves the chosen text out, leaving it empty — the commit path, which
     /// resets the whole record immediately after.
-    pub(super) fn take_selected(&mut self) -> String {
+    pub(super) fn take_selected(&mut self) -> PhraseText {
         core::mem::take(&mut self.selected)
     }
 
@@ -72,7 +73,7 @@ impl SelectionRecord {
     /// reset. The constraint store is cleared by the caller alongside
     /// this, or a forcing would outlive its own selection.
     pub(super) fn clear(&mut self) {
-        self.selected.clear();
+        self.selected = PhraseText::default();
         self.consumed = 0;
         self.history.clear();
         self.committed = false;
@@ -92,16 +93,18 @@ impl SelectionRecord {
     /// Extends the text chosen so far with a typed-but-unselected `gap`
     /// then the chosen `text` — the ordinary selection, whose gap is
     /// empty on the composition-anchored path.
-    pub(super) fn append_selected(&mut self, gap: &str, text: &str) {
-        self.selected.push_str(gap);
-        self.selected.push_str(text);
+    pub(super) fn append_selected(&mut self, gap: &str, text: &PhraseText) {
+        let mut selected = PhraseTextConcat::new();
+        selected.push(&self.selected);
+        selected.push(&PhraseText::from(gap));
+        selected.push(text);
+        self.selected = selected.finish();
     }
 
     /// Replaces the text chosen so far with `text` — an n-best row, whose
     /// text already covers the whole composition, so no gap is prepended.
-    pub(super) fn set_selected(&mut self, text: &str) {
-        self.selected.clear();
-        self.selected.push_str(text);
+    pub(super) fn set_selected(&mut self, text: &PhraseText) {
+        self.selected = text.clone();
     }
 
     /// Appends one token to the record.
@@ -141,26 +144,26 @@ impl SelectionRecord {
     pub(super) fn rebuild_from_constraints(
         &mut self,
         raw: &str,
-        runs: &[(usize, usize, PhraseToken, CompactString)],
+        runs: &[(usize, usize, PhraseToken, PhraseText)],
     ) {
         if runs.is_empty() {
             self.clear();
             return;
         }
-        let mut selected = String::new();
+        let mut selected = PhraseTextConcat::new();
         let mut cursor = 0_usize;
         let mut history = Vec::with_capacity(runs.len());
         for (start, end, token, text) in runs {
             if *start > cursor
                 && let Some(gap) = raw.get(cursor..*start)
             {
-                selected.push_str(gap);
+                selected.push(&PhraseText::from(gap));
             }
-            selected.push_str(text);
+            selected.push(text);
             history.push(*token);
             cursor = *end;
         }
-        self.selected = selected;
+        self.selected = selected.finish();
         self.consumed = cursor.min(raw.len());
         self.history = history;
         self.committed = false;

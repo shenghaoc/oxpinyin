@@ -153,19 +153,21 @@ pub extern "C" fn zhuyin_iterator_add_phrase(
         // table) leaves the pin's `PhraseItem` at length zero: `:454` asserts
         // before any import mutation.
         let item_text = dict.token_text(token);
-        if item_text.as_deref() != Some(phrase.as_str()) {
-            crate::ffi::log_warning(
-                if item_text
-                    .as_ref()
-                    .is_some_and(|text| text.chars().count() == length)
-                {
-                    "zhuyin_iterator_add_phrase: assertion \
+        // The stored length first, then every stored word (`zhuyin.cpp:454-457`).
+        let same_length = item_text
+            .as_ref()
+            .is_some_and(|text| text.phrase_length() == length);
+        let same_words = item_text.as_ref().is_some_and(|text| {
+            oxpinyin_capi_marshal::phrase_text::stored_words_match(text, &phrase)
+        });
+        if !(same_length && same_words) {
+            crate::ffi::log_warning(if same_length {
+                "zhuyin_iterator_add_phrase: assertion \
                      '0 == memcmp(phrase, tmp_phrase, sizeof(ucs4_t) * phrase_length)' failed"
-                } else {
-                    "zhuyin_iterator_add_phrase: assertion \
+            } else {
+                "zhuyin_iterator_add_phrase: assertion \
                      'phrase_length == item.get_phrase_length()' failed"
-                },
-            );
+            });
             return false;
         }
     }

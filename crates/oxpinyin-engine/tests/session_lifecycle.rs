@@ -82,12 +82,14 @@ fn the_reset_session_converts_identically_to_a_fresh_one() {
     let fresh_candidates: Vec<String> = fresh
         .candidates()
         .iter()
-        .map(|c| c.text().to_owned())
+        .filter_map(|c| c.text_str())
+        .map(str::to_owned)
         .collect();
     let reset_candidates: Vec<String> = reset
         .candidates()
         .iter()
-        .map(|c| c.text().to_owned())
+        .filter_map(|c| c.text_str())
+        .map(str::to_owned)
         .collect();
     assert_eq!(
         reset_candidates, fresh_candidates,
@@ -159,6 +161,8 @@ fn a_programmatic_choice_commits_the_chosen_phrase() {
         .get(0)
         .expect("candidates exist")
         .text()
+        .as_str()
+        .unwrap()
         .to_owned();
     assert_eq!(chosen, "你", "the captured order leads with 你");
 

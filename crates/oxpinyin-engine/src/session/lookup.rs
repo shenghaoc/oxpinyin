@@ -281,7 +281,7 @@ where
                     // a disabled field makes every candidate equal on
                     // it, which is that comparator exactly.
                     let key = RankKey::for_sort_word(
-                        candidate.text().chars().count(),
+                        candidate.phrase_length(),
                         candidate.consumed_bytes(),
                         frequency,
                         self.lookup.sort_word,
@@ -496,7 +496,7 @@ where
         let mut path: SmallVec<[SyllableKey; 16]> = SmallVec::new();
         self.collect_suggestion_paths(&matrix, 0, end, max_keys, &mut path, &mut paths);
 
-        let mut winner: Option<(PhraseToken, u64, String)> = None;
+        let mut winner: Option<(PhraseToken, u64, PhraseText)> = None;
         for keys in &paths {
             // The pin's `search_suggestion` gate: the walk reaches a user
             // index key past `MAX_PHRASE_LENGTH` syllables that extends this
@@ -529,7 +529,7 @@ where
                 let Some(text) = self.dictionary.phrase_text_for_token(token.value()) else {
                     continue;
                 };
-                let phrase_length = text.chars().count();
+                let phrase_length = text.phrase_length();
                 if phrase_length > prefix_len * 2 + 1 {
                     continue;
                 }
@@ -562,23 +562,16 @@ where
         // LONGER has no bigram term (`pinyin.cpp:1916-1927`). Its zero
         // span marks the C-facing row as LONGER. The final dedup reads
         // its frequency even when the sort word suppresses sentence rows.
+        let phrase_length = text.phrase_length();
         let key = RankKey::for_sort_word(
-            text.chars().count(),
+            phrase_length,
             0,
             amplified_frequency(unigram, total, self.model.amplification_lambda()),
             self.lookup.sort_word,
         );
         Ok(Some((
             key,
-            Candidate::new(
-                compact_str::CompactString::from(text),
-                CandidateKind::Phrase,
-                0,
-                0,
-                0,
-                Some(token),
-                None,
-            ),
+            Candidate::new(text, CandidateKind::Phrase, 0, 0, 0, Some(token), None),
         )))
     }
 
@@ -836,7 +829,7 @@ where
             slice_keys.extend(group.iter().zip(frequencies).enumerate().map(
                 |(index, (candidate, frequency))| {
                     let key = RankKey {
-                        phrase_length: candidate.text().chars().count(),
+                        phrase_length: candidate.phrase_length(),
                         pinyin_span: candidate.consumed_bytes(),
                         frequency: frequency as u32,
                         m_freq: frequency as u32,
@@ -1207,8 +1200,9 @@ where
         }
 
         // best[i] is the cheapest way to spell keys[..i].
-        let mut best: Vec<Option<(Cost, String, Vec<PhraseToken>)>> = vec![None; keys.len() + 1];
-        best[0] = Some((0, String::new(), self.record.history().to_vec()));
+        let mut best: Vec<Option<(Cost, PhraseText, Vec<PhraseToken>)>> =
+            vec![None; keys.len() + 1];
+        best[0] = Some((0, PhraseText::from(""), self.record.history().to_vec()));
 
         for end in 1..=keys.len() {
             let first = end.saturating_sub(MAX_PHRASE_KEYS);
@@ -1230,13 +1224,13 @@ where
 
                 let total = prefix_cost.saturating_add(*cost);
                 if cell.as_ref().is_none_or(|(seen, ..)| total < *seen) {
-                    let mut text = String::with_capacity(prefix_text.len() + entry.text().len());
-                    text.push_str(prefix_text);
-                    text.push_str(entry.text());
+                    let mut text = PhraseTextConcat::new();
+                    text.push(prefix_text);
+                    text.push(entry.text());
                     let mut history = Vec::with_capacity(prefix_history.len() + 1);
                     history.extend_from_slice(prefix_history);
                     history.push(entry.token());
-                    *cell = Some((total, text, history));
+                    *cell = Some((total, text.finish(), history));
                 }
             }
         }

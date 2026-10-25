@@ -552,13 +552,21 @@ where
     /// What the shell should display.
     #[must_use]
     pub fn preedit(&self) -> Preedit {
-        let selected = self.record.selected();
+        // Display text for a Rust shell; no C entry point reads it. The
+        // chosen phrases' outward text, with a non-scalar word shown as
+        // U+FFFD: a C client's bytes come from `phrase_text_bytes` instead.
+        let selected: String = self
+            .record
+            .selected()
+            .outward_words()
+            .map(|word| char::from_u32(word).unwrap_or(char::REPLACEMENT_CHARACTER))
+            .collect();
         let remaining = &self.input.as_str()[self.record.consumed()..];
         if selected.is_empty() && remaining.is_empty() {
             return Preedit::default();
         }
 
-        let mut text = selected.to_owned();
+        let mut text = selected.clone();
         text.push_str(remaining);
 
         let mut spans = Vec::with_capacity(2);
@@ -602,11 +610,11 @@ where
     /// The decoded text of n-best row `index`, best-first
     /// (`pinyin_get_sentence`'s payload). `None` when fewer rows exist.
     #[must_use]
-    pub fn sentence_text(&self, index: u8) -> Option<&str> {
+    pub fn sentence_text(&self, index: u8) -> Option<&PhraseText> {
         self.sentence
             .rows
             .get(usize::from(index))
-            .map(|row| row.text.as_str())
+            .map(|row| &row.text)
             .filter(|text| !text.is_empty())
     }
 

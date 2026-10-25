@@ -215,7 +215,7 @@ impl SystemLibrary {
         }
         let view = self.mapped.as_ref()?.item(slot)?;
         Some(ChunkItem {
-            phrase: view.phrase_text()?.chars().map(u32::from).collect(),
+            phrase: view.phrase_codes().collect::<Option<Vec<u32>>>()?,
             unigram: view.unigram(),
             prons: view
                 .pronunciations()
@@ -238,7 +238,7 @@ impl SystemLibrary {
             || self.mapped.as_ref().is_some_and(|library| {
                 library
                     .item(slot)
-                    .is_some_and(|view| view.phrase_chars().all(|scalar| scalar.is_some()))
+                    .is_some_and(|view| view.phrase_codes().all(|code| code.is_some()))
             })
     }
 

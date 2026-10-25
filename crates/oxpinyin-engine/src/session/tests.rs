@@ -304,7 +304,7 @@ fn enter_commits_and_escape_discards() {
         session
             .process_key(&KeyInput::plain(LogicalKey::Enter))
             .expect("no failure"),
-        KeyOutcome::Commit("nihao".to_owned())
+        KeyOutcome::Commit("nihao".into())
     );
     assert!(!session.is_composing());
     assert_eq!(
@@ -410,7 +410,7 @@ fn space_accepts_the_first_candidate_and_commits() {
         session
             .process_key(&KeyInput::plain(LogicalKey::Space))
             .expect("no failure"),
-        KeyOutcome::Commit("nihao".to_owned())
+        KeyOutcome::Commit("nihao".into())
     );
     assert!(!session.is_composing());
     assert_eq!(
@@ -658,7 +658,7 @@ impl Dictionary for Flaky {
         self.inner.suggest_extension_tokens(syllables)
     }
 
-    fn phrase_text_for_token(&self, token: u32) -> Option<String> {
+    fn phrase_text_for_token(&self, token: u32) -> Option<oxpinyin_core::PhraseText> {
         self.inner.phrase_text_for_token(token)
     }
 }
@@ -1031,6 +1031,137 @@ fn train_reports_the_earlier_bounds_fault_before_a_later_token_fault() {
         }
     );
     assert!(recorder.observed.is_empty());
+}
+
+/// A stored phrase trains as long as its stored length, the
+/// `get_phrase_length()` the pin's `increase_pronunciation_possibility`
+/// matches reading paths against (074a2219 `phonetic_lookup.h:924-927`,
+/// `storage/phonetic_key_matrix.cpp:610-620`), not as long as its outward
+/// text: `[你, 0]` trains the two-key reading of "nihao" though its outward
+/// text is one character.
+#[test]
+fn a_stored_phrase_trains_with_its_stored_length() {
+    use crate::constraint::PhraseSpan;
+
+    struct Readings(Vec<Vec<oxpinyin_core::ChewingKey>>);
+    impl UserModel for Readings {
+        type Token = PhraseToken;
+        type Error = EngineError;
+
+        fn score(
+            &self,
+            _history: &[Self::Token],
+            _token: &Self::Token,
+        ) -> Result<Cost, Self::Error> {
+            Ok(0)
+        }
+
+        fn observe(
+            &mut self,
+            _history: &[Self::Token],
+            _token: &Self::Token,
+        ) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        fn observe_with_keys(
+            &mut self,
+            _history: &[Self::Token],
+            _token: &Self::Token,
+            readings: impl Iterator<Item = Vec<oxpinyin_core::ChewingKey>>,
+        ) -> Result<(), Self::Error> {
+            self.0.extend(readings);
+            Ok(())
+        }
+    }
+
+    let text = oxpinyin_core::PhraseText::from_words([0x4F60, 0]).expect("stored words");
+    assert_eq!((text.phrase_length(), text.outward_words().count()), (2, 1));
+    let mut session = trellis_session();
+    session.replace_raw("nihao").expect("parse");
+    session.constraints.resize(6);
+    session
+        .constraints
+        .add(0, 5, PhraseToken::new(1), text.clone());
+    let spans = vec![PhraseSpan {
+        start: 0,
+        token: PhraseToken::new(1),
+        text,
+    }];
+    let mut model = Readings(Vec::new());
+    session
+        .train_spans(&spans, &mut model)
+        .expect("the forced span trains");
+    assert!(!model.0.is_empty(), "the two-key reading of nihao trains");
+    assert!(
+        model.0.iter().all(|reading| reading.len() == 2),
+        "every trained reading has the stored length: {:?}",
+        model.0
+    );
+}
+
+/// The selection record and the constraint keep a chosen phrase's own
+/// `PhraseText`: a stored phrase is never reduced to "", and an ordinary
+/// text's NUL suffix stops at the record. The pin's choose reads no text
+/// (074a2219 `pinyin.cpp:2577-2587`); its sentence converts each phrase
+/// from the stored words (`src/lookup/lookup.cpp:39-68`).
+#[test]
+fn a_chosen_phrase_keeps_its_text_through_the_record_and_commit() {
+    let cases = [
+        (
+            oxpinyin_core::PhraseText::from_words([0x4F60, 0xD800]).expect("stored words"),
+            "你\u{fffd}hao",
+            vec![0x4F60, 0xD800],
+        ),
+        (
+            oxpinyin_core::PhraseText::from_words([0x4F60, 0, 0x597D]).expect("stored words"),
+            "你hao",
+            vec![0x4F60],
+        ),
+        (
+            oxpinyin_core::PhraseText::from("你\0好"),
+            "你hao",
+            vec![0x4F60],
+        ),
+    ];
+    for (text, preedit, outward) in cases {
+        let mut session = trellis_session();
+        session.replace_raw("nihao").expect("parse");
+        let window =
+            crate::candidate::CandidateList::from_vec(vec![crate::candidate::Candidate::new(
+                text.clone(),
+                crate::CandidateKind::Phrase,
+                1,
+                2,
+                0,
+                Some(PhraseToken::new(7)),
+                None,
+            )]);
+        session
+            .select_anchored(0, &window, 0)
+            .expect("the phrase is selectable");
+
+        let runs = session.constraints.runs();
+        assert_eq!(runs.len(), 1, "{text:?} forces its span");
+        assert_eq!(runs[0].3.stored_words(), text.stored_words());
+        assert_eq!(runs[0].3.as_str(), text.as_str());
+        assert_eq!(runs[0].3.phrase_length(), text.phrase_length());
+        assert_eq!(
+            session
+                .record
+                .selected()
+                .outward_words()
+                .collect::<Vec<_>>(),
+            outward,
+            "{text:?} is the record's outward text"
+        );
+        assert_eq!(session.preedit().text(), preedit);
+
+        let committed = session.commit().expect("commit");
+        let mut expected = outward.clone();
+        expected.extend("hao".chars().map(u32::from));
+        assert_eq!(committed.outward_words().collect::<Vec<_>>(), expected);
+    }
 }
 
 #[test]
@@ -1590,7 +1721,8 @@ fn dynamic_adjust_run(
         texts: session
             .candidates()
             .iter()
-            .map(|candidate| candidate.text().to_owned())
+            .filter_map(|candidate| candidate.text_str())
+            .map(str::to_owned)
             .collect(),
         merges: merges.get(),
         asked_about: asked_about.get(),
@@ -2032,7 +2164,7 @@ fn window_scan_emits_system_candidates_before_addon_candidates() {
     let texts: Vec<&str> = session
         .candidates()
         .iter()
-        .map(super::super::candidate::Candidate::text)
+        .filter_map(super::super::candidate::Candidate::text_str)
         .collect();
     assert_eq!(
         texts,
@@ -2261,6 +2393,7 @@ fn a_terminal_selection_still_answers_the_full_matrix() {
     );
     let rows: Vec<&str> = (0..3)
         .filter_map(|index| session.sentence_text(index))
+        .filter_map(|text| text.as_str())
         .collect();
     assert_eq!(
         rows,
@@ -2457,7 +2590,7 @@ fn a_shrinking_reparse_reconciles_a_constraint_free_row_selection() {
         .expect("enter on a composing session cannot fail");
     assert_eq!(
         outcome,
-        KeyOutcome::Commit("ni".to_owned()),
+        KeyOutcome::Commit("ni".into()),
         "the commit answers the current input, never the stale row text"
     );
 }
@@ -2511,7 +2644,7 @@ fn a_divergent_replacement_reconciles_the_committed_selection() {
         .expect("enter on a composing session cannot fail");
     assert_eq!(
         outcome,
-        KeyOutcome::Commit("mixxo".to_owned()),
+        KeyOutcome::Commit("mixxo".into()),
         "the commit answers the current input, never the stale selection"
     );
 }
@@ -2537,7 +2670,10 @@ fn temporary_reparses_keep_constraints_until_a_guess_validates_them() {
             }
             session.replace_raw("nihao").expect("restore input");
             assert!(session.guess_sentence().expect("restored guess"));
-            assert_eq!(session.sentence_text(0), Some("你好"));
+            assert_eq!(
+                session.sentence_text(0).and_then(|text| text.as_str()),
+                Some("你好")
+            );
             assert_eq!(
                 session.constraints.is_one_step_at(0),
                 !validate || intermediate == "ni",
@@ -2911,7 +3047,7 @@ fn the_zhuyin_display_law_prepends_only_the_one_best_row() {
         .candidates()
         .iter()
         .filter(|cand| cand.kind() == CandidateKind::Sentence)
-        .map(super::super::candidate::Candidate::text)
+        .filter_map(super::super::candidate::Candidate::text_str)
         .collect();
     assert_eq!(sentences, ["你好世界", "你"]);
     assert!(
@@ -2931,7 +3067,7 @@ fn the_zhuyin_display_law_prepends_only_the_one_best_row() {
         .candidates()
         .iter()
         .filter(|cand| cand.kind() == CandidateKind::Sentence)
-        .map(super::super::candidate::Candidate::text)
+        .filter_map(super::super::candidate::Candidate::text_str)
         .collect();
     assert_eq!(sentences, ["你好世界"]);
     assert!(
@@ -2980,8 +3116,8 @@ fn choosing_a_before_cursor_row_constrains_its_own_span() {
     let runs = session.constraints.runs();
     assert_eq!(runs.len(), 1, "one forcing: {runs:?}");
     assert_eq!(
-        (runs[0].0, runs[0].1, runs[0].3.as_str()),
-        (2, 5, "好"),
+        (runs[0].0, runs[0].1, &runs[0].3),
+        (2, 5, &oxpinyin_core::PhraseText::from("好")),
         "the constraint is the row's own span, not [0, offset)"
     );
     assert_eq!(
@@ -3036,8 +3172,8 @@ fn candidates_ending_at_walks_the_spans_that_end_there() {
         .candidates_ending_at(2)
         .expect("offset 2 is in range");
     assert_eq!(
-        window.get(0).map(|cand| (cand.kind(), cand.text())),
-        Some((CandidateKind::Sentence, "你好")),
+        window.get(0).map(|cand| (cand.kind(), cand.text_str())),
+        Some((CandidateKind::Sentence, Some("你好"))),
         "the collapsed sentence row heads the before-cursor window"
     );
     assert!(window.iter().any(|cand| cand.text() == "你"));
@@ -3620,7 +3756,10 @@ fn choosing_behind_the_composition_moves_the_record_back() {
     assert_eq!(session.composition_offset(), 2, "the record moves back");
     let runs = session.constraints.runs();
     assert_eq!(runs.len(), 1, "你好 was overlapped and cleared: {runs:?}");
-    assert_eq!((runs[0].0, runs[0].1, runs[0].3.as_str()), (0, 2, "你"));
+    assert_eq!(
+        (runs[0].0, runs[0].1, &runs[0].3),
+        (0, 2, &oxpinyin_core::PhraseText::from("你"))
+    );
     assert_eq!(session.preedit().text(), "你hao");
 }
 
@@ -3686,7 +3825,8 @@ fn typed_tones_keep_only_user_phrases_with_a_matching_stored_tone() {
         session
             .candidates()
             .iter()
-            .map(|candidate| candidate.text().to_owned())
+            .filter_map(|candidate| candidate.text_str())
+            .map(str::to_owned)
             .collect()
     };
     assert!(texts("ni3hao3").contains(&"你鎄".to_owned()));
@@ -3980,7 +4120,12 @@ fn the_string_dedup_keeps_the_larger_m_freq_and_the_earlier_tie() {
     super::dedup_ranked_by_text(&mut ranked, &keys);
     let rows: Vec<_> = ranked
         .iter()
-        .map(|candidate| (candidate.text().to_owned(), candidate.kind()))
+        .map(|candidate| {
+            (
+                candidate.text_str().unwrap_or_default().to_owned(),
+                candidate.kind(),
+            )
+        })
         .collect();
     assert_eq!(
         rows,

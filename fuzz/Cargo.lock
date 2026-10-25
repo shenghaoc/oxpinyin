@@ -339,6 +339,7 @@ dependencies = [
 name = "oxpinyin-facade"
 version = "0.1.0"
 dependencies = [
+ "oxpinyin-capi-marshal",
  "oxpinyin-core",
  "oxpinyin-engine",
  "oxpinyin-runtime",

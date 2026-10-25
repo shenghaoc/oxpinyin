@@ -7,6 +7,7 @@
 //! the pinyin eight at 3 and 4 (see [`crate::types::lookup_candidate_type_t`]),
 //! so tagging must use the zhuyin enum, never the pinyin one.
 
+use oxpinyin_capi_marshal::phrase_text::phrase_text_bytes;
 use std::os::raw::c_int;
 
 use oxpinyin_engine::CandidateKind;
@@ -368,7 +369,10 @@ pub fn snapshot_candidates(
     // One row vector and one text buffer, each sized once for the window.
     inst.candidates.reserve(
         window.len(),
-        window.iter().map(|cand| cand.text().len() + 1).sum(),
+        window
+            .iter()
+            .map(|cand| phrase_text_bytes(cand.text()).len() + 1)
+            .sum(),
     );
     for (window_index, cand) in window.iter().enumerate() {
         if cand.kind() == CandidateKind::Sentence && !before_cursor {
@@ -380,7 +384,8 @@ pub fn snapshot_candidates(
         if sentence_rows_only && cand.kind() != CandidateKind::Sentence {
             continue;
         }
-        let Some(text) = inst.candidates.intern(cand.text().as_bytes()) else {
+        let bytes = phrase_text_bytes(cand.text());
+        let Some(text) = inst.candidates.intern(&bytes) else {
             continue;
         };
         let consumed_bytes = zhuyin_parse.as_ref().map_or_else(

@@ -101,7 +101,8 @@ fn candidate_texts(session: &Fixtures) -> Vec<String> {
     session
         .candidates()
         .iter()
-        .map(|candidate| candidate.text().to_owned())
+        .filter_map(|candidate| candidate.text_str())
+        .map(str::to_owned)
         .collect()
 }
 
@@ -288,7 +289,7 @@ fn f_e_12_zhuan_session_replay() {
         session
             .candidates()
             .get(0)
-            .map(oxpinyin_engine::Candidate::text),
+            .and_then(oxpinyin_engine::Candidate::text_str),
         Some("传"),
         "the pin's first candidate for zhuan"
     );

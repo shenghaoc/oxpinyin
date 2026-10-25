@@ -22,13 +22,14 @@
 //! already has `libglib-2.0.so.0` resident (upstream `libpinyin.so.15`
 //! records it in `DT_NEEDED`).
 
+use oxpinyin_capi_marshal::phrase_text::phrase_text_bytes;
 use std::os::raw::{c_char, c_uint, c_void};
 
 use oxpinyin_core::Dictionary;
 
 use glib_sys::{g_array_append_vals, g_array_set_size};
 
-use crate::ffi::{cstr_to_string, owned_cstr};
+use crate::ffi::cstr_to_string;
 use crate::state::instance_ref;
 use crate::types::{GChar, GUint, PhraseTokenT, PinyinInstance};
 
@@ -134,11 +135,15 @@ pub extern "C" fn pinyin_token_get_phrase(
     if !len.is_null() {
         // SAFETY: Null-checked above.
         unsafe {
-            *len = GUint::try_from(intro.text.chars().count()).unwrap_or(GUint::MAX);
+            *len = GUint::try_from(intro.phrase_length).unwrap_or(GUint::MAX);
         }
     }
     if !utf8_str.is_null() {
-        let rendered = owned_cstr(&intro.text);
+        let text = phrase_text_bytes(&intro.text);
+        let rendered = crate::ffi::malloc_cstr_with(text.len(), |out| {
+            out.copy_from_slice(&text);
+            text.len()
+        });
         // SAFETY: Null-checked above.
         unsafe {
             *utf8_str = rendered;
@@ -237,7 +242,7 @@ pub extern "C" fn pinyin_token_get_nth_pronunciation(
     let Some((keys_list, _count)) = intro.pronunciations.get(nth as usize) else {
         // Past the last reading: `phrase_length` keys of indeterminate
         // content at the pin; zeroed here.
-        let zeroed = vec![0_u16; intro.text.chars().count()];
+        let zeroed = vec![0_u16; intro.phrase_length];
         // SAFETY: Null-checked above; the caller creates the keys array
         // with element_size = sizeof(u16), as for the in-range path.
         unsafe {

@@ -41,7 +41,8 @@ use std::sync::{Arc, Mutex, RwLock};
 use oxpinyin_core::scoring::key_cost_table;
 use oxpinyin_core::{
     Cost, Dictionary, LanguageModel, MergedGram, NbestStepCosts, PhraseEntry, PhraseIndexRanges,
-    PhraseItemRead, PhraseToken, SyllableKey, TrellisItem, TrellisPathMemo, UserCountDelta,
+    PhraseItemRead, PhraseText, PhraseToken, SyllableKey, TrellisItem, TrellisPathMemo,
+    UserCountDelta,
 };
 pub use oxpinyin_data::phrase_library::{
     LayoutFault, LibraryError, PhraseItemView, RowFault, directory_reads_as_a_chunk,
@@ -77,25 +78,30 @@ use oxpinyin_user::{
 /// raw UCS-4 keys.
 #[must_use]
 pub fn merge_suggestion_rows(
-    system: &[(u32, String)],
+    system: &[(u32, PhraseText)],
     user_rows: &[(u32, Vec<u8>)],
-) -> Vec<(u32, Option<String>)> {
+) -> Vec<(u32, Option<PhraseText>)> {
     let mut user = user_rows.to_vec();
     user.sort_by(|a, b| a.1.cmp(&b.1));
     let mut merged = Vec::with_capacity(system.len() + user.len());
-    merged.extend(
-        system
-            .iter()
-            .map(|(token, text)| (*token, oxpinyin_data::ucs4_walk_key(text))),
-    );
-    merged.extend(user);
-    merged.sort_by_key(|(token, _)| token >> 24);
+    merged.extend(system.iter().map(|(token, text)| {
+        (
+            *token,
+            oxpinyin_data::phrase_walk_key(text),
+            Some(text.clone()),
+        )
+    }));
+    merged.extend(user.into_iter().map(|(token, key)| (token, key, None)));
+    merged.sort_by_key(|(token, _, _)| token >> 24);
     merged
         .into_iter()
-        .map(|(token, key)| {
+        .map(|(token, key, text)| {
             (
                 token,
-                oxpinyin_data::row_format::phrase_index::decode_ucs4_key(&key),
+                text.or_else(|| {
+                    oxpinyin_data::row_format::phrase_index::decode_ucs4_key(&key)
+                        .map(PhraseText::from)
+                }),
             )
         })
         .collect()
@@ -306,7 +312,7 @@ impl AddonSet {
 /// A chosen addon phrase item, ready to promote into default nibble 5.
 pub struct AddonPhraseItem {
     /// Phrase text.
-    pub text: String,
+    pub text: PhraseText,
     /// Pronunciations as `(key sequence, count)` pairs.
     pub readings: Vec<(Vec<PinyinKey>, u64)>,
     /// The item's copied unigram frequency (`add_phrase_item`).
@@ -346,7 +352,9 @@ pub enum IntroPronunciation {
 /// surface's answer, assembled per library seam.
 pub struct TokenIntrospection {
     /// The phrase text.
-    pub text: String,
+    pub text: PhraseText,
+    /// The item's stored character count.
+    pub phrase_length: usize,
     /// Pronunciations as `(keys, count)` pairs.
     pub pronunciations: Vec<(IntroPronunciation, u64)>,
 }
@@ -662,10 +670,10 @@ impl RuntimeDict {
         let mut priced = if let Some(entry) = user {
             PricedToken {
                 item: TrellisItem {
-                    chars: entry.text().chars().count().try_into().unwrap_or(u32::MAX),
+                    chars: entry.phrase_length().try_into().unwrap_or(u32::MAX),
                     pronunciation: entry.pronunciation_possibility(),
                 },
-                text: want_text.then(|| entry.text().to_owned()),
+                text: want_text.then(|| entry.text().clone()),
             }
         } else {
             let Some(item) = path
@@ -1206,7 +1214,7 @@ impl RuntimeDict {
     /// (074a2219 pinyin.cpp:566-571; zhuyin.cpp:452-457). Reading spellings,
     /// frequencies and the unigram do not participate in those checks.
     #[must_use]
-    pub fn token_text(&self, token: u32) -> Option<String> {
+    pub fn token_text(&self, token: u32) -> Option<PhraseText> {
         match token >> 24 {
             1..=4 => {
                 if !self.library_visible_token(token) {
@@ -1214,11 +1222,7 @@ impl RuntimeDict {
                 }
                 if let Some(text) = self.user.as_ref().and_then(|store| {
                     store.with_effective_system_item(token, |item| {
-                        item.phrase
-                            .iter()
-                            .copied()
-                            .map(char::from_u32)
-                            .collect::<Option<String>>()
+                        PhraseText::from_words(item.phrase.iter().copied())
                     })
                 }) {
                     return text;
@@ -1229,7 +1233,12 @@ impl RuntimeDict {
                 if !self.library_visible(token >> 24) {
                     return None;
                 }
-                self.user.as_ref()?.phrase_text(token).ok()?
+                self.user
+                    .as_ref()?
+                    .phrase_text(token)
+                    .ok()
+                    .flatten()
+                    .map(PhraseText::from)
             }
             _ => None,
         }
@@ -1253,12 +1262,9 @@ impl RuntimeDict {
                     .user
                     .as_ref()
                     .and_then(|store| store.system_item_override(token).ok().flatten());
-                let (text, pronunciations) = if let Some(item) = override_item {
-                    let text = item
-                        .phrase
-                        .into_iter()
-                        .map(char::from_u32)
-                        .collect::<Option<String>>()?;
+                let (text, phrase_length, pronunciations) = if let Some(item) = override_item {
+                    let length = item.phrase.len();
+                    let text = PhraseText::from_words(item.phrase)?;
                     let pronunciations = item
                         .prons
                         .into_iter()
@@ -1266,20 +1272,26 @@ impl RuntimeDict {
                             (IntroPronunciation::Stored(keys), u64::from(frequency))
                         })
                         .collect();
-                    (text, pronunciations)
+                    (text, length, pronunciations)
                 } else {
-                    (
-                        self.system.phrase_text(token)?,
-                        self.system
-                            .libraries()
-                            .pronunciation_keys(token)?
-                            .into_iter()
-                            .map(|(keys, frequency)| (IntroPronunciation::Stored(keys), frequency))
-                            .collect(),
-                    )
+                    let text = self.system.phrase_text(token)?;
+                    let length = self
+                        .system
+                        .libraries()
+                        .phrase_char_count(token)
+                        .map_or_else(|| text.phrase_length(), |count| count as usize);
+                    let pronunciations = self
+                        .system
+                        .libraries()
+                        .pronunciation_keys(token)?
+                        .into_iter()
+                        .map(|(keys, frequency)| (IntroPronunciation::Stored(keys), frequency))
+                        .collect();
+                    (text, length, pronunciations)
                 };
                 Some(TokenIntrospection {
                     text,
+                    phrase_length,
                     pronunciations,
                 })
             }
@@ -1298,7 +1310,8 @@ impl RuntimeDict {
                 let store = self.user.as_ref()?;
                 let phrase = store.phrase(token).ok()??;
                 Some(TokenIntrospection {
-                    text: phrase.text().to_owned(),
+                    text: PhraseText::from(phrase.text()),
+                    phrase_length: phrase.text().chars().count(),
                     pronunciations: phrase
                         .pronunciations()
                         .iter()
@@ -1338,7 +1351,7 @@ pub struct PathPricing {
 /// One token as the ordinary lookup prices it.
 struct PricedToken {
     item: TrellisItem,
-    text: Option<String>,
+    text: Option<PhraseText>,
 }
 
 impl Dictionary for RuntimeDict {
@@ -1463,7 +1476,7 @@ impl Dictionary for RuntimeDict {
         syllables: &[Self::Syllable],
         _tones: &[u8],
         token: u32,
-    ) -> Result<Option<String>, Self::Error> {
+    ) -> Result<Option<PhraseText>, Self::Error> {
         Ok(self
             .priced_token(syllables, token, true)?
             .and_then(|priced| priced.text))
@@ -1713,7 +1726,7 @@ impl Dictionary for RuntimeDict {
     /// text, else the user store's phrase text (the user library's
     /// items live there). The library mask hides an unloaded library's
     /// token, matching the pin's freed sub-index.
-    fn phrase_text_for_token(&self, token: u32) -> Option<String> {
+    fn phrase_text_for_token(&self, token: u32) -> Option<PhraseText> {
         if !self.library_visible_token(token) {
             return None;
         }
@@ -1725,7 +1738,7 @@ impl Dictionary for RuntimeDict {
             .phrase(token)
             .ok()
             .flatten()
-            .map(|phrase| phrase.text().to_owned())
+            .map(|phrase| PhraseText::from(phrase.text()))
     }
 
     /// `get_phrase_item` over the facade (074a2219 `phrase_index.h:646-657`):
@@ -2802,7 +2815,7 @@ mod tests {
         let rows = |entries: &[PhraseEntry]| {
             entries
                 .iter()
-                .map(|entry| (entry.token(), entry.text().to_owned()))
+                .map(|entry| (entry.token(), entry.text().clone()))
                 .collect::<Vec<_>>()
         };
         assert_eq!(rows(&candidates), rows(&priced));
@@ -3145,8 +3158,8 @@ mod tests {
         // (UTF-8 / code point) order. U+4E50 sorts before U+4F2D by code
         // point but after it by little-endian bytes (0x50 > 0x2D).
         let system = vec![
-            (0x0200_0001, "中年".to_owned()),
-            (0x0100_0010, "中华".to_owned()),
+            (0x0200_0001, PhraseText::from("中年")),
+            (0x0100_0010, PhraseText::from("中华")),
         ];
         let user_rows = vec![
             (0x0700_0001, oxpinyin_data::ucs4_walk_key("中乐")), // U+4E50
@@ -3155,5 +3168,20 @@ mod tests {
         let merged = merge_suggestion_rows(&system, &user_rows);
         let tokens: Vec<u32> = merged.iter().map(|(token, _)| *token).collect();
         assert_eq!(tokens, [0x0100_0010, 0x0200_0001, 0x0700_0002, 0x0700_0001]);
+    }
+
+    #[test]
+    fn suggestion_rows_preserve_system_stored_words() {
+        let words = [0xd800, 0, 0x4e59];
+        let text = PhraseText::from_words(words).expect("stored phrase");
+        let system = [(0x0100_0001, text)];
+        let user_rows = [(0x0700_0001, oxpinyin_data::ucs4_walk_key("你好"))];
+        let merged = merge_suggestion_rows(&system, &user_rows);
+        assert_eq!(merged.len(), 2);
+        assert_eq!(merged[0].0, system[0].0);
+        let preserved = merged[0].1.as_ref().expect("system row survives");
+        assert_eq!(preserved.stored_words(), Some(words.as_slice()));
+        assert_eq!(preserved.phrase_length(), words.len());
+        assert_eq!(merged[1], (0x0700_0001, Some(PhraseText::from("你好"))));
     }
 }

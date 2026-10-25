@@ -80,7 +80,7 @@ fn main() -> ExitCode {
         let ours: Vec<String> = session
             .candidates()
             .iter()
-            .map(|c| c.text().to_owned())
+            .map(|c| c.text().as_str().unwrap_or_default().to_owned())
             .collect();
         let oracle_top = oracle[0].clone();
         if ours.first() == Some(&oracle_top) {

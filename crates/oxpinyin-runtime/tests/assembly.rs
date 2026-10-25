@@ -41,18 +41,38 @@ fn token_text_reads_live_items_and_obeys_library_visibility() {
     let system = dict.system().tokens_for_text("你").expect("lookup")[0];
     let ni = SyllableKey::from_text("ni").expect("ni");
     let keys = [oxpinyin_user::toned_key(ni.index(), 3).expect("toned key")];
-    assert_eq!(dict.token_text(system).as_deref(), Some("你"));
+    assert_eq!(
+        dict.token_text(system)
+            .as_ref()
+            .and_then(|text| text.as_str()),
+        Some("你")
+    );
     store
         .add_system_phrase_in(1, Some(system), "你", &keys, Some(5))
         .expect("live system item");
-    assert_eq!(dict.token_text(system).as_deref(), Some("你"));
+    assert_eq!(
+        dict.token_text(system)
+            .as_ref()
+            .and_then(|text| text.as_str()),
+        Some("你")
+    );
     let user = store.add_phrase("词", &keys, Some(5)).expect("user item");
-    assert_eq!(dict.token_text(user).as_deref(), Some("词"));
+    assert_eq!(
+        dict.token_text(user)
+            .as_ref()
+            .and_then(|text| text.as_str()),
+        Some("词")
+    );
     for (library, token, text) in [(1, system, "你"), (7, user, "词")] {
         assert!(dict.unload_library(library));
         assert_eq!(dict.token_text(token), None);
         assert!(dict.load_library(library));
-        assert_eq!(dict.token_text(token).as_deref(), Some(text));
+        assert_eq!(
+            dict.token_text(token)
+                .as_ref()
+                .and_then(|text| text.as_str()),
+            Some(text)
+        );
     }
     assert_eq!(dict.token_text(0), None);
 }

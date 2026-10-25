@@ -7,8 +7,7 @@
 
 use core::slice;
 
-use compact_str::CompactString;
-use oxpinyin_core::{Cost, PhraseToken};
+use oxpinyin_core::{Cost, PhraseText, PhraseToken};
 
 /// Where a candidate came from.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -35,7 +34,7 @@ pub enum CandidateKind {
 /// instance heap.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Candidate {
-    text: CompactString,
+    text: PhraseText,
     cost: Cost,
     token: Option<PhraseToken>,
     consumed_keys: u16,
@@ -80,7 +79,7 @@ const fn narrow(count: usize) -> u16 {
 
 impl Candidate {
     pub(crate) fn new(
-        text: impl Into<CompactString>,
+        text: impl Into<PhraseText>,
         kind: CandidateKind,
         consumed_keys: usize,
         consumed_bytes: usize,
@@ -129,8 +128,22 @@ impl Candidate {
 
     /// The text this candidate would insert.
     #[must_use]
-    pub fn text(&self) -> &str {
+    pub fn text(&self) -> &PhraseText {
         &self.text
+    }
+
+    /// The text as `str`, when every stored word was a scalar value.
+    #[must_use]
+    pub fn text_str(&self) -> Option<&str> {
+        self.text.as_str()
+    }
+
+    /// The item's stored character count, which ranking uses
+    /// (`_compute_phrase_length` at the pin): a zero or a non-scalar word
+    /// leaves it unchanged.
+    #[must_use]
+    pub fn phrase_length(&self) -> usize {
+        self.text.phrase_length()
     }
 
     /// Where the candidate came from.
@@ -311,10 +324,13 @@ mod tests {
     #[test]
     fn iteration_preserves_rank_order() {
         let candidates = list();
-        let texts: Vec<&str> = candidates.iter().map(Candidate::text).collect();
+        let texts: Vec<&str> = candidates.iter().filter_map(Candidate::text_str).collect();
         assert_eq!(texts, ["\u{4f60}\u{597d}", "\u{4f60}"]);
 
-        let by_ref: Vec<&str> = (&candidates).into_iter().map(Candidate::text).collect();
+        let by_ref: Vec<&str> = (&candidates)
+            .into_iter()
+            .filter_map(Candidate::text_str)
+            .collect();
         assert_eq!(by_ref, texts);
     }
 

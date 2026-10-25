@@ -806,7 +806,7 @@ fn phrase_snapshot(instance: *mut PinyinInstance) -> Vec<(u32, String, i64)> {
         .filter_map(|candidate| {
             Some((
                 candidate.token()?.value(),
-                candidate.text().to_owned(),
+                candidate.text().as_str().unwrap_or_default().to_owned(),
                 candidate.cost(),
             ))
         })
@@ -1445,7 +1445,7 @@ fn export_iterators_walk_the_stored_triples() {
     assert_eq!(
         rows,
         vec![crate::ExportedBigramRow {
-            phrase: "你好".to_owned(),
+            phrase: "你好".into(),
             pinyin: "ni'hao".to_owned(),
             count: 138,
         }]
@@ -1995,7 +1995,7 @@ fn a_shrinking_reparse_reconciles_the_committed_selection() {
     };
     assert_eq!(
         outcome,
-        KeyOutcome::Commit("ni".to_owned()),
+        KeyOutcome::Commit("ni".into()),
         "the commit answers text valid for the current input"
     );
 
@@ -2317,8 +2317,7 @@ fn choosing_from_a_reanchored_window_uses_the_anchored_span() {
         }
     };
     assert_eq!(
-        committed,
-        "ni".to_owned() + "好",
+        committed, "ni好",
         "the typed prefix survives the re-anchored choose"
     );
     crate::instance::pinyin_free_instance(instance);

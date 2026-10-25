@@ -13,14 +13,14 @@
 //! every keystroke, and only `pinyin_reset` clears upstream's
 //! `m_constraints`) — see `Session::reset_composition` for the split.
 //!
-//! `OneStep` carries the chosen phrase's display text: upstream
-//! re-fetches it from the phrase index by token, the engine carries it
-//! from the candidate so the selection record can be rebuilt from the
-//! store alone (promoted addon phrases included) without a by-token
+//! `OneStep` carries the chosen phrase's text: upstream re-fetches it
+//! from the phrase index by token, the engine carries it from the
+//! candidate as a [`PhraseText`] — the item's stored words and length when
+//! it has the stored form — so the selection record can be rebuilt from
+//! the store alone (promoted addon phrases included) without a by-token
 //! dictionary lookup.
 
-use compact_str::CompactString;
-use oxpinyin_core::PhraseToken;
+use oxpinyin_core::{PhraseText, PhraseToken};
 
 use crate::error::EngineError;
 
@@ -32,11 +32,11 @@ pub enum Cell {
     None,
     /// `CONSTRAINT_ONESTEP` — `token` is forced over `[start, end)`;
     /// `end` is the cell's own index plus the span, `text` the chosen
-    /// phrase's display form.
+    /// phrase's text.
     OneStep {
         token: PhraseToken,
         end: usize,
-        text: CompactString,
+        text: PhraseText,
     },
     /// `CONSTRAINT_NOSEARCH` — interior of a forced run; `start` points
     /// back at the run's `OneStep` cell.
@@ -50,7 +50,9 @@ pub enum Cell {
 pub struct PhraseSpan {
     pub(crate) start: usize,
     pub(crate) token: PhraseToken,
-    pub(crate) text: CompactString,
+    /// The phrase's text; training reads its stored length
+    /// ([`PhraseText::phrase_length`]).
+    pub(crate) text: PhraseText,
 }
 
 /// The constraint array (`ForwardPhoneticConstraints`).
@@ -115,7 +117,7 @@ impl ConstraintStore {
         start: usize,
         end: usize,
         token: PhraseToken,
-        text: CompactString,
+        text: PhraseText,
     ) -> usize {
         if end > self.cells.len() || start >= end {
             return 0;
@@ -157,7 +159,9 @@ impl ConstraintStore {
     /// possibility `< FLT_EPSILON`, which `still_spells` decides from the
     /// token's stored pronunciations against the matrix
     /// ([`crate::nbest::ConstraintSpelling::spells`]); it is handed the
-    /// run's start, end, token and the forced text's character count.
+    /// run's start, end, token and the forced phrase's stored length, the
+    /// `get_phrase_length` the pin's check reads
+    /// (`storage/phonetic_key_matrix.cpp:541-551`).
     /// Returns whether anything dropped.
     ///
     /// The overrun boundary is `end >= len`, mirroring upstream verbatim,
@@ -188,13 +192,13 @@ impl ConstraintStore {
             .enumerate()
             .filter_map(|(index, cell)| match cell {
                 Cell::OneStep { token, end, text } => {
-                    Some((index, *token, *end, text.chars().count()))
+                    Some((index, *token, *end, text.phrase_length()))
                 }
                 _ => None,
             })
             .collect();
         let mut dropped = false;
-        for (index, token, end, text_len) in forcings {
+        for (index, token, end, length) in forcings {
             // The spelling probe runs first even for a run that overruns: the
             // pin reads the forced token's item before its overrun test
             // (`phonetic_lookup.cpp:152-154`), and a later forcing whose item
@@ -202,7 +206,7 @@ impl ConstraintStore {
             // for an overrunning run leaves the carried item as it was, as
             // the pin's failed `get_phrase_item` leaves `item`
             // (`:141-154`), and the run is cleared all the same.
-            let spells = still_spells(index, end, token, text_len);
+            let spells = still_spells(index, end, token, length);
             let overruns = end >= self.cells.len();
             if overruns || !spells? {
                 // The run's interior cells go with it (`clear_constraint`).
@@ -250,7 +254,7 @@ impl ConstraintStore {
     /// spans (`diff_result` forces only the differing phrases); the
     /// caller supplies their text from the current buffer, so the rebuilt
     /// record never drops raw input the forcings skip over.
-    pub(crate) fn runs(&self) -> Vec<(usize, usize, PhraseToken, CompactString)> {
+    pub(crate) fn runs(&self) -> Vec<(usize, usize, PhraseToken, PhraseText)> {
         self.cells
             .iter()
             .enumerate()

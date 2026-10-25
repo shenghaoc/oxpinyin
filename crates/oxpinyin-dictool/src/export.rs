@@ -49,12 +49,14 @@ impl std::error::Error for ExportError {
 }
 
 /// Write one classic row: 2 fields when count is zero (`dictool-format.md`
-/// §4), otherwise 3 fields.
-fn write_row<W: Write>(out: &mut W, phrase: &str, pinyin: &str, count: i64) -> io::Result<()> {
+/// §4), otherwise 3 fields. The phrase is written as the bytes the C export
+/// iterators hand out.
+fn write_row<W: Write>(out: &mut W, phrase: &[u8], pinyin: &str, count: i64) -> io::Result<()> {
+    out.write_all(phrase)?;
     if count == 0 {
-        writeln!(out, "{phrase} {pinyin}")
+        writeln!(out, " {pinyin}")
     } else {
-        writeln!(out, "{phrase} {pinyin} {count}")
+        writeln!(out, " {pinyin} {count}")
     }
 }
 
@@ -70,15 +72,15 @@ fn write_rows<W: Write>(
         count,
     } in phrases
     {
-        write_row(out, text, pinyin, i64::try_from(*count).unwrap_or(i64::MAX))?;
+        write_row(
+            out,
+            text.as_bytes(),
+            pinyin,
+            i64::try_from(*count).unwrap_or(i64::MAX),
+        )?;
     }
-    for ExportedBigramRow {
-        phrase,
-        pinyin,
-        count,
-    } in bigrams
-    {
-        write_row(out, phrase, pinyin, *count)?;
+    for row in bigrams {
+        write_row(out, &row.phrase_bytes(), &row.pinyin, row.count)?;
     }
     Ok(())
 }
@@ -131,7 +133,7 @@ mod tests {
                 count: 0,
             }],
             &[ExportedBigramRow {
-                phrase: "你好".to_owned(),
+                phrase: "你好".into(),
                 pinyin: "ni'hao".to_owned(),
                 count: 138,
             }],

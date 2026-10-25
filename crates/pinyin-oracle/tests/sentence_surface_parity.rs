@@ -294,7 +294,12 @@ fn sentence_surface_matches_supplementary_tie_order() {
         );
         let actual = TieSurface {
             indexed: (0..3)
-                .filter_map(|rank| session.sentence_text(rank).map(str::to_owned))
+                .filter_map(|rank| {
+                    session
+                        .sentence_text(rank)
+                        .and_then(|text| text.as_str())
+                        .map(str::to_owned)
+                })
                 .collect(),
             rows: session
                 .candidates()
@@ -303,7 +308,7 @@ fn sentence_surface_matches_supplementary_tie_order() {
                 .map(|candidate| {
                     (
                         candidate.nbest_row().expect("NBEST rank"),
-                        candidate.text().to_owned(),
+                        candidate.text().as_str().unwrap_or_default().to_owned(),
                     )
                 })
                 .collect(),

@@ -159,6 +159,7 @@ fn observe_port(session: &mut PortSession, input: &str) -> Result<PortSurface, S
         .map(|index| {
             session
                 .sentence_text(index)
+                .and_then(|text| text.as_str())
                 .map_or_else(|| "-".to_owned(), str::to_owned)
         })
         .collect();

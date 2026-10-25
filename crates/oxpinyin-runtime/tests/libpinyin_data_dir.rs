@@ -110,7 +110,10 @@ fn an_unmodified_libpinyin_data_directory_opens_and_decodes() {
     assert!(!tokens.is_empty());
     for token in &tokens {
         assert_eq!(
-            dict.system().phrase_text(token.value()).as_deref(),
+            dict.system()
+                .phrase_text(token.value())
+                .as_ref()
+                .and_then(|text| text.as_str()),
             Some("中国")
         );
         assert!(

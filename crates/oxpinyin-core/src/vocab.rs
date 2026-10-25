@@ -8,8 +8,7 @@
 
 use core::fmt;
 
-use compact_str::CompactString;
-
+use crate::PhraseText;
 use crate::options::{
     OptionBits, PINYIN_AMB_AN_ANG, PINYIN_AMB_C_CH, PINYIN_AMB_EN_ENG, PINYIN_AMB_F_H,
     PINYIN_AMB_G_K, PINYIN_AMB_IN_ING, PINYIN_AMB_L_N, PINYIN_AMB_L_R, PINYIN_AMB_S_SH,
@@ -320,7 +319,7 @@ impl fmt::Display for PhraseToken {
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct PhraseEntry {
     token: PhraseToken,
-    text: CompactString,
+    text: PhraseText,
     /// Pronunciation possibility `(matched, total)` over the phrase item's
     /// stored pronunciations (W14's polyphone discount): the fraction of
     /// the item's pronunciation frequency that spells the looked-up key
@@ -333,11 +332,11 @@ pub struct PhraseEntry {
 impl PhraseEntry {
     /// Builds an entry.
     ///
-    /// Phrase text is a [`CompactString`]: typical hits are one to four CJK
+    /// Phrase text is a [`PhraseText`]: ordinary hits are one to four CJK
     /// scalars and stay inline (no heap). Callers may pass a [`String`],
-    /// `&str`, or [`CompactString`].
+    /// `&str`, `CompactString`, or [`PhraseText`].
     #[must_use]
-    pub fn new(token: PhraseToken, text: impl Into<CompactString>) -> Self {
+    pub fn new(token: PhraseToken, text: impl Into<PhraseText>) -> Self {
         Self {
             token,
             text: text.into(),
@@ -351,10 +350,23 @@ impl PhraseEntry {
         self.token
     }
 
-    /// The phrase text.
+    /// The phrase's outward text.
     #[must_use]
-    pub fn text(&self) -> &str {
+    pub fn text(&self) -> &PhraseText {
         &self.text
+    }
+
+    /// The outward text as `str`, when every stored word was a scalar
+    /// value.
+    #[must_use]
+    pub fn text_str(&self) -> Option<&str> {
+        self.text.as_str()
+    }
+
+    /// The item's stored character count, from the text's own hint.
+    #[must_use]
+    pub fn phrase_length(&self) -> usize {
+        self.text.phrase_length()
     }
 
     /// The pronunciation possibility `(matched, total)`, when the backend
@@ -379,7 +391,7 @@ impl PhraseEntry {
 
     /// Consumes the entry and returns its phrase text.
     #[must_use]
-    pub fn into_text(self) -> CompactString {
+    pub fn into_text(self) -> PhraseText {
         self.text
     }
 }
@@ -491,7 +503,7 @@ mod tests {
         let entry = PhraseEntry::new(PhraseToken::new(7), "\u{4f60}\u{597d}".to_owned());
         assert_eq!(entry.token().value(), 7);
         assert_eq!(entry.text(), "\u{4f60}\u{597d}");
-        assert_eq!(entry.clone().into_text().as_str(), "\u{4f60}\u{597d}");
+        assert_eq!(entry.clone().into_text().as_str(), Some("\u{4f60}\u{597d}"));
         assert_eq!(entry.token().to_string(), "7");
     }
 }
