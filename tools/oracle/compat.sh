@@ -31,6 +31,7 @@ HELP
 }
 die() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 hash() { if command -v sha256sum >/dev/null 2>&1; then sha256sum; else shasum -a 256; fi; }
+# shellcheck disable=SC1007  # empty assignments are deliberate defaults for platform and archive.
 runtime=${OXPINYIN_CONTAINER:-} platform= cell=bdb archive='' jobs=2 memory=${OXPINYIN_CONTAINER_MEMORY_MIB-2560}
 original_args=("$@")
 selection=() selected=0 memory_smoke=0 list_only=0
@@ -90,6 +91,7 @@ reserved_run() {
 # shellcheck source=../container/runtime.sh
 source "$repo/tools/container/runtime.sh"
 oxpinyin_select_runtime "$runtime"
+# shellcheck disable=SC2154  # set by oxpinyin_select_runtime in tools/container/runtime.sh.
 runtime=$ctr
 case $(uname -s) in MINGW*|MSYS*) die 'Run this compatibility launcher from WSL Bash, not Git Bash. Native Windows development needs neither WSL nor containers.' ;; esac
 case $(basename "$runtime") in docker|podman|container) ;; *) die 'runtime must be docker, podman, container or unverified wslc' ;; esac

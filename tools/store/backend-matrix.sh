@@ -21,7 +21,7 @@
 # refused by the guard; non-zero on any deviation.
 
 set -u
-cd "$(dirname "$0")/../.."
+cd "$(dirname "$0")/../.." || exit 1
 
 # One securely-created temp file for every cargo-check log; trap ensures
 # it is removed on any exit path (success, failure, ^C). Predictable

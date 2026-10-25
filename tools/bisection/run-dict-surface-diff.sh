@@ -54,7 +54,6 @@ if [[ ! -f "$PREFIX/oracle-pin.txt" || ! -f "$ORACLE_SO" ]]; then
     echo "SKIP: pin-built oracle not found at $PREFIX"
     exit 77
 fi
-REPO_ROOT="$(git rev-parse --show-toplevel)"
 # The backend cell (PINYIN_ORACLE_DBM, default bdb) fixes the expected
 # pin ref (+dbm-<cell>), the capi's cargo feature and the data's
 # backend. Exact whole-line match on the ref so an oracle built against

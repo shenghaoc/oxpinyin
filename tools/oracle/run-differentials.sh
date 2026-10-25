@@ -127,25 +127,25 @@ fi
 need_file "$model/interpolation2.text" "model20 export"
 
 # Segment utils.
-PINYIN_SPSEG="$L/utils/segment/spseg"
-PINYIN_MERGESEQ="$L/utils/segment/mergeseq"
-PINYIN_NGSEG="$L/utils/segment/ngseg"
+export PINYIN_SPSEG="$L/utils/segment/spseg"
+export PINYIN_MERGESEQ="$L/utils/segment/mergeseq"
+export PINYIN_NGSEG="$L/utils/segment/ngseg"
 # KMM utils.
-PINYIN_GEN_KMM="$L/utils/training/gen_k_mixture_model"
-PINYIN_EXPORT_KMM="$L/utils/training/export_k_mixture_model"
-PINYIN_MERGE_KMM="$L/utils/training/merge_k_mixture_model"
-PINYIN_PRUNE_KMM="$L/utils/training/prune_k_mixture_model"
-PINYIN_VALIDATE_KMM="$L/utils/training/validate_k_mixture_model"
-PINYIN_KMM_TO_INTERP="$L/utils/training/k_mixture_model_to_interpolation"
+export PINYIN_GEN_KMM="$L/utils/training/gen_k_mixture_model"
+export PINYIN_EXPORT_KMM="$L/utils/training/export_k_mixture_model"
+export PINYIN_MERGE_KMM="$L/utils/training/merge_k_mixture_model"
+export PINYIN_PRUNE_KMM="$L/utils/training/prune_k_mixture_model"
+export PINYIN_VALIDATE_KMM="$L/utils/training/validate_k_mixture_model"
+export PINYIN_KMM_TO_INTERP="$L/utils/training/k_mixture_model_to_interpolation"
 # Legacy counting / interpolation utils (lambda + counter differentials).
-PINYIN_GEN_BINARY_FILES="$L/utils/storage/gen_binary_files"
-PINYIN_GEN_UNIGRAM="$L/utils/training/gen_unigram"
-PINYIN_GEN_NGRAM="$L/utils/training/gen_ngram"
-PINYIN_GEN_DELETED_NGRAM="$L/utils/training/gen_deleted_ngram"
-PINYIN_ESTIMATE_INTERPOLATION="$L/utils/training/estimate_interpolation"
-PINYIN_EXPORT_INTERPOLATION="$L/utils/storage/export_interpolation"
+export PINYIN_GEN_BINARY_FILES="$L/utils/storage/gen_binary_files"
+export PINYIN_GEN_UNIGRAM="$L/utils/training/gen_unigram"
+export PINYIN_GEN_NGRAM="$L/utils/training/gen_ngram"
+export PINYIN_GEN_DELETED_NGRAM="$L/utils/training/gen_deleted_ngram"
+export PINYIN_ESTIMATE_INTERPOLATION="$L/utils/training/estimate_interpolation"
+export PINYIN_EXPORT_INTERPOLATION="$L/utils/storage/export_interpolation"
 # eval_correction_rate: needs the compiled system bigram.db + an evals2.text.
-PINYIN_EVAL_CORRECTION_RATE="$L/utils/training/eval_correction_rate"
+export PINYIN_EVAL_CORRECTION_RATE="$L/utils/training/eval_correction_rate"
 
 tools=(PINYIN_SPSEG PINYIN_MERGESEQ PINYIN_NGSEG PINYIN_GEN_KMM PINYIN_EXPORT_KMM
 	PINYIN_MERGE_KMM PINYIN_PRUNE_KMM PINYIN_VALIDATE_KMM PINYIN_KMM_TO_INTERP
@@ -155,7 +155,6 @@ for v in "${tools[@]}"; do
 	need_exe "${!v}" "$v (built by make in the libpinyin tree)"
 done
 ((missing)) && exit 2
-export "${tools[@]}"
 
 export LD_LIBRARY_PATH="$L/src/.libs${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 

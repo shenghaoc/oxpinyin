@@ -83,7 +83,6 @@ source "$SCRIPT_LIB/debuginfo-neutrality-lib.sh"
 mkdir -p "$OUT"
 
 LP_SO=$(find /opt/libpinyin-tkrzw -name 'libpinyin.so' \( -type f -o -type l \) -print -quit)
-LP_LIB=$(dirname "$LP_SO")
 DATA=/opt/libpinyin-tkrzw/lib/libpinyin/data
 
 find_ox() {

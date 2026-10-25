@@ -33,6 +33,7 @@ tkrzw_env_prefix() (
 	[[ -f $env_file ]] || return 0
 	if grep -q '^export OXPINYIN_TKRZW_PREFIX=' "$env_file"; then
 		local OXPINYIN_TKRZW_PREFIX=
+		# shellcheck disable=SC1090  # generated assignment from the environment file, not a fixed path.
 		source <(sed -n '/^export OXPINYIN_TKRZW_PREFIX=/p' "$env_file")
 		printf '%s' "$OXPINYIN_TKRZW_PREFIX"
 		return
@@ -42,6 +43,7 @@ tkrzw_env_prefix() (
 	grep -q '^export OXPINYIN_TKRZW_LIBRARY=' "$env_file" && return 0
 	# Intentional: parse only the generated path, without caller inheritance.
 	LD_LIBRARY_PATH=
+	# shellcheck disable=SC1090  # generated assignment from the environment file, not a fixed path.
 	source <(sed -n '/^export LD_LIBRARY_PATH=/p' "$env_file")
 	lib=${LD_LIBRARY_PATH%%:*}
 	[[ $lib == */lib ]] || return 0
@@ -53,6 +55,7 @@ tkrzw_env_prefix() (
 without_prefix() {
 	local entry prefix out=() excluded=() IFS=:
 	read -r -a excluded <<<"${OXPINYIN_TKRZW_PREFIXES:-}"
+	# shellcheck disable=SC2154  # set by setup.sh or the harness before this call.
 	excluded+=("$tkrzw_prefix" "$(tkrzw_env_prefix)")
 	for entry in $1; do
 		for prefix in "${excluded[@]}"; do
@@ -73,6 +76,7 @@ probe_host() {
 	host_path=$(without_prefix "$PATH")
 	host_ld=$(without_prefix "${LD_LIBRARY_PATH:-}")
 	# Intentional: the host probe must exclude every inherited cache runtime.
+	# shellcheck disable=SC2154  # set by setup.sh or the harness before this call.
 	env PATH="$host_path" LD_LIBRARY_PATH="$host_ld" sh "$probe" || return 1
 	util=$(PATH=$host_path command -v tkrzw_dbm_util) || return 1
 	if ! so=$(LD_LIBRARY_PATH=$host_ld tkrzw_so "$util"); then
@@ -124,6 +128,7 @@ data_ok() {
 write_oracle_env() (
 	env_file=${OXPINYIN_ORACLE_ENV:-$HOME/.oxpinyin-oracle.env}
 	declare -A prefixes=()
+	# shellcheck disable=SC2154  # set by setup.sh or the harness before this call.
 	env_cells=("${cells[@]}")
 	kept_tkrzw_paths=
 	kept_tkrzw_library=
@@ -136,6 +141,7 @@ write_oracle_env() (
 		for dbm in bdb kc tkrzw; do
 			unset "OXPINYIN_ORACLE_PREFIX_${dbm^^}" "OXPINYIN_ORACLE_DATA_${dbm^^}"
 		done
+		# shellcheck disable=SC1090  # generated assignments from the environment file, not a fixed path.
 		source <(sed -nE '/^(_oxp_provisioned=|export OXPINYIN_ORACLE_(PREFIX|DATA)_(BDB|KC|TKRZW)=)/p' "$env_file")
 		for dbm in bdb kc tkrzw; do
 			[[ -z ${prefixes[$dbm]:-} && $_oxp_provisioned == *" $dbm "* ]] || continue
@@ -154,6 +160,7 @@ write_oracle_env() (
 					kept_tkrzw_paths=$(sed -n '/^export PKG_CONFIG_PATH=/,/^export PATH=/p' "$env_file")
 					kept_tkrzw_library=$(
 						OXPINYIN_TKRZW_LIBRARY=
+						# shellcheck disable=SC1090  # generated assignment from the environment file, not a fixed path.
 						source <(sed -n '/^export OXPINYIN_TKRZW_LIBRARY=/p' "$env_file")
 						printf '%s' "$OXPINYIN_TKRZW_LIBRARY"
 					)
@@ -165,6 +172,7 @@ write_oracle_env() (
 	for dbm in "${env_cells[@]}"; do [[ $dbm == bdb ]] && default_cell=bdb; done
 	runtime_prefix=
 	runtime_library=
+	# shellcheck disable=SC2154  # set by setup.sh or the harness before this call.
 	if ((tkrzw_local)); then
 		runtime_prefix=$tkrzw_prefix
 	elif [[ -n ${tkrzw_host_library:-} ]]; then
@@ -181,7 +189,9 @@ write_oracle_env() (
 	{
 		printf '# Written by tools/cloud/setup.sh; source it, do not edit it.\n'
 		printf '_oxp_provisioned=%q\n' " ${env_cells[*]} "
+		# shellcheck disable=SC2154  # set by setup.sh or the harness before this call.
 		printf 'export PINYIN_MODEL_DIR=%q\n' "$model_cache/extracted"
+		# shellcheck disable=SC2154  # set by setup.sh or the harness before this call.
 		printf 'export PATH=%s\n' "$(printf '%q' "$uv_dir"):\$PATH"
 		if [[ -n $runtime_library ]]; then
 			printf 'export OXPINYIN_TKRZW_LIBRARY=%q\n' "$runtime_library"

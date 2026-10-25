@@ -371,6 +371,7 @@ else
 fi
 uv_at_least_floor ||
 	die "uv $uv_minimum or newer required; found: $(uv --version 2>/dev/null || echo missing)"
+# shellcheck disable=SC2034  # read by tools/cloud/env.sh's environment writer.
 uv_dir=$(dirname "$(command -v uv)")
 # Keep a managed 3.15-series interpreter that is already there; install one only
 # when none is.
@@ -461,6 +462,7 @@ if ((!inside)); then
 	# shellcheck source=../container/runtime.sh
 	source "$repo/tools/container/runtime.sh"
 	oxpinyin_select_runtime "${OXPINYIN_CONTAINER:-}"
+	# shellcheck disable=SC2154  # set by oxpinyin_select_runtime in tools/container/runtime.sh.
 	[[ $(basename "$ctr") != container ]] || die 'normal cloud provisioning requires a Linux cloud runtime; use compat.sh for the Apple adapter'
 else
 	printf 'Runtime: supplied compatibility container (no nested runtime)\n'
@@ -734,6 +736,7 @@ if [[ " ${cells[*]} " == *' tkrzw '* ]]; then
 		log 'tkrzw: the host libtkrzw passes distro-probe.sh'
 	else
 		log "tkrzw: the host libtkrzw is broken or missing (probe: $cache/tkrzw-host-probe.log)"
+		# shellcheck disable=SC2034  # read by tools/cloud/env.sh's environment writer.
 		tkrzw_local=1
 		if [[ -f $tkrzw_prefix/REV && $(<"$tkrzw_prefix/REV") == "$tkrzw_rev" ]] && probe_built; then
 			log "tkrzw: cached build ${tkrzw_rev:0:7} passes distro-probe.sh"
