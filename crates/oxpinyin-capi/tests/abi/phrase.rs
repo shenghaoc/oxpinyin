@@ -365,8 +365,8 @@ fn lookup_tokens_resolves_stored_phrases() {
     ));
     assert!(array.elements().is_empty());
 
-    // Null tokenarray: refused (the pin dereferences it unguarded).
-    assert!(!pinyin_lookup_tokens(
+    // GLib diagnoses a NULL array; the pin still returns the lookup result.
+    assert!(pinyin_lookup_tokens(
         fixture.instance,
         cstr("你好").as_ptr(),
         std::ptr::null_mut()

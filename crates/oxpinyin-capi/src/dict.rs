@@ -56,12 +56,6 @@ pub extern "C" fn pinyin_lookup_tokens(
     if instance.is_null() || phrase.is_null() {
         return false;
     }
-    if tokenarray.is_null() {
-        // The pin dereferences the caller's array unguarded; the
-        // no-abort policy refuses instead.
-        return false;
-    }
-
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
     let inst = unsafe { instance_ref(instance) };
@@ -76,11 +70,23 @@ pub extern "C" fn pinyin_lookup_tokens(
         .collect();
     // `reduce_tokens` clears the caller's array before appending
     // (`phrase_large_table3.h:81`) — an empty result clears too.
-    // SAFETY: Null-checked above; `g_array_set_size` on a real
-    // glib GArray updates `len` and preserves the private
-    // metadata (`alloc`, `element_size`, `clear_func`).
+    // SAFETY: A non-null array is a caller-owned GLib GArray. GLib
+    // 2.84.4 garray.c:595,762 checks NULL, logs a critical, and returns
+    // before accessing the array or data (including a zero-length append).
     unsafe {
         g_array_set_size(tokenarray, 0);
+        if tokenarray.is_null() {
+            // prepare_tokens creates one array per loaded library, and
+            // reduce_tokens appends each, including empty arrays
+            // (074a2219 phrase_index.h:762-772,
+            // phrase_large_table3.h:77-97). GLib checks NULL before len.
+            for library in 0..16 {
+                if inst.core.dict.phrase_table_token_enabled(library << 24) {
+                    g_array_append_vals(tokenarray, std::ptr::null(), 0);
+                }
+            }
+            return !tokens.is_empty();
+        }
     }
     // The retval is `SEARCH_OK & retval`: exact hits exist.
     if tokens.is_empty() {
@@ -224,11 +230,9 @@ pub extern "C" fn pinyin_token_get_nth_pronunciation(
     if instance.is_null() {
         return false;
     }
-    if keys.is_null() {
-        return false;
-    }
 
-    // SAFETY: Null-checked above; `g_array_set_size` on a real glib GArray
+    // SAFETY: GLib checks NULL and logs a critical before any access.
+    // `g_array_set_size` on a real glib GArray
     // updates `len` and preserves the private metadata.
     unsafe {
         g_array_set_size(keys, 0);
@@ -243,7 +247,8 @@ pub extern "C" fn pinyin_token_get_nth_pronunciation(
         // Past the last reading: `phrase_length` keys of indeterminate
         // content at the pin; zeroed here.
         let zeroed = vec![0_u16; intro.phrase_length];
-        // SAFETY: Null-checked above; the caller creates the keys array
+        // SAFETY: GLib checks NULL and logs a critical before any access.
+        // the caller creates the keys array
         // with element_size = sizeof(u16), as for the in-range path.
         unsafe {
             g_array_append_vals(
@@ -281,7 +286,8 @@ pub extern "C" fn pinyin_token_get_nth_pronunciation(
     if packed.is_empty() {
         return false;
     }
-    // SAFETY: Null-checked above; the caller creates the keys
+    // SAFETY: GLib checks NULL and logs a critical before any access.
+    // the caller creates the keys
     // array with element_size = sizeof(u16) (chewing-key vector,
     // packed two-byte words). `g_array_append_vals` copies
     // `packed.len()` such elements from the buffer.
