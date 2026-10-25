@@ -193,18 +193,17 @@ class FixtureCrafterTests(unittest.TestCase):
 
 
 class PhraseTextRecordTests(unittest.TestCase):
-    def test_all_marked_cases_have_their_own_current_registered_observations(self):
+    def test_all_stored_text_cases_are_ordinary_parity_cases(self):
         names, _ = driver.select_cases(None, ['894'], [])
-        self.assertEqual(len(names), 24)
-        accepted = 0
+        self.assertEqual(len(names), 32)
         for name in names:
             spec = driver.CASES[name]
-            if spec['policy_record']:
-                pair = driver.policy_expectations(spec)
-                self.assertEqual(driver.verdict_for(spec, pair['pin'], pair['subject'], False),
-                                 ('POLICY-ACCEPTED', True, False))
-                accepted += 1
-        self.assertEqual(accepted, 15)
+            self.assertIsNone(spec['policy_record'], name)
+            controls = spec['control']
+            if '-valid-' in name or (name.startswith('phrase-text/zhuyin-') and name.endswith('-export')):
+                self.assertTrue(controls, name)
+            else:
+                self.assertFalse(controls, name)
 
 
 class TkrzwSavedBigramTests(unittest.TestCase):
@@ -350,38 +349,51 @@ class DriverFixtureCase(unittest.TestCase):
 
 class PolicyReportingTests(DriverFixtureCase):
     def test_main_retains_observations_and_counts_policy_separately(self):
-        name = 'phrase-text/pinyin-nul-candidate'
-        spec = driver.CASES[name]
-        pair = driver.policy_expectations(spec)
-        pin = observation(result=pair['pin']['result'])
-        subject = observation(result=pair['subject']['result'])
-        for broken in (False, True):
-            with self.subTest(broken=broken), tempfile.TemporaryDirectory() as scratch:
-                prefix = Path(scratch)
-                (prefix / 'lib/libpinyin/data').mkdir(parents=True)
-                (prefix / 'lib/libpinyin.so').touch()
-                (prefix / 'lib/libpinyin/data/bigram.db').touch()
-                (prefix / 'oracle-pin.txt').write_text(
-                    'libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99+dbm-bdb\n')
-                args = ['driver', 'bdb', str(prefix), str(prefix / 'lib/libpinyin.so'),
-                        '--cases', name]
-                actual_subject = copy.deepcopy(subject)
-                if broken:
-                    actual_subject['result']['ret'] = False
-                output = io.StringIO()
-                with patch.object(driver, 'run_case', return_value=(pin, actual_subject)), \
-                        patch.object(driver.sys, 'argv', args), \
-                        contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()):
-                    status = driver.main()
-                rows = [json.loads(line) for line in output.getvalue().splitlines() if line.startswith('{')]
-                verdict = 'DIFFER' if broken else 'POLICY-ACCEPTED'
-                self.assertEqual(status, int(broken))
-                self.assertEqual(rows[0]['verdict'], verdict)
-                self.assertEqual(rows[0]['record'], spec['policy_record'])
-                self.assertEqual(rows[0]['pin'], pin)
-                self.assertEqual(rows[0]['subject'], actual_subject)
-                self.assertEqual(next(row['verdict_counts'] for row in rows if 'verdict_counts' in row),
-                                 {verdict: 1})
+        name = 'synthetic/policy-reporting'
+        pin = observation(result={'ret': True, 'rows': [[2, 'e794b2']], 'logs': []})
+        subject = observation(result={'ret': True, 'rows': [], 'logs': []})
+        record = dict(schema=1, record='synthetic-record', status='current',
+                      disposition='POLICY-ACCEPTED',
+                      cases={name: {
+                          side: {key: value[key] for key in ('exit', 'result', 'stderr')}
+                          for side, value in (('pin', pin), ('subject', subject))
+                      }})
+        with tempfile.TemporaryDirectory() as findings:
+            root = Path(findings)
+            (root / 'synthetic-record.md').write_text(
+                '# Synthetic record\n\n```contract-diff-policy\n' + json.dumps(record) + '\n```\n')
+            (root / 'upstream-divergences.md').write_text('[record](synthetic-record.md)\n')
+            spec = driver.case_spec(policy_record='synthetic-record.md', case_id=name)
+            with patch.object(driver, 'POLICY_ROOT', root), patch.dict(driver.CASES, {name: spec}):
+                pair = driver.policy_expectations(spec)
+                self.assertEqual(pair['pin'], {key: pin[key] for key in ('exit', 'result', 'stderr')})
+                for broken in (False, True):
+                    with self.subTest(broken=broken), tempfile.TemporaryDirectory() as scratch:
+                        prefix = Path(scratch)
+                        (prefix / 'lib/libpinyin/data').mkdir(parents=True)
+                        (prefix / 'lib/libpinyin.so').touch()
+                        (prefix / 'lib/libpinyin/data/bigram.db').touch()
+                        (prefix / 'oracle-pin.txt').write_text(
+                            'libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99+dbm-bdb\n')
+                        args = ['driver', 'bdb', str(prefix), str(prefix / 'lib/libpinyin.so'),
+                                '--cases', name]
+                        actual_subject = copy.deepcopy(subject)
+                        if broken:
+                            actual_subject['result']['ret'] = False
+                        output = io.StringIO()
+                        with patch.object(driver, 'run_case', return_value=(pin, actual_subject)), \
+                                patch.object(driver.sys, 'argv', args), \
+                                contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()):
+                            status = driver.main()
+                        rows = [json.loads(line) for line in output.getvalue().splitlines() if line.startswith('{')]
+                        verdict = 'DIFFER' if broken else 'POLICY-ACCEPTED'
+                        self.assertEqual(status, int(broken))
+                        self.assertEqual(rows[0]['verdict'], verdict)
+                        self.assertEqual(rows[0]['record'], spec['policy_record'])
+                        self.assertEqual(rows[0]['pin'], pin)
+                        self.assertEqual(rows[0]['subject'], actual_subject)
+                        self.assertEqual(next(row['verdict_counts'] for row in rows if 'verdict_counts' in row),
+                                         {verdict: 1})
 
 
 class HashPathFixtureTests(DriverFixtureCase):

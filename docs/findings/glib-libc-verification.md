@@ -16,9 +16,12 @@ Source baseline: oxpinyin `801593723f62a36e1a5d2a7857209cc45d50bbe3`.
 The #894 records are now on main via [#1153](https://github.com/shenghaoc/oxpinyin/pull/1153);
 its reviewed head remains
 [`a3cf66514a22eb25a8ec636d4f03f18bd7efbce1`](https://github.com/shenghaoc/oxpinyin/commit/a3cf66514a22eb25a8ec636d4f03f18bd7efbce1).
-The immutable [non-scalar record][non-scalar] and [NUL record][nul] are the
-source of the established #894 conclusions below. No #1153 implementation
-is copied or changed by this coverage document.
+The [non-scalar record][non-scalar] and [NUL record][nul] were landed on
+main by [#1153](https://github.com/shenghaoc/oxpinyin/pull/1153) and are
+now dated superseded notes (2026-10-24 UTC, #1182): their former
+POLICY-ACCEPTED cases are ordinary MATCH cases and the implementation is
+in `PhraseText` and its consumers. The historical #1153 conclusions below
+are kept as history, not as the current source.
 
 All pin citations below are `file:line` at libpinyin
 `074a2219c90feaf962d0d24f034514033ece5f99`; relative pin paths start at
@@ -68,7 +71,8 @@ Pin: `pinyin.cpp:614-652,698-768,1450-1454,1627-1645,1953-2138,3669-3710`;
 `zhuyin.cpp:500-537,969-973,1096-1113,1294-1416`;
 `lookup/lookup.cpp:27-69`; `storage/phrase_index.cpp:103-111,522-555`;
 `storage/phrase_index.h` item storage; `storage/phrase_index.cpp` loaders.
-Rust: `data/src/phrase_library.rs`, `PhraseItemView::phrase_chars`;
+Rust: `core/src/ucs4.rs`, `PhraseText`;
+`data/src/phrase_library.rs`, `PhraseItemView::phrase_codes`/`phrase_text`;
 `data/src/phrase_libraries.rs`, `phrase_char_count`/`trellis_item`;
 `engine/src/nbest.rs`, `token_text`/`text`; both `capi/src/sentence.rs`
 and `zhuyin-capi/src/sentence.rs`; `facade/src/export_rows.rs`,
@@ -77,8 +81,8 @@ and `zhuyin-capi/src/sentence.rs`; `facade/src/export_rows.rs`,
 | Input partition | Verdict / record | Investigation and exercised scope |
 | --- | --- | --- |
 | Complete bounded phrase items, matching readings, nonzero scalar text; valid UTF-8 producers | Identical on the #894 text paths: GLib encoding and Rust scalar encoding agree. | Complete source trace in [non-scalar][non-scalar] and [NUL][nul] records, including system/addon/user chunks, journals, import, remember, generation, training/save, candidate/sentence/export consumers. Six scalar controls exercised; not every producer tested. |
-| Stored surrogates / above-Unicode values below `0x80000000`, with otherwise sound item/readings | Accepted runtime quirk, [non-scalar][non-scalar]. GLib emits extended UTF-8; Rust refuses the item. | Complete recorded source classification for the bounded text mechanism. Exercised U+D800 and U+110000 only: ten marked candidate/sentence/pinyin-export cases. Direct token getters, addon/prediction alternatives and journals are source-traced, not separate exercised witnesses. |
-| Embedded U+0000 in a declared phrase body | Accepted runtime quirk, [NUL][nul]. GLib stops per item; Rust retains zero until C marshalling refuses it. | Complete recorded source classification. Five marked candidate/sentence/pinyin-export cases. Dedup, prefix slices and NULL-output variants have source reasoning, not separate exercised controls. |
+| Stored surrogates / above-Unicode values below `0x80000000`, with otherwise sound item/readings | Identical, ordinary MATCH: [non-scalar][non-scalar] is a dated superseded note. GLib emits extended UTF-8; the Rust path carries the words and emits the same bytes. System data; malformed user-library items are tracked in #1198. | Complete source classification, now implemented by `PhraseText`. Exercised U+D800 and U+110000: the ten former marked candidate/sentence/pinyin-export cases are ordinary cases and MATCH. Direct token getters, addon/prediction alternatives and journals are source-traced, not separate exercised witnesses. |
+| Embedded U+0000 in a declared phrase body | Identical, ordinary MATCH: [NUL][nul] is a dated superseded note. GLib stops per item; the Rust path ends the outward text at the first zero word and keeps the stored length. System data; malformed user-library items are tracked in #1198. | Complete source classification, now implemented. The five former marked candidate/sentence/pinyin-export cases are ordinary cases and MATCH. Dedup, prefix slices and NULL-output variants have source reasoning, not separate exercised controls. |
 | Values >= `0x80000000`; truncated, empty, overlong or inconsistent items; invalid readings; allocation failure | Values >= `0x80000000`: `phrase_segment` with a matching raw key is identical ([record](918-nonscalar-token-result.md)); the text getters still differ (pin true/declared length/NULL, Rust false/untouched), a distinct malformed-item difference not admitted by #894. Truncated/empty/overlong/inconsistent items: out-of-bounds reads are class (b) (rows 101/107); in-bounds declared-length reads can return following bytes. Invalid readings are a separate surface, not on the segment path. Allocation failure is host-dependent: conversion OOM refuses at the pin, later container OOM aborts, and Rust aborts on its conversion/copy allocations. | Source-complete for the values/items/readings and allocation partitions in the [G1 closure](918-boundary-follow-through.md#g1-partition-closure); no new equivalence or #918 removal clearance. |
 | `phrase_segment`: empty; well-bounded rejected `ff fe`; valid scalar conversion | Identical for the entry/result lifecycle described in [#918's audit](918-phrase-segment-source-audit.md); existing independent lookup/math records retain their scope. | Source established, both facades; inherited tests only, no new gate. Not a proof of every valid decoder path. |
 | `phrase_segment`: GLib-accepted non-scalar, consistent scalar-only keys/items, sound grams and successful backing-store reads, including a matching scalar prefix | Identical return/result/getter/diagnostic behavior; no observable session or persistent change from prefix consultation. | Complete bounded source argument in [#918's audit](918-phrase-segment-source-audit.md), three backend read paths. Inherited surrogate-in-`nihao` tests do not exercise every non-scalar or store state. |
@@ -115,24 +119,26 @@ GLib source evidence in #894 is `glib/gutf8.c:1035-1047,1054-1060`
 non-scalars are superseded: **valid UTF-8 C input** cannot; malformed
 input can. No binary ambiguity was needed for these recorded arguments.
 
-#894's historical amd64 bdb gate: **15 POLICY-ACCEPTED, 9 MATCH**, no
-skips/failures, on 24 cases. Nine MATCH means six scalar controls plus
-three checks that zhuyin export symbols are absent, not three extra
-malformed-text equivalences. The PR also reports the same selection on
-kc after its fixture correction; no tkrzw or arm64 execution is claimed
-for #894. The `nul-as-replacement` subject mutation yielded five DIFFER,
-ten POLICY-ACCEPTED and nine MATCH. The records report the preceding
-135 harness tests; the final #1153 PR reports 138 after the KC fixture
-correction. These are inherited results, not executions by this PR.
+#894's new implementation gate: **24 MATCH**, no skips/failures, on 24
+cases on the bdb reference cell. The six scalar controls and three
+zhuyin export-symbol absence checks account for nine of them; the
+fifteen former POLICY-ACCEPTED cases are now ordinary parity cases. No
+kc, tkrzw or arm64 execution is claimed for this gate.
 
-Reproduction at the cited #1153 head (substitute `kc` for its fixture check):
+The historical amd64 bdb gate was **15 POLICY-ACCEPTED, 9 MATCH**, and
+the `nul-as-replacement` subject mutation yielded five DIFFER, ten
+POLICY-ACCEPTED and nine MATCH; those results describe the pre-#1182
+tree and are kept as history, not as the current gate.
+
+Reproduction:
 
 ```sh
 bash tools/oracle/compat.sh --runtime docker --cell bdb --runners contract-diff --issue 894
 uv run python tools/bisection/contract-diff.test.py
 ```
-The NUL record describes the temporary subject mutation; do not mutate
-the pin or use these tests to discover its behavior.
+The two #894 records are dated superseded notes; the differential, not a
+recorded expectation, is the evidence. Do not mutate the pin or use these
+tests to discover its behavior.
 
 ## G2 — C strings, joins and vectors
 
@@ -1090,6 +1096,6 @@ G14 tracks #1152. This docs PR implements no child.
 Documentation validation: reviewed cited records, source sites, item names
 and links; `git diff --check`. No new runtime or measurement result.
 
-[non-scalar]: https://github.com/shenghaoc/oxpinyin/blob/a3cf66514a22eb25a8ec636d4f03f18bd7efbce1/docs/findings/894-non-scalar-phrase-text.md
-[nul]: https://github.com/shenghaoc/oxpinyin/blob/a3cf66514a22eb25a8ec636d4f03f18bd7efbce1/docs/findings/894-nul-phrase-text.md
+[non-scalar]: 894-non-scalar-phrase-text.md
+[nul]: 894-nul-phrase-text.md
 [math-record]: upstream-divergences.md#n-best-trellis-accumulates-gfloat-log-costs--not-reproducible-in-fixed-point-frozen-as-a-permanent-stage-1-divergence
