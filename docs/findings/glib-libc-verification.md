@@ -399,7 +399,7 @@ Rust: both facades' `ffi.rs::log_warning`/`log_critical` and
 | --- | --- | --- |
 | Recorded #894 non-scalar candidate refusal versus NUL candidate omission | Accepted [non-scalar][non-scalar] / [NUL][nul]; warning only on the former witness. | Complete bounded records; G1's exact tested scope. |
 | Registered pin assertion/abort sites | Class (c) only at its [registered sites](compatibility-policy.md#c-availability--upstream-aborts-on-caller-input): false/Err and exactly one warning, correct domain/level. | Existing policy obligation; full G8 site audit partial. |
-| `phrase_segment` conversion failure, critical precondition and previous result; diagnostic NUL/text/allocator cases | Pending #918/#924. Required diagnostics are observable contract. | Unverified whole lifecycle; neither silence nor generic “quirk” classification is admitted. |
+| `phrase_segment` conversion failure, critical precondition and previous result; diagnostic NUL/text/allocator cases | The bounded invalid-byte critical is MUST RETAIN and verified in the #924 matrix below; NUL reachability/OOM remain open. | New #924 source proof and both-facade result-preservation cases; no blanket diagnostic exception. |
 
 ## G9 — Allocation/free and real GArray ABI
 
@@ -411,8 +411,200 @@ GLib array writers, `phrase.rs::segment_text`; ownership slots in
 
 | Partition | Verdict | Investigation |
 | --- | --- | --- |
-| Normal returned strings/vectors and caller arrays | Contract: malloc-compatible strings freeable with `g_free`, vectors with `g_strfreev`, real GArray metadata retained. MUST RETAIN, #924. | Inventory establishes boundary; full allocation/lifetime audit partial. G1 proves its text records preserve ownership. |
+| Normal returned strings/vectors and caller arrays | MUST RETAIN: per-operation #924 matrix below covers all 38 registered slots and four caller-array operations. | Source-backed lifecycle audit and caller-mutation tests below; G1 retains its separate malformed-text scope. |
 | NULL inputs/outputs, allocation failure/OOM, cleanup after partial allocation/conversion | Pending exact per-site classification. | Unverified full family; #894 explicitly excludes allocation failure. No ownership exception inferred. |
+
+### #924 ABI ownership audit — 2026-10-25 UTC
+
+**Decision: retain the GLib ABI.** This audit changes tests only. No new
+runtime exception is admitted; `upstream-divergences.md` therefore needs no
+new entry. The matrix settles the normal ownership boundaries, not every
+malformed-input/diagnostic partition. **Refs #924**, not Fixes: the explicit
+follow-ups below remain. Other families' rows above and below retain their
+own scope and status.
+
+Source trees read for this audit: libpinyin
+`074a2219c90feaf962d0d24f034514033ece5f99` (detached checkout), GLib tag
+`2.89.4`, commit `fa41d356ee4936264c45cf11fa6c2640a89fbdda` (the upstream
+version of reference package 2.89.4-2), and oxpinyin `6be364d9`.
+GLib citations in this subsection are to that tag; pin citations are to
+074a2219 and start at `src/`. Expectations below were derived from these
+sources before executing the new contract cases.
+
+`MUST RETAIN` applies to the outward contract, not the implementation's
+choice of container. `MAY DIVERGE` here means internal implementation
+freedom with identical outward results, **not** permission to change a
+message, return, out-parameter, lifetime or allocator pairing. Reproducing
+these contracts in ordinary Rust plus C adapters is possible. Opaque Rust
+handles may use `Box`; Rust strings/vectors may build payloads; only the C
+adapter transfers them to the matching foreign allocation. A Rust `CString`
+from `into_raw` is not a substitute for a promised `g_free` buffer.
+
+#### Exported allocation and lifetime matrix
+
+`P` = `pinyin_`; `Z` = `zhuyin_`. A row naming both prefixes covers each
+named exported operation independently. The two `.alloc` registers cover
+26 pinyin slots and 12 zhuyin slots; they are retained byte-for-byte. The
+four caller-supplied `GArray *` operations are additional to those registers
+(they have no pointer return or `T **` slot).
+
+| Exported operation | Allocation → library write → caller mutation/free: MUST RETAIN | Pin source; MAY DIVERGE internally |
+| --- | --- | --- |
+| P/Z `init`, `fini` | Caller lends directory strings for the call; library owns copies and context. Return opaque context, release only with matching `fini`; never `g_free` the handle. | `pinyin.cpp:326-441,1194-1224`; `zhuyin.cpp:270-357,741-765`. Pin `new/delete` and internal `g_strdup`/`g_free` may be Rust ownership, preserving path bytes and side effects. |
+| P/Z `alloc_instance`, `free_instance` | Context must outlive instance; only matching destructor frees the handle and its internal candidate/result storage. No caller ownership of internal GLib arrays. | `pinyin.cpp:1310-1356`; `zhuyin.cpp:845-883`. Internal arrays may be Rust vectors. |
+| P/Z `begin_add_phrases`, `end_add_phrases` | Opaque iterator borrows context; matching end releases it and performs the pin's compact/modified effects. | `pinyin.cpp:506-520,655-660`; `zhuyin.cpp:392-406,540-545`. Rust iterator representation is free. |
+| P `begin_get_phrases`, `end_get_phrases` | Own iterator even when it has no rows; release with end, not `g_free`. | `pinyin.cpp:662-689,771-773`. Rust cursor is free. |
+| P `begin_get_bigram_phrases`, `end_get_bigram_phrases` | Own iterator, matching end releases its buffers/arrays and handle. | `pinyin.cpp:775-790,913-919`. Rust row storage is free; existing row-1 over-read exception remains bounded. |
+| P `get_context` | Borrowed exact originating context pointer; caller must not free a second time. | `pinyin.cpp:1358-1360`. No zhuyin twin. |
+| P/Z `get_candidate` | Borrowed candidate, NULL on out-of-range false; invalidated with candidate storage, never caller-freed. | `pinyin.cpp:2851-2863`; `zhuyin.cpp:1843-1855`. Internal storage free subject to pointer validity. |
+| P/Z `get_candidate_string` | Borrowed candidate-owned string; successful accessor allocates nothing and returns true. Do not mutate/free through the const pointer. | `pinyin.cpp:2873-2877`; `zhuyin.cpp:1865-1869`. Pin's internal text allocation may be Rust-owned, with the same visible bytes/lifetime. |
+| P `get_pinyin_key`, Z `get_zhuyin_key` | Borrowed key, false-nulls; pin uses a function-static key overwritten by later calls. Caller does not free it. | `pinyin.cpp:2921-2941`; `zhuyin.cpp:1886-1905`. Representation may differ only without changing the established borrowed-slot behavior. |
+| P `get_pinyin_key_rest`, Z `get_zhuyin_key_rest` | Borrowed rest slot, false-nulls; same static-slot constraint, not an owned GLib allocation. | `pinyin.cpp:2944-2964`; `zhuyin.cpp:1908-1927`. Same constraint as key. |
+| P/Z `get_sentence` | Fresh caller-owned bytes via `g_free` when a sentence is produced; no guessed results means false and untouched out-pointer. Caller may write/reallocate its buffer. | `pinyin.cpp:1463-1481`; `zhuyin.cpp:982-999`; `lookup/lookup.cpp:27-69`. Rust sentence construction plus `owned_cstr`/`write_owned_sentence` may replace repeated GLib joins. |
+| P `get_full_pinyin_auxiliary_text` | Owned string, including allocated empty string on false with empty matrix; free regardless of success. | `pinyin.cpp:3381-3437`. `owned_cstr` may replace `g_strdup`/`g_strconcat`; G2 owns substring behavior. |
+| P `get_double_pinyin_auxiliary_text` | Same ownership and false-allocation rule. | `pinyin.cpp:3440-3515`. Same internal freedom. |
+| P `get_chewing_auxiliary_text` | Same ownership and false-allocation rule. | `pinyin.cpp:3518-3575`. Same internal freedom, subject to G2's recorded bounds. |
+| P `get_zhuyin_string` | Fresh `g_free` buffer; zero-table-index key gives false and NULL. | `pinyin.cpp:2707-2715`; `storage/chewing_key.cpp:74-88`. Rust rendering is free. |
+| P `get_pinyin_string` | Same owned-buffer/false-nulls rule. | `pinyin.cpp:2718-2726`; `storage/chewing_key.cpp:47-57`. Rust rendering is free. |
+| P `get_luoma_pinyin_string` | Same owned-buffer/false-nulls rule. | `pinyin.cpp:2729-2737`; `storage/chewing_key.cpp:90-101`. Rust rendering is free. |
+| P `get_secondary_zhuyin_string` | Same owned-buffer/false-nulls rule. | `pinyin.cpp:2740-2748`; `storage/chewing_key.cpp:103-114`. Rust rendering is free. |
+| Z `get_zhuyin_string` | Same owned-buffer/false-nulls rule. | `zhuyin.cpp:1732-1740`; same ChewingKey renderer. |
+| Z `get_pinyin_string` | Same ownership, selecting Hanyu/Luoma/secondary renderer from the context; false-nulls for zero key. | `zhuyin.cpp:1743-1765`; same ChewingKey renderers. |
+| P `get_pinyin_strings` | Two independently owned `g_free` buffers; NULL output addresses are allowed independently; zero key leaves both outputs untouched and returns false. | `pinyin.cpp:2751-2762`; `storage/chewing_key.cpp:60-71`. Rust rendering is free; no shared allocation for two independently freed slots. |
+| P/Z `token_get_phrase` | Optional length/text output addresses; missing item returns false without writing either. Successful text is an independent `g_free` allocation. | `pinyin.cpp:1627-1645,2776-2783`; `zhuyin.cpp:1096-1113,1768-1775`. Rust text conversion may replace internal UCS-4 buffer within G1's classified partitions. |
+| P `iterator_get_next_phrase` | Two independent `g_free` buffers per row. Pin initializes outputs NULL/count -1, then writes row and returns true, including last row. Calling without a row is the existing row-62 abort/refusal exception, not an ordinary false. | `pinyin.cpp:698-768`. `malloc_cstr_with` writes final bytes directly; no need to recreate temporary GPtrArray, `g_strjoinv`, `g_strfreev`. |
+| P `bigram_iterator_get_next_phrase` | Two independent `g_free` copies. Last row returns false **after** writing both strings; caller must free them. | `pinyin.cpp:896-910`. Rust copying is free; separate existing iterator safety exceptions apply. |
+| P/Z `in_chewing_keyboard` | Caller owns both NULL-terminated vector and each string; may replace strings or resize vector, finally `g_strfreev`. Unmapped key returns false with NULL vector. | `pinyin.cpp:1615-1624`; `zhuyin.cpp:1087-1093`; `storage/zhuyin_parser2.cpp:301-332,496-544,798-851`. `owned_cstr_list` can directly allocate the vector instead of building/detaching GPtrArray. |
+| P/Z `lookup_tokens` | Caller supplies a **real** GArray of `phrase_token_t`. Library clears previous contents, appends in library order, preserves clear callback/element size/zero termination/refcount/capacity semantics. Caller may append, shrink, reuse, ref/unref or free it. No-match false still clears. | `pinyin.cpp:2652-2667`; `zhuyin.cpp:1678-1693`; `storage/phrase_large_table3.h:77-97`. Rust may construct token payloads; GLib must mutate the caller object. Input conversion is separate follow-up, not a reason to change the array. |
+| P/Z `token_get_nth_pronunciation` | Real caller GArray of two-byte `ChewingKey`; clear **before** item lookup, including missing-token false. Valid reading appends phrase-length keys. Caller mutation/free remains legal. | `pinyin.cpp:2801-2818`; `zhuyin.cpp:1793-1810`; `storage/phrase_index.cpp:33-43`. Rust payload extraction is free; GLib owns metadata changes. Out-of-range reading uses the existing safety classification, not invented pin bytes. |
+| P/Z `phrase_segment` | No allocation transferred to caller. Pin's temporary `g_utf8_to_ucs4` buffer is freed after lookup; diagnostic refusal precedes result replacement. | `pinyin.cpp:1446-1460`; `zhuyin.cpp:965-979`. Current `phrase.rs::segment_text` already uses Rust scalar/raw-UCS4 decoding: there is no remaining GLib conversion allocation or `g_free` there. #918 owns that converter. |
+
+The last row corrects the old inventory's description of `phrase.rs` at the
+new baseline; it is not a proposal to remove a still-live foreign free.
+Other temporary GLib arrays (parser matrices, per-library `PhraseTokens`,
+candidate vectors, iterator scratch) do not cross the ABI as owned arrays.
+The borrowed candidate/key rows above constrain their exposed data, not
+which internal allocator or container implements it.
+
+GLib's implementation explains why the adapter stays:
+`glib/garray.c:63-74` has private element size/capacity, clear/terminator
+flags, reference count and callback beyond public data/len;
+`:605-625,773-795,890-916` update those and invoke caller clear callbacks.
+`:524-574` implements `g_array_free(FALSE)`'s caller-owned detached payload
+and shared-wrapper lifetime. Updating just public fields cannot preserve
+that contract. `glib/gmem.c:95-111,206-210` pairs malloc/free;
+`glib/gstrfuncs.c:2571-2582` frees every vector element and then the vector.
+Both `ffi.rs::owned_cstr` and `owned_cstr_list`, plus pinyin
+`malloc_cstr_with`, use that allocation family. Partial-list failure frees
+all preceding strings and the vector internally, never transfers a partial
+list. Interior NUL rejection and allocator failure are **not** proved
+compatible by successful allocator pairing; see the follow-ups.
+
+#### Diagnostic channels and macro-expanded sites
+
+| Exported operation / trigger | MUST RETAIN outward result and channel | MAY DIVERGE / status |
+| --- | --- | --- |
+| P/Z `phrase_segment`, well-bounded `ff fe` after successful segmentation | Exactly one NULL-domain critical (level 8), `bool <facade>_phrase_segment(<facade>_instance_t*, const char*): assertion 'num_of_chars == ucs4_len' failed`; false; previous result/count/token outputs remain readable and identical. Pin `pinyin.cpp:1450-1459`, `zhuyin.cpp:969-978`; GLib `gutf8.c:950-990` leaves initialized converted length 0 on failure. | Rust decode/Result control flow is free; exact text is easy and safe to reproduce, so keep it. New `glib-924-segment-critical-{pinyin,zhuyin}` asserts trigger, text, domain, level, return and old result, not just stderr. |
+| P/Z `init`, `load_phrase_library`, `save`, `mask_out`; additionally P `load_addon_phrase_library`, reached malformed sub-index separators/end | `storage/phrase_index.cpp:354-356,361` expands four `g_return_val_if_fail` checks; first failed reached check emits one NULL-domain critical and returns false from `SubPhraseIndex::load`. Facade outcomes are caller-specific: the load caller may ignore false; `save` may report true after a critical. Never convert all these into facade false or silence. | Existing `LayoutFault::critical_message`, context/config reporting and inherited G8/compatibility records govern these paths. Precise C++ signature imitation is formatting in an adapter, not a Rust-language impossibility. This audit does not certify every caller/corrupt-bound combination; full G8 closure remains open. |
+| P/Z `token_get_nth_pronunciation`, NULL `keys`, valid instance and known token/in-range reading | GLib `g_array_set_size` precondition emits `GLib`-domain critical `g_array_set_size: assertion 'array' failed`; append emits a second critical `g_array_append_vals: assertion 'array' failed`; both return NULL locally, facade still returns true, no caller output exists. With unknown token: only first critical, facade false. Pin `pinyin.cpp:2805-2818`, `zhuyin.cpp:1797-1810`; GLib `garray.c:611,778`. | **Unresolved defect/follow-up in reserved dict.rs:** current Rust early false is silent. Not a permitted diagnostic-only difference (the valid-token return also differs), not a pin crash. No changes to either dict.rs in this lane. Source-derived proof; no NULL-array probe run. |
+| P/Z `lookup_tokens`, NULL output array, valid instance/scalar phrase | `reduce_tokens` calls set_size then append for each non-NULL prepared library array, even length zero: one plus the number of prepared arrays `GLib` criticals, each returning NULL locally; facade still returns `SEARCH_OK & retval`. No out-array is written. Pin `storage/phrase_large_table3.h:77-97`; GLib `garray.c:611-614,778`; facade citations above. | **Unresolved reserved-file follow-up:** current silent false is not equivalent. Number of append diagnostics depends on loaded libraries; do not hard-code one warning or claim the pin dereferences NULL here. Source proof only. |
+| Facade refusals mapped from registered asserts/unsafe reads | Existing class-(b)/(c) records retain each operation's trigger, false/NULL/out-state and exactly one facade-domain warning (level 16); `ffi::log_warning` uses `libpinyin`/`libzhuyin`. This channel is distinct from the pin's NULL-domain critical and raw stderr. | All call sites remain. No blanket permission to remove/rename messages. Full per-trigger re-audit of the existing warning register is not completed here; inherited witnesses are not new executions. |
+| Both `ffi::log_warning`/`log_critical`, hypothetical embedded NUL in message | `CString::new` currently drops the whole diagnostic on embedded NUL; GLib `%s` truncates at NUL. A concrete reachable trigger and complete outward proof are required before classifying any difference. | **Unsettled**, not an admitted quirk. Shared helper callers and formatted error values need a whole-path trace; do not silently change reserved zhuyin ffi.rs. |
+
+Macro expansion is part of the source proof: GLib
+`glib/gmessages.h:663-674` calls `g_return_if_fail_warning` then returns the
+specified value; `glib/gmessages.c:3193-3201` chooses critical and formats
+the assertion. `glib/gmessages.h:323-325` defaults the domain to NULL;
+`glib/gmacros.h:932-939` selects `__PRETTY_FUNCTION__` for this C++ build.
+GLib's own array checks use its `GLib` domain (`glib/meson.build:421`) and C function spelling.
+These are real diagnostics even though the pin source contains no explicit
+`g_log` call. Pin `storage/tag_utility.cpp:137,202,211,239,246,256` is the
+separate G16 tool-only macro/warning surface; no facade claim is inferred
+from it. Raw file-I/O stderr belongs to G12/#929 and is not a `g_log`
+substitute.
+
+
+The retained warning entry-point inventory (Rust item names at the stated
+baseline; **MUST RETAIN**, no per-trigger closure implied) is:
+
+| Adapter path | Exported operations reaching the warning channel |
+| --- | --- |
+| Both `context.rs` | P/Z `init`, `save`; context load-fault reporting additionally uses the NULL-domain critical channel. |
+| Both `config.rs`; pinyin `state.rs::load_addon`/`unload_addon` | P `set_full_pinyin_scheme`, `set_double_pinyin_scheme`, `set_zhuyin_scheme`; Z `set_full_pinyin_scheme`, `set_chewing_scheme`; P/Z `load_phrase_library`, `unload_phrase_library`, `mask_out`; P `load_addon_phrase_library`, `unload_addon_phrase_library`. |
+| Both `cursor.rs` | P `get_pinyin_key`, `get_pinyin_key_rest`, `get_left_pinyin_offset`, `get_right_pinyin_offset`; Z `get_zhuyin_key`, `get_zhuyin_key_rest`, `get_left_zhuyin_offset`, `get_right_zhuyin_offset`. `warn_on_empty_matrix` supplies the operation-specific name. |
+| Both `keys.rs` | P/Z `parse_full_pinyin`; P `get_pinyin_is_incomplete`. |
+| Both `sentence.rs`, `phrase.rs` | P/Z `guess_sentence`, `guess_sentence_with_prefix`, `get_character_offset`, `phrase_segment`; P `get_sentence`, `guess_candidates`; Z `guess_candidates_before_cursor`, `guess_candidates_after_cursor`. `refuse_lookup_gram` and offset/tone validation are shared callers, not extra exported channels. |
+| Both `candidates.rs` | P/Z `train`; P `get_candidate_nbest_index`, `remove_user_candidate`, `choose_candidate`, `choose_predicted_candidate`. |
+| Both `iterators.rs` | P/Z `iterator_add_phrase`; P `begin_get_phrases`, `iterator_get_next_phrase`, `begin_get_bigram_phrases`, `bigram_iterator_get_next_phrase`. |
+| P `predict.rs::guess_predicted_result` | P `guess_predicted_candidates`, `guess_predicted_candidates_with_punctuations`. Reserved file, unchanged. |
+| P `text.rs::render_shared` | P `get_full_pinyin_auxiliary_text`, `get_double_pinyin_auxiliary_text`, `get_chewing_auxiliary_text`. |
+
+These operations' existing pin-assertion citations and individual exception
+obligations remain in the compatibility-policy register; merely forwarding
+the same GLib channel proves neither the trigger nor the return/out state.
+The matrix deliberately distinguishes this complete adapter-channel inventory
+from the unfinished per-trigger G8 investigation.
+
+#### Remaining scope and verification
+
+The following are **follow-ups**, not accepted divergences or authority to
+edit another lane's files:
+
+- Both reserved `dict.rs` NULL-array diagnostic/return paths described above;
+  malformed/non-scalar input conversion remains governed by G1, not an
+  allocator-pairing exception.
+- Every existing warning trigger/caller and four sub-index critical callers,
+  including partial output/state transitions; the new segment witness is
+  bounded to its named trigger. Diagnostic NUL reachability remains open.
+- Allocation exhaustion: GLib `g_malloc` aborts (`gmem.c:95-106`),
+  conversion uses `try_malloc_n` (`gutf8.c:977-979`), while the adapters can
+  return NULL after libc malloc failure and Rust's earlier allocations can
+  abort. These are different stages, so successful ownership tests establish
+  no blanket OOM equivalence. No failure-injection expectations were learned
+  by running the pin.
+- Borrowed/static-slot identity, malicious pointer aliasing and malformed
+  backing-item text retain their existing records; this ownership matrix
+  is not a complete test of those independent input partitions.
+
+New contract cases use the existing `contract-diff.py` driver. Array cases
+exercise each facade's lookup and nth-pronunciation output after a seeded
+clear callback, append 257 caller elements, shrink, call a refusing lookup,
+verify clearing and zero termination, grow with zero fill, detach with
+`g_array_free(FALSE)` and release with `g_free`. Both existing allocator
+consumers now mutate/reallocate every owned string, and replace/append
+vector elements before `g_strfreev`; borrowed and handle frees are untouched.
+
+
+Completion checks on linux/amd64, bdb, 2026-10-25 UTC: both capi package
+test suites passed (150 tests total), fmt and clippy passed; **4/4 MATCH**
+for `--issue 924`; allocator-pairing **26 + 12 slots passed**, including
+both LeakSanitizer negative controls; ABI exports **79 + 52 passed**;
+contract harness **142 tests passed**. Native GLib was **2.84.4**; source
+expectations above use reference-version **2.89.4**, not host source.
+The pin libraries and generated data were verified by `tools/cloud/setup.sh`.
+The named subject-only `segment-critical-expression` mutation replaced
+pinyin's assertion-expression literal: **1 INVALID, 3 MATCH**, rejecting
+the changed message by the witness's source-derived assertion. Restoring
+and rebuilding gave **4/4 MATCH**. No mutation touched reserved files.
+There are no shipping-code changes or new runtime divergence records.
+
+Reproduction (after cloud provisioning and sourcing its environment; one
+bdb target directory, managed CPython per the setup guide):
+
+```sh
+export CARGO_TARGET_DIR="$PWD/target/bdb"
+just heavy -- cargo test --locked -p oxpinyin-capi -p oxpinyin-zhuyin-capi
+just heavy -- cargo clippy --locked -p oxpinyin-capi -p oxpinyin-zhuyin-capi --all-targets -- -D warnings
+just fmt --all --check
+just heavy -- cargo build --locked -p oxpinyin-capi -p oxpinyin-zhuyin-capi
+just heavy -- tools/bisection/run-contract-diff.sh bdb "$PINYIN_ORACLE_PREFIX" \
+  "$CARGO_TARGET_DIR/debug/libpinyin_capi.so" \
+  "$CARGO_TARGET_DIR/debug/libzhuyin_capi.so" -- --issue 924
+just heavy -- tools/abi/check-alloc-pairing.sh
+just heavy -- tools/abi/check-exports.sh
+uv run --no-project --managed-python --python cpython@3.15+gil \
+  python -X lazy_imports=normal tools/bisection/contract-diff.test.py
+```
 
 ## G10 — Rename and sync
 
