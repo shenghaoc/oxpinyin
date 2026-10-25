@@ -188,6 +188,20 @@ def contract_tag_index():
     return json.loads(result.stdout)
 
 
+def requested_case_list(value):
+    """The --cases IDs in the order given, each once, as contract-diff.py's select_cases keeps them.
+
+    A set here made the order depend on the process (hash randomization), so the same
+    selection ran, and was planned, in a different order each time. None means the
+    option was omitted; a value with no IDs, or an empty component, raises ValueError."""
+    if value is None:
+        return None
+    names = [name.strip() for name in value.split(',')]
+    if not all(names):
+        raise ValueError('--cases must name at least one case ID and must not contain an empty value')
+    return list(dict.fromkeys(names))
+
+
 def contract_cases_for(requested, index):
     """Map selected case IDs to the normalized tags that selected them.
 
@@ -502,12 +516,15 @@ def run_main():
     if requested_issues and 'contract-diff' in selected:
         index = contract_tag_index()
         contract_cases = contract_cases_for(requested_issues, index)
-    requested_cases = {name.strip() for name in args.cases.split(',')} if args.cases else set()
-    if requested_cases:
+    try:
+        requested_cases = requested_case_list(args.cases)
+    except ValueError as error:
+        parser.error(str(error))
+    if requested_cases is not None:
         if 'contract-diff' not in selected:
             parser.error('--cases requires --runners contract-diff')
         index = index or contract_tag_index()
-        unknown_cases = requested_cases - set(index['modes'])
+        unknown_cases = [name for name in requested_cases if name not in index['modes']]
         if unknown_cases:
             parser.error('unknown contract case(s): ' + ', '.join(sorted(unknown_cases)))
         for name in requested_cases:
