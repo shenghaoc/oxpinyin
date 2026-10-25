@@ -616,6 +616,13 @@ test or equivalent refactor closes those rows, and no new runtime exception
 is admitted. The report separates these gaps from the existing approved
 interpolation-category difference.
 
+Bounded completion gate, 2026-10-25 UTC: native dictool/training tests,
+fmt and clippy passed; the named separator-collapse mutation failed and its
+restoration passed. BDB live counter values (138096 unigrams, 199 bigrams)
+matched for the ordinary and classified streams; existing import differential
+and classic frontend interchange matched in both directions. Commands and
+limits are in the audit; this does not promote the remaining G16 rows.
+
 The inventory excludes these sites from the shared objects' exported
 call graph; it does not exclude the tools' input/output contracts from
 #926. This source-reading check identifies interfaces and limits, and
