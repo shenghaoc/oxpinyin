@@ -168,6 +168,13 @@ void release_g_free(const char *symbol, const char *name, gchar *ptr) {
 #ifdef OXPINYIN_ALLOC_PAIRING_LEAK
     (void)ptr;
 #else
+    if (ptr != nullptr) {
+        // #924: owned buffers are writable and may be resized by the caller.
+        const size_t len = std::strlen(ptr);
+        ptr = static_cast<gchar *>(g_realloc(ptr, len + 2));
+        ptr[len] = '!';
+        ptr[len + 1] = '\0';
+    }
     g_free(ptr);
 #endif
 }
@@ -177,6 +184,15 @@ void release_g_strfreev(const char *symbol, const char *name, gchar **ptr) {
 #ifdef OXPINYIN_ALLOC_PAIRING_LEAK
     (void)ptr;
 #else
+    if (ptr != nullptr && ptr[0] != nullptr) {
+        // Each element and the vector belong to the caller independently.
+        g_free(ptr[0]);
+        ptr[0] = g_strdup("caller replacement");
+        const size_t count = g_strv_length(ptr);
+        ptr = static_cast<gchar **>(g_realloc(ptr, (count + 2) * sizeof(gchar *)));
+        ptr[count] = g_strdup("caller append");
+        ptr[count + 1] = nullptr;
+    }
     g_strfreev(ptr);
 #endif
 }
