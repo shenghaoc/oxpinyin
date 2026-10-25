@@ -203,7 +203,7 @@ times the count (`:604-605`); the reference `_add_phrase+0x37d`
 `PhraseItem::add_pronunciation` adds an existing reading with its overflow
 guard (`phrase_index.cpp:56-92`); the caller ignores its bool before restoring
 the item. Dictool instead accepts complete unsigned counts through i32::MAX,
-including Rust's `+7`, and rejects `-0`, `-1`, suffixes and larger values
+and rejects `+7`, `-0`, `-1`, suffixes and larger values
 before any writes. This is the existing explicitly frozen tool-validation
 contract, not a newly justified runtime exception; changing that contract
 is not part of this equivalent refactor. Its numeric conversion is fully
@@ -657,7 +657,7 @@ The live pin tools below were built on the cloud host (Ubuntu 24.04, glibc
 | --- | --- | --- |
 | `TAGLIB_PARSE_SEGMENTED_LINE` `atoi` (`utils_helper.h:61`): `gen_ngram`, `gen_deleted_ngram`, `gen_k_mixture_model`, `eval_correction_rate`, `mergeseq` | Reproduce | `oxpinyin_kmm::atoi` (`kmm/src/cnum.rs`) is used by `counter/parse.rs` (counter, emitter, lambda, train held-out), `eval/decode.rs`, `segment/mergeseq.rs` and `kmm/generate.rs`. A field with no digits is the null token, not an error, as at the pin. |
 | `TAGLIB_GET_TOKEN` `atoi` and `TAGLIB_GET_TAGVALUE(glong, .., atol)` in `import_k_mixture_model` and `k_mixture_model_to_interpolation` | Reproduce | `kmm/src/text.rs`: tokens `atoi`, counts `atol` then the low 32 bits for the model fields; the interpolation converter prints the token as `i32` and the count as `i64`. The line grammar (fixed field positions) is the crate's own and is unchanged. `assert(count == T)` in the importer is not a conversion and is untouched. |
-| Classic count `atoi` (ibus-libpinyin `PYLibPinyin.cc:262-267`; `pinyin.cpp:520-524`) | Frozen dictool contract | Not the pin library: the frontend is a separate package and dictool specifies its own grammar, `count := digit+`, with explicit errors and a *desired absolute count* meaning (`dictool-format.md` §2-3). Reproducing `atoi` would reverse that contract, which needs a human ruling. No change. Observed: `count_text.parse::<u64>()` also accepts a leading `+`, which the grammar does not list. |
+| Classic count `atoi` (ibus-libpinyin `PYLibPinyin.cc:262-267`; `pinyin.cpp:520-524`) | Frozen dictool contract | Not the pin library: the frontend is a separate package and dictool specifies its own grammar, `count := digit+`, with explicit errors and a *desired absolute count* meaning (`dictool-format.md` §2-3). Reproducing `atoi` would reverse that contract, which needs a human ruling. No change. The leading `+` that `parse::<u64>` used to accept is now refused with the line-numbered count error, as `digit+` requires. |
 | `import_interpolation` `atoi`/`atol` (`utils/storage/import_interpolation.cpp:135-182`) | Outside the three tool crates | The Rust reader is `oxpinyin-data` `interp.rs`; it stays pending under G16. |
 | `gen_zhuyin_table` `atoi`, `gen_pinyin_table` `fscanf("%u")`, `table_text_parser.h:62` `g_ascii_strtoull` | Outside the three tool crates | Datagen audit; unchanged. |
 | `parse_interpolation_dump`, `candidate.rs`, `status.rs` parses | No pin parser | They read oxpinyin's own counter dump, candidate index and status JSON; the pin consumes these only through Python scripts. Not a conversion of a pin input. |
