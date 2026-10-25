@@ -181,4 +181,34 @@ fn rust_matches_live_gen_ngram() {
         live.unigrams.len(),
         live.bigrams.len()
     );
+
+    // Source-derived accepted partitions, utils/utils_helper.h:57-65:
+    // atoi accepts a decimal prefix, TAB splits just like SP, and zero
+    // bypasses phrase validation even with repeated separators, Unicode
+    // format/unassigned scalars and a literal dangling backslash.
+    let classified: String = std::str::from_utf8(&fixture)
+        .expect("UTF-8 fixture")
+        .lines()
+        .map(|line| match line.split_once(' ') {
+            Some(("0", _)) => "0 \t\u{200d}\u{378}\\\n".to_owned(),
+            Some((token, phrase)) => format!("{token}suffix\t{phrase}\n"),
+            None if line.is_empty() => "\n".to_owned(),
+            None => panic!("fixture has no separator: {line:?}"),
+        })
+        .collect();
+    let export = locate_export_dir().expect("system tables");
+    let lexicon = PhraseLexicon::from_system_dir(&export).expect("phrase lexicon");
+    let classified_rust = count_ngseg(&lexicon, &classified, true).expect("classified stream");
+    assert_counts_equal(&rust, &classified_rust);
+    let classified_live = run_live_pipeline(
+        &gen_binary_files,
+        &gen_unigram,
+        &gen_ngram,
+        &export_interpolation,
+        &data,
+        classified.as_bytes(),
+    )
+    .expect("classified live gen_ngram pipeline");
+    assert_counts_equal(&rust, &classified_live);
+    eprintln!("classified prefixes, TAB separators and zero-token tails: value-identical");
 }

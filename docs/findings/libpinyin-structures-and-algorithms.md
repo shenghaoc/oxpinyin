@@ -660,3 +660,22 @@ Under #864, binary file savings cannot offset a runtime regression: file
 size is governed separately by Constitution §2. Heap use and allocation
 counts did not improve meaningfully, so the runtime time/space rule rejects
 the increased parser instruction cost.
+
+### Tool record splitting (#926, 2026-10-25 UTC)
+
+The pin's segmented reader (`utils/utils_helper.h:51-69` at `074a2219`)
+uses a two-field space/TAB split, an integer prefix and exact nonzero-token
+phrase validation before `gen_ngram.cpp:82-117` updates model counts.
+The classic frontend instead limits the split to three fields
+(`PYLibPinyin.cc:254` at `2d2cdac`). GLib 2.89.4
+`gstrfuncs.c:2489-2551` scans bytes using a delimiter table, copies each
+field and reverses its temporary list into an array: O(n) time and O(n)
+auxiliary bytes for either fixed field limit.
+
+Rust uses `str::split_once` and `str::splitn(3, [' ', '\t'])` respectively,
+borrowing fields and retaining empties/tails, with O(n) time and O(1)
+auxiliary space. Its unsigned numeric-prefix helper now borrows a prefix
+instead of constructing a `String`. No observable behavior is changed;
+the existing numeric-domain and phrase-validation gaps are not excused by
+this equivalent refactor. The [tool audit](926-tool-tokenizers.md) traces
+callers, output contracts, classified partitions and remaining work.

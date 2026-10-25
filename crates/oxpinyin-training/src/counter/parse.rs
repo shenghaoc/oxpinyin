@@ -1,6 +1,6 @@
 //! Token-stream and dump parsing.
 //!
-//! [`parse_ngseg`] reproduces `TAGLIB_PARSE_SEGMENTED_LINE`
+//! [`parse_ngseg`] reads the token fields of `TAGLIB_PARSE_SEGMENTED_LINE`
 //! (`utils/utils_helper.h:51-74`); [`parse_interpolation_dump`] reads the
 //! value shape of `export_interpolation` (`utils/storage/export_interpolation.cpp`).
 
@@ -12,13 +12,16 @@ use crate::counter::counts::Counts;
 use crate::counter::error::CounterError;
 
 /// Parses the ngseg segmented-token stream into token IDs, `NULL_TOKEN`
-/// marking sentence separators, exactly as `gen_ngram` sees it.
+/// marking sentence separators for the counter.
 ///
 /// `gen_ngram` reads the stream with `getline` (one record per `\n`) and
 /// feeds each line to `TAGLIB_PARSE_SEGMENTED_LINE`: an empty line stays
 /// `null_token`, any other line must split into exactly two `space`/`tab`
 /// fields whose first field is the decimal token. A line that does not
 /// split into two fields aborts `gen_ngram`; here it is an error.
+/// Unlike the pin macro, this helper does not validate nonzero tokens
+/// against their phrase text. Numeric-domain and validation follow-ups
+/// are classified in `docs/findings/926-tool-tokenizers.md`.
 ///
 /// # Errors
 ///
@@ -49,8 +52,9 @@ fn parse_segmented_line(line: &str, number: usize) -> Result<u32, CounterError> 
     Ok(atoi(token_text))
 }
 
-/// Leading-decimal-digits parse mirroring C `atoi` for the unsigned token
-/// field (never signed, never whitespace-prefixed after the split).
+/// Decimal-prefix parse for unsigned token fields emitted by the segmenter.
+/// This is not a general C `atoi`: signed/overflowing inputs are a separate
+/// compatibility gap, unchanged by borrowing the prefix instead of copying it.
 fn atoi(text: &str) -> u32 {
     let end = text.bytes().take_while(u8::is_ascii_digit).count();
     text[..end].parse::<u32>().unwrap_or(0)
