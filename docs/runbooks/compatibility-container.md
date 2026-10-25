@@ -150,11 +150,14 @@ The launcher diagnoses Git Bash and directs it to WSL rather than treating
 MSYS paths as Linux mounts. Native Windows work still needs neither WSL nor
 a container.
 
-The reference platform is the host's frozen platform: linux/amd64 or
-linux/arm64. Both have mandatory recorded hashes. Use a runtime that can
-build and run images for this platform; an arm64 host uses native arm64
-images, not amd64 emulation. Apple `container`'s arm64 oracle path is
-exercised natively; its restart behavior and the full compatibility smoke
+The reference platform defaults to the host's frozen platform: linux/amd64
+or linux/arm64. Both have mandatory recorded hashes. Use a runtime that can
+build and run images for this platform; by default an arm64 host uses
+native arm64 images, not amd64 emulation. `--platform linux/amd64` on an
+arm64 host is an explicit override that runs the amd64 reference under the
+runtime's emulation: its results are functional only, never timing or
+performance claims, and it does not replace the native default. Apple
+`container`'s arm64 oracle path is exercised natively; its restart behavior and the full compatibility smoke
 are not claimed here. If the installed runtime cannot execute the platform,
 use an appropriate Linux VM/environment with Docker/Podman rather than
 changing pins or loading Linux libraries on macOS.

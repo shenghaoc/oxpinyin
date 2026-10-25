@@ -57,6 +57,15 @@ class BoundaryTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'unknown issue'):
                 boundary.validate(['--runners', 'contract-diff', '--issue', 'not-known'], {})
 
+    def test_cases_need_contract_diff_in_runners(self):
+        for argv in (['--runners', 'pc-version', '--cases', 'default-option-parse'],
+                     ['--issue', '919', '--cases', 'default-option-parse'],
+                     ['--list', '--cases', 'default-option-parse']):
+            with self.subTest(argv=argv), self.assertRaisesRegex(ValueError, 'requires --runners contract-diff'):
+                boundary.validate(argv, {})
+        args = boundary.validate(['--runners', 'pc-version,contract-diff', '--cases', 'default-option-parse'], {})
+        self.assertEqual(args.cases, 'default-option-parse')
+
     def test_readonly_modes_cannot_silently_ignore_inputs(self):
         for mode in ('--memory-smoke', '--list'):
             with self.assertRaisesRegex(ValueError, 'cannot select'):

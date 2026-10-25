@@ -9,7 +9,8 @@ No exception admission and no executed fault injection.
 At libpinyin `074a2219`, both phrase-segment exports reach
 `lookup/phrase_lookup.cpp:255-276` for a matching scalar prefix before a
 later non-scalar. With input `e4 bd a0 ed a0 80 00`, sound scalar phrase
-keys/items and successful GLib 2.89.4-2 conversion, the system gram lookup
+keys/items and successful GLib 2.84.4 (trixie; the testing run used
+2.89.4-2, whose cited conversion paths are unchanged) conversion, the system gram lookup
 uses the kc `Bigram::load` at `storage/ngram_kyotodb.cpp:124-142`.
 
 The precise failure schedule is: `check` returns nonnegative size S,

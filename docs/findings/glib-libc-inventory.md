@@ -2,9 +2,10 @@
 
 Status: **current audit** (#917) · 2026-10-24 UTC · Parent: #915.
 Pin: libpinyin 2.11.92 at `074a2219c90feaf962d0d24f034514033ece5f99`.
-Oracle image: `debian:testing@sha256:dab11cdb0a9dcf4bbd68f671635b35f1f726b452b92396875b69bb2c7daa42a9`,
-apt snapshot `20260831T000000Z`, linux/amd64. **GLib 2.89.4-2**,
-**glibc 2.43-3**.
+Oracle image: `debian:trixie` (Debian 13.7, the current stable codename)
+from the default mirrors, linux/amd64. **GLib 2.84.4-3~deb13u5**,
+**glibc 2.41-12+deb13u4**. The reference environment moved from the testing
+digest/snapshot to trixie on 2026-10-25 UTC; see the G11 amendment below.
 Scope: the 79 `pinyin_*` and 52 `zhuyin_*` exports in
 `src/libpinyin.ver` and `src/libzhuyin.ver`, their reachable helpers,
 and the oxpinyin `crates/` counterparts. Test, oracle and tool-only code
@@ -235,6 +236,45 @@ second with the declared result; neither reproduces the uninitialised or
 invalid read. The four existing `host_scanf` cases remain HOST-DEPENDENT
 on glibc 2.39 (`1e`, `0x1p`); the reference cell is the oracle image's
 glibc 2.43-3.
+
+**trixie reference (2026-10-25 UTC).** The pin-reference image now builds on
+`debian:trixie` (Debian 13.7), whose glibc is **2.41-12+deb13u4**. Re-read
+from that source: the 2.41 `%f` lexer sets `got_e = got_dot = 1` at an
+exponent mark but does not clear `got_digit`
+(`stdio-common/vfscanf-internal.c:2196-2201`), and the post-loop conversion
+check tests only the empty buffer and the bare `0x` prefix, not `!got_digit`
+(`:2545-2549`). 2.43-3 adds both (`vfscanf-internal.c:2218-2219`,
+`:2571-2576`). Consequently 2.41 converts `1e`, `1e+`, `0x1p`, `0x1p+` and
+`0x1p-` (the buffer is `1e`/`0x1p`, and `strtof` consumes `1`/`0x1`), while
+`0x` and `infin` still fail. `stdlib/strtod_l.c` has no behavioural change
+in the cited parse, rounding or exponent paths, so the value and consumed
+bytes are 2.41's. The subject still emulates 2.43-3 and rejects these
+spellings: this is a reference-environment difference to report, not to tune
+away. Affected cases (both facades): `table-conf-lambda-exponent-without-digits`,
+`table-conf-lambda-hex-exponent-without-digits`,
+`table-conf-919-lambda-exponent-sign-without-digits`,
+`table-conf-919-lambda-hex-exponent-sign-without-digits` and
+`table-conf-919-lambda-hex-exponent-minus-without-digits`. On trixie the pin
+side loads and the subject refuses, so the existing `host_scanf` disposition
+reports them HOST-DEPENDENT rather than DIFFER. A second difference in the
+same walk is `0x.`, which has the hexadecimal prefix and no digit. 2.41's
+`%f` reaches `strtof("0x.")`, which treats it as the number 0 and returns
+with the read pointer after `0` (`stdlib/strtod_l.c` at 2.41: hex prefix
+`:690-700`, the `0x.` branch `:732-768`, the zero-digit return
+`:1044-1048`), so the conversion succeeds. 2.43 rejects it because
+`got_digit` is still zero (`vfscanf-internal.c:2571-2576`). The subject
+follows 2.43, so on trixie the pin loads and the subject refuses
+`table-conf-919-lambda-hex-dot-without-digits` and its zhuyin twin. At
+`8ba13c53` (preserved on wip/1229-pre-squash), before `0x.` was registered,
+those two cases reported DIFFER. Both facades now register
+`host_scanf=('0x.',)` (maintainer ruling, 2026-10-25), so on a host whose
+scanner accepts `0x.` the pin-loads/subject-refuses result reports
+HOST-DEPENDENT; any other difference stays DIFFER. This is the same
+library-version finding, not a subject defect to fix here. The `%d` lexer
+is unchanged for the base-10 table fields (2.43's added
+`(base == 0 || base == 16)` guard still leaves `0x` at `0` for `%d`), and
+`%255s` is unchanged for the caller-provided 256-byte buffer (2.43's
+buffer-size change is in the `%c` and `%m` allocation paths).
 
 The #920 `user.conf` walk uses the same scanner: version and counter
 `%d` values take LP64 `strtol` saturation followed by the low 32 bits of

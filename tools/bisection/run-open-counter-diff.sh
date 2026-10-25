@@ -104,7 +104,9 @@ CRASHES="${OPEN_COUNTER_CRASHES:-10}"
 
 # The seeded protocol's cases: user.conf's fourth line as printf %b writes
 # it, and what glibc's fscanf("open counter:%d\n") reads there. The %d
-# column is glibc's, checked in debian:testing (glibc 2.43).
+# column is glibc's, checked in the pin-reference image (glibc 2.41 on
+# trixie; the %d lexer is unchanged from the testing 2.43 build for these
+# values).
 SEEDS=(control-5 control-7 negative plus plus-over garbage garbage-over garbage-byte invalid-prefix
     space tab vtab newline indent spaced joined overflow-int overflow-wrap overflow-long
     overflow-neg under-int empty sign missing)

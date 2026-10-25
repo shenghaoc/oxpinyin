@@ -351,7 +351,7 @@ setup contacts, and what a session showed on 2026-10-16 UTC:
 | Host | Used for | Seen |
 | --- | --- | --- |
 | `registry-1.docker.io`, `auth.docker.io`, `production.cloudflare.docker.com` | the `debian:trixie` base image | reachable (429 under load; retried) |
-| `deb.debian.org` | the Debian stable package mirrors | reachable |
+| `snapshot.debian.org` | the apt snapshot the toolchain was installed from | reachable once allowed (403 before) |
 | `github.com` | libpinyin at the pinned commit (`git fetch --depth=1 <url> <sha>`) | reachable |
 | `github.com`, `release-assets.githubusercontent.com` | uv fallback archive and uv-managed CPython release assets | required when uncached; no fresh download measured for #1055 |
 | `downloads.sourceforge.net` and its redirect target, a rotating `*.dl.sourceforge.net` mirror | model20 archive | reachable (redirected to `cytranet-dal.dl.sourceforge.net`) |
@@ -364,8 +364,11 @@ session. The #1055 report records a cloud session refusing
 change from the environment owner or use an already verified local cache;
 model20 must not be mirrored or published by the project.
 
-`deb.debian.org` is the package mirror the trixie toolchain is installed
-from, and `--regen-data` compiles the pin's data build, so both the library
+**Current package mirror.** The trixie toolchain installs from
+`deb.debian.org`, the Debian stable package mirror, which a session's network
+policy has to allow; setup no longer contacts `snapshot.debian.org`. No
+session has been recorded reaching `deb.debian.org`, so that access is
+unverified. `--regen-data` compiles the pin's data build, so both the library
 build and the data step need the `deps` image. The normal image workflow now
 also publishes that exact `deps` stage as
 `ghcr.io/shenghaoc/oxpinyin-oracle:<oracle-tag>-deps` on amd64 and

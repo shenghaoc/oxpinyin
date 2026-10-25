@@ -654,6 +654,13 @@ class VerdictTests(DriverFixtureCase):
     """verdict_for: a difference needs two valid observations; a registered
     termination keeps the matcher's own semantics."""
 
+    def test_hex_dot_controls_register_both_facades_as_host_scanf(self):
+        self.assertEqual(
+            [contract['CASES']['table-conf-919-lambda-hex-dot-without-digits' + suffix]['host_scanf']
+             for suffix in ('', '-zhuyin')],
+            [('0x.',), ('0x.',)],
+        )
+
     def plain(self, control=False):
         return dict(contract['CASES']['default-option-parse'], control=control)
 

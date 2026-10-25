@@ -49,8 +49,10 @@ Native tests and the bdb compatibility gate for the new raw-path
 implementation are reported in its G1 record. The conversion/over-read
 questions were checked with
 `objdump -dlS -C --no-show-raw-insn` and `readelf` on the hash-matching
-bdb pin libraries from `tools/oracle/oracle-pin.txt` and the snapshot's
-GLib 2.89.4-2 libraries, on amd64 and arm64. amd64 is the reference.
+bdb pin libraries from `tools/oracle/oracle-pin.txt` and the testing
+snapshot's GLib 2.89.4-2 libraries, on amd64 and arm64. amd64 is the
+reference. The trixie image supplies GLib 2.84.4-3~deb13u5; the cited encoder
+paths were re-read on 2026-10-25 UTC and are unchanged.
 The normal-prefix and short-gram state questions below are settled by
 source. A later [bdb format-error check](918-prefix-bdb-format-error.md)
 used both architectures' dependency binaries only to resolve the

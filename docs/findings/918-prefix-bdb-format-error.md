@@ -11,8 +11,9 @@
   separate error-lifecycle entry in the follow-through, not a skipped
   read.
 - **Pin:** libpinyin source `074a2219`, both facades, bdb build;
-  GLib 2.89.4-2/glibc 2.43-3. Dependency source db5.3
-  `5.3.28+dfsg2-11`, binary `5.3.28+dfsg2-11+b1`, from the pinned snapshot.
+  GLib 2.84.4-3~deb13u5/glibc 2.41-12+deb13u4 (trixie; amended
+  2026-10-25 UTC). Dependency source db5.3 `5.3.28+dfsg2-9`, binary
+  `5.3.28+dfsg2-9+b1`, from trixie; the same upstream 5.3.28.
 - **Rust:** both facade `phrase.rs` exports and
   `engine/src/phrase.rs::phrase_segment_ucs4`; baseline `1c5d96b9` for
   the bypass, current head for the restored read.

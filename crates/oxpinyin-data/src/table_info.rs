@@ -1118,9 +1118,10 @@ mod tests {
         assert!(conf.lambda_f32().is_nan());
     }
 
-    /// What glibc's `sscanf("%f%n")` answered for each spelling, measured on
-    /// the pin's platform (glibc 2.43): the value and the bytes taken, or a
-    /// failed conversion.
+    /// What glibc's `sscanf("%f%n")` answered for each spelling on the 2.43
+    /// testing reference: the value and the bytes taken, or a failed
+    /// conversion. The subject follows that scanner; the trixie reference is
+    /// 2.41, whose bare-exponent acceptance is the recorded G11 difference.
     #[test]
     fn float_spellings_read_like_glibc() {
         let cases: &[(&str, Option<(f32, usize)>)] = &[

@@ -197,8 +197,9 @@ def case(name, *args, **kwargs):
     must still die of SIGSEGV and the subject answer `<fields>`, but the
     stderr bytes are not compared.
     `host_scanf=<spellings>` names `%f` inputs the case expects the host
-    libc's scanner to reject, as the oracle image's glibc does. The pin
-    reads them with the host libc, so on a host whose scanner accepts one
+    libc's scanner to reject, as the glibc 2.43 scanner the subject follows
+    does. The pin reads them with the host libc, so on a host whose scanner
+    accepts one
     the pin loads what the subject refuses. Only that difference (the pin
     created its context; the subject refused `table.conf`) prints
     `HOST-DEPENDENT` instead of `DIFFER` outside `--expect-parent` and is
@@ -9427,7 +9428,7 @@ for _name, _spelling, _control, _host in (
         ('lambda-exponent-sign-without-digits', '1e+', True, ('1e+',)),
         ('lambda-hex-exponent-sign-without-digits', '0x1p+', True, ('0x1p+',)),
         ('lambda-hex-exponent-minus-without-digits', '0x1p-', True, ('0x1p-',)),
-        ('lambda-hex-dot-without-digits', '0x.', True, ()),
+        ('lambda-hex-dot-without-digits', '0x.', True, ('0x.',)),
         ('lambda-nan-unclosed', 'nan(', True, ())):
     for _mode in ('pinyin', 'zhuyin'):
         _suffix = '-zhuyin' if _mode == 'zhuyin' else ''

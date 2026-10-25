@@ -7,7 +7,8 @@
   words and compared with the stored raw key. This is not a
   language/runtime quirk, a class (a)–(c) case, or a Stage 3 departure.
 - **Pin:** libpinyin `074a2219c90feaf962d0d24f034514033ece5f99`, GLib
-  2.89.4-2/glibc 2.43-3 reference environment; both facades.
+  2.84.4-3~deb13u5/glibc 2.41-12+deb13u4 reference environment (trixie;
+  amended 2026-10-25 UTC); both facades.
 - **Rust:** both facade `phrase.rs::segment_text` and
   `*_phrase_segment`, `oxpinyin_core::ucs4::decode`,
   `Dictionary::tokens_for_ucs4`, the system and user phrase-table raw

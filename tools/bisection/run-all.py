@@ -438,6 +438,7 @@ def run_main():
         raise ValueError("run-all.py needs POSIX fcntl; Windows support requires #895 Stage 2 (`just heavy`)")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--runners', help='comma-separated registry names (default: every gate)')
+    parser.add_argument('--cases', help='comma-separated contract-diff case IDs (requires contract-diff)')
     parser.add_argument('--cells', default='bdb', help='comma-separated bdb,kc,tkrzw')
     parser.add_argument('--issue', action='append', default=[],
                         help='issue number, W tag, or row:N; selects the runners and the exact '
@@ -500,6 +501,16 @@ def run_main():
     if requested_issues and 'contract-diff' in selected:
         index = contract_tag_index()
         contract_cases = contract_cases_for(requested_issues, index)
+    requested_cases = {name.strip() for name in args.cases.split(',')} if args.cases else set()
+    if requested_cases:
+        if 'contract-diff' not in selected:
+            parser.error('--cases requires --runners contract-diff')
+        index = index or contract_tag_index()
+        unknown_cases = requested_cases - set(index['modes'])
+        if unknown_cases:
+            parser.error('unknown contract case(s): ' + ', '.join(sorted(unknown_cases)))
+        for name in requested_cases:
+            contract_cases.setdefault(name, ['--cases'])
     runner_tags = {normal_tag(tag) for row in catalog for tag in row.get('issues', [])}
     known_issues = runner_tags | {normal_tag(tag) for tag in (index or {}).get('tags', {})}
     unknown_issues = requested_issues - known_issues

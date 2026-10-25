@@ -35,9 +35,10 @@ what used to differ.
 - **Record:** [894-non-scalar-phrase-text](894-non-scalar-phrase-text.md)
   (dated superseded note, 2026-10-24 UTC).
 - **Former classification:** decision-order limb 3, not class (b) merely
-  because Rust `str` cannot contain a non-scalar. GLib 2.89.4-2 emits
-  extended UTF-8 for surrogates and U+110000; the old Rust path refused
-  the item.
+  because Rust `str` cannot contain a non-scalar. GLib 2.84.4-3~deb13u5
+  (trixie) emits extended UTF-8 for surrogates and U+110000, as the
+  2.89.4-2 testing build did; the old Rust path refused the item.
+  Re-read 2026-10-25 UTC.
 - **Status:** **CLOSED (2026-10-24 UTC, #1182).** The stored UCS-4 words
   are carried as words (`PhraseText` in
   `crates/oxpinyin-core/src/ucs4.rs`; the chunk reader in

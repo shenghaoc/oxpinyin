@@ -674,14 +674,19 @@ of completing a contribution.
   arm64-only #1137 exclusions; same-data was identical on 15/15 drivers.
   See [the arm64 oracle finding](../findings/oracle-arm64-1132.md).
 - Canonical Debian/Linux amd64 compatibility environment (debian:trixie,
-  glibc 2.41, GLib 2.84): the oracle and compat images rebuilt on trixie;
-  `contract-diff` on 3,017 cases per cell reported bdb 2,988 MATCH / 15
-  POLICY-ACCEPTED / 10 HOST-DEPENDENT / 2 SKIP / 2 DIFFER, kc 2,983 / 15 /
-  10 / 7 / 2, tkrzw 2,985 / 15 / 10 / 5 / 2. The 2 DIFFER are the `0x.`
-  glibc-version host-dependence finding; the 10 HOST-DEPENDENT are the
-  exponent spellings. A targeted bdb rerun of the eight affected cases
-  returned the same 2 DIFFER and 6 HOST-DEPENDENT. The perf-matrix and
-  callgrind images built on debian:testing and their smoke steps passed.
+  glibc 2.41, GLib 2.84): the oracle and compat images rebuilt on trixie.
+  Historical, at `8ba13c53` (preserved on wip/1229-pre-squash), before `0x.`
+  was registered with `host_scanf`: `contract-diff` on 3,017 cases per cell
+  reported bdb 2,988 MATCH / 15 POLICY-ACCEPTED / 10 HOST-DEPENDENT / 2 SKIP
+  / 2 DIFFER, kc 2,983 / 15 / 10 / 7 / 2, tkrzw 2,985 / 15 / 10 / 5 / 2. The
+  2 DIFFER are the `0x.` glibc-version host-dependence finding; the 10
+  HOST-DEPENDENT are the exponent spellings. A targeted bdb rerun of the
+  eight affected cases at the same revision returned the same 2 DIFFER and
+  6 HOST-DEPENDENT. The current checker registers `0x.` with `host_scanf`,
+  so on a host whose scanner accepts it those two cases report
+  HOST-DEPENDENT when the pin loads and the subject refuses. The
+  perf-matrix and callgrind images built on debian:testing and their smoke
+  steps passed.
 - Anonymous oracle artifact retrieval/hash verification passed. Anonymous
   `-deps` retrieval awaits normal publication. See the PR for final-head CI
   and the current cloud-provisioning/compatibility smoke status.

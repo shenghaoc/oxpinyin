@@ -11,8 +11,9 @@ true/token when the table holds the non-scalar key
 
 ## Input and source derivation
 
-Pin source: `074a2219c90feaf962d0d24f034514033ece5f99`, GLib 2.89.4-2,
-glibc 2.43-3; both facades and the three backend wrappers. Paths below
+Pin source: `074a2219c90feaf962d0d24f034514033ece5f99`, GLib
+2.84.4-3~deb13u5, glibc 2.41-12+deb13u4 (trixie; amended 2026-10-25 UTC);
+both facades and the three backend wrappers. Paths below
 start at `src/`. The bounded trigger is `e4 bd a0 ed a0 80 00`: `你`,
 U+D800's historical UTF-8 encoding, NUL. The scalar phrase table and
 items are consistent; the reached sentence-start predecessor (token 1)
