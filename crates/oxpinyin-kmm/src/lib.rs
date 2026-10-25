@@ -20,6 +20,7 @@
 #![cfg_attr(not(test), deny(clippy::panic))]
 #![cfg_attr(not(test), deny(clippy::panic_in_result_fn))]
 
+mod cnum;
 mod error;
 mod estimate;
 mod generate;
@@ -29,6 +30,7 @@ mod prune;
 mod text;
 mod validate;
 
+pub use cnum::{atoi, atol};
 pub use error::KmmError;
 pub use estimate::{EPSILON, Estimate, SEED_LAMBDA, estimate};
 pub use generate::{DEFAULT_MAX_INCREASE_RATE, DEFAULT_MAX_OCCURS, GenerateParams};

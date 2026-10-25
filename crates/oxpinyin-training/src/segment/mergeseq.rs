@@ -134,10 +134,9 @@ fn parse_token(line: &str) -> Result<u32, SegmentError> {
             .ok_or_else(|| SegmentError::MalformedLine {
                 detail: format!("no separator in {line:?}"),
             })?;
-    head.parse::<u32>()
-        .map_err(|_| SegmentError::MalformedLine {
-            detail: format!("token field {head:?} is not an integer"),
-        })
+    // `atoi` of the first field (`utils_helper.h:61`): a field with no digits
+    // is the null token, not an error.
+    Ok(oxpinyin_kmm::atoi(head.as_bytes()))
 }
 
 /// Merges a whole segmented stream, returning the re-emitted stream.
@@ -167,6 +166,19 @@ pub fn merge_bytes(lexicon: &PhraseLexicon, input: &[u8]) -> Result<String, Segm
 mod tests {
     use super::merge_bytes;
     use crate::segment::lexicon::PhraseLexicon;
+
+    #[test]
+    fn tokens_read_as_glibc_atoi() {
+        // `mergeseq.cpp:157` reads the first field with `atoi`: a sign and C
+        // white space are accepted, and a token is its low 32 bits. The
+        // lexicon below resolves 10 and 11 to a phrase of token 12.
+        let input = "+10 \u{4e2d}\n\r4294967307 \u{56fd}\n-4294967286 \u{4e2d}\n0 \n";
+        let plain = "10 \u{4e2d}\n11 \u{56fd}\n10 \u{4e2d}\n0 \n";
+        assert_eq!(
+            super::merge_bytes(&lexicon(), input.as_bytes()).expect("signed"),
+            super::merge_bytes(&lexicon(), plain.as_bytes()).expect("plain")
+        );
+    }
 
     fn lexicon() -> PhraseLexicon {
         PhraseLexicon::from_pairs(vec![
