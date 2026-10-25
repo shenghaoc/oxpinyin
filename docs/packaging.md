@@ -365,9 +365,13 @@ relink log shows whether the compiler dropped one. A missing
 Rust or C path still fails; the shim's `extern "C"` entry points (`oxkc_*`)
 are C paths.
 
-A policy that went stale and merged is reported by the nightly
-`function-order-policy` job in `.github/workflows/verify-nightly.yml`
-(#1071). The job builds both facades' staticlibs for BDB, KC and tkrzw with
+A policy that goes stale is checked before merge by the
+`function-order-policy` job in `.github/workflows/ci.yml`. It runs on a PR
+that changes `Cargo.lock` or a file under
+`tools/packaging/function-order/`, the two inputs behind the `cc` bump in
+#1210, and reports `skipped` on every other PR. A source rename or inlining
+can stale a policy too; that case stays with the nightly job below. It builds both
+facades' staticlibs for BDB, KC and tkrzw with
 the release recipe
 (`tools/packaging/install.sh`, the build whose archive the relink reads) and
 runs `tools/packaging/function-order.sh resolve ARCHIVE POLICY SONAME` for
@@ -377,10 +381,15 @@ and one cargo-c installation for the job. It switches the relink's own
 ordering off, as
 "Regeneration" below does, so that a stale policy fails this check, with its
 message, and not the relink. On an unresolved path the job prints the
-resolver's `unresolved policy path` line and points to "Regeneration". It
-runs on the schedule and on a manual dispatch of that workflow
+resolver's `unresolved policy path` lines and points to "Regeneration".
+
+The nightly `function-order-policy` job in
+`.github/workflows/verify-nightly.yml` (#1071) runs the same build and
+resolve on the schedule and on a manual dispatch of that workflow
 (`gh workflow run verify-nightly.yml --ref <branch>`, which also runs every
-other nightly job; `windows_only` skips it) and blocks no merge. The check uses
+other nightly job; `windows_only` skips it), so a stale policy that reaches
+`main` another way is still reported the next night. It blocks no merge; the
+PR job is the pre-merge check. The check uses
 the backend-specific policy paths for all three backends; the legacy BDB
 aliases remain available for compatibility.
 
