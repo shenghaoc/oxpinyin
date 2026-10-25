@@ -6,6 +6,7 @@ import io
 import os
 from pathlib import Path
 import runpy
+import subprocess
 import sys
 import tempfile
 import threading
@@ -75,6 +76,51 @@ class RunnerSelectionTests(unittest.TestCase):
         rows = self.list_rows('--runners', 'bisect,contract-diff', '--issue', '545', index=index)
         self.assertEqual([row['name'] for row in rows], ['contract-diff'])
         self.assertEqual(rows[0]['command'][-3:], ['--', '--cases', 'default-option-parse'])
+
+    def test_cases_keep_the_order_given_once_each_as_contract_diff_does(self):
+        names = ['table-conf-a', 'phrase-text/b', 'default-option-parse', 'zero-key/c', 'x']
+        index = {'tags': {}, 'modes': dict.fromkeys(names, 'pinyin')}
+        for ordering in (names, names[::-1], names[2:] + names[:2], names + names[:2]):
+            with self.subTest(ordering=ordering):
+                rows = self.list_rows('--runners', 'contract-diff', '--cases', ','.join(ordering), index=index)
+                self.assertEqual(rows[0]['command'][-3:],
+                                 ['--', '--cases', ','.join(dict.fromkeys(ordering))])
+
+    def test_empty_cases_exit_two_before_scheduling(self):
+        index = {'tags': {}, 'modes': {'default-option-parse': 'pinyin'}}
+        for value in ('', ' ', ',', ' , ', 'default-option-parse,', ',default-option-parse'):
+            for extra in ([], ['--list']):
+                with self.subTest(value=value, extra=extra):
+                    message = self.selection_error('--runners', 'contract-diff', '--cases', value,
+                                                   *extra, index=index)
+                    self.assertIn('--cases', message)
+
+    def test_empty_cases_exit_two_from_the_command_line(self):
+        script = Path(__file__).with_name('run-all.py')
+        for value in ('', ' , '):
+            with self.subTest(value=value):
+                result = subprocess.run(
+                    [sys.executable, '-X', 'lazy_imports=normal', str(script), '--list', '--runners',
+                     'contract-diff', '--cases', value], capture_output=True, text=True, check=False)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn('--cases must name at least one case ID', result.stderr)
+                self.assertEqual(result.stdout, '')
+
+    def test_omitted_cases_is_not_an_error(self):
+        rows = self.list_rows('--runners', 'contract-diff')
+        self.assertNotIn('--cases', rows[0]['command'])
+
+    def test_cases_order_does_not_depend_on_the_process(self):
+        script = Path(__file__).with_name('run-all.py')
+        tails = set()
+        for seed in ('0', '1', '2', '12345'):
+            result = subprocess.run(
+                [sys.executable, '-X', 'lazy_imports=normal', str(script), '--list', '--runners', 'contract-diff',
+                 '--cases', 'default-option-parse,explicit-use-tone-parse,default-option-parse'],
+                env=dict(os.environ, PYTHONHASHSEED=seed), capture_output=True, text=True, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            tails.add(tuple(json.loads(result.stdout.splitlines()[0])['command'][-3:]))
+        self.assertEqual(tails, {('--', '--cases', 'default-option-parse,explicit-use-tone-parse')})
 
     def test_cells_do_not_filter_the_listed_rows(self):
         self.assertEqual(self.list_rows('--cells', 'bdb'), run_all['_registry'].load())
