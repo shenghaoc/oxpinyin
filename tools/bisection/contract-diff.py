@@ -12525,6 +12525,48 @@ for _mode in ('pinyin', 'zhuyin'):
          issues=('924', '924-oom'))(glib_924_oom_array)
 
 
+# Source-derived defect witnesses, deliberately ordinary DIFFERs rather than
+# policy exceptions. 074a2219 pinyin.cpp:2805-2818 / zhuyin.cpp:1797-1810
+# ignore g_array_set_size/append_vals' NULL returns; reduce_tokens at
+# storage/phrase_large_table3.h:77-97 does the same for lookup_tokens.
+# GLib 2.89.4 garray.c:611,778 emits criticals, not a NULL dereference.
+def glib_924_null_array(k, operation):
+    """Observe NULL-array return values and macro-generated GLib criticals."""
+    inst = k.inst
+    token = tokens_of(k, '你好')[0]
+    # Kit normally captures the facade and default domains. These checks
+    # originate inside GLib, whose build supplies G_LOG_DOMAIN="GLib".
+    install = k.glib.g_log_set_handler
+    callback_type = type(k._handler)
+    install.argtypes, install.restype = [S, U, callback_type, P], U
+    handler_id = install(b'GLib', 0xFFFFFFFC, k._handler, None)
+    out = {}
+    try:
+        for found in (True, False):
+            k.logs.clear()
+            k.log_messages.clear()
+            if operation == 'lookup':
+                phrase = '你好'.encode() if found else b'not-a-phrase'
+                ret = k.fn('lookup_tokens', B, P, S, P)(inst, phrase, None)
+            else:
+                ret = k.fn('token_get_nth_pronunciation', B, P, U, U, P)(
+                    inst, token if found else 0xFFFFFFFF, 0, None)
+            out['found' if found else 'missing'] = dict(
+                ret=ret, logs=list(k.logs), messages=list(k.log_messages))
+    finally:
+        remove = k.glib.g_log_remove_handler
+        remove.argtypes, remove.restype = [S, U], None
+        remove(b'GLib', handler_id)
+    return out
+
+
+for _mode in ('pinyin', 'zhuyin'):
+    for _operation in ('lookup', 'pronunciation'):
+        case(f'glib-924-null-array-{_operation}-{_mode}', mode=_mode,
+             issues=('924', '924-null-array'))(
+            lambda k, operation=_operation: glib_924_null_array(k, operation))
+
+
 # #542's remaining named audit inputs, kept in the existing isolated worker.
 def phrase_segment_invalid_utf8(k):
     """Segment two invalid UTF-8 bytes and return the flag with the kit's live log-message list."""
