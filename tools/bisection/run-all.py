@@ -175,13 +175,8 @@ def reason_for(rc, output, timeout, expired=False):
 
 
 def normal_tag(tag):
-    """Trim issue selectors, remove leading # characters, and lowercase them.
-
-    Canonicalize an initial row plus spaces or colons to row:, so Row 54 and
-    row:54 agree; numeric issue tags and W tags remain distinct.
-    """
-    tag = str(tag).strip().lstrip('#').lower()
-    return re.sub(r'^row[ :]*', 'row:', tag)
+    """Normalize an issue selector exactly as the shared registry does."""
+    return _registry.normal_issue(str(tag))
 
 
 def contract_tag_index():
@@ -486,8 +481,11 @@ def run_main():
     args = parser.parse_args()
     if args.runners is not None and any(not name.strip() for name in args.runners.split(',')):
         parser.error('--runners must not contain an empty value')
-    registry = json.loads((HERE / 'runners.json').read_text())
-    names = {row['name'] for row in registry}
+    requested_issues = {normal_tag(item) for item in args.issue}
+    if any(not issue for issue in requested_issues):
+        parser.error('--issue must not contain an empty value')
+    catalog = _registry.load()
+    names = {row['name'] for row in catalog}
     selected = set(args.runners.split(',')) if args.runners is not None else names
     unknown = selected - names
     if unknown:
@@ -495,13 +493,6 @@ def run_main():
     cells = list(dict.fromkeys(args.cells.split(',')))
     if not cells or set(cells) - set(CELLS):
         parser.error('--cells must select bdb,kc,tkrzw')
-    requested_issues = {normal_tag(item) for item in args.issue}
-    rows = [row for row in registry if row['name'] in selected and
-            (not requested_issues or requested_issues.intersection(
-                normal_tag(tag) for tag in row['issues']))]
-    reasons = {row['name']: ('--issue ' + ', '.join(sorted(requested_issues.intersection(
-        normal_tag(tag) for tag in row['issues']))) if requested_issues else
-        '--runners' if args.runners is not None else 'default gate set') for row in rows}
     # An issue tag also resolves to the exact contract cases registered under
     # it; those run through the contract-diff runner with --cases. Nothing
     # matching anywhere is an error that names what exists, never the suite.
@@ -509,21 +500,42 @@ def run_main():
     if requested_issues and 'contract-diff' in selected:
         index = contract_tag_index()
         contract_cases = contract_cases_for(requested_issues, index)
-        if contract_cases and all(row['name'] != 'contract-diff' for row in rows):
-            rows.append(next(row for row in registry if row['name'] == 'contract-diff'))
-            reasons['contract-diff'] = '--issue %s: %d contract case%s' % (
-                ', '.join(sorted({tag for tags in contract_cases.values() for tag in tags})),
-                len(contract_cases), '' if len(contract_cases) == 1 else 's')
-        elif contract_cases:
-            reasons['contract-diff'] += '; %d contract case%s' % (
-                len(contract_cases), '' if len(contract_cases) == 1 else 's')
+    runner_tags = {normal_tag(tag) for row in catalog for tag in row.get('issues', [])}
+    known_issues = runner_tags | {normal_tag(tag) for tag in (index or {}).get('tags', {})}
+    unknown_issues = requested_issues - known_issues
+    if unknown_issues:
+        parser.error('unknown issue(s): ' + ', '.join(sorted(unknown_issues)))
+    # The registry selects runner rows by name and runner issue tag. Its cell
+    # filter drops rows, while run-all keeps every selected row and reports an
+    # unsupported cell as SKIPPED; cell selection stays below. Contract issue
+    # tags are not runners.json rows and are resolved through contract-diff.
+    runner_requests = requested_issues & runner_tags
+    if requested_issues and not runner_requests:
+        rows = []
+    else:
+        try:
+            rows = _registry.select(catalog,
+                                    names=None if args.runners is None else selected,
+                                    issues=sorted(runner_requests) if requested_issues else None)
+        except _registry.NoMatch:
+            rows = []
+    reasons = {row['name']: ('--issue ' + ', '.join(sorted(requested_issues.intersection(
+        normal_tag(tag) for tag in row.get('issues', [])))) if requested_issues else
+        '--runners' if args.runners is not None else 'default gate set') for row in rows}
+    if contract_cases and all(row['name'] != 'contract-diff' for row in rows):
+        rows.append(_registry.by_name(catalog)['contract-diff'])
+        reasons['contract-diff'] = '--issue %s: %d contract case%s' % (
+            ', '.join(sorted({tag for tags in contract_cases.values() for tag in tags})),
+            len(contract_cases), '' if len(contract_cases) == 1 else 's')
+    elif contract_cases:
+        reasons['contract-diff'] += '; %d contract case%s' % (
+            len(contract_cases), '' if len(contract_cases) == 1 else 's')
     if not rows:
-        runner_tags = sorted({normal_tag(tag) for row in registry for tag in row['issues']})
         contract_tags = sorted(tag for tag in (index or contract_tag_index())['tags']
                                if not tag.startswith('family/'))
         parser.error('no runner or contract case carries issue tag(s) %s; runner tags: %s; '
                      'contract tags: %s' % (', '.join(sorted(requested_issues)),
-                                            ', '.join(runner_tags), ', '.join(contract_tags)))
+                                            ', '.join(sorted(runner_tags)), ', '.join(contract_tags)))
     if contract_cases:
         rows = [dict(row, command=row['command'] + ['--', '--cases', ','.join(contract_cases)])
                 if row['name'] == 'contract-diff' else row for row in rows]
