@@ -1,5 +1,5 @@
 #!/usr/bin/env -S uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal
-"""Unit tests for the registry's implementation field."""
+"""Unit tests for the registry catalog and its selection rules."""
 import json
 from pathlib import Path
 import sys
@@ -193,6 +193,99 @@ class ImplementationTests(unittest.TestCase):
             self.load([dict(name='fixture', cells=['bdb'])])
         with self.assertRaisesRegex(registry.RegistryError, "issues must be a list of strings"):
             self.load([row(issues=[541])])
+
+
+class SelectionTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.rows = registry.load()
+
+    def test_default_selection_is_the_catalog_in_file_order(self):
+        self.assertEqual(registry.select(self.rows), self.rows)
+
+    def test_names_keep_catalog_order_instead_of_selector_order(self):
+        chosen = registry.select(self.rows, names=['union-diff', 'bisect'])
+        self.assertEqual([row['name'] for row in chosen], ['bisect', 'union-diff'])
+
+    def test_cells_select_rows_supporting_any_requested_cell(self):
+        self.assertEqual([row['name'] for row in registry.select(self.rows, cells=['native'])],
+                         ['native-startup'])
+        self.assertNotIn('fuzz', [row['name'] for row in registry.select(self.rows, cells=['kc'])])
+        self.assertIn('fuzz', [row['name'] for row in registry.select(self.rows, cells=['bdb'])])
+
+    def test_issues_match_normalized_tags_and_keep_order(self):
+        chosen = registry.select(self.rows, issues=['Row 33'])
+        self.assertEqual([row['name'] for row in chosen], ['abi-probe-diff', 'residue-a-tail-diff'])
+
+    def test_kind_and_require_selection(self):
+        chosen = registry.select(self.rows, kind='not-a-gate')
+        self.assertTrue(chosen)
+        self.assertTrue(all(row['kind'] == 'not-a-gate' for row in chosen))
+        with self.assertRaisesRegex(registry.RegistryError, 'plan needs an explicit selection'):
+            registry.select(self.rows, require_selection=True)
+        self.assertEqual(registry.select(self.rows, names=['bisect'], require_selection=True),
+                         [row for row in self.rows if row['name'] == 'bisect'])
+
+    def test_empty_and_unknown_selectors_fail(self):
+        for kwargs, message in (
+                ({'names': []}, 'empty runner selection'),
+                ({'names': ['']}, 'empty runner selection'),
+                ({'names': ['missing']}, 'unknown runner(s): missing'),
+                ({'cells': []}, 'empty cell selection'),
+                ({'cells': ['']}, 'empty cell selection'),
+                ({'cells': ['missing']}, 'unknown cell(s): missing'),
+                ({'issues': []}, 'empty issue selection'),
+                ({'issues': ['']}, 'empty issue selection'),
+                ({'issues': ['missing']}, 'unknown issue(s): missing'),
+                ({'kind': 'missing'}, 'unknown kind(s): missing')):
+            with self.subTest(kwargs=kwargs):
+                with self.assertRaises(registry.RegistryError) as raised:
+                    registry.select(self.rows, **kwargs)
+                self.assertIn(message, str(raised.exception))
+
+    def test_no_match_raises_a_distinct_error(self):
+        with self.assertRaises(registry.NoMatch) as raised:
+            registry.select(self.rows, names=['bisect'], issues=['W11'])
+        self.assertIsInstance(raised.exception, registry.RegistryError)
+        self.assertEqual(str(raised.exception), 'selection matched no registry rows')
+
+
+class MalformedCatalogTests(unittest.TestCase):
+    implementation = 'legacy:tools/bisection/run-bisect.sh'
+    command = ['bash', '{root}/tools/bisection/run-bisect.sh']
+
+    def row(self, **fields):
+        base = dict(name='fixture', command=self.command, cells=['bdb'],
+                    implementation=self.implementation)
+        return base | fields
+
+    def load(self, rows):
+        with tempfile.TemporaryDirectory() as scratch:
+            path = Path(scratch) / 'runners.json'
+            path.write_text(rows if isinstance(rows, str) else json.dumps(rows))
+            return registry.load(path)
+
+    def rejects(self, rows, message):
+        with self.assertRaisesRegex(registry.RegistryError, message):
+            self.load(rows)
+
+    def test_a_minimal_catalog_loads(self):
+        rows = [self.row()]
+        self.assertEqual(self.load(rows), rows)
+
+    def test_unreadable_and_non_list_catalogs_fail(self):
+        self.rejects('{', 'cannot read registry')
+        self.rejects('{}', 'must be a JSON list')
+
+    def test_row_shape_failures_are_clear(self):
+        self.rejects([{}], 'has a row without a name')
+        self.rejects([{'name': '', 'command': self.command, 'cells': ['bdb']}],
+                     'has a row without a name')
+        self.rejects([self.row(), self.row()], "names 'fixture' twice")
+        self.rejects([self.row(command=[])], "row 'fixture' has no command")
+        self.rejects([self.row(cells=[])], "row 'fixture' has no cells")
+        self.rejects([self.row(issues=[541])], 'issues must be a list of strings')
+        self.rejects([self.row(issues='541')], 'issues must be a list of strings')
 
 
 if __name__ == '__main__':

@@ -18,6 +18,11 @@ class RegistryError(ValueError):
     pass
 
 
+class NoMatch(RegistryError):
+    """Indicate that valid selectors matched no catalog rows."""
+    pass
+
+
 def load(path=None):
     """Return registry rows in file order after validating their shape and commands.
 
@@ -171,5 +176,5 @@ def select(rows, names=None, cells=None, issues=None, kind=None, require_selecti
             continue
         chosen.append(row)
     if not chosen:
-        raise RegistryError('selection matched no registry rows')
+        raise NoMatch('selection matched no registry rows')
     return chosen

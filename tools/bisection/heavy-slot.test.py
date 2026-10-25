@@ -218,7 +218,9 @@ script, command, resource = sys.argv[1:]
 m = runpy.run_path(script)
 original = Path.read_text
 row = next(r for r in json.loads(original(Path(script).with_name('runners.json'))) if r['name']=='pc-version')
-row = dict(row, name='tiny-heavy', heavy=True, command=[sys.executable, '-c', command],
+implementation_arg = '{root}/' + row['implementation'].partition(':')[2]
+row = dict(row, name='tiny-heavy', heavy=True,
+           command=[sys.executable, '-c', command, implementation_arg],
            exclusive_resources=[resource])
 def read(path, *args, **kwargs):
     return json.dumps([row]) if path.name=='runners.json' else original(path, *args, **kwargs)
@@ -392,7 +394,8 @@ m = runpy.run_path(script)
 original_read = Path.read_text
 row = next(r for r in json.loads(original_read(Path(script).with_name('runners.json')))
            if r['name'] == 'pc-version')
-rows = [dict(row, name=name, heavy=heavy, command=[name])
+implementation_arg = '{root}/' + row['implementation'].partition(':')[2]
+rows = [dict(row, name=name, heavy=heavy, command=[name, implementation_arg])
         for name, heavy in [('heavy-a', True), ('heavy-b', True), ('light', False)]]
 finished = []
 holder = m['HeavySlot']('external holder', out=io.StringIO())
@@ -400,7 +403,7 @@ holder.__enter__()
 def read(path, *args, **kwargs):
     return json.dumps(rows) if path.name == 'runners.json' else original_read(path, *args, **kwargs)
 def execute(command, env, cwd, timeout, output, slot=None):
-    if command == ['light']:
+    if command[0] == 'light':
         assert 'OXPINYIN_HEAVY_SLOT_HELD' not in env
         finished.append('light')
         holder.__exit__()
@@ -496,7 +499,9 @@ script=sys.argv[1]
 m=runpy.run_path(script)
 original=Path.read_text
 row=next(r for r in json.loads(original(Path(script).with_name('runners.json'))) if r['name']=='pc-version')
-row=dict(row, name='tiny-heavy', heavy=True, command=[sys.executable, '-c', 'import sys; sys.stdin.read()'])
+implementation_arg='{root}/' + row['implementation'].partition(':')[2]
+row=dict(row, name='tiny-heavy', heavy=True,
+         command=[sys.executable, '-c', 'import sys; sys.stdin.read()', implementation_arg])
 def read(path,*args,**kwargs):
     return json.dumps([row]) if path.name=='runners.json' else original(path,*args,**kwargs)
 with mock.patch.object(Path,'read_text',read), mock.patch.object(sys,'argv',[script,'--runners','tiny-heavy','--no-build','--cells','bdb']):

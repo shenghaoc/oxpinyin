@@ -21,6 +21,11 @@ run_all = runpy.run_path(str(RUN_ALL))
 M = run_all
 
 
+def catalog_command(row, command):
+    """Append the row's implementation path so a synthetic catalog validates."""
+    return [*command, '{root}/' + row['implementation'].partition(':')[2]]
+
+
 class FitTests(unittest.TestCase):
     def test_fit_leaves_the_headroom_and_clamps(self):
         self.assertEqual(M['fit'](16000, 728, 4), 4)
@@ -394,7 +399,7 @@ class AdmissionTests(unittest.TestCase):
         original_read = Path.read_text
         row = next(r for r in json.loads(original_read(RUN_ALL.with_name('runners.json')))
                    if r['name'] == 'pc-version')
-        rows = [dict(row, name=name, heavy=heavy, command=[name])
+        rows = [dict(row, name=name, heavy=heavy, command=catalog_command(row, [name]))
                 for name, heavy in [('heavy-a', True), ('heavy-b', True), ('light', False)]]
         finished = []
         def read(path, *args, **kwargs):
@@ -441,7 +446,7 @@ class AdmissionTests(unittest.TestCase):
         original_read = Path.read_text
         row = next(r for r in json.loads(original_read(RUN_ALL.with_name('runners.json')))
                    if r['name'] == 'pc-version')
-        rows = [dict(row, name=name, heavy=heavy, command=[name])
+        rows = [dict(row, name=name, heavy=heavy, command=catalog_command(row, [name]))
                 for name, heavy in [('heavy-a', True), ('heavy-b', True), ('light', False)]]
         finished = []
         def read(path, *args, **kwargs):
@@ -488,7 +493,7 @@ class AdmissionTests(unittest.TestCase):
         row = next(r for r in json.loads(original_read(RUN_ALL.with_name('runners.json')))
                    if r['name'] == 'pc-version')
         row = dict(row, name='tiny', heavy=True, artifacts=['pinyin-capi'] if build else [],
-                   command=child or [sys.executable, '-c', 'pass'])
+                   command=catalog_command(row, child or [sys.executable, '-c', 'pass']))
         def read(path, *args, **kwargs):
             return json.dumps([row]) if path.name == 'runners.json' else original_read(path, *args, **kwargs)
         stdout = io.StringIO()

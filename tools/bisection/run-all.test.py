@@ -1,5 +1,5 @@
 #!/usr/bin/env -S uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal
-"""Regressions for run-all.py's issue resolution, runner timing and artifact selection."""
+"""Regressions for run-all.py's registry selection, issue resolution, runner timing and artifact selection."""
 import json
 import contextlib
 import io
@@ -17,15 +17,63 @@ run_all = runpy.run_path(str(Path(__file__).with_name('run-all.py')))
 
 
 class RunnerSelectionTests(unittest.TestCase):
-    def test_absent_runners_lists_the_default_registry(self):
-        expected = json.loads(Path(__file__).with_name('runners.json').read_text())
+    index = {'tags': {'532': ['default-option-parse', 'explicit-use-tone-parse']},
+             'modes': {'default-option-parse': 'pinyin', 'explicit-use-tone-parse': 'pinyin'}}
+
+    def list_rows(self, *argv, index=None):
         output = io.StringIO()
         namespace = run_all['main'].__globals__
-        with mock.patch.object(sys, 'argv', ['run-all.py', '--list']), \
-                mock.patch.dict(namespace, resource_snapshot=mock.Mock(side_effect=AssertionError('scheduled work'))), \
+        with mock.patch.object(sys, 'argv', ['run-all.py', '--list', *argv]), \
+                mock.patch.dict(namespace, resource_snapshot=mock.Mock(side_effect=AssertionError('scheduled work')),
+                                contract_tag_index=mock.Mock(return_value=index or {'tags': {}, 'modes': {}})), \
                 contextlib.redirect_stdout(output):
             self.assertEqual(run_all['main'](), 0)
-        self.assertEqual([json.loads(line) for line in output.getvalue().splitlines()], expected)
+        return [json.loads(line) for line in output.getvalue().splitlines()]
+
+    def selection_error(self, *argv, index=None):
+        error = io.StringIO()
+        schedule = mock.Mock(side_effect=AssertionError('scheduled work'))
+        namespace = run_all['main'].__globals__
+        with mock.patch.object(sys, 'argv', ['run-all.py', *argv]), \
+                mock.patch.dict(namespace, resource_snapshot=schedule, execute=schedule,
+                                contract_tag_index=mock.Mock(return_value=index or {'tags': {}, 'modes': {}})), \
+                contextlib.redirect_stderr(error), self.assertRaises(SystemExit) as caught:
+            run_all['main']()
+        self.assertEqual(caught.exception.code, 2)
+        schedule.assert_not_called()
+        return error.getvalue()
+
+    def test_absent_runners_lists_the_default_registry(self):
+        expected = run_all['_registry'].load()
+        self.assertEqual(self.list_rows(), expected)
+
+    def test_runner_filter_matches_registry_selection(self):
+        expected = run_all['_registry'].select(run_all['_registry'].load(),
+                                               names=['bisect', 'union-diff'])
+        self.assertEqual(self.list_rows('--runners', 'union-diff,bisect'), expected)
+
+    def test_issue_filter_matches_registry_selection(self):
+        rows = run_all['_registry'].load()
+        expected = run_all['_registry'].select(rows, issues=['W11'])
+        self.assertEqual(self.list_rows('--issue', 'W11'), expected)
+
+    def test_contract_only_issue_appends_contract_diff(self):
+        rows = self.list_rows('--issue', '532', index=self.index)
+        self.assertEqual([row['name'] for row in rows], ['contract-diff'])
+        self.assertEqual(rows[0]['command'][-3:],
+                         ['--', '--cases', 'default-option-parse,explicit-use-tone-parse'])
+
+    def test_no_match_from_registry_still_appends_contract_diff(self):
+        index = {'tags': {'545': ['default-option-parse']},
+                 'modes': {'default-option-parse': 'pinyin'}}
+        rows = self.list_rows('--runners', 'bisect,contract-diff', '--issue', '545', index=index)
+        self.assertEqual([row['name'] for row in rows], ['contract-diff'])
+        self.assertEqual(rows[0]['command'][-3:], ['--', '--cases', 'default-option-parse'])
+
+    def test_cells_do_not_filter_the_listed_rows(self):
+        self.assertEqual(self.list_rows('--cells', 'bdb'), run_all['_registry'].load())
+        self.assertEqual([row['name'] for row in self.list_rows('--runners', 'fuzz', '--cells', 'kc')],
+                         ['fuzz'])
 
     def test_empty_runners_exit_two_before_scheduling_even_with_an_issue(self):
         namespace = run_all['main'].__globals__
@@ -41,6 +89,46 @@ class RunnerSelectionTests(unittest.TestCase):
                     self.assertEqual(caught.exception.code, 2)
                     self.assertIn('--runners must not contain an empty value', error.getvalue())
                     schedule.assert_not_called()
+
+    def test_empty_or_unknown_cells_exit_two_before_scheduling(self):
+        for value in ('', 'bdb,', 'bdb,native', 'unknown'):
+            with self.subTest(value=value):
+                self.assertIn('--cells must select bdb,kc,tkrzw',
+                              self.selection_error('--cells', value, '--list'))
+
+    def test_empty_or_unknown_issues_exit_two_before_scheduling(self):
+        self.assertIn('--issue must not contain an empty value',
+                      self.selection_error('--issue', '', '--list'))
+        self.assertIn('unknown issue(s): 9999', self.selection_error('--issue', '9999', '--list'))
+        error = self.selection_error('--issue', '532', '--issue', '9999', '--list', index=self.index)
+        self.assertIn('unknown issue(s): 9999', error)
+
+    def test_a_contract_tag_requires_contract_diff_to_be_selected(self):
+        self.assertIn('unknown issue(s): 532',
+                      self.selection_error('--runners', 'bisect', '--issue', '532', '--list'))
+
+    def test_a_known_issue_without_a_selected_runner_keeps_the_catalog_diagnostic(self):
+        error = self.selection_error('--runners', 'bisect', '--issue', 'W11', '--list')
+        self.assertIn('no runner or contract case carries issue tag(s) w11', error)
+        self.assertIn('runner tags:', error)
+
+    def test_malformed_catalogs_fail_before_scheduling(self):
+        for text, message in (
+                ('{', 'cannot read registry'),
+                (json.dumps([{'name': 'fixture'}]), "registry row 'fixture' has no command"),
+                (json.dumps([{'name': 'fixture', 'command': ['x'], 'cells': ['bdb']}]),
+                 "registry row 'fixture' has no implementation"),
+                (json.dumps([{'name': 'fixture', 'command': ['x'], 'cells': ['bdb'],
+                              'implementation': 'legacy:missing'}]),
+                 "registry row 'fixture' implementation 'legacy:missing' does not exist")):
+            with self.subTest(text=text), \
+                    mock.patch.object(Path, 'read_text', return_value=text), \
+                    mock.patch.dict(run_all['main'].__globals__,
+                                    resource_snapshot=mock.Mock(side_effect=AssertionError('scheduled work')),
+                                    execute=mock.Mock(side_effect=AssertionError('scheduled work'))):
+                with self.assertRaises(run_all['_registry'].RegistryError) as caught:
+                    run_all['main']()
+                self.assertIn(message, str(caught.exception))
 
 
 class IssueResolutionTests(unittest.TestCase):
@@ -142,7 +230,7 @@ class ConcurrentContractCellsTests(unittest.TestCase):
         row = next(r for r in json.loads(original(Path(__file__).with_name('runners.json')))
                    if r['name'] == 'contract-diff')
         row = dict(row, oracle=False, artifacts=[], input_paths=[], required_env=[],
-                   command=['synthetic-contract-worker'])
+                   command=['bash', '{root}/tools/bisection/run-contract-diff.sh'])
         def read(path, *args, **kwargs):
             return json.dumps([row]) if path.name == 'runners.json' else original(path, *args, **kwargs)
         lock = threading.Lock()
