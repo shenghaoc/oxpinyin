@@ -196,11 +196,13 @@ pub extern "C" fn pinyin_get_candidate_nbest_index(
 ///                               lookup_candidate_t * candidate);
 /// ```
 ///
-/// The §3.2 nibble test: the candidate's token lives in the
+/// The §3.2 type and nibble test: only a normal or longer row can be a
+/// user candidate (`NORMAL_CANDIDATE != type && LONGER_CANDIDATE != type`
+/// returns false, `pinyin.cpp:3712-3715`), and its token must live in the
 /// [`USER_DICTIONARY`] sub-index. Network (nibble 6) is not "user" —
-/// `if (USER_DICTIONARY != index) return false` (`pinyin.cpp:3718`).
-/// Sentence-level and fallback candidates carry no token and are not
-/// user candidates.
+/// `if (USER_DICTIONARY != index) return false` (`:3718`). Predicted rows
+/// and sentence-level/fallback rows carry no user status even when a
+/// predicted prefix token names the user library.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_is_user_candidate(
     instance: *mut PinyinInstance,
@@ -213,6 +215,12 @@ pub extern "C" fn pinyin_is_user_candidate(
     // SAFETY: `candidate` is non-null and was produced by
     // `pinyin_get_candidate`.
     let cand = unsafe { candidate_ref(candidate) };
+    if !matches!(
+        cand.candidate_type(),
+        lookup_candidate_type_t::NORMAL_CANDIDATE | lookup_candidate_type_t::LONGER_CANDIDATE
+    ) {
+        return false;
+    }
     cand.token.is_some_and(|token| is_user_token(token.value()))
 }
 
@@ -655,6 +663,23 @@ pub extern "C" fn pinyin_choose_predicted_candidate(
     let Some(token) = inst.candidates[index].token else {
         return false;
     };
+    // A sole missing prefix item is still selectable. The pin advances the
+    // loaded facade's total by 483 (wrapping) and ignores the failing
+    // sub-index write; the prefix branch then answers true without a bigram
+    // (`pinyin.cpp:2608-2616`, `phrase_index.h:628-634`; #1231 ruling).
+    // `text_ptr` is NULL only for the sole missing row built above.
+    if inst.candidates[index].candidate_type()
+        == lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE
+        && inst.candidates[index].text_ptr.is_null()
+    {
+        // An unloaded library has no sub-index: the pin returns
+        // ERROR_NO_SUB_PHRASE_INDEX before touching the facade total,
+        // and the prefix branch still answers true.
+        if inst.core.dict.phrase_table_token_enabled(token.value()) {
+            let _ = inst.core.dict.add_unigram_delta(token.value(), 483);
+        }
+        return true;
+    }
     let last = previous_token(inst);
     let Some(user) = inst.core.user.as_mut() else {
         return false;

@@ -124,10 +124,15 @@ fn an_unmodified_libpinyin_data_directory_opens_and_decodes() {
         );
     }
 
-    // Prediction through the phrase DBM's suggestion walk.
-    let suggestions = dict.system().suggest_after("中").expect("suggest");
+    // Prediction through the phrase DBM's raw suggestion walk; the text
+    // comes from the live item, as the facade's prediction path resolves it.
+    let suggestions = dict.system().suggestion_tokens("中").expect("suggest");
     assert!(
-        suggestions.iter().any(|(_, text)| text == "中国"),
+        suggestions.iter().any(|&token| {
+            dict.system()
+                .phrase_text(token)
+                .is_some_and(|text| text == "中国")
+        }),
         "中 suggests 中国: {} rows",
         suggestions.len()
     );

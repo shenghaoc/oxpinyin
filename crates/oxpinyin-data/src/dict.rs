@@ -162,24 +162,6 @@ fn library_loaded(libraries: &PhraseLibraries, user_nibbles: u32, token: u32) ->
             .is_some_and(|bit| user_nibbles & bit != 0)
 }
 
-/// `search_suggestion` tokens resolved to `(token, text)` rows in the
-/// order upstream hands them to `_compute_predicted_prefix_candidates`:
-/// `search_suggestion` files each token into its library's array
-/// (`PhraseTableEntry::search`'s `tokens[PHRASE_INDEX_LIBRARY_INDEX]`)
-/// and `reduce_tokens` concatenates those arrays library by library, so
-/// the list is grouped by library nibble ascending, and inside a group
-/// it is the DBM's cursor order — byte-lexical over the UCS-4 keys, the
-/// order [`PhraseTable::search_suggestion`] already yields. A stable sort
-/// by nibble over the walk is exactly that.
-fn resolve_suggestions(libraries: &PhraseLibraries, tokens: Vec<u32>) -> Vec<(u32, PhraseText)> {
-    let mut rows: Vec<(u32, PhraseText)> = tokens
-        .into_iter()
-        .filter_map(|token| Some((token, libraries.phrase_text(token)?)))
-        .collect();
-    rows.sort_by_key(|(token, _)| token >> 24);
-    rows
-}
-
 /// The byte-lexical sort key of a phrase text in a UCS-4 keyed DBM.
 ///
 /// The little-endian `u32` scalars concatenated — the cursor order
@@ -193,23 +175,6 @@ pub fn ucs4_walk_key(text: &str) -> Vec<u8> {
     // The walk key *is* the phrase index's DBM key — same encoder, so a
     // change to the layout cannot reorder predictions here only.
     crate::row_format::phrase_index::encode_ucs4_key(text)
-}
-
-/// [`ucs4_walk_key`] for a [`PhraseText`]: the stored code points in order,
-/// including a zero and its suffix, because the pin's phrase table key uses
-/// the item's full stored length.
-#[must_use]
-pub fn phrase_walk_key(text: &PhraseText) -> Vec<u8> {
-    let words: Vec<u32> = match text.stored_words() {
-        Some(words) => words.to_vec(),
-        None => text
-            .as_str()
-            .unwrap_or_default()
-            .chars()
-            .map(u32::from)
-            .collect(),
-    };
-    crate::row_format::phrase_index::encode_ucs4_key_scalars(&words)
 }
 
 /// The `SEARCH_CONTINUED` probe restricted to visible phrases: whether
@@ -403,17 +368,18 @@ impl SystemDictionary {
         self.phrase.search_ucs4(words)
     }
 
-    /// Tokens whose phrase text starts with `prefix` and is longer, when
-    /// `prefix` itself is a stored key — `PhraseLargeTable3::search_suggestion`
-    /// resolved to `(token, text)` rows, tokens without a loaded item
-    /// dropped, in upstream's order (library groups, cursor order inside).
+    /// Raw phrase-table suggestion tokens in upstream's order (library
+    /// groups, cursor order inside) — `PhraseLargeTable3::search_suggestion`.
+    ///
+    /// Tokens whose live item is absent are kept: the prediction caller
+    /// needs the pin's stale-length filter and its sole-missing/class-(b)
+    /// split (`pinyin.cpp:2389-2405`, `:2443-2451`; #1231).
     ///
     /// # Errors
     ///
     /// Returns [`DictError`] when the DBM walk or a value decode fails.
-    pub fn suggest_after(&self, prefix: &str) -> Result<Vec<(u32, PhraseText)>, DictError> {
-        let tokens = self.phrase.search_suggestion(prefix)?;
-        Ok(resolve_suggestions(&self.libraries, tokens))
+    pub fn suggestion_tokens(&self, prefix: &str) -> Result<Vec<u32>, DictError> {
+        self.phrase.search_suggestion(prefix)
     }
 
     /// The `SEARCH_CONTINUED` probe with a per-token visibility filter:

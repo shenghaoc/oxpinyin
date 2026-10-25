@@ -139,7 +139,7 @@ fn guess_predicted_result(inst: &mut CapiInstance, prefix: &str) -> Result<bool,
         );
         return Err(());
     }
-    append_predicted_prefix(
+    let missing = append_predicted_prefix(
         &inst.core.dict,
         &inst.core.lm,
         inst.predicted_lambda,
@@ -147,6 +147,21 @@ fn guess_predicted_result(inst: &mut CapiInstance, prefix: &str) -> Result<bool,
         prefix,
         &mut items,
     );
+
+    if let Some(token) = missing {
+        // Only one pre-dedup row: neither strcmp runs. Its opaque score and
+        // length are unobservable; preserve the NULL getter and choose token.
+        inst.candidates.push(CapiCandidate {
+            text: oxpinyin_facade::TextSpan::NULL,
+            text_ptr: std::ptr::null(),
+            kind: CandidateKind::Phrase,
+            type_tag: lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE.tag(),
+            nbest_index: 0,
+            token: Some(oxpinyin_core::PhraseToken::new(token)),
+            source_index: 0,
+        });
+        return Ok(true);
+    }
 
     sort_predicted(&mut items);
 
@@ -382,6 +397,47 @@ fn append_predicted_bigrams(
     }
 }
 
+/// The pin's stale-length gate and missing-item cardinality
+/// (`pinyin.cpp:2389-2405`, `:2443-2451`).
+///
+/// `last_read_length` is the loop-wide `PhraseItem`'s length: it starts at
+/// the default header's zero and every successful item read replaces it
+/// *before* the `2 * prefix_len + 1` check, including a read the check then
+/// skips. A failed read leaves it unchanged, so a missing token can pass or
+/// be skipped on the previous success's length.
+///
+/// `existing_rows` counts the pre-dedup rows already collected (the bigram
+/// candidates). A sole missing row with no other row survives to the C
+/// surface; with any other row the pin's dedup reaches the NULL string, so
+/// class (b) takes row 106's answer and the missing token adds no candidate.
+fn select_prefix_rows(
+    suggestions: Vec<(u32, Option<PhraseText>)>,
+    limit: usize,
+    existing_rows: usize,
+) -> (Vec<(u32, PhraseText)>, Option<u32>) {
+    let mut last_read_length = 0;
+    let mut kept = Vec::new();
+    let mut missing = Vec::new();
+    for (token, text) in suggestions {
+        if let Some(text) = &text {
+            last_read_length = text.phrase_length();
+        }
+        if last_read_length > limit {
+            continue;
+        }
+        match text {
+            Some(text) => kept.push((token, text)),
+            None => missing.push(token),
+        }
+    }
+    let sole_missing = if missing.len() == 1 && existing_rows + kept.len() == 0 {
+        missing.pop()
+    } else {
+        None
+    };
+    (kept, sole_missing)
+}
+
 fn append_predicted_prefix(
     dict: &SharedDict,
     lm: &SharedLm,
@@ -389,10 +445,10 @@ fn append_predicted_prefix(
     user: Option<&UserStore>,
     prefix: &str,
     into: &mut Vec<Predicted>,
-) {
+) -> Option<u32> {
     let prefix_len = prefix.chars().count();
     if prefix_len == 0 {
-        return;
+        return None;
     }
     let limit = prefix_len.saturating_mul(2).saturating_add(1);
     // The facade merge reproduces reduce_tokens: library groups first,
@@ -400,14 +456,9 @@ fn append_predicted_prefix(
     // preserves this collection order on ties, including user/system ties.
     let suggestions = oxpinyin_facade::merged_suggestions(dict, user, prefix);
     let total = predicted_total(lm);
-    for (token, text) in suggestions {
-        // The length gate stays on the FULL phrase: the pin checks
-        // `get_phrase_length()` against `prefix_len * 2 + 1` before any
-        // slicing (`pinyin.cpp:2392-2395`).
+    let (kept, sole_missing) = select_prefix_rows(suggestions, limit, into.len());
+    for (token, text) in kept {
         let phrase_length = text.phrase_length();
-        if phrase_length > limit {
-            continue;
-        }
         // The prefix subtraction the pin applies twice (`pinyin.cpp:1976-1980`):
         // the display string is sliced from `m_begin` (`:2018-2023`) and the
         // phrase-length sort key subtracts it. Storing the sliced text here
@@ -430,6 +481,7 @@ fn append_predicted_prefix(
             candidate_type: lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE,
         });
     }
+    sole_missing
 }
 
 /// The live facade total is guint32 and wraps, including both training
@@ -500,8 +552,65 @@ pub(crate) fn phrase_text(dict: &SharedDict, store: &UserStore, token: u32) -> O
 
 #[cfg(test)]
 mod tests {
+    use super::select_prefix_rows;
+    use oxpinyin_core::PhraseText;
+
     fn amplified_frequency(unigram: u64, total: u64) -> u64 {
         super::amplified_frequency(unigram, total, 0.312_699)
+    }
+
+    #[test]
+    fn a_sole_missing_suggestion_survives_the_length_gate() {
+        let (kept, sole) = select_prefix_rows(vec![(7, None)], 5, 0);
+        assert!(kept.is_empty());
+        assert_eq!(sole, Some(7));
+    }
+
+    #[test]
+    fn a_missing_suggestion_with_any_other_row_adds_no_candidate() {
+        // A live row and the missing row: two pre-dedup rows, class (b).
+        let (kept, sole) =
+            select_prefix_rows(vec![(1, Some(PhraseText::from("abc"))), (2, None)], 5, 0);
+        assert_eq!(kept.len(), 1);
+        assert_eq!(sole, None);
+        // A preexisting bigram row is enough even without a live prefix row.
+        let (kept, sole) = select_prefix_rows(vec![(2, None)], 5, 1);
+        assert!(kept.is_empty());
+        assert_eq!(sole, None);
+        // Two missing rows also reach the NULL comparison.
+        let (kept, sole) = select_prefix_rows(vec![(2, None), (3, None)], 5, 0);
+        assert!(kept.is_empty());
+        assert_eq!(sole, None);
+    }
+
+    #[test]
+    fn the_stale_length_skips_a_missing_suggestion_after_a_skipped_read() {
+        // The long live row is itself skipped, but its successful read still
+        // updates the loop-wide length, so the following missing row is
+        // skipped too rather than becoming a sole NULL candidate.
+        let (kept, sole) =
+            select_prefix_rows(vec![(1, Some(PhraseText::from("abcdef"))), (2, None)], 5, 0);
+        assert!(kept.is_empty());
+        assert_eq!(sole, None);
+    }
+
+    #[test]
+    fn a_short_live_row_after_the_stale_skip_still_replaces_the_gate() {
+        // The skipped long row leaves its own length; the missing row is
+        // skipped on it. A later short successful read replaces the gate and
+        // is appended normally.
+        let (kept, sole) = select_prefix_rows(
+            vec![
+                (1, Some(PhraseText::from("abcdef"))),
+                (2, None),
+                (3, Some(PhraseText::from("ab"))),
+            ],
+            5,
+            0,
+        );
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].0, 3);
+        assert_eq!(sole, None);
     }
 
     #[test]
