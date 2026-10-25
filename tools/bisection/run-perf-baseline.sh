@@ -91,7 +91,8 @@ else
     STAGED_PC=$(find "$STAGE/usr" -name libpinyin.pc -print -quit)
 fi
 
-export PKG_CONFIG_PATH="$(dirname "$STAGED_PC")${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+PKG_CONFIG_PATH="$(dirname "$STAGED_PC")${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+export PKG_CONFIG_PATH
 export PKG_CONFIG_SYSROOT_DIR="$STAGE"
 CAPI_CFLAGS=$(pkg-config --cflags libpinyin)
 CAPI_LIBS=$(pkg-config --libs libpinyin)

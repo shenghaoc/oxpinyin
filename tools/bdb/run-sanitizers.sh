@@ -111,6 +111,7 @@ printf '%s\n' ""
 printf '%s\n' "--- 2/2: the libdb call pattern under ASan + UBSan (C) ---"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
+# shellcheck disable=SC2054  # the comma is part of the compiler flag, not an array separator.
 SAN_FLAGS=(-fsanitize=address,undefined -fno-sanitize-recover=all)
 compile=(gcc -Wall -Wextra -Werror -O1 -g "${SAN_FLAGS[@]}")
 if [ -n "${OXPINYIN_BDB_INCLUDE_DIR:-}" ]; then

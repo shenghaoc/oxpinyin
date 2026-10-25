@@ -35,7 +35,6 @@ L_LABEL=libpinyin-tkrzw
 Z_LABEL=oxpinyin-cur-cinstall
 S_LABEL=oxpinyin-shipped
 
-LP_LIB=/opt/libpinyin-tkrzw/lib
 DATA=/opt/libpinyin-tkrzw/lib/libpinyin/data
 L_SO=$(find /opt/libpinyin-tkrzw -name 'libpinyin.so' \( -type f -o -type l \) -print -quit)
 

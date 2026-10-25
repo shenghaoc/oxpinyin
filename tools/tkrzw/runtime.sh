@@ -13,6 +13,7 @@ _tkrzw_refuse() {
 
 _tkrzw_check() {
     local runner=$1 side=${2##*/} object=$3 output status=0 matches entry real
+    # shellcheck disable=SC1007  # empty defaults for the locals declared on this line.
     local found= resolved= invalid=0 ambiguous=0 expected= prefix=
     case $side in
         L|A|pin*|oracle*|reference*|libpinyin*) side=pin ;;

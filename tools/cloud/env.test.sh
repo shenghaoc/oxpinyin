@@ -6,7 +6,9 @@ source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 oracle_root=$work/"old cache '\$\`"/oracle
+# shellcheck disable=SC2034  # read by write_oracle_env in env.sh.
 model_cache=$work/model20
+# shellcheck disable=SC2034  # read by write_oracle_env in env.sh.
 uv_dir=$work/uv
 tkrzw_prefix=$work/tkrzw
 tkrzw_local=1
@@ -283,6 +285,7 @@ fixture() {
 
 select_cell() (
 	export PINYIN_ORACLE_DBM=$1
+	# shellcheck disable=SC1090  # the environment file under test is a runtime path.
 	source "$OXPINYIN_ORACLE_ENV" || return
 	[[ $PINYIN_ORACLE_PREFIX == "$2" && $OXPINYIN_LIBPINYIN_DATA_DIR == "$2/lib/libpinyin/data" ]]
 )
@@ -332,8 +335,10 @@ done
 printf 'PASS: kc and tkrzw survive a bdb-only run\n'
 
 (
+	# shellcheck disable=SC1007  # clear both variables for this subshell; this is not an assignment.
 	LD_LIBRARY_PATH= PKG_CONFIG_PATH=
 	export PINYIN_ORACLE_DBM=tkrzw
+	# shellcheck disable=SC1090  # the environment file under test is a runtime path.
 	source "$OXPINYIN_ORACLE_ENV"
 	[[ $OXPINYIN_TKRZW_PREFIX == "$tkrzw_prefix" ]] || fail "missing trusted runtime prefix"
 	[[ $LD_LIBRARY_PATH == "$tkrzw_prefix/lib" && $PKG_CONFIG_PATH == "$tkrzw_prefix/lib/pkgconfig" && $PATH == "$tkrzw_prefix/bin:"* ]]
@@ -435,6 +440,7 @@ printf 'PASS: failed rename leaves the old file intact and cleans staging\n'
 	PATH=$base_path
 	LD_LIBRARY_PATH=$host_prefix/lib
 	export PINYIN_ORACLE_DBM=tkrzw SYNTHETIC_HOST_STATUS=1 SYNTHETIC_HOST_LIB=$host_prefix/lib
+	# shellcheck disable=SC1090  # the environment file under test is a runtime path.
 	source "$OXPINYIN_ORACLE_ENV"
 	[[ $PATH == "$cache_a/bin:"* && $LD_LIBRARY_PATH == "$cache_a/lib:"* ]] || fail 'cache A was not inherited'
 	legacy_env=$work/legacy-a.env
@@ -451,6 +457,7 @@ printf 'PASS: failed rename leaves the old file intact and cleans staging\n'
 		OXPINYIN_ORACLE_ENV=$legacy_env
 		PATH=$base_path
 		LD_LIBRARY_PATH=$host_prefix/lib
+		# shellcheck disable=SC1090  # the environment file under test is a runtime path.
 		source "$OXPINYIN_ORACLE_ENV"
 		if probe_host; then fail 'legacy environment cache A was mistaken for the host'; fi
 	)
@@ -459,17 +466,20 @@ printf 'PASS: failed rename leaves the old file intact and cleans staging\n'
 	oracle_root=$work/cache-b/oracle
 	mkdir -p "$oracle_root"
 	cp -a "$old_root/tkrzw" "$oracle_root/tkrzw"
+	# shellcheck disable=SC2034  # read by write_oracle_env in env.sh.
 	cells=(tkrzw)
 	write_oracle_env
 	(
 		PATH=$base_path
 		LD_LIBRARY_PATH=$host_prefix/lib
+		# shellcheck disable=SC1090  # the environment file under test is a runtime path.
 		source "$OXPINYIN_ORACLE_ENV"
 		[[ $PATH == "$cache_b/bin:"* && $LD_LIBRARY_PATH == "$cache_b/lib:"* ]] || fail 'cache B runtime paths missing in a fresh shell'
 	)
 	printf 'PASS: cache B environment restores its runtime in a fresh shell\n'
 
 	# Sourcing another environment must keep the earlier cache excluded too.
+	# shellcheck disable=SC1090  # the environment file under test is a runtime path.
 	source "$OXPINYIN_ORACLE_ENV"
 	tkrzw_prefix=$work/cache-c/tkrzw
 	export SYNTHETIC_HOST_STATUS=0
@@ -487,6 +497,7 @@ printf 'PASS: failed rename leaves the old file intact and cleans staging\n'
 		write_oracle_env
 		[[ -z $(tkrzw_env_prefix "$OXPINYIN_ORACLE_ENV") ]] || fail 'host identity became a cache prefix'
 		unset OXPINYIN_TKRZW_LIBRARY OXPINYIN_TKRZW_PREFIX
+		# shellcheck disable=SC1090  # the environment file under test is a runtime path.
 		source "$OXPINYIN_ORACLE_ENV"
 		[[ $OXPINYIN_TKRZW_LIBRARY == "$host_prefix/lib/libtkrzw.so.1" ]] || fail 'verified host identity lost'
 		[[ -z ${OXPINYIN_TKRZW_PREFIX:-} ]] || fail 'host identity became a trusted system prefix'

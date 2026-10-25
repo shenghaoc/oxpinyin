@@ -13,7 +13,9 @@
 
 set -eu
 
+# shellcheck disable=SC1007  # CDPATH= is a command-prefix assignment, not an empty variable name.
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+# shellcheck disable=SC1007  # CDPATH= is a command-prefix assignment, not an empty variable name.
 REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 LINTER="$REPO_ROOT/.github/scripts/lint-crate-cfg-placement.sh"
 

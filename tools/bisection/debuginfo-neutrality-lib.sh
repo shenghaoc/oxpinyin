@@ -1,5 +1,7 @@
 # debuginfo-neutrality-lib.sh — is a debug-info build the same code?
 #
+# shellcheck shell=bash  # sourced by bash runners; deliberately has no shebang.
+#
 # Sourced by tools/bisection/run-callgrind-differential.sh (stage 2) and
 # tools/env-probe/probe-debuginfo-neutrality.sh, so the two cannot drift.
 # Provides compare_debuginfo_neutrality <a.so> <b.so>, which prints a
@@ -143,7 +145,6 @@ compare_debuginfo_neutrality() { # $1 $2 = the two .so; returns 0 = same code
     # Symbol accounting in two pairing tiers, printed in full. Tier 1 pairs
     # by name with the v0 crate-disambiguator hash stripped (`Cs…_`→`CsH_`);
     # tier 2 pairs any leftovers by identical normalized instruction body.
-    local a_syms b_syms
     nm --defined-only "$a" | awk '$2~/[tT]/{print $3, $1}' \
         | sed 's/Cs[0-9A-Za-z]\{1,\}_/CsH_/g' | sort -u > /tmp/neut-a.syms
     nm --defined-only "$b" | awk '$2~/[tT]/{print $3, $1}' \

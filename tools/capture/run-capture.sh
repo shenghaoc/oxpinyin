@@ -94,6 +94,7 @@ rm -rf "$build_dir/user-f-a" "$build_dir/user-f-c" "$build_dir/user-zh"
 mkdir -p "$build_dir/user-f-a" "$build_dir/user-f-c" "$build_dir/user-zh"
 
 export PKG_CONFIG_PATH=$prefix/lib/pkgconfig
+# shellcheck disable=SC2046  # pkg-config's flags are word lists, not one argument.
 cc -std=c11 -Wall -Wextra -Werror \
 	$(pkg-config --cflags libpinyin) \
 	"$script_dir/capture.c" \
