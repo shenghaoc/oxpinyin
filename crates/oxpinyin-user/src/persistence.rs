@@ -2216,7 +2216,12 @@ fn write_chunk_file(path: &Path, bytes: &[u8]) -> Result<(), PersistenceError> {
     let (length, checksum) = header.split_at(header.len().min(4));
     write_header_word(&mut file, length, ChunkHeaderField::Length)?;
     write_header_word(&mut file, checksum, ChunkHeaderField::Checksum)?;
-    std::io::Write::write_all(&mut file, payload).map_err(PersistenceError::Io)
+    std::io::Write::write_all(&mut file, payload).map_err(PersistenceError::Io)?;
+    // MemoryChunk::save ignores g_fsync before close (074a2219
+    // src/include/memory_chunk.h:555-557). File drops after this sync.
+    // On macOS std uses the stronger F_FULLFSYNC; see the G10 finding.
+    let _ = file.sync_all();
+    Ok(())
 }
 
 /// One of `MemoryChunk::save`'s two header words (`memory_chunk.h:542-549`).

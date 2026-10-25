@@ -193,6 +193,32 @@ payload. The Rust `save_with_bigram_reporting` keeps the per-file
 tolerance, the rename order and the return value (#929), including the
 pin's own answers after a failed write or rename.
 
+#1221 closes the missing chunk sync in `oxpinyin_user::persistence::write_chunk_file`:
+a successful payload write is followed by `File::sync_all`, whose result is
+ignored before the file drops. This follows `074a2219`
+`src/include/memory_chunk.h:536-557`, including the ignored sync failure.
+The pinyin journal/chunk callers (`src/pinyin.cpp:971,988`) and zhuyin
+callers (`src/zhuyin.cpp:607,633`) share that same `MemoryChunk::save`.
+The older storage facade writers (`src/storage/facade_chewing_table.h:164`
+and `src/storage/facade_phrase_table2.h:145`) also call it. The separate
+`oxpinyin_datagen` build-time `write_chunk_file` uses `std::fs::write` and
+is unchanged; `oxpinyin_data::phrase_library` reads/maps runtime libraries.
+
+On macOS, retain std's `F_FULLFSYNC` implementation of `sync_all`, stronger
+and potentially slower than the pin's Unix `g_fsync` macro (`fsync`, GLib
+2.84.4 `glib/gstdio.h:60-82`). This is a durability improvement using safe
+Rust, rather than adding a direct syscall to the unsafe-forbidden user
+crate. The return remains ignored; file bytes, write/rename order and
+save results remain unchanged. Linux uses `fsync` through std.
+
+No new test was added: this function owns a concrete `File`; the existing
+injected `Write` seam only observes header writes and cannot observe sync.
+The existing `save-929-sync-rejecting-{pinyin,zhuyin}` contract cases check
+continued saving when `/dev/null` rejects sync, explicitly not whether a
+sync was issued. Source inspection establishes the added call and its
+position. Crash/power-loss behavior and macOS runtime execution were not
+tested. Existing save/reload cases cover output and persistence behavior.
+
 ### G11 — numeric parsing and locale
 
 `SystemTableInfo2::load` and `UserTableInfo::load` read their fields with
