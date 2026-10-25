@@ -479,12 +479,13 @@ def main() -> int:
     print(f"# hottest stacks in {path}")
     sidecar_file = sidecar_path(path)
     if sidecar is None:
-        if sidecar_file.is_file():
-            print(f"# symbols: unusable sidecar at {sidecar_file}")
-        else:
-            print(f"# symbols: {UNRESOLVED} (no sidecar at {sidecar_file})")
+        state = "unusable" if sidecar_file.is_file() else "missing"
+        print(
+            f"# symbol sidecar: {state} at {sidecar_file}; "
+            "frames without an in-profile name print as unresolved"
+        )
     else:
-        print(f"# symbols: {sidecar_file}")
+        print(f"# symbol sidecar: {sidecar_file}")
     for rank, (stack, count) in enumerate(rows, start=1):
         pct = 100.0 * count / total if total else 0.0
         leaf = stack[-1] if stack else "?"
