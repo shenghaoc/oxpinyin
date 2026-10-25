@@ -760,7 +760,7 @@ uv run --no-project --managed-python --python cpython@3.15+gil \
 Audit #929, 2026-10-25 UTC, subject base `6be364d9`; pin source read from a
 checkout of `074a2219c90feaf962d0d24f034514033ece5f99`. No save implementation
 or fsync/rename policy is changed. The C-facing path is `context::save_context`
-/ `zhuyin_save` → `facade::ContextCore::save_user` →
+/ `zhuyin_save` → `facade::ContextCore::save_user_with_layout_faults` →
 `UserStore::save_reporting_with_baseline` → `persistence::save_reporting`.
 The separate strict Rust `UserStore::save`/`persistence::finish_save` path
 stops and cleans pending files on error; it is not the C facade's contract.
@@ -775,7 +775,7 @@ stops and cleans pending files on error; it is not the C facade's contract.
 | Chunk open, header, payload, sync and close | `include/memory_chunk.h:536-557`; callers `pinyin.cpp:971,988`, `zhuyin.cpp:607,633` | Open failure and payload short/error returns are ignored by the caller. Each failed four-byte header write asserts; existing class (c) refusal applies. Successful payload is followed by `g_fsync`, then close; both results ignored. **Gap:** `write_chunk_file` writes and drops the file without sync. This is not a necessary Rust difference: `File::sync_all` is available. Follow-up only under the no-edit restriction; successful write/rename alone does not establish durability. |
 | Staged DBM indexes | `storage/facade_chewing_table2.h:93-96`, `facade_phrase_table3.h:92-95`; `chewing_large_table2_bdb.cpp:135-161`, `phrase_large_table3_bdb.cpp:150-176`; KC `chewing_large_table2_kyotodb.cpp:124-145`, `phrase_large_table3_kyotodb.cpp:139-160`; tkrzw `chewing_large_table2_tkrzwdb.cpp:111-129`, `phrase_large_table3_tkrzwdb.cpp:102-120` | Unlink stale staging, create backend-native output, copy records, finish backend save before rename. KC active code dumps snapshots (its explicit synchronize/close branch is `#if 0`); tkrzw synchronizes with `false` then closes. BDB invokes the temporary DB's sync function with `m_db`, then closes the temporary DB. Do not silently describe that as a temporary-file fsync. Same-backend format/record bytes remain mandatory; backend error paths require separate verification. |
 | Staged bigram | `storage/ngram_bdb.cpp:81-110`; `ngram_kyotodb.cpp:82-113`; `ngram_tkrzwdb.cpp:65-83`; facade calls `pinyin.cpp:1014-1022`, `zhuyin.cpp:680-690` | Last DBM, before marker. BDB has the same sync receiver detail; KC dumps a snapshot; tkrzw HashDBM synchronizes with `false` and closes. Backend failures do not prevent the facade's attempted rename. Native save/reload checks retained counts; this is not a whole-file byte-identity proof. |
-| Failed rename, including a directory at the final name | `pinyin.cpp:1059-1129`; `zhuyin.cpp:609-638,655-690` | Retain failed staging and destination; attempt later files, print `rename ... to ... failed.` without errno text, then marker and dirty reset. `save_reporting` collects failures; `facade::ContextCore::save_user` prints them. Native tests block every destination and assert ordered failures and sentinel preservation; contract cases cover chunk and all three DBM finals on both facades. |
+| Failed rename, including a directory at the final name | `pinyin.cpp:1059-1129`; `zhuyin.cpp:609-638,655-690` | Retain failed staging and destination; attempt later files, print `rename ... to ... failed.` without errno text, then marker and dirty reset. `save_reporting` collects failures; `facade::ContextCore::save_user_with_layout_faults` prints them after persistence returns; interleaving with backend diagnostics remains an ordering follow-up. Native tests block every destination and assert ordered failures and sentinel preservation; contract cases cover chunk and all three DBM finals on both facades. |
 | Marker after attempted renames | `pinyin.cpp:220-232,1141-1146`; `zhuyin.cpp:164-176,695-698`; `storage/table_info.cpp:377-396` | In-place `user.conf` rewrite, not a `.tmp` commit record. Pinyin retains its context counter; zhuyin writes fresh counter zero. Open failure prints `write ... failed.`; caller still clears dirty and returns true. fprintf/fclose failures are unchecked upstream. Subject `write_marker` uses `std::fs::write`; write-error diagnostic equivalence after a successful open remains unverified. Parsing is #920. |
 | Fini with or without save | `pinyin.cpp:1194-1200`; `zhuyin.cpp:741-757` | Neither saves dirty dictionaries. Pinyin lowers counter (`>1 ? counter-1 : 0`) and writes marker; zhuyin only releases state. `FiniGuard`/`persistence::fini` follow this. Native and contract round trips include loss of an intentionally unsaved suffix, not loss of committed data. |
 | Restart after interruption | `pinyin.cpp:173-217,922-1146`; `zhuyin.cpp:126-162,547-698`; `storage/table_info.cpp:399-412` | Load finals, never replay `.tmp`; conformance/counter can trigger cleanup. No multi-file atomicity: pinyin before rename retains old finals; either facade during renames can leave mixed generations, zhuyin even before all staging completes. Native child exits before the second library baseline, verifies the exact first-file state and reload delta. No power-cut durability claim. |
@@ -796,8 +796,14 @@ Verification and reproduction: `just heavy -- cargo test -p oxpinyin-user`,
 sync-rejection case proves only the outward continuation result, **not that the
 subject issued a sync**. The contract selection is `--issue 929` in the existing
 `tools/bisection/run-contract-diff.sh` runner; cell selection is
-`tools/bisection/cells-for-diff.py origin/main`. Execution results are recorded
-with the final checkpoint; unresolved rows keep this audit partial (Refs #929).
+`tools/bisection/cells-for-diff.py origin/main`. On this Linux amd64 host, 231 user-crate tests and 142 contract-harness tests
+passed; fmt/clippy passed. The selector chose bdb only; all 12 new contract
+cases MATCH on bdb. A temporary subject-only mutation retaining dirty after
+`UserStore::save_reporting_inner` produced 10 DIFFER and two unchanged reload
+controls; restoring the subject restored 12 MATCH. No mutation remains in
+the diff. KC/tkrzw were provisioned and hash-verified, not selected for this
+diff. GLib source acquisition and the full durability/byte audit remain
+blocked or pending as distinguished above; this is Refs #929, not closure.
 
 
 ## G11 — Numeric parsing and locale
