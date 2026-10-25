@@ -66,6 +66,16 @@ The script writes a manifest the differential runners compare against
 
 ## 2a. Or pull the prebuilt libraries (any machine)
 
+Planning figures for the pooled builds (`tools/dev/pool.py`, `BUILD_BASE_MIB`
+and `BUILD_JOB_MIB`; `tools/cloud/setup.sh` uses them): the
+largest cgroup peaks measured for `build-oracle.sh` on linux/amd64, Docker,
+four CPUs. `--libs-only` peaked at 361 MiB (bdb), 528 MiB (kc) and 367 MiB
+(tkrzw) at `-j1` and at 432, 1,312 and 691 MiB at `-j4`; bdb `--regen-data` at
+`-j4` peaked at 606 MiB. Each build is counted at 300 MiB plus 275 MiB per make
+job, which covers every point. Three builds at `-j1` on four CPUs ran slower
+than one at a time at `-j4`, so builds overlap only while each keeps two make
+jobs.
+
 The oracle libraries build reproducibly: inside the pin-reference image
 (`tools/oracle/Dockerfile.oracle`: `debian:trixie`, the current Debian stable
 codename, from the default mirrors with normal security updates)

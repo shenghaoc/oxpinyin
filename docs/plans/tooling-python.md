@@ -253,6 +253,14 @@ private writable state, propagate errors, and reap children before releasing
 admission. Preserve deterministic output by combining results independently
 of completion order.
 
+CPU shares are per pool, or per `run-all.py` invocation: a pool keeps workers
+times make jobs within the CPUs it was admitted or measured, and does not
+reserve those CPUs against other, independent slot holders, which plan their own
+share the same way. Memory is admitted host-wide, counting every holder's
+reservation. There is no global CPU scheduler. `tools/dev/pool.py` also names,
+labels and records the containers it starts (a per-invocation random token and
+`--cidfile`) and removes only those on a failure or signal.
+
 Serialize dependent steps and work requiring isolation, and state the reason
 in the tool or its runbook. Timing, residency, cache-sensitive observations
 and sampling profiles require isolation. Untimed set collection does not.
@@ -268,6 +276,8 @@ Audit at `27c785c0` (follow-ups retain their own implementation gates):
 | `measure-function-order.py` | Required isolation: paired native timings, page-cache and parent-observed memory measurements share host resources. Keep the measurement campaign serial. |
 | `profile/run-w8-cycle.sh` | Profiler attempts form a fallback chain, each conditional on failure of its predecessor. Sampling and native timing need isolation; no independent campaign loop to parallelize. |
 | `bisection/run-system-import-profile.sh` | Side/mode collections use private users and instruction/allocation counters; independent serialization is accidental: [#1236](https://github.com/shenghaoc/oxpinyin/issues/1236). Attempts within each retry chain remain dependent. |
+
+Maintainer decision after this audit: [#1234](https://github.com/shenghaoc/oxpinyin/issues/1234) was closed as not planned. The serial backend build in `Dockerfile.oracle` stays, and no `tools/dev` module is copied into an image build.
 
 ## 6. Implementation acceptance
 
