@@ -5340,6 +5340,72 @@ def _(k):
     return blocked_save(k, 'user_pinyin_index.bin.tmp', 'parse_more_chewings', b'su3cl3', ())
 
 
+# #929: expectations read at 074a2219 pinyin.cpp:922-1146 and
+# zhuyin.cpp:547-698 before differential execution. Ordinary rename failures
+# continue, retain the failed .tmp and clear dirty; successful saves survive fini.
+def save_929_failure(k, blocked):
+    """Block a final name, then check the soft failure and clean-save guard."""
+    if k.mode == 'zhuyin':
+        out = blocked_save(k, blocked, 'parse_more_chewings', b'su3cl3', ())
+    else:
+        out = blocked_save(k, blocked)
+    out['clean_save'] = bool(k.fn('save', B, P)(k.ctx))
+    out['staged_retained'] = Path(k.user, blocked + '.tmp').is_file()
+    out['destination_retained'] = Path(k.user, blocked, 'keep').read_text()
+    assert out['second'] and not out['clean_save']
+    assert out['staged_retained'] and out['destination_retained'] == 'x'
+    return out
+
+
+def save_929_roundtrip(k):
+    """Saved imports survive reopen; an unsaved suffix does not survive fini."""
+    return token_reuse_sequence(k, [
+        ('add', 0), ('save',), ('reopen',), ('add', 1), ('reopen',),
+        ('add', 2), ('save',), ('reopen',),
+    ])
+
+
+def save_929_sync_rejecting(k):
+    """Chunk writes to /dev/null succeed; its ignored sync error cannot stop save.
+
+    memory_chunk.h:555-557 ignores g_fsync and close returns. This witnesses
+    outward continuation, not whether the subject actually issues a sync.
+    """
+    fd = os.open('/dev/null', os.O_WRONLY)
+    try:
+        try:
+            os.fsync(fd)
+        except OSError:
+            pass
+        else:
+            raise AssertionError('/dev/null must reject sync on this host')
+    finally:
+        os.close(fd)
+    if k.mode == 'zhuyin':
+        ctx = _dirty_for_save(k, 'parse_more_chewings', b'su3cl3', ())
+    else:
+        ctx = _dirty_for_save(k)
+    Path(k.user, 'user.bin.tmp').symlink_to('/dev/null')
+    saved = bool(k.fn('save', B, P)(ctx))
+    clean = bool(k.fn('save', B, P)(ctx))
+    assert saved and not clean
+    return {'saved': saved, 'clean': clean,
+            'renamed_target': os.readlink(Path(k.user, 'user.bin')),
+            'bigram_exists': Path(k.user, 'user_bigram.db').is_file()}
+
+
+for _save929_mode in ('pinyin', 'zhuyin'):
+    for _save929_name in ('user.bin', 'user_pinyin_index.bin',
+                          'user_phrase_index.bin', 'user_bigram.db'):
+        case('save-929-rename-' + _save929_name + '-' + _save929_mode,
+             mode=_save929_mode, stderr=True, issues=('929',))(
+            functools.partial(save_929_failure, blocked=_save929_name))
+    case('save-929-reload-' + _save929_mode, mode=_save929_mode,
+         issues=('929',))(save_929_roundtrip)
+    case('save-929-sync-rejecting-' + _save929_mode, mode=_save929_mode,
+         issues=('929',))(save_929_sync_rejecting)
+
+
 # Batch A (#525): `MemoryChunk::save`'s header writes (`memory_chunk.h:543`,
 # `:547`). The pin writes the header as two `guint32`s and `assert`s each, so
 # a filesystem that refuses a header word kills it mid-save. The save is the
