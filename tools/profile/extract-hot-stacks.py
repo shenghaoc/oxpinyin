@@ -5,28 +5,43 @@ Reads `target/profile/w8-cycle.profile.json.gz` (or a path argument) and
 prints the top frames by sample self-count. A samply symbol sidecar
 (`<profile>.syms.json`, written by
 `samply record --unstable-presymbolicate`) supplies function names for
-save-only profiles. Used to fill the Stage-2 findings note; not a CI gate.
+save-only profiles. The report opens with the profile's sample total. A total
+below MIN_SAMPLES also draws a warning on stderr, because the order of the
+stacks is then mostly sampling noise. `--total` prints only that line, which
+is what `run-w8-cycle.sh` shows after a record. Used to fill the Stage-2
+findings note; not a CI gate.
 """
 
 from __future__ import annotations
 
+import argparse
 import gzip
 import json
 import re
 import sys
+import zlib
 from collections import Counter
 from pathlib import Path
 
 RAW_ADDRESS = re.compile(r"^0x[0-9a-fA-F]+$")
 UNRESOLVED = "unresolved"
+DEFAULT_PROFILE = Path("target/profile/w8-cycle.profile.json.gz")
+# Samples needed to rank hot stacks: about twice the size from which the top two
+# stacks kept their places in every repeated run. The basis is in
+# docs/runbooks/benches.md, "Profiles".
+MIN_SAMPLES = 5000
 
 
 def load_profile(path: Path) -> dict:
     if path.suffix == ".gz" or str(path).endswith(".json.gz"):
         with gzip.open(path, "rt", encoding="utf-8") as handle:
-            return json.load(handle)
-    with path.open(encoding="utf-8") as handle:
-        return json.load(handle)
+            profile = json.load(handle)
+    else:
+        with path.open(encoding="utf-8") as handle:
+            profile = json.load(handle)
+    if not isinstance(profile, dict):
+        raise ValueError("the top-level JSON value is not an object")
+    return profile
 
 
 def column(table: object, name: str) -> list:
@@ -461,15 +476,85 @@ def _self_test() -> int:
     return 0
 
 
-def main() -> int:
-    if len(sys.argv) > 1 and sys.argv[1] == "--self-test":
+def report_samples(total: int, level: int, prefix: str = "") -> None:
+    """Print the sample total on stdout; below the level, warn on stderr.
+
+    Too few samples is a warning, not a failure: the profile is valid, only
+    too short for the order of its stacks to mean anything.
+    """
+    if total >= level:
+        print(
+            f"{prefix}samples: {total} (at least the {level} needed to rank "
+            "hot stacks)",
+            flush=True,
+        )
+        return
+    print(
+        f"{prefix}samples: {total} (fewer than the {level} needed to rank "
+        "hot stacks)",
+        flush=True,
+    )
+    print(
+        f"warning: the profile has {total} of the {level} samples needed to "
+        "rank hot stacks; their order is mostly sampling noise. Raise "
+        "PERF_CYCLES and record again.",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
+def _non_negative(text: str) -> int:
+    value = int(text)
+    if value < 0:
+        raise argparse.ArgumentTypeError("must not be negative")
+    return value
+
+
+def _parse_args(argv: list[str] | None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Print the hottest stacks from a samply profile."
+    )
+    parser.add_argument(
+        "profile",
+        nargs="?",
+        type=Path,
+        default=DEFAULT_PROFILE,
+        help=f"profile to read (default {DEFAULT_PROFILE})",
+    )
+    parser.add_argument(
+        "--total",
+        action="store_true",
+        help="print only the sample total, warning when it is below the level",
+    )
+    parser.add_argument(
+        "--min-samples",
+        type=_non_negative,
+        default=MIN_SAMPLES,
+        metavar="N",
+        help=f"samples needed to rank hot stacks (default {MIN_SAMPLES})",
+    )
+    parser.add_argument("--self-test", action="store_true", help=argparse.SUPPRESS)
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parse_args(argv)
+    if args.self_test:
         return _self_test()
-    default = Path("target/profile/w8-cycle.profile.json.gz")
-    path = Path(sys.argv[1]) if len(sys.argv) > 1 else default
+    path = args.profile
     if not path.is_file():
         print(f"fatal: profile not found at {path}", file=sys.stderr)
         return 1
-    profile = load_profile(path)
+    try:
+        profile = load_profile(path)
+    except (OSError, EOFError, ValueError, zlib.error) as error:
+        print(f"fatal: cannot read the profile at {path}: {error}", file=sys.stderr)
+        return 1
+    if args.total:
+        # The total does not depend on names, so skip the symbol sidecar.
+        total, _ = hottest(profile, top_n=0)
+        report_samples(total, args.min_samples)
+        return 0
     sidecar = load_sidecar(path)
     symbols = SymbolResolver(profile, sidecar)
     total, rows = hottest(profile, symbols=symbols)
@@ -486,6 +571,7 @@ def main() -> int:
         )
     else:
         print(f"# symbol sidecar: {sidecar_file}")
+    report_samples(total, args.min_samples, prefix="# ")
     for rank, (stack, count) in enumerate(rows, start=1):
         pct = 100.0 * count / total if total else 0.0
         leaf = stack[-1] if stack else "?"

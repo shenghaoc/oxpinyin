@@ -901,6 +901,54 @@ tables, the pinned model20 cache, cargo-c, and a profiler. `PROFILE_REUSE_STAGE=
 skips the restage. Artifacts land in `target/profile/`;
 `tools/profile/extract-hot-stacks.py` summarises them.
 
+**Sample count.** A hot-stack report ranks stacks by how many samples each
+holds, so its order is only as good as the profile is long. samply takes one
+sample per CPU millisecond, so the total follows the work in a cycle. On the
+measuring host (Apple M5, macOS 27 arm64, samply 0.13.1) a steady cycle over
+the full model20 tkrzw export takes about 8 ms and yields about 8 samples; the
+small fixture exports take about 1 ms and yield about 1. Unset, samply runs
+`PERF_CYCLES=2048`: about 16,000 samples in about 17 s there, three times the
+level below, so a host up to three times faster per cycle still reaches it. A
+set `PERF_CYCLES` applies to every profiler. The other profilers keep their
+32-cycle default: Callgrind counts instructions exactly, and `perf record`
+stores a stack dump with every sample. The W8 cycle and `bisect --perf` are
+unchanged; the timing JSON it prints and the launcher saves has one entry per
+cycle, so it is longer at 2048.
+
+After a samply record the launcher prints `samples: N` from the profile and
+warns on stderr when N is below 5,000. `extract-hot-stacks.py` opens its report
+with the same line and warning; `--total` prints the line alone and
+`--min-samples` changes the level. The flamegraph and perf fallbacks write no
+samply profile and print no total. A faster host or a smaller export takes
+fewer samples per cycle: when warned, raise `PERF_CYCLES` in proportion to the
+shortfall.
+
+The level comes from repeated runs. Each row is six runs at that
+`PERF_CYCLES` on the measuring host, ranked against the runs pooled at 4096:
+
+| `PERF_CYCLES` | samples (median) | top stack | top two, in order | top three, in order |
+| ---: | ---: | ---: | ---: | ---: |
+| 32 | 309 | 1/6 | 0/6 | 0/6 |
+| 64 | 563 | 6/6 | 2/6 | 0/6 |
+| 128 | 1,069 | 6/6 | 5/6 | 4/6 |
+| 256 | 2,106 | 6/6 | 6/6 | 4/6 |
+| 512 | 4,259 | 6/6 | 6/6 | 4/6 |
+| 1024 | 8,281 | 6/6 | 6/6 | 4/6 |
+| 2048 | 16,435 | 6/6 | 6/6 | 5/6 |
+| 4096 | 33,728 | 6/6 | 6/6 | 4/6 |
+
+The top two stacks, `core::slice::sort::stable::drift::sort` (6.1%) and
+`oxpinyin_data::dict::resolve_items` (4.0%), kept their places in every run
+from 256 cycles (about 2,100 samples) up. The level is 5,000, about twice that
+size. At the old 32-cycle default a tkrzw leaf-node read (`_platform_memmove`,
+a fixed cost of about 25 samples) led in five of six runs. Third place never
+settles. Its stack (`order_window_tail`, 2.7%) is within 0.2 points of the
+fourth, and in 5 of the 42 runs from 64 cycles up a `libsystem_malloc` frame
+calling `mach_absolute_time` took a top-three slot, which more samples do not
+prevent. Compare the counts as well as the ranks.
+To repeat the table, run `PERF_CYCLES=n PROFILE_REUSE_STAGE=1 just profile-w8`
+for each size and compare the first stacks of each report.
+
 The save-only profile is unsymbolicated. When the installed samply supports
 `--unstable-presymbolicate` (0.13.0 or later), the launcher passes it and
 samply writes `target/profile/w8-cycle.profile.json.syms.json` beside the
