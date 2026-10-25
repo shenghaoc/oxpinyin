@@ -232,6 +232,33 @@ Layer 2 owns the public heavy recipe. Layer 3 owns nextest's internal limits.
 Layer 5 schedules the runner refactor at T5. T2N already extracted this code;
 the refactor keeps the adapter import, with separate state in each environment.
 
+### Independent campaign work (#1232)
+
+A tool that launches many independent subprocesses or builds uses a bounded
+pool under the shared heavy-slot and memory admission. Choose its worker
+count from admitted CPU and memory capacity, not a fixed count. Account for
+nested compiler jobs and every live subprocess; multiple pools cannot share
+a reservation whose estimate only covers one of them. Give each worker
+private writable state, propagate errors, and reap children before releasing
+admission. Preserve deterministic output by combining results independently
+of completion order.
+
+Serialize dependent steps and work requiring isolation, and state the reason
+in the tool or its runbook. Timing, residency, cache-sensitive observations
+and sampling profiles require isolation. Untimed set collection does not.
+
+Audit at `27c785c0` (follow-ups retain their own implementation gates):
+
+| Tool | Classification and disposition |
+| --- | --- |
+| `generate-function-order.py` | Independent constructor/profile/toggle and steady runs: accidental serialization, replaced by one admitted pool. Each pass keeps private profile copies and unions before sorting. |
+| `cloud/setup.sh` | Common dependency-image/model setup and final environment publication are dependencies. Per-cell builds/data regeneration are independent; bounded container/make budgets need coordinated changes: [#1233](https://github.com/shenghaoc/oxpinyin/issues/1233). |
+| `oracle/Dockerfile.oracle` | Backend builds have distinct work/prefix directories. Serial backend loop is accidental; budget nested make jobs rather than starting three full-CPU builds: [#1234](https://github.com/shenghaoc/oxpinyin/issues/1234). |
+| `bisection/teardown.py` | Export must precede recipe selection; mutation within a profile is ordered. Independent population/witness jobs can overlap after controller scratch is separated: [#1235](https://github.com/shenghaoc/oxpinyin/issues/1235). Timing, residency and measurement phases remain isolated. |
+| `measure-function-order.py` | Required isolation: paired native timings, page-cache and parent-observed memory measurements share host resources. Keep the measurement campaign serial. |
+| `profile/run-w8-cycle.sh` | Profiler attempts form a fallback chain, each conditional on failure of its predecessor. Sampling and native timing need isolation; no independent campaign loop to parallelize. |
+| `bisection/run-system-import-profile.sh` | Side/mode collections use private users and instruction/allocation counters; independent serialization is accidental: [#1236](https://github.com/shenghaoc/oxpinyin/issues/1236). Attempts within each retry chain remain dependent. |
+
 ## 6. Implementation acceptance
 
 Run setup, bootstrap doctor and interpreter identity checks on all three native
