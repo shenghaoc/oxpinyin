@@ -337,8 +337,12 @@ trust its CA (`/root/.ccr/README.md`, "docker build / docker run"), so
 every Docker/Podman run here uses `--network host`, passes `https_proxy` and
 the CA (`GIT_SSL_CAINFO`, `SSL_CERT_FILE`, `CURL_CA_BUNDLE`) and mounts
 `/root/.ccr/ca-bundle.crt` only when that bundle exists (or an explicit
-`OXPINYIN_PROXY_CA` is supplied). An ordinary HTTPS proxy does not require
-Claude files. The `deps` build passes the proxy as a build
+`OXPINYIN_PROXY_CA` is supplied). With `HTTPS_PROXY` set and that bundle
+absent, step 0 uses the CA the host already trusts, in this order:
+`SSL_CERT_FILE`, `CURL_CA_BUNDLE`, then the system bundle, and logs which one
+(`proxy CA: ...`). When there is none, setup fails there, before any download
+or build, and names `OXPINYIN_PROXY_CA`; it never disables verification.
+An ordinary HTTPS proxy does not require Claude files. The `deps` build passes the proxy as a build
 arg and the CA as the optional BuildKit secret `cacert`
 (`tools/oracle/Dockerfile.oracle`); with the secret, apt trusts that CA for
 any https source. The base image keeps its default Debian mirrors either

@@ -197,6 +197,54 @@ STUB
 		$message != *'ACTION podman '* ]] || fail "$message"
 	printf 'PASS: model20 access failure precedes container pulls and library builds\n'
 
+	# The proxy CA is chosen before any download (#1239). The session directory and the system
+	# bundle search are moved into the work directory so the host's own files never decide.
+	: >"$work/empty-ca"
+	printf 'synthetic CA\n' >"$work/host-ca"
+	export OXPINYIN_CCR_DIR=$work/no-ccr OXPINYIN_SYSTEM_CA_BUNDLES=$work/no-system-ca HTTPS_PROXY=http://127.0.0.1:1
+	unset SSL_CERT_FILE CURL_CA_BUNDLE OXPINYIN_PROXY_CA
+	proxy_fail='FAIL: HTTPS_PROXY is set but there is no proxy CA bundle'
+	run_setup --cells bdb
+	[[ $status == 1 && $message == *"$proxy_fail"* && $message == *'set OXPINYIN_PROXY_CA to the proxy'* && \
+		$message != *'ACTION curl '* && $message != *'ACTION podman '* ]] || fail "$message"
+	printf 'PASS: a proxy with no CA anywhere fails at step 0 naming OXPINYIN_PROXY_CA\n'
+
+	export OXPINYIN_PROXY_CA=$work/missing-ca
+	run_setup --cells bdb
+	[[ $status == 1 && $message == *"FAIL: OXPINYIN_PROXY_CA bundle is missing: $work/missing-ca"* && \
+		$message != *'ACTION curl '* && $message != *'ACTION podman '* ]] || fail "$message"
+	export OXPINYIN_PROXY_CA=$work/empty-ca
+	run_setup --cells bdb
+	[[ $status == 1 && $message == *"FAIL: OXPINYIN_PROXY_CA bundle is missing: $work/empty-ca"* ]] || fail "$message"
+	printf 'PASS: OXPINYIN_PROXY_CA naming a missing or empty file fails at step 0\n'
+
+	export OXPINYIN_PROXY_CA=$work/host-ca
+	run_setup --cells bdb
+	[[ $status == 1 && $message == *"proxy CA: $work/host-ca (OXPINYIN_PROXY_CA)"* && \
+		$message == *'FAIL: model20 is unavailable'* && $message != *"$proxy_fail"* ]] || fail "$message"
+	unset OXPINYIN_PROXY_CA
+	printf 'PASS: OXPINYIN_PROXY_CA naming a present file is used\n'
+
+	export SSL_CERT_FILE=$work/host-ca CURL_CA_BUNDLE=$work/empty-ca
+	run_setup --cells bdb
+	[[ $status == 1 && $message == *"using the host-trusted SSL_CERT_FILE: $work/host-ca"* && \
+		$message == *'FAIL: model20 is unavailable'* ]] || fail "$message"
+	unset SSL_CERT_FILE
+	export CURL_CA_BUNDLE=$work/host-ca
+	run_setup --cells bdb
+	[[ $status == 1 && $message == *"using the host-trusted CURL_CA_BUNDLE: $work/host-ca"* ]] || fail "$message"
+	unset CURL_CA_BUNDLE
+	export OXPINYIN_SYSTEM_CA_BUNDLES=$work/no-system-ca:$work/host-ca
+	run_setup --cells bdb
+	[[ $status == 1 && $message == *"using the host-trusted the system bundle: $work/host-ca"* ]] || fail "$message"
+	printf 'PASS: with a proxy and no session bundle, the CA the host trusts is used and named\n'
+
+	unset HTTPS_PROXY https_proxy
+	run_setup --cells bdb
+	[[ $status == 1 && $message == *'FAIL: model20 is unavailable'* && $message != *'proxy CA'* ]] || fail "$message"
+	unset OXPINYIN_CCR_DIR OXPINYIN_SYSTEM_CA_BUNDLES
+	printf 'PASS: an ordinary setup without a proxy needs no CA\n'
+
 	# A Valgrind at or above its minimum is kept: setup goes on to the model fetch. A git build
 	# (valgrind-3.22.0.GIT) counts as its number, as it does in tools/dev/doctor.py.
 	for version in 3.22.0 3.27.1 3.22.0.GIT; do
