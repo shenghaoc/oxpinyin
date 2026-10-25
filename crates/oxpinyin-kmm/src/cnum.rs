@@ -78,9 +78,48 @@ pub fn atoi(field: &[u8]) -> u32 {
     atol(field) as u32
 }
 
+/// C `printf("%f")` rendering: six fixed decimals for a finite value, and
+/// glibc's `nan`/`-nan` (sign bit honoured) and `inf`/`-inf`. The pin's
+/// tools print a NaN when they divide zero by zero (`estimate_*` with no
+/// scorable context, `eval_correction_rate` with no test); Rust's own `{:.6}`
+/// would print `NaN`.
+#[must_use]
+pub fn printf_f(value: f64) -> String {
+    if value.is_nan() {
+        if value.is_sign_negative() {
+            "-nan"
+        } else {
+            "nan"
+        }
+        .to_owned()
+    } else if value.is_infinite() {
+        if value.is_sign_negative() {
+            "-inf"
+        } else {
+            "inf"
+        }
+        .to_owned()
+    } else {
+        format!("{value:.6}")
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{atoi, atol};
+    use super::{atoi, atol, printf_f};
+
+    #[test]
+    fn printf_f_matches_glibc_for_nan_inf_and_finite_values() {
+        assert_eq!(printf_f(0.5), "0.500000");
+        assert_eq!(printf_f(-0.0), "-0.000000");
+        assert_eq!(printf_f(f64::INFINITY), "inf");
+        assert_eq!(printf_f(f64::NEG_INFINITY), "-inf");
+        assert_eq!(printf_f(f64::NAN.copysign(1.0)), "nan");
+        assert_eq!(printf_f(f64::NAN.copysign(-1.0)), "-nan");
+        // The upstream `lambda_sum / lambda_count` with both zero.
+        let zero: f64 = "0".parse().expect("zero");
+        assert_eq!(printf_f(zero / zero).trim_start_matches('-'), "nan");
+    }
 
     #[test]
     fn plain_and_prefixed_decimals() {

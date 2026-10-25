@@ -38,4 +38,4 @@ mod interpolation;
 
 pub use error::LambdaError;
 pub use held_out::{DeletedCounts, count_deleted, count_deleted_tokens};
-pub use interpolation::{EPSILON, Lambda, SEED_LAMBDA, estimate_lambda};
+pub use interpolation::{EPSILON, Lambda, SEED_LAMBDA, estimate_lambda, mean_of_no_contexts};

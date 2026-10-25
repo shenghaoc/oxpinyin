@@ -135,6 +135,12 @@ impl PinDir {
         Ok(Self { dir })
     }
 
+    /// The path of `name` inside this dir.
+    #[must_use]
+    pub fn path(&self, name: &str) -> std::path::PathBuf {
+        self.dir.path().join(name)
+    }
+
     /// Runs one pin command with this dir as its working directory,
     /// capturing stdout; errors name the binary, its exit status, and the
     /// captured stderr.

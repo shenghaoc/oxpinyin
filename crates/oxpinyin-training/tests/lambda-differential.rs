@@ -316,3 +316,78 @@ fn rust_lambda_matches_live_estimate_interpolation() {
         estimate.lambda.average,
     );
 }
+
+/// With nothing to average or to test, the pin divides zero by zero and prints
+/// the NaN with `%f` (`estimate_interpolation.cpp:116-117,139`,
+/// `eval_correction_rate.cpp:201-203`): `average lambda:-nan` with no
+/// `token:` line, and `correction rate:-nan` (`nan` on AArch64, where the
+/// hardware's default NaN has the other sign). Both tools exit 0.
+#[test]
+#[ignore = "needs the pin-built estimate_interpolation and eval_correction_rate tool chain and PINYIN_GEN_NGRAM_DATA; run with --include-ignored"]
+fn empty_inputs_print_the_nan_the_pin_prints() {
+    let (
+        Some(gen_binary_files),
+        Some(gen_unigram),
+        Some(gen_ngram),
+        Some(gen_deleted_ngram),
+        Some(estimate_interpolation),
+        Some(eval_correction_rate),
+    ) = (
+        locate_bin("PINYIN_GEN_BINARY_FILES"),
+        locate_bin("PINYIN_GEN_UNIGRAM"),
+        locate_bin("PINYIN_GEN_NGRAM"),
+        locate_bin("PINYIN_GEN_DELETED_NGRAM"),
+        locate_bin("PINYIN_ESTIMATE_INTERPOLATION"),
+        locate_bin("PINYIN_EVAL_CORRECTION_RATE"),
+    )
+    else {
+        panic!(
+            "missing input for the live NaN differential: set PINYIN_GEN_BINARY_FILES, \
+             PINYIN_GEN_UNIGRAM, PINYIN_GEN_NGRAM, PINYIN_GEN_DELETED_NGRAM, \
+             PINYIN_ESTIMATE_INTERPOLATION, PINYIN_EVAL_CORRECTION_RATE"
+        )
+    };
+    let Some(data) = locate_data("PINYIN_GEN_NGRAM_DATA") else {
+        panic!(
+            "missing input for the live NaN differential: PINYIN_GEN_NGRAM_DATA not set or empty"
+        )
+    };
+    let full = std::fs::read(fixture_ngseg()).expect("fixture");
+
+    let pin = PinDir::fresh(&data, "empty-nan").expect("temp data dir");
+    pin.run(&gen_binary_files, &["--gen-punct-table"], None)
+        .expect("gen_binary_files");
+    pin.run(&gen_unigram, &[], None).expect("gen_unigram");
+    pin.run(&gen_ngram, &[], Some(&full)).expect("gen_ngram");
+    // An empty held-out stream leaves DELETED_BIGRAM without a context.
+    pin.run(&gen_deleted_ngram, &[], Some(b""))
+        .expect("gen_deleted_ngram");
+    let estimate = String::from_utf8(
+        pin.run(&estimate_interpolation, &[], None)
+            .expect("estimate_interpolation"),
+    )
+    .expect("utf8");
+    let expected = format!(
+        "average lambda:{}\n",
+        oxpinyin_kmm::printf_f(oxpinyin_training::lambda::mean_of_no_contexts())
+    );
+    assert_eq!(estimate, expected, "empty held-out: the pin's stdout");
+    assert!(matches!(
+        estimate_lambda(&Counts::default(), &DeletedCounts::default()),
+        Err(oxpinyin_training::lambda::LambdaError::EmptyDeleted)
+    ));
+
+    // An empty evaluation corpus tests nothing.
+    std::fs::write(pin.path("evals2.text"), b"").expect("evals2.text");
+    let rate = String::from_utf8(
+        pin.run(&eval_correction_rate, &[], None)
+            .expect("eval_correction_rate"),
+    )
+    .expect("utf8");
+    let report = oxpinyin_training::eval::EvalReport::default();
+    assert_eq!(
+        rate,
+        format!("{}\n", report.correction_rate_line()),
+        "empty corpus: the pin's stdout"
+    );
+}

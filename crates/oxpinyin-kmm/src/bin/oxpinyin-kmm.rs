@@ -17,7 +17,7 @@ use std::process::ExitCode;
 
 use oxpinyin_kmm::{
     DEFAULT_CDF, DEFAULT_PRUNE_K, GenerateParams, KMixtureModel, canonicalize, estimate, export,
-    import, kmm_text_to_interpolation, merge_into, prune, validate,
+    import, kmm_text_to_interpolation, merge_into, printf_f, prune, validate,
 };
 
 fn main() -> ExitCode {
@@ -170,30 +170,6 @@ fn run_estimate(args: &[String]) -> Cli {
     Ok(())
 }
 
-/// C `printf("%f")` rendering: six fixed decimals for a finite value, and
-/// glibc's `nan`/`-nan` (sign bit honoured) for the NaN that
-/// `estimate_k_mixture_model` prints when the deleted model has no scorable
-/// context — Rust's own `{:.6}` would print `NaN`.
-fn printf_f(value: f64) -> String {
-    if value.is_nan() {
-        if value.is_sign_negative() {
-            "-nan"
-        } else {
-            "nan"
-        }
-        .to_owned()
-    } else if value.is_infinite() {
-        if value.is_sign_negative() {
-            "-inf"
-        } else {
-            "inf"
-        }
-        .to_owned()
-    } else {
-        format!("{value:.6}")
-    }
-}
-
 fn run_merge(args: &[String]) -> Cli {
     let mut result_file: Option<PathBuf> = None;
     let mut sources: Vec<PathBuf> = Vec::new();
@@ -309,19 +285,4 @@ fn next<'a>(iter: &mut std::slice::Iter<'a, String>, flag: &str) -> Cli<&'a str>
     iter.next()
         .map(String::as_str)
         .ok_or_else(|| format!("missing value for {flag}").into())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::printf_f;
-
-    #[test]
-    fn printf_f_matches_glibc_for_nan_and_finite_values() {
-        assert_eq!(printf_f(0.5), "0.500000");
-        assert_eq!(printf_f(f64::NAN.copysign(1.0)), "nan");
-        assert_eq!(printf_f(f64::NAN.copysign(-1.0)), "-nan");
-        // The upstream `lambda_sum / lambda_count` with both zero.
-        let zero: f64 = "0".parse().expect("zero");
-        assert_eq!(printf_f(zero / zero).trim_start_matches('-'), "nan");
-    }
 }

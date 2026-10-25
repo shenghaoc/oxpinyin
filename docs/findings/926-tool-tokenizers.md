@@ -657,15 +657,47 @@ The live pin tools below were built on the cloud host (Ubuntu 24.04, glibc
 | --- | --- | --- |
 | `TAGLIB_PARSE_SEGMENTED_LINE` `atoi` (`utils_helper.h:61`): `gen_ngram`, `gen_deleted_ngram`, `gen_k_mixture_model`, `eval_correction_rate`, `mergeseq` | Reproduce | `oxpinyin_kmm::atoi` (`kmm/src/cnum.rs`) is used by `counter/parse.rs` (counter, emitter, lambda, train held-out), `eval/decode.rs`, `segment/mergeseq.rs` and `kmm/generate.rs`. A field with no digits is the null token, not an error, as at the pin. |
 | `TAGLIB_GET_TOKEN` `atoi` and `TAGLIB_GET_TAGVALUE(glong, .., atol)` in `import_k_mixture_model` and `k_mixture_model_to_interpolation` | Reproduce | `kmm/src/text.rs`: tokens `atoi`, counts `atol` then the low 32 bits for the model fields; the interpolation converter prints the token as `i32` and the count as `i64`. The line grammar (fixed field positions) is the crate's own and is unchanged. `assert(count == T)` in the importer is not a conversion and is untouched. |
-| Classic count `atoi` (ibus-libpinyin `PYLibPinyin.cc:262-267`; `pinyin.cpp:520-524`) | Frozen dictool contract | Not the pin library: the frontend is a separate package and dictool specifies its own grammar, `count := digit+`, with explicit errors and a *desired absolute count* meaning (`dictool-format.md` §2-3). Reproducing `atoi` would reverse that contract, which needs a human ruling. No change. The leading `+` that `parse::<u64>` used to accept is now refused with the line-numbered count error, as `digit+` requires. |
-| `import_interpolation` `atoi`/`atol` (`utils/storage/import_interpolation.cpp:135-182`) | Outside the three tool crates | The Rust reader is `oxpinyin-data` `interp.rs`; it stays pending under G16. |
-| `gen_zhuyin_table` `atoi`, `gen_pinyin_table` `fscanf("%u")`, `table_text_parser.h:62` `g_ascii_strtoull` | Outside the three tool crates | Datagen audit; unchanged. |
+| Classic count `atoi` (ibus-libpinyin `PYLibPinyin.cc:262-267`; `pinyin.cpp:520-524`) | Frozen dictool contract | Not the pin library: the frontend is a separate package and dictool specifies its own grammar, `count := digit+`, with explicit errors and a *desired absolute count* meaning (`dictool-format.md` §2-3). The maintainer's #1226 ruling keeps that contract, so `atoi` is not reproduced. The leading `+` that `parse::<u64>` accepted contradicted `digit+`; it is now refused with the line-numbered count error. |
+| `import_interpolation` `atoi`/`atol` (`utils/storage/import_interpolation.cpp:135-182`) | Remaining | The Rust reader is `oxpinyin-data` `interp.rs`; a separate PR after this one. |
+| `gen_zhuyin_table` `atoi` (`gen_zhuyin_table.cpp:153`), `gen_pinyin_table` `fscanf("%u")` (`gen_pinyin_table.cpp:145`), `table_text_parser.h:62` `g_ascii_strtoull` | Remaining | Datagen's numeric parsing; a separate PR after this one. |
 | `parse_interpolation_dump`, `candidate.rs`, `status.rs` parses | No pin parser | They read oxpinyin's own counter dump, candidate index and status JSON; the pin consumes these only through Python scripts. Not a conversion of a pin input. |
-| `printf("%f")` of lambda and correction rate | Not traced | Output formatting, not input conversion. `oxpinyin-kmm` already renders glibc's `nan`/`inf`; the training binaries print `{:.6}`, which spells NaN differently. Left for a separate record. |
+| `printf("%f")` of lambda and correction rate | Reproduce (NaN only) | See "NaN at the `%f` print sites" below. |
 
 No class (a)-(c) exception or language/runtime discrepancy is needed: every
 reproduced result is plain checked integer arithmetic in safe Rust, linear in
 the field length with no allocation.
+
+### NaN at the `%f` print sites
+
+The pin tools print floats at `estimate_interpolation.cpp:129,139`,
+`estimate_k_mixture_model.cpp:141,152` and `eval_correction_rate.cpp:203`.
+
+* Per-token `lambda:%f` is not NaN on a reachable input: a context exists only
+  with at least one item whose held-out count is at least 1, so the divisor
+  `table_num` is nonzero, and `numerator / sum` is guarded by `0 == sum`.
+* `average lambda:%f` is `lambda_sum / lambda_count` (`double / int`,
+  `estimate_interpolation.cpp:116-117,139`; `estimate_k_mixture_model.cpp`
+  the same). With no held-out context it is `0.0 / 0`, a NaN. An empty held-out
+  stream reaches it. x86-64's `divsd` yields the default NaN with the sign bit
+  set, so glibc prints `-nan` (AArch64's default NaN prints `nan`). The tool
+  exits 0.
+* `correction rate:%f` is `passed_count / (parameter_t) tested_count`
+  (`eval_correction_rate.cpp:201-203`). An empty or all-null evaluation
+  stream tests nothing, `0.0 / 0.0`, and prints `-nan` on x86-64.
+
+Reproduced in safe Rust at the print sites, with the sign taken from the
+machine's own division as the C does: `oxpinyin_kmm::printf_f` (moved from the
+KMM binary; glibc's `nan`/`-nan`/`inf`/`-inf`), `EvalReport::correction_rate_line`
+(`passed as f64 / tested as f64`) and `oxpinyin-lambda` on `EmptyDeleted`
+(`mean_of_no_contexts`, a `black_box` division so the compiler does not fold it
+to a NaN of its own). The pipeline keeps its own contracts: `rate` stays 0 for
+scoring and `estimate_lambda` still returns `EmptyDeleted`, because λ must lie
+in `[0, 1]`. `oxpinyin-kmm` already printed these through `printf_f`.
+
+The existing live lambda differential gains `empty_inputs_print_the_nan_the_pin_prints`:
+the pin's `estimate_interpolation` on an empty held-out stream prints exactly
+`average lambda:-nan` and its `eval_correction_rate` on an empty
+`evals2.text` prints `correction rate:-nan`, equal to the Rust lines.
 
 ### Verification
 
@@ -703,7 +735,9 @@ export PINYIN_KMM_TO_INTERP="$pin_src/utils/training/k_mixture_model_to_interpol
 just heavy -- cargo test --locked -p oxpinyin-kmm --test differential -- rust_kmm_matches_pin_gen_and_export rust_kmm_matches_pin_to_interpolation --include-ignored
 ```
 
-Not run: a live `import_k_mixture_model` differential (no existing driver;
+Remaining under #926, outside the three tool crates: `import_interpolation`
+(`oxpinyin-data` `interp.rs`) and datagen's `atoi`, `fscanf("%u")` and
+`g_ascii_strtoull` sites. Not run: a live `import_k_mixture_model` differential (no existing driver;
 its macros are the ones the converter run covers), the import runner
 (`run-import-diff.sh`, which needs the ibus stage), and the kc and tkrzw
 cells (no backend code changed).
