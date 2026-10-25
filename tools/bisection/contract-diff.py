@@ -6937,6 +6937,11 @@ for _mode in ('pinyin', 'zhuyin'):
             ('both-dot-segments', 'dot-segments', 'dot-segments'), ('both-dotdot', 'dotdot', 'dotdot')):
         case(f'glib-922-dir-{_label}-{_mode}', mode=_mode, control=True, stderr=True, issues=('922',))(
             lambda k, system=_system, user=_user: dir_spelling_session(k, system, user))
+    # The user directory's repeated trailing separators reach the `open` line
+    # of `user.conf`; the parent build spells them differently, so this is not
+    # a control.
+    case(f'glib-922-dir-user-dup-trailing-{_mode}', mode=_mode, stderr=True, issues=('922',))(
+        lambda k: dir_spelling_session(k, None, 'dup-trailing'))
 
 
 def fini_write_failed(k):
@@ -6952,6 +6957,26 @@ def fini_write_failed(k):
     shutil.rmtree(k.user)
     k.fn('fini', None, P)(ctx)
     return out
+
+
+def save_write_failed(k):
+    """Open with the user directory ending in `///`, train, remove it, then save and finalize.
+
+    The save's `rename <dir>/<file>.tmp to <dir>/<file> failed.` lines and the
+    `write <dir>/user.conf failed.` line name paths joined to that directory."""
+    name, index, parse, text, train_args = LIBRARY_FACADES[k.mode]
+    ctx = k.init(user=spell_dir('dup-trailing', k.user))
+    out = {'init': bool(ctx)}
+    out['train'] = train_once(k, ctx, parse, text, train_args)
+    shutil.rmtree(k.user)
+    out['save'] = k.fn('save', B, P)(ctx)
+    k.fn('fini', None, P)(ctx)
+    return out
+
+
+for _mode in ('pinyin', 'zhuyin'):
+    case(f'glib-922-save-write-failed-dup-trailing-{_mode}', mode=_mode, stderr=True,
+         issues=('922',))(save_write_failed)
 
 
 # Only pinyin's fini writes the marker (`pinyin.cpp:1194-1200`); zhuyin's has

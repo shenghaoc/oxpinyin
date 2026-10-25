@@ -312,26 +312,26 @@ appended whole). Nothing inside a part is touched.
 | User directory identity: `""` is a directory (cwd), NULL is none; `g_strdup` keeps the bytes | Unchanged. `cstr_to_path` is already a byte copy into `OsStr`, the natural Rust form; nothing to simplify. | Complete; existing #619/#642/#643 cases plus `glib-922-dir-*`: same file set, train/save/reopen. |
 | Non-UTF-8 directory or name bytes | Raw bytes everywhere (`OsStr`, `path_bytes`); unchanged. | Complete; existing `stderr-non-utf8-user-dir`. |
 | `\` as a separator | An ordinary byte on Unix (GLib uses `/` only there). On Windows GLib accepts both; `pin_join` follows that but no pin run covers Windows. | Unix complete; Windows unverified (no reference there). |
-| Residual: the other `dir.join(<constant name>)` sites, listed below | Same file always. Derived from the join rule and the pin, not run: with a directory ending in two or more separators (`/u///`), `Path::join` appends the name without adding one (`/u///user.conf`), while the pin's `g_build_filename(user_dir, USER_TABLE_INFO, NULL)` (`pinyin.cpp:175-176`, `zhuyin.cpp:129-130`; GLib `g_build_path_va` trims the directory's trailing separators and inserts one) gives `/u/user.conf`, and `UserTableInfo::load` prints that name raw in `open %s failed.` (`table_info.cpp:332`). So the line differs in bytes for such a directory and for no other. Not fixed here: #1190 edits these files. | Pending; follow-up after #1190 replaces these joins with `pin_join` and adds the user-directory witness to `glib-922-*`. |
+| User-directory file names joined with `Path::join` (`user.conf`, the user bigram and index files and their `.tmp` siblings) | Same file always. With a directory ending in two or more separators (`/u///`), `Path::join` appended the name without adding one (`/u///user.conf`), while the pin's `g_build_filename(user_dir, name, NULL)` (`pinyin.cpp:164-226`, `zhuyin.cpp:118-170`; GLib `g_build_path_va` trims the directory's trailing separators and inserts one) gives `/u/user.conf`. `UserTableInfo::load` and `save` print that name raw (`table_info.cpp:332`, `:382`), and the save prints the `rename %s to %s failed.` pair (`pinyin.cpp:1061-1123`, `zhuyin.cpp:611-689`). `persistence.rs` now builds every one of these through `pin_join` (`user_file`, `user_conf_path`). | Complete; unit `user_conf_path_is_the_join_the_pin_writes`, `glib-922-dir-user-dup-trailing`, `glib-922-save-write-failed-dup-trailing`. |
 
-Remaining `dir.join(<constant name>)` sites (items, not lines): in
-`user/src/persistence.rs`, `check_format` (`user.conf` read and its open line),
-the `user.conf` marker write, `user_conf_write_failed`, the user bigram,
-pinyin-index and phrase-index loads, saves and `.tmp` renames; in
-`data/src/dict.rs`, the system pinyin, phrase and addon index opens; in
-`runtime/src/lib.rs`, the `table.conf` open, the system index and punctuation
-opens and the `user.conf` text at the user-directory error; in
-`user/src/store_libpinyin.rs`, the user bigram existence check (prints
-nothing). Those that print a path (the `open`, `write` and `rename` lines)
-differ only as the row above says.
+Remaining `Path::join(<constant name>)` sites after that fix, all the same
+file as the pin's join and none printed as pin text: in `data/src/dict.rs`, the
+system pinyin, phrase and addon index opens; in `runtime/src/lib.rs`, the system
+index and punctuation opens and the oxpinyin-own `OpenError` text (the
+`user.conf` path in its unknown-format message is not a pin line); in
+`user/src/store_libpinyin.rs`, the user bigram existence check. The pin
+opens those DBM files through the backend and writes no path of its own for
+them. `cstr_to_path` (both facades) is already a byte copy of the caller's
+directory, the pin's `g_strdup`, and needs no change.
 
-No discrepancy is registered: every difference found is a defect fixed above
-or the pending residual, and no valid configured file moves.
+No discrepancy is registered: every difference found is a defect fixed above,
+and no valid configured file moves.
 
 Verification: the 35 `glib-922-*` cases match on the bdb, kc and tkrzw
 cells (tkrzw against a sound libtkrzw), and against the parent build on bdb
 `--expect-parent` finds the 11 non-control cases differ and the 24 controls
-match.
+match. The user-directory follow-up adds four cases (`--issue 922` is now 39
+cases, all `MATCH` on bdb); the old `persistence.rs` makes those four `DIFFER`.
 
 ## G4 — GArray/GPtrArray containers
 
