@@ -3926,3 +3926,52 @@ the proposed issue texts are in
 - **Proposed upstream report:** issue B in
   `arm64-pin-portability-1137.md` ("libzhuyin candidate frequency: λ > 1
   orders candidates differently on arm64").
+
+### Final C string/vector allocation refusal (#1227; class (c))
+
+Recorded 2026-10-25 UTC. At `074a2219`, renderer duplication and formatting
+(`src/storage/chewing_key.cpp:47-115`, callers `src/pinyin.cpp:2707-2764`
+and `src/zhuyin.cpp:1732-1765`), keyboard vector elements
+(`src/storage/zhuyin_parser2.cpp:496-544`), auxiliary concatenation
+(`src/pinyin.cpp:3381-3596`), final sentence duplication/concatenation
+(`src/lookup/lookup.cpp:27-69`), unigram reading join
+(`src/pinyin.cpp:721-733`), and returned bigram strings
+(`src/pinyin.cpp:896-910`) reach fatal GLib allocation. GLib 2.84.4
+`glib/gmem.c:94-112` calls `g_error` on positive-size malloc failure;
+`gstrfuncs.c` implements the concatenation/join allocations with `g_new`.
+This is an explicit class-(c) availability choice, not a runtime quirk.
+
+Both facades' `ffi::owned_cstr` and `ffi::owned_cstr_list` now log exactly
+one warning under their existing `libpinyin`/`libzhuyin` domain on final
+allocation failure. Nested string failure is logged only by the string
+helper; vector cleanup adds no second warning. `malloc_cstr_with_warning`
+provides that policy for final byte-buffer allocations, while
+`malloc_cstr_with` preserves nonfatal conversion behavior. Callers return
+false; the keyboard vector frees every partial string and its vector.
+Both pinyin export iterators and the dual-string cursor renderer defer
+out-param writes until all requested allocations succeed. A warned failure
+frees this call's earlier buffers with libc `free`, leaves all outputs
+untouched, and emits only the failing allocator's warning. The unigram
+phrase conversion deliberately remains non-warning and may return NULL
+with success: the pin does not check `g_ucs4_to_utf8` at
+`src/pinyin.cpp:715-716`, publishes it at `:737`, and returns true at `:745`
+or `:755`. GLib 2.84.4 `glib/gutf8.c:1049-1051` returns NULL after its
+fallible allocation; this is distinct from the fatal reading join.
+
+The existing `tools/abi/check-alloc-failure.sh` gate, registered as
+`abi-alloc-failure`, injects eight final-allocation failures: the first-tone
+zhuyin renderer and HSU `c` vector/first-string/second-string allocations
+on each facade. It checks the false return, NULL output, exactly one
+warning with the expected domain/message, partial-vector cleanup, and
+injection-disabled negative controls. Three further witnesses fail the
+second allocation in each pinyin iterator and `pinyin_get_pinyin_strings`;
+they require one warning, false, unchanged outputs, and equal tracked/freed
+allocation counts. All three failed against f369b0a2 with one tracked
+buffer and none freed before the cleanup fix. The remaining changed key,
+sentence and zhuyin paths publish one string or an already-cleaned vector,
+so none publishes a buffer before another fallible allocation. Other
+callers above are source-only
+coverage. Earlier Rust allocations may still terminate; no identical
+allocation graph or whole-process OOM equivalence is claimed. Real GArray
+growth stays fatal. Nonfatal `token_get_phrase` conversion belongs to
+#1224 and is unchanged by #1227.
