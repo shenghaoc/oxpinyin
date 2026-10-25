@@ -65,6 +65,23 @@ set -euo pipefail
 #
 # $OXPINYIN_CONTAINER names the container command (default: podman if on
 # PATH, else docker).
+#
+# $OXPINYIN_PROXY_CA names the proxy's CA bundle. Without it, the session's
+# /root/.ccr/ca-bundle.crt is used; with HTTPS_PROXY set and neither present,
+# the CA the host trusts is used (SSL_CERT_FILE, CURL_CA_BUNDLE, then the
+# system bundle), or setup fails at step 0. A present, non-empty system bundle
+# does not show that the proxy's interception certificate is trusted: the
+# fallback only avoids failing early, and a TLS failure there is real.
+# Containers mount a private copy (mode 0600, in this run's temporary
+# directory, removed on exit) with `:ro,z`; the selected file itself is never
+# bind-mounted or relabelled.
+#
+# Test-only overrides, read by tools/cloud/env.test.sh and not for use
+# otherwise: $OXPINYIN_CCR_DIR replaces /root/.ccr, and
+# $OXPINYIN_SYSTEM_CA_BUNDLES (colon-separated) replaces the system bundle
+# search (/etc/ssl/certs/ca-certificates.crt, /etc/pki/tls/certs/ca-bundle.crt,
+# /etc/ssl/cert.pem). Unset, both leave those defaults, and setup behaves as
+# it would without them.
 
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 pin=$repo/tools/oracle/oracle-pin.txt
@@ -77,8 +94,7 @@ pull=1
 inside=0
 python_only=0
 oracle_options=0
-# OXPINYIN_CCR_DIR and OXPINYIN_SYSTEM_CA_BUNDLES (colon-separated) only let
-# env.test.sh move the session's CA directory and the system bundle search.
+# OXPINYIN_CCR_DIR is a test-only override (see the header).
 ccr_dir=${OXPINYIN_CCR_DIR:-/root/.ccr}
 proxy_ca=${OXPINYIN_PROXY_CA:-$ccr_dir/ca-bundle.crt}
 proxy_ca_single=$ccr_dir/agent-proxy-ca.crt
@@ -422,11 +438,12 @@ elif [[ -s $proxy_ca ]]; then
 	custom_ca=1
 	log "proxy CA: $proxy_ca (session bundle)"
 elif [[ -n $proxy ]] && ((!inside)); then
+	# OXPINYIN_SYSTEM_CA_BUNDLES is a test-only override (see the header).
 	IFS=: read -r -a system_bundles <<<"${OXPINYIN_SYSTEM_CA_BUNDLES-/etc/ssl/certs/ca-certificates.crt:/etc/pki/tls/certs/ca-bundle.crt:/etc/ssl/cert.pem}"
 	labels=(SSL_CERT_FILE CURL_CA_BUNDLE)
 	paths=("${SSL_CERT_FILE:-}" "${CURL_CA_BUNDLE:-}")
 	for bundle in "${system_bundles[@]}"; do
-		labels+=("the system bundle")
+		labels+=("system bundle")
 		paths+=("$bundle")
 	done
 	for i in "${!paths[@]}"; do
@@ -434,10 +451,26 @@ elif [[ -n $proxy ]] && ((!inside)); then
 			proxy_ca=${paths[i]}
 			custom_ca=1
 			log "proxy CA: HTTPS_PROXY is set and $ccr_dir/ca-bundle.crt is absent; using the host-trusted ${labels[i]}: $proxy_ca"
+			log "proxy CA: a present, non-empty bundle does not show that the proxy's interception certificate is trusted; if TLS then fails, set OXPINYIN_PROXY_CA to the proxy's CA bundle"
 			break
 		fi
 	done
 	((custom_ca)) || die "HTTPS_PROXY is set but there is no proxy CA bundle: $ccr_dir/ca-bundle.crt is absent and the host trusts none (SSL_CERT_FILE, CURL_CA_BUNDLE, system bundle); set OXPINYIN_PROXY_CA to the proxy's CA bundle"
+fi
+
+# Containers mount a private copy of the selected bundle, never the host's own
+# file: the shared SELinux relabel (`z`) rewrites the label of whatever it
+# mounts, and a system CA file is not setup's to relabel. The copy lives in
+# this run's temporary directory, mode 0600, and is removed on exit.
+ca_mount=$proxy_ca
+ca_tmp=
+if ((custom_ca && !inside)); then
+	ca_tmp=$(mktemp -d)
+	trap 'rm -rf "$ca_tmp"' EXIT
+	trap 'exit 1' HUP INT TERM
+	ca_mount=$ca_tmp/ca.crt
+	(umask 077 && cat "$proxy_ca" >"$ca_mount") || die "could not copy the proxy CA bundle: $proxy_ca"
+	log "proxy CA: containers mount a private copy at $ca_mount (mode 0600, removed on exit)"
 fi
 
 # retry CMD...: registries answer 429 to anonymous pulls from a shared
@@ -590,7 +623,7 @@ if [[ -n $proxy ]]; then
 	)
 	if ((custom_ca)); then
 		env_flags+=(-e GIT_SSL_CAINFO=/run/ca.crt -e SSL_CERT_FILE=/run/ca.crt
-			-e CURL_CA_BUNDLE=/run/ca.crt -v "$proxy_ca:/run/ca.crt:ro,z")
+			-e CURL_CA_BUNDLE=/run/ca.crt -v "$ca_mount:/run/ca.crt:ro,z")
 	fi
 fi
 
