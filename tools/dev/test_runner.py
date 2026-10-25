@@ -3,6 +3,7 @@
 The just recipes stay thin. Resolve nextest's concurrency before admission,
 then pass its final budget through the same slot implementation as just heavy.
 """
+import fnmatch
 import os
 from pathlib import Path
 import re
@@ -20,6 +21,18 @@ ROOT = Path(__file__).resolve().parents[2]
 # libclang, which the CI harness jobs do not provision (docs/testing/README.md).
 HARNESS_EXCLUDED = {'tools/bisection/internal-ledger.test.py'}
 
+# No harness test file inherits a variable whose name matches one of these
+# patterns, compared case-insensitively. A failing mock assertion prints the
+# call's arguments, and launcher and HeavyAdmission mocks receive the whole
+# environment: one such failure printed API and GitHub tokens (#1262). AUTH
+# matches only as _AUTH, _AUTH_ or AUTH_CONFIG, never as a bare substring,
+# which would also remove GIT_AUTHOR_NAME and GIT_AUTHOR_EMAIL, the identity
+# git needs to make a commit.
+CREDENTIAL_PATTERNS = ('*_KEY', '*_KEY_ID', '*APIKEY*', '*_TOKEN', '*_SECRET', '*SECRET*',
+                       '*PASSWORD*', '*_PASSWD', '*_PAT', '*CREDENTIAL*', '*_AUTH', '*_AUTH_*',
+                       '*AUTH_CONFIG*', 'NETRC', '*_NETRC', 'GITHUB_TOKEN', 'GH_TOKEN',
+                       'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY')
+
 
 def harness_files():
     """Discover regular tools/**/*.test.py files in LC_ALL=C path order.
@@ -35,9 +48,25 @@ def harness_files():
     return sorted(files, key=os.fsencode)
 
 
+def harness_environment(environ):
+    """Copy environ without its credential-shaped variables.
+
+    Return the copy and the number of variables left out.
+    """
+    kept = {name: value for name, value in environ.items()
+            if not any(fnmatch.fnmatchcase(name.upper(), pattern) for pattern in CREDENTIAL_PATTERNS)}
+    return kept, len(environ) - len(kept)
+
+
 def run_tools():
-    """Run every non-excluded harness in order, returning 1 if any fails."""
+    """Run every non-excluded harness in order, returning 1 if any fails.
+
+    Each harness runs without the credential-shaped variables; only their
+    count is printed.
+    """
     status = 0
+    env, removed = harness_environment(os.environ)
+    print(f'tools harness: credential-shaped environment variables removed: {removed}', flush=True)
     for path in harness_files():
         if path in HARNESS_EXCLUDED:
             print(f'tools harness excluded (missing CI input): {path}', flush=True)
@@ -46,7 +75,7 @@ def run_tools():
         command = ['uv', 'run', '--no-project', '--managed-python', '--python',
                    'cpython@3.15+gil', 'python', '-X', 'lazy_imports=normal', path]
         try:
-            if subprocess.run(command, cwd=ROOT).returncode:
+            if subprocess.run(command, cwd=ROOT, env=env).returncode:
                 status = 1
         except OSError as error:
             print(error, file=sys.stderr)

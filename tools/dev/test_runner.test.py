@@ -46,26 +46,66 @@ class HarnessTests(unittest.TestCase):
 
     def test_runner_keeps_commands_exclusion_order_and_runs_after_failures(self):
         files = ['tools/a.test.py', 'tools/bisection/internal-ledger.test.py', 'tools/z.test.py']
+        environ = {'PATH': os.environ['PATH'], 'OXPINYIN_TEST_KEPT': 'kept', 'OXPINYIN_TEST_TOKEN': 'withheld'}
         for results, expected in (([0, 0], 0), ([1, 0], 1), ([0, -15], 1),
                                   ([OSError('missing uv'), 0], 1)):
             with self.subTest(results=results):
                 replies = [value if isinstance(value, OSError) else subprocess.CompletedProcess([], value)
                            for value in results]
                 out, err = io.StringIO(), io.StringIO()
-                with mock.patch.object(test_runner, 'harness_files', return_value=files), \
+                with mock.patch.dict(os.environ, environ, clear=True), \
+                        mock.patch.object(test_runner, 'harness_files', return_value=files), \
                         mock.patch.object(test_runner.subprocess, 'run', side_effect=replies) as run, \
                         contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
                     self.assertEqual(test_runner.run_tools(), expected)
                 prefix = ['uv', 'run', '--no-project', '--managed-python', '--python',
                           'cpython@3.15+gil', 'python', '-X', 'lazy_imports=normal']
-                self.assertEqual(run.call_args_list, [mock.call(prefix + [path], cwd=ROOT)
+                child = {'PATH': environ['PATH'], 'OXPINYIN_TEST_KEPT': 'kept'}
+                self.assertEqual(run.call_args_list, [mock.call(prefix + [path], cwd=ROOT, env=child)
                                                       for path in (files[0], files[2])])
                 self.assertEqual(out.getvalue().splitlines(), [
+                    'tools harness: credential-shaped environment variables removed: 1',
                     'tools harness: tools/a.test.py',
                     'tools harness excluded (missing CI input): tools/bisection/internal-ledger.test.py',
                     'tools harness: tools/z.test.py'])
                 self.assertEqual('::error::one or more tools/ Python harness tests failed' in err.getvalue(),
                                  bool(expected))
+
+    def test_credential_patterns_match_names_case_insensitively(self):
+        removed = ['DEPLOY_KEY', 'npm_token', 'Client_Secret', 'MYSECRETS', 'DB_PASSWORD_FILE', 'GH_PAT',
+                   'AWS_CREDENTIALS_FILE', 'GITHUB_TOKEN', 'GH_TOKEN', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY',
+                   'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'DOCKER_AUTH_CONFIG', 'NPM_CONFIG__AUTH',
+                   'npm_config__auth', 'DEEPSEEK_APIKEY', 'SSH_AUTH_SOCK', 'DB_PASSWD', 'OAUTH_CONFIG',
+                   'NETRC', 'BUILD_NETRC']
+        kept = ['PATH', 'HOME', 'TMPDIR', 'LANG', 'CARGO_HOME', 'RUSTUP_TOOLCHAIN', 'GIT_AUTHOR_NAME',
+                'GIT_AUTHOR_EMAIL', 'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL', 'KEY', 'PAT', 'PATTERN',
+                'KEYCHAIN', 'TOKENIZERS', 'OXPINYIN_LOCK_DIR']
+        env, count = test_runner.harness_environment({name: 'value' for name in removed + kept})
+        self.assertEqual(sorted(env), sorted(kept))
+        self.assertEqual(count, len(removed))
+
+    def test_a_harness_child_neither_receives_nor_prints_a_credential(self):
+        # The probe harness prints the sentinel if the runner lets it through.
+        sentinel = 'credential-sentinel-3b9e'
+        probe = ("import os\n"
+                 "print(os.environ.get('OXPINYIN_TEST_TOKEN'), os.environ.get('OXPINYIN_TEST_KEPT'))\n")
+        runner = ('import sys\nfrom pathlib import Path\nsys.path.insert(0, sys.argv[2])\n'
+                  'from tools.dev import test_runner\ntest_runner.ROOT = Path(sys.argv[1])\n'
+                  'raise SystemExit(test_runner.run_tools())\n')
+        environ, _ = test_runner.harness_environment(os.environ)
+        with tempfile.TemporaryDirectory() as temp:
+            (Path(temp) / 'tools').mkdir()
+            (Path(temp) / 'tools/probe.test.py').write_text(probe)
+            result = subprocess.run([sys.executable, '-X', 'lazy_imports=normal', '-c', runner, temp, str(ROOT)],
+                                    env=dict(environ, OXPINYIN_TEST_TOKEN=sentinel, OXPINYIN_TEST_KEPT='kept'),
+                                    capture_output=True, text=True, timeout=60)
+        # Not assertNotIn(sentinel, output): a failure would print the output.
+        self.assertFalse(sentinel in result.stdout + result.stderr, 'the harness output carries the sentinel')
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout.splitlines(), [
+            'tools harness: credential-shaped environment variables removed: 1',
+            'tools harness: tools/probe.test.py',
+            'None kept'])
 
 
 class MappingTests(unittest.TestCase):
