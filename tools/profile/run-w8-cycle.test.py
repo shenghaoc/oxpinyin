@@ -65,6 +65,25 @@ class LaunchTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stderr)
         self.assertIn('samply is required on macOS', result.stderr)
 
+    def check_darwin_with_samply(self, body):
+        with tempfile.TemporaryDirectory() as directory:
+            samply = Path(directory) / 'samply'
+            samply.write_text('#!/bin/sh\n' + body + '\n')
+            samply.chmod(0o755)
+            return self.check_darwin(path=f"{directory}:{os.environ['PATH']}")
+
+    def test_check_reports_presymbolicate_availability(self):
+        result = self.check_darwin_with_samply(
+            'printf "%s\\n" --unstable-presymbolicate')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('samply presymbolicate: available', result.stdout)
+
+    def test_check_reports_missing_presymbolicate(self):
+        result = self.check_darwin_with_samply('exit 0')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('samply presymbolicate: unavailable', result.stdout)
+        self.assertIn('samply has no --unstable-presymbolicate', result.stderr)
+
     def test_darwin_check_names_the_linux_only_parts(self):
         with tempfile.TemporaryDirectory() as directory:
             samply = Path(directory) / 'samply'

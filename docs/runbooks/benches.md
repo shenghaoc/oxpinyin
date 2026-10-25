@@ -899,13 +899,26 @@ The launcher stages oxpinyin-capi from the tkrzw cell through
 tables and thin LTO) and samples the keystroke cycle. It needs the exported
 tables, the pinned model20 cache, cargo-c, and a profiler. `PROFILE_REUSE_STAGE=1`
 skips the restage. Artifacts land in `target/profile/`;
-`tools/profile/extract-hot-stacks.py` summarises them. The save-only profile
-is unsymbolicated; the extractor reports raw frame addresses, and `samply load`
-can supply symbols interactively. Raw profiles are not committed.
+`tools/profile/extract-hot-stacks.py` summarises them.
+
+The save-only profile is unsymbolicated. When the installed samply supports
+`--unstable-presymbolicate` (0.13.0 or later), the launcher passes it and
+samply writes `target/profile/w8-cycle.profile.json.syms.json` beside the
+profile. The extractor maps each frame through the profile's `libs` and
+`resourceTable` to a library-relative address, then looks that address up in
+the sidecar's per-library `known_addresses`; the names are samply's demangled
+symbols. No separate symbolizer or debug-file step is required. A frame the
+sidecar does not cover prints as `unresolved`, never as its raw `0x...` offset.
+`samply load` uses the same sidecar. An older samply still records, with a
+warning, and the report is all unresolved. The flag is unstable upstream, so
+the launcher probes the installed help instead of requiring a version. Raw
+profiles and sidecars are not committed.
 
 On Linux the profiler chain is unchanged: samply, then the flamegraph wrapper,
-then perf record, then Valgrind Callgrind. On macOS samply is required and the
-recipe supplies Homebrew's GLib, Berkeley DB, tkrzw and codec paths. The
+then perf record, then Valgrind Callgrind. When Linux's samply supports the
+flag, it writes the same sidecar and the extractor reports the same way. On
+macOS samply is required and the recipe supplies Homebrew's GLib, Berkeley DB,
+tkrzw and codec paths. The
 launcher stages the tkrzw C ABI and uses `tools/tkrzw/runtime.sh`'s `otool`
 resolution for the staged dylib; set `OXPINYIN_TKRZW_PREFIX` (the recipe does)
 when running the script directly. There is no `setarch`, `taskset` or
@@ -916,8 +929,8 @@ hint rather than pinning, and the dylib's dependencies are absolute.
 its `perf_event_paranoid` hint are Linux-only and are skipped with a stated
 reason; the flamegraph and Valgrind fallbacks are likewise not used. A missing
 samply, cargo-c, export or model is a refusal, not a timing-only run. This
-macOS path has been exercised on arm64 only; the Linux launcher and its output
-are unchanged.
+macOS path has been exercised on arm64 only. The Linux profiler chain is
+unchanged.
 
 ## Writing it up
 
