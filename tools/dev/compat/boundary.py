@@ -80,14 +80,17 @@ def validate(argv, environ=None):
     """Parse and validate launcher inputs without accessing a container runtime.
 
     Check environment, result namespace, gate selection, timeouts, and any
-    model archive digest against tools/oracle/oracle-pin.txt. Return the
-    parsed namespace. Read the registry and, when needed, run the contract
-    tag listing; reject invalid inputs with parser exits or value errors.
+    model archive digest against tools/oracle/oracle-pin.txt. ``--cases``
+    needs ``--runners`` naming contract-diff; run-all.py checks the case IDs
+    against the contract index inside the container. Return the parsed
+    namespace. Read the registry and, when needed, run the contract tag
+    listing; reject invalid inputs with parser exits or value errors.
     """
     environ = os.environ if environ is None else environ
     validate_environment(environ)
     parser = argparse.ArgumentParser(allow_abbrev=False)
     parser.add_argument('--runtime')
+    parser.add_argument('--platform', choices=('linux/amd64', 'linux/arm64'))
     parser.add_argument('--cell', choices=('bdb', 'kc', 'tkrzw'), default='bdb')
     parser.add_argument('--archive', type=Path)
     parser.add_argument('--jobs', type=positive, default=2)
@@ -97,6 +100,7 @@ def validate(argv, environ=None):
     parser.add_argument('--list', action='store_true')
     parser.add_argument('--runners')
     parser.add_argument('--issue', action='append')
+    parser.add_argument('--cases')
     parser.add_argument('--timeout', type=positive)
     parser.add_argument('--runner-timeout', action='append', default=[])
     args = parser.parse_args(argv)
@@ -107,6 +111,9 @@ def validate(argv, environ=None):
     unredirected(result_root, Path.cwd(),
                  message='container result namespace must not redirect through a symlink')
     host.container_memory_mib(str(args.memory_mib))
+    if args.cases is not None and (args.runners is None
+                                   or 'contract-diff' not in registry.names(args.runners)):
+        raise ValueError('--cases requires --runners contract-diff')
     if args.memory_smoke or args.list:
         if args.runners is not None or args.issue is not None or args.archive is not None or args.timeout or args.runner_timeout:
             raise ValueError('list/memory smoke cannot select task inputs or runners')

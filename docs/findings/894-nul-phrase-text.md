@@ -10,9 +10,10 @@
   efficient Rust.
 - **Pin:** libpinyin 2.11.92 at
   `074a2219c90feaf962d0d24f034514033ece5f99`; both facades, all
-  backends. GLib **2.89.4-2** source as described in the
-  [non-scalar record](894-non-scalar-phrase-text.md). The Debian patch
-  series changes no UTF conversion code.
+  backends. GLib **2.84.4-3~deb13u5** (trixie), source tree read as
+  described in the [non-scalar record](894-non-scalar-phrase-text.md).
+  The testing run used 2.89.4-2 and its package patches change no UTF
+  conversion code. Amended 2026-10-25 UTC.
 
 ## Pin derivation
 
@@ -24,9 +25,9 @@ candidate paths read those words and pass the declared length to GLib:
   `g_ucs4_to_utf8(buffer + begin, length - begin, NULL, NULL, NULL)` and
   answers the allocation.
 - GLib's `g_ucs4_to_utf8` loop breaks on the first zero word
-  (`glib/gutf8.c:1035-1038` at 2.89.4) even though the length is
-  explicit. `:1054-1060` encodes only the words before it, with
-  `g_unichar_to_utf8` (`:549-607`). The pin therefore exposes the prefix
+  (`glib/gutf8.c:1036-1037` at 2.84.4) even though the length is
+  explicit. `:1055-1059` encodes only the words before it, with
+  `g_unichar_to_utf8` (`:546-596`). The pin therefore exposes the prefix
   before the zero; the words after it are not observable through the
   text.
 

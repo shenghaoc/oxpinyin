@@ -11,21 +11,21 @@
 - **Pin:** libpinyin 2.11.92,
   `074a2219c90feaf962d0d24f034514033ece5f99`, read from a clean tree at
   that commit. Both facades; all DBM backends. Reference image GLib
-  **2.89.4-2**, not the issue's 2.80.0. The snapshot
-  `20260831T000000Z` Debian source package was read, including its patch
-  series: none changes `gutf8.c`. Its upstream `gutf8.c` equals the
-  GNOME 2.89.4 tag at `fa41d356ee4936264c45cf11fa6c2640a89fbdda`.
+  **2.84.4-3~deb13u5** (trixie), not the issue's 2.80.0. The trixie
+  Debian source tree was read; the testing run used 2.89.4-2, whose
+  `gutf8.c` has the same encoder and range checks at different line
+  numbers. Re-read 2026-10-25 UTC.
 
 ## Pin derivation
 
 Phrase text is stored as `ucs4_t` words
 (`storage/phrase_index.cpp:103-111`). `_token_get_phrase`
 (`src/pinyin.cpp:1627-1645`) calls `g_ucs4_to_utf8` with the declared
-length. At GLib 2.89.4:
+length. At GLib 2.84.4:
 
-- `glib/gutf8.c:1035-1047` stops on zero and rejects only values at or
+- `glib/gutf8.c:1033-1047` stops on zero and rejects only values at or
   above `0x80000000`;
-- `UTF8_LENGTH` (`:81-87`) and `g_unichar_to_utf8` (`:549-607`) encode
+- `UTF8_LENGTH` (`:81-87`) and `g_unichar_to_utf8` (`:546-596`) encode
   U+D800 as `ed a0 80` and U+110000 as `f4 90 80 80`. Neither is valid
   UTF-8; both are non-NULL results.
 

@@ -187,7 +187,8 @@ mod tests {
             parse_table_conf_lambda(spaced.as_bytes()),
             Some(PINNED_LAMBDA)
         );
-        // An incomplete exponent is not a `%f` conversion at glibc 2.43.
+        // An incomplete exponent is not a `%f` conversion at glibc 2.43,
+        // which the subject follows; trixie's 2.41 reference accepts it (G11).
         assert_eq!(parse_table_conf_lambda(with_lambda("1e").as_bytes()), None);
     }
 

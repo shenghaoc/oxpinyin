@@ -1271,9 +1271,10 @@ mod tests {
     }
 
     /// What each counter line reads as, per glibc's
-    /// `fscanf("open counter:%d\n")` in debian:testing (glibc 2.43), which
-    /// the seeded protocol of `tools/bisection/run-open-counter-diff.sh`
-    /// checks against the pin.
+    /// `fscanf("open counter:%d\n")` in the 2.43 scanner the subject follows
+    /// (the trixie reference is 2.41; `%d` is unchanged for these values).
+    /// The seeded protocol of `tools/bisection/run-open-counter-diff.sh`
+    /// checks it against the pin.
     #[test]
     fn the_counter_reads_as_fscanfs_percent_d() {
         let head = "binary format version:7\nmodel data version:14\ndatabase format:Tkrzw\n";

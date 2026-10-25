@@ -27,8 +27,9 @@ All pin citations below are `file:line` at libpinyin
 `074a2219c90feaf962d0d24f034514033ece5f99`; relative pin paths start at
 `src/` unless prefixed `utils/`. The pin source was read at `074a2219`,
 alongside the cited existing findings. The
-inventory's reference is GLib **2.89.4-2**, glibc **2.43-3**, Debian snapshot
-`20260831T000000Z`, not the host libraries. Rust paths below start at
+inventory's reference is GLib **2.84.4-3~deb13u5**, glibc **2.41-12+deb13u4**
+from Debian 13.7 (trixie), the current stable codename, not the host
+libraries. The 2026-10-25 UTC trixie move re-read the G11 float paths below. Rust paths below start at
 `crates/oxpinyin-`; they cite items, not moving line numbers. “Both” means
 pinyin and zhuyin; backend-independent source arguments cover bdb/kc/tkrzw
 only to the stated extent, not three executed verification cells.
@@ -112,9 +113,10 @@ reached short-gram/non-scalar partition and returns the pin's true/token
 for a matching raw key. Sound-data equivalence is a length-sized
 zero-token result, not a zero-length result. No removal is cleared.
 
-GLib source evidence in #894 is `glib/gutf8.c:1035-1047,1054-1060`
+Historical GLib 2.89.4-2 source evidence in #894 is `glib/gutf8.c:1035-1047,1054-1060`
 (`g_ucs4_to_utf8`), `:549-607` (`g_unichar_to_utf8`) and `:940-990`
-(`g_utf8_to_ucs4`) from the stated Debian package. The earlier #894 issue's
+(`g_utf8_to_ucs4`) from the testing Debian package. The two #894 records
+now carry the trixie 2.84.4 source citations. The earlier #894 issue's
 2.80.0 citations and blanket assertion that C input cannot introduce
 non-scalars are superseded: **valid UTF-8 C input** cannot; malformed
 input can. No binary ambiguity was needed for these recorded arguments.
@@ -280,10 +282,11 @@ reached only from `pinyin_get_chewing_auxiliary_text`.
 
 Pin: `pinyin.cpp:164,176-226,252,268,286,308,331-336,353-368,395,400,419-439,952,968,985,997-1016,1052-1119,1260,1277`;
 `zhuyin.cpp:118,130-170,196,212,230,252,275-280,297-300,585,601,605,626,630,684`.
-GLib 2.89.4 (identical to 2.90.0), `glib/gfileutils.c`, `g_build_path_va` as
+GLib **2.84.4-3~deb13u5** (trixie; the testing run used 2.89.4, identical
+to 2.90.0), `glib/gfileutils.c:1925-2025`, `g_build_path_va` as
 `g_build_filename` calls it with `"/"` on Unix (the reference image's GLib;
-the `g_strdup` of the two directories at `pinyin.cpp:331-332` and
-`zhuyin.cpp:275-276` is a byte copy).
+re-read 2026-10-25 UTC; the `g_strdup` of the two directories at
+`pinyin.cpp:331-332` and `zhuyin.cpp:275-276` is a byte copy).
 Rust: `data/src/table_info.rs`, `pin_join`/`join_bytes` (used by
 `FileName::under`); `data/src/pin_stderr.rs`, `build_filename`;
 `user/src/store_libpinyin.rs`, the fini `write … failed.` line;
@@ -867,7 +870,7 @@ Pin: `storage/table_info.cpp:160,197-291,328-394` (scanner sites
 `locale.rs::pin_table_info_locale`; `training/src/segment/model.rs`,
 `parse_table_conf_lambda`.
 
-The reference scanner is glibc **2.43-3** from the Debian
+The reference scanner is glibc **2.41-12+deb13u4** from the Debian
 `glibc-source` package: `stdio-common/vfscanf-internal.c` for the
 `%d`/`%f`/`%255s` state machines and `stdlib/strtod_l.c` for the float
 value. The source walk below is the basis for each verdict; the corpus
@@ -881,15 +884,67 @@ marked otherwise.
 | Header order and missing fields: a missing `binary`/`model`/`lambda` directive is the pin’s ordinary `false`; a missing `database format:` line reuses the `source` word and aborts; an empty source or database value makes the next word the value and aborts at the converter; a missing `source` line reads an uninitialised `char str[256]` (class (b), not reproduced); a missing user-file row is the existing directory-read split. | Contract, except the missing-source class (b) refusal and the class (c) converter abort sites. Source: `stdio-common/vfscanf-internal.c:452-486` and `:1076-1259` (`%255s`); the missing-source class (b) is the pin's uninitialised `str` at `table_info.cpp:228-229`, not a glibc rule. | Complete: `table-conf-919-{binary-version,model-version}-line-missing`, `table-conf-abort-919-{database-format-line,database-format-value,source-format-value}-missing`, `table-conf-abort-919-source-format-line-missing`, existing `table-conf-abort-source-format-line-missing`. |
 | `%d` grammar: leading white space, optional `+`/`-`, at least one ASCII decimal digit, stop at the first non-digit; no digits is a conversion failure; base 10 leaves `x` after `0x`; a truncated line leaves the same bytes. | Contract. Source: `stdio-common/vfscanf-internal.c:1452-1500` (sign/digit lexer); `stdlib/strtol_l.c:401-435` (digit loop). | Complete: `table-conf-919-versions-{plus-sign,no-digits}`, existing `versions-negative-overflow`, unit `integers_saturate_at_long_min_like_strtol`. |
 | `%d` and `atoi` range: `strtol` saturates at `LONG_MIN`/`LONG_MAX`, the store into `int` is the low 32 bits on amd64/arm64, and an addon index is cut to `guint8`; `UserTableInfo::save` formats the two system versions with `%d`, so a `table.conf` value outside `int` is written back signed. | Contract; the writer was fixed here. Source: `stdlib/strtol_l.c:483-519` (overflow/saturation); `stdio-common/vfscanf-internal.c:1963-1984` (`int` store). | Complete: `table-conf-919-versions-{positive-overflow,int-wrap,negative}`, `table-conf-919-addon-atoi-nondigit`, `table-conf-abort-919-addon-positive-overflow`; `user_files::tests::an_out_of_int_version_is_written_signed`. |
-| `%f` decimal grammar: optional sign; digits with an optional dot on either side; at least one digit; `e`/`E` exponent with optional sign and digits; a bare exponent mark, a second dot, or no digit is rejected because the scanner’s `got_digit` is cleared; the scan is non-backtracking. | Contract. Source: `stdio-common/vfscanf-internal.c:2006-2320` (lexer); `stdlib/strtod_l.c:607-940` (sign, digits, fraction, exponent). | Complete: `table-conf-919-lambda-{dot-leading,dot-only,positive-sign,exponent-plus,exponent-sign-without-digits,decimal-underflow}`, existing `table-conf-lambda-{exponent-without-digits,hex-exponent-without-digits}` and `float_spellings_read_like_glibc`. |
-| `%f` hexadecimal: `0x`/`0X`; hex digits with an optional dot; at least one hex digit; optional `p`/`P` exponent with optional sign and digits; `e` is a hex digit, not the exponent; `0x`, `0x.`, `0x.p1` and a `p` without digits fail; the Rust `hex_float` rounds to nearest even, including subnormals and overflow. | Contract. Source: `stdio-common/vfscanf-internal.c:2140-2320`; `stdlib/strtod_l.c:684-700,732-756,850-940`; rounding at `strtod_l.c:213-357`. | Complete: `table-conf-919-lambda-{hex-no-exponent,hex-overflow,hex-dot-without-digits,hex-exponent-sign-without-digits,hex-exponent-minus-without-digits}`, existing `lambda-hex*`, unit `hex_floats_round_like_strtof`. |
+| `%f` decimal grammar: optional sign; digits with an optional dot on either side; at least one digit; `e`/`E` exponent with optional sign and digits; a second dot or no digit is rejected; a bare exponent mark is accepted by trixie 2.41 (it does not clear `got_digit`) but rejected by 2.43-3 and by the subject; the scan is non-backtracking. | Contract. Source: `stdio-common/vfscanf-internal.c:2006-2320` (lexer); `stdlib/strtod_l.c:607-940` (sign, digits, fraction, exponent). | Complete: `table-conf-919-lambda-{dot-leading,dot-only,positive-sign,exponent-plus,exponent-sign-without-digits,decimal-underflow}`, existing `table-conf-lambda-{exponent-without-digits,hex-exponent-without-digits}` and `float_spellings_read_like_glibc`. |
+| `%f` hexadecimal: `0x`/`0X`; hex digits with an optional dot; at least one hex digit; optional `p`/`P` exponent with optional sign and digits; `e` is a hex digit, not the exponent; `0x` fails; `0x.` converts to 0 in trixie 2.41 and is rejected by 2.43-3 and the subject; `0x1p`, `0x1p+` and `0x1p-` convert to 1.0 in trixie 2.41 and are rejected by 2.43-3 and the subject; the Rust `hex_float` rounds to nearest even, including subnormals and overflow. | Contract. Source: `stdio-common/vfscanf-internal.c:2140-2320`; `stdlib/strtod_l.c:684-700,732-756,850-940`; rounding at `strtod_l.c:213-357`. | Complete: `table-conf-919-lambda-{hex-no-exponent,hex-overflow,hex-dot-without-digits,hex-exponent-sign-without-digits,hex-exponent-minus-without-digits}`, existing `lambda-hex*`, unit `hex_floats_round_like_strtof`. |
 | `%f` specials: case-insensitive `inf`, `infinity`, `nan`, and `nan(n-char-sequence)`; an incomplete `infin`, an unclosed `nan(`, or an invalid payload fails; the payload bits are not retained by Rust’s `f32::NAN`, but λ is only consumed in NaN arithmetic whose result is zero frequency/NaN costs, so the payload is not observable. | Contract; NaN payload is an unobservable internal difference, not an exception. Source: `stdio-common/vfscanf-internal.c:2034-2160`; `stdlib/strtod_l.c:640-684`. | Complete: `table-conf-919-lambda-{infinity,nan-payload,nan-unclosed}`, existing `lambda-inf`, unit `float_spellings_read_like_glibc`. |
-| `%f` range and host libc: decimal overflow/underflow, hex subnormal/overflow and rounding match the reference; glibc 2.39 on Ubuntu 24.04 accepts `1e` and `0x1p` where 2.43-3 rejects them, and the four existing `host_scanf` cases report HOST-DEPENDENT rather than DIFFER. | Contract; host-libc dependent only for the registered spellings. Source: `stdlib/strtod_l.c:213-357` (round/overflow) and `:878-940` (exponent); `stdio-common/vfscanf-internal.c:2567-2576` (`got_digit`). | Complete: `table-conf-919-lambda-{hex-overflow,decimal-underflow}`, existing four `host_scanf` cases; the reference is the oracle image’s glibc 2.43-3. |
+| `%f` range and host libc: decimal overflow/underflow, hex subnormal/overflow and rounding match the reference; trixie 2.41 accepts `1e`, `1e+`, `0x1p`, `0x1p+` and `0x1p-` where 2.43-3 rejects them, and the registered `host_scanf` cases report HOST-DEPENDENT rather than DIFFER. | Reference-environment difference, not tuned away: the subject follows 2.43-3. Source: `stdlib/strtod_l.c:213-357` (round/overflow) and `:878-940` (exponent); `stdio-common/vfscanf-internal.c:2196-2201` (2.41 exponent mark keeps `got_digit`) and `:2545-2549` (2.41 conversion check has no `!got_digit`); 2.43-3 adds `:2218-2219` and `:2571-2576`. | Complete: `table-conf-919-lambda-{hex-overflow,decimal-underflow}`, existing four `host_scanf` cases and the three 919 exponent controls per facade; the reference is the oracle image’s glibc 2.41-12+deb13u4. |
 | `%255s` words: skip white space across newlines, take at most 255 bytes, retain NUL and non-UTF-8 bytes, then the C string stops at the first NUL; EOF after white space is an input failure; a 256th byte starts the next word. | Contract. Source: `stdio-common/vfscanf-internal.c:533-539` (width) and `:1076-1259` (`%s`). | Complete: `table-conf-919-word-{nul-truncates}`, `table-conf-abort-919-word-width-overlong`, existing `short-row-dropped`/`extra-word-dropped`; file names already cover non-UTF-8. |
 | Six-word rows: words group across line boundaries; a final short row is dropped; a five-word row followed by the next row’s first word forms a six-word row; a merged row that mismatches the library and table makes the pin read a NULL item and die of SIGSEGV, while the subject returns the declared result (class (b)). | Contract on defined rows; the merged-row crash is class (b). Source: `stdio-common/vfscanf-internal.c:1076-1259` (`%s` stops at white space); the six-word loop is pin `table_info.cpp:254-287`. | Complete: `table-conf-919-short-row-merged` (declared class-(b) result), existing `short-row-dropped`, `extra-word-dropped`, `comment-dropped`. |
 | Consumer mapping: system/user versions, addon index, λ `f32` bits, library names/types and file-type roles reach the same dictionary load/save and candidate results. | Contract. Source: the conversions above (`vfscanf-internal.c`/`strtod_l.c`); no additional scanner path. | Complete: the 68 #919 cases plus the existing 88 valid `table-conf-*` cases; the version writer fix is above. |
 | Training λ reader: the old line-based `parse_table_conf_lambda` accepted only a line-prefixed plain decimal; it now parses the same full `table.conf` stream as the pin through `TableConf::parse` (hex, leading whitespace, one-line headers, incomplete-exponent rejection). The file is read as bytes. | Tool-only contract with the pin’s loader; no C-ABI change. Source: it reuses the full `TableConf` stream and therefore the scanner citations above; no independent scanner. | Complete: `training/src/segment/model.rs::the_lambda_reader_follows_the_pin_stream`, `paths::load_lambda` reads bytes; no facades entry. |
 | Process `LC_NUMERIC`: the pin sets it to `C` and early returns skip the restore; oxpinyin leaves it at `C` and does not reproduce the process side effect. | **Needs a ruling to reverse**, [policy row 39](compatibility-policy.md), #923; retain. Not a scanner verdict: pin `table_info.cpp:197`; #923. | Not changed; real policy STOP, not an unread path. |
+
+**trixie re-derivation (2026-10-25 UTC).** The oracle image moved from the
+testing digest/snapshot to `debian:trixie`, so the reference scanner is glibc
+2.41-12+deb13u4, not 2.43-3. Reading that source changed the `%f` bare-exponent
+verdict above: 2.41 does not clear `got_digit` at the exponent mark and its
+post-loop check does not require a digit after it, so `1e`, `1e+`, `0x1p`,
+`0x1p+` and `0x1p-` convert (to 1.0) where 2.43-3 rejects them; `0x` and
+`infin` still fail, while `0x.` converts to 0 (see below). The subject still emulates 2.43-3 and rejects the
+accepted spellings, so the ten affected cases (both facades) are
+`table-conf-lambda-exponent-without-digits`,
+`table-conf-lambda-hex-exponent-without-digits`,
+`table-conf-919-lambda-exponent-sign-without-digits`,
+`table-conf-919-lambda-hex-exponent-sign-without-digits` and
+`table-conf-919-lambda-hex-exponent-minus-without-digits`; in the trixie
+container their pin side loads and the subject refuses, so the existing
+`host_scanf` disposition reports HOST-DEPENDENT. Separately, `0x.` has no
+hex digit and is now also registered with `host_scanf` (`0x.`): 2.41's `%f` reaches
+`strtof("0x.")`, which treats it as 0 and returns with the read pointer after
+`0` (`stdlib/strtod_l.c` at 2.41: hex prefix `:690-700`, the `0x.` branch
+`:732-768`, the zero-digit return `:1044-1048`), so the pin loads; 2.43
+rejects it before `strtof` (`vfscanf-internal.c:2571-2576`). The subject
+follows 2.43, so `table-conf-919-lambda-hex-dot-without-digits` and its
+zhuyin twin report HOST-DEPENDENT when the runtime scanner probe accepts
+`0x.` and the existing pin-loads/subject-refuses matcher holds. The control
+flag, default-suite membership and `--expect-parent` behavior are unchanged. The `%d` and `%255s` rows are unchanged
+for the scanned fields: 2.43's integer hex-prefix guard leaves `%d`'s `0x`
+stop at `0`, and its `%255s` buffer-size change is in the `%c`/`%m` paths,
+not the caller-provided 256-byte buffer.
+
+**trixie differential (2026-10-25 UTC, linux/amd64, `8ba13c53` (preserved on wip/1229-pre-squash)).** `contract-diff`
+ran 3,017 cases per cell: bdb 2,988 MATCH / 15 POLICY-ACCEPTED / 10
+HOST-DEPENDENT / 2 SKIP / 2 DIFFER; kc 2,983 / 15 / 10 / 7 / 2; tkrzw
+2,985 / 15 / 10 / 5 / 2. The last recorded three-cell run had 2,899 cases
+(bdb 2,893/2/4/0, kc 2,888/7/4/0, tkrzw 2,890/5/4/0). The 118 added cases
+are 103 MATCH and 15 POLICY-ACCEPTED. Of the shared cases, the six 919
+exponent controls moved MATCH -> HOST-DEPENDENT and the two `0x.` controls
+moved MATCH -> DIFFER; no other shared case changed.
+
+**`0x.` classification (2026-10-25 UTC).** The two
+`table-conf-919-lambda-hex-dot-without-digits` cases (pinyin and zhuyin) are
+glibc-version host dependence of the pin's `%f`, not a subject defect.
+Trixie's 2.41 `%f` reaches `strtof("0x.")`, which consumes the zero prefix
+and returns 0 (`stdlib/strtod_l.c:690-700`, `:732-768`, `:1044-1048`), so the
+pin loads; 2.43 and the subject reject it before `strtof`
+(`vfscanf-internal.c:2571-2576`). The maintainer's 2026-10-25 ruling
+registers `host_scanf=('0x.',)` on the shared row for both facades. The
+existing runtime probe and matcher classify only the pin-loads/subject-refuses
+result as HOST-DEPENDENT on accepting hosts; any other difference remains
+DIFFER, and matching observations remain MATCH. `control=True`, default
+membership and `--expect-parent` are unchanged. The earlier targeted bdb
+repeat at `8ba13c53` (preserved on wip/1229-pre-squash) returned 2 DIFFER and 6 HOST-DEPENDENT; those historical
+results are not rewritten as a new run.
 
 Completion gate (2026-10-24 UTC, linux/amd64, bdb): `cargo test -p
 oxpinyin-data -p oxpinyin-training` passed, clippy and fmt passed, and
