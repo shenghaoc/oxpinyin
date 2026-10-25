@@ -297,6 +297,22 @@ uv run --no-project --managed-python --python cpython@3.15.0+gil python -B -X la
    `deps` stage is built and `tools/oracle/build-oracle.sh --libs-only
    --enable-libzhuyin --dbm <cell>` runs inside it, at the same in-image
    paths as the Dockerfile (`/build/<cell>`, `/opt/pinyin-oracle/<cell>`).
+   The cells that need a build, and later the cells that need data, run at
+   once in a bounded pool (#1233, `python -m tools.dev pool run`,
+   `tools/dev/pool.py`). Each pool run holds the host heavy slot as `just heavy`
+   does, inheriting `OXPINYIN_HEAVY_SLOT_HELD` when `setup.sh` itself runs
+   under one, and divides the budget the slot admits: the available memory
+   after other slots' reservations and the CPUs (capped by `--jobs`). Workers
+   times make jobs stays within the CPUs, so nested `make -j` is counted; every
+   overlapped build keeps at least two make jobs; each build is counted at 300
+   MiB plus 275 MiB per make job (`docs/runbooks/oracle.md`); and unknown
+   memory builds one cell at a time. Each container is held to its make jobs
+   with `--cpus`; the memory figure sizes the overlap and is not a container
+   limit. The `deps` image, the model, the hash check, step 3b and the report
+   stay serial: the data step must not run on libraries that were not
+   verified. A failed build, or SIGINT or SIGTERM, starts no further cell,
+   stops the running containers and ends the run. Logs stay per cell in
+   `<cache>/build-<cell>.log` and `<cache>/data-<cell>.log`.
    Whichever way the libraries arrived, the script then compares
    `libpinyin.so` and `libzhuyin.so` with `libpinyin_sha256_<cell>` and
    `libzhuyin_sha256_<cell>` in `oracle-pin.txt` and **stops with exit 3

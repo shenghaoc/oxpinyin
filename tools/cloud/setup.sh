@@ -657,36 +657,61 @@ build_deps_image() {
 		-f "$repo/tools/oracle/Dockerfile.oracle" -t "$deps_image" "$repo" >&2
 }
 
-# in_image ARGS...: run build-oracle.sh in the pin-reference image. The oracle
-# root appears at /opt/pinyin-oracle, the path the published image uses, so
-# a prefix means the same thing wherever it was produced. Every mount
-# carries the shared SELinux relabel `z` (not the private `Z`): later
-# in_image calls mount the same paths again, and on a host without SELinux
-# the option does nothing.
-in_image() {
-	if ((inside)); then "$repo/tools/oracle/build-oracle.sh" "$@"; return; fi
-	"$ctr" run --rm --platform "$platform" "${net_flags[@]}" "${env_flags[@]}" \
-		-v "$repo/tools/oracle/build-oracle.sh:/usr/local/bin/build-oracle.sh:ro,z" \
-		-v "$repo/tools/oracle/oracle-pin.txt:/usr/local/bin/oracle-pin.txt:ro,z" \
-		-v "$oracle_root:/opt/pinyin-oracle:z" \
-		-v "$model_cache:/model-cache:ro,z" \
-		"$deps_image" build-oracle.sh "$@"
+# in_image_cmd ARGS...: set in_image_argv to the command that runs build-oracle.sh
+# in the pin-reference image. The oracle root appears at /opt/pinyin-oracle, the
+# path the published image uses, so a prefix means the same thing wherever it was
+# produced. Every mount carries the shared SELinux relabel `z` (not the private
+# `Z`): later runs mount the same paths again, and on a host without SELinux the
+# option does nothing. in_image_flags adds container flags.
+in_image_flags=()
+in_image_cmd() {
+	if ((inside)); then
+		in_image_argv=("$repo/tools/oracle/build-oracle.sh" "$@")
+		return
+	fi
+	in_image_argv=("$ctr" run --rm --platform "$platform" "${net_flags[@]}" "${env_flags[@]}" "${in_image_flags[@]}"
+		-v "$repo/tools/oracle/build-oracle.sh:/usr/local/bin/build-oracle.sh:ro,z"
+		-v "$repo/tools/oracle/oracle-pin.txt:/usr/local/bin/oracle-pin.txt:ro,z"
+		-v "$oracle_root:/opt/pinyin-oracle:z"
+		-v "$model_cache:/model-cache:ro,z"
+		"$deps_image" build-oracle.sh "$@")
 }
+in_image() {
+	in_image_cmd "$@"
+	"${in_image_argv[@]}"
+}
+
+# pool_phase LABEL NAMES LOG ARGS...: run build-oracle.sh ARGS once per cell, the
+# cells at once under the heavy slot (#1233). tools/dev/pool.py plans the overlap
+# from the budget the slot admits, so workers x make jobs stays within the CPUs
+# and memory; {item}, {jobs} in ARGS, LOG and the container flags are filled in
+# per cell. A failed cell, or a signal, stops the rest and removes the containers.
+pool_phase() {
+	local label=$1 names=$2 log=$3
+	local -a cleanup=()
+	shift 3
+	in_image_flags=()
+	if ((!inside)); then
+		in_image_flags=(--name "oxpinyin-setup-$$-$label-{item}" --cpus '{jobs}')
+		cleanup=(--cleanup "$ctr rm -f oxpinyin-setup-$$-$label-{item}")
+	fi
+	in_image_cmd "$@"
+	(cd "$repo" && uv run --no-project --managed-python python -X lazy_imports=normal \
+		-m tools.dev pool run --label "$label" --items "$names" --cpus "$jobs" --log "$log" "${cleanup[@]}" \
+		-- "${in_image_argv[@]}")
+}
+csv() { local IFS=,; printf '%s' "$*"; }
 
 mkdir -p "$model_cache"
 
-for dbm in "${need[@]}"; do
+if ((${#need[@]})); then
 	build_deps_image
-	log "$dbm: building the libraries"
-	rm -rf "${oracle_root:?}/$dbm"
-	in_image --libs-only --enable-libzhuyin --dbm "$dbm" \
-		--work-dir "/build/$dbm" --prefix "/opt/pinyin-oracle/$dbm" \
-		--jobs "$jobs" >/dev/null 2>"$cache/build-$dbm.log" ||
-		{
-			tail -40 "$cache/build-$dbm.log" >&2
-			die "$dbm: the library build failed (full log: $cache/build-$dbm.log)"
-		}
-done
+	for dbm in "${need[@]}"; do rm -rf "${oracle_root:?}/$dbm"; done
+	pool_phase libraries "$(csv "${need[@]}")" "$cache/build-{item}.log" \
+		--libs-only --enable-libzhuyin --dbm '{item}' --work-dir '/build/{item}' \
+		--prefix '/opt/pinyin-oracle/{item}' --jobs '{jobs}' ||
+		die "the library build failed or was cancelled (logs: $cache/build-<cell>.log)"
+fi
 
 status=0
 for dbm in "${cells[@]}"; do
@@ -777,23 +802,27 @@ fi
 
 # ---- 4. model20 and the data --------------------------------------------
 
+data_need=()
 for dbm in "${cells[@]}"; do
 	if data_ok "$dbm"; then
 		log "$dbm: data already matches the recorded manifest"
-		continue
+	else
+		data_need+=("$dbm")
 	fi
-	log "$dbm: fetching model20 and regenerating the data"
+done
+
+if ((${#data_need[@]})); then
+	log "fetching model20 for ${data_need[*]}"
 	"$repo/tools/model/fetch-model.sh" --cache-dir "$model_cache" >/dev/null
 	build_deps_image
-	in_image --regen-data --dbm "$dbm" --prefix "/opt/pinyin-oracle/$dbm" \
-		--model-dir /model-cache/extracted --work-dir "/build/$dbm-data" \
-		--jobs "$jobs" >/dev/null 2>"$cache/data-$dbm.log" ||
-		{
-			tail -40 "$cache/data-$dbm.log" >&2
-			die "$dbm: --regen-data failed (full log: $cache/data-$dbm.log)"
-		}
-	data_ok "$dbm" || die "$dbm: the regenerated data does not match the recorded manifest"
-done
+	pool_phase data "$(csv "${data_need[@]}")" "$cache/data-{item}.log" \
+		--regen-data --dbm '{item}' --prefix '/opt/pinyin-oracle/{item}' \
+		--model-dir /model-cache/extracted --work-dir '/build/{item}-data' --jobs '{jobs}' ||
+		die "--regen-data failed or was cancelled (logs: $cache/data-<cell>.log)"
+	for dbm in "${data_need[@]}"; do
+		data_ok "$dbm" || die "$dbm: the regenerated data does not match the recorded manifest"
+	done
+fi
 
 # ---- 5. report ----------------------------------------------------------
 
