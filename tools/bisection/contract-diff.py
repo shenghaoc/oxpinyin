@@ -1130,6 +1130,26 @@ def aux_matrix(k, parse_name, text, cursors):
     return out
 
 
+def chewing_cursors(k, parse_name, text, cursors):
+    """Collect chewing auxiliary text after parse_name at each byte cursor.
+
+    Allocate a separate instance per cursor so the parse is the only state.
+    Key the mapping by decoded input and cursor; values hold the return flag
+    and decoded/freed text, or the untouched marker when the out-param was
+    not written. text must decode as UTF-8 for the label, and cursors must
+    be reiterable."""
+    out = {}
+    for cursor in cursors:
+        inst = k.alloc()
+        k.fn(parse_name, Z, P, S)(inst, text)
+        aux = P(UNTOUCHED)
+        ret = k.fn('get_chewing_auxiliary_text', B, P, Z, C.POINTER(P))(
+            inst, cursor, C.byref(aux))
+        out['%s %s@%d' % (parse_name, text.decode(), cursor)] = [
+            ret, 'untouched' if aux.value == UNTOUCHED else k.text(aux.value)]
+    return out
+
+
 @case('aux-text-full-parse', issues=('542',))
 def _(k):
     """Render nihao with all auxiliary renderers at boundaries, mid-key and past-end cursors.
@@ -1158,6 +1178,50 @@ def _(k):
 def _(k):
     """Collect all auxiliary renderers across and beyond the chewing input su3cl3."""
     return aux_matrix(k, 'parse_more_chewings', b'su3cl3', (0, 1, 2, 3, 4, 5, 6, 9))
+
+
+@case('aux-text-chewing-cursors', issues=('925',))
+def _(k):
+    """Collect chewing text at every byte cursor of four full-pinyin inputs.
+
+    The inputs place a cut on both sides of a key boundary, inside a
+    multi-scalar zhuyin spelling (nihao@3), and exactly at its last scalar:
+    ni1@2 drops the tone-1 digit from the spelling and ni3hao4@6 cuts the
+    toned 'hao4'. Those are the two reachable terminator cuts. A cursor one
+    past the input and the maximum size_t clamp to the parsed length."""
+    out = {}
+    for text in (b'nihao', b'ni1', b'ni3hao4', b'xian'):
+        every = tuple(range(0, len(text) + 1)) + (2**64 - 1,)
+        out.update(chewing_cursors(k, 'parse_more_full_pinyins', text, every))
+    return out
+
+
+@case('aux-text-chewing-zhuyin-cursors', issues=('925',))
+def _(k):
+    """Collect chewing text at every keystroke cursor after a zhuyin parse.
+
+    su3cl3 spells each key in three keystrokes, so the four interior cursors
+    in a key are all below its zhuyin scalar count and the key boundaries
+    carry the terminator. The maximum size_t is the overrun cursor."""
+    out = {}
+    every = tuple(range(0, len(b'su3cl3') + 1)) + (2**64 - 1,)
+    out.update(chewing_cursors(k, 'parse_more_chewings', b'su3cl3', every))
+    return out
+
+
+@case('aux-text-chewing-overrun-cursor', issues=('925',))
+def _(k):
+    """Collect chewing text at cursors past the parsed input on both parse paths.
+
+    Cursors one past the input, seven past it and the maximum size_t all
+    clamp to parsed_len in pinyin_get_chewing_auxiliary_text
+    (src/pinyin.cpp:3527 at pin 074a2219)."""
+    out = {}
+    for parse_name, text in (('parse_more_full_pinyins', b'nihao'),
+                             ('parse_more_chewings', b'su3cl3')):
+        cursors = (len(text) + 1, len(text) + 7, 2**64 - 1)
+        out.update(chewing_cursors(k, parse_name, text, cursors))
+    return out
 
 
 @case('aux-text-tones', issues=('542',))

@@ -136,11 +136,12 @@ the pin or use these tests to discover its behavior.
 
 ## G2 — C strings, joins and vectors
 
-Pin: `pinyin.cpp:698-768,822-865,3421-3431,3482-3509,3518-3576`;
+Pin: `pinyin.cpp:698-768,822-865,3295-3379,3381-3576`;
 `storage/punct_table.cpp:74-94`; full `g_strdup`, `g_free`, `g_string_*`
 and vector membership in the inventory TSV.
 Rust: `capi/src/ffi.rs`, `owned_cstr`/`owned_cstr_list`;
-`capi/src/aux_matrix.rs`, `AuxMatrix::chewing`/`join`;
+`capi/src/aux_matrix.rs`, `SharedMatrix::{prefix,postfix,full,double,chewing}`
+and `split_zhuyin`; `capi/src/text.rs`, `chewing_aux_text`;
 `capi/src/iterators.rs` export getters; `capi/src/predict.rs`,
 `prepend_punctuations`; `data/src/pin_stderr.rs`, `build_filename`.
 
@@ -148,9 +149,106 @@ Rust: `capi/src/ffi.rs`, `owned_cstr`/`owned_cstr_list`;
 | --- | --- | --- |
 | Valid scalar phrase strings and their C marshalling | Identical within G1's valid-text scope. | Complete source argument there; other string consumers remain partial. |
 | Non-scalar / NUL phrase text at marshalling or export | Accepted only as [non-scalar][non-scalar] / [NUL][nul]. | Source complete for those records, runtime limits as G1. |
-| Ordinary aux prefix/middle/postfix; missing middle; UTF-8 substring boundaries | Inventory says `join` retains the NULL-middle drops-postfix law; full classification pending #925. | Partial; no removal clearance across all aux callers. |
+| Auxiliary prefix/middle/postfix at every supported cursor: key interiors, key boundaries, tone digit/mark cuts, clamped overrun cursors | Identical for the three auxiliary exports. `split_zhuyin` is an ordinary `str` scalar cut; the `g_strconcat` and `g_utf8_substring` shapes are gone. | Source trace below; new bdb cases `aux-text-chewing-cursors`, `aux-text-chewing-zhuyin-cursors`, `aux-text-chewing-overrun-cursor` MATCH, and the existing aux family 11/11 MATCH. |
+| Missing middle: the `g_strconcat(prefix, NULL, postfix, NULL)` stop | Unreachable in a supported operation; the walk cannot pass the cursor without setting `middle`, so the NULL-stop branch was dead and is removed. | Source proof below. No case can witness it because the pin cannot reach it. |
+| `g_utf8_substring` at the spelling's end (`len ==` scalar count) | Identical visible result: the right half is empty, which `split_zhuyin` produces at the terminator. | Source below; `ni1@2` and `ni3hao4@6` in the new cases. |
+| `len >` scalar count: a cursor inside a long key past its zhuyin spelling | Accepted class (b): `g_utf8_offset_to_pointer` walks past the allocation, so no deterministic bytes exist; oxpinyin keeps the right half empty. Registered in [upstream divergences](upstream-divergences.md#chewing-auxiliary-substring-over-read). | Source below; not a differential case, because the pin side has no reproducible result. |
 | Bigram export's unterminated pronunciation vector | Accepted class (b), [row 1 record](upstream-divergences.md#bigram-export-iterators-pinyin-buffer). | Established independent fault; #894 traces its text consumers but does not turn this fault into a deterministic phrase-text witness. |
 | Raw path bytes: see G3 (#922). Embedded NUL in diagnostics; duplicate punctuation strings/order | Paths classified under G3; the rest pending #924/#928/#1144, with G8/G15. | No blanket “malformed quirk” admission. |
+
+### G2 auxiliary-text closure — 2026-10-25 UTC
+
+The three exports read one matrix. `pinyin_parse_more_full_pinyins`
+(`pinyin.cpp:1497-1517`), `pinyin_parse_more_double_pinyins`
+(`:1540-1560`) and `pinyin_parse_more_chewings` (`:1582-1605`) fill it
+through `fill_matrix` (`storage/phonetic_key_matrix.cpp:30-80`): one column
+per consumed byte, each key at its `m_raw_begin`, zero keys in the gaps
+(apostrophes), and the reserved zero key at `parsed_len`, so
+`matrix.size() == parsed_len + 1`. Each export clamps the cursor with
+`std_lite::min(cursor, instance->m_parsed_len)` (`:3390`, `:3449`, `:3527`),
+leaving `cursor < matrix.size()`. `_get_aux_text_prefix` and
+`_get_aux_text_postfix` (`:3295-3379`) walk the same matrix, stop at the
+reserved last column, and build their result with `g_strconcat` over
+non-NULL pieces (`:3325`, `:3369`); the only NULL-argument stop is the final
+`g_strconcat(prefix, middle, postfix, NULL)` (`:3431`, `:3509`, `:3569`).
+
+**The NULL stop is unreachable.** For `full`, let `offset` be the loop
+variable (`:3400-3429`); it starts at zero and `cursor >= 0`. Each step
+computes `newoffset = _compute_pinyin_start(matrix, offset) >= offset`
+(`:2903-2919`). If `offset <= cursor <= newoffset`, the boundary branch sets
+`middle`. Otherwise `newoffset < cursor` (the only remaining case while
+`offset <= cursor`), the walk assigns `offset = newoffset`, and
+`key.begin == offset <= cursor`. If `begin < cursor < end`, the split branch
+sets `middle`; otherwise `cursor >= end`, and `offset = key.end <= cursor`.
+The invariant `offset <= cursor` therefore holds until the walk reaches the
+reserved last column `size - 1 == parsed_len`, where
+`newoffset == offset == parsed_len` and the boundary branch fires because
+`cursor <= parsed_len`. `full` always sets `middle` before the loop ends.
+`double` and `chewing` (`:3460-3507`, `:3538-3567`) maintain the same
+invariant: if `cursor != offset`, then `offset < cursor`; the span at
+`offset` starts there, so either it contains the cursor and the split branch
+sets `middle`, or it ends at or before the cursor and `offset = end <= cursor`
+with `end > offset`. The walk cannot step over `cursor`, so it reaches
+`cursor == offset` no later than the reserved last column and sets `middle`.
+A reached empty column is the pin's `assert(matrix.get_column_size(offset) >= 1)`
+(`:3311`, `:3353`, `:3410`, `:3467`, `:3545`) and oxpinyin's `None`; it never
+reaches the concat. The old helper's `middle == NULL` arm was therefore dead,
+and its removal changes no supported output.
+
+**`g_utf8_substring`'s end of string.** The chewing split calls
+`g_utf8_substring(zhuyin, 0, len)` and `g_utf8_substring(zhuyin, len, end)`
+(`:3557-3558`), where `len = cursor - begin` is a raw-input byte delta and
+`end = m_raw_end` an absolute raw byte offset. GLib 2.89.4-2
+`g_utf8_substring` (`glib/gutf8.c:298-322`) resolves
+`start = g_utf8_offset_to_pointer(str, len)`, then
+`end = g_utf8_offset_to_pointer(start, end_pos - len)`, and copies
+`end - start` bytes plus a terminator. `g_utf8_offset_to_pointer`
+(`:376-386`) advances by `g_utf8_next_char`, a byte-width step from
+`g_utf8_skip` that does not stop at the terminator. With `C` the spelling's
+scalar count:
+
+- `len < C`: `left` is the first `len` scalars. The right copy requests
+  `end - len` scalars; for every splittable row `end >= end - begin = B >= C`
+  (checked against all 441 `content_table` rows at the pin: only the
+  one-byte incomplete `w` and `y` placeholders have `B < C`, and neither has
+  an interior cursor), so the copy includes the terminator and the visible
+  `right` string is the remaining scalars.
+- `len == C`: `start` is the terminator, so `right` is empty; `left` is the
+  whole spelling.
+- `len > C`: `start` is already past the terminator and the result is heap
+  bytes. That is an out-of-allocation read, undefined with no reproducible
+  bytes.
+
+`split_zhuyin` cuts the spelling at scalar `len`, or leaves an empty right
+half when `len >= C`. It therefore produces exactly the first two cases with
+ordinary `str` operations and answers the third deterministically with an
+empty right half. The third is the class (b) difference registered in
+[upstream divergences](upstream-divergences.md#chewing-auxiliary-substring-over-read);
+the pin's bytes there cannot be reproduced safely. `g_strconcat`
+(`glib/gstrfuncs.c:572-609`) is a plain concatenation once the NULL stop is
+removed.
+
+**Cases.** `aux-text-chewing-cursors` visits every byte cursor on four
+full-pinyin inputs plus the maximum `size_t`, covering both key boundaries,
+interior cuts, the tone-1 terminator (`ni1@2`) and the tone-marked terminator
+(`ni3hao4@6`). `aux-text-chewing-zhuyin-cursors` does the same over the
+zhuyin parser (`su3cl3`). Its Standard-keyboard keys spend one keystroke per
+zhuyin scalar plus the tone key, so an interior cursor's `len` stays below
+`C`; the terminator falls on the key boundary, which the `cursor == offset`
+branch takes rather than the substring branch. The terminator cut is
+therefore exercised on the shared-matrix path by `ni1@2` and `ni3hao4@6`.
+(Longer keyboards such as CP26 can spend two keys on one scalar, so their
+interior `len` can exceed `C`; `split_zhuyin` applies the same class (b)
+clamp there.)
+`aux-text-chewing-overrun-cursor` uses one past, seven past and the maximum
+`size_t` on both parse paths; all clamp to `parsed_len` at `:3527`. The
+missing-middle and `len > C` partitions have no case for the reasons above.
+Output ownership is unchanged: the matrix-empty branch writes an allocated
+`""` and returns `false` (`:3385-3388`, `:3444-3447`, `:3522-3525`); every
+other answer is `true` plus one caller-owned allocation, still marshalled by
+`owned_cstr` under #924. No preedit or candidate path calls `split_zhuyin`;
+the only callers are `SharedMatrix::chewing` and `chewing_aux_text`, both
+reached only from `pinyin_get_chewing_auxiliary_text`.
 
 ## G3 — Path joining
 
