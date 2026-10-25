@@ -22,6 +22,9 @@ Linux only. The model20 archive is not redistributable
 below that needs it runs on GitHub-hosted runners. The one hosted job
 that touches the oracle, `.github/workflows/oracle-image.yml`, builds the
 libraries only and ships no model-derived data (section 2a).
+On a pull request, a push whose image tag and verification files already
+passed on that pull request and architecture skips the rebuild and says so in
+the job log; any change to an input rebuilds and verifies.
 
 ## 1. Fetch the model (once per machine)
 
