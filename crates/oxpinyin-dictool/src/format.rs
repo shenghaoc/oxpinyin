@@ -175,12 +175,17 @@ pub fn parse(text: impl AsRef<[u8]>) -> Result<Vec<Record>, ParseError> {
                 if count_text.is_empty() {
                     return Err(ParseError::new(line_number, "count field is empty"));
                 }
-                let count = count_text.parse::<u64>().map_err(|_| {
-                    ParseError::new(
-                        line_number,
-                        format!("count is not a decimal integer: {count_text:?}"),
-                    )
-                })?;
+                // `count := digit+` (`dictool-format.md` §2): `str::parse`
+                // would also take a leading `+`.
+                let count = Some(count_text)
+                    .filter(|text| text.bytes().all(|byte| byte.is_ascii_digit()))
+                    .and_then(|text| text.parse::<u64>().ok())
+                    .ok_or_else(|| {
+                        ParseError::new(
+                            line_number,
+                            format!("count is not a decimal integer: {count_text:?}"),
+                        )
+                    })?;
                 if count > MAX_COUNT {
                     return Err(ParseError::new(
                         line_number,
@@ -264,14 +269,36 @@ mod tests {
     #[test]
     fn classic_count_validation_is_not_frontend_atoi() {
         assert_eq!(
-            parse("词 ci +7").unwrap(),
+            parse("词 ci 007").unwrap(),
             vec![record("词", "ci", Some(7), 1)]
         );
-        // The frozen dictool validation contract refuses these count texts;
-        // the frontend's signed/prefix conversion has a different domain.
-        for count in ["-0", "-1", "-2", "7suffix", "2147483648", "4294967303"] {
+        // The frozen dictool validation contract (`count := digit+`) refuses
+        // these count texts; the frontend's signed/prefix conversion has a
+        // different domain. A leading `+` is not a digit.
+        for count in [
+            "+7",
+            "+0",
+            "+",
+            "-0",
+            "-1",
+            "-2",
+            "7suffix",
+            "2147483648",
+            "4294967303",
+        ] {
             assert!(parse(format!("词 ci {count}")).is_err(), "{count}");
         }
+    }
+
+    #[test]
+    fn a_plus_sign_count_is_refused_with_its_line_number() {
+        let error = parse("词 ci 3\n词二 ci'ci +7\n").unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("line 2"), "{message}");
+        assert!(
+            message.contains("count is not a decimal integer"),
+            "{message}"
+        );
     }
 
     #[test]
