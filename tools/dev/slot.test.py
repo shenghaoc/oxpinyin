@@ -56,29 +56,25 @@ class SlotTests(unittest.TestCase):
         self.hold_mutex()
         slot.CANCELLED.clear()
         self.addCleanup(slot.CANCELLED.clear)
-        # Cancellation is sent after the first busy attempt, during retry waiting.
-        original = admission.try_acquire
-        timers = []
-        def attempt():
-            acquired = original()
-            self.assertFalse(acquired)
-            timer = threading.Timer(0.02, slot.CANCELLED.set)
-            timers.append(timer)
-            timer.start()
-            return acquired
-        started = time.monotonic()
-        try:
-            with mock.patch.object(admission, 'try_acquire', side_effect=attempt), \
-                    self.assertRaises(slot.Cancelled):
-                with admission:
-                    self.fail('cancelled admission accepted')
-            self.assertLess(time.monotonic() - started, 0.25)
-            self.assertEqual(read.call_count, 1)
-            self.assertIsNone(admission.env)
-            self.assertEqual((Path(self.temp.name) / 'heavy-slot-0').read_text(), '')
-        finally:
-            for timer in timers:
-                timer.join()
+        # Cancellation arrives during the retry wait. Record the timeout the
+        # loop asks for and whether Event.wait returned on the event rather
+        # than on that timeout, so no scheduler timing can decide the test.
+        waits = []
+        real_wait = slot.CANCELLED.wait
+        def cancel_during_wait(timeout):
+            waits.append(timeout)
+            slot.CANCELLED.set()
+            returned = real_wait(timeout)
+            waits.append(returned)
+            return returned
+        with mock.patch.object(slot.CANCELLED, 'wait', side_effect=cancel_during_wait), \
+                self.assertRaises(slot.Cancelled):
+            with admission:
+                self.fail('cancelled admission accepted')
+        self.assertEqual(waits, [5, True])  # poll interval, woken by cancellation
+        self.assertEqual(read.call_count, 1)
+        self.assertIsNone(admission.env)
+        self.assertEqual((Path(self.temp.name) / 'heavy-slot-0').read_text(), '')
 
     def test_deadline_is_rechecked_after_mutex_acquisition(self):
         admission, read = self.mutex_admission(1)
