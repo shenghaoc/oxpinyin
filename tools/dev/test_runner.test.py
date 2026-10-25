@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from tools.dev import host, slot, test_runner
+from tools.dev import host, slot, test_runner, test_support
 
 
 class HarnessTests(unittest.TestCase):
@@ -61,7 +61,7 @@ class HarnessTests(unittest.TestCase):
                 prefix = ['uv', 'run', '--no-project', '--managed-python', '--python',
                           'cpython@3.15+gil', 'python', '-X', 'lazy_imports=normal']
                 child = {'PATH': environ['PATH'], 'OXPINYIN_TEST_KEPT': 'kept'}
-                self.assertEqual(run.call_args_list, [mock.call(prefix + [path], cwd=ROOT, env=child)
+                test_support.assert_calls(self, run, [mock.call(prefix + [path], cwd=ROOT, env=child)
                                                       for path in (files[0], files[2])])
                 self.assertEqual(out.getvalue().splitlines(), [
                     'tools harness: credential-shaped environment variables removed: 1',
@@ -125,7 +125,7 @@ class MappingTests(unittest.TestCase):
                 mock.patch.object(slot.subprocess, 'Popen') as launch, \
                 contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(test_runner.run([], profile='other'), 2)
-        launch.assert_not_called()
+        test_support.assert_not_called(self, launch)
 
 
 class AdmissionTests(unittest.TestCase):
@@ -191,7 +191,7 @@ class AdmissionTests(unittest.TestCase):
             with self.subTest(args=args, env=env):
                 status, launch, output = self.run_nextest(args, env)
                 self.assertEqual(status, 2)
-                launch.assert_not_called()
+                test_support.assert_not_called(self, launch)
                 self.assertIn('resource-blocked: 1280 MiB needed, 700 MiB available', output)
 
     def test_ci_profile_keeps_four_in_the_estimate_and_child(self):
@@ -225,7 +225,7 @@ class AdmissionTests(unittest.TestCase):
             with self.subTest(args=args):
                 status, launch, output = self.run_nextest(args)
                 self.assertEqual(status, 2, output)
-                launch.assert_not_called()
+                test_support.assert_not_called(self, launch)
                 self.assertIn('FAIL:', output)
 
     def test_no_capture_uses_nextest_serial_semantics(self):
@@ -237,7 +237,7 @@ class AdmissionTests(unittest.TestCase):
     def test_explicit_build_jobs_are_also_budgeted(self):
         status, launch, output = self.run_nextest(['--build-jobs=2'])
         self.assertEqual(status, 2)
-        launch.assert_not_called()
+        test_support.assert_not_called(self, launch)
         self.assertIn('1200 MiB needed, 700 MiB available', output)
 
     def test_rust_test_threads_caller_value_is_preserved(self):

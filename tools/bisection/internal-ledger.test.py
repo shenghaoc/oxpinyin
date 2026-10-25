@@ -7,6 +7,7 @@ import hashlib
 import os
 import signal
 import subprocess
+import sys
 from collections import defaultdict
 from types import SimpleNamespace
 from pathlib import Path
@@ -20,6 +21,12 @@ from render_ledger import align, annotate_comparison
 import gcov_measure
 import compiler_cells
 import finish_ledger
+
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from tools.dev import test_support
 
 spec = importlib.util.spec_from_file_location("internal_ledger", Path(__file__).with_name("internal-ledger.py"))
 ledger = importlib.util.module_from_spec(spec)
@@ -303,7 +310,7 @@ class ReviewGuardTests(unittest.TestCase):
                                              extra_env={'J_TEST_ENV': 'retained'}, timeout=60)
             self.assertEqual(run.call_args.kwargs['env']['J_TEST_ENV'], 'retained')
             self.assertEqual(guard.call_args.args[3], Path('/p'))
-            self.assertEqual(guard.call_args.kwargs['env'], run.call_args.kwargs['env'])
+            test_support.assert_same_environment(self, guard.call_args.kwargs['env'], run.call_args.kwargs['env'])
             self.assertEqual(process.communicate.call_count, 1)
             self.assertGreater(process.communicate.call_args.kwargs['timeout'], 0)
             self.assertLessEqual(process.communicate.call_args.kwargs['timeout'], 0.1)
@@ -594,7 +601,7 @@ libpinyin_la_SOURCES = $(pinyin_SOURCES) pinyin.cpp
             self.assertEqual(run.call_args.kwargs['env']['CONTRACT_DIFF_CELL'], 'kc')
             self.assertEqual(guard.call_args.args[0], 'kc')
             self.assertEqual(guard.call_args.args[3], Path('/p'))
-            self.assertEqual(guard.call_args.kwargs['env'], run.call_args.kwargs['env'])
+            test_support.assert_same_environment(self, guard.call_args.kwargs['env'], run.call_args.kwargs['env'])
             self.assertEqual(run.call_args.args[0][1:3], [str(Path(gcov_measure.__file__).resolve()), '--worker'])
 
     def test_ordinary_contract_worker_starts_the_cached_entry(self):
@@ -608,7 +615,7 @@ libpinyin_la_SOURCES = $(pinyin_SOURCES) pinyin.cpp
             self.assertEqual(run.call_args.args[0][1:], [str(module.WORKER), 'pinyin', '/p', '/data', 'probe'])
             self.assertEqual(Path(run.call_args.args[0][1]).name, 'contract-worker.py')
             self.assertEqual(guard.call_args.args[3], Path('/p'))
-            self.assertEqual(guard.call_args.kwargs['env'], run.call_args.kwargs['env'])
+            test_support.assert_same_environment(self, guard.call_args.kwargs['env'], run.call_args.kwargs['env'])
 
     def test_contracts_skip_other_cells_fixtures_and_select_the_cell(self):
         good = dict(exit=0, result={}, stderr='', userfiles=[], measurement_abort_flush=False)

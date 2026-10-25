@@ -18,7 +18,7 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
-from tools.dev import host, slot
+from tools.dev import host, slot, test_support
 from tools.dev.compat import boundary, memory
 
 
@@ -445,7 +445,7 @@ sys.stdin.readline()
                 mock.patch.object(host.subprocess, 'run') as runtime:
             with slot.admission_lock(self.directory):
                 self.assertEqual(slot.container_reservations(self.directory, out=self.out), 4096)
-            runtime.assert_not_called()
+            test_support.assert_not_called(self, runtime)
         self.assertTrue(reservation.path.exists())
 
     def test_inspect_error_is_unknown_until_successful_listing_proves_absence(self):

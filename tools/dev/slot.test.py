@@ -45,7 +45,7 @@ class SlotTests(unittest.TestCase):
             with self.assertRaisesRegex(slot.AdmissionWaitExpired, 'admission-wait-expired'):
                 with admission:
                     self.fail('accepted admission after its deadline')
-            self.assertIsNone(admission.env)
+            self.assertTrue(admission.env is None, 'the admission kept an environment')
             self.assertEqual(read.call_count, 1)  # provisional only
             self.assertEqual((Path(self.temp.name) / 'heavy-slot-0').read_text(), '')
         finally:
@@ -73,7 +73,7 @@ class SlotTests(unittest.TestCase):
                 self.fail('cancelled admission accepted')
         self.assertEqual(waits, [5, True])  # poll interval, woken by cancellation
         self.assertEqual(read.call_count, 1)
-        self.assertIsNone(admission.env)
+        self.assertTrue(admission.env is None, 'the admission kept an environment')
         self.assertEqual((Path(self.temp.name) / 'heavy-slot-0').read_text(), '')
 
     def test_deadline_is_rechecked_after_mutex_acquisition(self):
@@ -127,7 +127,7 @@ class SlotTests(unittest.TestCase):
                             self.assertRaisesRegex(host.ResourceBlocked, '^resource-blocked: ' + reason + '$'):
                         admission.try_acquire()
                 self.assertEqual(read.call_count, 2)  # provisional + first memory decision
-                self.assertIsNone(admission.env)
+                self.assertTrue(admission.env is None, 'the admission kept an environment')
                 self.assertEqual((Path(self.temp.name) / 'heavy-slot-0').read_text(), '')
 
     def setUp(self):

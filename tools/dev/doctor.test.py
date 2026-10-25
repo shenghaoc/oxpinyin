@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from tools.dev import doctor
+from tools.dev import doctor, test_support
 
 
 def completed(text, returncode=0):
@@ -182,7 +182,8 @@ class ToolCase(unittest.TestCase):
         with mock.patch.object(doctor.shutil, 'which', return_value=f'/tools/{subject.executable}'), \
                 mock.patch.object(doctor, '_run', return_value=completed(output, returncode)) as run:
             line = doctor.check_tool(subject, {'PATH': '/tools'})
-        run.assert_called_once_with([f'/tools/{subject.executable}', *subject.arguments], {'PATH': '/tools'})
+        test_support.assert_calls(self, run, [mock.call([f'/tools/{subject.executable}', *subject.arguments],
+                                                        {'PATH': '/tools'})])
         return line
 
     def assert_found(self, subject, output, shown):
@@ -240,7 +241,7 @@ class ToolMinimumTests(ToolCase):
                     mock.patch.object(doctor.shutil, 'which', return_value=None), \
                     mock.patch.object(doctor, '_run') as run:
                 line = doctor.check_tool(candidate, {'PATH': '/tools'})
-            run.assert_not_called()
+            test_support.assert_not_called(self, run)
             self.assertEqual(line, f'{candidate.name}: missing (requires {candidate.minimum} or later; '
                                    f'install: {candidate.install})')
 
