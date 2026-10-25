@@ -70,3 +70,5 @@ RUN set -eu; \
 FROM --platform=$ORACLE_PLATFORM scratch
 COPY --from=build /opt/pinyin-oracle /opt/pinyin-oracle
 COPY --from=build /opt/oracle-versions.txt /opt/pinyin-oracle/versions.txt
+
+# proof push 3: recipe input change (comment only)
