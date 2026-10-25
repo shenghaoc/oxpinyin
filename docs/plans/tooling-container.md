@@ -22,7 +22,7 @@ Historical findings keep their recorded heads and limitations.
 
 ## 1. Environment boundary
 
-Use the pinned Debian amd64 container for every pin, oracle, cell and
+Use the Debian trixie amd64 compatibility container for every pin, oracle, cell and
 contract-differential task. Apply this rule on Linux hosts too.
 Native Linux pin work is superseded by this ruling.
 The subject, pinned reference and harness run together inside the container.
@@ -124,7 +124,7 @@ Do not dispatch work to a remote machine implicitly.
 Cloud sessions, including Claude and Codex cloud environments, are supported
 container hosts. Before any `just container` task, cloud setup starts the
 Docker daemon or checks that it runs. It checks access to the image registry,
-`snapshot.debian.org`, `downloads.sourceforge.net` and the SourceForge mirror
+`deb.debian.org`, `downloads.sourceforge.net` and the SourceForge mirror
 hosts reached by the [model20 fetcher](../../tools/model/fetch-model.sh).
 If a host is blocked, provisioning fails and names that host. Never skip.
 When this implementation lands, AGENTS.md's “cloud sessions are a supported

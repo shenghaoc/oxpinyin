@@ -1,18 +1,21 @@
 # Reproducible build of the pin-built oracle's LIBRARIES (issue #818).
 #
-# Stage `deps` is the pinned build environment: the same debian:testing
-# digest and apt snapshot as tools/bisection/Dockerfile.perf-matrix, so the
-# compiler, glibc and the three DBM dev packages are a function of this file.
+# Stage `deps` is the pin-reference build environment: Debian stable by
+# codename, debian:trixie, from the default mirrors with normal security
+# updates. A move to the next Debian release is a deliberate codename change,
+# never automatic. Tools/oracle/version-manifest.json names every component
+# that affects reference results; versions.py records the installed versions
+# and fails the build, naming the component, when one is outside its range.
 # Stage `build` runs tools/oracle/build-oracle.sh --libs-only once per DBM
 # backend at fixed in-image paths. The final stage is the published image:
-# libpinyin.so, libzhuyin.so, headers, pkg-config files and oracle-pin.txt
-# per backend. It carries NO model20-derived data (that is not
-# redistributable: docs/findings/model-provenance.md); a lane regenerates
-# lib/libpinyin/data locally with `build-oracle.sh --regen-data`
+# libpinyin.so, libzhuyin.so, headers, pkg-config files, oracle-pin.txt per
+# backend and the recorded tool versions. It carries NO model20-derived data
+# (that is not redistributable: docs/findings/model-provenance.md); a lane
+# regenerates lib/libpinyin/data locally with `build-oracle.sh --regen-data`
 # (docs/runbooks/oracle.md).
 #
-# The build context is tools/oracle/ (the recipe needs nothing else):
-#   docker build -f tools/oracle/Dockerfile.oracle -t oxpinyin-oracle tools/oracle
+# The build context is the repository root:
+#   docker build -f tools/oracle/Dockerfile.oracle -t oxpinyin-oracle .
 
 # Every stage follows ORACLE_PLATFORM. It defaults to linux/amd64, so the
 # amd64 build command is unchanged; arm64 callers pass
@@ -20,23 +23,22 @@
 # platform; the build and run commands pass --platform as well.
 ARG ORACLE_PLATFORM=linux/amd64
 
-FROM --platform=$ORACLE_PLATFORM debian:testing@sha256:dab11cdb0a9dcf4bbd68f671635b35f1f726b452b92396875b69bb2c7daa42a9 AS deps
+FROM --platform=$ORACLE_PLATFORM debian:trixie AS deps
 
 # Behind a TLS-intercepting egress proxy (a cloud session: tools/cloud/setup.sh)
 # the proxy arrives as the predefined build arg https_proxy and its CA as the
-# optional BuildKit secret `cacert`; apt then reads the same snapshot over
-# https. Without them (CI, a workstation) it is the plain http fetch. The
-# packages, and so the toolchain, are the same either way.
+# optional BuildKit secret `cacert`; apt trusts that CA for any https source.
+# The base image keeps its default Debian mirrors, so the packages and the
+# toolchain are the same with or without the proxy.
+COPY tools/oracle/version-manifest.json /usr/local/share/oxpinyin/version-manifest.json
+COPY tools/oracle/versions.py /usr/local/bin/versions.py
+COPY tools/tkrzw/distro-probe.sh /usr/local/bin/distro-probe.sh
 RUN --mount=type=secret,id=cacert,required=false,mode=0444 \
-    set -eu; \
-    scheme=http; set --; \
+    set -eu; set --; \
     if [ -s /run/secrets/cacert ]; then \
-        scheme=https; set -- -o Acquire::https::CaInfo=/run/secrets/cacert; \
+        set -- -o Acquire::https::CaInfo=/run/secrets/cacert; \
     fi; \
-    rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list; \
-    echo "deb $scheme://snapshot.debian.org/archive/debian/20260831T000000Z testing main" \
-        > /etc/apt/sources.list; \
-    apt-get "$@" -o Acquire::Check-Valid-Until=false update; \
+    apt-get "$@" update; \
     apt-get "$@" install -y --no-install-recommends \
         build-essential \
         autoconf automake autopoint libtool \
@@ -46,12 +48,17 @@ RUN --mount=type=secret,id=cacert,required=false,mode=0444 \
         libsqlite3-dev \
         libdb-dev \
         libkyotocabinet-dev \
-        libtkrzw-dev; \
-    rm -rf /var/lib/apt/lists/*
+        libtkrzw-dev \
+        tkrzw-utils; \
+    rm -rf /var/lib/apt/lists/*; \
+    python3 /usr/local/bin/versions.py \
+        --manifest /usr/local/share/oxpinyin/version-manifest.json \
+        --probe /usr/local/bin/distro-probe.sh \
+        --record /opt/oracle-versions.txt
 
 FROM deps AS build
 
-COPY build-oracle.sh /usr/local/bin/build-oracle.sh
+COPY tools/oracle/build-oracle.sh /usr/local/bin/build-oracle.sh
 RUN set -eu; \
     for dbm in bdb kc tkrzw; do \
         build-oracle.sh --libs-only --enable-libzhuyin --dbm "$dbm" \
@@ -62,3 +69,4 @@ RUN set -eu; \
 
 FROM --platform=$ORACLE_PLATFORM scratch
 COPY --from=build /opt/pinyin-oracle /opt/pinyin-oracle
+COPY --from=build /opt/oracle-versions.txt /opt/pinyin-oracle/versions.txt

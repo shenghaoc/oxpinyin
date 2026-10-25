@@ -281,16 +281,17 @@ uv run --no-project --managed-python --python cpython@3.15.0+gil python -B -X la
    does not imply that this file exists. podman needs no daemon, no
    root and no `sudo`: `podman info` must answer, and the pulls, the
    `deps` build and the data runs are the same commands rootless.
-2. Pulls the `base_image` digest of `tools/oracle/oracle-pin.txt`
-   (`debian:testing@sha256:dab11cdb…`) only when an uncached local fallback
-   build needs it. Published artifacts/cached stages avoid that pull. Registry
-   retries retain the existing 2, 4, 8 and 16 s backoff.
+2. Pulls the `base_image` tag of `tools/oracle/oracle-pin.txt`
+   (`debian:trixie`, the current Debian stable codename) only when an
+   uncached local fallback build needs it. Published artifacts/cached stages
+   avoid that pull. Registry retries retain the existing 2, 4, 8 and 16 s
+   backoff.
 3. Gets the libraries for bdb, kc and tkrzw (the host platform, linux/amd64 or linux/arm64, whose
    frozen hashes the pin records). If
    `ghcr.io/shenghaoc/oxpinyin-oracle:<tag>` exists for amd64, or
    `<tag>-arm64` for arm64, with `<tag>` printed by
-   `tools/oracle/image-tag.sh` (pin, base digest, apt snapshot and a hash
-   of the recipe), it is pulled and the cells are copied out of it. A cell
+   `tools/oracle/image-tag.sh` (pin, base image codename and a hash
+   of the recipe and `oracle-pin.txt`), it is pulled and the cells are copied out of it. A cell
    whose pulled hashes do not match `oracle-pin.txt` is discarded and built
    instead, as is every cell when no image exists: the pinned image's
    `deps` stage is built and `tools/oracle/build-oracle.sh --libs-only
@@ -338,10 +339,9 @@ the CA (`GIT_SSL_CAINFO`, `SSL_CERT_FILE`, `CURL_CA_BUNDLE`) and mounts
 `OXPINYIN_PROXY_CA` is supplied). An ordinary HTTPS proxy does not require
 Claude files. The `deps` build passes the proxy as a build
 arg and the CA as the optional BuildKit secret `cacert`
-(`tools/oracle/Dockerfile.oracle`); with the secret, apt reads the same
-dated snapshot over https instead of http. Without it (CI, a workstation)
-nothing changes, and the installed packages, hence the toolchain, are the
-same.
+(`tools/oracle/Dockerfile.oracle`); with the secret, apt trusts that CA for
+any https source. The base image keeps its default Debian mirrors either
+way, so the installed packages, hence the toolchain, are the same.
 
 ## Allowlist domains
 
@@ -350,8 +350,8 @@ setup contacts, and what a session showed on 2026-10-16 UTC:
 
 | Host | Used for | Seen |
 | --- | --- | --- |
-| `registry-1.docker.io`, `auth.docker.io`, `production.cloudflare.docker.com` | the pinned `debian:testing` digest | reachable (429 under load; retried) |
-| `snapshot.debian.org` | the apt snapshot the toolchain is installed from | reachable once allowed (403 before) |
+| `registry-1.docker.io`, `auth.docker.io`, `production.cloudflare.docker.com` | the `debian:trixie` base image | reachable (429 under load; retried) |
+| `deb.debian.org` | the Debian stable package mirrors | reachable |
 | `github.com` | libpinyin at the pinned commit (`git fetch --depth=1 <url> <sha>`) | reachable |
 | `github.com`, `release-assets.githubusercontent.com` | uv fallback archive and uv-managed CPython release assets | required when uncached; no fresh download measured for #1055 |
 | `downloads.sourceforge.net` and its redirect target, a rotating `*.dl.sourceforge.net` mirror | model20 archive | reachable (redirected to `cytranet-dal.dl.sourceforge.net`) |
@@ -364,16 +364,16 @@ session. The #1055 report records a cloud session refusing
 change from the environment owner or use an already verified local cache;
 model20 must not be mirrored or published by the project.
 
-`snapshot.debian.org` is the one that is easy to miss: the pinned
-toolchain is installed from it, and `--regen-data` compiles the pin's data
-build, so both the library build and the data step need the `deps` image.
-The normal image workflow now also publishes that exact `deps` stage as
+`deb.debian.org` is the package mirror the trixie toolchain is installed
+from, and `--regen-data` compiles the pin's data build, so both the library
+build and the data step need the `deps` image. The normal image workflow now
+also publishes that exact `deps` stage as
 `ghcr.io/shenghaoc/oxpinyin-oracle:<oracle-tag>-deps` on amd64 and
 `<oracle-tag>-deps-arm64` on arm64. Setup tries the host platform's tag
-before building locally, so a successful pull removes the snapshot cold-start
-requirement. If unavailable, the existing snapshot build remains the fallback;
-its pull stderr is retained in `<cache>/pull-deps.err`. Anonymous access to
-this newly published tag must be checked after normal publication. Historical
+before building locally, so a successful pull removes the cold package-install
+requirement. If unavailable, the local `deps` build remains the fallback; its
+pull stderr is retained in `<cache>/pull-deps.err`. Anonymous access to this
+newly published tag must be checked after normal publication. Historical
 measurements below predate this optimization.
 
 ## Setup time and disk use
@@ -383,6 +383,14 @@ Measured on 2026-10-16 UTC in a 4-core, 15 GiB cloud session (x86_64,
 only the build path ("without the published image") was measured here; the
 "with" column is measured end to end in "With the published image, from
 scratch" below, not step by step.
+
+**Base image of these runs.** Every timing in this section was taken on
+2026-10-16 UTC, before the move to trixie: the base was the pinned
+`debian:testing@sha256:dab11cdb…` digest, and the `deps` stage installed its
+toolchain from the `20260831T000000Z` snapshot.debian.org snapshot. Setup
+now pulls the rolling `debian:trixie` tag and installs from the default
+Debian mirrors (step 2 and "Allowlist domains" above); the figures below
+are not trixie measurements.
 
 **Starting state of the from-scratch figures.** Docker emptied and stopped,
 and the cache removed, then `df` read before and after:
@@ -402,7 +410,7 @@ script started); a step ends where the next one starts.
 
 | Step (stderr offsets) | Without the published image | With the published image |
 | --- | --- | --- |
-| `dockerd` start and pinned-digest pull (`0` to `6`) | 6 s | same |
+| `dockerd` start and pinned `debian:testing` digest pull (`0` to `6`) | 6 s | same |
 | `deps` image build (`6` to `68`) | 62 s | same (the data step needs it) |
 | libraries bdb, kc, tkrzw (`68` to `96`, `96` to `148`, `148` to `180`) | 28 s, 52 s, 32 s (112 s) | not measured |
 | model20 fetch, once, and `--regen-data` bdb, kc, tkrzw (`180` to `224`, `224` to `301`, `301` to `353`) | 44 s, 77 s, 52 s (173 s) | not measured |
@@ -541,7 +549,7 @@ and the `deps` image was still built, because `--regen-data` needs it.
 
 | Step | Seconds |
 | --- | --- |
-| `dockerd` start and pinned-digest pull, two retries (`1` to `17`) | 16 |
+| `dockerd` start and pinned `debian:testing` digest pull, two retries (`1` to `17`) | 16 |
 | published image pull, three cells copied out, hashes match (`17` to `21`) | 4 |
 | tkrzw: probe, source build, install, probe, `ldd` (`21` to `86`) | 65 |
 | `deps` image build (starts at `89`) and model20 fetch, inside the bdb data step (`86` to `244`) | 158 for the step |

@@ -5,12 +5,14 @@ every gate. This container procedure is a second supported route. First
 [develop and test natively](setup.md). Use this procedure only when a
 change requires comparison with the pinned upstream implementation. It
 executes **subject** (oxpinyin), **reference** (the oracle) and the existing
-comparison **harness** together in the existing canonical pinned **Debian
-Linux** environment for the host platform. The pin, base digest and dated
-package snapshot remain defined by
+comparison **harness** together in the existing canonical **Debian Linux**
+compatibility environment for the host platform. The pin and the base image
+tag (debian:trixie, the current Debian stable codename) remain defined by
 [oracle-pin.txt](../../tools/oracle/oracle-pin.txt) and the existing
-[oracle recipe](../../tools/oracle/Dockerfile.oracle); the reference hashes
-are selected by platform. There are no host-specific reference recipes.
+[oracle recipe](../../tools/oracle/Dockerfile.oracle); the base follows
+normal stable security updates and is never digest- or snapshot-pinned. The
+reference hashes are selected by platform. There are no host-specific
+reference recipes.
 A passing differential covers its selected behavior/reference environment;
 it does not prove native Windows/macOS ABI behavior. Native tests provide
 separate platform evidence.
@@ -117,12 +119,13 @@ no host Rust, DBM development packages, libpinyin or remembered oracle env.
 Network access is needed for uncached images/packages/toolchains/crates/model
 inputs. The default is platform-native first, then Podman, then Docker: Windows
 (`wslc`, `podman`, `docker`), macOS (`container`, `podman`, `docker`), Linux
-(`podman`, `docker`). `--runtime` or `OXPINYIN_CONTAINER` overrides selection.
-The selected runtime/version is printed before provisioning; none available
+(`podman`, `docker`). `--runtime` or `OXPINYIN_CONTAINER` overrides selection;
+`--platform linux/amd64|linux/arm64` overrides the host architecture. The
+selected runtime/version is printed before provisioning; none available
 is an error naming the candidates. `wslc` has no verified adapter here and
 stops with an explicit not-yet-verified message instead of silently falling
-back. Apple container now runs the arm64 oracle path natively; amd64
-emulation is not used for that path. For an exercised Linux route, use
+back. Apple container runs the arm64 oracle path natively; its amd64 path is
+functional-only (Rosetta), never a timing claim. For an exercised Linux route, use
 rootless Podman and its [official installation
 instructions](https://podman.io/docs/installation). In this host terminal:
 
@@ -208,13 +211,13 @@ claim that the basic environment covers every advanced task.
 ## What happens and what success means
 
 The launcher obtains the existing immutable GHCR oracle artifact and its
-existing pinned `deps` stage, or builds an absent tag from
+recorded `deps` stage, or builds an absent tag from
 `tools/oracle/Dockerfile.oracle`. Access/auth/proxy errors stop with retained
 pull diagnostics; they do not silently start an expensive fallback. The base
 image is pulled only if a local fallback build needs it.
 
 `tools/oracle/Dockerfile.compat` adds the repository-selected Rust toolchain,
-libclang and backend dump utilities to that same pinned environment, with
+libclang and backend dump utilities to that same trixie environment, with
 no model bytes or contributor source baked into the image. There is no
 second oracle implementation and no general development image.
 

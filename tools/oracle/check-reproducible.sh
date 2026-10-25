@@ -11,13 +11,12 @@ set -euo pipefail
 #
 #   <dbm> <library> <sha256>
 #
-# Usage: check-reproducible.sh [--engine docker|podman] [--image IMAGE] [--jobs N]
+# Usage: check-reproducible.sh [--engine docker|podman|container] [--image IMAGE] [--jobs N]
 #                              [--platform linux/amd64|linux/arm64]
 #
 # Without --image the `deps` stage of tools/oracle/Dockerfile.oracle is built
-# first (the pinned debian:testing digest plus the pinned apt snapshot). The
-# builds fetch the two pinned upstreams over the network; no model is needed
-# (--libs-only).
+# first (the Debian trixie pin-reference environment). The builds fetch the
+# two pinned upstreams over the network; no model is needed (--libs-only).
 
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 # shellcheck source=pin.sh
@@ -64,17 +63,20 @@ linux/amd64 | linux/arm64) ;;
 	;;
 esac
 if [[ -z $engine ]]; then
-	for e in docker podman; do
+	for e in docker podman container; do
 		command -v "$e" >/dev/null 2>&1 && engine=$e && break
 	done
 fi
 [[ -n $engine ]] || {
-	printf '%s\n' 'neither docker nor podman found' >&2
+	printf '%s\n' 'no docker, podman or container runtime found' >&2
 	exit 1
 }
-# SELinux hosts refuse a bind-mounted script without a relabel.
+# SELinux hosts refuse a bind-mounted script without a relabel. Apple
+# container's default per-container limit is below the KC C++ build's peak;
+# give its two parallel builds room.
 run_flags=(--rm)
 [[ $engine == podman ]] && run_flags+=(--security-opt label=disable)
+[[ $engine == container ]] && run_flags+=(--memory 6G)
 
 # Behind a session proxy (a cloud session, tools/cloud/setup.sh) containers
 # cannot reach the proxy at its loopback address or trust its CA: they run
@@ -96,7 +98,7 @@ if [[ -z $image ]]; then
 	image=oxpinyin-oracle-deps:check
 	platform_build=()
 	[[ $platform == linux/amd64 ]] || platform_build=(--build-arg "ORACLE_PLATFORM=$platform")
-	"$engine" build --platform "$platform" "${platform_build[@]}" "${build_flags[@]}" --target deps -f "$repo/tools/oracle/Dockerfile.oracle" -t "$image" "$repo/tools/oracle" >&2
+	"$engine" build --platform "$platform" "${platform_build[@]}" "${build_flags[@]}" --target deps -f "$repo/tools/oracle/Dockerfile.oracle" -t "$image" "$repo" >&2
 fi
 
 scratch=$(mktemp -d)

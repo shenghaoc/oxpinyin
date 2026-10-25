@@ -23,11 +23,12 @@ set -euo pipefail
 #      docker). docker: start dockerd if it is not up (detached, waits for
 #      `docker info`) and trust the session proxy CA for the daemon
 #      (/root/.ccr/README.md); podman runs rootless and needs neither
-#   2. pull the pinned debian:testing digest
+#   2. pull the debian:trixie pin-reference base image
 #   3. oracle libraries for bdb, kc and tkrzw: pull
 #      ghcr.io/shenghaoc/oxpinyin-oracle when it exists, otherwise build
-#      them with tools/oracle/build-oracle.sh --libs-only inside the pinned
-#      image; either way each hash must equal tools/oracle/oracle-pin.txt
+#      them with tools/oracle/build-oracle.sh --libs-only inside the
+#      trixie pin-reference image; either way each hash must equal
+#      tools/oracle/oracle-pin.txt
 #   3b. tkrzw cell: tools/tkrzw/distro-probe.sh against the host libtkrzw;
 #      when it reports a defect (Ubuntu's -flto/-Bsymbolic-functions
 #      build) or finds none, build upstream tkrzw 9ee8416 (1.0.34) from source
@@ -438,7 +439,14 @@ linux/arm64)
 	die "no published oracle tag scheme for $platform"
 	;;
 esac
-deps_image=oxpinyin-oracle-deps:$(sha256sum "$repo/tools/oracle/Dockerfile.oracle" | cut -c1-12)
+# The key also hashes oracle-pin.txt: when a rolling trixie update changes the
+# recorded library hashes, a deps image cached from the older packages must
+# not be reused.
+deps_image=oxpinyin-oracle-deps:$(
+	cat "$repo/tools/oracle/Dockerfile.oracle" "$repo/tools/oracle/versions.py" \
+		"$repo/tools/oracle/version-manifest.json" "$repo/tools/tkrzw/distro-probe.sh" \
+		"$pin" | sha256sum | cut -c1-12
+)
 
 proxy=${HTTPS_PROXY:-${https_proxy:-}}
 # An ordinary proxy needs no custom CA. Claude trust handling is opt-in by
@@ -625,20 +633,20 @@ build_deps_image() {
 	((inside)) && return 0
 	"$ctr" image inspect "$deps_image" >/dev/null 2>&1 && return 0
 	# Same deps stage as the oracle recipe, published by the normal image workflow.
-	# Pulling it avoids snapshot.debian.org on cold data regeneration.
+	# Pulling it avoids a cold package install on data regeneration.
 	if ((pull)); then
 		if "$ctr" pull --quiet --platform "$platform" "$published_deps" > /dev/null 2>"$cache/pull-deps.err"; then
 			"$ctr" tag "$published_deps" "$deps_image"
 			return 0
 		fi
-		log "pinned deps image unavailable; building locally (details: $cache/pull-deps.err)"
+		log "recorded deps image unavailable; building locally (details: $cache/pull-deps.err)"
 		tail -n 5 "$cache/pull-deps.err" >&2
 	fi
 	if ! "$ctr" image inspect "$base_image" >/dev/null 2>&1; then
 		log "pulling $base_image for the local fallback build"
 		retry "$ctr" pull --quiet --platform "$platform" "$base_image" >/dev/null
 	fi
-	log "building $deps_image (the pinned toolchain)"
+	log "building $deps_image (the trixie pin-reference toolchain)"
 	local flags=("${net_flags[@]}")
 	[[ $platform == linux/amd64 ]] || flags+=(--build-arg "ORACLE_PLATFORM=$platform")
 	if [[ -n $proxy ]]; then
@@ -646,10 +654,10 @@ build_deps_image() {
 		if ((custom_ca)); then flags+=(--secret "id=cacert,src=$proxy_ca"); fi
 	fi
 	DOCKER_BUILDKIT=1 "$ctr" build --platform "$platform" "${flags[@]}" --target deps \
-		-f "$repo/tools/oracle/Dockerfile.oracle" -t "$deps_image" "$repo/tools/oracle" >&2
+		-f "$repo/tools/oracle/Dockerfile.oracle" -t "$deps_image" "$repo" >&2
 }
 
-# in_image ARGS...: run build-oracle.sh in the pinned image. The oracle
+# in_image ARGS...: run build-oracle.sh in the pin-reference image. The oracle
 # root appears at /opt/pinyin-oracle, the path the published image uses, so
 # a prefix means the same thing wherever it was produced. Every mount
 # carries the shared SELinux relabel `z` (not the private `Z`): later

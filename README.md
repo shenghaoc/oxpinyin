@@ -41,7 +41,7 @@ Start at [CONTRIBUTING.md](CONTRIBUTING.md). It walks through prerequisites,
 native Linux/macOS/Windows setup, a first link-and-run test, and returning
 in a fresh terminal. Ordinary development does not need an oracle, model20,
 or container. For compatibility gates, use a supported [cloud session](docs/runbooks/cloud.md)
-or the [canonical pinned Debian container](docs/runbooks/compatibility-container.md),
+or the [canonical Debian trixie compatibility container](docs/runbooks/compatibility-container.md),
 which runs the subject, reference and harness together.
 
 On macOS, install `brew install berkeley-db@5 glib pkgconf` and set

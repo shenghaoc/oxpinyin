@@ -1,5 +1,6 @@
-# Pinned compatibility execution environment; no source/model data is baked in.
-# Base and reference are built/pulled by compat.sh from Dockerfile.oracle.
+# Compatibility execution environment for the Debian trixie pin-reference
+# image; no source/model data is baked in. Base and reference are
+# built/pulled by compat.sh from Dockerfile.oracle.
 ARG DEPS_IMAGE
 ARG REFERENCE_IMAGE
 FROM ${REFERENCE_IMAGE} AS reference
@@ -8,13 +9,17 @@ ARG CA_IDENTITY=no-custom-ca
 RUN --mount=type=secret,id=cacert,required=false,mode=0444 \
     set -eu; set --; \
     if [ -s /run/secrets/cacert ]; then \
-      sed -i 's|http://snapshot|https://snapshot|' /etc/apt/sources.list; \
       set -- -o Acquire::https::CaInfo=/run/secrets/cacert; \
     fi; \
-    apt-get "$@" -o Acquire::Check-Valid-Until=false update; \
+    apt-get "$@" update; \
     apt-get "$@" install -y --no-install-recommends \
-      libclang-dev db5.3-util kyotocabinet-utils tkrzw-utils; \
-    rm -rf /var/lib/apt/lists/*
+      libclang-dev db5.3-util kyotocabinet-utils tkrzw-utils \
+      liblz4-dev libzstd-dev zlib1g-dev; \
+    rm -rf /var/lib/apt/lists/*; \
+    python3 /usr/local/bin/versions.py \
+      --manifest /usr/local/share/oxpinyin/version-manifest.json \
+      --probe /usr/local/bin/distro-probe.sh \
+      --record /opt/oxpinyin-compat-versions.txt
 # uv 0.13.1 and its managed GIL-enabled CPython of the 3.15 series. uv 0.13.1
 # has no separate +gil archive: install the plain cpython@3.15 build, select it
 # as cpython@3.15+gil.
