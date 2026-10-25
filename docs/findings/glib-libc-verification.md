@@ -1,6 +1,6 @@
 # GLib/libc verification coverage
 
-Status: **partial coverage, removal gate** · 2026-10-24 UTC ·
+Status: **partial coverage, removal gate** · 2026-10-25 UTC ·
 [Parent #915](https://github.com/shenghaoc/oxpinyin/issues/915).
 
 This ledger is keyed to G1–G17 of the merged
@@ -150,20 +150,61 @@ Rust: `capi/src/ffi.rs`, `owned_cstr`/`owned_cstr_list`;
 | Non-scalar / NUL phrase text at marshalling or export | Accepted only as [non-scalar][non-scalar] / [NUL][nul]. | Source complete for those records, runtime limits as G1. |
 | Ordinary aux prefix/middle/postfix; missing middle; UTF-8 substring boundaries | Inventory says `join` retains the NULL-middle drops-postfix law; full classification pending #925. | Partial; no removal clearance across all aux callers. |
 | Bigram export's unterminated pronunciation vector | Accepted class (b), [row 1 record](upstream-divergences.md#bigram-export-iterators-pinyin-buffer). | Established independent fault; #894 traces its text consumers but does not turn this fault into a deterministic phrase-text witness. |
-| Raw path bytes; embedded NUL in diagnostics; duplicate punctuation strings/order | Pending #922/#924/#928/#1144, with G3/G8/G15. | Unverified whole paths; no blanket “malformed quirk” admission. |
+| Raw path bytes: see G3 (#922). Embedded NUL in diagnostics; duplicate punctuation strings/order | Paths classified under G3; the rest pending #924/#928/#1144, with G8/G15. | No blanket “malformed quirk” admission. |
 
 ## G3 — Path joining
 
-Pin: `pinyin.cpp:164,252,268,286,308,395,400,952,968,985,1052`;
-`zhuyin.cpp:118,196,212,230,252,337,342,585,601,605,626,630,684`.
-Rust: `data/src/table_info.rs`, `FileName::under`/`pin_join`;
-`data/src/pin_stderr.rs`, `build_filename`; `capi/src/ffi.rs`, `cstr_to_path`
-and the zhuyin counterpart. Owner #922; G10 covers rename/sync.
+Pin: `pinyin.cpp:164,176-226,252,268,286,308,331-336,353-368,395,400,419-439,952,968,985,997-1016,1052-1119,1260,1277`;
+`zhuyin.cpp:118,130-170,196,212,230,252,275-280,297-300,585,601,605,626,630,684`.
+GLib 2.89.4 (identical to 2.90.0), `glib/gfileutils.c`, `g_build_path_va` as
+`g_build_filename` calls it with `"/"` on Unix (the reference image's GLib;
+the `g_strdup` of the two directories at `pinyin.cpp:331-332` and
+`zhuyin.cpp:275-276` is a byte copy).
+Rust: `data/src/table_info.rs`, `pin_join`/`join_bytes` (used by
+`FileName::under`); `data/src/pin_stderr.rs`, `build_filename`;
+`user/src/store_libpinyin.rs`, the fini `write … failed.` line;
+`capi/src/ffi.rs`, `cstr_to_path` and the zhuyin counterpart.
+Owner #922; G10 covers rename/sync. Derived by reading; the pin was not run
+to learn any result below.
+
+The pin joins exactly two elements, `dir` and `name`, so the function reduces
+to one law (checked against the source for every row): an empty `name` gives
+`dir`, an empty `dir` gives `name`; otherwise `dir` keeps its leading
+separators and loses its trailing ones, `name` loses its leading ones and
+keeps its trailing ones, and one separator stands between the bodies. A part
+made only of separators has no body (`dir` is then kept whole, `name` is
+appended whole). Nothing inside a part is touched.
 
 | Partition | Verdict | Investigation |
 | --- | --- | --- |
-| Ordinary directory/name pairs | Inventory source conclusion: same resolved path; contract retained. | Partial; not a completed all-caller audit. |
-| Leading `/`, empty name, `..`, duplicate separators, non-UTF-8 directory/name bytes | Pending classification. The current helpers preserve raw bytes and pin joining rather than establishing permission to remove it. | Unverified full load/save/stderr trace under #922. |
+| Ordinary directory/name pairs, empty `dir` (cwd-relative bare names), empty `name` | Same effective path as `Path::join`; `pin_join` yields identical bytes. | Complete (source argument above; `glib-922-dir-*`, `glib-922-row-*`). |
+| Leading `/` in a `table.conf` file name (`/x`, `//x`, `sub//x`) | Stays beneath the directory, never absolute: `pin_join` keeps the pin's file. Not removable. | Complete; `glib-922-row-*` open the same library as the pin, `glib-922-row-missing-*` write the same `mmap … failed!` bytes. |
+| Repeated or trailing separators on the directory (`/d///`) | The file is the same; the pin's printed path has one separator (`/d/x`). `pin_join` and `build_filename` now write that. They wrote `/d///x` (and `/` for a `//` directory) before. | Complete for the joins through `pin_join`/`build_filename`; see the residual row. `glib-922-row-missing-dup-trailing-dir`, `glib-922-table-conf-missing-slashes`, `glib-922-fini-write-failed-dup-trailing`. |
+| Directory or name made only of separators (`/`, `//`) | Kept whole as the law says (`//` + `x` is `//x`; `/a` + `//` is `/a//`). Same file as a plain join on Unix, different bytes only in diagnostics. | Complete; unit `file_names_stay_beneath_their_directory`, `glib-922-table-conf-missing-{slash,slashes,many-slashes}`. |
+| `..` and `.` segments, leading `//` on the directory | Untouched by the pin and by `pin_join`; `Path` semantics resolve them identically. | Complete; `glib-922-dir-both-{dotdot,dot-segments,leading-dup}`. |
+| User directory identity: `""` is a directory (cwd), NULL is none; `g_strdup` keeps the bytes | Unchanged. `cstr_to_path` is already a byte copy into `OsStr`, the natural Rust form; nothing to simplify. | Complete; existing #619/#642/#643 cases plus `glib-922-dir-*`: same file set, train/save/reopen. |
+| Non-UTF-8 directory or name bytes | Raw bytes everywhere (`OsStr`, `path_bytes`); unchanged. | Complete; existing `stderr-non-utf8-user-dir`. |
+| `\` as a separator | An ordinary byte on Unix (GLib uses `/` only there). On Windows GLib accepts both; `pin_join` follows that but no pin run covers Windows. | Unix complete; Windows unverified (no reference there). |
+| Residual: the other `dir.join(<constant name>)` sites, listed below | Same file always. Derived from the join rule and the pin, not run: with a directory ending in two or more separators (`/u///`), `Path::join` appends the name without adding one (`/u///user.conf`), while the pin's `g_build_filename(user_dir, USER_TABLE_INFO, NULL)` (`pinyin.cpp:175-176`, `zhuyin.cpp:129-130`; GLib `g_build_path_va` trims the directory's trailing separators and inserts one) gives `/u/user.conf`, and `UserTableInfo::load` prints that name raw in `open %s failed.` (`table_info.cpp:332`). So the line differs in bytes for such a directory and for no other. Not fixed here: #1190 edits these files. | Pending; follow-up after #1190 replaces these joins with `pin_join` and adds the user-directory witness to `glib-922-*`. |
+
+Remaining `dir.join(<constant name>)` sites (items, not lines): in
+`user/src/persistence.rs`, `check_format` (`user.conf` read and its open line),
+the `user.conf` marker write, `user_conf_write_failed`, the user bigram,
+pinyin-index and phrase-index loads, saves and `.tmp` renames; in
+`data/src/dict.rs`, the system pinyin, phrase and addon index opens; in
+`runtime/src/lib.rs`, the `table.conf` open, the system index and punctuation
+opens and the `user.conf` text at the user-directory error; in
+`user/src/store_libpinyin.rs`, the user bigram existence check (prints
+nothing). Those that print a path (the `open`, `write` and `rename` lines)
+differ only as the row above says.
+
+No discrepancy is registered: every difference found is a defect fixed above
+or the pending residual, and no valid configured file moves.
+
+Verification: the 35 `glib-922-*` cases match on the bdb, kc and tkrzw
+cells (tkrzw against a sound libtkrzw), and against the parent build on bdb
+`--expect-parent` finds the 11 non-control cases differ and the 24 controls
+match.
 
 ## G4 — GArray/GPtrArray containers
 

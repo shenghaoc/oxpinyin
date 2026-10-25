@@ -27,24 +27,15 @@ pub fn path_bytes(path: &Path) -> &[u8] {
 
 /// Whether `byte` is a directory separator to `g_build_filename`: `/` on
 /// Unix; `/` and `\` on Windows, where GLib accepts both.
-const fn is_separator(byte: u8) -> bool {
+pub(crate) const fn is_separator(byte: u8) -> bool {
     byte == std::path::MAIN_SEPARATOR as u8 || (cfg!(windows) && byte == b'/')
 }
 
-/// `g_build_filename(dir, name, NULL)` as bytes: one separator between the
-/// two, the trailing ones of `dir` gone, and an empty `dir` leaving the bare
-/// name. The separator is the platform's: `/` on Unix, the pin's bytes.
+/// `g_build_filename(dir, name, NULL)` as bytes, which is what `%s` writes
+/// for the path the pin opened: the same join [`pin_join`](crate::table_info::pin_join) opens.
 #[must_use]
 pub fn build_filename(dir: &Path, name: &str) -> Vec<u8> {
-    let mut joined = path_bytes(dir).to_vec();
-    while joined.last().is_some_and(|&byte| is_separator(byte)) {
-        joined.pop();
-    }
-    if !dir.as_os_str().is_empty() {
-        joined.push(std::path::MAIN_SEPARATOR as u8);
-    }
-    joined.extend_from_slice(name.as_bytes());
-    joined
+    crate::table_info::join_bytes(path_bytes(dir), name.as_bytes())
 }
 
 /// The pin's own report of a `table.conf` it cannot open
@@ -100,6 +91,10 @@ mod tests {
         assert_eq!(join("/a/b//"), want("/a/b/x.bin"));
         assert_eq!(join(""), b"x.bin");
         assert_eq!(join("/"), want("/x.bin"));
+        assert_eq!(join("/a/b///"), want("/a/b/x.bin"));
+        // Leading separators are the directory's own: `//` is kept whole.
+        assert_eq!(join("//"), want("//x.bin"));
+        assert_eq!(join("//a"), want("//a/x.bin"));
     }
 
     #[test]

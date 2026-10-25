@@ -286,7 +286,7 @@ impl Drop for FiniGuard {
             if persistence::fini(dir, &target.versions, target.law, target.open_counter).is_err() {
                 pin_stderr::emit(&[
                     b"write ",
-                    pin_stderr::path_bytes(&dir.join("user.conf")),
+                    &pin_stderr::build_filename(dir, "user.conf"),
                     b" failed.\n",
                 ]);
             }
