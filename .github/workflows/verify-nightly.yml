@@ -415,9 +415,11 @@ jobs:
   # tools/packaging/function-order/ must still resolve against the staticlib
   # the shipping build produces. A rename, removal or inlining of a function
   # a policy names makes it stale, and the release relink then refuses it
-  # (relink-versioned.sh). No PR job builds that staticlib with the release
-  # recipe, so a stale policy can merge; this lane reports it the night
-  # after. It does not block a merge.
+  # (relink-versioned.sh). ci.yml's function-order-policy job runs the same
+  # builds and resolve on PRs that change Cargo.lock or a policy, so the
+  # common case is caught before merge (#1210); this lane still reports a
+  # stale policy that reaches main another way, the night after. It does
+  # not block a merge.
   #
   # The archive is the shipping one: tools/packaging/install.sh, which runs
   # cargo-c with the release profile (fat LTO, one codegen unit) and the
