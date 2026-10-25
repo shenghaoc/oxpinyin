@@ -10,6 +10,11 @@
 # perf_event_paranoid hint are Linux-only, and the Linux fallbacks are not
 # attempted. Artifacts land under `target/profile/`.
 #
+# When samply supports `--unstable-presymbolicate`, the record also writes
+# `<profile>.syms.json` and extract-hot-stacks.py reports function names.
+# A samply without that flag still records; the report shows unresolved
+# frames instead.
+#
 # Requirements:
 #   - exported tables (`PINYIN_EXPORT_DIR` or /tmp/oxpinyin-export)
 #   - pinned model20 cache (`tools/model/fetch-model.sh`)
@@ -37,6 +42,18 @@ CHECK_ONLY=0
 [ "${1:-}" = --check ] && CHECK_ONLY=1
 source "$REPO_ROOT/tools/tkrzw/runtime.sh"
 BISECT_SRC="$REPO_ROOT/tools/bisection/bisect.c"
+
+# The flag is unstable and absent from older samply releases; probe the
+# installed help text instead of assuming it.
+samply_has_presymbolicate() {
+    local help
+    command -v samply >/dev/null 2>&1 || return 1
+    help=$(samply record --help 2>&1 || true)
+    case "$help" in
+        *--unstable-presymbolicate*) return 0 ;;
+    esac
+    return 1
+}
 
 # The W8 cycle profiles against the tkrzw cell (its exports and records
 # are tkrzw). build-oracle.sh defaults to Berkeley DB since 2026-09-27, so
@@ -70,7 +87,21 @@ if [ "$HOST_OS" = Darwin ] && ! command -v samply >/dev/null 2>&1; then
     echo "fatal: samply is required on macOS; install it (for example: cargo install samply) or put it on PATH." >&2
     exit 1
 fi
+SAMPLY_PRESYMBOLICATE=0
+if samply_has_presymbolicate; then
+    SAMPLY_PRESYMBOLICATE=1
+fi
+if command -v samply >/dev/null 2>&1 && [ "$SAMPLY_PRESYMBOLICATE" -eq 0 ]; then
+    echo "warning: samply has no --unstable-presymbolicate; the hot-stack report will show unresolved frames." >&2
+fi
 if [ "$CHECK_ONLY" = 1 ]; then
+    if command -v samply >/dev/null 2>&1; then
+        if [ "$SAMPLY_PRESYMBOLICATE" -eq 1 ]; then
+            echo "samply presymbolicate: available"
+        else
+            echo "samply presymbolicate: unavailable"
+        fi
+    fi
     if [ "$HOST_OS" = Darwin ]; then
         echo "profile platform: Darwin; profiler=samply"
         echo "note: taskset and PERF_CPU are unsupported on macOS: Mach affinity is a cache hint, not CPU pinning" >&2
@@ -269,6 +300,7 @@ CYCLE_CMD=("$PROFILE_DIR/bisect" --perf "$CAPI_SO" "$CAPI_DATA")
 
 TIMING_JSON="$PROFILE_DIR/w8-cycle-timing.json"
 PROFILE_JSON="$PROFILE_DIR/w8-cycle.profile.json.gz"
+PROFILE_SYMS="${PROFILE_JSON%.*}.syms.json"
 FLAMEGRAPH_SVG="$PROFILE_DIR/w8-cycle.svg"
 PERF_DATA="$PROFILE_DIR/perf.data"
 HEADER="$PROFILE_DIR/header.txt"
@@ -283,13 +315,24 @@ HEADER="$PROFILE_DIR/header.txt"
 } >"$HEADER"
 
 recorded=0
+# Never pair a fresh profile with a sidecar from an earlier run.
+rm -f "$PROFILE_JSON" "$PROFILE_SYMS"
 
 if command -v samply >/dev/null 2>&1; then
     echo "--- samply record (preferred) ---"
-    if run_pinned samply record --save-only -o "$PROFILE_JSON" -- \
+    SAMPLY_ARGS=(record --save-only)
+    if [ "$SAMPLY_PRESYMBOLICATE" -eq 1 ]; then
+        SAMPLY_ARGS+=(--unstable-presymbolicate)
+    fi
+    if run_pinned samply "${SAMPLY_ARGS[@]}" -o "$PROFILE_JSON" -- \
         "${CYCLE_CMD[@]}" | tee "$TIMING_JSON"
     then
         echo "samply profile: $PROFILE_JSON"
+        if [ -f "$PROFILE_SYMS" ]; then
+            echo "samply symbols: $PROFILE_SYMS"
+        else
+            echo "warning: samply wrote no symbol sidecar; the hot-stack report will show unresolved frames." >&2
+        fi
         recorded=1
     else
         if [ "$HOST_OS" = Darwin ]; then
