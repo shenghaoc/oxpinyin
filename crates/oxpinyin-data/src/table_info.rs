@@ -105,12 +105,11 @@ impl DatabaseFormat {
 
 /// A file name as a `table.conf` column spells it: the bytes of the `%s`
 /// word, kept raw (the pin opens whatever bytes it read), and joined to a
-/// directory the way `g_build_filename` does — never as `Path::join` does.
+/// directory by [`pin_join`] — never as `Path::join` does.
 ///
-/// A name that starts with a separator stays beneath the directory
-/// (`g_build_filename("/u", "/tmp/x", NULL)` is `/u/tmp/x`); only an empty
-/// directory leaves the name as it is. The type is not `AsRef<Path>` so that
-/// no caller can join it by accident.
+/// A name that starts with a separator stays beneath the directory; only an
+/// empty directory leaves the name as it is. The type is not `AsRef<Path>`
+/// so that no caller can join it by accident.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FileName(OsString);
 
@@ -129,7 +128,7 @@ impl FileName {
         }
     }
 
-    /// `g_build_filename(dir, name, NULL)`.
+    /// The name beneath `dir`, as [`pin_join`] spells it.
     #[must_use]
     pub fn under(&self, dir: &Path) -> PathBuf {
         pin_join(dir, &self.0)
@@ -156,29 +155,60 @@ impl AsRef<OsStr> for FileName {
     }
 }
 
-/// `g_build_filename(dir, name, NULL)`: the leading separators of `name` are
-/// dropped when `dir` is not empty, so a name never leaves its directory
-/// by being absolute; an empty `name` is `dir`; an empty `dir` leaves `name`
-/// as it is. (`..` stays, as in GLib.)
+/// The path `dir` and `name` make together, byte for byte as the pin spells
+/// it (`g_build_filename(dir, name, NULL)`, the GLib the reference image
+/// builds against): `name` stays beneath `dir` however it begins.
+///
+/// - an empty `name` is `dir`, and an empty `dir` leaves `name` as it is;
+/// - otherwise `dir` keeps its leading separators and loses its trailing
+///   ones, `name` loses its leading ones and keeps its trailing ones, and a
+///   single separator stands between the two bodies;
+/// - a part made only of separators has no body: `dir` alone is kept whole,
+///   `name` alone is appended whole.
+///
+/// `..`, `.` and separators inside either part are not touched, and neither
+/// are bytes that are not UTF-8. On Unix the only separator is `/`; the
+/// other platforms accept both `/` and `\`, which no pin run covers.
 #[must_use]
 pub fn pin_join(dir: &Path, name: &OsStr) -> PathBuf {
-    if dir.as_os_str().is_empty() {
-        return PathBuf::from(name);
-    }
+    let joined = join_bytes(dir.as_os_str().as_encoded_bytes(), name.as_encoded_bytes());
     #[cfg(unix)]
-    let relative: OsString = {
-        use std::os::unix::ffi::OsStrExt as _;
-        let bytes = name.as_bytes();
-        let skip = bytes.iter().take_while(|&&byte| byte == b'/').count();
-        OsStr::from_bytes(bytes.get(skip..).unwrap_or(&[])).to_owned()
-    };
-    #[cfg(not(unix))]
-    let relative: OsString = OsString::from(name.to_string_lossy().trim_start_matches(['/', '\\']));
-    if relative.is_empty() {
-        dir.to_path_buf()
-    } else {
-        dir.join(relative)
+    {
+        use std::os::unix::ffi::OsStringExt as _;
+        PathBuf::from(OsString::from_vec(joined))
     }
+    #[cfg(not(unix))]
+    {
+        PathBuf::from(String::from_utf8_lossy(&joined).into_owned())
+    }
+}
+
+/// [`pin_join`] on the parts' bytes.
+pub(crate) fn join_bytes(dir: &[u8], name: &[u8]) -> Vec<u8> {
+    if dir.is_empty() || name.is_empty() {
+        return [dir, name].concat();
+    }
+    let is_separator = |byte: &u8| crate::pin_stderr::is_separator(*byte);
+    let leading = |part: &[u8]| part.iter().take_while(|byte| is_separator(byte)).count();
+    let trailing = |part: &[u8]| {
+        part.iter()
+            .rev()
+            .take_while(|byte| is_separator(byte))
+            .count()
+    };
+    let dir_start = leading(dir);
+    let dir_end = dir_start.max(dir.len() - trailing(dir));
+    let name_start = leading(name);
+    let name_end = name_start.max(name.len() - trailing(name));
+    let mut joined = Vec::with_capacity(dir.len() + name.len() + 1);
+    joined.extend_from_slice(&dir[..dir_end]);
+    if dir_end > dir_start && name_end > name_start {
+        joined.push(std::path::MAIN_SEPARATOR as u8);
+    }
+    joined.extend_from_slice(&name[name_start..name_end]);
+    // The separators after the body; a name with no body is all of them.
+    joined.extend_from_slice(&name[if name_end > name_start { name_end } else { 0 }..]);
+    joined
 }
 
 /// One `pinyin_table_info_t` (`table_info.h:51-57`).
@@ -1174,15 +1204,40 @@ mod tests {
         assert_eq!(scan.at, 20);
     }
 
+    /// `g_build_filename(dir, name, NULL)` at GLib 2.89.4 (`gfileutils.c`,
+    /// `g_build_path_va`), worked by hand for each partition.
     #[test]
+    #[cfg(unix)]
     fn file_names_stay_beneath_their_directory() {
-        let under = |dir: &str, name: &[u8]| FileName::from_bytes(name).under(Path::new(dir));
-        assert_eq!(under("/u", b"/tmp/x"), Path::new("/u/tmp/x"));
-        assert_eq!(under("/u", b"//x//y/"), Path::new("/u/x//y/"));
-        assert_eq!(under("/u", b"../x"), Path::new("/u/../x"));
-        assert_eq!(under("/u", b""), Path::new("/u"));
-        assert_eq!(under("", b"/tmp/x"), Path::new("/tmp/x"));
-        assert_eq!(under("a/", b"x"), Path::new("a/x"));
+        // Compared as `OsString`, which is byte for byte: `Path::eq` compares
+        // components and would hide every repeated or trailing separator.
+        let under = |dir: &str, name: &[u8]| {
+            FileName::from_bytes(name)
+                .under(Path::new(dir))
+                .into_os_string()
+        };
+        // A name never leaves its directory by starting with a separator.
+        assert_eq!(under("/u", b"/tmp/x"), "/u/tmp/x");
+        assert_eq!(under("/u", b"//x//y/"), "/u/x//y/");
+        assert_eq!(under("/u", b"../x"), "/u/../x");
+        // Empty parts.
+        assert_eq!(under("/u", b""), "/u");
+        assert_eq!(under("", b"/tmp/x"), "/tmp/x");
+        assert_eq!(under("", b""), "");
+        // The directory loses every trailing separator, keeps the leading ones.
+        assert_eq!(under("a/", b"x"), "a/x");
+        assert_eq!(under("a///", b"x"), "a/x");
+        assert_eq!(under("//a", b"x"), "//a/x");
+        assert_eq!(under("/", b"x"), "/x");
+        assert_eq!(under("//", b"x"), "//x");
+        // A name made only of separators is appended whole, after the
+        // directory without its trailing separators.
+        assert_eq!(under("/a", b"//"), "/a//");
+        assert_eq!(under("/a//", b"/"), "/a/");
+        assert_eq!(under("/", b"/"), "//");
+        // Dots and the separator-like bytes of other platforms are ordinary.
+        assert_eq!(under("/u", b"./x"), "/u/./x");
+        assert_eq!(under("/u\\", b"\\x"), "/u\\/\\x");
     }
 
     #[cfg(unix)]

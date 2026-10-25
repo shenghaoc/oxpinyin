@@ -261,7 +261,7 @@ init	oxpinyin_data::table_entries::pinyin_index_entries
 init	oxpinyin_data::table_info::atoi_guint8
 init	oxpinyin_data::table_info::c_float
 init	oxpinyin_data::table_info::default_index
-init	oxpinyin_data::table_info::pin_join
+init	oxpinyin_data::table_info::join_bytes
 init	oxpinyin_data::user_files::decode_log_record_at
 init	oxpinyin_engine::cursor::matrix_keys
 init	oxpinyin_engine::nbest::glib_merge_sort::<(oxpinyin_engine::session::RankKey, u32), oxpinyin_engine::session::glib_rank_sort::{closure#0}>
