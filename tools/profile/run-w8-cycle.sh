@@ -15,6 +15,12 @@
 # A samply without that flag still records; the report shows unresolved
 # frames instead.
 #
+# After a samply record the run prints the profile's sample total and warns
+# when it is below the level extract-hot-stacks.py defines (MIN_SAMPLES): with
+# fewer samples the order of the hot stacks is mostly sampling noise. The
+# other profilers write no samply profile, print no total and keep their
+# shorter default run.
+#
 # Requirements:
 #   - exported tables (`PINYIN_EXPORT_DIR` or /tmp/oxpinyin-export)
 #   - pinned model20 cache (`tools/model/fetch-model.sh`)
@@ -27,7 +33,10 @@
 #                       produce it with `--features tkrzw` (the oracle
 #                       this cycle compares against is tkrzw)
 #   PINYIN_MODEL_DIR    extracted model20 (default target/model20/extracted)
-#   PERF_CYCLES         bisect cycles (default 32; drown pinyin_init)
+#   PERF_CYCLES         bisect cycles for every profiler. Unset, samply runs
+#                       2048, which gave about three times MIN_SAMPLES samples
+#                       on the measuring host (a faster host takes fewer), and
+#                       the other profilers run 32, as before
 #   PERF_CPU            taskset CPU (Linux only; refused on macOS)
 #   PROFILE_REUSE_STAGE=1  reuse a previous cargo-c staging tree
 #   OXPINYIN_PROFILE_OS test override for the host name; native runs use uname
@@ -69,7 +78,18 @@ EXPECTED_MODEL_FILES=(
 
 PROFILE_DIR="${OXPINYIN_PROFILE_DIR:-$REPO_ROOT/target/profile}"
 STAGE="$PROFILE_DIR/stage"
+# A sampling profile ranks stacks by sample count, and samply takes about one
+# sample per CPU millisecond, so its default run is long enough to reach the
+# level extract-hot-stacks.py defines (MIN_SAMPLES). The other profilers keep
+# the shorter default: Callgrind counts instructions exactly, and perf record
+# keeps a stack dump for every sample.
 CYCLES="${PERF_CYCLES:-32}"
+SAMPLY_CYCLES="${PERF_CYCLES:-2048}"
+if [ "$HOST_OS" = Darwin ] || [ "$SAMPLY_CYCLES" = "$CYCLES" ]; then
+    CYCLES_NOTE="$SAMPLY_CYCLES"
+else
+    CYCLES_NOTE="$SAMPLY_CYCLES (samply), $CYCLES (other profilers)"
+fi
 EXPORT_DIR="${PINYIN_EXPORT_DIR:-/tmp/oxpinyin-export}"
 if [ -n "${PINYIN_MODEL_DIR:-}" ]; then
     MODEL_DIR="$PINYIN_MODEL_DIR"
@@ -95,6 +115,7 @@ if command -v samply >/dev/null 2>&1 && [ "$SAMPLY_PRESYMBOLICATE" -eq 0 ]; then
     echo "warning: samply has no --unstable-presymbolicate; the hot-stack report will show unresolved frames." >&2
 fi
 if [ "$CHECK_ONLY" = 1 ]; then
+    echo "samply cycles: $SAMPLY_CYCLES"
     if command -v samply >/dev/null 2>&1; then
         if [ "$SAMPLY_PRESYMBOLICATE" -eq 1 ]; then
             echo "samply presymbolicate: available"
@@ -108,6 +129,7 @@ if [ "$CHECK_ONLY" = 1 ]; then
         echo "note: perf record and the perf_event_paranoid hint are Linux-only; skipped on macOS" >&2
     else
         echo "profile platform: $HOST_OS; profiler fallback chain: samply, flamegraph, perf, valgrind"
+        echo "fallback cycles: $CYCLES"
     fi
     exit 0
 fi
@@ -192,7 +214,7 @@ echo "  pin: $PIN_REF"
 echo "  model20 SHA-256: $MODEL20_SHA256"
 echo "  model dir: $MODEL_DIR"
 echo "  artifacts: $PROFILE_DIR"
-echo "  cycles: $CYCLES"
+echo "  cycles: $CYCLES_NOTE"
 
 # ── cargo-c install with the profiling profile ──────────────────────────
 
@@ -310,9 +332,19 @@ HEADER="$PROFILE_DIR/header.txt"
     echo "model20_sha256: $MODEL20_SHA256"
     echo "so: $CAPI_SO"
     echo "data: $CAPI_DATA"
-    echo "cycles: $CYCLES"
+    echo "cycles: $CYCLES_NOTE"
     echo "profile: profiling (release + line-tables-only + thin LTO)"
 } >"$HEADER"
+
+# Print the samply profile's sample total; extract-hot-stacks.py warns on
+# stderr when it is below its level. A profile it cannot read costs a warning,
+# not the run: samply has already written it and the timing is saved.
+report_samples() {
+    uv run --no-project --managed-python --python cpython@3.15+gil python \
+        -X lazy_imports=normal "$SCRIPT_DIR/extract-hot-stacks.py" \
+        --total "$PROFILE_JSON" ||
+        echo "warning: could not read the sample total from $PROFILE_JSON" >&2
+}
 
 recorded=0
 # Never pair a fresh profile with a sidecar from an earlier run.
@@ -324,7 +356,7 @@ if command -v samply >/dev/null 2>&1; then
     if [ "$SAMPLY_PRESYMBOLICATE" -eq 1 ]; then
         SAMPLY_ARGS+=(--unstable-presymbolicate)
     fi
-    if run_pinned samply "${SAMPLY_ARGS[@]}" -o "$PROFILE_JSON" -- \
+    if PERF_CYCLES="$SAMPLY_CYCLES" run_pinned samply "${SAMPLY_ARGS[@]}" -o "$PROFILE_JSON" -- \
         "${CYCLE_CMD[@]}" | tee "$TIMING_JSON"
     then
         echo "samply profile: $PROFILE_JSON"
@@ -333,6 +365,7 @@ if command -v samply >/dev/null 2>&1; then
         else
             echo "warning: samply wrote no symbol sidecar; the hot-stack report will show unresolved frames." >&2
         fi
+        report_samples
         recorded=1
     else
         if [ "$HOST_OS" = Darwin ]; then
