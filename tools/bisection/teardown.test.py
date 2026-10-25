@@ -947,16 +947,31 @@ class NativeTests(unittest.TestCase):
         cpu = min(affinity(0)) if affinity else None
         return td.Campaign(worker or self.worker, self.root, self.root, cpu, driver)
 
+    def require_eviction(self, directory):
+        """Fail, naming the file system, where fadvise cannot evict the directory's files.
+
+        The cold controls patch evict_files' ext4 check and evict on the
+        temporary directory's real file system. tmpfs and ramfs keep a file's
+        pages as its only storage and ignore fadvise (mm/fadvise.c), so there the
+        pages would stay resident and evict_files would blame a mapping for it.
+        """
+        kind = td.filesystem(directory)
+        if kind in ('tmpfs', 'ramfs'):
+            self.fail(f'unsupported temporary file system: {directory} is on {kind}, which ignores '
+                      'POSIX_FADV_DONTNEED; set TMPDIR to a directory on a disk-backed file system')
+
     @unittest.skipUnless(sys.platform == 'linux', 'Linux mincore and fadvise')
     def test_native_private_file_eviction_and_mapped_file_refusal(self):
         with tempfile.TemporaryDirectory(dir=self.root) as directory:
+            self.require_eviction(directory)
             path = Path(directory) / 'private-cold-input'
             path.write_bytes(b'x' * (os.sysconf('SC_PAGE_SIZE') + 1))
             with path.open('rb') as handle:
                 self.assertEqual(td.resident_pages(handle.fileno()), dict(pages=2, resident=2))
             # The ext4 refusal has its own test. This one exercises the real
-            # fadvise and mincore on the temporary file system, which CI's
-            # container gives as overlay; both pass through to the real inode.
+            # fadvise and mincore on the temporary directory's file system,
+            # which need not be ext4: overlay, for one, passes both to the
+            # real inode. require_eviction refuses the ones that cannot evict.
             with patch.object(td, 'print_record'), patch.object(td, 'filesystem', return_value='ext4'):
                 records = td.evict_files([path])
             self.assertEqual(records[0]['after'], dict(pages=2, resident=0))
@@ -969,6 +984,7 @@ class NativeTests(unittest.TestCase):
     @unittest.skipUnless(sys.platform == 'linux', 'Linux cold native stub samples')
     def test_cold_native_samples_evict_only_private_inputs_for_both_facades_and_all_arms(self):
         with tempfile.TemporaryDirectory(dir=self.root) as directory:
+            self.require_eviction(directory)
             root = Path(directory)
             data, profile = root / 'data', root / 'profile'
             data.mkdir()
@@ -1003,6 +1019,7 @@ class NativeTests(unittest.TestCase):
     @unittest.skipUnless(sys.platform == 'linux', 'Linux cold native stub samples')
     def test_cold_memory_samples_report_per_file_residency_at_each_checkpoint(self):
         with tempfile.TemporaryDirectory(dir=self.root) as directory:
+            self.require_eviction(directory)
             root = Path(directory)
             data, profile = root / 'data', root / 'profile'
             data.mkdir()
