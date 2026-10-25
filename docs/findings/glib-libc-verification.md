@@ -604,7 +604,17 @@ Rust: `data/src/interp.rs::parse_interpolation2_from_reader`,
 | Segmented `token phrase` stream, empty lines, repeated separators | Pending complete tool verdict; source maps two-piece space/tab split and empty-line null token. | Partial: the pin macro also validates token against phrase; reading the Rust parser is not proof of the full training pipeline. |
 | Signed/overflowing/malformed numeric fields, missing separators | Pending classification. | Unverified `atoi`/abort/error and downstream file effects; no generic tool-scope quirk admission. |
 | Four-field generation records, field-length limits, integer ranges and rejected rows | Pending whole `load_text` consumer verdict. | Source interface checked: table parser uses `g_ascii_strtoull`, bounded copies, four fields; generator callers identified. Full Rust datagen/output audit unverified. |
-| Classic dictool two/three-field dictionary interchange | Pending against its own interface contract, [dictool format](dictool-format.md). | `split_classic` targets the ibus frontend's three-piece split, not the pin's four-field generator parser. Inventory grouping does not make the formats interchangeable. |
+| Classic dictool two/three-field dictionary interchange | Equivalent `str::splitn` replacement under the existing [dictool format](dictool-format.md), including empty fields and retained count tail. | [#926 source audit](926-tool-tokenizers.md): current safe-store import/export path, ASCII versus Unicode separators, literal escapes/categories and preflight errors traced. The older description of dictool calling the C ABI is historical. |
+
+#926's [bounded tokenizer audit](926-tool-tokenizers.md) also replaces the
+segmented helper's two-piece iterator with `split_once` and borrows its numeric
+prefix without changing existing results. It inventories all six active pin
+split/category calls and preserves `interp_grammar.rs::is_graph` unchanged.
+Nonzero token/phrase validation, signed numeric inputs, overflow/NUL and the
+full four-field generator audit remain explicit follow-ups; no ordinary-file
+test or equivalent refactor closes those rows, and no new runtime exception
+is admitted. The report separates these gaps from the existing approved
+interpolation-category difference.
 
 The inventory excludes these sites from the shared objects' exported
 call graph; it does not exclude the tools' input/output contracts from
