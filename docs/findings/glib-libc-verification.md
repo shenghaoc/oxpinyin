@@ -436,7 +436,8 @@ orig tarball with no source changes; -1 imported 2.89.4 and dropped included
 patches. The actual `g_vasprintf` build branch was also inspected below.
 The authorized `bminor/glibc` GitHub mirror cloned successfully, but fetching
 `refs/tags/glibc-2.43` returned “couldn't find remote ref”; its newest release
-tag was 2.42 (HEAD `04e750e75b`, 2026-01-20). Neither session nor reference
+tag was 2.42; the additionally authorized fetch of `release/2.43/master`
+also returned “couldn't find remote ref” (HEAD `04e750e75b`, 2026-01-20). Neither session nor reference
 image has an available deb-src configuration. **Open source-evidence gap:**
 the matching glibc 2.43 allocator/vasprintf implementation and complete
 Debian patch comparison have not been read. The packaged 2.43-2 changelog
@@ -708,11 +709,33 @@ selected **bdb**: no changed store path, backend-feature line or backend
 Cargo.toml check fired. No kc/tkrzw run was selected or performed. Main's
 intervening changes were CI workflows/actions and packaging documentation;
 no tested production or contract-driver source changed in the rebase.
-The expanded final #924 selection has **6 MATCH, 4 DIFFER**: array lifecycle,
+The expanded selection at checkpoint `371de917` had **6 MATCH, 4 DIFFER**: array lifecycle,
 nonfatal segment and fatal segment pairs match; all four NULL-array witnesses
-fail as source predicted. Therefore the requested diagnostic compatibility
-gate is **not green**, and this checkpoint is not eligible for a completion
-PR. There are no shipping-code changes or new runtime divergence records.
+fail as source predicted. These four are real unresolved defects, not policy-accepted results.
+
+The subsequent explicit maintainer ruling uses the removal-and-issue
+fallback: the existing driver has no general opt-in-only registration
+mechanism (its axis-c exclusion belongs to the separate replacement suite).
+The four NULL-array definitions and registrations were removed unchanged
+from the active driver and preserved in the prepared bug-report body;
+they remain recoverable verbatim from `371de917`,
+`tools/bisection/contract-diff.py::glib_924_null_array` and its registration
+loop. Publication is pending: the required REST duplicate-issue lookup
+returned Forbidden, so no issue was created or guessed. After #1190 merges,
+a separate fix in both dictionary adapters must restore these four cases
+to the default suite with their comparisons unchanged.
+
+The remaining #924 selection is **6/6 MATCH**, all default-suite members.
+The default selection contains **3061 cases**, including none of the four
+removed witnesses; this was checked by `select_cases`, **not** by executing
+the entire suite. Driver regressions: **142 passed**. Final rebase onto `c83024a6` preserved
+the concurrent #926 ledger rows; main changed tool tokenizer/training code
+and findings, not these facade binaries or the contract driver. The selector
+still chose bdb only (all three backend-expansion checks did not fire), and
+the six audit cases passed again after rebase. No generic selection
+semantics or expected results changed. Exact glibc 2.43/Debian source
+inspection remains open; no older-release equivalence is inferred.
+There are no shipping-code changes or new runtime divergence records.
 
 Reproduction (after cloud provisioning and sourcing its environment; one
 bdb target directory, managed CPython per the setup guide):
