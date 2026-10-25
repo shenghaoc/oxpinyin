@@ -12,7 +12,10 @@ use oxpinyin_core::{OptionBits, PINYIN_CORRECT_ALL, USE_TONE};
 use oxpinyin_facade::{BigramExportWalk, BigramStep, ExportStep};
 use oxpinyin_user::{MAX_PHRASE_LENGTH, PinyinKey, UserStore, is_user_file_library, toned_key};
 
-use crate::ffi::{cstr_to_owned_lossy, cstr_to_parsed_prefix, malloc_cstr_with, owned_cstr};
+use crate::ffi::{
+    cstr_to_owned_lossy, cstr_to_parsed_prefix, malloc_cstr_with, malloc_cstr_with_warning,
+    owned_cstr,
+};
 use crate::state::context_ref;
 use crate::types::{
     BigramExportIterator, ExportIterator, GChar, GUint, ImportIterator, PinyinContext,
@@ -414,7 +417,7 @@ pub extern "C" fn pinyin_iterator_get_next_phrase(
             })
         });
         let reading = (!pinyin.is_null())
-            .then(|| malloc_cstr_with(row.pinyin_len(), |out| row.write_pinyin(out)));
+            .then(|| malloc_cstr_with_warning(row.pinyin_len(), |out| row.write_pinyin(out)));
         (text, reading, export_count(row.count()))
     });
     let step = match step {
@@ -442,6 +445,14 @@ pub extern "C" fn pinyin_iterator_get_next_phrase(
             return false;
         }
     };
+    if reading.is_some_and(|value| value.is_null()) {
+        if let Some(text) = text {
+            // SAFETY: This call owns the malloc buffer (or null); no
+            // out-param has received it. libc free matches its allocator.
+            unsafe { crate::ffi::free(text.cast()) };
+        }
+        return false;
+    }
     if let Some(text) = text {
         // SAFETY: `phrase` was null-checked when `text` was produced.
         unsafe {
@@ -630,21 +641,31 @@ pub extern "C" fn pinyin_bigram_iterator_get_next_phrase(
         // Class (b): the pin reads past its pinyin array.
         BigramStep::Undefined => return false,
     };
-    if !phrase.is_null() {
-        // SAFETY: Null-checked above.
-        unsafe {
-            let bytes = phrase_text_bytes(&row.phrase);
-            *phrase = malloc_cstr_with(bytes.len(), |out| {
-                out[..bytes.len()].copy_from_slice(&bytes);
-                bytes.len()
-            });
-        }
+    let text = (!phrase.is_null()).then(|| {
+        let bytes = phrase_text_bytes(&row.phrase);
+        malloc_cstr_with_warning(bytes.len(), |out| {
+            out[..bytes.len()].copy_from_slice(&bytes);
+            bytes.len()
+        })
+    });
+    if text.is_some_and(|value| value.is_null()) {
+        return false;
     }
-    if !pinyin.is_null() {
-        // SAFETY: Null-checked above.
-        unsafe {
-            *pinyin = owned_cstr(&row.pinyin);
+    let reading = (!pinyin.is_null()).then(|| owned_cstr(&row.pinyin));
+    if reading.is_some_and(|value| value.is_null()) {
+        if let Some(text) = text {
+            // SAFETY: This call still owns text, allocated with libc malloc.
+            unsafe { crate::ffi::free(text.cast()) };
         }
+        return false;
+    }
+    if let Some(text) = text {
+        // SAFETY: `phrase` was null-checked before allocation.
+        unsafe { *phrase = text };
+    }
+    if let Some(reading) = reading {
+        // SAFETY: `pinyin` was null-checked before allocation.
+        unsafe { *pinyin = reading };
     }
     if !count.is_null() {
         // SAFETY: Null-checked above.

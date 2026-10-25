@@ -1854,6 +1854,46 @@
     ]
   },
   {
+    "name": "abi-alloc-failure",
+    "kind": "gate",
+    "implementation": "legacy:tools/abi/check-alloc-failure.sh",
+    "issues": [
+      "1227"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "artifacts": [
+      "pinyin-capi",
+      "zhuyin-capi"
+    ],
+    "oracle": true,
+    "required_inputs": [
+      "pin-built oracle and system data",
+      "debug-symbol subject libraries",
+      "Linux glibc, C++ compiler and GLib"
+    ],
+    "timeout": 900,
+    "heavy": true,
+    "exclusive_resources": [],
+    "command": [
+      "bash",
+      "{root}/tools/abi/check-alloc-failure.sh",
+      "{prefix}",
+      "{capi}",
+      "{zhuyin}"
+    ],
+    "env": {},
+    "input_paths": [
+      "{capi}",
+      "{zhuyin}",
+      "{prefix}/lib/libpinyin.so",
+      "{prefix}/lib/libzhuyin.so"
+    ]
+  },
+  {
     "name": "abi-alloc",
     "kind": "gate",
     "implementation": "legacy:tools/abi/check-alloc-pairing.sh",

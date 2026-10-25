@@ -117,7 +117,7 @@ pub fn cstr_to_owned_lossy(ptr: *const c_char) -> String {
 // resolvable at runtime without adding a dependency.
 unsafe extern "C" {
     fn malloc(size: usize) -> *mut c_void;
-    fn free(ptr: *mut c_void);
+    pub(crate) fn free(ptr: *mut c_void);
 }
 
 /// Converts one caller-owned export-iterator buffer into a Rust string and
@@ -155,6 +155,7 @@ pub fn owned_cstr(s: &str) -> *mut c_char {
     // SAFETY: `malloc` returns a valid `bytes.len()`-byte allocation or null.
     let dst = unsafe { malloc(bytes.len()) }.cast::<u8>();
     if dst.is_null() {
+        log_warning("owned_cstr: allocation failed");
         return ptr::null_mut::<c_char>();
     }
     // SAFETY: `dst` points to `bytes.len()` writable bytes and
@@ -174,12 +175,32 @@ pub fn owned_cstr(s: &str) -> *mut c_char {
 /// [`owned_cstr`] refuses the same way. The buffer is zeroed before `fill`
 /// sees it, so the slice it writes through is initialized memory.
 pub fn malloc_cstr_with(len: usize, fill: impl FnOnce(&mut [u8]) -> usize) -> *mut c_char {
+    malloc_cstr_with_policy(len, fill, false)
+}
+
+/// The final string allocation at pin g_malloc/g_strdup/g_strconcat sites.
+/// Class (c): one warning on allocation failure; the caller returns false.
+pub fn malloc_cstr_with_warning(len: usize, fill: impl FnOnce(&mut [u8]) -> usize) -> *mut c_char {
+    malloc_cstr_with_policy(len, fill, true)
+}
+
+fn malloc_cstr_with_policy(
+    len: usize,
+    fill: impl FnOnce(&mut [u8]) -> usize,
+    warn: bool,
+) -> *mut c_char {
     let Some(size) = len.checked_add(1) else {
+        if warn {
+            log_warning("malloc_cstr_with: allocation size overflow");
+        }
         return ptr::null_mut();
     };
     // SAFETY: `malloc` returns `size` writable bytes or null.
     let dst = unsafe { malloc(size) }.cast::<u8>();
     if dst.is_null() {
+        if warn {
+            log_warning("malloc_cstr_with: allocation failed");
+        }
         return ptr::null_mut();
     }
     // SAFETY: `dst` points to `size` writable bytes that nothing else
@@ -210,11 +231,13 @@ pub fn owned_cstr_list(items: &[impl AsRef<str>]) -> *mut *mut c_char {
         .checked_add(1)
         .and_then(|count| count.checked_mul(std::mem::size_of::<*mut c_char>()));
     let Some(bytes) = bytes else {
+        log_warning("owned_cstr_list: allocation size overflow");
         return ptr::null_mut();
     };
     // SAFETY: `malloc` returns `bytes` writable bytes or null.
     let arr = unsafe { malloc(bytes) }.cast::<*mut c_char>();
     if arr.is_null() {
+        log_warning("owned_cstr_list: allocation failed");
         return ptr::null_mut();
     }
     for (i, item) in items.iter().enumerate() {

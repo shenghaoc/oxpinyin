@@ -661,7 +661,7 @@ with mock.patch.object(Path,'read_text',read), mock.patch.object(sys,'argv',[scr
     def test_heavy_rows_are_the_registered_ones(self):
         rows = json.loads((HERE / 'runners.json').read_text())
         heavy = sorted(r['name'] for r in rows if run_all['is_heavy'](r))
-        self.assertEqual(heavy, ['bisect', 'contract-diff', 'coverage', 'fuzz', 'native-startup',
+        self.assertEqual(heavy, ['abi-alloc-failure', 'bisect', 'contract-diff', 'coverage', 'fuzz', 'native-startup',
                                 'open-counter-diff', 'sanitize', 'transformed-options-sweep'])
 
     def test_a_stale_slot_is_reclaimed_with_a_message(self):

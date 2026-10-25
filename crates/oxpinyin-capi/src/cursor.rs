@@ -275,17 +275,25 @@ pub extern "C" fn pinyin_get_pinyin_strings(
     if decoded.table_index() == 0 {
         return false;
     }
-    if !shengmu.is_null() {
-        // SAFETY: Null-checked above.
-        unsafe {
-            *shengmu = owned_cstr(decoded.shengmu_string());
-        }
+    let initial = (!shengmu.is_null()).then(|| owned_cstr(decoded.shengmu_string()));
+    if initial.is_some_and(|value| value.is_null()) {
+        return false;
     }
-    if !yunmu.is_null() {
-        // SAFETY: Null-checked above.
-        unsafe {
-            *yunmu = owned_cstr(decoded.yunmu_string());
+    let final_part = (!yunmu.is_null()).then(|| owned_cstr(decoded.yunmu_string()));
+    if final_part.is_some_and(|value| value.is_null()) {
+        if let Some(initial) = initial {
+            // SAFETY: This call still owns initial, allocated with libc malloc.
+            unsafe { crate::ffi::free(initial.cast()) };
         }
+        return false;
+    }
+    if let Some(initial) = initial {
+        // SAFETY: `shengmu` was null-checked before allocation.
+        unsafe { *shengmu = initial };
+    }
+    if let Some(final_part) = final_part {
+        // SAFETY: `yunmu` was null-checked before allocation.
+        unsafe { *yunmu = final_part };
     }
     true
 }
@@ -317,9 +325,13 @@ fn render_key(
         return false;
     };
     if !utf8_str.is_null() {
+        let owned = owned_cstr(&rendered);
         // SAFETY: Null-checked above.
         unsafe {
-            *utf8_str = owned_cstr(&rendered);
+            *utf8_str = owned;
+        }
+        if owned.is_null() {
+            return false;
         }
     }
     true
