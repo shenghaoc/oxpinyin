@@ -72,7 +72,11 @@ class LaunchTests(unittest.TestCase):
         self.assertIn('Mach affinity is a cache hint, not CPU pinning', result.stderr)
 
     def test_darwin_refuses_missing_samply(self):
-        result = self.check_darwin(path='/usr/bin:/bin')
+        # Keep the Bash 5 used by the test on PATH while /usr/bin and /bin
+        # remain ahead of any Homebrew samply.
+        with tempfile.TemporaryDirectory() as directory:
+            (Path(directory) / 'bash').symlink_to(shutil.which('bash'))
+            result = self.check_darwin(path=f'{directory}:/usr/bin:/bin')
         self.assertEqual(result.returncode, 1, result.stderr)
         self.assertIn('samply is required on macOS', result.stderr)
 
@@ -132,7 +136,7 @@ class LaunchTests(unittest.TestCase):
                                PATH=f'{directory}:/usr/bin:/bin')
             environment.pop('PERF_CPU', None)
             environment.pop('PINYIN_EXPORT_DIR', None)
-            result = subprocess.run(['/bin/bash', str(SCRIPT)], env=environment,
+            result = subprocess.run([str(bin_dir / 'bash'), str(SCRIPT)], env=environment,
                                     capture_output=True, text=True)
         self.assertEqual(result.returncode, 1, result.stderr)
         self.assertIn('cargo-c is required on macOS', result.stderr)

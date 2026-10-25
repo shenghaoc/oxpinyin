@@ -4,6 +4,10 @@
 # the new work directory contains only the driver and fresh user profiles.
 # Usage: <pin-so> <ox-so> <system-data-dir> <new-work-dir> [iterations|--cold-open]
 #        [--function-order ARM/FACADE=POLICY] [--unordered-arm ARM]
+
+# shellcheck source=../lib/bash-floor.sh
+. "${0%/*}/../lib/bash-floor.sh"
+
 set -euo pipefail
 pin=$(realpath "${1:?pin-so}")
 ox=$(realpath "${2:?ox-so}")

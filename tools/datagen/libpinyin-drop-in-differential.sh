@@ -22,6 +22,10 @@
 #   ... tools/datagen/libpinyin-drop-in-differential.sh tkrzw fixtures/datagen-toned
 #
 # usage: libpinyin-drop-in-differential.sh <kc|tkrzw> <model-dir> [<work-dir>]
+
+# shellcheck source=../lib/bash-floor.sh
+. "${0%/*}/../lib/bash-floor.sh"
+
 set -euo pipefail
 
 backend=${1:?backend: kc or tkrzw}

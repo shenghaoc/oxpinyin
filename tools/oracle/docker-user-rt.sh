@@ -22,6 +22,10 @@
 #
 # apt (the small dev packages the base image lacks) runs with fast-fail
 # timeouts and retries; everything else is network-free.
+
+# shellcheck source=../lib/bash-floor.sh
+. "${0%/*}/../lib/bash-floor.sh"
+
 set -euo pipefail
 
 image=${1:?Supply a provisioned round-trip image; see docs/runbooks/setup.md. This is not ordinary setup.}

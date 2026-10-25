@@ -10,6 +10,10 @@
 # an empty LIST builds nothing. Without --artifacts the three libraries are
 # built, plus user-rt-test when OXPINYIN_BUILD_USER_RT=1 (the pre-selection
 # behaviour, kept for direct callers).
+
+# shellcheck source=../lib/bash-floor.sh
+. "${0%/*}/../lib/bash-floor.sh"
+
 set -euo pipefail
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)  # physical path: the identity names one worktree
 # shellcheck source=tools/bisection/oracle-cell.sh

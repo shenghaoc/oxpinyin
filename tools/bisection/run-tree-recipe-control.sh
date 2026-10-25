@@ -39,6 +39,9 @@
 #
 # Captures are written to /out and are not committed.
 
+# shellcheck source=../lib/bash-floor.sh
+. "${0%/*}/../lib/bash-floor.sh"
+
 set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../tkrzw" && pwd)/runtime.sh"
 HEAVY_RUNNER="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/run-all.py"

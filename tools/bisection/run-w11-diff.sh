@@ -11,6 +11,9 @@
 #      undocumented here before, and CAPI_W11_SYSTEM -- the name a reader
 #      would guess -- silently did nothing.)
 
+# shellcheck source=../lib/bash-floor.sh
+. "${0%/*}/../lib/bash-floor.sh"
+
 set -euo pipefail
 cd "$(dirname "$0")"
 REPO_ROOT="$(cd ../.. && pwd)"

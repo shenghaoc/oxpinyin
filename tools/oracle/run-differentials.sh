@@ -4,6 +4,10 @@
 # suite's exit status is accumulated instead, and the script exits non-zero
 # when any suite failed, so a later passing suite never masks an earlier
 # failure.
+
+# shellcheck source=../lib/bash-floor.sh
+. "${0%/*}/../lib/bash-floor.sh"
+
 set -uo pipefail
 
 # run-differentials.sh — run the oxpinyin↔libpinyin oracle differentials

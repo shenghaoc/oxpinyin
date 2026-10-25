@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # #599: byte-for-byte same-backend SYSTEM_FILE interchange, both directions.
 # Usage: <pinyin|zhuyin> <pin-so> <ox-so> <system-data-dir>
+
+# shellcheck source=../lib/bash-floor.sh
+. "${0%/*}/../lib/bash-floor.sh"
+
 set -euo pipefail
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 # shellcheck source=tools/bisection/oracle-cell.sh

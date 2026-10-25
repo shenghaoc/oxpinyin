@@ -4,6 +4,10 @@
 # Commands: inventory ARCHIVE; resolve ARCHIVE POLICY SONAME; policy POLICY SONAME
 # Source this file to use the compiler capability check and resolver.
 
+# shellcheck source=../lib/bash-floor.sh
+# shellcheck disable=SC2128  # BASH_SOURCE is a Bash array; test direct execution.
+[ "${BASH_SOURCE:-$0}" = "$0" ] && . "${0%/*}/../lib/bash-floor.sh"
+
 function_order_inventory() {
   local archive="$1" here
   here="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"

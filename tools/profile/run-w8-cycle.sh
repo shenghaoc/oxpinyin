@@ -42,6 +42,9 @@
 #   OXPINYIN_PROFILE_OS test override for the host name; native runs use uname
 #   OXPINYIN_TKRZW_PREFIX  Homebrew prefix for libtkrzw on macOS
 
+# shellcheck source=../lib/bash-floor.sh
+. "${0%/*}/../lib/bash-floor.sh"
+
 set -euo pipefail
 cd "$(dirname "$0")"
 SCRIPT_DIR="$(pwd)"

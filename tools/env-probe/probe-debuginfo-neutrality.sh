@@ -43,6 +43,9 @@
 #       at different addresses             branch figures layout-shifted
 #   (c) different instruction multiset   -> different code. Stop.
 
+# shellcheck source=../lib/bash-floor.sh
+. "${0%/*}/../lib/bash-floor.sh"
+
 set -euo pipefail
 
 BACKEND=${1:-bdb}

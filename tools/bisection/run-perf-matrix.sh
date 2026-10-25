@@ -21,6 +21,9 @@
 #       workload inside the timed region with the corpus frozen
 #   PERF_RAM_RUNS  RAM processes per cell (default 10)
 
+# shellcheck source=../lib/bash-floor.sh
+. "${0%/*}/../lib/bash-floor.sh"
+
 set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../tkrzw" && pwd)/runtime.sh"
 cd "$(dirname "$0")"

@@ -47,6 +47,8 @@
 #   - .config/nextest.toml — the `ci` nextest profile the Linux and macOS
 #     test jobs run under
 #   - .github/actions/** — the bootstrap composite action every job runs
+#   - *.sh — the lint job runs ShellCheck over every tracked shell script,
+#     including scripts outside tools/ and the two named gate scripts
 #
 # Deliberately NOT gated (changes to these skip every lane):
 #   - docs/** — findings, design docs, ROADMAP: no code
@@ -80,6 +82,10 @@ on:
 
 permissions:
   contents: read
+
+defaults:
+  run:
+    shell: bash
 
 env:
   CARGO_TERM_COLOR: always
@@ -143,6 +149,9 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+      - name: Require the Bash floor
+        shell: bash
+        run: . tools/lib/bash-floor.sh
       - name: Compute the path-gate flag
         id: gate
         run: |
@@ -158,7 +167,7 @@ jobs:
             echo 'function_order=true' >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          changed=$(git diff --name-only "$base" HEAD --             crates fuzz tools             Cargo.toml Cargo.lock rust-toolchain.toml deny.toml clippy.toml             justfile uv.toml .python-version             .github/workflows/ci.yml             .github/scripts/lint-crate-cfg-placement.sh             tests/lint-crate-cfg-placement.test.sh             fixtures tests/parity .github/actions .config/nextest.toml)
+          changed=$(git diff --name-only "$base" HEAD --             crates fuzz tools '*.sh'             Cargo.toml Cargo.lock rust-toolchain.toml deny.toml clippy.toml             justfile uv.toml .python-version             .github/workflows/ci.yml             .github/scripts/lint-crate-cfg-placement.sh             tests/lint-crate-cfg-placement.test.sh             fixtures tests/parity .github/actions .config/nextest.toml)
           if [ -n "$changed" ]; then
             echo 'run=true' >> "$GITHUB_OUTPUT"
           else
@@ -212,6 +221,17 @@ jobs:
         # system db.h at build time. test-macos installs Homebrew
         # berkeley-db@5, so that job does not use this apt line.
         run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libdb-dev libglib2.0-dev
+      # The distribution package supplies ShellCheck; the checked minimum is
+      # the version whose findings this tree is clean under. No installer.
+      - name: ShellCheck tracked scripts (>= 0.11.0)
+        run: |
+          set -euo pipefail
+          apt-get install -y --no-install-recommends shellcheck
+          version=$(shellcheck --version | sed -n 's/^version: //p')
+          printf 'ShellCheck %s\n' "$version"
+          dpkg --compare-versions "$version" ge 0.11.0 ||
+            { printf '::error::ShellCheck %s is older than 0.11.0\n' "$version"; exit 1; }
+          git ls-files -z -- '*.sh' | xargs -0 -r shellcheck --severity=warning
       - run: cargo fmt --all --check
       - run: cargo fmt --manifest-path fuzz/Cargo.toml --all --check
       # Placement gate for crate-level `#![cfg(...)]`. A gate that
@@ -242,6 +262,8 @@ jobs:
       # release the ratchet was validated against locally.
       - run: apt-get install -y --no-install-recommends python3-pip
       - run: pip install --break-system-packages lizard==1.24.0
+      - name: Bash floor source lines
+        run: python3 tools/dev/bash_floor.py
       - run: lizard crates/ -l rust -C 40
 
   test:

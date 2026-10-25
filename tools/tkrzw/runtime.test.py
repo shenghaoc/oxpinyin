@@ -82,7 +82,7 @@ class LoaderTests(unittest.TestCase):
         self.env['LD_LIBRARY_PATH'] = str(self.system / 'lib')
         script = Path(runtime.__file__).with_suffix('.sh')
         command = ['bash', '-c', 'source "$1"; tkrzw_run "${PINYIN_ORACLE_DBM:-bdb}" subject subject.so sh -c \'echo MATCH\'',
-                   'unlabelled-runner', str(script)]
+                   str(script.parent / 'unlabelled-runner'), str(script)]
         result = subprocess.run(command, cwd=self.cwd, env=self.env, capture_output=True, text=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(result.stdout, '')
@@ -229,7 +229,7 @@ class LoaderTests(unittest.TestCase):
     def test_shell_and_python_share_the_launch_environment(self):
         script = Path(runtime.__file__).with_suffix('.sh')
         command = ['bash', '-c', 'source "$1"; tkrzw_run tkrzw pin subject.so sh -c \'printf "%s" "$LD_LIBRARY_PATH"\'',
-                   'fixture-runner', str(script)]
+                   str(script.parent / 'fixture-runner'), str(script)]
         result = subprocess.run(command, cwd=self.cwd, env=self.env, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, self.env['LD_LIBRARY_PATH'])
@@ -250,7 +250,7 @@ class LoaderTests(unittest.TestCase):
         script = Path(runtime.__file__).with_suffix('.sh')
         for cell in ('bdb', 'kc'):
             result = subprocess.run(['bash', '-c', 'source "$1"; tkrzw_run --quiet-stderr "$2" subject /bin/sh sh -c \'echo RESULT; echo diagnostic >&2\'',
-                                     'fixture-runner', str(script), cell], env=self.env, capture_output=True, text=True)
+                                     str(script.parent / 'fixture-runner'), str(script), cell], env=self.env, capture_output=True, text=True)
             self.assertEqual((result.returncode, result.stdout, result.stderr), (0, 'RESULT\n', ''))
 
 
@@ -277,7 +277,7 @@ class DarwinLoaderOverrideTests(unittest.TestCase):
                 result = subprocess.run(
                     ['bash', '-c',
                      f'{name}=/tmp/override; source "$1"; _tkrzw_check runner subject /bin/true',
-                     'fixture', str(script)],
+                     str(script.parent / 'fixture'), str(script)],
                     capture_output=True, text=True)
                 self.assertEqual(result.returncode, 1, result.stderr)
                 self.assertIn('REFUSED: runner: subject:', result.stderr)

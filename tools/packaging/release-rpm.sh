@@ -24,6 +24,9 @@
 # Usage: release-rpm.sh <backend> <version> <stage-root> <outdir>
 #   e.g. release-rpm.sh kyotocabinet 0.1.0 stage dist
 
+# shellcheck source=../lib/bash-floor.sh
+. "${0%/*}/../lib/bash-floor.sh"
+
 set -euo pipefail
 
 BACKEND="${1:?backend required}"

@@ -22,6 +22,9 @@
 #      fixture and planter follow it, and the oracle must be that cell's.
 # Exit: 0 identical or skipped; 1 build/run failure; 2 divergence.
 
+# shellcheck source=../lib/bash-floor.sh
+. "${0%/*}/../lib/bash-floor.sh"
+
 set -euo pipefail
 cd "$(dirname "$0")"
 REPO_ROOT="$(cd ../.. && pwd)"

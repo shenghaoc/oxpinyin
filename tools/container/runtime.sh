@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Shared selection only; callers retain their runtime-specific execution paths.
+
 oxpinyin_select_runtime() {
 	local override=${1:-${OXPINYIN_CONTAINER:-}} host version candidate
 	local -a candidates

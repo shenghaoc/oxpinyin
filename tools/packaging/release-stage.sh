@@ -27,6 +27,9 @@
 # Exits 0 only after every gate passes: SONAME, the five pkg-config reads real
 # consumers perform, and a C compile/link/run smoke against the staged tree.
 
+# shellcheck source=../lib/bash-floor.sh
+. "${0%/*}/../lib/bash-floor.sh"
+
 set -euo pipefail
 cd "$(dirname "$0")"
 REPO_ROOT="$(cd ../.. && pwd)"

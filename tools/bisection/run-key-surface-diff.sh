@@ -42,6 +42,9 @@
 #                         with the matching cargo feature
 #                         (tools/bisection/oracle-cell.sh).
 
+# shellcheck source=../lib/bash-floor.sh
+. "${0%/*}/../lib/bash-floor.sh"
+
 set -u
 cd "$(dirname "$0")" || exit 1
 

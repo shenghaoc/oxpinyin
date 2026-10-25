@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 # Exercise setup prerequisites and the real environment writer with synthetic pins.
+
+# shellcheck source=../lib/bash-floor.sh
+. "${0%/*}/../lib/bash-floor.sh"
+
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 
@@ -90,7 +94,7 @@ STUB
 			PATH="$stub_bin" UV_INSTALL_DIR="${SYNTHETIC_UV_INSTALL_DIR:-$stub_bin}" \
 			OXPINYIN_CLOUD_CACHE="$work/setup-cache" OXPINYIN_ORACLE_ENV="$work/setup.env" \
 			PINYIN_MODEL_CACHE="$work/setup-model" OXPINYIN_CONTAINER=podman \
-			/bin/bash "$setup" "$@" 3>&1 2>&1) || status=$?
+			bash "$setup" "$@" 3>&1 2>&1) || status=$?
 	}
 	check_setup() {
 		local expected_status=$1 expected=$2

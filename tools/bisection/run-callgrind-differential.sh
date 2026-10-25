@@ -49,6 +49,9 @@
 # Nothing here interprets the numbers. The decision rule lives in the
 # accompanying findings document.
 
+# shellcheck source=../lib/bash-floor.sh
+. "${0%/*}/../lib/bash-floor.sh"
+
 set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../tkrzw" && pwd)/runtime.sh"
 

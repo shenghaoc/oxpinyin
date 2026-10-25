@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 # Regressions for the platform-keyed oracle-pin.txt reader.
+
+# shellcheck source=../lib/bash-floor.sh
+. "${0%/*}/../lib/bash-floor.sh"
+
 set -euo pipefail
 
 dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)

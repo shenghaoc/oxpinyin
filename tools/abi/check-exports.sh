@@ -29,6 +29,9 @@
 # Exit: 0 = both libraries export exactly their .ver set; non-zero on any
 # deviation, with the missing/extra symbols named.
 
+# shellcheck source=../lib/bash-floor.sh
+. "${0%/*}/../lib/bash-floor.sh"
+
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 REPO_ROOT=$(pwd)

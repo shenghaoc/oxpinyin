@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 # First setup acceptance: compile, link and execute existing native-library tests.
+
+# shellcheck source=../lib/bash-floor.sh
+. "${0%/*}/../lib/bash-floor.sh"
+
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 case ${1:-bdb} in

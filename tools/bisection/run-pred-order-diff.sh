@@ -17,6 +17,9 @@
 # Env: UNCOVERED_SYSTEM (the five-file system dir of
 # run-uncovered-surface-diff.sh) and PINYIN_ORACLE_PREFIX, as there.
 
+# shellcheck source=../lib/bash-floor.sh
+. "${0%/*}/../lib/bash-floor.sh"
+
 set -euo pipefail
 cd "$(dirname "$0")"
 REPO_ROOT="$(cd ../.. && pwd)"

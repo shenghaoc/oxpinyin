@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 # Exercise the real runner's launch environment with an isolated driver fixture.
+
+# shellcheck source=../lib/bash-floor.sh
+. "${0%/*}/../lib/bash-floor.sh"
+
 set -euo pipefail
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 work=$(mktemp -d)

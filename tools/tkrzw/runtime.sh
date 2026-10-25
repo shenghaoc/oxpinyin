@@ -2,6 +2,11 @@
 # The single resolver implementation. Requires bash, awk and readlink;
 # ldd on Linux and otool on Darwin. No Python/uv dependency in native
 # runners or measurement images.
+
+# shellcheck source=../lib/bash-floor.sh
+# shellcheck disable=SC2128  # BASH_SOURCE is a Bash array; test direct execution.
+[ "${BASH_SOURCE:-$0}" = "$0" ] && . "${0%/*}/../lib/bash-floor.sh"
+
 TKRZW_RUNTIME=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/runtime.sh
 TKRZW_EXEC=(bash "$TKRZW_RUNTIME")
 

@@ -29,6 +29,9 @@
 # Exit codes: 0 = identical; 77 = skipped; 1 = build/run failure;
 # 2 = divergence.
 
+# shellcheck source=../lib/bash-floor.sh
+. "${0%/*}/../lib/bash-floor.sh"
+
 set -euo pipefail
 cd "$(dirname "$0")"
 REPO_ROOT="$(cd ../.. && pwd)"

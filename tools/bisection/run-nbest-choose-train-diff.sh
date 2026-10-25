@@ -2,6 +2,10 @@
 # Lane I: every offered n-best candidate, both facades, fresh profiles.
 # Usage: <bdb|kc|tkrzw> <oracle-prefix> <pinyin-so> <zhuyin-so> <new-out-dir>
 # Snapshots and dumps remain in out for review and revert-and-check.
+
+# shellcheck source=../lib/bash-floor.sh
+. "${0%/*}/../lib/bash-floor.sh"
+
 set -euo pipefail
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 PINYIN_ORACLE_DBM=${1:?backend}

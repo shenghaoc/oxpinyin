@@ -57,6 +57,7 @@
 # On any other instruction, that hash is stripped from the annotation the
 # same way the symbol-pairing tier strips it from names; registers,
 # immediates and everything semantic stay verbatim.
+
 neutrality_symbol_lines() { # $1 = .so
     objdump -d --no-show-raw-insn "$1" 2>/dev/null \
         | sed -e 's/[[:space:]]#.*$//' \

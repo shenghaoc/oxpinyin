@@ -79,6 +79,9 @@
 # Exit codes: 0 = identical; 1 = build/run failure; 2 = divergence;
 # 3 = a required input is missing.
 
+# shellcheck source=../lib/bash-floor.sh
+. "${0%/*}/../lib/bash-floor.sh"
+
 set -euo pipefail
 cd "$(dirname "$0")"
 SCRIPT_DIR="$(pwd)"

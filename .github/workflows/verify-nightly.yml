@@ -38,6 +38,10 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash
+
 # One group per ref: the schedule always runs on main, so scheduled runs
 # still queue behind each other, and a dispatch on a branch does not
 # displace them.

@@ -7,6 +7,9 @@
 #
 # Run: tools/perf-gate/callgrind-ir.test.sh
 
+# shellcheck source=../lib/bash-floor.sh
+. "${0%/*}/../lib/bash-floor.sh"
+
 set -euo pipefail
 cd "$(dirname "$0")"
 
