@@ -24,6 +24,11 @@ name: oracle-image
 # builds and verifies on pull requests that touch the recipe, and pushes only
 # only from a normal push to main. Compatibility-only inputs do not rebuild
 # the frozen libraries. The changes job selects the appropriate validation path.
+#
+# A later push to a pull request skips the rebuild and verification of an
+# image that push's tag and verifier files already passed on that pull request
+# and architecture (#1241). The jobs still run and report success under the
+# same names; main pushes and publication are unchanged.
 
 on:
   workflow_dispatch:
@@ -147,10 +152,34 @@ jobs:
             echo 'LABELS_EOF'
           } >> "$GITHUB_OUTPUT"
 
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      # A completed build and verification is recorded per (tag, architecture)
+      # in the Actions cache (#1241). The cache is scoped to this PR's ref, so a
+      # record exists only for an image this PR already built and verified. The
+      # key is the full image tag plus a hash of the files that verify it, so a
+      # change to the image (the tag) or to its verification rebuilds. A record
+      # is written by the last step, after every check has passed, and never
+      # for a failure. Main pushes neither read nor write it.
+      - name: Look up the verified amd64 image record
+        id: record
+        if: github.event_name == 'pull_request' && needs.changes.outputs.oracle == 'true'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .oracle-image-verified
+          key: oracle-image-verified-linux-amd64-${{ steps.meta.outputs.tag }}-${{ hashFiles('.github/workflows/oracle-image.yml', 'tools/oracle/verify-oracle-image.sh', 'tools/oracle/check-reproducible.sh', 'tools/oracle/pin.sh', 'tools/oracle/Dockerfile.compat', 'tools/oracle/compat.sh', 'tools/oracle/compat-inside.sh', 'tools/container/runtime.sh', 'tools/cloud/setup.sh', 'tools/tkrzw/distro-probe.sh', 'rust-toolchain.toml') }}
+          lookup-only: true
+
+      - name: Skip the amd64 image rebuild
+        if: steps.record.outputs.cache-hit == 'true'
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: echo "::notice::oracle image tag ${TAG} was already built and verified for linux/amd64 on this pull request; skipping the rebuild and verification"
+
+      - name: Set up buildx
+        if: steps.record.outputs.cache-hit != 'true'
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Build the oracle image
-        if: needs.changes.outputs.oracle == 'true'
+        if: needs.changes.outputs.oracle == 'true' && steps.record.outputs.cache-hit != 'true'
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
@@ -162,7 +191,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
 
       - name: Verify the library hashes and the absence of model data
-        if: needs.changes.outputs.oracle == 'true'
+        if: needs.changes.outputs.oracle == 'true' && steps.record.outputs.cache-hit != 'true'
         run: tools/oracle/verify-oracle-image.sh --engine docker oxpinyin-oracle:candidate
 
       - name: Reuse the immutable reference for compatibility-only changes
@@ -178,6 +207,7 @@ jobs:
       # No model inputs enter this stage or the published artifact.
       - name: Build the recorded oracle build environment
         id: deps
+        if: steps.record.outputs.cache-hit != 'true'
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
@@ -189,6 +219,7 @@ jobs:
           tags: oxpinyin-oracle-deps:candidate
 
       - name: Verify deps is exactly the recorded build stage
+        if: steps.record.outputs.cache-hit != 'true'
         env:
           BUILT_STAGE_ID: ${{ steps.deps.outputs.imageid }}
         run: |
@@ -222,6 +253,7 @@ jobs:
             command -v cc; command -v pkg-config; command -v python3'
 
       - name: Build compatibility execution environment from the same stages
+        if: steps.record.outputs.cache-hit != 'true'
         run: |
           docker buildx build --builder default --load --platform linux/amd64 \
             --build-arg DEPS_IMAGE=oxpinyin-oracle-deps:candidate \
@@ -231,6 +263,21 @@ jobs:
           bash -n tools/container/runtime.sh tools/oracle/compat.sh tools/oracle/compat-inside.sh tools/cloud/setup.sh
           # No CI job fetches model20. End-to-end local differentials are
           # recorded separately and never turn missing model input into pass.
+
+      - name: Record the verified amd64 image
+        if: github.event_name == 'pull_request' && needs.changes.outputs.oracle == 'true' && steps.record.outputs.cache-hit != 'true'
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          mkdir -p .oracle-image-verified
+          printf '%s\n' "$TAG" > .oracle-image-verified/linux-amd64
+
+      - name: Save the verified amd64 image record
+        if: github.event_name == 'pull_request' && needs.changes.outputs.oracle == 'true' && steps.record.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .oracle-image-verified
+          key: oracle-image-verified-linux-amd64-${{ steps.meta.outputs.tag }}-${{ hashFiles('.github/workflows/oracle-image.yml', 'tools/oracle/verify-oracle-image.sh', 'tools/oracle/check-reproducible.sh', 'tools/oracle/pin.sh', 'tools/oracle/Dockerfile.compat', 'tools/oracle/compat.sh', 'tools/oracle/compat-inside.sh', 'tools/container/runtime.sh', 'tools/cloud/setup.sh', 'tools/tkrzw/distro-probe.sh', 'rust-toolchain.toml') }}
 
       - name: Log in to GHCR
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.oracle == 'true'
@@ -319,9 +366,34 @@ jobs:
             echo 'LABELS_EOF'
           } >> "$GITHUB_OUTPUT"
 
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      # A completed build and verification is recorded per (tag, architecture)
+      # in the Actions cache (#1241). The cache is scoped to this PR's ref, so a
+      # record exists only for an image this PR already built and verified. The
+      # key is the full image tag plus a hash of the files that verify it, so a
+      # change to the image (the tag) or to its verification rebuilds. A record
+      # is written by the last step, after every check has passed, and never
+      # for a failure. Main pushes neither read nor write it.
+      - name: Look up the verified arm64 image record
+        id: record
+        if: github.event_name == 'pull_request' && needs.changes.outputs.oracle == 'true'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .oracle-image-verified
+          key: oracle-image-verified-linux-arm64-${{ steps.meta.outputs.tag }}-${{ hashFiles('.github/workflows/oracle-image.yml', 'tools/oracle/verify-oracle-image.sh', 'tools/oracle/check-reproducible.sh', 'tools/oracle/pin.sh', 'tools/oracle/Dockerfile.compat', 'tools/oracle/compat.sh', 'tools/oracle/compat-inside.sh', 'tools/container/runtime.sh', 'tools/cloud/setup.sh', 'tools/tkrzw/distro-probe.sh', 'rust-toolchain.toml') }}
+          lookup-only: true
+
+      - name: Skip the arm64 image rebuild
+        if: steps.record.outputs.cache-hit == 'true'
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: echo "::notice::oracle image tag ${TAG} was already built and verified for linux/arm64 on this pull request; skipping the rebuild and verification"
+
+      - name: Set up buildx
+        if: steps.record.outputs.cache-hit != 'true'
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Build the arm64 oracle image
+        if: steps.record.outputs.cache-hit != 'true'
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
@@ -334,10 +406,12 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
 
       - name: Verify the arm64 library hashes and the absence of model data
+        if: steps.record.outputs.cache-hit != 'true'
         run: tools/oracle/verify-oracle-image.sh --engine docker --platform linux/arm64 oxpinyin-oracle:candidate-arm64
 
       - name: Build the recorded arm64 oracle build environment
         id: deps
+        if: steps.record.outputs.cache-hit != 'true'
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
@@ -350,6 +424,7 @@ jobs:
           tags: oxpinyin-oracle-deps:candidate-arm64
 
       - name: Verify the arm64 deps stage is exactly the recorded build stage
+        if: steps.record.outputs.cache-hit != 'true'
         env:
           BUILT_STAGE_ID: ${{ steps.deps.outputs.imageid }}
         run: |
@@ -382,7 +457,23 @@ jobs:
             command -v cc; command -v pkg-config; command -v python3'
 
       - name: Check arm64 reproducibility against the frozen hashes
+        if: steps.record.outputs.cache-hit != 'true'
         run: tools/oracle/check-reproducible.sh --engine docker --platform linux/arm64 --image oxpinyin-oracle-deps:candidate-arm64
+
+      - name: Record the verified arm64 image
+        if: github.event_name == 'pull_request' && needs.changes.outputs.oracle == 'true' && steps.record.outputs.cache-hit != 'true'
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          mkdir -p .oracle-image-verified
+          printf '%s\n' "$TAG" > .oracle-image-verified/linux-arm64
+
+      - name: Save the verified arm64 image record
+        if: github.event_name == 'pull_request' && needs.changes.outputs.oracle == 'true' && steps.record.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .oracle-image-verified
+          key: oracle-image-verified-linux-arm64-${{ steps.meta.outputs.tag }}-${{ hashFiles('.github/workflows/oracle-image.yml', 'tools/oracle/verify-oracle-image.sh', 'tools/oracle/check-reproducible.sh', 'tools/oracle/pin.sh', 'tools/oracle/Dockerfile.compat', 'tools/oracle/compat.sh', 'tools/oracle/compat-inside.sh', 'tools/container/runtime.sh', 'tools/cloud/setup.sh', 'tools/tkrzw/distro-probe.sh', 'rust-toolchain.toml') }}
 
       - name: Log in to GHCR
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.oracle == 'true'
