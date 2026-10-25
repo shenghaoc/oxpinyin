@@ -610,15 +610,18 @@ Rust: `data/src/interp.rs::parse_interpolation2_from_reader`,
 segmented helper's two-piece iterator with `split_once` and borrows its numeric
 prefix without changing existing results. It inventories all six active pin
 split/category calls and preserves `interp_grammar.rs::is_graph` unchanged.
-Nonzero token/phrase validation, signed numeric inputs, overflow/NUL and the
-full four-field generator audit remain explicit follow-ups; no ordinary-file
-test or equivalent refactor closes those rows, and no new runtime exception
-is admitted. The report separates these gaps from the existing approved
-interpolation-category difference.
+The follow-through traces nonzero phrase validation, signed numeric inputs,
+amd64 numeric narrowing, NUL and invalid UTF-8 through model output. It cites
+GLib tag 2.89.4 and the installed Debian 2.89.4-2 splitter, and libc 2.43-3
+headers/disassembly. Implementation/parity gaps, exact libc tag/patchset
+source inspection, and DBM durability after assertion remain open, as does
+the separate full four-field generator audit. No equivalent refactor closes
+those gaps or admits a runtime exception. The approved interpolation-category
+difference remains separate.
 
 Bounded completion gate, 2026-10-25 UTC: native dictool/training tests,
-fmt and clippy passed; the named separator-collapse mutation failed and its
-restoration passed. BDB live counter values (138096 unigrams, 199 bigrams)
+fmt and clippy passed; both named splitter mutations failed and their
+restorations passed. BDB live counter values (138096 unigrams, 199 bigrams)
 matched for the ordinary and classified streams; existing import differential
 and classic frontend interchange matched in both directions. Commands and
 limits are in the audit; this does not promote the remaining G16 rows.

@@ -186,16 +186,19 @@ fn rust_matches_live_gen_ngram() {
     // atoi accepts a decimal prefix, TAB splits just like SP, and zero
     // bypasses phrase validation even with repeated separators, Unicode
     // format/unassigned scalars and a literal dangling backslash.
-    let classified: String = std::str::from_utf8(&fixture)
+    let mut classified: String = std::str::from_utf8(&fixture)
         .expect("UTF-8 fixture")
         .lines()
         .map(|line| match line.split_once(' ') {
-            Some(("0", _)) => "0 \t\u{200d}\u{378}\\\n".to_owned(),
-            Some((token, phrase)) => format!("{token}suffix\t{phrase}\n"),
+            Some(("0", _)) => "-0 \t\u{200d}\u{378}\\\0hidden\n".to_owned(),
+            Some((token, phrase)) => format!("{token}suffix\t{phrase}\0hidden\n"),
             None if line.is_empty() => "\n".to_owned(),
             None => panic!("fixture has no separator: {line:?}"),
         })
         .collect();
+    // Signed zero and a NUL after the delimiter are source-derived controls,
+    // not evidence that positive signs or NUL before the delimiter agree.
+    classified.push_str("+0 ignored\n0 \0hidden\n");
     let export = locate_export_dir().expect("system tables");
     let lexicon = PhraseLexicon::from_system_dir(&export).expect("phrase lexicon");
     let classified_rust = count_ngseg(&lexicon, &classified, true).expect("classified stream");
@@ -210,5 +213,62 @@ fn rust_matches_live_gen_ngram() {
     )
     .expect("classified live gen_ngram pipeline");
     assert_counts_equal(&rust, &classified_live);
-    eprintln!("classified prefixes, TAB separators and zero-token tails: value-identical");
+    eprintln!("classified prefixes, TAB, signed zero and NUL tails: value-identical");
+}
+
+#[test]
+fn invalid_utf8_is_rejected_before_counter_or_emitter_output() {
+    let work = tempfile::tempdir().expect("temp dir");
+    let input = work.path().join("input.ngseg");
+    let output = work.path().join("output.txt");
+    // An empty directory is a valid empty phrase-library collection. These
+    // tests exercise the byte reader without any external model dependency.
+    for binary in [
+        env!("CARGO_BIN_EXE_oxpinyin-counter"),
+        env!("CARGO_BIN_EXE_oxpinyin-emitter"),
+    ] {
+        for bytes in [b"0 \xff\n".as_slice(), b"0 \0\xff\n".as_slice()] {
+            std::fs::write(&input, bytes).expect("input");
+            std::fs::write(&output, "unchanged").expect("output sentinel");
+            let result = std::process::Command::new(binary)
+                .arg("--export-dir")
+                .arg(work.path())
+                .arg("-o")
+                .arg(&output)
+                .arg(&input)
+                .output()
+                .expect("tool starts");
+            assert_eq!(result.status.code(), Some(1));
+            assert!(result.stdout.is_empty());
+            assert!(String::from_utf8_lossy(&result.stderr).contains("utf-8"));
+            assert_eq!(std::fs::read_to_string(&output).unwrap(), "unchanged");
+        }
+    }
+}
+
+#[test]
+fn invalid_utf8_in_either_lambda_stream_precedes_output() {
+    let work = tempfile::tempdir().expect("temp dir");
+    let system = work.path().join("system.ngseg");
+    let deleted = work.path().join("deleted.ngseg");
+    for invalid_system in [true, false] {
+        let valid = b"0 \n".as_slice();
+        let invalid = b"0 \0\xff\n".as_slice();
+        std::fs::write(&system, if invalid_system { invalid } else { valid }).unwrap();
+        std::fs::write(&deleted, if invalid_system { valid } else { invalid }).unwrap();
+        let result = std::process::Command::new(env!("CARGO_BIN_EXE_oxpinyin-lambda"))
+            .arg("--export-dir")
+            .arg(work.path())
+            .arg("--deleted")
+            .arg(&deleted)
+            .arg(&system)
+            .output()
+            .expect("lambda starts");
+        assert_eq!(result.status.code(), Some(1));
+        assert!(result.stdout.is_empty());
+        assert!(
+            String::from_utf8_lossy(&result.stderr).contains("UTF-8")
+                || String::from_utf8_lossy(&result.stderr).contains("utf-8")
+        );
+    }
 }

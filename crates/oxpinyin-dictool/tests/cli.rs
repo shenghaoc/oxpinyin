@@ -200,6 +200,35 @@ fn malformed_input_fails_with_a_line_numbered_error() {
     );
 }
 
+#[test]
+fn nul_and_invalid_utf8_fail_preflight_before_creating_the_store() {
+    let tmp = temp_dir("byte-preflight");
+    let user = tmp.path().join("user");
+    let input = tmp.path().join("input.txt");
+    let rejected: &[&[u8]] = &[
+        "词\0 ci 7\n".as_bytes(),
+        "词 ci\0 7\n".as_bytes(),
+        "词 ci 7\0ignored\n".as_bytes(),
+        b"\xff ci 7\n",
+        b"# comment with invalid UTF-8: \xff\n",
+        b"\0ignored invalid UTF-8: \xff\n",
+    ];
+    for &tail in rejected {
+        let mut bytes = "你好 ni'hao 5\n".as_bytes().to_vec();
+        bytes.extend_from_slice(tail);
+        std::fs::write(&input, bytes).expect("input writes");
+        let (ok, stderr) = run(&[
+            "import",
+            "--user-dir",
+            user.to_str().expect("UTF-8 path"),
+            input.to_str().expect("UTF-8 path"),
+        ]);
+        assert!(!ok, "invalid input must fail: {tail:?}");
+        assert!(stderr.contains("line 2"), "{stderr}");
+        assert!(!user.exists(), "preflight must precede all store writes");
+    }
+}
+
 /// Export from a user dir that never saw an import answers an empty
 /// document (or a bare header-free empty file), not an error.
 #[test]
