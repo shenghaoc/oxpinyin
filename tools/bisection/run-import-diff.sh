@@ -143,7 +143,8 @@ echo ""
 # default count (5).
 
 echo "--- classic-format frontend interop ---"
-FIXTURE="$REPO_ROOT/tools/bisection/classic-import.txt"
+# A source-derived classified input may use the same frontend/dictool driver.
+FIXTURE="${IMPORT_FIXTURE:-$REPO_ROOT/tools/bisection/classic-import.txt}"
 
 # Locate the ibus-libpinyin object tree from tools/oracle/build-oracle.sh
 # (its --work-dir). Prefer the pin-build path, then the other oracle

@@ -1,6 +1,6 @@
 # oxpinyin-dictool and the classic libpinyin user-dictionary interchange (W7-T1)
 
-Date: 2026-08-16 · Status: **pinned for oxpinyin-dictool import/export** ·
+Date: 2026-08-16 · Status: **dictool's own import/export specification** ·
 Scope: the text format `oxpinyin-dictool import --user-dir <path> <file.txt>`
 reads and `oxpinyin-dictool export --user-dir <path> [file.txt]` writes.
 
@@ -34,6 +34,19 @@ fixture. The alternative (dictool over `UserStore` + oxpinyin-core directly)
 is portable-Rust-friendlier but would fork the behavior surface from the
 frontend's, weakening the interop guarantee. Kept on the C ABI
 deliberately.
+
+## Byte-record boundary (2026-10-25 continuation)
+
+Input is read as physical LF-delimited byte records. As in frontend
+`PYLibPinyin.cc:245-254`, each record ends at its first NUL before UTF-8
+validation. Hidden suffix bytes are ignored, even when invalid UTF-8.
+Pinyin fields retain the longest valid prefix even when a later byte is
+invalid UTF-8, following `FullPinyinParser2`; invalid phrase bytes still
+refuse the record. The visible record follows the remaining grammar and
+full-file preflight below;
+this does not change desired-count semantics or admit numeric suffixes.
+See [#926 partitions](926-tool-tokenizers.md#continuation-segmented-byte-records-and-phrase-validation)
+for the remaining frontend differences.
 
 ## 1. Grammar
 
@@ -85,7 +98,24 @@ a command-line tool, so it reports instead:
   phrase parse there and be ignored, so accepting it here is a superset,
   not a format fork.
 
-All errors carry 1-based line numbers.
+All errors carry 1-based line numbers. This is dictool's own strict CLI
+specification, retained by the maintainer ruling for #1226; it is not the
+frontend's error-handling contract or the C ABI. The pin has no import tool.
+At ibus-libpinyin `42788824ef59ffc03c6f345e20f08ee860dd5c15`,
+`src/PYLibPinyin.cc:249-275` skips lines with the wrong field count, ignores
+`pinyin_iterator_add_phrase` failures, and saves the accepted rows.
+
+Dictool preflights the entire file: wrong field counts, empty phrase/pinyin,
+unparseable pinyin, phrase/key-count mismatch, bad counts and duplicates
+produce 1-based errors before any write. It does not implement frontend
+skip-and-continue. The verified byte boundaries above and desired-floor
+counts below remain unchanged.
+
+After successful preflight, if an add fails, the importer records its line
+and continues through all remaining rows. It marks the store modified and
+attempts to save before returning the first failing line. On successful save,
+every successful add before **and after** that row is persisted; this is not
+a stop-at-first-add-failure or rollback contract.
 
 ## 3. Count semantics and idempotency
 
