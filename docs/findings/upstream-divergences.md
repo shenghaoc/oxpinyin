@@ -3781,6 +3781,55 @@ previous token's gram).
   registry of live instances would worsen time and space on every
   alloc/free, so there is no case and no change.
 
+### A prediction candidate whose phrase item a journal REMOVE took out (#1231; policy row 106a, class (b), 2026-10-25 UTC)
+
+- **Upstream source cite:** `src/pinyin.cpp:2389-2405` (prefix filter),
+  `:2018-2022` and `:1635-1637` (NULL phrase string),
+  `:2041-2068` and `:2082` (dedup `strcmp`), `:2071-2080` (singleton
+  dedup), `:2608-2616` (prefix choose), and
+  `src/storage/phrase_index.h:628-634` (facade-total increment), at
+  `074a2219c90feaf962d0d24f034514033ece5f99`.
+- **Mechanism:** `_compute_predicted_prefix_candidates` ignores
+  `get_phrase_item`'s result. The loop-wide `PhraseItem` keeps the last
+  successful read's length (or the default zero), so the
+  `2 * prefix_len + 1` gate uses a stale length: every success replaces it
+  before the check, including one the check then skips. An appended missing
+  token keeps `m_phrase_string = NULL`. With two or more pre-dedup rows
+  the dedup sort's `strcmp` reads it and the pin dies of SIGSEGV; with one
+  row neither comparison runs, so the NULL row survives and the getters
+  expose count 1, prefix type, a successful string getter writing NULL, a
+  failed `token_get_phrase` with untouched outputs, and `false` from
+  `is_user_candidate`. Choosing that row calls
+  `add_unigram_frequency(token, 483)`: the loaded facade total advances by
+  483 modulo 2^32, the missing sub-index write fails, and the prefix
+  branch still returns true without a bigram; an unloaded library returns
+  before the total moves and still returns true.
+- **What oxpinyin does instead:** `select_prefix_rows`
+  (`crates/oxpinyin-capi/src/predict.rs`) keeps one plain
+  `last_read_length` with the pin's update-before-check order. It keeps a
+  sole missing row in the snapshot with `TextSpan::NULL`; with any other
+  pre-dedup row it drops missing rows under row 106's class (b) answer
+  (no candidate, normal true, no warning). `pinyin_choose_predicted_candidate`
+  (`crates/oxpinyin-capi/src/candidates.rs`) advances the loaded facade
+  total through `RuntimeDict::add_unigram_delta` and returns true, or
+  leaves it unchanged when the library is unloaded. The former
+  `.or(fallback)` phrase-table key text and #1190's system-text carry are
+  removed; an absent item reaches the adapter as `None`.
+- **Externally observable:** yes. `removed-predict-sole-pinyin`,
+  `removed-predict-choose-pinyin`, `removed-predict-class-b-pinyin`
+  (crash: pin SIGSEGV, subject true with the live candidate) and
+  `removed-predict-stale-skip-pinyin` in `contract-diff.py`; the stale
+  case is bdb-only by registration, and the other three run on bdb, kc and
+  tkrzw and MATCH on all three. The C ABI has no facade-total getter; the 483-total and
+  unloaded-unchanged effects are also held by the in-crate test
+  `choosing_a_sole_missing_prefix_row_advances_the_facade_total`.
+- **Separate pre-existing defect:** the same implementation applies the
+  pin's `pinyin_is_user_candidate` type gate (`src/pinyin.cpp:3713-3715`).
+  Before it, a predicted-bigram or predicted-prefix row whose token was in
+  `USER_DICTIONARY` answered true; `predicted-bigram-is-user-candidate`
+  holds the pin's false.
+- **Not changed:** the zhuyin facade has no predicted-candidate path.
+
 ## Pin portability defects found on arm64 (#1137, 2026-10-24 UTC)
 
 These entries are not oxpinyin divergences. On amd64 oxpinyin reproduces
