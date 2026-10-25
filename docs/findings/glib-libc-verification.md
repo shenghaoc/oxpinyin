@@ -658,7 +658,7 @@ infer expectations.
 | Allocation boundary / exported operations | Conditional pin result, return/out-state/diagnostic | Subject and disposition |
 | --- | --- | --- |
 | Real caller arrays, all four operations | GLib growth failure terminates through fatal allocation; no normal return. | Actual GLib growth retained. Rust payload preparation may terminate earlier. MUST RETAIN ABI; identical allocation graphs are not claimed. |
-| P/Z key renderers, P dual pinyin strings and auxiliary text | Duplication/concatenation OOM is fatal; formatted renderer ENOMEM aborts with raw stderr as above. | `owned_cstr` first allocates Rust CString, then libc storage. The former can terminate; the latter returns NULL. P renderers/dual getters can return true with NULL, Z renderer false/NULL; auxiliary writer false/NULL. Unaccepted conditional differences; adapter follow-up, including reserved zhuyin ffi.rs. |
+| P/Z key renderers, P dual pinyin strings and auxiliary text | Duplication/concatenation OOM is fatal; formatted renderer ENOMEM aborts with raw stderr as above. | `owned_cstr` first allocates Rust CString, then libc storage. The former can terminate; the latter returns NULL. P cursor renderers/dual getters can return true with NULL; P luoma/secondary and Z renderers return false/NULL; auxiliary writer false/NULL. Unaccepted conditional differences; adapter follow-up, including reserved zhuyin ffi.rs. |
 | P/Z keyboard vector | GLib vector/string allocation OOM is fatal, no returned partial vector. | Checked vector allocation or element libc failure returns false/NULL after freeing every prior string and vector. Earlier Rust allocation can terminate. No leaked partial-list transfer; successful pairing is correct, OOM returns are not equivalent. |
 | P/Z `token_get_phrase` | Conversion allocation failure writes declared length and NULL text, returns true, no warning (`pinyin.cpp:1627-1645`; `zhuyin.cpp:1096-1113`). | Subject writes length and NULL but returns false. Reserved dict.rs follow-up, not an accepted quirk. |
 | P/Z `get_sentence` | Each token conversion is fallible; a NULL conversion can leave NULL before a prefix exists or preserve an existing prefix, omitting that token. Later dup/concat allocation can terminate; converter otherwise returns true (`lookup/lookup.cpp:27-69`). No conversion warning. | Final subject buffer failure returns false/NULL; no per-token partial assembly. Conditional difference requires adapter follow-up, not C-like temporary allocations in the engine. |
@@ -675,7 +675,7 @@ Subject source: pinyin `ffi.rs:150-243`, zhuyin `ffi.rs:123-180`;
 A checked-size overflow returns NULL before allocation; realistic exported
 payload bounds do not license inventing a reachable usize overflow.
 The pin and upstream GLib call sites in the allocation families above have been read; the exact glibc/Debian source gap remains explicitly open above.
-There is **no existing per-allocation failure injector** in the contract
+At the original #1222 checkpoint there was **no per-allocation failure injector** in the contract
 driver: a process-wide memory cap could fail the harness or an earlier
 allocation, so it cannot verify these conditional outcomes. That is a
 verification-tooling limitation, not unavailable source or an accepted
@@ -763,6 +763,105 @@ just heavy -- tools/abi/check-exports.sh
 uv run --no-project --managed-python --python cpython@3.15+gil \
   python -X lazy_imports=normal tools/bisection/contract-diff.test.py
 ```
+
+### #924 Allocation-failure injection follow-through — 2026-10-25 UTC
+
+This continuation starts from `27c785c0`, after merged #1222, and retains
+Refs #924. Pin `074a2219` and GLib tag `2.89.4` source citations use the
+same trees as the preceding audit. The Linux C-consumer harness and its
+reproduction instructions are in
+[`tools/abi/alloc-failure.md`](../../tools/abi/alloc-failure.md).
+Source expectations were read before the fault-injected pin comparisons.
+
+
+
+GLib `glib/gmem.c:95-106` calls malloc and invokes fatal `g_error` on a
+positive-size failure. `:164-177` does the same for realloc.
+`glib/garray.c:605-625,1071-1100` grows a real GArray through that realloc;
+`glib/gstrfuncs.c:315-329` duplicates through `g_new`/g_malloc. Structured
+`g_error` expands through `glib/gmessages.h:328-334`; the writer is invoked
+before fatal termination (`glib/gmessages.c:1874-1910`). Legacy logging also
+calls its handler before fatal termination (`:1274-1313`). The harness
+observes both channels, because a legacy handler alone misses structured
+GLib allocation errors. Error level is 4, unlike precondition critical 8.
+
+The HSU mapping is source-defined (`storage/zhuyin_table.h:209-232`), with
+ordered strdup/append of both entries in
+`storage/zhuyin_parser2.cpp:496-544`. The regular single-symbol keyboard
+path has the same fatal allocation contract (`:301-332`); Dachen CP26 is
+`:798-851`. Pin vector capacity growth also goes through fatal g_realloc
+(`glib/garray.c:1890-1916`). Subject list construction is independent:
+vector malloc, then one `owned_cstr` per entry, then a terminating NULL.
+Failure frees all already-constructed foreign entries and the vector.
+
+The matrix separates the final foreign allocation from earlier Rust String,
+CString and Vec allocations. Ordinary infallible Rust allocations may
+terminate before the final transfer is attempted; this harness does not
+inject those earlier allocations or claim identical allocation graphs.
+A same-resource-pressure comparison is not established.
+
+| Exported caller(s) | Pin source and conditional result | Subject final-allocation result / classification |
+| --- | --- | --- |
+| P `get_pinyin_string`, `get_zhuyin_string` | `pinyin.cpp:2707-2726`; `storage/chewing_key.cpp:47-57,74-88`: g_strdup failure is fatal; formatted-tone path uses printf (see limit below). | `cursor.rs::render_key` writes NULL and returns true silently. **Defect**, not a logged class-(c) refusal. Zhuyin string with first tone tested. |
+| P `get_luoma_pinyin_string`, `get_secondary_zhuyin_string` | `pinyin.cpp:2729-2748`; `storage/chewing_key.cpp:90-114`: fatal duplicate/formatted allocation. | `keys.rs::{display_string_getter,write_string}` writes NULL and returns false silently. **Defect**. This corrects the earlier ledger's overbroad statement that all P renderers return true on NULL. The `write_string` comment also incorrectly says the output is untouched. No production edit here. |
+| Z `get_zhuyin_string`, `get_pinyin_string` | `zhuyin.cpp:1732-1765`; same ChewingKey renderers. | `keys.rs::display_string_getter` writes NULL and returns false silently. **Defect**; first-tone zhuyin rendering tested. |
+| P `get_pinyin_strings` | `pinyin.cpp:2751-2762`; `storage/chewing_key.cpp:60-71`: each requested output is independently duplicated; allocation failure terminates, potentially after writing the first output. | `cursor.rs::pinyin_get_pinyin_strings` independently writes NULL to a failed requested slot and returns true, no warning. **Defect**, source-only here. |
+| P three auxiliary-text getters | `pinyin.cpp:3381-3575`: dup/concat allocation fatal, including allocated empty string on false. | `text.rs::write_aux` writes NULL and returns false silently. **Defect**, source-only here. |
+| P/Z `in_chewing_keyboard` | `pinyin.cpp:1615-1624`, `zhuyin.cpp:1087-1093`; parser citations above: positive malloc/realloc failure terminates, no normal partial vector return. | Both `parse.rs` callers write NULL and return false silently. `ffi::owned_cstr_list` frees its partial vector. **Defect**, not logged class (c). Vector, first string and second string failures tested; reserved zhuyin ffi repair belongs to follow-up after #1190. |
+| P/Z `token_get_phrase` | `pinyin.cpp:1627-1645,2776-2783`, `zhuyin.cpp:1096-1113,1768-1775`: fallible UCS-4 conversion failure can write length + NULL and still return true, no conversion diagnostic. | Both `dict.rs` callers write length + NULL and return false silently. **Different from the pin's nonfatal failure**, not a class-(c) abort refusal. Reserved; follow-up with #1224, source-only here. |
+| P/Z `get_sentence` | `lookup/lookup.cpp:27-69`: per-item fallible conversion, then fatal duplication/concatenation; missing converted item may leave NULL or preserve an existing prefix. P `:1463-1481`, Z `:982-999`. | `sentence.rs` / `write_owned_sentence!` final failure writes NULL/false silently, no partial per-item assembly. **Defect**, source-only; reserved files. |
+| P `bigram_iterator_get_next_phrase` | `pinyin.cpp:896-910`: final two g_strdup calls fatal; last-row false still follows writes. | `iterators.rs::pinyin_bigram_iterator_get_next_phrase` independently writes NULL for failed final allocations, count and cursor semantics retained, returns whether more rows remain, silent. **Defect**, source-only; reserved file. |
+| P/Z `lookup_tokens`, `token_get_nth_pronunciation` GArray growth | `pinyin.cpp:2652-2667,2801-2818`; `zhuyin.cpp:1678-1693,1793-1810`; `storage/phrase_large_table3.h:77-97`: GLib owns real caller-array growth; failure terminates via GLib error. | Both dict adapters still invoke real GLib growth. **Same fatal boundary**, tested through nth pronunciation on an empty real array. Lookup's additional scratch/payload allocations are not injected. NULL-array handling is a different defect and is untouched. |
+
+`owned_cstr` also has a Rust CString preparation allocation before its libc
+malloc. Interior-NUL refusal is independent of OOM; existing malformed-text
+records retain their scope. `malloc_cstr_with` is a neighboring direct-fill
+helper for P unigram export, not an `owned_cstr` caller: its fallible phrase
+and reading allocation results require their own coverage. Pin
+`pinyin.cpp:698-768` can return true with a NULL phrase from conversion, while
+reading allocation is fatal. This remains an open runtime-coverage partition.
+
+The GLib conversion allocator is explicitly nonfatal:
+`glib/gutf8.c:905-912,977-990,1034-1068` uses try_malloc_n and returns NULL;
+the pin supplies NULL GError pointers, so the failed allocation itself does
+not log. Do not classify these conversion failures as g_malloc aborts.
+The reference image's g_vasprintf build follows
+`glib/gprintf.c:339-357` (ENOMEM abort with minimal raw stderr); the exact
+glibc implementation remains open. No new 2.43 source retrieval was tried.
+The 2.41 source trace must wait until the trixie reference image lands.
+
+## Results and remaining scope
+
+Bdb, Linux amd64, native GLib 2.84.4: 20 checks passed (five allocation
+boundaries × two facades × pin/subject), and both injection-disabled
+negative controls were rejected. Those checks confirm **eight silent-NULL
+subject defects**, two retained fatal subject GArray paths and ten fatal
+pin paths. A PASS here means the instrument observed the source-derived
+result; it does not mean a silent failure matches the pin or is admitted.
+The same-boundary checks reported GLib errors followed by SIGTRAP on this
+host; the harness also permits SIGABRT, the other GLib fatal termination.
+
+Remaining: earlier Rust allocations; exact formatted-allocation libc trace;
+individual runtime coverage of the source-only caller rows; a deliberate,
+logged class-(c) refusal where applicable rather than the current silent
+failure. No new divergence is admitted, and this does not close #924.
+
+The #1190 crate implementation reservation remains in force. The later
+maintainer clarification permits this lane's own ledger section and new
+contract definitions. Two default-suite cases,
+`glib-924-oom-array-growth-{pinyin,zhuyin}`, reuse the same harness and
+require failed allocation, GLib error and fatal signal on each side. They
+have no side-dependent exception; missing helper evidence or a helper
+failure invalidates the run. Existing cases and #1190 phrase-text cases
+are unchanged. The silent-NULL defects are named harness observations,
+not newly registered default-suite DIFFERs or new policy exceptions.
+
+Final scoped validation: both C-API package suites **150 passed**;
+fmt/clippy passed; new harness **20 checks passed**, both negative controls
+rejected; existing contract driver `--issue 924` **8/8 MATCH**, including
+the two new IDs; driver regressions **145 passed**. The complete default
+suite was not run. The path selector chooses **bdb only**; no store/backend
+feature/Cargo backend change requires kc or tkrzw.
 
 ## G10 — Rename and sync
 

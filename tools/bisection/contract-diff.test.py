@@ -2139,5 +2139,31 @@ totals: 5
                                     for op in ('add', 'count', 'lookup')])
 
 
+class AllocationFailure924Tests(unittest.TestCase):
+    """Do not let a helper's successful exit substitute for failure evidence."""
+
+    def test_array_cases_are_default_members(self):
+        selected, _ = driver.select_cases()
+        for mode in ('pinyin', 'zhuyin'):
+            self.assertIn(f'glib-924-oom-array-growth-{mode}', selected)
+
+    def test_missing_failure_evidence_is_rejected(self):
+        kit = SimpleNamespace(scratch='/tmp', lib=SimpleNamespace(_name='subject.so'),
+                              data='/tmp/data', mode='pinyin')
+        with patch.object(driver.subprocess, 'check_output', return_value=''), \
+             patch.object(driver.subprocess, 'run', return_value=SimpleNamespace(stdout='')):
+            with self.assertRaises(AssertionError):
+                driver.glib_924_oom_array(kit)
+
+    def test_helper_failure_is_not_a_match(self):
+        kit = SimpleNamespace(scratch='/tmp', lib=SimpleNamespace(_name='subject.so'),
+                              data='/tmp/data', mode='pinyin')
+        with patch.object(driver.subprocess, 'check_output', return_value=''), \
+             patch.object(driver.subprocess, 'run', side_effect=[
+                 SimpleNamespace(), subprocess.CalledProcessError(1, ['alloc-failure'])]):
+            with self.assertRaises(subprocess.CalledProcessError):
+                driver.glib_924_oom_array(kit)
+
+
 if __name__ == '__main__':
     unittest.main()
