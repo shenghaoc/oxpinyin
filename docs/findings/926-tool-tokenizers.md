@@ -134,3 +134,62 @@ backslashes are literal graph characters. The prior
 [interpolation record](interpolation2-grammar.md) owns this safe refusal and
 the bounded format/unassigned difference. Neither is transferred to the
 classic or segmented formats, and no new divergence is registered here.
+
+## Verification and reproduction
+
+BDB, Linux amd64, 2026-10-25 UTC: 128 native tests passed (12 external-input
+checks ignored by the normal suite); fmt and clippy passed. The existing
+counter differential's two explicitly selected tests then passed against the
+pin: **138096 unigrams / 199 bigrams**, checksum `1f7af24b04577d8b` for the
+ordinary fixture, with all values also identical for the classified variant.
+`run-import-diff.sh` reported **IDENTICAL**, including classic frontend
+interchange in both directions. The reference image supplied GLib 2.89.4-2
+and glibc 2.43-3. No logs or captures are deliverables.
+
+After [cloud setup](../runbooks/cloud.md), use the repository toolchain:
+
+```sh
+just heavy -- cargo test --locked -p oxpinyin-dictool -p oxpinyin-training
+just fmt --all --check
+just heavy -- cargo clippy --locked -p oxpinyin-dictool -p oxpinyin-training --all-targets -- -D warnings
+```
+
+For the existing live counter test, build the pin with
+`tools/oracle/build-oracle.sh --dbm bdb --work-dir "$pin_build" --prefix "$pin_prefix" --model-dir "$PINYIN_MODEL_DIR"`
+in the reference environment with the documented frontend prerequisites
+(including `libibus-1.0-dev` and the `sqlite3` executable). Both build/prefix
+paths must be task-owned and the initial prefix empty. The provisioned BDB
+prefix remains the separately hash-verified reference. Then set:
+
+```sh
+pin_src="$pin_build/src/libpinyin-074a2219c90feaf962d0d24f034514033ece5f99"
+export PINYIN_EXPORT_DIR="$OXPINYIN_LIBPINYIN_DATA_DIR"
+export PINYIN_GEN_NGRAM_DATA="$pin_src/data"
+export PINYIN_GEN_BINARY_FILES="$pin_prefix/bin/gen_binary_files"
+export PINYIN_GEN_UNIGRAM="$pin_prefix/bin/gen_unigram"
+export PINYIN_GEN_NGRAM="$pin_src/utils/training/gen_ngram"
+export PINYIN_EXPORT_INTERPOLATION="$pin_src/utils/storage/export_interpolation"
+just heavy -- cargo test --locked -p oxpinyin-training --test counter-differential -- --include-ignored --nocapture
+export PINYIN_IBUS_BUILD_DIR="$pin_build" PINYIN_IBUS_PREFIX="$pin_prefix"
+export IMPORT_SYSTEM="$OXPINYIN_LIBPINYIN_DATA_DIR"
+just heavy -- bash tools/bisection/run-import-diff.sh
+```
+
+The native Rust test binary can also run inside the reference image, with
+these same paths mounted and environment variables, as it did in this run;
+the pin-built tools must run with the reference runtime libraries. Explicit
+`OXPINYIN_CAPI_SO` and `OXPINYIN_DICTOOL` select prebuilt debug artifacts for
+the import runner. These are existing drivers, not session-only test code.
+
+Named mutation **collapse-classic-separators**: replace
+`line.splitn(3, [' ', '\t']).collect()` with
+`line.split_whitespace().take(3).collect()` and run
+`just heavy -- cargo test --locked -p oxpinyin-dictool split_classic_matches_g_strsplit_set_max_three`.
+It failed on the repeated-separator case (exit 101); restoring the expression
+made the same test pass. No mutation remains in the branch.
+
+`tools/bisection/cells-for-diff.py origin/main` reports
+**Cells: bdb (the reference cell; no check fired)**; all three backend checks
+are not fired. `interp_grammar.rs`, all #1190 paths and other ledger families
+are unchanged. No new necessary divergence was found, so
+`upstream-divergences.md` is unchanged.
