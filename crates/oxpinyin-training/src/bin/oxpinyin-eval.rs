@@ -70,16 +70,17 @@ fn run() -> Cli {
 
     // interpolation2.text → counts → estimate λ → apply λ.
     let counts = parse_interpolation2(&read(&interpolation2)?);
-    let deleted = count_deleted(&read(&held_out)?, train_pi_gram)?;
+    let library_dir = phrase_index
+        .parent()
+        .ok_or("--phrase-index must have a parent directory")?;
+    let lexicon = oxpinyin_training::segment::PhraseLexicon::from_system_dir(library_dir)?;
+    let deleted = count_deleted(&lexicon, fs::read(&held_out)?, train_pi_gram)?;
     let lambda = estimate_lambda(&counts, &deleted)?;
 
     // Decode the evaluation corpus against the system phrase index; the
     // model is floored over that index's lexicon, as `make` would.
     // P6's reader opens the two DBMs plus the per-library chunk files; the
     // chunk files sit in the same directory as the phrase index.
-    let library_dir = phrase_index
-        .parent()
-        .ok_or("--phrase-index must have a parent directory holding the chunk files")?;
     let dictionary = SystemDictionary::open_files(&pinyin_index, &phrase_index, library_dir)?;
     let source = SystemPhraseSource::new(&dictionary);
     let model = build_model(&counts, lambda, source.lexicon_tokens());

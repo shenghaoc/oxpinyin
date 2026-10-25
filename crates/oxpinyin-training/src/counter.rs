@@ -45,9 +45,9 @@ impl Counter {
 /// `token phrase`.
 pub fn count_ngseg(
     lexicon: &PhraseLexicon,
-    text: &str,
+    text: impl AsRef<[u8]>,
     train_pi_gram: bool,
 ) -> Result<Counts, CounterError> {
-    let tokens = parse_ngseg(text)?;
+    let tokens = parse_ngseg(lexicon, text)?;
     Ok(Counter::from_lexicon(lexicon, train_pi_gram).count(&tokens))
 }

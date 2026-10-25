@@ -16,6 +16,13 @@ pub enum CounterError {
         /// 1-based line number in the ngseg stream.
         line: usize,
     },
+    /// A nonzero token is unknown or its phrase bytes do not match.
+    InvalidPhrase {
+        /// 1-based source line.
+        line: usize,
+        /// Parsed token.
+        token: u32,
+    },
     /// Opening the phrase index (the seed-token source) failed.
     Segment(SegmentError),
     /// A path could not be read.
@@ -33,6 +40,12 @@ impl fmt::Display for CounterError {
             Self::MalformedLine { line } => {
                 write!(formatter, "segmented line {line} is not `token phrase`")
             }
+            Self::InvalidPhrase { line, token } => {
+                write!(
+                    formatter,
+                    "segmented line {line}: token {token} has an unknown or mismatched phrase"
+                )
+            }
             Self::Segment(error) => write!(formatter, "phrase index error: {error}"),
             Self::Io { path, source } => {
                 write!(formatter, "cannot read {}: {source}", path.display())
@@ -46,7 +59,7 @@ impl std::error::Error for CounterError {
         match self {
             Self::Segment(error) => Some(error),
             Self::Io { source, .. } => Some(source),
-            Self::MalformedLine { .. } => None,
+            Self::MalformedLine { .. } | Self::InvalidPhrase { .. } => None,
         }
     }
 }

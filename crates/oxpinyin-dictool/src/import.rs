@@ -19,10 +19,8 @@ pub const MAX_COUNT: u64 = c_int::MAX as u64;
 /// A user-vocabulary import run.
 #[derive(Debug)]
 pub enum ImportError {
-    /// The input file could not be read as UTF-8 text.
+    /// The input file could not be read.
     Read(PathBuf, std::io::Error),
-    /// The input file is not valid UTF-8 at the reported 1-based line.
-    Utf8(PathBuf, usize),
     /// The text does not match the pinned format.
     Parse(ParseError),
     /// The user-store context could not be opened.
@@ -42,9 +40,6 @@ impl fmt::Display for ImportError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Read(path, error) => write!(f, "cannot read {}: {error}", path.display()),
-            Self::Utf8(path, line) => {
-                write!(f, "{} is not valid UTF-8 at line {line}", path.display())
-            }
             Self::Parse(error) => write!(f, "{error}"),
             Self::Context(path, detail) => {
                 write!(
@@ -70,28 +65,7 @@ impl std::error::Error for ImportError {
         match self {
             Self::Read(_, error) => Some(error),
             Self::Parse(error) => Some(error),
-            Self::Utf8(_, _)
-            | Self::Context(_, _)
-            | Self::Add { .. }
-            | Self::Save
-            | Self::Snapshot => None,
-        }
-    }
-}
-
-/// Read `path` as UTF-8 with a line number when decoding fails.
-fn read_utf8(path: &Path) -> Result<String, ImportError> {
-    let bytes = fs::read(path).map_err(|error| ImportError::Read(path.to_path_buf(), error))?;
-    match String::from_utf8(bytes) {
-        Ok(text) => Ok(text),
-        Err(error) => {
-            let valid = error.utf8_error().valid_up_to();
-            let line = error.as_bytes()[..valid]
-                .iter()
-                .filter(|byte| **byte == b'\n')
-                .count()
-                + 1;
-            Err(ImportError::Utf8(path.to_path_buf(), line))
+            Self::Context(_, _) | Self::Add { .. } | Self::Save | Self::Snapshot => None,
         }
     }
 }
@@ -119,11 +93,13 @@ fn add_phrase(user: &mut UserStore, phrase: &str, pinyin: &str, count: u64) -> b
 /// Import `path` into the user store under `user_dir`.
 ///
 /// The directory is created when missing. Parsing is a full preflight, so a
-/// malformed file performs no writes. Adds are per-phrase committed
-/// (upstream `pinyin.cpp:614-653` semantics); if one somehow fails after a
-/// valid parse, earlier adds remain, matching the source behaviour.
+/// malformed file performs no writes. After successful preflight, a failed
+/// add records its line and processing continues through the remaining rows.
+/// The store is then marked modified and saved before the first failing line
+/// is returned. On successful save, successful adds both before and after
+/// that row are persisted.
 pub fn run(user_dir: &Path, path: &Path) -> Result<(), ImportError> {
-    let text = read_utf8(path)?;
+    let text = fs::read(path).map_err(|error| ImportError::Read(path.to_path_buf(), error))?;
     let records = crate::format::parse(&text).map_err(ImportError::Parse)?;
 
     fs::create_dir_all(user_dir)
@@ -322,6 +298,10 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "line 3: count is not a decimal integer: \"not-a-count\""
+        );
+        assert_eq!(
+            std::error::Error::source(&error).unwrap().to_string(),
+            error.to_string()
         );
         // Preflight parsing wrote nothing.
         assert!(!dir.join("user").exists());

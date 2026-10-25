@@ -31,8 +31,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let lexicon = PhraseLexicon::from_system_dir(&system_dir)?;
 
     let bytes = tool_cli::read_input(tool.input.as_deref())?;
-    let text = std::str::from_utf8(&bytes)?;
-    let counts = count_ngseg(&lexicon, text, !tool.skip_pi_gram)?;
+    let counts = count_ngseg(&lexicon, &bytes, !tool.skip_pi_gram)?;
     let dump = counts.dump();
 
     tool_cli::write_output(tool.output.as_deref(), dump.as_bytes())?;

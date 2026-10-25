@@ -404,7 +404,52 @@ fn rust_kmm_matches_pin_gen_and_export() {
         sorted_items(&strip_text(&pin_export)),
         "native gen+export must match the pin's record set field-for-field"
     );
-    eprintln!("live parity: native gen+export matches the pin on the real corpus");
+    // Source-derived byte variant: gen_k_mixture_model.cpp:72-137 invokes
+    // utils_helper.h:51-69, so NUL hides arbitrary bytes and zero ignores its
+    // phrase tail. Reuse the existing gen/export driver and a fresh model.
+    let mut bytes = Vec::new();
+    for line in segmented.lines() {
+        bytes.extend_from_slice(line.as_bytes());
+        bytes.extend_from_slice(b"\0\xff\n");
+    }
+    bytes.extend_from_slice(b"0 \xff\n");
+    std::fs::write(&seg_path, bytes).unwrap();
+    let byte_model = pin.path("byte-model.db");
+    pin.run(
+        &gen_bin,
+        &[
+            "--k-mixture-model-file",
+            byte_model.to_str().unwrap(),
+            seg_path.to_str().unwrap(),
+        ],
+    )
+    .expect("pin byte gen");
+    let byte_export = String::from_utf8(
+        pin.run(
+            &export_bin,
+            &["--k-mixture-model-file", byte_model.to_str().unwrap()],
+        )
+        .expect("pin byte export"),
+    )
+    .unwrap();
+    assert_eq!(sorted_items(&pin_export), sorted_items(&byte_export));
+    // The training reader supplies these already validated records directly,
+    // with no lossy decoding or second text parser between the two models.
+    let records = segmented.lines().map(|line| {
+        line.split_once([' ', '\t'])
+            .map_or((0, ""), |(token, phrase)| {
+                (token.parse::<u32>().unwrap(), phrase)
+            })
+    });
+    let mut model = KMixtureModel::new();
+    model
+        .add_token_document(records, GenerateParams::default())
+        .unwrap();
+    assert_eq!(
+        sorted_items(&strip_text(&export(&model))),
+        sorted_items(&strip_text(&byte_export))
+    );
+    eprintln!("live parity: native text/token gen+export and pin byte variants agree");
 }
 
 #[test]

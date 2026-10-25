@@ -54,16 +54,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let system_dir = tool_cli::locate_system_dir(tool.export_dir.as_deref())?;
     let lexicon = PhraseLexicon::from_system_dir(&system_dir)?;
 
-    let system_text = String::from_utf8(tool_cli::read_input(tool.input.as_deref())?)?;
+    let system_text = tool_cli::read_input(tool.input.as_deref())?;
     let train_pi_gram = !tool.skip_pi_gram;
     let system = count_ngseg(&lexicon, &system_text, train_pi_gram)?;
 
     // Held-out slice: the --deleted file, or the system stream itself.
     let deleted_text = match &deleted_path {
-        Some(path) => fs::read_to_string(path)?,
+        Some(path) => fs::read(path)?,
         None => system_text.clone(),
     };
-    let deleted = count_deleted(&deleted_text, train_pi_gram)?;
+    let deleted = count_deleted(&lexicon, &deleted_text, train_pi_gram)?;
 
     let lambda = estimate_lambda(&system, &deleted)?;
 

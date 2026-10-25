@@ -64,8 +64,34 @@ impl KMixtureModel {
     /// Returns [`KmmError::Malformed`] when a non-empty line is not a
     /// `token phrase` record.
     pub fn add_document(&mut self, text: &str, params: GenerateParams) -> Result<(), KmmError> {
-        let mut document = self.read_document(text, params.train_pi_gram)?;
+        let document = self.read_document(text, params.train_pi_gram)?;
+        self.fold_document(document, params);
+        Ok(())
+    }
 
+    /// Count one document whose token/phrase records were already validated
+    /// against the phrase index by the caller. Zero records mark boundaries.
+    /// This avoids reparsing or serializing the same input for a second model.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if document aggregation fails.
+    pub fn add_token_document<'a>(
+        &mut self,
+        records: impl IntoIterator<Item = (u32, &'a str)>,
+        params: GenerateParams,
+    ) -> Result<(), KmmError> {
+        let tokens = records.into_iter().map(|(token, phrase)| {
+            self.record_text(token, phrase);
+            Ok(token)
+        });
+        let document = Document::count(tokens, params.train_pi_gram)?;
+        self.fold_document(document, params);
+        Ok(())
+    }
+
+    /// Apply the pin's per-document filter and model updates after counting.
+    fn fold_document(&mut self, mut document: Document, params: GenerateParams) {
         // Train each token1's second words, token-ascending.
         let token1s: Vec<u32> = document.bigram.keys().copied().collect();
         for token1 in token1s {
@@ -98,43 +124,15 @@ impl KMixtureModel {
         if let Some(sum) = self.total_freq.checked_add(total) {
             self.total_freq = sum;
         }
-        Ok(())
     }
 
     /// Aggregate one document's unigram and pair counts (`read_document`,
     /// `:63-142`). Records each token's phrase text for the export column.
     fn read_document(&mut self, text: &str, train_pi_gram: bool) -> Result<Document, KmmError> {
-        let mut bigram: BTreeMap<u32, BTreeMap<u32, u32>> = BTreeMap::new();
-        let mut unigram: BTreeMap<u32, u32> = BTreeMap::new();
-
-        // `cur` carries across lines; `last` is the previous line's token
-        // (`cur_token = last_token = 0` initially, `gen_k_mixture_model.cpp:70`).
-        let mut cur = NULL_TOKEN;
-        for line in text.lines() {
-            let token = self.parse_line(line)?;
-            let mut last = cur;
-            cur = token;
-
-            // Skip null_token in the second word.
-            if cur == NULL_TOKEN {
-                continue;
-            }
-            let entry = unigram.entry(cur).or_insert(0);
-            *entry = entry.wrapping_add(1);
-
-            // Sentence boundary.
-            if last == NULL_TOKEN {
-                if !train_pi_gram {
-                    continue;
-                }
-                last = SENTENCE_START;
-            }
-
-            let pair = bigram.entry(last).or_default().entry(cur).or_insert(0);
-            *pair = pair.wrapping_add(1);
-        }
-
-        Ok(Document { bigram, unigram })
+        Document::count(
+            text.lines().map(|line| self.parse_line(line)),
+            train_pi_gram,
+        )
     }
 
     /// Parse one segmented line to its token, recording its phrase text.
@@ -260,6 +258,46 @@ fn subtract_unigram(unigram: &mut BTreeMap<u32, u32>, token2: u32, count: u32) {
         unigram.remove(&token2);
     } else {
         unigram.insert(token2, next);
+    }
+}
+
+impl Document {
+    /// Count the already parsed stream without retaining an extra token vector.
+    fn count(
+        tokens: impl IntoIterator<Item = Result<u32, KmmError>>,
+        train_pi_gram: bool,
+    ) -> Result<Self, KmmError> {
+        let mut bigram: BTreeMap<u32, BTreeMap<u32, u32>> = BTreeMap::new();
+        let mut unigram: BTreeMap<u32, u32> = BTreeMap::new();
+
+        // `cur` carries across lines; `last` is the previous line's token
+        // (`cur_token = last_token = 0` initially, `gen_k_mixture_model.cpp:70`).
+        let mut cur = NULL_TOKEN;
+        for token in tokens {
+            let token = token?;
+            let mut last = cur;
+            cur = token;
+
+            // Skip null_token in the second word.
+            if cur == NULL_TOKEN {
+                continue;
+            }
+            let entry = unigram.entry(cur).or_insert(0);
+            *entry = entry.wrapping_add(1);
+
+            // Sentence boundary.
+            if last == NULL_TOKEN {
+                if !train_pi_gram {
+                    continue;
+                }
+                last = SENTENCE_START;
+            }
+
+            let pair = bigram.entry(last).or_default().entry(cur).or_insert(0);
+            *pair = pair.wrapping_add(1);
+        }
+
+        Ok(Document { bigram, unigram })
     }
 }
 

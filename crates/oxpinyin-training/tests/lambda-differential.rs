@@ -96,9 +96,10 @@ fn rust_estimate() -> Result<Estimate, String> {
     let fixture = fixture_ngseg();
     let full = std::fs::read_to_string(&fixture)
         .map_err(|e| format!("committed fixture {}: {e}", fixture.display()))?;
-    let system = count_ngseg(&lexicon, &system_fold(&full), true)
-        .map_err(|e| format!("count_ngseg: {e}"))?;
-    let deleted = count_deleted(&full, true).map_err(|e| format!("count_deleted: {e}"))?;
+    let system =
+        count_ngseg(&lexicon, system_fold(&full), true).map_err(|e| format!("count_ngseg: {e}"))?;
+    let deleted =
+        count_deleted(&lexicon, &full, true).map_err(|e| format!("count_deleted: {e}"))?;
     let lambda = estimate_lambda(&system, &deleted).map_err(|e| format!("estimate_lambda: {e}"))?;
     Ok(Estimate {
         system,

@@ -104,7 +104,11 @@ fn full_flow_estimate_apply_decode_correction_rate() {
     let counts = parse_interpolation2(INTERPOLATION2);
 
     // estimate λ over a held-out slice (中 国), then apply it.
-    let deleted = count_deleted("10 中\n30 国\n", true).expect("held-out counts");
+    let lexicon = oxpinyin_training::segment::PhraseLexicon::from_pairs(vec![
+        (10, "中".into()),
+        (30, "国".into()),
+    ]);
+    let deleted = count_deleted(&lexicon, "10 中\n30 国\n", true).expect("held-out counts");
     let lambda = estimate_lambda(&counts, &deleted).expect("lambda estimates");
 
     // decode the evaluation corpus.

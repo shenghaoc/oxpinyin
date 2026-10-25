@@ -59,11 +59,12 @@ impl std::error::Error for ParseError {}
 /// (`PYLibPinyin.cc:249`): at most three pieces, delimiters are space or TAB,
 /// consecutive delimiters produce empty pieces, and the third piece keeps any
 /// remaining separator bytes.
-fn split_classic(line: &str) -> Vec<&str> {
-    line.splitn(3, [' ', '\t']).collect()
+fn split_classic(line: &[u8]) -> Vec<&[u8]> {
+    line.splitn(3, |byte| matches!(byte, b' ' | b'\t'))
+        .collect()
 }
 
-/// Parse the complete file text.
+/// Parse the complete file as byte records, ending each record at its first NUL.
 ///
 /// Classic interchange: `phrase SP/TAB pinyin [SP/TAB count]`, LF or CRLF,
 /// one record per line. Two-field lines mean "use the ABI default count".
@@ -72,19 +73,28 @@ fn split_classic(line: &str) -> Vec<&str> {
 /// (wrong field count, empty field, unparseable pinyin, bad/out-of-range
 /// count, duplicate `(phrase, pinyin)`) is an error carrying its 1-based line
 /// number.
-pub fn parse(text: &str) -> Result<Vec<Record>, ParseError> {
+pub fn parse(text: impl AsRef<[u8]>) -> Result<Vec<Record>, ParseError> {
     let mut records = Vec::new();
     let mut seen = HashSet::new();
 
-    for (index, raw_line) in text.split('\n').enumerate() {
+    for (index, raw_line) in text.as_ref().split(|byte| *byte == b'\n').enumerate() {
         let line_number = index + 1;
-        let line = raw_line.strip_suffix('\r').unwrap_or(raw_line);
-        let trimmed = line.trim_matches(|c: char| c == ' ' || c == '\t');
-        if trimmed.is_empty() || trimmed.starts_with('#') {
+        // Frontend PYLibPinyin.cc:245-254 sees only the prefix before NUL.
+        let visible = raw_line.split(|byte| *byte == 0).next().unwrap_or_default();
+        let visible = visible.strip_suffix(b"\r").unwrap_or(visible);
+        let Some(first) = visible
+            .iter()
+            .position(|byte| !matches!(byte, b' ' | b'\t'))
+        else {
+            continue;
+        };
+        if visible[first] == b'#' {
+            std::str::from_utf8(visible)
+                .map_err(|_| ParseError::new(line_number, "record is not valid UTF-8"))?;
             continue;
         }
 
-        let fields = split_classic(line);
+        let fields = split_classic(visible);
         if fields.len() != 2 && fields.len() != 3 {
             return Err(ParseError::new(
                 line_number,
@@ -94,9 +104,24 @@ pub fn parse(text: &str) -> Result<Vec<Record>, ParseError> {
                 ),
             ));
         }
-        let phrase = fields[0];
-        let pinyin = fields[1];
-        let count_text = fields.get(2).copied();
+        let phrase = std::str::from_utf8(fields[0])
+            .map_err(|_| ParseError::new(line_number, "phrase is not valid UTF-8"))?;
+        // FullPinyinParser2 takes a longest prefix from byte zero. No key can
+        // cross an invalid UTF-8 byte: its spelling inventory is ASCII.
+        // pinyin_parser2.cpp:164-213,217-333,346-379 at 074a2219.
+        let pinyin = match std::str::from_utf8(fields[1]) {
+            Ok(text) => text,
+            Err(error) => {
+                std::str::from_utf8(&fields[1][..error.valid_up_to()]).unwrap_or_default()
+            }
+        };
+        let count_text = fields
+            .get(2)
+            .map(|bytes| {
+                std::str::from_utf8(bytes)
+                    .map_err(|_| ParseError::new(line_number, "count is not valid UTF-8"))
+            })
+            .transpose()?;
 
         if phrase.is_empty() {
             return Err(ParseError::new(line_number, "phrase field is empty"));
@@ -199,24 +224,31 @@ mod tests {
 
     #[test]
     fn split_classic_matches_g_strsplit_set_max_three() {
-        assert_eq!(split_classic("a b 3"), ["a", "b", "3"]);
-        assert_eq!(split_classic("a  b 3"), ["a", "", "b 3"]);
-        assert_eq!(split_classic("a b 3 extra"), ["a", "b", "3 extra"]);
-        assert_eq!(split_classic(" a b 3"), ["", "a", "b 3"]);
-        assert_eq!(split_classic("a b\t3"), ["a", "b", "3"]);
-        assert_eq!(split_classic("a b "), ["a", "b", ""]);
-        assert_eq!(split_classic("a\tb"), ["a", "b"]);
+        for (input, expected) in [
+            ("a b 3", vec!["a", "b", "3"]),
+            ("a  b 3", vec!["a", "", "b 3"]),
+            ("a b 3 extra", vec!["a", "b", "3 extra"]),
+            (" a b 3", vec!["", "a", "b 3"]),
+            ("a b\t3", vec!["a", "b", "3"]),
+            ("a b ", vec!["a", "b", ""]),
+            ("a\tb", vec!["a", "b"]),
+        ] {
+            assert_eq!(
+                split_classic(input.as_bytes()),
+                expected.iter().map(|s| s.as_bytes()).collect::<Vec<_>>()
+            );
+        }
     }
 
     #[test]
     fn classic_separators_are_ascii_and_escapes_are_literal() {
         for separator in ['\u{a0}', '\u{2003}', '\u{2028}', '\u{2029}'] {
-            assert!(parse(&format!("词{separator}ci")).is_err());
+            assert!(parse(format!("词{separator}ci")).is_err());
         }
         for phrase in ["\\", "\u{200d}", "\u{378}", "\u{301}"] {
             // No quoting, escaping or Unicode-category filter in this format.
             assert_eq!(
-                parse(&format!("{phrase}\tci\t7")).unwrap(),
+                parse(format!("{phrase}\tci\t7")).unwrap(),
                 vec![record(phrase, "ci", Some(7), 1)]
             );
         }
@@ -238,7 +270,7 @@ mod tests {
         // The frozen dictool validation contract refuses these count texts;
         // the frontend's signed/prefix conversion has a different domain.
         for count in ["-0", "-1", "-2", "7suffix", "2147483648", "4294967303"] {
-            assert!(parse(&format!("词 ci {count}")).is_err(), "{count}");
+            assert!(parse(format!("词 ci {count}")).is_err(), "{count}");
         }
     }
 
@@ -309,5 +341,28 @@ mod tests {
             })
             .collect();
         assert_eq!(parse(&rendered).unwrap(), records);
+    }
+    #[test]
+    fn nul_terminates_classic_records_before_utf8_validation() {
+        let ordinary = parse("词 ci 7\n你好 nihao\n").unwrap();
+        let mut bytes = "词 ci 7\0".as_bytes().to_vec();
+        bytes.extend_from_slice(b"\xff\n");
+        bytes.extend_from_slice("你好 nihao\0hidden\n".as_bytes());
+        assert_eq!(parse(bytes).unwrap(), ordinary);
+        assert_eq!(parse(b"\0\xff\n").unwrap(), []);
+        assert!(parse("词\0 ci 7").is_err());
+        assert!(parse(b"\xff ci 7\0ignored").is_err());
+    }
+    #[test]
+    fn invalid_pinyin_suffix_keeps_the_longest_ascii_prefix() {
+        let mut input = "你好 nihao".as_bytes().to_vec();
+        input.extend_from_slice(b"\xffgarbage 7\n");
+        assert_eq!(parse(input).unwrap(), parse("你好 nihao 7\n").unwrap());
+        let mut input = "你好 ni".as_bytes().to_vec();
+        input.extend_from_slice(b"\xffhao 7\n");
+        assert!(
+            parse(input).is_err(),
+            "invalid byte must not join separated keys"
+        );
     }
 }

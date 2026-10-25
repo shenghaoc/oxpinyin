@@ -199,6 +199,15 @@ fn rust_matches_live_gen_ngram() {
     // Signed zero and a NUL after the delimiter are source-derived controls,
     // not evidence that positive signs or NUL before the delimiter agree.
     classified.push_str("+0 ignored\n0 \0hidden\n");
+    // GLib 2.89.4 glib/gstrfuncs.c:2507-2541 and the pin macro
+    // utils/utils_helper.h:51-69: NUL hides later bytes; zero ignores its tail.
+    let mut classified = classified.into_bytes();
+    classified.extend_from_slice(b"0 \xff\n\0\xff\n");
+    for byte in &mut classified {
+        if *byte == b'h' {
+            *byte = 0xff;
+        }
+    }
     let export = locate_export_dir().expect("system tables");
     let lexicon = PhraseLexicon::from_system_dir(&export).expect("phrase lexicon");
     let classified_rust = count_ngseg(&lexicon, &classified, true).expect("classified stream");
@@ -209,27 +218,59 @@ fn rust_matches_live_gen_ngram() {
         &gen_ngram,
         &export_interpolation,
         &data,
-        classified.as_bytes(),
+        &classified,
     )
     .expect("classified live gen_ngram pipeline");
     assert_counts_equal(&rust, &classified_live);
-    eprintln!("classified prefixes, TAB, signed zero and NUL tails: value-identical");
+    eprintln!(
+        "classified prefixes, TAB, signed zero, NUL and ignored invalid bytes: value-identical"
+    );
+    // Pin utils/utils_helper.h:58-65 aborts on shape/phrase mismatch;
+    // tag_utility.cpp:413 compares exact bytes for this known resident token.
+    for input in [
+        "16817937 wrong\n",
+        "16817937  中国\n",
+        "16817937 中国\r\n",
+        "16817937 中\0国\n",
+        "16817937\0 中国\n",
+    ] {
+        assert!(count_ngseg(&lexicon, input, true).is_err());
+        assert!(
+            run_live_pipeline(
+                &gen_binary_files,
+                &gen_unigram,
+                &gen_ngram,
+                &export_interpolation,
+                &data,
+                input.as_bytes()
+            )
+            .is_err(),
+            "pin must refuse {input:?}"
+        );
+    }
+    eprintln!("known-token phrase mismatches and NUL before delimiter: both refuse");
 }
 
 #[test]
-fn invalid_utf8_is_rejected_before_counter_or_emitter_output() {
+fn counter_and_emitter_accept_ignored_bytes_and_refuse_wrong_phrases() {
     let work = tempfile::tempdir().expect("temp dir");
     let input = work.path().join("input.ngseg");
     let output = work.path().join("output.txt");
-    // An empty directory is a valid empty phrase-library collection. These
-    // tests exercise the byte reader without any external model dependency.
     for binary in [
         env!("CARGO_BIN_EXE_oxpinyin-counter"),
         env!("CARGO_BIN_EXE_oxpinyin-emitter"),
     ] {
-        for bytes in [b"0 \xff\n".as_slice(), b"0 \0\xff\n".as_slice()] {
-            std::fs::write(&input, bytes).expect("input");
-            std::fs::write(&output, "unchanged").expect("output sentinel");
+        let mut baseline = None;
+        for bytes in [
+            b"1 <start>\n0 \n".as_slice(),
+            b"1 <start>\0\xff\n0 \xff\n",
+            b"1\xff <start>\n\0ignored \xff\n",
+            b"1 wrong\n",
+            b"99 unknown\n",
+            b"1 \xff\n",
+        ] {
+            std::fs::write(&input, bytes).unwrap();
+            std::fs::write(&output, "unchanged").unwrap();
             let result = std::process::Command::new(binary)
                 .arg("--export-dir")
                 .arg(work.path())
@@ -237,38 +278,144 @@ fn invalid_utf8_is_rejected_before_counter_or_emitter_output() {
                 .arg(&output)
                 .arg(&input)
                 .output()
-                .expect("tool starts");
-            assert_eq!(result.status.code(), Some(1));
+                .unwrap();
+            let invalid = bytes == b"1 wrong\n" || bytes == b"99 unknown\n" || bytes == b"1 \xff\n";
+            assert_eq!(
+                result.status.code(),
+                Some(i32::from(invalid)),
+                "{:?}",
+                result.stderr
+            );
             assert!(result.stdout.is_empty());
-            assert!(String::from_utf8_lossy(&result.stderr).contains("utf-8"));
-            assert_eq!(std::fs::read_to_string(&output).unwrap(), "unchanged");
+            let written = std::fs::read(&output).unwrap();
+            if invalid {
+                assert!(
+                    String::from_utf8_lossy(&result.stderr)
+                        .contains("unknown or mismatched phrase")
+                );
+                assert_eq!(written, b"unchanged");
+            } else if let Some(expected) = &baseline {
+                assert_eq!(&written, expected);
+            } else {
+                baseline = Some(written);
+            }
         }
     }
 }
 
 #[test]
-fn invalid_utf8_in_either_lambda_stream_precedes_output() {
-    let work = tempfile::tempdir().expect("temp dir");
+fn lambda_validates_both_byte_streams_before_output() {
+    let work = tempfile::tempdir().unwrap();
     let system = work.path().join("system.ngseg");
     let deleted = work.path().join("deleted.ngseg");
-    for invalid_system in [true, false] {
-        let valid = b"0 \n".as_slice();
-        let invalid = b"0 \0\xff\n".as_slice();
-        std::fs::write(&system, if invalid_system { invalid } else { valid }).unwrap();
-        std::fs::write(&deleted, if invalid_system { valid } else { invalid }).unwrap();
-        let result = std::process::Command::new(env!("CARGO_BIN_EXE_oxpinyin-lambda"))
-            .arg("--export-dir")
-            .arg(work.path())
-            .arg("--deleted")
-            .arg(&deleted)
-            .arg(&system)
-            .output()
-            .expect("lambda starts");
+    let valid = b"1 <start>\n1 <start>\n";
+    let mut baseline = None;
+    for change_system in [true, false] {
+        for changed in [
+            valid.as_slice(),
+            b"1 <start>\0\xff\n1 <start>\n0 \xff\n",
+            b"1 wrong\n",
+            b"99 unknown\n",
+        ] {
+            std::fs::write(&system, if change_system { changed } else { valid }).unwrap();
+            std::fs::write(&deleted, if change_system { valid } else { changed }).unwrap();
+            let result = std::process::Command::new(env!("CARGO_BIN_EXE_oxpinyin-lambda"))
+                .arg("--export-dir")
+                .arg(work.path())
+                .arg("--deleted")
+                .arg(&deleted)
+                .arg(&system)
+                .output()
+                .unwrap();
+            let invalid = changed == b"1 wrong\n" || changed == b"99 unknown\n";
+            assert_eq!(
+                result.status.code(),
+                Some(i32::from(invalid)),
+                "{:?}",
+                result.stderr
+            );
+            if invalid {
+                assert!(result.stdout.is_empty());
+                assert!(
+                    String::from_utf8_lossy(&result.stderr)
+                        .contains("unknown or mismatched phrase")
+                );
+            } else if let Some(expected) = &baseline {
+                assert_eq!(&result.stdout, expected);
+            } else {
+                baseline = Some(result.stdout);
+            }
+        }
+    }
+}
+
+#[test]
+#[ignore = "needs the BDB system tables (PINYIN_EXPORT_DIR); run with --include-ignored"]
+fn eval_and_train_refuse_mismatched_held_out_phrases() {
+    let export = locate_export_dir().expect("system tables");
+    let work = tempfile::tempdir().unwrap();
+    let held = work.path().join("held.ngseg");
+    let model = work.path().join("model.text");
+    let index = work.path().join("index.txt");
+    std::fs::write(&held, "16817937 wrong\n").unwrap();
+    std::fs::write(
+        &model,
+        "\\data model interpolation\n\\1-gram\n\\item 16817937 中国 count 1\n\\2-gram\n\\end\n",
+    )
+    .unwrap();
+    std::fs::write(&index, "document#/document.txt\n").unwrap();
+    for binary in [
+        env!("CARGO_BIN_EXE_oxpinyin-eval"),
+        env!("CARGO_BIN_EXE_oxpinyin-train"),
+    ] {
+        let mut command = std::process::Command::new(binary);
+        command
+            .arg("--interpolation2")
+            .arg(&model)
+            .arg("--held-out")
+            .arg(&held)
+            .arg("--evals")
+            .arg(work.path().join("evals.txt"))
+            .arg("--phrase-index")
+            .arg(export.join("phrase_index.bin"))
+            .arg("--pinyin-index")
+            .arg(export.join("pinyin_index.bin"));
+        if binary == env!("CARGO_BIN_EXE_oxpinyin-train") {
+            command
+                .arg("--bigram")
+                .arg(export.join("bigram.db"))
+                .arg("--text-dir")
+                .arg(work.path())
+                .arg("--model-dir")
+                .arg(work.path().join("models"))
+                .arg("--final-dir")
+                .arg(work.path().join("final"))
+                .arg("--index")
+                .arg(&index)
+                .arg("test");
+        }
+        let result = command.output().unwrap();
         assert_eq!(result.status.code(), Some(1));
         assert!(result.stdout.is_empty());
         assert!(
-            String::from_utf8_lossy(&result.stderr).contains("UTF-8")
-                || String::from_utf8_lossy(&result.stderr).contains("utf-8")
+            String::from_utf8_lossy(&result.stderr).contains("unknown or mismatched phrase"),
+            "{binary}: {:?}",
+            result.stderr
         );
+        assert!(!work.path().join("models").exists());
+        assert!(!work.path().join("final").exists());
+        // A valid phrase with hidden invalid bytes must pass both held-out
+        // consumers and reach the deliberately absent evaluation input.
+        let mut bytes = "16817937 中国".as_bytes().to_vec();
+        bytes.extend_from_slice(b"\0\xff\n0 \xff\n");
+        std::fs::write(&held, &bytes).unwrap();
+        let accepted = command.output().unwrap();
+        assert_eq!(accepted.status.code(), Some(1));
+        assert!(
+            String::from_utf8_lossy(&accepted.stderr).contains("evals.txt"),
+            "{binary}: {:?}",
+            accepted.stderr
+        );
+        std::fs::write(&held, "16817937 wrong\n").unwrap();
     }
 }
