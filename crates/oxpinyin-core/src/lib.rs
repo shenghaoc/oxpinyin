@@ -62,6 +62,7 @@ pub use syllables::{
     canonical_complete_syllable, full_pinyin_syllable, full_pinyin_syllables,
     option_alias_canonical, phonetic_initial, syllable_initial,
 };
+pub use ucs4::{OutwardWords, PhraseText, PhraseTextConcat};
 pub use vocab::{PhraseEntry, PhraseToken, SYLLABLE_KEY_COUNT, SyllableKey};
 
 /// Deterministic signed cost used by scoring seams.

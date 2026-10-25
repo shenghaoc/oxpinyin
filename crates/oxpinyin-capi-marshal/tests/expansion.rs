@@ -169,98 +169,51 @@ fn candidate_ptr_into_vec() {
     }
 }
 
-// ── Fixture for `write_owned_sentence!` ────────────────────────────────
+// ── Fixture for `write_owned_sentence_bytes!` ──────────────────────────
 
-/// A test stand-in for `crate::ffi::owned_cstr`: allocates a `CString`
-/// copy via `Box` (not libc `malloc`, since the test frees with
-/// `CString::from_raw` rather than `g_free`). Returns null on an interior
-/// NUL byte, mirroring the real function's contract.
-fn test_owned_cstr(s: &str) -> *mut c_char {
-    match std::ffi::CString::new(s) {
-        Ok(cstr) => {
-            // Leak into a raw pointer the caller owns.
-            cstr.into_raw()
-        }
+/// Mirrors the facade's `malloc_cstr_with` fill and NUL-rejection contract,
+/// using CString ownership so the test can reclaim the returned pointer.
+fn test_malloc_cstr_with(len: usize, fill: impl FnOnce(&mut [u8]) -> usize) -> *mut c_char {
+    let mut bytes = vec![0; len];
+    if fill(&mut bytes) != len {
+        return ptr::null_mut();
+    }
+    match std::ffi::CString::new(bytes) {
+        Ok(cstr) => cstr.into_raw(),
         Err(_) => ptr::null_mut(),
     }
 }
 
-// Stamp the helper.
-oxpinyin_capi_marshal::write_owned_sentence!(test_owned_cstr);
-
-// ── write_owned_sentence tests ─────────────────────────────────────────
+oxpinyin_capi_marshal::write_owned_sentence_bytes!(test_malloc_cstr_with);
 
 #[test]
 fn sentence_empty_text_returns_false_and_nulls_out() {
-    let mut out: *mut c_char = std::ptr::dangling_mut::<c_char>();
-    let ok = write_owned_sentence("", &mut out);
-    assert!(!ok);
-    assert!(out.is_null(), "out-param must be nulled on empty text");
+    let mut out = std::ptr::dangling_mut::<c_char>();
+    assert!(!write_owned_sentence_bytes(b"", &mut out));
+    assert!(out.is_null());
 }
 
 #[test]
-fn sentence_empty_text_null_out_param() {
-    // Null sentence pointer with empty text: must not crash.
-    let ok = write_owned_sentence("", ptr::null_mut());
-    assert!(!ok);
+fn sentence_null_out_param() {
+    assert!(!write_owned_sentence_bytes(b"", ptr::null_mut()));
+    assert!(write_owned_sentence_bytes(b"hello", ptr::null_mut()));
 }
 
 #[test]
-fn sentence_valid_text_writes_through() {
-    let mut out: *mut c_char = ptr::null_mut();
-    let ok = write_owned_sentence("hello", &mut out);
-    assert!(ok);
-    assert!(!out.is_null());
-
-    // Read back and verify.
-    // SAFETY: `out` was produced by `test_owned_cstr` (a `CString::into_raw`).
-    let cstr = unsafe { std::ffi::CString::from_raw(out) };
-    assert_eq!(cstr.to_str().unwrap(), "hello");
+fn sentence_interior_nul_returns_false_and_nulls_out() {
+    let mut out = std::ptr::dangling_mut::<c_char>();
+    assert!(!write_owned_sentence_bytes(b"hel\0lo", &mut out));
+    assert!(out.is_null());
 }
 
 #[test]
-fn sentence_valid_text_null_out_param() {
-    // Null sentence pointer with valid text: returns true, no crash.
-    let ok = write_owned_sentence("hello", ptr::null_mut());
-    assert!(ok);
-}
-
-#[test]
-fn sentence_interior_nul_returns_false() {
-    let mut out: *mut c_char = std::ptr::dangling_mut::<c_char>();
-    let ok = write_owned_sentence("hel\0lo", &mut out);
-    assert!(!ok);
-    assert!(out.is_null(), "out-param must be nulled on interior NUL");
-}
-
-#[test]
-fn sentence_unicode_text() {
-    let mut out: *mut c_char = ptr::null_mut();
-    let ok = write_owned_sentence("nihao", &mut out);
-    assert!(ok);
-
-    // SAFETY: produced by `CString::into_raw`.
-    let cstr = unsafe { std::ffi::CString::from_raw(out) };
-    assert_eq!(cstr.to_str().unwrap(), "nihao");
-}
-
-#[test]
-fn sentence_cjk_text() {
-    let mut out: *mut c_char = ptr::null_mut();
-    let ok = write_owned_sentence("\u{4f60}\u{597d}", &mut out);
-    assert!(ok);
-    assert!(!out.is_null());
-
-    let cstr = unsafe { std::ffi::CString::from_raw(out) };
-    assert_eq!(cstr.to_str().unwrap(), "\u{4f60}\u{597d}");
-}
-
-#[test]
-fn sentence_single_byte_text() {
-    let mut out: *mut c_char = ptr::null_mut();
-    let ok = write_owned_sentence("x", &mut out);
-    assert!(ok);
-
-    let cstr = unsafe { std::ffi::CString::from_raw(out) };
-    assert_eq!(cstr.to_str().unwrap(), "x");
+fn sentence_ascii_and_cjk_write_through() {
+    for text in ["x", "hello", "你好"] {
+        let mut out = ptr::null_mut();
+        assert!(write_owned_sentence_bytes(text.as_bytes(), &mut out));
+        assert!(!out.is_null());
+        // SAFETY: the fixture returned CString::into_raw ownership to `out`.
+        let cstr = unsafe { std::ffi::CString::from_raw(out) };
+        assert_eq!(cstr.to_bytes(), text.as_bytes());
+    }
 }
