@@ -60,16 +60,7 @@ impl std::error::Error for ParseError {}
 /// consecutive delimiters produce empty pieces, and the third piece keeps any
 /// remaining separator bytes.
 fn split_classic(line: &str) -> Vec<&str> {
-    let Some(first) = line.find([' ', '\t']) else {
-        return vec![line];
-    };
-    let mut rest = &line[first + 1..];
-    let Some(second) = rest.find([' ', '\t']) else {
-        return vec![&line[..first], rest];
-    };
-    let third = &rest[second + 1..];
-    rest = &rest[..second];
-    vec![&line[..first], rest, third]
+    line.splitn(3, [' ', '\t']).collect()
 }
 
 /// Parse the complete file text.
@@ -215,6 +206,27 @@ mod tests {
         assert_eq!(split_classic("a b\t3"), ["a", "b", "3"]);
         assert_eq!(split_classic("a b "), ["a", "b", ""]);
         assert_eq!(split_classic("a\tb"), ["a", "b"]);
+    }
+
+    #[test]
+    fn classic_separators_are_ascii_and_escapes_are_literal() {
+        for separator in ['\u{a0}', '\u{2003}', '\u{2028}', '\u{2029}'] {
+            assert!(parse(&format!("词{separator}ci")).is_err());
+        }
+        for phrase in ["\\", "\u{200d}", "\u{378}", "\u{301}"] {
+            // No quoting, escaping or Unicode-category filter in this format.
+            assert_eq!(
+                parse(&format!("{phrase}\tci\t7")).unwrap(),
+                vec![record(phrase, "ci", Some(7), 1)]
+            );
+        }
+        assert_eq!(
+            parse("词 ci\\ 7").unwrap(),
+            vec![record("词", "ci", Some(7), 1)]
+        );
+        for line in ["词  ci", "词\t\tci", "词 ci ", "词 ci 7\t"] {
+            assert!(parse(line).is_err(), "{line:?}");
+        }
     }
 
     #[test]
