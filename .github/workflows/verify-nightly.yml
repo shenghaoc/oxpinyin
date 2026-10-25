@@ -349,8 +349,8 @@ jobs:
           hash -r
           printf '%s\n' "$HOME/.local/bin" >> "$GITHUB_PATH"
           uv --version | grep -q '^uv 0\.13\.1 '
-          uv python install cpython@3.15
-          uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal - <<'PYTHON'
+          tools/install-python.sh
+          uv run --no-project --managed-python python -X lazy_imports=normal - <<'PYTHON'
           from pathlib import Path
           import subprocess
           import sys
@@ -360,7 +360,7 @@ jobs:
           assert sysconfig.get_config_var("Py_GIL_DISABLED") == 0
           assert sys._is_gil_enabled()
           managed = subprocess.check_output(
-              ["uv", "python", "find", "--managed-python", "cpython@3.15+gil"],
+              ["uv", "python", "find", "--managed-python"],
               text=True).strip()
           assert Path(sys.executable).resolve() == Path(managed).resolve()
           PYTHON
@@ -381,7 +381,7 @@ jobs:
             args+=(--append)
           fi
           status=0
-          uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal tools/perf-gate/series.py "${args[@]}" || status=$?
+          uv run --no-project --managed-python python -X lazy_imports=normal tools/perf-gate/series.py "${args[@]}" || status=$?
           echo "status=$status" >> "$GITHUB_OUTPUT"
           if [ "$status" -gt 1 ]; then
             echo "::error::series.py failed with $status"

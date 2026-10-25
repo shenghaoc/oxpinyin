@@ -41,8 +41,8 @@ checks, selections or execution steps.
 The deliverable is the software and maintained tooling that lets another
 contributor reproduce its results from a checkout. Use the repository's
 `just` recipes and in-tree Python tools with the managed interpreter from
-the setup guide. Extend shared tooling when a required capability is missing;
-do not depend on a session-only script or an agent's private environment.
+the setup guide (`just python` provisions it). Extend shared tooling when a
+required capability is missing; do not depend on a session-only script or an agent's private environment.
 Existing documented shell entry points remain supported during migration.
 
 Report the conclusion, relevant final results, and the commands to reproduce

@@ -1,4 +1,4 @@
-#!/usr/bin/env -S uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal
+#!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
 """Refuse shipping measurements unless the linked ELF has its policy prefix.
 
 Inspect the unstripped object before copying/stripping or starting workers.

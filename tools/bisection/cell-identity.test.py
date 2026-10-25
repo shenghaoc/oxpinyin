@@ -1,4 +1,4 @@
-#!/usr/bin/env -S uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal
+#!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
 """Regressions for run-all.py's target-directory identity check."""
 import json
 import os
@@ -92,7 +92,7 @@ class ClaimTests(unittest.TestCase):
         self.bin = self.root / 'bin'
         self.bin.mkdir()
         cargo = self.bin / 'cargo'
-        cargo.write_text('''#!/usr/bin/env -S uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal
+        cargo.write_text('''#!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
 import json, os, pathlib, sys, time
 target = pathlib.Path(os.environ['CARGO_TARGET_DIR'])
 owner = pathlib.Path(sys.argv[sys.argv.index('--manifest-path') + 1]).resolve().parent
@@ -121,7 +121,7 @@ if os.environ.get('STUB_FAIL') == '1':
             owner = self.root / name
             for relative in ('tools/bisection/cell-artifacts.sh', 'tools/bisection/oracle-cell.sh',
                              'tools/oracle/build-oracle.sh', 'tools/tkrzw/runtime.sh',
-                             'tools/lib/bash-floor.sh'):
+                             'tools/lib/bash-floor.sh', '.python-version'):
                 destination = owner / relative
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(ROOT / relative, destination)

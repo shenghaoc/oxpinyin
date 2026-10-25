@@ -1,4 +1,4 @@
-#!/usr/bin/env -S uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal
+#!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
 """4-cell backend × implementation performance-matrix analysis.
 
 Reads JSONL captures from bisect --perf (four backend labels) and

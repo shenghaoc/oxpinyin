@@ -183,7 +183,7 @@ for ((iteration = 1; iteration <= $((10#$RAM_RUNS)); iteration++)); do
 done
 
 echo "--- summary (medians) ---"
-uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal - "$SPEED_JSONL" "$RAM_INIT_JSONL" "$RAM_CYCLE_JSONL" <<'PY'
+uv run --no-project --managed-python python -X lazy_imports=normal - "$SPEED_JSONL" "$RAM_INIT_JSONL" "$RAM_CYCLE_JSONL" <<'PY'
 import json, statistics, sys
 def load(p):
     rows = {}

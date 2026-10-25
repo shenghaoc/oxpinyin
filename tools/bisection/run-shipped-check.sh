@@ -21,6 +21,7 @@
 . "${0%/*}/../lib/bash-floor.sh"
 
 set -euo pipefail
+python_request=$(<"$(dirname "${BASH_SOURCE[0]}")/../../.python-version")
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../tkrzw" && pwd)/runtime.sh"
 HEAVY_RUNNER="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/run-all.py"
 source "$(dirname "$HEAVY_RUNNER")/../packaging/function-order.sh"
@@ -101,7 +102,7 @@ for n in $SIZES; do
     {
         echo "## n=$n"
         for num in "$Z_LABEL" "$S_LABEL"; do
-            uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal "$CTLTOOLS/bisection/perf-ratio.py" "$SPEED" \
+            uv run --no-project --managed-python --python "$python_request" python -X lazy_imports=normal "$CTLTOOLS/bisection/perf-ratio.py" "$SPEED" \
                 --numerator "$num" --denominator "$L_LABEL" \
                 --repeats "$n" --format md
         done

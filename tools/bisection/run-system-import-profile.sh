@@ -9,6 +9,7 @@
 . "${0%/*}/../lib/bash-floor.sh"
 
 set -euo pipefail
+python_request=$(<"$(dirname "${BASH_SOURCE[0]}")/../../.python-version")
 pin=$(realpath "${1:?pin-so}")
 ox=$(realpath "${2:?ox-so}")
 data=$(realpath "${3:?system-data-dir}")
@@ -27,7 +28,7 @@ function_order_measurement --library "ox/pinyin=$ox" \
 mkdir "$out"
 out=$(realpath "$out")
 cc -std=gnu11 -Wall -Wextra -Werror -O2 "$root/system-import-profile.c" -ldl -o "$out/driver"
-uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal - "$pin" "$ox" "$data" "$out" "$iterations" "$root/../tkrzw/runtime.py" <<'PY'
+uv run --no-project --managed-python --python "$python_request" python -X lazy_imports=normal - "$pin" "$ox" "$data" "$out" "$iterations" "$root/../tkrzw/runtime.py" <<'PY'
 from pathlib import Path
 import re
 import runpy

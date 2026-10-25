@@ -38,9 +38,10 @@ OVERRIDES = (
     'PYTHONHOME',
     'PYTHONPATH',
 )
-# The managed 3.15 series, GIL build. 3.16 stays a deliberate step: the
+# The request .python-version states, the one place the interpreter version is
+# written. The 3.15 series bounds below stay a deliberate step: the
 # -X lazy_imports modes this tooling relies on are new in 3.15.
-MANAGED_REQUEST = 'cpython@3.15+gil'
+MANAGED_REQUEST = (Path(__file__).resolve().parents[2] / '.python-version').read_text().strip()
 PYTHON_MINIMUM = '3.15.0'
 PYTHON_BELOW = '3.16'
 UV_MINIMUM = '0.13.1'

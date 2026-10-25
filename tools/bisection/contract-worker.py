@@ -1,4 +1,4 @@
-#!/usr/bin/env -S uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal
+#!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
 """Worker entry for contract-diff.py: one fresh process per side per case.
 
 `python contract-diff.py --worker ...` compiled the whole driver on every

@@ -1,4 +1,4 @@
-#!/usr/bin/env -S uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal
+#!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
 """Linux function-layout campaign using the in-tree bisect worker.
 
 Run through just heavy. No observations or profiler dumps are saved. The only

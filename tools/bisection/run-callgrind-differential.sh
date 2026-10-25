@@ -53,6 +53,7 @@
 . "${0%/*}/../lib/bash-floor.sh"
 
 set -euo pipefail
+python_request=$(<"$(dirname "${BASH_SOURCE[0]}")/../../.python-version")
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../tkrzw" && pwd)/runtime.sh"
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -267,7 +268,7 @@ for ((iteration = 1; iteration <= $((10#$HW_RUNS)); iteration++)); do
             "${TKRZW_EXEC[@]}" tkrzw "${0##*/}" "$label" "$so" -- "$SCRIPT_DIR/bisect" --perf "$so" "$DATA" >> "$HW" 2>>"$OUT/hw.err"
     done
 done
-uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal - "$HW" <<'PY' | tee "$OUT/hw-instructions.md"
+uv run --no-project --managed-python --python "$python_request" python -X lazy_imports=normal - "$HW" <<'PY' | tee "$OUT/hw-instructions.md"
 import json, statistics, sys
 
 runs = {}
@@ -342,7 +343,7 @@ for ((iteration = 1; iteration <= $((10#$T_RUNS)); iteration++)); do
             "${TKRZW_EXEC[@]}" tkrzw "${0##*/}" "$label" "$so" -- "$SCRIPT_DIR/bisect" --perf "$so" "$DATA" >> "$SPEED" 2>>"$OUT/speed.err"
     done
 done
-uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal "$SCRIPT_DIR/perf-ci.py" "$SPEED" --metric steady --metric cold --format md \
+uv run --no-project --managed-python --python "$python_request" python -X lazy_imports=normal "$SCRIPT_DIR/perf-ci.py" "$SPEED" --metric steady --metric cold --format md \
     | tee "$OUT/timing.md"
 
 echo

@@ -13,58 +13,81 @@ default: doctor
 # Data-only transport target for the real-just smoke tests; never starts work.
 [unix]
 [private]
-_test-argv status *args:
-    @uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -c 'import json, sys; print(json.dumps(sys.argv[2:])); sys.exit(int(sys.argv[1]))' "$@"
+_test-argv status *args: python
+    @uv run --no-project --managed-python python -X lazy_imports=normal -c 'import json, sys; print(json.dumps(sys.argv[2:])); sys.exit(int(sys.argv[1]))' "$@"
 
 # Record or check the pin-reference image's tool versions. Requires the
 # Debian image environment (dpkg-query); the image builds run the same check.
 [unix]
-oracle-versions *args:
-    @uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -m tools.dev oracle-versions "$@"
+oracle-versions *args: python
+    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev oracle-versions "$@"
 
 [windows]
-oracle-versions *args:
-    @uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -m tools.dev oracle-versions @args; exit $LASTEXITCODE
+oracle-versions *args: python
+    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev oracle-versions @args; exit $LASTEXITCODE
 
-# Report native capabilities and the managed interpreter identity.
+# Provision the interpreter .python-version names, the one place the version is
+# stated. uv has no download keyed `+gil` (#1230), so tools/install-python.sh
+# installs the file's request without `+gil`; selection keeps the file's request.
+[unix]
+python:
+    @tools/install-python.sh
+
+# PowerShell cannot run the shell script; this derives the same install request.
+[windows]
+python:
+    @uv python find --managed-python *> $null; if ($LASTEXITCODE -ne 0) { uv python install ((Get-Content .python-version -Raw).Trim() -replace '\+gil$', ''); if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } }
+    @uv python find --managed-python *> $null; if ($LASTEXITCODE -ne 0) { [Console]::Error.WriteLine('the interpreter in .python-version does not resolve after installing it'); exit 1 }
+
+# Report native capabilities and the managed interpreter identity. Doctor
+# installs nothing: it names `just python` when the interpreter is missing.
+[unix]
 doctor:
-    @uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -m tools.dev doctor
+    @command -v uv >/dev/null 2>&1 || { echo 'uv is not installed: see docs/runbooks/setup.md' >&2; exit 1; }
+    @uv python find --managed-python >/dev/null 2>&1 || { echo 'the managed interpreter in .python-version is not installed: run `just python`' >&2; exit 1; }
+    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev doctor
+
+[windows]
+doctor:
+    @if (-not (Get-Command uv -ErrorAction SilentlyContinue)) { [Console]::Error.WriteLine('uv is not installed: see docs/runbooks/setup.md'); exit 1 }
+    @uv python find --managed-python *> $null; if ($LASTEXITCODE -ne 0) { [Console]::Error.WriteLine('the managed interpreter in .python-version is not installed: run `just python`'); exit 1 }
+    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev doctor; exit $LASTEXITCODE
 
 # Run one native setup check: bdb, tkrzw or kyotocabinet.
-check backend="bdb":
-    @uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -m tools.dev check {{backend}}
+check backend="bdb": python
+    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev check {{backend}}
 
 # Run a command inside the native heavy slot and memory admission.
 [unix]
-heavy *args:
-    @uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -m tools.dev slot run "$@"
+heavy *args: python
+    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev slot run "$@"
 
 [windows]
-heavy *args:
-    @uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -m tools.dev slot run @args; exit $LASTEXITCODE
+heavy *args: python
+    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev slot run @args; exit $LASTEXITCODE
 
 # Run the native Rust tests through nextest and the heavy slot.
 [unix]
-test *args:
-    @uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -m tools.dev test "$@"
+test *args: python
+    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev test "$@"
 
 [windows]
-test *args:
-    @uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -m tools.dev test @args; exit $LASTEXITCODE
+test *args: python
+    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev test @args; exit $LASTEXITCODE
 
 # Run the CI Python harness discovery and exclusions (Linux and macOS).
 [unix]
-test-tools:
-    @uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -m tools.dev test-tools
+test-tools: python
+    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev test-tools
 
 # Run doctests separately; nextest does not run them.
 [unix]
-test-doc *args:
-    @uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -m tools.dev test-doc "$@"
+test-doc *args: python
+    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev test-doc "$@"
 
 [windows]
-test-doc *args:
-    @uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -m tools.dev test-doc @args; exit $LASTEXITCODE
+test-doc *args: python
+    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev test-doc @args; exit $LASTEXITCODE
 
 # Build with the native heavy slot and memory admission.
 [unix]
@@ -85,8 +108,8 @@ fmt *args:
     @cargo fmt @args; exit $LASTEXITCODE
 
 # Regenerate the GLib/libc call-site TSV from a pinned libpinyin checkout.
-audit-glib-call-sites pin:
-    @uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal tools/audit/glib_call_sites.py "$1"
+audit-glib-call-sites pin: python
+    @uv run --no-project --managed-python python -X lazy_imports=normal tools/audit/glib_call_sites.py "$1"
 
 # Lint with the native heavy slot and memory admission.
 [unix]
@@ -159,13 +182,13 @@ fuzz *args:
 
 # Run native coverage with temporary state; run and report in one invocation.
 [unix]
-coverage *args:
-    @just heavy -- uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -m tools.dev coverage "$@"
+coverage *args: python
+    @just heavy -- uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev coverage "$@"
 
 # Windows transport is unverified (#950).
 [windows]
-coverage *args:
-    @just heavy -- uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -m tools.dev coverage @args; exit $LASTEXITCODE
+coverage *args: python
+    @just heavy -- uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev coverage @args; exit $LASTEXITCODE
 
 # Run one store backend's sanitizer gate (bdb, kc or tkrzw), or all three,
 # with address (default), thread, leak or memory instrumentation.
@@ -195,41 +218,41 @@ sanitize backend="bdb" sanitizer="address":
 
 # Read registry metadata, optionally filtered by issue or kind.
 [unix]
-list *args:
-    @uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -m tools.dev list "$@"
+list *args: python
+    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev list "$@"
 
 [windows]
-list *args:
-    @uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -m tools.dev list @args; exit $LASTEXITCODE
+list *args: python
+    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev list @args; exit $LASTEXITCODE
 
 # Describe an explicit registry selection without executing it.
 [unix]
-plan *args:
-    @uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -m tools.dev plan "$@"
+plan *args: python
+    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev plan "$@"
 
 [windows]
-plan *args:
-    @uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -m tools.dev plan @args; exit $LASTEXITCODE
+plan *args: python
+    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev plan @args; exit $LASTEXITCODE
 
 # Measure native oxpinyin startup; the controller holds the heavy slot.
 [unix]
-measure recipe *args:
-    @uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -m tools.dev measure "$@"
+measure recipe *args: python
+    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev measure "$@"
 
 # Startup measurement alias (Windows deferred, #950).
 [unix]
-initbench *args:
-    @uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -m tools.dev measure startup "$@"
+initbench *args: python
+    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev measure startup "$@"
 
 # Qualify APFS cold preparation on named files; read-only, runs no worker.
 [unix]
-cold-qualify *paths:
-    @uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -m tools.dev measure cold-qualify "$@"
+cold-qualify *paths: python
+    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev measure cold-qualify "$@"
 
 [windows]
-measure recipe *args:
-    @uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -m tools.dev measure @args; exit $LASTEXITCODE
+measure recipe *args: python
+    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev measure @args; exit $LASTEXITCODE
 
 [windows]
-initbench *args:
-    @uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -m tools.dev measure startup @args; exit $LASTEXITCODE
+initbench *args: python
+    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev measure startup @args; exit $LASTEXITCODE

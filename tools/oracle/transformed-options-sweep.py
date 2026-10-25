@@ -1,4 +1,4 @@
-#!/usr/bin/env -S uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal
+#!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
 """Reproducible Lane J replacement sweep; Python standard library only.
 
 See transformed-options-sweep.md for the exact lists and comparison scope.

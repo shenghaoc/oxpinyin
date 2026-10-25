@@ -556,20 +556,20 @@ inputs in an owned ext4 location under `TMPDIR` and use the same host-wide slot
 as other heavy work. Then compute the system-data identity:
 
 ```sh
-just heavy -- uv run --no-project --managed-python --python cpython@3.15+gil \
+just heavy -- uv run --no-project --managed-python \
   python -B -X lazy_imports=normal tools/bisection/contract-diff.py \
   "$CELL" "$PIN" "$STAGE/lib/libpinyin.so.15.0.0" \
   --zhuyin-so "$STAGE/lib/libzhuyin.so.15.0.0" \
   --unordered-arm ox --unordered-arm control \
   --teardown --teardown-stage provision --teardown-work-dir "$TEARDOWN"
 PROFILES="$TEARDOWN/profiles"
-DATA_ID=$(uv run --no-project --managed-python --python cpython@3.15+gil \
+DATA_ID=$(uv run --no-project --managed-python \
   python -X lazy_imports=normal tools/generate-function-order.py \
   --print-identity "$DATA")
 ```
 
 ```sh
-just heavy -- uv run --no-project --managed-python --python cpython@3.15+gil \
+just heavy -- uv run --no-project --managed-python \
   python -X lazy_imports=normal tools/generate-function-order.py \
   --library "pinyin=$STAGE/lib/libpinyin.so.15.0.0" \
   --library "zhuyin=$STAGE/lib/libzhuyin.so.15.0.0" \
@@ -611,7 +611,7 @@ so they cover every function the policy promotes. Policy regeneration is
 separate.
 
 ```sh
-just heavy -- uv run --no-project --managed-python --python cpython@3.15+gil \
+just heavy -- uv run --no-project --managed-python \
   python -X lazy_imports=normal tools/measure-function-order.py \
   --subject "base=$BASE" --subject "pr=$PR" \
   --subject "control=$CONTROL" --subject "pin=$PIN" \

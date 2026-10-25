@@ -1,10 +1,11 @@
-#!/usr/bin/env -S uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal
+#!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
 """Unit tests for tools.dev CLI diagnostics and exit statuses."""
 import contextlib
 import io
 import json
 import os
 from pathlib import Path
+import re
 import sys
 import subprocess
 import tempfile
@@ -47,6 +48,49 @@ class RealJustSmokeTests(unittest.TestCase):
                     self.assertEqual(result.returncode, status, result.stderr)
                     self.assertEqual(json.loads(result.stdout), values)
                     self.assertFalse(marker.exists(), 'shell expanded a literal argument')
+
+    def test_every_uv_run_recipe_except_doctor_depends_on_python(self):
+        result = self.invoke('--dump', '--dump-format', 'json')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        recipes = json.loads(result.stdout)['recipes']
+        users = {name for name, recipe in recipes.items()
+                 if any('uv run' in fragment for line in recipe['body'] for fragment in line)}
+        self.assertIn('check', users)
+        self.assertIn('heavy', users)
+        for name in sorted(users - {'doctor'}):
+            with self.subTest(recipe=name):
+                self.assertIn('python', [dependency['recipe'] for dependency in recipes[name]['dependencies']])
+        self.assertEqual(recipes['doctor']['dependencies'], [])
+
+    def test_every_platform_variant_of_a_uv_run_recipe_depends_on_python(self):
+        header = re.compile(r'^(@?[A-Za-z_][\w-]*)(?: [^:]*)?:(.*)$')
+        blocks = []
+        for line in (ROOT / 'justfile').read_text().splitlines():
+            match = header.match(line)
+            if match and not line.startswith(('set ', 'default')):
+                blocks.append([match.group(1), match.group(2), []])
+            elif blocks and line.startswith(' '):
+                blocks[-1][2].append(line)
+        users = [(name, dependencies) for name, dependencies, body in blocks
+                 if name != 'doctor' and any('uv run' in line for line in body)]
+        self.assertGreaterEqual(len(users), 20)
+        for name, dependencies in users:
+            with self.subTest(recipe=name):
+                self.assertIn('python', dependencies.split())
+
+    def test_doctor_without_the_interpreter_names_just_python_and_installs_nothing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / 'uv.log'
+            fake = Path(directory) / 'uv'
+            fake.write_text(f'#!/bin/sh\necho "$@" >> {log}\nexit 2\n')
+            fake.chmod(0o755)
+            env = {**os.environ, 'PATH': f'{directory}{os.pathsep}{os.environ["PATH"]}'}
+            result = subprocess.run(['just', '--justfile', str(ROOT / 'justfile'), 'doctor'],
+                                    cwd=ROOT, capture_output=True, text=True, timeout=30, env=env)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('the managed interpreter in .python-version is not installed: run `just python`', result.stderr)
+            self.assertEqual(log.read_text().splitlines(),
+                             ['python find --managed-python'])
 
 
 class CliTests(unittest.TestCase):

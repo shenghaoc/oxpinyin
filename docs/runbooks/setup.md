@@ -61,7 +61,7 @@ count. GNU ld, gcov and Valgrind compare by number, and a development build of
 one counts as its number. Install or upgrade a tool only when `just doctor`
 says it is missing or too old.
 
-Until uv and the interpreter exist, `just doctor` cannot run. Install uv only
+Until uv exists, `just doctor` cannot run. Install uv only
 when it is missing or older than 0.13.1 (`uv --version` shows the version):
 
 ```bash
@@ -78,12 +78,21 @@ export PATH="$HOME/.local/bin:$PATH"
 hash -r
 ```
 
-Provision the interpreter, installing it only when no managed 3.15 GIL build
-is present:
+The native command interface needs just at or above the `minimum-version` in the
+root `justfile`, which `just` enforces itself and `just doctor` reports.
+Install it through the host route: `brew install just` on macOS, the
+distribution package on Linux, or `cargo install just --locked`.
+
+Provision the interpreter through `just python`. It installs the interpreter
+`.python-version` names only when none is present, and fails if that request
+still does not resolve afterwards. Every other Python recipe depends on it, so a recipe
+run on a bare host provisions the interpreter itself; `just doctor` installs
+nothing and names `just python` when the interpreter is missing. Then verify
+the interpreter:
 
 ```bash
-uv python find --managed-python cpython@3.15+gil || uv python install cpython@3.15
-uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal - <<'PYTHON'
+just python
+uv run --no-project --managed-python python -X lazy_imports=normal - <<'PYTHON'
 from pathlib import Path
 import subprocess
 import sys
@@ -93,7 +102,7 @@ assert sys.version_info.releaselevel == "final" and (3, 15, 0) <= sys.version_in
 assert sysconfig.get_config_var("Py_GIL_DISABLED") == 0
 assert sys._is_gil_enabled()
 managed = subprocess.check_output(
-    ["uv", "python", "find", "--managed-python", "cpython@3.15+gil"],
+    ["uv", "python", "find", "--managed-python"],
     text=True).strip()
 assert Path(sys.executable).resolve() == Path(managed).resolve()
 PYTHON
@@ -104,9 +113,28 @@ The installer digest comes from its `digest` field in the official
 Automated Linux setup on x86_64 and arm64 verifies the release archive against the pinned
 [published checksum](https://github.com/astral-sh/uv/releases/download/0.13.1/sha256.sum).
 
-The `+gil` request requires the GIL-enabled build. uv 0.13.1 has no separate
-`+gil` archive, so install the plain 3.15 build (`cpython@3.15`) and verify that
-the request resolves to it. A later series is a deliberate change: the tooling
+`.python-version` is the one place the interpreter version is written. Inside the
+checkout, `uv run --no-project --managed-python python` and `uv python find
+--managed-python` read it; a script that changes directory first, or a container
+build, copies the file in or passes its contents on, and does not restate the
+version. A shell entry point that does not change into the checkout (for example
+`tools/bisection/run-all.sh`) passes `--python` with the contents of the
+`.python-version` beside its own location, so the caller's working directory, and
+any `.python-version` there, never decide the interpreter. Direct-run Python
+harness files rely on their `uv` shebang and a working directory inside the
+checkout. The two Axis J ledger generators keep the historical command their
+tracked ledgers record, and the check exempts exactly those two files. The file's request ends in `+gil`, which requires the GIL-enabled build.
+uv 0.13.1 has no separate `+gil` archive, and `uv python install` with no
+arguments fails on that request, so `tools/install-python.sh` (the one place that
+derives it) installs the same series without `+gil` and selection keeps the file's
+request. The check `tools/dev/python-request.test.py` fails when a version request
+appears anywhere else, outside the dated records in `docs/findings/` and
+`docs/perf/`.
+
+**Rule (#1230).** Provision the repository's managed Python interpreter
+through `just python`. Never pass the file's `+gil` request, or its expanded
+platform-specific identifier, to `uv python install`. Do not substitute another
+interpreter or upgrade uv to work around this error. A later series is a deliberate change: the tooling
 relies on 3.15's `-X lazy_imports` modes. Do not use a system Python, a virtual
 environment, `pyproject.toml` or `uv.lock`; the checkout's `.python-version`
 and `uv.toml` name the same interpreter series and uv floor.
@@ -114,14 +142,9 @@ and `uv.toml` name the same interpreter series and uv floor.
 To regenerate the W3 content fixtures, run this command from the checkout root:
 
 ```bash
-uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal \
+uv run --no-project --managed-python python -X lazy_imports=normal \
   tools/generate_w3_fixtures.py
 ```
-
-The native command interface needs just at or above the `minimum-version` in the
-root `justfile`, which `just` enforces itself and `just doctor` reports.
-Install it through the host route: `brew install just` on macOS, the
-distribution package on Linux, or `cargo install just --locked`.
 
 `just build` and `just clippy` pass Cargo arguments unchanged through
 `just heavy`, including the host-wide slot and memory admission. `just fmt`
@@ -454,8 +477,9 @@ git clone https://github.com/shenghaoc/oxpinyin.git
 cd oxpinyin
 ```
 
-Run the uv provisioning commands from the Linux section. For the checksum
-step, replace `sha256sum -c -` with `shasum -a256 -c -` on macOS.
+Run the uv, just and interpreter commands from the Linux section, in that
+order (`brew install just` supplies just). For the checksum step, replace
+`sha256sum -c -` with `shasum -a256 -c -` on macOS.
 Then install rustup if absent using the Linux rustup commands above
 and run:
 
@@ -542,6 +566,11 @@ cargo test --locked -p oxpinyin-chewing -p oxpinyin-core -p oxpinyin-engine
 cargo fmt --all --check
 cargo clippy --locked -p oxpinyin-chewing -p oxpinyin-core -p oxpinyin-engine --all-targets -- -D warnings
 ```
+
+Repository Python tooling on Windows runs through the PowerShell recipes
+(unverified: no Windows host, [`tooling-python.md`](../plans/tooling-python.md)).
+Install uv with its native Windows installer, then just (`cargo install just
+--locked`), then run `just python`; the rule above applies unchanged.
 
 All three packages link and run natively without a DBM library or container.
 Success is zero failed tests and exit code zero (`$LASTEXITCODE`). In a fresh

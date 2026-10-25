@@ -43,6 +43,7 @@
 . "${0%/*}/../lib/bash-floor.sh"
 
 set -euo pipefail
+python_request=$(<"$(dirname "${BASH_SOURCE[0]}")/../../.python-version")
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../tkrzw" && pwd)/runtime.sh"
 HEAVY_RUNNER="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/run-all.py"
 source "$(dirname "$HEAVY_RUNNER")/../packaging/function-order.sh"
@@ -194,7 +195,7 @@ for n in $SIZES; do
                     "$Z_LABEL:$L_LABEL" "$S_LABEL:$L_LABEL" \
                     "$S_LABEL:$Z_LABEL"; do
             num=${pair%%:*}; den=${pair#*:}
-            uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal "$CTLTOOLS/bisection/perf-ratio.py" "$SPEED" \
+            uv run --no-project --managed-python --python "$python_request" python -X lazy_imports=normal "$CTLTOOLS/bisection/perf-ratio.py" "$SPEED" \
                 --numerator "$num" --denominator "$den" \
                 --repeats "$n" --format md
         done
@@ -203,7 +204,7 @@ done
 
 # ── decomposition: paired round bootstrap ───────────────────────────
 for n in $SIZES; do
-    uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal "$CTLTOOLS/bisection/perf-decomp.py" "$SPEED" --repeats "$n" \
+    uv run --no-project --managed-python --python "$python_request" python -X lazy_imports=normal "$CTLTOOLS/bisection/perf-decomp.py" "$SPEED" --repeats "$n" \
         --l "$L_LABEL" --x "$X_LABEL" --y "$Y_LABEL" --z "$Z_LABEL" \
         --format md > "$OUT/decomp-n$n.md"
 done

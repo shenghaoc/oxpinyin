@@ -1,4 +1,4 @@
-#!/usr/bin/env -S uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal
+#!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
 """Tests for the GLib/libc call-site generator."""
 import csv
 import importlib.util
@@ -50,7 +50,7 @@ class CallSiteTests(unittest.TestCase):
                 capture_output=True, text=True, timeout=30)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(json.loads(result.stdout), [
-                'run', '--no-project', '--managed-python', '--python', 'cpython@3.15+gil',
+                'run', '--no-project', '--managed-python',
                 'python', '-X', 'lazy_imports=normal', 'tools/audit/glib_call_sites.py', str(pin)])
 
     def test_the_fixture_is_reproduced_byte_for_byte(self):

@@ -445,7 +445,7 @@ case; the second is the default selection, which leaves out the axis C
 battery:
 
 ```sh
-uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -c "import runpy; c = runpy.run_path('tools/bisection/contract-diff.py')['CASES']; print(len(c), sum(not n.startswith('axis-c-') for n in c))"
+uv run --no-project --managed-python python -X lazy_imports=normal -c "import runpy; c = runpy.run_path('tools/bisection/contract-diff.py')['CASES']; print(len(c), sum(not n.startswith('axis-c-') for n in c))"
 ```
 
 The harness runs every registered non-axis-C case, sorted, when no selector

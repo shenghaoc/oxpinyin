@@ -6,7 +6,7 @@ import sys
 _get_lazy_imports = getattr(sys, 'get_lazy_imports', None)
 if _get_lazy_imports is None:
     print('python -m tools.dev: sys.get_lazy_imports is missing; '
-          'run with cpython@3.15+gil and -X lazy_imports=normal', file=sys.stderr)
+          'run the interpreter in .python-version with -X lazy_imports=normal', file=sys.stderr)
     raise SystemExit(2)
 _mode = _get_lazy_imports()
 if _mode != 'normal':

@@ -5,6 +5,7 @@
 . "${0%/*}/../lib/bash-floor.sh"
 
 set -euo pipefail
+python_request=$(<"$(dirname "${BASH_SOURCE[0]}")/../../.python-version")
 for name in UV_PYTHON PYTHONHOME PYTHONPATH; do
 	if [[ -n ${!name:-} ]]; then
 		printf 'FAIL: %s is not supported; unset it before running repository Python\n' "$name" >&2
@@ -12,7 +13,7 @@ for name in UV_PYTHON PYTHONHOME PYTHONPATH; do
 	fi
 done
 command -v uv >/dev/null 2>&1 || {
-	printf 'missing uv 0.13.1 or newer; install it and managed CPython 3.15+gil (docs/runbooks/setup.md)\n' >&2
+	printf 'missing uv 0.13.1 or newer; install it and the managed interpreter in .python-version (docs/runbooks/setup.md)\n' >&2
 	exit 127
 }
-exec uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal "$(dirname "${BASH_SOURCE[0]}")/run-all.py" "$@"
+exec uv run --no-project --managed-python --python "$python_request" python -X lazy_imports=normal "$(dirname "${BASH_SOURCE[0]}")/run-all.py" "$@"

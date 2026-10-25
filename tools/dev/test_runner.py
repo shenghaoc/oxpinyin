@@ -72,8 +72,7 @@ def run_tools():
             print(f'tools harness excluded (missing CI input): {path}', flush=True)
             continue
         print(f'tools harness: {path}', flush=True)
-        command = ['uv', 'run', '--no-project', '--managed-python', '--python',
-                   'cpython@3.15+gil', 'python', '-X', 'lazy_imports=normal', path]
+        command = ['uv', 'run', '--no-project', '--managed-python', 'python', '-X', 'lazy_imports=normal', path]
         try:
             if subprocess.run(command, cwd=ROOT, env=env).returncode:
                 status = 1

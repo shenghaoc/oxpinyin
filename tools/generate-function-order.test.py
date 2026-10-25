@@ -1,4 +1,4 @@
-#!/usr/bin/env -S uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal
+#!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
 """Source regressions for the in-tree policy generator and measurement reader.
 
 Synthetic nm, Callgrind, smaps and linker records exercise parsing, scoping,

@@ -241,7 +241,7 @@
     ],
     "required_inputs": [
       "pin-built oracle at the selected cell",
-      "uv 0.13.1 or newer, managed CPython 3.15+gil and libglib-2.0.so.0",
+      "uv 0.13.1 or newer, the managed interpreter in .python-version and libglib-2.0.so.0",
       "prebuilt dev libpinyin and libzhuyin for the cell",
       "matching PREFIX/oracle-pin.txt and pin-built pinyin/zhuyin system tables"
     ],
@@ -1743,7 +1743,7 @@
     ],
     "required_inputs": [
       "cell oracle and prebuilt libraries",
-      "uv 0.13.1 or newer and managed CPython 3.15+gil",
+      "uv 0.13.1 or newer and the managed interpreter in .python-version",
       "native backend dump tools"
     ],
     "timeout": 900,
@@ -1753,8 +1753,6 @@
       "run",
       "--no-project",
       "--managed-python",
-      "--python",
-      "cpython@3.15+gil",
       "python",
       "-X",
       "lazy_imports=normal",
@@ -1787,7 +1785,7 @@
     ],
     "required_inputs": [
       "cell oracle and prebuilt libraries",
-      "uv 0.13.1 or newer and managed CPython 3.15+gil",
+      "uv 0.13.1 or newer and the managed interpreter in .python-version",
       "committed transformed-options input and word files"
     ],
     "timeout": 3600,
@@ -1798,8 +1796,6 @@
       "run",
       "--no-project",
       "--managed-python",
-      "--python",
-      "cpython@3.15+gil",
       "python",
       "-X",
       "lazy_imports=normal",
@@ -2154,8 +2150,6 @@
       "run",
       "--no-project",
       "--managed-python",
-      "--python",
-      "cpython@3.15+gil",
       "python",
       "-X",
       "lazy_imports=normal",

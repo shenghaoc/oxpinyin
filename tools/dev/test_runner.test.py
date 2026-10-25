@@ -1,4 +1,4 @@
-#!/usr/bin/env -S uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal
+#!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
 """Unit tests for the nextest argument mapping."""
 from pathlib import Path
 import contextlib
@@ -58,8 +58,7 @@ class HarnessTests(unittest.TestCase):
                         mock.patch.object(test_runner.subprocess, 'run', side_effect=replies) as run, \
                         contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
                     self.assertEqual(test_runner.run_tools(), expected)
-                prefix = ['uv', 'run', '--no-project', '--managed-python', '--python',
-                          'cpython@3.15+gil', 'python', '-X', 'lazy_imports=normal']
+                prefix = ['uv', 'run', '--no-project', '--managed-python', 'python', '-X', 'lazy_imports=normal']
                 child = {'PATH': environ['PATH'], 'OXPINYIN_TEST_KEPT': 'kept'}
                 test_support.assert_calls(self, run, [mock.call(prefix + [path], cwd=ROOT, env=child)
                                                       for path in (files[0], files[2])])
