@@ -603,9 +603,9 @@ jobs:
   # The PR half of verify-nightly.yml's function-order-policy job (#1071).
   # A lockfile-only dependency update can make a checked-in policy stale:
   # the cc 1.4.3 -> 1.9.0 bump (f9257eae) made both KC policies stop
-  # resolving (#1210). The build-and-resolve steps are the one shared
-  # definition in .github/workflows/function-order-policy.yml, called here
-  # and by the nightly; the two lanes cannot drift.
+  # resolving (#1210). The build-and-resolve steps are the shared action
+  # in .github/actions/function-order-policy, called here and by the
+  # nightly; the two lanes cannot drift.
   #
   # Trigger: Cargo.lock or tools/packaging/function-order/**, the two
   # inputs behind #1210. A source rename or inlining can stale a policy
@@ -620,7 +620,23 @@ jobs:
     # PRs only: a push to main is the nightly's job, and this check exists
     # to stop the merge, not to repeat the nightly's work.
     if: ${{ github.event_name == 'pull_request' && needs.changes.outputs.function_order == 'true' }}
-    uses: ./.github/workflows/function-order-policy.yml
+    runs-on: ubuntu-latest
+    container:
+      image: debian:testing # deliberately unpinned; see store-backends.yml header
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_TERM_COLOR: always
+      DEBIAN_FRONTEND: noninteractive
+      # The shared action runs outside ci.yml's workflow RUSTFLAGS.
+      RUSTFLAGS: ''
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/function-order-policy
 
   # The required aggregate check: always runs, always reports. Red only
   # when a lane that should have run ended as

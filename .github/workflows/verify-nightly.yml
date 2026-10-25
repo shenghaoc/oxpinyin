@@ -412,14 +412,30 @@ jobs:
           if-no-files-found: ignore
 
   # Function-order policies (#1071). The build-and-resolve steps are the
-  # one shared definition in .github/workflows/function-order-policy.yml,
-  # called here and by ci.yml's PR job; the two lanes cannot drift. This
-  # caller keeps the nightly schedule and manual dispatch. It reports a
-  # stale policy that reaches main; it does not block a merge.
+  # shared action in .github/actions/function-order-policy, called here
+  # and by ci.yml's PR job; the two lanes cannot drift. This caller keeps
+  # the nightly schedule and manual dispatch. It reports a stale policy
+  # that reaches main; it does not block a merge.
   function-order-policy:
     # Skipped by a windows_only dispatch; runs on the schedule.
     if: ${{ !inputs.windows_only }}
-    uses: ./.github/workflows/function-order-policy.yml
+    runs-on: ubuntu-latest
+    container:
+      image: debian:testing # deliberately unpinned; see the header comment
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_TERM_COLOR: always
+      DEBIAN_FRONTEND: noninteractive
+      # The shared action must see the same empty RUSTFLAGS as the PR caller.
+      RUSTFLAGS: ''
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/function-order-policy
 
   # The full Windows workspace: the portable workspace (all but capi,
   # zhuyin-capi, and the backend-independent corpus, KMM, punctuation, and
