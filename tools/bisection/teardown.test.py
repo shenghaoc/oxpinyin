@@ -1098,10 +1098,19 @@ class NativeTests(unittest.TestCase):
                 row = self.campaign().run('pinyin', self.library, self.profile, mode='init', probe=probe)
                 self.assertEqual((set(row['checkpoints'][0]), set(row['checkpoints'][1])), ({'M0'}, {'I1'}))
                 after = row['checkpoints'][1]['I1']
-                self.assertEqual(after['residency']['SUBJECT']['pages'], after['residency']['SUBJECT']['resident'])
+                subject = after['residency']['SUBJECT']
                 self.assertTrue(any(path == str(self.library) and 'x' in perms for _, _, perms, path, _ in after['maps']))
-                # Warm: the run covers every page of the stub library.
-                self.assertEqual(after['residency']['SUBJECT']['ranges'], [[0, after['residency']['SUBJECT']['pages']]])
+                # Warm: the page cache holds every page the loader mapped from the stub, not every page of
+                # the file. A linker that aligns segments to 64 KiB (GNU ld on arm64) leaves a hole that no
+                # segment maps; a hole page is cached only if something read the file, and never on tmpfs.
+                page = os.sysconf('SC_PAGE_SIZE')
+                mapped = {index for start, end, perms, path, offset in after['maps']
+                          if path == str(self.library) and perms[:3] != '---'
+                          for index in range(offset // page, (offset + end - start) // page)}
+                resident = td.range_pages(subject['ranges'])
+                self.assertEqual(subject['pages'], -(-self.library.stat().st_size // page))
+                self.assertEqual(len(resident), subject['resident'])
+                self.assertEqual(mapped - resident, set())
                 self.assertEqual(set(row['samples'][0]['times']['init_ns']), set(td.CLOCK_FIELDS))
                 self.assertEqual(row['observation']['stderr'].splitlines(), ['INIT', 'ALLOC', 'FREE', 'FINI'])
                 self.assertEqual(row['observation']['documents'], [])
