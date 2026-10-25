@@ -8,11 +8,9 @@
 //! have to go to `docs/findings/scoring-spec.md` to find out what the number
 //! means.
 //!
-//! Costs are integers on a fixed-point negative-log₂ scale, and every step of
-//! the computation is integer arithmetic. Floating point is deliberately
-//! absent: `f64::ln` is not required to be bit-identical across platforms and
-//! libms, and constitution item 6 makes engine output a pure function of
-//! (input, user state, config) — on every operating system, not just this one.
+//! Costs are integers on a fixed-point negative-log₂ scale. The logarithm is
+//! Rust's standard `f64::log2`, used at full speed (AGENTS.md, math rule); a
+//! last-bit difference from the pin's libm is class (a) and is not chased.
 
 use crate::Cost;
 
@@ -79,9 +77,9 @@ pub const fn cost_gt(a: Cost, b: Cost) -> bool {
 }
 
 /// The cost of a probability `x` that may lie outside `(0, 1]`: `-log2(x)` on
-/// the fixed-point scale, computed from the bits of `x` with integer
-/// arithmetic only. `x` above one costs less than nothing; `0` is `+inf`;
-/// `+inf` is `-inf`; a negative `x` or NaN is NaN — what `log` gives the pin.
+/// the fixed-point scale. `x` above one costs less than nothing; `0` is
+/// `+inf`; `+inf` is `-inf`; a negative `x` or NaN is NaN — what `log` gives
+/// the pin. Rust's `f64::log2` is used directly.
 #[must_use]
 pub fn cost_of_probability(x: f64) -> Cost {
     if x.is_nan() || x < 0.0 {
@@ -93,36 +91,10 @@ pub fn cost_of_probability(x: f64) -> Cost {
     if x.is_infinite() {
         return NEG_INF_COST;
     }
-    let bits = x.to_bits();
-    let biased = i64::try_from((bits >> 52) & 0x7ff).unwrap_or(0);
-    let fraction = bits & ((1_u64 << 52) - 1);
-    // x = mantissa × 2^(exponent − 52), mantissa in [2^52, 2^53) for a
-    // normal number; a subnormal is normalised first.
-    let (mantissa, exponent) = if biased == 0 {
-        let shift = i64::from(fraction.leading_zeros()) - 11;
-        (fraction << shift, -1022 - shift)
-    } else {
-        (fraction | (1_u64 << 52), biased - 1023)
-    };
-    // log2(x) = log2(mantissa) − 52 + exponent, fixed point.
-    let log2 = i128::from(log2_fixed(mantissa)) - (52_i128 << FRAC_BITS)
-        + (i128::from(exponent) << FRAC_BITS);
-    let scaled = (-log2 * i128::from(COST_PER_BIT) + i128::from(HALF)) >> FRAC_BITS;
-    let limit = i128::from(POS_INF_COST) - 1;
-    Cost::try_from(scaled.clamp(-limit, limit)).unwrap_or(POS_INF_COST - 1)
+    let scaled = (-x.log2() * COST_PER_BIT as f64).round();
+    let limit = (POS_INF_COST - 1) as f64;
+    scaled.clamp(-limit, limit) as Cost
 }
-
-/// Fractional bits in the fixed-point logarithm.
-const FRAC_BITS: u32 = 32;
-
-/// Half a fixed-point unit, for round-to-nearest.
-const HALF: u64 = 1 << (FRAC_BITS - 1);
-
-/// Scale of the mantissa used while extracting fractional log bits.
-///
-/// A mantissa in `[1, 2)` is held as `[2^62, 2^63)`, so squaring it stays
-/// below `2^126` and cannot overflow `u128`.
-const MANTISSA_SHIFT: u32 = 62;
 
 /// Cost of an event seen `count` times out of `total`.
 ///
@@ -137,10 +109,10 @@ pub fn surprisal(count: u64, total: u64) -> Cost {
     }
     let count = count.min(total);
     if count == total {
-        // Equal logarithms: `(0 + HALF) >> FRAC_BITS` is zero.
+        // Equal logarithms give zero.
         return 0;
     }
-    bits_to_cost(log2_fixed(total) - log2_fixed(count))
+    bits_to_cost(log2(total) - log2(count))
 }
 
 /// [`surprisal`] with `log2(total)` taken from `memo` when `total` is one of
@@ -157,20 +129,22 @@ pub fn surprisal_with_memo(count: u64, total: u64, memo: &mut Log2Memo) -> Cost 
     if count == total {
         return 0;
     }
-    bits_to_cost(memo.log2_fixed(total) - log2_fixed(count))
+    bits_to_cost(memo.log2(total) - log2(count))
 }
 
-/// A surprisal in fixed-point bits, rounded to cost units and floored at
+/// A surprisal in bits, rounded to cost units and floored at
 /// [`UNKNOWN_COST`].
-fn bits_to_cost(bits: u64) -> Cost {
-    let scaled = (bits.saturating_mul(COST_PER_BIT.unsigned_abs()) + HALF) >> FRAC_BITS;
-    Cost::try_from(scaled)
-        .unwrap_or(UNKNOWN_COST)
-        .min(UNKNOWN_COST)
+fn bits_to_cost(bits: f64) -> Cost {
+    let scaled = (bits * COST_PER_BIT as f64).round();
+    if !scaled.is_finite() || scaled >= UNKNOWN_COST as f64 {
+        UNKNOWN_COST
+    } else {
+        scaled as Cost
+    }
 }
 
-/// The last two fixed-point logarithms [`surprisal_with_memo`] took, keyed
-/// by their exact argument.
+/// The last two logarithms [`surprisal_with_memo`] took, keyed by their
+/// exact argument.
 ///
 /// One n-best step divides by the same few denominators over and over: the
 /// unigram branch by `λ_den · total`, the blended branch by
@@ -179,13 +153,13 @@ fn bits_to_cost(bits: u64) -> Cost {
 /// (training, import, mask, unload) is a miss, never a stale hit.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Log2Memo {
-    /// `(argument, log2_fixed(argument))`, most recent first. An argument of
-    /// zero marks an empty slot: the logarithm is never asked for zero.
-    entries: [(u64, u64); 2],
+    /// `(argument, log2(argument))`, most recent first. An argument of zero
+    /// marks an empty slot: the logarithm is never asked for zero.
+    entries: [(u64, f64); 2],
 }
 
 impl Log2Memo {
-    fn log2_fixed(&mut self, value: u64) -> u64 {
+    fn log2(&mut self, value: u64) -> f64 {
         let [first, second] = self.entries;
         if first.0 == value {
             return first.1;
@@ -194,38 +168,16 @@ impl Log2Memo {
             self.entries = [second, first];
             return second.1;
         }
-        let log = log2_fixed(value);
+        let log = log2(value);
         self.entries = [(value, log), first];
         log
     }
 }
 
-/// Base-2 logarithm of `value` as a fixed-point number with [`FRAC_BITS`]
-/// fractional bits.
-///
-/// Integer part from `ilog2`; fractional bits by repeated squaring of the
-/// mantissa, which is the standard bit-at-a-time algorithm and uses nothing
-/// but integer multiplication and shifts.
-///
-/// The mantissa stays below `2^63` between rounds, so its square is one
-/// widening `u64 × u64` multiply, not a full `u128 × u128` one.
-fn log2_fixed(value: u64) -> u64 {
-    debug_assert!(value > 0, "log2_fixed requires a positive value");
-    let integer = value.ilog2();
-
-    // Mantissa in [1, 2), scaled by 2^MANTISSA_SHIFT: in [2^62, 2^63).
-    let mut mantissa = ((u128::from(value) << MANTISSA_SHIFT) >> integer) as u64;
-    let mut fraction = 0_u64;
-    for _ in 0..FRAC_BITS {
-        // The square is below 2^126, so the shifted value is below 2^64.
-        let squared = ((u128::from(mantissa) * u128::from(mantissa)) >> MANTISSA_SHIFT) as u64;
-        // Bit 63 is the next fractional bit; when set the mantissa halves.
-        let carry = squared >> 63;
-        fraction = (fraction << 1) | carry;
-        mantissa = squared >> carry;
-    }
-
-    (u64::from(integer) << FRAC_BITS) | fraction
+/// Base-2 logarithm of a positive `u64` through Rust's standard maths.
+fn log2(value: u64) -> f64 {
+    debug_assert!(value > 0, "log2 requires a positive value");
+    (value as f64).log2()
 }
 
 /// Shrinks a ratio until both halves fit in a `u64`, preserving its value as
@@ -281,61 +233,23 @@ mod tests {
         assert_eq!(cost_of_probability(f64::from_bits(1)), 1074 * COST_PER_BIT);
     }
     use super::{
-        COST_PER_BIT, FRAC_BITS, Log2Memo, UNKNOWN_COST, log2_fixed, reduce_ratio, surprisal,
-        surprisal_with_memo,
+        COST_PER_BIT, Log2Memo, UNKNOWN_COST, log2, reduce_ratio, surprisal, surprisal_with_memo,
     };
 
     #[test]
     fn exact_powers_of_two_have_exact_logarithms() {
         for exponent in 0..64_u32 {
-            assert_eq!(
-                log2_fixed(1 << exponent),
-                u64::from(exponent) << FRAC_BITS,
-                "2^{exponent}"
-            );
+            assert_eq!(log2(1 << exponent), f64::from(exponent), "2^{exponent}");
         }
-    }
-
-    /// The logarithm as it was written with a `u128` mantissa throughout.
-    fn log2_fixed_u128(value: u64) -> u64 {
-        let integer = value.ilog2();
-        let mut mantissa = (u128::from(value) << super::MANTISSA_SHIFT) >> integer;
-        let mut fraction = 0_u64;
-        for bit in 0..FRAC_BITS {
-            mantissa = (mantissa * mantissa) >> super::MANTISSA_SHIFT;
-            if mantissa >= 2_u128 << super::MANTISSA_SHIFT {
-                fraction |= 1 << (FRAC_BITS - 1 - bit);
-                mantissa >>= 1;
-            }
-        }
-        (u64::from(integer) << FRAC_BITS) | fraction
     }
 
     #[test]
-    fn the_u64_mantissa_matches_the_u128_one_bit_for_bit() {
-        for value in 1..=1_000_000_u64 {
-            assert_eq!(log2_fixed(value), log2_fixed_u128(value), "{value}");
-        }
-        // Every bit width at its edges, then a fixed xorshift stream.
-        for width in 0..64_u32 {
-            for value in [
-                1_u64 << width,
-                (1_u64 << width) | 1,
-                u64::MAX >> (63 - width),
-            ] {
-                assert_eq!(log2_fixed(value), log2_fixed_u128(value), "{value}");
-            }
-        }
-        let mut state = 0x9e37_79b9_7f4a_7c15_u64;
-        for _ in 0..2_000_000 {
-            state ^= state << 13;
-            state ^= state >> 7;
-            state ^= state << 17;
-            let value = state >> (state & 63);
-            if value > 0 {
-                assert_eq!(log2_fixed(value), log2_fixed_u128(value), "{value}");
-            }
-        }
+    fn surprisal_uses_the_standard_logarithm() {
+        // log2(3) = 1.5849625... and log2(3/2) = 0.5849625..., rounded to
+        // the nearest cost unit.
+        assert_eq!(surprisal(1, 3), 1_585);
+        assert_eq!(surprisal(2, 3), 585);
+        assert_eq!(surprisal(1, 10), 3_322);
     }
 
     #[test]
@@ -369,46 +283,6 @@ mod tests {
             ] {
                 assert_eq!(reduce_ratio(n, d), looped(n, d), "{n} {d}");
             }
-        }
-    }
-
-    #[test]
-    fn surprisal_matches_the_u128_logarithm_reference() {
-        fn reference(count: u64, total: u64) -> i64 {
-            if count == 0 || total == 0 {
-                return UNKNOWN_COST;
-            }
-            let count = count.min(total);
-            let bits = log2_fixed_u128(total) - log2_fixed_u128(count);
-            let scaled = (bits.saturating_mul(COST_PER_BIT.unsigned_abs()) + (1 << 31)) >> 32;
-            i64::try_from(scaled)
-                .unwrap_or(UNKNOWN_COST)
-                .min(UNKNOWN_COST)
-        }
-        for total in 0..300_u64 {
-            for count in 0..320_u64 {
-                assert_eq!(
-                    surprisal(count, total),
-                    reference(count, total),
-                    "{count}/{total}"
-                );
-            }
-        }
-        let mut state = 0x1357_9bdf_2468_ace1_u64;
-        let mut next = || {
-            state ^= state << 13;
-            state ^= state >> 7;
-            state ^= state << 17;
-            state >> (state & 63)
-        };
-        for _ in 0..1_000_000 {
-            let (count, total) = (next(), next());
-            assert_eq!(
-                surprisal(count, total),
-                reference(count, total),
-                "{count}/{total}"
-            );
-            assert_eq!(surprisal(total, total), reference(total, total), "{total}");
         }
     }
 
@@ -470,9 +344,9 @@ mod tests {
 
     #[test]
     fn the_logarithm_is_monotonic() {
-        let mut previous = log2_fixed(1);
+        let mut previous = log2(1);
         for value in 2..4_096_u64 {
-            let current = log2_fixed(value);
+            let current = log2(value);
             assert!(current > previous, "log2 fell at {value}");
             previous = current;
         }
