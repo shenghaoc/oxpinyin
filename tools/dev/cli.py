@@ -5,7 +5,7 @@ import json
 import sys
 from pathlib import Path
 
-from . import check, coverage, doctor, host, registry, slot, test_runner
+from . import check, coverage, doctor, host, pool, registry, slot, test_runner
 from .measure import cold, startup
 
 
@@ -157,6 +157,13 @@ def slot_command(args):
     return 128 - rc if rc < 0 else rc
 
 
+def pool_command(args):
+    """Run a command per item within one CPU and memory budget; see tools/dev/pool.py."""
+    if args.command[:1] == ['--']:
+        args.command = args.command[1:]
+    return pool.run_command(args)
+
+
 def build_parser():
     """Build the native service CLI with dispatch callbacks on each subcommand."""
     parser = argparse.ArgumentParser(prog='python -m tools.dev',
@@ -218,6 +225,10 @@ def build_parser():
     run.add_argument('command', nargs=argparse.REMAINDER)
     slot_sub.add_parser('status', help='show the lock directory and slot count')
     p.set_defaults(func=slot_command)
+
+    p = sub.add_parser('pool', help='run independent builds at once within one CPU and memory budget')
+    pool.add_arguments(p)
+    p.set_defaults(func=pool_command)
     return parser
 
 
