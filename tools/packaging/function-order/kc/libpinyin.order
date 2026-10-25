@@ -1,6 +1,6 @@
 oxpinyin-function-order-v1	libpinyin.so.15
 init	<&[u8] as <alloc::ffi::c_str::CString>::new::SpecNewImpl>::spec_new_impl
-init	<&str as core::fmt::Display>::fmt [instantiating crate: oxpinyin_store]
+init	<&str as core::fmt::Display>::fmt [instantiating crate: pinyin]
 init	<alloc::collections::btree::map::BTreeMap<alloc::string::String, oxpinyin_engine::config::ConfigValue>>::insert [instantiating crate: oxpinyin_facade]
 init	<alloc::collections::btree::map::BTreeMap<alloc::vec::Vec<u8>, alloc::vec::Vec<u8>> as core::iter::traits::collect::FromIterator<(alloc::vec::Vec<u8>, alloc::vec::Vec<u8>)>>::from_iter::<alloc::vec::into_iter::IntoIter<(alloc::vec::Vec<u8>, alloc::vec::Vec<u8>)>> [instantiating crate: oxpinyin_user]
 init	<alloc::collections::btree::map::BTreeMap<alloc::vec::Vec<u8>, core::option::Option<alloc::vec::Vec<u8>>>>::insert [instantiating crate: oxpinyin_user]
@@ -52,12 +52,14 @@ init	<alloc::vec::Vec<oxpinyin_data::table_info::TableRow> as core::clone::Clone
 init	<alloc::vec::Vec<oxpinyin_engine::session::RankKey> as alloc::vec::spec_from_iter::SpecFromIter<oxpinyin_engine::session::RankKey, core::iter::adapters::map::Map<alloc::vec::into_iter::IntoIter<(oxpinyin_engine::session::RankKey, u32)>, <oxpinyin_engine::session::Session<oxpinyin_runtime::RuntimeDict, oxpinyin_runtime::RuntimeLm>>::scan_window::{closure#3}>>>::from_iter [instantiating crate: pinyin]
 init	<alloc::vec::Vec<oxpinyin_engine::session::ScanKey> as alloc::vec::spec_from_elem::SpecFromElem>::from_elem::<alloc::alloc::Global>
 init	<alloc::vec::Vec<u32>>::retain::<<oxpinyin_user::replay::Merge>::finish_lazy<alloc::borrow::Cow<str>>::{closure#0}>::{closure#0}
+init	<compact_str::CompactString>::push
 init	<core::fmt::Formatter>::pad
 init	<core::fmt::Formatter>::pad_integral
 init	<core::fmt::Formatter>::pad_integral::write_prefix
-init	<core::hash::sip::Hasher<core::hash::sip::Sip13Rounds> as core::hash::Hasher>::write [instantiating crate: oxpinyin_engine]
+init	<core::hash::sip::Hasher<core::hash::sip::Sip13Rounds> as core::hash::Hasher>::write [instantiating crate: pinyin]
 init	<core::iter::adapters::filter_map::FilterMap<core::iter::adapters::filter::Filter<core::iter::adapters::zip::Zip<core::ops::range::RangeFrom<u8>, core::slice::iter::Iter<oxpinyin_data::table_info::TableRow>>, <oxpinyin_data::table_info::TableConf>::rows_of::{closure#0}>, <oxpinyin_data::user_files::UserFileLayout>::from_conf::{closure#0}> as core::iter::traits::iterator::Iterator>::next
 init	<core::iter::adapters::filter_map::FilterMap<core::iter::sources::from_fn::FromFn<oxpinyin_data::user_files::log_records::{closure#0}>, <core::result::Result<oxpinyin_data::user_files::LogRecord<&[u8]>, oxpinyin_data::user_files::LogDecodeError>>::ok> as core::iter::traits::iterator::Iterator>::next [instantiating crate: oxpinyin_user]
+init	<core::slice::iter::Iter<oxpinyin_engine::candidate::Candidate> as core::iter::traits::iterator::Iterator>::fold::<usize, core::iter::adapters::map::map_fold<&oxpinyin_engine::candidate::Candidate, usize, usize, pinyin::sentence::pinyin_guess_candidates::{closure#4}, <usize as core::iter::traits::accum::Sum>::sum<core::iter::adapters::map::Map<core::slice::iter::Iter<oxpinyin_engine::candidate::Candidate>, pinyin::sentence::pinyin_guess_candidates::{closure#4}>>::{closure#0}>::{closure#0}>
 init	<core::str::iter::SplitInternal<char>>::next [instantiating crate: oxpinyin_store]
 init	<core::str::lossy::Utf8Chunks as core::iter::traits::iterator::Iterator>::next
 init	<core::str::pattern::CharSearcher as core::str::pattern::Searcher>::next_match
@@ -77,6 +79,7 @@ init	<oxpinyin_data::lm::BigramLanguageModel>::open_with_mask
 init	<oxpinyin_data::phrase_libraries::PhraseLibraries>::load
 init	<oxpinyin_data::phrase_libraries::PhraseLibraries>::unigram_count
 init	<oxpinyin_data::phrase_library::PhraseContent>::as_slice
+init	<oxpinyin_data::phrase_library::PhraseItemView>::phrase_text
 init	<oxpinyin_data::phrase_library::PhraseLibrary>::item_at_slot
 init	<oxpinyin_data::phrase_library::PhraseLibrary>::open
 init	<oxpinyin_data::punct::PunctTable>::open_optional
@@ -149,8 +152,8 @@ init	<oxpinyin_user::store::GenericUserStore<oxpinyin_store::kyotocabinet::KcSto
 init	<phf::map::Map<&str, u16>>::get_entry::<str> [instantiating crate: oxpinyin_core]
 init	<pinyin::aux_matrix::SharedMatrix>::of_keys
 init	<std::fs::OpenOptions>::_open
-init	<std::hash::random::RandomState as core::hash::BuildHasher>::hash_one::<&alloc::string::String> [instantiating crate: pinyin]
-init	<std::hash::random::RandomState as core::hash::BuildHasher>::hash_one::<&u32> [instantiating crate: oxpinyin_engine]
+init	<std::hash::random::RandomState as core::hash::BuildHasher>::hash_one::<&&oxpinyin_core::ucs4::PhraseText> [instantiating crate: oxpinyin_engine]
+init	<std::hash::random::RandomState as core::hash::BuildHasher>::hash_one::<&u32> [instantiating crate: pinyin]
 init	<std::path::Path>::_join
 init	<std::path::Path>::is_file
 init	<std::path::Path>::join::<alloc::string::String> [instantiating crate: oxpinyin_runtime]
@@ -220,6 +223,7 @@ init	core::ptr::drop_glue::<alloc::collections::btree::map::BTreeMap<u8, alloc::
 init	core::ptr::drop_glue::<alloc::collections::btree::map::IntoIter<alloc::string::String, alloc::collections::btree::map::BTreeMap<alloc::vec::Vec<u8>, core::option::Option<alloc::vec::Vec<u8>>>>> [instantiating crate: oxpinyin_runtime]
 init	core::ptr::drop_glue::<alloc::vec::Vec<(u32, oxpinyin_data::chunk_write::ChunkItem)>>
 init	core::ptr::drop_glue::<alloc::vec::Vec<alloc::vec::Vec<oxpinyin_engine::session::ScanKey>>>
+init	core::ptr::drop_glue::<alloc::vec::drain::Drain<oxpinyin_core::vocab::PhraseEntry>> [instantiating crate: pinyin]
 init	core::ptr::drop_glue::<alloc::vec::into_iter::IntoIter<oxpinyin_user::phrase::UserPhrase>>
 init	core::ptr::drop_glue::<core::result::Result<core::option::Option<usize>, oxpinyin_engine::error::EngineError>> [instantiating crate: pinyin]
 init	core::ptr::drop_glue::<oxpinyin_data::table_info::TableRow>
@@ -314,6 +318,7 @@ steady	_ZN12_GLOBAL__N_17Visitor11visit_emptyEPKcmPm
 steady	_ZN12kyotocabinet2DB7Visitor11visit_emptyEPKcmPm
 steady	_ZN12kyotocabinet7PlantDBINS_6HashDBELh49EE9set_errorEPKciS4_NS_7BasicDB5Error4CodeES4_
 steady	_ZNK12kyotocabinet7PlantDBINS_6HashDBELh49EE5errorEv
+steady	core::ptr::drop_glue::<oxpinyin_engine::candidate::Candidate>
 steady	core::slice::sort::shared::pivot::median3_rec::<oxpinyin_engine::candidate::Candidate, <[oxpinyin_engine::candidate::Candidate]>::sort_by_key<u32, oxpinyin_engine::session::order_window_tail::{closure#0}>::{closure#0}>
 steady	core::slice::sort::shared::smallsort::insertion_sort_shift_left::<oxpinyin_engine::candidate::Candidate, <[oxpinyin_engine::candidate::Candidate]>::sort_by_key<u32, oxpinyin_engine::session::order_window_tail::{closure#0}>::{closure#0}>
 steady	core::slice::sort::stable::quicksort::quicksort::<oxpinyin_engine::candidate::Candidate, <[oxpinyin_engine::candidate::Candidate]>::sort_by_key<u32, oxpinyin_engine::session::order_window_tail::{closure#0}>::{closure#0}>
