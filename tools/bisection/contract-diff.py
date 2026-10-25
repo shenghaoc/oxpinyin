@@ -3560,6 +3560,38 @@ def predicted_bigram_row_context(k, phrase, successor, count=20):
 # pinyin.cpp:2507 abort were verified there. _craft_hash now supports kc and
 # tkrzw too, but this case's row selection has not been verified on them;
 # their exclusion is a coverage limit, not an unreadable fixture format.
+# #1231 follow-up: the pin's `is_user_candidate` rejects every predicted row
+# before it reads the token library (`pinyin.cpp:3712-3715`), so a predicted
+# bigram whose successor token lives in USER_DICTIONARY still answers false.
+# Import the successor into library 7, plant the user bigram through the
+# existing builder, then query the predicted-bigram row. The parent build
+# answered true because it tested only the token nibble.
+@case('predicted-bigram-is-user-candidate', issues=('1231',))
+def _(k):
+    """Import 龘龘 into library 7, predict it as a bigram successor, and query user status."""
+    ctx = k.init()
+    assert ctx, 'the import context failed'
+    iterator = k.fn('begin_add_phrases', P, P, U)(ctx, 7)
+    assert iterator
+    added = k.fn('iterator_add_phrase', B, P, S, S, I)(
+        iterator, '龘龘'.encode(), "da2'da2".encode(), 5)
+    k.fn('end_add_phrases', None, P)(iterator)
+    assert added, 'the user successor did not import'
+    assert k.fn('save', B, P)(ctx), 'the user successor did not save'
+    k.fn('fini', None, P)(ctx)
+    ctx = predicted_bigram_row_context(k, '我', '龘龘')
+    inst = k.fn('alloc_instance', P, P)(ctx)
+    k.fn('guess_predicted_candidates_with_punctuations', B, P, S)(inst, '我'.encode())
+    row = row_of(k, inst, 4)
+    assert row, 'the planted gram listed no predicted-bigram row'
+    kind, text = I(), S()
+    typed = k.fn('get_candidate_type', B, P, P, C.POINTER(I))(inst, row, C.byref(kind))
+    rendered = k.fn('get_candidate_string', B, P, P, C.POINTER(S))(inst, row, C.byref(text))
+    return {'type': [typed, kind.value],
+            'text': [rendered, None if text.value is None else text.value.decode('utf-8', 'replace')],
+            'is-user': k.fn('is_user_candidate', B, P, P)(inst, row)}
+
+
 @case('abort-choose-candidate-predicted-bigram-row', abort=0, cells=('bdb',))
 def _(k):
     """Plant 我-to-你好 predictions and pass a kind-4 row to ordinary candidate selection.
@@ -11405,6 +11437,123 @@ for _mode in ('pinyin', 'zhuyin'):
 case('removed-candidate-before-cursor-zhuyin', mode='zhuyin', stderr=True, crash={
     'removed': [False, 0, None], 'exact-guessed': True, 'exact-candidates-ret': True,
 }, issues=('row:102',))(lambda k: _removed_candidate(k, before=True))
+
+
+# #1231: a system journal REMOVE leaves the phrase-table token, and the
+# prediction walk (`_compute_predicted_prefix_candidates`) reads its item
+# without checking the result (`pinyin.cpp:2389-2405` at 074a2219). The
+# loop-wide `PhraseItem` keeps the previous success's length, so a missing
+# token can pass or be skipped; an appended one carries a NULL phrase
+# string. With a sole row both dedup comparisons are skipped and the NULL
+# survives; with two or more rows `strcmp` reads it (row 106's class (b)).
+# The fixture removes one merged.bin phrase whose prefix is a stored phrase
+# and observes the plain prediction API. The stale case uses the reference
+# cell's byte-lexical cursor order: a library-one long phrase is read first,
+# raises the stale length past the bound, and the missing merged phrase is
+# skipped without ever being appended. Other cells' hash order can put the
+# missing row first, so those three cases are bdb only.
+def _removed_predict_setup(k, phrase):
+    """Remove one merged.bin phrase named by its rendered text and reopen.
+
+    Find the slot whose item text is phrase, close the cached context and
+    instance, write a REMOVE log for that token and reopen lazily. Return the
+    removed token. The phrase table keeps the token."""
+    total, items, _offsets = _system_items(k, 'merged.bin')
+    slot = next(slot for slot, item in items.items() if _item_text(item) == phrase)
+    token = 0x04000000 | slot
+    k.fn('free_instance', None, P)(k.inst)
+    k.fn('fini', None, P)(k.ctx)
+    k._ctx = k._inst = None
+    _write_user_conf(k)
+    _write_log(k, _modify_header(0, total, total) +
+               _log_record(_LOG_REMOVE, token, old=items[slot]), 'merged.dbin')
+    return token
+
+
+def _predicted_surface(k, inst, prefix):
+    """Call the plain prediction API and return its flag, count and rows.
+
+    Each row records every getter's flag, the type, and the string with NULL
+    kept distinct from an empty string. Return the candidate pointers too, for
+    the choose case; they are instance-borrowed and not part of the result."""
+    ret = k.fn('guess_predicted_candidates', B, P, S)(inst, prefix.encode())
+    count = U()
+    got = k.fn('get_n_candidate', B, P, C.POINTER(U))(inst, C.byref(count))
+    rows = []
+    pointers = []
+    for index in range(count.value):
+        cand, kind, string = P(), I(), S()
+        fetched = k.fn('get_candidate', B, P, U, C.POINTER(P))(inst, index, C.byref(cand))
+        typed = k.fn('get_candidate_type', B, P, P, C.POINTER(I))(inst, cand, C.byref(kind))
+        rendered = k.fn('get_candidate_string', B, P, P, C.POINTER(S))(inst, cand, C.byref(string))
+        text = None if string.value is None else string.value.decode('utf-8', 'replace')
+        rows.append([fetched, typed, kind.value, rendered, text])
+        pointers.append(cand)
+    return {'ret': ret, 'get-count': got, 'count': count.value, 'rows': rows}, pointers
+
+
+def _predicted_sole(k):
+    """Remove 不仅仅是 and predict from 不仅仅: the sole pre-dedup row.
+
+    Record the sole row's getters, user status, and the token's failed phrase
+    read with both outputs left unchanged."""
+    token = _removed_predict_setup(k, '不仅仅是')
+    inst = k.inst
+    surface, pointers = _predicted_surface(k, inst, '不仅仅')
+    length, text = U(UNTOUCHED), P(UNTOUCHED)
+    phrase_ret = k.fn('token_get_phrase', B, P, U, C.POINTER(U), C.POINTER(P))(
+        inst, token, C.byref(length), C.byref(text))
+    out = {'predicted': surface,
+           'token-phrase': [phrase_ret, length.value == UNTOUCHED,
+                            text.value == UNTOUCHED],
+           'is-user': k.fn('is_user_candidate', B, P, P)(inst, pointers[0]) if pointers else None}
+    return out
+
+
+def _predicted_choose(k):
+    """Choose the sole missing row, then read the token's frequency.
+
+    The pin advances the loaded facade total by 483 and leaves the missing
+    item unwritten; the later unigram read still fails with its seeded output
+    unchanged. (The facade total has no C getter; the runtime's own
+    amplified-total assertion covers that side effect.)"""
+    token = _removed_predict_setup(k, '不仅仅是')
+    inst = k.inst
+    surface, pointers = _predicted_surface(k, inst, '不仅仅')
+    before = unigram_of(k, token)
+    chosen = k.fn('choose_predicted_candidate', B, P, P)(inst, pointers[0]) if pointers else None
+    after = unigram_of(k, token)
+    return {'predicted': surface, 'choose': chosen,
+            'unigram-before': before, 'unigram-after': after}
+
+
+def _predicted_class_b(k):
+    """Remove 这样一个 and predict from 这样一: the missing row and a live row.
+
+    The pin reaches the NULL phrase string in dedup (SIGSEGV); the subject
+    drops the missing row and keeps the live prefix candidate."""
+    _removed_predict_setup(k, '这样一个')
+    surface, _pointers = _predicted_surface(k, k.inst, '这样一')
+    return {'ret': surface['ret'], 'count': surface['count'], 'rows': surface['rows']}
+
+
+def _predicted_stale_skip(k):
+    """Remove 明显的 and predict from 明显 in reference-cell cursor order.
+
+    gb_char's 明显的句法线索 (length 7) is read first and is skipped by the
+    bound; the failed 明显的 read keeps that length, so it is skipped too.
+    The subject drops both; the parent would keep the fallback text."""
+    _removed_predict_setup(k, '明显的')
+    surface, _pointers = _predicted_surface(k, k.inst, '明显')
+    return {'ret': surface['ret'], 'count': surface['count'], 'rows': surface['rows']}
+
+
+case('removed-predict-sole-pinyin', stderr=True, issues=('1231',))(_predicted_sole)
+case('removed-predict-choose-pinyin', stderr=True, issues=('1231',))(_predicted_choose)
+case('removed-predict-class-b-pinyin', stderr=True, crash={'ret': True, 'count': 1},
+     issues=('1231',))(_predicted_class_b)
+case('removed-predict-stale-skip-pinyin', stderr=True, cells=('bdb',),
+     issues=('1231',))(_predicted_stale_skip)
 
 
 # Batch F (#525): `zhuyin.cpp`'s phrase-table walk in `_add_phrase`. A token
