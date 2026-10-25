@@ -20,8 +20,9 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use oxpinyin_kmm::printf_f;
 use oxpinyin_training::counter::count_ngseg;
-use oxpinyin_training::lambda::{count_deleted, estimate_lambda};
+use oxpinyin_training::lambda::{LambdaError, count_deleted, estimate_lambda, mean_of_no_contexts};
 use oxpinyin_training::segment::PhraseLexicon;
 use oxpinyin_training::segment::tool_cli::{self, ToolAction, ToolArgs};
 
@@ -65,7 +66,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     };
     let deleted = count_deleted(&lexicon, &deleted_text, train_pi_gram)?;
 
-    let lambda = estimate_lambda(&system, &deleted)?;
+    let lambda = match estimate_lambda(&system, &deleted) {
+        Ok(lambda) => lambda,
+        // No held-out context: the pin prints no `token:` line, then the NaN
+        // of `0.0 / 0` as `%f`, and exits 0 (`estimate_interpolation.cpp:139`).
+        Err(LambdaError::EmptyDeleted) => {
+            println!("average lambda:{}", printf_f(mean_of_no_contexts()));
+            return Ok(());
+        }
+        Err(error) => return Err(error.into()),
+    };
 
     // `estimate_interpolation.cpp:129` / `:139` stdout shape.
     for (prev, value) in &lambda.per_context {

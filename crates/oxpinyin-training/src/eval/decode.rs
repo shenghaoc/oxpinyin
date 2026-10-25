@@ -77,7 +77,13 @@ impl EvalReport {
     /// The `correction rate:%f` line `evaluate.py` parses.
     #[must_use]
     pub fn correction_rate_line(&self) -> String {
-        format!("correction rate:{:.6}", self.rate)
+        // `passed_count / (parameter_t) tested_count` printed with `%f`
+        // (`eval_correction_rate.cpp:201-203`): with no test it is `0.0 / 0.0`,
+        // a NaN the tool prints as `-nan` (x86-64) or `nan` (AArch64). The
+        // division runs on the machine as the C one does. `rate` stays 0 for
+        // the pipeline's scoring.
+        let rate = self.passed as f64 / self.tested as f64;
+        format!("correction rate:{}", oxpinyin_kmm::printf_f(rate))
     }
 }
 
@@ -515,6 +521,27 @@ mod tests {
     // The full decode is exercised by the crate's integration tests (the
     // hand-computable homophone fixture) and the live pin gate; here we pin
     // the corpus parser and the error paths.
+
+    #[test]
+    fn the_correction_rate_line_is_printf_f_of_passed_over_tested() {
+        let report = super::EvalReport {
+            tested: 4,
+            passed: 3,
+            ..super::EvalReport::default()
+        };
+        assert_eq!(report.correction_rate_line(), "correction rate:0.750000");
+        // No test: `0.0 / 0.0` prints as glibc's `%f` prints a NaN.
+        let none = super::EvalReport::default();
+        let line = none.correction_rate_line();
+        assert!(line.starts_with("correction rate:"), "{line}");
+        assert_eq!(
+            line.trim_start_matches("correction rate:")
+                .trim_start_matches('-'),
+            "nan"
+        );
+        #[cfg(target_arch = "x86_64")]
+        assert_eq!(line, "correction rate:-nan");
+    }
 
     #[test]
     fn corpus_tokens_read_as_glibc_atoi() {
