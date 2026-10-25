@@ -77,8 +77,11 @@ pull=1
 inside=0
 python_only=0
 oracle_options=0
-proxy_ca=${OXPINYIN_PROXY_CA:-/root/.ccr/ca-bundle.crt}
-proxy_ca_single=/root/.ccr/agent-proxy-ca.crt
+# OXPINYIN_CCR_DIR and OXPINYIN_SYSTEM_CA_BUNDLES (colon-separated) only let
+# env.test.sh move the session's CA directory and the system bundle search.
+ccr_dir=${OXPINYIN_CCR_DIR:-/root/.ccr}
+proxy_ca=${OXPINYIN_PROXY_CA:-$ccr_dir/ca-bundle.crt}
+proxy_ca_single=$ccr_dir/agent-proxy-ca.crt
 # Minimums this script provisions to (see the header). Keep them equal to
 # tools/dev/doctor.py; doctor.test.py compares the two.
 uv_minimum=0.13.1
@@ -402,6 +405,41 @@ if ((python_only)); then
 	exit 0
 fi
 
+# ---- 0. the proxy CA ----------------------------------------------------
+
+# An ordinary proxy needs no custom CA. A TLS-intercepting one does, and
+# containers do not inherit the host's trust, so the CA is chosen here, before
+# any download or build: an explicit OXPINYIN_PROXY_CA, else the session's
+# bundle, else (proxy set) the CA the host already trusts, else a failure that
+# names OXPINYIN_PROXY_CA. Verification is never disabled.
+proxy=${HTTPS_PROXY:-${https_proxy:-}}
+custom_ca=0
+if [[ -n ${OXPINYIN_PROXY_CA:-} ]]; then
+	[[ -s $proxy_ca ]] || die "OXPINYIN_PROXY_CA bundle is missing: $proxy_ca"
+	custom_ca=1
+	log "proxy CA: $proxy_ca (OXPINYIN_PROXY_CA)"
+elif [[ -s $proxy_ca ]]; then
+	custom_ca=1
+	log "proxy CA: $proxy_ca (session bundle)"
+elif [[ -n $proxy ]] && ((!inside)); then
+	IFS=: read -r -a system_bundles <<<"${OXPINYIN_SYSTEM_CA_BUNDLES-/etc/ssl/certs/ca-certificates.crt:/etc/pki/tls/certs/ca-bundle.crt:/etc/ssl/cert.pem}"
+	labels=(SSL_CERT_FILE CURL_CA_BUNDLE)
+	paths=("${SSL_CERT_FILE:-}" "${CURL_CA_BUNDLE:-}")
+	for bundle in "${system_bundles[@]}"; do
+		labels+=("the system bundle")
+		paths+=("$bundle")
+	done
+	for i in "${!paths[@]}"; do
+		if [[ -n ${paths[i]} && -s ${paths[i]} ]]; then
+			proxy_ca=${paths[i]}
+			custom_ca=1
+			log "proxy CA: HTTPS_PROXY is set and $ccr_dir/ca-bundle.crt is absent; using the host-trusted ${labels[i]}: $proxy_ca"
+			break
+		fi
+	done
+	((custom_ca)) || die "HTTPS_PROXY is set but there is no proxy CA bundle: $ccr_dir/ca-bundle.crt is absent and the host trusts none (SSL_CERT_FILE, CURL_CA_BUNDLE, system bundle); set OXPINYIN_PROXY_CA to the proxy's CA bundle"
+fi
+
 # retry CMD...: registries answer 429 to anonymous pulls from a shared
 # egress address; back off 2, 4, 8, 16 s before giving up.
 retry() {
@@ -449,15 +487,6 @@ deps_image=oxpinyin-oracle-deps:$(
 		"$repo/tools/oracle/version-manifest.json" "$repo/tools/tkrzw/distro-probe.sh" \
 		"$pin" | sha256sum | cut -c1-12
 )
-
-proxy=${HTTPS_PROXY:-${https_proxy:-}}
-# An ordinary proxy needs no custom CA. Claude trust handling is opt-in by
-# an existing session file or an explicit OXPINYIN_PROXY_CA path.
-if [[ -n ${OXPINYIN_PROXY_CA:-} && ! -s $proxy_ca ]]; then
-	die "OXPINYIN_PROXY_CA bundle is missing: $proxy_ca"
-fi
-custom_ca=0
-[[ -s $proxy_ca ]] && custom_ca=1
 
 if ((!inside)); then
 	# shellcheck source=../container/runtime.sh
