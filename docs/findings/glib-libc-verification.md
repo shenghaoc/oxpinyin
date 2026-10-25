@@ -889,41 +889,73 @@ files use absolute paths rather than repository paths.
 | Failed rename, including a directory at the final name | `src/pinyin.cpp:1059-1129`; `src/zhuyin.cpp:609-638,655-690` | Retain failed staging and destination; attempt later files, print `rename ... to ... failed.` without errno text, then marker and dirty reset. `save_reporting` collects failures; `facade::ContextCore::save_user_with_layout_faults` prints them after persistence returns; interleaving with backend diagnostics remains an ordering follow-up. Native tests block every destination and assert ordered failures and sentinel preservation; contract cases cover chunk and all three DBM finals on both facades. |
 | Marker after attempted renames | `src/pinyin.cpp:220-232,1141-1146`; `src/zhuyin.cpp:164-176,695-698`; `src/storage/table_info.cpp:377-396` | In-place `user.conf` rewrite, not a `.tmp` commit record. Pinyin retains its context counter; zhuyin writes fresh counter zero. Open failure prints `write ... failed.`; caller still clears dirty and returns true. fprintf/fclose failures are unchecked upstream. Subject `write_marker` uses `std::fs::write`; write-error diagnostic equivalence after a successful open remains unverified. Parsing is #920. |
 | Fini with or without save | `src/pinyin.cpp:1194-1200`; `src/zhuyin.cpp:741-757` | Neither saves dirty dictionaries. Pinyin lowers counter (`>1 ? counter-1 : 0`) and writes marker; zhuyin only releases state. `FiniGuard`/`persistence::fini` follow this. Native and contract round trips include loss of an intentionally unsaved suffix, not loss of committed data. |
-| Restart after interruption | `src/pinyin.cpp:173-217,922-1146`; `src/zhuyin.cpp:126-162,547-698`; `src/storage/table_info.cpp:399-412` | Load finals, never replay `.tmp`; conformance/counter can trigger cleanup. No multi-file atomicity: pinyin before rename retains old finals; either facade during renames can leave mixed generations, zhuyin even before all staging completes. Native children exit without unwinding before library 2, 3 or 4, verify the complete earlier-log staging prefix (pinyin) or already-renamed prefix (zhuyin), and verify every system-library reload delta. No power-cut durability claim. |
-| Same-backend bytes and no data loss on valid completed saves | `src/pinyin.cpp:963-1018`; `src/zhuyin.cpp:596-685`; DBM writers cited above | Mandatory: encoded chunk/diff content, indexed records, bigram values and reload results. Native round trips also compare every data file byte-for-byte before fini and after conforming reopen (excluding only the lifecycle marker). This proves the subject preserves its own saved bytes across reopen, not physical-file identity between pin and subject; full cross-implementation backend-specific byte comparison and crash-order coverage remain open. Do not mask an unexplained byte difference as a filesystem quirk. |
-| GLib/platform boundary and errno wording | Call sites `src/pinyin.cpp:1059-1124`, `src/zhuyin.cpp:609-690`, `src/include/memory_chunk.h:555`; GLib tag `2.89.4`, `glib/gstdio.h:60-82`, `glib/gstdio.c:99-140,1169-1208,1706-1722` | Source trace completed below for Unix macro selection and Windows wrapper behavior. Rename diagnostics at these callers contain no errno text; syscall/backend diagnostic equivalence and non-Linux execution remain open. No new platform exception is admitted. |
+| Restart after interruption | `src/pinyin.cpp:173-217,922-1146`; `src/zhuyin.cpp:126-162,547-698`; `src/storage/table_info.cpp:399-412` | Load finals, never replay `.tmp`; conformance/counter can trigger cleanup. No multi-file atomicity: pinyin before rename retains old finals; either facade during renames can leave mixed generations, zhuyin even before all staging completes. Native children cover the earlier-log prefix and the later addon/network chunk prefix. Seven C-facade cases cover save marker-open, after save, after fini, and pinyin fini marker-open; all completed data survives restart. Individual DBM/rename interiors remain open. No power-cut durability claim. |
+| Same-backend bytes and no data loss on valid completed saves | `src/pinyin.cpp:963-1018`; `src/zhuyin.cpp:596-685`; DBM writers cited above | Mandatory: encoded chunk/diff content, indexed records, bigram values and reload results. Native round trips also compare every data file byte-for-byte before fini and after conforming reopen (excluding only the lifecycle marker). An authorized pin-only repeat control demonstrates variable BDB file IDs and unused-page residue, not changed records. Two replacement C-facade logical cases compare every key/value byte and reciprocal cross-open/re-save results. Detailed classification is below; interior crash-order coverage remains open. Do not mask an unexplained byte difference as a filesystem quirk. |
+| GLib/platform boundary and errno wording | Call sites `src/pinyin.cpp:1059-1124`, `src/zhuyin.cpp:609-690`, `src/include/memory_chunk.h:555`; GLib tag `2.84.4`, `glib/gstdio.h:60-84`, `glib/gstdio.c:99-140,1157-1198,1684-1702`; glibc tag `glibc-2.41`, `sysdeps/unix/sysv/linux/rename.c:25-35`, `sysdeps/unix/sysv/linux/fsync.c:24-28` | Source trace completed below for Unix macro selection, Windows wrapper behavior and the Linux libc `rename`/`fsync` wrappers. Rename diagnostics at these callers contain no errno text; syscall/backend diagnostic equivalence and non-Linux execution remain open. No new platform exception is admitted. |
 
-Source follow-through (2026-10-25 UTC): GLib tag
-[`2.89.4`](https://github.com/GNOME/glib/tree/2.89.4), commit
-`fa41d356ee4936264c45cf11fa6c2640a89fbdda`, read through the authorized GitHub
-mirror, not by executing the pin. The reference image installs Debian
-`libglib2.0-dev` **2.89.4-2**; its `glib/gstdio.h` is byte-identical to the tag.
-The installed `/usr/share/doc/libglib2.0-0t64/changelog.Debian.gz` entries for 2.89.4-2 and -1 say respectively
-“no source changes” and new upstream release/drop incorporated patches
-(uncompressed lines 1–13). This verifies the reference header
-selection; it is not a claim that every Debian patch was examined. Windows
-branches below are the upstream tag's source, not a tested Debian Windows
-build. Host 2.84.4 headers were not substituted.
+Source follow-through, re-derived 2026-10-25 UTC against the trixie reference
+(#1229): GLib tag [`2.84.4`](https://github.com/GNOME/glib/tree/2.84.4), commit
+`41eca60845d3fc309af361f5e7f801ba339099aa`, the upstream version of trixie's
+`libglib2.0-0t64` **2.84.4-3~deb13u5** (`tools/oracle/version-manifest.json`),
+read through the authorized GitHub mirror, not by executing the pin. The
+trixie source package `glib2.0_2.84.4-3~deb13u5` (snapshot.debian.org; archives
+checked against the `.dsc` SHA-256 entries) carries `glib/gstdio.c` and
+`glib/gstdio.h` byte-identical to the tag, and no patch in its
+`debian/patches` modifies either file; two patches only show
+`#include <glib/gstdio.h>` as context. The trixie `libgio-2.0-dev`
+2.84.4-3~deb13u5 amd64 package, which ships the GLib headers, installs
+`/usr/include/glib-2.0/glib/gstdio.h` byte-identical to the tag and defines
+`G_OS_UNIX` at `/usr/lib/x86_64-linux-gnu/glib-2.0/include/glibconfig.h:120`.
+Windows branches below are the upstream tag's source, not a tested Debian
+Windows build.
 
-| GLib source path at tag 2.89.4 | Source-derived result and scope |
+History: the first trace read tag `2.89.4`, commit
+`fa41d356ee4936264c45cf11fa6c2640a89fbdda`, against `libglib2.0-dev`
+**2.89.4-2**, the earlier testing reference, whose `glibconfig.h:118` defined
+`G_OS_UNIX`. The 2.84.4 re-read confirms every conclusion in the table below;
+only line numbers changed.
+
+| GLib source path at tag 2.84.4 | Source-derived result and scope |
 | --- | --- |
-| `glib/gstdio.h:60-82`; reference `/usr/lib/x86_64-linux-gnu/glib-2.0/include/glibconfig.h:118` | Ordinary Unix callers get macros: `g_rename` is `rename`, `g_fsync` is `fsync`. Both pinned Linux facade DSOs import the libc symbols, not `g_rename`/`g_fsync`. The pin's chunk call has no GLib EINTR retry or full-sync upgrade. |
-| `glib/gstdio.c:26,1169-1208` | GLib enables its own wrapper definitions internally. The non-Windows rename wrapper simply calls `rename`; the Windows wrapper converts both filenames to UTF-16, refuses failed conversion with EINVAL, and calls `MoveFileExW` with `MOVEFILE_REPLACE_EXISTING`. Replacement of an existing final is a required save effect, not a dispensable C-runtime quirk. Filename conversion policy remains #922. |
-| `glib/gstdio.c:99-140,1193-1205` | Windows failure maps `GetLastError` to errno: sharing/access denial to EACCES, existing destination to EEXIST, missing path/file to ENOENT, cross-device to EXDEV, default to EIO. Success sets errno to zero. These are integer mappings, not formatted messages. Pin rename callers test only zero/nonzero and emit the fixed path diagnostic (`src/pinyin.cpp:1059-1124`, `src/zhuyin.cpp:609-690`); they do not call strerror or format errno. Backend-generated diagnostics remain separate open coverage. No Windows errno-text exception is needed for these caller messages. |
-| `glib/gstdio.c:1706-1722` | The callable wrapper uses `_commit` on Windows. Its Unix implementation uses `F_FULLFSYNC` when configured, otherwise fsync, and retries EINTR; without either facility it returns zero. **These Unix wrapper branches are not the reference pin's macro-expanded call.** The Unix header also prevents attributing the wrapper's macOS stronger-sync branch to ordinary pin callers. #1221 owns the proposed natural Rust sync and its documented macOS stronger-sync consideration. |
+| `glib/gstdio.h:60-84` (`g_rename` at :75, `g_fsync` at :82); reference `/usr/lib/x86_64-linux-gnu/glib-2.0/include/glibconfig.h:120` | Ordinary Unix callers get macros: `g_rename` is `rename`, `g_fsync` is `fsync`. The pin's chunk call has no GLib EINTR retry or full-sync upgrade. The pinned Linux facade DSOs built against the earlier testing reference import the libc symbols, not `g_rename`/`g_fsync`; with the trixie header byte-identical, the same expansion follows from source, and the import tables of the trixie-built DSOs were not re-read in this pass. |
+| `glib/gstdio.c:26,1157-1198` | GLib enables its own wrapper definitions internally. The non-Windows rename wrapper simply calls `rename` (:1196); the Windows wrapper (:1161-1194) converts both filenames to UTF-16, refuses failed conversion with EINVAL, and calls `MoveFileExW` with `MOVEFILE_REPLACE_EXISTING` (:1182). Replacement of an existing final is a required save effect, not a dispensable C-runtime quirk. Filename conversion policy remains #922. |
+| `glib/gstdio.c:99-140,1182-1194` | Windows failure maps `GetLastError` to errno: sharing/access denial to EACCES, existing destination to EEXIST, missing path/file to ENOENT, cross-device to EXDEV, default to EIO; the map also covers handle, parameter and memory errors. Success sets errno to zero. These are integer mappings, not formatted messages. Pin rename callers test only zero/nonzero and emit the fixed path diagnostic (`src/pinyin.cpp:1059-1124`, `src/zhuyin.cpp:609-690`); they do not call strerror or format errno. Backend-generated diagnostics remain separate open coverage. No Windows errno-text exception is needed for these caller messages. |
+| `glib/gstdio.c:1684-1702` | The callable wrapper uses `_commit` on Windows (:1688). Its Unix implementation uses `F_FULLFSYNC` when configured, otherwise fsync, and retries EINTR (:1689-1698); without either facility it returns zero (:1700). **These Unix wrapper branches are not the reference pin's macro-expanded call.** The Unix header also prevents attributing the wrapper's macOS stronger-sync branch to ordinary pin callers. #1221 owns the proposed natural Rust sync and its documented macOS stronger-sync consideration. |
 | Pin `src/include/memory_chunk.h:549-557`, `src/pinyin.cpp:971,988`, `src/zhuyin.cpp:607,633` | After a complete payload write, invoke sync, ignore its result, close, ignore that result, return true. Callers ignore the chunk save return and continue according to each facade's ordering. The missing subject sync is a real open implementation issue (#1221), not excused by the ignored result. |
 
-The reference libc remains Debian **2.43-3**. Its installed changelog lists
-stable-branch updates in `debian/patches/git-updates.diff` (`/usr/share/doc/libc6/changelog.Debian.gz`, uncompressed lines 1–34), so an
-upstream release alone would not establish all Debian behavior. The authorized
-`bminor/glibc` mirror did not advertise `refs/tags/glibc-2.43` (exact-tag fetch
-reported no such ref); neither the host nor reference deps image has deb-src
-configured. Exact libc implementation/patch inspection therefore remains an
-**open source gap**, not a download blocker or an equivalence claim based on a
-nearby tag. G10's fixed rename message and ignored sync result are settled by
-the pin/GLib call sites above without importing a libc error-string rule.
-Platform syscall behavior, backend error strings, Windows/macOS execution and
-full Debian patch verification remain open. No TLS/network settings changed.
+The reference libc is trixie's `libc6` **2.41-12+deb13u4**
+(`tools/oracle/version-manifest.json`). Source read at the authorized
+`bminor/glibc` tag `glibc-2.41`, commit
+`74f59e9271cbb4071671e5a474e7d4f1622b186f`. The trixie source package
+`glibc_2.41-12+deb13u4` (snapshot.debian.org; archives checked against the
+`.dsc` SHA-256 entries) has an orig tarball whose copies of every file cited
+below are byte-identical to the tag. Of its 81 patches, only the stable-branch
+`debian/patches/git-updates.diff` touches one of them: in
+`nptl/cancellation.c` it widens `__syscall_cancel`'s local `r` from `int` to
+`long int`, which does not change `fsync`'s 0 or −1 result. The same patch
+narrows the SIGCANCEL handler's asynchronous-cancellation test in
+`nptl/pthread_cancel.c`, which matters only to a thread being cancelled.
+Linux x86_64:
+
+| glibc source at tag `glibc-2.41` | Source-derived result |
+| --- | --- |
+| `sysdeps/unix/sysv/linux/rename.c:25-35`; `sysdeps/unix/sysv/linux/x86_64/64/arch-syscall.h:253`; `sysdeps/unix/make-syscalls.sh:45-70`; `sysdeps/unix/syscalls.list:55`; `sysdeps/unix/sysv/linux/sysdep.h:42-48` | `rename` is a C wrapper. x86_64 defines `__NR_rename` (82), so it issues `INLINE_SYSCALL_CALL (rename, old, new)` (:29), not `renameat` or `renameat2`. The generic `syscalls.list` template entry is dropped because the higher-priority Linux directory supplies `rename.c`. `INLINE_SYSCALL` returns the kernel result, or −1 with `errno` set to the negated result. There is no EINTR retry, and `rename` is not a cancellation point. |
+| `sysdeps/unix/sysv/linux/fsync.c:24-28`; `sysdeps/unix/sysdep.h:202-206,243-253`; `nptl/cancellation.c:25-80` | `fsync` is `SYSCALL_CANCEL (fsync, fd)`, which in libc (not rtld) calls `__syscall_cancel`, so `fsync` is a cancellation point. In a single-threaded process, or with cancellation disabled or exiting, the syscall is issued directly (:37-45); otherwise it goes through `__syscall_cancel_arch`, and the thread is cancelled only when the syscall returns EINTR with cancellation enabled and pending (:52-61). Failure returns −1 with `errno` set (:69-80). EINTR is never retried. |
+
+Consequence for G10: on the reference, neither GLib's macro (`g_fsync` is
+`fsync`) nor libc retries an interrupted `fsync`, and `rename` is one syscall
+with no retry. The pin ignores the sync result (`src/include/memory_chunk.h:555`),
+so an EINTR or other sync failure is silent at the pin, and its rename callers
+print a fixed message without libc error text. This closes the libc source gap
+that the earlier reading left open. It changes no conclusion above, and admits
+no libc error-string rule. Kernel and filesystem semantics beneath these
+wrappers, backend error strings and Windows/macOS execution remain open.
+
+History: the earlier testing reference installed Debian libc **2.43-3**, whose
+changelog lists stable-branch updates in `debian/patches/git-updates.diff`. The
+`bminor/glibc` mirror did not advertise `refs/tags/glibc-2.43`, and no deb-src
+was configured, so that reading recorded exact libc inspection as an open
+source gap rather than borrowing a nearby tag. No TLS/network settings changed.
 
 Coverage limits (all native tests below run both facade laws):
 
@@ -931,8 +963,8 @@ Coverage limits (all native tests below run both facade laws):
 | --- | --- | --- |
 | Failed rename | `failed_renames_report_exact_order_and_preserve_destinations`: blocks every final with a sentinel-bearing directory; checks ordered failures, retained `.tmp`, marker success and clean retry. Eight `save-929-rename-*` cases cover four individual final roles through both C facades. | Error combinations with backend diagnostics and interruption at each individual rename remain unverified; ordered error lists do not establish all syscall/diagnostic interleavings. |
 | Failed sync | `sync_rejecting_chunk_target_does_not_stop_later_files` and two `save-929-sync-rejecting-*` cases use a chunk staging symlink to `/dev/null`, verify the target rejects sync, then verify save continuation. | The subject issues no chunk sync, so these are outward-result tests, not injection into an actual subject sync. Successful sync issuance, EIO/ENOSPC/EINTR, backend sync/close failures and power-loss durability remain untested. The implementation and any sync test seam are follow-up #1221, after #1190; `crates/oxpinyin-user/src/persistence.rs` remains outside this lane's edit authorization. |
-| Interrupted save | `interrupted_save_preserves_the_facade_specific_committed_prefix`: child process exits with code 73 without unwinding before library 2, 3 and 4; parent waits for completion, checks every earlier log and every reloaded library delta. | No C-facade interrupted-save case; no interruption at user-chunk, index/bigram or individual rename boundaries; no power-cut test. The existing public baseline callback exposes system-library boundaries only. Additional instrumentation is needed for those missing boundaries; no new driver or persistence hook was added. |
-| Save/reload | `save_reload_keeps_bigrams_and_unsaved_changes_do_not_replace_them`: saved count 37 survives an unsaved overwrite to 91; two reopens retain all data-file bytes. Two `save-929-reload-*` cases compare imported phrase tokens and normalized file content across saved/unsaved suffixes. | The C helper normalizes chunk-header bytes and DBM record representation; this is not full physical-byte identity between pin and subject. KC/tkrzw were not selected, so no execution claim is made for them. |
+| Interrupted save | `interrupted_save_preserves_the_facade_specific_committed_prefix`: child process exits with code 73 without unwinding before library 2, 3 and 4; parent waits for completion, checks every earlier log and every reloaded library delta. | Later coverage is now in `crates/oxpinyin-user/tests/save_boundaries_929.rs` and seven `save-929-boundary-*` C-facade cases, detailed below. Interruption inside index/bigram writes, each individual rename, marker writes after open, and power cuts remain open. No persistence hook or new driver was added. |
+| Save/reload | `save_reload_keeps_bigrams_and_unsaved_changes_do_not_replace_them`: saved count 37 survives an unsaved overwrite to 91; two reopens retain all data-file bytes. Two `save-929-reload-*` cases compare imported phrase tokens and normalized file content across saved/unsaved suffixes. | The original C helper normalizes chunk-header bytes and DBM records. The historical `save-929-physical-bytes-*` cases exposed variable BDB identity; the authorized pin-only control below led to replacement logical-record and reciprocal cross-open cases, with no masks or accepted exceptions. KC/tkrzw were not selected, so no execution claim is made for them. |
 
 No new necessary language/runtime exception is established, so the divergence
 register is unchanged. In particular the missing chunk sync, unchecked marker
@@ -954,9 +986,145 @@ cases MATCH on bdb. A temporary subject-only mutation retaining dirty after
 `UserStore::save_reporting_inner` produced 10 DIFFER and two unchanged reload
 controls; restoring the subject restored 12 MATCH. No mutation remains in
 the diff. KC/tkrzw were provisioned and hash-verified, not selected for this
-diff. The GLib wrapper source trace is complete; exact libc source/patch
-inspection, non-Linux execution and the full durability/byte audit remain open
-as distinguished above. This is Refs #929, not closure.
+diff. The GLib wrapper and glibc `rename`/`fsync` source traces are complete;
+non-Linux execution and the full durability/byte audit remain open as
+distinguished above. This is Refs #929, not closure.
+
+
+### Later save/fini boundaries and physical bytes (2026-10-25 UTC)
+
+Continuation #1225, subject base `0db61cb9` (preserved on wip/929-pre-squash), changes tests and observations
+only. `crates/oxpinyin-user/tests/save_boundaries_929.rs` adds two tests/six
+child exits under both facade laws: after addon/network chunks in a configured
+profile, after completed save, and after fini. The configured late system row
+uses the pin's independent row-name/type parsing
+(`src/storage/table_info.cpp:145-156,266-286`) and ascending save walk
+(`src/pinyin.cpp:927-994`; `src/zhuyin.cpp:560-644`). Restart checks old indexes
+and bigram after the chunk interruption, committed phrases and bigram after
+completed saves, and exact preservation of all data bytes across reopen.
+
+The existing `tools/bisection/contract-diff.py` now adds these cases without
+altering any pre-existing case or selection rule:
+
+| New case family | Source-derived boundary | BDB result |
+| --- | --- | --- |
+| `save-929-boundary-save-marker-{pinyin,zhuyin}` | Data renames precede marker open (`src/pinyin.cpp:1141-1143`; `src/zhuyin.cpp:695`; `src/storage/table_info.cpp:377-396`). A Linux read lease blocks the marker's write-open; its SIGIO notification tells the parent to kill and reap the saving child before releasing the lease. The marker stays intact; all committed phrase data survives restart with no `.tmp` files. | 2 MATCH |
+| `save-929-boundary-fini-marker-pinyin` | Save completes before acquiring the lease. Import another unsaved phrase, then interrupt fini at marker write-open (`src/pinyin.cpp:1194-1200`). The committed prefix survives; the unsaved phrase does not. Zhuyin has no fini marker open (`src/zhuyin.cpp:741-757`), so no fictitious zhuyin marker boundary is tested. | 1 MATCH |
+| `save-929-boundary-{after-save,after-fini}-{pinyin,zhuyin}` | Child exits without unwinding after the named C call. Both finies omit dictionary save; pinyin lowers the marker counter (`src/pinyin.cpp:1194-1200`), zhuyin does not write it (`src/zhuyin.cpp:741-757`). Reopen retains two saved tokens, loses the unsaved third, and preserves every data byte. | 4 MATCH |
+| `save-929-physical-bytes-{pinyin,zhuyin}` | Identical fresh profiles, two identical phrase imports and save, then an unsaved import, fini and reopen. Observe each complete file as length plus hex bytes, including checksum, DBM metadata and marker. `MemoryChunk::save` writes length/checksum/payload (`src/include/memory_chunk.h:536-557`); bytes 4–7 are a checksum, **not a timestamp** (`:136-159,545-547`). | Historical 2 DIFFER at `a4dd7637` (preserved on wip/929-pre-squash); replaced after the authorized pin-only control below |
+
+### Physical-byte classification and corrected criterion (2026-10-25 UTC)
+
+The maintainer authorized a pin-only repeat control before correcting the
+criterion. At driver revision `a4dd7637` (preserved on wip/929-pre-squash), both
+`save-929-physical-bytes-pinyin` and `save-929-physical-bytes-zhuyin` were
+**default-registered** (`select_cases` includes every non-axis-C case).
+Running each with the pin DSO in both runner positions repeats exactly the
+same two imports/save/unsaved-third-import/fini/reopen scenario from independent,
+equivalent fresh profiles. All three BDB containers differ from the pin's own
+second output on both facades. Chunks, diff logs, marker contents, lengths and
+recovered tokens agree. This is an explicitly authorized control result, not
+a claim derived by probing unspecified pin behavior.
+
+Reproduce that historical unmasked control at `a4dd7637` (preserved on wip/929-pre-squash), after provisioning:
+
+```sh
+just heavy -- tools/bisection/run-contract-diff.sh bdb "$OXPINYIN_ORACLE_PREFIX_BDB" \
+  "$OXPINYIN_ORACLE_PREFIX_BDB/lib/libpinyin.so" \
+  "$OXPINYIN_ORACLE_PREFIX_BDB/lib/libzhuyin.so" -- \
+  --cases save-929-physical-bytes-pinyin,save-929-physical-bytes-zhuyin
+```
+
+The observed pin/subject byte differences from the earlier run are fully
+classified below. The repeat control varies individual bytes within those
+same fields (including offset 65 in some IDs); the table describes actual
+observed regions, **not comparison masks**.
+
+| File / exact earlier differing offsets | Demonstrated cause; no logical-record change |
+| --- | --- |
+| All three containers: 52, 60–64 | Metadata UID occupies 52–71. Its inode bytes are 52–55, randomized ID 60–63 and process-seeded serial 64–67. The files are independently created. |
+| `user_phrase_index.bin` (8192 bytes): 4148, 4156–4160 | Root page starts at 4096. The metadata buffer is reused for that page, retaining the UID at relative 52–71 in unused space. The observed page has 8 index entries and free space `[42,4032)`; all differing bytes lie in that free space. |
+| `user_pinyin_index.bin` (8192 bytes): 4156–4160 | Same root-buffer reuse; 16 index entries leave free space `[58,3968)`. Index entries overwrite relative 52–57, so only later UID residue differs. |
+| `user_bigram.db` (12288 bytes): 8244, 8252–8256 | Final hash bucket starts at 8192 and reuses the metadata buffer. Zero entries leave free space `[26,4096)`, including the UID residue. |
+| Page allocation and LSNs | Both sides have 4096-byte pages and identical page counts/types for this fixture. Metadata/root/final-bucket LSNs are `{file=0, offset=1}`; the unused hash page is zero. No LSN byte differs. LSNs or page-allocation differences are **not** explanations for this observation. |
+
+Since #1229 the reference BDB is trixie's `libdb5.3t64` **5.3.28+dfsg2-9**
+(`tools/oracle/version-manifest.json`). The control and differential loaded
+the pin DSOs against a host `5.3.28+dfsg2-9` runtime, the same one the subject
+used, so the control ran on the reference's own BDB version. Source inspection
+used the source package of the earlier testing reference,
+[db5.3 5.3.28+dfsg2-11](https://snapshot.debian.org/archive/debian/20260831T000000Z/pool/main/d/db5.3/db5.3_5.3.28+dfsg2-11.dsc),
+with its Debian patch series applied. That testing reference installed
+`5.3.28+dfsg2-11+b1`; its binary changelog explicitly says no source changes.
+The inspected -9/-11 patch sets do not
+change the cited implementation files; the sole patch to the cited page header,
+`005-pg_crypt_size.patch`, is identical. The source archives were checked
+against the `.dsc` SHA-256 entries. References below are package-root paths:
+
+| BDB source | Consequence |
+| --- | --- |
+| `src/fileops/fop_util.c:633-645`; `src/os/os_fid.c:35-46,62-66,80-86,98-131`; `src/os/os_uid.c:33-54` | Database creation requests a unique file ID. Inode/device, process identity, time, stack address, random value and serial contribute; the ID is stamped once when the database is created. |
+| `src/dbinc/db_page.h:73-94`; `src/btree/bt_open.c:406-440`; `src/hash/hash_open.c:277-299` | The metadata's 20-byte UID is at offset 52 and is copied from the newly generated file ID. |
+| `src/btree/bt_open.c:538-569`; `src/hash/hash_open.c:417-446`; `src/dbinc/db_page.h:270-290,525-540` | Creation writes metadata, then reuses its buffer for the root/final bucket. Full clearing occurs only under DIAGNOSTIC; P_INIT changes the page header, not unused bytes. Entry count and high-free offset delimit the record-free region. Observed later-page residue equals the metadata ID, except where the index array overwrote it. |
+| `src/dbinc/db_int.in:1038-1044`; `src/btree/bt_open.c:541,562`; `src/hash/hash_open.c:420,440` | This nonlogged creation path writes LSN `{0,1}`. No transaction-LSN variability is inferred for this fixture. |
+
+The pin save path unlinks and creates new containers before copying records:
+`src/storage/chewing_large_table2_bdb.cpp:135-161`,
+`src/storage/phrase_large_table3_bdb.cpp:150-176`,
+`src/storage/ngram_bdb.cpp:81-110` at `074a2219`.
+Copying one identical starting profile for both sides therefore cannot make
+**new saves** physically identical: each save replaces the containers with
+newly identified files. Sharing one writable profile between the two saves
+would couple operations and change the experiment. The existing isolated
+profile handoff, however, permits a meaningful cross-open test of the exact
+file another implementation wrote, without requiring reproducible file IDs.
+
+Per the maintainer's conditional instruction, the two physical cases are now
+replaced by `save-929-logical-cross-open-pinyin` and
+`save-929-logical-cross-open-zhuyin`, both still default-registered. They use
+`index_file_rows`, whose BDB implementation runs `db5.3_dump`, and compare
+all key/value bytes including empty values, with no padding or metadata mask.
+The fixture uses two-syllable imported phrases and a nonempty bigram row
+with total/count 37. The existing crafted-profile helper supplies the same
+row to both sides; the pin loads and saves it by copying records
+(`src/storage/ngram_bdb.cpp:47-110`).
+The existing `run_case` handoff runs fresh pin→subject and subject→pin workers
+on each donor's exact directory. The receiving C facade opens it, recovers the
+saved tokens, re-adds one existing reading with count zero, saves and must
+produce exactly the same logical rows. The zero-count operation preserves the
+existing reading (`src/pinyin.cpp:561-582`; `src/zhuyin.cpp:449-469`), while
+forcing the facade's load/save path. Each receiver is checked against its own
+donor as well as the other receiver; equal corruption cannot become MATCH.
+The pre-existing #1114 handoff's byte criterion is unchanged.
+
+This is a correction of a criterion the pin itself does not satisfy, **not an
+accepted Rust difference**. No bytes are masked; no persistence/backend code
+or divergence register is changed. The original native tests and the new C-facade cross-open cases both check
+nonempty saved bigram counts.
+
+Other backends, source classification only:
+
+| Backend and inspected version | Save-container behavior |
+| --- | --- |
+| KC 1.2.80-2+b1, trixie's `libkyotocabinet16v5` (source 1.2.80-2; its `libkyotocabinet-dev` 1.2.80-2+b1 installs `kcdb.h` and `kcstashdb.h` byte-identical to the orig tarball, no Debian patch touches either, and the binary changelog says no source changes). First read at 1.2.80-2+b2, the earlier testing reference, a rebuild of the same source; the cited lines are unchanged | Pin `src/storage/ngram_kyotodb.cpp:82-105`, `src/storage/chewing_large_table2_kyotodb.cpp:124-145`, `src/storage/phrase_large_table3_kyotodb.cpp:139-160` use `dump_snapshot`; the native-file alternative is disabled. `kcdb.h:2271-2307,2316-2328` writes magic, key/value lengths and bytes, and terminator, without file IDs, page allocation or timestamps. `kcstashdb.h:442-468` iterates buckets/chains, so serialized record order remains a separate dependency. KC does **not** have the demonstrated BDB metadata cause; same-record/same-order snapshots have no source-visible per-save identity field. No unrun physical-identity result is claimed. |
+| tkrzw 1.0.32-1+b1, trixie's `libtkrzw1t64` (source 1.0.32-1, which carries no Debian patches, and the binary changelog says no source changes); first read at 1.0.32-1+b2, the earlier testing reference, a rebuild of the same source, so the cited lines are unchanged; sound-runtime source 9ee84164 (1.0.34) checked too | Pin `src/storage/ngram_tkrzwdb.cpp:65-83` creates HashDBM; the two index writers create TreeDBM (`src/storage/chewing_large_table2_tkrzwdb.cpp:111-129`, `src/storage/phrase_large_table3_tkrzwdb.cpp:102-120`). In both inspected tkrzw versions, `tkrzw_dbm_hash.cc:46,1184,1241,1296` writes a wall-clock microsecond timestamp at bytes 48–55. `tkrzw_dbm_tree.cc:379,432,954` uses an underlying HashDBM and synchronizes it. Thus tkrzw also has per-save variable physical metadata, for a different reason from BDB. No new timestamp mask or parity exception is introduced. |
+
+Final continuation gates: **233** user tests and **149** harness tests pass;
+fmt/clippy and whitespace checks pass. Full BDB `--issue 929` now reports
+**21 MATCH, exit 0**, including both logical cases and all four reciprocal
+cross-open workers. The selector chooses BDB only, with no check fired;
+KC/tkrzw are not selected and were not run. Reproduce with the user-crate
+commands above, the harness test, and the existing runner's `--issue 929`;
+the two focused IDs are `save-929-logical-cross-open-pinyin` and
+`save-929-logical-cross-open-zhuyin`.
+
+Open: individual DBM/rename interiors, writes after marker open, backend
+sync/close errors, power-loss durability,
+and non-Linux execution (this selected session is Linux only). Missing chunk
+sync stays with #1221 after #1190; no persistence implementation is edited.
+The glibc `rename` and `fsync` wrappers are traced above at `glibc-2.41`,
+trixie's libc; they add no retry and no error text.
+Refs #929 remains. No logs, captures or archives are published.
 
 
 ## G11 — Numeric parsing and locale

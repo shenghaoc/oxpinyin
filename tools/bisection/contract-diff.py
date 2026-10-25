@@ -5405,6 +5405,214 @@ for _save929_mode in ('pinyin', 'zhuyin'):
          issues=('929',))(save_929_sync_rejecting)
 
 
+# Later #929 boundaries: source-derived at 074a2219 src/pinyin.cpp:922-1146,
+# 1194-1200, src/zhuyin.cpp:547-698,741-757, and src/storage/table_info.cpp:377-396.
+# GLib 2.89.4 glib/gstdio.h:60-82 makes rename/fsync direct Unix calls.
+def save_929_physical_files(directory):
+    """Observe every regular file's complete bytes, without normalization.
+
+    Hex bytes plus length compare physical files without masks, including chunk
+    checksums, DBM metadata, marker contents and any retained staging files.
+    Nonregular entries are an error rather than an omitted observation.
+    """
+    files = {}
+    for path in sorted(Path(directory).iterdir()):
+        if not path.is_file() or path.is_symlink():
+            raise ValueError('nonregular saved profile entry: ' + path.name)
+        raw = path.read_bytes()
+        files[path.name] = dict(size=len(raw), bytes=raw.hex())
+    return files
+
+
+def save_929_import(k, ctx, number, count=100):
+    """Import one existing test phrase through the selected C facade."""
+    entry = TOKEN_REUSE_PHRASES[number]
+    iterator = k.fn('begin_add_phrases', P, P, U)(ctx, 7)
+    assert iterator
+    assert k.fn('iterator_add_phrase', B, P, S, S, I)(
+        iterator, entry[0].encode(), entry[1 if k.mode == 'pinyin' else 2].encode(), count)
+    k.fn('end_add_phrases', None, P)(iterator)
+
+
+def save_929_tokens(k, ctx):
+    """Observe the saved prefix and unsaved suffix after restart."""
+    inst = k.fn('alloc_instance', P, P)(ctx)
+    assert inst
+    k.glib.g_array_new.restype, k.glib.g_array_new.argtypes = P, [I, I, U]
+    k.glib.g_array_free.restype, k.glib.g_array_free.argtypes = P, [P, I]
+    result = []
+    try:
+        for text, _, _ in TOKEN_REUSE_PHRASES[:3]:
+            arr = k.glib.g_array_new(0, 0, 4)
+            try:
+                k.fn('lookup_tokens', B, P, S, P)(inst, text.encode(), arr)
+                view = C.cast(arr, C.POINTER(Arr)).contents
+                result.append(list(C.cast(view.data, C.POINTER(U))[:view.len]))
+            finally:
+                k.glib.g_array_free(arr, 1)
+    finally:
+        k.fn('free_instance', None, P)(inst)
+    return result
+
+
+def save_929_marker_interrupt(path, operation):
+    """Kill a child at the marker's write-open, notified by a Linux file lease.
+
+    The read lease prevents the write-open from completing. SIGIO is a kernel
+    lease-break notification, not a timed filesystem poll. Kill and reap the
+    child before releasing the lease; the bounded signal wait fails if the
+    intended boundary is never reached. No production hook or preload shim.
+    """
+    import fcntl
+    old_mask = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGIO})
+    fd = os.open(path, os.O_RDONLY)
+    pid = None
+    try:
+        fcntl.fcntl(fd, fcntl.F_SETLEASE, fcntl.F_RDLCK)
+        pid = os.fork()
+        if pid == 0:
+            os.close(fd)
+            try:
+                operation()
+            finally:
+                os._exit(74)  # reaching this means the boundary was missed
+        notification = signal.sigtimedwait({signal.SIGIO}, 10)
+        assert notification is not None, 'marker write-open did not request a lease break'
+        os.kill(pid, signal.SIGKILL)
+        _, status = os.waitpid(pid, 0)
+        pid = None
+        assert os.waitstatus_to_exitcode(status) == -signal.SIGKILL
+        return 'marker-open'
+    finally:
+        if pid is not None and pid > 0:
+            os.kill(pid, signal.SIGKILL)
+            os.waitpid(pid, 0)
+        fcntl.fcntl(fd, fcntl.F_SETLEASE, fcntl.F_UNLCK)
+        os.close(fd)
+        signal.pthread_sigmask(signal.SIG_SETMASK, old_mask)
+
+
+def save_929_late_boundary(k, boundary):
+    """Save/fini through C, interrupt at a named boundary, then reopen finals.
+
+    src/pinyin.cpp:1141-1146 and src/zhuyin.cpp:695-698 put the marker after
+    data renames. Fini never saves dirty dictionaries; only pinyin writes a
+    marker (src/pinyin.cpp:1194-1200; src/zhuyin.cpp:741-757).
+    """
+    ctx = k.ctx
+    save_929_import(k, ctx, 0)
+    assert k.fn('save', B, P)(ctx)
+    marker = Path(k.user, 'user.conf')
+    marker_before = marker.read_bytes()
+    if boundary == 'fini-marker':
+        save_929_import(k, ctx, 1)
+        assert k.fn('save', B, P)(ctx)
+
+    def child():
+        """Commit a second phrase and leave a third unsaved before fini."""
+        if boundary != 'fini-marker':
+            save_929_import(k, ctx, 1)
+            assert k.fn('save', B, P)(ctx)
+        save_929_import(k, ctx, 2)
+        if boundary in ('fini-marker', 'after-fini'):
+            k.fn('fini', None, P)(ctx)
+
+    if boundary in ('save-marker', 'fini-marker'):
+        stopped = save_929_marker_interrupt(marker, child)
+        assert marker.read_bytes() == marker_before
+    else:
+        pid = os.fork()
+        if pid == 0:
+            try:
+                child()
+            except BaseException:
+                os._exit(74)
+            os._exit(73)  # deliberately bypass fini/unwinding at after-save
+        _, status = os.waitpid(pid, 0)
+        assert os.waitstatus_to_exitcode(status) == 73
+        stopped = 'exit-73'
+    saved = save_929_physical_files(k.user)
+    assert not any(name.endswith('.tmp') for name in saved)
+    # The parent's inherited context is stale; never fini it over the child's
+    # marker. The worker exits without teardown, as other contract cases do.
+    k._ctx = None
+    reopened = k.ctx
+    tokens = save_929_tokens(k, reopened)
+    assert tokens == [[0x07000001], [0x07000002], []], tokens
+    after_open = save_929_physical_files(k.user)
+    k.fn('fini', None, P)(reopened)
+    k._ctx = None
+    after_fini = save_929_physical_files(k.user)
+    assert saved.keys() == after_open.keys() == after_fini.keys()
+    assert all(saved[n] == after_open[n] == after_fini[n] for n in saved if n != 'user.conf')
+    return dict(boundary=stopped, tokens=tokens,
+                files=sorted(saved), marker=marker_before.decode(),
+                data_unchanged_on_open={n: saved[n] == after_open.get(n) for n in saved if n != 'user.conf'},
+                data_unchanged_on_fini={n: saved[n] == after_fini.get(n) for n in saved if n != 'user.conf'},
+                final_marker=marker.read_text())
+
+
+def save_929_logical_roundtrip(k):
+    """Dump exact key/value records and re-save through each receiving facade.
+
+    The authorized pin-only control at a4dd7637 showed independent BDB saves
+    are not byte-identical. No fields are masked here: index_file_rows keeps
+    complete key/value bytes, including empty values. Fresh cross-open workers
+    receive the donor's exact profile through the existing handoff mechanism.
+    """
+    handoff = os.environ.get('CONTRACT_929_PROFILE')
+    if handoff:
+        k.user = handoff
+    bigram_key = (0x07000001).to_bytes(4, 'little')
+    bigram_value = d18_gram(37, 0x07000002, 37)
+    if os.environ.get('CONTRACT_929_RELOAD') != '1':
+        # Bigram::load_db/save_db copy full rows (ngram_bdb.cpp:47-110).
+        k._ctx = crafted_bigram_context(k, [(bigram_key, bigram_value)])
+        ctx = k.ctx
+        save_929_import(k, ctx, 0)
+        save_929_import(k, ctx, 1)
+        assert k.fn('save', B, P)(ctx)
+        save_929_import(k, ctx, 2)
+        k.fn('fini', None, P)(ctx)
+        k._ctx = None
+
+    def rows():
+        """Read every record, including the nonempty bigram row."""
+        return {name: index_file_rows(Path(k.user, name),
+                                     kind='hash' if name == 'user_bigram.db' else 'tree',
+                                     allow_empty=True)
+                for name in ('user_pinyin_index.bin', 'user_phrase_index.bin', 'user_bigram.db')}
+
+    before = rows()
+    assert before['user_bigram.db'] == [[bigram_key.hex(), bigram_value.hex()]]
+    ctx = k.ctx
+    tokens = save_929_tokens(k, ctx)
+    assert tokens == [[0x07000001], [0x07000002], []], tokens
+    # Re-adding an existing reading with count zero changes no logical value:
+    # src/pinyin.cpp:561-582; src/zhuyin.cpp:449-469 at 074a2219.
+    # Re-save witnesses that the C facade loaded the donor's records, rather
+    # than merely comparing untouched files with an external dump utility.
+    save_929_import(k, ctx, 0, count=0)
+    assert k.fn('save', B, P)(ctx)
+    after = rows()
+    assert before == after, 'facade reopen/save changed logical records'
+    k.fn('fini', None, P)(ctx)
+    k._ctx = None
+    return dict(rows=after, tokens=tokens)
+
+
+for _save929_mode in ('pinyin', 'zhuyin'):
+    for _save929_boundary in ('save-marker', 'after-save', 'after-fini') + (
+            ('fini-marker',) if _save929_mode == 'pinyin' else ()):
+        _save929_case = 'save-929-boundary-' + _save929_boundary + '-' + _save929_mode
+        case(_save929_case, mode=_save929_mode, issues=('929',))(
+            functools.partial(save_929_late_boundary, boundary=_save929_boundary))
+        CASES[_save929_case].update(platforms=('linux/amd64', 'linux/arm64'),
+                                  platform_skip_reason='#929 interruption uses Linux file leases and fork')
+    case('save-929-logical-cross-open-' + _save929_mode, mode=_save929_mode,
+         issues=('929',))(save_929_logical_roundtrip)
+
+
 # Batch A (#525): `MemoryChunk::save`'s header writes (`memory_chunk.h:543`,
 # `:547`). The pin writes the header as two `guint32`s and `assert`s each, so
 # a filesystem that refuses a header word kills it mid-save. The save is the
@@ -7597,11 +7805,16 @@ def run_case(spec, pin_so, subject_so, data, name, scratch, timeout):
     saved bigram bytes with only the timestamp normalized, and cross-reload
     both donor profiles in fresh workers under the same deadline. Mismatch or
     reload failure updates the corresponding observation; successful reloads
-    add filtered cross_reload results. Profile cleanup belongs to the caller."""
+    add filtered cross_reload results. The #929 logical cases reuse the same
+    handoff and deadline, requiring exact key/value rows in both directions,
+    without the #1114 byte criterion. Profile cleanup belongs to the caller."""
     deadline = time.monotonic() + timeout
     results = []
     fatal_env = {'G_DEBUG': 'fatal-criticals'} if spec['fatal'] else None
-    handoff = name in ('issue1114-collision-load-save-pinyin', 'issue1114-collision-load-save-zhuyin')
+    handoff_929 = name in ('save-929-logical-cross-open-pinyin', 'save-929-logical-cross-open-zhuyin')
+    handoff = handoff_929 or name in ('issue1114-collision-load-save-pinyin', 'issue1114-collision-load-save-zhuyin')
+    profile_key = 'CONTRACT_929_PROFILE' if handoff_929 else 'CONTRACT_1114_PROFILE'
+    reload_key = 'CONTRACT_929_RELOAD' if handoff_929 else 'CONTRACT_1114_RELOAD'
     profiles = {}
     if handoff:
         for side in ('pin', 'subject'):
@@ -7616,7 +7829,7 @@ def run_case(spec, pin_so, subject_so, data, name, scratch, timeout):
             extra_env = (dict(fatal_env or {}, OXPINYIN_RUNTIME_SIDE=side)
                          if os.environ.get('CONTRACT_DIFF_CELL', CELL) == 'tkrzw' else fatal_env)
             if handoff:
-                extra_env = dict(extra_env or {}, CONTRACT_1114_PROFILE=profiles[side])
+                extra_env = dict(extra_env or {}, **{profile_key: profiles[side]})
             result = run_worker(spec['mode'], so.resolve(), data, name, scratch,
                                 extra_env=extra_env, timeout=remaining)
         except subprocess.TimeoutExpired as error:
@@ -7630,12 +7843,13 @@ def run_case(spec, pin_so, subject_so, data, name, scratch, timeout):
     if len(results) == 1:
         results.append(dict(exit='NOT-RUN', result=None, userfiles=[], stderr_lines=0, stderr=''))
     if handoff and all(result['exit'] == 0 for result in results):
-        # Direct byte equality is the gate, not digest equality. Bucket
-        # pointers and record links stay exact along with every payload byte.
-        raw = [Path(profiles[side], 'user_bigram.db').read_bytes() for side in ('pin', 'subject')]
-        if tkrzw_saved_bigram_bytes(raw[0]) != tkrzw_saved_bigram_bytes(raw[1]):
-            results[0].update(exit=1, result={'error': 'saved bytes differ outside META_OFFSET_TIMESTAMP'})
-            return results
+        if not handoff_929:
+            # Direct byte equality is the gate, not digest equality. Bucket
+            # pointers and record links stay exact along with every payload byte.
+            raw = [Path(profiles[side], 'user_bigram.db').read_bytes() for side in ('pin', 'subject')]
+            if tkrzw_saved_bigram_bytes(raw[0]) != tkrzw_saved_bigram_bytes(raw[1]):
+                results[0].update(exit=1, result={'error': 'saved bytes differ outside META_OFFSET_TIMESTAMP'})
+                return results
         # Fresh workers isolate the two libraries. Run both donor -> receiver
         # directions under the same case deadline, retaining donor files.
         for index, (donor, receiver, so) in enumerate((('pin', 'subject', subject_so),
@@ -7648,8 +7862,8 @@ def run_case(spec, pin_so, subject_so, data, name, scratch, timeout):
                     raise subprocess.TimeoutExpired(str(so), timeout)
                 reload = run_worker(spec['mode'], so.resolve(), data, name, scratch,
                                     extra_env=dict(OXPINYIN_RUNTIME_SIDE=receiver,
-                                                   CONTRACT_1114_PROFILE=profiles[donor],
-                                                   CONTRACT_1114_RELOAD='1'), timeout=remaining)
+                                                   **{profile_key: profiles[donor], reload_key: '1'}),
+                                    timeout=remaining)
             except subprocess.TimeoutExpired:
                 results[index].update(exit='TIMEOUT', result=None)
                 break
@@ -7659,7 +7873,10 @@ def run_case(spec, pin_so, subject_so, data, name, scratch, timeout):
                 results[index].update(exit=reload['exit'] or 1, result=None,
                                       stderr=reload['stderr'], stderr_lines=reload['stderr_lines'])
             else:
-                results[index]['result']['cross_reload'] = observed(reload['result'])
+                if handoff_929 and observed(reload['result']) != observed(results[index]['result']):
+                    results[index].update(exit=1, result={'error': 'cross-open changed logical records'})
+                else:
+                    results[index]['result']['cross_reload'] = observed(reload['result'])
     return results
 
 
