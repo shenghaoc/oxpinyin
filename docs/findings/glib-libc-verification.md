@@ -154,7 +154,7 @@ and `split_zhuyin`; `capi/src/text.rs`, `chewing_aux_text`;
 | Chewing interior cursor (`len <= C`) | Visible right half identical to a pin that returns: the copied NUL terminates it at the spelling's end (empty at `len == C`). The call is class (b): `end_pos` is the absolute `m_raw_end`, so `raw_end - len > C - len` whenever `raw_end > C` (outside GLib's documented domain), which is essentially every interior cursor; the copy reads past the allocation at `raw_end >= C + 2`. | Source below; the new cases compare visible bytes, so a match is conditional on the pin not faulting. |
 | Chewing cursor past the spelling (`len > C`) | Accepted class (b): the copy starts past the terminator, so the pin's visible right half is heap bytes (and can fault); oxpinyin returns an empty right half. Registered in [upstream divergences](upstream-divergences.md#chewing-auxiliary-substring-over-read). | Source below; not a differential case, because the pin side has no reproducible result. |
 | Bigram export's unterminated pronunciation vector | Accepted class (b), [row 1 record](upstream-divergences.md#bigram-export-iterators-pinyin-buffer). | Established independent fault; #894 traces its text consumers but does not turn this fault into a deterministic phrase-text witness. |
-| Raw path bytes: see G3 (#922). Embedded NUL in diagnostics; duplicate punctuation strings/order | Paths classified under G3; the rest pending #924/#928/#1144, with G8/G15. | No blanket “malformed quirk” admission. |
+| Raw path bytes: see G3 (#922). Embedded NUL in diagnostics; duplicate punctuation strings/order | Paths classified under G3; diagnostic NUL producers closed under #924 below; punctuation remains #928/#1144, with G15. | No blanket “malformed quirk” admission. |
 
 ### G2 auxiliary-text closure — 2026-10-25 UTC
 
@@ -334,7 +334,7 @@ in the TSV. Rust: both `capi/src/dict.rs` and `zhuyin-capi/src/dict.rs`,
 
 | Partition | Verdict | Investigation |
 | --- | --- | --- |
-| Caller-owned real GArray mutation | Contract: MUST RETAIN GLib metadata/ownership, #924; direct `glib_sys` mutation is not emulation. | Established ownership constraint; full lifecycle/allocator audit still partial (G9). |
+| Caller-owned real GArray mutation | Contract: MUST RETAIN GLib metadata/ownership, #924; direct `glib_sys` mutation is not emulation. | Source-backed ownership/lifecycle audit below (G9); conditional allocation failures remain distinct. |
 | Valid internal step/candidate/result arrays | Inventory source conclusion: ordinary parity via vectors/slices. | Partial across all container sites; sorting separately G5/G6. |
 | Out-of-range indices, key with no whole word, short chunk header | Pending per-site classification here; named existing (b)/(c) records are not a blanket container exception. | Unverified family-wide coverage; chunk specifics G12. |
 
@@ -399,7 +399,7 @@ Rust: both facades' `ffi.rs::log_warning`/`log_critical` and
 | --- | --- | --- |
 | Recorded #894 non-scalar candidate refusal versus NUL candidate omission | Accepted [non-scalar][non-scalar] / [NUL][nul]; warning only on the former witness. | Complete bounded records; G1's exact tested scope. |
 | Registered pin assertion/abort sites | Class (c) only at its [registered sites](compatibility-policy.md#c-availability--upstream-aborts-on-caller-input): false/Err and exactly one warning, correct domain/level. | Existing policy obligation; full G8 site audit partial. |
-| `phrase_segment` conversion failure, critical precondition and previous result; diagnostic NUL/text/allocator cases | The bounded invalid-byte critical is MUST RETAIN and verified in the #924 matrix below; NUL reachability/OOM remain open. | New #924 source proof and both-facade result-preservation cases; no blanket diagnostic exception. |
+| `phrase_segment` conversion failure, critical precondition and previous result; diagnostic NUL/text/allocator cases | The bounded invalid-byte critical is MUST RETAIN and verified in the #924 matrix below; NUL reachability is closed for current diagnostic producers; conditional OOM outcomes are traced below, without same-allocation failure injection. | New #924 source proof and both-facade result-preservation cases; no blanket diagnostic exception. |
 
 ## G9 — Allocation/free and real GArray ABI
 
@@ -412,7 +412,7 @@ GLib array writers, `phrase.rs::segment_text`; ownership slots in
 | Partition | Verdict | Investigation |
 | --- | --- | --- |
 | Normal returned strings/vectors and caller arrays | MUST RETAIN: per-operation #924 matrix below covers all 38 registered slots and four caller-array operations. | Source-backed lifecycle audit and caller-mutation tests below; G1 retains its separate malformed-text scope. |
-| NULL inputs/outputs, allocation failure/OOM, cleanup after partial allocation/conversion | Pending exact per-site classification. | Unverified full family; #894 explicitly excludes allocation failure. No ownership exception inferred. |
+| NULL inputs/outputs, allocation failure/OOM, cleanup after partial allocation/conversion | #924 below traces conditional allocation outcomes and NULL caller-array diagnostics; malformed text retains G1 scope. | Four NULL-array defects verified; OOM outcomes source-derived without per-allocation injection. #894 excludes allocation failure. No ownership exception inferred. |
 
 ### #924 ABI ownership audit — 2026-10-25 UTC
 
@@ -429,7 +429,22 @@ Source trees read for this audit: libpinyin
 version of reference package 2.89.4-2), and oxpinyin `6be364d9`.
 GLib citations in this subsection are to that tag; pin citations are to
 074a2219 and start at `src/`. Expectations below were derived from these
-sources before executing the new contract cases.
+sources before executing the new contract cases. Reference package metadata
+was checked in the pinned dependency image: GLib **2.89.4-2**, glibc
+**2.43-3**. GLib's packaged `changelog.Debian` says -2 only re-uploaded the
+orig tarball with no source changes; -1 imported 2.89.4 and dropped included
+patches. The actual `g_vasprintf` build branch was also inspected below.
+The authorized `bminor/glibc` GitHub mirror cloned successfully, but fetching
+`refs/tags/glibc-2.43` returned “couldn't find remote ref”; its newest release
+tag was 2.42 (HEAD `04e750e75b`, 2026-01-20). Neither session nor reference
+image has an available deb-src configuration. **Open source-evidence gap:**
+the matching glibc 2.43 allocator/vasprintf implementation and complete
+Debian patch comparison have not been read. The packaged 2.43-2 changelog
+mentions an arm64 malloc sysfs change; -3 lists resolver, wordexp, loader
+and POWER10 memchr changes, not an amd64 malloc contract change. Changelog
+inspection is not a substitute for reading that patch set. This gap does
+not prevent the pin/GLib conditional traces or the permitted tests below;
+no older glibc tag is cited as if it were 2.43.
 
 `MUST RETAIN` applies to the outward contract, not the implementation's
 choice of container. `MAY DIVERGE` here means internal implementation
@@ -505,11 +520,11 @@ compatible by successful allocator pairing; see the follow-ups.
 | Exported operation / trigger | MUST RETAIN outward result and channel | MAY DIVERGE / status |
 | --- | --- | --- |
 | P/Z `phrase_segment`, well-bounded `ff fe` after successful segmentation | Exactly one NULL-domain critical (level 8), `bool <facade>_phrase_segment(<facade>_instance_t*, const char*): assertion 'num_of_chars == ucs4_len' failed`; false; previous result/count/token outputs remain readable and identical. Pin `pinyin.cpp:1450-1459`, `zhuyin.cpp:969-978`; GLib `gutf8.c:950-990` leaves initialized converted length 0 on failure. | Rust decode/Result control flow is free; exact text is easy and safe to reproduce, so keep it. New `glib-924-segment-critical-{pinyin,zhuyin}` asserts trigger, text, domain, level, return and old result, not just stderr. |
-| P/Z `init`, `load_phrase_library`, `save`, `mask_out`; additionally P `load_addon_phrase_library`, reached malformed sub-index separators/end | `storage/phrase_index.cpp:354-356,361` expands four `g_return_val_if_fail` checks; first failed reached check emits one NULL-domain critical and returns false from `SubPhraseIndex::load`. Facade outcomes are caller-specific: the load caller may ignore false; `save` may report true after a critical. Never convert all these into facade false or silence. | Existing `LayoutFault::critical_message`, context/config reporting and inherited G8/compatibility records govern these paths. Precise C++ signature imitation is formatting in an adapter, not a Rust-language impossibility. This audit does not certify every caller/corrupt-bound combination; full G8 closure remains open. |
-| P/Z `token_get_nth_pronunciation`, NULL `keys`, valid instance and known token/in-range reading | GLib `g_array_set_size` precondition emits `GLib`-domain critical `g_array_set_size: assertion 'array' failed`; append emits a second critical `g_array_append_vals: assertion 'array' failed`; both return NULL locally, facade still returns true, no caller output exists. With unknown token: only first critical, facade false. Pin `pinyin.cpp:2805-2818`, `zhuyin.cpp:1797-1810`; GLib `garray.c:611,778`. | **Unresolved defect/follow-up in reserved dict.rs:** current Rust early false is silent. Not a permitted diagnostic-only difference (the valid-token return also differs), not a pin crash. No changes to either dict.rs in this lane. Source-derived proof; no NULL-array probe run. |
-| P/Z `lookup_tokens`, NULL output array, valid instance/scalar phrase | `reduce_tokens` calls set_size then append for each non-NULL prepared library array, even length zero: one plus the number of prepared arrays `GLib` criticals, each returning NULL locally; facade still returns `SEARCH_OK & retval`. No out-array is written. Pin `storage/phrase_large_table3.h:77-97`; GLib `garray.c:611-614,778`; facade citations above. | **Unresolved reserved-file follow-up:** current silent false is not equivalent. Number of append diagnostics depends on loaded libraries; do not hard-code one warning or claim the pin dereferences NULL here. Source proof only. |
+| P/Z `init`, `load_phrase_library`, `save`, `mask_out`; additionally P `load_addon_phrase_library`, reached malformed sub-index separators/end | `storage/phrase_index.cpp:354-356,361` expands four `g_return_val_if_fail` checks; first failed reached check emits one NULL-domain critical and returns false from `SubPhraseIndex::load`. Facade outcomes are caller-specific: the load caller may ignore false; `save` may report true after a critical. Never convert all these into facade false or silence. | Existing `LayoutFault::critical_message`, context/config reporting and inherited G8/compatibility records govern these paths. Precise C++ signature imitation is formatting in an adapter, not a Rust-language impossibility. Source trace below separates bounded first-three checks from out-of-bounds/dangling-view paths; existing G8 exceptions remain independently scoped. |
+| P/Z `token_get_nth_pronunciation`, NULL `keys`, valid instance and known token/in-range reading | GLib `g_array_set_size` precondition emits `GLib`-domain critical `g_array_set_size: assertion 'array' failed`; append emits a second critical `g_array_append_vals: assertion 'array' failed`; both return NULL locally, facade still returns true, no caller output exists. With unknown token: only first critical, facade false. Pin `pinyin.cpp:2805-2818`, `zhuyin.cpp:1797-1810`; GLib `garray.c:611,778`. | **Unresolved defect/follow-up in reserved dict.rs:** current Rust early false is silent. Not a permitted diagnostic-only difference (the valid-token return also differs), not a pin crash. No changes to either dict.rs in this lane. Source-derived proof then `glib-924-null-array-pronunciation-{pinyin,zhuyin}`: both DIFFER. Pin known-token true/two criticals, unknown-token false/one critical; Rust both false/silent. |
+| P/Z `lookup_tokens`, NULL output array, valid instance/scalar phrase | `reduce_tokens` calls set_size then append for each non-NULL prepared library array, even length zero: one plus the number of prepared arrays `GLib` criticals, each returning NULL locally; facade still returns `SEARCH_OK & retval`. No out-array is written. Pin `storage/phrase_large_table3.h:77-97`; GLib `garray.c:611-614,778`; facade citations above. | **Unresolved reserved-file follow-up:** current silent false is not equivalent. Number of append diagnostics depends on loaded libraries; do not hard-code one warning or claim the pin dereferences NULL here. Source proof then `glib-924-null-array-lookup-{pinyin,zhuyin}`: both DIFFER. The fixture prepares seven library arrays, so both found/missing calls emit eight criticals; pin returns true/false respectively, Rust false/false silently. |
 | Facade refusals mapped from registered asserts/unsafe reads | Existing class-(b)/(c) records retain each operation's trigger, false/NULL/out-state and exactly one facade-domain warning (level 16); `ffi::log_warning` uses `libpinyin`/`libzhuyin`. This channel is distinct from the pin's NULL-domain critical and raw stderr. | All call sites remain. No blanket permission to remove/rename messages. Full per-trigger re-audit of the existing warning register is not completed here; inherited witnesses are not new executions. |
-| Both `ffi::log_warning`/`log_critical`, hypothetical embedded NUL in message | `CString::new` currently drops the whole diagnostic on embedded NUL; GLib `%s` truncates at NUL. A concrete reachable trigger and complete outward proof are required before classifying any difference. | **Unsettled**, not an admitted quirk. Shared helper callers and formatted error values need a whole-path trace; do not silently change reserved zhuyin ffi.rs. |
+| Both `ffi::log_warning`/`log_critical`, hypothetical embedded NUL in message | `CString::new` currently drops the whole diagnostic on embedded NUL; GLib `%s` truncates at NUL. A concrete reachable trigger and complete outward proof are required before classifying any difference. | No reachable embedded-NUL producer found in the current C-facing call graph; source closure below. The mechanical helper difference is not an admitted outward difference or a reason to edit reserved zhuyin ffi.rs. |
 
 Macro expansion is part of the source proof: GLib
 `glib/gmessages.h:663-674` calls `g_return_if_fail_warning` then returns the
@@ -545,26 +560,128 @@ the same GLib channel proves neither the trigger nor the return/out state.
 The matrix deliberately distinguishes this complete adapter-channel inventory
 from the unfinished per-trigger G8 investigation.
 
+#### Source closure of diagnostic producers
+
+The six literal facade-reachable pin `g_return_val_if_fail` sites are the
+two segment checks and four `SubPhraseIndex::load` checks above. The latter
+first delete the old owning chunk, read total/offsets, test three separators,
+install views, then test the end (`storage/phrase_index.cpp:335-361`).
+`FacadePhraseIndex::load` subtracts the previous total first and adds the
+new total only on success (`:237-248`). A fresh sub-index starts with empty
+views (`storage/phrase_index.h:281-283`); a first-three-check refusal retains
+the newly read local total but installs no views. This is not universally
+an empty-object refusal: reloading a populated object deletes its old chunk
+before checking the replacement, leaving stale views on an early refusal.
+Subsequent reads through those views are unsafe, not a deterministic output
+contract to copy into Rust.
+
+The exported load/init callers ignore the inner false on successfully read
+files and can return success (`pinyin.cpp:232-323,370-394,477-495`;
+`zhuyin.cpp:176-267`). Save's diff uses a fresh baseline and ignores its load
+false (`storage/phrase_index.cpp:270-283`; `pinyin.cpp:963`;
+`zhuyin.cpp:596`), so a critical is compatible with successful save and
+partial file writes. Mask reload also ignores false before merge/compact
+(`pinyin.cpp:1224-1295`; `zhuyin.cpp:759-830`); a fresh failed library and a
+previously populated library must not be conflated. The fourth check
+`index_three <= end` cannot fail on these callers' `[0, chunk->size())`
+bounds without the preceding `buf_begin + index_three - 1` separator read
+already leaving the payload. `include/memory_chunk.h:499-520` checks mapped
+payload length. There is no additional safe fourth-check fixture to invent.
+The existing second/third-separator init witnesses passed for both facades
+(four MATCH); this is bounded runtime coverage, not a run of unsafe reloads.
+Rust `phrase_library.rs:783` constructs fixed-expression layout faults;
+`phrase_libraries.rs:117-139` queues them for context/config reporting,
+while save reports at its callback. Further repairs in #1190's persistence
+path are follow-ups, not missing pin source.
+
+Indirect GLib checks were also traced. `g_utf8_strlen(NULL, -1)` emits a
+GLib-domain critical and returns zero (`glib/gutf8.c:237-242`), but segment
+then passes NULL to `g_utf8_to_ucs4`, whose `:950-952` dereference is unsafe:
+there is no defined false-return/out-state promise for that input. A NULL
+`g_strjoinv` vector guard (`glib/gstrfuncs.c:2646`) cannot arise from the
+normal terminated scratch vectors: their construction allocations are
+fatal. The separately recorded unterminated bigram vector remains an
+unsafe over-read, not a NULL-vector guard. `g_vasprintf`'s NULL output-address
+guard (`glib/gprintf.c:330`) is unreachable through `g_strdup_vprintf`,
+which supplies a local pointer address (`glib/gstrfuncs.c:510-517`). Internal
+array pointers are successfully constructed or allocation terminates; the
+four exported caller-array NULL paths are the reachable checks tested above.
+GLib invokes the handler before enforcing the fatal mask
+(`glib/gmessages.c:1274-1313`). Both new
+`glib-924-segment-fatal-critical-{pinyin,zhuyin}` cases MATCH (SIGTRAP),
+retaining the real channel's caller-selected fatal behavior.
+
+Diagnostic NUL reachability is closed for this baseline's C-facing
+producers, not for arbitrary Rust calls to `log_warning(&str)`. Literal
+messages, exported-operation names and assertion expressions are NUL-free.
+`LayoutFault.expression` is static (`oxpinyin-data/src/phrase_library.rs:82-97`);
+`TableConfError` warnings are static (`table_info.rs:280,322`), as are
+`ChunkHeaderWrite` expressions (`oxpinyin-user/src/persistence.rs:405`).
+The dynamic init message (`oxpinyin-capi/src/context.rs:81`, zhuyin `:102`)
+formats a typed `OpenError` and debug-formatted system path. Input paths
+come through CStr; configured filenames stop at the first NUL
+(`oxpinyin-data/src/table_info.rs:523,661-662`). Dictionary/layout errors
+format fixed text or numeric bounds, not raw stored phrase bytes. Backend
+messages terminate at CStr (`oxpinyin-store/src/bdb/ffi.rs:178-187`,
+`kyotocabinet/ffi.rs:547-558`, `tkrzw/mod.rs:213-224`). User-profile open
+errors either become fixed typed failures or go to raw stderr and degrade
+the store (`oxpinyin-runtime/src/lib.rs:2133-2189`), not arbitrary GLib
+warning strings. Thus the hypothetical drop-whole-message versus `%s`
+truncation has no current exported trigger. Stored-phrase NUL remains G1's
+separate returned-text contract. No helper-only artificial input establishes
+an outward discrepancy.
+
+#### Allocation-failure partitions (source-derived, not failure-injected)
+
+GLib fatal allocation and fallible conversion are different contracts.
+`g_malloc`/`g_realloc` call fatal `g_error` (`glib/gmem.c:95-106,164-177`),
+whereas conversion's `try_malloc_n` uses the nonfatal allocator and returns
+NULL (`glib/gutf8.c:905-912,977-990,1034-1068`). All these pin conversions
+pass NULL error pointers: conversion OOM itself emits no diagnostic and
+leaves `items_written` untouched. The reference package 2.89.4-2 defines
+`GLIB_USING_SYSTEM_PRINTF`; its `g_vasprintf` object calls system vasprintf
+and aborts on ENOMEM, matching `glib/gprintf.c:339-357`: minimal raw stderr,
+not `g_log`. Other printf failures set the output NULL. This build branch
+was checked in the reference dependency image, without running the pin to
+infer expectations.
+
+| Allocation boundary / exported operations | Conditional pin result, return/out-state/diagnostic | Subject and disposition |
+| --- | --- | --- |
+| Real caller arrays, all four operations | GLib growth failure terminates through fatal allocation; no normal return. | Actual GLib growth retained. Rust payload preparation may terminate earlier. MUST RETAIN ABI; identical allocation graphs are not claimed. |
+| P/Z key renderers, P dual pinyin strings and auxiliary text | Duplication/concatenation OOM is fatal; formatted renderer ENOMEM aborts with raw stderr as above. | `owned_cstr` first allocates Rust CString, then libc storage. The former can terminate; the latter returns NULL. P renderers/dual getters can return true with NULL, Z renderer false/NULL; auxiliary writer false/NULL. Unaccepted conditional differences; adapter follow-up, including reserved zhuyin ffi.rs. |
+| P/Z keyboard vector | GLib vector/string allocation OOM is fatal, no returned partial vector. | Checked vector allocation or element libc failure returns false/NULL after freeing every prior string and vector. Earlier Rust allocation can terminate. No leaked partial-list transfer; successful pairing is correct, OOM returns are not equivalent. |
+| P/Z `token_get_phrase` | Conversion allocation failure writes declared length and NULL text, returns true, no warning (`pinyin.cpp:1627-1645`; `zhuyin.cpp:1096-1113`). | Subject writes length and NULL but returns false. Reserved dict.rs follow-up, not an accepted quirk. |
+| P/Z `get_sentence` | Each token conversion is fallible; a NULL conversion can leave NULL before a prefix exists or preserve an existing prefix, omitting that token. Later dup/concat allocation can terminate; converter otherwise returns true (`lookup/lookup.cpp:27-69`). No conversion warning. | Final subject buffer failure returns false/NULL; no per-token partial assembly. Conditional difference requires adapter follow-up, not C-like temporary allocations in the engine. |
+| P unigram iterator | Phrase conversion can yield NULL; if later fatal-allocation stages succeed, row still writes reading/count and returns true (`pinyin.cpp:698-768`). Reading allocation OOM terminates. | Independent final allocations may yield NULL phrase and/or reading while returning true and advancing. No partial-allocation rollback is promised by either interface; reading OOM differs. |
+| P bigram iterator | Internal pair conversion can yield NULL first phrase (`g_strconcat` returns NULL) or omit a NULL second phrase; later returned-string duplication OOM is fatal (`pinyin.cpp:822-836,896-910`; `glib/gstrfuncs.c:576-578`). | Final allocations can yield NULL while retaining last-row return/advance. Internal unsafe unterminated vector remains its existing exception; no new OOM admission. |
+| P/Z `phrase_segment` temporary conversion | Positive nonempty input with failed conversion leaves length zero: critical, false, old result retained. Empty input has zero equal lengths and proceeds to empty successful result, if subsequent fatal allocations succeed (`lookup/phrase_lookup.cpp:36-52,129-157,382-433`). | Rust conversion allocation can terminate; no identical-site fallible conversion exists. #918 owns converter, not this audit. |
+| P/Z `iterator_add_phrase`, `remember_user_input`; P `get_character_offset` | Failed conversion leaves initialized length zero; return false before adding a phrase/remembering/writing offset (P `:628-646,3678-3681,3210-3213`; Z `:513-532,2165-2168`). Parser allocation after add-phrase conversion can terminate first. | Rust earlier allocations can terminate. Preserve ordinary return/output contracts, no same-pressure equivalence inferred. |
+| P/Z `lookup_tokens` temporary conversion | Zero initialized length on conversion failure searches zero-length input, then clears output and returns false (G1 closure; P `:2652-2667`, Z `:1678-1693`). | Caller-array ownership is independent of this converter partition; reserved dict.rs follow-up remains. |
+| P/Z `guess_sentence_with_prefix` | Failed conversion skips prefix token additions, continues lookup with sentence_start and returns lookup result, no conversion warning. P frees prior prefix, stores NULL but leaves prior prefix length unchanged on failure; Z uses local zero length and frees temporary (P `:1389-1443`, Z `:912-962`). | Rust allocation can terminate before this fallback; no attempt to imitate C allocation staging in Rust. |
+| Context/instance/iterator handles | Opaque C++ new allocation failure has no successful handle transfer. | Rust Box is appropriate; handle destructors retain ownership. Resource pressure thresholds need not match. |
+
+Subject source: pinyin `ffi.rs:150-243`, zhuyin `ffi.rs:123-180`;
+`malloc_cstr_with` additionally frees/refuses a failed fill or embedded NUL.
+A checked-size overflow returns NULL before allocation; realistic exported
+payload bounds do not license inventing a reachable usize overflow.
+The pin and upstream GLib call sites in the allocation families above have been read; the exact glibc/Debian source gap remains explicitly open above.
+There is **no existing per-allocation failure injector** in the contract
+driver: a process-wide memory cap could fail the harness or an earlier
+allocation, so it cannot verify these conditional outcomes. That is a
+verification-tooling limitation, not unavailable source or an accepted
+runtime exception. No new driver or speculative OOM experiment was added.
+
 #### Remaining scope and verification
 
-The following are **follow-ups**, not accepted divergences or authority to
-edit another lane's files:
-
-- Both reserved `dict.rs` NULL-array diagnostic/return paths described above;
-  malformed/non-scalar input conversion remains governed by G1, not an
-  allocator-pairing exception.
-- Every existing warning trigger/caller and four sub-index critical callers,
-  including partial output/state transitions; the new segment witness is
-  bounded to its named trigger. Diagnostic NUL reachability remains open.
-- Allocation exhaustion: GLib `g_malloc` aborts (`gmem.c:95-106`),
-  conversion uses `try_malloc_n` (`gutf8.c:977-979`), while the adapters can
-  return NULL after libc malloc failure and Rust's earlier allocations can
-  abort. These are different stages, so successful ownership tests establish
-  no blanket OOM equivalence. No failure-injection expectations were learned
-  by running the pin.
-- Borrowed/static-slot identity, malicious pointer aliasing and malformed
-  backing-item text retain their existing records; this ownership matrix
-  is not a complete test of those independent input partitions.
+The NULL-array and conditional OOM differences need implementation work;
+reserved dict.rs/zhuyin ffi.rs prevent those repairs in this lane. No source
+access or authority is needed to finish their traces, now recorded above.
+Broader G8 registered unsafe/assertion refusals, borrowed/static-slot
+identity and malformed backing-item text retain their individual existing
+records; channel inventory is not a new per-trigger certification of them.
+No new difference has been proved impossible or unsafe to reproduce at a
+safe C-adapter boundary, so none is admitted in `upstream-divergences.md`.
+**Refs #924** remains appropriate.
 
 New contract cases use the existing `contract-diff.py` driver. Array cases
 exercise each facade's lookup and nth-pronunciation output after a seeded
@@ -575,7 +692,7 @@ consumers now mutate/reallocate every owned string, and replace/append
 vector elements before `g_strfreev`; borrowed and handle frees are untouched.
 
 
-Completion checks on linux/amd64, bdb, 2026-10-25 UTC: both capi package
+Initial checkpoint checks on linux/amd64, bdb, 2026-10-25 UTC: both capi package
 test suites passed (150 tests total), fmt and clippy passed; **4/4 MATCH**
 for `--issue 924`; allocator-pairing **26 + 12 slots passed**, including
 both LeakSanitizer negative controls; ABI exports **79 + 52 passed**;
@@ -586,7 +703,16 @@ The named subject-only `segment-critical-expression` mutation replaced
 pinyin's assertion-expression literal: **1 INVALID, 3 MATCH**, rejecting
 the changed message by the witness's source-derived assertion. Restoring
 and rebuilding gave **4/4 MATCH**. No mutation touched reserved files.
-There are no shipping-code changes or new runtime divergence records.
+After rebasing onto `a4546f67`, `tools/bisection/cells-for-diff.py origin/main`
+selected **bdb**: no changed store path, backend-feature line or backend
+Cargo.toml check fired. No kc/tkrzw run was selected or performed. Main's
+intervening changes were CI workflows/actions and packaging documentation;
+no tested production or contract-driver source changed in the rebase.
+The expanded final #924 selection has **6 MATCH, 4 DIFFER**: array lifecycle,
+nonfatal segment and fatal segment pairs match; all four NULL-array witnesses
+fail as source predicted. Therefore the requested diagnostic compatibility
+gate is **not green**, and this checkpoint is not eligible for a completion
+PR. There are no shipping-code changes or new runtime divergence records.
 
 Reproduction (after cloud provisioning and sourcing its environment; one
 bdb target directory, managed CPython per the setup guide):
