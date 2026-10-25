@@ -12104,6 +12104,36 @@ for _mode in ('pinyin', 'zhuyin'):
          both_abort=True, stderr=True, issues=('924',))(glib_924_segment_critical)
 
 
+# #924: source-derived fatal GArray growth, sharing the ABI failure harness.
+# Pin pinyin.cpp:2801-2818 / zhuyin.cpp:1793-1810; GLib 2.89.4
+# garray.c:1071-1100 and gmem.c:164-177. The harness checks injection,
+# GLib error and fatal signal; successful exit alone is insufficient.
+def glib_924_oom_array(k):
+    """Require a failed real GArray growth to log an error and terminate."""
+    import shlex
+    root = Path(__file__).resolve().parents[2]
+    executable = Path(k.scratch) / 'alloc-failure'
+    flags = shlex.split(subprocess.check_output(
+        ['pkg-config', '--cflags', '--libs', 'glib-2.0'], text=True))
+    subprocess.run([
+        'g++', '-std=c++17', '-O0', '-g', '-Wall', '-Wextra', '-Werror',
+        '-fno-builtin', '-rdynamic', str(root / 'tools/abi/alloc-failure.cc'),
+        *flags, '-ldl', '-o', str(executable)], check=True, capture_output=True)
+    # Array-only has the same fatal expectation for both sides and requires
+    # no subject debug-symbol offsets. No side-dependent policy exemption.
+    result = subprocess.run([
+        str(executable), str(k.lib._name), str(k.data), k.mode, 'pin',
+        '0', '0', '0', '0', 'array-only'], check=True, capture_output=True, text=True)
+    expected = f'{k.mode} pin allocation-5: PASS (fatal GLib error)\n'
+    assert result.stdout == expected, result.stdout
+    return dict(injection=True, level=4, fatal=True)
+
+
+for _mode in ('pinyin', 'zhuyin'):
+    case(f'glib-924-oom-array-growth-{_mode}', mode=_mode,
+         issues=('924', '924-oom'))(glib_924_oom_array)
+
+
 # #542's remaining named audit inputs, kept in the existing isolated worker.
 def phrase_segment_invalid_utf8(k):
     """Segment two invalid UTF-8 bytes and return the flag with the kit's live log-message list."""
