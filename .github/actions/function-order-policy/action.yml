@@ -35,6 +35,9 @@ description: |-
 runs:
   using: composite
   steps:
+    - name: Record the job start
+      shell: bash
+      run: date +%s > "$RUNNER_TEMP/function-order-job-start.txt"
     # libssl-dev and pkg-config: cargo-c pulls openssl-sys through the
     # cargo crate (see perf-snapshot). The three backend -dev packages
     # supply each backend's headers/libraries; libclang-dev is for bindgen.
