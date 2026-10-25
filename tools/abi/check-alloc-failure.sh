@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Debug-symbol, Linux/glibc C-consumer audit; does not alter production code.
+# Debug-symbol, Linux/glibc C-consumer gate: eight logged class-(c) refusals.
+# Pin allocations and GArray growth stay fatal; the disabled control must fail.
 # Run through just heavy after building both capi packages with debug symbols.
 # Usage: check-alloc-failure.sh PIN_PREFIX PINYIN_SO ZHUYIN_SO
 set -euo pipefail

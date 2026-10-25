@@ -178,7 +178,7 @@ pub extern "C" fn zhuyin_get_sentence(
 // The `char **`-out sentence writer, stamped from the shared marshalling
 // macro (byte-identical to the pinyin facade's). `crate::ffi::owned_cstr` is
 // this facade's libc-`malloc` duplicator — the per-facade allocator edge.
-oxpinyin_capi_marshal::write_owned_sentence_bytes!(crate::ffi::malloc_cstr_with);
+oxpinyin_capi_marshal::write_owned_sentence_bytes!(crate::ffi::malloc_cstr_with_warning);
 
 /// Get the character offset within `phrase` for a lookup byte offset.
 ///

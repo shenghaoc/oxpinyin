@@ -157,9 +157,8 @@ pub extern "C" fn pinyin_parse_chewing(
 ///
 /// `out` must be non-null and writable.
 ///
-/// Returns `false` without touching `out` when the allocation fails
-/// (upstream would return `true` with NULL there — the glib OOM corner;
-/// `false` is the honest answer under the no-abort policy).
+/// Returns `false` with NULL at `out` and one warning on allocation failure
+/// (class (c): the pin aborts through GLib allocation).
 unsafe fn write_string(out: *mut *mut GChar, text: &str) -> bool {
     let rendered = owned_cstr(text);
     // SAFETY: The caller guarantees `out` is writable.

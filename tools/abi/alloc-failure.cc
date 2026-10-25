@@ -21,7 +21,7 @@ extern "C" void *__libc_realloc(void *, size_t);
 extern "C" void __libc_free(void *);
 namespace {
 uintptr_t str_lo, str_hi, list_lo, list_hi;
-int target, fail_at = 1, seen, fired, channel = -1, diagnostics;
+int target, fail_at = 1, seen, fired, channel = -1, diagnostics, warnings;
 bool armed, inside;
 void *tracked[32];
 unsigned tracked_count, freed_count;
@@ -33,11 +33,13 @@ bool glib_caller(void *pc, const char *name) {
 void marker(char c) { if (channel >= 0) { auto ignored = write(channel, &c, 1); (void)ignored; } }
 GLogWriterOutput writer(GLogLevelFlags level, const GLogField *, gsize, gpointer) {
     ++diagnostics;
+    if (level & G_LOG_LEVEL_WARNING) ++warnings;
     if (level & G_LOG_LEVEL_ERROR) marker('E');
     return G_LOG_WRITER_HANDLED;
 }
 void log_handler(const gchar *, GLogLevelFlags level, const gchar *, gpointer) {
     ++diagnostics;
+    if (level & G_LOG_LEVEL_WARNING) ++warnings;
     if (level & G_LOG_LEVEL_ERROR) marker('E');
 }
 }
@@ -135,19 +137,19 @@ int main(int argc, char **argv) {
             GArray *keys = g_array_new(FALSE, FALSE, sizeof(uint16_t));
             target = operation == 5 ? 5 : pin ? 4 : operation == 4 ? 3 : operation;
             fail_at = operation == 4 ? 2 : 1;
-            seen = fired = diagnostics = 0; tracked_count = freed_count = 0; armed = true;
+            seen = fired = diagnostics = warnings = 0; tracked_count = freed_count = 0; armed = true;
             bool ret; char *out = reinterpret_cast<char *>(1); char **list = reinterpret_cast<char **>(1);
             if (operation == 1) ret = render(inst, key, &out);
             else if (operation < 5) ret = keyboard(inst, keyboard_key, &list);
             else ret = nth(inst, token, 0, keys);
             armed = false;
-            // Source-derived existing defects: silent NULL, NOT a class-(c)
-            // logged refusal. This is an audit assertion, not a policy waiver.
-            bool valid = !pin && operation < 5 && fired == 1 && seen == fail_at && diagnostics == 0;
-            if (operation == 1) valid = valid && out == nullptr && ret == pinyin;
+            // Class (c): exactly one warning and failure, while retaining
+            // the partial-vector cleanup checks and fatal GArray control.
+            bool valid = !pin && operation < 5 && fired == 1 && seen == fail_at && diagnostics == 1 && warnings == 1;
+            if (operation == 1) valid = valid && out == nullptr && !ret;
             else if (operation < 5) valid = valid && list == nullptr && !ret && tracked_count == freed_count;
             if (operation == 4) valid = valid && tracked_count == 2 && freed_count == 2;
-            if (valid) marker('D');
+            if (valid) marker('R');
             _exit(valid ? 0 : 1);
         }
         close(fd[1]); char evidence[32]{}; ssize_t count = read(fd[0], evidence, sizeof evidence);
@@ -155,11 +157,11 @@ int main(int argc, char **argv) {
         while (count >= 0 && count < 32) { ssize_t n = read(fd[0], evidence + count, sizeof evidence - count); if (n <= 0) break; count += n; }
         close(fd[0]); int status; assert(waitpid(child, &status, 0) == child);
         const bool fatal = pin || operation == 5;
-        bool ok = count == 2 && evidence[0] == 'F' && evidence[1] == (fatal ? 'E' : 'D');
+        bool ok = count == 2 && evidence[0] == 'F' && evidence[1] == (fatal ? 'E' : 'R');
         ok = ok && (fatal ? WIFSIGNALED(status) && (WTERMSIG(status) == SIGTRAP || WTERMSIG(status) == SIGABRT)
                          : WIFEXITED(status) && WEXITSTATUS(status) == 0);
         printf("%s %s allocation-%d: %s (%s)\n", argv[3], argv[4], operation,
-               ok ? "PASS" : "FAIL", fatal ? "fatal GLib error" : "confirmed silent-NULL defect");
+               ok ? "PASS" : "FAIL", fatal ? "fatal GLib error" : "logged class-(c) refusal");
         if (!ok) ++failures;
     }
     free_inst(inst); fini(ctx); dlclose(lib);
