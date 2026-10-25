@@ -10,7 +10,9 @@ A new language/runtime-quirk entry also needs the full record from
 `docs/findings/language-runtime-discrepancy-template.md`; this register
 keeps the short entry and links the record. Class (a)–(c) entries keep
 their existing shape. No existing entry is rewritten by a later policy
-change.
+change. An entry whose own issue reproduces the behaviour is closed in
+place with a dated status; the historical finding stays as the record of
+what used to differ.
 
 ## Entry template
 
@@ -28,32 +30,37 @@ change.
 
 ## Register
 
-### Non-scalar stored phrase text — language/runtime quirk (#894)
+### Non-scalar stored phrase text — CLOSED, ordinary MATCH (#894)
 
-- **Record:** [894-non-scalar-phrase-text](894-non-scalar-phrase-text.md).
-- **Classification:** decision-order limb 3, not class (b) merely because
-  Rust `str` cannot contain a non-scalar. GLib 2.89.4-2 emits extended
-  UTF-8 for surrogates and U+110000; Rust refuses the item. Both candidate
-  and sentence facades, and pinyin phrase export, have the exact effects
-  and producer/consumer proof in the record. Zhuyin has no export iterator.
-- **Disposition:** POLICY-ACCEPTED with both expected observations checked;
-  ordinary scalar controls and export-symbol absence remain MATCH. No
-  production behavior change. Verified 2026-10-24 UTC on bdb; the combined
-  #894 gate reports 15 POLICY-ACCEPTED and 9 MATCH.
+- **Record:** [894-non-scalar-phrase-text](894-non-scalar-phrase-text.md)
+  (dated superseded note, 2026-10-24 UTC).
+- **Former classification:** decision-order limb 3, not class (b) merely
+  because Rust `str` cannot contain a non-scalar. GLib 2.89.4-2 emits
+  extended UTF-8 for surrogates and U+110000; the old Rust path refused
+  the item.
+- **Status:** **CLOSED (2026-10-24 UTC, #1182).** The stored UCS-4 words
+  are carried as words (`PhraseText` in
+  `crates/oxpinyin-core/src/ucs4.rs`; the chunk reader in
+  `crates/oxpinyin-data/src/phrase_library.rs`; the candidate, sentence
+  and export paths) and encoded with GLib's rule in natural Rust at the
+  C boundary (`phrase_text_bytes` in `crates/oxpinyin-capi-marshal`).
+  The former POLICY-ACCEPTED marker is removed; the ten cases are
+  ordinary MATCH cases. The zhuyin export-symbol absence checks remain
+  MATCH. The cases use system data; malformed user-library items are
+  tracked in #1198.
 
-### Embedded zero in stored phrase text — language/runtime quirk (#894)
+### Embedded zero in stored phrase text — CLOSED, ordinary MATCH (#894)
 
-- **Record:** [894-nul-phrase-text](894-nul-phrase-text.md).
-- **Classification:** decision-order limb 3. GLib truncates each phrase at
-  zero; Rust retains its full internal text. Length/ranking still see the
-  declared length, while full-text dedup, sentence assembly and C-string
-  refusal differ on malformed tables. The current C candidate snapshot
-  drops the row; sentence get returns false/NULL; pinyin export keeps the
-  row with NULL text. These are not prefix strings handed to C.
-- **Disposition:** POLICY-ACCEPTED, with the full forward/backward trace,
-  valid-input proof and expected observations in the record. No valid-input
-  change and no prior ruling reversed. Verified 2026-10-24 UTC on bdb;
-  the named subject mutation fails exactly the five NUL marked cases.
+- **Record:** [894-nul-phrase-text](894-nul-phrase-text.md) (dated
+  superseded note, 2026-10-24 UTC).
+- **Former classification:** decision-order limb 3. GLib truncates each
+  phrase at zero; the old Rust path retained the full internal text.
+- **Status:** **CLOSED (2026-10-24 UTC, #1182).** The outward text ends
+  at the first zero word, exactly as `g_ucs4_to_utf8` does, while the
+  stored length still prices the item; candidate, sentence and export
+  bytes match. The former POLICY-ACCEPTED marker is removed; the five
+  cases are ordinary MATCH cases. The cases use system data; malformed
+  user-library items are tracked in #1198.
 
 ### Bigram export iterator's pinyin buffer
 
