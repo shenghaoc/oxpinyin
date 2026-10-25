@@ -35,6 +35,15 @@ pub struct TextSpan {
     len: u32,
 }
 
+impl TextSpan {
+    /// No string: the C getter must return NULL, not an empty allocation.
+    /// `intern` cannot produce this offset because its terminator must fit.
+    pub const NULL: Self = Self {
+        start: u32::MAX,
+        len: 0,
+    };
+}
+
 /// A snapshot row that carries one [`TextSpan`] into its snapshot's buffer
 /// and the pointer C reads that string through.
 pub trait SnapshotRow {
@@ -55,6 +64,9 @@ pub struct CandidateSnapshot<R> {
 /// when the span is not of this buffer (which the snapshot's own calls
 /// never produce).
 fn span_ptr(text: &[u8], span: TextSpan) -> *const c_char {
+    if span == TextSpan::NULL {
+        return std::ptr::null();
+    }
     let start = span.start as usize;
     text.get(start..=start.saturating_add(span.len as usize))
         .and_then(|bytes| CStr::from_bytes_with_nul(bytes).ok())
@@ -168,6 +180,10 @@ impl<R: SnapshotRow> CandidateSnapshot<R> {
     pub fn append(&mut self, other: Self) {
         self.reserve(other.rows.len(), other.text.len());
         for mut row in other.rows {
+            if row.text_span() == TextSpan::NULL {
+                self.push(row);
+                continue;
+            }
             let Some(span) = self.intern(other_text(&other.text, row.text_span())) else {
                 continue;
             };
@@ -225,6 +241,25 @@ mod tests {
 
     fn row(span: TextSpan) -> Row {
         Row(span, std::ptr::null())
+    }
+
+    #[test]
+    fn null_text_survives_growth_and_punctuation_prepend() {
+        let mut predicted = CandidateSnapshot::<Row>::new();
+        predicted.push(row(TextSpan::NULL));
+        predicted.reserve(4, 1024);
+        assert!(predicted[0].1.is_null());
+        let mut punctuation = CandidateSnapshot::<Row>::new();
+        let span = punctuation.intern("。".as_bytes()).expect("punctuation");
+        punctuation.push(row(span));
+        punctuation.append(predicted);
+        assert_eq!(punctuation.len(), 2);
+        assert!(punctuation[1].1.is_null());
+        assert_eq!(punctuation[1].0, TextSpan::NULL);
+        let empty = punctuation.intern(b"").expect("empty string");
+        punctuation.push(row(empty));
+        assert!(!punctuation[2].1.is_null());
+        assert!(punctuation[1].1.is_null());
     }
 
     #[test]

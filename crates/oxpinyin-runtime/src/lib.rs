@@ -59,7 +59,7 @@ use oxpinyin_user::{
     PinyinKey, SaveBaseline, SystemLibrary, UserConfLaw, UserLookup, UserStore, UserStoreError,
 };
 
-/// Orders the system and user `suggest_after` rows the way
+/// Orders the system and user phrase-table suggestion tokens the way
 /// `_compute_predicted_prefix_candidates` receives them
 /// (`pinyin.cpp:2371-2405`): `FacadePhraseTable3::search_suggestion` runs
 /// the system phrase table then the user one, each filing tokens into
@@ -68,43 +68,27 @@ use oxpinyin_user::{
 /// library. So: grouped by library nibble ascending — the system
 /// libraries 1–4, then the user library 7 — and inside a group the UCS-4
 /// walk order, stored token order within one text. The system rows arrive
-/// in that order already (`SystemDictionary::suggest_after`); the user
-/// rows are ordered by little-endian UCS-4 keys, preserving the stored
-/// token order within each record.
+/// in that order already (`SystemDictionary::suggestion_tokens`); the
+/// user rows are ordered by their little-endian UCS-4 keys, preserving
+/// the stored token order within each record.
+///
+/// Tokens are kept even when their live item is absent: the caller needs
+/// the pin's stale-length filter and its sole-missing/class-(b) split
+/// (`pinyin.cpp:2389-2405`, `:2443-2451`; #1231).
 ///
 /// Lives beside the other pinned data+user compositions this crate holds
 /// (the [`RuntimeLm`] overlay feed), so the C-ABI facades share one
 /// suggestion ordering instead of each assembling an equivalent against
 /// raw UCS-4 keys.
 #[must_use]
-pub fn merge_suggestion_rows(
-    system: &[(u32, PhraseText)],
-    user_rows: &[(u32, Vec<u8>)],
-) -> Vec<(u32, Option<PhraseText>)> {
+pub fn merge_suggestion_rows(system: &[u32], user_rows: &[(u32, Vec<u8>)]) -> Vec<u32> {
     let mut user = user_rows.to_vec();
     user.sort_by(|a, b| a.1.cmp(&b.1));
     let mut merged = Vec::with_capacity(system.len() + user.len());
-    merged.extend(system.iter().map(|(token, text)| {
-        (
-            *token,
-            oxpinyin_data::phrase_walk_key(text),
-            Some(text.clone()),
-        )
-    }));
-    merged.extend(user.into_iter().map(|(token, key)| (token, key, None)));
-    merged.sort_by_key(|(token, _, _)| token >> 24);
+    merged.extend_from_slice(system);
+    merged.extend(user.into_iter().map(|(token, _)| token));
+    merged.sort_by_key(|token| token >> 24);
     merged
-        .into_iter()
-        .map(|(token, key, text)| {
-            (
-                token,
-                text.or_else(|| {
-                    oxpinyin_data::row_format::phrase_index::decode_ucs4_key(&key)
-                        .map(PhraseText::from)
-                }),
-            )
-        })
-        .collect()
 }
 
 // ── Open errors ─────────────────────────────────────────────────────────
@@ -3157,31 +3141,22 @@ mod tests {
         // last, each in the DBM's byte-lexical UCS-4 order — not text
         // (UTF-8 / code point) order. U+4E50 sorts before U+4F2D by code
         // point but after it by little-endian bytes (0x50 > 0x2D).
-        let system = vec![
-            (0x0200_0001, PhraseText::from("中年")),
-            (0x0100_0010, PhraseText::from("中华")),
-        ];
+        let system = vec![0x0200_0001, 0x0100_0010];
         let user_rows = vec![
             (0x0700_0001, oxpinyin_data::ucs4_walk_key("中乐")), // U+4E50
             (0x0700_0002, oxpinyin_data::ucs4_walk_key("中伭")), // U+4F2D
         ];
         let merged = merge_suggestion_rows(&system, &user_rows);
-        let tokens: Vec<u32> = merged.iter().map(|(token, _)| *token).collect();
-        assert_eq!(tokens, [0x0100_0010, 0x0200_0001, 0x0700_0002, 0x0700_0001]);
+        assert_eq!(merged, [0x0100_0010, 0x0200_0001, 0x0700_0002, 0x0700_0001]);
     }
 
     #[test]
-    fn suggestion_rows_preserve_system_stored_words() {
-        let words = [0xd800, 0, 0x4e59];
-        let text = PhraseText::from_words(words).expect("stored phrase");
-        let system = [(0x0100_0001, text)];
-        let user_rows = [(0x0700_0001, oxpinyin_data::ucs4_walk_key("你好"))];
-        let merged = merge_suggestion_rows(&system, &user_rows);
-        assert_eq!(merged.len(), 2);
-        assert_eq!(merged[0].0, system[0].0);
-        let preserved = merged[0].1.as_ref().expect("system row survives");
-        assert_eq!(preserved.stored_words(), Some(words.as_slice()));
-        assert_eq!(preserved.phrase_length(), words.len());
-        assert_eq!(merged[1], (0x0700_0001, Some(PhraseText::from("你好"))));
+    fn suggestion_merge_retains_missing_tokens_and_duplicate_occurrences() {
+        let system = [0x0100_0001];
+        let user_rows = [(0x0100_0001, vec![0xff; 4]), (0x0700_0002, vec![0; 4])];
+        assert_eq!(
+            merge_suggestion_rows(&system, &user_rows),
+            [0x0100_0001, 0x0100_0001, 0x0700_0002]
+        );
     }
 }

@@ -348,18 +348,28 @@ fn tokens_for_text_reads_the_phrase_dbm() {
 }
 
 #[test]
-fn suggest_after_walks_the_longer_phrases() {
+fn suggestion_tokens_walk_the_longer_phrases_in_order() {
     let fix = Fixture::new();
     let dict = fix.dict();
-    // 你 → 你好 (loaded) and 你们 (unloaded, dropped); defined order.
-    let rows = dict.suggest_after("你").unwrap();
+    // 你 → 你好 (loaded) and 你们 (unloaded). The raw walk keeps both tokens
+    // (the caller's item-level split is what drops the absent one); the
+    // live item's text is resolved here.
+    let tokens = dict.suggestion_tokens("你").unwrap();
+    assert_eq!(tokens.len(), 2);
+    assert!(tokens.contains(&0x0100_0099));
+    assert!(tokens.contains(&0x0200_0098));
+    assert_eq!(dict.phrase_text(0x0200_0098), None, "unloaded library");
+    let rows: Vec<(u32, oxpinyin_core::PhraseText)> = tokens
+        .into_iter()
+        .filter_map(|token| Some((token, dict.phrase_text(token)?)))
+        .collect();
     assert_eq!(
         rows,
         vec![(0x0100_0099, oxpinyin_core::PhraseText::from("你好"))]
     );
-    assert!(dict.suggest_after("你好").unwrap().is_empty());
-    assert!(dict.suggest_after("无").unwrap().is_empty());
-    assert!(dict.suggest_after("").unwrap().is_empty());
+    assert!(dict.suggestion_tokens("你好").unwrap().is_empty());
+    assert!(dict.suggestion_tokens("无").unwrap().is_empty());
+    assert!(dict.suggestion_tokens("").unwrap().is_empty());
 }
 
 #[test]

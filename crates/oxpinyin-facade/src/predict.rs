@@ -38,13 +38,18 @@ pub fn compute_prefixes(dict: &RuntimeDict, user: Option<&UserStore>, prefix: &s
     tokens
 }
 
-/// The system and user `suggest_after` rows for `prefix`, merged in the
-/// order `_compute_predicted_prefix_candidates` receives them.
+/// The system and user phrase-table suggestion tokens for `prefix`,
+/// merged in the order `_compute_predicted_prefix_candidates` receives
+/// them, each resolved to its live item's text or `None` when the item is
+/// absent.
 ///
 /// System rows come from the loaded phrase table filtered by the
 /// loaded-library mask — the same gate [`compute_prefixes`] applies on
-/// the prefix path; user rows from its raw phrase table.
-/// The ordering law itself is
+/// the prefix path; user rows from its raw phrase table. An absent item
+/// is not dropped and no phrase-table key text stands in for it: the
+/// pin's caller needs the token to take the stale-length filter and the
+/// sole-missing/class-(b) split (`pinyin.cpp:2389-2405`, `:2443-2451`;
+/// #1231). The ordering law itself is
 /// [`oxpinyin_runtime::merge_suggestion_rows`], held with this crate's
 /// other shared orchestration so the C-ABI facades rank one suggestion
 /// order rather than each assembling an equivalent.
@@ -53,13 +58,13 @@ pub fn merged_suggestions(
     dict: &RuntimeDict,
     user: Option<&UserStore>,
     prefix: &str,
-) -> Vec<(u32, PhraseText)> {
-    let system: Vec<(u32, PhraseText)> = dict
+) -> Vec<(u32, Option<PhraseText>)> {
+    let system: Vec<u32> = dict
         .system()
-        .suggest_after(prefix)
+        .suggestion_tokens(prefix)
         .unwrap_or_default()
         .into_iter()
-        .filter(|(token, _)| dict.phrase_table_token_enabled(*token))
+        .filter(|token| dict.phrase_table_token_enabled(*token))
         .collect();
     let mut user_rows = if let Some(store) = user
         && let Ok(lookup) = UserLookup::from_store(store)
@@ -76,13 +81,11 @@ pub fn merged_suggestions(
     // UCS-4 values that cannot be represented by a Rust String.
     oxpinyin_runtime::merge_suggestion_rows(&system, &user_rows)
         .into_iter()
-        .filter_map(|(token, fallback)| {
-            dict.token_introspection(token)
-                .map(|item| item.text)
-                // Preserve the established valid-key fallback when the live
-                // item is absent; raw-key traversal adds no new missing-item policy.
-                .or(fallback)
-                .map(|text| (token, text))
+        .map(|token| {
+            // A failed item read leaves no text; it must still reach the
+            // caller's stale-length filter and sole-NULL/class-(b) split
+            // (074a2219 pinyin.cpp:2393–2451).
+            (token, dict.token_introspection(token).map(|item| item.text))
         })
         .collect()
 }

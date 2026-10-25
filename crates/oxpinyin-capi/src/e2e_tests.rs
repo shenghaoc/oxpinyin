@@ -16,6 +16,8 @@
 //! `InvalidPhrase` → `false`.
 
 use oxpinyin_core::{Dictionary as _, LanguageModel, PhraseToken};
+use oxpinyin_engine::CandidateKind;
+use oxpinyin_facade::TextSpan;
 use std::ffi::c_uint;
 use std::ptr;
 
@@ -34,7 +36,7 @@ use crate::iterators::{
 };
 use crate::parse::pinyin_parse_more_full_pinyins;
 use crate::sentence::{pinyin_get_sentence, pinyin_guess_candidates, pinyin_guess_sentence};
-use crate::state::{instance_mut, instance_ref};
+use crate::state::{CapiCandidate, instance_mut, instance_ref};
 use crate::test_support::{DEFAULT_SORT, TempUserDir, candidate, cstr, open, system_dir};
 use crate::types::{LookupCandidate, PinyinInstance, lookup_candidate_type_t};
 use crate::user_data::pinyin_remember_user_input;
@@ -516,6 +518,57 @@ fn a_predicted_bigram_trains_from_the_prediction_prefix() {
             .unwrap(),
         sentence_start_before,
         "not sentence_start"
+    );
+
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}
+
+/// A sole missing prefix row still chooses. The facade total takes the
+/// fixed 483 (`pinyin.cpp:2608-2616`, `phrase_index.h:628-634`), wrapping,
+/// while the absent item is not written; an unloaded library leaves the
+/// total alone and still answers true (#1231 ruling).
+#[test]
+fn choosing_a_sole_missing_prefix_row_advances_the_facade_total() {
+    let user_dir = TempUserDir::new("missing-prefix-choose");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+    // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
+    let inst = unsafe { instance_mut(instance) };
+    // Library 1 is loaded; this slot is absent from the mini fixture, so the
+    // item read fails exactly as a journal-removed phrase item does.
+    let token = 0x0100_FFFE;
+    assert!(inst.core.dict.phrase_table_token_enabled(token));
+    assert!(inst.core.dict.token_introspection(token).is_none());
+    inst.candidates.push(CapiCandidate {
+        text: TextSpan::NULL,
+        text_ptr: ptr::null(),
+        kind: CandidateKind::Phrase,
+        type_tag: lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE.tag(),
+        nbest_index: 0,
+        token: Some(PhraseToken::new(token)),
+        source_index: 0,
+    });
+    let candidate = &mut inst.candidates[0] as *mut CapiCandidate as *mut LookupCandidate;
+    let before = inst.core.lm.amplified_total();
+    assert!(pinyin_choose_predicted_candidate(instance, candidate));
+    let after = inst.core.lm.amplified_total();
+    assert_eq!(
+        (after.wrapping_sub(before)) as u32,
+        483,
+        "the loaded facade total takes the fixed increment"
+    );
+    assert!(
+        inst.core.dict.system_unigram_count(token).is_none(),
+        "the missing item is not written"
+    );
+
+    assert!(inst.core.dict.unload_library(1));
+    let before = inst.core.lm.amplified_total();
+    assert!(pinyin_choose_predicted_candidate(instance, candidate));
+    assert_eq!(
+        inst.core.lm.amplified_total(),
+        before,
+        "an unloaded library has no facade total to advance"
     );
 
     crate::instance::pinyin_free_instance(instance);

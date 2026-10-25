@@ -50,9 +50,7 @@ pub mod user_files;
 
 pub use bigram_table::BigramTable;
 pub use content::{ContentTable, LoadError, Record, TokenPair};
-pub use dict::{
-    AddonDictionary, AddonPhraseItem, DictError, SystemDictionary, phrase_walk_key, ucs4_walk_key,
-};
+pub use dict::{AddonDictionary, AddonPhraseItem, DictError, SystemDictionary, ucs4_walk_key};
 pub use interp::{
     InterpolationError, UnigramTable, parse_interpolation2, parse_interpolation2_from_reader,
 };
