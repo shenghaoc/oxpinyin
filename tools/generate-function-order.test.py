@@ -14,6 +14,7 @@ import re
 import runpy
 import sys
 import tempfile
+import threading
 import unittest
 from types import SimpleNamespace
 from unittest import mock
@@ -142,6 +143,111 @@ class MeasurementTests(unittest.TestCase):
                 "4000-8000 r--p 3000 08:01 42 /selected.so\nRss: 4 kB\nPss: 4 kB\n"
                 "8000-9000 r-xp 0000 08:01 43 /foreign.so\nRss: 4 kB\nPss: 4 kB\n")
         self.assertEqual(MEASUREMENT["text_memory"](text, 42), {"text_pages": 2, "text_pss_kib": 6})
+
+
+class ParallelCollectionTests(unittest.TestCase):
+    def test_overlapping_workers_have_private_profiles_and_distinct_cpus(self):
+        collect = GENERATOR['collect_parallel']
+        barrier = threading.Barrier(2)
+        lock = threading.Lock()
+        active = set()
+        visited = []
+        def toggle(args, facade, library, user, name, environment):
+            self.assertEqual((user / 'state').read_text(), 'original')
+            (user / 'state').write_text('mutated')
+            with lock:
+                self.assertNotIn(args.cpu, active)
+                active.add(args.cpu)
+                visited.append(user)
+            barrier.wait(timeout=5)
+            with lock:
+                active.remove(args.cpu)
+            return {name, 'shared'}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in GENERATOR['PROFILES']:
+                user = root / 'profiles' / name / 'user'
+                user.mkdir(parents=True)
+                (user / 'state').write_text('original')
+            args = SimpleNamespace(profiles_dir=root / 'profiles')
+            with mock.patch.dict(collect.__globals__,
+                                 teardown_exports=lambda *args: '',
+                                 startup_collections=lambda *args: [('phrases', 'a'), ('journals', 'b')],
+                                 collect_toggle=toggle, collect_steady=lambda *args: {'hot', 'shared'}):
+                result = collect(args, {f: root / f for f in GENERATOR['FACADES']}, root, {}, [2, 5], passes=2)
+            self.assertEqual(len(set(visited)), 8)
+            for facade in GENERATOR['FACADES']:
+                for iteration in result:
+                    self.assertEqual(iteration[facade], {'startup': {'a', 'b', 'shared'}, 'steady': {'hot', 'shared'}})
+            for name in GENERATOR['PROFILES']:
+                self.assertEqual((root / 'profiles' / name / 'user' / 'state').read_text(), 'original')
+            self.assertTrue(all(not path.exists() for path in visited))
+
+    def test_cancelled_capture_kills_and_reaps_child_and_inherits_slot(self):
+        capture = GENERATOR['capture']
+        state = GENERATOR['COLLECTION_STATE']
+        state.cancelled = threading.Event()
+        state.fds = (42,)
+        child = mock.MagicMock()
+        def interrupted(**kwargs):
+            state.cancelled.set()
+            raise GENERATOR['subprocess'].TimeoutExpired(['worker'], .1)
+        child.communicate.side_effect = interrupted
+        process = mock.MagicMock()
+        process.__enter__.return_value = child
+        try:
+            with mock.patch.object(GENERATOR['subprocess'], 'Popen', return_value=process) as spawn:
+                with self.assertRaisesRegex(ValueError, 'collection cancelled'):
+                    capture(['worker'], {})
+            self.assertEqual(spawn.call_args.kwargs['pass_fds'], (42,))
+            child.kill.assert_called_once()
+            child.wait.assert_called_once()
+        finally:
+            del state.cancelled
+            del state.fds
+
+    def test_partial_submission_failure_cancels_already_queued_work(self):
+        collect = GENERATOR['collect_parallel']
+        first = mock.Mock()
+        pool = mock.MagicMock()
+        pool.submit.side_effect = [first, RuntimeError('submission failed')]
+        executor = mock.MagicMock()
+        executor.__enter__.return_value = pool
+        with mock.patch.dict(collect.__globals__, teardown_exports=lambda *args: '',
+                             startup_collections=lambda *args: [],
+                             ThreadPoolExecutor=mock.Mock(return_value=executor)):
+            with self.assertRaisesRegex(RuntimeError, 'submission failed'):
+                collect(SimpleNamespace(), {f: LIBRARY for f in GENERATOR['FACADES']},
+                        Path('/unused'), {}, [2])
+        first.cancel.assert_called_once()
+
+    def test_worker_error_propagates_after_cleanup(self):
+        collect = GENERATOR['collect_parallel']
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with mock.patch.dict(collect.__globals__, teardown_exports=lambda *args: '',
+                                 startup_collections=lambda *args: [],
+                                 collect_steady=mock.Mock(side_effect=ValueError('bad stream'))):
+                with self.assertRaisesRegex(ValueError, 'bad stream'):
+                    collect(SimpleNamespace(), {f: root / f for f in GENERATOR['FACADES']}, root, {}, [3])
+            self.assertEqual(list(root.iterdir()), [])
+
+    def test_admission_caps_workers_by_memory_and_affinity_and_refuses_unknown(self):
+        sys.path.insert(0, str(HERE.parent)) if str(HERE.parent) not in sys.path else None
+        from tools.dev import host
+        budget = GENERATOR['collection_budget']
+        env = {'OXPINYIN_ORDER_CPU_COUNT': '3'}
+        resources = dict(cpus=8, available_mib=5 * host.RUNNER_PEAK_MIB,
+                         total_mib=10000, memory_limit_mib=None)
+        with mock.patch.object(host, 'memory_headroom', return_value=host.RUNNER_PEAK_MIB):
+            child, _, estimate = budget(env, resources)
+            self.assertEqual(child['OXPINYIN_ORDER_WORKERS'], '3')
+            self.assertEqual(estimate, 3 * host.RUNNER_PEAK_MIB)
+            child, _, estimate = budget(env, dict(resources, available_mib=2 * host.RUNNER_PEAK_MIB))
+            self.assertEqual(child['OXPINYIN_ORDER_WORKERS'], '1')
+            child, chosen, estimate = budget(env, dict(resources, available_mib=None))
+            self.assertEqual(chosen['OXPINYIN_ORDER_WORKERS'][0], 0)
+            self.assertEqual(estimate, host.RUNNER_PEAK_MIB)
 
 
 class GeneratorTests(unittest.TestCase):
@@ -329,24 +435,11 @@ class GeneratorTests(unittest.TestCase):
     def test_generator_and_measurement_use_the_same_startup_toggles(self):
         exports = ",".join(f"pinyin_{name}" for name in ("init", *GENERATOR["FIRST_CANDIDATE"]["pinyin"]))
         constructors = ["ctor_a", "ctor_b"]
-        collected = []
-
-        def collect(args, facade, library, user, toggle, environment):
-            collected.append(toggle)
-            return set()
-
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            for name in GENERATOR["PROFILES"]:
-                (root / "profiles" / name / "user").mkdir(parents=True)
-            (root / "work").mkdir()
-            with mock.patch.dict(GENERATOR["collect_startup"].__globals__, collect_toggle=collect,
-                                 init_array_symbols=lambda library: constructors), \
-                    mock.patch.dict(MEASUREMENT["GEN"], init_array_symbols=lambda library: constructors):
-                GENERATOR["collect_startup"](SimpleNamespace(profiles_dir=root / "profiles"), "pinyin",
-                                             LIBRARY, root / "work",
-                                             {"OXPINYIN_TEARDOWN_EXPORTS": exports})
-                measured = MEASUREMENT["startup_toggles"](LIBRARY, "pinyin", exports)
+        collections = GENERATOR['startup_collections']
+        with mock.patch.dict(collections.__globals__, init_array_symbols=lambda library: constructors), \
+                mock.patch.dict(MEASUREMENT["GEN"], init_array_symbols=lambda library: constructors):
+            collected = [toggle for profile, toggle in collections("pinyin", LIBRARY, exports)]
+            measured = MEASUREMENT["startup_toggles"](LIBRARY, "pinyin", exports)
         self.assertEqual(list(dict.fromkeys(collected)), list(measured))
         self.assertIn("pinyin_get_candidate_nbest_index", measured)
 

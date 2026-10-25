@@ -14,6 +14,9 @@ profiles are required, with no default policy.
 
 import argparse
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from copy import copy
+from queue import Queue
 from contextlib import contextmanager, nullcontext
 import io
 import json
@@ -25,13 +28,15 @@ import shutil
 import signal
 import subprocess
 import sys
-import runpy
 import tempfile
+import threading
+import time
 
 
 FACADES = ("pinyin", "zhuyin")
 PROFILES = ("phrases", "journals")
 HERE = Path(__file__).resolve().parent
+COLLECTION_STATE = threading.local()
 # The startup-profile manifest, shared with the teardown provisioner that
 # writes it; also the system-data identity.
 STARTUP_PROFILE = runpy.run_path(str(HERE / "bisection/startup_profile.py"))
@@ -101,8 +106,33 @@ def run(command):
 def capture(command, environment):
     """Run a measured child and keep both streams in memory until it succeeds."""
     try:
-        result = subprocess.run(command, capture_output=True, check=False,
-                                env=environment, timeout=1800)
+        cancelled = getattr(COLLECTION_STATE, 'cancelled', None)
+        if cancelled is None:
+            result = subprocess.run(command, capture_output=True, check=False,
+                                    env=environment, timeout=1800)
+        else:
+            if cancelled.is_set():
+                raise ValueError('collection cancelled')
+            with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                  env=environment, pass_fds=COLLECTION_STATE.fds) as child:
+                deadline = time.monotonic() + 1800
+                try:
+                    while True:
+                        if cancelled.is_set():
+                            raise ValueError('collection cancelled')
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            raise subprocess.TimeoutExpired(command, 1800)
+                        try:
+                            out, err = child.communicate(timeout=min(.1, remaining))
+                            break
+                        except subprocess.TimeoutExpired:
+                            continue
+                except BaseException:
+                    child.kill()
+                    child.wait()
+                    raise
+                result = subprocess.CompletedProcess(command, child.returncode, out, err)
     except subprocess.TimeoutExpired as error:
         raise ValueError(f"measurement child timed out: {command[0]}") from error
     if result.returncode:
@@ -460,25 +490,88 @@ def startup_toggles(facade, exports):
     return (f"{facade}_init", *first_candidate_toggles(facade, exports))
 
 
-def collect_startup(args, facade, library, work, environment):
-    """Load constructors plus each profile's init-to-M1 path, from the worker."""
-    functions = set()
-    first = work / f"{facade}-load"
-    shutil.copytree(args.profiles_dir / PROFILES[0] / "user", first)
-    try:
-        for toggle in init_array_symbols(library):
-            functions |= collect_toggle(args, facade, library, first, toggle, environment)
-    finally:
-        shutil.rmtree(first)
-    for profile in PROFILES:
-        user = work / f"{facade}-{profile}"
-        shutil.copytree(args.profiles_dir / profile / "user", user)
+def startup_collections(facade, library, exports):
+    """Independent (profile, toggle) inputs, including load constructors."""
+    return [(PROFILES[0], toggle) for toggle in init_array_symbols(library)] + [
+        (profile, toggle) for profile in PROFILES
+        for toggle in startup_toggles(facade, exports)]
+
+
+def collection_budget(env, resources, *, runner=False):
+    """Reserve each profiler worker under the shared slot's memory accounting."""
+    from tools.dev import host
+    child = dict(env)
+    ceiling = min(resources['cpus'], int(env['OXPINYIN_ORDER_CPU_COUNT']))
+    available = resources['available_mib']
+    headroom = host.memory_headroom(env, resources)
+    # Use the existing heavy-runner allowance, including captured output and
+    # private fixtures, rather than treating a profiler as a rustc process.
+    peak = host.RUNNER_PEAK_MIB
+    slots = host.heavy_slot_count(resources.get('total_mib'))
+    workers = 0 if available is None else min(ceiling, max(0, available - headroom) // slots // peak)
+    if not workers and available is not None:
+        workers = host.fit(available, peak, ceiling, headroom)
+        workers = min(workers, 1)
+    child['OXPINYIN_ORDER_WORKERS'] = str(max(1, workers))
+    reason = f'{available} MiB available; {headroom} MiB headroom; {peak} MiB per collection; CPU ceiling {ceiling}'
+    return child, {'OXPINYIN_ORDER_WORKERS': (workers, reason, False)}, max(1, workers) * peak
+
+
+def collect_parallel(args, libraries, work, environment, cpus, *, passes=1, pass_fds=()):
+    """Union independent collections; private copies and CPU leases never overlap."""
+    jobs = []
+    for facade in FACADES:
+        library = libraries[facade].resolve()
+        exports = teardown_exports(library, facade)
+        env = dict(environment, OXPINYIN_TEARDOWN_EXPORTS=exports)
+        jobs.extend((facade, library, profile, toggle, env)
+                    for profile, toggle in startup_collections(facade, library, exports))
+        jobs.append((facade, library, None, None, env))
+    jobs = [(iteration, job) for job in jobs for iteration in range(passes)]
+    cancelled = threading.Event()
+    leases = Queue()
+    for cpu in cpus:
+        leases.put(cpu)
+
+    def collect(job):
+        """Keep temporary files until the child has exited and streams are parsed."""
+        iteration, job = job
+        facade, library, profile, toggle, env = job
+        COLLECTION_STATE.cancelled = cancelled
+        COLLECTION_STATE.fds = pass_fds
+        local = copy(args)
+        local.cpu = leases.get()
         try:
-            for toggle in startup_toggles(facade, environment["OXPINYIN_TEARDOWN_EXPORTS"]):
-                functions |= collect_toggle(args, facade, library, user, toggle, environment)
+            with tempfile.TemporaryDirectory(prefix=f'{facade}-', dir=work) as directory:
+                scratch = Path(directory)
+                env = dict(env, TMPDIR=str(scratch))
+                if profile is None:
+                    functions = collect_steady(local, facade, library, scratch, env)
+                else:
+                    user = scratch / 'user'
+                    shutil.copytree(args.profiles_dir / profile / 'user', user)
+                    functions = collect_toggle(local, facade, library, user, toggle, env)
+                return iteration, facade, 'steady' if profile is None else 'startup', functions
         finally:
-            shutil.rmtree(user)
-    return functions
+            leases.put(local.cpu)
+
+    result = [{facade: {'startup': set(), 'steady': set()} for facade in FACADES}
+              for _ in range(passes)]
+    with ThreadPoolExecutor(max_workers=len(cpus)) as pool:
+        futures = []
+        try:
+            for job in jobs:
+                futures.append(pool.submit(collect, job))
+            for future in as_completed(futures):
+                iteration, facade, tier, functions = future.result()
+                result[iteration][facade][tier].update(functions)
+        finally:
+            # Do not launch queued work after failure/cancellation. Running
+            # children are reaped before the pool and scratch context exit.
+            cancelled.set()
+            for future in futures:
+                future.cancel()
+    return result
 
 
 def collect_steady(args, facade, library, work, environment):
@@ -498,27 +591,42 @@ def collect_steady(args, facade, library, work, environment):
 
 def collect_policies(args, libraries, archives):
     required = (args.bisect, args.system_dir, args.profiles_dir, args.work_dir,
-                args.system_identity, args.cpu is not None)
+                args.system_identity)
     if not all(required) or args.init or args.steady:
-        raise ValueError("collection needs the bisect worker, system/profile/work directories, identity and CPU; no stream inputs")
+        raise ValueError("collection needs the bisect worker, system/profile/work directories and identity; no stream inputs")
     identity = STARTUP_PROFILE["identity"](args.system_dir)
     if identity != args.system_identity:
         raise ValueError(f"system identity differs: {identity}")
     for profile in PROFILES:
         fixture = args.profiles_dir / profile
         STARTUP_PROFILE["check"](fixture / "user", fixture / "profile.manifest")
-    outputs = {}
+    passes = 2 if getattr(args, "repeat_output_dir", None) else 1
+    outputs = [{} for _ in range(passes)]
     with collection_scratch(args.work_dir) as work:
-        environment = {**os.environ, "LC_ALL": "C", "TMPDIR": str(work)}
-        for facade in FACADES:
-            library = libraries[facade].resolve()
-            table, available = library_symbols(library), archive_paths(archives[facade])
-            environment["OXPINYIN_TEARDOWN_EXPORTS"] = teardown_exports(library, facade)
-            startup = resolved_paths(collect_startup(args, facade, library, work, environment),
-                                     library, table, available)
-            hot = resolved_paths(collect_steady(args, facade, library, work, environment),
-                                 library, table, available)
-            outputs[f"lib{facade}.order"] = policy(facade, startup, hot)
+        cpus = sorted(os.sched_getaffinity(0))
+        if args.cpu is not None:
+            if args.cpu not in cpus:
+                raise ValueError(f'CPU {args.cpu} is outside the allowed affinity set')
+            cpus = [args.cpu]
+        root = str(HERE.parent)
+        if root not in sys.path:
+            sys.path.insert(0, root)
+        from tools.dev import slot
+        environment = dict(os.environ, LC_ALL="C", TMPDIR=str(work),
+                           OXPINYIN_ORDER_CPU_COUNT=str(len(cpus)))
+        with slot.HeavyAdmission('function-order collections', environment,
+                                 prepare_heavy_env=collection_budget) as admission:
+            cpus = cpus[:int(admission.env['OXPINYIN_ORDER_WORKERS'])]
+            print(f'function-order workers: {len(cpus)}; CPUs: {cpus}', file=sys.stderr, flush=True)
+            collected = collect_parallel(args, libraries, work, admission.env, cpus, passes=passes,
+                                         pass_fds=admission.slot.pass_fds())
+            for facade in FACADES:
+                library = libraries[facade].resolve()
+                table, available = library_symbols(library), archive_paths(archives[facade])
+                for iteration, streams in enumerate(collected):
+                    startup = resolved_paths(streams[facade]['startup'], library, table, available)
+                    hot = resolved_paths(streams[facade]['steady'], library, table, available)
+                    outputs[iteration][f"lib{facade}.order"] = policy(facade, startup, hot)
     # The input fixtures are immutable even if a driver's private copy mutates.
     for profile in PROFILES:
         fixture = args.profiles_dir / profile
@@ -555,6 +663,8 @@ def main():
     parser.add_argument("--init", action="append", default=[], metavar="FACADE:PROFILE=STREAM")
     parser.add_argument("--steady", action="append", default=[], metavar="FACADE=STREAM")
     parser.add_argument("--output-dir", type=Path)
+    parser.add_argument("--repeat-output-dir", type=Path,
+                        help="collect a second independent pass in the same admitted pool")
     parser.add_argument("--print-identity", type=Path, metavar="DIR",
                         help="print DIR's --system-identity value and exit")
     parser.add_argument("--bisect", type=Path, help="in-tree bisect worker; collects instead of reading streams")
@@ -562,7 +672,7 @@ def main():
     parser.add_argument("--system-identity")
     parser.add_argument("--profiles-dir", type=Path)
     parser.add_argument("--work-dir", type=Path)
-    parser.add_argument("--cpu", type=int)
+    parser.add_argument("--cpu", type=int, help="restrict collection to one allowed CPU (default: admitted pool)")
     args = parser.parse_args()
     if args.print_identity:
         try:
@@ -578,6 +688,8 @@ def main():
         if args.bisect:
             outputs = collect_policies(args, libraries, archives)
         else:
+            if args.repeat_output_dir:
+                raise ValueError("--repeat-output-dir requires --bisect")
             startup = pairs(args.init, tuple(f"{f}:{p}" for f in FACADES for p in PROFILES), "--init")
             steady = pairs(args.steady, FACADES, "--steady")
             if sum(str(path) == "-" for path in (*startup.values(), *steady.values())) > 1:
@@ -594,9 +706,17 @@ def main():
                 outputs[f"lib{facade}.order"] = policy(facade, init, hot)
         # Validate all streams before writing either policy. No raw data is
         # copied; the only outputs are the production-layout policy inputs.
-        args.output_dir.mkdir(parents=True, exist_ok=True)
-        for name, contents in outputs.items():
-            (args.output_dir / name).write_text(contents, encoding="utf-8", newline="\n")
+        if not args.bisect:
+            outputs = [outputs]
+        destinations = [args.output_dir]
+        if args.repeat_output_dir:
+            if args.repeat_output_dir.resolve() == args.output_dir.resolve():
+                raise ValueError("repeat output directory must differ from output directory")
+            destinations.append(args.repeat_output_dir)
+        for destination, policies in zip(destinations, outputs, strict=True):
+            destination.mkdir(parents=True, exist_ok=True)
+            for name, contents in policies.items():
+                (destination / name).write_text(contents, encoding="utf-8", newline="\n")
     except (OSError, ValueError) as error:
         parser.exit(1, f"function ordering: {error}\n")
 
