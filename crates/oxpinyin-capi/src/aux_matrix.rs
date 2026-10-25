@@ -249,7 +249,15 @@ impl SharedMatrix {
             }
             offset = key.end;
         }
-        Some(join(&prefix, middle.as_deref(), &postfix))
+        // The pin's final `g_strconcat(prefix, middle, postfix, NULL)` stops
+        // at a NULL middle and drops the postfix. `middle` is always set
+        // before the walk can end: every step leaves the cursor inside the
+        // current span or advances a span that ends at or before it, so the
+        // walk meets the boundary test or a containing key first. A matrix
+        // that breaks that invariant is the pin's
+        // `assert(get_column_size(offset) >= 1)`, not a NULL concat.
+        let middle = middle?;
+        Some(format!("{prefix}{middle}{postfix}"))
     }
 
     /// `pinyin_get_double_pinyin_auxiliary_text`'s body
@@ -286,12 +294,16 @@ impl SharedMatrix {
             middle = Some(text);
             break;
         }
-        Some(join(&prefix, middle.as_deref(), &postfix))
+        // `middle` is reached exactly as in `full`; the pin's NULL-stop is
+        // the same unreachable concat, not a rendering branch.
+        let middle = middle?;
+        Some(format!("{prefix}{middle}{postfix}"))
     }
 
     /// `pinyin_get_chewing_auxiliary_text`'s body (`pinyin.cpp:3518-3576`):
-    /// the zhuyin spelling cut by characters, `g_utf8_substring(zhuyin, len,
-    /// end)` for the right half.
+    /// the zhuyin spelling cut by scalar, `g_utf8_substring(zhuyin, len,
+    /// end)` for the right half. The cut point is the raw byte delta used
+    /// as a scalar index; see [`split_zhuyin`].
     pub(crate) fn chewing(&self, cursor: usize) -> Option<String> {
         let cursor = cursor.min(self.parsed_len);
         let prefix = self.prefix(cursor, Spelling::Zhuyin)?;
@@ -308,21 +320,13 @@ impl SharedMatrix {
                 offset = end;
                 continue;
             };
-            let zhuyin: Vec<char> = key.key.zhuyin_string().chars().collect();
-            let len = cursor - begin;
-            // `g_utf8_substring` steps by characters; it stops at the
-            // string's end (the pin's walk past the terminator is the
-            // over-read class (b) covers).
-            let left: String = zhuyin.iter().take(len).collect();
-            let right: String = zhuyin
-                .iter()
-                .skip(len)
-                .take(end.saturating_sub(len))
-                .collect();
+            let zhuyin = key.key.zhuyin_string();
+            let (left, right) = split_zhuyin(&zhuyin, cursor - begin);
             middle = Some(format!("{left}|{right} "));
             break;
         }
-        Some(join(&prefix, middle.as_deref(), &postfix))
+        let middle = middle?;
+        Some(format!("{prefix}{middle}{postfix}"))
     }
 
     /// The span a column starts, with its key; a zero key spans one byte.
@@ -338,13 +342,20 @@ impl SharedMatrix {
     }
 }
 
-/// `g_strconcat(prefix, middle, postfix, NULL)`: a NULL middle ends the
-/// list, so the postfix is dropped with it.
-fn join(prefix: &str, middle: Option<&str>, postfix: &str) -> String {
-    match middle {
-        Some(middle) => format!("{prefix}{middle}{postfix}"),
-        None => prefix.to_owned(),
-    }
+/// The pin's `g_utf8_substring(zhuyin, 0, split)` and
+/// `g_utf8_substring(zhuyin, split, end)` pair: a scalar-index cut of a
+/// zhuyin spelling. `split` is the raw-input byte delta, which the pin
+/// passes as a character offset. At or past the spelling's last scalar the
+/// right half is empty — the visible result of the second substring
+/// starting at the terminator. Past that scalar the pin's
+/// `g_utf8_offset_to_pointer` walks off the allocation (class (b)); this
+/// cut stays at the string's end instead.
+pub(crate) fn split_zhuyin(spelling: &str, split: usize) -> (&str, &str) {
+    let end = spelling
+        .char_indices()
+        .nth(split)
+        .map_or(spelling.len(), |(offset, _)| offset);
+    spelling.split_at(end)
 }
 
 /// The tone digit `%d` appends, for tones 1 to 5.
@@ -422,6 +433,62 @@ mod tests {
         ] {
             assert_eq!(aux(render, instance, 0), (false, String::new()));
         }
+
+        crate::instance::pinyin_free_instance(instance);
+        crate::context::pinyin_fini(context);
+    }
+
+    /// The chewing split is the pin's `g_utf8_substring` cut: the raw byte
+    /// delta is used as a scalar index into the zhuyin spelling. At the last
+    /// scalar the right half is empty; past it the pin's pointer is already
+    /// off the allocation (class (b)), so oxpinyin keeps the right half
+    /// empty as well.
+    #[test]
+    fn chewing_cuts_the_zhuyin_spelling_by_scalar() {
+        let user_dir = TempUserDir::new("aux-chewing-scalar");
+        let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+
+        assert_eq!(
+            pinyin_parse_more_full_pinyins(instance, cstr("nihao").as_ptr()),
+            5
+        );
+        // "hao" spans bytes 2..5 and spells two scalars: cursor 3 cuts after
+        // the first, cursor 4 after the second (the terminator).
+        assert_eq!(
+            aux(pinyin_get_chewing_auxiliary_text, instance, 3),
+            (true, "ㄋㄧ ㄏ|ㄠ ".to_owned())
+        );
+        assert_eq!(
+            aux(pinyin_get_chewing_auxiliary_text, instance, 4),
+            (true, "ㄋㄧ ㄏㄠ| ".to_owned())
+        );
+        // An overrun cursor clamps to the parsed length, the end boundary.
+        assert_eq!(
+            aux(pinyin_get_chewing_auxiliary_text, instance, 99),
+            (true, "ㄋㄧ ㄏㄠ |".to_owned())
+        );
+
+        // "zhong" spells three scalars in five raw bytes, so cursor 4 is a
+        // scalar past the spelling.
+        assert_eq!(
+            pinyin_parse_more_full_pinyins(instance, cstr("zhong").as_ptr()),
+            5
+        );
+        assert_eq!(
+            aux(pinyin_get_chewing_auxiliary_text, instance, 4),
+            (true, "ㄓㄨㄥ| ".to_owned())
+        );
+
+        // A tone-1 key keeps its digit in the raw span but not in the
+        // zhuyin spelling: cursor 2 lands exactly on the terminator.
+        assert_eq!(
+            pinyin_parse_more_full_pinyins(instance, cstr("ni1").as_ptr()),
+            3
+        );
+        assert_eq!(
+            aux(pinyin_get_chewing_auxiliary_text, instance, 2),
+            (true, "ㄋㄧ| ".to_owned())
+        );
 
         crate::instance::pinyin_free_instance(instance);
         crate::context::pinyin_fini(context);

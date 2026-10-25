@@ -7,7 +7,7 @@ use oxpinyin_core::OptionBits;
 use oxpinyin_core::ZhuyinParse;
 use oxpinyin_core::graph::SegmentGraph;
 
-use crate::aux_matrix::SharedMatrix;
+use crate::aux_matrix::{SharedMatrix, split_zhuyin};
 use crate::ffi::owned_cstr;
 use crate::state::instance_ref;
 use crate::types::{GChar, PinyinInstance};
@@ -187,13 +187,11 @@ fn chewing_aux_text(input: &str, parse: &ZhuyinParse, parsed_len: usize, cursor:
         let begin = item.start();
         let end = item.end();
         if begin < cursor && cursor < end {
-            let chars: Vec<char> = item.display().chars().collect();
-            let split = (cursor - begin).min(chars.len());
-            let left: String = chars[..split].iter().collect();
-            let right: String = chars[split..].iter().collect();
-            middle.push_str(&left);
+            let display = item.display();
+            let (left, right) = split_zhuyin(&display, cursor - begin);
+            middle.push_str(left);
             middle.push('|');
-            middle.push_str(&right);
+            middle.push_str(right);
             middle.push(' ');
             break;
         }
