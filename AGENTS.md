@@ -652,6 +652,9 @@ they now live where the procedure is documented, and this file only
 points at them:
 
 - **Independent campaign subprocesses/builds** use bounded pools under heavy admission; isolation exceptions and the audit live in `docs/plans/tooling-python.md`, "Independent campaign work".
+- **Managed Python** is stated once, in `.python-version`, and provisioned
+  through `just python`; never restate the version or pass the file's `+gil`
+  request to `uv python install`: `docs/runbooks/setup.md`.
 - **Tests that need inputs CI never has** (model20, the system-table
   export, pin-built tools, opencc) are `#[ignore = "needs …"]` and fail
   on a missing input, never skip: `docs/testing/README.md`. Do not add a

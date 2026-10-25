@@ -257,10 +257,10 @@ semver_at_least() {
 }
 
 # ---- 0a. uv and the managed interpreter ---------------------------------
-# Every repository-owned Python call uses this interpreter: the managed 3.15
-# series. Its plain build is the GIL-enabled one; uv 0.13.1 has no separate
-# +gil archive, so it is installed as cpython@3.15 and selected as
-# cpython@3.15+gil.
+# Every repository-owned Python call uses the interpreter .python-version names,
+# the one place its version is stated. tools/install-python.sh installs it (uv has
+# no +gil archive, so the install request is the file's without +gil).
+python_request=$(<"$repo/.python-version")
 for name in UV_PYTHON PYTHONHOME PYTHONPATH; do
 	if [[ -n ${!name:-} ]]; then
 		die "$name is not supported; unset it before running repository Python"
@@ -377,13 +377,10 @@ uv_at_least_floor ||
 	die "uv $uv_minimum or newer required; found: $(uv --version 2>/dev/null || echo missing)"
 # shellcheck disable=SC2034  # read by tools/cloud/env.sh's environment writer.
 uv_dir=$(dirname "$(command -v uv)")
-# Keep a managed 3.15-series interpreter that is already there; install one only
-# when none is.
-if ! uv python find --managed-python cpython@3.15+gil >/dev/null 2>&1; then
-	uv python install cpython@3.15 ||
-		die 'managed CPython 3.15 provisioning failed; check writable UV_PYTHON_INSTALL_DIR/UV_CACHE_DIR and access to github.com and release-assets.githubusercontent.com (docs/runbooks/cloud.md)'
-fi
-uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal - <<'PYTHON'
+# Keep a managed interpreter that is already there; install one only when none is.
+"$repo/tools/install-python.sh" ||
+	die 'managed Python provisioning failed; check writable UV_PYTHON_INSTALL_DIR/UV_CACHE_DIR and access to github.com and release-assets.githubusercontent.com (docs/runbooks/cloud.md)'
+uv run --no-project --managed-python --python "$python_request" python -X lazy_imports=normal - "$python_request" <<'PYTHON'
 from pathlib import Path
 import subprocess
 import sys
@@ -393,7 +390,7 @@ assert sys.version_info.releaselevel == "final" and (3, 15, 0) <= sys.version_in
 assert sysconfig.get_config_var("Py_GIL_DISABLED") == 0
 assert sys._is_gil_enabled()
 managed = subprocess.check_output(
-    ["uv", "python", "find", "--managed-python", "cpython@3.15+gil"],
+    ["uv", "python", "find", "--managed-python", sys.argv[1]],
     text=True).strip()
 assert Path(sys.executable).resolve() == Path(managed).resolve()
 print("Verified managed CPython", sys.version.split()[0], "GIL build:", Path(managed).resolve())

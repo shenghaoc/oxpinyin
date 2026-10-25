@@ -68,7 +68,7 @@ or unordered experiment too. Unknown/repeated names or conflicting
 declarations fail. A check can run alone without starting a campaign:
 
 ```sh
-uv run --no-project --managed-python --python cpython@3.15+gil \
+uv run --no-project --managed-python \
   python -X lazy_imports=normal tools/packaging/function_order.py \
   --arm subject --library "pinyin=$SUBJECT_PREFIX/lib/libpinyin.so.15.0.0"
 ```
@@ -351,7 +351,7 @@ teardown_work=$(mktemp -d "$PWD/target/teardown.XXXXXX")
 trap 'rm -rf "$teardown_work"' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-just heavy -- uv run --no-project --managed-python --python cpython@3.15+gil \
+just heavy -- uv run --no-project --managed-python \
   python -B -X lazy_imports=normal tools/bisection/contract-diff.py \
   bdb "$pin_prefix" "$shipping_prefix/lib/libpinyin.so" \
   --zhuyin-so "$shipping_prefix/lib/libzhuyin.so" \
@@ -733,7 +733,7 @@ It is a disposable workload input, not a committed fixture or profile
 capture:
 
 ```sh
-uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal - "$HARNESS" "$PIN_SO" "$DATA" "$PHRASE_FILE" <<'PY'
+uv run --no-project --managed-python python -X lazy_imports=normal - "$HARNESS" "$PIN_SO" "$DATA" "$PHRASE_FILE" <<'PY'
 import hashlib
 import subprocess
 import sys
@@ -1171,7 +1171,7 @@ Run this command under the shared host admission wrapper:
 
 ```sh
 tools/bisection/run-all.py --heavy-slot -- \
-  uv run --no-project --managed-python --python cpython@3.15+gil \
+  uv run --no-project --managed-python \
   python -X lazy_imports=normal tools/bisection/contract-diff.py \
   bdb "$PINYIN_ORACLE_PREFIX" "$SUBJECT_PREFIX/lib/libpinyin.so" \
   --zhuyin-so "$SUBJECT_PREFIX/lib/libzhuyin.so" \

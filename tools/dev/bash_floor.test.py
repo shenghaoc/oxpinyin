@@ -1,4 +1,4 @@
-#!/usr/bin/env -S uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal
+#!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
 """The one Bash floor declaration, its source-line gate and its run-time check."""
 from pathlib import Path
 import shutil

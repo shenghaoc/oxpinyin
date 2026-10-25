@@ -25,7 +25,7 @@ Options:
   --memory-smoke                    Short memory-limit smoke; requires an existing compat image
   --timeout N                       Existing registry runner timeout override
   --runner-timeout NAME=SECONDS     Existing per-runner override
-  --list                            Existing registry listing; needs uv 0.13.1 or newer and CPython 3.15+gil, no build
+  --list                            Existing registry listing; needs uv 0.13.1 or newer and the interpreter in .python-version, no build
   --help                            No runtime or build required
 Needs Bash, Git, tar, SHA-256 utility, and a working runtime. macOS/WSL/Linux
 hosts need no Rust, native DBM or libpinyin for compatibility execution.
@@ -80,16 +80,16 @@ for command in git tar; do command -v "$command" >/dev/null || die "missing $com
 for variable in UV_PYTHON UV_PYTHON_VERSION UV_PYTHON_IMPLEMENTATION UV_PYTHON_VARIANT UV_PYTHON_ARCH UV_PYTHON_BIN_DIR UV_PYTHON_PREFERENCE PYTHONHOME PYTHONPATH; do
 	[[ -z ${!variable:-} ]] || die "$variable is not supported; unset it before running repository Python"
 done
-command -v uv >/dev/null || die 'missing uv 0.13.1 or newer and managed CPython 3.15+gil'
+command -v uv >/dev/null || die 'missing uv 0.13.1 or newer and the managed interpreter in .python-version'
 # Fail before runtime detection, pulling, snapshotting or reserving memory.
-uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal \
+uv run --no-project --managed-python python -X lazy_imports=normal \
 	-m tools.dev.compat.boundary "${original_args[@]}"
 if ((list_only)); then
-	exec uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal tools/bisection/run-all.py --list
+	exec uv run --no-project --managed-python python -X lazy_imports=normal tools/bisection/run-all.py --list
 fi
 # All host admission and reservation decisions use the native Python core.
 reserved_run() {
-	exec uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal \
+	exec uv run --no-project --managed-python python -X lazy_imports=normal \
 		-m tools.dev.compat.memory --runtime "$runtime" --name "$1" --memory-mib "$memory" "${@:2}"
 }
 # shellcheck source=../container/runtime.sh
@@ -120,7 +120,7 @@ if [[ -n ${OXPINYIN_PROXY_CA:-} ]]; then
 	[[ -s $OXPINYIN_PROXY_CA ]] || die "custom CA file missing: $OXPINYIN_PROXY_CA"
 	ca_identity=$(hash < "$OXPINYIN_PROXY_CA" | cut -d' ' -f1)
 fi
-key=$( { cat tools/oracle/Dockerfile.compat rust-toolchain.toml; printf '%s:%s:%s' "$reference_tag" "$ca_identity" "$platform"; } | hash | cut -c1-16)
+key=$( { cat tools/oracle/Dockerfile.compat rust-toolchain.toml .python-version tools/install-python.sh tools/lib/bash-floor.sh; printf '%s:%s:%s' "$reference_tag" "$ca_identity" "$platform"; } | hash | cut -c1-16)
 image=oxpinyin-compat:$key
 if ((memory_smoke)); then
 	# Exercise the real launcher/admission transport without provisioning or
@@ -176,12 +176,12 @@ COPYFILE_DISABLE=1 tar --no-xattrs --null -T "$input/files" -cf "$input/source.t
 printf 'Source archive SHA-256: %s\n' "$(hash < "$input/source.tar" | cut -d' ' -f1)" >> "$input/source.txt"
 cp tools/oracle/compat-inside.sh "$input/inside.sh"
 cp tools/dev/compat/identity.py "$input/identity.py"
-input_identity=$(uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal \
+input_identity=$(uv run --no-project --managed-python python -X lazy_imports=normal \
 	-m tools.dev.compat.identity seal-inputs "$input" "$key" "$reference_tag" "$(git rev-parse HEAD)")
-source_identity=$(uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal \
+source_identity=$(uv run --no-project --managed-python python -X lazy_imports=normal \
 	-m tools.dev.compat.identity verify-inputs "$input" "$input_identity")
 # Container exports are never placed in the native Cargo target/result tree.
-result_root=$(uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal \
+result_root=$(uv run --no-project --managed-python python -X lazy_imports=normal \
 	-m tools.dev.compat.identity result-directory "$repo" "$source_identity" "$run_id")
 results=$result_root/transport
 exported_results=$result_root/result
@@ -282,6 +282,6 @@ else
 	"$runtime" cp "$name:/state/results/container/$source_identity/$run_id/." "$exported_results/"
 fi || die 'container result export failed; results are not verified'
 # Host transport diagnostics are separate from the sealed inner result files.
-uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal \
+uv run --no-project --managed-python python -X lazy_imports=normal \
 	-m tools.dev.compat.identity verify-results "$exported_results" "$input_identity" || die 'container result identity verification failed'
 exit "$status"

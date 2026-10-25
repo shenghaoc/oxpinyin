@@ -162,7 +162,7 @@ SIZE_DATA_DIRS=(
     "/opt/oxpinyin-kc/data"
 )
 
-uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal "$SCRIPT_DIR/perf-matrix.py" summarize \
+uv run --no-project --managed-python python -X lazy_imports=normal "$SCRIPT_DIR/perf-matrix.py" summarize \
     --speed "$SPEED_JSONL" \
     --ram-init "$RAM_INIT_JSONL" \
     --ram-cycle "$RAM_CYCLE_JSONL" \

@@ -20,9 +20,13 @@ RUN --mount=type=secret,id=cacert,required=false,mode=0444 \
       --manifest /usr/local/share/oxpinyin/version-manifest.json \
       --probe /usr/local/bin/distro-probe.sh \
       --record /opt/oxpinyin-compat-versions.txt
-# uv 0.13.1 and its managed GIL-enabled CPython of the 3.15 series. uv 0.13.1
-# has no separate +gil archive: install the plain cpython@3.15 build, select it
-# as cpython@3.15+gil.
+# uv 0.13.1 and the managed interpreter that .python-version names. The file and
+# the install script are copied in because the build has no checkout as its working
+# directory; the version is not restated here. uv 0.13.1 has no +gil archive, so
+# tools/install-python.sh installs the file's request without +gil.
+COPY .python-version /opt/python-pin/.python-version
+COPY tools/install-python.sh /opt/python-pin/tools/install-python.sh
+COPY tools/lib/bash-floor.sh /opt/python-pin/tools/lib/bash-floor.sh
 # Archive digest: https://github.com/astral-sh/uv/releases/download/0.13.1/sha256.sum.
 # Exact on purpose (#1074): this image installs from a checksum, and a checksum
 # is only known for a known version.
@@ -55,9 +59,10 @@ RUN --mount=type=secret,id=cacert,required=false,mode=0444 \
     unset uv_payload; \
     export PATH="/opt/uv/bin:$PATH"; \
     /opt/uv/bin/uv --version | grep -q '^uv 0\.13\.1 '; \
-    /opt/uv/bin/uv python install cpython@3.15; \
-    /opt/uv/bin/uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal \
-      -c 'from pathlib import Path; import subprocess, sys, sysconfig; assert sys.implementation.name == "cpython"; assert sys.version_info.releaselevel == "final" and (3, 15, 0) <= sys.version_info[:3] < (3, 16, 0); assert sysconfig.get_config_var("Py_GIL_DISABLED") == 0; assert sys._is_gil_enabled(); managed = subprocess.check_output(["uv", "python", "find", "--managed-python", "cpython@3.15+gil"], text=True).strip(); assert Path(sys.executable).resolve() == Path(managed).resolve()'
+    /opt/python-pin/tools/install-python.sh; \
+    cd /opt/python-pin; \
+    /opt/uv/bin/uv run --no-project --managed-python python -X lazy_imports=normal \
+      -c 'from pathlib import Path; import subprocess, sys, sysconfig; assert sys.implementation.name == "cpython"; assert sys.version_info.releaselevel == "final" and (3, 15, 0) <= sys.version_info[:3] < (3, 16, 0); assert sysconfig.get_config_var("Py_GIL_DISABLED") == 0; assert sys._is_gil_enabled(); managed = subprocess.check_output(["uv", "python", "find", "--managed-python"], text=True).strip(); assert Path(sys.executable).resolve() == Path(managed).resolve()'
 ENV PATH=/opt/uv/bin:$PATH
 COPY --from=reference /opt/pinyin-oracle /opt/reference
 COPY rust-toolchain.toml /tmp/toolchain/rust-toolchain.toml

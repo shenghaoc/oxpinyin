@@ -1,4 +1,4 @@
-#!/usr/bin/env -S uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal
+#!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
 """callgrind-ir.py — total Ir attributed to one object in a callgrind file.
 
 Used by tools/perf-gate/snapshot.sh for the nightly series' instruction count.

@@ -1,4 +1,4 @@
-#!/usr/bin/env -S uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal
+#!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
 """Regenerate the GLib/libc call-site TSV from a pinned libpinyin checkout.
 
 The pin checkout must be at 074a2219c90feaf962d0d24f034514033ece5f99.

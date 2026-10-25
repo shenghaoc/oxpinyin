@@ -103,7 +103,7 @@ without the oracle setup:
 ```sh
 tools/cloud/setup.sh --python-only
 export PATH="${UV_INSTALL_DIR:-$HOME/.local/bin}:$PATH"
-uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -m tools.dev doctor
+uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev doctor
 ```
 
 This mode runs the existing Linux and frozen-platform checks, then the
@@ -114,7 +114,8 @@ prints the verified-interpreter line and the informational ext4 path report,
 logs that it stops after Python provisioning and exits successfully. It does
 not select, start or pull a container runtime, install Valgrind or backend
 utilities, provision oracle libraries or model data, or write the oracle
-environment file. See [native setup](setup.md) for the interpreter policy.
+environment file. See [native setup](setup.md) for the interpreter policy;
+on a host that has `just`, `just python` provisions the same interpreter.
 
 `--python-only` cannot be combined with `--cells`, `--cache-dir`, `--jobs`,
 `--no-pull` or `--in-container`; these combinations fail with exit 2 before
@@ -252,7 +253,7 @@ the same implementation. A refusal is a failed run, never MATCH or SKIP.
 Run loader fixtures with:
 
 ```sh
-uv run --no-project --managed-python --python cpython@3.15.0+gil python -B -X lazy_imports=normal tools/tkrzw/runtime.test.py
+uv run --no-project --managed-python python -B -X lazy_imports=normal tools/tkrzw/runtime.test.py
 ```
 
 ## What it does

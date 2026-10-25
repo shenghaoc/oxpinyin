@@ -73,11 +73,13 @@ uv)
 	if [[ $1 == --version ]]; then printf 'uv %s (synthetic)\n' "${SYNTHETIC_UV_VERSION:-0.13.1}"
 	elif [[ $1 == python && $2 == find ]]; then
 		# A read-only probe, so it records no ACTION.
-		[[ ${SYNTHETIC_PYTHON_PRESENT:-0} == 1 ]] || exit 1
+		[[ ${SYNTHETIC_PYTHON_PRESENT:-0} == 1 || -e ${SYNTHETIC_PYTHON_INSTALLED:-/nonexistent} ]] || exit 1
 		printf '/synthetic/managed/python\n'
 	else
 		printf 'ACTION uv %s\n' "$*" >&3
 		[[ ${SYNTHETIC_PYTHON_FAILURE:-0} == 0 ]] || exit 97
+		# An install makes the interpreter findable for the verification that follows it.
+		if [[ $1 == python && $2 == install ]]; then : >"$SYNTHETIC_PYTHON_INSTALLED"; fi
 		if [[ $1 == run ]]; then cat >/dev/null; printf 'Verified synthetic managed Python\n'; fi
 	fi
 	;;
@@ -90,8 +92,9 @@ STUB
 	done
 	run_setup() {
 		status=0
+		rm -f "$work/python-installed"
 		message=$(env -u UV_PYTHON -u PYTHONHOME -u PYTHONPATH \
-			PATH="$stub_bin" UV_INSTALL_DIR="${SYNTHETIC_UV_INSTALL_DIR:-$stub_bin}" \
+			SYNTHETIC_PYTHON_INSTALLED="$work/python-installed" PATH="$stub_bin" UV_INSTALL_DIR="${SYNTHETIC_UV_INSTALL_DIR:-$stub_bin}" \
 			OXPINYIN_CLOUD_CACHE="$work/setup-cache" OXPINYIN_ORACLE_ENV="$work/setup.env" \
 			PINYIN_MODEL_CACHE="$work/setup-model" OXPINYIN_CONTAINER=podman \
 			bash "$setup" "$@" 3>&1 2>&1) || status=$?
@@ -169,7 +172,7 @@ STUB
 
 	export SYNTHETIC_PYTHON_FAILURE=1
 	run_setup --python-only
-	[[ $status == 1 && $message == *'FAIL: managed CPython 3.15 provisioning failed; check writable UV_PYTHON_INSTALL_DIR/UV_CACHE_DIR and access to github.com and release-assets.githubusercontent.com'* ]] || fail "$message"
+	[[ $status == 1 && $message == *'FAIL: managed Python provisioning failed; check writable UV_PYTHON_INSTALL_DIR/UV_CACHE_DIR and access to github.com and release-assets.githubusercontent.com'* ]] || fail "$message"
 	unset SYNTHETIC_PYTHON_FAILURE
 	printf 'PASS: Python provisioning failure names writable paths and release hosts\n'
 
@@ -222,7 +225,7 @@ STUB
 	rm "$stub_bin/cargo" "$stub_bin/rustup" "$stub_bin/valgrind"
 	run_setup --python-only
 	[[ $status == 0 && $message == *'stopping after Python provisioning (--python-only)'* && \
-		$message == *'ACTION uv python install cpython@3.15'* && $message != *'ACTION curl '* && \
+		$message == *'ACTION uv python install '* && $message != *'ACTION curl '* && \
 		$message != *'ACTION apt-get '* && $message != *'ACTION podman '* ]] || fail "$message"
 	printf 'PASS: Python-only keeps its Python-only prerequisite scope\n'
 

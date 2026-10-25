@@ -1,4 +1,4 @@
-#!/usr/bin/env -S uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal
+#!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
 """Teardown instrumentation controls using private native stubs and mocked inputs."""
 import importlib.util
 import json
@@ -922,7 +922,7 @@ def write_perf_baseline():
     fixture = dict(
         _comment=('Generated once from tools/bisection/bisect.c at main 2ce6cb7d '
                   '(pre-teardown) using the NativeTests stub. Regenerate with: '
-                  'uv run --no-project --managed-python --python cpython@3.15+gil '
+                  'uv run --no-project --managed-python '
                   'python tools/bisection/teardown.test.py --write-perf-baseline'),
         input_sha256=input_sha256, **observation)
     PERF_BASELINE.write_text(json.dumps(fixture, indent=2, sort_keys=True) + '\n')

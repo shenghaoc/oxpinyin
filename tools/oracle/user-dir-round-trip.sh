@@ -24,6 +24,7 @@
 . "${0%/*}/../lib/bash-floor.sh"
 
 set -euo pipefail
+python_request=$(<"$(dirname "${BASH_SOURCE[0]}")/../../.python-version")
 
 prefix=${1:?usage: user-dir-round-trip.sh <oracle-prefix> [input ...]}
 shift
@@ -114,7 +115,7 @@ run_round_trip_test() {
         local executable
         executable=$(cargo test --locked --profile dev --manifest-path "$root/Cargo.toml" -p oxpinyin-runtime \
             "${feature_flags[@]}" --test user_dir_round_trip --no-run --message-format=json | \
-            uv run --no-project --managed-python --python cpython@3.15.0+gil python -B -X lazy_imports=normal -c \
+            uv run --no-project --managed-python --python "$python_request" python -B -X lazy_imports=normal -c \
             'import json, sys; paths = [row["executable"] for line in sys.stdin if (row := json.loads(line)).get("executable")]; assert len(paths) == 1, paths; print(paths[0])') || return 1
         tkrzw_run "$ORACLE_DBM" subject "$executable" "$executable" --ignored --nocapture "$1"
     fi
