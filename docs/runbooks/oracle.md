@@ -477,3 +477,5 @@ touching code: reproducing the pin is the default, and only classes
 (a)–(c) may be recorded in `docs/findings/upstream-divergences.md`.
 Anything else is a defect to fix. A frozen pin that moves is a STOP
 (`goldens-and-pins.md`).
+
+Proof push 2 (docs only; image tag unchanged).
