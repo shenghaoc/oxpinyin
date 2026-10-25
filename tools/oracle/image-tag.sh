@@ -7,7 +7,8 @@ set -euo pipefail
 #
 # The tag names every input that changes the library hashes: the pin, the base
 # image codename (all from oracle-pin.txt) and the recipe itself (SHA-256 of
-# tools/oracle/Dockerfile.oracle, build-oracle.sh and the version-check
+# tools/oracle/Dockerfile.oracle, build-oracle.sh, the tools/dev files the build
+# stage copies (pool.py and the three modules it imports) and the version-check
 # inputs, followed by oracle-pin.txt). The record holds the library hashes,
 # so a rebuild that records new ones gets a new tag instead of being skipped
 # because the old tag exists.
@@ -46,7 +47,9 @@ grep -qF "$base" "$dir/Dockerfile.oracle" || {
 hash() {
 	if command -v sha256sum >/dev/null 2>&1; then sha256sum; else shasum -a 256; fi
 }
+dev=$dir/../dev
 recipe=$(cat "$dir/Dockerfile.oracle" "$dir/build-oracle.sh" \
+	"$dev/__init__.py" "$dev/darwin.py" "$dev/host.py" "$dev/pool.py" "$dev/records.py" \
 	"$dir/version-manifest.json" "$dir/versions.py" \
 	"$dir/../tkrzw/distro-probe.sh" "$pin" | hash | cut -c1-12)
 printf '%s-%s-%s\n' "${commit:0:12}" "$slug" "$recipe"

@@ -73,6 +73,18 @@ job, which covers every point. Three builds at `-j1` on four CPUs ran slower
 than one at a time at `-j4`, so builds overlap only while each keeps two make
 jobs.
 
+The image build compiles the bdb, kc and tkrzw libraries at once (#1234). The
+`build` stage copies `tools/dev/pool.py` and the three modules it imports
+(`__init__.py`, `darwin.py`, `host.py`, `records.py`) and runs
+`python3 -m tools.dev.pool run --admission none` with the deps stage's
+`python3`. No host heavy slot exists inside `docker build`, so the plan comes from
+the build step's own limits through `host.resource_snapshot` (`nproc`, the cgroup
+CPU quota, `MemAvailable`, the cgroup memory room), with the same figures and
+rules as `setup.sh`. Workers times make jobs stays within the CPUs, so nested
+`make -j` is counted. A failed backend stops the queued ones and reaps the
+running ones, and the common dependency install stays serial. `image-tag.sh`
+hashes the copied files, so editing any of them retags the image.
+
 The oracle libraries build reproducibly: inside the pin-reference image
 (`tools/oracle/Dockerfile.oracle`: `debian:trixie`, the current Debian stable
 codename, from the default mirrors with normal security updates)
@@ -93,8 +105,8 @@ arm64 runners. The amd64 tags are the historical
 and arm64 publishes the siblings `<tag>-arm64` and `<tag>-deps-arm64`.
 `<tag>` is printed by `tools/oracle/image-tag.sh`: the libpinyin
 commit and the base image codename (both from `oracle-pin.txt`) and a hash
-of `Dockerfile.oracle`, `build-oracle.sh`, the version-check inputs and
-`oracle-pin.txt` itself, so it changes whenever the library hashes or their
+of `Dockerfile.oracle`, `build-oracle.sh`, the five `tools/dev` files the build
+stage copies, the version-check inputs and `oracle-pin.txt` itself, so it changes whenever the library hashes or their
 record can. The arm64 contract gate
 excludes the 13 cases diagnosed in #1137 and reports 0 DIFFER; amd64 still
 runs them. See [the arm64 finding](../findings/oracle-arm64-1132.md). A published tag is

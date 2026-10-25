@@ -31,6 +31,11 @@ on:
     branches: [main]
     paths:
       - tools/oracle/build-oracle.sh
+      - tools/dev/__init__.py
+      - tools/dev/darwin.py
+      - tools/dev/host.py
+      - tools/dev/pool.py
+      - tools/dev/records.py
       - tools/oracle/Dockerfile.oracle
       - tools/oracle/oracle-pin.txt
       - tools/oracle/version-manifest.json
@@ -51,6 +56,11 @@ on:
     branches: [main]
     paths:
       - tools/oracle/build-oracle.sh
+      - tools/dev/__init__.py
+      - tools/dev/darwin.py
+      - tools/dev/host.py
+      - tools/dev/pool.py
+      - tools/dev/records.py
       - tools/oracle/Dockerfile.oracle
       - tools/oracle/oracle-pin.txt
       - tools/oracle/version-manifest.json
@@ -95,7 +105,7 @@ jobs:
             oracle=true
           else
             changed=$(git diff --name-only "$BASE" HEAD)
-            if grep -E '^(tools/oracle/(build-oracle.sh|check-reproducible.sh|Dockerfile.oracle|oracle-pin.txt|pin.sh|verify-oracle-image.sh|image-tag.sh|version-manifest.json|versions.py)|tools/tkrzw/distro-probe.sh|.github/workflows/oracle-image.yml)$' <<< "$changed" >/dev/null; then
+            if grep -E '^(tools/dev/(__init__|darwin|host|pool|records).py|tools/oracle/(build-oracle.sh|check-reproducible.sh|Dockerfile.oracle|oracle-pin.txt|pin.sh|verify-oracle-image.sh|image-tag.sh|version-manifest.json|versions.py)|tools/tkrzw/distro-probe.sh|.github/workflows/oracle-image.yml)$' <<< "$changed" >/dev/null; then
               oracle=true
             fi
           fi

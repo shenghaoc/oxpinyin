@@ -7,7 +7,8 @@
 # that affects reference results; versions.py records the installed versions
 # and fails the build, naming the component, when one is outside its range.
 # Stage `build` runs tools/oracle/build-oracle.sh --libs-only once per DBM
-# backend at fixed in-image paths. The final stage is the published image:
+# backend at fixed in-image paths, the backends at once within the step's own
+# CPU and memory limits. The final stage is the published image:
 # libpinyin.so, libzhuyin.so, headers, pkg-config files, oracle-pin.txt per
 # backend and the recorded tool versions. It carries NO model20-derived data
 # (that is not redistributable: docs/findings/model-provenance.md); a lane
@@ -59,13 +60,20 @@ RUN --mount=type=secret,id=cacert,required=false,mode=0444 \
 FROM deps AS build
 
 COPY tools/oracle/build-oracle.sh /usr/local/bin/build-oracle.sh
-RUN set -eu; \
-    for dbm in bdb kc tkrzw; do \
-        build-oracle.sh --libs-only --enable-libzhuyin --dbm "$dbm" \
-            --work-dir "/build/$dbm" --prefix "/opt/pinyin-oracle/$dbm" \
-            --jobs "$(nproc)"; \
-        rm -rf "/build/$dbm"; \
-    done
+# The backends are independent: each has its own work directory and prefix, and
+# build-oracle.sh output does not depend on make -j. They build at once within
+# this step's own CPU and memory limits, planned by tools/dev/pool.py (the module
+# `just` and setup.sh use under the host heavy slot; no host slot exists here).
+# Workers x make jobs stays within the CPUs, so nested make -j is counted. The
+# module runs with the deps stage's python3 beside the three files it imports;
+# tools/oracle/image-tag.sh hashes every file copied here.
+COPY tools/dev/__init__.py tools/dev/darwin.py tools/dev/host.py tools/dev/pool.py tools/dev/records.py \
+    /opt/oxpinyin-pool/tools/dev/
+RUN set -eu; cd /opt/oxpinyin-pool; \
+    python3 -m tools.dev.pool run --label backends --items bdb,kc,tkrzw --admission none \
+        --log '/build/{item}.log' --remove '/build/{item}' \
+        -- build-oracle.sh --libs-only --enable-libzhuyin --dbm '{item}' \
+           --work-dir '/build/{item}' --prefix '/opt/pinyin-oracle/{item}' --jobs '{jobs}'
 
 FROM --platform=$ORACLE_PLATFORM scratch
 COPY --from=build /opt/pinyin-oracle /opt/pinyin-oracle
