@@ -31,7 +31,7 @@ fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 (
 	setup=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/setup.sh
 	stub_bin=$work/setup-bin
-	mkdir -p "$stub_bin" "$work/uv-bin" "$work/readonly-uv"
+	mkdir -p "$stub_bin" "$work/uv-bin" "$work/readonly-uv" "$work/setup-tmp"
 	for tool in bash dirname nproc uname sed cat mkdir mktemp rm base64 sha256sum cut grep basename tar; do
 		ln -s "$(command -v "$tool")" "$stub_bin/$tool"
 	done
@@ -96,7 +96,7 @@ STUB
 		message=$(env -u UV_PYTHON -u PYTHONHOME -u PYTHONPATH \
 			SYNTHETIC_PYTHON_INSTALLED="$work/python-installed" PATH="$stub_bin" UV_INSTALL_DIR="${SYNTHETIC_UV_INSTALL_DIR:-$stub_bin}" \
 			OXPINYIN_CLOUD_CACHE="$work/setup-cache" OXPINYIN_ORACLE_ENV="$work/setup.env" \
-			PINYIN_MODEL_CACHE="$work/setup-model" OXPINYIN_CONTAINER=podman \
+			PINYIN_MODEL_CACHE="$work/setup-model" OXPINYIN_CONTAINER=podman TMPDIR="$work/setup-tmp" \
 			bash "$setup" "$@" 3>&1 2>&1) || status=$?
 	}
 	check_setup() {
@@ -222,13 +222,19 @@ STUB
 	run_setup --cells bdb
 	[[ $status == 1 && $message == *"proxy CA: $work/host-ca (OXPINYIN_PROXY_CA)"* && \
 		$message == *'FAIL: model20 is unavailable'* && $message != *"$proxy_fail"* ]] || fail "$message"
+	copy_line="containers mount a private copy at $work/setup-tmp/"
+	[[ $message == *"$copy_line"*'/ca.crt (mode 0600, removed on exit)'* ]] || fail "$message"
+	[[ -z $(ls -A "$work/setup-tmp") ]] || fail "the private CA copy outlived setup: $(ls -A "$work/setup-tmp")"
 	unset OXPINYIN_PROXY_CA
-	printf 'PASS: OXPINYIN_PROXY_CA naming a present file is used\n'
+	printf 'PASS: OXPINYIN_PROXY_CA naming a present file is used, through a private copy removed on exit\n'
 
 	export SSL_CERT_FILE=$work/host-ca CURL_CA_BUNDLE=$work/empty-ca
 	run_setup --cells bdb
 	[[ $status == 1 && $message == *"using the host-trusted SSL_CERT_FILE: $work/host-ca"* && \
 		$message == *'FAIL: model20 is unavailable'* ]] || fail "$message"
+	[[ $message == *"does not show that the proxy's interception certificate is trusted"* && \
+		$message == *'set OXPINYIN_PROXY_CA to the proxy'* ]] || fail "$message"
+	[[ $message != *"$work/host-ca:/run/ca.crt"* && $message != *prevent* ]] || fail "$message"
 	unset SSL_CERT_FILE
 	export CURL_CA_BUNDLE=$work/host-ca
 	run_setup --cells bdb
@@ -236,8 +242,21 @@ STUB
 	unset CURL_CA_BUNDLE
 	export OXPINYIN_SYSTEM_CA_BUNDLES=$work/no-system-ca:$work/host-ca
 	run_setup --cells bdb
-	[[ $status == 1 && $message == *"using the host-trusted the system bundle: $work/host-ca"* ]] || fail "$message"
+	[[ $status == 1 && $message == *"using the host-trusted system bundle: $work/host-ca"* ]] || fail "$message"
 	printf 'PASS: with a proxy and no session bundle, the CA the host trusts is used and named\n'
+
+	# The copy is private (0600) whatever the caller's umask, holds the selected bundle, and the
+	# selected host file is never the mount source: `cat` records the mode of the file it writes.
+	real_cat=$(command -v cat) real_ls=$(command -v ls)
+	rm "$stub_bin/cat"
+	printf '#!/bin/bash\n"%s" -lL /dev/fd/9 9>&1 >>"%s" 2>&1\nexec "%s" "$@"\n' \
+		"$real_ls" "$work/cat-modes" "$real_cat" >"$stub_bin/cat"
+	chmod +x "$stub_bin/cat"
+	(umask 022 && run_setup --cells bdb)
+	rm "$stub_bin/cat"
+	ln -s "$real_cat" "$stub_bin/cat"
+	grep -q '^-rw------- ' "$work/cat-modes" || fail "the private CA copy is not mode 0600: $(cat "$work/cat-modes")"
+	printf 'PASS: the CA copy mounted into containers is mode 0600 and removed on exit\n'
 
 	unset HTTPS_PROXY https_proxy
 	run_setup --cells bdb

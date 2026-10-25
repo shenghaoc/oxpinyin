@@ -337,11 +337,18 @@ trust its CA (`/root/.ccr/README.md`, "docker build / docker run"), so
 every Docker/Podman run here uses `--network host`, passes `https_proxy` and
 the CA (`GIT_SSL_CAINFO`, `SSL_CERT_FILE`, `CURL_CA_BUNDLE`) and mounts
 `/root/.ccr/ca-bundle.crt` only when that bundle exists (or an explicit
-`OXPINYIN_PROXY_CA` is supplied). With `HTTPS_PROXY` set and that bundle
+`OXPINYIN_PROXY_CA` is supplied). The mount is a private copy of the selected
+bundle (mode 0600, in the run's temporary directory, removed on exit) mounted
+`:ro,z`; the selected file itself, including a host system CA file, is never
+bind-mounted or relabelled. With `HTTPS_PROXY` set and that bundle
 absent, step 0 uses the CA the host already trusts, in this order:
 `SSL_CERT_FILE`, `CURL_CA_BUNDLE`, then the system bundle, and logs which one
 (`proxy CA: ...`). When there is none, setup fails there, before any download
 or build, and names `OXPINYIN_PROXY_CA`; it never disables verification.
+The fallback proves only that a non-empty bundle is present. It does not show
+that the proxy's interception certificate is trusted, so it does not prevent a
+TLS failure; step 0 says so, and a failure there is resolved by setting
+`OXPINYIN_PROXY_CA` to the proxy's CA bundle. No network probe checks it.
 An ordinary HTTPS proxy does not require Claude files. The `deps` build passes the proxy as a build
 arg and the CA as the optional BuildKit secret `cacert`
 (`tools/oracle/Dockerfile.oracle`); with the secret, apt trusts that CA for
@@ -373,7 +380,10 @@ model20 must not be mirrored or published by the project.
 `deb.debian.org`, the Debian stable package mirror, which a session's network
 policy has to allow; setup no longer contacts `snapshot.debian.org`. No
 session has been recorded reaching `deb.debian.org`, so that access is
-unverified. `--regen-data` compiles the pin's data build, so both the library
+unverified. Observed in a cloud session on 2026-10-25 UTC: `deb.debian.org`
+was blocked and `snapshot.debian.org` was reachable. A session's network
+policy therefore has to allow `deb.debian.org` for the trixie image builds;
+reaching `snapshot.debian.org` does not substitute for it. `--regen-data` compiles the pin's data build, so both the library
 build and the data step need the `deps` image. The normal image workflow now
 also publishes that exact `deps` stage as
 `ghcr.io/shenghaoc/oxpinyin-oracle:<oracle-tag>-deps` on amd64 and
