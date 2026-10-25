@@ -72,6 +72,28 @@ Language and runtime-library divergences follow one decision order,
 stated in full in `docs/findings/compatibility-policy.md` under "The
 language/runtime-quirk exception":
 
+Maintainer rulings, 2026-10-24 UTC (the full policy text is in that
+section): oxpinyin follows libpinyin's outward behaviour unless that
+behaviour is against Rust; that behaviour is reproduced in natural,
+efficient Rust, and inefficient code is never written to imitate GLib,
+libc or C++ behaviour or internals; Rust's `std` maths is used at full
+speed (recorded under class (a); cross-reference, not duplicate); and no
+specialised maths dependencies (SIMD crates and the like).
+
+**Adapter placement (2026-10-24 UTC, #1182).** C, C++ and GLib
+interoperability, and C-facing encodings, live only in the consumer C API
+adapters (`oxpinyin-capi`, `oxpinyin-zhuyin-capi`,
+`oxpinyin-capi-marshal`, and their shared `oxpinyin-facade` layer)
+and the store backend adapters
+(`oxpinyin-data`, `oxpinyin-user`). Core and engine types carry only the
+stored length and outward words that the pin's ranking, comparison,
+sentence, export and token-getter paths need before the C API, plus the
+full stored words its store/table maintenance reads. General Rust
+conversions preserve all characters: NUL-containing text becomes Stored,
+with its full declared character count and first-zero outward cut.
+`phrase_text_bytes` is the explicit C-boundary encoder. The broader
+user-library audit stays in #1198.
+
 1. **The C-facing contract is never a quirk.** The C ABI and its layout,
    ownership and lifetime (real `GArray`, `g_free`, every other
    GLib-owned structure and allocation), the on-disk system and user
@@ -81,17 +103,20 @@ language/runtime-quirk exception":
    a Stage 3 departure; the quirk limb below cannot admit it.
 2. **If it is class (a), (b) or (c)**, classify it there and follow that
    class's rules.
-3. **A GLib, glibc or C++ language/runtime quirk may be accepted**
-   instead of emulated in Rust. oxpinyin uses normal Rust functions in
-   place of GLib-conformity code. The exception is admitted only by a
-   discrepancy record
+3. **A GLib, glibc or C++ language/runtime quirk is accepted only
+   where reproducing its outward result in natural, efficient Rust is
+   impossible or unsafe.** "Ordinary Rust does not reproduce it" is not
+   enough. Reproducing an outward behaviour never means emulating a
+   GLib, libc or C++ mechanism: it means producing the same observable
+   result with plain Rust — a byte scan, a raw comparison, `Vec<u8>`
+   instead of `String`. The exception is admitted only by a discrepancy
+   record
    (`docs/findings/language-runtime-discrepancy-template.md`) after the
-   whole reachable path is traced; it must be confined to malformed,
-   non-scalar, host-dependent or otherwise undefined input, or to a
-   diagnostic/comparator detail with no valid-input consequence, and it
-   must preserve every item in limb 1. Register it by name in
-   `docs/findings/upstream-divergences.md`; one record does not admit
-   another by analogy, though the category itself is
+   whole reachable path is traced; the record must partition valid from
+   malformed input, state why the outward result cannot be produced in
+   natural, efficient Rust, and preserve every item in limb 1. Register
+   it by name in `docs/findings/upstream-divergences.md`; one record
+   does not admit another by analogy, though the category itself is
    maintainer-authorized.
 4. **Anything else is a defect to revert.** An intentional departure
    that changes valid behaviour or the contract is Stage 3, behind an
