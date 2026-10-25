@@ -1347,7 +1347,7 @@ Pin: `storage/tag_utility.cpp:94-95,118-264` (`split_line`, `taglib_read`);
 `utils/storage/gen_binary_files.cpp:68-72,103` (`load_text` callers).
 Rust: `data/src/interp.rs::parse_interpolation2_from_reader`,
 `data/src/interp_grammar.rs::read`/`Tokens`/`is_graph`;
-`training/src/counter/parse.rs::parse_ngseg`/`parse_segmented_line`/`atoi`;
+`training/src/counter/parse.rs::parse_ngseg`/`parse_segmented_line`; `kmm/src/cnum.rs::atoi`/`atol`;
 `dictool/src/format.rs::parse`/`split_classic`. Owner #926.
 
 | Tool input partition/interface | Verdict | Investigation |
@@ -1355,7 +1355,9 @@ Rust: `data/src/interp.rs::parse_interpolation2_from_reader`,
 | Ordinary tagged interpolation input; spaces, printable tokens, required/ignored tags | Pending full interface equivalence. | Checked interface mapping and `taglib_read`/Rust grammar entry points; not a completed value/diagnostic/output audit. |
 | Quoted escapes, dangling escapes, Unicode whitespace/graph categories, unexpected/missing tags | Pending classification. | Unverified against the pinned GLib category tables and all consuming tools; Rust `is_graph` alone is not proof. |
 | Segmented `token phrase` stream, empty lines, repeated separators | Pending complete tool verdict; source maps two-piece space/tab split and empty-line null token. | Partial: the pin macro also validates token against phrase; reading the Rust parser is not proof of the full training pipeline. |
-| Signed/overflowing/malformed numeric fields, missing separators | Pending classification. | Unverified `atoi`/abort/error and downstream file effects; no generic tool-scope quirk admission. |
+| Signed/overflowing/malformed numeric fields in the segmented stream and K-mixture text | Reproduce: glibc 2.41 `strtol` base 10, low 32 bits for tokens, `long` for counts. Done in the training and kmm crates; no exception admitted. | Complete for `counter/parse.rs`, `eval/decode.rs`, `segment/mergeseq.rs`, `kmm/generate.rs`, `kmm/text.rs` against live `gen_ngram`, `gen_k_mixture_model` and `k_mixture_model_to_interpolation` ([#926 numeric conversion](926-tool-tokenizers.md#numeric-conversion-glibc-241)). Missing separators are the earlier tokenizer rows. |
+| Classic dictool count (`atoi` in the ibus frontend) | Frozen dictool grammar `digit+` and desired-count meaning; not reproduced. | Needs a human ruling to change; see the #926 numeric section. |
+| `import_interpolation` numeric fields (`oxpinyin-data` `interp.rs`) | Pending. | Outside the dictool/training/kmm scope of the numeric change. |
 | Four-field generation records, field-length limits, integer ranges and rejected rows | Pending whole `load_text` consumer verdict. | Source interface checked: table parser uses `g_ascii_strtoull`, bounded copies, four fields; generator callers identified. Full Rust datagen/output audit unverified. |
 | Classic dictool two/three-field dictionary interchange | Equivalent `str::splitn` replacement under the existing [dictool format](dictool-format.md), including empty fields and retained count tail. | [#926 source audit](926-tool-tokenizers.md): current safe-store import/export path, ASCII versus Unicode separators, literal escapes/categories and preflight errors traced. The older description of dictool calling the C ABI is historical. |
 
@@ -1388,7 +1390,8 @@ validate nonzero phrases. Train's held-out reader now validates bytes once
 and feeds both K-mixture scoring and deleted counting; the existing live
 KMM gen/export driver verifies the accepted byte variant. The existing BDB driver confirms ordinary
 and accepted byte-variant values and source-derived known-token refusals.
-Signed/overflow conversion awaits the trixie reference. Classic invalid
+Signed/overflow conversion is traced against glibc 2.41 and reproduced for
+the segmented stream and K-mixture text (see the #926 numeric section). Classic invalid
 phrase rows retain dictool's own strict preflight/error specification under
 the #1226 maintainer ruling; frontend skipping is not a C ABI requirement.
 Post-assertion DBM durability is outside this scope. Details and commands are in the #926 audit. This is

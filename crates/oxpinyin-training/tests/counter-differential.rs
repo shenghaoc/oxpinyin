@@ -141,6 +141,55 @@ fn run_live_pipeline(
     Ok(parse_interpolation_dump(text))
 }
 
+/// The fixture with each token field respelled so that `atoi` still reads the
+/// same token: a sign, C white space before the digits, leading zeros,
+/// trailing bytes, a value above 2^32 and a negative whose low 32 bits are
+/// the token. Zero is respelled as a signed or wrapped zero or a field with no
+/// digits, which bypass phrase validation as `0` does (`utils_helper.h:63`).
+fn spell_token_fields(fixture: &[u8]) -> Vec<u8> {
+    const WRAP: u64 = 1 << 32;
+    let mut out = Vec::new();
+    let body = fixture.strip_suffix(b"\n").unwrap_or(fixture);
+    for (index, line) in body.split(|byte| *byte == b'\n').enumerate() {
+        if line.is_empty() {
+            out.push(b'\n');
+            continue;
+        }
+        let Some(split) = line.iter().position(|byte| matches!(byte, b' ' | b'\t')) else {
+            panic!("fixture has no separator: {line:?}");
+        };
+        let token: u64 = std::str::from_utf8(&line[..split])
+            .expect("ASCII token")
+            .parse()
+            .expect("fixture token");
+        let field = if token == 0 {
+            [
+                "-4294967296",
+                "4294967296",
+                "-0",
+                "abc",
+                "+",
+                "-9223372036854775808",
+                "\r0",
+            ][index % 7]
+                .to_owned()
+        } else {
+            match index % 6 {
+                0 => format!("+{token}"),
+                1 => format!("\r{token}"),
+                2 => format!("{}", token + WRAP),
+                3 => format!("-{}", WRAP - token),
+                4 => format!("\x0b00{token}"),
+                _ => format!("\x0c{token}x"),
+            }
+        };
+        out.extend_from_slice(field.as_bytes());
+        out.extend_from_slice(&line[split..]);
+        out.push(b'\n');
+    }
+    out
+}
+
 #[test]
 #[ignore = "needs the pin-built gen_ngram tool chain and PINYIN_GEN_NGRAM_DATA; run with --include-ignored"]
 fn rust_matches_live_gen_ngram() {
@@ -225,6 +274,25 @@ fn rust_matches_live_gen_ngram() {
     eprintln!(
         "classified prefixes, TAB, signed zero, NUL and ignored invalid bytes: value-identical"
     );
+    // `atoi` is `(int) strtol(field, NULL, 10)` (`utils_helper.h:61`; glibc
+    // 2.41 `stdlib/strtol_l.c:295-524`): C white space other than the field
+    // separators, one sign and trailing bytes are accepted, a `long` overflow
+    // saturates and only the low 32 bits become the token. Every spelling
+    // below names the token its line already carries, or zero.
+    let spelled = spell_token_fields(&fixture);
+    let spelled_rust = count_ngseg(&lexicon, &spelled, true).expect("spelled stream");
+    assert_counts_equal(&rust, &spelled_rust);
+    let spelled_live = run_live_pipeline(
+        &gen_binary_files,
+        &gen_unigram,
+        &gen_ngram,
+        &export_interpolation,
+        &data,
+        &spelled,
+    )
+    .expect("spelled live gen_ngram pipeline");
+    assert_counts_equal(&rust, &spelled_live);
+    eprintln!("signed, spaced, wrapped and saturated token fields: value-identical");
     // Pin utils/utils_helper.h:58-65 aborts on shape/phrase mismatch;
     // tag_utility.cpp:413 compares exact bytes for this known resident token.
     for input in [

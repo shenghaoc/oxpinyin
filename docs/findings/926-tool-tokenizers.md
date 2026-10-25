@@ -428,10 +428,10 @@ reject a mismatched held-out phrase before producing output.
 
 ### Open partitions and held edits
 
-* Signed numbers, long-range saturation/narrowing and numeric-domain changes
-  await the authorized trixie reference and glibc 2.41 source trace. The old
-  amd64 disassembly findings are historical evidence, not a replacement for
-  that prerequisite.
+* Signed numbers, long-range saturation/narrowing and numeric-domain changes:
+  traced against glibc 2.41 source and reproduced in
+  [Numeric conversion](#numeric-conversion-glibc-241) below. The old amd64
+  disassembly findings are historical evidence only.
 * **Resolved:** dictool keeps its own strict CLI specification
   (`dictool-format.md` §2), including preflight refusal and desired-floor
   counts. NUL and pinyin-prefix fixes remain. Frontend skipping is not the
@@ -610,3 +610,100 @@ restored before the full suite passed. Each newly changed function is covered:
 | `Document::count` | `kmm-reset-every-token`: reset previous token each line | same |
 | `prepare_held_out` | `held-out-drop-records`: parse empty input | `held_out_byte_records_produce_identical_scoring_and_lambda_models` |
 | train `run` | `train-reject-hidden-bytes`: restore whole-file UTF-8 decoding | `eval_and_train_refuse_mismatched_held_out_phrases` |
+
+## Numeric conversion (glibc 2.41)
+
+2026-10-25 UTC, based on main `1e88675`. The reference image is Debian trixie,
+glibc 2.41. Source read from `bminor/glibc` tag `glibc-2.41` (commit
+`74f59e9271cbb4071671e5a474e7d4f1622b186f`), not 2.43; libpinyin at
+`074a2219`. This replaces the 2.43 disassembly reading above for the
+conversion rule. No pin tool was run to find a rule.
+
+### The rule
+
+The pin's tools convert record fields with `atoi` and `atol`
+(`utils/utils_helper.h:23-35,57-69`). Both are `strtol(nptr, NULL, 10)`
+(`stdlib/atoi.c:27`, `stdlib/atol.c:27`, inline forms
+`stdlib/stdlib.h:481-489`), whose body is `__strtol_l_internal`
+(`stdlib/strtol_l.c:235-546`; `strtol.c:108-117` passes `group` 0, so there
+is no thousands grouping; the C23 entry `strtol.c:124-127` differs only in
+the `0b` prefix, which is not read in base 10). On LP64:
+
+* leading `isspace` bytes are skipped (`:304`); the tools call
+  `setlocale(LC_ALL, "")`, so the table is the locale's. The C locale's is
+  TAB, LF, VT, FF, CR and SPACE (`locale/C-ctype.c:366-369`), and a UTF-8
+  locale adds no byte above 0x7f. Other single-byte locales are not traced;
+* one `+` or `-` follows (`:311-317`). A field that is empty, white space
+  only, a sign alone or has no digit gives 0 (`:306`, `:495`, `:526-545`);
+  white space after the sign is not skipped;
+* digits are consumed to the first other byte, without error (`:449-492`);
+* a magnitude above `LONG_MAX` (below `LONG_MIN` when negative) saturates
+  (`:503-521`); `-2^63` is exact (`:507-509`, `:524`);
+* `atoi` casts to `int` (`atoi.c:27`) and the macros store a `guint32`: the
+  low 32 bits. `atol` is kept as a `glong` and the K-mixture importer stores
+  it in `guint32` fields (`utils/training/k_mixture_model.h:117-153`); the
+  interpolation converter prints it whole with `%ld`
+  (`k_mixture_model_to_interpolation.cpp:131-133,170-172`) and a token with
+  `%d`.
+
+Between 2.39 and 2.41 `strtol_l.c`, `strtol.c`, `atoi.c`, `atol.c` and
+`C-ctype.c` differ only in copyright years and a `C2X`→`C23` macro rename.
+The live pin tools below were built on the cloud host (Ubuntu 24.04, glibc
+2.39), not in the reference image; that difference does not reach this rule.
+
+### Sites
+
+| Site | Class | Result |
+| --- | --- | --- |
+| `TAGLIB_PARSE_SEGMENTED_LINE` `atoi` (`utils_helper.h:61`): `gen_ngram`, `gen_deleted_ngram`, `gen_k_mixture_model`, `eval_correction_rate`, `mergeseq` | Reproduce | `oxpinyin_kmm::atoi` (`kmm/src/cnum.rs`) is used by `counter/parse.rs` (counter, emitter, lambda, train held-out), `eval/decode.rs`, `segment/mergeseq.rs` and `kmm/generate.rs`. A field with no digits is the null token, not an error, as at the pin. |
+| `TAGLIB_GET_TOKEN` `atoi` and `TAGLIB_GET_TAGVALUE(glong, .., atol)` in `import_k_mixture_model` and `k_mixture_model_to_interpolation` | Reproduce | `kmm/src/text.rs`: tokens `atoi`, counts `atol` then the low 32 bits for the model fields; the interpolation converter prints the token as `i32` and the count as `i64`. The line grammar (fixed field positions) is the crate's own and is unchanged. `assert(count == T)` in the importer is not a conversion and is untouched. |
+| Classic count `atoi` (ibus-libpinyin `PYLibPinyin.cc:262-267`; `pinyin.cpp:520-524`) | Frozen dictool contract | Not the pin library: the frontend is a separate package and dictool specifies its own grammar, `count := digit+`, with explicit errors and a *desired absolute count* meaning (`dictool-format.md` §2-3). Reproducing `atoi` would reverse that contract, which needs a human ruling. No change. Observed: `count_text.parse::<u64>()` also accepts a leading `+`, which the grammar does not list. |
+| `import_interpolation` `atoi`/`atol` (`utils/storage/import_interpolation.cpp:135-182`) | Outside the three tool crates | The Rust reader is `oxpinyin-data` `interp.rs`; it stays pending under G16. |
+| `gen_zhuyin_table` `atoi`, `gen_pinyin_table` `fscanf("%u")`, `table_text_parser.h:62` `g_ascii_strtoull` | Outside the three tool crates | Datagen audit; unchanged. |
+| `parse_interpolation_dump`, `candidate.rs`, `status.rs` parses | No pin parser | They read oxpinyin's own counter dump, candidate index and status JSON; the pin consumes these only through Python scripts. Not a conversion of a pin input. |
+| `printf("%f")` of lambda and correction rate | Not traced | Output formatting, not input conversion. `oxpinyin-kmm` already renders glibc's `nan`/`inf`; the training binaries print `{:.6}`, which spells NaN differently. Left for a separate record. |
+
+No class (a)-(c) exception or language/runtime discrepancy is needed: every
+reproduced result is plain checked integer arithmetic in safe Rust, linear in
+the field length with no allocation.
+
+### Verification
+
+Unit tests: `cnum.rs` (white space, signs, saturation, NUL, 32-bit
+narrowing), `counter/parse.rs::segmented_tokens_read_as_glibc_atoi`,
+`eval/decode.rs`, `mergeseq.rs`, `kmm/generate.rs`, and two `kmm/text.rs`
+tests (import narrowing; `%d`/`%ld` conversion output).
+
+The existing live counter test (`counter-differential`,
+`rust_matches_live_gen_ngram`) gains a stream whose every token field is
+respelled with a sign, leading CR/VT/FF, leading zeros, trailing bytes, a
+value above 2^32, or a negative with the token's low 32 bits; zero lines
+become `-4294967296`, `4294967296`, `-0`, `abc`, `+`, `-2^63` or `\r0`. The
+pin's `gen_ngram` and `export_interpolation` agree with the Rust counter on
+all 138096 unigrams and 199 bigrams. The existing live KMM tests gain the
+same respelling for `gen_k_mixture_model`/`export_k_mixture_model`, and a
+`k_mixture_model_to_interpolation` input carrying `+5`, `4294967301`, `-7`,
+`abc`, `00012x`, a token above 2^31 (printed negative), a count above
+2^32, a count that saturates, and a lone `-`.
+
+Revert-and-check: with the old digits-only `atoi` restored in
+`counter/parse.rs`, the respelled counter step fails (Rust bigrams 199 vs 0).
+
+```sh
+source ~/.oxpinyin-oracle.env
+tools/oracle/build-oracle.sh --dbm bdb --work-dir "$pin_build" --prefix "$pin_prefix" --model-dir "$PINYIN_MODEL_DIR"
+# the libpinyin stage builds the utils; the ibus stage needs autopoint and is not used here
+pin_src="$pin_build/src/libpinyin-074a2219c90feaf962d0d24f034514033ece5f99"
+export PINYIN_EXPORT_DIR="$OXPINYIN_LIBPINYIN_DATA_DIR" PINYIN_GEN_NGRAM_DATA="$pin_src/data"
+export PINYIN_GEN_BINARY_FILES="$pin_prefix/bin/gen_binary_files" PINYIN_GEN_UNIGRAM="$pin_prefix/bin/gen_unigram"
+export PINYIN_GEN_NGRAM="$pin_src/utils/training/gen_ngram" PINYIN_EXPORT_INTERPOLATION="$pin_src/utils/storage/export_interpolation"
+just heavy -- cargo test --locked -p oxpinyin-training --test counter-differential -- --include-ignored
+export PINYIN_GEN_KMM="$pin_src/utils/training/gen_k_mixture_model" PINYIN_EXPORT_KMM="$pin_src/utils/training/export_k_mixture_model"
+export PINYIN_KMM_TO_INTERP="$pin_src/utils/training/k_mixture_model_to_interpolation"
+just heavy -- cargo test --locked -p oxpinyin-kmm --test differential -- rust_kmm_matches_pin_gen_and_export rust_kmm_matches_pin_to_interpolation --include-ignored
+```
+
+Not run: a live `import_k_mixture_model` differential (no existing driver;
+its macros are the ones the converter run covers), the import runner
+(`run-import-diff.sh`, which needs the ibus stage), and the kc and tkrzw
+cells (no backend code changed).

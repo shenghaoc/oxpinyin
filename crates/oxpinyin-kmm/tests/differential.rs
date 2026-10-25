@@ -357,6 +357,48 @@ fn strip_text(export_text: &str) -> String {
     out
 }
 
+/// The segmented corpus with each token field respelled so that `atoi` still
+/// reads the same token; zero lines become a signed or wrapped zero or a field
+/// with no digits, which bypass phrase validation as `0` does.
+fn spell_token_fields(segmented: &str) -> String {
+    const WRAP: u64 = 1 << 32;
+    let mut out = String::new();
+    for (index, line) in segmented.lines().enumerate() {
+        let Some((head, rest)) = line.split_once([' ', '\t']) else {
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        };
+        let token: u64 = head.parse().expect("fixture token");
+        let field = if token == 0 {
+            [
+                "-4294967296",
+                "4294967296",
+                "-0",
+                "abc",
+                "+",
+                "-9223372036854775808",
+                "\r0",
+            ][index % 7]
+                .to_owned()
+        } else {
+            match index % 6 {
+                0 => format!("+{token}"),
+                1 => format!("\r{token}"),
+                2 => format!("{}", token + WRAP),
+                3 => format!("-{}", WRAP - token),
+                4 => format!("\x0b00{token}"),
+                _ => format!("\x0c{token}x"),
+            }
+        };
+        out.push_str(&field);
+        out.push_str(&line[head.len()..head.len() + 1]);
+        out.push_str(rest);
+        out.push('\n');
+    }
+    out
+}
+
 #[test]
 #[ignore = "needs the pin-built KMM tools and data (PINYIN_GEN_KMM, PINYIN_EXPORT_KMM, ...); run with --include-ignored"]
 fn rust_kmm_matches_pin_gen_and_export() {
@@ -433,6 +475,35 @@ fn rust_kmm_matches_pin_gen_and_export() {
     )
     .unwrap();
     assert_eq!(sorted_items(&pin_export), sorted_items(&byte_export));
+    // `atoi` (`utils_helper.h:61`) is `(int) strtol(field, NULL, 10)`: a sign,
+    // C white space, leading zeros, trailing bytes, a value above 2^32 and a
+    // negative with the token's low 32 bits all read as the same token.
+    let spelled = spell_token_fields(&segmented);
+    std::fs::write(&seg_path, &spelled).unwrap();
+    let spelled_model = pin.path("spelled-model.db");
+    pin.run(
+        &gen_bin,
+        &[
+            "--k-mixture-model-file",
+            spelled_model.to_str().unwrap(),
+            seg_path.to_str().unwrap(),
+        ],
+    )
+    .expect("pin spelled gen");
+    let spelled_export = String::from_utf8(
+        pin.run(
+            &export_bin,
+            &["--k-mixture-model-file", spelled_model.to_str().unwrap()],
+        )
+        .expect("pin spelled export"),
+    )
+    .unwrap();
+    assert_eq!(sorted_items(&pin_export), sorted_items(&spelled_export));
+    assert_eq!(
+        sorted_items(&native_export_tokens_only(&spelled)),
+        sorted_items(&strip_text(&spelled_export)),
+        "native gen must read the spelled token fields as the pin does"
+    );
     // The training reader supplies these already validated records directly,
     // with no lossy decoding or second text parser between the two models.
     let records = segmented.lines().map(|line| {
@@ -482,6 +553,43 @@ fn rust_kmm_matches_pin_to_interpolation() {
     assert_eq!(
         native, pin_interp,
         "native to-interpolation matches the pin"
+    );
+
+    // `TAGLIB_GET_TOKEN` is `atoi` into a `phrase_token_t` printed with `%d`,
+    // and `TAGLIB_GET_TAGVALUE(glong, .., atol)` is printed with `%ld`
+    // (`k_mixture_model_to_interpolation.cpp:123-133,163-172`): a sign, leading
+    // zeros and trailing bytes are read, a count keeps its 64 bits, a token
+    // keeps its low 32 bits and prints as a signed int, and a field with no
+    // digits is zero, which drops a unigram. The text is on one line per
+    // record because the tool splits fields on white space.
+    let numeric = "\\data model \"k mixture model\" count 1 N 1 total_freq 1\n\
+                   \\1-gram\n\
+                   \\item 16817937 中国 count 1 freq +5\n\
+                   \\item 16802309 你好 count 1 freq 4294967301\n\
+                   \\item 16808451 世界 count 1 freq -7\n\
+                   \\item 16782711 人 count 1 freq abc\n\
+                   \\item 2147483649 甲 count 1 freq 00012x\n\
+                   \\item 1 <start> count 1 freq 9\n\
+                   \\2-gram\n\
+                   \\item +16817937 中国 -4278149359 中国 count +3 T 3 N_n_0 1 n_1 1 Mr 3\n\
+                   \\item 4311785233 中国 16802309 你好 count 4294967299 T 3 N_n_0 1 n_1 1 Mr 3\n\
+                   \\item 2147483649 甲 16802309 你好 count -3 T 3 N_n_0 1 n_1 1 Mr 3\n\
+                   \\item 16802309 你好 16808451 世界 count 99999999999999999999 T 3 N_n_0 1 n_1 1 Mr 3\n\
+                   \\item 16808451 世界 16817937 中国 count - T 3 N_n_0 1 n_1 1 Mr 3\n\
+                   \\end\n";
+    std::fs::write(&input, numeric).expect("write numeric kmm");
+    let output = Command::new(&to_interp)
+        .current_dir(&pin.dir)
+        .stdin(std::fs::File::open(&input).expect("open"))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run to-interpolation");
+    assert!(output.status.success(), "pin to-interpolation failed");
+    assert_eq!(
+        kmm_text_to_interpolation(numeric).expect("native"),
+        String::from_utf8(output.stdout).expect("utf8"),
+        "native to-interpolation reads numeric fields as the pin does"
     );
     eprintln!("live parity: native to-interpolation matches the pin");
 }

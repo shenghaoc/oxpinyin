@@ -42,7 +42,8 @@ pub fn parse_ngseg(
     Ok(tokens)
 }
 
-/// One line of the ngseg stream → token ID (`atoi` of the first field).
+/// One line of the ngseg stream → token ID (`atoi` of the first field,
+/// `utils_helper.h:61`: C `strtol` base 10, low 32 bits).
 fn parse_segmented_line(
     lexicon: &PhraseLexicon,
     line: &[u8],
@@ -58,7 +59,7 @@ fn parse_segmented_line(
     let Some(separator) = line.iter().position(|byte| matches!(byte, b' ' | b'\t')) else {
         return Err(CounterError::MalformedLine { line: number });
     };
-    let token = atoi(&line[..separator]);
+    let token = oxpinyin_kmm::atoi(&line[..separator]);
     if token != NULL_TOKEN {
         let expected = if token == 1 {
             Some("<start>")
@@ -75,18 +76,6 @@ fn parse_segmented_line(
         }
     }
     Ok(token)
-}
-
-/// Decimal-prefix parse for unsigned token fields emitted by the segmenter.
-/// This is not a general C `atoi`: signed/overflowing inputs are a separate
-/// compatibility gap; this byte parser retains the existing unsigned domain.
-fn atoi(text: &[u8]) -> u32 {
-    text.iter()
-        .take_while(|byte| byte.is_ascii_digit())
-        .try_fold(0_u32, |value, byte| {
-            value.checked_mul(10)?.checked_add(u32::from(byte - b'0'))
-        })
-        .unwrap_or(0)
 }
 
 /// Parses an `export_interpolation` dump into the same value shape
@@ -160,7 +149,7 @@ enum Section {
 
 #[cfg(test)]
 mod tests {
-    use super::{atoi, parse_ngseg};
+    use super::parse_ngseg;
     use crate::segment::PhraseLexicon;
 
     fn lexicon() -> PhraseLexicon {
@@ -168,11 +157,54 @@ mod tests {
     }
 
     #[test]
-    fn atoi_matches_c_for_token_fields() {
-        assert_eq!(atoi(b"16817937"), 16_817_937);
-        assert_eq!(atoi(b"0"), 0);
-        assert_eq!(atoi(b""), 0);
-        assert_eq!(atoi(b"12abc"), 12);
+    fn segmented_tokens_read_as_glibc_atoi() {
+        // `atoi` is `(int) strtol(field, NULL, 10)` (`utils_helper.h:61`): C
+        // white space and one sign are accepted, a `long` overflow saturates,
+        // and only the low 32 bits reach the `phrase_token_t`.
+        for field in [
+            "+16817937",
+            "\r16817937",
+            "\x0b16817937",
+            "\x0c+16817937",
+            "0016817937",
+            "16817937x",
+            "4311785233",
+            "-4278149359",
+        ] {
+            let line = format!("{field} 中国");
+            assert_eq!(
+                parse_ngseg(&lexicon(), &line).unwrap(),
+                [16_817_937],
+                "{field:?}"
+            );
+        }
+        // The field is converted to zero, so the phrase is not validated.
+        for field in [
+            "+0",
+            "-0",
+            "+",
+            "-",
+            "- 5",
+            "abc",
+            "4294967296",
+            "-4294967296",
+            "-9223372036854775808",
+            "-9223372036854775809",
+        ] {
+            let line = format!("{field} no such phrase");
+            assert_eq!(parse_ngseg(&lexicon(), &line).unwrap(), [0], "{field:?}");
+        }
+        // A converted token the lexicon lacks is refused like any other.
+        for field in ["-1", "99999999999999999999", "9223372036854775807", "5"] {
+            let line = format!("{field} 中国");
+            assert!(
+                matches!(
+                    parse_ngseg(&lexicon(), &line),
+                    Err(crate::counter::CounterError::InvalidPhrase { line: 1, .. })
+                ),
+                "{field:?}"
+            );
+        }
     }
 
     #[test]

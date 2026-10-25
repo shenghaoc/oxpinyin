@@ -95,7 +95,7 @@ pub fn parse_eval_corpus(text: &str) -> Result<Vec<Vec<PhraseToken>>, EvalError>
         if line.is_empty() {
             continue;
         }
-        let token = parse_token(line)?;
+        let token = parse_token(line);
         if token == NULL_TOKEN {
             if !current.is_empty() {
                 sentences.push(std::mem::take(&mut current));
@@ -110,11 +110,11 @@ pub fn parse_eval_corpus(text: &str) -> Result<Vec<Vec<PhraseToken>>, EvalError>
     Ok(sentences)
 }
 
-fn parse_token(line: &str) -> Result<u32, EvalError> {
+/// `atoi` of the first field (`TAGLIB_PARSE_SEGMENTED_LINE`,
+/// `utils_helper.h:61`): a field with no digits is the null token.
+fn parse_token(line: &str) -> u32 {
     let head = line.split([' ', '\t']).next().unwrap_or(line);
-    head.parse::<u32>().map_err(|_| EvalError::Malformed {
-        detail: format!("token field {head:?} is not an integer"),
-    })
+    oxpinyin_kmm::atoi(head.as_bytes())
 }
 
 /// Evaluates the correction rate over `sentences`, decoding each with the
@@ -515,6 +515,28 @@ mod tests {
     // The full decode is exercised by the crate's integration tests (the
     // hand-computable homophone fixture) and the live pin gate; here we pin
     // the corpus parser and the error paths.
+
+    #[test]
+    fn corpus_tokens_read_as_glibc_atoi() {
+        // `eval_correction_rate.cpp:178` reads the first field with `atoi`: C
+        // white space and a sign are accepted, the low 32 bits are kept and a
+        // field with no digits is the null token (a sentence separator).
+        let sentences =
+            parse_eval_corpus("+7 甲\n\r8 乙\n4294967305 丙\n-4294967287 丁\nabc x\n9 戊\n")
+                .expect("parse");
+        assert_eq!(
+            sentences,
+            vec![
+                vec![
+                    PhraseToken::new(7),
+                    PhraseToken::new(8),
+                    PhraseToken::new(9),
+                    PhraseToken::new(9),
+                ],
+                vec![PhraseToken::new(9)],
+            ]
+        );
+    }
 
     #[test]
     fn corpus_splits_on_null_tokens() {
