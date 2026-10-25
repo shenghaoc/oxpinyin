@@ -197,8 +197,10 @@ gets no PR/base ratio. Fault counts are diagnostic, not residency ratios.
 The statuses are 0 completed (including INCONCLUSIVE), 1 failure/refusal,
 2 usage error, 3 NOT COMPARABLE or INVALID exact control, 130 cancelled.
 Pin rows require the Layer 4 container path; Windows stays deferred (#950).
-Cold mode is refused on both hosts in this change. Its rejection limit needs
-approval before implementation or sampling.
+Cold mode is refused on both hosts. macOS per-file APFS preparation is
+implemented and qualified below, but its rejection limit is shared with the
+Linux cold sampler (#1162) and unset; `--cache cold` refuses until a maintainer
+approves the limit. Linux cold sampling is still unimplemented.
 
 Linux KC smoke acceptance completed on 2026-10-24 UTC at 08:23 with controller
 `1cea405cf297e68da8ca3caf97594de45f467ef8` and retained shipping build
@@ -249,6 +251,45 @@ parent memory reads were nonzero at all seven child handshakes. The macOS
 reader uses `ps` for RSS and virtual size (§7.7).
 [CI run 39892909515](https://github.com/shenghaoc/oxpinyin/actions/runs/39892909515)
 is green at that head. Unit tests and verification are not performance results.
+
+### APFS cold preparation
+
+`tools.dev.measure.cold` prepares the native controller's macOS sample inputs
+cold. For the copied facade, every system-data file and every regular file in
+the sample's private user copy, it makes a read-only `MAP_SHARED` mapping,
+touches one byte per host page, and calls `msync(MS_SYNC | MS_INVALIDATE)`
+before the worker is spawned. It then checks the whole set with `mincore` over
+`PROT_NONE` mappings. A resident page gets one more full preparation and
+check; a set still resident is rejected. The Darwin metric is
+`darwin_resident_pages`; zero qualifies. It is never written to a Linux
+cold-page field.
+
+Qualification on 2026-10-25 UTC on macOS 27.0.1 (build 26A434), arm64, APFS,
+16 KiB pages, with a 6.3 MB database file, a 2.9 MB Mach-O dylib and a 2 MiB
+user file:
+
+| file | bytes | pages | resident before | after `MS_SYNC` alone | after `MS_SYNC + MS_INVALIDATE` |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `data.db` | 6,302,040 | 385 | 385 | 385 | 0 |
+| `libpinyin.dylib` | 2,968,416 | 182 | 182 | 182 | 0 |
+| `user.db` | 2,097,152 | 128 | 128 | 128 | 0 |
+| whole set | 11,397,608 | 695 | — | — | 0 (one preparation, no retry) |
+
+"Resident before" is after every page was touched and before `msync`.
+`msync(MS_SYNC)` alone left every page resident; adding `MS_INVALIDATE`
+dropped all of them, and `mincore` reported the drop. The whole-set
+preparation then qualified on its first attempt.
+
+```sh
+just cold-qualify /tmp/cold-qualify
+```
+
+`cold-qualify` is read-only: it maps and touches the named files and runs no
+worker. `REJECTION_LIMIT` in `tools/dev/measure/cold.py` is `None` and shared
+with #1162; no cold sample may run until a maintainer approves it. The native
+controller's sample records carry the preparation record and metric, but
+`--cache cold` refuses while the limit is unset. Files the sample does not own
+(libc, backend dylibs) stay out of the set, matching #1162's Linux scope.
 
 ## Native teardown workload
 

@@ -221,6 +221,11 @@ measure recipe *args:
 initbench *args:
     @uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -m tools.dev measure startup "$@"
 
+# Qualify APFS cold preparation on named files; read-only, runs no worker.
+[unix]
+cold-qualify *paths:
+    @uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -m tools.dev measure cold-qualify "$@"
+
 [windows]
 measure recipe *args:
     @uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -m tools.dev measure @args; exit $LASTEXITCODE

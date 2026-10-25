@@ -12,6 +12,7 @@ import sys
 import time
 
 from .. import slot
+from . import cold as cold_cache
 from . import native
 from ...bisection import startup_profile
 
@@ -239,19 +240,30 @@ class Worker:
         self.executable, self.identity, self.data, self.work = executable, identity, data, work
         self.env, self.pass_fds, self.cpu, self.bind = env, pass_fds, cpu, bind
 
-    def run(self, library, facade, profile, *, mode='measure', witness=None, memory=False, probe=None, scope=None):
+    def run(self, library, facade, profile, *, mode='measure', witness=None, memory=False,
+            probe=None, scope=None, cold=False):
         """Run one worker with a fresh user directory and verify its executable identity.
 
         Copy the guarded profile under work/sample and remove it after completion.
         Optionally wrap the worker in scoped Callgrind or gather memory checkpoints.
+        With cold, prepare the copied facade, system data and private user files
+        on APFS after the copy and before spawning, so preparation is outside
+        the timed region; the preparation record travels with the sample.
         Probe calls return status and stream digests even on failure; other
         nonzero statuses raise ValueError. Successful non-probes return raw
         streams, documents, user-file observations, and wall time in ns.
         """
         check_identity(self.executable, self.identity)
+        if cold and (probe is not None or scope):
+            raise ValueError('cold preparation is only for timing and memory samples')
         with checked_profile(profile, witness), sample_directory(self.work) as temporary:
             user = temporary / 'user'
             shutil.copytree(profile, user)
+            prepared = None
+            if cold:
+                if sys.platform != 'darwin':
+                    raise ValueError('cold preparation is not implemented for this host')
+                prepared = cold_cache.prepare(cold_cache.sample_files(library, self.data, user))
             argument = ','.join(POINTS) if memory else '-'
             if mode == 'verify' and witness is not None:
                 argument = str(witness)
@@ -284,5 +296,6 @@ class Worker:
                 digest = None
             else:
                 documents, digest = parse(result['stdout'])
-            result.update(documents=documents, digest=digest, userfiles=userfiles(user), command=command)
+            result.update(documents=documents, digest=digest, userfiles=userfiles(user),
+                          command=command, cold=prepared)
             return result

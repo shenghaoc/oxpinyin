@@ -1,13 +1,16 @@
-"""Darwin libproc observations shared by host admission and startup measurement.
+"""Darwin libproc and file-page observations shared by native tooling.
 
 The module owns the ctypes layouts for rusage_info_v4 and proc_taskinfo and
-exposes one observation function. A call that fails leaves its fields None;
-the functions never substitute zero for an unavailable kernel value. Byte
-quantities stay bytes here; the startup adapter converts sizes to KiB.
+exposes one process observation function. It also binds the mman calls that
+observe and invalidate APFS file-cache pages. A process observation that
+fails leaves its fields None and the mman wrappers raise OSError; the module
+never substitutes zero for an unavailable kernel value. Byte quantities stay
+bytes here; the startup adapter converts sizes to KiB.
 
 Sources: <sys/resource.h> (rusage_info_v4), <sys/proc_info.h>
-(proc_taskinfo and PROC_PIDTASKINFO), and <mach/task_info.h>
-(MACH_TASK_BASIC_INFO resident_size_max). resident_size_max is only readable
+(proc_taskinfo and PROC_PIDTASKINFO), <mach/task_info.h>
+(MACH_TASK_BASIC_INFO resident_size_max), and <sys/mman.h> (mmap, msync,
+mincore, MS_SYNC and MS_INVALIDATE). resident_size_max is only readable
 with a task port, so a controller without one reports it unavailable instead
 of using another metric. XNU's fill_task_rusage copies ri_instructions and
 ri_cycles from task_power_info_extra, which is filled only under
@@ -15,12 +18,22 @@ CONFIG_PERVASIVE_CPI; a host probe requires each counter to advance and
 reports an unpopulated one unavailable rather than zero.
 """
 import ctypes
+import mmap
 import os
 import time
 
 RUSAGE_INFO_V4 = 4
 PROC_PIDTASKINFO = 4
 MACH_TASK_BASIC_INFO = 20
+
+# <sys/mman.h> on Darwin. mincore reports one bit per host page in a byte vector.
+# mmap.PAGESIZE is defined on every supported host, unlike os.sysconf.
+PAGE_SIZE = mmap.PAGESIZE
+PROT_NONE = 0x0
+PROT_READ = 0x1
+MAP_SHARED = 0x1
+MS_INVALIDATE = 0x2
+MS_SYNC = 0x10
 
 OBSERVATION_FIELDS = (
     'resident_bytes',
@@ -130,8 +143,69 @@ def _system():
         libc.task_info.restype = ctypes.c_int
         libc.mach_port_deallocate.argtypes = [ctypes.c_uint, ctypes.c_uint]
         libc.mach_port_deallocate.restype = ctypes.c_int
+        libc.mmap.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int,
+                              ctypes.c_int, ctypes.c_int, ctypes.c_long]
+        libc.mmap.restype = ctypes.c_void_p
+        libc.munmap.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
+        libc.munmap.restype = ctypes.c_int
+        libc.msync.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int]
+        libc.msync.restype = ctypes.c_int
+        libc.mincore.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_void_p]
+        libc.mincore.restype = ctypes.c_int
         _libc = libc
     return _libc
+
+
+def map_file(fd, size, protection, flags=MAP_SHARED):
+    """Map SIZE bytes of FD from offset zero and return the address.
+
+    The mapping shares the file object, so a later msync can invalidate the
+    cached pages rather than only this process's view. Raise OSError when the
+    kernel refuses the mapping.
+    """
+    address = _system().mmap(None, size, protection, flags, fd, 0)
+    if address == ctypes.c_void_p(-1).value:
+        raise OSError(ctypes.get_errno(), 'mmap failed')
+    return address
+
+
+def unmap(address, size):
+    """Remove a mapping, raising OSError if munmap fails."""
+    if _system().munmap(address, size):
+        raise OSError(ctypes.get_errno(), 'munmap failed')
+
+
+def msync(address, size, flags):
+    """Synchronize or invalidate a file mapping, raising OSError on failure."""
+    if _system().msync(address, size, flags):
+        raise OSError(ctypes.get_errno(), 'msync failed')
+
+
+def mincore(address, size, vector):
+    """Fill VECTOR with mincore's residency bytes, raising OSError on failure."""
+    if _system().mincore(address, size, vector):
+        raise OSError(ctypes.get_errno(), 'mincore failed')
+
+
+def file_residency(fd):
+    """Return total and resident file pages from mincore.
+
+    Map the file PROT_NONE and MAP_SHARED: mincore may examine the file's
+    cached pages, and the mapping itself never faults a page in, so the
+    observation does not make itself stale. An empty file has zero pages and
+    is not mapped.
+    """
+    size = os.fstat(fd).st_size
+    if not size:
+        return dict(pages=0, resident=0)
+    pages = (size + PAGE_SIZE - 1) // PAGE_SIZE
+    address = map_file(fd, size, PROT_NONE, MAP_SHARED)
+    try:
+        vector = (ctypes.c_ubyte * pages)()
+        mincore(address, size, vector)
+        return dict(pages=pages, resident=sum(value & 1 for value in vector))
+    finally:
+        unmap(address, size)
 
 
 def rusage(pid):

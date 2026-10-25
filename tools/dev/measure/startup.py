@@ -13,7 +13,7 @@ import sys
 import tempfile
 
 from .. import slot
-from . import instructions, native, stats, worker
+from . import cold, instructions, native, stats, worker
 
 ROOT = Path(__file__).resolve().parents[3]
 PROFILES = ('empty', 'modest', 'phrases', 'journals')
@@ -107,8 +107,12 @@ def validate(args):
     if sys.platform == 'darwin' and args.function_order:
         raise ValueError('ELF function-order policies are unsupported on macOS')
     if args.cache == 'cold':
-        raise ValueError('cold cache is unsupported on macOS' if sys.platform == 'darwin' else
-                         'cold cache is not implemented; rejection-limit approval is pending (§7.8)')
+        # #1162 implements the Linux path and reads the same cold.REJECTION_LIMIT.
+        if sys.platform != 'darwin':
+            raise ValueError('cold cache is not implemented; rejection-limit approval is pending (§7.8)')
+        reason = cold.refusal()
+        if reason:
+            raise ValueError(reason)
     for name in ('base', 'pr', 'system_dir', 'profiles_dir'):
         path = getattr(args, name)
         if path is None or not path.is_dir():
@@ -511,6 +515,7 @@ def campaign_run(args, profiles, work, admission):
              witnesses=path.read_text().splitlines() if path.is_file() else [])
     campaign = worker.Worker(executable, record, args.system_dir.resolve(), work,
                              admission.env, admission.slot.pass_fds(), args.cpu, args.bind)
+    cold_sample = args.cache == 'cold'
     old_affinity = os.sched_getaffinity(0) if sys.platform == 'linux' else None
     try:
         if args.cpu is not None:
@@ -529,11 +534,15 @@ def campaign_run(args, profiles, work, admission):
                     samples = {arm: [] for arm in ARMS}
                     for index in range(rounds + warmups):
                         for arm in order(index):
-                            row = campaign.run(libraries[arm][facade], facade, user, memory=memory)
-                            emit('sample', facade=facade, profile=name, arm=arm, round=index,
-                                 warmup=index < warmups, memory=memory,
-                                 process_wall_ns=row['process_wall'], documents=row['documents'],
-                                 checkpoints=row['checkpoints'])
+                            row = campaign.run(libraries[arm][facade], facade, user, memory=memory,
+                                               cold=cold_sample)
+                            sample = dict(facade=facade, profile=name, arm=arm, round=index,
+                                          warmup=index < warmups, memory=memory,
+                                          process_wall_ns=row['process_wall'], documents=row['documents'],
+                                          checkpoints=row['checkpoints'])
+                            if row.get('cold') is not None:
+                                sample['cold'] = row['cold']
+                            emit('sample', **sample)
                             require_digest(row, references[arm])
                             if (row['stderr'] != references[arm]['unit_stderr'] or
                                     row['userfiles'] != references[arm]['unit_userfiles']):
