@@ -59,6 +59,20 @@ use crate::store::SaveReport;
 /// `USER_TABLE_INFO` (`pinyin_internal.h:56`).
 const USER_CONF: &str = "user.conf";
 
+/// `g_build_filename(user_dir, name, NULL)` (`pinyin.cpp:164-226`,
+/// `zhuyin.cpp:118-170` at 074a2219): the file the pin opens, writes or
+/// renames and names in `open`/`rename`/`write` lines. `Path::join` reaches
+/// the same file but keeps a directory's repeated trailing separators in the
+/// message.
+fn user_file(dir: &Path, name: &str) -> PathBuf {
+    oxpinyin_data::table_info::pin_join(dir, std::ffi::OsStr::new(name))
+}
+
+/// [`user_file`] for `user.conf`.
+fn user_conf_path(dir: &Path) -> PathBuf {
+    user_file(dir, USER_CONF)
+}
+
 /// Reads `user.conf`'s bytes, splitting upstream's two failure kinds the
 /// way `check_format` meets them.
 ///
@@ -780,7 +794,7 @@ pub(crate) fn check_format(
     layout: &UserFileLayout,
     law: UserConfLaw,
 ) -> Result<ProfileCheck, PersistenceError> {
-    let conf_path = dir.join(USER_CONF);
+    let conf_path = user_conf_path(dir);
     let existing = match std::fs::read(&conf_path) {
         Ok(bytes) => parse_user_conf(&bytes)?,
         Err(_) => {
@@ -950,7 +964,7 @@ fn write_marker(
 ) -> Result<(), PersistenceError> {
     let mut marker = UserTableInfo::conform_to(versions);
     marker.open_counter = open_counter;
-    std::fs::write(dir.join(USER_CONF), marker.to_text())?;
+    std::fs::write(user_conf_path(dir), marker.to_text())?;
     Ok(())
 }
 
@@ -985,7 +999,7 @@ fn clean_user_files(dir: &Path, layout: &UserFileLayout) {
 /// the pin's own operations wherever they are used. A session reads the
 /// file once, into its container ([`load_user_bigram_db`]), not here.
 fn load_bigram_rows(dir: &Path, loaded: &mut Loaded) {
-    let path = dir.join(UserDbm::Bigram.file_name());
+    let path = user_file(dir, &UserDbm::Bigram.file_name());
     if !path.exists() {
         return;
     }
@@ -1027,7 +1041,7 @@ fn load_user_pinyin_index(
     file_keys: &mut BTreeSet<Vec<u8>>,
     #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))] records: &mut Vec<(Vec<u8>, Vec<u8>)>,
 ) {
-    let path = dir.join(UserDbm::PinyinIndex.file_name());
+    let path = user_file(dir, &UserDbm::PinyinIndex.file_name());
     if !path.exists() {
         return;
     }
@@ -1127,7 +1141,7 @@ fn load_user_phrase_index(
     skipped: &mut Vec<String>,
     table: &mut BTreeMap<Vec<u8>, Vec<u8>>,
 ) {
-    let path = dir.join(UserDbm::PhraseIndex.file_name());
+    let path = user_file(dir, &UserDbm::PhraseIndex.file_name());
     if !path.exists() {
         return;
     }
@@ -1161,9 +1175,10 @@ fn load_user_phrase_index(
 /// Returns [`PersistenceError`] when the in-memory container cannot be
 /// created.
 pub(crate) fn load_user_bigram_db(dir: &Path) -> Result<DefaultUserBigramDb, PersistenceError> {
-    Ok(DefaultUserBigramDb::load_db(
-        &dir.join(UserDbm::Bigram.file_name()),
-    )?)
+    Ok(DefaultUserBigramDb::load_db(&user_file(
+        dir,
+        &UserDbm::Bigram.file_name(),
+    ))?)
 }
 
 /// The `USER_FILE` chunk stores, or only library `only`'s.
@@ -1774,7 +1789,7 @@ pub(crate) fn save_reporting<B: FnMut(u8) -> SaveBaseline>(
         }
     }
     if write_marker(dir, reporting.versions, reporting.open_counter).is_err() {
-        outcome.user_conf_write_failed = Some(dir.join(USER_CONF));
+        outcome.user_conf_write_failed = Some(user_conf_path(dir));
     }
     Ok(outcome)
 }
@@ -1837,8 +1852,8 @@ fn stage_all<B: FnMut(u8) -> SaveBaseline>(
     stage_rest(dir, source, originals, reporting, staged)?;
     let state = source.state;
     if let Some(db) = reporting.bigram_db {
-        let final_path = dir.join(UserDbm::Bigram.file_name());
-        let tmp = dir.join(format!("{}.tmp", UserDbm::Bigram.file_name()));
+        let final_path = user_file(dir, &UserDbm::Bigram.file_name());
+        let tmp = user_file(dir, &format!("{}.tmp", UserDbm::Bigram.file_name()));
         let written = db.save_db(&tmp).map_err(PersistenceError::from);
         tolerate(reporting.lenient, staged.finish((tmp, final_path), written))?;
         return Ok(());
@@ -2131,7 +2146,7 @@ fn stage_user_bigram(dir: &Path, rows: &[(Vec<u8>, Vec<u8>)]) -> Result<(), Pers
     // The seam stages its own sibling temporary and renames atomically
     // (S2's review fix), so this is a direct call on the final path, with
     // no outer `.tmp`.
-    DefaultStore::write_user_bigram(&dir.join(UserDbm::Bigram.file_name()), rows)?;
+    DefaultStore::write_user_bigram(&user_file(dir, &UserDbm::Bigram.file_name()), rows)?;
     Ok(())
 }
 
@@ -2146,8 +2161,8 @@ fn stage_dbm(
     staged: &mut Staged,
 ) -> Result<(), PersistenceError> {
     debug_assert!(!dbm.is_hash(), "stage_dbm serves the two index trees");
-    let final_path = dir.join(dbm.file_name());
-    let tmp = dir.join(format!("{}.tmp", dbm.file_name()));
+    let final_path = user_file(dir, &dbm.file_name());
+    let tmp = user_file(dir, &format!("{}.tmp", dbm.file_name()));
     // A crashed save can leave this `.tmp` behind with rows the coming
     // write would not overwrite — `create` opens-or-creates, so stale
     // index rows would survive into the renamed file.
@@ -2693,6 +2708,28 @@ mod tests {
         }
 
         std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    #[test]
+    fn user_conf_path_is_the_join_the_pin_writes() {
+        // `g_build_filename(dir, "user.conf", NULL)`: the directory's repeated
+        // trailing separators collapse; `Path::join` would keep them in the
+        // `open`/`write` lines.
+        for (dir, expected) in [
+            ("a", "a/user.conf"),
+            ("a/", "a/user.conf"),
+            ("a///", "a/user.conf"),
+            ("/", "/user.conf"),
+            ("//", "//user.conf"),
+            ("", "user.conf"),
+            ("a/./", "a/./user.conf"),
+        ] {
+            assert_eq!(
+                user_conf_path(Path::new(dir)),
+                Path::new(expected),
+                "{dir:?}"
+            );
+        }
     }
 
     #[test]
