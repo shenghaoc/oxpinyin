@@ -5,8 +5,8 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use oxpinyin_facade::ExportedBigramRow;
-use oxpinyin_user::{ExportedPhrase, USER_DICTIONARY};
+use oxpinyin_facade::{ExportedBigramRow, ExportedPhrase};
+use oxpinyin_user::USER_DICTIONARY;
 
 use crate::context::UserImportContext;
 

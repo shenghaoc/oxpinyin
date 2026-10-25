@@ -173,7 +173,7 @@ fn add_lookup_remove_roundtrip_and_persists_across_handles() {
             .phrase(token)
             .unwrap()
             .expect("persists across handles");
-        assert_eq!(phrase.text(), "测试");
+        assert_eq!(phrase.phrase_text().unwrap(), "测试");
         assert_eq!(phrase.pronunciations().len(), 1);
 
         assert!(store.remove_user_phrase(token).unwrap());
@@ -286,8 +286,8 @@ fn the_same_reading_on_different_texts_yields_distinct_tokens() {
 
     let phrase_a = store.phrase(a).unwrap().expect("stored");
     let phrase_b = store.phrase(b).unwrap().expect("stored");
-    assert_eq!(phrase_a.text(), "测试");
-    assert_eq!(phrase_b.text(), "策士");
+    assert_eq!(phrase_a.phrase_text().unwrap(), "测试");
+    assert_eq!(phrase_b.phrase_text().unwrap(), "策士");
     assert_eq!(phrase_a.pronunciations().len(), 1);
     assert_eq!(phrase_b.pronunciations().len(), 1);
 }

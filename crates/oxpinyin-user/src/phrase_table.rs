@@ -299,12 +299,28 @@ pub fn add_index(txn: &mut impl WriteTxn, text: &str, token: u32) -> Result<i32,
 /// `phrase_large_table3_tkrzwdb.cpp:253-272`, pin 074a2219).
 pub fn remove_index(txn: &mut impl WriteTxn, text: &str, token: u32) -> Result<i32, StoreError> {
     let key = key(text);
-    let Ok(Some(bytes)) = txn_get_bytes(txn, TABLE, &key) else {
+    remove_index_key(txn, &key, token)
+}
+
+/// Remove a token under its exact stored words.
+///
+/// # Errors
+/// Returns an incomplete-token error, as [`remove_index`].
+pub fn remove_index_ucs4(
+    txn: &mut impl WriteTxn,
+    words: &[u32],
+    token: u32,
+) -> Result<i32, StoreError> {
+    remove_index_key(txn, &key_ucs4(words), token)
+}
+
+fn remove_index_key(txn: &mut impl WriteTxn, key: &[u8], token: u32) -> Result<i32, StoreError> {
+    let Ok(Some(bytes)) = txn_get_bytes(txn, TABLE, key) else {
         return Ok(ERROR_REMOVE_ITEM_DONOT_EXISTS);
     };
     let mut entry = PhraseTableEntry::from_bytes(bytes)?;
     let result = entry.remove_index(token);
-    if result == ERROR_OK && txn.put(TABLE, &key, entry.as_bytes()).is_err() {
+    if result == ERROR_OK && txn.put(TABLE, key, entry.as_bytes()).is_err() {
         return Ok(ERROR_FILE_CORRUPTION);
     }
     Ok(result)

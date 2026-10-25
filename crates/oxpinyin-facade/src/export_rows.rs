@@ -11,14 +11,26 @@ use oxpinyin_capi_marshal::phrase_text::phrase_text_bytes;
 use oxpinyin_core::{ChewingKey, PhraseText, PhraseTextConcat, SyllableKey};
 use oxpinyin_runtime::{PhraseItemView, RuntimeDict};
 use oxpinyin_user::{
-    ADDON_DICTIONARY, ExportedPhrase, MAX_KEY_TONE, NETWORK_DICTIONARY, PinyinKey, SENTENCE_START,
-    USER_DICTIONARY, UserPhrase, UserPronunciation, UserStore, UserStoreError, is_user_file_token,
-    key_syllable, key_tone,
+    ADDON_DICTIONARY, MAX_KEY_TONE, NETWORK_DICTIONARY, PinyinKey, SENTENCE_START, USER_DICTIONARY,
+    UserPhrase, UserPronunciation, UserStore, UserStoreError, is_user_file_token, key_syllable,
+    key_tone,
 };
 
 use std::collections::{HashMap, VecDeque};
 
 use crate::ContextCore;
+
+/// A materialized scalar export row for Rust text consumers.
+/// Non-scalar C exports use [`PhraseExportCursor`] and [`ExportRow::write_text`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExportedPhrase {
+    /// Outward scalar text.
+    pub text: String,
+    /// Apostrophe-joined pronunciation.
+    pub pinyin: String,
+    /// Stored pronunciation count.
+    pub count: u64,
+}
 
 /// The first `SYSTEM_FILE` library (`novel_types.h:154`).
 const GB_DICTIONARY: u8 = 1;
@@ -185,7 +197,7 @@ enum RowSource<'a> {
     },
     /// A `USER_FILE` item.
     User {
-        text: &'a str,
+        text: &'a [u32],
         keys: &'a [PinyinKey],
         count: u64,
     },
@@ -301,7 +313,9 @@ impl ExportRow<'_> {
         match &self.0 {
             RowSource::Mapped { item, .. } => item.phrase_text(),
             RowSource::Override { phrase, .. } => PhraseText::from_words(phrase.iter().copied()),
-            RowSource::User { text, .. } => Some(PhraseText::from(*text)),
+            RowSource::User { text, .. } => {
+                PhraseText::from_stored_words(text.iter().copied().map(Some))
+            }
         }
     }
 
@@ -453,7 +467,7 @@ impl ItemRef<'_> {
             Self::User(phrase) => {
                 let pronunciation = phrase.pronunciations().get(nth)?;
                 RowSource::User {
-                    text: phrase.text(),
+                    text: phrase.words(),
                     keys: pronunciation.keys(),
                     count: pronunciation.count(),
                 }
@@ -937,7 +951,7 @@ impl ExportSource {
             if pinyins.is_empty() {
                 return None;
             }
-            Some((PhraseText::from(phrase.text()), pinyins))
+            Some((phrase.phrase_text()?, pinyins))
         } else {
             let dict = self.dict.as_ref()?;
             // The item's stored words: the pin converts each phrase of the
@@ -1273,11 +1287,13 @@ mod tests {
 
 #[cfg(test)]
 mod phrase_cursor_tests {
-    use super::{ContextCore, ExportAssert, ExportStep, PhraseExportCursor, assert_for};
+    use super::{
+        ContextCore, ExportAssert, ExportStep, ExportedPhrase, PhraseExportCursor, assert_for,
+    };
     use oxpinyin_core::{ChewingKey, SyllableKey};
     use oxpinyin_user::{
-        ExportedPhrase, KEY_SYLLABLE_MASK, KEY_TONE_SHIFT, MAX_KEY_TONE, USER_DICTIONARY,
-        UserConfLaw, UserStoreError, toned_key,
+        KEY_SYLLABLE_MASK, KEY_TONE_SHIFT, MAX_KEY_TONE, USER_DICTIONARY, UserConfLaw,
+        UserStoreError, toned_key,
     };
 
     /// A transient context over the committed mini tables of whichever

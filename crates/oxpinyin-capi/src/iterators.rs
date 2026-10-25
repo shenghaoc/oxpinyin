@@ -202,10 +202,9 @@ pub extern "C" fn pinyin_iterator_add_phrase(
         let item_text = if let Some(dict) = handle.dict.as_ref() {
             dict.token_text(token)
         } else {
-            user.phrase_text(token)
-                .ok()
-                .flatten()
-                .map(oxpinyin_core::PhraseText::from)
+            user.phrase_text(token).ok().flatten().and_then(|words| {
+                oxpinyin_core::PhraseText::from_stored_words(words.into_iter().map(Some))
+            })
         };
         // A missing item leaves the pin's PhraseItem at length zero;
         // :568 then asserts before any import mutation.

@@ -191,7 +191,7 @@ fn add_phrase_batch_writes_the_user_index() {
     assert_eq!(
         rows,
         vec![oxpinyin_user::ExportedPhrase {
-            text: "网词".to_owned(),
+            text: "网词".chars().map(u32::from).collect(),
             pinyin: "wang3'ci2".to_owned(),
             count: 5,
         }]

@@ -215,7 +215,8 @@ fn interruption_after_save_or_fini_retains_every_saved_data_byte() {
                         .phrase((library << 24) | 1)
                         .unwrap()
                         .unwrap()
-                        .text(),
+                        .phrase_text()
+                        .unwrap(),
                     "你"
                 );
             }

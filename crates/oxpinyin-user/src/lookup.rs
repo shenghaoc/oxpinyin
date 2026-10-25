@@ -10,7 +10,9 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use oxpinyin_core::{Completeness, PhraseEntry, PhraseToken, SyllableKey, syllable_initial};
+use oxpinyin_core::{
+    Completeness, PhraseEntry, PhraseText, PhraseToken, SyllableKey, syllable_initial,
+};
 
 use crate::store::{UserStore, UserStoreError};
 
@@ -38,7 +40,7 @@ pub struct UserLookup {
     pinyin_keys: Box<[String]>,
     initial_keys: Box<[String]>,
     text_tokens: BTreeMap<Vec<u8>, Vec<u32>>,
-    token_text: BTreeMap<u32, String>,
+    token_text: BTreeMap<u32, PhraseText>,
 }
 
 impl UserLookup {
@@ -58,13 +60,16 @@ impl UserLookup {
         let mut exact: BTreeMap<String, Vec<PhraseEntry>> = BTreeMap::new();
         let mut by_initial: BTreeMap<String, Vec<(String, PhraseEntry)>> = BTreeMap::new();
         let mut text_tokens: BTreeMap<Vec<u8>, Vec<u32>> = BTreeMap::new();
-        let mut token_text: BTreeMap<u32, String> = BTreeMap::new();
+        let mut token_text: BTreeMap<u32, PhraseText> = BTreeMap::new();
         let mut pinyin_keys: Vec<String> = Vec::new();
         let mut initial_keys: Vec<String> = Vec::new();
 
         for phrase in store.index_phrases()? {
             let token = phrase.token();
-            token_text.insert(token, phrase.text().to_owned());
+            let Some(text) = phrase.phrase_text() else {
+                continue;
+            };
+            token_text.insert(token, text.clone());
             for pronunciation in phrase.pronunciations() {
                 // Only readings the user pinyin index carries are found
                 // (`_add_phrase` never indexes a reading merged into an
@@ -77,7 +82,7 @@ impl UserLookup {
                 let Some(pinyin) = pronunciation.render_pinyin_toneless() else {
                     continue;
                 };
-                let entry = PhraseEntry::new(PhraseToken::new(token), phrase.text().to_owned());
+                let entry = PhraseEntry::new(PhraseToken::new(token), text.clone());
                 exact.entry(pinyin.clone()).or_default().push(entry.clone());
                 by_initial
                     .entry(initial_of(&pinyin))
@@ -243,8 +248,8 @@ impl UserLookup {
 
     /// Phrase text for `token`, if this snapshot holds it.
     #[must_use]
-    pub fn phrase_text(&self, token: u32) -> Option<&str> {
-        self.token_text.get(&token).map(String::as_str)
+    pub fn phrase_text(&self, token: u32) -> Option<&PhraseText> {
+        self.token_text.get(&token)
     }
 
     /// Tokens whose phrase text is exactly `text`.

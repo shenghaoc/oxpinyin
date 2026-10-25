@@ -512,7 +512,10 @@ fn a_populated_user_library_and_an_independent_index_beside_a_replayed_item() {
         .export_phrases_in(crate::USER_DICTIONARY)
         .expect("export");
     assert_eq!(phrases.len(), 1);
-    assert_eq!((phrases[0].text.as_str(), phrases[0].count), ("龘", 20));
+    assert_eq!(
+        (phrases[0].text.as_slice(), phrases[0].count),
+        (&[0x9f98][..], 20)
+    );
     train(&mut store, 1, key("ni", 3), 1);
     assert_eq!(counts(&store, 1), [199]);
     assert!(store.save().expect("save again"));

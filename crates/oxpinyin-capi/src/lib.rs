@@ -115,9 +115,8 @@ mod user_data;
 
 pub use context::{pinyin_fini, pinyin_init, pinyin_save};
 pub use iterators::{pinyin_begin_add_phrases, pinyin_end_add_phrases, pinyin_iterator_add_phrase};
-pub use oxpinyin_user::{
-    DEFAULT_PHRASE_COUNT, ExportedPhrase, NETWORK_DICTIONARY, USER_DICTIONARY,
-};
+pub use oxpinyin_facade::ExportedPhrase;
+pub use oxpinyin_user::{DEFAULT_PHRASE_COUNT, NETWORK_DICTIONARY, USER_DICTIONARY};
 pub use state::ExportedBigramRow;
 pub use types::{ChewingKey, ChewingKeyRest, GChar, LookupCandidate, PinyinInstance};
 pub use types::{GArray, ImportIterator, PhraseTokenT, PinyinContext, lookup_candidate_type_t};

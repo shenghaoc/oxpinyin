@@ -123,7 +123,10 @@ fn abort_mid_batch_leaves_a_consistent_prefix() {
     // which is exactly the finding this test exists to surface.
     let store = UserStore::open(&path).expect("the crashed store reopens");
     let visible = store.phrases().expect("the crashed store reads");
-    let texts: Vec<String> = visible.iter().map(|row| row.text().to_owned()).collect();
+    let texts: Vec<String> = visible
+        .iter()
+        .map(|row| row.phrase_text().unwrap().as_str().unwrap().to_owned())
+        .collect();
     assert!(
         texts.len() <= ABORT_AT,
         "the crash cannot leave more rows than the child wrote before aborting"
@@ -149,7 +152,8 @@ fn abort_mid_batch_leaves_a_consistent_prefix() {
     // decodes with the right length.
     for row in &visible {
         let token = row.token();
-        let text = row.text();
+        let phrase_text = row.phrase_text().unwrap();
+        let text = phrase_text.as_str().unwrap();
         assert!(
             oxpinyin_user::is_user_token(token),
             "token {token} must be a user token"
@@ -232,7 +236,7 @@ fn a_truncated_store_file_is_a_typed_error() {
             for row in store.phrases().expect("truncated store reads") {
                 assert_eq!(
                     store
-                        .token_for_phrase(row.text())
+                        .token_for_phrase(row.phrase_text().unwrap().as_str().unwrap())
                         .expect("text index reads"),
                     Some(row.token()),
                     "a surviving row must stay self-consistent"
