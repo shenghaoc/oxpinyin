@@ -7,7 +7,8 @@ use std::os::raw::c_int;
 use std::path::{Path, PathBuf};
 
 use oxpinyin_core::graph::FewestKeys;
-use oxpinyin_user::{DEFAULT_PHRASE_COUNT, ExportedPhrase, PinyinKey, USER_DICTIONARY, UserStore};
+use oxpinyin_facade::ExportedPhrase;
+use oxpinyin_user::{DEFAULT_PHRASE_COUNT, PinyinKey, USER_DICTIONARY, UserStore};
 
 use crate::context::UserImportContext;
 

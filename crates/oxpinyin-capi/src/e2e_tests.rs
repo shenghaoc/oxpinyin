@@ -163,7 +163,7 @@ fn remember_user_input_indexes_without_training(instance: *mut PinyinInstance) {
         assert_eq!(store.bigram_count(SENTENCE_START, user_token).unwrap(), 0);
         assert_eq!(store.bigram_total(user_token).unwrap(), 0);
         let phrase = store.phrase(user_token).unwrap().expect("phrase stored");
-        assert_eq!(phrase.text(), "你好");
+        assert_eq!(phrase.phrase_text().unwrap(), "你好");
         assert_eq!(phrase.pronunciations().len(), 1);
         // The current composition "nihao" supplies the pronunciation keys.
         let ni = u16::try_from(

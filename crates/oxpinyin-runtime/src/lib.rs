@@ -747,9 +747,11 @@ impl RuntimeDict {
                 else {
                     continue;
                 };
+                let Some(text) = phrase.phrase_text() else {
+                    continue;
+                };
                 let initial = keys.iter().map(|key| key.initial).collect();
-                let entry =
-                    PhraseEntry::new(PhraseToken::new(phrase.token()), phrase.text().to_owned());
+                let entry = PhraseEntry::new(PhraseToken::new(phrase.token()), text);
                 index.entry(initial).or_default().push((keys, entry));
             }
         }
@@ -1222,7 +1224,7 @@ impl RuntimeDict {
                     .phrase_text(token)
                     .ok()
                     .flatten()
-                    .map(PhraseText::from)
+                    .and_then(|words| PhraseText::from_stored_words(words.into_iter().map(Some)))
             }
             _ => None,
         }
@@ -1294,8 +1296,8 @@ impl RuntimeDict {
                 let store = self.user.as_ref()?;
                 let phrase = store.phrase(token).ok()??;
                 Some(TokenIntrospection {
-                    text: PhraseText::from(phrase.text()),
-                    phrase_length: phrase.text().chars().count(),
+                    text: phrase.phrase_text()?,
+                    phrase_length: phrase.words().len(),
                     pronunciations: phrase
                         .pronunciations()
                         .iter()
@@ -1722,7 +1724,7 @@ impl Dictionary for RuntimeDict {
             .phrase(token)
             .ok()
             .flatten()
-            .map(|phrase| PhraseText::from(phrase.text()))
+            .and_then(|phrase| phrase.phrase_text())
     }
 
     /// `get_phrase_item` over the facade (074a2219 `phrase_index.h:646-657`):

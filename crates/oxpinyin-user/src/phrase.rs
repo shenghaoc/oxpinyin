@@ -283,7 +283,7 @@ impl UserPronunciation {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UserPhrase {
     token: Token,
-    text: String,
+    text: Vec<u32>,
     pronunciations: Vec<UserPronunciation>,
 }
 
@@ -309,11 +309,16 @@ impl UserPhrase {
         self.token
     }
 
-    /// Phrase text as stored (UTF-8; Unicode scalar length is the phrase
-    /// length).
+    /// Exact stored words, including zero words and non-scalars.
     #[must_use]
-    pub fn text(&self) -> &str {
+    pub fn words(&self) -> &[u32] {
         &self.text
+    }
+
+    /// Text for lookup consumers, with the stored length and outward prefix.
+    #[must_use]
+    pub fn phrase_text(&self) -> Option<oxpinyin_core::PhraseText> {
+        oxpinyin_core::PhraseText::from_stored_words(self.text.iter().copied().map(Some))
     }
 
     /// Pronunciations in insertion order — `add_pronunciation` appends
@@ -325,7 +330,7 @@ impl UserPhrase {
 
     pub(crate) const fn new(
         token: Token,
-        text: String,
+        text: Vec<u32>,
         pronunciations: Vec<UserPronunciation>,
     ) -> Self {
         Self {

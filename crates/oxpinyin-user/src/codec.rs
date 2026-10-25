@@ -116,6 +116,20 @@ pub fn decode_str(bytes: &[u8]) -> Result<&str, DecodeError> {
     std::str::from_utf8(bytes).map_err(|_| DecodeError::InvalidUtf8)
 }
 
+/// Decode the internal phrase value's complete little-endian stored words.
+pub(crate) fn decode_words(bytes: &[u8]) -> Result<Vec<u32>, DecodeError> {
+    if !bytes.len().is_multiple_of(4) {
+        return Err(DecodeError::Truncated {
+            expected: bytes.len().saturating_add(3) / 4 * 4,
+            actual: bytes.len(),
+        });
+    }
+    Ok(bytes
+        .chunks_exact(4)
+        .map(|word| u32::from_le_bytes([word[0], word[1], word[2], word[3]]))
+        .collect())
+}
+
 /// Encode `&[u8]` (identity — returns the same slice).
 #[must_use]
 pub const fn encode_bytes(b: &[u8]) -> &[u8] {

@@ -545,7 +545,7 @@ fn amplified_frequency(unigram: u64, total: u64, lambda: f32) -> u64 {
 
 pub(crate) fn phrase_text(dict: &SharedDict, store: &UserStore, token: u32) -> Option<PhraseText> {
     if let Ok(Some(phrase)) = store.phrase(token) {
-        return Some(PhraseText::from(phrase.text()));
+        return phrase.phrase_text();
     }
     dict.system().phrase_text(token)
 }

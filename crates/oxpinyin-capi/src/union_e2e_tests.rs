@@ -200,7 +200,10 @@ fn chosen_addon_candidate_is_promoted_into_default_nibble_5() {
         .phrase(promoted)
         .expect("store read")
         .expect("promoted phrase exists");
-    assert_eq!(phrase.text(), text);
+    assert_eq!(
+        phrase.words(),
+        text.chars().map(u32::from).collect::<Vec<_>>()
+    );
     let reading = phrase
         .pronunciations()
         .first()

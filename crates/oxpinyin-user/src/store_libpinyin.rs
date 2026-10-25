@@ -658,26 +658,17 @@ fn seed_txn_with_replay(
     for (&nibble, items) in &libraries {
         for (&slot, item) in items {
             let token = (u32::from(nibble) << 24) | slot;
-            let Some(text) = ucs4_to_string(&item.phrase) else {
-                continue; // a phrase that is not UTF-32 text cannot be a
-                // user phrase in this engine; leave it unseeded
-            };
-            txn.put(
-                PHRASE,
-                &codec::encode_token(token),
-                codec::encode_str(&text),
-            )?;
+            let text = crate::phrase_table::key_ucs4(&item.phrase);
+            txn.put(PHRASE, &codec::encode_token(token), &text)?;
+            let mut library_text = vec![nibble];
+            library_text.extend_from_slice(&text);
             txn.put(
                 PHRASE_BY_LIB_TEXT,
-                &codec::encode_u8_str(nibble, &text),
+                &library_text,
                 &codec::encode_token(token),
             )?;
             if nibble == crate::phrase::USER_DICTIONARY {
-                txn.put(
-                    PHRASE_BY_TEXT,
-                    codec::encode_str(&text),
-                    &codec::encode_token(token),
-                )?;
+                txn.put(PHRASE_BY_TEXT, &text, &codec::encode_token(token))?;
             }
             for (seq, (keys, freq)) in (0_u32..).zip(&item.prons) {
                 // The store's pronunciation table keys on the dense
@@ -845,9 +836,9 @@ pub fn export_state<S: WriteStore>(
     db.for_each(PHRASE, |key, value| {
         let token = codec::decode_token(key)
             .map_err(|_| StoreError::Backend("corrupt phrase token".into()))?;
-        let text = codec::decode_str(value)
+        let text = codec::decode_words(value)
             .map_err(|_| StoreError::Backend("corrupt phrase text".into()))?;
-        phrase_text.insert(token, text.chars().map(u32::from).collect());
+        phrase_text.insert(token, text);
         Ok(())
     })?;
 
@@ -998,11 +989,6 @@ pub fn export_state<S: WriteStore>(
 /// One stored reading on its way to the file: insertion sequence, packed
 /// `ChewingKey` words, count, and whether the user pinyin index carries it.
 type StoredReading = (u32, Vec<u16>, u64, bool);
-
-/// UCS-4 code points as text; `None` when any scalar is invalid.
-fn ucs4_to_string(codes: &[u32]) -> Option<String> {
-    codes.iter().copied().map(char::from_u32).collect()
-}
 
 /// The store's dense syllable ids for a reading's packed `ChewingKey`
 /// words; `None` when any word names no syllable in the frozen
@@ -2656,7 +2642,7 @@ mod tests {
                 .expect("token")
                 .expect("present");
             let phrase = store.phrase(token).expect("phrase").expect("row");
-            assert_eq!(phrase.text(), "你好");
+            assert_eq!(phrase.phrase_text().unwrap(), "你好");
             let pron = &phrase.pronunciations()[0];
             assert_eq!(pron.count(), crate::phrase::DEFAULT_PHRASE_COUNT);
             assert_eq!(
@@ -2784,6 +2770,60 @@ mod tests {
         }
         assert_eq!(phrase_rows(), rows);
         std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    #[test]
+    fn loaded_words_survive_lookup_and_native_save() {
+        let dir = tempdir("stored-words-1198");
+        let mut state = UserState::default();
+        for library in [5, 6, 7] {
+            for (slot, middle) in (1..).zip([0x4e01, 0, 0xd800, 0x110000]) {
+                state.libraries.entry(library).or_default().insert(
+                    slot,
+                    ChunkItem {
+                        phrase: vec![0x7532, middle, 0x4e59],
+                        unigram: 100,
+                        prons: vec![(vec![0x1084; 3], 10)],
+                    },
+                );
+            }
+        }
+        let state = state.index_every_reading();
+        persistence::save(&dir, &state, &originals(), &versions(), 1).expect("native fixture");
+        for _ in 0..2 {
+            let mut store =
+                UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+                    .expect("load");
+            for (&library, items) in &state.libraries {
+                for (&slot, expected) in items {
+                    let token = u32::from(library) << 24 | slot;
+                    let phrase = store.phrase(token).expect("read").expect("retained item");
+                    assert_eq!(phrase.words(), expected.phrase);
+                    assert_eq!(phrase.pronunciations()[0].count(), 10);
+                    assert_eq!(store.unigram_delta(token).expect("unigram"), 100);
+                    let text = phrase.phrase_text().expect("outward text");
+                    assert_eq!(text.phrase_length(), 3);
+                    let outward = expected
+                        .phrase
+                        .iter()
+                        .copied()
+                        .take_while(|&word| word != 0)
+                        .collect::<Vec<_>>();
+                    assert_eq!(text.outward_words().collect::<Vec<_>>(), outward);
+                    if expected.phrase[1] == 0 {
+                        let scalar = oxpinyin_core::PhraseText::from("甲\0乙");
+                        assert_eq!(scalar.stored_words(), Some(expected.phrase.as_slice()));
+                        assert_eq!(scalar.phrase_length(), 3);
+                        assert_eq!(scalar, text);
+                    }
+                }
+            }
+            let exported = export_state(&store, &originals()).expect("save state");
+            assert_eq!(exported.libraries, state.libraries);
+            store.mark_modified();
+            assert!(store.save().expect("save"));
+        }
+        std::fs::remove_dir_all(dir).expect("cleanup");
     }
 
     #[test]
