@@ -748,14 +748,19 @@ def plan_defaults(chosen, out=sys.stderr, phase='defaults'):
 
 
 def prepare_heavy_env(env: Mapping[str, str], resources: ResourceSnapshot, *,
-                      runner: bool = False) -> tuple[dict[str, str],
+                      runner: bool = False,
+                      contract_rows: int = 0) -> tuple[dict[str, str],
                                                      dict[str, tuple[int | str, str, bool]], MiB]:
     """Return a copied child environment, chosen budgets, and an estimate in MiB.
 
     Preserve explicit build/test settings and resolve defaults against the
     resource snapshot. Cap an explicit contract-case maximum to available
-    room while reserving at least one worker. This estimates but does not
-    admit work or mutate the caller's environment.
+    room while reserving at least one worker. CONTRACT_ROWS counts the
+    contract-diff runs that share this host's CPUs at once; when it is
+    nonzero and OXPINYIN_CONTRACT_JOBS is absent, choose a default (#1240):
+    at most each run's share of the CPUs, and as many cases as fit in memory,
+    one worker when none does. This estimates but does not admit work or
+    mutate the caller's environment.
     """
     chosen = memory_defaults(env, None, cpus=resources['cpus'], available_mib=resources['available_mib'],
                              memory_limit_mib=resources.get('memory_limit_mib'),
@@ -768,18 +773,26 @@ def prepare_heavy_env(env: Mapping[str, str], resources: ResourceSnapshot, *,
         count = max(1, resources['cargo_cpus'] + count)
     estimate = max(RUNNER_PEAK_MIB if runner else RUSTC_PEAK_MIB, count * RUSTC_PEAK_MIB,
                    int(child['RUST_TEST_THREADS']) * TEST_THREAD_PEAK_MIB)
-    if 'OXPINYIN_CONTRACT_JOBS' in env:
+    if 'OXPINYIN_CONTRACT_JOBS' in env or contract_rows:
         # A case runs pin then subject, so at most one worker per active
         # case is live. Charge the existing runner estimate for EACH case.
-        # This explicit setting is a requested maximum: reduce it against
-        # the room left after other live reservations and headroom, before
-        # the admission lock publishes the estimate or any worker starts.
-        requested = int(env['OXPINYIN_CONTRACT_JOBS'])
+        # An explicit setting is a requested maximum; the default, which only
+        # a contract-diff run with no setting gets, is its share of the CPUs.
+        # Either is reduced against the room left after other live
+        # reservations and headroom, before the admission lock publishes the
+        # estimate or any worker starts.
         available = resources['available_mib']
         headroom = memory_headroom(env, resources)
+        if 'OXPINYIN_CONTRACT_JOBS' in env:
+            requested = int(env['OXPINYIN_CONTRACT_JOBS'])
+            label = f'requested maximum {requested}'
+        else:
+            requested = max(1, resources['cpus'] // contract_rows)
+            label = (f'default maximum {requested}: {resources["cpus"]} CPUs shared by '
+                     f'{contract_rows} concurrent contract-diff run(s)')
         workers = 0 if available is None else fit(available, RUNNER_PEAK_MIB, requested, headroom)
-        reason = (f'requested maximum {requested}; available memory unknown' if available is None else
-                  f'requested maximum {requested}; {available} MiB available - {headroom} MiB headroom; '
+        reason = (f'{label}; available memory unknown' if available is None else
+                  f'{label}; {available} MiB available - {headroom} MiB headroom; '
                   f'{RUNNER_PEAK_MIB} MiB per contract case')
         chosen['OXPINYIN_CONTRACT_JOBS'] = (workers, reason, False)
         # Zero capacity still needs one worker's estimate. Admission refuses

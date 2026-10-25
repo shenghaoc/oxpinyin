@@ -204,6 +204,8 @@ in [oracle procedures](oracle.md) before deciding which cells to run.
 Use `--jobs 2` (the default) to bound compiler and runner concurrency and
 the execution container to two CPUs. Podman image builds also receive that
 CPU quota; Docker image-build CPU limits depend on your configured builder.
+With no `--contract-jobs`, contract cases run on that many workers, within the
+container's memory (`docs/runbooks/oracle.md`).
 Apple builds use its `--cpus` setting. The
 existing registry's `--timeout` and `--runner-timeout NAME=SECONDS` options
 are accepted; no skip-as-pass override or arbitrary host artifact paths are
