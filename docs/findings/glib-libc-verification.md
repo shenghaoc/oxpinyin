@@ -757,15 +757,48 @@ uv run --no-project --managed-python --python cpython@3.15+gil \
 
 ## G10 — Rename and sync
 
-Pin: `pinyin.cpp:915-1130` (renames `:1059,1078,1094,1108,1121`);
-`zhuyin.cpp:585-693`; `include/memory_chunk.h:555`.
-Rust: `user/src/persistence.rs`, `save_with_bigram_reporting`,
-`pin_rename_order`; `data/src/phrase_library.rs` chunk saves. #929.
+Audit #929, 2026-10-25 UTC, subject base `6be364d9`; pin source read from a
+checkout of `074a2219c90feaf962d0d24f034514033ece5f99`. No save implementation
+or fsync/rename policy is changed. The C-facing path is `context::save_context`
+/ `zhuyin_save` → `facade::ContextCore::save_user` →
+`UserStore::save_reporting_with_baseline` → `persistence::save_reporting`.
+The separate strict Rust `UserStore::save`/`persistence::finish_save` path
+stops and cleans pending files on error; it is not the C facade's contract.
+`UserConfLaw` selects staged pinyin versus interleaved zhuyin writes.
 
-| Partition | Verdict | Investigation |
+| Path / side effect | Pin citation at 074a2219 | Mandatory result and subject audit |
 | --- | --- | --- |
-| Successful valid-profile save, per-library then index/bigram order | Inventory source conclusion: same file bytes/order. | Partial; proposed changes need same-backend persistence gates. |
-| Per-file write, rename or sync failure, partial saved state, return value | Pending classification. | Unverified complete failure ordering across both facades/backends; no quirk admission. |
+| No user directory or clean context | `pinyin.cpp:1132-1137`; `zhuyin.cpp:547-552` | Return false before compaction, staging or marker write. A clean retry after a soft save failure does not repair the failed file. `UserStore::save_reporting_inner` retains these guards. |
+| Loaded default libraries, ascending index 1..15, skipping absent, NOT_USED and NULL user names | `pinyin.cpp:922-994,1025-1086`; `zhuyin.cpp:559-644` | Exact library order is mandatory; SYSTEM_FILE/DICTIONARY writes a diff against the currently mapped system chunk, USER_FILE writes a chunk. `libraries_in_pin_order`, `stage_rest` and the baseline hook implement this. No filename policy change (#922). |
+| Pinyin `.tmp` staging and rename pass | `pinyin.cpp:971,988,996-1022,1059,1078,1094,1108,1121` | Stage **all** selected libraries, user pinyin index, user phrase index, user bigram, then rename in that same order. `pin_rename_order`/`save_reporting` implement the pass. A failure never licenses reordering later files. |
+| Zhuyin `.tmp` staging and immediate renames | `zhuyin.cpp:607-609,633-635,646-690` | Write then rename each library, then write/rename pinyin index, phrase index and bigram individually. `Staged::immediate` preserves this difference. |
+| Chunk open, header, payload, sync and close | `include/memory_chunk.h:536-557`; callers `pinyin.cpp:971,988`, `zhuyin.cpp:607,633` | Open failure and payload short/error returns are ignored by the caller. Each failed four-byte header write asserts; existing class (c) refusal applies. Successful payload is followed by `g_fsync`, then close; both results ignored. **Gap:** `write_chunk_file` writes and drops the file without sync. This is not a necessary Rust difference: `File::sync_all` is available. Follow-up only under the no-edit restriction; successful write/rename alone does not establish durability. |
+| Staged DBM indexes | `storage/facade_chewing_table2.h:93-96`, `facade_phrase_table3.h:92-95`; `chewing_large_table2_bdb.cpp:135-161`, `phrase_large_table3_bdb.cpp:150-176`; KC `chewing_large_table2_kyotodb.cpp:124-145`, `phrase_large_table3_kyotodb.cpp:139-160`; tkrzw `chewing_large_table2_tkrzwdb.cpp:111-129`, `phrase_large_table3_tkrzwdb.cpp:102-120` | Unlink stale staging, create backend-native output, copy records, finish backend save before rename. KC active code dumps snapshots (its explicit synchronize/close branch is `#if 0`); tkrzw synchronizes with `false` then closes. BDB invokes the temporary DB's sync function with `m_db`, then closes the temporary DB. Do not silently describe that as a temporary-file fsync. Same-backend format/record bytes remain mandatory; backend error paths require separate verification. |
+| Staged bigram | `storage/ngram_bdb.cpp:81-110`; `ngram_kyotodb.cpp:82-113`; `ngram_tkrzwdb.cpp:65-83`; facade calls `pinyin.cpp:1014-1022`, `zhuyin.cpp:680-690` | Last DBM, before marker. BDB has the same sync receiver detail; KC dumps a snapshot; tkrzw HashDBM synchronizes with `false` and closes. Backend failures do not prevent the facade's attempted rename. Native save/reload checks retained counts; this is not a whole-file byte-identity proof. |
+| Failed rename, including a directory at the final name | `pinyin.cpp:1059-1129`; `zhuyin.cpp:609-638,655-690` | Retain failed staging and destination; attempt later files, print `rename ... to ... failed.` without errno text, then marker and dirty reset. `save_reporting` collects failures; `facade::ContextCore::save_user` prints them. Native tests block every destination and assert ordered failures and sentinel preservation; contract cases cover chunk and all three DBM finals on both facades. |
+| Marker after attempted renames | `pinyin.cpp:220-232,1141-1146`; `zhuyin.cpp:164-176,695-698`; `storage/table_info.cpp:377-396` | In-place `user.conf` rewrite, not a `.tmp` commit record. Pinyin retains its context counter; zhuyin writes fresh counter zero. Open failure prints `write ... failed.`; caller still clears dirty and returns true. fprintf/fclose failures are unchecked upstream. Subject `write_marker` uses `std::fs::write`; write-error diagnostic equivalence after a successful open remains unverified. Parsing is #920. |
+| Fini with or without save | `pinyin.cpp:1194-1200`; `zhuyin.cpp:741-757` | Neither saves dirty dictionaries. Pinyin lowers counter (`>1 ? counter-1 : 0`) and writes marker; zhuyin only releases state. `FiniGuard`/`persistence::fini` follow this. Native and contract round trips include loss of an intentionally unsaved suffix, not loss of committed data. |
+| Restart after interruption | `pinyin.cpp:173-217,922-1146`; `zhuyin.cpp:126-162,547-698`; `storage/table_info.cpp:399-412` | Load finals, never replay `.tmp`; conformance/counter can trigger cleanup. No multi-file atomicity: pinyin before rename retains old finals; either facade during renames can leave mixed generations, zhuyin even before all staging completes. Native child exits before the second library baseline, verifies the exact first-file state and reload delta. No power-cut durability claim. |
+| Same-backend bytes and no data loss on valid completed saves | `pinyin.cpp:963-1018`; `zhuyin.cpp:596-685`; DBM writers cited above | Mandatory: encoded chunk/diff content, indexed records, bigram values and reload results. Current tests cover record content and round trips; full backend-specific byte comparison and crash-order coverage remain open. Do not mask an unexplained byte difference as a filesystem quirk. |
+| GLib/platform boundary and errno wording | Call sites `pinyin.cpp:1059-1124`, `zhuyin.cpp:609-690`, `include/memory_chunk.h:555` | Rename diagnostics at these callers contain no errno text, unlike some backend diagnostics. **Blocked source audit:** fetch of reference GLib 2.89.4 source returned HTTP 403; no cached copy found. `g_rename` versus Rust rename on Windows, exact reference `g_fsync` behavior, and platform error wording are not classified as equivalent or admitted exceptions without that source. No alternate download route attempted. |
+
+No new necessary language/runtime exception is established, so the divergence
+register is unchanged. In particular the missing chunk sync, unchecked marker
+write differences and overly broad “previous profile intact” comments in
+`persistence.rs` are follow-ups, not accepted exceptions. Rust can express
+per-file staging, replacement, explicit sync and ignored error results naturally;
+there is no reason to imitate GLib containers or C ownership mechanisms here.
+
+Verification and reproduction: `just heavy -- cargo test -p oxpinyin-user`,
+`just heavy -- cargo clippy -p oxpinyin-user --all-targets -- -D warnings`,
+`cargo fmt --all --check`. The four new tests in
+`user/tests/save_semantics_929.rs` exercise both facade laws. The `/dev/null`
+sync-rejection case proves only the outward continuation result, **not that the
+subject issued a sync**. The contract selection is `--issue 929` in the existing
+`tools/bisection/run-contract-diff.sh` runner; cell selection is
+`tools/bisection/cells-for-diff.py origin/main`. Execution results are recorded
+with the final checkpoint; unresolved rows keep this audit partial (Refs #929).
+
 
 ## G11 — Numeric parsing and locale
 
