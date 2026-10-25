@@ -160,7 +160,7 @@ class SidecarTests(unittest.TestCase):
     def test_missing_sidecar_labels_each_unresolved_frame(self):
         result = run_report(raw_profile([0x10, 0x20]))
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn('# symbols: unresolved (no sidecar at', result.stdout)
+        self.assertIn('# symbol sidecar: missing at', result.stdout)
         self.assertIn(
             'unresolved (libpinyin_capi.dylib+0x10)', result.stdout)
         self.assertIn(
