@@ -86,15 +86,183 @@ space instead of O(n). The name `atoi` does not establish full C equivalence.
 | Unsigned in-range numeric prefix followed by nondigits | Decimal prefix is consumed; the remaining first-field bytes do not affect the token. A matching phrase remains required at the pin. |
 | Nonzero token with extra leading phrase separator, wrong/empty phrase, or CRLF tail | Pin compares exact phrase bytes at `src/storage/tag_utility.cpp:407-416` and asserts on mismatch. Rust currently discards the phrase column. Existing defect/follow-up, **not** an accepted quirk or verified equivalence. |
 | Signed or ASCII-whitespace-prefixed first field | Pin calls `atoi`; Rust's digits-only helper yields zero. The nonzero signed-token case is an existing defect/follow-up; a normal Rust parser can preserve it. No exception is admitted. |
-| Numeric overflow, embedded NUL, invalid UTF-8 | Outside ordinary producer output; not certified by this refactor. Rust over-u32 prefixes currently become zero and invalid UTF-8 is refused at the reader. Pin C-string truncation and integer narrowing need their own bounded caller/output check before any change. |
+| Numeric overflow, embedded NUL, invalid UTF-8 | Source-classified below, including the amd64 reference's numeric narrowing. Existing compatibility gaps remain; ordinary producer output does not exempt these inputs. |
 
 The safe refactor does not fix the existing phrase-validation/numeric-domain
 holes, nor does it classify them as necessary differences. They remain
 follow-ups, including the held-out caller that has no lexicon parameter.
-Reading glibc 2.43-3 from sources.debian.org was blocked by HTTP 403; no
-alternative route was attempted after that refusal. No overflow result was
-inferred by executing the pin. Existing ordinary value tests cannot certify
-these partitions.
+Following explicit authorization to use GitHub mirrors, the bminor/glibc
+clone succeeded, but fetching `glibc-2.43` failed: that remote tag is absent
+(confirmed with `git ls-remote --tags origin refs/tags/glibc-2.43`). The
+provisioned image has only a `deb` snapshot entry, no `deb-src`, and no local
+implementation source. Exact upstream/debian-patchset source inspection
+remains open; no other version is substituted. Follow-through below uses
+the already-installed reference header and compiled objects.
+No input was executed against the pin to discover these expectations.
+
+## Remaining input partitions: source follow-through
+
+2026-10-25 UTC; this extends the bounded source classification, **not**
+the implementation or verification of the known differences. The PR remains
+partial work on #926. No parser implementation or `is_graph` changes follow
+from this section.
+
+The GLib GitHub checkout is tag **2.89.4**, with splitter source at
+`glib/gstrfuncs.c:2489-2551`. For the Debian **2.89.4-2** revision, reading
+installed `g_strsplit_set` (address `0x8dfa0`) confirms the relevant empty
+input branch (`+0x54..+0x59`, `+0x1c8`), byte/NUL loop and token limit
+(`+0xc0..+0x10e`), and retained final field (`+0x110..+0x121`). These agree
+with the tagged source for this tokenizer; this is not a claim that the
+entire Debian patchset was inspected. The libc header and machine-code
+checks below likewise use the actual Debian **2.43-3** revision.
+
+### Nonzero token and phrase validation
+
+At `utils/utils_helper.h:61-67`, zero bypasses validation. Every other token
+goes through `src/storage/tag_utility.cpp:384-416`: library-zero token 1 maps
+to `<start>` (`:362-393`); an ordinary resident token maps to its full UTF-8
+phrase (`:395-404`). `strcmp` at `:413` compares that exact byte string with
+the entire second field. It does not trim separators/CR, normalize Unicode,
+or interpret escapes. Thus repeated separators, an empty/wrong phrase and
+a CRLF tail fail for a resident token unless those bytes actually belong to
+its stored phrase. These are context-dependent validation failures, not
+uniformly malformed separator syntax. A mismatch reaches `assert` through
+`utils_helper.h:64-65` and `include/pinyin_utils.h:27-30`, before that line's
+count updates. An unknown token instead returns NULL (`tag_utility.cpp:380-381`
+or `:395-398`) and passes it to `strcmp`: an unsafe read, not a defined
+validation-false result. The bounded conclusions assume sound scalar phrase
+items; corrupt stored items belong to their existing data-path audits.
+
+Rust `parse_segmented_line` discards the second field. `count_ngseg` has a
+lexicon but uses it only to seed counts; the held-out `count_deleted` caller
+has no lexicon parameter. Therefore a resident token with the wrong phrase
+still increases its Rust count. Counter's dump exposes the numeric increase;
+the emitter resolves the *canonical lexicon phrase*, hiding the bad supplied
+phrase while retaining the increase (`emitter/emit.rs::phrase_text` /
+`emit_interpolation2`). Lambda uses those counts in estimation. Unknown-token
+counts remain in the counter dump; the emitter skips unresolved phrase rows,
+which does not make the reader compatible.
+
+Classification: mismatch-to-typed-error is the safe refusal corresponding to
+the pin assertion; NULL lookup-to-typed-error avoids the unsafe read. Silently
+counting either case is an existing defect, not a necessary Rust difference.
+Normal Rust lookup plus comparison can implement validation; the held-out
+caller would need its lexicon passed explicitly. No such implementation is
+included here.
+
+### Signed prefixes and overflow: installed reference evidence
+
+No `atoi.c` or `strtol_l.c` was found in the checked local source/cache paths
+or the reference image's `/usr/src` and `/usr/share`. However, its installed
+libc6-dev **2.43-3** `/usr/include/stdlib.h:483-488` defines `atoi` as
+`(int) strtol(nptr, NULL, 10)`. The compiled pin `gen_ngram` confirms the
+actual call, rather than assuming the header was used: `main+0x1c9`
+(`0x29679`) calls `__isoc23_strtol`; `main+0x1d1` tests `%eax` for zero and
+`main+0x1e2` passes `%eax` as the unsigned token to validation. Only the low
+32 bits of the returned long reach the token/count loop.
+
+The installed amd64 libc6 **2.43-3** disassembly settles the remaining
+conversion at `__isoc23_strtol` (symbol address `0x504a0`): locale ctype-space
+skipping at `+0x78..+0xb1`, minus/plus recognition at `+0xca..+0xe4`, base-10
+digit accumulation/cutoff at `+0x148..+0x1af`, no-digit zero at `+0x3c0`
+branching to `+0x61`, and signed-long overflow saturation at
+`+0x1e6..+0x1fe`, `+0x320..+0x351`, `+0x358..+0x382`. The latter returns
+`LONG_MAX` or `LONG_MIN` and sets ERANGE; the macro never reads errno.
+This is a binary reading, not an overflow probe. Conclusions are bounded to
+the provisioned amd64 reference; no arm64 conversion claim is made.
+
+For C-locale ASCII fields, trim the leading C whitespace, consume one
+optional sign and decimal digits, saturate to signed 64-bit, then retain
+the low 32 bits. SP/TAB at the start of the *line* have already created an
+empty token field, so they yield zero instead; CR/VT/FF can survive inside
+the first field and be consumed by the numeric parser. Examples derived
+before verification:
+
+| First field | Pin token | Existing Rust token / consequence |
+| --- | --- | --- |
+| `+16817937`, `\r16817937` | 16817937; exact phrase still required | 0, loses this token's count and resets the boundary |
+| `+0`, `-0`, `+`, `-` | 0 | 0; no-digit and signed-zero controls |
+| `-1` | 4294967295 | 0; pin lookup outcome depends on that token, not on its sign |
+| `4311785233` (2^32 + 16817937) | 16817937 | 0; an ordinary resident-token count can differ |
+| `4294967296` | 0 | 0; wrapping to zero is not proof of general overflow parity |
+| Beyond positive signed-long range | 4294967295 | 0 |
+| Beyond negative signed-long range | 0 | 0 |
+
+Classification: the reference's deterministic result can be represented
+with checked integer parsing and explicit conversion in ordinary safe Rust.
+No overflow or sign difference is admitted merely because C's abstract
+`atoi` contract has a narrower defined domain. The remaining limitation is
+implementation/verification, not an unavailable reference conversion rule.
+
+Classic counts use the same frontend `atoi` (`PYLibPinyin.cc:262-267`),
+but then reach signed `pinyin_iterator_add_phrase`. Pin
+`pinyin.cpp:520-524` maps -1 to default 5; other counts become unsigned
+pronunciation deltas at `:578-579,602`. A new item's unigram delta is three
+times the count (`:604-605`); the reference `_add_phrase+0x37d`
+(`0x8f79d`) computes that with a 32-bit `lea`, so its low 32 bits are used.
+`PhraseItem::add_pronunciation` adds an existing reading with its overflow
+guard (`phrase_index.cpp:56-92`); the caller ignores its bool before restoring
+the item. Dictool instead accepts complete unsigned counts through i32::MAX,
+including Rust's `+7`, and rejects `-0`, `-1`, suffixes and larger values
+before any writes. This is the existing explicitly frozen tool-validation
+contract, not a newly justified runtime exception; changing that contract
+is not part of this equivalent refactor. Its numeric conversion is fully
+representable in safe Rust.
+
+### NUL and invalid UTF-8, through model output
+
+`LineString` converts to `std::string::c_str()`
+(`include/pinyin_utils.h:33-38`), so the segmented macro sees only bytes
+before the first NUL even though `getline` consumed the whole physical line.
+GLib's splitter is byte-based (`gstrfuncs.c:2507-2541`) and does not validate
+UTF-8. For a sound scalar phrase index:
+
+| Location | Pin result | Rust result and classification |
+| --- | --- | --- |
+| NUL is first byte | Empty C string → zero | No truncation; may return an error or parse a later separator. Existing gap; safe byte slicing suffices. |
+| NUL before the only delimiter, after digits | One field → abort before this line's update | May split after NUL and consume the preceding digits. Existing gap; safe refusal required. |
+| NUL after a complete matching nonzero phrase | Hidden suffix ignored; token counted | Token counted because phrase is discarded. Value-equivalent control, not full phrase-validation parity. |
+| NUL truncates a nonzero phrase before it matches | Exact comparison fails → assert | Token counted. Existing validation defect. |
+| NUL or arbitrary bytes in zero-token tail | Tail ignored; boundary zero | Scalar NUL tails count as zero. Invalid UTF-8 instead fails the whole Rust file before counting. Safe byte processing could reproduce the pin; not a necessary difference. |
+| Invalid UTF-8 in nonzero phrase before NUL | Cannot match the sound scalar phrase's UTF-8 → assert | Reader rejects before parsing; safe refusal, with different streaming side effects below. |
+| Invalid byte after a valid decimal prefix in token field, followed by a correct phrase | Conversion stops at that byte; exact phrase matches and token counts | Whole-file UTF-8 rejection. Existing byte-reader gap, not inherently malformed token syntax. |
+| Invalid bytes after first NUL | Never seen by macro | Whole-file UTF-8 rejection. Existing gap, safely reproducible with byte input. |
+
+The counter and emitter validate the entire file with `str::from_utf8`
+before counting and call `write_output` only after successful counting.
+Lambda validates both its system file and held-out file before printing
+estimates. An invalid byte therefore leaves an existing output file untouched,
+even after preceding valid lines. Pin `gen_ngram.cpp:79-117` processes records
+incrementally, calls `bigram.store` after each accepted nonzero token, and
+saves phrase frequencies only on normal completion (`:120-121`);
+`gen_deleted_ngram.cpp:78-118` likewise stores bigrams incrementally.
+There is no rollback call on a later assertion. Exact durable DBM bytes after
+abnormal termination are **not settled** by this tokenizer trace: libdb's
+dirty-page flush/abort behavior would need backend source evidence. This is
+the remaining semantic boundary for multi-line failing files; neither a
+clean rollback nor preservation of all previous writes is claimed.
+
+For classic input, frontend `getline` followed by `strlen` and
+`g_strsplit_set` (`PYLibPinyin.cc:245-267`) similarly truncates each line at
+NUL. A NUL before enough fields skips the line; one after a valid two-field
+prefix can import with default 5, and one after a count imports that count.
+There is no whole-file UTF-8 check. For malformed/incomplete UTF-8 in the
+phrase, GLib `gutf8.c:940-996` returns NULL without setting `items_written`;
+the pin initialized `phrase_length` to zero and refuses the row at
+`pinyin.cpp:627-644`. It still saves accepted preceding/later rows at frontend
+`:272-275`. Invalid suffix bytes in pinyin can leave a valid longest parsed
+prefix (`pinyin_parser2.cpp:164-213,217-333,346-379`); invalid count suffix
+bytes can leave a valid decimal prefix. Neither is generically rejected by
+the frontend. GLib-accepted surrogate/extended encodings are distinct from
+malformed UTF-8 (`gutf8.c:665-746`); their stored-item consequences overlap
+the existing non-scalar audit, not a new #926 exception.
+
+Dictool's `read_utf8` instead rejects an invalid byte anywhere, including
+comments or after NUL, before opening the store. Its parser rejects NUL in
+record fields (comments can contain scalar NUL). The frozen validation and
+full-file preflight contract explains these existing choices; it does not
+make them impossible to reproduce differently in Rust. Tests below verify
+that contract's no-write boundary, not universal frontend byte-input parity.
 
 ## Other split/category sites feeding tool formats
 
@@ -137,10 +305,10 @@ classic or segmented formats, and no new divergence is registered here.
 
 ## Verification and reproduction
 
-BDB, Linux amd64, 2026-10-25 UTC: 128 native tests passed (12 external-input
+BDB, Linux amd64, 2026-10-25 UTC: 132 native tests passed (12 external-input
 checks ignored by the normal suite); fmt and clippy passed. The existing
-counter differential's two explicitly selected tests then passed against the
-pin: **138096 unigrams / 199 bigrams**, checksum `1f7af24b04577d8b` for the
+counter differential's four tests, including both external-input checks,
+then passed against the pin: **138096 unigrams / 199 bigrams**, checksum `1f7af24b04577d8b` for the
 ordinary fixture, with all values also identical for the classified variant.
 `run-import-diff.sh` reported **IDENTICAL**, including classic frontend
 interchange in both directions. The reference image supplied GLib 2.89.4-2
@@ -187,6 +355,16 @@ Named mutation **collapse-classic-separators**: replace
 `just heavy -- cargo test --locked -p oxpinyin-dictool split_classic_matches_g_strsplit_set_max_three`.
 It failed on the repeated-separator case (exit 101); restoring the expression
 made the same test pass. No mutation remains in the branch.
+
+Named mutation **segmented-space-only**: replace the parser's
+`split_once([' ', '\t'])` with `split_once(' ')`, rebuild the existing
+`counter-differential` test and run `rust_matches_live_gen_ngram` with
+`--include-ignored --exact`. The classified TAB stream failed (exit 101).
+Restoring the expression and rerunning all four integration tests passed,
+including signed-zero and NUL-tail controls. Invalid-byte CLI tests cover
+dictool preflight, counter/emitter output preservation, and both lambda
+streams; they characterize current rejection boundaries, not pin parity
+for the open byte-reader and phrase-validation differences.
 
 `tools/bisection/cells-for-diff.py origin/main` reports
 **Cells: bdb (the reference cell; no check fired)**; all three backend checks

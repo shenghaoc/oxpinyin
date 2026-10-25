@@ -230,6 +230,19 @@ mod tests {
     }
 
     #[test]
+    fn classic_count_validation_is_not_frontend_atoi() {
+        assert_eq!(
+            parse("词 ci +7").unwrap(),
+            vec![record("词", "ci", Some(7), 1)]
+        );
+        // The frozen dictool validation contract refuses these count texts;
+        // the frontend's signed/prefix conversion has a different domain.
+        for count in ["-0", "-1", "-2", "7suffix", "2147483648", "4294967303"] {
+            assert!(parse(&format!("词 ci {count}")).is_err(), "{count}");
+        }
+    }
+
+    #[test]
     fn parses_two_and_three_field_space_or_tab_records() {
         let text = "# classic export\n   \n你好 ni'hao 3\r\n世界\tshi'jie\t7\n词 ci\n";
         assert_eq!(
