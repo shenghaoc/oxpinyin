@@ -14,6 +14,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <initializer_list>
 
 // Test-only glibc interposition bypass; no shipping library uses these.
 extern "C" void *__libc_malloc(size_t);
@@ -21,8 +22,11 @@ extern "C" void *__libc_realloc(void *, size_t);
 extern "C" void __libc_free(void *);
 namespace {
 uintptr_t str_lo, str_hi, list_lo, list_hi;
+uintptr_t buffer_lo[32], buffer_hi[32];
+unsigned buffer_count;
 int target, fail_at = 1, seen, fired, channel = -1, diagnostics, warnings;
 bool armed, inside;
+const char *warning_domain, *warning_message;
 void *tracked[32];
 unsigned tracked_count, freed_count;
 bool in(uintptr_t pc, uintptr_t lo, uintptr_t hi) { return pc >= lo && pc < hi; }
@@ -33,13 +37,13 @@ bool glib_caller(void *pc, const char *name) {
 void marker(char c) { if (channel >= 0) { auto ignored = write(channel, &c, 1); (void)ignored; } }
 GLogWriterOutput writer(GLogLevelFlags level, const GLogField *, gsize, gpointer) {
     ++diagnostics;
-    if (level & G_LOG_LEVEL_WARNING) ++warnings;
     if (level & G_LOG_LEVEL_ERROR) marker('E');
     return G_LOG_WRITER_HANDLED;
 }
-void log_handler(const gchar *, GLogLevelFlags level, const gchar *, gpointer) {
+void log_handler(const gchar *domain, GLogLevelFlags level, const gchar *message, gpointer) {
     ++diagnostics;
-    if (level & G_LOG_LEVEL_WARNING) ++warnings;
+    if ((level & G_LOG_LEVEL_WARNING) && domain && message && warning_domain && warning_message &&
+        !strcmp(domain, warning_domain) && !strcmp(message, warning_message)) ++warnings;
     if (level & G_LOG_LEVEL_ERROR) marker('E');
 }
 }
@@ -50,6 +54,8 @@ extern "C" void *malloc(size_t n) noexcept {
         inside = true;
         auto pc = reinterpret_cast<uintptr_t>(caller);
         bool string = in(pc, str_lo, str_hi), list = in(pc, list_lo, list_hi);
+        for (unsigned i = 0; i < buffer_count; ++i)
+            string = string || in(pc, buffer_lo[i], buffer_hi[i]);
         relevant = string || list;
         fail = (target == 1 && string) || (target == 2 && list) ||
                (target == 3 && string) ||
@@ -88,9 +94,9 @@ template<class T> T symbol(void *lib, const char *mode, const char *name) {
     void *p = dlsym(lib, full); assert(p); return reinterpret_cast<T>(p);
 }
 int main(int argc, char **argv) {
-    assert(argc == 9 || (argc == 10 && !strcmp(argv[9], "array-only")));
+    assert(argc == 11 || (argc == 12 && !strcmp(argv[11], "array-only")));
     // so, data, facade, pin|subject, str offset/size, list offset/size
-    const bool array_only = argc == 10;
+    const bool array_only = argc == 12;
     const bool pin = !strcmp(argv[4], "pin"), pinyin = !strcmp(argv[3], "pinyin");
     void *lib = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL); assert(lib);
     auto init = symbol<void *(*)(const char *, const char *)>(lib, argv[3], "init");
@@ -98,6 +104,14 @@ int main(int argc, char **argv) {
     auto base = reinterpret_cast<uintptr_t>(info.dli_fbase);
     str_lo = base + strtoull(argv[5], nullptr, 16); str_hi = str_lo + strtoull(argv[6], nullptr, 16);
     list_lo = base + strtoull(argv[7], nullptr, 16); list_hi = list_lo + strtoull(argv[8], nullptr, 16);
+    for (char *range = strtok(argv[9], ","); range; range = strtok(nullptr, ",")) {
+        assert(buffer_count < 32);
+        char *end;
+        buffer_lo[buffer_count] = base + strtoull(range, &end, 16);
+        assert(*end == ':');
+        buffer_hi[buffer_count] = buffer_lo[buffer_count] + strtoull(end + 1, nullptr, 16);
+        ++buffer_count;
+    }
     auto alloc = symbol<void *(*)(void *)>(lib, argv[3], "alloc_instance");
     auto parse = symbol<size_t (*)(void *, const char *)>(lib, argv[3], "parse_more_full_pinyins");
     auto key_get = symbol<bool (*)(void *, unsigned, void **)>(lib, argv[3], pinyin ? "get_pinyin_key" : "get_zhuyin_key");
@@ -107,7 +121,7 @@ int main(int argc, char **argv) {
     auto nth = symbol<bool (*)(void *, unsigned, unsigned, GArray *)>(lib, argv[3], "token_get_nth_pronunciation");
     auto free_inst = symbol<void (*)(void *)>(lib, argv[3], "free_instance");
     auto fini = symbol<void (*)(void *)>(lib, argv[3], "fini");
-    void *ctx = init(argv[2], nullptr); assert(ctx);
+    void *ctx = init(argv[2], pin ? nullptr : argv[10]); assert(ctx);
     void *inst = alloc(ctx); assert(inst); assert(parse(inst, "ni1hao3") > 0);
     void *key = nullptr; assert(key_get(inst, 0, &key) && key);
     char *text = nullptr; assert(render(inst, key, &text) && text); g_free(text);
@@ -123,7 +137,7 @@ int main(int argc, char **argv) {
     assert(lookup(inst, "你好", tokens) && tokens->len);
     unsigned token = g_array_index(tokens, unsigned, 0); g_array_free(tokens, TRUE);
     int failures = 0;
-    for (int operation = array_only ? 5 : 1; operation <= 5; ++operation) {
+    for (int operation = array_only ? 5 : 1; operation <= (!pin && pinyin && !array_only ? 8 : 5); ++operation) {
         // pin vector and element probes share its fatal strdup allocation;
         // subject distinguishes vector malloc from first-element malloc.
         int fd[2]; assert(pipe(fd) == 0); pid_t child = fork(); assert(child >= 0);
@@ -135,13 +149,60 @@ int main(int argc, char **argv) {
             g_log_set_handler(nullptr, static_cast<GLogLevelFlags>(0xFFFFFFFC), log_handler, nullptr);
             g_log_set_handler(pinyin ? "libpinyin" : "libzhuyin", static_cast<GLogLevelFlags>(0xFFFFFFFC), log_handler, nullptr);
             GArray *keys = g_array_new(FALSE, FALSE, sizeof(uint16_t));
+            void *iterator = nullptr;
+            auto next = static_cast<bool (*)(void *, char **, char **, int *)>(nullptr);
+            if (operation == 6) {
+                auto begin = symbol<void *(*)(void *, unsigned)>(lib, argv[3], "begin_get_phrases");
+                iterator = begin(ctx, token >> 24);
+                auto has = symbol<bool (*)(void *)>(lib, argv[3], "iterator_has_next_phrase");
+                assert(iterator && has(iterator));
+                next = symbol<bool (*)(void *, char **, char **, int *)>(lib, argv[3], "iterator_get_next_phrase");
+            } else if (operation == 7) {
+                // Seed a subject-only user bigram through the public API.
+                auto guess = symbol<bool (*)(void *)>(lib, argv[3], "guess_sentence");
+                auto candidates = symbol<bool (*)(void *, size_t, unsigned)>(lib, argv[3], "guess_candidates");
+                auto number = symbol<bool (*)(void *, unsigned *)>(lib, argv[3], "get_n_candidate");
+                auto candidate = symbol<bool (*)(void *, unsigned, void **)>(lib, argv[3], "get_candidate");
+                auto string = symbol<bool (*)(void *, void *, const char **)>(lib, argv[3], "get_candidate_string");
+                auto choose = symbol<int (*)(void *, size_t, void *)>(lib, argv[3], "choose_candidate");
+                assert(parse(inst, "nihao") > 0);
+                assert(guess(inst));
+                size_t cursor = 0;
+                for (const char *wanted : {"你", "好"}) {
+                    assert(candidates(inst, cursor, 0x1e));
+                    unsigned n = 0; assert(number(inst, &n));
+                    bool found = false;
+                    for (unsigned i = 0; i < n; ++i) {
+                        void *item = nullptr; const char *value = nullptr;
+                        assert(candidate(inst, i, &item) && string(inst, item, &value));
+                        if (!strcmp(value, wanted)) { cursor = choose(inst, cursor, item); found = true; break; }
+                    }
+                    assert(found);
+                }
+                // Refresh the decoded sentence after both forcing choices.
+                assert(guess(inst));
+                auto train = symbol<bool (*)(void *, unsigned)>(lib, argv[3], "train");
+                assert(train(inst, 0));
+                auto begin = symbol<void *(*)(void *)>(lib, argv[3], "begin_get_bigram_phrases");
+                iterator = begin(ctx);
+                auto has = symbol<bool (*)(void *)>(lib, argv[3], "bigram_iterator_has_next_phrase");
+                assert(iterator && has(iterator));
+                next = symbol<bool (*)(void *, char **, char **, int *)>(lib, argv[3], "bigram_iterator_get_next_phrase");
+            }
             target = operation == 5 ? 5 : pin ? 4 : operation == 4 ? 3 : operation;
-            fail_at = operation == 4 ? 2 : 1;
+            if (operation >= 6) target = 1;
+            fail_at = operation == 4 || operation >= 6 ? 2 : 1;
+            warning_domain = pinyin ? "libpinyin" : "libzhuyin";
+            warning_message = operation == 2 ? "owned_cstr_list: allocation failed" : "owned_cstr: allocation failed";
+            if (operation == 6) warning_message = "malloc_cstr_with: allocation failed";
             seen = fired = diagnostics = warnings = 0; tracked_count = freed_count = 0; armed = true;
             bool ret; char *out = reinterpret_cast<char *>(1); char **list = reinterpret_cast<char **>(1);
+            char *reading = reinterpret_cast<char *>(2); int frequency = 73;
             if (operation == 1) ret = render(inst, key, &out);
             else if (operation < 5) ret = keyboard(inst, keyboard_key, &list);
-            else ret = nth(inst, token, 0, keys);
+            else if (operation == 5) ret = nth(inst, token, 0, keys);
+            else if (operation < 8) ret = next(iterator, &out, &reading, &frequency);
+            else ret = symbol<bool (*)(void *, void *, char **, char **)>(lib, argv[3], "get_pinyin_strings")(inst, key, &out, &reading);
             armed = false;
             // Class (c): exactly one warning and failure, while retaining
             // the partial-vector cleanup checks and fatal GArray control.
@@ -149,6 +210,14 @@ int main(int argc, char **argv) {
             if (operation == 1) valid = valid && out == nullptr && !ret;
             else if (operation < 5) valid = valid && list == nullptr && !ret && tracked_count == freed_count;
             if (operation == 4) valid = valid && tracked_count == 2 && freed_count == 2;
+            if (operation >= 6) {
+                valid = !ret && fired == 1 && seen == 2 && diagnostics == 1 && warnings == 1 &&
+                    out == reinterpret_cast<char *>(1) && reading == reinterpret_cast<char *>(2) &&
+                    frequency == 73 && tracked_count == 1 && tracked_count == freed_count;
+                dprintf(STDERR_FILENO, "allocation-%d: return=%d warnings=%d outputs-unchanged=%d tracked=%u freed=%u\n",
+                        operation, ret, warnings, out == reinterpret_cast<char *>(1) && reading == reinterpret_cast<char *>(2) && frequency == 73,
+                        tracked_count, freed_count);
+            }
             if (valid) marker('R');
             _exit(valid ? 0 : 1);
         }
@@ -163,6 +232,7 @@ int main(int argc, char **argv) {
         printf("%s %s allocation-%d: %s (%s)\n", argv[3], argv[4], operation,
                ok ? "PASS" : "FAIL", fatal ? "fatal GLib error" : "logged class-(c) refusal");
         if (!ok) ++failures;
+        if (!ok) fprintf(stderr, "allocation-%d: child-status=%d markers=%.*s\n", operation, status, static_cast<int>(count), evidence);
     }
     free_inst(inst); fini(ctx); dlclose(lib);
     return failures ? 1 : 0;
