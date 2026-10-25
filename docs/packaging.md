@@ -366,11 +366,14 @@ Rust or C path still fails; the shim's `extern "C"` entry points (`oxkc_*`)
 are C paths.
 
 A policy that goes stale is checked before merge by the
-`function-order-policy` job in `.github/workflows/ci.yml`. It runs on a PR
-that changes `Cargo.lock` or a file under
+`function-order-policy` job in `.github/workflows/ci.yml`. The build and
+resolve live once, in `.github/workflows/function-order-policy.yml`, which
+both that job and the nightly call, so the two lanes cannot drift. The PR
+job runs on a change to `Cargo.lock` or a file under
 `tools/packaging/function-order/`, the two inputs behind the `cc` bump in
 #1210, and reports `skipped` on every other PR. A source rename or inlining
-can stale a policy too; that case stays with the nightly job below. It builds both
+can stale a policy too; that case stays with the nightly job below. The
+shared job builds both
 facades' staticlibs for BDB, KC and tkrzw with
 the release recipe
 (`tools/packaging/install.sh`, the build whose archive the relink reads) and
@@ -384,8 +387,8 @@ message, and not the relink. On an unresolved path the job prints the
 resolver's `unresolved policy path` lines and points to "Regeneration".
 
 The nightly `function-order-policy` job in
-`.github/workflows/verify-nightly.yml` (#1071) runs the same build and
-resolve on the schedule and on a manual dispatch of that workflow
+`.github/workflows/verify-nightly.yml` (#1071) calls the same shared job on
+the schedule and on a manual dispatch of that workflow
 (`gh workflow run verify-nightly.yml --ref <branch>`, which also runs every
 other nightly job; `windows_only` skips it), so a stale policy that reaches
 `main` another way is still reported the next night. It blocks no merge; the
