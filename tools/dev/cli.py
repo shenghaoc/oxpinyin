@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 from . import check, coverage, doctor, host, registry, slot, test_runner
-from .measure import startup
+from .measure import cold, startup
 
 
 def _selected(args, *, required=False):
@@ -42,6 +42,13 @@ def oracle_versions_command(args):
     if args.print_only:
         forwarded.append('--print')
     return _oracle_versions().main(forwarded)
+
+
+def measure_command(args):
+    """Dispatch one native measure recipe and return its status."""
+    if args.recipe == 'cold-qualify':
+        return cold.main(args.args)
+    return startup.main(args.args)
 
 
 def doctor_command(args):
@@ -201,9 +208,9 @@ def build_parser():
     p.set_defaults(func=plan_command)
 
     p = sub.add_parser('measure', help='native oxpinyin-only measurement')
-    p.add_argument('recipe', choices=('startup',))
+    p.add_argument('recipe', choices=('startup', 'cold-qualify'))
     p.add_argument('args', nargs=argparse.REMAINDER)
-    p.set_defaults(func=lambda args: startup.main(args.args))
+    p.set_defaults(func=measure_command)
 
     p = sub.add_parser('slot', help='inspect or run under the host-wide heavy slot')
     slot_sub = p.add_subparsers(dest='action', required=True)

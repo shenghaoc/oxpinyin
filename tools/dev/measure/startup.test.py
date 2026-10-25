@@ -74,12 +74,27 @@ class ControllerTests(unittest.TestCase):
             with contextlib.redirect_stderr(io.StringIO()):
                 self.assertEqual(st.main([*self.argv, '--profiles', 'empty']), 1)
 
-    def test_macos_cold_and_windows_are_refused_before_filesystem_or_slot(self):
-        for system, extra in (('darwin', ['--cache', 'cold']), ('win32', [])):
-            with mock.patch.object(st.sys, 'platform', system), mock.patch.object(slot, 'HeavyAdmission') as admission, \
-                    contextlib.redirect_stderr(io.StringIO()):
+    def test_cold_is_refused_before_filesystem_or_slot_until_the_limit_is_approved(self):
+        for system, extra, message in (
+                ('darwin', ['--cache', 'cold'], 'approved rejection limit'),
+                ('linux', ['--cache', 'cold'], 'not implemented; rejection-limit approval is pending'),
+                ('win32', [], 'Windows is deferred')):
+            with self.subTest(system=system), mock.patch.object(st.sys, 'platform', system), \
+                    mock.patch.object(slot, 'HeavyAdmission') as admission, \
+                    contextlib.redirect_stderr(io.StringIO()) as error:
                 self.assertEqual(st.main([*self.argv, *extra]), 1)
             admission.assert_not_called()
+            self.assertIn(message, error.getvalue())
+
+    def test_cold_gate_opens_only_when_the_shared_limit_is_approved(self):
+        args = st.parser().parse_args([*self.argv, '--profiles', 'empty', '--cache', 'cold'])
+        with mock.patch.object(st.sys, 'platform', 'darwin'), \
+                mock.patch.object(st.cold, 'REJECTION_LIMIT', 5):
+            self.assertEqual(st.validate(args), {'empty': self.root / 'profiles/empty/user'})
+        with mock.patch.object(st.sys, 'platform', 'linux'), \
+                mock.patch.object(st.cold, 'REJECTION_LIMIT', 5), \
+                self.assertRaisesRegex(ValueError, 'not implemented'):
+            st.validate(args)
 
     def test_all_statuses(self):
         for result, expected in ((0, 0), (ValueError('refused'), 1), (st.NotResult('INVALID'), 3),
@@ -412,8 +427,9 @@ class ControllerTests(unittest.TestCase):
                                       '--rounds', '2', '--warmups', '1', '--memory-rounds', '2', '--memory-warmups', '1'])
         args.cpu = None
         seen, printed = [], []
-        def run(path, facade, profile, *, memory=False):
+        def run(path, facade, profile, *, memory=False, cold=False):
             seen.append((path.parent.name, memory))
+            self.assertFalse(cold)
             times = {metric: dict(wall_ns=999999 if memory else 100000, cpu_ns=1)
                      for metric in st.TIMING_METRICS if metric != 'process_wall'}
             points = {point: {metric: 100 for metric in native.MEMORY_FIELDS} for point in worker.POINTS}
@@ -449,6 +465,84 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(len(times), len(st.TIMING_METRICS))
         self.assertTrue(all(v['summaries']['pr']['n'] == 2 and v['summaries']['pr']['median'] == .1 for v in times))
         self.assertTrue(all(v['pr_base_ratio']['median'] == 1 for v in times))
+
+    def test_campaign_passes_cold_to_timed_and_memory_samples_and_records_the_metric(self):
+        library = self.root / 'lib.so'
+        library.write_bytes(b'synthetic oxpinyin')
+        work = self.root / 'work'
+        work.mkdir()
+        args = st.parser().parse_args([*self.argv, '--profiles', 'empty', '--facades', 'pinyin',
+                                      '--rounds', '1', '--warmups', '0', '--memory-rounds', '1',
+                                      '--memory-warmups', '0', '--cache', 'cold'])
+        args.cpu = None
+        calls, printed = [], []
+
+        def run(path, facade, profile, *, memory=False, cold=False):
+            calls.append(cold)
+            times = {metric: dict(wall_ns=100000, cpu_ns=1)
+                     for metric in st.TIMING_METRICS if metric != 'process_wall'}
+            points = {point: {metric: 100 for metric in native.MEMORY_FIELDS} for point in worker.POINTS}
+            cold = dict(metric='darwin_resident_pages', value=0, resident=0, pages=1,
+                        attempts=1, verdict='QUALIFIED', checks=[], files=[]) if cold else None
+            return dict(digest='same', stderr=b'', userfiles={}, documents=[dict(startup='times', **times)],
+                        checkpoints=points, process_wall=100000, cold=cold)
+
+        fake = SimpleNamespace(run=run)
+        with mock.patch.object(st.sys, 'platform', 'darwin'), \
+                mock.patch.object(st.native, 'check_filesystems'), \
+                mock.patch.object(st, 'library', return_value=library), \
+                mock.patch.object(worker, 'build', return_value=(Path('worker'), {})), \
+                mock.patch.object(st, 'artifact', return_value={}), \
+                mock.patch.object(worker, 'Worker', return_value=fake), \
+                mock.patch.object(st, 'verify', return_value={a: dict(digest='same', unit_stderr=b'',
+                                                                       unit_userfiles={}) for a in st.ARMS}), \
+                mock.patch.object(st, 'instrument'), \
+                mock.patch.object(st, 'emit', side_effect=lambda kind, **v: printed.append((kind, v))):
+            status = st.campaign_run(args, {'empty': self.root / 'profiles/empty/user'}, work,
+                                     SimpleNamespace(env={}, slot=SimpleNamespace(pass_fds=lambda: ())))
+        self.assertEqual(status, 0)
+        self.assertTrue(calls)
+        self.assertTrue(all(calls))
+        samples = [v for kind, v in printed if kind == 'sample']
+        self.assertEqual(len(samples), 6)
+        self.assertTrue(all(v['cold']['metric'] == 'darwin_resident_pages' for v in samples))
+
+    def test_worker_prepares_cold_files_before_spawning(self):
+        work = self.root / 'work'
+        work.mkdir()
+        data = self.root / 'data'
+        (data / 'system.bin').write_bytes(b's')
+        root = self.root / 'profile'
+        profile = root / 'user'
+        profile.mkdir(parents=True)
+        (profile / 'user.bin').write_bytes(b'u')
+        (root / 'profile.manifest').write_text(st.PROFILE.manifest(profile))
+        library = self.root / 'libpinyin.dylib'
+        library.write_bytes(b'lib')
+        prepared = dict(metric='darwin_resident_pages', value=0, resident=0, pages=1,
+                        attempts=1, verdict='QUALIFIED', checks=[], files=[])
+        events = []
+
+        def prepare(files):
+            events.append(('prepare', [Path(path).name for path in files]))
+            return prepared
+
+        def execute(command, **_kwargs):
+            events.append(('execute', command))
+            return dict(status=0, pid=1, stdout=b'', stderr=b'', checkpoints={}, process_wall=1)
+
+        with mock.patch.object(worker, 'check_identity'), \
+                mock.patch.object(worker, 'execute', side_effect=execute), \
+                mock.patch.object(worker, 'parse', return_value=([], 'digest')), \
+                mock.patch.object(worker, 'userfiles', return_value={}), \
+                mock.patch.object(worker, 'exports', return_value=[]), \
+                mock.patch.object(worker.cold_cache, 'prepare', side_effect=prepare), \
+                mock.patch.object(worker.sys, 'platform', 'darwin'):
+            campaign = worker.Worker(Path('worker'), {}, data, work, {}, (), None, 'now')
+            row = campaign.run(library, 'pinyin', profile, cold=True)
+        self.assertEqual([event[0] for event in events], ['prepare', 'execute'])
+        self.assertEqual(events[0][1], ['libpinyin.dylib', 'system.bin', 'user.bin'])
+        self.assertEqual(row['cold'], prepared)
 
     def test_teardown_equivalence_blocked_is_status_three(self):
         td = st.module(ROOT / 'tools/bisection/teardown.py', 'td_status')
