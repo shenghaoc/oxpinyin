@@ -790,6 +790,7 @@ class ContainerReservation:
 
 
 def reserve_heavy_env(slot: HeavySlot, env: dict[str, str], *, runner: bool = False,
+                      contract_rows: int = 0,
                       resource_snapshot: Callable[[], ResourceSnapshot] | None = None,
                       prepare_heavy_env: Callable[..., tuple[dict[str, str],
                                                               dict[str, tuple[int | str, str, bool]],
@@ -809,7 +810,8 @@ def reserve_heavy_env(slot: HeavySlot, env: dict[str, str], *, runner: bool = Fa
     prepare = prepare_heavy_env or host.prepare_heavy_env
     with admission_lock(slot.lock_dir, blocking=False, deadline=deadline):
         resources = budget_resources(slot.lock_dir, slot.slot, read=read)
-        child, chosen, estimate = prepare(env, resources, runner=runner)
+        extra = dict(contract_rows=contract_rows) if contract_rows else {}
+        child, chosen, estimate = prepare(env, resources, runner=runner, **extra)
         headroom = host.memory_headroom(env, resources)
         admitted = resources['available_mib'] is not None and resources['available_mib'] - headroom >= estimate
         if admitted:
@@ -850,7 +852,7 @@ class HeavyAdmission:
     that decision's figures)."""
 
     def __init__(self, command, env, out=sys.stderr, poll=0.5, *, runner=False,
-                 resource_snapshot=None, prepare_heavy_env=None):
+                 contract_rows=0, resource_snapshot=None, prepare_heavy_env=None):
         """Validate settings and print a provisional resource plan without taking a slot.
 
         Copy env, read resources, and initialize the combined wait limit in seconds;
@@ -861,6 +863,7 @@ class HeavyAdmission:
         host.validate_settings(env)
         self.command, self.out, self.poll = command, out, poll
         self.runner = runner
+        self.contract_rows = contract_rows
         self.base_env, self.env = env.copy(), None
         self.limit = host.resource_wait_limit(env)
         self.slot = HeavySlot(command, out=out, poll=poll)
@@ -874,8 +877,9 @@ class HeavyAdmission:
         self.blocked_by = None
         self.reservations: tuple[MiB | None, MiB | None] = (None, None)
         resources = self.resource_snapshot()
+        extra = dict(contract_rows=contract_rows) if contract_rows else {}
         _, self.provisional, estimate = self.prepare_heavy_env(
-            self.base_env, resources, runner=self.runner)
+            self.base_env, resources, runner=self.runner, **extra)
         self.estimate: MiB = estimate
         self.available: MiB | None = resources['available_mib']
         self.headroom: MiB = host.memory_headroom(self.base_env, resources)
@@ -944,6 +948,7 @@ class HeavyAdmission:
         try:
             resources, child, chosen, self.estimate, admitted = reserve_heavy_env(
                 self.slot, self.base_env, runner=self.runner,
+                contract_rows=self.contract_rows,
                 resource_snapshot=self.resource_snapshot,
                 prepare_heavy_env=self.prepare_heavy_env,
                 # Zero wait permits one immediate attempt, never a blocking wait.

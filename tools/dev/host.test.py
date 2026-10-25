@@ -832,5 +832,68 @@ class ContractWorkerEstimates(unittest.TestCase):
                 host.validate_settings({'OXPINYIN_CONTRACT_JOBS': value})
 
 
+class ContractWorkerDefaults(unittest.TestCase):
+    """With no OXPINYIN_CONTRACT_JOBS, a contract-diff run gets a bounded default (#1240)."""
+
+    def prepare(self, available, *, cpus=4, rows=1, env=None, **resources):
+        env = dict(CARGO_BUILD_JOBS='1', RUST_TEST_THREADS='1', **(env or {}))
+        resources = dict(available_mib=available, total_mib=16384, cpus=cpus, cargo_cpus=cpus, **resources)
+        return host.prepare_heavy_env(env, resources, runner=True, contract_rows=rows)
+
+    def test_the_default_is_the_cpu_count_when_memory_allows(self):
+        child, chosen, estimate = self.prepare(1638 + 8 * host.RUNNER_PEAK_MIB)
+        self.assertEqual(child['OXPINYIN_CONTRACT_JOBS'], '4')
+        value, reason, explicit = chosen['OXPINYIN_CONTRACT_JOBS']
+        self.assertEqual(value, 4)
+        self.assertFalse(explicit)
+        self.assertIn('default maximum 4: 4 CPUs shared by 1 concurrent contract-diff run(s)', reason)
+        self.assertEqual(estimate, 4 * host.RUNNER_PEAK_MIB)
+
+    def test_concurrent_runs_share_the_cpus(self):
+        for rows, expected in ((1, 6), (2, 3), (3, 2), (4, 1), (9, 1)):
+            with self.subTest(rows=rows):
+                child, chosen, _ = self.prepare(1638 + 8 * host.RUNNER_PEAK_MIB, cpus=6, rows=rows)
+                self.assertEqual(child['OXPINYIN_CONTRACT_JOBS'], str(expected))
+                self.assertEqual(chosen['OXPINYIN_CONTRACT_JOBS'][0], expected)
+
+    def test_short_memory_reduces_the_default(self):
+        child, chosen, estimate = self.prepare(1638 + 2 * host.RUNNER_PEAK_MIB)
+        self.assertEqual(child['OXPINYIN_CONTRACT_JOBS'], '2')
+        self.assertEqual(estimate, 2 * host.RUNNER_PEAK_MIB)
+
+    def test_unknown_or_insufficient_room_does_not_claim_capacity(self):
+        for available in (None, 1638 + host.RUNNER_PEAK_MIB - 1):
+            with self.subTest(available=available):
+                child, chosen, estimate = self.prepare(available)
+                self.assertEqual(chosen['OXPINYIN_CONTRACT_JOBS'][0], 0)
+                self.assertEqual(child['OXPINYIN_CONTRACT_JOBS'], '1')
+                self.assertEqual(estimate, host.RUNNER_PEAK_MIB)
+
+    def test_a_compatibility_guest_is_sized_from_its_own_limits(self):
+        # Two CPUs and 2,560 MiB, the container's own limits; a hard-limited guest keeps no headroom.
+        child, chosen, estimate = self.prepare(2560, cpus=2, memory_limit_mib=2560,
+                                               env=dict(OXPINYIN_COMPAT_CONTAINER='1'))
+        self.assertEqual(child['OXPINYIN_CONTRACT_JOBS'], '2')
+        self.assertEqual(estimate, 2 * host.RUNNER_PEAK_MIB)
+        child, _, _ = self.prepare(2560, cpus=1, memory_limit_mib=2560,
+                                   env=dict(OXPINYIN_COMPAT_CONTAINER='1'))
+        self.assertEqual(child['OXPINYIN_CONTRACT_JOBS'], '1')
+
+    def test_an_explicit_setting_keeps_its_meaning(self):
+        for value, expected in (('1', 1), ('3', 3), ('8', 4)):
+            with self.subTest(value=value):
+                child, chosen, _ = self.prepare(1638 + 4 * host.RUNNER_PEAK_MIB, rows=3,
+                                                env=dict(OXPINYIN_CONTRACT_JOBS=value))
+                self.assertEqual(child['OXPINYIN_CONTRACT_JOBS'], str(expected))
+                self.assertIn(f'requested maximum {value}', chosen['OXPINYIN_CONTRACT_JOBS'][1])
+
+    def test_other_runs_get_no_default(self):
+        env = dict(CARGO_BUILD_JOBS='1', RUST_TEST_THREADS='1')
+        resources = dict(available_mib=16000, total_mib=16384, cpus=4, cargo_cpus=4)
+        child, chosen, _ = host.prepare_heavy_env(env, resources, runner=True)
+        self.assertNotIn('OXPINYIN_CONTRACT_JOBS', child)
+        self.assertNotIn('OXPINYIN_CONTRACT_JOBS', chosen)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -231,6 +231,10 @@ section uses the same two:
   headroom and other reservations. It never forces a worker when none fits:
   one worker's estimate is kept, so admission can refuse the work instead of
   launching it.
+  Without a setting, a contract-diff run of `run-all.py` gets a default
+  maximum: its share of the CPUs (the CPU count divided by the contract-diff
+  runs that can be live together, at least one), reduced the same way
+  (#1240). `--contract-jobs 1` keeps it serial.
 
 Cargo job counts accept positive integers, negative integers, and `default`;
 zero and values outside the signed 32-bit range are rejected. Test thread

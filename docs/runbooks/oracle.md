@@ -384,7 +384,16 @@ OXPINYIN_HEAVY_SLOTS=3 tools/bisection/run-all.py \
     --oracle-root "$OXPINYIN_CLOUD_CACHE/oracle"
 ```
 
-Neither case concurrency nor the host's slot count changes by default.
+With no `--contract-jobs` and no `OXPINYIN_CONTRACT_JOBS`, `run-all.py` and
+`compat.sh` give each contract-diff run its share of the CPUs as the case
+maximum: the CPU count divided by the contract-diff runs that can be live
+together, at least one. Admission then reduces it to the cases that fit in
+memory, and the log shows the choice as `effective defaults:
+OXPINYIN_CONTRACT_JOBS=N (default maximum ...)`. Inside the compatibility
+container the CPU count and memory are the container's own (`--jobs`
+CPUs, `--memory-mib`). `--contract-jobs 1` runs the cases serially. A direct
+`contract-diff.py` call, `--expect-parent`, `--teardown` and `--per-call` keep
+their serial default; the host's slot count does not change.
 The final timing record reports the effective per-cell case count as `jobs`.
 
 Five `table-conf-abort-*` cases (`dir_chunk` in `contract-diff.py`, #1011)

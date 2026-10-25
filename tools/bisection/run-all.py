@@ -448,7 +448,8 @@ def run_main():
                         help='concurrent runner jobs (default: from available memory, at most 2)')
     parser.add_argument('--contract-jobs', type=positive,
                         help='maximum concurrent cases per contract-diff cell, reduced by memory admission '
-                             '(default: serial)')
+                             '(default: each concurrent cell\'s share of the CPUs, at most what fits in memory; '
+                             '1 runs the cases serially)')
     parser.add_argument('--timeout', type=positive, help='override the registry default for every runner')
     parser.add_argument('--runner-timeout', action='append', default=[], metavar='RUNNER=SECONDS')
     parser.add_argument('--allow-skipped', action='append', default=[], metavar='RUNNER[:CELL]',
@@ -714,6 +715,10 @@ def run_main():
                           f"{identity.get('built_utc', '?')}; this worktree is at {head[:12]}", file=sys.stderr, flush=True)
             jobs.extend(cell_jobs)
 
+        # Contract-diff runs that can be live together share the CPUs; with no
+        # OXPINYIN_CONTRACT_JOBS, admission gives each its share as the case
+        # maximum (#1240). --contract-jobs 1 keeps a run serial.
+        contract_rows = min(args.jobs, sum(row['name'] == 'contract-diff' for row, *_ in jobs))
         prepared = []
         for row, result, base, substitutions in jobs:
             timeout = timeouts.get(row['name'], args.timeout or row['timeout'])
@@ -739,7 +744,9 @@ def run_main():
                               else 'SKIPPED', reason='missing required input: ' + ', '.join(missing))
                 results.append(result)
                 continue
-            admission = HeavyAdmission(f"{row['name']} / {result['cell']} in {ROOT}", env, runner=True) if is_heavy(row) else None
+            admission = HeavyAdmission(f"{row['name']} / {result['cell']} in {ROOT}", env, runner=True,
+                                       contract_rows=contract_rows if row['name'] == 'contract-diff' else 0
+                                       ) if is_heavy(row) else None
             prepared.append(dict(row=row, result=result, env=env, command=command,
                                  timeout=timeout, work=work, admission=admission))
 

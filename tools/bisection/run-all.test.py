@@ -230,7 +230,7 @@ class TimingColumnsTests(unittest.TestCase):
 
 
 class ConcurrentContractCellsTests(unittest.TestCase):
-    def run_cells(self, available, expected_overlap):
+    def run_cells(self, available, expected_overlap, contract_jobs='4', cpus=4):
         namespace = run_all['main'].__globals__
         original = Path.read_text
         row = next(r for r in json.loads(original(Path(__file__).with_name('runners.json')))
@@ -268,9 +268,9 @@ class ConcurrentContractCellsTests(unittest.TestCase):
                        OXPINYIN_RESOURCE_WAIT_SECONDS='5', CARGO_BUILD_JOBS='1', RUST_TEST_THREADS='1')
             for key in ('OXPINYIN_HEAVY_SLOT_HELD', 'CARGO_TARGET_DIR', 'OXPINYIN_CONTRACT_JOBS'):
                 env.pop(key, None)
-            resources = dict(available_mib=available, total_mib=16384, cpus=4, cargo_cpus=4, notes=[])
+            resources = dict(available_mib=available, total_mib=16384, cpus=cpus, cargo_cpus=cpus, notes=[])
             args = ['run-all.py', '--runners', 'contract-diff', '--cells', 'bdb,kc,tkrzw',
-                    '--no-build', '--jobs', '3', '--contract-jobs', '4',
+                    '--no-build', '--jobs', '3', *(['--contract-jobs', contract_jobs] if contract_jobs else []),
                     '--target-root', directory + '/targets', '--oracle-root', directory + '/oracles']
             output = io.StringIO()
             with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(Path, 'read_text', read), \
@@ -294,6 +294,15 @@ class ConcurrentContractCellsTests(unittest.TestCase):
 
     def test_short_memory_reduces_workers_and_serializes_cells(self):
         self.assertEqual({item[1] for item in self.run_cells(5000, 1)}, {3})
+
+    def test_no_setting_gives_each_concurrent_cell_its_share_of_the_cpus(self):
+        for cpus, expected in ((3, 1), (6, 2), (9, 3)):
+            with self.subTest(cpus=cpus):
+                seen = self.run_cells(32000, 3, contract_jobs=None, cpus=cpus)
+                self.assertEqual({item[1] for item in seen}, {expected})
+
+    def test_explicit_contract_jobs_override_the_default(self):
+        self.assertEqual({item[1] for item in self.run_cells(32000, 3, contract_jobs='1', cpus=9)}, {1})
 
 
 if __name__ == '__main__':
