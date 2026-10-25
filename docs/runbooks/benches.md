@@ -224,15 +224,19 @@ never in a Linux-named field.
 Linux KC smoke acceptance completed on 2026-10-24 UTC at 08:23 with controller
 `1cea405cf297e68da8ca3caf97594de45f467ef8` and retained shipping build
 `ebc9d4f5bf3edc6d08f254de39a6db46bb75c9b3`, not moving main. This was a
-retained-profile recheck followed by a separate continuation, both exit 0:
+retained-profile recheck followed by a separate continuation, both exit 0.
+`$INPUT` is the directory that held the retained shipping build's installed
+prefix (`stage`) and the provisioned profiles (`provision/profiles`).
+`$RETAINED` is the retained controller output (`measurements.jsonl`) of the
+earlier profiler segment. `$DATA` is the `lib/libpinyin/data` directory of the
+Kyoto Cabinet oracle prefix. `$TMPDIR` is an owned temporary parent directory on
+ext4 for the continuation's work files:
 
 ```sh
-INPUT=/home/sheng/Documents/Codex/2026-10-23/task-9/kc-parser-smoke
-RETAINED=/home/sheng/Documents/Codex/2026-10-23/task-9/kc-loader-smoke/measurements.jsonl
 just measure startup --recheck-instructions "$RETAINED"
-TMPDIR=/home/sheng/Documents/Codex/2026-10-23/task-9/kc-continuation/tmp \
+TMPDIR="$TMPDIR" \
   just initbench --base "$INPUT/stage" --pr "$INPUT/stage" \
-  --system-dir /home/sheng/.cache/oxpinyin/oracle/kc/lib/libpinyin/data \
+  --system-dir "$DATA" \
   --profiles-dir "$INPUT/provision/profiles" --profiles empty \
   --rounds 3 --warmups 1 --memory-rounds 2 --memory-warmups 1 \
   --instructions-from "$RETAINED"
