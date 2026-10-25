@@ -18,8 +18,8 @@ use oxpinyin_core::graph::{Edge, EdgeKind, ExactSegment, SegmentGraph};
 use oxpinyin_core::kbest::{DecodedPath, k_best};
 use oxpinyin_core::scoring::{Scorer, ScoringConfig, ScoringError, expand_keys, key_cost_table};
 use oxpinyin_core::{
-    Completeness, Cost, Dictionary, LanguageModel, MergedGram, OptionBits, PhraseEntry,
-    PhraseToken, SyllableKey, UserModel,
+    Completeness, Cost, Dictionary, LanguageModel, MergedGram, OptionBits, PhraseEntry, PhraseText,
+    PhraseTextConcat, PhraseToken, SyllableKey, UserModel,
 };
 
 use crate::candidate::{Candidate, CandidateKind, CandidateList};
@@ -81,8 +81,9 @@ pub enum KeyOutcome {
     Ignored,
     /// The session used the key.
     Consumed,
-    /// The session used the key and finished a composition.
-    Commit(String),
+    /// The session used the key and finished a composition
+    /// ([`Session::commit`]'s text).
+    Commit(PhraseText),
 }
 
 /// What choosing a candidate left behind.
@@ -1067,7 +1068,7 @@ impl RankKey {
 fn dedup_by_text_keep_first(candidates: &mut Vec<Candidate>) {
     let mut keep = Vec::with_capacity(candidates.len());
     {
-        let mut seen: HashSet<&str> = HashSet::with_capacity(candidates.len());
+        let mut seen: HashSet<&PhraseText> = HashSet::with_capacity(candidates.len());
         keep.extend(
             candidates
                 .iter()
@@ -1099,7 +1100,7 @@ fn dedup_ranked_by_text(ranked: &mut Vec<Candidate>, keys: &[RankKey]) {
     debug_assert_eq!(ranked.len(), keys.len());
     let mut keep = vec![true; ranked.len()];
     {
-        let mut survivor: HashMap<&str, usize> = HashMap::with_capacity(ranked.len());
+        let mut survivor: HashMap<&PhraseText, usize> = HashMap::with_capacity(ranked.len());
         for (index, (key, candidate)) in keys.iter().zip(ranked.iter()).enumerate() {
             match survivor.entry(candidate.text()) {
                 Entry::Vacant(slot) => {

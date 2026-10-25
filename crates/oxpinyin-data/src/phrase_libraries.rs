@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Mutex, OnceLock, RwLock};
 
-use oxpinyin_core::{ChewingKey, TrellisItem};
+use oxpinyin_core::{ChewingKey, PhraseText, TrellisItem};
 
 use crate::chewing_table::key_matches;
 use crate::phrase_library::{
@@ -436,18 +436,18 @@ impl PhraseLibraries {
     /// `FacadePhraseIndex::get_phrase_item`'s text half: the phrase
     /// behind `token`, if its library is loaded and owns the token.
     #[must_use]
-    pub fn phrase_text(&self, token: u32) -> Option<String> {
+    pub fn phrase_text(&self, token: u32) -> Option<PhraseText> {
         self.library(token)?.item(token)?.phrase_text()
     }
 
-    /// The character count of [`Self::phrase_text`], read without
-    /// building the string; `None` where that text is `None`.
+    /// The item's stored character count, read without building the text;
+    /// `None` when the item's bytes end before a declared word.
     #[must_use]
     pub fn phrase_char_count(&self, token: u32) -> Option<u32> {
         self.library(token)?
             .item(token)?
-            .phrase_chars()
-            .try_fold(0_u32, |count, char| char.map(|_| count.saturating_add(1)))
+            .phrase_codes()
+            .try_fold(0_u32, |count, code| code.map(|_| count.saturating_add(1)))
     }
 
     /// `PhraseItem::get_unigram_frequency` for `token` — the stored
@@ -576,8 +576,8 @@ impl PhraseLibraries {
         let library = self.library(token)?;
         let item = library.item(token)?;
         let chars = item
-            .phrase_chars()
-            .try_fold(0_u32, |count, char| char.map(|_| count.saturating_add(1)))?;
+            .phrase_codes()
+            .try_fold(0_u32, |count, code| code.map(|_| count.saturating_add(1)))?;
         Some(TrellisItem {
             chars,
             pronunciation: Some(item_possibility(&item, query)),

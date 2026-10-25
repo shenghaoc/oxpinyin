@@ -140,7 +140,12 @@ where
         candidate: &Candidate,
         token_override: Option<PhraseToken>,
     ) -> Result<Selection, EngineError> {
-        let text = candidate.text().to_owned();
+        // The chosen phrase's own text, stored words included: the pin's
+        // choose reads no text (`add_constraint(m_begin, m_end, token)`,
+        // `pinyin.cpp:2577-2587`, `zhuyin.cpp:1646-1666` at 074a2219), and
+        // the C sentence read converts each phrase from its stored words
+        // (`src/lookup/lookup.cpp:39-68`), so the record keeps them too.
+        let text = candidate.text().clone();
         let advance = candidate.consumed_bytes();
         let token = token_override.or_else(|| candidate.token());
         // The chosen span in the store's coordinates — upstream's
@@ -172,7 +177,7 @@ where
         // the record follows the store, moving back to it. An n-best row
         // is a whole-composition hypothesis and takes the row path below.
         if span_start < self.record.consumed() && candidate.nbest_row().is_none() {
-            return self.select_behind(constraint_start, constraint_end, token, &text);
+            return self.select_behind(constraint_start, constraint_end, token, text);
         }
         // The raw bytes between the composition offset and the span start
         // were typed without being selected. For a re-anchored selection
@@ -250,12 +255,8 @@ where
             }
         } else if let Some(token) = token {
             self.constraints.resize(self.input.len() + 1);
-            self.constraints.add(
-                constraint_start,
-                constraint_end,
-                token,
-                compact_str::CompactString::from(text.as_str()),
-            );
+            self.constraints
+                .add(constraint_start, constraint_end, token, text);
         }
         self.record.set_consumed(constraint_end);
         self.record
@@ -280,7 +281,7 @@ where
         start: usize,
         end: usize,
         token: Option<PhraseToken>,
-        text: &str,
+        text: PhraseText,
     ) -> Result<Selection, EngineError> {
         let Some(token) = token else {
             return Err(EngineError::SelectionAnchorBeforeComposition {
@@ -289,8 +290,7 @@ where
             });
         };
         self.constraints.resize(self.input.len() + 1);
-        self.constraints
-            .add(start, end, token, compact_str::CompactString::from(text));
+        self.constraints.add(start, end, token, text);
         self.rebuild_selection_from_constraints();
         self.refresh()?;
         Ok(self.selection_outcome())
@@ -509,13 +509,19 @@ where
         let mut context: Vec<PhraseToken> = Vec::with_capacity(spans.len());
         for (index, span) in spans.iter().enumerate() {
             if let Some(end) = ends[index] {
-                // :923-927 trains every matching path of this span.
+                // :923-927 trains every matching path of this span, as long
+                // as the item's stored length: `get_phrase_item` then
+                // `increase_pronunciation_possibility` (074a2219
+                // phonetic_lookup.h:924-927), which keeps only paths of
+                // `item.get_phrase_length()` keys
+                // (storage/phonetic_key_matrix.cpp:610-620). A stored
+                // phrase's outward text is shorter than that after a zero.
                 let mut readings = training_readings(
                     matrix,
                     self.input.as_bytes(),
                     span.start,
                     end,
-                    span.text.chars().count(),
+                    span.text.phrase_length(),
                 );
                 user.observe_with_keys(&context, &span.token, &mut readings)
                     .map_err(|error| EngineError::UserModel(error.to_string()))?;
@@ -594,18 +600,24 @@ where
             .collect())
     }
 
-    /// Finishes the composition and returns its text.
+    /// Finishes the composition and returns its text: the chosen phrases,
+    /// stored words kept and each cut at its own first zero, then the raw
+    /// input no selection consumed. A C client's bytes come from
+    /// `phrase_text_bytes` at its own boundary.
     ///
     /// Never fails on an empty composition: the text is then empty too.
     ///
     /// # Errors
     ///
     /// Returns [`EngineError`] when a backend fails while the session resets.
-    pub fn commit(&mut self) -> Result<String, EngineError> {
-        let mut text = self.record.take_selected();
-        text.push_str(&self.input.as_str()[self.record.consumed()..]);
+    pub fn commit(&mut self) -> Result<PhraseText, EngineError> {
+        let mut text = PhraseTextConcat::new();
+        text.push(&self.record.take_selected());
+        text.push(&PhraseText::from(
+            &self.input.as_str()[self.record.consumed()..],
+        ));
         self.reset();
-        Ok(text)
+        Ok(text.finish())
     }
 }
 

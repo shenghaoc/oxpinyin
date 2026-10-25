@@ -1,5 +1,6 @@
 //! Sentence guessing and retrieval.
 
+use oxpinyin_capi_marshal::phrase_text::phrase_text_bytes;
 use std::os::raw::c_char;
 
 use oxpinyin_core::{Dictionary as _, LanguageModel as _};
@@ -282,7 +283,7 @@ pub extern "C" fn pinyin_get_sentence(
         return false;
     }
     match inst.core.session.sentence_text(index) {
-        Some(decoded) => write_owned_sentence(decoded, sentence),
+        Some(decoded) => write_owned_sentence_bytes(&phrase_text_bytes(decoded), sentence),
         None => {
             // Class (c), `pinyin.cpp:1474`: with rows present, an index past
             // them is `assert(index < results.size())`. No rows at all is the
@@ -300,7 +301,7 @@ pub extern "C" fn pinyin_get_sentence(
 // The `char **`-out sentence writer, stamped from the shared marshalling
 // macro (byte-identical to the zhuyin facade's). `crate::ffi::owned_cstr` is
 // this facade's libc-`malloc` duplicator — the per-facade allocator edge.
-oxpinyin_capi_marshal::write_owned_sentence!(crate::ffi::owned_cstr);
+oxpinyin_capi_marshal::write_owned_sentence_bytes!(crate::ffi::malloc_cstr_with);
 
 /// Get the character offset within `phrase` for a lookup byte offset.
 ///
@@ -605,7 +606,10 @@ pub extern "C" fn pinyin_guess_candidates(
     // (rows the loop skips leave a little slack, never a second growth).
     inst.candidates.reserve(
         candidates.len(),
-        candidates.iter().map(|cand| cand.text().len() + 1).sum(),
+        candidates
+            .iter()
+            .map(|cand| phrase_text_bytes(cand.text()).len() + 1)
+            .sum(),
     );
     for (window_index, cand) in candidates.iter().enumerate() {
         // The engine's remaining-raw-input `Fallback` row is the
@@ -638,7 +642,8 @@ pub extern "C" fn pinyin_guess_candidates(
         {
             continue;
         }
-        let Some(text) = inst.candidates.intern(cand.text().as_bytes()) else {
+        let bytes = phrase_text_bytes(cand.text());
+        let Some(text) = inst.candidates.intern(&bytes) else {
             continue;
         };
         inst.candidates.push(CapiCandidate {

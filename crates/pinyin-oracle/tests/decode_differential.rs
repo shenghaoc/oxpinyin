@@ -213,7 +213,7 @@ fn candidate_differential_over_the_capture_families() {
         let ours: Vec<String> = session
             .candidates()
             .iter()
-            .map(|candidate| candidate.text().to_owned())
+            .map(|candidate| candidate.text().as_str().unwrap_or_default().to_owned())
             .collect();
         // A record the mini vocabulary knows nothing about would otherwise
         // drag every rate toward zero while measuring the fixture, not the

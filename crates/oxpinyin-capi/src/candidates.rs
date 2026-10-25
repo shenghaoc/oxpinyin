@@ -571,11 +571,14 @@ fn try_promote_addon(inst: &mut CapiInstance, index: usize) -> Option<PhraseToke
     }
     let addon_token = inst.candidates[index].token?;
     let item = inst.core.dict.addon_phrase_item(addon_token.value())?;
+    // The user store's phrase text is UTF-8; a non-scalar addon item has no
+    // representable text there, so the promotion is skipped.
+    let text = item.text.as_str()?;
     let promoted = inst
         .core
         .user
         .as_mut()?
-        .promote_addon_phrase(&item.text, &item.readings, item.unigram)
+        .promote_addon_phrase(text, &item.readings, item.unigram)
         .ok()?;
     let promoted = PhraseToken::new(promoted);
     let snapshot = &mut inst.candidates[index];
@@ -704,7 +707,7 @@ fn previous_token(inst: &CapiInstance) -> u32 {
         let Some(text) = crate::predict::phrase_text(&inst.core.dict, store, token) else {
             continue;
         };
-        let length = text.chars().count();
+        let length = text.phrase_length();
         if length > longest {
             previous = token;
             longest = length;

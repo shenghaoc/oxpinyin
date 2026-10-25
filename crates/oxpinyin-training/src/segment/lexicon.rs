@@ -46,9 +46,14 @@ impl PhraseLexicon {
             };
             for (slot, item) in library.items() {
                 let token = base | slot;
-                let text = item.phrase_text().ok_or_else(|| {
-                    SegmentError::Config(format!("phrase text for token {token} does not decode"))
-                })?;
+                let text = item
+                    .phrase_text()
+                    .and_then(|text| text.as_str().map(ToOwned::to_owned))
+                    .ok_or_else(|| {
+                        SegmentError::Config(format!(
+                            "phrase text for token {token} does not decode"
+                        ))
+                    })?;
                 pairs.push((token, text));
             }
         }

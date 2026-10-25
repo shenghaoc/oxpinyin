@@ -29,7 +29,7 @@ use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::hash::{BuildHasherDefault, Hasher};
 
-use compact_str::CompactString;
+use oxpinyin_core::PhraseText;
 use oxpinyin_core::cost::{NAN_COST, NEG_INF_COST, POS_INF_COST, cost_add, cost_gt};
 use oxpinyin_core::graph::{GraphError, MAX_GRAPH_INPUT};
 use oxpinyin_core::scoring::{ScoringError, expand_keys};
@@ -113,7 +113,7 @@ pub const SENTENCE_START: u32 = 1;
 #[derive(Clone, Debug)]
 pub struct NbestRow {
     /// Concatenated phrase texts.
-    pub(crate) text: CompactString,
+    pub(crate) text: PhraseText,
     /// The phrase tokens in order — the selection record a chosen row
     /// contributes (upstream keeps the whole `MatchResult` on the
     /// instance; the engine records tokens instead).
@@ -565,9 +565,9 @@ impl Trellis {
     fn token_text<D>(
         &self,
         dictionary: &D,
-        cache: &mut TokenMap<Option<CompactString>>,
+        cache: &mut TokenMap<Option<PhraseText>>,
         token: u32,
-    ) -> Result<Option<CompactString>, EngineError>
+    ) -> Result<Option<PhraseText>, EngineError>
     where
         D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
         D::Error: core::fmt::Display,
@@ -586,8 +586,7 @@ impl Trellis {
                         .trellis_text(keys, tones, token)
                         .map_err(|error| {
                             EngineError::Scoring(ScoringError::Dictionary(error.to_string()))
-                        })?
-                        .map(CompactString::from),
+                        })?,
                     _ => None,
                 }
             }
@@ -600,21 +599,21 @@ impl Trellis {
     fn text<D>(
         &self,
         dictionary: &D,
-        cache: &mut TokenMap<Option<CompactString>>,
+        cache: &mut TokenMap<Option<PhraseText>>,
         spans: &[(usize, u32)],
-    ) -> Result<Option<CompactString>, EngineError>
+    ) -> Result<Option<PhraseText>, EngineError>
     where
         D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
         D::Error: core::fmt::Display,
     {
-        let mut text = CompactString::const_new("");
+        let mut text = oxpinyin_core::PhraseTextConcat::new();
         for (_, token) in spans {
             let Some(part) = self.token_text(dictionary, cache, *token)? else {
                 return Ok(None);
             };
-            text.push_str(&part);
+            text.push(&part);
         }
-        Ok(Some(text))
+        Ok(Some(text.finish()))
     }
 }
 
@@ -991,14 +990,22 @@ where
         if text.is_empty() {
             continue;
         }
-        let phrase_spans: Vec<PhraseSpan> = spans
+        // `trellis.text` resolved every token's text or the row was
+        // skipped above; each span keeps its phrase's own text, stored words
+        // and length included, for the constraint writes and training.
+        let Some(phrase_spans) = spans
             .iter()
-            .map(|(start, token)| PhraseSpan {
-                start: *start,
-                token: PhraseToken::new(*token),
-                text: texts.get(token).cloned().flatten().unwrap_or_default(),
+            .map(|(start, token)| {
+                Some(PhraseSpan {
+                    start: *start,
+                    token: PhraseToken::new(*token),
+                    text: texts.get(token)?.clone()?,
+                })
             })
-            .collect();
+            .collect::<Option<Vec<PhraseSpan>>>()
+        else {
+            continue;
+        };
         let tokens = phrase_spans.iter().map(|span| span.token).collect();
         rows.push(NbestRow {
             text,
@@ -1263,7 +1270,8 @@ impl<'a> ConstraintSpelling<'a> {
     /// total reaches 2^23 (`docs/findings/upstream-divergences.md`, the
     /// `validate_constraint` entry).
     ///
-    /// `text_len` is the forced phrase's character count; it only bounds
+    /// `length` is the forced phrase's stored length
+    /// ([`PhraseText::phrase_length`]); it only bounds
     /// the walk for a dictionary that keeps no phrase items
     /// ([`PhraseItemRead::Unsupported`]).
     ///
@@ -1276,7 +1284,7 @@ impl<'a> ConstraintSpelling<'a> {
         start: usize,
         end: usize,
         token: PhraseToken,
-        text_len: usize,
+        length: usize,
     ) -> Result<bool, EngineError>
     where
         D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
@@ -1311,7 +1319,7 @@ impl<'a> ConstraintSpelling<'a> {
             return Ok(false);
         }
         if item_less {
-            for reading in training_readings(columns, self.input, start, end, text_len) {
+            for reading in training_readings(columns, self.input, start, end, length) {
                 if lookup_finds_token(dictionary, &reading, token)? {
                     return Ok(true);
                 }
@@ -1668,13 +1676,57 @@ mod tests {
     use super::{LONG_SENTENCE_PENALTY, NbestRow, NbestShape, Trellis, Value, nbest_sentences};
     use crate::session::ScanKey;
     use oxpinyin_core::graph::SegmentGraph;
-    use oxpinyin_core::{Cost, LanguageModel, NbestStepCosts, OptionBits, PhraseToken};
+    use oxpinyin_core::{
+        Cost, Dictionary, LanguageModel, NbestStepCosts, OptionBits, PhraseEntry, PhraseToken,
+        SyllableKey,
+    };
     use oxpinyin_testsupport::{FixtureDictionary, FixtureLanguageModel};
 
     use crate::config::EmptyConfigSource;
     use crate::error::EngineError;
     use crate::session::build_scan_matrix;
     use crate::storage::StoragePaths;
+
+    #[derive(Debug)]
+    struct TextError;
+
+    impl core::fmt::Display for TextError {
+        fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            formatter.write_str("text dictionary error")
+        }
+    }
+
+    impl std::error::Error for TextError {}
+
+    struct TextDictionary;
+
+    impl Dictionary for TextDictionary {
+        type Syllable = SyllableKey;
+        type Entry = PhraseEntry;
+        type Error = TextError;
+        type PathMemo = ();
+
+        fn lookup(&self, _syllables: &[Self::Syllable]) -> Result<Vec<Self::Entry>, Self::Error> {
+            Ok(vec![PhraseEntry::new(PhraseToken::new(1), "你好")])
+        }
+    }
+
+    #[test]
+    fn an_ordinary_sentence_text_stays_inline() {
+        let mut trellis = Trellis::with_seeds(0, &[], NbestShape::PINYIN);
+        trellis.texts.insert(1, (0, 1));
+        trellis
+            .text_keys
+            .push(SyllableKey::from_text("ni").expect("ni is a key"));
+        trellis.text_tones.push(0);
+        let mut cache = super::TokenMap::default();
+        let text = trellis
+            .text(&TextDictionary, &mut cache, &[(0, 1)])
+            .expect("trellis text")
+            .expect("present");
+        assert!(text.is_inline(), "short sentence is inline");
+        assert_eq!(text.as_str(), Some("你好"));
+    }
 
     /// A slot whose pricing is already known, so no dictionary is read.
     fn priced_slot(token: u32) -> super::LazySlot {
@@ -2247,7 +2299,7 @@ mod tests {
             nbest_sentences(&matrix, bound, &dict, &model, &[], None, NbestShape::PINYIN)
                 .expect("the trellis cannot fail here");
         assert!(!rows.is_empty());
-        assert_eq!(rows[0].text.as_str(), "你好");
+        assert_eq!(rows[0].text.as_str(), Some("你好"));
         assert_eq!(rows[0].span, bound);
         assert_eq!(rows[0].keys, 2);
     }

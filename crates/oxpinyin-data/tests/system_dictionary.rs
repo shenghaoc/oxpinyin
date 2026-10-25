@@ -318,7 +318,12 @@ fn lookup_into_matches_lookup() {
 fn token_surface_resolves_through_the_chunk_file() {
     let fix = Fixture::new();
     let dict = fix.dict();
-    assert_eq!(dict.phrase_text(0x0100_0099).as_deref(), Some("你好"));
+    assert_eq!(
+        dict.phrase_text(0x0100_0099)
+            .as_ref()
+            .and_then(|text| text.as_str()),
+        Some("你好")
+    );
     assert_eq!(dict.phrase_text(0x0200_0010), None, "unloaded library");
     assert_eq!(dict.phrase_text(0xFFFF_FFFF), None);
     assert_eq!(dict.unigram_count(0x0100_0010), Some(5));
@@ -348,7 +353,10 @@ fn suggest_after_walks_the_longer_phrases() {
     let dict = fix.dict();
     // 你 → 你好 (loaded) and 你们 (unloaded, dropped); defined order.
     let rows = dict.suggest_after("你").unwrap();
-    assert_eq!(rows, vec![(0x0100_0099, "你好".to_owned())]);
+    assert_eq!(
+        rows,
+        vec![(0x0100_0099, oxpinyin_core::PhraseText::from("你好"))]
+    );
     assert!(dict.suggest_after("你好").unwrap().is_empty());
     assert!(dict.suggest_after("无").unwrap().is_empty());
     assert!(dict.suggest_after("").unwrap().is_empty());
@@ -418,7 +426,7 @@ fn convert_ranges(dict: &SystemDictionary, tones: &[u8]) -> (Spans, Vec<String>)
         .trellis_records(&syls("ni"), tones)
         .unwrap()
         .iter()
-        .map(|entry| entry.text().to_owned())
+        .filter_map(|entry| entry.text_str().map(str::to_owned))
         .collect();
     (spans, texts)
 }

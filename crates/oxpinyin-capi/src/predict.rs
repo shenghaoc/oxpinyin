@@ -5,10 +5,11 @@
 //! and the punctuation prefix of
 //! `pinyin_guess_predicted_candidates_with_punctuations` (`:2454-2498`).
 
+use oxpinyin_capi_marshal::phrase_text::phrase_text_bytes;
 use std::collections::HashSet;
 use std::os::raw::c_char;
 
-use oxpinyin_core::single_gram;
+use oxpinyin_core::{PhraseText, single_gram};
 use oxpinyin_engine::CandidateKind;
 use oxpinyin_user::UserStore;
 
@@ -27,7 +28,8 @@ const BIGRAM_FILTER: u32 = 10;
 
 /// One predicted item before sort/dedup.
 struct Predicted {
-    text: String,
+    text: PhraseText,
+    phrase_length: usize,
     token: u32,
     candidate_type: lookup_candidate_type_t,
     frequency: u64,
@@ -162,7 +164,8 @@ fn guess_predicted_result(inst: &mut CapiInstance, prefix: &str) -> Result<bool,
         if winners.get(&item.text) != Some(&index) {
             continue;
         }
-        let Some(text) = inst.candidates.intern(item.text.as_bytes()) else {
+        let bytes = phrase_text_bytes(&item.text);
+        let Some(text) = inst.candidates.intern(&bytes) else {
             continue;
         };
         inst.candidates.push(CapiCandidate {
@@ -206,8 +209,8 @@ fn sort_predicted(items: &mut [Predicted]) {
             } else {
                 let left = &items[order[lhs]];
                 let right = &items[order[rhs]];
-                let left_len = left.text.chars().count();
-                let right_len = right.text.chars().count();
+                let left_len = left.phrase_length;
+                let right_len = right.phrase_length;
                 if left_len != right_len {
                     left_len > right_len
                 } else {
@@ -362,10 +365,12 @@ fn append_predicted_bigrams(
             let Some(text) = phrase_text(dict, store, *token) else {
                 continue;
             };
-            if text.chars().count() != length {
+            let phrase_length = text.phrase_length();
+            if phrase_length != length {
                 continue;
             }
             into.push(Predicted {
+                phrase_length,
                 // The caller passes null_token to the scorer, so the bigram
                 // term is zero even with DYNAMIC_ADJUST (`pinyin.cpp:2418,2438`).
                 frequency: predicted_frequency(dict, Some(store), *token, total, lambda),
@@ -399,7 +404,8 @@ fn append_predicted_prefix(
         // The length gate stays on the FULL phrase: the pin checks
         // `get_phrase_length()` against `prefix_len * 2 + 1` before any
         // slicing (`pinyin.cpp:2392-2395`).
-        if text.chars().count() > limit {
+        let phrase_length = text.phrase_length();
+        if phrase_length > limit {
             continue;
         }
         // The prefix subtraction the pin applies twice (`pinyin.cpp:1976-1980`):
@@ -408,7 +414,10 @@ fn append_predicted_prefix(
         // drives both — the sort counts `text.chars()`, the dedup and the
         // emitted candidate reuse the same string, matching upstream's
         // `_remove_duplicated_items_by_phrase_string` on the final string.
-        let display: String = text.chars().skip(prefix_len).collect();
+        let display = text.skip_chars(prefix_len);
+        let display_length = display
+            .char_count()
+            .unwrap_or_else(|| phrase_length.saturating_sub(prefix_len));
         // The sort key is the amplified law, not the raw count: the pin's
         // PREDICTED_PREFIX branch computes `(1−λ)·unigram/total·2²⁴`
         // truncated (`pinyin.cpp:1811-1824`), the same law the normal
@@ -416,6 +425,7 @@ fn append_predicted_prefix(
         into.push(Predicted {
             frequency: predicted_frequency(dict, user, token, total, lambda),
             text: display,
+            phrase_length: display_length,
             token,
             candidate_type: lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE,
         });
@@ -481,9 +491,9 @@ fn amplified_frequency(unigram: u64, total: u64, lambda: f32) -> u64 {
     u64::from(score as i64 as u32)
 }
 
-pub(crate) fn phrase_text(dict: &SharedDict, store: &UserStore, token: u32) -> Option<String> {
+pub(crate) fn phrase_text(dict: &SharedDict, store: &UserStore, token: u32) -> Option<PhraseText> {
     if let Ok(Some(phrase)) = store.phrase(token) {
-        return Some(phrase.text().to_owned());
+        return Some(PhraseText::from(phrase.text()));
     }
     dict.system().phrase_text(token)
 }

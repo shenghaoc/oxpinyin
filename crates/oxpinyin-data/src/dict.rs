@@ -19,21 +19,20 @@
 //! surviving token through its library — a token whose library is not
 //! loaded is invisible, upstream's `NULL == head` skip.
 
-use std::borrow::Cow;
 use std::fmt;
 use std::path::Path;
 use std::sync::Arc;
 
 use oxpinyin_core::{
-    ChewingKey, Dictionary, PhraseEntry, PhraseIndexRanges, PhraseItemRead, PhraseToken,
-    SyllableKey, TrellisItem,
+    ChewingKey, Dictionary, PhraseEntry, PhraseIndexRanges, PhraseItemRead, PhraseText,
+    PhraseToken, SyllableKey, TrellisItem,
 };
 use oxpinyin_store::{DefaultStore, ReadStore};
 
 use crate::chewing_table::{ChewingTable, PinyinIndexItem, RawChewingDbm, prefix_keys_match};
 use crate::phrase_libraries::PhraseLibraries;
 use crate::phrase_library::LibraryError;
-use crate::phrase_library::{PHRASE_TEXT_STACK_BYTES, RowFault};
+use crate::phrase_library::RowFault;
 use crate::phrase_table::PhraseTable;
 use crate::system_files::{SYSTEM_LIBRARY_FILES, SystemDbm};
 use crate::table::TableError;
@@ -134,10 +133,10 @@ fn resolve_items(
 /// library is unloaded or the item cannot be read.
 ///
 /// The text is `PhraseItem::get_phrase_string` then `g_ucs4_to_utf8`
-/// (`_token_get_phrase`, `pinyin.cpp:1627-1647` at 074a2219), decoded
-/// here into a stack buffer and handed to the entry as `&str`, so a hit
-/// of ordinary length costs no heap allocation; a longer text takes the
-/// one owned `String` it needs ([`PhraseItemView::phrase_text_into`]).
+/// (`_token_get_phrase`, `pinyin.cpp:1627-1647` at 074a2219); the entry
+/// keeps the item's stored words and its stored character count, so a zero
+/// or a non-scalar word changes neither the ranking nor the token's item.
+/// The C adapters' `phrase_text_bytes` produces the pin's bytes.
 fn resolve_item(
     libraries: &PhraseLibraries,
     pricing_keys: Option<&[ChewingKey]>,
@@ -145,11 +144,7 @@ fn resolve_item(
 ) -> Option<PhraseEntry> {
     let library = libraries.library(token)?;
     let item = library.item(token)?;
-    let mut buf = [0_u8; PHRASE_TEXT_STACK_BYTES];
-    let mut entry = match item.phrase_text_into(&mut buf)? {
-        Cow::Borrowed(text) => PhraseEntry::new(PhraseToken::new(token), text),
-        Cow::Owned(text) => PhraseEntry::new(PhraseToken::new(token), text),
-    };
+    let mut entry = PhraseEntry::new(PhraseToken::new(token), item.phrase_text()?);
     if let Some(keys) = pricing_keys
         && let Some((matched, total)) = libraries.pronunciation_possibility(token, keys)
     {
@@ -176,8 +171,8 @@ fn library_loaded(libraries: &PhraseLibraries, user_nibbles: u32, token: u32) ->
 /// it is the DBM's cursor order — byte-lexical over the UCS-4 keys, the
 /// order [`PhraseTable::search_suggestion`] already yields. A stable sort
 /// by nibble over the walk is exactly that.
-fn resolve_suggestions(libraries: &PhraseLibraries, tokens: Vec<u32>) -> Vec<(u32, String)> {
-    let mut rows: Vec<(u32, String)> = tokens
+fn resolve_suggestions(libraries: &PhraseLibraries, tokens: Vec<u32>) -> Vec<(u32, PhraseText)> {
+    let mut rows: Vec<(u32, PhraseText)> = tokens
         .into_iter()
         .filter_map(|token| Some((token, libraries.phrase_text(token)?)))
         .collect();
@@ -198,6 +193,23 @@ pub fn ucs4_walk_key(text: &str) -> Vec<u8> {
     // The walk key *is* the phrase index's DBM key — same encoder, so a
     // change to the layout cannot reorder predictions here only.
     crate::row_format::phrase_index::encode_ucs4_key(text)
+}
+
+/// [`ucs4_walk_key`] for a [`PhraseText`]: the stored code points in order,
+/// including a zero and its suffix, because the pin's phrase table key uses
+/// the item's full stored length.
+#[must_use]
+pub fn phrase_walk_key(text: &PhraseText) -> Vec<u8> {
+    let words: Vec<u32> = match text.stored_words() {
+        Some(words) => words.to_vec(),
+        None => text
+            .as_str()
+            .unwrap_or_default()
+            .chars()
+            .map(u32::from)
+            .collect(),
+    };
+    crate::row_format::phrase_index::encode_ucs4_key_scalars(&words)
 }
 
 /// The `SEARCH_CONTINUED` probe restricted to visible phrases: whether
@@ -328,7 +340,7 @@ impl SystemDictionary {
 
     /// Phrase text for `token`, if its library is loaded and owns it.
     #[must_use]
-    pub fn phrase_text(&self, token: u32) -> Option<String> {
+    pub fn phrase_text(&self, token: u32) -> Option<PhraseText> {
         self.libraries.phrase_text(token)
     }
 
@@ -399,7 +411,7 @@ impl SystemDictionary {
     /// # Errors
     ///
     /// Returns [`DictError`] when the DBM walk or a value decode fails.
-    pub fn suggest_after(&self, prefix: &str) -> Result<Vec<(u32, String)>, DictError> {
+    pub fn suggest_after(&self, prefix: &str) -> Result<Vec<(u32, PhraseText)>, DictError> {
         let tokens = self.phrase.search_suggestion(prefix)?;
         Ok(resolve_suggestions(&self.libraries, tokens))
     }
@@ -701,7 +713,7 @@ impl Dictionary for SystemDictionary {
         syllables: &[SyllableKey],
         _tones: &[u8],
         token: u32,
-    ) -> Result<Option<String>, DictError> {
+    ) -> Result<Option<PhraseText>, DictError> {
         if syllables_to_chewing_keys(syllables).is_none() {
             return Ok(None);
         }
@@ -782,7 +794,7 @@ impl Dictionary for SystemDictionary {
     }
 
     /// `_token_get_phrase`'s system half: the loaded library item's text.
-    fn phrase_text_for_token(&self, token: u32) -> Option<String> {
+    fn phrase_text_for_token(&self, token: u32) -> Option<PhraseText> {
         self.libraries.phrase_text(token)
     }
 
@@ -814,7 +826,7 @@ impl Dictionary for SystemDictionary {
 /// choose-promotion path (`pinyin.cpp:2534-2549`).
 pub struct AddonPhraseItem {
     /// Phrase text.
-    pub text: String,
+    pub text: PhraseText,
     /// Pronunciations as `(spelling, count)` pairs, in stored order.
     pub pronunciations: Vec<(String, u64)>,
     /// The item's stored unigram frequency.
@@ -1035,7 +1047,7 @@ impl AddonDictionary {
 
     /// Phrase text for `token`, if its addon library is loaded.
     #[must_use]
-    pub fn phrase_text(&self, token: u32) -> Option<String> {
+    pub fn phrase_text(&self, token: u32) -> Option<PhraseText> {
         self.libraries.phrase_text(token)
     }
 

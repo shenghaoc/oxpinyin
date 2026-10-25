@@ -41,7 +41,7 @@
 //! assert_eq!(session.preedit().text(), "nihao");
 //! assert_eq!(
 //!     session.process_key(&KeyInput::plain(LogicalKey::Enter))?,
-//!     KeyOutcome::Commit("nihao".to_owned()),
+//!     KeyOutcome::Commit("nihao".into()),
 //! );
 //! # Ok::<(), oxpinyin_engine::EngineError>(())
 //! ```

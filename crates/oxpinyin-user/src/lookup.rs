@@ -555,7 +555,7 @@ mod tests {
         let entries = lookup.lookup(&[n_partial]);
         let texts: Vec<&str> = entries
             .iter()
-            .map(oxpinyin_core::PhraseEntry::text)
+            .filter_map(oxpinyin_core::PhraseEntry::text_str)
             .collect();
         assert!(texts.contains(&"你"), "expected 你 in {texts:?}");
         assert!(texts.contains(&"那"), "expected 那 in {texts:?}");
@@ -605,7 +605,7 @@ mod tests {
         let entries = lookup.lookup(&[n_partial, key("hao")]);
         let texts: Vec<&str> = entries
             .iter()
-            .map(oxpinyin_core::PhraseEntry::text)
+            .filter_map(oxpinyin_core::PhraseEntry::text_str)
             .collect();
         assert!(texts.contains(&"你好"), "expected 你好 in {texts:?}");
         assert!(texts.contains(&"那号"), "expected 那号 in {texts:?}");

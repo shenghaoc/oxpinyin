@@ -133,7 +133,10 @@ fn worked_example_an_incomplete_key_reaches_the_pins_phrases() {
     let ranked = scorer
         .rank_phrases(&[], &keys("ni,h"), &[EdgeKind::Exact, EdgeKind::Incomplete])
         .expect("ranking cannot fail here");
-    let texts: Vec<&str> = ranked.iter().map(|(entry, _)| entry.text()).collect();
+    let texts: Vec<&str> = ranked
+        .iter()
+        .filter_map(|(entry, _)| entry.text_str())
+        .collect();
 
     assert_eq!(texts[0], "你好");
     for wanted in ["霓虹", "拟合", "你和", "你很", "你会"] {

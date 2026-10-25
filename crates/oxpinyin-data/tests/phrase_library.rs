@@ -165,14 +165,20 @@ fn reads_items_texts_and_pronunciations() {
     assert_eq!(item.phrase_length(), 1);
     assert_eq!(item.n_pronunciations(), 1);
     assert_eq!(item.unigram(), 5);
-    assert_eq!(item.phrase_text().as_deref(), Some("你"));
+    assert_eq!(
+        item.phrase_text().as_ref().and_then(|text| text.as_str()),
+        Some("你")
+    );
     let pronunciations: Vec<_> = item.pronunciations().collect();
     assert_eq!(pronunciations.len(), 1);
     assert_eq!(pronunciations[0].keys, &[0x12, 0x34]);
     assert_eq!(pronunciations[0].freq, 5);
 
     let item = library.item_at_slot(9).expect("item at slot 9");
-    assert_eq!(item.phrase_text().as_deref(), Some("你好"));
+    assert_eq!(
+        item.phrase_text().as_ref().and_then(|text| text.as_str()),
+        Some("你好")
+    );
     let pronunciations: Vec<_> = item.pronunciations().collect();
     assert_eq!(pronunciations.len(), 2);
     assert_eq!(pronunciations[1].keys, &[0xAA, 0xBB, 0xCC, 0xDD]);
@@ -361,7 +367,24 @@ fn item_damage_answers_no_item_never_panics() {
     let library = PhraseLibrary::open(&path).expect("layout still validates");
     let item = library.item_at_slot(1).expect("item present");
     assert_eq!(item.phrase_length(), 2);
-    assert!(item.phrase_text().is_none(), "surrogate is not a char");
+    let text = item.phrase_text().expect("surrogate is stored");
+    assert_eq!(text.stored_words(), Some([0x01, 0xD800].as_slice()));
+    assert!(text.as_str().is_none(), "surrogate is not a char");
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn an_embedded_zero_ends_the_phrase_text() {
+    let mut builder = ChunkBuilder::new(1);
+    builder.add(1, 1, "\u{1}\u{0}\u{2}", vec![(vec![0; 6], 1)]);
+    let bytes = builder.build();
+    let path = write_temp("nul-text", &bytes);
+    let library = PhraseLibrary::open(&path).expect("layout validates");
+    let item = library.item_at_slot(1).expect("item present");
+    assert_eq!(item.phrase_length(), 3);
+    let text = item.phrase_text().expect("zero is stored, not refused");
+    assert_eq!(text.stored_words(), Some([0x01, 0, 0x02].as_slice()));
+    assert!(text.as_str().is_none(), "the stored form carries the cut");
     let _ = std::fs::remove_file(&path);
 }
 
@@ -601,7 +624,10 @@ fn reads_a_real_libpinyin_installation() {
     let item = gb
         .item(0x0100_05DB)
         .unwrap_or_else(|| panic!("的 missing from gb_char"));
-    assert_eq!(item.phrase_text().as_deref(), Some("的"));
+    assert_eq!(
+        item.phrase_text().as_ref().and_then(|text| text.as_str()),
+        Some("的")
+    );
     assert_eq!(item.n_pronunciations(), 2);
     let mut freqs: Vec<u32> = item
         .pronunciations()
@@ -616,7 +642,10 @@ fn reads_a_real_libpinyin_installation() {
 
     // A single-reading cross-check: 锕, token 0x01000001, `a 锕 … 7`.
     let item = gb.item(0x0100_0001).expect("锕 present");
-    assert_eq!(item.phrase_text().as_deref(), Some("锕"));
+    assert_eq!(
+        item.phrase_text().as_ref().and_then(|text| text.as_str()),
+        Some("锕")
+    );
     assert_eq!(item.n_pronunciations(), 1);
     assert_eq!(
         item.pronunciations()

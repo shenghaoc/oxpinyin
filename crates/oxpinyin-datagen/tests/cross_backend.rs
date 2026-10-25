@@ -139,9 +139,11 @@ fn the_compiled_backend_reads_back_through_the_runtime_reader() {
     // `system_dictionary.rs`'s `empty_and_unknown_lookups_answer_empty`.
     let tokens = dict.tokens_for_text("你好").unwrap();
     assert!(
-        tokens
-            .iter()
-            .all(|token| dict.phrase_text(*token).as_deref() == Some("你好")),
+        tokens.iter().all(|token| dict
+            .phrase_text(*token)
+            .as_ref()
+            .and_then(|text| text.as_str())
+            == Some("你好")),
         "phrase DBM and chunk files agree on 你好: {tokens:?}"
     );
     let _ = std::fs::remove_dir_all(&out);

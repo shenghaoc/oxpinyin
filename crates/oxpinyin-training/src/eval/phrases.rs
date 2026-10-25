@@ -37,7 +37,9 @@ impl PhraseSource for SystemPhraseSource<'_> {
     }
 
     fn text(&self, token: PhraseToken) -> Option<String> {
-        self.dictionary.phrase_text(token.value())
+        self.dictionary
+            .phrase_text(token.value())
+            .and_then(|text| text.as_str().map(ToOwned::to_owned))
     }
 
     fn lexicon_tokens(&self) -> Vec<PhraseToken> {

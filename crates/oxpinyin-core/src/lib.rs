@@ -281,7 +281,7 @@ pub trait Dictionary {
         syllables: &[Self::Syllable],
         tones: &[u8],
         token: u32,
-    ) -> Result<Option<String>, Self::Error>
+    ) -> Result<Option<PhraseText>, Self::Error>
     where
         Self::Entry: PhraseIndexToken,
     {
@@ -575,7 +575,7 @@ pub trait Dictionary {
     /// Defaulted to `None` so existing implementors compile unchanged;
     /// a dictionary that does not override it cannot back a LONGER row's
     /// text (the row is then not built).
-    fn phrase_text_for_token(&self, _token: u32) -> Option<String> {
+    fn phrase_text_for_token(&self, _token: u32) -> Option<PhraseText> {
         None
     }
 
@@ -691,7 +691,7 @@ impl<D: Dictionary + ?Sized> Dictionary for &D {
         syllables: &[Self::Syllable],
         tones: &[u8],
         token: u32,
-    ) -> Result<Option<String>, Self::Error>
+    ) -> Result<Option<PhraseText>, Self::Error>
     where
         Self::Entry: PhraseIndexToken,
     {
@@ -783,7 +783,7 @@ impl<D: Dictionary + ?Sized> Dictionary for &D {
         (**self).checked_extension_tokens(syllables)
     }
 
-    fn phrase_text_for_token(&self, token: u32) -> Option<String> {
+    fn phrase_text_for_token(&self, token: u32) -> Option<PhraseText> {
         (**self).phrase_text_for_token(token)
     }
 
@@ -879,7 +879,7 @@ pub trait PhraseIndexToken {
     fn phrase_index_item(&self) -> TrellisItem;
 
     /// The entry's phrase text.
-    fn phrase_index_text(&self) -> String;
+    fn phrase_index_text(&self) -> PhraseText;
 }
 
 impl PhraseIndexToken for PhraseEntry {
@@ -889,13 +889,13 @@ impl PhraseIndexToken for PhraseEntry {
 
     fn phrase_index_item(&self) -> TrellisItem {
         TrellisItem {
-            chars: self.text().chars().count().try_into().unwrap_or(u32::MAX),
+            chars: self.phrase_length().try_into().unwrap_or(u32::MAX),
             pronunciation: self.pronunciation_possibility(),
         }
     }
 
-    fn phrase_index_text(&self) -> String {
-        self.text().to_owned()
+    fn phrase_index_text(&self) -> PhraseText {
+        self.text().clone()
     }
 }
 

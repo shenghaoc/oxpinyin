@@ -23,7 +23,9 @@ use core::fmt;
 use std::collections::BTreeMap;
 
 use oxpinyin_core::cost::{self, UNKNOWN_COST};
-use oxpinyin_core::{Cost, Dictionary, LanguageModel, PhraseEntry, PhraseToken, SyllableKey};
+use oxpinyin_core::{
+    Cost, Dictionary, LanguageModel, PhraseEntry, PhraseText, PhraseToken, SyllableKey,
+};
 
 /// Weight of the bigram term in the interpolated estimate, as a fraction.
 ///
@@ -285,13 +287,13 @@ impl Dictionary for FixtureDictionary {
             .collect())
     }
 
-    fn phrase_text_for_token(&self, token: u32) -> Option<String> {
+    fn phrase_text_for_token(&self, token: u32) -> Option<PhraseText> {
         let token = PhraseToken::new(token);
         self.entries
             .values()
             .flatten()
             .find(|entry| entry.token() == token)
-            .map(|entry| entry.text().to_owned())
+            .map(|entry| entry.text().clone())
     }
 }
 
@@ -575,7 +577,7 @@ mod tests {
         let entries = dictionary.lookup(&keys("ni")).expect("lookup cannot fail");
         let texts: Vec<&str> = entries
             .iter()
-            .map(oxpinyin_core::PhraseEntry::text)
+            .filter_map(oxpinyin_core::PhraseEntry::text_str)
             .collect();
         assert_eq!(
             texts,

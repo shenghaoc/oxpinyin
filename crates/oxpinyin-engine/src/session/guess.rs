@@ -276,13 +276,13 @@ where
                 sentences.extend(self.collect_sentences_with_tokens(&graph, &scorer, path)?);
             }
             sentences.sort_by_key(|(candidate, _)| candidate.cost());
-            let mut seen: HashSet<compact_str::CompactString> = HashSet::new();
+            let mut seen: HashSet<PhraseText> = HashSet::new();
             sentences
                 .into_iter()
-                .filter(|(candidate, _)| seen.insert(candidate.text().into()))
+                .filter(|(candidate, _)| seen.insert(candidate.text().clone()))
                 .take(self.nbest_shape.nbest())
                 .map(|(candidate, tokens)| crate::nbest::NbestRow {
-                    text: candidate.text().into(),
+                    text: candidate.text().clone(),
                     tokens,
                     spans: Vec::new(),
                     keys: candidate.consumed_keys(),
@@ -313,9 +313,10 @@ where
 
         if !self.record.selected().is_empty() {
             for row in &mut self.sentence.rows {
-                let mut full = compact_str::CompactString::from(self.record.selected());
-                full.push_str(&row.text);
-                row.text = full;
+                let mut full = PhraseTextConcat::new();
+                full.push(self.record.selected());
+                full.push(&row.text);
+                row.text = full.finish();
             }
         }
 

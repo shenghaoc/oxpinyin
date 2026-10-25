@@ -17,6 +17,7 @@ use crate::state::context_ref;
 use crate::types::{
     BigramExportIterator, ExportIterator, GChar, GUint, ImportIterator, PinyinContext,
 };
+use oxpinyin_capi_marshal::phrase_text::phrase_text_bytes;
 
 /// State behind `export_iterator_t *`: the pin's iterator state, which
 /// reads each item when a call needs it and buffers no row.
@@ -198,23 +199,28 @@ pub extern "C" fn pinyin_iterator_add_phrase(
         let item_text = if let Some(dict) = handle.dict.as_ref() {
             dict.token_text(token)
         } else {
-            user.phrase_text(token).ok().flatten()
+            user.phrase_text(token)
+                .ok()
+                .flatten()
+                .map(oxpinyin_core::PhraseText::from)
         };
         // A missing item leaves the pin's PhraseItem at length zero;
         // :568 then asserts before any import mutation.
-        if item_text.as_deref() != Some(phrase.as_str()) {
-            crate::ffi::log_warning(
-                if item_text
-                    .as_ref()
-                    .is_some_and(|text| text.chars().count() == length)
-                {
-                    "pinyin_iterator_add_phrase: assertion \
+        // The stored length first, then every stored word (`pinyin.cpp:568-571`).
+        let same_length = item_text
+            .as_ref()
+            .is_some_and(|text| text.phrase_length() == length);
+        let same_words = item_text.as_ref().is_some_and(|text| {
+            oxpinyin_capi_marshal::phrase_text::stored_words_match(text, &phrase)
+        });
+        if !(same_length && same_words) {
+            crate::ffi::log_warning(if same_length {
+                "pinyin_iterator_add_phrase: assertion \
              '0 == memcmp(phrase, tmp_phrase, sizeof(ucs4_t) * phrase_length)' failed"
-                } else {
-                    "pinyin_iterator_add_phrase: assertion \
+            } else {
+                "pinyin_iterator_add_phrase: assertion \
              'phrase_length == item.get_phrase_length()' failed"
-                },
-            );
+            });
             return false;
         }
     }
@@ -627,7 +633,11 @@ pub extern "C" fn pinyin_bigram_iterator_get_next_phrase(
     if !phrase.is_null() {
         // SAFETY: Null-checked above.
         unsafe {
-            *phrase = owned_cstr(&row.phrase);
+            let bytes = phrase_text_bytes(&row.phrase);
+            *phrase = malloc_cstr_with(bytes.len(), |out| {
+                out[..bytes.len()].copy_from_slice(&bytes);
+                bytes.len()
+            });
         }
     }
     if !pinyin.is_null() {

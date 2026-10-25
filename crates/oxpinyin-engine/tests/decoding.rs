@@ -50,7 +50,8 @@ fn texts(session: &Fixtures) -> Vec<String> {
     session
         .candidates()
         .iter()
-        .map(|candidate| candidate.text().to_owned())
+        .filter_map(|candidate| candidate.text_str())
+        .map(str::to_owned)
         .collect()
 }
 
@@ -284,7 +285,7 @@ fn an_expansion_past_the_limit_offers_no_phrase_for_that_span() {
     let session = typed("zhzh");
     let candidates = session.candidates();
     assert!(!candidates.is_empty(), "one initial still expands");
-    assert_eq!(candidates.get(0).map(Candidate::text), Some("传"));
+    assert_eq!(candidates.get(0).and_then(Candidate::text_str), Some("传"));
 
     for candidate in candidates
         .iter()
@@ -307,7 +308,7 @@ fn an_expansion_past_the_limit_offers_no_phrase_for_that_span() {
         .find(|candidate| candidate.kind() == CandidateKind::Sentence)
         .expect("a sentence over the two keys");
     assert_eq!(sentence.consumed_keys(), 2);
-    assert_eq!(sentence.text().chars().count(), 2);
+    assert_eq!(sentence.text().as_str().unwrap().chars().count(), 2);
 }
 
 #[test]
@@ -480,7 +481,11 @@ fn turning_incomplete_pinyin_off_stops_at_the_initial() {
             .expect("typing cannot fail");
     }
 
-    let texts: Vec<&str> = session.candidates().iter().map(Candidate::text).collect();
+    let texts: Vec<&str> = session
+        .candidates()
+        .iter()
+        .filter_map(Candidate::text_str)
+        .collect();
     assert_eq!(texts[0], "你", "without the incomplete key, nih is just ni");
     assert!(!texts.contains(&"你好"));
 }
@@ -492,7 +497,7 @@ fn enter_commits_the_raw_text_when_nothing_is_chosen() {
         session
             .process_key(&KeyInput::plain(LogicalKey::Enter))
             .expect("no failure"),
-        oxpinyin_engine::KeyOutcome::Commit("nihao".to_owned())
+        oxpinyin_engine::KeyOutcome::Commit("nihao".into())
     );
 }
 
