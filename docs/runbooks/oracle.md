@@ -63,9 +63,10 @@ The script writes a manifest the differential runners compare against
 
 ## 2a. Or pull the prebuilt libraries (any machine)
 
-The oracle libraries build reproducibly: inside the pinned image
-(`tools/oracle/Dockerfile.oracle`: `debian:testing` by digest, apt from
-a dated snapshot) `build-oracle.sh --libs-only` produces byte-identical
+The oracle libraries build reproducibly: inside the pin-reference image
+(`tools/oracle/Dockerfile.oracle`: `debian:trixie`, the current Debian stable
+codename, from the default mirrors with normal security updates)
+`build-oracle.sh --libs-only` produces byte-identical
 `libpinyin.so` and `libzhuyin.so` wherever it runs on the same platform, so
 their hashes are recorded once per platform in
 `tools/oracle/oracle-pin.txt` (`libpinyin_sha256_<dbm>`,
@@ -81,9 +82,10 @@ arm64 runners. The amd64 tags are the historical
 
 and arm64 publishes the siblings `<tag>-arm64` and `<tag>-deps-arm64`.
 `<tag>` is printed by `tools/oracle/image-tag.sh`: the libpinyin
-commit, the base image digest, the apt snapshot timestamp (all from
-`oracle-pin.txt`) and a hash of `Dockerfile.oracle` and `build-oracle.sh`,
-so it changes whenever the library hashes can. The arm64 contract gate
+commit and the base image codename (both from `oracle-pin.txt`) and a hash
+of `Dockerfile.oracle`, `build-oracle.sh`, the version-check inputs and
+`oracle-pin.txt` itself, so it changes whenever the library hashes or their
+record can. The arm64 contract gate
 excludes the 13 cases diagnosed in #1137 and reports 0 DIFFER; amd64 still
 runs them. See [the arm64 finding](../findings/oracle-arm64-1132.md). A published tag is
 immutable (the workflow never overwrites one), and `tools/cloud/setup.sh`
@@ -155,7 +157,7 @@ the prefix — the pulled libraries are left as they are. On a mismatch it
 exits non-zero and the prefix is byte-for-byte what it was.
 It needs the build dependencies of section 2 (the pinned image's `deps`
 stage has them: `docker build --target deps -f tools/oracle/Dockerfile.oracle
-tools/oracle`). Use `--dbm kc` or `--dbm tkrzw` with the matching
+.`). Use `--dbm kc` or `--dbm tkrzw` with the matching
 subdirectory for the other cells.
 
 Then use the prefix as if it had been built locally:
@@ -173,11 +175,11 @@ local manifest before the pre-release real-installation checks below.
 ### Reproducing the libraries
 
 `tools/oracle/check-reproducible.sh --platform linux/arm64` builds each
-cell twice in the pinned image, from different work directories and
-prefixes, and fails unless the two builds agree with each other and with
-the platform's `oracle-pin.txt` fields. The default platform is
-`linux/amd64`; run it when the recipe, the base image or the apt snapshot
-changes, and update the recorded hashes in the same commit. The recipe is
+cell twice in the trixie pin-reference image, from different work
+directories and prefixes, and fails unless the two builds agree with each
+other and with the platform's `oracle-pin.txt` fields. The default platform
+is `linux/amd64`; run it when the recipe or the base image changes, and
+update the recorded hashes in the same commit. The recipe is
 `SOURCE_DATE_EPOCH` = the pin's commit time, `-ffile-prefix-map` and
 `-fdebug-prefix-map` on the source path, and `-Wl,--build-id=none`; the
 `.la` and `.pc` files still record the install prefix and are not part

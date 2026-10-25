@@ -1,0 +1,87 @@
+{
+  "schema": "oracle-version-manifest-v1",
+  "reference": "debian:trixie",
+  "recorded_utc": "2026-10-25T03:13:50Z",
+  "note": "Ranges are the Debian 13 (trixie) package's current major.minor. Point and security updates within that major.minor pass; moving to the next Debian release is a deliberate codename change. Each component affects the pin-built reference results, so an image build records the installed version and fails when it leaves its range. tkrzw must also pass tools/tkrzw/distro-probe.sh.",
+  "components": [
+    {
+      "name": "glibc",
+      "package": "libc6",
+      "major_minor": "2.41",
+      "basis": "trixie 13.7 libc6 2.41-12+deb13u4; the pin's fscanf %d/%f/%255s grammar and strtod behaviour are this libc's."
+    },
+    {
+      "name": "glib",
+      "package": "libglib2.0-0t64",
+      "major_minor": "2.84",
+      "basis": "trixie 13.7 libglib2.0-0t64 2.84.4-3~deb13u5; GLib owns the pin's GArray, g_free and string helpers."
+    },
+    {
+      "name": "Berkeley DB 5.3",
+      "package": "libdb5.3t64",
+      "major_minor": "5.3",
+      "basis": "trixie 13.7 libdb5.3t64 5.3.28+dfsg2-9; the bdb cell's on-disk format and cursor semantics."
+    },
+    {
+      "name": "Kyoto Cabinet",
+      "package": "libkyotocabinet16v5",
+      "major_minor": "1.2",
+      "basis": "trixie 13.7 libkyotocabinet16v5 1.2.80-2+b1; the kc cell's on-disk format and API."
+    },
+    {
+      "name": "tkrzw",
+      "package": "libtkrzw1t64",
+      "major_minor": "1.0",
+      "basis": "trixie 13.7 libtkrzw1t64 1.0.32-1+b1; the tkrzw cell's on-disk format and API, and the pointer-identity health check.",
+      "probe": true
+    },
+    {
+      "name": "C compiler",
+      "package": "gcc-14",
+      "major_minor": "14.2",
+      "basis": "trixie 13.7 gcc-14 14.2.0-19; the compiler that builds the pin's shared objects."
+    },
+    {
+      "name": "C++ compiler",
+      "package": "g++-14",
+      "major_minor": "14.2",
+      "basis": "trixie 13.7 g++-14 14.2.0-19; the compiler that builds the pin's shared objects."
+    },
+    {
+      "name": "binutils",
+      "package": "binutils",
+      "major_minor": "2.44",
+      "basis": "trixie 13.7 binutils 2.44-3; the assembler and linker that build the pin's shared objects."
+    },
+    {
+      "name": "autoconf",
+      "package": "autoconf",
+      "major_minor": "2.72",
+      "basis": "trixie 13.7 autoconf 2.72-3.1; the autotools generation that builds the pin."
+    },
+    {
+      "name": "automake",
+      "package": "automake",
+      "major_minor": "1.17",
+      "basis": "trixie 13.7 automake 1:1.17-4; the autotools generation that builds the pin."
+    },
+    {
+      "name": "libtool",
+      "package": "libtool",
+      "major_minor": "2.5",
+      "basis": "trixie 13.7 libtool 2.5.4-4; the autotools generation that builds the pin."
+    },
+    {
+      "name": "gettext",
+      "package": "gettext",
+      "major_minor": "0.23",
+      "basis": "trixie 13.7 gettext 0.23.1-2; provides autopoint, which autoreconf runs for the pin."
+    },
+    {
+      "name": "pkg-config",
+      "package": "pkg-config",
+      "major_minor": "1.8",
+      "basis": "trixie 13.7 pkg-config 1.8.1-4; resolves the pin's GLib and DBM build flags."
+    }
+  ]
+}

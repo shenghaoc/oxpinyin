@@ -1,4 +1,4 @@
-schema=oracle-provisioning-pin-v4
+schema=oracle-provisioning-pin-v5
 # Exact on purpose (#1074): every pin below identifies the reference libpinyin and its inputs, not a tool version a newer one could replace.
 # Composite pin identity for the locally built oracle. Every field mirrors
 # a constant in tools/oracle/build-oracle.sh; tools/bisection runners and
@@ -16,10 +16,12 @@ schema=oracle-provisioning-pin-v4
 # upstreams are now verified symmetrically by commit SHA (git fetch
 # --depth=1, checked by git rev-parse). The 1.16.5 tag is retained as
 # the release-line name only; the tree built is the commit.
-# libtkrzw is deliberately NOT pinned here: inside the debian:testing
-# container it comes from libtkrzw-dev as part of the rolling build
-# environment (the workflow's provenance record attributes which version
-# each run linked), not the frozen oracle chain.
+# libtkrzw is deliberately NOT pinned here: inside the Debian trixie
+# pin-reference container it comes from libtkrzw-dev as part of the stable
+# build environment (the workflow's provenance record attributes which
+# version each run linked), not the frozen oracle chain. The accepted
+# major.minor and the distro-probe requirement live in
+# tools/oracle/version-manifest.json.
 libpinyin_tag=2.11.92
 libpinyin_commit=074a2219c90feaf962d0d24f034514033ece5f99
 # libpinyin: verified by commit SHA (git fetch --depth=1); no release tag
@@ -39,28 +41,33 @@ dbm=BerkeleyDB
 # v4 (2026-10-16 UTC, issue #818): the library build is reproducible, so the
 # digests below are the output of the RECIPE, not of one host's build. The
 # recipe is tools/oracle/build-oracle.sh --libs-only run in the image that
-# tools/oracle/Dockerfile.oracle pins (base_image, apt_snapshot): fixed
-# SOURCE_DATE_EPOCH, source path remapped by -ffile-prefix-map and
-# -fdebug-prefix-map, no ELF build ID. tools/oracle/check-reproducible.sh
-# rebuilds each cell twice from different directories and fails unless both
-# builds match each other and these values. A pin component, the base image,
-# the apt snapshot or the recipe changing changes them: update them in the
-# same commit.
+# tools/oracle/Dockerfile.oracle builds: fixed SOURCE_DATE_EPOCH, source path
+# remapped by -ffile-prefix-map and -fdebug-prefix-map, no ELF build ID.
+# tools/oracle/check-reproducible.sh rebuilds each cell twice from different
+# directories and fails unless both builds match each other and these values.
+# A pin component, the base image or the recipe changing changes them: update
+# them in the same commit.
+# v5 (2026-10-25 UTC): the pin-reference image tracks Debian stable by
+# codename, debian:trixie, with normal security updates. base_image is a tag,
+# not a digest, and apt_snapshot is gone: no image is pinned by digest or
+# snapshot.debian.org date, and the snapshot-era Valid-Until workaround is
+# gone too. A move to the next Debian release is a deliberate codename
+# change, never automatic. The components whose versions affect reference
+# results are gated by tools/oracle/version-manifest.json.
 # The unqualified fields below are the historical linux/amd64 entries and
 # stay byte-identical. Native shared objects differ across architectures, so
 # other platforms add the same fields with a platform suffix
 # (_linux_arm64); tools/oracle/pin.sh selects them. The image, the
 # Dockerfile and the checks take their platform from the build request.
 platform=linux/amd64
-base_image=debian:testing@sha256:dab11cdb0a9dcf4bbd68f671635b35f1f726b452b92396875b69bb2c7daa42a9
-apt_snapshot=20260831T000000Z
+base_image=debian:trixie
 source_date_epoch=1788427579
-libpinyin_sha256_bdb=754499651c302efd91fe7f72dd6a791978400b268cb6206d2ebe644015721f30
-libzhuyin_sha256_bdb=cf4ccbce9f70f6c7e412b92a52a243ba64fdea1ff197cbc44019c6b85650d53b
-libpinyin_sha256_kc=ddbb3ce4b625bf3b6ab0f32b2e28e49144595a953490a2221bee6a5642c55ef6
-libzhuyin_sha256_kc=e538c36cc0d9e6c43c595c296db539cd2b768bce427252358e6f825387e13dc4
-libpinyin_sha256_tkrzw=d78a91676af43ad5075c20ab4ae014a8bc6e03b7a5f5ab656d014087f18ff7b8
-libzhuyin_sha256_tkrzw=adbcc8c8c3dec00a488ea89413a525f57fdccf280a8ca44e6c2ad6765fd24c3d
+libpinyin_sha256_bdb=58f73afe634b2fcf3be3e5d59e92037dee8df99f4aaf8fbbe8b835856d93c34c
+libzhuyin_sha256_bdb=44c6ca9a7b8fd315e28bd0168803a29b367bd56065fe57d17de2889518f20fb2
+libpinyin_sha256_kc=39e668eb48afe3fcdb9894c11325231d8c30f6e90f42ce674111ad006e0973ea
+libzhuyin_sha256_kc=29d26d811b344b5cb1995aa1c4e416343f931f5f9e6ceed2e33fb25c9bf763fe
+libpinyin_sha256_tkrzw=703272aa023f11a5139ee64e23e3b2e160cb30dd4b910039980ae528ec078efe
+libzhuyin_sha256_tkrzw=0c8a2cfd9ab2e7b35acb2cbdad887d0e161c9d42c6d4f6fc60ee2c37c28002ad
 # data_manifest_sha256 of the 17 reproducible data files, per cell (they
 # differ across cells only in table.conf). `build-oracle.sh --regen-data`
 # fails unless the regenerated manifest equals the cell's value.
@@ -71,12 +78,12 @@ data_manifest_sha256_tkrzw=4a03fce6eec26916bc5bd0f0f18cba24492f334698e1d9b14b83e
 # linux/arm64: the same pin, base image, apt snapshot, recipe and model data
 # on native arm64 Linux. Only the native shared objects differ.
 platform_linux_arm64=linux/arm64
-libpinyin_sha256_bdb_linux_arm64=473187d8d040b8a5763a188509d6be031e224a712ad9b7716defdb4ff1293a2f
-libzhuyin_sha256_bdb_linux_arm64=e90429560584cf9dfee345d41e608092032d3a1c7248e04feeedc899dcfd24b5
-libpinyin_sha256_kc_linux_arm64=d2672b94ec8fe15c86062ca9e400a0df8b52b9b1f8be196a71e27e545de50e2d
-libzhuyin_sha256_kc_linux_arm64=644cc0edb5080925bb574445deac5425c7fca729bcd9032d8b4858ffe22e6df7
-libpinyin_sha256_tkrzw_linux_arm64=062caa79982cb2024666666e5c0da1914808b9d2eba55c9ae95acc6827d8d32a
-libzhuyin_sha256_tkrzw_linux_arm64=43b884cbaa74b170a3a4b4cd254fff7d2939b9442d07c6190f51a643610c67c3
+libpinyin_sha256_bdb_linux_arm64=59bbf8203f2b4fa5f651262429ff24d2e3bf12b95a53082ddd1e251b59958e44
+libzhuyin_sha256_bdb_linux_arm64=7270c446e32d43f0700ffab30cb7280ba7b5273c9139891a254a6df6d4777f83
+libpinyin_sha256_kc_linux_arm64=a0569facd603318e9b1443ef87cb59e6c2fc09b35625a935bcf8214b7a435f3d
+libzhuyin_sha256_kc_linux_arm64=cef3c326c9a5f669f75d580c2b7b977638c19b09db3acfe60fa82371bd956d59
+libpinyin_sha256_tkrzw_linux_arm64=946eaceae4ef7395c51f656b3a9b341ebea1e507ed343ec7d7eb4c964871525b
+libzhuyin_sha256_tkrzw_linux_arm64=0b1e3ed549202cdd25f42d7ebf6bad20aed0c3ad4411066c1c1866704907cd82
 data_manifest_sha256_bdb_linux_arm64=a050c357e5b80eac1d83204822d246fbe66f7049d25e7085ee1bc4fdc9e3c8f2
 data_manifest_sha256_kc_linux_arm64=91e906bd42ddebe5070b8bfe3cf48a9104286c22fbe8d8acb90df18ed431c8ba
 data_manifest_sha256_tkrzw_linux_arm64=4a03fce6eec26916bc5bd0f0f18cba24492f334698e1d9b14b83e9c50c58e281

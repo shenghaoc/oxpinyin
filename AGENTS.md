@@ -456,7 +456,7 @@ Start with `CONTRIBUTING.md` and `docs/runbooks/setup.md`, the same setup
 procedures humans use. Ordinary development is native and needs no oracle
 or container. Alongside cloud provisioning, compatibility tasks may use
 `tools/oracle/compat.sh`, which runs
-the subject, pinned reference and harness together in the canonical pinned Debian Linux amd64 environment
+the subject, pinned reference and harness together in the canonical Debian Linux amd64 compatibility environment
 (`docs/runbooks/compatibility-container.md`). Native tests are separate evidence.
 
 ## Concurrent sessions

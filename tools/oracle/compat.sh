@@ -12,7 +12,9 @@ Usage: bash tools/oracle/compat.sh [OPTIONS] --runners NAME[,NAME...]
        bash tools/oracle/compat.sh --list
 Options:
   --runtime docker|podman|container|wslc  Override platform-native, Podman, Docker order
+  --platform linux/amd64|linux/arm64  Override the host architecture
   --cell bdb|kc|tkrzw               Default: bdb; one backend on both sides
+  --cases ID[,ID...]                Contract-diff case IDs (requires contract-diff)
   --archive PATH                    Optional local model20 archive (checksum verified)
   --jobs N                          Build/runner concurrency (default 2)
   --memory-mib N                    Hard limit and native reservation (default 2560 MiB)
@@ -29,7 +31,7 @@ HELP
 }
 die() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 hash() { if command -v sha256sum >/dev/null 2>&1; then sha256sum; else shasum -a 256; fi; }
-runtime=${OXPINYIN_CONTAINER:-} cell=bdb archive='' jobs=2 memory=${OXPINYIN_CONTAINER_MEMORY_MIB-2560}
+runtime=${OXPINYIN_CONTAINER:-} platform= cell=bdb archive='' jobs=2 memory=${OXPINYIN_CONTAINER_MEMORY_MIB-2560}
 original_args=("$@")
 selection=() selected=0 memory_smoke=0 list_only=0
 while (($#)); do
@@ -38,10 +40,11 @@ while (($#)); do
 	--memory-smoke) memory_smoke=1; shift ;;
 	--list) list_only=1; shift ;;
 	--runners=*|--issue=*) set -- "${1%%=*}" "${1#*=}" "${@:2}"; continue ;;
-	--runtime|--cell|--archive|--jobs|--memory-mib|--runners|--issue|--timeout|--runner-timeout)
+	--runtime|--platform|--cell|--archive|--jobs|--memory-mib|--runners|--issue|--cases|--timeout|--runner-timeout)
 		(($# >= 2)) || { usage >&2; exit 2; }
 		case $1 in
 		--runtime) runtime=$2 ;;
+		--platform) platform=$2 ;;
 		--cell) cell=$2 ;;
 		--archive) archive=$2 ;;
 		--jobs) jobs=$2 ;;
@@ -56,11 +59,13 @@ while (($#)); do
 	esac
 done
 case $cell in bdb|kc|tkrzw) ;; *) echo 'cell must be bdb, kc or tkrzw' >&2; exit 2 ;; esac
-case $(uname -m) in
-x86_64) platform=linux/amd64 ;;
-aarch64 | arm64) platform=linux/arm64 ;;
-*) die "no compatibility platform for architecture $(uname -m)" ;;
-esac
+if [[ -z $platform ]]; then
+	case $(uname -m) in
+	x86_64) platform=linux/amd64 ;;
+	aarch64 | arm64) platform=linux/arm64 ;;
+	*) die "no compatibility platform for architecture $(uname -m)" ;;
+	esac
+fi
 platform_args=(--platform "$platform")
 [[ $jobs =~ ^[1-9][0-9]*$ ]] || { echo '--jobs must be positive' >&2; exit 2; }
 [[ $memory =~ ^[1-9][0-9]*$ ]] || { echo '--memory-mib must be a positive integer in MiB' >&2; exit 2; }
@@ -109,7 +114,7 @@ if [[ -n ${OXPINYIN_PROXY_CA:-} ]]; then
 	[[ -s $OXPINYIN_PROXY_CA ]] || die "custom CA file missing: $OXPINYIN_PROXY_CA"
 	ca_identity=$(hash < "$OXPINYIN_PROXY_CA" | cut -d' ' -f1)
 fi
-key=$( { cat tools/oracle/Dockerfile.compat rust-toolchain.toml; printf '%s:%s' "$reference_tag" "$ca_identity"; } | hash | cut -c1-16)
+key=$( { cat tools/oracle/Dockerfile.compat rust-toolchain.toml; printf '%s:%s:%s' "$reference_tag" "$ca_identity" "$platform"; } | hash | cut -c1-16)
 image=oxpinyin-compat:$key
 if ((memory_smoke)); then
 	# Exercise the real launcher/admission transport without provisioning or
@@ -224,7 +229,7 @@ pull_or_build() {
 	fi
 	printf 'Image tag absent; building %s from the pinned source recipe\n' "$wanted" >&2
 	build_image "${platform_args[@]}" "${build_flags[@]}" --target "$target" \
-		-f tools/oracle/Dockerfile.oracle -t "$wanted" tools/oracle
+		-f tools/oracle/Dockerfile.oracle -t "$wanted" .
 }
 # The unchanged oracle final stage has no name; use a private build stage name
 # only for deps and build the artifact's default final target separately.
@@ -235,7 +240,7 @@ if ! image_present "$image"; then
 		if ! "${pull_command[@]}" "${platform_args[@]}" "$reference" 2>"$results/pull-reference.log"; then
 			cat "$results/pull-reference.log" >&2
 			grep -Eiq 'manifest unknown|name unknown|manifest.*not found|404[[:space:]]+not found' "$results/pull-reference.log" || die 'reference access/network/proxy failure; see retained pull-reference.log'
-			build_image "${platform_args[@]}" "${build_flags[@]}" -f tools/oracle/Dockerfile.oracle -t "$reference" tools/oracle
+			build_image "${platform_args[@]}" "${build_flags[@]}" -f tools/oracle/Dockerfile.oracle -t "$reference" .
 		fi
 	fi
 	build_image "${platform_args[@]}" "${build_flags[@]}" \

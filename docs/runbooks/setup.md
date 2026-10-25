@@ -659,7 +659,7 @@ of completing a contribution.
   No local Windows storage installation was executed.
   Supported local BDB5.3/MSVC provisioning remains a gap; CI's BDB4.8
   exception is not a contributor default.
-- Canonical pinned Debian/Linux amd64: BDB `same-data-dir-diff` and cache/
+- Canonical Debian/Linux amd64 compatibility environment: BDB `same-data-dir-diff` and cache/
   environment-isolation resume passed on rootless Podman. Other runtime
   interoperability was not executed. Apple's volume-reader result retrieval
   is source-verified only, not runtime-tested.
@@ -673,6 +673,15 @@ of completing a contribution.
   2,875 / 20 / 4, tkrzw 2,877 / 18 / 4. Each cell's SKIPs include the 13
   arm64-only #1137 exclusions; same-data was identical on 15/15 drivers.
   See [the arm64 oracle finding](../findings/oracle-arm64-1132.md).
+- Canonical Debian/Linux amd64 compatibility environment (debian:trixie,
+  glibc 2.41, GLib 2.84): the oracle and compat images rebuilt on trixie;
+  `contract-diff` on 3,017 cases per cell reported bdb 2,988 MATCH / 15
+  POLICY-ACCEPTED / 10 HOST-DEPENDENT / 2 SKIP / 2 DIFFER, kc 2,983 / 15 /
+  10 / 7 / 2, tkrzw 2,985 / 15 / 10 / 5 / 2. The 2 DIFFER are the `0x.`
+  glibc-version host-dependence finding; the 10 HOST-DEPENDENT are the
+  exponent spellings. A targeted bdb rerun of the eight affected cases
+  returned the same 2 DIFFER and 6 HOST-DEPENDENT. The perf-matrix and
+  callgrind images built on debian:testing and their smoke steps passed.
 - Anonymous oracle artifact retrieval/hash verification passed. Anonymous
   `-deps` retrieval awaits normal publication. See the PR for final-head CI
   and the current cloud-provisioning/compatibility smoke status.

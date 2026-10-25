@@ -30,10 +30,9 @@ set -uo pipefail
 # that as a denial sends the next reader chasing a phantom.
 PROBES=(
     "https://deb.debian.org/debian/dists/stable/Release	deb.debian.org	Debian packages (libtkrzw-dev, libkyotocabinet-dev, glib, valgrind)"
-    "https://snapshot.debian.org/archive/debian/20260831T000000Z/dists/testing/Release	snapshot.debian.org	the pinned apt snapshot the perf images use"
     "https://production.cloudfront.docker.com/	cloudfront.docker.com	Docker Hub blob CDN (base image layers)"
     "https://registry-1.docker.io/v2/	registry-1.docker.io	Docker Hub manifests"
-    "https://mirror.gcr.io/v2/	mirror.gcr.io	a mirror that can serve the same base image digest"
+    "https://mirror.gcr.io/v2/	mirror.gcr.io	a mirror that can serve the same base image layers"
     "https://static.rust-lang.org/rustup/archive/1.29.0/x86_64-unknown-linux-gnu/rustup-init.sha256	static.rust-lang.org	rustup-init"
     "https://index.crates.io/config.json	index.crates.io	the cargo registry index"
     "https://static.crates.io/crates/libc/libc-0.2.189.crate	static.crates.io	crate downloads"

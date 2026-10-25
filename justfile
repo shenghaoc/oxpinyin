@@ -16,6 +16,16 @@ default: doctor
 _test-argv status *args:
     @uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -c 'import json, sys; print(json.dumps(sys.argv[2:])); sys.exit(int(sys.argv[1]))' "$@"
 
+# Record or check the pin-reference image's tool versions. Requires the
+# Debian image environment (dpkg-query); the image builds run the same check.
+[unix]
+oracle-versions *args:
+    @uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -m tools.dev oracle-versions "$@"
+
+[windows]
+oracle-versions *args:
+    @uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -m tools.dev oracle-versions @args; exit $LASTEXITCODE
+
 # Report native capabilities and the managed interpreter identity.
 doctor:
     @uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -m tools.dev doctor

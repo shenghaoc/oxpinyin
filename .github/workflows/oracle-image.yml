@@ -2,13 +2,14 @@ name: oracle-image
 
 # Builds the pin-built oracle LIBRARIES (libpinyin.so, libzhuyin.so, headers,
 # pkg-config files, oracle-pin.txt for the bdb, kc and tkrzw cells) in the
-# pinned debian:testing image and publishes them to GHCR as
+# Debian trixie pin-reference image and publishes them to GHCR as
 #
 #   ghcr.io/shenghaoc/oxpinyin-oracle:<tag>
 #
 # (<tag> is printed by tools/oracle/image-tag.sh: the libpinyin commit, the
-# base image digest, the apt snapshot and a hash of the recipe, so it changes
-# whenever the library hashes can; an existing tag is never overwritten).
+# base image codename and a hash of the recipe and oracle-pin.txt, so it
+# changes whenever the library hashes or their record can; an existing tag is
+# never overwritten).
 # Native linux/amd64 and linux/arm64 jobs build separately. The amd64 job
 # keeps its historical <tag> and <tag>-deps tags; the arm64 job publishes the
 # sibling <tag>-arm64 and <tag>-deps-arm64 tags. The library hashes are in each
@@ -32,6 +33,9 @@ on:
       - tools/oracle/build-oracle.sh
       - tools/oracle/Dockerfile.oracle
       - tools/oracle/oracle-pin.txt
+      - tools/oracle/version-manifest.json
+      - tools/oracle/versions.py
+      - tools/tkrzw/distro-probe.sh
       - tools/oracle/verify-oracle-image.sh
       - tools/oracle/image-tag.sh
       - tools/oracle/pin.sh
@@ -49,6 +53,9 @@ on:
       - tools/oracle/build-oracle.sh
       - tools/oracle/Dockerfile.oracle
       - tools/oracle/oracle-pin.txt
+      - tools/oracle/version-manifest.json
+      - tools/oracle/versions.py
+      - tools/tkrzw/distro-probe.sh
       - tools/oracle/verify-oracle-image.sh
       - tools/oracle/image-tag.sh
       - tools/oracle/pin.sh
@@ -88,7 +95,7 @@ jobs:
             oracle=true
           else
             changed=$(git diff --name-only "$BASE" HEAD)
-            if grep -E '^(tools/oracle/(build-oracle.sh|check-reproducible.sh|Dockerfile.oracle|oracle-pin.txt|pin.sh|verify-oracle-image.sh|image-tag.sh)|.github/workflows/oracle-image.yml)$' <<< "$changed" >/dev/null; then
+            if grep -E '^(tools/oracle/(build-oracle.sh|check-reproducible.sh|Dockerfile.oracle|oracle-pin.txt|pin.sh|verify-oracle-image.sh|image-tag.sh|version-manifest.json|versions.py)|tools/tkrzw/distro-probe.sh|.github/workflows/oracle-image.yml)$' <<< "$changed" >/dev/null; then
               oracle=true
             fi
           fi
@@ -136,7 +143,7 @@ jobs:
         if: needs.changes.outputs.oracle == 'true'
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
-          context: tools/oracle
+          context: .
           file: tools/oracle/Dockerfile.oracle
           platforms: linux/amd64
           load: true
@@ -159,11 +166,11 @@ jobs:
 
       # Reuse the exact pinned environment needed for local --regen-data.
       # No model inputs enter this stage or the published artifact.
-      - name: Build the pinned oracle build environment
+      - name: Build the recorded oracle build environment
         id: deps
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
-          context: tools/oracle
+          context: .
           file: tools/oracle/Dockerfile.oracle
           target: deps
           platforms: linux/amd64
@@ -171,7 +178,7 @@ jobs:
           provenance: false
           tags: oxpinyin-oracle-deps:candidate
 
-      - name: Verify deps is exactly the pinned build stage
+      - name: Verify deps is exactly the recorded build stage
         env:
           BUILT_STAGE_ID: ${{ steps.deps.outputs.imageid }}
         run: |
@@ -179,13 +186,22 @@ jobs:
           # Publish only the image produced by the explicit file/target above.
           test "$(docker image inspect --format '{{.Id}}' oxpinyin-oracle-deps:candidate)" = "$BUILT_STAGE_ID"
           base=$(sed -n 's/^base_image=//p' tools/oracle/oracle-pin.txt)
-          snapshot=$(sed -n 's/^apt_snapshot=//p' tools/oracle/oracle-pin.txt)
+          test "$base" = debian:trixie
           grep -Fq "$base AS deps" tools/oracle/Dockerfile.oracle
-          grep -Fq "/archive/debian/$snapshot " tools/oracle/Dockerfile.oracle
-          # The pinned deps stage contains no COPY/ADD and has no secret-bearing ENV.
-          sed '/^FROM deps AS build/,$d' tools/oracle/Dockerfile.oracle | \
-            grep -q '^FROM .*debian:testing@sha256:'
-          ! sed '/^FROM deps AS build/,$d' tools/oracle/Dockerfile.oracle | grep -qE '^(COPY|ADD|ENV) '
+          # The deps stage is the trixie pin-reference environment. It may
+          # COPY only the version-check inputs and has no secret-bearing ENV.
+          stage=$(sed '/^FROM deps AS build/,$d' tools/oracle/Dockerfile.oracle)
+          grep -q '^FROM .*debian:trixie' <<< "$stage"
+          if grep -qE '^(ADD|ENV) ' <<< "$stage"; then
+            echo 'unexpected ADD or ENV in the deps stage' >&2
+            exit 1
+          fi
+          bad=$(grep -E '^COPY ' <<< "$stage" | \
+            grep -vE '^COPY tools/(oracle/(version-manifest.json|versions.py)|tkrzw/distro-probe.sh) ' || true)
+          if [[ -n $bad ]]; then
+            printf 'unexpected COPY in the deps stage: %s\n' "$bad" >&2
+            exit 1
+          fi
           docker run --rm oxpinyin-oracle-deps:candidate sh -ec '
             test ! -e /opt/pinyin-oracle
             test ! -e /root/.docker/config.json
@@ -295,7 +311,7 @@ jobs:
       - name: Build the arm64 oracle image
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
-          context: tools/oracle
+          context: .
           file: tools/oracle/Dockerfile.oracle
           platforms: linux/arm64
           build-args: ORACLE_PLATFORM=linux/arm64
@@ -307,11 +323,11 @@ jobs:
       - name: Verify the arm64 library hashes and the absence of model data
         run: tools/oracle/verify-oracle-image.sh --engine docker --platform linux/arm64 oxpinyin-oracle:candidate-arm64
 
-      - name: Build the pinned arm64 oracle build environment
+      - name: Build the recorded arm64 oracle build environment
         id: deps
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
-          context: tools/oracle
+          context: .
           file: tools/oracle/Dockerfile.oracle
           target: deps
           platforms: linux/arm64
@@ -320,19 +336,29 @@ jobs:
           provenance: false
           tags: oxpinyin-oracle-deps:candidate-arm64
 
-      - name: Verify the arm64 deps stage is exactly the pinned build stage
+      - name: Verify the arm64 deps stage is exactly the recorded build stage
         env:
           BUILT_STAGE_ID: ${{ steps.deps.outputs.imageid }}
         run: |
           set -euo pipefail
           test "$(docker image inspect --format '{{.Id}}' oxpinyin-oracle-deps:candidate-arm64)" = "$BUILT_STAGE_ID"
           base=$(sed -n 's/^base_image=//p' tools/oracle/oracle-pin.txt)
-          snapshot=$(sed -n 's/^apt_snapshot=//p' tools/oracle/oracle-pin.txt)
+          test "$base" = debian:trixie
           grep -Fq "$base AS deps" tools/oracle/Dockerfile.oracle
-          grep -Fq "/archive/debian/$snapshot " tools/oracle/Dockerfile.oracle
-          sed '/^FROM deps AS build/,$d' tools/oracle/Dockerfile.oracle | \
-            grep -q '^FROM .*debian:testing@sha256:'
-          ! sed '/^FROM deps AS build/,$d' tools/oracle/Dockerfile.oracle | grep -qE '^(COPY|ADD|ENV) '
+          # The deps stage is the trixie pin-reference environment. It may
+          # COPY only the version-check inputs and has no secret-bearing ENV.
+          stage=$(sed '/^FROM deps AS build/,$d' tools/oracle/Dockerfile.oracle)
+          grep -q '^FROM .*debian:trixie' <<< "$stage"
+          if grep -qE '^(ADD|ENV) ' <<< "$stage"; then
+            echo 'unexpected ADD or ENV in the deps stage' >&2
+            exit 1
+          fi
+          bad=$(grep -E '^COPY ' <<< "$stage" | \
+            grep -vE '^COPY tools/(oracle/(version-manifest.json|versions.py)|tkrzw/distro-probe.sh) ' || true)
+          if [[ -n $bad ]]; then
+            printf 'unexpected COPY in the deps stage: %s\n' "$bad" >&2
+            exit 1
+          fi
           docker run --rm oxpinyin-oracle-deps:candidate-arm64 sh -ec '
             test ! -e /opt/pinyin-oracle
             test ! -e /root/.docker/config.json

@@ -25,18 +25,22 @@
 # Multi-arch OCI index (amd64, arm64, …): resolves to the build host's
 # native variant. Do not pin --platform here — it would override any
 # CLI platform choice and pin every host to one arch.
-FROM debian:testing@sha256:dab11cdb0a9dcf4bbd68f671635b35f1f726b452b92396875b69bb2c7daa42a9
+#
+# Rolling Debian testing from the default mirrors, deliberately unpinned
+# (no digest, no snapshot), like store-backends.yml. The pin and the subject
+# are built and measured in this one image. The versions it used are printed
+# at build time; there is no range check because testing rolls.
+FROM debian:testing
 
-RUN rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list \
-    && echo 'deb http://snapshot.debian.org/archive/debian/20260831T000000Z testing main' \
-    > /etc/apt/sources.list
+COPY tools/oracle/version-manifest.json /usr/local/share/oxpinyin/version-manifest.json
+COPY tools/oracle/versions.py /usr/local/bin/versions.py
 
 # libdb-dev (→ libdb5.3-dev): Berkeley DB is the workspace default since
 # 2026-09-20 and the parity oracle's default cell since 2026-09-27, so a
 # default-feature build in this image (tools/bisection/run-perf-baseline.sh
 # stages oxpinyin that way) needs the system libdb. Cell D stays Kyoto
 # Cabinet: its commands name --features kyotocabinet explicitly.
-RUN apt-get -o Acquire::Check-Valid-Until=false update \
+RUN apt-get update \
     && apt-get install -y --no-install-recommends \
     build-essential \
     autoconf automake autopoint libtool \
@@ -56,7 +60,9 @@ RUN apt-get -o Acquire::Check-Valid-Until=false update \
     libssl-dev \
     libibus-1.0-dev \
     util-linux \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && python3 /usr/local/bin/versions.py \
+       --print --manifest /usr/local/share/oxpinyin/version-manifest.json
 
 # rustup-init is per-arch: take the build host's own binary and verify it
 # against the pinned checksum for that arch

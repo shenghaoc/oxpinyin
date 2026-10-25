@@ -130,7 +130,7 @@ The library build is made reproducible: SOURCE_DATE_EPOCH is the pin's commit
 time, the source path is remapped (-ffile-prefix-map, -fdebug-prefix-map) to a
 fixed name, and the ELF build ID is omitted. The libraries then hash the same
 wherever the work directory is, provided the toolchain and --prefix are the
-same (tools/oracle/Dockerfile.oracle pins the toolchain; tools/oracle/
+same (tools/oracle/Dockerfile.oracle fixes the toolchain; tools/oracle/
 check-reproducible.sh proves it).
 The final stdout line is the absolute path to the built libpinyin shared object.
 EOF
