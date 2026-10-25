@@ -9,7 +9,7 @@
 //! `char **`-out sentence writer — is stamped from these macros instead of
 //! being written out by hand twice.
 //!
-//! ## Why a macro crate, and not a shared library of functions
+//! ## Why the unsafe marshalling is macros, not functions
 //!
 //! Every helper stamped here is itself an `unsafe` edge (a raw-pointer
 //! deref, `Box::from_raw`/`into_raw`, a `*out = ..` write). The
@@ -22,7 +22,11 @@
 //! allowlisted capi crate, carrying its `// SAFETY:` comment, and this
 //! crate stays unsafe-free. This is the same boundary the per-facade
 //! `ffi.rs` files document: the allocator edge is not shared, and neither
-//! is any compiled `unsafe` — only the *shape* of the marshalling is.
+//! is any compiled `unsafe` — only the *shape* of the unsafe marshalling.
+//!
+//! The [`phrase_text`] module is the exception that proves the boundary: it
+//! is safe, compiled here, and the one place a [`oxpinyin_core::PhraseText`]
+//! becomes the pin's C-facing bytes.
 //!
 //! No exported C symbol is generated here: the `#[unsafe(no_mangle)]`
 //! entry points keep their hand-written bodies in each crate, so the
@@ -158,6 +162,55 @@ macro_rules! opaque_handle_casts {
         /// Returns a lookup-candidate handle pointer to a backing candidate.
         $vis const fn candidate_ptr(cand: &$cand_backing) -> *mut $cand_marker {
             (cand as *const $cand_backing as *mut $cand_backing).cast()
+        }
+    };
+}
+
+pub mod phrase_text;
+
+/// Stamps a facade's byte-oriented `write_owned_sentence_bytes` helper: the
+/// `char **`-out sentence writer for UTF-8 and the pin's historical encoding
+/// of non-scalar phrase words. The facade passes its `malloc_cstr_with`
+/// allocator, which rejects interior NUL bytes.
+///
+/// # Example
+///
+/// ```ignore
+/// oxpinyin_capi_marshal::write_owned_sentence_bytes!(crate::ffi::malloc_cstr_with);
+/// ```
+#[macro_export]
+macro_rules! write_owned_sentence_bytes {
+    ($malloc_cstr_with:path) => {
+        /// Writes `text` through the caller-owned out-param: `false` on an
+        /// empty text, interior NUL or allocation failure, with the out-param
+        /// nulled on every failure path.
+        fn write_owned_sentence_bytes(
+            text: &[u8],
+            sentence: *mut *mut ::std::os::raw::c_char,
+        ) -> bool {
+            if text.is_empty() {
+                if !sentence.is_null() {
+                    // SAFETY: Caller null-checks the out-param.
+                    unsafe {
+                        *sentence = ::std::ptr::null_mut();
+                    }
+                }
+                return false;
+            }
+            if !sentence.is_null() {
+                let owned = $malloc_cstr_with(text.len(), |out| {
+                    out.copy_from_slice(text);
+                    text.len()
+                });
+                // SAFETY: Null-checked above.
+                unsafe {
+                    *sentence = owned;
+                }
+                if owned.is_null() {
+                    return false;
+                }
+            }
+            true
         }
     };
 }

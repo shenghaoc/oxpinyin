@@ -624,6 +624,9 @@ dependencies = [
 [[package]]
 name = "oxpinyin-capi-marshal"
 version = "0.1.0"
+dependencies = [
+ "oxpinyin-core",
+]
 
 [[package]]
 name = "oxpinyin-chewing"
