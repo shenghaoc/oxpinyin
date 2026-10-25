@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from tools.dev import cli, host, registry, slot
+from tools.dev import cli, host, registry, slot, test_support
 
 IMPLEMENTATION = 'legacy:tools/bisection/run-bisect.sh'
 COMMAND = ['bash', '{root}/tools/bisection/run-bisect.sh']
@@ -82,7 +82,7 @@ class CliTests(unittest.TestCase):
                     slot, 'run_command', return_value=status) as run:
                 command = ['child', '--flag', '', '/path with spaces', 'literal;$value']
                 self.assertEqual(cli.main(['slot', 'run', '--', *command]), status)
-                run.assert_called_once_with(command)
+                test_support.assert_calls(self, run, [mock.call(command)])
 
     def test_test_commands_forward_raw_arguments_before_argparse(self):
         selections = (['-p', 'oxpinyin-core'], ['--workspace'],
@@ -93,7 +93,7 @@ class CliTests(unittest.TestCase):
                         mock.patch.object(cli.test_runner, target, return_value=7) as run:
                     self.assertEqual(cli.main([command, *selection]), 7)
                     run.assert_called_once_with(selection)
-        self.launch.assert_not_called()
+        test_support.assert_not_called(self, self.launch)
 
     def test_tools_dispatches_to_shared_harness_runner(self):
         with mock.patch.object(cli.test_runner, 'run_tools', return_value=1) as run:
@@ -105,7 +105,7 @@ class CliTests(unittest.TestCase):
         with mock.patch.object(cli.coverage, 'run', return_value=77) as run:
             self.assertEqual(cli.main(['coverage', *args]), 77)
             run.assert_called_once_with(args)
-        self.launch.assert_not_called()
+        test_support.assert_not_called(self, self.launch)
 
     def test_test_options_reach_the_slot_without_a_separator(self):
         for selection in (['-p', 'oxpinyin-core'], ['--workspace'],
@@ -114,7 +114,7 @@ class CliTests(unittest.TestCase):
                     mock.patch.object(slot, 'run_command', return_value=0) as run:
                 self.assertEqual(cli.main(['test', *selection]), 0)
                 self.assertEqual(run.call_args.args[0][-len(selection):], selection)
-        self.launch.assert_not_called()
+        test_support.assert_not_called(self, self.launch)
 
     def test_test_command_help_keeps_the_parser_entries(self):
         for command in ('test', 'test-doc'):
@@ -129,14 +129,14 @@ class CliTests(unittest.TestCase):
                     self.assertIn('usage:', output.getvalue())
                     run.assert_not_called()
                     run_doc.assert_not_called()
-        self.launch.assert_not_called()
+        test_support.assert_not_called(self, self.launch)
 
     def test_main_reads_raw_arguments_from_sys_argv(self):
         with mock.patch.object(sys, 'argv', ['tools.dev', 'test', '--workspace']), \
                 mock.patch.object(cli.test_runner, 'run', return_value=7) as run:
             self.assertEqual(cli.main(), 7)
             run.assert_called_once_with(['--workspace'])
-        self.launch.assert_not_called()
+        test_support.assert_not_called(self, self.launch)
 
     def test_registry_commands_reject_empty_unknown_and_unmatched_selections(self):
         selections = ([], ['--runners', ''], ['--runners', ','],
@@ -153,7 +153,7 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(output.getvalue(), '')
                 self.assertTrue(error.getvalue().startswith('plan: '))
                 self.assertNotIn('Traceback', error.getvalue())
-        self.launch.assert_not_called()
+        test_support.assert_not_called(self, self.launch)
 
     def test_registry_listing_filters_static_issues_kind_and_heavy_state(self):
         for selector in ('row:33', 'Row 33'):
@@ -172,7 +172,7 @@ class CliTests(unittest.TestCase):
                          'instrument:tools/bisection/run-perf-baseline.sh\n')
         self.assertNotIn('registered', output.getvalue())
         self.assertNotIn('measurement recipe', output.getvalue())
-        self.launch.assert_not_called()
+        test_support.assert_not_called(self, self.launch)
 
     def test_plan_describes_templates_without_resolving_or_executing_them(self):
         with contextlib.redirect_stdout(io.StringIO()) as output:
@@ -184,7 +184,7 @@ class CliTests(unittest.TestCase):
         self.assertIn('{env[OXPINYIN_METADATA_PIN_ROOT]}', plan)
         self.assertIn('command template:', plan)
         self.assertIn('\n  implementation: legacy:tools/packaging/check-pc-metadata.sh\n', plan)
-        self.launch.assert_not_called()
+        test_support.assert_not_called(self, self.launch)
 
     def test_plan_prints_the_implementation_with_each_row(self):
         with contextlib.redirect_stdout(io.StringIO()) as output:
@@ -192,7 +192,7 @@ class CliTests(unittest.TestCase):
         lines = [line for line in output.getvalue().splitlines() if line.startswith('  implementation: ')]
         self.assertEqual(lines, ['  implementation: legacy:tools/bisection/run-bisect.sh',
                                  '  implementation: instrument:tools/bisection/run-perf-baseline.sh'])
-        self.launch.assert_not_called()
+        test_support.assert_not_called(self, self.launch)
 
     def test_registry_commands_report_a_missing_implementation_without_tracebacks(self):
         rows = [dict(name='fixture', command=['unused'], cells=['bdb'])]
@@ -205,7 +205,7 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(output.getvalue(), '')
                 self.assertEqual(error.getvalue(),
                                  f"{command}: registry row 'fixture' has no implementation\n")
-        self.launch.assert_not_called()
+        test_support.assert_not_called(self, self.launch)
 
     def test_registry_read_failure_has_a_nonzero_diagnostic(self):
         for command, selection in (('list', []), ('plan', ['--runners', 'bisect'])):
@@ -214,7 +214,7 @@ class CliTests(unittest.TestCase):
                     contextlib.redirect_stderr(io.StringIO()) as error:
                 self.assertEqual(cli.main([command, *selection]), 2)
                 self.assertEqual(error.getvalue(), f'{command}: bad registry\n')
-        self.launch.assert_not_called()
+        test_support.assert_not_called(self, self.launch)
 
     def test_registry_load_rejects_numeric_issue_labels(self):
         for issues in ([541], ['541', 542], 541):
@@ -224,7 +224,7 @@ class CliTests(unittest.TestCase):
                 with self.assertRaisesRegex(registry.RegistryError,
                                             "registry row 'fixture' issues must be a list of strings"):
                     registry.load()
-        self.launch.assert_not_called()
+        test_support.assert_not_called(self, self.launch)
 
     def test_registry_commands_report_numeric_issue_labels_without_tracebacks(self):
         rows = [dict(name='fixture', command=COMMAND, cells=['bdb'], implementation=IMPLEMENTATION, issues=[541])]
@@ -237,7 +237,7 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(output.getvalue(), '')
                 self.assertEqual(error.getvalue(),
                                  f"{command}: registry row 'fixture' issues must be a list of strings\n")
-        self.launch.assert_not_called()
+        test_support.assert_not_called(self, self.launch)
 
     def test_registry_numeric_string_issue_labels_remain_selectable(self):
         rows = [dict(name='fixture', command=COMMAND, cells=['bdb'], implementation=IMPLEMENTATION, issues=['541', 'Row 33'])]
@@ -247,7 +247,7 @@ class CliTests(unittest.TestCase):
         for issue in ('541', '#541', '  #541  ', 'row:33', 'Row 33'):
             with self.subTest(issue=issue):
                 self.assertEqual(registry.select(loaded, issues=[issue]), rows)
-        self.launch.assert_not_called()
+        test_support.assert_not_called(self, self.launch)
 
 
 if __name__ == '__main__':

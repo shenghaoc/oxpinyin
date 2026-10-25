@@ -15,6 +15,12 @@ from unittest.mock import MagicMock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import teardown as td
 
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from tools.dev import test_support
+
 
 class PureTests(unittest.TestCase):
     @unittest.skipUnless(sys.platform.startswith('linux'), 'Linux measurement controller')
@@ -369,7 +375,9 @@ class PureTests(unittest.TestCase):
                     mode, anchor, path, kind, scratch = call.args
                     self.assertEqual((mode, anchor, scratch), ('profile-rows', Path('/subject.so'), root.parent))
                     self.assertEqual(kind, 'hash' if path.name == 'user_bigram.db' else 'tree')
-                    self.assertEqual(call.kwargs, dict(extra_env=dict(CONTRACT_DIFF_CELL=cell), timeout=120))
+                    self.assertEqual(sorted(call.kwargs), ['extra_env', 'timeout'])
+                    self.assertEqual(call.kwargs['timeout'], 120)
+                    test_support.assert_same_environment(self, call.kwargs['extra_env'], dict(CONTRACT_DIFF_CELL=cell))
                 for name in names:
                     (root / name).write_bytes(b'different layout and metadata')
                 self.assertEqual(first, td.profile_contents(driver, root, library=Path('/subject.so'), cell=cell))
@@ -384,7 +392,7 @@ class PureTests(unittest.TestCase):
                 driver = self.peer_driver([])
                 with self.assertRaisesRegex(ValueError, 'runtime certification'):
                     td.profile_contents(driver, root, cell=cell)
-                driver.run_worker.assert_not_called()
+                test_support.assert_not_called(self, driver.run_worker)
                 # Empty database is distinct from an absent database.
                 result = td.profile_contents(driver, root, library=Path('/subject.so'), cell=cell)
                 self.assertIn('user_bigram.db', result)
@@ -1071,7 +1079,7 @@ class NativeTests(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, 'file stays resident: private-stub'):
                         campaign.run('pinyin', library, self.profile)
                     eviction.assert_called_once_with(paths)
-                    child.assert_not_called()
+                    test_support.assert_not_called(self, child)
                 self.assertFalse(list(self.root.glob('sample-*')))
 
     def test_cold_eviction_precedes_successful_stub_launch_and_warm_does_not_evict(self):
@@ -1233,7 +1241,7 @@ class NativeTests(unittest.TestCase):
                         campaign.run(facade, self.library, self.profile)
                     self.assertEqual(guard.call_args.args[1:4], ('teardown.py', facade, self.library))
                     evict.assert_not_called()
-                    child.assert_not_called()
+                    test_support.assert_not_called(self, child)
                 self.assertFalse(list(self.root.glob('sample-*')))
 
     def test_profile_population_certifies_pin_before_launch(self):
@@ -1243,7 +1251,7 @@ class NativeTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'runtime refused'):
                 td.populate_user(campaign, self.library, self.profile, self.root / 'rows')
             self.assertEqual(guard.call_args.args[1:4], ('teardown.py/populate', 'pin', self.library))
-            child.assert_not_called()
+            test_support.assert_not_called(self, child)
 
     def test_missing_export_is_invalid_and_cleans_private_sample(self):
         campaign = self.campaign()

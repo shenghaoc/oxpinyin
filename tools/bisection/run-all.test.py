@@ -13,6 +13,12 @@ import time
 import unittest
 from unittest import mock
 
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from tools.dev import test_support
+
 run_all = runpy.run_path(str(Path(__file__).with_name('run-all.py')))
 
 
@@ -40,7 +46,7 @@ class RunnerSelectionTests(unittest.TestCase):
                 contextlib.redirect_stderr(error), self.assertRaises(SystemExit) as caught:
             run_all['main']()
         self.assertEqual(caught.exception.code, 2)
-        schedule.assert_not_called()
+        test_support.assert_not_called(self, schedule)
         return error.getvalue()
 
     def test_absent_runners_lists_the_default_registry(self):
@@ -88,7 +94,7 @@ class RunnerSelectionTests(unittest.TestCase):
                         run_all['main']()
                     self.assertEqual(caught.exception.code, 2)
                     self.assertIn('--runners must not contain an empty value', error.getvalue())
-                    schedule.assert_not_called()
+                    test_support.assert_not_called(self, schedule)
 
     def test_empty_or_unknown_cells_exit_two_before_scheduling(self):
         for value in ('', 'bdb,', 'bdb,native', 'unknown'):

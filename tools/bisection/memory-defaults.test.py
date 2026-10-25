@@ -16,6 +16,12 @@ import subprocess
 import sys
 import unittest
 
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from tools.dev import test_support
+
 RUN_ALL = Path(__file__).with_name('run-all.py')
 run_all = runpy.run_path(str(RUN_ALL))
 M = run_all
@@ -286,7 +292,7 @@ class AdmissionTests(unittest.TestCase):
                 started = time.monotonic()
                 admission = self.admission(dict(os.environ, **settings))
                 self.assertFalse(admission.try_acquire())
-                self.assertIsNone(admission.env)
+                self.assertTrue(admission.env is None, 'the admission kept an environment')
                 with M['HeavySlot']('probe', out=self.out) as slot:
                     self.assertLess(slot.waited, 0.01)
                 calls = []
@@ -529,7 +535,7 @@ class AdmissionTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(len(seen), 3)
         self.assertEqual(seen, [seen[0]] * 3)
-        self.assertNotIn('CARGO_BUILD_JOBS', os.environ)
+        self.assertIsNone(os.environ.get('CARGO_BUILD_JOBS'))
 
     def test_blocked_build_and_runner_report_fail_rows(self):
         for build in (False, True):
@@ -539,7 +545,7 @@ class AdmissionTests(unittest.TestCase):
                 self.assertEqual(rc, 1)
                 self.assertIn('tiny | bdb | FAIL', output)
                 self.assertIn(f'resource-blocked: {600 if build else 1024} MiB needed, 0 MiB available', output)
-                execute.assert_not_called()
+                test_support.assert_not_called(self, execute)
 
     def failed_build_reason(self):
         """The reason column of the one FAIL row when the cell build's admission refuses."""
@@ -548,7 +554,7 @@ class AdmissionTests(unittest.TestCase):
         rows = [line.split(' | ') for line in output.splitlines() if ' | ' in line][2:]
         self.assertEqual(rc, 1)
         self.assertEqual({(fields[0], fields[1], fields[2]) for fields in rows}, {('tiny', 'bdb', 'FAIL')})
-        execute.assert_not_called()
+        test_support.assert_not_called(self, execute)
         return rows[0][-1]
 
     def test_a_cell_build_refused_on_memory_keeps_its_resource_blocked_reason(self):
@@ -582,7 +588,7 @@ class AdmissionTests(unittest.TestCase):
                     self.assertEqual(rc, 1)
                     self.assertIn('tiny | bdb | FAIL', output)
                     self.assertIn('resource-blocked: available memory unknown', output)
-                    execute.assert_not_called()
+                    test_support.assert_not_called(self, execute)
 
 
 class ReviewAdmissionTests(unittest.TestCase):
@@ -599,7 +605,7 @@ class ReviewAdmissionTests(unittest.TestCase):
                 try:
                     self.assertEqual(admission.estimate, M['RUNNER_PEAK_MIB'])
                     self.assertFalse(admission.try_acquire())
-                    self.assertIsNone(admission.env)
+                    self.assertTrue(admission.env is None, 'the admission kept an environment')
                     with M['HeavySlot']('probe', out=out):
                         pass
                 finally:
@@ -684,7 +690,7 @@ finally:
                 admitted = self.admission(dict(os.environ, CARGO_BUILD_JOBS='3',
                                                OXPINYIN_RESOURCE_WAIT_SECONDS='5'))
                 self.assertFalse(admitted.try_acquire())
-                self.assertIsNone(admitted.env)
+                self.assertTrue(admitted.env is None, 'the admission kept an environment')
                 # The record names the surviving child: its estimate less its use.
                 note = re.search(r'slot [0-9]+ pid ([0-9]+): estimate 1800 MiB, '
                                  r'process tree use ([0-9]+) MiB, charge ([0-9]+) MiB', self.out.getvalue())

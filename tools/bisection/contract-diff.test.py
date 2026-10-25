@@ -18,6 +18,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from tools.dev import test_support
+
 spec = importlib.util.spec_from_file_location('contract_diff', Path(__file__).with_name('contract-diff.py'))
 driver = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(driver)
@@ -292,7 +298,7 @@ class TkrzwHandoffTests(unittest.TestCase):
         for donor, receiver in ((0, 2), (1, 3)):
             self.assertEqual(environments[donor]['CONTRACT_1114_PROFILE'],
                              environments[receiver]['CONTRACT_1114_PROFILE'])
-            self.assertNotIn('CONTRACT_1114_RELOAD', environments[donor])
+            self.assertIsNone(environments[donor].get('CONTRACT_1114_RELOAD'))
             self.assertEqual(environments[receiver]['CONTRACT_1114_RELOAD'], '1')
         self.assertNotEqual(environments[0]['CONTRACT_1114_PROFILE'], environments[1]['CONTRACT_1114_PROFILE'])
         self.assertEqual(results[0]['result'], results[1]['result'])
@@ -1092,7 +1098,7 @@ class WorkerEntryTests(DriverFixtureCase):
         self.assertEqual(Path(command[1]).name, 'contract-worker.py')
         self.assertTrue(Path(command[1]).is_file())
         self.assertEqual(self.runtime_guard.call_args.args[3], '/so')
-        self.assertEqual(self.runtime_guard.call_args.kwargs['env'], run.call_args.kwargs['env'])
+        test_support.assert_same_environment(self, self.runtime_guard.call_args.kwargs['env'], run.call_args.kwargs['env'])
 
     def test_cached_entry_loads_the_same_registry(self):
         import importlib.util
@@ -1230,7 +1236,7 @@ class TimingTests(DriverFixtureCase):
             value = contract['run_worker']('pinyin', '/so', '/data', 'case', scratch)
         self.assertEqual(value['result'], {'ret': True})
         self.assertNotIn('timing', value)
-        self.assertIn('CONTRACT_DIFF_SPAWNED', run.call_args.kwargs['env'])
+        self.assertIsNotNone(run.call_args.kwargs['env'].get('CONTRACT_DIFF_SPAWNED'))
         timing = contract['TIMINGS'][before]
         self.assertEqual((timing['case'], timing['startup'], timing['execute']), ('case', 0.1, 0.4))
         self.assertIn('wall', timing)
@@ -1268,7 +1274,7 @@ class DeadlineTests(DriverFixtureCase):
              patch.object(driver, 'run_worker', side_effect=[observation(result={'ret': True}), observation(result={'ret': True})]) as run:
             pin, subject = driver.run_case(spec, Path('/pin'), Path('/subject'), Path('/data'), 'case', '/tmp', 20)
         self.assertEqual([call.kwargs['timeout'] for call in run.call_args_list], [19, 13])
-        self.assertEqual(run.call_args.kwargs['extra_env'], {'G_DEBUG': 'fatal-criticals'})
+        test_support.assert_same_environment(self, run.call_args.kwargs['extra_env'], {'G_DEBUG': 'fatal-criticals'})
         self.assertEqual(pin, subject)
 
     def test_pin_timeout_does_not_launch_subject(self):
@@ -1977,7 +1983,7 @@ class ProcessObservationTests(DriverFixtureCase):
                 patch.object(subprocess, 'Popen') as spawn, \
                 self.assertRaisesRegex(AssertionError, r'no readable /proc/\*/stat records'):
             CancellationTests().cancel(signal.SIGTERM, through_runner=True)
-        spawn.assert_not_called()
+        test_support.assert_not_called(self, spawn)
 
 
 class PerCallTests(DriverFixtureCase):
