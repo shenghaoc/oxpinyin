@@ -434,6 +434,85 @@ class HashPathFixtureTests(DriverFixtureCase):
             self.assertTrue(driver.CASES[name]['stderr'])
 
 
+class Save929HandoffTests(unittest.TestCase):
+    def run_handoff(self, replies):
+        with tempfile.TemporaryDirectory() as scratch, \
+                patch.object(driver, 'run_worker', side_effect=replies) as worker:
+            results = driver.run_case(dict(mode='pinyin', fatal=False), Path('/pin'), Path('/pr'),
+                                      Path('/data'), 'save-929-logical-cross-open-pinyin', scratch, 20)
+        return results, worker.call_args_list
+
+    def test_both_facades_open_the_exact_other_profile(self):
+        results, calls = self.run_handoff([
+            observation(result={'rows': {'db': [['00', '']]}, 'tokens': [[1]]}) for _ in range(4)])
+        self.assertEqual([c.args[1] for c in calls], list(map(Path, ('/pin', '/pr', '/pr', '/pin'))))
+        environments = [c.kwargs['extra_env'] for c in calls]
+        for donor, receiver in ((0, 2), (1, 3)):
+            self.assertEqual(environments[donor]['CONTRACT_929_PROFILE'],
+                             environments[receiver]['CONTRACT_929_PROFILE'])
+            self.assertEqual(environments[receiver]['CONTRACT_929_RELOAD'], '1')
+        self.assertNotEqual(environments[0]['CONTRACT_929_PROFILE'], environments[1]['CONTRACT_929_PROFILE'])
+        self.assertEqual(results[0]['result'], results[1]['result'])
+        self.assertIn('cross_reload', results[0]['result'])
+
+    def test_equal_corruption_in_both_receivers_is_rejected_against_donors(self):
+        replies = [observation(result={'rows': [['00', '01']]}) for _ in range(2)]
+        replies += [observation(result={'rows': [['00', '02']]}) for _ in range(2)]
+        results, _ = self.run_handoff(replies)
+        self.assertEqual([r['exit'] for r in results], [1, 1])
+
+    def test_receiver_failure_or_timeout_is_not_a_match(self):
+        for failure in (observation(exit=1, result=None), subprocess.TimeoutExpired('receiver', 20)):
+            replies = [observation(result={'rows': []}) for _ in range(2)]
+            replies += [failure, observation(result={'rows': []})]
+            results, _ = self.run_handoff(replies)
+            self.assertNotEqual(results[0]['exit'], 0)
+
+    def test_default_selection_replaces_byte_cases_without_hiding_logical_cases(self):
+        names, _ = driver.select_cases()
+        for mode in ('pinyin', 'zhuyin'):
+            self.assertIn('save-929-logical-cross-open-' + mode, names)
+            self.assertNotIn('save-929-physical-bytes-' + mode, driver.CASES)
+
+
+class Save929ObservationTests(DriverFixtureCase):
+    def test_physical_observation_retains_checksum_metadata_marker_and_staging(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in ('user.bin', 'user_bigram.db', 'user.conf', 'user.bin.tmp'):
+                path = root / name
+                path.write_bytes(bytes(range(128)))
+                before = driver.save_929_physical_files(root)
+                for offset in (4, 7, 48, 55, 56, 127):
+                    raw = bytearray(range(128))
+                    raw[offset] ^= 1
+                    path.write_bytes(raw)
+                    after = driver.save_929_physical_files(root)
+                    self.assertNotEqual(before[name], after[name], (name, offset))
+                    self.assertEqual(after[name]['size'], 128)
+                path.write_bytes(bytes(range(128)))
+            self.assertEqual(set(driver.save_929_physical_files(root)),
+                             {'user.bin', 'user_bigram.db', 'user.conf', 'user.bin.tmp'})
+
+    def test_nonregular_profile_entry_is_not_silently_omitted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            (Path(directory) / 'user.bin').mkdir()
+            with self.assertRaisesRegex(ValueError, 'nonregular'):
+                driver.save_929_physical_files(directory)
+
+    @unittest.skipUnless(sys.platform == 'linux', 'Linux file leases')
+    def test_marker_notification_precedes_write_and_child_is_reaped(self):
+        with tempfile.TemporaryDirectory() as directory:
+            marker = Path(directory) / 'user.conf'
+            marker.write_bytes(b'old marker')
+            self.assertEqual(driver.save_929_marker_interrupt(
+                marker, lambda: marker.write_bytes(b'new marker')), 'marker-open')
+            self.assertEqual(marker.read_bytes(), b'old marker')
+            # Unlock/close must leave the marker writable after the child died.
+            marker.write_bytes(b'next marker')
+            self.assertEqual(marker.read_bytes(), b'next marker')
+
+
 class ProfileRowsTests(DriverFixtureCase):
     def test_profile_worker_certifies_then_loads_exact_runtime_and_accepts_empty_db(self):
         events = []
