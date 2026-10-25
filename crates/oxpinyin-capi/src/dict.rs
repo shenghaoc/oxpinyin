@@ -154,9 +154,8 @@ pub extern "C" fn pinyin_token_get_phrase(
         unsafe {
             *utf8_str = rendered;
         }
-        if rendered.is_null() {
-            return false;
-        }
+        // The pin ignores the nonfatal g_ucs4_to_utf8 allocation failure
+        // (074a2219 pinyin.cpp:1643-1644, zhuyin.cpp:1112-1113).
     }
     true
 }
