@@ -651,6 +651,7 @@ The procedure-level rules used to accumulate here as incident notes;
 they now live where the procedure is documented, and this file only
 points at them:
 
+- **Independent campaign subprocesses/builds** use bounded pools under heavy admission; isolation exceptions and the audit live in `docs/plans/tooling-python.md`, "Independent campaign work".
 - **Tests that need inputs CI never has** (model20, the system-table
   export, pin-built tools, opencc) are `#[ignore = "needs …"]` and fail
   on a missing input, never skip: `docs/testing/README.md`. Do not add a

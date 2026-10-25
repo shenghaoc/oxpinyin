@@ -468,13 +468,37 @@ them too, so their `nm --demangle=rust` symbol sets are equal. On the tree of
 the 0.10.25 outputs were identical to each other and to the checked-in
 `libpinyin.order` and `libzhuyin.order`.
 
-Run one backend campaign at a time on ext4, with worktree and `TMPDIR` on the
-home disk. Verify all three cells with `tools/cloud/setup.sh --cells 'bdb kc tkrzw'`
+Run generation on ext4, with worktree and `TMPDIR` on the home disk. Verify all three cells with `tools/cloud/setup.sh --cells 'bdb kc tkrzw'`
 and source its environment file in every shell that launches a tool. Set
 `CELL=bdb`, `kc` or `tkrzw`; map `kc` to Cargo feature `kyotocabinet` below.
 Use one `$BUILD` target directory per backend, and separate `$STAGE`,
 `$TEARDOWN` and `$WORK` directories. The #1076 campaign uses cargo-c 0.10.24
 and GNU ld 2.47.
+
+Generation collects executed-function sets, not elapsed-time rankings. The
+single `--cpu` pin was introduced in `b497482c` (#1002), together with the
+measurement helper; its PR discussion and subsequent generator changes record
+no CPU-feature or hybrid-core requirement. `d5b957dc` introduced the
+one-backend-at-a-time instruction with the #1076 measurement campaign.
+Neither provides a generation-specific reason for serialization. The generator
+therefore leases distinct CPUs from `sched_getaffinity(0)` to its admitted
+workers. `--cpu` remains an optional single-CPU restriction; a restricted
+process affinity also constrains the pool if a host needs a homogeneous CPU
+subset. Keep builds, profiler version and input fixtures identical when
+checking determinism; output is not promised identical across different
+builds or CPU instruction-set configurations.
+
+Each constructor/profile/toggle and steady collection has private writable
+scratch. The shared heavy slot chooses concurrency from available memory,
+CPU affinity and cgroup CPU limits; the pool reserves the existing heavy-runner
+allowance per collection. Results are set unions followed by lexical sorting,
+independent of completion order. Three backend campaigns may be launched
+concurrently with separate directories and separate `just heavy` admissions;
+no campaign starts before admission permits it. Never launch several pools
+under a single inherited reservation: their memory estimates would not add.
+For two concurrent determinism passes within one admitted pool, use
+`--repeat-output-dir`; the workers share one aggregate budget, including on a
+host with only one heavy slot.
 
 For tkrzw, the environment must name the sound libtkrzw supplied by setup
 (normally `<cache>/tkrzw/lib/libtkrzw.so.1` on Ubuntu). Its `PKG_CONFIG_PATH`
@@ -552,15 +576,16 @@ just heavy -- uv run --no-project --managed-python --python cpython@3.15+gil \
   --staticlib "pinyin=$BUILD/x86_64-unknown-linux-gnu/release/libpinyin.a" \
   --staticlib "zhuyin=$BUILD/x86_64-unknown-linux-gnu/release/libzhuyin.a" \
   --bisect "$BISECT" --system-dir "$DATA" --system-identity "$DATA_ID" \
-  --profiles-dir "$PROFILES" --work-dir "$WORK" --cpu "$CPU" \
+  --profiles-dir "$PROFILES" --work-dir "$WORK" \
   --output-dir "tools/packaging/function-order/$CELL"
 git diff --exit-code -- \
   "tools/packaging/function-order/$CELL/libpinyin.order" \
   "tools/packaging/function-order/$CELL/libzhuyin.order"
 ```
 
-Run generation twice into separate temporary output directories and use `cmp`
-on both facade files before replacing the checked-in policies. Keep policy
+Add `--repeat-output-dir "$SECOND_OUTPUT"` to collect two independent passes
+concurrently within the same pool. Use separate temporary output directories
+and `cmp` both facade files before replacing the checked-in policies. Keep policy
 files in their own commit. Compare backend path sets before proposing a shared
 prefix; implementing one requires a separate maintainer ruling.
 
@@ -572,7 +597,10 @@ orderable Rust path is an error; fixed loader/CRT paths are counted and
 excluded. C++ functions in the staticlib are ordered under their mangled
 names (see "Final-link mechanism and fallback").
 
-Repeat the campaign with `tools/measure-function-order.py`, which drives the
+Measurement remains isolated: run one backend measurement campaign at a time,
+without overlapping generation, builds or other isolated measurements. This
+includes teardown residency, whose shared page-cache and memory observations
+would be disturbed by concurrent work. `tools/measure-function-order.py` drives the
 same worker for native timing, parent-observed `smaps` at the load and
 lifecycle checkpoints, Callgrind instruction positions, and the steady
 workload. The memory checkpoints are `M0` (after load) and `M1` (after the
