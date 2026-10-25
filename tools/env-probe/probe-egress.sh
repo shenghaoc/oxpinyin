@@ -21,6 +21,9 @@
 # A CONNECT denial hides its body from curl, so where an agent proxy
 # exposes a status endpoint this also prints the reason it recorded.
 
+# shellcheck source=../lib/bash-floor.sh
+. "${0%/*}/../lib/bash-floor.sh"
+
 set -uo pipefail
 
 # url<TAB>label<TAB>why-it-is-needed

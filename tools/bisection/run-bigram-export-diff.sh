@@ -31,6 +31,10 @@
 # usage: run-bigram-export-diff.sh <libpinyin.so> <libpinyin_capi.so> <data-dir>
 #
 # Exit codes: 0 = pass; 1 = build/run/provisioning failure; 2 = divergence.
+
+# shellcheck source=../lib/bash-floor.sh
+. "${0%/*}/../lib/bash-floor.sh"
+
 set -euo pipefail
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 # shellcheck source=tools/bisection/oracle-cell.sh

@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+
+# shellcheck source=../lib/bash-floor.sh
+. "${0%/*}/../lib/bash-floor.sh"
+
 set -euo pipefail
 
 # Check a built oracle image against tools/oracle/oracle-pin.txt (issue #818).

@@ -17,6 +17,9 @@
 #
 # Usage: tools/perf-gate/snapshot.sh --out snapshot.json [--backend tkrzw]
 
+# shellcheck source=../lib/bash-floor.sh
+. "${0%/*}/../lib/bash-floor.sh"
+
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 source tools/packaging/function-order.sh

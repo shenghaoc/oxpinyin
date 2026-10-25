@@ -34,6 +34,9 @@
 #   PERF_CYCLES           keystroke cycles per process (default 8)
 #   PERF_RAM_RUNS         ram-init/ram-cycle processes per backend (default 10)
 
+# shellcheck source=../lib/bash-floor.sh
+. "${0%/*}/../lib/bash-floor.sh"
+
 set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../tkrzw" && pwd)/runtime.sh"
 HEAVY_RUNNER="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/run-all.py"

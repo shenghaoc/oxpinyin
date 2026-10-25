@@ -1,7 +1,8 @@
 name: 'bootstrap'
 description: |-
   Shared post-checkout bootstrap cluster for this repository's
-  workflows: the checkout registered as a git safe.directory (container
+  workflows: the Bash floor check (installing Homebrew Bash on macOS
+  first), the checkout registered as a git safe.directory (container
   jobs run as root over a root-owned checkout), an optional
   pinned-rustup install (channel read from rust-toolchain.toml, minimal
   profile), and an optional Swatinem/rust-cache restore/save (its post
@@ -13,7 +14,8 @@ description: |-
   exists, so a bootstrap-owned checkout died at step 1 with "Can't find
   'action.yml'" in every job. Call this right after checkout instead.
 
-  The optional steps default to off, so a bare call is a no-op.
+  The optional Rust steps default to off, so a bare call only installs
+  and checks Bash.
   Composite-action inputs are strings; the switches take 'true'/'false'.
 
 inputs:
@@ -49,6 +51,19 @@ inputs:
 runs:
   using: composite
   steps:
+    # macOS ships an older Bash. GITHUB_PATH applies to later steps, so the
+    # floor check below sees the Homebrew Bash this step selects.
+    - name: Install Homebrew Bash on macOS
+      if: runner.os == 'macOS'
+      shell: bash
+      run: |
+        brew install bash
+        printf '%s\n' "$(brew --prefix bash)/bin" >> "$GITHUB_PATH"
+
+    - name: Require the Bash floor
+      shell: bash
+      run: . tools/lib/bash-floor.sh
+
     # Container jobs run as root over a root-owned checkout, so any later
     # git invocation would die on dubious ownership (this affected
     # tracked-path probes in local tooling scripts during development).

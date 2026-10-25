@@ -27,6 +27,10 @@
 #
 # Exit codes: 0 = identical on every driver; 1 = build/run failure;
 # 2 = at least one driver's logs differ (each divergence is printed).
+
+# shellcheck source=../lib/bash-floor.sh
+. "${0%/*}/../lib/bash-floor.sh"
+
 set -euo pipefail
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 # shellcheck source=tools/bisection/oracle-cell.sh

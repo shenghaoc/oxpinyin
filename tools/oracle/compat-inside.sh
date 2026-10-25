@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 # Invoked only by compat.sh, inside the controlled image and Linux volume.
+
+# shellcheck source=../lib/bash-floor.sh
+. "${0%/*}/../lib/bash-floor.sh"
+
 set -euo pipefail
 [[ ${OXPINYIN_COMPAT_CONTAINER:-} == 1 && $(uname -s) == Linux &&
 	($(uname -m) == x86_64 || $(uname -m) == aarch64 || $(uname -m) == arm64) ]] || {

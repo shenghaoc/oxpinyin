@@ -732,7 +732,8 @@ raise SystemExit(importlib.import_module(module).main(sys.argv[sys.argv.index('-
         apple = self.directory / 'container'
         apple.symlink_to(runtime)
         fixture = self.directory / 'source'
-        paths = ('tools/oracle/compat.sh', 'tools/container/runtime.sh', 'tools/dev/compat/identity.py')
+        paths = ('tools/oracle/compat.sh', 'tools/container/runtime.sh',
+                 'tools/dev/compat/identity.py', 'tools/lib/bash-floor.sh')
         for relative in paths:
             destination = fixture / relative
             destination.parent.mkdir(parents=True, exist_ok=True)

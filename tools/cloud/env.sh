@@ -4,6 +4,7 @@
 # tkrzw_so FILE: where the platform loader, in the caller's environment,
 # resolves FILE's libtkrzw (empty if it does not). Linux uses ldd; Darwin
 # uses otool -L and the Homebrew dylib's install name.
+
 tkrzw_so() {
 	case $(uname -s) in
 	Darwin)

@@ -8,15 +8,22 @@ shows its exit status (zero means success); PowerShell uses `$LASTEXITCODE`.
 Choose your operating system below. Ordinary native work
 requires no container, oracle or model20 (upstream reference model data).
 
+Every repository shell script requires Bash 5.0 or newer on Linux and macOS.
+`just doctor` reports the `bash` that `env bash` selects and fails below 5.0.
+Linux distributions provide it; the macOS section installs Homebrew's Bash and
+checks the selection. On Windows doctor reports Bash as not applicable and
+never fails on its version: native Windows recipes use PowerShell 7.
+
 Rust's **toolchain** consists of the compiler and its tools. rustup installs
 and selects it; `rust-toolchain.toml` is the version/component authority.
 The **linker** connects compiled code into executables and native libraries.
 
 ## Linux
 
-Use Bash. Linux is one native platform target. You need Git, curl and CA
-certificates, a C/C++ compiler and linker, Make, pkg-config, libclang,
-Berkeley DB **5.3** development headers/libraries and GLib development files.
+Use Bash 5.0 or newer. Linux is one native platform target. You need Git,
+curl and CA certificates, a C/C++ compiler and linker, Make, pkg-config,
+libclang, Berkeley DB **5.3** development headers/libraries and GLib
+development files.
 A development package supplies the headers and libraries needed to
 compile against a native library. Package names depend on your system; that
 does not change the build or create another compatibility environment.
@@ -42,10 +49,12 @@ sudo dnf install gcc gcc-c++ make git curl ca-certificates pkgconf-pkg-config cl
 Repository Python uses uv and its managed CPython 3.15 series with the GIL.
 `uv.toml` sets uv's floor, 0.13.1; CI installs exactly that version.
 
-`just doctor` is the one check of every tool's minimum: uv, CPython, just,
-cargo-nextest, cargo-c, cargo-fuzz, cargo-llvm-cov and, on Linux, GNU ld, gcov
-and Valgrind. Each line names the minimum and the version found. A newer tool
-passes, an older one fails, and a missing one comes with its install command.
+`just doctor` is the one check of every tool's minimum: Bash 5.0, uv,
+CPython, just, cargo-nextest, cargo-c, cargo-fuzz, cargo-llvm-cov, and
+ShellCheck 0.11.0. ShellCheck is advisory because only the lint job needs it.
+On Linux it also checks GNU ld, gcov and Valgrind. Each line names the resolved
+executable, the minimum and the version found. A newer tool passes, an older
+required tool fails, and a missing one comes with its install command.
 Semantic versions compare as semver does: a pre-release of the minimum
 (`1.59.0-beta.1`) is older than it and build metadata (`+build`) does not
 count. GNU ld, gcov and Valgrind compare by number, and a development build of
@@ -417,10 +426,25 @@ Keep outputs separate across worktrees (separate checkouts of branches).
 
 ## macOS
 
-Use Terminal with Bash (`bash`), Git, Apple's
+Use Terminal with Bash 5.0 or newer (`bash`), Git, Apple's
 [Command Line Tools](https://developer.apple.com/xcode/resources/),
 [Homebrew](https://docs.brew.sh/Installation) and rustup. If Command Line
 Tools are absent, run `xcode-select --install` and complete the system dialog.
+
+macOS ships Bash 3.2 at `/bin/bash`. Install Homebrew's Bash and check that
+`env bash` selects it:
+
+```bash
+brew install bash
+env bash --version
+command -v bash
+```
+
+`env bash --version` must print 5.0 or newer. `command -v bash` must print the
+Homebrew path (`/opt/homebrew/bin/bash` on Apple silicon or
+`/usr/local/bin/bash` on Intel), not `/bin/bash`. If it prints `/bin/bash`,
+put Homebrew's `bin` directory before `/bin` on `PATH` in your shell profile
+and open a new terminal.
 
 ```bash
 brew install berkeley-db@5 glib pkgconf

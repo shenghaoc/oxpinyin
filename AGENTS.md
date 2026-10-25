@@ -663,3 +663,5 @@ points at them:
 - **Report results and reproduction commands**, under "Results and
   reproduction" above. Measurement-specific interpretation belongs in
   `docs/runbooks/benches.md`; raw captures are not submission requirements.
+- **Shell scripts require Bash 5.0 or newer; ShellCheck 0.11.0 is their lint
+  floor**: `docs/runbooks/setup.md`.

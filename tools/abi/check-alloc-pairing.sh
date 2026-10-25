@@ -57,6 +57,9 @@
 # Exit: 0 when both ABIs pass every check; non-zero with the offending slots
 # named.
 
+# shellcheck source=../lib/bash-floor.sh
+. "${0%/*}/../lib/bash-floor.sh"
+
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 REPO_ROOT=$(pwd)

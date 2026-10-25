@@ -13,6 +13,9 @@
 # Usage: tools/packaging/pc-version.sh
 # Exits 0 printing the version; 1 when the record has no well-formed line.
 
+# shellcheck source=../lib/bash-floor.sh
+. "${0%/*}/../lib/bash-floor.sh"
+
 set -euo pipefail
 RECORD="$(cd "$(dirname "$0")/../oracle" && pwd)/oracle-pin.txt"
 version="$(sed -n 's/^libpinyin_tag=//p' "$RECORD")"

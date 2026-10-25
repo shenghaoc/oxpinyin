@@ -37,6 +37,9 @@
 # the SAME model20 punct.table the oracle's punct.bin was built from, so
 # the punct rows are compared over matched tables (370 rows / 272 tokens).
 
+# shellcheck source=../lib/bash-floor.sh
+. "${0%/*}/../lib/bash-floor.sh"
+
 set -euo pipefail
 cd "$(dirname "$0")"
 # shellcheck source=tools/bisection/system-dir.sh

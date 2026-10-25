@@ -25,6 +25,9 @@
 # Usage: release-deb.sh <backend> <version> <stage-root> <libdir> <outdir>
 #   e.g. release-deb.sh tkrzw 0.1.0 stage /usr/lib/x86_64-linux-gnu dist
 
+# shellcheck source=../lib/bash-floor.sh
+. "${0%/*}/../lib/bash-floor.sh"
+
 set -euo pipefail
 
 BACKEND="${1:?backend required}"

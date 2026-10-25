@@ -4,8 +4,12 @@ Standard library only. Doctor reads capabilities; it does not provision,
 install or enter a container. It rejects interpreter-selection overrides and a
 free-threaded build, and it checks every tool against its minimum version: a
 newer tool passes, an older one fails with the minimum and the version found,
-and an absent one is reported with its installation step. Each tool's version
-is read in the format that tool prints and compared by that format's rules:
+and an absent one is reported with its installation step. Each report line
+names the resolved executable. Bash is required at the floor declared in
+tools/lib/bash-floor.sh on Linux and macOS and reported as not applicable on
+Windows, whose native recipes use PowerShell 7; ShellCheck is advisory at 0.11.0 because only the lint
+job needs it. Each tool's version is
+read in the format that tool prints and compared by that format's rules:
 semantic versioning for most (a pre-release of the minimum is older than it),
 the projects' own numbering for GNU ld, gcov and Valgrind. Runbooks and
 setup.sh point here instead of repeating version lists.
@@ -20,6 +24,8 @@ import sysconfig
 from collections.abc import Callable
 from pathlib import Path
 from typing import NamedTuple
+
+from . import bash_floor
 
 OVERRIDES = (
     'UV_PYTHON',
@@ -52,8 +58,8 @@ class Version(NamedTuple):
 
 
 class Format(NamedTuple):
-    """How one tool writes its version. PARSE reads the first line of its output and returns a
-    Version, or None when the line is not in this format; KEY turns a minimum into the same ordering."""
+    """How one tool writes its version. PARSE reads its output and returns a Version, or None
+    when the output is not in this format; KEY turns a minimum into the same ordering."""
     parse: Callable
     key: Callable
 
@@ -174,15 +180,37 @@ class Tool(NamedTuple):
     install: str
     platform: str = ''  # sys.platform prefix this check is for; empty means every platform
     identity: str = ''  # when set, any other program under this name is reported as absent
+    optional: bool = False  # report the version but do not fail collect when it is old or missing
+    applies_to: tuple = ()  # sys.platform prefixes it is checked on; elsewhere it is not applicable
 
 
 UV = _semver_format('uv')
+
+# Bash prints its version in a banner; ShellCheck puts it on the second line.
+_BASH = re.compile(r'GNU bash, version (\d+(?:\.\d+)+)')
+_SHELLCHECK = re.compile(r'^version:\s*(\d+(?:\.\d+)+)\s*$', re.MULTILINE)
+
+
+def _parse_bash(text):
+    """Read the number from 'GNU bash, version X.Y.Z(...)', or return None for another format."""
+    match = _BASH.search(text)
+    return None if match is None else Version(_dotted_key(match.group(1)), match.group(1))
+
+
+def _parse_shellcheck(text):
+    """Read ShellCheck's 'version: X.Y.Z' line, or return None for another format."""
+    match = _SHELLCHECK.search(text)
+    return None if match is None else Version(_dotted_key(match.group(1)), match.group(1))
+
 
 # One row per tool. A minimum is the oldest version the repository has run
 # or documents. Where the tool has its own configuration for it (the
 # justfile, .config/nextest.toml, uv.toml, setup.sh) doctor.test.py keeps the
 # two in step.
 TOOLS = (
+    Tool('bash', 'bash', ('--version',), Format(_parse_bash, _dotted_key), bash_floor.read_floor(),
+         'brew install bash (macOS) and make env bash select it, or your distribution package',
+         applies_to=('linux', 'darwin')),
     Tool('just', 'just', ('--version',), _semver_format('just'), '1.59.0',
          'brew install just, your distribution package, or cargo install just --locked'),
     Tool('cargo-nextest', 'cargo-nextest', ('--version',), _semver_format('cargo-nextest'), '0.9.115',
@@ -199,6 +227,8 @@ TOOLS = (
          'apt-get install gcc', platform='linux'),
     Tool('valgrind', 'valgrind', ('--version',), Format(_parse_valgrind, _dotted_key), '3.22.0',
          'apt-get install valgrind', platform='linux'),
+    Tool('shellcheck', 'shellcheck', ('--version',), Format(_parse_shellcheck, _dotted_key), '0.11.0',
+         'apt-get install shellcheck, or brew install shellcheck', optional=True),
 )
 
 
@@ -324,15 +354,16 @@ def check_tool(tool, environ=None):
                 f'install: {tool.install})')
     result = _run([executable, *tool.arguments], environ)
     text = _first_line(result)
+    output = ((result.stdout or result.stderr) if result else '').strip()
     if tool.identity and not re.search(tool.identity, text or ''):
-        return (f'{tool.name}: not found, {tool.executable} is {text or "unidentified"} '
+        return (f'{tool.name}: not found, {tool.executable} is {text or "unidentified"} at {executable} '
                 f'(requires {tool.minimum} or later; install: {tool.install})')
-    version = tool.format.parse(text or '')
+    version = tool.format.parse(output)
     if (result is None or result.returncode != 0 or version is None
             or version.key < tool.format.key(tool.minimum)):
-        raise DoctorError(f'{tool.name} {tool.minimum} or later required; '
-                          f'found {text or "unreadable version"}')
-    return f'{tool.name}: {version.text} (minimum {tool.minimum})'
+        found = version.text if version is not None else (text or 'unreadable version')
+        raise DoctorError(f'{tool.name} {tool.minimum} or later required; found {found} at {executable}')
+    return f'{tool.name}: {version.text} at {executable} (minimum {tool.minimum})'
 
 
 def tool_lines(environ=None):
@@ -342,11 +373,19 @@ def tool_lines(environ=None):
     for tool in TOOLS:
         if tool.platform and not sys.platform.startswith(tool.platform):
             continue
+        if tool.applies_to and not sys.platform.startswith(tool.applies_to):
+            lines.append(f'{tool.name}: not applicable on {sys.platform}')
+            continue
         try:
-            lines.append(check_tool(tool, environ))
+            line = check_tool(tool, environ)
         except DoctorError as exc:
-            failures.append(str(exc))
-            lines.append(f'FAIL: {exc}')
+            if tool.optional:
+                lines.append(f'advisory: {exc}')
+            else:
+                failures.append(str(exc))
+                lines.append(f'FAIL: {exc}')
+        else:
+            lines.append(line + (' (advisory)' if tool.optional else ''))
     return lines, failures
 
 

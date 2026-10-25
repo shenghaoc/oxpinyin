@@ -57,6 +57,7 @@
 # follow-up). All three backends name their files identically in the P6
 # native layout, so only system_dir_require_backend — which reads the
 # directory's datagen-manifest.txt or table.conf — tells them apart.
+
 SYSTEM_DIR_BACKEND_EXTS="db kct tkt"
 
 # The peer-backend table stems the capi opens from a system directory.

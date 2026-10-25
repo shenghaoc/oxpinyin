@@ -50,6 +50,10 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash
+
 # One run per release: a re-published or edited release must not race an
 # attach still uploading assets for the same tag. Queue, never cancel — the
 # run in flight is the one whose packages are already half-attached.

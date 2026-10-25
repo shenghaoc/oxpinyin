@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from tools.dev import doctor, test_support
+from tools.dev import bash_floor, doctor, test_support
 
 
 def completed(text, returncode=0):
@@ -166,6 +166,7 @@ class UvVersionTests(unittest.TestCase):
 # a version below the minimum, the minimum itself and a newer one. The output
 # shapes are the ones the tools print on the hosts this repository runs on.
 SAMPLES = {
+    'bash': ('GNU bash, version {} (1)-release (x86_64-pc-linux-gnu)', '4.4.23', '5.0.0', '5.2.37'),
     'just': ('just {}', '1.58.9', '1.59.0', '1.61.2'),
     'cargo-nextest': ('cargo-nextest {} (60fa45f63 2026-08-04)', '0.9.114', '0.9.115', '0.10.0'),
     'cargo-c': ('cargo-c {}+cargo-0.98.0', '0.10.23', '0.10.24', '0.10.26'),
@@ -174,6 +175,7 @@ SAMPLES = {
     'GNU ld': ('GNU ld (GNU Binutils for Debian) {}', '2.42', '2.43', '2.47'),
     'gcov': ('gcov (Debian 16.2.0-3) {}', '13.3.0', '14.0.0', '16.2.0'),
     'valgrind': ('valgrind-{}', '3.21.0', '3.22.0', '3.27.1'),
+    'shellcheck': ('ShellCheck - shell script analysis tool\nversion: {}', '0.10.0', '0.11.0', '0.12.0'),
 }
 
 
@@ -187,13 +189,19 @@ class ToolCase(unittest.TestCase):
         return line
 
     def assert_found(self, subject, output, shown):
-        self.assertEqual(self.check(subject, output), f'{subject.name}: {shown} (minimum {subject.minimum})')
+        suffix = ' (advisory)' if subject.optional else ''
+        self.assertEqual(self.check(subject, output),
+                         f'{subject.name}: {shown} at /tools/{subject.executable} '
+                         f'(minimum {subject.minimum}){suffix}')
 
     def assert_too_old(self, subject, output):
         with self.assertRaises(doctor.DoctorError) as caught:
             self.check(subject, output)
+        parsed = subject.format.parse(output)
+        shown = parsed.text if parsed else output
         self.assertEqual(str(caught.exception),
-                         f'{subject.name} {subject.minimum} or later required; found {output}')
+                         f'{subject.name} {subject.minimum} or later required; '
+                         f'found {shown} at /tools/{subject.executable}')
 
 
 class ToolMinimumTests(ToolCase):
@@ -211,6 +219,7 @@ class ToolMinimumTests(ToolCase):
                 with self.subTest(tool=candidate.name, version=version):
                     line = self.check(candidate, template.format(version))
                     self.assertRegex(line, rf'^{re.escape(candidate.name)}: {re.escape(version)}\S* '
+                                           rf'at /tools/{re.escape(candidate.executable)} '
                                            rf'\(minimum {re.escape(candidate.minimum)}\)$')
 
     def test_a_tool_below_its_minimum_fails_with_both_versions(self):
@@ -224,8 +233,10 @@ class ToolMinimumTests(ToolCase):
             if candidate.identity:
                 continue  # another program under the name is reported, not failed
             with self.subTest(tool=candidate.name):
-                with self.assertRaisesRegex(doctor.DoctorError,
-                                            'or later required; found Apple LLVM version 21$'):
+                with self.assertRaisesRegex(
+                        doctor.DoctorError,
+                        'or later required; found Apple LLVM version 21 at '
+                        + re.escape(f'/tools/{candidate.executable}') + '$'):
                     self.check(candidate, 'Apple LLVM version 21')
 
     def test_a_failing_command_fails(self):
@@ -251,7 +262,7 @@ class ToolMinimumTests(ToolCase):
                        'mold 2.40.0 (compatible with GNU ld)'):
             with self.subTest(output=output):
                 line = self.check(ld, output)
-                self.assertTrue(line.startswith(f'GNU ld: not found, ld is {output} '), line)
+                self.assertTrue(line.startswith(f'GNU ld: not found, ld is {output} at /tools/ld '), line)
                 self.assertIn('requires 2.43 or later', line)
 
     def test_linux_only_tools_are_skipped_elsewhere(self):
@@ -265,13 +276,92 @@ class ToolMinimumTests(ToolCase):
             self.assertEqual(failures, [])
             self.assertEqual({line.split(':')[0] for line in lines}, expected)
 
-    def test_tool_lines_collects_every_failure(self):
+    def test_tool_lines_collects_every_required_failure(self):
+        required = [candidate for candidate in doctor.TOOLS
+                    if not candidate.optional and not candidate.platform]
         with mock.patch.object(doctor.sys, 'platform', 'darwin'), \
                 mock.patch.object(doctor.shutil, 'which', return_value='/tools/x'), \
                 mock.patch.object(doctor, '_run', return_value=completed('just 1.0.0')):
             lines, failures = doctor.tool_lines({'PATH': '/tools'})
-        self.assertEqual(len(failures), len(lines))
+        self.assertEqual(len(failures), len(required))
         self.assertTrue(all(line == f'FAIL: {failure}' for line, failure in zip(lines, failures)))
+        self.assertTrue(any(line.startswith('advisory: shellcheck ') for line in lines), lines)
+
+
+class BashFloorTests(ToolCase):
+    """Every repository shell script needs the declared Bash floor."""
+
+    def test_bash_floor_is_enforced(self):
+        bash = tool('bash')
+        self.assertEqual(bash.minimum, bash_floor.read_floor())
+        self.assert_too_old(bash, 'GNU bash, version 3.2.57(1)-release (arm64-apple-darwin24)')
+        self.assert_too_old(bash, 'GNU bash, version 4.4.23(1)-release (x86_64-pc-linux-gnu)')
+        self.assert_found(bash, 'GNU bash, version 5.0.0(1)-release (x86_64-pc-linux-gnu)', '5.0.0')
+        self.assert_found(bash, 'GNU bash, version 5.3.9(1)-release (x86_64-pc-linux-gnu)', '5.3.9')
+
+    def test_a_bash_failure_fails_the_report(self):
+        failure = f'bash {bash_floor.read_floor()} or later required; found 3.2.57 at /tools/bash'
+
+        def fake_check(subject, environ=None):
+            if subject.name == 'bash':
+                raise doctor.DoctorError(failure)
+            return f'{subject.name}: ok'
+
+        with mock.patch.object(doctor, 'check_tool', side_effect=fake_check):
+            lines, failures = doctor.tool_lines({'PATH': '/tools'})
+        self.assertEqual(failures, [failure])
+        self.assertIn(f'FAIL: {failure}', lines)
+
+    def test_bash_is_not_applicable_on_windows(self):
+        # An old Bash on PATH (Git Bash, MSYS) is neither run nor failed there.
+        executed = []
+
+        def fake_run(command, environ):
+            executed.append(command[0])
+            if command[0] == '/tools/bash':
+                return completed('GNU bash, version 3.2.57(1)-release (x86_64-pc-msys)')
+            return completed('just 1.0.0')
+
+        with mock.patch.object(doctor.sys, 'platform', 'win32'), \
+                mock.patch.object(doctor.shutil, 'which', side_effect=lambda name, path: f'/tools/{name}'), \
+                mock.patch.object(doctor, '_run', side_effect=fake_run):
+            lines, failures = doctor.tool_lines({'PATH': '/tools'})
+        self.assertIn('bash: not applicable on win32', lines)
+        self.assertNotIn('/tools/bash', executed)
+        self.assertFalse(any(failure.startswith('bash ') for failure in failures), failures)
+
+class AdvisoryToolTests(unittest.TestCase):
+    """ShellCheck is reported against 0.11.0 without blocking work that does not need it."""
+
+    def lines_for(self, shellcheck):
+        def fake_check(subject, environ=None):
+            if subject.name == 'shellcheck':
+                if isinstance(shellcheck, Exception):
+                    raise shellcheck
+                return shellcheck
+            return f'{subject.name}: ok'
+
+        with mock.patch.object(doctor, 'check_tool', side_effect=fake_check):
+            return doctor.tool_lines({'PATH': '/tools'})
+
+    def test_an_old_shellcheck_is_reported_without_failing(self):
+        failure = 'shellcheck 0.11.0 or later required; found 0.10.0 at /tools/shellcheck'
+        lines, failures = self.lines_for(doctor.DoctorError(failure))
+        self.assertEqual(failures, [])
+        self.assertIn(f'advisory: {failure}', lines)
+
+    def test_a_missing_shellcheck_is_reported_without_failing(self):
+        line = ('shellcheck: missing (requires 0.11.0 or later; '
+                'install: apt-get install shellcheck, or brew install shellcheck)')
+        lines, failures = self.lines_for(line)
+        self.assertEqual(failures, [])
+        self.assertIn(f'{line} (advisory)', lines)
+
+    def test_a_current_shellcheck_is_marked_advisory(self):
+        line = 'shellcheck: 0.11.0 at /tools/shellcheck (minimum 0.11.0)'
+        lines, failures = self.lines_for(line)
+        self.assertEqual(failures, [])
+        self.assertIn(f'{line} (advisory)', lines)
 
 
 SEMVER_TOOLS = ('just', 'cargo-nextest', 'cargo-c', 'cargo-fuzz', 'cargo-llvm-cov')
@@ -473,6 +563,11 @@ class MinimumsAgreeWithTheirOtherHomes(unittest.TestCase):
 
     def test_the_managed_request_is_the_checkouts_python_version(self):
         self.assertEqual(read('.python-version').strip(), doctor.MANAGED_REQUEST)
+
+    def test_setup_runbook_states_the_shell_floor(self):
+        setup = read('docs/runbooks/setup.md')
+        self.assertIn(f'Bash {self.minimum("bash")} or newer', setup)
+        self.assertIn(f'ShellCheck {self.minimum("shellcheck")}', setup)
 
     def test_setup_script_provisions_with_the_same_minimums(self):
         setup = read('tools/cloud/setup.sh')

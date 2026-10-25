@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+
+# shellcheck source=../lib/bash-floor.sh
+. "${0%/*}/../lib/bash-floor.sh"
+
 set -euo pipefail
 
 # run-zhuyin-diff.sh — build and run the libzhuyin differential driver against

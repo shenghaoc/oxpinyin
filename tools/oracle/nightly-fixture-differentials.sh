@@ -50,6 +50,10 @@
 # libpinyin-drop-in-differential.sh hardcodes that path for its tkrzw
 # oracle, so an override here would build a pin the second script never
 # looks at.
+
+# shellcheck source=../lib/bash-floor.sh
+. "${0%/*}/../lib/bash-floor.sh"
+
 set -euo pipefail
 
 repo=$(cd "$(dirname "$0")/../.." && pwd)

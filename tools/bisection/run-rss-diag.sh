@@ -22,6 +22,10 @@
 # Usage:
 #   run-rss-diag.sh --lp <libpinyin.so> --ox <oxpinyin.so> --data <dir> \
 #                   [--out DIR] [--rounds N] [--cycles N]
+
+# shellcheck source=../lib/bash-floor.sh
+. "${0%/*}/../lib/bash-floor.sh"
+
 set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../tkrzw" && pwd)/runtime.sh"
 # Resolve before the cd: usage() reads the script by path, and $0 is

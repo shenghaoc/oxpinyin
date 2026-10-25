@@ -54,6 +54,9 @@
 # Usage: tools/tkrzw/run-sanitizers.sh
 # Exit: 0 clean; non-zero on a sanitizer finding or a build failure.
 
+# shellcheck source=../lib/bash-floor.sh
+. "${0%/*}/../lib/bash-floor.sh"
+
 set -euo pipefail
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 

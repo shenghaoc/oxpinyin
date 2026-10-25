@@ -28,6 +28,7 @@
 
 # Snapshot inherited search directories before the caller changes directory.
 # Keep loader tokens literal: the loader, not this shell, interprets them.
+
 oracle_cell_library_path() {
     local remaining=${LD_LIBRARY_PATH-} entry separator=
     [[ -n $remaining ]] || return 0

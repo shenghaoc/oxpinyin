@@ -36,6 +36,9 @@
 #   e.g. release-arch.sh kyotocabinet 0.1.0 stage dist \
 #          --data=arch-data --data-version=2.10.3-2
 
+# shellcheck source=../lib/bash-floor.sh
+. "${0%/*}/../lib/bash-floor.sh"
+
 set -euo pipefail
 
 BACKEND="${1:?backend required}"

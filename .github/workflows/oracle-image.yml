@@ -71,6 +71,10 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash
+
 concurrency:
   group: oracle-image-${{ github.ref }}
   cancel-in-progress: false
@@ -85,6 +89,9 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Require the Bash floor
+        shell: bash
+        run: . tools/lib/bash-floor.sh
       - id: scope
         env:
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
@@ -113,6 +120,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Require the Bash floor
+        shell: bash
+        run: . tools/lib/bash-floor.sh
 
       - name: Derive the tag and labels from oracle-pin.txt
         id: meta
@@ -278,6 +288,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Require the Bash floor
+        shell: bash
+        run: . tools/lib/bash-floor.sh
 
       - name: Derive the arm64 tag and labels from oracle-pin.txt
         id: meta

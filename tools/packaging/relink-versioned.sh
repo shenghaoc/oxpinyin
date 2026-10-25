@@ -43,6 +43,9 @@
 # counterpart (the cdylib as built is correct there). Exits 0 on success,
 # non-zero on any failed link or verification.
 
+# shellcheck source=../lib/bash-floor.sh
+. "${0%/*}/../lib/bash-floor.sh"
+
 set -euo pipefail
 
 STATICLIB=""

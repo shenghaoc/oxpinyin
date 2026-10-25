@@ -3,6 +3,10 @@
 # Pin allocations and GArray growth stay fatal; the disabled control must fail.
 # Run through just heavy after building both capi packages with debug symbols.
 # Usage: check-alloc-failure.sh PIN_PREFIX PINYIN_SO ZHUYIN_SO
+
+# shellcheck source=../lib/bash-floor.sh
+. "${0%/*}/../lib/bash-floor.sh"
+
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 [[ $# == 3 ]] || { echo 'expected pin prefix and two subject shared libraries' >&2; exit 2; }

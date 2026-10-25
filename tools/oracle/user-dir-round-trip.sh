@@ -19,6 +19,10 @@
 #   input            pinyin strings to train on (default: nihao nisha).
 #
 # Requires: cc, pkg-config, glib-2.0 dev files, and the rust toolchain.
+
+# shellcheck source=../lib/bash-floor.sh
+. "${0%/*}/../lib/bash-floor.sh"
+
 set -euo pipefail
 
 prefix=${1:?usage: user-dir-round-trip.sh <oracle-prefix> [input ...]}

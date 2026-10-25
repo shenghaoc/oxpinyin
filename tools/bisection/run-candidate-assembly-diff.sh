@@ -21,6 +21,10 @@
 #
 # Exit: 0 = as declared; 1 = missing input or a crash; 2 = a divergence
 # outside the table, or a declared case that no longer diverges.
+
+# shellcheck source=../lib/bash-floor.sh
+. "${0%/*}/../lib/bash-floor.sh"
+
 set -euo pipefail
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 # shellcheck source=tools/bisection/oracle-cell.sh

@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # Native development stays native. This launcher runs selected registry gates
 # wholly inside the pinned Linux environment for the host architecture, without a nested runtime.
+
+# shellcheck source=../lib/bash-floor.sh
+. "${0%/*}/../lib/bash-floor.sh"
+
 set -euo pipefail
 umask 077
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)

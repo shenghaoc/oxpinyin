@@ -29,6 +29,10 @@
 #       (default: cargo build --release from this tree, one per feature).
 #       Either way the artifact's backend linkage is verified before any
 #       cell is measured -- see verify_backend.
+
+# shellcheck source=../lib/bash-floor.sh
+. "${0%/*}/../lib/bash-floor.sh"
+
 set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../tkrzw" && pwd)/runtime.sh"
 HEAVY_RUNNER="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/run-all.py"

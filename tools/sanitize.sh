@@ -24,6 +24,9 @@
 # 1 otherwise; 2 on a usage error. --check validates and prints the selection
 # without running a gate.
 
+# shellcheck source=lib/bash-floor.sh
+. "${0%/*}/lib/bash-floor.sh"
+
 set -euo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 

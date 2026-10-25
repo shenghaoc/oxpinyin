@@ -186,7 +186,7 @@ class CapabilityTests(unittest.TestCase):
                 'esac\ndone\nexit 1\n')
             compiler.chmod(0o755)
             command = ['bash', '-c', 'source "$1"; function_order_supported "$2" unused.a "$3"',
-                       'capability-test', str(HERE / "function-order.sh"), str(compiler), str(work)]
+                       str(HERE / 'capability-test'), str(HERE / "function-order.sh"), str(compiler), str(work)]
             return subprocess.run(command, capture_output=True, text=True, check=False,
                                   env={**os.environ, "TEST_LINKER_VERSION": version,
                                        "TEST_LINKER_HELP": help_text})
@@ -447,7 +447,7 @@ source "$0"
                 environment[variable] = str(LIBRARY)
             environment.update(OXPINYIN_TKRZW_SO=str(LIBRARY), OXPINYIN_KC_SO=str(LIBRARY))
             shell = 'set -euo pipefail; source "$1"; FUNCTION_ORDER_ARGS=(); function_order_measurement() { printf "%s\\n" "$@"; }; ' + guard
-            result = subprocess.run(['bash', '-c', shell, 'guard-test', str(HERE / 'function-order.sh')],
+            result = subprocess.run(['bash', '-c', shell, str(HERE / 'guard-test'), str(HERE / 'function-order.sh')],
                                     capture_output=True, text=True, env=environment)
             with self.subTest(script=script):
                 self.assertEqual(result.returncode, 0, result.stderr)
@@ -560,6 +560,8 @@ printf ' 0x000000000000000e (SONAME) Library soname: [libpinyin.so.15]\n'
             (scripts / "function-order/bdb").mkdir(parents=True)
             for filename in ("relink-versioned.sh", "function-order.sh", "function-order.awk"):
                 shutil.copyfile(HERE / filename, scripts / filename)
+            (work / "lib").mkdir()
+            shutil.copyfile(HERE.parent / "lib/bash-floor.sh", work / "lib/bash-floor.sh")
             shutil.copyfile(work / "policy", scripts / "function-order/bdb/libpinyin.order")
             environment.pop("OXPINYIN_FUNCTION_ORDER_POLICY")
             ordered, args, _ = self.relink(work, environment, script=scripts / "relink-versioned.sh")
@@ -611,6 +613,8 @@ printf ' 0x000000000000000e (SONAME) Library soname: [libpinyin.so.15]\n'
             (scripts / "function-order/bdb").mkdir(parents=True)
             for filename in ("relink-versioned.sh", "function-order.sh", "function-order.awk"):
                 shutil.copyfile(HERE / filename, scripts / filename)
+            (work / "lib").mkdir()
+            shutil.copyfile(HERE.parent / "lib/bash-floor.sh", work / "lib/bash-floor.sh")
             # A policy no backend's archive satisfies: the BDB default must
             # not be consulted for the other backends at all.
             (scripts / "function-order/bdb/libpinyin.order").write_text(HEADER + "init\tbdb_only\n")
@@ -655,6 +659,8 @@ printf ' 0x000000000000000e (SONAME) Library soname: [libpinyin.so.15]\n'
             scripts.mkdir()
             for filename in ('relink-versioned.sh', 'function-order.sh', 'function-order.awk'):
                 shutil.copyfile(HERE / filename, scripts / filename)
+            (work / 'lib').mkdir()
+            shutil.copyfile(HERE.parent / 'lib/bash-floor.sh', work / 'lib/bash-floor.sh')
             for feature, backend in (('bdb', 'bdb'), ('kyotocabinet', 'kc'), ('tkrzw', 'tkrzw')):
                 policy = scripts / 'function-order' / backend / 'libpinyin.order'
                 policy.parent.mkdir(parents=True)

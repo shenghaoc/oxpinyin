@@ -19,6 +19,10 @@
 # the run's phase timing. The exit status is 0 only when every selected case
 # matches the pin (or, with --expect-parent, when every non-control case
 # differs and every control case matches).
+
+# shellcheck source=../lib/bash-floor.sh
+. "${0%/*}/../lib/bash-floor.sh"
+
 set -euo pipefail
 cell=${1:?backend: bdb, kc or tkrzw}
 prefix=${2:?oracle prefix}

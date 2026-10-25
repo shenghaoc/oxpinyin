@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 # Live parity aggregate; registry and orchestration use Python's standard library.
+
+# shellcheck source=../lib/bash-floor.sh
+. "${0%/*}/../lib/bash-floor.sh"
+
 set -euo pipefail
 for name in UV_PYTHON PYTHONHOME PYTHONPATH; do
 	if [[ -n ${!name:-} ]]; then

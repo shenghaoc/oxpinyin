@@ -23,6 +23,9 @@
 # Exit codes: 0 = identical; 77 = skipped; 1 = build/run failure (including a
 # backend mismatch); 2 = divergence.
 
+# shellcheck source=../lib/bash-floor.sh
+. "${0%/*}/../lib/bash-floor.sh"
+
 set -euo pipefail
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 # shellcheck source=tools/bisection/oracle-cell.sh

@@ -59,6 +59,9 @@
 # Exits 0 on success; 2 on a usage error; non-zero on a failed install, a
 # missing baked template, or divergent companion headers.
 
+# shellcheck source=../lib/bash-floor.sh
+. "${0%/*}/../lib/bash-floor.sh"
+
 set -euo pipefail
 cd "$(dirname "$0")"
 SCRIPT_DIR="$(pwd)"

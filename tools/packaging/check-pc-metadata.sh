@@ -39,6 +39,9 @@
 # Exits 0 when every item matches; 1 on any difference (each one printed as a
 # unified diff); 2 on a usage error or a missing input.
 
+# shellcheck source=../lib/bash-floor.sh
+. "${0%/*}/../lib/bash-floor.sh"
+
 set -euo pipefail
 cd "$(dirname "$0")"
 SCRIPT_DIR="$(pwd)"
