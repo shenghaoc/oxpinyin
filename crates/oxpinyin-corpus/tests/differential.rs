@@ -79,7 +79,8 @@ fn run_rust_chain(sample: &[u8]) -> Result<RustChain, String> {
     // T2 + T3 + T4a.
     let counts =
         count_ngseg(lexicon, &ngseg_text, true).map_err(|e| format!("count_ngseg: {e}"))?;
-    let deleted = count_deleted(&ngseg_text, true).map_err(|e| format!("count_deleted: {e}"))?;
+    let deleted =
+        count_deleted(lexicon, &ngseg_text, true).map_err(|e| format!("count_deleted: {e}"))?;
     let lambda = estimate_lambda(&counts, &deleted).map_err(|e| format!("estimate_lambda: {e}"))?;
     let interpolation = emit_interpolation2(&counts, lexicon);
     let per_context: BTreeMap<u32, String> = lambda

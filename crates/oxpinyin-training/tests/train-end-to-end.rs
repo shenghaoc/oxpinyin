@@ -152,7 +152,7 @@ fn raw_corpus_to_final_model_and_correction_rate() {
     scoring_deleted
         .add_document(HELD_OUT, GenerateParams::default())
         .expect("scoring deleted");
-    let deleted_counts = count_deleted(HELD_OUT, true).expect("deleted counts");
+    let deleted_counts = count_deleted(&lexicon(), HELD_OUT, true).expect("deleted counts");
 
     let dictionary = FixtureDictionary::parse(VOCAB).expect("vocab");
     let source = FixtureSource::new();
@@ -296,7 +296,7 @@ fn run_full_with_index(
     scoring_deleted
         .add_document(HELD_OUT, GenerateParams::default())
         .expect("scoring deleted");
-    let deleted_counts = count_deleted(HELD_OUT, true).expect("deleted counts");
+    let deleted_counts = count_deleted(&lexicon(), HELD_OUT, true).expect("deleted counts");
     let dictionary = FixtureDictionary::parse(VOCAB).expect("vocab");
     let source = FixtureSource::new();
     let eval = EvalInputs {
@@ -520,4 +520,41 @@ fn generate_emits_no_trailing_empty_candidate() {
     let candidates = generate_candidates(&config, &docs).expect("generate");
     assert_eq!(candidates.len(), 2, "no empty trailing candidate");
     assert_eq!(candidates[1].text_end, 2);
+}
+
+#[test]
+fn held_out_byte_records_produce_identical_scoring_and_lambda_models() {
+    let lexicon = lexicon();
+    let expected = oxpinyin_training::train::prepare_held_out(
+        &lexicon,
+        HELD_OUT.as_bytes(),
+        GenerateParams::default(),
+    )
+    .unwrap();
+    let mut bytes = Vec::new();
+    for line in HELD_OUT.lines() {
+        bytes.extend_from_slice(line.as_bytes());
+        bytes.extend_from_slice(b"\0\xff\n");
+    }
+    bytes.extend_from_slice(b"0 \xff\n");
+    let actual =
+        oxpinyin_training::train::prepare_held_out(&lexicon, &bytes, GenerateParams::default())
+            .unwrap();
+    assert_eq!(
+        oxpinyin_kmm::export(&actual.0),
+        oxpinyin_kmm::export(&expected.0)
+    );
+    assert_eq!(actual.1, expected.1);
+    let mut old = KMixtureModel::new();
+    old.add_document(HELD_OUT, GenerateParams::default())
+        .unwrap();
+    assert_eq!(oxpinyin_kmm::export(&actual.0), oxpinyin_kmm::export(&old));
+    assert!(
+        oxpinyin_training::train::prepare_held_out(
+            &lexicon,
+            b"10 wrong\n",
+            GenerateParams::default()
+        )
+        .is_err()
+    );
 }

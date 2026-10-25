@@ -58,3 +58,39 @@ pub use pipeline::{
 };
 pub use status::{EpochState, Stage, Status};
 pub use workspace::{Trainer, TrainerPaths};
+
+/// Validate one held-out byte stream and build both scoring and lambda models.
+///
+/// The pin's `gen_k_mixture_model.cpp:72-137` and
+/// `gen_deleted_ngram.cpp:78-118` consume the same segmented-line macro.
+/// Parse once so ignored bytes and exact phrase validation cannot differ
+/// between the two consumers.
+///
+/// # Errors
+///
+/// Returns an error for a malformed or mismatched segmented record.
+pub fn prepare_held_out(
+    lexicon: &crate::segment::PhraseLexicon,
+    bytes: &[u8],
+    params: oxpinyin_kmm::GenerateParams,
+) -> Result<(oxpinyin_kmm::KMixtureModel, crate::lambda::DeletedCounts), TrainError> {
+    let tokens =
+        crate::counter::parse_ngseg(lexicon, bytes).map_err(|error| TrainError::Malformed {
+            detail: error.to_string(),
+        })?;
+    let mut scoring = oxpinyin_kmm::KMixtureModel::new();
+    scoring
+        .add_token_document(
+            tokens.iter().map(|&token| {
+                let phrase = lexicon.text(token).unwrap_or_default();
+                (token, phrase.split('\0').next().unwrap_or_default())
+            }),
+            params,
+        )
+        .map_err(|error| TrainError::Kmm {
+            stage: "held-out",
+            detail: error.to_string(),
+        })?;
+    let deleted = crate::lambda::count_deleted_tokens(&tokens, params.train_pi_gram);
+    Ok((scoring, deleted))
+}

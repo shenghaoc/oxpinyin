@@ -123,8 +123,12 @@ pub fn count_deleted_tokens(tokens: &[u32], train_pi_gram: bool) -> DeletedCount
 ///
 /// Returns [`LambdaError::Count`] when a line is not `token phrase`
 /// (`TAGLIB_PARSE_SEGMENTED_LINE` aborts on that shape).
-pub fn count_deleted(text: &str, train_pi_gram: bool) -> Result<DeletedCounts, LambdaError> {
-    let tokens = parse_ngseg(text)?;
+pub fn count_deleted(
+    lexicon: &crate::segment::PhraseLexicon,
+    text: impl AsRef<[u8]>,
+    train_pi_gram: bool,
+) -> Result<DeletedCounts, LambdaError> {
+    let tokens = parse_ngseg(lexicon, text)?;
     Ok(count_deleted_tokens(&tokens, train_pi_gram))
 }
 

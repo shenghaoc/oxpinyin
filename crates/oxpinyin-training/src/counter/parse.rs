@@ -6,7 +6,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::segment::NULL_TOKEN;
+use crate::segment::{NULL_TOKEN, PhraseLexicon};
 
 use crate::counter::counts::Counts;
 use crate::counter::error::CounterError;
@@ -19,45 +19,74 @@ use crate::counter::error::CounterError;
 /// `null_token`, any other line must split into exactly two `space`/`tab`
 /// fields whose first field is the decimal token. A line that does not
 /// split into two fields aborts `gen_ngram`; here it is an error.
-/// Unlike the pin macro, this helper does not validate nonzero tokens
-/// against their phrase text. Numeric-domain and validation follow-ups
-/// are classified in `docs/findings/926-tool-tokenizers.md`.
+/// Records are bytes: NUL terminates each physical line, and arbitrary bytes
+/// are allowed in ignored fields. Nonzero tokens must name their exact phrase.
 ///
 /// # Errors
 ///
 /// Returns [`CounterError::MalformedLine`] when a non-empty line lacks the
 /// `token phrase` shape.
-pub fn parse_ngseg(text: &str) -> Result<Vec<u32>, CounterError> {
+pub fn parse_ngseg(
+    lexicon: &PhraseLexicon,
+    text: impl AsRef<[u8]>,
+) -> Result<Vec<u32>, CounterError> {
     let mut tokens = Vec::new();
-    for (index, line) in text.split_inclusive('\n').enumerate() {
-        let line = line.strip_suffix('\n').unwrap_or(line);
-        tokens.push(parse_segmented_line(line, index + 1)?);
+    for (index, line) in text
+        .as_ref()
+        .split_inclusive(|byte| *byte == b'\n')
+        .enumerate()
+    {
+        let line = line.strip_suffix(b"\n").unwrap_or(line);
+        tokens.push(parse_segmented_line(lexicon, line, index + 1)?);
     }
     Ok(tokens)
 }
 
 /// One line of the ngseg stream → token ID (`atoi` of the first field).
-fn parse_segmented_line(line: &str, number: usize) -> Result<u32, CounterError> {
+fn parse_segmented_line(
+    lexicon: &PhraseLexicon,
+    line: &[u8],
+    number: usize,
+) -> Result<u32, CounterError> {
+    let line = line.split(|byte| *byte == 0).next().unwrap_or_default();
     // `TAGLIB_PARSE_SEGMENTED_LINE`: `0 == strlen(line)` → `null_token`.
     if line.is_empty() {
         return Ok(NULL_TOKEN);
     }
 
     // `g_strsplit_set(line, " \t", 2)`; `abort()` unless exactly two parts.
-    let Some((token_text, _phrase)) = line.split_once([' ', '\t']) else {
+    let Some(separator) = line.iter().position(|byte| matches!(byte, b' ' | b'\t')) else {
         return Err(CounterError::MalformedLine { line: number });
     };
-
-    // `atoi(strs[0])`: leading decimal digits, `0` when none.
-    Ok(atoi(token_text))
+    let token = atoi(&line[..separator]);
+    if token != NULL_TOKEN {
+        let expected = if token == 1 {
+            Some("<start>")
+        } else {
+            lexicon.text(token)
+        };
+        if expected.map(|text| text.split('\0').next().unwrap_or_default().as_bytes())
+            != Some(&line[separator + 1..])
+        {
+            return Err(CounterError::InvalidPhrase {
+                line: number,
+                token,
+            });
+        }
+    }
+    Ok(token)
 }
 
 /// Decimal-prefix parse for unsigned token fields emitted by the segmenter.
 /// This is not a general C `atoi`: signed/overflowing inputs are a separate
-/// compatibility gap, unchanged by borrowing the prefix instead of copying it.
-fn atoi(text: &str) -> u32 {
-    let end = text.bytes().take_while(u8::is_ascii_digit).count();
-    text[..end].parse::<u32>().unwrap_or(0)
+/// compatibility gap; this byte parser retains the existing unsigned domain.
+fn atoi(text: &[u8]) -> u32 {
+    text.iter()
+        .take_while(|byte| byte.is_ascii_digit())
+        .try_fold(0_u32, |value, byte| {
+            value.checked_mul(10)?.checked_add(u32::from(byte - b'0'))
+        })
+        .unwrap_or(0)
 }
 
 /// Parses an `export_interpolation` dump into the same value shape
@@ -132,30 +161,35 @@ enum Section {
 #[cfg(test)]
 mod tests {
     use super::{atoi, parse_ngseg};
+    use crate::segment::PhraseLexicon;
+
+    fn lexicon() -> PhraseLexicon {
+        PhraseLexicon::from_pairs(vec![(16_817_937, "中国".into()), (16_782_711, "人".into())])
+    }
 
     #[test]
     fn atoi_matches_c_for_token_fields() {
-        assert_eq!(atoi("16817937"), 16_817_937);
-        assert_eq!(atoi("0"), 0);
-        assert_eq!(atoi(""), 0);
-        assert_eq!(atoi("12abc"), 12);
+        assert_eq!(atoi(b"16817937"), 16_817_937);
+        assert_eq!(atoi(b"0"), 0);
+        assert_eq!(atoi(b""), 0);
+        assert_eq!(atoi(b"12abc"), 12);
     }
 
     #[test]
     fn parse_ngseg_reproduces_segmented_lines() {
-        let tokens = parse_ngseg("16817937 中国\n0 \n16782711 人\n").unwrap();
+        let tokens = parse_ngseg(&lexicon(), "16817937 中国\n0 \n16782711 人\n").unwrap();
         assert_eq!(tokens, vec![16_817_937, 0, 16_782_711]);
     }
 
     #[test]
     fn parse_ngseg_treats_empty_line_as_null() {
-        let tokens = parse_ngseg("16817937 中国\n\n16782711 人\n").unwrap();
+        let tokens = parse_ngseg(&lexicon(), "16817937 中国\n\n16782711 人\n").unwrap();
         assert_eq!(tokens, vec![16_817_937, 0, 16_782_711]);
     }
 
     #[test]
     fn parse_ngseg_rejects_missing_second_field() {
-        assert!(parse_ngseg("16817937\n").is_err());
+        assert!(parse_ngseg(&lexicon(), "16817937\n").is_err());
     }
 
     #[test]
@@ -163,24 +197,73 @@ mod tests {
         // Zero bypasses the pin's phrase validation, so all these tails are
         // valid, including repeated separators and a literal trailing slash.
         for line in ["0 ", "0  中国", "0\t\t中国", "0 \\", "0 \u{200d}\u{378}"] {
-            assert_eq!(parse_ngseg(line).unwrap(), [0], "{line:?}");
+            assert_eq!(parse_ngseg(&lexicon(), line).unwrap(), [0], "{line:?}");
         }
         for separator in ['\u{a0}', '\u{2003}', '\u{2028}', '\u{2029}'] {
-            assert!(parse_ngseg(&format!("0{separator}中国")).is_err());
+            assert!(parse_ngseg(&lexicon(), format!("0{separator}中国")).is_err());
         }
-        assert_eq!(parse_ngseg("").unwrap(), []);
-        assert_eq!(parse_ngseg("\n").unwrap(), [0]);
-        assert!(parse_ngseg("\r\n").is_err());
+        assert_eq!(parse_ngseg(&lexicon(), "").unwrap(), []);
+        assert_eq!(parse_ngseg(&lexicon(), "\n").unwrap(), [0]);
+        assert!(parse_ngseg(&lexicon(), "\r\n").is_err());
     }
 
     #[test]
     fn ordinary_segmented_stream_preserves_model_values() {
-        let tokens = parse_ngseg("16817937 中国\n16782711\t人\n0 \\\n16817937tail 中国\n").unwrap();
+        let tokens = parse_ngseg(
+            &lexicon(),
+            "16817937 中国\n16782711\t人\n0 \\\n16817937tail 中国\n",
+        )
+        .unwrap();
         let counts = crate::counter::Counter::new(true, [16_817_937, 16_782_711]).count(&tokens);
         assert_eq!(counts.unigrams.get(&16_817_937), Some(&3));
         assert_eq!(counts.unigrams.get(&16_782_711), Some(&2));
         assert_eq!(counts.bigrams.get(&(1, 16_817_937)), Some(&2));
         assert_eq!(counts.bigrams.get(&(16_817_937, 16_782_711)), Some(&1));
         assert_eq!(counts.bigrams.len(), 2);
+    }
+    #[test]
+    fn byte_records_validate_exact_phrase_and_nul_boundaries() {
+        let lexicon = lexicon();
+        let text = b"16817937\xff \xe4\xb8\xad\xe5\x9b\xbd\0\xff\n0 \xff\n\0\xff\n1 <start>";
+        assert_eq!(parse_ngseg(&lexicon, text).unwrap(), [16_817_937, 0, 0, 1]);
+        for text in [
+            "16817937 wrong",
+            "16817937  中国",
+            "16817937 中国\r",
+            "16817937 中\0国",
+            "99 unknown",
+            "1 wrong",
+        ] {
+            let error = parse_ngseg(&lexicon, text).unwrap_err();
+            assert!(matches!(
+                error,
+                crate::counter::CounterError::InvalidPhrase { line: 1, .. }
+            ));
+            assert!(error.to_string().contains("unknown or mismatched phrase"));
+            assert!(std::error::Error::source(&error).is_none());
+        }
+        assert!(parse_ngseg(&lexicon, "16817937\0 中国").is_err());
+        let lexicon = PhraseLexicon::from_pairs(vec![(16_817_937, "中国\0hidden".into())]);
+        assert_eq!(
+            parse_ngseg(&lexicon, "16817937 中国").unwrap(),
+            [16_817_937]
+        );
+    }
+
+    #[test]
+    fn validated_streams_feed_both_model_consumers() {
+        let lexicon = lexicon();
+        let input = b"16817937 \xe4\xb8\xad\xe5\x9b\xbd\0\xff\n16782711 \xe4\xba\xba\n";
+        let counts = crate::counter::count_ngseg(&lexicon, input, true).unwrap();
+        assert_eq!(counts.unigrams[&16_817_937], 2);
+        assert_eq!(counts.bigrams[&(1, 16_817_937)], 1);
+        assert_eq!(counts.bigrams[&(16_817_937, 16_782_711)], 1);
+        let deleted = crate::lambda::count_deleted(&lexicon, input, true).unwrap();
+        assert_eq!(deleted.bigrams[&(16_817_937, 16_782_711)], 1);
+        assert_eq!(deleted.bigrams[&(1, 16_817_937)], 1);
+        for bad in ["16817937 wrong", "99 unknown"] {
+            assert!(crate::counter::count_ngseg(&lexicon, bad, true).is_err());
+            assert!(crate::lambda::count_deleted(&lexicon, bad, true).is_err());
+        }
     }
 }

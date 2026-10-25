@@ -29,12 +29,11 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use oxpinyin_data::SystemDictionary;
-use oxpinyin_kmm::{GenerateParams, KMixtureModel};
+use oxpinyin_kmm::GenerateParams;
 use oxpinyin_training::eval::SystemPhraseSource;
-use oxpinyin_training::lambda::count_deleted;
 use oxpinyin_training::segment::{PINNED_LAMBDA, Segmenter, SegmenterPaths, load_lambda};
 use oxpinyin_training::train::{
-    CorpusIndex, EvalInputs, SegmentMethod, TrainConfig, Trainer, TrainerPaths,
+    CorpusIndex, EvalInputs, SegmentMethod, TrainConfig, Trainer, TrainerPaths, prepare_held_out,
 };
 
 fn main() -> ExitCode {
@@ -113,14 +112,21 @@ fn run() -> Cli {
     // The held-out corpus seeds both the scoring deleted model (a KMM) and the
     // final λ estimation's deleted counts.
     let held_out = require(args.held_out, "--held-out")?;
-    let held_text = read(&held_out)?;
-    let mut scoring_deleted = KMixtureModel::new();
+    let held_bytes = std::fs::read(&held_out)?;
     let generate_params = GenerateParams {
         train_pi_gram: config.train_pi_gram,
         ..config.generate_params()
     };
-    scoring_deleted.add_document(&held_text, generate_params)?;
-    let deleted_counts = count_deleted(&held_text, config.train_pi_gram)?;
+    let phrase_path = args
+        .phrase_index
+        .as_ref()
+        .ok_or("--phrase-index is required")?;
+    let library_dir = phrase_path
+        .parent()
+        .ok_or("--phrase-index must have a parent directory")?;
+    let lexicon = oxpinyin_training::segment::PhraseLexicon::from_system_dir(library_dir)?;
+    let (scoring_deleted, deleted_counts) =
+        prepare_held_out(&lexicon, &held_bytes, generate_params)?;
 
     // The evaluation decode target.
     let pinyin_index = require(args.pinyin_index, "--pinyin-index")?;

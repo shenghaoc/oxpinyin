@@ -201,17 +201,14 @@ fn malformed_input_fails_with_a_line_numbered_error() {
 }
 
 #[test]
-fn nul_and_invalid_utf8_fail_preflight_before_creating_the_store() {
+fn visible_invalid_bytes_fail_preflight_before_creating_the_store() {
     let tmp = temp_dir("byte-preflight");
     let user = tmp.path().join("user");
     let input = tmp.path().join("input.txt");
     let rejected: &[&[u8]] = &[
         "词\0 ci 7\n".as_bytes(),
-        "词 ci\0 7\n".as_bytes(),
-        "词 ci 7\0ignored\n".as_bytes(),
         b"\xff ci 7\n",
         b"# comment with invalid UTF-8: \xff\n",
-        b"\0ignored invalid UTF-8: \xff\n",
     ];
     for &tail in rejected {
         let mut bytes = "你好 ni'hao 5\n".as_bytes().to_vec();
@@ -250,4 +247,45 @@ fn export_of_a_fresh_user_dir_is_clean() {
         body.lines().all(str::is_empty),
         "no phrase rows can exist yet: {body:?}"
     );
+}
+
+#[test]
+fn classic_nul_tails_preserve_imported_counts_and_round_trip() {
+    let tmp = temp_dir("nul-import");
+    let input = tmp.path().join("input.txt");
+    let mut exports = Vec::new();
+    for (index, bytes) in [
+        "词 ci 7\n你好 nihao\n".as_bytes(),
+        "词 ci 7\0hidden\n你好 nihao\0ignored\n".as_bytes(),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let user = tmp.path().join(format!("user-{index}"));
+        let output = tmp.path().join(format!("export-{index}.txt"));
+        let mut bytes = bytes.to_vec();
+        if index == 1 {
+            bytes.extend_from_slice(b"\0\xff\n");
+            // Invalid UTF-8 hidden after the count must not reject this record.
+            let offset = bytes.iter().position(|byte| *byte == b'h').unwrap();
+            bytes[offset] = 0xff;
+        }
+        std::fs::write(&input, bytes).unwrap();
+        let (ok, stderr) = run(&[
+            "import",
+            "--user-dir",
+            user.to_str().unwrap(),
+            input.to_str().unwrap(),
+        ]);
+        assert!(ok, "{stderr}");
+        let (ok, stderr) = run(&[
+            "export",
+            "--user-dir",
+            user.to_str().unwrap(),
+            output.to_str().unwrap(),
+        ]);
+        assert!(ok, "{stderr}");
+        exports.push(std::fs::read(output).unwrap());
+    }
+    assert_eq!(exports[0], exports[1]);
 }
