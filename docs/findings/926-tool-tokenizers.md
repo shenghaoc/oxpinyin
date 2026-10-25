@@ -371,3 +371,242 @@ for the open byte-reader and phrase-validation differences.
 are not fired. `interp_grammar.rs`, all #1190 paths and other ledger families
 are unchanged. No new necessary divergence was found, so
 `upstream-divergences.md` is unchanged.
+
+## Continuation: segmented byte records and phrase validation
+
+2026-10-25 UTC, based on main `27c785c0`. This section supersedes the
+training parser's validation and classic NUL descriptions above for this change;
+the earlier audit remains the source of the open numeric and classic cases.
+The reference image is still the verified GLib 2.89.4-2/glibc 2.43-3 image.
+The requested glibc 2.41 source work waits for the trixie reference-image
+change; no further 2.43 fetch is attempted.
+
+The implementation now reads physical LF-delimited byte records and borrows
+the prefix before NUL, using ordinary Rust slice operations. Pin
+`include/pinyin_utils.h:33-38`, `utils/utils_helper.h:51-69` and GLib tag
+2.89.4 `glib/gstrfuncs.c:2507-2541` establish this boundary before decoding.
+An empty visible prefix is token zero; a nonempty prefix needs one ASCII
+space/TAB delimiter. Zero ignores all remaining bytes. The existing unsigned
+decimal-prefix domain is retained, including stopping before an invalid
+UTF-8 suffix; signed/overflow behavior is not claimed fixed.
+
+For nonzero tokens, `src/storage/tag_utility.cpp:362-416` requires the exact
+stored phrase (or `<start>` for token 1). The comparison also stops at an
+embedded NUL in the stored text, as `strcmp` does at `:413`. A missing token
+or mismatched phrase now returns a line-numbered `InvalidPhrase` instead of
+silently increasing its count. This safe refusal avoids the pin's assertion
+or NULL read; it does not emulate their mechanisms. Non-scalar stored phrase
+loading remains with #1190 and is not modified here.
+
+`counter::count_ngseg` and `lambda::count_deleted` both require the lexicon.
+Counter, emitter and lambda now pass file bytes directly. Eval also reads
+its held-out stream as bytes. Train reads held-out bytes, validates them once,
+and shares the records between K-mixture scoring and deleted counts.
+Classic parsing now also consumes bytes and truncates each physical line
+before validating UTF-8, matching frontend `PYLibPinyin.cc:245-254`. Its
+whole-file preflight and desired-count behavior are retained. A NUL after
+the pinyin or count now imports the visible two/three-field record, including
+when hidden bytes are invalid UTF-8; NUL at the start gives a blank record.
+Unit and CLI tests compare exported counts to the ordinary input. Visible
+invalid phrase bytes still produce a typed preflight error rather than the
+frontend's silent skip. Invalid pinyin suffix bytes now retain the longest
+valid prefix; numeric suffix handling awaits the glibc trace.
+
+Accepted records still feed the same unigram/bigram algorithms and output
+writers, with no new selection semantics or model coefficients. Work remains
+linear in input bytes with borrowed fields, expected constant-time token
+lookup, and the existing token-vector storage. No shipping library changes.
+
+The existing BDB differential verifies ordinary values and accepted byte
+variants, then verifies refusal for a known token with a wrong phrase,
+repeated separator, CR tail, truncated phrase, or NUL before its delimiter.
+Expectations come from the cited source before these executions. Native
+checks cover arbitrary bytes in zero tails and after NUL, invalid bytes in
+numeric suffixes, exact phrase validation, both count consumers, and CLI
+output preservation on refusal. The existing driver also checks eval/train
+reject a mismatched held-out phrase before producing output.
+
+### Open partitions and held edits
+
+* Signed numbers, long-range saturation/narrowing and numeric-domain changes
+  await the authorized trixie reference and glibc 2.41 source trace. The old
+  amd64 disassembly findings are historical evidence, not a replacement for
+  that prerequisite.
+* **Resolved:** dictool keeps its own strict CLI specification
+  (`dictool-format.md` §2), including preflight refusal and desired-floor
+  counts. NUL and pinyin-prefix fixes remain. Frontend skipping is not the
+  C ABI and does not replace dictool's error contract. Numeric investigation
+  remains deferred as instructed.
+* For a later bad record, exact durable pin DBM state after its assertion
+  remains open. `gen_ngram.cpp:79-121` and `gen_deleted_ngram.cpp:78-118`
+  establish incremental store calls but not libdb's dirty-page durability.
+  These tools emit count text only on success; neither rollback nor prior
+  durable writes are inferred from the refusal comparisons.
+* The full #1190 overlap was checked before editing. Relevant prohibited
+  files include `dictool/src/export.rs`, training `segment/lexicon.rs` and
+  `eval/phrases.rs`, both shared ledgers (`glib-libc-verification.md` and
+  `upstream-divergences.md`), and `contract-diff.py` / its test. The maintainer
+  subsequently authorized own-family shared-ledger/driver edits; only G16
+  is updated. All overlapping crate files remain untouched. No contract case
+  is needed for these tool-only functions, and no replacement driver is
+  introduced.
+
+The continuation remains **Refs #926**, not completion of all partitions.
+`interp_grammar.rs::is_graph` is unchanged.
+
+### Continuation gates and reproduction
+
+BDB Linux amd64: **136 native tests passed**, 13 external-input checks ignored
+by the ordinary suite; fmt and clippy passed. All five counter integration
+checks passed with external inputs enabled. Ordinary and classified byte
+streams retained **138096 unigram / 199 bigram** values and the ordinary
+checksum `1f7af24b04577d8b`; known-token failure cases were refused on both
+sides. The existing import differential reported **IDENTICAL** for ordinary
+and NUL-hidden-invalid-byte fixtures, including classic interchange in both
+directions. No raw outputs are published.
+
+Use the crate/fmt/clippy and BDB counter commands in the earlier reproduction
+section. The existing import runner now accepts `IMPORT_FIXTURE` (an absolute
+path) to use the same frontend harness with a classified input. After the
+ordinary run, create the NUL variant and rerun:
+
+```sh
+uv run --python 3.15 python -c 'from pathlib import Path; p = Path("tools/bisection/classic-import.txt"); Path("/tmp/classic-nul.txt").write_bytes(b"".join(line + b"\0\xffhidden\n" for line in p.read_bytes().splitlines()))'
+IMPORT_FIXTURE=/tmp/classic-nul.txt just heavy -- bash tools/bisection/run-import-diff.sh
+```
+
+When running inside the reference image, mount the input path as well as the
+checkout and configured prefixes. The ordinary fixture is unchanged.
+
+Each changed production function has a named mutation below. Every mutation
+compiled and failed its selected test (exit 101); each was restored, then the
+full native suite passed. Apply one replacement at a time and use
+`just heavy -- cargo test --locked -p <crate> <test>`; CLI checks are in
+`--test counter-differential` (training) or `--test cli` (dictool). The
+eval/train test additionally needs the BDB export and `-- --include-ignored`.
+The old `read_utf8` helper was removed; the importer mutation covers its
+replacement at the file-reader boundary. Test/fixture setup functions and
+removed match arms add no independent production behavior.
+
+| Function | Named mutation | Selected test |
+| --- | --- | --- |
+| `counter::parse_ngseg` | `keep-record-lf`: retain terminal LF | `parse_ngseg_reproduces_segmented_lines` |
+| `parse_segmented_line` | `skip-phrase-validation`: disable nonzero validation | `byte_records_validate_exact_phrase_and_nul_boundaries` |
+| `atoi` | `decimal-radix-eleven`: multiply accumulated digits by 11 | `atoi_matches_c_for_token_fields` |
+| `count_ngseg` | `counter-drop-boundary`: force pi-gram training off | `validated_streams_feed_both_model_consumers` |
+| `count_deleted` | `held-out-drop-boundary`: force pi-gram training off | same |
+| `CounterError::fmt` | `phrase-diagnostic-erased`: replace phrase diagnostic | `byte_records_validate_exact_phrase_and_nul_boundaries` |
+| `CounterError::source` | `phrase-error-source-cycle`: return self as source | same |
+| counter `run` | `counter-whole-file-utf8`: validate all bytes before counting | `counter_and_emitter_accept_ignored_bytes_and_refuse_wrong_phrases` |
+| emitter `run` | `emitter-whole-file-utf8`: same replacement | same |
+| lambda `run` | `lambda-whole-file-utf8`: validate whole system stream | `lambda_validates_both_byte_streams_before_output` |
+| eval `run` | `eval-discard-held-out`: replace held-out bytes with zero record | `eval_and_train_refuse_mismatched_held_out_phrases` |
+| train `run` | `train-discard-held-out`: same replacement | same |
+| dictool `format::parse` | `classic-keep-nul-tail`: retain bytes after NUL | `nul_terminates_classic_records_before_utf8_validation` |
+| dictool import `run` | `classic-import-whole-file-utf8`: decode whole input first | `classic_nul_tails_preserve_imported_counts_and_round_trip` |
+| `ImportError::fmt` | `classic-error-diagnostic-erased`: remove parse detail | `malformed_file_reports_its_line_number` |
+| `ImportError::source` | `classic-error-chain-erased`: remove parse cause | same |
+
+`cells-for-diff.py origin/main` selects **bdb; no check fired**. The BDB
+counter and import comparisons above are the applicable cells. No C-facing
+function changed, so no contract case or shipping-library size build applies.
+
+### Follow-through: K-mixture input and classic visible bytes
+
+2026-10-25 UTC. The held-out K-mixture reader is within #926: it consumed
+exactly the same input as deleted counting and decoded it too early. The
+source is available, and no #1190 file is required, so leaving it open was
+not justified. It is now fixed. Pin `gen_k_mixture_model.cpp:350-366` opens
+one document, `:72-137` reads/validates each segmented record, `:371-384`
+folds pair counts, increments the document count and updates unigrams.
+The same macro/GLib split citations above govern NUL and invalid bytes.
+`train::prepare_held_out` now parses once and feeds validated token/phrase
+records to KMM's existing counting/folding algorithms and deleted counting.
+There is no replacement-character decoding or serialize-and-reparse step.
+KMM's existing text entry point shares the extracted aggregation/fold; its
+unrelated standalone CLI contract is not changed.
+
+The existing KMM gen/export differential now checks a source-derived variant
+with hidden invalid bytes and an arbitrary-byte zero tail. Both the original
+text path and the validated-record path match the pin's exported model
+records. Native tests compare both held-out model outputs directly; the
+existing eval/train CLI check confirms accepted bytes reach the subsequent
+evaluation-input read, while a phrase mismatch is refused beforehand.
+
+Classic pinyin is a byte field too. `pinyin.cpp:638` passes it to
+`FullPinyinParser2`; `pinyin_parser2.cpp:164-213,217-333,346-379` matches
+ASCII spellings and selects the longest prefix from byte zero. An invalid
+UTF-8 byte cannot be crossed by a key, but does not invalidate an already
+complete prefix. The parser now splits bytes before decoding fields and
+passes the valid pinyin prefix to the unchanged `FewestKeys` selection.
+The existing frontend driver verifies invalid pinyin suffixes with identical
+exported rows in both directions. Invalid bytes before enough pinyin keys
+still refuse the record; no new key-selection rule is introduced.
+
+**Resolved by the maintainer ruling for #1226:** dictool keeps its strict
+CLI contract (`dictool-format.md` §2). This is dictool's own specification,
+not a pinned libpinyin import-tool contract: the pin has no import tool.
+The frontend `importPinyinDictionary` at ibus-libpinyin
+`42788824ef59ffc03c6f345e20f08ee860dd5c15`,
+`src/PYLibPinyin.cc:249-275`, skips wrong-field-count lines and ignores
+add failures before saving. That frontend handling is not the C ABI.
+GLib tag 2.89.4 `glib/gutf8.c:940-996` and pin `pinyin.cpp:627-644`
+still explain why an invalid phrase is rejected by an add; they do not
+require dictool to copy the frontend's handling of that rejection.
+
+Dictool retains full-file preflight: wrong field counts, empty phrase/pinyin,
+unparseable pinyin, phrase/key-count mismatch, bad counts and duplicates
+produce 1-based errors before any write. Invalid phrase bytes still refuse;
+verified NUL truncation, valid pinyin prefixes, shared held-out records and
+desired-floor counts remain unchanged. Skip-and-continue is not implemented.
+
+After successful preflight, a failed add records its line while later rows
+still run. The store is marked modified and saved, then the first failing
+line is returned. On successful save, successful adds both before and after
+that row are persisted. This corrects the earlier doc comment's misleading
+claim about only earlier adds; runtime behavior is unchanged.
+
+Numeric work remains deferred until #1229 merges and the glibc 2.41 trace
+can begin. DBM durability after an assertion stays outside this scope.
+
+Follow-through gates at `8fa83791` (preserved on wip/926-pre-squash): **179 native tests passed** across dictool, training
+and KMM (18 external-input checks ignored); fmt and clippy passed. This
+includes 138 dictool/training tests and 41 KMM tests. Five BDB counter checks
+and the existing live KMM gen/export check passed. Classic invalid-pinyin
+suffix interchange was **IDENTICAL** in both directions. Reproduce with the
+same crate commands above, adding `-p oxpinyin-kmm`, and:
+
+```sh
+export PINYIN_GEN_KMM="$pin_src/utils/training/gen_k_mixture_model"
+export PINYIN_EXPORT_KMM="$pin_src/utils/training/export_k_mixture_model"
+just heavy -- cargo test --locked -p oxpinyin-kmm --test differential rust_kmm_matches_pin_gen_and_export -- --include-ignored --nocapture
+uv run --python 3.15 python -c 'from pathlib import Path; rows = [line.split(b" ", 2) for line in Path("tools/bisection/classic-import.txt").read_bytes().splitlines()]; Path("/tmp/classic-pinyin-bytes.txt").write_bytes(b"".join(b" ".join([f[0], f[1] + b"\xffignored", *f[2:]]) + b"\n" for f in rows))'
+IMPORT_FIXTURE=/tmp/classic-pinyin-bytes.txt just heavy -- bash tools/bisection/run-import-diff.sh
+```
+
+Review fix gate, 2026-10-25 UTC: the missed corpus caller now passes the
+lexicon to `count_deleted`. **227 tests passed**, 21 external-input checks
+ignored, across corpus, dictool, training and KMM; clippy and fmt passed.
+This caller-only fix changes no parser behavior. Per the maintainer's rule-7
+instruction, mutation and BDB comparisons above were not rerun. Reproduce:
+
+```sh
+just heavy -- cargo test --locked -p oxpinyin-corpus -p oxpinyin-dictool -p oxpinyin-training -p oxpinyin-kmm
+just heavy -- cargo clippy --locked -p oxpinyin-corpus -p oxpinyin-dictool -p oxpinyin-training -p oxpinyin-kmm --all-targets -- -D warnings
+just fmt --all --check
+```
+
+Nine additional named mutations compiled and failed their tests, then were
+restored before the full suite passed. Each newly changed function is covered:
+
+| Function | Mutation | Test |
+| --- | --- | --- |
+| `split_classic` | `classic-byte-space-only`: stop splitting TAB | `split_classic_matches_g_strsplit_set_max_three` |
+| `format::parse` | `classic-reject-pinyin-suffix`: discard valid prefix | `invalid_pinyin_suffix_keeps_the_longest_ascii_prefix` |
+| KMM `add_document` | `kmm-text-discard-document`: skip folding | `one_document_counts_pairs_and_documents` |
+| KMM `add_token_document` | `kmm-token-drop-text`: discard phrase text | `held_out_byte_records_produce_identical_scoring_and_lambda_models` |
+| KMM `fold_document` | `kmm-double-document`: increment document count twice | `one_document_counts_pairs_and_documents` |
+| KMM `read_document` | `kmm-text-drop-boundary`: disable pi-grams | same |
+| `Document::count` | `kmm-reset-every-token`: reset previous token each line | same |
+| `prepare_held_out` | `held-out-drop-records`: parse empty input | `held_out_byte_records_produce_identical_scoring_and_lambda_models` |
+| train `run` | `train-reject-hidden-bytes`: restore whole-file UTF-8 decoding | `eval_and_train_refuse_mismatched_held_out_phrases` |

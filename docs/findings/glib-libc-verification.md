@@ -1379,6 +1379,22 @@ matched for the ordinary and classified streams; existing import differential
 and classic frontend interchange matched in both directions. Commands and
 limits are in the audit; this does not promote the remaining G16 rows.
 
+Continuation, 2026-10-25 UTC: segmented records now use borrowed byte slices,
+NUL termination and lexicon-backed exact phrase validation before counting.
+Counter/emitter/lambda and eval's held-out reader accept ignored invalid bytes;
+classic imports also truncate NUL before UTF-8 preflight and retain valid
+pinyin prefixes before invalid suffix bytes. Both native model consumers
+validate nonzero phrases. Train's held-out reader now validates bytes once
+and feeds both K-mixture scoring and deleted counting; the existing live
+KMM gen/export driver verifies the accepted byte variant. The existing BDB driver confirms ordinary
+and accepted byte-variant values and source-derived known-token refusals.
+Signed/overflow conversion awaits the trixie reference. Classic invalid
+phrase rows retain dictool's own strict preflight/error specification under
+the #1226 maintainer ruling; frontend skipping is not a C ABI requirement.
+Post-assertion DBM durability is outside this scope. Details and commands are in the #926 audit. This is
+partial coverage, not a new accepted runtime difference; `is_graph` and #1190
+crate implementations are untouched.
+
 The inventory excludes these sites from the shared objects' exported
 call graph; it does not exclude the tools' input/output contracts from
 #926. This source-reading check identifies interfaces and limits, and
