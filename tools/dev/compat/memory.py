@@ -16,6 +16,7 @@ import threading
 import time
 
 from tools.dev import host, slot
+from tools.dev.records import ContainerKind, ContainerReservationRecord, MiB
 
 
 def call(runtime, args, *, pass_fds=(), console=None, cancellable=True):
@@ -65,7 +66,7 @@ def call(runtime, args, *, pass_fds=(), console=None, cancellable=True):
                 process.stdout.close()
 
 
-def verify_limit(record):
+def verify_limit(record: ContainerReservationRecord) -> None:
     """Require runtime metadata to match the reservation token and memory cap.
 
     Docker/Podman must report equal memory and memory-plus-swap byte limits.
@@ -122,8 +123,8 @@ echo 'Memory smoke: over-limit allocation killed (137)'
 '''
 
 
-def run(runtime, kind, name, memory_mib, command, *, console=None, remove=False,
-        exit_confirmed=None, out=sys.stderr):
+def run(runtime: str, kind: ContainerKind, name: str, memory_mib: MiB, command, *, console=None,
+        remove: bool = False, exit_confirmed=None, out=sys.stderr):
     """Reserve native memory, create a capped container, verify it, and attach.
 
     Split runtime options from image/payload at -- and return the start
@@ -206,7 +207,7 @@ def main(argv=None):
     parser.add_argument('command', nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
     try:
-        size = host.container_memory_mib(args.memory_mib)
+        size: MiB = host.container_memory_mib(args.memory_mib)
         runtime = shutil.which(args.runtime)
         if runtime is None or Path(runtime).name not in ('container', 'docker', 'podman'):
             raise ValueError('runtime must enforce memory limits: container, docker or podman')

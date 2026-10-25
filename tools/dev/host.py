@@ -8,12 +8,14 @@ import ctypes
 import json
 import math
 import os
+from collections.abc import Mapping
 from pathlib import Path
 import re
 import subprocess
 import sys
 
 from . import darwin
+from .records import ContainerRef, HeadroomResources, MiB, ResourceSnapshot
 
 # The Linux cgroup reader and its tests use os.sched_getaffinity. macOS has no
 # such syscall; the all-CPU set is the equivalent native answer, and it keeps
@@ -42,7 +44,7 @@ TWO_SLOT_TOTAL_MIB = 15 * 1024
 CONTAINER_MEMORY_MIB = 2560
 
 
-def container_memory_mib(value):
+def container_memory_mib(value: str | None) -> MiB:
     """Parse a positive decimal memory cap in MiB, defaulting when value is None.
 
     Reject nonstrings, leading zeros, and nonpositive values with ValueError.
@@ -54,7 +56,7 @@ def container_memory_mib(value):
     return int(value)
 
 
-def inspect_container(record):
+def inspect_container(record: ContainerRef) -> dict[str, object] | None:
     """Read runtime metadata; CLI/daemon errors are unknown, never exit proof."""
     try:
         result = subprocess.run([record['runtime'], 'inspect', record['name']],
@@ -69,7 +71,7 @@ def inspect_container(record):
         return None
 
 
-def container_liveness(record):
+def container_liveness(record: ContainerRef) -> str:
     """Read live, created (never started), gone, or unknown runtime state.
 
     Names carry a random ownership label; a different owner is uncertain.
@@ -116,7 +118,7 @@ def container_liveness(record):
         return 'unknown'
 
 
-def list_containers(record, *, token_only=False):
+def list_containers(record: ContainerRef, *, token_only: bool = False) -> list[dict[str, object]] | None:
     """A completed all-container listing, or None for an uncertain result."""
     try:
         apple = record['kind'] == 'container'
@@ -139,7 +141,7 @@ def list_containers(record, *, token_only=False):
         return None
 
 
-def container_token_absent(record):
+def container_token_absent(record: ContainerRef) -> bool | None:
     """True only after a complete listing proves no token-labeled container."""
     rows = list_containers(record, token_only=True)
     if rows is None:
@@ -159,7 +161,7 @@ def container_token_absent(record):
         return None
 
 
-def remove_created_container(record):
+def remove_created_container(record: ContainerRef) -> bool:
     """Remove only this token's inert object. Caller owns admission and guard.
 
     No force: if something starts it between inspect and removal, the runtime
@@ -205,7 +207,7 @@ class _VMStatistics64(ctypes.Structure):
     ]
 
 
-def _macos_available_mib():
+def _macos_available_mib() -> MiB | None:
     """Return free plus inactive Mach pages as whole MiB.
 
     XNU's host_statistics64 HOST_VM_INFO64 path (osfmk/kern/host.c, vm_stats)
@@ -238,7 +240,7 @@ def _macos_available_mib():
         return None
 
 
-def _macos_total_mib():
+def _macos_total_mib() -> MiB | None:
     """Read hw.memsize through sysctl and return whole MiB, or None on failure."""
     try:
         libc = ctypes.CDLL('/usr/lib/libSystem.B.dylib')
@@ -256,7 +258,7 @@ def _macos_total_mib():
     return None
 
 
-def total_memory_mib(proc=Path('/proc')):
+def total_memory_mib(proc: Path = Path('/proc')) -> MiB | None:
     """Total physical memory in MiB, or None. Linux: MemTotal from /proc/meminfo."""
     try:
         if sys.platform.startswith('linux'):
@@ -281,7 +283,7 @@ def total_memory_mib(proc=Path('/proc')):
     return None
 
 
-def memory_available_mib():
+def memory_available_mib() -> MiB | None:
     """Memory the host can give new processes now, in MiB, or None.
     Linux: MemAvailable from /proc/meminfo. macOS: Mach host_statistics64
     free + inactive pages (speculative pages are already in free_count).
@@ -517,7 +519,8 @@ def _cgroup_memory_used(directory, current):
     return total - clean, stats
 
 
-def resource_snapshot(proc=Path('/proc'), cgroup_root=Path('/sys/fs/cgroup')):
+def resource_snapshot(proc: Path = Path('/proc'),
+                     cgroup_root: Path = Path('/sys/fs/cgroup')) -> ResourceSnapshot:
     """Return known memory and CPU budgets with diagnostics for unreadable limits.
 
     Use the smallest known host/cgroup memory room in MiB, or None when none
@@ -649,21 +652,22 @@ def resource_snapshot(proc=Path('/proc'), cgroup_root=Path('/sys/fs/cgroup')):
                 cargo_cpus=max(1, math.ceil(min(cpus))), notes=notes)
 
 
-def desktop_headroom_mib(total_mib):
+def desktop_headroom_mib(total_mib: MiB | None) -> MiB:
     """10% of total memory, at most HEADROOM_MIB; HEADROOM_MIB when the total is unknown."""
     if total_mib is None:
         return HEADROOM_MIB
     return min(HEADROOM_MIB, total_mib * HEADROOM_PERCENT // 100)
 
 
-def memory_headroom(env, resources):
+def memory_headroom(env: Mapping[str, str], resources: HeadroomResources) -> MiB:
     """Return desktop headroom in MiB, except for a known hard-limited compat guest."""
     if env.get('OXPINYIN_COMPAT_CONTAINER') == '1' and resources.get('memory_limit_mib') is not None:
         return 0
     return desktop_headroom_mib(resources.get('total_mib'))
 
 
-def fit(available_mib, per_process_mib, ceiling, headroom_mib=HEADROOM_MIB):
+def fit(available_mib: MiB, per_process_mib: MiB, ceiling: int,
+        headroom_mib: MiB = HEADROOM_MIB) -> int:
     """Cap a process count by the ceiling and MiB available after headroom.
 
     Expect a positive per-process MiB estimate; return zero when none fits.
@@ -743,7 +747,9 @@ def plan_defaults(chosen, out=sys.stderr, phase='defaults'):
         print(f"{phase}: {name}={value} ({'explicit: ' if explicit else ''}{reason})", file=out, flush=True)
 
 
-def prepare_heavy_env(env, resources, *, runner=False):
+def prepare_heavy_env(env: Mapping[str, str], resources: ResourceSnapshot, *,
+                      runner: bool = False) -> tuple[dict[str, str],
+                                                     dict[str, tuple[int | str, str, bool]], MiB]:
     """Return a copied child environment, chosen budgets, and an estimate in MiB.
 
     Preserve explicit build/test settings and resolve defaults against the
@@ -839,7 +845,7 @@ def heavy_slot_count(total_mib=READ_HOST):
     return 2 if total_mib is not None and total_mib >= TWO_SLOT_TOTAL_MIB else 1
 
 
-def pid_alive(pid):
+def pid_alive(pid: int) -> bool:
     """Check whether a PID exists, treating access denial as evidence of existence.
 
     Use the Windows exit code or a POSIX signal-zero check; unexpected OS
@@ -869,10 +875,11 @@ def pid_alive(pid):
     return True
 
 
-def read_holder(path):
+def read_holder(path: Path) -> object | None:
     """Read a JSON holder record, returning None for empty, unreadable, or invalid data.
 
-    The decoded value is returned without validating its shape.
+    The decoded value is returned without validating its shape; callers check
+    it as a records.HeavyHolder or records.ContainerReservationRecord.
     """
     try:
         return json.loads(path.read_text() or 'null')
@@ -880,7 +887,7 @@ def read_holder(path):
         return None
 
 
-def describe_holder(holder):
+def describe_holder(holder: object) -> str:
     """Format advisory holder fields, or report that no object record is available."""
     if not isinstance(holder, dict):
         return 'no holder recorded'
@@ -888,7 +895,7 @@ def describe_holder(holder):
             f"{holder.get('command')}")
 
 
-def write_holder(file, holder):
+def write_holder(file, holder: Mapping[str, object]) -> None:
     """Replace and flush a holder file with JSON, leaving locking to the caller."""
     file.seek(0)
     file.truncate()
@@ -1075,7 +1082,7 @@ def _windows_tree_working_set(pid):
     return total
 
 
-def process_tree_use_mib(pid, proc=Path('/proc')):
+def process_tree_use_mib(pid: int, proc: Path = Path('/proc')) -> MiB | None:
     """Memory use of PID and its descendants in MiB, or None when unknown.
 
     Linux sums Pss from /proc and macOS the physical footprint from libproc,

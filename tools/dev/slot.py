@@ -21,7 +21,12 @@ import threading
 import time
 import uuid
 
+from collections.abc import Callable
+from typing import cast
+
 from . import host
+from .records import (BudgetedResources, ContainerKind, ContainerReservationRecord,
+                      HeavyHolder, MiB, ResourceSnapshot)
 
 HEAVY_SLOT = 'heavy-slot'
 HEAVY_SLOT_HELD = 'OXPINYIN_HEAVY_SLOT_HELD'
@@ -437,8 +442,9 @@ class HeavySlot:
                   file=self.out, flush=True)
         self.holder_pid = os.getpid()
         self.token = uuid.uuid4().hex
-        holder = dict(pid=self.holder_pid, worktree=str(ROOT), command=self.command,
-                      since=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()), token=self.token)
+        holder: HeavyHolder = dict(pid=self.holder_pid, worktree=str(ROOT), command=self.command,
+                                   since=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+                                   token=self.token)
         host.write_holder(self._file, holder)
         if self.waited >= self.poll:
             print(f'heavy slot {self.slot} acquired after {self.waited:.1f}s wait: {self.command}',
@@ -533,14 +539,15 @@ class HeavySlot:
         return False
 
 
-def other_reservations(directory, own_slot, notes=None):
+def other_reservations(directory: Path, own_slot: int | None,
+                       notes: list[str] | None = None) -> MiB:
     """Charge live holders in other locked slots. Ignore dead records.
 
     Live memory already excludes what a holder's process tree uses, so a
     holder is charged only the rest of its estimate: max(0, estimate - use).
     A use that cannot be read is charged the full estimate.
     """
-    reserved = 0
+    reserved: MiB = 0
     for path in sorted(directory.glob(f'{HEAVY_SLOT}-*')):
         suffix = path.name.removeprefix(HEAVY_SLOT + '-')
         if not suffix.isdigit() or int(suffix) == own_slot:
@@ -567,7 +574,7 @@ def other_reservations(directory, own_slot, notes=None):
     return reserved
 
 
-def write_container_record(path, record):
+def write_container_record(path: Path, record: ContainerReservationRecord) -> None:
     """Atomic replacement, always called with heavy-admission held."""
     temporary = path.with_suffix('.tmp')
     with temporary.open('w') as file:
@@ -577,7 +584,7 @@ def write_container_record(path, record):
     temporary.replace(path)
 
 
-def container_recovery_state(record):
+def container_recovery_state(record: ContainerReservationRecord) -> str:
     """Reconcile runtime state under admission, with no other launch client."""
     if record['phase'] == 'create-failed' and host.container_token_absent(record) is True:
         return 'gone'
@@ -599,7 +606,7 @@ def container_recovery_state(record):
     return state
 
 
-def container_reservations(directory, out=sys.stderr):
+def container_reservations(directory: Path, out=sys.stderr) -> MiB | None:
     """Count host budgets, recovering only settled, confirmed-gone containers.
 
     Caller holds heavy-admission. The per-record fence is inherited by runtime
@@ -607,7 +614,7 @@ def container_reservations(directory, out=sys.stderr):
     or a request still in flight. An interrupted create remains reserved even
     if its name is absent: a daemon may still complete that request later.
     """
-    reserved = 0
+    reserved: MiB = 0
     for path in directory.glob('container-memory-*.json'):
         record = host.read_holder(path)
         if (not isinstance(record, dict) or record.get('schema') != 1
@@ -619,6 +626,7 @@ def container_reservations(directory, out=sys.stderr):
                 or not Path(record['runtime']).is_absolute()):
             print(f'container reservation invalid: {path}; available memory unknown', file=out, flush=True)
             return None
+        record = cast(ContainerReservationRecord, record)
         guard = path.with_suffix('.guard')
         with guard.open('a+') as file:
             try:
@@ -640,7 +648,9 @@ def container_reservations(directory, out=sys.stderr):
     return reserved
 
 
-def budget_resources(directory, own_slot=None, *, read=None, out=sys.stderr):
+def budget_resources(directory: Path, own_slot: int | None = None, *,
+                     read: Callable[[], ResourceSnapshot] | None = None,
+                     out=sys.stderr) -> BudgetedResources:
     """Read host resources and subtract other slot and container reservations in MiB.
 
     Return the resource mapping with diagnostic notes and reservation totals;
@@ -671,7 +681,8 @@ class ContainerReservation:
     exit is confirmed; this reservation does not take a heavy slot.
     """
 
-    def __init__(self, runtime, kind, name, memory_mib, out=sys.stderr, poll=0.5):
+    def __init__(self, runtime: str, kind: ContainerKind, name: str, memory_mib: MiB,
+                 out=sys.stderr, poll: float = 0.5):
         """Prepare a uniquely named reservation and validate its memory cap in MiB.
 
         Create the host lock directory but do not yet acquire the guard or budget.
@@ -681,9 +692,10 @@ class ContainerReservation:
         self.path = self.directory / f'container-memory-{token}.json'
         self.guard = None
         self.out, self.poll = out, poll
-        self.record = dict(schema=1, runtime=runtime, kind=kind, name=name, token=token,
-                           memory_mib=host.container_memory_mib(str(memory_mib)), phase='creating',
-                           since=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()))
+        self.record: ContainerReservationRecord = dict(
+            schema=1, runtime=runtime, kind=kind, name=name, token=token,
+            memory_mib=host.container_memory_mib(str(memory_mib)), phase='creating',
+            since=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()))
 
     def acquire(self):
         """Hold the creation guard and wait for enough native memory to reserve.
@@ -703,9 +715,9 @@ class ContainerReservation:
                     held = inherited_slot_marker(self.directory, self.out)
                     own_slot = held['slot'] if held is not None else None
                     resources = budget_resources(self.directory, own_slot, out=self.out)
-                    available = resources['available_mib']
-                    estimate = self.record['memory_mib']
-                    headroom = host.desktop_headroom_mib(resources.get('total_mib'))
+                    available: MiB | None = resources['available_mib']
+                    estimate: MiB = self.record['memory_mib']
+                    headroom: MiB = host.desktop_headroom_mib(resources.get('total_mib'))
                     if available is not None and available - headroom >= estimate:
                         write_container_record(self.path, self.record)
                         print(f'container reservation: {self.path}; {estimate} MiB; '
@@ -777,8 +789,14 @@ class ContainerReservation:
             self.path.with_suffix('.guard').unlink(missing_ok=True)
 
 
-def reserve_heavy_env(slot, env, *, runner=False, resource_snapshot=None, prepare_heavy_env=None,
-                      deadline=None):
+def reserve_heavy_env(slot: HeavySlot, env: dict[str, str], *, runner: bool = False,
+                      resource_snapshot: Callable[[], ResourceSnapshot] | None = None,
+                      prepare_heavy_env: Callable[..., tuple[dict[str, str],
+                                                              dict[str, tuple[int | str, str, bool]],
+                                                              MiB]] | None = None,
+                      deadline: float | None = None
+                      ) -> tuple[BudgetedResources, dict[str, str],
+                                 dict[str, tuple[int | str, str, bool]], MiB, bool]:
     """Serialize the resource read, reservation check, and holder estimate update.
 
     Return resources, child environment, chosen budgets, estimate in MiB,
@@ -797,7 +815,7 @@ def reserve_heavy_env(slot, env, *, runner=False, resource_snapshot=None, prepar
         if admitted:
             path = slot.lock_dir / f'{HEAVY_SLOT}-{slot.slot}'
             with path.open('r+') as record:
-                holder = json.load(record)
+                holder: HeavyHolder = json.load(record)
                 previous = holder.get('estimate_mib', 0)
                 if type(previous) is not int or previous < 0:
                     previous = 0
@@ -818,7 +836,7 @@ class AdmissionMutexBusy(BlockingIOError):
     """A non-blocking attempt found the admission mutex held elsewhere."""
 
 
-def _mib(value):
+def _mib(value: MiB | None) -> str:
     """Format a memory quantity with MiB, or unknown when the value is None."""
     return 'unknown' if value is None else f'{value} MiB'
 
@@ -854,12 +872,13 @@ class HeavyAdmission:
         # Last obstacle: 'slot', 'admission' mutex, or 'memory'. The
         # figures below describe the last memory decision, and only that.
         self.blocked_by = None
-        self.reservations = (None, None)
+        self.reservations: tuple[MiB | None, MiB | None] = (None, None)
         resources = self.resource_snapshot()
-        _, self.provisional, self.estimate = self.prepare_heavy_env(
+        _, self.provisional, estimate = self.prepare_heavy_env(
             self.base_env, resources, runner=self.runner)
-        self.available = resources['available_mib']
-        self.headroom = host.memory_headroom(self.base_env, resources)
+        self.estimate: MiB = estimate
+        self.available: MiB | None = resources['available_mib']
+        self.headroom: MiB = host.memory_headroom(self.base_env, resources)
         print('resources (provisional): ' + '; '.join(resources['notes']), file=out, flush=True)
         host.plan_defaults(self.provisional, out, 'provisional defaults')
 
