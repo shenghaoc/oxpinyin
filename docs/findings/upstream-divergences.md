@@ -96,27 +96,37 @@ change.
 
 - **Upstream source cite:** `src/pinyin.cpp:3555-3560`
   (`pinyin_get_chewing_auxiliary_text`): after `len = cursor - begin`
-  (`:3556`), `g_utf8_substring(zhuyin, len, end)` (`:3558`) treats the raw
-  byte delta and the absolute raw end as scalar offsets into the canonical
-  zhuyin spelling. GLib 2.89.4-2 `g_utf8_substring`
-  (`glib/gutf8.c:298-322`) resolves both with `g_utf8_offset_to_pointer`
-  (`:376-386`), which steps by `g_utf8_next_char` and does not stop at the
-  terminator.
-- **Mechanism:** `len` can exceed the spelling's scalar count for a cursor
-  inside a long key (for example `zhong` at cursor 4: five raw bytes, three
-  zhuyin scalars). `start` is then past the allocation and the copied
-  `right` bytes are heap contents; `g_utf8_substring(zhuyin, 0, len)` also
-  copies `len` bytes from the start, past the terminator, although its
-  visible C string stops at the NUL.
+  (`:3556`), `g_utf8_substring(zhuyin, len, end)` (`:3558`) passes the raw
+  byte delta as `start_pos` and `m_raw_end`, an **absolute** raw-input
+  offset, as `end_pos`. GLib 2.89.4-2 `g_utf8_substring`
+  (`glib/gutf8.c:298-322`) resolves
+  `start = g_utf8_offset_to_pointer(str, len)` and
+  `end = g_utf8_offset_to_pointer(start, end_pos - len)`;
+  `g_utf8_offset_to_pointer` (`glib/gutf8.c:376-386`) steps
+  `g_utf8_next_char` `end_pos - start_pos` times with no terminator check.
+- **Mechanism:** the second call asks for `m_raw_end - len` scalars from
+  scalar `len`, not for the `C - len` scalars remaining. `m_raw_end > C` for
+  essentially every interior cursor (a later key's absolute end exceeds `C`;
+  a first key's end is its raw span, at least `C` for every splittable
+  content row and usually larger), so the call is outside GLib's documented
+  domain and the walk passes the NUL. The copy reads beyond the allocation
+  once the end pointer is at least one byte past the NUL
+  (`m_raw_end >= C + 2`); for `nihao@3` (`hao`, `C = 2`, `len = 1`,
+  `m_raw_end = 5`) it walks three scalars past and copies the NUL plus the
+  bytes after it. While the pin returns, `g_strconcat` sees the copied NUL
+  and the visible right half is the spelling from `len` to `C` (empty at
+  `len == C`). For `len > C` the copy starts past the NUL, so the visible
+  right half is heap bytes. The over-read can fault.
 - **What oxpinyin does instead:** `crates/oxpinyin-capi/src/aux_matrix.rs`
   `split_zhuyin` cuts the spelling at scalar `len` and returns an empty
   right half when `len` is at or past the scalar count; the zhuyin-parser
   branch in `crates/oxpinyin-capi/src/text.rs` `chewing_aux_text` uses the
-  same cut. Output for `len <= C` is unchanged.
-- **Externally observable:** yes in principle — the pin can return heap
-  bytes (or fault), oxpinyin returns `left| ` with an empty right half.
-  Class (b): no safe, deterministic reproduction. The same cursor is not a
-  differential case because the pin side has no reproducible result.
+  same cut. For `len <= C` its bytes are the pin's visible right half.
+- **Externally observable:** for an interior cursor the visible bytes match
+  only when the pin returns; the difference is the absent out-of-allocation
+  read and possible fault, plus the out-of-domain walk at `m_raw_end == C + 1`.
+  For `len > C` the visible bytes differ (heap vs empty). Class (b): no safe,
+  deterministic reproduction; no differential case reproduces the read.
 - **Record:** [G2 closure](glib-libc-verification.md#g2--c-strings-joins-and-vectors);
   verified 2026-10-25 UTC on bdb.
 
