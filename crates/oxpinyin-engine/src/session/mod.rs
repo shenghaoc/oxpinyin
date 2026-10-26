@@ -974,10 +974,11 @@ const SORT_WITHOUT_LONGER_CANDIDATE: u32 = 0x2;
 /// (`g_array_sort_with_data`, `g_array_sort`): descending on each enabled key.
 /// The frequency key is `-(freq_lhs - freq_rhs)` in `guint32` arithmetic
 /// returned as a `gint`, so a difference of 2³¹ or more flips sign and the
-/// comparator stops being transitive — which the stock λ never reaches (the
-/// frequencies stay below 2²⁴) and a `table.conf` λ outside `[0, 1]` does
+/// comparator stops being transitive — which a λ in `[0, 1]` never reaches
+/// (the frequencies stay below 2²⁴) and a `table.conf` λ outside it does
 /// (`(1−λ)` negative wraps the stored `guint32`). The order is then the merge
-/// sort's, so the sort is GLib's recursion, not the standard library's.
+/// sort's, so the sort is GLib's recursion ([`crate::glib_merge_sort`]),
+/// not the standard library's.
 ///
 /// `keys[i]` is `(candidates[i]`'s key, `i)`. The merge runs over the
 /// 32-byte key rows; the 72-byte candidates move once each.
