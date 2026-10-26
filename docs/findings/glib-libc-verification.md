@@ -349,6 +349,15 @@ in the TSV. Rust: both `capi/src/dict.rs` and `zhuyin-capi/src/dict.rs`,
 
 ## G5 — N-best tail sort
 
+**#1297 update:** the Rust implementation uses stable tail sorting and
+`RankScore`/stable enabled-field candidate sorting. The source names and
+MUST-RETAIN verdicts below document the pre-#1297 baseline and are superseded
+by the limb-3 ranking records, not current instructions. #1137's two
+unsigned-score controls remain ordinary amd64 MATCH specifications; its
+three zhuyin λ > 1 cases have separate exact POLICY-ACCEPTED #1297 records.
+The pin portability classifications are unchanged. See
+[ranking-score](1297-ranking-score.md) and [tail-score-order](1297-tail-score-order.md).
+
 Pin: `lookup/phonetic_lookup.h:174-178,329-339` (`trellis_value_compare`,
 `g_ptr_array_sort`). Rust: `engine/src/nbest.rs` `glib_merge_sort`, `tail_compare`,
 `c_float_to_gint`. Both facades, all
@@ -361,6 +370,15 @@ backends; #921. Record: [921-927-glib-sorts.md](921-927-glib-sorts.md).
 | NaN, out-of-range float differences, non-transitive comparisons | Contract: MUST RETAIN the merge; no removal proposed. | amd64 binary read (`subss`, `xorps`, `cvttss2si`); arm64 not read, and the existing `the_tail_sort_is_glibs_merge_and_blind_to_the_nan_conversion` shows the NaN conversion is not observable. `std-stable-sort` DIFFERs on five λ cases. |
 
 ## G6 — Candidate and predicted-list sorting
+
+**#1297 update:** the Rust implementation uses stable tail sorting and
+`RankScore`/stable enabled-field candidate sorting. The source names and
+MUST-RETAIN verdicts below document the pre-#1297 baseline and are superseded
+by the limb-3 ranking records, not current instructions. #1137's two
+unsigned-score controls remain ordinary amd64 MATCH specifications; its
+three zhuyin λ > 1 cases have separate exact POLICY-ACCEPTED #1297 records.
+The pin portability classifications are unchanged. See
+[ranking-score](1297-ranking-score.md) and [tail-score-order](1297-tail-score-order.md).
 
 Pin: `pinyin.cpp:1678-1709,1794-1868,2041-2138,2286,2443`;
 `zhuyin.cpp:1129-1144,1229-1270,1375,1529,1610`.

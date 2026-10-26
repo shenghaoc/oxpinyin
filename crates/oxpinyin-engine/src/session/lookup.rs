@@ -261,19 +261,19 @@ where
             // The scan's result stands even when it found nothing. Tokens the
             // table lacks rank as zero rather than falling back.
             let frequencies = self
-                .candidate_frequencies(
+                .candidate_scores(
                     collected,
                     gram.as_ref().map(|(prev, row)| (*prev, row)),
                     gate,
                 )?
-                .unwrap_or_else(|| vec![0; collected.len()]);
+                .unwrap_or_else(|| vec![crate::RankScore::default(); collected.len()]);
             // `Session::rank_word`: the sort word, or libzhuyin's fixed
             // comparator (`zhuyin.cpp:1129-1144`) on a zhuyin facade.
             let rank_word = self.rank_word();
             // One key row per candidate, sorted and applied in place: the
             // candidates never leave `collected`, and the key rows are the
             // only per-call buffer of this stage.
-            let mut keys: Vec<(RankKey, u32)> = collected
+            let mut keys: Vec<(RankKey, usize)> = collected
                 .iter()
                 .zip(frequencies)
                 .enumerate()
@@ -289,14 +289,14 @@ where
                         frequency,
                         rank_word,
                     );
-                    (key, index as u32)
+                    (key, index)
                 })
                 .collect();
 
             // Stable sort, all three keys descending: an all-equal tie keeps
             // the collection order, which the scan now lays down in the
             // pin's array order (per window, token-ascending).
-            glib_rank_sort(collected, &mut keys);
+            rank_candidates(collected, &mut keys);
             let mut keys: Vec<RankKey> = keys.into_iter().map(|(key, _)| key).collect();
 
             // The pin prepends LONGER before the frequency dedup
@@ -438,13 +438,12 @@ where
     /// whole composition's matrix, its extensions capped at twice the
     /// parse's key count, the maximum-unigram token of the (char-length
     /// capped) survivors as the row, typed `LONGER_CANDIDATE` with the
-    /// unigram-only amplified frequency and a zero span.
+    /// unigram-only score and a zero span.
     ///
     /// `None` when the pin would prepend no row: the parse is empty, the
     /// cap admits no phrase, or no surviving token owns a phrase item.
-    /// The frequency law is `((1−λ) · unigram / total) · 2²⁴` truncated —
-    /// [`amplified_frequency`], the bigram term at exactly `0.0` exactly
-    /// as the pin's LONGER branch computes it (no merged gram there).
+    /// Its score is `(1−λ) · unigram / total`, with no bigram term,
+    /// as the pin's LONGER branch specifies.
     ///
     /// # Errors
     ///
@@ -569,7 +568,7 @@ where
         let key = RankKey::for_sort_word(
             phrase_length,
             0,
-            amplified_frequency(unigram, total, self.model.amplification_lambda()),
+            unigram_score(unigram, total, self.model.amplification_lambda()),
             self.lookup.sort_word,
         );
         Ok(Some((
@@ -778,7 +777,7 @@ where
         } = core::mem::take(&mut self.scratch);
         let mut group: Vec<Candidate> = Vec::new();
         let mut keys: Vec<RankKey> = Vec::new();
-        let mut slice_keys: Vec<(RankKey, u32)> = Vec::new();
+        let mut slice_keys: Vec<(RankKey, usize)> = Vec::new();
         let mut unreadable = false;
 
         for start in 0..bound {
@@ -827,8 +826,8 @@ where
                 candidate.set_span_start(start);
             }
             let frequencies = self
-                .candidate_frequencies(&group, gram.as_ref().map(|(prev, row)| (*prev, row)), true)?
-                .unwrap_or_else(|| vec![0; group.len()]);
+                .candidate_scores(&group, gram.as_ref().map(|(prev, row)| (*prev, row)), true)?
+                .unwrap_or_else(|| vec![crate::RankScore::default(); group.len()]);
             slice_keys.clear();
             slice_keys.extend(group.iter().zip(frequencies).enumerate().map(
                 |(index, (candidate, frequency))| {
@@ -840,10 +839,10 @@ where
                         frequency,
                         rank_word,
                     );
-                    (key, index as u32)
+                    (key, index)
                 },
             ));
-            glib_rank_sort(&mut group, &mut slice_keys);
+            rank_candidates(&mut group, &mut slice_keys);
             keys.extend(slice_keys.iter().map(|(key, _)| *key));
             out.append(&mut group);
         }
@@ -1036,39 +1035,17 @@ where
         Ok(gram.map(|gram| (prev.value(), gram)))
     }
 
-    /// Per-candidate sort frequencies on the pin's amplified scale, or
-    /// `None` when the model carries no real frequency table at all.
-    ///
-    /// The pinned oracle does not compare raw unigram counts: it truncates
-    /// the f32 possibility `(1−λ)·unigram/total` amplified by 2²⁴ into a
-    /// `guint32` (`_compute_frequency_of_items`, `pinyin.cpp:1855-1866`).
-    /// `gram` is the row merged once for this guess: `None`, or a row that
-    /// misses the token, contributes a bigram possibility of exactly `0.0`
-    /// and leaves the amplified value bit-identical to the unigram-only
-    /// law. Near-ties collapse
-    /// to equal keys under that truncation — the tie class
-    /// `docs/testing/corpus-tail.md` calls Class A — and equal keys fall to
-    /// the collection order the stable sort keeps. `amplified_frequency`
-    /// reproduces the arithmetic bit-for-bit over the model's own numbers:
-    /// the item's stored unigram (`get_unigram_frequency`, `gen_unigram`'s
-    /// +1 included — a phrase the corpus never saw is 1, never 0) over the
-    /// facade total (`get_phrase_index_total_freq`, Σ item), exactly the
-    /// two reads `_compute_frequency_of_items` performs.
-    ///
-    /// Only the first `Some` switches the construction on, so a model that
-    /// mixes per-token answers degrades deterministically (missing tokens
-    /// rank as zero).
-    ///
-    /// With `gate` clear (the eager refresh; see
-    /// [`Session::dynamic_adjust_gram`]) a read of `gram` the pin cannot
-    /// make contributes a bigram term of `0.0` instead of refusing.
-    pub(super) fn candidate_frequencies(
+    /// Interpolated scores for each real-frequency candidate. Ordinary rows
+    /// use the gated merged bigram, addon rows their own unigram total.
+    /// Missing scores rank as zero. The product's unsafe-read refusals and
+    /// dynamic-adjust option gates remain at their existing call sites.
+    pub(super) fn candidate_scores(
         &self,
         collected: &[Candidate],
         gram: Option<(u32, &MergedGram)>,
         gate: bool,
-    ) -> Result<Option<Vec<u64>>, EngineError> {
-        let mut frequencies: Option<Vec<u64>> = None;
+    ) -> Result<Option<Vec<crate::RankScore>>, EngineError> {
+        let mut frequencies: Option<Vec<crate::RankScore>> = None;
         // The facade total, `get_phrase_index_total_freq()`: the sum of
         // every item's stored unigram (`gen_unigram`'s +1 included).
         let lambda = self.model.amplification_lambda();
@@ -1097,7 +1074,7 @@ where
                         EngineError::Scoring(ScoringError::LanguageModel(error.to_string()))
                     })?
                     .unwrap_or(0);
-                Some(amplified_frequency(raw, addon_total, lambda))
+                Some(unigram_score(raw, addon_total, lambda))
             } else {
                 // Upstream's Gate 3: the bigram possibility joins the unigram
                 // term INSIDE the pin's expression, before its single
@@ -1122,12 +1099,11 @@ where
                     .map_err(|error| {
                         EngineError::Scoring(ScoringError::LanguageModel(error.to_string()))
                     })?
-                    .map(|count| {
-                        amplified_frequency_with_bigram(count, default_total, bigram, lambda)
-                    })
+                    .map(|count| crate::interpolated_score(count, default_total, bigram, lambda))
             };
             if let Some(count) = count {
-                let table = frequencies.get_or_insert_with(|| vec![0; collected.len()]);
+                let table = frequencies
+                    .get_or_insert_with(|| vec![crate::RankScore::default(); collected.len()]);
                 // Unigram term of candidate frequency: always on. Upstream
                 // reads FacadePhraseIndex unigrams (including trained user
                 // counts) with no DYNAMIC_ADJUST check. W6-T4's overlay is

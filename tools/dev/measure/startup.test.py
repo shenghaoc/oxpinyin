@@ -259,8 +259,8 @@ class ControllerTests(unittest.TestCase):
         self.assertNotIn('pr_base_ratio', emit.call_args.kwargs)
 
     def range_campaign(self, *, wide=False, outside=False, init_variation=False, init_unresolved=False,
-                       backend='kc', profile_edit=None, nonoverlap=False):
-        libraries = {a: {'pinyin': self.root / (a + '.so')} for a in st.ARMS}
+                       backend='kc', profile_edit=None, nonoverlap=False, arms=st.ARMS):
+        libraries = {a: {'pinyin': self.root / (a + '.so')} for a in arms}
         for paths in libraries.values():
             paths['pinyin'].write_bytes(b'identical')
         visits = {}
@@ -286,10 +286,20 @@ class ControllerTests(unittest.TestCase):
                 mock.patch.object(st, 'emit', side_effect=lambda kind, **row: records.append(row)):
             try:
                 st.instrument(campaign, libraries, 'pinyin', 'empty', self.root,
-                              {a: dict(digest='same') for a in st.ARMS}, backends=dict.fromkeys(st.ARMS, backend))
+                              {a: dict(digest='same') for a in arms}, backends=dict.fromkeys(arms, backend), arms=arms)
             except st.NotResult:
                 pass
         return records, visits
+
+    def test_reference_arm_uses_the_shared_instruction_controls(self):
+        arms = (*st.ARMS, 'pin')
+        records, visits = self.range_campaign(arms=arms)
+        self.assertEqual([r['verdict'] for r in records], ['VALID', 'DIAGNOSTIC', 'DIAGNOSTIC'])
+        for row in records:
+            self.assertEqual(set(row['counts']), set(arms))
+            self.assertEqual(visits[row['scope'], 'pin'], 2 if row['scope'] == 'init' else 5)
+        records, _ = self.range_campaign(arms=arms, outside=True)
+        self.assertEqual(records[-1]['verdict'], 'INVALID')
 
     def test_randomstate_range_pass_reports_every_original(self):
         records, visits = self.range_campaign()

@@ -1066,8 +1066,10 @@ Pin: `pinyin_token_get_unigram_frequency` →
 → `RuntimeLm::unigram_freq` → `PhraseLibraries` item field
 (`oxpinyin-capi/src/dict.rs:276-344`;
 `oxpinyin-runtime/src/lib.rs:780-789`;
-`phrase_library.rs:305-311`). `amplified_frequency` is sort-only
-(`lookup.rs:640-657`), never this getter. Committed fixtures store
+`phrase_library.rs:305-311`). Candidate `RankScore` computation is
+ranking-only, never this getter. The dated implementation called that
+helper `amplified_frequency` (`lookup.rs:640-657`); #1297 removed the
+scaled-key conversion without changing this unigram getter. Committed fixtures store
 你好 unigram **161** (`fixtures/w3/*/gb_char.bin`).
 
 **Isolation.** dict-surface's add-then-read flows remain IDENTICAL.
