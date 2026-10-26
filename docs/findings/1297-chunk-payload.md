@@ -1,0 +1,16 @@
+# #1297 — Complete chunk payload writes
+
+- **Status:** accepted · 2026-10-26 UTC · #1297 Phase 2.
+- **Disposition:** POLICY-ACCEPTED where the recorded artefact changes output; controls remain MATCH.
+- **Policy limb:** language artefact under #1304 (main `ab0b1da7`), not a new product rule or a class (a), (b), or (c) exception.
+- **Pin:** libpinyin `074a2219c90feaf962d0d24f034514033ece5f99`; source read from a checkout at 074a2219 whose cited blobs were hashed against the pin. `src/storage/table_info.cpp` blob `07b20e4ee9f061251d62efd2e4c4b09e55119d26`; `utils/utils_helper.h` blob `385415f7244a131dec378ce22436ce32ac45714b`. Reference image glibc 2.41; this native Ubuntu host uses glibc 2.44. Both facades, all backends unless stated otherwise.
+- **Contract preserved:** exported symbols, C layouts, ownership, allocators, persistent layouts, data ownership, and the ruled LC_NUMERIC side effect are unchanged. Existing class (b)/(c) diagnostics stay at their boundaries. The input-dependent differences below are the entire admitted scope.
+- **Prior rulings:** none reversed; #923 remains in force.
+
+`memory_chunk.h:536-557` makes one payload write, treats a short count or EINTR as soft failure, then skips sync. `persistence::write_chunk` uses Write::write_all for the payload; the two header writes keep the existing class (c) word diagnostics. Both facade saves, journal/chunk staging, and strict Rust saves share it. Valid completed saves have the same header, payload, sync, rename order and bytes; transient short writes/interruptions now retry before sync, final zero/error writes remain soft, and sync failure remains ignored. All producers frame payloads with the same chunk codec. No operation-count guarantee is a product or persistent-format requirement. Recording-sink tests cover partial, interrupted, zero, full, and failed-sync writes; the #929 file-operation differential checks the outward save lifecycle.
+
+**Tests and reproduction:** use the existing `contract-diff.py` scanner selections (`--issue 919 --issue 920`), #1144 punctuation and #929 save selections on bdb, plus the touched-crate gate and #926 tool differentials. The PR reports executed results; source-derived expectations below are specified before the differential run. No captures are submitted.
+
+**Conclusion:** accepted under the merged policy. Valid product grammar, ABI and persistent contracts remain. Runtime is linear in the input; parsing keeps borrowed header/row slices and removes the hex conversion/word-copy machinery.
+
+**Named mutation (2026-10-26 UTC):** `M1297-single-payload-write` — replace the payload `write_all` with one `write`; `cargo test -p oxpinyin-user chunk_short_payload_write_is_completed_before_sync` detects it (assertion failure, exit 101). Every mutated source was restored byte-for-byte. Rebuild with `just cell-artifacts --artifacts pinyin-capi,zhuyin-capi` for C-facing witnesses, then run the existing contract driver with the named `--cases`; tool and sink witnesses use `just heavy -- cargo test` with their existing test target. The restored touched-crate gate passes, and the three C-facing mutation witnesses return to their declared MATCH/POLICY-ACCEPTED outcomes.

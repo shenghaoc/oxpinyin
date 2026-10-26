@@ -77,13 +77,12 @@ impl EvalReport {
     /// The `correction rate:%f` line `evaluate.py` parses.
     #[must_use]
     pub fn correction_rate_line(&self) -> String {
-        // `passed_count / (parameter_t) tested_count` printed with `%f`
-        // (`eval_correction_rate.cpp:201-203`): with no test it is `0.0 / 0.0`,
-        // a NaN the tool prints as `-nan` (x86-64) or `nan` (AArch64). The
-        // division runs on the machine as the C one does. `rate` stays 0 for
-        // the pipeline's scoring.
+        // Finite rates keep six decimals; an empty test set prints Rust's NaN.
         let rate = self.passed as f64 / self.tested as f64;
-        format!("correction rate:{}", oxpinyin_kmm::printf_f(rate))
+        format!(
+            "correction rate:{}",
+            oxpinyin_kmm::format_six_decimals(rate)
+        )
     }
 }
 
@@ -98,10 +97,11 @@ pub fn parse_eval_corpus(text: &str) -> Result<Vec<Vec<PhraseToken>>, EvalError>
     let mut sentences = Vec::new();
     let mut current = Vec::new();
     for line in text.lines() {
-        if line.is_empty() {
-            continue;
-        }
-        let token = parse_token(line);
+        let token = if line.is_empty() {
+            NULL_TOKEN
+        } else {
+            parse_token(line)?
+        };
         if token == NULL_TOKEN {
             if !current.is_empty() {
                 sentences.push(std::mem::take(&mut current));
@@ -116,11 +116,16 @@ pub fn parse_eval_corpus(text: &str) -> Result<Vec<Vec<PhraseToken>>, EvalError>
     Ok(sentences)
 }
 
-/// `atoi` of the first field (`TAGLIB_PARSE_SEGMENTED_LINE`,
-/// `utils_helper.h:61`): a field with no digits is the null token.
-fn parse_token(line: &str) -> u32 {
-    let head = line.split([' ', '\t']).next().unwrap_or(line);
-    oxpinyin_kmm::atoi(head.as_bytes())
+/// The complete decimal token of one segmented record.
+fn parse_token(line: &str) -> Result<u32, EvalError> {
+    let (head, _) = line
+        .split_once([' ', '\t'])
+        .ok_or_else(|| EvalError::Malformed {
+            detail: format!("no separator in {line:?}"),
+        })?;
+    oxpinyin_kmm::decimal_field::<u32>(head.as_bytes()).map_err(|error| EvalError::Malformed {
+        detail: error.to_string(),
+    })
 }
 
 /// Evaluates the correction rate over `sentences`, decoding each with the
@@ -523,7 +528,7 @@ mod tests {
     // the corpus parser and the error paths.
 
     #[test]
-    fn the_correction_rate_line_is_printf_f_of_passed_over_tested() {
+    fn the_correction_rate_line_is_format_six_decimals_of_passed_over_tested() {
         let report = super::EvalReport {
             tested: 4,
             passed: 3,
@@ -533,36 +538,14 @@ mod tests {
         // No test: `0.0 / 0.0` prints as glibc's `%f` prints a NaN.
         let none = super::EvalReport::default();
         let line = none.correction_rate_line();
-        assert!(line.starts_with("correction rate:"), "{line}");
-        assert_eq!(
-            line.trim_start_matches("correction rate:")
-                .trim_start_matches('-'),
-            "nan"
-        );
-        #[cfg(target_arch = "x86_64")]
-        assert_eq!(line, "correction rate:-nan");
+        assert_eq!(line, "correction rate:NaN");
     }
 
     #[test]
-    fn corpus_tokens_read_as_glibc_atoi() {
-        // `eval_correction_rate.cpp:178` reads the first field with `atoi`: C
-        // white space and a sign are accepted, the low 32 bits are kept and a
-        // field with no digits is the null token (a sentence separator).
-        let sentences =
-            parse_eval_corpus("+7 甲\n\r8 乙\n4294967305 丙\n-4294967287 丁\nabc x\n9 戊\n")
-                .expect("parse");
-        assert_eq!(
-            sentences,
-            vec![
-                vec![
-                    PhraseToken::new(7),
-                    PhraseToken::new(8),
-                    PhraseToken::new(9),
-                    PhraseToken::new(9),
-                ],
-                vec![PhraseToken::new(9)],
-            ]
-        );
+    fn corpus_tokens_require_complete_decimals() {
+        for field in ["7x", "4294967305", "-1", "abc"] {
+            assert!(parse_eval_corpus(&format!("{field} 甲\n")).is_err());
+        }
     }
 
     #[test]
@@ -572,6 +555,14 @@ mod tests {
         assert_eq!(sentences.len(), 2);
         assert_eq!(sentences[0], vec![PhraseToken::new(1), PhraseToken::new(2)]);
         assert_eq!(sentences[1], vec![PhraseToken::new(3)]);
+    }
+
+    #[test]
+    fn an_empty_line_is_a_sentence_separator() {
+        assert_eq!(
+            parse_eval_corpus("1 甲\n\n2 乙\n").unwrap(),
+            vec![vec![PhraseToken::new(1)], vec![PhraseToken::new(2)]]
+        );
     }
 
     #[test]

@@ -20,17 +20,16 @@
 #![cfg_attr(not(test), deny(clippy::panic))]
 #![cfg_attr(not(test), deny(clippy::panic_in_result_fn))]
 
-mod cnum;
 mod error;
 mod estimate;
 mod generate;
 mod merge;
 mod model;
+mod numeric;
 mod prune;
 mod text;
 mod validate;
 
-pub use cnum::{atoi, atol, printf_f};
 pub use error::KmmError;
 pub use estimate::{EPSILON, Estimate, SEED_LAMBDA, estimate};
 pub use generate::{DEFAULT_MAX_INCREASE_RATE, DEFAULT_MAX_OCCURS, GenerateParams};
@@ -39,6 +38,7 @@ pub use model::{
     ArrayItem, KMixtureModel, NULL_TOKEN, Parameter, SENTENCE_START, SENTENCE_START_TEXT,
     SingleGram, compute_alpha, compute_b, compute_gamma, compute_pr_g_3, compute_pr_g_3_with_count,
 };
+pub use numeric::{decimal_field, format_six_decimals};
 pub use prune::{DEFAULT_CDF, DEFAULT_PRUNE_K, prune};
 pub use text::{canonicalize, export, import, kmm_text_to_interpolation};
 pub use validate::validate;

@@ -2,23 +2,9 @@
 //! `SystemTableInfo2::load` reads it (`src/storage/table_info.cpp:194-294`
 //! at `074a2219`), and the library set its rows describe.
 //!
-//! The pin reads the file with `fscanf` over one stream: five header
-//! directives in order, then rows of six white-space separated words.
-//! This module is that sequence, not a line parser — `Scan` follows the C
-//! library's rules for the directives the pin uses (a space in a directive
-//! matches any run of white space, an empty one included; `%255s` skips
-//! white space across newlines and takes at most 255 bytes; a directive that
-//! does not match leaves the stream where it stopped):
-//!
-//! ```c
-//! fscanf(input, "binary format version:%d\n", &binver);      // :208
-//! fscanf(input, "model data version:%d\n", &modelver);       // :214
-//! fscanf(input, "lambda parameter:%f\n", &lambda);           // :220
-//! fscanf(input, "source table format:%255s\n", str);         // :228
-//! fscanf(input, "database format:%255s\n", str);             // :232
-//! while (!feof(input))
-//!     fscanf(input, "%255s %255s %255s %255s %255s %255s\n", …);  // :255
-//! ```
+//! Five line headers declare versions, decimal λ, source and database format,
+//! followed by six-word library rows. Parsing uses Rust's decimal conversions;
+//! libc scanner extensions are recorded in the #1297 scanner discrepancy.
 //!
 //! # What the rows mean
 //!
@@ -26,8 +12,7 @@
 //! enum name (`RESERVED`, `GB_DICTIONARY`/`TSI_DICTIONARY` = 1,
 //! `GBK_DICTIONARY` = 2, `OPENGRAM_DICTIONARY` = 3, `MERGED_DICTIONARY` = 4,
 //! `ADDON_DICTIONARY` = 5, `NETWORK_DICTIONARY` = 6, `USER_DICTIONARY` = 7);
-//! an `addon` row names its sub-index by number (`atoi`, truncated to a
-//! `guint8`). The three file columns are the model source table, the
+//! an `addon` row names its sub-index by a decimal number in range. The three file columns are the model source table, the
 //! system chunk and the user chunk (`NULL` is no name); the last column is
 //! the file type that decides how the pin loads and saves the library.
 //! Slots no row names stay `NOT_USED`; a later row for the same slot
@@ -311,7 +296,8 @@ pub enum TableConfError {
     /// The `source table format:` directive did not match, so the pin
     /// compares a buffer it never wrote (`:228-229`): undefined behaviour.
     UninitialisedSourceFormat,
-    /// An `abort()` or `assert` of the pin.
+    /// An invalid directive or slot, carrying its established boundary warning.
+    /// Malformed addon fields can also reach this refusal under the native grammar.
     Abort(TableConfSite),
 }
 
@@ -423,51 +409,44 @@ impl TableConf {
     ///
     /// [`TableConfError`] where the pin returns `false` or dies.
     pub fn parse(bytes: &[u8]) -> Result<Self, TableConfError> {
-        let mut scan = Scan::new(bytes);
-
-        // :208-224 — three directives, each must convert one value.
-        if !scan.literal(b"binary format version:") {
+        let mut lines = ConfigLines::new(bytes);
+        let binary_format_version = lines
+            .field(b"binary format version:")
+            .and_then(parse_decimal::<i32>)
+            .ok_or(TableConfError::Header)?;
+        let model_data_version = lines
+            .field(b"model data version:")
+            .and_then(parse_decimal::<i32>)
+            .ok_or(TableConfError::Header)?;
+        let lambda_text = lines
+            .field(b"lambda parameter:")
+            .and_then(|text| std::str::from_utf8(text).ok())
+            .ok_or(TableConfError::Header)?;
+        // Rust also accepts NaN and infinity; those are outside the decimal
+        // grammar. Decimal overflow and subnormal rounding stay f32's.
+        let magnitude = lambda_text.trim_start_matches(['+', '-']);
+        if !magnitude
+            .as_bytes()
+            .first()
+            .is_some_and(|byte| byte.is_ascii_digit() || *byte == b'.')
+        {
             return Err(TableConfError::Header);
         }
-        let binary_format_version = scan.int().ok_or(TableConfError::Header)?;
-        scan.skip_space();
-        if !scan.literal(b"model data version:") {
-            return Err(TableConfError::Header);
-        }
-        let model_data_version = scan.int().ok_or(TableConfError::Header)?;
-        scan.skip_space();
-        if !scan.literal(b"lambda parameter:") {
-            return Err(TableConfError::Header);
-        }
-        let lambda_text = scan.float().ok_or(TableConfError::Header)?;
-        scan.skip_space();
-        let lambda = c_float(&lambda_text).ok_or(TableConfError::Header)?;
-        let lambda_unit = Lambda::from_decimal(&lambda_text);
-
-        // :228-229 — a directive that does not convert leaves `str`
-        // unwritten, and `to_table_phonetic_type` reads it.
-        let word = scan
-            .literal(b"source table format:")
-            .then(|| scan.word())
-            .flatten()
-            .ok_or(TableConfError::UninitialisedSourceFormat)?;
-        scan.skip_space();
-        let phonetic = match c_string(&word) {
+        let lambda = lambda_text
+            .parse::<f32>()
+            .map_err(|_| TableConfError::Header)?;
+        let lambda_unit = Lambda::from_decimal(lambda_text);
+        let phonetic = match lines
+            .field(b"source table format:")
+            .ok_or(TableConfError::UninitialisedSourceFormat)?
+        {
             b"pinyin" => PhoneticType::Pinyin,
             b"zhuyin" => PhoneticType::Zhuyin,
             _ => return Err(TableConfError::Abort(TableConfSite::SourceFormat)),
         };
-
-        // :232-233 — a directive that does not convert leaves the previous
-        // word in `str`, which is neither a database format.
-        let word = scan
-            .literal(b"database format:")
-            .then(|| scan.word())
-            .flatten()
-            .ok_or(TableConfError::Abort(TableConfSite::DatabaseFormat))?;
-        scan.skip_space();
-        let database_format = std::str::from_utf8(c_string(&word))
-            .ok()
+        let database_format = lines
+            .field(b"database format:")
+            .and_then(|word| std::str::from_utf8(word).ok())
             .and_then(DatabaseFormat::from_token)
             .ok_or(TableConfError::Abort(TableConfSite::DatabaseFormat))?;
 
@@ -482,31 +461,32 @@ impl TableConf {
             addon: vec![TableRow::unused(); PHRASE_INDEX_LIBRARY_COUNT],
         };
 
-        // :254-287 — rows of six words; an incomplete last row is dropped.
-        let mut words = Vec::new();
-        while let Some(word) = scan.word() {
-            words.push(word);
-        }
-        for row in words.chunks_exact(6) {
-            let [target, index, table, system, user, file_type] = row else {
+        // Each row owns its six fields; malformed short rows do not consume
+        // words from a following row (table_info.cpp:254-260).
+        for line in lines {
+            if line.starts_with(b"#") {
+                continue;
+            }
+            let row: Vec<&[u8]> = line
+                .split(u8::is_ascii_whitespace)
+                .filter(|word| !word.is_empty())
+                .collect();
+            let [target, index, table, system, user, file_type] = row.as_slice() else {
                 continue;
             };
-            let is_default = match c_string(target) {
+            let is_default = match *target {
                 b"default" => true,
                 b"addon" => false,
                 _ => return Err(TableConfError::Abort(TableConfSite::Target)),
             };
             let index = if is_default {
-                default_index(c_string(index))
-                    .ok_or(TableConfError::Abort(TableConfSite::DefaultIndex))?
+                default_index(index).ok_or(TableConfError::Abort(TableConfSite::DefaultIndex))?
             } else {
-                let index = atoi_guint8(c_string(index));
-                if usize::from(index) >= PHRASE_INDEX_LIBRARY_COUNT {
-                    return Err(TableConfError::Abort(TableConfSite::AddonIndex));
-                }
-                usize::from(index)
+                parse_decimal::<usize>(index)
+                    .filter(|&index| index < PHRASE_INDEX_LIBRARY_COUNT)
+                    .ok_or(TableConfError::Abort(TableConfSite::AddonIndex))?
             };
-            let file_type = match c_string(file_type) {
+            let file_type = match *file_type {
                 b"NOT_USED" => FileType::NotUsed,
                 b"SYSTEM_FILE" => FileType::SystemFile,
                 b"DICTIONARY" => FileType::Dictionary,
@@ -678,304 +658,36 @@ fn default_index(name: &[u8]) -> Option<usize> {
     })
 }
 
-/// `strtol` over the digits after an optional sign: the value, saturating at
-/// `LONG_MIN`/`LONG_MAX` (accumulated toward the sign, so `LONG_MIN` is
-/// reachable), and how many digits it took.
-fn strtol_digits(negative: bool, digits: &[u8]) -> (i64, usize) {
-    let mut value = Some(0_i64);
-    let mut taken = 0_usize;
-    for &byte in digits.iter().take_while(|byte| byte.is_ascii_digit()) {
-        let digit = i64::from(byte - b'0');
-        value = value
-            .and_then(|value| value.checked_mul(10))
-            .and_then(|value| {
-                if negative {
-                    value.checked_sub(digit)
-                } else {
-                    value.checked_add(digit)
-                }
-            });
-        taken += 1;
-    }
-    (
-        value.unwrap_or(if negative { i64::MIN } else { i64::MAX }),
-        taken,
-    )
+/// Decimal fields are complete tokens with a representable value.
+pub(crate) fn parse_decimal<T: std::str::FromStr>(text: &[u8]) -> Option<T> {
+    std::str::from_utf8(text).ok()?.parse().ok()
 }
 
-/// `atoi` returned through a `guint8` (`:159-161`): `strtol`'s saturating
-/// value, cut to the low byte.
-fn atoi_guint8(word: &[u8]) -> u8 {
-    let mut rest = word;
-    while let [first, tail @ ..] = rest {
-        if is_space(*first) {
-            rest = tail;
-        } else {
-            break;
-        }
-    }
-    let negative = matches!(rest.first(), Some(b'-'));
-    if matches!(rest.first(), Some(b'-' | b'+')) {
-        rest = rest.get(1..).unwrap_or(&[]);
-    }
-    let (value, _) = strtol_digits(negative, rest);
-    // `(int)` of a `long`, then `(guint8)` of that.
-    (value & 0xFF) as u8
+/// Nonempty configuration lines, shared by the system and user markers.
+pub(crate) struct ConfigLines<'a> {
+    lines: std::slice::Split<'a, u8, fn(&u8) -> bool>,
 }
 
-/// The `gfloat` `strtof` makes of the text [`Scan::float`] took.
-fn c_float(text: &str) -> Option<f32> {
-    let (negative, body) = match text.as_bytes().first() {
-        Some(b'-') => (true, text.get(1..)?),
-        Some(b'+') => (false, text.get(1..)?),
-        _ => (false, text),
-    };
-    let lower = body.to_ascii_lowercase();
-    let magnitude = if lower.starts_with("nan") {
-        f32::NAN
-    } else if lower.starts_with("inf") {
-        f32::INFINITY
-    } else if let Some(hex) = lower.strip_prefix("0x") {
-        hex_float(hex)?
-    } else {
-        lower.parse::<f32>().ok()?
-    };
-    Some(if negative { -magnitude } else { magnitude })
+impl<'a> ConfigLines<'a> {
+    pub(crate) fn new(bytes: &'a [u8]) -> Self {
+        Self {
+            lines: bytes.split(|byte| *byte == b'\n'),
+        }
+    }
+
+    pub(crate) fn field(&mut self, name: &[u8]) -> Option<&'a [u8]> {
+        self.next()?.strip_prefix(name).map(<[u8]>::trim_ascii)
+    }
 }
 
-/// A hexadecimal float (`0x` already removed): `hexdigits[.hexdigits][p[+-]digits]`,
-/// rounded to nearest even as `strtof` does.
-fn hex_float(text: &str) -> Option<f32> {
-    let (mantissa, exponent) = match text.split_once('p') {
-        Some((mantissa, exponent)) => (mantissa, exponent),
-        None => (text, "0"),
-    };
-    let (whole, fraction) = mantissa.split_once('.').unwrap_or((mantissa, ""));
-    let mut accumulated: u64 = 0;
-    let mut scale: i64 = 0;
-    let mut sticky = false;
-    for (digit, after_point) in whole
-        .chars()
-        .map(|digit| (digit, false))
-        .chain(fraction.chars().map(|digit| (digit, true)))
-    {
-        let digit = u64::from(digit.to_digit(16)?);
-        if accumulated >> 60 == 0 {
-            accumulated = accumulated * 16 + digit;
-            if after_point {
-                scale -= 4;
-            }
-        } else {
-            sticky |= digit != 0;
-            if !after_point {
-                scale += 4;
-            }
-        }
-    }
-    let (negative, digits) = match exponent.as_bytes().first() {
-        Some(b'-') => (true, exponent.get(1..)?),
-        Some(b'+') => (false, exponent.get(1..)?),
-        _ => (false, exponent),
-    };
-    let (power, _) = strtol_digits(negative, digits.as_bytes());
-    let power = power.clamp(-100_000, 100_000);
-    Some(round_to_f32(accumulated, scale + power, sticky))
-}
+impl<'a> Iterator for ConfigLines<'a> {
+    type Item = &'a [u8];
 
-/// `mantissa × 2^exponent`, with `sticky` marking nonzero bits already
-/// dropped below the mantissa, rounded to the nearest `f32` (ties to even,
-/// subnormals and overflow included).
-fn round_to_f32(mantissa: u64, exponent: i64, sticky: bool) -> f32 {
-    if mantissa == 0 {
-        return 0.0;
-    }
-    let leading = i64::from(mantissa.leading_zeros());
-    let mantissa = mantissa << leading;
-    // The value lies in [2^top, 2^(top+1)).
-    let top = exponent - leading + 63;
-    if top > 127 {
-        return f32::INFINITY;
-    }
-    let keep = if top >= -126 { 24 } else { 24 - (-126 - top) };
-    if keep < 0 {
-        return 0.0;
-    }
-    let shift = 64 - keep;
-    let (mut kept, remainder) = if shift >= 64 {
-        (0_u64, mantissa)
-    } else {
-        (mantissa >> shift, mantissa & ((1_u64 << shift) - 1))
-    };
-    let half = 1_u64 << (shift - 1);
-    if remainder > half || (remainder == half && (sticky || kept & 1 == 1)) {
-        kept += 1;
-    }
-    let scale = top - keep + 1;
-    (kept as f64 * 2_f64.powi(i32::try_from(scale).unwrap_or(i32::MIN))) as f32
-}
-
-const fn is_space(byte: u8) -> bool {
-    matches!(byte, b' ' | b'\t' | b'\n' | 0x0b | 0x0c | b'\r')
-}
-
-/// The C library's view of an input stream for the directives above.
-struct Scan<'a> {
-    bytes: &'a [u8],
-    at: usize,
-}
-
-impl<'a> Scan<'a> {
-    const fn new(bytes: &'a [u8]) -> Self {
-        Self { bytes, at: 0 }
-    }
-
-    fn peek(&self) -> Option<u8> {
-        self.bytes.get(self.at).copied()
-    }
-
-    fn skip_space(&mut self) {
-        while self.peek().is_some_and(is_space) {
-            self.at += 1;
-        }
-    }
-
-    /// A directive's literal text: a white-space byte matches any run of
-    /// white space, any other byte only itself; the first mismatch stops.
-    fn literal(&mut self, text: &[u8]) -> bool {
-        for &byte in text {
-            if is_space(byte) {
-                self.skip_space();
-            } else if self.peek() == Some(byte) {
-                self.at += 1;
-            } else {
-                return false;
-            }
-        }
-        true
-    }
-
-    /// `%d`: white space, an optional sign, at least one digit; `strtol`
-    /// saturates at `long`, and the store into an `int` keeps the low 32 bits.
-    fn int(&mut self) -> Option<i32> {
-        self.skip_space();
-        let negative = self.peek() == Some(b'-');
-        let sign = usize::from(matches!(self.peek(), Some(b'-' | b'+')));
-        let digits = self.bytes.get(self.at + sign..).unwrap_or(&[]);
-        let (value, taken) = strtol_digits(negative, digits);
-        if taken == 0 {
-            return None;
-        }
-        self.at += sign + taken;
-        Some((value & 0xFFFF_FFFF) as u32 as i32)
-    }
-
-    /// `%f`: white space, then what glibc's scanner takes for `strtof`: a
-    /// sign; `inf` or `infinity`; `nan` with an optional parenthesised
-    /// `[0-9A-Za-z_]*`; a decimal with an optional exponent; or a hexadecimal
-    /// float `0x` hex digits, an optional `.`, an optional `p` exponent. Unlike
-    /// `strtod`, the scanner does not back up: an `e` or `p` with no digits
-    /// after it, a `0x` with no hex digit, or an `infi…` that is not
-    /// `infinity` fails the conversion. Returns the text taken.
-    fn float(&mut self) -> Option<String> {
-        self.skip_space();
-        let start = self.at;
-        if matches!(self.peek(), Some(b'+' | b'-')) {
-            self.at += 1;
-        }
-        let rest = self.bytes.get(self.at..).unwrap_or(&[]);
-        let lower: Vec<u8> = rest.iter().take(8).map(u8::to_ascii_lowercase).collect();
-        if lower.starts_with(b"inf") {
-            if lower.get(3).is_some_and(|byte| *byte == b'i') {
-                if !lower.starts_with(b"infinity") {
-                    return None;
-                }
-                self.at += 8;
-            } else {
-                self.at += 3;
-            }
-        } else if lower.starts_with(b"nan") {
-            self.at += 3;
-            if self.peek() == Some(b'(') {
-                self.at += 1;
-                while self
-                    .peek()
-                    .is_some_and(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
-                {
-                    self.at += 1;
-                }
-                if self.peek() != Some(b')') {
-                    return None;
-                }
-                self.at += 1;
-            }
-        } else if lower.starts_with(b"0x") {
-            self.at += 2;
-            let mut digits = 0;
-            while self.peek().is_some_and(|byte| byte.is_ascii_hexdigit()) {
-                self.at += 1;
-                digits += 1;
-            }
-            if self.peek() == Some(b'.') {
-                self.at += 1;
-                while self.peek().is_some_and(|byte| byte.is_ascii_hexdigit()) {
-                    self.at += 1;
-                    digits += 1;
-                }
-            }
-            if digits == 0 {
-                return None;
-            }
-            self.exponent(b'p')?;
-        } else {
-            let mut digits = 0;
-            while self.peek().is_some_and(|byte| byte.is_ascii_digit()) {
-                self.at += 1;
-                digits += 1;
-            }
-            if self.peek() == Some(b'.') {
-                self.at += 1;
-                while self.peek().is_some_and(|byte| byte.is_ascii_digit()) {
-                    self.at += 1;
-                    digits += 1;
-                }
-            }
-            if digits == 0 {
-                return None;
-            }
-            self.exponent(b'e')?;
-        }
-        let text = self.bytes.get(start..self.at)?;
-        Some(String::from_utf8_lossy(text).into_owned())
-    }
-
-    /// An optional exponent introduced by `marker` (either case): once the
-    /// marker is read the scanner needs a digit after the optional sign.
-    fn exponent(&mut self, marker: u8) -> Option<()> {
-        if self.peek().map(|byte| byte.to_ascii_lowercase()) != Some(marker) {
-            return Some(());
-        }
-        self.at += 1;
-        if matches!(self.peek(), Some(b'+' | b'-')) {
-            self.at += 1;
-        }
-        let digits = self.at;
-        while self.peek().is_some_and(|byte| byte.is_ascii_digit()) {
-            self.at += 1;
-        }
-        (self.at > digits).then_some(())
-    }
-
-    /// `%255s`: skips white space (newlines included) and takes up to 255
-    /// bytes; `None` at the end of the file.
-    fn word(&mut self) -> Option<Vec<u8>> {
-        self.skip_space();
-        let start = self.at;
-        while self.at - start < 255 && self.peek().is_some_and(|byte| !is_space(byte)) {
-            self.at += 1;
-        }
-        (self.at > start)
-            .then(|| self.bytes.get(start..self.at).map(<[u8]>::to_vec))
-            .flatten()
+    fn next(&mut self) -> Option<Self::Item> {
+        self.lines
+            .by_ref()
+            .map(<[u8]>::trim_ascii)
+            .find(|line| !line.is_empty())
     }
 }
 
@@ -1022,18 +734,14 @@ mod tests {
     }
 
     #[test]
-    fn addon_indexes_wrap_through_a_guint8() {
-        // `atoi("256")` is 256, the `guint8` is 0; `atoi("abc")` is 0.
-        for (word, expected) in [("256", 0), ("abc", 0), ("4", 4), ("-1", 255), ("16", 16)] {
-            assert_eq!(atoi_guint8(word.as_bytes()), expected, "{word}");
+    fn addon_indexes_require_decimal_slots() {
+        for word in ["256", "abc", "-1", "16", "4x", "99999999999999999999"] {
+            let text = format!("{STOCK}addon {word} w.table w.bin NULL DICTIONARY\n");
+            assert_eq!(
+                parse(&text).unwrap_err(),
+                TableConfError::Abort(TableConfSite::AddonIndex)
+            );
         }
-        let text = format!("{STOCK}addon 256 w.table w.bin NULL DICTIONARY\n");
-        let conf = parse(&text).expect("256 wraps to a valid slot");
-        assert_eq!(
-            conf.addon_row(0)
-                .and_then(|row| row.system.as_ref().map(|name| name.display().into_owned())),
-            Some("w.bin".to_owned())
-        );
     }
 
     #[test]
@@ -1042,6 +750,19 @@ mod tests {
         assert!(parse(&text).is_ok());
         let text = format!("{STOCK}# comment\n");
         assert!(parse(&text).is_ok());
+    }
+
+    #[test]
+    fn a_long_filename_stays_one_field() {
+        let name = "a".repeat(300);
+        let text = format!("{STOCK}addon 3 art.table {name} NULL DICTIONARY\n");
+        let conf = parse(&text).expect("complete row");
+        assert_eq!(
+            conf.addon_row(3)
+                .and_then(|row| row.system.as_ref())
+                .map(|file| file.display().into_owned()),
+            Some(name)
+        );
     }
 
     #[test]
@@ -1114,95 +835,23 @@ mod tests {
         }
         let conf = parse(&STOCK.replace("0.312699", "2")).expect("parses");
         assert_eq!(conf.lambda_unit(), None);
-        let conf = parse(&STOCK.replace("0.312699", "nan")).expect("parses");
-        assert!(conf.lambda_f32().is_nan());
     }
 
-    /// What glibc's `sscanf("%f%n")` answered for each spelling on the 2.43
-    /// testing reference: the value and the bytes taken, or a failed
-    /// conversion. The subject follows that scanner; the trixie reference is
-    /// 2.41, whose bare-exponent acceptance is the recorded G11 difference.
     #[test]
-    fn float_spellings_read_like_glibc() {
-        let cases: &[(&str, Option<(f32, usize)>)] = &[
-            ("0x1p-1 Z", Some((0.5, 6))),
-            ("0x.8 Z", Some((0.5, 4))),
-            ("0x Z", None),
-            ("0x1p Z", None),
-            ("0xg Z", None),
-            ("0x.p1 Z", None),
-            ("0x1.8p+1z Z", Some((3.0, 8))),
-            ("0X1P1 Z", Some((2.0, 5))),
-            ("0x1.p0 Z", Some((1.0, 6))),
-            ("  +0x10 Z", Some((16.0, 7))),
-            ("0x1e Z", Some((30.0, 4))),
-            ("inf Z", Some((f32::INFINITY, 3))),
-            ("infinity Z", Some((f32::INFINITY, 8))),
-            ("infin Z", None),
-            ("1e Z", None),
-            ("1e+ Z", None),
-            (".e1 Z", None),
-            ("+.5 Z", Some((0.5, 3))),
-            ("1_0 Z", Some((1.0, 1))),
-            ("1.5.5 Z", Some((1.5, 3))),
-            ("1e5000 Z", Some((f32::INFINITY, 6))),
-            ("- Z", None),
-        ];
-        for &(input, expected) in cases {
-            let mut scan = Scan::new(input.as_bytes());
-            let got = scan
-                .float()
-                .and_then(|text| c_float(&text))
-                .map(|value| (value, scan.at));
-            assert_eq!(got, expected, "{input:?}");
-        }
-        for (input, taken) in [
-            ("nan(1) Z", 6),
-            ("nan(1_a) Z", 8),
-            ("nan() Z", 5),
-            ("-nan Z", 4),
-            ("nanx Z", 3),
+    fn headers_require_complete_decimal_values_on_their_line() {
+        for value in [
+            "nan", "nan(1)", "inf", "0x1p-1", "1e", "1e+", "1_0", "1.5.5",
         ] {
-            let mut scan = Scan::new(input.as_bytes());
-            let value = scan.float().and_then(|text| c_float(&text));
-            assert!(
-                value.is_some_and(f32::is_nan) && scan.at == taken,
-                "{input:?}"
-            );
+            assert!(parse(&STOCK.replace("0.312699", value)).is_err(), "{value}");
         }
-        for input in ["nan( Z", "nan(1 Z"] {
-            assert!(Scan::new(input.as_bytes()).float().is_none(), "{input:?}");
+        for value in ["2147483648", "7x", "999999999999999999999"] {
+            assert!(parse(&STOCK.replace("version:7", &format!("version:{value}"))).is_err());
         }
-    }
-
-    #[test]
-    fn hex_floats_round_like_strtof() {
-        // 24 bits kept; a tie goes to even, a nonzero tail breaks it upward.
-        let bits = |text: &str| hex_float(text).map(f32::to_bits);
-        assert_eq!(bits("1.000001p0"), Some(0x3f80_0000));
-        assert_eq!(bits("1.000002p0"), Some(0x3f80_0001));
-        assert_eq!(bits("1.000003p0"), Some(0x3f80_0002));
-        assert_eq!(bits("1.0000010000000001p0"), Some(0x3f80_0001));
-        // The smallest subnormal, half of it (a tie to even), and overflow.
-        assert_eq!(hex_float("1p-149"), Some(f32::from_bits(1)));
-        assert_eq!(hex_float("1p-150"), Some(0.0));
-        assert_eq!(hex_float("1.8p-150"), Some(f32::from_bits(1)));
-        assert_eq!(hex_float("1p128"), Some(f32::INFINITY));
-        assert_eq!(hex_float("1.ffffffp127"), Some(f32::INFINITY));
-        assert_eq!(hex_float("0p0"), Some(0.0));
-    }
-
-    #[test]
-    fn integers_saturate_at_long_min_like_strtol() {
-        assert_eq!(strtol_digits(true, b"9223372036854775808"), (i64::MIN, 19));
-        assert_eq!(strtol_digits(true, b"99999999999999999999"), (i64::MIN, 20));
-        assert_eq!(strtol_digits(false, b"9223372036854775808"), (i64::MAX, 19));
-        assert_eq!(atoi_guint8(b"-99999999999999999999"), 0);
-        assert_eq!(atoi_guint8(b"-256"), 0);
-        assert_eq!(atoi_guint8(b"-1"), 255);
-        let mut scan = Scan::new(b"-9223372036854775808x");
-        assert_eq!(scan.int(), Some(0));
-        assert_eq!(scan.at, 20);
+        assert!(
+            parse(&STOCK.replace("source table format:pinyin", "source table format:\npinyin"))
+                .is_err()
+        );
+        assert!(parse(&STOCK.replace('\n', " ")).is_err());
     }
 
     /// `g_build_filename(dir, name, NULL)` at GLib 2.89.4 (`gfileutils.c`,

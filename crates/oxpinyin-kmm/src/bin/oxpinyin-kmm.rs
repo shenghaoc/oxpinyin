@@ -17,7 +17,7 @@ use std::process::ExitCode;
 
 use oxpinyin_kmm::{
     DEFAULT_CDF, DEFAULT_PRUNE_K, GenerateParams, KMixtureModel, canonicalize, estimate, export,
-    import, kmm_text_to_interpolation, merge_into, printf_f, prune, validate,
+    format_six_decimals, import, kmm_text_to_interpolation, merge_into, prune, validate,
 };
 
 fn main() -> ExitCode {
@@ -163,9 +163,13 @@ fn run_estimate(args: &[String]) -> Cli {
 
     let mut out = String::new();
     for (token, lambda) in &result.per_token {
-        let _ = writeln!(out, "token:{token} lambda:{}", printf_f(*lambda));
+        let _ = writeln!(out, "token:{token} lambda:{}", format_six_decimals(*lambda));
     }
-    let _ = writeln!(out, "average lambda:{}", printf_f(result.average));
+    let _ = writeln!(
+        out,
+        "average lambda:{}",
+        format_six_decimals(result.average)
+    );
     io::stdout().lock().write_all(out.as_bytes())?;
     Ok(())
 }

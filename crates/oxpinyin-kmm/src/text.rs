@@ -16,9 +16,9 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
-use crate::cnum::{atoi, atol};
 use crate::error::KmmError;
 use crate::model::{ArrayItem, KMixtureModel, SENTENCE_START};
+use crate::numeric::decimal_field;
 
 const KMM_MODEL_NAME: &str = "k mixture model";
 
@@ -133,9 +133,9 @@ fn parse_header(line: &str) -> Result<KMixtureModel, KmmError> {
         return Err(malformed(line, "malformed KMM header fields"));
     }
     let mut model = KMixtureModel::new();
-    model.wc = field_count(fields[1]);
-    model.n = field_count(fields[3]);
-    model.total_freq = field_count(fields[5]);
+    model.wc = field_count(fields[1])?;
+    model.n = field_count(fields[3])?;
+    model.total_freq = field_count(fields[5])?;
     Ok(model)
 }
 
@@ -145,10 +145,10 @@ fn parse_unigram_item(model: &mut KMixtureModel, line: &str) -> Result<(), KmmEr
     if fields.len() != 7 || fields[3] != "count" || fields[5] != "freq" {
         return Err(malformed(line, "malformed \\1-gram \\item"));
     }
-    let token = field_token(fields[1]);
+    let token = field_token(fields[1])?;
     let phrase = fields[2];
-    let header_wc = field_count(fields[4]);
-    let header_freq = field_count(fields[6]);
+    let header_wc = field_count(fields[4])?;
+    let header_freq = field_count(fields[6])?;
     model.record_text(token, phrase);
     let gram = model.grams.entry(token).or_default();
     gram.header_wc = header_wc;
@@ -168,15 +168,15 @@ fn parse_bigram_item(model: &mut KMixtureModel, line: &str) -> Result<(), KmmErr
     {
         return Err(malformed(line, "malformed \\2-gram \\item"));
     }
-    let token1 = field_token(fields[1]);
+    let token1 = field_token(fields[1])?;
     let word1 = fields[2];
-    let token2 = field_token(fields[3]);
+    let token2 = field_token(fields[3])?;
     let word2 = fields[4];
     let item = ArrayItem {
-        wc: field_count(fields[6]),
-        n_n_0: field_count(fields[10]),
-        n_1: field_count(fields[12]),
-        mr: field_count(fields[14]),
+        wc: field_count(fields[6])?,
+        n_n_0: field_count(fields[10])?,
+        n_1: field_count(fields[12])?,
+        mr: field_count(fields[14])?,
     };
     model.record_text(token1, word1);
     model.record_text(token2, word2);
@@ -223,9 +223,9 @@ pub fn kmm_text_to_interpolation(text: &str) -> Result<String, KmmError> {
                     if fields.len() != 7 || fields[3] != "count" || fields[5] != "freq" {
                         return Err(malformed(line, "malformed \\1-gram \\item"));
                     }
-                    let token = field_token(fields[1]);
+                    let token = field_token(fields[1])?;
                     let word = fields[2];
-                    let freq = atol(fields[6].as_bytes());
+                    let freq = decimal_field::<i64>(fields[6].as_bytes())?;
                     // Drop <start> and zero-freq unigrams. The tool prints
                     // the token with `%d` and the count with `%ld`
                     // (`k_mixture_model_to_interpolation.cpp:131-133`).
@@ -244,11 +244,11 @@ pub fn kmm_text_to_interpolation(text: &str) -> Result<String, KmmError> {
                     {
                         return Err(malformed(line, "malformed \\2-gram \\item"));
                     }
-                    let token1 = field_token(fields[1]) as i32;
+                    let token1 = field_token(fields[1])? as i32;
                     let word1 = fields[2];
-                    let token2 = field_token(fields[3]) as i32;
+                    let token2 = field_token(fields[3])? as i32;
                     let word2 = fields[4];
-                    let count = atol(fields[6].as_bytes());
+                    let count = decimal_field::<i64>(fields[6].as_bytes())?;
                     let _ = writeln!(
                         out,
                         "\\item {token1} {word1} {token2} {word2} count {count}"
@@ -266,18 +266,14 @@ pub fn kmm_text_to_interpolation(text: &str) -> Result<String, KmmError> {
     Ok(out)
 }
 
-/// A token field, as `TAGLIB_GET_TOKEN` reads it (`utils_helper.h:23-30`):
-/// `atoi` into a `phrase_token_t`. A field with no digits is the null token.
-fn field_token(field: &str) -> u32 {
-    atoi(field.as_bytes())
+/// A complete decimal token in the persistent model's token range.
+fn field_token(field: &str) -> Result<u32, KmmError> {
+    decimal_field(field.as_bytes())
 }
 
-/// A count field, as `TAGLIB_GET_TAGVALUE(glong, ..., atol)` reads it
-/// (`import_k_mixture_model.cpp:90-92,153-154,202-207`) and the model stores
-/// it: `atol`, then the low 32 bits for the `guint32` header and item fields
-/// (`k_mixture_model.h:117-153`).
-fn field_count(field: &str) -> u32 {
-    atol(field.as_bytes()) as u32
+/// A complete decimal count in the persistent model's count range.
+fn field_count(field: &str) -> Result<u32, KmmError> {
+    decimal_field(field.as_bytes())
 }
 
 fn malformed(line: &str, why: &str) -> KmmError {
@@ -313,54 +309,13 @@ mod tests {
     use crate::model::KMixtureModel;
 
     #[test]
-    fn value_fields_read_as_glibc_atoi_and_atol() {
-        // Tokens are `atoi` into a `phrase_token_t` and counts are `atol`
-        // into a `guint32` field: a sign and C white space are accepted, the
-        // low 32 bits are kept and a field with no digits is zero.
-        let text = "\\data model \"k mixture model\" count -1 N 4294967297 total_freq abc\n\
-                    \\1-gram\n\
-                    \\item +10 甲 count +2 freq \r3\n\
-                    \\2-gram\n\
-                    \\item 10 甲 4294967316 乙 count 4294967298 T 2 N_n_0 -2 n_1 x Mr 9223372036854775808\n\
-                    \\end\n";
-        let model = import(text).expect("import");
-        assert_eq!(
-            export(&model),
-            "\\data model \"k mixture model\" count 4294967295 N 1 total_freq 0\n\
-             \\1-gram\n\
-             \\item 10 甲 count 2 freq 3\n\
-             \\2-gram\n\
-             \\item 10 甲 20 乙 count 2 T 2 N_n_0 4294967294 n_1 0 Mr 4294967295\n\
-             \\end\n"
-        );
-    }
-
-    #[test]
-    fn interpolation_prints_tokens_with_d_and_counts_with_ld() {
-        // `k_mixture_model_to_interpolation.cpp:131-133,170-172`: `%d` of the
-        // `atoi` token, `%ld` of the `atol` count (not narrowed), and a zero
-        // freq (including a field with no digits) is dropped.
-        let text = "\\data model \"k mixture model\" count 1 N 1 total_freq 1\n\
-                    \\1-gram\n\
-                    \\item 2147483648 甲 count 1 freq 4294967296\n\
-                    \\item 1 <start> count 1 freq 5\n\
-                    \\item 20 乙 count 1 freq abc\n\
-                    \\item 30 丙 count 1 freq -7\n\
-                    \\2-gram\n\
-                    \\item -1 甲 +20 乙 count 4294967296 T 1 N_n_0 1 n_1 1 Mr 1\n\
-                    \\item 10 丙 20 乙 count -3 T 1 N_n_0 1 n_1 1 Mr 1\n\
-                    \\end\n";
-        assert_eq!(
-            kmm_text_to_interpolation(text).expect("convert"),
-            "\\data model interpolation\n\
-             \\1-gram\n\
-             \\item -2147483648 甲 count 4294967296\n\
-             \\item 30 丙 count -7\n\
-             \\2-gram\n\
-             \\item -1 甲 20 乙 count 4294967296\n\
-             \\item 10 丙 20 乙 count -3\n\
-             \\end\n"
-        );
+    fn model_fields_reject_prefixes_and_out_of_range_counts() {
+        for field in ["abc", "1x", "-1", "4294967296", "9223372036854775808"] {
+            let text =
+                format!("\\data model \"k mixture model\" count {field} N 1 total_freq 1\n\\end\n");
+            assert!(import(&text).is_err(), "{field}");
+            assert!(kmm_text_to_interpolation(&text).is_err(), "{field}");
+        }
     }
 
     fn sample_model() -> KMixtureModel {

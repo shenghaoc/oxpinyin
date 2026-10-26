@@ -286,6 +286,8 @@ it is never a quirk by itself.
 
 ### G10 — rename and sync
 
+**Amendment 2026-10-26 UTC (#1297 Phase 2).** The single-payload-write reproduction below is historical. [Complete payload writes](1297-chunk-payload.md) now use `write_all`; header-word diagnostics, ignored sync errors, file/rename order and tolerance remain.
+
 `_rename_files` renames the library files by sub-index, then the user
 pinyin index, the phrase index and the bigram; `zhuyin_save` renames
 each file as it writes it. `MemoryChunk::save` calls `g_fsync` after the
@@ -351,6 +353,8 @@ mandatory for a valid profile and what is a platform exception:
 
 
 ### G11 — numeric parsing and locale
+
+**Amendment 2026-10-26 UTC (#1297 Phase 2).** The #1297 scanner lane replaces the scanner emulations described below with line headers, complete decimal fields, unlimited whole words, and exact marker tokens. The old G11 scanner conclusions are historical. See [decimal λ](1297-table-floats.md), [version fields](1297-table-decimals.md), [line boundaries](1297-table-lines.md), [addon indexes](1297-addon-index.md), [marker numbers](1297-user-decimals.md) and [marker tokens](1297-user-token.md). `LC_NUMERIC` remains unchanged. The source-history correction is glibc 2.42 for incomplete exponents and 2.43 for `0x.`.
 
 `SystemTableInfo2::load` and `UserTableInfo::load` read their fields with
 `fscanf`; `atoi` cuts an addon index to `guint8`; `setlocale(LC_NUMERIC,
@@ -700,6 +704,56 @@ then names each part.
   "under #1303" column of the first version of this section. The
   comparators are total once their artefacts are gone, so a standard
   stable sort is well defined and cannot panic.
+
+### Scanner/tools implementation (2026-10-26 UTC)
+
+Rows 21, 23–25, 29 and 30 are implemented in native Rust in the scanner lane.
+The pin’s chunk header, sync and rename rules remain; [payload writes](1297-chunk-payload.md)
+retry short counts and interruptions. [Punctuation](1297-punct-words.md) reads whole words.
+`ConfigLines` replaces both `Scan` types; `TableConf::parse` has representable
+versions, decimal λ, line headers and complete unbounded words. Addon indexes
+are checked against the sixteen slots. `UserTableInfo::parse` uses complete
+fields and exact database tokens; malformed numbers and NUL-suffixed tokens
+reset the profile. `numeric::decimal_field` replaces `atoi`/`atol`, and
+`format_six_decimals` uses Rust formatting. The records above and in the register
+name every admitted difference. The six generated function-order policies
+accompany the removals; the PR reports their two-pass check, ordered validation,
+crate gates, selected cells, mutations and stripped sizes. Ranking rows remain
+owned by the separate ranking lane.
+
+**Scanner-lane results (2026-10-26 UTC):** 600 touched-crate tests passed (20 external-input tests ignored); fmt and clippy passed. The existing #926 counter, finite lambda estimate, KMM gen/export, KMM transform and empty-input differentials passed. The contract selection `--issue 919 --issue 920 --issue 1144 --issue 929` passed on bdb, kc and tkrzw: each 135 cases, 93 MATCH and 42 POLICY-ACCEPTED. The seven named mutations in the discrepancy records were detected and restored. The harness suite passed 161 tests, including the non-glibc registration guard.
+
+The shared generator’s two independent passes produced byte-identical policies
+for all six backend/facade pairs. `function_order.py` verified the actual `.text`
+policy prefixes of all twelve base/head objects, not only resolver output; no
+policy path remained unresolved. Stripped shipping bytes at base `bab92bf0`
+against this scanner implementation, one Ubuntu/glibc 2.44 host and the repository
+release install recipe:
+
+| Backend | Library | Base bytes | Head bytes | Difference |
+| --- | --- | ---: | ---: | ---: |
+| bdb | libpinyin | 2482928 | 2474736 | -8192 |
+| bdb | libzhuyin | 2233072 | 2224880 | -8192 |
+| kc | libpinyin | 2845928 | 2837736 | -8192 |
+| kc | libzhuyin | 2591976 | 2583784 | -8192 |
+| tkrzw | libpinyin | 2527976 | 2519784 | -8192 |
+| tkrzw | libzhuyin | 2278120 | 2269928 | -8192 |
+
+Main advanced to `c0c9c227` with an unrelated ABI-test repair; the lane rebased and its shared harness passed again. No shipping source, policy generator or profile format changed from measured base `bab92bf0`.
+
+Reproduce the native gate with `just fmt --all --check`,
+`just heavy -- cargo test -p oxpinyin-data -p oxpinyin-user -p oxpinyin-training -p oxpinyin-kmm`,
+and the corresponding `cargo clippy --all-targets -- -D warnings` command.
+Source the environment emitted by `tools/cloud/setup.sh`; run the existing
+contract driver with the selection above for each selected cell. Tool-input
+setup and live test commands remain in [the #926 audit](926-tool-tokenizers.md).
+Use [packaging Regeneration](../packaging.md#regeneration), with
+`repeat_output_dir` for every backend, compare both outputs with `cmp`, then
+install both facades with ordering enabled. Validate linked objects using
+`tools/packaging/function_order.py --library ARM/FACADE=OBJECT` (give the base
+its historical `--function-order ARM/FACADE=POLICY`); run
+`strip --strip-unneeded -o OUTPUT OBJECT` and compare file sizes. No timing,
+RSS or instruction-count claim is made by this scanner lane.
 
 ### Phase 2: the cleanup, in two independent lanes
 

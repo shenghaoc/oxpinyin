@@ -259,8 +259,7 @@ fn rust_matches_live_gen_ngram() {
     }
     let export = locate_export_dir().expect("system tables");
     let lexicon = PhraseLexicon::from_system_dir(&export).expect("phrase lexicon");
-    let classified_rust = count_ngseg(&lexicon, &classified, true).expect("classified stream");
-    assert_counts_equal(&rust, &classified_rust);
+    assert!(count_ngseg(&lexicon, &classified, true).is_err());
     let classified_live = run_live_pipeline(
         &gen_binary_files,
         &gen_unigram,
@@ -272,7 +271,7 @@ fn rust_matches_live_gen_ngram() {
     .expect("classified live gen_ngram pipeline");
     assert_counts_equal(&rust, &classified_live);
     eprintln!(
-        "classified prefixes, TAB, signed zero, NUL and ignored invalid bytes: value-identical"
+        "POLICY-ACCEPTED #1297: malformed prefixes are refused; the pin retains the canonical counts"
     );
     // `atoi` is `(int) strtol(field, NULL, 10)` (`utils_helper.h:61`; glibc
     // 2.41 `stdlib/strtol_l.c:295-524`): C white space other than the field
@@ -280,8 +279,7 @@ fn rust_matches_live_gen_ngram() {
     // saturates and only the low 32 bits become the token. Every spelling
     // below names the token its line already carries, or zero.
     let spelled = spell_token_fields(&fixture);
-    let spelled_rust = count_ngseg(&lexicon, &spelled, true).expect("spelled stream");
-    assert_counts_equal(&rust, &spelled_rust);
+    assert!(count_ngseg(&lexicon, &spelled, true).is_err());
     let spelled_live = run_live_pipeline(
         &gen_binary_files,
         &gen_unigram,
@@ -292,7 +290,9 @@ fn rust_matches_live_gen_ngram() {
     )
     .expect("spelled live gen_ngram pipeline");
     assert_counts_equal(&rust, &spelled_live);
-    eprintln!("signed, spaced, wrapped and saturated token fields: value-identical");
+    eprintln!(
+        "POLICY-ACCEPTED #1297: malformed/overflow token fields are refused; canonical counts MATCH"
+    );
     // Pin utils/utils_helper.h:58-65 aborts on shape/phrase mismatch;
     // tag_utility.cpp:413 compares exact bytes for this known resident token.
     for input in [
@@ -347,7 +347,11 @@ fn counter_and_emitter_accept_ignored_bytes_and_refuse_wrong_phrases() {
                 .arg(&input)
                 .output()
                 .unwrap();
-            let invalid = bytes == b"1 wrong\n" || bytes == b"99 unknown\n" || bytes == b"1 \xff\n";
+            let malformed_token = bytes == b"1\xff <start>\n\0ignored \xff\n";
+            let invalid = malformed_token
+                || bytes == b"1 wrong\n"
+                || bytes == b"99 unknown\n"
+                || bytes == b"1 \xff\n";
             assert_eq!(
                 result.status.code(),
                 Some(i32::from(invalid)),
@@ -358,8 +362,11 @@ fn counter_and_emitter_accept_ignored_bytes_and_refuse_wrong_phrases() {
             let written = std::fs::read(&output).unwrap();
             if invalid {
                 assert!(
-                    String::from_utf8_lossy(&result.stderr)
-                        .contains("unknown or mismatched phrase")
+                    String::from_utf8_lossy(&result.stderr).contains(if malformed_token {
+                        "not `token phrase`"
+                    } else {
+                        "unknown or mismatched phrase"
+                    })
                 );
                 assert_eq!(written, b"unchanged");
             } else if let Some(expected) = &baseline {

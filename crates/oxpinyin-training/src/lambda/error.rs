@@ -13,8 +13,8 @@ pub enum LambdaError {
     Count(CounterError),
     /// The held-out (`DELETED_BIGRAM`) counts are empty, so the outer
     /// average `lambda_sum / lambda_count` would divide by zero
-    /// (`estimate_interpolation.cpp:139`). libpinyin prints `-nan` here; a
-    /// port must not panic, so estimation reports this instead.
+    /// (`estimate_interpolation.cpp:139`). The tool uses Rust's NaN spelling;
+    /// estimation reports this error to the pipeline.
     EmptyDeleted,
 }
 
