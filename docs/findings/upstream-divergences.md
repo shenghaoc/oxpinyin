@@ -170,6 +170,40 @@ what used to differ.
   `punct-decode/misaligned-unterminated` and `punct-decode/misaligned-short`
   of `contract-diff.py` MATCH on bdb (#1144, 2026-10-26 UTC).
 
+### Aliased prediction prefix use-after-free
+
+- **Upstream source cite:** `src/pinyin.cpp:2413-2427`
+  (`pinyin_guess_predicted_candidates`): `_free_candidates` (`:1335-1344`)
+  `g_free`s every candidate string and empties the list (`:2420`),
+  `m_prefixes` is set to size 0 (`:2423`), then `_compute_prefixes` reads
+  `prefix` with `g_utf8_to_ucs4` (`:2424`, `:1389-1398`).
+  `pinyin_guess_predicted_candidates_with_punctuations` makes that call
+  first and ignores its answer (`:2459`), walks `m_prefixes` (`:2463-2486`)
+  and returns `true` (`:2498`).
+- **Mechanism:** when `prefix` is one of the instance's candidate strings
+  (`pinyin_get_candidate_string`, `:2876`), `_compute_prefixes` reads
+  freed storage. Defined: the emptied list, the emptied `m_prefixes`
+  before the read, untouched sentence rows, and the punctuation entry's
+  `true`. Undefined: the prefixes computed from the freed bytes, and so
+  the predicted and punctuation rows.
+- **What oxpinyin does instead:** `crates/oxpinyin-capi/src/predict.rs`
+  `clear_borrowed_prefix` finds the alias by pointer identity before
+  reading it, empties the candidates and prefixes, and gives #542's
+  no-prefix outcome. The plain entry answers `false`; the punctuation
+  entry (`crates/oxpinyin-capi/src/sentence.rs`) answers `true` with an
+  empty list, since an empty `m_prefixes` prepends nothing.
+- **Externally observable:** only where the pin's freed bytes would decode
+  to a prefix with phrase-table tokens, or the read faults. Class (b): the
+  read is not reproduced. The punctuation entry used to predict from the
+  intact candidate text, which neither #542 nor the pin's defined parts
+  give.
+- **Cases:** `punct-alias/borrowed-candidates` and
+  `punct-alias/borrowed-predicted` of `contract-diff.py` (`pin_not_run`:
+  the pin is not driven into the read; the subject is held to the defined
+  parts) pass on bdb and differ against the parent build;
+  `punct-alias/owned-*` pass a copy of the same text and MATCH the pin
+  (#1272, 2026-10-26 UTC).
+
 ### Public bigram export is a rendering surface
 
 - **Upstream source cite:** `src/pinyin.cpp:775-918`.

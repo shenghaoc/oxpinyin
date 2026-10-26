@@ -805,6 +805,20 @@ class VerdictTests(DriverFixtureCase):
         self.assertEqual(self.decide(spec, pin, crashed_parent, True), ('DIFFER', True, False))
         self.assertEqual(self.decide(spec, pin, crashed_parent, False), ('DIFFER', False, False))
 
+    def test_pin_not_run_holds_the_subject_to_its_declaration(self):
+        spec = dict(self.plain(), pin_not_run={'ret': True, 'candidates': 0})
+        pin = observation(exit='NOT-RUN')
+        subject = observation(result={'ret': True, 'candidates': 0, 'logs': []})
+        self.assertEqual(self.decide(spec, pin, subject, False), ('MATCH', True, True))
+        parent = observation(result={'ret': True, 'candidates': 4, 'logs': []})
+        self.assertEqual(self.decide(spec, pin, parent, True), ('DIFFER', True, False))
+        self.assertEqual(self.decide(spec, pin, parent, False), ('DIFFER', False, False))
+        # A pin observation never satisfies the declaration.
+        ran = observation(result={'ret': True, 'candidates': 0, 'logs': []})
+        self.assertEqual(self.decide(spec, ran, subject, False), ('DIFFER', False, False))
+        dead = observation(exit=-signal.SIGSEGV)
+        self.assertEqual(self.decide(spec, pin, dead, False), ('DIFFER', False, False))
+
     def test_either_semantics_unchanged(self):
         spec = dict(self.plain(), abort=False, crash={'ret': False}, either=True, stderr=True)
         subject = observation(result={'ret': False, 'logs': [['libpinyin', 16]]}, stderr='')
@@ -1276,6 +1290,15 @@ class DeadlineTests(DriverFixtureCase):
         self.assertEqual([call.kwargs['timeout'] for call in run.call_args_list], [19, 13])
         test_support.assert_same_environment(self, run.call_args.kwargs['extra_env'], {'G_DEBUG': 'fatal-criticals'})
         self.assertEqual(pin, subject)
+
+    def test_pin_not_run_launches_only_the_subject(self):
+        good = observation(result={'ret': True})
+        with patch.object(driver, 'run_worker', return_value=good) as run:
+            results = driver.run_case(dict(mode='pinyin', fatal=False, pin_not_run={'ret': True}),
+                                      Path('/p'), Path('/s'), '/data', 'case', '/tmp', 3)
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(run.call_args.args[1], Path('/s').resolve())
+        self.assertEqual([r['exit'] for r in results], ['NOT-RUN', 0])
 
     def test_pin_timeout_does_not_launch_subject(self):
         with patch.object(driver, 'run_worker', side_effect=subprocess.TimeoutExpired('worker', 1)) as run:

@@ -262,6 +262,27 @@ fn sort_predicted(items: &mut [Predicted]) {
     }
 }
 
+/// Whether `prefix` is one of the instance's own candidate strings; if so,
+/// empties the candidates and prediction prefixes without reading it.
+///
+/// At 074a2219, `pinyin_guess_predicted_candidates` frees that string in
+/// `_free_candidates` and empties `m_prefixes` before `_compute_prefixes`
+/// reads it (`pinyin.cpp:1335-1344`, `:2420-2424`). #542's ruling keeps
+/// the defined part and the stable no-prefix outcome, by pointer identity;
+/// the punctuation entry reaches the same call first (`:2459`), register
+/// entry "Aliased prediction prefix use-after-free".
+pub fn clear_borrowed_prefix(inst: &mut CapiInstance, prefix: *const c_char) -> bool {
+    let borrowed = inst
+        .candidates
+        .iter()
+        .any(|candidate| std::ptr::eq(candidate.text_ptr, prefix));
+    if borrowed {
+        inst.candidates.clear();
+        inst.prefixes.clear();
+    }
+    borrowed
+}
+
 /// Guess predicted candidates for a prefix (plain variant).
 ///
 /// # C signature
@@ -286,17 +307,7 @@ pub extern "C" fn pinyin_guess_predicted_candidates(
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
     let inst = unsafe { instance_mut(instance) };
-    // At 074a2219, `_free_candidates` frees this borrowed string before
-    // `_compute_prefixes` reads it (pinyin.cpp:1340, :2420-2427). #542's
-    // ruling preserves its stable false by identity, without reading freed
-    // storage. The pin still empties the candidates and prediction prefixes.
-    if inst
-        .candidates
-        .iter()
-        .any(|candidate| std::ptr::eq(candidate.text_ptr, prefix))
-    {
-        inst.candidates.clear();
-        inst.prefixes.clear();
+    if clear_borrowed_prefix(inst, prefix) {
         return false;
     }
     // Reject invalid UTF-8 without touching `inst.candidates` —

@@ -238,6 +238,12 @@ pub extern "C" fn pinyin_guess_predicted_candidates_with_punctuations(
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
     let inst = unsafe { instance_mut(instance) };
+    // The nested prediction's aliased-prefix outcome leaves no prefix, so
+    // no punctuation is prepended, and the pin answers `true`
+    // (`pinyin.cpp:2459-2498`).
+    if crate::predict::clear_borrowed_prefix(inst, prefix) {
+        return true;
+    }
     // SAFETY: `prefix` is a C string from the caller (null OK).
     let prefix = unsafe { cstr_to_string(prefix) };
     crate::predict::guess_predicted_with_punctuations(inst, &prefix)

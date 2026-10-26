@@ -35,6 +35,11 @@ does not crash, wrote the same stderr bytes and answers the declared fields.
 The pin's bytes are compared up to the crash; the invalid read is never
 reproduced.
 
+A class (b) case whose own call would be the pin's undefined behaviour
+(`pin_not_run=`) does not run the pin at all: its pin side reads
+`NOT-RUN`, and it holds when the subject exits normally and answers the
+declared fields, the parts the pin's source defines.
+
 A policy-accepted language/runtime difference is neither MATCH nor an
 unclassified DIFFER. A current discrepancy record
 (`docs/findings/language-runtime-discrepancy-template.md`) names the case and
@@ -150,7 +155,7 @@ WARNING_DOMAIN = {'pinyin': 'libpinyin', 'zhuyin': 'libzhuyin'}
 def case_spec(mode='pinyin', control=False, abort=NO_ABORT, stderr=False, crash=None, userdir=False,
               cells=('bdb', 'kc', 'tkrzw'), either=False, host_scanf=(), dir_chunk=None, stderr_varies=False,
               abort_logs=None, fatal=False, both_abort=False, strjoinv_over_read=False, issues=(), *, fn=None,
-              policy_record=None, case_id=None):
+              policy_record=None, case_id=None, pin_not_run=None):
     """Build the registration metadata with shared defaults, without validating it.
 
     Store host scanner spellings and normalized issue tags as tuples. A
@@ -161,7 +166,7 @@ def case_spec(mode='pinyin', control=False, abort=NO_ABORT, stderr=False, crash=
                 dir_chunk=dir_chunk, stderr_varies=stderr_varies, abort_logs=abort_logs, fatal=fatal,
                 both_abort=both_abort, strjoinv_over_read=strjoinv_over_read,
                 issues=tuple(normal_tag(tag) for tag in issues),
-                policy_record=policy_record, case_id=case_id)
+                policy_record=policy_record, case_id=case_id, pin_not_run=pin_not_run)
 
 
 def case(name, *args, **kwargs):
@@ -234,6 +239,12 @@ def case(name, *args, **kwargs):
     case's family for `--family` is the text before the first `/` of its
     ID, when it has one.
 
+    `pin_not_run=<fields>` marks a class (b) site where the case's own call
+    would be the pin's undefined behaviour (a read of storage the call has
+    freed): the pin is not run and is reported `NOT-RUN`, the subject must
+    exit normally and answer `<fields>`, and the verdict compares the
+    registered declaration, not the two libraries.
+
     `policy_record` links a discrepancy record whose evidence is checked at
     verdict time. Accepted differences are reported as `POLICY-ACCEPTED`,
     never `MATCH`; registration checks option compatibility, not the record's
@@ -250,6 +261,10 @@ def case(name, *args, **kwargs):
         assert not spec['either'] or (spec['abort'] is not NO_ABORT and spec['crash'] is not None), name
         assert not spec['both_abort'] or spec['fatal'], name
         assert spec['dir_chunk'] in (None, 'user', 'system') and (spec['dir_chunk'] is None or spec['abort'] is not NO_ABORT), name
+        assert spec['pin_not_run'] is None or not (
+            spec['abort'] is not NO_ABORT or spec['crash'] is not None or spec['both_abort'] or spec['either']
+            or spec['strjoinv_over_read'] or spec['dir_chunk'] or spec['userdir'] or spec['stderr']
+            or spec['policy_record'] is not None), name
         if spec['policy_record'] is not None:
             assert not (spec['abort'] is not NO_ABORT or spec['crash'] is not None
                         or spec['both_abort'] or spec['strjoinv_over_read']
@@ -1885,6 +1900,77 @@ def _(k):
             texts.append(None if text.value is None else text.value.hex())
     out['first predicted'] = texts
     return out
+
+
+# An aliased prefix for the punctuation entry (#1272). The entry first
+# calls `pinyin_guess_predicted_candidates` (`src/pinyin.cpp:2459` at pin
+# 074a2219), which frees every candidate string (`_free_candidates`,
+# `:1335-1344`) and empties `m_prefixes` (`:2423`) before `_compute_prefixes`
+# reads `prefix` (`:2424`): when `prefix` is one of those strings, that read
+# is a use-after-free, so the pin is never driven with it (`pin_not_run`).
+# The defined parts are the answer `true` (`:2498`), the emptied list and
+# the sentence rows, which neither call touches; with #542's no-prefix
+# outcome the list stays empty. The owned controls pass a copy of the same
+# text and compare with the pin.
+def punct_alias_case(source, aliased):
+    """A case that passes a candidate string, or a copy of it, as the prefix.
+
+    `source` picks the list the string comes from: `candidates` (the first
+    row of `pinyin_guess_candidates` after nihao) or `predicted` (the first
+    non-punctuation row of a punctuation prediction after 我 whose own text,
+    predicted on a second instance, gives rows)."""
+    def probe(k):
+        """Guess nihao, build the list, then predict with punctuation after the row's text.
+
+        Record the answer, the candidate count, the first kinds and whether
+        the three sentence rows are unchanged."""
+        inst = full_inst(k, b'nihao')
+        k.fn('guess_sentence', B, P)(inst)
+        index = 0
+        if source == 'candidates':
+            k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0x1E)
+        else:
+            k.fn('guess_predicted_candidates_with_punctuations', B, P, S)(inst, '我'.encode())
+            probe_inst = k.alloc()
+            kind, n = I(), U()
+            while True:
+                cand, text = P(), S()
+                assert k.fn('get_candidate', B, P, U, C.POINTER(P))(inst, index, C.byref(cand))
+                k.fn('get_candidate_type', B, P, P, C.POINTER(I))(inst, cand, C.byref(kind))
+                if kind.value != 8:
+                    k.fn('get_candidate_string', B, P, P, C.POINTER(S))(inst, cand, C.byref(text))
+                    k.fn('guess_predicted_candidates_with_punctuations', B, P, S)(probe_inst, text.value)
+                    assert k.fn('get_n_candidate', B, P, C.POINTER(U))(probe_inst, C.byref(n))
+                    if n.value:
+                        break
+                index += 1
+        before = [sentence_out(k, inst, i) for i in range(3)]
+        cand, text = P(UNTOUCHED), P(UNTOUCHED)
+        assert k.fn('get_candidate', B, P, U, C.POINTER(P))(inst, index, C.byref(cand))
+        assert k.fn('get_candidate_string', B, P, P, C.POINTER(P))(inst, cand, C.byref(text))
+        owned = C.create_string_buffer(C.string_at(text.value))
+        prefix = text.value if aliased else C.cast(owned, P).value
+        ret = k.fn('guess_predicted_candidates_with_punctuations', B, P, P)(inst, prefix)
+        count = U(UNTOUCHED)
+        assert k.fn('get_n_candidate', B, P, C.POINTER(U))(inst, C.byref(count))
+        kinds = []
+        for i in range(min(count.value, 4)):
+            cand, kind = P(), I()
+            assert k.fn('get_candidate', B, P, U, C.POINTER(P))(inst, i, C.byref(cand))
+            k.fn('get_candidate_type', B, P, P, C.POINTER(I))(inst, cand, C.byref(kind))
+            kinds.append(kind.value)
+        after = [sentence_out(k, inst, i) for i in range(3)]
+        return {'ret': ret, 'candidates': count.value, 'kinds': kinds,
+                'sentences kept': before == after}
+    return probe
+
+
+PUNCT_ALIAS_DEFINED = {'ret': True, 'candidates': 0, 'kinds': [], 'sentences kept': True}
+for _source in ('candidates', 'predicted'):
+    case('punct-alias/borrowed-' + _source, pin_not_run=PUNCT_ALIAS_DEFINED,
+         issues=('1272', '542'))(punct_alias_case(_source, True))
+    case('punct-alias/owned-' + _source, control=True,
+         issues=('1272',))(punct_alias_case(_source, False))
 
 
 def remember_negative(count):
@@ -8027,6 +8113,9 @@ def run_case(spec, pin_so, subject_so, data, name, scratch, timeout):
         for side in ('pin', 'subject'):
             profiles[side] = tempfile.mkdtemp(prefix='handoff-' + side + '-', dir=scratch)
     for side, so in (('pin', pin_so), ('subject', subject_so)):
+        if side == 'pin' and spec.get('pin_not_run') is not None:
+            results.append(dict(exit='NOT-RUN', result=None, userfiles=[], stderr_lines=0, stderr=''))
+            continue
         previous_side = getattr(WORKER_STATE, 'side', None)
         WORKER_STATE.side = side
         remaining = deadline - time.monotonic()
@@ -16404,7 +16493,8 @@ def registered_termination(spec):
     """Whether the spec says how the pin dies (`abort=`, `crash=`,
     `both_abort=`, with or without `either=`): then `matches` owns the exit
     conditions of both sides and no validity check is layered on top."""
-    return spec['abort'] is not NO_ABORT or spec['crash'] is not None or spec['both_abort']
+    return spec['abort'] is not NO_ABORT or spec['crash'] is not None or spec['both_abort'] \
+        or spec.get('pin_not_run') is not None
 
 
 def valid_observation(spec, side):
@@ -16552,6 +16642,10 @@ def matches(spec, pin, subject):
             )
             and (not spec['userdir'] or pin['userfiles'] == subject['userfiles'])
         )
+    elif spec.get('pin_not_run') is not None:
+        shown = subject['result'] or {}
+        same = pin['exit'] == 'NOT-RUN' and subject['exit'] == 0 and \
+            all(shown.get(key) == value for key, value in spec['pin_not_run'].items())
     elif spec['crash'] is not None and not as_abort:
         shown = subject['result'] or {}
         same = pin['exit'] == -signal.SIGSEGV and subject['exit'] == 0 and \
