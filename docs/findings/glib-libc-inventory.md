@@ -1,6 +1,8 @@
 # GLib and libc at the pin: reachable calls and oxpinyin counterparts
 
-Status: **current audit** (#917) · 2026-10-24 UTC · Parent: #915.
+Status: **current audit** (#917) · 2026-10-24 UTC · Parent: #915 ·
+#1297 Phase 1 classification added 2026-10-26 UTC (see "Classification
+of the remaining GLib- and libc-shaped code").
 Pin: libpinyin 2.11.92 at `074a2219c90feaf962d0d24f034514033ece5f99`.
 Oracle image: `debian:trixie` (Debian 13.7, the current stable codename)
 from the default mirrors, linux/amd64. **GLib 2.84.4-3~deb13u5**,
@@ -78,14 +80,14 @@ for libpinyin and libzhuyin, `pinyin` for the prediction-only surfaces;
 
 | ID | Family and pin call sites | Reach | oxpinyin counterpart | Valid / malformed | Disposition | Child |
 | --- | --- | --- | --- | --- | --- | --- |
-| G1 | UTF-8/UCS-4 conversion and category: `pinyin.cpp:628,715,1397,1450-1454,2658,3210,3678`; `lookup.cpp:54,58`; `zhuyin.cpp:918,969-973,1684,2165`; `zhuyin_parser2.cpp:871,879`; `punct_table.cpp:48` (dead); `tag_utility.cpp` (tool) | both (punct pinyin only); all | `capi/src/ffi.rs` `cstr_to_string` / `cstr_to_parsed_prefix` / `cstr_to_strict`; `capi/src/phrase.rs` `segment_text`; `data/src/phrase_library.rs` `phrase_chars`; `data/src/interp_grammar.rs` `is_graph`; `data/src/row_format.rs` `decode_puncts` | valid: identical strings. malformed/non-scalar: `g_utf8_to_ucs4` accepts surrogates and values above U+10FFFF; Rust `str` cannot. Embedded U+0000 stops the pin's conversion. | valid: contract. malformed: quirk (#894, #918); tool: quirk (#926); punct: quirk/class (b) (#1144) | #894, #918, #925, #926, #1144 |
-| G2 | C strings, joins and vectors: `g_strdup` 39, `g_free` 155, `g_strdup_printf` 14, `g_strconcat` 16, `g_strjoinv` 3, `g_strndup` 7, `g_strfreev` 10, `g_strv_length`/`g_strv_contains` 2, `g_string_*` 4 | both (punct subset pinyin only); all | `capi/src/ffi.rs` `owned_cstr` / `owned_cstr_list`; `capi/src/aux_matrix.rs` `join`; `capi/src/predict.rs` `prepend_punctuations`; `capi/src/iterators.rs` export rendering; `data/src/pin_stderr.rs` `build_filename` | valid: identical bytes. malformed: raw path bytes, missing middle aux component, NUL in a diagnostic, duplicate punctuation. | valid: contract. malformed: quirk (#922) or #925; punctuation strings #1144 and punctuation order/duplicates #928, both contract (closed 2026-10-26 UTC) | #922, #924, #925, #928, #1144; export row 1 |
-| G3 | Path joining: `g_build_filename`, 68 sites, e.g. `pinyin.cpp:164,252,268,286,308,395,400,952,968,985,1052`; `zhuyin.cpp:118,196,212,230,252,337,342,585,601,605,626,630,684` | both; all | `data/src/table_info.rs` `FileName::under` / `pin_join`; `data/src/pin_stderr.rs` `build_filename`; `capi/src/ffi.rs` `cstr_to_path` | valid: same resolved path. malformed: leading `/`, empty name, `..`, duplicate separators, non-UTF-8 bytes. | valid: contract. malformed: quirk (#922) | #922 |
+| G1 | UTF-8/UCS-4 conversion and category: `pinyin.cpp:628,715,1397,1450-1454,2658,3210,3678`; `lookup.cpp:54,58`; `zhuyin.cpp:918,969-973,1684,2165`; `zhuyin_parser2.cpp:871,879`; `punct_table.cpp:48` (dead); `tag_utility.cpp` (tool) | both (punct pinyin only); all | `capi-marshal/src/input.rs` `utf8_to_ucs4` / `parser_prefix` / `scalar_text` (#1279); `capi/src/phrase.rs` `pinyin_phrase_segment`; `data/src/phrase_library.rs` `phrase_chars`; `data/src/interp_grammar.rs` `is_graph`; `data/src/row_format.rs` `decode_puncts` | valid: identical strings. malformed/non-scalar: `g_utf8_to_ucs4` accepts surrogates and values above U+10FFFF; Rust `str` cannot. Embedded U+0000 stops the pin's conversion. | valid: contract. malformed: quirk (#894, #918); tool: quirk (#926); punct: quirk/class (b) (#1144) | #894, #918, #925, #926, #1144 |
+| G2 | C strings, joins and vectors: `g_strdup` 39, `g_free` 155, `g_strdup_printf` 14, `g_strconcat` 16, `g_strjoinv` 3, `g_strndup` 7, `g_strfreev` 10, `g_strv_length`/`g_strv_contains` 2, `g_string_*` 4 | both (punct subset pinyin only); all | `capi/src/ffi.rs` `owned_cstr` / `owned_cstr_list`; `capi/src/aux_matrix.rs` `AuxMatrix::full` / `double` / `chewing`; `capi/src/predict.rs` `prepend_punctuations`; `capi/src/iterators.rs` export rendering; `data/src/pin_stderr.rs` `build_filename` | valid: identical bytes. malformed: raw path bytes, missing middle aux component, NUL in a diagnostic, duplicate punctuation. | valid: contract. malformed: quirk (#922) or #925; punctuation strings #1144 and punctuation order/duplicates #928, both contract (closed 2026-10-26 UTC) | #922, #924, #925, #928, #1144; export row 1 |
+| G3 | Path joining: `g_build_filename`, 68 sites, e.g. `pinyin.cpp:164,252,268,286,308,395,400,952,968,985,1052`; `zhuyin.cpp:118,196,212,230,252,337,342,585,601,605,626,630,684` | both; all | `data/src/table_info.rs` `FileName::under` / `pin_join`; `data/src/pin_stderr.rs` `build_filename`; `capi-marshal/src/input.rs` `filename` (#1279) | valid: same resolved path. malformed: leading `/`, empty name, `..`, duplicate separators, non-UTF-8 bytes. | valid: contract. malformed: quirk (#922) | #922 |
 | G4 | GArray/GPtrArray containers: `g_array_*` and `g_ptr_array_*`, 514 sites (`g_array_index` 101, `g_array_new` 64, `g_array_free` 68, `g_ptr_array_index` 58, `g_array_set_size` 57, `g_array_append_val` 54, ...) | both; all | `capi/src/dict.rs` and zhuyin twin keep real `GArray` for the ABI; internal steps are `Vec`/slices in `engine/src/nbest.rs`, `engine/src/session/*`, `data/src/phrase_library.rs` | valid: identical candidate/result arrays. malformed: out-of-range indices, a key with no whole word, a short chunk header. | valid: contract. malformed: class (b)/(c) rows; #924 for the ABI arrays | #924 |
-| G5 | n-best tail sort: `phonetic_lookup.h:337` `g_ptr_array_sort(tails, trellis_value_compare)` | both; all | `engine/src/nbest.rs` `glib_merge_sort`, `tail_compare`, `c_float_to_gint` | valid: the `gint` truncation ties scores under one unit apart, so the comparator is not transitive on finite scores. malformed: NaN and ±∞ from λ outside `[0, 1]`. | contract; merge kept, [record](921-927-glib-sorts.md) | #921 |
-| G6 | candidate and predicted list sorts: `pinyin.cpp:2286,2443` `g_array_sort_with_data(compare_item_with_sort_option)`; `zhuyin.cpp:1529,1610` `g_array_sort`; phrase-string dedup `pinyin.cpp:2067`, `zhuyin.cpp:1375` | both; all | `engine/src/nbest.rs` `glib_merge_sort` under `engine/src/session/mod.rs` `glib_rank_sort`, `RankKey::pin_compare` and `capi/src/predict.rs` `sort_predicted` | valid: a total order (frequencies below 2²⁴); stable order and dedup winner. malformed: λ outside `[0, 1]` wraps the `gint` frequency key into cycles. | contract; merge kept, [record](921-927-glib-sorts.md); dedup #913/#914 | #927, #928 |
+| G5 | n-best tail sort: `phonetic_lookup.h:337` `g_ptr_array_sort(tails, trellis_value_compare)` | both; all | `engine/src/nbest.rs` `glib_merge_sort`, `tail_compare`, `c_float_to_gint` | valid: the `gint` truncation ties scores under one unit apart, so the comparator is not transitive on finite scores. malformed: NaN and ±∞ from λ outside `[0, 1]`. | contract; merge kept, [record](921-927-glib-sorts.md); superseded 2026-10-26 UTC: language artefact, #1297 classification | #921 |
+| G6 | candidate and predicted list sorts: `pinyin.cpp:2286,2443` `g_array_sort_with_data(compare_item_with_sort_option)`; `zhuyin.cpp:1529,1610` `g_array_sort`; phrase-string dedup `pinyin.cpp:2067`, `zhuyin.cpp:1375` | both; all | `engine/src/nbest.rs` `glib_merge_sort` under `engine/src/session/mod.rs` `glib_rank_sort`, `RankKey::pin_compare` and `capi/src/predict.rs` `sort_predicted` | valid: a total order (frequencies below 2²⁴); stable order and dedup winner. malformed: λ outside `[0, 1]` wraps the `gint` frequency key into cycles. | contract; merge kept, [record](921-927-glib-sorts.md), superseded 2026-10-26 UTC (#1297 classification); dedup #913/#914 | #927, #928 |
 | G7 | hash tables: `g_hash_table_new` 2, `insert` 4, `lookup_extended` 4, `destroy` 2; `g_direct_hash`/`equal` | both; all | `engine/src/nbest.rs` `Step`, `engine/src/session/*` vectors; no exposed iteration order | valid: lookup only; no order reaches the ABI. malformed: none. | contract (internal; no observable order) | — |
-| G8 | diagnostics: `g_return_val_if_fail`, 6 sites (`pinyin.cpp:1454`, `zhuyin.cpp:973`, `phrase_index.cpp:354-356,361`); `g_warning` only in the tool-only tag utility | both; all | `capi/src/ffi.rs` `log_warning` / `log_critical`; `capi/src/phrase.rs` `g_log` / `g_return_if_fail_warning`; zhuyin twin | valid: class (c) sites keep one warning at warning level and the pin's domain. malformed: a GLib conversion failure logs the critical. | (c) where the pin aborts; #924 for the channel; #918 for the segment gate | #918, #924 |
+| G8 | diagnostics: `g_return_val_if_fail`, 6 sites (`pinyin.cpp:1454`, `zhuyin.cpp:973`, `phrase_index.cpp:354-356,361`); `g_warning` only in the tool-only tag utility | both; all | `capi/src/ffi.rs` `log_warning` / `log_critical`; `capi/src/phrase.rs` `g_return_if_fail_warning`; zhuyin twin | valid: class (c) sites keep one warning at warning level and the pin's domain. malformed: a GLib conversion failure logs the critical. | (c) where the pin aborts; #924 for the channel; #918 for the segment gate | #918, #924 |
 | G9 | allocation/free and real GArray ABI: `g_free` 155, `g_strdup` 39, `g_strdup_printf` 14; C `malloc`/`free`/`realloc` 6; `g_array_set_size`/`g_array_append_vals` into caller arrays in `pinyin.cpp:2805,2817` and `zhuyin.cpp:1797,1809` | both; all | `capi/src/ffi.rs` `owned_cstr` / `owned_cstr_list` (C `malloc`/`g_free` contract); `capi/src/dict.rs` and zhuyin twin on `glib_sys`; `libpinyin.alloc` / `libzhuyin.alloc` | valid: caller may `g_free` / `g_strfreev`; the real `GArray` keeps GLib's private metadata. malformed: NULL or OOM paths. | contract; MUST RETAIN | #924 |
 | G10 | rename and sync: `g_rename` 10 (`pinyin.cpp:1059,1078,1094,1108,1121`; `zhuyin.cpp:609,635,655,672,687`); `g_fsync` 1 (`memory_chunk.h:555`) | both; all | `user/src/persistence.rs` `save_with_bigram_reporting`, `pin_rename_order`; `data/src/phrase_library.rs` chunk save | valid: same file order and bytes. failure: per-file write/rename failures and the save's return. | contract on valid profiles; #929 for failure ordering | #929 |
 | G11 | numeric parsing and locale: `fscanf` 10 (`table_info.cpp:208,214,220,228,232,255,338,344,352,357`); `atoi` 1 (`:160`); `setlocale` 6 (`:197,291,328,372,378,394`) | both; all | `data/src/table_info.rs` `Scan`, `strtol_digits`, `atoi_guint8`, `hex_float`; `data/src/user_files.rs` `Scan::int`; `capi/src/locale.rs` | valid: same table values, versions, λ bits and library mapping. malformed/host: glibc 2.43-3 `%d`/`%f`/`%255s` grammar, saturation, signed user.conf versions, hex/NaN/Inf, incomplete exponents, NUL/width and row grouping; class (b): missing source buffer and merged-row SIGSEGV. | valid: contract. malformed: contract except the class (b) refusals; host scanner (#919/#920); process side effect ruling (#923) | #919, #920, #923 |
@@ -256,7 +258,10 @@ cycles outside it. The phrase-string dedup sorts (`pinyin.cpp:2067`,
 `zhuyin.cpp:1375`) are total; their winner rule is #913/#914, and the
 dedup winner and punctuation order are #928.
 
-All of these stay GLib's merge (#921, #927): one implementation,
+**Superseded 2026-10-26 UTC** by the #1303 ruling and the #1297
+classification below: the merge and the wrapping and truncating keys are
+language artefacts. Historical text follows. All of these stay GLib's
+merge (#921, #927): one implementation,
 `oxpinyin_engine::glib_merge_sort`, used by the tails, `glib_rank_sort`
 and `sort_predicted`. A standard-library sort gives other sentence orders
 on NaN tails and may panic on a non-total comparator. The record is
@@ -566,11 +571,11 @@ child column is the audit that must decide it.
 
 | Counterpart | Emulates | Pin cite | Child |
 | --- | --- | --- | --- |
-| `capi/src/ffi.rs` `cstr_to_string`, `cstr_to_parsed_prefix`, `cstr_to_strict`, `cstr_to_path` | `g_utf8_to_ucs4` / `g_utf8_strlen` gates; raw C path bytes | `pinyin.cpp:1450-1454`; `zhuyin.cpp:969-973`; `pinyin.cpp:1498-1509` | #918 |
-| `capi/src/phrase.rs` `segment_text` | `g_utf8_strlen` + `g_utf8_to_ucs4` gate and `g_return_val_if_fail` | `pinyin.cpp:1450-1454`; `zhuyin.cpp:969-973` | #918 |
+| `capi-marshal/src/input.rs` `utf8_to_ucs4`, `scalar_text`, `parser_prefix`, `direct_zhuyin_reading`, `filename` (since #1279, PR #1296; formerly `capi/src/ffi.rs` `cstr_to_*`) | `g_utf8_to_ucs4` / `g_utf8_strlen` gates; raw C path bytes | `pinyin.cpp:1450-1454`; `zhuyin.cpp:969-973`; `pinyin.cpp:1498-1509` | #918 |
+| `capi/src/phrase.rs` `pinyin_phrase_segment` (formerly `segment_text`; `utf8_to_ucs4` plus two `g_return_if_fail_warning` calls since #1279) | `g_utf8_strlen` + `g_utf8_to_ucs4` gate and `g_return_val_if_fail` | `pinyin.cpp:1450-1454`; `zhuyin.cpp:969-973` | #918 |
 | `data/src/phrase_library.rs` `phrase_chars` | `g_ucs4_to_utf8` on stored phrase text | `pinyin.cpp:1627-1645`; `lookup.cpp:27-60`; `pinyin.cpp:698-716` | #894 |
 | `data/src/row_format.rs` `decode_puncts`; `capi-marshal/src/phrase_text.rs` `phrase_text_bytes` | `PunctTableEntry::unescape` / `get_all_punctuations`; `g_string_append_unichar` | `punct_table.cpp:56-94` | #1144 (closed: pin rows reproduced; over-read class (b)) |
-| `capi/src/aux_matrix.rs` `AuxMatrix::chewing`, `join` | `g_utf8_substring`, `g_strconcat` with a NULL middle | `pinyin.cpp:3518-3576` | #925 |
+| `capi/src/aux_matrix.rs` `AuxMatrix::chewing`, `split_zhuyin` (the former `join` is a `format!`) | `g_utf8_substring`, `g_strconcat` with a NULL middle | `pinyin.cpp:3518-3576` | #925 |
 | `capi/src/predict.rs` `prepend_punctuations`, `seen` | `g_strv_length` + `g_strv_contains` + reverse prepend | `pinyin.cpp:2456-2498` | #928 (closed: byte-equality first occurrence, contract) |
 | `data/src/pin_stderr.rs` `build_filename` | `g_build_filename` raw bytes for stderr | `table_info.cpp:201,332`; `pinyin.cpp:338`; `zhuyin.cpp:282` | #922 |
 | `data/src/table_info.rs` `pin_join` | `g_build_filename(dir, name, NULL)` | `pinyin.cpp:395,400`; `zhuyin.cpp:337,342` | #922 |
@@ -585,7 +590,213 @@ child column is the audit that must decide it.
 | `data/src/interp_grammar.rs` `is_graph`, `interp.rs` | `taglib_read` + `g_unichar_isgraph` | `tag_utility.cpp:171-264` | #926: kept as [recorded](interpolation2-grammar.md) |
 | `dictool/src/format.rs` `split_classic`; `training/src/counter/parse.rs` `parse_segmented_line`, `kmm/src/cnum.rs` `atoi`; `datagen/src/table.rs`, `system.rs` numeric fields | `g_strsplit_set` / C `atoi`, `atol` / `g_ascii_strtoull` in tool input | `utils_helper.h`, `table_text_parser.h:34-121`; `import_interpolation.cpp:135-182` | #926: training reproduces `atoi`; dictool and datagen strict, [record](926-tool-tokenizers.md) |
 | `capi/src/dict.rs`, `zhuyin-capi/src/dict.rs` direct `g_array_*` | real GLib `GArray` mutation | `pinyin.cpp:2805,2817`; `zhuyin.cpp:1797,1809` | #924 |
-| `capi/src/ffi.rs` `owned_cstr`, `owned_cstr_list`, `log_warning`, `log_critical`; `phrase.rs` `g_log` / `g_free` | `g_strdup` / `g_strfreev` / `g_log` / `g_return_val_if_fail` | `pinyin.cpp` diagnostics; `phrase_index.cpp:354-356` | #924 |
+| `capi/src/ffi.rs` `owned_cstr`, `owned_cstr_list`, `log_warning`, `log_critical`; `phrase.rs` `g_return_if_fail_warning` (the `g_free` of a GLib buffer is gone since #1279) | `g_strdup` / `g_strfreev` / `g_log` / `g_return_val_if_fail` | `pinyin.cpp` diagnostics; `phrase_index.cpp:354-356` | #924 |
+
+## Classification of the remaining GLib- and libc-shaped code (#1297, Phase 1)
+
+Recorded 2026-10-26 UTC at `main` `ab0b1da` and classified under the
+maintainer ruling of 2026-10-26 UTC (#1303, merged as PR #1304):
+product behaviour is reproduced in idiomatic Rust; a language artefact
+(C or C++ semantics such as an integer-returning comparator, unsigned
+wrap-around, float-to-integer truncation or an integer width chosen for
+storage; GLib, glibc or another libc, libstdc++, compiler or processor
+behaviour) is never reproduced, on valid or malformed input, and its
+difference is recorded without approval. A width or wrap that the C
+ABI, an on-disk format or a domain algorithm prescribes is not an
+artefact. The test in every reason below is the policy's: would a
+language-neutral requirement for the behaviour mention it?
+
+Pin read from a clone at `074a2219c90feaf962d0d24f034514033ece5f99`;
+GLib read at tag `2.84.4` (the GitHub mirror of the GNOME tree); the
+glibc citations are the #919, #920 and #926 readings in this file and in
+[926-tool-tokenizers.md](926-tool-tokenizers.md), not re-read. Nothing was
+run to learn a behaviour. This is Phase 1 of #1297, docs only. The
+cleanup is Phase 2, below.
+
+The search was by behaviour, not by the text `glib`: every crate under
+`crates/` except the test-only `pinyin-oracle` was read for conversions,
+comparisons, sorts, selections, scanners, joins, writers and arithmetic
+shaped like a GLib, glibc, libstdc++ or C mechanism. The rows are one per
+item of the emulations table above, split or merged where the code moved,
+plus the items the behaviour search added (marked **new**).
+
+Buckets:
+
+- **Boundary** — the C ABI and its GLib-owned objects, the diagnostic
+  channel, the on-disk system and user formats, path and stderr bytes
+  (limb 1, and the earlier rulings limb 6 keeps). Kept as is.
+- **Product behaviour** — what a user or a developer calling the shared
+  object observes, including libpinyin's logic defects (limb 4). Kept, in
+  idiomatic Rust, named for the behaviour.
+- **Language artefact** — not reproduced (limb 3). Phase 2 removes it and
+  records the difference.
+
+A row can hold both a product rule and an artefact inside it; the bucket
+then names each part.
+
+| # | oxpinyin item (`crates/`) | Pin cite | Final bucket | Reason |
+| --- | --- | --- | --- | --- |
+| 1 | `oxpinyin-capi/src/dict.rs`, `oxpinyin-zhuyin-capi/src/dict.rs`: `glib_sys::g_array_set_size` / `g_array_append_vals` on the caller's array | `pinyin.cpp:2805,2817`; `zhuyin.cpp:1797,1809` | Boundary | The caller owns a real `GArray` (#924); the ABI prescribes it. |
+| 2 | `ffi.rs` (both facades) `owned_cstr`, `owned_cstr_list`, `malloc_cstr_with`, `malloc_cstr_with_warning` | the `g_free` / `g_strfreev` ownership of returned strings (`pinyin.cpp:715-716,733`; the `.alloc` registers) | Boundary | Ownership and lifetime of returned C strings are ABI. |
+| 3 | `ffi.rs` (both facades) `log_warning`, `log_critical` | `g_log` domains; `g_return_val_if_fail` (`phrase_index.cpp:354-356`) | Boundary | The diagnostic channel a caller's log handler observes, produced at the facade. |
+| 4 | `oxpinyin-capi/src/phrase.rs` `pinyin_phrase_segment` and the zhuyin twin: two `g_return_if_fail_warning` calls | `gutf8.c:240`; `pinyin.cpp:1450-1454`; `zhuyin.cpp:969-973` | Boundary | The criticals reach the caller's log handler (#918, #924). |
+| 5 | `locale.rs` (both facades) `pin_table_info_locale` | `table_info.cpp:197,291,328,372,378,394` | Boundary | Maintainer ruling 2026-10-25 UTC (row 39, #923); limb 6 keeps it until a new ruling. |
+| 6 **new** | `oxpinyin-capi/src/types.rs` `GArray`, `GUint`, `GInt`, `GChar`; `oxpinyin-chewing/src/chewing_key.rs` packed key; the casts at exported parameters in `cursor.rs` (`guint16` rest length), `iterators.rs` (`guint` index into the `guint8` field), `user_data.rs` (`gint` count to `guint32`) | `pinyin.h`, `zhuyin.h`; `chewing_key.h:111-113`; `pinyin.cpp:126,520-524` | Boundary | The exported signatures prescribe these widths. |
+| 7 | `oxpinyin-capi-marshal/src/input.rs` `utf8_to_ucs4`; `ucs4.rs` `decode`, `prefix_text` | `g_utf8_to_ucs4` (`gutf8.c:938-993`) at the C string entries | Boundary (excluded) | #1297 excludes the C string conversions (#1279, PR #1296); the words reach stored user data. Not re-classified here. |
+| 8 | `input.rs` `scalar_text`, `parser_prefix`, `direct_zhuyin_reading`, `filename` | `pinyin_parser2.cpp:164-175,217-333`; `zhuyin_parser2.cpp:914-959`; `pinyin.cpp:332`; `zhuyin.cpp:276` | Boundary (excluded) | Same exclusion (#1279). |
+| 9 | `oxpinyin-capi-marshal/src/phrase_text.rs` `phrase_text_bytes`, `stored_words_match` | `g_ucs4_to_utf8` / `g_unichar_to_utf8` (`gutf8.c:546-596,1022`); `pinyin.cpp:568-571` | Boundary | The C-string form of stored words; a C string cannot hold a zero (#1182). |
+| 10 | `oxpinyin-core/src/ucs4.rs` `PhraseText`; `oxpinyin-data/src/phrase_library.rs` `PhraseItemView::phrase_text`, `phrase_codes`, `phrase_chars`; `row_format.rs` `punct_text` | `lookup.cpp:39-60`; `pinyin.cpp:1627-1645` | Product behaviour | Phrase text is the stored code points; the outward cut is row 9's boundary. |
+| 11 | `oxpinyin-engine/src/nbest.rs` `glib_merge_sort` (re-exported from `lib.rs`) | `g_sort_array` → `msort_with_tmp` (GLib `gqsort.c:69-281,328-335`) behind `g_ptr_array_sort`, `g_array_sort`, `g_array_sort_with_data` | Language artefact | No requirement names GLib's merge; it was kept only because rows 12, 13 and 14 feed it artefact comparators. |
+| 12 | `nbest.rs` `tail_compare`, `c_float_to_gint`, `tail_merge`, `poss` | `trellis_value_compare` (`phonetic_lookup.h:174-178`) at `:337` | Product: tails best score first. Artefact: the `float` to `gint` truncation that ties scores under one unit, the NaN and ±∞ `INT_MIN` branch (amd64 `cvttss2si`; arm64 `fcvtzs` differs), and the `gfloat` conversion in `poss` | A requirement says "the n-best sentences, best first"; it would not mention truncation, `gint` or an x86 instruction. |
+| 13 | `oxpinyin-engine/src/session/mod.rs` `glib_rank_sort`, `RankKey::pin_compare`, `RankKey::for_sort_word` | `compare_item_with_sort_option` (`pinyin.cpp:1678-1709`) at `:2286`; `compare_item_with_length_and_frequency` (`zhuyin.cpp:1129-1144`) at `:1529,1610` | Product: descending phrase length, pinyin length, frequency over the enabled sort bits (`pinyin.h:55`), stable. Artefact: the wrapping `guint32` frequency difference returned as `gint`, and the `guint8` span key that wraps at 256 bytes (#1275) | A requirement names the keys and their order; the comparator's integer type and wrap are C semantics, and the 8-bit span is a local storage width. |
+| 14 | `oxpinyin-capi/src/predict.rs` `sort_predicted` | `pinyin.cpp:2440-2445` (key `:1701-1705`) | Product: phrase length then frequency, descending, stable. Artefact: the wrapping `gint` frequency difference and the GLib merge | As row 13. |
+| 15 **new** | `session/mod.rs` `dedup_ranked_by_text`, `dedup_by_text_keep_first` | `pinyin.cpp:2128-2138`; `zhuyin.cpp:1406-1416` | Product behaviour | One row per text, the higher frequency winning and the earlier on a tie (#913/#914); already a map, no C shape. |
+| 16 | `predict.rs` `prepend_punctuations` | `pinyin.cpp:2468-2494`; `gstrfuncs.c:3234-3247` | Product behaviour | Distinct punctuation strings in prefix then table order, before the predictions (#928). |
+| 17 | `session/mod.rs` `amplified_frequency`, `amplified_frequency_with_bigram`, `guint32_of_score`; `predict.rs` `amplified_frequency` (a private copy) | `pinyin.cpp:1811-1824,1862-1866`; `zhuyin.cpp:1264-1268`; `m_freq` is an internal `guint32` (`pinyin.cpp:105`), never exported | Product: the interpolated score `λ·bigram·discount + (1−λ)·unigram/total`. Artefact: scaling by 2²⁴ and truncating into a `guint32`, the near-tie collapse that truncation causes, the low-32-bit wrap of out-of-range scores and the `INT64_MIN` branch (amd64 `cvttss2si`; the arm64 pin saturates, `arm64-pin-portability-1137.md`) | A requirement ranks by the score; the integer it was stored in is internal storage, not ABI. `f32` against `f64` is class (a). |
+| 18 | `oxpinyin-data/src/table_info.rs` `pin_join`, `join_bytes`, `FileName::under`; `oxpinyin-user/src/persistence.rs` `user_file`, `user_conf_path`; `pin_stderr.rs` `build_filename` | `g_build_filename` (`gfileutils.c:1904-1999,2202-2243`) at the G3 sites | Boundary | Which file a `table.conf` row names and the path bytes on stderr (#922; stderr ruling 2026-10-03 UTC, kept by limb 6). |
+| 19 | `oxpinyin-data/src/pin_stderr.rs` `emit`, `path_bytes`, `report_*_table_conf`, `mmap_failed`; the `rename %s to %s failed.` lines in `persistence.rs` | the `fprintf(stderr, …)` sites (`table_info.cpp:201,332`; `pinyin.cpp:256,290,338,956,1059-1121,1265`; `zhuyin.cpp:200,282,589,609-687,800`) | Boundary | stderr bytes, ruling 2026-10-03 UTC (#545). |
+| 20 | `persistence.rs` `save_session`, `save_reporting`, `pin_rename_order`, `tolerate`, `write_marker`, `clean_user_files`, `.tmp` staging | `_write_files` / `_rename_files` (`pinyin.cpp:922-1130`); `zhuyin_save` (`zhuyin.cpp:547-700`); `pinyin.cpp:149-170` | Boundary | Files on disk, their order and the save's answers (#929). |
+| 21 | `persistence.rs` `write_chunk`, `write_header_word`, `ChunkSink` | `MemoryChunk::save` (`memory_chunk.h:536-557`) | Boundary: header words, payload, sync, a failure that is soft. Artefact: one `write(2)` with no retry, so a short count or `EINTR` fails the file | A requirement says "write the chunk"; it would not mention a single system call. |
+| 22 | `oxpinyin-data/src/phrase_library.rs` `map_chunk`, `MappedFile`, `directory_chunk_fault`, `directory_end` | `memory_chunk.h:420-427,470-520` | Boundary | The chunk format; the directory and sparse cases are policy rows 76, 96 and 109. |
+| 23 | `oxpinyin-data/src/row_format.rs` `decode_puncts` | `punct_table.cpp:56-94` at `pinyin.cpp:2468-2494` | Boundary: the `punct.bin` value layout (zero-terminated UCS-4 words). Artefact: the misaligned-length rows (`maxlen` as the `sar` of a byte difference, `begin < end` over bytes, one extra empty row) | A requirement reads whole words; pointer arithmetic over a length that is not a multiple of 4 is C. |
+| 24 | `oxpinyin-data/src/table_info.rs` `Scan`, `strtol_digits`, `atoi_guint8`, `c_float`, `hex_float`, `round_to_f32`, `c_string`, `is_space`; `oxpinyin-training/src/segment/model.rs` through `TableConf::parse` | `table_info.cpp:159-161,208-289`; glibc 2.41 `vfscanf-internal.c`, `strtod_l.c`, `strtol_l.c` | Product: the `table.conf` grammar the pin's files use (five header lines in order, decimal integers, a decimal λ read to the pin's `f32`, rows of six words, the library names). Artefact: hexadecimal floats, `inf` / `infinity` / `nan(…)`, the incomplete-exponent rule, `strtol` saturation and the 32-bit store of `%d`, the `%255s` width cut and white-space directives that run across lines, and `atoi` wrapping an addon index through `guint8` | A requirement gives the file's grammar; fscanf and strtol details would not appear, and an out-of-range addon index is an error, not index 0. |
+| 25 | `oxpinyin-data/src/user_files.rs` `Scan`, `upstream_db_format`, `UserTableInfo::parse` | `table_info.cpp:122-131,338-359` | Product: the `user.conf` grammar and the conformance test; a non-conforming marker resets the profile. Artefact: `strtol` saturation, the 32-bit store, and a NUL inside the format token ending `strcmp` | The pin writes `user.conf` itself with `%d` from an `int` (`table_info.cpp:378-394`), so an out-of-range number or a NUL in the token comes only from a hand-edited file; natural Rust (`str::parse`, exact token match) makes it non-conforming and the profile resets like any bad marker. Recorded. |
+| 26 **new** | `user_files.rs` `UserTableInfo::to_text` | `table_info.cpp:378-394`; fields `int` (`table_info.h:99-102`) | Boundary | The `user.conf` text the pin reads back. |
+| 27 | `oxpinyin-capi/src/aux_matrix.rs` `AuxMatrix::full`, `double`, `chewing`, `split_zhuyin` | `pinyin.cpp:3295-3576`; `g_utf8_substring` (`gutf8.c:292`) | Product behaviour | The byte delta used as a character offset is libpinyin's logic defect, reproduced as written (limb 4); idiomatic Rust already. |
+| 28 | `oxpinyin-data/src/interp_grammar.rs` `read`, `Tokens`, `is_graph`; `interp.rs` `parse_interpolation2` (datagen and training only) | `taglib_read` (`tag_utility.cpp:127-264`); `g_unichar_isgraph` (`guniprop.c:185`) | Product: the `interpolation2.text` record grammar. Artefact, already not reproduced: GLib's Unicode tables (`is_graph` is Rust's predicate, recorded in `interpolation2-grammar.md`) | The model text format is the tools' product; GLib's category data is a library's. |
+| 29 | `oxpinyin-kmm/src/cnum.rs` `atol`, `atoi`; callers `training/src/counter/parse.rs`, `eval/decode.rs`, `segment/mergeseq.rs`, `kmm/src/generate.rs`, `kmm/src/text.rs` | `utils_helper.h:23-35,57-69`; glibc `strtol_l.c` | Product: decimal token and count fields, the empty line as the null token (`0 == strlen(line)`). Artefact: `atoi`'s prefix parse (`12abc` is 12), a digit-less field as 0, `strtol` saturation and the 32-bit cut | A requirement says the field is a decimal token; C's conversion rules would not appear. |
+| 30 **new** | `oxpinyin-kmm/src/cnum.rs` `printf_f`; `training/src/lambda/interpolation.rs` `mean_of_no_contexts`; `training/src/eval/decode.rs` `EvalReport::correction_rate_line` | `printf("%f")` (`estimate_interpolation.cpp:116-117,139`; `eval_correction_rate.cpp:201-203`) | Product: six decimals for a finite value. Artefact: glibc's `nan` / `-nan` / `inf` spellings and the sign of a hardware default NaN | A requirement fixes the number format; how one libc spells NaN on one processor is not part of it. |
+| 31 | `oxpinyin-dictool/src/format.rs` `split_classic` | ibus-libpinyin `PYLibPinyin.cc:249` | Product behaviour | dictool's own frozen grammar (#1226); not the pin library. |
+| 32 | `oxpinyin-datagen/src/table.rs`, `punct.rs`, `system.rs` parsers | `table_text_parser.h:34-121`; `import_interpolation.cpp:135-182` | Product behaviour | datagen's own strict contract (#926). |
+| 33 **new** | `oxpinyin-engine/src/nbest.rs` `heap_push`, `heap_adjust`, `heap_pop`, `heap_make`, `heap_top` (a literal port of libstdc++ `stl_heap.h`), used by the node store, the beam and the tails | site A: `trellis_node::eval_item` with `std_lite::push_heap` / `pop_heap` (`phonetic_lookup_heap.h:56-79`); sites B and C: `get_top_results` with `std_lite::make_heap` / `pop_heap` (`phonetic_lookup.h:141-172`), called for the beam at `:771` and the tails at `:335`; `std_lite` is `std` (`include/stl_lite.h:38-44`) | Product: the selection policy as written, `trellis_value_less_than` with its `LONG_SENTENCE_PENALTY` = `log(1.2f)` clause (`phonetic_lookup.h:39,65-91`), `nstore` 2 and `nbest` 3 for pinyin (`pinyin.cpp:55`), 1 and 1 for zhuyin (`zhuyin.cpp:50`), a 32-entry beam. Artefact: which values libstdc++'s comparison sequence selects where the comparator is not a total order | A language-neutral requirement names the comparator and the counts, not the heap. Any other structure selects differently where the comparator contradicts itself (lengths one apart with a margin above `log(1.2)`, so each value is "less" than the other) and on exact ties (same length, equal cost), which libstdc++ and another structure break by different positional rules. `m_sentence_length` counts characters, not phrases (`unigram_gen_next_step` / `bigram_gen_next_step` add `phrase_length`, `phonetic_lookup.h:662,691`). Existing class (a), not from the swap: the pin applies the margin in `gfloat` natural log; oxpinyin applies the quantised `LONG_SENTENCE_PENALTY` = 263 on its log2×1000 `Cost` scale (`nbest.rs`), so pairs at the threshold can decide differently. |
+| 34 **new** | in-memory wrapping sums: the facade unigram total in `oxpinyin-runtime/src/lib.rs` and `oxpinyin-data` (`phrase_libraries.rs`, `lm/mod.rs`), the user overlay totals in `oxpinyin-user` (`store.rs`, `registry.rs`, `seed.rs`), the `guint8` pronunciation count (`store_libpinyin.rs`) | `FacadePhraseIndex` `m_total_freq` (`phrase_index.h:615,633`); `add_unigram_frequency`; `phrase_index.cpp:28` | Boundary (no change) | The fields are on-disk `guint32` / `guint8` widths; `wrapping_add` gives the pin's values and files at no cost and is as natural as `saturating_add`. No issue, no change. |
+
+### Checked and excluded
+
+- The input caps `oxpinyin_engine::session::MAX_INPUT_BYTES` (the pin's
+  32,767-byte parse) and `oxpinyin_core::graph::MAX_GRAPH_INPUT`: a limit
+  is product behaviour (limb 4) and the second is oxpinyin's own refusal.
+- Byte-order key comparison in `oxpinyin-store` and `PhraseItem` byte
+  equality in `oxpinyin-user/src/replay.rs`: the backend's and the chunk
+  format's own orders.
+- `oxpinyin-core/src/cost.rs`: `f64::log2` directly. The "C-maths
+  imitation" table below predates this; its `log2_fixed` row no longer
+  exists in the tree and is historical.
+- The candidate snapshot (`oxpinyin-facade/src/snapshot.rs`) and the
+  probe-only trellis hash maps: no order reaches the ABI (G7).
+- `pinyin-oracle`'s direct `glib_sys` use: the test harness, not shipped.
+
+### Result
+
+- **Boundary:** rows 1–9, 18–20, 22, 26 and 34, and the boundary parts
+  of 21 and 23.
+- **Product behaviour:** rows 10, 15, 16, 27, 31 and 32, and the product
+  parts of 12–14, 17, 24, 25, 28–30 and 33.
+- **Language artefact:** row 11 whole, and the artefact parts of 12–14,
+  17, 21, 23–25, 28 (already native), 29, 30 and 33.
+- Superseded: the earlier conclusion that the sorts stay a hand-written
+  merge (the G5/G6 notes and
+  [921-927-glib-sorts.md](921-927-glib-sorts.md)) and the
+  "under #1303" column of the first version of this section. The
+  comparators are total once their artefacts are gone, so a standard
+  stable sort is well defined and cannot panic.
+
+### Phase 2: the cleanup, in two independent lanes
+
+Each lane is one PR. Each records its differences with
+`language-runtime-discrepancy-template.md` and a register entry in
+`upstream-divergences.md`, and marks `POLICY-ACCEPTED` on the cases that
+tell the two apart; no approval is needed for an artefact (limb 3). The
+renames or removals and the regenerated function-order policies land in
+the same commit: `glib_merge_sort`, `glib_rank_sort`, `atoi_guint8`,
+`table_info::Scan` and `user_files::Scan` are named in all six policies
+(`tools/packaging/function-order/{bdb,kc,tkrzw}/lib{pinyin,zhuyin}.order`),
+regenerated with `tools/generate-function-order.py` as
+`docs/packaging.md` "Regeneration" prescribes (two passes,
+byte-identical, never hand-edited). Whichever lane lands second rebases
+and regenerates again. Each lane reports stripped shipping-library sizes
+base against head in one run.
+
+**Ranking lane** (`oxpinyin-engine` `nbest` and `session`,
+`oxpinyin-capi` `predict`; rows 11–14, 17, 33):
+
+1. Tails sort by score: best cost first, `Ord` on the fixed-point
+   `Cost`, stable; `tail_compare`, `c_float_to_gint`, `tail_merge` and
+   the `poss` round trip go.
+2. Candidate and predicted lists use `slice::sort_by` (stable) with a
+   plain lexicographic order over the enabled keys: phrase length,
+   pinyin length (the full span, no `u8` cut), frequency, each
+   descending. `glib_merge_sort`, `glib_rank_sort`'s GLib name and
+   `pin_compare`'s wrap go.
+3. Frequency: rank by the interpolated score itself, compared with a
+   total order; `guint32_of_score`, the 2²⁴ scale-and-truncate and the
+   amd64 branches go, and the `predict.rs` copy folds into the session's.
+   The dedup (row 15) compares the same score.
+4. Selection: replace the `stl_heap.h` port, keeping the product rule as
+   written (`trellis_value_less_than`, its `log(1.2f)` clause, `nstore` 2
+   for pinyin and 1 for zhuyin):
+   - site A, `trellis_node::eval_item`: the pin's two-slot keep rule
+     written out, at most two comparisons, in the pin's argument order and
+     slot order, because backtracking reads the slot;
+   - sites B and C, the 32-entry beam and the 3 tails: one winner
+     (tournament) tree over the step's node storage, taking the comparator
+     as a closure with a fixed, documented argument order (the lower leaf
+     index on the left); O(m + k log m) time, O(m) space; no `Ord`, no
+     `std` heap or sort on this comparator;
+   - the final tails then sorted by score (step 1).
+   The tree selects differently from libstdc++'s heap where the
+   comparator contradicts itself and on exact ties (same length, equal
+   cost), which the two break by different positional rules: a language
+   artefact, recorded. Before the swap the lane measures on the corpus
+   how often the beam selection, the first choice and the top N change,
+   over ordinary steps as well as multi-length inputs, and registers the
+   result. The record also states the existing class (a) margin
+   difference (`gfloat` `log(1.2f)` against the quantised 263 `Cost`
+   units), which the swap does not introduce.
+5. Gates on bdb: `--issue 921 --issue 927 --issue 594` (sorts, keys,
+   n-best), the `table-conf-lambda-*` selection, the predicted and
+   punctuation cases; revert-and-check or a named mutation per change;
+   kc and tkrzw only if `cells-for-diff.py` selects them.
+
+**Scanners and tools lane** (`oxpinyin-data`, `oxpinyin-user`,
+`oxpinyin-training`, `oxpinyin-kmm`; rows 21, 23–25, 29, 30):
+
+1. `table.conf` and `user.conf`: plain Rust parsing of the product
+   grammar (line headers, decimal integers in range, a decimal λ to
+   `f32`, six-word rows); drop hexadecimal and special float spellings,
+   saturation, the 32-bit store, the 255-byte cut, cross-line words and
+   the `guint8` addon wrap (an out-of-range index is refused). For
+   `user.conf`, `str::parse` and an exact token match: an out-of-range
+   number or a NUL in the token makes the marker non-conforming and the
+   profile resets as for any bad marker; recorded.
+2. Tool fields: parse decimal tokens and counts; a field that is not a
+   decimal integer is a line error; the empty line stays the null token.
+   `printf_f` keeps six decimals and prints Rust's spelling for NaN and
+   infinity.
+3. `decode_puncts` reads whole words only; `write_chunk` writes the
+   payload with `write_all`.
+4. Gates on bdb: `--issue 919 --issue 920` (scanners, both facades),
+   `--issue 1144` (punctuation), `--issue 929` (saves), the tool
+   differentials of #926; all three cells for any file under
+   `oxpinyin-store` or as `cells-for-diff.py` selects.
+
+**Planned, outside the lanes** (row 33's comparator; it does not change
+the cleanup):
+
+- An upstream report entry in `upstream-report-drafts.md` on
+  `trellis_value_less_than` (`phonetic_lookup.h:65-91`): the two-way
+  contradiction (for adjacent lengths, the longer value is always "less"
+  through the shorter-sentence clause, and the shorter is "less" when the
+  longer is better by more than `log(1.2)`); the cycles for lengths
+  1/1/2 and 1/2/3; the reverse adjacent-length rule (`:75-77`), which the
+  shorter-sentence clause (`:87-88`) masks, so it never changes a result;
+  the C++ standard's precondition that `make_heap`, `push_heap` and
+  `pop_heap` take a strict weak ordering; and two independent fixes, the
+  minimal one (exclude adjacent lengths from the shorter-sentence
+  fallback, which still leaves the 1/2/3 cycles) and a unified score.
+
+**Not in either lane:** row 34 needs no change; the excluded rows 7 and 8
+stay with #1279.
 
 ## C-maths imitation — record only
 

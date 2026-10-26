@@ -8,6 +8,13 @@ tag (`gqsort.c` SHA-256 `7c24f23e…6950`). Binary: the bdb reference cell's
 `libpinyin.so.15.0.0` (SHA-256 `58f73afe…c34c`, the value in
 `tools/oracle/oracle-pin.txt`). No pin run was used to learn a behaviour.
 
+**Superseded 2026-10-26 UTC.** Under the maintainer ruling of that date
+(#1303, PR #1304) the GLib merge, the `gint` truncation of the tail
+comparator, the wrapping frequency key and the `guint8` span key are
+language artefacts and are not reproduced; see the #1297 classification
+in [glib-libc-inventory.md](glib-libc-inventory.md). This record is kept
+as dated evidence.
+
 ## Result
 
 Every sort in scope is kept as GLib's merge. None of the comparators is a
