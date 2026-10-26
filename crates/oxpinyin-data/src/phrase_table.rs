@@ -97,11 +97,13 @@ impl<D: ChewingDbm> PhraseTable<D> {
     /// prediction order. Upstream also drops tokens whose library array is
     /// `NULL` (not loaded); the dictionary applies that when it resolves
     /// text.
-    pub(crate) fn search_suggestion(&self, prefix: &str) -> Result<Vec<u32>, DictError> {
+    /// `prefix` is raw UCS-4 words, as the pin's `m_prefix_ucs4`, so a
+    /// surrogate or above-Unicode word is compared as stored.
+    pub(crate) fn search_suggestion(&self, prefix: &[u32]) -> Result<Vec<u32>, DictError> {
         if prefix.is_empty() {
             return Ok(Vec::new());
         }
-        let key = encode_ucs4_key(prefix);
+        let key = encode_ucs4_key_scalars(prefix);
         if !self.dbm.contains(&key)? {
             return Ok(Vec::new());
         }
@@ -200,22 +202,23 @@ mod tests {
         dbm.put(encode_ucs4_key("你们"), encode_tokens(&[0x0100_0098]));
         dbm.put(encode_ucs4_key("好"), encode_tokens(&[0x0100_0011]));
         let table = PhraseTable::new(dbm);
-        let mut tokens = table.search_suggestion("你").unwrap();
+        let words = |text: &str| text.chars().map(u32::from).collect::<Vec<_>>();
+        let mut tokens = table.search_suggestion(&words("你")).unwrap();
         tokens.sort_unstable();
         assert_eq!(
             tokens,
             vec![0x0100_0098, 0x0100_0099, 0x0200_0001, 0x0300_0005]
         );
         // The prefix's own tokens are not suggestions.
-        let tokens = table.search_suggestion("你好").unwrap();
+        let tokens = table.search_suggestion(&words("你好")).unwrap();
         assert_eq!(tokens, vec![0x0300_0005]);
         // A prefix that is no key at all answers nothing, even though
         // longer phrases would extend it.
         let dbm = MemoryDbm::new();
         dbm.put(encode_ucs4_key("你好"), encode_tokens(&[0x0100_0099]));
         let table = PhraseTable::new(dbm);
-        assert!(table.search_suggestion("你").unwrap().is_empty());
-        assert!(table.search_suggestion("").unwrap().is_empty());
+        assert!(table.search_suggestion(&words("你")).unwrap().is_empty());
+        assert!(table.search_suggestion(&[]).unwrap().is_empty());
     }
 
     #[test]

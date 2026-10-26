@@ -354,7 +354,8 @@ fn suggestion_tokens_walk_the_longer_phrases_in_order() {
     // 你 → 你好 (loaded) and 你们 (unloaded). The raw walk keeps both tokens
     // (the caller's item-level split is what drops the absent one); the
     // live item's text is resolved here.
-    let tokens = dict.suggestion_tokens("你").unwrap();
+    let words = |text: &str| text.chars().map(u32::from).collect::<Vec<_>>();
+    let tokens = dict.suggestion_tokens(&words("你")).unwrap();
     assert_eq!(tokens.len(), 2);
     assert!(tokens.contains(&0x0100_0099));
     assert!(tokens.contains(&0x0200_0098));
@@ -367,9 +368,9 @@ fn suggestion_tokens_walk_the_longer_phrases_in_order() {
         rows,
         vec![(0x0100_0099, oxpinyin_core::PhraseText::from("你好"))]
     );
-    assert!(dict.suggestion_tokens("你好").unwrap().is_empty());
-    assert!(dict.suggestion_tokens("无").unwrap().is_empty());
-    assert!(dict.suggestion_tokens("").unwrap().is_empty());
+    assert!(dict.suggestion_tokens(&words("你好")).unwrap().is_empty());
+    assert!(dict.suggestion_tokens(&words("无")).unwrap().is_empty());
+    assert!(dict.suggestion_tokens(&[]).unwrap().is_empty());
 }
 
 #[test]

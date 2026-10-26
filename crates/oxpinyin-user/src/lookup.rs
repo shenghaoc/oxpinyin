@@ -252,11 +252,12 @@ impl UserLookup {
         self.token_text.get(&token)
     }
 
-    /// Tokens whose phrase text is exactly `text`.
+    /// Tokens whose stored UCS-4 key is exactly `words`, non-scalar words
+    /// included.
     #[must_use]
-    pub fn tokens_for_text(&self, text: &str) -> &[u32] {
+    pub fn tokens_for_ucs4(&self, words: &[u32]) -> &[u32] {
         self.text_tokens
-            .get(&crate::phrase_table::key(text))
+            .get(&crate::phrase_table::key_ucs4(words))
             .map_or(&[], Vec::as_slice)
     }
 
@@ -335,8 +336,8 @@ impl UserLookup {
     /// A prefix need not have a phrase token of its own. Rows are merged into
     /// the DBM walk order by the runtime before the stable prediction sort.
     #[must_use]
-    pub fn suggest_after(&self, prefix: &str) -> Vec<(u32, Vec<u8>)> {
-        let prefix = crate::phrase_table::key(prefix);
+    pub fn suggest_after(&self, prefix: &[u32]) -> Vec<(u32, Vec<u8>)> {
+        let prefix = crate::phrase_table::key_ucs4(prefix);
         if !self.text_tokens.contains_key(&prefix) {
             return Vec::new();
         }

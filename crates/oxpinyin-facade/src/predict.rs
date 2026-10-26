@@ -6,9 +6,11 @@ use oxpinyin_core::PhraseText;
 use oxpinyin_runtime::RuntimeDict;
 use oxpinyin_user::{UserLookup, UserStore};
 
-/// Resolves a prefix string to the phrase tokens its tail substrings
-/// name, in the order `guess_sentence_with_prefix` consumes them
-/// (upstream's `_compute_prefixes`).
+/// Resolves a prefix to the phrase tokens its tail substrings name, in the
+/// order `guess_sentence_with_prefix` consumes them (upstream's
+/// `_compute_prefixes`, `pinyin.cpp:1389-1422`). The suffixes are the
+/// stored words, so a non-scalar word is searched as the tables store it;
+/// `None` adds no token.
 ///
 /// System tokens ride the loaded-library mask: an unloaded library must
 /// not contribute prefix tokens (upstream's `_get_phrase_item_from_token`
@@ -16,19 +18,23 @@ use oxpinyin_user::{UserLookup, UserStore};
 /// to that gate on the prefix path). User tokens come from the user
 /// store's raw phrase table.
 #[must_use]
-pub fn compute_prefixes(dict: &RuntimeDict, user: Option<&UserStore>, prefix: &str) -> Vec<u32> {
-    let chars: Vec<char> = prefix.chars().collect();
-    if chars.is_empty() {
+pub fn compute_prefixes(
+    dict: &RuntimeDict,
+    user: Option<&UserStore>,
+    prefix: Option<&PhraseText>,
+) -> Vec<u32> {
+    let Some(prefix) = prefix else {
         return Vec::new();
-    }
+    };
+    let prefix: Vec<u32> = prefix.outward_words().collect();
     let user_lookup = user.and_then(|store| UserLookup::from_store(store).ok());
-    let max = chars.len().min(oxpinyin_user::MAX_PHRASE_LENGTH);
+    let max = prefix.len().min(oxpinyin_user::MAX_PHRASE_LENGTH);
     let mut tokens = Vec::new();
     for length in 1..=max {
-        let suffix: String = chars[chars.len() - length..].iter().collect();
-        let mut matches = dict.system().tokens_for_text(&suffix).unwrap_or_default();
+        let suffix = &prefix[prefix.len() - length..];
+        let mut matches = dict.system().tokens_for_ucs4(suffix).unwrap_or_default();
         if let Some(lookup) = user_lookup.as_ref() {
-            matches.extend(lookup.tokens_for_text(&suffix).iter().copied());
+            matches.extend(lookup.tokens_for_ucs4(suffix).iter().copied());
         }
         matches.retain(|token| dict.phrase_table_token_enabled(*token));
         // 074a2219 pinyin.cpp:1414-1420 reduces each suffix separately.
@@ -57,11 +63,12 @@ pub fn compute_prefixes(dict: &RuntimeDict, user: Option<&UserStore>, prefix: &s
 pub fn merged_suggestions(
     dict: &RuntimeDict,
     user: Option<&UserStore>,
-    prefix: &str,
+    prefix: &PhraseText,
 ) -> Vec<(u32, Option<PhraseText>)> {
+    let prefix: Vec<u32> = prefix.outward_words().collect();
     let system: Vec<u32> = dict
         .system()
-        .suggestion_tokens(prefix)
+        .suggestion_tokens(&prefix)
         .unwrap_or_default()
         .into_iter()
         .filter(|token| dict.phrase_table_token_enabled(*token))
@@ -69,7 +76,7 @@ pub fn merged_suggestions(
     let mut user_rows = if let Some(store) = user
         && let Ok(lookup) = UserLookup::from_store(store)
     {
-        lookup.suggest_after(prefix)
+        lookup.suggest_after(&prefix)
     } else {
         Vec::new()
     };

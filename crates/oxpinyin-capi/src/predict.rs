@@ -13,7 +13,7 @@ use oxpinyin_core::{PhraseText, single_gram};
 use oxpinyin_engine::CandidateKind;
 use oxpinyin_user::UserStore;
 
-use crate::ffi::cstr_to_strict;
+use crate::ffi::cstr_opt;
 use crate::state::{CapiCandidate, CapiInstance, SharedDict, SharedLm, instance_mut};
 use crate::types::{PinyinInstance, lookup_candidate_type_t};
 
@@ -39,7 +39,7 @@ struct Predicted {
 ///
 /// Returns `false` when the prefix matches no phrase-table suffix (upstream
 /// returns false when `m_prefixes` stays empty).
-pub fn guess_predicted(inst: &mut CapiInstance, prefix: &str) -> bool {
+pub fn guess_predicted(inst: &mut CapiInstance, prefix: Option<&PhraseText>) -> bool {
     guess_predicted_result(inst, prefix).unwrap_or(false)
 }
 
@@ -99,16 +99,19 @@ fn predicted_bigram_items(
 
 // Err marks the scorer's assert site, distinct from a missing prefix. The
 // punctuation wrapper ignores a missing prefix but must refuse an assert.
-fn guess_predicted_result(inst: &mut CapiInstance, prefix: &str) -> Result<bool, ()> {
+fn guess_predicted_result(
+    inst: &mut CapiInstance,
+    prefix: Option<&PhraseText>,
+) -> Result<bool, ()> {
     inst.candidates.clear();
     let prefixes =
         oxpinyin_facade::compute_prefixes(&inst.core.dict, inst.core.user.as_ref(), prefix);
     // `m_prefixes` is emptied and refilled before the empty check
     // (`pinyin.cpp:2423-2426`).
     inst.prefixes.clone_from(&prefixes);
-    if prefixes.is_empty() {
+    let Some(prefix) = prefix.filter(|_| !prefixes.is_empty()) else {
         return Ok(false);
-    }
+    };
 
     // `_compute_predicted_bigram_candidates` (`pinyin.cpp:2310-2341`). A
     // gram the pin dies on in its walk is refused here: one warning and
@@ -272,10 +275,11 @@ fn sort_predicted(items: &mut [Predicted]) {
 /// the punctuation entry reaches the same call first (`:2459`), register
 /// entry "Aliased prediction prefix use-after-free".
 pub fn clear_borrowed_prefix(inst: &mut CapiInstance, prefix: *const c_char) -> bool {
-    let borrowed = inst
-        .candidates
-        .iter()
-        .any(|candidate| std::ptr::eq(candidate.text_ptr, prefix));
+    let borrowed = !prefix.is_null()
+        && inst
+            .candidates
+            .iter()
+            .any(|candidate| std::ptr::eq(candidate.text_ptr, prefix));
     if borrowed {
         inst.candidates.clear();
         inst.prefixes.clear();
@@ -310,20 +314,18 @@ pub extern "C" fn pinyin_guess_predicted_candidates(
     if clear_borrowed_prefix(inst, prefix) {
         return false;
     }
-    // Reject invalid UTF-8 without touching `inst.candidates` —
-    // mirrors upstream's `g_return_val_if_fail(prefix, FALSE)` at
-    // `pinyin.cpp:1450-1452` (see `ffi::cstr_to_strict`).
-    let Some(prefix) = cstr_to_strict(prefix) else {
-        return false;
-    };
-    guess_predicted(inst, &prefix)
+    let prefix = oxpinyin_capi_marshal::ucs4::prefix_text(cstr_opt(prefix));
+    guess_predicted(inst, prefix.as_ref())
 }
 
 ///
 /// Upstream returns `true` after the prepend, even when the prefix matched
 /// no phrase-table suffix. The scorer's zero-total assert is refused before
 /// prepending, with a warning and `false` under policy class (c).
-pub fn guess_predicted_with_punctuations(inst: &mut CapiInstance, prefix: &str) -> bool {
+pub fn guess_predicted_with_punctuations(
+    inst: &mut CapiInstance,
+    prefix: Option<&PhraseText>,
+) -> bool {
     if guess_predicted_result(inst, prefix).is_err() {
         return false;
     }
@@ -461,10 +463,11 @@ fn append_predicted_prefix(
     lm: &SharedLm,
     lambda: f32,
     user: Option<&UserStore>,
-    prefix: &str,
+    prefix: &PhraseText,
     into: &mut Vec<Predicted>,
 ) -> Option<u32> {
-    let prefix_len = prefix.chars().count();
+    // `m_prefix_len`, the converted word count (`pinyin.cpp:2395`, `:2401`).
+    let prefix_len = prefix.outward_words().count();
     if prefix_len == 0 {
         return None;
     }
