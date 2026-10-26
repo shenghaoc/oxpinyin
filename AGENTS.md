@@ -443,6 +443,8 @@ run time from the machine executing the step (`date -u`), never
 hand-written: a local timestamp from a zone ahead of UTC dates a record
 into the future (PR #363).
 
+Shell placement: follow [the Python orchestration rule and audit](docs/plans/tooling-python.md#shell-placement-rule-1260).
+
 ## Toolchain
 
 `rust-toolchain.toml` is the only supported toolchain. Portable crates:

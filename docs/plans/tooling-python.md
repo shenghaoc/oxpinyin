@@ -306,3 +306,150 @@ uses an exclusive nonblocking flock. Its
 uses an exclusive nonblocking LockFileEx byte range.
 Adopt those OS-lock patterns. The distant byte offset above adapts the pattern
 to oxpinyin's holder-record file. No source code is copied.
+
+## Shell placement rule (#1260)
+
+Maintainer rule: orchestrate in Python. Keep shell only for one of these
+reasons, recorded at the **top of each retained script**, naming its concrete
+caller and boundary:
+
+1. **Bootstrap:** runs before the managed CPython exists, to provision it or
+   support that provisioning.
+2. **Environment:** runs where managed CPython is unavailable, such as a
+   reference-image build or a container before provisioning.
+3. **External interface:** an outside tool requires a shell entry point, and
+   the script is only a thin wrapper.
+
+Everything else belongs in `tools.dev`, an existing harness, or the run-all
+runner registry. Internal callers can be updated: a `just` recipe, workflow
+`run:` block, Docker `CMD`, sourced helper or existing shell filename does not
+by itself require shell. Provision Python before migrated calls. Keep `just`
+recipes as one-line delegation in `sh -cu`; this audit does not convert recipes.
+No inventoried script needs an external-interface exception solely because of
+its current callers. Keep the Bash floor in `tools/lib/bash-floor.sh` rather
+than copying guards. Record reasons when each implementation unit touches its
+kept scripts; this docs-only audit does not edit them.
+
+The [full per-script audit](tooling-shell-audit.md) covers **100 scripts** at
+`a04c91afa343428ba7294e86f217f3e4e286e890`, current `origin/main` when fetched,
+on 2026-10-26 UTC (`date -u`). Six whole scripts have concrete keep
+reasons: `install-python.sh`, `lib/bash-floor.sh`, `oracle/pin.sh`,
+`oracle/build-oracle.sh`, `model/fetch-model.sh` and `tkrzw/distro-probe.sh`
+(all under `tools/`). The remaining 94 enter six units below. Cloud setup
+retains only its pre-interpreter portion; its post-bootstrap work migrates.
+The 98 count in #1260 predates this base.
+
+The image `RUN` exceptions are concrete: `Dockerfile.oracle` has system
+`python3`, not uv-managed CPython, and calls `build-oracle.sh --libs-only`;
+`versions.py` calls the copied distro probe in that image and before Python
+provisioning in `Dockerfile.compat`; both bisection image builds run model
+fetching without managed CPython. The full `build-oracle.sh` remains usable
+inside the dependency image for `--regen-data`. The pin reader is sourced by
+cloud setup before interpreter installation. These are not reasons to retain
+unrelated host orchestration. The #1234 rejection of parallel image builds
+also remains: no `tools.dev` package is copied into the reference image.
+
+### Migration units
+
+Each unit has one shared implementation per concern, with small entry points
+and case/recipe data. It does not get one Python file for each shell script.
+The audit table assigns every script, including tests and sourced libraries.
+New child issues cover shell migration; related existing issues retain their
+own scopes and decisions.
+
+| Unit | Scripts | Shared Python layer and caller boundary | Child |
+| --- | --- | --- | --- |
+| U1 | 43 | Registry/ABI runners: run-all.py and runners.json; shared build, artifact identity, cell/system-data, C-driver execution and comparison services; reuse contract-diff. | [#1289](https://github.com/shenghaoc/oxpinyin/issues/1289) |
+| U2 | 15 | Measurement/profile controllers: tools.dev.measure and existing perf-gate/bisection parsers; registry, nightly snapshot, profile-w8 and image CMD callers. | [#1290](https://github.com/shenghaoc/oxpinyin/issues/1290) |
+| U3 | 14 | Oracle/compat orchestration: tools.dev.compat and existing identity/boundary/memory, oracle fixture and tkrzw runtime services; host launchers, workflows and aggregate harnesses. | [#1291](https://github.com/shenghaoc/oxpinyin/issues/1291) |
+| U4 | 10 | Packaging: one tools.dev packaging layer for version/layout/install/relink/metadata/package assembly; reuse function_order.py; release workflow and layout action callers. | [#1292](https://github.com/shenghaoc/oxpinyin/issues/1292) |
+| U5 | 9 | Native validation: tools.dev.check, test_runner and shared lint/backend/sanitizer selection; just check/sanitize, registry, workflow and fixture-test callers. | [#1293](https://github.com/shenghaoc/oxpinyin/issues/1293) |
+| U6 | 3 | Post-bootstrap provisioning: one tools.dev provisioning layer using pool and compat services; setup.sh handoff, environment writer and synthetic-fixture tests. | [#1294](https://github.com/shenghaoc/oxpinyin/issues/1294) |
+
+U1 preserves runner IDs, registry commands/implementation metadata, artifact
+and identity JSON, compilation flags, fresh user directories, loader precedence,
+complete log comparisons, controls and build/divergence/skip/usage statuses.
+The two Python wrappers (`run-all.sh`, `run-contract-diff.sh`) also migrate;
+keep interpreter-injection rejection and exec status semantics. #1175 is the
+existing contract-driver split, not a duplicate runner migration. The legacy
+`check.sh` in U5 is already bypassed by `just check`; its comparison harness
+must retire the legacy control without restoring oracle probing to native check.
+
+U2 preserves sample/warmup counts, arm order, CPU choices/refusals, cache and
+suspend qualification, retries, policy validation and report schemas. Timing,
+RSS/residency and sampling stay isolated. Independent instruction/allocation
+collections use the shared admitted pool; a retry follows its own discarded
+attempt. U3 preserves image tags and pin hashes, CLI/environment transport,
+container state and reservation lifetimes, runtime refusal, fixture formats and
+both-direction profile interchange. The existing Python tkrzw adapter currently
+calls shell via `Path(__file__).with_suffix('.sh')`; move the actual resolver
+into that common Python service rather than leaving a second implementation.
+
+U4 preserves the complete staged tree and package identity, one-facade install,
+Cargo target/profile and argument forwarding, DESTDIR/prefix/libdir/includedir,
+pkg-config/header bytes, ELF version/export/SONAME checks, function-order policy
+resolution and opt-out. `function-order.sh`'s existing comment excludes Python
+from link inputs, but its link callers are repository packaging controllers;
+none proves an unavoidable pre-Python environment at this base. Migrate them
+together and update caller provisioning; retain a thin shell interface only if
+an actual outside requirement or image-build caller is identified and recorded.
+This is not authority to change policy files, compiler recipes or exports.
+
+U5 preserves lint diagnostics and 0/1/2 meanings, backend positive/negative
+checks, backend-specific sanitizer flags, toolchain/target selection, allow-skip
+behavior, Linux setarch and Darwin refusals/paths. U6 keeps bootstrap and
+`--python-only` behavior, option exclusions, cache/cell/job/no-pull/in-container
+selection, proxy/CA precedence and private-copy cleanup, hash-mismatch status 3,
+progress/result streams and order, shell environment-file quoting/selection and
+atomic publication. Its `pool_phase` already delegates to `tools.dev.pool`:
+[#1233](https://github.com/shenghaoc/oxpinyin/issues/1233) is complete at this
+base and is reused, not repeated.
+
+### Shared machinery and active lanes
+
+| Concern | Single owner and migration disposition |
+| --- | --- |
+| Admission, reservations, CPU/job budgets and bounded fan-out | `tools/dev/slot.py` and `tools/dev/pool.py`; migrate shell glue into calls to these services. #1232's rule remains; do not reopen completed #1233. |
+| mmap/munmap/mincore and page residency | `tools/dev/mman.py`, landed in [#1286](https://github.com/shenghaoc/oxpinyin/pull/1286). Reuse it; move teardown's remaining separate binding after its owning lane lands. |
+| Mount-type parsing and disk-backed TMPDIR preflight | `tools/dev/mounts.py`, landed in [#1283](https://github.com/shenghaoc/oxpinyin/pull/1283), implementing [#1281](https://github.com/shenghaoc/oxpinyin/issues/1281); do not duplicate either reader or preflight. |
+| Bash version checks | `tools/lib/bash-floor.sh`; retained Bash entry points source the one declaration, and Python doctor reads it. |
+| Container identity, state, lifetime reservation and runtime selection | Existing `tools/dev/compat/` services, extended by U3/U6, with separate native and container state. |
+| Build/driver launch, temporary profiles and failure cleanup | Shared runner services in U1, reused by the other units; registry keeps cases/recipes, not separate controllers. |
+
+Lane status at the rebased audit base: [#1284](https://github.com/shenghaoc/oxpinyin/pull/1284)
+extends pool.py with admitted callable units and moves teardown fixture/witness
+fan-out onto it. Its child [#1287](https://github.com/shenghaoc/oxpinyin/pull/1287)
+extracts system-import profile collection from embedded Python to
+`tools/bisection/system_import_profile.py`. That reduces U2's remaining work to
+its shell build/layout/argument orchestration; it does not make the whole
+script a justified shell exception. #1284 and #1287 remain open. #1286 is merged
+and also changes `tools/dev/measure/`; #1283 is merged and changes
+`test_runner.py`, `teardown.py` and the shared mount reader. The latter two
+landed during this audit; no shell script changed between the initial source
+snapshot and this rebased base. None of these PRs is changed by this audit.
+Use the landed helpers and sequence the remaining migration after the
+relevant open shared-layer PR lands; recheck status then.
+
+Existing [#1175](https://github.com/shenghaoc/oxpinyin/issues/1175),
+[#1232](https://github.com/shenghaoc/oxpinyin/issues/1232),
+[#1259](https://github.com/shenghaoc/oxpinyin/issues/1259) and #1281 cover,
+respectively, contract-driver internals, bounded parallelism, PowerShell 7
+transport and TMPDIR preflight. Link them; do not recreate them as shell
+migration tasks. Native macOS capabilities remain under #1171. Closed
+[#1234](https://github.com/shenghaoc/oxpinyin/issues/1234) is not planned;
+its reference-image serial build decision stands.
+
+### Migration acceptance
+
+Run old and new entry points on the same inputs, environment and artifacts;
+show unchanged behavior, output and exit statuses, including invalid inputs,
+child failures and cancellation/cleanup. Preserve per-script interfaces in the
+audit. Variable timing/identity fields keep their meaning and format; do not
+claim bit-identical timing samples. Update all callers, registry metadata and
+documented commands. Remove migrated scripts or reduce them to an entry point
+with a concrete allowed reason recorded at its top. Use existing harnesses and
+case data. Require `just test-tools` (disk-backed TMPDIR where needed),
+`just fmt --all --check` and tracked-shell `shellcheck --severity=warning` at
+the repository's declared floor. Follow the current verification-cell policy
+for functional checks affected by an implementation. This plan reports no
+migration execution and authorizes no new dependency or frozen-input change.
