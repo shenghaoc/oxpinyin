@@ -38,14 +38,42 @@ The measurement inventory (arm names are command-line names):
 | `tools/measure-function-order.py` | Both facades of `base`, `pr`, `control`; supplied installed prefixes. `pin` is the reference. |
 | `tools/bisection/contract-diff.py --teardown` / `teardown.py` | Selected facades of `ox` and its byte-identical `control`; supplied libraries, copied then checked before building a worker. `pin` is the reference. This includes the provision stage. |
 | `tools/bisection/contract-diff.py --per-call` | Selected facades of `subject` and optional `base`; supplied libraries. `pin` is the reference. Ordinary behavioral differentials have no shipping-layout requirement. |
-| `tools/perf-gate/snapshot.sh` | `shipped/pinyin`; calls `install.sh`, hence `relink-versioned.sh`, then checks before strip. The separate `alloc-count` artifact is a fixture. This is the only measurement caller of those packaging scripts in this tree. |
-| `tools/bisection/run-rss-diag.sh` | `S/pinyin`; supplied shipping library. `L` is the reference. |
-| `tools/bisection/run-system-import-profile.sh` | `ox/pinyin`; supplied library for the import/save and cold-open profiles. `pin` is the reference. Ordering options follow the optional workload argument. |
-| `tools/bisection/run-perf-baseline.sh` | `ox/pinyin`; reusable installed stage or bare `cargo cinstall` stage. `pin` is the reference. |
-| `tools/bisection/run-perf-matrix.sh` | `C/pinyin`, `D/pinyin`; installed container libraries. `A`, `B` are references. |
-| `tools/bisection/run-perf-same-data.sh` | `C/pinyin`, `D/pinyin`; supplied libraries or legacy `cargo build` fixtures. `A`, `B` are references. |
-| `tools/bisection/run-shipped-check.sh` | `Z/pinyin`, `S/pinyin`; legacy bare `cargo cinstall` comparison, whose `S` description claims the product. `L` is the reference. |
-| `tools/bisection/run-tree-recipe-control.sh` | `X/pinyin`, `Y/pinyin`, `Z/pinyin`, `S/pinyin`; historical cargo-build/cinstall recipe comparison. `L` is the reference. |
+| `just measure snapshot` | `shipped/pinyin`; calls `install.sh`, hence `relink-versioned.sh`, then checks before strip. The separate `alloc-count` artifact is a fixture. This is the only measurement caller of those packaging scripts in this tree. |
+| `just measure rss-diag` | `S/pinyin`; supplied shipping library. `L` is the reference. |
+| `just measure system-import-profile` | `ox/pinyin`; supplied library for the import/save and cold-open profiles. `pin` is the reference. Ordering options follow the optional workload argument. |
+| `just measure perf-baseline` | `ox/pinyin`; reusable installed stage or bare `cargo cinstall` stage. `pin` is the reference. |
+| `just measure perf-matrix` | `C/pinyin`, `D/pinyin`; installed container libraries. `A`, `B` are references. |
+| `just measure perf-same-data` | `C/pinyin`, `D/pinyin`; supplied libraries or legacy `cargo build` fixtures. `A`, `B` are references. |
+| `just measure shipped-check` | `Z/pinyin`, `S/pinyin`; legacy bare `cargo cinstall` comparison, whose `S` description claims the product. `L` is the reference. |
+| `just measure tree-recipe-control` | `X/pinyin`, `Y/pinyin`, `Z/pinyin`, `S/pinyin`; historical cargo-build/cinstall recipe comparison. `L` is the reference. |
+
+These measurement and profile tools were shell runners under `tools/bisection/`,
+`tools/perf-gate/`, `tools/env-probe/` and `tools/profile/`; each is now a
+recipe of `python -m tools.dev measure RECIPE [ARGS]` (`just measure RECIPE`; the
+measurement images have no `just` and run the `uv run` form). Their environment
+variables, options, output files and exit statuses are the shell runners' (the
+recorded differences are in `docs/plans/tooling-python.md`, unit U2), and a
+diagnostic still carries the old script name:
+
+| Recipe | Formerly |
+| --- | --- |
+| `perf-baseline` | `tools/bisection/run-perf-baseline.sh` |
+| `perf-matrix` | `tools/bisection/run-perf-matrix.sh` |
+| `perf-same-data` | `tools/bisection/run-perf-same-data.sh` |
+| `shipped-check` | `tools/bisection/run-shipped-check.sh` |
+| `tree-recipe-control` | `tools/bisection/run-tree-recipe-control.sh` |
+| `rss-diag` | `tools/bisection/run-rss-diag.sh` |
+| `callgrind-differential` | `tools/bisection/run-callgrind-differential.sh` |
+| `system-import-profile` | `tools/bisection/run-system-import-profile.sh` |
+| `snapshot` | `tools/perf-gate/snapshot.sh` |
+| `probe-debuginfo-neutrality` | `tools/env-probe/probe-debuginfo-neutrality.sh` |
+| `probe-egress` | `tools/env-probe/probe-egress.sh` |
+| `just profile-w8` | `tools/profile/run-w8-cycle.sh` |
+
+The sampling loops are serial and interleave the arms one process at a time,
+because a timed or resident-set sample belongs to its arm only if nothing runs
+beside it. The builds are not samples: `shipped-check` and `tree-recipe-control`
+build their independent artifacts as units of one admitted pool.
 
 Legacy recipes do not gain the shipping relink merely by enabling `shipped`.
 They now refuse unordered artifacts by default. To reproduce an intentional
@@ -75,7 +103,7 @@ uv run --no-project --managed-python \
 
 `tools/generate-function-order.py` intentionally profiles unordered inputs to
 derive policies; its output is a policy, not shipping performance figures.
-`tools/profile/run-w8-cycle.sh` uses the thin-LTO `profiling` recipe and makes
+`just profile-w8` uses the thin-LTO `profiling` recipe and makes
 no shipping-performance claim. `tools/workers/startup.c` is the native worker
 for `tools.dev.measure.startup`. Packaging's
 `release-stage.sh` and `check-pc-metadata.sh` call `install.sh` for release or
@@ -895,20 +923,22 @@ byte-identical stdout against the historical executable.
 
 ## The perf baseline (oracle vs installed oxpinyin)
 
-`tools/bisection/run-perf-baseline.sh` measures speed, installed size
+`just measure perf-baseline` measures speed, installed size
 and RSS with one dlopen harness (`bisect --perf`), alternating oracle
 and oxpinyin processes. It needs the pin-built oracle, `cargo-c` and
-the model cache. The reproducible form is the perf-matrix container:
+the model cache. The reproducible form is the perf-matrix container, which
+carries uv and the managed interpreter (it has no `just`):
 
 ```sh
 docker build --platform linux/arm64 -f tools/bisection/Dockerfile.perf-matrix -t oxpinyin-matrix .
 docker run --rm -v /tmp/perf-out:/out -e PINYIN_ORACLE_PREFIX=/opt/libpinyin-tkrzw \
-    -e OXPINYIN_PERF_WORK=/out oxpinyin-matrix bash tools/bisection/run-perf-baseline.sh
+    -e OXPINYIN_PERF_WORK=/out oxpinyin-matrix \
+    uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev measure perf-baseline
 ```
 
 Knobs: `PERF_RUNS`, `PERF_CYCLES`, `PERF_RAM_RUNS`, `PERF_CPU` (pin a
-CPU; do it). `tools/bisection/run-perf-matrix.sh` is the four-backend
-form. For a parent-vs-HEAD comparison use one `CARGO_TARGET_DIR` per
+CPU; do it). `measure perf-matrix` is the four-backend
+form, and the image's default command. For a parent-vs-HEAD comparison use one `CARGO_TARGET_DIR` per
 tree: cargo's freshness check is fooled by `git archive` mtimes and will
 reuse the wrong artifacts otherwise.
 
@@ -922,13 +952,13 @@ split) and `mallinfo2()` (heap high-water, retained free chunks, arena
 count), then calls `malloc_trim(0)` and reads both again — the one call
 that separates allocator retention from memory genuinely held.
 
-`tools/bisection/run-rss-diag.sh` drives the two cells round-robin over
+`just measure rss-diag` drives the two cells round-robin over
 **one** data directory (the drop-in configuration: both engines open
 libpinyin's own installed `data/`) and writes `rounds.jsonl` plus an
 `identity.txt` naming every artifact by SHA-256:
 
 ```sh
-tools/bisection/run-rss-diag.sh \
+just measure rss-diag \
     --lp /opt/libpinyin-kc/lib/libpinyin.so.15.0.0 \
     --ox <shipped oxpinyin .so> \
     --data /opt/libpinyin-kc/lib/libpinyin/data \
@@ -1106,7 +1136,7 @@ builds the base tree, the PR tree and the pin-built oracle, runs all three
 in one job on one machine (same CPU, same data), **interleaving** the base,
 PR and pin artifacts run by run, and reports only those figures and the
 ratios between them. Interleaving all three is a requirement of the
-measurement, not a property of `tools/bisection/run-perf-same-data.sh`,
+measurement, not a property of `just measure perf-same-data`,
 which interleaves two pin-built backends and two artifacts of the current
 tree and does not run a base artifact. If the needed base/PR/pin selection is
 missing, extend the maintained in-tree tooling and its `just` entry point;
@@ -1173,11 +1203,11 @@ misled a reader:
   (2026-08-29T16:33:26Z)**, which introduced the `libpinyin.so.15` SONAME.
   Before it, cargo-c installed under the same `libpinyin_capi.so` name the
   cargo build produces.
-- **Naming `run-perf-same-data.sh` is not naming a recipe.** Its
+- **Naming `perf-same-data` is not naming a recipe.** Its
   `OXPINYIN_KC_SO` / `OXPINYIN_TKRZW_SO` variables take a prebuilt `.so` and
   skip `build_capi` entirely.
 
-`tools/profile/run-w8-cycle.sh` is a third case worth naming explicitly: it
+`just profile-w8` is a third case worth naming explicitly: it
 stages through `cargo cinstall` but with `--profile profiling` (thin LTO, line
 tables, `panic = "unwind"`), so it is neither the fixture nor the product.
 

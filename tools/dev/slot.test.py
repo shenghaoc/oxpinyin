@@ -11,6 +11,7 @@ import sys
 import tempfile
 import threading
 import time
+import types
 import unittest
 from unittest import mock
 
@@ -443,6 +444,46 @@ class SlotTests(unittest.TestCase):
             with admission:
                 self.fail('an unadmitted worker could start')
         self.assertEqual((Path(self.temp.name) / 'heavy-slot-0').read_text(), '')
+
+
+@unittest.skipIf(sys.platform == 'win32', 'the child is started in its own POSIX session')
+class RunCommandOutputTests(unittest.TestCase):
+    """run_command can redirect the child's stdout and end with the slot trailer `run-all.py --heavy-slot` printed."""
+
+    class Admission:
+        def __init__(self, command, env, out=None, poll=0.5, prepare_heavy_env=None):
+            self.env = dict(env)
+            self.slot = types.SimpleNamespace(slot=3, pass_fds=lambda: (), handoff=lambda: None)
+            self.slot_wait, self.memory_wait = 1.5, 0.5
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def run_child(self, code, **options):
+        out = io.StringIO()
+        with mock.patch.object(slot, 'HeavyAdmission', self.Admission):
+            status = slot.run_command([sys.executable, '-c', code], out=out, **options)
+        return status, out.getvalue()
+
+    def test_stdout_goes_where_it_is_sent_and_the_trailer_names_the_slot_waits_and_status(self):
+        with tempfile.TemporaryFile() as target:
+            status, trailer = self.run_child('print("hi"); raise SystemExit(3)', stdout=target, report=True)
+            target.seek(0)
+            self.assertEqual(target.read(), b'hi\n')
+        self.assertEqual(status, 3)
+        self.assertRegex(trailer, r'^heavy slot 3: slot_wait_seconds 1\.5, memory_wait_seconds 0\.5, '
+                                  r'ran \d+\.\ds, exit 3\n$')
+
+    def test_a_signalled_child_reports_the_negative_status_it_returned(self):
+        status, trailer = self.run_child('import os, signal; os.kill(os.getpid(), signal.SIGTERM)', report=True)
+        self.assertEqual(status, -signal.SIGTERM)
+        self.assertTrue(trailer.endswith(f', exit {-signal.SIGTERM}\n'))
+
+    def test_without_report_nothing_is_added_to_the_admission_output(self):
+        self.assertEqual(self.run_child('pass'), (0, ''))
 
 
 if __name__ == '__main__':

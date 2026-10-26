@@ -287,9 +287,9 @@ jobs:
       # The snapshot runs tkrzw explicitly (the w3 fixture directory its
       # tooling opens is the tkrzw one); the workspace default moved to
       # Berkeley DB on 2026-09-20. valgrind supplies the instruction
-      # count; it is optional by design — snapshot.sh records null rather than
-      # zero when it is absent, so losing it degrades the sample instead of
-      # corrupting the series.
+      # count; it is optional by design — the snapshot recipe records null
+      # rather than zero when it is absent, so losing it degrades the sample
+      # instead of corrupting the series.
       - name: Install build and measurement dependencies (apt)
         run: |
           apt-get install -y --no-install-recommends \
@@ -365,7 +365,7 @@ jobs:
           assert Path(sys.executable).resolve() == Path(managed).resolve()
           PYTHON
       - name: Measure
-        run: tools/perf-gate/snapshot.sh --out snapshot.json --backend tkrzw
+        run: uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev measure snapshot --out snapshot.json --backend tkrzw
       # --append only on the schedule. A manual run gets the full report and
       # writes nothing, so an off-cadence sample cannot silently become
       # tomorrow's baseline.

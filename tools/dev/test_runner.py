@@ -99,6 +99,26 @@ HARNESS_DEPENDENCIES = {
     'tools/dev/cli.py': ('tools/dev/cli.test.py', 'tools/dev/sanitize.test.py',
                          'tools/dev/lint-crate-cfg-placement.test.py',
                          'tools/dev/backend.test.py'),
+    # The measure recipes (#1290). bench.py is every recipe module's service layer.
+    'tools/dev/measure/bench.py': tuple(f'tools/dev/measure/{name}.test.py' for name in (
+        'bench', 'campaigns', 'neutrality', 'probes', 'profile', 'recipes', 'snapshot', 'valgrind')),
+    'tools/dev/measure/identity.py': ('tools/dev/measure/bench.test.py', 'tools/dev/measure/campaigns.test.py',
+                                      'tools/dev/measure/valgrind.test.py'),
+    'tools/dev/measure/reports.py': ('tools/dev/measure/bench.test.py', 'tools/dev/measure/campaigns.test.py',
+                                     'tools/dev/measure/valgrind.test.py'),
+    'tools/dev/measure/fake_world.py': ('tools/dev/measure/campaigns.test.py', 'tools/dev/measure/valgrind.test.py'),
+    'tools/dev/measure/campaigns.py': ('tools/dev/measure/campaigns.test.py', 'tools/bisection/memory-defaults.test.py',
+                                       'tools/packaging/function-order.test.py'),
+    'tools/dev/measure/valgrind.py': ('tools/dev/measure/valgrind.test.py', 'tools/dev/measure/campaigns.test.py',
+                                      'tools/packaging/function-order.test.py'),
+    'tools/dev/measure/recipes.py': ('tools/dev/measure/recipes.test.py', 'tools/dev/cli.test.py'),
+    'tools/dev/measure/neutrality.py': ('tools/dev/measure/neutrality.test.py', 'tools/dev/measure/probes.test.py',
+                                        'tools/dev/measure/valgrind.test.py'),
+    'tools/dev/measure/probes.py': ('tools/dev/measure/probes.test.py',),
+    'tools/dev/measure/profile.py': ('tools/dev/measure/profile.test.py',),
+    'tools/dev/measure/snapshot.py': ('tools/dev/measure/snapshot.test.py',),
+    'tools/perf-gate/callgrind-ir.py': ('tools/perf-gate/callgrind-ir.test.py', 'tools/dev/measure/snapshot.test.py'),
+    'tools/perf-gate/series.py': ('tools/perf-gate/series.test.py',),
 }
 
 

@@ -20,7 +20,6 @@ VERSION_LITERAL = re.compile(r'(?i)\bbash\b[ \t]*(?:>=|>|at[ \t]+least)[ \t]*[0-
 # Files that are sourced, never executed. Their caller has run the floor
 # check, so they neither source the guard nor carry a version themselves.
 SOURCED_ONLY = frozenset({
-    'tools/bisection/debuginfo-neutrality-lib.sh',
     'tools/cloud/env.sh',
     'tools/container/runtime.sh',
     'tools/oracle/pin.sh',

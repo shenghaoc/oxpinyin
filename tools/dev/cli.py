@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 from . import abi, cell, check, coverage, doctor, host, pool, registry, slot, test_runner
-from .measure import cold, startup
+from .measure import cold, recipes, startup
 
 
 def _selected(args, *, required=False):
@@ -45,10 +45,12 @@ def oracle_versions_command(args):
 
 
 def measure_command(args):
-    """Dispatch one native measure recipe and return its status."""
+    """Dispatch one measure recipe and return its status."""
     if args.recipe == 'cold-qualify':
         return cold.main(args.args)
-    return startup.main(args.args)
+    if args.recipe == 'startup':
+        return startup.main(args.args)
+    return recipes.main(args.recipe, args.args)
 
 
 def doctor_command(args):
@@ -279,8 +281,8 @@ def build_parser():
     _selection_arguments(p)
     p.set_defaults(func=plan_command)
 
-    p = sub.add_parser('measure', help='native oxpinyin-only measurement')
-    p.add_argument('recipe', choices=('startup', 'cold-qualify'))
+    p = sub.add_parser('measure', help='measurement and profile recipes')
+    p.add_argument('recipe', choices=('startup', 'cold-qualify', *recipes.NAMES))
     p.add_argument('args', nargs=argparse.REMAINDER)
     p.set_defaults(func=measure_command)
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
 """perf-decomp.py — within-session tree/recipe decomposition of a ratio shift.
 
-The control (run-tree-recipe-control.sh) times four cells round-robin in one
+The control (`measure tree-recipe-control`) times four cells round-robin in one
 session at one workload size:
 
     L  libpinyin (in-image)

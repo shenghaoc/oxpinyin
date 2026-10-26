@@ -477,7 +477,11 @@ class AdmissionTests(unittest.TestCase):
         code = (f"import runpy; m=runpy.run_path({str(RUN_ALL.resolve())!r}); "
                 f"m['run_in_heavy_slot'].__globals__['resource_snapshot']=lambda: {resources(0)!r}; "
                 "m['run_in_heavy_slot'](['echo','child-started'])")
-        result = subprocess.run([sys.executable, '-c', code], env=os.environ,
+        # The child gets its own wait limit rather than setUp's 0.12 s, which a stall inside its first attempt
+        # outlasts: it then fails with the mutex expiry error and not the refusal. The refusal comes when the
+        # limit runs out, so five seconds would outlast the timeout below; zero is one immediate attempt,
+        # which no stall can turn into an expiry.
+        result = subprocess.run([sys.executable, '-c', code], env=dict(os.environ, OXPINYIN_RESOURCE_WAIT_SECONDS='0'),
                                 capture_output=True, text=True, timeout=3)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('resource-blocked: 600 MiB needed, 0 MiB available', result.stderr)
@@ -677,7 +681,10 @@ finally:
                 f"m['HeavyAdmission'].__init__.__globals__['resource_snapshot']=lambda: {resources(4096, 8)!r}; "
                 "sys.exit(m['run_in_heavy_slot']([sys.executable,'-c',"
                 "'import sys; print(12345,flush=True); sys.stdin.read()']))")
-        env = dict(os.environ, OXPINYIN_HEAVY_SLOTS='2', CARGO_BUILD_JOBS='3')
+        # The parent admits for real, so it gets a wait limit of its own: setUp's 0.12 s, inherited
+        # through os.environ, expires on a host that stalls for that long inside its first attempt, and
+        # the parent then exits with the admission-wait-expired error before it has started the child.
+        env = dict(os.environ, OXPINYIN_HEAVY_SLOTS='2', CARGO_BUILD_JOBS='3', OXPINYIN_RESOURCE_WAIT_SECONDS='5')
         parent = subprocess.Popen([sys.executable, '-c', code], env=env, stdin=subprocess.PIPE,
                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
@@ -752,18 +759,33 @@ class RunnerBuildRoutingTests(unittest.TestCase):
         self.assertIn('nbest_tail_probe', [item.value for item in builds[0].elts if isinstance(item, ast.Constant)])
 
     def test_runner_cargo_builds_all_use_the_heavy_wrapper(self):
-        scripts = sorted(RUN_ALL.parent.glob('run-*.sh'))
-        routed = []
-        for path in scripts:
-            text = path.read_text()
-            self.assertIsNone(re.search(r'^\s*cargo\s+(?:build|test|clippy|run|cinstall|capi)\b', text, re.M), path.name)
-            if re.search(r'--heavy-slot -- cargo (?:build|cinstall) ', text):
-                routed.append(path.name)
-                checked = subprocess.run(['bash', '-n', str(path)], capture_output=True, text=True, timeout=3)
-                self.assertEqual(checked.returncode, 0, checked.stderr)
-        self.assertEqual(sorted(routed), ['run-perf-baseline.sh', 'run-perf-same-data.sh',
-                                           'run-shipped-check.sh',
-                                           'run-tree-recipe-control.sh'])
+        import ast
+        tree = ast.parse((ROOT / 'tools/dev/measure/campaigns.py').read_text())
+
+        def cargo_list(node):
+            """A command line that compiles: `cargo build` and its siblings, not `cargo --version`."""
+            return (isinstance(node, ast.List) and len(node.elts) > 1
+                    and all(isinstance(item, ast.Constant) for item in node.elts[:2])
+                    and node.elts[0].value == 'cargo'
+                    and node.elts[1].value in ('build', 'test', 'clippy', 'run', 'cinstall', 'capi'))
+
+        def service(call):
+            return call.func.attr if isinstance(call.func, ast.Attribute) else None
+        routed = {}
+        for function in ast.walk(tree):
+            if not isinstance(function, ast.FunctionDef):
+                continue
+            calls = [node for node in ast.walk(function) if isinstance(node, ast.Call)]
+            if not any(cargo_list(node) for node in ast.walk(function)):
+                continue
+            # A cargo command line goes to bench.heavy (one build, holding the slot) or to bench.cargo
+            # (a unit of bench.build_all's admitted pool); never straight to bench.run or bench.capture.
+            for call in calls:
+                if service(call) in ('run', 'capture') and call.args and cargo_list(call.args[0]):
+                    self.fail(f'{function.name} runs cargo outside the heavy slot')
+            routed[function.name] = sorted({service(call) for call in calls} & {'heavy', 'cargo'})
+        self.assertEqual(routed, {'perf_baseline': ['heavy'], 'build_capi': ['heavy'], 'cinstall': ['cargo'],
+                                  'cargo_build': ['cargo'], 'build': ['cargo']})
 
 
 if __name__ == '__main__':

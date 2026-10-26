@@ -139,20 +139,21 @@ bench-smoke:
     @just bench --no-run; exit $LASTEXITCODE
 
 # Profile the W8 keystroke cycle with samply. macOS uses Homebrew's native
-# build inputs; the script refuses Linux-only pinning and fallbacks there.
+# build inputs; tools.dev.measure.profile refuses Linux-only pinning and
+# fallbacks there.
 [linux]
-profile-w8 *args:
-    @just heavy -- bash tools/profile/run-w8-cycle.sh "$@"
+profile-w8 *args: python
+    @just heavy -- uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev measure profile-w8 "$@"
 
 [macos]
-profile-w8 *args:
+profile-w8 *args: python
     @just heavy -- env \
         OXPINYIN_BDB_INCLUDE_DIR="$(brew --prefix berkeley-db@5)/include" \
         OXPINYIN_BDB_LIB_DIR="$(brew --prefix berkeley-db@5)/lib" \
         PKG_CONFIG_PATH="$(brew --prefix glib)/lib/pkgconfig:$(brew --prefix kyoto-cabinet)/lib/pkgconfig:$(brew --prefix tkrzw)/lib/pkgconfig:$(brew --prefix berkeley-db@5)/lib/pkgconfig" \
         LIBRARY_PATH="$(brew --prefix berkeley-db@5)/lib:$(brew --prefix kyoto-cabinet)/lib:$(brew --prefix tkrzw)/lib:$(brew --prefix lz4)/lib:$(brew --prefix xz)/lib:$(brew --prefix zstd)/lib" \
         OXPINYIN_TKRZW_PREFIX="$(brew --prefix tkrzw)" \
-        bash tools/profile/run-w8-cycle.sh "$@"
+        uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev measure profile-w8 "$@"
 
 [windows]
 profile-w8 *args:
@@ -260,7 +261,8 @@ plan *args: python
 plan *args: python
     @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev plan @args; exit $LASTEXITCODE
 
-# Measure native oxpinyin startup; the controller holds the heavy slot.
+# Run a measure recipe: startup (the controller holds the heavy slot), cold-qualify, or a measurement
+# or profile recipe such as perf-baseline or snapshot (the list is tools/dev/measure/recipes.py).
 [unix]
 measure recipe *args: python
     @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev measure "$@"

@@ -278,13 +278,26 @@ def main(argv: Sequence[str]) -> int:
     if recipe not in RECIPES:
         emit(f'unknown runner recipe: {recipe}', error=True)
         return 2
-    try:
-        with slot.cancellation_handlers(), ExitStack() as stack:
+    def call() -> int:
+        with ExitStack() as stack:
             settings = Settings.read(os.environ)
             context = pool.UnitContext(recipe, slot.CANCELLED, environment=dict(settings.environment),
                                        fds=slot.inherited_fds(recipe, out=io.StringIO()))
             ctx = Context(settings, DriverServices(settings, context), stack, Path.cwd(), recipe)
             return RECIPES[recipe](ctx, args)
+    return guarded(call)
+
+
+def guarded(call: Callable[[], int]) -> int:
+    """Run CALL under the cancellation handlers and return its status.
+
+    The failures every runner shares end in the same statuses and messages: a
+    finished or refused run, a cancellation, a blocked admission, a missing
+    command (127), and any other OS or value error (1).
+    """
+    try:
+        with slot.cancellation_handlers():
+            return call()
     except Finished as error:
         return error.status
     except CellError as error:

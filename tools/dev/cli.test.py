@@ -223,8 +223,7 @@ class CliTests(unittest.TestCase):
                              'python:tools.dev\n')
         with contextlib.redirect_stdout(io.StringIO()) as output:
             self.assertEqual(cli.main(['list', '--runners', 'perf-baseline']), 0)
-        self.assertEqual(output.getvalue().split('\t')[-1],
-                         'instrument:tools/bisection/run-perf-baseline.sh\n')
+        self.assertEqual(output.getvalue().split('\t')[-1], 'python:tools.dev\n')
         self.assertNotIn('registered', output.getvalue())
         self.assertNotIn('measurement recipe', output.getvalue())
         test_support.assert_not_called(self, self.launch)
@@ -243,10 +242,10 @@ class CliTests(unittest.TestCase):
 
     def test_plan_prints_the_implementation_with_each_row(self):
         with contextlib.redirect_stdout(io.StringIO()) as output:
-            self.assertEqual(cli.main(['plan', '--runners', 'bisect,perf-baseline']), 0)
+            self.assertEqual(cli.main(['plan', '--runners', 'bisect,pc-metadata']), 0)
         lines = [line for line in output.getvalue().splitlines() if line.startswith('  implementation: ')]
         self.assertEqual(lines, ['  implementation: python:tools.dev',
-                                 '  implementation: instrument:tools/bisection/run-perf-baseline.sh'])
+                                 '  implementation: legacy:tools/packaging/check-pc-metadata.sh'])
         test_support.assert_not_called(self, self.launch)
 
     def test_registry_commands_report_a_missing_implementation_without_tracebacks(self):

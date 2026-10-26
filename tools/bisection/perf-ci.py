@@ -1,8 +1,8 @@
 #!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
 """perf-ci.py — medians with percentile-bootstrap CIs over bisect --perf captures.
 
-`bisect --perf` writes one JSON object per process; `run-perf-matrix.sh` and
-`run-perf-same-data.sh` append them to a speed.jsonl. Their inline summarizers
+`bisect --perf` writes one JSON object per process; the `perf-matrix` and
+`perf-same-data` recipes append them to a speed.jsonl. Their inline summarizers
 print bare medians. Findings documents have quoted 95% CIs alongside those
 medians since the 2026-09 matrices, but the script that produced them was never
 committed, so the intervals in those documents are not reproducible from the

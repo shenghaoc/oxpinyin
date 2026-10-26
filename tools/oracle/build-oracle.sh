@@ -69,7 +69,7 @@ model_dir=
 # with --dbm. The frozen capture goldens and the pinyin-oracle crate's
 # EXPECTED_PIN_REF are still the tkrzw cell (+dbm-tkrzw); build those
 # prefixes with `--dbm tkrzw` (tools/capture/run-capture.sh,
-# tools/profile/run-w8-cycle.sh, docs/testing/capture-fixtures.md).
+# `just profile-w8`, docs/testing/capture-fixtures.md).
 dbm=bdb
 enable_libzhuyin=0
 # full: libraries, ibus-libpinyin and the model-derived data (the default).

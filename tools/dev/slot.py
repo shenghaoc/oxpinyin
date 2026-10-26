@@ -1135,13 +1135,16 @@ def run_admitted(jobs, workers, run):
 
 
 def run_command(command, env=None, out=sys.stderr, poll=0.5, *,
-                prepare_heavy_env=None, on_admitted=None):
+                prepare_heavy_env=None, on_admitted=None, stdout=None, report=False):
     """Run a child after heavy-slot and memory admission, returning its raw status.
 
     Copy the supplied environment or os.environ; invoke on_admitted with
     final settings before spawning. Install cancellation handlers, supervise
     the child group/job, and reap it before releasing local slot ownership.
-    Admission, spawn, and cancellation errors propagate.
+    Admission, spawn, and cancellation errors propagate. Off Windows, stdout
+    redirects the child's standard output (default: inherited) and report
+    prints the slot, waits, run time and status on out once the child is
+    reaped, the line `run-all.py --heavy-slot` ended with.
     """
     command = list(command)
     with cancellation_handlers():
@@ -1168,7 +1171,13 @@ def run_command(command, env=None, out=sys.stderr, poll=0.5, *,
                         process.kill()
                         process.wait()
                         raise
-            with subprocess.Popen(command, env=admission.env, start_new_session=True,
+            started = time.monotonic()
+            with subprocess.Popen(command, env=admission.env, start_new_session=True, stdout=stdout,
                                   pass_fds=admission.slot.pass_fds()) as process:
                 admission.slot.handoff()
-                return wait_child(process)
+                code = wait_child(process)
+            if report:
+                print(f'heavy slot {admission.slot.slot}: slot_wait_seconds {admission.slot_wait:.1f}, '
+                      f'memory_wait_seconds {admission.memory_wait:.1f}, '
+                      f'ran {time.monotonic() - started:.1f}s, exit {code}', file=out, flush=True)
+            return code

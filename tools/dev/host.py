@@ -744,6 +744,15 @@ def plan_defaults(chosen, out=sys.stderr, phase='defaults'):
         print(f"{phase}: {name}={value} ({'explicit: ' if explicit else ''}{reason})", file=out, flush=True)
 
 
+def cargo_jobs(setting: str, cargo_cpus: int) -> int:
+    """The job count a CARGO_BUILD_JOBS SETTING stands for.
+
+    "default" counts the CPUs and a negative count is subtracted from them, at least one.
+    """
+    count = cargo_cpus if setting == 'default' else int(setting)
+    return max(1, cargo_cpus + count) if count < 0 else count
+
+
 def prepare_heavy_env(env: Mapping[str, str], resources: ResourceSnapshot, *,
                       runner: bool = False,
                       contract_rows: int = 0) -> tuple[dict[str, str],
@@ -764,10 +773,7 @@ def prepare_heavy_env(env: Mapping[str, str], resources: ResourceSnapshot, *,
                              total_mib=resources.get('total_mib'))
     chosen.pop('--jobs')
     child = dict(env, **{name: str(value[0]) for name, value in chosen.items()})
-    build = child['CARGO_BUILD_JOBS']
-    count = resources['cargo_cpus'] if build == 'default' else int(build)
-    if count < 0:
-        count = max(1, resources['cargo_cpus'] + count)
+    count = cargo_jobs(child['CARGO_BUILD_JOBS'], resources['cargo_cpus'])
     estimate = max(RUNNER_PEAK_MIB if runner else RUSTC_PEAK_MIB, count * RUSTC_PEAK_MIB,
                    int(child['RUST_TEST_THREADS']) * TEST_THREAD_PEAK_MIB)
     if 'OXPINYIN_CONTRACT_JOBS' in env or contract_rows:

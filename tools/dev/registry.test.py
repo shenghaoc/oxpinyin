@@ -66,8 +66,8 @@ class ImplementationTests(unittest.TestCase):
                 ('legacy:tools/install-python.sh',
                  ['bash', (ROOT / 'tools/install-python.sh').as_posix()]),
                 ('legacy:./tools/install-python.sh', ['{root}/tools/install-python.sh', 'x']),
-                ('instrument:tools/bisection/run-perf-baseline.sh',
-                 ['bash', '{root}/tools/bisection/run-perf-baseline.sh']),
+                ('instrument:tools/bisection/perf-baseline.py',
+                 ['python', '{root}/tools/bisection/perf-baseline.py']),
                 ('python:tools.dev.registry', [*python, 'tools.dev.registry', 'list']),
                 ('python:tools.dev', [*python, 'tools.dev'])):
             with self.subTest(implementation=implementation, command=command):
@@ -79,8 +79,8 @@ class ImplementationTests(unittest.TestCase):
                 ('legacy:tools/install-python.sh', ['bash', '{root}/tools/bisection/run-w11-diff.sh']),
                 ('legacy:tools/install-python.sh', ['bash', '{root}/tools/install-python.sh.bak']),
                 ('legacy:tools/install-python.sh', ['bash', '-c', '{root}/tools/install-python.sh x']),
-                ('instrument:tools/bisection/run-perf-baseline.sh',
-                 ['bash', '{prefix}/tools/bisection/run-perf-baseline.sh'])):
+                ('instrument:tools/bisection/perf-baseline.py',
+                 ['python', '{prefix}/tools/bisection/perf-baseline.py'])):
             with self.subTest(implementation=implementation, command=command):
                 with self.assertRaises(registry.RegistryError) as raised:
                     self.load([row(implementation=implementation) | {'command': command}])
@@ -124,7 +124,7 @@ class ImplementationTests(unittest.TestCase):
 
     def test_path_outside_the_checkout(self):
         for implementation in ('legacy:/bin/sh', 'legacy:../oxpinyin/tools/install-python.sh',
-                               'instrument:tools\\bisection\\run-perf-baseline.sh'):
+                               'instrument:tools\\bisection\\perf-baseline.py'):
             with self.subTest(implementation=implementation):
                 self.rejects(implementation,
                              f"registry row 'fixture' implementation {implementation!r} must be a "

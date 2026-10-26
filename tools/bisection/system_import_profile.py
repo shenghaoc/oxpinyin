@@ -1,6 +1,6 @@
 """Collect #599's import/save or cold-open profiles for the pin and the subject.
 
-Called by run-system-import-profile.sh after it has checked the arms and built
+Called by the `measure system-import-profile` recipe after it has checked the arms and built
 the driver. Every side (pin, ox) is profiled three ways: Callgrind phase
 instruction counts, the Massif heap peak and the Massif mapped-page peak. The
 six collections are independent: each has its own user store, reads only

@@ -8,7 +8,7 @@ prints the top frames by sample self-count. A samply symbol sidecar
 save-only profiles. The report opens with the profile's sample total. A total
 below MIN_SAMPLES also draws a warning on stderr, because the order of the
 stacks is then mostly sampling noise. `--total` prints only that line, which
-is what `run-w8-cycle.sh` shows after a record. Used to fill the Stage-2
+is what `just profile-w8` shows after a record. Used to fill the Stage-2
 findings note; not a CI gate.
 """
 

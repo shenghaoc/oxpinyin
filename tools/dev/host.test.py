@@ -81,6 +81,11 @@ class HostTests(unittest.TestCase):
                     host, 'os', SimpleNamespace(cpu_count=lambda: count)):
                 self.assertEqual(host.allowed_cpus(), expected)
 
+    def test_cargo_jobs_resolve_default_and_negative_settings_against_the_cpus(self):
+        for setting, cpus, expected in (('3', 6, 3), ('default', 6, 6), ('-1', 6, 5), ('-9', 6, 1), ('+4', 2, 4)):
+            with self.subTest(setting=setting, cpus=cpus):
+                self.assertEqual(host.cargo_jobs(setting, cpus), expected)
+
     def test_memory_available_is_an_integer_on_macos(self):
         if sys.platform != 'darwin':
             self.skipTest('macOS reader')

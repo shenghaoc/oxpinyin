@@ -400,72 +400,25 @@ class BackendPolicyTests(unittest.TestCase):
                 ORDER['check_policy_backend'](link, 'kc')
 
 
+def measure(recipe, *arguments):
+    """Run `python -m tools.dev measure RECIPE ARGUMENTS` in a child, as the registry and the images do."""
+    return subprocess.run([sys.executable, '-X', 'lazy_imports=normal', '-m', 'tools.dev', 'measure', recipe,
+                           *map(str, arguments)], capture_output=True, text=True, cwd=ROOT)
+
+
 class MeasurementCallerTests(unittest.TestCase):
     def test_input_library_tools_refuse_before_creating_output_or_starting_a_worker(self):
         with scratch() as work:
             library = work / 'unordered.so'
             library.write_bytes(b'not an ordered ELF')
-            scripts = [('run-rss-diag.sh', 'S', ['--lp', str(library), '--ox', str(library),
-                                               '--data', str(work), '--out', str(work / 'output')]),
-                       ('run-system-import-profile.sh', 'ox', [str(library), str(library), str(work),
-                                                              str(work / 'output'), '--cold-open'])]
-            for script, arm, arguments in scripts:
-                with self.subTest(script=script):
-                    result = subprocess.run(['bash', str(HERE.parent / 'bisection' / script), *arguments],
-                                            capture_output=True, text=True)
+            recipes = [('rss-diag', 'S', ['--lp', library, '--ox', library, '--data', work, '--out', work / 'output']),
+                       ('system-import-profile', 'ox', [library, library, work, work / 'output', '--cold-open'])]
+            for recipe, arm, arguments in recipes:
+                with self.subTest(recipe=recipe):
+                    result = measure(recipe, *arguments)
                     self.assertNotEqual(result.returncode, 0)
                     self.assertIn(f'arm {arm}/pinyin refused', result.stderr)
                     self.assertFalse((work / 'output').exists())
-
-    def test_snapshot_checks_before_stripping_or_building_the_fixture(self):
-        with scratch() as work:
-            script = HERE.parent / 'perf-gate/snapshot.sh'
-            command = r'''
-# Satisfy snapshot's tool-presence preflight on hosts without GNU binutils.
-# The invalid ELF must be refused before any build/strip command can run.
-cargo() { echo 'unexpected cargo' >&2; exit 99; }
-gcc() { echo 'unexpected gcc' >&2; exit 99; }
-readelf() { echo 'unexpected shell readelf' >&2; exit 99; }
-nm() { echo 'unexpected shell nm' >&2; exit 99; }
-tools/packaging/install.sh() {
-  for arg; do case "$arg" in --destdir=*) stage=${arg#*=};; esac; done
-  mkdir -p "$stage/usr/lib"
-  printf 'not an ordered ELF' > "$stage/usr/lib/libpinyin.so.15.0.0"
-}
-strip() { echo 'unexpected strip' >&2; exit 99; }
-source "$0"
-'''
-            result = subprocess.run(['bash', '-c', command, str(script), '--backend', 'kyotocabinet',
-                                     '--out', str(work / 'snapshot.json')], capture_output=True, text=True)
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn('arm shipped/pinyin refused', result.stderr)
-            self.assertNotIn('unexpected strip', result.stderr)
-            self.assertNotIn('building the alloc-count', result.stdout)
-            self.assertFalse((work / 'snapshot.json').exists())
-
-    def test_legacy_runner_guards_pass_every_measured_arm_to_the_shared_check(self):
-        expected = {'run-perf-baseline.sh': ('ox', 'pin'), 'run-perf-matrix.sh': ('C', 'D', 'A', 'B'),
-                    'run-perf-same-data.sh': ('C', 'D', 'A', 'B'),
-                    'run-shipped-check.sh': ('Z', 'S', 'L'),
-                    'run-tree-recipe-control.sh': ('X', 'Y', 'Z', 'S', 'L')}
-        for script, arms in expected.items():
-            text = (HERE.parent / 'bisection' / script).read_text()
-            start = text.index('function_order_measurement ')
-            guard = text[start:].split('\n\n', 1)[0]
-            environment = {**os.environ}
-            for variable in ('CAPI_SO', 'ORACLE_SO', 'A_SO', 'B_SO', 'C_SO', 'D_SO',
-                             'L_SO', 'X_SO', 'Y_SO', 'Z_SO', 'S_SO'):
-                environment[variable] = str(LIBRARY)
-            environment.update(OXPINYIN_TKRZW_SO=str(LIBRARY), OXPINYIN_KC_SO=str(LIBRARY))
-            shell = 'set -euo pipefail; source "$1"; FUNCTION_ORDER_ARGS=(); function_order_measurement() { printf "%s\\n" "$@"; }; ' + guard
-            result = subprocess.run(['bash', '-c', shell, str(HERE / 'guard-test'), str(HERE / 'function-order.sh')],
-                                    capture_output=True, text=True, env=environment)
-            with self.subTest(script=script):
-                self.assertEqual(result.returncode, 0, result.stderr)
-                for arm in arms:
-                    self.assertIn(f'{arm}/pinyin={LIBRARY}', result.stdout)
-                self.assertLess(start, text.index('SPEED_JSONL=' if script in ('run-perf-baseline.sh', 'run-perf-matrix.sh', 'run-perf-same-data.sh')
-                                                 else 'for n in $SIZES'))
 
 
 def load_profile_module():
@@ -763,21 +716,18 @@ class SystemImportProfileTests(unittest.TestCase):
         self.assertNotIn('ox ', out.getvalue())
         self.assertEqual(self.events[-1], 'close')
 
-    def test_the_shell_entry_takes_jobs_before_or_after_the_ordering_options(self):
-        script = ROOT / 'tools/bisection/run-system-import-profile.sh'
+    def test_the_recipe_takes_jobs_before_or_after_the_ordering_options(self):
         with scratch() as work:
             library = work / 'unordered.so'
             library.write_bytes(b'not an ordered ELF')
             for tail in (['--jobs', '1'], ['30', '--jobs', '2']):
                 with self.subTest(tail=tail):
-                    result = subprocess.run(['bash', str(script), str(library), str(library), str(work),
-                                             str(work / 'output'), *tail], capture_output=True, text=True)
+                    result = measure('system-import-profile', library, library, work, work / 'output', *tail)
                     self.assertNotEqual(result.returncode, 0)
                     self.assertIn('arm ox/pinyin refused', result.stderr)
                     self.assertNotIn('unknown function-order argument', result.stderr)
                     self.assertFalse((work / 'output').exists())
-            result = subprocess.run(['bash', str(script), str(library), str(library), str(work),
-                                     str(work / 'output'), '--jobs'], capture_output=True, text=True)
+            result = measure('system-import-profile', library, library, work, work / 'output', '--jobs')
             self.assertEqual(result.returncode, 2)
             self.assertIn('--jobs needs a count', result.stderr)
 

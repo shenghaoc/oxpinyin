@@ -84,6 +84,28 @@ class PlanTests(unittest.TestCase):
     def test_the_estimate_is_every_workers_fixed_part_and_make_jobs(self):
         self.assertEqual(pool.estimate_mib(pool.Plan(2, 3)), 2 * (300 + 3 * 275))
 
+    def test_an_explicit_job_count_is_kept_and_only_the_overlap_adapts(self):
+        rustc = 600
+        self.assertEqual(pool.plan(4, 8, 10**6, 0, rustc, jobs=2), (4, 2))
+        self.assertEqual(pool.plan(4, 8, 10**6, 0, rustc, jobs=3), (2, 3))      # the CPUs hold two builds at 3 jobs
+        self.assertEqual(pool.plan(4, 8, 10**6, 0, rustc, jobs=16), (1, 16))    # more jobs than CPUs: one build, as asked
+        self.assertEqual(pool.plan(4, 32, 3687, 0, rustc, jobs=3), (2, 3))      # 1,800 MiB a build: two fit
+        self.assertEqual(pool.plan(4, 32, 1000, 0, rustc, jobs=3), (1, 3))      # none fits: one build, charged in full
+        self.assertEqual(pool.plan(4, 32, None, 0, rustc, jobs=3), (1, 3))      # unknown memory: no overlap
+        self.assertEqual(pool.estimate_mib(pool.Plan(1, 3), 0, rustc), 1800)
+
+    def test_an_explicit_job_count_never_changes_and_the_overlap_fits_the_cpus_and_the_room(self):
+        for jobs in (1, 2, 3, 5, 8, 33):
+            for cpus in (1, 4, 8, 32):
+                for memory in (None, 0, 700, 1900, 4000, 10**6):
+                    with self.subTest(jobs=jobs, cpus=cpus, memory=memory):
+                        chosen = pool.plan(4, cpus, memory, 100, 600, jobs=jobs)
+                        self.assertEqual(chosen.jobs, jobs)
+                        self.assertTrue(1 <= chosen.workers <= 4)
+                        if chosen.workers > 1:
+                            self.assertLessEqual(chosen.workers * jobs, cpus)
+                            self.assertLessEqual(pool.estimate_mib(chosen, 100, 600), memory)
+
 
 def resources(available, cpus=4, total=16384, limit=None):
     return dict(available_mib=available, total_mib=total, cpus=cpus, cargo_cpus=cpus,
@@ -130,6 +152,33 @@ class AdmissionPreparerTests(unittest.TestCase):
     def test_the_callers_environment_is_kept(self):
         child, _, _ = self.prepare(resources(10**6), env={'KEEP': 'yes'})
         self.assertEqual(child['KEEP'], 'yes')
+
+    def test_cargo_allowances_plan_the_jobs_a_build_gets_from_the_admitted_room(self):
+        # 32 CPUs and 3,687 MiB after headroom, two builds, 600 MiB a job: one build with the 6 jobs the room carries.
+        prepare = pool.admission_preparer(2, None, 0, 600, job_name='cargo job')
+        child, chosen, estimate = prepare({}, resources(3687 + host.desktop_headroom_mib(16384), cpus=32))
+        self.assertEqual((child[pool.POOL_WORKERS], child[pool.POOL_JOBS], estimate), ('1', '6', 3600))
+        self.assertIn('0 MiB + 600 MiB per cargo job', chosen[pool.POOL_JOBS][1])
+
+    def test_an_explicit_cargo_setting_is_resolved_against_the_cpus_kept_and_charged_in_full(self):
+        def prepare(explicit, snapshot):
+            return pool.admission_preparer(4, None, 0, 600, explicit=explicit, job_name='cargo job')({}, snapshot)
+        headroom = host.desktop_headroom_mib(16384)
+        for explicit, jobs in (('3', 3), ('default', 8), ('-1', 7), ('-20', 1)):
+            with self.subTest(explicit=explicit):
+                child, chosen, estimate = prepare(explicit, resources(headroom + 10**6, cpus=8))
+                self.assertEqual((child[pool.POOL_JOBS], chosen[pool.POOL_JOBS][0]), (str(jobs), jobs))
+                self.assertEqual(estimate, int(child[pool.POOL_WORKERS]) * jobs * 600)
+                self.assertIn(f'cargo jobs kept at {jobs} as the caller set them', chosen[pool.POOL_JOBS][1])
+        # 5 jobs is 3,000 MiB a build and the room is 2,000: one build is reserved in full, for the admission to refuse.
+        child, _, estimate = prepare('5', resources(headroom + 2000, cpus=8))
+        self.assertEqual((child[pool.POOL_WORKERS], child[pool.POOL_JOBS], estimate), ('1', '5', 3000))
+
+    def test_without_a_cargo_setting_the_make_planning_is_unchanged(self):
+        child, chosen, _ = self.prepare(resources(10**6, cpus=12))
+        self.assertEqual((child[pool.POOL_WORKERS], child[pool.POOL_JOBS]), ('3', '4'))
+        self.assertIn('per make job', chosen[pool.POOL_JOBS][1])
+        self.assertNotIn('kept at', chosen[pool.POOL_JOBS][1])
 
 
 class FakeProcess:
@@ -374,8 +423,12 @@ class CliTests(unittest.TestCase):
                 self.assertFalse(running(pid), f'{pid} still running')
 
 FAKE_RUNTIME = """
-import json, os, secrets, subprocess, sys
+import json, os, secrets, subprocess, sys, time
 state, args = sys.argv[1], sys.argv[2:]
+# Invocations overlap: one `run` scans every record while another writes its own. A record is written
+# under a temporary name beside it and renamed into place, as the fake runtime of compat/memory.test.py
+# does (#1029), so a scan finds a whole record or none; it skips the temporaries. No record is read,
+# changed and written back, so there is no lock.
 
 
 def record(cid):
@@ -383,7 +436,24 @@ def record(cid):
 
 
 def containers():
-    return {cid: json.load(open(record(cid))) for cid in sorted(os.listdir(state))}
+    return {cid: json.load(open(record(cid))) for cid in sorted(os.listdir(state)) if not cid.endswith('.tmp')}
+
+
+def write(target, text):
+    temporary = f'{target}.{os.getpid()}.tmp'
+    with open(temporary, 'w') as stream:
+        hold()
+        stream.write(text)
+    os.replace(temporary, target)
+
+
+def hold():
+    # Test hook: with HOLD_RECORD set, stop once the new file exists and is empty, until release-record exists.
+    if os.environ.get('HOLD_RECORD'):
+        beside = os.path.dirname(state)
+        open(os.path.join(beside, 'record-created'), 'w').close()
+        while not os.path.exists(os.path.join(beside, 'release-record')):
+            time.sleep(0.01)
 
 
 if args[0] == 'run':
@@ -403,7 +473,7 @@ if args[0] == 'run':
         sys.exit(125)
     cid = secrets.token_hex(32)
     key, _, value = options['--label'].partition('=')
-    json.dump({'name': options['--name'], 'labels': {key: value}}, open(record(cid), 'w'))
+    write(record(cid), json.dumps({'name': options['--name'], 'labels': {key: value}}))
     open(options['--cidfile'], 'w').write(cid)
     sys.exit(subprocess.call(rest))
 elif args[:2] == ['container', 'inspect']:
@@ -432,7 +502,8 @@ class ContainerOwnershipTests(unittest.TestCase):
         (self.state / self.bystander).write_text('{"name": "fixed-a", "labels": {"oxpinyin.test": "someone-else"}}')
 
     def left(self):
-        return sorted(path.name for path in self.state.iterdir())
+        """The container records; a runtime's unfinished temporary is not one."""
+        return sorted(path.name for path in self.state.iterdir() if path.suffix != '.tmp')
 
     def command(self, name, script):
         return [*self.runtime.split(), 'run', '--name', name, '--label', 'oxpinyin.test={token}',
@@ -475,6 +546,39 @@ class ContainerOwnershipTests(unittest.TestCase):
         self.assertEqual(process.returncode, pool.CANCELLED_STATUS, stderr)
         self.assertEqual(self.left(), [self.bystander])
 
+    def test_a_run_scanning_while_another_writes_its_record_never_reads_it_half_written(self):
+        # The pool's workers start their `run` commands together, so one scans the records while another
+        # writes its own. The first run here stops (HOLD_RECORD) once its record's file exists and is empty;
+        # the second then scans and runs to its end; only then is the first released. With a plain
+        # `json.dump(..., open(record, 'w'))` the second reads the empty file and exits 1 on a JSONDecodeError.
+        def run(name, **environment):
+            return subprocess.Popen(
+                [*self.runtime.split(), 'run', '--name', name, '--label', 'oxpinyin.test=t',
+                 '--cidfile', str(self.directory / f'{name}.cid'), '--', sys.executable, '-c', 'pass'],
+                env=dict(os.environ, **environment), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        created, release = self.directory / 'record-created', self.directory / 'release-record'
+        first = run('first', HOLD_RECORD='1')
+        self.addCleanup(first.kill)
+        reached, second, second_stderr = False, None, ''
+        try:
+            deadline = time.monotonic() + 30
+            while not created.exists() and first.poll() is None and time.monotonic() < deadline:
+                time.sleep(0.01)
+            reached = created.exists()
+            if reached:
+                second = run('second')
+                second_stderr = second.communicate(timeout=30)[1]
+        finally:
+            release.touch()
+            first_stderr = first.communicate(timeout=30)[1]
+        self.assertTrue(reached, f'the first run never reached its record: {first_stderr}')
+        self.assertEqual(second.returncode, 0, second_stderr)
+        self.assertEqual(first.returncode, 0, first_stderr)
+        names = sorted(json.loads((self.state / record).read_text())['name']
+                       for record in self.left() if record != self.bystander)
+        self.assertEqual(names, ['first', 'second'])
+        self.assertEqual(sorted(path.name for path in self.state.glob('*.tmp')), [])
+
     def owned(self, cid, token='mine'):
         cidfile = self.directory / 'cid'
         cidfile.write_text(cid)
@@ -512,11 +616,14 @@ class ContainerOwnershipTests(unittest.TestCase):
 
 class FakeAdmission:
     """HeavyAdmission stand-in: records its lifecycle and admits a fixed worker count."""
-    workers, blocked, events = 2, False, []
+    workers, blocked, events, jobs, last = 2, False, [], None, None
 
     def __init__(self, label, env, out=None, runner=False, prepare_heavy_env=None, *, fds=(7,)):
-        self.label, self.prepare = label, prepare_heavy_env
+        self.label, self.prepare, self.base_env = label, prepare_heavy_env, dict(env)
         self.env = {pool.POOL_WORKERS: str(self.workers), 'FAKE_ADMITTED': '1'}
+        if self.jobs is not None:
+            self.env[pool.POOL_JOBS] = str(self.jobs)
+        FakeAdmission.last = self
         self.slot = mock.Mock(pass_fds=lambda: fds, handoff=lambda: self.events.append('handoff'))
         self.events.append('admission')
 
@@ -875,6 +982,7 @@ class AdmittedTests(unittest.TestCase):
     def setUp(self):
         self.events = []
         FakeAdmission.events, FakeAdmission.workers, FakeAdmission.blocked = self.events, 2, False
+        FakeAdmission.jobs = None
         patcher = mock.patch('tools.dev.slot.HeavyAdmission', FakeAdmission)
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -893,6 +1001,25 @@ class AdmittedTests(unittest.TestCase):
                                                  {pool.POOL_WORKERS: '2', 'FAKE_ADMITTED': '1'})
             self.assertEqual(self.events, ['admission', 'handoff'])
         self.assertEqual(self.events[-1], 'close')
+
+    def test_a_planning_preparer_and_environment_replace_the_defaults(self):
+        def planner(env, snapshot, *, runner=False):
+            raise AssertionError('the fake admission does not call it')
+        self.run_admitted([('a', lambda c: None)], prepare=planner, env={'KEEP': 'yes'})
+        self.assertIs(FakeAdmission.last.prepare, planner)
+        self.assertEqual(FakeAdmission.last.base_env, {'KEEP': 'yes'})
+        self.run_admitted([('a', lambda c: None)])
+        self.assertIsNot(FakeAdmission.last.prepare, planner)
+        self.assertEqual(FakeAdmission.last.base_env, dict(os.environ))
+
+    def test_the_accounting_line_names_the_planned_jobs_only_for_a_planning_preparer(self):
+        FakeAdmission.jobs = 3
+        for prepare, line in ((lambda env, snapshot, *, runner=False: None, 'label: requested 5, admitted 2, 3 jobs each\n'),
+                              (None, 'label: requested 5, admitted 2\n')):
+            out = io.StringIO()
+            with pool.admitted(5, 'label', cancelled=lambda: False, prepare=prepare, out=out):
+                pass
+            self.assertEqual(out.getvalue(), line)
 
     def test_the_admission_is_released_when_the_block_fails(self):
         with self.assertRaisesRegex(RuntimeError, 'boom'):
