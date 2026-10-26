@@ -350,29 +350,31 @@ in the TSV. Rust: both `capi/src/dict.rs` and `zhuyin-capi/src/dict.rs`,
 ## G5 — N-best tail sort
 
 Pin: `lookup/phonetic_lookup.h:174-178,329-339` (`trellis_value_compare`,
-`g_ptr_array_sort`). Rust: `engine/src/nbest.rs`, `glib_merge_sort`,
-`tail_compare`, `c_float_to_gint`. Both facades, all backends; #921.
+`g_ptr_array_sort`). Rust: `engine/src/nbest.rs` `glib_merge_sort`, `tail_compare`,
+`c_float_to_gint`. Both facades, all
+backends; #921. Record: [921-927-glib-sorts.md](921-927-glib-sorts.md).
 
 | Partition | Verdict / record | Investigation |
 | --- | --- | --- |
-| Ordinary finite tails and stable/tied ordering | Pending replacement classification; order is valid-input contract. | Partial inventory trace; full comparator/caller proof unverified. |
+| Ordinary finite tails and stable/tied ordering | Contract: MUST RETAIN the merge. The `gint` truncation ties scores under one unit apart, so the comparator is not transitive on finite scores. | Source and binary (`cvttss2si`, symbol `0x96010`); bdb controls `glib-sort-tails-*`, `final-step-*`; `tie-takes-right` DIFFERs. |
 | Transcendental accumulation near-ties | Accepted class (a) only within [row 11's record][math-record], not every comparator difference. | Existing math finding; G14 does not complete #921. |
-| NaN, out-of-range float differences, non-transitive comparisons | Pending classification. | Unverified; source does not alone settle narrowing/evaluation. Both-target binary symbol/offset evidence must be supplied before a proposed removal. G6's different unsigned conversion is not a substitute. |
+| NaN, out-of-range float differences, non-transitive comparisons | Contract: MUST RETAIN the merge; no removal proposed. | amd64 binary read (`subss`, `xorps`, `cvttss2si`); arm64 not read, and the existing `the_tail_sort_is_glibs_merge_and_blind_to_the_nan_conversion` shows the NaN conversion is not observable. `std-stable-sort` DIFFERs on five λ cases. |
 
 ## G6 — Candidate and predicted-list sorting
 
 Pin: `pinyin.cpp:1678-1709,1794-1868,2041-2138,2286,2443`;
 `zhuyin.cpp:1129-1144,1229-1270,1375,1529,1610`.
 Rust: `engine/src/session/mod.rs`, `glib_rank_sort`, `RankKey::pin_compare`,
-`guint32_of_score`; `capi/src/predict.rs`, `sort_predicted`.
+`guint32_of_score`; `capi/src/predict.rs`, `sort_predicted`; both through
+`engine/src/nbest.rs` `glib_merge_sort`.
 Owners #927/#928; preserve #913/#914 valid-input ranking.
 
 | Partition | Verdict / record | Investigation |
 | --- | --- | --- |
-| Valid candidate order, equal keys, stable dedup winner and prediction order | Inventory records preservation; complete replacement verdict pending #927/#928. | Partial, not permission to substitute an unstable sort. |
+| Valid candidate order, equal keys, stable dedup winner and prediction order | Contract: the key is a total order for λ in `[0, 1]`; the merge is kept for the wrap below ([record](921-927-glib-sorts.md)). Dedup winner #913/#914/#928. | bdb controls `glib-sort-candidates-*`, `glib-sort-predicted`; `tie-takes-right` DIFFERs. |
 | NUL/non-scalar stored text affecting membership, dedup or ranking | Accepted only within [NUL][nul] / [non-scalar][non-scalar] source traces. | Source analysis established; #894 isolated witnesses do not exercise every dedup collision. |
 | Out-of-range unsigned frequency stores in #1137's five named cases | Identical to amd64 reference; arm64 pin portability defect, no oxpinyin exception. [Binary finding](arm64-pin-portability-1137.md). | Established source/binary result for those sites/cases; not all frequency-wrap or NaN cases. |
-| Other `gint` frequency wrap, NaN scores, comparator ordering and shared-helper callers | Pending classification. | Unverified beyond the bounded findings above. |
+| Other `gint` frequency wrap, NaN scores, comparator ordering and shared-helper callers | Contract: MUST RETAIN the merge; a λ outside `[0, 1]` makes the key cyclic. | Source (#927 record); out-of-range λ cases MATCH on bdb. Other frequency stores remain as bounded above. |
 
 Inherited binary citations: `_compute_frequency_of_items` in the bdb
 `libpinyin.so.15.0.0`, amd64 symbol at `0x8fa20`, predicted conversion

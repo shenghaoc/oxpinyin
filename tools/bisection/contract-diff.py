@@ -9912,6 +9912,70 @@ for _mode in ('pinyin', 'zhuyin'):
         final_step_surface("ba'kua", 1 << 5, imported=True))
 
 
+# #921, #927: every sort that orders a C-visible list is GLib's merge
+# (`g_sort_array`, glib 2.84.4 `gqsort.c:69-193`) over a comparator that is
+# not a total order. The tails compare `-(lhs - rhs)` of two `gfloat`
+# possibilities as a `gint` (074a2219 `phonetic_lookup.h:174-178,337`), so
+# scores under one natural-log unit apart tie and ordinary sentences take the
+# merge's order; the candidate and predicted lists (`pinyin.cpp:1678-1709,
+# 2286,2443`; `zhuyin.cpp:1129-1144,1529,1610`) tie on equal truncated
+# frequencies and keep the search order. Controls: the parent already sorts
+# with the same merge.
+GLIB_SORT_TAIL_INPUTS = ('xian', 'fangan', 'shishi', 'yiyi', 'jiandan', 'tiantian', 'woaini',
+                         'nihaoshijie', 'zhongguoren', 'shijie', 'dada', 'mama', 'lilun', 'jiqi',
+                         'shuxue', 'diannao', 'yuyan', 'jintian', 'mingtian', 'shangwu')
+GLIB_SORT_LIST_INPUTS = ('n', 'zh', 'a', 'de', 'yi', 'shi', 'ji')
+
+
+def glib_sort_zhuyin_options(k):
+    """Set USE_TONE without FORCE_TONE on the zhuyin facade, so it takes a toneless key."""
+    if k.mode == 'zhuyin':
+        assert k.fn('set_options', B, P, U)(k.ctx, 1 << 5)
+
+
+def glib_sort_tails(k):
+    """Parse each tail input on a fresh instance, guess and read every sentence rank."""
+    glib_sort_zhuyin_options(k)
+    out = {}
+    for text in GLIB_SORT_TAIL_INPUTS:
+        inst = k.alloc()
+        parsed = k.fn('parse_more_full_pinyins', Z, P, S)(inst, text.encode())
+        guessed = k.fn('guess_sentence', B, P)(inst)
+        out[text] = dict(parsed=parsed, guessed=guessed, sentences=final_step_sentences(k, inst))
+    return out
+
+
+def glib_sort_candidates(k):
+    """Full candidate lists of each list input: three pinyin sort words, or both zhuyin cursors."""
+    glib_sort_zhuyin_options(k)
+    out = {}
+    for text in GLIB_SORT_LIST_INPUTS:
+        inst = k.alloc()
+        parsed = k.fn('parse_more_full_pinyins', Z, P, S)(inst, text.encode())
+        if k.mode == 'pinyin':
+            out[text] = {hex(sort): guess_rows(k, inst, 0, sort) for sort in (0x14, 0x1c, 0x1e)}
+        else:
+            after = zhuyin_guess_rows(k, inst, 0)
+            before = k.fn('guess_candidates_before_cursor', B, P, Z)(inst, parsed)
+            out[text] = {'after': after, 'before': {'ret': before, 'rows': candidate_rows(k, inst)}}
+    return out
+
+
+@case('glib-sort-predicted', control=True, issues=('927',))
+def _(k):
+    """Full plain predicted lists (no punctuation) after common one-character prefixes."""
+    out = {}
+    for prefix in ('你', '我', '中', '的', '一', '是'):
+        ret = k.fn('guess_predicted_candidates', B, P, S)(k.inst, prefix.encode())
+        out[prefix] = {'ret': ret, 'rows': candidate_rows(k, k.inst)}
+    return out
+
+
+for _mode in ('pinyin', 'zhuyin'):
+    case('glib-sort-tails-' + _mode, mode=_mode, control=True, issues=('921',))(glib_sort_tails)
+    case('glib-sort-candidates-' + _mode, mode=_mode, control=True, issues=('927',))(glib_sort_candidates)
+
+
 # #728: mask_out rebuilds loaded system sub-indexes from disk, then merges
 # the saved user log with the mask (074a2219 pinyin.cpp:1253-1285,
 # zhuyin.cpp:788-820). The separate phrase table keeps the imported token,
