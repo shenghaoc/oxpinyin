@@ -134,6 +134,20 @@ name beneath the directory even when it starts with `/`; `build_filename`
 keeps raw bytes for stderr; `cstr_to_path` keeps the caller's bytes.
 `g_rename` and `g_fsync` are G10.
 
+**Close-out record, #922 (2026-10-26 UTC).** Pin read from a tree exported
+with `git archive` from commit `074a2219c90feaf962d0d24f034514033ece5f99`;
+GLib `g_build_path_va` is the 2026-10-25 reading in
+[glib-libc-verification.md](glib-libc-verification.md) G3 (not re-read
+here). Nothing was run to learn behaviour. The join law and its partitions
+are in that G3 table; this record is the acceptance summary.
+
+| Acceptance item | Result | Evidence already in the tree |
+| --- | --- | --- |
+| Valid configured paths | Unchanged: `pin_join` keeps a row name beneath the directory (`/x`, `//x`, `sub//x`), and an empty `dir` or `name` gives the other part. The pin's only path constructor is `g_build_filename(dir, name, NULL)` (`pinyin.cpp:395,400`, `zhuyin.cpp:337,342`, `table_info.cpp:201,332`). | unit `file_names_stay_beneath_their_directory` (`table_info.rs`); `glib-922-dir-*`, `glib-922-row-*` |
+| User directory identity | Unchanged: `""` is the working directory, NULL is none, the bytes are the caller's (`g_strdup` at `pinyin.cpp:332`, `zhuyin.cpp:276`). `cstr_to_path` is a byte copy into `OsStr`; non-UTF-8 bytes survive. | `glib-922-dir-*`, `stderr-non-utf8-user-dir`, #619/#642/#643 cases |
+| Consumer-visible diagnostics | The printed join is the pin's: one separator after the directory, trailing separators of the name kept, separator-only parts kept whole. `build_filename` and `user_file` both go through `join_bytes`. | unit `build_filename_joins_as_glib_does` (`pin_stderr.rs`), `user_conf_path_is_the_join_the_pin_writes` (`persistence.rs`); `glib-922-table-conf-*`, `glib-922-save-write-failed-dup-trailing-*`, `glib-922-fini-write-failed-dup-trailing-pinyin` |
+| Remaining discrepancy | **None.** Every difference found was a defect fixed (the user directory's `Path::join`, `218b0a4c`). The Windows separator set follows GLib but has no pin run; Unix is complete. `..`, `.`, duplicate separators and `\` on Unix are ordinary bytes in both. | G3 table; `tools/bisection/run-contract-diff.sh ... -- --issue 922` |
+
 ### G4 and G9 — containers, allocation and the ABI
 
 The C ABI's `GArray` is a real GLib object. `g_array_set_size` and
@@ -150,6 +164,55 @@ The allocation contract is the same: returned `gchar *` is
 `malloc`-compatible and freed by `g_free`; `gchar **` is freed by
 `g_strfreev`; the two `.alloc` files enumerate every ownership slot.
 `g_free` on a GLib conversion in `phrase_segment` stays direct (#924).
+
+**Close-out record, #924 (2026-10-26 UTC).** Pin read from the exported
+`074a2219` tree. Disposition: **retain** the GLib ABI. The per-operation
+MUST RETAIN / MAY DIVERGE matrix (every exported operation that touches a
+GLib-owned object, allocation or diagnostic channel, with pin cites) is the
+"#924 ABI ownership audit" in
+[glib-libc-verification.md](glib-libc-verification.md) G9 and is not
+repeated here. The allocation-failure follow-through and its limits are in
+the same file's "#924 Allocation-failure injection follow-through". This
+record adds what merged after those sections:
+
+| Settlement | What it fixed | Where it stands |
+| --- | --- | --- |
+| #1224, PR #1247 | NULL `GArray` in `pinyin_lookup_tokens`, `pinyin_token_get_nth_pronunciation` and the zhuyin twins: GLib now diagnoses the NULL naturally (`g_array_set_size` / `g_array_append_vals` criticals in domain `GLib`, one append per prepared library for lookup), with the pin's return values. `*_token_get_phrase` keeps success with a NULL output after the nonfatal UTF-8 conversion allocation fails (`pinyin.cpp:1627-1645`, `zhuyin.cpp:1096-1113`). | Closed defects, not exceptions. `glib-924-null-array-{lookup,pronunciation}-{pinyin,zhuyin}` are in the `--issue 924` selection. |
+| #1227, PR #1252 | Final C string and keyboard-vector allocation refusals: one facade-domain warning, false, untouched out-params, earlier buffers of the call freed; export iterators and `pinyin_get_pinyin_strings` defer their out-param writes. | Class (c), registered in `upstream-divergences.md` "Final C string/vector allocation refusal (#1227; class (c))". Gate `tools/abi/check-alloc-failure.sh` (runner `abi-alloc-failure`). |
+| #1229 | Moves the reference environment to Debian trixie (GLib 2.84.4, glibc 2.41). | Reference-environment move only. It changes no ABI, ownership or diagnostic rule; it re-based the GLib and libc line citations. |
+
+Guards that stay green (unchanged by this PR): `tools/abi/check-exports.sh`
+(exported-symbol set equals the pin's version scripts);
+`tools/abi/check-alloc-pairing.sh` with `alloc-pairing-pinyin.cc`,
+`alloc-pairing-zhuyin.cc` and the `libpinyin.alloc` / `libzhuyin.alloc`
+registers; caller mutation and `GArray` lifecycle in
+`glib-924-array-lifecycle-{pinyin,zhuyin}`; `glib-924-oom-array-growth-*`
+(real `GArray` growth stays fatal on both sides); the diagnostic channel in
+`glib-924-segment-critical-*` and `glib-924-segment-fatal-critical-*`.
+
+Stated limits (not closed by this record):
+
+- Source-only caller rows: the final-allocation refusals other than the
+  eleven injected witnesses (the remaining key renderers, the three
+  auxiliary-text getters, both sentence writers, the zhuyin-side keyboard
+  paths and the bigram iterator) rest on source reading and on the one
+  helper they share; there is no per-row injection.
+- Earlier Rust allocations (`String`, `CString`, `Vec`) can still terminate
+  before the final foreign allocation; no identical allocation graph or
+  whole-process OOM equivalence is claimed.
+- The `*_iterator_get_next_phrase` phrase conversion stays non-warning and
+  may return NULL with success, as the pin's unchecked `g_ucs4_to_utf8`
+  does (`pinyin.cpp:715-716,737,745`).
+- Diagnostic text with an embedded NUL has no producer in the C-facing call
+  graph; the helper difference is not an admitted outward one.
+- The glibc `vasprintf` allocation path of the formatted-tone renderers is
+  not traced for 2.41.
+- Per-trigger re-audit of the facade warning register belongs to G8; the
+  entry-point inventory in the verification file is not a trigger proof.
+
+No unregistered discrepancy remains for #924's operations: every difference
+found is a fixed defect or a registered class (c) refusal. This PR changes no
+ABI, ownership or allocator rule, and re-ran none of these gates for #924.
 
 ### G5 and G6 — sorts
 
@@ -209,15 +272,46 @@ and potentially slower than the pin's Unix `g_fsync` macro (`fsync`, GLib
 2.84.4 `glib/gstdio.h:60-82`). This is a durability improvement using safe
 Rust, rather than adding a direct syscall to the unsafe-forbidden user
 crate. The return remains ignored; file bytes, write/rename order and
-save results remain unchanged. Linux uses `fsync` through std.
+save results remain unchanged. Linux uses `fsync` through std. This needs no register entry: the observable output, the files on disk and the ABI are unchanged, so it is an internal durability improvement.
 
-No new test was added: this function owns a concrete `File`; the existing
-injected `Write` seam only observes header writes and cannot observe sync.
-The existing `save-929-sync-rejecting-{pinyin,zhuyin}` contract cases check
-continued saving when `/dev/null` rejects sync, explicitly not whether a
-sync was issued. Source inspection establishes the added call and its
-position. Crash/power-loss behavior and macOS runtime execution were not
-tested. Existing save/reload cases cover output and persistence behavior.
+**Payload, header and sync, step for step (2026-10-26 UTC).** The pin's
+`MemoryChunk::save` (`memory_chunk.h:536-557`) writes the length word and the
+checksum word with one `write` each (`assert`ed), the payload with one
+`write(fd, begin(), size())`, and answers false with the fd closed and no
+`g_fsync` when that returns -1 or a short count (`:549-553`); otherwise it
+syncs, closes and answers true. The callers ignore the answer
+(`pinyin.cpp:971,988`; `zhuyin.cpp:607,633`) and go on to the rename. Oxpinyin
+now matches that step for step in `write_chunk` over a `ChunkSink` (write +
+sync; `File` in production): two single header writes, one payload `write`, then
+`sync`. A short payload count returns an `Io` error of kind `WriteZero`, and
+`Interrupted` or any other error returns as it is: no retry, no `write_all`
+loop, no sync. `PersistenceError::Io` is the soft path (`tolerate` in the
+reporting save, `Staged::finish` for zhuyin), the same handling as the pin's
+ignored false; the header-word `assert` remains register row 77
+(`ChunkHeaderWrite`). A sync error is ignored. The recording-sink unit tests
+are `chunk_writes_header_words_then_payload_then_syncs_once`,
+`chunk_sync_error_is_ignored`, `chunk_short_payload_write_is_an_error_without_sync`
+and `chunk_interrupted_payload_write_is_not_retried` in `persistence.rs`. File
+bytes, write and rename order, tolerance and return values are unchanged; the
+`write_all` it replaces differed only under `RLIMIT_FSIZE`, payloads over the
+single-write cap and `EINTR`.
+
+**Close-out record, #929 (2026-10-26 UTC).** Pin read from the exported
+`074a2219` tree. The ordered per-operation table is in
+[glib-libc-verification.md](glib-libc-verification.md) G10. Summary of what is
+mandatory for a valid profile and what is a platform exception:
+
+| Semantics | Status | Evidence |
+| --- | --- | --- |
+| File order (libraries in index order, then user pinyin index, phrase index, bigram) and the rename order; pinyin stages all then renames, zhuyin writes and renames each | Mandatory | `failed_renames_report_exact_order_and_preserve_destinations`, `interrupted_save_preserves_the_facade_specific_committed_prefix`, `interruption_after_user_chunks_keeps_indexes_and_bigram_at_previous_save`, `save-929-boundary-*` |
+| Per-file tolerance: a failed write or rename does not stop later files; rename failures print the fixed `rename %s to %s failed.` pair; the marker and the dirty reset still follow | Mandatory | `save-929-rename-*`, the rename unit test above |
+| Return values: true after attempted renames, false before staging when there is no user dir or nothing modified | Mandatory | G10 table rows 1 and 7; `--issue 929` |
+| Same-backend bytes, no data loss on completed saves, reload round trips | Mandatory | `save_reload_keeps_bigrams_and_unsaved_changes_do_not_replace_them`, `save-929-reload-*`, `save-929-logical-cross-open-*` |
+| Chunk write: header words, one payload write, `sync` (#1221) with its result ignored, short or failed payload soft | Mandatory, now tested | the four `chunk_*` unit tests; `sync_rejecting_chunk_target_does_not_stop_later_files`, `save-929-sync-rejecting-*` |
+| Header-word `assert` abort | Register row 77 | `reporting_save_stops_at_a_chunk_header_write` |
+| macOS `F_FULLFSYNC` through `File::sync_all` | Platform difference, no register entry | the macOS paragraph above |
+| errno wording, Windows `MoveFileExW` mapping, power-loss durability, interleaving of backend diagnostics | Not claimed; no exception admitted | G10 limits in the verification file |
+
 
 ### G11 — numeric parsing and locale
 
@@ -315,6 +409,41 @@ non-conforming ones, with every fixture value read from the cell's
 `table.conf` (no backend literal). The signed `%d` writer from #1178
 round-trips the integer fields. The 24,687-string `%d` corpus from #919
 is confirmation only here; it is not the basis.
+
+**Close-out record, #923 (2026-10-26 UTC).** Pin read from the exported
+`074a2219` tree. Disposition: **retain**. The maintainer ruling of
+2026-10-25 UTC, quoted from the #923 comment:
+
+> Maintainer ruling, 2026-10-25 UTC: **retain** the pinned `LC_NUMERIC` side effect (register row 39, #539/#618). The default build stays bug-for-bug, and no opt-in departure is planned. The maintainer intends to report the defect upstream; oxpinyin changes only if libpinyin does.
+
+The default build stays bug-for-bug, there is no departure behind a
+feature, and the row 39 entry in `upstream-divergences.md` and
+`compatibility-policy.md` is unchanged. The mechanism is the pin's:
+`SystemTableInfo2::load`, `UserTableInfo::load` and `UserTableInfo::save`
+save `setlocale(LC_NUMERIC, "C")`'s return, which is the new name `"C"`
+(`table_info.cpp:197,291`; `:328,372`; `:378,394`), so the closing call
+re-installs `"C"` and every early return skips it. Oxpinyin's counterpart is
+`pin_table_info_locale` in `capi/src/locale.rs` and its zhuyin twin, called
+at the pin's points. Side-effect table (sequencing is before any parse or
+return, so no legal return or error path leaves a different locale):
+
+| Exported call | Pin site | Locale after | oxpinyin site (`context.rs`) |
+| --- | --- | --- | --- |
+| `pinyin_init`, any outcome | `pinyin.cpp:337` (`table.conf` load), then `check_format` `:178,:187` | `"C"` | `init_context` (called by `pinyin_init`), first step |
+| `zhuyin_init`, any outcome | `zhuyin.cpp:281`, then `check_format` `:126-176` | `"C"` | `zhuyin_init`, first step |
+| `pinyin_save`, past the user-dir and modified guards | `pinyin.cpp:1133-1137,1143` (`mark_version`) | `"C"` | `save_context`, under the same guards |
+| `zhuyin_save`, past its guards | `zhuyin.cpp:547-552,695-698` | `"C"` | `zhuyin_save`, under the same guards |
+| `pinyin_fini`, always | `pinyin.cpp:1200` | `"C"` | `pinyin_fini` |
+| `zhuyin_fini` | `zhuyin.cpp:741-757` releases state and writes no marker | unchanged | none |
+
+Guards: `run-locale-diff.sh` (registered in `tools/bisection/runners.json`)
+diffs the success path and six failure forms of init byte for byte. The
+"Locale after" results assume no other thread changes the locale
+concurrently. `setlocale` is process-wide and not thread-safe, in the pin as
+in oxpinyin. Retaining the side effect (the 2026-10-25 UTC ruling) accepts
+that concurrency impact unchanged; no removal is proposed, so none is
+assessed. Upstream's own fix would be to copy `setlocale(LC_NUMERIC, NULL)`
+first and restore it on every path; oxpinyin changes only if libpinyin does.
 
 ### G12 — file I/O
 
