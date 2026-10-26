@@ -225,7 +225,7 @@ esac
 # unordered link run, and no route drops it.
 # shellcheck disable=SC2086
 "$CC_CMD" -shared -o "$TMP_DEST" \
-  ${ORDER_ARGS[@]+"${ORDER_ARGS[@]}"} \
+  "${ORDER_ARGS[@]}" \
   -Wl,-z,defs \
   -Wl,-soname,"$SONAME" \
   -Wl,--version-script="$VER" \

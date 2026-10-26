@@ -539,7 +539,7 @@ elif [[ $(basename "$ctr") == docker ]]; then
 	fi
 	log 'starting dockerd'
 	setsid nohup dockerd >/var/log/dockerd.log 2>&1 </dev/null &
-	for _ in $(seq 1 60); do
+	for ((attempt = 1; attempt <= 60; attempt++)); do
 		ctr_ready && break
 		sleep 1
 	done

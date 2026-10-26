@@ -52,8 +52,7 @@ function_order_measurement() {
 
 # Legacy runners have no other command-line options. Keep their opt-outs
 # explicit arguments, never an inherited environment variable.
-# Callers use ${FUNCTION_ORDER_ARGS[@]+"${FUNCTION_ORDER_ARGS[@]}"}: Bash 3.2
-# treats an empty array as unset under `set -u`.
+# Callers expand "${FUNCTION_ORDER_ARGS[@]}" directly.
 function_order_arguments() {
   FUNCTION_ORDER_ARGS=()
   while (( $# )); do

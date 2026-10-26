@@ -391,7 +391,7 @@ if [[ -n $apply_patches_dir ]]; then
 		exit 1
 	fi
 	apply_patches_dir=$(cd "$apply_patches_dir" && pwd)
-	mapfile -t patches < <(find "$apply_patches_dir" -maxdepth 1 -type f -name '*.patch' -print | sort)
+	mapfile -d '' patches < <(find "$apply_patches_dir" -maxdepth 1 -type f -name '*.patch' -print0 | sort -z)
 	if ((${#patches[@]} == 0)); then
 		printf '%s\n' "--apply-patches: no *.patch files in $apply_patches_dir" >&2
 		exit 1

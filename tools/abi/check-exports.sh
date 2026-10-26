@@ -105,7 +105,7 @@ check() {
 	local sym leak=0
 	for sym in $others; do
 		local ok=0 a
-		for a in ${allowed_extra[@]+"${allowed_extra[@]}"}; do
+		for a in "${allowed_extra[@]}"; do
 			[[ $sym == "$a" ]] && ok=1
 		done
 		if ((ok)); then
@@ -127,7 +127,7 @@ if ((!shipped)); then
 	# (crates/oxpinyin-capi/src/context.rs).
 	hooks=(oxpinyin_init_for_fixtures oxpinyin_test_set_user_bigram)
 fi
-check libpinyin "$OXPINYIN_CAPI_SO" crates/oxpinyin-capi/libpinyin.ver pinyin ${hooks[@]+"${hooks[@]}"}
+check libpinyin "$OXPINYIN_CAPI_SO" crates/oxpinyin-capi/libpinyin.ver pinyin "${hooks[@]}"
 check libzhuyin "$OXPINYIN_ZHUYIN_SO" crates/oxpinyin-zhuyin-capi/libzhuyin.ver zhuyin
 
 if ((status)); then

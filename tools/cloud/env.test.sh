@@ -312,7 +312,7 @@ for file in bigram.db phrase_index.bin pinyin_index.bin punct.bin addon_phrase_i
 	refused_data "$file"
 	printf 'bdb %s\n' "$file" >"$oracle_root/bdb/lib/libpinyin/data/$file"
 done
-manifest=$(cat "$oracle_root/bdb/oracle-data-unstable.sha256")
+manifest=$(<"$oracle_root/bdb/oracle-data-unstable.sha256")
 printf '\n' >>"$oracle_root/bdb/oracle-data-unstable.sha256"
 refused_data oracle-data-unstable.sha256
 rm "$oracle_root/bdb/oracle-data-unstable.sha256"
@@ -395,10 +395,10 @@ restore_env
 
 # Observe the old complete file at the exact rename boundary, and source the
 # complete replacement there. Keep observations in memory, never in captures.
-before=$(cat "$OXPINYIN_ORACLE_ENV")
+before=$(<"$OXPINYIN_ORACLE_ENV")
 mv() {
 	[[ $1 == "$OXPINYIN_ORACLE_ENV.new" && $2 == "$OXPINYIN_ORACLE_ENV" ]] || fail 'unexpected rename'
-	[[ $(cat "$2") == "$before" ]] || fail 'environment changed before rename'
+	[[ $(<"$2") == "$before" ]] || fail 'environment changed before rename'
 	for dbm in bdb kc tkrzw; do
 		OXPINYIN_ORACLE_ENV=$1 select_cell "$dbm" "${old_root}/$dbm" || fail 'incomplete staging file'
 	done
@@ -409,12 +409,12 @@ unset -f mv
 [[ ! -e $OXPINYIN_ORACLE_ENV.new ]] || fail 'staging file left after rename'
 printf 'PASS: complete replacement published by one atomic rename\n'
 
-before=$(cat "$OXPINYIN_ORACLE_ENV")
+before=$(<"$OXPINYIN_ORACLE_ENV")
 mv() { return 75; }
 status=0
 (write_oracle_env) || status=$?
 unset -f mv
-[[ $status == 75 && $(cat "$OXPINYIN_ORACLE_ENV") == "$before" && ! -e $OXPINYIN_ORACLE_ENV.new ]] || fail 'failed rename changed the environment or left staging behind'
+[[ $status == 75 && $(<"$OXPINYIN_ORACLE_ENV") == "$before" && ! -e $OXPINYIN_ORACLE_ENV.new ]] || fail 'failed rename changed the environment or left staging behind'
 printf 'PASS: failed rename leaves the old file intact and cleans staging\n'
 
 # Model setup's tkrzw decision with the real probe helpers. Cached utilities

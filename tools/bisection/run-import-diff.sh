@@ -200,7 +200,7 @@ done
 # Compile the frontend harness from the same object files the pin build made.
 read -r -a frontend_cflags <<< "$(pkg-config --cflags ibus-1.0 glib-2.0 gio-2.0 sqlite3)"
 read -r -a frontend_libs <<< "$(pkg-config --libs ibus-1.0 glib-2.0 gio-2.0 sqlite3)"
-mapfile -t frontend_objects < <(find "$FRONT_SRC" -maxdepth 1 -name '*.o' ! -name '*PYMain.o' -print | sort)
+mapfile -d '' frontend_objects < <(find "$FRONT_SRC" -maxdepth 1 -name '*.o' ! -name '*PYMain.o' -print0 | sort -z)
 g++ -std=gnu++17 -O2 -I"$FRONT_SRC" -I"$IBUS_PREFIX/include/libpinyin-2.11.92" \
     "${frontend_cflags[@]}" frontend-import.cc "${frontend_objects[@]}" \
     "${frontend_libs[@]}" -L"$IBUS_PREFIX/lib" -lpinyin -o frontend-import

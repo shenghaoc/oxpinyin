@@ -193,7 +193,7 @@ write_oracle_env() (
 		# shellcheck disable=SC2154  # set by setup.sh or the harness before this call.
 		printf 'export PINYIN_MODEL_DIR=%q\n' "$model_cache/extracted"
 		# shellcheck disable=SC2154  # set by setup.sh or the harness before this call.
-		printf 'export PATH=%s\n' "$(printf '%q' "$uv_dir"):\$PATH"
+		printf 'export PATH=%s\n' "${uv_dir@Q}:\$PATH"
 		if [[ -n $runtime_library ]]; then
 			printf 'export OXPINYIN_TKRZW_LIBRARY=%q\n' "$runtime_library"
 		fi
@@ -201,14 +201,15 @@ write_oracle_env() (
 			printf 'export OXPINYIN_TKRZW_PREFIX=%q\n' "$runtime_prefix"
 			# Accumulate at source time: a shell can load several environment
 			# files before setup probes a different cache's host library.
-			printf 'export OXPINYIN_TKRZW_PREFIXES=%s\n' "$(printf '%q' "$runtime_prefix")\${OXPINYIN_TKRZW_PREFIXES:+:\$OXPINYIN_TKRZW_PREFIXES}"
+			printf 'export OXPINYIN_TKRZW_PREFIXES=%s\n' "${runtime_prefix@Q}\${OXPINYIN_TKRZW_PREFIXES:+:\$OXPINYIN_TKRZW_PREFIXES}"
 		fi
 		if ((tkrzw_local)); then
-			printf 'export PKG_CONFIG_PATH=%s\n' "$(printf '%q' "$tkrzw_prefix/lib/pkgconfig")\${PKG_CONFIG_PATH:+:\$PKG_CONFIG_PATH}"
-			printf 'export LD_LIBRARY_PATH=%s\n' "$(printf '%q' "$tkrzw_prefix/lib")\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"
-			printf 'export PATH=%s\n' "$(printf '%q' "$tkrzw_prefix/bin"):\$PATH"
+			printf 'export PKG_CONFIG_PATH=%s\n' "${tkrzw_prefix@Q}/lib/pkgconfig\${PKG_CONFIG_PATH:+:\$PKG_CONFIG_PATH}"
+			printf 'export LD_LIBRARY_PATH=%s\n' "${tkrzw_prefix@Q}/lib\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"
+			printf 'export PATH=%s\n' "${tkrzw_prefix@Q}/bin:\$PATH"
 		elif [[ -n $runtime_library && -z $runtime_prefix ]]; then
-			printf 'export LD_LIBRARY_PATH=%s\n' "$(printf '%q' "${runtime_library%/*}")\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"
+			runtime_dir=${runtime_library%/*}
+			printf 'export LD_LIBRARY_PATH=%s\n' "${runtime_dir@Q}\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"
 		elif [[ -n $kept_tkrzw_paths ]]; then
 			printf '%s\n' "$kept_tkrzw_paths"
 		fi
