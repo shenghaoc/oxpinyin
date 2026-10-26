@@ -11,9 +11,10 @@ import shlex
 import stat
 import subprocess
 import sys
+import tempfile
 import tomllib
 
-from . import host, slot
+from . import host, mounts, slot
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -58,12 +59,34 @@ def harness_environment(environ):
     return kept, len(environ) - len(kept)
 
 
+def memory_backed_tmpdir():
+    """Return the refusal line when the harness temporary directory is on tmpfs or ramfs, else None.
+
+    teardown.test.py's cold eviction tests need fadvise to evict, which tmpfs
+    and ramfs ignore. An unreadable mount type is not a refusal.
+    """
+    directory = tempfile.gettempdir()
+    try:
+        kind = mounts.filesystem(directory)
+    except (OSError, ValueError):
+        return None
+    if kind not in ('tmpfs', 'ramfs'):
+        return None
+    return (f'just test-tools: TMPDIR {directory} is on {kind}; the cold teardown tests need a '
+            'disk-backed TMPDIR (for example ~/.cache/oxpinyin/tmp)')
+
+
 def run_tools():
     """Run every non-excluded harness in order, returning 1 if any fails.
 
-    Each harness runs without the credential-shaped variables; only their
-    count is printed.
+    Return 2 before any harness runs when the temporary directory is
+    memory-backed. Each harness runs without the credential-shaped
+    variables; only their count is printed.
     """
+    refusal = memory_backed_tmpdir()
+    if refusal:
+        print(refusal, file=sys.stderr, flush=True)
+        return 2
     status = 0
     env, removed = harness_environment(os.environ)
     print(f'tools harness: credential-shaped environment variables removed: {removed}', flush=True)

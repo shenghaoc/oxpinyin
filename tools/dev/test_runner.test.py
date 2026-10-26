@@ -55,6 +55,7 @@ class HarnessTests(unittest.TestCase):
                 out, err = io.StringIO(), io.StringIO()
                 with mock.patch.dict(os.environ, environ, clear=True), \
                         mock.patch.object(test_runner, 'harness_files', return_value=files), \
+                        mock.patch.object(test_runner.mounts, 'filesystem', return_value='ext4'), \
                         mock.patch.object(test_runner.subprocess, 'run', side_effect=replies) as run, \
                         contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
                     self.assertEqual(test_runner.run_tools(), expected)
@@ -69,6 +70,44 @@ class HarnessTests(unittest.TestCase):
                     'tools harness: tools/z.test.py'])
                 self.assertEqual('::error::one or more tools/ Python harness tests failed' in err.getvalue(),
                                  bool(expected))
+
+    def run_tools_on(self, reader):
+        """Run run_tools with one fake harness file and the given fake mount-type reader."""
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(test_runner, 'harness_files', return_value=['tools/a.test.py']), \
+                mock.patch.object(test_runner.mounts, 'filesystem', side_effect=reader) as read, \
+                mock.patch.object(test_runner.tempfile, 'gettempdir', return_value='/tmp/harness'), \
+                mock.patch.object(test_runner.subprocess, 'run',
+                                  return_value=subprocess.CompletedProcess([], 0)) as run, \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            status = test_runner.run_tools()
+        read.assert_called_once_with('/tmp/harness')
+        return status, run, out.getvalue(), err.getvalue()
+
+    def test_memory_backed_tmpdir_refuses_before_any_harness(self):
+        for kind in ('tmpfs', 'ramfs'):
+            with self.subTest(kind=kind):
+                status, run, out, err = self.run_tools_on(lambda path: kind)
+                self.assertEqual(status, 2)
+                run.assert_not_called()
+                self.assertEqual(out, '')
+                self.assertEqual(err, f'just test-tools: TMPDIR /tmp/harness is on {kind}; the cold teardown '
+                                      'tests need a disk-backed TMPDIR (for example ~/.cache/oxpinyin/tmp)\n')
+
+    def test_disk_backed_or_unreadable_tmpdir_runs_unchanged(self):
+        def unreadable(path):
+            raise OSError('mountinfo unreadable')
+
+        def unknown(path):
+            raise ValueError('filesystem type is unknown')
+
+        for reader in (lambda path: 'ext4', lambda path: 'overlay', unreadable, unknown):
+            with self.subTest(reader=reader):
+                status, run, out, err = self.run_tools_on(reader)
+                self.assertEqual(status, 0)
+                self.assertEqual(run.call_count, 1)
+                self.assertEqual(out.splitlines()[1:], ['tools harness: tools/a.test.py'])
+                self.assertEqual(err, '')
 
     def test_credential_patterns_match_names_case_insensitively(self):
         removed = ['DEPLOY_KEY', 'npm_token', 'Client_Secret', 'MYSECRETS', 'DB_PASSWORD_FILE', 'GH_PAT',
@@ -90,6 +129,7 @@ class HarnessTests(unittest.TestCase):
                  "print(os.environ.get('OXPINYIN_TEST_TOKEN'), os.environ.get('OXPINYIN_TEST_KEPT'))\n")
         runner = ('import sys\nfrom pathlib import Path\nsys.path.insert(0, sys.argv[2])\n'
                   'from tools.dev import test_runner\ntest_runner.ROOT = Path(sys.argv[1])\n'
+                  'test_runner.mounts.filesystem = lambda path: "ext4"\n'
                   'raise SystemExit(test_runner.run_tools())\n')
         environ, _ = test_runner.harness_environment(os.environ)
         with tempfile.TemporaryDirectory() as temp:
