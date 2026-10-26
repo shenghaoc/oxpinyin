@@ -34,3 +34,7 @@ harness = false
 # counters under --nocapture. Never enabled in CI or the shipped surface;
 # only turned on locally for the diagnostic.
 diagnostic_403 = []
+
+# Counterfactual tail ordering for the existing ranking attribution driver.
+# Never enabled by a shipping build.
+diagnostic_ranking = []

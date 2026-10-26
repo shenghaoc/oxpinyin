@@ -364,7 +364,7 @@ def report_values(kind, values, **context):
          if control['stable'] and all(v > 0 for v in values['base']) else None)
 
 
-def verify(campaign, libraries, facade, name, profiles):
+def verify(campaign, libraries, facade, name, profiles, *, arms=ARMS, registration=None, hostile=True):
     """Compare base, PR, and control verification, persistence, and units observations.
 
     Run workers on private profiles, check populated witnesses against an
@@ -376,7 +376,7 @@ def verify(campaign, libraries, facade, name, profiles):
     witness = user.parent / 'witness.txt'
     witness = witness if witness.is_file() else None
     rows, observed = {}, {}
-    for arm in ARMS:
+    for arm in arms:
         rows[arm] = campaign.run(libraries[arm][facade], facade, user, mode='verify', witness=witness)
         unit_sample = campaign.run(libraries[arm][facade], facade, user)
         require_digest(unit_sample, rows[arm])
@@ -396,15 +396,19 @@ def verify(campaign, libraries, facade, name, profiles):
             if answers(baseline) == answers(rows[arm]):
                 raise NotResult('NOT COMPARABLE: populated profile changes no witness answer: ' + name)
     comparable = all(value == observed['pr'] for value in observed.values())
+    accepted = 0
+    if registration is not None:
+        accepted = registration.check('startup', facade, name, observed)
+        comparable = True
     emit('equivalence', schema=OBSERVATION_SCHEMA, facade=facade, profile=name,
-         verdict='COMPARABLE' if comparable else 'NOT COMPARABLE',
+         verdict='POLICY-ACCEPTED' if accepted else 'COMPARABLE' if comparable else 'NOT COMPARABLE',
          digests={a: worker.sha256(json.dumps(v, sort_keys=True).encode()) for a, v in observed.items()},
          unit_digests={a: v['digest'] for a, v in rows.items()},
          differences={a: first_difference(observed['base'], v) for a, v in observed.items() if v != observed['base']})
     if not comparable:
         raise NotResult('NOT COMPARABLE: native verify/reopen/raw user-file observations differ')
     # Hostile probes are deliberately outside comparability and timed transcripts.
-    for arm in ARMS:
+    for arm in arms if hostile else ():
         for index in range(12):
             emit('hostile', arm=arm, facade=facade, profile=name, input_index=index,
                  **campaign.run(libraries[arm][facade], facade, user, mode='probe', probe=index))

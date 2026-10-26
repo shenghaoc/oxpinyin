@@ -1,0 +1,28 @@
+diff --git a/crates/oxpinyin-engine/src/nbest.rs b/crates/oxpinyin-engine/src/nbest.rs
+index f53da55b..643acade 100644
+--- a/crates/oxpinyin-engine/src/nbest.rs
++++ b/crates/oxpinyin-engine/src/nbest.rs
+@@ -459 +459 @@ impl Trellis {
+-        values.sort_by_key(|value| (value.cost == oxpinyin_core::cost::NAN_COST, value.cost));
++        values.sort_by_key(|value| std::cmp::Reverse((value.cost == oxpinyin_core::cost::NAN_COST, value.cost)));
+diff --git a/crates/oxpinyin-engine/src/nbest/selection.rs b/crates/oxpinyin-engine/src/nbest/selection.rs
+index 3ad58f44..e1990337 100644
+--- a/crates/oxpinyin-engine/src/nbest/selection.rs
++++ b/crates/oxpinyin-engine/src/nbest/selection.rs
+@@ -64 +64 @@ impl LoserTree {
+-                if loses(left.get() - 1, right.get() - 1) {
++                if !loses(left.get() - 1, right.get() - 1) {
+diff --git a/crates/oxpinyin-engine/src/ranking.rs b/crates/oxpinyin-engine/src/ranking.rs
+index c933badb..f673732b 100644
+--- a/crates/oxpinyin-engine/src/ranking.rs
++++ b/crates/oxpinyin-engine/src/ranking.rs
+@@ -26 +26 @@ impl Ord for RankScore {
+-        self.0.total_cmp(&other.0)
++        other.0.total_cmp(&self.0)
+diff --git a/crates/oxpinyin-engine/src/session/mod.rs b/crates/oxpinyin-engine/src/session/mod.rs
+index e7d7c2b7..dda008c4 100644
+--- a/crates/oxpinyin-engine/src/session/mod.rs
++++ b/crates/oxpinyin-engine/src/session/mod.rs
+@@ -938 +938 @@ impl RankKey {
+-            .then_with(|| self.pinyin_span.cmp(&other.pinyin_span))
++            .then_with(|| other.pinyin_span.cmp(&self.pinyin_span))
