@@ -14,7 +14,7 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
-from tools.dev import cli, slot
+from tools.dev import cli, slot, test_support
 from tools.dev.measure import startup as st, worker, native, stats
 
 
@@ -50,7 +50,7 @@ class ControllerTests(unittest.TestCase):
     def test_pin_row_is_refused_before_inputs_or_slot_with_container_path(self):
         with mock.patch.object(slot, 'HeavyAdmission') as admission, contextlib.redirect_stderr(io.StringIO()) as err:
             self.assertEqual(st.main(['--pin', 'some-pin']), 1)
-        admission.assert_not_called()
+        test_support.assert_not_called(self, admission)
         self.assertIn('just container run', err.getvalue())
 
     def test_populated_profiles_require_nonempty_witness(self):
@@ -74,26 +74,24 @@ class ControllerTests(unittest.TestCase):
             with contextlib.redirect_stderr(io.StringIO()):
                 self.assertEqual(st.main([*self.argv, '--profiles', 'empty']), 1)
 
-    def test_cold_is_refused_before_filesystem_or_slot_until_the_limit_is_approved(self):
+    def test_cold_is_refused_on_linux_and_windows_before_filesystem_or_slot(self):
+        # #1162 owns the Linux sampler and replaces this text when it lands.
         for system, extra, message in (
-                ('darwin', ['--cache', 'cold'], 'approved rejection limit'),
-                ('linux', ['--cache', 'cold'], 'not implemented; rejection-limit approval is pending'),
-                ('win32', [], 'Windows is deferred')):
+                ('linux', ['--cache', 'cold'], 'startup: cold cache is not implemented on Linux (#1162)\n'),
+                ('win32', [], 'startup: native startup supports Linux/macOS; Windows is deferred (#950)\n')):
             with self.subTest(system=system), mock.patch.object(st.sys, 'platform', system), \
                     mock.patch.object(slot, 'HeavyAdmission') as admission, \
                     contextlib.redirect_stderr(io.StringIO()) as error:
                 self.assertEqual(st.main([*self.argv, *extra]), 1)
-            admission.assert_not_called()
-            self.assertIn(message, error.getvalue())
+            test_support.assert_not_called(self, admission)
+            self.assertEqual(error.getvalue(), message)
 
-    def test_cold_gate_opens_only_when_the_shared_limit_is_approved(self):
+    def test_cold_validates_on_macos_with_no_approval_gate(self):
         args = st.parser().parse_args([*self.argv, '--profiles', 'empty', '--cache', 'cold'])
-        with mock.patch.object(st.sys, 'platform', 'darwin'), \
-                mock.patch.object(st.cold, 'REJECTION_LIMIT', 5):
+        with mock.patch.object(st.sys, 'platform', 'darwin'):
             self.assertEqual(st.validate(args), {'empty': self.root / 'profiles/empty/user'})
         with mock.patch.object(st.sys, 'platform', 'linux'), \
-                mock.patch.object(st.cold, 'REJECTION_LIMIT', 5), \
-                self.assertRaisesRegex(ValueError, 'not implemented'):
+                self.assertRaisesRegex(ValueError, r'^cold cache is not implemented on Linux \(#1162\)$'):
             st.validate(args)
 
     def test_all_statuses(self):
@@ -167,8 +165,26 @@ class ControllerTests(unittest.TestCase):
                 mock.patch.object(slot, 'HeavyAdmission') as admission, \
                 contextlib.redirect_stderr(io.StringIO()) as error:
             self.assertEqual(st.main([*self.argv, '--profiles', 'empty']), 1)
-        admission.assert_not_called()
+        test_support.assert_not_called(self, admission)
         self.assertIn('one APFS volume', error.getvalue())
+
+    def test_a_failing_admission_assertion_does_not_print_the_environment(self):
+        # HeavyAdmission receives dict(os.environ): the shared helper must fail without printing it.
+        sentinel = 'environment-sentinel-5f2c'
+        args = st.parser().parse_args([*self.argv, '--profiles', 'empty'])
+        with mock.patch.dict(os.environ, OXPINYIN_TEST_SENTINEL=sentinel), \
+                mock.patch.object(st.tempfile, 'gettempdir', return_value=str(self.root)), \
+                mock.patch.object(native, 'pin_cpu', return_value=None), \
+                mock.patch.object(native, 'check_filesystems', return_value={'A'}), \
+                mock.patch.object(slot, 'HeavyAdmission') as admission, \
+                mock.patch.object(st, 'campaign_run', return_value=0):
+            self.assertEqual(st.run(args), 0)
+        self.assertEqual(admission.call_count, 1)
+        self.assertEqual(admission.call_args.args[1]['OXPINYIN_TEST_SENTINEL'], sentinel)
+        with self.assertRaises(AssertionError) as raised:
+            test_support.assert_not_called(self, admission)
+        # Not assertNotIn(sentinel, message): a failure would print the message, and with it the environment.
+        self.assertFalse(sentinel in str(raised.exception), 'the assertion message echoes the environment')
 
     def test_cli_and_rotation(self):
         with mock.patch.object(st, 'main', return_value=3) as run:
@@ -506,6 +522,356 @@ class ControllerTests(unittest.TestCase):
         samples = [v for kind, v in printed if kind == 'sample']
         self.assertEqual(len(samples), 6)
         self.assertTrue(all(v['cold']['metric'] == 'darwin_resident_pages' for v in samples))
+
+    def synthetic_campaign(self, *options, platform='darwin', rejections=None):
+        """Run campaign_run over a scripted worker and return its status and printed records.
+
+        Rows are deterministic functions of (arm, memory, round), shaped like macOS rows: the
+        Darwin names carry values and the Linux names are unavailable. With a cold cache every
+        sample runs the real cold.prepare over a fake residency reader. REJECTIONS maps
+        (arm, memory, round) to how many of that sample's whole-set checks find a page
+        resident; two reject the sample, one qualifies it on the second preparation.
+        """
+        rejections = rejections or {}
+        directories = dict(zip(('baseobj', 'subject', 'control'), st.ARMS))
+        visits, resident = {}, [0]
+        subject = self.root / 'subject.bin'
+        subject.write_bytes(b'x' * (3 * st.cold.darwin.PAGE_SIZE))
+
+        def residency(_fd):
+            """Fake mincore: the next checks find two of three pages resident, then none."""
+            if resident[0]:
+                resident[0] -= 1
+                return dict(pages=3, resident=2)
+            return dict(pages=3, resident=0)
+
+        def run(path, facade, profile, *, memory=False, cold=False):
+            arm = directories[path.parent.name]
+            n = visits[arm, memory] = visits.get((arm, memory), -1) + 1
+            prepared = None
+            if cold:
+                resident[0] = rejections.get((arm, memory, n), 0)
+                prepared = st.cold.prepare([subject])
+            shift = 0 if arm == 'base' else 3
+            times = {}
+            for index, metric in enumerate(m for m in st.TIMING_METRICS if m != 'process_wall'):
+                wall = 100_000 + 1_000 * n + 100 * shift + index
+                times[metric] = dict(wall_ns=wall * 1.2 if (arm, metric) == ('control', 'fini') else wall, cpu_ns=1)
+            points = {}
+            for index, point in enumerate(worker.POINTS):
+                resident_kib = 10_000 + 7 * n + index + (200 if arm == 'control' else 0)
+                points[point] = dict.fromkeys(native.MEMORY_FIELDS) | dict(
+                    resident_kib=resident_kib, resident_peak_kib=resident_kib + 100,
+                    physical_footprint_kib=20_000 + n + index, faults=50 + n, pageins=n,
+                    disk_bytes_read=4096 * n, disk_bytes_written=0, instructions=1_000 + n,
+                    cycles=2_000 + n, instructions_available=True, cycles_available=True)
+            return dict(digest='same', stderr=b'', userfiles={}, documents=[dict(startup='times', **times)],
+                        checkpoints=points, process_wall=1_000_000 + 10_000 * n + shift, cold=prepared)
+
+        library = self.root / 'lib.so'
+        library.write_bytes(b'synthetic oxpinyin')
+        work = Path(tempfile.mkdtemp(dir=self.root))
+        args = st.parser().parse_args([*self.argv, '--profiles', 'empty', '--facades', 'pinyin', *options])
+        args.cpu = None
+        printed = []
+        with mock.patch.object(st.sys, 'platform', platform), \
+                mock.patch.object(st.native, 'check_filesystems'), \
+                mock.patch.object(st, 'library', return_value=library), \
+                mock.patch.object(worker, 'build', return_value=(Path('worker'), {})), \
+                mock.patch.object(st, 'artifact', return_value={}), \
+                mock.patch.object(worker, 'Worker', return_value=SimpleNamespace(run=run)), \
+                mock.patch.object(st, 'verify', return_value={a: dict(digest='same', unit_stderr=b'',
+                                                                       unit_userfiles={}) for a in st.ARMS}), \
+                mock.patch.object(st, 'instrument'), \
+                mock.patch.object(st, 'emit', side_effect=lambda kind, **v: printed.append((kind, v))), \
+                mock.patch.object(st.cold, '_touch'), \
+                mock.patch.object(st.cold.darwin, 'map_file', return_value=0x1000), \
+                mock.patch.object(st.cold.darwin, 'unmap'), mock.patch.object(st.cold.darwin, 'msync'), \
+                mock.patch.object(st.cold.darwin, 'file_residency', side_effect=residency), \
+                mock.patch.object(st.cold.os, 'fsync'):
+            status = st.campaign_run(args, {'empty': self.root / 'profiles/empty/user'}, work,
+                                     SimpleNamespace(env={}, slot=SimpleNamespace(pass_fds=lambda: ())))
+        return status, printed
+
+    def test_macos_warm_campaign_output_is_byte_identical_to_before(self):
+        # The digest is the SHA-256 of the sample, timing and memory records this scripted warm macOS
+        # campaign printed before cold sampling was enabled: STABLE, INCONCLUSIVE, diagnostic and
+        # unavailable verdicts all appear, and a warm record carries no cold key.
+        status, printed = self.synthetic_campaign('--rounds', '5', '--warmups', '1',
+                                                  '--memory-rounds', '5', '--memory-warmups', '1')
+        self.assertEqual(status, 0)
+        records = [[kind, values] for kind, values in printed if kind in ('sample', 'timing', 'memory')]
+        fields = (len(native.MEMORY_FIELDS) + len(native.DARWIN_COUNTER_FIELDS) +
+                  len(native.DARWIN_AVAILABILITY_FIELDS))
+        self.assertEqual(len(records), 36 + len(st.TIMING_METRICS) + len(worker.POINTS) * fields)
+        verdicts = {values['verdict'] for kind, values in records if kind != 'sample'}
+        self.assertEqual(verdicts, {'STABLE', 'INCONCLUSIVE', 'diagnostic', 'unavailable'})
+        self.assertFalse(any('cold' in values for _, values in records))
+        digest = worker.sha256(json.dumps(records, sort_keys=True).encode())
+        self.assertEqual(digest, 'cbac14bfb42027503822ee43092d1469d9705314d9371381682f5b34560cf4d2')
+
+    def report(self, printed, kind, metric, point=None):
+        """The one metric report of a kind (and checkpoint) the scripted campaign printed."""
+        found = [v for k, v in printed if k == kind and v['metric'] == metric and v.get('point') == point]
+        self.assertEqual(len(found), 1)
+        return found[0]
+
+    COLD = ('--cache', 'cold')
+
+    def test_rejected_sample_is_reported_excluded_and_never_replaced(self):
+        # PR's second measured timing round never qualifies: two preparations leave pages resident.
+        status, printed = self.synthetic_campaign(
+            *self.COLD, '--rounds', '4', '--warmups', '1', '--memory-rounds', '3', '--memory-warmups', '1',
+            rejections={('pr', False, 2): 2})
+        self.assertEqual(status, 0)
+        samples = [v for k, v in printed if k == 'sample']
+        # Round accounting is unchanged: every attempted round has its record and none was rerun.
+        self.assertEqual(len(samples), (4 + 1) * 3 + (3 + 1) * 3)
+        rejected = [s for s in samples if s['cold']['verdict'] == 'REJECTED']
+        self.assertEqual(len(rejected), 1)
+        self.assertEqual((rejected[0]['arm'], rejected[0]['round'], rejected[0]['warmup'], rejected[0]['memory']),
+                         ('pr', 2, False, False))
+        self.assertEqual((rejected[0]['cold']['metric'], rejected[0]['cold']['attempts'],
+                          rejected[0]['cold']['resident']), ('darwin_resident_pages', 2, 2))
+        self.assertTrue({'documents', 'checkpoints', 'process_wall_ns'}.isdisjoint(rejected[0]))
+        self.assertTrue(all(s['cold']['verdict'] == 'QUALIFIED' and s['cold']['attempts'] == 1
+                            for s in samples if s is not rejected[0]))
+        timing = self.report(printed, 'timing', 'process_wall')
+        self.assertEqual(timing['cold'], dict(
+            metric='darwin_resident_pages', limit=2, accepted=dict(base=4, pr=3, control=4),
+            rejected=dict(base=0, pr=1, control=0), warmup_rejected=dict(base=0, pr=0, control=0)))
+        # Rounds 1, 3 and 4 pool for every arm: base's wall times there are 1.01, 1.03 and 1.04 ms.
+        self.assertEqual({arm: s['n'] for arm, s in timing['summaries'].items()}, dict(base=3, pr=3, control=3))
+        self.assertEqual(timing['summaries']['base']['median'], 1.03)
+        self.assertEqual(timing['verdict'], 'STABLE')
+        self.assertIsNotNone(timing['pr_base_ratio'])
+        # The memory family had no rejection; a Linux-named metric stays unavailable but is still counted.
+        memory = self.report(printed, 'memory', 'resident_kib', 'end')
+        self.assertEqual((memory['cold']['rejected'], memory['summaries']['pr']['n']),
+                         (dict(base=0, pr=0, control=0), 3))
+        unavailable = self.report(printed, 'memory', 'rss', 'end')
+        self.assertEqual((unavailable['verdict'], unavailable['summaries']), ('unavailable', None))
+        self.assertEqual(unavailable['cold']['rejected'], dict(base=0, pr=0, control=0))
+
+    def test_two_rejections_in_an_arm_keep_a_metric_eligible_and_three_make_it_inconclusive(self):
+        options = (*self.COLD, '--rounds', '8', '--warmups', '1', '--memory-rounds', '2', '--memory-warmups', '0')
+        status, printed = self.synthetic_campaign(*options, rejections={('pr', False, 2): 2, ('pr', False, 4): 2})
+        self.assertEqual(status, 0)
+        eligible = self.report(printed, 'timing', 'process_wall')
+        self.assertEqual((eligible['cold']['rejected']['pr'], eligible['verdict']), (2, 'STABLE'))
+        self.assertEqual(eligible['summaries']['pr']['n'], 6)
+        self.assertIsNotNone(eligible['pr_base_ratio'])
+        self.assertFalse(any('reason' in v for k, v in printed if k == 'timing'))
+        status, printed = self.synthetic_campaign(
+            *options, rejections={('pr', False, 2): 2, ('pr', False, 4): 2, ('pr', False, 5): 2})
+        self.assertEqual(status, 0)
+        timing = [v for k, v in printed if k == 'timing']
+        self.assertEqual({v['verdict'] for v in timing}, {'INCONCLUSIVE'})
+        self.assertEqual(len(timing), len(st.TIMING_METRICS))
+        for record in timing:
+            self.assertEqual((record['summaries'], record['pr_base_ratio']), (None, None))
+            self.assertEqual(record['reason'], 'rejected cold samples exceed the limit of 2 per arm: pr 3')
+            self.assertEqual((record['cold']['accepted']['pr'], record['cold']['rejected']['pr']), (5, 3))
+        # The limit is per arm and per metric family: the memory metrics saw no rejection.
+        self.assertNotIn('reason', self.report(printed, 'memory', 'physical_footprint_kib', 'end'))
+
+    def test_the_limit_counts_each_arm_alone_and_pools_only_rounds_every_arm_accepted(self):
+        options = (*self.COLD, '--rounds', '8', '--warmups', '1', '--memory-rounds', '2', '--memory-warmups', '0')
+        # Two rejections in each of the three arms: six rejected samples, none over the limit.
+        rejections = {(arm, False, n): 2 for arm, rounds in (('base', (1, 2)), ('pr', (3, 4)), ('control', (5, 6)))
+                      for n in rounds}
+        _, printed = self.synthetic_campaign(*options, rejections=rejections)
+        timing = self.report(printed, 'timing', 'process_wall')
+        self.assertEqual(timing['cold']['rejected'], dict(base=2, pr=2, control=2))
+        self.assertEqual(timing['cold']['accepted'], dict(base=6, pr=6, control=6))
+        self.assertEqual({arm: s['n'] for arm, s in timing['summaries'].items()}, dict(base=2, pr=2, control=2))
+        self.assertEqual(timing['verdict'], 'STABLE')
+        # One rejection per arm, each in its own round, leaves no round to compare.
+        _, printed = self.synthetic_campaign(*self.COLD, '--rounds', '3', '--warmups', '0',
+                                             '--memory-rounds', '2', '--memory-warmups', '0',
+                                             rejections={('base', False, 0): 2, ('pr', False, 1): 2,
+                                                         ('control', False, 2): 2})
+        timing = self.report(printed, 'timing', 'process_wall')
+        self.assertEqual((timing['cold']['rejected'], timing['verdict'], timing['summaries']),
+                         (dict(base=1, pr=1, control=1), 'INCONCLUSIVE', None))
+        self.assertEqual(timing['reason'], 'no measured round has every arm accepted')
+
+    def test_rejected_warmups_are_reported_apart_and_never_count_toward_the_limit(self):
+        _, printed = self.synthetic_campaign(
+            *self.COLD, '--rounds', '3', '--warmups', '3', '--memory-rounds', '2', '--memory-warmups', '0',
+            rejections={('pr', False, n): 2 for n in range(3)})
+        timing = self.report(printed, 'timing', 'process_wall')
+        self.assertEqual((timing['cold']['rejected']['pr'], timing['cold']['warmup_rejected']['pr']), (0, 3))
+        self.assertEqual((timing['verdict'], timing['summaries']['pr']['n']), ('STABLE', 3))
+        warmups = [v for k, v in printed if k == 'sample' and v['cold']['verdict'] == 'REJECTED']
+        self.assertEqual([(v['arm'], v['round'], v['warmup']) for v in warmups],
+                         [('pr', n, True) for n in range(3)])
+
+    def test_a_set_that_qualifies_on_the_second_preparation_is_accepted(self):
+        _, printed = self.synthetic_campaign(
+            *self.COLD, '--rounds', '2', '--warmups', '0', '--memory-rounds', '2', '--memory-warmups', '0',
+            rejections={('base', False, 1): 1})
+        second = [v for k, v in printed if k == 'sample' and v['cold']['attempts'] == 2]
+        self.assertEqual(len(second), 1)
+        self.assertEqual((second[0]['cold']['verdict'], second[0]['cold']['value']), ('QUALIFIED', 0))
+        self.assertEqual([c['resident'] for c in second[0]['cold']['checks']], [2, 0])
+        self.assertEqual(self.report(printed, 'timing', 'process_wall')['cold']['rejected'],
+                         dict(base=0, pr=0, control=0))
+
+    def test_the_limit_is_the_shared_constant_whatever_the_results(self):
+        options = (*self.COLD, '--rounds', '6', '--warmups', '1', '--memory-rounds', '2', '--memory-warmups', '0')
+        two = {('pr', False, 2): 2, ('pr', False, 3): 2}
+        many = {('pr', False, n): 2 for n in range(1, 7)}
+        seen = set()
+        for rejections in ({}, two, many):
+            _, printed = self.synthetic_campaign(*options, rejections=rejections)
+            seen |= {v['cold']['limit'] for k, v in printed if k in ('timing', 'memory')}
+        self.assertEqual(seen, {2})
+        self.assertEqual(self.report(printed, 'timing', 'process_wall')['verdict'], 'INCONCLUSIVE')
+        # The same two rejections cross the boundary only when the shared constant moves.
+        with mock.patch.object(st.cold, 'REJECTION_LIMIT', 1):
+            _, printed = self.synthetic_campaign(*options, rejections=two)
+        moved = self.report(printed, 'timing', 'process_wall')
+        self.assertEqual((moved['verdict'], moved['cold']['limit']), ('INCONCLUSIVE', 1))
+        self.assertEqual(st.cold.REJECTION_LIMIT, 2)
+
+    def test_the_darwin_metric_stays_out_of_every_linux_named_field(self):
+        options = ('--rounds', '3', '--warmups', '1', '--memory-rounds', '2', '--memory-warmups', '0')
+        _, warm_run = self.synthetic_campaign(*options)
+        _, cold_run = self.synthetic_campaign(*self.COLD, *options, rejections={('pr', False, 2): 2})
+
+        def reported(printed):
+            """Every (kind, metric, checkpoint) the campaign reported."""
+            return {(k, v['metric'], v.get('point')) for k, v in printed if k in ('timing', 'memory')}
+
+        self.assertEqual(reported(cold_run), reported(warm_run))
+        self.assertNotIn('darwin_resident_pages', {metric for _, metric, _ in reported(cold_run)})
+        for kind, record in cold_run:
+            if kind in ('timing', 'memory'):
+                self.assertTrue(set(native.LINUX_MEMORY_FIELDS).isdisjoint(record['cold']))
+                self.assertEqual(record['cold']['metric'], 'darwin_resident_pages')
+            if kind == 'sample':
+                self.assertEqual(record['cold']['metric'], 'darwin_resident_pages')
+                self.assertNotIn('darwin_resident_pages', json.dumps(record.get('checkpoints', {})))
+        for _, record in warm_run:
+            self.assertNotIn('cold', record)
+
+    def test_pool_cold_and_cold_account_are_plain_arithmetic_on_the_shared_limit(self):
+        rejected = st.REJECTED
+        samples = dict(base=[dict(), None, dict(), dict()], pr=[dict(), dict(), None, dict()], control=[dict()] * 4)
+        account = st.cold_account(samples, dict(base=0, pr=1, control=0))
+        self.assertEqual(account, dict(metric='darwin_resident_pages', limit=2,
+                                       rejected=dict(base=1, pr=1, control=0), accepted=dict(base=3, pr=3, control=4),
+                                       warmup_rejected=dict(base=0, pr=1, control=0)))
+        values = dict(base=[1, rejected, 3, 4], pr=[1, 2, rejected, 4], control=[1, 2, 3, 4])
+        self.assertEqual(st.pool_cold(values, account), (dict(base=[1, 4], pr=[1, 4], control=[1, 4]), None))
+        over = dict(account, rejected=dict(base=3, pr=0, control=3))
+        self.assertEqual(st.pool_cold(values, over),
+                         (None, 'rejected cold samples exceed the limit of 2 per arm: base 3, control 3'))
+        exact = dict(account, rejected=dict(base=2, pr=2, control=2))
+        self.assertIsNone(st.pool_cold(values, exact)[1])
+        self.assertEqual(st.pool_cold(dict(base=[rejected], pr=[1], control=[1]), account),
+                         (None, 'no measured round has every arm accepted'))
+
+    def cold_report(self, values):
+        """Report one cold memory metric from per-round values (REJECTED where rejected); return its record."""
+        samples = {arm: [None if value is st.REJECTED else {} for value in rows] for arm, rows in values.items()}
+        account = st.cold_account(samples, dict.fromkeys(st.ARMS, 0))
+        with mock.patch.object(st, 'emit') as emit:
+            st.report_values('memory', values, facade='pinyin', profile='empty', point='end',
+                             metric='resident_kib', unit='KiB', cold=account)
+        self.assertEqual(emit.call_count, 1)
+        return emit.call_args.kwargs
+
+    def test_a_field_none_in_every_kept_sample_is_unavailable_even_over_the_limit(self):
+        record = self.cold_report(dict(base=[None] * 4, pr=[st.REJECTED] * 3 + [None], control=[None] * 4))
+        self.assertEqual(record['cold']['rejected']['pr'], 3)
+        self.assertEqual((record['verdict'], record['summaries'], record['pr_base_ratio']), ('unavailable', None, None))
+        self.assertNotIn('reason', record)
+
+    def test_a_none_in_a_dropped_round_does_not_make_the_metric_unavailable(self):
+        # The review's case: PR's round 2 is rejected, so round 2 leaves the pool with base's None in it.
+        record = self.cold_report(dict(base=[10, None, 12], pr=[10, st.REJECTED, 12], control=[10, 10, 12]))
+        self.assertEqual(record['verdict'], 'STABLE')
+        self.assertEqual({arm: s['n'] for arm, s in record['summaries'].items()}, dict(base=2, pr=2, control=2))
+        self.assertEqual(record['summaries']['base']['median'], 11)
+        self.assertEqual(record['pr_base_ratio']['median'], 1.0)
+
+    def test_a_none_in_a_kept_round_is_still_unavailable(self):
+        record = self.cold_report(dict(base=[10, None, 12], pr=[st.REJECTED, 11, 12], control=[10, 10, 12]))
+        self.assertEqual((record['verdict'], record['summaries'], record['pr_base_ratio']), ('unavailable', None, None))
+        self.assertNotIn('reason', record)
+
+    def test_recorded_values_over_the_limit_are_inconclusive_with_a_reason(self):
+        record = self.cold_report(dict(base=[10, 11, 12, 13], pr=[st.REJECTED] * 3 + [13], control=[10, 11, 12, 13]))
+        self.assertEqual((record['verdict'], record['summaries'], record['pr_base_ratio']), ('INCONCLUSIVE', None, None))
+        self.assertEqual(record['reason'], 'rejected cold samples exceed the limit of 2 per arm: pr 3')
+
+    def test_every_sample_rejected_is_inconclusive_not_unavailable(self):
+        # Nothing was recorded, so nothing shows the host lacks the field: pool_cold decides.
+        for rounds, reason in ((3, 'rejected cold samples exceed the limit of 2 per arm: base 3, pr 3, control 3'),
+                               (2, 'no measured round has every arm accepted')):
+            with self.subTest(rounds=rounds):
+                record = self.cold_report({arm: [st.REJECTED] * rounds for arm in st.ARMS})
+                self.assertEqual((record['verdict'], record['summaries'], record['pr_base_ratio']),
+                                 ('INCONCLUSIVE', None, None))
+                self.assertEqual(record['reason'], reason)
+
+    def test_one_arm_fully_rejected_beside_recorded_values_is_inconclusive(self):
+        record = self.cold_report(dict(base=[10, 11, 12], pr=[st.REJECTED] * 3, control=[10, 11, 12]))
+        self.assertEqual((record['verdict'], record['summaries'], record['pr_base_ratio']), ('INCONCLUSIVE', None, None))
+        self.assertEqual(record['reason'], 'rejected cold samples exceed the limit of 2 per arm: pr 3')
+
+    def test_worker_rejected_cold_preparation_never_spawns_and_cleans_up(self):
+        # The real cold.prepare runs over a fake residency reader, so the private user copy is part of the
+        # rejected set; afterwards neither it nor its sample directory remains and the next sample runs.
+        work = self.root / 'work'
+        work.mkdir()
+        data = self.root / 'data'
+        (data / 'system.bin').write_bytes(b's')
+        root = self.root / 'profile'
+        profile = root / 'user'
+        profile.mkdir(parents=True)
+        (profile / 'user.bin').write_bytes(b'u')
+        (root / 'profile.manifest').write_text(st.PROFILE.manifest(profile))
+        library = self.root / 'libpinyin.dylib'
+        library.write_bytes(b'lib')
+        resident = [True]
+
+        def check(handle, path):
+            """Fake residency reader: one page per file, resident until the flag is cleared."""
+            return dict(path=str(path), pages=1, resident=int(resident[0]))
+
+        result = dict(status=0, pid=1, stdout=b'', stderr=b'', checkpoints={}, process_wall=1)
+        with mock.patch.object(worker, 'check_identity'), \
+                mock.patch.object(worker, 'execute', return_value=result) as execute, \
+                mock.patch.object(worker, 'parse', return_value=([], 'digest')), \
+                mock.patch.object(worker, 'userfiles', return_value={}), \
+                mock.patch.object(worker, 'exports', return_value=[]), \
+                mock.patch.object(st.cold, '_invalidate'), \
+                mock.patch.object(st.cold, '_check', side_effect=check), \
+                mock.patch.object(st.cold.os, 'fsync'), \
+                mock.patch.object(worker.sys, 'platform', 'darwin'):
+            campaign = worker.Worker(Path('worker'), {}, data, work, {}, (), None, 'now')
+            with self.assertRaises(st.cold.Rejected) as raised:
+                campaign.run(library, 'pinyin', profile, cold=True)
+            test_support.assert_not_called(self, execute)
+            record = raised.exception.record
+            self.assertEqual((record['verdict'], record['attempts'], record['resident']), ('REJECTED', 2, 3))
+            files = {Path(row['path']).name: Path(row['path']) for row in record['files']}
+            self.assertEqual(set(files), {'libpinyin.dylib', 'system.bin', 'user.bin'})
+            copy = files['user.bin']
+            self.assertEqual(copy.parent.parent, work.resolve() / 'sample')
+            self.assertFalse(copy.exists())
+            self.assertFalse((work / 'sample').exists())
+            self.assertEqual(list(work.iterdir()), [])
+            self.assertTrue(files['libpinyin.dylib'].exists() and files['system.bin'].exists())
+            # A stale sample directory would refuse this run.
+            resident[0] = False
+            row = campaign.run(library, 'pinyin', profile, cold=True)
+            self.assertEqual((row['cold']['verdict'], row['cold']['attempts']), ('QUALIFIED', 1))
+            self.assertEqual(execute.call_count, 1)
+            self.assertEqual(list(work.iterdir()), [])
 
     def test_worker_prepares_cold_files_before_spawning(self):
         work = self.root / 'work'
@@ -866,7 +1232,8 @@ class WorkerIntegration(unittest.TestCase):
                 self.assertEqual(kwargs['env']['OXPINYIN_STARTUP_STEADY'], '1')
                 command = command[command.index(str(self.executable)):]
             else:
-                self.assertNotIn('OXPINYIN_STARTUP_STEADY', kwargs['env'])
+                # Not assertNotIn(…, env): its failure message would print the whole environment.
+                self.assertIsNone(kwargs['env'].get('OXPINYIN_STARTUP_STEADY'))
             return execute(command, **kwargs)
         with mock.patch.dict(self.campaign.env, OXPINYIN_STARTUP_STEADY='inherited'), \
                 mock.patch.object(worker, 'execute', side_effect=run):

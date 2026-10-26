@@ -197,10 +197,29 @@ gets no PR/base ratio. Fault counts are diagnostic, not residency ratios.
 The statuses are 0 completed (including INCONCLUSIVE), 1 failure/refusal,
 2 usage error, 3 NOT COMPARABLE or INVALID exact control, 130 cancelled.
 Pin rows require the Layer 4 container path; Windows stays deferred (#950).
-Cold mode is refused on both hosts. macOS per-file APFS preparation is
-implemented and qualified below, but its rejection limit is shared with the
-Linux cold sampler (#1162) and unset; `--cache cold` refuses until a maintainer
-approves the limit. Linux cold sampling is still unimplemented.
+`--cache cold` runs on native macOS only. Linux cold sampling (#1162) is
+unimplemented and still refuses with status 1. Maintainer ruling (2026-10-25
+UTC, recorded 2026-10-25 17:53 UTC): "the shared cold-mode rejection limit is 2
+rejected samples per arm and metric. A metric with more than 2 rejected samples
+is INCONCLUSIVE. The limit is a fixed constant and is never derived from or
+tuned against campaign output."
+
+On macOS the controller prepares every timing and memory sample through
+`tools.dev.measure.cold` ([APFS cold preparation](#apfs-cold-preparation))
+after the user copy is made and before the worker is spawned. A set still
+resident after the second preparation is rejected. Its `sample` record carries
+the rejection (`cold.verdict` `REJECTED`) and no worker output. The sample is
+excluded, never pooled and never rerun, so `--rounds` and `--warmups` still
+count attempted rounds. Every metric report in a cold run carries `cold`: the
+limit (`REJECTION_LIMIT` in `tools/dev/measure/cold.py`, the one constant
+#1162 will import), the accepted and rejected counts of the measured samples
+per arm, and the rejected warm-ups, which never count toward the limit. A
+metric with more than 2 rejected samples in any arm, or with no round in which
+every arm was accepted, is INCONCLUSIVE with no summaries or ratio. Any other
+metric follows the usual rules over the rounds in which every arm was accepted,
+so paired ratios and controls compare like with like. Status stays 0. The
+Darwin metric is `darwin_resident_pages`; it appears only in `cold` records,
+never in a Linux-named field.
 
 Linux KC smoke acceptance completed on 2026-10-24 UTC at 08:23 with controller
 `1cea405cf297e68da8ca3caf97594de45f467ef8` and retained shipping build
@@ -285,11 +304,10 @@ just cold-qualify /tmp/cold-qualify
 ```
 
 `cold-qualify` is read-only: it maps and touches the named files and runs no
-worker. `REJECTION_LIMIT` in `tools/dev/measure/cold.py` is `None` and shared
-with #1162; no cold sample may run until a maintainer approves it. The native
-controller's sample records carry the preparation record and metric, but
-`--cache cold` refuses while the limit is unset. Files the sample does not own
-(libc, backend dylibs) stay out of the set, matching #1162's Linux scope.
+worker. `--cache cold` on macOS prepares each sample's set the same way and
+applies the rejection limit above; the native controller's sample records carry
+the preparation record and metric. Files the sample does not own (libc, backend
+dylibs) stay out of the set, matching #1162's Linux scope.
 
 ## Native teardown workload
 

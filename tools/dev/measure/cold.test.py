@@ -1,5 +1,6 @@
 #!/usr/bin/env -S uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal
 """Tests for APFS cold-page preparation and the shared rejection limit."""
+import ast
 import contextlib
 import io
 import json
@@ -103,12 +104,34 @@ class ColdTests(unittest.TestCase):
         self.assertEqual((record['pages'], record['resident'], record['attempts']), (0, 0, 1))
         mapping.assert_not_called()
 
-    def test_rejection_limit_is_shared_and_unset_until_approved(self):
-        self.assertIsNone(cold.REJECTION_LIMIT)
-        self.assertEqual(cold.refusal(),
-                         'cold cache requires an approved rejection limit (§7.8); none is set')
-        with mock.patch.object(cold, 'REJECTION_LIMIT', 2):
-            self.assertIsNone(cold.refusal())
+    def test_rejected_preparation_carries_the_rejection_record(self):
+        with self.assertRaises(cold.Rejected) as raised:
+            self.prepare_with([dict(pages=3, resident=2), dict(pages=3, resident=1)])
+        record = raised.exception.record
+        self.assertEqual((record['metric'], record['verdict'], record['attempts']),
+                         ('darwin_resident_pages', 'REJECTED', cold.ATTEMPTS))
+        self.assertEqual((record['value'], record['resident'], record['pages']), (1, 1, 3))
+        self.assertEqual([check['resident'] for check in record['checks']], [2, 1])
+        self.assertEqual([row['path'] for row in record['files']], [str(self.file)])
+        self.assertIn('1 of 3 darwin_resident_pages still resident after 2 preparations', str(raised.exception))
+        self.assertIsNone(cold.Rejected('no record').record)
+
+    def test_rejection_limit_is_the_maintainer_constant_never_computed(self):
+        # Maintainer ruling 2026-10-25 UTC: 2 rejected samples per arm and metric, fixed before any sample.
+        self.assertIs(type(cold.REJECTION_LIMIT), int)
+        self.assertEqual(cold.REJECTION_LIMIT, 2)
+        self.assertFalse(hasattr(cold, 'refusal'))
+        # Structurally: one module-level binding, a literal, never reassigned from a function.
+        tree = ast.parse(Path(cold.__file__).read_text())
+        bindings = [node for node in ast.walk(tree) if isinstance(node, ast.Name)
+                    and node.id == 'REJECTION_LIMIT' and not isinstance(node.ctx, ast.Load)]
+        self.assertEqual(len(bindings), 1)
+        assignment = next(node for node in tree.body if isinstance(node, ast.Assign)
+                          and [t.id for t in node.targets if isinstance(t, ast.Name)] == ['REJECTION_LIMIT'])
+        self.assertIsInstance(assignment.value, ast.Constant)
+        self.assertEqual(assignment.value.value, 2)
+        self.assertFalse([node for node in ast.walk(tree) if isinstance(node, (ast.Global, ast.Nonlocal))
+                          and 'REJECTION_LIMIT' in node.names])
 
     def test_main_prints_the_darwin_metric_and_refuses_other_hosts(self):
         evidence = dict(metric=cold.METRIC, verdict='QUALIFIED', files=[])

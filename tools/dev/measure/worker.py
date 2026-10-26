@@ -248,7 +248,9 @@ class Worker:
         Optionally wrap the worker in scoped Callgrind or gather memory checkpoints.
         With cold, prepare the copied facade, system data and private user files
         on APFS after the copy and before spawning, so preparation is outside
-        the timed region; the preparation record travels with the sample.
+        the timed region; the preparation record travels with the sample. A set
+        still resident after the second preparation raises cold.Rejected before
+        the worker is spawned; the controller counts and excludes that sample.
         Probe calls return status and stream digests even on failure; other
         nonzero statuses raise ValueError. Successful non-probes return raw
         streams, documents, user-file observations, and wall time in ns.
