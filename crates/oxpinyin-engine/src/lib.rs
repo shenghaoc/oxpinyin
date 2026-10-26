@@ -80,7 +80,7 @@ pub use cursor::{
 };
 pub use error::{EngineError, TrainingSpanFault};
 pub use key::{KeyInput, LogicalKey, Modifiers};
-pub use nbest::NbestShape;
+pub use nbest::{NbestShape, glib_merge_sort};
 pub use preedit::{Preedit, PreeditSpan, SpanStyle};
 pub use session::{
     KeyOutcome, MAX_INPUT_BYTES, Selection, Session, check_lookup_offset_range,

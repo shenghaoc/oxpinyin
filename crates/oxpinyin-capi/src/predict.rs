@@ -203,54 +203,28 @@ fn guess_predicted_result(
     Ok(true)
 }
 
-/// Reproduce GLib's stable half-split merge order, including comparisons
-/// whose guint32 difference converts to a negative gint. A wrapping score
-/// comparator need not be transitive, so Rust's total-order sort is unsuitable.
-/// GLib 2.90.0 glib/gqsort.c:64-183 halves n/2 and takes the left item on <= 0.
-/// Sort indices and permute in place: O(n log n) time and two usize arrays.
+/// `g_array_sort_with_data(candidates, compare_item_with_sort_option,
+/// SORT_BY_PHRASE_LENGTH | SORT_BY_FREQUENCY)` (`pinyin.cpp:2440-2445`):
+/// phrase length descending, then `-(freq_lhs - freq_rhs)` in `guint32`
+/// arithmetic as a `gint` (`:1701-1705`). A λ outside `[0, 1]` makes that
+/// wrap and the comparator cyclic, so the order is GLib's merge
+/// (`oxpinyin_engine::glib_merge_sort`). Sorts indices and permutes in
+/// place: O(n log n) time; the index array, its destinations and the
+/// merge's half copies, all `usize`.
 fn sort_predicted(items: &mut [Predicted]) {
-    fn merge(items: &[Predicted], order: &mut [usize], scratch: &mut [usize]) {
-        if order.len() <= 1 {
-            return;
-        }
-        let middle = order.len() / 2;
-        let (left, right) = order.split_at_mut(middle);
-        let (left_scratch, right_scratch) = scratch.split_at_mut(middle);
-        merge(items, left, left_scratch);
-        merge(items, right, right_scratch);
-        let (mut lhs, mut rhs) = (0, middle);
-        for target in scratch.iter_mut() {
-            let take_left = if rhs == order.len() {
-                true
-            } else if lhs == middle {
-                false
-            } else {
-                let left = &items[order[lhs]];
-                let right = &items[order[rhs]];
-                let left_len = left.phrase_length;
-                let right_len = right.phrase_length;
-                if left_len != right_len {
-                    left_len > right_len
-                } else {
-                    // pinyin.cpp:1701-1705: -(freq_lhs - freq_rhs),
-                    // guint32 arithmetic followed by the gint conversion.
-                    (right.frequency as u32).wrapping_sub(left.frequency as u32) as i32 <= 0
-                }
-            };
-            if take_left {
-                *target = order[lhs];
-                lhs += 1;
-            } else {
-                *target = order[rhs];
-                rhs += 1;
-            }
-        }
-        order.copy_from_slice(scratch);
-    }
-
     let mut order: Vec<usize> = (0..items.len()).collect();
+    oxpinyin_engine::glib_merge_sort(&mut order, &|&lhs, &rhs| {
+        let (left, right) = (&items[lhs], &items[rhs]);
+        if left.phrase_length != right.phrase_length {
+            return if left.phrase_length > right.phrase_length {
+                -1
+            } else {
+                1
+            };
+        }
+        (right.frequency as u32).wrapping_sub(left.frequency as u32) as i32
+    });
     let mut scratch = vec![0; items.len()];
-    merge(items, &mut order, &mut scratch);
     // Reuse scratch for old-index -> new-index destinations. Cycle swaps
     // move Strings without cloning them or using unchecked accesses.
     for (new, old) in order.into_iter().enumerate() {
