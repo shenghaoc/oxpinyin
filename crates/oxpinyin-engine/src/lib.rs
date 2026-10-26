@@ -65,6 +65,7 @@ mod key;
 mod nbest;
 mod phrase;
 mod preedit;
+mod ranking;
 mod session;
 mod storage;
 
@@ -80,10 +81,14 @@ pub use cursor::{
 };
 pub use error::{EngineError, TrainingSpanFault};
 pub use key::{KeyInput, LogicalKey, Modifiers};
-pub use nbest::{NbestShape, glib_merge_sort};
+pub use nbest::NbestShape;
 pub use preedit::{Preedit, PreeditSpan, SpanStyle};
+pub use ranking::{RankScore, interpolated_score};
 pub use session::{
     CandidateRanking, KeyOutcome, MAX_INPUT_BYTES, Selection, Session, check_lookup_offset_range,
     normalize_lookup_offset,
 };
 pub use storage::StoragePaths;
+
+#[cfg(feature = "diagnostic_ranking")]
+pub use nbest::tail_attribution;

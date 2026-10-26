@@ -741,6 +741,41 @@ oxpinyin reproduces the wrap (#1275; contract-diff
 
 ---
 
+## 10. The trellis selection predicate is not a strict weak ordering
+
+Source read at 074a2219 in the lane's detached pin checkout:
+`src/lookup/phonetic_lookup.h:65-91,141-172` and
+`src/lookup/phonetic_lookup_heap.h:56-79`; `include/stl_lite.h:38-44`
+aliases `std_lite` to `std`. No issue has been filed.
+
+With nstore > 1, let P = log(1.2f), L be character length and S the log
+possibility (larger is better). If L(a)+1=L(b) and S(b)>S(a)+P,
+the first clause says a is less than b, while the shorter-sentence
+fallback also says b is less than a. The reverse adjacent-length clause
+at :75-77 is masked by the fallback at :87-88: every longer left value
+is already less regardless of score.
+
+Cycles also occur. For lengths 1/1/2, take scores -3P/-2P/0:
+a < b by score, b < c by the adjacent clause, c < a by length.
+For lengths 1/2/3, scores -4P/-2P/0 give the same cycle.
+These are valid finite possibilities; NaN is unnecessary.
+
+The C++ heap algorithms require their comparator to induce a strict
+weak ordering ([alg.sorting.general](https://eel.is/c++draft/alg.sorting.general#3),
+covering [heap operations](https://eel.is/c++draft/alg.heap.operations)).
+This predicate violates asymmetry and transitivity, so
+the selected values depend on the heap implementation's comparison
+sequence. oxpinyin preserves the product predicate and counts while
+using an explicitly directed winner tree; the implementation-dependent
+difference is recorded in [1297-selection-structure.md](1297-selection-structure.md).
+
+Two independent upstream fix options: exclude adjacent lengths from the
+shorter-sentence fallback (the minimal asymmetry fix, which still leaves
+the 1/2/3 cycles), or define one adjusted score for all lengths with a
+documented total tie order. Neither product-level fix is applied in this
+Phase 2 cleanup. The existing margin quantisation (263 Cost units
+against gfloat log(1.2f)) remains the earlier class (a) difference.
+
 ## Filing notes
 
 - Independence: no fix touches another; file items 1–4 as four issues.

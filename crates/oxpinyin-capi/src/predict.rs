@@ -31,7 +31,7 @@ struct Predicted {
     phrase_length: usize,
     token: u32,
     candidate_type: lookup_candidate_type_t,
-    frequency: u64,
+    score: oxpinyin_engine::RankScore,
 }
 
 /// Fills `inst.candidates` with predicted phrases for `prefix`.
@@ -167,13 +167,12 @@ fn guess_predicted_result(
 
     sort_predicted(&mut items);
 
-    // Dedup retains the numerically higher score even if the pin's signed
-    // comparator put it later (`pinyin.cpp:2128-2136`). Equal scores keep
+    // Dedup retains the higher score (`pinyin.cpp:2128-2136`). Equal scores keep
     // the first row. The winner remains at its original sorted position.
     let mut winners = std::collections::HashMap::new();
     for (index, item) in items.iter().enumerate() {
         let winner = winners.entry(item.text.clone()).or_insert(index);
-        if item.frequency > items[*winner].frequency {
+        if item.score > items[*winner].score {
             *winner = index;
         }
     }
@@ -202,40 +201,14 @@ fn guess_predicted_result(
     Ok(true)
 }
 
-/// `g_array_sort_with_data(candidates, compare_item_with_sort_option,
-/// SORT_BY_PHRASE_LENGTH | SORT_BY_FREQUENCY)` (`pinyin.cpp:2440-2445`):
-/// phrase length descending, then `-(freq_lhs - freq_rhs)` in `guint32`
-/// arithmetic as a `gint` (`:1701-1705`). A λ outside `[0, 1]` makes that
-/// wrap and the comparator cyclic, so the order is GLib's merge
-/// (`oxpinyin_engine::glib_merge_sort`). Sorts indices and permutes in
-/// place: O(n log n) time; the index array, its destinations and the
-/// merge's half copies, all `usize`.
+/// Stable descending phrase length and interpolated score, preserving ties.
 fn sort_predicted(items: &mut [Predicted]) {
-    let mut order: Vec<usize> = (0..items.len()).collect();
-    oxpinyin_engine::glib_merge_sort(&mut order, &|&lhs, &rhs| {
-        let (left, right) = (&items[lhs], &items[rhs]);
-        if left.phrase_length != right.phrase_length {
-            return if left.phrase_length > right.phrase_length {
-                -1
-            } else {
-                1
-            };
-        }
-        (right.frequency as u32).wrapping_sub(left.frequency as u32) as i32
+    items.sort_by(|left, right| {
+        right
+            .phrase_length
+            .cmp(&left.phrase_length)
+            .then_with(|| right.score.cmp(&left.score))
     });
-    let mut scratch = vec![0; items.len()];
-    // Reuse scratch for old-index -> new-index destinations. Cycle swaps
-    // move Strings without cloning them or using unchecked accesses.
-    for (new, old) in order.into_iter().enumerate() {
-        scratch[old] = new;
-    }
-    for index in 0..items.len() {
-        while scratch[index] != index {
-            let target = scratch[index];
-            items.swap(index, target);
-            scratch.swap(index, target);
-        }
-    }
 }
 
 /// Whether `prefix` is one of the instance's own candidate strings; if so,
@@ -382,7 +355,7 @@ fn append_predicted_bigrams(
                 phrase_length,
                 // The caller passes null_token to the scorer, so the bigram
                 // term is zero even with DYNAMIC_ADJUST (`pinyin.cpp:2418,2438`).
-                frequency: predicted_frequency(dict, Some(store), *token, total, lambda),
+                score: predicted_score(dict, Some(store), *token, total, lambda),
                 text,
                 token: *token,
                 candidate_type: lookup_candidate_type_t::PREDICTED_BIGRAM_CANDIDATE,
@@ -464,12 +437,9 @@ fn append_predicted_prefix(
         let display_length = display
             .char_count()
             .unwrap_or_else(|| phrase_length.saturating_sub(prefix_len));
-        // The sort key is the amplified law, not the raw count: the pin's
-        // PREDICTED_PREFIX branch computes `(1−λ)·unigram/total·2²⁴`
-        // truncated (`pinyin.cpp:1811-1824`), the same law the normal
-        // candidate path pins.
+        // Prefix prediction uses the shared unigram-only interpolation.
         into.push(Predicted {
-            frequency: predicted_frequency(dict, user, token, total, lambda),
+            score: predicted_score(dict, user, token, total, lambda),
             text: display,
             phrase_length: display_length,
             token,
@@ -488,13 +458,13 @@ fn predicted_total(lm: &SharedLm) -> u64 {
 /// Both predicted row kinds read the live item counter. Imports, training
 /// and system ABI increments share store rows; remaining transient increments
 /// live in the dictionary overlay.
-fn predicted_frequency(
+fn predicted_score(
     dict: &SharedDict,
     user: Option<&UserStore>,
     token: u32,
     total: u64,
     lambda: f32,
-) -> u64 {
+) -> oxpinyin_engine::RankScore {
     let store_count = || {
         user.and_then(|store| store.unigram_delta(token).ok())
             .unwrap_or(0)
@@ -508,34 +478,7 @@ fn predicted_frequency(
     };
     let unigram =
         item_count.wrapping_add(dict.unigram_delta(token).unwrap_or(0)) & u64::from(u32::MAX);
-    amplified_frequency(unigram, total, lambda)
-}
-
-/// The pin's candidate `m_freq` for predicted rows: the unigram possibility
-/// `(1−λ)·unigram/total` computed and amplified by 2²⁴ in C `float`
-/// arithmetic, then truncated like the `guint32` assignment
-/// (`pinyin.cpp:1811-1824`, the `PREDICTED_PREFIX` branch).
-///
-/// Matches the engine's ordinary in-range probe values. Its copy is private
-/// and widening it would change the crate's public surface, so this copy is
-/// bound to those values by
-/// [`tests::amplified_law_mirrors_the_session_pinning_values`] asserting the
-/// same probe values `amplified_frequency_pins_the_class_a_probe_values`
-/// pins there.
-fn amplified_frequency(unigram: u64, total: u64, lambda: f32) -> u64 {
-    if total == 0 {
-        return 0;
-    }
-    let possibility = (1.0_f32 - lambda) * unigram as f32 / total as f32;
-    let score = possibility * 256.0 * 256.0 * 256.0;
-    // The pinned x86-64 scorer converts with cvttss2si to a 64-bit integer
-    // then stores eax (pinyin.cpp:1821-1824, 1862-1866). Preserve its low
-    // 32 bits for finite scores beyond guint32 instead of Rust saturation.
-    // An invalid 64-bit conversion yields INT64_MIN, whose low bits are 0.
-    if !score.is_finite() || score >= i64::MAX as f32 || score < i64::MIN as f32 {
-        return 0;
-    }
-    u64::from(score as i64 as u32)
+    oxpinyin_engine::interpolated_score(unigram, total, 0.0, lambda)
 }
 
 pub(crate) fn phrase_text(dict: &SharedDict, store: &UserStore, token: u32) -> Option<PhraseText> {
@@ -549,10 +492,6 @@ pub(crate) fn phrase_text(dict: &SharedDict, store: &UserStore, token: u32) -> O
 mod tests {
     use super::select_prefix_rows;
     use oxpinyin_core::PhraseText;
-
-    fn amplified_frequency(unigram: u64, total: u64) -> u64 {
-        super::amplified_frequency(unigram, total, 0.312_699)
-    }
 
     #[test]
     fn a_sole_missing_suggestion_survives_the_length_gate() {
@@ -606,29 +545,5 @@ mod tests {
         assert_eq!(kept.len(), 1);
         assert_eq!(kept[0].0, 3);
         assert_eq!(sole, None);
-    }
-
-    #[test]
-    fn amplified_law_mirrors_the_session_pinning_values() {
-        // The same probe values `amplified_frequency_pins_the_class_a_probe_values`
-        // pins for the engine's private copy (`session.rs`): binds this
-        // mirror to the pinned law so the two cannot drift.
-        const PIN_TOTAL: u64 = 51_051_831;
-        assert_eq!(amplified_frequency(1, PIN_TOTAL), 0);
-        assert_eq!(amplified_frequency(3, PIN_TOTAL), 0);
-        assert_eq!(amplified_frequency(14, PIN_TOTAL), 3);
-        assert_eq!(amplified_frequency(16, PIN_TOTAL), 3);
-        assert_eq!(amplified_frequency(18, PIN_TOTAL), 4);
-        assert_eq!(amplified_frequency(20, PIN_TOTAL), 4);
-        assert_eq!(amplified_frequency(21, PIN_TOTAL), 4);
-        assert_eq!(amplified_frequency(77, PIN_TOTAL), 17);
-        assert_eq!(amplified_frequency(78, PIN_TOTAL), 17);
-        assert_eq!(amplified_frequency(87, PIN_TOTAL), 19);
-        assert_eq!(amplified_frequency(0, PIN_TOTAL), 0);
-    }
-
-    #[test]
-    fn amplified_law_zero_total_is_zero() {
-        assert_eq!(amplified_frequency(100, 0), 0);
     }
 }

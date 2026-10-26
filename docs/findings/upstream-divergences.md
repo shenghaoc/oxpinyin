@@ -665,16 +665,19 @@ line.)
   function of (input, user state, config) on every OS. The float
   dependency also reaches the tiebreak (heap-pop order is seeded by the
   exact-float comparator), so it cannot be recovered in fixed point
-  either. Contrast the candidate frequency `amplified_frequency`
-  (`(1−λ)·unigram/total·2²⁴` — IEEE-754 basic ops only, no
-  transcendental), which *is* bit-reproducible and ported to 100%.
+  either. Candidate interpolation uses IEEE-754 basic operations without
+  a transcendental. Its current `RankScore` ordering removes the former
+  scaled integer key under [#1297](1297-ranking-score.md), independently
+  of this class (a) accumulation difference.
 - **Externally observable:** yes, on the sentence surface only. Against
   the pinned oracle over a 496-input W2 sample
   (`fixtures/w4/oracle-sentence-surface.txt`): 1-best 491/496, n-best
   distinct-set 396/496, n-best ordered / first-6 rows 390/496; the 106
   ordered misses are all trellis-side (0 candidate-surface leaks). The
-  candidate surface, which does not share this arithmetic, is
-  bit-identical. Frozen as a permanent Stage-1 divergence by maintainer
+  candidate surface in that retained run, which did not share this
+  arithmetic, was bit-identical. Current score-key differences are
+  separately recorded under #1297. Frozen as a permanent Stage-1
+  divergence by maintainer
   ruling 2026-09-02 at 488/385/379 and re-frozen 2026-09-04 at 491/396/390
   after P6 (`345af16d`) moved the trellis's P_unigram source —
   `sentence-surface.md` §12, asserted by
@@ -3958,29 +3961,32 @@ the proposed issue texts are in
   the arm64 conversion is `libpinyin.so.15.0.0+0x72644`
   (predicted-prefix) and the shared store is `+0x72530`; the amd64
   conversion is `+0x8fcce` and the store is `+0x8fb6e`.
-- **What oxpinyin does instead:** `oxpinyin_capi::predict::amplified_frequency`
-  reproduces the amd64 `cvttss2si` result (`score as i64 as u32`, with
-  non-finite and 64-bit-out-of-range scores as 0), and
-  `oxpinyin_engine::session::guint32_of_score` is the same law for the
-  ordinary candidate lists. Both architectures therefore get the amd64
-  key; `oxpinyin_engine::session::glib_rank_sort` and
-  `RankKey::pin_compare` reproduce the pin's `guint32` comparator and
-  GLib's merge.
-- **Externally observable:** yes, on arm64 only, in the candidate order.
-  `row58-unsigned-score-off` and `row58-unsigned-score-on` of
+- **What oxpinyin does instead:** the shared `RankScore` and
+  `interpolated_score` retain the product interpolation without the 2²⁴
+  integer scale or float-to-unsigned conversion. `rank_candidates` stably
+  sorts enabled `RankKey` fields using `RankKey::compare`;
+  `pinyin::predict::sort_predicted` stably sorts phrase length then score.
+  These paths compare fields directly, without unsigned subtraction or a
+  GLib merge. See [1297-ranking-score](1297-ranking-score.md).
+- **Externally observable:** yes between the pin architectures, in the
+  candidate order. `row58-unsigned-score-off` and
+  `row58-unsigned-score-on` of
   `contract-diff.py`: import `我甲甲` with count 1431655631, bring the
   facade total to 10000000 through the absent-token delta, then call
   `pinyin_guess_predicted_candidates("我")`. The frequency is
   `4952525312.0f`; amd64 stores `0x27318a00 = 657558016` and lists `甲甲`
   first, arm64 stores `0xffffffff` and lists it last among the
-  two-character rows. The amd64 pin and the amd64 subject are
-  byte-identical; the arm64 subject also matches the amd64 pin.
+  two-character rows. Those numeric keys describe the pin and the retained
+  #1132 implementation, not current Rust storage. Current source ranks
+  this large positive score first without integer conversion; these two
+  cases remain ordinary amd64 MATCH controls. No new arm64 run is claimed.
 - **Classification:** pin portability defect to report upstream; not an
   oxpinyin divergence and no class (a)/(b)/(c) exception. The observed
-  amd64 behaviour is the Stage 2 target (policy row 83); the arm64 pin is
-  the outlier.
+  amd64 reference distinguishes this pin portability defect (policy row
+  83); #1297 does not reclassify the defect or reproduce its conversion.
 - **Held by:** `row58-unsigned-score-off` and `row58-unsigned-score-on`
-  (arm64-excluded by #1137; amd64 MATCH on bdb, kc and tkrzw).
+  (still arm64-excluded by #1137 and registered as ordinary amd64 MATCH
+  controls; earlier bdb/kc/tkrzw results are retained, not new executions).
 - **Proposed upstream report:** issue A in
   `arm64-pin-portability-1137.md` ("pinyin candidate frequency:
   undefined float-to-`guint32` conversion is target-dependent").
@@ -4000,14 +4006,15 @@ the proposed issue texts are in
   `fcvtzu` for arm64 (`+0x70938`, store `+0x7093c`). amd64 keeps the
   low 32 bits of `-k` (for `0 < k < 2³²`, that is `2³² - k`); arm64
   stores 0, so every negative key is equal.
-- **What oxpinyin does instead:** the shared engine law
-  `oxpinyin_engine::session::amplified_frequency_with_bigram` and
-  `guint32_of_score` produces the amd64 low-32 key on both
-  architectures, and `glib_rank_sort` / `RankKey::pin_compare` order the
-  rows with the pin's `guint32` comparator. The arm64 subject therefore
-  matches the amd64 pin row for row.
-- **Externally observable:** yes, on arm64 only, in
-  `zhuyin_guess_candidates_after_cursor`. With
+- **What oxpinyin does instead:** `candidate_scores` uses the shared
+  `interpolated_score`/`RankScore` without converting negative scores to
+  unsigned keys. `rank_candidates` uses a stable sort over the enabled
+  `RankKey` fields, comparing them directly. The current Rust language
+  artefacts are recorded independently under #1297; they do not redefine
+  the pin's cross-architecture portability defect.
+- **Externally observable:** yes between pin architectures, in
+  `zhuyin_guess_candidates_after_cursor`. In the retained #1137 pin
+  observations, with
   `lambda parameter:1.5`, `2` and `1e6` in `table.conf`, the arm64 pin's
   candidate rows 3–12 are the collection order within the length-1 group
   `疒 祢 禰 妳 呢 堄 逆 猊 霓 儗` and are identical for all three λ
@@ -4019,8 +4026,13 @@ the proposed issue texts are in
   oxpinyin divergence and no class (a)/(b)/(c) exception (policy row 83).
 - **Held by:** `table-conf-lambda-million-zhuyin`,
   `table-conf-lambda-one-and-a-half-zhuyin` and
-  `table-conf-lambda-two-zhuyin` (arm64-excluded by #1137; amd64 MATCH
-  on bdb, kc and tkrzw).
+  `table-conf-lambda-two-zhuyin` (still arm64-excluded by #1137). Their
+  current amd64 specifications name `1297-selection-structure.md` and
+  retain exact POLICY-ACCEPTED Rust observations, including sentence/list
+  head and count changes. Add/save/train results, files and diagnostics
+  remain checked. The old amd64 MATCH results in #1137 predate #1297.
+  This separate language-artefact record does not reclassify the pin
+  portability defect above.
 - **Proposed upstream report:** issue B in
   `arm64-pin-portability-1137.md` ("libzhuyin candidate frequency: λ > 1
   orders candidates differently on arm64").
@@ -4073,6 +4085,22 @@ coverage. Earlier Rust allocations may still terminate; no identical
 allocation graph or whole-process OOM equivalence is claimed. Real GArray
 growth stays fatal. Nonfatal `token_get_phrase` conversion belongs to
 #1224 and is unchanged by #1227.
+
+### Native ranking artefacts (#1297 Phase 2)
+
+The following independent language artefacts are accepted under limb 3 of
+the native Rust policy (#1303, merged #1304), as classified at PR #1306
+`6b641395`. Each keeps its own record and exact POLICY-ACCEPTED cases:
+
+- [1297-selection-structure — tournament selection with a cyclic predicate](1297-selection-structure.md).
+- [1297-tail-score-order — final tail score ordering](1297-tail-score-order.md).
+- [1297-ranking-score — interpolated scores without integer conversion](1297-ranking-score.md).
+- [1297-frequency-order — frequency comparisons without unsigned subtraction](1297-frequency-order.md).
+- [1297-pinyin-span — the full pinyin span](1297-pinyin-span.md).
+
+The trellis predicate, its 263-unit margin, nstore 2/1, nbest 3/1, the
+32-entry beam, option gates and interpolation rules remain product behaviour.
+ABI, ownership, persistent formats, diagnostics and data ownership are unchanged.
 
 ### NULL string conversion after defined prior work (#1279)
 

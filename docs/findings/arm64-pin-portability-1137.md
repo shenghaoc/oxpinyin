@@ -490,31 +490,47 @@ here.
 
 ## Oxpinyin's position
 
-Oxpinyin reproduces the amd64 pin, not the arm64 pin, on both
-architectures, and that is the Stage 2 target (`AGENTS.md`, "Stage 2";
-`docs/findings/compatibility-policy.md` row 83). The relevant code is:
+Current #1297 source uses shared `interpolated_score`/`RankScore`, stable
+`rank_candidates` over enabled `RankKey` fields, and stable
+`pinyin::predict::sort_predicted`. It does not scale into unsigned integer
+keys, reproduce a target's float-to-integer conversion, or emulate GLib's
+merge. These language-artefact changes are recorded in
+[1297-ranking-score](1297-ranking-score.md) and
+[1297-frequency-order](1297-frequency-order.md).
+
+The source still registers `row58-unsigned-score-off/on` as ordinary amd64
+MATCH controls: their very large positive score ranks first under the new
+score as under the amd64 reference. The three zhuyin λ > 1 cases now name
+`1297-selection-structure.md` and have exact POLICY-ACCEPTED observations
+for the independent #1297 changes. All five remain excluded against the
+arm64 pin by #1137. These current case specifications do not change the
+classification of the two pin portability defects above, and no new arm64
+execution is claimed.
+
+### Historical subject in the #1132 captures
+
+The subject used for the retained #1132 comparison predates #1297. Its
+implementation was:
 
 - Predicted candidates: `oxpinyin_capi::predict::amplified_frequency`
-  computes the same `f32` expression and converts with
-  `u64::from(score as i64 as u32)`, which keeps the low 32 bits of the
-  x86-64 `cvttss2si` result for finite in-range scores. It is the same
+  computed the same `f32` expression and converted with
+  `u64::from(score as i64 as u32)`, which kept the low 32 bits of the
+  x86-64 `cvttss2si` result for finite in-range scores. It was the same
   law as `oxpinyin_engine::session::guint32_of_score`, which the engine
-  uses for ordinary candidate lists.
+  used for ordinary candidate lists.
 - Ordinary candidates, both facades:
   `oxpinyin_engine::session::amplified_frequency_with_bigram` and
   `guint32_of_score` (`crates/oxpinyin-engine/src/session/mod.rs`). The
-  latter returns 0 for non-finite or 64-bit-out-of-range scores, which
+  latter returned 0 for non-finite or 64-bit-out-of-range scores, which
   is the low 32 bits of `cvttss2si`'s `INT64_MIN`.
 - Candidate order: `oxpinyin_engine::session::glib_rank_sort` and
-  `RankKey::pin_compare` reproduce the pin's `guint32` subtraction and
+  `RankKey::pin_compare` reproduced the pin's `guint32` subtraction and
   GLib's merge, as row 83 records.
 
-Both paths therefore produce `0x27318a00` for the `row58` candidate and
+Both paths therefore produced `0x27318a00` for the `row58` candidate and
 `2³² - k` for the zhuyin negative frequencies on arm64 as well as amd64.
-That is why the arm64 subject hashes equal the amd64 pin hashes in the
-#1132 table. No oxpinyin change is owed. No case shows oxpinyin
-depending on pin undefined behaviour beyond the deliberate
-`cvttss2si` reproduction that row 83 already records.
+That explains why the arm64 subject hashes equalled the amd64 pin hashes
+in the #1132 table.
 
 ## Proposed upstream issues
 

@@ -30,6 +30,110 @@ spec.loader.exec_module(driver)
 contract = vars(driver)
 
 
+class CandidateScoreAttributionTests(unittest.TestCase):
+    def test_pinyin_chewing_is_a_separate_existing_fixture_stratum(self):
+        strata = driver.candidate_input_strata('pinyin')
+        self.assertEqual(set(strata), {'full_pinyin', 'chewing_standard'})
+        self.assertEqual(strata['chewing_standard']['parser'], 'parse_more_chewings')
+        self.assertIn('su3cl3', strata['chewing_standard']['inputs'])
+        self.assertEqual(set(driver.candidate_input_strata('zhuyin')), {'full_pinyin'})
+        calls = []
+        def fn(name, *signature):
+            def call(*args):
+                calls.append(name)
+                return len(args[-1]) if name.startswith('parse_more_') else True
+            return call
+        kit = SimpleNamespace(mode='pinyin', ctx=object(), inst=object(), fn=fn)
+        tiny = {name: dict(source, inputs=source['inputs'][:1]) for name, source in strata.items()}
+        with patch.object(driver, 'candidate_input_strata', return_value=tiny), \
+                patch.object(driver, 'guess_rows', return_value={'ret': True, 'n': 1, 'rows': [[2, 'a']]}):
+            observed = driver.ranking_candidate_windows(kit)
+        self.assertEqual(set(observed), set(tiny))
+        self.assertEqual(calls.count('parse_more_chewings'), 1)
+        self.assertEqual(calls.count('parse_more_full_pinyins'), 1)
+        self.assertNotIn('guess_sentence', calls)
+
+    def test_changed_row_multiplicity_accounts_for_count_without_relaxing_envelopes(self):
+        base = dict(sources={}, windows=[dict(input='ni', parsed=2, ret=True, n=2, rows=[[2, 'a'], [2, 'a']])])
+        subject = copy.deepcopy(base)
+        subject['windows'][0].update(n=1, rows=[[2, 'a']])
+        self.assertEqual(driver.candidate_change_counts(base, subject)['row_set'],
+                         dict(windows=1, first=0, top5=1, largest_changed_position=2))
+        subject['windows'][0]['parsed'] = 1
+        with self.assertRaisesRegex(ValueError, 'non-ranking'):
+            driver.candidate_change_counts(base, subject)
+
+    def test_full_window_metrics_include_positions_beyond_top_five(self):
+        base = dict(sources={'stratum': 'digest'}, windows=[dict(input='nihao', parsed=5, ret=True,
+                    rows=[[2, str(i)] for i in range(8)])])
+        subject = copy.deepcopy(base)
+        subject['windows'][0]['rows'][6:8] = reversed(subject['windows'][0]['rows'][6:8])
+        self.assertEqual(driver.candidate_change_counts(base, subject),
+                         dict(windows=1,
+                              order_only=dict(windows=1, first=0, top5=0, largest_changed_position=8),
+                              row_set=dict(windows=0, first=0, top5=0, largest_changed_position=0)))
+        subject['windows'][0]['rows'][0:2] = reversed(subject['windows'][0]['rows'][0:2])
+        result = driver.candidate_change_counts(base, subject)
+        self.assertEqual((result['order_only']['first'], result['order_only']['top5']), (1, 1))
+
+    def test_order_only_and_row_multiset_changes_have_separate_head_counts(self):
+        base = dict(sources={'stratum': 'digest'}, windows=[
+            dict(input='ni', parsed=2, ret=True, rows=[[2, 'a'], [2, 'b']]),
+            dict(input='hao', parsed=3, ret=True, rows=[[2, 'a'], [2, 'a'], [2, 'b']])])
+        subject = copy.deepcopy(base)
+        subject['windows'][0]['rows'].reverse()
+        # The set stays {a, b}, but multiplicity changes: this is a row-set
+        # change, not an order-only permutation. Its first candidate stays a.
+        subject['windows'][1]['rows'] = [[2, 'a'], [2, 'b'], [2, 'b']]
+        self.assertEqual(driver.candidate_change_counts(base, subject),
+                         dict(windows=2,
+                              order_only=dict(windows=1, first=1, top5=1, largest_changed_position=2),
+                              row_set=dict(windows=1, first=0, top5=1, largest_changed_position=2)))
+
+    def test_incompatible_modes_are_rejected_before_dispatch_or_artifact_checks(self):
+        options = [
+            ['--plan-only'], ['--list-tags'], ['--cases', 'default-option-parse'],
+            ['--issue', '1297'], ['--family', 'separator'], ['--observations', 'capture'],
+            ['--teardown'], ['--per-call', 'wrap'], ['--expect-parent'],
+            ['--regenerate-sentence-ties', 'fixture'], ['--axis-c-replacement', 'options'],
+            ['--axis-c-mutation', 'C-m1-r'], ['--axis-c-snapshot-check'],
+            ['--axis-c-mutant-pinyin-so', 'mutant'], ['--axis-c-mutant-zhuyin-so', 'mutant'],
+            ['--function-order', 'base/pinyin=policy'], ['--unordered-arm', 'base'],
+            ['--per-call-attribution'], ['--per-call-operations', 'lookup'],
+            ['--per-call-cpu', '0'], ['--per-call-facades', 'pinyin'],
+            ['--per-call-attribution-limit', '0'], ['--jobs', '2'], ['--case-timeout', '10'],
+            ['--teardown-stage', 'provision'], ['--teardown-cache', 'cold'],
+            ['--teardown-work-dir', 'work'], ['--teardown-cpu', '0'],
+            ['--teardown-cases', 'empty'], ['--teardown-facades', 'pinyin'],
+            ['--teardown-attribution-case', 'empty'], ['--run-platform-excluded'],
+        ]
+        for flags in options:
+            error = io.StringIO()
+            with self.subTest(flags=flags), patch.object(
+                    sys, 'argv', ['driver', '--candidate-score-attribution', *flags]), \
+                    patch.object(driver, 'candidate_score_attribution') as dispatch, \
+                    patch.object(driver, 'check_tkrzw') as artifacts, \
+                    patch.object(driver, 'tag_index') as listing, \
+                    contextlib.redirect_stderr(error), self.assertRaises(SystemExit) as caught:
+                driver.run_main()
+            self.assertEqual(caught.exception.code, 2)
+            self.assertIn('candidate attribution is a separate ranking-driver mode', error.getvalue())
+            dispatch.assert_not_called()
+            artifacts.assert_not_called()
+            listing.assert_not_called()
+
+    def test_candidate_attribution_rejects_nonranking_or_provenance_changes(self):
+        base = dict(sources={'stratum': 'digest'}, windows=[dict(input='n', parsed=1, ret=True, rows=[])])
+        for field in ('sources', 'parsed'):
+            subject = copy.deepcopy(base)
+            if field == 'sources':
+                subject['sources']['stratum'] = 'changed'
+            else:
+                subject['windows'][0]['parsed'] = 2
+            with self.assertRaises(ValueError):
+                driver.candidate_change_counts(base, subject)
+
+
 class PolicyAcceptedTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -1307,6 +1411,34 @@ class SelectionTests(DriverFixtureCase):
                 self.assertIs(original['fn'], first)
             self.assertIs(driver.case('other-case')(second), second)
             self.assertEqual(list(driver.CASES), ['unique-case', 'other-case'])
+
+    def test_duplicate_policy_requires_explicit_composition(self):
+        probe = lambda k: None
+        with patch.object(driver, 'CASES', {'case': driver.case_spec(fn=probe)}):
+            driver.register_policy('case', 'first.md')
+            for record in ('first.md', 'second.md'):
+                with self.assertRaisesRegex(ValueError, 'duplicate policy registration: case'):
+                    driver.register_policy('case', record)
+                self.assertEqual(driver.CASES['case']['policy_record'], 'first.md')
+                self.assertIs(driver.CASES['case']['fn'], probe)
+            driver.register_policy('case', 'second.md', compose=lambda spec, old, new: new)
+            self.assertEqual(driver.CASES['case']['policy_record'], 'second.md')
+
+    def test_scanner_initialization_precedes_ranking_registration(self):
+        names = ('table-conf-lambda-inf', 'table-conf-lambda-inf-zhuyin',
+                 'table-conf-lambda-nan', 'table-conf-lambda-nan-zhuyin',
+                 'table-conf-lambda-hex-zhuyin', 'table-conf-lambda-hex-fraction-zhuyin',
+                 'table-conf-lambda-hex-upper-zhuyin')
+        for name in names:
+            with self.subTest(case=name):
+                spec = driver.CASES[name]
+                self.assertTrue(spec['fn'].initialization_only)
+                self.assertEqual(spec['policy_record'], '1297-table-floats.md')
+        spec = driver.case_spec(fn=lambda k: None, policy_record='unrelated.md')
+        with patch.object(driver, 'CASES', {'ranking': spec}):
+            with self.assertRaisesRegex(ValueError, 'unhandled ranking policy composition'):
+                driver.register_policy('ranking', 'ranking.md', compose=driver.ranking_after_initialization)
+            self.assertEqual(spec['policy_record'], 'unrelated.md')
 
     def test_plan_lists_ids_reasons_facades_and_artifacts(self):
         names, reasons = contract['select_cases'](issues=['532'], families=['zero-key'])
