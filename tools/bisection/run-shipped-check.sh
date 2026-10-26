@@ -32,6 +32,12 @@ CYCLES=${CTRL_CYCLES:-8}
 SIZES=${CTRL_SIZES:-8 16}
 CPU=${CTRL_CPU:-0}
 CTLTOOLS=${CTLTOOLS:-/ctltools}
+# Counts reach arithmetic loops, which would evaluate any other text as an
+# expression and read a leading zero as octal; refuse it here instead.
+decimal_count() { # <name> <value>
+    [[ $2 =~ ^[0-9]+$ ]] || { echo "${0##*/}: $1 must be a decimal count (got '$2')" >&2; exit 2; }
+}
+decimal_count CTRL_RUNS "$RUNS"
 mkdir -p "$OUT"
 
 L_LABEL=libpinyin-tkrzw
@@ -56,7 +62,7 @@ S_SO=/tmp/S-shipped.so
 build_cinstall "$Z_SO" tkrzw
 build_cinstall "$S_SO" tkrzw,shipped
 function_order_measurement --library "Z/pinyin=$Z_SO" --library "S/pinyin=$S_SO" \
-    --reference-arm L --library "L/pinyin=$L_SO" ${FUNCTION_ORDER_ARGS[@]+"${FUNCTION_ORDER_ARGS[@]}"}
+    --reference-arm L --library "L/pinyin=$L_SO" "${FUNCTION_ORDER_ARGS[@]}"
 
 LD_LIBRARY_PATH="$(dirname "$L_SO")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" tkrzw_run tkrzw pin "$L_SO"
 LD_LIBRARY_PATH="$(dirname "$Z_SO")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" tkrzw_run tkrzw subject "$Z_SO"
@@ -80,7 +86,7 @@ SPEED=$OUT/speed-shipped.jsonl
 : > "$SPEED"
 for n in $SIZES; do
     echo "--- n=$n: $RUNS runs, round-robin L Z S ---"
-    for _ in $(seq 1 "$RUNS"); do
+    for ((iteration = 1; iteration <= $((10#$RUNS)); iteration++)); do
         for cell in "$L_LABEL:$L_SO" "$Z_LABEL:$Z_SO" "$S_LABEL:$S_SO"; do
             label=${cell%%:*}; so=${cell#*:}
             taskset -c "$CPU" env LD_LIBRARY_PATH="$(dirname "$so")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \

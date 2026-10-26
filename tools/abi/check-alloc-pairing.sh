@@ -316,12 +316,12 @@ build_driver() {
 	((leak)) && defines=(-DOXPINYIN_ALLOC_PAIRING_LEAK)
 	g++ -std=c++17 -Wall -Wextra -Werror -O1 -g -fno-omit-frame-pointer \
 		-fsanitize=address \
-		${GLIB_CFLAGS[@]+"${GLIB_CFLAGS[@]}"} \
+		"${GLIB_CFLAGS[@]}" \
 		-I"$REPO_ROOT/$include" \
 		"$REPO_ROOT/$src" \
 		-L"$CAPI_DIR" -Wl,-rpath,"$CAPI_DIR" \
-		"-l$lib" ${GLIB_LIBS[@]+"${GLIB_LIBS[@]}"} \
-		${defines[@]+"${defines[@]}"} \
+		"-l$lib" "${GLIB_LIBS[@]}" \
+		"${defines[@]}" \
 		-o "$out"
 }
 

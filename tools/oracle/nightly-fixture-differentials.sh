@@ -80,7 +80,7 @@ mkdir -p "$work"
 # The marker records which sha the checkout holds; a reused work dir is
 # refreshed whenever build-oracle.sh moves the pin.
 src=$work/libpinyin
-if [[ ! -f $src/.pin-ok || $(cat "$src/.pin-ok") != "$pin_sha" ]]; then
+if [[ ! -f $src/.pin-ok || $(<"$src/.pin-ok") != "$pin_sha" ]]; then
 	rm -rf "$src"
 	git init -q "$src"
 	git -C "$src" fetch --quiet --depth=1 "$pin_url" "$pin_sha"

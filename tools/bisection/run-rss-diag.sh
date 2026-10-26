@@ -63,7 +63,7 @@ while (($#)); do
 done
 [ -n "$LP" ] && [ -n "$OX" ] && [ -n "$DATA" ] || usage
 function_order_measurement --library "S/pinyin=$OX" \
-    --reference-arm L --library "L/pinyin=$LP" ${FUNCTION_ORDER_ARGS[@]+"${FUNCTION_ORDER_ARGS[@]}"}
+    --reference-arm L --library "L/pinyin=$LP" "${FUNCTION_ORDER_ARGS[@]}"
 OUT="${OUT:-/tmp/rss-diag}"
 tkrzw_run auto pin "$LP"
 tkrzw_run auto subject "$OX"

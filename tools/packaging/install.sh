@@ -208,12 +208,9 @@ locate_baked() {
     return 0
   fi
   local candidates=()
-  local cand
   if [ -d "$QUALIFIED_DIR/build" ]; then
-    while IFS= read -r cand; do
-      candidates+=("$cand")
-    done < <(find "$QUALIFIED_DIR/build" -mindepth 3 -maxdepth 3 \
-                -path "*/out/$name" -type f 2>/dev/null)
+    mapfile -d '' candidates < <(find "$QUALIFIED_DIR/build" -mindepth 3 -maxdepth 3 \
+                -path "*/out/$name" -type f -print0 2>/dev/null)
   fi
   if [ "${#candidates[@]}" -eq 1 ]; then
     printf '%s\n' "${candidates[0]}"
@@ -291,7 +288,7 @@ install_library() {
   shift 4
   ( cd "$crate_dir" && cargo cinstall --prefix="$PREFIX" --libdir="$LIBDIR" --includedir="$INCLUDEDIR" \
       --target-dir="$TARGET_DIR" \
-      ${DESTDIR:+--destdir="$DESTDIR"} ${PASSTHRU[@]+"${PASSTHRU[@]}"} )
+      ${DESTDIR:+--destdir="$DESTDIR"} "${PASSTHRU[@]}" )
   local baked
   baked="$(locate_baked "$baked_name")"
   sed "$@" "$baked" > "$PC_DIR/$pc_name"

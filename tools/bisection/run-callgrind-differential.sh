@@ -76,6 +76,14 @@ T_REPEATS=${T_REPEATS:-1}
 # bracketing the steady cycles. One number per process; the median across
 # runs is the figure, matching how the timing pass aggregates.
 HW_RUNS=${HW_RUNS:-10}
+# Counts reach arithmetic loops, which would evaluate any other text as an
+# expression and read a leading zero as octal; refuse it here instead.
+decimal_count() { # <name> <value>
+    [[ $2 =~ ^[0-9]+$ ]] || { echo "${0##*/}: $1 must be a decimal count (got '$2')" >&2; exit 2; }
+}
+decimal_count CG_ROUNDS "$CG_ROUNDS"
+decimal_count T_RUNS "$T_RUNS"
+decimal_count HW_RUNS "$HW_RUNS"
 
 # Stage 2's comparison lives in a shared library so the standalone probe
 # (tools/env-probe/probe-debuginfo-neutrality.sh) cannot drift from it.
@@ -215,7 +223,7 @@ run_cell() { # label so extra-valgrind-args...
 # Both cells, two rounds each, allocator intercepted as in every valgrind
 # run. Callgrind is deterministic; the second round exists to demonstrate
 # that (a >0.1% divergence between rounds is reported, not averaged).
-for round in $(seq 1 "$CG_ROUNDS"); do
+for ((round = 1; round <= $((10#$CG_ROUNDS)); round++)); do
     for cell in "libpinyin-tkrzw:$LP_SO" "oxpinyin-tkrzw:$OX_SO"; do
         label=${cell%%:*}; so=${cell#*:}
         echo "--- callgrind: $label round $round ---"
@@ -249,7 +257,7 @@ done
 # Requires a container whose SELinux label and seccomp profile do not
 # deny perf_event_open (see the run command in the header).
 HW="$OUT/hw-instructions.jsonl"; : > "$HW"
-for _ in $(seq 1 "$HW_RUNS"); do
+for ((iteration = 1; iteration <= $((10#$HW_RUNS)); iteration++)); do
     for cell in "libpinyin-tkrzw:$LP_SO" "oxpinyin-tkrzw:$OX_SO"; do
         label=${cell%%:*}; so=${cell#*:}
         taskset -c "$CPU" env LD_LIBRARY_PATH="$(dirname "$so")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
@@ -325,7 +333,7 @@ PY
 # interleaved round-robin, taskset pinned.
 SPEED="$OUT/speed.jsonl"; : > "$SPEED"
 echo "--- timing: $T_RUNS alternating runs x $T_CYCLES cycles x $T_REPEATS passes ---"
-for _ in $(seq 1 "$T_RUNS"); do
+for ((iteration = 1; iteration <= $((10#$T_RUNS)); iteration++)); do
     for cell in "libpinyin-tkrzw:$LP_SO" "oxpinyin-tkrzw:$OX_SO"; do
         label=${cell%%:*}; so=${cell#*:}
         taskset -c "$CPU" env LD_LIBRARY_PATH="$(dirname "$so")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \

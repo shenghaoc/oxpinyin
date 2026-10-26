@@ -53,6 +53,13 @@ CPU="${PERF_CPU:-0}"
 RUNS="${PERF_RUNS:-20}"
 CYCLES="${PERF_CYCLES:-8}"
 RAM_RUNS="${PERF_RAM_RUNS:-10}"
+# Counts reach arithmetic loops, which would evaluate any other text as an
+# expression and read a leading zero as octal; refuse it here instead.
+decimal_count() { # <name> <value>
+    [[ $2 =~ ^[0-9]+$ ]] || { echo "${0##*/}: $1 must be a decimal count (got '$2')" >&2; exit 2; }
+}
+decimal_count PERF_RUNS "$RUNS"
+decimal_count PERF_RAM_RUNS "$RAM_RUNS"
 
 ORACLE_SO="$ORACLE_PREFIX/lib/libpinyin.so"
 ORACLE_DATA="$ORACLE_PREFIX/lib/libpinyin/data"
@@ -107,7 +114,7 @@ echo "pkg-config oxpinyin libs:   $CAPI_LIBS"
 echo "installed capi .so:         $CAPI_SO"
 [ -f "$CAPI_SO" ] || { echo "fatal: $CAPI_SO not found" >&2; exit 1; }
 function_order_measurement --library "ox/pinyin=$CAPI_SO" \
-    --reference-arm pin --library "pin/pinyin=$ORACLE_SO" ${FUNCTION_ORDER_ARGS[@]+"${FUNCTION_ORDER_ARGS[@]}"}
+    --reference-arm pin --library "pin/pinyin=$ORACLE_SO" "${FUNCTION_ORDER_ARGS[@]}"
 
 LD_LIBRARY_PATH="$(dirname "$ORACLE_SO")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" tkrzw_run auto pin "$ORACLE_SO"
 LD_LIBRARY_PATH="$(dirname "$CAPI_SO")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" tkrzw_run auto subject "$CAPI_SO"
@@ -174,7 +181,7 @@ run_speed_side() {
 }
 
 echo "--- speed: $RUNS alternating runs x $CYCLES cycles, CPU $CPU ---"
-for _ in $(seq 1 "$RUNS"); do
+for ((iteration = 1; iteration <= $((10#$RUNS)); iteration++)); do
     run_speed_side oracle "$ORACLE_SO" "$ORACLE_DATA" "$ORACLE_PREFIX/lib"
     run_speed_side oxpinyin "$CAPI_SO" "$CAPI_DATA" "$CAPI_LIBDIR"
 done
@@ -206,7 +213,7 @@ run_ram_side() {
 }
 
 echo "--- RAM: $RAM_RUNS runs per mode per backend, CPU $CPU ---"
-for _ in $(seq 1 "$RAM_RUNS"); do
+for ((iteration = 1; iteration <= $((10#$RAM_RUNS)); iteration++)); do
     run_ram_side oracle ram-init "$ORACLE_SO" "$ORACLE_DATA" "$ORACLE_PREFIX/lib"
     run_ram_side oxpinyin ram-init "$CAPI_SO" "$CAPI_DATA" "$CAPI_LIBDIR"
     run_ram_side oracle ram-cycle "$ORACLE_SO" "$ORACLE_DATA" "$ORACLE_PREFIX/lib"

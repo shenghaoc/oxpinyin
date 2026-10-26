@@ -48,6 +48,13 @@ RUNS="${PERF_RUNS:-20}"
 CYCLES="${PERF_CYCLES:-8}"
 REPEATS="${PERF_REPEATS:-1}"
 RAM_RUNS="${PERF_RAM_RUNS:-10}"
+# Counts reach arithmetic loops, which would evaluate any other text as an
+# expression and read a leading zero as octal; refuse it here instead.
+decimal_count() { # <name> <value>
+    [[ $2 =~ ^[0-9]+$ ]] || { echo "${0##*/}: $1 must be a decimal count (got '$2')" >&2; exit 2; }
+}
+decimal_count PERF_RUNS "$RUNS"
+decimal_count PERF_RAM_RUNS "$RAM_RUNS"
 TARGET="${CARGO_TARGET_DIR:-$REPO_ROOT/target}"
 mkdir -p "$OUT"
 
@@ -128,7 +135,7 @@ A_SO=$(find_so /opt/libpinyin-tkrzw); A_DATA=/opt/libpinyin-tkrzw/lib/libpinyin/
 B_SO=$(find_so /opt/libpinyin-kc);    B_DATA=/opt/libpinyin-kc/lib/libpinyin/data
 function_order_measurement --library "C/pinyin=$OXPINYIN_TKRZW_SO" \
     --library "D/pinyin=$OXPINYIN_KC_SO" --reference-arm A --library "A/pinyin=$A_SO" \
-    --reference-arm B --library "B/pinyin=$B_SO" ${FUNCTION_ORDER_ARGS[@]+"${FUNCTION_ORDER_ARGS[@]}"}
+    --reference-arm B --library "B/pinyin=$B_SO" "${FUNCTION_ORDER_ARGS[@]}"
 
 LD_LIBRARY_PATH="$(dirname "$A_SO")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" tkrzw_run tkrzw pin "$A_SO"
 LD_LIBRARY_PATH="$(dirname "$OXPINYIN_TKRZW_SO")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" tkrzw_run tkrzw subject "$OXPINYIN_TKRZW_SO"
@@ -161,14 +168,14 @@ run_one() {
 
 SPEED_JSONL="$OUT/speed.jsonl"; : > "$SPEED_JSONL"
 echo "--- speed: $RUNS alternating runs × $CYCLES cycles × $REPEATS passes, CPU $CPU ---"
-for _ in $(seq 1 "$RUNS"); do
+for ((iteration = 1; iteration <= $((10#$RUNS)); iteration++)); do
     for i in 0 1 2 3; do run_one "${LABELS[$i]}" "${SOS[$i]}" "${DATAS[$i]}" "${LIBS[$i]}" speed "$SPEED_JSONL"; done
 done
 
 RAM_INIT_JSONL="$OUT/ram-init.jsonl"; RAM_CYCLE_JSONL="$OUT/ram-cycle.jsonl"
 : > "$RAM_INIT_JSONL"; : > "$RAM_CYCLE_JSONL"
 echo "--- RAM: $RAM_RUNS runs per mode per cell, CPU $CPU ---"
-for _ in $(seq 1 "$RAM_RUNS"); do
+for ((iteration = 1; iteration <= $((10#$RAM_RUNS)); iteration++)); do
     for i in 0 1 2 3; do
         run_one "${LABELS[$i]}" "${SOS[$i]}" "${DATAS[$i]}" "${LIBS[$i]}" ram-init "$RAM_INIT_JSONL"
         run_one "${LABELS[$i]}" "${SOS[$i]}" "${DATAS[$i]}" "${LIBS[$i]}" ram-cycle "$RAM_CYCLE_JSONL"

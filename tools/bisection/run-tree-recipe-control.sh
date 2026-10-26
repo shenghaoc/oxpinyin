@@ -56,6 +56,12 @@ CYCLES=${CTRL_CYCLES:-8}
 SIZES=${CTRL_SIZES:-1 8 16}
 CPU=${CTRL_CPU:-0}
 CTLTOOLS=${CTLTOOLS:-/ctltools}
+# Counts reach arithmetic loops, which would evaluate any other text as an
+# expression and read a leading zero as octal; refuse it here instead.
+decimal_count() { # <name> <value>
+    [[ $2 =~ ^[0-9]+$ ]] || { echo "${0##*/}: $1 must be a decimal count (got '$2')" >&2; exit 2; }
+}
+decimal_count CTRL_RUNS "$RUNS"
 mkdir -p "$OUT"
 
 L_LABEL=libpinyin-tkrzw
@@ -88,7 +94,7 @@ L_SO=$(find /opt/libpinyin-tkrzw -name 'libpinyin.so' \( -type f -o -type l \) -
     echo "libtkrzw: $(pkg-config --modversion tkrzw 2>/dev/null || echo unknown)"
     echo "libpinyin: $(grep -h '^Version:' /opt/libpinyin-tkrzw/lib/pkgconfig/libpinyin.pc 2>/dev/null || echo unknown)"
     echo "data_dir: $DATA"
-    echo "loadavg: $(cat /proc/loadavg)"
+    echo "loadavg: $(</proc/loadavg)"
 } | tee "$OUT/environment.txt"
 
 # ── builds: X and Y with the record recipe; Z with cinstall ─────────
@@ -123,7 +129,7 @@ build_cinstall "$SRC_CURR" "$Z_SO" tkrzw
 build_cinstall "$SRC_CURR" "$S_SO" tkrzw,shipped
 function_order_measurement --library "X/pinyin=$X_SO" --library "Y/pinyin=$Y_SO" \
     --library "Z/pinyin=$Z_SO" --library "S/pinyin=$S_SO" \
-    --reference-arm L --library "L/pinyin=$L_SO" ${FUNCTION_ORDER_ARGS[@]+"${FUNCTION_ORDER_ARGS[@]}"}
+    --reference-arm L --library "L/pinyin=$L_SO" "${FUNCTION_ORDER_ARGS[@]}"
 
 LD_LIBRARY_PATH="$(dirname "$L_SO")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" tkrzw_run tkrzw pin "$L_SO"
 LD_LIBRARY_PATH="$(dirname "$X_SO")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" tkrzw_run tkrzw subject "$X_SO"
@@ -166,8 +172,8 @@ SPEED=$OUT/speed.jsonl
 : > "$OUT/load.txt"
 for n in $SIZES; do
     echo "--- n=$n: $RUNS runs x $CYCLES cycles x $n repeats, round-robin L X Y Z S ---"
-    echo "before n=$n: $(cat /proc/loadavg)" >> "$OUT/load.txt"
-    for _ in $(seq 1 "$RUNS"); do
+    echo "before n=$n: $(</proc/loadavg)" >> "$OUT/load.txt"
+    for ((iteration = 1; iteration <= $((10#$RUNS)); iteration++)); do
         for cell in "$L_LABEL:$L_SO" "$X_LABEL:$X_SO" "$Y_LABEL:$Y_SO" "$Z_LABEL:$Z_SO" "$S_LABEL:$S_SO"; do
             label=${cell%%:*}; so=${cell#*:}
             taskset -c "$CPU" env LD_LIBRARY_PATH="$(dirname "$so")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
@@ -176,7 +182,7 @@ for n in $SIZES; do
                 "${TKRZW_EXEC[@]}" tkrzw "${0##*/}" "$label" "$so" -- "$BISECT" --perf "$so" "$DATA" >> "$SPEED" 2>>"$OUT/run.err"
         done
     done
-    echo "after  n=$n: $(cat /proc/loadavg)" >> "$OUT/load.txt"
+    echo "after  n=$n: $(</proc/loadavg)" >> "$OUT/load.txt"
 done
 echo "speed rows: $(wc -l < "$SPEED")"
 

@@ -23,7 +23,7 @@ root=$(cd "$(dirname "$0")" && pwd)
 source "$root/../packaging/function-order.sh"
 function_order_arguments "$@"
 function_order_measurement --library "ox/pinyin=$ox" \
-    --reference-arm pin --library "pin/pinyin=$pin" ${FUNCTION_ORDER_ARGS[@]+"${FUNCTION_ORDER_ARGS[@]}"}
+    --reference-arm pin --library "pin/pinyin=$pin" "${FUNCTION_ORDER_ARGS[@]}"
 mkdir "$out"
 out=$(realpath "$out")
 cc -std=gnu11 -Wall -Wextra -Werror -O2 "$root/system-import-profile.c" -ldl -o "$out/driver"
