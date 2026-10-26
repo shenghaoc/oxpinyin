@@ -162,7 +162,7 @@ and `split_zhuyin`; `capi/src/text.rs`, `chewing_aux_text`;
 | Chewing interior cursor (`len <= C`) | Visible right half identical to a pin that returns: the copied NUL terminates it at the spelling's end (empty at `len == C`). The call is class (b): `end_pos` is the absolute `m_raw_end`, so `raw_end - len > C - len` whenever `raw_end > C` (outside GLib's documented domain), which is essentially every interior cursor; the copy reads past the allocation at `raw_end >= C + 2`. | Source below; the new cases compare visible bytes, so a match is conditional on the pin not faulting. |
 | Chewing cursor past the spelling (`len > C`) | Accepted class (b): the copy starts past the terminator, so the pin's visible right half is heap bytes (and can fault); oxpinyin returns an empty right half. Registered in [upstream divergences](upstream-divergences.md#chewing-auxiliary-substring-over-read). | Source below; not a differential case, because the pin side has no reproducible result. |
 | Bigram export's unterminated pronunciation vector | Accepted class (b), [row 1 record](upstream-divergences.md#bigram-export-iterators-pinyin-buffer). | Established independent fault; #894 traces its text consumers but does not turn this fault into a deterministic phrase-text witness. |
-| Raw path bytes: see G3 (#922). Embedded NUL in diagnostics; duplicate punctuation strings/order | Paths classified under G3; diagnostic NUL producers closed under #924 below; punctuation remains #928/#1144, with G15. | No blanket “malformed quirk” admission. |
+| Raw path bytes: see G3 (#922). Embedded NUL in diagnostics; duplicate punctuation strings/order | Paths classified under G3; diagnostic NUL producers closed under #924 below; punctuation strings closed under G15 (#1144) and order/duplicates in the inventory's G2 notes (#928). | No blanket “malformed quirk” admission. |
 
 ### G2 auxiliary-text closure — 2026-10-25 UTC
 
@@ -1335,7 +1335,7 @@ order/dedup #928. No zhuyin punctuation-export twin is implied.
 
 The full partition is the inventory's
 [G15](glib-libc-inventory.md#g15--punctuation) (closed 2026-10-26 UTC).
-Order and duplicates remain #928.
+Order and duplicates are the inventory's G2 notes (#928, closed 2026-10-26 UTC).
 
 ## G16 — Tool-interface check
 

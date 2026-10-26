@@ -79,7 +79,7 @@ for libpinyin and libzhuyin, `pinyin` for the prediction-only surfaces;
 | ID | Family and pin call sites | Reach | oxpinyin counterpart | Valid / malformed | Disposition | Child |
 | --- | --- | --- | --- | --- | --- | --- |
 | G1 | UTF-8/UCS-4 conversion and category: `pinyin.cpp:628,715,1397,1450-1454,2658,3210,3678`; `lookup.cpp:54,58`; `zhuyin.cpp:918,969-973,1684,2165`; `zhuyin_parser2.cpp:871,879`; `punct_table.cpp:48` (dead); `tag_utility.cpp` (tool) | both (punct pinyin only); all | `capi/src/ffi.rs` `cstr_to_string` / `cstr_to_parsed_prefix` / `cstr_to_strict`; `capi/src/phrase.rs` `segment_text`; `data/src/phrase_library.rs` `phrase_chars`; `data/src/interp_grammar.rs` `is_graph`; `data/src/row_format.rs` `decode_puncts` | valid: identical strings. malformed/non-scalar: `g_utf8_to_ucs4` accepts surrogates and values above U+10FFFF; Rust `str` cannot. Embedded U+0000 stops the pin's conversion. | valid: contract. malformed: quirk (#894, #918); tool: quirk (#926); punct: quirk/class (b) (#1144) | #894, #918, #925, #926, #1144 |
-| G2 | C strings, joins and vectors: `g_strdup` 39, `g_free` 155, `g_strdup_printf` 14, `g_strconcat` 16, `g_strjoinv` 3, `g_strndup` 7, `g_strfreev` 10, `g_strv_length`/`g_strv_contains` 2, `g_string_*` 4 | both (punct subset pinyin only); all | `capi/src/ffi.rs` `owned_cstr` / `owned_cstr_list`; `capi/src/aux_matrix.rs` `join`; `capi/src/predict.rs` `prepend_punctuations`; `capi/src/iterators.rs` export rendering; `data/src/pin_stderr.rs` `build_filename` | valid: identical bytes. malformed: raw path bytes, missing middle aux component, NUL in a diagnostic, duplicate punctuation. | valid: contract. malformed: quirk (#922) or #925/#928; punctuation strings #1144 | #922, #924, #925, #928, #1144; export row 1 |
+| G2 | C strings, joins and vectors: `g_strdup` 39, `g_free` 155, `g_strdup_printf` 14, `g_strconcat` 16, `g_strjoinv` 3, `g_strndup` 7, `g_strfreev` 10, `g_strv_length`/`g_strv_contains` 2, `g_string_*` 4 | both (punct subset pinyin only); all | `capi/src/ffi.rs` `owned_cstr` / `owned_cstr_list`; `capi/src/aux_matrix.rs` `join`; `capi/src/predict.rs` `prepend_punctuations`; `capi/src/iterators.rs` export rendering; `data/src/pin_stderr.rs` `build_filename` | valid: identical bytes. malformed: raw path bytes, missing middle aux component, NUL in a diagnostic, duplicate punctuation. | valid: contract. malformed: quirk (#922) or #925; punctuation strings #1144 and punctuation order/duplicates #928, both contract (closed 2026-10-26 UTC) | #922, #924, #925, #928, #1144; export row 1 |
 | G3 | Path joining: `g_build_filename`, 68 sites, e.g. `pinyin.cpp:164,252,268,286,308,395,400,952,968,985,1052`; `zhuyin.cpp:118,196,212,230,252,337,342,585,601,605,626,630,684` | both; all | `data/src/table_info.rs` `FileName::under` / `pin_join`; `data/src/pin_stderr.rs` `build_filename`; `capi/src/ffi.rs` `cstr_to_path` | valid: same resolved path. malformed: leading `/`, empty name, `..`, duplicate separators, non-UTF-8 bytes. | valid: contract. malformed: quirk (#922) | #922 |
 | G4 | GArray/GPtrArray containers: `g_array_*` and `g_ptr_array_*`, 514 sites (`g_array_index` 101, `g_array_new` 64, `g_array_free` 68, `g_ptr_array_index` 58, `g_array_set_size` 57, `g_array_append_val` 54, ...) | both; all | `capi/src/dict.rs` and zhuyin twin keep real `GArray` for the ABI; internal steps are `Vec`/slices in `engine/src/nbest.rs`, `engine/src/session/*`, `data/src/phrase_library.rs` | valid: identical candidate/result arrays. malformed: out-of-range indices, a key with no whole word, a short chunk header. | valid: contract. malformed: class (b)/(c) rows; #924 for the ABI arrays | #924 |
 | G5 | n-best tail sort: `phonetic_lookup.h:337` `g_ptr_array_sort(tails, trellis_value_compare)` | both; all | `engine/src/nbest.rs` `glib_merge_sort`, `tail_compare`, `c_float_to_gint` | valid: ordered tails. malformed/pathological: NaN and out-of-range float differences make the comparator non-transitive. | contract on valid data; class (a) tie rows | #921 |
@@ -129,6 +129,31 @@ are `%s` and `%d` over bytes, not a locale conversion.
 (#925). `g_strjoinv`/`g_strfreev` at `pinyin.cpp:849,862` render the
 bigram export; the pin's array is not NULL-terminated (row 1, class
 (b)); oxpinyin renders owned strings before the iterator exists.
+
+**Punctuation order and duplicates (#928, closed 2026-10-26 UTC).**
+`pinyin_guess_predicted_candidates_with_punctuations` walks
+`m_prefixes` as `pinyin_guess_predicted_candidates` left it
+(`pinyin.cpp:2459-2463`), takes each token's `get_all_punctuations`
+array, counts it with `g_strv_length` and skips a string that
+`g_strv_contains` finds in the zero-terminated `punct_array`
+(`:2468-2483`); GLib 2.84.4 `g_strv_contains` is a `g_str_equal` walk
+(`gstrfuncs.c:3234-3247`), and `g_array_new(TRUE, TRUE, …)` allocates
+and terminates the empty array, so the first test sees no entry
+(`garray.c:356-361`). The reverse `g_array_prepend_val` (`:2488-2494`)
+leaves the kept strings first, in first-occurrence order, ahead of the
+predicted rows, which the test never sees. No entry is `NULL`
+(`g_strdup` of the cache string), so `g_strv_length` is the entry count.
+`prepend_punctuations` keeps the first of equal `phrase_text_bytes`
+values in the same order and puts them ahead of the candidates; those
+bytes are the pin's C string. The two agree on every stored value:
+duplicates within one value, across prefix tokens (shortest suffix
+first) and in empty strings from different stored words, non-scalar
+strings, and a punctuation equal to a predicted phrase (both kept). This
+is ordinary compatibility; `prepend_punctuations` now reads the prefixes
+the prediction stored instead of computing them a second time. Cases
+`punct-dedup/*` of `contract-diff.py` MATCH on bdb; the named mutation
+`M928-no-dedup` (every punctuation kept) makes the five duplicate cases
+differ while the `distinct` and `candidate` controls match.
 
 `g_build_filename` is the only path constructor. `pin_join` keeps the
 name beneath the directory even when it starts with `/`; `build_filename`
@@ -526,7 +551,7 @@ child column is the audit that must decide it.
 | `data/src/phrase_library.rs` `phrase_chars` | `g_ucs4_to_utf8` on stored phrase text | `pinyin.cpp:1627-1645`; `lookup.cpp:27-60`; `pinyin.cpp:698-716` | #894 |
 | `data/src/row_format.rs` `decode_puncts`; `capi-marshal/src/phrase_text.rs` `phrase_text_bytes` | `PunctTableEntry::unescape` / `get_all_punctuations`; `g_string_append_unichar` | `punct_table.cpp:56-94` | #1144 (closed: pin rows reproduced; over-read class (b)) |
 | `capi/src/aux_matrix.rs` `AuxMatrix::chewing`, `join` | `g_utf8_substring`, `g_strconcat` with a NULL middle | `pinyin.cpp:3518-3576` | #925 |
-| `capi/src/predict.rs` `prepend_punctuations`, `seen` | `g_strv_length` + `g_strv_contains` + reverse prepend | `pinyin.cpp:2456-2498` | #928 |
+| `capi/src/predict.rs` `prepend_punctuations`, `seen` | `g_strv_length` + `g_strv_contains` + reverse prepend | `pinyin.cpp:2456-2498` | #928 (closed: byte-equality first occurrence, contract) |
 | `data/src/pin_stderr.rs` `build_filename` | `g_build_filename` raw bytes for stderr | `table_info.cpp:201,332`; `pinyin.cpp:338`; `zhuyin.cpp:282` | #922 |
 | `data/src/table_info.rs` `pin_join` | `g_build_filename(dir, name, NULL)` | `pinyin.cpp:395,400`; `zhuyin.cpp:337,342` | #922 |
 | `data/src/table_info.rs` `Scan`, `strtol_digits`, `atoi_guint8`, `hex_float` | `fscanf` `%d`/`%f`/`%255s`, `atoi`/`strtol`, glibc `strtof` | `table_info.cpp:160,208-289` | #919 |

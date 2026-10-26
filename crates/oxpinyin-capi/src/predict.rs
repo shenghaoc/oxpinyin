@@ -313,15 +313,21 @@ pub extern "C" fn pinyin_guess_predicted_candidates(
 /// no phrase-table suffix. The scorer's zero-total assert is refused before
 /// prepending, with a warning and `false` under policy class (c).
 pub fn guess_predicted_with_punctuations(inst: &mut CapiInstance, prefix: &str) -> bool {
-    let prefixes =
-        oxpinyin_facade::compute_prefixes(&inst.core.dict, inst.core.user.as_ref(), prefix);
     if guess_predicted_result(inst, prefix).is_err() {
         return false;
     }
+    // The pin walks `m_prefixes` as the prediction left it (`pinyin.cpp:2463`).
+    let prefixes = inst.prefixes.clone();
     prepend_punctuations(inst, &prefixes);
     true
 }
 
+/// Prepends the punctuations of each prefix token, in prefix order then
+/// table order, keeping the first of equal strings (`pinyin.cpp:2468-2494`
+/// at 074a2219). The pin's `g_strv_contains` compares C strings with
+/// `g_str_equal`; `phrase_text_bytes` is that string, so equal bytes are
+/// the test. Existing candidates take no part, and the reverse
+/// `g_array_prepend_val` leaves the punctuations first in this order.
 fn prepend_punctuations(inst: &mut CapiInstance, prefixes: &[u32]) {
     let mut puncts: Vec<Vec<u8>> = Vec::new();
     let mut seen: HashSet<Vec<u8>> = HashSet::new();
