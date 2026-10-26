@@ -278,8 +278,15 @@ Audit at `27c785c0` (follow-ups retain their own implementation gates):
 | `oracle/Dockerfile.oracle` | Backend builds have distinct work/prefix directories. The maintainer retained the serial backend loop: copying host tooling into the image would couple image rebuilds to unrelated tooling changes; the measured saving did not justify that cost (#1263 closed unmerged): [#1234](https://github.com/shenghaoc/oxpinyin/issues/1234). |
 | `bisection/teardown.py` | Export must precede recipe selection; mutation within a profile is ordered. Independent profile population and witness checks run as units in one admitted pool, each with its own sample names, counter and CPU lease; records print in profile order, and `--jobs 1` is the serial reference ([#1235](https://github.com/shenghaoc/oxpinyin/issues/1235)). Timing, residency and measurement phases remain isolated and start only after the pool is released. |
 | `measure-function-order.py` | Required isolation: paired native timings, page-cache and parent-observed memory measurements share host resources. Keep the measurement campaign serial. |
-| `profile/run-w8-cycle.sh` | Profiler attempts form a fallback chain, each conditional on failure of its predecessor. Sampling and native timing need isolation; no independent campaign loop to parallelize. |
-| `bisection/run-system-import-profile.sh` | Side/mode collections use private users and instruction/allocation counters; the serialization was accidental. `system_import_profile.py` now runs the six collections in one admitted pool and reports in a fixed order; `--jobs 1` is the serial reference ([#1236](https://github.com/shenghaoc/oxpinyin/issues/1236)). Attempts within each retry chain remain dependent and sequential. |
+| `just profile-w8` (`tools.dev.measure.profile`, formerly `profile/run-w8-cycle.sh`) | Profiler attempts form a fallback chain, each conditional on failure of its predecessor. Sampling and native timing need isolation; no independent campaign loop to parallelize. |
+| `measure system-import-profile` (formerly `bisection/run-system-import-profile.sh`) | Side/mode collections use private users and instruction/allocation counters; the serialization was accidental. `system_import_profile.py` now runs the six collections in one admitted pool and reports in a fixed order; `--jobs 1` is the serial reference ([#1236](https://github.com/shenghaoc/oxpinyin/issues/1236)). Attempts within each retry chain remain dependent and sequential. |
+| `measure perf-baseline`, `perf-matrix`, `perf-same-data`, `rss-diag`, `callgrind-differential`, `snapshot` | Every sample is a timed, resident-set or hardware-counter observation of one arm, pinned to the caller's one `PERF_CPU`; `bench.round_robin` runs them one process at a time and interleaves the arms so host drift lands on all of them. Serial by measurement isolation. `callgrind-differential` stage 4 (Callgrind is exact) pins its runs to that same CPU, so pooling them would only time-share it. |
+| `measure shipped-check`, `tree-recipe-control` (#1290) | The two or four builds are independent (private target and stage directories): units of one admitted pool (`bench.build_all`) that `pool.plan` sizes from the admitted CPUs and memory at a rustc allowance (600 MiB) per Cargo job. Both how many builds overlap and the jobs each gets come from the plan, so a host with many CPUs and little memory builds one at a time with fewer jobs. An explicit `CARGO_BUILD_JOBS` is kept as given and charged in full (rule 8): only the overlap adapts, and a host that cannot hold one build at that count refuses it. The sampling that follows is serial, as above. |
+| `measure callgrind-differential` annotations (#1290) | The two `callgrind_annotate` runs (self and inclusive) over each profile are independent post-processing of files on disk: units of one admitted pool (`pool.run_admitted`), each charged the runner allowance (1,024 MiB; the old script ran them one at a time and Valgrind documents no figure). The slot is taken, or inherited, and the memory reserved before any starts, so a host short of memory annotates one at a time and a direct run, such as the image's command, never starts more than it holds. |
+| `measure perf-same-data` builds (#1290) | The two builds share one target directory and copy `libpinyin_capi.so` out before the next replaces it: dependent, so serial. |
+| `measure snapshot` builds (#1290) | The function-order check must refuse an unordered shipped artifact before the alloc-count fixture is built (pinned by `snapshot.test.py`): ordered, so serial. |
+| `measure probe-egress` (#1290) | A diagnostic: eight short requests whose table prints in a fixed order. It must not hold the heavy slot or wait behind a build to make them, so it takes no admission. |
+| `measure probe-debuginfo-neutrality` builds (#1290) | The three builds share `target/release` and each artifact is copied out before the next replaces it: serial. |
 
 Maintainer decision after this audit: [#1234](https://github.com/shenghaoc/oxpinyin/issues/1234) was closed as not planned. The serial backend build in `Dockerfile.oracle` stays, and no `tools/dev` module is copied into an image build.
 
@@ -389,7 +396,51 @@ U2 preserves sample/warmup counts, arm order, CPU choices/refusals, cache and
 suspend qualification, retries, policy validation and report schemas. Timing,
 RSS/residency and sampling stay isolated. Independent instruction/allocation
 collections use the shared admitted pool; a retry follows its own discarded
-attempt. U3 preserves image tags and pin hashes, CLI/environment transport,
+attempt. Its entry points are `just measure RECIPE ...` (`python -m tools.dev
+measure RECIPE`) for `perf-baseline`, `perf-matrix`, `perf-same-data`,
+`shipped-check`, `tree-recipe-control`, `rss-diag`, `callgrind-differential`,
+`system-import-profile`, `snapshot`, `probe-debuginfo-neutrality` and
+`probe-egress`, and `just profile-w8`. The shared services are
+`tools/dev/measure/bench.py` (counts, the function-order guard, the libtkrzw
+check through its adapter, harness builds, pinned launches, heavy builds, the
+pool of independent builds, arm scheduling), `identity.py`, `reports.py`,
+`neutrality.py` and the recipe modules `campaigns.py`, `valgrind.py`, `probes.py`,
+`profile.py` and `snapshot.py`; the report parsers stay the existing
+`tools/bisection` and `tools/perf-gate` scripts. A diagnostic keeps the legacy
+script name (`run-perf-baseline.sh: PERF_RUNS must be a decimal count ...`)
+because reports and runbooks quote it. The two measurement images
+(`Dockerfile.callgrind`, `Dockerfile.perf-matrix`) now install uv and the managed
+interpreter and run their recipe as `CMD`; the libtkrzw runtime check stays
+`tools/tkrzw/runtime.sh` (U3) and is called through its Python adapter.
+
+U2's recorded differences from the shell runners change no measured value,
+report schema, option or documented status. A missing command is Python's
+`FileNotFoundError` text with status 127 where bash said `line N: cmd: command
+not found`, and the bash-only diagnostics (`unbound variable`, `${1:?}`) are
+reworded. `rss-diag --rounds 010` and `--rounds 08` are decimal, where bash
+arithmetic read the first as octal 8 and failed the second, so the old identity
+record said 010 beside a run of 8 (or no) rounds; its usage text names the
+recipe. `snapshot` validates `PERF_GATE_RSS_PROCESSES` as a decimal count before
+building. The `nproc` count in the identity and environment records is the CPU
+budget of `host.resource_snapshot`, the affinity set held to the smallest cgroup
+CPU quota rounded up, where the shell runners printed GNU `nproc` (coreutils
+9.10, `lib/nproc.c`). The two agree where no quota applies, for a quota below one
+CPU and for a quota that is whole or has a fraction of .5 or more. They can differ
+for a cgroup v2 quota above one CPU with a smaller fraction (1.25 CPUs: `nproc` 1,
+here 2), for a cgroup v1 CFS quota (counted here; `nproc` reads cgroup v2 only)
+and under `OMP_NUM_THREADS` or `OMP_THREAD_LIMIT` (applied by `nproc`, ignored
+here).
+Independent builds are pool units: a failing build lets its siblings
+finish, the pool names the failed unit and prints its accounting lines in place
+of one slot trailer per build, and the build and neutrality scratch files are
+removed. The callgrind annotations, which the old script ran one at a time and
+without a slot, are pool units too and print the same accounting lines. A signal sent to the controller alone terminates and reaps the children it started
+and exits 128 plus the signal, where the shell runner died of it and left them
+running; the cancellation messages differ. A measured launch of a harness that
+is not there leaves taskset's own line in the arm's `.err` file, with status 1
+as before.
+
+U3 preserves image tags and pin hashes, CLI/environment transport,
 container state and reservation lifetimes, runtime refusal, fixture formats and
 both-direction profile interchange. The existing Python tkrzw adapter currently
 calls shell via `Path(__file__).with_suffix('.sh')`; move the actual resolver
@@ -454,7 +505,8 @@ and also changes `tools/dev/measure/`; #1283 is merged and changes
 landed during this audit; no shell script changed between the initial source
 snapshot and this rebased base. None of these PRs is changed by this audit.
 Use the landed helpers and sequence the remaining migration after the
-relevant open shared-layer PR lands; recheck status then.
+relevant open shared-layer PR lands; recheck status then. #1284, #1286 and #1287
+have since merged, and U2 (#1290) builds on them.
 
 Existing [#1175](https://github.com/shenghaoc/oxpinyin/issues/1175),
 [#1232](https://github.com/shenghaoc/oxpinyin/issues/1232),

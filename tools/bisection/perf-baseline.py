@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
 """Summarize oxpinyin-vs-oracle performance-baseline captures and sizes.
 
-The capture JSONL is produced by `bisect --perf` (see run-perf-baseline.sh).
+The capture JSONL is produced by `bisect --perf` (see `measure perf-baseline`).
 Sizes are measured from the installed prefixes, not from cargo target dirs.
 """
 

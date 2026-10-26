@@ -78,7 +78,7 @@ class Plan(NamedTuple):
 
 
 def plan(tasks: int, cpus: int, memory_mib: int | None,
-         base_mib: int = BUILD_BASE_MIB, job_mib: int = BUILD_JOB_MIB) -> Plan:
+         base_mib: int = BUILD_BASE_MIB, job_mib: int = BUILD_JOB_MIB, *, jobs: int | None = None) -> Plan:
     """Divide a CPU and memory budget among TASKS independent builds.
 
     Workers times jobs never exceeds CPUS, so the nested make -j is counted; every
@@ -86,8 +86,17 @@ def plan(tasks: int, cpus: int, memory_mib: int | None,
     JOB_MIB) fits MEMORY_MIB. Unknown memory (None) admits no overlap: one build
     with every CPU. A single build's jobs are held below the CPU count when
     memory is short, never below one.
+
+    JOBS is the caller's own job count per build (an explicit CARGO_BUILD_JOBS). It is
+    kept as given and charged in full, so only the overlap adapts: as many builds as the
+    CPUs and the memory hold at that count, one when not even that fits. The admission
+    then refuses the one build instead of shrinking the request.
     """
     cpus, tasks = max(1, cpus), max(1, tasks)
+    if jobs is not None:
+        if memory_mib is None:
+            return Plan(1, jobs)
+        return Plan(max(1, min(tasks, cpus // jobs, memory_mib // (base_mib + jobs * job_mib))), jobs)
     if memory_mib is None:
         return Plan(1, cpus)
     workers = max(1, min(tasks, cpus // MIN_OVERLAP_JOBS))
@@ -105,23 +114,29 @@ def estimate_mib(chosen: Plan, base_mib: int = BUILD_BASE_MIB, job_mib: int = BU
 
 
 def admission_preparer(tasks: int, cpu_cap: int | None, base_mib: int = BUILD_BASE_MIB,
-                       job_mib: int = BUILD_JOB_MIB):
+                       job_mib: int = BUILD_JOB_MIB, *, explicit: str | None = None, job_name: str = 'make job'):
     """Return the heavy-admission callback that sizes the pool from the admitted budget.
 
     slot.HeavyAdmission calls it with the resource snapshot read under the
     admission lock, after other slots' reservations are subtracted. It chooses
     the plan from that room and reserves exactly the plan's estimate, so the pool
     cannot use capacity the slot did not admit.
+
+    EXPLICIT is the caller's CARGO_BUILD_JOBS setting, if it set one: its job count
+    (host.cargo_jobs) is kept for every build and charged in full (see `plan`).
+    JOB_NAME names a job in the reasoning that is printed.
     """
     def prepare(env: Mapping[str, str], resources, *, runner: bool = False):
         cpus = resources['cpus'] if cpu_cap is None else min(resources['cpus'], cpu_cap)
         available = resources['available_mib']
         headroom = host.memory_headroom(env, resources)
         room = None if available is None else max(0, available - headroom)
-        chosen = plan(tasks, cpus, room, base_mib, job_mib)
+        kept = None if explicit is None else host.cargo_jobs(explicit, resources['cargo_cpus'])
+        chosen = plan(tasks, cpus, room, base_mib, job_mib, jobs=kept)
         why = (f'{tasks} builds, {cpus} CPUs, '
                + ('memory unknown, no overlap' if room is None else f'{room} MiB after {headroom} MiB headroom')
-               + f', {base_mib} MiB + {job_mib} MiB per make job')
+               + f', {base_mib} MiB + {job_mib} MiB per {job_name}'
+               + ('' if kept is None else f'; {job_name}s kept at {kept} as the caller set them'))
         return (dict(env, **{POOL_WORKERS: str(chosen.workers), POOL_JOBS: str(chosen.jobs)}),
                 {POOL_WORKERS: (chosen.workers, why, False), POOL_JOBS: (chosen.jobs, why, False)},
                 estimate_mib(chosen, base_mib, job_mib))
@@ -524,17 +539,21 @@ class Budget(NamedTuple):
 
 @contextlib.contextmanager
 def admitted(units: int, label: str, *, cancelled: Callable[[], bool], cpu_cap: int | None = None,
-             unit_mib: int = host.RUNNER_PEAK_MIB, cancel_error: Callable[[str], BaseException] = UnitsCancelled,
-             out=sys.stderr):
+             unit_mib: int = host.RUNNER_PEAK_MIB, prepare=None, env: Mapping[str, str] | None = None,
+             cancel_error: Callable[[str], BaseException] = UnitsCancelled, out=sys.stderr):
     """Admit a pool of at most UNITS callables before any starts, and yield its Budget.
 
-    Take or inherit the heavy slot and reserve the pool's memory (unit_preparer). While
-    waiting, CANCELLED() is polled and CANCEL_ERROR raised; the slot is released on any error. The caller joins
-    its threads and reaps their children before leaving the block, which releases it.
+    Take or inherit the heavy slot and reserve the pool's memory (unit_preparer: one
+    UNIT_MIB allowance per worker). PREPARE replaces that callback, for a pool that plans
+    more than its workers: admission_preparer also chooses the jobs each unit builds with
+    and puts them in the units' environment as POOL_JOBS. ENV is the environment the
+    units inherit (default os.environ). While waiting, CANCELLED() is polled and
+    CANCEL_ERROR raised; the slot is released on any error. The caller joins its threads
+    and reaps their children before leaving the block, which releases it.
     """
     with contextlib.ExitStack() as stack:
-        admission = slot.HeavyAdmission(label, dict(os.environ), out=out, runner=True,
-                                        prepare_heavy_env=unit_preparer(units, cpu_cap, unit_mib))
+        admission = slot.HeavyAdmission(label, dict(os.environ if env is None else env), out=out, runner=True,
+                                        prepare_heavy_env=prepare or unit_preparer(units, cpu_cap, unit_mib))
         stack.callback(admission.close)
         while not admission.try_acquire():
             if cancelled():
@@ -544,7 +563,8 @@ def admitted(units: int, label: str, *, cancelled: Callable[[], bool], cpu_cap: 
             raise cancel_error('cancelled while waiting for admission')
         budget = Budget(int(admission.env[POOL_WORKERS]), dict(admission.env), tuple(admission.slot.pass_fds()))
         admission.slot.handoff()
-        print(f'{label}: requested {units}, admitted {budget.workers}', file=out, flush=True)
+        jobs = f', {budget.env[POOL_JOBS]} jobs each' if prepare is not None and POOL_JOBS in budget.env else ''
+        print(f'{label}: requested {units}, admitted {budget.workers}{jobs}', file=out, flush=True)
         yield budget
 
 
@@ -553,7 +573,8 @@ def run_admitted(units: Sequence[tuple[str, Callable[[UnitContext], object]]], l
                  max_workers: int | None = None,
                  emit: Callable[[str, object], object] | None = None,
                  cancel_error: Callable[[str], BaseException] = UnitsCancelled,
-                 unit_mib: int = host.RUNNER_PEAK_MIB, out=sys.stderr) -> list:
+                 unit_mib: int = host.RUNNER_PEAK_MIB, prepare=None, env: Mapping[str, str] | None = None,
+                 out=sys.stderr) -> list:
     """Run independent UNITS in a pool sized by the heavy slot's admission; return values in order.
 
     Every nonempty run takes or inherits admission, including a single unit.
@@ -561,6 +582,8 @@ def run_admitted(units: Sequence[tuple[str, Callable[[UnitContext], object]]], l
     MAX_WORKERS, the unit count or CPUS (the CPU ids to lease, one per running
     unit; defaults to the host's allowed set). See `run_units` for the stop and
     ordering rules. Every unit sees the admitted environment and slot descriptors.
+    PREPARE and ENV are those of `admitted`; a PREPARE does not see SERIAL or
+    MAX_WORKERS, which still cap the workers but not what it reserves.
     """
     if max_workers is not None and max_workers < 1:
         raise ValueError('max_workers must be positive')
@@ -574,8 +597,8 @@ def run_admitted(units: Sequence[tuple[str, Callable[[UnitContext], object]]], l
     cpu_cap = len(cpus)
     if max_workers is not None:
         cpu_cap = min(cpu_cap, max_workers)
-    with admitted(len(units), label, cancelled=cancelled, cpu_cap=cpu_cap,
-                  unit_mib=unit_mib, cancel_error=cancel_error, out=out) as budget:
+    with admitted(len(units), label, cancelled=cancelled, cpu_cap=cpu_cap, unit_mib=unit_mib, prepare=prepare,
+                  env=env, cancel_error=cancel_error, out=out) as budget:
         workers = max(1, min(budget.workers, len(units), len(cpus),
                              max_workers if max_workers is not None else len(units)))
         launcher = ProcessLauncher(env=budget.env, pass_fds=budget.fds, cpus=cpus[:workers],

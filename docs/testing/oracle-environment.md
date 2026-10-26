@@ -200,7 +200,7 @@ What changed, and what did not:
 - **Unchanged — the tkrzw cell stays the pin for the frozen goldens.** The
   capture fixtures (`fixtures/foundation`, `fixtures/w4`, `fixtures/w3/pin-ref.txt`)
   and the `pinyin-oracle` crate's `EXPECTED_PIN_REF` carry `+dbm-tkrzw`;
-  `tools/capture/run-capture.sh`, `tools/profile/run-w8-cycle.sh` and the
+  `tools/capture/run-capture.sh`, `just profile-w8` and the
   crate's parity tests need a prefix built with `--dbm tkrzw`. The
   Multi-backend section's statement that capture links only the tkrzw
   oracle still holds.

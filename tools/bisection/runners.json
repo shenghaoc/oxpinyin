@@ -196,7 +196,7 @@
   {
     "name": "callgrind-differential",
     "kind": "not-a-gate",
-    "implementation": "instrument:tools/bisection/run-callgrind-differential.sh",
+    "implementation": "python:tools.dev",
     "issues": [
       "measurement recipe"
     ],
@@ -213,8 +213,8 @@
     "timeout": 900,
     "exclusive_resources": [],
     "command": [
-      "bash",
-      "{root}/tools/bisection/run-callgrind-differential.sh"
+      "uv", "run", "--no-project", "--managed-python", "python", "-X",
+      "lazy_imports=normal", "-m", "tools.dev", "measure", "callgrind-differential"
     ],
     "env": {},
     "input_paths": [],
@@ -923,7 +923,7 @@
   {
     "name": "perf-baseline",
     "kind": "not-a-gate",
-    "implementation": "instrument:tools/bisection/run-perf-baseline.sh",
+    "implementation": "python:tools.dev",
     "issues": [
       "370"
     ],
@@ -940,8 +940,8 @@
     "timeout": 900,
     "exclusive_resources": [],
     "command": [
-      "bash",
-      "{root}/tools/bisection/run-perf-baseline.sh"
+      "uv", "run", "--no-project", "--managed-python", "python", "-X",
+      "lazy_imports=normal", "-m", "tools.dev", "measure", "perf-baseline"
     ],
     "env": {},
     "input_paths": [],
@@ -950,7 +950,7 @@
   {
     "name": "perf-matrix",
     "kind": "not-a-gate",
-    "implementation": "instrument:tools/bisection/run-perf-matrix.sh",
+    "implementation": "python:tools.dev",
     "issues": [
       "measurement recipe"
     ],
@@ -967,8 +967,8 @@
     "timeout": 900,
     "exclusive_resources": [],
     "command": [
-      "bash",
-      "{root}/tools/bisection/run-perf-matrix.sh"
+      "uv", "run", "--no-project", "--managed-python", "python", "-X",
+      "lazy_imports=normal", "-m", "tools.dev", "measure", "perf-matrix"
     ],
     "env": {},
     "input_paths": [],
@@ -977,7 +977,7 @@
   {
     "name": "perf-same-data",
     "kind": "not-a-gate",
-    "implementation": "instrument:tools/bisection/run-perf-same-data.sh",
+    "implementation": "python:tools.dev",
     "issues": [
       "260"
     ],
@@ -994,8 +994,8 @@
     "timeout": 900,
     "exclusive_resources": [],
     "command": [
-      "bash",
-      "{root}/tools/bisection/run-perf-same-data.sh"
+      "uv", "run", "--no-project", "--managed-python", "python", "-X",
+      "lazy_imports=normal", "-m", "tools.dev", "measure", "perf-same-data"
     ],
     "env": {},
     "input_paths": [],
@@ -1272,7 +1272,7 @@
   {
     "name": "rss-diag",
     "kind": "not-a-gate",
-    "implementation": "instrument:tools/bisection/run-rss-diag.sh",
+    "implementation": "python:tools.dev",
     "issues": [
       "measurement recipe"
     ],
@@ -1289,8 +1289,8 @@
     "timeout": 900,
     "exclusive_resources": [],
     "command": [
-      "bash",
-      "{root}/tools/bisection/run-rss-diag.sh"
+      "uv", "run", "--no-project", "--managed-python", "python", "-X",
+      "lazy_imports=normal", "-m", "tools.dev", "measure", "rss-diag"
     ],
     "env": {},
     "input_paths": [],
@@ -1438,7 +1438,7 @@
   {
     "name": "shipped-check",
     "kind": "not-a-gate",
-    "implementation": "legacy:tools/bisection/run-shipped-check.sh",
+    "implementation": "python:tools.dev",
     "issues": [
       "measurement recipe"
     ],
@@ -1455,8 +1455,8 @@
     "timeout": 900,
     "exclusive_resources": [],
     "command": [
-      "bash",
-      "{root}/tools/bisection/run-shipped-check.sh"
+      "uv", "run", "--no-project", "--managed-python", "python", "-X",
+      "lazy_imports=normal", "-m", "tools.dev", "measure", "shipped-check"
     ],
     "env": {},
     "input_paths": [],
@@ -1465,7 +1465,7 @@
   {
     "name": "system-import-profile",
     "kind": "not-a-gate",
-    "implementation": "instrument:tools/bisection/run-system-import-profile.sh",
+    "implementation": "python:tools.dev",
     "issues": [
       "599"
     ],
@@ -1482,8 +1482,8 @@
     "timeout": 900,
     "exclusive_resources": [],
     "command": [
-      "bash",
-      "{root}/tools/bisection/run-system-import-profile.sh"
+      "uv", "run", "--no-project", "--managed-python", "python", "-X",
+      "lazy_imports=normal", "-m", "tools.dev", "measure", "system-import-profile"
     ],
     "env": {},
     "input_paths": [],
@@ -1625,7 +1625,7 @@
   {
     "name": "tree-recipe-control",
     "kind": "not-a-gate",
-    "implementation": "instrument:tools/bisection/run-tree-recipe-control.sh",
+    "implementation": "python:tools.dev",
     "issues": [
       "measurement recipe"
     ],
@@ -1642,8 +1642,8 @@
     "timeout": 900,
     "exclusive_resources": [],
     "command": [
-      "bash",
-      "{root}/tools/bisection/run-tree-recipe-control.sh"
+      "uv", "run", "--no-project", "--managed-python", "python", "-X",
+      "lazy_imports=normal", "-m", "tools.dev", "measure", "tree-recipe-control"
     ],
     "env": {},
     "input_paths": [],

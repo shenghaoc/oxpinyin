@@ -192,13 +192,13 @@ def check_arms(args, arms, references=()):
     return results
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--arm', help='arm name for unqualified FACADE=OBJECT inputs')
     parser.add_argument('--reference-arm', action='append', default=[])
     parser.add_argument('--library', action='append', required=True, metavar='ARM/FACADE=OBJECT')
     add_arguments(parser)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     arms = {}
     for value in args.library:
         key, separator, path = value.partition('=')

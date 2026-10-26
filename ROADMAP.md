@@ -418,7 +418,7 @@ is the size/speed/RAM work the constitution puts first, each change
 measured against the pin in the same container:
 
 - **Measurement harness** (2026-08-19): Criterion groups on the C-ABI
-  surface, the `profiling` cargo profile, `tools/profile/run-w8-cycle.sh`.
+  surface, the `profiling` cargo profile, `just profile-w8`.
 - **P1–P6 data-layer inversion** (2026-09-01 → 2026-09-02): the runtime
   opens each backend's native files directly (W15 note above). Same data
   directory as the pin: init within ~1.1× (KC) / ~1.3× (tkrzw)

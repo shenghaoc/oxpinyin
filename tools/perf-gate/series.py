@@ -1,8 +1,8 @@
 #!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
 """series.py — append a nightly snapshot to the series and read it back.
 
-The other half of tools/perf-gate/snapshot.sh. Design and rationale:
-docs/perf/ci-perf-size-gate-proposal-2026-09-09.md.
+The other half of the `measure snapshot` recipe (tools/dev/measure/snapshot.py).
+Design and rationale: docs/perf/ci-perf-size-gate-proposal-2026-09-09.md.
 
 This is not a gate and it does not run on the PR path. It reports a trend and
 draws attention to a large night-over-night move. Three rules shape it, and

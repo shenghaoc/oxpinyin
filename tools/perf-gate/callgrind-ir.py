@@ -1,9 +1,9 @@
 #!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
 """callgrind-ir.py — total Ir attributed to one object in a callgrind file.
 
-Used by tools/perf-gate/snapshot.sh for the nightly series' instruction count.
-It is a separate file rather than an inline heredoc so it can be tested against
-fixtures: tools/perf-gate/callgrind-ir.test.sh.
+Used by the `measure snapshot` recipe (tools/dev/measure/snapshot.py) for the
+nightly series' instruction count. It is a separate file rather than inline code
+so it can be tested against fixtures: tools/perf-gate/callgrind-ir.test.py.
 
 The format has three features that a naive "sum the numbers under a matching
 `ob=`" reader gets wrong, and all three were wrong in the first version:

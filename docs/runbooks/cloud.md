@@ -188,9 +188,9 @@ environment and run from the repository root:
 Any object that resolves `libtkrzw` must use the runtime verified by setup,
 even when `PINYIN_ORACLE_DBM` is unset, `bdb` or `kc`.
 `tools/tkrzw/runtime.sh` contains the single check, using bash, `ldd`, awk
-and readlink; `runtime.py` is only an adapter for Python tools. Native
-runners and the callgrind/perf-matrix images need no uv or Python to check
-the runtime. The environment writer exports `OXPINYIN_TKRZW_LIBRARY`, the
+and readlink; `runtime.py` is only an adapter for Python tools, which is how
+the measurement recipes call it. The check itself needs no uv or Python.
+The environment writer exports `OXPINYIN_TKRZW_LIBRARY`, the
 exact canonical library verified by setup. A healthy host uses the existing
 `probe_host` result; an unhealthy host uses the provisioned cache. An older
 generated `OXPINYIN_TKRZW_PREFIX` or `OXPINYIN_TKRZW_PREFIXES` still selects
@@ -234,9 +234,9 @@ by the inherited value. The remaining overwrites were classified as follows:
 | Sites | Classification |
 | --- | --- |
 | `gcov_measure.py`: same-data and user-store environments | Defects; preserve inheritance and check the actual object/executable. |
-| `run-callgrind-differential.sh`: all five launch sites | Defects; use each selected object's directory, then inheritance. |
-| `run-perf-baseline.sh`, `run-perf-matrix.sh`, `run-perf-same-data.sh` | Defects, including reused stages and both taskset branches; preserve inheritance. |
-| `run-shipped-check.sh`, `run-tree-recipe-control.sh` | Defects; use the selected object's directory, then inheritance. |
+| `measure callgrind-differential`: all five launch sites | Defects; use each selected object's directory, then inheritance. |
+| `measure perf-baseline`, `perf-matrix`, `perf-same-data` | Defects, including reused stages and both taskset branches; preserve inheritance. |
+| `measure shipped-check`, `tree-recipe-control` | Defects; use the selected object's directory, then inheritance. |
 | `release-stage.sh` and `capture/run-capture.sh` | Additional defects; linked smoke/capture processes also need inheritance and the check. |
 | `just runner cpp-smoke`: cleared-path `ldd` assertion | Intentional SONAME/RPATH test; the subsequent executable launch is checked with its actual environment. |
 | `build-oracle.sh`: generation-prefix assignment | Intentional isolation in the pinned build recipe; not a differential launch. |
