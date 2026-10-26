@@ -45,7 +45,8 @@ surface is the gate.
 Each row whose structure is "different" moves from "unverified" to
 "argued" by getting a short argument in the record, beneath its table:
 what the pin's structure guarantees that
-reaches output (an order, a tie rule, a wraparound), how oxpinyin's
+reaches output (an order, a tie rule, a product quirk; not a language
+artefact, which is recorded instead), how oxpinyin's
 structure keeps that guarantee, and the time and space complexity of
 both. When the argument needs more than a paragraph it moves to its own
 finding and the row links to it.

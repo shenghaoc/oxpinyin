@@ -2,17 +2,21 @@
 
 ## Introduction
 
-Stage 2 (maintainer ruling 2026-10-14 UTC) makes oxpinyin match the
-pinned libpinyin bug for bug across the whole exported ABI and the
-user-store surfaces. It also allows internal improvement that keeps
-compatibility. This spec contains requirements from both sides:
+Stage 2 (maintainer ruling 2026-10-14 UTC, amended 2026-10-26 UTC by
+#1303) makes oxpinyin match the pinned libpinyin's product behaviour bug
+for bug across the whole exported ABI and the user-store surfaces, in
+idiomatic Rust. The programming language is an implementation detail:
+behaviour that comes only from C or C++ semantics or from a library
+written for another language is a language artefact and is not
+reproduced (Requirement 6). Stage 2 also allows internal improvement
+that keeps compatibility. This spec contains requirements from both sides:
 
 - Requirements 1–3 are pinned behaviour
   (`.kiro/steering/pinned-behaviour.md`).
 - Requirements 4–6 are oxpinyin rules, not behaviours of the pin
   (`.kiro/steering/oxpinyin-improvements.md`). Requirement 4 sets a
   performance floor and no ceiling. Requirement 5 sets the measurement
-  method. Requirement 6 bounds language/runtime quirks and the math
+  method. Requirement 6 sets the language-artefact rule and the math
   rule.
 
 Where oxpinyin may differ from the pin, the rule is in
@@ -26,8 +30,20 @@ from the pin are Stage 3 (`.kiro/specs/stage3-departures/`).
   (2.11.92, `074a2219`).
 - **Reference cell** — the Berkeley DB build on both sides
   (`PINYIN_ORACLE_DBM=bdb`).
-- **Pin defect** — an observable behaviour of the pin that upstream
-  would call a bug.
+- **Pin defect** — an observable product behaviour of the pin that
+  upstream would call a bug: a logic defect that idiomatic Rust
+  reproduces as written.
+- **Product behaviour** — what a user, or a developer calling the shared
+  object, observes and a language-neutral requirement would state: which
+  candidates, in what order, under which options; what is saved and
+  loaded; what the C API returns, owns and frees; what lands on disk.
+- **Language artefact** — a behaviour that comes only from C or C++
+  semantics (an integer-returning comparator, unsigned wrap-around,
+  float-to-integer truncation, an integer width chosen for storage) or
+  from a library written for another language (GLib, glibc or another
+  libc, libstdc++), or from compiler or processor behaviour. A width or
+  wrap that the C ABI, an on-disk format or a domain algorithm prescribes
+  is not an artefact.
 - **Derivation** — the pin's source lines, or the symbol and
   instruction offsets in the pin-built object holding the code (the
   reference cell's by default, the backend's own for backend-specific
@@ -48,12 +64,13 @@ built against libpinyin's actual behaviour keep working.
    the same inputs and state, oxpinyin SHALL produce the pin's return
    status, out-parameters and the data they point to, written lengths,
    handle state transitions, files written, stderr bytes and
-   process-wide side effects.
+   process-wide side effects, except where Requirement 6 records a
+   language artefact.
 2. WHEN the pin's behaviour is a pin defect THEN oxpinyin SHALL
    reproduce it and record it as an upstream defect
    (`docs/findings/upstream-report-drafts.md`), unless the policy places
-   it in class (a), (b) or (c), or admits it under the
-   language/runtime-quirk exception with a discrepancy record.
+   it in class (a), (b) or (c), or the difference is a language
+   artefact recorded under Requirement 6.
 3. Matching the pin SHALL be the default; a departure SHALL name its
    class or its record and SHALL NOT create a new class or exception.
 4. THE `errno` a successful call leaves behind SHALL NOT be compared
@@ -92,6 +109,9 @@ place by a test, so that it cannot silently regress.
    and there is no fix to revert, by a deliberate named mutation of
    oxpinyin's side. The pin SHALL NOT be mutated.
 3. New cases SHALL go into an existing driver where one can take them.
+4. A case that differs from the pin only through a recorded language
+   artefact SHALL carry `POLICY-ACCEPTED` with oxpinyin's idiomatic
+   result; it SHALL NOT be fixed towards the pin.
 
 ### Requirement 4: Performance floor, no ceiling
 
@@ -114,15 +134,17 @@ compatibility stays.
    trade (`/AGENTS.md`, Source policy).
 4. A change that makes oxpinyin faster or smaller than the pin is
    eligible for Stage 2 WHEN observable output, the files on disk and the
-   ABI do not change. Its differentials SHALL stay identical. Eligibility
+   ABI do not change, other than through a recorded language artefact.
+   Its differentials SHALL stay identical, or `POLICY-ACCEPTED` for a
+   recorded artefact. Eligibility
    is not approval: the change SHALL also satisfy the other rules that
    apply to it (safety, dependencies, binary-size disclosure under
    Constitution §2, review and verification).
 5. A performance change that needs an observable or on-disk change
    SHALL NOT land in Stage 2, unless a registered class (a)–(c)
-   exception or a recorded language/runtime-quirk exception in
-   `docs/findings/compatibility-policy.md` covers that change.
-   Otherwise the change is a Stage 3 departure.
+   exception covers that change or the change is a recorded language
+   artefact (`docs/findings/compatibility-policy.md`). Otherwise the
+   change is a Stage 3 departure.
 
 ### Requirement 5: Performance measured the same way on both sides
 
@@ -142,26 +164,37 @@ reproducible and like-for-like.
 4. Performance SHALL NOT be a PR gate. The nightly snapshot series is
    the tracking surface (`docs/perf/ci-perf-size-gate-proposal-2026-09-09.md`).
 
-### Requirement 6: Language/runtime quirks and the math rule
+### Requirement 6: Language artefacts and the math rule
 
-**User Story:** As the maintainer, I want GLib/glibc/C++ quirks handled as
-normal Rust without losing the C contract, so that the port is idiomatic
-without becoming incompatible.
+**User Story:** As the maintainer, I want the product's behaviour
+implemented in idiomatic Rust, with no effort spent imitating another
+programming language or a library written for one, and without losing
+the C contract.
 
 #### Acceptance Criteria
 
-1. A language/runtime difference SHALL be decided in the policy's order:
-   the C-facing contract first, then classes (a)–(c), then a recorded
-   quirk, otherwise a defect or a Stage 3 departure.
-2. A quirk exception SHALL preserve the C ABI and layout, ownership and
-   lifetime (real `GArray`, `g_free`, other GLib-owned structures), the
-   on-disk formats, data ownership and behaviour on valid supported
-   input, and SHALL be recorded with
+1. A difference from the pin SHALL be decided in the policy's order: the
+   C-facing contract first, then classes (a)–(c), then a language
+   artefact, then a product-level change, otherwise a defect.
+2. No Rust SHALL be written to reproduce a language artefact. Whether a
+   behaviour is an artefact SHALL be decided by asking whether a
+   language-neutral requirement for it would mention it; when unsure,
+   the agent SHALL err towards idiomatic Rust and record the difference.
+3. WHEN idiomatic Rust differs from the pin only through a language
+   artefact, on valid or malformed input, THEN the Rust result SHALL
+   stand, and the difference SHALL be recorded with
    `docs/findings/language-runtime-discrepancy-template.md`, registered
-   by name, and carried by a `POLICY-ACCEPTED` differential case.
-3. A valid-input change, an untraceable path, or a conflict with an
-   earlier maintainer ruling SHALL STOP for a human decision.
-4. EVERY math function SHALL use Rust's standard maths at full speed —
+   by name in `docs/findings/upstream-divergences.md` and carried by a
+   `POLICY-ACCEPTED` differential case. No approval SHALL be required.
+4. THE C ABI and layout, ownership and lifetime (real `GArray`, `g_free`,
+   other GLib-owned structures), every exported symbol, the on-disk
+   formats and data ownership SHALL be preserved exactly; none of them
+   is an artefact.
+5. A product-level change (a ranking rule, a limit, a refusal, the
+   meaning of an option, a pin defect), an untraceable path, or a
+   conflict with an earlier maintainer ruling SHALL STOP for a human
+   decision.
+6. EVERY math function SHALL use Rust's standard maths at full speed —
    `f64::ln`, `exp`, `powf` and every other `std` float method — in
    every crate, training and word included. oxpinyin SHALL NOT slow code
    down to imitate glibc, libm, GLib `gfloat` or any other C behaviour.

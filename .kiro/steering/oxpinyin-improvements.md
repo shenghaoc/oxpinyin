@@ -35,16 +35,18 @@ own discrepancy record; none is admitted by analogy.
   first. There is no fourth "tolerate and warn" class.
 - **(d) CONSUMER SCOPE** — retired 2026-09-06.
 
-**Language/runtime-quirk exception.** A GLib/glibc/C++ quirk that normal
-Rust does not reproduce may be accepted without changing the C ABI,
-ownership (including real `GArray` and `g_free`), the on-disk formats,
-data ownership or behaviour on valid input. It is outside the classes
+See `docs/findings/compatibility-policy.md`, "Native Rust implementation" (#1303).
+
+The language/runtime-quirk exception does not change the C ABI,
+ownership (including real `GArray` and `g_free`), the on-disk formats
+or data ownership. It is outside the classes
 and is admitted only by a discrepancy record from
 `docs/findings/language-runtime-discrepancy-template.md`, registered by
 name in `docs/findings/upstream-divergences.md` and carried by a
 `POLICY-ACCEPTED` differential case. One record admits no other by
-analogy. A valid-input difference or a reversal of a prior ruling is a
-STOP.
+analogy. A language artefact is not reproduced, on valid or malformed
+input, and needs no approval; a product-level change or a reversal of a
+prior ruling is a STOP.
 
 **Registered standing divergences** are individual entries under that
 exception (tkrzw's `SYSTEM_ERROR`/`UNKNOWN_ERROR` collapse through its C

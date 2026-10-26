@@ -93,7 +93,9 @@ behaviour" is a claim I can check.
 2. EACH such row SHALL compare oxpinyin's time and space complexity with
    the pin's for the operation, and SHALL NOT be worse in both.
 3. A row whose argument fails SHALL be treated as a defect and fixed to
-   the pin's behaviour.
+   the pin's product behaviour. A difference that is only a language
+   artefact SHALL be recorded, not fixed (amended 2026-10-26 UTC,
+   #1303).
 
 ### Requirement 4: Known defects are fixed bug for bug
 
