@@ -71,6 +71,7 @@ series lives in `../perf/`.
 | [`emitter-port`](emitter-port.md) | Emitter port — `export_interpolation` → `interpolation2.text` (W9-T4a) | historical (pre-P6) |
 | [`error-handling`](error-handling.md) | Error-handling audit | record (re-verified 2026-08-28; still cites oxpinyin-migrate) |
 | [`full-pinyin-aux-overread`](full-pinyin-aux-overread.md) | Findings — upstream heap over-read in `pinyin_get_full_pinyin_auxiliary_text` | record (upstream defect) |
+| [`glib-glibc-version-sensitivity`](glib-glibc-version-sensitivity.md) | GLib and glibc version sensitivity of the reimplemented behaviours — which of them changed across the versions Debian, Ubuntu, Fedora, Arch and Homebrew ship, the observable difference, and the #1303 classification (#1298) | record (read-only investigation) |
 | [`init-metadata-calls-1090`](init-metadata-calls-1090.md) | Init metadata calls — one `fstat` per chunk open and no DBM sidecar unlinks (#1090 items 1–2): history of the sidecars, the probes that remain, KC init Ir and syscalls base / PR / pin | measured |
 | [`installed-naming`](installed-naming.md) | The installed tree takes libpinyin's name; the source tree keeps ours | implemented |
 | [`interpolation2-grammar`](interpolation2-grammar.md) | The `interpolation2.text` taglib grammar — one shared reader, and the duplicate/zero-count policy split | record (implemented) |
