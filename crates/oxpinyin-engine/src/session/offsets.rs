@@ -178,7 +178,7 @@ where
     /// dictionary's backend failure.
     pub fn character_offset(
         &self,
-        phrase: &str,
+        phrase: &oxpinyin_core::PhraseText,
         offset: usize,
     ) -> Result<Option<usize>, EngineError> {
         // The working graph, not the parsed-only one `matrix_keys`

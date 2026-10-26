@@ -61,7 +61,7 @@ fn change(store: &mut UserStore) {
     let key = PinyinKey::try_from(SyllableKey::from_text("ni").unwrap().index()).unwrap();
     for library in 5..=6_u8 {
         store
-            .add_phrase_in(library, "你", &[key], Some(17))
+            .add_phrase_in(library, &"你".into(), &[key], Some(17))
             .unwrap();
     }
     store

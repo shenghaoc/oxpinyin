@@ -11,7 +11,7 @@ use std::os::raw::c_char;
 use std::ptr;
 use std::sync::atomic::Ordering;
 
-use crate::ffi::{cstr_to_string, owned_cstr};
+use crate::ffi::owned_cstr;
 use crate::state::instance_ref;
 use crate::types::{ChewingKey, GChar, ZhuyinInstance};
 
@@ -42,10 +42,15 @@ pub extern "C" fn zhuyin_parse_full_pinyin(
     // `zhuyin_alloc_instance`.
     let inst = unsafe { instance_ref(instance) };
     // SAFETY: Null-checked above.
-    let text = unsafe { cstr_to_string(onepinyin) };
+    let text = oxpinyin_capi_marshal::input::scalar_text(oxpinyin_capi_marshal::borrow_c_string!(
+        onepinyin
+    ))
+    .unwrap_or_default();
     // Class (c), `pinyin_parser2.cpp:170`: the shared `parse_one_key` asserts
     // the text holds no `'`, before it touches `*onekey`.
-    if text.contains('\'') {
+    if oxpinyin_capi_marshal::borrow_c_string!(onepinyin)
+        .is_some_and(|input| input.to_bytes().contains(&b'\''))
+    {
         crate::ffi::log_warning(
             "zhuyin_parse_full_pinyin: assertion 'NULL == strchr(input, ''')' failed",
         );
@@ -90,7 +95,10 @@ pub extern "C" fn zhuyin_parse_chewing(
     // `zhuyin_alloc_instance`.
     let inst = unsafe { instance_ref(instance) };
     // SAFETY: Null-checked above.
-    let text = unsafe { cstr_to_string(onechewing) };
+    let text = oxpinyin_capi_marshal::input::scalar_text(oxpinyin_capi_marshal::borrow_c_string!(
+        onechewing
+    ))
+    .unwrap_or_default();
     inst.core.parse_one_chewing(&text).is_some_and(|key| {
         // SAFETY: Null-checked above.
         unsafe { *onekey = ChewingKey::from_core(key) };

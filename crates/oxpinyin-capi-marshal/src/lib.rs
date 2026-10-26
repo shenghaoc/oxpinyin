@@ -24,9 +24,10 @@
 //! `ffi.rs` files document: the allocator edge is not shared, and neither
 //! is any compiled `unsafe` — only the *shape* of the unsafe marshalling.
 //!
-//! The [`phrase_text`] module is the exception that proves the boundary: it
-//! is safe, compiled here, and the one place a [`oxpinyin_core::PhraseText`]
-//! becomes the pin's C-facing bytes.
+//! The safe [`input`] and [`phrase_text`] modules compile here: they convert
+//! borrowed input to Rust values and encode [`oxpinyin_core::PhraseText`]
+//! as the pin's C-facing bytes. Only pointer borrowing and output allocation
+//! remain unsafe edges in the adapters.
 //!
 //! No exported C symbol is generated here: the `#[unsafe(no_mangle)]`
 //! entry points keep their hand-written bodies in each crate, so the
@@ -166,6 +167,7 @@ macro_rules! opaque_handle_casts {
     };
 }
 
+pub mod input;
 pub mod phrase_text;
 pub mod ucs4;
 

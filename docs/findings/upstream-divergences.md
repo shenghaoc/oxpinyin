@@ -4073,3 +4073,32 @@ coverage. Earlier Rust allocations may still terminate; no identical
 allocation graph or whole-process OOM equivalence is claimed. Real GArray
 growth stays fatal. Nonfatal `token_get_phrase` conversion belongs to
 #1224 and is unchanged by #1227.
+
+### NULL string conversion after defined prior work (#1279)
+
+Class (b), following the #1272/#1277 no-input ruling. At 074a2219
+`src/pinyin.cpp:1450-1452` and `src/zhuyin.cpp:969-971`, NULL sentence
+first calls `g_utf8_strlen`, which emits its precondition critical
+(GLib 2.84.4 `glib/gutf8.c:240`, GLib domain from `glib/meson.build:404`),
+then `g_utf8_to_ucs4` dereferences NULL (`gutf8.c:950`). Both adapters'
+`phrase_segment` entries preserve that critical, then segment no input:
+true with the prior phrase-result list cleared (`lookup/phrase_lookup.cpp:36-52,119-157,382-428`).
+
+NULL lookup phrase faults before `reduce_tokens` at
+`src/pinyin.cpp:2658` / `src/zhuyin.cpp:1684`; the adapters' `lookup_tokens`
+entries take the no-input lookup, return false and clear the caller array.
+Batch parse NULL strings fault at strlen before instance mutation
+(`pinyin.cpp:1509,1552,1599`; `zhuyin.cpp:1032,1070`); their existing
+no-input path returns zero and clears parse state. Single-key NULL strings
+fault at strlen before key mutation (`pinyin.cpp:1491,1534,1575`;
+`zhuyin.cpp:1011,1052`); the existing guard returns false and leaves the
+key untouched. NULL `parse_full_pinyin` is the single-key case in point:
+the pin faults at strlen (`pinyin.cpp:1491`, `zhuyin.cpp:1011`) before
+`parse_one_key` touches the key, so the key stays untouched. No UB is
+reproduced. Existing row 41 remains the guard classification; this entry
+records the state-sensitive string outcomes.
+
+Cases: `c-string-input/*-segment-state-null`, `*-lookup-state-null`,
+`*-parse*-null`, `*-character-offset-null`, `*-import-null` and
+`*-remember-null`, with the pin not driven into UB (`pin_not_run`), plus
+non-empty valid controls.

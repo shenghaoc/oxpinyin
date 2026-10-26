@@ -6,7 +6,6 @@ use oxpinyin_core::{Dictionary, SyllableKey};
 use oxpinyin_engine::MatrixKey;
 use oxpinyin_user::{PinyinKey, toned_key};
 
-use crate::ffi::cstr_to_string;
 use crate::state::instance_mut;
 use crate::types::PinyinInstance;
 
@@ -46,15 +45,14 @@ pub extern "C" fn pinyin_remember_user_input(
 
     // SAFETY: `phrase` is a C string from the caller (null OK; null and
     // invalid UTF-8 read as empty, which the length gate below rejects).
-    let phrase = unsafe { cstr_to_string(phrase) };
+    let phrase =
+        oxpinyin_capi_marshal::input::utf8_to_ucs4(oxpinyin_capi_marshal::borrow_c_string!(phrase))
+            .unwrap_or_default();
     // 074a2219 pinyin.cpp:3677-3681 checks the character count before
     // _pre_compute_tokens. A failed g_utf8_to_ucs4 leaves that count zero.
     // Stop counting at the refusal boundary: oversized known-character
     // strings must not reach the per-character dictionary lookups.
-    let phrase_length = phrase
-        .chars()
-        .take(oxpinyin_user::MAX_PHRASE_LENGTH)
-        .count();
+    let phrase_length = phrase.phrase_length();
     if phrase_length == 0 || phrase_length >= oxpinyin_user::MAX_PHRASE_LENGTH {
         return false;
     }
@@ -70,13 +68,10 @@ pub extern "C" fn pinyin_remember_user_input(
     // 074a2219 pinyin.cpp:3098-3130, 3685-3695: _pre_compute_tokens
     // refuses before remembering when any single-character search has no
     // token. Search the loaded system and user tables, as lookup_tokens does.
-    if phrase.chars().any(|character| {
-        let mut buffer = [0_u8; 4];
-        inst.core
-            .dict
-            .tokens_for_text(character.encode_utf8(&mut buffer))
-            .is_empty()
-    }) {
+    if phrase
+        .outward_words()
+        .any(|word| inst.core.dict.tokens_for_ucs4(&[word]).is_empty())
+    {
         return false;
     }
     // Keep the existing selected syllable sequence, adding its parsed tones.

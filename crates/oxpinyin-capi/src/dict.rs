@@ -29,7 +29,6 @@ use oxpinyin_core::Dictionary;
 
 use glib_sys::{g_array_append_vals, g_array_set_size};
 
-use crate::ffi::cstr_to_string;
 use crate::state::instance_ref;
 use crate::types::{GChar, GUint, PhraseTokenT, PinyinInstance};
 
@@ -53,18 +52,20 @@ pub extern "C" fn pinyin_lookup_tokens(
     phrase: *const c_char,
     tokenarray: *mut crate::types::GArray,
 ) -> bool {
-    if instance.is_null() || phrase.is_null() {
+    if instance.is_null() {
         return false;
     }
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
     let inst = unsafe { instance_ref(instance) };
     // SAFETY: Null-checked above.
-    let text = unsafe { cstr_to_string(phrase) };
+    let text =
+        oxpinyin_capi_marshal::input::utf8_to_ucs4(oxpinyin_capi_marshal::borrow_c_string!(phrase))
+            .unwrap_or_default();
     let tokens: Vec<u32> = inst
         .core
         .dict
-        .tokens_for_text(&text)
+        .tokens_for_ucs4(&text.outward_words().collect::<Vec<_>>())
         .iter()
         .map(|token| token.value())
         .collect();

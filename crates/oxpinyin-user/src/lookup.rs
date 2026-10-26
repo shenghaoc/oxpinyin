@@ -511,10 +511,10 @@ mod tests {
         let ni = u16::try_from(SyllableKey::from_text("ni").unwrap().index())
             .expect("frozen syllable inventory fits u16");
         store
-            .add_phrase_in(USER_DICTIONARY, "你", &[ni], Some(5))
+            .add_phrase_in(USER_DICTIONARY, &"你".into(), &[ni], Some(5))
             .unwrap();
         store
-            .add_phrase_in(NETWORK_DICTIONARY, "拟", &[ni], Some(5))
+            .add_phrase_in(NETWORK_DICTIONARY, &"拟".into(), &[ni], Some(5))
             .unwrap();
         let lookup = UserLookup::from_store(&store).unwrap();
         let entries = lookup.lookup(&[key("ni")]);
@@ -541,13 +541,13 @@ mod tests {
         let hao = u16::try_from(SyllableKey::from_text("hao").unwrap().index())
             .expect("frozen syllable inventory fits u16");
         store
-            .add_phrase_in(USER_DICTIONARY, "你", &[ni], Some(5))
+            .add_phrase_in(USER_DICTIONARY, &"你".into(), &[ni], Some(5))
             .unwrap();
         store
-            .add_phrase_in(USER_DICTIONARY, "那", &[na], Some(5))
+            .add_phrase_in(USER_DICTIONARY, &"那".into(), &[na], Some(5))
             .unwrap();
         store
-            .add_phrase_in(USER_DICTIONARY, "号", &[hao], Some(5))
+            .add_phrase_in(USER_DICTIONARY, &"号".into(), &[hao], Some(5))
             .unwrap();
         let lookup = UserLookup::from_store(&store).unwrap();
 
@@ -591,13 +591,13 @@ mod tests {
         // Two matching phrases: (ni, hao) and (na, hao); one non-matching
         // (li, hao) — starts with 'l' not 'n'.
         store
-            .add_phrase_in(USER_DICTIONARY, "你好", &[ni, hao], Some(5))
+            .add_phrase_in(USER_DICTIONARY, &"你好".into(), &[ni, hao], Some(5))
             .unwrap();
         store
-            .add_phrase_in(USER_DICTIONARY, "那号", &[na, hao], Some(5))
+            .add_phrase_in(USER_DICTIONARY, &"那号".into(), &[na, hao], Some(5))
             .unwrap();
         store
-            .add_phrase_in(USER_DICTIONARY, "礼号", &[li, hao], Some(5))
+            .add_phrase_in(USER_DICTIONARY, &"礼号".into(), &[li, hao], Some(5))
             .unwrap();
         let lookup = UserLookup::from_store(&store).unwrap();
 

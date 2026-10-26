@@ -87,8 +87,13 @@ fn add_phrase(user: &mut UserStore, phrase: &str, pinyin: &str, count: u64) -> b
     else {
         return false;
     };
-    user.add_phrase_in(USER_DICTIONARY, phrase, &keys, Some(count))
-        .is_ok()
+    user.add_phrase_in(
+        USER_DICTIONARY,
+        &oxpinyin_core::PhraseText::from(phrase),
+        &keys,
+        Some(count),
+    )
+    .is_ok()
 }
 
 /// Import `path` into the user store under `user_dir`.

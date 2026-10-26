@@ -20,7 +20,7 @@
 use std::os::raw::c_char;
 use std::ptr;
 
-use crate::ffi::{cstr_to_string, owned_cstr};
+use crate::ffi::owned_cstr;
 use crate::state::instance_ref;
 use crate::types::{ChewingKey, GChar, PinyinInstance};
 
@@ -53,10 +53,15 @@ pub extern "C" fn pinyin_parse_full_pinyin(
     // `pinyin_alloc_instance`.
     let inst = unsafe { instance_ref(instance) };
     // SAFETY: Null-checked above.
-    let text = unsafe { cstr_to_string(onepinyin) };
+    let text = oxpinyin_capi_marshal::input::scalar_text(oxpinyin_capi_marshal::borrow_c_string!(
+        onepinyin
+    ))
+    .unwrap_or_default();
     // Class (c), `pinyin_parser2.cpp:170`: `parse_one_key` asserts the text
     // holds no `'`, before it touches `*onekey`.
-    if text.contains('\'') {
+    if oxpinyin_capi_marshal::borrow_c_string!(onepinyin)
+        .is_some_and(|input| input.to_bytes().contains(&b'\''))
+    {
         crate::ffi::log_warning(
             "pinyin_parse_full_pinyin: assertion 'NULL == strchr(input, ''')' failed",
         );
@@ -104,7 +109,10 @@ pub extern "C" fn pinyin_parse_double_pinyin(
     // `pinyin_alloc_instance`.
     let inst = unsafe { instance_ref(instance) };
     // SAFETY: Null-checked above.
-    let text = unsafe { cstr_to_string(onepinyin) };
+    let text = oxpinyin_capi_marshal::input::scalar_text(oxpinyin_capi_marshal::borrow_c_string!(
+        onepinyin
+    ))
+    .unwrap_or_default();
     inst.core.parse_one_double_pinyin(&text).is_some_and(|key| {
         // SAFETY: Null-checked above.
         unsafe { *onekey = ChewingKey::from_core(key) };
@@ -140,7 +148,10 @@ pub extern "C" fn pinyin_parse_chewing(
     // `pinyin_alloc_instance`.
     let inst = unsafe { instance_ref(instance) };
     // SAFETY: Null-checked above.
-    let text = unsafe { cstr_to_string(onechewing) };
+    let text = oxpinyin_capi_marshal::input::scalar_text(oxpinyin_capi_marshal::borrow_c_string!(
+        onechewing
+    ))
+    .unwrap_or_default();
     inst.core.parse_one_chewing(&text).is_some_and(|key| {
         // SAFETY: Null-checked above.
         unsafe { *onekey = ChewingKey::from_core(key) };

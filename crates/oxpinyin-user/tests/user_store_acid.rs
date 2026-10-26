@@ -86,7 +86,9 @@ fn run_child(path: &std::path::Path) {
     let mut store = UserStore::create_standalone(path).expect("child store opens");
     for index in 0..ABORT_AT {
         let (text, keys) = batch_phrase(index);
-        store.add_phrase(&text, &keys, None).expect("child add");
+        store
+            .add_phrase(&oxpinyin_core::PhraseText::from(&text), &keys, None)
+            .expect("child add");
     }
     // The crash under test: no drop, no save, no unwinding.
     std::process::abort();
@@ -216,7 +218,9 @@ fn a_truncated_store_file_is_a_typed_error() {
         let mut store = UserStore::create_standalone(&path).expect("store creates");
         for index in 0..4 {
             let (text, keys) = batch_phrase(index);
-            store.add_phrase(&text, &keys, None).expect("seed add");
+            store
+                .add_phrase(&oxpinyin_core::PhraseText::from(&text), &keys, None)
+                .expect("seed add");
         }
         store.save().expect("seed save");
     }

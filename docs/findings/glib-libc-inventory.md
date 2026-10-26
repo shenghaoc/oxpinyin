@@ -550,6 +550,13 @@ reproduce glibc `atoi`/`atol`; dictool keeps its frozen classic grammar;
 datagen reads exactly the pin's valid `.table`, `punct.table` and
 `interpolation2.text` records and refuses or skips malformed ones by its own
 contract; `gen_pinyin_table` and `gen_zhuyin_table` have no counterpart.
+## Exported C string inputs
+
+The [#1279 per-parameter inventory](c-string-inputs-1279.md) covers all 25
+exported functions with string inputs (29 parameters), their pin conversion,
+invalid/non-scalar/NULL outcomes, prior state changes, and current Rust
+helper. It records source-derived defects and the pending session-interface
+coordination; it is not a completed verification claim.
 
 ## oxpinyin GLib emulations in `crates/`
 

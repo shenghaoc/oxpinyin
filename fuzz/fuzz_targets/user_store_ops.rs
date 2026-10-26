@@ -124,25 +124,41 @@ fn check_phrase_index(store: &UserStore, freshest: Option<u32>) {
     if phrases.len() <= 128 {
         for phrase in &phrases {
             let token = phrase.token();
-            let text = phrase.text();
+            let words = phrase.words();
             let back = store
                 .phrase(token)
                 .expect("phrase lookup")
                 .expect("live row");
-            assert_eq!(back.text(), text, "token {token} must resolve to its text");
             assert_eq!(
-                store.token_for_phrase(text).expect("text lookup"),
-                Some(token),
-                "text {text:?} must resolve to its token"
+                back.words(),
+                words,
+                "token {token} must resolve to its text"
             );
+            // The text index is keyed by scalar text; stored non-scalar
+            // words have no `&str` form to look up.
+            if let Some(text) = phrase
+                .phrase_text()
+                .and_then(|text| text.as_str().map(str::to_owned))
+            {
+                assert_eq!(
+                    store.token_for_phrase(&text).expect("text lookup"),
+                    Some(token),
+                    "text {text:?} must resolve to its token"
+                );
+            }
         }
     } else if let Some(token) = freshest {
         if let Some(row) = store.phrase(token).expect("phrase lookup") {
-            assert_eq!(
-                store.token_for_phrase(row.text()).expect("text lookup"),
-                Some(token),
-                "the freshest row must stay self-consistent"
-            );
+            if let Some(text) = row
+                .phrase_text()
+                .and_then(|text| text.as_str().map(str::to_owned))
+            {
+                assert_eq!(
+                    store.token_for_phrase(&text).expect("text lookup"),
+                    Some(token),
+                    "the freshest row must stay self-consistent"
+                );
+            }
         }
     }
 }
@@ -176,7 +192,9 @@ fuzz_target!(|data: &[u8]| {
                     .map(|index| key_for(index as u8))
                     .collect();
                 if text.chars().count() == keys.len() && !text.is_empty() {
-                    let token = store.add_phrase(&text, &keys, None).expect("valid add");
+                    let token = store
+                        .add_phrase(&oxpinyin_core::PhraseText::from(&text), &keys, None)
+                        .expect("valid add");
                     added.push(token);
                 }
             }
@@ -185,7 +203,7 @@ fuzz_target!(|data: &[u8]| {
                 let count = u64::from(payload.first().copied().unwrap_or(0)) % 1000;
                 let keys = vec![key_for(payload.first().copied().unwrap_or(0))];
                 let token = store
-                    .add_phrase("词", &keys, Some(count))
+                    .add_phrase(&"词".into(), &keys, Some(count))
                     .expect("valid add with count");
                 added.push(token);
             }
@@ -195,11 +213,11 @@ fuzz_target!(|data: &[u8]| {
                 let over_limit: String = std::iter::repeat('词').take(16).collect();
                 let keys16: Vec<PinyinKey> = (0..16).map(|index| key_for(index)).collect();
                 assert!(matches!(
-                    store.add_phrase(&over_limit, &keys16, None),
+                    store.add_phrase(&oxpinyin_core::PhraseText::from(&over_limit), &keys16, None),
                     Err(UserStoreError::InvalidPhrase)
                 ));
                 assert!(matches!(
-                    store.add_phrase("ab", &[key_for(0)], None),
+                    store.add_phrase(&"ab".into(), &[key_for(0)], None),
                     Err(UserStoreError::InvalidPhrase)
                 ));
             }

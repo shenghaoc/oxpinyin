@@ -90,7 +90,11 @@ fn main() {
             .iter()
             .map(|key| u16::try_from(key.index()).expect("syllable indices fit u16"))
             .collect();
-        match store.add_phrase(phrase, &key_path, Some(count)) {
+        match store.add_phrase(
+            &oxpinyin_core::PhraseText::from(phrase),
+            &key_path,
+            Some(count),
+        ) {
             Ok(token) => {
                 println!("add({phrase}/{pinyin}/{count}) = token 0x{token:08x}");
                 user_tokens.push((phrase.to_owned(), token));

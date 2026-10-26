@@ -48,7 +48,7 @@ fn token_text_reads_live_items_and_obeys_library_visibility() {
         Some("你")
     );
     store
-        .add_system_phrase_in(1, Some(system), "你", &keys, Some(5))
+        .add_system_phrase_in(1, Some(system), &"你".into(), &keys, Some(5))
         .expect("live system item");
     assert_eq!(
         dict.token_text(system)
@@ -56,7 +56,9 @@ fn token_text_reads_live_items_and_obeys_library_visibility() {
             .and_then(|text| text.as_str()),
         Some("你")
     );
-    let user = store.add_phrase("词", &keys, Some(5)).expect("user item");
+    let user = store
+        .add_phrase(&"词".into(), &keys, Some(5))
+        .expect("user item");
     assert_eq!(
         dict.token_text(user)
             .as_ref()
@@ -101,7 +103,7 @@ fn trellis_records_filter_user_tones_and_refresh_after_import() {
     let token = runtime
         .user_store()
         .unwrap()
-        .add_phrase("你鎄", &keys, Some(5))
+        .add_phrase(&"你鎄".into(), &keys, Some(5))
         .unwrap();
     let records = dict.trellis_records(&syllables, &[3, 3]).unwrap();
     assert_eq!(
@@ -226,7 +228,9 @@ fn usable_user_dir_feeds_the_merged_lookup_and_overlay() {
         "fixture already carries the probe phrase"
     );
 
-    let token = store.add_phrase(phrase, &keys, None).expect("learn it");
+    let token = store
+        .add_phrase(&oxpinyin_core::PhraseText::from(phrase), &keys, None)
+        .expect("learn it");
 
     // Dictionary seam: the merged lookup returns the learned phrase.
     let entries = merged();
@@ -496,10 +500,10 @@ fn fresh_nbest_step_observes_training_store_writes_and_mask_out() {
         .into_iter()
         .map(|text| SyllableKey::from_text(text).unwrap().index() as PinyinKey)
         .collect();
-    let token = PhraseToken::new(store.add_phrase("你鎄", &keys, Some(5)).unwrap());
+    let token = PhraseToken::new(store.add_phrase(&"你鎄".into(), &keys, Some(5)).unwrap());
     // A second successor keeps count/total from remaining exactly 1 when
     // the tested count changes, so a stale row cannot pass by normalization.
-    let other = store.add_phrase("你鎬", &keys, Some(5)).unwrap();
+    let other = store.add_phrase(&"你鎬".into(), &keys, Some(5)).unwrap();
     store.set_bigram_count(SENTENCE_START, other, 1000).unwrap();
     let prev = PhraseToken::new(SENTENCE_START);
     let lm = runtime.lm();
@@ -541,8 +545,8 @@ fn cached_nbest_row_observes_a_cloned_stores_committed_write() {
         .into_iter()
         .map(|text| SyllableKey::from_text(text).unwrap().index() as PinyinKey)
         .collect();
-    let token = PhraseToken::new(store.add_phrase("你鎄", &keys, Some(5)).unwrap());
-    let other = store.add_phrase("你鎬", &keys, Some(5)).unwrap();
+    let token = PhraseToken::new(store.add_phrase(&"你鎄".into(), &keys, Some(5)).unwrap());
+    let other = store.add_phrase(&"你鎬".into(), &keys, Some(5)).unwrap();
     store.set_bigram_count(SENTENCE_START, other, 1000).unwrap();
     let prev = PhraseToken::new(SENTENCE_START);
     let lm = runtime.lm();
@@ -680,10 +684,10 @@ fn trellis_ranges_continued_matches_the_ranges_and_prefix_pair() {
     };
     let mut store = runtime.user_store().unwrap();
     store
-        .add_phrase("你鎄", &user(&["ni", "hao"]), Some(5))
+        .add_phrase(&"你鎄".into(), &user(&["ni", "hao"]), Some(5))
         .unwrap();
     store
-        .add_phrase("坐坐坐", &user(&["zuo", "zuo", "zuo"]), Some(5))
+        .add_phrase(&"坐坐坐".into(), &user(&["zuo", "zuo", "zuo"]), Some(5))
         .unwrap();
     compare("with user phrases");
     assert!(runtime.unload_library(2));
@@ -717,7 +721,7 @@ fn a_store_write_between_guesses_reaches_the_second_guess() {
         .into_iter()
         .map(|text| SyllableKey::from_text(text).unwrap().index() as PinyinKey)
         .collect();
-    let token = store.add_phrase("你鎄", &keys, Some(5)).unwrap();
+    let token = store.add_phrase(&"你鎄".into(), &keys, Some(5)).unwrap();
     store.set_bigram_count(SENTENCE_START, token, 1000).unwrap();
     assert_eq!(guess(), "你鎄", "the second guess prices the added phrase");
 

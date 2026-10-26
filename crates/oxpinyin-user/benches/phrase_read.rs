@@ -45,7 +45,9 @@ fn seed(store: &mut UserStore) -> Vec<Token> {
                         + u16::from(k == 0) * j
                 })
                 .collect();
-            token = store.add_phrase(&text, &keys, Some(3)).expect("add_phrase");
+            token = store
+                .add_phrase(&oxpinyin_core::PhraseText::from(&text), &keys, Some(3))
+                .expect("add_phrase");
         }
         tokens.push(token);
     }

@@ -3,7 +3,6 @@
 use std::os::raw::c_char;
 use std::ptr;
 
-use crate::ffi::cstr_to_path;
 use crate::state::{CapiContext, box_context, context_mut};
 use crate::types::ZhuyinContext;
 
@@ -45,14 +44,17 @@ pub extern "C" fn zhuyin_init(
     // bytes, so the names are paths, not text (#587). g_build_filename
     // stops at NULL but drops an empty element (074a2219 pinyin.cpp:335,
     // zhuyin.cpp:279): NULL names no file; "" names cwd/table.conf.
-    let Some(system_path) = cstr_to_path(systemdir) else {
+    let Some(system_path) =
+        oxpinyin_capi_marshal::input::filename(oxpinyin_capi_marshal::borrow_c_string!(systemdir))
+    else {
         oxpinyin_data::pin_stderr::emit(&[b"open  failed.\nload  failed!\n"]);
         return ptr::null_mut();
     };
     // The pin's guards test the user pointer (`zhuyin.cpp:548`, `:1697`):
     // NULL is no user dir, while "" is one — the working directory (#619) —
     // so the two stay apart.
-    let user_path = cstr_to_path(userdir);
+    let user_path =
+        oxpinyin_capi_marshal::input::filename(oxpinyin_capi_marshal::borrow_c_string!(userdir));
     match CapiContext::try_open(&system_path, user_path.as_deref()) {
         Ok(ctx) => {
             log_layout_faults(&ctx);

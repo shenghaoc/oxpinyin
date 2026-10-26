@@ -33,7 +33,7 @@ fn write_chunk(path: &std::path::Path, payload: &[u8]) {
     file.write_all(&bytes).expect("scratch write");
 }
 
-fn walk(library: &PhraseLibrary) -> Vec<(u32, Option<String>, usize, usize, u64)> {
+fn walk(library: &PhraseLibrary) -> Vec<(u32, Option<Vec<u32>>, usize, usize, u64)> {
     let mut rows = Vec::new();
     let _ = library.total_freq();
     let _ = library.token_range();
@@ -48,7 +48,10 @@ fn walk(library: &PhraseLibrary) -> Vec<(u32, Option<String>, usize, usize, u64)
         let _ = item.unigram();
         let _ = item.n_pronunciations();
         let _ = library.item(token);
-        rows.push((token, item.phrase_text(), item.phrase_length(), n, freq_sum));
+        let text = item
+            .phrase_text()
+            .map(|text| text.outward_words().collect::<Vec<u32>>());
+        rows.push((token, text, item.phrase_length(), n, freq_sum));
     }
     rows
 }

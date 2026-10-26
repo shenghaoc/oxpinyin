@@ -12,10 +12,7 @@ use oxpinyin_core::{OptionBits, PINYIN_CORRECT_ALL, USE_TONE};
 use oxpinyin_facade::{BigramExportWalk, BigramStep, ExportStep};
 use oxpinyin_user::{MAX_PHRASE_LENGTH, PinyinKey, UserStore, is_user_file_library, toned_key};
 
-use crate::ffi::{
-    cstr_to_owned_lossy, cstr_to_parsed_prefix, malloc_cstr_with, malloc_cstr_with_warning,
-    owned_cstr,
-};
+use crate::ffi::{malloc_cstr_with, malloc_cstr_with_warning, owned_cstr};
 use crate::state::context_ref;
 use crate::types::{
     BigramExportIterator, ExportIterator, GChar, GUint, ImportIterator, PinyinContext,
@@ -132,12 +129,15 @@ pub extern "C" fn pinyin_iterator_add_phrase(
         return false;
     }
 
-    // `cstr_to_owned_lossy` is the C ABI entry point's string
-    // marshaller.
-    let phrase = cstr_to_owned_lossy(phrase);
+    // Scalar input conversion; raw-word import is tracked by #1279.
+    let phrase =
+        oxpinyin_capi_marshal::input::utf8_to_ucs4(oxpinyin_capi_marshal::borrow_c_string!(phrase))
+            .unwrap_or_default();
     // The reading is parsed from the raw bytes (`pinyin.cpp:638`): the
     // keys before an invalid sequence stand, as they do at the pin.
-    let pinyin = cstr_to_parsed_prefix(pinyin);
+    let pinyin = oxpinyin_capi_marshal::input::parser_prefix(
+        oxpinyin_capi_marshal::borrow_c_string!(pinyin),
+    );
     // `if (-1 == count) count = default_count;` (`pinyin.cpp:523-524`);
     // otherwise the `gint` is used as the `guint32` it becomes.
     let count = (count != -1).then(|| u64::from(count.cast_unsigned()));
@@ -153,7 +153,7 @@ pub extern "C" fn pinyin_iterator_add_phrase(
     };
     // The iterator validates the phrase/key lengths before _add_phrase:
     // 074a2219 pinyin.cpp:639-646 / zhuyin.cpp:525-532.
-    let length = phrase.chars().count();
+    let length = phrase.phrase_length();
     if length == 0 || length >= MAX_PHRASE_LENGTH || length != keys.len() {
         return false;
     }
@@ -213,7 +213,10 @@ pub extern "C" fn pinyin_iterator_add_phrase(
             .as_ref()
             .is_some_and(|text| text.phrase_length() == length);
         let same_words = item_text.as_ref().is_some_and(|text| {
-            oxpinyin_capi_marshal::phrase_text::stored_words_match(text, &phrase)
+            text.stored_words().map_or_else(
+                || text.outward_words().eq(phrase.outward_words()),
+                |words| words.iter().copied().eq(phrase.outward_words()),
+            )
         });
         if !(same_length && same_words) {
             crate::ffi::log_warning(if same_length {
@@ -254,14 +257,15 @@ pub extern "C" fn pinyin_iterator_add_phrase(
 fn phrase_table_tokens(
     user: &UserStore,
     dict: Option<&oxpinyin_runtime::RuntimeDict>,
-    phrase: &str,
+    phrase: &oxpinyin_core::PhraseText,
 ) -> Result<Vec<u32>, ()> {
+    let words: Vec<u32> = phrase.outward_words().collect();
     let mut tokens = if let Some(dict) = dict {
-        dict.system().tokens_for_text(phrase).map_err(|_| ())?
+        dict.system().tokens_for_ucs4(&words).map_err(|_| ())?
     } else {
         Vec::new()
     };
-    tokens.extend(user.phrase_table_tokens_for_text(phrase).map_err(|_| ())?);
+    tokens.extend(user.phrase_table_tokens_for_ucs4(&words).map_err(|_| ())?);
     if let Some(dict) = dict {
         tokens.retain(|token| dict.phrase_table_token_enabled(*token));
     }

@@ -260,7 +260,19 @@ pub fn search_suggestion(db: &impl ReadStore, text: &str) -> Result<SearchResult
 /// result and retain earlier changes (`pinyin.cpp:596-606`); it is not a
 /// transaction rollback request.
 pub fn add_index(txn: &mut impl WriteTxn, text: &str, token: u32) -> Result<i32, StoreError> {
-    let key = key(text);
+    add_index_words(txn, &text.chars().map(u32::from).collect::<Vec<_>>(), token)
+}
+
+/// Add a raw-word phrase without converting non-scalar words to characters.
+///
+/// # Errors
+/// Returns the same table and storage errors as [`add_index`].
+pub fn add_index_words(
+    txn: &mut impl WriteTxn,
+    words: &[u32],
+    token: u32,
+) -> Result<i32, StoreError> {
+    let key = key_ucs4(words);
     if key.is_empty() {
         return Err(StoreError::InvalidInput("phrase table text is empty"));
     }

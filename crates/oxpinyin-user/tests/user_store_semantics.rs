@@ -162,7 +162,9 @@ fn add_lookup_remove_roundtrip_and_persists_across_handles() {
     let token = {
         let mut store = UserStore::create_standalone(&path).unwrap();
         assert!(store.token_for_phrase(&text).unwrap().is_none());
-        let token = store.add_phrase(&text, &reading, None).unwrap();
+        let token = store
+            .add_phrase(&oxpinyin_core::PhraseText::from(&text), &reading, None)
+            .unwrap();
         assert_eq!(store.token_for_phrase(&text).unwrap(), Some(token));
         token
     };
@@ -199,13 +201,19 @@ fn one_phrase_holds_several_readings_and_counts_accumulate_per_reading() {
     let text = "重";
     let zhong = keys("zhong");
     let chong = keys("chong");
-    let token = store.add_phrase(text, &zhong, Some(7)).unwrap();
-    store.add_phrase(text, &chong, Some(9)).unwrap();
+    let token = store
+        .add_phrase(&oxpinyin_core::PhraseText::from(text), &zhong, Some(7))
+        .unwrap();
+    store
+        .add_phrase(&oxpinyin_core::PhraseText::from(text), &chong, Some(9))
+        .unwrap();
 
     let phrase: UserPhrase = store.phrase(token).unwrap().expect("stored");
     assert_eq!(phrase.pronunciations().len(), 2, "both readings stored");
 
-    store.add_phrase(text, &zhong, Some(3)).unwrap();
+    store
+        .add_phrase(&oxpinyin_core::PhraseText::from(text), &zhong, Some(3))
+        .unwrap();
     let phrase = store.phrase(token).unwrap().expect("stored");
     let zhong_count = phrase
         .pronunciations()
@@ -237,9 +245,11 @@ fn readings_keep_insertion_order_tones_and_only_the_first_is_indexed() {
     let toneless = [toned_key(ce, 0).unwrap(), toned_key(yan, 0).unwrap()];
     let toned = [toned_key(ce, 4).unwrap(), toned_key(yan, 4).unwrap()];
 
-    let token = store.add_phrase("测验", &toned, Some(7)).unwrap();
-    store.add_phrase("测验", &toneless, Some(5)).unwrap();
-    store.add_phrase("测验", &toned, Some(1)).unwrap();
+    let token = store.add_phrase(&"测验".into(), &toned, Some(7)).unwrap();
+    store
+        .add_phrase(&"测验".into(), &toneless, Some(5))
+        .unwrap();
+    store.add_phrase(&"测验".into(), &toned, Some(1)).unwrap();
 
     let phrase = store.phrase(token).unwrap().expect("stored");
     let rows: Vec<(Option<String>, u64, bool)> = phrase
@@ -263,12 +273,12 @@ fn a_reading_add_that_would_overflow_the_running_total_changes_nothing() {
     let mut store = UserStore::create_standalone(&temp_path("phrase-overflow")).unwrap();
     let reading = keys("ce,shi");
     let token = store
-        .add_phrase("测试", &reading, Some(u64::from(u32::MAX - 1)))
+        .add_phrase(&"测试".into(), &reading, Some(u64::from(u32::MAX - 1)))
         .unwrap();
-    store.add_phrase("测试", &reading, Some(2)).unwrap();
+    store.add_phrase(&"测试".into(), &reading, Some(2)).unwrap();
     let phrase = store.phrase(token).unwrap().expect("stored");
     assert_eq!(phrase.pronunciations()[0].count(), u64::from(u32::MAX - 1));
-    store.add_phrase("测试", &reading, Some(1)).unwrap();
+    store.add_phrase(&"测试".into(), &reading, Some(1)).unwrap();
     let phrase = store.phrase(token).unwrap().expect("stored");
     assert_eq!(phrase.pronunciations()[0].count(), u64::from(u32::MAX));
 }
@@ -280,8 +290,8 @@ fn the_same_reading_on_different_texts_yields_distinct_tokens() {
     // text, so equal key sequences on two texts stay separate entries.
     let mut store = UserStore::create_standalone(&temp_path("phrase-same-keys")).unwrap();
     let reading = keys("ce,shi");
-    let a = store.add_phrase("测试", &reading, None).unwrap();
-    let b = store.add_phrase("策士", &reading, None).unwrap();
+    let a = store.add_phrase(&"测试".into(), &reading, None).unwrap();
+    let b = store.add_phrase(&"策士".into(), &reading, None).unwrap();
     assert_ne!(a, b, "distinct texts allocate distinct tokens");
 
     let phrase_a = store.phrase(a).unwrap().expect("stored");
@@ -298,8 +308,12 @@ fn adding_an_existing_phrase_returns_the_same_token() {
     // one token per phrase text, so a re-add is an update, not a duplicate.
     let mut store = UserStore::create_standalone(&temp_path("phrase-same-token")).unwrap();
     let (text, reading) = user_phrase("你好", "ni,hao");
-    let first = store.add_phrase(&text, &reading, None).unwrap();
-    let second = store.add_phrase(&text, &reading, None).unwrap();
+    let first = store
+        .add_phrase(&oxpinyin_core::PhraseText::from(&text), &reading, None)
+        .unwrap();
+    let second = store
+        .add_phrase(&oxpinyin_core::PhraseText::from(&text), &reading, None)
+        .unwrap();
     assert_eq!(first, second);
     assert_eq!(store.phrases().unwrap().len(), 1);
 }
@@ -312,12 +326,22 @@ fn phrase_length_ceiling_rejects_sixteen_characters() {
     let mut store = UserStore::create_standalone(&temp_path("phrase-length")).unwrap();
 
     let ok: String = "测".repeat(15);
-    let token = store.add_phrase(&ok, &[key("ce"); 15], None).unwrap();
+    let token = store
+        .add_phrase(
+            &oxpinyin_core::PhraseText::from(&ok),
+            &[key("ce"); 15],
+            None,
+        )
+        .unwrap();
     assert!(store.phrase(token).unwrap().is_some());
 
     let too_long: String = "测".repeat(16);
     assert!(matches!(
-        store.add_phrase(&too_long, &[key("ce"); 16], None),
+        store.add_phrase(
+            &oxpinyin_core::PhraseText::from(&too_long),
+            &[key("ce"); 16],
+            None
+        ),
         Err(UserStoreError::InvalidPhrase)
     ));
 }
@@ -328,15 +352,15 @@ fn key_count_must_match_the_phrase_length() {
     // remove alike; oxpinyin rejects it at add time with `InvalidPhrase`.
     let mut store = UserStore::create_standalone(&temp_path("phrase-keys")).unwrap();
     assert!(matches!(
-        store.add_phrase("测试", &keys("ce"), None),
+        store.add_phrase(&"测试".into(), &keys("ce"), None),
         Err(UserStoreError::InvalidPhrase)
     ));
     assert!(matches!(
-        store.add_phrase("测试", &keys("ce,shi,de"), None),
+        store.add_phrase(&"测试".into(), &keys("ce,shi,de"), None),
         Err(UserStoreError::InvalidPhrase)
     ));
     assert!(matches!(
-        store.add_phrase("", &[], None),
+        store.add_phrase(&"".into(), &[], None),
         Err(UserStoreError::InvalidPhrase)
     ));
 }

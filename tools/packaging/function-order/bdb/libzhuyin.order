@@ -172,6 +172,7 @@ init	core::slice::sort::stable::driftsort_main::<(alloc::string::String, oxpinyi
 init	core::slice::sort::stable::driftsort_main::<oxpinyin_engine::candidate::Candidate, <[oxpinyin_engine::candidate::Candidate]>::sort_by_key<u32, oxpinyin_engine::session::order_window_tail::{closure#0}>::{closure#0}, alloc::vec::Vec<oxpinyin_engine::candidate::Candidate>>
 init	core::slice::sort::unstable::ipnsort::<u32, <u32 as core::cmp::PartialOrd>::lt> [instantiating crate: oxpinyin_user]
 init	core::str::converts::from_utf8
+init	oxpinyin_capi_marshal::input::parser_prefix
 init	oxpinyin_data::chunk_format::chunk_checksum
 init	oxpinyin_data::dict::resolve_items
 init	oxpinyin_data::dict::syllables_to_chewing_keys
@@ -214,7 +215,6 @@ init	std::sys::fs::unix::try_statx
 init	std::sys::random::linux::hashmap_random_keys
 init	zhuyin::candidates::snapshot_candidates
 init	zhuyin::context::log_layout_faults
-init	zhuyin::ffi::cstr_to_parsed_prefix
 init	zhuyin::sentence::guess_candidates
 init	zhuyin_alloc_instance
 init	zhuyin_get_candidate

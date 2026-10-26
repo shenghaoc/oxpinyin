@@ -88,7 +88,9 @@ fn empty_user_path_is_the_working_directory_at_each_use() {
         .map(|key| PinyinKey::try_from(key.index()).expect("frozen syllable inventory fits u16"))
         .collect();
     let phrase = "你鎄";
-    store.add_phrase(phrase, &keys, None).expect("learn it");
+    store
+        .add_phrase(&oxpinyin_core::PhraseText::from(phrase), &keys, None)
+        .expect("learn it");
     store.mark_modified();
     assert!(store.save().expect("save"), "a dirty save answers true");
     let saved = names(&second);

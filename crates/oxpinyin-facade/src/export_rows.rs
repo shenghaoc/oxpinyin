@@ -1393,13 +1393,13 @@ mod phrase_cursor_tests {
             store
                 .add_phrase_in(
                     USER_DICTIONARY,
-                    "你好",
+                    &"你好".into(),
                     &user_keys(&["ni", "hao"], 0),
                     Some(5),
                 )
                 .expect("first");
             store
-                .add_phrase_in(USER_DICTIONARY, "甲", &[key], Some(2))
+                .add_phrase_in(USER_DICTIONARY, &"甲".into(), &[key], Some(2))
                 .expect("the add checks lengths only");
             let mut cursor = ctx
                 .phrase_export_cursor(u32::from(USER_DICTIONARY))
@@ -1477,7 +1477,13 @@ mod phrase_cursor_tests {
         ctx.user
             .as_mut()
             .unwrap()
-            .add_system_phrase_in(1, Some(next), text.as_str().unwrap(), &keys, Some(5))
+            .add_system_phrase_in(
+                1,
+                Some(next),
+                &oxpinyin_core::PhraseText::from(text.as_str().unwrap()),
+                &keys,
+                Some(5),
+            )
             .expect("import");
         let toned = spellings
             .iter()
@@ -1506,7 +1512,7 @@ mod phrase_cursor_tests {
         store
             .add_phrase_in(
                 USER_DICTIONARY,
-                "你好",
+                &"你好".into(),
                 &user_keys(&["ni", "hao"], 0),
                 Some(5),
             )
@@ -1519,7 +1525,7 @@ mod phrase_cursor_tests {
         store
             .add_phrase_in(
                 USER_DICTIONARY,
-                "好你",
+                &"好你".into(),
                 &user_keys(&["hao", "ni"], 0),
                 Some(7),
             )
@@ -1527,7 +1533,7 @@ mod phrase_cursor_tests {
         store
             .add_phrase_in(
                 USER_DICTIONARY,
-                "你好",
+                &"你好".into(),
                 &user_keys(&["ni", "hao"], 2),
                 Some(3),
             )
