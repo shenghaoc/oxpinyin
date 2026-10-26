@@ -25,6 +25,8 @@ DIAGNOSTIC_METRICS = ('minor_faults', 'major_faults', 'faults', 'pageins',
                       'instructions_available', 'cycles_available')
 SAMPLE_SCHEMA = 'oxpinyin-initbench-sample-v1'
 OBSERVATION_SCHEMA = 'oxpinyin-initbench-observation-v1'
+# Stands in for the value of a sample whose cold preparation was rejected.
+REJECTED = object()
 
 
 class NotResult(ValueError):
@@ -96,9 +98,10 @@ def positive(text):
 def validate(args):
     """Validate native startup options and return selected profile user directories.
 
-    Reject pin/cold-cache requests, unsupported platforms, missing inputs,
-    unknown/repeated profiles, and invalid manifests or witnesses. Read input
-    files without provisioning or modifying them; validation errors propagate.
+    Reject pin requests, cold-cache requests on Linux, unsupported platforms,
+    missing inputs, unknown/repeated profiles, and invalid manifests or
+    witnesses. Read input files without provisioning or modifying them;
+    validation errors propagate.
     """
     if args.pin is not None:
         raise ValueError('native pin rows require the Layer 4 container path: just container run (T11C)')
@@ -106,13 +109,9 @@ def validate(args):
         raise ValueError('native startup supports Linux/macOS; Windows is deferred (#950)')
     if sys.platform == 'darwin' and args.function_order:
         raise ValueError('ELF function-order policies are unsupported on macOS')
-    if args.cache == 'cold':
+    if args.cache == 'cold' and sys.platform != 'darwin':
         # #1162 implements the Linux path and reads the same cold.REJECTION_LIMIT.
-        if sys.platform != 'darwin':
-            raise ValueError('cold cache is not implemented; rejection-limit approval is pending (§7.8)')
-        reason = cold.refusal()
-        if reason:
-            raise ValueError(reason)
+        raise ValueError('cold cache is not implemented on Linux (#1162)')
     for name in ('base', 'pr', 'system_dir', 'profiles_dir'):
         path = getattr(args, name)
         if path is None or not path.is_dir():
@@ -225,6 +224,40 @@ def describe(values):
     return dict(stats.summary(values), ci95=stats.paired_bootstrap(values)['ci95'])
 
 
+def cold_account(samples, warmup_rejected):
+    """Count one cold family's accepted and rejected samples per arm.
+
+    Each arm's list holds one row per measured round, None where the sample's
+    cold preparation was rejected. warmup_rejected counts the discarded
+    warm-up samples that were rejected; they never count toward the limit.
+    The limit is cold.REJECTION_LIMIT: a constant read here, never derived
+    from these counts.
+    """
+    rejected = {arm: rows.count(None) for arm, rows in samples.items()}
+    return dict(metric=cold.METRIC, limit=cold.REJECTION_LIMIT, rejected=rejected,
+                accepted={arm: len(rows) - rejected[arm] for arm, rows in samples.items()},
+                warmup_rejected=dict(warmup_rejected))
+
+
+def pool_cold(values, counts):
+    """Return a cold metric's pooled values, or the reason it is INCONCLUSIVE.
+
+    More rejected samples than the limit in any arm is INCONCLUSIVE. The pool
+    is the measured rounds in which every arm was accepted, so paired ratios
+    and controls compare like with like. Rejected rounds hold REJECTED. Return
+    (pooled, None), or (None, reason) when an arm is over the limit or no round
+    has every arm accepted.
+    """
+    over = ', '.join(f'{arm} {n}' for arm, n in counts['rejected'].items() if n > counts['limit'])
+    if over:
+        return None, f"rejected cold samples exceed the limit of {counts['limit']} per arm: {over}"
+    kept = [i for i, round_values in enumerate(zip(*values.values()))
+            if all(value is not REJECTED for value in round_values)]
+    if not kept:
+        return None, 'no measured round has every arm accepted'
+    return {arm: [rows[i] for i in kept] for arm, rows in values.items()}, None
+
+
 def report_values(kind, values, **context):
     """Emit a distribution report with the appropriate PR/control stability rule.
 
@@ -232,8 +265,23 @@ def report_values(kind, values, **context):
     and disk-I/O counts are diagnostic. macOS reports resident and physical
     footprint metrics; the Linux names stay unavailable there. Missing values
     produce unavailable reports; PR/base ratios require stable controls and
-    positive base samples.
+    positive base samples. A cold campaign passes cold_account as context
+    ['cold'] and marks each rejected sample's value REJECTED: a metric over the
+    limit is INCONCLUSIVE with no summaries or ratio (pool_cold). A field with
+    at least one sample that was not rejected and None in every such sample is
+    unavailable even over the limit (with every sample rejected, pool_cold
+    decides), and a None in a pooled round is unavailable after pooling,
+    because a field the host does not record cannot be INCONCLUSIVE.
     """
+    recorded = [value for rows in values.values() for value in rows if value is not REJECTED]
+    if recorded and all(value is None for value in recorded):
+        emit(kind, **context, verdict='unavailable', summaries=None, pr_base_ratio=None)
+        return
+    if context.get('cold') is not None:
+        values, reason = pool_cold(values, context['cold'])
+        if reason:
+            emit(kind, **context, verdict='INCONCLUSIVE', summaries=None, pr_base_ratio=None, reason=reason)
+            return
     if any(any(value is None for value in rows) for rows in values.values()):
         emit(kind, **context, verdict='unavailable', summaries=None, pr_base_ratio=None)
         return
@@ -532,10 +580,21 @@ def campaign_run(args, profiles, work, admission):
                 for memory, rounds, warmups in ((False, args.rounds, args.warmups),
                                                 (True, args.memory_rounds, args.memory_warmups)):
                     samples = {arm: [] for arm in ARMS}
+                    warmup_rejected = dict.fromkeys(ARMS, 0)
                     for index in range(rounds + warmups):
                         for arm in order(index):
-                            row = campaign.run(libraries[arm][facade], facade, user, memory=memory,
-                                               cold=cold_sample)
+                            try:
+                                row = campaign.run(libraries[arm][facade], facade, user, memory=memory,
+                                                   cold=cold_sample)
+                            except cold.Rejected as error:
+                                # A rejected sample keeps its round: reported, never pooled, never rerun.
+                                emit('sample', facade=facade, profile=name, arm=arm, round=index,
+                                     warmup=index < warmups, memory=memory, cold=error.record)
+                                if index < warmups:
+                                    warmup_rejected[arm] += 1
+                                else:
+                                    samples[arm].append(None)
+                                continue
                             sample = dict(facade=facade, profile=name, arm=arm, round=index,
                                           warmup=index < warmups, memory=memory,
                                           process_wall_ns=row['process_wall'], documents=row['documents'],
@@ -549,9 +608,12 @@ def campaign_run(args, profiles, work, admission):
                                 raise NotResult('NOT COMPARABLE: timed stderr/raw user files changed')
                             if index >= warmups:
                                 samples[arm].append(row)
+                    cold_context = dict(cold=cold_account(samples, warmup_rejected)) if cold_sample else {}
                     if memory:
                         def memory_value(row, point, metric):
                             """Return one checkpoint metric, deriving Linux rss_delta only when both RSS values exist."""
+                            if row is None:
+                                return REJECTED
                             if metric == 'rss_delta':
                                 current = row['checkpoints'][point].get('rss')
                                 start = row['checkpoints']['start'].get('rss')
@@ -570,7 +632,7 @@ def campaign_run(args, profiles, work, admission):
                                         else 'flag' if metric.endswith('_available')
                                         else 'bytes' if metric.startswith('disk_') else 'KiB')
                                 report_values('memory', values, facade=facade, profile=name, point=point,
-                                              metric=metric, unit=unit)
+                                              metric=metric, unit=unit, **cold_context)
                     else:
                         for metric in TIMING_METRICS:
                             def timing(row):
@@ -579,6 +641,8 @@ def campaign_run(args, profiles, work, admission):
                                 Use process_wall directly for whole-process time; otherwise require one
                                 times record and convert its wall_ns value.
                                 """
+                                if row is None:
+                                    return REJECTED
                                 if metric == 'process_wall':
                                     return row['process_wall'] / 1e6
                                 clocks = [d for d in row['documents'] if d.get('startup') == 'times']
@@ -586,7 +650,8 @@ def campaign_run(args, profiles, work, admission):
                                     raise ValueError('missing native timing record')
                                 return clocks[0][metric]['wall_ns'] / 1e6
                             report_values('timing', {a: [timing(r) for r in rows] for a, rows in samples.items()},
-                                          facade=facade, profile=name, metric=metric, unit='ms', schema=SAMPLE_SCHEMA)
+                                          facade=facade, profile=name, metric=metric, unit='ms', schema=SAMPLE_SCHEMA,
+                                          **cold_context)
         return 0
     finally:
         if old_affinity is not None:

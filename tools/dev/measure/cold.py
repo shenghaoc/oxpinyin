@@ -7,9 +7,11 @@ mincore over PROT_NONE mappings. Preparation and checking happen before the
 worker is spawned, outside the timed region.
 
 A page still resident after the first whole-set check triggers one more full
-preparation and check. A sample whose pages remain resident is rejected.
-Darwin's metric is darwin_resident_pages; zero qualifies. Linux keeps its own
-implementation (#1162) and shares REJECTION_LIMIT from this module.
+preparation and check. A sample whose pages remain resident is rejected: the
+controller excludes it, never pools it, and calls a metric INCONCLUSIVE once an
+arm has more than REJECTION_LIMIT of them. Darwin's metric is
+darwin_resident_pages; zero qualifies. Linux keeps its own implementation
+(#1162) and shares REJECTION_LIMIT from this module.
 
 Qualification results are recorded in #1243.
 """
@@ -24,9 +26,10 @@ import sys
 
 from .. import darwin
 
-# Shared with #1162 (Linux). Unset until a maintainer approves a value; never
-# derive or tune it from campaign output. Cold mode is refused while it is None.
-REJECTION_LIMIT = None
+# Rejected samples tolerated per arm and metric (maintainer ruling 2026-10-25 UTC,
+# §7.8 item 7). More makes the metric INCONCLUSIVE. Shared with #1162 (Linux). A
+# fixed constant: never derive or tune it from campaign output.
+REJECTION_LIMIT = 2
 
 # Darwin's own name for the whole-set residency observation. Never report it
 # under a Linux cold-page field.
@@ -35,7 +38,14 @@ ATTEMPTS = 2
 
 
 class Rejected(ValueError):
-    """Indicate a file set that stayed resident after the one allowed retry."""
+    """Indicate a file set that stayed resident after the one allowed retry.
+
+    record, when present, is the sample's preparation record with verdict
+    REJECTED, shaped like prepare's qualified record.
+    """
+    def __init__(self, message, record=None):
+        super().__init__(message)
+        self.record = record
 
 
 def collect(paths):
@@ -105,8 +115,10 @@ def prepare(files):
     names the same file. Flush each file first: a freshly copied user profile
     can still have dirty pages that MS_INVALIDATE would not drop. Return a
     record keyed by METRIC when the whole set is non-resident, or raise
-    Rejected after ATTEMPTS preparations leave a page resident. File bytes are
-    not read after preparation; the check uses PROT_NONE mappings only.
+    Rejected after ATTEMPTS preparations leave a page resident; the exception
+    carries the same record with verdict REJECTED and the resident page count
+    as its value. File bytes are not read after preparation; the check uses
+    PROT_NONE mappings only.
     """
     paths = [Path(path) for path in files]
     if not paths:
@@ -142,7 +154,9 @@ def prepare(files):
     details = '; '.join(f"{row['path']} ({row['resident']}/{row['pages']})"
                         for row in rows if row['resident'])
     raise Rejected(f'cold sample rejected: {resident} of {pages} {METRIC} still resident '
-                   f'after {ATTEMPTS} preparations: {details}')
+                   f'after {ATTEMPTS} preparations: {details}',
+                   dict(metric=METRIC, value=resident, pages=pages, resident=resident,
+                        attempts=ATTEMPTS, verdict='REJECTED', checks=checks, files=rows))
 
 
 def demonstrate(files):
@@ -182,13 +196,6 @@ def demonstrate(files):
     return dict(metric=METRIC, verdict='QUALIFIED' if qualified else 'REJECTED',
                 rule='before == pages, MS_SYNC == pages, MS_SYNC|MS_INVALIDATE == 0',
                 files=rows)
-
-
-def refusal():
-    """Return the reason cold mode is refused, or None once a limit is approved."""
-    if REJECTION_LIMIT is None:
-        return 'cold cache requires an approved rejection limit (§7.8); none is set'
-    return None
 
 
 def main(argv=None):
