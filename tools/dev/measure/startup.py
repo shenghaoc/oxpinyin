@@ -13,7 +13,7 @@ import sys
 import tempfile
 
 from .. import slot
-from . import cold, instructions, native, stats, worker
+from . import cold, cold_linux, instructions, native, stats, worker
 
 ROOT = Path(__file__).resolve().parents[3]
 PROFILES = ('empty', 'modest', 'phrases', 'journals')
@@ -98,7 +98,7 @@ def positive(text):
 def validate(args):
     """Validate native startup options and return selected profile user directories.
 
-    Reject pin requests, cold-cache requests on Linux, unsupported platforms,
+    Reject pin requests, unsupported platforms (cold cache included),
     missing inputs, unknown/repeated profiles, and invalid manifests or
     witnesses. Read input files without provisioning or modifying them;
     validation errors propagate.
@@ -109,9 +109,6 @@ def validate(args):
         raise ValueError('native startup supports Linux/macOS; Windows is deferred (#950)')
     if sys.platform == 'darwin' and args.function_order:
         raise ValueError('ELF function-order policies are unsupported on macOS')
-    if args.cache == 'cold' and sys.platform != 'darwin':
-        # #1162 implements the Linux path and reads the same cold.REJECTION_LIMIT.
-        raise ValueError('cold cache is not implemented on Linux (#1162)')
     for name in ('base', 'pr', 'system_dir', 'profiles_dir'):
         path = getattr(args, name)
         if path is None or not path.is_dir():
@@ -230,11 +227,12 @@ def cold_account(samples, warmup_rejected):
     Each arm's list holds one row per measured round, None where the sample's
     cold preparation was rejected. warmup_rejected counts the discarded
     warm-up samples that were rejected; they never count toward the limit.
-    The limit is cold.REJECTION_LIMIT: a constant read here, never derived
-    from these counts.
+    The limit is cold.REJECTION_LIMIT on both hosts: a constant read here,
+    never derived from these counts. The metric is the host's own name.
     """
     rejected = {arm: rows.count(None) for arm, rows in samples.items()}
-    return dict(metric=cold.METRIC, limit=cold.REJECTION_LIMIT, rejected=rejected,
+    metric = cold_linux.METRIC if sys.platform == 'linux' else cold.METRIC
+    return dict(metric=metric, limit=cold.REJECTION_LIMIT, rejected=rejected,
                 accepted={arm: len(rows) - rejected[arm] for arm, rows in samples.items()},
                 warmup_rejected=dict(warmup_rejected))
 

@@ -11,7 +11,8 @@ preparation and check. A sample whose pages remain resident is rejected: the
 controller excludes it, never pools it, and calls a metric INCONCLUSIVE once an
 arm has more than REJECTION_LIMIT of them. Darwin's metric is
 darwin_resident_pages; zero qualifies. Linux keeps its own implementation
-(#1162) and shares REJECTION_LIMIT from this module.
+(tools.dev.measure.cold_linux, #1162) and shares REJECTION_LIMIT from this
+module.
 
 Qualification results are recorded in #1243.
 """
@@ -27,7 +28,7 @@ import sys
 from .. import darwin
 
 # Rejected samples tolerated per arm and metric (maintainer ruling 2026-10-25 UTC,
-# §7.8 item 7). More makes the metric INCONCLUSIVE. Shared with #1162 (Linux). A
+# §7.8 item 7). More makes the metric INCONCLUSIVE. Shared with cold_linux (#1162). A
 # fixed constant: never derive or tune it from campaign output.
 REJECTION_LIMIT = 2
 
