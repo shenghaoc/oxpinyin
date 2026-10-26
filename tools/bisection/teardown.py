@@ -32,6 +32,7 @@ from tools.dev.measure.stats import (
     paired_bootstrap, paired_ratio, paired_difference, within, stable_control,
     stable_residency, exact_control,
 )
+from tools.dev.mounts import filesystem
 FIELDS = ('Rss', 'Pss', 'Anonymous', 'Private_Clean', 'Private_Dirty', 'Shared_Clean')
 PROFILES = ('empty', 'modest', 'phrases', 'journals')
 CASES = (*PROFILES, 'modest-unsaved', 'modest-saved')
@@ -242,22 +243,6 @@ def memory_deltas(checkpoints):
         if left['allocator'] is not None and right['allocator'] is not None:
             result[label]['allocator'] = signed_delta(left['allocator'], right['allocator'])
     return result
-
-
-def filesystem(path):
-    """Read the actual mount type; ext2/3/4 share statfs's magic number."""
-    path = Path(path).resolve()
-    matches = []
-    for line in Path('/proc/self/mountinfo').read_text().splitlines():
-        fields, separator, trailer = line.partition(' - ')
-        if not separator:
-            continue
-        mount = re.sub(r'\\([0-7]{3})', lambda match: chr(int(match[1], 8)), fields.split()[4])
-        if path.is_relative_to(mount):
-            matches.append((len(mount), trailer.split()[0]))
-    if not matches:
-        raise ValueError('filesystem type is unknown')
-    return max(matches)[1]
 
 
 # glibc, its dynamic loader and libgcc_s remain warm. libgcc_s joins the C
