@@ -1590,13 +1590,14 @@ class ParallelCaseTests(DriverFixtureCase):
             'import json, sys, threading\n'
             "if sys.argv[-1] == 'first': threading.Event().wait()\n"
             "print(json.dumps({'ret': sys.argv[-1]}))\n")
+        # Real processes verify timeout cleanup and later-case execution.
         # The hung case waits on an event nobody sets, so it always reaches its
         # deadline, and a short one is enough. Every other case gets a long
         # deadline, so a loaded host cannot turn a healthy case into a TIMEOUT.
         self.args.case_timeout = 30
         run_case = driver.run_case
         def run(spec, pin, subject, data, name, scratch, timeout):
-            return run_case(spec, pin, subject, data, name, scratch, 1 if name == 'first' else timeout)
+            return run_case(spec, pin, subject, data, name, scratch, .05 if name == 'first' else timeout)
         with patch.object(driver, 'WORKER', worker), patch.object(driver, 'TIMINGS', []), \
                 patch.object(driver, 'run_case', run):
             results = self.results(2)

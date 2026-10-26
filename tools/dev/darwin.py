@@ -218,7 +218,7 @@ def resident_peak(pid):
         libc.mach_port_deallocate(libc.mach_task_self(), task)
 
 
-def _probe_counters():
+def _probe_counters(*, sleep=time.sleep):
     """Return whether instructions and cycles advance across a forced context switch.
 
     XNU's fill_task_rusage copies ri_instructions and ri_cycles from
@@ -233,7 +233,7 @@ def _probe_counters():
     try:
         before = rusage(os.getpid())
         sum(range(20000))
-        time.sleep(0.02)
+        sleep(0.02)
         after = rusage(os.getpid())
     except (OSError, AttributeError):
         return (False, False)

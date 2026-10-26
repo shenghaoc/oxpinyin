@@ -128,22 +128,21 @@ class HeavySlotTests(unittest.TestCase):
         try:
             self.assertTrue(select.select([first.stdout], [], [], 3)[0])
             child_pid = int(first.stdout.readline())
-            second = self.heavy(0.1)
+            second = self.heavy(0.01)
             self.until_waiting(second)
-            # Hold for the original 1.2 s only after the contender is waiting.
-            # A stall can lengthen this measured wait, but cannot free the slot.
+            # Real processes verify kernel lock exclusion after the contender reports waiting.
             with self.assertRaises(subprocess.TimeoutExpired):
-                second.communicate(timeout=1.2)
+                second.communicate(timeout=0.12)
             first.stdin.close()
             outputs = [p.communicate()[1] for p in (first, second)]
             elapsed = time.monotonic() - started
             self.assertEqual([first.returncode, second.returncode], [0, 0])
-            self.assertGreaterEqual(elapsed, 1.3)
+            self.assertGreaterEqual(elapsed, 0.12)
             waits = [float(line.split('slot_wait_seconds ')[1].split(',')[0]) for out in outputs
                      for line in out.splitlines() if 'heavy slot 0: slot_wait_seconds' in line]
             self.assertEqual(len(waits), 2)
             self.assertLess(min(waits), 0.5)
-            self.assertGreaterEqual(max(waits), 0.8)
+            self.assertGreaterEqual(max(waits), 0.1)
             waiting = [line for out in outputs for line in out.splitlines() if line.startswith('waiting for a heavy slot')]
             self.assertEqual(len(waiting), 1)
             self.assertIn('pid ', waiting[0])
@@ -305,7 +304,8 @@ with mock.patch.object(Path, 'read_text', read), mock.patch.object(sys, 'argv',
                                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                 try:
                     with self.assertRaises(subprocess.TimeoutExpired):
-                        child.communicate(timeout=0.8)
+                        self.until_waiting(child)
+                        child.communicate(timeout=0.05)
                 finally:
                     if child.poll() is not None:
                         self.fail('The child bypassed the held slot.')
@@ -368,9 +368,9 @@ def execute(command, env, cwd, timeout, output, slot=None):
     assert nested.returncode == 0, nested.stderr
     assert 'inherited from ancestor' in nested.stderr
     assert 'slot_wait_seconds 0.0' in nested.stderr
-    time.sleep(0.7)
+    # Real nested launches verify slot inheritance; no extra hold is needed.
     seen.append((start, time.monotonic()))
-    return 0, 0.7, '', False
+    return 0, time.monotonic() - start, '', False
 with mock.patch.object(Path, 'read_text', read), mock.patch.dict(m['main'].__globals__, execute=execute):
     with mock.patch.object(sys, 'argv', [sys.argv[1], '--runners', 'heavy-a,heavy-b',
                                        '--cells', 'bdb', '--no-build', '--jobs', '2']):

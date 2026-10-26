@@ -142,7 +142,18 @@ class CliTests(unittest.TestCase):
     def test_tools_dispatches_to_shared_harness_runner(self):
         with mock.patch.object(cli.test_runner, 'run_tools', return_value=1) as run:
             self.assertEqual(cli.main(['test-tools']), 1)
-        run.assert_called_once_with()
+        run.assert_called_once_with([], None, None)
+
+    def test_tools_forwards_selection_options(self):
+        cases = ((['tools/dev/test_runner.test.py', '-k', 'HarnessTests'],
+                  (['tools/dev/test_runner.test.py'], 'HarnessTests', None)),
+                 (['--changed'], ([], None, 'HEAD')),
+                 (['--changed', 'origin/main'], ([], None, 'origin/main')))
+        for argv, expected in cases:
+            with self.subTest(argv=argv), \
+                    mock.patch.object(cli.test_runner, 'run_tools', return_value=7) as run:
+                self.assertEqual(cli.main(['test-tools', *argv]), 7)
+                run.assert_called_once_with(*expected)
 
     def test_coverage_forwards_raw_arguments_before_argparse(self):
         args = ['--locked', '-p', 'oxpinyin-chewing', '--', '', '/path with spaces', 'literal;$value']

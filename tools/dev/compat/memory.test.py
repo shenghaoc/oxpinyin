@@ -43,7 +43,7 @@ class MemoryTests(unittest.TestCase):
 
     def reservation(self, size=4096):
         reservation = slot.ContainerReservation('/usr/bin/docker', 'docker', 'test-container', size,
-                                                 out=self.out, poll=0.01)
+                                                 out=self.out, poll=0.001)
         reservation.acquire()
         self.addCleanup(reservation.close)
         return reservation
@@ -85,6 +85,7 @@ class MemoryTests(unittest.TestCase):
         self.assertIn('no process started', self.out.getvalue())
 
     def test_memory_wait_retries_and_can_admit_after_resources_change(self):
+        # A short retry checks the reservation transition, not elapsed wall time.
         self.resources['available_mib'] = None
         reads = []
         def read():
