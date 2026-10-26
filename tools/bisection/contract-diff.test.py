@@ -2274,6 +2274,21 @@ class AllocationFailure924Tests(unittest.TestCase):
             with self.assertRaises(subprocess.CalledProcessError):
                 driver.glib_924_oom_array(kit)
 
+    def test_harness_receives_the_arguments_its_usage_line_names(self):
+        # tools/abi/alloc-failure.cc: SO DATA FACADE SIDE USER_DIR [array-only].
+        kit = SimpleNamespace(scratch='/tmp', lib=SimpleNamespace(_name='subject.so'),
+                              data='/tmp/data', mode='pinyin')
+        calls = []
+
+        def run(argv, **options):
+            calls.append(list(argv))
+            return SimpleNamespace(stdout='pinyin pin allocation-5: PASS (fatal GLib error)\n')
+
+        with patch.object(driver.subprocess, 'check_output', return_value=''), \
+             patch.object(driver.subprocess, 'run', side_effect=run):
+            driver.glib_924_oom_array(kit)
+        self.assertEqual(calls[1][1:], ['subject.so', '/tmp/data', 'pinyin', 'pin', '', 'array-only'])
+
 
 class GLibDomainCaptureTests(unittest.TestCase):
     """A GLib-domain critical is captured by the kit and compared (#1279)."""

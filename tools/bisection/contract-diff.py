@@ -12846,11 +12846,12 @@ def glib_924_oom_array(k):
         'g++', '-std=c++17', '-O0', '-g', '-Wall', '-Wextra', '-Werror',
         '-fno-builtin', '-rdynamic', str(root / 'tools/abi/alloc-failure.cc'),
         *flags, '-ldl', '-o', str(executable)], check=True, capture_output=True)
-    # Array-only has the same fatal expectation for both sides and requires
-    # no subject debug-symbol offsets. No side-dependent policy exemption.
+    # Array-only has the same fatal expectation for both sides and needs no
+    # user directory or subject allocation site. No side-dependent policy
+    # exemption. The empty user directory is the pin side's, as in the ABI gate.
     result = subprocess.run([
-        str(executable), str(k.lib._name), str(k.data), k.mode, 'pin',
-        '0', '0', '0', '0', 'array-only'], check=True, capture_output=True, text=True)
+        str(executable), str(k.lib._name), str(k.data), k.mode, 'pin', '',
+        'array-only'], check=True, capture_output=True, text=True)
     expected = f'{k.mode} pin allocation-5: PASS (fatal GLib error)\n'
     assert result.stdout == expected, result.stdout
     return dict(injection=True, level=4, fatal=True)
