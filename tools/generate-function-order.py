@@ -14,10 +14,8 @@ profiles are required, with no default policy.
 
 import argparse
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from copy import copy
-from queue import Queue
-from contextlib import contextmanager, nullcontext
+from contextlib import ExitStack, contextmanager, nullcontext
 import io
 import json
 import os
@@ -29,14 +27,17 @@ import signal
 import subprocess
 import sys
 import tempfile
-import threading
 import time
+from dataclasses import replace
+from itertools import zip_longest
 
 
 FACADES = ("pinyin", "zhuyin")
 PROFILES = ("phrases", "journals")
 HERE = Path(__file__).resolve().parent
-COLLECTION_STATE = threading.local()
+if str(HERE.parent) not in sys.path:
+    sys.path.insert(0, str(HERE.parent))
+from tools.dev import host, pool, slot
 # The startup-profile manifest, shared with the teardown provisioner that
 # writes it; also the system-data identity.
 STARTUP_PROFILE = runpy.run_path(str(HERE / "bisection/startup_profile.py"))
@@ -103,41 +104,22 @@ def run(command):
     return result.stdout
 
 
-def capture(command, environment):
-    """Run a measured child and keep both streams in memory until it succeeds."""
-    try:
-        cancelled = getattr(COLLECTION_STATE, 'cancelled', None)
-        if cancelled is None:
-            result = subprocess.run(command, capture_output=True, check=False,
-                                    env=environment, timeout=1800)
-        else:
-            if cancelled.is_set():
-                raise ValueError('collection cancelled')
-            with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                  env=environment, pass_fds=COLLECTION_STATE.fds) as child:
-                deadline = time.monotonic() + 1800
-                try:
-                    while True:
-                        if cancelled.is_set():
-                            raise ValueError('collection cancelled')
-                        remaining = deadline - time.monotonic()
-                        if remaining <= 0:
-                            raise subprocess.TimeoutExpired(command, 1800)
-                        try:
-                            out, err = child.communicate(timeout=min(.1, remaining))
-                            break
-                        except subprocess.TimeoutExpired:
-                            continue
-                except BaseException:
-                    child.kill()
-                    child.wait()
-                    raise
-                result = subprocess.CompletedProcess(command, child.returncode, out, err)
-    except subprocess.TimeoutExpired as error:
-        raise ValueError(f"measurement child timed out: {command[0]}") from error
-    if result.returncode:
+def capture(command, environment, context):
+    """Capture through the shared unit launcher, preserving the 1800-second bound."""
+    deadline = time.monotonic() + 1800
+
+    def stopped():
+        context.check()
+        if time.monotonic() >= deadline:
+            raise ValueError(f"measurement child timed out: {command[0]}")
+        return False
+
+    # UnitContext.launch checks this deadline at every wait and owns all
+    # process-group termination, descriptor inheritance and reaping.
+    result = replace(context, cancelled=stopped).launch(command, env=environment)
+    if result.status:
         diagnostic = result.stderr[-4000:].decode("utf-8", errors="backslashreplace")
-        raise ValueError(f"measurement child failed ({result.returncode}): {diagnostic}")
+        raise ValueError(f"measurement child failed ({result.status}): {diagnostic}")
     return result.stdout, result.stderr
 
 
@@ -448,7 +430,7 @@ def collect_toggle(args, facade, library, user, toggle, environment):
     check_tkrzw("auto", "generate-function-order.py", "subject", library, env=environment)
     command = [*callgrind_prefix(args.bisect, args.cpu, toggle),
                *teardown_command(args, facade, library, user)[1:]]
-    _, error = capture(command, environment)
+    _, error = capture(command, environment, args.context)
     try:
         return callgrind_functions(io.StringIO(error.decode("utf-8", errors="strict")), library)
     except ValueError as error_text:
@@ -497,81 +479,40 @@ def startup_collections(facade, library, exports):
         for toggle in startup_toggles(facade, exports)]
 
 
-def collection_budget(env, resources, *, runner=False):
-    """Reserve each profiler worker under the shared slot's memory accounting."""
-    from tools.dev import host
-    child = dict(env)
-    ceiling = min(resources['cpus'], int(env['OXPINYIN_ORDER_CPU_COUNT']))
-    available = resources['available_mib']
-    headroom = host.memory_headroom(env, resources)
-    # Use the existing heavy-runner allowance, including captured output and
-    # private fixtures, rather than treating a profiler as a rustc process.
-    peak = host.RUNNER_PEAK_MIB
-    slots = host.heavy_slot_count(resources.get('total_mib'))
-    workers = 0 if available is None else min(ceiling, max(0, available - headroom) // slots // peak)
-    if not workers and available is not None:
-        workers = host.fit(available, peak, ceiling, headroom)
-        workers = min(workers, 1)
-    child['OXPINYIN_ORDER_WORKERS'] = str(max(1, workers))
-    reason = f'{available} MiB available; {headroom} MiB headroom; {peak} MiB per collection; CPU ceiling {ceiling}'
-    return child, {'OXPINYIN_ORDER_WORKERS': (workers, reason, False)}, max(1, workers) * peak
-
-
-def collect_parallel(args, libraries, work, environment, cpus, *, passes=1, pass_fds=()):
-    """Union independent collections; private copies and CPU leases never overlap."""
+def collection_units(args, libraries, work, backend, campaign):
+    """Describe one backend's independent collections, with interleaved passes."""
     jobs = []
     for facade in FACADES:
         library = libraries[facade].resolve()
         exports = teardown_exports(library, facade)
-        env = dict(environment, OXPINYIN_TEARDOWN_EXPORTS=exports)
-        jobs.extend((facade, library, profile, toggle, env)
+        jobs.extend((facade, library, profile, toggle, exports)
                     for profile, toggle in startup_collections(facade, library, exports))
-        jobs.append((facade, library, None, None, env))
-    jobs = [(iteration, job) for job in jobs for iteration in range(passes)]
-    cancelled = threading.Event()
-    leases = Queue()
-    for cpu in cpus:
-        leases.put(cpu)
+        jobs.append((facade, library, None, None, exports))
 
-    def collect(job):
-        """Keep temporary files until the child has exited and streams are parsed."""
-        iteration, job = job
-        facade, library, profile, toggle, env = job
-        COLLECTION_STATE.cancelled = cancelled
-        COLLECTION_STATE.fds = pass_fds
-        local = copy(args)
-        local.cpu = leases.get()
-        try:
+    def unit(job, iteration):
+        def collect(context):
+            facade, library, profile, toggle, exports = job
+            context.check()
+            local = copy(args)
+            local.cpu, local.context = context.cpu, context
             with tempfile.TemporaryDirectory(prefix=f'{facade}-', dir=work) as directory:
                 scratch = Path(directory)
-                env = dict(env, TMPDIR=str(scratch))
+                environment = dict(context.environment, LC_ALL='C', TMPDIR=str(scratch),
+                                   OXPINYIN_TEARDOWN_EXPORTS=exports)
                 if profile is None:
-                    functions = collect_steady(local, facade, library, scratch, env)
+                    functions = collect_steady(local, facade, library, scratch, environment)
                 else:
                     user = scratch / 'user'
                     shutil.copytree(args.profiles_dir / profile / 'user', user)
-                    functions = collect_toggle(local, facade, library, user, toggle, env)
-                return iteration, facade, 'steady' if profile is None else 'startup', functions
-        finally:
-            leases.put(local.cpu)
+                    context.check()
+                    functions = collect_toggle(local, facade, library, user, toggle, environment)
+                return (campaign, iteration, facade, 'steady' if profile is None else 'startup', functions,
+                        context.environment.get(pool.POOL_WORKERS))
+        return collect
 
-    result = [{facade: {'startup': set(), 'steady': set()} for facade in FACADES}
-              for _ in range(passes)]
-    with ThreadPoolExecutor(max_workers=len(cpus)) as pool:
-        futures = []
-        try:
-            for job in jobs:
-                futures.append(pool.submit(collect, job))
-            for future in as_completed(futures):
-                iteration, facade, tier, functions = future.result()
-                result[iteration][facade][tier].update(functions)
-        finally:
-            # Do not launch queued work after failure/cancellation. Running
-            # children are reaped before the pool and scratch context exit.
-            cancelled.set()
-            for future in futures:
-                future.cancel()
-    return result
+    passes = 2 if args.repeat_output_dir else 1
+    return [(f'{backend}-pass{iteration + 1}-{index}', unit(job, iteration))
+            for index, job in enumerate(jobs) for iteration in range(passes)]
 
 
 def collect_steady(args, facade, library, work, environment):
@@ -581,7 +522,7 @@ def collect_steady(args, facade, library, work, environment):
                        "PERF_CYCLES": "4", "PERF_REPEATS": "1",
                        "PERF_WORKLOAD_CHECKSUM": "1"}
     check_tkrzw("auto", "generate-function-order.py", "subject", library, env=run_environment)
-    output, error = capture(command, run_environment)
+    output, error = capture(command, run_environment, args.context)
     row = json.loads(output)
     if len(row.get("cycles_ns", [])) != 4 or "workload_checksum" not in row:
         raise ValueError("steady driver lacks its cycle/fingerprint result")
@@ -589,52 +530,187 @@ def collect_steady(args, facade, library, work, environment):
     return functions
 
 
-def collect_policies(args, libraries, archives):
-    required = (args.bisect, args.system_dir, args.profiles_dir, args.work_dir,
-                args.system_identity)
-    if not all(required) or args.init or args.steady:
-        raise ValueError("collection needs the bisect worker, system/profile/work directories and identity; no stream inputs")
-    identity = STARTUP_PROFILE["identity"](args.system_dir)
-    if identity != args.system_identity:
-        raise ValueError(f"system identity differs: {identity}")
-    for profile in PROFILES:
-        fixture = args.profiles_dir / profile
-        STARTUP_PROFILE["check"](fixture / "user", fixture / "profile.manifest")
-    passes = 2 if getattr(args, "repeat_output_dir", None) else 1
-    outputs = [{} for _ in range(passes)]
-    with collection_scratch(args.work_dir) as work:
-        cpus = sorted(os.sched_getaffinity(0))
-        if args.cpu is not None:
-            if args.cpu not in cpus:
-                raise ValueError(f'CPU {args.cpu} is outside the allowed affinity set')
-            cpus = [args.cpu]
-        root = str(HERE.parent)
-        if root not in sys.path:
-            sys.path.insert(0, root)
-        from tools.dev import slot
-        environment = dict(os.environ, LC_ALL="C", TMPDIR=str(work),
-                           OXPINYIN_ORDER_CPU_COUNT=str(len(cpus)))
-        with slot.HeavyAdmission('function-order collections', environment,
-                                 prepare_heavy_env=collection_budget) as admission:
-            cpus = cpus[:int(admission.env['OXPINYIN_ORDER_WORKERS'])]
-            print(f'function-order workers: {len(cpus)}; CPUs: {cpus}', file=sys.stderr, flush=True)
-            collected = collect_parallel(args, libraries, work, admission.env, cpus, passes=passes,
-                                         pass_fds=admission.slot.pass_fds())
+def collect_campaigns(campaigns, *, cpu=None, jobs=None, report=None):
+    """Run all backend/pass units under one shared admission, then resolve every stream."""
+    cpus = sorted(host.allowed_cpus())
+    if cpu is not None:
+        if cpu not in cpus:
+            raise ValueError(f'CPU {cpu} is outside the allowed affinity set')
+        cpus = [cpu]
+    outputs, batches = [], []
+    with ExitStack() as scratch:
+        for index, (backend, args, libraries, archives) in enumerate(campaigns):
+            required = (args.bisect, args.system_dir, args.profiles_dir, args.work_dir, args.system_identity)
+            if not all(required) or args.init or args.steady:
+                raise ValueError('collection needs the bisect worker, system/profile/work directories and identity; no stream inputs')
+            identity = STARTUP_PROFILE['identity'](args.system_dir)
+            if identity != args.system_identity:
+                raise ValueError(f'system identity differs: {identity}')
+            for profile in PROFILES:
+                fixture = args.profiles_dir / profile
+                STARTUP_PROFILE['check'](fixture / 'user', fixture / 'profile.manifest')
+            work = scratch.enter_context(collection_scratch(args.work_dir))
+            batches.append(collection_units(args, libraries, work, backend, index))
+            outputs.append([{facade: {'startup': set(), 'steady': set()} for facade in FACADES}
+                            for _ in range(2 if args.repeat_output_dir else 1)])
+        # Round-robin the backends as well as the passes so capacity can serve
+        # all campaigns immediately instead of draining the first backend first.
+        units = [unit for row in zip_longest(*batches) for unit in row if unit is not None]
+        with slot.cancellation_handlers():
+            results = pool.run_admitted(units, 'function-order collections',
+                                        cancelled=slot.CANCELLED.is_set, cpus=cpus,
+                                        max_workers=jobs, cancel_error=slot.Cancelled)
+        for campaign, iteration, facade, tier, functions, workers in results:
+            if report is not None and workers is not None:
+                report['workers'] = int(workers)
+            outputs[campaign][iteration][facade][tier].update(functions)
+        for index, (_, args, libraries, archives) in enumerate(campaigns):
             for facade in FACADES:
                 library = libraries[facade].resolve()
                 table, available = library_symbols(library), archive_paths(archives[facade])
-                for iteration, streams in enumerate(collected):
+                for streams in outputs[index]:
                     startup = resolved_paths(streams[facade]['startup'], library, table, available)
                     hot = resolved_paths(streams[facade]['steady'], library, table, available)
-                    outputs[iteration][f"lib{facade}.order"] = policy(facade, startup, hot)
-    # The input fixtures are immutable even if a driver's private copy mutates.
-    for profile in PROFILES:
-        fixture = args.profiles_dir / profile
-        try:
-            STARTUP_PROFILE["check"](fixture / "user", fixture / "profile.manifest")
-        except ValueError as error:
-            raise ValueError(f"profile changed during collection: {profile}: {error}") from error
+                    streams[f'lib{facade}.order'] = policy(facade, startup, hot)
+                    del streams[facade]
+            for profile in PROFILES:
+                fixture = args.profiles_dir / profile
+                try:
+                    STARTUP_PROFILE['check'](fixture / 'user', fixture / 'profile.manifest')
+                except ValueError as error:
+                    raise ValueError(f'profile changed during collection: {profile}: {error}') from error
     return outputs
+
+
+def collect_policies(args, libraries, archives):
+    """The single-backend CLI uses the same admitted campaign path."""
+    return collect_campaigns([('backend', args, libraries, archives)], cpu=args.cpu,
+                             jobs=getattr(args, 'jobs', None))[0]
+
+
+def positive(text):
+    value = int(text)
+    if value < 1:
+        raise argparse.ArgumentTypeError('jobs must be positive')
+    return value
+
+
+def read_campaign(path):
+    """Load backend inputs; paths are relative to the campaign file."""
+    rows = json.loads(path.read_text())
+    if not isinstance(rows, list) or not rows:
+        raise ValueError('campaign must be a nonempty JSON array')
+    required = {'backend', 'library', 'staticlib', 'bisect', 'system_dir', 'system_identity',
+                'profiles_dir', 'work_dir', 'output_dir'}
+    campaigns, backends, destinations = [], set(), set()
+    def resolve(value):
+        return (path.parent / value).resolve()
+    for row in rows:
+        if not isinstance(row, dict) or not required <= row.keys() or row.keys() - required - {'repeat_output_dir'}:
+            raise ValueError('campaign entry has missing or unknown fields')
+        backend = row['backend']
+        if backend not in ('bdb', 'kc', 'tkrzw') or backend in backends:
+            raise ValueError(f'invalid or duplicate campaign backend: {backend}')
+        backends.add(backend)
+        mappings = []
+        for field in ('library', 'staticlib'):
+            if not isinstance(row[field], dict) or row[field].keys() != set(FACADES):
+                raise ValueError(f'campaign {field} requires exactly pinyin and zhuyin')
+            mappings.append({facade: resolve(value) for facade, value in row[field].items()})
+        fields = {key: resolve(row[key]) for key in
+                  ('bisect', 'system_dir', 'profiles_dir', 'work_dir', 'output_dir')}
+        fields['repeat_output_dir'] = resolve(row['repeat_output_dir']) if row.get('repeat_output_dir') else None
+        args = argparse.Namespace(**fields, system_identity=row['system_identity'], init=[], steady=[])
+        for destination in (args.output_dir, args.repeat_output_dir):
+            if destination is not None:
+                if destination in destinations:
+                    raise ValueError('campaign output directories must be distinct')
+                destinations.add(destination)
+        campaigns.append((backend, args, *mappings))
+    return campaigns
+
+
+def write_outputs(args, outputs):
+    """Publish policies only after every campaign and immutable fixture check succeeds."""
+    destinations = [args.output_dir]
+    if args.repeat_output_dir:
+        if args.repeat_output_dir.resolve() == args.output_dir.resolve():
+            raise ValueError('repeat output directory must differ from output directory')
+        destinations.append(args.repeat_output_dir)
+    for destination, policies in zip(destinations, outputs, strict=True):
+        destination.mkdir(parents=True, exist_ok=True)
+        for name, contents in policies.items():
+            (destination / name).write_text(contents, encoding='utf-8', newline='\n')
+
+
+def compare_base(campaigns, base, *, cpu=None, jobs=None):
+    """Compare the base in one-CPU mode, this campaign, and two concurrent passes.
+
+    This is maintained verification orchestration: the base is an unchanged
+    generator script in its own checkout, with its own sibling helper imports.
+    Every launch uses the shared admitted runner; no private controller is needed.
+    """
+    if not base.is_file():
+        raise ValueError(f'base generator does not exist: {base}')
+    if any(not args.repeat_output_dir for _, args, _, _ in campaigns):
+        raise ValueError('--compare-base needs repeat_output_dir on every campaign entry')
+    allowed = sorted(host.allowed_cpus())
+    selected = allowed[0] if cpu is None else cpu
+    if selected not in allowed:
+        raise ValueError(f'CPU {selected} is outside the allowed affinity set')
+    baseline, single = [], []
+    with ExitStack() as scratch:
+        for backend, args, libraries, archives in campaigns:
+            root = Path(scratch.enter_context(tempfile.TemporaryDirectory(prefix='comparison-', dir=args.work_dir)))
+            original = copy(args)
+            original.output_dir, original.repeat_output_dir = root / 'base', None
+            candidate = copy(args)
+            candidate.output_dir, candidate.repeat_output_dir = root / 'parallel', None
+            single.append((backend, candidate, libraries, archives))
+            def run(context, args=original, libraries=libraries, archives=archives):
+                command = [sys.executable, '-X', 'lazy_imports=normal', str(base)]
+                for option, mapping in (('--library', libraries), ('--staticlib', archives)):
+                    for facade, path in mapping.items():
+                        command += [option, f'{facade}={path}']
+                for option in ('bisect', 'system_dir', 'system_identity', 'profiles_dir', 'work_dir', 'output_dir'):
+                    command += ['--' + option.replace('_', '-'), str(getattr(args, option))]
+                command += ['--cpu', str(selected)]
+                result = context.launch(command)
+                if result.status:
+                    raise ValueError(f'base generator failed ({result.status}): '
+                                     + result.stderr[-4000:].decode(errors='backslashreplace'))
+                return {f'lib{facade}.order': (args.output_dir / f'lib{facade}.order').read_bytes()
+                        for facade in FACADES}
+            baseline.append((backend, run))
+        summary = {'base_script': str(base), 'baseline_mode': f'--cpu {selected}: one worker',
+                   'policies': len(campaigns) * len(FACADES)}
+        started = time.monotonic()
+        with slot.cancellation_handlers():
+            expected = pool.run_admitted(baseline, 'function-order serial base',
+                                         cancelled=slot.CANCELLED.is_set, cpus=[selected],
+                                         max_workers=1, cancel_error=slot.Cancelled)
+        summary['serial_seconds'] = round(time.monotonic() - started, 3)
+        started = time.monotonic()
+        parallel_report = {}
+        actual = collect_campaigns(single, cpu=cpu, jobs=jobs, report=parallel_report)
+        for (_, args, _, _), policies in zip(single, actual, strict=True):
+            write_outputs(args, policies)
+        summary['parallel_seconds'] = round(time.monotonic() - started, 3)
+        summary['parallel_workers'] = parallel_report['workers']
+        for (backend, _, _, _), wanted, got in zip(campaigns, expected, actual, strict=True):
+            if wanted != {name: value.encode('utf-8') for name, value in got[0].items()}:
+                raise ValueError(f'{backend}: serial/parallel policies differ')
+        started = time.monotonic()
+        repeat_report = {}
+        repeated = collect_campaigns(campaigns, cpu=cpu, jobs=jobs, report=repeat_report)
+        for (backend, _, _, _), wanted, got in zip(campaigns, expected, repeated, strict=True):
+            if any(wanted != {name: value.encode('utf-8') for name, value in policies.items()} for policies in got):
+                raise ValueError(f'{backend}: concurrent repeat policies differ')
+        for (_, args, _, _), policies in zip(campaigns, repeated, strict=True):
+            write_outputs(args, policies)
+        summary['repeat_seconds'] = round(time.monotonic() - started, 3)
+        summary['repeat_workers'] = repeat_report['workers']
+        print(json.dumps(summary, sort_keys=True), flush=True)
 
 
 def pairs(values, expected, option):
@@ -656,29 +732,33 @@ def policy(facade, startup, steady):
     return "\n".join(rows) + "\n"
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--library", action="append", default=[], metavar="FACADE=SO")
-    parser.add_argument("--staticlib", action="append", default=[], metavar="FACADE=ARCHIVE")
-    parser.add_argument("--init", action="append", default=[], metavar="FACADE:PROFILE=STREAM")
-    parser.add_argument("--steady", action="append", default=[], metavar="FACADE=STREAM")
-    parser.add_argument("--output-dir", type=Path)
-    parser.add_argument("--repeat-output-dir", type=Path,
-                        help="collect a second independent pass in the same admitted pool")
-    parser.add_argument("--print-identity", type=Path, metavar="DIR",
-                        help="print DIR's --system-identity value and exit")
-    parser.add_argument("--bisect", type=Path, help="in-tree bisect worker; collects instead of reading streams")
-    parser.add_argument("--system-dir", type=Path)
-    parser.add_argument("--system-identity")
-    parser.add_argument("--profiles-dir", type=Path)
-    parser.add_argument("--work-dir", type=Path)
-    parser.add_argument("--cpu", type=int, help="restrict collection to one allowed CPU (default: admitted pool)")
-    args = parser.parse_args()
+def run_generation(args, parser):
+    """Execute validated host work after the CLI's platform/tool preflight."""
+    if args.compare_base and not args.campaign:
+        parser.error('--compare-base requires --campaign')
+    if args.campaign and args.print_identity:
+        parser.error('--campaign cannot be combined with --print-identity')
     if args.print_identity:
         try:
             print(STARTUP_PROFILE["identity"](args.print_identity))
         except (OSError, ValueError) as error:
             parser.exit(1, f"function ordering: {error}\n")
+        return
+    if args.campaign:
+        if (args.library or args.staticlib or args.init or args.steady or args.output_dir or
+                args.repeat_output_dir or args.bisect or args.system_dir or args.system_identity or
+                args.profiles_dir or args.work_dir or args.print_identity):
+            parser.error('--campaign takes its inputs and output directories from the JSON file')
+        try:
+            campaigns = read_campaign(args.campaign.resolve())
+            if args.compare_base:
+                compare_base(campaigns, args.compare_base.resolve(), cpu=args.cpu, jobs=args.jobs)
+                return
+            outputs = collect_campaigns(campaigns, cpu=args.cpu, jobs=args.jobs)
+            for (_, campaign, _, _), policies in zip(campaigns, outputs, strict=True):
+                write_outputs(campaign, policies)
+        except (OSError, ValueError, TypeError) as error:
+            parser.exit(1, f'function ordering: {error}\n')
         return
     if not args.output_dir:
         parser.error("--output-dir is required")
@@ -708,18 +788,49 @@ def main():
         # copied; the only outputs are the production-layout policy inputs.
         if not args.bisect:
             outputs = [outputs]
-        destinations = [args.output_dir]
-        if args.repeat_output_dir:
-            if args.repeat_output_dir.resolve() == args.output_dir.resolve():
-                raise ValueError("repeat output directory must differ from output directory")
-            destinations.append(args.repeat_output_dir)
-        for destination, policies in zip(destinations, outputs, strict=True):
-            destination.mkdir(parents=True, exist_ok=True)
-            for name, contents in policies.items():
-                (destination / name).write_text(contents, encoding="utf-8", newline="\n")
+        write_outputs(args, outputs)
     except (OSError, ValueError) as error:
         parser.exit(1, f"function ordering: {error}\n")
 
 
+def generation_refusal(platform, which):
+    """Return one missing host requirement, or None; inspect no campaign inputs."""
+    if platform != 'linux':
+        return f'function ordering: generation requires Linux (host: {platform})'
+    for tool in ('taskset', 'valgrind'):
+        if which(tool) is None:
+            return f'function ordering: generation requires {tool} on PATH'
+    return None
+
+
+def main(argv=None, *, platform=sys.platform, which=shutil.which,
+         execute=run_generation, err=sys.stderr):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--campaign', type=Path, help='JSON backend inputs; all collections share one admitted pool')
+    parser.add_argument('--compare-base', type=Path, help='verify serial base, parallel campaign and concurrent repeats')
+    parser.add_argument('--jobs', type=positive, help='maximum collection workers; admission may lower it')
+    parser.add_argument("--library", action="append", default=[], metavar="FACADE=SO")
+    parser.add_argument("--staticlib", action="append", default=[], metavar="FACADE=ARCHIVE")
+    parser.add_argument("--init", action="append", default=[], metavar="FACADE:PROFILE=STREAM")
+    parser.add_argument("--steady", action="append", default=[], metavar="FACADE=STREAM")
+    parser.add_argument("--output-dir", type=Path)
+    parser.add_argument("--repeat-output-dir", type=Path,
+                        help="collect a second independent pass in the same admitted pool")
+    parser.add_argument("--print-identity", type=Path, metavar="DIR",
+                        help="print DIR's --system-identity value and exit")
+    parser.add_argument("--bisect", type=Path, help="in-tree bisect worker; collects instead of reading streams")
+    parser.add_argument("--system-dir", type=Path)
+    parser.add_argument("--system-identity")
+    parser.add_argument("--profiles-dir", type=Path)
+    parser.add_argument("--work-dir", type=Path)
+    parser.add_argument("--cpu", type=int, help="restrict collection to one allowed CPU (default: admitted pool)")
+    args = parser.parse_args(argv)
+    refusal = generation_refusal(platform, which)
+    if refusal:
+        print(refusal, file=err, flush=True)
+        return 2
+    return execute(args, parser)
+
+
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

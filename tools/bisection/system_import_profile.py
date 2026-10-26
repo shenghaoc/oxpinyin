@@ -127,7 +127,7 @@ def run_collections(plan, jobs, emit):
     """Collect every side and mode; emit(side, mode, lines) runs in fixed order.
 
     The six collections are units of tools/dev/pool.py's admitted pool; --jobs 1
-    runs them in order with no pool. Emission is in this thread, pin then ox and
+    limits the admitted pool to one worker. Emission is in this thread, pin then ox and
     callgrind, heap, pages, as each result becomes the next in that order. Every
     child gets the environment captured here, because Callgrind counts move with
     its size and serial and pooled runs must agree.

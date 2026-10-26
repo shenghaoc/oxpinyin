@@ -1496,15 +1496,15 @@ class UnitPoolTests(unittest.TestCase):
         self.assertEqual(self.events[-1], 'close')
         self.assertEqual(sorted(self.events[2:-1]), ['a', 'b', 'c'])
 
-    def test_one_job_and_one_unit_run_in_order_in_the_caller_without_admission(self):
+    def test_one_job_and_one_unit_run_in_order_under_admission(self):
         caller, seen = threading.get_ident(), []
-        units = [(name, lambda c, name=name: seen.append((name, threading.get_ident(), c.prefix, c.cpu)))
+        units = [(name, lambda c, name=name: seen.append((name, threading.get_ident() == caller, c.prefix, c.cpu)))
                  for name in ('a', 'b', 'c')]
         td.fan_out(self.campaign(jobs=1), units, 'pool')
         td.fan_out(self.campaign(), units[:1], 'pool')
-        self.assertEqual(seen, [('a', caller, 'a-sample', 2), ('b', caller, 'b-sample', 2),
-                                ('c', caller, 'c-sample', 2), ('a', caller, 'a-sample', 2)])
-        self.assertEqual(self.events, [])
+        self.assertEqual(seen, [('a', False, 'a-sample', 2), ('b', False, 'b-sample', 2),
+                                ('c', False, 'c-sample', 2), ('a', False, 'a-sample', 2)])
+        self.assertEqual(self.events, ['admission', 'handoff', 'close'] * 2)
 
     def test_serial_failure_stops_the_remaining_units(self):
         ran = []
@@ -1693,13 +1693,14 @@ class FixtureFlowTests(unittest.TestCase):
 
     def test_pooled_provision_matches_serial_output_order_and_files(self):
         serial_profiles, serial_records = self.provisioned('serial', 1)
+        self.assertEqual(FakeAdmission.events, ['admission', 'handoff', 'close'])
         pooled_profiles, pooled_records = self.provisioned('pooled', None)
         self.assertEqual([record[1]['profile'] for record in serial_records], list(td.PROFILES))
         self.assertEqual(serial_records, pooled_records)
         self.assertEqual({name: path.relative_to(self.root / 'serial') for name, path in serial_profiles.items()},
                          {name: path.relative_to(self.root / 'pooled') for name, path in pooled_profiles.items()})
         self.assertEqual(self.tree(self.root / 'serial'), self.tree(self.root / 'pooled'))
-        self.assertEqual(FakeAdmission.events.count('close'), 1)
+        self.assertEqual(FakeAdmission.events, ['admission', 'handoff', 'close'] * 2)
 
     def test_provision_failure_in_one_profile_raises_after_the_export_and_stops_the_rest(self):
         FakeAdmission.workers = 1

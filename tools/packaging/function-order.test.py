@@ -543,7 +543,7 @@ class SystemImportProfileTests(unittest.TestCase):
         self.assertEqual([report for _, _, report in reports], [[f'{side} {mode}'] for side, mode in order])
         self.assertEqual(self.events[-1], 'close')
 
-    def test_one_job_runs_in_order_in_the_caller_with_no_admission(self):
+    def test_one_job_runs_in_order_under_admission(self):
         caller, seen = threading.get_ident(), []
 
         def collect(side, mode, plan, environment, context):
@@ -551,8 +551,8 @@ class SystemImportProfileTests(unittest.TestCase):
             return []
         with mock.patch.object(PROFILE, 'collect', collect):
             self.emitted(1)
-        self.assertEqual(seen, [(side, mode, True, ()) for side in ('pin', 'ox') for mode in ('callgrind', 'heap', 'pages')])
-        self.assertEqual(self.events, [])
+        self.assertEqual(seen, [(side, mode, False, ()) for side in ('pin', 'ox') for mode in ('callgrind', 'heap', 'pages')])
+        self.assertEqual(self.events, ['admission', 'close'])
 
     def test_jobs_two_caps_concurrent_collections_despite_larger_admission(self):
         FakeAdmission.workers = 6

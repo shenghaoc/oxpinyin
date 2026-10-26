@@ -9,6 +9,7 @@ import ast
 import contextlib
 import hashlib
 import io
+import os
 from pathlib import Path
 import re
 import runpy
@@ -34,6 +35,74 @@ def row(name, section, address="0000000000000000"):
 
 def profile(body, total):
     return f"version: 1\npositions: instr line\nevents: Ir\n{body}totals: {total}\n"
+
+
+class GenerationPreflightTests(unittest.TestCase):
+    @staticmethod
+    def tree(root):
+        return {str(path.relative_to(root)): path.read_bytes() if path.is_file() else None
+                for path in root.rglob('*')}
+
+    def refusal(self, platform, missing, expected, expected_lookups):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in ('work', 'build'):
+                (root / name).mkdir()
+                (root / name / 'keep').write_bytes(b'unchanged')
+            campaign = root / 'campaign.json'
+            campaign.write_text('[]')
+            before = self.tree(root)
+            variants = (
+                ['--bisect', str(root / 'worker'), '--work-dir', str(root / 'new-work'),
+                 '--output-dir', str(root / 'out')],
+                ['--campaign', str(campaign)],
+                ['--campaign', str(campaign), '--compare-base', str(root / 'base.py')],
+                ['--output-dir', str(root / 'out')],
+            )
+            for argv in variants:
+                with self.subTest(argv=argv):
+                    looked_up, executed = [], []
+                    def which(tool):
+                        looked_up.append(tool)
+                        return None if tool == missing else f'/tools/{tool}'
+                    def execute(args, parser):
+                        # All admission, worker launches and directory changes
+                        # belong to this execution phase, after the CLI guard.
+                        executed.append('generation')
+                        self.fail('generation started before platform/tool refusal')
+                    err = io.StringIO()
+                    status = GENERATOR['main'](argv, platform=platform, which=which,
+                                               execute=execute, err=err)
+                    self.assertEqual(status, 2)
+                    self.assertEqual(err.getvalue(), expected + '\n')
+                    self.assertEqual(looked_up, expected_lookups)
+                    self.assertEqual(executed, [])
+                    self.assertEqual(self.tree(root), before)
+
+    def test_macos_refuses_before_tool_lookup_or_generation(self):
+        self.refusal('darwin', None, 'function ordering: generation requires Linux (host: darwin)', [])
+
+    def test_linux_without_taskset_refuses_before_generation(self):
+        self.refusal('linux', 'taskset', 'function ordering: generation requires taskset on PATH', ['taskset'])
+
+    def test_linux_without_valgrind_refuses_before_generation(self):
+        self.refusal('linux', 'valgrind', 'function ordering: generation requires valgrind on PATH',
+                     ['taskset', 'valgrind'])
+
+    def test_supported_host_dispatches_once_after_checking_both_tools(self):
+        looked_up, executed = [], []
+        def which(tool):
+            looked_up.append(tool)
+            return f'/tools/{tool}'
+        def execute(args, parser):
+            executed.append(args.campaign)
+            return 0
+        err = io.StringIO()
+        self.assertEqual(GENERATOR['main'](['--campaign', 'campaign.json'], platform='linux', which=which,
+                                          execute=execute, err=err), 0)
+        self.assertEqual(looked_up, ['taskset', 'valgrind'])
+        self.assertEqual(executed, [Path('campaign.json')])
+        self.assertEqual(err.getvalue(), '')
 
 
 class MeasurementTests(unittest.TestCase):
@@ -146,108 +215,226 @@ class MeasurementTests(unittest.TestCase):
 
 
 class ParallelCollectionTests(unittest.TestCase):
-    def test_overlapping_workers_have_private_profiles_and_distinct_cpus(self):
-        collect = GENERATOR['collect_parallel']
-        barrier = threading.Barrier(2)
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.campaigns = []
+        for backend in ('bdb', 'kc', 'tkrzw'):
+            root = self.root / backend
+            root.mkdir()
+            data = root / 'system'
+            data.mkdir()
+            (data / 'table.conf').write_text('system')
+            for profile in GENERATOR['PROFILES']:
+                user = root / 'profiles' / profile / 'user'
+                user.mkdir(parents=True)
+                (user / 'state').write_text('original')
+                (user.parent / 'profile.manifest').write_text(GENERATOR['manifest'](user))
+            args = SimpleNamespace(bisect=Path('/worker'), system_dir=data,
+                                   system_identity=GENERATOR['STARTUP_PROFILE']['identity'](data),
+                                   profiles_dir=root / 'profiles', work_dir=root, init=[], steady=[],
+                                   output_dir=root / 'output', repeat_output_dir=root / 'repeat')
+            libraries = {facade: root / f'lib{facade}.so' for facade in GENERATOR['FACADES']}
+            self.campaigns.append((backend, args, libraries, libraries))
+
+    def run_collections(self, toggle, *, workers=6, steady=None):
+        from tools.dev import pool
+        @contextlib.contextmanager
+        def admitted(*args, **kwargs):
+            yield pool.Budget(workers, {'ADMITTED': 'yes', pool.POOL_WORKERS: str(workers)}, (42,))
+        collect = GENERATOR['collect_campaigns']
+        with mock.patch.dict(collect.__globals__, teardown_exports=lambda *a: '',
+                             startup_collections=lambda *a: [('phrases', 'a'), ('journals', 'b')],
+                             collect_toggle=toggle, collect_steady=steady or (lambda *a: {'hot', 'shared'}),
+                             library_symbols=lambda *a: {}, archive_paths=lambda *a: {},
+                             resolved_paths=lambda functions, *a: functions), \
+                mock.patch.object(GENERATOR['host'], 'allowed_cpus', return_value=set(range(6))), \
+                mock.patch.object(pool, 'admitted', side_effect=admitted) as admission, \
+                mock.patch.object(pool, 'run_admitted', wraps=pool.run_admitted) as runner:
+            result = collect(self.campaigns, jobs=workers)
+        return result, admission, runner
+
+    def test_three_backends_and_two_passes_share_admission_and_private_cpu_leases(self):
+        barrier = threading.Barrier(6)
         lock = threading.Lock()
-        active = set()
-        visited = []
+        active, visited, first = set(), [], []
         def toggle(args, facade, library, user, name, environment):
             self.assertEqual((user / 'state').read_text(), 'original')
             (user / 'state').write_text('mutated')
+            self.assertEqual(environment['ADMITTED'], 'yes')
+            self.assertEqual(args.context.fds, (42,))
             with lock:
                 self.assertNotIn(args.cpu, active)
                 active.add(args.cpu)
                 visited.append(user)
-            barrier.wait(timeout=5)
+                initial = len(visited) <= 6
+                if initial:
+                    first.append(library.parent.name)
+            if initial:
+                barrier.wait(timeout=5)
             with lock:
                 active.remove(args.cpu)
             return {name, 'shared'}
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            for name in GENERATOR['PROFILES']:
-                user = root / 'profiles' / name / 'user'
-                user.mkdir(parents=True)
-                (user / 'state').write_text('original')
-            args = SimpleNamespace(profiles_dir=root / 'profiles')
-            with mock.patch.dict(collect.__globals__,
-                                 teardown_exports=lambda *args: '',
-                                 startup_collections=lambda *args: [('phrases', 'a'), ('journals', 'b')],
-                                 collect_toggle=toggle, collect_steady=lambda *args: {'hot', 'shared'}):
-                result = collect(args, {f: root / f for f in GENERATOR['FACADES']}, root, {}, [2, 5], passes=2)
-            self.assertEqual(len(set(visited)), 8)
-            for facade in GENERATOR['FACADES']:
-                for iteration in result:
-                    self.assertEqual(iteration[facade], {'startup': {'a', 'b', 'shared'}, 'steady': {'hot', 'shared'}})
-            for name in GENERATOR['PROFILES']:
-                self.assertEqual((root / 'profiles' / name / 'user' / 'state').read_text(), 'original')
-            self.assertTrue(all(not path.exists() for path in visited))
+        result, admission, runner = self.run_collections(toggle)
+        self.assertEqual(admission.call_count, 1)
+        self.assertEqual(runner.call_count, 1)
+        units = runner.call_args.args[0]
+        self.assertEqual([name.split('-pass')[0] for name, _ in units[:6]],
+                         ['bdb', 'kc', 'tkrzw', 'bdb', 'kc', 'tkrzw'])
+        self.assertEqual(sorted(first), ['bdb', 'bdb', 'kc', 'kc', 'tkrzw', 'tkrzw'])
+        self.assertEqual(len(set(visited)), 24)
+        self.assertTrue(all(not path.exists() for path in visited))
+        for backend in result:
+            self.assertEqual(backend[0], backend[1])
+            self.assertIn('init\ta\ninit\tb\ninit\tshared\nsteady\thot\n', backend[0]['libpinyin.order'])
+        for _, args, _, _ in self.campaigns:
+            for profile in GENERATOR['PROFILES']:
+                self.assertEqual((args.profiles_dir / profile / 'user/state').read_text(), 'original')
 
-    def test_cancelled_capture_kills_and_reaps_child_and_inherits_slot(self):
-        capture = GENERATOR['capture']
-        state = GENERATOR['COLLECTION_STATE']
-        state.cancelled = threading.Event()
-        state.fds = (42,)
-        child = mock.MagicMock()
-        def interrupted(**kwargs):
-            state.cancelled.set()
-            raise GENERATOR['subprocess'].TimeoutExpired(['worker'], .1)
-        child.communicate.side_effect = interrupted
-        process = mock.MagicMock()
-        process.__enter__.return_value = child
-        try:
-            with mock.patch.object(GENERATOR['subprocess'], 'Popen', return_value=process) as spawn:
-                with self.assertRaisesRegex(ValueError, 'collection cancelled'):
-                    capture(['worker'], {})
-            self.assertEqual(spawn.call_args.kwargs['pass_fds'], (42,))
-            child.kill.assert_called_once()
-            child.wait.assert_called_once()
-        finally:
-            del state.cancelled
-            del state.fds
+    def test_worker_failure_propagates_and_removes_all_scratch(self):
+        def failed(*args):
+            raise ValueError('bad stream')
+        with self.assertRaisesRegex(ValueError, 'bad stream'):
+            self.run_collections(failed, workers=2)
+        self.assertEqual(list(self.root.glob('*/function-order-*')), [])
+        self.assertTrue(all(not args.output_dir.exists() for _, args, _, _ in self.campaigns))
 
-    def test_partial_submission_failure_cancels_already_queued_work(self):
-        collect = GENERATOR['collect_parallel']
-        first = mock.Mock()
-        pool = mock.MagicMock()
-        pool.submit.side_effect = [first, RuntimeError('submission failed')]
-        executor = mock.MagicMock()
-        executor.__enter__.return_value = pool
-        with mock.patch.dict(collect.__globals__, teardown_exports=lambda *args: '',
-                             startup_collections=lambda *args: [],
-                             ThreadPoolExecutor=mock.Mock(return_value=executor)):
-            with self.assertRaisesRegex(RuntimeError, 'submission failed'):
-                collect(SimpleNamespace(), {f: LIBRARY for f in GENERATOR['FACADES']},
-                        Path('/unused'), {}, [2])
-        first.cancel.assert_called_once()
+    def test_fixture_changed_during_collection_is_rejected_before_publication(self):
+        changed = self.campaigns[0][1].profiles_dir / 'phrases/user/state'
+        def toggle(*args):
+            changed.write_text('changed')
+            return {'function'}
+        with self.assertRaisesRegex(ValueError, 'profile changed during collection'):
+            self.run_collections(toggle, workers=1)
+        self.assertTrue(all(not args.output_dir.exists() for _, args, _, _ in self.campaigns))
 
-    def test_worker_error_propagates_after_cleanup(self):
-        collect = GENERATOR['collect_parallel']
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            with mock.patch.dict(collect.__globals__, teardown_exports=lambda *args: '',
-                                 startup_collections=lambda *args: [],
-                                 collect_steady=mock.Mock(side_effect=ValueError('bad stream'))):
-                with self.assertRaisesRegex(ValueError, 'bad stream'):
-                    collect(SimpleNamespace(), {f: root / f for f in GENERATOR['FACADES']}, root, {}, [3])
-            self.assertEqual(list(root.iterdir()), [])
+    def test_single_cpu_still_uses_shared_admission(self):
+        from tools.dev import pool
+        with mock.patch.object(GENERATOR['host'], 'allowed_cpus', return_value={2, 5}), \
+                mock.patch.object(pool, 'run_admitted', side_effect=ValueError('reached shared runner')) as runner, \
+                mock.patch.dict(GENERATOR['collect_campaigns'].__globals__, collection_units=lambda *a: []):
+            with self.assertRaisesRegex(ValueError, 'reached shared runner'):
+                GENERATOR['collect_campaigns'](self.campaigns, cpu=5, jobs=1)
+            self.assertEqual(runner.call_args.kwargs['cpus'], [5])
+            self.assertEqual(runner.call_args.kwargs['max_workers'], 1)
+            self.assertNotIn('serial', runner.call_args.kwargs)
 
-    def test_admission_caps_workers_by_memory_and_affinity_and_refuses_unknown(self):
-        sys.path.insert(0, str(HERE.parent)) if str(HERE.parent) not in sys.path else None
-        from tools.dev import host
-        budget = GENERATOR['collection_budget']
-        env = {'OXPINYIN_ORDER_CPU_COUNT': '3'}
-        resources = dict(cpus=8, available_mib=5 * host.RUNNER_PEAK_MIB,
-                         total_mib=10000, memory_limit_mib=None)
-        with mock.patch.object(host, 'memory_headroom', return_value=host.RUNNER_PEAK_MIB):
-            child, _, estimate = budget(env, resources)
-            self.assertEqual(child['OXPINYIN_ORDER_WORKERS'], '3')
-            self.assertEqual(estimate, 3 * host.RUNNER_PEAK_MIB)
-            child, _, estimate = budget(env, dict(resources, available_mib=2 * host.RUNNER_PEAK_MIB))
-            self.assertEqual(child['OXPINYIN_ORDER_WORKERS'], '1')
-            child, chosen, estimate = budget(env, dict(resources, available_mib=None))
-            self.assertEqual(chosen['OXPINYIN_ORDER_WORKERS'][0], 0)
-            self.assertEqual(estimate, host.RUNNER_PEAK_MIB)
+    def test_comparison_uses_serial_base_and_one_then_two_candidate_passes(self):
+        compare = GENERATOR['compare_base']
+        baseline = self.root / 'base.py'
+        baseline.touch()
+        wanted = {'libpinyin.order': 'p', 'libzhuyin.order': 'z'}
+        def run_base(units, label, **kwargs):
+            self.assertEqual(kwargs['max_workers'], 1)
+            self.assertEqual(kwargs['cpus'], [2])
+            self.assertEqual(len(units), 3)
+            from tools.dev import pool
+            def launch(context, command):
+                self.assertEqual(command[command.index('--cpu') + 1], '2')
+                self.assertNotIn('--repeat-output-dir', command)
+                self.assertEqual(command[3], str(baseline))
+                destination = Path(command[command.index('--output-dir') + 1])
+                destination.mkdir()
+                for name, contents in wanted.items():
+                    (destination / name).write_text(contents)
+                return pool.Completed(0, b'', b'')
+            with mock.patch.object(pool.UnitContext, 'launch', launch):
+                return [function(pool.UnitContext(name, threading.Event(), cpu=2))
+                        for name, function in units]
+        def collect(campaigns, **kwargs):
+            kwargs['report']['workers'] = 3
+            return [[wanted.copy() for _ in range(2 if args.repeat_output_dir else 1)]
+                    for _, args, _, _ in campaigns]
+        with mock.patch.object(GENERATOR['host'], 'allowed_cpus', return_value={2, 5}), \
+                mock.patch.object(GENERATOR['pool'], 'run_admitted', side_effect=run_base), \
+                mock.patch.dict(compare.__globals__, collect_campaigns=collect), \
+                contextlib.redirect_stdout(io.StringIO()) as output:
+            compare(self.campaigns, baseline)
+        summary = GENERATOR['json'].loads(output.getvalue())
+        self.assertEqual(summary['policies'], 6)
+        self.assertEqual(summary['parallel_workers'], 3)
+        for _, args, _, _ in self.campaigns:
+            self.assertEqual((args.output_dir / 'libpinyin.order').read_text(), 'p')
+            self.assertEqual((args.repeat_output_dir / 'libpinyin.order').read_text(), 'p')
+
+    def test_one_backend_comparison_uses_the_selected_cpu_and_admitted_environment(self):
+        from tools.dev import pool
+        compare = GENERATOR['compare_base']
+        baseline = self.root / 'base.py'
+        baseline.touch()
+        locks = self.root / 'locks'
+        locks.mkdir()
+        wanted = {'libpinyin.order': 'p', 'libzhuyin.order': 'z'}
+        launched = []
+        def launch(context, command):
+            launched.append(command)
+            self.assertEqual(command[command.index('--cpu') + 1], '5')
+            self.assertEqual(context.cpu, 5)
+            for name in ('PATH', 'HOME'):
+                self.assertEqual(context.environment.get(name), os.environ[name])
+            self.assertEqual(Path(context.environment['OXPINYIN_LOCK_DIR']), locks)
+            marker = GENERATOR['json'].loads(context.environment['OXPINYIN_HEAVY_SLOT_HELD'])
+            self.assertEqual(context.fds, (marker['fd'],))
+            os.fstat(marker['fd'])
+            destination = Path(command[command.index('--output-dir') + 1])
+            destination.mkdir()
+            for name, contents in wanted.items():
+                (destination / name).write_text(contents)
+            return pool.Completed(0, b'', b'')
+        def collect(campaigns, **kwargs):
+            kwargs['report']['workers'] = 1
+            return [[wanted.copy() for _ in range(2 if args.repeat_output_dir else 1)]
+                    for _, args, _, _ in campaigns]
+        snapshot = dict(available_mib=12000, total_mib=16384, cpus=4, cargo_cpus=4, notes=[])
+        with mock.patch.object(GENERATOR['host'], 'allowed_cpus', return_value={2, 5}), \
+                mock.patch.object(GENERATOR['host'], 'host_lock_dir', return_value=locks), \
+                mock.patch.object(GENERATOR['host'], 'resource_snapshot', return_value=snapshot), \
+                mock.patch.object(pool.UnitContext, 'launch', launch), \
+                mock.patch.dict(compare.__globals__, collect_campaigns=collect), \
+                contextlib.redirect_stdout(io.StringIO()) as output:
+            compare(self.campaigns[:1], baseline, cpu=5)
+        self.assertEqual(len(launched), 1)
+        self.assertEqual(GENERATOR['json'].loads(output.getvalue())['policies'], 2)
+        for _, args, _, _ in self.campaigns[:1]:
+            self.assertEqual((args.output_dir / 'libpinyin.order').read_text(), 'p')
+            self.assertEqual((args.repeat_output_dir / 'libpinyin.order').read_text(), 'p')
+
+    def test_comparison_rejects_byte_difference_without_publishing(self):
+        compare = GENERATOR['compare_base']
+        baseline = self.root / 'base.py'
+        baseline.touch()
+        wanted = {f'lib{facade}.order': b'line\r\n' for facade in GENERATOR['FACADES']}
+        def collect(campaigns, **kwargs):
+            kwargs['report']['workers'] = 2
+            return [[{f'lib{facade}.order': 'line\n' for facade in GENERATOR['FACADES']}]
+                    for _ in campaigns]
+        with mock.patch.object(GENERATOR['host'], 'allowed_cpus', return_value={2}), \
+                mock.patch.object(GENERATOR['pool'], 'run_admitted', return_value=[wanted] * 3), \
+                mock.patch.dict(compare.__globals__, collect_campaigns=collect):
+            with self.assertRaisesRegex(ValueError, 'serial/parallel policies differ'):
+                compare(self.campaigns, baseline)
+        self.assertTrue(all(not args.output_dir.exists() for _, args, _, _ in self.campaigns))
+
+    def test_campaign_paths_and_duplicate_outputs_are_checked(self):
+        row = {'backend': 'bdb', 'library': {'pinyin': 'p.so', 'zhuyin': 'z.so'},
+               'staticlib': {'pinyin': 'p.a', 'zhuyin': 'z.a'}, 'bisect': 'worker',
+               'system_dir': 'system', 'system_identity': 'id', 'profiles_dir': 'profiles',
+               'work_dir': 'work', 'output_dir': 'out', 'repeat_output_dir': 'again'}
+        # Exercise canonical paths even when the host's temp directory is not
+        # symlinked (macOS normally reaches /private/var through /var).
+        linked = self.root / 'linked'
+        linked.symlink_to(self.root, target_is_directory=True)
+        path = linked / 'campaign.json'
+        path.write_text(GENERATOR['json'].dumps([row]))
+        campaigns = GENERATOR['read_campaign'](path)
+        self.assertEqual(campaigns[0][1].bisect, (self.root / 'worker').resolve())
+        path.write_text(GENERATOR['json'].dumps([row, dict(row, backend='kc')]))
+        with self.assertRaisesRegex(ValueError, 'output directories must be distinct'):
+            GENERATOR['read_campaign'](path)
+        path.write_text(GENERATOR['json'].dumps([dict(row, unknown='bad')]))
+        with self.assertRaisesRegex(ValueError, 'missing or unknown fields'):
+            GENERATOR['read_campaign'](path)
 
 
 class GeneratorTests(unittest.TestCase):
@@ -402,14 +589,21 @@ class GeneratorTests(unittest.TestCase):
         with mock.patch.dict(reader.__globals__, run=run), self.assertRaisesRegex(ValueError, "0x3000"):
             reader(LIBRARY)
 
-    def test_capture_timeout_is_a_value_error(self):
-        capture = GENERATOR["capture"]
-        subprocess = GENERATOR["subprocess"]
-        with mock.patch.object(subprocess, "run",
-                               side_effect=subprocess.TimeoutExpired(["worker"], 1800)) as run:
-            with self.assertRaisesRegex(ValueError, "measurement child timed out: worker"):
-                capture(["worker"], {})
-        self.assertEqual(run.call_args.kwargs["timeout"], 1800)
+    def test_capture_uses_shared_launcher_and_preserves_deadline(self):
+        from tools.dev import pool
+        context = pool.UnitContext('collection', threading.Event(), cpu=2, fds=(42,))
+        def launch(context, command, *, env):
+            self.assertEqual(context.fds, (42,))
+            context.check()
+            return pool.Completed(0, b'out', b'err')
+        capture = GENERATOR['capture']
+        with mock.patch.object(pool.UnitContext, 'launch', launch), \
+                mock.patch.object(GENERATOR['time'], 'monotonic', side_effect=[0, 1]):
+            self.assertEqual(capture(['worker'], {'KEY': 'value'}, context), (b'out', b'err'))
+        with mock.patch.object(pool.UnitContext, 'launch', launch), \
+                mock.patch.object(GENERATOR['time'], 'monotonic', side_effect=[0, 1801]):
+            with self.assertRaisesRegex(ValueError, 'measurement child timed out'):
+                capture(['worker'], {}, context)
 
     def test_teardown_exports_keep_only_the_selected_facade(self):
         reader = GENERATOR["teardown_exports"]
