@@ -82,8 +82,8 @@ for libpinyin and libzhuyin, `pinyin` for the prediction-only surfaces;
 | G2 | C strings, joins and vectors: `g_strdup` 39, `g_free` 155, `g_strdup_printf` 14, `g_strconcat` 16, `g_strjoinv` 3, `g_strndup` 7, `g_strfreev` 10, `g_strv_length`/`g_strv_contains` 2, `g_string_*` 4 | both (punct subset pinyin only); all | `capi/src/ffi.rs` `owned_cstr` / `owned_cstr_list`; `capi/src/aux_matrix.rs` `join`; `capi/src/predict.rs` `prepend_punctuations`; `capi/src/iterators.rs` export rendering; `data/src/pin_stderr.rs` `build_filename` | valid: identical bytes. malformed: raw path bytes, missing middle aux component, NUL in a diagnostic, duplicate punctuation. | valid: contract. malformed: quirk (#922) or #925; punctuation strings #1144 and punctuation order/duplicates #928, both contract (closed 2026-10-26 UTC) | #922, #924, #925, #928, #1144; export row 1 |
 | G3 | Path joining: `g_build_filename`, 68 sites, e.g. `pinyin.cpp:164,252,268,286,308,395,400,952,968,985,1052`; `zhuyin.cpp:118,196,212,230,252,337,342,585,601,605,626,630,684` | both; all | `data/src/table_info.rs` `FileName::under` / `pin_join`; `data/src/pin_stderr.rs` `build_filename`; `capi/src/ffi.rs` `cstr_to_path` | valid: same resolved path. malformed: leading `/`, empty name, `..`, duplicate separators, non-UTF-8 bytes. | valid: contract. malformed: quirk (#922) | #922 |
 | G4 | GArray/GPtrArray containers: `g_array_*` and `g_ptr_array_*`, 514 sites (`g_array_index` 101, `g_array_new` 64, `g_array_free` 68, `g_ptr_array_index` 58, `g_array_set_size` 57, `g_array_append_val` 54, ...) | both; all | `capi/src/dict.rs` and zhuyin twin keep real `GArray` for the ABI; internal steps are `Vec`/slices in `engine/src/nbest.rs`, `engine/src/session/*`, `data/src/phrase_library.rs` | valid: identical candidate/result arrays. malformed: out-of-range indices, a key with no whole word, a short chunk header. | valid: contract. malformed: class (b)/(c) rows; #924 for the ABI arrays | #924 |
-| G5 | n-best tail sort: `phonetic_lookup.h:337` `g_ptr_array_sort(tails, trellis_value_compare)` | both; all | `engine/src/nbest.rs` `glib_merge_sort`, `tail_compare`, `c_float_to_gint` | valid: ordered tails. malformed/pathological: NaN and out-of-range float differences make the comparator non-transitive. | contract on valid data; class (a) tie rows | #921 |
-| G6 | candidate and predicted list sorts: `pinyin.cpp:2067,2286,2443` `g_array_sort_with_data`; `zhuyin.cpp:1375` `g_array_sort_with_data`; `zhuyin.cpp:1529,1610` `g_array_sort`; `pinyin.cpp:1701-1705` predicted comparator | both; all | `engine/src/session/mod.rs` `glib_rank_sort`; `capi/src/predict.rs` `sort_predicted` | valid: ordered candidate list and dedup winner. malformed/pathological: `gint` frequency wrap, NaN scores. | contract on valid data; #927/#928 boundaries | #927, #928 |
+| G5 | n-best tail sort: `phonetic_lookup.h:337` `g_ptr_array_sort(tails, trellis_value_compare)` | both; all | `engine/src/nbest.rs` `glib_merge_sort`, `tail_compare`, `c_float_to_gint` | valid: the `gint` truncation ties scores under one unit apart, so the comparator is not transitive on finite scores. malformed: NaN and ±∞ from λ outside `[0, 1]`. | contract; merge kept, [record](921-927-glib-sorts.md) | #921 |
+| G6 | candidate and predicted list sorts: `pinyin.cpp:2286,2443` `g_array_sort_with_data(compare_item_with_sort_option)`; `zhuyin.cpp:1529,1610` `g_array_sort`; phrase-string dedup `pinyin.cpp:2067`, `zhuyin.cpp:1375` | both; all | `engine/src/nbest.rs` `glib_merge_sort` under `engine/src/session/mod.rs` `glib_rank_sort`, `RankKey::pin_compare` and `capi/src/predict.rs` `sort_predicted` | valid: a total order (frequencies below 2²⁴); stable order and dedup winner. malformed: λ outside `[0, 1]` wraps the `gint` frequency key into cycles. | contract; merge kept, [record](921-927-glib-sorts.md); dedup #913/#914 | #927, #928 |
 | G7 | hash tables: `g_hash_table_new` 2, `insert` 4, `lookup_extended` 4, `destroy` 2; `g_direct_hash`/`equal` | both; all | `engine/src/nbest.rs` `Step`, `engine/src/session/*` vectors; no exposed iteration order | valid: lookup only; no order reaches the ABI. malformed: none. | contract (internal; no observable order) | — |
 | G8 | diagnostics: `g_return_val_if_fail`, 6 sites (`pinyin.cpp:1454`, `zhuyin.cpp:973`, `phrase_index.cpp:354-356,361`); `g_warning` only in the tool-only tag utility | both; all | `capi/src/ffi.rs` `log_warning` / `log_critical`; `capi/src/phrase.rs` `g_log` / `g_return_if_fail_warning`; zhuyin twin | valid: class (c) sites keep one warning at warning level and the pin's domain. malformed: a GLib conversion failure logs the critical. | (c) where the pin aborts; #924 for the channel; #918 for the segment gate | #918, #924 |
 | G9 | allocation/free and real GArray ABI: `g_free` 155, `g_strdup` 39, `g_strdup_printf` 14; C `malloc`/`free`/`realloc` 6; `g_array_set_size`/`g_array_append_vals` into caller arrays in `pinyin.cpp:2805,2817` and `zhuyin.cpp:1797,1809` | both; all | `capi/src/ffi.rs` `owned_cstr` / `owned_cstr_list` (C `malloc`/`g_free` contract); `capi/src/dict.rs` and zhuyin twin on `glib_sys`; `libpinyin.alloc` / `libzhuyin.alloc` | valid: caller may `g_free` / `g_strfreev`; the real `GArray` keeps GLib's private metadata. malformed: NULL or OOM paths. | contract; MUST RETAIN | #924 |
@@ -243,18 +243,24 @@ ABI, ownership or allocator rule, and re-ran none of these gates for #924.
 ### G5 and G6 — sorts
 
 `g_ptr_array_sort` at `phonetic_lookup.h:337` orders the n-best tails
-with `trellis_value_compare`; the comparator narrows the float difference
-to `gint`, so NaN and out-of-range scores are non-transitive. The port is
-`glib_merge_sort` and `tail_compare` (#921; the class (a) tie rows are
-row 11).
+with `trellis_value_compare`, which truncates the float difference to
+`gint` (`cvttss2si` in the bdb binary). Scores less than one unit apart
+compare equal, so the comparator is not transitive even on finite scores;
+NaN and ±∞ come from a λ outside `[0, 1]`.
 
-`g_array_sort_with_data` orders candidate indices by phrase bytes before
-dedup (`pinyin.cpp:2067,2286,2443`; `zhuyin.cpp:1375`), and
-`g_array_sort` orders the zhuyin candidate list (`:1529,1610`). The
-predicted list has its own half-split merge in `predict.rs:186-230`.
-These are valid-input ranking rules: the merge recursion and the `gint`
-frequency key are reproduced, not replaced by `sort_unstable_by`
-(#927). The dedup winner and punctuation order are #928.
+`g_array_sort_with_data` orders the pinyin and predicted candidate lists
+under `compare_item_with_sort_option` (`pinyin.cpp:2286,2443`), and
+`g_array_sort` the zhuyin lists (`zhuyin.cpp:1529,1610`). Their
+`gint` frequency key is a total order for λ in `[0, 1]` and wraps into
+cycles outside it. The phrase-string dedup sorts (`pinyin.cpp:2067`,
+`zhuyin.cpp:1375`) are total; their winner rule is #913/#914, and the
+dedup winner and punctuation order are #928.
+
+All of these stay GLib's merge (#921, #927): one implementation,
+`oxpinyin_engine::glib_merge_sort`, used by the tails, `glib_rank_sort`
+and `sort_predicted`. A standard-library sort gives other sentence orders
+on NaN tails and may panic on a non-total comparator. The record is
+[921-927-glib-sorts.md](921-927-glib-sorts.md).
 
 ### G7 — hash tables
 
@@ -564,9 +570,9 @@ child column is the audit that must decide it.
 | `data/src/table_info.rs` `Scan`, `strtol_digits`, `atoi_guint8`, `hex_float` | `fscanf` `%d`/`%f`/`%255s`, `atoi`/`strtol`, glibc `strtof` | `table_info.cpp:160,208-289` | #919 |
 | `data/src/user_files.rs` `Scan::int` | `fscanf` `%d` and `strtol` truncation to `int` | `table_info.cpp:338-359` | #920 |
 | `capi/src/locale.rs` `pin_table_info_locale` | `setlocale(LC_NUMERIC, "C")` | `table_info.cpp:197,291,328,372,378,394` | #923 (STOP) |
-| `engine/src/nbest.rs` `glib_merge_sort`, `tail_compare`, `c_float_to_gint` | `g_ptr_array_sort` + `trellis_value_compare` | `phonetic_lookup.h:174-178,329-339` | #921 |
-| `engine/src/session/mod.rs` `glib_rank_sort`, `RankKey::pin_compare` | `g_array_sort_with_data` under the `gint` frequency key | `pinyin.cpp:1678-1709`; `zhuyin.cpp:1129-1144` | #927 |
-| `capi/src/predict.rs` `sort_predicted` | GLib half-split merge + `gint` frequency key | `pinyin.cpp:1701-1705` | #927 |
+| `engine/src/nbest.rs` `glib_merge_sort`, `tail_compare`, `c_float_to_gint` | `g_sort_array` merge + `trellis_value_compare` | `phonetic_lookup.h:174-178,329-339`; GLib 2.84.4 `gqsort.c:69-281` | #921: kept, [record](921-927-glib-sorts.md) |
+| `engine/src/session/mod.rs` `glib_rank_sort`, `RankKey::pin_compare` | `g_array_sort_with_data` / `g_array_sort` under the `gint` frequency key, through `glib_merge_sort` | `pinyin.cpp:1678-1709`; `zhuyin.cpp:1129-1144` | #927: kept, [record](921-927-glib-sorts.md) |
+| `capi/src/predict.rs` `sort_predicted` | `gint` frequency key, through `glib_merge_sort` | `pinyin.cpp:1701-1705,2440-2445` | #927: kept, [record](921-927-glib-sorts.md) |
 | `user/src/persistence.rs` `save_with_bigram_reporting`, `pin_rename_order` | `_write_files` / `_rename_files` and per-file tolerance | `pinyin.cpp:915-1130`; `zhuyin.cpp:585-693` | #929 |
 | `data/src/phrase_library.rs` `map_chunk`, `MappedFile` | `MemoryChunk::mmap` / header / checksum | `memory_chunk.h:424-520` | rows 76, 96, 109 |
 | `data/src/interp_grammar.rs` `is_graph`, `interp.rs` | `taglib_read` + `g_unichar_isgraph` | `tag_utility.cpp:171-264` | #926: kept as [recorded](interpolation2-grammar.md) |

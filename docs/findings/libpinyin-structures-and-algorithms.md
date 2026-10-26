@@ -426,7 +426,7 @@ far where oxpinyin keeps C-shaped code:
 
 | Place | Why | Needed for behaviour? |
 | --- | --- | --- |
-| Hand-written libstdc++ `push_heap` / `pop_heap` / `make_heap` (`heap_push`, `heap_adjust`, `heap_pop`, `heap_make` in `oxpinyin-engine/src/nbest.rs`) and GLib's merge sort (`glib_merge_sort`) | the comparator is cyclic, so the pin's result is defined by the exact sequence of swaps | yes |
+| Hand-written libstdc++ `push_heap` / `pop_heap` / `make_heap` (`heap_push`, `heap_adjust`, `heap_pop`, `heap_make` in `oxpinyin-engine/src/nbest.rs`) and GLib's merge sort (`glib_merge_sort`, shared with the candidate and predicted sorts) | the comparator is cyclic, so the pin's result is defined by the exact sequence of swaps | yes |
 | `SingleGram` operations over raw bytes (`oxpinyin-core/src/single_gram.rs`), including libstdc++'s `lower_bound` on unsorted arrays | the byte layout is the on-disk format, and the unsorted-array result reaches output | yes |
 | The pin's `SEARCH_*` / `ERROR_*` integer codes in the user phrase table (`oxpinyin-user/src/phrase_table.rs`) | carried over from the pin's interface | no — they are read only inside `oxpinyin-user` (`store.rs`) and never cross the C ABI; a candidate for an enum or `Result` |
 
