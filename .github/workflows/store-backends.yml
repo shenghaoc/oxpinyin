@@ -97,6 +97,8 @@ on:
 
 permissions:
   contents: read
+  actions: read
+  pull-requests: read
 
 defaults:
   run:
@@ -134,11 +136,19 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       run: ${{ steps.gate.outputs.run }}
+      reuse: ${{ steps.evidence.outputs.reuse }}
+      tree: ${{ steps.evidence.outputs.tree }}
+      source_run: ${{ steps.evidence.outputs.source_run }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
+      - name: Look up complete successful PR evidence for this tree
+        id: evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tools/dev/ci_tree.py evidence store
       - name: Require the Bash floor
         shell: bash
         run: . tools/lib/bash-floor.sh
@@ -169,6 +179,8 @@ jobs:
             # sources tools/cloud/env.sh and tools/bisection/oracle-cell.sh);
             # every job runs the bootstrap composite action.
             fixtures
+            tools/dev/ci_tree.py
+            tools/dev/ci_tree.test.py
             tools/store
             tools/kc
             tools/bdb
@@ -187,7 +199,7 @@ jobs:
 
   store-features:
     needs: changes
-    if: needs.changes.outputs.run == 'true'
+    if: needs.changes.outputs.run == 'true' && (needs.changes.outputs.reuse != 'true' || github.event_name == 'push')
     # One matrix child per non-default backend, each on its own runner:
     # every such backend is
     # exercised through the backend-relevant workspace (the seven
@@ -223,7 +235,7 @@ jobs:
       - name: Bootstrap the bare runner essentials (apt)
         run: |
           apt-get update -qq
-          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl
+          apt-get install -y --no-install-recommends bash python3 tar gzip zstd git ca-certificates curl
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -275,6 +287,7 @@ jobs:
       # engine, facade, both C ABIs, dictool, the oracle harness, and the
       # training package (segment, eval, train modules).
       - name: Test the workspace under this backend
+        if: needs.changes.outputs.reuse != 'true'
         id: backend-test
         env:
           BACKEND: ${{ matrix.backend }}
@@ -319,7 +332,7 @@ jobs:
           echo "elapsed=$((EPOCHSECONDS - start))" >> "$GITHUB_OUTPUT"
 
       - name: Report
-        if: always()
+        if: ${{ !cancelled() && needs.changes.outputs.reuse != 'true' }}
         env:
           BACKEND: ${{ matrix.backend }}
         run: |
@@ -334,10 +347,15 @@ jobs:
             echo "|---|---:|"
             echo "| ${BACKEND} | ${{ steps.backend-test.outputs.elapsed || '—' }}s |"
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: Refresh the main Rust cache using the lane's compile mode
+        if: github.event_name == 'push' && needs.changes.outputs.reuse == 'true'
+        env:
+          BACKEND: ${{ matrix.backend }}
+        run: python3 tools/dev/ci_tree.py refresh store-features --backend "$BACKEND"
 
   backend-matrix:
     needs: changes
-    if: needs.changes.outputs.run == 'true'
+    if: needs.changes.outputs.run == 'true' && (needs.changes.outputs.reuse != 'true' || github.event_name == 'push')
     # Replaces the historical `store-conformance` job. Under
     # exactly-one-backend the "one binary with three backends compiled
     # in" build is architecturally impossible (a `compile_error!` in
@@ -363,7 +381,7 @@ jobs:
       - name: Bootstrap the bare runner essentials (apt)
         run: |
           apt-get update -qq
-          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl
+          apt-get install -y --no-install-recommends bash python3 tar gzip zstd git ca-certificates curl
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -393,6 +411,7 @@ jobs:
         run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libkyotocabinet-dev libtkrzw-dev libdb-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev libglib2.0-dev
 
       - name: Exactly-one-backend invariant (backend-matrix pass)
+        if: needs.changes.outputs.reuse != 'true'
         id: matrix-test
         run: |
           set -euo pipefail
@@ -409,6 +428,7 @@ jobs:
       # #1136, so the step covers every crate, not just the store. The loop
       # runs a closed set of repository-controlled feature names.
       - name: Document the workspace under each backend (rustdoc warnings denied)
+        if: needs.changes.outputs.reuse != 'true'
         env:
           RUSTDOCFLAGS: -D warnings
         run: |
@@ -419,7 +439,7 @@ jobs:
           done
 
       - name: Report
-        if: always()
+        if: ${{ !cancelled() && needs.changes.outputs.reuse != 'true' }}
         run: |
           {
             echo "## backend-matrix (exactly-one-backend gate)"
@@ -435,6 +455,9 @@ jobs:
             echo "|---|---:|"
             echo "| backend-matrix (workspace-check pass) | ${{ steps.matrix-test.outputs.elapsed || '—' }}s |"
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: Refresh the main Rust cache using the lane's compile mode
+        if: github.event_name == 'push' && needs.changes.outputs.reuse == 'true'
+        run: python3 tools/dev/ci_tree.py refresh backend-matrix
 
   store-backends-gate:
     # Aggregate status check and the context the ruleset names once it is
@@ -448,7 +471,7 @@ jobs:
     # change it only together with the ruleset.
     name: store backends (kyotocabinet / tkrzw / bdb)
     runs-on: ubuntu-latest
-    if: ${{ always() }}
+    if: ${{ !cancelled() }}
     needs:
       - changes
       - store-features
@@ -460,65 +483,18 @@ jobs:
       run:
         shell: bash
     steps:
-      - name: Aggregate the backend, matrix and sanitizer results
-        # Job results are bound through env rather than spliced into the
-        # script body; the values are the closed set
-        # success/failure/cancelled/skipped.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Require every applicable lane to succeed
         env:
-          CHANGES_RESULT: ${{ needs.changes.result }}
-          GATED: ${{ needs.changes.outputs.run }}
-          FEATURES_RESULT: ${{ needs.store-features.result }}
-          MATRIX_RESULT: ${{ needs.backend-matrix.result }}
-          SANITIZER_RESULT: ${{ needs.tkrzw-sanitizers.result }}
-          BDB_SANITIZER_RESULT: ${{ needs.bdb-sanitizers.result }}
-          KC_SANITIZER_RESULT: ${{ needs.kc-sanitizers.result }}
-        run: |
-          set -euo pipefail
-          echo "changes:                 ${CHANGES_RESULT} (run=${GATED})"
-          echo "store-features (matrix): ${FEATURES_RESULT}"
-          echo "backend-matrix:          ${MATRIX_RESULT}"
-          echo "tkrzw-sanitizers:        ${SANITIZER_RESULT}"
-          echo "bdb-sanitizers:          ${BDB_SANITIZER_RESULT}"
-          echo "kc-sanitizers:           ${KC_SANITIZER_RESULT}"
-          {
-            echo "## store backends (aggregate gate)"
-            echo ""
-            echo "This job runs no tests. It is the aggregate status check the"
-            echo "ruleset requires once the maintainer adds it. It passes when"
-            echo "the path gate says no relevant path changed; otherwise it fails"
-            echo "unless every peer matrix child, the exactly-one-backend gate"
-            echo "AND all three sanitizer jobs succeeded."
-            echo ""
-            echo "| Upstream job | Result |"
-            echo "|---|---|"
-            echo "| changes (path gate) | ${CHANGES_RESULT} (run=${GATED}) |"
-            echo "| store-features (matrix, every peer) | ${FEATURES_RESULT} |"
-            echo "| backend-matrix (exactly-one-backend gate) | ${MATRIX_RESULT} |"
-            echo "| tkrzw-sanitizers (ASan) | ${SANITIZER_RESULT} |"
-            echo "| bdb-sanitizers (ASan + UBSan) | ${BDB_SANITIZER_RESULT} |"
-            echo "| kc-sanitizers (ASan + LSan) | ${KC_SANITIZER_RESULT} |"
-          } >> "$GITHUB_STEP_SUMMARY"
-          if [ "${CHANGES_RESULT}" != "success" ]; then
-            echo "::error::the changes job ended as ${CHANGES_RESULT}" >&2
-            exit 1
-          fi
-          if [ "${GATED}" != "true" ]; then
-            echo "store-backends gate: no relevant paths changed; nothing to gate"
-            {
-              echo ""
-              echo "No relevant path changed, so no upstream job ran; the gate passes."
-            } >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-          if [ "${FEATURES_RESULT}" != "success" ] || [ "${MATRIX_RESULT}" != "success" ] || [ "${SANITIZER_RESULT}" != "success" ] || [ "${BDB_SANITIZER_RESULT}" != "success" ] || [ "${KC_SANITIZER_RESULT}" != "success" ]; then
-            echo "::error::store-backends gate failed: store-features=${FEATURES_RESULT}, backend-matrix=${MATRIX_RESULT}, tkrzw-sanitizers=${SANITIZER_RESULT}, bdb-sanitizers=${BDB_SANITIZER_RESULT}, kc-sanitizers=${KC_SANITIZER_RESULT}" >&2
-            exit 1
-          fi
-          echo "store-backends gate: all upstream jobs succeeded"
+          NEEDS: ${{ toJSON(needs) }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: python3 tools/dev/ci_tree.py aggregate store
 
   tkrzw-sanitizers:
     needs: changes
-    if: needs.changes.outputs.run == 'true'
+    if: needs.changes.outputs.run == 'true' && needs.changes.outputs.reuse != 'true'
     # The tkrzw backend passes Rust callbacks into tkrzw's visitor dispatch
     # (db_get/db_scan install Process-full visitors handing borrowed key/value
     # records to Rust fn pointers valid only for the callback). Panic-unwinding
@@ -619,7 +595,7 @@ jobs:
 
   bdb-sanitizers:
     needs: changes
-    if: needs.changes.outputs.run == 'true'
+    if: needs.changes.outputs.run == 'true' && needs.changes.outputs.reuse != 'true'
     # The Berkeley DB feature's own suite under ASan, plus the C
     # call-pattern harnesses under ASan+UBSan, via the same
     # tools/bdb/run-sanitizers.sh developers run locally. The hazards
@@ -699,7 +675,7 @@ jobs:
 
   kc-sanitizers:
     needs: changes
-    if: needs.changes.outputs.run == 'true'
+    if: needs.changes.outputs.run == 'true' && needs.changes.outputs.reuse != 'true'
     # The Kyoto Cabinet feature's own suite under ASan + LeakSanitizer, via
     # tools/sanitize.sh kc. The backend's hazard is ownership: kcdbget,
     # kccurgetkey, kccurgetvalue and kccurget return caller-owned regions
@@ -769,3 +745,19 @@ jobs:
             echo "|---|---:|"
             echo "| instrumented suite | ${{ steps.sanitize-tests.outputs.elapsed || '—' }}s |"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  tree-evidence:
+    name: tested tree ${{ needs.changes.outputs.tree }}
+    needs: [changes, store-backends-gate, store-features, backend-matrix, tkrzw-sanitizers, bdb-sanitizers, kc-sanitizers]
+    if: ${{ needs.changes.outputs.run == 'true' && needs.changes.outputs.reuse == 'false' && needs.changes.result == 'success' && needs.store-backends-gate.result == 'success' && needs.store-features.result == 'success' && needs.backend-matrix.result == 'success' && needs.tkrzw-sanitizers.result == 'success' && needs.bdb-sanitizers.result == 'success' && needs.kc-sanitizers.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo 'All concrete verification lanes passed for this checkout tree.'
+
+  reused-tree-evidence:
+    name: reused tree ${{ needs.changes.outputs.tree }} from run ${{ needs.changes.outputs.source_run }}
+    needs: [changes, store-backends-gate]
+    if: ${{ !cancelled() && needs.changes.outputs.reuse == 'true' && needs.store-backends-gate.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo 'The original full PR run was revalidated for this exact tree.'
