@@ -781,11 +781,10 @@ impl RuntimeDict {
         &self.system
     }
 
-    /// Punctuation strings registered for `token`, if the punct table
-    /// shipped with the system dir — one point read; a malformed value
-    /// answers none, as upstream's `get_all_punctuations` failing does.
+    /// Punctuations registered for `token`, if the punct table shipped
+    /// with the system dir — one point read; a failed read answers none.
     #[must_use]
-    pub fn punctuations(&self, token: u32) -> Vec<String> {
+    pub fn punctuations(&self, token: u32) -> Vec<PhraseText> {
         self.punct.punctuations(token).unwrap_or_default()
     }
 

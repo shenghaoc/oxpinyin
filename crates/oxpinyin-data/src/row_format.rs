@@ -414,7 +414,7 @@ pub mod bigram {
 ///
 /// `docs/findings/prediction-punct.md`.
 pub mod punct {
-    use crate::dict::DictError;
+    use oxpinyin_core::PhraseText;
 
     use super::push_ucs4;
 
@@ -430,51 +430,55 @@ pub mod punct {
         buf
     }
 
-    /// Decodes a UCS-4 punctuation stream — `PunctTableEntry::unescape`
-    /// + `get_all_punctuations` (`punct_table.cpp:56-94`).
+    /// Decodes a punctuation value as the pin walks it: the stored words
+    /// of each punctuation, which the C boundary encodes
+    /// (`PunctTableEntry::unescape` and `get_all_punctuations`,
+    /// `punct_table.cpp:57-94` at 074a2219).
     ///
-    /// # Errors
-    ///
-    /// Returns `DictError::Parse` when the value is not u32-aligned, ends
-    /// without a terminator, or holds an undecodable scalar. Upstream
-    /// reads past the buffer on such input (memory-safety class); the
-    /// Rust reader refuses it instead
-    /// (`docs/findings/upstream-divergences.md`).
-    pub fn decode_puncts(value: &[u8]) -> Result<Vec<String>, DictError> {
-        if !value.len().is_multiple_of(4) {
-            return Err(DictError::Parse(
-                "punct value is not u32-aligned".to_owned(),
-            ));
-        }
+    /// Each punctuation is the word at the cursor followed by the nonzero
+    /// words after it, up to a zero or the value's last whole word; the
+    /// cursor then steps one word past that run, over the zero or past
+    /// the end. Any stored word is kept: a non-scalar is encoded with
+    /// GLib's historical form at the C boundary, and a zero first word
+    /// gives an empty punctuation, as `g_strdup` cuts the pin's string
+    /// there. A value with no final zero ends with its unterminated run;
+    /// the pin decides that by reading one word past the value, and both
+    /// outcomes of the read end the same run (upstream divergences,
+    /// "Unterminated punctuation value over-read"). The walk compares
+    /// byte positions, so 1–3 trailing bytes after a terminated run add
+    /// one empty punctuation (`sar` of the byte difference in the pin's
+    /// `get_all_punctuations`).
+    #[must_use]
+    pub fn decode_puncts(value: &[u8]) -> Vec<PhraseText> {
+        let words: Vec<u32> = value
+            .chunks_exact(4)
+            .map(|chunk| u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+            .collect();
         let mut out = Vec::new();
-        let mut current = String::new();
-        let mut terminated = false;
-        for chunk in value.chunks_exact(4) {
-            let code = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-            if code == 0 {
-                if current.is_empty() {
-                    return Err(DictError::Parse(
-                        "punct value holds an empty punctuation".to_owned(),
-                    ));
-                }
-                out.push(std::mem::take(&mut current));
-                terminated = true;
-                continue;
-            }
-            terminated = false;
-            let Some(scalar) = char::from_u32(code) else {
-                return Err(DictError::Parse(
-                    "punct value holds an invalid UCS-4 scalar".to_owned(),
-                ));
+        let mut cursor = 0_usize;
+        while cursor.saturating_mul(4) < value.len() {
+            let rest = words.get(cursor..).unwrap_or_default();
+            let run = match rest.split_first() {
+                Some((_, tail)) => 1 + tail.iter().take_while(|&&word| word != 0).count(),
+                None => 0,
             };
-            current.push(scalar);
+            out.push(punct_text(&rest[..run]));
+            cursor += run + 1;
         }
-        if !terminated {
-            return Err(DictError::Parse(
-                "punct value is not zero-terminated".to_owned(),
-            ));
-        }
-        Ok(out)
+        out
+    }
+
+    /// Ordinary text when every word is a nonzero scalar; otherwise the
+    /// stored words.
+    fn punct_text(words: &[u32]) -> PhraseText {
+        let text: Option<String> = words
+            .iter()
+            .map(|&word| char::from_u32(word).filter(|_| word != 0))
+            .collect();
+        text.map_or_else(
+            || PhraseText::from_stored_parts(words.to_vec(), words.len()),
+            PhraseText::from,
+        )
     }
 }
 
@@ -673,35 +677,72 @@ mod tests {
         use punct::{decode_puncts, encode_puncts};
         let encoded = encode_puncts(&["，", "。"]);
         // ， = U+FF0C, 。 = U+3002, each zero-terminated as u32.
-        let mut want = Vec::new();
-        want.extend_from_slice(&0xFF0C_u32.to_le_bytes());
-        want.extend_from_slice(&0_u32.to_le_bytes());
-        want.extend_from_slice(&0x3002_u32.to_le_bytes());
-        want.extend_from_slice(&0_u32.to_le_bytes());
-        assert_eq!(encoded, want);
-        assert_eq!(decode_puncts(&encoded).unwrap(), vec!["，", "。"]);
+        assert_eq!(encoded, words(&[0xFF0C, 0, 0x3002, 0]));
+        assert_eq!(decode_puncts(&encoded), ["，", "。"]);
         // Owned strings encode identically to borrowed ones.
         assert_eq!(encoded, encode_puncts(&["，".to_owned(), "。".to_owned()]));
-        assert!(decode_puncts("，".as_bytes()).is_err(), "not u32-aligned");
-        assert!(decode_puncts(b"\x00").is_err(), "not u32-aligned");
-        assert!(
-            decode_puncts(&0xFF0C_u32.to_le_bytes()).is_err(),
-            "unterminated"
-        );
-        assert!(decode_puncts(b"").is_err(), "no terminator at all");
+        assert!(decode_puncts(b"").is_empty());
     }
 
-    /// A terminator with nothing before it is corruption, not an empty
-    /// punctuation: upstream never stores one, and admitting it would
-    /// hand the prediction path a zero-length candidate.
+    fn words(words: &[u32]) -> Vec<u8> {
+        words.iter().flat_map(|word| word.to_le_bytes()).collect()
+    }
+
+    /// `unescape` appends the first word unconditionally, so a zero there
+    /// is an empty punctuation whose run still takes the next nonzero
+    /// words (`punct_table.cpp:64-69`).
     #[test]
-    fn punct_stream_rejects_an_empty_field() {
+    fn punct_stream_keeps_empty_fields() {
         use punct::decode_puncts;
-        assert!(decode_puncts(&0_u32.to_le_bytes()).is_err(), "leading");
-        let mut trailing = Vec::new();
-        trailing.extend_from_slice(&0xFF0C_u32.to_le_bytes());
-        trailing.extend_from_slice(&0_u32.to_le_bytes());
-        trailing.extend_from_slice(&0_u32.to_le_bytes());
-        assert!(decode_puncts(&trailing).is_err(), "trailing");
+        assert_eq!(decode_puncts(&words(&[0, 0])), [""]);
+        assert_eq!(
+            decode_puncts(&words(&[0, 0xFF0C, 0, 0x3002, 0])),
+            ["", "。"]
+        );
+        assert_eq!(decode_puncts(&words(&[0xFF0C, 0, 0, 0])), ["，", ""]);
+        assert_eq!(decode_puncts(&words(&[0xFF0C, 0, 0])), ["，", ""]);
+    }
+
+    /// The last run ends at the value's end whether or not a zero follows
+    /// it (`punct_table.cpp:64-71`).
+    #[test]
+    fn punct_stream_ends_an_unterminated_run() {
+        use punct::decode_puncts;
+        assert_eq!(decode_puncts(&words(&[0xFF0C])), ["，"]);
+        assert_eq!(
+            decode_puncts(&words(&[0xFF0C, 0, 0x3002, 0x3001])),
+            ["，", "。、"]
+        );
+    }
+
+    /// A misaligned tail is read as whole words, with one empty
+    /// punctuation for 1–3 bytes left after a terminated run.
+    #[test]
+    fn punct_stream_reads_a_misaligned_tail() {
+        use punct::decode_puncts;
+        assert_eq!(decode_puncts(b"\x00"), [""]);
+        assert_eq!(decode_puncts("，".as_bytes()), [""]);
+        let mut value = words(&[0xFF0C, 0]);
+        value.push(0x41);
+        assert_eq!(decode_puncts(&value), ["，", ""]);
+        let mut value = words(&[0xFF0C]);
+        value.extend_from_slice(&[0x41, 0x42]);
+        assert_eq!(decode_puncts(&value), ["，"]);
+    }
+
+    /// Non-scalar words are kept as stored words, not refused.
+    #[test]
+    fn punct_stream_keeps_non_scalar_words() {
+        use punct::decode_puncts;
+        let decoded = decode_puncts(&words(&[0xD800, 0, 0x11_0000, 0xFF0C, 0, 0xFFFF_FFFF, 0]));
+        let stored: Vec<_> = decoded.iter().map(|text| text.stored_words()).collect();
+        assert_eq!(
+            stored,
+            [
+                Some(&[0xD800][..]),
+                Some(&[0x11_0000, 0xFF0C][..]),
+                Some(&[0xFFFF_FFFF][..])
+            ]
+        );
     }
 }
