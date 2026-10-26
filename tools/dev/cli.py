@@ -71,6 +71,31 @@ def check_command(args):
     return check.run(args.backend)
 
 
+def lint_command(args):
+    """Run the crate-configuration placement lint and return 0, 1 or 2."""
+    return check.lint_crate_cfg_placement(args.files)
+
+
+def backend_matrix_command(args):
+    """Prove the exactly-one-backend invariant and return 0 or 1."""
+    return check.backend_matrix()
+
+
+def backend_probe_command(args):
+    """Identify the system libpinyin's DBM and return its probe status."""
+    return check.backend_probe()
+
+
+def sanitize_command(args):
+    """Select and run a sanitizer gate, forwarding its arguments unchanged."""
+    return test_runner.sanitize(args.args)
+
+
+def sanitize_toolchain_command(args):
+    """Print the sanitizer nightly that the workflow environment selects."""
+    return test_runner.sanitize_toolchain()
+
+
 def test_command(args):
     """Forward test arguments and profile to nextest under resource admission."""
     return test_runner.run(args.args, args.profile)
@@ -195,6 +220,24 @@ def build_parser():
     p.add_argument('backend', nargs='?', default='bdb')
     p.set_defaults(func=check_command)
 
+    p = sub.add_parser('lint-crate-cfg-placement',
+                       help='reject crate cfg attributes above crate documentation')
+    p.add_argument('files', nargs='*')
+    p.set_defaults(func=lint_command)
+
+    p = sub.add_parser('backend-matrix', help='prove the exactly-one-backend invariant')
+    p.set_defaults(func=backend_matrix_command)
+
+    p = sub.add_parser('backend-probe', help='identify the system libpinyin backend')
+    p.set_defaults(func=backend_probe_command)
+
+    p = sub.add_parser('sanitize', help='run one store backend sanitizer gate')
+    p.add_argument('args', nargs=argparse.REMAINDER)
+    p.set_defaults(func=sanitize_command)
+
+    p = sub.add_parser('sanitize-toolchain', help='print the sanitizer nightly')
+    p.set_defaults(func=sanitize_toolchain_command)
+
     p = sub.add_parser('test', help='run cargo nextest through the heavy slot')
     p.add_argument('--profile')
     p.add_argument('args', nargs=argparse.REMAINDER)
@@ -278,6 +321,16 @@ def main(argv=None):
         return runners.main(argv[1:])
     if argv[:1] == ['coverage']:
         return coverage.run(argv[1:])
+    if argv[:1] == ['lint-crate-cfg-placement']:
+        return check.lint_crate_cfg_placement(argv[1:])
+    if argv[:1] == ['backend-matrix']:
+        return check.backend_matrix()
+    if argv[:1] == ['backend-probe']:
+        return check.backend_probe()
+    if argv[:1] == ['sanitize']:
+        return test_runner.sanitize(argv[1:])
+    if argv[:1] == ['sanitize-toolchain']:
+        return test_runner.sanitize_toolchain()
     if argv[:1] == ['test'] and argv[1:2] not in (['-h'], ['--help']):
         return test_runner.run(argv[1:])
     if argv[:1] == ['test-doc'] and argv[1:2] not in (['-h'], ['--help']):

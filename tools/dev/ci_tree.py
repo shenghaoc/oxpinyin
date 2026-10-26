@@ -283,7 +283,7 @@ def refresh_commands(lane: str, backend: str | None = None) -> tuple[CompileComm
             raise ValueError("cache refresh requires an alternate backend")
         return (CompileCommand(("cargo", "build", "--locked", "--workspace", "--tests",
                                 "--no-default-features", "--features", backend, *BACKEND_EXCLUDES)),)
-    # Match backend-matrix.sh's four valid package checks, including both
+    # Match the backend-matrix service's four valid package checks, including both
     # default and explicit bdb. Its invalid-combination checks remain in the
     # normal verification step. Rustdoc uses the lane's existing flags.
     check = ("cargo", "check", "--locked", "-p", "oxpinyin-store")

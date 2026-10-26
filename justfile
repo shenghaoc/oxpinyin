@@ -193,14 +193,14 @@ coverage *args: python
 # Run one store backend's sanitizer gate (bdb, kc or tkrzw), or all three,
 # with address (default), thread, leak or memory instrumentation.
 [linux]
-sanitize backend="bdb" sanitizer="address":
-    @just heavy -- bash tools/sanitize.sh "$1" "$2"
+sanitize backend="bdb" sanitizer="address": python
+    @just heavy -- uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev sanitize "$1" "$2"
 
-# Darwin uses Homebrew's Berkeley DB 5.3, Kyoto Cabinet and tkrzw. The wrapper
+# Darwin uses Homebrew's Berkeley DB 5.3, Kyoto Cabinet and tkrzw. The recipe
 # selects Darwin paths and omits Linux setarch. The tkrzw gate certifies the
 # host library through distro-probe.sh; put Homebrew's tkrzw_dbm_util on PATH.
 [macos]
-sanitize backend="bdb" sanitizer="address":
+sanitize backend="bdb" sanitizer="address": python
     @just heavy -- env \
         OXPINYIN_BDB_INCLUDE_DIR="$(brew --prefix berkeley-db@5)/include" \
         OXPINYIN_BDB_LIB_DIR="$(brew --prefix berkeley-db@5)/lib" \
@@ -208,12 +208,12 @@ sanitize backend="bdb" sanitizer="address":
         LIBRARY_PATH="$(brew --prefix berkeley-db@5)/lib:$(brew --prefix kyoto-cabinet)/lib:$(brew --prefix tkrzw)/lib:$(brew --prefix lz4)/lib:$(brew --prefix xz)/lib:$(brew --prefix zstd)/lib" \
         CPATH="$(brew --prefix berkeley-db@5)/include:$(brew --prefix kyoto-cabinet)/include" \
         PATH="$(brew --prefix tkrzw)/bin:$PATH" \
-        bash tools/sanitize.sh "$1" "$2"
+        uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev sanitize "$1" "$2"
 
-# The gates are Linux/Darwin bash scripts; Windows transport is unverified (#950).
+# The gates are Linux/Darwin native builds; Windows transport is unverified (#950).
 [windows]
 sanitize backend="bdb" sanitizer="address":
-    @echo "sanitize is unsupported on Windows: the sanitizer gates are Linux/Darwin bash scripts."
+    @echo "sanitize is unsupported on Windows: the sanitizer gates are Linux/Darwin native builds."
     @exit 1
 
 # Run shared ABI export and allocation gates.

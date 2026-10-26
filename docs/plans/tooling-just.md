@@ -74,7 +74,7 @@ Layer 5 schedules the old-to-new handoffs.
 | `just doctor` | Call Layer 1's native doctor. | Bootstrap doctor | Implemented, #942. |
 | `just list [--issue X] [--kind K]` | Read registry rows and implementation state; execute nothing. | `run-all.py --list` | Partial: #941 supplies `tools.dev list [--heavy]`; #948 implemented the recipe, issue/kind filters and selection tests. [#1033](https://github.com/shenghaoc/oxpinyin/pull/1033) (maintainer ruling 2026-10-22 UTC) implemented the `implementation` field: `list` prints it in place of the reason, and `plan` prints it with each row. |
 | `just plan [selection ...]` | Print the native plan without execution. | Native command planning | Partial: #941 supplies read-only `tools.dev plan --runners/--cells`; #948 implemented the recipe and issue/kind selection. Full command/input identities and digests (stage T3) remain proposed. |
-| `just check [backend]` | Run native setup checks; default bdb. | `tools/dev/check.sh` | Implemented, #942. The shell remains an old/new acceptance input. |
+| `just check [backend]` | Run native setup checks; default bdb. | `python -m tools.dev check` | Implemented, #942; the legacy shell control retired in #1293. |
 | `just heavy -- <command>` | Use Layer 1's slot and admission. | Merged #905/#906/#903 `run-all.py --heavy-slot --` | Implemented, #942; shared core from #941. |
 | `just test [args ...]` | Enter Layer 3's native Rust test path. | Native `cargo test` orchestration | Implemented, #943; the `ci.yml` Linux and macOS test cutover is #968 (merge `c017ebee`). Windows and other workflows remain proposed. |
 | `just test-doc [args ...]` | Run doctests through the heavy slot. | `cargo test --doc` | Implemented, #943. |
@@ -86,10 +86,10 @@ Layer 5 schedules the old-to-new handoffs.
 | `just measure <recipe>` / `just initbench` | Enter native oxpinyin-only measurement; `initbench` is `measure startup`. Pin rows are refused. | Native startup controller and worker (layer 5 §7.8) | Implemented under the 2026-10-22 UTC ruling; Linux KC empty-profile smoke completed on 2026-10-24 UTC at controller `1cea405c`, retained shipping `ebc9d4f5`, via recheck plus separate continuation (both exit 0; benches runbook); macOS acceptance pending. |
 | `just fuzz <target> [args ...]` | Run one native fuzz target through the heavy wrapper. | `setarch "$(uname -m)" -R cargo +nightly-2026-08-01 fuzz run <args>` on Linux from `verify-nightly.yml`'s `fuzz-soak` job; the macOS recipe supplies Homebrew GLib and Berkeley DB paths. | Implemented (maintainer ruling 2026-10-23 UTC; macOS native path added by #1180). All ten targets run on Linux and macOS. Windows transport unverified (#950). |
 | `just coverage [args ...]` | Run native coverage through the heavy wrapper; the tool owns crate, backend and report selection. | `tools.dev coverage` runs `cargo llvm-cov <args>` from `coverage.yml`'s `coverage` job with temporary per-invocation state. | Implemented (maintainer ruling 2026-10-23 UTC). Run and report in one invocation; pass the desired workflow scope, report and floor options together. macOS execution unverified; Windows transport unverified (#950). |
-| `just sanitize [bdb\|kc\|tkrzw\|all] [address\|thread\|leak\|memory]` | Run one store backend's sanitizer gate, or all three, through the heavy wrapper: `tools/sanitize.sh <backend> [sanitizer]`, default `bdb address`. | `tools/bdb/run-sanitizers.sh`, `tools/kc/run-sanitizers.sh`, and `tools/tkrzw/run-sanitizers.sh` (moved from `store-backends.yml`'s inline `tkrzw-sanitizers` command). | Implemented (maintainer approval 2026-10-23 UTC, #1085; macOS and thread selection added by #1180). Linux and macOS select address and thread; only macOS thread has been run. macOS refuses MemorySanitizer and standalone LSan on arm64; tkrzw leak is refused on every host. Windows exits 1. `store-backends.yml`'s three sanitizer jobs call the same dispatcher. |
+| `just sanitize [bdb\|kc\|tkrzw\|all] [address\|thread\|leak\|memory]` | Run one store backend's sanitizer gate, or all three, through the heavy wrapper: `python -m tools.dev sanitize <backend> [sanitizer]`, default `bdb address`. | `tools/dev/test_runner.py` (moved from `store-backends.yml`'s inline `tkrzw-sanitizers` command and the three backend scripts retired in #1293). | Implemented (maintainer approval 2026-10-23 UTC, #1085; macOS and thread selection added by #1180; Python service #1293). Linux and macOS select address and thread; only macOS thread has been run. macOS refuses MemorySanitizer and standalone LSan on arm64; tkrzw leak is refused on every host. Windows exits 1. `store-backends.yml`'s three sanitizer jobs call the same service. |
 | `just ci <job>` | Select an approved native job. | Workflow-specific commands | Proposed. |
 
-`just check` keeps `check.sh`'s backend selection and selected crate sets.
+`just check` keeps the retired `check.sh`'s backend selection and selected crate sets.
 Keep the platform-specific native dependency checks and exit results.
 The #942 check uses `slot.run_command` for its cargo steps. It still uses
 `cargo test`. Layer 3 may change that executor
@@ -172,14 +172,14 @@ transport and runtime remain unverified (#950).
 
 These recipes do not change either workflow.
 
-`just sanitize` selects only. `tools/sanitize.sh <bdb|kc|tkrzw|all> [address|thread|leak|memory]`
-runs the backend's own script, which keeps its instrumentation, flags and pass
-criteria; the three share the nightly that the `NIGHTLY` line in
-`tools/sanitize.sh` names. `all` runs the three in turn and exits 1 if any
-gate failed. Linux and macOS select address and thread; only macOS thread
+`just sanitize` selects only. `python -m tools.dev sanitize <bdb|kc|tkrzw|all>
+[address|thread|leak|memory]` runs the shared service, which keeps each
+backend's instrumentation, flags and pass criteria as data; the three share
+the nightly that `tools/dev/test_runner.py` declares. `all` runs the three in
+turn and exits 1 if any gate failed. Linux and macOS select address and thread; only macOS thread
 has been run. macOS refuses MemorySanitizer and standalone LSan on arm64, and
 tkrzw leak is refused on every host because its harness retains
-process-lifetime allocations. The tkrzw script carries the command
+process-lifetime allocations. The tkrzw path carries the command
 `tkrzw-sanitizers` used to inline, with its flags, sanitizer options and
 Linux address-gate ASLR wrapper unchanged, and adds one precondition, checked
 by `tools/tkrzw/runtime.sh`: every test binary must load the verified
@@ -190,8 +190,8 @@ Homebrew dylib. Ubuntu's packaged libtkrzw fails that probe.
 
 `store-backends.yml` runs the same entry point (maintainer approval
 2026-10-23 UTC, #1085): `tkrzw-sanitizers`, `bdb-sanitizers` and
-`kc-sanitizers` each call `tools/sanitize.sh <backend>`, read the nightly from
-the `NIGHTLY` line, and feed `store-backends-gate`.
+`kc-sanitizers` each call `python -m tools.dev sanitize <backend>`, read the
+nightly from `tools.dev sanitize-toolchain`, and feed `store-backends-gate`.
 
 ## 3. Cross-platform command transport
 

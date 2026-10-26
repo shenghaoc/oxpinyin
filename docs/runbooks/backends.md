@@ -83,7 +83,7 @@ inherits that.
 ## The exactly-one-backend gate
 
 ```sh
-tools/store/backend-matrix.sh
+uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev backend-matrix
 ```
 
 Runs `cargo check --locked -p oxpinyin-store` for the default selection
