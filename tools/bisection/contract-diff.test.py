@@ -1815,7 +1815,8 @@ class CancellationTests(DriverFixtureCase):
                     for pid in self.tree(proc.pid):
                         try:
                             argv = Path(f'/proc/{pid}/cmdline').read_bytes().split(b'\0')
-                        except FileNotFoundError:
+                        except (FileNotFoundError, ProcessLookupError, PermissionError):
+                            # The process exited during the scan.
                             continue
                         if len(argv) > 1 and argv[1] == os.fsencode(worker):
                             children = self.children(pid)
