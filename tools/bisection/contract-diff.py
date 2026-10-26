@@ -1827,6 +1827,66 @@ for _name, _value in PUNCT_DECODE_CASES.items():
          issues=('1144',))(punct_decode_case(_value))
 
 
+# Punctuation order and duplicates (#928). The pin appends each prefix
+# token's punctuations in `m_prefixes` order, skips a string already taken
+# (`g_strv_contains`, `g_str_equal` over the C strings) and prepends the
+# result in reverse, so the rows keep first-occurrence order ahead of the
+# predicted rows, which take no part in the test (`src/pinyin.cpp:2463-2494`
+# at pin 074a2219).
+def punct_dedup_case(rows, prefix='我'):
+    """A case that stores `rows` (`(text, value)` pairs) and predicts after `prefix`."""
+    def probe(k):
+        """Craft the table, then record the punctuation rows for the prefix."""
+        punct_fixture(k, lambda _k: rows)
+        return punct_rows(k, prefix)
+    return probe
+
+
+PUNCT_DEDUP_CASES = {
+    # Control: no repeated string.
+    'distinct': [('我', punct_words(0xFF0C, 0, 0x3002, 0, 0xFF01, 0))],
+    'within': [('我', punct_words(0xFF0C, 0, 0x3002, 0, 0xFF0C, 0, 0x3002, 0))],
+    # 们's tokens come before 我们's: suffixes are walked shortest first.
+    'across-prefixes': [('们', punct_words(0xFF0C, 0, 0xFF01, 0)),
+                        ('我们', punct_words(0x3002, 0, 0xFF0C, 0))],
+    'empty': [('我', punct_words(0, 0, 0, 0, 0xFF0C, 0))],
+    # Different stored words, one empty C string.
+    'empty-forms': [('我', punct_words(0, 0, 0, 0xFF0C, 0, 0x3002, 0))],
+    'non-scalar': [('们', punct_words(0xD800, 0, 0x11_0000, 0)),
+                   ('我们', punct_words(0x11_0000, 0, 0xD800, 0))],
+}
+for _name, _rows in PUNCT_DEDUP_CASES.items():
+    _prefix = '我们' if any(text == '我们' for text, _ in _rows) else '我'
+    case('punct-dedup/' + _name, control=_name == 'distinct',
+         issues=('928',))(punct_dedup_case(_rows, _prefix))
+
+
+@case('punct-dedup/candidate', control=True, issues=('928',))
+def _(k):
+    """Store the first predicted phrase for 我 as its punctuation.
+
+    The punctuation row and the predicted row both stay: the pin compares
+    punctuations only with each other. Record the punctuation rows and the
+    first predicted rows' bytes."""
+    inst = k.inst
+    assert k.fn('guess_predicted_candidates', B, P, S)(inst, '我'.encode())
+    cand, text = P(), S()
+    assert k.fn('get_candidate', B, P, U, C.POINTER(P))(inst, 0, C.byref(cand))
+    assert k.fn('get_candidate_string', B, P, P, C.POINTER(S))(inst, cand, C.byref(text))
+    first = text.value.decode()
+    punct_fixture(k, lambda _k: [('我', punct_words(*(ord(ch) for ch in first), 0, 0xFF0C, 0))])
+    out = punct_rows(k, '我')
+    inst = k.inst
+    texts = []
+    for i in range(len(out['puncts']), len(out['puncts']) + 3):
+        cand, text = P(), S()
+        if k.fn('get_candidate', B, P, U, C.POINTER(P))(inst, i, C.byref(cand)):
+            k.fn('get_candidate_string', B, P, P, C.POINTER(S))(inst, cand, C.byref(text))
+            texts.append(None if text.value is None else text.value.hex())
+    out['first predicted'] = texts
+    return out
+
+
 def remember_negative(count):
     """Build a phrase-remembering case with the supplied signed count, including controls.
 
