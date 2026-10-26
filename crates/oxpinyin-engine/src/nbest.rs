@@ -30,7 +30,7 @@ use std::collections::hash_map::Entry;
 use std::hash::{BuildHasherDefault, Hasher};
 
 use oxpinyin_core::PhraseText;
-use oxpinyin_core::cost::{NAN_COST, NEG_INF_COST, POS_INF_COST, cost_add, cost_gt};
+use oxpinyin_core::cost::{cost_add, cost_gt};
 use oxpinyin_core::graph::{GraphError, MAX_GRAPH_INPUT};
 use oxpinyin_core::scoring::{ScoringError, expand_keys};
 use oxpinyin_core::{
@@ -47,6 +47,8 @@ use crate::session::{
 };
 
 mod selection;
+#[cfg(feature = "diagnostic_ranking")]
+pub mod tail_attribution;
 pub(crate) use selection::LoserTree;
 
 /// Inline capacity of a node's value list: libpinyin's `nstore`, the
@@ -185,6 +187,19 @@ struct BeamEntry {
     slot: u32,
 }
 
+fn order_tail_scores(values: &mut [Value]) {
+    // Selection yields at most three tails. Strict insertion preserves the
+    // selected order of equal costs without instantiating a general sorter.
+    let key = |value: &Value| (value.cost == oxpinyin_core::cost::NAN_COST, value.cost);
+    for index in 1..values.len() {
+        let mut position = index;
+        while position > 0 && key(&values[position]) < key(&values[position - 1]) {
+            values.swap(position, position - 1);
+            position -= 1;
+        }
+    }
+}
+
 /// 074a2219 phonetic_lookup.h:66-91, including the nstore gate. The
 /// longer-by-one branch is result-redundant: the final longer clause wins
 /// regardless. This comparator is cyclic; never pass it to a Rust sort.
@@ -202,106 +217,6 @@ fn loses_to(left: &Value, right: &Value, nstore: usize) -> bool {
                 && cost_gt(left.cost, cost_add(right.cost, LONG_SENTENCE_PENALTY))
         }
     }
-}
-
-/// `m_poss` of a cost: the natural-log possibility the pin keeps in a
-/// `gfloat`.
-fn poss(cost: Cost) -> f32 {
-    match cost {
-        NAN_COST => f32::NAN,
-        POS_INF_COST => f32::NEG_INFINITY,
-        NEG_INF_COST => f32::INFINITY,
-        _ => (-(cost as f64) * core::f64::consts::LN_2 / 1000.0) as f32,
-    }
-}
-
-/// A C float converted to `gint` as x86-64 does it (`cvttss2si`): anything
-/// that does not fit, NaN included, is `INT_MIN`.
-fn c_float_to_gint(value: f32) -> i32 {
-    if value.is_nan() || !(-2_147_483_648.0..2_147_483_648.0).contains(&value) {
-        i32::MIN
-    } else {
-        value as i32
-    }
-}
-
-/// The final tail comparison (074a2219 phonetic_lookup.h:174-178):
-/// `-(lhs->m_poss - rhs->m_poss)` in `float`, truncated to `gint`. A NaN
-/// difference is `INT_MIN` for both orders, so NaN sorts before everything
-/// and before itself. Finite scores less than one unit apart compare 0, so
-/// the comparator is not transitive on valid input either: the order that
-/// results is the sort algorithm's (below).
-fn tail_compare(left: &Value, right: &Value) -> i32 {
-    c_float_to_gint(-(poss(left.cost) - poss(right.cost)))
-}
-
-/// GLib's stable merge sort, kept because the pin's comparators are not
-/// total orders on input the C API reaches (#921, #927).
-///
-/// Every sort this crate and the C API adapters reproduce goes through
-/// `g_sort_array` (GLib 2.84.4 `glib/gqsort.c:197-281`, `msort_r`, behind
-/// `g_ptr_array_sort`, `g_array_sort` and `g_array_sort_with_data` in
-/// `glib/garray.c:919-965,2409-2421`). For every element size it runs
-/// `msort_with_tmp` (`gqsort.c:69-193`): split at `n / 2`, sort the left and
-/// right halves, then merge, comparing only while both halves have elements
-/// and taking the left one on `cmp <= 0`. An element larger than 32 bytes
-/// is sorted through pointers to it, which changes the copying, not the
-/// comparisons.
-///
-/// For a total order every stable sort gives this order, and a slice
-/// `sort_by` would do. None of the callers has one:
-///
-/// - The n-best tails (`trellis_value_compare`, 074a2219
-///   `phonetic_lookup.h:174-178`) return `-(lhs - rhs)` of two `gfloat`
-///   possibilities as a `gint`, truncated toward zero. Two scores less than
-///   one natural-log unit apart compare equal, so ordinary finite scores are
-///   not transitive: −10.0 ~ −10.6 ~ −11.2, yet −10.0 sorts before −11.2.
-///   NaN (a `table.conf` λ above 1, policy row 83) compares below everything
-///   and below itself.
-/// - The candidate and predicted lists (`compare_item_with_sort_option`,
-///   `pinyin.cpp:1678-1709`; `compare_item_with_length_and_frequency`,
-///   `zhuyin.cpp:1129-1144`) return `-(freq_lhs - freq_rhs)` in `guint32`
-///   arithmetic as a `gint`. With λ in `[0, 1]` every frequency is below
-///   2²⁴ and the key is a total order; a `table.conf` λ outside it makes
-///   frequency gaps of 2³¹ or more, which flip sign and form cycles.
-///
-/// On such a comparator the order is this recursion's, and the standard
-/// library's sorts may order differently or panic (Rust 1.81). This merge
-/// makes the pin's comparisons in the pin's sequence and so returns the
-/// pin's order on every input, total or not.
-///
-/// Recursive, so the function itself is each instantiation's symbol (the
-/// function-order policies under `tools/packaging/function-order/` name
-/// it); each merge copies only its left half.
-pub fn glib_merge_sort<T: Copy>(values: &mut [T], compare: &impl Fn(&T, &T) -> i32) {
-    if values.len() < 2 {
-        return;
-    }
-    let mid = values.len() / 2;
-    glib_merge_sort(&mut values[..mid], compare);
-    glib_merge_sort(&mut values[mid..], compare);
-    let left = values[..mid].to_vec();
-    // The output never overtakes the unread right half: `out` is `l` plus
-    // the right elements taken, and `r` is `mid` plus the same.
-    let (mut l, mut r, mut out) = (0, mid, 0);
-    while l < left.len() && r < values.len() {
-        if compare(&left[l], &values[r]) <= 0 {
-            values[out] = left[l];
-            l += 1;
-        } else {
-            values[out] = values[r];
-            r += 1;
-        }
-        out += 1;
-    }
-    // A right remainder is already in place (`gqsort.c:190-192`).
-    values[out..out + left.len() - l].copy_from_slice(&left[l..]);
-}
-
-/// `g_ptr_array_sort(tails, trellis_value_compare)`: GLib's merge order,
-/// which the comparator's truncation makes observable on ordinary scores.
-fn tail_merge(values: &mut [Value]) {
-    glib_merge_sort(values, &tail_compare);
 }
 
 /// A multiplicative hasher for the trellis's `u32` token keys.
@@ -549,7 +464,12 @@ impl Trellis {
             .into_iter()
             .map(|entry| entry.value)
             .collect();
-        tail_merge(&mut values);
+        #[cfg(feature = "diagnostic_ranking")]
+        if tail_attribution::reference_order() {
+            tail_attribution::sort(&mut values);
+            return Ok(values);
+        }
+        order_tail_scores(&mut values);
         Ok(values)
     }
 
@@ -1760,6 +1680,7 @@ mod tests {
 
     use super::{
         LONG_SENTENCE_PENALTY, LoserTree, NbestRow, NbestShape, Trellis, Value, nbest_sentences,
+        order_tail_scores,
     };
     use crate::session::ScanKey;
     use oxpinyin_core::graph::SegmentGraph;
@@ -1948,6 +1869,113 @@ mod tests {
         // Equal cost and length are comparator ties.
         assert!(!loses_to(&value(10, 3, 0), &value(10, 3, 1)));
         assert!(!loses_to(&value(10, 3, 1), &value(10, 3, 0)));
+    }
+
+    #[test]
+    fn bounded_tail_insertion_matches_stable_sort() {
+        use oxpinyin_core::cost::NAN_COST;
+
+        let costs = [
+            i64::MIN + 1,
+            i64::MIN + 2,
+            -264,
+            -263,
+            -262,
+            0,
+            262,
+            263,
+            264,
+            i64::MAX - 1,
+            i64::MAX,
+            NAN_COST,
+        ];
+        // Every arrangement of zero through three tails, including repeated
+        // costs, compares both costs and IDs so exact-tie stability is checked.
+        for length in 0..=3 {
+            for mut arrangement in 0..costs.len().pow(length) {
+                let mut tails = Vec::new();
+                for token in 0..length {
+                    tails.push(Value {
+                        token,
+                        ..value(costs[arrangement % costs.len()], 1, 0)
+                    });
+                    arrangement /= costs.len();
+                }
+                let mut expected = tails.clone();
+                expected.sort_by_key(|value| (value.cost == NAN_COST, value.cost));
+                order_tail_scores(&mut tails);
+                assert_eq!(
+                    tails
+                        .iter()
+                        .map(|value| (value.cost, value.token))
+                        .collect::<Vec<_>>(),
+                    expected
+                        .iter()
+                        .map(|value| (value.cost, value.token))
+                        .collect::<Vec<_>>()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn final_tail_nan_cost_is_last() {
+        let mut trellis = Trellis::with_seeds(1, &[], NbestShape::PINYIN);
+        for (token, cost) in [(1, oxpinyin_core::cost::NAN_COST), (2, 300), (3, 100)] {
+            trellis.insert(
+                1,
+                Value {
+                    token,
+                    ..value(cost, 1, 0)
+                },
+            );
+        }
+        let tokens: Vec<_> = trellis
+            .tails(&mut LoserTree::default())
+            .unwrap()
+            .iter()
+            .map(|value| value.token)
+            .collect();
+        assert_eq!(tokens, [3, 2, 1]);
+    }
+
+    #[test]
+    fn final_tails_use_the_score_order_and_keep_exact_ties() {
+        let mut trellis = Trellis::with_seeds(1, &[], NbestShape::PINYIN);
+        for (token, cost, length) in [(1, 300, 1), (2, 100, 2), (3, 200, 3)] {
+            trellis.insert(
+                1,
+                Value {
+                    token,
+                    ..value(cost, length, 0)
+                },
+            );
+        }
+        // POLICY-ACCEPTED: 1297-tail-score-order.md; there is no gint
+        // difference truncation, even when scores are very close.
+        let tails = trellis.tails(&mut LoserTree::default()).unwrap();
+        assert_eq!(
+            tails.iter().map(|tail| tail.cost).collect::<Vec<_>>(),
+            [100, 200, 300]
+        );
+        let mut tied = Trellis::with_seeds(1, &[], NbestShape::PINYIN);
+        for token in [9, 4, 8] {
+            tied.insert(
+                1,
+                Value {
+                    token,
+                    ..value(100, 1, 0)
+                },
+            );
+        }
+        assert_eq!(
+            tied.tails(&mut LoserTree::default())
+                .unwrap()
+                .iter()
+                .map(|tail| tail.token)
+                .collect::<Vec<_>>(),
+            [9, 4, 8]
+        );
     }
 
     #[test]

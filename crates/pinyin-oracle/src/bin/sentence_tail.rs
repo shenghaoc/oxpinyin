@@ -36,6 +36,10 @@ fn run() -> Result<(), String> {
                 .to_owned(),
         );
     };
+    #[cfg(feature = "diagnostic-ranking")]
+    if std::env::args().any(|arg| arg == "--tail-sort-attribution") {
+        return tail_sort_attribution(&mut session);
+    }
     let report = sentence_tail::measure(&mut session, &sentence_tail::repo_root())?;
     print_report(&report);
     Ok(())
@@ -105,4 +109,58 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+#[cfg(feature = "diagnostic-ranking")]
+fn tail_sort_attribution(session: &mut sentence_tail::PortSession) -> Result<(), String> {
+    use oxpinyin_engine::{NbestShape, tail_attribution};
+    use pinyin_oracle::corpus;
+    let mut inputs = Vec::new();
+    for stratum in corpus::generate() {
+        let path = sentence_tail::repo_root()
+            .join(corpus::CORPUS_DIR)
+            .join(stratum.file_name);
+        let bytes = std::fs::read(&path).map_err(|error| format!("{}: {error}", path.display()))?;
+        inputs.extend(corpus::Stratum::parse_file_bytes(&bytes));
+    }
+    for shape in [NbestShape::PINYIN, NbestShape::ZHUYIN] {
+        session.set_nbest_shape(shape);
+        let (mut first, mut ordered, mut set, mut decoded) = (0, 0, 0, 0);
+        for input in &inputs {
+            let mut observations = Vec::new();
+            for reference in [true, false] {
+                tail_attribution::set_reference_order(reference);
+                session.reset();
+                session
+                    .type_pinyin(input)
+                    .map_err(|error| error.to_string())?;
+                session
+                    .guess_sentence()
+                    .map_err(|error| error.to_string())?;
+                observations.push(
+                    (0..shape.nbest() as u8)
+                        .filter_map(|index| {
+                            session
+                                .sentence_text(index)
+                                .and_then(|text| text.as_str())
+                                .map(str::to_owned)
+                        })
+                        .collect::<Vec<_>>(),
+                );
+            }
+            decoded += usize::from(observations.iter().any(|rows| !rows.is_empty()));
+            first += usize::from(observations[0].first() != observations[1].first());
+            ordered += usize::from(observations[0] != observations[1]);
+            for rows in &mut observations {
+                rows.sort();
+                rows.dedup();
+            }
+            set += usize::from(observations[0] != observations[1]);
+        }
+        println!(
+            "tail sort {shape:?}: inputs={}, decoded={decoded}, row0={first}, ordered_top_n={ordered}, distinct_top_n={set}",
+            inputs.len()
+        );
+    }
+    Ok(())
 }

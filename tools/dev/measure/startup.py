@@ -227,10 +227,10 @@ def artifact(path):
     return dict(path=str(path), sha256=worker.sha256(path.read_bytes()), bytes=path.stat().st_size, **metadata)
 
 
-def order(round_index):
+def order(round_index, arms=ARMS):
     """Rotate the base, PR, and control execution order by the round index."""
-    offset = round_index % len(ARMS)
-    return ARMS[offset:] + ARMS[:offset]
+    offset = round_index % len(arms)
+    return arms[offset:] + arms[:offset]
 
 
 def observation(row):
@@ -364,7 +364,7 @@ def report_values(kind, values, **context):
          if control['stable'] and all(v > 0 for v in values['base']) else None)
 
 
-def verify(campaign, libraries, facade, name, profiles):
+def verify(campaign, libraries, facade, name, profiles, *, arms=ARMS, registration=None, hostile=True):
     """Compare base, PR, and control verification, persistence, and units observations.
 
     Run workers on private profiles, check populated witnesses against an
@@ -376,7 +376,7 @@ def verify(campaign, libraries, facade, name, profiles):
     witness = user.parent / 'witness.txt'
     witness = witness if witness.is_file() else None
     rows, observed = {}, {}
-    for arm in ARMS:
+    for arm in arms:
         rows[arm] = campaign.run(libraries[arm][facade], facade, user, mode='verify', witness=witness)
         unit_sample = campaign.run(libraries[arm][facade], facade, user)
         require_digest(unit_sample, rows[arm])
@@ -396,15 +396,19 @@ def verify(campaign, libraries, facade, name, profiles):
             if answers(baseline) == answers(rows[arm]):
                 raise NotResult('NOT COMPARABLE: populated profile changes no witness answer: ' + name)
     comparable = all(value == observed['pr'] for value in observed.values())
+    accepted = 0
+    if registration is not None:
+        accepted = registration.check('startup', facade, name, observed)
+        comparable = True
     emit('equivalence', schema=OBSERVATION_SCHEMA, facade=facade, profile=name,
-         verdict='COMPARABLE' if comparable else 'NOT COMPARABLE',
+         verdict='POLICY-ACCEPTED' if accepted else 'COMPARABLE' if comparable else 'NOT COMPARABLE',
          digests={a: worker.sha256(json.dumps(v, sort_keys=True).encode()) for a, v in observed.items()},
          unit_digests={a: v['digest'] for a, v in rows.items()},
          differences={a: first_difference(observed['base'], v) for a, v in observed.items() if v != observed['base']})
     if not comparable:
         raise NotResult('NOT COMPARABLE: native verify/reopen/raw user-file observations differ')
     # Hostile probes are deliberately outside comparability and timed transcripts.
-    for arm in ARMS:
+    for arm in arms if hostile else ():
         for index in range(12):
             emit('hostile', arm=arm, facade=facade, profile=name, input_index=index,
                  **campaign.run(libraries[arm][facade], facade, user, mode='probe', probe=index))
@@ -425,7 +429,7 @@ def instruction_range_result(counts, profiles):
     return result
 
 
-def instrument(campaign, libraries, facade, name, user, references, *, completed=None, backends=None):
+def instrument(campaign, libraries, facade, name, user, references, *, completed=None, backends=None, arms=ARMS):
     """Run or reuse qualified instruction scopes and emit their control results.
 
     On Linux, take two init samples and five first-candidate/steady samples
@@ -440,7 +444,7 @@ def instrument(campaign, libraries, facade, name, user, references, *, completed
     # seeding. See docs/findings/init-gap-1090-2026-10-23.md, "Rulings".
     # Select BDB only from every arm's checked DT_NEEDED backend, never an env
     # default. Unknown and non-BDB init scopes keep the exact rule and STOP.
-    bdb_init = backends is not None and all(backends.get(arm) == 'bdb' for arm in ARMS)
+    bdb_init = backends is not None and all(backends.get(arm) == 'bdb' for arm in arms)
     for scope in ('init', 'first_candidate', 'steady'):
         retained = completed.get((facade, name, scope), {}) if completed else {}
         if (retained.get('verdict') in ('VALID', 'RANGE-QUALIFIED', 'DIAGNOSTIC')
@@ -448,11 +452,11 @@ def instrument(campaign, libraries, facade, name, user, references, *, completed
             emit('rechecked-instructions', facade=facade, profile=name, scope=scope,
                  **completed[facade, name, scope])
             continue
-        counts, profiles = {}, {a: [] for a in ARMS}
-        raw_profiles = {a: [] for a in ARMS}
-        pids = {a: [] for a in ARMS}
+        counts, profiles = {}, {a: [] for a in arms}
+        raw_profiles = {a: [] for a in arms}
+        pids = {a: [] for a in arms}
         for repeat in range(2 if scope == 'init' else 5):
-            for arm in order(repeat):
+            for arm in order(repeat, arms):
                 row = campaign.run(libraries[arm][facade], facade, user, scope=scope)
                 require_digest(row, references[arm])
                 totals = re.findall(rb'^summary:\s*(\d+)\s*$', row['stderr'], re.M)
@@ -487,7 +491,7 @@ def instrument(campaign, libraries, facade, name, user, references, *, completed
         if scope == 'init':
             try:
                 exact_profiles = {arm: [instructions.total_profile(bytes.fromhex(raw), campaign.executable, pid)
-                                        for raw, pid in zip(raw_profiles[arm], pids[arm])] for arm in ARMS}
+                                        for raw, pid in zip(raw_profiles[arm], pids[arm])] for arm in arms}
                 if len({p['creator'] for samples in exact_profiles.values() for p in samples}) != 1:
                     raise ValueError('Callgrind profiler identity changed between samples')
             except ValueError as error:

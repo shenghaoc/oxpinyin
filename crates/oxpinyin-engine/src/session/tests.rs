@@ -1518,16 +1518,15 @@ fn dynamic_adjust_folds_the_bigram_term_only_with_the_bit_and_a_gram() {
     // is what a stub cannot satisfy: returning a constant zero
     // possibility leaves `adjusted` equal to `base`.
     let (unigram, total) = (1_234_u64, 51_051_831_u64);
-    let base = super::amplified_frequency_with_bigram(unigram, total, 0.0, super::PIN_LAMBDA_F32);
-    let adjusted =
-        super::amplified_frequency_with_bigram(unigram, total, 0.5, super::PIN_LAMBDA_F32);
+    let base = crate::interpolated_score(unigram, total, 0.0, super::PIN_LAMBDA_F32);
+    let adjusted = crate::interpolated_score(unigram, total, 0.5, super::PIN_LAMBDA_F32);
     assert!(
         adjusted > base,
-        "a non-zero possibility must raise the amplified frequency ({adjusted} vs {base})"
+        "a non-zero possibility must raise the amplified frequency ({adjusted:?} vs {base:?})"
     );
     assert_eq!(
         base,
-        super::amplified_frequency(unigram, total, super::PIN_LAMBDA_F32),
+        super::unigram_score(unigram, total, super::PIN_LAMBDA_F32),
         "the bit-clear path is the pre-existing unigram law exactly"
     );
 }
@@ -1813,82 +1812,6 @@ fn dynamic_adjust_merges_one_row_per_guess_and_lifts_only_the_credited_token() {
 }
 
 #[test]
-fn amplified_frequency_pins_the_class_a_probe_values() {
-    // The denominator is the pin's phrase-index total over model20:
-    // interpolation2 sum 50_913_735 + 138_096 items, each item's baked
-    // unigram being its interpolation2 count + 1 (probe-verified over
-    // the whole index; `docs/testing/corpus-tail.md` Class A). The
-    // values are the amplified keys the 12 top-1 tie-swaps collapse on.
-    const PIN_TOTAL: u64 = 51_051_831;
-    // 0: the 量比/两笔, 建仓/减仓, 拜倒/白道, 冰坝/并把, 长着/唱着 pairs.
-    assert_eq!(
-        super::amplified_frequency(1, PIN_TOTAL, super::PIN_LAMBDA_F32),
-        0
-    );
-    assert_eq!(
-        super::amplified_frequency(3, PIN_TOTAL, super::PIN_LAMBDA_F32),
-        0
-    );
-    // 3: 写歌 16 vs 写稿 14 (`xiego`).
-    assert_eq!(
-        super::amplified_frequency(14, PIN_TOTAL, super::PIN_LAMBDA_F32),
-        3
-    );
-    assert_eq!(
-        super::amplified_frequency(16, PIN_TOTAL, super::PIN_LAMBDA_F32),
-        3
-    );
-    // 4: 古稀 21 vs 股息 20 (`guxi`), 酸楚 20 vs 算出 18 (`suanch`).
-    assert_eq!(
-        super::amplified_frequency(18, PIN_TOTAL, super::PIN_LAMBDA_F32),
-        4
-    );
-    assert_eq!(
-        super::amplified_frequency(20, PIN_TOTAL, super::PIN_LAMBDA_F32),
-        4
-    );
-    assert_eq!(
-        super::amplified_frequency(21, PIN_TOTAL, super::PIN_LAMBDA_F32),
-        4
-    );
-    // 17: 每家 78 vs 美加 77 (`meijia…`).
-    assert_eq!(
-        super::amplified_frequency(77, PIN_TOTAL, super::PIN_LAMBDA_F32),
-        17
-    );
-    assert_eq!(
-        super::amplified_frequency(78, PIN_TOTAL, super::PIN_LAMBDA_F32),
-        17
-    );
-    // 19: 狗狗 = 沟谷 = 87 (`goug`).
-    assert_eq!(
-        super::amplified_frequency(87, PIN_TOTAL, super::PIN_LAMBDA_F32),
-        19
-    );
-    assert_eq!(
-        super::amplified_frequency(0, PIN_TOTAL, super::PIN_LAMBDA_F32),
-        0
-    );
-    assert_eq!(
-        super::amplified_frequency(20, 0, super::PIN_LAMBDA_F32),
-        0,
-        "no index total ranks as zero"
-    );
-}
-
-#[test]
-fn amplified_frequency_is_c_float_not_f64() {
-    // 2_349_890 is a corpus-scale count (interpolation2 tops out at
-    // 3_081_671) where the C float chain and the same chain in f64
-    // truncate apart — 530_766 vs 530_765 — so this pins the f32
-    // arithmetic the oracle's m_freq runs in.
-    assert_eq!(
-        super::amplified_frequency(2_349_890, 51_051_831, super::PIN_LAMBDA_F32),
-        530_766
-    );
-}
-
-#[test]
 fn window_flush_is_token_ascending_and_one_row_per_token() {
     use super::{CandidateKind, flush_window_batch};
     use crate::candidate::Candidate;
@@ -2071,8 +1994,9 @@ fn addon_candidates_rank_on_their_own_amplified_scale() {
     // addon, `:1855-1866` for the system): both read the item's stored
     // unigram (a model20 count 13 is stored as 14, `gen_unigram`'s +1)
     // — the system branch over the default facade's total, the addon
-    // branch over the addon facade's. The same stored 14 therefore
-    // lands on 3 over 51,051,831 but 6 over the half-size addon total.
+    // branch over the addon facade's. Both fixture frequencies are 14:
+    // exact helper expectations pin the denominator and default lambda,
+    // but cannot distinguish a swapped frequency source in this fixture.
     let session = Session::new(
         &EmptyConfigSource,
         StoragePaths::new("user"),
@@ -2106,12 +2030,19 @@ fn addon_candidates_rank_on_their_own_amplified_scale() {
         ),
     ];
     let frequencies = session
-        .candidate_frequencies(&collected, None, true)
+        .candidate_scores(&collected, None, true)
         .expect("frequency reads cannot fail here");
+    let scores = frequencies.expect("both facades provide counts");
+    assert_eq!(scores.len(), 2);
     assert_eq!(
-        frequencies,
-        Some(vec![3, 6]),
-        "system = amplified(14, 51_051_831) = 3; addon = amplified(14, 25_525_916) = 6"
+        scores[0],
+        super::unigram_score(14, 51_051_831, super::PIN_LAMBDA_F32),
+        "the system row scores over the default total"
+    );
+    assert_eq!(
+        scores[1],
+        super::unigram_score(14, 25_525_916, super::PIN_LAMBDA_F32),
+        "the addon row scores over the addon total"
     );
 }
 
@@ -4059,52 +3990,16 @@ fn retained_exact_key_windows_search_the_reserved_end_slot() {
 }
 
 /// The pin stores the candidate frequency as `cvttss2si` to 64 bits, low 32
-/// kept: a negative score wraps, NaN and the out-of-range are 0.
 #[test]
-fn candidate_scores_wrap_like_the_pinned_conversion() {
-    assert_eq!(super::guint32_of_score(3.9), 3);
-    assert_eq!(super::guint32_of_score(-3.7), 4_294_967_293);
-    assert_eq!(super::guint32_of_score(f32::NAN), 0);
-    assert_eq!(super::guint32_of_score(f32::INFINITY), 0);
-    assert_eq!(super::guint32_of_score(-1.0e30), 0);
-    assert_eq!(super::guint32_of_score(4_294_967_296.0), 0);
-    assert_eq!(super::guint32_of_score(8_589_934_592.0), 0);
-}
-
-/// `-(freq_lhs - freq_rhs)` in `guint32` arithmetic returned as a `gint`: a
-/// difference of 2³¹ or more flips sign, so the larger frequency can sort
-/// after the smaller (`pinyin.cpp:1700-1705`).
-#[test]
-fn the_candidate_comparator_wraps_large_frequency_gaps() {
-    let key = |frequency| super::RankKey {
-        phrase_length: 1,
-        pinyin_span: 1,
-        frequency,
-        m_freq: frequency,
-    };
-    assert!(key(10).pin_compare(&key(5)) < 0, "higher frequency first");
-    assert!(key(5).pin_compare(&key(10)) > 0);
-    assert_eq!(key(7).pin_compare(&key(7)), 0);
-    assert!(
-        key(1).pin_compare(&key(u32::MAX)) < 0,
-        "the wrap puts 1 first"
-    );
-    assert!(key(u32::MAX).pin_compare(&key(1)) > 0);
-}
-
-/// The pinyin-length key is the pin's `guint8` span (`pinyin.cpp:1692-1694`):
-/// 256 bytes wraps to 0 and sorts after a 2-byte span, 257 after 255.
-#[test]
-fn the_pinyin_length_key_wraps_at_eight_bits() {
-    let key = |span| super::RankKey::for_sort_word(1, span, 0, super::SORT_BY_PINYIN_LENGTH);
-    assert!(
-        key(255).pin_compare(&key(2)) < 0,
-        "longer span first below 256"
-    );
-    assert!(key(256).pin_compare(&key(2)) > 0, "256 wraps to 0");
-    assert!(key(257).pin_compare(&key(255)) > 0, "257 wraps to 1");
-    assert_eq!(key(258).pin_compare(&key(2)), 0, "258 and 2 tie");
-    assert!(key(600).pin_compare(&key(100)) > 0, "600 wraps to 88");
+fn ranking_fields_compare_the_full_span_and_enabled_score() {
+    let score = crate::interpolated_score(1, 10, 0.0, 0.0);
+    let key = |span| super::RankKey::for_sort_word(1, span, score, super::SORT_BY_PINYIN_LENGTH);
+    for span in [255, 256, 257, 258, 600] {
+        assert!(key(span).compare(&key(2)).is_gt());
+    }
+    let disabled = super::RankKey::for_sort_word(1, 600, score, 0);
+    let zero = super::RankKey::for_sort_word(2, 2, crate::RankScore::default(), 0);
+    assert!(disabled.compare(&zero).is_eq());
 }
 
 /// Of two rows with one text the larger `m_freq` survives wherever the sort
@@ -4118,8 +4013,8 @@ fn the_string_dedup_keeps_the_larger_m_freq_and_the_earlier_tie() {
         let key = super::RankKey {
             phrase_length: 2,
             pinyin_span: 6,
-            frequency: 0,
-            m_freq,
+            score: crate::RankScore::default(),
+            dedup_score: crate::interpolated_score(m_freq, 1, 0.0, 0.0),
         };
         (key, Candidate::new(text, kind, 2, 6, 0, None, None))
     };

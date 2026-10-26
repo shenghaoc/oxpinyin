@@ -98,6 +98,7 @@ pin and subject execution, teardown (worker exit and the user-dir
 listing) and comparison. The verdict rows are unchanged.
 """
 import argparse
+from collections import Counter
 import copy
 import contextlib
 import ctypes as C
@@ -366,7 +367,7 @@ def worker(mode, so, data, name):
     scratch = os.environ['TMPDIR']
     kit = Kit(mode, so, data, scratch)
     built = time.monotonic()
-    result = CASES[name]['fn'](kit)
+    result = (ranking_candidate_windows(kit) if name == 'ranking-candidate-windows' else CASES[name]['fn'](kit))
     finished = time.monotonic()
     result['logs'] = kit.logs
     if name.startswith('axis-c-'):
@@ -9089,6 +9090,83 @@ for _mode in ('pinyin', 'zhuyin'):
     case('glib-sort-candidates-' + _mode, mode=_mode, control=True, issues=('927',))(glib_sort_candidates)
 
 
+def ranking_prediction_scores(lambda_text, high_count):
+    """Two user-only suffixes distinguish score conversion and unsigned subtraction.
+
+    The model20 tables contain no phrase beginning 龘. Import its prefix,
+    then 甲 before 乙, so reduce_tokens yields the two suffixes in token order.
+    The source-defined unigram counts are three times the import counts.
+    """
+    def probe(k):
+        system = private_system(k)
+        conf = Path(system, 'table.conf')
+        text = conf.read_text()
+        conf.unlink()
+        conf.write_text(re.sub(r'lambda parameter:[^\n]+', 'lambda parameter:' + lambda_text, text))
+        k._ctx = k.init(system=system)
+        assert k._ctx
+        row58_import(k, [('龘', 'da', 1), ('龘甲', "da'jia", 1), ('龘乙', "da'yi", high_count)])
+        ret = k.fn('guess_predicted_candidates', B, P, S)(k.inst, '龘'.encode())
+        return dict(ret=ret, rows=candidate_rows(k, k.inst))
+    return probe
+
+
+def ranking_user_only(k, rows):
+    """A zero-lambda context whose only loaded phrase items are authored user rows."""
+    system = private_system(k)
+    conf = Path(system, 'table.conf')
+    text = re.sub(r'lambda parameter:[^\n]+', 'lambda parameter:0', conf.read_text())
+    text = re.sub(r'^(default .* )SYSTEM_FILE$', r'\1NOT_USED', text, flags=re.M)
+    conf.unlink()
+    conf.write_text(text)
+    k._ctx = k.init(system=system)
+    assert k._ctx
+    row58_import(k, rows)
+
+
+@case('ranking-selection-tie', issues=('1297', '594'),
+      policy_record='1297-selection-structure.md')
+def _(k):
+    """Two equal user nodes: libstdc++'s two-leaf make_heap picks the right one."""
+    ranking_user_only(k, [('龘龘', "da'da", 100), ('靐靐', "da'da", 100)])
+    parsed = k.fn('parse_more_full_pinyins', Z, P, S)(k.inst, b"da'da")
+    guessed = k.fn('guess_sentence', B, P)(k.inst)
+    return dict(parsed=parsed, guessed=guessed, sentences=final_step_sentences(k, k.inst))
+
+
+@case('ranking-close-tail-scores', issues=('1297', '921'),
+      policy_record='1297-tail-score-order.md')
+def _(k):
+    """The same two selected tails differ only in final score ordering.
+
+    Unigrams 300 and 330 give a 137-unit Cost gap, below the unchanged
+    adjacent-length margin. Both selectors put the shorter hypothesis first;
+    gint truncation then ties their <1 natural-log score difference.
+    """
+    ranking_user_only(k, [('龘', 'xian', 100), ('靐靐', "xi'an", 110)])
+    assert k.fn('set_options', B, P, U)(k.ctx, 0x18a)
+    parsed = k.fn('parse_more_full_pinyins', Z, P, S)(k.inst, b'xian')
+    guessed = k.fn('guess_sentence', B, P)(k.inst)
+    return dict(parsed=parsed, guessed=guessed, sentences=final_step_sentences(k, k.inst))
+
+
+case('ranking-score-prefix', issues=('1297', '927'),
+     policy_record='1297-ranking-score.md')(ranking_prediction_scores('0.999999', 2))
+case('ranking-frequency-gap', issues=('1297', '927'),
+     policy_record='1297-frequency-order.md')(ranking_prediction_scores('-500', 10000000))
+
+
+@case('ranking-full-pinyin-span', issues=('1297', '1275'),
+      policy_record='1297-pinyin-span.md')
+def _(k):
+    """The authored 256-byte phrase outranks a two-byte phrase by its full span."""
+    text = b'ni' + b"'" * 251 + b'hao'
+    parsed = k.fn('parse_more_full_pinyins', Z, P, S)(k.inst, text)
+    rows = guess_rows(k, k.inst, 0, 0x0b)  # pinyin length; suppress sentence/LONGER
+    return dict(parsed=parsed, ret=rows['ret'],
+                rows=[row for row in rows['rows'] if row[1] in ('你', '你好')])
+
+
 # #1275: the pin's SORT_BY_PINYIN_LENGTH key is `guint8 len = m_end -
 # m_begin` (074a2219 `pinyin.cpp:1692-1694`). Any run of apostrophes parses
 # (`storage/pinyin_parser2.cpp:238-251`) into zero keys the matrix search
@@ -9120,6 +9198,137 @@ def pinyin_length_rows(apostrophes):
 for _apostrophes, _control in ((0, True), (10, True), (250, True), (251, False), (252, False), (507, False)):
     case('pinyin-length-wrap/span-%d' % (5 + _apostrophes), control=_control, issues=('1275',))(
         pinyin_length_rows(_apostrophes))
+
+
+# #1297: exact source-derived expectations retain every field of these
+# pre-existing observations. The only differences are list permutations from
+# integer score ties and, for spans >=256, the narrowed pinyin-length key.
+for _ranking_case in (
+        'glib-sort-candidates-pinyin',
+        'glib-sort-candidates-zhuyin',
+        'glib-sort-predicted',
+        "final-step-pinyin-ba'ku-20",
+        "final-step-pinyin-ba'ku-28",
+        "final-step-pinyin-ba'kua-20",
+        "final-step-pinyin-ba'kua-28",
+        'final-step-pinyin-import-ba-kua',
+        "final-step-pinyin-li'shi-20",
+        "final-step-pinyin-li'shi-28",
+        'final-step-pinyin-n-28',
+        "final-step-pinyin-ni'h-20",
+        "final-step-pinyin-ni'h-28",
+        "final-step-pinyin-ni'hao-20",
+        "final-step-pinyin-ni'hao-28",
+        'final-step-pinyin-ni-20',
+        'final-step-pinyin-ni-28',
+        'final-step-pinyin-nih-20',
+        'final-step-pinyin-nih-28',
+        "final-step-pinyin-nihao'-20",
+        "final-step-pinyin-nihao'-28",
+        'final-step-pinyin-nihao-20',
+        'final-step-pinyin-nihao-28',
+        "final-step-pinyin-xi'an-20",
+        "final-step-pinyin-xi'an-28",
+        'final-step-pinyin-zhongguo-20',
+        'final-step-pinyin-zhongguo-28',
+        "final-step-zhuyin-ba'ku-20",
+        "final-step-zhuyin-ba'ku-28",
+        "final-step-zhuyin-ba'kua-20",
+        "final-step-zhuyin-ba'kua-28",
+        'final-step-zhuyin-import-ba-kua',
+        "final-step-zhuyin-li'shi-20",
+        "final-step-zhuyin-li'shi-28",
+        'final-step-zhuyin-n-28',
+        "final-step-zhuyin-ni'h-20",
+        "final-step-zhuyin-ni'h-28",
+        "final-step-zhuyin-ni'hao-20",
+        "final-step-zhuyin-ni'hao-28",
+        'final-step-zhuyin-ni-20',
+        'final-step-zhuyin-ni-28',
+        'final-step-zhuyin-nih-20',
+        'final-step-zhuyin-nih-28',
+        "final-step-zhuyin-nihao'-20",
+        "final-step-zhuyin-nihao'-28",
+        'final-step-zhuyin-nihao-20',
+        'final-step-zhuyin-nihao-28',
+        "final-step-zhuyin-xi'an-20",
+        "final-step-zhuyin-xi'an-28",
+        'final-step-zhuyin-zhongguo-20',
+        'final-step-zhuyin-zhongguo-28',
+        'pinyin-length-wrap/span-15',
+        'pinyin-length-wrap/span-255',
+        'pinyin-length-wrap/span-5',
+):
+    CASES[_ranking_case]['policy_record'] = '1297-ranking-score.md'
+
+for _ranking_case in (
+        'pinyin-length-wrap/span-256',
+        'pinyin-length-wrap/span-257',
+        'pinyin-length-wrap/span-512',
+):
+    CASES[_ranking_case]['policy_record'] = '1297-pinyin-span.md'
+
+
+# #1297: lambda and prediction cases carry the same exact ranking records.
+for _ranking_case in (
+        'predicted-unigram-overflow',
+        'table-conf-lambda-zero-zhuyin',
+        'table-conf-lambda-half-zhuyin',
+        'table-conf-lambda-exponent-zhuyin',
+        'table-conf-lambda-tiny-zhuyin',
+        'table-conf-lambda-negative-half-zhuyin',
+        'table-conf-lambda-hex-zhuyin',
+        'table-conf-lambda-hex-fraction-zhuyin',
+        'table-conf-lambda-hex-upper-zhuyin',
+        'row58-bigram-choices-off',
+        'row58-bigram-choices-on',
+        'row58-bigram-scoring-off',
+        'row58-bigram-scoring-on',
+        'row58-conversions-off',
+        'row58-conversions-on',
+        'row58-lambda-rounding-off',
+        'row58-lambda-rounding-on',
+        'row58-prefix-live-21-off',
+        'row58-prefix-live-21-on',
+        'row58-prefix-no-bigram-off',
+        'row58-prefix-no-bigram-on',
+        'row58-prefix-overflow-off',
+        'row58-prefix-overflow-on',
+        'row58-signed-duplicate-off',
+        'row58-signed-duplicate-on',
+        'row58-signed-score-off',
+        'row58-signed-score-on',
+        'row58-system-existing-off',
+        'row58-system-existing-on',
+        'row58-system-import-1-off',
+        'row58-system-import-1-on',
+        'row58-system-import-2-off',
+        'row58-system-import-2-on',
+        'row58-system-import-3-off',
+        'row58-system-import-3-on',
+        'row58-system-import-4-off',
+        'row58-system-import-4-on',
+):
+    CASES[_ranking_case]['policy_record'] = '1297-ranking-score.md'
+
+for _ranking_case in (
+        'nbest-user-table-order-pinyin',
+        'nbest-user-table-order-zhuyin',
+        'table-conf-lambda-negative-half',
+        'table-conf-lambda-negative-two',
+        'table-conf-lambda-negative-two-zhuyin',
+        'table-conf-lambda-one-and-a-half',
+        'table-conf-lambda-one-and-a-half-zhuyin',
+        'table-conf-lambda-two',
+        'table-conf-lambda-two-zhuyin',
+        'table-conf-lambda-million',
+        'table-conf-lambda-million-zhuyin',
+        'table-conf-lambda-inf',
+        'table-conf-lambda-inf-zhuyin',
+        'table-conf-lambda-nan',
+        'table-conf-lambda-nan-zhuyin',
+):
+    CASES[_ranking_case]['policy_record'] = '1297-selection-structure.md'
 
 
 # #728: mask_out rebuilds loaded system sub-indexes from disk, then merges
@@ -16175,6 +16384,81 @@ def platform_skips(spec):
     return bool(platforms) and HOST_ORACLE_PLATFORM is not None and HOST_ORACLE_PLATFORM not in platforms
 
 
+def ranking_candidate_windows(kit):
+    """Actual C-facade windows, without invoking sentence/tournament ranking."""
+    root = Path(__file__).resolve().parents[2]
+    files = sorted((root / 'tests/parity/corpus/inputs').glob('*.txt'))
+    if len(files) != 9:
+        raise ValueError('ranking corpus requires its nine committed strata')
+    sources = {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in files}
+    inputs = [text for path in files for text in path.read_text().splitlines()]
+    assert kit.fn('set_options', B, P, U)(kit.ctx, 0x18a)
+    windows = []
+    for text in inputs:
+        assert kit.fn('reset', B, P)(kit.inst)
+        parsed = kit.fn('parse_more_full_pinyins', Z, P, S)(kit.inst, text.encode())
+        # The only >255-byte corpus entry is unparseable punctuation. This
+        # check prevents mixing the separate full-span-key change into counts.
+        if parsed >= 256:
+            raise ValueError('candidate-score attribution encountered a byte-span-width case')
+        window = (guess_rows(kit, kit.inst, 0, 0x1c) if kit.mode == 'pinyin' else
+                  zhuyin_guess_rows(kit, kit.inst, 0))
+        if any(row is None or row[0] == 1 for row in window['rows']):
+            raise ValueError('unreadable or sentence candidate in score-only window')
+        windows.append(dict(input=text, parsed=parsed, **window))
+    if sources != {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in files}:
+        raise ValueError('ranking corpus changed during observation')
+    return dict(sources=sources, windows=windows)
+
+
+def candidate_change_counts(base, subject):
+    """Separate row-multiset changes from order-only changes; positions start at one."""
+    if base['sources'] != subject['sources'] or len(base['windows']) != len(subject['windows']):
+        raise ValueError('candidate corpus provenance differs')
+    counts = dict(windows=len(base['windows']),
+                  order_only=dict(windows=0, first=0, top5=0, largest_changed_position=0),
+                  row_set=dict(windows=0, first=0, top5=0, largest_changed_position=0))
+    for left, right in zip(base['windows'], subject['windows'], strict=True):
+        if {k: v for k, v in left.items() if k != 'rows'} != {k: v for k, v in right.items() if k != 'rows'}:
+            raise ValueError('non-ranking candidate-window result differs')
+        a, b = left['rows'], right['rows']
+        same_rows = Counter(map(tuple, a)) == Counter(map(tuple, b))
+        if a == b:
+            continue
+        changed = counts['order_only' if same_rows else 'row_set']
+        changed['windows'] += 1
+        changed['first'] += a[:1] != b[:1]
+        changed['top5'] += a[:5] != b[:5]
+        for position in range(max(len(a), len(b))):
+            x = a[position] if position < len(a) else None
+            y = b[position] if position < len(b) else None
+            if x != y:
+                changed['largest_changed_position'] = max(changed['largest_changed_position'], position + 1)
+    return counts
+
+
+def candidate_score_attribution(args, data, parser):
+    if args.cell != 'bdb' or not all((args.base_pinyin_so, args.base_zhuyin_so, args.zhuyin_so)):
+        parser.error('candidate attribution needs BDB and both actual base/PR facades')
+    libraries = {'pinyin': (args.base_pinyin_so, args.pinyin_so),
+                 'zhuyin': (args.base_zhuyin_so, args.zhuyin_so)}
+    hashes = {str(path): hashlib.sha256(path.read_bytes()).hexdigest()
+              for pair in libraries.values() for path in pair}
+    with tempfile.TemporaryDirectory(prefix='ranking-candidates-') as directory:
+        scratch = Path(directory)
+        for facade, pair in libraries.items():
+            observations = [run_worker(facade, str(library.resolve()), str(data.resolve()),
+                                       'ranking-candidate-windows', scratch, timeout=1800) for library in pair]
+            if any(row['exit'] != 0 or row['result'] is None for row in observations):
+                raise ValueError('candidate attribution worker failed: ' + repr(
+                    [(row['exit'], row['stderr'][-800:]) for row in observations]))
+            print(json.dumps(dict(candidate_score_attribution=facade,
+                                  **candidate_change_counts(*(row['result'] for row in observations)))), flush=True)
+    if hashes != {path: hashlib.sha256(Path(path).read_bytes()).hexdigest() for path in hashes}:
+        raise ValueError('candidate attribution library changed')
+    return 0
+
+
 def run_main():
     """Parse driver options and dispatch listing, planning or the requested execution mode.
 
@@ -16213,6 +16497,7 @@ def run_main():
     parser.add_argument('--per-call-operations', help='comma-separated add,count,lookup (default: all)')
     parser.add_argument('--per-call-attribution', action='store_true')
     parser.add_argument('--per-call-attribution-limit', type=int, default=25, help='top functions and edges; 0 emits all')
+    parser.add_argument('--candidate-score-attribution', action='store_true')
     parser.add_argument('--base-pinyin-so', type=Path)
     parser.add_argument('--base-zhuyin-so', type=Path)
     parser.add_argument('--cases')
@@ -16242,6 +16527,21 @@ def run_main():
     parser.add_argument('--axis-c-mutant-pinyin-so', type=Path)
     parser.add_argument('--axis-c-mutant-zhuyin-so', type=Path)
     args = parser.parse_args()
+    if args.candidate_score_attribution and (
+            args.plan_only or args.list_tags or args.cases is not None or args.issue or args.family or
+            args.observations or args.expect_parent or args.run_platform_excluded or
+            args.teardown or args.per_call or args.regenerate_sentence_ties or
+            args.axis_c_replacement or args.axis_c_mutation or args.axis_c_snapshot_check or
+            args.axis_c_mutant_pinyin_so or args.axis_c_mutant_zhuyin_so or
+            args.function_order or args.unordered_arm or args.per_call_attribution or
+            args.per_call_operations or args.per_call_cpu is not None or
+            args.per_call_facades != 'both' or args.per_call_attribution_limit != 25 or
+            args.jobs is not None or args.case_timeout != 300 or
+            args.teardown_stage != 'verify' or args.teardown_cache != 'warm' or
+            args.teardown_work_dir or args.teardown_cpu is not None or
+            args.teardown_cases != 'empty,modest,phrases,journals,modest-unsaved,modest-saved' or
+            args.teardown_facades != 'both' or args.teardown_attribution_case != 'journals'):
+        parser.error('candidate attribution is a separate ranking-driver mode; incompatible options')
     if args.cases is not None:
         try:
             case_names(args.cases)
@@ -16279,6 +16579,8 @@ def run_main():
                               ("subject", args.zhuyin_so)):
             if library is not None:
                 check_tkrzw(args.cell, 'contract-diff.py', side, library)
+    if args.candidate_score_attribution:
+        return candidate_score_attribution(args, data, parser)
     if args.teardown:
         import teardown
         return teardown.run(args, sys.modules[__name__], parser)

@@ -412,69 +412,9 @@ fn order_window_tail(into: &mut Vec<Candidate>, start: usize) {
 #[cfg(test)]
 const PIN_LAMBDA_F32: f32 = 0.312_699;
 
-/// The pin's candidate `m_freq` under the default profile: the unigram
-/// possibility `(1−λ)·unigram/total` computed and amplified by 2²⁴ in C
-/// `float` arithmetic, then truncated like the `guint32` assignment
-/// (`pinyin.cpp:1862-1866`; `DYNAMIC_ADJUST` clear ⇒ bigram term zero).
-///
-/// The truncation is load-bearing, not a rounding detail: it collapses
-/// near-ties into equal comparator keys — the Class A tie class — which
-/// the stable sort then resolves by collection order. Evaluation order
-/// mirrors the C expression left-to-right (`f32` throughout, the three
-/// `* 256` factors kept as written); any `f64` intermediate or a
-/// pre-combined `* 2²⁴` risks drifting off the tie boundary.
-fn amplified_frequency(unigram: u64, total: u64, lambda: f32) -> u64 {
-    amplified_frequency_with_bigram(unigram, total, 0.0, lambda)
-}
-
-/// The pin's `BIGRAM_FREQUENCY_DISCOUNT` (`pinyin.cpp:33`).
-const BIGRAM_FREQUENCY_DISCOUNT_F32: f32 = 0.1;
-
-/// The pin's amplification of a `[0, 1]` possibility into the `guint32`
-/// candidate frequency: `* 256 * 256 * 256` (`pinyin.cpp:1821`), i.e. 2²⁴,
-/// written as the same three-factor product so the `float` rounding
-/// sequence is the pin's.
-const AMPLIFY_SCALE_F32: f32 = 256.0 * 256.0 * 256.0;
-
-/// [`amplified_frequency`] with the `DYNAMIC_ADJUST` bigram term folded in,
-/// reproducing the pin's whole expression (`pinyin.cpp:1862-1866`):
-///
-/// ```c
-/// freq = (lambda * bigram_poss * BIGRAM_FREQUENCY_DISCOUNT +
-///         (1 - lambda) * unigram / (gfloat) total_freq) * 256 * 256 * 256;
-/// ```
-///
-/// The two terms are summed **before** the single truncation, which is the
-/// whole reason this is one function rather than an additive term bolted
-/// onto [`amplified_frequency`]'s result: the pin truncates the sum once,
-/// and `trunc(a) + trunc(b)` differs from `trunc(a + b)` by up to one unit.
-/// That unit is not a rounding detail here — the truncation collapses
-/// near-ties into equal comparator keys, so an off-by-one moves candidates
-/// between tie classes and reorders the list.
-///
-/// With `bigram_poss` at `0.0` the first term is exactly `0.0` and
-/// `0.0 + x == x` in IEEE-754, so the DYNAMIC_ADJUST-clear path is
-/// bit-identical to the pre-existing unigram-only law by construction —
-/// not merely by the frozen words happening to leave the bit clear.
-fn amplified_frequency_with_bigram(unigram: u64, total: u64, bigram_poss: f32, lambda: f32) -> u64 {
-    if total == 0 {
-        return 0;
-    }
-    let possibility = lambda * bigram_poss * BIGRAM_FREQUENCY_DISCOUNT_F32
-        + (1.0_f32 - lambda) * unigram as f32 / total as f32;
-    guint32_of_score(possibility * AMPLIFY_SCALE_F32)
-}
-
-/// The `guint32` the pinned x86-64 build stores for a `float` score
-/// (`pinyin.cpp:1821-1824`): `cvttss2si` to a 64-bit integer, then the low
-/// 32 bits. A negative score therefore wraps (`-3.7` is `2³² − 3`) and one
-/// that does not fit 64 bits, NaN and infinity included, is `INT64_MIN`,
-/// whose low bits are 0.
-fn guint32_of_score(score: f32) -> u64 {
-    if !score.is_finite() || score >= i64::MAX as f32 || score < i64::MIN as f32 {
-        return 0;
-    }
-    u64::from(score as i64 as u32)
+/// Candidate scores retain the product interpolation without a storage-width key.
+fn unigram_score(unigram: u64, total: u64, lambda: f32) -> crate::RankScore {
+    crate::interpolated_score(unigram, total, 0.0, lambda)
 }
 
 /// One resplit pair the scan matrix admits alongside the selected parse,
@@ -953,26 +893,14 @@ pub enum CandidateRanking {
     LengthThenFrequency,
 }
 
-/// The three sort keys of the pinned candidate construction.
-///
-/// `Ord` derives the pinned precedence: phrase length first, then pinyin
-/// span, then frequency. All comparisons run descending, so the stable sort
-/// keeps collection order exactly when all three tie.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+/// Enabled lexicographic sort fields, plus the score used by text dedup.
+/// Disabled fields compare equally; stable sorting retains collection ties.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct RankKey {
-    /// Unicode scalar count of the candidate text.
     phrase_length: usize,
-    /// Bytes of the raw input the candidate covers, as the pin's `guint8`
-    /// key holds them: the low 8 bits.
-    pinyin_span: u8,
-    /// Real unigram count from the model's frequency table.
-    frequency: u32,
-    /// The pin's `m_freq` whatever the sort word: the string dedup reads it
-    /// when `SORT_BY_FREQUENCY` is clear and `frequency` is zeroed. Not a
-    /// sort key; `pin_compare` never reads it. Both are `guint32` in the pin
-    /// (`lookup_candidate_t::m_freq`, `pinyin.cpp:105`), so the key keeps its
-    /// 24 bytes.
-    m_freq: u32,
+    pinyin_span: usize,
+    score: crate::RankScore,
+    dedup_score: crate::RankScore,
 }
 
 /// `sort_option_t::SORT_BY_PHRASE_LENGTH` (`pinyin.h`).
@@ -989,96 +917,51 @@ const SORT_WITHOUT_SENTENCE_CANDIDATE: u32 = 0x1;
 /// the LONGER row is suppressed (`pinyin.cpp:2292-2293`).
 const SORT_WITHOUT_LONGER_CANDIDATE: u32 = 0x2;
 
-/// The pin's candidate comparators (`compare_item_with_sort_option`,
-/// `pinyin.cpp:1678-1709`; `compare_item_with_length_and_frequency`,
-/// `zhuyin.cpp:1129-1144`) under GLib's stable merge sort
-/// (`g_array_sort_with_data`, `g_array_sort`): descending on each enabled key.
-/// The frequency key is `-(freq_lhs - freq_rhs)` in `guint32` arithmetic
-/// returned as a `gint`, so a difference of 2³¹ or more flips sign and the
-/// comparator stops being transitive — which a λ in `[0, 1]` never reaches
-/// (the frequencies stay below 2²⁴) and a `table.conf` λ outside it does
-/// (`(1−λ)` negative wraps the stored `guint32`). The order is then the merge
-/// sort's, so the sort is GLib's recursion ([`crate::glib_merge_sort`]),
-/// not the standard library's.
-///
-/// `keys[i]` is `(candidates[i]`'s key, `i)`. The merge runs over the
-/// 32-byte key rows; the 72-byte candidates move once each.
-fn glib_rank_sort(candidates: &mut [Candidate], keys: &mut [(RankKey, u32)]) {
+/// Sort keys stably and move each candidate once via the resulting permutation.
+fn rank_candidates(candidates: &mut [Candidate], keys: &mut [(RankKey, usize)]) {
     debug_assert_eq!(candidates.len(), keys.len());
-    crate::nbest::glib_merge_sort(keys, &|left, right| left.0.pin_compare(&right.0));
-    // Apply the sorted order with swaps, following each displaced element
-    // to where an earlier swap moved it (the standard library's
-    // `sort_by_cached_key` scheme): no second candidate buffer, no
-    // per-call slot vector. After the loop `keys[i]` is `candidates[i]`'s
-    // key.
+    keys.sort_by(|left, right| right.0.compare(&left.0));
     for i in 0..keys.len() {
-        let mut index = keys[i].1 as usize;
+        let mut index = keys[i].1;
         while index < i {
-            index = keys[index].1 as usize;
+            index = keys[index].1;
         }
-        keys[i].1 = index as u32;
+        keys[i].1 = index;
         candidates.swap(i, index);
     }
 }
 
 impl RankKey {
-    /// The comparator's `gint` for `self` against `other`; only its sign
-    /// matters to a merge, and it is the pin's, wrap included.
-    fn pin_compare(&self, other: &Self) -> i32 {
-        if self.phrase_length != other.phrase_length {
-            return if self.phrase_length > other.phrase_length {
-                -1
-            } else {
-                1
-            };
-        }
-        if self.pinyin_span != other.pinyin_span {
-            return if self.pinyin_span > other.pinyin_span {
-                -1
-            } else {
-                1
-            };
-        }
-        if self.frequency != other.frequency {
-            return other.frequency.wrapping_sub(self.frequency) as i32;
-        }
-        0
+    fn compare(&self, other: &Self) -> std::cmp::Ordering {
+        self.phrase_length
+            .cmp(&other.phrase_length)
+            .then_with(|| self.pinyin_span.cmp(&other.pinyin_span))
+            .then_with(|| self.score.cmp(&other.score))
     }
 
-    /// The key `compare_item_with_sort_option` sees under `sort_word`
-    /// (`pinyin.cpp:1678-1709` at the pin): a field whose bit is clear
-    /// compares equal for every candidate — zeroed here — so the sort
-    /// orders by the enabled keys only and their ties fall through to the
-    /// collection order the stable sort keeps.
-    const fn for_sort_word(
+    fn for_sort_word(
         phrase_length: usize,
         pinyin_span: usize,
-        frequency: u64,
+        score: crate::RankScore,
         sort_word: u32,
     ) -> Self {
-        // The scale never leaves `guint32`: `guint32_of_score` is the only
-        // source of a frequency.
-        let frequency = frequency as u32;
         Self {
             phrase_length: if sort_word & SORT_BY_PHRASE_LENGTH != 0 {
                 phrase_length
             } else {
                 0
             },
-            // `guint8 len_lhs = item_lhs->m_end - item_lhs->m_begin;`
-            // (`pinyin.cpp:1692-1694` at 074a2219): a span of 256 bytes or
-            // more wraps, an upstream defect reproduced as is (#1275).
             pinyin_span: if sort_word & SORT_BY_PINYIN_LENGTH != 0 {
-                pinyin_span as u8
+                pinyin_span
             } else {
                 0
             },
-            frequency: if sort_word & SORT_BY_FREQUENCY != 0 {
-                frequency
+            score: if sort_word & SORT_BY_FREQUENCY != 0 {
+                score
             } else {
-                0
+                crate::RankScore::default()
             },
-            m_freq: frequency,
+            dedup_score: score,
         }
     }
 }
@@ -1133,7 +1016,7 @@ fn dedup_ranked_by_text(ranked: &mut Vec<Candidate>, keys: &[RankKey]) {
                 }
                 Entry::Occupied(mut slot) => {
                     let held = *slot.get();
-                    if key.m_freq > keys[held].m_freq {
+                    if key.dedup_score > keys[held].dedup_score {
                         keep[held] = false;
                         slot.insert(index);
                     } else {
