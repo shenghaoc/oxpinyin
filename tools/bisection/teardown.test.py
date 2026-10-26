@@ -8,6 +8,8 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -19,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from tools.dev import test_support
+from tools.dev import pool, test_support
 
 
 class PureTests(unittest.TestCase):
@@ -98,6 +100,31 @@ class PureTests(unittest.TestCase):
         for cell in ('bdb', 'kc', 'tkrzw'):
             with self.subTest(cell=cell):
                 self.assertIn('--teardown-work-dir', self.refusal(cell=cell))
+
+    def test_measured_stages_without_taskset_refuse_before_build_or_launch(self):
+        stages = [('warm', stage) for stage in ('pilot', 'confirm', 'repeat', 'multi', 'attribute', 'init-attribute')]
+        stages += [('cold', stage) for stage in ('pilot', 'confirm', 'init-attribute')]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'lib').mkdir()
+            (root / 'lib/libpinyin.so').write_bytes(b'pin')
+            (root / 'subject.so').write_bytes(b'ox')
+            for cache, stage in stages:
+                with self.subTest(cache=cache, stage=stage), \
+                        patch.object(sys, 'platform', 'linux'), \
+                        patch.object(td.host, 'allowed_cpus', return_value={3}), \
+                        patch.object(td.shutil, 'which', return_value=None), \
+                        patch.object(td, 'filesystem', return_value='ext4'), \
+                        patch.dict(td.FUNCTION_ORDER, check_arms=lambda *a, **k: None), \
+                        patch.object(td, 'build_worker') as build, \
+                        patch.object(td.subprocess, 'Popen') as launch:
+                    message = self.refusal(teardown_stage=stage, teardown_cache=cache,
+                                           teardown_work_dir=root, teardown_cases='empty', teardown_cpu=3,
+                                           teardown_facades='pinyin', pinyin_so=root / 'subject.so',
+                                           zhuyin_so=None, prefix=root)
+                    self.assertIn('measured teardown stages require taskset', message)
+                    build.assert_not_called()
+                    test_support.assert_not_called(self, launch)
 
     def test_comparison_stages_accept_all_three_cells(self):
         for stage in ('verify', 'pilot', 'confirm', 'repeat', 'multi', 'attribute', 'init-attribute'):
@@ -752,6 +779,21 @@ class InitAttributionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'unknown init probe'):
             campaign.run('pinyin', Path('/lib.so'), Path('/profile'), mode='init', probe='ebpf')
 
+    def test_measured_samples_without_taskset_refuse_before_launch(self):
+        for cache in ('warm', 'cold'):
+            for mode in ('time', 'memory', 'init'):
+                for cpu in (None, 3):
+                    with self.subTest(cache=cache, mode=mode, cpu=cpu):
+                        campaign = td.Campaign(Path('/worker'), Path('/'), Path('/'), cpu, None, cache=cache)
+                        with patch.object(td.shutil, 'which', return_value=None), \
+                                patch.object(td.subprocess, 'Popen') as launch, \
+                                patch.object(td, 'evict_files') as evict:
+                            with self.assertRaisesRegex(ValueError, 'measured teardown samples require taskset'):
+                                campaign.run('pinyin', Path('/lib.so'), Path('/profile'), mode=mode)
+                        test_support.assert_not_called(self, launch)
+                        evict.assert_not_called()
+                        self.assertEqual(campaign.serial, 0)
+
 
 STUB = r'''
 #define _POSIX_C_SOURCE 200809L
@@ -942,6 +984,19 @@ class NativeTests(unittest.TestCase):
     def tearDownClass(cls):
         cls.temporary.cleanup()
 
+    def setUp(self):
+        which = td.shutil.which
+        if not which('taskset'):
+            # These native stubs test controller protocols, not Linux affinity.
+            # A portable fake supplies the pinning tool's argv contract on macOS.
+            tool = self.root / 'fake-taskset'
+            tool.write_text('#!/bin/sh\nshift 2\nexec "$@"\n')
+            tool.chmod(0o755)
+            patcher = patch.object(td.shutil, 'which', side_effect=lambda name:
+                                   str(tool) if name == 'taskset' else which(name))
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
     def campaign(self, worker=None):
         spec = importlib.util.spec_from_file_location('contract_diff', td.HERE / 'contract-diff.py')
         driver = importlib.util.module_from_spec(spec)
@@ -951,9 +1006,30 @@ class NativeTests(unittest.TestCase):
             # Linux ELF objects. These stub lifecycles are not loader fixtures;
             # tkrzw/runtime.test.py holds those.
             driver.check_tkrzw = lambda *args, **kwargs: None
-        affinity = getattr(os, 'sched_getaffinity', None)
-        cpu = min(affinity(0)) if affinity else None
+        cpu = min(td.host.allowed_cpus())
         return td.Campaign(worker or self.worker, self.root, self.root, cpu, driver)
+
+    def test_fixture_work_without_taskset_proceeds_unpinned(self):
+        campaign = self.campaign()
+        with patch.object(td.shutil, 'which', return_value=None), \
+                patch.object(td, 'exports', return_value=['pinyin_init']), \
+                patch.object(td.subprocess, 'Popen', wraps=td.subprocess.Popen) as launch:
+            for mode in ('export', 'observe'):
+                with self.subTest(mode=mode):
+                    row = campaign.run('pinyin', self.library, self.profile, mode=mode)
+                    self.assertEqual(row['command'][0], str(self.worker))
+            rows = self.root / 'rows'
+            rows.write_text("1\t测试\tce4'shi4\t20000\n")
+            user = self.root / 'population-user'
+            user.mkdir()
+            td.populate_user(campaign, self.library, user, rows)
+            self.assertEqual(launch.call_args.args[0][0], str(self.worker))
+
+    def test_measured_sample_pins_to_the_reported_cpu(self):
+        campaign = self.campaign()
+        with patch.object(td, 'exports', return_value=['pinyin_init']):
+            row = campaign.run('pinyin', self.library, self.profile)
+        self.assertEqual(row['command'][:3], [td.shutil.which('taskset'), '-c', str(campaign.cpu)])
 
     def require_eviction(self, directory):
         """Fail, naming the file system, where fadvise cannot evict the directory's files.
@@ -1253,6 +1329,35 @@ class NativeTests(unittest.TestCase):
             self.assertEqual(guard.call_args.args[1:4], ('teardown.py/populate', 'pin', self.library))
             test_support.assert_not_called(self, child)
 
+    def test_unit_launch_gets_its_admitted_environment_and_slot_descriptor_and_private_scratch(self):
+        worker = self.root / 'unit-worker'
+        worker.write_text(f'#!{sys.executable}\nimport os, sys\n'
+                          'os.fstat(int(os.environ["TD_FD"]))\n'
+                          'print("probe=" + os.environ["TD_PROBE"] + " fd=open", file=sys.stderr)\n'
+                          'sys.stdout.write(\'{"teardown":\')\nraise SystemExit(1)\n')
+        worker.chmod(0o755)
+        with open(self.root / 'held', 'w') as held:
+            unit = self.campaign(worker).unit('witness', environment=dict(TD_PROBE='admitted', TD_FD=str(held.fileno())),
+                                              fds=(held.fileno(),))
+            with self.assertRaises(ValueError) as raised:
+                unit.run('pinyin', self.library, self.profile, mode='observe')
+        self.assertIn('probe=admitted fd=open', str(raised.exception))
+        self.assertEqual(unit.serial, 1)
+        self.assertEqual(self.campaign(worker).serial, 0)
+        self.assertFalse(list(self.root.glob('witness-sample-*')))
+
+    def test_profile_population_passes_the_unit_environment_and_slot_descriptor(self):
+        worker = self.root / 'populate-worker'
+        worker.write_text(f'#!{sys.executable}\nimport os\n'
+                          'os.fstat(int(os.environ["TD_FD"]))\n'
+                          'assert os.environ["TD_PROBE"] == "admitted"\n'
+                          'print(\'{"populated": true, "saved": true}\')\n')
+        worker.chmod(0o755)
+        with open(self.root / 'held-populate', 'w') as held:
+            unit = self.campaign(worker).unit('modest', environment=dict(TD_PROBE='admitted', TD_FD=str(held.fileno())),
+                                              fds=(held.fileno(),))
+            td.populate_user(unit, self.library, self.profile, self.root / 'rows')
+
     def test_missing_export_is_invalid_and_cleans_private_sample(self):
         campaign = self.campaign()
         with patch.object(td, 'exports', return_value=['missing_export']), self.assertRaisesRegex(ValueError, 'missing export'):
@@ -1275,6 +1380,406 @@ class NativeTests(unittest.TestCase):
         self.assertEqual(observation['schema'], baseline['schema'])
         self.assertEqual(observation['values'], baseline['values'])
         self.assertEqual(observation['checksum'], baseline['checksum'])
+
+
+class FakeCancelled(Exception):
+    pass
+
+
+class FakeDriver:
+    """The driver surface a campaign uses, with an observable cancellation flag."""
+    Cancelled = FakeCancelled
+
+    def __init__(self):
+        self.cancelled = False
+
+    def check_cancelled(self):
+        if self.cancelled:
+            raise FakeCancelled('cancelled')
+
+    def check_tkrzw(self, *args, **kwargs):
+        pass
+
+
+class FakeAdmission:
+    """HeavyAdmission stand-in: records its lifecycle and admits a fixed worker count."""
+    workers = 2
+    blocked = False
+    events = None
+
+    def __init__(self, label, env, out=None, runner=False, prepare_heavy_env=None):
+        self.label, self.runner = label, runner
+        self.env = {'OXPINYIN_POOL_WORKERS': str(self.workers), 'FAKE_ADMITTED': '1'}
+        self.slot = SimpleNamespace(pass_fds=lambda: (), handoff=lambda: self.events.append('handoff'))
+        self.events.append('admission')
+
+    def try_acquire(self):
+        return not self.blocked
+
+    def close(self):
+        self.events.append('close')
+
+
+class UnitPoolTests(unittest.TestCase):
+    """run_units, with a fake admission and fake units; no native worker."""
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix='teardown-pool-')
+        self.root = Path(self.temporary.name)
+        self.addCleanup(self.temporary.cleanup)
+        self.driver = FakeDriver()
+        self.events = []
+        self.lock = threading.Lock()
+        FakeAdmission.events, FakeAdmission.workers, FakeAdmission.blocked = self.events, 2, False
+        patcher = patch('tools.dev.slot.HeavyAdmission', FakeAdmission)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        patcher = patch.object(td.host, 'allowed_cpus', return_value={0, 1, 2, 3})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.children = []
+
+    def campaign(self, jobs=None, cpu=2):
+        return td.Campaign(self.root / 'worker', self.root, self.root, cpu, self.driver, jobs=jobs)
+
+    def log(self, event):
+        with self.lock:
+            self.events.append(event)
+
+    def spawn(self):
+        """A real child in its own group, as a native worker is."""
+        child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'], start_new_session=True)
+        self.children.append(child)
+        self.addCleanup(lambda: (child.kill(), child.wait()))
+        return child
+
+    def watch(self, unit, child):
+        """Hold a child until the unit is stopped or cancelled, then reap its group before returning."""
+        try:
+            while True:
+                unit.driver.check_cancelled()
+                time.sleep(.01)
+        except BaseException:
+            os.killpg(child.pid, 9)
+            child.wait()
+            self.log(('reaped', unit.prefix))
+            raise
+
+    def test_overlap_is_bounded_by_admission(self):
+        for admitted in (1, 2, 3):
+            with self.subTest(admitted=admitted):
+                FakeAdmission.workers = admitted
+                active, peak, order = [0], [0], []
+                everyone = threading.Event()
+
+                def unit(name):
+                    def run(campaign):
+                        with self.lock:
+                            active[0] += 1
+                            peak[0] = max(peak[0], active[0])
+                            order.append(name)
+                            if active[0] == admitted:
+                                everyone.set()
+                        everyone.wait(2) if admitted > 1 else time.sleep(.01)
+                        time.sleep(.02)
+                        with self.lock:
+                            active[0] -= 1
+                        return name
+                    return name, run
+                units = [unit('u%d' % number) for number in range(6)]
+                self.assertEqual(td.fan_out(self.campaign(), units, 'pool'), [name for name, _ in units])
+                self.assertEqual(peak[0], admitted)
+                if admitted == 1:
+                    self.assertEqual(order, [name for name, _ in units])
+
+    def test_the_pool_is_admitted_before_its_units_and_released_after_them(self):
+        td.fan_out(self.campaign(), [('a', lambda c: self.log('a')), ('b', lambda c: self.log('b')),
+                                       ('c', lambda c: self.log('c'))], 'pool')
+        self.assertEqual(self.events[:2], ['admission', 'handoff'])
+        self.assertEqual(self.events[-1], 'close')
+        self.assertEqual(sorted(self.events[2:-1]), ['a', 'b', 'c'])
+
+    def test_one_job_and_one_unit_run_in_order_in_the_caller_without_admission(self):
+        caller, seen = threading.get_ident(), []
+        units = [(name, lambda c, name=name: seen.append((name, threading.get_ident(), c.prefix, c.cpu)))
+                 for name in ('a', 'b', 'c')]
+        td.fan_out(self.campaign(jobs=1), units, 'pool')
+        td.fan_out(self.campaign(), units[:1], 'pool')
+        self.assertEqual(seen, [('a', caller, 'a-sample', 2), ('b', caller, 'b-sample', 2),
+                                ('c', caller, 'c-sample', 2), ('a', caller, 'a-sample', 2)])
+        self.assertEqual(self.events, [])
+
+    def test_serial_failure_stops_the_remaining_units(self):
+        ran = []
+
+        def failing(campaign):
+            raise ValueError('populate failed')
+        units = [('a', lambda c: ran.append('a')), ('b', failing), ('c', lambda c: ran.append('c'))]
+        with self.assertRaisesRegex(ValueError, 'populate failed'):
+            td.fan_out(self.campaign(jobs=1), units, 'pool')
+        self.assertEqual(ran, ['a'])
+
+    def test_failure_starts_no_queued_unit_and_reaps_running_children_before_release(self):
+        FakeAdmission.workers = 2
+        started = []
+        both_running = threading.Barrier(2, timeout=5)
+
+        def failing(campaign):
+            started.append('fail')
+            both_running.wait()
+            raise ValueError('populate failed')
+
+        def waiting(campaign):
+            started.append('wait')
+            child = self.spawn()
+            both_running.wait()
+            self.watch(campaign, child)
+        queued = [(name, lambda c, name=name: started.append(name)) for name in ('q1', 'q2', 'q3')]
+        with self.assertRaisesRegex(ValueError, 'populate failed'):
+            td.fan_out(self.campaign(), [('fail', failing), ('wait', waiting), *queued], 'pool')
+        self.assertEqual(sorted(started), ['fail', 'wait'])
+        self.assertIsNotNone(self.children[0].returncode)
+        self.assertEqual(self.events[-2:], [('reaped', 'wait-sample'), 'close'])
+
+    def test_cancellation_stops_queued_units_and_reaps_before_release(self):
+        FakeAdmission.workers = 2
+        started, running = [], threading.Barrier(3, timeout=5)
+
+        def holding(name):
+            def run(campaign):
+                started.append(name)
+                child = self.spawn()
+                running.wait()
+                self.watch(campaign, child)
+            return name, run
+        queued = [(name, lambda c, name=name: started.append(name)) for name in ('q1', 'q2')]
+
+        def cancel():
+            running.wait()
+            self.driver.cancelled = True
+        thread = threading.Thread(target=cancel)
+        thread.start()
+        self.addCleanup(thread.join)
+        with self.assertRaises(FakeCancelled):
+            td.fan_out(self.campaign(), [holding('a'), holding('b'), *queued], 'pool')
+        self.assertEqual(sorted(started), ['a', 'b'])
+        self.assertTrue(all(child.returncode is not None for child in self.children))
+        self.assertEqual(sorted(event for event in self.events if isinstance(event, tuple) and event[0] == 'reaped'),
+                         [('reaped', 'a-sample'), ('reaped', 'b-sample')])
+        self.assertEqual(self.events[-1], 'close')
+
+    def test_cancellation_while_waiting_for_admission_starts_nothing_and_releases(self):
+        FakeAdmission.blocked = True
+        started = []
+        threading.Timer(.2, lambda: setattr(self.driver, 'cancelled', True)).start()
+        with self.assertRaises(FakeCancelled):
+            td.fan_out(self.campaign(), [('a', lambda c: started.append('a')), ('b', lambda c: started.append('b'))],
+                         'pool')
+        self.assertEqual(started, [])
+        self.assertEqual(self.events[-1], 'close')
+
+    def test_each_concurrent_unit_has_private_names_counter_cpu_and_stop_view(self):
+        FakeAdmission.workers = 3
+        base = self.campaign(cpu=2)
+        seen, together = {}, threading.Barrier(3, timeout=5)
+
+        def unit(name):
+            def run(campaign):
+                together.wait()
+                seen[name] = dict(prefix=campaign.prefix, cpu=campaign.cpu, driver=campaign.driver,
+                                  names=[campaign.next_scratch() for _ in range(50)], environment=campaign.environment)
+            return name, run
+        td.fan_out(base, [unit(name) for name in ('modest', 'phrases', 'journals')], 'pool')
+        names = [path for value in seen.values() for path in value['names']]
+        self.assertEqual(len(set(names)), 150)
+        self.assertEqual(base.serial, 0)
+        self.assertEqual(base.prefix, 'sample')
+        self.assertEqual({value['prefix'] for value in seen.values()},
+                         {'modest-sample', 'phrases-sample', 'journals-sample'})
+        # The campaign's own CPU leads; no two concurrent units share one.
+        self.assertEqual(sorted(value['cpu'] for value in seen.values()), [0, 1, 2])
+        self.assertTrue(all(isinstance(value['driver'], pool.StoppableDriver) for value in seen.values()))
+        self.assertTrue(all(value['environment'].get('FAKE_ADMITTED') == '1' for value in seen.values()))
+        self.assertEqual(base.environment, {})
+
+    def test_unit_names_are_unique_across_threads_of_one_campaign_family(self):
+        base = self.campaign()
+        names, lock = [], threading.Lock()
+
+        def take(unit):
+            for _ in range(200):
+                path = unit.next_scratch()
+                with lock:
+                    names.append(path)
+        threads = [threading.Thread(target=take, args=(base.unit('u%d' % number),)) for number in range(4)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        self.assertEqual(len(set(names)), 800)
+
+    def test_results_and_emission_follow_unit_order_whatever_the_completion_order(self):
+        FakeAdmission.workers = 4
+        caller, emitted = threading.get_ident(), []
+        finished = [threading.Event() for _ in range(4)]
+
+        def unit(number):
+            def run(campaign):
+                # Unit n ends only after unit n+1 has: completion is the reverse of unit order.
+                if number < 3:
+                    finished[number + 1].wait(5)
+                finished[number].set()
+                return 'result-%d' % number
+            return 'u%d' % number, run
+
+        def emit(name, result):
+            emitted.append((name, result, threading.get_ident() == caller))
+        self.assertEqual(td.fan_out(self.campaign(), [unit(number) for number in range(4)], 'pool', emit),
+                         ['result-%d' % number for number in range(4)])
+        self.assertEqual(emitted, [('u%d' % number, 'result-%d' % number, True) for number in range(4)])
+
+
+def export_lines():
+    """An export that fills both 10,000-phrase recipes, in library order."""
+    lines = []
+    for library, count in ((1, 4000), (2, 4000), (3, 4000), (4, 1500)):
+        lines.extend('%d\t词%d_%d\tci%d\t7' % (library, library, number, number) for number in range(count))
+    return lines
+
+
+class FixtureFlowTests(unittest.TestCase):
+    """provision and prepare_witnesses with fake native launches, serial against pooled."""
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix='teardown-fixtures-')
+        self.root = Path(self.temporary.name)
+        self.addCleanup(self.temporary.cleanup)
+        FakeAdmission.events, FakeAdmission.workers, FakeAdmission.blocked = [], 4, False
+        for patcher in (patch('tools.dev.slot.HeavyAdmission', FakeAdmission),
+                        patch.object(td.host, 'allowed_cpus', return_value={0, 1, 2, 3})):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.records = []
+        patcher = patch.object(td, 'print_record', lambda kind, **values: self.records.append((kind, values)))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def campaign(self, jobs):
+        return td.Campaign(self.root / 'worker', self.root, self.root, 0, FakeDriver(), jobs=jobs)
+
+    @staticmethod
+    def tree(directory):
+        return {str(path.relative_to(directory)): path.read_bytes()
+                for path in sorted(Path(directory).rglob('*')) if path.is_file()}
+
+    def provisioned(self, name, jobs):
+        """Run provision under fake population that finishes in reverse profile order."""
+        order = ['empty', 'modest', 'phrases', 'journals']
+        done = {}
+
+        def populate(campaign, pin, user, rows):
+            profile = user.parent.name
+            # A later profile finishes first, when the pool lets it.
+            later = order[order.index(profile) + 1:]
+            if jobs != 1:
+                for other in later:
+                    done.setdefault(other, threading.Event()).wait(5)
+            (user / 'user.bin').write_bytes(rows.read_bytes()[:64] + profile.encode())
+            done.setdefault(profile, threading.Event()).set()
+
+        def run(self_, facade, library, profile, *, mode='time', **kwargs):
+            self.assertEqual(mode, 'export')
+            return dict(observation=dict(documents=export_lines()))
+        del self.records[:]
+        with patch.object(td, 'populate_user', populate), patch.object(td.Campaign, 'run', run):
+            profiles = td.provision(self.campaign(jobs), Path('pin.so'), self.root / name)
+        return profiles, list(self.records)
+
+    def test_pooled_provision_matches_serial_output_order_and_files(self):
+        serial_profiles, serial_records = self.provisioned('serial', 1)
+        pooled_profiles, pooled_records = self.provisioned('pooled', None)
+        self.assertEqual([record[1]['profile'] for record in serial_records], list(td.PROFILES))
+        self.assertEqual(serial_records, pooled_records)
+        self.assertEqual({name: path.relative_to(self.root / 'serial') for name, path in serial_profiles.items()},
+                         {name: path.relative_to(self.root / 'pooled') for name, path in pooled_profiles.items()})
+        self.assertEqual(self.tree(self.root / 'serial'), self.tree(self.root / 'pooled'))
+        self.assertEqual(FakeAdmission.events.count('close'), 1)
+
+    def test_provision_failure_in_one_profile_raises_after_the_export_and_stops_the_rest(self):
+        FakeAdmission.workers = 1
+        seen = []
+
+        def populate(campaign, pin, user, rows):
+            seen.append(user.parent.name)
+            if user.parent.name == 'modest':
+                raise ValueError('fixture population failed')
+
+        def run(self_, *args, mode='time', **kwargs):
+            return dict(observation=dict(documents=export_lines()))
+        with patch.object(td, 'populate_user', populate), patch.object(td.Campaign, 'run', run):
+            with self.assertRaisesRegex(ValueError, 'fixture population failed'):
+                td.provision(self.campaign(None), Path('pin.so'), self.root / 'failed')
+        self.assertEqual(seen, ['modest'])
+        self.assertEqual(self.records, [('fixture', unittest.mock.ANY)])
+        self.assertEqual(self.records[0][1]['profile'], 'empty')
+        self.assertEqual(FakeAdmission.events[-1], 'close')
+
+    def witnesses(self, name, jobs):
+        profiles = {}
+        for profile in td.PROFILES:
+            directory = self.root / name / profile
+            (directory / 'user').mkdir(parents=True)
+            (directory / 'witness.txt').write_text('')
+            (directory / 'rows.tsv').write_text(td.row_text(
+                [(1, 'p%s%d' % (profile, number), 'wo%s%d' % ('abc'[number % 3], number % 5 + 1), 5) for number in range(6)]
+                if profile != 'empty' else []))
+            profiles[profile] = directory / 'user'
+        (self.root / name / 'phrases' / 'witness.txt').write_text('kept\n')
+        order = ['modest', 'phrases', 'journals']
+        done = {}
+
+        def run(self_, facade, library, profile, *, mode='time', inputs=None, **kwargs):
+            populated = profile.parent.name != 'empty'
+            if populated and jobs != 1:
+                # Reverse completion: a later profile's check ends before an earlier one's.
+                for other in order[order.index(profile.parent.name) + 1:]:
+                    done.setdefault(other, threading.Event()).wait(5)
+            documents = [dict(parser='full', transcript=value, answer=value + (profile.parent.name if populated else ''))
+                         for value in inputs.read_text().split()]
+            if populated:
+                done.setdefault(profile.parent.name, threading.Event()).set()
+            return dict(observation=dict(documents=documents))
+        del self.records[:]
+        with patch.object(td.Campaign, 'run', run):
+            result = td.prepare_witnesses(self.campaign(jobs), Path('pin.so'), profiles)
+        return result, list(self.records), self.tree(self.root / name)
+
+    def test_pooled_witnesses_match_serial_records_and_files(self):
+        serial = self.witnesses('serial', 1)
+        pooled = self.witnesses('pooled', None)
+        self.assertEqual(list(serial[0]), list(td.PROFILES))
+        self.assertEqual([(kind, values['profile']) for kind, values in serial[1]],
+                         [('witness', 'modest'), ('witness', 'phrases'), ('witness', 'journals')])
+        self.assertEqual(serial[1], pooled[1])
+        self.assertEqual(serial[2], pooled[2])
+        self.assertEqual(serial[2]['phrases/witness.txt'], b'kept\n')
+        self.assertEqual(serial[2]['empty/witness.txt'], b'')
+
+    def test_a_populated_profile_that_changes_no_answer_stops_the_witness_pool(self):
+        profiles = {}
+        for profile in td.PROFILES:
+            directory = self.root / profile
+            (directory / 'user').mkdir(parents=True)
+            (directory / 'witness.txt').write_text('')
+            (directory / 'rows.tsv').write_text(td.row_text([] if profile == 'empty' else [(1, 'p', 'wo3', 5)]))
+            profiles[profile] = directory / 'user'
+
+        def run(self_, facade, library, profile, *, mode='time', inputs=None, **kwargs):
+            return dict(observation=dict(documents=[dict(parser='full', transcript=value, answer='same')
+                                                    for value in inputs.read_text().split()]))
+        with patch.object(td.Campaign, 'run', run):
+            with self.assertRaisesRegex(ValueError, 'changes no witness answer'):
+                td.prepare_witnesses(self.campaign(None), Path('pin.so'), profiles)
+        self.assertEqual(self.records, [])
+        self.assertEqual(FakeAdmission.events[-1], 'close')
 
 
 if __name__ == '__main__':

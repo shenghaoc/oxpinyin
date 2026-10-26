@@ -15,6 +15,14 @@ are not reserved against other, independent slot holders, which plan their own
 share the same way. Memory is different: the slot admits it host-wide and counts
 other holders' reservations. There is no global CPU scheduler.
 
+Units: a task may carry a callable instead of an argv (`unit()`). `run_units` and
+`run_admitted` run such callables in worker threads under the same loop, so
+in-process steps and launched processes get one stop rule: the first failure or a
+cancellation starts nothing more, stops the running units, and joins every one (a
+unit reaps its own children, `UnitContext.launch` does) before the admission is
+released. Results and emission follow unit order, never completion order. A unit
+must stop when `UnitContext.check()` raises; a thread cannot be killed.
+
 Containers: with `--container-runtime`, each item's command may use {token} (a
 random value for this invocation) and {cidfile} (a private file per item) in
 `--name`, `--label` and `--cidfile` flags. Cleanup after a failure or a signal
@@ -29,6 +37,7 @@ import contextlib
 import dataclasses
 import functools
 import os
+import queue
 import secrets
 import shlex
 import shutil
@@ -36,12 +45,13 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import NamedTuple
 
-from . import host
+from . import host, slot
 
 # Planning figures for one library build or data regeneration, in MiB: the
 # largest cgroup peaks measured for build-oracle.sh on linux/amd64 (Docker, 4
@@ -126,6 +136,7 @@ class Task:
     log: Path | None = None
     cleanup: Callable[[], object] | None = None    # run once if the task was started and the pool stopped early
     remove: Path | None = None          # removed after the task succeeds
+    run: Callable[['UnitContext'], object] | None = None    # a unit: run in a worker thread instead of launching ARGV
 
 
 @dataclasses.dataclass
@@ -134,6 +145,7 @@ class Result:
     started: list[str] = dataclasses.field(default_factory=list)
     failed: dict[str, int] = dataclasses.field(default_factory=dict)
     cancelled: bool = False
+    errors: dict[str, BaseException] = dataclasses.field(default_factory=dict)    # units that raised
 
     @property
     def ok(self) -> bool:
@@ -144,12 +156,35 @@ class Result:
 class ProcessLauncher:
     """Start each task in its own session so the pool can stop and reap its whole tree."""
 
-    def __init__(self, env: Mapping[str, str] | None = None, pass_fds: Sequence[int] = ()):
-        """Remember the child environment and the slot descriptors children inherit."""
-        self.env, self.pass_fds = env, tuple(pass_fds)
+    def __init__(self, env: Mapping[str, str] | None = None, pass_fds: Sequence[int] = (),
+                 cpus: Sequence[int] = (), wake: threading.Event | None = None,
+                 cancelled: Callable[[], bool] | None = None):
+        """Remember the child environment and the slot descriptors children inherit.
+
+        CPUS are leased one per running unit; WAKE is set whenever a unit ends; units
+        also see CANCELLED() at their checks.
+        """
+        self.env, self.pass_fds, self.cancelled = env, tuple(pass_fds), cancelled
+        self.leases: queue.Queue = queue.Queue()
+        for cpu in cpus:
+            self.leases.put(cpu)
+        self.wake = wake or threading.Event()
+        self.units: dict[str, 'UnitHandle'] = {}    # the handles of the units launched, by name
 
     def launch(self, task: Task):
-        """Start TASK with its output in its log and return the process handle."""
+        """Start TASK and return its handle: a worker thread for a unit, else a process.
+
+        A process runs ARGV with its output in its log.
+        """
+        if task.run is not None:
+            try:
+                cpu = self.leases.get_nowait()
+            except queue.Empty:
+                cpu = None
+            context = UnitContext(task.name, threading.Event(), cpu,
+                                  {} if self.env is None else dict(self.env), self.pass_fds, self.cancelled)
+            self.units[task.name] = UnitHandle(task, context, self.wake, self.leases)
+            return self.units[task.name]
         log = None
         if task.log is not None:
             task.log.parent.mkdir(parents=True, exist_ok=True)
@@ -205,13 +240,16 @@ def _tail(path: Path | None, out) -> None:
 
 
 def run_pool(tasks: Sequence[Task], workers: int, launcher, *, cancelled: Callable[[], bool],
-             poll: float = 0.2, grace: float = 5.0, out=sys.stderr, sleep: Callable[[float], object] = time.sleep) -> Result:
+             poll: float = 0.2, grace: float = 5.0, out=sys.stderr, sleep: Callable[[float], object] = time.sleep,
+             progress: Callable[[], object] | None = None) -> Result:
     """Run TASKS, at most WORKERS at once, in order of submission.
 
     After the first failure, or once CANCELLED() is true, nothing more starts; each
     running task's group gets SIGTERM, then SIGKILL after GRACE seconds, and is
     reaped; and every started task's cleanup command runs. Results do not depend
     on completion order. Return what happened; the caller chooses the exit status.
+    PROGRESS, if given, runs in this thread after every reap and once more after
+    the running tasks are stopped and joined.
     """
     pending = collections.deque(tasks)
     running: dict[str, tuple[Task, object]] = {}
@@ -225,6 +263,9 @@ def run_pool(tasks: Sequence[Task], workers: int, launcher, *, cancelled: Callab
             del running[name]
             if status:
                 result.failed[name] = status
+                error = getattr(handle, 'error', None)
+                if error is not None:
+                    result.errors[name] = error
                 print(f'{name}: failed with status {status}', file=out, flush=True)
                 _tail(task.log, out)
             elif task.remove is not None:
@@ -241,6 +282,8 @@ def run_pool(tasks: Sequence[Task], workers: int, launcher, *, cancelled: Callab
                 result.started.append(task.name)
             sleep(poll)
             reap()
+            if progress is not None:
+                progress()
             if result.failed:
                 break
     finally:
@@ -254,6 +297,8 @@ def run_pool(tasks: Sequence[Task], workers: int, launcher, *, cancelled: Callab
                 handle.wait()
         stopped_early = bool(result.failed) or result.cancelled or bool(running)
         running.clear()
+        if progress is not None:
+            progress()
         if stopped_early:
             by_name = {task.name: task for task in tasks}
             for name in result.started:
@@ -261,6 +306,278 @@ def run_pool(tasks: Sequence[Task], workers: int, launcher, *, cancelled: Callab
                     with contextlib.suppress(Exception):
                         by_name[name].cleanup()
     return result
+
+
+class UnitStopped(Exception):
+    """Raised inside a unit when its pool has stopped: a sibling failed, or the run was cancelled."""
+
+
+class UnitsCancelled(Exception):
+    """The run was cancelled (the default error of `run_units`)."""
+
+
+class Completed(NamedTuple):
+    """What `UnitContext.launch` returns: the exit status and the captured output."""
+    status: int
+    stdout: bytes
+    stderr: bytes
+
+
+class StoppableDriver:
+    """A driver as one unit sees it: its own checks, plus the pool's stop request.
+
+    Every other attribute is the shared driver's, so a unit's launches terminate and
+    reap their process groups through the driver's own code.
+    """
+
+    def __init__(self, driver, context: 'UnitContext'):
+        self.driver, self.context = driver, context
+
+    def check_cancelled(self):
+        """Run the driver's check, then raise UnitStopped if the pool has stopped."""
+        self.driver.check_cancelled()
+        self.context.check()
+
+    def __getattr__(self, name):
+        return getattr(self.driver, name)
+
+
+@dataclasses.dataclass
+class UnitContext:
+    """What a running unit sees: its stop request, leased CPU, environment and slot descriptors."""
+    name: str
+    stop: threading.Event
+    cpu: int | None = None
+    environment: dict = dataclasses.field(default_factory=dict)
+    fds: tuple = ()
+    cancelled: Callable[[], bool] | None = None
+
+    def check(self) -> None:
+        """Raise UnitStopped once the pool has stopped or the run is cancelled; units call this at every wait."""
+        if self.stop.is_set():
+            raise UnitStopped(f'{self.name}: the pool stopped')
+        if self.cancelled is not None and self.cancelled():
+            raise UnitStopped(f'{self.name}: cancelled')
+
+    def driver(self, base) -> StoppableDriver:
+        """Wrap BASE, a driver with check_cancelled, so its checks also see the pool's stop."""
+        return StoppableDriver(base, self)
+
+    def launch(self, argv: Sequence[str], *, env: Mapping[str, str] | None = None,
+               pass_fds: Sequence[int] | None = None, poll: float = 0.1) -> Completed:
+        """Run ARGV in its own session and return its status and captured output.
+
+        stdin is closed at once. Every POLL seconds the unit checks for a stop; on a
+        stop, a timeout of the caller's making, or any other error the group gets
+        SIGTERM, then SIGKILL through slot.terminate_group, and its leader is reaped before the
+        error propagates. ENV defaults to the unit's environment, PASS_FDS to its slot
+        descriptors.
+        """
+        with subprocess.Popen(list(argv), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                              env=dict(self.environment if env is None else env), start_new_session=True,
+                              pass_fds=tuple(self.fds if pass_fds is None else pass_fds)) as process:
+            try:
+                first = True
+                while True:
+                    self.check()
+                    try:
+                        stdout, stderr = process.communicate(b'' if first else None, timeout=poll)
+                        break
+                    except subprocess.TimeoutExpired:
+                        first = False
+            except BaseException:
+                slot.terminate_group(process)
+                raise
+        return Completed(process.returncode, stdout, stderr)
+
+
+class UnitHandle:
+    """The pool's view of a unit running in a worker thread (the same methods as Handle)."""
+
+    def __init__(self, task: Task, context: UnitContext, wake: threading.Event, leases: queue.Queue):
+        self.task, self.context, self.wake, self.leases = task, context, wake, leases
+        self.value, self.error = None, None
+        self.thread = threading.Thread(target=self.work, name=task.name, daemon=True)
+        self.thread.start()
+
+    def work(self) -> None:
+        """Run the unit; keep its value or error, return the CPU lease, wake the pool's loop."""
+        try:
+            self.value = self.task.run(self.context)
+        except BaseException as error:
+            self.error = error
+        finally:
+            if self.context.cpu is not None:
+                self.leases.put(self.context.cpu)
+            self.wake.set()
+
+    def poll(self) -> int | None:
+        """None while the unit runs; 0 if it returned, -SIGTERM if it stopped, else 1."""
+        if self.thread.is_alive():
+            return None
+        if self.error is None:
+            return 0
+        return -signal.SIGTERM if isinstance(self.error, UnitStopped) else 1
+
+    def terminate(self) -> None:
+        """Ask the unit to stop: the next UnitContext.check() raises."""
+        self.context.stop.set()
+
+    def kill(self) -> None:
+        """A thread cannot be killed; this repeats the stop request."""
+        self.context.stop.set()
+
+    def wait(self, timeout: float | None = None) -> int | None:
+        """Join the unit's thread; return None if TIMEOUT seconds pass first."""
+        self.thread.join(timeout)
+        return self.poll()
+
+
+def cancelled_from(check: Callable[[], object]) -> Callable[[], bool]:
+    """Turn CHECK, which raises when the run is cancelled, into a flag the pool polls."""
+    def flag() -> bool:
+        try:
+            check()
+        except Exception:
+            return True
+        return False
+    return flag
+
+
+def run_units(units: Sequence[tuple[str, Callable[[UnitContext], object]]], workers: int, *,
+              cancelled: Callable[[], bool], launcher: ProcessLauncher | None = None,
+              emit: Callable[[str, object], object] | None = None,
+              cancel_error: Callable[[str], BaseException] = UnitsCancelled,
+              poll: float = 0.05, grace: float = 5.0, out=sys.stderr) -> list:
+    """Run UNITS, (name, function) pairs, at most WORKERS at once; return their values in order.
+
+    This is run_pool with callables: the same stop rule, with every thread joined
+    before return. EMIT(name, value) runs in this thread in unit order as the next
+    value becomes available, so output never depends on completion order; units
+    finished before a failure are still emitted. A failure raises the earliest
+    unit's own error (never a sibling's UnitStopped); a cancellation raises
+    CANCEL_ERROR('cancelled').
+    """
+    launcher = launcher or ProcessLauncher()
+    names = [name for name, _ in units]
+    if len(set(names)) != len(names):
+        raise ValueError('run_units needs distinct unit names')
+    handles = launcher.units
+    emitted = 0
+
+    def progress() -> None:
+        nonlocal emitted
+        while emitted < len(names) and names[emitted] in handles:
+            handle = handles[names[emitted]]
+            if handle.thread.is_alive() or handle.error is not None:
+                return
+            emitted += 1
+            if emit is not None:
+                emit(names[emitted - 1], handle.value)
+    result = run_pool([Task(name, [], run=function) for name, function in units], workers, launcher,
+                      cancelled=cancelled, poll=poll, grace=grace, out=out,
+                      sleep=lambda seconds: (launcher.wake.wait(seconds), launcher.wake.clear()),
+                      progress=progress)
+    if result.cancelled:
+        raise cancel_error('cancelled')
+    for name in names:
+        error = handles[name].error if name in handles else None
+        if error is not None and not isinstance(error, UnitStopped):
+            raise error
+    if cancelled():
+        raise cancel_error('cancelled')
+    if not result.ok:
+        raise UnitsCancelled('the run stopped before every unit finished')
+    return [handles[name].value for name in names]
+
+
+def unit_preparer(units: int, cpu_cap: int | None = None, unit_mib: int = host.RUNNER_PEAK_MIB):
+    """Return the heavy-admission callback that sizes a pool of UNITS callables.
+
+    Like admission_preparer, it chooses from the room the slot admits after other
+    holders' reservations and headroom, and reserves exactly what it chose: one
+    UNIT_MIB allowance per worker (the heavy-runner allowance by default), at most
+    UNITS workers and the admitted (or capped) CPUs. When not even one worker fits,
+    it reserves one worker's allowance and the slot refuses it.
+    """
+    def prepare(env: Mapping[str, str], resources, *, runner: bool = False):
+        cpus = resources['cpus'] if cpu_cap is None else min(resources['cpus'], cpu_cap)
+        available = resources['available_mib']
+        headroom = host.memory_headroom(env, resources)
+        workers = 0 if available is None else host.fit(available, unit_mib, min(units, cpus), headroom)
+        why = (f'{units} units, {cpus} CPUs, '
+               + ('memory unknown' if available is None else f'{max(0, available - headroom)} MiB after {headroom} MiB headroom')
+               + f', {unit_mib} MiB per unit')
+        return (dict(env, **{POOL_WORKERS: str(max(1, workers))}),
+                {POOL_WORKERS: (workers, why, False)}, max(1, workers) * unit_mib)
+    return prepare
+
+
+class Budget(NamedTuple):
+    """What admission granted a pool: its worker count, environment and slot descriptors."""
+    workers: int
+    env: dict
+    fds: tuple
+
+
+@contextlib.contextmanager
+def admitted(units: int, label: str, *, cancelled: Callable[[], bool], cpu_cap: int | None = None,
+             unit_mib: int = host.RUNNER_PEAK_MIB, cancel_error: Callable[[str], BaseException] = UnitsCancelled,
+             out=sys.stderr):
+    """Admit a pool of at most UNITS callables before any starts, and yield its Budget.
+
+    Take or inherit the heavy slot and reserve the pool's memory (unit_preparer). While
+    waiting, CANCELLED() is polled and CANCEL_ERROR raised; the slot is released on any error. The caller joins
+    its threads and reaps their children before leaving the block, which releases it.
+    """
+    with contextlib.ExitStack() as stack:
+        admission = slot.HeavyAdmission(label, dict(os.environ), out=out, runner=True,
+                                        prepare_heavy_env=unit_preparer(units, cpu_cap, unit_mib))
+        stack.callback(admission.close)
+        while not admission.try_acquire():
+            if cancelled():
+                raise cancel_error('cancelled while waiting for admission')
+            time.sleep(0.05)
+        if cancelled():
+            raise cancel_error('cancelled while waiting for admission')
+        budget = Budget(int(admission.env[POOL_WORKERS]), dict(admission.env), tuple(admission.slot.pass_fds()))
+        admission.slot.handoff()
+        print(f'{label}: requested {units}, admitted {budget.workers}', file=out, flush=True)
+        yield budget
+
+
+def run_admitted(units: Sequence[tuple[str, Callable[[UnitContext], object]]], label: str, *,
+                 cancelled: Callable[[], bool], serial: bool = False, cpus: Sequence[int] | None = None,
+                 emit: Callable[[str, object], object] | None = None,
+                 cancel_error: Callable[[str], BaseException] = UnitsCancelled,
+                 unit_mib: int = host.RUNNER_PEAK_MIB, out=sys.stderr) -> list:
+    """Run independent UNITS in a pool sized by the heavy slot's admission; return values in order.
+
+    SERIAL, or a single unit, runs them in order in this thread with no admission: the
+    serial reference. Otherwise the pool is admitted (`admitted`) and sized by it, never
+    above the unit count or CPUS (the CPU ids to lease, one per running unit; none means
+    no limit and no lease); see `run_units` for the stop and ordering rules. Every unit
+    sees the admitted environment and slot descriptors.
+    """
+    if serial or len(units) < 2:
+        values = []
+        for name, function in units:
+            try:
+                values.append(function(UnitContext(name, threading.Event(), cancelled=cancelled)))
+            except UnitStopped:
+                if cancelled():
+                    raise cancel_error('cancelled') from None
+                raise
+            if emit is not None:
+                emit(name, values[-1])
+        return values
+    with admitted(len(units), label, cancelled=cancelled, cpu_cap=None if cpus is None else len(cpus),
+                  unit_mib=unit_mib, cancel_error=cancel_error, out=out) as budget:
+        workers = max(1, min(budget.workers, len(units), len(cpus) if cpus else len(units)))
+        launcher = ProcessLauncher(env=budget.env, pass_fds=budget.fds, cpus=list(cpus or [])[:workers],
+                                   cancelled=cancelled)
+        return run_units(units, workers, cancelled=cancelled, launcher=launcher, emit=emit,
+                         cancel_error=cancel_error, out=out)
 
 
 @dataclasses.dataclass(frozen=True)

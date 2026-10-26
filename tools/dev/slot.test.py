@@ -21,6 +21,30 @@ if str(ROOT) not in sys.path:
 from tools.dev import host, slot
 
 
+class GroupTerminationTests(unittest.TestCase):
+    def test_darwin_exiting_group_permission_error_retries_final_kill(self):
+        process = mock.Mock(pid=123)
+        with mock.patch.object(sys, 'platform', 'darwin'), \
+                mock.patch.object(slot.os, 'killpg', side_effect=[PermissionError(), PermissionError(), ProcessLookupError()]) as kill, \
+                mock.patch.object(slot.time, 'monotonic', side_effect=[0, .01]), \
+                mock.patch.object(slot.time, 'sleep') as sleep:
+            slot.terminate_group(process)
+        self.assertEqual(kill.call_args_list, [mock.call(123, signal.SIGTERM),
+                                              mock.call(123, signal.SIGKILL), mock.call(123, signal.SIGKILL)])
+        sleep.assert_called_once_with(.01)
+        self.assertEqual(process.wait.call_args_list, [mock.call(timeout=5), mock.call()])
+
+    def test_group_permission_errors_are_not_silenced(self):
+        for platform in ('darwin', 'linux'):
+            with self.subTest(platform=platform), mock.patch.object(sys, 'platform', platform), \
+                    mock.patch.object(slot.os, 'killpg', side_effect=[None, PermissionError()]), \
+                    mock.patch.object(slot.time, 'monotonic', side_effect=[0, 6]), \
+                    mock.patch.object(slot.time, 'sleep') as sleep:
+                with self.assertRaises(PermissionError):
+                    slot.terminate_group(mock.Mock(pid=123))
+                sleep.assert_not_called()
+
+
 class SlotTests(unittest.TestCase):
     def mutex_admission(self, limit, poll=0.005):
         read = mock.Mock(return_value=dict(available_mib=16000, total_mib=16384,

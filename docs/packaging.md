@@ -553,7 +553,10 @@ Every teardown stage runs on `bdb`, `kc` and `tkrzw`
 (`docs/runbooks/benches.md`, "Native teardown workload"). This is Linux
 provisioning, separate from the native measurement command. Keep provisioning
 inputs in an owned ext4 location under `TMPDIR` and use the same host-wide slot
-as other heavy work. Then compute the system-data identity:
+as other heavy work. Profile population and the witness checks overlap within the
+slot's CPU and memory admission; `--jobs 1` runs them in order and produces the
+same recipes, witnesses and logical profile contents. Then compute the
+system-data identity:
 
 ```sh
 just heavy -- uv run --no-project --managed-python \

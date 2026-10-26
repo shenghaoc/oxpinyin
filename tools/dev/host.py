@@ -17,18 +17,6 @@ import sys
 from . import darwin
 from .records import ContainerRef, HeadroomResources, MiB, ResourceSnapshot
 
-# The Linux cgroup reader and its tests use os.sched_getaffinity. macOS has no
-# such syscall; the all-CPU set is the equivalent native answer, and it keeps
-# the Linux-shaped reader testable on the development host.
-if not hasattr(os, 'sched_getaffinity'):
-    def _sched_getaffinity_fallback(_pid):
-        """Return all reported CPU indices, or {0} when the CPU count is unknown.
-
-        Ignore the PID; this substitutes for platforms without sched_getaffinity.
-        """
-        return set(range(os.cpu_count() or 1))
-    os.sched_getaffinity = _sched_getaffinity_fallback
-
 # These estimates use the existing Step 0 peaks from 2026-10-19 UTC.
 RUSTC_PEAK_MIB = 600        # rustc 555 MiB (test build), 492 (cold cell build), 470 (incremental)
 TEST_THREAD_PEAK_MIB = 64   # the crates' test binaries peak at 6-11 MiB; rustdoc beside them 91 MiB
@@ -42,6 +30,15 @@ TWO_SLOT_TOTAL_MIB = 15 * 1024
 # 2,232,991,744 bytes (ceil 2130 MiB). Add 20% (426 MiB), round up to 256 MiB;
 # also covers two RUNNER_PEAK_MIB (2048 MiB) and two RUSTC_PEAK_MIB (1200 MiB).
 CONTAINER_MEMORY_MIB = 2560
+
+
+def allowed_cpus() -> set[int]:
+    """Read process affinity, or all reported CPUs where affinity is unavailable.
+
+    This is a capacity read, not evidence that CPU pinning tools are available.
+    """
+    affinity = getattr(os, 'sched_getaffinity', None)
+    return affinity(0) if affinity is not None else set(range(os.cpu_count() or 1))
 
 
 def container_memory_mib(value: str | None) -> MiB:
@@ -549,7 +546,7 @@ def resource_snapshot(proc: Path = Path('/proc'),
         total = total_memory_mib(proc)
         notes.append(f'MemTotal={total} MiB' if total is not None else 'MemTotal=unknown')
         try:
-            affinity = len(os.sched_getaffinity(0))
+            affinity = len(allowed_cpus())
             if not affinity:
                 raise ValueError('empty CPU affinity')
             cpus.append(affinity)

@@ -1,6 +1,7 @@
 #!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
-"""Tests for tools/dev/pool.py: the plan arithmetic, the admission callback, the pool loop with a
-fake launcher, and a real SIGTERM against the CLI. No platform is skipped."""
+"""Tests for tools/dev/pool.py: the plan arithmetic, the admission callbacks, the pool loop with a
+fake launcher, callable units under the same loop, and a real SIGTERM against the CLI. No platform is
+skipped: /proc, CPU affinity and the slot are faked, and a unit's real children are plain Python."""
 import argparse
 import io
 import os
@@ -9,14 +10,16 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from tools.dev import host, pool
+from tools.dev import host, pool, test_support
 
 
 def running(pid):
@@ -503,6 +506,430 @@ class ContainerOwnershipTests(unittest.TestCase):
         owned.cidfile.unlink()
         self.assertFalse(pool.remove_owned(owned, run, io.StringIO()))
         self.assertEqual(calls, [])
+
+
+class FakeAdmission:
+    """HeavyAdmission stand-in: records its lifecycle and admits a fixed worker count."""
+    workers, blocked, events = 2, False, []
+
+    def __init__(self, label, env, out=None, runner=False, prepare_heavy_env=None):
+        self.label, self.prepare = label, prepare_heavy_env
+        self.env = {pool.POOL_WORKERS: str(self.workers), 'FAKE_ADMITTED': '1'}
+        self.slot = mock.Mock(pass_fds=lambda: (7,), handoff=lambda: self.events.append('handoff'))
+        self.events.append('admission')
+
+    def try_acquire(self):
+        return not self.blocked
+
+    def close(self):
+        self.events.append('close')
+
+
+class UnitPreparerTests(unittest.TestCase):
+    def prepare(self, snapshot, units=6, cap=None, mib=1024, env=None):
+        return pool.unit_preparer(units, cap, mib)(dict(env or {}), snapshot)
+
+    def test_workers_are_the_fewest_of_the_units_the_cpus_and_the_admitted_room(self):
+        headroom = host.desktop_headroom_mib(16384)
+        for room, cpus, cap, units, expected in ((10_000, 12, None, 6, 6), (10_000, 4, None, 6, 4),
+                                                (10_000, 12, 3, 6, 3), (2_500, 12, None, 6, 2),
+                                                (10_000, 12, None, 2, 2), (100, 12, None, 6, 0)):
+            with self.subTest(room=room, cpus=cpus, cap=cap, units=units):
+                child, chosen, estimate = self.prepare(resources(headroom + room, cpus=cpus), units, cap)
+                self.assertEqual(chosen[pool.POOL_WORKERS][0], expected)
+                self.assertEqual(child[pool.POOL_WORKERS], str(max(1, expected)))
+                self.assertEqual(estimate, max(1, expected) * 1024)
+
+    def test_the_reservation_never_exceeds_the_admitted_room_while_a_worker_fits(self):
+        headroom = host.desktop_headroom_mib(16384)
+        for room in range(0, 9000, 250):
+            with self.subTest(room=room):
+                _, chosen, estimate = self.prepare(resources(headroom + room, cpus=8))
+                if chosen[pool.POOL_WORKERS][0]:
+                    self.assertLessEqual(estimate, room)
+
+    def test_unknown_memory_admits_no_worker_but_reserves_one(self):
+        child, chosen, estimate = self.prepare(resources(None, cpus=8))
+        self.assertEqual((child[pool.POOL_WORKERS], chosen[pool.POOL_WORKERS][0], estimate), ('1', 0, 1024))
+
+    def test_the_callers_environment_is_kept(self):
+        child, _, _ = self.prepare(resources(10**6), env={'KEEP': 'yes'})
+        self.assertEqual(child['KEEP'], 'yes')
+
+
+class UnitRunnerTests(unittest.TestCase):
+    """Callable units under the pool loop; the admission is a fake, the children are real."""
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix='pool-units-')
+        self.work = Path(self.temporary.name)
+        self.addCleanup(self.temporary.cleanup)
+        self.lock, self.events = threading.Lock(), []
+        FakeAdmission.events, FakeAdmission.workers, FakeAdmission.blocked = self.events, 2, False
+        patcher = mock.patch('tools.dev.slot.HeavyAdmission', FakeAdmission)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def log(self, event):
+        with self.lock:
+            self.events.append(event)
+
+    def run_units(self, units, workers=2, cancelled=lambda: False, **kwargs):
+        return pool.run_units(units, workers, cancelled=cancelled, poll=0.01, grace=3, out=io.StringIO(), **kwargs)
+
+    def hold(self, name):
+        """A unit that launches a real child (and a grandchild) and holds until the pool stops it."""
+        def run(context):
+            script = ('import os, subprocess, sys, time\n'
+                      'g = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])\n'
+                      f'open({str(self.work / (name + ".pids"))!r}, "w").write(f"{{os.getpid()}} {{g.pid}}")\n'
+                      'time.sleep(60)')
+            try:
+                context.launch([sys.executable, '-c', script])
+            finally:
+                self.log('reaped-' + name)
+        return name, run
+
+    def pids(self, name):
+        deadline = time.monotonic() + 10
+        path = self.work / (name + '.pids')
+        while time.monotonic() < deadline:
+            if path.exists() and path.read_text().count(' '):
+                return [int(value) for value in path.read_text().split()]
+            time.sleep(0.01)
+        self.fail('the child never started: ' + name)
+
+    def test_no_more_than_the_workers_run_at_once_and_values_come_back_in_order(self):
+        for workers in (1, 2, 3):
+            with self.subTest(workers=workers):
+                active, peak = [0], [0]
+
+                def unit(name):
+                    def run(context):
+                        with self.lock:
+                            active[0] += 1
+                            peak[0] = max(peak[0], active[0])
+                        time.sleep(0.03)
+                        with self.lock:
+                            active[0] -= 1
+                        return name.upper()
+                    return name, run
+                names = ['a', 'b', 'c', 'd', 'e', 'f']
+                self.assertEqual(self.run_units([unit(name) for name in names], workers), [n.upper() for n in names])
+                self.assertEqual(peak[0], workers)
+
+    def test_emission_follows_unit_order_in_the_calling_thread_whatever_the_completion_order(self):
+        caller, emitted = threading.get_ident(), []
+        finished = [threading.Event() for _ in range(4)]
+
+        def unit(number):
+            def run(context):
+                # Unit n ends only after unit n+1 has: completion is the reverse of unit order.
+                if number < 3:
+                    finished[number + 1].wait(5)
+                finished[number].set()
+                return number
+            return 'u%d' % number, run
+        values = self.run_units([unit(number) for number in range(4)], 4,
+                                emit=lambda name, value: emitted.append((name, value, threading.get_ident() == caller)))
+        self.assertEqual(values, [0, 1, 2, 3])
+        self.assertEqual(emitted, [('u%d' % number, number, True) for number in range(4)])
+
+    def failing_after(self, name, hold):
+        """A unit that fails once the held unit's child is running."""
+        def run(context):
+            self.pids(hold)
+            raise ValueError('populate failed')
+        return name, run
+
+    def test_a_failure_starts_no_queued_unit_stops_the_running_and_reaps_their_children_first(self):
+        started = []
+        units = [self.hold('hold'), self.failing_after('bad', 'hold'),
+                 *[(name, lambda c, name=name: started.append(name)) for name in ('q1', 'q2', 'q3')]]
+        with self.assertRaisesRegex(ValueError, 'populate failed'):
+            self.run_units(units, 2)
+        self.assertEqual(started, [])
+        self.assertIn('reaped-hold', self.events)
+        child, grandchild = self.pids('hold')
+        self.assertFalse(running(child) or running(grandchild))
+
+    def test_units_finished_before_a_failure_are_still_emitted_in_order(self):
+        emitted = []
+        units = [('good', lambda context: 'ok'), self.hold('hold'), self.failing_after('bad', 'hold')]
+        with self.assertRaisesRegex(ValueError, 'populate failed'):
+            self.run_units(units, 3, emit=lambda name, value: emitted.append((name, value)))
+        self.assertEqual(emitted, [('good', 'ok')])
+
+    def test_the_earliest_units_own_error_is_raised_whichever_failed_first(self):
+        later_failed = threading.Event()
+
+        def first(context):
+            later_failed.wait(5)
+            raise ValueError('first')
+
+        def second(context):
+            later_failed.set()
+            raise KeyError('second')
+        with self.assertRaisesRegex(ValueError, 'first'):
+            self.run_units([('first', first), ('second', second)], 2)
+
+    def test_cancellation_stops_queued_units_and_reaps_children_before_returning(self):
+        class Cancelled(Exception):
+            pass
+        flag, started = threading.Event(), []
+        units = [self.hold('a'), self.hold('b'),
+                 *[(name, lambda c, name=name: started.append(name)) for name in ('q1', 'q2')]]
+        threading.Thread(target=lambda: (self.pids('a'), self.pids('b'), flag.set())).start()
+        with self.assertRaises(Cancelled):
+            self.run_units(units, 2, cancelled=flag.is_set, cancel_error=Cancelled)
+        self.assertEqual(started, [])
+        self.assertEqual(sorted(event for event in self.events if str(event).startswith('reaped')),
+                         ['reaped-a', 'reaped-b'])
+        for name in ('a', 'b'):
+            self.assertFalse(any(running(pid) for pid in self.pids(name)))
+
+    def test_cancellation_and_failure_kill_descendants_after_the_leader_exits(self):
+        for reason in ('cancelled', 'sibling failed'):
+            with self.subTest(reason=reason):
+                ready = self.work / (reason + '.pids')
+                # The intermediate parent stays outside the target group and reaps
+                # the stubborn descendant, so even a container without a reaping
+                # PID 1 can observe the target group's disappearance with killpg.
+                child = ('import os, signal, sys, time\n'
+                         'os.setpgid(0, int(sys.argv[1]))\n'
+                         'signal.signal(signal.SIGTERM, signal.SIG_IGN)\n'
+                         f'open({str(ready)!r}, "w").write(f"{{os.getpgrp()}} {{os.getppid()}}")\n'
+                         'time.sleep(60)\n')
+                reaper = ('import os, subprocess, sys\n'
+                          'os.setpgrp()\n'
+                          f'subprocess.Popen([sys.executable, "-c", {child!r}, sys.argv[1]]).wait()\n')
+                leader = ('import os, signal, subprocess, sys, time\n'
+                          'signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))\n'
+                          f'subprocess.Popen([sys.executable, "-c", {reaper!r}, str(os.getpid())])\n'
+                          'time.sleep(60)\n')
+                flag, groups = threading.Event(), []
+
+                def hold(context):
+                    return context.launch([sys.executable, '-c', leader], poll=.01)
+
+                def stop(context):
+                    deadline = time.monotonic() + 10
+                    while time.monotonic() < deadline:
+                        if ready.exists() and ready.read_text().count(' '):
+                            groups.extend(map(int, ready.read_text().split()))
+                            break
+                        context.check()
+                        time.sleep(.01)
+                    else:
+                        raise AssertionError('descendant did not become ready')
+                    os.killpg(groups[0], 0)
+                    if reason == 'cancelled':
+                        flag.set()
+                    else:
+                        raise ValueError(reason)
+
+                try:
+                    error = pool.UnitsCancelled if reason == 'cancelled' else ValueError
+                    with self.assertRaisesRegex(error, reason):
+                        self.run_units([('leader', hold), ('stop', stop)], cancelled=flag.is_set)
+                    deadline = time.monotonic() + 10
+                    while time.monotonic() < deadline:
+                        try:
+                            os.killpg(groups[0], 0)
+                        except ProcessLookupError:
+                            break
+                        except PermissionError:
+                            # A transient permission error is not proof that the
+                            # group is gone; keep waiting for ProcessLookupError.
+                            pass
+                        time.sleep(.01)
+                    with self.assertRaises(ProcessLookupError):
+                        os.killpg(groups[0], 0)
+                finally:
+                    for group in groups:
+                        try:
+                            os.killpg(group, signal.SIGKILL)
+                        except (ProcessLookupError, PermissionError):
+                            pass
+
+    def test_a_serial_run_sees_cancellation_at_its_checks_and_reaps_its_child(self):
+        class Cancelled(Exception):
+            pass
+        flag = threading.Event()
+        threading.Timer(0.2, flag.set).start()
+        units = [self.hold('a'), ('b', lambda context: self.log('b'))]
+        with self.assertRaises(Cancelled):
+            pool.run_admitted(units, 'label', cancelled=flag.is_set, serial=True, cancel_error=Cancelled,
+                              out=io.StringIO())
+        self.assertEqual([event for event in self.events if event != 'admission'], ['reaped-a'])
+        self.assertFalse(any(running(pid) for pid in self.pids('a')))
+
+    def test_a_pooled_run_cancelled_at_a_unit_check_raises_the_cancel_error(self):
+        class Cancelled(Exception):
+            pass
+        flag = threading.Event()
+        threading.Timer(0.2, flag.set).start()
+        FakeAdmission.workers = 2
+        with self.assertRaises(Cancelled):
+            pool.run_admitted([self.hold('a'), self.hold('b')], 'label', cancelled=flag.is_set,
+                              cancel_error=Cancelled, out=io.StringIO())
+        self.assertEqual(self.events[-1], 'close')
+
+    def test_the_stop_reaches_a_unit_only_at_its_checks(self):
+        context = pool.UnitContext('u', threading.Event())
+        context.check()
+        context.stop.set()
+        with self.assertRaises(pool.UnitStopped):
+            context.check()
+
+    def test_a_driver_view_adds_the_stop_to_the_drivers_own_check(self):
+        driver = mock.Mock(check_cancelled=mock.Mock(), other='kept')
+        context = pool.UnitContext('u', threading.Event())
+        view = context.driver(driver)
+        view.check_cancelled()
+        driver.check_cancelled.assert_called_once_with()
+        self.assertEqual(view.other, 'kept')
+        driver.check_cancelled.side_effect = RuntimeError('driver cancelled')
+        with self.assertRaisesRegex(RuntimeError, 'driver cancelled'):
+            view.check_cancelled()
+        driver.check_cancelled.side_effect = None
+        context.stop.set()
+        with self.assertRaises(pool.UnitStopped):
+            view.check_cancelled()
+
+    def test_launch_returns_status_and_output_with_the_units_environment_and_descriptors(self):
+        with open(self.work / 'held', 'w') as held:
+            context = pool.UnitContext('u', threading.Event(), environment={'UNIT_PROBE': 'admitted'},
+                                       fds=(held.fileno(),))
+            script = ('import os, sys\nos.fstat(int(sys.argv[1]))\nprint(os.environ["UNIT_PROBE"], flush=True)\n'
+                      'print("to stderr", file=sys.stderr)\nsys.exit(3)')
+            done = context.launch([sys.executable, '-c', script, str(held.fileno())])
+        self.assertEqual((done.status, done.stdout, done.stderr), (3, b'admitted\n', b'to stderr\n'))
+
+    def test_launch_closes_stdin_and_honours_an_explicit_environment(self):
+        context = pool.UnitContext('u', threading.Event(), environment={'UNIT_PROBE': 'unit'})
+        done = context.launch([sys.executable, '-c', 'import os, sys; print(repr(sys.stdin.read()), os.environ.get("UNIT_PROBE"))'],
+                              env={'ONLY': '1'})
+        self.assertEqual(done.stdout, b"'' None\n")
+
+    def test_each_running_unit_leases_its_own_cpu_and_returns_it(self):
+        seen, together = [], threading.Barrier(3, timeout=5)
+
+        def unit(name):
+            def run(context):
+                together.wait()
+                seen.append(context.cpu)
+            return name, run
+        launcher = pool.ProcessLauncher(cpus=[5, 6, 7])
+        self.run_units([unit(name) for name in 'abc'], 3, launcher=launcher)
+        self.assertEqual(sorted(seen), [5, 6, 7])
+        self.assertEqual(sorted(launcher.leases.get_nowait() for _ in range(3)), [5, 6, 7])
+
+    def test_a_unit_without_a_lease_has_no_cpu(self):
+        seen = []
+        self.run_units([('a', lambda context: seen.append(context.cpu))], 1)
+        self.assertEqual(seen, [None])
+
+    def test_units_and_launched_processes_share_one_pool(self):
+        path = self.work / 'process-ran'
+        tasks = [pool.Task('process', [sys.executable, '-c', f'open({str(path)!r}, "w").write("x")']),
+                 pool.Task('unit', [], run=lambda context: self.log('unit'))]
+        launcher = pool.ProcessLauncher()
+        result = pool.run_pool(tasks, 2, launcher, cancelled=lambda: False, poll=0.01, out=io.StringIO())
+        self.assertTrue(result.ok)
+        self.assertEqual(result.started, ['process', 'unit'])
+        self.assertTrue(path.exists())
+        self.assertEqual(self.events, ['unit'])
+
+    def test_duplicate_unit_names_are_refused_before_anything_starts(self):
+        started = []
+        with self.assertRaisesRegex(ValueError, 'distinct'):
+            self.run_units([('a', lambda c: started.append(1)), ('a', lambda c: started.append(2))])
+        self.assertEqual(started, [])
+
+
+class AdmittedTests(unittest.TestCase):
+    """admitted and run_admitted, against a fake slot admission."""
+    def setUp(self):
+        self.events = []
+        FakeAdmission.events, FakeAdmission.workers, FakeAdmission.blocked = self.events, 2, False
+        patcher = mock.patch('tools.dev.slot.HeavyAdmission', FakeAdmission)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def run_admitted(self, units, **kwargs):
+        kwargs.setdefault('cancelled', lambda: False)
+        return pool.run_admitted(units, 'label', out=io.StringIO(), **kwargs)
+
+    def test_the_budget_carries_the_admitted_workers_environment_and_slot_descriptors(self):
+        with pool.admitted(5, 'label', cancelled=lambda: False, out=io.StringIO()) as budget:
+            self.assertEqual((budget.workers, budget.fds), (2, (7,)))
+            test_support.assert_same_environment(self, budget.env,
+                                                 {pool.POOL_WORKERS: '2', 'FAKE_ADMITTED': '1'})
+            self.assertEqual(self.events, ['admission', 'handoff'])
+        self.assertEqual(self.events[-1], 'close')
+
+    def test_the_admission_is_released_when_the_block_fails(self):
+        with self.assertRaisesRegex(RuntimeError, 'boom'):
+            with pool.admitted(5, 'label', cancelled=lambda: False, out=io.StringIO()):
+                raise RuntimeError('boom')
+        self.assertEqual(self.events[-1], 'close')
+
+    def test_cancellation_while_waiting_raises_the_callers_error_and_releases(self):
+        FakeAdmission.blocked = True
+        flag = threading.Event()
+        threading.Timer(0.2, flag.set).start()
+
+        class Cancelled(Exception):
+            pass
+        with self.assertRaises(Cancelled):
+            with pool.admitted(5, 'label', cancelled=flag.is_set, cancel_error=Cancelled, out=io.StringIO()):
+                self.fail('no unit may start')
+        self.assertEqual(self.events, ['admission', 'close'])
+
+    def test_serial_and_single_unit_runs_are_in_order_in_the_caller_with_no_admission(self):
+        caller, seen = threading.get_ident(), []
+        units = [(name, lambda context, name=name: seen.append((name, threading.get_ident() == caller)) or name)
+                 for name in 'abc']
+        emitted = []
+        self.assertEqual(self.run_admitted(units, serial=True, emit=lambda name, value: emitted.append(name)), list('abc'))
+        self.run_admitted(units[:1])
+        self.assertEqual(seen, [('a', True), ('b', True), ('c', True), ('a', True)])
+        self.assertEqual(emitted, list('abc'))
+        self.assertEqual(self.events, [])
+
+    def test_a_serial_failure_stops_the_remaining_units(self):
+        ran = []
+
+        def bad(context):
+            raise ValueError('first')
+        with self.assertRaisesRegex(ValueError, 'first'):
+            self.run_admitted([('a', lambda c: ran.append('a')), ('b', bad), ('c', lambda c: ran.append('c'))], serial=True)
+        self.assertEqual(ran, ['a'])
+
+    def test_the_pool_is_sized_by_admission_the_unit_count_and_the_cpu_list(self):
+        for admitted_workers, cpus, expected in ((1, [0, 1, 2, 3], 1), (6, [0, 1, 2, 3], 4), (3, [0, 1], 2), (6, None, 4)):
+            with self.subTest(admitted=admitted_workers, cpus=cpus):
+                FakeAdmission.workers = admitted_workers
+                active, peak, together = [0], [0], threading.Event()
+
+                def run(context):
+                    with threading.Lock():
+                        active[0] += 1
+                        peak[0] = max(peak[0], active[0])
+                        if active[0] == expected:
+                            together.set()
+                    together.wait(2) if expected > 1 else time.sleep(.01)
+                    time.sleep(.02)
+                    active[0] -= 1
+                self.run_admitted([(name, run) for name in 'abcd'], cpus=cpus)
+                self.assertEqual(peak[0], expected)
+
+    def test_units_see_the_admitted_environment_and_the_pool_releases_after_them(self):
+        seen = []
+        self.run_admitted([('a', lambda c: seen.append((c.environment.get('FAKE_ADMITTED'), c.fds))),
+                           ('b', lambda c: seen.append((c.environment.get('FAKE_ADMITTED'), c.fds)))])
+        self.assertEqual(seen, [('1', (7,)), ('1', (7,))])
+        self.assertEqual(self.events[-1], 'close')
 
 
 if __name__ == '__main__':
