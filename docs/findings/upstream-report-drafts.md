@@ -11,8 +11,10 @@ was added 2026-09-27 UTC: `pinyin_init` leaves the process
 A seventh draft, item 7, was added 2026-10-21 UTC: temporary Berkeley
 DB handles leak on failed user-database loads (#993). An eighth, item 8,
 was added 2026-10-22 UTC: every Berkeley DB `save_db` passes the wrong
-handle to `DB->sync`, which has no observable effect. The file now holds
-eight drafts; items 7 and 8 are ready to file as separate reports.
+handle to `DB->sync`, which has no observable effect. A ninth, item 9,
+was added 2026-10-26 UTC: the `SORT_BY_PINYIN_LENGTH` key wraps at 8 bits
+(#1275). The file now holds nine drafts; items 7, 8 and 9 are ready to file
+as separate reports.
 Filing is the
 maintainer's action (and account); nothing here has been posted. The
 collection mandate is `AGENTS.md`'s ("collected to report back to
@@ -708,6 +710,37 @@ Nothing has been filed upstream.
 
 ---
 
+## 9. `SORT_BY_PINYIN_LENGTH` compares the span in 8 bits
+
+**Severity: low** — a wrong candidate order, no memory or abort hazard.
+
+`compare_item_with_sort_option` (`src/pinyin.cpp:1692-1694` at `074a2219`)
+reads the pinyin length as `guint8 len = m_end - m_begin`, but the span is
+a `guint16` difference (`lookup_candidate_t`, `:103-104`) with no 255-byte
+bound: the parser accepts any run of apostrophes
+(`src/storage/pinyin_parser2.cpp:238-251`), each becomes a zero key the
+matrix search steps over without counting it toward `MAX_PHRASE_LENGTH`
+(`src/storage/phonetic_key_matrix.cpp:69-80,383-393`), and
+`pinyin_guess_candidates` records the whole span (`src/pinyin.cpp:2246`).
+A span of 256 bytes or more wraps, so the longer candidate sorts as a
+short one.
+
+```c
+char input[2 + 251 + 3 + 1] = "ni";
+memset(input + 2, '\'', 251);
+strcpy(input + 253, "hao");            /* 你好 spans 256 bytes */
+pinyin_parse_more_full_pinyins(inst, input);
+pinyin_guess_candidates(inst, 0, SORT_BY_PINYIN_LENGTH);
+/* 你好 (key 0) sorts after 你 (key 2); with 250 apostrophes it is first. */
+```
+
+**Suggested fix:** compare the spans as `guint16` (or `gint`) values.
+
+oxpinyin reproduces the wrap (#1275; contract-diff
+`pinyin-length-wrap/span-*`). Nothing has been filed upstream.
+
+---
+
 ## Filing notes
 
 - Independence: no fix touches another; file items 1–4 as four issues.
@@ -716,6 +749,7 @@ Nothing has been filed upstream.
   own. Item 7 is a separate BDB resource-leak report, ready to file.
   Item 8 is a separate BDB report with no observable effect; it can go
   with item 7 or on its own.
+  Item 9 is a separate ranking report.
 - Order: 1 (info leak) → 2 (API inconsistency) → 3, 4 (abort classes).
 - Credit line per `AGENTS.md` attribution rules is the maintainer's to
   place; the reproductions above stand alone.

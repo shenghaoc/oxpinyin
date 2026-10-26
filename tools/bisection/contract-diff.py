@@ -10215,6 +10215,39 @@ for _mode in ('pinyin', 'zhuyin'):
     case('glib-sort-candidates-' + _mode, mode=_mode, control=True, issues=('927',))(glib_sort_candidates)
 
 
+# #1275: the pin's SORT_BY_PINYIN_LENGTH key is `guint8 len = m_end -
+# m_begin` (074a2219 `pinyin.cpp:1692-1694`). Any run of apostrophes parses
+# (`storage/pinyin_parser2.cpp:238-251`) into zero keys the matrix search
+# steps over without counting them (`storage/phonetic_key_matrix.cpp:69-80,
+# 383-393`), so `ni`, N apostrophes and `hao` give 你好 a span of 5 + N bytes
+# at offset 0 (`pinyin.cpp:2246`) while the one-syllable rows span 2. From
+# 256 bytes the key wraps; a sort word carrying SORT_BY_PHRASE_LENGTH still
+# ranks 你好 first, so those words are controls inside every case.
+PINYIN_LENGTH_SORTS = (0x08, 0x09, 0x0a, 0x0c, 0x18, 0x1a, 0x1c, 0x1e)
+
+
+def pinyin_length_rows(apostrophes):
+    """Full offset-0 candidate lists of `ni`, apostrophes, `hao` under each pinyin-length sort word."""
+    def probe(k):
+        """Parse the whole input on a fresh instance, list every sort word and require a non-empty list."""
+        text = b'ni' + b"'" * apostrophes + b'hao'
+        inst = k.alloc()
+        parsed = k.fn('parse_more_full_pinyins', Z, P, S)(inst, text)
+        assert parsed == len(text), parsed
+        out = {'span': len(text), 'parsed': parsed}
+        for sort in PINYIN_LENGTH_SORTS:
+            rows = guess_rows(k, inst, 0, sort)
+            assert rows['ret'] and rows['rows'], hex(sort)
+            out[hex(sort)] = rows
+        return out
+    return probe
+
+
+for _apostrophes, _control in ((0, True), (10, True), (250, True), (251, False), (252, False), (507, False)):
+    case('pinyin-length-wrap/span-%d' % (5 + _apostrophes), control=_control, issues=('1275',))(
+        pinyin_length_rows(_apostrophes))
+
+
 # #728: mask_out rebuilds loaded system sub-indexes from disk, then merges
 # the saved user log with the mask (074a2219 pinyin.cpp:1253-1285,
 # zhuyin.cpp:788-820). The separate phrase table keeps the imported token,

@@ -116,8 +116,33 @@ tools/bisection/run-contract-diff.sh bdb "$PINYIN_ORACLE_PREFIX" \
 Result on bdb: 71 of 71 MATCH. kc and tkrzw: not run; no backend code
 changed (`tools/bisection/cells-for-diff.py`).
 
-## Not covered
+## Pinyin-length key (#1275)
 
 The pin's pinyin-length key wraps at 8 bits (`guint8`, `pinyin.cpp:1692-1694`),
-tracked as #1275; it does not affect the merge decision, because a wrapped
-key is still a total preorder.
+and a candidate can span 256 bytes or more, since apostrophes become zero
+keys that do not count toward `MAX_PHRASE_LENGTH`
+(`phonetic_key_matrix.cpp:69-80,383-393`). `RankKey::for_sort_word` now
+truncates the span to `u8` (upstream report draft 9). It does not affect the
+merge decision: a wrapped key is still a total preorder.
+
+The pin's zhuyin facade has no span key: `compare_item_with_length_and_frequency`
+(`zhuyin.cpp:1129-1144`) compares phrase length and frequency only, under
+`g_array_sort` (`:1529,1610`). oxpinyin's zhuyin lists now use the same
+comparator: the zhuyin C API sets `CandidateRanking::LengthThenFrequency` on
+each session at instance setup, and both the after-cursor scan and the
+before-cursor slices rank with `SORT_BY_PHRASE_LENGTH | SORT_BY_FREQUENCY`
+under it (`Session::rank_word`). Nothing observable changes, because the span key always tied
+there:
+
+- a phrase length is a key count (`phrase_index.h:136-150`; zhuyin import
+  refuses a mismatch, `zhuyin.cpp:525`);
+- the zhuyin parses run no split pass (`zhuyin.cpp:1030-1038,1069-1076`),
+  `fill_matrix` puts one key per column (`phonetic_key_matrix.cpp:51-55`)
+  and fuzzy keys keep the span (`:254-258`), so every phrase of one length
+  from one offset ends at one byte; oxpinyin's zhuyin matrix has no split
+  keys either (`Session::ensure_matrix`);
+- the only same-length rows with different spans the pin makes are copies of
+  one token across an apostrophe run (`zhuyin.cpp:1499-1512` does not skip
+  zero keys), and they share the token's `m_freq` (`:1229-1270`). oxpinyin's
+  scan does not make the copies, and the pin's dedup keeps the shortest one
+  (`:1408`).
