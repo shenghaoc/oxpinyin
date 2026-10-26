@@ -63,7 +63,7 @@
 # always-running `ci-aggregate` job at the tail reports on every push
 # and PR no matter what changed — it is the shape a required check
 # needs. Main's required set is `ci-aggregate`. `ci-aggregate`
-# fails when any lane that should have run failed or was cancelled,
+# fails when an applicable lane fails; superseded run sets stay cancelled,
 # and when a gated-out lane was skipped despite its paths changing.
 # The path-set bypass (a PR editing ci.yml to skip its own lanes) is
 # closed as far as this workflow can close it — the aggregate compares
@@ -82,6 +82,8 @@ on:
 
 permissions:
   contents: read
+  actions: read
+  pull-requests: read
 
 defaults:
   run:
@@ -143,12 +145,20 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       run: ${{ steps.gate.outputs.run }}
+      reuse: ${{ steps.evidence.outputs.reuse }}
+      tree: ${{ steps.evidence.outputs.tree }}
+      source_run: ${{ steps.evidence.outputs.source_run }}
       function_order: ${{ steps.gate.outputs.function_order }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
+      - name: Look up complete successful PR evidence for this tree
+        id: evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tools/dev/ci_tree.py evidence ci
       - name: Require the Bash floor
         shell: bash
         run: . tools/lib/bash-floor.sh
@@ -187,7 +197,7 @@ jobs:
 
   lint:
     needs: changes
-    if: needs.changes.outputs.run == 'true'
+    if: needs.changes.outputs.run == 'true' && (needs.changes.outputs.reuse != 'true' || github.event_name == 'push')
     runs-on: ubuntu-latest
     container:
       image: debian:testing # deliberately unpinned; see store-backends.yml header
@@ -203,7 +213,7 @@ jobs:
       - name: Bootstrap the bare runner essentials (apt)
         run: |
           apt-get update -qq
-          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl
+          apt-get install -y --no-install-recommends bash python3 tar gzip zstd git ca-certificates curl
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -224,6 +234,7 @@ jobs:
       # The distribution package supplies ShellCheck; the checked minimum is
       # the version whose findings this tree is clean under. No installer.
       - name: ShellCheck tracked scripts (>= 0.11.0)
+        if: needs.changes.outputs.reuse != 'true'
         run: |
           set -euo pipefail
           apt-get install -y --no-install-recommends shellcheck
@@ -233,7 +244,9 @@ jobs:
             { printf '::error::ShellCheck %s is older than 0.11.0\n' "$version"; exit 1; }
           git ls-files -z -- '*.sh' | xargs -0 -r shellcheck --severity=warning
       - run: cargo fmt --all --check
+        if: needs.changes.outputs.reuse != 'true'
       - run: cargo fmt --manifest-path fuzz/Cargo.toml --all --check
+        if: needs.changes.outputs.reuse != 'true'
       # Placement gate for crate-level `#![cfg(...)]`. A gate that
       # evaluates false discards the crate attributes written AFTER it, so
       # one placed above a `//!` block takes the docs with it and
@@ -245,13 +258,17 @@ jobs:
       # for every host from here. Harness first: a regression in the
       # checker itself must not pass quietly.
       - run: tests/lint-crate-cfg-placement.test.sh
+        if: needs.changes.outputs.reuse != 'true'
       - run: .github/scripts/lint-crate-cfg-placement.sh
+        if: needs.changes.outputs.reuse != 'true'
       # Drop-in version agreement: the capi manifests' header subdirectory
       # and pkg_config version against the pin record (issue #537). The
       # full installed-tree diff, tools/packaging/check-pc-metadata.sh,
       # needs the pin-built libpinyin, which CI never has.
       - run: tools/packaging/check-pc-version.sh
+        if: needs.changes.outputs.reuse != 'true'
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
+        if: needs.changes.outputs.reuse != 'true'
       # Complexity ratchet: no function may exceed CCN 40 (current max is
       # 38, the user/store.rs quartet — a tracked refactor target, never
       # allowed to grow past the limit). Moved here from verify-nightly
@@ -261,14 +278,21 @@ jobs:
       # ephemeral, there is no system Python to protect. 1.24.0 is the
       # release the ratchet was validated against locally.
       - run: apt-get install -y --no-install-recommends python3-pip
+        if: needs.changes.outputs.reuse != 'true'
       - run: pip install --break-system-packages lizard==1.24.0
+        if: needs.changes.outputs.reuse != 'true'
       - name: Bash floor source lines
+        if: needs.changes.outputs.reuse != 'true'
         run: python3 tools/dev/bash_floor.py
       - run: lizard crates/ -l rust -C 40
+        if: needs.changes.outputs.reuse != 'true'
+      - name: Refresh the main Rust cache using the lane's compile mode
+        if: github.event_name == 'push' && needs.changes.outputs.reuse == 'true'
+        run: python3 tools/dev/ci_tree.py refresh lint
 
   test:
     needs: changes
-    if: needs.changes.outputs.run == 'true'
+    if: needs.changes.outputs.run == 'true' && (needs.changes.outputs.reuse != 'true' || github.event_name == 'push')
     runs-on: ubuntu-latest
     container:
       image: debian:testing # deliberately unpinned; see store-backends.yml header
@@ -284,7 +308,7 @@ jobs:
       - name: Bootstrap the bare runner essentials (apt)
         run: |
           apt-get update -qq
-          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl
+          apt-get install -y --no-install-recommends bash python3 tar gzip zstd git ca-certificates curl
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -302,6 +326,7 @@ jobs:
         # berkeley-db@5, so that job does not use this apt line.
         run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libdb-dev libglib2.0-dev
       - name: Set up pinned repository Python
+        if: needs.changes.outputs.reuse != 'true'
         run: |
           set -euo pipefail
           uv_install_dir="$HOME/.local/bin"
@@ -343,6 +368,7 @@ jobs:
           assert Path(sys.executable).resolve() == Path(managed).resolve()
           PYTHON
       - name: Install pinned just
+        if: needs.changes.outputs.reuse != 'true'
         run: |
           # Exact on purpose (#1074): a checksum is only known for a known version.
           ver=1.59.0
@@ -358,6 +384,7 @@ jobs:
           ~/.local/bin/just --version
           test "$(~/.local/bin/just --version)" = "just ${ver}"
       - name: Run tools Python harness tests
+        if: needs.changes.outputs.reuse != 'true'
         shell: bash
         run: just test-tools
       # The w3 fixture manifest is a byte-identity gate that nothing
@@ -368,8 +395,10 @@ jobs:
       # is a check, run from the repo root because the manifest's paths are
       # repo-relative.
       - name: Verify the w3 fixture checksums
+        if: needs.changes.outputs.reuse != 'true'
         run: sha256sum -c fixtures/w3/fixtures.sha256
       - name: Install pinned cargo-nextest
+        if: needs.changes.outputs.reuse != 'true'
         run: |
           # Exact on purpose (#1074): a checksum is only known for a known version.
           ver=0.9.143
@@ -381,9 +410,12 @@ jobs:
           install -m755 cargo-nextest ~/.local/bin
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - run: cargo nextest run --locked --profile ci --status-level skip --workspace
+        if: needs.changes.outputs.reuse != 'true'
       # nextest does not run doctests; keep the same workspace selection.
       - run: cargo test --locked --doc --workspace
+        if: needs.changes.outputs.reuse != 'true'
       - name: C++ pinyin.h smoke gate
+        if: needs.changes.outputs.reuse != 'true'
         run: tools/bisection/run-cpp-smoke.sh
       # The exported-symbol gate: each cdylib exports exactly its pin
       # version script's set (libpinyin.ver 79, libzhuyin.ver 52) and
@@ -391,6 +423,7 @@ jobs:
       # allowed) and in the packaged one (--features shipped, hooks
       # compiled out). The packaged mode is the last step of this job.
       - name: ABI export gate (development build)
+        if: needs.changes.outputs.reuse != 'true'
         run: tools/abi/check-exports.sh
       # The allocator-pairing gate: every pointer the two C ABIs hand a
       # consumer is classified in libpinyin.alloc / libzhuyin.alloc, and a
@@ -400,6 +433,7 @@ jobs:
       # new allocating entry point nobody classified. No extra apt package:
       # the g++ installed above already carries libasan/liblsan.
       - name: Allocator-pairing gate
+        if: needs.changes.outputs.reuse != 'true'
         run: tools/abi/check-alloc-pairing.sh
       # The exported-symbol gate's packaged mode runs after every gate that
       # uses the development build (#970). Only oxpinyin-capi rebuilds for
@@ -408,6 +442,7 @@ jobs:
       # files and fingerprint in target/cells/bdb. A development-build gate
       # after this step would compile oxpinyin-capi again.
       - name: ABI export gate (shipped build)
+        if: needs.changes.outputs.reuse != 'true'
         run: tools/abi/check-exports.sh --shipped
 
   # macOS links a C store backend: Homebrew's keg-only berkeley-db@5 (the
@@ -423,9 +458,13 @@ jobs:
   # The Windows job with the same exclude set runs in verify-nightly.yml.
   # Containers run on Linux runners only, so these operating systems get
   # their own jobs rather than a containerized matrix.
+      - name: Refresh the main Rust cache using the lane's compile mode
+        if: github.event_name == 'push' && needs.changes.outputs.reuse == 'true'
+        run: python3 tools/dev/ci_tree.py refresh test
+
   test-macos:
     needs: changes
-    if: needs.changes.outputs.run == 'true'
+    if: needs.changes.outputs.run == 'true' && (needs.changes.outputs.reuse != 'true' || github.event_name == 'push')
     runs-on: macos-latest
     timeout-minutes: 45
     steps:
@@ -437,6 +476,7 @@ jobs:
           rust-cache: 'true'
       - run: rustup show active-toolchain
       - name: Set up pinned repository Python
+        if: needs.changes.outputs.reuse != 'true'
         run: |
           set -euo pipefail
           uv_install_dir="$HOME/.local/bin"
@@ -489,6 +529,7 @@ jobs:
           assert Path(sys.executable).resolve() == Path(managed).resolve()
           PYTHON
       - name: Install pinned just
+        if: needs.changes.outputs.reuse != 'true'
         run: |
           # Exact on purpose (#1074): a checksum is only known for a known version.
           ver=1.59.0
@@ -515,6 +556,7 @@ jobs:
           ~/.local/bin/just --version
           test "$(~/.local/bin/just --version)" = "just ${ver}"
       - name: Run tools Python harness tests
+        if: needs.changes.outputs.reuse != 'true'
         shell: bash
         run: just test-tools
       # The macOS reference backend uses the same libdb release as Linux;
@@ -534,6 +576,7 @@ jobs:
           brew list --versions berkeley-db@5 | grep -Eq '^berkeley-db@5 5[.]3[.]' \
             || { echo "::error::Homebrew berkeley-db@5 is not the documented 5.3.x line: $(brew list --versions berkeley-db@5)"; exit 1; }
       - name: Install pinned cargo-nextest
+        if: needs.changes.outputs.reuse != 'true'
         run: |
           # Exact on purpose (#1074): a checksum is only known for a known version.
           ver=0.9.143
@@ -544,17 +587,24 @@ jobs:
           mkdir -p ~/.local/bin
           install -m755 cargo-nextest ~/.local/bin
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-      - run: >
+      - if: needs.changes.outputs.reuse != 'true'
+        run: >
           cargo nextest run --locked --profile ci --status-level skip --workspace --no-default-features --features bdb
           --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi
           --exclude oxpinyin-corpus --exclude oxpinyin-kmm --exclude oxpinyin-punct
           --exclude oxpinyin-word
       # nextest does not run doctests; keep the same features and exclusions.
-      - run: >
+      - if: needs.changes.outputs.reuse != 'true'
+        run: >
           cargo test --locked --doc --workspace --no-default-features --features bdb
           --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi
           --exclude oxpinyin-corpus --exclude oxpinyin-kmm --exclude oxpinyin-punct
           --exclude oxpinyin-word
+
+      - name: Refresh the main Rust cache using the lane's compile mode
+        if: github.event_name == 'push' && needs.changes.outputs.reuse == 'true'
+        run: python3 tools/dev/ci_tree.py refresh test-macos
+
 
   # Supply-chain gate. cargo-deny's advisories check consumes the same
   # RustSec DB cargo-audit uses, so this one job replaces both tools; the
@@ -568,7 +618,7 @@ jobs:
   # workflow's header).
   deny:
     needs: changes
-    if: needs.changes.outputs.run == 'true'
+    if: needs.changes.outputs.run == 'true' && needs.changes.outputs.reuse != 'true'
     runs-on: ubuntu-latest
     container:
       image: debian:testing # deliberately unpinned; see store-backends.yml
@@ -660,7 +710,7 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/function-order-policy
 
-  # The required aggregate check: always runs, always reports. Red only
+  # The required aggregate runs after failures, and remains cancellable. Red only
   # when a lane that should have run ended as
   # anything but success, or when the path gate said run but a lane
   # was skipped anyway (a broken `if`, or a PR narrowing its own
@@ -671,45 +721,31 @@ jobs:
   ci-aggregate:
     needs:
       [changes, lint, test, test-macos, deny]
-    if: always()
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
-      - name: Fail when any lane failed, was cancelled, or skipped unjustly
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Require every applicable lane to succeed
         env:
-          CHANGES: ${{ needs.changes.result }}
-          GATED: ${{ needs.changes.outputs.run }}
-          LINT: ${{ needs.lint.result }}
-          TEST: ${{ needs.test.result }}
-          TEST_MACOS: ${{ needs.test-macos.result }}
-          DENY: ${{ needs.deny.result }}
-        run: |
-          set -euo pipefail
-          status=0
-          if [ "$CHANGES" != success ]; then
-            echo "::error::the changes job ended as $CHANGES"
-            status=1
-          fi
-          lane() {
-            local name="$1" result="$2"
-            case "$result" in
-              success) ;;
-              skipped)
-                if [ "$GATED" = true ]; then
-                  echo "::error::$name skipped although the path gate said run"
-                  status=1
-                fi
-                ;;
-              *)
-                echo "::error::$name ended as $result"
-                status=1
-                ;;
-            esac
-          }
-          lane lint "$LINT"
-          lane test "$TEST"
-          lane test-macos "$TEST_MACOS"
-          lane deny "$DENY"
-          if [ "$status" -eq 0 ]; then
-            echo "all lanes green (gated=$GATED)"
-          fi
-          exit $status
+          NEEDS: ${{ toJSON(needs) }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: python3 tools/dev/ci_tree.py aggregate ci
+
+
+  tree-evidence:
+    name: tested tree ${{ needs.changes.outputs.tree }}
+    needs: [changes, ci-aggregate, lint, test, test-macos, deny]
+    if: ${{ needs.changes.outputs.run == 'true' && needs.changes.outputs.reuse == 'false' && needs.changes.result == 'success' && needs.ci-aggregate.result == 'success' && needs.lint.result == 'success' && needs.test.result == 'success' && needs.test-macos.result == 'success' && needs.deny.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo 'All concrete verification lanes passed for this checkout tree.'
+
+  reused-tree-evidence:
+    name: reused tree ${{ needs.changes.outputs.tree }} from run ${{ needs.changes.outputs.source_run }}
+    needs: [changes, ci-aggregate]
+    if: ${{ !cancelled() && needs.changes.outputs.reuse == 'true' && needs.ci-aggregate.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo 'The original full PR run was revalidated for this exact tree.'
