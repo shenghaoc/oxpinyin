@@ -138,6 +138,38 @@ what used to differ.
 - **Record:** [G2 closure](glib-libc-verification.md#g2--c-strings-joins-and-vectors);
   verified 2026-10-25 UTC on bdb.
 
+### Unterminated punctuation value over-read
+
+- **Upstream source cite:** `src/storage/punct_table.cpp:57-72`
+  (`PunctTableEntry::unescape`) and `:74-94` (`get_all_punctuations`),
+  reached from `pinyin_guess_predicted_candidates_with_punctuations`
+  (`src/pinyin.cpp:2474`). The disassembly of the bdb reference build
+  (`unescape` at `0x72020`, `get_all_punctuations` at `0x72080`) has the
+  same control flow.
+- **Mechanism:** `unescape` appends `punct[index]`, increments `index`,
+  then reads `punct[index]` to test for the terminator before the loop
+  checks `index < maxlen`. When a run reaches the value's last whole word,
+  that read is one `ucs4_t` past the value. A zero breaks the loop and any
+  other word ends it at the loop test, so both outcomes return
+  `index + 1`: the run, and so the visible punctuation, does not depend
+  on the word read. `get_all_punctuations` passes `end - begin` as
+  `maxlen`, an arithmetic right shift of the byte difference, and
+  compares `begin < end` on bytes, so a value whose length is not a
+  multiple of four is walked as its whole words, with one more empty
+  punctuation (`maxlen` zero) when 1–3 bytes remain after a terminated run.
+- **What oxpinyin does instead:** `crates/oxpinyin-data/src/row_format.rs`
+  `punct::decode_puncts` ends the run at the value's last whole word without
+  reading past it, and walks a misaligned tail as the pin's compiled walk
+  does. Its result is the pin's visible result.
+- **Externally observable:** only when the pin's read faults, which needs
+  the copied value to end where mapped memory ends. Otherwise the rows
+  are identical. Class (b): the out-of-bounds read and its possible fault
+  are not reproduced.
+- **Cases:** `punct-decode/unterminated`, `punct-decode/unterminated-zero`,
+  `punct-decode/misaligned-terminated`,
+  `punct-decode/misaligned-unterminated` and `punct-decode/misaligned-short`
+  of `contract-diff.py` MATCH on bdb (#1144, 2026-10-26 UTC).
+
 ### Public bigram export is a rendering surface
 
 - **Upstream source cite:** `src/pinyin.cpp:775-918`.

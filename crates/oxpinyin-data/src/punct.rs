@@ -17,6 +17,7 @@
 
 use std::path::Path;
 
+use oxpinyin_core::PhraseText;
 use oxpinyin_store::{DefaultStore, ReadStore};
 
 use crate::chewing_table::{ChewingDbm, DefaultDbm, RawChewingDbm};
@@ -54,12 +55,13 @@ impl<D: ChewingDbm> PunctTable<D> {
         self.dbm.is_some()
     }
 
-    /// Punctuation strings stored for `token`, in table order.
+    /// Punctuations stored for `token`, in table order, as stored words
+    /// (`decode_puncts`).
     ///
     /// # Errors
     ///
-    /// Returns [`DictError`] when the read fails or the value is malformed.
-    pub fn punctuations(&self, token: u32) -> Result<Vec<String>, DictError> {
+    /// Returns [`DictError`] when the read fails.
+    pub fn punctuations(&self, token: u32) -> Result<Vec<PhraseText>, DictError> {
         let Some(dbm) = self.dbm.as_ref() else {
             return Ok(Vec::new());
         };
@@ -72,7 +74,7 @@ impl<D: ChewingDbm> PunctTable<D> {
         if value.is_empty() {
             return Ok(Vec::new());
         }
-        decode_puncts(&value)
+        Ok(decode_puncts(&value))
     }
 }
 
@@ -164,7 +166,7 @@ mod tests {
 
         let table = PunctTable::new(dbm);
         let result = table.punctuations(token).unwrap();
-        assert_eq!(result, vec!["，", "。"]);
+        assert_eq!(result, ["，", "。"]);
     }
 
     #[test]
@@ -176,10 +178,10 @@ mod tests {
     }
 
     #[test]
-    fn malformed_value_does_not_panic() {
+    fn malformed_value_decodes_as_the_pin_walks_it() {
         let dbm = MemoryDbm::new();
         dbm.put(0x0100_0295_u32.to_le_bytes().to_vec(), vec![0xFF; 3]);
         let table = PunctTable::new(dbm);
-        assert!(table.punctuations(0x0100_0295).is_err());
+        assert_eq!(table.punctuations(0x0100_0295).unwrap(), [""]);
     }
 }

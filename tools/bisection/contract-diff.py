@@ -1737,6 +1737,96 @@ def _(k):
     return out
 
 
+# punct.bin decoding (#1144). `PunctTableEntry::unescape` appends the
+# word at the cursor, then each nonzero word after it up to a zero or the
+# value's last whole word, and the walk steps one word past that run
+# (`src/storage/punct_table.cpp:57-94` at pin 074a2219). The pin hands each
+# run to C through `g_string_append_unichar`, so a non-scalar takes GLib's
+# historical form and a zero first word cuts to an empty string. Each case
+# writes the system `punct.bin` in the running cell's native format and
+# records the punctuation rows' raw bytes.
+def punct_words(*words):
+    """Encode u32 words little-endian, the `punct.bin` value layout."""
+    return b''.join(word.to_bytes(4, 'little') for word in words)
+
+
+def punct_fixture(k, rows_for):
+    """Replace the system `punct.bin` with crafted rows and reopen lazily.
+
+    `rows_for(k)` runs on the original data and returns `(text, value)`
+    pairs; every token of `text` gets `value`. Copy the system tree to
+    scratch, write the table natively (`_craft_db` with `system_index`: a
+    btree on bdb, a TreeDB on kc, a TreeDBM on tkrzw, as each pin's
+    `PunctTable::attach` opens it) and close the cached instance and context."""
+    rows = [(token.to_bytes(4, 'little'), value)
+            for text, value in rows_for(k) for token in tokens_of(k, text)]
+    k.fn('free_instance', None, P)(k._inst)
+    k._inst = None
+    k.fn('fini', None, P)(k._ctx)
+    k._ctx = None
+    copied = tempfile.mkdtemp(prefix='sys-', dir=k.scratch)
+    shutil.copytree(k.data, copied, dirs_exist_ok=True)
+    k.data = copied
+    _craft_db(str(Path(copied, 'punct.bin')), rows, 1, system_index=True)
+
+
+def punct_rows(k, prefix):
+    """Run the punctuation prediction for `prefix` and record its rows.
+
+    Return the call's result, the punctuation rows' bytes as hex in list
+    order, the kinds of the first rows and the other rows' count."""
+    inst = k.inst
+    ret = k.fn('guess_predicted_candidates_with_punctuations', B, P, S)(inst, prefix.encode())
+    count = U()
+    assert k.fn('get_n_candidate', B, P, C.POINTER(U))(inst, C.byref(count))
+    kinds, puncts = [], []
+    for i in range(count.value):
+        cand, kind, text = P(), I(), S()
+        k.fn('get_candidate', B, P, U, C.POINTER(P))(inst, i, C.byref(cand))
+        k.fn('get_candidate_type', B, P, P, C.POINTER(I))(inst, cand, C.byref(kind))
+        kinds.append(kind.value)
+        if kind.value == 8:
+            k.fn('get_candidate_string', B, P, P, C.POINTER(S))(inst, cand, C.byref(text))
+            puncts.append(None if text.value is None else text.value.hex())
+    return dict(ret=ret, puncts=puncts, kinds=kinds[:len(puncts) + 2],
+                others=len(kinds) - len(puncts))
+
+
+def punct_decode_case(value):
+    """A case that stores `value` under 我 and predicts after 我."""
+    def probe(k):
+        """Craft the table, then record the punctuation rows for 我."""
+        punct_fixture(k, lambda _k: [('我', value)])
+        return punct_rows(k, '我')
+    return probe
+
+
+PUNCT_DECODE_CASES = {
+    # Controls: identical before and after #1144.
+    'valid': punct_words(0xFF0C, 0, 0x3002, 0),
+    'zero-length': b'',
+    # Non-scalars: a surrogate, the first value above Unicode, the first
+    # five- and six-byte forms and the largest word.
+    'surrogate': punct_words(0xD800, 0, 0xFF0C, 0xDFFF, 0),
+    'above-unicode': punct_words(0x11_0000, 0, 0x20_0000, 0, 0x400_0000, 0, 0xFFFF_FFFF, 0),
+    # No final zero: the pin reads one word past the value either way.
+    'unterminated': punct_words(0xFF0C, 0, 0x3002, 0x3001),
+    'unterminated-zero': punct_words(0xFF0C, 0, 0),
+    # Length not a multiple of four: whole words, then one empty
+    # punctuation after a terminated run.
+    'misaligned-terminated': punct_words(0xFF0C, 0) + b'A',
+    'misaligned-unterminated': punct_words(0xFF0C) + b'AB',
+    'misaligned-short': b'ABC',
+    # A zero first word is an empty punctuation that still takes the
+    # nonzero words after it.
+    'empty': punct_words(0, 0, 0xFF0C, 0),
+    'empty-leading': punct_words(0, 0xFF0C, 0, 0x3002, 0),
+}
+for _name, _value in PUNCT_DECODE_CASES.items():
+    case('punct-decode/' + _name, control=_name in ('valid', 'zero-length'),
+         issues=('1144',))(punct_decode_case(_value))
+
+
 def remember_negative(count):
     """Build a phrase-remembering case with the supplied signed count, including controls.
 

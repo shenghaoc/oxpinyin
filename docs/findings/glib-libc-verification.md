@@ -1324,20 +1324,18 @@ order/dedup #928. No zhuyin punctuation-export twin is implied.
 
 | Partition | Verdict / evidence | Investigation |
 | --- | --- | --- |
-| Well-formed, nonempty, scalar, terminated fields | Inventory source conclusion: identical strings. | Partial: inherited BEHAVIOR-COVERED applies only to exercised valid values; not all lookup/order states. |
-| Non-u32-aligned byte length | Pending pin/subject classification; Rust decoder Err -> runtime empty vector. | Unverified pin load_entry/unescape outcome per backend. |
-| Empty punctuation field | Pending pin/subject classification; Rust decoder Err -> runtime empty vector. | Unverified pin whole path per backend. |
-| Non-scalar code point | Inventory identifies extended UTF-8 versus scalar rejection mechanism; pending complete discrepancy record #1144. | Partial mechanism only; G1's phrase-text record does not admit this independent producer. |
-| Unterminated stored value | Inventory identifies class-(b) over-read candidate at `unescape`'s next-word access; complete outcome/classification pending #1144. | Partial source defect, unverified per-backend whole path. |
-| Absent DBM entry | Pending comparative verdict; Rust `Ok(Vec::new())`, not decoder error. | Unverified pin per-backend outcome. |
-| Zero-length stored value | Pending comparative verdict; Rust `Ok(Vec::new())`, bypasses decoder. | Unverified pin per-backend outcome. |
-| Unopened table | Pending comparative verdict; Rust `Ok(Vec::new())`, bypasses decoder. | Unverified pin per-backend outcome. |
+| Well-formed, nonempty, scalar, terminated fields | Identical strings. | `punct-decode/valid` MATCH on bdb (#1144). |
+| Non-u32-aligned byte length | Pin rows reproduced: whole words, then one empty row after a terminated run. | `punct-decode/misaligned-*` MATCH on bdb (#1144). |
+| Empty punctuation field | Pin rows reproduced: a zero first word is an empty string. | `punct-decode/empty`, `punct-decode/empty-leading` MATCH on bdb (#1144). |
+| Non-scalar code point | Pin bytes reproduced through `phrase_text_bytes`; no quirk record needed. | `punct-decode/surrogate`, `punct-decode/above-unicode` MATCH on bdb (#1144). |
+| Unterminated stored value | Pin rows reproduced; the one-word over-read is class (b), [registered](upstream-divergences.md#unterminated-punctuation-value-over-read). | `punct-decode/unterminated`, `punct-decode/unterminated-zero` MATCH on bdb (#1144). |
+| Absent DBM entry | No row on either side. | Source: `load_entry` leaves the chunk empty on a failed get (`punct_table_bdb.cpp:145,154-156`), and `get_all_punctuations` returns `false` on a zero-size chunk (`punct_table.cpp:78-79`). |
+| Zero-length stored value | No row on either side. | `punct-decode/zero-length` MATCH on bdb (#1144). |
+| Unopened table | No row on either side. | Source: `pinyin_init` ignores a failed attach (`pinyin.cpp:437-441`); `load_entry` returns `false` with no database (`punct_table_bdb.cpp:141-142`). |
 
-For the Rust empty-vector paths, prediction prepends no punctuation and
-returns its normal true; existing predicted candidates need not be empty.
-Neither that C result nor the shared empty vector proves the pin result.
-No malformed partition above is certified by valid-only differential
-coverage. No pending partition is a request for a human ruling yet.
+The full partition is the inventory's
+[G15](glib-libc-inventory.md#g15--punctuation) (closed 2026-10-26 UTC).
+Order and duplicates remain #928.
 
 ## G16 — Tool-interface check
 

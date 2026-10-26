@@ -92,7 +92,7 @@ for libpinyin and libzhuyin, `pinyin` for the prediction-only surfaces;
 | G12 | file I/O and `MemoryChunk`: `mmap` 10, `munmap` 2, `lseek` 4, `read` 5, `write` 3, `open` 3, `close` 12, `unlink` 22, `fopen` 3, `fclose` 8, `fprintf` 36 | both; all | `data/src/phrase_library.rs` `map_chunk`, `MappedFile`, chunk header; `user/src/persistence.rs`; `data/src/pin_stderr.rs` raw bytes | valid: same mapped extent, header check and file bytes. malformed: short/truncated/directory chunk; write failures. | contract on valid files. malformed: class (b) rows 76/96/109; #929 for writes | rows 76, 96, 109; #929 |
 | G13 | C primitives: `memset` 124, `memcpy` 28, `strlen` 18, `strcmp` 18, `memcmp` 10, `memmove` 7, `strchr` 2 | both; all | Rust slices/`str`; `data/src/row_format.rs`, `core/src/single_gram.rs`, `capi/src/ffi.rs` | valid: same bytes. malformed: NULL/unreadable phrase strings and out-of-range walks are class (b) rows. | contract; class (b) at the registered NULL/over-read rows | rows 80, 106 |
 | G14 | libm: `log` 7 (`phonetic_lookup.h:39,250,663,693`; `phrase_lookup.cpp:40,321,342`) | both; all | `core/src/cost.rs` `cost_of_probability` / `surprisal` (fixed-point `log2_fixed`); `engine/src/nbest.rs` `poss` | valid: class (a) last-bit differences are accepted. | class (a), row 11; record only | no child (math record) |
-| G15 | punctuation decoding: `punct_table.cpp:56-72` `unescape`, `:74-94` `get_all_punctuations`, reached at `pinyin.cpp:2474` | pinyin; all | `data/src/row_format.rs` `decode_puncts`; `data/src/punct.rs` `PunctTable::punctuations` (`Err(DictError::Parse)` for malformed non-empty; `Ok(Vec::new())` for unopened/absent/empty); `runtime/src/lib.rs:721` (`RuntimeDict::punctuations` uses `unwrap_or_default`); `capi/src/predict.rs:308` | valid: identical punctuation strings. decoder errors and lookup states are partitioned below; they are not one case. | valid: contract. malformed: class (b) over-read, non-scalar quirk, and empty results separately; no ruling | **#1144** |
+| G15 | punctuation decoding: `punct_table.cpp:56-72` `unescape`, `:74-94` `get_all_punctuations`, reached at `pinyin.cpp:2474` | pinyin; all | `data/src/row_format.rs` `decode_puncts` (stored words per punctuation; infallible); `data/src/punct.rs` `PunctTable::punctuations` (`Err` only for a failed read; `Ok(Vec::new())` for unopened/absent/empty); `runtime/src/lib.rs` `RuntimeDict::punctuations`; `capi/src/predict.rs` `prepend_punctuations` (`phrase_text_bytes` at the C boundary) | valid: identical punctuation strings. malformed: non-scalar, empty, unterminated and misaligned values give the pin's rows; partitions below. | contract; class (b) for the unterminated over-read only, registered (2026-10-26 UTC, #1144) | **#1144** |
 | G16 | tool-only GLib: `tag_utility.cpp` (`g_strsplit_set`, `g_unichar_*`, `g_strv_length`, `g_utf8_get_char/next_char`, `g_ptr_array_foreach`, `g_hash_table_foreach_steal`, `g_warning`); `table_text_parser.h` (`g_ascii_strtoull`, `g_strlcpy`); the `load_text` methods | not C ABI | `data/src/interp.rs`, `data/src/interp_grammar.rs`; `training/src/counter/parse.rs`; `dictool/src/format.rs` | valid: tool input. malformed: separator, escape, category and `atoi` quirks. | quirk, tool scope | #926 |
 | G17 | dead code: `pinyin_lookup2.cpp`, `chewing_large_table.cpp`, `phrase_large_table2.cpp`, `facade_chewing_table.h`, `facade_phrase_table2.h`, `PunctTableEntry::escape/append/remove`, `#if 0` dumps | none | no shipped counterpart; the runtime uses `PhoneticLookup`, `PhraseLookup` and the large-table-3/chunk path | n/a | negative coverage | — |
 
@@ -105,9 +105,10 @@ three candidate/sentence/export paths (`pinyin.cpp:1627-1645` and
 `lookup.cpp:27-60`; the export is `pinyin.cpp:698-716`). GLib 2.89.4
 encodes surrogates and values above U+10FFFF and stops at an embedded
 U+0000. Rust `char`/`str` cannot represent the first two, and
-`PhraseItemView::phrase_chars` treats them as unreadable; `decode_puncts`
-rejects them. The valid-input path is byte-identical; the malformed
-cases are #894 (phrase text) and #1144 (punctuation). `phrase_segment` is
+`PhraseItemView::phrase_chars` treats them as unreadable. The valid-input
+path is byte-identical; the malformed cases are #894 (phrase text) and
+#1144 (punctuation), both now carried as stored words and encoded at the C
+boundary. `phrase_segment` is
 different: it deliberately keeps the direct GLib conversion because the
 C entry's precondition and warning are observable (#918), and #924 keeps
 the GLib-owned conversion buffer's `g_free`.
@@ -474,44 +475,32 @@ replacement child for `std` calls.
 
 ### G15 — punctuation
 
-`decode_puncts` is the decoder for a **stored, non-empty** value. A
-malformed value returns `Err(DictError::Parse)`; `PunctTable::punctuations`
-propagates it, and `RuntimeDict::punctuations` turns it into an empty
-vector through `unwrap_or_default`. An unopened table, an absent DBM
-entry and a zero-length stored value bypass `decode_puncts` and return
-`Ok(Vec::new())` directly.
+Closed 2026-10-26 UTC (#1144). `decode_puncts` walks a stored value as
+`get_all_punctuations` does (`punct_table.cpp:57-94`) and keeps each
+punctuation's stored words (`PhraseText`); `prepend_punctuations` encodes
+them with `phrase_text_bytes`, the encoder #894 and #1198 use, which is
+the `g_string_append_unichar` form (GLib 2.84.4 `gstring.c:816-888`
+copies `g_unichar_to_utf8`, `gutf8.c:546-596`). `PunctTable::punctuations`
+fails only on a failed read; an unopened table, an absent entry and a
+zero-length value answer `Ok(Vec::new())`, as the pin's
+`get_all_punctuations` answers `false` on a zero-size chunk (`:78-79`).
 
-| Partition | oxpinyin result | `RuntimeDict::punctuations` | C API |
+| Partition | Pin (`074a2219`) | oxpinyin | Case |
 | --- | --- | --- | --- |
-| Stored value length is not a multiple of 4 | `decode_puncts` -> `Err(DictError::Parse)` | empty vector | no punctuation prepended; `pinyin_guess_predicted_candidates_with_punctuations` returns its normal `true`, not an empty candidate list |
-| Empty punctuation field (zero code point while the current field is empty) | `decode_puncts` -> `Err(DictError::Parse)` | empty vector | as above |
-| Code point is not a Unicode scalar value | `decode_puncts` -> `Err(DictError::Parse)` | empty vector | as above |
-| Unterminated stored value | `decode_puncts` -> `Err(DictError::Parse)` | empty vector | as above |
-| Absent DBM entry | `PunctTable::punctuations` -> `Ok(Vec::new())` | empty vector | no punctuation prepended; normal `true` |
-| Zero-length stored value | `PunctTable::punctuations` -> `Ok(Vec::new())` | empty vector | no punctuation prepended; normal `true` |
-| Unopened table | `PunctTable::punctuations` -> `Ok(Vec::new())` | empty vector | no punctuation prepended; normal `true` |
+| Scalar words, each punctuation zero-terminated | the strings | identical | `punct-decode/valid` |
+| Zero-length stored value | no row (`size == 0`) | no row | `punct-decode/zero-length` |
+| Surrogate or value above U+10FFFF | GLib's three- to six-byte form | identical bytes | `punct-decode/surrogate`, `punct-decode/above-unicode` |
+| Zero first word | `unescape` appends it, so `g_strdup` cuts to an empty string; the run still takes the nonzero words after it | identical | `punct-decode/empty`, `punct-decode/empty-leading` |
+| No final zero | the run ends at the last whole word after a one-word over-read whose result is not used | identical rows; no over-read | `punct-decode/unterminated`, `punct-decode/unterminated-zero` |
+| Length not a multiple of 4 | `maxlen` is the `sar` of the byte difference and `begin < end` compares bytes: whole words, then one empty row after a terminated run | identical | `punct-decode/misaligned-terminated`, `punct-decode/misaligned-unterminated`, `punct-decode/misaligned-short` |
+| Absent DBM entry, unopened table | no row | no row | — |
 
-The three findings stay separate:
-
-- **Class (b), over-read.** The unterminated value is the row where the
-  pin's `PunctTableEntry::unescape` reads `punct[index]` after advancing
-  `index`, one `ucs4_t` past the value. That is #1144's class (b) half.
-- **Language/runtime quirk, non-scalar conversion.** A surrogate or a
-  value above U+10FFFF is encoded by the pin's
-  `g_string_append_unichar` into invalid UTF-8; Rust's `char` cannot
-  hold it, so `decode_puncts` refuses the value.
-- **Empty results.** An absent entry, a zero-length value and an unopened
-  table are lookup states, not decoder errors. They are not evidence
-  that a malformed value was decoded.
-
-The pin's result for each malformed partition through `load_entry` and
-`unescape`, including the bdb/kc/tkrzw differences, is deliberately left
-to #1144. This inventory records the Rust result and the C-visible
-outcome only.
-
-`BEHAVIOR-COVERED` applies only to the inputs the differential
-exercised (valid punctuation values). It does not establish any
-malformed partition above.
+The unterminated read is class (b), registered as
+[Unterminated punctuation value over-read](upstream-divergences.md#unterminated-punctuation-value-over-read):
+the rows match whenever the pin returns, and only the read and its
+possible fault are not reproduced. The other partitions are ordinary
+compatibility. All eleven cases MATCH on bdb; against the parent build the
+two controls match and the other nine differ.
 
 ### G16 and G17 — tools and dead code
 
@@ -535,7 +524,7 @@ child column is the audit that must decide it.
 | `capi/src/ffi.rs` `cstr_to_string`, `cstr_to_parsed_prefix`, `cstr_to_strict`, `cstr_to_path` | `g_utf8_to_ucs4` / `g_utf8_strlen` gates; raw C path bytes | `pinyin.cpp:1450-1454`; `zhuyin.cpp:969-973`; `pinyin.cpp:1498-1509` | #918 |
 | `capi/src/phrase.rs` `segment_text` | `g_utf8_strlen` + `g_utf8_to_ucs4` gate and `g_return_val_if_fail` | `pinyin.cpp:1450-1454`; `zhuyin.cpp:969-973` | #918 |
 | `data/src/phrase_library.rs` `phrase_chars` | `g_ucs4_to_utf8` on stored phrase text | `pinyin.cpp:1627-1645`; `lookup.cpp:27-60`; `pinyin.cpp:698-716` | #894 |
-| `data/src/row_format.rs` `decode_puncts` | `PunctTableEntry::unescape` / `get_all_punctuations` | `punct_table.cpp:56-94` | #1144 |
+| `data/src/row_format.rs` `decode_puncts`; `capi-marshal/src/phrase_text.rs` `phrase_text_bytes` | `PunctTableEntry::unescape` / `get_all_punctuations`; `g_string_append_unichar` | `punct_table.cpp:56-94` | #1144 (closed: pin rows reproduced; over-read class (b)) |
 | `capi/src/aux_matrix.rs` `AuxMatrix::chewing`, `join` | `g_utf8_substring`, `g_strconcat` with a NULL middle | `pinyin.cpp:3518-3576` | #925 |
 | `capi/src/predict.rs` `prepend_punctuations`, `seen` | `g_strv_length` + `g_strv_contains` + reverse prepend | `pinyin.cpp:2456-2498` | #928 |
 | `data/src/pin_stderr.rs` `build_filename` | `g_build_filename` raw bytes for stderr | `table_info.cpp:201,332`; `pinyin.cpp:338`; `zhuyin.cpp:282` | #922 |

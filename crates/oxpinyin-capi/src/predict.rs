@@ -323,12 +323,13 @@ pub fn guess_predicted_with_punctuations(inst: &mut CapiInstance, prefix: &str) 
 }
 
 fn prepend_punctuations(inst: &mut CapiInstance, prefixes: &[u32]) {
-    let mut puncts: Vec<String> = Vec::new();
-    let mut seen: HashSet<String> = HashSet::new();
+    let mut puncts: Vec<Vec<u8>> = Vec::new();
+    let mut seen: HashSet<Vec<u8>> = HashSet::new();
     for token in prefixes {
         for punct in inst.core.dict.punctuations(*token) {
-            if seen.insert(punct.clone()) {
-                puncts.push(punct);
+            let bytes = phrase_text_bytes(&punct).into_owned();
+            if seen.insert(bytes.clone()) {
+                puncts.push(bytes);
             }
         }
     }
@@ -337,7 +338,7 @@ fn prepend_punctuations(inst: &mut CapiInstance, prefixes: &[u32]) {
     }
     let rest = inst.candidates.take();
     for text in puncts {
-        let Some(text) = inst.candidates.intern(text.as_bytes()) else {
+        let Some(text) = inst.candidates.intern(&text) else {
             continue;
         };
         inst.candidates.push(CapiCandidate {
