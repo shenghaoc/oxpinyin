@@ -28,7 +28,8 @@ pub struct PunctRow {
     pub count: u64,
 }
 
-/// Parses one `fscanf("%u %s %s %ld")` `punct.table` line.
+/// Parses one `punct.table` line, the four fields upstream reads with
+/// `table_text_read_punct_record` (074a2219 `table_text_parser.h:99-121`).
 #[must_use]
 pub fn parse_punct_line(line: &str) -> Option<PunctRow> {
     let line = line.trim();

@@ -2,8 +2,10 @@
 //!
 //! The files in `model20.text.tar.gz` are line-oriented with four
 //! whitespace-separated fields, read upstream by
-//! `fscanf("%255s %255s %u %ld")`; blank lines and short lines are skipped
-//! there, and skipped here. Tokens are the library's `phrase_token_t` and
+//! `table_text_read_pinyin_record` (074a2219
+//! `src/storage/table_text_parser.h:34-97`); blank lines and short lines are
+//! skipped there, and skipped here. Where the two readers part on malformed
+//! rows is recorded in `docs/findings/926-tool-tokenizers.md`. Tokens are the library's `phrase_token_t` and
 //! are taken verbatim from the column — `FacadePhraseIndex::load_text`
 //! never renumbers them (`PHRASE_INDEX_LIBRARY_INDEX(token) ==
 //! phrase_index` is asserted upstream).
@@ -66,8 +68,8 @@ pub fn read_table_file(path: &Path) -> Result<Vec<TableRow>, DatagenError> {
         if trimmed.is_empty() || trimmed.starts_with('#') {
             continue;
         }
-        // Upstream's fscanf reads four fields and would re-tokenize a
-        // fifth as the next row's pinyin; a strict compiler refuses the
+        // Upstream ignores everything after the fourth field
+        // (`table_text_parser.h:34-52`); a strict compiler refuses the
         // line instead (no pinned row carries extra fields). The check
         // applies to candidate rows only — comments are skipped above.
         if trimmed.split_whitespace().count() > 4 {
