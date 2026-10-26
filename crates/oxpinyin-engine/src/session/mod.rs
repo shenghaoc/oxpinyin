@@ -172,6 +172,11 @@ pub struct Session<D, L> {
     /// surface's one-row-per-sentence law) by default. Surface config, set
     /// once and surviving every reset — not part of [`Self::sentence`].
     collapse_sentence_rows_to_best: bool,
+    /// Which comparator orders the candidate lists — the pinyin facade's sort
+    /// word by default, libzhuyin's fixed comparator when a zhuyin facade
+    /// sets it ([`Session::set_candidate_ranking`]). Surface config, like
+    /// [`Self::collapse_sentence_rows_to_best`].
+    candidate_ranking: CandidateRanking,
     /// The n-best trellis's `<nstore, nbest>` — libpinyin's `<2, 3>` by
     /// default, libzhuyin's `<1, 1>` when a zhuyin facade sets it
     /// ([`Session::set_nbest_shape`]). Surface config, like
@@ -933,6 +938,19 @@ fn dynamic_adjust_bigram_possibility(
     Ok(freq as f32 / total as f32)
 }
 
+/// Which comparator a session's candidate lists are sorted with.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum CandidateRanking {
+    /// libpinyin's `compare_item_with_sort_option` (`pinyin.cpp:1678-1709`)
+    /// under the stored sort word.
+    #[default]
+    SortWord,
+    /// libzhuyin's `compare_item_with_length_and_frequency`
+    /// (`zhuyin.cpp:1129-1144`): phrase length, then frequency, whatever the
+    /// sort word.
+    LengthThenFrequency,
+}
+
 /// The three sort keys of the pinned candidate construction.
 ///
 /// `Ord` derives the pinned precedence: phrase length first, then pinyin
@@ -942,8 +960,9 @@ fn dynamic_adjust_bigram_possibility(
 struct RankKey {
     /// Unicode scalar count of the candidate text.
     phrase_length: usize,
-    /// Bytes of the raw input the candidate covers.
-    pinyin_span: usize,
+    /// Bytes of the raw input the candidate covers, as the pin's `guint8`
+    /// key holds them: the low 8 bits.
+    pinyin_span: u8,
     /// Real unigram count from the model's frequency table.
     frequency: u32,
     /// The pin's `m_freq` whatever the sort word: the string dedup reads it
@@ -1044,8 +1063,11 @@ impl RankKey {
             } else {
                 0
             },
+            // `guint8 len_lhs = item_lhs->m_end - item_lhs->m_begin;`
+            // (`pinyin.cpp:1692-1694` at 074a2219): a span of 256 bytes or
+            // more wraps, an upstream defect reproduced as is (#1275).
             pinyin_span: if sort_word & SORT_BY_PINYIN_LENGTH != 0 {
-                pinyin_span
+                pinyin_span as u8
             } else {
                 0
             },

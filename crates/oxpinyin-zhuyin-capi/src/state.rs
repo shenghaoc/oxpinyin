@@ -68,6 +68,11 @@ impl CapiContext {
         // the observable list carries exactly one sentence row — see
         // `Session::set_collapse_sentence_rows_to_best`.
         core.session.set_collapse_sentence_rows_to_best(true);
+        // libzhuyin sorts its candidate lists with
+        // `compare_item_with_length_and_frequency` (`zhuyin.cpp:1129-1144`),
+        // not the pinyin sort word.
+        core.session
+            .set_candidate_ranking(oxpinyin_engine::CandidateRanking::LengthThenFrequency);
         // libzhuyin's trellis is `PhoneticLookup<1, 1>` (`zhuyin.cpp:50`),
         // not libpinyin's `<2, 3>`: one value per node, one sentence tail.
         core.session

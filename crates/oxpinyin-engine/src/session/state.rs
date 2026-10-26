@@ -124,6 +124,7 @@ where
             scoring: ScoringConfig::default(),
             key_costs,
             collapse_sentence_rows_to_best: false,
+            candidate_ranking: CandidateRanking::SortWord,
             nbest_shape: crate::nbest::NbestShape::default(),
             defer_list_builds: false,
             input: InputBuffer::default(),
@@ -514,6 +515,32 @@ where
     /// display the 1-best string), so it must not be absorbed here either.
     pub const fn set_collapse_sentence_rows_to_best(&mut self, collapse: bool) {
         self.collapse_sentence_rows_to_best = collapse;
+    }
+
+    /// Selects the comparator the candidate lists are sorted with: the
+    /// pinyin facade's sort word ([`CandidateRanking::SortWord`], the
+    /// default) or libzhuyin's ([`CandidateRanking::LengthThenFrequency`]).
+    pub const fn set_candidate_ranking(&mut self, ranking: CandidateRanking) {
+        self.candidate_ranking = ranking;
+    }
+
+    /// The sort word that orders this session's candidate lists under its
+    /// [`CandidateRanking`].
+    ///
+    /// The zhuyin comparator has no span key, and the span key would always
+    /// tie on a zhuyin list anyway: a phrase length is a key count
+    /// (`phrase_index.h:136-150`; zhuyin import refuses a mismatch,
+    /// `zhuyin.cpp:525`); a zhuyin column's keys share one end
+    /// (`zhuyin.cpp:1030-1038,1069-1076` run no split pass; fuzzy keys keep
+    /// the span, `phonetic_key_matrix.cpp:254-258`); and the only longer
+    /// copies the pin makes cross an apostrophe run with the same token's
+    /// frequency (`zhuyin.cpp:1499-1512`, `:1229-1270`), which this scan does
+    /// not produce.
+    pub(super) const fn rank_word(&self) -> u32 {
+        match self.candidate_ranking {
+            CandidateRanking::SortWord => self.lookup.sort_word,
+            CandidateRanking::LengthThenFrequency => SORT_BY_PHRASE_LENGTH | SORT_BY_FREQUENCY,
+        }
     }
 
     /// Selects whether the parse seams ([`Session::replace_raw`] and its

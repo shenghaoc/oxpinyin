@@ -4092,6 +4092,21 @@ fn the_candidate_comparator_wraps_large_frequency_gaps() {
     assert!(key(u32::MAX).pin_compare(&key(1)) > 0);
 }
 
+/// The pinyin-length key is the pin's `guint8` span (`pinyin.cpp:1692-1694`):
+/// 256 bytes wraps to 0 and sorts after a 2-byte span, 257 after 255.
+#[test]
+fn the_pinyin_length_key_wraps_at_eight_bits() {
+    let key = |span| super::RankKey::for_sort_word(1, span, 0, super::SORT_BY_PINYIN_LENGTH);
+    assert!(
+        key(255).pin_compare(&key(2)) < 0,
+        "longer span first below 256"
+    );
+    assert!(key(256).pin_compare(&key(2)) > 0, "256 wraps to 0");
+    assert!(key(257).pin_compare(&key(255)) > 0, "257 wraps to 1");
+    assert_eq!(key(258).pin_compare(&key(2)), 0, "258 and 2 tie");
+    assert!(key(600).pin_compare(&key(100)) > 0, "600 wraps to 88");
+}
+
 /// Of two rows with one text the larger `m_freq` survives wherever the sort
 /// put it, a tie keeps the earlier row, and the order of the rest holds
 /// (`pinyin.cpp:2128-2138`).

@@ -267,6 +267,9 @@ where
                     gate,
                 )?
                 .unwrap_or_else(|| vec![0; collected.len()]);
+            // `Session::rank_word`: the sort word, or libzhuyin's fixed
+            // comparator (`zhuyin.cpp:1129-1144`) on a zhuyin facade.
+            let rank_word = self.rank_word();
             // One key row per candidate, sorted and applied in place: the
             // candidates never leave `collected`, and the key rows are the
             // only per-call buffer of this stage.
@@ -284,7 +287,7 @@ where
                         candidate.phrase_length(),
                         candidate.consumed_bytes(),
                         frequency,
-                        self.lookup.sort_word,
+                        rank_word,
                     );
                     (key, index as u32)
                 })
@@ -757,6 +760,7 @@ where
     ) -> Result<usize, EngineError> {
         out.clear();
         self.ensure_matrix()?;
+        let rank_word = self.rank_word();
         let matrix = if self.collapse_sentence_rows_to_best {
             self.input.ending_matrix.as_ref()
         } else {
@@ -828,12 +832,14 @@ where
             slice_keys.clear();
             slice_keys.extend(group.iter().zip(frequencies).enumerate().map(
                 |(index, (candidate, frequency))| {
-                    let key = RankKey {
-                        phrase_length: candidate.phrase_length(),
-                        pinyin_span: candidate.consumed_bytes(),
-                        frequency: frequency as u32,
-                        m_freq: frequency as u32,
-                    };
+                    // `Session::rank_word`: on the zhuyin facade, phrase
+                    // length then frequency (`zhuyin.cpp:1129-1144`).
+                    let key = RankKey::for_sort_word(
+                        candidate.phrase_length(),
+                        candidate.consumed_bytes(),
+                        frequency,
+                        rank_word,
+                    );
                     (key, index as u32)
                 },
             ));
