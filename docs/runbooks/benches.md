@@ -478,6 +478,25 @@ because libdb seeds `srandom_r` from the process. With `--teardown-cache cold`,
 each sample evicts as above and Callgrind is NOT RUN. None of these samples is
 a primary timing sample; report primary timings from `confirm`.
 
+## Per-page residency attribution
+
+`tools/dev/measure/pages.py` (#1163) is the shared core for naming the file
+pages that become resident during a cold sample; neither controller calls it
+yet. It compares one file's `mincore` vectors from two checkpoints and lists
+each newly resident object page with every section and symbol it overlaps:
+ELF section headers with `.symtab` and `.dynsym` (`elf_sections`,
+`elf_symbols`), or thin arm64 and x86_64 Mach-O segments, sections and
+`LC_SYMTAB` symbols (`macho_segments`, `macho_sections`, `macho_symbols`).
+Data and user files are reported as byte ranges (`offset_range`). Fat Mach-O
+and other formats are refused. Two limits apply to every result:
+
+- A `mincore` difference includes readahead. A page that became resident
+  between two checkpoints was not necessarily faulted; the kernel may have
+  read it ahead of a fault on a nearby page.
+- Pausing at a checkpoint can let outstanding readahead finish. Pages
+  requested before one checkpoint can arrive during the pause and show as
+  newly resident at the next.
+
 ## Criterion benches
 
 | crate | bench | needs |
