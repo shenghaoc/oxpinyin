@@ -74,11 +74,10 @@ class ControllerTests(unittest.TestCase):
             with contextlib.redirect_stderr(io.StringIO()):
                 self.assertEqual(st.main([*self.argv, '--profiles', 'empty']), 1)
 
-    def test_cold_is_refused_on_linux_and_windows_before_filesystem_or_slot(self):
-        # #1162 owns the Linux sampler and replaces this text when it lands.
-        for system, extra, message in (
-                ('linux', ['--cache', 'cold'], 'startup: cold cache is not implemented on Linux (#1162)\n'),
-                ('win32', [], 'startup: native startup supports Linux/macOS; Windows is deferred (#950)\n')):
+    def test_cold_is_refused_on_windows_before_filesystem_or_slot(self):
+        # Cold mode exists on Linux and macOS only; any other host refuses before admission.
+        for system, extra in (('win32', []), ('win32', ['--cache', 'cold']), ('freebsd14', ['--cache', 'cold'])):
+            message = 'startup: native startup supports Linux/macOS; Windows is deferred (#950)\n'
             with self.subTest(system=system), mock.patch.object(st.sys, 'platform', system), \
                     mock.patch.object(slot, 'HeavyAdmission') as admission, \
                     contextlib.redirect_stderr(io.StringIO()) as error:
@@ -86,13 +85,21 @@ class ControllerTests(unittest.TestCase):
             test_support.assert_not_called(self, admission)
             self.assertEqual(error.getvalue(), message)
 
-    def test_cold_validates_on_macos_with_no_approval_gate(self):
+    def test_cold_validates_on_macos_and_linux_with_no_approval_gate(self):
         args = st.parser().parse_args([*self.argv, '--profiles', 'empty', '--cache', 'cold'])
-        with mock.patch.object(st.sys, 'platform', 'darwin'):
-            self.assertEqual(st.validate(args), {'empty': self.root / 'profiles/empty/user'})
+        for system in ('darwin', 'linux'):
+            with self.subTest(system=system), mock.patch.object(st.sys, 'platform', system):
+                self.assertEqual(st.validate(args), {'empty': self.root / 'profiles/empty/user'})
+
+    def test_cold_refuses_a_work_directory_that_is_not_ext4_on_linux(self):
+        args = st.parser().parse_args([*self.argv, '--profiles', 'empty', '--cache', 'cold'])
         with mock.patch.object(st.sys, 'platform', 'linux'), \
-                self.assertRaisesRegex(ValueError, r'^cold cache is not implemented on Linux \(#1162\)$'):
-            st.validate(args)
+                mock.patch.object(st.native, 'filesystem', return_value=('tmpfs', '0:1')), \
+                mock.patch.object(st.native, 'pin_cpu', return_value=None), \
+                mock.patch.object(slot, 'HeavyAdmission') as admission, \
+                self.assertRaisesRegex(ValueError, r'requires ext4, found tmpfs \(tmpfs is unsupported\)$'):
+            st.run(args)
+        test_support.assert_not_called(self, admission)
 
     def test_all_statuses(self):
         for result, expected in ((0, 0), (ValueError('refused'), 1), (st.NotResult('INVALID'), 3),
@@ -528,7 +535,8 @@ class ControllerTests(unittest.TestCase):
 
         Rows are deterministic functions of (arm, memory, round), shaped like macOS rows: the
         Darwin names carry values and the Linux names are unavailable. With a cold cache every
-        sample runs the real cold.prepare over a fake residency reader. REJECTIONS maps
+        sample runs the host's real preparation (cold.prepare on macOS, cold_linux.prepare on
+        Linux) over fake eviction and residency readers. REJECTIONS maps
         (arm, memory, round) to how many of that sample's whole-set checks find a page
         resident; two reject the sample, one qualifies it on the second preparation.
         """
@@ -551,7 +559,10 @@ class ControllerTests(unittest.TestCase):
             prepared = None
             if cold:
                 resident[0] = rejections.get((arm, memory, n), 0)
-                prepared = st.cold.prepare([subject])
+                if platform == 'linux':
+                    prepared = st.cold_linux.prepare([subject], self.root)
+                else:
+                    prepared = st.cold.prepare([subject])
             shift = 0 if arm == 'base' else 3
             times = {}
             for index, metric in enumerate(m for m in st.TIMING_METRICS if m != 'process_wall'):
@@ -588,6 +599,12 @@ class ControllerTests(unittest.TestCase):
                 mock.patch.object(st.cold.darwin, 'map_file', return_value=0x1000), \
                 mock.patch.object(st.cold.darwin, 'unmap'), mock.patch.object(st.cold.darwin, 'msync'), \
                 mock.patch.object(st.cold.darwin, 'file_residency', side_effect=residency), \
+                mock.patch.object(st.cold_linux.mman, 'residency', side_effect=residency), \
+                mock.patch.object(st.cold_linux, 'evict'), \
+                mock.patch.object(st.cold_linux.native, 'filesystem', return_value=('ext4', '0:1')), \
+                mock.patch.object(st.runpy, 'run_path', return_value=dict(check_arms=lambda *_: None)), \
+                mock.patch.object(st.os, 'sched_getaffinity', return_value={0}, create=True), \
+                mock.patch.object(st.os, 'sched_setaffinity', create=True), \
                 mock.patch.object(st.cold.os, 'fsync'):
             status = st.campaign_run(args, {'empty': self.root / 'profiles/empty/user'}, work,
                                      SimpleNamespace(env={}, slot=SimpleNamespace(pass_fds=lambda: ())))
@@ -654,8 +671,15 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(unavailable['cold']['rejected'], dict(base=0, pr=0, control=0))
 
     def test_two_rejections_in_an_arm_keep_a_metric_eligible_and_three_make_it_inconclusive(self):
+        for platform in ('darwin', 'linux'):
+            with self.subTest(platform=platform):
+                self.limit_at_two_and_three(platform)
+
+    def limit_at_two_and_three(self, platform):
+        """Two PR rejections stay eligible and three are INCONCLUSIVE, under the host's preparation."""
         options = (*self.COLD, '--rounds', '8', '--warmups', '1', '--memory-rounds', '2', '--memory-warmups', '0')
-        status, printed = self.synthetic_campaign(*options, rejections={('pr', False, 2): 2, ('pr', False, 4): 2})
+        status, printed = self.synthetic_campaign(*options, platform=platform,
+                                                  rejections={('pr', False, 2): 2, ('pr', False, 4): 2})
         self.assertEqual(status, 0)
         eligible = self.report(printed, 'timing', 'process_wall')
         self.assertEqual((eligible['cold']['rejected']['pr'], eligible['verdict']), (2, 'STABLE'))
@@ -663,7 +687,8 @@ class ControllerTests(unittest.TestCase):
         self.assertIsNotNone(eligible['pr_base_ratio'])
         self.assertFalse(any('reason' in v for k, v in printed if k == 'timing'))
         status, printed = self.synthetic_campaign(
-            *options, rejections={('pr', False, 2): 2, ('pr', False, 4): 2, ('pr', False, 5): 2})
+            *options, platform=platform,
+            rejections={('pr', False, 2): 2, ('pr', False, 4): 2, ('pr', False, 5): 2})
         self.assertEqual(status, 0)
         timing = [v for k, v in printed if k == 'timing']
         self.assertEqual({v['verdict'] for v in timing}, {'INCONCLUSIVE'})
@@ -673,7 +698,8 @@ class ControllerTests(unittest.TestCase):
             self.assertEqual(record['reason'], 'rejected cold samples exceed the limit of 2 per arm: pr 3')
             self.assertEqual((record['cold']['accepted']['pr'], record['cold']['rejected']['pr']), (5, 3))
         # The limit is per arm and per metric family: the memory metrics saw no rejection.
-        self.assertNotIn('reason', self.report(printed, 'memory', 'physical_footprint_kib', 'end'))
+        memory = 'physical_footprint_kib' if platform == 'darwin' else 'resident_kib'
+        self.assertNotIn('reason', self.report(printed, 'memory', memory, 'end'))
 
     def test_the_limit_counts_each_arm_alone_and_pools_only_rounds_every_arm_accepted(self):
         options = (*self.COLD, '--rounds', '8', '--warmups', '1', '--memory-rounds', '2', '--memory-warmups', '0')
@@ -756,13 +782,38 @@ class ControllerTests(unittest.TestCase):
         for _, record in warm_run:
             self.assertNotIn('cold', record)
 
+    def test_linux_cold_run_rejects_like_macos_under_its_own_metric(self):
+        options = (*self.COLD, '--rounds', '4', '--warmups', '1', '--memory-rounds', '2', '--memory-warmups', '0')
+        status, printed = self.synthetic_campaign(*options, platform='linux',
+                                                  rejections={('pr', False, 2): 2, ('base', False, 1): 1})
+        self.assertEqual(status, 0)
+        samples = [v for k, v in printed if k == 'sample']
+        rejected = [s for s in samples if s['cold']['verdict'] == 'REJECTED']
+        self.assertEqual([(s['arm'], s['round']) for s in rejected], [('pr', 2)])
+        self.assertEqual((rejected[0]['cold']['attempts'], rejected[0]['cold']['resident']), (2, 2))
+        # One check found a page resident, the second eviction cleared it: accepted.
+        second = [s for s in samples if s['cold']['verdict'] == 'QUALIFIED' and s['cold']['attempts'] == 2]
+        self.assertEqual([(s['arm'], s['round']) for s in second], [('base', 1)])
+        timing = self.report(printed, 'timing', 'process_wall')
+        self.assertEqual(timing['cold'], dict(
+            metric='linux_resident_pages', limit=2, accepted=dict(base=4, pr=3, control=4),
+            rejected=dict(base=0, pr=1, control=0), warmup_rejected=dict(base=0, pr=0, control=0)))
+        self.assertEqual(timing['verdict'], 'STABLE')
+        for kind, record in printed:
+            if 'cold' in record:
+                self.assertEqual(record['cold']['metric'], 'linux_resident_pages')
+        self.assertNotIn('darwin_resident_pages', json.dumps(printed))
+
     def test_pool_cold_and_cold_account_are_plain_arithmetic_on_the_shared_limit(self):
         rejected = st.REJECTED
         samples = dict(base=[dict(), None, dict(), dict()], pr=[dict(), dict(), None, dict()], control=[dict()] * 4)
-        account = st.cold_account(samples, dict(base=0, pr=1, control=0))
-        self.assertEqual(account, dict(metric='darwin_resident_pages', limit=2,
-                                       rejected=dict(base=1, pr=1, control=0), accepted=dict(base=3, pr=3, control=4),
-                                       warmup_rejected=dict(base=0, pr=1, control=0)))
+        for system, metric in (('linux', 'linux_resident_pages'), ('darwin', 'darwin_resident_pages')):
+            with mock.patch.object(st.sys, 'platform', system):
+                account = st.cold_account(samples, dict(base=0, pr=1, control=0))
+            self.assertEqual(account, dict(metric=metric, limit=2,
+                                           rejected=dict(base=1, pr=1, control=0),
+                                           accepted=dict(base=3, pr=3, control=4),
+                                           warmup_rejected=dict(base=0, pr=1, control=0)))
         values = dict(base=[1, rejected, 3, 4], pr=[1, 2, rejected, 4], control=[1, 2, 3, 4])
         self.assertEqual(st.pool_cold(values, account), (dict(base=[1, 4], pr=[1, 4], control=[1, 4]), None))
         over = dict(account, rejected=dict(base=3, pr=0, control=3))

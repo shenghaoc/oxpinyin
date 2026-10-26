@@ -13,6 +13,7 @@ import time
 
 from .. import slot
 from . import cold as cold_cache
+from . import cold_linux
 from . import native
 from ...bisection import startup_profile
 
@@ -247,9 +248,10 @@ class Worker:
         Copy the guarded profile under work/sample and remove it after completion.
         Optionally wrap the worker in scoped Callgrind or gather memory checkpoints.
         With cold, prepare the copied facade, system data and private user files
-        on APFS after the copy and before spawning, so preparation is outside
-        the timed region; the preparation record travels with the sample. A set
-        still resident after the second preparation raises cold.Rejected before
+        (APFS on macOS, ext4 on Linux) after the copy and before spawning, so
+        preparation is outside the timed region; the preparation record travels
+        with the sample. A set still resident after the second preparation
+        raises cold.Rejected before
         the worker is spawned; the controller counts and excludes that sample.
         Probe calls return status and stream digests even on failure; other
         nonzero statuses raise ValueError. Successful non-probes return raw
@@ -263,9 +265,13 @@ class Worker:
             shutil.copytree(profile, user)
             prepared = None
             if cold:
-                if sys.platform != 'darwin':
-                    raise ValueError('cold preparation is not implemented for this host')
-                prepared = cold_cache.prepare(cold_cache.sample_files(library, self.data, user))
+                files = cold_cache.sample_files(library, self.data, user)
+                if sys.platform == 'darwin':
+                    prepared = cold_cache.prepare(files)
+                elif sys.platform == 'linux':
+                    prepared = cold_linux.prepare(files, user)
+                else:
+                    raise ValueError('cold cache requires native Linux (ext4) or macOS (APFS)')
             argument = ','.join(POINTS) if memory else '-'
             if mode == 'verify' and witness is not None:
                 argument = str(witness)

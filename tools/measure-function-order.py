@@ -11,7 +11,6 @@ the facade init function and the exports the worker calls from there to M1.
 
 import argparse
 from collections import defaultdict
-import ctypes
 import hashlib
 import io
 import json
@@ -29,6 +28,7 @@ import subprocess
 check_tkrzw = runpy.run_path(str(Path(__file__).parent / "tkrzw/runtime.py"))["check"]
 GEN = runpy.run_path(str(Path(__file__).with_name("generate-function-order.py")))
 ORDER = runpy.run_path(str(Path(__file__).parent / 'packaging/function_order.py'))
+MMAN = runpy.run_path(str(Path(__file__).parent / 'dev/mman.py'))
 ARMS = ("base", "pr", "control", "pin")
 FACADES = ("pinyin", "zhuyin")
 PROFILES = ("phrases", "journals")
@@ -58,26 +58,10 @@ def digest(path):
 
 
 def cache_pages(path):
-    """mincore(PROT_NONE mapping) observes file cache without faulting it in."""
-    libc = ctypes.CDLL(None, use_errno=True)
-    libc.mmap.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int,
-                          ctypes.c_int, ctypes.c_int, ctypes.c_long]
-    libc.mmap.restype = ctypes.c_void_p
-    libc.mincore.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_void_p]
-    libc.munmap.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
-    size = path.stat().st_size
+    """mincore(PROT_NONE mapping) observes file cache without faulting it in (tools/dev/mman.py)."""
     with path.open("rb") as handle:
-        address = libc.mmap(None, size, 0, 1, handle.fileno(), 0)  # PROT_NONE, MAP_SHARED
-        if address == ctypes.c_void_p(-1).value:
-            raise OSError(ctypes.get_errno(), "mmap for mincore")
-        try:
-            vector = (ctypes.c_ubyte * math.ceil(size / PAGE))()
-            if libc.mincore(address, size, vector):
-                raise OSError(ctypes.get_errno(), "mincore")
-            return sum(bool(value & 1) for value in vector), len(vector)
-        finally:
-            if libc.munmap(address, size):
-                raise OSError(ctypes.get_errno(), "munmap")
+        observed = MMAN["residency"](handle.fileno())
+    return observed["resident"], observed["pages"]
 
 
 def prepare_cache(path, cold):

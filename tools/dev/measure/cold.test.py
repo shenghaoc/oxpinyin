@@ -1,5 +1,5 @@
 #!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
-"""Tests for APFS cold-page preparation and the shared rejection limit."""
+"""Tests for APFS and Linux cold-page preparation and the shared rejection limit."""
 import ast
 import contextlib
 import io
@@ -14,7 +14,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 from tools.dev import darwin
-from tools.dev.measure import cold
+from tools.dev.measure import cold, cold_linux
 
 
 class ColdTests(unittest.TestCase):
@@ -178,6 +178,89 @@ class ColdTests(unittest.TestCase):
         self.assertEqual((record['metric'], record['value']), ('darwin_resident_pages', 0))
         self.assertEqual(record['verdict'], 'QUALIFIED')
         self.assertIn(record['attempts'], (1, 2))
+
+
+class LinuxColdTests(unittest.TestCase):
+    def setUp(self):
+        self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.facade = self.root / 'libpinyin.so.15.0.0'
+        self.facade.write_bytes(b'f' * 8192)
+        self.data = self.root / 'data'
+        self.data.mkdir()
+        (self.data / 'table.conf').write_bytes(b'conf')
+        self.user = self.root / 'sample/user'
+        self.user.mkdir(parents=True)
+        (self.user / 'user.conf').write_bytes(b'user')
+        (self.user / 'nested').mkdir()
+        (self.user / 'nested/bigram.db').write_bytes(b'db' * 4096)
+        self.files = cold.sample_files(self.facade, self.data, self.user)
+
+    def prepare_with(self, residency, filesystem='ext4'):
+        """Run cold_linux.prepare with fake fsync, eviction and mincore; return the record and event log."""
+        events, answers = [], iter(residency)
+
+        inodes = {(info.st_dev, info.st_ino): path.name
+                  for path in self.files for info in [path.stat()]}
+
+        def name(fd):
+            """The basename of the file an open descriptor names, found by inode."""
+            info = os.fstat(fd)
+            return inodes[info.st_dev, info.st_ino]
+
+        def resident(fd):
+            events.append(('check', name(fd)))
+            return dict(pages=2, resident=next(answers))
+
+        with mock.patch.object(cold_linux.native, 'filesystem', return_value=(filesystem, '0:1')), \
+                mock.patch.object(cold_linux.os, 'fsync', side_effect=lambda fd: events.append(('fsync', name(fd)))), \
+                mock.patch.object(cold_linux, 'evict', side_effect=lambda fd: events.append(('evict', name(fd)))), \
+                mock.patch.object(cold_linux.mman, 'residency', side_effect=resident):
+            return cold_linux.prepare(self.files, self.user), events
+
+    def test_user_copy_is_flushed_before_any_eviction_and_only_the_copy(self):
+        record, events = self.prepare_with([0] * 4)
+        flushed = [file for kind, file in events if kind == 'fsync']
+        self.assertEqual(sorted(flushed), ['bigram.db', 'user.conf'])
+        first_evict = next(i for i, (kind, _) in enumerate(events) if kind == 'evict')
+        self.assertTrue(all(kind == 'fsync' for kind, _ in events[:first_evict]))
+        self.assertEqual(len(events[:first_evict]), 2)
+        # Every file is evicted before any is checked, so a refault cannot hide.
+        self.assertEqual([kind for kind, _ in events[first_evict:]], ['evict'] * 4 + ['check'] * 4)
+        self.assertEqual(record['metric'], 'linux_resident_pages')
+        self.assertEqual((record['value'], record['resident'], record['pages']), (0, 0, 8))
+        self.assertEqual((record['attempts'], record['verdict']), (1, 'QUALIFIED'))
+        self.assertEqual(sorted(record), ['attempts', 'checks', 'files', 'metric', 'pages',
+                                          'resident', 'value', 'verdict'])
+
+    def test_a_resident_page_gets_one_more_eviction_and_check(self):
+        record, events = self.prepare_with([0, 1, 0, 0, 0, 0, 0, 0])
+        self.assertEqual((record['attempts'], record['verdict'], record['value']), (2, 'QUALIFIED', 0))
+        self.assertEqual([check['resident'] for check in record['checks']], [1, 0])
+        self.assertEqual([kind for kind, _ in events].count('evict'), 8)
+        self.assertEqual([kind for kind, _ in events].count('fsync'), 2)
+
+    def test_a_set_still_resident_after_the_second_eviction_is_rejected(self):
+        with self.assertRaises(cold.Rejected) as raised:
+            self.prepare_with([0, 1, 0, 0, 0, 0, 2, 0])
+        self.assertIs(cold_linux.Rejected, cold.Rejected)
+        record = raised.exception.record
+        self.assertEqual((record['metric'], record['verdict'], record['attempts']),
+                         ('linux_resident_pages', 'REJECTED', cold.ATTEMPTS))
+        self.assertEqual((record['value'], record['resident'], record['pages']), (2, 2, 8))
+        self.assertEqual([check['resident'] for check in record['checks']], [1, 2])
+        self.assertIn('2 of 8 linux_resident_pages still resident after 2 evictions', str(raised.exception))
+        self.assertNotIn('darwin', json.dumps(record))
+
+    def test_a_file_off_ext4_is_refused_before_any_eviction(self):
+        with self.assertRaisesRegex(ValueError, r'^cold cache requires ext4: .* is on tmpfs$'):
+            self.prepare_with([], filesystem='tmpfs')
+
+    def test_the_shared_limit_is_imported_not_redefined(self):
+        tree = ast.parse(Path(cold_linux.__file__).read_text())
+        self.assertFalse([node for node in ast.walk(tree) if isinstance(node, ast.Name)
+                          and node.id == 'REJECTION_LIMIT'])
+        self.assertFalse(hasattr(cold_linux, 'REJECTION_LIMIT'))
+        self.assertNotEqual(cold_linux.METRIC, cold.METRIC)
 
 
 if __name__ == '__main__':
