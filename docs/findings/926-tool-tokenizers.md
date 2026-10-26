@@ -658,8 +658,9 @@ The live pin tools below were built on the cloud host (Ubuntu 24.04, glibc
 | `TAGLIB_PARSE_SEGMENTED_LINE` `atoi` (`utils_helper.h:61`): `gen_ngram`, `gen_deleted_ngram`, `gen_k_mixture_model`, `eval_correction_rate`, `mergeseq` | Reproduce | `oxpinyin_kmm::atoi` (`kmm/src/cnum.rs`) is used by `counter/parse.rs` (counter, emitter, lambda, train held-out), `eval/decode.rs`, `segment/mergeseq.rs` and `kmm/generate.rs`. A field with no digits is the null token, not an error, as at the pin. |
 | `TAGLIB_GET_TOKEN` `atoi` and `TAGLIB_GET_TAGVALUE(glong, .., atol)` in `import_k_mixture_model` and `k_mixture_model_to_interpolation` | Reproduce | `kmm/src/text.rs`: tokens `atoi`, counts `atol` then the low 32 bits for the model fields; the interpolation converter prints the token as `i32` and the count as `i64`. The line grammar (fixed field positions) is the crate's own and is unchanged. `assert(count == T)` in the importer is not a conversion and is untouched. |
 | Classic count `atoi` (ibus-libpinyin `PYLibPinyin.cc:262-267`; `pinyin.cpp:520-524`) | Frozen dictool contract | Not the pin library: the frontend is a separate package and dictool specifies its own grammar, `count := digit+`, with explicit errors and a *desired absolute count* meaning (`dictool-format.md` §2-3). The maintainer's #1226 ruling keeps that contract, so `atoi` is not reproduced. The leading `+` that `parse::<u64>` accepted contradicted `digit+`; it is now refused with the line-numbered count error. |
-| `import_interpolation` `atoi`/`atol` (`utils/storage/import_interpolation.cpp:135-182`) | Remaining | The Rust reader is `oxpinyin-data` `interp.rs`; a separate PR after this one. |
-| `gen_zhuyin_table` `atoi` (`gen_zhuyin_table.cpp:153`), `gen_pinyin_table` `fscanf("%u")` (`gen_pinyin_table.cpp:145`), `table_text_parser.h:62` `g_ascii_strtoull` | Remaining | Datagen's numeric parsing; a separate PR after this one. |
+| `import_interpolation` `atoi`/`atol` (`utils/storage/import_interpolation.cpp:135-182`) | Strict, valid input identical | See "Datagen and `import_interpolation`" below. |
+| `table_text_parser.h:54-69` `g_ascii_strtoull` (`.table` and `punct.table` rows) | Strict, valid input identical | See below. |
+| `gen_zhuyin_table` `atoi` (`gen_zhuyin_table.cpp:153`), `gen_pinyin_table` `fscanf("%u")` (`gen_pinyin_table.cpp:145`) | No counterpart | Neither is in the data build (`data/Makefile.am:60-62`); oxpinyin has no port. |
 | `parse_interpolation_dump`, `candidate.rs`, `status.rs` parses | No pin parser | They read oxpinyin's own counter dump, candidate index and status JSON; the pin consumes these only through Python scripts. Not a conversion of a pin input. |
 | `printf("%f")` of lambda and correction rate | Reproduce (NaN only) | See "NaN at the `%f` print sites" below. |
 
@@ -735,9 +736,85 @@ export PINYIN_KMM_TO_INTERP="$pin_src/utils/training/k_mixture_model_to_interpol
 just heavy -- cargo test --locked -p oxpinyin-kmm --test differential -- rust_kmm_matches_pin_gen_and_export rust_kmm_matches_pin_to_interpolation --include-ignored
 ```
 
-Remaining under #926, outside the three tool crates: `import_interpolation`
-(`oxpinyin-data` `interp.rs`) and datagen's `atoi`, `fscanf("%u")` and
-`g_ascii_strtoull` sites. Not run: a live `import_k_mixture_model` differential (no existing driver;
-its macros are the ones the converter run covers), the import runner
-(`run-import-diff.sh`, which needs the ibus stage), and the kc and tkrzw
-cells (no backend code changed).
+Not run for that change: a live `import_k_mixture_model` differential (no
+existing driver; its macros are the ones the converter run covers), the
+import runner (`run-import-diff.sh`, which needs the ibus stage), and the kc
+and tkrzw cells (no backend code changed).
+
+## Datagen and `import_interpolation`
+
+2026-10-26 UTC, based on main `e84f06f`; libpinyin `074a2219`. Source read;
+no pin tool was run.
+
+**Promise.** `oxpinyin-datagen` compiles the pinned model20 archive (and the
+toned mini model under `fixtures/datagen-toned/`) into the system data a
+pin-built libpinyin ships: chunk files byte for byte, DBM rows record for
+record (`crates/oxpinyin-datagen/src/lib.rs`, `datagen-model20.md`). It is
+a build-time tool that never ships, and its documented posture on malformed
+input is refusal with a line-numbered error where the pin aborts or skips
+(`datagen-model20.md`, the `import_interpolation` row;
+`interpolation2-grammar.md` §5). Its readers are plain Rust parses with no
+GLib emulation, so there is nothing to remove. The record below fixes which
+inputs agree.
+
+**Model tables** (`table.rs` `parse_table_line`, `read_table_file`). The pin
+reads every `.table` with `table_text_read_pinyin_record`
+(`src/storage/table_text_parser.h:34-97`, called from
+`phrase_index.cpp:537`, `chewing_large_table2.cpp:118`,
+`phrase_large_table3.cpp:131`), not with `fscanf`: `fgets` into a 4096-byte
+buffer; fields separated by runs of space and TAB, each ending at space,
+TAB, CR or LF; a line with fewer than four fields is skipped and bytes after
+the fourth are ignored; pinyin and phrase must be under 256 bytes; token and
+count must be whole decimal fields without a leading `-`, read by
+`g_ascii_strtoull` (a leading `+` is accepted) and at most `guint32` and
+`size_t` respectively, else the line is skipped.
+
+| Input | Pin | Datagen |
+| --- | --- | --- |
+| Four fields, plain decimal token ≤ 2³²−1 and count ≤ 2⁶³−1 | row | the same row |
+| Leading `+` on token or count | row | row (`str::parse` accepts `+`) |
+| Fewer than four fields; negative or non-numeric token or count | skipped | skipped |
+| A fifth field | ignored | error |
+| `-0` count | skipped | row with count 0 |
+| Count in 2⁶³..2⁶⁴−1 | row | skipped |
+| A field of 256 bytes or more; a line over 4095 bytes | skipped; split into pieces | row; one line |
+| Non-ASCII white space (U+3000, U+00A0) inside a field | part of the field | separator |
+| A line starting with `#` | a row if its fields parse | skipped |
+| Invalid UTF-8 | bytes kept | error for the file |
+
+`punct.rs` `parse_punct_line` follows the same pattern against
+`table_text_read_punct_record` (`table_text_parser.h:99-121`); it was read,
+not changed.
+
+**Interpolation model** (`system.rs` `read_interpolation`, `parse_count`,
+`validate_pair`). The pin's `import_interpolation` converts the token with
+`atoi` and the count with `atol` (`utils_helper.h:27-49`;
+`import_interpolation.cpp:135-141,172-182`), then stores the count as
+`guint32` (`add_unigram_frequency`, `phrase_index.h:628`;
+`SingleGram::insert_freq` and the `guint32` total at `:205-209`). The rule
+is the glibc one above. Datagen reads the same lines through the shared
+grammar, then `str::parse::<u32>` for tokens and `str::parse::<i64>` with a
+`u32` range check for counts. For a plain decimal token and a count of at
+most 2³²−1 the stored values are the same; a repeated unigram token sums
+and a zero count is a no-op, as at the pin. Any other spelling (trailing
+bytes, a value out of range, a negative count, a sign on the token) is a
+line-numbered error, where the pin stores `atoi`/`atol`'s low 32 bits. A
+unigram sum above 2³²−1 is kept as `u64` where the pin wraps. No pinned or
+toned row reaches any of these.
+
+**Decoder loader** (`oxpinyin-data` `interp.rs`). Not a port of the tool:
+it reads the same file for the runtime and refuses zero counts and
+duplicate tokens on purpose (`interpolation2-grammar.md` §5). Its
+`parse::<u32>`/`parse::<u64>` refuse every malformed spelling. `is_graph`
+in `interp_grammar.rs` is unchanged; its bounded difference stays recorded
+there.
+
+**Valid-input evidence.** The existing differentials compare datagen with
+the pin's `gen_binary_files` / `import_interpolation` / `gen_unigram` output
+on the pinned model20 and the toned model
+(`crates/oxpinyin-datagen/tests/libpinyin_parity.rs`, driven by
+`tools/datagen/libpinyin-drop-in-differential.sh` on the kc and tkrzw
+cells). Nothing they compare changes here: the only code edits are two
+comments in `table.rs` and `punct.rs` that named the old `fscanf` reader.
+
+**Decision (maintainer, 2026-10-26 UTC).** Datagen stays strict: it is a build-time tool, not a drop-in for the pin's `utils` programs, and the differences above meet #926's acceptance.

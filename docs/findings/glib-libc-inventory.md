@@ -93,7 +93,7 @@ for libpinyin and libzhuyin, `pinyin` for the prediction-only surfaces;
 | G13 | C primitives: `memset` 124, `memcpy` 28, `strlen` 18, `strcmp` 18, `memcmp` 10, `memmove` 7, `strchr` 2 | both; all | Rust slices/`str`; `data/src/row_format.rs`, `core/src/single_gram.rs`, `capi/src/ffi.rs` | valid: same bytes. malformed: NULL/unreadable phrase strings and out-of-range walks are class (b) rows. | contract; class (b) at the registered NULL/over-read rows | rows 80, 106 |
 | G14 | libm: `log` 7 (`phonetic_lookup.h:39,250,663,693`; `phrase_lookup.cpp:40,321,342`) | both; all | `core/src/cost.rs` `cost_of_probability` / `surprisal` (fixed-point `log2_fixed`); `engine/src/nbest.rs` `poss` | valid: class (a) last-bit differences are accepted. | class (a), row 11; record only | no child (math record) |
 | G15 | punctuation decoding: `punct_table.cpp:56-72` `unescape`, `:74-94` `get_all_punctuations`, reached at `pinyin.cpp:2474` | pinyin; all | `data/src/row_format.rs` `decode_puncts` (stored words per punctuation; infallible); `data/src/punct.rs` `PunctTable::punctuations` (`Err` only for a failed read; `Ok(Vec::new())` for unopened/absent/empty); `runtime/src/lib.rs` `RuntimeDict::punctuations`; `capi/src/predict.rs` `prepend_punctuations` (`phrase_text_bytes` at the C boundary) | valid: identical punctuation strings. malformed: non-scalar, empty, unterminated and misaligned values give the pin's rows; partitions below. | contract; class (b) for the unterminated over-read only, registered (2026-10-26 UTC, #1144) | **#1144** |
-| G16 | tool-only GLib: `tag_utility.cpp` (`g_strsplit_set`, `g_unichar_*`, `g_strv_length`, `g_utf8_get_char/next_char`, `g_ptr_array_foreach`, `g_hash_table_foreach_steal`, `g_warning`); `table_text_parser.h` (`g_ascii_strtoull`, `g_strlcpy`); the `load_text` methods | not C ABI | `data/src/interp.rs`, `data/src/interp_grammar.rs`; `training/src/counter/parse.rs`; `dictool/src/format.rs` | valid: tool input. malformed: separator, escape, category and `atoi` quirks. | quirk, tool scope | #926 |
+| G16 | tool-only GLib: `tag_utility.cpp` (`g_strsplit_set`, `g_unichar_*`, `g_strv_length`, `g_utf8_get_char/next_char`, `g_ptr_array_foreach`, `g_hash_table_foreach_steal`, `g_warning`); `table_text_parser.h` (`g_ascii_strtoull`, `g_strlcpy`); the `load_text` methods | not C ABI | `data/src/interp.rs`, `data/src/interp_grammar.rs`; `training/src/counter/parse.rs`; `kmm/src/cnum.rs`; `dictool/src/format.rs`; `datagen/src/table.rs`, `punct.rs`, `system.rs` | valid: tool input, identical records. malformed: separator, escape, category and `atoi` quirks reproduced in the training tools; dictool and datagen refuse or skip by their own contracts. | tool scope, [record](926-tool-tokenizers.md); `is_graph` stays as [recorded](interpolation2-grammar.md) | #926 |
 | G17 | dead code: `pinyin_lookup2.cpp`, `chewing_large_table.cpp`, `phrase_large_table2.cpp`, `facade_chewing_table.h`, `facade_phrase_table2.h`, `PunctTableEntry::escape/append/remove`, `#if 0` dumps | none | no shipped counterpart; the runtime uses `PhoneticLookup`, `PhraseLookup` and the large-table-3/chunk path | n/a | negative coverage | — |
 
 ## Family notes
@@ -538,6 +538,13 @@ used only by `utils/storage/gen_binary_files.cpp`.
 `FacadePhraseTable2`/`ChewingLargeTable`. The `#if 0` dumps and the
 `PunctTableEntry` writer methods have no exported caller.
 
+The tool parsers are recorded per helper in
+[926-tool-tokenizers.md](926-tool-tokenizers.md): the training tools
+reproduce glibc `atoi`/`atol`; dictool keeps its frozen classic grammar;
+datagen reads exactly the pin's valid `.table`, `punct.table` and
+`interpolation2.text` records and refuses or skips malformed ones by its own
+contract; `gen_pinyin_table` and `gen_zhuyin_table` have no counterpart.
+
 ## oxpinyin GLib emulations in `crates/`
 
 The table covers semantic counterparts, not only names containing
@@ -562,8 +569,8 @@ child column is the audit that must decide it.
 | `capi/src/predict.rs` `sort_predicted` | GLib half-split merge + `gint` frequency key | `pinyin.cpp:1701-1705` | #927 |
 | `user/src/persistence.rs` `save_with_bigram_reporting`, `pin_rename_order` | `_write_files` / `_rename_files` and per-file tolerance | `pinyin.cpp:915-1130`; `zhuyin.cpp:585-693` | #929 |
 | `data/src/phrase_library.rs` `map_chunk`, `MappedFile` | `MemoryChunk::mmap` / header / checksum | `memory_chunk.h:424-520` | rows 76, 96, 109 |
-| `data/src/interp_grammar.rs` `is_graph`, `interp.rs` | `taglib_read` + `g_unichar_isgraph` | `tag_utility.cpp:171-264` | #926 |
-| `dictool/src/format.rs` `split_classic`; `training/src/counter/parse.rs` `atoi`, `splitn` | `g_strsplit_set` / C `atoi` in tool input | `tag_utility.cpp`, `table_text_parser.h`; utils | #926 |
+| `data/src/interp_grammar.rs` `is_graph`, `interp.rs` | `taglib_read` + `g_unichar_isgraph` | `tag_utility.cpp:171-264` | #926: kept as [recorded](interpolation2-grammar.md) |
+| `dictool/src/format.rs` `split_classic`; `training/src/counter/parse.rs` `parse_segmented_line`, `kmm/src/cnum.rs` `atoi`; `datagen/src/table.rs`, `system.rs` numeric fields | `g_strsplit_set` / C `atoi`, `atol` / `g_ascii_strtoull` in tool input | `utils_helper.h`, `table_text_parser.h:34-121`; `import_interpolation.cpp:135-182` | #926: training reproduces `atoi`; dictool and datagen strict, [record](926-tool-tokenizers.md) |
 | `capi/src/dict.rs`, `zhuyin-capi/src/dict.rs` direct `g_array_*` | real GLib `GArray` mutation | `pinyin.cpp:2805,2817`; `zhuyin.cpp:1797,1809` | #924 |
 | `capi/src/ffi.rs` `owned_cstr`, `owned_cstr_list`, `log_warning`, `log_critical`; `phrase.rs` `g_log` / `g_free` | `g_strdup` / `g_strfreev` / `g_log` / `g_return_val_if_fail` | `pinyin.cpp` diagnostics; `phrase_index.cpp:354-356` | #924 |
 
