@@ -33,20 +33,21 @@ output moves towards the pin's is Stage 2 work, not a departure.
 The default build behaves as the pinned libpinyin does, bugs included,
 measured against the pin-built oracle. A language/runtime quirk is
 decided in the policy's order: the C-facing contract first, then classes
-(a)–(c), then a record-admitted quirk, then a defect or Stage 3. A quirk
-that meets the record's conditions is accepted and is implemented with
-normal Rust functions; one that does not is a defect to revert, or a
-STOP. Never improvise a new exception. Record an accepted quirk in
+(a)–(c), then a recorded language artefact, then a product-level change
+(a ruling or Stage 3), then a defect.
+See `docs/findings/compatibility-policy.md`, "Native Rust implementation" (#1303).
+Never improvise a new exception. Record an accepted quirk in
 `docs/findings/upstream-divergences.md` with its discrepancy record and
 `POLICY-ACCEPTED` case.
 
 **Floating point is not, by itself, a Rust language limitation.**
 Rust's `f32` and `f64` are the same IEEE formats as `gfloat` and
 `gdouble`. For the IEEE-exact operations — basic arithmetic, `sqrt`,
-`abs`, rounding and comparisons — reproduce the pin's types, conversion
-points and operation order, and verify the relevant compiler
-transformations (multiply-add contraction, constant folding). Those
-operations are bit-reproducible and must match.
+`abs`, rounding and comparisons — write the calculation the product
+requires in idiomatic Rust. Where the pin's result differs only through
+C or C++ semantics (implicit promotions or conversions, a float stored
+into an integer) or a compiler transformation (multiply-add contraction),
+that is a language artefact: record it, do not imitate it.
 
 **Transcendentals come from Rust's standard maths.** `log`, `exp`,
 `pow`, the trigonometric and hyperbolic functions, and the rest use
@@ -78,10 +79,13 @@ outputs match. Each one is recorded with its pin citation in
    algorithm, constants, tie orders and any quirk that reaches output,
    with time and space complexity, each cited `file:line` at `074a2219`.
 2. **Design and analyse.** Choose oxpinyin's structure and algorithm.
-   State why it produces the pin's behaviour — including tie orders,
-   integer wraparound and quirks — and its time and space complexity
-   against the pin's.
-3. **Implement** to imitate the pin, and gate on the oracle differential.
+   State why it produces the pin's product behaviour — including tie
+   orders and the product's own quirks, not language artefacts
+   (`/AGENTS.md`, quirk decision order, limb 3) — and its time and space
+   complexity against the pin's.
+3. **Implement** the required observable behaviour in natural, efficient
+   Rust; verify it with the established differentials and record any
+   policy-approved departure.
 
 Work that predates this ruling is brought into the record by
 `.kiro/specs/oxidation-record/`.
@@ -98,8 +102,9 @@ Work that predates this ruling is brought into the record by
   copies, and loses what the Rust compiler and standard library do
   well. Express the pin's *behaviour* in idiomatic Rust: owned or
   borrowed slices, enums and `Result`, iterators, the standard
-  collections. Reproduce the pin's *code shape* only where the
-  behaviour depends on it (a tie order, a wraparound, a quirk).
+  collections. Never reproduce the pin's *code shape*: where a result
+  depends on it only through a C, C++ or library artefact, the Rust
+  result stands and the difference is recorded.
 - **Never both worse.** For the same operation, oxpinyin's time and
   space complexity are never both worse than the pin's. A regression in
   one is accepted only when traded for a gain in the other, kept as

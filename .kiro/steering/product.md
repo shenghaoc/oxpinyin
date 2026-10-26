@@ -9,6 +9,8 @@ for the zhuyin facade). Claims: re-expression is fine; never replace /
 succeed / outperform. Scoped measurements only. See `ROADMAP.md` and
 `/AGENTS.md`.
 
+See `docs/findings/compatibility-policy.md`, "Native Rust implementation" (#1303).
+
 **Goal (maintainer, 2026-09-12).** The shipped object is a libpinyin
 shared object indistinguishable from libpinyin's own except for the
 established exceptions: the same SONAME and exports, the same data and
@@ -34,7 +36,8 @@ Cabinet), Debian testing (tkrzw) and NixOS — 1,571/1,571 rows each.
 
 **Stage 2 — bug-for-bug compatibility and internal improvement
 (current, not complete).** The target is that every exported behaviour
-matches the pin, defects included. Performance, memory, safety and
+matches the pin, defects included, except the recorded exceptions and
+language artefacts, which are not reproduced. Performance, memory, safety and
 architecture work is allowed when output, files on disk and the ABI do
 not change. oxpinyin may be faster or smaller than the pin by any
 amount. This applies to the whole ABI and the user-store surfaces.

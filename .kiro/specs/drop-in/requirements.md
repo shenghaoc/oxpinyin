@@ -64,12 +64,14 @@ replacement changes nothing observable.
 
 1. FOR every exported symbol, given the same inputs and state, the whole
    observable output SHALL be byte-identical to the pinned libpinyin
-   2.11.92 at `074a2219`. State includes the user dir on the same
-   backend.
+   2.11.92 at `074a2219`, except a recorded language artefact. State
+   includes the user dir on the same backend.
 2. Divergence SHALL be permitted only under classes (a) MATH, (b) MEMORY
-   SAFETY, (c) AVAILABILITY — `docs/findings/compatibility-policy.md`.
+   SAFETY, (c) AVAILABILITY and recorded language artefacts (amended
+   2026-10-26 UTC, #1303) — `docs/findings/compatibility-policy.md`.
 3. THE predicted-candidate rows
    (`pinyin_guess_predicted_candidates[_with_punctuations]` /
    `pinyin_choose_predicted_candidate`) SHALL match the pin, list order
-   included (register R1, closed by P6; policy row 12).
+   included (register R1, closed by P6; policy row 12), except for a
+   difference the compatibility policy admits.
 4. A stub returning `false` SHALL be treated as a defect, not compliance.

@@ -47,13 +47,15 @@ onto the landing tip before every push and before any merge
 
 E2E I/O is what the pin produces given the same inputs and state
 (`pinned-behaviour.md`), except the classes (a)–(c) and the recorded
-language/runtime-quirk discrepancies in `oxpinyin-improvements.md`. A
-quirk change needs its discrepancy record before code; it never changes
-the C ABI, ownership, the on-disk formats, data ownership or valid-input
-behaviour. Nothing panics on
+language artefacts in `oxpinyin-improvements.md`. No Rust is
+written to imitate another language or a library written for one; the
+difference is recorded instead. The C ABI, ownership, the on-disk
+formats and data ownership never change. Nothing panics on
 any input, and public APIs return `Result` (constitution §4 — the broad
 rule stands on its own). Class (c) is narrower: where the pin asserts or
 aborts on input a caller or file can supply, the C ABI returns
 `false`/`Err` and logs the point; it does not mask internal invariant
 failures and does not govern the return types of unrelated errors.
-Engine output is a pure function of (input, user state, config).
+Engine output is a pure function of (input, user state, config) on each host.
+
+See `docs/findings/compatibility-policy.md`, "Native Rust implementation" (#1303).

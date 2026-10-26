@@ -19,4 +19,6 @@ The internal items of the 2026-09 direction keep compatibility, so they
 are Stage 2 work (`.kiro/specs/bug-for-bug/design.md`, "Internal
 improvement"): the dictionary cursor walk, the incremental per-keystroke
 lattice, the per-session arena, ordered atomics off the steady cycle,
-and host-independent cost derivation if output stays identical.
+and host-independent cost derivation if output stays identical. A
+difference that is only a language artefact is also Stage 2: it is
+recorded, not opted into (`.kiro/specs/bug-for-bug/`, Requirement 6).

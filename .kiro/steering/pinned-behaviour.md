@@ -73,11 +73,13 @@ Examples already ruled:
 - Predicted-candidate ranking and training follow the pin's own rules,
   derived from its source — not tuned until examples agree.
 
-The only departures are the classes and the recorded
-language/runtime-quirk exception in `oxpinyin-improvements.md`. That
-exception preserves the C ABI and ownership, the on-disk formats, data
-ownership and behaviour on valid input exactly; it covers incidental
-GLib/glibc/C++ runtime behaviour only.
+The only departures are the classes and recorded language artefacts
+(`oxpinyin-improvements.md`): behaviour that comes from another
+language or a library written for one is not reproduced, on valid or
+malformed input. The C ABI and ownership, the on-disk formats and data
+ownership are preserved exactly.
+
+See `docs/findings/compatibility-policy.md`, "Native Rust implementation" (#1303).
 
 ## How the pin's behaviour is known
 

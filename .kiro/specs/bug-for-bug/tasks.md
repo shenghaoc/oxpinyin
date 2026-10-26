@@ -23,11 +23,21 @@ issue list.
 
 - [ ] 3. Internal improvement that keeps compatibility (design,
   "Internal improvement"): each item lands when it is ready, with its
-  differentials identical. It does not block task 4.
+  differentials identical, or `POLICY-ACCEPTED` for a recorded language
+  artefact. It does not block task 4.
   _Requirements: 3, 4, 5_
 
 - [ ] 4. Run the third bug-for-bug sweep after tasks 1 and 2: every
   differential on all three cells, every register row re-checked against
-  the pin's source, and the items carried to round 3 from task 1. This
-  task is the Stage 2 compatibility exit gate.
-  _Requirements: 1, 3_
+  the pin's source, and the items carried to round 3 from task 1. A
+  difference that is a language artefact is recorded, not reproduced.
+  This task is the Stage 2 compatibility exit gate.
+  _Requirements: 1, 3, 6_
+
+- [ ] 5. Remove reproduced language artefacts from the tree (2026-10-26
+  ruling, #1303), each with its record and `POLICY-ACCEPTED` cases. The
+  classification is #1297 (#1306); known examples are the 8-bit span
+  key (#1275), the wrapping frequency key, the tail comparator's
+  truncation, the libstdc++ heap tie order, glibc's `%f` extensions and
+  the amd64 out-of-range conversions. It does not block task 4.
+  _Requirements: 6_

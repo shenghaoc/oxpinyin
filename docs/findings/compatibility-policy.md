@@ -46,6 +46,78 @@ is impossible or unsafe; "ordinary Rust does not reproduce it" is no
 longer enough, and reproducing an outward behaviour never means emulating
 a GLib, libc or C++ mechanism. The maintainer's efficiency rulings are
 recorded under "The language/runtime-quirk exception".
+**Amended 2026-10-26 UTC (#1303):** oxpinyin is a native Rust
+implementation, not an emulator of the pin. Language artefacts
+(behaviour that comes from C, C++ or a library written for another
+language) are not reproduced, on valid or malformed input; the
+difference is recorded without approval. Product-level changes need a
+ruling or Stage 3. This amends the 2026-10-14 stages ruling; the
+platform, boundary and maths wording is under "Native Rust
+implementation". The 2026-10-24 wording above is history.
+
+## Native Rust implementation
+
+Maintainer ruling 2026-10-26 UTC (#1303)
+
+oxpinyin is a native Rust implementation of libpinyin and libzhuyin, not
+an emulator of the pin; it reproduces the pin's outward behaviour, at the
+C API and in persistent data, in idiomatic Rust.
+
+**Language artefacts.** The programming language is an implementation
+detail: what a user or a developer calling the shared object observes is
+the behaviour, and oxpinyin implements it in idiomatic Rust. No code is
+written to reproduce a behaviour of another programming language or of a
+library written for one: C or C++ semantics (an integer-returning
+comparator, unsigned wrap-around, float-to-integer truncation, an
+integer width chosen for storage), GLib, glibc or another libc,
+libstdc++, or compiler or processor behaviour. The test is whether a
+language-neutral requirement for the behaviour would mention it; if not,
+it is a language artefact. A width or wrap that the C ABI or an on-disk
+format prescribes, or that is part of a domain algorithm such as a
+checksum or hash, is contract or product behaviour, not an artefact; the
+origin of an operation in C does not by itself make every use of it an
+artefact. Where idiomatic Rust gives the pin's result, which is the
+normal case, nothing more is needed. Where it differs only through a
+language artefact, on valid or malformed input, the Rust result stands:
+the difference is recorded (a discrepancy record from
+`docs/findings/language-runtime-discrepancy-template.md`, registered by
+name in `docs/findings/upstream-divergences.md`, with `POLICY-ACCEPTED`
+on the cases that tell the two apart) and the work moves on. No approval
+is needed, and writing Rust to imitate the artefact is forbidden. When
+unsure whether a difference is an artefact, err towards idiomatic Rust
+and record it.
+
+**Product-level changes.** A behaviour that is part of the product
+itself (a ranking rule, a limit, a refusal, the meaning of an option, or
+a logic defect of libpinyin that idiomatic Rust reproduces as written)
+is not an artefact. It is reproduced bug for bug, and changing it needs
+a maintainer ruling or a Stage 3 feature.
+
+Where the pin's result depends on the host or its libc, oxpinyin uses
+Rust or the host's native facilities and need not reproduce the reference
+image's libc; the difference is recorded as platform-dependent.
+Platform-independent logic must not differ, and output stays deterministic
+on each host (constitution §6).
+This clause does not reverse an existing ruling, including `LC_NUMERIC`
+(row 39).
+
+C and GLib interoperability machinery (ABI objects, ownership
+conventions, diagnostics and boundary encodings) belongs in the C
+adapters; database interoperability belongs in the storage adapters.
+Core and engine code implement domain semantics in native Rust, even
+where those semantics are observable through the C interfaces. The C
+ABI, ownership, diagnostics and persistent data keep their existing
+obligations.
+
+oxpinyin uses Rust's standard maths at full speed (math rule 2026-10-19).
+Class (a) governs the resulting precision differences, including those
+between platforms; nothing calls the reference implementation's libm for
+bit-exact parity.
+
+The cells ruling of 2026-10-04, the stages ruling of 2026-10-14 as
+amended here, the interfaces ruling of 2026-10-18 and the math ruling
+of 2026-10-19 stand.
+A registered class (b)/(c) case returning its prescribed result is MATCH.
 
 ## External interfaces: C only
 
@@ -172,7 +244,8 @@ That goal sets the default: **oxpinyin reproduces the pin.** Divergence
 is not a design freedom to be exercised where the Rust is nicer. It is
 an exception that has to be argued into one of the three live classes
 below, (a)–(c), or into the recorded language/runtime-quirk exception
-(outside the classes); everything else is a defect to be reverted.
+(outside the classes), which covers every language artefact; everything
+else is a defect to be reverted.
 Class (d) was retired on 2026-09-06; its text is kept below as a record
 and no entry may be classified under it.
 
@@ -195,11 +268,13 @@ through a transcendental (`log`), and no fixed-point or integer form
 reproduces it. Reproducing it would require delegating to the platform
 libm, which carries no cross-platform bit-exactness guarantee.
 
-**Cited against constitution item 6:** *"Determinism: output is a pure
-function of (input, user state, config)."* Output that depends on which
-libm the build linked is not a function of those three, so reproducing
-upstream here would violate the constitution rather than serve it. The
-build's refusal of `-march=native` is the same rule applied earlier.
+**Constitution item 6 and maths:** oxpinyin uses Rust's standard maths
+at full speed (math rule below) and never calls the reference
+implementation's libm to chase bit-exact parity. Rust's standard float
+methods carry no cross-platform precision guarantee, so a precision
+difference that follows from them — from the pin, or between hosts — is
+class (a): record it and do not chase it. Output stays deterministic on
+each host.
 
 **The class is narrow.** Basic IEEE-754 operations — add, subtract,
 multiply, divide, compare — are bit-reproducible across platforms and
@@ -331,50 +406,67 @@ rulings, not by a list of C mechanisms:
 3. Use Rust’s `std` maths at full speed. This is already recorded under
    class (a) above; cross-reference it, don’t duplicate it.
 4. No specialised maths dependencies (SIMD crates and the like).
+5. (2026-10-26 UTC, #1303.) No Rust is written to imitate another
+   language or a library written for one. A language artefact is not
+   reproduced on valid or malformed input; the difference is recorded
+   without approval.
 
 The exception is outside the numbered classes: it changes no C-facing
-contract and no valid-input behaviour, so it is neither (a), (b) nor (c).
-It is not a freedom to depart from the pin where the Rust is nicer.
+contract, so it is neither (a), (b) nor (c). It may change behaviour on
+valid input when the difference is a language artefact; a product-level
+change is never a quirk (limb 4).
 
-**The test.** A pin behaviour is reproduced unless reproducing it in
-natural, efficient Rust is impossible or unsafe. Only then may a
-discrepancy record admit a difference. “Ordinary Rust does not reproduce
-it” is not enough. Reproducing an outward behaviour never means emulating
-a GLib, libc or C++ mechanism: it means producing the same observable
-result with plain Rust — a byte scan, a raw comparison, `Vec<u8>` instead
-of `String`.
+**The test.** Would a language-neutral requirement for the behaviour
+mention it? If not, it is a language artefact and is not reproduced. If
+so, it is product behaviour, produced with idiomatic Rust — a byte scan,
+a raw comparison, `Vec<u8>` instead of `String` — never by emulating a
+GLib, libc or C++ mechanism.
 
 **Preserved exactly, with no quirk exception:** the C ABI and ABI
 layout, ownership and lifetime (real `GArray`/`g_free` conventions and
 every other GLib-owned structure or allocation), every exported symbol,
 the on-disk system and user formats, data ownership, and observable
-behaviour on valid supported input. A proposed change to any of these
-is not a quirk.
+product behaviour on valid supported input. A proposed change to any
+of these is not a quirk. Valid-input behaviour differs only where the
+difference is a language artefact; the others never change.
 
 **Decision order.** Every proposed difference is decided in this order;
 the first matching limb wins:
 
-1. **Contract.** The C ABI, ownership, on-disk formats, data ownership
-   and behaviour on valid supported input are the default. A change
-   there is not a quirk: it is a defect to revert, a class (a), (b) or
-   (c) case (limb 2), or a Stage 3 departure behind an opt-in feature.
-   The quirk limb below cannot admit it.
+1. **Contract.** The C ABI, ownership, exported symbols, on-disk formats
+   and data ownership never change. Product behaviour on valid input is
+   the default; a change to it that is not a language artefact is a
+   defect to revert, a class (a), (b) or (c) case (limb 2), or a
+   product-level change (limb 4).
 2. **Class (a), (b) or (c).** If it is math, memory safety or
    availability, classify it in that class and follow the class's
    obligations.
-3. **Language/runtime quirk.** Reproducing the pin's outward behaviour in
-   natural, efficient Rust is impossible or unsafe. It is admitted only
-   by a discrepancy record
-   (`docs/findings/language-runtime-discrepancy-template.md`) that
-   traces the whole reachable path forwards and backwards, partitions
-   valid from malformed input, proves every preserved item above, and
-   states why the outward result cannot be produced in natural,
-   efficient Rust. Reproducing an outward behaviour never means
-   emulating a GLib, libc or C++ mechanism. The record is registered by
-   name in `docs/findings/upstream-divergences.md`. The category itself
-   is maintainer-authorized; an individual entry is admitted only by
-   its own record and review, and one record does not admit another by
-   analogy.
+3. **Language artefact.** The programming language is an implementation
+   detail: what a user or a developer calling the shared object observes
+   is the behaviour, and oxpinyin implements it in idiomatic Rust. No
+   code is written to reproduce a behaviour of another programming
+   language or of a library written for one: C or C++ semantics (an
+   integer-returning comparator, unsigned wrap-around, float-to-integer
+   truncation, an integer width chosen for storage), GLib, glibc or
+   another libc, libstdc++, or compiler or processor behaviour. The test
+   is whether a language-neutral requirement for the behaviour would
+   mention it; if not, it is a language artefact. A width or wrap that
+   the C ABI or an on-disk format prescribes, or that is part of a
+   domain algorithm such as a checksum or hash, is contract or product
+   behaviour, not an artefact; the origin of an operation in C does not
+   by itself make every use of it an artefact. Where idiomatic Rust
+   gives the pin's result, which is the normal case, nothing more is
+   needed. Where it differs only through a language artefact, on valid
+   or malformed input, the Rust result stands: the difference is
+   recorded (a discrepancy record from
+   `docs/findings/language-runtime-discrepancy-template.md`, registered
+   by name in `docs/findings/upstream-divergences.md`, with
+   `POLICY-ACCEPTED` on the cases that tell the two apart) and the work
+   moves on. No approval is needed, and writing Rust to imitate the
+   artefact is forbidden. When unsure whether a difference is an
+   artefact, err towards idiomatic Rust and record it. The record traces
+   the reachable path and names the cases; one record does not admit
+   another by analogy.
 
    **Adapter placement (2026-10-24 UTC, #1182).** C, C++ and GLib
    interoperability, and C-facing encodings, live only in the consumer C API
@@ -392,21 +484,23 @@ the first matching limb wins:
    NUL-free text with no cached length or metadata bytes. The broader
    user-library audit stays in #1198. `phrase_text_bytes` is the explicit
    C-boundary encoder.
-4. **Anything else.** A defect to revert. A Stage 3 departure if it
-   changes valid behaviour and is opted into behind a feature.
+4. **Product-level change.** A behaviour that is part of the product
+   itself (a ranking rule, a limit, a refusal, the meaning of an option,
+   or a logic defect of libpinyin that idiomatic Rust reproduces as
+   written) is not an artefact. It is reproduced bug for bug, and
+   changing it needs a maintainer ruling or a Stage 3 feature.
+5. **Anything else.** A defect to revert.
 
 **Prior rulings stand.** The exception does not reverse an earlier
 maintainer decision. `LC_NUMERIC` (row 39, #539/#618) is to be revisited
-under #923, not changed; it needs a new human ruling. A valid-input
+under #923, not changed; it needs a new human ruling. A product-level
 change or a conflicting prior ruling is a STOP, not a judgement call.
 
-**What it is not.** "The Rust is cleaner", "the GLib code is ugly", "no
-frontend sees it", "it is only a warning" and "it is only a byte" are
-not arguments by themselves. Neither is "ordinary Rust does not
-reproduce it": the record must show that the outward result cannot be
-produced in natural, efficient Rust, that the input class is partitioned,
-and that there is no valid-input difference. A slower Rust imitation of
-a C mechanism is not an argument either.
+**What it is not.** It is not a licence to change product behaviour: a
+ranking rule, a limit or a logic defect of libpinyin is reproduced. "No
+frontend sees it" and "it is only a warning" are not reasons:
+diagnostics are part of the C contract. The record traces the path and
+names the cases; it does not argue for the artefact's reproduction.
 
 ### Discrepancy records and the `POLICY-ACCEPTED` disposition
 
@@ -415,8 +509,9 @@ A language/runtime-quirk exception is recorded with
 linked from the register entry and from the contract-diff case. It
 requires the pin citation, the Rust counterpart, the forward and
 backward paths, the input partition, the exact triggering input, why
-the difference is a runtime quirk rather than a defect, the preserved
-contract elements, the valid-input proof, and the tests and controls.
+the difference is a language artefact rather than product behaviour,
+the preserved contract elements, the affected inputs, and the tests and
+controls.
 
 The differential disposition vocabulary is:
 
@@ -488,8 +583,9 @@ exceptions apply to.
 > against which the candidate surface is byte-identical —
 > `docs/testing/oracle-environment.md`) —
 > except where one of the named exceptions (a)/(b)/(c) ((d) retired
-> 2026-09-06) or a recorded language/runtime-quirk exception explicitly
-> applies. Exporting a symbol that returns a wrong value is worse than
+> 2026-09-06) or a recorded language/runtime-quirk exception — every
+> language artefact, on valid or malformed input (2026-10-26 UTC,
+> #1303) — explicitly applies. Exporting a symbol that returns a wrong value is worse than
 > not exporting it: the consumer gets a silent wrong answer instead of a
 > link error. **A stub returning `false` is not compliance —
 > it is a defect.**
@@ -503,8 +599,11 @@ exceptions apply to.
 > and asserts byte-identical output — where *output* is the whole
 > observable surface, not just the scalar return: return status,
 > out-parameters and the data they point to, written lengths, and any
-> state transition on the handle. A symbol with no probe is unverified,
-> not compliant. The probe runs on all three backend cells — tkrzw,
+> state transition on the handle. A case the policy admits holds its
+> declared disposition instead (`POLICY-ACCEPTED` for a recorded
+> language artefact, `HOST-DEPENDENT` where registered, or a class
+> (b)/(c) declaration). A symbol with no probe is unverified, not
+> compliant. The probe runs on all three backend cells — tkrzw,
 > bdb and kc — against the pin built for the same cell (ruling
 > 2026-09-26 UTC; see "Amendment — rulings recorded").
 >
@@ -872,8 +971,8 @@ Stated so the classes are not read as broader than they are:
 - **"Upstream returns something useless."** Not class (c) unless
   upstream *aborts*. A wrong-but-defined answer is reproducible.
 - **"It is only GLib/glibc/C++."** Not an exception by itself. The
-  decision order above must be walked, and a valid-input difference is
-  never a quirk.
+  decision order above must be walked: an artefact is not reproduced,
+  and a product-level change needs a ruling (limb 4).
 - **"It only affects malformed input."** Necessary, not sufficient: the
   path must be traced end to end, the C contract must be preserved, and
   the record must name the case and its controls.

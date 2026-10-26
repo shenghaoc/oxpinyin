@@ -12,7 +12,9 @@ after the Stage 2 compatibility exit gate
 pinned behaviour (`.kiro/steering/pinned-behaviour.md`).
 
 Performance work that keeps compatibility is not Stage 3. It is Stage 2
-work (`.kiro/specs/bug-for-bug/`, Requirement 4).
+work (`.kiro/specs/bug-for-bug/`, Requirement 4). A difference that is
+only a language artefact is not Stage 3 either: it is recorded in
+Stage 2 (`.kiro/specs/bug-for-bug/`, Requirement 6).
 
 ## Requirements
 
@@ -26,8 +28,10 @@ me unless I opt in at build time.
 
 1. EACH departure SHALL sit behind an opt-in cargo feature, off by
    default.
-2. IN the default build, every differential that was identical SHALL
-   stay identical, and the files on disk SHALL not change.
+2. IN the default build, every differential SHALL keep its Stage 2
+   disposition under its policy — `MATCH`, `POLICY-ACCEPTED` for a
+   recorded language artefact, or an existing `HOST-DEPENDENT` case —
+   and the files on disk SHALL not change.
 3. EACH departure SHALL state what it changes: observable output, files
    on disk, the ABI, or more than one of these.
 

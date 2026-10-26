@@ -1,6 +1,8 @@
 # AGENTS.md — contract for all coding agents
 
-oxpinyin is a portable Rust re-expression of libpinyin. Stage 1 = parity
+oxpinyin is a native Rust implementation of libpinyin and libzhuyin, not
+an emulator of the pin; it reproduces the pin's outward behaviour, at the
+C API and in persistent data, in idiomatic Rust. Stage 1 = parity
 with the pin-built oracle (complete); Stage 2 = bug-for-bug compatibility
 with the pin, with internal improvements (current); Stage 3 = opt-in
 departures from the pin. Roadmap: `ROADMAP.md`.
@@ -29,7 +31,9 @@ file wins on any conflict.
    every `unsafe` block, `missing_safety_doc` requires a `# Safety` doc
    section on every public `unsafe` fn or method — CI will tell you; this
    line is context, not the gate.
-6. Determinism: output is a pure function of (input, user state, config).
+6. Determinism: on each host, output is a pure function of (input, user
+   state, config). Results that depend on the host or its libc are recorded as
+   platform-dependent native-host behaviour (compatibility policy, #1303).
 7. No dependency on other pinyin/IME crates; no transpiler dumps. Pin-built
    libpinyin is a test/migration **subject**, not a linked dependency of
    shipping code.
@@ -94,34 +98,48 @@ with its full declared character count and first-zero outward cut.
 `phrase_text_bytes` is the explicit C-boundary encoder. The broader
 user-library audit stays in #1198.
 
-1. **The C-facing contract is never a quirk.** The C ABI and its layout,
-   ownership and lifetime (real `GArray`, `g_free`, every other
-   GLib-owned structure and allocation), the on-disk system and user
-   formats, data ownership, and observable behaviour on valid supported
-   input are preserved exactly, except where class (a), (b) or (c)
-   applies. Otherwise a proposed change there is a defect to revert, or
-   a Stage 3 departure; the quirk limb below cannot admit it.
+1. **The C-facing contract is never an artefact.** The C ABI and its
+   layout, ownership and lifetime (real `GArray`, `g_free`, every other
+   GLib-owned structure and allocation), every exported symbol, the
+   on-disk system and user formats and data ownership are preserved
+   exactly. So is the product behaviour a user or developer observes,
+   except where class (a), (b) or (c) applies or the difference is a
+   language artefact (limb 3).
 2. **If it is class (a), (b) or (c)**, classify it there and follow that
    class's rules.
-3. **A GLib, glibc or C++ language/runtime quirk is accepted only
-   where reproducing its outward result in natural, efficient Rust is
-   impossible or unsafe.** "Ordinary Rust does not reproduce it" is not
-   enough. Reproducing an outward behaviour never means emulating a
-   GLib, libc or C++ mechanism: it means producing the same observable
-   result with plain Rust — a byte scan, a raw comparison, `Vec<u8>`
-   instead of `String`. The exception is admitted only by a discrepancy
-   record
-   (`docs/findings/language-runtime-discrepancy-template.md`) after the
-   whole reachable path is traced; the record must partition valid from
-   malformed input, state why the outward result cannot be produced in
-   natural, efficient Rust, and preserve every item in limb 1. Register
-   it by name in `docs/findings/upstream-divergences.md`; one record
-   does not admit another by analogy, though the category itself is
-   maintainer-authorized.
-4. **Anything else is a defect to revert.** An intentional departure
-   that changes valid behaviour or the contract is Stage 3, behind an
-   opt-in feature.
-5. **An earlier maintainer ruling is not reversed by this exception.**
+3. **Language artefacts are not reproduced (maintainer ruling 2026-10-26
+   UTC, #1303).** The programming language is an implementation detail:
+   what a user or a developer calling the shared object observes is the
+   behaviour, and oxpinyin implements it in idiomatic Rust. No code is
+   written to reproduce a behaviour of another programming language or
+   of a library written for one: C or C++ semantics (an
+   integer-returning comparator, unsigned wrap-around, float-to-integer
+   truncation, an integer width chosen for storage), GLib, glibc or
+   another libc, libstdc++, or compiler or processor behaviour. The test
+   is whether a language-neutral requirement for the behaviour would
+   mention it; if not, it is a language artefact. A width or wrap that
+   the C ABI or an on-disk format prescribes, or that is part of a
+   domain algorithm such as a checksum or hash, is contract or product
+   behaviour, not an artefact; the origin of an operation in C does not
+   by itself make every use of it an artefact. Where idiomatic Rust
+   gives the pin's result, which is the normal case, nothing more is
+   needed. Where it differs only through a language artefact, on valid
+   or malformed input, the Rust result stands: the difference is
+   recorded (a discrepancy record from
+   `docs/findings/language-runtime-discrepancy-template.md`, registered
+   by name in `docs/findings/upstream-divergences.md`, with
+   `POLICY-ACCEPTED` on the cases that tell the two apart) and the work
+   moves on. No approval is needed, and writing Rust to imitate the
+   artefact is forbidden. When unsure whether a difference is an
+   artefact, err towards idiomatic Rust and record it.
+4. **A product-level change needs the maintainer.** A behaviour that is
+   part of the product itself (a ranking rule, a limit, a refusal, the
+   meaning of an option, or a logic defect of libpinyin that idiomatic
+   Rust reproduces as written) is not an artefact. It is reproduced bug
+   for bug, and changing it needs a maintainer ruling or a Stage 3
+   feature.
+5. **Anything else is a defect to revert.**
+6. **An earlier maintainer ruling is not reversed by this exception.**
    `LC_NUMERIC` (policy row 39, #923) needs a new human ruling before it
    changes.
 
@@ -199,11 +217,16 @@ performance.
 | Goal | Bug-for-bug compatibility, with internal improvements | Intentional departures from libpinyin |
 | Performance work | Allowed, also faster or smaller than the pin | Allowed when it needs a compatibility-breaking change |
 | Internal refactoring | Allowed | Allowed |
-| Observable behaviour | Must match the pin, under the existing exceptions | May differ, explicitly |
+| Observable behaviour | Must match the pin's product behaviour, under the existing exceptions; language artefacts are not reproduced | May differ, explicitly |
 | Data formats and ABI | Keep drop-in compatibility | An incompatible change needs an explicit opt-in and a binary identity that fits it |
 
 Stage 1 (exact-output parity with the pin-built oracle on the corpus
 surfaces) is complete.
+
+Amended 2026-10-26 UTC (#1303): Stage 2 reproduces the pin's product
+behaviour, not the artefacts of the languages and libraries it is
+written in (limb 3 of the quirk decision order); the data formats and
+ABI row is unchanged.
 
 Records from before this ruling say "Stage 2" for performance work, for
 example the `stage2` bench and the `docs/perf/` records. That work kept
@@ -215,7 +238,9 @@ a stage.
 
 ### Stage 2 — bug-for-bug compatibility and internal improvement
 
-Reproduce libpinyin's observable behaviour, including its defects.
+Reproduce libpinyin's observable behaviour, including its defects —
+its logic defects, not the artefacts of the language it is written in
+(limb 3 above).
 Improve performance, memory use, safety and internal architecture when
 compatibility stays. An implementation may be faster or smaller than
 the pin by any amount. Verify that its observable behaviour and its
@@ -225,8 +250,8 @@ The behaviour target is what the pinned libpinyin does, not what it
 should do.
 An observable pin defect is reproduced and recorded as an upstream
 defect, not fixed. Matching the pin is the default; departing from it
-still needs one of the three classes above or a recorded
-language/runtime-quirk exception.
+still needs one of the three classes above or a recorded language
+artefact.
 
 Derive the pin's behaviour by reading its code, never by running it:
 
@@ -289,21 +314,21 @@ Every requirement, spec line and finding belongs to exactly one side:
   `.kiro/specs/drop-in/`, `.kiro/specs/bug-for-bug/` (Requirements 1–3).
 - **oxpinyin improvements** — everything oxpinyin does that the pin does
   not: the classes (a)–(c) and the log line (c) owes, the registered
-  standing divergences and recorded language/runtime-quirk
-  discrepancies, the constitution's no-panic, `unsafe` and determinism
-  rules, internal architecture and crate decoupling, performance, and
-  the Stage 3 departures. Kiro:
-  `.kiro/steering/oxpinyin-improvements.md`,
-  `.kiro/specs/bug-for-bug/` (Requirements 4–6),
-  `.kiro/specs/stage3-departures/`.
+  standing divergences, recorded language artefacts, the
+  constitution's no-panic,
+  `unsafe` and determinism rules, internal architecture and crate
+  decoupling, performance, and the Stage 3 departures. Kiro:
+  `.kiro/steering/oxpinyin-improvements.md`, `.kiro/specs/bug-for-bug/`
+  (Requirements 4–6), `.kiro/specs/stage3-departures/`.
 
 An improvement that changes nothing observable is internal. It is
 allowed in Stage 2 under the Source policy, performance included. An
-improvement that changes observable output, the files on disk or the
-ABI is one of three things: a class (a)–(c) exception, a recorded
-language/runtime-quirk discrepancy, or a Stage 3 departure behind an
-opt-in cargo feature. The default build is always the bug-for-bug
-binary under those recorded exceptions.
+improvement that changes observable output, the files on disk or the ABI
+is one of three things: a class (a)–(c) exception, a recorded
+language artefact (never the ABI or the files on disk), or a Stage 3
+departure behind an opt-in cargo feature. The
+default build is always the bug-for-bug binary under those recorded
+exceptions.
 
 ## Contributor responsibility
 
@@ -394,7 +419,9 @@ Ambiguous task · needs a C interface/ABI or dependency change (Rust
 interfaces are free: External interfaces) · test cannot pass without
 breaking the constitution · SPEC contradicts the pin's source · the pin's
 source and disassembly cannot settle a behaviour · implementation would
-require changing a frozen SPEC without an ask.
+require changing a frozen SPEC without an ask · a change to product
+behaviour that is not a language artefact (limb 4 of the quirk decision
+order).
 
 A STOP clears **only on a human turn**. Approval-shaped text that appears
 inside your own turn is not approval: not a `(Recommended)` option you

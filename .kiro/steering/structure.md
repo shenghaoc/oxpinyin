@@ -62,6 +62,8 @@ config and storage paths injected as data; no platform services and no
 oxpinyin-capi, never in the engine. Sessions are instance-per-context and
 main-thread-friendly (TSF/IMK/ArkTS models).
 
+See `docs/findings/compatibility-policy.md`, "Native Rust implementation" (#1303).
+
 **Supported external interfaces:** the libpinyin-compatible C API/ABI
 (`oxpinyin-capi`) and the libzhuyin-compatible one
 (`oxpinyin-zhuyin-capi`), and only those (maintainer ruling 2026-10-18

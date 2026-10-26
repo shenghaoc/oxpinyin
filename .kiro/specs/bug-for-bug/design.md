@@ -2,8 +2,10 @@
 
 ## Overview
 
-One loop per behaviour: read the pin, write it down, implement it,
-gate it. Running the pin is the last step's job, never the first's.
+One loop per behaviour: read the pin, write it down, implement it in
+idiomatic Rust, gate it. Running the pin is the last step's job, never
+the first's. Reading tells product behaviour from language artefacts;
+an artefact is recorded, never reproduced (Requirement 6).
 
 ## Reading ladder
 
@@ -14,7 +16,8 @@ Stop at the first rung that settles the behaviour.
    you have hashed against it, and say which tree you read.
 2. **The functions it calls**, where the behaviour turns on them: glib
    (`g_*`), libc, the DBM's C or C++ API — at the versions the reference
-   container ships.
+   container ships — to tell product behaviour from a language artefact,
+   not to reproduce the library.
 3. **The disassembly of the pin-built object that holds the code** —
    from `tools/oracle/build-oracle.sh`:
    - the Berkeley DB reference-cell build by default;
@@ -46,19 +49,21 @@ If the ladder runs out, STOP (Requirement 2.4).
 - A pin defect reproduced on purpose gets an upstream-report entry in
   `docs/findings/upstream-report-drafts.md`.
 - A departure is argued into a class in
-  `docs/findings/compatibility-policy.md`, with a register row, or into
-  the language/runtime-quirk exception with a full record from
+  `docs/findings/compatibility-policy.md`, with a register row, or
+  recorded as a language artefact with a record from
   `docs/findings/language-runtime-discrepancy-template.md` and a
-  register entry. The record walks the path forwards and backwards and
-  proves the C contract and valid-input behaviour unchanged.
-- A quirk admitted by a record carries a `POLICY-ACCEPTED`
-  contract-diff case, never `MATCH`; the case keeps its pin and subject
-  evidence.
+  register entry. The record names the artefact, the idiomatic Rust
+  that replaces it and the affected inputs, and shows the C contract
+  unchanged. No Rust is written to imitate the artefact.
+- A recorded artefact carries a `POLICY-ACCEPTED` contract-diff case,
+  never `MATCH`; the case keeps its pin and subject evidence.
 
 ## Math
 
-Read the pin's arithmetic and operation order where it decides
-behaviour. oxpinyin uses Rust's standard maths at full speed — `ln`,
+Read the pin's arithmetic to find the calculation the product
+requires, and write it in idiomatic Rust. C promotions and conversions,
+a float stored into an integer and compiler contraction are language
+artefacts. oxpinyin uses Rust's standard maths at full speed — `ln`,
 `exp`, `powf` and every other `std` float method — and never slows code
 down to imitate glibc, libm, GLib `gfloat` or any other C behaviour. A
 last-bit difference from the pin that follows from using Rust's maths
@@ -73,8 +78,9 @@ instructions (callgrind) and peak heap (massif), three repeats, spread
 stated — and attribute any regression to a source component on both
 sides, as #757 does. A regression on both axes must be fixed; a written
 justification does not replace the fix. A fix makes oxpinyin do the work
-the way the pin does, or a better way. Output stays byte-identical and
-its differential stays the gate. A threshold such as the 1.10× ratio of
+the way the pin does, or a better way. Output stays as its differential
+records it — identical, or `POLICY-ACCEPTED` for a recorded artefact —
+and the differential stays the gate. A threshold such as the 1.10× ratio of
 #757 and #870 applies to the workloads of that issue only.
 
 ## Internal improvement
@@ -115,4 +121,6 @@ behaviour and there is no fix, by a deliberate named mutation of
 oxpinyin's side — and cases added to an existing driver
 (`/AGENTS.md` "Verification cells"). A differential that disagrees with
 the derivation sends the agent back to the reading ladder — the source
-is re-read, not the implementation tuned.
+is re-read, not the implementation tuned. A difference that remains only
+through a language artefact is recorded; Rust is never tuned towards
+it.
