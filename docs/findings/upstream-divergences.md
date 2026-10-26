@@ -204,6 +204,38 @@ what used to differ.
   `punct-alias/owned-*` pass a copy of the same text and MATCH the pin
   (#1272, 2026-10-26 UTC).
 
+### NULL prediction prefix
+
+- **Upstream source cite:** `src/pinyin.cpp:1389-1398` (`_compute_prefixes`)
+  passes `prefix` to `g_utf8_to_ucs4`, whose first act is `*in`
+  (GLib 2.84.4 `gutf8.c:950`); there is no NULL guard. Its callers reset
+  first: `pinyin_guess_predicted_candidates` frees the candidates and
+  empties `m_prefixes` (`:2420-2423`), the punctuation entry makes that
+  call (`:2459`), and `pinyin_guess_sentence_with_prefix` sets
+  `m_prefixes` to `[sentence_start]` (`:1431-1432`).
+  `zhuyin_guess_sentence_with_prefix` has the same shape
+  (`src/zhuyin.cpp:912-918`, `:949-953`).
+- **Mechanism:** a NULL `prefix` with a live instance passes those defined
+  resets, then the conversion dereferences NULL and the pin dies of
+  SIGSEGV. Row 41's guard covers a NULL instance only, where nothing
+  defined precedes the fault.
+- **What oxpinyin does instead:** by maintainer ruling (2026-10-26 UTC,
+  #1277), a NULL `prefix` is a prefix that adds no token, like one
+  `g_utf8_to_ucs4` rejects or an empty one.
+  `oxpinyin-capi-marshal`'s `ucs4::prefix_text` turns all three into
+  `None` at the C boundary, and the prediction and prefixed-sentence paths
+  take that `Option`. The plain entry answers `false` with the candidates
+  and prefixes emptied, the punctuation entry answers `true` with an empty
+  list, and both sentence entries guess on `[sentence_start]` and answer
+  the n-best result.
+- **Externally observable:** yes. The pin faults; oxpinyin answers the
+  no-prefix outcome. Class (b): the NULL dereference is not reproduced.
+- **Cases:** `prefix-convert/{predicted,punctuation,pinyin-sentence,zhuyin-sentence}-null`
+  of `contract-diff.py` (`crash=`: the pin dies of SIGSEGV after the
+  subject's stderr, and the subject answers the outcome above) pass on bdb.
+  Against the #1276 build, all but `punctuation-null` differ; that entry
+  already gave the outcome (2026-10-26 UTC).
+
 ### Public bigram export is a rendering surface
 
 - **Upstream source cite:** `src/pinyin.cpp:775-918`.

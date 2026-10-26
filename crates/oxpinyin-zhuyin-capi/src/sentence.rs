@@ -8,7 +8,7 @@
 use oxpinyin_capi_marshal::phrase_text::phrase_text_bytes;
 use std::os::raw::c_char;
 
-use crate::ffi::cstr_to_strict;
+use crate::ffi::{cstr_opt, cstr_to_strict};
 use crate::state::{instance_mut, instance_ref};
 use crate::types::ZhuyinInstance;
 
@@ -118,14 +118,17 @@ pub extern "C" fn zhuyin_guess_sentence_with_prefix(
     // SAFETY: `instance` is non-null and was produced by
     // `zhuyin_alloc_instance`.
     let inst = unsafe { instance_mut(instance) };
-    let Some(prefix) = cstr_to_strict(prefix) else {
-        return false;
-    };
+    // `m_prefixes` becomes `[sentence_start]` and the prefix adds what it
+    // converts to (`zhuyin.cpp:949-953`); `None` adds nothing.
+    let prefix = oxpinyin_capi_marshal::ucs4::prefix_text(cstr_opt(prefix));
     if refuse_empty_matrix(inst) {
         return false;
     }
-    let prefixes =
-        oxpinyin_facade::compute_prefixes(&inst.core.dict, inst.core.user.as_ref(), &prefix);
+    let prefixes = oxpinyin_facade::compute_prefixes(
+        &inst.core.dict,
+        inst.core.user.as_ref(),
+        prefix.as_ref(),
+    );
     let prefix_tokens: Vec<oxpinyin_core::PhraseToken> = prefixes
         .iter()
         .map(|&token| oxpinyin_core::PhraseToken::new(token))

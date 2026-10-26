@@ -54,6 +54,16 @@ pub fn cstr_to_parsed_prefix(ptr: *const c_char) -> String {
     }
 }
 
+/// Borrows a nullable C string as it stands; `None` for NULL. The bytes
+/// are not checked, so a caller converts them by its own rule.
+pub fn cstr_opt<'a>(ptr: *const c_char) -> Option<&'a CStr> {
+    if ptr.is_null() {
+        return None;
+    }
+    // SAFETY: Caller guarantees `ptr` is null-terminated when non-null.
+    Some(unsafe { CStr::from_ptr(ptr) })
+}
+
 /// Converts a nullable C string to an owned [`String`], `None` unless the
 /// bytes are valid UTF-8.
 pub fn cstr_to_strict(ptr: *const c_char) -> Option<String> {

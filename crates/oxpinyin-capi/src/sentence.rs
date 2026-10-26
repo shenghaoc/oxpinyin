@@ -5,7 +5,7 @@ use std::os::raw::c_char;
 
 use oxpinyin_core::{Dictionary as _, LanguageModel as _};
 
-use crate::ffi::{cstr_to_strict, cstr_to_string};
+use crate::ffi::{cstr_opt, cstr_to_strict};
 use crate::state::{CapiCandidate, instance_mut, instance_ref};
 use crate::types::{GUint, PinyinInstance, lookup_candidate_type_t};
 
@@ -181,16 +181,14 @@ pub extern "C" fn pinyin_guess_sentence_with_prefix(
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
     let inst = unsafe { instance_mut(instance) };
-    // The pin converts the prefix with `g_utf8_to_ucs4`; invalid UTF-8
-    // gives NULL, `_compute_prefixes` then adds no prefix token
-    // (`pinyin.cpp:1397-1403`) and the decode runs as if the prefix were
-    // empty. A NULL pointer keeps the capi's null guard (register row 41).
-    if prefix.is_null() {
-        return false;
-    }
-    let prefix = cstr_to_strict(prefix).unwrap_or_default();
-    let prefixes =
-        oxpinyin_facade::compute_prefixes(&inst.core.dict, inst.core.user.as_ref(), &prefix);
+    // `m_prefixes` becomes `[sentence_start]` and the prefix adds what it
+    // converts to (`pinyin.cpp:1431-1434`); `None` adds nothing.
+    let prefix = oxpinyin_capi_marshal::ucs4::prefix_text(cstr_opt(prefix));
+    let prefixes = oxpinyin_facade::compute_prefixes(
+        &inst.core.dict,
+        inst.core.user.as_ref(),
+        prefix.as_ref(),
+    );
     inst.prefixes.clone_from(&prefixes);
     if !matrix_has_keys(inst) {
         // Validate against the empty matrix for every keyless parse,
@@ -244,9 +242,8 @@ pub extern "C" fn pinyin_guess_predicted_candidates_with_punctuations(
     if crate::predict::clear_borrowed_prefix(inst, prefix) {
         return true;
     }
-    // SAFETY: `prefix` is a C string from the caller (null OK).
-    let prefix = unsafe { cstr_to_string(prefix) };
-    crate::predict::guess_predicted_with_punctuations(inst, &prefix)
+    let prefix = oxpinyin_capi_marshal::ucs4::prefix_text(cstr_opt(prefix));
+    crate::predict::guess_predicted_with_punctuations(inst, prefix.as_ref())
 }
 
 /// Get a sentence string from the instance (n-best variant).

@@ -378,7 +378,7 @@ impl SystemDictionary {
     /// # Errors
     ///
     /// Returns [`DictError`] when the DBM walk or a value decode fails.
-    pub fn suggestion_tokens(&self, prefix: &str) -> Result<Vec<u32>, DictError> {
+    pub fn suggestion_tokens(&self, prefix: &[u32]) -> Result<Vec<u32>, DictError> {
         self.phrase.search_suggestion(prefix)
     }
 

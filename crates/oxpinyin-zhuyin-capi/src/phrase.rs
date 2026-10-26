@@ -28,7 +28,7 @@ fn segment_text(sentence: *const c_char) -> Option<SegmentText> {
     if let Ok(text) = bytes.to_str() {
         return Some(SegmentText::Unicode(text.to_owned()));
     }
-    oxpinyin_core::ucs4::decode(bytes.to_bytes())
+    oxpinyin_capi_marshal::ucs4::decode(bytes.to_bytes())
         .ok()
         .map(SegmentText::Ucs4)
 }

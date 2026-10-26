@@ -14908,30 +14908,40 @@ def phrase_text_system(k, variant):
     ChewingKey at chewing_key.h:41-47 has tone at bit 12; da = 4|1<<7,
     ba = 1|1<<7 (chewing_enum.h:16,19,65). No API import repairs the words.
     """
-    system = private_system(k)
     word = PHRASE_TEXT_WORDS[variant]
-    texts = ((0x7532, word, 0x4e59), (0x4e19,))
-    keys = ((0x1084,) * 3, (0x1081,))
+    items_system(k, [((0x7532, word, 0x4e59), (0x1084,) * 3, 100), ((0x4e19,), (0x1081,), 100)])
+
+
+def items_system(k, items, total=200):
+    """A private system whose library 1 holds exactly `items`, tokens 1, 2, ….
+
+    Each item is `(words, keys, unigram)`, written raw: no API import
+    repairs a non-scalar word. Items that share a reading share one
+    `pinyin_index.bin` value, in token order; every proper prefix of a
+    reading or a text is an empty marker row, as import writes them.
+    Replace the private links to gb_char.bin, pinyin_index.bin and
+    phrase_index.bin, write user.conf and point the kit at the system."""
+    system = private_system(k)
     content, offsets = bytearray(8), [0]
     phonetic, phrases = {}, {}
-    for slot, (text, reading) in enumerate(zip(texts, keys), 1):
+    for slot, (text, reading, unigram) in enumerate(items, 1):
         token = 0x01000000 | slot
         raw_text = b''.join(value.to_bytes(4, 'little') for value in text)
         raw_keys = b''.join(value.to_bytes(2, 'little') for value in reading)
         offsets.append(len(content))
-        content += bytes((len(text), 1)) + (100).to_bytes(4, 'little') + raw_text
+        content += bytes((len(text), 1)) + unigram.to_bytes(4, 'little') + raw_text
         content += raw_keys + (10).to_bytes(4, 'little')
         index = b''.join((value & 0x0fff).to_bytes(2, 'little') for value in reading)
         for end in range(2, len(index), 2):
             phonetic.setdefault(index[:end], b'')
         item = token.to_bytes(4, 'little') + raw_keys
-        phonetic[index] = item + bytes((-len(item)) % 4)
+        phonetic[index] = phonetic.get(index, b'') + item + bytes((-len(item)) % 4)
         for end in range(4, len(raw_text), 4):
             phrases.setdefault(raw_text[:end], b'')
-        phrases[raw_text] = token.to_bytes(4, 'little')
+        phrases[raw_text] = phrases.get(raw_text, b'') + token.to_bytes(4, 'little')
     index_two = 17 + len(offsets) * 4 + 1
     payload = b''.join(value.to_bytes(4, 'little') for value in
-                       (200, 17, index_two, index_two + len(content) + 1))
+                       (total, 17, index_two, index_two + len(content) + 1))
     payload += b'#' + b''.join(value.to_bytes(4, 'little') for value in offsets)
     payload += b'#' + content + b'#'
     path = Path(system, 'gb_char.bin')
@@ -15093,6 +15103,135 @@ for _mode in ('pinyin', 'zhuyin'):
             case(f'phrase-text/{_mode}-{_variant}-{_surface}', mode=_mode,
                  control=not _fixed, issues=('894',))(
                      phrase_text_probe(_variant, _surface))
+
+
+# Prefix conversion (#1277). `_compute_prefixes` converts `prefix` with
+# `g_utf8_to_ucs4(prefix, -1, NULL, &len, NULL)` (pinyin.cpp:1396-1398;
+# zhuyin.cpp:918 at pin 074a2219). GLib 2.84.4 decodes every one- to
+# six-byte form, surrogates and values above U+10FFFF included
+# (gutf8.c:661-743), returns NULL for a malformed, overlong or truncated
+# string (:938-993), and reads `*prefix` first (:950). The callers reset
+# before converting: the plain prediction frees the candidates and empties
+# `m_prefixes` (:2420-2423) and answers false with no prefix (:2426-2427);
+# the punctuation entry answers true (:2498); `*_guess_sentence_with_prefix`
+# sets `m_prefixes` to `[sentence_start]` and runs the n-best on what the
+# conversion adds (pinyin.cpp:1431-1441; zhuyin.cpp:949-961). NULL is
+# registered class (b) ("NULL prediction prefix"): the pin faults at
+# gutf8.c:950, the subject gives the no-prefix outcome (`crash=`).
+#
+# The private system holds 甲<word>乙, 丙 and 戌 (both ba, 丙 the commoner)
+# and 甲<word>乙丙; the system bigram makes 戌 follow 甲<word>乙. So a
+# converted prefix seeds 戌 in the sentence and suggests 丙 in prediction.
+def glib_utf8(words):
+    """`g_unichar_to_utf8`'s one- to six-byte forms (gutf8.c:546-596)."""
+    out = bytearray()
+    for word in words:
+        for limit, first, length in ((0x80, 0, 1), (0x800, 0xc0, 2), (0x10000, 0xe0, 3),
+                                     (0x200000, 0xf0, 4), (0x4000000, 0xf8, 5), (1 << 32, 0xfc, 6)):
+            if word < limit:
+                break
+        tail = []
+        for _ in range(length - 1):
+            tail.append(0x80 | (word & 0x3f))
+            word >>= 6
+        out += bytes([first | word] + tail[::-1])
+    return bytes(out)
+
+
+PREFIX_WORDS = {'valid': 0x4e01, 'surrogate': 0xd800, 'above-unicode': 0x110000,
+                'five-byte': 0x200000, 'six-byte': 0x4000000}
+
+
+def prefix_system(k, word):
+    """The private system and bigram above, for the middle word `word`."""
+    prefix_text = (0x7532, word, 0x4e59)
+    items_system(k, [(prefix_text, (0x1084,) * 3, 100), ((0x4e19,), (0x1081,), 1000),
+                     ((0x620c,), (0x1081,), 10), (prefix_text + (0x4e19,), (0x1084,) * 3 + (0x1081,), 100)],
+                 total=2000)
+    path = Path(k.data, 'bigram.db')
+    path.unlink()
+    d18_bigram_db(k, path, [(0x01000001.to_bytes(4, 'little'), d18_gram(1000, 0x01000003, 1000))])
+
+
+def prefix_argument(variant):
+    """The prefix bytes for `variant`, or None for the NULL case."""
+    if variant == 'null':
+        return None
+    if variant == 'invalid':
+        return '甲'.encode() + b'\xff' + '乙'.encode()
+    return glib_utf8((0x7532, PREFIX_WORDS[variant], 0x4e59))
+
+
+def prefix_prediction_case(entry, variant):
+    """Fill the candidate list, then predict after the prefix of `variant`.
+
+    Record the answer and every row's type and bytes."""
+    def probe(k):
+        """Build the system, list the ba1 candidates, then call the entry."""
+        prefix_system(k, PREFIX_WORDS.get(variant, PREFIX_WORDS['valid']))
+        inst = k.inst
+        assert k.fn('set_options', B, P, U)(k.ctx, 1 << 5)
+        k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'ba1')
+        k.fn('guess_sentence', B, P)(inst)
+        k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0x1e)
+        ret = k.fn(entry, B, P, S)(inst, prefix_argument(variant))
+        count = U(UNTOUCHED)
+        assert k.fn('get_n_candidate', B, P, C.POINTER(U))(inst, C.byref(count))
+        rows = []
+        for index in range(count.value):
+            candidate, text, kind = P(), P(UNTOUCHED), I(UNTOUCHED)
+            assert k.fn('get_candidate', B, P, U, C.POINTER(P))(inst, index, C.byref(candidate))
+            k.fn('get_candidate_string', B, P, P, C.POINTER(P))(inst, candidate, C.byref(text))
+            k.fn('get_candidate_type', B, P, P, C.POINTER(I))(inst, candidate, C.byref(kind))
+            rows.append([kind.value, phrase_text_bytes(k, text.value, owned=False)])
+        return {'ret': ret, 'rows': rows}
+    return probe
+
+
+def prefix_sentence_case(variant):
+    """Guess ba1 with or without a converted prefix, then with `variant`'s.
+
+    A converted non-scalar prefix seeds 戌. For NULL and invalid input the
+    first guess is seeded with the valid prefix, so the no-prefix answer 丙
+    shows the sentence was guessed again. Record the answer and sentence."""
+    def probe(k):
+        """Build the system, guess once, then guess with the prefix."""
+        prefix_system(k, PREFIX_WORDS.get(variant, PREFIX_WORDS['valid']))
+        inst = k.inst
+        assert k.fn('set_options', B, P, U)(k.ctx, 1 << 5)
+        k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'ba1')
+        if variant in ('null', 'invalid'):
+            seeded = k.fn('guess_sentence_with_prefix', B, P, S)(inst, prefix_argument('valid'))
+        else:
+            seeded = k.fn('guess_sentence', B, P)(inst)
+        ret = k.fn('guess_sentence_with_prefix', B, P, S)(inst, prefix_argument(variant))
+        sentence = P(UNTOUCHED)
+        if k.mode == 'pinyin':
+            read = k.fn('get_sentence', B, P, C.c_ubyte, C.POINTER(P))(inst, 0, C.byref(sentence))
+        else:
+            read = k.fn('get_sentence', B, P, C.POINTER(P))(inst, C.byref(sentence))
+        return {'seeded': seeded, 'ret': ret, 'sentence': [read, phrase_text_bytes(k, sentence.value)]}
+    return probe
+
+
+# 丙 and 戌 as the C strings the getters return.
+_BING, _XU = '丙'.encode().hex(), '戌'.encode().hex()
+for _variant in ('valid', 'invalid', 'surrogate', 'above-unicode', 'five-byte', 'six-byte', 'null'):
+    for _entry, _null in (('guess_predicted_candidates', {'ret': False, 'rows': []}),
+                          ('guess_predicted_candidates_with_punctuations', {'ret': True, 'rows': []})):
+        _name = 'prefix-convert/%s-%s' % ('predicted' if _entry == 'guess_predicted_candidates'
+                                          else 'punctuation', _variant)
+        # The punctuation entry already gave no prefix for invalid and NULL.
+        _control = _variant == 'valid' or (_entry != 'guess_predicted_candidates' and _variant in ('invalid', 'null'))
+        case(_name, control=_control, crash=_null if _variant == 'null' else None,
+             issues=('1277',))(prefix_prediction_case(_entry, _variant))
+    for _mode in ('pinyin', 'zhuyin'):
+        # The pinyin sentence entry already guessed on no prefix for invalid input.
+        _control = _variant == 'valid' or (_mode == 'pinyin' and _variant == 'invalid')
+        _null = {'seeded': True, 'ret': True, 'sentence': [True, _BING]}
+        case('prefix-convert/%s-sentence-%s' % (_mode, _variant), mode=_mode, control=_control,
+             crash=_null if _variant == 'null' else None,
+             issues=('1277',))(prefix_sentence_case(_variant))
 
 
 # #1198: USER_FILE load copies raw words (074a2219 pinyin.cpp:303-318,

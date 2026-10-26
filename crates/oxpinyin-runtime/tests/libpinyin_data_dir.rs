@@ -126,7 +126,10 @@ fn an_unmodified_libpinyin_data_directory_opens_and_decodes() {
 
     // Prediction through the phrase DBM's raw suggestion walk; the text
     // comes from the live item, as the facade's prediction path resolves it.
-    let suggestions = dict.system().suggestion_tokens("中").expect("suggest");
+    let suggestions = dict
+        .system()
+        .suggestion_tokens(&[u32::from('中')])
+        .expect("suggest");
     assert!(
         suggestions.iter().any(|&token| {
             dict.system()

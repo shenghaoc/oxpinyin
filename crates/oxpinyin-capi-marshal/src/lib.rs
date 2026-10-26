@@ -167,6 +167,7 @@ macro_rules! opaque_handle_casts {
 }
 
 pub mod phrase_text;
+pub mod ucs4;
 
 /// Stamps a facade's byte-oriented `write_owned_sentence_bytes` helper: the
 /// `char **`-out sentence writer for UTF-8 and the pin's historical encoding
