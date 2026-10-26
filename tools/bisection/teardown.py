@@ -1242,8 +1242,8 @@ def fan_out(campaign, units, label, emit=None):
     Each function receives a private copy of the campaign (Campaign.unit): its own
     sample names, counter and CPU lease, a driver whose checks also see the pool's
     stop, and the admitted environment and slot descriptors for its children.
-    --jobs 1 or a single unit runs them in order in this thread; otherwise they run
-    in tools/dev/pool.py's admitted pool, one CPU lease each from the allowed set,
+    All units run in tools/dev/pool.py's admitted pool; --jobs 1 limits it to one
+    worker. Each unit gets one CPU lease from the allowed set,
     this campaign's own first. emit(name, value) runs in unit order. Only fixture
     work goes through here: measured stages never run inside the pool.
     """

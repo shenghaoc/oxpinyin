@@ -3,7 +3,9 @@
 fake launcher, callable units under the same loop, and a real SIGTERM against the CLI. No platform is
 skipped: /proc, CPU affinity and the slot are faked, and a unit's real children are plain Python."""
 import argparse
+from functools import partial
 import io
+import json
 import os
 from pathlib import Path
 import signal
@@ -512,10 +514,10 @@ class FakeAdmission:
     """HeavyAdmission stand-in: records its lifecycle and admits a fixed worker count."""
     workers, blocked, events = 2, False, []
 
-    def __init__(self, label, env, out=None, runner=False, prepare_heavy_env=None):
+    def __init__(self, label, env, out=None, runner=False, prepare_heavy_env=None, *, fds=(7,)):
         self.label, self.prepare = label, prepare_heavy_env
         self.env = {pool.POOL_WORKERS: str(self.workers), 'FAKE_ADMITTED': '1'}
-        self.slot = mock.Mock(pass_fds=lambda: (7,), handoff=lambda: self.events.append('handoff'))
+        self.slot = mock.Mock(pass_fds=lambda: fds, handoff=lambda: self.events.append('handoff'))
         self.events.append('admission')
 
     def try_acquire(self):
@@ -565,7 +567,9 @@ class UnitRunnerTests(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.lock, self.events = threading.Lock(), []
         FakeAdmission.events, FakeAdmission.workers, FakeAdmission.blocked = self.events, 2, False
-        patcher = mock.patch('tools.dev.slot.HeavyAdmission', FakeAdmission)
+        # Real subprocesses cannot inherit the opaque descriptor used by the
+        # context-only tests. This fake admission owns no slot descriptor.
+        patcher = mock.patch('tools.dev.slot.HeavyAdmission', partial(FakeAdmission, fds=()))
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -649,8 +653,7 @@ class UnitRunnerTests(unittest.TestCase):
             self.run_units(units, 2)
         self.assertEqual(started, [])
         self.assertIn('reaped-hold', self.events)
-        child, grandchild = self.pids('hold')
-        self.assertFalse(running(child) or running(grandchild))
+        self.assert_reaped_and_stopped(self.pids('hold'))
 
     def test_units_finished_before_a_failure_are_still_emitted_in_order(self):
         emitted = []
@@ -685,7 +688,16 @@ class UnitRunnerTests(unittest.TestCase):
         self.assertEqual(sorted(event for event in self.events if str(event).startswith('reaped')),
                          ['reaped-a', 'reaped-b'])
         for name in ('a', 'b'):
-            self.assertFalse(any(running(pid) for pid in self.pids(name)))
+            self.assert_reaped_and_stopped(self.pids(name))
+
+    def assert_reaped_and_stopped(self, pids):
+        """The direct child is reaped synchronously; descendants receive SIGKILL asynchronously."""
+        child, *descendants = pids
+        self.assertFalse(running(child))
+        deadline = time.monotonic() + 5
+        while any(running(pid) for pid in descendants) and time.monotonic() < deadline:
+            time.sleep(.01)
+        self.assertFalse(any(running(pid) for pid in descendants))
 
     def test_cancellation_and_failure_kill_descendants_after_the_leader_exits(self):
         for reason in ('cancelled', 'sibling failed'):
@@ -754,14 +766,25 @@ class UnitRunnerTests(unittest.TestCase):
     def test_a_serial_run_sees_cancellation_at_its_checks_and_reaps_its_child(self):
         class Cancelled(Exception):
             pass
-        flag = threading.Event()
-        threading.Timer(0.2, flag.set).start()
+        flag, observed = threading.Event(), []
+        def cancel_after_ready():
+            try:
+                observed.extend(self.pids('a'))
+            finally:
+                flag.set()
+        stopper = threading.Thread(target=cancel_after_ready)
+        stopper.start()
         units = [self.hold('a'), ('b', lambda context: self.log('b'))]
-        with self.assertRaises(Cancelled):
-            pool.run_admitted(units, 'label', cancelled=flag.is_set, serial=True, cancel_error=Cancelled,
-                              out=io.StringIO())
-        self.assertEqual([event for event in self.events if event != 'admission'], ['reaped-a'])
-        self.assertFalse(any(running(pid) for pid in self.pids('a')))
+        try:
+            with self.assertRaises(Cancelled):
+                pool.run_admitted(units, 'label', cancelled=flag.is_set, serial=True, cancel_error=Cancelled,
+                                  out=io.StringIO())
+        finally:
+            stopper.join(timeout=12)
+        self.assertFalse(stopper.is_alive())
+        self.assertEqual(self.events, ['admission', 'handoff', 'reaped-a', 'close'])
+        self.assertEqual(len(observed), 2)
+        self.assert_reaped_and_stopped(observed)
 
     def test_a_pooled_run_cancelled_at_a_unit_check_raises_the_cancel_error(self):
         class Cancelled(Exception):
@@ -855,6 +878,9 @@ class AdmittedTests(unittest.TestCase):
         patcher = mock.patch('tools.dev.slot.HeavyAdmission', FakeAdmission)
         patcher.start()
         self.addCleanup(patcher.stop)
+        cpus = mock.patch.object(host, 'allowed_cpus', return_value={2, 5, 7, 9})
+        cpus.start()
+        self.addCleanup(cpus.stop)
 
     def run_admitted(self, units, **kwargs):
         kwargs.setdefault('cancelled', lambda: False)
@@ -886,15 +912,22 @@ class AdmittedTests(unittest.TestCase):
                 self.fail('no unit may start')
         self.assertEqual(self.events, ['admission', 'close'])
 
-    def test_serial_and_single_unit_runs_are_in_order_in_the_caller_with_no_admission(self):
+    def test_serial_and_single_unit_runs_use_admission_and_keep_emission_in_the_caller(self):
         caller, seen = threading.get_ident(), []
         units = [(name, lambda context, name=name: seen.append((name, threading.get_ident() == caller)) or name)
                  for name in 'abc']
         emitted = []
-        self.assertEqual(self.run_admitted(units, serial=True, emit=lambda name, value: emitted.append(name)), list('abc'))
+        self.assertEqual(self.run_admitted(units, serial=True,
+                         emit=lambda name, value: emitted.append((name, threading.get_ident() == caller))), list('abc'))
         self.run_admitted(units[:1])
-        self.assertEqual(seen, [('a', True), ('b', True), ('c', True), ('a', True)])
-        self.assertEqual(emitted, list('abc'))
+        self.assertEqual(seen, [('a', False), ('b', False), ('c', False), ('a', False)])
+        self.assertEqual(emitted, [(name, True) for name in 'abc'])
+        self.assertEqual(self.events, ['admission', 'handoff', 'close'] * 2)
+
+    def test_empty_work_takes_no_admission_and_empty_cpus_refuse_before_start(self):
+        self.assertEqual(self.run_admitted([]), [])
+        with self.assertRaisesRegex(ValueError, 'cpus must not be empty'):
+            self.run_admitted([('a', lambda c: self.fail('unit must not run'))], cpus=[])
         self.assertEqual(self.events, [])
 
     def test_a_serial_failure_stops_the_remaining_units(self):
@@ -963,6 +996,67 @@ class AdmittedTests(unittest.TestCase):
             with self.subTest(cap=cap), self.assertRaisesRegex(ValueError, 'max_workers must be positive'):
                 self.run_admitted(units, max_workers=cap)
         self.assertEqual(self.events, [])
+
+
+class SingleUnitAdmissionTests(unittest.TestCase):
+    """Real slot acquisition and inheritance, with deterministic resource readers."""
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(prefix='single-unit-admission-')
+        self.addCleanup(temporary.cleanup)
+        self.locks = Path(temporary.name)
+        for patcher in (mock.patch.object(host, 'host_lock_dir', return_value=self.locks),
+                        mock.patch.object(host, 'allowed_cpus', return_value={2, 5}),
+                        mock.patch.object(host, 'resource_snapshot', return_value=resources(12000))):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_single_heavy_unit_acquires_admission_and_a_complete_context(self):
+        for serial in (False, True):
+            with self.subTest(serial=serial):
+                def run(context):
+                    self.assertEqual(context.cpu, 2)
+                    for name in ('PATH', 'HOME'):
+                        self.assertEqual(context.environment.get(name), os.environ[name])
+                    self.assertEqual(Path(context.environment['OXPINYIN_LOCK_DIR']), self.locks)
+                    marker = json.loads(context.environment['OXPINYIN_HEAVY_SLOT_HELD'])
+                    self.assertEqual(marker['pid'], os.getpid())
+                    self.assertEqual(context.fds, (marker['fd'],))
+                    record = self.locks / f'heavy-slot-{marker["slot"]}'
+                    self.assertEqual(json.loads(record.read_text())['estimate_mib'], 64)
+                    self.assertTrue(os.path.samestat(os.fstat(context.fds[0]), record.stat()))
+                    return record
+                records = pool.run_admitted([('heavy', run)], 'single heavy', cancelled=lambda: False,
+                                            serial=serial, unit_mib=64, out=io.StringIO())
+                self.assertEqual(records[0].read_text(), '')
+
+    def test_single_heavy_unit_in_a_child_inherits_the_ancestor_slot(self):
+        script = '''
+import io, json, os
+from unittest import mock
+from tools.dev import host, pool
+def run(context):
+    for name in ('PATH', 'HOME'):
+        assert context.environment.get(name) == os.environ[name], name
+    marker = json.loads(context.environment['OXPINYIN_HEAVY_SLOT_HELD'])
+    assert context.fds == (marker['fd'],)
+    os.fstat(marker['fd'])
+    return {'cpu': context.cpu, 'holder': marker['pid'], 'slot': marker['slot']}
+snapshot = dict(available_mib=12000, total_mib=16384, cpus=4, cargo_cpus=4, notes=[])
+with mock.patch.object(host, 'resource_snapshot', return_value=snapshot):
+    result = pool.run_admitted([('heavy', run)], 'nested single heavy', cancelled=lambda: False,
+                               cpus=[5], unit_mib=32, out=io.StringIO())
+print(json.dumps(result[0]))
+'''
+        with pool.admitted(1, 'ancestor', cancelled=lambda: False, cpu_cap=1,
+                           unit_mib=64, out=io.StringIO()) as budget:
+            result = subprocess.run([sys.executable, '-X', 'lazy_imports=normal', '-c', script],
+                                    cwd=ROOT, env=budget.env, pass_fds=budget.fds,
+                                    capture_output=True, timeout=15)
+            self.assertEqual(result.returncode, 0, result.stderr.decode(errors='replace'))
+            marker = json.loads(budget.env['OXPINYIN_HEAVY_SLOT_HELD'])
+            self.assertEqual(json.loads(result.stdout), {'cpu': 5, 'holder': os.getpid(), 'slot': marker['slot']})
+            record = self.locks / f'heavy-slot-{marker["slot"]}'
+            self.assertEqual(json.loads(record.read_text())['estimate_mib'], 64)
 
 
 if __name__ == '__main__':

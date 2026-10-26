@@ -443,6 +443,10 @@ require them.
 
 ### Regeneration
 
+Generation requires Linux with `taskset` and `valgrind` on `PATH`. The generator
+refuses an unsupported host or a missing tool before taking heavy admission,
+starting workers or changing work/output directories.
+
 The policies are generated separately from each backend's shipping release inputs
 by `tools/generate-function-order.py`. The generator uses the in-tree
 `tools/bisection/bisect.c` worker in its teardown mode: the load constructors,
@@ -481,7 +485,7 @@ measurement helper; its PR discussion and subsequent generator changes record
 no CPU-feature or hybrid-core requirement. `d5b957dc` introduced the
 one-backend-at-a-time instruction with the #1076 measurement campaign.
 Neither provides a generation-specific reason for serialization. The generator
-therefore leases distinct CPUs from `sched_getaffinity(0)` to its admitted
+therefore leases distinct CPUs from `tools.dev.host.allowed_cpus()` to its admitted
 workers. `--cpu` remains an optional single-CPU restriction; a restricted
 process affinity also constrains the pool if a host needs a homogeneous CPU
 subset. Keep builds, profiler version and input fixtures identical when
@@ -489,16 +493,48 @@ checking determinism; output is not promised identical across different
 builds or CPU instruction-set configurations.
 
 Each constructor/profile/toggle and steady collection has private writable
-scratch. The shared heavy slot chooses concurrency from available memory,
-CPU affinity and cgroup CPU limits; the pool reserves the existing heavy-runner
-allowance per collection. Results are set unions followed by lexical sorting,
-independent of completion order. Three backend campaigns may be launched
-concurrently with separate directories and separate `just heavy` admissions;
-no campaign starts before admission permits it. Never launch several pools
-under a single inherited reservation: their memory estimates would not add.
-For two concurrent determinism passes within one admitted pool, use
-`--repeat-output-dir`; the workers share one aggregate budget, including on a
-host with only one heavy slot.
+scratch. `tools.dev.pool.run_admitted` supplies the worker count, CPU leases,
+child environment and slot descriptors, and owns cancellation and process-group
+cleanup. The pool reserves the existing heavy-runner allowance per collection.
+Results are set unions followed by lexical sorting, independent of completion
+order. `--jobs N` is a maximum that admission may lower; `--jobs 1` and `--cpu`
+still go through admission. Timing and residency measurements remain isolated.
+
+For all three backends, `--campaign campaign.json` flattens their collections
+and both determinism passes into one admitted pool. Backends and passes are
+interleaved so every backend can start when capacity permits, even with one
+heavy slot. No nested pools share a reservation sized for only one pool.
+The JSON file is a nonempty array with one entry per backend (`bdb`, `kc`,
+`tkrzw`), with paths relative to that file. Each backend needs its own build,
+stage, profiles, work and output directories. For example, one entry is:
+
+```json
+[
+  {
+    "backend": "bdb",
+    "library": {"pinyin": "bdb/stage/lib/libpinyin.so.15.0.0", "zhuyin": "bdb/stage/lib/libzhuyin.so.15.0.0"},
+    "staticlib": {"pinyin": "bdb/build/x86_64-unknown-linux-gnu/release/libpinyin.a", "zhuyin": "bdb/build/x86_64-unknown-linux-gnu/release/libzhuyin.a"},
+    "bisect": "bisect",
+    "system_dir": "bdb/system",
+    "system_identity": "SHA256_FROM_PRINT_IDENTITY",
+    "profiles_dir": "bdb/teardown/profiles",
+    "work_dir": "bdb/work",
+    "output_dir": "bdb/first",
+    "repeat_output_dir": "bdb/second"
+  }
+]
+```
+
+Add the same fields for `kc` and `tkrzw` using their inputs and identities.
+`repeat_output_dir` is optional; supplying it requests two independent passes
+for that backend. Duplicate backends, unknown fields and reused output
+directories are errors. All fixtures and streams are checked before any
+campaign publishes policies.
+
+```sh
+just heavy -- uv run --no-project --managed-python python -X lazy_imports=normal \
+  tools/generate-function-order.py --campaign "$CAMPAIGN"
+```
 
 For tkrzw, the environment must name the sound libtkrzw supplied by setup
 (normally `<cache>/tkrzw/lib/libtkrzw.so.1` on Ubuntu). Its `PKG_CONFIG_PATH`
@@ -585,6 +621,28 @@ git diff --exit-code -- \
   "tools/packaging/function-order/$CELL/libpinyin.order" \
   "tools/packaging/function-order/$CELL/libzhuyin.order"
 ```
+
+For a same-input serial baseline, current main's generator accepts `--cpu`
+with one allowed CPU: its admitted pool then has one worker, so all collections
+run sequentially. This is the parallel generator landed in #1237 executing
+serially, rather than the pre-#1237 implementation; #1237 recorded their
+byte-equality. Keep the baseline script in a separate checkout, so it imports
+its unchanged sibling helpers, and record that checkout's exact revision.
+
+With `repeat_output_dir` on every entry, the maintained comparison mode runs
+the base serially, this campaign once, then two concurrent passes, and compares
+every policy byte for byte. It writes the requested output directories only
+after agreement. Its JSON summary reports wall seconds and the workers chosen
+by admission. Run the whole comparison inside one heavy command on one host:
+
+```sh
+just heavy -- uv run --no-project --managed-python python -X lazy_imports=normal \
+  tools/generate-function-order.py --campaign "$CAMPAIGN" \
+  --compare-base "$BASE_CHECKOUT/tools/generate-function-order.py"
+```
+
+All arms use the same libraries, archives, worker, system data and profiles.
+Old campaign timings are historical and are never a baseline for this run.
 
 Add `--repeat-output-dir "$SECOND_OUTPUT"` to collect two independent passes
 concurrently within the same pool. Use separate temporary output directories

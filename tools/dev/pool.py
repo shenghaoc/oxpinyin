@@ -556,34 +556,29 @@ def run_admitted(units: Sequence[tuple[str, Callable[[UnitContext], object]]], l
                  unit_mib: int = host.RUNNER_PEAK_MIB, out=sys.stderr) -> list:
     """Run independent UNITS in a pool sized by the heavy slot's admission; return values in order.
 
-    SERIAL, or a single unit, runs them in order in this thread with no admission: the
-    serial reference. Otherwise the pool is admitted (`admitted`) and sized by it, never
-    above MAX_WORKERS, the unit count or CPUS (the CPU ids to lease, one per running unit; none means
-    no limit and no lease); see `run_units` for the stop and ordering rules. Every unit
-    sees the admitted environment and slot descriptors.
+    Every nonempty run takes or inherits admission, including a single unit.
+    SERIAL caps admission and execution at one worker. The pool never exceeds
+    MAX_WORKERS, the unit count or CPUS (the CPU ids to lease, one per running
+    unit; defaults to the host's allowed set). See `run_units` for the stop and
+    ordering rules. Every unit sees the admitted environment and slot descriptors.
     """
     if max_workers is not None and max_workers < 1:
         raise ValueError('max_workers must be positive')
-    if serial or len(units) < 2:
-        values = []
-        for name, function in units:
-            try:
-                values.append(function(UnitContext(name, threading.Event(), cancelled=cancelled)))
-            except UnitStopped:
-                if cancelled():
-                    raise cancel_error('cancelled') from None
-                raise
-            if emit is not None:
-                emit(name, values[-1])
-        return values
-    cpu_cap = None if cpus is None else len(cpus)
+    if not units:
+        return []
+    cpus = sorted(host.allowed_cpus()) if cpus is None else list(cpus)
+    if not cpus:
+        raise ValueError('cpus must not be empty')
+    if serial:
+        max_workers = 1
+    cpu_cap = len(cpus)
     if max_workers is not None:
-        cpu_cap = max_workers if cpu_cap is None else min(cpu_cap, max_workers)
+        cpu_cap = min(cpu_cap, max_workers)
     with admitted(len(units), label, cancelled=cancelled, cpu_cap=cpu_cap,
                   unit_mib=unit_mib, cancel_error=cancel_error, out=out) as budget:
-        workers = max(1, min(budget.workers, len(units), len(cpus) if cpus else len(units),
+        workers = max(1, min(budget.workers, len(units), len(cpus),
                              max_workers if max_workers is not None else len(units)))
-        launcher = ProcessLauncher(env=budget.env, pass_fds=budget.fds, cpus=list(cpus or [])[:workers],
+        launcher = ProcessLauncher(env=budget.env, pass_fds=budget.fds, cpus=cpus[:workers],
                                    cancelled=cancelled)
         return run_units(units, workers, cancelled=cancelled, launcher=launcher, emit=emit,
                          cancel_error=cancel_error, out=out)
