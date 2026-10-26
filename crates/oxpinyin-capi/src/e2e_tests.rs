@@ -2061,16 +2061,6 @@ fn predicted_tie_groups_are_text_ascending_including_user_rows() {
     use crate::sentence::pinyin_guess_predicted_candidates_with_punctuations;
     use crate::types::lookup_candidate_type_t;
 
-    /// Mirror of predict.rs's private `amplified_frequency` — the same
-    /// mirroring convention as `amplified_law_mirrors_the_session_pinning_values`.
-    fn amplified(baked: u64, total: u64) -> u64 {
-        if total == 0 {
-            return 0;
-        }
-        let possibility = (1.0_f32 - 0.312_699_f32) * baked as f32 / total as f32;
-        u64::from((possibility * 256.0 * 256.0 * 256.0) as u32)
-    }
-
     let user_dir = TempUserDir::new("pred-defined-order");
     let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
 
@@ -2111,7 +2101,7 @@ fn predicted_tie_groups_are_text_ascending_including_user_rows() {
     // SAFETY: live instance immediately after the guess.
     let inst = unsafe { instance_ref(instance) };
     let total = inst.core.lm.amplified_total();
-    let rows: Vec<(String, usize, u64)> = inst
+    let rows: Vec<(String, usize, oxpinyin_engine::RankScore)> = inst
         .candidates
         .iter()
         .filter(|c| c.candidate_type() == lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE)
@@ -2134,7 +2124,7 @@ fn predicted_tie_groups_are_text_ascending_including_user_rows() {
                     .expect("candidate text is UTF-8")
                     .chars()
                     .count(),
-                amplified(baked, total),
+                oxpinyin_engine::interpolated_score(baked, total, 0.0, 0.312_699),
             )
         })
         .collect();
@@ -2145,7 +2135,7 @@ fn predicted_tie_groups_are_text_ascending_including_user_rows() {
     assert!(texts.contains(&"\u{5e74}"), "中年 sliced to 年: {texts:?}");
 
     // DEFINED ORDER: the emitted list is sorted by the comparator's keys
-    // (length desc, amplified frequency desc) with TEXT ASCENDING inside
+    // (length desc, interpolated score desc) with TEXT ASCENDING inside
     // every tie group — equivalently, no later row in the same group may
     // sort before an earlier one. Covers the user seam: 华 and 年 tie
     // (both user rows, equal live count 21) and must appear 华-first.

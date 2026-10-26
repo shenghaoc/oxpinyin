@@ -658,6 +658,11 @@ scale is integer fixed-point at all. The float dependency reaches the
 tiebreak too — heap-pop order is seeded by the exact-float comparator — so no
 fixed-point transform recovers the order either.
 
+The following arithmetic comparison describes the dated implementation;
+current #1297 candidate ranking uses shared `RankScore` and stable sorts,
+with scaled integer-key artefacts recorded separately. The historical
+sentence-surface measurements below are unchanged.
+
 This is **not** the Class A species. Class A's `amplified_frequency`
 (`crates/oxpinyin-engine/src/session.rs:1835-1841`) is
 `(1−λ)·unigram/total·2²⁴` — multiply, divide, cast: IEEE-754 basic ops,

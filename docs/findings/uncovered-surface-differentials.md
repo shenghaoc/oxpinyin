@@ -19,6 +19,12 @@ first (the bare defaults differ; without the common word a
 default-config artefact would masquerade as a divergence). No fix lands
 here; the differential exiting non-zero **is** the deliverable.
 
+The helper names and missing-path descriptions below refer to the dated
+2026-08-24/25 implementations. In current #1297 source, candidate scores
+use shared `RankScore` and stable field sorting; the former
+`amplified_frequency` scale/conversion is removed under the language-artefact
+policy. The historical reasoning and observations are retained as history.
+
 ## Reproduction
 
 > **Backend removed (2026-09-20 UTC, branch `refactor/drop-redb-backend`).** The live-typing provisioning snippets below name `*.redb` table files; the equivalent provisioning today uses the tkrzw export's `*.tkt`.

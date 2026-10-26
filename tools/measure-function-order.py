@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
 """Linux function-layout campaign using the in-tree bisect worker.
 
-Run through just heavy. No observations or profiler dumps are saved. The only
+Run through just heavy. --profiler-output-dir retains profiler streams locally. The only
 scratch files are private library/profile copies, deleted on exit and signals.
 The worker is tools/bisection/bisect.c in its teardown mode: native timing uses
 its time stop, memory uses its parent-observed checkpoints, and Callgrind uses
@@ -11,6 +11,7 @@ the facade init function and the exports the worker calls from there to M1.
 
 import argparse
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import io
 import json
@@ -23,33 +24,62 @@ import shutil
 import signal
 import statistics
 import subprocess
+import tempfile
 
 
 check_tkrzw = runpy.run_path(str(Path(__file__).parent / "tkrzw/runtime.py"))["check"]
 GEN = runpy.run_path(str(Path(__file__).with_name("generate-function-order.py")))
 ORDER = runpy.run_path(str(Path(__file__).parent / 'packaging/function_order.py'))
 MMAN = runpy.run_path(str(Path(__file__).parent / 'dev/mman.py'))
+from tools.dev.measure import registration, startup as startup_controller, worker
 ARMS = ("base", "pr", "control", "pin")
 FACADES = ("pinyin", "zhuyin")
 PROFILES = ("phrases", "journals")
-PAGE = os.sysconf("SC_PAGE_SIZE")
+PAGE = MMAN["PAGE_SIZE"]
 
 
-def run(command, env=None):
-    """Keep bytes until success is known; reap a child before scratch cleanup."""
-    with subprocess.Popen(list(map(str, command)), stdout=subprocess.PIPE,
-                          stderr=subprocess.PIPE, env=env, start_new_session=True) as child:
-        try:
-            out, err = child.communicate(timeout=1800)
-        except BaseException:
-            os.killpg(child.pid, signal.SIGKILL)
-            child.wait()
-            raise
-        if child.returncode:
-            raise RuntimeError(f"child exit {child.returncode}: {command}\n"
-                               + out[-2000:].decode(errors="backslashreplace")
-                               + err[-4000:].decode(errors="backslashreplace"))
-        return out, err
+def run(command, env=None, *, profiler=False, native_stderr=None, profiler_output_dir=None):
+    """Reap each child; keep profiler output separate from strict native stderr."""
+    command = list(map(str, command))
+    out = err = b''
+    reader = writer = None
+    if profiler:
+        reader, writer = os.pipe()
+        position = next(i for i, arg in enumerate(command) if Path(arg).name == 'valgrind')
+        command.insert(position + 1, '--log-fd=' + str(writer))
+        command = [('--callgrind-out-file=/dev/fd/' + str(writer)
+                    if arg.startswith('--callgrind-out-file=') else arg) for arg in command]
+    with ThreadPoolExecutor(max_workers=1) as drain:
+        with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env,
+                              pass_fds=() if writer is None else (writer,), start_new_session=True) as child:
+            if writer is not None:
+                os.close(writer)
+                stream = os.fdopen(reader, 'rb')
+                profile = drain.submit(stream.read)
+            try:
+                out, err = child.communicate(timeout=1800)
+            except BaseException:
+                os.killpg(child.pid, signal.SIGKILL)
+                child.wait()
+                raise
+            finally:
+                if reader is not None:
+                    collected = profile.result()
+                    stream.close()
+                    if profiler_output_dir is not None:
+                        with tempfile.NamedTemporaryFile(dir=profiler_output_dir, prefix='profile-',
+                                                         suffix='.json', mode='w', delete=False) as saved:
+                            json.dump(dict(command=command, status=child.returncode,
+                                           stdout_hex=out.hex(), stderr_hex=err.hex(),
+                                           profiler_hex=collected.hex()), saved)
+            if child.returncode:
+                raise RuntimeError(f'child exit {child.returncode}: {command}\n'
+                                   + out[-2000:].decode(errors='backslashreplace')
+                                   + err[-4000:].decode(errors='backslashreplace')
+                                   + (collected[-4000:].decode(errors='backslashreplace') if profiler else ''))
+            if native_stderr is not None and err != native_stderr:
+                raise ValueError('instrumented native stderr differs from verification')
+            return out, collected if profiler else err
 
 
 def digest(path):
@@ -107,6 +137,7 @@ def text_memory(smaps, inode):
 def teardown_memory(command, library, env):
     """Drive the worker's memory checkpoints and read smaps from the parent."""
     snapshots = {}
+    samples = []
     with subprocess.Popen(list(map(str, command)), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                           stderr=subprocess.PIPE, env=env, start_new_session=True) as child:
         try:
@@ -122,6 +153,8 @@ def teardown_memory(command, library, env):
                     child.stdin.write(b"\n")
                     child.stdin.flush()
                     continue
+                if row.get('teardown') == 'sample':
+                    samples.append(row)
                 point = row.get("checkpoint")
                 if point is not None:
                     smaps = Path(f"/proc/{child.pid}/smaps").read_text()
@@ -147,6 +180,8 @@ def teardown_memory(command, library, env):
     missing = [point for point in ("M0", "M1") if point not in snapshots]
     if missing:
         raise ValueError(f"missing teardown memory checkpoints: {missing}")
+    if len(samples) != 1:
+        raise ValueError('memory worker supplied no complete observation')
     load, init = snapshots["M0"], snapshots["M1"]
     return {
         "load_text_pages": load["text_pages"], "load_text_pss_kib": load["text_pss_kib"],
@@ -155,7 +190,7 @@ def teardown_memory(command, library, env):
         "load_minor_faults": load["minor_faults"],
         "init_minor_faults": init["minor_faults"] - load["minor_faults"],
         "init_heap_bytes": (init["allocator"] or {}).get("uordblks"),
-    }
+    }, samples[0]['observations'], err
 
 
 def instruction_sizes(library):
@@ -267,31 +302,86 @@ def time_sample(output):
     return samples[0]
 
 
-def toggle_profile(args, facade, library, user, toggle, env, sizes):
+def toggle_profile(args, facade, library, user, toggle, env, sizes, verify=None, stderr=None):
     command = [*GEN["callgrind_prefix"](args.bisect, args.cpu, toggle),
                *teardown_command(args, facade, library, user, "time")[1:]]
-    _, err = run(command, env)
+    output, err = run(command, env, profiler=True, native_stderr=stderr,
+                      profiler_output_dir=args.profiler_output_dir)
+    if verify is not None:
+        verify(output)
     return executed_profile(err, library, sizes)
+
+
+def stripped_sizes(libraries, work_dir, env):
+    """Count stripped shipping copies in one run without changing source objects."""
+    hashes = {key: digest(path) for key, path in libraries.items()}
+    with GEN['collection_scratch'](work_dir) as root:
+        for (arm, facade), library in libraries.items():
+            temporary = root / 'strip.so'
+            shutil.copyfile(library, temporary)
+            run(['strip', '--strip-unneeded', temporary], env)
+            print('stripped bytes', arm, facade, temporary.stat().st_size, flush=True)
+            temporary.unlink()
+    if any(digest(path) != hashes[key] for key, path in libraries.items()):
+        raise ValueError('source library changed during stripping')
+
+
+def allocation_totals(stderr):
+    """DHAT's whole-process totals, without retaining its allocation profile."""
+    total = re.findall(rb'Total:\s+([0-9,]+) bytes in ([0-9,]+) blocks', stderr)
+    peak = re.findall(rb'At t-gmax:\s+([0-9,]+) bytes in ([0-9,]+) blocks', stderr)
+    if len(total) != 1 or len(peak) != 1:
+        raise ValueError('missing or repeated DHAT allocation totals')
+    return dict(allocated_bytes=int(total[0][0].replace(b',', b'')),
+                allocations=int(total[0][1].replace(b',', b'')),
+                peak_heap_bytes=int(peak[0][0].replace(b',', b'')))
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     ORDER['add_arguments'](parser)
-    parser.add_argument("--subject", action="append", required=True, help="base|pr|control|pin=installed prefix")
+    parser.add_argument("--subject", action="append", required=True,
+                        help="base|pr|control|pin=prefix; additional names supply shipping sizes only")
     for name in ("bisect", "system-dir", "profiles-dir", "work-dir"):
-        parser.add_argument("--" + name, type=Path, required=True)
-    parser.add_argument("--system-identity", required=True)
-    parser.add_argument("--cpu", type=int, required=True)
+        parser.add_argument("--" + name, type=Path, required=name == 'work-dir')
+    parser.add_argument("--system-identity")
+    parser.add_argument("--cpu", type=int)
     parser.add_argument("--rounds", type=int, default=20)
+    parser.add_argument('--stripped-sizes-only', action='store_true',
+                        help='compare stripped copies only; named subjects may span backends')
+    registrations = parser.add_mutually_exclusive_group()
+    registrations.add_argument('--record-registration', type=Path,
+                               help='write a new run input from this bench’s own complete observations')
+    registrations.add_argument('--registration', type=Path, help='require the bound observation registration')
+    parser.add_argument('--base-checkout', type=Path, help='checkout that produced the baseline install')
+    parser.add_argument('--profiler-output-dir', type=Path, help='retain complete local profiler streams; must be empty')
     args = parser.parse_args()
+    if args.profiler_output_dir is not None:
+        args.profiler_output_dir.mkdir(parents=True, exist_ok=True)
+        if any(args.profiler_output_dir.iterdir()):
+            parser.error('--profiler-output-dir must be empty')
+    names = {value.split('=', 1)[0] for value in args.subject}
+    prefixes = GEN['pairs'](args.subject, names, '--subject')
+    all_libraries = {(arm, facade): (prefix / 'lib' / f'lib{facade}.so.15.0.0').resolve()
+                     for arm, prefix in prefixes.items() for facade in FACADES}
+    if args.stripped_sizes_only:
+        if args.record_registration or args.registration:
+            parser.error('registrations apply to the full bench')
+        ORDER['check_arms'](args, {arm: {facade: all_libraries[arm, facade] for facade in FACADES}
+                                   for arm in prefixes}, references=())
+        stripped_sizes(all_libraries, args.work_dir, {**os.environ, 'LC_ALL': 'C'})
+        return
+    for name in ('bisect', 'system_dir', 'profiles_dir', 'system_identity', 'cpu'):
+        if getattr(args, name) is None:
+            parser.error('--' + name.replace('_', '-') + ' is required for a full campaign')
     if args.rounds < 20 or PAGE != 4096:
         parser.error("campaign requires >=20 rounds and a 4 KiB host page")
-    prefixes = GEN["pairs"](args.subject, set(ARMS), "--subject")
-    libraries = {(arm, facade): (prefixes[arm] / "lib" / f"lib{facade}.so.15.0.0").resolve()
-                 for arm in ARMS for facade in FACADES}
-    ORDER['check_arms'](args, {arm: {facade: libraries[arm, facade] for facade in FACADES}
-                               for arm in ARMS}, references=('pin',))
-    hashes = {key: digest(lib) for key, lib in libraries.items()}
+    if not set(ARMS) <= names:
+        parser.error('--subject requires base, pr, control and pin')
+    libraries = {key: library for key, library in all_libraries.items() if key[0] in ARMS}
+    ORDER['check_arms'](args, {arm: {facade: all_libraries[arm, facade] for facade in FACADES}
+                               for arm in prefixes}, references=('pin',))
+    hashes = {key: digest(lib) for key, lib in all_libraries.items()}
     if any(hashes["pr", f] != hashes["control", f] for f in FACADES):
         raise ValueError("same-bytes control differs from PR")
     fs, _ = run(["findmnt", "-n", "-o", "FSTYPE", "-T", args.work_dir])
@@ -307,6 +397,20 @@ def main():
                 raise ValueError("fixture manifest differs: " + profile)
     fixtures()
     env = {**os.environ, "LC_ALL": "C"}
+    identities = None
+    if args.record_registration or args.registration:
+        if args.base_checkout is None:
+            parser.error('--base-checkout is required with a registration')
+        identities = registration.git_identity(args.base_checkout, Path(__file__).resolve().parents[1])
+        binding = dict(**identities, libraries={f'{arm}/{facade}': value for (arm, facade), value in hashes.items()},
+                       system_identity=args.system_identity,
+                       profiles_identity=hashlib.sha256(manifest(args.profiles_dir).encode()).hexdigest(),
+                       worker_source=worker.sha256((worker.ROOT / 'tools/workers/startup.c').read_bytes()),
+                       bisect_sha256=digest(args.bisect))
+        expected = (registration.Registration(binding, recording=True) if args.record_registration else
+                    registration.Registration.load(args.registration, binding))
+    else:
+        expected = None
     for key, value in hashes.items():
         print("library", *key, value, flush=True)
     print("cold proof: private copy + fsync + POSIX_FADV_DONTNEED + zero-resident mincore; libraries only", flush=True)
@@ -329,6 +433,62 @@ def main():
         def memory_child(facade, library, user):
             return ["taskset", "-c", str(args.cpu),
                     *teardown_command(args, facade, library, user, "memory")]
+        native_reference = {}
+        instruction_references = {}
+        if expected is not None:
+            executable, identity = worker.build(root, env, ())
+            affinity = os.sched_getaffinity(0)
+            os.sched_setaffinity(0, {args.cpu})
+            try:
+                campaign = worker.Worker(executable, identity, args.system_dir, root, env, (), args.cpu, 'now')
+                library_arms = {arm: {facade: libraries[arm, facade] for facade in FACADES} for arm in ARMS}
+                profiles = {name: args.profiles_dir / name / 'user' for name in PROFILES}
+                for facade in FACADES:
+                    for profile in PROFILES:
+                        instruction_references[facade, profile] = startup_controller.verify(campaign, library_arms, facade, profile, profiles,
+                                       arms=ARMS, registration=expected, hostile=False)
+            finally:
+                os.sched_setaffinity(0, affinity)
+            # The same complete first-candidate observation is checked in
+            # record mode and in every subsequent timed sample.
+            for facade in FACADES:
+                env['OXPINYIN_TEARDOWN_EXPORTS'] = GEN['teardown_exports'](libraries['pr', facade], facade)
+                for profile in PROFILES:
+                    observations = {}
+                    for arm in ARMS:
+                        work, library, user = fresh(arm, facade, profile)
+                        try:
+                            output, error = run(timing_child(facade, library, user), env)
+                            observations[arm] = dict(observations=time_sample(output)['observations'],
+                                                     stderr_hex=error.hex(), userfiles=worker.userfiles(user))
+                        finally:
+                            shutil.rmtree(work)
+                    expected.check('first-candidate', facade, profile, observations)
+                    native_reference[facade, profile] = observations
+            if args.record_registration:
+                fixtures()
+                if any(digest(lib) != hashes[key] for key, lib in all_libraries.items()):
+                    raise ValueError('measured library changed during recording')
+                if registration.git_identity(args.base_checkout, Path(__file__).resolve().parents[1]) != identities:
+                    raise ValueError('Git identity changed during recording')
+                count = expected.write(args.record_registration)
+                print('registration entries', count, flush=True)
+                return
+            print('registration entries', len(expected.entries), flush=True)
+            # Use main's shared fresh-process/RandomState validation unchanged,
+            # adding the pin as context while keeping PR/control qualification.
+            affinity = os.sched_getaffinity(0)
+            os.sched_setaffinity(0, {args.cpu})
+            try:
+                for facade in FACADES:
+                    backends = {arm: ORDER['library_backend'](libraries[arm, facade]) for arm in ARMS}
+                    for profile in PROFILES:
+                        startup_controller.instrument(campaign, library_arms, facade, profile,
+                            profiles[profile], instruction_references[facade, profile], arms=ARMS,
+                            backends=backends)
+            finally:
+                os.sched_setaffinity(0, affinity)
+        stripped_sizes(all_libraries, args.work_dir, env)
         for facade in FACADES:
             env["OXPINYIN_TEARDOWN_EXPORTS"] = GEN["teardown_exports"](libraries[("pr", facade)], facade)
             for profile in PROFILES:
@@ -337,14 +497,20 @@ def main():
                 cold_proofs = 0
                 for round_no in range(-2, args.rounds):
                     order = ARMS[round_no % 4:] + ARMS[:round_no % 4]
+                    round_observations = {}
                     for arm in order:
                         for cold in (False, True):
                             work, library, user = fresh(arm, facade, profile)
                             check_tkrzw("auto", "measure-function-order.py", arm, library, env=env)
                             try:
                                 prepare_cache(library, cold)
-                                output, _ = run(timing_child(facade, library, user), env)
+                                output, error = run(timing_child(facade, library, user), env)
                                 sample = time_sample(output)
+                                observation = dict(observations=sample['observations'], stderr_hex=error.hex(),
+                                                   userfiles=worker.userfiles(user))
+                                if arm in round_observations and round_observations[arm] != observation:
+                                    raise ValueError('warm/cold observations differ')
+                                round_observations[arm] = observation
                                 traces.add(hashlib.sha256(json.dumps(
                                     sample["observations"], sort_keys=True).encode()).hexdigest())
                                 timing = sample["times"]
@@ -363,16 +529,21 @@ def main():
                         work, library, user = fresh(arm, facade, profile)
                         try:
                             prepare_cache(library, False)
-                            reading = teardown_memory(memory_child(facade, library, user), library, env)
+                            reading, answers, error = teardown_memory(memory_child(facade, library, user), library, env)
+                            observation = dict(observations=answers, stderr_hex=error.hex(), userfiles=worker.userfiles(user))
+                            if observation != round_observations[arm]:
+                                raise ValueError('time/memory observations differ')
                             if round_no >= 0:
                                 rows[arm, "memory"].append(reading)
                         finally:
                             shutil.rmtree(work)
+                    if expected is not None:
+                        expected.check('first-candidate', facade, profile, round_observations)
                     if round_no >= 0 and (round_no + 1) % 5 == 0:
                         print("native progress", facade, profile, round_no + 1, "/", args.rounds, flush=True)
-                if len(traces) != 1:
+                if expected is None and len(traces) != 1:
                     raise ValueError("native first-candidate answer traces differ")
-                print("CELL", facade, profile, "trace", traces.pop(), "verified cold samples", cold_proofs, flush=True)
+                print("CELL", facade, profile, "traces", len(traces), "verified cold samples", cold_proofs, flush=True)
                 for key, samples in rows.items():
                     print("native", facade, profile, *key, "median,min,max", summarize(samples), flush=True)
                 memory = {arm: rows[arm, "memory"] for arm in ARMS}
@@ -386,6 +557,7 @@ def main():
                       "PR-pin gap KiB", med["pr"] - med["pin"],
                       "gain established", med["base"] - med["pr"] >= effective,
                       "pin envelope met", meets_residency_target(med["pr"], med["pin"], spread), flush=True)
+                profile_metrics = {}
                 # Deterministic counters use the startup toggles the policy
                 # was generated from and the existing steady toggle, outside
                 # native timing samples.
@@ -393,12 +565,20 @@ def main():
                     # These sizes are for libraries[arm, facade]; fresh()
                     # copies exactly those bytes to each private lib.so.
                     sizes = instruction_sizes(libraries[arm, facade])
+                    reference = native_reference.get((facade, profile), {}).get(arm)
+                    def verify_output(output):
+                        if reference is not None:
+                            observed = dict(observations=time_sample(output)['observations'],
+                                            stderr_hex=reference['stderr_hex'], userfiles=worker.userfiles(user))
+                            if observed != reference:
+                                raise ValueError('instrumented observations differ from verification')
+                    native_error = bytes.fromhex(reference['stderr_hex']) if reference is not None else None
                     startup = defaultdict(list)
                     for toggle in startup_toggles(libraries[arm, facade], facade,
                                                   env["OXPINYIN_TEARDOWN_EXPORTS"]):
                         work, library, user = fresh(arm, facade, profile)
                         try:
-                            startup[toggle].append(toggle_profile(args, facade, library, user, toggle, env, sizes))
+                            startup[toggle].append(toggle_profile(args, facade, library, user, toggle, env, sizes, verify_output, native_error))
                         finally:
                             shutil.rmtree(work)
                     first_candidate = GEN["first_candidate_toggles"](facade, env["OXPINYIN_TEARDOWN_EXPORTS"])
@@ -415,20 +595,28 @@ def main():
                                         "--perf", str(library), str(args.system_dir)],
                                        {**env, "PERF_FACADE": facade, "PERF_MODE": "speed",
                                         "PERF_CYCLES": "4", "PERF_REPEATS": "1",
-                                        "PERF_WORKLOAD_CHECKSUM": "1"})
+                                        "PERF_WORKLOAD_CHECKSUM": "1"}, profiler=True,
+                                       profiler_output_dir=args.profiler_output_dir)
                         steady = executed_profile(error, library, sizes)
                     finally:
                         shutil.rmtree(work)
                     work, library, user = fresh(arm, facade, profile)
                     try:
-                        _, error = run(["taskset", "-c", str(args.cpu), "valgrind", "--tool=dhat",
-                                        "--dhat-out-file=/dev/null",
-                                        *teardown_command(args, facade, library, user, "time")], env)
-                        peaks = re.findall(rb"At t-gmax:\s+([0-9,]+) bytes in ([0-9,]+) blocks", error)
-                        if len(peaks) != 1:
-                            raise ValueError("DHAT peak missing or repeated")
+                        heap_profile = (args.profiler_output_dir / f'dhat-{facade}-{profile}-{arm}.json'
+                                        if args.profiler_output_dir is not None else Path('/dev/null'))
+                        output, error = run(["taskset", "-c", str(args.cpu), "valgrind", "--tool=dhat",
+                                        '--dhat-out-file=' + str(heap_profile),
+                                        *teardown_command(args, facade, library, user, "time")], env,
+                                            profiler=True, native_stderr=native_error,
+                                            profiler_output_dir=args.profiler_output_dir)
+                        verify_output(output)
+                        allocations = allocation_totals(error)
                     finally:
                         shutil.rmtree(work)
+                    profile_metrics[arm] = dict(startup_ir=combined['ir'],
+                        allocated_bytes=allocations['allocated_bytes'], peak_heap_bytes=allocations['peak_heap_bytes'],
+                        through_first_ns=statistics.median(row['startup_ns'] + row['first_candidate_ns']
+                                                          for row in rows[arm, 'warm']))
                     constructors = GEN["init_array_symbols"](libraries[arm, facade])
                     load_pages = set().union(*(p["pages"] for toggle in constructors
                                                for p in startup.get(toggle, []))) if constructors else set()
@@ -438,7 +626,14 @@ def main():
                           "init Ir", init["ir"], "first-candidate Ir", first["ir"],
                           "startup Ir", combined["ir"], "steady Ir", steady["ir"],
                           "steady pages", len(steady["pages"]),
-                          "peak heap B", int(peaks[0][0].replace(b",", b"")), flush=True)
+                          "peak heap B", allocations['peak_heap_bytes'],
+                          "allocations", allocations['allocations'],
+                          "allocated bytes", allocations['allocated_bytes'], flush=True)
+                print('base/PR/pin metrics', facade, profile, json.dumps(profile_metrics, sort_keys=True), flush=True)
+                if (profile_metrics['pr']['peak_heap_bytes'] > profile_metrics['pin']['peak_heap_bytes'] and
+                        (profile_metrics['pr']['startup_ir'] > profile_metrics['pin']['startup_ir'] or
+                         profile_metrics['pr']['through_first_ns'] > profile_metrics['pin']['through_first_ns'])):
+                    raise RuntimeError('STOP: PR time/instructions and peak heap are both worse than pin')
         for facade in FACADES:
             measurements = defaultdict(list)
             checksums = set()
@@ -468,15 +663,11 @@ def main():
                 print("steady", facade, arm, "median,min,max ns", statistics.median(values), min(values), max(values), flush=True)
             if delta > spread:
                 raise RuntimeError("STOP: steady guess-path slowdown exceeds same-bytes control spread")
-        for (arm, facade), library in libraries.items():
-            temporary = root / "strip.so"
-            shutil.copyfile(library, temporary)
-            run(["strip", "--strip-unneeded", temporary], env)
-            print("stripped bytes", arm, facade, temporary.stat().st_size, flush=True)
-            temporary.unlink()
     fixtures()
-    if any(digest(lib) != hashes[key] for key, lib in libraries.items()):
+    if any(digest(lib) != hashes[key] for key, lib in all_libraries.items()):
         raise ValueError("measured library changed during campaign")
+    if identities is not None and registration.git_identity(args.base_checkout, Path(__file__).resolve().parents[1]) != identities:
+        raise ValueError('Git identity changed during measurement')
     print("campaign complete; fixture manifests and all library hashes unchanged; no raw records retained", flush=True)
 
 

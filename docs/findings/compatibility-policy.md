@@ -278,10 +278,12 @@ each host.
 
 **The class is narrow.** Basic IEEE-754 operations — add, subtract,
 multiply, divide, compare — are bit-reproducible across platforms and
-are **not** covered. `amplified_frequency` ((1−λ)·unigram/total·2²⁴) is
-basic-ops-only and is ported to 100%; that is the standard. A float in
-the call graph does not make an entry class (a). A transcendental in
-the accumulation does.
+are **not** covered. The interpolation feeding `RankScore` is
+basic-ops-only; it has no transcendental and is not class (a). The former
+`amplified_frequency` scaled integer key was removed under the independent
+[#1297 language-artefact record](1297-ranking-score.md). A float in the
+call graph does not make an entry class (a). A transcendental in the
+accumulation does.
 
 **Example:** the n-best trellis (`phonetic_lookup.h:663,692`) does
 `m_poss += log(...)` per step into a `gfloat`, and near-ties among the
@@ -904,8 +906,9 @@ anyway.** The drop test is
 (`phonetic_key_matrix.cpp:534-600`), it is a recursive **sum over every
 path** of `PhraseItem::get_pronunciation_possibility` — `gfloat`
 addition and a frequency ratio, no transcendental anywhere. That is the
-`amplified_frequency` standard, which is ported to 100%, so the
-threshold is bit-reproducible and the entry does not qualify under (a).
+same basic-ops standard as candidate interpolation (now feeding `RankScore`),
+so the threshold is bit-reproducible and the entry does not qualify under
+(a). The former scaled-key conversion is a separate #1297 language artefact.
 
 Reverting it would be real work rather than a flag flip: oxpinyin's
 `span_finds_token` follows the §3 step-cost model (first path per
