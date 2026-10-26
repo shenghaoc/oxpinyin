@@ -3,9 +3,6 @@
 use std::os::raw::c_char;
 use std::ptr;
 
-#[cfg(not(feature = "shipped"))]
-use crate::ffi::cstr_to_owned_lossy;
-use crate::ffi::cstr_to_path;
 use crate::state::{CapiContext, box_context, context_mut};
 // Only the harness-gated fixture hooks below take a shared context ref; the
 // shipped build (--features shipped) does not compile them.
@@ -24,14 +21,17 @@ fn init_context(systemdir: *const c_char, userdir: *const c_char) -> *mut Pinyin
     // bytes, so the names are paths, not text (#587). g_build_filename
     // stops at NULL but drops an empty element (074a2219 pinyin.cpp:335,
     // zhuyin.cpp:279): NULL names no file; "" names cwd/table.conf.
-    let Some(system_path) = cstr_to_path(systemdir) else {
+    let Some(system_path) =
+        oxpinyin_capi_marshal::input::filename(oxpinyin_capi_marshal::borrow_c_string!(systemdir))
+    else {
         oxpinyin_data::pin_stderr::emit(&[b"open  failed.\nload  failed!\n"]);
         return ptr::null_mut();
     };
     // The pin's guards test the user pointer (`pinyin.cpp:1133`, `:2671`):
     // NULL is no user dir, while "" is one — the working directory (#619) —
     // so the two stay apart.
-    let user_path = cstr_to_path(userdir);
+    let user_path =
+        oxpinyin_capi_marshal::input::filename(oxpinyin_capi_marshal::borrow_c_string!(userdir));
     match CapiContext::try_new(&system_path, user_path.as_deref()) {
         Ok(context) => {
             log_layout_faults(&context);
@@ -159,8 +159,12 @@ pub extern "C" fn oxpinyin_test_set_user_bigram(
     let Some(mut user) = ctx.user_store() else {
         return false;
     };
-    let prev_text = cstr_to_owned_lossy(prev);
-    let cur_text = cstr_to_owned_lossy(cur);
+    let prev_text =
+        oxpinyin_capi_marshal::input::scalar_text(oxpinyin_capi_marshal::borrow_c_string!(prev))
+            .unwrap_or_default();
+    let cur_text =
+        oxpinyin_capi_marshal::input::scalar_text(oxpinyin_capi_marshal::borrow_c_string!(cur))
+            .unwrap_or_default();
     let Some(prev_tok) = user.token_for_phrase(&prev_text).ok().flatten() else {
         return false;
     };

@@ -2786,7 +2786,7 @@ mod tests {
         let mut store = runtime.user_store().unwrap();
         let keys = [oxpinyin_user::toned_key(ni.index(), 3).unwrap()];
         store
-            .add_system_phrase_in(1, Some(token), "你", &keys, Some(5))
+            .add_system_phrase_in(1, Some(token), &"你".into(), &keys, Some(5))
             .unwrap();
         let mut candidates = Vec::new();
         assert!(!dict.lookup_candidates_into(&[ni], &mut candidates).unwrap());
@@ -2868,7 +2868,9 @@ mod tests {
                 oxpinyin_user::toned_key(ni.index(), 3).unwrap(),
                 oxpinyin_user::toned_key(hao.index(), 3).unwrap(),
             ];
-            let token = store.add_phrase_in(5, "你鎄", &keys, Some(5)).unwrap();
+            let token = store
+                .add_phrase_in(5, &"你鎄".into(), &keys, Some(5))
+                .unwrap();
             assert_eq!(token >> 24, 5);
             assert!(
                 zhuyin
@@ -2933,7 +2935,9 @@ mod tests {
             .map(|text| PinyinKey::try_from(SyllableKey::from_text(text).unwrap().index()).unwrap())
             .collect();
         let mut store = runtime.user_store().unwrap();
-        let token = store.add_phrase(phrase, &keys, None).unwrap();
+        let token = store
+            .add_phrase(&oxpinyin_core::PhraseText::from(phrase), &keys, None)
+            .unwrap();
         assert_eq!(dict.tokens_for_text(phrase), [PhraseToken::new(token)]);
         let row_generation = store.phrase_table_generation();
         let row_tokens = dict
@@ -2944,7 +2948,12 @@ mod tests {
             .unwrap()
             .tokens
             .as_ptr();
-        assert_eq!(store.add_phrase(phrase, &keys, Some(5)).unwrap(), token);
+        assert_eq!(
+            store
+                .add_phrase(&oxpinyin_core::PhraseText::from(phrase), &keys, Some(5))
+                .unwrap(),
+            token
+        );
         assert_eq!(store.phrase_table_generation(), row_generation);
         assert_eq!(dict.tokens_for_text(phrase), [PhraseToken::new(token)]);
         assert_eq!(
@@ -2972,7 +2981,9 @@ mod tests {
         // Another session's store handle can write without touching this
         // dictionary or its old lookup snapshot.
         let mut other = runtime.user_store().unwrap();
-        let imported = other.add_phrase_in(7, phrase, &keys, Some(5)).unwrap();
+        let imported = other
+            .add_phrase_in(7, &oxpinyin_core::PhraseText::from(phrase), &keys, Some(5))
+            .unwrap();
         assert_eq!(dict.tokens_for_text(phrase), [PhraseToken::new(imported)]);
         other.mask_out(u32::MAX, imported).unwrap();
         assert!(dict.tokens_for_text(phrase).is_empty());
@@ -2995,12 +3006,12 @@ mod tests {
         let mut store = runtime.user_store().unwrap();
         let generation = store.phrase_table_generation();
         store
-            .add_system_phrase_in(library, Some(token), "你好", &keys, Some(5))
+            .add_system_phrase_in(library, Some(token), &"你好".into(), &keys, Some(5))
             .unwrap();
         assert_eq!(store.phrase_table_generation(), generation);
         assert_eq!(dict.tokens_for_text("你好"), tokens);
         let added = store
-            .add_system_phrase_in(library, None, "你鎄", &keys, Some(5))
+            .add_system_phrase_in(library, None, &"你鎄".into(), &keys, Some(5))
             .unwrap();
         assert!(store.phrase_table_generation() > generation);
         assert_eq!(dict.tokens_for_text("你鎄"), [PhraseToken::new(added)]);

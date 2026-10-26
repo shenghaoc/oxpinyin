@@ -35,7 +35,9 @@ fn seed(store: &mut UserStore, n: u32) {
         let keys: Vec<u16> = (0..text.chars().count())
             .map(|j| u16::try_from(1 + (i as usize + j) % 300).unwrap_or(u16::MAX))
             .collect();
-        store.add_phrase(&text, &keys, Some(3)).expect("add_phrase");
+        store
+            .add_phrase(&oxpinyin_core::PhraseText::from(&text), &keys, Some(3))
+            .expect("add_phrase");
     }
 }
 

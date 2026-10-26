@@ -5,7 +5,6 @@ use std::os::raw::c_char;
 
 use oxpinyin_core::{Dictionary as _, LanguageModel as _};
 
-use crate::ffi::{cstr_opt, cstr_to_strict};
 use crate::state::{CapiCandidate, instance_mut, instance_ref};
 use crate::types::{GUint, PinyinInstance, lookup_candidate_type_t};
 
@@ -183,7 +182,8 @@ pub extern "C" fn pinyin_guess_sentence_with_prefix(
     let inst = unsafe { instance_mut(instance) };
     // `m_prefixes` becomes `[sentence_start]` and the prefix adds what it
     // converts to (`pinyin.cpp:1431-1434`); `None` adds nothing.
-    let prefix = oxpinyin_capi_marshal::ucs4::prefix_text(cstr_opt(prefix));
+    let prefix =
+        oxpinyin_capi_marshal::ucs4::prefix_text(oxpinyin_capi_marshal::borrow_c_string!(prefix));
     let prefixes = oxpinyin_facade::compute_prefixes(
         &inst.core.dict,
         inst.core.user.as_ref(),
@@ -242,7 +242,8 @@ pub extern "C" fn pinyin_guess_predicted_candidates_with_punctuations(
     if crate::predict::clear_borrowed_prefix(inst, prefix) {
         return true;
     }
-    let prefix = oxpinyin_capi_marshal::ucs4::prefix_text(cstr_opt(prefix));
+    let prefix =
+        oxpinyin_capi_marshal::ucs4::prefix_text(oxpinyin_capi_marshal::borrow_c_string!(prefix));
     crate::predict::guess_predicted_with_punctuations(inst, prefix.as_ref())
 }
 
@@ -342,9 +343,9 @@ pub extern "C" fn pinyin_get_character_offset(
     let inst = unsafe { instance_ref(instance) };
     // SAFETY: Null-checked inside; invalid UTF-8 refuses like the pin's
     // `g_utf8_to_ucs4` NULL answer.
-    let Some(text) = cstr_to_strict(phrase) else {
-        return false;
-    };
+    let text =
+        oxpinyin_capi_marshal::input::utf8_to_ucs4(oxpinyin_capi_marshal::borrow_c_string!(phrase))
+            .unwrap_or_default();
     let char_count = match inst.core.character_offset(&text, offset) {
         Ok(Some(char_count)) => char_count,
         Ok(None) => {
@@ -380,21 +381,15 @@ pub extern "C" fn pinyin_get_character_offset(
 /// returns (`pinyin.cpp:3200-3228`): a non-empty matrix, a non-empty
 /// phrase and a dictionary token for every character. The engine answers
 /// all of them, and the walk's own failure, with `Ok(None)`.
-fn character_walk_ran(inst: &crate::state::CapiInstance, text: &str) -> bool {
+fn character_walk_ran(inst: &crate::state::CapiInstance, text: &oxpinyin_core::PhraseText) -> bool {
     let Ok((keys, input, _)) = inst.core.mode_keys() else {
         return false;
     };
     if input.is_empty() || keys.is_empty() || text.is_empty() {
         return false;
     }
-    text.chars().all(|character| {
-        let mut buffer = [0_u8; 4];
-        !inst
-            .core
-            .dict
-            .tokens_for_text(character.encode_utf8(&mut buffer))
-            .is_empty()
-    })
+    text.outward_words()
+        .all(|word| !inst.core.dict.tokens_for_ucs4(&[word]).is_empty())
 }
 
 /// The one log line both overlong-index surfaces of

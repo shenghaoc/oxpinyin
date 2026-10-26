@@ -85,7 +85,7 @@ fn oxpinyin_trains_and_saves_its_own_profile() {
             })
             .collect();
         store
-            .add_phrase(&committed, &keys, None)
+            .add_phrase(&oxpinyin_core::PhraseText::from(&committed), &keys, None)
             .expect("the committed sentence is remembered");
         expected_phrases.push(committed);
     }

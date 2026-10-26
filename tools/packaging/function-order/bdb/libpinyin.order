@@ -191,6 +191,7 @@ init	core::slice::sort::stable::driftsort_main::<(alloc::string::String, oxpinyi
 init	core::slice::sort::stable::driftsort_main::<oxpinyin_engine::candidate::Candidate, <[oxpinyin_engine::candidate::Candidate]>::sort_by_key<u32, oxpinyin_engine::session::order_window_tail::{closure#0}>::{closure#0}, alloc::vec::Vec<oxpinyin_engine::candidate::Candidate>>
 init	core::slice::sort::unstable::ipnsort::<u32, <u32 as core::cmp::PartialOrd>::lt> [instantiating crate: oxpinyin_user]
 init	core::str::converts::from_utf8
+init	oxpinyin_capi_marshal::input::parser_prefix
 init	oxpinyin_data::chunk_format::chunk_checksum
 init	oxpinyin_data::dict::resolve_items
 init	oxpinyin_data::dict::syllables_to_chewing_keys
@@ -228,7 +229,6 @@ init	oxpinyin_user::store_libpinyin::backed_readings
 init	oxpinyin_user::store_libpinyin::loaded_pronunciation_counts
 init	oxpinyin_user::store_libpinyin::seed_txn_with_replay::<oxpinyin_user::session_values::SessionTxn> [instantiating crate: oxpinyin_runtime]
 init	pinyin::context::log_layout_faults
-init	pinyin::ffi::cstr_to_parsed_prefix
 init	pinyin::sentence::refuse_toned_matrix
 init	pinyin_alloc_instance
 init	pinyin_get_candidate

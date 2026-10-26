@@ -541,10 +541,10 @@ fn append_system_token<S: WriteStore>(
     db: &S,
     library: u8,
     range_end: u32,
-    text: &str,
+    text: &[u32],
     reading: &SystemReading<'_>,
 ) -> Result<Token, StoreError> {
-    let lib_key = phrase_library_key(library, &phrase_table::key(text));
+    let lib_key = phrase_library_key(library, &phrase_table::key_ucs4(text));
     db.write(|txn| {
         let token = match txn.read_with(ALLOC, &codec::encode_u8(library), codec::decode_token)? {
             Some(token) => {
@@ -562,10 +562,10 @@ fn append_system_token<S: WriteStore>(
         txn.put(
             PHRASE,
             &codec::encode_token(token),
-            &phrase_table::key(text),
+            &phrase_table::key_ucs4(text),
         )?;
         txn.put(PHRASE_BY_LIB_TEXT, &lib_key, &codec::encode_token(token))?;
-        phrase_table::add_index(txn, text, token)?;
+        phrase_table::add_index_words(txn, text, token)?;
         add_pronunciation(
             txn,
             token,
@@ -1392,6 +1392,20 @@ fn predicted_gram(row: Option<Vec<u8>>, cur: Token) -> Result<Vec<u8>, UserStore
     }
     single_gram::set_total_freq(&mut gram, total.wrapping_add(seed));
     Ok(gram)
+}
+
+/// The words a phrase writes: the stored form when the phrase carries one,
+/// else its outward words.
+fn phrase_words(phrase: &oxpinyin_core::PhraseText) -> Vec<u32> {
+    phrase
+        .stored_words()
+        .map_or_else(|| phrase.outward_words().collect(), <[u32]>::to_vec)
+}
+
+/// `_add_phrase`'s gate: a non-empty phrase shorter than the maximum with
+/// one key per word (074a2219 pinyin.cpp:620-627).
+fn phrase_fits_keys(words: &[u32], keys: &[PinyinKey]) -> bool {
+    !words.is_empty() && words.len() < crate::MAX_PHRASE_LENGTH && words.len() == keys.len()
 }
 
 fn phrase_library_key(library: u8, text: &[u8]) -> Vec<u8> {
@@ -2922,7 +2936,7 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// Returns [`UserStoreError`] when the phrase cannot be added.
     pub fn add_phrase(
         &mut self,
-        phrase: &str,
+        phrase: &oxpinyin_core::PhraseText,
         keys: &[PinyinKey],
         count: Option<u64>,
     ) -> Result<Token, UserStoreError> {
@@ -3022,14 +3036,15 @@ impl<S: WriteStore> GenericUserStore<S> {
     pub fn add_phrase_in(
         &mut self,
         library: u8,
-        phrase: &str,
+        phrase: &oxpinyin_core::PhraseText,
         keys: &[PinyinKey],
         count: Option<u64>,
     ) -> Result<Token, UserStoreError> {
+        let words = phrase_words(phrase);
         self.flush_system_unigrams()?;
         if !is_user_file_library(library)
             || !self.has_user_library(library)
-            || !phrase::phrase_and_keys_valid(phrase, keys)
+            || !phrase_fits_keys(&words, keys)
         {
             return Err(UserStoreError::InvalidPhrase);
         }
@@ -3047,17 +3062,19 @@ impl<S: WriteStore> GenericUserStore<S> {
         discard_stale_import_readings(&mut import_readings, generation);
         let indexed_new = std::cell::Cell::new(false);
         let (token, count) = db.write(|txn| {
-            let lib_key = phrase_library_key(library, &phrase_table::key(phrase));
+            let lib_key = phrase_library_key(library, &phrase_table::key_ucs4(&words));
             // _add_phrase selects existing items from the phrase table,
             // not the live item's reverse index (074a2219 pinyin.cpp:533-562).
             let mut tokens = Vec::new();
-            if let Some(searched) =
-                txn.read_with(phrase_table::TABLE, &phrase_table::key(phrase), |bytes| {
+            if let Some(searched) = txn.read_with(
+                phrase_table::TABLE,
+                &phrase_table::key_ucs4(&words),
+                |bytes| {
                     phrase_table::search_bytes(bytes, &mut tokens, |token| {
                         phrase_index_library_index(token) == library
                     })
-                })?
-            {
+                },
+            )? {
                 searched?;
             }
             if tokens.len() > 1 {
@@ -3066,7 +3083,7 @@ impl<S: WriteStore> GenericUserStore<S> {
             let existing = tokens.first().copied();
             if let Some(token) = existing
                 && txn.read_with(PHRASE, &codec::encode_token(token), |text| {
-                    text == phrase_table::key(phrase)
+                    text == phrase_table::key_ucs4(&words)
                 })? != Some(true)
             {
                 return Ok(Err(UserStoreError::InvalidPhrase));
@@ -3126,18 +3143,18 @@ impl<S: WriteStore> GenericUserStore<S> {
                 txn.put(
                     PHRASE,
                     &codec::encode_token(token),
-                    &phrase_table::key(phrase),
+                    &phrase_table::key_ucs4(&words),
                 )?;
                 txn.put(PHRASE_BY_LIB_TEXT, &lib_key, &codec::encode_token(token))?;
                 if library == USER_DICTIONARY {
                     txn.put(
                         PHRASE_BY_TEXT,
-                        &phrase_table::key(phrase),
+                        &phrase_table::key_ucs4(&words),
                         &codec::encode_token(token),
                     )?;
                 }
                 // pinyin.cpp:596 adds every new item to the user phrase table.
-                phrase_table::add_index(txn, phrase, token)?;
+                phrase_table::add_index_words(txn, &words, token)?;
 
                 // The new-item path (`pinyin.cpp:585-607`): indexed
                 // under its reading, then `add_unigram_frequency(token,
@@ -4728,13 +4745,14 @@ impl<S: WriteStore> GenericUserStore<S> {
         &mut self,
         library: u8,
         original_token: Option<Token>,
-        text: &str,
+        text: &oxpinyin_core::PhraseText,
         keys: &[PinyinKey],
         count: Option<u64>,
     ) -> Result<Token, UserStoreError> {
+        let words = phrase_words(text);
         self.flush_system_unigrams()?;
         use oxpinyin_data::chunk_write::ChunkItem;
-        if !(1..=4).contains(&library) || !phrase::phrase_and_keys_valid(text, keys) {
+        if !(1..=4).contains(&library) || !phrase_fits_keys(&words, keys) {
             return Err(UserStoreError::InvalidPhrase);
         }
         let mut import_readings = self.import_readings.take();
@@ -4788,13 +4806,13 @@ impl<S: WriteStore> GenericUserStore<S> {
             };
             (token, pending, was_live)
         } else {
-            let token = append_system_token(&*db, library, original.range_end, text, &reading)?;
+            let token = append_system_token(&*db, library, original.range_end, &words, &reading)?;
             #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
             self.note_index_add(keys, token, false);
             (
                 token,
                 Some(ChunkItem {
-                    phrase: text.chars().map(u32::from).collect(),
+                    phrase: words.clone(),
                     unigram: 0,
                     prons: Vec::new(),
                 }),
@@ -5122,7 +5140,7 @@ mod tests {
                     let path = temp_path("pred-prefix-overflow");
                     let mut store = Store::create_standalone(&path).unwrap();
                     let token = store
-                        .add_phrase("你好", &[10, 20], Some(1_431_655_631))
+                        .add_phrase(&"你好".into(), &[10, 20], Some(1_431_655_631))
                         .unwrap();
                     let before = store.unigram_delta(token).unwrap();
                     let total = store.unigram_total().unwrap();
@@ -5172,7 +5190,7 @@ mod tests {
                     store.observe_predicted(10, 20).unwrap();
                     assert!(!store.is_modified());
                     assert!(!store.save().unwrap());
-                    store.add_phrase("你好", &[1, 2], None).unwrap();
+                    store.add_phrase(&"你好".into(), &[1, 2], None).unwrap();
                     assert!(!store.is_modified());
                     assert!(!store.save().unwrap());
 
@@ -5192,7 +5210,7 @@ mod tests {
                         store.observe_selection(SENTENCE_START, 10).unwrap();
                         store.observe_selection(10, 20).unwrap();
                         store.observe_selection(10, 20).unwrap();
-                        let token = store.add_phrase("你好", &[10, 20], None).unwrap();
+                        let token = store.add_phrase(&"你好".into(), &[10, 20], None).unwrap();
                         assert_eq!(token, FIRST_USER_TOKEN);
                         assert!(store.is_modified());
                         assert!(store.save().unwrap());
@@ -5241,7 +5259,7 @@ mod tests {
                     let path = temp_path("first-tok");
                     let mut store = Store::create_standalone(&path).unwrap();
                     assert_eq!(store.next_user_token().unwrap(), FIRST_USER_TOKEN);
-                    let token = store.add_phrase("你好", &[10, 20], None).unwrap();
+                    let token = store.add_phrase(&"你好".into(), &[10, 20], None).unwrap();
                     assert_eq!(token, FIRST_USER_TOKEN);
                     assert_eq!(token, 0x0700_0001);
                     assert!(phrase::is_user_token(token));
@@ -5253,9 +5271,9 @@ mod tests {
                 fn allocation_increments_by_one_without_gap() {
                     let path = temp_path("incr");
                     let mut store = Store::create_standalone(&path).unwrap();
-                    let a = store.add_phrase("甲", &[1], None).unwrap();
-                    let b = store.add_phrase("乙", &[2], None).unwrap();
-                    let c = store.add_phrase("丙", &[3], None).unwrap();
+                    let a = store.add_phrase(&"甲".into(), &[1], None).unwrap();
+                    let b = store.add_phrase(&"乙".into(), &[2], None).unwrap();
+                    let c = store.add_phrase(&"丙".into(), &[3], None).unwrap();
                     assert_eq!(a, FIRST_USER_TOKEN);
                     assert_eq!(b, a + 1);
                     assert_eq!(c, a + 2);
@@ -5268,7 +5286,7 @@ mod tests {
                     const SYSTEM: Token = 0x0100_0001;
                     let path = temp_path("nibble");
                     let mut store = Store::create_standalone(&path).unwrap();
-                    let user = store.add_phrase("词", &[7], None).unwrap();
+                    let user = store.add_phrase(&"词".into(), &[7], None).unwrap();
                     assert!(phrase::is_user_token(user));
                     assert!(!phrase::is_user_token(SYSTEM));
                     cleanup(&path);
@@ -5279,10 +5297,10 @@ mod tests {
                     let path = temp_path("two-nibbles");
                     let mut store = Store::create_standalone(&path).unwrap();
                     let user = store
-                        .add_phrase_in(phrase::USER_DICTIONARY, "词", &[7], Some(5))
+                        .add_phrase_in(phrase::USER_DICTIONARY, &"词".into(), &[7], Some(5))
                         .unwrap();
                     let net = store
-                        .add_phrase_in(phrase::NETWORK_DICTIONARY, "词", &[7], Some(5))
+                        .add_phrase_in(phrase::NETWORK_DICTIONARY, &"词".into(), &[7], Some(5))
                         .unwrap();
                     assert_ne!(user, net);
                     assert_eq!(phrase::phrase_index_library_index(user), 7);
@@ -5297,11 +5315,13 @@ mod tests {
                 fn add_phrase_seeds_unigram_with_count_times_three() {
                     let path = temp_path("uni");
                     let mut store = Store::create_standalone(&path).unwrap();
-                    let token = store.add_phrase("你好", &[10, 20], None).unwrap();
+                    let token = store.add_phrase(&"你好".into(), &[10, 20], None).unwrap();
                     assert_eq!(store.unigram_delta(token).unwrap(), 15);
                     assert_eq!(store.bigram_count(SENTENCE_START, token).unwrap(), 0);
 
-                    let token2 = store.add_phrase("世界", &[30, 40], Some(10)).unwrap();
+                    let token2 = store
+                        .add_phrase(&"世界".into(), &[30, 40], Some(10))
+                        .unwrap();
                     assert_eq!(store.unigram_delta(token2).unwrap(), 30);
                     cleanup(&path);
                 }
@@ -5317,7 +5337,7 @@ mod tests {
                     let mut store = Store::create_standalone(&path).unwrap();
                     // 402 below `u32::MAX`: room for no 483 delta.
                     let token = store
-                        .add_phrase("你好", &[10, 20], Some(1_431_655_631))
+                        .add_phrase(&"你好".into(), &[10, 20], Some(1_431_655_631))
                         .unwrap();
                     let full = store.unigram_delta(token).unwrap();
                     assert_eq!(full, 4_294_966_893);
@@ -5339,7 +5359,7 @@ mod tests {
                     let path = temp_path("phrase-gen");
                     let mut store = Store::create_standalone(&path).unwrap();
                     assert_eq!(store.phrase_generation(), 0);
-                    let token = store.add_phrase("你好", &[10, 20], None).unwrap();
+                    let token = store.add_phrase(&"你好".into(), &[10, 20], None).unwrap();
                     assert_eq!(store.phrase_generation(), 1, "add_phrase is a phrase write");
                     let before = store.phrase_generation();
                     let write_before = store.generation();
@@ -5368,17 +5388,20 @@ mod tests {
                     let path = temp_path("phrase-table-gen");
                     let mut store = Store::create_standalone(&path).unwrap();
                     assert_eq!(store.phrase_table_generation(), 0);
-                    let token = store.add_phrase("你好", &[10, 20], None).unwrap();
+                    let token = store.add_phrase(&"你好".into(), &[10, 20], None).unwrap();
                     assert_eq!(store.phrase_table_generation(), 1);
                     let phrase_before = store.phrase_generation();
-                    assert_eq!(store.add_phrase("你好", &[11, 20], None).unwrap(), token);
+                    assert_eq!(
+                        store.add_phrase(&"你好".into(), &[11, 20], None).unwrap(),
+                        token
+                    );
                     assert_eq!(store.phrase_generation(), phrase_before + 1);
                     assert_eq!(store.phrase_table_generation(), 1);
                     store.observe_selection(SENTENCE_START, token).unwrap();
                     assert_eq!(store.phrase_table_generation(), 1);
 
                     let mut writer = store.clone();
-                    let second = writer.add_phrase("中国", &[30, 40], None).unwrap();
+                    let second = writer.add_phrase(&"中国".into(), &[30, 40], None).unwrap();
                     assert_eq!(store.phrase_table_generation(), 2);
                     assert!(writer.remove_user_phrase(second).unwrap());
                     assert_eq!(store.phrase_table_generation(), 3);
@@ -5391,8 +5414,10 @@ mod tests {
                 fn existing_phrase_merges_a_new_reading() {
                     let path = temp_path("merge");
                     let mut store = Store::create_standalone(&path).unwrap();
-                    let first = store.add_phrase("你好", &[10, 20], None).unwrap();
-                    let again = store.add_phrase("你好", &[11, 20], Some(8)).unwrap();
+                    let first = store.add_phrase(&"你好".into(), &[10, 20], None).unwrap();
+                    let again = store
+                        .add_phrase(&"你好".into(), &[11, 20], Some(8))
+                        .unwrap();
                     assert_eq!(first, again);
                     assert_eq!(store.next_user_token().unwrap(), FIRST_USER_TOKEN + 1);
                     assert_eq!(store.unigram_delta(first).unwrap(), 15);
@@ -5416,7 +5441,7 @@ mod tests {
                     // membership, or the phrase would stop being removable.
                     let path = temp_path("pair-set");
                     let mut store = Store::create_standalone(&path).unwrap();
-                    let token = store.add_phrase("甲", &[7], None).unwrap();
+                    let token = store.add_phrase(&"甲".into(), &[7], None).unwrap();
                     // A later-walked phrase-index entry: same token, new text.
                     store
                         .database()
@@ -5447,7 +5472,7 @@ mod tests {
                     let path = temp_path("backfill");
                     let token = {
                         let mut store = Store::create_standalone(&path).unwrap();
-                        let token = store.add_phrase("你好", &[10, 20], None).unwrap();
+                        let token = store.add_phrase(&"你好".into(), &[10, 20], None).unwrap();
                         // Parent-written shape: drop the membership row.
                         store
                             .database()
@@ -5482,7 +5507,7 @@ mod tests {
                     for legacy in [true, false] {
                         let path = temp_path("legacy-pron-order");
                         let mut store = Store::create_standalone(&path).unwrap();
-                        let token = store.add_phrase("你", &[20], Some(5)).unwrap();
+                        let token = store.add_phrase(&"你".into(), &[20], Some(5)).unwrap();
                         store
                             .database()
                             .write(|txn| {
@@ -5504,8 +5529,8 @@ mod tests {
                                 )
                             })
                             .unwrap();
-                        store.add_phrase("你", &[10], Some(7)).unwrap();
-                        store.add_phrase("你", &[15], Some(9)).unwrap();
+                        store.add_phrase(&"你".into(), &[10], Some(7)).unwrap();
+                        store.add_phrase(&"你".into(), &[15], Some(9)).unwrap();
                         let item = store.phrase(token).unwrap().unwrap();
                         assert_eq!(
                             item.pronunciations()
@@ -5535,8 +5560,8 @@ mod tests {
                 fn same_reading_accumulates_pronunciation_count() {
                     let path = temp_path("same-read");
                     let mut store = Store::create_standalone(&path).unwrap();
-                    let token = store.add_phrase("词", &[7], Some(5)).unwrap();
-                    let again = store.add_phrase("词", &[7], Some(5)).unwrap();
+                    let token = store.add_phrase(&"词".into(), &[7], Some(5)).unwrap();
+                    let again = store.add_phrase(&"词".into(), &[7], Some(5)).unwrap();
                     assert_eq!(token, again);
                     assert_eq!(store.unigram_delta(token).unwrap(), 15);
                     let got = store.phrase(token).unwrap().unwrap();
@@ -5550,9 +5575,13 @@ mod tests {
                     let path = temp_path("phrase-rt");
                     let (t1, t2, next) = {
                         let mut store = Store::create_standalone(&path).unwrap();
-                        let t1 = store.add_phrase("你好", &[10, 20], None).unwrap();
-                        let t2 = store.add_phrase("世界", &[30, 40], Some(9)).unwrap();
-                        store.add_phrase("你好", &[11, 20], Some(2)).unwrap();
+                        let t1 = store.add_phrase(&"你好".into(), &[10, 20], None).unwrap();
+                        let t2 = store
+                            .add_phrase(&"世界".into(), &[30, 40], Some(9))
+                            .unwrap();
+                        store
+                            .add_phrase(&"你好".into(), &[11, 20], Some(2))
+                            .unwrap();
                         (t1, t2, store.next_user_token().unwrap())
                     };
 
@@ -5577,7 +5606,7 @@ mod tests {
                     assert_eq!(store.unigram_delta(t2).unwrap(), 27);
 
                     let mut store = store;
-                    let t3 = store.add_phrase("中国", &[50, 60], None).unwrap();
+                    let t3 = store.add_phrase(&"中国".into(), &[50, 60], None).unwrap();
                     assert_eq!(t3, t2 + 1);
                     assert_eq!(t3, FIRST_USER_TOKEN + 2);
                     cleanup(&path);
@@ -5588,15 +5617,19 @@ mod tests {
                     let path = temp_path("invalid");
                     let mut store = Store::create_standalone(&path).unwrap();
                     assert!(matches!(
-                        store.add_phrase("", &[], None),
+                        store.add_phrase(&"".into(), &[], None),
                         Err(UserStoreError::InvalidPhrase)
                     ));
                     assert!(matches!(
-                        store.add_phrase("你好", &[10], None),
+                        store.add_phrase(&"你好".into(), &[10], None),
                         Err(UserStoreError::InvalidPhrase)
                     ));
                     assert!(matches!(
-                        store.add_phrase(&"啊".repeat(16), &[0; 16], None),
+                        store.add_phrase(
+                            &oxpinyin_core::PhraseText::from(&"啊".repeat(16)),
+                            &[0; 16],
+                            None
+                        ),
                         Err(UserStoreError::InvalidPhrase)
                     ));
                     assert_eq!(store.next_user_token().unwrap(), FIRST_USER_TOKEN);
@@ -5630,9 +5663,13 @@ mod tests {
                         u16::try_from(SyllableKey::from_text("jie").expect("frozen key").index())
                             .expect("frozen syllable inventory fits u16");
 
-                    store.add_phrase("你好", &[ni, hao], None).unwrap();
-                    store.add_phrase("你好", &[ni, hao], Some(7)).unwrap();
-                    store.add_phrase("世界", &[shi, jie], Some(3)).unwrap();
+                    store.add_phrase(&"你好".into(), &[ni, hao], None).unwrap();
+                    store
+                        .add_phrase(&"你好".into(), &[ni, hao], Some(7))
+                        .unwrap();
+                    store
+                        .add_phrase(&"世界".into(), &[shi, jie], Some(3))
+                        .unwrap();
 
                     assert_eq!(
                         store.export_phrases().unwrap(),
@@ -5729,8 +5766,8 @@ mod tests {
                     const SYSTEM_A: Token = 0x0100_0001;
                     const SYSTEM_B: Token = 0x0200_0001;
                     let mut store = Store::create_standalone(path).unwrap();
-                    let user_a = store.add_phrase("你好", &[10, 20], None).unwrap();
-                    let user_b = store.add_phrase("世界", &[30, 40], None).unwrap();
+                    let user_a = store.add_phrase(&"你好".into(), &[10, 20], None).unwrap();
+                    let user_b = store.add_phrase(&"世界".into(), &[30, 40], None).unwrap();
                     store.observe_selection(SYSTEM_A, SYSTEM_B).unwrap();
                     store.observe_selection(SYSTEM_A, user_a).unwrap();
                     store.observe_selection(user_a, SYSTEM_B).unwrap();
@@ -5783,9 +5820,9 @@ mod tests {
                 fn next_user_token_follows_the_highest_live_token() {
                     let path = temp_path("next-token");
                     let mut store = Store::create_standalone(&path).unwrap();
-                    let a = store.add_phrase("你好", &[10, 20], None).unwrap();
-                    let b = store.add_phrase("世界", &[30, 40], None).unwrap();
-                    let c = store.add_phrase("再见", &[50, 60], None).unwrap();
+                    let a = store.add_phrase(&"你好".into(), &[10, 20], None).unwrap();
+                    let b = store.add_phrase(&"世界".into(), &[30, 40], None).unwrap();
+                    let c = store.add_phrase(&"再见".into(), &[50, 60], None).unwrap();
                     assert_eq!((b, c), (a + 1, a + 2));
 
                     // A hole below the top is not reused.
@@ -5795,12 +5832,18 @@ mod tests {
                     // Masking the top frees it and every empty slot beneath it.
                     store.mask_out(0xFFFF_FFFF, c).unwrap();
                     assert_eq!(store.next_user_token().unwrap(), a + 1);
-                    assert_eq!(store.add_phrase("好的", &[70, 80], None).unwrap(), a + 1);
+                    assert_eq!(
+                        store.add_phrase(&"好的".into(), &[70, 80], None).unwrap(),
+                        a + 1
+                    );
 
                     // A single removal frees the top the same way.
                     assert!(store.remove_user_phrase(a + 1).unwrap());
                     assert_eq!(store.next_user_token().unwrap(), a + 1);
-                    assert_eq!(store.add_phrase("再来", &[90, 100], None).unwrap(), a + 1);
+                    assert_eq!(
+                        store.add_phrase(&"再来".into(), &[90, 100], None).unwrap(),
+                        a + 1
+                    );
                     cleanup(&path);
                 }
 
@@ -5841,7 +5884,7 @@ mod tests {
                         ] {
                             let path = temp_path("remove-bigram-total");
                             let mut store = Store::create_standalone(&path).unwrap();
-                            let token = store.add_phrase("你好", &[10, 20], None).unwrap();
+                            let token = store.add_phrase(&"你好".into(), &[10, 20], None).unwrap();
                             let prev = 0x0100_0001;
                             let kept = [0x0100_0002, 0x0100_0003];
                             let gram = |total: u32, items: &[(Token, u32)]| {
@@ -5927,7 +5970,7 @@ mod tests {
                             phrase_index_make_token(USER_DICTIONARY, 0),
                         )
                         .unwrap();
-                    let other = store.add_phrase("中国", &[50, 60], None).unwrap();
+                    let other = store.add_phrase(&"中国".into(), &[50, 60], None).unwrap();
                     store.remove_user_phrase(other).unwrap();
                     drop(store);
 
@@ -5965,7 +6008,7 @@ mod tests {
                         })
                         .unwrap();
                     }
-                    let err = store.add_phrase("你好", &[1, 2], None).unwrap_err();
+                    let err = store.add_phrase(&"你好".into(), &[1, 2], None).unwrap_err();
                     assert!(matches!(err, UserStoreError::TokenSpaceExhausted));
                     cleanup(&path);
                 }
@@ -6054,7 +6097,9 @@ mod tests {
                 fn phrase_tells_an_undecodable_text_and_pronunciation_apart() {
                     let path = temp_path("decode-apart");
                     let mut store = Store::create_standalone(&path).unwrap();
-                    let token = store.add_phrase("甲", &[key("jia")], Some(3)).unwrap();
+                    let token = store
+                        .add_phrase(&"甲".into(), &[key("jia")], Some(3))
+                        .unwrap();
                     let text_key = codec::encode_token(token);
                     // Text bytes that are not UTF-8.
                     store

@@ -275,7 +275,7 @@ impl InstanceCore {
     /// policy's refusal) and the dictionary's backend failure.
     pub fn character_offset(
         &self,
-        phrase: &str,
+        phrase: &oxpinyin_core::PhraseText,
         offset: usize,
     ) -> Result<Option<usize>, EngineError> {
         let Some(source) = self.span_source() else {

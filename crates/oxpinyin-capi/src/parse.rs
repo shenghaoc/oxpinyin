@@ -12,7 +12,6 @@ use std::os::raw::c_char;
 
 use oxpinyin_facade::ToneForwarding;
 
-use crate::ffi::cstr_to_parsed_prefix;
 use crate::state::{instance_mut, instance_ref};
 use crate::types::{GChar, PinyinInstance};
 
@@ -33,8 +32,9 @@ fn parse_c_string(instance: *mut PinyinInstance, text: *const c_char) -> usize {
     }
 
     // The pin parses the raw bytes: what follows an invalid sequence is
-    // never reached (`cstr_to_parsed_prefix`).
-    let text = cstr_to_parsed_prefix(text);
+    // never reached (`input::parser_prefix`).
+    let text =
+        oxpinyin_capi_marshal::input::parser_prefix(oxpinyin_capi_marshal::borrow_c_string!(text));
     parse_more(instance, &text)
 }
 
@@ -74,7 +74,9 @@ pub extern "C" fn pinyin_parse_more_double_pinyins(
         return 0;
     }
 
-    let text = cstr_to_parsed_prefix(pinyins);
+    let text = oxpinyin_capi_marshal::input::parser_prefix(
+        oxpinyin_capi_marshal::borrow_c_string!(pinyins),
+    );
     // SAFETY: `instance` is non-null (checked above).
     let inst = unsafe { instance_mut(instance) };
     // Parse-path snapshot clear (main's begin_parse law).
@@ -101,7 +103,9 @@ pub extern "C" fn pinyin_parse_more_chewings(
         return 0;
     }
 
-    let text = cstr_to_parsed_prefix(chewings);
+    let text = oxpinyin_capi_marshal::input::parser_prefix(
+        oxpinyin_capi_marshal::borrow_c_string!(chewings),
+    );
     // SAFETY: `instance` is non-null (checked above).
     let inst = unsafe { instance_mut(instance) };
     // Parse-path snapshot clear (main's begin_parse law).

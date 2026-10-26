@@ -8,7 +8,6 @@
 use oxpinyin_capi_marshal::phrase_text::phrase_text_bytes;
 use std::os::raw::c_char;
 
-use crate::ffi::{cstr_opt, cstr_to_strict};
 use crate::state::{instance_mut, instance_ref};
 use crate::types::ZhuyinInstance;
 
@@ -120,7 +119,8 @@ pub extern "C" fn zhuyin_guess_sentence_with_prefix(
     let inst = unsafe { instance_mut(instance) };
     // `m_prefixes` becomes `[sentence_start]` and the prefix adds what it
     // converts to (`zhuyin.cpp:949-953`); `None` adds nothing.
-    let prefix = oxpinyin_capi_marshal::ucs4::prefix_text(cstr_opt(prefix));
+    let prefix =
+        oxpinyin_capi_marshal::ucs4::prefix_text(oxpinyin_capi_marshal::borrow_c_string!(prefix));
     if refuse_empty_matrix(inst) {
         return false;
     }
@@ -218,9 +218,9 @@ pub extern "C" fn zhuyin_get_character_offset(
     let inst = unsafe { instance_ref(instance) };
     // SAFETY: Null-checked inside; invalid UTF-8 refuses like the pin's
     // `g_utf8_to_ucs4` NULL answer.
-    let Some(text) = cstr_to_strict(phrase) else {
-        return false;
-    };
+    let text =
+        oxpinyin_capi_marshal::input::utf8_to_ucs4(oxpinyin_capi_marshal::borrow_c_string!(phrase))
+            .unwrap_or_default();
     let char_count = match inst.core.character_offset(&text, offset) {
         Ok(Some(_)) if offset == inst.core.parsed_len && character_walk_ran(inst, &text) => {
             if !length.is_null() {
@@ -264,7 +264,7 @@ pub extern "C" fn zhuyin_get_character_offset(
 /// (`zhuyin.cpp:2152-2182`): a non-empty matrix, a non-empty phrase and a
 /// dictionary token for every character. The engine answers all of them, and
 /// the walk's own failure, with `Ok(None)`.
-fn character_walk_ran(inst: &crate::state::CapiInstance, text: &str) -> bool {
+fn character_walk_ran(inst: &crate::state::CapiInstance, text: &oxpinyin_core::PhraseText) -> bool {
     use oxpinyin_core::Dictionary as _;
 
     let Ok((keys, input, _)) = inst.core.mode_keys() else {
@@ -273,14 +273,8 @@ fn character_walk_ran(inst: &crate::state::CapiInstance, text: &str) -> bool {
     if input.is_empty() || keys.is_empty() || text.is_empty() {
         return false;
     }
-    text.chars().all(|character| {
-        let mut buffer = [0_u8; 4];
-        !inst
-            .core
-            .dict
-            .tokens_for_text(character.encode_utf8(&mut buffer))
-            .is_empty()
-    })
+    text.outward_words()
+        .all(|word| !inst.core.dict.tokens_for_ucs4(&[word]).is_empty())
 }
 
 /// Guess candidates at the after-cursor offset.

@@ -1832,7 +1832,7 @@ mod tests {
                 UserStore::open_libpinyin(&dir, base.clone(), versions(), UserConfLaw::Pinyin)
                     .expect("open");
             store
-                .add_system_phrase_in(1, Some(token.value()), "你", &dense(2), Some(20))
+                .add_system_phrase_in(1, Some(token.value()), &"你".into(), &dense(2), Some(20))
                 .expect("extra reading");
             UserModel::observe_with_keys(
                 &mut store,
@@ -1843,7 +1843,7 @@ mod tests {
             .expect("train extra");
             assert_eq!(counts(&store), [100, 89]);
             store
-                .add_system_phrase_in(1, Some(token.value()), "你", &dense(2), Some(7))
+                .add_system_phrase_in(1, Some(token.value()), &"你".into(), &dense(2), Some(7))
                 .expect("import after training");
             assert_eq!(counts(&store), [100, 96]);
             assert!(store.save().expect("save"));
@@ -1891,12 +1891,12 @@ mod tests {
             UserStore::open_libpinyin(&dir, base.clone(), versions(), UserConfLaw::Pinyin)
                 .expect("open");
         store
-            .add_system_phrase_in(1, Some(0x0100_0001), "你", &dense(2), Some(20))
+            .add_system_phrase_in(1, Some(0x0100_0001), &"你".into(), &dense(2), Some(20))
             .expect("saved reading");
         store.mark_modified();
         assert!(store.save().expect("save"));
         store
-            .add_system_phrase_in(1, Some(0x0100_0001), "你", &dense(4), Some(30))
+            .add_system_phrase_in(1, Some(0x0100_0001), &"你".into(), &dense(4), Some(30))
             .expect("unsaved reading");
         let saved = counts(&store);
         assert_eq!(saved.len(), 3, "the unsaved reading is live");
@@ -1934,13 +1934,13 @@ mod tests {
                 .expect("open");
         let mut other = store.clone();
         let user = store
-            .add_phrase_in(7, "龘", &keys, Some(5))
+            .add_phrase_in(7, &"龘".into(), &keys, Some(5))
             .expect("new user item");
         other
-            .add_phrase_in(7, "龘", &keys, Some(7))
+            .add_phrase_in(7, &"龘".into(), &keys, Some(7))
             .expect("other user writer");
         store
-            .add_phrase_in(7, "龘", &keys, Some(3))
+            .add_phrase_in(7, &"龘".into(), &keys, Some(3))
             .expect("refresh user memo");
         assert_eq!(
             store
@@ -1953,16 +1953,16 @@ mod tests {
         );
 
         let system = store
-            .add_system_phrase_in(1, None, "拟", &keys, Some(5))
+            .add_system_phrase_in(1, None, &"拟".into(), &keys, Some(5))
             .expect("new system item");
         store
-            .add_system_phrase_in(1, Some(system), "拟", &extra, Some(7))
+            .add_system_phrase_in(1, Some(system), &"拟".into(), &extra, Some(7))
             .expect("append cached row");
         other
-            .add_system_phrase_in(1, Some(system), "拟", &extra, Some(11))
+            .add_system_phrase_in(1, Some(system), &"拟".into(), &extra, Some(11))
             .expect("other system writer");
         store
-            .add_system_phrase_in(1, Some(system), "拟", &extra, Some(3))
+            .add_system_phrase_in(1, Some(system), &"拟".into(), &extra, Some(3))
             .expect("refresh system memo");
         assert_eq!(
             store.with_effective_system_item(system, |item| item.prons[1].1),
@@ -2011,16 +2011,16 @@ mod tests {
                 UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
                     .expect("open");
             token = store
-                .add_phrase_in(7, "龘", &dense(readings[0]), Some(1))
+                .add_phrase_in(7, &"龘".into(), &dense(readings[0]), Some(1))
                 .expect("add");
             assert_eq!(store.user_pronunciation_count(token), Some(1));
             store
-                .add_phrase_in(7, "龘", &dense(readings[0]), Some(9))
+                .add_phrase_in(7, &"龘".into(), &dense(readings[0]), Some(9))
                 .expect("merge");
             assert_eq!(store.user_pronunciation_count(token), Some(1));
             for (index, &reading) in readings[1..255].iter().enumerate() {
                 store
-                    .add_phrase_in(7, "龘", &dense(reading), Some(1))
+                    .add_phrase_in(7, &"龘".into(), &dense(reading), Some(1))
                     .expect("append");
                 assert_eq!(
                     store.user_pronunciation_count(token),
@@ -2028,11 +2028,11 @@ mod tests {
                 );
             }
             store
-                .add_phrase_in(7, "龘", &dense(readings[255]), Some(1))
+                .add_phrase_in(7, &"龘".into(), &dense(readings[255]), Some(1))
                 .expect("wrap");
             assert_eq!(store.user_pronunciation_count(token), Some(0));
             store
-                .add_phrase_in(7, "龘", &dense(readings[256]), Some(1))
+                .add_phrase_in(7, &"龘".into(), &dense(readings[256]), Some(1))
                 .expect("257th");
             assert_eq!(store.user_pronunciation_count(token), Some(1));
             store.mark_modified();
@@ -2052,7 +2052,7 @@ mod tests {
         store.mask_out(0xffff_ffff, token).expect("mask");
         assert_eq!(store.user_pronunciation_count(token), None);
         let other = store
-            .add_phrase_in(7, "龖", &dense(readings[0]), Some(1))
+            .add_phrase_in(7, &"龖".into(), &dense(readings[0]), Some(1))
             .expect("new");
         assert_eq!(store.user_pronunciation_count(other), Some(1));
         assert!(store.remove_user_phrase(other).expect("remove"));
@@ -2085,7 +2085,7 @@ mod tests {
                 .expect("open");
         // Nothing saved: the library comes back empty.
         store
-            .add_phrase_in(crate::USER_DICTIONARY, "龘", &dense(2), Some(20))
+            .add_phrase_in(crate::USER_DICTIONARY, &"龘".into(), &dense(2), Some(20))
             .expect("unsaved item");
         store
             .unload_user_library(crate::USER_DICTIONARY)
@@ -2098,12 +2098,12 @@ mod tests {
         // A saved item returns with its reading still indexed; an unsaved
         // reading merged after the save does not.
         store
-            .add_phrase_in(crate::USER_DICTIONARY, "鱻", &dense(2), Some(20))
+            .add_phrase_in(crate::USER_DICTIONARY, &"鱻".into(), &dense(2), Some(20))
             .expect("item");
         store.mark_modified();
         assert!(store.save().expect("save"));
         store
-            .add_phrase_in(crate::USER_DICTIONARY, "鱻", &dense(4), Some(30))
+            .add_phrase_in(crate::USER_DICTIONARY, &"鱻".into(), &dense(4), Some(30))
             .expect("unsaved reading");
         assert_eq!(readings(&store), [vec![true, false]]);
         store
@@ -2124,7 +2124,7 @@ mod tests {
             .load_user_library(crate::USER_DICTIONARY)
             .expect("load again");
         let reused = store
-            .add_phrase_in(crate::USER_DICTIONARY, "鱺", &dense(3), Some(20))
+            .add_phrase_in(crate::USER_DICTIONARY, &"鱺".into(), &dense(3), Some(20))
             .expect("another phrase takes the dropped token");
         let found = crate::UserLookup::from_store(&store)
             .expect("lookup")
@@ -2162,7 +2162,7 @@ mod tests {
             UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
                 .expect("open");
         store
-            .add_phrase_in(crate::USER_DICTIONARY, "龘", &dense(2), Some(20))
+            .add_phrase_in(crate::USER_DICTIONARY, &"龘".into(), &dense(2), Some(20))
             .expect("item");
         assert!(kept(&store).is_empty());
         // A refused unload keeps the index entries where they were: none
@@ -2253,18 +2253,18 @@ mod tests {
                 UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
                     .expect("open");
             token = store
-                .add_system_phrase_in(1, None, "拟", &dense(readings[0]), Some(5))
+                .add_system_phrase_in(1, None, &"拟".into(), &dense(readings[0]), Some(5))
                 .expect("append");
             for &packed in &readings[1..255] {
                 store
-                    .add_system_phrase_in(1, Some(token), "拟", &dense(packed), Some(5))
+                    .add_system_phrase_in(1, Some(token), &"拟".into(), &dense(packed), Some(5))
                     .expect("reading within the 255 limit");
             }
             assert_eq!(pronunciation_rows(&store), 255);
             unigram = store.unigram_delta(token).expect("unigram");
             assert_eq!(unigram, 15);
             store
-                .add_system_phrase_in(1, Some(token), "拟", &dense(readings[255]), Some(5))
+                .add_system_phrase_in(1, Some(token), &"拟".into(), &dense(readings[255]), Some(5))
                 .expect("the 256th reading is accepted");
             assert_eq!(pronunciation_rows(&store), 0);
             assert_eq!(
@@ -2283,7 +2283,7 @@ mod tests {
             assert!(readings_of(&store, token).is_empty());
             assert_eq!(store.unigram_delta(token).expect("unigram"), unigram);
             store
-                .add_system_phrase_in(1, Some(token), "拟", &dense(readings[256]), Some(9))
+                .add_system_phrase_in(1, Some(token), &"拟".into(), &dense(readings[256]), Some(9))
                 .expect("the 257th reading");
             assert_eq!(readings_of(&store, token), [9]);
             assert_eq!(
@@ -2333,13 +2333,13 @@ mod tests {
                     .expect("open");
             for &packed in &readings[..254] {
                 store
-                    .add_system_phrase_in(1, Some(token), "你", &dense(packed), Some(5))
+                    .add_system_phrase_in(1, Some(token), &"你".into(), &dense(packed), Some(5))
                     .expect("reading within the 255 limit");
             }
             assert_eq!(prons_of(&store).len(), 255);
             unigram = unigram_of(&store);
             store
-                .add_system_phrase_in(1, Some(token), "你", &dense(readings[254]), Some(5))
+                .add_system_phrase_in(1, Some(token), &"你".into(), &dense(readings[254]), Some(5))
                 .expect("the 256th reading is accepted");
             assert!(prons_of(&store).is_empty());
             assert_eq!(unigram_of(&store), unigram);
@@ -2353,7 +2353,7 @@ mod tests {
             assert!(prons_of(&store).is_empty());
             assert_eq!(unigram_of(&store), unigram);
             store
-                .add_system_phrase_in(1, Some(token), "你", &dense(readings[255]), Some(9))
+                .add_system_phrase_in(1, Some(token), &"你".into(), &dense(readings[255]), Some(9))
                 .expect("the 257th reading");
             assert_eq!(prons_of(&store), [(vec![readings[255]], 9)]);
             store.mark_modified();
@@ -2390,17 +2390,32 @@ mod tests {
                 UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
                     .expect("open");
             token = store
-                .add_phrase_in(crate::USER_DICTIONARY, "龘", &dense(readings[0]), Some(5))
+                .add_phrase_in(
+                    crate::USER_DICTIONARY,
+                    &"龘".into(),
+                    &dense(readings[0]),
+                    Some(5),
+                )
                 .expect("append");
             for &packed in &readings[1..255] {
                 store
-                    .add_phrase_in(crate::USER_DICTIONARY, "龘", &dense(packed), Some(5))
+                    .add_phrase_in(
+                        crate::USER_DICTIONARY,
+                        &"龘".into(),
+                        &dense(packed),
+                        Some(5),
+                    )
                     .expect("reading within the 255 limit");
             }
             assert_eq!(readings_of(&store, token).len(), 255);
             unigram = store.unigram_delta(token).expect("unigram");
             store
-                .add_phrase_in(crate::USER_DICTIONARY, "龘", &dense(readings[255]), Some(5))
+                .add_phrase_in(
+                    crate::USER_DICTIONARY,
+                    &"龘".into(),
+                    &dense(readings[255]),
+                    Some(5),
+                )
                 .expect("the 256th reading is accepted");
             assert!(readings_of(&store, token).is_empty());
             assert_eq!(store.unigram_delta(token).expect("unigram"), unigram);
@@ -2414,7 +2429,12 @@ mod tests {
             assert!(readings_of(&store, token).is_empty());
             assert_eq!(store.unigram_delta(token).expect("unigram"), unigram);
             store
-                .add_phrase_in(crate::USER_DICTIONARY, "龘", &dense(readings[256]), Some(9))
+                .add_phrase_in(
+                    crate::USER_DICTIONARY,
+                    &"龘".into(),
+                    &dense(readings[256]),
+                    Some(9),
+                )
                 .expect("the 257th reading");
             assert_eq!(readings_of(&store, token), [9]);
             store.mark_modified();
@@ -2440,7 +2460,7 @@ mod tests {
                 UserStore::open_libpinyin(&dir, base.clone(), versions(), UserConfLaw::Pinyin)
                     .expect("open");
             token = store
-                .add_system_phrase_in(1, None, "拟", &keys, Some(5))
+                .add_system_phrase_in(1, None, &"拟".into(), &keys, Some(5))
                 .expect("append");
             UserModel::observe_with_keys(
                 &mut store,
@@ -2454,7 +2474,7 @@ mod tests {
                 Some(74)
             );
             store
-                .add_system_phrase_in(1, Some(token), "拟", &keys, Some(7))
+                .add_system_phrase_in(1, Some(token), &"拟".into(), &keys, Some(7))
                 .expect("reimport");
             assert_eq!(
                 store.with_effective_system_item(token, |item| item.prons[0].1),
@@ -2610,7 +2630,7 @@ mod tests {
             // in `pinyin_train` and `pinyin_end_add_phrases`); the
             // import trio's `mark_modified` is what arms a phrase save.
             let token = store
-                .add_phrase("你好", &keys[..], None)
+                .add_phrase(&"你好".into(), &keys[..], None)
                 .expect("add phrase");
             assert_eq!(token & 0x0F00_0000, 0x0700_0000);
             assert!(!store.save().expect("gate holds"));
@@ -2724,16 +2744,18 @@ mod tests {
                 UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
                     .expect("open");
             let masked = store
-                .add_phrase("你好", &[id("ni"), id("hao")][..], None)
+                .add_phrase(&"你好".into(), &[id("ni"), id("hao")][..], None)
                 .expect("add");
             let removed = store
-                .add_phrase("我们", &[id("wo"), id("men")][..], None)
+                .add_phrase(&"我们".into(), &[id("wo"), id("men")][..], None)
                 .expect("add");
             store.mark_modified();
             assert!(store.save().expect("save"));
             store.mask_out(0xffff_ffff, masked).expect("mask");
             assert!(store.remove_user_phrase(removed).expect("remove"));
-            store.add_phrase("他", &[id("ta")][..], None).expect("add");
+            store
+                .add_phrase(&"他".into(), &[id("ta")][..], None)
+                .expect("add");
             store.mark_modified();
             assert!(store.save().expect("save after"));
             removed

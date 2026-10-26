@@ -13,7 +13,6 @@ use oxpinyin_core::{PhraseText, single_gram};
 use oxpinyin_engine::CandidateKind;
 use oxpinyin_user::UserStore;
 
-use crate::ffi::cstr_opt;
 use crate::state::{CapiCandidate, CapiInstance, SharedDict, SharedLm, instance_mut};
 use crate::types::{PinyinInstance, lookup_candidate_type_t};
 
@@ -288,7 +287,8 @@ pub extern "C" fn pinyin_guess_predicted_candidates(
     if clear_borrowed_prefix(inst, prefix) {
         return false;
     }
-    let prefix = oxpinyin_capi_marshal::ucs4::prefix_text(cstr_opt(prefix));
+    let prefix =
+        oxpinyin_capi_marshal::ucs4::prefix_text(oxpinyin_capi_marshal::borrow_c_string!(prefix));
     guess_predicted(inst, prefix.as_ref())
 }
 

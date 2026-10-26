@@ -3,7 +3,6 @@
 
 use std::os::raw::c_char;
 
-use crate::ffi::cstr_to_parsed_prefix;
 use crate::state::{instance_mut, instance_ref};
 use crate::types::{GChar, ZhuyinInstance};
 
@@ -45,7 +44,9 @@ pub extern "C" fn zhuyin_parse_more_full_pinyins(
         return 0;
     }
 
-    let text = cstr_to_parsed_prefix(pinyins);
+    let text = oxpinyin_capi_marshal::input::parser_prefix(
+        oxpinyin_capi_marshal::borrow_c_string!(pinyins),
+    );
     parse_full_more(instance, &text)
 }
 
@@ -68,7 +69,9 @@ pub extern "C" fn zhuyin_parse_more_chewings(
         return 0;
     }
 
-    let text = cstr_to_parsed_prefix(chewings);
+    let text = oxpinyin_capi_marshal::input::parser_prefix(
+        oxpinyin_capi_marshal::borrow_c_string!(chewings),
+    );
     parse_chewing_more(instance, &text)
 }
 

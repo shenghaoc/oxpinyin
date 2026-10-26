@@ -202,7 +202,7 @@ pub fn character_offset_over_keys<D>(
     keys: &[MatrixKey],
     separators: bool,
     dictionary: &D,
-    phrase: &str,
+    phrase: &oxpinyin_core::PhraseText,
     offset: usize,
 ) -> Result<Option<usize>, EngineError>
 where
@@ -231,11 +231,9 @@ where
 
     // `_pre_compute_tokens`: the first token of each character's
     // one-character phrase-table search; none → `false`.
-    let mut tokens = Vec::with_capacity(phrase.chars().count());
-    let mut buffer = [0_u8; 4];
-    for character in phrase.chars() {
-        let text: &str = character.encode_utf8(&mut buffer);
-        let Some(token) = dictionary.tokens_for_text(text).into_iter().next() else {
+    let mut tokens = Vec::with_capacity(phrase.phrase_length());
+    for word in phrase.outward_words() {
+        let Some(token) = dictionary.tokens_for_ucs4(&[word]).into_iter().next() else {
             return Ok(None);
         };
         tokens.push(token);
@@ -310,8 +308,16 @@ mod tests {
     fn counts_characters_up_to_the_offset() {
         let keys = nihao();
         for (offset, expected) in [(0, 0), (2, 1), (5, 2)] {
-            let got = character_offset_over_keys(b"nihao", 5, &keys, true, &dict(), "你好", offset)
-                .expect("no abort shape");
+            let got = character_offset_over_keys(
+                b"nihao",
+                5,
+                &keys,
+                true,
+                &dict(),
+                &"你好".into(),
+                offset,
+            )
+            .expect("no abort shape");
             assert_eq!(got, Some(expected), "offset {offset}");
         }
     }
@@ -323,8 +329,9 @@ mod tests {
         // true with a byte-derived count.
         let keys = vec![key("ni", 0, 2)];
         for offset in 0..=2 {
-            let got = character_offset_over_keys(b"ni'", 3, &keys, true, &dict(), "ni'", offset)
-                .expect("no abort shape");
+            let got =
+                character_offset_over_keys(b"ni'", 3, &keys, true, &dict(), &"ni'".into(), offset)
+                    .expect("no abort shape");
             assert_eq!(got, None, "offset {offset}");
         }
     }
@@ -332,18 +339,18 @@ mod tests {
     #[test]
     fn the_separator_and_tail_zero_keys_are_stepped_over() {
         let keys = vec![key("ni", 0, 2), key("hao", 3, 6)];
-        let got = character_offset_over_keys(b"ni'hao", 6, &keys, true, &dict(), "你好", 6)
+        let got = character_offset_over_keys(b"ni'hao", 6, &keys, true, &dict(), &"你好".into(), 6)
             .expect("no abort shape");
         assert_eq!(got, Some(2));
         // Offset 3 sits one past the separator's lone zero key: the pin's
         // `_check_offset` abort.
-        let got = character_offset_over_keys(b"ni'hao", 6, &keys, true, &dict(), "你好", 3);
+        let got = character_offset_over_keys(b"ni'hao", 6, &keys, true, &dict(), &"你好".into(), 3);
         assert!(matches!(
             got,
             Err(EngineError::ZeroKeyOffsetCheck { offset: 3 })
         ));
         // Past the reserved slot: the range assert.
-        let got = character_offset_over_keys(b"ni'hao", 6, &keys, true, &dict(), "你好", 7);
+        let got = character_offset_over_keys(b"ni'hao", 6, &keys, true, &dict(), &"你好".into(), 7);
         assert!(matches!(
             got,
             Err(EngineError::LookupOffsetOutOfRange { offset: 7, len: 6 })
@@ -354,12 +361,12 @@ mod tests {
     fn a_key_the_phrase_does_not_pronounce_fails_the_walk() {
         // 好 does not pronounce `ni`, so no path reaches the offset.
         let keys = nihao();
-        let got = character_offset_over_keys(b"nihao", 5, &keys, true, &dict(), "好你", 2)
+        let got = character_offset_over_keys(b"nihao", 5, &keys, true, &dict(), &"好你".into(), 2)
             .expect("no abort shape");
         assert_eq!(got, None);
         // A shorter phrase than the matrix: the walk beyond its tokens is
         // a miss, not a read off the array.
-        let got = character_offset_over_keys(b"nihao", 5, &keys, true, &dict(), "你", 5)
+        let got = character_offset_over_keys(b"nihao", 5, &keys, true, &dict(), &"你".into(), 5)
             .expect("no abort shape");
         assert_eq!(got, None);
     }
@@ -367,18 +374,20 @@ mod tests {
     #[test]
     fn empty_input_and_empty_phrase_answer_false() {
         assert_eq!(
-            character_offset_over_keys(b"", 0, &[], true, &dict(), "你", 0).expect("no abort"),
+            character_offset_over_keys(b"", 0, &[], true, &dict(), &"你".into(), 0)
+                .expect("no abort"),
             None
         );
         // A non-empty buffer whose parse placed no key: `fill_matrix`
         // leaves the matrix cleared, so the pin's empty-matrix `false`
         // applies before any offset check.
         assert_eq!(
-            character_offset_over_keys(b"xyz", 0, &[], true, &dict(), "你", 0).expect("no abort"),
+            character_offset_over_keys(b"xyz", 0, &[], true, &dict(), &"你".into(), 0)
+                .expect("no abort"),
             None
         );
         assert_eq!(
-            character_offset_over_keys(b"nihao", 5, &nihao(), true, &dict(), "", 0)
+            character_offset_over_keys(b"nihao", 5, &nihao(), true, &dict(), &"".into(), 0)
                 .expect("no abort"),
             None
         );

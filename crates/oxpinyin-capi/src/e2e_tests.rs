@@ -1568,14 +1568,14 @@ fn export_iterator_refuses_a_reading_it_cannot_spell() {
         };
         let ni = oxpinyin_user::toned_key(syllable("ni"), 0).expect("key");
         store
-            .add_phrase_in(USER_DICTIONARY, "你", &[ni], Some(5))
+            .add_phrase_in(USER_DICTIONARY, &"你".into(), &[ni], Some(5))
             .expect("a reading the engine spells");
         // One past `MAX_KEY_TONE`: the add checks lengths only.
         let past_the_tones = oxpinyin_user::toned_key(syllable("hao"), oxpinyin_user::MAX_KEY_TONE)
             .expect("key")
             + (1 << oxpinyin_user::KEY_TONE_SHIFT);
         store
-            .add_phrase_in(USER_DICTIONARY, "好", &[past_the_tones], Some(3))
+            .add_phrase_in(USER_DICTIONARY, &"好".into(), &[past_the_tones], Some(3))
             .expect("stored unchecked");
     }
     let iter = crate::iterators::pinyin_begin_get_phrases(context, 7);

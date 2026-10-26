@@ -16,33 +16,6 @@ use std::os::raw::c_char;
 use crate::state::{instance_mut, instance_ref};
 use crate::types::{GUint, PhraseTokenT, PinyinInstance};
 
-/// Text accepted by the pin's UCS-4 gate: ordinary Rust text, or the raw
-/// UCS-4 words of a GLib-accepted non-scalar sequence.
-enum SegmentText {
-    Unicode(String),
-    Ucs4(Vec<u32>),
-}
-
-/// Decode the C input at the pin's conversion boundary.
-///
-/// 074a2219 pinyin.cpp:1450-1454 / zhuyin.cpp:969-973 convert with GLib
-/// and require the byte-walked length to equal the converted length. The
-/// outward result is: valid scalar text stays text; a canonical
-/// historical sequence (surrogate, above-U+10FFFF or a five/six-byte
-/// form) becomes raw `u32` words; a malformed, partial or overlong
-/// sequence is the failed-conversion critical.
-fn segment_text(sentence: *const c_char) -> Option<SegmentText> {
-    // SAFETY: The entry point checked for NULL; its C contract requires
-    // a live NUL-terminated string for the duration of the call.
-    let bytes = unsafe { std::ffi::CStr::from_ptr(sentence) };
-    if let Ok(text) = bytes.to_str() {
-        return Some(SegmentText::Unicode(text.to_owned()));
-    }
-    oxpinyin_capi_marshal::ucs4::decode(bytes.to_bytes())
-        .ok()
-        .map(SegmentText::Ucs4)
-}
-
 /// Segment an arbitrary sentence string into phrase tokens.
 ///
 /// # C signature
@@ -60,14 +33,39 @@ pub extern "C" fn pinyin_phrase_segment(
     instance: *mut PinyinInstance,
     sentence: *const c_char,
 ) -> bool {
-    if instance.is_null() || sentence.is_null() {
+    if instance.is_null() {
         return false;
     }
 
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
     let inst = unsafe { instance_mut(instance) };
-    let Some(text) = segment_text(sentence) else {
+    // GLib 2.84.4 gutf8.c:240 logs before the following UCS-4 NULL
+    // dereference. Preserve that defined diagnostic, then take the ruled
+    // no-input outcome (074a2219 phrase_lookup.cpp:119-157,382-428).
+    if sentence.is_null() {
+        // SAFETY: All three arguments are static NUL-terminated strings.
+        unsafe {
+            glib_sys::g_return_if_fail_warning(
+                c"GLib".as_ptr(),
+                c"g_utf8_strlen".as_ptr(),
+                c"p != NULL || max == 0".as_ptr(),
+            );
+        }
+        return match inst.core.session.phrase_segment("") {
+            Ok((matched, tokens)) => {
+                inst.core.phrase_result = tokens;
+                matched
+            }
+            Err(error) => {
+                crate::sentence::refuse_lookup_gram("phrase_segment", &error);
+                false
+            }
+        };
+    }
+    let Some(text) = oxpinyin_capi_marshal::input::utf8_to_ucs4(
+        oxpinyin_capi_marshal::borrow_c_string!(sentence),
+    ) else {
         // 074a2219 pinyin.cpp:1454: the GLib precondition uses the default
         // domain, critical level and C++ G_STRFUNC spelling, exactly once.
         // SAFETY: the function and expression are NUL-terminated constants;
@@ -81,9 +79,12 @@ pub extern "C" fn pinyin_phrase_segment(
         }
         return false;
     };
-    let outcome = match text {
-        SegmentText::Unicode(text) => inst.core.session.phrase_segment(&text),
-        SegmentText::Ucs4(words) => inst.core.session.phrase_segment_ucs4(&words),
+    let outcome = match text.as_str() {
+        Some(text) => inst.core.session.phrase_segment(text),
+        None => inst
+            .core
+            .session
+            .phrase_segment_ucs4(text.stored_words().unwrap_or_default()),
     };
     match outcome {
         Ok((matched, tokens)) => {

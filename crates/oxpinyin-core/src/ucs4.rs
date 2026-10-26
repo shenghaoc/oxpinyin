@@ -261,6 +261,11 @@ impl From<&str> for PhraseText {
         Self::from(CompactString::from(text))
     }
 }
+impl From<&String> for PhraseText {
+    fn from(text: &String) -> Self {
+        Self::from(text.as_str())
+    }
+}
 impl From<String> for PhraseText {
     fn from(text: String) -> Self {
         Self::from(CompactString::from(text))

@@ -389,10 +389,10 @@ fn entries_with_the_same_keys_stay_separate_through_import_save_and_reopen() {
     // (`phrase_index.cpp:122-139`) and to nothing else.
     let token = |slot: u32| LIBRARY | slot;
     store
-        .add_system_phrase_in(1, Some(token(1)), "你", &dense("ni", 3), Some(7))
+        .add_system_phrase_in(1, Some(token(1)), &"你".into(), &dense("ni", 3), Some(7))
         .expect("import onto the grown item");
     store
-        .add_system_phrase_in(1, Some(token(2)), "好", &dense("hao", 3), Some(9))
+        .add_system_phrase_in(1, Some(token(2)), &"好".into(), &dense("hao", 3), Some(9))
         .expect("import onto the shipped duplicate");
     assert_eq!(counts(&store, 1), [107, 160]);
     assert_eq!(exported(&store, &base, 1), [107, 160]);
@@ -435,7 +435,7 @@ fn a_mask_leaves_nothing_of_the_replayed_counts() {
             .is_none()
     );
     store
-        .add_system_phrase_in(1, Some(LIBRARY | 1), "你", &dense("ni", 3), Some(4))
+        .add_system_phrase_in(1, Some(LIBRARY | 1), &"你".into(), &dense("ni", 3), Some(4))
         .expect("import");
     assert_eq!(counts(&store, 1), [104, 40]);
     assert_eq!(exported(&store, &base, 1), [104, 40]);
@@ -472,10 +472,20 @@ fn a_populated_user_library_and_an_independent_index_beside_a_replayed_item() {
     };
     let user_session = |store: &mut UserStore| {
         let kept = store
-            .add_phrase_in(crate::USER_DICTIONARY, "龘", &dense("ni", 2), Some(20))
+            .add_phrase_in(
+                crate::USER_DICTIONARY,
+                &"龘".into(),
+                &dense("ni", 2),
+                Some(20),
+            )
             .expect("kept");
         let removed = store
-            .add_phrase_in(crate::USER_DICTIONARY, "鱻", &dense("hao", 4), Some(9))
+            .add_phrase_in(
+                crate::USER_DICTIONARY,
+                &"鱻".into(),
+                &dense("hao", 4),
+                Some(9),
+            )
             .expect("removed");
         assert!(store.remove_user_phrase(removed).expect("remove"));
         store.mark_modified();
@@ -661,10 +671,20 @@ fn a_mixed_profile_keeps_shipped_appended_and_user_state_apart() {
     // A user library with a removed phrase, grams over the three items, and
     // training and imports onto the shipped and the appended item.
     let kept = store
-        .add_phrase_in(crate::USER_DICTIONARY, "龘", &dense("ni", 2), Some(20))
+        .add_phrase_in(
+            crate::USER_DICTIONARY,
+            &"龘".into(),
+            &dense("ni", 2),
+            Some(20),
+        )
         .expect("kept");
     let gone = store
-        .add_phrase_in(crate::USER_DICTIONARY, "鱻", &dense("hao", 4), Some(9))
+        .add_phrase_in(
+            crate::USER_DICTIONARY,
+            &"鱻".into(),
+            &dense("hao", 4),
+            Some(9),
+        )
         .expect("gone");
     assert!(store.remove_user_phrase(gone).expect("remove"));
     store
@@ -676,10 +696,16 @@ fn a_mixed_profile_keeps_shipped_appended_and_user_state_apart() {
     train(&mut store, 1, key("ni", 3), 1);
     train(&mut store, 3, key("ta", 1), 1);
     store
-        .add_system_phrase_in(1, Some(LIBRARY | 1), "你", &dense("ni", 2), Some(11))
+        .add_system_phrase_in(
+            1,
+            Some(LIBRARY | 1),
+            &"你".into(),
+            &dense("ni", 2),
+            Some(11),
+        )
         .expect("new reading on the shipped item");
     store
-        .add_system_phrase_in(1, Some(LIBRARY | 3), "他", &dense("ta", 1), Some(4))
+        .add_system_phrase_in(1, Some(LIBRARY | 3), &"他".into(), &dense("ta", 1), Some(4))
         .expect("known reading on the appended item");
     let live = mixed_view(&store, &base, &tokens);
     assert!(live.contains(&format!("{:#x} Some([", LIBRARY | 1)));
@@ -778,11 +804,16 @@ fn the_gate_never_hides_a_count_or_a_gram_after_a_mask_removal_reload_or_import(
     store.mask_out(0xff00_0000, 0x0200_0000).expect("mask 2");
     assert_the_gate_suppresses_nothing(&store, &tokens, "a mask of another library");
     store
-        .add_system_phrase_in(1, Some(LIBRARY | 1), "你", &dense("ni", 3), Some(3))
+        .add_system_phrase_in(1, Some(LIBRARY | 1), &"你".into(), &dense("ni", 3), Some(3))
         .expect("import");
     assert_the_gate_suppresses_nothing(&store, &tokens, "an import");
     let user = store
-        .add_phrase_in(crate::USER_DICTIONARY, "龘", &dense("ni", 2), Some(20))
+        .add_phrase_in(
+            crate::USER_DICTIONARY,
+            &"龘".into(),
+            &dense("ni", 2),
+            Some(20),
+        )
         .expect("user phrase");
     assert_the_gate_suppresses_nothing(&store, &tokens, "a user phrase");
     assert!(store.remove_user_phrase(user).expect("remove"));

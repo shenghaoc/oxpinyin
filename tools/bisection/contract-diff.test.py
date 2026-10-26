@@ -2275,5 +2275,29 @@ class AllocationFailure924Tests(unittest.TestCase):
                 driver.glib_924_oom_array(kit)
 
 
+class GLibDomainCaptureTests(unittest.TestCase):
+    """A GLib-domain critical is captured by the kit and compared (#1279)."""
+
+    def critical(self):
+        with tempfile.TemporaryDirectory() as scratch, \
+             patch.object(driver, 'check_tkrzw'):
+            kit = driver.Kit('pinyin', 'libglib-2.0.so.0', scratch, scratch)
+            # g_utf8_strlen's own precondition critical (gutf8.c:240).
+            kit.glib.g_return_if_fail_warning.argtypes = [driver.S, driver.S, driver.S]
+            kit.glib.g_return_if_fail_warning(b'GLib', b'g_utf8_strlen', b'p != NULL || max == 0')
+            return kit.logs
+
+    @unittest.skipUnless(sys.platform.startswith('linux'), 'needs Linux libglib-2.0.so.0 (g_log_set_handler on the "GLib" domain)')
+    def test_glib_domain_critical_is_recorded(self):
+        self.assertEqual(self.critical(), [['GLib', 8]])
+
+    def test_a_missing_glib_critical_makes_the_verdict_differ(self):
+        spec = driver.case_spec(case_id='c-string-input/pinyin-segment-state-null')
+        pin = dict(exit=0, result={'ret': True, 'logs': [['GLib', 8]]}, stderr='')
+        subject = dict(exit=0, result={'ret': True, 'logs': []}, stderr='')
+        self.assertEqual(driver.verdict_for(spec, pin, pin, False)[0], 'MATCH')
+        self.assertEqual(driver.verdict_for(spec, pin, subject, False)[0], 'DIFFER')
+
+
 if __name__ == '__main__':
     unittest.main()

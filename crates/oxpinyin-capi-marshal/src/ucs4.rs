@@ -80,11 +80,7 @@ pub fn decode(bytes: &[u8]) -> Result<Vec<u32>, Ucs4Error> {
 /// non-scalar words keep the stored form.
 #[must_use]
 pub fn prefix_text(prefix: Option<&CStr>) -> Option<PhraseText> {
-    let words = decode(prefix?.to_bytes()).ok()?;
-    if words.is_empty() {
-        return None;
-    }
-    PhraseText::from_words(words)
+    crate::input::utf8_to_ucs4(prefix).filter(|text| !text.is_empty())
 }
 
 #[cfg(test)]
