@@ -931,6 +931,39 @@ class AdmittedTests(unittest.TestCase):
         self.assertEqual(seen, [('1', (7,)), ('1', (7,))])
         self.assertEqual(self.events[-1], 'close')
 
+    def test_worker_limit_caps_admission_and_concurrency(self):
+        for admitted_workers, cpus, expected in ((6, None, 2), (1, None, 1), (6, [5], 1)):
+            with self.subTest(admitted=admitted_workers, cpus=cpus):
+                FakeAdmission.workers = admitted_workers
+                active, peak = 0, 0
+                lock, together = threading.Lock(), threading.Event()
+
+                def run(context):
+                    nonlocal active, peak
+                    with lock:
+                        active += 1
+                        peak = max(peak, active)
+                        if active == expected:
+                            together.set()
+                    self.assertTrue(together.wait(5), 'the admitted workers did not overlap')
+                    time.sleep(.02)
+                    with lock:
+                        active -= 1
+                    return context.name
+
+                with mock.patch.object(pool, 'unit_preparer', wraps=pool.unit_preparer) as prepare:
+                    values = self.run_admitted([(name, run) for name in 'abcdef'], max_workers=2, cpus=cpus)
+                self.assertEqual(values, list('abcdef'))
+                self.assertEqual(peak, expected)
+                self.assertEqual(prepare.call_args.args[:2], (6, 1 if cpus else 2))
+
+    def test_nonpositive_worker_limit_refuses_before_admission(self):
+        units = [('a', lambda c: self.fail('unit must not run')), ('b', lambda c: None)]
+        for cap in (0, -1):
+            with self.subTest(cap=cap), self.assertRaisesRegex(ValueError, 'max_workers must be positive'):
+                self.run_admitted(units, max_workers=cap)
+        self.assertEqual(self.events, [])
+
 
 if __name__ == '__main__':
     unittest.main()
