@@ -190,13 +190,15 @@ struct BeamEntry {
 /// cost makes every one of them false ([`cost_gt`]); only the length clause
 /// is left standing.
 fn loses_to(left: &Value, right: &Value, nstore: usize) -> bool {
-    (nstore > 1
-        && ((left.length.checked_add(1) == Some(right.length)
-            && cost_gt(left.cost, cost_add(right.cost, LONG_SENTENCE_PENALTY)))
-            || (left.length == right.length.saturating_add(1)
-                && cost_gt(cost_add(left.cost, LONG_SENTENCE_PENALTY), right.cost))))
-        || (left.length == right.length && cost_gt(left.cost, right.cost))
-        || left.length > right.length
+    match left.length.cmp(&right.length) {
+        std::cmp::Ordering::Greater => true,
+        std::cmp::Ordering::Equal => cost_gt(left.cost, right.cost),
+        std::cmp::Ordering::Less => {
+            nstore > 1
+                && right.length - left.length == 1
+                && cost_gt(left.cost, cost_add(right.cost, LONG_SENTENCE_PENALTY))
+        }
+    }
 }
 
 // Literal libstdc++ stl_heap.h algorithms (__push_heap, __adjust_heap,
@@ -1713,6 +1715,74 @@ where
 
 #[cfg(test)]
 mod tests {
+    // The old saturating_add rule differs at u32::MAX, an unreachable
+    // character count. Exclude it from equivalence, and show the difference.
+    #[test]
+    fn simplified_predicate_matches_the_old_rule_on_reachable_lengths() {
+        use oxpinyin_core::cost::{NAN_COST, NEG_INF_COST, POS_INF_COST, cost_add, cost_gt};
+        fn old(left: &Value, right: &Value, nstore: usize) -> bool {
+            (nstore > 1
+                && ((left.length.checked_add(1) == Some(right.length)
+                    && cost_gt(left.cost, cost_add(right.cost, LONG_SENTENCE_PENALTY)))
+                    || (left.length == right.length.saturating_add(1)
+                        && cost_gt(cost_add(left.cost, LONG_SENTENCE_PENALTY), right.cost))))
+                || (left.length == right.length && cost_gt(left.cost, right.cost))
+                || left.length > right.length
+        }
+        let lengths = [0, 1, 2, 3, 4, 15, 16, 65534, 65535];
+        let costs = [
+            NAN_COST,
+            NEG_INF_COST,
+            POS_INF_COST,
+            Cost::MIN + 2,
+            Cost::MAX - 1,
+            -264,
+            -263,
+            -262,
+            0,
+            262,
+            263,
+            264,
+        ];
+        for nstore in [1, 2] {
+            for left_length in lengths {
+                for right_length in lengths {
+                    for left_cost in costs {
+                        for right_cost in costs {
+                            let left = Value {
+                                length: left_length,
+                                cost: left_cost,
+                                ..Value::seed(0)
+                            };
+                            let right = Value {
+                                length: right_length,
+                                cost: right_cost,
+                                ..Value::seed(0)
+                            };
+                            assert_eq!(
+                                super::loses_to(&left, &right, nstore),
+                                old(&left, &right, nstore),
+                                "lengths {left_length}/{right_length}, costs {left_cost}/{right_cost}, nstore {nstore}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        let left = Value {
+            length: u32::MAX,
+            cost: 0,
+            ..Value::seed(0)
+        };
+        let right = Value {
+            length: u32::MAX,
+            cost: 262,
+            ..Value::seed(0)
+        };
+        assert!(old(&left, &right, 2));
+        assert!(!super::loses_to(&left, &right, 2));
+    }
+
     use super::{LONG_SENTENCE_PENALTY, NbestRow, NbestShape, Trellis, Value, nbest_sentences};
     use crate::session::ScanKey;
     use oxpinyin_core::graph::SegmentGraph;
