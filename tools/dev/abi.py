@@ -106,27 +106,6 @@ def check_exports(settings: Settings, argv: Sequence[str], facts: HostFacts) -> 
     return status
 
 
-def allocation_ranges(text: str) -> tuple[str, str, str, str, str]:
-    """Recover exactly the adapter ranges the injected allocation driver needs."""
-    strings, lists, buffers = [], [], []
-    for line in text.splitlines():
-        fields = line.split()
-        if len(fields) < 4 or fields[2] != 't':
-            continue
-        address, size, _, name = fields[:4]
-        if re.search(r'^_RNv.*3ffi10owned_cstr$', name):
-            strings.append((address, size))
-        if re.search(r'^_RINvNt.*3ffi15owned_cstr_list', name):
-            lists.append((address, size))
-        if re.search(r'^_RINvNt.*3ffi(16malloc_cstr_with|23malloc_cstr_with_policy|24malloc_cstr_with_warning)', name):
-            buffers.append(address + ':' + size)
-    if len(strings) != 1 or len(lists) != 1:
-        raise CellError('missing unique adapter symbols', 2)
-    if not buffers:
-        raise CellError('missing byte-buffer adapter symbols', 2)
-    return (*strings[0], *lists[0], ','.join(buffers))
-
-
 def check_alloc_failure(settings: Settings, argv: Sequence[str]) -> int:
     if len(argv) != 3:
         print('expected pin prefix and two subject shared libraries', file=sys.stderr)
@@ -145,22 +124,13 @@ def check_alloc_failure(settings: Settings, argv: Sequence[str]) -> int:
                 return result.returncode
         status = 0
         for mode, subject in zip(('pinyin', 'zhuyin'), subjects):
-            result = subprocess.run(['nm', '-S', '-a', subject], capture_output=True, text=True,
-                                    env=settings.environment)
-            if result.returncode:
-                sys.stderr.write(result.stderr)
-                return result.returncode
-            try:
-                ranges = allocation_ranges(result.stdout)
-            except CellError as error:
-                print(f'{error}: {subject}', file=sys.stderr)
-                return error.status
             user = work / ('user-' + mode)
             user.mkdir()
             data = str(Path(prefix) / 'lib/libpinyin/data')
-            subject_args = [subject, data, mode, 'subject', *ranges, str(user)]
-            for args in (subject_args, [str(Path(prefix) / f'lib/lib{mode}.so'), data, mode, 'pin',
-                                        '0', '0', '0', '0', '', '']):
+            # The probe finds the subject's allocation sites itself, from where the
+            # library's own allocations go, so no symbol or build detail is read here.
+            subject_args = [subject, data, mode, 'subject', str(user)]
+            for args in (subject_args, [str(Path(prefix) / f'lib/lib{mode}.so'), data, mode, 'pin', '']):
                 if services.command([str(work / 'probe'), *args]).returncode:
                     status = 1
             control = services.command([str(work / 'control'), *subject_args], capture=True, merged=True)

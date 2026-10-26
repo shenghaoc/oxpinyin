@@ -2229,7 +2229,7 @@
     "oracle": true,
     "required_inputs": [
       "pin-built oracle and system data",
-      "debug-symbol subject libraries",
+      "subject libraries",
       "Linux glibc, C++ compiler and GLib"
     ],
     "timeout": 900,
