@@ -359,6 +359,35 @@ checkout lock wait in `lock_wait_seconds`, and cell build slot wait in
 
 ### Registry listing and test entry points
 
+`just test-tools` runs every non-excluded Python harness file, concurrently up
+to the host's allowed CPU count. Each file has private temporary and lock
+directories; output appears as complete blocks in path order, and failures do
+not prevent the remaining files from running. The same managed interpreter runs
+the controller and each file.
+
+For iteration, pass files and optionally a unittest name pattern:
+
+```sh
+just test-tools tools/dev/test_runner.test.py
+just test-tools tools/dev/test_runner.test.py -k HarnessTests
+just test-tools --changed
+just test-tools --changed origin/main
+```
+
+`--changed [BASE]` compares tracked files against BASE (HEAD by default),
+including staged and unstaged edits, and includes untracked files. Changed test
+files select themselves; `HARNESS_DEPENDENCIES` in `tools/dev/test_runner.py`
+maps known modules to their tests. Any unknown path or missing mapped test
+selects the full suite. An empty diff selects no files. Explicit files and
+`--changed` cannot be combined. Every mode retains the credential filter,
+existing exclusions and refusal of memory-backed TMPDIRs.
+
+`--changed` is iteration feedback only: `HARNESS_DEPENDENCIES` is hand-maintained
+and can under-select. The full `just test-tools` remains the completion gate.
+With `-k` and no explicit FILE, files with no matching tests are reported as
+unselected. A named file with no matches remains a failure, as does a pattern
+that matches no tests across all selected files.
+
 `just list` reads `tools/bisection/runners.json`. Use `--issue 541`,
 `--kind gate` or `--heavy` to filter its static rows. `just plan` requires
 an explicit selection, for example `just plan --runners bisect --cells bdb`.

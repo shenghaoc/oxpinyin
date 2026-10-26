@@ -14,7 +14,7 @@ import sys
 import tempfile
 import tomllib
 
-from . import host, mounts, slot
+from . import host, mounts, pool, slot
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -76,8 +76,65 @@ def memory_backed_tmpdir():
             'disk-backed TMPDIR (for example ~/.cache/oxpinyin/tmp)')
 
 
-def run_tools():
-    """Run every non-excluded harness in order, returning 1 if any fails.
+# Explicit dependency mapping; shared infrastructure and unknown paths fall back
+# to the full suite rather than guessing from a matching filename.
+HARNESS_DEPENDENCIES = {
+    'tools/dev/test_runner.py': ('tools/dev/test_runner.test.py', 'tools/dev/cli.test.py'),
+    'tools/bisection/contract-diff.py': ('tools/bisection/contract-diff.test.py',
+                                        'tools/bisection/teardown.test.py'),
+    'tools/bisection/teardown.py': ('tools/bisection/teardown.test.py',
+                                  'tools/dev/measure/startup.test.py',
+                                  'tools/generate-function-order.test.py'),
+    'tools/bisection/system_import_profile.py': ('tools/packaging/function-order.test.py',),
+}
+
+
+def changed_harness_files(files, paths):
+    """Map changed paths conservatively; any unknown mapping selects all files."""
+    selected = set()
+    for path in paths:
+        mapped = (path,) if path in files else HARNESS_DEPENDENCIES.get(path)
+        if mapped is None or any(name not in files for name in mapped):
+            return files
+        selected.update(mapped)
+    return [path for path in files if path in selected]
+
+
+def changed_paths(base):
+    """Tracked changes since BASE (including staged/worktree edits), plus untracked files.
+
+    Disable rename folding so both old and new paths take part in selection.
+    Git failures propagate: an invalid base must not silently select no tests.
+    """
+    paths = set()
+    for args in (['diff', '--name-only', '-z', '--no-renames', base, '--'],
+                 ['ls-files', '--others', '--exclude-standard', '-z']):
+        result = subprocess.run(['git', *args], cwd=ROOT, capture_output=True, check=True)
+        paths.update(os.fsdecode(path) for path in result.stdout.split(b'\0') if path)
+    return sorted(paths, key=os.fsencode)
+
+
+def select_harness_files(files, requested, changed):
+    """Validate explicit files, or map a Git diff; return unique paths in discovery order."""
+    if requested and changed is not None:
+        raise ValueError('FILE and --changed cannot be combined')
+    if changed is not None:
+        return changed_harness_files(files, changed_paths(changed))
+    selected = set()
+    for value in requested:
+        path = Path(os.path.abspath(ROOT / value))
+        try:
+            name = path.relative_to(ROOT).as_posix()
+        except ValueError:
+            raise ValueError(f'not a discovered harness file: {value}') from None
+        if name not in files:
+            raise ValueError(f'not a discovered harness file: {value}')
+        selected.add(name)
+    return [path for path in files if not requested or path in selected]
+
+
+def run_tools(files=(), pattern=None, changed=None):
+    """Run selected harness files concurrently, returning 1 if any fails.
 
     Return 2 before any harness runs when the temporary directory is
     memory-backed. Each harness runs without the credential-shaped
@@ -87,21 +144,60 @@ def run_tools():
     if refusal:
         print(refusal, file=sys.stderr, flush=True)
         return 2
-    status = 0
+    try:
+        selected = select_harness_files(harness_files(), files, changed)
+    except (ValueError, OSError, subprocess.CalledProcessError) as error:
+        print(f'just test-tools: {error}', file=sys.stderr)
+        if isinstance(error, subprocess.CalledProcessError) and error.stderr:
+            detail = error.stderr.decode(errors='replace') if isinstance(error.stderr, bytes) else error.stderr
+            print(detail, end='' if detail.endswith('\n') else '\n', file=sys.stderr)
+        return 2
     env, removed = harness_environment(os.environ)
     print(f'tools harness: credential-shaped environment variables removed: {removed}', flush=True)
-    for path in harness_files():
+
+    def execute(path, context):
+        if path in HARNESS_EXCLUDED:
+            return None, ''
+        # Harnesses are light work. Private roots keep real lock tests independent.
+        try:
+            with tempfile.TemporaryDirectory(prefix='oxpinyin-harness-') as directory:
+                temporary = Path(directory) / 'tmp'
+                locks = Path(directory) / 'locks'
+                temporary.mkdir()
+                locks.mkdir()
+                child = dict(env, TMPDIR=str(temporary), TMP=str(temporary), TEMP=str(temporary),
+                             OXPINYIN_LOCK_DIR=str(locks))
+                command = [sys.executable, '-X', 'lazy_imports=normal', str(ROOT / path)]
+                if pattern is not None:
+                    command += ['-k', pattern]
+                result = context.launch(command, env=child)
+                output = (result.stdout + result.stderr).decode(errors='replace')
+                if result.status == 5 and pattern is not None and not files:
+                    # unittest's no-tests status is selection, unless the file was explicit.
+                    output += f'\ntools harness unselected (no tests match -k {pattern!r}): {path}\n'
+                    return None, output
+                return result.status, output
+        except OSError as error:
+            return 1, f'{error}\n'
+
+    def emit(path, result):
         if path in HARNESS_EXCLUDED:
             print(f'tools harness excluded (missing CI input): {path}', flush=True)
-            continue
+            return
         print(f'tools harness: {path}', flush=True)
-        command = ['uv', 'run', '--no-project', '--managed-python', 'python', '-X', 'lazy_imports=normal', path]
+        print(result[1], end='' if result[1].endswith('\n') or not result[1] else '\n', flush=True)
+
+    units = [(path, lambda context, path=path: execute(path, context)) for path in selected]
+    with slot.cancellation_handlers():
         try:
-            if subprocess.run(command, cwd=ROOT, env=env).returncode:
-                status = 1
-        except OSError as error:
-            print(error, file=sys.stderr)
-            status = 1
+            results = pool.run_units(units, max(1, min(len(units), len(host.allowed_cpus()))),
+                                     cancelled=slot.CANCELLED.is_set, emit=emit)
+        except pool.UnitsCancelled:
+            return 130
+    status = int(any(result[0] for result in results))
+    if pattern is not None and not any(result[0] is not None for result in results):
+        print(f'just test-tools: no tests match -k {pattern!r} in any selected file', file=sys.stderr)
+        return 1
     if status:
         print('::error::one or more tools/ Python harness tests failed', file=sys.stderr)
     return status

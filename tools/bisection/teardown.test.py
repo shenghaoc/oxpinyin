@@ -1446,7 +1446,7 @@ class UnitPoolTests(unittest.TestCase):
             self.events.append(event)
 
     def spawn(self):
-        """A real child in its own group, as a native worker is."""
+        """Keep real processes to verify cancellation kills and reaps the whole group."""
         child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'], start_new_session=True)
         self.children.append(child)
         self.addCleanup(lambda: (child.kill(), child.wait()))
@@ -1469,7 +1469,7 @@ class UnitPoolTests(unittest.TestCase):
             with self.subTest(admitted=admitted):
                 FakeAdmission.workers = admitted
                 active, peak, order = [0], [0], []
-                everyone = threading.Event()
+                everyone = threading.Barrier(admitted, timeout=5)
 
                 def unit(name):
                     def run(campaign):
@@ -1477,10 +1477,8 @@ class UnitPoolTests(unittest.TestCase):
                             active[0] += 1
                             peak[0] = max(peak[0], active[0])
                             order.append(name)
-                            if active[0] == admitted:
-                                everyone.set()
-                        everyone.wait(2) if admitted > 1 else time.sleep(.01)
-                        time.sleep(.02)
+                        # Synchronize actual workers; elapsed time is not the overlap contract.
+                        everyone.wait()
                         with self.lock:
                             active[0] -= 1
                         return name

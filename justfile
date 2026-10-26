@@ -77,8 +77,8 @@ test *args: python
 
 # Run the CI Python harness discovery and exclusions (Linux and macOS).
 [unix]
-test-tools: python
-    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev test-tools
+test-tools *args: python
+    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev test-tools "$@"
 
 # Run doctests separately; nextest does not run them.
 [unix]

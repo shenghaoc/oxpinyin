@@ -1152,9 +1152,8 @@ class ControllerTests(unittest.TestCase):
         for before, after, expected in cases:
             with self.subTest(before=before, after=after):
                 with mock.patch.object(native.darwin, 'rusage',
-                                       side_effect=[usage(*before), usage(*after)]), \
-                        mock.patch.object(native.darwin.time, 'sleep'):
-                    self.assertEqual(native.darwin._probe_counters(), expected)
+                                       side_effect=[usage(*before), usage(*after)]):
+                    self.assertEqual(native.darwin._probe_counters(sleep=lambda _: None), expected)
 
     @unittest.skipUnless(sys.platform == 'darwin', 'Darwin libproc binding')
     def test_darwin_binding_reads_this_process(self):
@@ -1370,6 +1369,7 @@ class WorkerIntegration(unittest.TestCase):
         self.assertIn('ambiguous loader mapping', records[-1]['reason'])
 
     def test_timeout_reaps_worker(self):
+        # A real worker verifies process-group termination and reaping on timeout.
         with self.assertRaisesRegex(ValueError, 'timed out'):
             worker.execute([sys.executable, '-c', 'import time; time.sleep(10)'], env=dict(os.environ), timeout=.05)
 

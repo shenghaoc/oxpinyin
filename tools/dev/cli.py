@@ -83,7 +83,7 @@ def test_doc_command(args):
 
 def test_tools_command(args):
     """Run the same Python harness discovery and exclusions as CI."""
-    return test_runner.run_tools()
+    return test_runner.run_tools(args.files, args.pattern, args.changed)
 
 
 def coverage_command(args):
@@ -199,6 +199,10 @@ def build_parser():
     p.set_defaults(func=test_doc_command)
 
     p = sub.add_parser('test-tools', help='run the CI Python harness suite')
+    p.add_argument('files', nargs='*', metavar='FILE')
+    p.add_argument('-k', dest='pattern', help='unittest name substring or wildcard pattern')
+    p.add_argument('--changed', nargs='?', const='HEAD', metavar='BASE',
+                   help='select tests for changes since BASE (default HEAD), including untracked files')
     p.set_defaults(func=test_tools_command)
 
     p = sub.add_parser('coverage', help='run cargo llvm-cov with temporary per-invocation state')
