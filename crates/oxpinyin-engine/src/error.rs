@@ -201,6 +201,11 @@ pub enum EngineError {
         /// The prefix path length the walk was on when it reached the key.
         syllables: usize,
     },
+    /// The trellis cannot represent its candidate IDs safely.
+    TrellisTooLarge {
+        /// Number of live candidates.
+        candidates: usize,
+    },
     /// The user-model backend failed (the learning/observation seam).
     UserModel(String),
     /// The input could not be represented as a segment graph.
@@ -316,6 +321,9 @@ impl fmt::Display for EngineError {
                      {syllables}-syllable prefix"
                 )
             }
+            Self::TrellisTooLarge { candidates } => {
+                write!(formatter, "trellis candidate count too large: {candidates}")
+            }
             Self::UserModel(message) => write!(formatter, "user model error: {message}"),
             Self::Graph(error) => write!(formatter, "graph error: {error}"),
             Self::Decode(error) => write!(formatter, "decode error: {error}"),
@@ -346,6 +354,7 @@ impl std::error::Error for EngineError {
             | Self::UnsafeLookupPredecessor { .. }
             | Self::ReadAfterCheck { .. }
             | Self::OverlongUserIndexKey { .. }
+            | Self::TrellisTooLarge { .. }
             | Self::UserModel(_) => None,
         }
     }

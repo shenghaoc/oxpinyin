@@ -182,6 +182,8 @@ pub struct Session<D, L> {
     /// ([`Session::set_nbest_shape`]). Surface config, like
     /// [`Self::collapse_sentence_rows_to_best`].
     nbest_shape: crate::nbest::NbestShape,
+    /// Reused compact loser bracket for beam and tail selection.
+    selection: crate::nbest::LoserTree,
     /// Whether the parse and sentence-guess paths leave the candidate list
     /// to its next reader instead of building it — the C facades' mode,
     /// set via [`Session::set_defer_list_builds`]; off (the session API's

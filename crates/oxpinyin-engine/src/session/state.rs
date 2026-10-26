@@ -126,6 +126,7 @@ where
             collapse_sentence_rows_to_best: false,
             candidate_ranking: CandidateRanking::SortWord,
             nbest_shape: crate::nbest::NbestShape::default(),
+            selection: crate::nbest::LoserTree::default(),
             defer_list_builds: false,
             input: InputBuffer::default(),
             record: SelectionRecord::default(),

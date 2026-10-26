@@ -46,6 +46,9 @@ use crate::session::{
     MAX_PHRASE_LENGTH, SCAN_EXPANSION_LIMIT, ScanKey, column_is_empty, training_readings,
 };
 
+mod selection;
+pub(crate) use selection::LoserTree;
+
 /// Inline capacity of a node's value list: libpinyin's `nstore`, the
 /// larger of the two shapes, so neither allocates per node. The live cap
 /// is [`NbestShape::nstore`].
@@ -136,7 +139,7 @@ const SEED_STEP: u32 = u32::MAX;
 
 /// One hypothesis in the trellis, at the pin's `trellis_value_t` field
 /// widths (074a2219 phonetic_lookup.h:41-52) wherever every value fits.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 struct Value {
     /// Phrase token ending at this step (`m_handles[1]`, `phrase_token_t`).
     token: u32,
@@ -199,87 +202,6 @@ fn loses_to(left: &Value, right: &Value, nstore: usize) -> bool {
                 && cost_gt(left.cost, cost_add(right.cost, LONG_SENTENCE_PENALTY))
         }
     }
-}
-
-// Literal libstdc++ stl_heap.h algorithms (__push_heap, __adjust_heap,
-// __pop_heap, __make_heap), not an ordered-sort approximation. Equal and
-// cyclic comparisons make each assignment and the right-child tie matter.
-fn heap_push<T: Clone>(
-    values: &mut [T],
-    mut hole: usize,
-    top: usize,
-    value: T,
-    less: &impl Fn(&T, &T) -> bool,
-) {
-    while hole > top {
-        let parent = (hole - 1) / 2;
-        if !less(&values[parent], &value) {
-            break;
-        }
-        values[hole] = values[parent].clone();
-        hole = parent;
-    }
-    values[hole] = value;
-}
-
-fn heap_adjust<T: Clone>(
-    values: &mut [T],
-    mut hole: usize,
-    len: usize,
-    value: T,
-    less: &impl Fn(&T, &T) -> bool,
-) {
-    let top = hole;
-    let mut child = hole;
-    while child < (len - 1) / 2 {
-        child = 2 * (child + 1);
-        if less(&values[child], &values[child - 1]) {
-            child -= 1;
-        }
-        values[hole] = values[child].clone();
-        hole = child;
-    }
-    if len.is_multiple_of(2) && child == (len - 2) / 2 {
-        child = 2 * (child + 1);
-        values[hole] = values[child - 1].clone();
-        hole = child - 1;
-    }
-    heap_push(values, hole, top, value, less);
-}
-
-fn heap_pop<T: Clone>(values: &mut [T], less: &impl Fn(&T, &T) -> bool) {
-    if values.len() > 1 {
-        let last = values.len() - 1;
-        let value = values[last].clone();
-        values[last] = values[0].clone();
-        heap_adjust(values, 0, last, value, less);
-    }
-}
-
-fn heap_make<T: Clone>(values: &mut [T], less: &impl Fn(&T, &T) -> bool) {
-    if values.len() < 2 {
-        return;
-    }
-    let mut parent = (values.len() - 2) / 2;
-    loop {
-        let value = values[parent].clone();
-        heap_adjust(values, parent, values.len(), value, less);
-        if parent == 0 {
-            break;
-        }
-        parent -= 1;
-    }
-}
-
-fn heap_top<T: Clone>(mut values: Vec<T>, count: usize, less: impl Fn(&T, &T) -> bool) -> Vec<T> {
-    heap_make(&mut values, &less);
-    let mut result = Vec::with_capacity(count.min(values.len()));
-    while !values.is_empty() && result.len() < count {
-        result.push(values[0].clone());
-        heap_pop(&mut values, &less);
-        values.pop();
-    }
-    result
 }
 
 /// `m_poss` of a cost: the natural-log possibility the pin keeps in a
@@ -414,11 +336,13 @@ type TokenMap<V> = HashMap<u32, V, BuildHasherDefault<TokenHasher>>;
 
 /// One `(position, token)` node: the pin's `trellis_node<nstore>`
 /// (074a2219 phonetic_lookup_heap.h:31-82), a fixed array whose first
-/// `len` values are the pinned heap. The rest are unused.
+/// `len` values are the kept slots. The rest are unused.
 #[derive(Clone, Copy, Debug)]
 struct Node {
     /// `m_nelem`, at most `nstore`.
     len: u32,
+    /// First packed selection leaf; rebuilt before each tournament.
+    selection_leaf: u32,
     /// `m_elements`, sized for the larger shape's `nstore`.
     values: [Value; NSTORE],
 }
@@ -426,16 +350,44 @@ struct Node {
 impl Node {
     const EMPTY: Self = Self {
         len: 0,
+        selection_leaf: 0,
         values: [Value::seed(0); NSTORE],
     };
 
-    /// The stored values in their physical heap slots.
+    /// The stored values in their backtracking slots.
     fn values(&self) -> &[Value] {
         self.values.get(..self.len as usize).unwrap_or_default()
     }
 
-    fn values_mut(&mut self) -> &mut [Value] {
-        self.values.get_mut(..self.len as usize).unwrap_or_default()
+    /// The pin's bounded keep rule (phonetic_lookup_heap.h:56-79).
+    /// A full node tests slot 0 against the newcomer, then slot 1 against
+    /// it. Preserve these argument and slot orders for backtracking.
+    fn keep(&mut self, value: Value, nstore: usize) {
+        let less = |left: &Value, right: &Value| loses_to(left, right, nstore);
+        match self.len {
+            0 => {
+                self.values[0] = value;
+                self.len = 1;
+            }
+            1 if nstore > 1 => {
+                if less(&self.values[0], &value) {
+                    self.values[1] = self.values[0];
+                    self.values[0] = value;
+                } else {
+                    self.values[1] = value;
+                }
+                self.len = 2;
+            }
+            _ if less(&self.values[0], &value) => {
+                if nstore > 1 && !less(&self.values[1], &value) {
+                    self.values[0] = self.values[1];
+                    self.values[1] = value;
+                } else {
+                    self.values[0] = value;
+                }
+            }
+            _ => {}
+        }
     }
 }
 
@@ -512,74 +464,93 @@ impl Trellis {
         }
     }
 
-    /// 074a2219 phonetic_lookup_heap.h:56-81: a full heap replaces its
-    /// front when the newcomer wins. At equal length the front is BEST,
-    /// so reproducing the pin deliberately evicts the best stored value.
     fn insert(&mut self, position: usize, value: Value) {
-        let nstore = self.shape.nstore();
-        let Some(node) = self
+        if let Some(node) = self
             .steps
             .get_mut(position)
             .and_then(|step| step.node_mut(value.token))
-        else {
-            return;
-        };
-        let less = |left: &Value, right: &Value| loses_to(left, right, nstore);
-        let len = node.len as usize;
-        if len < nstore.min(NSTORE) {
-            node.values[len] = value;
-            node.len += 1;
-            heap_push(node.values_mut(), len, 0, value, &less);
-        } else if node
-            .values()
-            .first()
-            .is_some_and(|front| less(front, &value))
         {
-            let values = node.values_mut();
-            heap_pop(values, &less);
-            heap_push(values, len - 1, 0, value, &less);
+            node.keep(value, self.shape.nstore());
         }
     }
 
-    /// 074a2219 phonetic_lookup.h:272-297: creation order, physical slots.
-    fn candidates(&self, position: usize) -> Vec<BeamEntry> {
-        self.steps.get(position).map_or_else(Vec::new, |step| {
-            step.nodes
-                .iter()
-                .flat_map(|node| {
-                    node.values()
-                        .iter()
-                        .zip(0_u32..)
-                        .map(|(&value, slot)| BeamEntry { value, slot })
-                })
-                .collect()
-        })
+    /// Leaves are live node slots, in node creation order then slot order.
+    /// The tree holds indices into this storage, not copied candidates.
+    /// Every match passes the lower leaf index on the left, selecting the
+    /// right only when the left loses. This direction also defines ties
+    /// and contradictory comparisons; it makes no ordering assumption.
+    fn select(
+        &mut self,
+        position: usize,
+        count: usize,
+        tree: &mut LoserTree,
+    ) -> Result<SmallVec<[BeamEntry; NBEAM]>, EngineError> {
+        let Some(step) = self.steps.get_mut(position) else {
+            return Ok(SmallVec::new());
+        };
+        let mut live = 0usize;
+        for node in &mut step.nodes {
+            node.selection_leaf = u32::try_from(live)
+                .map_err(|_| EngineError::TrellisTooLarge { candidates: live })?;
+            live = live
+                .checked_add(node.len as usize)
+                .ok_or(EngineError::TrellisTooLarge {
+                    candidates: usize::MAX,
+                })?;
+        }
+        u32::try_from(step.nodes.len().saturating_mul(NSTORE))
+            .map_err(|_| EngineError::TrellisTooLarge { candidates: live })?;
+        let value = |id: u32| {
+            let index = id as usize;
+            step.nodes.get(index / NSTORE)?.values().get(index % NSTORE)
+        };
+        let entry = |id: u32| {
+            Some(BeamEntry {
+                value: *value(id)?,
+                slot: id % NSTORE as u32,
+            })
+        };
+        let loses = |left, right| match (value(left), value(right)) {
+            (Some(left), Some(right)) => loses_to(left, right, self.shape.nstore()),
+            _ => false,
+        };
+        let indices = step.nodes.iter().enumerate().flat_map(|(node, values)| {
+            (0..values.len as usize).map(move |slot| node * NSTORE + slot)
+        });
+        tree.reset(live, indices.map(Some), &loses)?;
+        let wanted = count.min(live);
+        Ok((0..wanted)
+            .filter_map(|rank| {
+                tree.pop(
+                    rank + 1 < wanted,
+                    |id| {
+                        let index = id as usize;
+                        step.nodes[index / NSTORE].selection_leaf as usize + index % NSTORE
+                    },
+                    &loses,
+                )
+                .and_then(entry)
+            })
+            .collect())
     }
 
-    fn beam(&mut self, position: usize) -> SmallVec<[BeamEntry; NBEAM]> {
-        heap_top(self.candidates(position), NBEAM, |left, right| {
-            loses_to(&left.value, &right.value, self.shape.nstore())
-        })
-        .into_iter()
-        .collect()
+    fn beam(
+        &mut self,
+        position: usize,
+        tree: &mut LoserTree,
+    ) -> Result<SmallVec<[BeamEntry; NBEAM]>, EngineError> {
+        self.select(position, NBEAM, tree)
     }
 
-    /// 074a2219 phonetic_lookup.h:329-339: only the fixed final step,
-    /// heap selection, then GLib's stable merge with gint comparison.
-    /// Fewer final-step values yield fewer tails; an empty final step
-    /// never falls back to an earlier populated step (#594).
-    fn tails(&mut self) -> Vec<Value> {
-        let position = self.steps.len().saturating_sub(1);
-        let mut values: Vec<_> = heap_top(
-            self.candidates(position),
-            self.shape.nbest(),
-            |left, right| loses_to(&left.value, &right.value, self.shape.nstore()),
-        )
-        .into_iter()
-        .map(|entry| entry.value)
-        .collect();
+    /// Select final tails, then stably order by cost, with NaN last.
+    fn tails(&mut self, tree: &mut LoserTree) -> Result<Vec<Value>, EngineError> {
+        let mut values: Vec<_> = self
+            .select(self.steps.len().saturating_sub(1), self.shape.nbest(), tree)?
+            .into_iter()
+            .map(|entry| entry.value)
+            .collect();
         tail_merge(&mut values);
-        values
+        Ok(values)
     }
 
     fn extract(&self, tail: &Value) -> Vec<(usize, u32)> {
@@ -860,6 +831,7 @@ where
         history,
         constraints,
         shape,
+        &mut LoserTree::default(),
     )
 }
 
@@ -870,6 +842,7 @@ pub(super) fn nbest_sentences_generation<D, L>(
     history: &[PhraseToken],
     constraints: Option<&ConstraintStore>,
     shape: NbestShape,
+    selection: &mut LoserTree,
 ) -> Result<Vec<NbestRow>, EngineError>
 where
     D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
@@ -901,6 +874,7 @@ where
         &[PhraseToken::new(seed)],
         constraints,
         shape,
+        selection,
     )
 }
 
@@ -915,6 +889,7 @@ pub(super) fn nbest_sentences_with_seeds_generation<D, L>(
     seeds: &[PhraseToken],
     constraints: Option<&ConstraintStore>,
     shape: NbestShape,
+    selection: &mut LoserTree,
 ) -> Result<Vec<NbestRow>, EngineError>
 where
     D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
@@ -954,7 +929,7 @@ where
             position += 1;
             continue;
         }
-        let beam = trellis.beam(position);
+        let beam = trellis.beam(position, selection)?;
         if beam.is_empty() {
             position += 1;
             continue;
@@ -1024,7 +999,7 @@ where
     let span = bound;
     let mut rows = Vec::new();
     let mut texts = TokenMap::default();
-    for tail in trellis.tails() {
+    for tail in trellis.tails(selection)? {
         let spans = trellis.extract(&tail);
         let Some(text) = trellis.text(dictionary, &mut texts, &spans)? else {
             continue;
@@ -1783,7 +1758,9 @@ mod tests {
         assert!(!super::loses_to(&left, &right, 2));
     }
 
-    use super::{LONG_SENTENCE_PENALTY, NbestRow, NbestShape, Trellis, Value, nbest_sentences};
+    use super::{
+        LONG_SENTENCE_PENALTY, LoserTree, NbestRow, NbestShape, Trellis, Value, nbest_sentences,
+    };
     use crate::session::ScanKey;
     use oxpinyin_core::graph::SegmentGraph;
     use oxpinyin_core::{
@@ -1908,42 +1885,6 @@ mod tests {
         ));
     }
 
-    /// GLib's merge sort over the pin's tail comparator with NaN keys. The
-    /// order for `[-9.25, nan, -1.5, nan]` is glib 2.90's (measured; a plain
-    /// insertion sort over the same comparator leaves `[0, 1, 2, 3]`), and
-    /// `INT_MIN` (x86-64) and `0` (arm64) for the NaN comparison never give
-    /// different orders: a left element wins every `<= 0` merge step either
-    /// way, so the architecture's float-to-int conversion is not observable.
-    #[test]
-    fn the_tail_sort_is_glibs_merge_and_blind_to_the_nan_conversion() {
-        use super::{c_float_to_gint, glib_merge_sort};
-        let sorted = |poss: &[f32], nan_as_zero: bool| {
-            let mut items: Vec<(f32, usize)> = poss.iter().copied().zip(0..).collect();
-            glib_merge_sort(&mut items, &|a: &(f32, usize), b: &(f32, usize)| {
-                let difference = -(a.0 - b.0);
-                if nan_as_zero && difference.is_nan() {
-                    0
-                } else {
-                    c_float_to_gint(difference)
-                }
-            });
-            items.into_iter().map(|item| item.1).collect::<Vec<_>>()
-        };
-        assert_eq!(
-            sorted(&[-9.25, f32::NAN, -1.5, f32::NAN], false),
-            [2, 0, 1, 3]
-        );
-        let values = [f32::NAN, -1.5, -9.25, -20.5];
-        for count in 2..=6_u32 {
-            for code in 0..4_usize.pow(count) {
-                let poss: Vec<f32> = (0..count)
-                    .map(|slot| values[(code >> (2 * slot)) & 3])
-                    .collect();
-                assert_eq!(sorted(&poss, false), sorted(&poss, true), "{poss:?}");
-            }
-        }
-    }
-
     #[test]
     fn tails_do_not_fall_back_from_an_empty_final_step() {
         for shape in [NbestShape::PINYIN, NbestShape::ZHUYIN] {
@@ -1957,8 +1898,15 @@ mod tests {
                     },
                 );
             }
-            assert_eq!(trellis.candidates(1).len(), 3);
-            assert!(trellis.tails().is_empty());
+            assert_eq!(
+                trellis.steps[1]
+                    .nodes
+                    .iter()
+                    .map(|node| node.len as usize)
+                    .sum::<usize>(),
+                3
+            );
+            assert!(trellis.tails(&mut LoserTree::default()).unwrap().is_empty());
         }
     }
 
@@ -1983,7 +1931,12 @@ mod tests {
                 },
             );
         }
-        let mut tokens: Vec<_> = trellis.tails().iter().map(|tail| tail.token).collect();
+        let mut tokens: Vec<_> = trellis
+            .tails(&mut LoserTree::default())
+            .unwrap()
+            .iter()
+            .map(|tail| tail.token)
+            .collect();
         tokens.sort_unstable();
         assert_eq!(tokens, [4, 5]);
     }
@@ -2027,7 +1980,7 @@ mod tests {
     }
 
     #[test]
-    fn the_comparator_cycle_requires_heap_selection() {
+    fn the_comparator_cycle_is_preserved() {
         let a = value(70_848, 4, 0);
         let b = value(69_469, 5, 0);
         let c = value(68_730, 6, 0);
@@ -2210,7 +2163,7 @@ mod tests {
         entries.convert([3, 2, 1, 3].map(|token| (token, Some(priced_slot(token)))));
         let model = Sparse(RefCell::new(Vec::new()));
         let mut trellis = super::Trellis::with_seeds(1, &[11], NbestShape::PINYIN);
-        let beam = trellis.beam(0);
+        let beam = trellis.beam(0, &mut LoserTree::default()).unwrap();
         super::expand_entries(
             &pricing(&entries),
             &beam,
@@ -2289,7 +2242,7 @@ mod tests {
         entries.convert([1, 2].map(|token| (token, Some(priced_slot(token)))));
         let run = |row: Option<MergedGram>, one_step: Option<u32>| {
             let mut trellis = super::Trellis::with_seeds(1, &[11], NbestShape::PINYIN);
-            let beam = trellis.beam(0);
+            let beam = trellis.beam(0, &mut LoserTree::default()).unwrap();
             super::expand_entries(
                 &pricing(&entries),
                 &beam,
@@ -2374,7 +2327,7 @@ mod tests {
         entries.convert([1, 3, 2].map(|token| (token, Some(priced_slot(token)))));
         let model = Walked(RefCell::new(Vec::new()));
         let mut trellis = super::Trellis::with_seeds(1, &[11], NbestShape::PINYIN);
-        let beam = trellis.beam(0);
+        let beam = trellis.beam(0, &mut LoserTree::default()).unwrap();
         super::expand_entries(
             &pricing(&entries),
             &beam,
@@ -2417,9 +2370,9 @@ mod tests {
     /// libzhuyin's `PhoneticLookup<1, 1>` keeps one value per node and
     /// extracts one tail, where libpinyin's `<2, 3>` extracts up to three:
     /// two readings of `ni` give the pinyin shape two rows and the zhuyin
-    /// shape exactly one; equal-cost heap ties can select different heads.
+    /// shape exactly one; equal costs retain the lower leaf.
     #[test]
-    fn the_zhuyin_shape_has_its_own_single_tail_heap_order() {
+    fn the_zhuyin_shape_selects_one_tail() {
         const VOCAB: &str = "token=1\tkeys=ni\ttext=你\tunigram=1000\n\
                              token=2\tkeys=ni\ttext=尼\tunigram=900\n\
                              token=3\tkeys=hao\ttext=好\tunigram=900\n";
@@ -2443,7 +2396,8 @@ mod tests {
             "libzhuyin's shape extracts one tail: {zhuyin:?}"
         );
         assert_eq!(pinyin[0].text, "你好");
-        assert_eq!(zhuyin[0].text, "尼好", "one-store heap tie order");
+        // POLICY-ACCEPTED: 1297-selection-structure.md; the old heap chose 尼好.
+        assert_eq!(zhuyin[0].text, "你好", "one-store left-leaf tie order");
         assert_eq!(NbestShape::default(), NbestShape::PINYIN);
     }
 
@@ -2472,107 +2426,5 @@ mod tests {
         )
         .expect("the fixtures open");
         assert!(!session.is_composing());
-    }
-}
-
-#[cfg(test)]
-mod glib_merge_sort_tests {
-    use super::glib_merge_sort;
-
-    /// The pin's merge, transcribed from `msort_with_tmp` with a temporary
-    /// array per level, as the reference for the in-place version.
-    fn reference<T: Copy>(values: &mut [T], compare: &impl Fn(&T, &T) -> i32) {
-        if values.len() < 2 {
-            return;
-        }
-        let n1 = values.len() / 2;
-        reference(&mut values[..n1], compare);
-        reference(&mut values[n1..], compare);
-        let (mut b1, mut b2) = (0, n1);
-        let mut tmp = Vec::with_capacity(values.len());
-        while b1 < n1 && b2 < values.len() {
-            if compare(&values[b1], &values[b2]) <= 0 {
-                tmp.push(values[b1]);
-                b1 += 1;
-            } else {
-                tmp.push(values[b2]);
-                b2 += 1;
-            }
-        }
-        tmp.extend_from_slice(&values[b1..n1]);
-        values[..tmp.len()].copy_from_slice(&tmp);
-    }
-
-    /// `trellis_value_compare` over plain `f32` possibilities.
-    fn truncated(left: &(f32, usize), right: &(f32, usize)) -> i32 {
-        (-(left.0 - right.0)) as i32
-    }
-
-    #[test]
-    fn equal_keys_keep_their_input_order() {
-        let mut items: Vec<(u32, usize)> = [3, 1, 3, 2, 1, 3].into_iter().zip(0..).collect();
-        glib_merge_sort(&mut items, &|a, b| b.0.wrapping_sub(a.0) as i32);
-        assert_eq!(
-            items.iter().map(|item| item.1).collect::<Vec<_>>(),
-            [0, 2, 5, 3, 1, 4]
-        );
-    }
-
-    /// Scores within one natural-log unit tie, so the order depends on the
-    /// merge: here −10.6 stays ahead of −10.0, which a total order on the
-    /// scores would not allow.
-    #[test]
-    fn near_equal_tails_take_the_merge_order() {
-        let mut items: Vec<(f32, usize)> = [-10.6, -11.2, -10.0].into_iter().zip(0..).collect();
-        glib_merge_sort(&mut items, &truncated);
-        assert_eq!(
-            items.iter().map(|item| item.1).collect::<Vec<_>>(),
-            [0, 2, 1]
-        );
-    }
-
-    /// Every array of up to seven scores drawn from four values that tie
-    /// pairwise but not across the range, plus NaN and a far score: the
-    /// in-place merge makes the reference's choices.
-    #[test]
-    fn the_in_place_merge_matches_the_transcribed_one() {
-        let values = [-10.0, -10.6, -11.2, f32::NAN, -30.0];
-        for count in 0..=7_u32 {
-            for code in 0..5_usize.pow(count) {
-                let mut digits = code;
-                let poss: Vec<(f32, usize)> = (0..count as usize)
-                    .map(|slot| {
-                        let value = values[digits % 5];
-                        digits /= 5;
-                        (value, slot)
-                    })
-                    .collect();
-                let mut ours = poss.clone();
-                let mut theirs = poss;
-                glib_merge_sort(&mut ours, &truncated);
-                reference(&mut theirs, &truncated);
-                let order = |items: &[(f32, usize)]| items.iter().map(|i| i.1).collect::<Vec<_>>();
-                assert_eq!(order(&ours), order(&theirs));
-            }
-        }
-    }
-
-    /// The frequency key's `guint32` wrap: 0, 2³⁰+1 and 2³¹+2 form a cycle,
-    /// and the merge still answers the pin's order.
-    #[test]
-    fn a_wrapping_frequency_cycle_takes_the_merge_order() {
-        let compare = |a: &(u32, usize), b: &(u32, usize)| b.0.wrapping_sub(a.0) as i32;
-        let cycle = [0, (1 << 30) + 1, (1 << 31) + 2];
-        assert!(compare(&(cycle[0], 0), &(cycle[1], 0)) > 0);
-        assert!(compare(&(cycle[1], 0), &(cycle[2], 0)) > 0);
-        assert!(compare(&(cycle[0], 0), &(cycle[2], 0)) < 0);
-        for rotation in 0..3 {
-            let mut items: Vec<(u32, usize)> =
-                (0..3).map(|i| (cycle[(i + rotation) % 3], i)).collect();
-            let mut expected = items.clone();
-            glib_merge_sort(&mut items, &compare);
-            reference(&mut expected, &compare);
-            assert_eq!(items, expected);
-        }
     }
 }

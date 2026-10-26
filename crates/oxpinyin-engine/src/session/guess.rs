@@ -104,6 +104,7 @@ where
             &[],
             Some(&self.constraints),
             self.nbest_shape,
+            &mut self.selection,
         )?;
         // The full-matrix rows already carry the chosen prefix: a chosen
         // row's record is its own whole path, so no lookup-time history
@@ -218,6 +219,7 @@ where
             &seeds,
             Some(&self.constraints),
             self.nbest_shape,
+            &mut self.selection,
         )?;
         self.sentence.last_result = self
             .sentence
@@ -262,6 +264,7 @@ where
                 self.record.history(),
                 None,
                 self.nbest_shape,
+                &mut self.selection,
             )?
         } else {
             let scorer = Scorer::with_key_costs(
