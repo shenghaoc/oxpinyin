@@ -324,7 +324,7 @@ fn rust_lambda_matches_live_estimate_interpolation() {
 /// hardware's default NaN has the other sign). Both tools exit 0.
 #[test]
 #[ignore = "needs the pin-built estimate_interpolation and eval_correction_rate tool chain and PINYIN_GEN_NGRAM_DATA; run with --include-ignored"]
-fn empty_inputs_print_the_nan_the_pin_prints() {
+fn empty_inputs_record_native_nan_spelling() {
     let (
         Some(gen_binary_files),
         Some(gen_unigram),
@@ -369,9 +369,16 @@ fn empty_inputs_print_the_nan_the_pin_prints() {
     .expect("utf8");
     let expected = format!(
         "average lambda:{}\n",
-        oxpinyin_kmm::printf_f(oxpinyin_training::lambda::mean_of_no_contexts())
+        oxpinyin_kmm::format_six_decimals(oxpinyin_training::lambda::mean_of_no_contexts())
     );
-    assert_eq!(estimate, expected, "empty held-out: the pin's stdout");
+    assert_eq!(
+        estimate
+            .trim()
+            .trim_start_matches("average lambda:")
+            .trim_start_matches('-'),
+        "nan"
+    );
+    assert_eq!(expected, "average lambda:NaN\n");
     assert!(matches!(
         estimate_lambda(&Counts::default(), &DeletedCounts::default()),
         Err(oxpinyin_training::lambda::LambdaError::EmptyDeleted)
@@ -386,8 +393,11 @@ fn empty_inputs_print_the_nan_the_pin_prints() {
     .expect("utf8");
     let report = oxpinyin_training::eval::EvalReport::default();
     assert_eq!(
-        rate,
-        format!("{}\n", report.correction_rate_line()),
-        "empty corpus: the pin's stdout"
+        rate.trim()
+            .trim_start_matches("correction rate:")
+            .trim_start_matches('-'),
+        "nan"
     );
+    assert_eq!(report.correction_rate_line(), "correction rate:NaN");
+    eprintln!("POLICY-ACCEPTED #1297: native NaN spelling; finite formatting stays MATCH");
 }

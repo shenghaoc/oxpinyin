@@ -679,3 +679,19 @@ instead of constructing a `String`. No observable behavior is changed;
 the existing numeric-domain and phrase-validation gaps are not excused by
 this equivalent refactor. The [tool audit](926-tool-tokenizers.md) traces
 callers, output contracts, classified partitions and remaining work.
+
+## Scanner/tools native parsing (#1297; 2026-10-26 UTC)
+
+Pin `table_info.cpp:208-287,338-359` uses five system/four marker directives,
+then six-column library rows. Rust `table_info::ConfigLines` borrows nonempty
+physical lines; `TableConf::parse` and `UserTableInfo::parse` parse whole decimal
+fields with explicit destination types. The [scanner records](1297-table-lines.md)
+partition libc artefacts from the product grammar. Both readers are O(n) time
+with O(maximum row fields) temporary borrowed slices, replacing a whole-file
+vector of copied scanner words. Library slot vectors and persistent writers
+retain their formats and ordering. Pin `utils_helper.h:23-35,57-69` feeds decimal
+tokens/counts to the training tools; `numeric::decimal_field` is the one complete
+field conversion for their domain types, O(field length) time and no successful
+parse allocation. The [tool record](1297-tool-decimals.md) names the callers.
+Punctuation remains O(words) time/space; chunk payload retries preserve O(bytes)
+time and O(1) additional space, with the existing header/sync/rename contract.

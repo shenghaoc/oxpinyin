@@ -1,5 +1,7 @@
 # Tool record tokenizers (#926)
 
+**Amendment 2026-10-26 UTC (#1297 Phase 2).** The #1297 scanner/tools lane supersedes the numeric-prefix and nonfinite-format reproduction conclusions in this dated audit. [Complete decimal fields](1297-tool-decimals.md) now produce line errors for malformed or out-of-range fields; [native special values](1297-tool-special-values.md) keep finite six-decimal output and Rust’s NaN spelling. All nonnumeric tokenization and domain validation rules in this record remain. The existing live counter/KMM/empty-input differentials keep their source-derived malformed fixtures and distinguish POLICY-ACCEPTED from valid-decimal MATCH controls.
+
 Date: 2026-10-25 UTC. Source baseline: oxpinyin `6be364d9`;
 libpinyin checkout `074a2219c90feaf962d0d24f034514033ece5f99`;
 ibus-libpinyin checkout `2d2cdac0187101aa0cd7ac06694a8340721ddfbb`;

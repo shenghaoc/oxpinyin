@@ -4102,3 +4102,17 @@ Cases: `c-string-input/*-segment-state-null`, `*-lookup-state-null`,
 `*-parse*-null`, `*-character-offset-null`, `*-import-null` and
 `*-remember-null`, with the pin not driven into UB (`pin_not_run`), plus
 non-empty valid controls.
+
+## Native scanner and tool parsing (#1297 Phase 2)
+
+- [Decimal lambda grammar](1297-table-floats.md): language artefact; source trace, affected inputs and witnesses in the record.
+- [Representable version fields](1297-table-decimals.md): language artefact; source trace, affected inputs and witnesses in the record.
+- [Configuration line boundaries](1297-table-lines.md): language artefact; source trace, affected inputs and witnesses in the record.
+- [Addon indexes in the library range](1297-addon-index.md): language artefact; source trace, affected inputs and witnesses in the record.
+- [Nonconforming decimal markers reset profiles](1297-user-decimals.md): language artefact; source trace, affected inputs and witnesses in the record.
+- [Exact database marker tokens](1297-user-token.md): language artefact; source trace, affected inputs and witnesses in the record.
+- [Punctuation values contain whole words](1297-punct-words.md): language artefact; source trace, affected inputs and witnesses in the record.
+- [Complete chunk payload writes](1297-chunk-payload.md): language artefact; source trace, affected inputs and witnesses in the record.
+- [Complete tool decimal fields](1297-tool-decimals.md): language artefact; source trace, affected inputs and witnesses in the record.
+- [Native nonfinite tool formatting](1297-tool-special-values.md): language artefact; source trace, affected inputs and witnesses in the record.
+- [Complete table words and exact enum tokens](1297-table-words.md): language artefact; source trace, affected inputs and witnesses in the record.

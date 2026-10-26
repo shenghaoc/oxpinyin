@@ -178,10 +178,10 @@ mod tests {
     }
 
     #[test]
-    fn malformed_value_decodes_as_the_pin_walks_it() {
+    fn partial_word_has_no_punctuation() {
         let dbm = MemoryDbm::new();
         dbm.put(0x0100_0295_u32.to_le_bytes().to_vec(), vec![0xFF; 3]);
         let table = PunctTable::new(dbm);
-        assert_eq!(table.punctuations(0x0100_0295).unwrap(), [""]);
+        assert!(table.punctuations(0x0100_0295).unwrap().is_empty());
     }
 }

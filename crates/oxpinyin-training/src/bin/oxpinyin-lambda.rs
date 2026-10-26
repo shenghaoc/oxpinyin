@@ -20,7 +20,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use oxpinyin_kmm::printf_f;
+use oxpinyin_kmm::format_six_decimals;
 use oxpinyin_training::counter::count_ngseg;
 use oxpinyin_training::lambda::{LambdaError, count_deleted, estimate_lambda, mean_of_no_contexts};
 use oxpinyin_training::segment::PhraseLexicon;
@@ -71,7 +71,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         // No held-out context: the pin prints no `token:` line, then the NaN
         // of `0.0 / 0` as `%f`, and exits 0 (`estimate_interpolation.cpp:139`).
         Err(LambdaError::EmptyDeleted) => {
-            println!("average lambda:{}", printf_f(mean_of_no_contexts()));
+            println!(
+                "average lambda:{}",
+                format_six_decimals(mean_of_no_contexts())
+            );
             return Ok(());
         }
         Err(error) => return Err(error.into()),

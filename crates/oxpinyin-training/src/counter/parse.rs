@@ -42,8 +42,7 @@ pub fn parse_ngseg(
     Ok(tokens)
 }
 
-/// One line of the ngseg stream → token ID (`atoi` of the first field,
-/// `utils_helper.h:61`: C `strtol` base 10, low 32 bits).
+/// One line of the ngseg stream → a decimal token ID.
 fn parse_segmented_line(
     lexicon: &PhraseLexicon,
     line: &[u8],
@@ -59,7 +58,8 @@ fn parse_segmented_line(
     let Some(separator) = line.iter().position(|byte| matches!(byte, b' ' | b'\t')) else {
         return Err(CounterError::MalformedLine { line: number });
     };
-    let token = oxpinyin_kmm::atoi(&line[..separator]);
+    let token: u32 = oxpinyin_kmm::decimal_field(&line[..separator])
+        .map_err(|_| CounterError::MalformedLine { line: number })?;
     if token != NULL_TOKEN {
         let expected = if token == 1 {
             Some("<start>")
@@ -157,53 +157,18 @@ mod tests {
     }
 
     #[test]
-    fn segmented_tokens_read_as_glibc_atoi() {
-        // `atoi` is `(int) strtol(field, NULL, 10)` (`utils_helper.h:61`): C
-        // white space and one sign are accepted, a `long` overflow saturates,
-        // and only the low 32 bits reach the `phrase_token_t`.
-        for field in [
-            "+16817937",
-            "\r16817937",
-            "\x0b16817937",
-            "\x0c+16817937",
-            "0016817937",
-            "16817937x",
-            "4311785233",
-            "-4278149359",
-        ] {
-            let line = format!("{field} 中国");
+    fn segmented_tokens_require_complete_decimals() {
+        for field in ["+16817937", "0016817937"] {
             assert_eq!(
-                parse_ngseg(&lexicon(), &line).unwrap(),
-                [16_817_937],
-                "{field:?}"
+                parse_ngseg(&lexicon(), format!("{field} 中国")).unwrap(),
+                [16_817_937]
             );
         }
-        // The field is converted to zero, so the phrase is not validated.
-        for field in [
-            "+0",
-            "-0",
-            "+",
-            "-",
-            "- 5",
-            "abc",
-            "4294967296",
-            "-4294967296",
-            "-9223372036854775808",
-            "-9223372036854775809",
-        ] {
-            let line = format!("{field} no such phrase");
-            assert_eq!(parse_ngseg(&lexicon(), &line).unwrap(), [0], "{field:?}");
-        }
-        // A converted token the lexicon lacks is refused like any other.
-        for field in ["-1", "99999999999999999999", "9223372036854775807", "5"] {
-            let line = format!("{field} 中国");
-            assert!(
-                matches!(
-                    parse_ngseg(&lexicon(), &line),
-                    Err(crate::counter::CounterError::InvalidPhrase { line: 1, .. })
-                ),
-                "{field:?}"
-            );
+        for field in ["16817937x", "4311785233", "-1", "abc", "+", "\r16817937"] {
+            assert!(matches!(
+                parse_ngseg(&lexicon(), format!("{field} 中国")),
+                Err(crate::counter::CounterError::MalformedLine { line: 1 })
+            ));
         }
     }
 
@@ -243,7 +208,7 @@ mod tests {
     fn ordinary_segmented_stream_preserves_model_values() {
         let tokens = parse_ngseg(
             &lexicon(),
-            "16817937 中国\n16782711\t人\n0 \\\n16817937tail 中国\n",
+            "16817937 中国\n16782711\t人\n0 \\\n16817937 中国\n",
         )
         .unwrap();
         let counts = crate::counter::Counter::new(true, [16_817_937, 16_782_711]).count(&tokens);
@@ -256,7 +221,7 @@ mod tests {
     #[test]
     fn byte_records_validate_exact_phrase_and_nul_boundaries() {
         let lexicon = lexicon();
-        let text = b"16817937\xff \xe4\xb8\xad\xe5\x9b\xbd\0\xff\n0 \xff\n\0\xff\n1 <start>";
+        let text = b"16817937 \xe4\xb8\xad\xe5\x9b\xbd\0\xff\n0 \xff\n\0\xff\n1 <start>";
         assert_eq!(parse_ngseg(&lexicon, text).unwrap(), [16_817_937, 0, 0, 1]);
         for text in [
             "16817937 wrong",
@@ -275,6 +240,7 @@ mod tests {
             assert!(std::error::Error::source(&error).is_none());
         }
         assert!(parse_ngseg(&lexicon, "16817937\0 中国").is_err());
+        assert!(parse_ngseg(&lexicon, b"16817937\xff \xe4\xb8\xad\xe5\x9b\xbd").is_err());
         let lexicon = PhraseLexicon::from_pairs(vec![(16_817_937, "中国\0hidden".into())]);
         assert_eq!(
             parse_ngseg(&lexicon, "16817937 中国").unwrap(),

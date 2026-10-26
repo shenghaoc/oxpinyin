@@ -444,10 +444,8 @@ pub mod punct {
     /// there. A value with no final zero ends with its unterminated run;
     /// the pin decides that by reading one word past the value, and both
     /// outcomes of the read end the same run (upstream divergences,
-    /// "Unterminated punctuation value over-read"). The walk compares
-    /// byte positions, so 1–3 trailing bytes after a terminated run add
-    /// one empty punctuation (`sar` of the byte difference in the pin's
-    /// `get_all_punctuations`).
+    /// "Unterminated punctuation value over-read"). Partial trailing bytes
+    /// are ignored: only complete stored words belong to the value.
     #[must_use]
     pub fn decode_puncts(value: &[u8]) -> Vec<PhraseText> {
         let words: Vec<u32> = value
@@ -456,7 +454,7 @@ pub mod punct {
             .collect();
         let mut out = Vec::new();
         let mut cursor = 0_usize;
-        while cursor.saturating_mul(4) < value.len() {
+        while cursor < words.len() {
             let rest = words.get(cursor..).unwrap_or_default();
             let run = match rest.split_first() {
                 Some((_, tail)) => 1 + tail.iter().take_while(|&&word| word != 0).count(),
@@ -715,16 +713,15 @@ mod tests {
         );
     }
 
-    /// A misaligned tail is read as whole words, with one empty
-    /// punctuation for 1–3 bytes left after a terminated run.
+    /// Partial words cannot add punctuation entries.
     #[test]
-    fn punct_stream_reads_a_misaligned_tail() {
+    fn punct_stream_ignores_partial_words() {
         use punct::decode_puncts;
-        assert_eq!(decode_puncts(b"\x00"), [""]);
-        assert_eq!(decode_puncts("，".as_bytes()), [""]);
+        assert!(decode_puncts(b"\x00").is_empty());
+        assert!(decode_puncts("，".as_bytes()).is_empty());
         let mut value = words(&[0xFF0C, 0]);
         value.push(0x41);
-        assert_eq!(decode_puncts(&value), ["，", ""]);
+        assert_eq!(decode_puncts(&value), ["，"]);
         let mut value = words(&[0xFF0C]);
         value.extend_from_slice(&[0x41, 0x42]);
         assert_eq!(decode_puncts(&value), ["，"]);

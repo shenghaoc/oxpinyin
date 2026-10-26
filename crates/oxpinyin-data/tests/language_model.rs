@@ -481,7 +481,7 @@ fn merged_row_items_price_as_the_pair_overlay_at_wrap_presence_and_lambda_edges(
         (HAO, u64::from(u32::MAX - 6)),
         (NIHAO, 0),
     ];
-    for lambda in ["0.312699", "0.5", "0", "1e-1", "nan", "inf", "-1"] {
+    for lambda in ["0.312699", "0.5", "0", "1e-1", "1e9999", "-1"] {
         let conf = oxpinyin_data::table_info::TableConf::parse(format!(
             "binary format version:7\nmodel data version:12\nlambda parameter:{lambda}\nsource table format:pinyin\ndatabase format:BerkeleyDB\n").as_bytes()).unwrap();
         lm.set_lambda_from_conf(&conf);

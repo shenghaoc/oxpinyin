@@ -162,15 +162,10 @@ fn compute_interpolation(
     next_lambda
 }
 
-/// The outer mean when there is no held-out context:
-/// `lambda_sum / lambda_count` is `0.0 / 0` (`estimate_interpolation.cpp:116-117,139`),
-/// a NaN the tool prints with `%f`. The division runs on the machine like the
-/// C one, so the NaN carries the sign the hardware gives it (`-nan` on x86-64,
-/// `nan` on AArch64); `black_box` keeps the compiler from folding it to a
-/// constant NaN of its own.
+/// The undefined mean of an empty set of held-out contexts.
 #[must_use]
 pub fn mean_of_no_contexts() -> f64 {
-    std::hint::black_box(0.0_f64) / f64::from(std::hint::black_box(0_u32))
+    f64::NAN
 }
 
 /// Estimates the single system λ from the system counts and the held-out
@@ -186,9 +181,9 @@ pub fn mean_of_no_contexts() -> f64 {
 /// # Errors
 ///
 /// Returns [`LambdaError::EmptyDeleted`] when `deleted` has no contexts:
-/// the outer mean would divide by zero (libpinyin prints `-nan`, which
-/// [`mean_of_no_contexts`] reproduces for the tool's stdout; the estimate
-/// itself stays an error for the pipeline, whose λ must lie in `[0, 1]`).
+/// the outer mean would divide by zero. The tool formats
+/// [`mean_of_no_contexts`] with Rust's native NaN spelling; the estimate
+/// itself stays an error for the pipeline, whose λ must lie in `[0, 1]`.
 pub fn estimate_lambda(system: &Counts, deleted: &DeletedCounts) -> Result<Lambda, LambdaError> {
     // `get_phrase_index_total_freq()` = Σ unigram frequencies (`:70`,
     // phrase_index.h:615). guint32 in the pin; the sum is < 2^32 here and
@@ -312,14 +307,11 @@ mod tests {
     }
 
     #[test]
-    fn the_mean_of_no_contexts_prints_as_glibc_prints_zero_over_zero() {
-        let line = oxpinyin_kmm::printf_f(super::mean_of_no_contexts());
-        assert_eq!(line.trim_start_matches('-'), "nan");
-        // SSE and AArch64 divisions produce different default NaN signs.
-        #[cfg(target_arch = "x86_64")]
-        assert_eq!(line, "-nan");
-        #[cfg(target_arch = "aarch64")]
-        assert_eq!(line, "nan");
+    fn an_empty_mean_uses_native_nan_spelling() {
+        assert_eq!(
+            oxpinyin_kmm::format_six_decimals(super::mean_of_no_contexts()),
+            "NaN"
+        );
     }
 
     #[test]

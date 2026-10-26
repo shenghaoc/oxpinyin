@@ -499,10 +499,13 @@ fn rust_kmm_matches_pin_gen_and_export() {
     )
     .unwrap();
     assert_eq!(sorted_items(&pin_export), sorted_items(&spelled_export));
-    assert_eq!(
-        sorted_items(&native_export_tokens_only(&spelled)),
-        sorted_items(&strip_text(&spelled_export)),
-        "native gen must read the spelled token fields as the pin does"
+    assert!(
+        KMixtureModel::new()
+            .add_document(&spelled, GenerateParams::default())
+            .is_err()
+    );
+    eprintln!(
+        "POLICY-ACCEPTED #1297: respelled malformed tokens are refused; pin counts retain the canonical model"
     );
     // The training reader supplies these already validated records directly,
     // with no lossy decoding or second text parser between the two models.
@@ -586,10 +589,14 @@ fn rust_kmm_matches_pin_to_interpolation() {
         .output()
         .expect("run to-interpolation");
     assert!(output.status.success(), "pin to-interpolation failed");
+    let pin_numeric = String::from_utf8(output.stdout).expect("utf8");
     assert_eq!(
-        kmm_text_to_interpolation(numeric).expect("native"),
-        String::from_utf8(output.stdout).expect("utf8"),
-        "native to-interpolation reads numeric fields as the pin does"
+        pin_numeric,
+        "\\data model interpolation\n\\1-gram\n\\item 16817937 中国 count 5\n\\item 16802309 你好 count 4294967301\n\\item 16808451 世界 count -7\n\\item -2147483647 甲 count 12\n\\2-gram\n\\item 16817937 中国 16817937 中国 count 3\n\\item 16817937 中国 16802309 你好 count 4294967299\n\\item -2147483647 甲 16802309 你好 count -3\n\\item 16802309 你好 16808451 世界 count 9223372036854775807\n\\item 16808451 世界 16817937 中国 count 0\n\\end\n"
+    );
+    assert!(kmm_text_to_interpolation(numeric).is_err());
+    eprintln!(
+        "POLICY-ACCEPTED #1297: malformed numeric text is refused; pin prefix/saturation result verified"
     );
     eprintln!("live parity: native to-interpolation matches the pin");
 }

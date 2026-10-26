@@ -146,9 +146,7 @@ impl KMixtureModel {
             .ok_or_else(|| KmmError::Malformed {
                 detail: format!("no separator in {line:?}"),
             })?;
-        // `atoi` of the first field (`utils_helper.h:61`): a field with no
-        // digits is the null token, not an error.
-        let token = crate::cnum::atoi(head.as_bytes());
+        let token: u32 = crate::decimal_field(head.as_bytes())?;
         if token != NULL_TOKEN {
             // The phrase field must be exactly one word: an empty or
             // space-containing phrase would export a line `import` cannot
@@ -324,27 +322,14 @@ mod tests {
     }
 
     #[test]
-    fn tokens_read_as_glibc_atoi() {
-        // `gen_k_mixture_model.cpp:75` reads the first field with `atoi`: a
-        // sign and C white space are accepted, a token is its low 32 bits
-        // and a field with no digits is the null token (no error).
-        let plain = seg(&["10 甲", "20 乙", "10 甲", "20 乙"]);
-        let signed = seg(&["+10 甲", "\r4294967316 乙", "-4294967286 甲", "020 乙"]);
-        let mut one = KMixtureModel::new();
-        let mut two = KMixtureModel::new();
-        one.add_document(&plain, GenerateParams::default())
-            .expect("plain");
-        two.add_document(&signed, GenerateParams::default())
-            .expect("signed");
-        assert_eq!(one, two);
-
-        let mut model = KMixtureModel::new();
-        model
-            .add_document(
-                &seg(&["abc x", "10 甲", "0 ", "- 5 y"]),
-                GenerateParams::default(),
-            )
-            .expect("a field without digits is the null token");
+    fn tokens_require_complete_decimals() {
+        for field in ["10x", "4294967306", "-1", "abc"] {
+            assert!(
+                KMixtureModel::new()
+                    .add_document(&format!("{field} 甲\n"), GenerateParams::default())
+                    .is_err()
+            );
+        }
     }
 
     #[test]

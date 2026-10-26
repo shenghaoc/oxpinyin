@@ -23,7 +23,7 @@
 //! those files, and a same-backend oxpinyin pair is what stays conform.
 
 use crate::chunk_format::{CHUNK_HEADER_SIZE, chunk_checksum};
-use crate::table_info::FileName;
+use crate::table_info::{ConfigLines, FileName, parse_decimal};
 use oxpinyin_store::DEFAULT_STORE_DB_FORMAT;
 
 /// A `MemoryChunk` file that does not frame a valid payload.
@@ -260,10 +260,8 @@ pub const fn get_open_counter(open_counter: i32) -> i32 {
 /// open counter:3
 /// ```
 ///
-/// The file is read as upstream's four `fscanf` calls read it, not as
-/// lines; [`UserTableInfo::parse`] is that sequence. The first two
-/// directives are required, `database format:` and `open counter:` fall
-/// back (`UNKNOWN`/0) where upstream's calls do.
+/// The marker uses ordered line headers and exact decimal fields. Missing
+/// database and counter fields retain their UNKNOWN/0 defaults.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UserTableInfo {
     /// `binary format version:`.
@@ -303,94 +301,40 @@ impl UserTableInfo {
         }
     }
 
-    /// Parses `user.conf` bytes the way upstream's `UserTableInfo::load`
-    /// reads them: as the four `fscanf` calls of `table_info.cpp:338-359`
-    /// (`074a2219`), over one stream, each directive matching from where
-    /// the previous one stopped.
-    ///
-    /// ```c
-    /// fscanf(input, "binary format version:%d\n", &binver);   // :338
-    /// fscanf(input, "model data version:%d\n", &modelver);    // :344
-    /// fscanf(input, "database format:%255s\n", str);          // :352
-    /// fscanf(input, "open counter:%d\n", &counter);           // :357
-    /// ```
-    ///
-    /// A white-space byte in a format matches any run of C white space, an
-    /// empty one included, and any other byte matches only itself
-    /// (C11 7.21.6.2p5-6). So `%d` takes an optional sign and every digit
-    /// after it, and `%255s` skips white space — newlines included — and
-    /// reads at most 255 bytes, stopping at the first white-space byte.
-    /// A call that fails its directive leaves the stream where it stopped
-    /// and the next call carries on from there, which is why a foreign
-    /// line between two directives is what the following `%d` reads.
-    ///
-    /// The three fallbacks are upstream's. A version directive that does
-    /// not convert is the load's `false` (`:339-342`, `:345-348`): the
-    /// marker reads as absent ([`UserConfError::Line`]). A counter
-    /// directive that does not convert reads 0 (`:358-359`). The
-    /// `database format:` directive ends at
-    /// `to_table_database_format_type` (`:353-354`), which `abort()`s on
-    /// any token it does not know (`:122-133`) — and which is also called
-    /// when the directive *failed*, on a `str` no conversion wrote
-    /// (`:351`). Both are [`UserConfError::UnknownDatabaseFormat`], the
-    /// class-(c) answer to upstream's abort; the one outcome that is not
-    /// an abort is an input failure before the conversion, where upstream
-    /// leaves `format` at `UNKNOWN_FORMAT` and the file is simply
-    /// non-conforming.
+    /// Parses the marker's line headers and complete decimal fields.
     ///
     /// # Errors
     ///
-    /// [`UserConfError::Line`] when a version directive does not convert;
-    /// [`UserConfError::UnknownDatabaseFormat`] where upstream's
-    /// `to_table_database_format_type` aborts.
+    /// A malformed version or counter is a non-conforming marker. Unknown
+    /// database names keep the existing availability refusal; a NUL suffix
+    /// is malformed rather than a C string alias of a known name.
     pub fn parse(bytes: &[u8]) -> Result<Self, UserConfError> {
-        let mut scan = Scan::new(bytes);
-
-        scan.literal(b"binary format version:")
-            .map_err(|_| UserConfError::Line("binary format version"))?;
-        let binary_format_version = scan
-            .int()
+        let mut lines = ConfigLines::new(bytes);
+        let binary_format_version = lines
+            .field(b"binary format version:")
+            .and_then(parse_decimal::<i32>)
             .ok_or(UserConfError::Line("binary format version"))?;
-        scan.skip_space(); // the format's trailing `\n`
-
-        scan.literal(b"model data version:")
-            .map_err(|_| UserConfError::Line("model data version"))?;
-        let model_data_version = scan
-            .int()
+        let model_data_version = lines
+            .field(b"model data version:")
+            .and_then(parse_decimal::<i32>)
             .ok_or(UserConfError::Line("model data version"))?;
-        scan.skip_space();
-
-        let database_format = match scan.literal(b"database format:") {
-            // `if (EOF != num) format = to_...(str)`: the literal ran off
-            // the end of the file, so `format` keeps UNKNOWN_FORMAT.
-            Err(Call::Eof) => None,
-            // The literal mismatched: `str` was never written, and
-            // upstream maps it anyway.
-            Err(Call::Mismatch) => return Err(UserConfError::UnknownDatabaseFormat),
-            Ok(()) => match scan.token(255) {
-                Err(Call::Eof) => None,
-                Err(Call::Mismatch) => return Err(UserConfError::UnknownDatabaseFormat),
-                Ok(token) => Some(
-                    upstream_db_format(token)
-                        .ok_or(UserConfError::UnknownDatabaseFormat)?
-                        .to_owned(),
-                ),
-            },
+        let database_format = match lines.field(b"database format:") {
+            None => None,
+            Some(token) if token.contains(&0) => {
+                return Err(UserConfError::Line("database format"));
+            }
+            Some(token) => Some(
+                UPSTREAM_DB_FORMATS
+                    .into_iter()
+                    .find(|known| known.as_bytes() == token)
+                    .ok_or(UserConfError::UnknownDatabaseFormat)?
+                    .to_owned(),
+            ),
         };
-        scan.skip_space();
-
-        // The format's trailing `\n`, then
-        // `if (1 != num) counter = 0` — a failed literal or conversion,
-        // and an empty value running into the next line, all read 0.
-        let open_counter = match scan.literal(b"open counter:") {
-            Ok(()) => scan.int().unwrap_or(0),
-            Err(_) => 0,
+        let open_counter = match lines.field(b"open counter:") {
+            None => 0,
+            Some(text) => parse_decimal::<i32>(text).ok_or(UserConfError::Line("open counter"))?,
         };
-
-        // Upstream's fields are `int`; these are `u32` holding the same
-        // low 32 bits (`%d`'s store through `int *` is that bit
-        // pattern). The system's own versions are positive constants, so
-        // `is_conform`'s comparison is the signed one upstream makes.
         Ok(Self {
             binary_format_version: binary_format_version.cast_unsigned(),
             model_data_version: model_data_version.cast_unsigned(),
@@ -476,155 +420,6 @@ impl std::fmt::Display for UserConfError {
 }
 
 impl std::error::Error for UserConfError {}
-
-/// C's `isspace` over ASCII — the white space a `scanf` directive or
-/// conversion skips: space, `\t`, `\n`, `\v`, `\f` and `\r`.
-/// [`u8::is_ascii_whitespace`] leaves out `\v`.
-const fn is_c_space(byte: u8) -> bool {
-    matches!(byte, b' ' | b'\t' | b'\n' | 0x0b | 0x0c | b'\r')
-}
-
-/// The `database format:` token upstream recognises, per
-/// `to_table_database_format_type` (`table_info.cpp:122-131`); `None` is
-/// the token that function `abort()`s on, which [`UserTableInfo::parse`]
-/// answers with [`UserConfError::UnknownDatabaseFormat`].
-fn upstream_db_format(token: &[u8]) -> Option<&'static str> {
-    // `%255s` writes the token into a `char str[256]`; the pin compares it
-    // with `strcmp`, so a NUL ends the token even though the conversion
-    // kept reading the rest of the word.
-    let token = token.split(|&byte| byte == 0).next().unwrap_or_default();
-    UPSTREAM_DB_FORMATS
-        .into_iter()
-        .find(|known| known.as_bytes() == token)
-}
-
-/// How a directive fails, where `load` can tell the outcomes apart
-/// (C11 7.21.6.2p16). A directive that runs is `Ok`, and the stream then
-/// sits where it stopped.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Call {
-    /// A matching failure: the literal or the conversion did not match.
-    /// No conversion is reported.
-    Mismatch,
-    /// An input failure before any conversion — the format ran off the
-    /// end of the file. `fscanf` returns `EOF`, which the
-    /// `database format:` directive alone distinguishes from a mismatch
-    /// (`table_info.cpp:353`).
-    Eof,
-}
-
-/// The stream upstream's four `fscanf` calls share: a byte slice and a
-/// position, each directive consuming exactly what glibc's would.
-struct Scan<'a> {
-    bytes: &'a [u8],
-    at: usize,
-}
-
-impl<'a> Scan<'a> {
-    fn new(bytes: &'a [u8]) -> Self {
-        Self { bytes, at: 0 }
-    }
-
-    fn rest(&self) -> &'a [u8] {
-        self.bytes.get(self.at..).unwrap_or_default()
-    }
-
-    /// A white-space directive in a format: it matches any run of C white
-    /// space, an empty one included, and the end of the file is not a
-    /// failure for it.
-    fn skip_space(&mut self) {
-        let skip = self
-            .rest()
-            .iter()
-            .position(|&byte| !is_c_space(byte))
-            .unwrap_or(self.rest().len());
-        self.at = self.at.saturating_add(skip);
-    }
-
-    /// A format's literal run, up to its first conversion: white-space
-    /// bytes match as [`Self::skip_space`] does, every other byte must
-    /// match the stream exactly. `Err(Call::Eof)` when the stream ends
-    /// first.
-    fn literal(&mut self, format: &[u8]) -> Result<(), Call> {
-        for &byte in format {
-            if is_c_space(byte) {
-                self.skip_space();
-                continue;
-            }
-            let Some(&first) = self.rest().first() else {
-                return Err(Call::Eof);
-            };
-            if first != byte {
-                return Err(Call::Mismatch);
-            }
-            self.at = self.at.saturating_add(1);
-        }
-        Ok(())
-    }
-
-    /// `%d`: white space, an optional sign, then every decimal digit.
-    /// glibc converts with `strtol`, which saturates at `long`'s range
-    /// (64 bits on the pin's LP64 builds), and stores through an `int *`,
-    /// which keeps the low 32 bits — so `2147483648` reads as
-    /// −2147483648 and `4294967303` as 7. `None` is a failed conversion:
-    /// no digit after the optional sign.
-    fn int(&mut self) -> Option<i32> {
-        self.skip_space();
-        let (negative, digits) = match self.rest().split_first() {
-            Some((&b'-', tail)) => (true, tail),
-            Some((&b'+', tail)) => (false, tail),
-            _ => (false, self.rest()),
-        };
-        // `strtol` accumulates toward the sign, so `LONG_MIN` is
-        // reachable; `None` once the value has left `long`'s range.
-        let mut long = Some(0_i64);
-        let mut any_digit = false;
-        let mut taken = 0_usize;
-        for &byte in digits.iter().take_while(|byte| byte.is_ascii_digit()) {
-            any_digit = true;
-            let digit = i64::from(byte - b'0');
-            long = long
-                .and_then(|value| value.checked_mul(10))
-                .and_then(|value| {
-                    if negative {
-                        value.checked_sub(digit)
-                    } else {
-                        value.checked_add(digit)
-                    }
-                });
-            taken += 1;
-        }
-        if !any_digit {
-            return None;
-        }
-        // The sign, the digits, and nothing else: the stream sits at the
-        // first byte the conversion did not take.
-        let sign = usize::from(self.rest().first().is_some_and(|&b| b == b'+' || b == b'-'));
-        self.at = self.at.saturating_add(sign + taken);
-        let long = long.unwrap_or(if negative { i64::MIN } else { i64::MAX });
-        // The store through `int *`: the low 32 bits.
-        Some(long as i32)
-    }
-
-    /// `%<width>s`: white space, then at most `width` non-white-space
-    /// bytes. `Err(Call::Eof)` when the stream ends before a byte can be
-    /// taken — the conversion never runs, whatever the width.
-    fn token(&mut self, width: usize) -> Result<&'a [u8], Call> {
-        self.skip_space();
-        if self.rest().is_empty() {
-            return Err(Call::Eof);
-        }
-        let take = self
-            .rest()
-            .iter()
-            .take(width)
-            .position(|&byte| is_c_space(byte))
-            .unwrap_or_else(|| self.rest().len().min(width));
-        let token = self.rest().get(..take).unwrap_or_default();
-        self.at = self.at.saturating_add(take);
-        Ok(token)
-    }
-}
 
 /// One `PhraseIndexLogger` record (`phrase_index_logger.h`).
 ///
@@ -1276,248 +1071,38 @@ mod tests {
     /// The seeded protocol of `tools/bisection/run-open-counter-diff.sh`
     /// checks it against the pin.
     #[test]
-    fn the_counter_reads_as_fscanfs_percent_d() {
-        let head = "binary format version:7\nmodel data version:14\ndatabase format:Tkrzw\n";
-        for (tail, counter) in [
-            ("open counter:5\n", 5),
-            ("open counter:-3\n", -3),
-            ("open counter:+3\n", 3),
-            ("open counter:+7\n", 7),
-            ("open counter:3x\n", 3),
-            ("open counter:7x\n", 7),
-            ("open counter:3\u{fffd}\n", 3),
-            ("open counter: 5\n", 5),
-            ("open counter:\t5\n", 5),
-            ("open counter:\u{b}5\n", 5),
-            ("open counter:\n5\n", 5),
-            ("open counter:\r\n5\r\n", 5),
-            ("  open counter:5\n", 5),
-            ("\nopen counter:5\n", 5),
-            ("open   counter:5\n", 5),
-            ("opencounter:5\n", 5),
-            ("open counter:2147483647\n", i32::MAX),
-            ("open counter:2147483648\n", i32::MIN),
-            ("open counter:4294967303\n", 7),
-            ("open counter:99999999999999999999\n", -1),
-            ("open counter:-99999999999999999999\n", 0),
-            ("open counter:-2147483649\n", i32::MAX),
-            ("open counter:-9223372036854775808\n", 0),
-            ("open counter:9223372036854775807\n", -1),
-            ("open counter:-0\n", 0),
-            ("open counter:\n", 0),
-            ("open counter:", 0),
-            ("open counter:-\n", 0),
-            ("open counter:- 5\n", 0),
-            ("open counter:x5\n", 0),
-            ("", 0),
-            // One conversion only: an empty value reads on, but not into a
-            // second counter line.
-            ("open counter:\nopen counter:5\n", 0),
-            ("open counter:4\nopen counter:5\n", 4),
-        ] {
-            let info = UserTableInfo::parse(format!("{head}{tail}").as_bytes()).expect("parse");
-            assert_eq!(info.open_counter, counter, "{tail:?}");
+    fn marker_fields_require_complete_decimal_values() {
+        let good = "binary format version:7\nmodel data version:14\ndatabase format:BerkeleyDB\nopen counter:3\n";
+        for value in ["3x", "2147483648", "99999999999999999999"] {
+            assert!(matches!(
+                UserTableInfo::parse(
+                    good.replace("counter:3", &format!("counter:{value}"))
+                        .as_bytes()
+                ),
+                Err(UserConfError::Line(_))
+            ));
         }
-    }
-
-    /// The version directives are `fscanf` calls, not a line model: `%d`
-    /// skips white space, takes an optional sign, reads every digit,
-    /// saturates at `long` and stores the low 32 bits. Every value below
-    /// was executed against the pin-built library (glibc 2.43) and the
-    /// pin's own `table_info.cpp` at `074a2219`.
-    #[test]
-    fn the_version_directives_read_as_fscanfs_percent_d() {
-        let tail = "\ndatabase format:Tkrzw\nopen counter:5\n";
-        let parse2 = |binver: &str, modelver: &str| {
-            UserTableInfo::parse(
-                format!("binary format version:{binver}\nmodel data version:{modelver}{tail}")
-                    .as_bytes(),
-            )
-        };
-        for (binver, modelver, expected) in [
-            ("7", "14", (7_u32, 14_u32)),
-            ("+7", "14", (7, 14)),
-            ("4294967303", "14", (7, 14)),
-            (" 7", "14", (7, 14)),
-            ("07", "14", (7, 14)),
-            ("7", "+14", (7, 14)),
-            ("7", "4294967310", (7, 14)),
-            ("-1", "14", ((-1_i32).cast_unsigned(), 14)),
-            ("2147483655", "14", ((-2147483641_i32).cast_unsigned(), 14)),
-            ("-2147483649", "14", (i32::MAX.cast_unsigned(), 14)),
-            ("7", "-1", (7, (-1_i32).cast_unsigned())),
-        ] {
-            let info = parse2(binver, modelver).expect("parse");
-            assert_eq!(
-                (info.binary_format_version, info.model_data_version),
-                expected,
-                "{binver:?} {modelver:?}"
-            );
-        }
-        // Junk after a version line is what the *next* directive meets:
-        // after the first line it is that directive's matching failure,
-        // after the second it reaches the database-format abort.
-        assert!(matches!(
-            parse2("7x", "14"),
-            Err(UserConfError::Line("model data version"))
-        ));
-        assert!(matches!(
-            parse2("7", "14x"),
-            Err(UserConfError::UnknownDatabaseFormat)
-        ));
-        // A reordered file fails the first literal.
-        assert!(matches!(
-            UserTableInfo::parse(b"model data version:14\nbinary format version:7\n"),
-            Err(UserConfError::Line("binary format version"))
-        ));
-    }
-
-    /// The `database format:` directive, with upstream's
-    /// `if (EOF != num) format = to_table_database_format_type (str);`
-    /// behind it (`table_info.cpp:353-354`): a token, `UNKNOWN_FORMAT`
-    /// when the call ran off the end of the file, and the class-(c)
-    /// `Err` where upstream's mapper `abort()`s — on an unrecognised
-    /// token, and on the matching failure that leaves its `str`
-    /// unwritten.
-    #[test]
-    fn the_database_format_directive_maps_or_refuses() {
-        let head = "binary format version:7\nmodel data version:14\n";
-        let ok = |body: &str| UserTableInfo::parse(format!("{head}{body}").as_bytes());
-        assert_eq!(
-            ok("database format:Tkrzw\nopen counter:5\n")
-                .expect("parse")
-                .database_format,
-            Some("Tkrzw".to_owned())
-        );
-        // `%255s` skips white space first, so a blank after the colon is
-        // not part of the token.
-        assert_eq!(
-            ok("database format: Tkrzw\nopen counter:5\n")
-                .expect("parse")
-                .database_format,
-            Some("Tkrzw".to_owned())
-        );
-        // Any recognised token parses; conformance is a separate check.
-        assert_eq!(
-            ok("database format:KyotoCabinet\nopen counter:5\n")
-                .expect("parse")
-                .database_format,
-            Some("KyotoCabinet".to_owned())
-        );
-        // The conversion stops at white space: the trailing `extra` is
-        // what the counter directive then meets.
-        let tailed = ok("database format:Tkrzw extra\nopen counter:5\n").expect("parse");
-        assert_eq!(tailed.database_format, Some("Tkrzw".to_owned()));
-        assert_eq!(tailed.open_counter, 0);
-
-        // The one outcome that is not the abort: the call ran off the end
-        // of the file, so `format` keeps UNKNOWN_FORMAT (`:350`).
-        let sparse = ok("").expect("parse");
-        assert_eq!(sparse.database_format, None);
-        assert_eq!(sparse.open_counter, 0);
-        assert_eq!(ok("database format:").expect("parse").database_format, None);
-        assert_eq!(
-            UserTableInfo::parse(b"binary format version:7\nmodel data version:14\n")
-                .expect("parse")
-                .database_format,
-            None
-        );
-
-        // The abort point, in each shape executed against the pin.
-        let long = format!("database format:{}\nopen counter:5\n", "A".repeat(300));
-        let trunc = format!("database format:{}open counter:5\n", "A".repeat(255));
-        for body in [
-            // A token no upstream build knows.
-            "database format:NotADbmLibrary\nopen counter:5\n".to_owned(),
-            // 300 bytes: `%255s` takes 255 and maps those.
-            long,
-            // 255 bytes, with the counter on the same line.
-            trunc,
-            // Nothing after the colon: `%255s` reads the *next* word,
-            // across the newline, and `open` is no format either.
-            "database format:\nopen counter:5\n".to_owned(),
-            // No format directive at all: the literal mismatches, and
-            // upstream maps the `str` no conversion wrote.
-            "open counter:5\n".to_owned(),
-        ] {
-            assert!(
-                matches!(ok(&body), Err(UserConfError::UnknownDatabaseFormat)),
-                "{body:?}"
-            );
-        }
-    }
-
-    /// `%255s` keeps reading through a NUL into the rest of the word, but
-    /// `to_table_database_format_type` compares a C string: the NUL ends
-    /// the token. A known format followed by NUL+bytes therefore loads and
-    /// conforms, exactly as the pin's `strcmp` reads it.
-    #[test]
-    fn a_nul_ends_the_database_format_token() {
-        let head = "binary format version:7\nmodel data version:14\n";
-        for known in UPSTREAM_DB_FORMATS {
-            let body = format!("database format:{known}\0junk\nopen counter:5\n");
-            let info = UserTableInfo::parse(format!("{head}{body}").as_bytes()).expect("parse");
-            assert_eq!(info.database_format, Some(known.to_owned()), "{known}");
-            assert_eq!(info.open_counter, 5);
-            assert!(
-                info.to_text()
-                    .contains(&format!("database format:{known}\n"))
-            );
+        for value in ["4294967303", "7x", "-9223372036854775808"] {
+            assert!(matches!(
+                UserTableInfo::parse(
+                    good.replace("version:7", &format!("version:{value}"))
+                        .as_bytes()
+                ),
+                Err(UserConfError::Line(_))
+            ));
         }
         assert!(matches!(
-            UserTableInfo::parse(
-                format!("{head}database format:NotADbm\0Tkrzw\nopen counter:5\n").as_bytes()
-            ),
-            Err(UserConfError::UnknownDatabaseFormat)
+            UserTableInfo::parse(good.replace("BerkeleyDB", "BerkeleyDB\0suffix").as_bytes()),
+            Err(UserConfError::Line(_))
         ));
-    }
-
-    /// The counter directive reads from where the `database format:` call
-    /// stopped — one call, one attempt at its literal — and a failed
-    /// conversion reads 0 (`table_info.cpp:358-359`).
-    #[test]
-    fn the_counter_directive_reads_where_the_token_left_it() {
-        let head = "binary format version:7\nmodel data version:14\ndatabase format:Tkrzw\n";
-        let ok =
-            |body: &str| UserTableInfo::parse(format!("{head}{body}").as_bytes()).expect("parse");
-        assert_eq!(ok("open counter:5\n").open_counter, 5);
-        // A foreign line between the token and the counter is what the
-        // literal meets: 0, not the counter line below it.
-        assert_eq!(ok("junk line\nopen counter:5\n").open_counter, 0);
-        // A missing trailing newline is not a failure: the conversion has
-        // already run when the whitespace directive sees the end of the
-        // file.
-        assert_eq!(ok("open counter:5").open_counter, 5);
-        assert_eq!(ok("open counter:").open_counter, 0);
-    }
-
-    /// The scan is one pass over the bytes: a long run of white space is
-    /// spent once by the directive that skipped it, never re-walked per
-    /// line, and a long run of irrelevant text is never rescanned. The
-    /// run lengths are long enough that a per-line re-scan would multiply
-    /// out to a visible stall.
-    #[test]
-    fn a_long_run_is_walked_once() {
-        let head = "binary format version:7\nmodel data version:14\ndatabase format:Tkrzw\n";
-        let blanks = "\u{b}\t \n".repeat(20_000);
-        let junk = "not a counter line\n".repeat(20_000);
-        let cases = [
-            (format!("{head}{blanks}open counter:5\n"), 5),
-            // The literal's own leading skip spans the blank run.
-            (format!("{head}{blanks}  open counter:-3\n"), -3),
-            // White space after the colon reads on across the blank run.
-            (format!("{head}{blanks}open counter:\n{blanks}7\n"), 7),
-            // Anything ahead of the counter literal stops it: one call
-            // matches once, at the byte where the previous one stopped.
-            (format!("{head}{junk}open counter:9\n"), 0),
-            (format!("{head}{junk}{blanks}open counter: 4\n"), 0),
-            // Never a counter: the walk still ends in one pass, at 0.
-            (format!("{head}{junk}{blanks}"), 0),
-        ];
-        for (text, counter) in cases {
-            let info = UserTableInfo::parse(text.as_bytes()).expect("parse");
-            assert_eq!(info.open_counter, counter);
-        }
+        assert!(UserTableInfo::parse(good.replace('\n', " ").as_bytes()).is_err());
+        let missing = good.replace("open counter:3\n", "");
+        assert_eq!(
+            UserTableInfo::parse(missing.as_bytes())
+                .unwrap()
+                .open_counter,
+            0
+        );
     }
 
     #[test]

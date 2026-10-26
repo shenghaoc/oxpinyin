@@ -867,6 +867,8 @@ feature/Cargo backend change requires kc or tkrzw.
 
 ## G10 — Rename and sync
 
+**Amendment 2026-10-26 UTC (#1297 Phase 2).** The single-payload-write reproduction below is historical. [Complete payload writes](1297-chunk-payload.md) now use `write_all`; header-word diagnostics, ignored sync errors, file/rename order and tolerance remain.
+
 Audit #929, 2026-10-25 UTC, subject base `6be364d9`; pin source read from a
 checkout of `074a2219c90feaf962d0d24f034514033ece5f99`. No save implementation
 or fsync/rename policy is changed. The C-facing path is `context::save_context`
@@ -1130,6 +1132,8 @@ Refs #929 remains. No logs, captures or archives are published.
 
 
 ## G11 — Numeric parsing and locale
+
+**Amendment 2026-10-26 UTC (#1297 Phase 2).** The #1297 scanner lane now uses `ConfigLines`, `TableConf::parse`, and `UserTableInfo::parse`, with exact decimal fields and tokens. The G11 scanner-emulation claims below are historical and superseded by [decimal λ](1297-table-floats.md), [version fields](1297-table-decimals.md), [line/word boundaries](1297-table-lines.md), [addon indexes](1297-addon-index.md), [marker numbers](1297-user-decimals.md) and [marker tokens](1297-user-token.md). Unknown ordinary database names retain their class (c) refusal; malformed numeric/NUL markers reset profiles. The locale ruling remains unchanged. Incomplete-exponent rejection first arrived in glibc 2.42; only `0x.` is 2.43, as the [source-history record](glib-glibc-version-sensitivity.md) corrects. Current gate results are in the PR.
 
 Pin: `storage/table_info.cpp:160,197-291,328-394` (scanner sites
 `:208,214,220,228,232,255,338,344,352,357`; locale

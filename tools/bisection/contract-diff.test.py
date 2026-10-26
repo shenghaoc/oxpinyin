@@ -87,6 +87,33 @@ class PolicyAcceptedTests(unittest.TestCase):
     def test_even_equal_observations_do_not_hide_a_broken_policy_case(self):
         self.assertEqual(self.verdict(subject=self.pin), ('DIFFER', False, False))
 
+    def test_registered_pin_abort_requires_the_exact_recorded_observations(self):
+        self.spec['abort'] = False
+        self.pin.update(exit=-signal.SIGABRT, result=None)
+        self.write_record()
+        self.assertEqual(self.verdict(), ('POLICY-ACCEPTED', True, False))
+        for exit_code in (-signal.SIGSEGV, 1, 0):
+            self.assertEqual(self.verdict(pin={**self.pin, 'exit': exit_code}),
+                             ('DIFFER', False, False))
+        self.assertEqual(self.verdict(subject={**self.subject, 'exit': -signal.SIGABRT}),
+                         ('DIFFER', False, False))
+        self.spec['abort'] = driver.NO_ABORT
+        self.assertEqual(self.verdict(), ('INVALID', False, False))
+
+    def test_cell_record_keeps_complete_user_directory_observations(self):
+        self.spec['userdir'] = True
+        self.pin['userfiles'] = {}
+        self.subject['userfiles'] = {'user.conf': 'canonical marker'}
+        pair = self.record['cases'][self.name]
+        self.record['cases'][self.name] = {'cells': {'selected-cell': pair}}
+        self.write_record()
+        with patch.dict(driver.os.environ, CONTRACT_DIFF_CELL='selected-cell'):
+            self.assertEqual(self.verdict(), ('POLICY-ACCEPTED', True, False))
+            self.assertEqual(self.verdict(subject={**self.subject, 'userfiles': {}}),
+                             ('DIFFER', False, False))
+        with patch.dict(driver.os.environ, CONTRACT_DIFF_CELL='unrecorded-cell'):
+            self.assertEqual(self.verdict(), ('INVALID', False, False))
+
     def test_missing_record_or_registration_is_invalid(self):
         (self.root / 'test-record.md').unlink()
         self.assertEqual(self.verdict(), ('INVALID', False, False))
@@ -739,12 +766,18 @@ class VerdictTests(DriverFixtureCase):
     """verdict_for: a difference needs two valid observations; a registered
     termination keeps the matcher's own semantics."""
 
-    def test_hex_dot_controls_register_both_facades_as_host_scanf(self):
+    def test_hex_dot_has_no_legacy_host_scanner_exemption(self):
         self.assertEqual(
             [contract['CASES']['table-conf-919-lambda-hex-dot-without-digits' + suffix]['host_scanf']
              for suffix in ('', '-zhuyin')],
-            [('0x.',), ('0x.',)],
+            [(), ()],
         )
+
+    def test_native_scanner_policy_tolerates_non_glibc_hosts(self):
+        with patch.object(driver.os, 'confstr', side_effect=ValueError('unknown confstr name')):
+            driver._scanner_host_policy()
+        with patch.object(driver.os, 'confstr', return_value=None):
+            driver._scanner_host_policy()
 
     def plain(self, control=False):
         return dict(contract['CASES']['default-option-parse'], control=control)

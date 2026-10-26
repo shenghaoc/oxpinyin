@@ -165,7 +165,7 @@ mod tests {
     }
 
     #[test]
-    fn the_lambda_reader_follows_the_pin_stream() {
+    fn the_lambda_reader_uses_the_shared_decimal_grammar() {
         let with_lambda = |spelling: &str| {
             CONF.replace(
                 "lambda parameter:0.312699",
@@ -174,21 +174,20 @@ mod tests {
         };
         assert_eq!(
             parse_table_conf_lambda(with_lambda("0x1p-1").as_bytes()),
-            Some(0.5)
+            None
         );
         assert_eq!(
             parse_table_conf_lambda(with_lambda("5e-1").as_bytes()),
             Some(0.5)
         );
-        assert!(parse_table_conf_lambda(with_lambda("nan").as_bytes()).is_some_and(f32::is_nan));
+        assert!(parse_table_conf_lambda(with_lambda("nan").as_bytes()).is_none());
         // The preceding `\n` in the pin's directive matches any whitespace.
         let spaced = CONF.replace("lambda parameter:", "   lambda parameter:");
         assert_eq!(
             parse_table_conf_lambda(spaced.as_bytes()),
             Some(PINNED_LAMBDA)
         );
-        // An incomplete exponent is not a `%f` conversion at glibc 2.43,
-        // which the subject follows; trixie's 2.41 reference accepts it (G11).
+        // Complete decimal exponents are required; the native libc may differ.
         assert_eq!(parse_table_conf_lambda(with_lambda("1e").as_bytes()), None);
     }
 

@@ -201,9 +201,9 @@ def case(name, *args, **kwargs):
     stderr is read from freed memory and so changes from run to run: the pin
     must still die of SIGSEGV and the subject answer `<fields>`, but the
     stderr bytes are not compared.
-    `host_scanf=<spellings>` names `%f` inputs the case expects the host
-    libc's scanner to reject, as the glibc 2.43 scanner the subject follows
-    does. The pin reads them with the host libc, so on a host whose scanner
+    `host_scanf=<spellings>` is legacy metadata for `%f` inputs whose pin
+    acceptance varies by host libc. Current scanner cases use discrepancy
+    records instead. The pin reads them with the host libc, so on a host whose scanner
     accepts one
     the pin loads what the subject refuses. Only that difference (the pin
     created its context; the subject refused `table.conf`) prints
@@ -1811,8 +1811,13 @@ def punct_decode_case(value):
     """A case that stores `value` under 我 and predicts after 我."""
     def probe(k):
         """Craft the table, then record the punctuation rows for 我."""
+        if value in (PUNCT_DECODE_CASES['misaligned-terminated'], PUNCT_DECODE_CASES['misaligned-short']):
+            _write_user_conf(k)
         punct_fixture(k, lambda _k: [('我', value)])
-        return punct_rows(k, '我')
+        out = punct_rows(k, '我')
+        if value in (PUNCT_DECODE_CASES['misaligned-terminated'], PUNCT_DECODE_CASES['misaligned-short']):
+            return {'ret': out['ret'], 'puncts': out['puncts']}
+        return out
     return probe
 
 
@@ -1839,7 +1844,7 @@ PUNCT_DECODE_CASES = {
 }
 for _name, _value in PUNCT_DECODE_CASES.items():
     case('punct-decode/' + _name, control=_name in ('valid', 'zero-length'),
-         issues=('1144',))(punct_decode_case(_value))
+         issues=('1144',), policy_record='1297-punct-words.md' if _name in ('misaligned-terminated', 'misaligned-short') else None)(punct_decode_case(_value))
 
 
 # Punctuation order and duplicates (#928). The pin appends each prefix
@@ -3347,7 +3352,7 @@ def _edit_user_conf_negative_overflow(k):
     return data
 
 
-def _user_conf_920_session(edit, keep_state):
+def _user_conf_920_session(edit, keep_state, policy=False):
     """Build a saved-profile reopen case with an edited user.conf.
 
     The callback edit(k) supplies replacement bytes. keep_state asserts retained
@@ -3362,6 +3367,8 @@ def _user_conf_920_session(edit, keep_state):
         when requested and reopen succeeds, unchanged trained/imported frequencies;
         return those observations and the resulting user-file inventory.
         """
+        if policy:
+            _write_user_conf(k)
         training = token_unigram_trained(k)
         imported = token_unigram_user(k, add_frequency=False)
         saved = k.fn('save', B, P)(k.ctx)
@@ -3377,10 +3384,14 @@ def _user_conf_920_session(edit, keep_state):
             k._ctx = ctx
             out['trained-after'] = unigram_of(k, int(training['token'], 16))
             out['import-after'] = unigram_of(k, int(imported['token'], 16))
-            if keep_state:
+            if keep_state and not policy:
                 assert out['trained-after'] == training['after'], 'trained state was wiped'
                 assert out['import-after'] == imported['after'], 'imported state was wiped'
         out['files'] = user_listing(k)
+        if policy:
+            return {'reopen': out['reopen'],
+                    'trained-retained': out.get('trained-after') == training['after'],
+                    'import-retained': out.get('import-after') == imported['after']}
         return out
     return probe
 
@@ -3393,8 +3404,10 @@ def _user_conf_920_case(name, edit, keep_state, control):
     """
     for mode in ('pinyin', 'zhuyin'):
         suffix = '-zhuyin' if mode == 'zhuyin' else ''
+        policy = name in ('nul-database-token', 'version-overflow-conforms', 'counter-overflow-conforms')
+        record = ('1297-user-token.md' if name == 'nul-database-token' else '1297-user-decimals.md') if policy else None
         case('user-conf-920-' + name + suffix, mode=mode, issues=('920',),
-             control=control)(_user_conf_920_session(edit, keep_state))
+             control=control, policy_record=record)(_user_conf_920_session(edit, keep_state, policy))
 
 
 _user_conf_920_case('nul-database-token', _edit_user_conf_nul, True, False)
@@ -9500,7 +9513,8 @@ def conf_session(k, system):
     """Open on `system`, look up, learn one sentence and one phrase, save:
     what the rows decide to load, to accept and to write."""
     ctx = k.init(system=system)
-    assert ctx, 'init failed'
+    if not ctx:
+        return {'ctx': False}
     out = {'view': conf_view(k, ctx)}
     inst = k.fn('alloc_instance', P, P)(ctx)
     k.fn('parse_more_full_pinyins', Z, P, S)(inst, CONF_TEXTS[k.mode][0])
@@ -9649,6 +9663,7 @@ def conf_case(name, *edits, modes=('pinyin', 'zhuyin'), session=conf_session,
         def probe(k, edits=edits):
             """Apply the captured config edits and return the selected session's observations."""
             return session(k, conf_system(k, *edits))
+        probe.config_edits = edits
         control = name in CONF_CONTROLS and not (mode == 'zhuyin' and name in CONF_ZHUYIN_CHANGED)
         case('table-conf-' + name + ('-zhuyin' if mode == 'zhuyin' else ''), mode=mode,
              **{'control': control, **options}, issues=issues)(probe)
@@ -9824,6 +9839,7 @@ def header_probe(*edits, issues=('694', '525')):
     def probe(k):
         """Create the edited private system and return the new context's truth value."""
         return {'ctx': bool(k.init(system=conf_system(k, *edits)))}
+    probe.config_edits = edits
     return probe
 
 
@@ -9835,10 +9851,10 @@ for _mode in ('pinyin', 'zhuyin'):
     # it, a `0x` with no hex digit and `infin` fail the `%f` conversion.
     for _name, _spelling in (('exponent-without-digits', '1e'), ('hex-without-digits', '0x'),
                              ('hex-exponent-without-digits', '0x1p'), ('infin', 'infin')):
-        # The oracle image's glibc rejects `1e` and `0x1p` (2.43); Ubuntu's
-        # 2.39 accepts them, and the pin follows the host libc.
+        # glibc 2.42 first rejects incomplete exponents. Native pin acceptance
+        # is classified by source version below; Rust requires a complete field.
         case('table-conf-lambda-' + _name + _suffix, mode=_mode, stderr=True,
-             host_scanf=(_spelling,) if _name.endswith('exponent-without-digits') else (), issues=('694', '525'))(header_probe(('lambda parameter:0.312699', 'lambda parameter:' + _spelling)))
+             issues=('694', '525'))(header_probe(('lambda parameter:0.312699', 'lambda parameter:' + _spelling)))
 
 
 # Every spelling glibc's `%f` accepts, hexadecimal floats included.
@@ -9848,7 +9864,7 @@ for _name, _spelling in (('hex', '0x1p-1'), ('hex-fraction', '0x.8'), ('hex-uppe
 
 
 
-# #919: table.conf scanner partitions. The reference glibc is 2.43-3; the
+# #919: table.conf scanner partitions. The reference image uses glibc 2.41; the
 # cases cover every partition the source walk distinguishes, not only the
 # spellings the stock file uses. `control=True` cases already agree with the
 # parent; the three incomplete-exponent spellings are the mutation targets.
@@ -9860,6 +9876,7 @@ def conf_919_case(name, mutate, **options):
         def probe(k, mutate=mutate):
             """Apply the captured byte mutation to private table.conf and run the standard config session."""
             return conf_session(k, conf_system_bytes(k, mutate))
+        probe.config_mutate = mutate
         case('table-conf-919-' + name + ('-zhuyin' if mode == 'zhuyin' else ''),
              mode=mode, issues=('919',), **options)(probe)
 
@@ -9884,13 +9901,19 @@ conf_919_case('word-nul-truncates',
                   b'gb_char.table gb_char.bin\x00junk gb_char.dbin'),
               control=True)
 
+conf_919_case('source-token-nul',
+              lambda data: data.replace(b'source table format:pinyin', b'source table format:pinyin\x00suffix'))
+conf_919_case('database-token-nul',
+              lambda data: data.replace(b'database format:BerkeleyDB', b'database format:BerkeleyDB\x00suffix')
+                  .replace(b'database format:KyotoCabinet', b'database format:KyotoCabinet\x00suffix')
+                  .replace(b'database format:Tkrzw', b'database format:Tkrzw\x00suffix'))
 
-def header_919(name, *edits, control=True, host_scanf=()):
-    """Register initialization-only header cases for both facades with stderr and scanner metadata."""
+
+def header_919(name, *edits, control=True):
+    """Register initialization-only header cases for both facades with stderr."""
     for mode in ('pinyin', 'zhuyin'):
         case('table-conf-919-' + name + ('-zhuyin' if mode == 'zhuyin' else ''),
-             mode=mode, stderr=True, issues=('919',), control=control,
-             host_scanf=host_scanf)(header_probe(*edits))
+             mode=mode, stderr=True, issues=('919',), control=control)(header_probe(*edits))
 
 
 header_919('lambda-dot-only', ('lambda parameter:0.312699', 'lambda parameter:.'))
@@ -9937,16 +9960,16 @@ for _name, _spelling in (
     conf_case('919-' + _name, ('lambda parameter:0.312699', 'lambda parameter:' + _spelling),
               issues=('919',), control=True)
 
-for _name, _spelling, _control, _host in (
-        ('lambda-exponent-sign-without-digits', '1e+', True, ('1e+',)),
-        ('lambda-hex-exponent-sign-without-digits', '0x1p+', True, ('0x1p+',)),
-        ('lambda-hex-exponent-minus-without-digits', '0x1p-', True, ('0x1p-',)),
-        ('lambda-hex-dot-without-digits', '0x.', True, ('0x.',)),
-        ('lambda-nan-unclosed', 'nan(', True, ())):
+for _name, _spelling in (
+        ('lambda-exponent-sign-without-digits', '1e+'),
+        ('lambda-hex-exponent-sign-without-digits', '0x1p+'),
+        ('lambda-hex-exponent-minus-without-digits', '0x1p-'),
+        ('lambda-hex-dot-without-digits', '0x.'),
+        ('lambda-nan-unclosed', 'nan(')):
     for _mode in ('pinyin', 'zhuyin'):
         _suffix = '-zhuyin' if _mode == 'zhuyin' else ''
         case('table-conf-919-' + _name + _suffix, mode=_mode, stderr=True,
-             issues=('919',), control=_control, host_scanf=_host)(
+             issues=('919',), control=True)(
                  header_probe(('lambda parameter:0.312699', 'lambda parameter:' + _spelling)))
 
 # The five-word row plus the next row's first word form a valid six-word
@@ -9964,6 +9987,77 @@ conf_case('919-addon-atoi-nondigit',
 conf_abort('919-addon-positive-overflow',
            ('+', 'addon 99999999999999999999 art.table art.bin NULL DICTIONARY'),
            modes=('pinyin',), issues=('919',), control=True)
+
+# #1297 Phase 2: these malformed headers now stop before a session exists.
+# Keep each fixture and ID; observe initialization directly, without requiring
+# the old scanner's successful initialization to reach the case's assertions.
+def scanner_initialization(original):
+    """Keep the fixture while observing the header parser before user-state work."""
+    def probe(k):
+        """Observe header acceptance with an already conforming user marker."""
+        if hasattr(original, 'config_edits'):
+            system = conf_system(k, *original.config_edits)
+        else:
+            system = conf_system_bytes(k, original.config_mutate)
+        _write_user_conf(k)
+        return {'ctx': bool(k.init(system=system))}
+    return probe
+
+_SCANNER_RECORDS = {
+    '1297-table-floats.md': (
+        'lambda-hex', 'lambda-hex-fraction', 'lambda-hex-upper', 'lambda-inf', 'lambda-nan',
+        '919-lambda-hex-no-exponent', '919-lambda-infinity', '919-lambda-nan-payload',
+        '919-lambda-hex-overflow'),
+    '1297-table-decimals.md': ('919-versions-positive-overflow', '919-versions-int-wrap'),
+    '1297-table-lines.md': ('919-header-one-line', '919-header-leading-space'),
+    '1297-table-words.md': ('919-source-token-nul', '919-database-token-nul'),
+    '1297-addon-index.md': ('addon-index-wraps', '919-addon-atoi-nondigit'),
+}
+for _record, _names in _SCANNER_RECORDS.items():
+    for _name in _names:
+        for _suffix in ('', '-zhuyin'):
+            _id = 'table-conf-' + _name + _suffix
+            if _id not in CASES:
+                continue
+            _spec = CASES[_id]
+            _original = _spec['fn']
+            _spec['fn'] = scanner_initialization(_original)
+            _spec.update(policy_record=_record, host_scanf=(), issues=tuple(dict.fromkeys((*_spec['issues'], '919'))))
+
+# The old host_scanf tags belonged to the scanner imitation. Use source-derived
+# host-version classification for the pin only; no scanner probe is executed.
+# glibc 2.42 first rejected incomplete exponents (0a8e7ac95c); 2.43 first
+# rejected 0x. (b52ecff316). Both Rust and newer glibc reject these fields.
+def _scanner_host_policy():
+    """Register platform-dependent pin acceptance from its native libc version."""
+    try:
+        native = os.confstr('CS_GNU_LIBC_VERSION')
+    except (AttributeError, OSError, ValueError):
+        return  # registry/harness tests also run on non-glibc native hosts
+    if not native or not native.startswith('glibc '):
+        return
+    release = tuple(int(part) for part in native.removeprefix('glibc ').split('.')[:2])
+    exponents = ('lambda-exponent-without-digits', 'lambda-hex-exponent-without-digits',
+                 '919-lambda-exponent-sign-without-digits',
+                 '919-lambda-hex-exponent-sign-without-digits',
+                 '919-lambda-hex-exponent-minus-without-digits')
+    for stem in (*exponents, '919-lambda-hex-dot-without-digits'):
+        threshold = (2, 43) if stem.endswith('hex-dot-without-digits') else (2, 42)
+        for suffix in ('', '-zhuyin'):
+            spec = CASES['table-conf-' + stem + suffix]
+            if release < threshold:
+                spec['policy_record'] = '1297-table-floats.md'
+                spec['fn'] = scanner_initialization(spec['fn'])
+            spec['issues'] = tuple(dict.fromkeys((*spec['issues'], '919')))
+
+_scanner_host_policy()
+for _suffix in ('', '-zhuyin'):
+    CASES['table-conf-abort-919-word-width-overlong' + _suffix].update(
+        policy_record='1297-table-words.md', control=False)
+for _suffix, _domain in (('', 'libpinyin'), ('-zhuyin', 'libzhuyin')):
+    _spec = CASES['table-conf-919-short-row-merged' + _suffix]
+    _spec['crash'] = {'ctx': False, 'logs': [[_domain, 16]]}
+
 
 # A file name never leaves its directory: `g_build_filename(user_dir,
 # "/abs/u.bin")` is `<user_dir>/abs/u.bin`, not `/abs/u.bin`.
@@ -16769,23 +16863,36 @@ def policy_expectations(spec):
             or record.get('disposition') != 'POLICY-ACCEPTED'):
         raise ValueError('policy record is not current or has incompatible metadata')
     pair = record['cases'][spec['case_id']]
+    if isinstance(pair, dict) and set(pair) == {'cells'}:
+        pair = pair['cells'][os.environ.get('CONTRACT_DIFF_CELL', CELL)]
     if not isinstance(pair, dict) or set(pair) != {'pin', 'subject'}:
         raise ValueError('policy case must specify both observations')
-    for side in pair.values():
-        if (not isinstance(side, dict) or set(side) != {'exit', 'result', 'stderr'}
-                or type(side['exit']) is not int or side['exit'] != 0
-                or not isinstance(side['result'], dict) or 'logs' not in side['result']
-                or any(key.startswith('~') for key in side['result'])
+    keys = {'exit', 'result', 'stderr'} | ({'userfiles'} if spec['userdir'] else set())
+    for name, side in pair.items():
+        if (not isinstance(side, dict) or set(side) != keys
+                or type(side['exit']) is not int
                 or not isinstance(side['stderr'], str)):
-            raise ValueError('policy observation must be complete and normally terminated')
+            raise ValueError('policy observation must be complete')
+        if spec['userdir'] and (not isinstance(side['userfiles'], dict)
+                               or any(not isinstance(key, str) or not isinstance(value, str)
+                                      for key, value in side['userfiles'].items())):
+            raise ValueError('policy user-directory listing must be complete')
+        if name == 'pin' and side['exit'] == -signal.SIGABRT and spec['abort'] is not NO_ABORT:
+            if side['result'] is not None:
+                raise ValueError('aborted pin cannot have a result document')
+        elif (side['exit'] != 0 or not isinstance(side['result'], dict)
+              or 'logs' not in side['result']
+              or any(key.startswith('~') for key in side['result'])):
+            raise ValueError('policy observation must normally terminate or hold a registered pin abort')
     if pair['pin'] == pair['subject']:
         raise ValueError('policy case must record a difference, not parity')
     return pair
 
 
-def policy_observation(side):
+def policy_observation(spec, side):
     """The full stable observation, excluding worker timings only."""
-    return {key: side[key] for key in ('exit', 'result', 'stderr')}
+    keys = ('exit', 'result', 'stderr', *(['userfiles'] if spec['userdir'] else []))
+    return {key: side[key] for key in keys}
 
 
 def verdict_for(spec, pin, subject, expect_parent):
@@ -16799,7 +16906,7 @@ def verdict_for(spec, pin, subject, expect_parent):
     if spec['policy_record'] is not None:
         try:
             expected_pair = policy_expectations(spec)
-            actual = dict(pin=policy_observation(pin), subject=policy_observation(subject))
+            actual = dict(pin=policy_observation(spec, pin), subject=policy_observation(spec, subject))
         except (OSError, ValueError, KeyError, TypeError):
             return 'INVALID', False, False
         if not all(valid_observation(spec, side) for side in (pin, subject)):

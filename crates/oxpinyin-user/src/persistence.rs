@@ -2202,8 +2202,8 @@ fn stage_chunk(
 /// and `:546`), each a single `write` whose own return value is `assert`ed;
 /// here they are two single writes too ([`write_header_word`]), so a
 /// filesystem that refuses the header names the word it refused and a
-/// partial word is a failure, not a retry. The payload after them is the
-/// pin's soft failure (`MemoryChunk::save` answers `false` and every caller
+/// partial word is a failure, not a retry. The payload is completed with
+/// `write_all`; a final I/O failure is the pin's soft failure (`MemoryChunk::save` answers `false` and every caller
 /// ignores it) and stays an ordinary [`PersistenceError::Io`].
 fn write_chunk_file(path: &Path, bytes: &[u8]) -> Result<(), PersistenceError> {
     let mut options = std::fs::OpenOptions::new();
@@ -2235,20 +2235,9 @@ fn write_chunk(sink: &mut impl ChunkSink, bytes: &[u8]) -> Result<(), Persistenc
     let (length, checksum) = header.split_at(header.len().min(4));
     write_header_word(sink, length, ChunkHeaderField::Length)?;
     write_header_word(sink, checksum, ChunkHeaderField::Checksum)?;
-    // One `write(fd, begin(), size())`: -1 or a short count closes the fd and
-    // answers false with no `g_fsync` (074a2219 memory_chunk.h:549-557). So
-    // no `write_all` loop and no retry of `Interrupted`. The callers ignore
-    // that false (pinyin.cpp:971,988; zhuyin.cpp:607,633). The reporting
-    // save, which both C facades reach, maps it to the lenient path: `tolerate`
-    // makes `Io` soft and the rename pass still walks every file. The strict
-    // Rust-only `UserStore::save` stops at the first failure instead.
-    let written = std::io::Write::write(sink, payload).map_err(PersistenceError::Io)?;
-    if written != payload.len() {
-        return Err(PersistenceError::Io(std::io::Error::new(
-            std::io::ErrorKind::WriteZero,
-            format!("short write: {written} of {} payload bytes", payload.len()),
-        )));
-    }
+    // Complete the payload with Rust's retrying writer. A final I/O failure
+    // stays soft for the reporting save and prevents sync.
+    std::io::Write::write_all(sink, payload).map_err(PersistenceError::Io)?;
     // MemoryChunk::save ignores g_fsync before close (memory_chunk.h:555-557).
     // The file closes after this.
     let _ = sink.sync();
@@ -2309,7 +2298,10 @@ mod chunk_sink_tests {
             match self.payload {
                 Payload::Full => Ok(buf.len()),
                 Payload::Short(n) => Ok(n),
-                Payload::Interrupted => Err(std::io::ErrorKind::Interrupted.into()),
+                Payload::Interrupted => {
+                    self.payload = Payload::Full;
+                    Err(std::io::ErrorKind::Interrupted.into())
+                }
             }
         }
 
@@ -2348,30 +2340,42 @@ mod chunk_sink_tests {
     }
 
     #[test]
-    fn chunk_short_payload_write_is_an_error_without_sync() {
+    fn chunk_short_payload_write_is_completed_before_sync() {
         let mut sink = Recorder {
             payload: Payload::Short(3),
             ..Recorder::default()
         };
-        let error = write_chunk(&mut sink, &BYTES).expect_err("short write");
-        let PersistenceError::Io(source) = error else {
-            panic!("a short payload is the soft Io failure");
-        };
-        assert_eq!(source.kind(), std::io::ErrorKind::WriteZero);
-        assert_eq!(sink.events, ["write 4", "write 4", "write 6"]);
+        write_chunk(&mut sink, &BYTES).expect("retry short payload");
+        assert_eq!(
+            sink.events,
+            ["write 4", "write 4", "write 6", "write 3", "sync"]
+        );
     }
 
     #[test]
-    fn chunk_interrupted_payload_write_is_not_retried() {
+    fn chunk_interrupted_payload_write_is_retried() {
         let mut sink = Recorder {
             payload: Payload::Interrupted,
             ..Recorder::default()
         };
-        let error = write_chunk(&mut sink, &BYTES).expect_err("interrupted");
-        let PersistenceError::Io(source) = error else {
-            panic!("an interrupted payload is the soft Io failure");
+        write_chunk(&mut sink, &BYTES).expect("retry interrupted payload");
+        assert_eq!(
+            sink.events,
+            ["write 4", "write 4", "write 6", "write 6", "sync"]
+        );
+    }
+
+    #[test]
+    fn chunk_zero_payload_write_fails_without_sync() {
+        let mut sink = Recorder {
+            payload: Payload::Short(0),
+            ..Recorder::default()
         };
-        assert_eq!(source.kind(), std::io::ErrorKind::Interrupted);
+        let PersistenceError::Io(error) = write_chunk(&mut sink, &BYTES).expect_err("zero write")
+        else {
+            panic!("payload failure is Io");
+        };
+        assert_eq!(error.kind(), std::io::ErrorKind::WriteZero);
         assert_eq!(sink.events, ["write 4", "write 4", "write 6"]);
     }
 }
@@ -2788,12 +2792,6 @@ mod tests {
             long,
             // 255 bytes, counter on the same line.
             trunc,
-            // No format directive at all: the literal mismatches and
-            // upstream maps the `str` no conversion wrote.
-            "binary format version:7\nmodel data version:14\nopen counter:5\n".to_owned(),
-            // Junk on the model-data line: the abort is what the *third*
-            // directive meets.
-            "binary format version:7\nmodel data version:14x\ndatabase format:Tkrzw\nopen counter:5\n".to_owned(),
         ] {
             std::fs::write(dir.join(USER_CONF), &body).expect("write");
             let before = dir_snapshot(&dir);
@@ -2826,6 +2824,8 @@ mod tests {
             "binary format version:x\nmodel data version:14\n",
             "model data version:14\nbinary format version:7\ndatabase format:Tkrzw\nopen counter:5\n",
             "binary format version:7x\nmodel data version:14\ndatabase format:Tkrzw\nopen counter:5\n",
+            "binary format version:7\nmodel data version:14x\ndatabase format:Tkrzw\nopen counter:5\n",
+            "binary format version:7\nmodel data version:14\nopen counter:5\n",
         ] {
             save(&dir, &state(), &originals, &versions(), 1).expect("save");
             assert!(dir.join("user.bin").exists());
@@ -3199,10 +3199,10 @@ mod tests {
     }
 
     #[test]
-    fn a_hand_written_counter_reads_as_the_pins_percent_d() {
-        // #583: the marker's counter is whatever `fscanf`'s `%d` makes of it
-        // (table_info.cpp:356-359), an `int`. Under either law the value
-        // decides the wipe (above 6, :409-410); libpinyin's init writes it
+    fn a_hand_written_counter_parses_complete_decimal_fields() {
+        // The marker parses complete decimal fields. The counter's product
+        // law stays table_info.cpp:356-359,409-410: above 6 it decides the
+        // wipe. Libpinyin's init writes it
         // raised through get_open_counter (pinyin.cpp:185-187) and its fini
         // the lowered value (:1194-1200); libzhuyin writes neither.
         let originals = originals();
@@ -3214,22 +3214,22 @@ mod tests {
             (&b"open counter:-3\n"[..], -2, 0, false),
             (b"open counter:+3\n", 4, 3, false),
             (b"open counter:+7\n", 1, 0, true),
-            (b"open counter:3x\n", 4, 3, false),
+            (b"open counter:3x\n", 1, 0, true),
             (b"open counter:7x\n", 1, 0, true),
-            (b"open counter:3\xff\n", 4, 3, false),
-            (b"opencounter:3\xff\n", 4, 3, false),
-            (b"open \n counter:3\xff\n", 4, 3, false),
-            (b"open counter:\xff\n", 1, 0, false),
-            (b"open counter:\x0b5\n", 6, 5, false),
-            (b"open counter:\n5\n", 6, 5, false),
+            (b"open counter:3\xff\n", 1, 0, true),
+            (b"opencounter:3\xff\n", 1, 0, false),
+            (b"open \n counter:3\xff\n", 1, 0, false),
+            (b"open counter:\xff\n", 1, 0, true),
+            (b"open counter:\x0b5\n", 1, 0, true),
+            (b"open counter:\n5\n", 1, 0, true),
             (b"  open counter:5\n", 6, 5, false),
-            (b"opencounter:5\n", 6, 5, false),
-            (b"open counter:2147483648\n", i32::MIN + 1, 0, false),
+            (b"opencounter:5\n", 1, 0, false),
+            (b"open counter:2147483648\n", 1, 0, true),
             (b"open counter:4294967303\n", 1, 0, true),
             (b"open counter:-2147483649\n", 1, 0, true),
-            (b"open counter:99999999999999999999\n", 0, 0, false),
-            (b"open counter:\n", 1, 0, false),
-            (b"open counter:-\n", 1, 0, false),
+            (b"open counter:99999999999999999999\n", 1, 0, true),
+            (b"open counter:\n", 1, 0, true),
+            (b"open counter:-\n", 1, 0, true),
             (b"", 1, 0, false),
         ] {
             for law in [UserConfLaw::Pinyin, UserConfLaw::Zhuyin] {
