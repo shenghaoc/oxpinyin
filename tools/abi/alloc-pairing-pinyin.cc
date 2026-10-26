@@ -5,7 +5,7 @@
 // slot `pinyin.h` hands across the boundary, which deallocator releases it.
 // This translation unit is the proof that the declaration is true: it drives
 // the ABI the way a consumer does, releases each slot with exactly the
-// declared deallocator, and is run by tools/abi/check-alloc-pairing.sh under
+// declared deallocator, and is run by just abi alloc-pairing under
 // LeakSanitizer. A slot whose declared deallocator does not in fact release
 // the allocation shows up as a leak; a borrowed pointer wrongly declared
 // owned shows up as ASan's invalid-free.

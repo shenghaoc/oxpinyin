@@ -967,6 +967,42 @@ def process_parent(pid):
         return None
 
 
+def process_group_live(group: int, *, system: str | None = None,
+                       proc: Path = Path('/proc'), ps_output: str | None = None) -> bool | None:
+    """Whether a POSIX group has an executing member, excluding zombies.
+
+    Linux reads stat's state and process-group fields. Darwin has no stdlib
+    process enumeration, so ps supplies the same two facts. Tests inject the
+    platform and proc tree or ps output; parsing is independent of the host.
+    Unknown observations stay unknown rather than claiming termination.
+    """
+    system = sys.platform if system is None else system
+    try:
+        if system.startswith('linux'):
+            for entry in proc.iterdir():
+                if not entry.name.isdigit():
+                    continue
+                try:
+                    fields = (entry / 'stat').read_text().rsplit(')', 1)[1].split()
+                except FileNotFoundError:
+                    continue
+                if int(fields[2]) == group and fields[0] not in ('Z', 'X'):
+                    return True
+            return False
+        if system == 'darwin':
+            if ps_output is None:
+                ps_output = subprocess.run(['ps', '-axo', 'pgid=,stat='], capture_output=True,
+                                           text=True, check=True, timeout=5).stdout
+            for line in ps_output.splitlines():
+                fields = line.split()
+                if fields and int(fields[0]) == group and not fields[1].startswith(('Z', 'X')):
+                    return True
+            return False
+    except (OSError, ValueError, IndexError, subprocess.SubprocessError):
+        return None
+    return None
+
+
 def is_ancestor(pid):
     """Walk this process's parent chain for a PID, stopping on unknown parents or cycles."""
     current, seen = os.getppid(), set()

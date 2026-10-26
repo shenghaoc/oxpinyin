@@ -1,6 +1,6 @@
 # Live parity gates
 
-`tools/bisection/run-all.sh` runs the registered ABI differentials against the
+`just runner run-all` runs the registered ABI differentials against the
 pin-built oracle. It does not provision or patch the oracle, cache oracle output,
 run a workspace test sweep, or execute performance recipes. The registry is
 `tools/bisection/runners.json`; `--list` prints its issue/register references,
@@ -13,22 +13,22 @@ the manifest must match it before any oracle gate executes.
 
 Use Berkeley DB for a lane's ordinary before/after verification. Select all
 three cells for the start-of-sweep and pre-release differential run. The
-aggregate changes no CI policy; direct `run-live-typing-diff.sh` keeps its legacy
+aggregate changes no CI policy; direct `just runner live-typing-diff` keeps its legacy
 missing-oracle exit behavior for CI.
 
 ```sh
 # A lane's named runners on the reference cell.
-tools/bisection/run-all.sh --cells bdb \
+just runner run-all --cells bdb \
   --runners addon-candidate-diff,union-diff \
   --oracle bdb=/path/to/oracle/bdb --data bdb=/path/to/bdb-data
 
 # Find and run the differentials associated with an issue or register row.
-tools/bisection/run-all.sh --list --issue 599
-tools/bisection/run-all.sh --cells bdb --issue row:35 \
+just runner run-all --list --issue 599
+just runner run-all --cells bdb --issue row:35 \
   --oracle bdb=/path/to/oracle/bdb --data bdb=/path/to/bdb-data
 
 # One sweep, including both facades' SYSTEM_FILE interchange.
-tools/bisection/run-all.sh --cells bdb,kc,tkrzw --jobs 2 \
+just runner run-all --cells bdb,kc,tkrzw --jobs 2 \
   --oracle-root /path/to/oracle --target-root /path/to/retained/targets \
   --data bdb=/path/to/bdb-data --data kc=/path/to/kc-data \
   --data tkrzw=/path/to/tkrzw-data \
@@ -54,7 +54,7 @@ and builds a sound libtkrzw, with its `tkrzw_dbm_util`, when the host's fails
 The registry's `oracle_variant` defaults to `unpatched`. Only
 `bigram-export-diff` and `residue-a-tail-diff` select `bigram-export-strjoinv`.
 For an unpatched base prefix `ROOT/CELL` (including `--oracle CELL=PREFIX`),
-`oracle-cell.sh` resolves that variant to `ROOT/CELL-bigram-export-strjoinv`.
+`tools.dev.cell.Settings` resolves that variant to `ROOT/CELL-bigram-export-strjoinv`.
 It derives the expected patch-qualified pin reference from the committed patch
 manifest recipe. The aggregate uses this selected prefix in both runner argv
 and `PINYIN_ORACLE_PREFIX`; every other runner retains the unpatched base.
@@ -79,7 +79,7 @@ The direct residue-A runner requires the patch marker in
 missing. Both patched registry entries require the exact patch-qualified pin
 identity. An absent patched prefix is FAIL, never an allowable skip.
 
-`oracle-cell.sh` owns backend selection and target resolution. It exports
+`tools.dev.cell.Settings` owns backend selection and target resolution. Its child environment sets
 `CARGO_PROFILE_DEV_OPT_LEVEL=1`; no Cargo manifest or shipped source is changed.
 The aggregate builds the requested cells' capi, zhuyin-capi and dictool dev
 artifacts once before scheduling execution. Each cell has a separate retained
@@ -154,7 +154,7 @@ Installed metadata is a supplied-tree gate. Its staging inputs may be set per
 cell without changing the global process environment:
 
 ```sh
-tools/bisection/run-all.sh --runners pc-metadata --cells bdb \
+just runner run-all --runners pc-metadata --cells bdb \
   --oracle bdb=/path/to/oracle/bdb \
   --cell-env bdb:OXPINYIN_METADATA_PIN_ROOT=/path/to/pin-stage \
   --cell-env bdb:OXPINYIN_METADATA_SUBJECT_ROOT=/path/to/subject-stage \

@@ -7,6 +7,7 @@ import runpy
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -108,20 +109,27 @@ if os.environ.get('STUB_FAIL') == '1':
 (target / 'debug/libpinyin_capi.so').write_bytes(b'stub library')
 ''')
         cargo.chmod(0o755)
+        # A compiler fixture is not heavy work. Exercise the production command
+        # boundary without acquiring admission for a process that waits on us.
+        just = self.bin / 'just'
+        just.write_text('#!/bin/sh\nshift 2\nexec "$@"\n')
+        just.chmod(0o755)
         self.env = dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ['PATH'],
                         CARGO_TARGET_DIR=str(self.target), PINYIN_ORACLE_DBM='bdb',
                         STUB_ENTERED=str(self.entered), STUB_RELEASE=str(self.release))
 
     def command(self, owner, artifacts='pinyin-capi'):
-        return ['bash', str(owner / 'tools/bisection/cell-artifacts.sh'), '--artifacts', artifacts]
+        program = ('import sys; from pathlib import Path; '
+                   f'sys.path.insert(0, {str(ROOT)!r}); '
+                   'from tools.dev.cell import main; '
+                   'raise SystemExit(main(["--artifacts", sys.argv[2]], root=Path(sys.argv[1])))')
+        return [sys.executable, '-X', 'lazy_imports=normal', '-c', program, str(owner), artifacts]
 
     def test_concurrent_owners_only_one_reaches_cargo(self):
         owners = []
         for name in ('first', 'second'):
             owner = self.root / name
-            for relative in ('tools/bisection/cell-artifacts.sh', 'tools/bisection/oracle-cell.sh',
-                             'tools/oracle/build-oracle.sh', 'tools/tkrzw/runtime.sh',
-                             'tools/lib/bash-floor.sh', '.python-version'):
+            for relative in ('tools/oracle/build-oracle.sh', '.python-version'):
                 destination = owner / relative
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(ROOT / relative, destination)
@@ -161,6 +169,14 @@ if os.environ.get('STUB_FAIL') == '1':
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(self.target.exists())
         self.assertFalse((self.target / 'oxpinyin-cell-identity.json').exists())
+        self.assertEqual(list(self.entered.iterdir()), [])
+
+    def test_malformed_inherited_marker_fails_before_cargo_without_traceback(self):
+        result = subprocess.run(self.command(ROOT), env=dict(self.env, OXPINYIN_HEAVY_SLOT_HELD='{'),
+                                capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('Invalid OXPINYIN_HEAVY_SLOT_HELD', result.stderr)
+        self.assertNotIn('Traceback', result.stderr)
         self.assertEqual(list(self.entered.iterdir()), [])
 
     def test_unreadable_identity_stops_before_cargo_without_traceback(self):

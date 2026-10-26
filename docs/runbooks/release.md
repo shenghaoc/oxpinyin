@@ -14,10 +14,10 @@ and attaches them with a `SHA256SUMS` to the release.
 ## Before tagging
 
 1. `main` green on `CI`, `Store backends` and the last `verify-nightly`.
-2. The ABI export gate passed on the tip (`tools/abi/check-exports.sh
+2. The ABI export gate passed on the tip (`just abi exports
    --shipped`; CI runs it on every change).
 3. The allocator-pairing gate passed on the tip
-   (`tools/abi/check-alloc-pairing.sh`; CI runs it on every change).
+   (`just abi alloc-pairing`; CI runs it on every change).
    Linux only — `--static-only` is the portable half.
 4. Frozen pins unchanged since the last measured run, or re-measured
    (`goldens-and-pins.md`).

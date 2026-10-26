@@ -126,7 +126,7 @@ class CheckoutInterpreterTests(unittest.TestCase):
             env = {key: value for key, value in os.environ.items()
                    if key not in ('UV_PYTHON', 'PYTHONHOME', 'PYTHONPATH')}
             env.update(PATH=f'{stubs}{os.pathsep}{os.environ["PATH"]}', RECORD=str(record))
-            result = subprocess.run([str(ROOT / 'tools/bisection/run-all.sh'), '--list', '--runners', 'relative/path'],
+            result = subprocess.run(['uv', 'run', '--no-project', '--managed-python', '--python', checkout_request, 'python', '-X', 'lazy_imports=normal', str(ROOT / 'tools/dev/__main__.py'), 'runner', 'run-all', '--list', '--runners', 'relative/path'],
                                     cwd=outer, env=env, capture_output=True, text=True, check=False)
             self.assertEqual(result.returncode, 0, result.stderr)
             lines = record.read_text().splitlines()

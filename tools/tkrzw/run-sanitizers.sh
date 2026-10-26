@@ -43,7 +43,7 @@
 # enforcement"): the library setup.sh's environment file names or, with none
 # configured, a host libtkrzw that passes tools/tkrzw/distro-probe.sh. Every
 # test binary must resolve libtkrzw to it before a test runs.
-# oracle_cell_library_path() snapshots the inherited loader path before
+# The shared cell service snapshots the inherited loader path before
 # any directory change, because cargo runs each test binary from the package
 # directory. On macOS the just recipe puts Homebrew's tkrzw_dbm_util on
 # PATH, and this probe certifies the Homebrew dylib.
@@ -60,15 +60,11 @@
 set -euo pipefail
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 
-# Before any directory change (#1060). The subshell keeps the rest of
-# oracle-cell.sh, its cell target directory and CARGO_PROFILE_DEV_OPT_LEVEL,
-# out of this build.
-inherited_library_path=$(
-	PINYIN_ORACLE_DBM=tkrzw
-	# shellcheck source=tools/bisection/oracle-cell.sh
-	source "$REPO_ROOT/tools/bisection/oracle-cell.sh"
-	oracle_cell_library_path
-)
+# Before any directory change (#1060); no cell build settings enter this build.
+"$REPO_ROOT/tools/install-python.sh"
+sanitizer_caller_directory=$PWD
+inherited_library_path=$(cd "$REPO_ROOT" && uv run --no-project --managed-python python \
+    -X lazy_imports=normal -m tools.dev cell-artifacts --library-path "$sanitizer_caller_directory")
 cd "$REPO_ROOT"
 
 # Named once, in tools/sanitize.sh.

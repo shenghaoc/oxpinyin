@@ -282,7 +282,7 @@ class ConcurrentContractCellsTests(unittest.TestCase):
         row = next(r for r in json.loads(original(Path(__file__).with_name('runners.json')))
                    if r['name'] == 'contract-diff')
         row = dict(row, oracle=False, artifacts=[], input_paths=[], required_env=[],
-                   command=['bash', '{root}/tools/bisection/run-contract-diff.sh'])
+                   command=[sys.executable, '-m', 'tools.dev', 'runner', 'contract-diff'])
         def read(path, *args, **kwargs):
             return json.dumps([row]) if path.name == 'runners.json' else original(path, *args, **kwargs)
         lock = threading.Lock()

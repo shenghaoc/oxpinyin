@@ -18,8 +18,8 @@ if str(ROOT) not in sys.path:
 
 from tools.dev import cli, host, registry, slot, test_support
 
-IMPLEMENTATION = 'legacy:tools/bisection/run-bisect.sh'
-COMMAND = ['bash', '{root}/tools/bisection/run-bisect.sh']
+IMPLEMENTATION = 'legacy:tools/install-python.sh'
+COMMAND = ['bash', '{root}/tools/install-python.sh']
 
 
 class RealJustSmokeTests(unittest.TestCase):
@@ -220,7 +220,7 @@ class CliTests(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()) as output:
             self.assertEqual(cli.main(['list', '--runners', 'bisect', '--heavy']), 0)
             self.assertEqual(output.getvalue(), 'bisect\tgate\tbdb,kc,tkrzw\theavy\t'
-                             'legacy:tools/bisection/run-bisect.sh\n')
+                             'python:tools.dev\n')
         with contextlib.redirect_stdout(io.StringIO()) as output:
             self.assertEqual(cli.main(['list', '--runners', 'perf-baseline']), 0)
         self.assertEqual(output.getvalue().split('\t')[-1],
@@ -245,7 +245,7 @@ class CliTests(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()) as output:
             self.assertEqual(cli.main(['plan', '--runners', 'bisect,perf-baseline']), 0)
         lines = [line for line in output.getvalue().splitlines() if line.startswith('  implementation: ')]
-        self.assertEqual(lines, ['  implementation: legacy:tools/bisection/run-bisect.sh',
+        self.assertEqual(lines, ['  implementation: python:tools.dev',
                                  '  implementation: instrument:tools/bisection/run-perf-baseline.sh'])
         test_support.assert_not_called(self, self.launch)
 

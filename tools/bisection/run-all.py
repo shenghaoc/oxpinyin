@@ -25,6 +25,7 @@ if str(ROOT) not in sys.path:
 from tools.dev import host as _host
 from tools.dev import registry as _registry
 from tools.dev import slot as _slot
+from tools.dev.cell import Settings as CellSettings
 
 RUSTC_PEAK_MIB = _host.RUSTC_PEAK_MIB
 TEST_THREAD_PEAK_MIB = _host.TEST_THREAD_PEAK_MIB
@@ -308,7 +309,7 @@ def needed_artifacts(rows, env):
 
 
 def identity_of(target_dir):
-    """The identity cell-artifacts.sh recorded for a target directory, or None."""
+    """The shared cell builder's target-directory identity, or None."""
     path = Path(target_dir) / 'oxpinyin-cell-identity.json'
     return json.loads(path.read_text()) if path.is_file() else None
 
@@ -321,7 +322,7 @@ def check_identity(identity, root, cell, needed):
     after the record is a mixed identity, never a run."""
     if identity is None:
         raise ValueError('no artifact identity recorded for this target directory: build it with '
-                         'tools/bisection/cell-artifacts.sh (drop --no-build) before running')
+                         'just cell-artifacts (drop --no-build) before running')
     claimed = dict(worktree=identity.get('worktree'), cell=identity.get('cell'), profile=identity.get('profile'))
     wanted = dict(worktree=str(Path(root).resolve()), cell=cell, profile='dev')
     if claimed != wanted:
@@ -412,32 +413,23 @@ def run_in_heavy_slot(command):
 
 
 def cell_config(cell, target_root, env):
-    """Read a cell's artifact configuration through cell-artifacts.sh --describe.
+    """Read a cell's explicit artifact configuration through the shared service.
 
     Set the cell and target root in a copied environment. Return decoded JSON
-    or raise ValueError on a nonzero shell exit.
+    or raise ValueError for an invalid cell or pin configuration.
     """
     configured = env.copy()
     configured['PINYIN_ORACLE_DBM'] = cell
     configured['OXPINYIN_TARGET_ROOT'] = str(target_root)
-    command = ['bash', str(HERE / 'cell-artifacts.sh'), '--describe']
-    result = subprocess.run(command, env=configured, cwd=ROOT, capture_output=True, text=True)
-    if result.returncode:
-        raise ValueError(result.stderr.strip() or 'cell configuration failed')
-    return json.loads(result.stdout)
+    return CellSettings.read(configured, ROOT).describe()
 
 
 def oracle_config(prefix, variant, env):
-    """Read an oracle variant's configuration as JSON through cell-artifacts.sh.
+    """Read an oracle variant's configuration through the shared cell service.
 
-    Raise ValueError on a nonzero shell exit; launch and JSON errors propagate.
+    Raise ValueError for an unknown variant or invalid cell configuration.
     """
-    command = ['bash', str(HERE / 'cell-artifacts.sh'), '--describe-oracle',
-               str(prefix), variant]
-    result = subprocess.run(command, env=env, cwd=ROOT, capture_output=True, text=True)
-    if result.returncode:
-        raise ValueError(result.stderr.strip() or 'oracle configuration failed')
-    return json.loads(result.stdout)
+    return CellSettings.read(env, ROOT).oracle(str(prefix), variant).describe()
 
 
 def run_main():
@@ -701,7 +693,8 @@ def run_main():
                 try:
                     with admission:
                         rc, seconds, output, expired = execute(
-                            ['bash', str(HERE / 'cell-artifacts.sh'), '--artifacts', ','.join(artifacts)],
+                            [sys.executable, '-X', 'lazy_imports=normal', '-m', 'tools.dev',
+                             'cell-artifacts', '--artifacts', ','.join(artifacts)],
                             admission.env, ROOT, args.build_timeout, scratch / f'build-{cell}.log', slot=admission.slot)
                 except ResourceBlocked as exc:
                     rc, seconds, output, expired = 1, 0.0, str(exc), False

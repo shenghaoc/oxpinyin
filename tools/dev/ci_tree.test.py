@@ -6,6 +6,7 @@ import contextlib
 import io
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -313,6 +314,34 @@ class EvidenceTests(unittest.TestCase):
             self.assertNotEqual(git('rev-parse', 'HEAD'), original)
             self.assertEqual(git('rev-parse', 'HEAD^'), git('rev-parse', 'main'))
             self.assertEqual(git('rev-parse', 'HEAD^{tree}'), original_tree)
+
+
+class MigratedWorkflowTests(unittest.TestCase):
+    def test_migrated_gates_keep_the_tree_reuse_guard(self):
+        workflow = (ROOT / PROFILE.path).read_text()
+        commands = {
+            'C++ pinyin.h smoke gate': 'just heavy -- just runner cpp-smoke',
+            'ABI export gate (development build)': 'just heavy -- just abi exports',
+            'Allocator-pairing gate': 'just heavy -- just abi alloc-pairing',
+            'ABI export gate (shipped build)': 'just heavy -- just abi exports --shipped',
+        }
+        for name, command in commands.items():
+            with self.subTest(gate=name):
+                step = workflow.split('      - name: ' + name + '\n', 1)[1].split('\n      - ', 1)[0]
+                self.assertIn("        if: needs.changes.outputs.reuse != 'true'\n", step)
+                self.assertIn('        run: ' + command + '\n', step)
+
+    def test_workflow_script_paths_exist_and_shared_inputs_trigger_store_checks(self):
+        for profile in ci_tree.WORKFLOWS.values():
+            workflow = (ROOT / profile.path).read_text()
+            for path in re.findall(r'\btools/(?:[\w.-]+/)*[\w.-]+\.(?:py|sh)\b', workflow):
+                with self.subTest(workflow=profile.path, path=path):
+                    self.assertTrue((ROOT / path).is_file(), path)
+        store = (ROOT / ci_tree.WORKFLOWS['store'].path).read_text()
+        paths = store.split('          paths=(\n', 1)[1].split('\n          )', 1)[0]
+        for path in ('tools/dev', 'justfile', 'uv.toml', '.python-version', 'tools/install-python.sh'):
+            with self.subTest(path=path):
+                self.assertIn('            ' + path + '\n', paths + '\n')
 
 
 class RefreshTests(unittest.TestCase):

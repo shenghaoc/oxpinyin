@@ -52,7 +52,7 @@ class ImplementationTests(unittest.TestCase):
     def test_checked_in_row_logic_resolves_python_modules_and_keeps_paths_literal(self):
         for implementation, expected in (('python:tools.dev.registry', 'tools/dev/registry.py'),
                                          ('python:tools.dev', 'tools/dev/__main__.py'),
-                                         ('legacy:tools/bisection/run-bisect.sh', 'tools/bisection/run-bisect.sh')):
+                                         ('legacy:tools/install-python.sh', 'tools/install-python.sh')):
             with self.subTest(implementation=implementation):
                 self.assertEqual(target_file(ROOT, implementation), ROOT / expected)
                 self.assertTrue(target_file(ROOT, implementation).is_file())
@@ -61,11 +61,11 @@ class ImplementationTests(unittest.TestCase):
     def test_the_three_forms_load_when_the_command_runs_them(self):
         python = ['uv', 'run', 'python', '-X', 'lazy_imports=normal', '-m']
         for implementation, command in (
-                ('legacy:tools/bisection/run-bisect.sh', ['bash', '{root}/tools/bisection/run-bisect.sh']),
-                ('legacy:tools/bisection/run-bisect.sh', ['bash', './tools/bisection/run-bisect.sh']),
-                ('legacy:tools/bisection/run-bisect.sh',
-                 ['bash', (ROOT / 'tools/bisection/run-bisect.sh').as_posix()]),
-                ('legacy:./tools/bisection/run-bisect.sh', ['{root}/tools/bisection/run-bisect.sh', 'x']),
+                ('legacy:tools/install-python.sh', ['bash', '{root}/tools/install-python.sh']),
+                ('legacy:tools/install-python.sh', ['bash', './tools/install-python.sh']),
+                ('legacy:tools/install-python.sh',
+                 ['bash', (ROOT / 'tools/install-python.sh').as_posix()]),
+                ('legacy:./tools/install-python.sh', ['{root}/tools/install-python.sh', 'x']),
                 ('instrument:tools/bisection/run-perf-baseline.sh',
                  ['bash', '{root}/tools/bisection/run-perf-baseline.sh']),
                 ('python:tools.dev.registry', [*python, 'tools.dev.registry', 'list']),
@@ -76,9 +76,9 @@ class ImplementationTests(unittest.TestCase):
 
     def test_path_not_in_the_command(self):
         for implementation, command in (
-                ('legacy:tools/bisection/run-bisect.sh', ['bash', '{root}/tools/bisection/run-w11-diff.sh']),
-                ('legacy:tools/bisection/run-bisect.sh', ['bash', '{root}/tools/bisection/run-bisect.sh.bak']),
-                ('legacy:tools/bisection/run-bisect.sh', ['bash', '-c', '{root}/tools/bisection/run-bisect.sh x']),
+                ('legacy:tools/install-python.sh', ['bash', '{root}/tools/bisection/run-w11-diff.sh']),
+                ('legacy:tools/install-python.sh', ['bash', '{root}/tools/install-python.sh.bak']),
+                ('legacy:tools/install-python.sh', ['bash', '-c', '{root}/tools/install-python.sh x']),
                 ('instrument:tools/bisection/run-perf-baseline.sh',
                  ['bash', '{prefix}/tools/bisection/run-perf-baseline.sh'])):
             with self.subTest(implementation=implementation, command=command):
@@ -101,14 +101,14 @@ class ImplementationTests(unittest.TestCase):
                                  f'match its command {json.dumps(command)}')
 
     def test_missing_field(self):
-        for implementation in (None, '', 7, ['legacy:tools/bisection/run-bisect.sh']):
+        for implementation in (None, '', 7, ['legacy:tools/install-python.sh']):
             with self.subTest(implementation=implementation):
                 self.rejects(implementation, "registry row 'fixture' has no implementation")
 
     def test_unknown_form(self):
-        for implementation in ('native', 'native:tools/bisection/run-bisect.sh',
-                               'bash:tools/bisection/run-bisect.sh', 'legacy:',
-                               'tools/bisection/run-bisect.sh', 'Legacy:tools/bisection/run-bisect.sh'):
+        for implementation in ('native', 'native:tools/install-python.sh',
+                               'bash:tools/install-python.sh', 'legacy:',
+                               'tools/install-python.sh', 'Legacy:tools/install-python.sh'):
             with self.subTest(implementation=implementation):
                 self.rejects(implementation,
                              f"registry row 'fixture' implementation {implementation!r} is not "
@@ -123,7 +123,7 @@ class ImplementationTests(unittest.TestCase):
                              f"registry row 'fixture' implementation {implementation!r} does not exist")
 
     def test_path_outside_the_checkout(self):
-        for implementation in ('legacy:/bin/sh', 'legacy:../oxpinyin/tools/bisection/run-bisect.sh',
+        for implementation in ('legacy:/bin/sh', 'legacy:../oxpinyin/tools/install-python.sh',
                                'instrument:tools\\bisection\\run-perf-baseline.sh'):
             with self.subTest(implementation=implementation):
                 self.rejects(implementation,
@@ -251,8 +251,8 @@ class SelectionTests(unittest.TestCase):
 
 
 class MalformedCatalogTests(unittest.TestCase):
-    implementation = 'legacy:tools/bisection/run-bisect.sh'
-    command = ['bash', '{root}/tools/bisection/run-bisect.sh']
+    implementation = 'legacy:tools/install-python.sh'
+    command = ['bash', '{root}/tools/install-python.sh']
 
     def row(self, **fields):
         base = dict(name='fixture', command=self.command, cells=['bdb'],

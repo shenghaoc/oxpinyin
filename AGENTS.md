@@ -554,7 +554,7 @@ a failing job).
 ## Verification cells
 
 Maintainer ruling 2026-10-04 UTC. A cell is one DBM backend on both sides
-(`tools/bisection/oracle-cell.sh`). These rules decide which cells a
+(`tools/dev/cell.py`). These rules decide which cells a
 change runs on; they replace any lane prompt that says "all three cells
 always".
 
@@ -628,7 +628,7 @@ always".
    tests of the touched crate (`cargo test -p <crate> <test name>`),
    plus an explicit, small case selection of the differential that
    reaches the changed behaviour — the defect's witness case and its
-   neighbours, named by case ID (`tools/bisection/run-contract-diff.sh
+   neighbours, named by case ID (`just runner contract-diff
    ... -- --cases default-option-parse,default-option-single-key`),
    never the default suite.
    Iteration feedback is not a gate result and is not reported as one.

@@ -242,7 +242,7 @@ directory:
 
 ```sh
 cargo build --locked -p oxpinyin-capi
-tools/bisection/run-same-data-dir-diff.sh \
+just runner same-data-dir-diff \
     "$PINYIN_ORACLE_PREFIX/lib/libpinyin.so" target/debug/libpinyin_capi.so \
     "$PINYIN_ORACLE_PREFIX/lib/libpinyin/data"
 ```
@@ -355,7 +355,7 @@ just heavy -- cargo test -p oxpinyin-runtime --no-default-features --features tk
 `--cases`, `--issue` or `--family`, on one cell:
 
 ```sh
-just heavy -- tools/bisection/run-contract-diff.sh bdb "$PINYIN_ORACLE_PREFIX" \
+just heavy -- just runner contract-diff bdb "$PINYIN_ORACLE_PREFIX" \
     <target>/debug/libpinyin_capi.so <target>/debug/libzhuyin_capi.so
 ```
 
@@ -430,7 +430,7 @@ with `tools/cloud/setup.sh`; bdb and tkrzw completed there.
 Keep the contract harness's scratch directory and generated user directories
 on the container's local filesystem, outside macOS bind mounts. Create the
 directory and export `TMPDIR` **inside the Linux container** before starting
-`tools/bisection/run-contract-diff.sh`:
+`just runner contract-diff`:
 
 ```sh
 mkdir -p /var/tmp/lane-c-contract

@@ -5,7 +5,7 @@ import json
 import sys
 from pathlib import Path
 
-from . import check, coverage, doctor, host, pool, registry, slot, test_runner
+from . import abi, cell, check, coverage, doctor, host, pool, registry, slot, test_runner
 from .measure import cold, startup
 
 
@@ -164,6 +164,12 @@ def pool_command(args):
     return pool.run_command(args)
 
 
+def runner_command(args):
+    """Call the shared driver recipe services; the registry still owns selection."""
+    from . import runners
+    return runners.main(args.args)
+
+
 def build_parser():
     """Build the native service CLI with dispatch callbacks on each subcommand."""
     parser = argparse.ArgumentParser(prog='python -m tools.dev',
@@ -204,6 +210,18 @@ def build_parser():
     p.add_argument('--changed', nargs='?', const='HEAD', metavar='BASE',
                    help='select tests for changes since BASE (default HEAD), including untracked files')
     p.set_defaults(func=test_tools_command)
+
+    p = sub.add_parser('cell-artifacts', help='build or describe the selected cell artifacts')
+    p.add_argument('args', nargs=argparse.REMAINDER)
+    p.set_defaults(func=lambda args: cell.main(args.args))
+
+    p = sub.add_parser('abi', help='check exports and allocation contracts through shared services')
+    p.add_argument('args', nargs=argparse.REMAINDER)
+    p.set_defaults(func=lambda args: abi.main(args.args))
+
+    p = sub.add_parser('runner', help='execute one registry recipe through shared driver services')
+    p.add_argument('args', nargs=argparse.REMAINDER)
+    p.set_defaults(func=runner_command)
 
     p = sub.add_parser('coverage', help='run cargo llvm-cov with temporary per-invocation state')
     p.add_argument('args', nargs=argparse.REMAINDER)
@@ -251,6 +269,13 @@ def main(argv=None):
     to their runners; report registry selection errors on stderr with status 2.
     """
     argv = list(sys.argv[1:] if argv is None else argv)
+    if argv[:1] == ['cell-artifacts']:
+        return cell.main(argv[1:])
+    if argv[:1] == ['abi']:
+        return abi.main(argv[1:])
+    if argv[:1] == ['runner']:
+        from . import runners
+        return runners.main(argv[1:])
     if argv[:1] == ['coverage']:
         return coverage.run(argv[1:])
     if argv[:1] == ['test'] and argv[1:2] not in (['-h'], ['--help']):
