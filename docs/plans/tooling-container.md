@@ -227,14 +227,14 @@ Any later CI host change needs separate approval.
 | --- | --- |
 | `cargo fmt` including fuzz formatting; `cargo clippy`; `cargo deny` | Source/tool checks without a reference installation. |
 | `ci.yml` test, test-macos and test-windows Rust tests | Existing native crate/feature scopes from Layer 3. |
-| `tools/dev/check.sh` | Selected native storage/C-API setup tests. |
-| `tools/store/backend-matrix.sh`; store-features | Native backend feature validity and tests. |
-| `tools/bdb/run-sanitizers.sh`; `tools/kc/run-sanitizers.sh`; tkrzw-sanitizers | Native backend tests without a reference installation. |
+| `python -m tools.dev check` | Selected native storage/C-API setup tests. |
+| `python -m tools.dev backend-matrix`; store-features | Native backend feature validity and tests. |
+| `python -m tools.dev sanitize`; tkrzw-sanitizers | Native backend tests without a reference installation. |
 | `coverage.yml`; native fuzz-soak selections | Existing coverage/fuzz targets without pin inputs. |
 | `run-cpp-smoke.sh`; `check-exports.sh` including `--shipped`; `check-alloc-pairing.sh` | Direct subject-only CI gates against committed headers/fixtures. Keep existing platform limits. |
 | `check-pc-version.sh` | Static checked-in version consistency; no reference installation or live pin execution. |
-| `tests/lint-crate-cfg-placement.test.sh` | Keep the native lint-checker harness. |
-| `.github/scripts/lint-crate-cfg-placement.sh` | Keep the native crate-configuration placement check. |
+| `tools/dev/lint-crate-cfg-placement.test.py` | Keep the native lint-checker harness. |
+| `python -m tools.dev lint-crate-cfg-placement` | Keep the native crate-configuration placement check. |
 | `lizard crates/ -l rust -C 40` | Keep the native complexity gate with `lizard==1.24.0`. |
 | `sha256sum -c fixtures/w3/fixtures.sha256` | Keep the W3 fixture checksum gate. |
 | `verify-nightly.yml` overflow-lane | Run `cargo test --locked --workspace --release --no-default-features --features kyotocabinet` with `RUSTFLAGS=-C overflow-checks=y -C debug-assertions=y -D warnings`. Layer 3 owns nextest parity. |

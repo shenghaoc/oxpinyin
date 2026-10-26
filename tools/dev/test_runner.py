@@ -3,18 +3,22 @@
 The just recipes stay thin. Resolve nextest's concurrency before admission,
 then pass its final budget through the same slot implementation as just heavy.
 """
+from collections.abc import Mapping
+from dataclasses import dataclass
 import fnmatch
 import os
 from pathlib import Path
+import platform
 import re
 import shlex
+import shutil
 import stat
 import subprocess
 import sys
 import tempfile
 import tomllib
 
-from . import host, mounts, pool, slot
+from . import host, mounts, native, pool, slot
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -79,13 +83,22 @@ def memory_backed_tmpdir():
 # Explicit dependency mapping; shared infrastructure and unknown paths fall back
 # to the full suite rather than guessing from a matching filename.
 HARNESS_DEPENDENCIES = {
-    'tools/dev/test_runner.py': ('tools/dev/test_runner.test.py', 'tools/dev/cli.test.py'),
+    'tools/dev/test_runner.py': ('tools/dev/test_runner.test.py', 'tools/dev/cli.test.py',
+                                 'tools/dev/sanitize.test.py'),
     'tools/bisection/contract-diff.py': ('tools/bisection/contract-diff.test.py',
                                         'tools/bisection/teardown.test.py'),
     'tools/bisection/teardown.py': ('tools/bisection/teardown.test.py',
                                   'tools/dev/measure/startup.test.py',
                                   'tools/generate-function-order.test.py'),
     'tools/bisection/system_import_profile.py': ('tools/packaging/function-order.test.py',),
+    'tools/dev/native.py': ('tools/dev/check.test.py', 'tools/dev/backend.test.py',
+                            'tools/dev/sanitize.test.py'),
+    'tools/dev/check.py': ('tools/dev/check.test.py', 'tools/dev/backend.test.py',
+                           'tools/dev/lint-crate-cfg-placement.test.py',
+                           'tools/dev/cli.test.py'),
+    'tools/dev/cli.py': ('tools/dev/cli.test.py', 'tools/dev/sanitize.test.py',
+                         'tools/dev/lint-crate-cfg-placement.test.py',
+                         'tools/dev/backend.test.py'),
 }
 
 
@@ -201,6 +214,438 @@ def run_tools(files=(), pattern=None, changed=None):
     if status:
         print('::error::one or more tools/ Python harness tests failed', file=sys.stderr)
     return status
+
+
+SANITIZER_TOOLCHAIN = 'nightly-2026-09-07'
+SANITIZER_ALIASES = {'asan': 'address', 'tsan': 'thread', 'lsan': 'leak', 'msan': 'memory'}
+SANITIZER_NAMES = ('address', 'thread', 'leak', 'memory')
+SANITIZER_BACKENDS = ('bdb', 'kc', 'tkrzw')
+SANITIZE_USAGE = ('usage: sanitize.sh [--check] <bdb|kc|tkrzw|all> '
+                  '[address|thread|leak|memory]\n')
+
+
+@dataclass(frozen=True)
+class SanitizerBackend:
+    """One store backend's sanitizer data: feature, flags and display names."""
+
+    name: str
+    feature: str
+    locked: bool
+    target_from_nightly: bool
+    flags: Mapping[str, str]
+    display: Mapping[str, str]
+    override_options: bool = False
+
+
+_COMMON_FLAGS = {
+    'thread': '-Zsanitizer=thread -Cdebuginfo=1 -Cunsafe-allow-abi-mismatch=sanitizer',
+    'leak': '-Zsanitizer=leak -Cdebuginfo=1 -Cunsafe-allow-abi-mismatch=sanitizer',
+}
+_COMMON_DISPLAY = {'address': 'AddressSanitizer', 'thread': 'ThreadSanitizer',
+                   'leak': 'LeakSanitizer'}
+BACKEND_DATA = {
+    'bdb': SanitizerBackend(
+        'bdb', 'bdb', locked=False, target_from_nightly=False,
+        flags={'address': '-Zsanitizer=address -Cdebuginfo=1', **_COMMON_FLAGS},
+        display=_COMMON_DISPLAY),
+    'kc': SanitizerBackend(
+        'kc', 'kyotocabinet', locked=False, target_from_nightly=False,
+        flags={'address': '-Zsanitizer=address',
+               'thread': '-Zsanitizer=thread -Cunsafe-allow-abi-mismatch=sanitizer',
+               'leak': '-Zsanitizer=leak -Cunsafe-allow-abi-mismatch=sanitizer'},
+        display=_COMMON_DISPLAY),
+    'tkrzw': SanitizerBackend(
+        'tkrzw', 'tkrzw', locked=True, target_from_nightly=True,
+        flags={'address': '-D warnings -Zsanitizer=address -Cdebuginfo=1',
+               'thread': '-D warnings ' + _COMMON_FLAGS['thread'],
+               'leak': '-D warnings ' + _COMMON_FLAGS['leak']},
+        display=_COMMON_DISPLAY, override_options=True),
+}
+
+
+def _nightly(environment):
+    """Return the selected sanitizer nightly."""
+    return environment.get('OXPINYIN_SANITIZER_TOOLCHAIN') or SANITIZER_TOOLCHAIN
+
+
+def _toolchain_installed(tools, nightly, environment):
+    """Return whether rustup lists the selected nightly."""
+    try:
+        result = tools.run(['rustup', 'toolchain', 'list'], environment=environment)
+    except OSError:
+        return False
+    return any(line.startswith(nightly) for line in result.stdout.splitlines())
+
+
+def _rustc_host(tools, environment, nightly=None):
+    """Return the host triple rustc reports, with the nightly when given."""
+    command = ['rustc'] + ([f'+{nightly}'] if nightly else []) + ['-vV']
+    try:
+        result = tools.run(command, environment=environment)
+    except OSError:
+        return ''
+    for line in result.stdout.splitlines():
+        if line.startswith('host: '):
+            return line.removeprefix('host: ')
+    return ''
+
+
+def _toolchain_failure(backend, nightly, environment, out, err):
+    """Print the missing-toolchain diagnostic on the stream the old gate used."""
+    stream = out if backend.name == 'kc' else err
+    print(f'{nightly} is not installed.', file=stream, flush=True)
+    print(f'  install it with: rustup toolchain install {nightly} --profile minimal',
+          file=stream, flush=True)
+    if environment.get('OXPINYIN_SANITIZER_ALLOW_SKIP'):
+        print('  SKIP: OXPINYIN_SANITIZER_ALLOW_SKIP is set; the gate did NOT run.',
+              file=stream, flush=True)
+        return 0
+    print('  ERROR: the sanitizer gate cannot run. Install the toolchain, or set',
+          file=stream, flush=True)
+    print('  OXPINYIN_SANITIZER_ALLOW_SKIP=1 to allow skipping it.', file=stream, flush=True)
+    return 1
+
+
+def _sanitizer_options(backend, sanitizer, host_os, environment):
+    """Return the child environment with the gate's sanitizer options applied."""
+    child = dict(environment)
+    if sanitizer == 'address':
+        default = 'detect_leaks=0:abort_on_error=1'
+        if backend.override_options or host_os == 'Darwin':
+            child['ASAN_OPTIONS'] = default if backend.override_options else (
+                child.get('ASAN_OPTIONS') or default)
+    elif sanitizer == 'thread':
+        if backend.override_options:
+            child['TSAN_OPTIONS'] = 'abort_on_error=1'
+        else:
+            default = ('detect_deadlocks=0:abort_on_error=1'
+                       if backend.name == 'kc' and host_os == 'Darwin' else 'abort_on_error=1')
+            child['TSAN_OPTIONS'] = child.get('TSAN_OPTIONS') or default
+    elif sanitizer == 'leak':
+        child['LSAN_OPTIONS'] = ('abort_on_error=1' if backend.override_options else
+                                 child.get('LSAN_OPTIONS') or 'abort_on_error=1')
+    return child
+
+
+def _launch(tools, argv, *, environment, err, **streams):
+    """Run a required gate child; a launch failure has the shell's status, 127 or 126."""
+    try:
+        return tools.run(argv, environment=environment, **streams)
+    except FileNotFoundError as error:
+        print(f'{argv[0]}: command not found', file=err, flush=True)
+        return subprocess.CompletedProcess([str(part) for part in argv],
+                                           native.launch_status(error), '', '')
+    except OSError as error:
+        print(f'{argv[0]}: {error}', file=err, flush=True)
+        return subprocess.CompletedProcess([str(part) for part in argv],
+                                           native.launch_status(error), '', '')
+
+
+def _cargo_test(backend, nightly, target):
+    """Return the backend's cargo test argv, preserving the old argument order."""
+    command = ['cargo', f'+{nightly}', 'test']
+    if backend.locked:
+        command += ['--locked', '--target', target, '-p', 'oxpinyin-store',
+                    '--no-default-features', '--features', backend.feature]
+    else:
+        command += ['-p', 'oxpinyin-store', '--no-default-features',
+                    '--features', backend.feature, '--target', target]
+    return command
+
+
+def _run_bdb(backend, sanitizer, *, environment, out, err, tools, host_os, nightly, target):
+    display = backend.display[sanitizer]
+    child = _sanitizer_options(backend, sanitizer, host_os, environment)
+    test_environment = dict(child, RUSTFLAGS=backend.flags[sanitizer])
+    command = _cargo_test(backend, nightly, target)
+    if sanitizer == 'address':
+        suffix = ('(LeakSanitizer off on Darwin)' if host_os == 'Darwin'
+                  else '(+ LeakSanitizer)')
+        print(f'--- 1/2: Rust under {display} {suffix} ---', file=out, flush=True)
+    else:
+        print(f'--- 1/2: Rust under {display} ---', file=out, flush=True)
+    result = _launch(tools, command, environment=test_environment, err=err,
+                     stdout=None, stderr=None)
+    if result.returncode:
+        return native.shell_status(result.returncode)
+    if sanitizer != 'address':
+        print('', file=out, flush=True)
+        print("sanitizers: clean (libdb's own internals are NOT instrumented)", file=out, flush=True)
+        return 0
+    print('', file=out, flush=True)
+    print('--- 2/2: the libdb call pattern under ASan + UBSan (C) ---', file=out, flush=True)
+    work = tempfile.mkdtemp(prefix='tmp.')
+    try:
+        compile = ['gcc', '-Wall', '-Wextra', '-Werror', '-O1', '-g',
+                   '-fsanitize=address,undefined', '-fno-sanitize-recover=all']
+        include = child.get('OXPINYIN_BDB_INCLUDE_DIR')
+        if include:
+            compile.append(f'-I{include}')
+        library = child.get('OXPINYIN_BDB_LIB_DIR')
+        if library:
+            compile.append(f'-L{library}')
+        hash_walk = str(Path(work) / 'hash-walk')
+        btree_order = str(Path(work) / 'btree-order')
+        for output, source in ((hash_walk, 'tools/bdb/hash-walk.c'),
+                               (btree_order, 'tools/bdb/btree-order.c')):
+            result = _launch(tools, [*compile, '-o', output, source, '-ldb'],
+                             environment=child, err=err, stdout=None, stderr=None)
+            if result.returncode:
+                return native.shell_status(result.returncode)
+        result = _launch(
+            tools, ['cargo', f'+{nightly}', 'build', '-p', 'oxpinyin-store',
+                    '--no-default-features', '--features', 'bdb', '--target', target,
+                    '--example', 'bdb_write_profile'],
+            environment=child, err=err, stdout=None, stderr=None)
+        if result.returncode:
+            return native.shell_status(result.returncode)
+        target_dir = Path(child.get('CARGO_TARGET_DIR') or 'target')
+        example = target_dir / target / 'debug/examples/bdb_write_profile'
+        result = _launch(tools, [example, str(Path(work) / 'user_bigram.db')],
+                         environment=child, err=err, stdout=None, stderr=None)
+        if result.returncode:
+            return native.shell_status(result.returncode)
+        print(f'walking the backend-written {work}/user_bigram.db', file=out, flush=True)
+        result = _launch(tools, [hash_walk, str(Path(work) / 'user_bigram.db')],
+                         environment=child, err=err, stdout=None, stderr=None)
+        if result.returncode:
+            return native.shell_status(result.returncode)
+        data_dir = child.get('OXPINYIN_LIBPINYIN_DATA_DIR', '')
+        if not data_dir:
+            for candidate in ('/usr/lib/x86_64-linux-gnu/libpinyin/data',
+                              '/usr/lib/aarch64-linux-gnu/libpinyin/data',
+                              '/usr/lib64/libpinyin/data',
+                              '/usr/lib/libpinyin/data',
+                              '/usr/local/lib/libpinyin/data'):
+                if (Path(candidate) / 'bigram.db').is_file():
+                    data_dir = candidate
+                    break
+        if data_dir:
+            print(f'walking {data_dir}/bigram.db', file=out, flush=True)
+            result = _launch(tools, [hash_walk, f'{data_dir}/bigram.db'],
+                             environment=child, err=err, stdout=None, stderr=None)
+            if result.returncode:
+                return native.shell_status(result.returncode)
+        else:
+            print('note: no installed libpinyin bigram.db; the real-file walk did not run.',
+                  file=out, flush=True)
+        print('', file=out, flush=True)
+        print(f'exercising DB_BTREE create/put/cursor in {work}', file=out, flush=True)
+        result = _launch(tools, [btree_order, str(Path(work) / 'btree-order.db')],
+                         environment=child, err=err, stdout=subprocess.DEVNULL,
+                         stderr=None)
+        if result.returncode:
+            return native.shell_status(result.returncode)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    print('', file=out, flush=True)
+    print("sanitizers: clean (libdb's own internals are NOT instrumented)", file=out, flush=True)
+    return 0
+
+
+def _run_kc(backend, sanitizer, *, environment, out, err, tools, host_os, nightly, target):
+    display = backend.display[sanitizer]
+    child = _sanitizer_options(backend, sanitizer, host_os, environment)
+    test_environment = dict(child, RUSTFLAGS=backend.flags[sanitizer])
+    if sanitizer == 'address':
+        suffix = ('(LeakSanitizer off on Darwin)' if host_os == 'Darwin'
+                  else '(+ LeakSanitizer)')
+        print(f'--- Rust under {display} {suffix} ---', file=out, flush=True)
+    else:
+        print(f'--- Rust under {display} ---', file=out, flush=True)
+    result = _launch(tools, _cargo_test(backend, nightly, target),
+                     environment=test_environment, err=err, stdout=None, stderr=None)
+    if result.returncode:
+        return native.shell_status(result.returncode)
+    print('', file=out, flush=True)
+    print("sanitizers: clean (libkyotocabinet's own internals are NOT instrumented)",
+          file=out, flush=True)
+    return 0
+
+
+def _run_tkrzw(backend, sanitizer, *, environment, out, err, tools, host_os, nightly, target,
+               check_object=None, caller_directory=None):
+    display = backend.display[sanitizer]
+    child = _sanitizer_options(backend, sanitizer, host_os, environment)
+    child['RUSTFLAGS'] = backend.flags[sanitizer]
+    if caller_directory is not None and child.get('LD_LIBRARY_PATH'):
+        from .cell import library_path
+        inherited = library_path(child['LD_LIBRARY_PATH'], caller_directory)
+        if inherited:
+            child['LD_LIBRARY_PATH'] = inherited
+    if not (child.get('OXPINYIN_TKRZW_LIBRARY') or child.get('OXPINYIN_TKRZW_PREFIX')
+            or child.get('OXPINYIN_TKRZW_PREFIXES')):
+        try:
+            host_library = tools.tkrzw_host(environment=child)
+        except native.NativeRefused:
+            print('ERROR: no verified libtkrzw; the sanitizer gate did NOT run.', file=err, flush=True)
+            print('  Source the environment file tools/cloud/setup.sh writes, or provide a host',
+                  file=err, flush=True)
+            print('  libtkrzw that passes tools/tkrzw/distro-probe.sh (tkrzw_dbm_util on PATH).',
+                  file=err, flush=True)
+            print("  Ubuntu's packaged libtkrzw fails it: it cannot read files it writes.",
+                  file=err, flush=True)
+            return 1
+        child['OXPINYIN_TKRZW_LIBRARY'] = str(host_library)
+    command = _cargo_test(backend, nightly, target)
+    if platform.system() == 'Linux' and sanitizer == 'address':
+        command = ['setarch', platform.machine(), '-R', *command]
+    print(f'--- building the tkrzw feature tests under {display} ---', file=out, flush=True)
+    result = _launch(tools, [*command, '--no-run', '--message-format=json-render-diagnostics'],
+                     environment=child, err=err, stdout=subprocess.PIPE, stderr=None)
+    if result.returncode:
+        return native.shell_status(result.returncode)
+    executables = []
+    for line in (result.stdout or '').splitlines():
+        match = re.search(r'"executable":"([^"]*)"', line)
+        if match:
+            executables.append(match.group(1))
+    package = ROOT / 'crates/oxpinyin-store'
+    if check_object is None:
+        def check_object(obj):
+            return tools.tkrzw(obj, runner='run-sanitizers', side='subject',
+                               cwd=package, environment=child)
+    checked = 0
+    library = None
+    for executable in executables:
+        try:
+            resolved = check_object(Path(executable))
+        except native.NativeRefused as error:
+            print(f'REFUSED: {error}', file=err, flush=True)
+            print('ERROR: the sanitizer gate did NOT run.', file=err, flush=True)
+            return 1
+        if resolved:
+            library = resolved
+            checked += 1
+    if checked == 0:
+        print('ERROR: no test binary loads libtkrzw; the sanitizer gate did NOT run.',
+              file=err, flush=True)
+        return 1
+    print(f'libtkrzw: {checked} test binaries resolve it to {library}', file=out, flush=True)
+    if sanitizer == 'address':
+        print('', file=out, flush=True)
+        print(f'--- Rust under {display} (LeakSanitizer off) ---', file=out, flush=True)
+    else:
+        print('', file=out, flush=True)
+        print(f'--- Rust under {display} ---', file=out, flush=True)
+    result = _launch(tools, command, environment=child, err=err,
+                     stdout=None, stderr=None)
+    if result.returncode:
+        return native.shell_status(result.returncode)
+    print('', file=out, flush=True)
+    print("sanitizers: clean (libtkrzw's own internals are NOT instrumented)", file=out, flush=True)
+    return 0
+
+
+def _run_sanitizer_backend(backend, sanitizer, *, environment, out, err, tools,
+                           host_os, caller_directory=None):
+    """Run one backend's sanitizer gate and return its shell-style status."""
+    if sanitizer not in backend.flags:
+        print(f'unknown sanitizer: {sanitizer}', file=err, flush=True)
+        return 2
+    nightly = _nightly(environment)
+    if not _toolchain_installed(tools, nightly, environment):
+        return _toolchain_failure(backend, nightly, environment, out, err)
+    if backend.target_from_nightly:
+        target = environment.get('OXPINYIN_SANITIZER_TARGET') or _rustc_host(
+            tools, environment, nightly)
+    else:
+        target = environment.get('OXPINYIN_SANITIZER_TARGET') or _rustc_host(tools, environment)
+    if backend.name == 'bdb':
+        return _run_bdb(backend, sanitizer, environment=environment, out=out, err=err,
+                        tools=tools, host_os=host_os, nightly=nightly, target=target)
+    if backend.name == 'kc':
+        return _run_kc(backend, sanitizer, environment=environment, out=out, err=err,
+                       tools=tools, host_os=host_os, nightly=nightly, target=target)
+    return _run_tkrzw(backend, sanitizer, environment=environment, out=out, err=err,
+                      tools=tools, host_os=host_os, nightly=nightly, target=target,
+                      caller_directory=caller_directory)
+
+
+def sanitize(argv=None, *, out=sys.stdout, err=sys.stderr, environment=None, tools=None,
+             caller_directory=None):
+    """Select and run one sanitizer gate, preserving the old entry grammar.
+
+    Return the backend's shell-style status; for `all`, 0 when every gate
+    succeeded and 1 otherwise; 2 on a usage error. `--check` validates and
+    prints the selection without running a gate.
+    """
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    environment = dict(os.environ if environment is None else environment)
+    check = False
+    if arguments[:1] == ['--check']:
+        check = True
+        arguments = arguments[1:]
+    if not 1 <= len(arguments) <= 2:
+        err.write(SANITIZE_USAGE)
+        return 2
+    backend_name = arguments[0]
+    sanitizer = arguments[1] if len(arguments) > 1 else 'address'
+    sanitizer = SANITIZER_ALIASES.get(sanitizer, sanitizer)
+    if backend_name not in (*SANITIZER_BACKENDS, 'all'):
+        err.write(SANITIZE_USAGE)
+        return 2
+    if sanitizer not in SANITIZER_NAMES:
+        err.write(SANITIZE_USAGE)
+        return 2
+    environment['OXPINYIN_SANITIZER_TOOLCHAIN'] = _nightly(environment)
+    selection_os = environment.get('OXPINYIN_SANITIZER_HOST_OS') or platform.system()
+    selection_arch = environment.get('OXPINYIN_SANITIZER_HOST_ARCH') or platform.machine()
+    # The backend scripts read the real host; the override only selects and
+    # refuses in the dispatcher, as tools/sanitize.sh did.
+    host_os = platform.system()
+    if sanitizer == 'memory':
+        if selection_os == 'Darwin':
+            print('sanitize: MemorySanitizer is unsupported on macOS: rustc has no Darwin '
+                  'MSan target.', file=err, flush=True)
+        else:
+            print('sanitize: MemorySanitizer has no in-tree wrapper; use address, thread '
+                  'or leak.', file=err, flush=True)
+        return 1
+    if sanitizer == 'leak':
+        if backend_name in ('tkrzw', 'all'):
+            print('sanitize: tkrzw LeakSanitizer is unsupported: the Rust harness keeps '
+                  'process-lifetime allocations that LSan reports as leaks; use address '
+                  'or thread.', file=err, flush=True)
+            return 1
+        if selection_os == 'Darwin' and selection_arch == 'arm64':
+            print('sanitize: standalone LeakSanitizer is unsupported on macOS arm64; '
+                  'use address (leak detection off on Darwin) or an x86_64 host.',
+                  file=err, flush=True)
+            return 1
+    environment['OXPINYIN_SANITIZER'] = sanitizer
+    if check:
+        print(f'sanitize: check backend={backend_name} sanitizer={sanitizer} '
+              f'host={selection_os}/{selection_arch}', file=out, flush=True)
+        return 0
+    if caller_directory is None:
+        caller_directory = Path.cwd()
+    tools = native.Tools(environment=environment) if tools is None else tools
+    if backend_name != 'all':
+        return _run_sanitizer_backend(
+            BACKEND_DATA[backend_name], sanitizer, environment=environment,
+            out=out, err=err, tools=tools, host_os=host_os,
+            caller_directory=caller_directory)
+    results = []
+    failed = 0
+    for name in SANITIZER_BACKENDS:
+        print(f'=== sanitize {name} ===', file=out, flush=True)
+        code = native.shell_status(_run_sanitizer_backend(
+            BACKEND_DATA[name], sanitizer, environment=environment,
+            out=out, err=err, tools=tools, host_os=host_os,
+            caller_directory=caller_directory))
+        results.append(f'{name}: exit {code}')
+        failed = failed or code != 0
+        print('', file=out, flush=True)
+    for result in results:
+        print(f'sanitize all: {result}', file=out, flush=True)
+    return 0 if not failed else 1
+
+
+def sanitize_toolchain():
+    """Print the single sanitizer nightly for callers that select the toolchain."""
+    print(SANITIZER_TOOLCHAIN)
+    return 0
 
 
 def _strip_separator(args):

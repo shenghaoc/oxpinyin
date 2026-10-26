@@ -2479,10 +2479,11 @@
   {
     "name": "sanitize",
     "kind": "not-a-gate",
-    "implementation": "legacy:justfile",
+    "implementation": "python:tools.dev",
     "issues": [
       "T2N",
-      "1085"
+      "1085",
+      "1293"
     ],
     "cells": [
       "bdb",
@@ -2493,7 +2494,7 @@
     "oracle": false,
     "required_inputs": [
       "Linux native toolchain and the selected backend's headers and library",
-      "the nightly named in tools/sanitize.sh (nightly-2026-09-07)",
+      "the nightly named in tools/dev/test_runner.py (nightly-2026-09-07)",
       "setarch with permission to disable ASLR (tkrzw)",
       "a verified libtkrzw: the one setup.sh's environment file names, or a host library that passes tools/tkrzw/distro-probe.sh (tkrzw)",
       "caller-selected backend: bdb, kc, tkrzw or all"
@@ -2502,18 +2503,26 @@
     "heavy": true,
     "exclusive_resources": [],
     "command": [
-      "just",
-      "--justfile",
-      "{root}/justfile",
+      "uv",
+      "run",
+      "--no-project",
+      "--managed-python",
+      "python",
+      "-X",
+      "lazy_imports=normal",
+      "-m",
+      "tools.dev",
       "sanitize"
     ],
     "env": {},
     "input_paths": [
       "{root}/justfile",
-      "{root}/tools/sanitize.sh",
-      "{root}/tools/bdb/run-sanitizers.sh",
-      "{root}/tools/kc/run-sanitizers.sh",
-      "{root}/tools/tkrzw/run-sanitizers.sh"
+      "{root}/tools/dev/test_runner.py",
+      "{root}/tools/dev/native.py",
+      "{root}/tools/tkrzw/runtime.py",
+      "{root}/tools/tkrzw/runtime.sh",
+      "{root}/tools/tkrzw/distro-probe.sh",
+      "{root}/tools/cloud/env.sh"
     ],
     "reason": "native sanitizer recipe; caller selects the backend; excluded from compatibility aggregate gates"
   },

@@ -213,11 +213,12 @@ if __name__ == '__main__': unittest.main()
 
     def test_changed_mapping_and_unknown_fallback(self):
         sources = {name: "print('ran')" for name in
-                   ('tools/dev/test_runner.test.py', 'tools/dev/cli.test.py', 'tools/other.test.py')}
-        for paths, expected in ((['tools/dev/test_runner.py'], 2),
+                   ('tools/dev/test_runner.test.py', 'tools/dev/cli.test.py',
+                    'tools/dev/sanitize.test.py', 'tools/other.test.py')}
+        for paths, expected in ((['tools/dev/test_runner.py'], 3),
                                 (['tools/other.test.py'], 1),
-                                (['tools/unknown.py'], 3),
-                                (['tools/dev/test_runner.py', 'justfile'], 3), ([], 0)):
+                                (['tools/unknown.py'], 4),
+                                (['tools/dev/test_runner.py', 'justfile'], 4), ([], 0)):
             with self.subTest(paths=paths), \
                     mock.patch.object(test_runner, 'changed_paths', return_value=paths):
                 status, out, _ = self.fake_run(sources, changed='HEAD')

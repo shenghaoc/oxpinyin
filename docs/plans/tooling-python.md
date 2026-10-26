@@ -367,7 +367,7 @@ own scopes and decisions.
 | U2 | 15 | Measurement/profile controllers: tools.dev.measure and existing perf-gate/bisection parsers; registry, nightly snapshot, profile-w8 and image CMD callers. | [#1290](https://github.com/shenghaoc/oxpinyin/issues/1290) |
 | U3 | 14 | Oracle/compat orchestration: tools.dev.compat and existing identity/boundary/memory, oracle fixture and tkrzw runtime services; host launchers, workflows and aggregate harnesses. | [#1291](https://github.com/shenghaoc/oxpinyin/issues/1291) |
 | U4 | 10 | Packaging: one tools.dev packaging layer for version/layout/install/relink/metadata/package assembly; reuse function_order.py; release workflow and layout action callers. | [#1292](https://github.com/shenghaoc/oxpinyin/issues/1292) |
-| U5 | 9 | Native validation: tools.dev.check, test_runner and shared lint/backend/sanitizer selection; just check/sanitize, registry, workflow and fixture-test callers. | [#1293](https://github.com/shenghaoc/oxpinyin/issues/1293) |
+| U5 | 9 | Native validation: tools.dev.check, test_runner and native; shared lint/backend/sanitizer services; just check/sanitize, registry, workflow and fixture-test callers (migrated). | [#1293](https://github.com/shenghaoc/oxpinyin/issues/1293) |
 | U6 | 3 | Post-bootstrap provisioning: one tools.dev provisioning layer using pool and compat services; setup.sh handoff, environment writer and synthetic-fixture tests. | [#1294](https://github.com/shenghaoc/oxpinyin/issues/1294) |
 
 U1 preserves runner IDs, registry commands/implementation metadata, artifact
@@ -382,8 +382,8 @@ chains remain ordered within a unit, with private writable state.
 The former wrappers (`run-all.sh`, `run-contract-diff.sh`) use the shared CLI
 routes, retaining interpreter-injection rejection and exec status semantics. #1175 is the
 existing contract-driver split, not a duplicate runner migration. The legacy
-`check.sh` in U5 is already bypassed by `just check`; its comparison harness
-must retire the legacy control without restoring oracle probing to native check.
+`check.sh` in U5 was already bypassed by `just check`; its comparison harness
+retired the legacy control without restoring oracle probing to native check.
 
 U2 preserves sample/warmup counts, arm order, CPU choices/refusals, cache and
 suspend qualification, retries, policy validation and report schemas. Timing,
@@ -407,7 +407,23 @@ This is not authority to change policy files, compiler recipes or exports.
 
 U5 preserves lint diagnostics and 0/1/2 meanings, backend positive/negative
 checks, backend-specific sanitizer flags, toolchain/target selection, allow-skip
-behavior, Linux setarch and Darwin refusals/paths. U6 keeps bootstrap and
+behavior, Linux setarch and Darwin refusals/paths. Its entry points are
+`python -m tools.dev lint-crate-cfg-placement`, `backend-matrix`,
+`backend-probe` and `sanitize [--check] ...`; `just check` and `just sanitize`
+call the same services. The shared services are `tools/dev/check.py`,
+`tools/dev/test_runner.py` and `tools/dev/native.py`; the tkrzw qualification
+stays `tools/tkrzw/runtime.py` and `runtime.sh`. The shell entry points and the
+standalone shell fixture are retired; the fixture cases live in
+`tools/dev/lint-crate-cfg-placement.test.py`, `tools/dev/backend.test.py` and
+`tools/dev/sanitize.test.py` under the existing `just test-tools` discovery.
+
+U5's deliberate differences from the shell entry points change no status. A
+missing command is `cmd: command not found` with status 127 where bash said
+`script: line N: cmd: command not found`. A command that exists but is not
+executable is Python's `PermissionError` text with status 126 where bash said
+`script: line N: path: Permission denied`.
+
+U6 keeps bootstrap and
 `--python-only` behavior, option exclusions, cache/cell/job/no-pull/in-container
 selection, proxy/CA precedence and private-copy cleanup, hash-mismatch status 3,
 progress/result streams and order, shell environment-file quoting/selection and

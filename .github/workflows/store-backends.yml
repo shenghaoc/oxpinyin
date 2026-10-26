@@ -32,7 +32,7 @@ name: Store backends
 #     step); no command is built from untrusted event input.
 #   - backend-matrix is an INDEPENDENT job — it has no needs edge to the
 #     matrix, so it schedules concurrently with all the backend children.
-#     It runs `tools/store/backend-matrix.sh`, which proves the valid
+#     It runs `python -m tools.dev backend-matrix`, which proves the valid
 #     peer selections each `cargo check --workspace` cleanly AND that
 #     every one of the pairwise combinations plus the three-way
 #     combination plus the zero-backend build is refused by the
@@ -51,13 +51,12 @@ name: Store backends
 #     on 2026-09-20; the name is the ruleset context, so change both
 #     together.
 #   - tkrzw-sanitizers, bdb-sanitizers and kc-sanitizers each run one
-#     backend's gate through `tools/sanitize.sh <backend>`, the command
+#     backend's gate through `python -m tools.dev sanitize <backend>`, the command
 #     `just sanitize` runs locally, on the date-pinned nightly that
-#     tools/sanitize.sh names: the tkrzw suite under ASan
-#     (`tools/tkrzw/run-sanitizers.sh`), the Berkeley DB suite under ASan
-#     plus the C call-pattern harnesses under ASan+UBSan
-#     (`tools/bdb/run-sanitizers.sh`), and the Kyoto Cabinet suite under
-#     ASan + LeakSanitizer (`tools/kc/run-sanitizers.sh`). Each feeds
+#     tools/dev/test_runner.py names: the tkrzw suite under ASan, the
+#     Berkeley DB suite under ASan plus the C call-pattern harnesses under
+#     ASan+UBSan, and the Kyoto Cabinet suite under ASan + LeakSanitizer.
+#     Each feeds
 #     store-backends-gate, so a finding turns that check red. On a
 #     BerkeleyDB distro the system bigram.db is BDB and every session
 #     opens it through that FFI, so the instrumentation is load-bearing,
@@ -173,10 +172,9 @@ jobs:
             rust-toolchain.toml
             .github/workflows/store-backends.yml
             # Direct inputs: every child decodes the fixture tables;
-            # backend-matrix runs tools/store/backend-matrix.sh; the sanitizer
-            # jobs run tools/sanitize.sh, which runs
-            # tools/{bdb,kc,tkrzw}/run-sanitizers.sh (the tkrzw script also
-            # uses tools/cloud/env.sh and the shared cell service);
+            # backend-matrix runs the tools.dev backend-matrix service; the
+            # sanitizer jobs run the tools.dev sanitizer service (the tkrzw
+            # path also uses tools/cloud/env.sh and the shared cell service);
             # every job runs the bootstrap composite action.
             fixtures
             tools/dev
@@ -184,11 +182,8 @@ jobs:
             uv.toml
             .python-version
             tools/install-python.sh
-            tools/store
-            tools/kc
             tools/bdb
             tools/tkrzw
-            tools/sanitize.sh
             tools/cloud/env.sh
             .github/actions
           )
@@ -362,7 +357,7 @@ jobs:
     # exactly-one-backend the "one binary with three backends compiled
     # in" build is architecturally impossible (a `compile_error!` in
     # `crates/oxpinyin-store/src/lib.rs` refuses it), so the same
-    # `tools/store/backend-matrix.sh` script that developers run locally
+    # `python -m tools.dev backend-matrix` service that developers run locally
     # runs here instead: it proves the valid peer selections each
     # `cargo check --workspace` cleanly AND that every pairwise
     # combination, the all-peers combination, and the
@@ -412,13 +407,56 @@ jobs:
         # `.so` NEEDS `libglib-2.0`.
         run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libkyotocabinet-dev libtkrzw-dev libdb-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev libglib2.0-dev
 
+      - name: Set up pinned repository Python
+        if: needs.changes.outputs.reuse != 'true'
+        run: |
+          set -euo pipefail
+          uv_install_dir="$HOME/.local/bin"
+          (
+            [[ $(uname -s)-$(uname -m) == Linux-x86_64 ]]
+            uv_target=x86_64-unknown-linux-gnu
+            # Published in https://github.com/astral-sh/uv/releases/download/0.13.1/sha256.sum.
+            # Exact on purpose (#1074): a checksum is only known for a known version.
+            uv_sha256=eadd9d27c134ab5ac1ffd4473b97a741407f3ea238288f03121fc4deddf90220
+            # Keep the archive in memory. Write only its verified executables.
+            uv_payload=$(curl --fail --location --retry 3 "https://github.com/astral-sh/uv/releases/download/0.13.1/uv-$uv_target.tar.gz" | base64)
+            uv_actual=$(printf '%s' "$uv_payload" | base64 -d | sha256sum)
+            [[ ${uv_actual%% *} == "$uv_sha256" ]] || { printf 'uv archive checksum mismatch\n' >&2; exit 1; }
+            uv_tmp=$(mktemp -d)
+            trap 'rm -rf "$uv_tmp"' EXIT
+            trap 'exit 1' HUP INT TERM
+            printf '%s' "$uv_payload" | base64 -d | tar -xz -C "$uv_tmp" "uv-$uv_target/uv" "uv-$uv_target/uvx"
+            mkdir -p "$uv_install_dir"
+            install -m755 "$uv_tmp/uv-$uv_target/uv" "$uv_tmp/uv-$uv_target/uvx" "$uv_install_dir/"
+            printf 'uv archive SHA-256 verified: %s\n' "$uv_sha256"
+          )
+          export PATH="$HOME/.local/bin:$PATH"
+          hash -r
+          printf '%s\n' "$HOME/.local/bin" >> "$GITHUB_PATH"
+          uv --version | grep -q '^uv 0\.13\.1 '
+          tools/install-python.sh
+          uv run --no-project --managed-python python -X lazy_imports=normal - <<'PYTHON'
+          from pathlib import Path
+          import subprocess
+          import sys
+          import sysconfig
+          assert sys.implementation.name == "cpython"
+          assert sys.version_info.releaselevel == "final" and (3, 15, 0) <= sys.version_info[:3] < (3, 16, 0)
+          assert sysconfig.get_config_var("Py_GIL_DISABLED") == 0
+          assert sys._is_gil_enabled()
+          managed = subprocess.check_output(
+              ["uv", "python", "find", "--managed-python"],
+              text=True).strip()
+          assert Path(sys.executable).resolve() == Path(managed).resolve()
+          PYTHON
+
       - name: Exactly-one-backend invariant (backend-matrix pass)
         if: needs.changes.outputs.reuse != 'true'
         id: matrix-test
         run: |
           set -euo pipefail
           start=$EPOCHSECONDS
-          tools/store/backend-matrix.sh
+          uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev backend-matrix
           echo "elapsed=$((EPOCHSECONDS - start))" >> "$GITHUB_OUTPUT"
 
       # Rustdoc for the whole workspace under each backend with every warning
@@ -448,7 +486,7 @@ jobs:
             echo ""
             echo "Result: **$([ '${{ job.status }}' = 'success' ] && echo 'passed' || echo 'FAILED')**"
             echo ""
-            echo "\`tools/store/backend-matrix.sh\` — proves the valid"
+            echo "\`python -m tools.dev backend-matrix\` — proves the valid"
             echo "peer selections each \`cargo check --workspace\` cleanly and"
             echo "that every multi-peer combination plus the zero-backend"
             echo "build is refused by the exactly-one-backend guards."
@@ -544,36 +582,9 @@ jobs:
         with:
           safe-directory: 'true'
 
-      # The sanitizer nightly lives in tools/sanitize.sh (NIGHTLY=), which
-      # every backend script reads. RUSTUP_TOOLCHAIN beats
+      # The sanitizer nightly is declared once in tools/dev/test_runner.py and
+      # read through `tools.dev sanitize-toolchain`. RUSTUP_TOOLCHAIN beats
       # rust-toolchain.toml's channel pin for this job only.
-      - name: Select the sanitizer nightly
-        run: echo "RUSTUP_TOOLCHAIN=$(sed -n 's/^NIGHTLY=//p' tools/sanitize.sh)" >> "$GITHUB_ENV"
-
-      - name: Install build dependencies (apt)
-        # On Debian, libasan ships with gcc and is not a separate package.
-        # libtkrzw-dev provides the distro library the backend links
-        # against; libclang-dev is bindgen's runtime dependency.
-        # tkrzw-utils: with no setup.sh environment here, the gate trusts
-        # the distro libtkrzw only after tools/tkrzw/distro-probe.sh, which
-        # runs tkrzw_dbm_util, passes it (Ubuntu's build fails that probe).
-        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config util-linux libclang-dev libtkrzw-dev tkrzw-utils liblzma-dev liblz4-dev libzstd-dev zlib1g-dev
-
-      - name: Install nightly Rust (sanitizer support)
-        run: |
-          set -euo pipefail
-          curl --fail --location --retry 3 --show-error https://sh.rustup.rs \
-            | sh -s -- -y --profile minimal --default-toolchain "$RUSTUP_TOOLCHAIN"
-          printf '%s/.cargo/bin\n' "$HOME" >> "$GITHUB_PATH"
-          # Visible to THIS step too: GITHUB_PATH only applies to later steps.
-          . "$HOME/.cargo/env"
-          rustc --version
-
-      # No rust-cache here on purpose: the store crate compiles in seconds;
-      # a separate sanitizer-flavored cache entry would be pure book-keeping.
-      # (Rust-cache hashes RUSTFLAGS into its key anyway, so even a future
-      # enablement cannot cross-contaminate the unsanitized dep store.)
-      # tools/tkrzw/run-sanitizers.sh carries the flags and their reasons.
       - name: Set up pinned repository Python
         run: |
           set -euo pipefail
@@ -616,12 +627,41 @@ jobs:
           assert Path(sys.executable).resolve() == Path(managed).resolve()
           PYTHON
 
+      - name: Select the sanitizer nightly
+        run: echo "RUSTUP_TOOLCHAIN=$(uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev sanitize-toolchain)" >> "$GITHUB_ENV"
+
+      - name: Install build dependencies (apt)
+        # On Debian, libasan ships with gcc and is not a separate package.
+        # libtkrzw-dev provides the distro library the backend links
+        # against; libclang-dev is bindgen's runtime dependency.
+        # tkrzw-utils: with no setup.sh environment here, the gate trusts
+        # the distro libtkrzw only after tools/tkrzw/distro-probe.sh, which
+        # runs tkrzw_dbm_util, passes it (Ubuntu's build fails that probe).
+        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config util-linux libclang-dev libtkrzw-dev tkrzw-utils liblzma-dev liblz4-dev libzstd-dev zlib1g-dev
+
+      - name: Install nightly Rust (sanitizer support)
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --show-error https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal --default-toolchain "$RUSTUP_TOOLCHAIN"
+          printf '%s/.cargo/bin\n' "$HOME" >> "$GITHUB_PATH"
+          # Visible to THIS step too: GITHUB_PATH only applies to later steps.
+          . "$HOME/.cargo/env"
+          rustc --version
+
+      # No rust-cache here on purpose: the store crate compiles in seconds;
+      # a separate sanitizer-flavored cache entry would be pure book-keeping.
+      # (Rust-cache hashes RUSTFLAGS into its key anyway, so even a future
+      # enablement cannot cross-contaminate the unsanitized dep store.)
+      # tools.dev.test_runner carries the flags, their reasons and the
+      # verified-runtime check.
+
       - name: Run the tkrzw sanitizer gate
         id: sanitize-tests
         run: |
           set -euo pipefail
           start=$EPOCHSECONDS
-          bash tools/sanitize.sh tkrzw
+          uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev sanitize tkrzw
           echo "elapsed=$((EPOCHSECONDS - start))" >> "$GITHUB_OUTPUT"
 
       - name: Report
@@ -642,7 +682,7 @@ jobs:
     if: needs.changes.outputs.run == 'true' && needs.changes.outputs.reuse != 'true'
     # The Berkeley DB feature's own suite under ASan, plus the C
     # call-pattern harnesses under ASan+UBSan, via the same
-    # tools/bdb/run-sanitizers.sh developers run locally. The hazards
+    # `python -m tools.dev sanitize bdb` developers run locally. The hazards
     # are the DBT plumbing and cursor buffers (Rust, ASan) and the
     # SingleGram chunk arithmetic the C harness mirrors (ASan+UBSan —
     # rustc has no `undefined` sanitizer, so the C half is where UBSan
@@ -678,8 +718,50 @@ jobs:
           safe-directory: 'true'
 
       # Same nightly source as the tkrzw lane above.
+      - name: Set up pinned repository Python
+        run: |
+          set -euo pipefail
+          uv_install_dir="$HOME/.local/bin"
+          (
+            [[ $(uname -s)-$(uname -m) == Linux-x86_64 ]]
+            uv_target=x86_64-unknown-linux-gnu
+            # Published in https://github.com/astral-sh/uv/releases/download/0.13.1/sha256.sum.
+            # Exact on purpose (#1074): a checksum is only known for a known version.
+            uv_sha256=eadd9d27c134ab5ac1ffd4473b97a741407f3ea238288f03121fc4deddf90220
+            # Keep the archive in memory. Write only its verified executables.
+            uv_payload=$(curl --fail --location --retry 3 "https://github.com/astral-sh/uv/releases/download/0.13.1/uv-$uv_target.tar.gz" | base64)
+            uv_actual=$(printf '%s' "$uv_payload" | base64 -d | sha256sum)
+            [[ ${uv_actual%% *} == "$uv_sha256" ]] || { printf 'uv archive checksum mismatch\n' >&2; exit 1; }
+            uv_tmp=$(mktemp -d)
+            trap 'rm -rf "$uv_tmp"' EXIT
+            trap 'exit 1' HUP INT TERM
+            printf '%s' "$uv_payload" | base64 -d | tar -xz -C "$uv_tmp" "uv-$uv_target/uv" "uv-$uv_target/uvx"
+            mkdir -p "$uv_install_dir"
+            install -m755 "$uv_tmp/uv-$uv_target/uv" "$uv_tmp/uv-$uv_target/uvx" "$uv_install_dir/"
+            printf 'uv archive SHA-256 verified: %s\n' "$uv_sha256"
+          )
+          export PATH="$HOME/.local/bin:$PATH"
+          hash -r
+          printf '%s\n' "$HOME/.local/bin" >> "$GITHUB_PATH"
+          uv --version | grep -q '^uv 0\.13\.1 '
+          tools/install-python.sh
+          uv run --no-project --managed-python python -X lazy_imports=normal - <<'PYTHON'
+          from pathlib import Path
+          import subprocess
+          import sys
+          import sysconfig
+          assert sys.implementation.name == "cpython"
+          assert sys.version_info.releaselevel == "final" and (3, 15, 0) <= sys.version_info[:3] < (3, 16, 0)
+          assert sysconfig.get_config_var("Py_GIL_DISABLED") == 0
+          assert sys._is_gil_enabled()
+          managed = subprocess.check_output(
+              ["uv", "python", "find", "--managed-python"],
+              text=True).strip()
+          assert Path(sys.executable).resolve() == Path(managed).resolve()
+          PYTHON
+
       - name: Select the sanitizer nightly
-        run: echo "RUSTUP_TOOLCHAIN=$(sed -n 's/^NIGHTLY=//p' tools/sanitize.sh)" >> "$GITHUB_ENV"
+        run: echo "RUSTUP_TOOLCHAIN=$(uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev sanitize-toolchain)" >> "$GITHUB_ENV"
 
       - name: Install build dependencies (apt)
         # libdb-dev resolves to libdb5.3-dev — the system libdb this
@@ -701,7 +783,7 @@ jobs:
         run: |
           set -euo pipefail
           start=$EPOCHSECONDS
-          bash tools/sanitize.sh bdb
+          uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev sanitize bdb
           echo "elapsed=$((EPOCHSECONDS - start))" >> "$GITHUB_OUTPUT"
 
       - name: Report
@@ -721,7 +803,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.run == 'true' && needs.changes.outputs.reuse != 'true'
     # The Kyoto Cabinet feature's own suite under ASan + LeakSanitizer, via
-    # tools/sanitize.sh kc. The backend's hazard is ownership: kcdbget,
+    # `python -m tools.dev sanitize kc`. The backend's hazard is ownership: kcdbget,
     # kccurgetkey, kccurgetvalue and kccurget return caller-owned regions
     # released with kcfree, so a leak, a double free or a free through the
     # wrong allocator is what ASan and LSan see. Fedora and Arch ship this
@@ -751,8 +833,50 @@ jobs:
           safe-directory: 'true'
 
       # Same nightly source as the tkrzw lane above.
+      - name: Set up pinned repository Python
+        run: |
+          set -euo pipefail
+          uv_install_dir="$HOME/.local/bin"
+          (
+            [[ $(uname -s)-$(uname -m) == Linux-x86_64 ]]
+            uv_target=x86_64-unknown-linux-gnu
+            # Published in https://github.com/astral-sh/uv/releases/download/0.13.1/sha256.sum.
+            # Exact on purpose (#1074): a checksum is only known for a known version.
+            uv_sha256=eadd9d27c134ab5ac1ffd4473b97a741407f3ea238288f03121fc4deddf90220
+            # Keep the archive in memory. Write only its verified executables.
+            uv_payload=$(curl --fail --location --retry 3 "https://github.com/astral-sh/uv/releases/download/0.13.1/uv-$uv_target.tar.gz" | base64)
+            uv_actual=$(printf '%s' "$uv_payload" | base64 -d | sha256sum)
+            [[ ${uv_actual%% *} == "$uv_sha256" ]] || { printf 'uv archive checksum mismatch\n' >&2; exit 1; }
+            uv_tmp=$(mktemp -d)
+            trap 'rm -rf "$uv_tmp"' EXIT
+            trap 'exit 1' HUP INT TERM
+            printf '%s' "$uv_payload" | base64 -d | tar -xz -C "$uv_tmp" "uv-$uv_target/uv" "uv-$uv_target/uvx"
+            mkdir -p "$uv_install_dir"
+            install -m755 "$uv_tmp/uv-$uv_target/uv" "$uv_tmp/uv-$uv_target/uvx" "$uv_install_dir/"
+            printf 'uv archive SHA-256 verified: %s\n' "$uv_sha256"
+          )
+          export PATH="$HOME/.local/bin:$PATH"
+          hash -r
+          printf '%s\n' "$HOME/.local/bin" >> "$GITHUB_PATH"
+          uv --version | grep -q '^uv 0\.13\.1 '
+          tools/install-python.sh
+          uv run --no-project --managed-python python -X lazy_imports=normal - <<'PYTHON'
+          from pathlib import Path
+          import subprocess
+          import sys
+          import sysconfig
+          assert sys.implementation.name == "cpython"
+          assert sys.version_info.releaselevel == "final" and (3, 15, 0) <= sys.version_info[:3] < (3, 16, 0)
+          assert sysconfig.get_config_var("Py_GIL_DISABLED") == 0
+          assert sys._is_gil_enabled()
+          managed = subprocess.check_output(
+              ["uv", "python", "find", "--managed-python"],
+              text=True).strip()
+          assert Path(sys.executable).resolve() == Path(managed).resolve()
+          PYTHON
+
       - name: Select the sanitizer nightly
-        run: echo "RUSTUP_TOOLCHAIN=$(sed -n 's/^NIGHTLY=//p' tools/sanitize.sh)" >> "$GITHUB_ENV"
+        run: echo "RUSTUP_TOOLCHAIN=$(uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev sanitize-toolchain)" >> "$GITHUB_ENV"
 
       - name: Install build dependencies (apt)
         # libkyotocabinet-dev: the library this backend links and whose
@@ -774,7 +898,7 @@ jobs:
         run: |
           set -euo pipefail
           start=$EPOCHSECONDS
-          bash tools/sanitize.sh kc
+          uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev sanitize kc
           echo "elapsed=$((EPOCHSECONDS - start))" >> "$GITHUB_OUTPUT"
 
       - name: Report
