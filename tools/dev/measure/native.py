@@ -5,7 +5,7 @@ import re
 import subprocess
 import sys
 
-from .. import darwin
+from .. import darwin, host
 
 COMMAND_TIMEOUT_SECONDS = 30
 
@@ -148,7 +148,7 @@ def pin_cpu(cpu):
     pinning with ValueError.
     """
     if sys.platform.startswith('linux'):
-        allowed = os.sched_getaffinity(0)
+        allowed = host.allowed_cpus()
         cpu = min(allowed) if cpu is None else cpu
         if cpu not in allowed:
             raise ValueError('CPU is outside this process affinity')

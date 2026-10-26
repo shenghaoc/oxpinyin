@@ -202,15 +202,31 @@ def terminate_group(process):
             process.kill()
             process.wait()
         return
-    with contextlib.suppress(ProcessLookupError):
+    try:
         os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    except PermissionError:
+        if sys.platform != 'darwin':
+            raise
     try:
         process.wait(timeout=5)
     except subprocess.TimeoutExpired:
         pass
     # The leader can exit while a descendant still runs.
-    with contextlib.suppress(ProcessLookupError):
-        os.killpg(process.pid, signal.SIGKILL)
+    deadline = time.monotonic() + 5
+    while True:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+            break
+        except ProcessLookupError:
+            break
+        except PermissionError:
+            # XNU killpg1 filters zombie group members and can return EPERM
+            # until the group disappears. Retry without hiding a lasting denial.
+            if sys.platform != 'darwin' or time.monotonic() >= deadline:
+                raise
+            time.sleep(.01)
     process.wait()
 
 

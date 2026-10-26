@@ -259,7 +259,11 @@ reserve those CPUs against other, independent slot holders, which plan their own
 share the same way. Memory is admitted host-wide, counting every holder's
 reservation. There is no global CPU scheduler. `tools/dev/pool.py` also names,
 labels and records the containers it starts (a per-invocation random token and
-`--cidfile`) and removes only those on a failure or signal.
+`--cidfile`) and removes only those on a failure or signal. Its unit runner
+(`run_admitted`) takes callables, in-process steps and launched processes alike,
+under the same admission and stop rule: the first failure or a cancellation starts
+nothing more, stops the running units, and joins them (each reaps its own children)
+before the admission is released, and results and output follow unit order.
 
 Serialize dependent steps and work requiring isolation, and state the reason
 in the tool or its runbook. Timing, residency, cache-sensitive observations
@@ -272,7 +276,7 @@ Audit at `27c785c0` (follow-ups retain their own implementation gates):
 | `generate-function-order.py` | Independent constructor/profile/toggle and steady runs: accidental serialization, replaced by one admitted pool. Each pass keeps private profile copies and unions before sorting. |
 | `cloud/setup.sh` | Common dependency-image/model setup and final environment publication are dependencies. Per-cell builds/data regeneration are independent; bounded container/make budgets need coordinated changes: [#1233](https://github.com/shenghaoc/oxpinyin/issues/1233). |
 | `oracle/Dockerfile.oracle` | Backend builds have distinct work/prefix directories. Serial backend loop is accidental; budget nested make jobs rather than starting three full-CPU builds: [#1234](https://github.com/shenghaoc/oxpinyin/issues/1234). |
-| `bisection/teardown.py` | Export must precede recipe selection; mutation within a profile is ordered. Independent population/witness jobs can overlap after controller scratch is separated: [#1235](https://github.com/shenghaoc/oxpinyin/issues/1235). Timing, residency and measurement phases remain isolated. |
+| `bisection/teardown.py` | Export must precede recipe selection; mutation within a profile is ordered. Independent profile population and witness checks run as units in one admitted pool, each with its own sample names, counter and CPU lease; records print in profile order, and `--jobs 1` is the serial reference ([#1235](https://github.com/shenghaoc/oxpinyin/issues/1235)). Timing, residency and measurement phases remain isolated and start only after the pool is released. |
 | `measure-function-order.py` | Required isolation: paired native timings, page-cache and parent-observed memory measurements share host resources. Keep the measurement campaign serial. |
 | `profile/run-w8-cycle.sh` | Profiler attempts form a fallback chain, each conditional on failure of its predecessor. Sampling and native timing need isolation; no independent campaign loop to parallelize. |
 | `bisection/run-system-import-profile.sh` | Side/mode collections use private users and instruction/allocation counters; independent serialization is accidental: [#1236](https://github.com/shenghaoc/oxpinyin/issues/1236). Attempts within each retry chain remain dependent. |

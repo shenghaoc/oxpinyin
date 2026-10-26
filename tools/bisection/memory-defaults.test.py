@@ -21,6 +21,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from tools.dev import test_support
+from tools.dev import host
 
 RUN_ALL = Path(__file__).with_name('run-all.py')
 run_all = runpy.run_path(str(RUN_ALL))
@@ -109,7 +110,7 @@ class CgroupTests(unittest.TestCase):
             (directory / 'cpu.max').write_text('max 100000')
 
     def snapshot(self):
-        with mock.patch.object(sys, 'platform', 'linux'), mock.patch.object(os, 'sched_getaffinity', return_value=set(range(8))):
+        with mock.patch.object(sys, 'platform', 'linux'), mock.patch.object(host, 'allowed_cpus', return_value=set(range(8))):
             return M['resource_snapshot'](self.proc, self.cg)
 
     def test_parent_memory_and_cpu_limits_control_the_choice(self):

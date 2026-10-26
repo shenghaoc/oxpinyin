@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest import mock
 
@@ -37,6 +38,29 @@ def slot_setting(value):
 
 
 class HostTests(unittest.TestCase):
+    def test_import_does_not_modify_os(self):
+        for remove_affinity in (False, True):
+            with self.subTest(remove_affinity=remove_affinity):
+                subprocess.run([sys.executable, '-c',
+                    'import os\n'
+                    f'if {remove_affinity!r}:\n'
+                    '    vars(os).pop("sched_getaffinity", None)\n'
+                    'before = vars(os).copy()\n'
+                    'from tools.dev import host\n'
+                    'assert vars(os) == before\n'], cwd=ROOT, check=True)
+
+    def test_allowed_cpus_reads_affinity(self):
+        affinity = mock.Mock(return_value={2, 5})
+        with mock.patch.object(host, 'os', SimpleNamespace(sched_getaffinity=affinity)):
+            self.assertEqual(host.allowed_cpus(), {2, 5})
+        affinity.assert_called_once_with(0)
+
+    def test_allowed_cpus_without_affinity(self):
+        for count, expected in ((4, {0, 1, 2, 3}), (None, {0})):
+            with self.subTest(count=count), mock.patch.object(
+                    host, 'os', SimpleNamespace(cpu_count=lambda: count)):
+                self.assertEqual(host.allowed_cpus(), expected)
+
     def test_memory_available_is_an_integer_on_macos(self):
         if sys.platform != 'darwin':
             self.skipTest('macOS reader')
@@ -555,7 +579,7 @@ class CgroupV1Tests(unittest.TestCase):
 
     def snapshot(self):
         with mock.patch.object(sys, 'platform', 'linux'), \
-                mock.patch.object(os, 'sched_getaffinity', return_value={0, 1, 2, 3}):
+                mock.patch.object(host, 'allowed_cpus', return_value={0, 1, 2, 3}):
             return host.resource_snapshot(self.proc, self.unified)
 
     def test_v1_session_room_below_host_memory_from_nondefault_mount(self):

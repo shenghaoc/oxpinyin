@@ -7,6 +7,7 @@ native executable are materialized, under the caller's temporary work directory.
 import bisect
 import collections
 import contextlib
+import copy
 import ctypes
 import hashlib
 import importlib.util
@@ -27,6 +28,7 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+from tools.dev import host
 from tools.dev.measure.stats import (
     CONTROL_INTERVAL, RESIDENCY_FLOOR_KIB, RESIDENCY_FRACTION, percentile, summary,
     paired_bootstrap, paired_ratio, paired_difference, within, stable_control,
@@ -929,11 +931,39 @@ class Campaign:
     Measured native work runs in child processes, with driver-provided
     cancellation, runtime certification, and process-group cleanup.
     """
-    def __init__(self, worker, data, work, cpu, driver, cache='warm'):
-        """Store sample settings and resolve system data; initialize the sample serial counter."""
+    def __init__(self, worker, data, work, cpu, driver, cache='warm', jobs=None):
+        """Store sample settings and resolve system data; initialize the sample serial counter.
+
+        jobs is the --jobs setting: 1 keeps fixture work serial, None lets
+        admission size the pool (fan_out). A unit's copy (unit) carries its
+        own serial counter, scratch prefix, CPU, driver view and, in a pool,
+        the admitted environment and slot descriptors for its children.
+        """
         self.worker, self.data, self.work, self.cpu, self.driver = worker, data.resolve(), work, cpu, driver
         self.serial = 0
+        self.prefix = 'sample'
         self.cache = cache
+        self.jobs = jobs
+        self.environment, self.fds = {}, ()
+
+    def unit(self, label, *, cpu=None, driver=None, environment=None, fds=()):
+        """Return a copy with private sample names and counter for one independent unit.
+
+        Units share the worker, data and work directory; they never share a
+        scratch name or the controller's serial counter, so concurrent units
+        cannot collide and the original campaign's numbering is unchanged.
+        """
+        unit = copy.copy(self)
+        unit.serial, unit.prefix = 0, label + '-sample'
+        unit.cpu = self.cpu if cpu is None else cpu
+        unit.driver = self.driver if driver is None else driver
+        unit.environment, unit.fds = dict(environment or {}), tuple(fds)
+        return unit
+
+    def next_scratch(self):
+        """Count one sample and return its private scratch path (not yet created)."""
+        self.serial += 1
+        return self.work / ('%s-%06d' % (self.prefix, self.serial))
 
     def run(self, facade, library, profile, *, mode='time', save=False, scenario='first-candidate',
             rows=None, instances=1, cycles=1, inputs=None, reopen=False, profiler=None, probe=None):
@@ -957,14 +987,18 @@ class Campaign:
             raise ValueError('unknown init probe or a traced profiler')
         if probe not in (None, 'none') and mode != 'init':
             raise ValueError('init probes require init mode')
-        self.serial += 1
-        scratch = self.work / ('sample-%06d' % self.serial)
+        pinning = shutil.which('taskset')
+        # Only untimed fixture export and witness observations may run unpinned.
+        # Timing, memory, cold and profiler samples must pin to their reported CPU.
+        if (mode not in ('export', 'observe') or profiler or cold) and (self.cpu is None or not pinning):
+            raise ValueError('measured teardown samples require taskset and a selected CPU')
+        scratch = self.next_scratch()
         scratch.mkdir()
         user = scratch / 'user'
         shutil.copytree(profile, user)
         expected_source = file_set(profile)
         checkpoints, samples, closed = {}, [], None
-        command = ['taskset', '-c', str(self.cpu)] if self.cpu is not None else []
+        command = [pinning, '-c', str(self.cpu)] if self.cpu is not None and pinning else []
         trace_read = trace_write = marker = marker_number = None
         if probe == 'trace':
             # strace runs unpinned; the traced worker keeps taskset's CPU. The
@@ -1004,7 +1038,7 @@ class Campaign:
                 raise ValueError('unknown profiler')
         command += [str(self.worker), '--teardown', facade, str(library), str(self.data), str(user),
                     mode, str(int(save)), str(instances), str(cycles), scenario, str(rows) if rows else '-']
-        env = dict(os.environ, OXPINYIN_TEARDOWN_EXPORTS=','.join(exports(facade)))
+        env = dict(os.environ, **self.environment, OXPINYIN_TEARDOWN_EXPORTS=','.join(exports(facade)))
         env.pop('OXPINYIN_TEARDOWN_INIT_PROBE', None)
         env.pop('OXPINYIN_TEARDOWN_MARKER_FD', None)
         if inputs is not None:
@@ -1032,8 +1066,9 @@ class Campaign:
                 evict_files(cold_set)
             self.driver.check_cancelled()
             passed = tuple(value for value in (trace_write, marker) if value is not None)
+            held = self.fds
             with subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                  env=env, start_new_session=True, pass_fds=passed) as process:
+                                  env=env, start_new_session=True, pass_fds=(*passed, *held)) as process:
                 for value in passed:
                     os.close(value)
                 trace_write = marker = None
@@ -1201,12 +1236,42 @@ def print_record(kind, **values):
     print(json.dumps(dict(teardown=kind, **values), sort_keys=True, ensure_ascii=True), flush=True)
 
 
+def fan_out(campaign, units, label, emit=None):
+    """Run independent (name, function) units of fixture work and return their values in order.
+
+    Each function receives a private copy of the campaign (Campaign.unit): its own
+    sample names, counter and CPU lease, a driver whose checks also see the pool's
+    stop, and the admitted environment and slot descriptors for its children.
+    --jobs 1 or a single unit runs them in order in this thread; otherwise they run
+    in tools/dev/pool.py's admitted pool, one CPU lease each from the allowed set,
+    this campaign's own first. emit(name, value) runs in unit order. Only fixture
+    work goes through here: measured stages never run inside the pool.
+    """
+    from tools.dev import pool
+    allowed = sorted(host.allowed_cpus())
+    cpus = ([campaign.cpu] if campaign.cpu is not None else []) + [cpu for cpu in allowed if cpu != campaign.cpu]
+
+    def instance(name, function):
+        def run(context):
+            return function(campaign.unit(name, cpu=context.cpu, driver=context.driver(campaign.driver),
+                                          environment=context.environment, fds=context.fds))
+        return name, run
+    return pool.run_admitted([instance(name, function) for name, function in units], label,
+                             cancelled=pool.cancelled_from(campaign.driver.check_cancelled),
+                             serial=campaign.jobs == 1, cpus=cpus or None, emit=emit,
+                             cancel_error=getattr(campaign.driver, 'Cancelled', pool.UnitsCancelled))
+
+
 def provision(campaign, pin, root):
     """Create pin-populated fixture profiles, or validate existing profile manifests.
 
     Write recipes, manifests, and empty witness inputs under root; print
     fixture identities for newly generated profiles and return name-to-user
     paths. Existing roots must contain every expected verified profile.
+    The export runs first, alone: recipe selection reads it. The profiles
+    are independent of each other and populate as units (fan_out); each
+    unit keeps its own steps in order, and the fixture records print in
+    profile order.
     """
     if root.exists():
         profiles = {name: root / name / 'user' for name in PROFILES}
@@ -1223,25 +1288,32 @@ def provision(campaign, pin, root):
         exported.append((int(library), phrase, pinyin, int(count)))
     shutil.rmtree(export_user)
     recipes = dict(empty=[], modest=modest_rows(), phrases=select_rows(exported), journals=select_rows(exported, True))
-    profiles = {}
-    for name, rows in recipes.items():
-        destination = root / name
-        destination.mkdir()
-        user = destination / 'user'
-        user.mkdir()
-        path = destination / 'rows.tsv'
-        path.write_text(row_text(rows))
-        if rows:
-            # Populate through a private working copy, then move its resulting
-            # profile into place. run() intentionally never mutates its input.
-            populate_user(campaign, pin, user, path)
-        files = file_set(user)
-        (destination / 'profile.manifest').write_text(STARTUP_PROFILE.manifest(user))
-        (destination / 'witness.txt').write_text('')
-        profiles[name] = user
-        print_record('fixture', profile=name, files=files, identity=identity(files),
-                     rows=len(rows), recipe_sha256=digest_bytes(path.read_bytes()), historical_byte_identity=False)
-    return profiles
+
+    def fixture(name, rows):
+        """Build one profile: recipe, population, manifest, empty witness, in that order."""
+        def build(unit):
+            destination = root / name
+            destination.mkdir()
+            user = destination / 'user'
+            user.mkdir()
+            path = destination / 'rows.tsv'
+            path.write_text(row_text(rows))
+            if rows:
+                # Populate through a private working copy, then move its resulting
+                # profile into place. run() intentionally never mutates its input.
+                populate_user(unit, pin, user, path)
+            files = file_set(user)
+            (destination / 'profile.manifest').write_text(STARTUP_PROFILE.manifest(user))
+            (destination / 'witness.txt').write_text('')
+            return user, dict(profile=name, files=files, identity=identity(files), rows=len(rows),
+                              recipe_sha256=digest_bytes(path.read_bytes()), historical_byte_identity=False)
+        return name, build
+
+    def record(name, result):
+        print_record('fixture', **result[1])
+    built = fan_out(campaign, [fixture(name, rows) for name, rows in recipes.items()],
+                      'teardown fixture population', record)
+    return {name: result[0] for name, result in zip(recipes, built)}
 
 
 def populate_user(campaign, pin, user, rows):
@@ -1255,12 +1327,12 @@ def populate_user(campaign, pin, user, rows):
     """
     command = [str(campaign.worker), '--teardown', 'pinyin', str(pin), str(campaign.data), str(user),
                'populate', '1', '1', '1', 'first-candidate', str(rows)]
-    env = dict(os.environ, OXPINYIN_TEARDOWN_EXPORTS=','.join(exports('pinyin')))
+    env = dict(os.environ, **campaign.environment, OXPINYIN_TEARDOWN_EXPORTS=','.join(exports('pinyin')))
     campaign.driver.check_cancelled()
     campaign.driver.check_tkrzw(os.environ.get('CONTRACT_DIFF_CELL', 'bdb'),
                                'teardown.py/populate', 'pin', pin, env=env)
     with subprocess.Popen(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                          text=True, start_new_session=True) as process:
+                          text=True, start_new_session=True, pass_fds=campaign.fds) as process:
         deadline = time.monotonic() + 300
         try:
             while True:
@@ -1303,8 +1375,9 @@ def run(args, driver, parser):
     cases = tuple(args.teardown_cases.split(','))
     if not cases or len(set(cases)) != len(cases) or any(name not in CASES for name in cases):
         parser.error('unknown or repeated --teardown-cases')
-    cpu = args.teardown_cpu if args.teardown_cpu is not None else min(os.sched_getaffinity(0))
-    if cpu not in os.sched_getaffinity(0):
+    allowed = host.allowed_cpus()
+    cpu = args.teardown_cpu if args.teardown_cpu is not None else min(allowed)
+    if cpu not in allowed:
         parser.error('--teardown-cpu is outside this process affinity')
     work = args.teardown_work_dir.resolve()
     fs = filesystem(work)
@@ -1339,9 +1412,11 @@ def run(args, driver, parser):
                                               bytes=target.stat().st_size, filesystem=library_fs)
     FUNCTION_ORDER['check_arms'](args, {side: {facade: paths[facade] for facade in facades}
                                       for side, paths in subjects.items()}, references=('pin',))
+    if args.teardown_stage not in ('provision', 'verify') and not shutil.which('taskset'):
+        parser.error('measured teardown stages require taskset')
     worker, worker_identity = build_worker(work)
     data = args.prefix / 'lib/libpinyin/data'
-    campaign = Campaign(worker, data, work, cpu, driver, cache=cache)
+    campaign = Campaign(worker, data, work, cpu, driver, cache=cache, jobs=getattr(args, 'jobs', None))
     print_record('start', stage=args.teardown_stage, cache=cache, cpu=cpu, filesystem=fs, libraries=provenance,
                  worker=worker_identity, model_identity=identity(file_set(data)),
                  model_filesystem=filesystem(data), control_noise_rule=list(CONTROL_INTERVAL))
@@ -1952,35 +2027,46 @@ def prepare_witnesses(campaign, pin, profiles):
     Probe candidate readings against empty and populated profiles, selecting
     up to forty sorted differing inputs. Reuse nonempty witness files, leave
     the empty-profile witness unchanged, and print identities; raise ValueError
-    if a populated profile changes no candidate answer.
+    if a populated profile changes no candidate answer. The populated profiles
+    are independent: each is a unit (fan_out) that keeps its own steps in
+    order, and the witness records print in profile order.
     """
     result = {}
-    for name in PROFILES:
+
+    def witness(name):
+        """Choose one populated profile's witness inputs, reusing a nonempty file."""
         path = profiles[name].parent / 'witness.txt'
-        if name == 'empty':
-            result[name] = path
-            continue
-        if not path.read_text():
-            rows = []
-            for line in (path.parent / 'rows.tsv').read_text().splitlines():
-                library, phrase, pronunciation, count = line.split('\t')
-                rows.append((int(library), phrase, pronunciation, int(count)))
-            candidates = witness_inputs(rows)
-            candidate_file = path.parent / 'candidate-inputs.txt'
-            candidate_file.write_text(''.join(value + '\n' for value in candidates))
-            empty = campaign.run('pinyin', pin, profiles['empty'], mode='observe', inputs=candidate_file)
-            populated = campaign.run('pinyin', pin, profiles[name], mode='observe', inputs=candidate_file)
-            def by_input(row):
-                """Index full-parser transcript observations by input, keeping the last duplicate."""
-                return {value['transcript']: value for value in row['observation']['documents']
-                        if value.get('parser') == 'full'}
-            a, b = by_input(empty), by_input(populated)
-            chosen = [value for value in sorted(candidates) if a.get(value) != b.get(value)][:40]
-            if not chosen:
-                raise ValueError('populated profile changes no witness answer: ' + name)
-            path.write_text(''.join(value + '\n' for value in chosen))
-        result[name] = path
+
+        def prepare(unit):
+            if not path.read_text():
+                rows = []
+                for line in (path.parent / 'rows.tsv').read_text().splitlines():
+                    library, phrase, pronunciation, count = line.split('\t')
+                    rows.append((int(library), phrase, pronunciation, int(count)))
+                candidates = witness_inputs(rows)
+                candidate_file = path.parent / 'candidate-inputs.txt'
+                candidate_file.write_text(''.join(value + '\n' for value in candidates))
+                empty = unit.run('pinyin', pin, profiles['empty'], mode='observe', inputs=candidate_file)
+                populated = unit.run('pinyin', pin, profiles[name], mode='observe', inputs=candidate_file)
+                def by_input(row):
+                    """Index full-parser transcript observations by input, keeping the last duplicate."""
+                    return {value['transcript']: value for value in row['observation']['documents']
+                            if value.get('parser') == 'full'}
+                a, b = by_input(empty), by_input(populated)
+                chosen = [value for value in sorted(candidates) if a.get(value) != b.get(value)][:40]
+                if not chosen:
+                    raise ValueError('populated profile changes no witness answer: ' + name)
+                path.write_text(''.join(value + '\n' for value in chosen))
+            return path
+        return name, prepare
+
+    def record(name, path):
         print_record('witness', profile=name, inputs=path.read_text().splitlines(), sha256=digest_bytes(path.read_bytes()))
+    populated = fan_out(campaign, [witness(name) for name in PROFILES if name != 'empty'],
+                          'teardown witness checks', record)
+    paths = dict(zip((name for name in PROFILES if name != 'empty'), populated))
+    for name in PROFILES:
+        result[name] = profiles[name].parent / 'witness.txt' if name == 'empty' else paths[name]
     return result
 
 

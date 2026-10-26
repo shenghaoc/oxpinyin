@@ -17361,8 +17361,10 @@ def run_per_call(args, parser):
             artifacts[mode] = artifacts[mode].resolve()
     FUNCTION_ORDER['check_arms'](args, {side: {mode: paths[mode] for mode in modes}
                                       for side, paths in sides.items()}, references=('pin',))
-    cpu = args.per_call_cpu if args.per_call_cpu is not None else min(os.sched_getaffinity(0))
-    if cpu not in os.sched_getaffinity(0):
+    from tools.dev import host
+    allowed = host.allowed_cpus()
+    cpu = args.per_call_cpu if args.per_call_cpu is not None else min(allowed)
+    if cpu not in allowed:
         parser.error('--per-call-cpu is outside this process CPU affinity')
     data = args.prefix / 'lib/libpinyin/data'
     provenance = {side: {mode: dict(path=str(paths[mode]), sha256=hashlib.sha256(paths[mode].read_bytes()).hexdigest())
