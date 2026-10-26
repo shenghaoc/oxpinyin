@@ -304,38 +304,78 @@ fn c_float_to_gint(value: f32) -> i32 {
 /// The final tail comparison (074a2219 phonetic_lookup.h:174-178):
 /// `-(lhs->m_poss - rhs->m_poss)` in `float`, truncated to `gint`. A NaN
 /// difference is `INT_MIN` for both orders, so NaN sorts before everything
-/// and before itself, and the comparator is not transitive: the order that
+/// and before itself. Finite scores less than one unit apart compare 0, so
+/// the comparator is not transitive on valid input either: the order that
 /// results is the sort algorithm's (below).
 fn tail_compare(left: &Value, right: &Value) -> i32 {
     c_float_to_gint(-(poss(left.cost) - poss(right.cost)))
 }
 
-/// GLib 2.90.0 `g_ptr_array_sort` (`g_sort_array`, gqsort.c:
-/// `msort_with_tmp`): split at `n / 2`, sort both halves, merge taking the
-/// left element on `cmp <= 0`. Stable for a consistent comparator; for the
-/// inconsistent one above its order is exactly this recursion's.
-pub(crate) fn glib_merge_sort<T: Clone>(values: &mut [T], compare: &impl Fn(&T, &T) -> i32) {
+/// GLib's stable merge sort, kept because the pin's comparators are not
+/// total orders on input the C API reaches (#921, #927).
+///
+/// Every sort this crate and the C API adapters reproduce goes through
+/// `g_sort_array` (GLib 2.84.4 `glib/gqsort.c:197-281`, `msort_r`, behind
+/// `g_ptr_array_sort`, `g_array_sort` and `g_array_sort_with_data` in
+/// `glib/garray.c:919-965,2409-2421`). For every element size it runs
+/// `msort_with_tmp` (`gqsort.c:69-193`): split at `n / 2`, sort the left and
+/// right halves, then merge, comparing only while both halves have elements
+/// and taking the left one on `cmp <= 0`. An element larger than 32 bytes
+/// is sorted through pointers to it, which changes the copying, not the
+/// comparisons.
+///
+/// For a total order every stable sort gives this order, and a slice
+/// `sort_by` would do. None of the callers has one:
+///
+/// - The n-best tails (`trellis_value_compare`, 074a2219
+///   `phonetic_lookup.h:174-178`) return `-(lhs - rhs)` of two `gfloat`
+///   possibilities as a `gint`, truncated toward zero. Two scores less than
+///   one natural-log unit apart compare equal, so ordinary finite scores are
+///   not transitive: −10.0 ~ −10.6 ~ −11.2, yet −10.0 sorts before −11.2.
+///   NaN (a `table.conf` λ above 1, policy row 83) compares below everything
+///   and below itself.
+/// - The candidate and predicted lists (`compare_item_with_sort_option`,
+///   `pinyin.cpp:1678-1709`; `compare_item_with_length_and_frequency`,
+///   `zhuyin.cpp:1129-1144`) return `-(freq_lhs - freq_rhs)` in `guint32`
+///   arithmetic as a `gint`. With λ in `[0, 1]` every frequency is below
+///   2²⁴ and the key is a total order; a `table.conf` λ outside it makes
+///   frequency gaps of 2³¹ or more, which flip sign and form cycles.
+///
+/// On such a comparator the order is this recursion's, and the standard
+/// library's sorts may order differently or panic (Rust 1.81). This merge
+/// makes the pin's comparisons in the pin's sequence and so returns the
+/// pin's order on every input, total or not.
+///
+/// Recursive, so the function itself is each instantiation's symbol (the
+/// function-order policies under `tools/packaging/function-order/` name
+/// it); each merge copies only its left half.
+pub fn glib_merge_sort<T: Copy>(values: &mut [T], compare: &impl Fn(&T, &T) -> i32) {
     if values.len() < 2 {
         return;
     }
     let mid = values.len() / 2;
-    let (left, right) = values.split_at_mut(mid);
-    glib_merge_sort(left, compare);
-    glib_merge_sort(right, compare);
-    let left = left.to_vec();
-    let right = right.to_vec();
-    let (mut l, mut r) = (0, 0);
-    for slot in values {
-        if r == right.len() || (l < left.len() && compare(&left[l], &right[r]) <= 0) {
-            *slot = left[l].clone();
+    glib_merge_sort(&mut values[..mid], compare);
+    glib_merge_sort(&mut values[mid..], compare);
+    let left = values[..mid].to_vec();
+    // The output never overtakes the unread right half: `out` is `l` plus
+    // the right elements taken, and `r` is `mid` plus the same.
+    let (mut l, mut r, mut out) = (0, mid, 0);
+    while l < left.len() && r < values.len() {
+        if compare(&left[l], &values[r]) <= 0 {
+            values[out] = left[l];
             l += 1;
         } else {
-            *slot = right[r].clone();
+            values[out] = values[r];
             r += 1;
         }
+        out += 1;
     }
+    // A right remainder is already in place (`gqsort.c:190-192`).
+    values[out..out + left.len() - l].copy_from_slice(&left[l..]);
 }
 
+/// `g_ptr_array_sort(tails, trellis_value_compare)`: GLib's merge order,
+/// which the comparator's truncation makes observable on ordinary scores.
 fn tail_merge(values: &mut [Value]) {
     glib_merge_sort(values, &tail_compare);
 }
@@ -2362,5 +2402,107 @@ mod tests {
         )
         .expect("the fixtures open");
         assert!(!session.is_composing());
+    }
+}
+
+#[cfg(test)]
+mod glib_merge_sort_tests {
+    use super::glib_merge_sort;
+
+    /// The pin's merge, transcribed from `msort_with_tmp` with a temporary
+    /// array per level, as the reference for the in-place version.
+    fn reference<T: Copy>(values: &mut [T], compare: &impl Fn(&T, &T) -> i32) {
+        if values.len() < 2 {
+            return;
+        }
+        let n1 = values.len() / 2;
+        reference(&mut values[..n1], compare);
+        reference(&mut values[n1..], compare);
+        let (mut b1, mut b2) = (0, n1);
+        let mut tmp = Vec::with_capacity(values.len());
+        while b1 < n1 && b2 < values.len() {
+            if compare(&values[b1], &values[b2]) <= 0 {
+                tmp.push(values[b1]);
+                b1 += 1;
+            } else {
+                tmp.push(values[b2]);
+                b2 += 1;
+            }
+        }
+        tmp.extend_from_slice(&values[b1..n1]);
+        values[..tmp.len()].copy_from_slice(&tmp);
+    }
+
+    /// `trellis_value_compare` over plain `f32` possibilities.
+    fn truncated(left: &(f32, usize), right: &(f32, usize)) -> i32 {
+        (-(left.0 - right.0)) as i32
+    }
+
+    #[test]
+    fn equal_keys_keep_their_input_order() {
+        let mut items: Vec<(u32, usize)> = [3, 1, 3, 2, 1, 3].into_iter().zip(0..).collect();
+        glib_merge_sort(&mut items, &|a, b| b.0.wrapping_sub(a.0) as i32);
+        assert_eq!(
+            items.iter().map(|item| item.1).collect::<Vec<_>>(),
+            [0, 2, 5, 3, 1, 4]
+        );
+    }
+
+    /// Scores within one natural-log unit tie, so the order depends on the
+    /// merge: here −10.6 stays ahead of −10.0, which a total order on the
+    /// scores would not allow.
+    #[test]
+    fn near_equal_tails_take_the_merge_order() {
+        let mut items: Vec<(f32, usize)> = [-10.6, -11.2, -10.0].into_iter().zip(0..).collect();
+        glib_merge_sort(&mut items, &truncated);
+        assert_eq!(
+            items.iter().map(|item| item.1).collect::<Vec<_>>(),
+            [0, 2, 1]
+        );
+    }
+
+    /// Every array of up to seven scores drawn from four values that tie
+    /// pairwise but not across the range, plus NaN and a far score: the
+    /// in-place merge makes the reference's choices.
+    #[test]
+    fn the_in_place_merge_matches_the_transcribed_one() {
+        let values = [-10.0, -10.6, -11.2, f32::NAN, -30.0];
+        for count in 0..=7_u32 {
+            for code in 0..5_usize.pow(count) {
+                let mut digits = code;
+                let poss: Vec<(f32, usize)> = (0..count as usize)
+                    .map(|slot| {
+                        let value = values[digits % 5];
+                        digits /= 5;
+                        (value, slot)
+                    })
+                    .collect();
+                let mut ours = poss.clone();
+                let mut theirs = poss;
+                glib_merge_sort(&mut ours, &truncated);
+                reference(&mut theirs, &truncated);
+                let order = |items: &[(f32, usize)]| items.iter().map(|i| i.1).collect::<Vec<_>>();
+                assert_eq!(order(&ours), order(&theirs));
+            }
+        }
+    }
+
+    /// The frequency key's `guint32` wrap: 0, 2³⁰+1 and 2³¹+2 form a cycle,
+    /// and the merge still answers the pin's order.
+    #[test]
+    fn a_wrapping_frequency_cycle_takes_the_merge_order() {
+        let compare = |a: &(u32, usize), b: &(u32, usize)| b.0.wrapping_sub(a.0) as i32;
+        let cycle = [0, (1 << 30) + 1, (1 << 31) + 2];
+        assert!(compare(&(cycle[0], 0), &(cycle[1], 0)) > 0);
+        assert!(compare(&(cycle[1], 0), &(cycle[2], 0)) > 0);
+        assert!(compare(&(cycle[0], 0), &(cycle[2], 0)) < 0);
+        for rotation in 0..3 {
+            let mut items: Vec<(u32, usize)> =
+                (0..3).map(|i| (cycle[(i + rotation) % 3], i)).collect();
+            let mut expected = items.clone();
+            glib_merge_sort(&mut items, &compare);
+            reference(&mut expected, &compare);
+            assert_eq!(items, expected);
+        }
     }
 }
