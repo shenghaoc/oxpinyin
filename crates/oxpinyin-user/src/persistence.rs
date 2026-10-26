@@ -2211,16 +2211,47 @@ fn write_chunk_file(path: &Path, bytes: &[u8]) -> Result<(), PersistenceError> {
     #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o644);
     let mut file = options.open(path).map_err(PersistenceError::Io)?;
+    write_chunk(&mut file, bytes)
+}
+
+/// The file `MemoryChunk::save` writes: the bytes go out through
+/// [`std::io::Write`], and `g_fsync` is [`ChunkSink::sync`].
+trait ChunkSink: std::io::Write {
+    fn sync(&mut self) -> std::io::Result<()>;
+}
+
+impl ChunkSink for std::fs::File {
+    fn sync(&mut self) -> std::io::Result<()> {
+        // On macOS std uses the stronger F_FULLFSYNC; see the G10 finding.
+        self.sync_all()
+    }
+}
+
+/// `MemoryChunk::save`'s writes after the open: the two header words, the
+/// payload, then the sync (`memory_chunk.h:542-557`).
+fn write_chunk(sink: &mut impl ChunkSink, bytes: &[u8]) -> Result<(), PersistenceError> {
     let split = bytes.len().min(CHUNK_HEADER_SIZE);
     let (header, payload) = bytes.split_at(split);
     let (length, checksum) = header.split_at(header.len().min(4));
-    write_header_word(&mut file, length, ChunkHeaderField::Length)?;
-    write_header_word(&mut file, checksum, ChunkHeaderField::Checksum)?;
-    std::io::Write::write_all(&mut file, payload).map_err(PersistenceError::Io)?;
-    // MemoryChunk::save ignores g_fsync before close (074a2219
-    // src/include/memory_chunk.h:555-557). File drops after this sync.
-    // On macOS std uses the stronger F_FULLFSYNC; see the G10 finding.
-    let _ = file.sync_all();
+    write_header_word(sink, length, ChunkHeaderField::Length)?;
+    write_header_word(sink, checksum, ChunkHeaderField::Checksum)?;
+    // One `write(fd, begin(), size())`: -1 or a short count closes the fd and
+    // answers false with no `g_fsync` (074a2219 memory_chunk.h:549-557). So
+    // no `write_all` loop and no retry of `Interrupted`. The callers ignore
+    // that false (pinyin.cpp:971,988; zhuyin.cpp:607,633). The reporting
+    // save, which both C facades reach, maps it to the lenient path: `tolerate`
+    // makes `Io` soft and the rename pass still walks every file. The strict
+    // Rust-only `UserStore::save` stops at the first failure instead.
+    let written = std::io::Write::write(sink, payload).map_err(PersistenceError::Io)?;
+    if written != payload.len() {
+        return Err(PersistenceError::Io(std::io::Error::new(
+            std::io::ErrorKind::WriteZero,
+            format!("short write: {written} of {} payload bytes", payload.len()),
+        )));
+    }
+    // MemoryChunk::save ignores g_fsync before close (memory_chunk.h:555-557).
+    // The file closes after this.
+    let _ = sink.sync();
     Ok(())
 }
 
@@ -2248,6 +2279,101 @@ fn write_header_word(
             format!("short write: {written} of {} header bytes", word.len()),
         ),
     })
+}
+
+#[cfg(test)]
+mod chunk_sink_tests {
+    use super::*;
+
+    #[derive(Default)]
+    struct Recorder {
+        events: Vec<String>,
+        payload: Payload,
+        fail_sync: bool,
+    }
+
+    #[derive(Default)]
+    enum Payload {
+        #[default]
+        Full,
+        Short(usize),
+        Interrupted,
+    }
+
+    impl std::io::Write for Recorder {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.events.push(format!("write {}", buf.len()));
+            if buf.len() <= 4 {
+                return Ok(buf.len());
+            }
+            match self.payload {
+                Payload::Full => Ok(buf.len()),
+                Payload::Short(n) => Ok(n),
+                Payload::Interrupted => Err(std::io::ErrorKind::Interrupted.into()),
+            }
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl ChunkSink for Recorder {
+        fn sync(&mut self) -> std::io::Result<()> {
+            self.events.push("sync".to_owned());
+            if self.fail_sync {
+                return Err(std::io::Error::other("sync refused"));
+            }
+            Ok(())
+        }
+    }
+
+    const BYTES: [u8; 14] = [1, 0, 0, 0, 2, 0, 0, 0, 9, 9, 9, 9, 9, 9];
+
+    #[test]
+    fn chunk_writes_header_words_then_payload_then_syncs_once() {
+        let mut sink = Recorder::default();
+        write_chunk(&mut sink, &BYTES).expect("write");
+        assert_eq!(sink.events, ["write 4", "write 4", "write 6", "sync"]);
+    }
+
+    #[test]
+    fn chunk_sync_error_is_ignored() {
+        let mut sink = Recorder {
+            fail_sync: true,
+            ..Recorder::default()
+        };
+        write_chunk(&mut sink, &BYTES).expect("sync failure is not the save's");
+        assert_eq!(sink.events.last().map(String::as_str), Some("sync"));
+    }
+
+    #[test]
+    fn chunk_short_payload_write_is_an_error_without_sync() {
+        let mut sink = Recorder {
+            payload: Payload::Short(3),
+            ..Recorder::default()
+        };
+        let error = write_chunk(&mut sink, &BYTES).expect_err("short write");
+        let PersistenceError::Io(source) = error else {
+            panic!("a short payload is the soft Io failure");
+        };
+        assert_eq!(source.kind(), std::io::ErrorKind::WriteZero);
+        assert_eq!(sink.events, ["write 4", "write 4", "write 6"]);
+    }
+
+    #[test]
+    fn chunk_interrupted_payload_write_is_not_retried() {
+        let mut sink = Recorder {
+            payload: Payload::Interrupted,
+            ..Recorder::default()
+        };
+        let error = write_chunk(&mut sink, &BYTES).expect_err("interrupted");
+        let PersistenceError::Io(source) = error else {
+            panic!("an interrupted payload is the soft Io failure");
+        };
+        assert_eq!(source.kind(), std::io::ErrorKind::Interrupted);
+        assert_eq!(sink.events, ["write 4", "write 4", "write 6"]);
+    }
 }
 
 #[cfg(test)]
