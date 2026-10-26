@@ -238,7 +238,7 @@ by the inherited value. The remaining overwrites were classified as follows:
 | `run-perf-baseline.sh`, `run-perf-matrix.sh`, `run-perf-same-data.sh` | Defects, including reused stages and both taskset branches; preserve inheritance. |
 | `run-shipped-check.sh`, `run-tree-recipe-control.sh` | Defects; use the selected object's directory, then inheritance. |
 | `release-stage.sh` and `capture/run-capture.sh` | Additional defects; linked smoke/capture processes also need inheritance and the check. |
-| `run-cpp-smoke.sh`: cleared-path `ldd` assertion | Intentional SONAME/RPATH test; the subsequent executable launch is checked with its actual environment. |
+| `just runner cpp-smoke`: cleared-path `ldd` assertion | Intentional SONAME/RPATH test; the subsequent executable launch is checked with its actual environment. |
 | `build-oracle.sh`: generation-prefix assignment | Intentional isolation in the pinned build recipe; not a differential launch. |
 | `cloud/env.sh`: generated-path parsing and host-probe filtering; setup's cache-probe assignments | Intentional parsing without caller inheritance, or isolation of the host or selected cache while provisioning. |
 | `tools/dev/compat/boundary.py`: removal of host loader variables | Intentional host/container boundary; the container supplies its own runtime. |
@@ -555,7 +555,7 @@ Rerun with nothing removed: `real 0m1.164s`.
 
 **Capi and contract diff.** `oxpinyin-capi` and `oxpinyin-zhuyin-capi` debug
 builds, one target directory per cell (`--no-default-features --features
-bdb|kyotocabinet|tkrzw`), then `tools/bisection/run-contract-diff.sh` with
+bdb|kyotocabinet|tkrzw`), then `just runner contract-diff` with
 `--cases` set to the 26 `issue784-index-keys-*` cases (pinyin and zhuyin),
 after `source ~/.oxpinyin-oracle.env`:
 

@@ -21,8 +21,6 @@ VERSION_LITERAL = re.compile(r'(?i)\bbash\b[ \t]*(?:>=|>|at[ \t]+least)[ \t]*[0-
 # check, so they neither source the guard nor carry a version themselves.
 SOURCED_ONLY = frozenset({
     'tools/bisection/debuginfo-neutrality-lib.sh',
-    'tools/bisection/oracle-cell.sh',
-    'tools/bisection/system-dir.sh',
     'tools/cloud/env.sh',
     'tools/container/runtime.sh',
     'tools/oracle/pin.sh',

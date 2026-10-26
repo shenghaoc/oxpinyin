@@ -174,9 +174,9 @@ No root recipe contains orchestration logic.
 | `just container list` | List registry work without execution. | `run-all.py --list` |
 | `just container plan` | Print selected work without execution. | Proposed wrapper. #941 implemented read-only `tools.dev plan --runners/--cells` for row metadata; resolved commands and identities remain proposed. |
 | `just container doctor` | Report inner capabilities. | Cell/env probes |
-| `just container run` | Run selected registry gates. | `run-all.sh`, `run-all.py` |
+| `just container run` | Run selected registry gates. | `just runner run-all`, `run-all.py` |
 | `just container contract` | Run selected contract families/options/Axis C. | `contract-diff.py`, `transformed-options-sweep.py`, wrappers |
-| `just container cells` | Describe/select cells, data and artifacts. | `oracle-cell.sh`, `system-dir.sh`, `cell-artifacts.sh` |
+| `just container cells` | Describe/select cells, data and artifacts. | `tools.dev.cell`, `tools.dev.system_data`, `just cell-artifacts` |
 | `just container oracle build\|pull\|verify\|regen-data` | Provision or verify frozen-reference inputs. | Existing oracle provisioning scripts |
 | `just container test --differential` | Run pin-dependent Rust tests. | `run-differentials.sh`, `nightly-fixture-differentials.sh` |
 | `just container ci <job>` | Run a separately approved pin-dependent CI task. | Pin workflow-specific commands |

@@ -2,7 +2,7 @@
   {
     "name": "abi-probe-diff",
     "kind": "gate",
-    "implementation": "legacy:tools/bisection/run-abi-probe-diff.sh",
+    "implementation": "python:tools.dev",
     "issues": [
       "row:33",
       "row:34",
@@ -30,8 +30,17 @@
       "bisection-source-output"
     ],
     "command": [
-      "bash",
-      "{root}/tools/bisection/run-abi-probe-diff.sh"
+      "uv",
+      "run",
+      "--no-project",
+      "--managed-python",
+      "python",
+      "-X",
+      "lazy_imports=normal",
+      "-m",
+      "tools.dev",
+      "runner",
+      "abi-probe-diff"
     ],
     "env": {},
     "input_paths": [
@@ -41,7 +50,7 @@
   {
     "name": "addon-candidate-diff",
     "kind": "gate",
-    "implementation": "legacy:tools/bisection/run-w11-diff.sh",
+    "implementation": "python:tools.dev",
     "issues": [
       "W11"
     ],
@@ -65,8 +74,17 @@
       "bisection-source-output"
     ],
     "command": [
-      "bash",
-      "{root}/tools/bisection/run-w11-diff.sh",
+      "uv",
+      "run",
+      "--no-project",
+      "--managed-python",
+      "python",
+      "-X",
+      "lazy_imports=normal",
+      "-m",
+      "tools.dev",
+      "runner",
+      "w11-diff",
       "addon-candidate-diff"
     ],
     "env": {},
@@ -77,7 +95,7 @@
   {
     "name": "bigram-export-diff",
     "kind": "gate",
-    "implementation": "legacy:tools/bisection/run-bigram-export-diff.sh",
+    "implementation": "python:tools.dev",
     "issues": [
       "541",
       "row:1"
@@ -100,8 +118,17 @@
     "timeout": 900,
     "exclusive_resources": [],
     "command": [
-      "bash",
-      "{root}/tools/bisection/run-bigram-export-diff.sh",
+      "uv",
+      "run",
+      "--no-project",
+      "--managed-python",
+      "python",
+      "-X",
+      "lazy_imports=normal",
+      "-m",
+      "tools.dev",
+      "runner",
+      "bigram-export-diff",
       "{prefix}/lib/libpinyin.so",
       "{capi}",
       "{prefix}/lib/libpinyin/data"
@@ -116,7 +143,7 @@
     "name": "bisect",
     "heavy": true,
     "kind": "gate",
-    "implementation": "legacy:tools/bisection/run-bisect.sh",
+    "implementation": "python:tools.dev",
     "issues": [
       "coverage:20",
       "coverage:2",
@@ -142,8 +169,17 @@
       "bisection-source-output"
     ],
     "command": [
-      "bash",
-      "{root}/tools/bisection/run-bisect.sh",
+      "uv",
+      "run",
+      "--no-project",
+      "--managed-python",
+      "python",
+      "-X",
+      "lazy_imports=normal",
+      "-m",
+      "tools.dev",
+      "runner",
+      "bisect",
       "{prefix}/lib/libpinyin.so",
       "{prefix}/lib/libpinyin/data"
     ],
@@ -187,7 +223,7 @@
   {
     "name": "candidate-assembly-diff",
     "kind": "gate",
-    "implementation": "legacy:tools/bisection/run-candidate-assembly-diff.sh",
+    "implementation": "python:tools.dev",
     "issues": [
       "582"
     ],
@@ -210,8 +246,17 @@
     "timeout": 900,
     "exclusive_resources": [],
     "command": [
-      "bash",
-      "{root}/tools/bisection/run-candidate-assembly-diff.sh",
+      "uv",
+      "run",
+      "--no-project",
+      "--managed-python",
+      "python",
+      "-X",
+      "lazy_imports=normal",
+      "-m",
+      "tools.dev",
+      "runner",
+      "candidate-assembly-diff",
       "{prefix}",
       "{capi}",
       "{zhuyin}"
@@ -226,7 +271,7 @@
   {
     "name": "contract-diff",
     "kind": "gate",
-    "implementation": "legacy:tools/bisection/run-contract-diff.sh",
+    "implementation": "python:tools.dev",
     "issues": [
       "lane-C-contract"
     ],
@@ -249,8 +294,17 @@
     "heavy": true,
     "exclusive_resources": [],
     "command": [
-      "bash",
-      "{root}/tools/bisection/run-contract-diff.sh",
+      "uv",
+      "run",
+      "--no-project",
+      "--managed-python",
+      "python",
+      "-X",
+      "lazy_imports=normal",
+      "-m",
+      "tools.dev",
+      "runner",
+      "contract-diff",
       "{cell}",
       "{prefix}",
       "{capi}",
@@ -266,7 +320,7 @@
   {
     "name": "cpp-smoke",
     "kind": "gate",
-    "implementation": "legacy:tools/bisection/run-cpp-smoke.sh",
+    "implementation": "python:tools.dev",
     "issues": [
       "register:abi-reference"
     ],
@@ -286,8 +340,17 @@
     "timeout": 900,
     "exclusive_resources": [],
     "command": [
-      "bash",
-      "{root}/tools/bisection/run-cpp-smoke.sh"
+      "uv",
+      "run",
+      "--no-project",
+      "--managed-python",
+      "python",
+      "-X",
+      "lazy_imports=normal",
+      "-m",
+      "tools.dev",
+      "runner",
+      "cpp-smoke"
     ],
     "env": {},
     "input_paths": [
@@ -298,7 +361,7 @@
   {
     "name": "dict-surface-diff",
     "kind": "gate",
-    "implementation": "legacy:tools/bisection/run-dict-surface-diff.sh",
+    "implementation": "python:tools.dev",
     "issues": [
       "register:probe-coverage-abi/Tier-C"
     ],
@@ -322,8 +385,17 @@
       "surface-native-output"
     ],
     "command": [
-      "bash",
-      "{root}/tools/bisection/run-dict-surface-diff.sh"
+      "uv",
+      "run",
+      "--no-project",
+      "--managed-python",
+      "python",
+      "-X",
+      "lazy_imports=normal",
+      "-m",
+      "tools.dev",
+      "runner",
+      "dict-surface-diff"
     ],
     "env": {
       "DICT_SYSTEM": "{data}"
@@ -335,7 +407,7 @@
   {
     "name": "dynamic-adjust-diff",
     "kind": "gate",
-    "implementation": "legacy:tools/bisection/run-dynamic-adjust-diff.sh",
+    "implementation": "python:tools.dev",
     "issues": [
       "W10"
     ],
@@ -357,8 +429,17 @@
     "timeout": 900,
     "exclusive_resources": [],
     "command": [
-      "bash",
-      "{root}/tools/bisection/run-dynamic-adjust-diff.sh"
+      "uv",
+      "run",
+      "--no-project",
+      "--managed-python",
+      "python",
+      "-X",
+      "lazy_imports=normal",
+      "-m",
+      "tools.dev",
+      "runner",
+      "dynamic-adjust-diff"
     ],
     "env": {},
     "input_paths": [
@@ -368,7 +449,7 @@
   {
     "name": "export-diff",
     "kind": "gate",
-    "implementation": "legacy:tools/bisection/run-export-diff.sh",
+    "implementation": "python:tools.dev",
     "issues": [
       "533"
     ],
@@ -389,8 +470,17 @@
     "timeout": 900,
     "exclusive_resources": [],
     "command": [
-      "bash",
-      "{root}/tools/bisection/run-export-diff.sh",
+      "uv",
+      "run",
+      "--no-project",
+      "--managed-python",
+      "python",
+      "-X",
+      "lazy_imports=normal",
+      "-m",
+      "tools.dev",
+      "runner",
+      "export-diff",
       "{prefix}/lib/libpinyin.so",
       "{capi}",
       "{prefix}/lib/libpinyin/data"
@@ -403,7 +493,7 @@
   {
     "name": "import-diff",
     "kind": "gate",
-    "implementation": "legacy:tools/bisection/run-import-diff.sh",
+    "implementation": "python:tools.dev",
     "issues": [
       "W7-T1"
     ],
@@ -431,8 +521,17 @@
       "bisection-source-output"
     ],
     "command": [
-      "bash",
-      "{root}/tools/bisection/run-import-diff.sh"
+      "uv",
+      "run",
+      "--no-project",
+      "--managed-python",
+      "python",
+      "-X",
+      "lazy_imports=normal",
+      "-m",
+      "tools.dev",
+      "runner",
+      "import-diff"
     ],
     "env": {
       "IMPORT_SYSTEM": "{data}"
@@ -444,7 +543,7 @@
   {
     "name": "import-semantics-diff",
     "kind": "gate",
-    "implementation": "legacy:tools/bisection/run-import-semantics-diff.sh",
+    "implementation": "python:tools.dev",
     "issues": [
       "534"
     ],
@@ -465,8 +564,17 @@
     "timeout": 900,
     "exclusive_resources": [],
     "command": [
-      "bash",
-      "{root}/tools/bisection/run-import-semantics-diff.sh",
+      "uv",
+      "run",
+      "--no-project",
+      "--managed-python",
+      "python",
+      "-X",
+      "lazy_imports=normal",
+      "-m",
+      "tools.dev",
+      "runner",
+      "import-semantics-diff",
       "{prefix}/lib/libpinyin.so",
       "{capi}",
       "{prefix}/lib/libpinyin/data"
@@ -479,7 +587,7 @@
   {
     "name": "key-surface-diff",
     "kind": "gate",
-    "implementation": "legacy:tools/bisection/run-key-surface-diff.sh",
+    "implementation": "python:tools.dev",
     "issues": [
       "109"
     ],
@@ -503,8 +611,17 @@
       "surface-native-output"
     ],
     "command": [
-      "bash",
-      "{root}/tools/bisection/run-key-surface-diff.sh"
+      "uv",
+      "run",
+      "--no-project",
+      "--managed-python",
+      "python",
+      "-X",
+      "lazy_imports=normal",
+      "-m",
+      "tools.dev",
+      "runner",
+      "key-surface-diff"
     ],
     "env": {
       "KEY_SYSTEM": "{data}"
@@ -516,7 +633,7 @@
   {
     "name": "live-typing-diff",
     "kind": "gate",
-    "implementation": "legacy:tools/bisection/run-live-typing-diff.sh",
+    "implementation": "python:tools.dev",
     "issues": [
       "W12"
     ],
@@ -540,8 +657,17 @@
       "bisection-source-output"
     ],
     "command": [
-      "bash",
-      "{root}/tools/bisection/run-live-typing-diff.sh"
+      "uv",
+      "run",
+      "--no-project",
+      "--managed-python",
+      "python",
+      "-X",
+      "lazy_imports=normal",
+      "-m",
+      "tools.dev",
+      "runner",
+      "live-typing-diff"
     ],
     "env": {},
     "input_paths": [
@@ -551,7 +677,7 @@
   {
     "name": "locale-diff",
     "kind": "gate",
-    "implementation": "legacy:tools/bisection/run-locale-diff.sh",
+    "implementation": "python:tools.dev",
     "issues": [
       "539",
       "619",
@@ -577,8 +703,17 @@
     "timeout": 900,
     "exclusive_resources": [],
     "command": [
-      "bash",
-      "{root}/tools/bisection/run-locale-diff.sh"
+      "uv",
+      "run",
+      "--no-project",
+      "--managed-python",
+      "python",
+      "-X",
+      "lazy_imports=normal",
+      "-m",
+      "tools.dev",
+      "runner",
+      "locale-diff"
     ],
     "env": {
       "LOCALE_DIFF_ORACLE_PREFIX": "{prefix}",
@@ -594,7 +729,7 @@
   {
     "name": "nbest-choose-train-diff",
     "kind": "gate",
-    "implementation": "legacy:tools/bisection/run-nbest-choose-train-diff.sh",
+    "implementation": "python:tools.dev",
     "issues": [
       "row:38"
     ],
@@ -618,8 +753,17 @@
     "timeout": 900,
     "exclusive_resources": [],
     "command": [
-      "bash",
-      "{root}/tools/bisection/run-nbest-choose-train-diff.sh",
+      "uv",
+      "run",
+      "--no-project",
+      "--managed-python",
+      "python",
+      "-X",
+      "lazy_imports=normal",
+      "-m",
+      "tools.dev",
+      "runner",
+      "nbest-choose-train-diff",
       "{cell}",
       "{prefix}",
       "{capi}",
@@ -636,7 +780,7 @@
   {
     "name": "nbest-train-diff",
     "kind": "gate",
-    "implementation": "legacy:tools/bisection/run-nbest-train-diff.sh",
+    "implementation": "python:tools.dev",
     "issues": [
       "W14"
     ],
@@ -660,8 +804,17 @@
       "bisection-source-output"
     ],
     "command": [
-      "bash",
-      "{root}/tools/bisection/run-nbest-train-diff.sh"
+      "uv",
+      "run",
+      "--no-project",
+      "--managed-python",
+      "python",
+      "-X",
+      "lazy_imports=normal",
+      "-m",
+      "tools.dev",
+      "runner",
+      "nbest-train-diff"
     ],
     "env": {},
     "input_paths": [
@@ -671,7 +824,7 @@
   {
     "name": "open-counter-diff",
     "kind": "gate",
-    "implementation": "legacy:tools/bisection/run-open-counter-diff.sh",
+    "implementation": "python:tools.dev",
     "issues": [
       "523",
       "583",
@@ -698,8 +851,17 @@
     "heavy": true,
     "exclusive_resources": [],
     "command": [
-      "bash",
-      "{root}/tools/bisection/run-open-counter-diff.sh"
+      "uv",
+      "run",
+      "--no-project",
+      "--managed-python",
+      "python",
+      "-X",
+      "lazy_imports=normal",
+      "-m",
+      "tools.dev",
+      "runner",
+      "open-counter-diff"
     ],
     "env": {
       "OPEN_COUNTER_ORACLE_PREFIX": "{prefix}",
@@ -715,7 +877,7 @@
   {
     "name": "option-sweep",
     "kind": "gate",
-    "implementation": "legacy:tools/bisection/run-option-sweep.sh",
+    "implementation": "python:tools.dev",
     "issues": [
       "W10",
       "row:17"
@@ -741,8 +903,17 @@
       "bisection-source-output"
     ],
     "command": [
-      "bash",
-      "{root}/tools/bisection/run-option-sweep.sh"
+      "uv",
+      "run",
+      "--no-project",
+      "--managed-python",
+      "python",
+      "-X",
+      "lazy_imports=normal",
+      "-m",
+      "tools.dev",
+      "runner",
+      "option-sweep"
     ],
     "env": {},
     "input_paths": [
@@ -833,7 +1004,7 @@
   {
     "name": "phrase-surface-diff",
     "kind": "gate",
-    "implementation": "legacy:tools/bisection/run-phrase-surface-diff.sh",
+    "implementation": "python:tools.dev",
     "issues": [
       "coverage:68",
       "coverage:69",
@@ -859,8 +1030,17 @@
       "surface-native-output"
     ],
     "command": [
-      "bash",
-      "{root}/tools/bisection/run-phrase-surface-diff.sh"
+      "uv",
+      "run",
+      "--no-project",
+      "--managed-python",
+      "python",
+      "-X",
+      "lazy_imports=normal",
+      "-m",
+      "tools.dev",
+      "runner",
+      "phrase-surface-diff"
     ],
     "env": {
       "PHRASE_SYSTEM": "{data}"
@@ -872,7 +1052,7 @@
   {
     "name": "pred-order-diff",
     "kind": "gate",
-    "implementation": "legacy:tools/bisection/run-pred-order-diff.sh",
+    "implementation": "python:tools.dev",
     "issues": [
       "row:12"
     ],
@@ -896,8 +1076,17 @@
       "bisection-source-output"
     ],
     "command": [
-      "bash",
-      "{root}/tools/bisection/run-pred-order-diff.sh"
+      "uv",
+      "run",
+      "--no-project",
+      "--managed-python",
+      "python",
+      "-X",
+      "lazy_imports=normal",
+      "-m",
+      "tools.dev",
+      "runner",
+      "pred-order-diff"
     ],
     "env": {},
     "input_paths": [
@@ -907,7 +1096,7 @@
   {
     "name": "predict-diff",
     "kind": "gate",
-    "implementation": "legacy:tools/bisection/run-w11-diff.sh",
+    "implementation": "python:tools.dev",
     "issues": [
       "W11",
       "104"
@@ -931,8 +1120,17 @@
       "bisection-source-output"
     ],
     "command": [
-      "bash",
-      "{root}/tools/bisection/run-w11-diff.sh",
+      "uv",
+      "run",
+      "--no-project",
+      "--managed-python",
+      "python",
+      "-X",
+      "lazy_imports=normal",
+      "-m",
+      "tools.dev",
+      "runner",
+      "w11-diff",
       "predict-diff"
     ],
     "env": {},
@@ -943,7 +1141,7 @@
   {
     "name": "punct-diff",
     "kind": "gate",
-    "implementation": "legacy:tools/bisection/run-w11-diff.sh",
+    "implementation": "python:tools.dev",
     "issues": [
       "104"
     ],
@@ -966,7 +1164,8 @@
       "bisection-source-output"
     ],
     "command": [
-      "{root}/tools/bisection/run-w11-diff.sh",
+      "uv", "run", "--no-project", "--managed-python", "python", "-X",
+      "lazy_imports=normal", "-m", "tools.dev", "runner", "w11-diff",
       "punct-diff"
     ],
     "env": {},
@@ -977,7 +1176,7 @@
   {
     "name": "residue-a-tail-diff",
     "kind": "gate",
-    "implementation": "legacy:tools/bisection/run-residue-a-tail-diff.sh",
+    "implementation": "python:tools.dev",
     "issues": [
       "row:33",
       "row:34",
@@ -1006,8 +1205,17 @@
       "bisection-source-output"
     ],
     "command": [
-      "bash",
-      "{root}/tools/bisection/run-residue-a-tail-diff.sh"
+      "uv",
+      "run",
+      "--no-project",
+      "--managed-python",
+      "python",
+      "-X",
+      "lazy_imports=normal",
+      "-m",
+      "tools.dev",
+      "runner",
+      "residue-a-tail-diff"
     ],
     "env": {
       "RESIDUE_A_CAPI_SO": "{capi}"
@@ -1020,7 +1228,7 @@
   {
     "name": "residue-mechanism-diff",
     "kind": "gate",
-    "implementation": "legacy:tools/bisection/run-residue-mechanism-diff.sh",
+    "implementation": "python:tools.dev",
     "issues": [
       "row:34"
     ],
@@ -1044,8 +1252,17 @@
       "bisection-source-output"
     ],
     "command": [
-      "bash",
-      "{root}/tools/bisection/run-residue-mechanism-diff.sh"
+      "uv",
+      "run",
+      "--no-project",
+      "--managed-python",
+      "python",
+      "-X",
+      "lazy_imports=normal",
+      "-m",
+      "tools.dev",
+      "runner",
+      "residue-mechanism-diff"
     ],
     "env": {},
     "input_paths": [
@@ -1082,7 +1299,7 @@
   {
     "name": "same-data-dir-diff",
     "kind": "gate",
-    "implementation": "legacy:tools/bisection/run-same-data-dir-diff.sh",
+    "implementation": "python:tools.dev",
     "issues": [
       "635",
       "636",
@@ -1105,8 +1322,17 @@
     "timeout": 900,
     "exclusive_resources": [],
     "command": [
-      "bash",
-      "{root}/tools/bisection/run-same-data-dir-diff.sh",
+      "uv",
+      "run",
+      "--no-project",
+      "--managed-python",
+      "python",
+      "-X",
+      "lazy_imports=normal",
+      "-m",
+      "tools.dev",
+      "runner",
+      "same-data-dir-diff",
       "{prefix}/lib/libpinyin.so",
       "{capi}",
       "{prefix}/lib/libpinyin/data"
@@ -1119,7 +1345,7 @@
   {
     "name": "scheme-diff",
     "kind": "gate",
-    "implementation": "legacy:tools/bisection/run-scheme-diff.sh",
+    "implementation": "python:tools.dev",
     "issues": [
       "W13",
       "W15"
@@ -1144,8 +1370,17 @@
       "bisection-source-output"
     ],
     "command": [
-      "bash",
-      "{root}/tools/bisection/run-scheme-diff.sh"
+      "uv",
+      "run",
+      "--no-project",
+      "--managed-python",
+      "python",
+      "-X",
+      "lazy_imports=normal",
+      "-m",
+      "tools.dev",
+      "runner",
+      "scheme-diff"
     ],
     "env": {},
     "input_paths": [
@@ -1155,7 +1390,7 @@
   {
     "name": "session-fork-diff",
     "kind": "gate",
-    "implementation": "legacy:tools/bisection/run-session-fork-diff.sh",
+    "implementation": "python:tools.dev",
     "issues": [
       "531",
       "546"
@@ -1179,8 +1414,17 @@
     "timeout": 900,
     "exclusive_resources": [],
     "command": [
-      "bash",
-      "{root}/tools/bisection/run-session-fork-diff.sh"
+      "uv",
+      "run",
+      "--no-project",
+      "--managed-python",
+      "python",
+      "-X",
+      "lazy_imports=normal",
+      "-m",
+      "tools.dev",
+      "runner",
+      "session-fork-diff"
     ],
     "env": {
       "SESSION_FORK_ORACLE_PREFIX": "{prefix}",
@@ -1248,7 +1492,7 @@
   {
     "name": "system-import-round-trip",
     "kind": "gate",
-    "implementation": "legacy:tools/bisection/run-system-import-round-trip.sh",
+    "implementation": "python:tools.dev",
     "issues": [
       "599"
     ],
@@ -1269,8 +1513,17 @@
     "timeout": 900,
     "exclusive_resources": [],
     "command": [
-      "bash",
-      "{root}/tools/bisection/run-system-import-round-trip.sh",
+      "uv",
+      "run",
+      "--no-project",
+      "--managed-python",
+      "python",
+      "-X",
+      "lazy_imports=normal",
+      "-m",
+      "tools.dev",
+      "runner",
+      "system-import-round-trip",
       "pinyin",
       "{prefix}/lib/libpinyin.so",
       "{capi}",
@@ -1284,7 +1537,7 @@
   {
     "name": "train-diff-dynamic-off",
     "kind": "gate",
-    "implementation": "legacy:tools/bisection/run-train-diff-dynamic-off.sh",
+    "implementation": "python:tools.dev",
     "issues": [
       "W10"
     ],
@@ -1308,8 +1561,17 @@
       "bisection-source-output"
     ],
     "command": [
-      "bash",
-      "{root}/tools/bisection/run-train-diff-dynamic-off.sh"
+      "uv",
+      "run",
+      "--no-project",
+      "--managed-python",
+      "python",
+      "-X",
+      "lazy_imports=normal",
+      "-m",
+      "tools.dev",
+      "runner",
+      "train-diff-dynamic-off"
     ],
     "env": {},
     "input_paths": [
@@ -1319,7 +1581,7 @@
   {
     "name": "train-diff",
     "kind": "gate",
-    "implementation": "legacy:tools/bisection/run-train-diff.sh",
+    "implementation": "python:tools.dev",
     "issues": [
       "W6-T7"
     ],
@@ -1343,8 +1605,17 @@
       "bisection-source-output"
     ],
     "command": [
-      "bash",
-      "{root}/tools/bisection/run-train-diff.sh"
+      "uv",
+      "run",
+      "--no-project",
+      "--managed-python",
+      "python",
+      "-X",
+      "lazy_imports=normal",
+      "-m",
+      "tools.dev",
+      "runner",
+      "train-diff"
     ],
     "env": {},
     "input_paths": [
@@ -1381,7 +1652,7 @@
   {
     "name": "two-context-diff",
     "kind": "gate",
-    "implementation": "legacy:tools/bisection/run-two-context-diff.sh",
+    "implementation": "python:tools.dev",
     "issues": [
       "538",
       "578"
@@ -1405,8 +1676,17 @@
     "timeout": 900,
     "exclusive_resources": [],
     "command": [
-      "bash",
-      "{root}/tools/bisection/run-two-context-diff.sh"
+      "uv",
+      "run",
+      "--no-project",
+      "--managed-python",
+      "python",
+      "-X",
+      "lazy_imports=normal",
+      "-m",
+      "tools.dev",
+      "runner",
+      "two-context-diff"
     ],
     "env": {
       "TWO_CONTEXT_ORACLE_PREFIX": "{prefix}",
@@ -1422,7 +1702,7 @@
   {
     "name": "uncovered-surface-diff",
     "kind": "gate",
-    "implementation": "legacy:tools/bisection/run-uncovered-surface-diff.sh",
+    "implementation": "python:tools.dev",
     "issues": [
       "W12"
     ],
@@ -1446,8 +1726,17 @@
       "bisection-source-output"
     ],
     "command": [
-      "bash",
-      "{root}/tools/bisection/run-uncovered-surface-diff.sh"
+      "uv",
+      "run",
+      "--no-project",
+      "--managed-python",
+      "python",
+      "-X",
+      "lazy_imports=normal",
+      "-m",
+      "tools.dev",
+      "runner",
+      "uncovered-surface-diff"
     ],
     "env": {},
     "input_paths": [
@@ -1457,7 +1746,7 @@
   {
     "name": "union-diff",
     "kind": "gate",
-    "implementation": "legacy:tools/bisection/run-union-diff.sh",
+    "implementation": "python:tools.dev",
     "issues": [
       "W11"
     ],
@@ -1481,8 +1770,17 @@
       "bisection-source-output"
     ],
     "command": [
-      "bash",
-      "{root}/tools/bisection/run-union-diff.sh"
+      "uv",
+      "run",
+      "--no-project",
+      "--managed-python",
+      "python",
+      "-X",
+      "lazy_imports=normal",
+      "-m",
+      "tools.dev",
+      "runner",
+      "union-diff"
     ],
     "env": {},
     "input_paths": [
@@ -1492,7 +1790,7 @@
   {
     "name": "user-candidate-diff",
     "kind": "gate",
-    "implementation": "legacy:tools/bisection/run-w11-diff.sh",
+    "implementation": "python:tools.dev",
     "issues": [
       "W11"
     ],
@@ -1515,8 +1813,17 @@
       "bisection-source-output"
     ],
     "command": [
-      "bash",
-      "{root}/tools/bisection/run-w11-diff.sh",
+      "uv",
+      "run",
+      "--no-project",
+      "--managed-python",
+      "python",
+      "-X",
+      "lazy_imports=normal",
+      "-m",
+      "tools.dev",
+      "runner",
+      "w11-diff",
       "user-candidate-diff"
     ],
     "env": {},
@@ -1527,7 +1834,7 @@
   {
     "name": "user-file-modes-diff",
     "kind": "gate",
-    "implementation": "legacy:tools/bisection/run-user-file-modes-diff.sh",
+    "implementation": "python:tools.dev",
     "issues": [
       "544"
     ],
@@ -1550,8 +1857,17 @@
     "timeout": 900,
     "exclusive_resources": [],
     "command": [
-      "bash",
-      "{root}/tools/bisection/run-user-file-modes-diff.sh"
+      "uv",
+      "run",
+      "--no-project",
+      "--managed-python",
+      "python",
+      "-X",
+      "lazy_imports=normal",
+      "-m",
+      "tools.dev",
+      "runner",
+      "user-file-modes-diff"
     ],
     "env": {
       "MODES_ORACLE_PREFIX": "{prefix}",
@@ -1567,7 +1883,7 @@
   {
     "name": "w11-diff",
     "kind": "gate",
-    "implementation": "legacy:tools/bisection/run-w11-diff.sh",
+    "implementation": "python:tools.dev",
     "issues": [
       "W11"
     ],
@@ -1591,8 +1907,17 @@
       "bisection-source-output"
     ],
     "command": [
-      "bash",
-      "{root}/tools/bisection/run-w11-diff.sh",
+      "uv",
+      "run",
+      "--no-project",
+      "--managed-python",
+      "python",
+      "-X",
+      "lazy_imports=normal",
+      "-m",
+      "tools.dev",
+      "runner",
+      "w11-diff",
       "predict-diff"
     ],
     "env": {},
@@ -1603,7 +1928,7 @@
   {
     "name": "zhuyin-diff",
     "kind": "gate",
-    "implementation": "legacy:tools/bisection/run-zhuyin-diff.sh",
+    "implementation": "python:tools.dev",
     "issues": [
       "row:24",
       "row:25",
@@ -1632,8 +1957,17 @@
     "timeout": 900,
     "exclusive_resources": [],
     "command": [
-      "bash",
-      "{root}/tools/bisection/run-zhuyin-diff.sh"
+      "uv",
+      "run",
+      "--no-project",
+      "--managed-python",
+      "python",
+      "-X",
+      "lazy_imports=normal",
+      "-m",
+      "tools.dev",
+      "runner",
+      "zhuyin-diff"
     ],
     "env": {
       "ZHUYIN_ORACLE_PREFIX": "{prefix}",
@@ -1650,7 +1984,7 @@
   {
     "name": "zhuyin-import-diff",
     "kind": "gate",
-    "implementation": "legacy:tools/bisection/run-zhuyin-import-diff.sh",
+    "implementation": "python:tools.dev",
     "issues": [
       "575",
       "600",
@@ -1675,8 +2009,17 @@
     "timeout": 900,
     "exclusive_resources": [],
     "command": [
-      "bash",
-      "{root}/tools/bisection/run-zhuyin-import-diff.sh",
+      "uv",
+      "run",
+      "--no-project",
+      "--managed-python",
+      "python",
+      "-X",
+      "lazy_imports=normal",
+      "-m",
+      "tools.dev",
+      "runner",
+      "zhuyin-import-diff",
       "{prefix}/lib/libzhuyin.so",
       "{zhuyin}",
       "{prefix}/lib/libpinyin/data"
@@ -1691,7 +2034,7 @@
   {
     "name": "system-import-round-trip-zhuyin",
     "kind": "gate",
-    "implementation": "legacy:tools/bisection/run-system-import-round-trip.sh",
+    "implementation": "python:tools.dev",
     "issues": [
       "599"
     ],
@@ -1712,8 +2055,17 @@
     "timeout": 900,
     "exclusive_resources": [],
     "command": [
-      "bash",
-      "{root}/tools/bisection/run-system-import-round-trip.sh",
+      "uv",
+      "run",
+      "--no-project",
+      "--managed-python",
+      "python",
+      "-X",
+      "lazy_imports=normal",
+      "-m",
+      "tools.dev",
+      "runner",
+      "system-import-round-trip",
       "zhuyin",
       "{prefix}/lib/libzhuyin.so",
       "{zhuyin}",
@@ -1818,7 +2170,7 @@
   {
     "name": "abi-exports",
     "kind": "gate",
-    "implementation": "legacy:tools/abi/check-exports.sh",
+    "implementation": "python:tools.dev",
     "issues": [
       "register:libpinyin.ver",
       "register:libzhuyin.ver"
@@ -1840,8 +2192,17 @@
     "timeout": 900,
     "exclusive_resources": [],
     "command": [
-      "bash",
-      "{root}/tools/abi/check-exports.sh"
+      "uv",
+      "run",
+      "--no-project",
+      "--managed-python",
+      "python",
+      "-X",
+      "lazy_imports=normal",
+      "-m",
+      "tools.dev",
+      "abi",
+      "exports"
     ],
     "env": {},
     "input_paths": [
@@ -1852,7 +2213,7 @@
   {
     "name": "abi-alloc-failure",
     "kind": "gate",
-    "implementation": "legacy:tools/abi/check-alloc-failure.sh",
+    "implementation": "python:tools.dev",
     "issues": [
       "1227"
     ],
@@ -1875,8 +2236,17 @@
     "heavy": true,
     "exclusive_resources": [],
     "command": [
-      "bash",
-      "{root}/tools/abi/check-alloc-failure.sh",
+      "uv",
+      "run",
+      "--no-project",
+      "--managed-python",
+      "python",
+      "-X",
+      "lazy_imports=normal",
+      "-m",
+      "tools.dev",
+      "abi",
+      "alloc-failure",
       "{prefix}",
       "{capi}",
       "{zhuyin}"
@@ -1892,7 +2262,7 @@
   {
     "name": "abi-alloc",
     "kind": "gate",
-    "implementation": "legacy:tools/abi/check-alloc-pairing.sh",
+    "implementation": "python:tools.dev",
     "issues": [
       "register:libpinyin.alloc",
       "register:libzhuyin.alloc"
@@ -1915,8 +2285,17 @@
     "timeout": 900,
     "exclusive_resources": [],
     "command": [
-      "bash",
-      "{root}/tools/abi/check-alloc-pairing.sh"
+      "uv",
+      "run",
+      "--no-project",
+      "--managed-python",
+      "python",
+      "-X",
+      "lazy_imports=normal",
+      "-m",
+      "tools.dev",
+      "abi",
+      "alloc-pairing"
     ],
     "env": {},
     "input_paths": [

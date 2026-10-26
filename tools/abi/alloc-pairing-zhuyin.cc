@@ -4,7 +4,7 @@
 // The libpinyin driver beside this one (alloc-pairing-pinyin.cc) carries the
 // full rationale: the register declares a deallocator per pointer-shaped
 // slot, this TU releases each slot with exactly that deallocator, and
-// tools/abi/check-alloc-pairing.sh runs it under LeakSanitizer with the same
+// just abi alloc-pairing runs it under LeakSanitizer with the same
 // properties — per-slot coverage cleared between the warm and measured
 // passes, a warm pass that keeps one-time library statics out of the report
 // so a leak reported here is per-call, the register's own class and note

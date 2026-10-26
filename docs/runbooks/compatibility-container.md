@@ -229,7 +229,7 @@ second oracle implementation and no general development image.
 Inside the container, existing `tools/cloud/setup.sh --in-container` verifies
 reference hashes, reuses `tools/model/fetch-model.sh`, regenerates/validates
 backend data when needed, and writes an internal environment file. Existing
-cell selection, artifact building and `run-all.sh` perform the comparison.
+cell selection, artifact building and `just runner run-all` perform the comparison.
 No nested container runtime is required. A clean container environment prevents
 host library/artifact/backend overrides from contaminating the comparison.
 

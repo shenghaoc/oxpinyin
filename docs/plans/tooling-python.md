@@ -373,8 +373,14 @@ own scopes and decisions.
 U1 preserves runner IDs, registry commands/implementation metadata, artifact
 and identity JSON, compilation flags, fresh user directories, loader precedence,
 complete log comparisons, controls and build/divergence/skip/usage statuses.
-The two Python wrappers (`run-all.sh`, `run-contract-diff.sh`) also migrate;
-keep interpreter-injection rejection and exec status semantics. #1175 is the
+Its shared services are `tools.dev.cell`, `system_data`, `drivers`, `runners`
+and the recipe modules under `tools/dev/`. `just runner RECIPE ...` retains the
+audited runner arguments; `just abi ...` and `just cell-artifacts ...` expose
+the ABI gates and cell builder. The registry calls the same services. Independent
+case groups use `pool.run_admitted`; per-side comparisons and mutation/control
+chains remain ordered within a unit, with private writable state.
+The former wrappers (`run-all.sh`, `run-contract-diff.sh`) use the shared CLI
+routes, retaining interpreter-injection rejection and exec status semantics. #1175 is the
 existing contract-driver split, not a duplicate runner migration. The legacy
 `check.sh` in U5 is already bypassed by `just check`; its comparison harness
 must retire the legacy control without restoring oracle probing to native check.

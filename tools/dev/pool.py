@@ -364,7 +364,8 @@ class UnitContext:
         return StoppableDriver(base, self)
 
     def launch(self, argv: Sequence[str], *, env: Mapping[str, str] | None = None,
-               pass_fds: Sequence[int] | None = None, poll: float = 0.1) -> Completed:
+               pass_fds: Sequence[int] | None = None, poll: float = 0.1,
+               cwd: Path | None = None, merge_stderr: bool = False, umask: int = -1) -> Completed:
         """Run ARGV in its own session and return its status and captured output.
 
         stdin is closed at once. Every POLL seconds the unit checks for a stop; on a
@@ -373,7 +374,8 @@ class UnitContext:
         error propagates. ENV defaults to the unit's environment, PASS_FDS to its slot
         descriptors.
         """
-        with subprocess.Popen(list(argv), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        with subprocess.Popen(list(argv), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                              stderr=subprocess.STDOUT if merge_stderr else subprocess.PIPE, cwd=cwd, umask=umask,
                               env=dict(self.environment if env is None else env), start_new_session=True,
                               pass_fds=tuple(self.fds if pass_fds is None else pass_fds)) as process:
             try:
@@ -388,7 +390,7 @@ class UnitContext:
             except BaseException:
                 slot.terminate_group(process)
                 raise
-        return Completed(process.returncode, stdout, stderr)
+        return Completed(process.returncode, stdout, stderr or b'')
 
 
 class UnitHandle:

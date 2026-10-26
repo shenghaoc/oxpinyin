@@ -14,6 +14,13 @@ if _mode != 'normal':
           'run with -X lazy_imports=normal (or PYTHON_LAZY_IMPORTS=normal)', file=sys.stderr)
     raise SystemExit(2)
 
-from .cli import main
+if __package__:
+    from .cli import main
+else:
+    # A caller outside the checkout can pass this file to the managed
+    # interpreter selected from the checkout's .python-version, preserving cwd.
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from tools.dev.cli import main
 
 raise SystemExit(main())

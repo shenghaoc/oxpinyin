@@ -38,6 +38,26 @@ def slot_setting(value):
 
 
 class HostTests(unittest.TestCase):
+    def test_group_liveness_uses_injected_linux_states_and_group_ids(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            proc = Path(scratch)
+            for pid, group, state in ((10, 10, 'Z'), (11, 10, 'S'), (12, 12, 'R')):
+                directory = proc / str(pid)
+                directory.mkdir()
+                (directory / 'stat').write_text(f'{pid} (name (nested)) {state} 1 {group} 0\n')
+            self.assertTrue(host.process_group_live(10, system='linux', proc=proc))
+            (proc / '11/stat').write_text('11 (name) X 1 10 0\n')
+            self.assertFalse(host.process_group_live(10, system='linux', proc=proc))
+            self.assertFalse(host.process_group_live(999, system='linux', proc=proc))
+            (proc / '11/stat').write_text('malformed\n')
+            self.assertIsNone(host.process_group_live(10, system='linux', proc=proc))
+
+    def test_group_liveness_uses_injected_darwin_rows_on_every_platform(self):
+        self.assertTrue(host.process_group_live(10, system='darwin', ps_output='10 Z\n10 S+\n11 R\n'))
+        self.assertFalse(host.process_group_live(10, system='darwin', ps_output='10 Z+\n11 R\n'))
+        self.assertIsNone(host.process_group_live(10, system='darwin', ps_output='malformed\n'))
+        self.assertIsNone(host.process_group_live(10, system='unavailable'))
+
     def test_import_does_not_modify_os(self):
         for remove_affinity in (False, True):
             with self.subTest(remove_affinity=remove_affinity):

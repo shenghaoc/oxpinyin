@@ -216,6 +216,32 @@ sanitize backend="bdb" sanitizer="address":
     @echo "sanitize is unsupported on Windows: the sanitizer gates are Linux/Darwin bash scripts."
     @exit 1
 
+# Run shared ABI export and allocation gates.
+[unix]
+runner *args: python
+    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev runner "$@"
+
+[windows]
+runner *args: python
+    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev runner @args; exit $LASTEXITCODE
+
+[unix]
+abi *args: python
+    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev abi "$@"
+
+[windows]
+abi *args: python
+    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev abi @args; exit $LASTEXITCODE
+
+# Build or describe the registry's selected cell artifacts.
+[unix]
+cell-artifacts *args: python
+    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev cell-artifacts "$@"
+
+[windows]
+cell-artifacts *args: python
+    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev cell-artifacts @args; exit $LASTEXITCODE
+
 # Read registry metadata, optionally filtered by issue or kind.
 [unix]
 list *args: python

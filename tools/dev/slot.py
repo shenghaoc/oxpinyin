@@ -6,6 +6,7 @@ uses LockFileEx through ctypes. The holder record is advisory: the kernel lock
 is the authority, and a record naming a dead holder is reclaimed.
 """
 import contextlib
+import io
 import errno
 try:
     import fcntl
@@ -156,6 +157,12 @@ class WindowsJob:
 
 
 CANCELLED = threading.Event()
+CANCELLED_SIGNAL = None
+
+
+def cancellation_status():
+    """The shell status of the signal recorded by cancellation_handlers."""
+    return 128 + CANCELLED_SIGNAL if CANCELLED_SIGNAL is not None else 130
 
 
 class Cancelled(ValueError):
@@ -179,12 +186,18 @@ def cancellation_handlers():
     SIGTERM, SIGINT, and SIGHUP set the shared event where available. Restore
     previous handlers on exit; signal installation requires the main thread.
     """
+    global CANCELLED_SIGNAL
     CANCELLED.clear()
+    CANCELLED_SIGNAL = None
+    def cancel(signum, frame):
+        global CANCELLED_SIGNAL
+        CANCELLED_SIGNAL = signum
+        CANCELLED.set()
     previous = {}
     for name in ('SIGTERM', 'SIGINT', 'SIGHUP'):
         signum = getattr(signal, name, None)
         if signum is not None:
-            previous[signum] = signal.signal(signum, lambda *_: CANCELLED.set())
+            previous[signum] = signal.signal(signum, cancel)
     try:
         yield
     finally:
@@ -215,11 +228,13 @@ def terminate_group(process):
         pass
     # The leader can exit while a descendant still runs.
     deadline = time.monotonic() + 5
+    group_gone = False
     while True:
         try:
             os.killpg(process.pid, signal.SIGKILL)
             break
         except ProcessLookupError:
+            group_gone = True
             break
         except PermissionError:
             # XNU killpg1 filters zombie group members and can return EPERM
@@ -228,6 +243,15 @@ def terminate_group(process):
                 raise
             time.sleep(.01)
     process.wait()
+    # killpg returning only means the signal was queued. Wait for executing
+    # descendants to disappear before admission can be released. A container's
+    # PID 1 may retain zombies indefinitely; those have no work or descriptors.
+    if not group_gone:
+        deadline = time.monotonic() + 5
+        while host.process_group_live(process.pid) is not False:
+            if time.monotonic() >= deadline:
+                raise RuntimeError(f'process group {process.pid} termination could not be proved')
+            time.sleep(.01)
 
 
 def wait_child(process, timeout=None):
@@ -356,6 +380,18 @@ def inherited_slot_marker(directory, out=sys.stderr):
         print(f'stale {HEAVY_SLOT_HELD}: different lock directory; acquire a slot normally',
               file=out, flush=True)
     return None
+
+
+def inherited_fds(command='registry driver', out=None):
+    """Return only descriptors validated by the existing ancestor-slot contract.
+
+    Light driver steps take no new slot. Passing the ancestor's description
+    keeps its lock alive if a wrapper is killed before its child finishes.
+    """
+    if HEAVY_SLOT_HELD not in os.environ:
+        return ()
+    holder = HeavySlot(command, out=io.StringIO() if out is None else out)
+    return holder.pass_fds() if holder._inherit() else ()
 
 
 class HeavySlot:

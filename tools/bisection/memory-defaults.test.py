@@ -30,7 +30,8 @@ M = run_all
 
 def catalog_command(row, command):
     """Append the row's implementation path so a synthetic catalog validates."""
-    return [*command, '{root}/' + row['implementation'].partition(':')[2]]
+    form, _, target = row['implementation'].partition(':')
+    return [*command, *(['-m', target] if form == 'python' else ['{root}/' + target])]
 
 
 class FitTests(unittest.TestCase):
@@ -737,31 +738,21 @@ finally:
 
 class RunnerBuildRoutingTests(unittest.TestCase):
     def test_residue_probe_build_uses_the_heavy_wrapper(self):
-        text = RUN_ALL.with_name('run-residue-a-tail-diff.sh').read_text()
-        condition = next(line for line in text.splitlines() if 'if [[ "${RESIDUE_A_PROBE:-}"' in line)
-        # Select only the conditional build command. Do not run the driver.
-        lines = text.splitlines()
-        start = next(i for i, line in enumerate(lines) if '--heavy-slot -- cargo build ' in line)
-        build = []
-        for line in lines[start:]:
-            build.append(line)
-            if not line.rstrip().endswith('\\'):
-                break
-        script = ('record_wrapper() { printf "%s\\n" "$@"; }; HEAVY_RUNNER=record_wrapper; '
-                  'CAPI_FEATURE=bdb; REPO_ROOT=/synthetic;\n' + condition + '\n' + '\n'.join(build) + '\nfi')
-        for enabled in ('0', '1'):
-            with self.subTest(enabled=enabled):
-                result = subprocess.run(['bash', '-c', script], env=dict(os.environ, RESIDUE_A_PROBE=enabled),
-                                        capture_output=True, text=True, timeout=3)
-                self.assertEqual(result.returncode, 0, result.stderr)
-                if enabled == '1':
-                    self.assertEqual(result.stdout.splitlines()[:4], ['--heavy-slot', '--', 'cargo', 'build'])
-                    self.assertIn('nbest_tail_probe', result.stdout)
-                else:
-                    self.assertEqual(result.stdout, '')
+        import ast
+        source = ROOT / 'tools/dev/runner_recipes.py'
+        tree = ast.parse(source.read_text())
+        residue = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'residue')
+        commands = [node.args[0] for node in ast.walk(residue)
+                    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == 'checked' and node.args and isinstance(node.args[0], ast.List)]
+        builds = [command for command in commands if any(isinstance(item, ast.Constant) and item.value == 'cargo'
+                                                        for item in command.elts)]
+        self.assertEqual(len(builds), 1)
+        self.assertEqual([item.value for item in builds[0].elts[:5]], ['just', 'heavy', '--', 'cargo', 'build'])
+        self.assertIn('nbest_tail_probe', [item.value for item in builds[0].elts if isinstance(item, ast.Constant)])
 
     def test_runner_cargo_builds_all_use_the_heavy_wrapper(self):
-        scripts = sorted(RUN_ALL.parent.glob('run-*.sh')) + [RUN_ALL.with_name('oracle-cell.sh')]
+        scripts = sorted(RUN_ALL.parent.glob('run-*.sh'))
         routed = []
         for path in scripts:
             text = path.read_text()
@@ -770,8 +761,8 @@ class RunnerBuildRoutingTests(unittest.TestCase):
                 routed.append(path.name)
                 checked = subprocess.run(['bash', '-n', str(path)], capture_output=True, text=True, timeout=3)
                 self.assertEqual(checked.returncode, 0, checked.stderr)
-        self.assertEqual(sorted(routed), ['oracle-cell.sh', 'run-perf-baseline.sh', 'run-perf-same-data.sh',
-                                           'run-residue-a-tail-diff.sh', 'run-shipped-check.sh',
+        self.assertEqual(sorted(routed), ['run-perf-baseline.sh', 'run-perf-same-data.sh',
+                                           'run-shipped-check.sh',
                                            'run-tree-recipe-control.sh'])
 
 

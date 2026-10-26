@@ -79,8 +79,10 @@ case $BUILD_FEATURES in
   kyotocabinet) PINYIN_ORACLE_DBM=${PINYIN_ORACLE_DBM:-kc} ;;
   bdb|tkrzw) PINYIN_ORACLE_DBM=${PINYIN_ORACLE_DBM:-$BUILD_FEATURES} ;;
 esac
-# shellcheck source=tools/bisection/oracle-cell.sh
-source "$REPO_ROOT/tools/bisection/oracle-cell.sh"
+"$REPO_ROOT/tools/install-python.sh"
+cell_environment=$(cd "$REPO_ROOT" && PINYIN_ORACLE_DBM="${PINYIN_ORACLE_DBM:-bdb}" \
+  uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev cell-artifacts --shell)
+eval "$cell_environment"
 
 if [ -n "$BUILD_FEATURES" ]; then
   rm -rf -- "$SUBJECT_ROOT"

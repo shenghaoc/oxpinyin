@@ -60,7 +60,8 @@ bash tools/cloud/setup.sh --in-container --cells "$cell" --cache-dir "/state/cac
 source "$OXPINYIN_ORACLE_ENV"
 printf 'Subject Rust toolchain: '; rustup show active-toolchain
 set +e
-bash tools/bisection/run-all.sh --cells "$cell" --oracle "$cell=$PINYIN_ORACLE_PREFIX" \
+uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev runner run-all \
+  --cells "$cell" --oracle "$cell=$PINYIN_ORACLE_PREFIX" \
 	--target-root "$OXPINYIN_TARGET_ROOT" --json "$result/results.json" --log-dir "$result/logs" "$@" 2>&1 | tee "$result/comparison.log"
 status=${PIPESTATUS[0]}
 set -e

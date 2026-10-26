@@ -117,10 +117,11 @@ Automated Linux setup on x86_64 and arm64 verifies the release archive against t
 checkout, `uv run --no-project --managed-python python` and `uv python find
 --managed-python` read it; a script that changes directory first, or a container
 build, copies the file in or passes its contents on, and does not restate the
-version. A shell entry point that does not change into the checkout (for example
-`tools/bisection/run-all.sh`) passes `--python` with the contents of the
-`.python-version` beside its own location, so the caller's working directory, and
-any `.python-version` there, never decide the interpreter. Direct-run Python
+version. From outside the checkout, pass `--python` the contents of the checkout's
+`.python-version`, then pass `tools/dev/__main__.py` by absolute path to that
+interpreter (with `-X lazy_imports=normal`), followed by `runner run-all` and its
+arguments. This preserves the caller's working directory; its `.python-version`
+does not decide the interpreter. Direct-run Python
 harness files rely on their `uv` shebang and a working directory inside the
 checkout. The two Axis J ledger generators keep the historical command their
 tracked ledgers record, and the check exempts exactly those two files. The file's request ends in `+gil`, which requires the GIL-enabled build.

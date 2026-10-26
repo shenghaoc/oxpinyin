@@ -64,13 +64,16 @@ Tkrzw) ox_default_feature=tkrzw ;;
 	exit 1
 	;;
 esac
-REPO_ROOT=$root
 case $ox_default_feature in
     kyotocabinet) PINYIN_ORACLE_DBM=${PINYIN_ORACLE_DBM:-kc} ;;
     *) PINYIN_ORACLE_DBM=${PINYIN_ORACLE_DBM:-$ox_default_feature} ;;
 esac
-# shellcheck source=tools/bisection/oracle-cell.sh
-source "$root/tools/bisection/oracle-cell.sh"
+"$root/tools/install-python.sh"
+cell_environment=$(cd "$root" && PINYIN_ORACLE_DBM="$PINYIN_ORACLE_DBM" \
+    uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev cell-artifacts --shell)
+eval "$cell_environment"
+# shellcheck source=tools/tkrzw/runtime.sh
+source "$root/tools/tkrzw/runtime.sh"
 
 printf '== Phase A: the pin trains a profile ==\n'
 tkrzw_run "$ORACLE_DBM" pin "$work/user_driver" "$work/user_driver" train "$data_dir" "$work/pin" "${inputs[@]}"
@@ -180,6 +183,8 @@ printf 'READABLE: the pin loads and renders oxpinyin own profile (%s rows, %s ph
 # #599: creation and pronunciation edits in SYSTEM_FILE libraries 1–4.
 # Build the same facade/backend used above; both readers consume each other's
 # saved .dbin files, including a pin -> oxpinyin -> pin rewrite.
-oracle_cell_artifact OXPINYIN_CAPI_SO libpinyin_capi.so oxpinyin-capi
-"$root/tools/bisection/run-system-import-round-trip.sh" \
+OXPINYIN_CAPI_SO=$(cd "$root" && uv run --no-project --managed-python python -X lazy_imports=normal \
+    -m tools.dev cell-artifacts --artifact OXPINYIN_CAPI_SO libpinyin_capi.so oxpinyin-capi)
+uv run --no-project --managed-python --python "$python_request" python -X lazy_imports=normal \
+    "$root/tools/dev/__main__.py" runner system-import-round-trip \
     pinyin "$so" "$OXPINYIN_CAPI_SO" "$data_dir"
