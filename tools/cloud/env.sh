@@ -3,27 +3,15 @@
 
 # tkrzw_so FILE: where the platform loader, in the caller's environment,
 # resolves FILE's libtkrzw (empty if it does not). Linux uses ldd; Darwin
-# uses otool -L and the Homebrew dylib's install name.
+# uses otool -L and the Homebrew dylib's install name. setup.sh provisions
+# managed Python before these post-bootstrap probes.
 
 tkrzw_so() {
-	case $(uname -s) in
-	Darwin)
-		# otool reports the recorded install name; a dyld override can change
-		# which library the process actually loads, so refuse to certify it.
-		if [ -n "${DYLD_LIBRARY_PATH:-}" ] || [ -n "${DYLD_FALLBACK_LIBRARY_PATH:-}" ]; then
-			printf '%s\n' "REFUSED: otool -L reports the recorded libtkrzw install name, which DYLD_LIBRARY_PATH or DYLD_FALLBACK_LIBRARY_PATH can bypass; unset both to probe the host library." >&2
-			return 1
-		fi
-		otool -L "$1" 2>/dev/null | awk '
-			/^[[:space:]]*\/.*libtkrzw[^[:space:]]*[.]dylib[[:space:]]+[(]compatibility version/ {
-				print $1
-				exit
-			}'
-		;;
-	*)
-		ldd "$1" 2>/dev/null | sed -n 's/^[[:space:]]*libtkrzw\.so\.1 => \(\/[^ ]*\).*/\1/p'
-		;;
-	esac
+    local runtime_root
+    runtime_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+    DYLD_LIBRARY_PATH=${DYLD_LIBRARY_PATH:-} DYLD_FALLBACK_LIBRARY_PATH=${DYLD_FALLBACK_LIBRARY_PATH:-} \
+    uv --quiet run --no-project --managed-python --python "$(<"$runtime_root/.python-version")" python -X lazy_imports=normal \
+        "$runtime_root/tools/tkrzw/runtime.py" --resolve "$1"
 }
 
 # tkrzw_env_prefix [FILE]: the cache runtime named by an environment file.

@@ -80,7 +80,13 @@ uv)
 		[[ ${SYNTHETIC_PYTHON_FAILURE:-0} == 0 ]] || exit 97
 		# An install makes the interpreter findable for the verification that follows it.
 		if [[ $1 == python && $2 == install ]]; then : >"$SYNTHETIC_PYTHON_INSTALLED"; fi
-		if [[ $1 == run ]]; then cat >/dev/null; printf 'Verified synthetic managed Python\n'; fi
+        if [[ $* == *' compat image-tag' ]]; then
+            printf 'synthetic-oracle-tag\n'
+        elif [[ $* == *' compat select-runtime --shell '* ]]; then
+            printf 'ctr=podman\n'
+        elif [[ $1 == run ]]; then
+            cat >/dev/null; printf 'Verified synthetic managed Python\n'
+        fi
 	fi
 	;;
 *) printf 'ACTION %s %s\n' "${0##*/}" "$*" >&3; exit 97 ;;
@@ -505,12 +511,17 @@ printf 'PASS: failed rename leaves the old file intact and cleans staging\n'
 	done
 	probe=$work/tkrzw-probe.sh
 	printf '#!/bin/sh\ntkrzw_dbm_util\n' >"$probe"
-	ldd() {
-		local so=${1%/bin/tkrzw_dbm_util}/lib/libtkrzw.so.1
-		[[ $1 != "$host_prefix/bin/tkrzw_dbm_util" ]] || so=${SYNTHETIC_HOST_SO:-$so}
-		printf 'libtkrzw.so.1 => %s (0x1234)\n' "$so"
-	}
-	base_path=$host_prefix/bin:$PATH
+    resolver_bin=$work/probe-resolver-bin
+    mkdir -p "$resolver_bin"
+    cat >"$resolver_bin/ldd" <<'PROBE_RESOLVER'
+#!/bin/sh
+so=${1%/bin/tkrzw_dbm_util}/lib/libtkrzw.so.1
+[ "$1" != "$SYNTHETIC_HOST_UTIL" ] || so=${SYNTHETIC_HOST_SO:-$so}
+printf 'libtkrzw.so.1 => %s (0x1234)\n' "$so"
+PROBE_RESOLVER
+    chmod +x "$resolver_bin/ldd"
+    export SYNTHETIC_HOST_UTIL=$host_prefix/bin/tkrzw_dbm_util SYNTHETIC_HOST_SO=
+	base_path=$host_prefix/bin:$resolver_bin:$PATH
 	PATH=$base_path
 	LD_LIBRARY_PATH=$host_prefix/lib
 	export PINYIN_ORACLE_DBM=tkrzw SYNTHETIC_HOST_STATUS=1 SYNTHETIC_HOST_LIB=$host_prefix/lib

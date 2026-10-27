@@ -410,8 +410,8 @@ pool of independent builds, arm scheduling), `identity.py`, `reports.py`,
 script name (`run-perf-baseline.sh: PERF_RUNS must be a decimal count ...`)
 because reports and runbooks quote it. The two measurement images
 (`Dockerfile.callgrind`, `Dockerfile.perf-matrix`) now install uv and the managed
-interpreter and run their recipe as `CMD`; the libtkrzw runtime check stays
-`tools/tkrzw/runtime.sh` (U3) and is called through its Python adapter.
+interpreter and run their recipe as `CMD`; the libtkrzw runtime check now lives
+in `tools/tkrzw/runtime.py` (U3).
 
 U2's recorded differences from the shell runners change no measured value,
 report schema, option or documented status. A missing command is Python's
@@ -440,11 +440,37 @@ running; the cancellation messages differ. A measured launch of a harness that
 is not there leaves taskset's own line in the arm's `.err` file, with status 1
 as before.
 
-U3 preserves image tags and pin hashes, CLI/environment transport,
-container state and reservation lifetimes, runtime refusal, fixture formats and
-both-direction profile interchange. The existing Python tkrzw adapter currently
-calls shell via `Path(__file__).with_suffix('.sh')`; move the actual resolver
-into that common Python service rather than leaving a second implementation.
+U3 preserves image tags and pin hashes, the compat CLI/environment transport,
+container state and reservation lifetimes, runtime precedence/refusals, fixture
+formats, both-direction profile interchange and aggregate failures. `just compat`
+retains the `bash tools/oracle/compat.sh` interface. The other recipes are
+`image-tag`, `verify-image`, `reproducible`, `capture`, `user-round-trip`,
+`docker-user-round-trip`, `drop-in`, `differentials` and `nightly-fixtures`.
+Shared controllers are `tools/dev/compat/{launcher,images,fixtures,campaigns}.py`,
+with the existing identity, boundary and memory services. The host loader reader
+and qualifier live only in `tools/tkrzw/runtime.py`; native checks, measurements,
+packaging, capture and provisioning reuse them. `runtime.check(cell, runner,
+side, object, env=..., cwd=...)` keeps its interface. Provisioning's unchecked
+lookup uses the same reader before establishing a healthy host identity.
+
+The compat shell entry point remains an external interface. Its staged guest
+bootstrap keeps the adjacent Bash floor and fail-closed guard from #1313, sets
+image-owned interpreter paths, then hands off to a separately hashed `guest.py`.
+The supplied-image round-trip bootstrap retains only pre-interpreter provisioning.
+No `tools.dev` module enters the reference image, and its serial backend loop is
+unchanged. Heavy launches use `slot.run_command`; independent reproducibility
+builds use the existing admitted pool. Container workloads retain the existing
+memory reservation transport, including confirmed-exit fencing before a reader.
+
+U3's deliberate diagnostic wording differences change no status. Bash's
+`script: line N: command: command not found`, permission errors, `unbound variable`
+and `${n:?}` messages become the command's OS error or a short missing-argument
+message, retaining 126/127 for launch errors and 1 for missing required arguments.
+A differing phrase-set dump names owned temporary files where Bash named its
+`/dev/fd` process substitutions. Legacy usage/help text and runtime refusal text
+keep their script names, as U2's diagnostic prefixes do. Scratch paths, PIDs and
+UTC run identifiers retain their formats; comparison controls normalize only the
+base/worktree and private scratch locations.
 
 U4 preserves the complete staged tree and package identity, one-facade install,
 Cargo target/profile and argument forwarding, DESTDIR/prefix/libdir/includedir,
@@ -463,7 +489,7 @@ behavior, Linux setarch and Darwin refusals/paths. Its entry points are
 `backend-probe` and `sanitize [--check] ...`; `just check` and `just sanitize`
 call the same services. The shared services are `tools/dev/check.py`,
 `tools/dev/test_runner.py` and `tools/dev/native.py`; the tkrzw qualification
-stays `tools/tkrzw/runtime.py` and `runtime.sh`. The shell entry points and the
+uses `tools/tkrzw/runtime.py`. The shell entry points and the
 standalone shell fixture are retired; the fixture cases live in
 `tools/dev/lint-crate-cfg-placement.test.py`, `tools/dev/backend.test.py` and
 `tools/dev/sanitize.test.py` under the existing `just test-tools` discovery.

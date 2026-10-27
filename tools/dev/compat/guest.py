@@ -60,7 +60,7 @@ def main(argv=None):
                      '--archive', '/input/model.tar.gz'], env=environment)
             run(['bash', 'tools/cloud/setup.sh', '--in-container', '--cells', cell,
                  '--cache-dir', f'/state/cache/{reference}', '--jobs', environment.get('CARGO_BUILD_JOBS', '2')], env=environment)
-            done = capture(['bash', '-c', 'source "$1"; env -0', '--', environment['OXPINYIN_ORACLE_ENV']], env=environment)
+            done = capture(['bash', '-e', '-u', '-c', 'source "$1"; env -0', '--', environment['OXPINYIN_ORACLE_ENV']], env=environment)
             environment.update(os.fsdecode(entry).split('=', 1) for entry in done.stdout.split(b'\0') if entry)
             print('Subject Rust toolchain: ', end='', flush=True)
             run(['rustup', 'show', 'active-toolchain'], env=environment)

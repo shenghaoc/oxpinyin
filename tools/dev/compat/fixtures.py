@@ -2,14 +2,12 @@
 
 These recipes consume frozen inputs; they never update committed fixtures.
 """
-import difflib
 import json
 import os
 from pathlib import Path
 import re
-import shlex
+import glob
 import shutil
-import subprocess
 import sys
 import tempfile
 
@@ -23,6 +21,12 @@ from .process import ROOT, PYTHON, capture, fail, run, text
 
 CAPTURE_PIN = ('libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99+'
                'model20-59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155+dbm-tkrzw')
+
+
+def words(value, *, expand=False):
+    """Keep Bash's IFS word-list flags, including literal quote/backslash bytes."""
+    parts = re.findall(r'[^ \t\n]+', value)
+    return [word for part in parts for word in (glob.glob(part) or [part])] if expand else parts
 
 
 def qualified(command, cell, side, obj, *, env, cwd=None, stdout=None):
@@ -43,7 +47,7 @@ def capture_fixtures(argv, *, root=ROOT):
     """Validate the capture pin and payload, compile the driver, and write its three formats."""
     if len(argv) != 2:
         fail('usage: tools/capture/run-capture.sh ORACLE_PREFIX OUTPUT_DIR', 2)
-    prefix, output = Path(argv[0]).resolve(), Path(argv[1])
+    prefix, output = Path(text(['realpath', argv[0]])), Path(argv[1])
     here = Path(root) / 'tools/capture'
     build = Path(root) / 'target/capture'
     data = prefix / 'lib/libpinyin/data'
@@ -89,8 +93,8 @@ def capture_fixtures(argv, *, root=ROOT):
         shutil.rmtree(build / name, ignore_errors=True)
         (build / name).mkdir()
     env = dict(os.environ, PKG_CONFIG_PATH=str(prefix / 'lib/pkgconfig'))
-    cflags = shlex.split(text(['pkg-config', '--cflags', 'libpinyin'], env=env))
-    libs = shlex.split(text(['pkg-config', '--libs', 'libpinyin'], env=env))
+    cflags = words(text(['pkg-config', '--cflags', 'libpinyin'], env=env, check=False), expand=True)
+    libs = words(text(['pkg-config', '--libs', 'libpinyin'], env=env, check=False), expand=True)
     driver = build / 'pinyin-capture'
     run(['cc', '-std=c11', '-Wall', '-Wextra', '-Werror', *cflags, here / 'capture.c', '-o', driver, *libs], env=env)
     env['LD_LIBRARY_PATH'] = bench.loader_path(prefix / 'lib', env.get('LD_LIBRARY_PATH'))
@@ -127,8 +131,8 @@ def round_trip(argv, *, root=ROOT):
     with tempfile.TemporaryDirectory(prefix='oxpinyin-user-rt.') as scratch:
         work = Path(scratch)
         driver = work / 'user_driver'
-        cflags = shlex.split(text(['pkg-config', '--cflags', 'glib-2.0']))
-        libs = shlex.split(text(['pkg-config', '--libs', 'glib-2.0']))
+        cflags = words(text(['pkg-config', '--cflags', 'glib-2.0'], check=False))
+        libs = words(text(['pkg-config', '--libs', 'glib-2.0'], check=False))
         run(['cc', '-O2', '-o', driver, Path(root) / 'tools/oracle/user_driver.c', '-I' + str(headers[0]),
              *cflags, '-L' + str(prefix / 'lib'), '-lpinyin', *libs, '-Wl,-rpath,' + str(so.parent)])
         for name in ('pin', 'ox'):
@@ -139,7 +143,7 @@ def round_trip(argv, *, root=ROOT):
             fail(f'fatal: {prefix}/oracle-pin.txt names no known dbm (BerkeleyDB, KyotoCabinet, Tkrzw)')
         settings = Settings.read(dict(os.environ, PINYIN_ORACLE_DBM=os.environ.get('PINYIN_ORACLE_DBM') or cell), Path(root))
         env = dict(settings.environment)
-        feature_flags = shlex.split(env.get('OX_CARGO_FEATURES') or '--no-default-features --features ' + settings.feature)
+        feature_flags = words(env.get('OX_CARGO_FEATURES') or '--no-default-features --features ' + settings.feature)
         def pin(action, profile, *, output=None):
             command = [str(driver), action, str(data), str(work / profile), *(inputs if action == 'train' else [])]
             if output is None:
@@ -186,7 +190,7 @@ def round_trip(argv, *, root=ROOT):
         print('== Phase B: oxpinyin loads the pin profile and saves it back in place ==')
         subject('a_pin_profile', dict(OX_SYSTEM_DIR=str(data), OX_PIN_DIR=str(work / 'pin')))
         print('== Phase C: the pin renders the original and oxpinyin rewrite ==')
-        rewrite = pin('dump', 'pin', output='pin-reads-ox.dump')
+        pin('dump', 'pin', output='pin-reads-ox.dump')
         with (work / 'diff.txt').open('wb') as output:
             status = run(['diff', '-u', work / 'pin.dump', work / 'pin-reads-ox.dump'], stdout=output, check=False)
         if status:
@@ -201,8 +205,9 @@ def round_trip(argv, *, root=ROOT):
         phrases = sum(line.startswith('P') for line in owned.splitlines())
         if not rows or not phrases:
             fail(f'DIVERGED: the pin found nothing (or no phrases) in oxpinyin own profile (rows={rows} phrases={phrases})')
-        actual = '\n'.join(sorted(line.split('\t')[1] for line in owned.splitlines() if line.split('\t')[0] == 'P'))
-        expected = '\n'.join(sorted((work / 'expected-phrases').read_text().splitlines()))
+        (work / 'actual-phrases').write_text(''.join(line.split('\t')[1] + '\n' for line in owned.splitlines() if line.split('\t')[0] == 'P'))
+        actual = text(['sort', work / 'actual-phrases'])
+        expected = text(['sort', work / 'expected-phrases'])
         if actual != expected:
             print('DIVERGED: the pin rendered phrase set differs from what oxpinyin remembered', file=sys.stderr)
             (work / 'expected').write_text(expected + '\n')

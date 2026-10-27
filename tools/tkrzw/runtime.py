@@ -19,6 +19,58 @@ class RuntimeRefused(RuntimeError):
     """The object's loader cannot be certified against the configured runtime."""
 
 
+class LoaderOverride(RuntimeError):
+    """A dyld override prevents install-name resolution from certifying a library."""
+
+
+class LoaderFailure(RuntimeError):
+    """The host loader command could not be executed or timed out."""
+
+    def __init__(self, message, status=1):
+        super().__init__(message)
+        self.status = status
+
+
+def resolve(obj, *, env=None, cwd=None, probe=False):
+    """Read loader dependencies once for certification or pre-certification host probes.
+
+    PROBE preserves env.sh's historical libtkrzw.so.1/first-install-name view;
+    certification always checks the full resolved dependency set.
+    """
+    environment = dict(os.environ if env is None else env)
+    directory = Path.cwd() if cwd is None else Path(cwd).resolve()
+    obj = str(obj)
+    try:
+        host = subprocess.run(['uname', '-s'], env=environment, cwd=directory,
+                              capture_output=True, text=True, timeout=30).stdout.strip()
+        if host == 'Darwin' and any(environment.get(name) for name in
+                                    ('DYLD_LIBRARY_PATH', 'DYLD_FALLBACK_LIBRARY_PATH')):
+            raise LoaderOverride()
+        done = subprocess.run(['otool', '-L', obj] if host == 'Darwin' else ['ldd', obj],
+                              env=environment, cwd=directory, stdout=subprocess.PIPE,
+                              stderr=subprocess.STDOUT, text=True, timeout=30)
+    except OSError as error:
+        from tools.dev.native import launch_status
+        raise LoaderFailure(str(error), launch_status(error)) from error
+    except subprocess.TimeoutExpired as error:
+        raise LoaderFailure(str(error)) from error
+    matches = []
+    for line in done.stdout.splitlines():
+        if host == 'Darwin':
+            match = re.match(r'\s*(/.*libtkrzw\S*\.dylib)\s+\(compatibility version', line)
+            if match:
+                matches.append(match[1])
+        else:
+            match = re.match(r'\s*(libtkrzw\.so\S*)\s+=>\s*(.*)', line)
+            if match:
+                entry = re.sub(r'\s+\(0x[0-9a-fA-F]+\)\s*$', '', match[2])
+                if not probe or match[1] == 'libtkrzw.so.1' and entry.startswith('/'):
+                    matches.append(entry)
+            elif not probe and re.match(r'\s*(/|\./|\.\./).*/libtkrzw\.so.*\s+\(0x[0-9a-fA-F]+\)', line):
+                matches.append(re.sub(r'\s+\(0x[0-9a-fA-F]+\)\s*$', '', line.lstrip()))
+    return host, done, matches
+
+
 def check(cell, runner, side, obj, *, env=None, cwd=None):
     """Return the loaded libtkrzw path, None if absent, or raise RuntimeRefused.
 
@@ -28,37 +80,19 @@ def check(cell, runner, side, obj, *, env=None, cwd=None):
     environment = dict(os.environ if env is None else env)
     directory = Path.cwd() if cwd is None else Path(cwd).resolve()
     obj = str(obj)
-    side = Path(side).name
+    side = str(side).rsplit('/', 1)[-1]
     side = 'pin' if re.match(r'^(?:L$|A$|pin|oracle|reference|libpinyin)', side) else 'subject'
 
     def refuse(found, expected):
         raise RuntimeRefused(f'{runner}: {side}: libtkrzw resolved to {found}; expected {expected} '
                              f'(object {obj}, cwd {directory})')
-
     try:
-        host = subprocess.run(['uname', '-s'], env=environment, cwd=directory,
-                              capture_output=True, text=True, timeout=30).stdout.strip()
-        if host == 'Darwin' and any(environment.get(name) for name in
-                                    ('DYLD_LIBRARY_PATH', 'DYLD_FALLBACK_LIBRARY_PATH')):
-            refuse('<DYLD_LIBRARY_PATH or DYLD_FALLBACK_LIBRARY_PATH set>',
-                   '<otool -L recorded install name; a dyld override can bypass it>')
-        done = subprocess.run(['otool', '-L', obj] if host == 'Darwin' else ['ldd', obj],
-                              env=environment, cwd=directory, stdout=subprocess.PIPE,
-                              stderr=subprocess.STDOUT, text=True, timeout=30)
-    except (OSError, subprocess.TimeoutExpired) as error:
+        host, done, matches = resolve(obj, env=environment, cwd=directory)
+    except LoaderOverride:
+        refuse('<DYLD_LIBRARY_PATH or DYLD_FALLBACK_LIBRARY_PATH set>',
+               '<otool -L recorded install name; a dyld override can bypass it>')
+    except LoaderFailure as error:
         raise RuntimeRefused(f'{runner}: {side}: libtkrzw resolved to <unknown>: {error}') from error
-    matches = []
-    for line in done.stdout.splitlines():
-        if host == 'Darwin':
-            match = re.match(r'\s*(/.*libtkrzw\S*\.dylib)\s+\(compatibility version', line)
-            if match:
-                matches.append(match[1])
-        else:
-            match = re.match(r'\s*libtkrzw\.so\S*\s+=>\s*(.*)', line)
-            if match:
-                matches.append(re.sub(r'\s+\(0x[0-9a-fA-F]+\)\s*$', '', match[1]))
-            elif re.match(r'\s*(/|\./|\.\./).*/libtkrzw\.so.*\s+\(0x[0-9a-fA-F]+\)', line):
-                matches.append(re.sub(r'\s+\(0x[0-9a-fA-F]+\)\s*$', '', line.lstrip()))
     if not matches and done.returncode == 0:
         if 'libtkrzw' in done.stdout:
             refuse('<unresolved libtkrzw>', '<verified runtime>')
@@ -116,6 +150,20 @@ def qualify(cell, runner, side, obj, command=(), *, env=None, cwd=None):
 def main(argv=None):
     """Preserve the runtime.sh CLI, including child execution and signal statuses."""
     args = list(sys.argv[1:] if argv is None else argv)
+    if args[:1] == ['--resolve']:
+        if len(args) != 2:
+            print('usage: runtime.py --resolve OBJECT', file=sys.stderr)
+            return 2
+        try:
+            host, done, matches = resolve(args[1], probe=True)
+            for path in matches[:1] if host == 'Darwin' else matches:
+                print(path)
+            return 128 - done.returncode if done.returncode < 0 else done.returncode
+        except LoaderOverride:
+            print('REFUSED: otool -L reports the recorded libtkrzw install name, which DYLD_LIBRARY_PATH or DYLD_FALLBACK_LIBRARY_PATH can bypass; unset both to probe the host library.', file=sys.stderr)
+            return 1
+        except LoaderFailure as error:
+            return error.status  # env.sh suppressed the loader command's stderr
     quiet = print_path = False
     while args and args[0] in ('--quiet-stderr', '--print-path'):
         quiet |= args[0] == '--quiet-stderr'

@@ -182,7 +182,7 @@ tkrzw leak is refused on every host because its harness retains
 process-lifetime allocations. The tkrzw path carries the command
 `tkrzw-sanitizers` used to inline, with its flags, sanitizer options and
 Linux address-gate ASLR wrapper unchanged, and adds one precondition, checked
-by `tools/tkrzw/runtime.sh`: every test binary must load the verified
+by `tools/tkrzw/runtime.py`: every test binary must load the verified
 libtkrzw, the one `tools/cloud/setup.sh`'s environment file names or a host
 library that passes `tools/tkrzw/distro-probe.sh`. On macOS the just recipe
 puts Homebrew's `tkrzw_dbm_util` on PATH, and `probe_host` certifies the

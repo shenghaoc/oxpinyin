@@ -314,7 +314,7 @@ def capture(command: Sequence, *, env: Mapping[str, str] | None = None, cwd=None
 
 
 def run(command: Sequence, *, env: Mapping[str, str] | None = None, cwd=None, stdout=None,
-        check_status: bool = True) -> int:
+        stdin=None, stderr=None, check_status: bool = True) -> int:
     """Run COMMAND on the console (STDOUT may redirect it) and return the shell status.
 
     A nonzero status ends the run with that status unless CHECK_STATUS is false.
@@ -323,8 +323,13 @@ def run(command: Sequence, *, env: Mapping[str, str] | None = None, cwd=None, st
     command = [str(part) for part in command]
     sys.stdout.flush()
     sys.stderr.flush()
+    streams = {}
+    if stdin is not None:
+        streams['stdin'] = stdin
+    if stderr is not None:
+        streams['stderr'] = stderr
     with subprocess.Popen(command, env=None if env is None else dict(env), cwd=cwd, stdout=stdout,
-                          start_new_session=True) as process:
+                          start_new_session=True, **streams) as process:
         code = shell_status(slot.wait_child(process))
     if check_status and code:
         raise Finished(code)

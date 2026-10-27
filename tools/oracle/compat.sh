@@ -7,6 +7,7 @@
 set -euo pipefail
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 cd "$repo"
+case ${1:-} in -h|--help) cat tools/dev/compat/help.txt; exit 0 ;; esac
 for variable in UV_PYTHON UV_PYTHON_VERSION UV_PYTHON_IMPLEMENTATION UV_PYTHON_VARIANT UV_PYTHON_ARCH UV_PYTHON_BIN_DIR UV_PYTHON_PREFERENCE PYTHONHOME PYTHONPATH; do
     [[ -z ${!variable:-} ]] || { printf 'FAIL: %s is not supported; unset it before running repository Python\n' "$variable" >&2; exit 1; }
 done

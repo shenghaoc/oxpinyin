@@ -1,6 +1,4 @@
 """Compatibility recipe dispatch; all implementations share the services beside it."""
-import os
-from pathlib import Path
 import shlex
 import sys
 

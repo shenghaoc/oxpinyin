@@ -152,7 +152,7 @@ def archive_content(archive):
 def seal_inputs(directory, image, reference, head):
     """Validate staged source/helpers and write their container input identity.
 
-    Hash source.tar, model.tar.gz, inside.sh, bash-floor.sh, and identity.py;
+    Hash source.tar, model.tar.gz, inside.sh, bash-floor.sh, identity.py, and guest.py;
     a nonempty model must match the archived oracle pin. Write identity.json
     and return its SHA-256. Raise ValueError for mismatches; read/archive
     errors propagate.

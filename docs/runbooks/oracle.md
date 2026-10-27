@@ -214,7 +214,7 @@ export PINYIN_EXPORT_DIR=/tmp/oxpinyin-export
 ## 4. Run the differentials
 
 ```sh
-just heavy -- just compat differentials --libpinyin <built libpinyin tree> \
+just compat differentials --libpinyin <built libpinyin tree> \
     --data <built system data dir> --export "$PINYIN_EXPORT_DIR" \
     --model "$PINYIN_MODEL_DIR"
 ```
