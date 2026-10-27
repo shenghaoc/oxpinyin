@@ -138,6 +138,12 @@ import contract_fixtures
 from contract_fixtures import (  # profile, system-directory and DBM-container fixtures
     _craft_bdb, _craft_kc, _craft_tkrzw, _write_user_conf, conf_system, import_rows, private_system, row58_import,
     user_listing, zero_item_padding)
+import contract_verdict
+from contract_verdict import (  # comparison and verdict rules
+    META_OFFSET_TIMESTAMP, NO_ABORT, TKRZW_HASH_METADATA_SIZE, TKRZW_TIMESTAMP_WIDTH, WARNING_DOMAIN,
+    _FATAL_GLIB_PREFIX, abort_answered, directory_reads_as_a_chunk, fatal_stderr, host_scanf_accepts, observed,
+    pin_loaded_subject_refused_table_conf, policy_observation, registered_termination, strjoinv_fault,
+    tkrzw_saved_bigram_bytes, tkrzw_saved_bigram_equal, valid_observation)
 
 # The DBM cell the run is for (set by `main`, inherited by every worker):
 # fixtures that craft a user table write it in that backend's own format.
@@ -161,12 +167,6 @@ CASES = {}
 # file through the import system so its bytecode is cached between workers
 # (a script run as __main__ is recompiled on every start).
 WORKER = Path(__file__).resolve().with_name('contract-worker.py')
-
-
-NO_ABORT = object()
-
-# Each facade logs under its own library's domain.
-WARNING_DOMAIN = {'pinyin': 'libpinyin', 'zhuyin': 'libzhuyin'}
 
 
 def case_spec(mode='pinyin', control=False, abort=NO_ABORT, stderr=False, crash=None, userdir=False,
@@ -398,55 +398,6 @@ def plan_lines(names, reasons, pinyin_so, zhuyin_so, prefix, cell):
     return lines
 
 
-def host_scanf_accepts(spelling):
-    """Test whether the host libc converts one float from the spelling's prefix.
-
-    Call sscanf with %f in the current numeric locale, without requiring
-    the entire string to be consumed or changing the locale. This checks
-    the conversion used by SystemTableInfo2::load in src/storage/table_info.cpp
-    at pin 074a2219; that loader sets LC_NUMERIC to C before scanning."""
-    scanned = C.c_float()
-    return C.CDLL(None).sscanf(spelling.encode(), b'%f', C.byref(scanned)) == 1
-
-
-def pin_loaded_subject_refused_table_conf(pin, subject):
-    """Recognize successful pin initialization paired with subject table refusal.
-
-    Require zero exits, ctx exactly True for the pin and False for the
-    subject, and only the expected user.conf-open and table.conf-load
-    diagnostics. Other result fields are not checked. The pin diagnostic
-    has no trailing newline, as emitted by UserTableInfo::load in
-    src/storage/table_info.cpp at pin 074a2219."""
-    return (pin['exit'] == 0 and subject['exit'] == 0
-            and (pin['result'] or {}).get('ctx') is True
-            and (subject['result'] or {}).get('ctx') is False
-            and re.fullmatch(r'open \S*/user\.conf failed\.', pin['stderr']) is not None
-            and re.fullmatch(r'load \S*table\.conf failed!\n', subject['stderr']) is not None)
-
-
-@functools.cache
-def directory_reads_as_a_chunk():
-    """Cache whether a temporary directory passes the pin's 8-byte size gate.
-
-    Create a directory containing user.conf in the default temporary
-    directory, seek to its end, and remove it on exit. Return False if the
-    seek raises OSError; creation and open failures propagate. The cached
-    result is reused even if the temporary-directory setting later changes.
-    This reproduces only the size check in MemoryChunk::load and
-    MemoryChunk::mmap in src/include/memory_chunk.h at pin 074a2219, not
-    their subsequent reads. The single entry models the user.conf saved by
-    check_format in src/pinyin.cpp before the directory-chunk cases run."""
-    with tempfile.TemporaryDirectory(prefix='contract-dir-probe-') as probe:
-        Path(probe, 'user.conf').touch()
-        fd = os.open(probe, os.O_RDONLY)
-        try:
-            return os.lseek(fd, 0, os.SEEK_END) >= 8
-        except OSError:
-            return False
-        finally:
-            os.close(fd)
-
-
 class Kit:
     """Hold a worker's native libraries, fresh profile and lazy facade handles.
 
@@ -608,11 +559,6 @@ def worker(mode, so, data, name):
                                      execute=finished - built - kit.init_seconds)), flush=True)
     print(json.dumps(result, sort_keys=True, ensure_ascii=False), flush=True)
     os._exit(0)  # no atexit: a case never shares teardown with the next
-
-
-def observed(result):
-    """Return a shallow copy omitting top-level keys that start with a tilde."""
-    return {k: v for k, v in result.items() if not k.startswith('~')}
 
 
 # --------------------------------------------------------------------------
@@ -3786,38 +3732,6 @@ def token_reuse_sequence(k, steps, bigram_rows=None, library=7):
 
 
 USER_INDEX_FILES = ('user_phrase_index.bin', 'user_pinyin_index.bin')
-
-
-# tkrzw 9ee8416, tkrzw_dbm_hash.cc:46,1296: timestamp_ is written as an
-# eight-byte microsecond wall clock. The maintainer's #1114 ruling permits
-# only this comparison mask. Offset 56 starts db_type_ and stays exact.
-META_OFFSET_TIMESTAMP = 48
-TKRZW_TIMESTAMP_WIDTH = 8
-TKRZW_HASH_METADATA_SIZE = 128
-
-
-def tkrzw_saved_bigram_bytes(raw):
-    """Saved HashDBM bytes with only META_OFFSET_TIMESTAMP (48-55) masked.
-
-    This is specific to #1114's user-bigram comparison; it changes no
-    existing contract's file comparison or other backend's rules.
-
-    Require at least the 128-byte metadata header or raise ValueError.
-    Zero the eight timestamp bytes; preserve all other bytes, including byte 56."""
-    if len(raw) < TKRZW_HASH_METADATA_SIZE:
-        raise ValueError('saved HashDBM is shorter than its metadata')
-    end = META_OFFSET_TIMESTAMP + TKRZW_TIMESTAMP_WIDTH
-    return raw[:META_OFFSET_TIMESTAMP] + bytes(TKRZW_TIMESTAMP_WIDTH) + raw[end:]
-
-
-def tkrzw_saved_bigram_equal(left, right, left_bucket_chains, right_bucket_chains):
-    """Require saved-byte identity and exact ordered bucket chains.
-
-    Chains must come from each side's native walk, grouped by bucket and
-    kept in chain order; callers must never sort keys to compare them.
-    """
-    return (tkrzw_saved_bigram_bytes(left) == tkrzw_saved_bigram_bytes(right)
-            and left_bucket_chains == right_bucket_chains)
 
 
 def index_file_rows(path, *, kind='tree', allow_empty=False, library=None):
@@ -16244,214 +16158,31 @@ def run_axis_c(args, names):
         return 0
     return 1 if totals['case_differ'] else 0
 
-_FATAL_GLIB_PREFIX = re.compile(
-    r'\*\* \(process:\d+\): (CRITICAL|WARNING|MESSAGE|ERROR|DEBUG|INFO) \*\*: '
-    r'\d\d:\d\d:\d\d\.\d+: ')
-
-
-def fatal_stderr(text):
-    """Drop GLib's process id and timestamp from a fatal run's stderr: they
-    differ between the two processes, while the severity and the message are
-    the diagnostics under comparison."""
-    return _FATAL_GLIB_PREFIX.sub(r'** \1 **: ', text)
-
-
-def registered_termination(spec):
-    """Whether the spec says how the pin dies (`abort=`, `crash=`,
-    `both_abort=`, with or without `either=`): then `matches` owns the exit
-    conditions of both sides and no validity check is layered on top."""
-    return spec['abort'] is not NO_ABORT or spec['crash'] is not None or spec['both_abort'] \
-        or spec.get('pin_not_run') is not None
-
-
-def valid_observation(spec, side):
-    """An ordinary case observed something only when the worker exited
-    normally and printed its result document; a signal, a non-zero exit, a
-    timeout or an empty stdout observed nothing."""
-    return registered_termination(spec) or (side['exit'] == 0 and side['result'] is not None)
-
 
 POLICY_ROOT = Path(__file__).resolve().parents[2] / 'docs/findings'
 
 
+# The rules are in contract_verdict. These keep their names and signatures and hand
+# them the state this module owns, read when they are called.
 def policy_expectations(spec):
-    """Read the current registered record, never a cached exemption.
-
-    Each case lists complete exit/result/stderr observations for both sides.
-    No wildcards, ignored result fields or partial-dict matching are allowed.
-    Rejected metadata is INVALID, including under --expect-parent.
-    """
-    name = spec['policy_record']
-    if not isinstance(name, str) or Path(name).name != name or not name.endswith('.md'):
-        raise ValueError('policy_record must name a findings Markdown record')
-    path = POLICY_ROOT / name
-    if path.resolve().parent != POLICY_ROOT.resolve():
-        raise ValueError('policy record escapes findings directory')
-    register = (POLICY_ROOT / 'upstream-divergences.md').read_text()
-    if f']({name})' not in register:
-        raise ValueError('policy record is not registered')
-    blocks = re.findall(r'^```contract-diff-policy\n(.*?)\n```$', path.read_text(), re.M | re.S)
-    if len(blocks) != 1:
-        raise ValueError('policy record needs exactly one observations block')
-    record = json.loads(blocks[0])
-    if (not isinstance(record, dict) or type(record.get('schema')) is not int or record.get('schema') != 1
-            or record.get('record') != path.stem or record.get('status') != 'current'
-            or record.get('disposition') != 'POLICY-ACCEPTED'):
-        raise ValueError('policy record is not current or has incompatible metadata')
-    pair = record['cases'][spec['case_id']]
-    if isinstance(pair, dict) and set(pair) == {'cells'}:
-        pair = pair['cells'][os.environ.get('CONTRACT_DIFF_CELL', CELL)]
-    if not isinstance(pair, dict) or set(pair) != {'pin', 'subject'}:
-        raise ValueError('policy case must specify both observations')
-    keys = {'exit', 'result', 'stderr'} | ({'userfiles'} if spec['userdir'] else set())
-    for name, side in pair.items():
-        if (not isinstance(side, dict) or set(side) != keys
-                or type(side['exit']) is not int
-                or not isinstance(side['stderr'], str)):
-            raise ValueError('policy observation must be complete')
-        if spec['userdir'] and (not isinstance(side['userfiles'], dict)
-                               or any(not isinstance(key, str) or not isinstance(value, str)
-                                      for key, value in side['userfiles'].items())):
-            raise ValueError('policy user-directory listing must be complete')
-        if name == 'pin' and side['exit'] == -signal.SIGABRT and spec['abort'] is not NO_ABORT:
-            if side['result'] is not None:
-                raise ValueError('aborted pin cannot have a result document')
-        elif (side['exit'] != 0 or not isinstance(side['result'], dict)
-              or 'logs' not in side['result']
-              or any(key.startswith('~') for key in side['result'])):
-            raise ValueError('policy observation must normally terminate or hold a registered pin abort')
-    if pair['pin'] == pair['subject']:
-        raise ValueError('policy case must record a difference, not parity')
-    return pair
-
-
-def policy_observation(spec, side):
-    """The full stable observation, excluding worker timings only."""
-    keys = ('exit', 'result', 'stderr', *(['userfiles'] if spec['userdir'] else []))
-    return {key: side[key] for key in keys}
+    """Read the current registered record, never a cached exemption (contract_verdict)."""
+    return contract_verdict.policy_expectations(spec, policy_root=POLICY_ROOT, cell=CELL)
 
 
 def verdict_for(spec, pin, subject, expect_parent):
-    """The driver's decision for one case: (verdict, expected_ok, same).
-
-    INVALID when either side of an ordinary case produced no valid
-    observation; it is never expected, in either mode. A `strjoinv_over_read`
-    case's held pin fault (`strjoinv_fault`) counts as valid. Otherwise MATCH or
-    DIFFER by `matches`, and expected when it is what the mode asks for: a
-    MATCH, or under --expect-parent a DIFFER from a non-control case."""
-    if spec['policy_record'] is not None:
-        try:
-            expected_pair = policy_expectations(spec)
-            actual = dict(pin=policy_observation(spec, pin), subject=policy_observation(spec, subject))
-        except (OSError, ValueError, KeyError, TypeError):
-            return 'INVALID', False, False
-        if not all(valid_observation(spec, side) for side in (pin, subject)):
-            return 'INVALID', False, False
-        if json.dumps(actual, sort_keys=True) == json.dumps(expected_pair, sort_keys=True):
-            # An existing accepted quirk is a control on its parent too.
-            return 'POLICY-ACCEPTED', True, False
-        # A bad record observation is never an expected parent difference.
-        return 'DIFFER', False, False
-    same = matches(spec, pin, subject)
-    held_fault = spec['strjoinv_over_read'] and strjoinv_fault(pin, subject)
-    if not held_fault and not all(valid_observation(spec, side) for side in (pin, subject)):
-        return 'INVALID', False, same
-    expected = same if (not expect_parent or spec['control']) else not same
-    return ('MATCH' if same else 'DIFFER'), expected, same
-
-
-def abort_answered(spec, pin, subject):
-    """The subject's half of a class (c) site: it survives with the `ret`
-    the spec names, the one warning and every untouched out-param, and
-    leaves the profile the pin left (`userdir`)."""
-    shown = subject['result'] or {}
-    expected_logs = spec['abort_logs'] if spec['abort_logs'] is not None \
-        else [[WARNING_DOMAIN[spec['mode']], 16]]
-    return subject['exit'] == 0 and \
-        shown.get('ret') == spec['abort'] and shown.get('logs') == expected_logs and \
-        all(v for key, v in shown.items() if key.startswith('untouched')) and \
-        (not spec['userdir'] or pin['userfiles'] == subject['userfiles'])
+    """The driver's decision for one case: (verdict, expected_ok, same) (contract_verdict)."""
+    return contract_verdict.verdict_for(spec, pin, subject, expect_parent, policy_root=POLICY_ROOT, cell=CELL,
+                                        directory_probe=directory_reads_as_a_chunk)
 
 
 def short_dir_chunk(spec):
-    """A `dir_chunk` case on a host where the pin does not reach its assert."""
-    return spec['dir_chunk'] is not None and not directory_reads_as_a_chunk()
-
-
-# Register row 1 (class (b)): `pinyin_bigram_iterator_has_next_phrase` joins
-# each predecessor's and each successor's syllables from a `GPtrArray` made by
-# `g_ptr_array_new` and taken by `g_ptr_array_free(…, FALSE)`, never
-# terminated, with `g_strjoinv("'", …)` and frees it with `g_strfreev`
-# (`pinyin.cpp:844-850`, `:857-863` at 074a2219). At GLib 2.90.0 (the oracle
-# image) and 2.80.0, `g_ptr_array_maybe_expand` grows a non-terminated array,
-# one add at a time, to the power of two of bytes that holds its `len`
-# pointers, at least `MIN_ARRAY_SIZE` (16), with `g_realloc`, and clears the
-# new slots only under `g_mem_gc_friendly` (`garray.c:1893-1921` at 2.90.0);
-# `ptr_array_free` hands that buffer back as is (`:1845-1890`). So
-# `pdata[len]` is uninitialised heap (inside the 16-byte block for one
-# syllable, the word past it for two), and `g_strjoinv` walks to the first
-# NULL (`gstrfuncs.c:2661`, `:2672`). An unreadable word faults; a NULL word
-# gives the subject's reading. A readable non-NULL word would be joined and
-# then freed by `g_strfreev` (`pinyin.cpp:850`, `:863`), so a completed run
-# with such a tail is not probable, and a completed pin is compared exactly.
-def strjoinv_fault(pin, subject):
-    """Row 1's fault: the pin dies of SIGSEGV after the stderr the subject
-    wrote, byte for byte, and the subject completes. The subject's rows are
-    not compared with anything here."""
-    return pin['exit'] == -signal.SIGSEGV and pin['stderr'] == subject['stderr'] and \
-        subject['exit'] == 0 and subject['result'] is not None
+    """A `dir_chunk` case on a host where the pin does not reach its assert (contract_verdict)."""
+    return contract_verdict.short_dir_chunk(spec, directory_probe=directory_reads_as_a_chunk)
 
 
 def matches(spec, pin, subject):
-    """The verdict predicate shared by the driver and gcov measurement tier."""
-    if spec['policy_record'] is not None:
-        return False  # accepted differences must never enter MATCH totals
-    short_dir = short_dir_chunk(spec)
-    as_abort = spec['abort'] is not NO_ABORT and not short_dir and (not spec['either'] or pin['exit'] == -6)
-    if spec['both_abort']:
-        # GLib's _g_log_abort can use g_abort or G_BREAKPOINT (gmessages.c
-        # at GLib 2.80.0 / 2.89.4). Require the same fatal-log signal;
-        # the comparison is the signal, the raw stderr and the partial
-        # profile left behind, not a surviving subject result.
-        same = (
-            pin['exit'] in (-signal.SIGABRT, -signal.SIGTRAP)
-            and subject['exit'] == pin['exit']
-            and (
-                not spec['stderr']
-                or fatal_stderr(pin['stderr']) == fatal_stderr(subject['stderr'])
-            )
-            and (not spec['userdir'] or pin['userfiles'] == subject['userfiles'])
-        )
-    elif spec.get('pin_not_run') is not None:
-        shown = subject['result'] or {}
-        same = pin['exit'] == 'NOT-RUN' and subject['exit'] == 0 and \
-            all(shown.get(key) == value for key, value in spec['pin_not_run'].items())
-    elif spec['crash'] is not None and not as_abort:
-        shown = subject['result'] or {}
-        same = pin['exit'] == -signal.SIGSEGV and subject['exit'] == 0 and \
-            (spec['stderr_varies'] or pin['stderr'] == subject['stderr']) and \
-            all(shown.get(key) == value for key, value in spec['crash'].items())
-    elif as_abort:
-        same = pin['exit'] == -6 and abort_answered(spec, pin, subject)
-    elif spec['strjoinv_over_read'] and pin['exit'] == -signal.SIGSEGV:
-        same = strjoinv_fault(pin, subject)
-    elif short_dir and spec['dir_chunk'] == 'system':
-        # Class (b): the pin dies of SIGSEGV after the stderr the subject
-        # writes in full; the subject answers as the abort site registers.
-        same = pin['exit'] == -signal.SIGSEGV and pin['stderr'] == subject['stderr'] and \
-            abort_answered(spec, pin, subject)
-    else:
-        # A side that died or printed nothing observed nothing: two
-        # identical failures must not read as a match (nor satisfy
-        # --expect-parent as a difference).
-        same = all(r['exit'] == 0 and r['result'] is not None for r in (pin, subject)) and \
-            observed(pin['result']) == observed(subject['result'])
-        if spec['stderr'] or short_dir:
-            same = same and pin['stderr'] == subject['stderr']
-        if short_dir:
-            # `dir_chunk='user'`: both sides carry on past an ordinary false.
-            same = same and pin['userfiles'] == subject['userfiles']
-    return same
+    """The verdict predicate shared by the driver and gcov measurement tier (contract_verdict)."""
+    return contract_verdict.matches(spec, pin, subject, directory_probe=directory_reads_as_a_chunk)
 
 
 # Per-call measurement stays in this driver so it uses the same fixtures and
