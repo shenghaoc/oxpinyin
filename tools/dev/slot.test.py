@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from tools.dev import host, slot
+from tools.dev import host, slot, test_support
 
 
 class GroupTerminationTests(unittest.TestCase):
@@ -484,6 +484,27 @@ class RunCommandOutputTests(unittest.TestCase):
 
     def test_without_report_nothing_is_added_to_the_admission_output(self):
         self.assertEqual(self.run_child('pass'), (0, ''))
+
+
+class RunCommandWindowsTests(unittest.TestCase):
+    """The Job Object branch takes cwd and stdout as the POSIX branch does, and reports the same trailer."""
+
+    def test_cwd_stdout_and_the_trailer_reach_the_job_object_launch(self):
+        out = io.StringIO()
+        with tempfile.TemporaryFile() as target, test_support.windows_launch(status=3) as (launch, jobs, ntdll):
+            status = slot.run_command(['cargo', 'x'], env={}, out=out, cwd='work', stdout=target, report=True)
+            self.assertIs(launch.call_args.kwargs['stdout'], target)
+        self.assertEqual(status, 3)
+        test_support.assert_windows_launches(self, launch, jobs, ntdll, cwd='work')
+        self.assertRegex(out.getvalue(), r'^heavy slot 0: slot_wait_seconds 0\.0, memory_wait_seconds 0\.0, '
+                                         r'ran \d+\.\ds, exit 3\n$')
+
+    def test_without_report_the_job_object_branch_adds_no_trailer(self):
+        out = io.StringIO()
+        with test_support.windows_launch() as (launch, jobs, ntdll):
+            self.assertEqual(slot.run_command(['cargo', 'x'], env={}, out=out), 0)
+        test_support.assert_windows_launches(self, launch, jobs, ntdll)
+        self.assertEqual(out.getvalue(), '')
 
 
 if __name__ == '__main__':

@@ -100,6 +100,7 @@ owner = pathlib.Path(sys.argv[sys.argv.index('--manifest-path') + 1]).resolve().
 claim = json.loads((target / 'oxpinyin-cell-identity.json').read_text())
 assert claim['worktree'] == str(owner)
 assert (claim['cell'], claim['feature'], claim['profile'], claim['opt_level']) == ('bdb', 'bdb', 'dev', '1')
+assert os.getsid(0) != int(os.environ['STUB_CALLER_SID']), "cargo shares its caller's session"
 (pathlib.Path(os.environ['STUB_ENTERED']) / str(os.getpid())).write_text(str(owner))
 while not pathlib.Path(os.environ['STUB_RELEASE']).exists():
     time.sleep(0.01)
@@ -109,18 +110,26 @@ if os.environ.get('STUB_FAIL') == '1':
 (target / 'debug/libpinyin_capi.so').write_bytes(b'stub library')
 ''')
         cargo.chmod(0o755)
-        # A compiler fixture is not heavy work. Exercise the production command
-        # boundary without acquiring admission for a process that waits on us.
+        # The build goes through slot.run_command in its own process, which
+        # starts cargo in a new session it supervises (the stub checks). The
+        # compatibility image has no just, so calling it fails.
         just = self.bin / 'just'
-        just.write_text('#!/bin/sh\nshift 2\nexec "$@"\n')
+        just.write_text('#!/bin/sh\necho "just must not run: $*" >&2\nexit 99\n')
         just.chmod(0o755)
         self.env = dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ['PATH'],
                         CARGO_TARGET_DIR=str(self.target), PINYIN_ORACLE_DBM='bdb',
+                        OXPINYIN_LOCK_DIR=str(self.root / 'locks'), OXPINYIN_HEAVY_SLOTS='1',
                         STUB_ENTERED=str(self.entered), STUB_RELEASE=str(self.release))
+        self.env.pop('OXPINYIN_HEAVY_SLOT_HELD', None)
 
     def command(self, owner, artifacts='pinyin-capi'):
-        program = ('import sys; from pathlib import Path; '
+        # Real admission in a private lock directory, reading a fixed snapshot so
+        # that a busy host cannot hold the stub build back.
+        resources = dict(available_mib=12000, total_mib=16384, cpus=4, cargo_cpus=4, memory_limit_mib=None, notes=[])
+        program = ('import os, sys; from pathlib import Path; '
                    f'sys.path.insert(0, {str(ROOT)!r}); '
+                   'os.environ["STUB_CALLER_SID"] = str(os.getsid(0)); '
+                   f'from tools.dev import host; host.resource_snapshot = lambda: {resources!r}; '
                    'from tools.dev.cell import main; '
                    'raise SystemExit(main(["--artifacts", sys.argv[2]], root=Path(sys.argv[1])))')
         return [sys.executable, '-X', 'lazy_imports=normal', '-c', program, str(owner), artifacts]

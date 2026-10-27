@@ -12,15 +12,17 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-from tools.dev.cell import CellError, Settings, library_path
+from tools.dev import test_support
+from tools.dev.cell import CellError, Settings, library_path, patch_digest
 from tools.dev.drivers import DriverServices
 from tools.dev.pool import UnitContext
 from tools.dev.runner_protocols import candidate_sequences, conf_body, text_order
 from tools.dev.runner_recipes import (SURFACES, active_rows, candidate_blocks, explicit_compare, pinyin_needed,
-                                      pinyin_resolved, return_law, same_data)
+                                      pinyin_resolved, residue, return_law, same_data)
 from tools.dev.runner_state import verify_steps
 from tools.dev.runners import Context
 from tools.dev.system_data import SystemData, data_extension
@@ -265,6 +267,139 @@ raise SystemExit(result)
 
     def test_sigkill_keeps_the_slot_until_the_driver_ends(self):
         self.exercise(signal.SIGKILL)
+
+
+# A residue-a-tail-diff runner whose driver steps are replaced, so that the next
+# real child is the RESIDUE_A_PROBE build. It records what became of that build.
+RESIDUE_RUNNER = '''
+import json, os, signal, subprocess, sys
+from pathlib import Path
+from unittest import mock
+from tools.dev import host, runners
+from tools.dev.cell import Settings
+fixture = json.loads(sys.argv[1])
+def run(driver, so, args, *, side, **options):
+    if side == 'pin' and fixture['signal_before_build']:
+        os.kill(os.getpid(), signal.SIGTERM)
+    return subprocess.CompletedProcess([str(driver)], 0, b'row\\n', b'')
+with mock.patch.object(host, 'resource_snapshot', return_value=fixture['resources']), \\
+        mock.patch.object(runners.Context, 'compile', return_value=Path(fixture['driver'])), \\
+        mock.patch.object(runners.Context, 'run', side_effect=run), \\
+        mock.patch.object(Settings, 'artifact', return_value=Path(fixture['capi'])):
+    seen = dict(status=runners.main(['residue-a-tail-diff']))
+pids = Path(os.environ['FAKE_CARGO_STATE'], 'pids')
+if pids.exists():
+    leader = int(pids.read_text().split()[0])
+    try:
+        os.waitpid(leader, os.WNOHANG)
+        seen['reaped'] = False
+    except ChildProcessError:
+        seen['reaped'] = True
+    seen['group_live'] = host.process_group_live(leader)
+Path(fixture['result']).write_text(json.dumps(seen))
+'''
+
+# The probe build: it leaves a second member in its process group, and when asked
+# it signals the runner that launched it while it is still running.
+FAKE_PROBE_CARGO = '''#!/bin/sh
+sleep 30 &
+printf '%s %s\\n' "$$" "$!" > "$FAKE_CARGO_STATE/pids"
+if [ "${FAKE_CARGO_SIGNAL_PARENT:-}" = 1 ]; then kill -TERM "$PPID"; fi
+i=0
+while [ "$i" -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
+'''
+
+
+class ResidueProbeFixture(unittest.TestCase):
+    """A residue-a-tail-diff runner whose next real child is the RESIDUE_A_PROBE build."""
+
+    def setUp(self):
+        scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(scratch.cleanup)
+        root = Path(scratch.name)
+        (root / 'bin').mkdir()
+        cargo = root / 'bin/cargo'
+        cargo.write_text(FAKE_PROBE_CARGO)
+        cargo.chmod(0o755)
+        self.state = root / 'state'
+        self.state.mkdir()
+        self.addCleanup(self.kill_leftovers)
+        prefix = root / 'oracle'
+        (prefix / 'lib/libpinyin/data').mkdir(parents=True)
+        (prefix / 'lib/libpinyin.so').write_bytes(b'')
+        (prefix / 'lib/libpinyin/data/bigram.db').write_bytes(b'')
+        (prefix / 'oracle-patches.sha256').write_text('pin-bigram-export-strjoinv.patch\n')
+        self.env = {name: value for name, value in os.environ.items()
+                    if name not in ('OXPINYIN_HEAVY_SLOT_HELD', 'OXPINYIN_CAPI_SO', 'OXPINYIN_ZHUYIN_SO',
+                                    'RESIDUE_A_CAPI_SO', 'OXPINYIN_NBEST_TAIL_PROBE', 'RESIDUE_A_DUMP_PREFIX',
+                                    'CARGO_BUILD_JOBS', 'RUST_TEST_THREADS', 'UV_PYTHON', 'PYTHONHOME', 'PYTHONPATH')}
+        self.env.update(PATH=str(root / 'bin') + os.pathsep + os.environ['PATH'],
+                        OXPINYIN_LOCK_DIR=str(root / 'locks'), OXPINYIN_HEAVY_SLOTS='1',
+                        OXPINYIN_RESOURCE_WAIT_SECONDS='5', CARGO_TARGET_DIR=str(root / 'target'),
+                        PINYIN_ORACLE_DBM='bdb', PINYIN_ORACLE_PREFIX=str(prefix), RESIDUE_A_PROBE='1',
+                        RESIDUE_A_SAME_DIR='1', RESIDUE_A_OUT=str(root / 'out'), FAKE_CARGO_STATE=str(self.state))
+        digest = patch_digest(ROOT / 'tools/bisection/patches/bigram-export-strjoinv')
+        (prefix / 'oracle-pin.txt').write_text(f'{Settings.read(self.env).expected_pin}+patches-{digest}\n'
+                                               f'patches_manifest_sha256={digest}\n')
+        self.fixture = dict(driver=str(root / 'driver'), capi=str(root / 'libpinyin_capi.so'),
+                            result=str(root / 'result.json'),
+                            resources=dict(available_mib=12000, total_mib=16384, cpus=4, cargo_cpus=4,
+                                           memory_limit_mib=None, notes=['synthetic resources']))
+
+    def kill_leftovers(self):
+        pids = self.state / 'pids'
+        if pids.exists():
+            try:
+                os.killpg(int(pids.read_text().split()[0]), signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+
+@unittest.skipIf(sys.platform == 'win32', 'Unix process groups and signals')
+class ResidueProbeCancellationTests(ResidueProbeFixture):
+    """SIGTERM before or during the residue probe build cancels the runner with status 128 + SIGTERM."""
+
+    def run_residue(self, *, signal_before_build=False, signal_from_build=False):
+        env = dict(self.env, FAKE_CARGO_SIGNAL_PARENT='1' if signal_from_build else '0')
+        fixture = dict(self.fixture, signal_before_build=signal_before_build)
+        result = subprocess.run([sys.executable, '-X', 'lazy_imports=normal', '-c', RESIDUE_RUNNER,
+                                 json.dumps(fixture)], cwd=ROOT, env=env, capture_output=True, text=True,
+                                timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('--- runtime-side probe ---', result.stdout)
+        return json.loads(Path(fixture['result']).read_text()), result
+
+    def test_sigterm_during_the_probe_build_stops_and_reaps_its_process_group(self):
+        seen, result = self.run_residue(signal_from_build=True)
+        self.assertEqual(seen['status'], 128 + signal.SIGTERM, result.stderr)
+        self.assertTrue(seen['reaped'], 'the probe build was not reaped by the runner')
+        self.assertIs(seen['group_live'], False, 'a member of the probe build group outlived the runner')
+
+    def test_sigterm_before_the_probe_build_cancels_without_starting_it(self):
+        seen, result = self.run_residue(signal_before_build=True)
+        self.assertEqual(seen['status'], 128 + signal.SIGTERM, result.stderr)
+        self.assertFalse((self.state / 'pids').exists(), 'the probe build started after SIGTERM')
+
+
+class ProbeServices(FixtureServices):
+    """FixtureServices that also runs the probe the recipe built."""
+    def command(self, argv, **options):
+        if Path(str(argv[0])).name == 'nbest_tail_probe':
+            return subprocess.CompletedProcess(list(map(str, argv)), 0, b'probe\n', b'')
+        return super().command(argv, **options)
+
+
+class ResidueProbeWindowsTests(ResidueProbeFixture):
+    def test_windows_probe_build_takes_the_job_object_path_without_pass_fds(self):
+        settings = Settings.read(self.env)
+        with ExitStack() as stack, test_support.windows_launch() as (launch, jobs, ntdll), \
+                mock.patch.object(Settings, 'artifact', return_value=Path(self.fixture['capi'])):
+            ctx = Context(settings, ProbeServices(settings), stack, ROOT, 'residue-a-tail-diff', events=[])
+            self.assertEqual(residue(ctx, []), 0, b''.join(data for _, data in ctx.events).decode())
+        test_support.assert_windows_launches(self, launch, jobs, ntdll, cwd=ROOT)
+        [build] = launch.call_args_list
+        self.assertEqual(build.args[0][:2], ['cargo', 'build'])
+        self.assertIn('nbest_tail_probe', build.args[0])
 
 
 if __name__ == '__main__':

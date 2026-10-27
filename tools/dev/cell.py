@@ -12,6 +12,8 @@ import subprocess
 import sys
 import tempfile
 
+from . import slot
+
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -84,6 +86,9 @@ def main(argv: Sequence[str], *, root: Path = ROOT,
     except CellError as exc:
         print(exc, file=sys.stderr)
         return exc.status
+    except slot.Cancelled as exc:
+        print(exc, file=sys.stderr)
+        return slot.cancellation_status()
     except (OSError, ValueError) as exc:
         print(f'FAIL: {exc}', file=sys.stderr)
         return 1
@@ -165,19 +170,16 @@ class Settings:
                        EXPECTED_ORACLE_PIN_REF=expected, ORACLE_PATCH_FILE=patch))
 
     def artifact(self, variable: str, filename: str, package: str) -> Path:
-        from .slot import inherited_fds
         value = self.environment.get(variable)
         if value:
             artifact = Path(value)
             if not artifact.is_absolute():
                 artifact = self.root / artifact
         else:
-            command = ['just', 'heavy', '--', 'cargo', 'build', '--locked', '--manifest-path',
+            command = ['cargo', 'build', '--locked', '--manifest-path',
                        str(self.root / 'Cargo.toml'), '-p', package, '--no-default-features',
                        '--features', self.feature]
-            result = subprocess.run(command, cwd=self.root, env=self.environment, stdout=2,
-                                    pass_fds=inherited_fds())
-            if result.returncode:
+            if slot.run_command(command, env=self.environment, out=sys.stderr, cwd=self.root, stdout=2):
                 raise CellError(f'FAIL: building {package}', 1)
             artifact = self.target / 'debug' / filename
         if not artifact.is_file():
@@ -218,7 +220,6 @@ class Settings:
             os.unlink(staged)
 
     def build(self, wanted: Sequence[str]) -> int:
-        from .slot import inherited_fds
         packages = {'pinyin-capi': 'oxpinyin-capi', 'zhuyin-capi': 'oxpinyin-zhuyin-capi',
                     'dictool': 'oxpinyin-dictool'}
         for item in wanted:
@@ -231,19 +232,22 @@ class Settings:
         features = ['--no-default-features', '--features', self.feature]
         selected = [part for item in wanted if item in packages for part in ('-p', packages[item])]
         if selected:
-            result = subprocess.run(['just', 'heavy', '--', 'cargo', 'build', *common, *selected,
-                                     *features], cwd=self.root, env=self.environment, pass_fds=inherited_fds())
-            if result.returncode:
-                return result.returncode
+            status = slot.run_command(['cargo', 'build', *common, *selected, *features],
+                                      env=self.environment, out=sys.stderr, cwd=self.root)
+            if status:
+                return status
         if 'user-rt-test' in wanted:
-            result = subprocess.run(['just', 'heavy', '--', 'cargo', 'test', *common,
-                                     '--profile', 'dev', '--no-run', '--message-format=json',
-                                     '-p', 'oxpinyin-runtime', *features, '--test', 'user_dir_round_trip'],
-                                    cwd=self.root, env=self.environment, stdout=subprocess.PIPE, text=True,
-                                    pass_fds=inherited_fds())
-            if result.returncode:
-                return result.returncode
-            executables = [row['executable'] for line in result.stdout.splitlines()
+            # A file, not a pipe: run_command supervises the child and drains nothing.
+            with tempfile.TemporaryFile('w+') as messages:
+                status = slot.run_command(['cargo', 'test', *common, '--profile', 'dev', '--no-run',
+                                           '--message-format=json', '-p', 'oxpinyin-runtime', *features,
+                                           '--test', 'user_dir_round_trip'],
+                                          env=self.environment, out=sys.stderr, cwd=self.root, stdout=messages)
+                if status:
+                    return status
+                messages.seek(0)
+                lines = messages.read().splitlines()
+            executables = [row['executable'] for line in lines
                            if (row := json.loads(line)).get('reason') == 'compiler-artifact'
                            and row.get('target', {}).get('name') == 'user_dir_round_trip'
                            and row.get('executable')]

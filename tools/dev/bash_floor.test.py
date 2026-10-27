@@ -1,9 +1,12 @@
 #!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
 """The one Bash floor declaration, its source-line gate and its run-time check."""
+import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -105,6 +108,53 @@ class RunTimeTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stderr)
         self.assertRegex(result.stderr, MESSAGE)
         self.assertIn(f'(found {version})', result.stderr)
+
+
+class StagedCopyTests(unittest.TestCase):
+    """compat.sh runs compat-inside.sh as /input/inside.sh, away from tools/lib."""
+
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.input = Path(directory.name)
+        # Stage the helpers with compat.sh's own copy lines, and run the copy it runs.
+        compat = (ROOT / 'tools/oracle/compat.sh').read_text(encoding='utf-8')
+        self.staged = {source: self.input / name
+                       for source, name in re.findall(r'^cp (tools/\S+) "\$input/([^"/]+)"$', compat, re.M)}
+        self.assertIn(bash_floor.FLOOR_FILE, self.staged, 'compat.sh does not stage the floor file')
+        for source, path in self.staged.items():
+            shutil.copyfile(ROOT / source, path)
+        self.script = self.staged['tools/oracle/compat-inside.sh']
+        self.assertEqual(re.search(r'\bbash /input/(\S+)', compat)[1], self.script.name)
+        self.floor = self.staged[bash_floor.FLOOR_FILE]
+
+    def run_staged(self):
+        environment = {name: value for name, value in os.environ.items()
+                       if name not in ('OXPINYIN_COMPAT_CONTAINER', 'OXPINYIN_BASH_FLOOR')}
+        return subprocess.run(['bash', str(self.script)], env=environment,
+                              capture_output=True, text=True, timeout=10)
+
+    def test_the_staged_copy_sources_and_runs_the_floor_beside_it(self):
+        # A floor no Bash meets shows the check runs from the copy and refuses.
+        text, count = bash_floor.FLOOR_RE.subn('OXPINYIN_BASH_FLOOR=99.0', self.floor.read_text(encoding='utf-8'))
+        self.assertEqual(count, 1)
+        self.floor.write_text(text, encoding='utf-8')
+        result = self.run_staged()
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertRegex(result.stderr, rf'\A{re.escape(str(self.script))}: needs Bash >= 99\.0 \(found [^\n]+\)\n\Z')
+
+    def test_bash_5_passes_the_staged_floor_to_the_next_check(self):
+        result = self.run_staged()
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertEqual(result.stderr, 'FAIL: compatibility requires a controlled Linux amd64 or arm64 image\n')
+
+    def test_a_missing_staged_floor_stops_the_script(self):
+        self.floor.unlink()
+        result = self.run_staged()
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn(f'FAIL: {self.script}: {self.input}/bash-floor.sh not sourced; Bash floor unchecked\n',
+                      result.stderr)
+        self.assertNotIn('controlled Linux', result.stderr)
 
 
 if __name__ == '__main__':

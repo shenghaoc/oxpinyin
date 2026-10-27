@@ -104,7 +104,7 @@ def test_command(args):
 
 
 def test_doc_command(args):
-    """Forward doctest arguments through just heavy and return the child status."""
+    """Forward doctest arguments to cargo test --doc under heavy-slot admission; return its status."""
     return test_runner.run_doc(args.args)
 
 

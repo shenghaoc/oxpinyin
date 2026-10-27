@@ -409,7 +409,7 @@ needs it); `just doctor` reports it. Install it with
 `tools.dev.test_runner` with the local profile. Pass the same crate and
 feature selection as cargo test (the default workspace feature is Berkeley
 DB). Set `NEXTEST_PROFILE=ci` for the CI limits. `just test-doc` runs
-`cargo test --doc` through `just heavy`.
+`cargo test --doc` under heavy-slot admission.
 
 Use your system's official package documentation if names or enabled
 repositories differ. The native check below prints the actual Berkeley DB

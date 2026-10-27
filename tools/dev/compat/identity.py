@@ -152,9 +152,10 @@ def archive_content(archive):
 def seal_inputs(directory, image, reference, head):
     """Validate staged source/helpers and write their container input identity.
 
-    Hash source.tar, model.tar.gz, inside.sh, and identity.py; a nonempty model
-    must match the archived oracle pin. Write identity.json and return its
-    SHA-256. Raise ValueError for mismatches; read/archive errors propagate.
+    Hash source.tar, model.tar.gz, inside.sh, bash-floor.sh, and identity.py;
+    a nonempty model must match the archived oracle pin. Write identity.json
+    and return its SHA-256. Raise ValueError for mismatches; read/archive
+    errors propagate.
     """
     directory = Path(directory)
     files = archive_content(directory / 'source.tar')
@@ -171,8 +172,10 @@ def seal_inputs(directory, image, reference, head):
                   archive_sha256=digest_file(directory / 'source.tar'),
                   model_sha256=digest_file(model),
                   inside_sha256=digest_file(directory / 'inside.sh'),
+                  floor_sha256=digest_file(directory / 'bash-floor.sh'),
                   verifier_sha256=digest_file(directory / 'identity.py'))
     for source, field in (('tools/oracle/compat-inside.sh', 'inside_sha256'),
+                          ('tools/lib/bash-floor.sh', 'floor_sha256'),
                           ('tools/dev/compat/identity.py', 'verifier_sha256')):
         if files.get(source, {}).get('content') != record[field]:
             raise ValueError(f'launch helper differs from source snapshot: {source}')
@@ -197,7 +200,8 @@ def verify_inputs(directory, expected, image=None, reference=None):
     if reference is not None and record.get('reference') != reference:
         raise ValueError('container reference namespace mismatch')
     for filename, field in (('source.tar', 'archive_sha256'), ('model.tar.gz', 'model_sha256'),
-                            ('inside.sh', 'inside_sha256'), ('identity.py', 'verifier_sha256')):
+                            ('inside.sh', 'inside_sha256'), ('bash-floor.sh', 'floor_sha256'),
+                            ('identity.py', 'verifier_sha256')):
         if digest_file(directory / filename) != record.get(field):
             raise ValueError(f'container input content mismatch: {filename}')
     files = archive_content(directory / 'source.tar')

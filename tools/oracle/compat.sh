@@ -175,6 +175,8 @@ COPYFILE_DISABLE=1 tar --no-xattrs --null -T "$input/files" -cf "$input/source.t
 } > "$input/source.txt"
 printf 'Source archive SHA-256: %s\n' "$(hash < "$input/source.tar" | cut -d' ' -f1)" >> "$input/source.txt"
 cp tools/oracle/compat-inside.sh "$input/inside.sh"
+# The copy runs from /input, away from tools/lib: its floor file goes beside it.
+cp tools/lib/bash-floor.sh "$input/bash-floor.sh"
 cp tools/dev/compat/identity.py "$input/identity.py"
 input_identity=$(uv run --no-project --managed-python python -X lazy_imports=normal \
 	-m tools.dev.compat.identity seal-inputs "$input" "$key" "$reference_tag" "$(git rev-parse HEAD)")

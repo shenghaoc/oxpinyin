@@ -747,7 +747,7 @@ raise SystemExit(importlib.import_module(module).main(sys.argv[sys.argv.index('-
         git = self.directory / 'git'
         git.write_text('''#!/bin/sh
 case $1 in
-ls-files) printf 'tools/oracle/compat-inside.sh\\0tools/dev/compat/identity.py\\0' ;;
+ls-files) printf 'tools/oracle/compat-inside.sh\\0tools/lib/bash-floor.sh\\0tools/dev/compat/identity.py\\0' ;;
 rev-parse) printf '0000000000000000000000000000000000000000\\n' ;;
 status) : ;;
 *) exit 1 ;;

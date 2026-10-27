@@ -122,7 +122,7 @@ Do not assume `RUST_TEST_THREADS` alone controls nextest's process pool.
 
 ## 4. Doctests and ignored tests
 
-Keep doctests on `cargo test --doc`, through `just test-doc` and `just heavy`.
+Keep doctests on `cargo test --doc`, through `just test-doc` under heavy-slot admission.
 Nextest does not replace that separate step. See its
 [running guide](https://nexte.st/docs/running/).
 
@@ -170,7 +170,7 @@ approval; the T13N exception above covers only the two approved CI jobs.
 After equivalence passes, the cutover implementation updates AGENTS.md rule 5.
 Replace its `cargo test -p <crate>` completion gate with the native `just test`
 nextest route. Keep the same touched-crate scope and feature selection.
-Keep doctests on `cargo test --doc` through `just test-doc` and `just heavy`.
+Keep doctests on `cargo test --doc` through `just test-doc` under heavy-slot admission.
 Keep fmt and clippy obligations. Do not add a local workspace sweep.
 This is a planned policy edit; this docs-only PR changes no AGENTS.md rule.
 

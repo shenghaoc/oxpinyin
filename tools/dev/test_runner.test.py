@@ -3,7 +3,9 @@
 from pathlib import Path
 import contextlib
 import io
+import json
 import os
+import signal
 import subprocess
 import sys
 import tempfile
@@ -490,6 +492,56 @@ class AdmissionTests(unittest.TestCase):
         self.assertEqual(status, 0, output)
         self.assertEqual(launch.call_args.kwargs['env']['RUST_TEST_THREADS'], '3')
         self.assertEqual(launch.call_args.kwargs['env']['NEXTEST_TEST_THREADS'], '2')
+
+    def run_doctests(self, args=(), status=0, resources=None):
+        child = mock.MagicMock()
+        child.__enter__.return_value = child
+        child.wait.return_value = status
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, self.environ, clear=True), \
+                mock.patch.object(host, 'resource_snapshot', return_value=resources or self.resources), \
+                mock.patch.object(slot.subprocess, 'Popen', return_value=child) as launch, \
+                contextlib.redirect_stderr(out):
+            result = test_runner.run_doc(list(args))
+        return result, launch, out.getvalue()
+
+    def test_doctests_run_cargo_through_run_command(self):
+        # No just: run_command admits here and supervises cargo in its own session.
+        args = ['-p', 'oxpinyin-core', '--', 'name with spaces']
+        for status, expected in ((0, 0), (101, 101), (-15, 143)):
+            with self.subTest(status=status):
+                result, launch, output = self.run_doctests(['--', *args], status)
+                self.assertEqual(result, expected, output)
+                self.assertEqual(launch.call_count, 1)
+                self.assertEqual(launch.call_args.args[0], ['cargo', 'test', '--doc', *args])
+                options = launch.call_args.kwargs
+                marker = json.loads(options['env'][slot.HEAVY_SLOT_HELD])
+                self.assertEqual(marker['pid'], os.getpid())
+                self.assertEqual(options['pass_fds'], (marker['fd'],))
+                self.assertTrue(options['start_new_session'])
+                self.assertEqual((options['cwd'], options['stdout']), (None, None))
+                self.assertIn('resources (admitted)', output)
+
+    def test_windows_doctests_take_the_job_object_path_without_pass_fds(self):
+        with mock.patch.dict(os.environ, self.environ, clear=True), \
+                test_support.windows_launch(status=3) as (launch, jobs, ntdll), \
+                contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(test_runner.run_doc(['-p', 'oxpinyin-core']), 3)
+        test_support.assert_windows_launches(self, launch, jobs, ntdll)
+        self.assertEqual(launch.call_args.args[0], ['cargo', 'test', '--doc', '-p', 'oxpinyin-core'])
+
+    def test_a_cancelled_doctest_run_exits_with_128_plus_the_signal(self):
+        with mock.patch.object(slot, 'run_command', side_effect=slot.Cancelled('cancelled')), \
+                mock.patch.object(slot, 'CANCELLED_SIGNAL', signal.SIGTERM), \
+                contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(test_runner.run_doc([]), 128 + signal.SIGTERM)
+
+    def test_doctests_never_start_without_admission(self):
+        resources = dict(self.resources, available_mib=host.HEADROOM_MIB + 100)
+        result, launch, output = self.run_doctests(resources=resources)
+        self.assertEqual(result, 2)
+        test_support.assert_not_called(self, launch)
+        self.assertIn('FAIL: resource-blocked', output)
 
 
 if __name__ == '__main__':
