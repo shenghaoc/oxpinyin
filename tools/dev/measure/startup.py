@@ -12,8 +12,8 @@ import subprocess
 import sys
 import tempfile
 
-from .. import slot
-from . import cold, cold_linux, instructions, native, stats, worker
+from .. import mman, slot
+from . import cold, cold_linux, instructions, native, pages, stats, worker
 
 ROOT = Path(__file__).resolve().parents[3]
 PROFILES = ('empty', 'modest', 'phrases', 'journals')
@@ -48,6 +48,64 @@ PROFILE = module(ROOT / 'tools/bisection/startup_profile.py', 'startup_profile')
 def emit(kind, **values):
     """Print and flush one sorted JSON record with the given startup event kind."""
     print(json.dumps(dict(startup=kind, **values), sort_keys=True), flush=True)
+
+
+def report_page_residency(facade, profile, arm, samples):
+    """Report Darwin checkpoint changes after all rounds, parsing verified descriptors."""
+    layouts = {}
+    for sample in samples:
+        if sample is None:
+            continue
+        round_index = sample['round']
+        observations = sample.get('residency', {})
+        for before_point, after_point in pages.checkpoint_pairs(list(observations)):
+            before, after = observations[before_point], observations[after_point]
+            files = {}
+            for label in sorted(before.keys() | after.keys()):
+                if label not in before or label not in after:
+                    files[label] = dict(reason='file appeared or disappeared between checkpoints')
+                    continue
+                first, last = before[label], after[label]
+                if first['identity'] != last['identity']:
+                    files[label] = dict(reason='file replaced between checkpoints')
+                    continue
+                offsets = pages.newly_resident(first['vector'], last['vector'], mman.PAGE_SIZE)
+                if not offsets:
+                    continue
+                entry = dict(darwin_resident_pages=len(offsets))
+                layout = None
+                if last['kind'] == 'object':
+                    expected = (*last['identity'], last['size'], last['mtime_ns'])
+                    key = (last['path'], expected)
+                    if key not in layouts:
+                        try:
+                            if (first['size'], first['mtime_ns']) != (last['size'], last['mtime_ns']):
+                                raise ValueError('object modified between checkpoints')
+                            with open(last['path'], 'rb') as handle:
+                                info = os.fstat(handle.fileno())
+                                actual = (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns)
+                                if actual != expected:
+                                    raise ValueError('object replaced or modified before parsing')
+                                data = handle.read()
+                                end = os.fstat(handle.fileno())
+                                if (end.st_dev, end.st_ino, end.st_size, end.st_mtime_ns) != actual:
+                                    raise ValueError('object modified while parsing')
+                                layout = pages.object_layout(last['path'], data=data)
+                                slice_name = pages._host_slice(data)[2] if data[:4] in pages.FAT_MAGICS else None
+                                layouts[key] = (layout, None, slice_name)
+                        except (OSError, ValueError) as error:
+                            layouts[key] = (None, str(error), None)
+                    layout, reason, slice_name = layouts[key]
+                    if reason:
+                        entry['layout_error'] = reason
+                    if slice_name:
+                        entry['macho_slice'] = slice_name
+                entry['rows'] = (pages.object_rows(layout, offsets, mman.PAGE_SIZE, label) if layout is not None
+                                 else pages.data_rows(offsets, mman.PAGE_SIZE, last['size'], label))
+                files[label] = entry
+            emit('page-residency', facade=facade, profile=profile, arm=arm, round=round_index,
+                 checkpoints=[before_point, after_point], page_size=mman.PAGE_SIZE,
+                 metric='darwin_resident_pages', limits=list(pages.LIMITS), files=files)
 
 
 def parser():
@@ -605,7 +663,11 @@ def campaign_run(args, profiles, work, admission):
                                     row['userfiles'] != references[arm]['unit_userfiles']):
                                 raise NotResult('NOT COMPARABLE: timed stderr/raw user files changed')
                             if index >= warmups:
+                                row['round'] = index
                                 samples[arm].append(row)
+                    if cold_sample and memory and sys.platform == 'darwin':
+                        for arm in ARMS:
+                            report_page_residency(facade, name, arm, samples[arm])
                     cold_context = dict(cold=cold_account(samples, warmup_rejected)) if cold_sample else {}
                     if memory:
                         def memory_value(row, point, metric):

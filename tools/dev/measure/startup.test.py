@@ -19,6 +19,28 @@ from tools.dev.measure import startup as st, worker, native, stats
 
 
 class ControllerTests(unittest.TestCase):
+    def test_macho_replacement_falls_back_to_byte_range(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'libpinyin.dylib'
+            fixture = ROOT / 'tools/dev/measure/fixtures/pages-macho-arm64.dylib'
+            path.write_bytes(fixture.read_bytes())
+            info = path.stat()
+            reading = dict(path=str(path), kind='object', identity=(info.st_dev, info.st_ino),
+                           size=info.st_size, mtime_ns=info.st_mtime_ns, pages=3)
+            before = dict(reading, vector=bytes([0, 0, 0]))
+            after = dict(reading, vector=bytes([1, 0, 0]))
+            replacement = path.with_name('replacement')
+            replacement.write_bytes(fixture.read_bytes())
+            replacement.replace(path)
+            sample = dict(round=2, residency={'start': {'object': before}, 'init': {'object': after}})
+            with contextlib.redirect_stdout(io.StringIO()) as output:
+                st.report_page_residency('pinyin', 'empty', 'pr', [sample])
+            record = json.loads(output.getvalue())
+            entry = record['files']['object']
+            self.assertIn('replaced or modified', entry['layout_error'])
+            self.assertEqual(entry['darwin_resident_pages'], 1)
+            self.assertEqual(entry['rows'][0]['offset_range'], [0, st.mman.PAGE_SIZE])
+
     def test_optimised_controller_refuses_before_inputs_or_admission(self):
         for flags, value in (([], '1'), (['-O'], '0'), (['-OO'], '0')):
             with self.subTest(flags=flags, value=value), tempfile.TemporaryDirectory() as locks:
@@ -530,7 +552,7 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(len(samples), 6)
         self.assertTrue(all(v['cold']['metric'] == 'darwin_resident_pages' for v in samples))
 
-    def synthetic_campaign(self, *options, platform='darwin', rejections=None):
+    def synthetic_campaign(self, *options, platform='darwin', rejections=None, with_residency=False):
         """Run campaign_run over a scripted worker and return its status and printed records.
 
         Rows are deterministic functions of (arm, memory, round), shaped like macOS rows: the
@@ -576,8 +598,14 @@ class ControllerTests(unittest.TestCase):
                     physical_footprint_kib=20_000 + n + index, faults=50 + n, pageins=n,
                     disk_bytes_read=4096 * n, disk_bytes_written=0, instructions=1_000 + n,
                     cycles=2_000 + n, instructions_available=True, cycles_available=True)
-            return dict(digest='same', stderr=b'', userfiles={}, documents=[dict(startup='times', **times)],
-                        checkpoints=points, process_wall=1_000_000 + 10_000 * n + shift, cold=prepared)
+            result = dict(digest='same', stderr=b'', userfiles={}, documents=[dict(startup='times', **times)],
+                          checkpoints=points, process_wall=1_000_000 + 10_000 * n + shift, cold=prepared)
+            if memory and with_residency:
+                reading = dict(path=str(subject), kind='data', identity=(1, 2), size=st.mman.PAGE_SIZE,
+                               mtime_ns=1, pages=1)
+                result['residency'] = {'start': {'data': dict(reading, vector=b'\0')},
+                                       'end': {'data': dict(reading, vector=b'\1')}}
+            return result
 
         library = self.root / 'lib.so'
         library.write_bytes(b'synthetic oxpinyin')
@@ -669,6 +697,24 @@ class ControllerTests(unittest.TestCase):
         unavailable = self.report(printed, 'memory', 'rss', 'end')
         self.assertEqual((unavailable['verdict'], unavailable['summaries']), ('unavailable', None))
         self.assertEqual(unavailable['cold']['rejected'], dict(base=0, pr=0, control=0))
+
+    def test_residency_rounds_match_measured_samples_after_warmups_and_rejection(self):
+        status, printed = self.synthetic_campaign(
+            *self.COLD, '--rounds', '2', '--warmups', '0', '--memory-rounds', '3', '--memory-warmups', '2',
+            rejections={('pr', True, 3): 2}, with_residency=True)
+        self.assertEqual(status, 0)
+        samples = [v for kind, v in printed if kind == 'sample' and v['memory']]
+        records = [v for kind, v in printed if kind == 'page-residency']
+        accepted = {(v['arm'], v['round']) for v in samples
+                    if not v['warmup'] and v['cold']['verdict'] == 'QUALIFIED'}
+        observed = [(v['arm'], v['round']) for v in records]
+        self.assertEqual(len(observed), len(accepted))
+        self.assertEqual(set(observed), accepted)
+        self.assertEqual({v['round'] for v in records}, {2, 3, 4})
+        self.assertNotIn(('pr', 3), observed)
+        self.assertTrue(all(v['checkpoints'] == ['start', 'end'] for v in records))
+        self.assertEqual(next(v for v in samples if v['arm'] == 'pr' and v['round'] == 3)
+                         ['cold']['verdict'], 'REJECTED')
 
     def test_two_rejections_in_an_arm_keep_a_metric_eligible_and_three_make_it_inconclusive(self):
         for platform in ('darwin', 'linux'):
