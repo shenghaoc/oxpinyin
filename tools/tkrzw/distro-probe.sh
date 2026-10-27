@@ -1,4 +1,6 @@
 #!/bin/sh
+# Environment: versions.py calls the copied probe from Dockerfile.oracle RUN
+# and Dockerfile.compat RUN before managed CPython provisioning.
 # distro-probe.sh — does this system's tkrzw honour its own pointer-identity
 # protocol?
 #

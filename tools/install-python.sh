@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Bootstrap: `just python`, cloud setup and Dockerfile.compat call this to ensure
+# the managed interpreter exists.
 # Install the managed interpreter that .python-version names, only when absent.
 # `just python`, tools/cloud/setup.sh, CI and tools/oracle/Dockerfile.compat call
 # this, so the version is stated once, in .python-version (#1230).

@@ -343,20 +343,22 @@ kept scripts; this docs-only audit does not edit them.
 
 The [full per-script audit](tooling-shell-audit.md) covers **100 scripts** at
 `a04c91afa343428ba7294e86f217f3e4e286e890`, current `origin/main` when fetched,
-on 2026-10-26 UTC (`date -u`). Six whole scripts have concrete keep
-reasons: `install-python.sh`, `lib/bash-floor.sh`, `oracle/pin.sh`,
-`oracle/build-oracle.sh`, `model/fetch-model.sh` and `tkrzw/distro-probe.sh`
-(all under `tools/`). The remaining 94 enter six units below. Cloud setup
-retains only its pre-interpreter portion; its post-bootstrap work migrates.
-The 98 count in #1260 predates this base.
+on 2026-10-26 UTC (`date -u`). Five whole scripts have concrete keep
+reasons: `install-python.sh`, `lib/bash-floor.sh`, `oracle/build-oracle.sh`,
+`model/fetch-model.sh` and `tkrzw/distro-probe.sh` (all under `tools/`). The
+pin reader `oracle/pin.sh` was kept at that base and is removed by the closing
+check: its one live caller, the arm64 metadata step of `oracle-image.yml`,
+runs after managed Python is provisioned and reads the platform-keyed fields
+through `just compat pin-field`. The remaining 94 enter six units below. Cloud
+setup retains only its pre-interpreter portion; its post-bootstrap work
+migrates. The 98 count in #1260 predates this base.
 
 The image `RUN` exceptions are concrete: `Dockerfile.oracle` has system
 `python3`, not uv-managed CPython, and calls `build-oracle.sh --libs-only`;
 `versions.py` calls the copied distro probe in that image and before Python
 provisioning in `Dockerfile.compat`; both bisection image builds run model
 fetching without managed CPython. The full `build-oracle.sh` remains usable
-inside the dependency image for `--regen-data`. The pin reader is sourced by
-cloud setup before interpreter installation. These are not reasons to retain
+inside the dependency image for `--regen-data`. These are not reasons to retain
 unrelated host orchestration. The #1234 rejection of parallel image builds
 also remains: no `tools.dev` package is copied into the reference image.
 
@@ -444,7 +446,7 @@ U3 preserves image tags and pin hashes, the compat CLI/environment transport,
 container state and reservation lifetimes, runtime precedence/refusals, fixture
 formats, both-direction profile interchange and aggregate failures. `just compat`
 retains the `bash tools/oracle/compat.sh` interface. The other recipes are
-`image-tag`, `verify-image`, `reproducible`, `capture`, `user-round-trip`,
+`image-tag`, `pin-field`, `verify-image`, `reproducible`, `capture`, `user-round-trip`,
 `docker-user-round-trip`, `drop-in`, `differentials` and `nightly-fixtures`.
 Shared controllers are `tools/dev/compat/{launcher,images,fixtures,campaigns}.py`,
 with the existing identity, boundary and memory services. The host loader reader

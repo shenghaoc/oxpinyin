@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Environment: Dockerfile.callgrind and Dockerfile.perf-matrix RUN this after
+# managed-Python provisioning.
 
 # shellcheck source=../lib/bash-floor.sh
 . "${0%/*}/../lib/bash-floor.sh"

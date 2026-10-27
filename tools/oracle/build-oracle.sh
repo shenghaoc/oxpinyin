@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Environment: Dockerfile.oracle RUN invokes --libs-only without managed CPython;
+# the dependency image also supports --regen-data without it.
 
 # shellcheck source=../lib/bash-floor.sh
 . "${0%/*}/../lib/bash-floor.sh"
