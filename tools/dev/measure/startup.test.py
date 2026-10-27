@@ -243,7 +243,6 @@ class ControllerTests(unittest.TestCase):
         self.assertFalse(stats.stable_residency([0] * 4, [65] * 4)['stable'])
         self.assertEqual(stats.exact_control(10, 11)['verdict'], 'INVALID')
 
-    @unittest.skipUnless(sys.platform == 'linux', 'Linux Callgrind controller')
     def test_exact_instruction_mismatch_stops_at_first_pair(self):
         libs = {a: {'pinyin': self.root / (a + '.so')} for a in st.ARMS}
         for value in libs.values():
@@ -251,14 +250,16 @@ class ControllerTests(unittest.TestCase):
         campaign = SimpleNamespace(run=mock.Mock(side_effect=[
             dict(digest='same', stderr=b'summary: 100\n'),
             dict(digest='same', stderr=b'summary: 101\n')]))
-        with mock.patch.object(st, 'emit') as emit, self.assertRaisesRegex(st.NotResult, 'STOP: same-bytes init Ir'):
+        with mock.patch.object(st, 'sys', SimpleNamespace(platform='linux')), \
+                mock.patch.object(st, 'emit') as emit, self.assertRaisesRegex(st.NotResult, 'STOP: same-bytes init Ir'):
             st.instrument(campaign, libs, 'pinyin', 'empty', self.root,
-                          {a: dict(digest='same') for a in st.ARMS})
+                          {a: dict(digest='same') for a in st.ARMS}, backends=dict.fromkeys(st.ARMS, 'kc'))
         self.assertEqual(campaign.run.call_count, 2)
         self.assertEqual(emit.call_args.kwargs['verdict'], 'INVALID')
         self.assertNotIn('pr_base_ratio', emit.call_args.kwargs)
 
-    def range_campaign(self, *, wide=False, outside=False, init_variation=False, init_unresolved=False):
+    def range_campaign(self, *, wide=False, outside=False, init_variation=False, init_unresolved=False,
+                       backend='kc', profile_edit=None, nonoverlap=False):
         libraries = {a: {'pinyin': self.root / (a + '.so')} for a in st.ARMS}
         for paths in libraries.values():
             paths['pinyin'].write_bytes(b'identical')
@@ -268,28 +269,31 @@ class ControllerTests(unittest.TestCase):
             index = visits.get((scope, arm), 0)
             visits[scope, arm] = index + 1
             delta = (200 if wide else 10) if index % 2 else 0
-            total = 100000 + (delta if scope != 'init' else int(init_variation and arm == 'pr'))
+            total = 100000 + (delta + int(nonoverlap and arm == 'control') * 1000 if scope != 'init'
+                              else int(init_variation and arm == 'pr' and index == 0))
             fn = 'dedup_ranked_by_text_extra' if outside else 'oxpinyin_engine::session::dedup_ranked_by_text::h0123456789abcdef'
             raw = (f'creator: callgrind-3.27.1\npid: {index + 1}\ncmd: /worker measure\n'
                    f'positions: line\nevents: Ir\nsummary: {total}\nob={path}\n'
                    f'fn={fn}\n1 {total - 100}\nfn=stable\n2 100\ntotals: {total}\n').encode()
             if init_unresolved and scope == 'init':
                 raw = raw.replace(fn.encode(), b'???')
+            if profile_edit:
+                raw = profile_edit(raw, scope, arm, index)
             return dict(digest='same', stderr=raw, pid=index + 1)
         campaign = SimpleNamespace(run=run, executable=Path('/worker'))
         records = []
-        with mock.patch.object(st.sys, 'platform', 'linux'), \
+        with mock.patch.object(st, 'sys', SimpleNamespace(platform='linux')), \
                 mock.patch.object(st, 'emit', side_effect=lambda kind, **row: records.append(row)):
             try:
                 st.instrument(campaign, libraries, 'pinyin', 'empty', self.root,
-                              {a: dict(digest='same') for a in st.ARMS})
+                              {a: dict(digest='same') for a in st.ARMS}, backends=dict.fromkeys(st.ARMS, backend))
             except st.NotResult:
                 pass
         return records, visits
 
     def test_randomstate_range_pass_reports_every_original(self):
         records, visits = self.range_campaign()
-        self.assertEqual([r['verdict'] for r in records], ['VALID', 'RANGE-QUALIFIED', 'RANGE-QUALIFIED'])
+        self.assertEqual([r['verdict'] for r in records], ['VALID', 'DIAGNOSTIC', 'DIAGNOSTIC'])
         for row in records[1:]:
             self.assertEqual(row['bounds']['pr'], [100000, 100010])
             self.assertEqual(row['base_minus_pr_bounds'], [-10, 10])
@@ -299,10 +303,10 @@ class ControllerTests(unittest.TestCase):
                 self.assertEqual(len(row['profiles'][arm]), 5)
                 self.assertIn('totals:', row['profiles'][arm][0]['raw'])
 
-    def test_randomstate_wide_allowlisted_range_qualifies_with_wider_bounds(self):
+    def test_randomstate_wide_allowlisted_range_reports_diagnostic_bounds(self):
         records, _ = self.range_campaign(wide=True)
         self.assertTrue(records[-1]['overlap'])
-        self.assertEqual(records[-1]['verdict'], 'RANGE-QUALIFIED')
+        self.assertEqual(records[-1]['verdict'], 'DIAGNOSTIC')
         self.assertEqual(records[-1]['base_minus_pr_bounds'], [-200, 200])
 
     def test_recheck_retained_profiles_without_launching_workers(self):
@@ -358,6 +362,77 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(records[-1]['scope'], 'init')
         self.assertEqual(records[-1]['verdict'], 'INVALID')
         self.assertFalse(any(scope != 'init' for scope, arm in visits))
+
+    def test_bdb_init_one_instruction_control_difference_is_diagnostic_and_continues(self):
+        records, visits = self.range_campaign(backend='bdb', init_variation=True)
+        self.assertEqual([r['scope'] for r in records], ['init', 'first_candidate', 'steady'])
+        init = records[0]
+        self.assertEqual((init['verdict'], init['rule']), ('DIAGNOSTIC', 'bdb-init'))
+        self.assertEqual(init['counts'], dict(base=[100000, 100000], pr=[100001, 100000], control=[100000, 100000]))
+        self.assertEqual(init['bounds'], dict(base=[100000, 100000], pr=[100000, 100001], control=[100000, 100000]))
+        self.assertNotIn('control', init)
+        self.assertNotIn('stop', init)
+        for arm in st.ARMS:
+            self.assertEqual(visits['init', arm], 2)
+            self.assertEqual(visits['first_candidate', arm], 5)
+            self.assertEqual(visits['steady', arm], 5)
+            self.assertEqual(len(init['raw_profiles_hex'][arm]), 2)
+
+    def test_randomstate_nonoverlapping_controls_are_diagnostic_after_attribution(self):
+        records, visits = self.range_campaign(nonoverlap=True)
+        self.assertEqual(records[-1]['scope'], 'steady')
+        for row in records[1:]:
+            self.assertEqual((row['verdict'], row['rule'], row['overlap']), ('DIAGNOSTIC', 'randomstate', False))
+            self.assertEqual(row['bounds'], dict(base=[100000, 100010], pr=[100000, 100010], control=[101000, 101010]))
+            self.assertEqual(row['outside_allowlist'], [])
+            self.assertTrue(all(visits[row['scope'], arm] == 5 for arm in st.ARMS))
+
+    def test_bdb_diagnostic_init_still_requires_profiler_identity_and_reconciled_totals(self):
+        edits = (
+            lambda raw, *_: raw.replace(b'pid: 1', b'pid: 99'),
+            lambda raw, *_: raw.replace(b'totals: 100000', b'totals: 99999'),
+            lambda raw, scope, arm, index: raw.replace(b'creator: callgrind-3.27.1', b'creator: callgrind-3.26.0')
+            if arm == 'pr' and index == 1 else raw,
+        )
+        for edit in edits:
+            with self.subTest(edit=edit):
+                records, visits = self.range_campaign(backend='bdb', profile_edit=edit)
+                self.assertEqual((records[-1]['scope'], records[-1]['verdict'], records[-1]['stop']),
+                                 ('init', 'INVALID', True))
+                self.assertFalse(any(scope != 'init' for scope, _ in visits))
+
+    def test_bdb_retained_diagnostics_recheck_with_identity_and_skip_completed_scopes(self):
+        records, _ = self.range_campaign(backend='bdb', init_variation=True)
+        start = dict(startup='start', worker=dict(path='/worker'), libraries={arm: {
+            'pinyin': dict(path=str(self.root / (arm + '.so')), backend='bdb')} for arm in st.ARMS})
+        path = self.root / 'retained-bdb.jsonl'
+        path.write_text('\n'.join(json.dumps(r) for r in [start, *[
+            dict(r, startup='instructions') for r in records]]) + '\n')
+        replay = st.recheck_instructions(path)
+        self.assertTrue(all(row['verdict'] == 'DIAGNOSTIC' for row in replay['scopes'].values()))
+        self.assertEqual(replay['scopes']['pinyin', 'empty', 'init']['bounds'], records[0]['bounds'])
+        campaign = SimpleNamespace(run=mock.Mock(side_effect=AssertionError('covered scope rerun')))
+        with mock.patch.object(st, 'sys', SimpleNamespace(platform='linux')), mock.patch.object(st, 'emit'):
+            st.instrument(campaign, {}, 'pinyin', 'empty', self.root, {}, completed=replay['scopes'],
+                          backends=dict.fromkeys(st.ARMS, 'bdb'))
+        test_support.assert_not_called(self, campaign.run)
+
+    def test_retained_bdb_diagnostic_cannot_bypass_a_deterministic_init_control(self):
+        libraries = {arm: {'pinyin': self.root / (arm + '.so')} for arm in st.ARMS}
+        for paths in libraries.values():
+            paths['pinyin'].write_bytes(b'identical')
+        completed = {('pinyin', 'empty', 'init'): dict(verdict='DIAGNOSTIC', rule='bdb-init')}
+        for backend in ('kc', 'tkrzw', None):
+            campaign = SimpleNamespace(run=mock.Mock(side_effect=[
+                dict(digest='same', stderr=b'summary: 100\n'),
+                dict(digest='same', stderr=b'summary: 101\n')]))
+            with self.subTest(backend=backend), mock.patch.object(st, 'sys', SimpleNamespace(platform='linux')), \
+                    mock.patch.object(st, 'emit') as emit, self.assertRaisesRegex(st.NotResult, 'STOP: same-bytes init Ir'):
+                st.instrument(campaign, libraries, 'pinyin', 'empty', self.root,
+                              {arm: dict(digest='same') for arm in st.ARMS}, completed=completed,
+                              backends=dict.fromkeys(st.ARMS, backend))
+            self.assertEqual(campaign.run.call_count, 2)
+            self.assertEqual(emit.call_args.kwargs['verdict'], 'INVALID')
 
     def test_callgrind_identity_resolution_and_exclusive_accounting(self):
         raw = ('creator: callgrind-3.27.1\npid: 123\ncmd: /worker measure\npositions: line\n'
@@ -481,13 +556,14 @@ class ControllerTests(unittest.TestCase):
             return dict(digest='same', stderr=b'', userfiles={}, documents=[dict(startup='times', **times)],
                         checkpoints=points, process_wall=100000)
         fake = SimpleNamespace(run=run)
-        checks = mock.Mock()
+        checks = mock.Mock(return_value={arm: {'pinyin': dict(backend='kc')} for arm in st.ARMS})
         with mock.patch.object(st.native, 'check_filesystems'), mock.patch.object(st, 'library', return_value=library), \
                 mock.patch.object(st.runpy, 'run_path', return_value={'check_arms': checks}), \
                 mock.patch.object(worker, 'build', return_value=(Path('worker'), {})), \
                 mock.patch.object(st, 'artifact', return_value={}), mock.patch.object(worker, 'Worker', return_value=fake), \
                 mock.patch.object(st, 'verify', return_value={a: dict(digest='same', unit_stderr=b'', unit_userfiles={}) for a in st.ARMS}), \
-                mock.patch.object(st, 'instrument'), mock.patch.object(st, 'emit', side_effect=lambda kind, **v: printed.append((kind, v))):
+                mock.patch.object(st, 'instrument') as instrument, \
+                mock.patch.object(st, 'emit', side_effect=lambda kind, **v: printed.append((kind, v))):
             status = st.campaign_run(args, {'empty': self.root / 'profiles/empty/user'}, work,
                                      SimpleNamespace(env={}, slot=SimpleNamespace(pass_fds=lambda: ())))
         self.assertEqual(status, 0)
@@ -499,6 +575,10 @@ class ControllerTests(unittest.TestCase):
         if sys.platform == 'linux':
             # #1062: every Linux shipping arm goes through the shared ELF ordering checker.
             self.assertEqual(set(checks.call_args.args[1]), set(st.ARMS))
+            self.assertEqual(instrument.call_args.kwargs['backends'], dict.fromkeys(st.ARMS, 'kc'))
+            start = next(v for kind, v in printed if kind == 'start')
+            self.assertEqual({arm: rows['pinyin']['backend'] for arm, rows in start['libraries'].items()},
+                             dict.fromkeys(st.ARMS, 'kc'))
             self.assertEqual(orders, [])
         else:
             # Mach-O has no function-order policy. The controller records the check as
@@ -641,7 +721,8 @@ class ControllerTests(unittest.TestCase):
                 mock.patch.object(st.cold_linux.mman, 'residency', side_effect=residency), \
                 mock.patch.object(st.cold_linux, 'evict'), \
                 mock.patch.object(st.cold_linux.native, 'filesystem', return_value=('ext4', '0:1')), \
-                mock.patch.object(st, 'runpy', SimpleNamespace(run_path=lambda _: dict(check_arms=lambda *_: None))):
+                mock.patch.object(st, 'runpy', SimpleNamespace(run_path=lambda _: dict(check_arms=lambda *_:
+                    {arm: {'pinyin': dict(backend='kc')} for arm in st.ARMS}))):
             status = st.campaign_run(args, {'empty': self.root / 'profiles/empty/user'}, work,
                                      SimpleNamespace(env={}, slot=SimpleNamespace(pass_fds=lambda: ())))
         return status, printed
