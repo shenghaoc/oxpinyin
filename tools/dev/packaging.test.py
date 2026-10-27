@@ -585,6 +585,8 @@ os.utime(package,(1,1))
         self.assertIn('Depends: libc6 (>= 2.17), libglib2.0-0t64', control)
         self.assertIn('Provides: libpinyin15 (= 2.11.92), libzhuyin15 (= 2.11.92)', control)
         self.assertIn('Conflicts: libpinyin15, libzhuyin15', control)
+        dev_control = (payload / 'dev/DEBIAN/control').read_text()
+        self.assertIn('Depends: oxpinyin-libpinyin15-bdb (= 0.1.0-1), libglib2.0-dev\n', dev_control)
         result = self.compare('release-deb', ['bdb','0.1.0',stage,'/usr/lib',out], env={'FAIL_PACKAGE':'1'})
         self.assertEqual(result.returncode, 39)
 
