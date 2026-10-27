@@ -43,7 +43,7 @@ CASES = (*PROFILES, 'modest-unsaved', 'modest-saved')
 # 12-354 more Ir, consistent with its 5-byte longer path (the loader and the
 # library keep path strings). `subject`, `control` and `pinlibs` are 7 bytes
 # each, so neither control-ox nor pin-ox figures carry a path-length difference.
-LIBRARY_DIRECTORIES = dict(ox='subject', control='control', pin='pinlibs')
+LIBRARY_DIRECTORIES = dict(ox='subject', control='control', pin='pinlibs', base='baselib')
 TIMING_ROUNDS, TIMING_WARMUPS = 60, 3
 MEMORY_ROUNDS, MEMORY_WARMUPS = 30, 2
 # The worker's per-phase getrusage/clock fields (teardown.h, td_print_time).
@@ -931,7 +931,7 @@ class Campaign:
     Measured native work runs in child processes, with driver-provided
     cancellation, runtime certification, and process-group cleanup.
     """
-    def __init__(self, worker, data, work, cpu, driver, cache='warm', jobs=None):
+    def __init__(self, worker, data, work, cpu, driver, cache='warm', jobs=None, attribute_window='init'):
         """Store sample settings and resolve system data; initialize the sample serial counter.
 
         jobs is the --jobs setting: 1 keeps fixture work serial, None lets
@@ -943,6 +943,7 @@ class Campaign:
         self.serial = 0
         self.prefix = 'sample'
         self.cache = cache
+        self.attribute_window = attribute_window
         self.jobs = jobs
         self.environment, self.fds = {}, ()
 
@@ -1025,7 +1026,8 @@ class Campaign:
             elif profiler == 'callgrind-init':
                 # Diagnostic: exclusive costs inside the facade's init export only.
                 command += ['--collect-atstart=no', '--cache-sim=yes', '--branch-sim=yes', *INIT_CACHE_SIM,
-                            '--callgrind-out-file=/dev/stderr', '--toggle-collect=' + facade + '_init']
+                            '--callgrind-out-file=/dev/stderr', '--toggle-collect=' +
+                            ('bisect_teardown_first_candidate_unit' if self.attribute_window == 'first-candidate' else facade + '_init')]
             elif profiler == 'dhat':
                 command += ['--dhat-out-file=/dev/stderr']
             elif profiler == 'massif':
@@ -1040,6 +1042,9 @@ class Campaign:
                     mode, str(int(save)), str(instances), str(cycles), scenario, str(rows) if rows else '-']
         env = dict(os.environ, **self.environment, OXPINYIN_TEARDOWN_EXPORTS=','.join(exports(facade)))
         env.pop('OXPINYIN_TEARDOWN_INIT_PROBE', None)
+        env.pop('OXPINYIN_TEARDOWN_PROBE_WINDOW', None)
+        if mode == 'init':
+            env['OXPINYIN_TEARDOWN_PROBE_WINDOW'] = self.attribute_window
         env.pop('OXPINYIN_TEARDOWN_MARKER_FD', None)
         if inputs is not None:
             env['OXPINYIN_TEARDOWN_INPUTS'] = str(inputs)
@@ -1362,6 +1367,9 @@ def run(args, driver, parser):
     if args.per_call or args.cases or args.issue or args.family or args.expect_parent or args.observations or args.plan_only or args.axis_c_replacement or args.axis_c_mutation or args.axis_c_snapshot_check or args.regenerate_sentence_ties:
         parser.error('--teardown is a separate workload; contract/profiler modes cannot be combined')
     cache = getattr(args, 'teardown_cache', 'warm')
+    window = getattr(args, 'teardown_attribute_window', 'init')
+    if window != 'init' and (args.teardown_stage != 'init-attribute' or cache != 'warm'):
+        parser.error('first-candidate attribution requires the warm init-attribute stage')
     if cache == 'cold':
         if sys.platform != 'linux':
             parser.error('--teardown-cache cold requires native Linux and ext4')
@@ -1386,6 +1394,10 @@ def run(args, driver, parser):
     facades = ('pinyin', 'zhuyin') if args.teardown_facades == 'both' else (args.teardown_facades,)
     subjects = {'ox': dict(pinyin=args.pinyin_so, zhuyin=args.zhuyin_so),
                 'pin': {facade: args.prefix / 'lib' / ('lib' + facade + '.so') for facade in facades}}
+    if getattr(args, 'base_pinyin_so', None) or getattr(args, 'base_zhuyin_so', None):
+        if args.teardown_stage not in ('verify', 'confirm', 'init-attribute'):
+            parser.error('a teardown base arm supports verify, confirm and init-attribute')
+        subjects['base'] = dict(pinyin=args.base_pinyin_so, zhuyin=args.base_zhuyin_so)
     for paths in subjects.values():
         for facade in facades:
             if paths.get(facade) is None or not paths[facade].is_file():
@@ -1395,7 +1407,7 @@ def run(args, driver, parser):
     libraries.mkdir(exist_ok=True)
     subjects['control'] = {}
     provenance = {}
-    for subject in ('ox', 'pin', 'control'):
+    for subject in subjects:
         directory = libraries / LIBRARY_DIRECTORIES[subject]
         directory.mkdir(exist_ok=True)
         provenance[subject] = {}
@@ -1416,8 +1428,11 @@ def run(args, driver, parser):
         parser.error('measured teardown stages require taskset')
     worker, worker_identity = build_worker(work)
     data = args.prefix / 'lib/libpinyin/data'
-    campaign = Campaign(worker, data, work, cpu, driver, cache=cache, jobs=getattr(args, 'jobs', None))
-    print_record('start', stage=args.teardown_stage, cache=cache, cpu=cpu, filesystem=fs, libraries=provenance,
+    campaign = Campaign(worker, data, work, cpu, driver, cache=cache, jobs=getattr(args, 'jobs', None), attribute_window=window)
+    campaign.init_probes = getattr(args, 'teardown_init_probes', ','.join(INIT_PROBE_ROUNDS)).split(',')
+    if len(set(campaign.init_probes)) != len(campaign.init_probes) or any(probe not in INIT_PROBE_ROUNDS for probe in campaign.init_probes):
+        parser.error('unknown or repeated --teardown-init-probes')
+    print_record('start', stage=args.teardown_stage, attribute_window=window, cache=cache, cpu=cpu, filesystem=fs, libraries=provenance,
                  worker=worker_identity, model_identity=identity(file_set(data)),
                  model_filesystem=filesystem(data), control_noise_rule=list(CONTROL_INTERVAL))
     # Profiles and witnesses come from the pin's pinyin facade, whichever
@@ -1454,7 +1469,7 @@ def execute(campaign, args, subjects, profiles, cases, facades, driver):
         for case in cases:
             options = case_options(case, profiles, dirty_rows[facade])
             readings = {}
-            for side in ('pin', 'ox', 'control'):
+            for side in subjects:
                 readings[side] = campaign.run(facade, subjects[side][facade], mode='observe',
                                               inputs=witnesses[case.split('-')[0]], reopen=True, **options)
             reference = readings['pin']['observation']
@@ -1483,9 +1498,7 @@ def execute(campaign, args, subjects, profiles, cases, facades, driver):
                                               ('memory', 3 if pilot else MEMORY_ROUNDS, 1 if pilot else MEMORY_WARMUPS)):
                     samples = {side: [] for side in subjects}
                     for index in range(rounds + warmups):
-                        order = ['ox', 'control', 'pin']
-                        order = order[index % 3:] + order[:index % 3]
-                        for side in order:
+                        for side in rotation(index, subjects):
                             row = campaign.run(facade, subjects[side][facade], mode=mode, **options)
                             if workload_observation(row) != references[facade, case][side]:
                                 raise ValueError(f'timed workload observation changed: {facade} {case} {side}')
@@ -1495,6 +1508,22 @@ def execute(campaign, args, subjects, profiles, cases, facades, driver):
                         report_times(facade, case, samples, pilot)
                     else:
                         report_memory(facade, case, samples, pilot)
+                if getattr(args, 'teardown_startup_heap', False):
+                    if pilot:
+                        raise ValueError('startup heap requires the confirm stage')
+                    worker = campaign.worker
+                    campaign.worker, worker_identity = build_worker(campaign.work, 'massif')
+                    heaps = {}
+                    try:
+                        for side in rotation(0, subjects):
+                            row = campaign.run(facade, subjects[side][facade], mode='memory', profiler='massif', **options)
+                            require_profile_controls(row, references[facade, case][side])
+                            heaps[side] = massif_profile(row['observation']['stderr'])
+                    finally:
+                        campaign.worker = worker
+                    print_record('diagnostic-worker', tool='massif', profiler_only=True, worker=worker_identity)
+                    if report_exact('startup-heap', facade, case, heaps, massif_counts):
+                        return 1
         return 0
     if args.teardown_stage in ('repeat', 'multi'):
         populated = args.teardown_attribution_case.split('-')[0]
@@ -1567,10 +1596,12 @@ def execute(campaign, args, subjects, profiles, cases, facades, driver):
     raise ValueError('unknown teardown stage')
 
 
-def rotation(index):
+def rotation(index, subjects=None):
     """Rotate ox, control, and pin execution order by the round index modulo three."""
     order = ['ox', 'control', 'pin']
-    return order[index % 3:] + order[:index % 3]
+    if subjects is not None and 'base' in subjects:
+        order.insert(0, 'base')
+    return order[index % len(order):] + order[:index % len(order)]
 
 
 def init_attribute(campaign, subjects, profiles, cases, facades, references, dirty_rows):
@@ -1586,7 +1617,8 @@ def init_attribute(campaign, subjects, profiles, cases, facades, references, dir
     and touches onto the object's layout and ordered startup prefix.
     """
     cell = os.environ.get('CONTRACT_DIFF_CELL', 'bdb')
-    if shutil.which('strace') is None:
+    probes = getattr(campaign, 'init_probes', list(INIT_PROBE_ROUNDS))
+    if 'trace' in probes and shutil.which('strace') is None:
         raise ValueError('init-attribute traces syscalls with strace; none is on PATH')
     symbols = kernel_symbols()
     invalid = False
@@ -1594,17 +1626,18 @@ def init_attribute(campaign, subjects, profiles, cases, facades, references, dir
         for case in cases:
             options = case_options(case, profiles, dirty_rows[facade])
             bitmaps = None
-            for probe, (rounds, warmups) in INIT_PROBE_ROUNDS.items():
+            for probe in probes:
+                rounds, warmups = INIT_PROBE_ROUNDS[probe]
                 rows = {side: [] for side in subjects}
                 for index in range(rounds + warmups):
-                    for side in rotation(index):
+                    for side in rotation(index, subjects):
                         row = campaign.run(facade, subjects[side][facade], mode='init', probe=probe, **options)
                         if workload_observation(row) != references[facade, case][side]:
                             raise ValueError(f'init workload observation changed: {facade} {case} {side} {probe}')
                         if index >= warmups:
                             rows[side].append(row)
                 if probe == 'count':
-                    report_init_counts(facade, case, rows, campaign.cache)
+                    report_init_counts(facade, case, rows, campaign.cache, window=campaign.attribute_window)
                     bitmaps = rows
                 elif probe == 'pages':
                     report_init_pages(facade, case, rows, bitmaps, subjects, campaign.cache)
@@ -1620,23 +1653,23 @@ def init_attribute(campaign, subjects, profiles, cases, facades, references, dir
                 continue
             costs = {side: [] for side in subjects}
             for index in range(INIT_IR_ROUNDS):
-                for side in rotation(index):
+                for side in rotation(index, subjects):
                     row = campaign.run(facade, subjects[side][facade], profiler='callgrind-init', **options)
                     require_profile_controls(row, references[facade, case][side])
                     costs[side].append(callgrind_costs(row['observation']['stderr'], subjects[side][facade]))
-            invalid |= report_init_ir(cell, facade, case, costs)
+            invalid |= report_init_ir(cell, facade, case, costs, window=campaign.attribute_window)
     return 1 if invalid else 0
 
 
-def report_init_counts(facade, case, rows, cache):
+def report_init_counts(facade, case, rows, cache, window='init'):
     """Print init resource, performance-event, and residency summaries from completed samples.
 
     Keep refused events as NOT RUN. Report duration in ns, RSS growth in KiB,
     and file residency in pages, with paired differences where applicable.
     """
-    values = {side: {field: [row['samples'][0]['times']['init_ns'][field] for row in samples]
+    values = {side: {field: [row['samples'][0]['times']['init_ns' if window == 'init' else 'first_candidate_ns'][field] for row in samples]
                      for field in CLOCK_FIELDS} for side, samples in rows.items()}
-    print_record('init-resources', facade=facade, case=case, cache=cache, rounds=len(rows['ox']),
+    print_record(window + '-resources', facade=facade, case=case, cache=cache, rounds=len(rows['ox']),
                  note='diagnostic init-mode samples; user_ns/sys_ns follow the kernel CPU accounting',
                  summaries={side: {field: summary(value) for field, value in fields.items()}
                             for side, fields in values.items()},
@@ -1888,25 +1921,27 @@ def report_init_trace(facade, case, rows, cache):
                      unfinished=sum(trace['unfinished'] for trace in traces))
 
 
-def report_init_ir(cell, facade, case, costs):
+def report_init_ir(cell, facade, case, costs, window='init'):
     """Print init instruction-count controls and attribution; return whether control is invalid.
 
     Require exact repeated ox/control Ir outside bdb. Bdb is diagnostic only;
     an invalid exact control withholds pin and ox attribution rows.
     """
     readings = {side: [value['totals']['Ir'] for value in values] for side, values in costs.items()}
-    exact = cell != 'bdb'
+    exact = cell != 'bdb' and window == 'init'
     equal = len(set(readings['ox'])) == 1 and set(readings['ox']) == set(readings['control'])
     verdict = ('VALID' if equal else 'INVALID') if exact else 'DIAGNOSTIC'
-    print_record('init-ir-control', cell=cell, facade=facade, case=case, ox=readings['ox'], control=readings['control'],
-                 rule='exact' if exact else 'diagnostic: BDB init Ir is not reproducible (libdb seeds srandom_r)',
+    print_record(window + '-ir-control', cell=cell, facade=facade, case=case, ox=readings['ox'], control=readings['control'],
+                 rule='exact' if exact else ('diagnostic: RandomState first-candidate Ir ranges' if window == 'first-candidate' else 'diagnostic: BDB init Ir is not reproducible (libdb seeds srandom_r)'),
                  verdict=verdict)
-    for side in ('control',) if verdict == 'INVALID' else ('ox', 'control', 'pin'):
+    for side in ('control',) if verdict == 'INVALID' else costs:
         first = costs[side][0]
-        print_record('init-ir', cell=cell, facade=facade, case=case, side=side, profiler_only=True,
-                     readings=readings[side], simulated=list(INIT_CACHE_SIM),
+        print_record(window + '-ir', cell=cell, facade=facade, case=case, side=side, profiler_only=True,
+                     readings=readings[side], Ir_min_max=[min(readings[side]), max(readings[side])], simulated=list(INIT_CACHE_SIM),
                      events_identical=all(value['totals'] == first['totals'] for value in costs[side]),
-                     totals=first['totals'], objects=first['objects'], functions=first['functions'][:25])
+                     totals=first['totals'] if window == 'init' else None,
+                     objects=first['objects'] if window == 'init' else None,
+                     functions=first['functions'][:25] if window == 'init' else None)
     return verdict == 'INVALID'
 
 
@@ -1962,6 +1997,8 @@ def massif_profile(text):
     interval = [value for value in snapshots
                 if checkpoints['M1']['time'] <= value['time'] <= checkpoints['M3']['time']]
     return dict(checkpoints=checkpoints, sampled_teardown_peak=max(interval, key=lambda value: value['mem_heap_B']),
+                sampled_startup_peak=max((value for value in snapshots if value['time'] <= checkpoints['M1']['time']),
+                                         key=lambda value: value['mem_heap_B']),
                 whole_lifecycle_peak=max(snapshots, key=lambda value: value['mem_heap_B']),
                 interval_snapshots=len(interval), peak_basis='sampled snapshots plus exact ABI-boundary snapshots; not an exact transient-peak claim',
                 freed_heap_bytes={label: checkpoints[a]['mem_heap_B'] - checkpoints[b]['mem_heap_B']
@@ -2076,6 +2113,13 @@ def report_times(facade, case, samples, pilot):
     Report major-fault event counts separately without ratios or a timing
     control rule.
     """
+    if 'base' in samples:
+        for rows in samples.values():
+            for row in rows:
+                times = row['samples'][0]['times']
+                times['init_first_candidate_ns'] = {
+                    clock: times['init_ns'][clock] + times['first_candidate_ns'][clock]
+                    for clock in CLOCK_FIELDS}
     for metric in samples['ox'][0]['samples'][0]['times']:
         for clock in ('wall_ns', 'cpu_ns'):
             values = {side: [row['samples'][0]['times'][metric][clock] for row in rows]
@@ -2084,6 +2128,7 @@ def report_times(facade, case, samples, pilot):
             print_record('time', facade=facade, case=case, metric=metric, clock=clock, pilot=pilot,
                          summaries={side: summary(value) for side, value in values.items()}, control=control,
                          verdict='STABLE' if control['stable'] else 'INCONCLUSIVE',
+                         ox_base_ratio=paired_ratio(values['ox'], values['base']) if control['stable'] and 'base' in values else None,
                          ox_pin_ratio=paired_ratio(values['ox'], values['pin']) if control['stable'] else None,
                          control_pin_ratio=paired_ratio(values['control'], values['pin']) if control['stable'] else None)
         # Major faults are event counts, not durations: no control rule and
@@ -2180,6 +2225,6 @@ def report_exact(kind, facade, case, rows, counts):
         result = exact_control(ox[name], control[name])
         invalid |= result['verdict'] == 'INVALID'
         print_record(kind + '-control', facade=facade, case=case, count=name, **result)
-    for side in ('control',) if invalid else ('ox', 'control', 'pin'):
+    for side in ('control',) if invalid else rows:
         print_record(kind, facade=facade, case=case, side=side, profiler_only=True, **rows[side])
     return invalid

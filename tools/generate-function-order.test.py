@@ -663,7 +663,7 @@ class GeneratorTests(unittest.TestCase):
         scope = {"pinyin": resolved(common) | resolved(pinyin),
                  "zhuyin": resolved(common) | resolved(zhuyin)}
         calls = set(re.findall(r"api->(?:common\.)?(\w+)\(",
-                               body("static bool td_first(") + body("static bool td_read_candidate(")))
+            body("bool bisect_teardown_first_candidate_unit(") + body("static bool td_read_candidate(")))
         run = body("static int run_teardown_mode(")
         path = run[run.index("api.common.init("):run.index('td_checkpoint("M1"')]
         for field in ("set_options", "alloc_instance"):
