@@ -3712,20 +3712,6 @@ def addon_promote_sequence(k, mask_value):
     return {'steps': out, 'files': token_reuse_files(k)}
 
 
-def candidate_rows(k, inst):
-    """Every row of the instance's list as `[type, text]`, in list order."""
-    count = U()
-    k.fn('get_n_candidate', B, P, C.POINTER(U))(inst, C.byref(count))
-    rows = []
-    for i in range(count.value):
-        cand, kind, text = P(), I(), S()
-        k.fn('get_candidate', B, P, U, C.POINTER(P))(inst, i, C.byref(cand))
-        k.fn('get_candidate_type', B, P, P, C.POINTER(I))(inst, cand, C.byref(kind))
-        k.fn('get_candidate_string', B, P, P, C.POINTER(S))(inst, cand, C.byref(text))
-        rows.append([kind.value, text.value.decode()])
-    return rows
-
-
 # A promoted addon phrase leaves two rows with one string in the next list:
 # the NORMAL row of the new nibble-5 token and the ADDON row. The phrase-string
 # dedup keeps the row with the larger `m_freq`, and a tie keeps the earlier row
