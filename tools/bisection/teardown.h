@@ -194,7 +194,10 @@ static bool td_read_candidate(const struct td_api *api, void *instance,
     return true;
 }
 
-static bool td_first(const struct td_api *api, void *instance, const char *input,
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((noinline))
+#endif
+bool bisect_teardown_first_candidate_unit(const struct td_api *api, void *instance, const char *input,
                      struct td_observation *out) {
     out->consumed = api->common.parse_full(instance, input);
     out->parsed = api->zhuyin ? out->consumed : api->common.get_parsed_input_length(instance);
@@ -762,6 +765,10 @@ static int run_teardown_mode(int argc, char **argv) {
     if (save && !dirty && !populate) return 2;
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stdin, NULL, _IONBF, 0);
+    const char *probe_window = getenv("OXPINYIN_TEARDOWN_PROBE_WINDOW");
+    bool first_window = probe_window && !strcmp(probe_window, "first-candidate");
+    if (probe_window && strcmp(probe_window, "init") && !first_window) return 2;
+    if (first_window && (!init_mode || instances != 1 || cycles != 1 || dirty || multi)) return 2;
     struct td_probe probe;
     td_probe_open(&probe, init_mode);
     if (wait || init_mode) {
@@ -780,22 +787,26 @@ static int run_teardown_mode(int argc, char **argv) {
     struct td_api api;
     td_resolve(handle, argv[2], &api);
     struct td_clock load = td_elapsed(start);
-    td_checkpoint("M0", 0, wait || init_mode);
+    if (!first_window) td_checkpoint("M0", 0, wait || init_mode);
     for (int cycle = 1; cycle <= cycles; cycle++) {
         void *allocated[TD_MAX_INSTANCES] = {0};
         struct td_clock beginning = td_now();
-        td_probe_calibrate(&probe);
-        td_probe_toggle(&probe, true);
+        if (!first_window) {
+            td_probe_calibrate(&probe);
+            td_probe_toggle(&probe, true);
+        }
         start = td_now();
-        td_probe_mark(&probe, "B");
+        if (!first_window) td_probe_mark(&probe, "B");
         void *context = api.common.init(argv[4], argv[5]);
-        td_probe_mark(&probe, "E");
+        if (!first_window) td_probe_mark(&probe, "E");
         struct td_clock init = td_elapsed(start);
-        td_probe_toggle(&probe, false);
+        if (!first_window) td_probe_toggle(&probe, false);
         if (!context) { fputs("teardown init returned NULL\n", stderr); return 1; }
-        td_checkpoint("I1", cycle, init_mode);
-        td_probe_report(&probe);
-        td_probe_close(&probe);
+        if (!first_window) {
+            td_checkpoint("I1", cycle, init_mode);
+            td_probe_report(&probe);
+            td_probe_close(&probe);
+        }
         if (exporting) {
             int status = api.zhuyin ? 2 : td_export(&api, context);
             api.common.fini(context);
@@ -821,9 +832,22 @@ static int run_teardown_mode(int argc, char **argv) {
             struct td_clock duration = td_elapsed(start);
             td_add(&alloc, duration);
             if (!allocated[i]) { fputs("teardown alloc returned NULL\n", stderr); return 1; }
+            if (first_window) {
+                td_checkpoint("M0", 0, true);
+                td_probe_calibrate(&probe);
+                td_probe_toggle(&probe, true);
+            }
             start = td_now();
-            bool valid = td_first(&api, allocated[i], "nihao", &observations[i]);
+            if (first_window) td_probe_mark(&probe, "B");
+            bool valid = bisect_teardown_first_candidate_unit(&api, allocated[i], "nihao", &observations[i]);
+            if (first_window) td_probe_mark(&probe, "E");
             duration = td_elapsed(start);
+            if (first_window) {
+                td_probe_toggle(&probe, false);
+                td_checkpoint("I1", cycle, true);
+                td_probe_report(&probe);
+                td_probe_close(&probe);
+            }
             td_add(&first, duration);
             if (!valid || (!observing && (observations[i].consumed != 5 || observations[i].parsed != 5 ||
                 !observations[i].guessed || !observations[i].count || !observations[i].candidates[0].text[0]))) {
@@ -851,7 +875,7 @@ static int run_teardown_mode(int argc, char **argv) {
             if (multi && i == 0) {
                 struct td_observation remaining;
                 memset(&remaining, 0, sizeof remaining);
-                if (!td_first(&api, allocated[1], "nihao", &remaining) ||
+                if (!bisect_teardown_first_candidate_unit(&api, allocated[1], "nihao", &remaining) ||
                     remaining.count != observations[1].count ||
                     strcmp(remaining.candidates[0].text, observations[1].candidates[0].text)) {
                     fputs("teardown surviving instance failed\n", stderr); return 1;
