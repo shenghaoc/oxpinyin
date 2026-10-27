@@ -949,13 +949,23 @@ def callgrind_costs(text, library, *, preserve_objects=False):
 def retain_profiler_summary(directory, name, document):
     """Save a complete parsed summary locally before the next profiler launch.
 
-    Exclusive creation refuses reuse of a sample name. Raw profiler streams
-    are not written; the file contains the validated counters and attribution.
+    Exclusive creation refuses reuse of a sample name. The file contains
+    validated counters and attribution; raw profiles have their own files.
     """
     path = directory / (name + '.json')
     with path.open('x', encoding='utf-8') as output:
         json.dump(document, output, ensure_ascii=False, indent=2, sort_keys=True)
         output.write('\n')
+        output.flush()
+        os.fsync(output.fileno())
+    return path
+
+
+def retain_profiler_profile(directory, name, profile):
+    """Retain the raw local profile before parsing, without replacing a file."""
+    path = directory / (name + '.callgrind')
+    with path.open('x', encoding='utf-8', errors='surrogateescape') as output:
+        output.write(profile)
         output.flush()
         os.fsync(output.fileno())
     return path
@@ -1701,9 +1711,11 @@ def init_attribute(campaign, subjects, profiles, cases, facades, references, dir
             for index in range(INIT_IR_ROUNDS):
                 for side in rotation(index, subjects):
                     row = campaign.run(facade, subjects[side][facade], profiler='callgrind-init', **options)
+                    name = f'{campaign.attribute_window}-{cell}-{facade}-{case}-{side}-{index + 1}'
+                    if getattr(campaign, 'summary_dir', None) is not None:
+                        retain_profiler_profile(campaign.summary_dir, name, row['observation']['stderr'])
                     profile = callgrind_costs(row['observation']['stderr'], subjects[side][facade])
                     if getattr(campaign, 'summary_dir', None) is not None:
-                        name = f'{campaign.attribute_window}-{cell}-{facade}-{case}-{side}-{index + 1}'
                         path = retain_profiler_summary(campaign.summary_dir, name,
                             dict(schema='oxpinyin-callgrind-summary-v1', window=campaign.attribute_window,
                                  cell=cell, facade=facade, case=case, side=side, round=index + 1,

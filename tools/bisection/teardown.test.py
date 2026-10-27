@@ -787,6 +787,11 @@ class InitAttributionTests(unittest.TestCase):
             with self.assertRaises(FileExistsError):
                 td.retain_profiler_summary(directory, 'sample-1', dict(profile={}))
             self.assertEqual(path.read_bytes(), before)
+            raw = td.retain_profiler_profile(directory, 'sample-1', self.CALLGRIND)
+            self.assertEqual(raw.read_text(), self.CALLGRIND)
+            with self.assertRaises(FileExistsError):
+                td.retain_profiler_profile(directory, 'sample-1', 'replacement')
+            self.assertEqual(raw.read_text(), self.CALLGRIND)
 
     def test_init_ir_is_exact_off_bdb_and_diagnostic_on_bdb(self):
         def costs(*values):
