@@ -230,7 +230,7 @@ def encoded(value):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(prog="transformed-options-sweep.py", description=__doc__)
     parser.add_argument("--oracle", required=True)
     parser.add_argument("--subject", required=True)
     parser.add_argument("--data", required=True)

@@ -42,7 +42,6 @@ on:
       - tools/oracle/versions.py
       - tools/tkrzw/distro-probe.sh
       - tools/dev/compat/**
-      - tools/oracle/pin.sh
       - .github/workflows/oracle-image.yml
       - tools/oracle/Dockerfile.compat
       - tools/oracle/compat.sh
@@ -59,7 +58,6 @@ on:
       - tools/oracle/versions.py
       - tools/tkrzw/distro-probe.sh
       - tools/dev/compat/**
-      - tools/oracle/pin.sh
       - .github/workflows/oracle-image.yml
       - tools/oracle/Dockerfile.compat
       - tools/oracle/compat.sh
@@ -101,7 +99,7 @@ jobs:
             oracle=true
           else
             changed=$(git diff --name-only "$BASE" HEAD)
-            if grep -E '^(tools/dev/compat/.*|tools/oracle/(build-oracle.sh|Dockerfile.oracle|oracle-pin.txt|pin.sh|version-manifest.json|versions.py)|tools/tkrzw/distro-probe.sh|.github/workflows/oracle-image.yml)$' <<< "$changed" >/dev/null; then
+            if grep -E '^(tools/dev/compat/.*|tools/oracle/(build-oracle.sh|Dockerfile.oracle|oracle-pin.txt|version-manifest.json|versions.py)|tools/tkrzw/distro-probe.sh|.github/workflows/oracle-image.yml)$' <<< "$changed" >/dev/null; then
               oracle=true
             fi
           fi
@@ -162,7 +160,7 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .oracle-image-verified
-          key: oracle-image-verified-linux-amd64-${{ steps.meta.outputs.tag }}-${{ hashFiles('.github/workflows/oracle-image.yml', 'tools/oracle/pin.sh', 'tools/oracle/Dockerfile.compat', 'tools/oracle/compat.sh', 'tools/oracle/compat-inside.sh', 'tools/dev/compat/*.py', 'tools/cloud/setup.sh', 'tools/tkrzw/distro-probe.sh', 'rust-toolchain.toml') }}
+          key: oracle-image-verified-linux-amd64-${{ steps.meta.outputs.tag }}-${{ hashFiles('.github/workflows/oracle-image.yml', 'tools/oracle/Dockerfile.compat', 'tools/oracle/compat.sh', 'tools/oracle/compat-inside.sh', 'tools/dev/compat/*.py', 'tools/cloud/setup.sh', 'tools/tkrzw/distro-probe.sh', 'rust-toolchain.toml') }}
           lookup-only: true
 
       - name: Skip the amd64 image rebuild
@@ -274,7 +272,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .oracle-image-verified
-          key: oracle-image-verified-linux-amd64-${{ steps.meta.outputs.tag }}-${{ hashFiles('.github/workflows/oracle-image.yml', 'tools/oracle/pin.sh', 'tools/oracle/Dockerfile.compat', 'tools/oracle/compat.sh', 'tools/oracle/compat-inside.sh', 'tools/dev/compat/*.py', 'tools/cloud/setup.sh', 'tools/tkrzw/distro-probe.sh', 'rust-toolchain.toml') }}
+          key: oracle-image-verified-linux-amd64-${{ steps.meta.outputs.tag }}-${{ hashFiles('.github/workflows/oracle-image.yml', 'tools/oracle/Dockerfile.compat', 'tools/oracle/compat.sh', 'tools/oracle/compat-inside.sh', 'tools/dev/compat/*.py', 'tools/cloud/setup.sh', 'tools/tkrzw/distro-probe.sh', 'rust-toolchain.toml') }}
 
       - name: Log in to GHCR
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.oracle == 'true'
@@ -345,9 +343,8 @@ jobs:
           set -euo pipefail
           pin=tools/oracle/oracle-pin.txt
           platform=linux/arm64
-          source tools/oracle/pin.sh
           field() { sed -n "s/^$1=//p" "$pin"; }
-          pfield() { pin_platform_field "$pin" "$platform" "$1"; }
+          pfield() { uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev compat pin-field --platform "$platform" "$1"; }
           commit=$(field libpinyin_commit)
           base=$(field base_image)
           {
@@ -379,7 +376,7 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .oracle-image-verified
-          key: oracle-image-verified-linux-arm64-${{ steps.meta.outputs.tag }}-${{ hashFiles('.github/workflows/oracle-image.yml', 'tools/oracle/pin.sh', 'tools/oracle/Dockerfile.compat', 'tools/oracle/compat.sh', 'tools/oracle/compat-inside.sh', 'tools/dev/compat/*.py', 'tools/cloud/setup.sh', 'tools/tkrzw/distro-probe.sh', 'rust-toolchain.toml') }}
+          key: oracle-image-verified-linux-arm64-${{ steps.meta.outputs.tag }}-${{ hashFiles('.github/workflows/oracle-image.yml', 'tools/oracle/Dockerfile.compat', 'tools/oracle/compat.sh', 'tools/oracle/compat-inside.sh', 'tools/dev/compat/*.py', 'tools/cloud/setup.sh', 'tools/tkrzw/distro-probe.sh', 'rust-toolchain.toml') }}
           lookup-only: true
 
       - name: Skip the arm64 image rebuild
@@ -473,7 +470,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .oracle-image-verified
-          key: oracle-image-verified-linux-arm64-${{ steps.meta.outputs.tag }}-${{ hashFiles('.github/workflows/oracle-image.yml', 'tools/oracle/pin.sh', 'tools/oracle/Dockerfile.compat', 'tools/oracle/compat.sh', 'tools/oracle/compat-inside.sh', 'tools/dev/compat/*.py', 'tools/cloud/setup.sh', 'tools/tkrzw/distro-probe.sh', 'rust-toolchain.toml') }}
+          key: oracle-image-verified-linux-arm64-${{ steps.meta.outputs.tag }}-${{ hashFiles('.github/workflows/oracle-image.yml', 'tools/oracle/Dockerfile.compat', 'tools/oracle/compat.sh', 'tools/oracle/compat-inside.sh', 'tools/dev/compat/*.py', 'tools/cloud/setup.sh', 'tools/tkrzw/distro-probe.sh', 'rust-toolchain.toml') }}
 
       - name: Log in to GHCR
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.oracle == 'true'

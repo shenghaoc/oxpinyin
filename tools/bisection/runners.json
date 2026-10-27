@@ -2080,7 +2080,7 @@
   {
     "name": "train-index-diff",
     "kind": "gate",
-    "implementation": "legacy:tools/bisection/train-index-diff.py",
+    "implementation": "python:tools.bisection.train_index_diff",
     "issues": [
       "row:38"
     ],
@@ -2108,7 +2108,8 @@
       "python",
       "-X",
       "lazy_imports=normal",
-      "{root}/tools/bisection/train-index-diff.py",
+      "-m",
+      "tools.bisection.train_index_diff",
       "{cell}",
       "{prefix}",
       "{capi}",
@@ -2123,7 +2124,7 @@
   {
     "name": "transformed-options-sweep",
     "kind": "gate",
-    "implementation": "legacy:tools/oracle/transformed-options-sweep.py",
+    "implementation": "python:tools.oracle.transformed_options_sweep",
     "issues": [
       "634"
     ],
@@ -2151,7 +2152,8 @@
       "python",
       "-X",
       "lazy_imports=normal",
-      "{root}/tools/oracle/transformed-options-sweep.py",
+      "-m",
+      "tools.oracle.transformed_options_sweep",
       "--oracle",
       "{prefix}/lib/libpinyin.so",
       "--subject",

@@ -57,7 +57,7 @@ dbm=BerkeleyDB
 # The unqualified fields below are the historical linux/amd64 entries and
 # stay byte-identical. Native shared objects differ across architectures, so
 # other platforms add the same fields with a platform suffix
-# (_linux_arm64); tools/oracle/pin.sh selects them. The image, the
+# (_linux_arm64); `just compat pin-field` selects them. The image, the
 # Dockerfile and the checks take their platform from the build request.
 platform=linux/amd64
 base_image=debian:trixie

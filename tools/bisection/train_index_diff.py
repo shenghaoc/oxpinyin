@@ -137,7 +137,7 @@ def main():
     abort observations, and compare saved state. Print the case summary and
     remove the temporary profiles on exit; failed checks raise AssertionError.
     """
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(prog='train-index-diff.py', description=__doc__)
     parser.add_argument('cell', choices=['bdb', 'kc', 'tkrzw'])
     parser.add_argument('prefix', type=Path)
     parser.add_argument('pinyin_so', type=Path)

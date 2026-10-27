@@ -88,7 +88,7 @@ def parse_options(argv, names, *, positional=False):
                 fail(f'{option}: requires an argument', 1)
             values[option[2:]] = rest.pop(0)
         elif positional and not option.startswith('-'):
-            values['image'] = option
+            values['positional'] = option
         else:
             fail(f'unknown option: {option}', 2)
     return values
@@ -101,6 +101,26 @@ def valid_platform(value):
     return value
 
 
+PIN_FIELD_USAGE = 'usage: pin-field [--platform linux/amd64|linux/arm64] KEY'
+
+
+def pin_field(argv, *, root=ROOT):
+    """Print one platform-keyed field of oracle-pin.txt; an absent field prints nothing."""
+    values = parse_options(argv, ('--platform',), positional=True)
+    if values.get('help'):
+        print(PIN_FIELD_USAGE)
+        print('linux/arm64 reads KEY_linux_arm64; the unqualified fields are linux/amd64.')
+        return 0
+    key = values.get('positional')
+    if not key:
+        fail(PIN_FIELD_USAGE, 2)
+    platform = valid_platform(values.get('platform', 'linux/amd64'))
+    value = platform_field(Path(root) / 'tools/oracle/oracle-pin.txt', platform, key)
+    if value:
+        print(value)
+    return 0
+
+
 def verify_image(argv, *, root=ROOT):
     """Copy a scratch image's libraries, check frozen hashes and reject model data."""
     values = parse_options(argv, ('--engine', '--platform'), positional=True)
@@ -108,7 +128,7 @@ def verify_image(argv, *, root=ROOT):
         from .help import TEXT
         print(TEXT['verify-image'], end='')
         return 0
-    image = values.get('image')
+    image = values.get('positional')
     if not image:
         fail('usage: verify-oracle-image.sh [--engine docker|podman] [--platform PLATFORM] IMAGE', 2)
     platform = valid_platform(values.get('platform', 'linux/amd64'))
