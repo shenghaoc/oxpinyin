@@ -1,0 +1,20 @@
+Usage: bash tools/oracle/compat.sh [OPTIONS] --runners NAME[,NAME...]
+       bash tools/oracle/compat.sh [OPTIONS] --issue NUMBER
+       bash tools/oracle/compat.sh --list
+Options:
+  --runtime docker|podman|container|wslc  Override platform-native, Podman, Docker order
+  --platform linux/amd64|linux/arm64  Override the host architecture
+  --cell bdb|kc|tkrzw               Default: bdb; one backend on both sides
+  --cases ID[,ID...]                Contract-diff case IDs (requires contract-diff)
+  --archive PATH                    Optional local model20 archive (checksum verified)
+  --jobs N                          Build/runner concurrency (default 2)
+  --memory-mib N                    Hard limit and native reservation (default 2560 MiB)
+  --memory-smoke                    Short memory-limit smoke; requires an existing compat image
+  --timeout N                       Existing registry runner timeout override
+  --runner-timeout NAME=SECONDS     Existing per-runner override
+  --list                            Existing registry listing; needs uv 0.13.1 or newer and the interpreter in .python-version, no build
+  --help                            No runtime or build required
+Needs Bash, Git, tar, SHA-256 utility, and a working runtime. macOS/WSL/Linux
+hosts need no Rust, native DBM or libpinyin for compatibility execution.
+Results remain local in .oxpinyin-container/results; inputs/targets live in a
+checkout-specific Linux volume. See docs/runbooks/compatibility-container.md.

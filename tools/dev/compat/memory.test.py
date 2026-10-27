@@ -19,7 +19,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 from tools.dev import host, slot, test_support
-from tools.dev.compat import boundary, memory
+from tools.dev.compat import boundary, memory, launcher, images
 
 
 class MemoryTests(unittest.TestCase):
@@ -711,7 +711,13 @@ from tools.dev import host
 host.resource_snapshot=lambda: dict(available_mib=16000, cpus=1, cargo_cpus=1, notes=[])
 import importlib
 module = sys.argv[sys.argv.index('-m')+1]
-assert module in ('tools.dev.compat.memory', 'tools.dev.compat.boundary', 'tools.dev.compat.identity')
+assert module in ('tools.dev', 'tools.dev.compat.memory', 'tools.dev.compat.boundary', 'tools.dev.compat.identity')
+if module == 'tools.dev':
+    from pathlib import Path
+    from functools import partial
+    from tools.dev.compat import commands, launcher
+    launcher.launch = partial(launcher.launch, root=Path.cwd())
+    raise SystemExit(commands.main(sys.argv[sys.argv.index('-m')+3:]))
 raise SystemExit(importlib.import_module(module).main(sys.argv[sys.argv.index('-m')+2:]))
 """)
         uv.chmod(0o755)
@@ -733,21 +739,25 @@ raise SystemExit(importlib.import_module(module).main(sys.argv[sys.argv.index('-
         apple = self.directory / 'container'
         apple.symlink_to(runtime)
         fixture = self.directory / 'source'
-        paths = ('tools/oracle/compat.sh', 'tools/container/runtime.sh',
-                 'tools/dev/compat/identity.py', 'tools/lib/bash-floor.sh')
+        paths = ('tools/oracle/compat.sh', 'tools/dev/compat/identity.py', 'tools/lib/bash-floor.sh',
+                 'tools/dev/compat/guest.py', '.python-version', 'tools/install-python.sh')
         for relative in paths:
             destination = fixture / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(ROOT / relative, destination)
         (fixture / 'tools/oracle/compat-inside.sh').write_text('# synthetic input; never executed\n')
-        (fixture / 'tools/oracle/image-tag.sh').write_text('printf test-reference\n')
+        (fixture / 'tools/oracle/oracle-pin.txt').write_text('libpinyin_commit=000000000000\nbase_image=debian:test\n')
+        for name in ('Dockerfile.oracle', 'build-oracle.sh', 'version-manifest.json', 'versions.py', '../tkrzw/distro-probe.sh'):
+            path = fixture / 'tools/oracle' / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text('debian:test\n')
         (fixture / 'tools/oracle/Dockerfile.compat').write_text('synthetic image recipe\n')
         (fixture / 'rust-toolchain.toml').write_text('synthetic toolchain identity\n')
-        key = hashlib.sha256(b'synthetic image recipe\nsynthetic toolchain identity\ntest-reference:no-custom-ca').hexdigest()[:16]
+        key = launcher.image_identity(fixture, images.image_tag(fixture), 'no-custom-ca', 'linux/amd64')
         git = self.directory / 'git'
         git.write_text('''#!/bin/sh
 case $1 in
-ls-files) printf 'tools/oracle/compat-inside.sh\\0tools/lib/bash-floor.sh\\0tools/dev/compat/identity.py\\0' ;;
+ls-files) printf 'tools/oracle/compat-inside.sh\\0tools/lib/bash-floor.sh\\0tools/dev/compat/identity.py\\0tools/dev/compat/guest.py\\0' ;;
 rev-parse) printf '0000000000000000000000000000000000000000\\n' ;;
 status) : ;;
 *) exit 1 ;;
@@ -807,15 +817,14 @@ esac
         self.assertEqual(len(list(self.directory.glob('container-memory-*.json'))), 1)
 
     def test_all_runtime_starts_are_inside_the_single_reserved_launch_function(self):
-        shells = ('tools/oracle/compat.sh', 'tools/oracle/compat-inside.sh', 'tools/container/runtime.sh')
+        shells = ('tools/oracle/compat.sh', 'tools/oracle/compat-inside.sh')
         direct = re.compile(r'(?:["\']?\$(?:runtime|ctr)["\']?|\b(?:docker|podman|container))\s+(run|start|create|exec)\b')
         for relative in shells:
-            source = (ROOT / relative).read_text()
-            self.assertIsNone(direct.search(source), relative)
-        source = (ROOT / 'tools/oracle/compat.sh').read_text()
-        sites = re.findall(r'^\s*\(?reserved_run\s+([^\n]+)', source, re.MULTILINE)
-        self.assertEqual(len(sites), 3, sites)  # main, Apple reader, memory smoke
-        self.assertIn('-m tools.dev.compat.memory', source)
+            self.assertIsNone(direct.search((ROOT / relative).read_text()), relative)
+        source = ast.parse((ROOT / 'tools/dev/compat/launcher.py').read_text())
+        sites = [node for node in ast.walk(source) if isinstance(node, ast.Call)
+                 and isinstance(node.func, ast.Name) and node.func.id == 'reserved']
+        self.assertEqual(len(sites), 3)  # main, Apple reader, memory smoke
         tree = ast.parse((ROOT / 'tools/dev/compat/memory.py').read_text())
         starts = []
         for function in (node for node in tree.body if isinstance(node, ast.FunctionDef)):
@@ -846,7 +855,8 @@ esac
                                              ('Darwin', 'docker', 'docker')):
             env = dict(self.env, SYNTHETIC_HOST=platform, OXPINYIN_CONTAINER=override,
                        PATH=self.temp.name + os.pathsep + os.environ['PATH'])
-            result = subprocess.run(['bash', '-c', 'source tools/container/runtime.sh; oxpinyin_select_runtime; printf "selected:%s\\n" "$ctr"'],
+            result = subprocess.run([sys.executable, '-X', 'lazy_imports=normal', '-c',
+                                     'from tools.dev.compat.images import select_runtime; print("selected:" + select_runtime())'],
                                     cwd=ROOT, env=env, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn('selected:' + expected, result.stdout)

@@ -14,7 +14,7 @@ library (`er4'huang2` / `er'huang`). `interpolation2.text` carries
 `\1-gram` counts for some tokens only (the others take `gen_unigram`'s
 bare `+1`), a `<start>` bigram, and a two-token row.
 
-It is the input of `tools/datagen/libpinyin-drop-in-differential.sh`:
+It is the input of `just compat drop-in`:
 libpinyin's own `gen_binary_files` / `import_interpolation` /
 `gen_unigram` compile it on one side, `oxpinyin-datagen` on the other,
 and `crates/oxpinyin-datagen/tests/libpinyin_parity.rs` compares the

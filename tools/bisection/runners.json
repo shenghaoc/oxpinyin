@@ -2372,7 +2372,7 @@
   {
     "name": "user-dir-round-trip",
     "kind": "gate",
-    "implementation": "legacy:tools/oracle/user-dir-round-trip.sh",
+    "implementation": "python:tools.dev",
     "issues": [
       "task:9",
       "599"
@@ -2396,14 +2396,16 @@
     "timeout": 900,
     "exclusive_resources": [],
     "command": [
-      "bash",
-      "{root}/tools/oracle/user-dir-round-trip.sh",
+      "uv", "run", "--no-project", "--managed-python", "python", "-X",
+      "lazy_imports=normal", "-m", "tools.dev", "compat", "user-round-trip",
       "{prefix}"
     ],
     "env": {},
     "input_paths": [
       "{capi}",
-      "{env[OXPINYIN_USER_RT_TEST]}"
+      "{env[OXPINYIN_USER_RT_TEST]}",
+      "{root}/tools/dev/compat/fixtures.py",
+      "{root}/tools/tkrzw/runtime.py"
     ]
   },
   {
@@ -2520,7 +2522,6 @@
       "{root}/tools/dev/test_runner.py",
       "{root}/tools/dev/native.py",
       "{root}/tools/tkrzw/runtime.py",
-      "{root}/tools/tkrzw/runtime.sh",
       "{root}/tools/tkrzw/distro-probe.sh",
       "{root}/tools/cloud/env.sh"
     ],

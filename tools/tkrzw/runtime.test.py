@@ -1,13 +1,127 @@
-"""Loader fixtures and launch regressions; no oracle or system install needed."""
-
+#!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
+"""Host-loader fixtures, optionally compared with the preserved migration base."""
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
 
-import runtime
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+from tools.tkrzw import runtime
+
+
+class AdapterControlTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.directory = Path(temporary.name)
+        self.library = self.directory / 'libtkrzw.so.1'
+        self.library.write_bytes(b'verified')
+        self.other = self.directory / 'other.so'
+        self.other.write_bytes(b'other')
+        for name, program in {
+            'uname': 'printf "%s\\n" "${FAKE_HOST:-Linux}"',
+            'ldd': 'printf "%s\\n" "$FAKE_LDD"; exit "${FAKE_STATUS:-0}"',
+            'otool': 'printf "%s\\n" "$FAKE_LDD"; exit "${FAKE_STATUS:-0}"',
+        }.items():
+            path = self.directory / name
+            path.write_text('#!/bin/sh\n' + program + '\n')
+            path.chmod(0o755)
+        self.env = dict(os.environ, PATH=str(self.directory) + os.pathsep + os.environ['PATH'],
+                        OXPINYIN_TKRZW_LIBRARY=str(self.library), FAKE_LDD=f'libtkrzw.so.1 => {self.library} (0x1234)')
+        for name in ('DYLD_LIBRARY_PATH', 'DYLD_FALLBACK_LIBRARY_PATH', 'OXPINYIN_TKRZW_PREFIX', 'OXPINYIN_TKRZW_PREFIXES'):
+            self.env.pop(name, None)
+
+    def invoke(self, args, **settings):
+        env = dict(self.env, **settings)
+        done = subprocess.run([sys.executable, '-m', 'tools.tkrzw.runtime', *map(str, args)],
+                              cwd=ROOT, env=env, capture_output=True, timeout=10)
+        base = os.environ.get('U3_BASE')
+        if base:
+            old = subprocess.run(['bash', str(Path(base).resolve() / 'tools/tkrzw/runtime.sh'), *map(str, args)],
+                                 cwd=ROOT, env=env, capture_output=True, timeout=10)
+            self.assertEqual((done.returncode, done.stdout, done.stderr),
+                             (old.returncode, old.stdout, old.stderr))
+        return done
+
+    def test_advisory_labels_never_bypass_a_loaded_library(self):
+        for cell in ('bdb', 'kc', 'tkrzw', 'unknown'):
+            done = self.invoke(['--print-path', cell, 'fixture', 'pin', '/object'])
+            self.assertEqual(done.returncode, 0)
+            self.assertEqual(done.stdout, (str(self.library) + '\n').encode())
+
+    def test_absent_library_is_allowed_for_every_cell(self):
+        done = self.invoke(['--print-path', 'tkrzw', 'fixture', 'pin', '/object'], FAKE_LDD='libc.so => /lib/libc.so (0x1)')
+        self.assertEqual((done.returncode, done.stdout, done.stderr), (0, b'', b''))
+
+    def test_wrong_missing_unresolved_and_failed_libraries_are_refused(self):
+        cases = [(f'libtkrzw.so.1 => {self.other} (0x1)', '0'),
+                 ('libtkrzw.so.1 => not found', '0'), ('libtkrzw.so.1 unresolved', '0'),
+                 ('', '1'), (f'libtkrzw.so.1 => {self.library} (0x1)', '1')]
+        for output, status in cases:
+            with self.subTest(output=output, status=status):
+                done = self.invoke(['bdb', 'fixture', 'subject', '/object'], FAKE_LDD=output, FAKE_STATUS=status)
+                self.assertEqual(done.returncode, 1)
+                self.assertIn(b'REFUSED: fixture: subject:', done.stderr)
+
+    def test_aliases_are_one_library_but_distinct_libraries_are_ambiguous(self):
+        alias = self.directory / 'alias.so'
+        alias.symlink_to(self.library)
+        for path, expected in ((alias, 0), (self.other, 1)):
+            output = self.env['FAKE_LDD'] + f'\nlibtkrzw.so.1 => {path} (0x2)'
+            self.assertEqual(self.invoke(['bdb', 'fixture', 'L', '/object'], FAKE_LDD=output).returncode, expected)
+
+    def test_expected_library_then_prefix_then_first_prefix_precedence(self):
+        prefix = self.directory / 'prefix'
+        (prefix / 'lib').mkdir(parents=True)
+        (prefix / 'lib/libtkrzw.so.1').symlink_to(self.library)
+        for key in ('OXPINYIN_TKRZW_PREFIX', 'OXPINYIN_TKRZW_PREFIXES'):
+            env = dict(self.env)
+            env.pop('OXPINYIN_TKRZW_LIBRARY')
+            env[key] = str(prefix) + (':/ignored' if key.endswith('PREFIXES') else '')
+            self.assertEqual(runtime.check('bdb', 'fixture', 'pin', '/object', env=env), self.library)
+        done = self.invoke(['bdb', 'fixture', 'pin', '/object'], OXPINYIN_TKRZW_PREFIX='/ignored')
+        self.assertEqual(done.returncode, 0)
+        done = self.invoke(['bdb', 'fixture', 'pin', '/object'], OXPINYIN_TKRZW_LIBRARY='')
+        self.assertEqual(done.returncode, 1)
+
+    def test_relative_loader_entries_keep_the_callers_cwd(self):
+        env = dict(self.env, FAKE_LDD='libtkrzw.so.1 => ./libtkrzw.so.1 (0x1)', OXPINYIN_TKRZW_LIBRARY='./libtkrzw.so.1')
+        self.assertEqual(runtime.check('kc', 'fixture', 'pin', 'object', env=env, cwd=self.directory), self.library)
+
+    def test_darwin_install_name_and_override_refusals(self):
+        output = f'\t{self.library} (compatibility version 1.0.0, current version 1.0.0)'
+        # The install-name parser requires .dylib as the shell did.
+        dylib = self.directory / 'libtkrzw.dylib'
+        dylib.symlink_to(self.library)
+        output = f'\t{dylib} (compatibility version 1.0.0, current version 1.0.0)'
+        self.assertEqual(self.invoke(['kc', 'fixture', 'oracle', '/object'], FAKE_HOST='Darwin', FAKE_LDD=output).returncode, 0)
+        for variable in ('DYLD_LIBRARY_PATH', 'DYLD_FALLBACK_LIBRARY_PATH'):
+            self.assertEqual(self.invoke(['bdb', 'fixture', 'oracle', '/object'], FAKE_HOST='Darwin', **{variable: '/override'}).returncode, 1)
+
+    def test_child_status_and_quiet_stderr(self):
+        for code in (0, 7, 77, 127):
+            for quiet in ([], ['--quiet-stderr']):
+                done = self.invoke([*quiet, 'bdb', 'fixture', 'pin', '/object', '--',
+                                    'bash', '-c', f'printf out; printf err >&2; exit {code}'])
+                self.assertEqual(done.returncode, code)
+                self.assertEqual(done.stdout, b'out')
+                self.assertEqual(done.stderr, b'' if quiet else b'err')
+
+    def test_missing_command_and_usage_status(self):
+        self.assertEqual(self.invoke([]).returncode, 2)
+        self.assertEqual(self.invoke(['bdb', 'fixture', 'pin', '/object', '--', 'not-a-real-command']).returncode, 1)
+
+    def test_binary_qualification_covers_elf_and_macho(self):
+        for magic in (b'\x7fELF', bytes.fromhex('cffaedfe'), bytes.fromhex('cefaedfe'), bytes.fromhex('feedfacf'), bytes.fromhex('feedface')):
+            path = self.directory / 'object'
+            path.write_bytes(magic + b'payload')
+            self.assertTrue(runtime.binary(path))
+        path.write_text('#!/bin/sh\n')
+        self.assertFalse(runtime.binary(path))
 
 
 @unittest.skipUnless(sys.platform.startswith('linux'), 'Linux ELF loader fixtures')
@@ -80,9 +194,9 @@ class LoaderTests(unittest.TestCase):
     def test_unset_cell_cannot_bypass_tkrzw_subject(self):
         self.env.pop('PINYIN_ORACLE_DBM', None)
         self.env['LD_LIBRARY_PATH'] = str(self.system / 'lib')
-        script = Path(runtime.__file__).with_suffix('.sh')
-        command = ['bash', '-c', 'source "$1"; tkrzw_run "${PINYIN_ORACLE_DBM:-bdb}" subject subject.so sh -c \'echo MATCH\'',
-                   str(script.parent / 'unlabelled-runner'), str(script)]
+        script = Path(runtime.__file__)
+        command = [sys.executable, str(script), self.env.get('PINYIN_ORACLE_DBM', 'bdb'),
+                   'unlabelled-runner', 'subject', 'subject.so', '--', 'sh', '-c', 'echo MATCH']
         result = subprocess.run(command, cwd=self.cwd, env=self.env, capture_output=True, text=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(result.stdout, '')
@@ -96,10 +210,10 @@ class LoaderTests(unittest.TestCase):
                 runtime.check(cell, 'labelled-runner', 'subject', self.obj,
                               env=self.env, cwd=self.cwd)
 
-    def test_shell_guard_needs_no_uv_or_python(self):
-        script = Path(runtime.__file__).with_suffix('.sh')
+    def test_direct_guard_needs_no_uv_with_selected_interpreter(self):
+        script = Path(runtime.__file__)
         self.env['PATH'] = '/usr/bin:/bin'
-        result = subprocess.run(['bash', str(script), 'tkrzw', 'image-runner', 'subject',
+        result = subprocess.run([sys.executable, str(script), 'tkrzw', 'image-runner', 'subject',
                                  str(self.obj), '--', '/bin/sh', '-c', 'echo RESULT'],
                                 cwd=self.cwd, env=self.env, capture_output=True, text=True)
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, 'RESULT\n', ''))
@@ -114,8 +228,8 @@ class LoaderTests(unittest.TestCase):
         subprocess.run(['cc', str(source), '-L' + str(self.cache / 'lib'),
                         '-l:libtkrzw.so.1064', '-o', str(worker)], check=True)
         self.env['LD_LIBRARY_PATH'] = str(self.system / 'lib')
-        script = Path(runtime.__file__).with_suffix('.sh')
-        result = subprocess.run(['bash', str(script), 'bdb', 'linked-worker', 'pin',
+        script = Path(runtime.__file__)
+        result = subprocess.run([sys.executable, str(script), 'bdb', 'linked-worker', 'pin',
                                  str(plain), '--', str(worker)], cwd=self.cwd, env=self.env,
                                 capture_output=True, text=True)
         self.assertNotEqual(result.returncode, 0)
@@ -227,9 +341,9 @@ class LoaderTests(unittest.TestCase):
         self.assertIn(str(self.system / 'lib/libtkrzw.so.1064'), result.stderr)
 
     def test_shell_and_python_share_the_launch_environment(self):
-        script = Path(runtime.__file__).with_suffix('.sh')
-        command = ['bash', '-c', 'source "$1"; tkrzw_run tkrzw pin subject.so sh -c \'printf "%s" "$LD_LIBRARY_PATH"\'',
-                   str(script.parent / 'fixture-runner'), str(script)]
+        script = Path(runtime.__file__)
+        command = [sys.executable, str(script), 'tkrzw', 'fixture-runner', 'pin', 'subject.so',
+                   '--', 'sh', '-c', 'printf "%s" "$LD_LIBRARY_PATH"']
         result = subprocess.run(command, cwd=self.cwd, env=self.env, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, self.env['LD_LIBRARY_PATH'])
@@ -247,10 +361,11 @@ class LoaderTests(unittest.TestCase):
         self.assertIn('REFUSED: fixture-runner: pin:', refused.stderr)
 
     def test_other_cells_keep_their_driver_stderr_suppressed(self):
-        script = Path(runtime.__file__).with_suffix('.sh')
+        script = Path(runtime.__file__)
         for cell in ('bdb', 'kc'):
-            result = subprocess.run(['bash', '-c', 'source "$1"; tkrzw_run --quiet-stderr "$2" subject /bin/sh sh -c \'echo RESULT; echo diagnostic >&2\'',
-                                     str(script.parent / 'fixture-runner'), str(script), cell], env=self.env, capture_output=True, text=True)
+            result = subprocess.run([sys.executable, str(script), '--quiet-stderr', cell, 'fixture-runner', 'subject',
+                                     '/bin/sh', '--', 'sh', '-c', 'echo RESULT; echo diagnostic >&2'],
+                                    env=self.env, capture_output=True, text=True)
             self.assertEqual((result.returncode, result.stdout, result.stderr), (0, 'RESULT\n', ''))
 
 
@@ -271,17 +386,9 @@ class DarwinLoaderOverrideTests(unittest.TestCase):
                               result.stderr)
 
     def test_tkrzw_check_refuses_both_dyld_overrides(self):
-        script = Path(runtime.__file__).with_suffix('.sh')
         for name in ('DYLD_LIBRARY_PATH', 'DYLD_FALLBACK_LIBRARY_PATH'):
-            with self.subTest(name=name):
-                result = subprocess.run(
-                    ['bash', '-c',
-                     f'{name}=/tmp/override; source "$1"; _tkrzw_check runner subject /bin/true',
-                     str(script.parent / 'fixture'), str(script)],
-                    capture_output=True, text=True)
-                self.assertEqual(result.returncode, 1, result.stderr)
-                self.assertIn('REFUSED: runner: subject:', result.stderr)
-                self.assertIn('otool -L recorded install name', result.stderr)
+            with self.subTest(name=name), self.assertRaisesRegex(runtime.RuntimeRefused, 'otool -L recorded install name'):
+                runtime.check('tkrzw', 'runner', 'subject', '/bin/true', env=dict(os.environ, **{name: '/tmp/override'}))
 
 
 if __name__ == '__main__':

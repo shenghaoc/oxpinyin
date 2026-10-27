@@ -173,10 +173,12 @@ def seal_inputs(directory, image, reference, head):
                   model_sha256=digest_file(model),
                   inside_sha256=digest_file(directory / 'inside.sh'),
                   floor_sha256=digest_file(directory / 'bash-floor.sh'),
-                  verifier_sha256=digest_file(directory / 'identity.py'))
+                  verifier_sha256=digest_file(directory / 'identity.py'),
+                  guest_sha256=digest_file(directory / 'guest.py'))
     for source, field in (('tools/oracle/compat-inside.sh', 'inside_sha256'),
                           ('tools/lib/bash-floor.sh', 'floor_sha256'),
-                          ('tools/dev/compat/identity.py', 'verifier_sha256')):
+                          ('tools/dev/compat/identity.py', 'verifier_sha256'),
+                          ('tools/dev/compat/guest.py', 'guest_sha256')):
         if files.get(source, {}).get('content') != record[field]:
             raise ValueError(f'launch helper differs from source snapshot: {source}')
     write_record(directory / 'identity.json', record)
@@ -201,7 +203,7 @@ def verify_inputs(directory, expected, image=None, reference=None):
         raise ValueError('container reference namespace mismatch')
     for filename, field in (('source.tar', 'archive_sha256'), ('model.tar.gz', 'model_sha256'),
                             ('inside.sh', 'inside_sha256'), ('bash-floor.sh', 'floor_sha256'),
-                            ('identity.py', 'verifier_sha256')):
+                            ('identity.py', 'verifier_sha256'), ('guest.py', 'guest_sha256')):
         if digest_file(directory / filename) != record.get(field):
             raise ValueError(f'container input content mismatch: {filename}')
     files = archive_content(directory / 'source.tar')

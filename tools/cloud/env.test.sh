@@ -584,11 +584,11 @@ printf 'libtkrzw.so.1 => %s (0x1234)\n' "$SYNTHETIC_RESOLVED_LIBRARY"
 RESOLVER
 		chmod +x "$resolver_bin/ldd"
 		export PATH="$resolver_bin:$PATH" SYNTHETIC_RESOLVED_LIBRARY="$host_prefix/lib/libtkrzw.so.1"
-		runtime=$(cd "$(dirname "${BASH_SOURCE[0]}")/../tkrzw" && pwd)/runtime.sh
-		bash "$runtime" bdb host-env-test subject "$host_prefix/bin/tkrzw_dbm_util" || fail 'verified host library refused'
+		runtime=$(cd "$(dirname "${BASH_SOURCE[0]}")/../tkrzw" && pwd)/runtime.py
+		uv run --no-project --managed-python python -X lazy_imports=normal "$runtime" bdb host-env-test subject "$host_prefix/bin/tkrzw_dbm_util" || fail 'verified host library refused'
 		printf 'PASS: healthy host without a cache exports an accepted exact runtime identity\n'
 		SYNTHETIC_RESOLVED_LIBRARY=$host_prefix/lib/other/libtkrzw.so.1
-		if message=$(bash "$runtime" bdb host-env-test subject "$host_prefix/bin/tkrzw_dbm_util" 2>&1); then
+		if message=$(uv run --no-project --managed-python python -X lazy_imports=normal "$runtime" bdb host-env-test subject "$host_prefix/bin/tkrzw_dbm_util" 2>&1); then
 			fail 'another library under the same system prefix was accepted'
 		fi
 		[[ $message == *"$SYNTHETIC_RESOLVED_LIBRARY"* ]] || fail "wrong host refusal diagnostic: $message"

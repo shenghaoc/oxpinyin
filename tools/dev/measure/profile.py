@@ -209,7 +209,7 @@ class Commands:
             return shell_status(slot.wait_child(process))
 
     def guard(self, obj: str, env: Mapping[str, str]) -> None:
-        """Refuse OBJ unless its libtkrzw is the verified runtime (tools/tkrzw/runtime.sh)."""
+        """Refuse OBJ unless its libtkrzw is the verified runtime (tools/tkrzw/runtime.py)."""
         bench.runtime_check(LABEL, 'auto', 'subject', obj, env=env)
 
 

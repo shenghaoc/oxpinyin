@@ -498,7 +498,7 @@ base_image=$(pinval base_image)
 # The published tag is derived from the whole recipe by one script, the same
 # one the workflow and docs/runbooks/oracle.md use. The amd64 tags are the
 # historical names; arm64 publishes sibling -arm64 tags.
-published_base=ghcr.io/shenghaoc/oxpinyin-oracle:$("$repo/tools/oracle/image-tag.sh")
+published_base=ghcr.io/shenghaoc/oxpinyin-oracle:$(uv run --no-project --managed-python --python "$python_request" python -X lazy_imports=normal "$repo/tools/dev/__main__.py" compat image-tag)
 case $platform in
 linux/amd64)
 	published=$published_base
@@ -522,10 +522,9 @@ deps_image=oxpinyin-oracle-deps:$(
 )
 
 if ((!inside)); then
-	# shellcheck source=../container/runtime.sh
-	source "$repo/tools/container/runtime.sh"
-	oxpinyin_select_runtime "${OXPINYIN_CONTAINER:-}"
-	# shellcheck disable=SC2154  # set by oxpinyin_select_runtime in tools/container/runtime.sh.
+	# Python has been provisioned above; preserve the selected runtime in this shell.
+	eval "$(uv run --no-project --managed-python --python "$python_request" python -X lazy_imports=normal "$repo/tools/dev/__main__.py" compat select-runtime --shell "${OXPINYIN_CONTAINER:-}")"
+	# shellcheck disable=SC2154  # emitted by the shared runtime selector.
 	[[ $(basename "$ctr") != container ]] || die 'normal cloud provisioning requires a Linux cloud runtime; use compat.sh for the Apple adapter'
 else
 	printf 'Runtime: supplied compatibility container (no nested runtime)\n'

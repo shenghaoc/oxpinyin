@@ -284,3 +284,8 @@ measure recipe *args: python
 [windows]
 initbench *args: python
     @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev measure startup @args; exit $LASTEXITCODE
+
+# Oracle and compatibility recipes share host/runtime/fixture services.
+[unix]
+compat *args: python
+    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev compat "$@"

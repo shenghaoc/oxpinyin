@@ -88,7 +88,7 @@ def validate(argv, environ=None):
     """
     environ = os.environ if environ is None else environ
     validate_environment(environ)
-    parser = argparse.ArgumentParser(allow_abbrev=False)
+    parser = argparse.ArgumentParser(prog=str(Path(__file__)), allow_abbrev=False)
     parser.add_argument('--runtime')
     parser.add_argument('--platform', choices=('linux/amd64', 'linux/arm64'))
     parser.add_argument('--cell', choices=('bdb', 'kc', 'tkrzw'), default='bdb')

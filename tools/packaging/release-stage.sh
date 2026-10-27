@@ -33,7 +33,13 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 REPO_ROOT="$(cd ../.. && pwd)"
-source "$REPO_ROOT/tools/tkrzw/runtime.sh"
+# U3 bridge until the packaging controller moves this call to runtime.check.
+tkrzw_run() {
+    local cell=$1 side=$2 object=$3
+    shift 3
+    uv run --no-project --managed-python --python "$(<"$REPO_ROOT/.python-version")" python -X lazy_imports=normal \
+        "$REPO_ROOT/tools/tkrzw/runtime.py" "$cell" "${0##*/}" "$side" "$object" -- "$@"
+}
 PINYIN_CRATE_DIR="$REPO_ROOT/crates/oxpinyin-capi"
 ZHUYIN_CRATE_DIR="$REPO_ROOT/crates/oxpinyin-zhuyin-capi"
 

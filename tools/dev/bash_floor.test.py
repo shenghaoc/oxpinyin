@@ -117,15 +117,12 @@ class StagedCopyTests(unittest.TestCase):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         self.input = Path(directory.name)
-        # Stage the helpers with compat.sh's own copy lines, and run the copy it runs.
-        compat = (ROOT / 'tools/oracle/compat.sh').read_text(encoding='utf-8')
-        self.staged = {source: self.input / name
-                       for source, name in re.findall(r'^cp (tools/\S+) "\$input/([^"/]+)"$', compat, re.M)}
-        self.assertIn(bash_floor.FLOOR_FILE, self.staged, 'compat.sh does not stage the floor file')
+        from tools.dev.compat.launcher import STAGED
+        self.staged = {source: self.input / name for source, name in STAGED.items()}
+        self.assertIn(bash_floor.FLOOR_FILE, self.staged)
         for source, path in self.staged.items():
             shutil.copyfile(ROOT / source, path)
         self.script = self.staged['tools/oracle/compat-inside.sh']
-        self.assertEqual(re.search(r'\bbash /input/(\S+)', compat)[1], self.script.name)
         self.floor = self.staged[bash_floor.FLOOR_FILE]
 
     def run_staged(self):

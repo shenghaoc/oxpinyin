@@ -94,7 +94,7 @@ arm64 runners. The amd64 tags are the historical
     ghcr.io/shenghaoc/oxpinyin-oracle:<tag>
 
 and arm64 publishes the siblings `<tag>-arm64` and `<tag>-deps-arm64`.
-`<tag>` is printed by `tools/oracle/image-tag.sh`: the libpinyin
+`<tag>` is printed by `just compat image-tag`: the libpinyin
 commit and the base image codename (both from `oracle-pin.txt`) and a hash
 of `Dockerfile.oracle`, `build-oracle.sh`, the version-check inputs and
 `oracle-pin.txt` itself, so it changes whenever the library hashes or their
@@ -110,7 +110,7 @@ image holds `/opt/pinyin-oracle/{bdb,kc,tkrzw}` with `lib/`, `include/`,
 step below before any differential can use it.
 
 ```sh
-tag=$(tools/oracle/image-tag.sh)
+tag=$(just compat image-tag)
 platform=linux/amd64                       # or linux/arm64
 suffix=
 [[ $platform == linux/amd64 ]] || suffix=-arm64
@@ -187,7 +187,7 @@ local manifest before the pre-release real-installation checks below.
 
 ### Reproducing the libraries
 
-`tools/oracle/check-reproducible.sh --platform linux/arm64` builds each
+`just compat reproducible --platform linux/arm64` builds each
 cell twice in the trixie pin-reference image, from different work
 directories and prefixes, and fails unless the two builds agree with each
 other and with the platform's `oracle-pin.txt` fields. The default platform
@@ -214,7 +214,7 @@ export PINYIN_EXPORT_DIR=/tmp/oxpinyin-export
 ## 4. Run the differentials
 
 ```sh
-just heavy -- tools/oracle/run-differentials.sh --libpinyin <built libpinyin tree> \
+just heavy -- just compat differentials --libpinyin <built libpinyin tree> \
     --data <built system data dir> --export "$PINYIN_EXPORT_DIR" \
     --model "$PINYIN_MODEL_DIR"
 ```

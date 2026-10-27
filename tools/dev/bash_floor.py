@@ -21,7 +21,6 @@ VERSION_LITERAL = re.compile(r'(?i)\bbash\b[ \t]*(?:>=|>|at[ \t]+least)[ \t]*[0-
 # check, so they neither source the guard nor carry a version themselves.
 SOURCED_ONLY = frozenset({
     'tools/cloud/env.sh',
-    'tools/container/runtime.sh',
     'tools/oracle/pin.sh',
 })
 
@@ -30,7 +29,6 @@ SOURCED_ONLY = frozenset({
 # line runs only for direct execution.
 MIXED = frozenset({
     'tools/packaging/function-order.sh',
-    'tools/tkrzw/runtime.sh',
 })
 
 # Scripts that run only from a staged copy, with the floor file staged beside

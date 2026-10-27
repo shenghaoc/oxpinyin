@@ -171,7 +171,7 @@ def runtime_check(label: str, cell: str, side: str, obj, *, env: Mapping[str, st
                   cwd: Path | None = None) -> None:
     """Refuse OBJ unless every libtkrzw it resolves is the runtime setup verified.
 
-    The check is tools/tkrzw/runtime.sh's, through its Python adapter, run in the
+    The check is tools/tkrzw/runtime.py's, run in the
     environment and directory the worker will have. CELL is advisory; SIDE
     decides only the diagnostic's wording. A refusal is a failed run.
     """
