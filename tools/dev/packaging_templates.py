@@ -39,7 +39,7 @@ Section: libdevel
 Priority: optional
 Maintainer: $MAINTAINER
 Homepage: $HOMEPAGE
-Depends: $BASE (= $DEBVER)
+Depends: $BASE (= $DEBVER), libglib2.0-dev
 Provides: libpinyin15-dev (= $PCVER), libzhuyin-dev (= $PCVER)
 Conflicts: libpinyin15-dev, libzhuyin-dev
 Replaces: libpinyin15-dev, libzhuyin-dev

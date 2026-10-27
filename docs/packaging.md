@@ -834,7 +834,9 @@ originals:
   computed from the shipped ELF's DT_NEEDED via ldconfig + `dpkg -S`, so
   t64-era names (`libglib2.0-0t64`, `libtkrzw1t64`) resolve on whatever
   suite the build runs on, plus a `libc6 (>= N)` floor taken from the
-  highest `GLIBC_*` symbol version referenced.
+  highest `GLIBC_*` symbol version referenced. The `-dev` package depends
+  on the matching runtime package and `libglib2.0-dev` for the GLib headers
+  included by `pinyin.h` and `zhuyin.h`.
 - `just packaging release-rpm` — `oxpinyin-libpinyin-<backend>` +
   `-devel` (~ libpinyin + libpinyin-devel). rpm's dependency generator
   emits the soname Provides (`libpinyin.so.15()(64bit)`) and the backend
@@ -846,6 +848,7 @@ originals:
   directory installed as `/usr/lib/libpinyin/data`; `--data-version=VER`
   records the origin package version in the description, since Arch's data
   (2.10.x) is older than the pin version (2.11.92) the library provides.
+  Its existing `glib2` dependency already includes the GLib headers.
 
 Data: Debian and Fedora keep `libpinyin-data` — a separate package there,
 it stays installed through the takeover and is only a Recommends on ours.
