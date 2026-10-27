@@ -39,12 +39,22 @@ MODULES = {
         ('_craft_bdb', '_craft_kc', '_craft_tkrzw', '_write_user_conf', 'conf_system', 'import_rows',
          'private_system', 'row58_import', 'user_listing', 'zero_item_padding'),
         ('contract_abi',)),
+    'contract_verdict': (
+        ('META_OFFSET_TIMESTAMP', 'NO_ABORT', 'TKRZW_HASH_METADATA_SIZE', 'TKRZW_TIMESTAMP_WIDTH', 'WARNING_DOMAIN',
+         '_FATAL_GLIB_PREFIX', 'abort_answered', 'directory_reads_as_a_chunk', 'fatal_stderr', 'host_scanf_accepts',
+         'observed', 'pin_loaded_subject_refused_table_conf', 'policy_observation', 'registered_termination',
+         'strjoinv_fault', 'tkrzw_saved_bigram_bytes', 'tkrzw_saved_bigram_equal', 'valid_observation'),
+        ()),
 }
 
 # Driver functions that stay as adapters: the original signature, kept for every caller,
 # and the state they hand the module from the driver's own globals.
 ADAPTERS = {
     'index_file_rows': "(path, *, kind='tree', allow_empty=False, library=None)",
+    'policy_expectations': '(spec)',
+    'verdict_for': '(spec, pin, subject, expect_parent)',
+    'short_dir_chunk': '(spec)',
+    'matches': '(spec, pin, subject)',
 }
 
 spec = importlib.util.spec_from_file_location('contract_diff', HERE / 'contract-diff.py')
@@ -119,6 +129,22 @@ class ModuleBoundaryTests(unittest.TestCase):
                     patch.object(sys.modules['contract_fixtures'], 'index_file_rows', return_value='rows') as moved:
                 self.assertEqual(driver.index_file_rows('p', kind='hash', allow_empty=True, library='L'), 'rows')
                 moved.assert_called_once_with('p', cell=cell, kind='hash', allow_empty=True, library='L')
+
+    def test_verdict_adapters_pass_the_findings_directory_cell_and_probe_the_driver_holds_now(self):
+        verdicts = sys.modules['contract_verdict']
+        probe = lambda: False
+        case, pin, subject = {'case': 1}, {'side': 'pin'}, {'side': 'subject'}
+        state = dict(policy_root=Path('/findings'), cell='kc', directory_probe=probe)
+        calls = (('policy_expectations', (case,), dict(policy_root=state['policy_root'], cell='kc')),
+                 ('verdict_for', (case, pin, subject, True), state),
+                 ('short_dir_chunk', (case,), dict(directory_probe=probe)),
+                 ('matches', (case, pin, subject), dict(directory_probe=probe)))
+        with patch.object(driver, 'POLICY_ROOT', Path('/findings')), patch.object(driver, 'CELL', 'kc'), \
+                patch.object(driver, 'directory_reads_as_a_chunk', probe):
+            for name, arguments, keywords in calls:
+                with self.subTest(name=name), patch.object(verdicts, name, return_value=name) as moved:
+                    self.assertEqual(getattr(driver, name)(*arguments), name)
+                    moved.assert_called_once_with(*arguments, **keywords)
 
     def test_changed_runs_map_each_module_to_its_tests_and_the_driver_tests(self):
         files = set(test_runner.harness_files())
