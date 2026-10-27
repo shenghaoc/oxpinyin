@@ -591,26 +591,7 @@ impl RuntimeDict {
     ) -> Option<(u32, u32)> {
         self.user
             .as_ref()?
-            .with_effective_system_item(token, |item| {
-                let mut total = 0_u32;
-                let mut matched = 0_u32;
-                for (keys, frequency) in &item.prons {
-                    total = total.wrapping_add(*frequency);
-                    if query.len() == keys.len()
-                        && query.iter().zip(keys).all(|(q, bits)| {
-                            let s = oxpinyin_core::ChewingKey::from_packed(*bits);
-                            q.initial == s.initial
-                                && ((q.middle == s.middle && q.final_ == s.final_)
-                                    || (q.middle == 0 && q.final_ == 0)
-                                    || (s.middle == 0 && s.final_ == 0))
-                                && (q.tone == s.tone || q.tone == 0 || s.tone == 0)
-                        })
-                    {
-                        matched = matched.wrapping_add(*frequency);
-                    }
-                }
-                (matched, total)
-            })
+            .system_pronunciation_possibility(token, query)
     }
 
     /// What [`Self::priced_token`] reads of `syllables` whatever the

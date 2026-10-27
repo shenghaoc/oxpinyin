@@ -381,6 +381,19 @@ pub struct PhraseItemView<'a> {
 }
 
 impl<'a> PhraseItemView<'a> {
+    /// Borrows a structurally complete phrase-item payload, without decoding
+    /// its text or pronunciation vectors. Trailing bytes are accepted, as by
+    /// the journal decoder.
+    ///
+    /// # Errors
+    /// Returns the journal decoder's structural error for a truncated payload.
+    pub fn from_bytes(
+        bytes: &'a [u8],
+    ) -> Result<Self, crate::chunk_write::PhraseItemValidationError> {
+        crate::chunk_write::validate_phrase_item(bytes)?;
+        Ok(Self { bytes })
+    }
+
     /// The item's bytes as `get_phrase_item` hands them out: the header-derived
     /// length from its offset, nothing beyond it.
     #[must_use]
@@ -980,6 +993,36 @@ mod sparse_mapping_tests {
 #[cfg(test)]
 mod pronunciation_count_tests {
     use super::PhraseLibrary;
+
+    #[test]
+    fn borrowed_payload_checks_every_extent_without_interpreting_values() {
+        use super::PhraseItemView;
+        use crate::chunk_write::{ChunkItem, decode_phrase_item, encode_phrase_item};
+        let item = ChunkItem {
+            phrase: vec![u32::MAX, 0],
+            unigram: u32::MAX,
+            prons: vec![(vec![u16::MAX, 0], u32::MAX), (vec![0, u16::MAX], 7)],
+        };
+        let mut bytes = encode_phrase_item(&item).unwrap();
+        for end in 0..bytes.len() {
+            assert!(decode_phrase_item(&bytes[..end]).is_err());
+            assert!(PhraseItemView::from_bytes(&bytes[..end]).is_err());
+        }
+        bytes.extend_from_slice(&[1, 2, 3]);
+        let view = PhraseItemView::from_bytes(&bytes).unwrap();
+        assert_eq!(
+            view.phrase_codes().collect::<Option<Vec<_>>>(),
+            Some(item.phrase)
+        );
+        assert_eq!(view.unigram(), item.unigram);
+        assert_eq!(
+            view.pronunciations()
+                .map(|row| row.freq)
+                .collect::<Vec<_>>(),
+            [u32::MAX, 7]
+        );
+        assert!(PhraseItemView::from_bytes(&[0; 6]).is_ok());
+    }
 
     #[test]
     fn count_checks_offset_and_two_header_bytes_only() {

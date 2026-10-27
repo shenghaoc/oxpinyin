@@ -201,7 +201,9 @@ preflight likewise checks record heads, tokens, lengths and payload extents
 without constructing records; only the replay walk produces borrowed records.
 Both validators keep static/numeric error values without allocation, formatting
 the same diagnostics only when the caller reports an error.
-`SystemItems` caches decoded items on use; added items still seed
+`SystemItems` caches decoded items when callers need their owned payload;
+pronunciation pricing reads completed replay bytes through `PhraseItemView`
+without filling that cache. Added items still seed
 the existing text/index rows, removals the removal set, and original items seed
 only necessary unigram deltas. Replayed reading rows are never synthesized.
 
@@ -239,9 +241,26 @@ space bound. After lazy filtering and capacity trimming it retains O(J + M),
 plus typed payloads for the K used items. This trades transient duplicate IDs
 for cheaper insertion; it does not restore decoded payload, write-run or record
 staging. Validation checks one item's shape in O(1) time and space during init;
-first use decodes and caches it. Bulk save/mask operations may materialize all changed items, as the
+first payload use decodes and caches it. Bulk save/mask operations may materialize all changed items, as the
 previous loader did at init. The extra private view shares clean file pages;
 MODIFY dirties private pages as the pin does, without writing the system file.
+
+Pronunciation pricing (#1031) follows the pin's borrowed item and byte scan:
+`storage/phrase_index.cpp:180-205` returns a view and
+`storage/phrase_index.h:136-163` reads packed keys/frequencies in guess
+(`lookup/phonetic_lookup.h:643-685`), after init's journal merge
+(`pinyin.cpp:275-276`, `zhuyin.cpp:219-220`), all at 074a2219, read with
+`git show` in `/home/sheng/repos/libpinyin`. For phrase length L, P readings,
+D decoded items and J retained slots, the old first pricing read cost
+O(log(D+1) + log(J+1) + L(P+1)) and retained O(L(P+1)) decoded payload
+with O(P) allocations. The byte path costs
+O(log(D+1) + log(J+1) + LP), with O(1) additional space for contiguous
+replay bytes, and retains no decoded payload. The replay buffer's existing
+sparse-tail fallback can still allocate O(L(P+1)) transient bytes. Later
+pricing reads still scan O(LP); the decoded-item path remains authoritative
+after an edit. Init does no extra work. The pin's direct offset lookup is
+O(1), followed by O(LP) pricing with O(1) auxiliary space. No key, count,
+text, or outward candidate rule changes.
 
 For libpinyin sessions, `SessionValues::Memory`
 (`oxpinyin-user/src/session_values.rs`) owns separate logical tables:

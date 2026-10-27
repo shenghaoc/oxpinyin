@@ -4671,6 +4671,25 @@ impl<S: WriteStore> GenericUserStore<S> {
         items.get(&token).map(read)
     }
 
+    /// The live system item's pronunciation sums without decoding a replayed
+    /// payload into owned text and key vectors. Edited items use the same
+    /// readings as [`Self::with_effective_system_item`].
+    #[must_use]
+    pub fn system_pronunciation_possibility(
+        &self,
+        token: Token,
+        query: &[ChewingKey],
+    ) -> Option<(u32, u32)> {
+        if !self.has_system_items() || !(1..=4).contains(&(token >> 24)) {
+            return None;
+        }
+        self.inner
+            .system_items
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .pronunciation_possibility(token, query)
+    }
+
     /// One past the highest token a `USER_FILE` library holds: the pin's
     /// `SubPhraseIndex::get_range` end (`phrase_index.cpp:624-646` at
     /// 074a2219, the offset array less its trailing zeros). It is the
