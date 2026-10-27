@@ -14465,6 +14465,61 @@ for _mode in ('pinyin', 'zhuyin'):
                      phrase_text_probe(_variant, _surface))
 
 
+def phrase_text_nul_snapshot(k):
+    """Observe bytes, NULL outputs and statuses for raw 甲/NUL/乙 words.
+
+    The pin converts the stored three words at guess, keeping only the prefix
+    before zero (pinyin.cpp:1627-1644,1995-2031; zhuyin.cpp:1096-1113,1318-1338
+    at 074a2219). Candidate getters borrow that text; a missing token leaves
+    both out-params untouched. stderr and GLib logs are compared by the case.
+    """
+    phrase_text_system(k, 'nul')
+    options = k.fn('set_options', B, P, U)(k.ctx, 1 << 5)
+    parsed = k.fn('parse_more_full_pinyins', Z, P, S)(k.inst, b'da1da1da1')
+    if k.mode == 'pinyin':
+        guessed = k.fn('guess_candidates', B, P, Z, U)(k.inst, 0, 0x1f)
+    else:
+        guessed = k.fn('guess_candidates_after_cursor', B, P, Z)(k.inst, 0)
+    count = U(UNTOUCHED)
+    counted = k.fn('get_n_candidate', B, P, C.POINTER(U))(k.inst, C.byref(count))
+    rows = []
+    if counted:
+        for index in range(count.value):
+            candidate, text, kind = P(), P(), I(UNTOUCHED)
+            found = k.fn('get_candidate', B, P, U, C.POINTER(P))(
+                k.inst, index, C.byref(candidate))
+            assert found and candidate.value, 'fixture candidate must be addressable'
+            rendered = k.fn('get_candidate_string', B, P, P, C.POINTER(P))(
+                k.inst, candidate, C.byref(text))
+            typed = k.fn('get_candidate_type', B, P, P, C.POINTER(I))(
+                k.inst, candidate, C.byref(kind))
+            row = dict(found=found, rendered=rendered, typed=typed, kind=kind.value,
+                       null=text.value is None,
+                       bytes=phrase_text_bytes(k, text.value, owned=False))
+            if k.mode == 'zhuyin':
+                # The getter reads the row alone (zhuyin.cpp:1865-1869).
+                text = P()
+                row['null_instance_status'] = k.fn('get_candidate_string', B, P, P, C.POINTER(P))(
+                    None, candidate, C.byref(text))
+                row['null_instance_bytes'] = phrase_text_bytes(k, text.value, owned=False)
+                row['null_instance_null'] = text.value is None
+            rows.append(row)
+    tokens = []
+    for token in (0x01000001, 0x01000003):
+        length, text = U(UNTOUCHED), P()
+        status = k.fn('token_get_phrase', B, P, U, C.POINTER(U), C.POINTER(P))(
+            k.inst, token, C.byref(length), C.byref(text))
+        tokens.append(dict(status=status, length=length.value, null=text.value is None,
+                           bytes=phrase_text_bytes(k, text.value)))
+    return dict(options=options, parsed=parsed, guessed=guessed, counted=counted,
+                count=count.value, rows=rows, tokens=tokens)
+
+
+for _mode in ('pinyin', 'zhuyin'):
+    case(f'phrase-text/{_mode}-nul-snapshot-full', mode=_mode, stderr=True,
+         control=True, issues=('1031',))(phrase_text_nul_snapshot)
+
+
 # Prefix conversion (#1277). `_compute_prefixes` converts `prefix` with
 # `g_utf8_to_ucs4(prefix, -1, NULL, &len, NULL)` (pinyin.cpp:1396-1398;
 # zhuyin.cpp:918 at pin 074a2219). GLib 2.84.4 decodes every one- to
