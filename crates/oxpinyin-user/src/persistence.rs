@@ -18,8 +18,12 @@
 //!   (`pinyin.cpp:569-582`) — so its records are loaded
 //!   ([`UserState::indexed`]) and saved back.
 //! * save — the pin's `_write_files` + `_rename_files`: every file is
-//!   written whole to a `.tmp` sibling, then all are renamed over their
-//!   finals, so a crash mid-save leaves the previous profile intact.
+//!   written whole to a `.tmp` sibling, then renamed over its final one
+//!   after another in the pin's order: libraries by index, the pinyin
+//!   index, the phrase index, then the bigram. A failure before the first
+//!   rename leaves the old profile. A failure or crash between renames
+//!   can leave a mix of old and new files, as in libpinyin
+//!   (`pinyin.cpp:1025-1130` at 074a2219).
 //! * fini — `pinyin_fini`'s `user.conf` write: the open counter the load
 //!   raised, lowered again.
 //!
@@ -1557,8 +1561,11 @@ pub fn system_new_total(
 }
 
 /// Writes the whole profile: `_write_files` (every file to its `.tmp`
-/// sibling) then `_rename_files` (all renames), so a crash between the
-/// passes leaves the previous profile intact.
+/// sibling) then `_rename_files` (one file after another in the pin's
+/// order: libraries by index, the pinyin index, the phrase index, then
+/// the bigram). A failure before the first rename leaves the old
+/// profile. A failure or crash between renames can leave a mix of old
+/// and new files, as in libpinyin (`pinyin.cpp:1025-1130` at 074a2219).
 ///
 /// `user.conf` is `mark_version`'s marker with `open_counter` — the
 /// session's [`Loaded::open_counter`]: libpinyin's save writes back the
@@ -1568,9 +1575,10 @@ pub fn system_new_total(
 ///
 /// # Errors
 ///
-/// Returns [`PersistenceError`] on the first write or rename failure;
-/// the `.tmp` files of a failed save are removed, leaving the previous
-/// profile untouched.
+/// Returns [`PersistenceError`] on the first write, rename, or marker
+/// failure. Cleanup attempts to remove the remaining staged `.tmp`
+/// files after a write or rename failure; it does not undo completed
+/// renames.
 pub fn save(
     dir: &Path,
     state: &UserState,
@@ -1971,8 +1979,10 @@ fn stage_rest<B: FnMut(u8) -> SaveBaseline>(
     }
 }
 
-/// The save's commit: on success every staged `.tmp` renamed over its
-/// final, then `user.conf`; on failure every staged `.tmp` removed.
+/// The save's commit: rename each staged `.tmp` over its final in the
+/// pin's order, then write `user.conf`. After a write or rename failure,
+/// cleanup attempts to remove the remaining staged `.tmp` files;
+/// completed renames are not undone.
 fn finish_save(
     dir: &Path,
     versions: &SystemVersions,

@@ -87,11 +87,12 @@ tempfile = "3.27"
 # keystroke cycle measured +5.5% steady / +6.4% cold, and a back-to-back
 # rebuild without it recovers the time at +64 KiB
 # (docs/perf/perf-baseline-kc-2026-09.md, "Where the changes landed").
-# The panic discipline does not depend on the strategy: the no-panic lints
-# (clippy::unwrap_used/expect_used/panic/panic_in_result_fn denied in every
-# library crate, non-test scope) keep the bodies panic-free, and since
-# Rust 1.81 a panic reaching a non-unwinding ABI boundary aborts (Rust
-# Reference, "Unwinding"), so the removed catch sites stay removed under
+# The panic discipline does not depend on the strategy. The lints
+# clippy::unwrap_used/expect_used/panic/panic_in_result_fn deny explicit
+# panic forms in every library crate's non-test scope. They do not make
+# bodies panic-free or exclude other panic sources. Since Rust 1.81 a
+# panic reaching a non-unwinding ABI boundary aborts (Rust Reference,
+# "Unwinding"), so the removed catch sites stay removed under
 # either strategy. Re-adopting abort needs a keystroke-cycle number next
 # to the size number. The 116 KiB gimli/addr2line symbolizer is held by
 # std's default panic hook and is unaffected by either strategy (see the
