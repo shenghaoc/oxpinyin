@@ -45,6 +45,7 @@ MODULES = {
          'observed', 'pin_loaded_subject_refused_table_conf', 'policy_observation', 'registered_termination',
          'strjoinv_fault', 'tkrzw_saved_bigram_bytes', 'tkrzw_saved_bigram_equal', 'valid_observation'),
         ()),
+    'contract_selection': (('SelectionError', 'case_names', 'family_of', 'normal_tag'), ()),
 }
 
 # Driver functions that stay as adapters: the original signature, kept for every caller,
@@ -55,6 +56,9 @@ ADAPTERS = {
     'verdict_for': '(spec, pin, subject, expect_parent)',
     'short_dir_chunk': '(spec)',
     'matches': '(spec, pin, subject)',
+    'tag_index': '()',
+    'select_cases': '(cases=None, issues=(), families=())',
+    'plan_lines': '(names, reasons, pinyin_so, zhuyin_so, prefix, cell)',
 }
 
 spec = importlib.util.spec_from_file_location('contract_diff', HERE / 'contract-diff.py')
@@ -145,6 +149,18 @@ class ModuleBoundaryTests(unittest.TestCase):
                 with self.subTest(name=name), patch.object(verdicts, name, return_value=name) as moved:
                     self.assertEqual(getattr(driver, name)(*arguments), name)
                     moved.assert_called_once_with(*arguments, **keywords)
+
+    def test_selection_adapters_select_from_the_registry_the_driver_holds_now(self):
+        registry = {'only/one': dict(mode='zhuyin', cells=('kc',), issues=('7',))}
+        with patch.object(driver, 'CASES', registry):
+            self.assertEqual(driver.select_cases(), (['only/one'], {'only/one': ['default suite']}))
+            self.assertEqual(driver.select_cases(issues=['#7'])[0], ['only/one'])
+            self.assertEqual(driver.tag_index(), {'7': ['only/one'], 'family/only': ['only/one']})
+            names, reasons = driver.select_cases('only/one')
+            self.assertEqual(driver.plan_lines(names, reasons, Path('/s'), Path('/z'), Path('/pin'), 'bdb')[1],
+                             "  1 case skip on this cell (fixture in another backend's format)")
+            with self.assertRaises(driver.SelectionError):
+                driver.select_cases('plain')
 
     def test_changed_runs_map_each_module_to_its_tests_and_the_driver_tests(self):
         files = set(test_runner.harness_files())
