@@ -238,14 +238,15 @@ class ParallelCollectionTests(unittest.TestCase):
             libraries = {facade: root / f'lib{facade}.so' for facade in GENERATOR['FACADES']}
             self.campaigns.append((backend, args, libraries, libraries))
 
-    def run_collections(self, toggle, *, workers=6, steady=None):
+    def run_collections(self, toggle, *, workers=6, steady=None,
+                        startup=(('phrases', 'a'), ('journals', 'b'))):
         from tools.dev import pool
         @contextlib.contextmanager
         def admitted(*args, **kwargs):
             yield pool.Budget(workers, {'ADMITTED': 'yes', pool.POOL_WORKERS: str(workers)}, (42,))
         collect = GENERATOR['collect_campaigns']
         with mock.patch.dict(collect.__globals__, teardown_exports=lambda *a: '',
-                             startup_collections=lambda *a: [('phrases', 'a'), ('journals', 'b')],
+                             startup_collections=lambda *a: list(startup),
                              collect_toggle=toggle, collect_steady=steady or (lambda *a: {'hot', 'shared'}),
                              library_symbols=lambda *a: {}, archive_paths=lambda *a: {},
                              resolved_paths=lambda functions, *a: functions), \
@@ -291,6 +292,20 @@ class ParallelCollectionTests(unittest.TestCase):
         for _, args, _, _ in self.campaigns:
             for profile in GENERATOR['PROFILES']:
                 self.assertEqual((args.profiles_dir / profile / 'user/state').read_text(), 'original')
+
+    def test_empty_profile_functions_follow_the_populated_init_path(self):
+        def toggle(args, facade, library, user, name, environment):
+            return {name, 'shared'}
+        result, _, _ = self.run_collections(
+            toggle, startup=(('phrases', 'b'), ('journals', 'c'), ('empty', 'a'), ('empty', 'shared')))
+        for backend in result:
+            self.assertEqual(backend[0], backend[1])
+            self.assertEqual(backend[0]['libpinyin.order'],
+                             HEADER + 'init\tb\ninit\tc\ninit\tshared\ninit\ta\nsteady\thot\n')
+
+    def test_generator_profiles_are_teardown_fixtures_with_the_empty_one_last(self):
+        self.assertEqual(GENERATOR['PROFILES'], (*GENERATOR['POPULATED_PROFILES'], 'empty'))
+        self.assertTrue(set(GENERATOR['PROFILES']) <= set(TEARDOWN['PROFILES']))
 
     def test_worker_failure_propagates_and_removes_all_scratch(self):
         def failed(*args):
@@ -473,6 +488,11 @@ class GeneratorTests(unittest.TestCase):
         self.assertEqual(first, HEADER + "init\ta\ninit\tz\nsteady\tb\n")
         self.assertEqual(first, second)
 
+    def test_empty_profile_only_functions_follow_the_populated_init_path(self):
+        render = GENERATOR["policy"]
+        rendered = render("pinyin", {"z", "m"}, {"b", "y", "a"}, {"a", "m", "c"})
+        self.assertEqual(rendered, HEADER + "init\tm\ninit\tz\ninit\ta\ninit\tc\nsteady\tb\nsteady\ty\n")
+
     def test_paths_preserve_generics_and_closures(self):
         name = "<crate::Store<T>>::open::{closure#1}"
         self.assertEqual(GENERATOR["canonical"](name + "::h0123456789abcdef.llvm.abcdef"), name)
@@ -492,7 +512,11 @@ class GeneratorTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             GENERATOR["pairs"](["pinyin:phrases=one"],
                                tuple(f"{f}:{p}" for f in ("pinyin", "zhuyin")
-                                     for p in ("phrases", "journals")), "--init")
+                                     for p in GENERATOR["PROFILES"]), "--init")
+        with self.assertRaises(ValueError):
+            GENERATOR["pairs"]([f"{f}:{p}=one" for f in ("pinyin", "zhuyin") for p in ("phrases", "journals")],
+                               tuple(f"{f}:{p}" for f in ("pinyin", "zhuyin")
+                                     for p in GENERATOR["PROFILES"]), "--init")
 
     def test_exact_unnamed_crt_start_resolves_without_address_guessing(self):
         reader = GENERATOR["library_symbols"]

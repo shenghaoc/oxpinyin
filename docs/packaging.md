@@ -466,6 +466,12 @@ in the startup set, the code that options, the instance and the first
 candidate reach lay in eight (libzhuyin) or nine (libpinyin) scattered
 windows: 512 or 576 KiB of resident text (#1032).
 
+Startup runs on three user profiles: `phrases` and `journals`, which are
+populated, and `empty`, an empty user directory. On the empty directory, init
+takes the missing-profile path: it cannot read `user.conf`, reports that on
+stderr, and removes the user files. A first start of every user takes that
+path, and the populated profiles never do (#1090).
+
 Any cargo-c at or above the minimum that `just doctor` reports does the build,
 because it only drives rustc. On 2026-10-23 UTC, built as below (Rust 1.97.1,
 GNU ld 2.47, linux/amd64), cargo-c 0.10.24, 0.10.25 and 0.10.26 gave
@@ -574,8 +580,8 @@ cc -std=gnu11 -Wall -Wextra -Werror -O2 -o "$BISECT" \
 ```
 
 `$DATA` is that cell's system directory, `$DATA_ID` its SHA-256 under the profile
-manifest schema, and `$PROFILES` holds the `phrases` and `journals` fixture
-trees with their `user/` directories and `profile.manifest` files. The library
+manifest schema, and `$PROFILES` holds the `phrases`, `journals` and `empty`
+fixture trees with their `user/` directories and `profile.manifest` files. The library
 and staticlib for a facade must be the same build.
 
 Provision the profiles with the in-tree teardown provisioner against the
@@ -655,9 +661,12 @@ files in their own commit. Compare backend path sets before proposing a shared
 prefix; implementing one requires a separate maintainer ruling.
 
 The generator stops each measured child at the worker's teardown boundary and
-keeps profiler output in memory. It requires both facades and both startup
-profiles, unions the two startup sets, subtracts that union from the steady
-set, and writes either policy only after every stream resolves. A missing
+keeps profiler output in memory. It requires both facades and all three
+startup profiles. The init tier lists the union of the populated profiles'
+startup sets first, in lexical order, then the functions only the empty
+profile runs, in lexical order. The steady tier lists the steady set less both
+of those, in lexical order. It writes either policy only after every stream
+resolves. A missing
 orderable Rust path is an error; fixed loader/CRT paths are counted and
 excluded. C++ functions in the staticlib are ordered under their mangled
 names (see "Final-link mechanism and fallback").
