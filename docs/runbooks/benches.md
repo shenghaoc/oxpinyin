@@ -448,7 +448,10 @@ is restricted; that refuses the sample too. Do not treat a refusal as cold
 measurement evidence. Cold memory samples also read every cold file's
 resident pages with the same `mincore` at each checkpoint, and a `residency`
 record gives their per-file summaries at M0 (after load, before init) through
-M3; this reads no file bytes. Equivalence/provisioning observations stay warm;
+M3; this reads no file bytes. The same readings keep each file's `mincore`
+vector, and a `page-residency` record per pair of neighbouring checkpoints
+names the pages that became resident between them (see "Per-page residency
+attribution"). Equivalence/provisioning observations stay warm;
 `verify` performs no cold samples. Cold mode refuses profiling and repeated
 in-process lifecycles. Run cold campaigns only when other measurement lanes
 are idle and the heavy slot is available: dependency and system-data cache
@@ -530,6 +533,8 @@ through M1 and are sampled maxima, not exact transient allocation peaks.
 - `count`: perf counters around init, minus an empty calibration bracket
   that the record reports too. An event the kernel refuses (for example a
   hardware event on a host without a PMU) is NOT RUN with its errno, never 0.
+  With `--teardown-cache cold`, its rounds also give each side's
+  `page-residency` record for M0 to I1.
 - `sample` and `sample-coarse`: `cpu-clock` samples every 20 µs and every
   200 µs, with kernel call chains. Kernel samples are named by their
   innermost syscall or page-fault frame from `/proc/kallsyms`; user samples
@@ -560,15 +565,69 @@ a primary timing sample; report primary timings from `confirm`.
 
 ## Per-page residency attribution
 
-`tools/dev/measure/pages.py` (#1163) is the shared core for naming the file
-pages that become resident during a cold sample; neither controller calls it
-yet. It compares one file's `mincore` vectors from two checkpoints and lists
-each newly resident object page with every section and symbol it overlaps:
-ELF section headers with `.symtab` and `.dynsym` (`elf_sections`,
-`elf_symbols`), or thin arm64 and x86_64 Mach-O segments, sections and
-`LC_SYMTAB` symbols (`macho_segments`, `macho_sections`, `macho_symbols`).
-Data and user files are reported as byte ranges (`offset_range`). Fat Mach-O
-and other formats are refused. Two limits apply to every result:
+`tools/dev/measure/pages.py` (#1163) names the file pages that become resident
+during a cold sample. It compares one file's `mincore` vectors from two
+checkpoints and lists each newly resident object page with every section and
+symbol it overlaps: ELF section headers with `.symtab` and `.dynsym`
+(`elf_sections`, `elf_symbols`), or thin arm64 and x86_64 Mach-O segments,
+sections and `LC_SYMTAB` symbols (`macho_segments`, `macho_sections`,
+`macho_symbols`). Data and user files are reported as byte ranges
+(`offset_range`). Fat Mach-O and other formats are refused.
+
+The teardown campaign's cold mode (`--teardown-cache cold`, native Linux) is
+the first caller; the native controller does not call it yet. No flag turns it
+on: the cold memory samples of `pilot` and `confirm`, and the cold init samples
+of the `init-attribute` stage's `count` probe, report. It adds only text to the
+existing output; nothing is archived or uploaded:
+
+- **Capture.** At each paused checkpoint the controller already reads every
+  cold file's residency with `tools.dev.mman.vector`, the one `mincore` reader
+  in the tree; the page counts in the `residency` and `init-residency` records
+  are derived from the same vector. A cold sample now keeps that vector, with
+  the file's size and inode and its kind: an object (the facade and its
+  non-C-runtime dependencies, which the report parses) or data (system data,
+  the private user files and the dirty scenario's rows file). There is no
+  second read and no file byte is read.
+- **Pairs.** Only neighbouring checkpoints pair. An `init` sample (the
+  `init-attribute` stage's `count` probe) gives M0 to I1. A `memory` sample
+  (`pilot`, `confirm`) gives M0 to M1, M1 to M2 and M2 to M3. M0 is after load,
+  I1 after init, M1 after the workload and optional save, M2 after the frees
+  and M3 after fini.
+- **Record.** After the rounds of one facade, case and side, one
+  `page-residency` record per pair holds `facade`, `case`, `side`, `cache`,
+  `checkpoints` (the pair), `rounds`, `page_size`, the `limits` below, `files`
+  and `unchanged`. `files` maps each cold file that had a newly resident page in
+  any round to its `kind`, `pages`, `new_pages` (the per-round count, as a
+  summary) and `rows`. An object row is one page: `page_offset` with
+  `elf_sections` and `elf_symbols`. A data row is a half-open `offset_range`,
+  its last page clipped to the file size. Both carry `in_rounds`, the number of
+  rounds in which that page became resident; pages join a range only when
+  their counts are equal. `unchanged` lists the files with no newly resident
+  page in any round. File labels are `facade`, `data/<path>`, `user/<path>` and
+  the dependency's name for memory samples, and `SUBJECT`, `DATA:<path>`,
+  `USER:<path>` and `LIB:<name>` for init samples.
+- **Replaced and unparsed files.** A file that is another inode at the later
+  checkpoint (a saved user database that was recreated) has nothing to compare:
+  its entry carries `replaced_in_rounds` and those rounds are left out of the
+  rest. An object that cannot be parsed (unsupported, malformed or
+  unreadable) is reported as byte ranges with a `layout_error` naming why; the
+  campaign goes on. Before parsing, the opened descriptor's device, inode,
+  size and recorded modification time must match the checkpoint metadata;
+  the mapper parses bytes from that same descriptor. A replacement or
+  modification after capture, or disagreement across retained rounds, also
+  falls back to byte ranges with the reason.
+- **Outside the timed scopes.** Objects are parsed after the rounds, when the
+  record is printed, never at a checkpoint and never inside a sample: parsing
+  reads the object into the page cache, and the next cold sample evicts it
+  again. The worker's timed intervals are bracketed by its own clocks, and it
+  waits at each checkpoint while the controller reads, as it did before.
+
+```sh
+# The records of a cold run whose standard output is in $cold_run:
+grep '"teardown": "page-residency"' "$cold_run"
+```
+
+Three limits apply to every result, and every record repeats them in `limits`:
 
 - A `mincore` difference includes readahead. A page that became resident
   between two checkpoints was not necessarily faulted; the kernel may have
@@ -576,6 +635,12 @@ and other formats are refused. Two limits apply to every result:
 - Pausing at a checkpoint can let outstanding readahead finish. Pages
   requested before one checkpoint can arrive during the pause and show as
   newly resident at the next.
+- A page the process wrote is resident too. A user file that grew or was
+  rewritten shows its written pages as newly resident, whether or not anything
+  read them.
+
+A page with `in_rounds` below `rounds` was newly resident in only some of the
+rounds.
 
 ## Criterion benches
 

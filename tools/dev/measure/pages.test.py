@@ -105,6 +105,12 @@ class PagesTests(unittest.TestCase):
         self.assertEqual(rows[0x6a0]['elf_sections'], ['.got', '.data', '.got.plt'])
         self.assertEqual(rows[0x6a0]['elf_symbols'], ['pages_counter'])
 
+    def test_verified_bytes_are_parsed_without_opening_the_diagnostic_path(self):
+        missing = self.root / 'not-opened'
+        for path in (ELF, ARM64, X86_64):
+            with self.subTest(object=path.name):
+                self.assertEqual(pages.object_layout(missing, data=path.read_bytes()), pages.object_layout(path))
+
     def test_elf_pages_spanning_sections_and_symbols(self):
         rows = pages_at(ELF, [0x520, 0x540, 0x5a0], 32)
         self.assertEqual(rows[0x520]['elf_sections'], ['.eh_frame', '.text'])
@@ -244,6 +250,53 @@ class PagesTests(unittest.TestCase):
         rows = pages.object_report(ARM64, read('M0', ARM64), read('I1', ARM64), 16384, 'facade')
         self.assertEqual([(row['page_offset'], row['macho_segments']) for row in rows], [(0x4000, ['__DATA'])])
         self.assertEqual(rows[0]['file'], 'facade')
+
+    def test_checkpoint_pairs_are_neighbours_only(self):
+        self.assertEqual(pages.checkpoint_pairs(['M0', 'I1']), [('M0', 'I1')])
+        self.assertEqual(pages.checkpoint_pairs(['M0', 'M1', 'M2', 'M3']),
+                         [('M0', 'M1'), ('M1', 'M2'), ('M2', 'M3')])
+        self.assertEqual(pages.checkpoint_pairs(['M0']), [])
+        self.assertEqual(pages.checkpoint_pairs([]), [])
+
+    def test_a_page_that_stays_resident_belongs_to_the_interval_that_brought_it(self):
+        read = FakeResidency({'M0': {'f': [0, 0, 0]}, 'M1': {'f': [0, 1, 0]},
+                              'M2': {'f': [0, 1, 1]}, 'M3': {'f': [0, 1, 1]}})
+        found = [pages.newly_resident(read(earlier, 'f'), read(later, 'f'), 4096)
+                 for earlier, later in pages.checkpoint_pairs(['M0', 'M1', 'M2', 'M3'])]
+        # Page 1 is new at M1 and stays; page 2 is new at M2; nothing is new at M3.
+        self.assertEqual(found, [[4096], [8192], []])
+
+    def test_rounds_are_tallied_per_page(self):
+        read = FakeResidency({
+            'M0': {'a': [0, 0, 0, 0], 'b': [0, 0, 0, 0], 'c': [1, 0, 0, 0]},
+            'I1': {'a': [0, 1, 1, 0], 'b': [0, 1, 0, 1], 'c': [1, 1, 0, 0]}})
+        rounds = [pages.newly_resident(read('M0', name), read('I1', name), 4096) for name in 'abc']
+        self.assertEqual(pages.tally(rounds), {4096: 3, 8192: 1, 12288: 1})
+        # A page listed twice in one round still counts once.
+        self.assertEqual(pages.tally([[0, 0], [0]]), {0: 2})
+        self.assertEqual(pages.tally([]), {})
+
+    def test_object_rows_carry_the_rounds_that_saw_their_page(self):
+        rows = pages.object_tally_rows(pages.object_layout(ELF), {0x440: 3, 0x540: 1}, 32, 'facade')
+        self.assertEqual(rows, [
+            dict(file='facade', page_offset=0x440, elf_sections=['.rodata'], elf_symbols=['pages_table'], in_rounds=3),
+            dict(file='facade', page_offset=0x540, elf_sections=['.text'],
+                 elf_symbols=['pages_first', 'pages_second', 'pages_third'], in_rounds=1)])
+        self.assertEqual(pages.object_tally_rows(pages.object_layout(ELF), {}, 32, 'facade'), [])
+
+    def test_data_rows_join_pages_only_when_their_round_counts_are_equal(self):
+        counts = {0: 3, 64: 3, 128: 2, 192: 3}
+        self.assertEqual(pages.data_tally_rows(counts, 64, 224, 'user/user.db'), [
+            dict(file='user/user.db', offset_range=[0, 128], in_rounds=3),
+            dict(file='user/user.db', offset_range=[128, 192], in_rounds=2),
+            dict(file='user/user.db', offset_range=[192, 224], in_rounds=3)])
+        self.assertEqual(pages.data_tally_rows({}, 64, 224, 'user/user.db'), [])
+
+    def test_limits_name_readahead_the_checkpoint_pause_and_written_pages(self):
+        text = ' '.join(pages.LIMITS)
+        for phrase in ('readahead', 'not necessarily a faulted page', 'pausing at a checkpoint', 'finish',
+                       'process wrote'):
+            self.assertIn(phrase, text)
 
 
 if __name__ == '__main__':
