@@ -158,6 +158,8 @@ class WindowsJob:
 
 CANCELLED = threading.Event()
 CANCELLED_SIGNAL = None
+# Open cancellation_handlers contexts; only the outermost clears the state.
+_HANDLER_DEPTH = 0
 
 
 def cancellation_status():
@@ -185,10 +187,13 @@ def cancellation_handlers():
 
     SIGTERM, SIGINT, and SIGHUP set the shared event where available. Restore
     previous handlers on exit; signal installation requires the main thread.
+    A nested context, such as run_command's inside a runner's, keeps the
+    state: a signal the outer handlers recorded still cancels the inner work.
     """
-    global CANCELLED_SIGNAL
-    CANCELLED.clear()
-    CANCELLED_SIGNAL = None
+    global CANCELLED_SIGNAL, _HANDLER_DEPTH
+    if not _HANDLER_DEPTH:
+        CANCELLED.clear()
+        CANCELLED_SIGNAL = None
     def cancel(signum, frame):
         global CANCELLED_SIGNAL
         CANCELLED_SIGNAL = signum
@@ -198,9 +203,11 @@ def cancellation_handlers():
         signum = getattr(signal, name, None)
         if signum is not None:
             previous[signum] = signal.signal(signum, cancel)
+    _HANDLER_DEPTH += 1
     try:
         yield
     finally:
+        _HANDLER_DEPTH -= 1
         for signum, handler in previous.items():
             signal.signal(signum, handler)
 
@@ -1135,16 +1142,18 @@ def run_admitted(jobs, workers, run):
 
 
 def run_command(command, env=None, out=sys.stderr, poll=0.5, *,
-                prepare_heavy_env=None, on_admitted=None, stdout=None, report=False):
+                prepare_heavy_env=None, on_admitted=None, cwd=None, stdout=None, report=False):
     """Run a child after heavy-slot and memory admission, returning its raw status.
 
     Copy the supplied environment or os.environ; invoke on_admitted with
     final settings before spawning. Install cancellation handlers, supervise
     the child group/job, and reap it before releasing local slot ownership.
-    Admission, spawn, and cancellation errors propagate. Off Windows, stdout
-    redirects the child's standard output (default: inherited) and report
-    prints the slot, waits, run time and status on out once the child is
-    reaped, the line `run-all.py --heavy-slot` ended with.
+    Admission, spawn, and cancellation errors propagate. On every platform,
+    cwd is the child's working directory, stdout redirects its standard
+    output to a file or descriptor (default: inherited; never PIPE, which
+    nothing here drains), and report prints the slot, waits, run time and
+    status on out once the child is reaped: the line
+    `run-all.py --heavy-slot` ended with.
     """
     command = list(command)
     with cancellation_handlers():
@@ -1152,11 +1161,12 @@ def run_command(command, env=None, out=sys.stderr, poll=0.5, *,
                             poll=poll, prepare_heavy_env=prepare_heavy_env) as admission:
             if on_admitted is not None:
                 on_admitted(admission.env)
+            started = time.monotonic()
             if sys.platform == 'win32':
                 import ctypes
                 from ctypes import wintypes
                 with WindowsJob() as job:
-                    process = subprocess.Popen(command, env=admission.env,
+                    process = subprocess.Popen(command, env=admission.env, cwd=cwd, stdout=stdout,
                                                creationflags=CREATE_SUSPENDED)
                     try:
                         job.assign(process._handle)
@@ -1165,17 +1175,17 @@ def run_command(command, env=None, out=sys.stderr, poll=0.5, *,
                         ntdll.NtResumeProcess.argtypes = [wintypes.HANDLE]
                         if ntdll.NtResumeProcess(wintypes.HANDLE(process._handle)) != 0:
                             raise OSError(ctypes.get_last_error(), 'NtResumeProcess failed')
-                        return wait_child(process)
+                        code = wait_child(process)
                     except BaseException:
                         job.terminate()
                         process.kill()
                         process.wait()
                         raise
-            started = time.monotonic()
-            with subprocess.Popen(command, env=admission.env, start_new_session=True, stdout=stdout,
-                                  pass_fds=admission.slot.pass_fds()) as process:
-                admission.slot.handoff()
-                code = wait_child(process)
+            else:
+                with subprocess.Popen(command, env=admission.env, cwd=cwd, stdout=stdout, start_new_session=True,
+                                      pass_fds=admission.slot.pass_fds()) as process:
+                    admission.slot.handoff()
+                    code = wait_child(process)
             if report:
                 print(f'heavy slot {admission.slot.slot}: slot_wait_seconds {admission.slot_wait:.1f}, '
                       f'memory_wait_seconds {admission.memory_wait:.1f}, '

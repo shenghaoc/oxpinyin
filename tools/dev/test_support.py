@@ -7,6 +7,86 @@ such failure printed API and GitHub tokens (#1262). These helpers report call
 counts and the argument positions or variable names that differ, never values.
 Standard library only.
 """
+import contextlib
+import sys
+import types
+from unittest import mock
+
+
+@contextlib.contextmanager
+def windows_launch(status=0, write=None):
+    """Drive slot.run_command's Windows branch on any host, starting nothing.
+
+    Patch sys.platform to win32, admission to a stand-in that holds no lock,
+    and the Job Object, ntdll and Popen to recorders. WRITE, if given, fills a
+    child's standard output when it is redirected to a file. Yield the Popen
+    mock, the jobs created (each with the process handles it was given), and
+    the ntdll stand-in.
+    """
+    from tools.dev import slot
+
+    jobs = []
+
+    class Job:
+        def __init__(self):
+            self.assigned = []
+            jobs.append(self)
+
+        def assign(self, handle):
+            self.assigned.append(handle)
+
+        def terminate(self, code=1):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    class Admission:
+        def __init__(self, command, env, *args, **options):
+            self.env = dict(env)
+            # The report's figures, and no descriptor to pass or hand off: the Windows branch needs neither.
+            self.slot = types.SimpleNamespace(slot=0)
+            self.slot_wait = self.memory_wait = 0.0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def popen(argv, **options):
+        if write is not None and hasattr(options.get('stdout'), 'write'):
+            write(options['stdout'])
+        process = mock.MagicMock(args=argv, _handle=4242)
+        process.wait.return_value = status
+        return process
+
+    ntdll = mock.Mock()
+    ntdll.NtResumeProcess.return_value = 0
+    with mock.patch.object(sys, 'platform', 'win32'), \
+            mock.patch.object(slot, 'HeavyAdmission', Admission), \
+            mock.patch.object(slot, 'WindowsJob', Job), \
+            mock.patch('ctypes.WinDLL', return_value=ntdll, create=True), \
+            mock.patch.object(slot.subprocess, 'Popen', side_effect=popen) as launch:
+        yield launch, jobs, ntdll
+
+
+def assert_windows_launches(test, launch, jobs, ntdll, cwd=None):
+    """Fail unless every launch took run_command's Job Object path without pass_fds."""
+    from tools.dev import slot
+
+    test.assertEqual(len(jobs), launch.call_count, 'one Job Object per launch')
+    test.assertEqual(ntdll.NtResumeProcess.call_count, launch.call_count, 'each child resumed once')
+    for index, call in enumerate(launch.call_args_list):
+        test.assertNotIn('pass_fds', call.kwargs, f'launch {index} passed descriptors')
+        test.assertNotIn('start_new_session', call.kwargs, f'launch {index} used the POSIX path')
+        test.assertEqual(call.kwargs.get('creationflags'), slot.CREATE_SUSPENDED,
+                         f'launch {index} not CREATE_SUSPENDED')
+        test.assertEqual(call.kwargs.get('cwd'), cwd, f'launch {index} working directory')
+        test.assertEqual(jobs[index].assigned, [4242], f'launch {index} not assigned to its job')
 
 
 def assert_not_called(test, mocked):

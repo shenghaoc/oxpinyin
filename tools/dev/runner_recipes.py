@@ -7,6 +7,7 @@ import re
 import shutil
 import sys
 
+from . import slot
 from .cell import CellError, Settings, patch_digest
 from .runners import Context, Finished, emit, python_script, status, write
 from .system_data import NAMES, data_extension
@@ -960,9 +961,12 @@ def residue(ctx: Context, args: Sequence[str]) -> int:
             if supplied:
                 ctx.emit('FAIL: RESIDUE_A_PROBE needs OXPINYIN_NBEST_TAIL_PROBE with a supplied library')
                 return 1
-            ctx.checked(['just', 'heavy', '--', 'cargo', 'build', '--locked', '-p', 'oxpinyin-runtime',
-                         '--example', 'nbest_tail_probe', '--no-default-features', '--features', settings.feature,
-                         '--manifest-path', settings.root / 'Cargo.toml'])
+            built = slot.run_command(['cargo', 'build', '--locked', '-p', 'oxpinyin-runtime',
+                                      '--example', 'nbest_tail_probe', '--no-default-features', '--features',
+                                      settings.feature, '--manifest-path', str(settings.root / 'Cargo.toml')],
+                                     env=ctx.env, out=sys.stderr, cwd=settings.root)
+            if built:
+                raise Finished(status(built))
             probe = str(settings.target / 'debug/examples/nbest_tail_probe')
         result = ctx.command([probe, data, ctx.scratch()], capture=True)
         (out / 'ox-probe.log').write_bytes(result.stdout)

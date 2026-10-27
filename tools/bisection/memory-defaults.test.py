@@ -749,13 +749,14 @@ class RunnerBuildRoutingTests(unittest.TestCase):
         source = ROOT / 'tools/dev/runner_recipes.py'
         tree = ast.parse(source.read_text())
         residue = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'residue')
-        commands = [node.args[0] for node in ast.walk(residue)
-                    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                    and node.func.attr == 'checked' and node.args and isinstance(node.args[0], ast.List)]
-        builds = [command for command in commands if any(isinstance(item, ast.Constant) and item.value == 'cargo'
-                                                        for item in command.elts)]
-        self.assertEqual(len(builds), 1)
-        self.assertEqual([item.value for item in builds[0].elts[:5]], ['just', 'heavy', '--', 'cargo', 'build'])
+        calls = [node for node in ast.walk(residue)
+                 if isinstance(node, ast.Call) and node.args and isinstance(node.args[0], ast.List)
+                 and any(isinstance(item, ast.Constant) and item.value == 'cargo' for item in node.args[0].elts)]
+        # The probe build goes through slot.run_command, as the cell builds do: admitted
+        # and supervised in the runner's process, without just, which the image lacks.
+        self.assertEqual([ast.unparse(call.func) for call in calls], ['slot.run_command'])
+        builds = [call.args[0] for call in calls]
+        self.assertEqual([item.value for item in builds[0].elts[:2]], ['cargo', 'build'])
         self.assertIn('nbest_tail_probe', [item.value for item in builds[0].elts if isinstance(item, ast.Constant)])
 
     def test_runner_cargo_builds_all_use_the_heavy_wrapper(self):

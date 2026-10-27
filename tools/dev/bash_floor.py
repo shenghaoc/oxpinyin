@@ -33,6 +33,12 @@ MIXED = frozenset({
     'tools/tkrzw/runtime.sh',
 })
 
+# Scripts that run only from a staged copy, with the floor file staged beside
+# them: compat.sh runs compat-inside.sh as /input/inside.sh.
+STAGED = frozenset({
+    'tools/oracle/compat-inside.sh',
+})
+
 
 def read_floor():
     """Return the floor declared in FLOOR_FILE."""
@@ -44,7 +50,8 @@ def read_floor():
 
 def source_line(relative):
     """Return the POSIX source line a script at RELATIVE must use."""
-    target = posixpath.relpath(FLOOR_FILE, posixpath.dirname(relative))
+    target = (posixpath.basename(FLOOR_FILE) if relative in STAGED
+              else posixpath.relpath(FLOOR_FILE, posixpath.dirname(relative)))
     if relative in MIXED:
         return f'[ "${{BASH_SOURCE:-$0}}" = "$0" ] && . "${{0%/*}}/{target}"'
     return f'. "${{0%/*}}/{target}"'

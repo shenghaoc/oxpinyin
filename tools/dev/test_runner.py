@@ -820,20 +820,6 @@ def _prepare_nextest(count, source):
     return prepare
 
 
-def _run(command, label):
-    """Print the step and command, execute it, and return its subprocess status.
-
-    Report a missing executable as missing just and return 127.
-    """
-    print(label, file=sys.stderr, flush=True)
-    print('command: ' + shlex.join(command), file=sys.stderr, flush=True)
-    try:
-        return subprocess.run(command, env=os.environ).returncode
-    except FileNotFoundError:
-        print('missing just; install it and retry (docs/runbooks/setup.md)', file=sys.stderr, flush=True)
-        return 127
-
-
 def run(args=None, profile=None):
     """Run nextest under the shared slot with its final process budget.
 
@@ -870,6 +856,22 @@ def run(args=None, profile=None):
 
 
 def run_doc(args=None):
-    """Run cargo test --doc through just heavy. Returns the child status."""
+    """Run cargo test --doc under the shared slot, as `just heavy` did.
+
+    Default to command-line arguments. Return the child status, a signal or a
+    cancellation as 128 plus its number, or print FAIL and return 2 for other
+    OS/value errors during admission and execution.
+    """
     args = _strip_separator(sys.argv[1:] if args is None else args)
-    return _run(['just', 'heavy', '--', 'cargo', 'test', '--doc', *args], 'doctest step')
+    command = ['cargo', 'test', '--doc', *args]
+    print('doctest step', file=sys.stderr, flush=True)
+    print('command: ' + shlex.join(command), file=sys.stderr, flush=True)
+    try:
+        status = slot.run_command(command, env=os.environ, out=sys.stderr)
+    except slot.Cancelled as exc:
+        print(exc, file=sys.stderr, flush=True)
+        return slot.cancellation_status()
+    except (ValueError, OSError) as exc:
+        print(f'FAIL: {exc}', file=sys.stderr, flush=True)
+        return 2
+    return 128 - status if status < 0 else status

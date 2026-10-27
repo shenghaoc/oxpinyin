@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # Invoked only by compat.sh, inside the controlled image and Linux volume.
 
+# compat.sh runs this as /input/inside.sh and stages the floor file beside it.
 # shellcheck source=../lib/bash-floor.sh
-. "${0%/*}/../lib/bash-floor.sh"
+. "${0%/*}/bash-floor.sh"
+# Bash only warns when `.` cannot read the file; stop rather than skip the check.
+[[ -n ${OXPINYIN_BASH_FLOOR-} ]] || { echo "FAIL: $0: ${0%/*}/bash-floor.sh not sourced; Bash floor unchecked" >&2; exit 2; }
 
 set -euo pipefail
 [[ ${OXPINYIN_COMPAT_CONTAINER:-} == 1 && $(uname -s) == Linux &&
