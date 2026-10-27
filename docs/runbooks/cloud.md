@@ -31,7 +31,7 @@ The script also requires:
   access plus `apt-get` to install or upgrade it. Root uses apt directly; a
   non-root account with sudo retains the sudo install path. Without either
   privilege route, setup prints `run as root: apt-get install -y valgrind` and
-  a specific missing- or outdated-Valgrind failure before Python downloads.
+  a specific missing- or outdated-Valgrind failure before oracle downloads.
   Ask the environment owner to install it or choose a host with a suitable
   Valgrind already available.
 - A writable uv installation directory when uv needs installing or replacing
@@ -154,7 +154,7 @@ provision stops the `source` with an error. The file needs bash.
 
 ### Data verification
 
-`data_ok` in `tools/cloud/env.sh` checks the same data contract when setup
+`Provision.data_ok` in `tools/dev/provision.py` checks the same data contract when setup
 reuses a cache, verifies regenerated data, or retains an existing cell in
 the environment file. It compares the SHA-256 of `oracle-data.sha256`
 with `data_manifest_sha256_<cell>` in the repository's pin file and checks
@@ -173,23 +173,16 @@ For a read-only check of a selected prefix, load its matching setup
 environment and run from the repository root:
 
 ```sh
-(
-    source tools/cloud/env.sh
-    pin=tools/oracle/oracle-pin.txt
-    source tools/oracle/pin.sh
-    platform=$(oracle_platform)
-    pinval_platform() { pin_platform_field "$pin" "$platform" "$1"; }
-    data_ok "$PINYIN_ORACLE_DBM" "$PINYIN_ORACLE_PREFIX"
-)
+just provision data-check "$PINYIN_ORACLE_DBM" "$PINYIN_ORACLE_PREFIX"
 ```
 
 ### Runtime enforcement (verification rule 9)
 
 Any object that resolves `libtkrzw` must use the runtime verified by setup,
 even when `PINYIN_ORACLE_DBM` is unset, `bdb` or `kc`.
-`tools/tkrzw/runtime.py` contains the single check, using bash, `ldd`, awk
-and readlink; `runtime.py` is only an adapter for Python tools, which is how
-the measurement recipes call it. The check itself needs no uv or Python.
+`tools/tkrzw/runtime.py` contains the single Python loader check, shared by
+provisioning, native gates and compatibility recipes. The reference images
+retain their environment-only shell check and do not receive `tools.dev`.
 The environment writer exports `OXPINYIN_TKRZW_LIBRARY`, the
 exact canonical library verified by setup. A healthy host uses the existing
 `probe_host` result; an unhealthy host uses the provisioned cache. An older
@@ -240,7 +233,7 @@ by the inherited value. The remaining overwrites were classified as follows:
 | `release-stage.sh` and `capture/run-capture.sh` | Additional defects; linked smoke/capture processes also need inheritance and the check. |
 | `just runner cpp-smoke`: cleared-path `ldd` assertion | Intentional SONAME/RPATH test; the subsequent executable launch is checked with its actual environment. |
 | `build-oracle.sh`: generation-prefix assignment | Intentional isolation in the pinned build recipe; not a differential launch. |
-| `cloud/env.sh`: generated-path parsing and host-probe filtering; setup's cache-probe assignments | Intentional parsing without caller inheritance, or isolation of the host or selected cache while provisioning. |
+| `tools/dev/provision.py`: generated-path parsing and host-probe filtering; setup's cache-probe assignments | Intentional parsing without caller inheritance, or isolation of the host or selected cache while provisioning. |
 | `tools/dev/compat/boundary.py`: removal of host loader variables | Intentional host/container boundary; the container supplies its own runtime. |
 
 No listed remaining measurement overwrite is exempt as never-tkrzw.
@@ -258,9 +251,10 @@ uv run --no-project --managed-python python -B -X lazy_imports=normal tools/tkrz
 
 ## What it does
 
-0. Checks Cargo and the repository toolchain, and requires or installs
-   Valgrind before Python provisioning. Then provisions uv and managed
-   CPython, checking the uv installation destination before its download.
+0. Bootstraps uv and managed CPython, checking the uv installation
+   destination before its download. The Python provisioning service then
+   checks Cargo and the repository toolchain and requires or installs
+   Valgrind.
    Requires backend dump utilities for the requested cells: `db5.3_dump`
    (`db5.3-util`) and `kchashmgr` (`kyotocabinet-utils`). Root containers may
    install them with apt; ordinary accounts get an explicit missing-package
@@ -642,3 +636,24 @@ one run, spread 0) needs only the Rust side.
   `oracle-pin.txt`. They are left in the oracle root; compare them with
   `readelf -S -W` and `cmp -l` against a reference build and report the
   difference. Do not edit the recorded values to match.
+
+### Provisioning implementation and fixture checks
+
+`tools/cloud/setup.sh` retains the pre-interpreter uv/bootstrap step and then
+calls the single `tools.dev provision` service. `just provision` uses an already
+provisioned interpreter. The function-order policy action continues to call
+`tools/cloud/setup.sh --python-only` unchanged.
+
+Run the synthetic cloud fixtures through normal Python discovery:
+
+```sh
+just test-tools tools/dev/provision.test.py
+U6_BASE=/absolute/path/to/preserved/base just test-tools tools/dev/provision.test.py
+```
+
+The optional preserved tree compares shell and Python entry points with the same
+fake host, pins, data, proxy CA and generated environment paths. Times and private
+temporary paths retain their meaning but vary by invocation. Missing option values
+retain status 1 with Python's `--option: requires an argument` diagnostic; Bash's
+unbound-variable and signal job messages are not reproduced. On a fresh host,
+uv/interpreter bootstrap precedes Python-owned native prerequisite checks.

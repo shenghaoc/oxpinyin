@@ -237,11 +237,17 @@ if __name__ == '__main__': unittest.main()
         shared = ('justfile', 'tools/bisection/runners.json', 'tools/dev/bash_floor.py',
                   '.github/actions/function-order-policy/action.yml',
                   '.github/workflows/oracle-image.yml', '.github/workflows/verify-nightly.yml',
-                  'tools/cloud/setup.sh', 'tools/cloud/env.sh', 'tools/cloud/env.test.sh')
+                  'docs/plans/tooling-shell-audit.md')
         for path in shared:
             with self.subTest(path=path):
                 self.assertNotIn(path, test_runner.HARNESS_DEPENDENCIES)
                 self.assertEqual(test_runner.changed_harness_files(files, [path]), files)
+
+    def test_provision_owned_file_selects_its_readers_and_justfile_selects_all(self):
+        files = test_runner.harness_files()
+        selected = test_runner.changed_harness_files(files, ['tools/dev/provision.py'])
+        self.assertEqual(selected, [name for name in files if name in test_runner.PROVISION_HARNESS])
+        self.assertEqual(test_runner.changed_harness_files(files, ['justfile']), files)
 
     def test_tooling_shell_audit_and_other_audited_text_select_their_reader(self):
         # python-request.test.py reads every tracked text file outside its

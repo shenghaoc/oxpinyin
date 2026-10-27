@@ -839,10 +839,11 @@ esac
         self.assertEqual(starts, ['run'])
         # compat-inside passes --in-container. Its provisioning helper returns
         # before the native-only in_image runtime command in that mode.
-        setup = (ROOT / 'tools/cloud/setup.sh').read_text()
-        in_image = setup[setup.index('in_image_cmd() {'):]
-        self.assertLess(in_image.index('if ((inside)); then'), in_image.index('"$ctr" run'))
-        self.assertIn('return\n\tfi', in_image[:in_image.index('"$ctr" run')])
+        from tools.dev.provision import Provision
+        service = Provision()
+        service.inside = True
+        self.assertEqual(service.in_image_command(['--libs-only']),
+                         [str(ROOT / 'tools/oracle/build-oracle.sh'), '--libs-only'])
 
     def test_runtime_preference_and_explicit_override_are_preserved(self):
         self.fake_runtime()
