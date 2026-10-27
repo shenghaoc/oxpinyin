@@ -76,10 +76,10 @@ fn syllables(text: &str) -> Vec<SyllableKey> {
 }
 
 #[test]
-#[ignore = "needs the model20 cache (tools/model/fetch-model.sh); run with --include-ignored"]
+#[ignore = "needs the model20 cache (just fetch-model); run with --include-ignored"]
 fn the_compiled_backend_reads_back_through_the_runtime_reader() {
     let Some(model) = model_dir() else {
-        panic!("missing input: model20 cache absent (run tools/model/fetch-model.sh)")
+        panic!("missing input: model20 cache absent (run just fetch-model)")
     };
     let backend = compiled_backend();
     eprintln!("compiled peer: {backend:?}");

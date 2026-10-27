@@ -80,7 +80,7 @@ name: Store backends
 # recorded by the provenance step below.
 #
 # The pin-built oracle and the model20 archive are deliberately NOT CI
-# concerns: provisioning them (tools/model/fetch-model.sh,
+# concerns: provisioning them (just fetch-model,
 # tools/oracle/build-oracle.sh) is a LOCAL workflow, and no CI job may
 # download model20.text.tar.gz or anything like it. The oracle-gated
 # differentials and the model cache live on developer machines only.

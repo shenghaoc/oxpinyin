@@ -16,7 +16,7 @@ import sys
 import tempfile
 import time
 
-from . import doctor, slot
+from . import doctor, model, slot
 from .compat import images
 from .compat.identity import digest_file
 from .compat.process import ROOT, capture, fail, run, text
@@ -757,7 +757,9 @@ class Provision:
             self.backend_tools()
             for cell in self.cells:
                 if not self.libs_ok(cell) or not self.data_ok(cell):
-                    if run([self.root / 'tools/model/fetch-model.sh', '--cache-dir', self.model_cache], env=self.env, stdout=subprocess.DEVNULL, check=False):
+                    try:
+                        model.fetch(self.model_cache, root=self.root, env=self.env)
+                    except Finished:
                         self.die('model20 is unavailable; allow downloads.sourceforge.net and its *.dl.sourceforge.net redirect target, or supply a verified local model cache (docs/runbooks/cloud.md)')
                     break
             if self.inside:
@@ -775,7 +777,7 @@ class Provision:
                     need.append(cell)
             if need:
                 self.log(f'fetching model20 for {" ".join(need)}')
-                run([self.root / 'tools/model/fetch-model.sh', '--cache-dir', self.model_cache], env=self.env, stdout=subprocess.DEVNULL)
+                model.fetch(self.model_cache, root=self.root, env=self.env)
                 self.build_deps_image()
                 if self.pool_phase('data', need, self.cache / 'data-{item}.log',
                                    ['--regen-data', '--dbm', '{item}', '--prefix', '/opt/pinyin-oracle/{item}',

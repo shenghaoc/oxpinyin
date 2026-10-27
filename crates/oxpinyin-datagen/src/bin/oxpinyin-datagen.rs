@@ -18,7 +18,7 @@
 //! The model directory is discovered exactly as the differential harness
 //! discovers it (`PINYIN_MODEL_DIR`, `PINYIN_MODEL_CACHE/extracted`, the
 //! workspace `target/model20/extracted` cache); run
-//! `tools/model/fetch-model.sh` first. The output directory receives the
+//! `just fetch-model` first. The output directory receives the
 //! tables and `datagen-manifest.txt` with the run's provenance.
 //! `interpolation2.text` is consumed by the datagen only (for bigram
 //! compilation) and is not emitted — unigram counts live in the chunk
@@ -138,7 +138,7 @@ fn resolve_model_dir(explicit: Option<&Path>) -> PathBuf {
         Ok(None) => {
             eprintln!(
                 "oxpinyin-datagen: no model20 cache found (set --model-dir or run \
-                 tools/model/fetch-model.sh)"
+                 just fetch-model)"
             );
             std::process::exit(1);
         }

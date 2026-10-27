@@ -16,7 +16,7 @@
 //! - [`flags`] holds the option words and rejects `DYNAMIC_ADJUST`;
 //! - [`observation`] is what the oracle reported for one input;
 //! - [`model_cache`] locates the checksum-pinned model20 text export after
-//!   `tools/model/fetch-model.sh` has populated the build cache;
+//!   `just fetch-model` has populated the build cache;
 //! - `live` is the FFI producer, behind the non-default `oracle-ffi` feature.
 //!
 //! Because a replayed capture fixture and a live FFI run both yield an

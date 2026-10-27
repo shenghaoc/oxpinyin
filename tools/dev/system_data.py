@@ -105,7 +105,7 @@ class SystemData:
                         '  /tmp/oxpinyin-export   (only if written by the same backend)\n\n'
                         "Another backend's directory is never used instead: the three\n"
                         'DBMs share file names, so it would load or score the wrong data.\n\n'
-                        'Build one from the pinned model:\n  tools/model/fetch-model.sh\n'
+                        'Build one from the pinned model:\n  just fetch-model\n'
                         '  PINYIN_MODEL_DIR=$PWD/target/model20/extracted \\\n'
                         '    cargo run --release -p oxpinyin-datagen --no-default-features \\\n'
                         f'    --features {FEATURES[ext]} -- compile --backend {FEATURES[ext]}\n'

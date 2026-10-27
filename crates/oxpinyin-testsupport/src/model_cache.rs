@@ -1,6 +1,6 @@
 //! Location of the checksum-pinned model20 text export.
 //!
-//! `tools/model/fetch-model.sh` downloads the archive pinned by
+//! `just fetch-model` (`tools/dev/model.py`) downloads the archive pinned by
 //! `docs/findings/model-provenance.md`, verifies SHA-256, and extracts the
 //! eighteen files into a build cache. This module only *finds* that cache so
 //! tests and benches can take a model-dir path; it does not read
@@ -41,7 +41,7 @@ pub const EXTRACTED_SUBDIR: &str = "extracted";
 ///
 /// Inventory from `docs/findings/model-provenance.md`: `interpolation2.text`
 /// plus seventeen `.table` files. Keep in lockstep with
-/// `tools/model/fetch-model.sh`.
+/// `tools/dev/model.py`.
 pub const EXPECTED_MODEL_FILES: &[&str] = &[
     "art.table",
     "culture.table",
@@ -94,7 +94,7 @@ impl core::fmt::Display for ModelDirError {
             Self::Incomplete { path, missing } => write!(
                 formatter,
                 "model export directory {} is missing {missing:?}; \
-                 run tools/model/fetch-model.sh",
+                 run just fetch-model",
                 path.display()
             ),
         }
@@ -316,7 +316,7 @@ mod tests {
     #[test]
     fn workspace_root_is_this_repository() {
         let root = workspace_root().expect("compiled from the workspace");
-        assert!(root.join("tools/model/fetch-model.sh").is_file());
+        assert!(root.join("tools/dev/model.py").is_file());
     }
 
     #[test]

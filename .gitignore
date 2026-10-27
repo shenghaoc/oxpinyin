@@ -2,7 +2,7 @@
 debug
 /target
 /.oxpinyin-container/
-# /target includes the model20 fetch cache (tools/model/fetch-model.sh).
+# /target includes the model20 fetch cache (just fetch-model).
 # The archive, its extraction, and any converted form must never be tracked.
 /fuzz/target/
 /fuzz/artifacts/

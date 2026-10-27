@@ -230,6 +230,10 @@ HARNESS_DEPENDENCIES.update(dict.fromkeys((
     'tools/cloud/env.sh', 'tools/cloud/env.test.sh',
 ), PROVISION_HARNESS))
 
+# The model20 fetch and its callers; the retired script's path selects the same.
+MODEL_HARNESS = ('tools/dev/model.test.py', 'tools/dev/measure/profile.test.py',
+                 'tools/dev/provision.test.py')
+HARNESS_DEPENDENCIES.update(dict.fromkeys(('tools/dev/model.py', 'tools/model/fetch-model.sh'), MODEL_HARNESS))
 
 
 def changed_harness_files(files, paths):

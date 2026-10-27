@@ -278,6 +278,10 @@ def build_parser():
     p.add_argument('args', nargs=argparse.REMAINDER)
     p.set_defaults(func=lambda args: __import__('tools.dev.compat.commands', fromlist=['main']).main(args.args))
 
+    p = sub.add_parser('fetch-model', help='fetch and verify the pinned model20 archive into a build cache')
+    p.add_argument('args', nargs=argparse.REMAINDER)
+    p.set_defaults(func=lambda args: __import__('tools.dev.model', fromlist=['main']).main(args.args))
+
     p = sub.add_parser('provision', help='post-bootstrap cloud provisioning')
     p.add_argument('args', nargs=argparse.REMAINDER)
     p.set_defaults(func=lambda args: __import__('tools.dev.provision', fromlist=['main']).main(args.args))
@@ -335,6 +339,9 @@ def main(argv=None):
     if argv[:1] == ['provision']:
         from . import provision
         return provision.main(argv[1:])
+    if argv[:1] == ['fetch-model']:
+        from . import model
+        return model.main(argv[1:])
     if argv[:1] == ['compat']:
         from .compat import commands
         return commands.main(argv[1:])

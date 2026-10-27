@@ -49,6 +49,7 @@ def main(argv=None):
         from tools.dev.compat.process import capture, run, tee
         from tools.dev.runners import guarded
         from tools.dev.compat.identity import seal_results
+        from tools.dev import model
         environment = dict(os.environ, OXPINYIN_ORACLE_ENV=f'/state/cache/{reference}/oracle.env',
                            PINYIN_MODEL_CACHE='/state/model20', PINYIN_ORACLE_DBM=cell,
                            OXPINYIN_TARGET_ROOT=f'/state/container/{image}/targets/{source}')
@@ -56,8 +57,7 @@ def main(argv=None):
 
         def execute():
             if Path('/input/model.tar.gz').stat().st_size:
-                run(['bash', 'tools/model/fetch-model.sh', '--cache-dir', environment['PINYIN_MODEL_CACHE'],
-                     '--archive', '/input/model.tar.gz'], env=environment)
+                print(model.fetch(environment['PINYIN_MODEL_CACHE'], archive='/input/model.tar.gz', env=environment))
             run(['bash', 'tools/cloud/setup.sh', '--in-container', '--cells', cell,
                  '--cache-dir', f'/state/cache/{reference}', '--jobs', environment.get('CARGO_BUILD_JOBS', '2')], env=environment)
             done = capture(['bash', '-e', '-u', '-c', 'source "$1"; env -0', '--', environment['OXPINYIN_ORACLE_ENV']], env=environment)

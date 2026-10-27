@@ -142,7 +142,7 @@ WORKDIR /repo
 
 # ── Shared: model data + libpinyin source ────────────────────────────
 
-RUN bash tools/model/fetch-model.sh
+RUN uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev fetch-model
 
 # libpinyin source: git fetch pinned by commit SHA (verified by SHA, not
 # an archive hash -- 2.11.92 is untagged upstream and GitHub may regenerate

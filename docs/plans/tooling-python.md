@@ -346,8 +346,10 @@ The [full per-script audit](tooling-shell-audit.md) covers **100 scripts** at
 on 2026-10-26 UTC (`date -u`). Five whole scripts have concrete keep
 reasons: `install-python.sh`, `lib/bash-floor.sh`, `oracle/build-oracle.sh`,
 `model/fetch-model.sh` and `tkrzw/distro-probe.sh` (all under `tools/`). The
-pin reader `oracle/pin.sh` was kept at that base and is removed by the closing
-check: its one live caller, the arm64 metadata step of `oracle-image.yml`,
+closing check moves the model fetcher to `tools/dev/model.py` (`just
+fetch-model`), since its only shell callers, the two bisection Dockerfiles,
+run after managed Python. The pin reader `oracle/pin.sh` was kept at that base
+and is removed by the closing check: its one live caller, the arm64 metadata step of `oracle-image.yml`,
 runs after managed Python is provisioned and reads the platform-keyed fields
 through `just compat pin-field`. The remaining 94 enter six units below. Cloud
 setup retains only its pre-interpreter portion; its post-bootstrap work

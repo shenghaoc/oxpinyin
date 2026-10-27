@@ -687,14 +687,14 @@ class InputTests(ScenarioTest):
         result = self.invoke()
         self.assertStatus(result, 1)
         self.assertEqual(result.stderr, f'fatal: model dir is not a directory: {self.scenario.root}/nowhere\n'
-                                        '  run: tools/model/fetch-model.sh\n')
+                                        '  run: just fetch-model\n')
 
     def test_a_missing_model_file_is_named(self):
         (self.scenario.model / 'merged.table').unlink()
         result = self.invoke()
         self.assertStatus(result, 1)
         self.assertEqual(result.stderr, f'fatal: model dir {self.scenario.model} is missing merged.table\n'
-                                        '  run: tools/model/fetch-model.sh\n')
+                                        '  run: just fetch-model\n')
 
     def test_the_model_cache_names_the_extracted_directory(self):
         del self.env['PINYIN_MODEL_DIR']
@@ -711,7 +711,7 @@ class InputTests(ScenarioTest):
         self.assertStatus(result, 1)
         self.assertEqual(result.stderr,
                          f'fatal: {self.scenario.model} is not a verified model20 cache '
-                         f'(no sha256={profile.MODEL20_SHA256} marker)\n  run: tools/model/fetch-model.sh\n')
+                         f'(no sha256={profile.MODEL20_SHA256} marker)\n  run: just fetch-model\n')
 
     def test_a_marker_for_another_digest_is_not_a_marker(self):
         (self.scenario.cache / 'verified').write_text('sha256=' + '0' * 64 + '\n')

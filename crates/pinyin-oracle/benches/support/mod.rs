@@ -44,7 +44,7 @@ pub const CYCLE_INPUTS: &[&str] = &[
 pub fn model_dir() -> PathBuf {
     model_cache::locate_model_dir()
         .expect("PINYIN_MODEL_DIR / cache lookup")
-        .expect("model cache missing; run tools/model/fetch-model.sh")
+        .expect("model cache missing; run just fetch-model")
 }
 
 /// Dictionary + real-frequency language model used by the pinned scan:

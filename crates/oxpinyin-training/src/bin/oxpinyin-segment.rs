@@ -4,7 +4,7 @@
 //!
 //! Paths default to the export directory (`PINYIN_EXPORT_DIR` /
 //! `/tmp/oxpinyin-export`) and the fetched model20 cache
-//! (`PINYIN_MODEL_DIR` / `tools/model/fetch-model.sh`).
+//! (`PINYIN_MODEL_DIR` / `just fetch-model`).
 
 #![forbid(unsafe_code)]
 #![allow(missing_docs)]

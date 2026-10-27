@@ -111,7 +111,7 @@ fn assert_pinned_model(extracted: &Path) -> PathBuf {
     let missing = missing_model_files(extracted);
     assert!(
         missing.is_empty(),
-        "model dir {} is incomplete (missing {missing:?}); run tools/model/fetch-model.sh",
+        "model dir {} is incomplete (missing {missing:?}); run just fetch-model",
         extracted.display()
     );
     let cache_root = cache_root_of(extracted);
@@ -126,7 +126,7 @@ fn assert_pinned_model(extracted: &Path) -> PathBuf {
         assert_eq!(
             digest,
             MODEL20_SHA256,
-            "archive {} is not the pinned model20 (got {digest}); run tools/model/fetch-model.sh",
+            "archive {} is not the pinned model20 (got {digest}); run just fetch-model",
             archive.display()
         );
         return extracted
@@ -134,7 +134,7 @@ fn assert_pinned_model(extracted: &Path) -> PathBuf {
             .unwrap_or_else(|_| extracted.to_path_buf());
     }
     panic!(
-        "model dir {} is not a verified model20 cache (no sha256={} marker); run tools/model/fetch-model.sh",
+        "model dir {} is not a verified model20 cache (no sha256={} marker); run just fetch-model",
         extracted.display(),
         MODEL20_SHA256
     );

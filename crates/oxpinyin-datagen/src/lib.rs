@@ -5,7 +5,7 @@
 //!
 //! The canonical source of truth is the pinned `model20.text.tar.gz`
 //! archive (`docs/findings/model-provenance.md`; fetched and verified by
-//! `tools/model/fetch-model.sh`). Every producer consumes that archive
+//! `just fetch-model`). Every producer consumes that archive
 //! **directly** — no producer may take libpinyin-generated runtime data as
 //! its input:
 //!
