@@ -53,6 +53,11 @@ doctor:
     @uv python find --managed-python *> $null; if ($LASTEXITCODE -ne 0) { [Console]::Error.WriteLine('the managed interpreter in .python-version is not installed: run `just python`'); exit 1 }
     @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev doctor; exit $LASTEXITCODE
 
+# Install, validate and assemble drop-in packages through the shared service.
+[unix]
+packaging *args: python
+    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev packaging "$@"
+
 # Run one native setup check: bdb, tkrzw or kyotocabinet.
 check backend="bdb": python
     @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev check {{backend}}

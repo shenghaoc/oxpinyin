@@ -394,7 +394,7 @@ failure refuses the comparison; an unreadable DB is never an empty DB.
 
 Run inside the selected pinned Linux amd64 cell, after installing both
 shipping libraries with
-`tools/packaging/install.sh`. Use the existing container reservation and heavy
+`just packaging install`. Use the existing container reservation and heavy
 admission paths. Keep one campaign active. The work directory and measured
 library copies must be on ext4; tmpfs gives misleading private-dirty
 attribution for clean library pages.
@@ -795,7 +795,7 @@ has SHA-256 `d535d077eb55736f742a270a4128763ca4f9b0471819778b06b5708b47b4badc`.
 The subject SO for those registered findings has SHA-256
 `8d74995f5f4cab5013da28ef083259e588821b2cf28249548dba705db643436b`.
 Its recorded build invoked
-`tools/packaging/install.sh libpinyin --prefix=/lane/stage-main -- --locked --release --jobs 1 --no-default-features --features bdb,shipped`
+`just packaging install libpinyin --prefix=/lane/stage-main -- --locked --release --jobs 1 --no-default-features --features bdb,shipped`
 with `CARGO_BUILD_JOBS=1` and `CARGO_TARGET_DIR=/lane/target-bdb`.
 From `crates/oxpinyin-capi`, that wrapper ran this exact Cargo command,
 then relinked the installed SO under the version script:
@@ -901,7 +901,7 @@ run. Its BDB subject was built from that exact commit with:
 
 ```sh
 CARGO_BUILD_JOBS=1 CARGO_TARGET_DIR=/home/sheng/Documents/Codex/2026-10-14/task-4/target-main-bdb \
-  tools/packaging/install.sh libpinyin \
+  just packaging install libpinyin \
     --prefix=/home/sheng/Documents/Codex/2026-10-14/task-4/stage-main-shipped \
     --libdir=/home/sheng/Documents/Codex/2026-10-14/task-4/stage-main-shipped/lib \
     -- --locked --release --jobs 1 --no-default-features --features bdb,shipped
@@ -1211,7 +1211,7 @@ specific hash or dependency only when it explains a concrete build-identity
 or loader discrepancy.
 
 This is not bookkeeping. `cargo cinstall` is the shipping path
-(`.github/workflows/release-packages.yml` → `tools/packaging/install.sh`;
+(`.github/workflows/release-packages.yml` → `just packaging install`;
 `libpinyin.so.15.0.0`, plus `--features shipped` for the drop-in), while
 `cargo build` produces `libpinyin_capi.so`, a bisection fixture nothing
 installs — and the two do **not** run at the same speed. On the steady
@@ -1267,7 +1267,7 @@ rejection rules, including exact checks where the method requires them.
 ## Per-call C-API costs
 
 Use the contract driver for #882, #883 and #884. Build base and subject
-with `tools/packaging/install.sh`. Use one target directory per worktree.
+with `just packaging install`. Use one target directory per worktree.
 Run this command under the shared host admission wrapper:
 
 ```sh

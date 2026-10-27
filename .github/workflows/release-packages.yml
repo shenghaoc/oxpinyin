@@ -14,12 +14,12 @@
 # The packages REPLACE the distro's libpinyin/libzhuyin in their entirety:
 # same sonames (libpinyin.so.15 / libzhuyin.so.15), same pkg-config names,
 # versioned Provides at the pinned pc version (the pin record's libpinyin_tag,
-# read by tools/packaging/pc-version.sh), Conflicts/Replaces
+# read by just packaging pc-version), Conflicts/Replaces
 # (deb) or Obsoletes (rpm) or conflicts= (pacman) on the originals. Data is
 # deliberately NOT replaced on Debian/Fedora (libpinyin-data is a separate
 # package there and stays); on Arch the data lives inside the libpinyin
 # package the takeover removes, so the Arch lane fetches that package and
-# ships its data directory inside ours — see tools/packaging/release-arch.sh.
+# ships its data directory inside ours — see just packaging release-arch.
 #
 # Image choice: each lane builds on the distro release whose libpinyin
 # actually IS 2.11.91 in the backend named above. For Debian that is
@@ -29,10 +29,10 @@
 # would be a package for a system whose data it cannot open.
 #
 # The build is the distro-documented one: each distro's own cargo-c package
-# runs `cargo cinstall` through tools/packaging/install.sh (which completes
+# runs `cargo cinstall` through just packaging install (which completes
 # the .pc), with the backend chosen by cargo-c's ordinary
 # `--no-default-features --features <backend>`. See the header of
-# tools/packaging/release-stage.sh.
+# just packaging release-stage.
 #
 # Two jobs:
 #   package — 3-container matrix; each child stages the drop-in tree, builds
@@ -146,6 +146,17 @@ jobs:
           rustup: 'true'
           rust-cache: 'true'
           rust-cache-key: release-${{ matrix.distro }}
+      - name: Provision managed packaging Python
+        shell: bash
+        run: |
+          installer=$(mktemp)
+          trap 'rm -f "$installer"' EXIT
+          curl --fail --location --retry 3 https://github.com/astral-sh/uv/releases/download/0.13.1/uv-installer.sh -o "$installer"
+          printf '%s  %s\n' 7c482d409673a53f4d9bd34ae95c9166be3b8d89ca82f27dd7bca3cab457afff "$installer" | sha256sum -c -
+          sh "$installer"
+          export PATH="$HOME/.local/bin:$PATH"
+          printf '%s\n' "$HOME/.local/bin" >> "$GITHUB_PATH"
+          tools/install-python.sh
       - run: rustup show active-toolchain
 
       # The install libdir per distro. Debian's is the MULTIARCH dir —
@@ -164,7 +175,7 @@ jobs:
           esac >> "$GITHUB_ENV"
 
       # Package version = the release tag (v stripped). The .pc keeps its
-      # own version, the pin's libpinyin version (tools/packaging/pc-version.sh)
+      # own version, the pin's libpinyin version (just packaging pc-version)
       # — docs/packaging.md "The four version streams".
       # Stable three-component versions only: a prerelease suffix (-rc1)
       # is not a legal pkgver for makepkg and sorts wrongly under dpkg/rpm,
@@ -186,7 +197,7 @@ jobs:
         env:
           BACKEND: ${{ matrix.backend }}
         run: |
-          tools/packaging/release-stage.sh "$BACKEND" \
+          uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev packaging release-stage "$BACKEND" \
             --prefix=/usr --libdir="$LIBDIR" --dest="$PWD/stage"
 
       - name: Package for this distro
@@ -197,8 +208,8 @@ jobs:
           set -euo pipefail
           mkdir -p dist
           case "$DISTRO" in
-            debian) tools/packaging/release-deb.sh "$BACKEND" "$VERSION" "$PWD/stage" "$LIBDIR" dist ;;
-            fedora) tools/packaging/release-rpm.sh "$BACKEND" "$VERSION" "$PWD/stage" dist ;;
+            debian) uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev packaging release-deb "$BACKEND" "$VERSION" "$PWD/stage" "$LIBDIR" dist ;;
+            fedora) uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev packaging release-rpm "$BACKEND" "$VERSION" "$PWD/stage" dist ;;
             arch)
               # Arch has no separate data package: the model lives inside
               # the libpinyin package our takeover removes. Download (not
@@ -214,7 +225,7 @@ jobs:
               mkdir -p arch-data
               tar -xf "$DATA_PKG" -C arch-data --strip-components=4 usr/lib/libpinyin/data
               [ -f arch-data/table.conf ] || { echo "::error::Arch libpinyin data not found in $DATA_PKG" >&2; exit 1; }
-              tools/packaging/release-arch.sh "$BACKEND" "$VERSION" "$PWD/stage" dist \
+              uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev packaging release-arch "$BACKEND" "$VERSION" "$PWD/stage" dist \
                 --data="$PWD/arch-data" --data-version="$DATA_VER"
               ;;
           esac
@@ -241,7 +252,7 @@ jobs:
           esac
           ldconfig
           fail() { echo "::error::gate failed: $*" >&2; exit 1; }
-          PCVER="$(tools/packaging/pc-version.sh)"
+          PCVER="$(uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev packaging pc-version)"
           [ "$(pkg-config --modversion libpinyin)" = "$PCVER" ] || fail "libpinyin modversion"
           [ "$(pkg-config --variable=database_format libpinyin)" = "$DBFMT" ] || fail "database_format"
           [ -n "$(pkg-config --variable=pkgdatadir libpinyin)" ] || fail "pkgdatadir"

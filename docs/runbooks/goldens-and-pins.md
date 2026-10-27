@@ -53,7 +53,7 @@ model SHA-256, DBM) are one identity; change every field together. The
    moves with the pin: the capi builds read `libpinyin_tag` from
    `oracle-pin.txt` and refuse a `[package.metadata.capi]` table that
    disagrees, so the bump edits both capi `Cargo.toml` files in the same
-   commit; then run `tools/packaging/check-pc-metadata.sh` against the
+   commit; then run `just packaging check-pc-metadata` against the
    rebuilt pin (issue #537).
 
 Re-run the pins after any rebase that touches engine, capi or data

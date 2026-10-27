@@ -308,9 +308,9 @@ jobs:
         run: uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev lint-crate-cfg-placement
       # Drop-in version agreement: the capi manifests' header subdirectory
       # and pkg_config version against the pin record (issue #537). The
-      # full installed-tree diff, tools/packaging/check-pc-metadata.sh,
+      # full installed-tree diff, just packaging check-pc-metadata,
       # needs the pin-built libpinyin, which CI never has.
-      - run: tools/packaging/check-pc-version.sh
+      - run: uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev packaging check-pc-version
         if: needs.changes.outputs.reuse != 'true'
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
         if: needs.changes.outputs.reuse != 'true'

@@ -23,13 +23,13 @@ and attaches them with a `SHA256SUMS` to the release.
    (`goldens-and-pins.md`).
 5. Version streams agree (`docs/packaging.md`, "The four version
    streams"): the drop-in identity is the pin's libpinyin version
-   (`tools/packaging/pc-version.sh`; CI's `check-pc-version.sh` holds the
-   manifests to it); the crate version is the workspace's `0.x` lockstep.
+   (`just packaging pc-version`; CI's `python -m tools.dev packaging
+   check-pc-version` holds the manifests to it); the crate version is the workspace's `0.x` lockstep.
 
 ## What each lane gates
 
-`tools/packaging/release-stage.sh <backend>` builds both cdylibs through
-`tools/packaging/install.sh` (`cargo cinstall` plus the complete `.pc`),
+`just packaging release-stage <backend>` builds both cdylibs through
+`just packaging install` (`cargo cinstall` plus the complete `.pc`),
 `--features shipped` on the pinyin crate, strips, and exits 0 only after:
 the SONAME, the five pkg-config reads real consumers perform, and a C
 compile/link/run smoke against the staged tree. The workflow then
@@ -41,11 +41,11 @@ not ship.
 ## Locally
 
 ```sh
-tools/packaging/release-stage.sh tkrzw --prefix=/usr --libdir=/usr/lib/x86_64-linux-gnu \
+just packaging release-stage tkrzw --prefix=/usr --libdir=/usr/lib/x86_64-linux-gnu \
     --dest=target/release-stage/tkrzw
-tools/packaging/release-deb.sh  tkrzw <version> target/release-stage/tkrzw /usr/lib/x86_64-linux-gnu <outdir>
-tools/packaging/release-rpm.sh  kyotocabinet <version> target/release-stage/kyotocabinet <outdir>
-tools/packaging/release-arch.sh kyotocabinet <version> target/release-stage/kyotocabinet <outdir> --data=<arch data dir> --data-version=<ver>  # without --data the package cannot init on the system it replaced
+just packaging release-deb  tkrzw <version> target/release-stage/tkrzw /usr/lib/x86_64-linux-gnu <outdir>
+just packaging release-rpm  kyotocabinet <version> target/release-stage/kyotocabinet <outdir>
+just packaging release-arch kyotocabinet <version> target/release-stage/kyotocabinet <outdir> --data=<arch data dir> --data-version=<ver>  # without --data the package cannot init on the system it replaced
 ```
 
 Each maker's header states its arguments; the workflow is the reference

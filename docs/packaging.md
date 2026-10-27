@@ -23,7 +23,7 @@ exactly this job:
 No hand-written `Makefile` is needed: `cargo cbuild`/`cargo cinstall` derive
 the install layout and SONAME from Cargo metadata. The one thing cargo-c
 cannot produce is a complete libpinyin `.pc` (see "Locating the model data"
-below), which is why `tools/packaging/install.sh` wraps `cargo cinstall`.
+below), which is why `just packaging install` wraps `cargo cinstall`.
 
 ## Metadata on `oxpinyin-capi`
 
@@ -48,7 +48,7 @@ keeps ours; the full rationale and the measured gates live in
   `version = "2.11.92"`. The `.pc` answers to libpinyin's own name and a
   libpinyin version, so consumers' `>=` constraints resolve; cargo-c's own
   `.pc` is incomplete (closed seven-key field set) and is overwritten from
-  the build.rs-baked template by `tools/packaging/install.sh`.
+  the build.rs-baked template by `just packaging install`.
 - `[package.metadata.capi.library] name = "pinyin"`, `version = "15.0.0"`,
   `versioning = true`. The INSTALLED artifact is the drop-in
   `libpinyin.so.15`; the Rust `[lib] name` stays `pinyin_capi` so in-tree
@@ -136,7 +136,7 @@ These are independent and move for different reasons:
    `configure.ac` version and moves with it: its one source is
    `libpinyin_tag` in `tools/oracle/oracle-pin.txt`, which both capi build
    scripts read (and check their `[package.metadata.capi]` tables against)
-   and `tools/packaging/pc-version.sh` prints for the shell side.
+   and `just packaging pc-version` prints for the shell side.
 4. **Parity pins** — `10190 / 10190 / 98930` of `98930` candidate symbols,
    `0` absent, `0` tie-swaps (per `pin-refreeze-2026-08.md`
    2026-08-22 amendment). These freeze the decode/predict output the
@@ -163,7 +163,7 @@ BuildRequires: cargo-c
 `cargo cinstall` derives `--libdir=/usr/lib64` from the target environment.
 
 Both recipes are the distro-documented shape; a real packaging must run
-`tools/packaging/install.sh <libpinyin|libzhuyin> --prefix=/usr …` in place
+`just packaging install <libpinyin|libzhuyin> --prefix=/usr …` in place
 of the bare `cargo cinstall` (or re-run it afterwards), because cargo-c's
 own `.pc` lacks the variables consumers read — see the next section. The
 release packages built by `release-packages.yml` go through exactly that
@@ -214,14 +214,14 @@ writing its own incomplete `libpinyin.pc`.
 
 The contract is therefore carried outside cargo-c: each crate's build.rs
 bakes a complete `.pc` template (`libpinyin.pc.in.baked`) with the
-build-time fields, and `tools/packaging/install.sh` fills the install-time
+build-time fields, and `just packaging install` fills the install-time
 placeholders and **overwrites** the file cargo-c installed. Both templates
 are the pin's own `.pc.in`, and the wrapper substitutes what the pin's
 configure does — `exec_prefix=${prefix}`, and `libdir` / `includedir` as
 the given `--libdir` / `--includedir` verbatim or, without them, autoconf's
 prefix-relative `${exec_prefix}/lib` / `${prefix}/include` — so the
 installed file is byte-identical to the pin's for the same layout and
-backend (`tools/packaging/check-pc-metadata.sh` diffs the two trees). A bare
+backend (`just packaging check-pc-metadata` diffs the two trees). A bare
 `cargo cinstall` without the wrapper leaves the incomplete file; that
 silent window and its gates are recorded in
 `docs/findings/installed-naming.md`.
@@ -267,9 +267,9 @@ remain. Its first run found the shipped library one symbol short
 scoping); nothing in a version script is gated any more.
 
 The version scripts stopped being the record only on 2026-09-14: on Linux
-`tools/packaging/install.sh` now relinks the installed shared object from
+`just packaging install` now relinks the installed shared object from
 the staticlib under the crate's `.ver` script
-(`tools/packaging/relink-versioned.sh`), so the shipped library carries
+(`just packaging relink-versioned`), so the shipped library carries
 upstream's symbol versioning — `pinyin_init@@LIBPINYIN` — and consumers
 load it with no glibc version warning. The relink itself verifies the
 export set against the `.ver` list in both directions before replacing
@@ -311,7 +311,7 @@ and the unsupported-linker fallback keep their existing behavior.
 
 ### Final-link mechanism and fallback
 
-Apply ordering in `tools/packaging/relink-versioned.sh`, after cargo-c has
+Apply ordering in `just packaging relink-versioned`, after cargo-c has
 produced the static library. That relink produces the installed ELF object;
 changing only cargo-c's cdylib link would miss the shipping artifact.
 
@@ -322,7 +322,7 @@ It does not require `KEEP`, new roots, a version-script change, or a change to
 `--whole-archive` or `--gc-sections`. See the
 [GNU ld option description](https://sourceware.org/binutils/docs/ld/Options.html#index-_002d_002dsection_002dordering_002dfile).
 
-`tools/packaging/function-order.sh` checks support through the compiler driver
+`just packaging function-order` checks support through the compiler driver
 used by the relink, rather than assuming that `ld` on PATH is the selected
 linker. It requires GNU BFD: gold uses the same option name with different
 syntax. The relink distinguishes four states and reports each on stderr:
@@ -376,8 +376,8 @@ can stale a policy too; that case stays with the nightly job below. The
 shared action builds both
 facades' staticlibs for BDB, KC and tkrzw with
 the release recipe
-(`tools/packaging/install.sh`, the build whose archive the relink reads) and
-runs `tools/packaging/function-order.sh resolve ARCHIVE POLICY SONAME` for
+(`just packaging install`, the build whose archive the relink reads) and
+runs `just packaging function-order resolve ARCHIVE POLICY SONAME` for
 all six backend/facade policies. Each policy is checked against its own
 backend's shipping staticlib, with separate target directories per backend
 and one cargo-c installation for the job. It switches the relink's own
@@ -426,7 +426,7 @@ match that invocation's SONAME. For example:
 
 ```sh
 OXPINYIN_FUNCTION_ORDER_POLICY="$POLICIES/libpinyin.order" \
-  just heavy -- tools/packaging/install.sh libpinyin --prefix="$PREFIX" \
+  just heavy -- just packaging install libpinyin --prefix="$PREFIX" \
   -- --locked --release --no-default-features --features bdb,shipped
 ```
 
@@ -560,10 +560,10 @@ DATA_VAR=OXPINYIN_ORACLE_DATA_${CELL^^}
 PIN=${!PREFIX_VAR}
 DATA=${!DATA_VAR}
 CARGO_TARGET_DIR="$BUILD" OXPINYIN_FUNCTION_ORDER_POLICY= \
-  just heavy -- tools/packaging/install.sh libpinyin --prefix="$STAGE" \
+  just heavy -- just packaging install libpinyin --prefix="$STAGE" \
   -- --locked --release --no-default-features --features "$FEATURE,shipped"
 CARGO_TARGET_DIR="$BUILD" OXPINYIN_FUNCTION_ORDER_POLICY= \
-  just heavy -- tools/packaging/install.sh libzhuyin --prefix="$STAGE" \
+  just heavy -- just packaging install libzhuyin --prefix="$STAGE" \
   -- --locked --release --no-default-features --features "$FEATURE"
 cc -std=gnu11 -Wall -Wextra -Werror -O2 -o "$BISECT" \
   tools/bisection/bisect.c -ldl
@@ -708,8 +708,8 @@ already on the system:
 | Fedora | `fedora:latest` | kyotocabinet | Fedora's libpinyin still links KyotoCabinet (`kyotocabinet-libs`) |
 | Arch | `archlinux:latest` | kyotocabinet | Arch's libpinyin still links KyotoCabinet |
 
-`tools/packaging/release-stage.sh` builds and stages through the supported
-path: `tools/packaging/install.sh` (cargo cinstall plus the complete `.pc`)
+`just packaging release-stage` builds and stages through the supported
+path: `just packaging install` (cargo cinstall plus the complete `.pc`)
 once per library, with `--destdir` pointing at the staging root and the
 backend selected by cargo-c's ordinary
 `--no-default-features --features <backend>` (plus `shipped` on the pinyin
@@ -727,22 +727,22 @@ The per-distro makers wrap that staged tree in the shape the distro's real
 libpinyin packaging uses, and every package takes the distro's
 libpinyin/libzhuyin over **in their entirety** — same sonames, same
 pkg-config names, versioned Provides at the pin's libpinyin version
-(`tools/packaging/pc-version.sh`; 2.11.92), and
+(`just packaging pc-version`; 2.11.92), and
 Conflicts/Replaces (deb) / Obsoletes (rpm) / `conflicts=` (pacman) on the
 originals:
 
-- `tools/packaging/release-deb.sh` — `oxpinyin-libpinyin15-<backend>` +
+- `just packaging release-deb` — `oxpinyin-libpinyin15-<backend>` +
   `-dev` (~ libpinyin15 + libzhuyin15, and their -dev packages). Depends is
   computed from the shipped ELF's DT_NEEDED via ldconfig + `dpkg -S`, so
   t64-era names (`libglib2.0-0t64`, `libtkrzw1t64`) resolve on whatever
   suite the build runs on, plus a `libc6 (>= N)` floor taken from the
   highest `GLIBC_*` symbol version referenced.
-- `tools/packaging/release-rpm.sh` — `oxpinyin-libpinyin-<backend>` +
+- `just packaging release-rpm` — `oxpinyin-libpinyin-<backend>` +
   `-devel` (~ libpinyin + libpinyin-devel). rpm's dependency generator
   emits the soname Provides (`libpinyin.so.15()(64bit)`) and the backend
   Requires automatically; Obsoletes (not Conflicts — a package may not
   conflict with a name it provides) performs the swap.
-- `tools/packaging/release-arch.sh` — one `oxpinyin-libpinyin-<backend>`
+- `just packaging release-arch` — one `oxpinyin-libpinyin-<backend>`
   package, since Arch ships libpinyin undivided, with soname Provides in
   pacman's form (`libpinyin.so=15-64`) and, via `--data=DIR`, the model
   directory installed as `/usr/lib/libpinyin/data`; `--data-version=VER`

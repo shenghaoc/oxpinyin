@@ -27,9 +27,7 @@ SOURCED_ONLY = frozenset({
 # Scripts that are both executed and sourced. They must not re-run the
 # relative-path check when a caller has changed directory, so the source
 # line runs only for direct execution.
-MIXED = frozenset({
-    'tools/packaging/function-order.sh',
-})
+MIXED = frozenset()
 
 # Scripts that run only from a staged copy, with the floor file staged beside
 # them: compat.sh runs compat-inside.sh as /input/inside.sh.
