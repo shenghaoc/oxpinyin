@@ -34,7 +34,7 @@ class ControllerTests(unittest.TestCase):
             replacement.replace(path)
             sample = dict(round=2, residency={'start': {'object': before}, 'init': {'object': after}})
             with contextlib.redirect_stdout(io.StringIO()) as output:
-                st.report_page_residency('pinyin', 'empty', 'pr', [sample])
+                st.report_page_residency('pinyin', 'empty', 'pr', [sample], metric=st.cold.METRIC)
             record = json.loads(output.getvalue())
             entry = record['files']['object']
             self.assertIn('replaced or modified', entry['layout_error'])
@@ -613,7 +613,17 @@ class ControllerTests(unittest.TestCase):
         args = st.parser().parse_args([*self.argv, '--profiles', 'empty', '--facades', 'pinyin', *options])
         args.cpu = None
         printed = []
-        with mock.patch.object(st.sys, 'platform', platform), \
+        report_residency = st.report_page_residency
+
+        def report_after_rounds(*report_args, **kwargs):
+            self.assertEqual(sum(n + 1 for n in visits.values()),
+                             len(st.ARMS) * (args.rounds + args.warmups +
+                                             args.memory_rounds + args.memory_warmups))
+            report_residency(*report_args, **kwargs)
+
+        with mock.patch.object(st, 'sys', SimpleNamespace(platform=platform)), \
+                mock.patch.object(st, 'os', SimpleNamespace(**(vars(os) | dict(
+                    sched_getaffinity=lambda _: {0}, sched_setaffinity=lambda *_: None)))), \
                 mock.patch.object(st.native, 'check_filesystems'), \
                 mock.patch.object(st, 'library', return_value=library), \
                 mock.patch.object(worker, 'build', return_value=(Path('worker'), {})), \
@@ -622,6 +632,7 @@ class ControllerTests(unittest.TestCase):
                 mock.patch.object(st, 'verify', return_value={a: dict(digest='same', unit_stderr=b'',
                                                                        unit_userfiles={}) for a in st.ARMS}), \
                 mock.patch.object(st, 'instrument'), \
+                mock.patch.object(st, 'report_page_residency', side_effect=report_after_rounds), \
                 mock.patch.object(st, 'emit', side_effect=lambda kind, **v: printed.append((kind, v))), \
                 mock.patch.object(st.cold, '_touch'), \
                 mock.patch.object(st.cold.darwin, 'map_file', return_value=0x1000), \
@@ -630,10 +641,7 @@ class ControllerTests(unittest.TestCase):
                 mock.patch.object(st.cold_linux.mman, 'residency', side_effect=residency), \
                 mock.patch.object(st.cold_linux, 'evict'), \
                 mock.patch.object(st.cold_linux.native, 'filesystem', return_value=('ext4', '0:1')), \
-                mock.patch.object(st.runpy, 'run_path', return_value=dict(check_arms=lambda *_: None)), \
-                mock.patch.object(st.os, 'sched_getaffinity', return_value={0}, create=True), \
-                mock.patch.object(st.os, 'sched_setaffinity', create=True), \
-                mock.patch.object(st.cold.os, 'fsync'):
+                mock.patch.object(st, 'runpy', SimpleNamespace(run_path=lambda _: dict(check_arms=lambda *_: None))):
             status = st.campaign_run(args, {'empty': self.root / 'profiles/empty/user'}, work,
                                      SimpleNamespace(env={}, slot=SimpleNamespace(pass_fds=lambda: ())))
         return status, printed
@@ -699,22 +707,27 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(unavailable['cold']['rejected'], dict(base=0, pr=0, control=0))
 
     def test_residency_rounds_match_measured_samples_after_warmups_and_rejection(self):
-        status, printed = self.synthetic_campaign(
-            *self.COLD, '--rounds', '2', '--warmups', '0', '--memory-rounds', '3', '--memory-warmups', '2',
-            rejections={('pr', True, 3): 2}, with_residency=True)
-        self.assertEqual(status, 0)
-        samples = [v for kind, v in printed if kind == 'sample' and v['memory']]
-        records = [v for kind, v in printed if kind == 'page-residency']
-        accepted = {(v['arm'], v['round']) for v in samples
-                    if not v['warmup'] and v['cold']['verdict'] == 'QUALIFIED'}
-        observed = [(v['arm'], v['round']) for v in records]
-        self.assertEqual(len(observed), len(accepted))
-        self.assertEqual(set(observed), accepted)
-        self.assertEqual({v['round'] for v in records}, {2, 3, 4})
-        self.assertNotIn(('pr', 3), observed)
-        self.assertTrue(all(v['checkpoints'] == ['start', 'end'] for v in records))
-        self.assertEqual(next(v for v in samples if v['arm'] == 'pr' and v['round'] == 3)
-                         ['cold']['verdict'], 'REJECTED')
+        for system, metric in (('darwin', st.cold.METRIC), ('linux', st.cold_linux.METRIC)):
+            with self.subTest(system=system):
+                status, printed = self.synthetic_campaign(
+                    *self.COLD, '--rounds', '2', '--warmups', '0', '--memory-rounds', '3', '--memory-warmups', '2',
+                    platform=system, rejections={('base', True, 0): 2, ('pr', True, 3): 2}, with_residency=True)
+                self.assertEqual(status, 0)
+                samples = [v for kind, v in printed if kind == 'sample' and v['memory']]
+                records = [v for kind, v in printed if kind == 'page-residency']
+                accepted = {(v['arm'], v['round']) for v in samples
+                            if not v['warmup'] and v['cold']['verdict'] == 'QUALIFIED'}
+                observed = [(v['arm'], v['round']) for v in records]
+                self.assertEqual(len(observed), len(accepted))
+                self.assertEqual(set(observed), accepted)
+                self.assertEqual({v['round'] for v in records}, {2, 3, 4})
+                self.assertNotIn(('pr', 3), observed)
+                self.assertTrue(all(v['checkpoints'] == ['start', 'end'] for v in records))
+                self.assertTrue(all(v['metric'] == metric and v['files']['data'][metric] == 1 for v in records))
+                self.assertEqual(next(v for v in samples if v['arm'] == 'pr' and v['round'] == 3)
+                                 ['cold']['verdict'], 'REJECTED')
+                if system == 'linux':
+                    self.assertNotIn(st.cold.METRIC, json.dumps(records))
 
     def test_two_rejections_in_an_arm_keep_a_metric_eligible_and_three_make_it_inconclusive(self):
         for platform in ('darwin', 'linux'):

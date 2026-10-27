@@ -317,7 +317,7 @@ class Worker:
             if scope == 'steady':
                 env['OXPINYIN_STARTUP_STEADY'] = '1'
             capture = (dict(residency=lambda: checkpoint_residency(library, self.data, user))
-                       if cold and memory and sys.platform == 'darwin' else {})
+                       if cold and memory else {})
             result = execute(command, env=env, pass_fds=self.pass_fds, memory=memory, cpu=self.cpu,
                              timeout=1800 if scope else 120, **capture)
             if probe is not None:
