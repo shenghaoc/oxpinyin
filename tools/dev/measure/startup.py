@@ -50,8 +50,8 @@ def emit(kind, **values):
     print(json.dumps(dict(startup=kind, **values), sort_keys=True), flush=True)
 
 
-def report_page_residency(facade, profile, arm, samples):
-    """Report Darwin checkpoint changes after all rounds, parsing verified descriptors."""
+def report_page_residency(facade, profile, arm, samples, *, metric):
+    """Report host-named checkpoint changes after all rounds, parsing verified descriptors."""
     layouts = {}
     for sample in samples:
         if sample is None:
@@ -72,7 +72,7 @@ def report_page_residency(facade, profile, arm, samples):
                 offsets = pages.newly_resident(first['vector'], last['vector'], mman.PAGE_SIZE)
                 if not offsets:
                     continue
-                entry = dict(darwin_resident_pages=len(offsets))
+                entry = {metric: len(offsets)}
                 layout = None
                 if last['kind'] == 'object':
                     expected = (*last['identity'], last['size'], last['mtime_ns'])
@@ -105,7 +105,7 @@ def report_page_residency(facade, profile, arm, samples):
                 files[label] = entry
             emit('page-residency', facade=facade, profile=profile, arm=arm, round=round_index,
                  checkpoints=[before_point, after_point], page_size=mman.PAGE_SIZE,
-                 metric='darwin_resident_pages', limits=list(pages.LIMITS), files=files)
+                 metric=metric, limits=list(pages.LIMITS), files=files)
 
 
 def parser():
@@ -665,9 +665,10 @@ def campaign_run(args, profiles, work, admission):
                             if index >= warmups:
                                 row['round'] = index
                                 samples[arm].append(row)
-                    if cold_sample and memory and sys.platform == 'darwin':
+                    if cold_sample and memory:
+                        metric = cold_linux.METRIC if sys.platform == 'linux' else cold.METRIC
                         for arm in ARMS:
-                            report_page_residency(facade, name, arm, samples[arm])
+                            report_page_residency(facade, name, arm, samples[arm], metric=metric)
                     cold_context = dict(cold=cold_account(samples, warmup_rejected)) if cold_sample else {}
                     if memory:
                         def memory_value(row, point, metric):
