@@ -968,7 +968,9 @@ def main(argv=None, *, tools=None):
         return functions[name](rest, tools)
     def quiet_cancellation():
         try:
-            return call()
+            result = call()
+            slot.check_cancelled()
+            return result
         except (pool.UnitStopped, pool.UnitsCancelled, slot.Cancelled):
             raise Finished(slot.cancellation_status()) from None
     return guarded(quiet_cancellation)
