@@ -33,17 +33,43 @@ def observed(result):
 
 def registered_termination(spec):
     """Whether the spec says how the pin dies (`abort=`, `crash=`,
-    `both_abort=`, with or without `either=`): then `matches` owns the exit
-    conditions of both sides and no validity check is layered on top."""
+    `both_abort=`, with or without `either=`), or is deliberately not run.
+    In default mode `matches` alone owns these cases' exit conditions."""
     return spec['abort'] is not NO_ABORT or spec['crash'] is not None or spec['both_abort'] \
         or spec.get('pin_not_run') is not None
 
 
 def valid_observation(spec, side):
-    """An ordinary case observed something only when the worker exited
-    normally and printed its result document; a signal, a non-zero exit, a
-    timeout or an empty stdout observed nothing."""
+    """Default-mode validity: an ordinary case needs a normal worker exit
+    and a result document; a signal, a non-zero exit, a timeout or an empty
+    stdout observed nothing."""
     return registered_termination(spec) or (side['exit'] == 0 and side['result'] is not None)
+
+
+def valid_parent_observations(spec, pin, subject, *, directory_probe):
+    """A parent difference needs a pin satisfying its termination contract.
+
+    The subject must complete with a result, or terminate as registered for
+    the pin. A fatal-log case requires the pin's same signal. Keep the
+    deliberate pin_not_run declaration's existing classification.
+    """
+    if spec.get('pin_not_run') is not None:
+        return True
+    if not registered_termination(spec):
+        return all(valid_observation(spec, side) for side in (pin, subject))
+    if spec['both_abort']:
+        signals = (-signal.SIGABRT, -signal.SIGTRAP)
+    elif short_dir_chunk(spec, directory_probe=directory_probe):
+        signals = (-signal.SIGSEGV,) if spec['dir_chunk'] == 'system' else ()
+        if not signals:
+            return all(side['exit'] == 0 and side['result'] is not None for side in (pin, subject))
+    else:
+        signals = ((-signal.SIGABRT,) if spec['abort'] is not NO_ABORT else ()) + \
+            ((-signal.SIGSEGV,) if spec['crash'] is not None
+             and (spec['abort'] is NO_ABORT or spec['either']) else ())
+    return pin['exit'] in signals and (
+        (subject['exit'] == 0 and subject['result'] is not None)
+        or subject['exit'] in ((pin['exit'],) if spec['both_abort'] else signals))
 
 
 def policy_expectations(spec, *, policy_root, cell):
@@ -110,7 +136,8 @@ def verdict_for(spec, pin, subject, expect_parent, *, policy_root, cell, directo
     """The driver's decision for one case: (verdict, expected_ok, same).
 
     INVALID when either side of an ordinary case produced no valid
-    observation; it is never expected, in either mode. A `strjoinv_over_read`
+    observation; it is never expected, in either mode. Under --expect-parent,
+    registered terminations also require valid_parent_observations. A `strjoinv_over_read`
     case's held pin fault (`strjoinv_fault`) counts as valid. Otherwise MATCH or
     DIFFER by `matches`, and expected when it is what the mode asks for: a
     MATCH, or under --expect-parent a DIFFER from a non-control case.
@@ -123,7 +150,9 @@ def verdict_for(spec, pin, subject, expect_parent, *, policy_root, cell, directo
             actual = dict(pin=policy_observation(spec, pin), subject=policy_observation(spec, subject))
         except (OSError, ValueError, KeyError, TypeError):
             return 'INVALID', False, False
-        if not all(valid_observation(spec, side) for side in (pin, subject)):
+        valid = (valid_parent_observations(spec, pin, subject, directory_probe=directory_probe) if expect_parent
+                 else all(valid_observation(spec, side) for side in (pin, subject)))
+        if not valid:
             return 'INVALID', False, False
         if json.dumps(actual, sort_keys=True) == json.dumps(expected_pair, sort_keys=True):
             # An existing accepted quirk is a control on its parent too.
@@ -132,7 +161,9 @@ def verdict_for(spec, pin, subject, expect_parent, *, policy_root, cell, directo
         return 'DIFFER', False, False
     same = matches(spec, pin, subject, directory_probe=directory_probe)
     held_fault = spec['strjoinv_over_read'] and strjoinv_fault(pin, subject)
-    if not held_fault and not all(valid_observation(spec, side) for side in (pin, subject)):
+    valid = (valid_parent_observations(spec, pin, subject, directory_probe=directory_probe) if expect_parent
+             else all(valid_observation(spec, side) for side in (pin, subject)))
+    if not held_fault and not valid:
         return 'INVALID', False, same
     expected = same if (not expect_parent or spec['control']) else not same
     return ('MATCH' if same else 'DIFFER'), expected, same

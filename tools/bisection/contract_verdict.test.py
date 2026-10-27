@@ -190,6 +190,97 @@ class VerdictTests(unittest.TestCase):
         self.assertEqual(decide(spec(), good, other, True), ('DIFFER', True, False))
         self.assertEqual(decide(spec(control=True), good, other, True), ('DIFFER', False, False))
 
+    def test_parent_rejects_unrelated_subject_failures_at_registered_terminations(self):
+        for case, pin in ((spec(abort=False), observation(exit=-signal.SIGABRT)),
+                          (spec(crash={'ret': False}), observation(exit=-signal.SIGSEGV)),
+                          (spec(both_abort=True, fatal=True), observation(exit=-signal.SIGTRAP)),
+                          (spec(abort=False, crash={'ret': False}, either=True),
+                           observation(exit=-signal.SIGABRT))):
+            for bad in (observation(exit=-signal.SIGILL), observation(exit='TIMEOUT'),
+                        observation(exit=127, stderr='loader failed'), observation(),
+                        observation(exit=1, result={'ret': True})):
+                for control in (False, True):
+                    with self.subTest(case=case, bad=bad, control=control):
+                        self.assertEqual(decide(dict(case, control=control), pin, bad, True),
+                                         ('INVALID', False, False))
+
+    def test_parent_rejects_a_pin_that_violates_its_registered_termination(self):
+        for case, wrong_signal in ((spec(abort=False), -signal.SIGSEGV),
+                                   (spec(crash={'ret': False}), -signal.SIGABRT),
+                                   (spec(both_abort=True, fatal=True), -signal.SIGSEGV),
+                                   (spec(abort=False, crash={'ret': False}, either=True), -signal.SIGILL)):
+            for pin in (observation(exit=wrong_signal), observation(exit='TIMEOUT'),
+                        observation(exit=127), observation(), observation(result={'ret': False})):
+                with self.subTest(case=case, pin=pin):
+                    self.assertEqual(decide(case, pin, observation(result={'ret': True}), True),
+                                     ('INVALID', False, False))
+
+    def test_parent_rejects_the_wrong_registered_kind_of_subject_termination(self):
+        for case, pin_exit, wrong_exit in ((spec(abort=False), -signal.SIGABRT, -signal.SIGSEGV),
+                                           (spec(crash={'ret': False}), -signal.SIGSEGV, -signal.SIGABRT),
+                                           (spec(both_abort=True, fatal=True), -signal.SIGTRAP, -signal.SIGABRT),
+                                           (spec(both_abort=True, fatal=True), -signal.SIGABRT, -signal.SIGTRAP)):
+            with self.subTest(case=case, pin_exit=pin_exit, wrong_exit=wrong_exit):
+                self.assertEqual(decide(case, observation(exit=pin_exit), observation(exit=wrong_exit), True),
+                                 ('INVALID', False, False))
+
+    def test_parent_accepts_completed_regressions_and_registered_subject_terminations(self):
+        for case, exits in ((spec(abort=False), (-signal.SIGABRT,)),
+                            (spec(crash={'ret': False}), (-signal.SIGSEGV,)),
+                            (spec(abort=False, crash={'ret': False}, either=True),
+                             (-signal.SIGABRT, -signal.SIGSEGV))):
+            for pin_exit in exits:
+                pin = observation(exit=pin_exit)
+                for subject in (observation(result={'ret': True, 'logs': []}), observation(exit=pin_exit)):
+                    with self.subTest(case=case, pin_exit=pin_exit, subject=subject):
+                        self.assertEqual(decide(case, pin, subject, True), ('DIFFER', True, False))
+                        self.assertEqual(decide(dict(case, control=True), pin, subject, True),
+                                         ('DIFFER', False, False))
+        for pin_exit in (-signal.SIGABRT, -signal.SIGTRAP):
+            case = spec(both_abort=True, fatal=True, stderr=True)
+            pin = observation(exit=pin_exit, stderr='fatal message')
+            self.assertEqual(decide(case, pin, observation(result={}), True), ('DIFFER', True, False))
+            self.assertEqual(decide(case, pin, observation(exit=pin_exit, stderr='wrong message'), True),
+                             ('DIFFER', True, False))
+            self.assertEqual(decide(case, pin, dict(pin), True), ('MATCH', False, True))
+
+    def test_parent_directory_chunk_validity_uses_the_registered_host_path(self):
+        for kind in ('user', 'system'):
+            case = spec(abort=False, dir_chunk=kind)
+            for reads in (False, True):
+                pin = (observation(exit=-signal.SIGABRT) if reads else
+                       observation(exit=-signal.SIGSEGV) if kind == 'system' else observation(result={}))
+                state = dict(directory_probe=lambda: reads)
+                with self.subTest(kind=kind, reads=reads):
+                    self.assertEqual(decide(case, pin, observation(result={'ret': True}), True, **state),
+                                     ('DIFFER', True, False))
+                    self.assertEqual(decide(case, pin, observation(exit=-signal.SIGILL), True, **state),
+                                     ('INVALID', False, False))
+                    self.assertEqual(decide(case, observation(exit=-signal.SIGILL),
+                                            observation(result={}), True, **state), ('INVALID', False, False))
+                    if pin['exit'] != 0:
+                        self.assertEqual(decide(case, pin, dict(pin), True, **state), ('DIFFER', True, False))
+
+    def test_pin_not_run_classification_is_unchanged_in_both_modes(self):
+        case = spec(pin_not_run={'ret': True})
+        pin = observation(exit='NOT-RUN')
+        for subject, same in ((observation(result={'ret': True}), True),
+                              (observation(result={'ret': False}), False),
+                              (observation(exit=-signal.SIGSEGV), False),
+                              (observation(exit='TIMEOUT'), False), (observation(), False)):
+            for parent in (False, True):
+                with self.subTest(subject=subject, parent=parent):
+                    self.assertEqual(decide(case, pin, subject, parent),
+                                     ('MATCH' if same else 'DIFFER', not same if parent else same, same))
+
+    def test_held_strjoinv_pin_fault_stays_valid_in_both_modes(self):
+        case = spec(strjoinv_over_read=True)
+        pin = observation(exit=-signal.SIGSEGV, stderr='e\n')
+        subject = observation(result={'rows': []}, stderr='e\n')
+        self.assertEqual(decide(case, pin, subject), ('MATCH', True, True))
+        self.assertEqual(decide(case, pin, subject, True), ('MATCH', False, True))
+        self.assertEqual(decide(case, pin, dict(subject, stderr='wrong'), True), ('INVALID', False, False))
+
 
 class PolicyTests(unittest.TestCase):
     PIN = dict(exit=0, result={'ret': True, 'rows': [[2, 'e794b2']], 'logs': []}, stderr='')
@@ -216,6 +307,16 @@ class PolicyTests(unittest.TestCase):
     def test_both_recorded_observations_are_accepted_in_either_mode(self):
         for parent in (False, True):
             self.assertEqual(self.decide(parent=parent), ('POLICY-ACCEPTED', True, False))
+
+    def test_a_registered_policy_abort_does_not_exempt_invalid_parent_workers(self):
+        self.spec['abort'] = False
+        pin = dict(self.PIN, exit=-signal.SIGABRT, result=None)
+        self.write(dict(pin=pin, subject=self.SUBJECT))
+        self.assertEqual(self.decide(pin=pin, parent=True), ('POLICY-ACCEPTED', True, False))
+        for bad in (dict(self.SUBJECT, exit=-signal.SIGILL, result=None),
+                    dict(self.SUBJECT, exit='TIMEOUT', result=None), dict(self.SUBJECT, result=None)):
+            with self.subTest(subject=bad):
+                self.assertEqual(self.decide(pin=pin, subject=bad, parent=True), ('INVALID', False, False))
 
     def test_any_other_observation_is_a_difference_and_a_missing_record_is_invalid(self):
         changed = dict(self.SUBJECT, result=dict(self.SUBJECT['result'], ret=False), stderr_lines=0, userfiles={})
