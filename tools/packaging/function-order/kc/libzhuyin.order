@@ -105,6 +105,7 @@ init	<oxpinyin_facade::context::ContextCore>::take_layout_faults
 init	<oxpinyin_facade::instance::InstanceCore>::abi_columns_over
 init	<oxpinyin_facade::instance::InstanceCore>::mode_key_list
 init	<oxpinyin_facade::instance::InstanceCore>::reset_parse_state
+init	<oxpinyin_facade::snapshot::CandidateSnapshot<zhuyin::state::CapiCandidate>>::intern_nul_free
 init	<oxpinyin_runtime::FacadeBumps as core::default::Default>::default
 init	<oxpinyin_runtime::FacadeBumps>::token
 init	<oxpinyin_runtime::Runtime>::dict
@@ -255,7 +256,6 @@ init	oxpinyin_engine::session::dedup_ranked_by_text
 init	oxpinyin_engine::session::dynamic_adjust_bigram_possibility
 init	oxpinyin_engine::session::glib_rank_sort
 init	oxpinyin_engine::session::order_window_tail
-init	oxpinyin_facade::snapshot::span_ptr
 init	oxpinyin_runtime::open_user_store
 init	oxpinyin_runtime::require_file
 init	oxpinyin_store::kyotocabinet::ffi::visit_full::<oxpinyin_store::kyotocabinet::ffi::Fill>
