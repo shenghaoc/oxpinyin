@@ -43,7 +43,8 @@ class MmanTests(unittest.TestCase):
         self.assertIs(darwin.unmap, mman.unmap)
         self.assertIs(darwin.file_residency, mman.residency)
         # No second declaration of the shared calls in any of its users.
-        for path in (darwin.__file__, cold_linux.__file__, ROOT / 'tools/measure-function-order.py'):
+        for path in (darwin.__file__, cold_linux.__file__, ROOT / 'tools/measure-function-order.py',
+                     ROOT / 'tools/bisection/teardown.py'):
             tree = ast.parse(Path(path).read_text())
             declared = {node.value.attr for node in ast.walk(tree)
                         if isinstance(node, ast.Attribute) and node.attr in ('argtypes', 'restype')
@@ -71,8 +72,39 @@ class MmanTests(unittest.TestCase):
         empty = self.root / 'empty.bin'
         empty.write_bytes(b'')
         with empty.open('rb') as handle, mock.patch.object(mman, 'map_file') as mapping:
+            self.assertEqual(mman.vector(handle.fileno()), b'')
             self.assertEqual(mman.residency(handle.fileno()), dict(pages=0, resident=0))
         mapping.assert_not_called()
+
+    def test_the_vector_is_the_mincore_result_and_residency_counts_bit_zero(self):
+        # Darwin sets flag bits above bit 0: 0x80 alone is not resident, 0x03 is.
+        marks = (0x01, 0x00, 0x03, 0x80)
+
+        def mincore(address, size, buffer):
+            for index, value in enumerate(marks):
+                buffer[index] = value
+            return 0
+        for read, expected in ((mman.vector, bytes(marks)), (mman.residency, dict(pages=4, resident=2))):
+            with self.file.open('rb') as handle, \
+                    mock.patch.object(mman, 'map_file', return_value=0x1000) as mapping, \
+                    mock.patch.object(mman, 'unmap') as unmapping, \
+                    mock.patch.object(mman, '_system') as system:
+                system.return_value.mincore.side_effect = mincore
+                fd = handle.fileno()
+                self.assertEqual(read(fd), expected)
+            # The mapping is PROT_NONE, so reading the vector faults no page in, and it is removed.
+            mapping.assert_called_once_with(fd, 4 * mman.PAGE_SIZE, mman.PROT_NONE, mman.MAP_SHARED)
+            unmapping.assert_called_once_with(0x1000, 4 * mman.PAGE_SIZE)
+
+    def test_a_real_vector_has_one_byte_per_page_and_agrees_with_residency(self):
+        with self.file.open('rb') as handle:
+            handle.read()
+            marks = mman.vector(handle.fileno())
+            observed = mman.residency(handle.fileno())
+        self.assertIsInstance(marks, bytes)
+        self.assertEqual(len(marks), observed['pages'])
+        self.assertGreaterEqual(sum(value & 1 for value in marks), 1)
+        self.assertEqual(sum(value & 1 for value in marks), observed['resident'])
 
     def test_a_read_file_has_its_pages_and_a_resident_page(self):
         with self.file.open('rb') as handle:

@@ -1,6 +1,8 @@
 #!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
 """Teardown instrumentation controls using private native stubs and mocked inputs."""
+import contextlib
 import importlib.util
+import io
 import json
 import mmap
 import os
@@ -587,6 +589,267 @@ class ColdTests(unittest.TestCase):
                     expected = [('ox', 'control', 'pin'), ('control', 'pin', 'ox'), ('pin', 'ox', 'control')]
                     self.assertEqual(order, [side for index in range(rounds) for side in expected[index % 3]])
         self.assertEqual(*sequences)
+
+
+class PageResidencyTests(unittest.TestCase):
+    """The per-page report (#1163) over fake mincore readings and the pages ELF fixture.
+
+    A reading is data here, never taken from a page cache. The host page is 32
+    bytes, so the 3,848-byte ELF fixture has 121 pages and the offsets that
+    tools/dev/measure/pages.test.py checks against GNU readelf apply.
+    """
+    PAGE = 32
+    ELF = ROOT / 'tools/dev/measure/fixtures/pages-elf-x86_64.so'
+    ELF_PAGES = -(-3848 // PAGE)
+
+    def setUp(self):
+        patcher = patch.object(td.mman, 'PAGE_SIZE', self.PAGE)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+
+    def entry(self, resident, pages, kind, path='', size=None, identity=None):
+        """One file's reading at a checkpoint, with the pages in RESIDENT set in its vector."""
+        info = Path(path).stat() if kind == 'object' and Path(path).is_file() else None
+        result = dict(pages=pages, resident=len(resident), kind=kind, path=str(path),
+                      size=(info.st_size if info else pages * self.PAGE) if size is None else size,
+                      identity=list(identity or ((info.st_dev, info.st_ino) if info else (7, 1))),
+                      vector=bytes(index in resident for index in range(pages)))
+        if info is not None:
+            result['mtime_ns'] = info.st_mtime_ns
+        return result
+
+    def sample(self, *points):
+        """A sample row from (name, residency) pairs, laid out as Campaign.run records them."""
+        checkpoints = {0: {points[0][0]: dict(residency=points[0][1])},
+                       1: {name: dict(residency=value) for name, value in points[1:]}}
+        if len(points) > 2:
+            # A memory sample's cycle 1 also holds a copy of the initial M0.
+            checkpoints[1]['M0'] = checkpoints[0]['M0']
+        return dict(checkpoints=checkpoints)
+
+    def report(self, samples):
+        """Print the report as the campaign does and return its records, parsed from the text."""
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            td.report_page_residency('pinyin', 'empty', 'ox', samples)
+        lines = output.getvalue().splitlines()
+        records = [json.loads(line) for line in lines]
+        # The existing output: one sorted, ASCII JSON object per line, tagged with its kind.
+        self.assertTrue(all(record.pop('teardown') == 'page-residency' for record in records))
+        self.assertEqual(lines, [json.dumps(dict(teardown='page-residency', **record), sort_keys=True)
+                                 for record in records])
+        return records
+
+    def test_resident_pages_derive_every_shape_from_one_vector(self):
+        file = self.root / 'file'
+        file.write_bytes(b'x')
+        with file.open('rb') as handle, \
+                patch.object(td.mman, 'vector', return_value=bytes([1, 0, 3, 0x80])) as read:
+            fd = handle.fileno()
+            self.assertEqual(td.resident_pages(fd), dict(pages=4, resident=2))
+            self.assertEqual(td.resident_pages(fd, ranges=True),
+                             dict(pages=4, resident=2, ranges=[[0, 1], [2, 3]]))
+            self.assertEqual(td.resident_pages(fd, vector=True),
+                             dict(pages=4, resident=2, vector=bytes([1, 0, 3, 0x80])))
+            self.assertEqual(read.call_count, 3)
+            read.return_value = b''
+            # An empty file has no pages, so no runs, and an empty vector when asked for one.
+            self.assertEqual(td.resident_pages(fd, ranges=True), dict(pages=0, resident=0))
+            self.assertEqual(td.resident_pages(fd, vector=True), dict(pages=0, resident=0, vector=b''))
+
+    def test_vectors_are_kept_from_the_one_read_that_counts_the_pages(self):
+        names = ('facade.so', 'libdb.so.5', 'data/table.conf', 'sample/user/user.bin', 'dirty.tsv')
+        for name in names:
+            (self.root / name).parent.mkdir(parents=True, exist_ok=True)
+            (self.root / name).write_bytes(b'x' * 40)
+        files = [self.root / name for name in names]
+        marks = [bytes([1, 0]), bytes([0, 1]), bytes([1, 1]), bytes([0, 0]), bytes([1, 0])]
+        where = (self.root / 'facade.so', self.root / 'data', self.root / 'sample/user')
+        with patch.object(td.mman, 'vector', side_effect=lambda fd: marks[(read.call_count - 1) % len(marks)]) as read:
+            plain = td.file_residency(files, *where)
+            kept = td.file_residency(files, *where, vectors=True, rows=self.root / 'dirty.tsv')
+            by_role = td.residency(files, *where, vectors=True, rows=self.root / 'dirty.tsv')
+        # Every call reads each file once; keeping the vector adds no second read.
+        self.assertEqual(read.call_count, 15)
+        self.assertEqual({label: set(row) for label, row in plain.items()}, {label: {'pages', 'resident'} for label in plain})
+        kinds = ['object', 'object', 'data', 'data', 'data']
+        self.assertEqual(list(kept), ['facade', 'libdb.so.5', 'data/table.conf', 'user/user.bin', 'dirty.tsv'])
+        self.assertEqual(list(by_role), ['SUBJECT', 'LIB:libdb.so.5', 'DATA:table.conf', 'USER:user.bin',
+                                         'LIB:dirty.tsv'])
+        for readings in (kept, by_role):
+            self.assertEqual([row['kind'] for row in readings.values()], kinds)
+            self.assertEqual([row['vector'] for row in readings.values()], marks)
+            self.assertEqual([row['resident'] for row in readings.values()], [1, 1, 2, 0, 1])
+            self.assertEqual([row['size'] for row in readings.values()], [40] * 5)
+            for path, row in zip(files, readings.values()):
+                info = path.stat()
+                self.assertEqual((row['path'], row['identity']), (str(path), [info.st_dev, info.st_ino]))
+                self.assertEqual(row['mtime_ns'], info.st_mtime_ns)
+        # The facade's own runs stay, for the init pages probe.
+        self.assertEqual(by_role['SUBJECT']['ranges'], [[0, 1]])
+        self.assertNotIn('ranges', by_role['LIB:libdb.so.5'])
+
+    def test_checkpoint_sequence_is_the_order_the_worker_paused_in(self):
+        init = self.sample(('M0', {}), ('I1', {}))
+        memory = self.sample(('M0', {}), ('M1', {}), ('M2', {}), ('M3', {}))
+        self.assertIn('M0', memory['checkpoints'][1])
+        self.assertEqual([point for point, _ in td.checkpoint_sequence(init['checkpoints'])], ['M0', 'I1'])
+        self.assertEqual([point for point, _ in td.checkpoint_sequence(memory['checkpoints'])],
+                         ['M0', 'M1', 'M2', 'M3'])
+        # The initial observation is cycle 0's, not the copy.
+        observations = dict(td.checkpoint_sequence(memory['checkpoints']))
+        self.assertIs(observations['M0'], memory['checkpoints'][0]['M0'])
+
+    def test_an_init_pair_maps_object_pages_to_sections_and_symbols_and_data_pages_to_offsets(self):
+        def round_(subject, data):
+            return self.sample(
+                ('M0', {'SUBJECT': self.entry({0}, self.ELF_PAGES, 'object', self.ELF),
+                        'DATA:bigram.db': self.entry({0}, 7, 'data', size=224),
+                        'LIB:libquiet.so': self.entry({0}, 3, 'object', self.ELF)}),
+                ('I1', {'SUBJECT': self.entry({0, *subject}, self.ELF_PAGES, 'object', self.ELF),
+                        'DATA:bigram.db': self.entry({0, *data}, 7, 'data', size=224),
+                        'LIB:libquiet.so': self.entry({0}, 3, 'object', self.ELF)}))
+        # Pages 34, 42 and 45 start at 0x440, 0x540 and 0x5a0; the second round drops 42 and 6 and adds 45.
+        records = self.report([round_({34, 42}, {1, 2, 6}), round_({34, 45}, {1, 2})])
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0], dict(
+            facade='pinyin', case='empty', side='ox', cache='cold', checkpoints=['M0', 'I1'], rounds=2,
+            page_size=self.PAGE, limits=list(td.page_map.LIMITS), unchanged=['LIB:libquiet.so'], files={
+                'DATA:bigram.db': dict(kind='data', pages=7, new_pages=td.summary([3, 2]), rows=[
+                    dict(file='DATA:bigram.db', offset_range=[32, 96], in_rounds=2),
+                    dict(file='DATA:bigram.db', offset_range=[192, 224], in_rounds=1)]),
+                'SUBJECT': dict(kind='object', pages=self.ELF_PAGES, new_pages=td.summary([2, 2]), rows=[
+                    dict(file='SUBJECT', page_offset=0x440, elf_sections=['.rodata'], elf_symbols=['pages_table'],
+                         in_rounds=2),
+                    dict(file='SUBJECT', page_offset=0x540, elf_sections=['.text'],
+                         elf_symbols=['pages_first', 'pages_second', 'pages_third'], in_rounds=1),
+                    dict(file='SUBJECT', page_offset=0x5a0, elf_sections=['.plt', '.tdata', '.dynamic'],
+                         elf_symbols=['pages_tls'], in_rounds=1)])}))
+        text = ' '.join(records[0]['limits'])
+        self.assertIn('readahead', text)
+        self.assertIn('pausing at a checkpoint', text)
+
+    def test_a_memory_sample_reports_each_neighbouring_pair_and_never_a_skipped_one(self):
+        def user(resident):
+            return {'user/user.db': self.entry(resident, 5, 'data', size=150)}
+        # Page 1 is new at M1 and stays; page 2 is new at M2; nothing is new at M3.
+        sample = self.sample(('M0', user({0})), ('M1', user({0, 1})), ('M2', user({0, 1, 2})), ('M3', user({0, 1, 2})))
+        records = self.report([sample])
+        self.assertEqual([record['checkpoints'] for record in records], [['M0', 'M1'], ['M1', 'M2'], ['M2', 'M3']])
+        self.assertEqual([record['files']['user/user.db']['rows'] if record['files'] else None for record in records],
+                         [[dict(file='user/user.db', offset_range=[32, 64], in_rounds=1)],
+                          [dict(file='user/user.db', offset_range=[64, 96], in_rounds=1)], None])
+        self.assertEqual([record['unchanged'] for record in records], [[], [], ['user/user.db']])
+        # The last page is clipped to the file's 150 bytes.
+        sample = self.sample(('M0', user({0})), ('M1', user({0, 4})), ('M2', user({0, 4})), ('M3', user({0, 4})))
+        self.assertEqual(self.report([sample])[0]['files']['user/user.db']['rows'],
+                         [dict(file='user/user.db', offset_range=[128, 150], in_rounds=1)])
+
+    def test_a_file_replaced_between_checkpoints_has_nothing_to_compare(self):
+        def round_(identity, resident):
+            return self.sample(('M0', {'USER:user.db': self.entry({0}, 4, 'data', identity=(7, 10))}),
+                               ('I1', {'USER:user.db': self.entry(resident, 4, 'data', identity=identity)}))
+        # Round 1 finds a new inode, whose pages are all resident because they were just written.
+        shown = self.report([round_((7, 11), {0, 1, 2, 3}), round_((7, 10), {0, 2})])[0]['files']['USER:user.db']
+        self.assertEqual(shown['replaced_in_rounds'], 1)
+        self.assertEqual(shown['rows'], [dict(file='USER:user.db', offset_range=[64, 96], in_rounds=1)])
+        self.assertEqual(shown['new_pages'], td.summary([1]))
+        only = self.report([round_((7, 11), {0, 1, 2, 3})])[0]
+        self.assertEqual(only['files']['USER:user.db'], dict(kind='data', pages=4, new_pages=None, rows=[],
+                                                              replaced_in_rounds=1))
+        self.assertEqual(only['unchanged'], [])
+
+    def test_an_object_that_cannot_be_parsed_is_reported_by_byte_range_with_the_reason(self):
+        text, missing = self.root / 'not-an-object.so', self.root / 'gone.so'
+        text.write_bytes(b'tab\tseparated\n' * 8)
+        sample = self.sample(
+            ('M0', {'LIB:a': self.entry({0}, 4, 'object', text), 'LIB:b': self.entry({0}, 4, 'object', missing)}),
+            ('I1', {'LIB:a': self.entry({0, 1}, 4, 'object', text), 'LIB:b': self.entry({0, 3}, 4, 'object', missing)}))
+        files = self.report([sample])[0]['files']
+        self.assertEqual(files['LIB:a']['rows'], [dict(file='LIB:a', offset_range=[32, 64], in_rounds=1)])
+        self.assertTrue(files['LIB:a']['layout_error'].startswith(f'{text}: unknown object format'))
+        self.assertEqual(files['LIB:b']['rows'], [dict(file='LIB:b', offset_range=[96, 128], in_rounds=1)])
+        self.assertIn('No such file', files['LIB:b']['layout_error'])
+        # A parsed object has no layout_error.
+        sample = self.sample(('M0', {'SUBJECT': self.entry({0}, self.ELF_PAGES, 'object', self.ELF)}),
+                             ('I1', {'SUBJECT': self.entry({0, 34}, self.ELF_PAGES, 'object', self.ELF)}))
+        self.assertNotIn('layout_error', self.report([sample])[0]['files']['SUBJECT'])
+
+    def test_each_object_is_parsed_once_per_report_and_only_when_a_page_is_new(self):
+        def facade(resident):
+            return {'SUBJECT': self.entry(resident, self.ELF_PAGES, 'object', self.ELF)}
+        sample = self.sample(('M0', facade({0})), ('M1', facade({0, 34})), ('M2', facade({0, 34, 42})),
+                             ('M3', facade({0, 34, 42})))
+        with patch.object(td.page_map, 'object_layout', wraps=td.page_map.object_layout) as parse:
+            self.report([sample, sample])
+        # Two pairs have a new page, one has none; the object is parsed for the first and reused for the second.
+        self.assertEqual(parse.call_count, 1)
+
+    def test_a_valid_object_replacing_the_path_after_the_last_checkpoint_falls_back(self):
+        path, replacement = self.root / 'subject.so', self.root / 'replacement.so'
+        path.write_bytes(self.ELF.read_bytes())
+        sample = self.sample(('M0', {'SUBJECT': self.entry({0}, self.ELF_PAGES, 'object', path)}),
+                             ('I1', {'SUBJECT': self.entry({0, 34}, self.ELF_PAGES, 'object', path)}))
+        replacement.write_bytes(self.ELF.read_bytes().replace(b'pages_table', b'other_table'))
+        replacement.replace(path)
+        # The replacement is a different valid ELF object, so a path-only parse would succeed.
+        self.assertIn('other_table', [name for _, _, name in td.page_map.object_layout(path)['elf_symbols']])
+        shown = self.report([sample])[0]['files']['SUBJECT']
+        self.assertIn('replaced', shown['layout_error'])
+        self.assertEqual(shown['rows'], [dict(file='SUBJECT', offset_range=[0x440, 0x460], in_rounds=1)])
+
+    def test_same_inode_and_size_with_a_changed_mtime_falls_back(self):
+        path = self.root / 'subject.so'
+        path.write_bytes(self.ELF.read_bytes())
+        sample = self.sample(('M0', {'SUBJECT': self.entry({0}, self.ELF_PAGES, 'object', path)}),
+                             ('I1', {'SUBJECT': self.entry({0, 34}, self.ELF_PAGES, 'object', path)}))
+        info = path.stat()
+        path.write_bytes(self.ELF.read_bytes().replace(b'pages_table', b'other_table'))
+        os.utime(path, ns=(info.st_atime_ns, info.st_mtime_ns + 1000000000))
+        self.assertEqual((path.stat().st_dev, path.stat().st_ino, path.stat().st_size),
+                         (info.st_dev, info.st_ino, info.st_size))
+        self.assertIn('mtime changed', self.report([sample])[0]['files']['SUBJECT']['layout_error'])
+
+    def test_parsing_uses_verified_descriptor_bytes_when_the_path_changes_again(self):
+        path, replacement = self.root / 'subject.so', self.root / 'replacement.so'
+        path.write_bytes(self.ELF.read_bytes())
+        replacement.write_bytes(self.ELF.read_bytes().replace(b'pages_table', b'other_table'))
+        sample = self.sample(('M0', {'SUBJECT': self.entry({0}, self.ELF_PAGES, 'object', path)}),
+                             ('I1', {'SUBJECT': self.entry({0, 34}, self.ELF_PAGES, 'object', path)}))
+        parse = td.page_map.object_layout
+
+        def replace_then_parse(name, *, data=None):
+            replacement.replace(path)
+            return parse(name, data=data)
+
+        with patch.object(td.page_map, 'object_layout', side_effect=replace_then_parse):
+            shown = self.report([sample])[0]['files']['SUBJECT']
+        self.assertNotIn('layout_error', shown)
+        self.assertEqual(shown['rows'][0]['elf_symbols'], ['pages_table'])
+
+    def test_replaced_objects_across_retained_rounds_fall_back(self):
+        path, replacement = self.root / 'subject.so', self.root / 'replacement.so'
+        path.write_bytes(self.ELF.read_bytes())
+
+        def sample():
+            return self.sample(('M0', {'SUBJECT': self.entry({0}, self.ELF_PAGES, 'object', path)}),
+                               ('I1', {'SUBJECT': self.entry({0, 34}, self.ELF_PAGES, 'object', path)}))
+
+        first = sample()
+        replacement.write_bytes(self.ELF.read_bytes().replace(b'pages_table', b'other_table'))
+        replacement.replace(path)
+        shown = self.report([first, sample()])[0]['files']['SUBJECT']
+        self.assertIn('replaced', shown['layout_error'])
+        self.assertEqual(shown['rows'], [dict(file='SUBJECT', offset_range=[0x440, 0x460], in_rounds=2)])
+
+    def test_samples_that_paused_at_different_checkpoints_are_refused(self):
+        init = self.sample(('M0', {}), ('I1', {}))
+        memory = self.sample(('M0', {}), ('M1', {}), ('M2', {}), ('M3', {}))
+        with patch.object(td, 'print_record') as record:
+            with self.assertRaisesRegex(ValueError, 'did not pause at the same checkpoints'):
+                td.report_page_residency('pinyin', 'empty', 'ox', [init, memory])
+        record.assert_not_called()
 
 
 class InitAttributionTests(unittest.TestCase):
@@ -1180,14 +1443,22 @@ class NativeTests(unittest.TestCase):
             library.write_bytes(self.library.read_bytes())
             campaign = self.campaign()
             campaign.data, campaign.work, campaign.cache = data, root, 'cold'
-            # The ext4 refusal is tested on its own.
+            # The ext4 refusal is tested on its own. Objects are parsed when the
+            # rounds are over, never inside a sample.
             with patch.object(td, 'exports', return_value=['pinyin_init']), \
-                    patch.object(td, 'filesystem', return_value='ext4'), patch.object(td, 'print_record'):
+                    patch.object(td, 'filesystem', return_value='ext4'), patch.object(td, 'print_record'), \
+                    patch.object(td.page_map, 'object_layout', side_effect=AssertionError('parsed in a sample')):
                 rows = [campaign.run('pinyin', library, profile, mode='memory') for _ in range(2)]
             for row in rows:
                 points = dict(row['checkpoints'][1], M0=row['checkpoints'][0]['M0'])
                 for point in ('M0', 'M1', 'M2', 'M3'):
                     self.assertEqual(set(points[point]['residency']), {'facade', 'data/table.conf', 'user/user.conf'})
+                    # Each reading keeps its vector, one byte per page, and counts from it.
+                    for label, reading in points[point]['residency'].items():
+                        self.assertEqual(len(reading['vector']), reading['pages'], label)
+                        self.assertEqual(sum(value & 1 for value in reading['vector']), reading['resident'], label)
+                    self.assertEqual({label: reading['kind'] for label, reading in points[point]['residency'].items()},
+                                     {'facade': 'object', 'data/table.conf': 'data', 'user/user.conf': 'data'})
                 # Loading faults the facade in before M0; nothing evicts it after.
                 self.assertGreater(points['M0']['residency']['facade']['resident'], 0)
             with patch.object(td, 'print_record') as record:
@@ -1196,10 +1467,76 @@ class NativeTests(unittest.TestCase):
             self.assertEqual([value['side'] for value in residency], ['ox', 'control', 'pin'])
             self.assertEqual(residency[0]['files']['data/table.conf']['pages']['median'], 1)
             self.assertEqual(set(residency[0]['files']['facade']), {'pages', 'M0', 'M1', 'M2', 'M3'})
+            # One page-residency record per neighbouring pair for each side, after that side's residency.
+            pairs = [(call.kwargs['side'], call.kwargs['checkpoints'])
+                     for call in record.call_args_list if call.args[0] == 'page-residency']
+            self.assertEqual(pairs, [(side, pair) for side in ('ox', 'control', 'pin')
+                                     for pair in (['M0', 'M1'], ['M1', 'M2'], ['M2', 'M3'])])
+            for call in record.call_args_list:
+                if call.args[0] == 'page-residency':
+                    # Every cold file is either named by a page or listed as unchanged.
+                    self.assertEqual(sorted(call.kwargs['files']) + call.kwargs['unchanged'],
+                                     sorted(['facade', 'data/table.conf', 'user/user.conf']))
         # Warm samples carry no residency and print no residency record.
         with patch.object(td, 'exports', return_value=['pinyin_init']):
             warm = self.campaign().run('pinyin', self.library, self.profile, mode='memory')
         self.assertNotIn('residency', warm['checkpoints'][0]['M0'])
+
+    @unittest.skipUnless(sys.platform == 'linux', 'Linux cold native stub samples')
+    def test_cold_init_samples_report_page_residency_from_load_to_init(self):
+        with tempfile.TemporaryDirectory(dir=self.root) as directory:
+            self.require_eviction(directory)
+            root = Path(directory)
+            data, profile = root / 'data', root / 'profile'
+            data.mkdir()
+            profile.mkdir()
+            (data / 'table.conf').write_bytes(b'private-system-fixture')
+            (profile / 'user.conf').write_bytes(b'private-profile-fixture')
+            library = root / 'subject.so'
+            library.write_bytes(self.library.read_bytes())
+            campaign = self.campaign()
+            campaign.data, campaign.work, campaign.cache = data, root, 'cold'
+            with patch.object(td, 'exports', return_value=['pinyin_init']), \
+                    patch.object(td, 'filesystem', return_value='ext4'), patch.object(td, 'print_record'):
+                rows = [campaign.run('pinyin', library, profile, mode='init', probe='count') for _ in range(2)]
+            for row in rows:
+                for point, cycle in (('M0', 0), ('I1', 1)):
+                    reading = row['checkpoints'][cycle][point]['residency']['SUBJECT']
+                    self.assertEqual((len(reading['vector']), reading['kind']), (reading['pages'], 'object'))
+            with patch.object(td, 'print_record') as record:
+                td.report_init_counts('pinyin', 'empty', {side: rows for side in ('ox', 'control', 'pin')}, 'cold')
+                td.report_init_counts('pinyin', 'empty', {side: rows for side in ('ox', 'control', 'pin')}, 'warm')
+            shown = [call.kwargs for call in record.call_args_list if call.args[0] == 'page-residency']
+            # Only the cold call reports pages; the init pair is M0 to I1.
+            self.assertEqual([(value['side'], value['checkpoints'], value['rounds']) for value in shown],
+                             [(side, ['M0', 'I1'], 2) for side in ('ox', 'control', 'pin')])
+            self.assertEqual(sorted(shown[0]['files']) + shown[0]['unchanged'],
+                             sorted(['SUBJECT', 'DATA:table.conf', 'USER:user.conf']))
+
+    @unittest.skipUnless(sys.platform == 'linux', 'Linux mincore and fadvise')
+    def test_a_real_vector_shows_a_read_page_and_its_readahead_as_newly_resident(self):
+        with tempfile.TemporaryDirectory(dir=self.root) as directory:
+            self.require_eviction(directory)
+            page = os.sysconf('SC_PAGE_SIZE')
+            path = Path(directory) / 'database'
+            path.write_bytes(os.urandom(64 * page))
+            with patch.object(td, 'filesystem', return_value='ext4'), patch.object(td, 'print_record'):
+                td.evict_files([path])
+            where = (Path(directory) / 'facade.so', Path(directory), Path(directory) / 'user')
+            before = td.file_residency([path], *where, vectors=True)
+            self.assertEqual(before['data/database']['resident'], 0)
+            with path.open('rb') as handle:
+                os.pread(handle.fileno(), 1, 40 * page)
+                after = td.file_residency([path], *where, vectors=True)
+            newly = td.page_map.newly_resident(before['data/database']['vector'], after['data/database']['vector'], page)
+            # The page that was read is newly resident; the kernel may have read more around it,
+            # which a difference of two vectors cannot tell from the page that was faulted.
+            self.assertIn(40 * page, newly)
+            self.assertEqual(len(newly), after['data/database']['resident'])
+            self.assertLessEqual(len(newly), 64)
+            rows = td.page_map.data_tally_rows(td.page_map.tally([newly]), page, 64 * page, 'data/database')
+            self.assertTrue(any(start <= 40 * page < end for start, end in (row['offset_range'] for row in rows)))
+            self.assertEqual(after['data/database']['kind'], 'data')
 
     def test_cold_prepares_every_arm_after_copy_and_before_child_and_cleans_refusal(self):
         for side in ('subject', 'control', 'pinlibs'):

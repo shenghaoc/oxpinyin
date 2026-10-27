@@ -8,7 +8,6 @@ import bisect
 import collections
 import contextlib
 import copy
-import ctypes
 import hashlib
 import importlib.util
 import json
@@ -28,7 +27,8 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-from tools.dev import host
+from tools.dev import host, mman
+from tools.dev.measure import pages as page_map
 from tools.dev.measure.stats import (
     CONTROL_INTERVAL, RESIDENCY_FLOOR_KIB, RESIDENCY_FRACTION, percentile, summary,
     paired_bootstrap, paired_ratio, paired_difference, within, stable_control,
@@ -304,13 +304,42 @@ def cold_files(library, data, user, rows=None):
             *([Path(rows)] if rows else [])]
 
 
-def file_residency(files, library, data, user):
+def cold_kind(path, data, user, rows=None):
+    """Classify a cold file for the per-page report: 'data' or 'object'.
+
+    System data, the private user files and the dirty scenario's rows file are
+    data, reported as byte ranges. The rest of the cold set is the facade and
+    its non-C-runtime dependencies, which are objects: the report names the
+    sections and symbols their pages hold.
+    """
+    return 'data' if (path.is_relative_to(data) or path.is_relative_to(user) or
+                      (rows is not None and path == Path(rows))) else 'object'
+
+
+def page_observation(handle, path, kind):
+    """What the per-page report keeps of a cold file at a checkpoint besides its vector.
+
+    size clips a data file's last range, identity ((st_dev, st_ino)) shows a
+    file replaced between two checkpoints, and path names an object to parse
+    once the sample is over. Its identity, size and mtime_ns also verify the
+    descriptor used by that later parse. The private user copy is removed
+    with the sample, so a data file's path is never read again. Read no bytes.
+    """
+    info = os.fstat(handle.fileno())
+    return dict(kind=kind, path=str(path), size=info.st_size, identity=[info.st_dev, info.st_ino],
+                mtime_ns=info.st_mtime_ns)
+
+
+def file_residency(files, library, data, user, vectors=False, rows=None):
     """Resident pages of each cold file, keyed by a sample-independent label.
 
     Read at a paused checkpoint of a cold memory sample; resident_pages reads
-    no file bytes, so the reading does not fault the pages it counts.
+    no file bytes, so the reading does not fault the pages it counts. With
+    vectors, each reading also keeps the file's mincore vector and its
+    page_observation for the per-page report; rows is the dirty scenario's
+    rows file, which cold_kind needs to tell from a dependency.
     """
-    rows = {}
+    result = {}
     for path in map(Path, files):
         if path == Path(library):
             label = 'facade'
@@ -321,46 +350,29 @@ def file_residency(files, library, data, user):
         else:
             label = path.name
         with path.open('rb') as handle:
-            rows[label] = resident_pages(handle.fileno())
-    return rows
+            result[label] = resident_pages(handle.fileno(), vector=vectors)
+            if vectors:
+                result[label].update(page_observation(handle, path, cold_kind(path, data, user, rows)))
+    return result
 
 
-def resident_pages(fd, ranges=False):
-    """Count resident file pages with Linux mincore over an unfaulted PROT_NONE mapping.
+def resident_pages(fd, ranges=False, vector=False):
+    """Count resident file pages from the shared mincore vector (tools.dev.mman).
 
     Read no file bytes. With ranges, include half-open resident page-index runs
     for a nonempty file; an empty file returns just zero pages/resident counts.
-    Unmap on exit and propagate syscall failures as OSError. Linux may report
-    all pages resident without sufficient permissions, so eviction callers
-    must reject that result rather than infer success.
+    With vector, include the vector too: one byte per page, bit 0 set when
+    resident. Propagate syscall failures as OSError. Linux may report all pages
+    resident without sufficient permissions, so eviction callers must reject
+    that result rather than infer success.
     """
-    size = os.fstat(fd).st_size
-    if not size:
-        return dict(pages=0, resident=0)
-    libc = ctypes.CDLL(None, use_errno=True)
-    libc.mmap.argtypes = (ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int,
-                          ctypes.c_int, ctypes.c_int, ctypes.c_long)
-    libc.mmap.restype = ctypes.c_void_p
-    libc.mincore.argtypes = (ctypes.c_void_p, ctypes.c_size_t, ctypes.c_void_p)
-    libc.mincore.restype = ctypes.c_int
-    libc.munmap.argtypes = (ctypes.c_void_p, ctypes.c_size_t)
-    libc.munmap.restype = ctypes.c_int
-    # PROT_NONE=0, MAP_SHARED=1 on Linux. This mapping never pins/faults pages.
-    address = libc.mmap(None, size, 0, 1, fd, 0)
-    if address == ctypes.c_void_p(-1).value:
-        raise OSError(ctypes.get_errno(), 'cold mincore mmap failed')
-    try:
-        pages = (size + os.sysconf('SC_PAGE_SIZE') - 1) // os.sysconf('SC_PAGE_SIZE')
-        vector = (ctypes.c_ubyte * pages)()
-        if libc.mincore(address, size, vector):
-            raise OSError(ctypes.get_errno(), 'cold mincore failed')
-        result = dict(pages=pages, resident=sum(value & 1 for value in vector))
-        if ranges:
-            result['ranges'] = page_ranges(index for index, value in enumerate(vector) if value & 1)
-        return result
-    finally:
-        if libc.munmap(address, size):
-            raise OSError(ctypes.get_errno(), 'cold mincore munmap failed')
+    marks = mman.vector(fd)
+    result = dict(pages=len(marks), resident=sum(value & 1 for value in marks))
+    if ranges and marks:
+        result['ranges'] = page_ranges(index for index, value in enumerate(marks) if value & 1)
+    if vector:
+        result['vector'] = marks
+    return result
 
 
 def page_ranges(indices):
@@ -488,14 +500,20 @@ def file_role(path, library, data, user):
     return 'LIB:' + path.name
 
 
-def residency(files, library, data, user):
-    """Page-cache residency of each measured file (mincore); reads no bytes."""
+def residency(files, library, data, user, vectors=False, rows=None):
+    """Page-cache residency of each measured file (mincore); reads no bytes.
+
+    With vectors (cold samples), each reading also keeps what file_residency
+    keeps for the per-page report.
+    """
     result = {}
-    for path in files:
-        with Path(path).open('rb') as handle:
+    for path in map(Path, files):
+        with path.open('rb') as handle:
             role = file_role(path, library, data, user)
             # The facade's own page bitmap names which of its pages init reads.
-            result[role] = resident_pages(handle.fileno(), ranges=role == 'SUBJECT')
+            result[role] = resident_pages(handle.fileno(), ranges=role == 'SUBJECT', vector=vectors)
+            if vectors:
+                result[role].update(page_observation(handle, path, cold_kind(path, data, user, rows)))
     return result
 
 
@@ -1186,13 +1204,18 @@ class Campaign:
                                 elif cycles == 1 or cycle in (0, 1, 10, 50, 100):
                                     memory = read_memory(process.pid, library.resolve(), self.data)
                                     memory['allocator'] = document['allocator']
+                                    # Cold samples keep each file's mincore vector here, from
+                                    # the one read that counts the pages, for the per-page report
+                                    # (report_page_residency). It maps and prints after the sample.
                                     if cold_set is not None and mode == 'memory':
-                                        memory['residency'] = file_residency(cold_set, library, self.data, user)
+                                        memory['residency'] = file_residency(cold_set, library, self.data, user,
+                                                                             vectors=True, rows=rows)
                                     if mode == 'init':
                                         # Private paths differ per sample; name them by role.
                                         memory['groups'] = {key.replace(str(user), '$USER'): value
                                                             for key, value in memory['groups'].items()}
-                                        memory['residency'] = residency(files, library, self.data, user)
+                                        memory['residency'] = residency(files, library, self.data, user,
+                                                                        vectors=cold, rows=rows)
                                         memory['maps'] = process_maps(process.pid)
                                     checkpoints.setdefault(cycle, {})[point] = memory
                                 process.stdin.write(b'\n')
@@ -1783,6 +1806,8 @@ def report_init_counts(facade, case, rows, cache, window='init'):
                                                   i1=summary([item[1] for item in value]),
                                                   growth=summary([item[1] - item[0] for item in value]))
                                        for role, value in sorted(cached.items())})
+        if cache == 'cold':
+            report_page_residency(facade, case, side, samples)
 
 
 def report_init_samples(facade, case, rows, symbols, subjects, worker, cache, probe='sample'):
@@ -2261,6 +2286,112 @@ def report_memory(facade, case, samples, pilot):
                                     for point in ('M0', 'M1', 'M2', 'M3')})
                      for label in points[0]['M0']['residency']}
             print_record('residency', facade=facade, case=case, side=side, pilot=pilot, unit='pages', files=files)
+            report_page_residency(facade, case, side, rows)
+
+
+def checkpoint_sequence(checkpoints):
+    """Return a cold sample's (point, observation) pairs in the order the worker paused at them.
+
+    M0 is cycle 0's. The rest are cycle 1's: I1 of an init sample, or M1, M2
+    and M3 of a memory sample. A memory sample's cycle 1 also holds a copy of
+    the M0 observation (run puts it there); that is not a second pause, so it
+    is left out.
+    """
+    later = checkpoints[1]
+    return [('M0', checkpoints[0]['M0']),
+            *((point, later[point]) for point in ('I1', 'M1', 'M2', 'M3') if point in later)]
+
+
+def object_layout_or_error(observation, layouts):
+    """Parse an object once per report: (layout, None), or (None, reason) when it cannot be.
+
+    LAYOUTS keys answers by path and recorded identity, size and optional
+    mtime. Open once, verify that descriptor against the checkpoint, and
+    parse its bytes. A replaced, modified, unsupported, malformed or unreadable
+    object falls back to byte ranges without stopping an already measured run.
+    """
+    path = Path(observation['path'])
+    expected = (*observation['identity'], observation['size'], observation.get('mtime_ns'))
+    key = (path, expected)
+    if key not in layouts:
+        try:
+            with path.open('rb') as handle:
+                info = os.fstat(handle.fileno())
+                actual = (info.st_dev, info.st_ino, info.st_size,
+                          info.st_mtime_ns if expected[-1] is not None else None)
+                if actual != expected:
+                    raise ValueError(f'{path}: object replaced or modified before parsing '
+                                     '(device/inode, size or mtime changed)')
+                data = handle.read()
+                after = os.fstat(handle.fileno())
+                if (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns) != \
+                        (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns):
+                    raise ValueError(f'{path}: object replaced or modified while reading for parsing')
+                layouts[key] = (page_map.object_layout(path, data=data), None)
+        except (OSError, ValueError) as error:
+            layouts[key] = (None, str(error))
+    return layouts[key]
+
+
+def report_page_residency(facade, case, side, samples):
+    """Print the pages that became resident between consecutive checkpoints (#1163).
+
+    SAMPLES are one side's cold rounds, read with vectors. One page-residency
+    record per pair of neighbouring checkpoints (page_map.checkpoint_pairs: M0
+    to I1 of an init sample; M0 to M1, M1 to M2 and M2 to M3 of a memory
+    sample) gives, for each cold file with a page newly resident in any round,
+    how many rounds saw each page. An object's pages carry the ELF sections and
+    symbols they overlap; a data or user file's become byte ranges. Files
+    without such a page are listed as unchanged. A file replaced between two
+    checkpoints is another inode with nothing to compare, so its rounds are
+    counted apart and left out of the rest.
+
+    This runs after the rounds, never at a checkpoint or inside a timed scope:
+    it parses objects, which reads them into the page cache, and the next
+    sample evicts them again. The record states the limits of the method.
+    """
+    sequences = [checkpoint_sequence(row['checkpoints']) for row in samples]
+    points = [point for point, _ in sequences[0]]
+    if any([point for point, _ in sequence] != points for sequence in sequences):
+        raise ValueError('cold samples did not pause at the same checkpoints')
+    page_size, layouts = mman.PAGE_SIZE, {}
+    for step, (earlier, later) in enumerate(page_map.checkpoint_pairs(points)):
+        files, unchanged = {}, []
+        for label in sorted(sequences[0][step][1]['residency']):
+            seen = [(sequence[step][1]['residency'][label], sequence[step + 1][1]['residency'][label])
+                    for sequence in sequences]
+            kept = [(before, after) for before, after in seen if before['identity'] == after['identity']]
+            rounds = [page_map.newly_resident(before['vector'], after['vector'], page_size) for before, after in kept]
+            counts = page_map.tally(rounds)
+            replaced = len(seen) - len(kept)
+            if not counts and not replaced:
+                unchanged.append(label)
+                continue
+            # Use retained metadata when another round found a replacement.
+            first = kept[0][1] if kept else seen[0][1]
+            entry = dict(kind=first['kind'], pages=first['pages'],
+                         new_pages=summary([len(offsets) for offsets in rounds]) if rounds else None)
+            if replaced:
+                entry['replaced_in_rounds'] = replaced
+            layout = None
+            if counts and first['kind'] == 'object':
+                identities = {(*reading['identity'], reading['size'], reading.get('mtime_ns'))
+                              for pair in kept for reading in pair}
+                if len(identities) != 1:
+                    reason = 'object replaced or modified across checkpoints or retained rounds'
+                else:
+                    layout, reason = object_layout_or_error(first, layouts)
+                if layout is None:
+                    entry['layout_error'] = reason
+            if layout is not None:
+                entry['rows'] = page_map.object_tally_rows(layout, counts, page_size, label)
+            else:
+                size = max((after['size'] for _, after in kept), default=0)
+                entry['rows'] = page_map.data_tally_rows(counts, page_size, size, label)
+            files[label] = entry
+        print_record('page-residency', facade=facade, case=case, side=side, cache='cold',
+                     checkpoints=[earlier, later], rounds=len(samples), page_size=page_size,
+                     limits=list(page_map.LIMITS), files=files, unchanged=unchanged)
 
 
 def callgrind_counts(shown):

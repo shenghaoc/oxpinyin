@@ -1,14 +1,18 @@
 """Map newly resident file pages to object sections and symbols (#1163).
 
-The shared core of per-page residency attribution for the teardown campaign's
-cold mode and the native controller's; neither calls it yet. Standard library
-only: objects are parsed with struct, never readelf, nm or otool.
+The shared core of per-page residency attribution. The teardown campaign's
+cold mode (tools/bisection/teardown.py) reports through it; the native
+controller does not call it yet. Standard library only: objects are parsed
+with struct, never readelf, nm or otool.
 
-A residency vector is one file's mincore result: one byte per host page,
-resident when bit 0 is set (Darwin sets other flag bits too). newly_resident
-compares the vectors read at two checkpoints. Each newly resident page of an
-object is reported with every segment, section and symbol it overlaps; pages
-of data and user files are reported as byte ranges.
+A residency vector is one file's mincore result (tools.dev.mman.vector): one
+byte per host page, resident when bit 0 is set (Darwin sets other flag bits
+too). newly_resident compares the vectors read at two checkpoints, and
+checkpoint_pairs names the pairs of a sample's checkpoint sequence. Each newly
+resident page of an object is reported with every segment, section and symbol
+it overlaps; pages of data and user files are reported as byte ranges. A
+campaign with several rounds counts the rounds that saw each page (tally) and
+puts that count on each row (object_tally_rows, data_tally_rows).
 
 Rows carry the object format's own field names. ELF rows have elf_sections and
 elf_symbols; Mach-O rows have macho_segments, macho_sections and macho_symbols;
@@ -21,11 +25,12 @@ Anything else, including a fat Mach-O, raises ValueError. An ELF symbol spans
 its st_size; zero-size, section and file symbols are left out. A Mach-O symbol
 has no size, so it spans to the next symbol address in its section.
 
-Limits (docs/runbooks/benches.md): a mincore difference includes readahead,
-so a newly resident page is not necessarily a faulted page, and pausing at a
-checkpoint can let outstanding readahead finish. Parsing reads the whole
-object into the page cache, so parse it after the sample's last residency
-read, or parse a byte-identical copy.
+Limits (LIMITS, docs/runbooks/benches.md): a mincore difference includes
+readahead, so a newly resident page is not necessarily a faulted page, and
+pausing at a checkpoint can let outstanding readahead finish; a page the
+process wrote is resident too. Parsing reads the whole object into the page
+cache, so parse it after the sample's last residency read, or parse a
+byte-identical copy.
 """
 import bisect
 import json
@@ -65,6 +70,16 @@ N_STAB = 0xe0
 N_TYPE = 0x0e
 N_SECT = 0xe
 
+# What a report of newly resident pages says about itself, for the reader of
+# its output (docs/runbooks/benches.md, "Per-page residency attribution").
+LIMITS = (
+    'a mincore difference includes readahead, so a newly resident page is not necessarily a faulted page',
+    'pausing at a checkpoint can let outstanding readahead finish, so a page requested before one checkpoint '
+    'can show as newly resident at the next',
+    'a page the process wrote is resident too, so a file that grew or was rewritten shows its written pages '
+    'as newly resident',
+)
+
 
 def _check_page_size(page_size):
     """Raise ValueError unless PAGE_SIZE is a positive power of two."""
@@ -83,6 +98,16 @@ def newly_resident(before, after, page_size):
     _check_page_size(page_size)
     return [index * page_size for index, value in enumerate(after)
             if value & 1 and not (index < len(before) and before[index] & 1)]
+
+
+def checkpoint_pairs(points):
+    """Return the consecutive (earlier, later) pairs of an ordered checkpoint sequence.
+
+    Only neighbours pair: M0, M1, M2, M3 give (M0, M1), (M1, M2) and (M2, M3),
+    never (M0, M2), because a page that became resident at M1 and stayed so
+    belongs to the first interval alone. Fewer than two checkpoints give no pair.
+    """
+    return list(zip(points, points[1:]))
 
 
 def _unpack(layout, data, offset, what):
@@ -238,14 +263,17 @@ def _macho(data):
                 macho_symbols=sorted(symbols))
 
 
-def object_layout(path):
+def object_layout(path, *, data=None):
     """Read an object and return its named file ranges, keyed by output field.
 
     Each value is a sorted list of [start, end) file byte ranges with names:
     sections and symbols for ELF; segments, sections and symbols for Mach-O.
-    Raise ValueError, naming PATH, for an unsupported or malformed file.
+    DATA supplies bytes already read from a verified descriptor; when given,
+    PATH is only a diagnostic name and is not opened. Raise ValueError,
+    naming PATH, for an unsupported or malformed file.
     """
-    data = Path(path).read_bytes()
+    if data is None:
+        data = Path(path).read_bytes()
     try:
         return _elf(data) if data[:4] == ELF_MAGIC else _macho(data)
     except ValueError as error:
@@ -289,6 +317,44 @@ def data_rows(offsets, page_size, size, name):
         else:
             rows.append(dict(file=name, offset_range=[offset, end]))
     return rows
+
+
+def tally(rounds):
+    """Count, for each page offset, the rounds in which it was newly resident.
+
+    ROUNDS holds one newly_resident result per round. Readahead timing can
+    differ between rounds, so a campaign reports how often each page was seen
+    rather than one round's set.
+    """
+    counts = {}
+    for offsets in rounds:
+        for offset in set(offsets):
+            counts[offset] = counts.get(offset, 0) + 1
+    return counts
+
+
+def object_tally_rows(layout, counts, page_size, name):
+    """Return object_rows for the offsets in COUNTS, each row with in_rounds.
+
+    in_rounds is the number of rounds that saw the row's page newly resident.
+    """
+    rows = object_rows(layout, sorted(counts), page_size, name)
+    for row in rows:
+        row['in_rounds'] = counts[row['page_offset']]
+    return rows
+
+
+def data_tally_rows(counts, page_size, size, name):
+    """Return data_rows for the offsets in COUNTS, each row with in_rounds.
+
+    Pages join one offset_range only when their round counts are equal, so a
+    row's in_rounds is true of every page in it. Rows are in file order.
+    """
+    rows = []
+    for count in sorted(set(counts.values())):
+        runs = data_rows([offset for offset, seen in counts.items() if seen == count], page_size, size, name)
+        rows.extend(dict(row, in_rounds=count) for row in runs)
+    return sorted(rows, key=lambda row: row['offset_range'])
 
 
 def object_report(path, before, after, page_size, name=None):

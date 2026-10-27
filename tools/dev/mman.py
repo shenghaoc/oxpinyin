@@ -6,6 +6,10 @@ names the process's own C library, which resolves all three on glibc and on
 libSystem alike; the protection and flag values below are the same on both.
 The library is loaded on first use, never at import. Every failure raises
 OSError with the call's errno; no value is substituted for a failed call.
+This is the one mincore reader in the tree: vector is the raw per-page result
+and residency its page counts. A caller that needs the pages themselves (the
+teardown campaign's per-page report, #1163) takes the vector and derives its
+counts from it, so one read serves both.
 """
 import ctypes
 import mmap
@@ -60,25 +64,32 @@ def unmap(address, size):
         _fail('munmap')
 
 
-def residency(fd):
-    """Return total and resident file pages from mincore.
+def vector(fd):
+    """Return the file's mincore vector: one byte per page, in file order.
 
-    Map the file PROT_NONE and MAP_SHARED: mincore may examine the file's
-    cached pages, and the mapping itself never faults a page in, so the
-    observation does not make itself stale. An empty file has zero pages and
-    is not mapped. Since Linux 5.2 mincore reports every page of a file the
-    caller cannot write as resident, so a permission gap reads as resident,
-    never as evicted.
+    Bit 0 of a byte is set when its page is resident; the other bits are
+    host-defined (Darwin sets several) and mean nothing here. Map the file
+    PROT_NONE and MAP_SHARED: mincore may examine the file's cached pages, and
+    the mapping itself never faults a page in, so the observation does not make
+    itself stale. An empty file has no pages and is not mapped. Since Linux 5.2
+    mincore reports every page of a file the caller cannot write as resident,
+    so a permission gap reads as resident, never as evicted.
     """
     size = os.fstat(fd).st_size
     if not size:
-        return dict(pages=0, resident=0)
+        return b''
     pages = (size + PAGE_SIZE - 1) // PAGE_SIZE
     address = map_file(fd, size, PROT_NONE, MAP_SHARED)
     try:
-        vector = (ctypes.c_ubyte * pages)()
-        if _system().mincore(address, size, vector):
+        marks = (ctypes.c_ubyte * pages)()
+        if _system().mincore(address, size, marks):
             _fail('mincore')
-        return dict(pages=pages, resident=sum(value & 1 for value in vector))
+        return bytes(marks)
     finally:
         unmap(address, size)
+
+
+def residency(fd):
+    """Return total and resident file pages from the file's mincore vector."""
+    marks = vector(fd)
+    return dict(pages=len(marks), resident=sum(value & 1 for value in marks))
