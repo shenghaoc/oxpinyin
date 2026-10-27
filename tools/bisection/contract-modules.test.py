@@ -47,6 +47,7 @@ MODULES = {
         ()),
     'contract_selection': (('SelectionError', 'case_names', 'family_of', 'normal_tag'), ()),
     'contract_execution': (('ordinary_jobs', 'positive_jobs', 'terminate_group', 'user_dir_listing'), ()),
+    'contract_runner': (('Cancelled',), ()),
 }
 
 # Driver functions that stay as adapters: the original signature, kept for every caller,
@@ -61,6 +62,12 @@ ADAPTERS = {
     'select_cases': '(cases=None, issues=(), families=())',
     'plan_lines': '(names, reasons, pinyin_so, zhuyin_so, prefix, cell)',
     'timing_summary': '(names, compare_seconds, total)',
+    'check_cancelled': '()',
+    'cancellation_handlers': '()',
+    'run_worker': '(mode, so, data, name, scratch, extra_env=None, timeout=None, entry=None)',
+    'run_case': '(spec, pin_so, subject_so, data, name, scratch, timeout)',
+    'case_jobs': '(requested)',
+    'case_results': '(args, names, data, scratch, jobs)',
 }
 
 spec = importlib.util.spec_from_file_location('contract_diff', HERE / 'contract-diff.py')
@@ -82,7 +89,7 @@ def code_objects(module):
             yield from nested(value.__code__)
         elif isinstance(value, type) and value.__module__ == module.__name__:
             for member in vars(value).values():
-                member = getattr(member, '__func__', member)
+                member = inspect.unwrap(getattr(member, '__func__', member))
                 if isinstance(member, types.FunctionType):
                     yield from nested(member.__code__)
 
@@ -95,6 +102,13 @@ def unbound_globals(module):
 
 
 class ModuleBoundaryTests(unittest.TestCase):
+    def test_the_scan_checks_the_underlying_decorated_method_not_the_library_wrapper(self):
+        probe = types.ModuleType('decorated_probe')
+        exec('import contextlib\n\nclass Holder:\n'
+             '    @contextlib.contextmanager\n'
+             '    def scope(self):\n        yield MISSING_DRIVER_STATE\n', probe.__dict__)
+        self.assertEqual(unbound_globals(probe), ['MISSING_DRIVER_STATE'])
+
     def test_the_scan_names_a_global_that_only_the_driver_binds(self):
         probe = types.ModuleType('probe')
         exec('import os\n\n\ndef reads():\n    return os.sep, CELL, len\n\n\n'
