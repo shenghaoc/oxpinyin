@@ -46,6 +46,7 @@ MODULES = {
          'strjoinv_fault', 'tkrzw_saved_bigram_bytes', 'tkrzw_saved_bigram_equal', 'valid_observation'),
         ()),
     'contract_selection': (('SelectionError', 'case_names', 'family_of', 'normal_tag'), ()),
+    'contract_execution': (('ordinary_jobs', 'positive_jobs', 'terminate_group', 'user_dir_listing'), ()),
 }
 
 # Driver functions that stay as adapters: the original signature, kept for every caller,
@@ -59,6 +60,7 @@ ADAPTERS = {
     'tag_index': '()',
     'select_cases': '(cases=None, issues=(), families=())',
     'plan_lines': '(names, reasons, pinyin_so, zhuyin_so, prefix, cell)',
+    'timing_summary': '(names, compare_seconds, total)',
 }
 
 spec = importlib.util.spec_from_file_location('contract_diff', HERE / 'contract-diff.py')
@@ -161,6 +163,12 @@ class ModuleBoundaryTests(unittest.TestCase):
                              "  1 case skip on this cell (fixture in another backend's format)")
             with self.assertRaises(driver.SelectionError):
                 driver.select_cases('plain')
+
+    def test_timing_summary_totals_the_timings_the_driver_holds_now(self):
+        with patch.object(driver, 'TIMINGS', [dict(execute=2, side='pin'), dict(execute=3)]):
+            summary = driver.timing_summary(['a'], 0, 1)
+        self.assertEqual((summary['workers'], summary['seconds']['pin_execute'], summary['seconds']['subject_execute']),
+                         (2, 2, 3))
 
     def test_changed_runs_map_each_module_to_its_tests_and_the_driver_tests(self):
         files = set(test_runner.harness_files())
