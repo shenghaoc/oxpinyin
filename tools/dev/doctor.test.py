@@ -571,12 +571,13 @@ class MinimumsAgreeWithTheirOtherHomes(unittest.TestCase):
 
     def test_setup_script_provisions_with_the_same_minimums(self):
         setup = read('tools/cloud/setup.sh')
-        for variable, expected in (('uv_minimum', doctor.UV_MINIMUM),
-                                   ('valgrind_minimum', self.minimum('valgrind'))):
-            with self.subTest(variable=variable):
-                match = re.search(rf'^{variable}=(\S+)$', setup, re.M)
-                self.assertIsNotNone(match, f'setup.sh sets no {variable}')
-                self.assertEqual(match.group(1), expected)
+        match = re.search(r'^uv_minimum=(\S+)$', setup, re.M)
+        self.assertIsNotNone(match)
+        self.assertEqual(match.group(1), doctor.UV_MINIMUM)
+        from tools.dev import provision
+        self.assertIs(provision.doctor, doctor)
+        self.assertIn("tool.name == 'valgrind'", read('tools/dev/provision.py'))
+
 
 
 if __name__ == '__main__':

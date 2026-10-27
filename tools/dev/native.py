@@ -77,24 +77,12 @@ class Tools:
             raise NativeRefused(str(error)) from error
 
     def tkrzw_host(self, *, environment=None):
-        """Return the host libtkrzw that tools/cloud/env.sh certifies.
-
-        The pre-Python environment writer still owns the host decision, including
-        cache-prefix exclusion and the loader check.  Its progress goes to the
-        inherited stderr; only the certified path is captured, as the shell gate
-        did.
-        """
+        """Return the exact host library certified by the provisioning service."""
+        from .provision import probe_host
+        import contextlib
         settings = self.environment if environment is None else environment
-        script = ('probe=tools/tkrzw/distro-probe.sh\n'
-                  'tkrzw_prefix=\n'
-                  'source tools/cloud/env.sh\n'
-                  'probe_host >&2 && printf "%s" "$tkrzw_host_library"')
-        try:
-            result = subprocess.run(['bash', '-c', script], cwd=self.root,
-                                    env=dict(settings), text=True,
-                                    stdout=subprocess.PIPE)
-        except OSError as error:
-            raise NativeRefused(str(error)) from error
-        if result.returncode:
-            raise NativeRefused(f'probe_host exited {shell_status(result.returncode)}')
-        return Path(result.stdout)
+        with contextlib.redirect_stdout(sys.stderr):
+            library = probe_host(env=dict(settings), root=self.root)
+        if not library:
+            raise NativeRefused('probe_host exited 1')
+        return Path(library)

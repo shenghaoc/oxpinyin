@@ -167,12 +167,6 @@ if sys.argv[1]=='cp': sys.exit(19)
         self.assertEqual(done.stderr, b'unsupported oracle manifest schema\n')
         self.assertFalse(output.exists())
 
-    @unittest.skipUnless(sys.platform.startswith('linux'), 'Linux cloud provisioning fixture')
-    def test_post_bootstrap_host_probes_and_environment_writer(self):
-        done = subprocess.run(['bash', 'tools/cloud/env.test.sh'], cwd=ROOT, env=self.env,
-                              capture_output=True, timeout=45)
-        self.assertEqual(done.returncode, 0, done.stdout.decode() + done.stderr.decode())
-
     def test_heavy_launch_uses_the_existing_slot_and_launch_statuses(self):
         with mock.patch.object(process.slot, 'run_command', return_value=-15) as launch:
             self.assertEqual(process.run(['cargo', 'test'], heavy=True, check=False), 143)

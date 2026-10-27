@@ -318,6 +318,9 @@ def main(argv=None):
     to their runners; report registry selection errors on stderr with status 2.
     """
     argv = list(sys.argv[1:] if argv is None else argv)
+    if argv[:1] == ['provision']:
+        from . import provision
+        return provision.main(argv[1:])
     if argv[:1] == ['compat']:
         from .compat import commands
         return commands.main(argv[1:])
