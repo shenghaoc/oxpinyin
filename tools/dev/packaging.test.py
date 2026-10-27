@@ -116,6 +116,18 @@ class PackagingTests(unittest.TestCase):
         self.fake('cargo', FAKE_CARGO)
         self.fake('uname', "print('Darwin')")
         self.fake('rustc', "print('host: fixture-target')")
+        self.fake('dpkg', "print('fixture-architecture')")
+        self.fake('nm','pass')
+        self.fake('readelf','pass')
+        self.fake('chmod', r"""import os,sys
+from pathlib import Path
+mode=sys.argv[1]
+for word in sys.argv[2:]:
+    if word=='--':continue
+    path=Path(word)
+    os.chmod(path,int(mode,8) if mode.isdecimal() else path.stat().st_mode|0o222)
+""")
+
         # Distro packaging fixtures provide their GNU host interfaces on macOS
         # too; they never require a Debian installation or system GLib data.
         pcdir = self.work / 'system-pc'
@@ -164,12 +176,16 @@ if lines:sys.stdout.buffer.write(separator.join(sorted(lines,key=key))+separator
     def compare(self, name, args=(), *, env=None, reset=None, files=None, diagnostics=True, artifacts=()):
         result = self.invoke(name, args, env=env)
         contents = tree(files) if files else None
+        calls = self.work / 'calls'
+        arguments = calls.read_bytes() if calls.exists() else None
         produced = [path.read_bytes() for path in artifacts]
         if BASE:
             if reset:
                 reset()
             control = self.invoke(name, args, old=True, env=env)
             self.assertEqual(result.returncode, control.returncode)
+            if arguments is not None:
+                self.assertEqual(arguments, calls.read_bytes())
             if diagnostics:
                 self.assertEqual(self.normalize(result), self.normalize(control))
             if files:
@@ -284,6 +300,9 @@ unified diff); 2 on a usage error or a missing input.
 
     def test_forwarding_custom_target_profile_and_empty_words(self):
         target = self.work / 'custom target'
+        actual = self.work / 'physical target'
+        actual.mkdir()
+        target.symlink_to(actual, target_is_directory=True)
         result, _ = self.install(extra=['--', '--target-dir', str(target), '--target=specs/fake.json',
                                           '--profile', 'dev', '--locked', '--features=a', '--features', 'b,c', ''])
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -371,7 +390,9 @@ unified diff); 2 on a usage error or a missing input.
 from pathlib import Path
 if os.environ.get('FAIL_PACKAGE'): sys.exit(39)
 shutil.copytree(sys.argv[-2], Path(os.environ['PAYLOAD'])/Path(sys.argv[-2]).name, dirs_exist_ok=True, symlinks=True)
-Path(sys.argv[-1]).write_bytes(b'deb package')
+package=Path(sys.argv[-1])
+package.write_bytes(b'deb package')
+os.utime(package,(1,1))
 """)
         payload = self.work / 'payload'
         def reset():
@@ -396,7 +417,9 @@ root=Path(sys.argv[2].removeprefix('_topdir '))
 shutil.copyfile(sys.argv[-1], os.environ['PAYLOAD'])
 if not os.environ.get('NO_RPM'):
     (root/'RPMS/x86_64').mkdir()
-    (root/'RPMS/x86_64/package.rpm').write_bytes(b'rpm package')
+    package=root/'RPMS/x86_64/package.rpm'
+    package.write_bytes(b'rpm package')
+    os.utime(package,(1,1))
 """)
         self.fake('rpm', 'print("/usr/lib/libpinyin.so.15")')
         result = self.compare('release-rpm', ['tkrzw','0.1.0',stage,out], env={'PAYLOAD':str(payload)}, artifacts=(payload,))
@@ -422,7 +445,9 @@ work=Path(re.search("cd '([^']+)'",command)[1])
 out=Path(re.search("PKGDEST='([^']+)'",command)[1])
 shutil.copyfile(work/'PKGBUILD', os.environ['PAYLOAD'])
 shutil.copyfile(work/'stage-usr/lib/libpinyin/data/table.conf', os.environ['PAYLOAD']+'.data')
-(out/'oxpinyin-libpinyin-kyotocabinet-0.1.0-1-x86_64.pkg.tar.zst').write_bytes(b'arch package')
+package=out/'oxpinyin-libpinyin-kyotocabinet-0.1.0-1-x86_64.pkg.tar.zst'
+package.write_bytes(b'arch package')
+os.utime(package,(1,1))
 """)
         result = self.compare('release-arch', ['kyotocabinet','0.1.0',stage,out,'--data='+str(data),'--data-version=2.10.3-2'], env={'PAYLOAD':str(payload)}, artifacts=(payload,))
         self.assertEqual(result.returncode, 0, result.stderr)

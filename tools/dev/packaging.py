@@ -196,8 +196,11 @@ class Layout:
                 index += 1
         with directory(tools.here):
             target_path = Path(target) if target else tools.root / 'target'
+            if not target_path.is_absolute():
+                target_path = tools.here / target_path
             tools.run(['mkdir', '-p', '--', target_path])
-            target_path = target_path.resolve()
+            # The shell's cd + pwd retains logical aliases such as /var.
+            target_path = Path(os.path.abspath(target_path))
         triple = triple or tools.env.get('CARGO_BUILD_TARGET') or ''
         if not triple:
             triple = '\n'.join(re.findall(r'^host: (.*)$', tools.text(['rustc', '-vV']), re.M))
