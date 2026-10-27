@@ -278,6 +278,10 @@ def build_parser():
     p.add_argument('args', nargs=argparse.REMAINDER)
     p.set_defaults(func=lambda args: __import__('tools.dev.compat.commands', fromlist=['main']).main(args.args))
 
+    p = sub.add_parser('provision', help='post-bootstrap cloud provisioning')
+    p.add_argument('args', nargs=argparse.REMAINDER)
+    p.set_defaults(func=lambda args: __import__('tools.dev.provision', fromlist=['main']).main(args.args))
+
     p = sub.add_parser('coverage', help='run cargo llvm-cov with temporary per-invocation state')
     p.add_argument('args', nargs=argparse.REMAINDER)
     p.set_defaults(func=coverage_command)

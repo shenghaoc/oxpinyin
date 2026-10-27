@@ -174,7 +174,7 @@ jobs:
             # Direct inputs: every child decodes the fixture tables;
             # backend-matrix runs the tools.dev backend-matrix service; the
             # sanitizer jobs run the tools.dev sanitizer service (the tkrzw
-            # path also uses tools/cloud/env.sh and the shared cell service);
+            # path also uses tools/dev/provision.py and the shared cell service);
             # every job runs the bootstrap composite action.
             fixtures
             tools/dev
@@ -184,7 +184,7 @@ jobs:
             tools/install-python.sh
             tools/bdb
             tools/tkrzw
-            tools/cloud/env.sh
+            tools/dev/provision.py
             .github/actions
           )
           changed=$(git diff --name-only "$base" HEAD -- "${paths[@]}")
