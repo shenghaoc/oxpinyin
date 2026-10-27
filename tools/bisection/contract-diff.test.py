@@ -871,10 +871,59 @@ class VerdictTests(DriverFixtureCase):
         self.assertEqual(self.decide(spec, pin, survivor, False), ('DIFFER', False, False))
 
 
+class RegisteredTerminationDefaultTests(unittest.TestCase):
+    def test_every_registered_termination_keeps_the_legacy_default_verdict(self):
+        """Freeze the pre-fix default rule over the full registry, using fake workers.
+
+        Registered terminations bypassed validity: matches alone determined
+        (verdict, expected_ok, same), except for policy records' exact pairs.
+        Exercise both directory-probe answers and unrelated worker failures
+        without loading any libraries.
+        """
+        cases = {name: case for name, case in contract['CASES'].items()
+                 if driver.registered_termination(case)}
+        self.assertTrue(cases)
+        for name, case in cases.items():
+            policy_pair = None
+            policy_invalid = False
+            if case['policy_record'] is not None:
+                try:
+                    policy_pair = driver.policy_expectations(case)
+                except (OSError, ValueError, KeyError, TypeError):
+                    policy_invalid = True
+            observations = [observation(exit=code) for code in
+                            (0, 1, 127, -signal.SIGABRT, -signal.SIGSEGV, -signal.SIGTRAP,
+                             -signal.SIGILL, 'TIMEOUT', 'NOT-RUN')]
+            observations += [observation(result=value) for value in
+                             ({}, {'ret': True, 'logs': []},
+                              {'ret': case['abort'], 'logs': case['abort_logs'] if case['abort_logs'] is not None
+                               else [[driver.WARNING_DOMAIN[case['mode']], 16]]},
+                              case['crash'] or {}, case['pin_not_run'] or {})]
+            observations += [dict(side, stderr='different diagnostic', userfiles={'changed': 'bytes'})
+                             for side in observations[-2:]]
+            if policy_pair is not None:
+                observations += [observation(**side) for side in policy_pair.values()]
+            for reads in (False, True):
+                with patch.object(driver, 'directory_reads_as_a_chunk', return_value=reads):
+                    for pin in observations:
+                        for subject in observations:
+                            with self.subTest(case=name, reads=reads, pin=pin, subject=subject):
+                                same = driver.matches(case, pin, subject)
+                                legacy = ('MATCH' if same else 'DIFFER', same, same)
+                                if case['policy_record'] is not None:
+                                    actual = dict(pin=driver.policy_observation(case, pin),
+                                                  subject=driver.policy_observation(case, subject))
+                                    legacy = (('INVALID', False, False) if policy_invalid else
+                                              ('POLICY-ACCEPTED', True, False)
+                                              if json.dumps(actual, sort_keys=True) == json.dumps(policy_pair, sort_keys=True)
+                                              else ('DIFFER', False, False))
+                                self.assertEqual(driver.verdict_for(case, pin, subject, False), legacy)
+
+
 class DriverInvalidTests(DriverFixtureCase):
     """main(): two failed workers under --expect-parent exit 1 with INVALID."""
 
-    def invoke(self, parent, workers, plan=False, host=False):
+    def invoke(self, parent, workers, plan=False, host=False, case_name='default-option-parse'):
         import contextlib
         import io
         with tempfile.TemporaryDirectory() as scratch:
@@ -885,12 +934,11 @@ class DriverInvalidTests(DriverFixtureCase):
             (prefix / 'oracle-pin.txt').write_text(
                 'libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99+dbm-bdb\n')
             argv = ['driver', 'bdb', str(prefix), str(prefix / 'lib/libpinyin.so'),
-                    '--cases', 'default-option-parse'] + (['--expect-parent'] if parent else [])
+                    '--cases', case_name] + (['--expect-parent'] if parent else [])
             if plan:
                 argv.append('--plan-only')
             output = io.StringIO()
-            cases = {'default-option-parse': dict(contract['CASES']['default-option-parse'],
-                                                host_scanf=('1e',) if host else ())}
+            cases = {case_name: dict(contract['CASES'][case_name], host_scanf=('1e',) if host else ())}
             with patch.dict(contract['main'].__globals__, CASES=cases), \
                     patch.object(contract['sys'], 'argv', argv), \
                     patch.dict(contract['main'].__globals__, run_worker=lambda *a, **k: workers.pop(0)), \
@@ -905,6 +953,14 @@ class DriverInvalidTests(DriverFixtureCase):
         status, rows = self.invoke(True, [observation(exit=1), observation(exit=1)])
         self.assertEqual(status, 1)
         self.assertEqual([(r['verdict'], r['expected_ok'], r['exit']) for r in rows], [('INVALID', False, [1, 1])])
+
+    def test_registered_abort_parent_worker_failures_are_invalid_and_exit_one(self):
+        for bad in (observation(exit=-signal.SIGSEGV), observation(exit='TIMEOUT'),
+                    observation(exit=127), observation()):
+            with self.subTest(bad=bad):
+                status, rows = self.invoke(True, [observation(exit=-signal.SIGABRT), bad],
+                                           case_name='abort-train-index-past-results')
+                self.assertEqual((status, rows[0]['verdict'], rows[0]['expected_ok']), (1, 'INVALID', False))
 
     def test_two_failed_workers_fail_in_normal_mode(self):
         status, rows = self.invoke(False, [observation(exit=-signal.SIGSEGV), observation(exit=0)])

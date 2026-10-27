@@ -57,14 +57,20 @@ normally with a result document; a side that died or printed no
 result is INVALID, and the case fails in both modes — two failed workers are
 not a MATCH, and they are not the expected DIFFER of a parent build either.
 For a case whose spec registers how the pin dies, the matcher's own exit
-conditions stand unchanged.
+conditions stand unchanged in default mode. Under --expect-parent the pin
+must satisfy its registered termination contract, and the subject must
+complete with a result or terminate as registered for the pin. Other
+signals, timeouts, loader failures and missing results are INVALID.
+The pin_not_run declaration and held strjoinv_over_read fault keep their
+existing classification.
 
 Missing inputs and an empty case list fail. Scratch lives under TMPDIR and is
 removed even on failure.
 
 Ordinary cases share a 300-second deadline across pin and subject.
---case-timeout overrides it. A timeout reports TIMEOUT and fails in both
-modes. Later cases still run.
+--case-timeout overrides it. A timeout fails in both modes, reporting
+INVALID for registered terminations under --expect-parent and TIMEOUT
+otherwise. Later cases still run.
 
 --jobs N requests at most N concurrent ordinary cases. The default is serial.
 Heavy admission reserves memory for every active case and can reduce N.
@@ -16355,7 +16361,9 @@ def run_main():
                     with args.observations.open('a') as capture:
                         capture.write(json.dumps(dict(cell=args.cell,case=n,pin=pin,subject=subject),ensure_ascii=True)+'\n')
                 compared = time.monotonic()
-                if any(side['exit'] == 'TIMEOUT' for side in (pin, subject)):
+                if (any(side['exit'] == 'TIMEOUT' for side in (pin, subject))
+                        and (not args.expect_parent or not registered_termination(spec)
+                             or spec.get('pin_not_run') is not None)):
                     verdict, expected, same = 'TIMEOUT', False, False
                 else:
                     verdict, expected, same = verdict_for(spec, pin, subject, args.expect_parent)
