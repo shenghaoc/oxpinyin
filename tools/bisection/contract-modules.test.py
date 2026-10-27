@@ -17,6 +17,7 @@ import sys
 import tempfile
 import types
 import unittest
+from unittest.mock import patch
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
@@ -34,6 +35,16 @@ MODULES = {
          'full_inst', 'guessed', 'key_out', 'owned_text', 'row_of', 'row_with_text', 'sentence_out', 'tokens_of',
          'unigram_of', 'zhuyin_chewing', 'zhuyin_sentence_out'),
         ()),
+    'contract_fixtures': (
+        ('_craft_bdb', '_craft_kc', '_craft_tkrzw', '_write_user_conf', 'conf_system', 'import_rows',
+         'private_system', 'row58_import', 'user_listing', 'zero_item_padding'),
+        ('contract_abi',)),
+}
+
+# Driver functions that stay as adapters: the original signature, kept for every caller,
+# and the state they hand the module from the driver's own globals.
+ADAPTERS = {
+    'index_file_rows': "(path, *, kind='tree', allow_empty=False, library=None)",
 }
 
 spec = importlib.util.spec_from_file_location('contract_diff', HERE / 'contract-diff.py')
@@ -96,6 +107,18 @@ class ModuleBoundaryTests(unittest.TestCase):
                                         capture_output=True, text=True, timeout=60)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(json.loads(result.stdout), sorted((name, *peers)))
+
+    def test_adapters_keep_the_signatures_their_callers_use(self):
+        for name, signature in ADAPTERS.items():
+            with self.subTest(name=name):
+                self.assertEqual(str(inspect.signature(getattr(driver, name))), signature)
+
+    def test_index_file_rows_reads_the_cell_from_the_driver_at_call_time(self):
+        for cell in ('bdb', 'kc', 'tkrzw'):
+            with self.subTest(cell=cell), patch.object(driver, 'CELL', cell), \
+                    patch.object(sys.modules['contract_fixtures'], 'index_file_rows', return_value='rows') as moved:
+                self.assertEqual(driver.index_file_rows('p', kind='hash', allow_empty=True, library='L'), 'rows')
+                moved.assert_called_once_with('p', cell=cell, kind='hash', allow_empty=True, library='L')
 
     def test_changed_runs_map_each_module_to_its_tests_and_the_driver_tests(self):
         files = set(test_runner.harness_files())
