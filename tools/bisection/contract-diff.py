@@ -17594,7 +17594,9 @@ def run_main():
     parser.add_argument('--teardown-attribute-window', choices=('init', 'first-candidate'), default='init',
                         help='window for the existing init-attribute probes; first-candidate retains RandomState Ir ranges')
     parser.add_argument('--teardown-init-probes', default='count,sample,sample-coarse,faults,trace,pages',
-                        help='comma-separated init-attribute probes; Callgrind always runs three fresh processes per arm')
+                        help='comma-separated init-attribute probes, or none; Callgrind always runs three fresh processes per arm')
+    parser.add_argument('--teardown-summary-dir', type=Path,
+                        help='empty local directory for complete per-process Callgrind summaries; never overwrites')
     parser.add_argument('--teardown-startup-heap', action='store_true',
                         help='also report existing Massif startup snapshots in the confirm stage')
     parser.add_argument('--teardown-cache', choices=('warm', 'cold'), default='warm',

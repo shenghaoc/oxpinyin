@@ -508,6 +508,15 @@ candidate observation. `--teardown-init-probes count` selects the retained
 resource probe; three fresh Callgrind processes per arm still run. Ir is a
 diagnostic min–max range under production RandomState, without a tolerance.
 The default window remains `init` and the default probe selection remains all.
+`--teardown-init-probes none` selects Callgrind alone. For local retention,
+pass `--teardown-summary-dir` an empty directory inside the worktree. Each
+fresh process writes its full parsed counters, exclusive function costs,
+inclusive function costs and call edges before the next process starts;
+each facade/profile also gets all three rounds together. Exclusive totals
+are reconciled before writing. Inclusive costs overlap and may recurse,
+so they must never be summed as a partition. Files are created exclusively,
+flushed and synced, and existing summaries are never overwritten. These are
+local profiler summaries; do not commit or publish them as routine evidence.
 The `verify`, `confirm` and `init-attribute` stages accept
 `--base-pinyin-so` and `--base-zhuyin-so`; the four arms rotate serially with
 equal-length library-directory names. `confirm` reports paired PR/base ratios

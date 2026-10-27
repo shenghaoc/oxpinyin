@@ -857,10 +857,10 @@ def file_offset(address, maps, library):
 
 
 def callgrind_costs(text, library, *, preserve_objects=False):
-    """Exclusive costs of every collected event, by object and function, from
-    one in-memory Callgrind profile. The cost line after `calls=` is the
-    callee's inclusive cost and is skipped; the exclusive sums must equal the
-    profile's totals.
+    """Read exclusive functions and inclusive call edges from one profile.
+
+    Only exclusive costs sum to the profile totals. Inclusive function costs
+    add outgoing edges and can overlap or recurse; they are never a partition.
     """
     events = re.findall(r'^events:\s*(.*?)\s*$', text, re.M)
     totals = re.findall(r'^totals:\s*(.*?)\s*$', text, re.M)
@@ -872,8 +872,9 @@ def callgrind_costs(text, library, *, preserve_objects=False):
     positions = 1
     ids = {'ob': {}, 'fn': {}}
     obj = function = '???'
-    skip = False
-    exclusive = {}
+    pending = None
+    next_callee_object, callee = None, None
+    exclusive, edges = {}, {}
     for line in text.splitlines():
         if line.startswith('positions:'):
             positions = len(line.split(':', 1)[1].split())
@@ -888,25 +889,37 @@ def callgrind_costs(text, library, *, preserve_objects=False):
                 elif match[3] not in table:
                     raise ValueError('unresolved Callgrind name ID')
                 value = table[match[3]]
-            if not match[1]:
+            if match[1]:
+                if match[2] == 'ob':
+                    next_callee_object = value
+                else:
+                    callee = (obj if next_callee_object is None else next_callee_object, value)
+                    next_callee_object = None
+            else:
                 if match[2] == 'ob':
                     obj = value
                 else:
                     function = value
+                    next_callee_object, callee = None, None
             continue
         if line.startswith('calls='):
-            skip = True
+            if pending is not None or callee is None:
+                raise ValueError('invalid Callgrind call association')
+            pending = (obj, function, *callee)
             continue
         if not re.match(r'^(?:[+\-]?\d+|\*|0x[0-9a-fA-F]+)(?:\s|$)', line):
             continue
-        if skip:
-            skip = False
+        if pending is not None:
+            costs = edges.setdefault(pending, [0] * len(names))
+            for index, value in enumerate(line.split()[positions:]):
+                costs[index] += int(value)
+            pending = None
             continue
         costs = exclusive.setdefault((obj, function), [0] * len(names))
         for index, value in enumerate(line.split()[positions:]):
             costs[index] += int(value)
     sums = [sum(costs[index] for costs in exclusive.values()) for index in range(len(names))]
-    if sums != total or 'Ir' not in names or not total[names.index('Ir')]:
+    if pending is not None or sums != total or 'Ir' not in names or not total[names.index('Ir')]:
         raise ValueError('Callgrind exclusive costs do not reconcile with totals')
     def label(path):
         """Name the subject specially and preserve other paths or reduce them to basenames."""
@@ -919,9 +932,33 @@ def callgrind_costs(text, library, *, preserve_objects=False):
     ir = names.index('Ir')
     functions = sorted(((label(path), name, costs[ir]) for (path, name), costs in exclusive.items() if costs[ir]),
                        key=lambda item: (-item[2], item[0], item[1]))
+    inclusive = {key: list(value) for key, value in exclusive.items()}
+    for (caller_object, caller, _, _), value in edges.items():
+        target = inclusive.setdefault((caller_object, caller), [0] * len(names))
+        for index, count in enumerate(value):
+            target[index] += count
     return dict(totals=dict(zip(names, total)),
                 objects={key: dict(zip(names, value)) for key, value in sorted(objects.items())},
-                functions=[dict(object=obj, function=name, Ir=value) for obj, name, value in functions])
+                functions=[dict(object=obj, function=name, Ir=value) for obj, name, value in functions],
+                inclusive_functions=[dict(object=label(obj), function=fn, Ir=value[ir])
+                    for (obj, fn), value in sorted(inclusive.items(), key=lambda item: -item[1][ir]) if value[ir]],
+                edges=[dict(caller_object=label(obj), caller=fn, callee_object=label(cob), callee=cfn, Ir=value[ir])
+                    for (obj, fn, cob, cfn), value in sorted(edges.items(), key=lambda item: -item[1][ir]) if value[ir]])
+
+
+def retain_profiler_summary(directory, name, document):
+    """Save a complete parsed summary locally before the next profiler launch.
+
+    Exclusive creation refuses reuse of a sample name. Raw profiler streams
+    are not written; the file contains the validated counters and attribution.
+    """
+    path = directory / (name + '.json')
+    with path.open('x', encoding='utf-8') as output:
+        json.dump(document, output, ensure_ascii=False, indent=2, sort_keys=True)
+        output.write('\n')
+        output.flush()
+        os.fsync(output.fileno())
+    return path
 
 
 class Campaign:
@@ -1429,9 +1466,18 @@ def run(args, driver, parser):
     worker, worker_identity = build_worker(work)
     data = args.prefix / 'lib/libpinyin/data'
     campaign = Campaign(worker, data, work, cpu, driver, cache=cache, jobs=getattr(args, 'jobs', None), attribute_window=window)
-    campaign.init_probes = getattr(args, 'teardown_init_probes', ','.join(INIT_PROBE_ROUNDS)).split(',')
+    selected_probes = getattr(args, 'teardown_init_probes', ','.join(INIT_PROBE_ROUNDS))
+    campaign.init_probes = [] if selected_probes == 'none' else selected_probes.split(',')
     if len(set(campaign.init_probes)) != len(campaign.init_probes) or any(probe not in INIT_PROBE_ROUNDS for probe in campaign.init_probes):
         parser.error('unknown or repeated --teardown-init-probes')
+    campaign.summary_dir = getattr(args, 'teardown_summary_dir', None)
+    if campaign.summary_dir is not None:
+        campaign.summary_dir = campaign.summary_dir.resolve()
+        campaign.summary_dir.mkdir(parents=True, exist_ok=True)
+        if any(campaign.summary_dir.iterdir()):
+            parser.error('--teardown-summary-dir must be empty; existing summaries are never replaced')
+        campaign.summary_identity = dict(worker=worker_identity, libraries=provenance,
+            source_revision=subprocess.check_output(['git', '-C', str(ROOT), 'rev-parse', 'HEAD'], text=True).strip())
     print_record('start', stage=args.teardown_stage, attribute_window=window, cache=cache, cpu=cpu, filesystem=fs, libraries=provenance,
                  worker=worker_identity, model_identity=identity(file_set(data)),
                  model_filesystem=filesystem(data), control_noise_rule=list(CONTROL_INTERVAL))
@@ -1655,8 +1701,22 @@ def init_attribute(campaign, subjects, profiles, cases, facades, references, dir
             for index in range(INIT_IR_ROUNDS):
                 for side in rotation(index, subjects):
                     row = campaign.run(facade, subjects[side][facade], profiler='callgrind-init', **options)
+                    profile = callgrind_costs(row['observation']['stderr'], subjects[side][facade])
+                    if getattr(campaign, 'summary_dir', None) is not None:
+                        name = f'{campaign.attribute_window}-{cell}-{facade}-{case}-{side}-{index + 1}'
+                        path = retain_profiler_summary(campaign.summary_dir, name,
+                            dict(schema='oxpinyin-callgrind-summary-v1', window=campaign.attribute_window,
+                                 cell=cell, facade=facade, case=case, side=side, round=index + 1,
+                                 simulated=list(INIT_CACHE_SIM), identity=campaign.summary_identity, profile=profile))
+                        print_record('profiler-summary', cell=cell, facade=facade, case=case, side=side,
+                                     round=index + 1, path=str(path), Ir=profile['totals']['Ir'])
                     require_profile_controls(row, references[facade, case][side])
-                    costs[side].append(callgrind_costs(row['observation']['stderr'], subjects[side][facade]))
+                    costs[side].append(profile)
+            if getattr(campaign, 'summary_dir', None) is not None:
+                retain_profiler_summary(campaign.summary_dir,
+                    f'{campaign.attribute_window}-{cell}-{facade}-{case}-all-rounds',
+                    dict(schema='oxpinyin-callgrind-rounds-v1', cell=cell, facade=facade, case=case,
+                         window=campaign.attribute_window, costs=costs))
             invalid |= report_init_ir(cell, facade, case, costs, window=campaign.attribute_window)
     return 1 if invalid else 0
 
