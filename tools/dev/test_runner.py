@@ -111,7 +111,6 @@ PACKAGING_PATHS = (
 
 HARNESS_DEPENDENCIES = {
     **dict.fromkeys(PACKAGING_PATHS, PACKAGING_HARNESSES),
-    'tools/bisection/runners.json': (*PACKAGING_HARNESSES, 'tools/bisection/heavy-slot.test.py'),
     'tools/dev/test_runner.py': ('tools/dev/test_runner.test.py', 'tools/dev/cli.test.py',
                                  'tools/dev/sanitize.test.py'),
     'tools/bisection/contract-diff.py': ('tools/bisection/contract-diff.test.py',

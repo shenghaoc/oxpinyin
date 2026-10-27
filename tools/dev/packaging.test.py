@@ -116,6 +116,28 @@ class PackagingTests(unittest.TestCase):
         self.fake('cargo', FAKE_CARGO)
         self.fake('uname', "print('Darwin')")
         self.fake('rustc', "print('host: fixture-target')")
+        # Distro packaging fixtures provide their GNU host interfaces on macOS
+        # too; they never require a Debian installation or system GLib data.
+        pcdir = self.work / 'system-pc'
+        pcdir.mkdir()
+        for module in ('glib-2.0', 'gobject-2.0'):
+            (pcdir / (module + '.pc')).write_text('Name: '+module+'\nDescription: fixture\nVersion: 2.88.0\nLibs: -l'+module+'\nCflags:\n')
+        self.env['PKG_CONFIG_LIBDIR'] = str(pcdir)
+        self.fake('md5sum', "import hashlib,sys; from pathlib import Path; "
+                  "[(print(hashlib.md5(Path(name).read_bytes()).hexdigest()+'  '+name,flush=True)) for name in sys.argv[1:]]")
+        self.fake('sort', r"""import sys
+from pathlib import Path
+files=[word for word in sys.argv[1:] if not word.startswith('-')]
+data=b''.join(Path(file).read_bytes() for file in files) if files else sys.stdin.buffer.read()
+flags=''.join(word for word in sys.argv[1:] if word.startswith('-'))
+separator=b'\0' if 'z' in flags else b'\n'
+lines=data.split(separator)
+if lines and lines[-1]==b'':lines.pop()
+if 'u' in flags:lines=list(set(lines))
+key=(lambda value:tuple(int(part) for part in value.split(b'.'))) if 'V' in flags else None
+if lines:sys.stdout.buffer.write(separator.join(sorted(lines,key=key))+separator)
+""")
+
         shutil.copy(ROOT / 'tools/oracle/build-oracle.sh', self.root / 'tools/oracle/build-oracle.sh')
         (self.root / 'tools/install-python.sh').write_text('#!/bin/sh\nexit 0\n')
         (self.root / 'tools/install-python.sh').chmod(0o755)
@@ -446,6 +468,18 @@ shutil.copyfile(work/'stage-usr/lib/libpinyin/data/table.conf', os.environ['PAYL
         self.fake('uname', "print('Linux')")
         self.fake('strip','pass')
         self.fake('ldd','pass')
+        self.fake('find', r"""import fnmatch,sys
+from pathlib import Path
+root=Path(sys.argv[1])
+if '-printf' in sys.argv:
+    for path in root.rglob('*'):
+        print(('l' if path.is_symlink() else 'd' if path.is_dir() else 'f')+' '+str(path.relative_to(root)))
+else:
+    patterns=[sys.argv[index+1] for index,word in enumerate(sys.argv) if word=='-path']
+    for path in root.rglob('*'):
+        if path.is_file() and not path.is_symlink() and not any(fnmatch.fnmatch(str(path),pattern) for pattern in patterns):print(path)
+""")
+
         self.fake('cargo-cinstall','pass')
         self.fake('cc', r"""import sys
 from pathlib import Path

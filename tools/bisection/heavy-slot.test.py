@@ -217,9 +217,9 @@ script, command, resource = sys.argv[1:]
 m = runpy.run_path(script)
 original = Path.read_text
 row = next(r for r in json.loads(original(Path(script).with_name('runners.json'))) if r['name']=='pc-version')
-implementation_arg = '{root}/' + row['implementation'].partition(':')[2]
+implementation_args = ['-m', row['implementation'].partition(':')[2]]
 row = dict(row, name='tiny-heavy', heavy=True,
-           command=[sys.executable, '-c', command, implementation_arg],
+           command=[sys.executable, '-c', command, *implementation_args],
            exclusive_resources=[resource])
 def read(path, *args, **kwargs):
     return json.dumps([row]) if path.name=='runners.json' else original(path, *args, **kwargs)
@@ -394,8 +394,8 @@ m = runpy.run_path(script)
 original_read = Path.read_text
 row = next(r for r in json.loads(original_read(Path(script).with_name('runners.json')))
            if r['name'] == 'pc-version')
-implementation_arg = '{root}/' + row['implementation'].partition(':')[2]
-rows = [dict(row, name=name, heavy=heavy, command=[name, implementation_arg])
+implementation_args = ['-m', row['implementation'].partition(':')[2]]
+rows = [dict(row, name=name, heavy=heavy, command=[name, *implementation_args])
         for name, heavy in [('heavy-a', True), ('heavy-b', True), ('light', False)]]
 finished = []
 holder = m['HeavySlot']('external holder', out=io.StringIO())
@@ -499,9 +499,9 @@ script=sys.argv[1]
 m=runpy.run_path(script)
 original=Path.read_text
 row=next(r for r in json.loads(original(Path(script).with_name('runners.json'))) if r['name']=='pc-version')
-implementation_arg='{root}/' + row['implementation'].partition(':')[2]
+implementation_args=['-m', row['implementation'].partition(':')[2]]
 row=dict(row, name='tiny-heavy', heavy=True,
-         command=[sys.executable, '-c', 'import sys; sys.stdin.read()', implementation_arg])
+         command=[sys.executable, '-c', 'import sys; sys.stdin.read()', *implementation_args])
 def read(path,*args,**kwargs):
     return json.dumps([row]) if path.name=='runners.json' else original(path,*args,**kwargs)
 with mock.patch.object(Path,'read_text',read), mock.patch.object(sys,'argv',[script,'--runners','tiny-heavy','--no-build','--cells','bdb']):
