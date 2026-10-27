@@ -317,8 +317,8 @@ class PureTests(unittest.TestCase):
 
     def test_subject_control_and_pin_library_paths_have_equal_length(self):
         names = td.LIBRARY_DIRECTORIES
-        self.assertEqual(set(names), {'ox', 'control', 'pin'})
-        self.assertEqual(len(set(names.values())), 3)
+        self.assertEqual(set(names), {'ox', 'control', 'pin', 'base'})
+        self.assertEqual(len(set(names.values())), 4)
         work = Path('/work/libraries')
         lengths = {side: len(bytes(work / name / 'libpinyin.so')) for side, name in names.items()}
         self.assertEqual(len(set(lengths.values())), 1, lengths)
@@ -771,6 +771,36 @@ class InitAttributionTests(unittest.TestCase):
             self.assertFalse(td.report_init_ir('kc', 'zhuyin', 'phrases',
                                                dict(ox=costs(10, 10, 10), control=costs(10, 10, 10), pin=costs(20, 21, 20))))
 
+    def test_first_candidate_window_requires_warm_attribute_stage(self):
+        for fields in (dict(teardown_stage='confirm'),
+                       dict(teardown_stage='init-attribute', teardown_cache='cold')):
+            self.assertIn('requires the warm init-attribute stage',
+                          PureTests().refusal(teardown_attribute_window='first-candidate', **fields))
+
+    def test_first_candidate_ir_reports_ranges_without_single_baseline(self):
+        def values(*counts):
+            return [dict(totals=dict(Ir=n), objects={}, functions=[], inclusive_functions=[], edges=[])
+                    for n in counts]
+        costs = dict(ox=values(10, 11, 12), control=values(9, 11, 13), pin=values(5, 6, 5))
+        with patch.object(td, 'print_record') as record:
+            self.assertFalse(td.report_init_ir('kc', 'pinyin', 'phrases', costs,
+                                               window='first-candidate'))
+        control, *sides = record.call_args_list
+        self.assertEqual(control.kwargs['verdict'], 'DIAGNOSTIC')
+        self.assertEqual(sides[0].kwargs['Ir_min_max'], [10, 12])
+        self.assertIsNone(sides[0].kwargs['totals'])
+
+    def test_base_rotates_with_every_measurement_arm(self):
+        arms = dict(base={}, ox={}, control={}, pin={})
+        for index in range(4):
+            self.assertEqual(td.rotation(index, arms),
+                             list(arms)[index:] + list(arms)[:index])
+        costs = {side: [dict(totals=dict(Ir=value), objects={}, functions=[])] * 3
+                 for side, value in zip(arms, (100, 80, 80, 60))}
+        with patch.object(td, 'print_record') as record:
+            self.assertFalse(td.report_init_ir('bdb', 'pinyin', 'phrases', costs))
+        self.assertEqual({call.kwargs['side'] for call in record.call_args_list[1:]}, set(arms))
+
     def test_probes_are_refused_outside_init_mode(self):
         campaign = td.Campaign(Path('/worker'), Path('/'), Path('/'), None, None)
         for mode in ('time', 'memory', 'observe'):
@@ -1215,6 +1245,32 @@ class NativeTests(unittest.TestCase):
                     if not report['errno']:
                         # fake_init's calloc and stderr write fault at least once.
                         self.assertTrue(any(value.get('fault') == 'minor' for value in report['samples']))
+
+    @unittest.skipUnless(sys.platform == 'linux', 'Linux worker probes')
+    def test_first_candidate_markers_exclude_init_and_allocation(self):
+        read, write = os.pipe()
+        env = dict(os.environ, OXPINYIN_TEARDOWN_EXPORTS='pinyin_init',
+                   OXPINYIN_TEARDOWN_INIT_PROBE='trace',
+                   OXPINYIN_TEARDOWN_PROBE_WINDOW='first-candidate',
+                   OXPINYIN_TEARDOWN_MARKER_FD=str(write))
+        try:
+            child = subprocess.run([str(self.worker), '--teardown', 'pinyin', str(self.library),
+                                    str(self.root), str(self.profile), 'init', '0', '1', '1',
+                                    'first-candidate', '-'], input=b'\n' * 3, stdout=subprocess.PIPE,
+                                   stderr=write, env=env, pass_fds=(write,), timeout=20)
+        finally:
+            os.close(write)
+        try:
+            trace = os.read(read, 65536)
+        finally:
+            os.close(read)
+        self.assertEqual(child.returncode, 0, trace)
+        self.assertEqual(trace, b'INIT\nALLOC\nBEFREE\nFINI\n')
+        rows = [json.loads(line) for line in child.stdout.splitlines()]
+        self.assertEqual([(row['checkpoint'], row['cycle']) for row in rows if 'checkpoint' in row],
+                         [('M0', 0), ('I1', 1)])
+        sample = next(row for row in rows if row.get('teardown') == 'sample')
+        self.assertEqual(set(sample['times']['first_candidate_ns']), set(td.CLOCK_FIELDS))
 
     @unittest.skipUnless(sys.platform == 'linux', 'Linux worker probes')
     def test_trace_probe_writes_begin_and_end_markers_around_init_only(self):

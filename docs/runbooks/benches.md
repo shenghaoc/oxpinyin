@@ -500,6 +500,23 @@ carries `getrusage` user/sys time, minor/major faults and context switches;
 under tick CPU accounting the user/sys split of a 2 ms interval is quantized.
 One probe runs per sample, in the rotating order:
 
+For first-candidate attribution (#1031), select
+`--teardown-attribute-window first-candidate` with the warm `init-attribute`
+stage and `--teardown-cases phrases,journals`. The window starts after init,
+configuration and instance allocation and includes parse, guess and first
+candidate observation. `--teardown-init-probes count` selects the retained
+resource probe; three fresh Callgrind processes per arm still run. Ir is a
+diagnostic min–max range under production RandomState, without a tolerance.
+The default window remains `init` and the default probe selection remains all.
+The `verify`, `confirm` and `init-attribute` stages accept
+`--base-pinyin-so` and `--base-zhuyin-so`; the four arms rotate serially with
+equal-length library-directory names. `confirm` reports paired PR/base ratios
+under the existing same-bytes timing rule, including the per-sample sum of
+init and first candidate. Its `--teardown-startup-heap` option uses the
+existing Massif worker and reports sampled startup peaks through M1, with
+exact ABI-boundary heap controls. Those peaks include candidate enumeration
+through M1 and are sampled maxima, not exact transient allocation peaks.
+
 - `count`: perf counters around init, minus an empty calibration bracket
   that the record reports too. An event the kernel refuses (for example a
   hardware event on a host without a PMU) is NOT RUN with its errno, never 0.
