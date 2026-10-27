@@ -14,8 +14,6 @@ import os
 from pathlib import Path
 import re
 import runpy
-import subprocess
-import tempfile
 
 HERE = Path(__file__).resolve().parent
 GEN = runpy.run_path(str(HERE.parent / 'generate-function-order.py'))
@@ -25,7 +23,7 @@ def resolve(mode, archive=None, policy=None, soname=None, *, run=None):
     """Run the existing nm/AWK resolver; keep policy semantics in one place.
 
     Return (status, stdout, stderr), including nm's pipefail status. The
-    temporary nm input replaces the shell pipe and is removed on cancellation.
+    pool feeds the nm bytes to AWK on stdin, as the shell pipe did.
     RUN is a captured process adapter; packaging supplies its pool launcher.
     """
     from tools.dev import pool, slot
@@ -39,10 +37,7 @@ def resolve(mode, archive=None, policy=None, soname=None, *, run=None):
     if mode == 'policy':
         return launch([*arguments, str(policy)])
     nm = launch(['nm', '--format=sysv', '--defined-only', '--no-sort', '--demangle=rust', str(archive)])
-    with tempfile.NamedTemporaryFile(prefix='function-order-') as source:
-        source.write(nm.stdout)
-        source.flush()
-        done = launch([*arguments, *([] if mode == 'inventory' else [str(policy)]), source.name])
+    done = launch([*arguments, *([] if mode == 'inventory' else [str(policy)]), '-'], input=nm.stdout)
     output = done.stdout
     if mode == 'inventory':
         output = b''.join(line + b'\n' for line in sorted(set(output.splitlines())))
@@ -62,11 +57,13 @@ def supported(compiler, archive, scratch, *, run):
 
 
 def command(arguments):
-    result = subprocess.run(list(map(str, arguments)), capture_output=True, text=True,
-                            env={**os.environ, 'LC_ALL': 'C'}, check=False)
-    if result.returncode:
-        raise ValueError(f'{arguments[0]}: {result.stderr.strip()}')
-    return result.stdout
+    from tools.dev import pool, slot
+    context = pool.UnitContext('function-order', slot.CANCELLED,
+                               environment={**os.environ, 'LC_ALL': 'C'})
+    result = context.launch(list(map(str, arguments)))
+    if result.status:
+        raise ValueError(f'{arguments[0]}: {result.stderr.decode().strip()}')
+    return result.stdout.decode()
 
 
 def linker_description(library):

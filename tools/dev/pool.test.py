@@ -941,6 +941,15 @@ class UnitRunnerTests(unittest.TestCase):
                               env={'ONLY': '1'})
         self.assertEqual(done.stdout, b"'' None\n")
 
+    def test_launch_delivers_binary_input_across_communicate_timeouts(self):
+        context = pool.UnitContext('u', threading.Event())
+        data = bytes(range(256)) * 8192
+        done = context.launch([sys.executable, '-c',
+            'import sys,time; time.sleep(.1); sys.stdout.buffer.write(sys.stdin.buffer.read())'],
+            input=data, poll=.01)
+        self.assertEqual(done.status, 0)
+        self.assertEqual(done.stdout, data)
+
     def test_each_running_unit_leases_its_own_cpu_and_returns_it(self):
         seen, together = [], threading.Barrier(3, timeout=5)
 

@@ -24,7 +24,7 @@ HERE = ROOT / 'tools/packaging'
 LIBRARIES = {'libpinyin': 'oxpinyin-capi', 'libzhuyin': 'oxpinyin-zhuyin-capi'}
 HEADERS = ('novel_types.h', 'pinyin_custom2.h')
 NAMES = ('install', 'relink-versioned', 'pc-version', 'check-pc-version', 'check-pc-metadata',
-         'function-order', 'release-stage', 'release-deb', 'release-rpm', 'release-arch')
+         'function-order', 'release-stage', 'release-deb', 'release-rpm', 'release-arch', 'compare-installs')
 
 
 def fail(message='', code=1):
@@ -50,11 +50,14 @@ class Tools:
         self.here = self.root / "tools/packaging"
         self.env = dict(os.environ if env is None else env)
 
-    def capture(self, argv, *, cwd=None, env=None, merge_stderr=False):
+    def capture(self, argv, *, cwd=None, env=None, merge_stderr=False, input=b''):
         context = pool.UnitContext('packaging', slot.CANCELLED,
             environment=dict(self.env if env is None else env),
             fds=slot.inherited_fds('packaging', out=io.StringIO()))
-        done = context.launch(list(map(str, argv)), cwd=cwd, merge_stderr=merge_stderr)
+        try:
+            done = context.launch(list(map(str, argv)), cwd=cwd, merge_stderr=merge_stderr, input=input)
+        except PermissionError as error:
+            fail(str(error), 126)
         return done._replace(status=status(done.status))
 
     def run(self, argv, **options):
@@ -67,7 +70,11 @@ class Tools:
 
     def heavy(self, argv, *, cwd=None, env=None):
         with directory(cwd or Path.cwd()):
-            code = status(slot.run_command(list(map(str, argv)), env=self.env if env is None else env))
+            try:
+                code = status(slot.run_command(list(map(str, argv)), env=self.env if env is None else env,
+                                           out=io.StringIO()))
+            except PermissionError as error:
+                fail(str(error), 126)
         if code:
             raise Finished(code)
 
@@ -92,7 +99,11 @@ def option(argv, index):
 
 def version(root=ROOT):
     record = root / 'tools/oracle/oracle-pin.txt'
-    values = re.findall(r'^libpinyin_tag=(.*)$', record.read_text(), re.M)
+    try:
+        text = record.read_text()
+    except OSError as error:
+        fail(f"sed: can't read {record}: {error.strerror}", 2)
+    values = re.findall(r'^libpinyin_tag=(.*)$', text, re.M)
     value = '\n'.join(values)
     if not re.search(r'^[0-9]+\.[0-9]+\.[0-9]+$', value, re.M):
         fail(f'error: {record}: no well-formed libpinyin_tag=<major>.<minor>.<micro> line')
@@ -185,7 +196,7 @@ class Layout:
                 index += 1
         with directory(tools.here):
             target_path = Path(target) if target else tools.root / 'target'
-            target_path.mkdir(parents=True, exist_ok=True)
+            tools.run(['mkdir', '-p', '--', target_path])
             target_path = target_path.resolve()
         triple = triple or tools.env.get('CARGO_BUILD_TARGET') or ''
         if not triple:
@@ -227,9 +238,14 @@ class Layout:
 
 
 def install(argv, tools):
+    with directory(tools.here):
+        return install_library(argv, tools)
+
+
+def install_library(argv, tools):
     layout = Layout.parse(argv, tools)
     companion_headers(root=tools.root)
-    layout.pcdir.mkdir(parents=True, exist_ok=True)
+    tools.run(['mkdir', '-p', layout.pcdir])
     crate = tools.root / 'crates' / LIBRARIES[layout.library]
     command = ['cargo', 'cinstall', f'--prefix={layout.prefix}', f'--libdir={layout.libdir}',
                f'--includedir={layout.includedir}', f'--target-dir={layout.target}']
@@ -253,10 +269,17 @@ def install(argv, tools):
     return 0
 
 
+def optional_pkg_config(arguments, tools):
+    try:
+        return tools.capture(['pkg-config', *arguments])
+    except OSError:
+        return pool.Completed(127, b'', b'')
+
+
 def backend_flags(backend, tools):
     if backend == 'bdb':
         return ['-ldb']
-    done = tools.capture(['pkg-config', '--libs', backend])
+    done = optional_pkg_config(['--libs', backend], tools)
     flags = done.stdout.decode().split() if not done.status else ['-l' + backend]
     return [*flags, *(['-lstdc++'] if backend == 'kyotocabinet' else [])]
 
@@ -291,7 +314,7 @@ def relink(argv, tools):
     for feature in values['features'].replace(',', ' ').split():
         if feature in ('tkrzw', 'kyotocabinet', 'bdb'):
             backend = feature
-    glib = tools.capture(['pkg-config', '--libs', 'glib-2.0', 'gobject-2.0'])
+    glib = optional_pkg_config(['--libs', 'glib-2.0', 'gobject-2.0'], tools)
     flags = glib.stdout.decode().split() if not glib.status else ['-lglib-2.0', '-lgobject-2.0']
     flags += backend_flags(backend, tools)
     policy_backend = 'kc' if backend == 'kyotocabinet' else backend
@@ -302,9 +325,7 @@ def relink(argv, tools):
     destination = Path(dest)
     # As mktemp ${DEST%.so*}.relink.XXXXXX: scratch stays beside the object,
     # so the verified replacement is atomic and its symlinks keep resolving.
-    prefix = destination.name.rsplit('.so', 1)[0] + '.relink.'
-    fd, temporary = tempfile.mkstemp(prefix=prefix, dir=destination.parent)
-    os.close(fd)
+    temporary = tools.text(['mktemp', str(destination).rsplit('.so', 1)[0] + '.relink.XXXXXX'])
     try:
         order = []
         if source == 'opt-out':
@@ -316,10 +337,9 @@ def relink(argv, tools):
                 function_order.check_policy_backend(Path(policy), policy_backend)
             except ValueError as error:
                 fail('error: function ordering: ' + str(error))
-            with tempfile.TemporaryDirectory(prefix=Path(temporary).name + '.order.',
-                                             dir=destination.parent) as scratch:
+            with temporary_directory(tools, temporary + '.order.XXXXXX') as scratch:
                 done = function_order.resolve('resolve', archive, policy, soname,
-                    run=lambda command: tools.capture(command, env={**tools.env, 'LC_ALL': 'C'}))
+                    run=lambda command, **options: tools.capture(command, env={**tools.env, 'LC_ALL': 'C'}, **options))
                 write(done.stderr, error=True)
                 order_file = Path(scratch) / 'order.ld'
                 order_file.write_bytes(done.stdout)
@@ -328,7 +348,7 @@ def relink(argv, tools):
                          'regenerate it (docs/packaging.md, "Regeneration") or disable ordering explicitly '
                          "with --function-order ''")
                 if function_order.supported(cc, archive, scratch,
-                        run=lambda command: tools.capture(command, env={**tools.env, 'LC_ALL': 'C'})):
+                        run=lambda command, **options: tools.capture(command, env={**tools.env, 'LC_ALL': 'C'}, **options)):
                     order = ['-Xlinker', '--section-ordering-file', '-Xlinker', str(order_file)]
                     emit(f'function ordering: using measured policy {policy}', error=True)
                 else:
@@ -371,9 +391,11 @@ def link_and_verify(cc, temporary, order, ver, soname, archive, flags, tools):
     raw = tools.text(['nm', '-D', '--defined-only', temporary])
     symbols = [line.split()[-1] for line in raw.splitlines() if line.split()]
     actual = sorted(name.split('@')[0] for name in symbols if name.split('@')[0] != node)
+    if not actual:
+        raise Finished(1)
     if expected != actual:
         emit(f"error: relinked object's export set differs from {ver}:", error=True)
-        with tempfile.TemporaryDirectory() as scratch:
+        with temporary_directory(tools) as scratch:
             left, right = Path(scratch) / 'ver', Path(scratch) / 'so'
             left.write_text(''.join(name + '\n' for name in expected))
             right.write_text(''.join(name + '\n' for name in actual))
@@ -439,9 +461,18 @@ def expand(template, values):
                   lambda match: str(values[match[1] or match[2]]), template).replace('\\$', '$')
 
 
-def package_work(outdir):
-    Path(outdir).mkdir(parents=True, exist_ok=True)
-    return tempfile.TemporaryDirectory()
+@contextmanager
+def temporary_directory(tools, template=None):
+    path = Path(tools.text(['mktemp', '-d', *([template] if template else [])]))
+    try:
+        yield path
+    finally:
+        shutil.rmtree(path, ignore_errors=True)
+
+
+def package_work(outdir, tools):
+    tools.run(['mkdir', '-p', '--', outdir])
+    return temporary_directory(tools)
 
 
 def package_done(kind, outdir, tools):
@@ -460,7 +491,7 @@ def release_deb(argv, tools):
     for name in ('libpinyin.so.15.0.0', 'libzhuyin.so.15.0.0'):
         if not (stage_lib / name).is_file():
             fail(f'error: {stage_lib / name} missing')
-    Path(outdir).mkdir(parents=True, exist_ok=True)
+    tools.run(['mkdir', '-p', '--', outdir])
     libraries = [str(stage_lib / (lib + '.so.15.0.0')) for lib in LIBRARIES]
     sonames = sorted(set(re.findall(r'^\s*NEEDED\s+(\S+)', tools.text(['objdump', '-p', *libraries]), re.M)))
     packages = set()
@@ -488,13 +519,13 @@ def release_deb(argv, tools):
     base, debver = 'oxpinyin-libpinyin15-' + backend, release + '-1'
     fields = dict(BASE=base, BACKEND=backend, DEBVER=debver, ARCH=arch, PCVER=pcver, DEPS=deps,
                   MAINTAINER='Shenghao Chen <shenghaoc@outlook.com>', HOMEPAGE='https://github.com/shenghaoc/oxpinyin')
-    with package_work(outdir) as work:
+    with package_work(outdir, tools) as work:
         runtime, dev = Path(work) / 'runtime', Path(work) / 'dev'
         rtlib, devlib = Path(str(runtime) + libdir), Path(str(dev) + libdir)
         inc = dev / 'usr/include' / ('libpinyin-' + pcver)
         for path in (rtlib, devlib / 'pkgconfig', inc, runtime / 'DEBIAN', dev / 'DEBIAN',
                      runtime / 'usr/share/doc' / base, dev / 'usr/share/doc' / (base + '-dev')):
-            path.mkdir(parents=True, exist_ok=True)
+            tools.run(['mkdir', '-p', '--', path])
         for library in LIBRARIES:
             tools.run(['install', '-m0755', '--', stage_lib / (library + '.so.15.0.0'), str(rtlib) + '/'])
             tools.run(['ln', '-sfn', '--', library + '.so.15.0.0', rtlib / (library + '.so.15')])
@@ -511,7 +542,13 @@ def release_deb(argv, tools):
             sums = tree / 'DEBIAN/md5sums'
             sums.touch()
             files = sorted(str(path.relative_to(tree)) for path in tree.rglob('*') if path.is_file() and not path.is_symlink())
-            sums.write_text(tools.text(['md5sum', *files], cwd=tree) + '\n')
+            # GNU md5sum flushes each record. The legacy find includes
+            # md5sums itself, after control, so its self-entry hashes the
+            # records already written. Keep those exact package bytes.
+            with sums.open('w') as output:
+                for file in files:
+                    output.write(tools.text(['md5sum', file], cwd=tree) + '\n')
+                    output.flush()
         for tree, name in ((runtime, base), (dev, base + '-dev')):
             tools.heavy(['dpkg-deb', '--root-owner-group', '--build', tree,
                          Path(outdir) / f'{name}_{debver}_{arch}.deb'])
@@ -524,10 +561,10 @@ def release_rpm(argv, tools):
     pcver, name = version(tools.root), 'oxpinyin-libpinyin-' + backend
     if not (Path(stage) / 'usr').is_dir():
         fail(f'error: {stage}/usr missing')
-    with package_work(outdir) as work:
+    with package_work(outdir, tools) as work:
         root = Path(work).resolve()
         for folder in ('BUILD', 'RPMS', 'SOURCES', 'SPECS', 'SRPMS'):
-            (root / folder).mkdir()
+            tools.run(['mkdir', '-p', '--', root / folder])
         tools.run(['tar', '-czf', root / 'SOURCES/staged-tree.tar.gz', '-C', stage, 'usr'])
         spec = root / 'SPECS' / (name + '.spec')
         spec.write_text(expand(templates.RPM_SPEC, dict(NAME=name, VERSION=release, BACKEND=backend, PCVER=pcver)))
@@ -568,17 +605,17 @@ def release_arch(argv, tools):
         fail(f"error: unknown backend '{backend}'", 2)
     if not (Path(stage) / 'usr').is_dir():
         fail(f'error: {stage}/usr missing')
-    with package_work(outdir) as work:
+    with package_work(outdir, tools) as work:
         outdir = str(Path(outdir).resolve())
         os.chmod(work, 0o711)
         pkgwork = Path(work) / 'pkg'
-        pkgwork.mkdir()
+        tools.run(['mkdir', '-p', '--', pkgwork])
         tools.run(['cp', '-a', '--', Path(stage) / 'usr', pkgwork / 'stage-usr'])
         if data:
             target = pkgwork / 'stage-usr/lib/libpinyin/data'
             if target.exists():
                 fail('error: staged tree already carries lib/libpinyin/data')
-            target.parent.mkdir(parents=True, exist_ok=True)
+            tools.run(['mkdir', '-p', '--', target.parent])
             tools.run(['cp', '-a', '--', data, target])
         fields = dict(PKGNAME=name, VERSION=release, DESC=description, ARCH=arch,
                       EXTRA_DEPS=backend, PCVER=pcver, SOARCH=64)
@@ -677,7 +714,7 @@ def release_stage(argv, tools):
                 gate(f'{library} --cflags does not point into libpinyin-{pcver}')
         if not query('--variable=pkgdatadir', 'libpinyin'):
             gate('libpinyin pkgdatadir is empty (the silent-misconfiguration gap)')
-        with tempfile.TemporaryDirectory() as smoke:
+        with temporary_directory(tools) as smoke:
             for library, source in [('libpinyin', templates.SMOKE_PINYIN), ('libzhuyin', templates.SMOKE_ZHUYIN)]:
                 name = library[3:]
                 program = Path(smoke) / ('smoke_' + name)
@@ -720,8 +757,21 @@ def metadata(argv, tools):
         fail(templates.METADATA_USAGE.rstrip('\n'), 2)
     if not tools.which('pkg-config'):
         fail('error: pkg-config not found', 2)
+    from .cell import Settings
+    backend = values['build_subject']
+    environment = dict(tools.env)
+    if backend in ('bdb', 'tkrzw', 'kyotocabinet'):
+        environment.setdefault('PINYIN_ORACLE_DBM', 'kc' if backend == 'kyotocabinet' else backend)
+    try:
+        settings = Settings.read(environment, tools.root)
+    except OSError as error:
+        fail(f'FAIL: {error}')
+    for key in ('ORACLE_DBM', 'ORACLE_DBM_NAME', 'CAPI_FEATURE', 'OXPINYIN_CAPI_BACKEND_EXT',
+                'EXPECTED_PIN_REF', 'CARGO_TARGET_DIR', 'CARGO_PROFILE_DEV_OPT_LEVEL',
+                'OXPINYIN_CAPI_SO', 'OXPINYIN_ZHUYIN_SO'):
+        if key in settings.environment:
+            tools.env[key] = settings.environment[key]
     with directory(tools.here):
-        backend = values['build_subject']
         if backend:
             tools.run(['rm', '-rf', '--', values['subject_root']])
             layout = [f'--prefix={values["prefix"]}', f'--destdir={values["subject_root"]}']
@@ -737,7 +787,7 @@ def metadata(argv, tools):
         prefix = values['prefix']
         libdir, includedir = values['libdir'] or prefix + '/lib', values['includedir'] or prefix + '/include'
         relocated, differences = '/relocated-by-check-pc-metadata', 0
-        with tempfile.TemporaryDirectory() as work:
+        with temporary_directory(tools) as work:
             def compare(label, texts):
                 nonlocal differences
                 paths = [Path(work) / 'pin', Path(work) / 'subject']
@@ -808,10 +858,96 @@ def function_order_command(argv, tools):
     fields = {'inventory': dict(archive=argv[1]), 'resolve': dict(archive=argv[1], policy=argv[2] if len(argv) > 2 else '', soname=argv[3] if len(argv) > 3 else ''),
               'policy': dict(policy=argv[1], soname=argv[2] if len(argv) > 2 else '')}[mode]
     done = function_order.resolve(mode, **fields,
-        run=lambda command: tools.capture(command, env={**tools.env, 'LC_ALL': 'C'}))
+        run=lambda command, **options: tools.capture(command, env={**tools.env, 'LC_ALL': 'C'}, **options))
     write(done.stdout)
     write(done.stderr, error=True)
     return status(done.status)
+
+
+def installed_tree(root):
+    """Relative entries, including directories and symlinks, without following them."""
+    return {str(path.relative_to(root)): path for path in root.rglob('*')}
+
+
+def compare_trees(left, right):
+    """Compare all installed bytes, modes and symlink targets; refuse any difference."""
+    import filecmp
+    import stat
+    before, after = installed_tree(left), installed_tree(right)
+    if before.keys() != after.keys():
+        fail('installed tree paths differ: ' + ', '.join(sorted(before.keys() ^ after.keys())))
+    for name, path in before.items():
+        other = after[name]
+        if stat.S_IFMT(path.lstat().st_mode) != stat.S_IFMT(other.lstat().st_mode):
+            fail('installed file type differs: ' + name)
+        if path.is_symlink():
+            same = os.readlink(path) == os.readlink(other)
+        elif path.is_dir():
+            same = True
+        else:
+            same = filecmp.cmp(path, other, shallow=False)
+        if not same or stat.S_IMODE(path.lstat().st_mode) != stat.S_IMODE(other.lstat().st_mode):
+            fail('installed bytes, mode or link target differ: ' + name)
+    return len(before)
+
+
+def compare_installs(argv, tools):
+    """The real U4 comparison: each facade, BDB, identical release inputs.
+
+    BASE is a preserved checkout with the shell entry points; WORK owns this
+    comparison's targets, separate one-facade staging roots and stripped copies.
+    Rust source/build paths are remapped equally on both sides. No oracle is
+    executed and no measurement or other lane's artifacts are used.
+    """
+    values = dict(base='', work='')
+    for word in argv:
+        key, separator, value = word.partition('=')
+        if not separator or key not in ('--base', '--work') or not value:
+            fail('usage: just packaging compare-installs --base=CHECKOUT --work=DIR', 2)
+        values[key[2:]] = value
+    if not all(values.values()):
+        fail('usage: just packaging compare-installs --base=CHECKOUT --work=DIR', 2)
+    base, work = Path(values['base']).resolve(), Path(values['work']).resolve()
+    legacy = base / 'tools/packaging/install.sh'
+    if not legacy.is_file():
+        fail('preserved base has no packaging install entry point: ' + str(legacy))
+    work.mkdir(parents=True, exist_ok=True)
+    environment = dict(tools.env)
+    remaps = [(str(base), '/oxpinyin'), (str(tools.root), '/oxpinyin'),
+              (str(work / 'base-target'), '/oxpinyin-target'), (str(work / 'new-target'), '/oxpinyin-target')]
+    flags = ' '.join('--remap-path-prefix=' + source + '=' + target for source, target in remaps)
+    environment['RUSTFLAGS'] = ((environment.get('RUSTFLAGS') or '') + ' ' + flags).strip()
+    environment['PINYIN_ORACLE_DBM'] = 'bdb'
+    current = Tools(environment, root=tools.root)
+    for library in LIBRARIES:
+        stages = []
+        for side in ('base', 'new'):
+            stage = work / side / library
+            shutil.rmtree(stage, ignore_errors=True)
+            stages.append(stage)
+            arguments = [library, '--prefix=/usr', '--libdir=/usr/lib', '--destdir=' + str(stage), '--',
+                         '--target-dir=' + str(work / (side + '-target')), '--locked', '--release',
+                         '--no-default-features', '--features', 'bdb' + (',shipped' if library == 'libpinyin' else '')]
+            if side == 'base':
+                tools.heavy(['bash', legacy, *arguments], env=environment)
+            else:
+                install(arguments, current)
+        count = compare_trees(*stages)
+        objects = [stage / 'usr/lib' / (library + '.so.15.0.0') for stage in stages]
+        for arguments in (['readelf', '-d'], ['nm', '-D', '--defined-only']):
+            if tools.text([*arguments, objects[0]]) != tools.text([*arguments, objects[1]]):
+                fail(library + ': ELF identity differs')
+        sizes = []
+        for side, source in zip(('base', 'new'), objects):
+            stripped = work / (side + '-' + library + '.stripped.so')
+            shutil.copyfile(source, stripped)
+            tools.run(['strip', '--strip-unneeded', '--', stripped])
+            sizes.append(stripped.stat().st_size)
+        if sizes[0] != sizes[1]:
+            fail(library + ': stripped sizes differ')
+        emit(f'{library}: {count} installed entries byte-identical; headers, pkg-config, SONAME, versions and exports match; '
+             f'stripped bytes base={sizes[0]} new={sizes[1]}')
+    return 0
 
 
 def main(argv=None, *, tools=None):
@@ -821,7 +957,7 @@ def main(argv=None, *, tools=None):
         emit('usage: python -m tools.dev packaging {' + ','.join(NAMES) + '} ...', error=True)
         return 2
     name, rest = argv[0], argv[1:]
-    functions = {'install': install, 'relink-versioned': relink, 'check-pc-version': check_version,
+    functions = {'compare-installs': compare_installs, 'install': install, 'relink-versioned': relink, 'check-pc-version': check_version,
                  'check-pc-metadata': metadata, 'function-order': function_order_command,
                  'release-stage': release_stage, 'release-deb': release_deb, 'release-rpm': release_rpm,
                  'release-arch': release_arch}
@@ -830,4 +966,9 @@ def main(argv=None, *, tools=None):
             emit(version(tools.root))
             return 0
         return functions[name](rest, tools)
-    return guarded(call)
+    def quiet_cancellation():
+        try:
+            return call()
+        except (pool.UnitStopped, pool.UnitsCancelled, slot.Cancelled):
+            raise Finished(slot.cancellation_status()) from None
+    return guarded(quiet_cancellation)

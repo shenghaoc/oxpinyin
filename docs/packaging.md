@@ -24,6 +24,10 @@ No hand-written `Makefile` is needed: `cargo cbuild`/`cargo cinstall` derive
 the install layout and SONAME from Cargo metadata. The one thing cargo-c
 cannot produce is a complete libpinyin `.pc` (see "Locating the model data"
 below), which is why `just packaging install` wraps `cargo cinstall`.
+Run from the checkout with the [ordinary native setup](runbooks/setup.md);
+`just python` provisions its managed interpreter. The packaging commands
+use the shared heavy slot and memory admission for builds, relinks and package
+builders.
 
 ## Metadata on `oxpinyin-capi`
 
@@ -136,7 +140,7 @@ These are independent and move for different reasons:
    `configure.ac` version and moves with it: its one source is
    `libpinyin_tag` in `tools/oracle/oracle-pin.txt`, which both capi build
    scripts read (and check their `[package.metadata.capi]` tables against)
-   and `just packaging pc-version` prints for the shell side.
+   and `just packaging pc-version` prints for package assembly.
 4. **Parity pins** — `10190 / 10190 / 98930` of `98930` candidate symbols,
    `0` absent, `0` tie-swaps (per `pin-refreeze-2026-08.md`
    2026-08-22 amendment). These freeze the decode/predict output the
@@ -291,7 +295,7 @@ Each backend has its own `tools/packaging/function-order/<backend>/` directory:
 `bdb`, `kc` (Cargo feature `kyotocabinet`) or `tkrzw`. Each contains
 `libpinyin.order` and `libzhuyin.order`, generated from that backend's shipping
 build and same-cell profiles. The BDB files retain their previous contents.
-`relink-versioned.sh` selects the directory from the build's feature list.
+`just packaging relink-versioned` selects the directory from the build's feature list.
 Measurement verification derives the backend independently from the linked
 object's `DT_NEEDED`; the caller's environment cannot select another backend's
 default. Both paths reject a named policy in a different backend's directory,
@@ -416,12 +420,13 @@ cannot replace this check. Each arm prints its own result. Use
 `--function-order ARM/FACADE=POLICY` to name a historical policy, or an explicit
 `--unordered-arm ARM` for an intentional non-shipping experiment. See
 [the measurement inventory and refusal rules](runbooks/benches.md#verify-function-ordering-before-shipping-measurements).
-Package installation gains no Python dependency: its own refusal of a policy
-that does not resolve uses the Bash and `nm` resolver above.
+Package installation and measurement use the same managed Python prerequisite
+(`just python`). Policy resolution still uses the existing `nm`/AWK resolver;
+the shared Python service owns its invocation and validation.
 
 Use `--function-order POLICY` to override the relinker's measured default.
 For the full shipping path, set `OXPINYIN_FUNCTION_ORDER_POLICY` for one install invocation;
-`install.sh` passes its environment to the relinker. A policy header must
+`just packaging install` passes its environment to the relinker. A policy header must
 match that invocation's SONAME. For example:
 
 ```sh
@@ -436,10 +441,9 @@ on the relinker) restores the original command with no inventory or capability
 query. An unset variable selects `tools/packaging/function-order/<backend>/libpinyin.order`
 or `libzhuyin.order`. A package build does not profile or infer a policy.
 
-Ordering adds no linker replacement or packaging dependency. The relinker
-resolves the policy with its existing Bash, binutils and text utilities.
-Python and uv are used only for regeneration; the package build does not
-require them.
+Ordering adds no linker replacement. Packaging requires uv and the repository
+managed interpreter, provisioned before packaging by the release and policy CI
+callers. The relinker reuses binutils and the existing AWK policy resolver.
 
 ### Regeneration
 
@@ -764,3 +768,20 @@ compile/link/run, and a real `pinyin_init`/`zhuyin_init` on
 `$(pkg-config --variable=pkgdatadir libpinyin)/data` that must return a
 context — so a release never attaches a package that does not install,
 does not answer as libpinyin/libzhuyin, or cannot open the system's model.
+
+### Packaging migration comparison
+
+Preserve the base checkout before changing its entry points. Run
+`OXPINYIN_PACKAGING_BASE=/path/to/base just test-tools --changed origin/main`
+for identical-input fake comparisons, including metadata and package payloads,
+policy refusals, child failures and SIGINT/SIGTERM cleanup. Without the base
+override, those fixtures assert the migrated behavior under the normal suite.
+
+For real output, run
+`just packaging compare-installs --base=/path/to/base --work=/path/to/private-work`.
+It installs each facade separately through both entry points on BDB, using
+the locked release recipe and equally remapped source/build paths. It compares
+the complete trees byte for byte, modes, symlinks, headers, pkg-config metadata,
+ELF identity and stripped sizes. Its work directory owns all targets and stages;
+it neither executes the oracle nor reads another lane's builds. Keep targets
+for reuse; raw output is disposable under CONTRIBUTING.
