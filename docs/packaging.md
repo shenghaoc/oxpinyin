@@ -792,6 +792,10 @@ Every published GitHub release triggers
 the three distro families and attaches them (plus a `SHA256SUMS`) to the
 release with `gh release upload`.
 
+Each lane builds on its distro's rolling branch: Debian testing, Fedora
+Rawhide and Arch. Fedora's lane uses `fedora:rawhide`, not `fedora:latest`,
+which is the current stable release.
+
 Each lane builds under the ONE store backend whose model format that
 distro's own `libpinyin` data is encoded in, so the drop-in reads the data
 already on the system:
@@ -799,7 +803,7 @@ already on the system:
 | lane | image | backend | because |
 |---|---|---|---|
 | Debian | `debian:testing` | tkrzw | Debian's libpinyin 2.11.91 (testing/forky) switched BerkeleyDB → Tkrzw (`libtkrzw1t64`); stable (trixie) still ships 2.8.1 on BerkeleyDB, which no backend reads |
-| Fedora | `fedora:latest` | kyotocabinet | Fedora's libpinyin still links KyotoCabinet (`kyotocabinet-libs`) |
+| Fedora | `fedora:rawhide` | kyotocabinet | Fedora's libpinyin still links KyotoCabinet (`kyotocabinet-libs`) |
 | Arch | `archlinux:latest` | kyotocabinet | Arch's libpinyin still links KyotoCabinet |
 
 `just packaging release-stage` builds and stages through the supported

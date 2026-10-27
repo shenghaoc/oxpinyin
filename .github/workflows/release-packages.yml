@@ -21,12 +21,14 @@
 # package the takeover removes, so the Arch lane fetches that package and
 # ships its data directory inside ours — see just packaging release-arch.
 #
-# Image choice: each lane builds on the distro release whose libpinyin
-# actually IS 2.11.91 in the backend named above. For Debian that is
-# testing (forky): stable (trixie, what debian:latest resolves to) still
-# ships libpinyin 2.8.1 on BerkeleyDB, whose bigram.db no oxpinyin backend
-# can read, so a tkrzw build there could not pass the init gate below and
-# would be a package for a system whose data it cannot open.
+# Image choice: each lane builds on the distro's rolling branch
+# (maintainer ruling 2026-10-27 UTC): Debian testing, Fedora Rawhide and
+# Arch. For Debian that is testing (forky): stable (trixie, what
+# debian:latest resolves to) still ships libpinyin 2.8.1 on BerkeleyDB,
+# whose bigram.db no oxpinyin backend can read, so a tkrzw build there could
+# not pass the init gate below and would be a package for a system whose
+# data it cannot open. Fedora uses fedora:rawhide, not fedora:latest, which
+# is the current stable release.
 #
 # The build is the distro-documented one: each distro's own cargo-c package
 # runs `cargo cinstall` through just packaging install (which completes
@@ -87,7 +89,7 @@ jobs:
             backend: tkrzw
             dbfmt: Tkrzw
           - distro: fedora
-            image: fedora:latest
+            image: fedora:rawhide
             backend: kyotocabinet
             dbfmt: KyotoCabinet
           - distro: arch
