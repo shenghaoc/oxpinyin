@@ -186,12 +186,12 @@ impl<D: ChewingDbm> ChewingTable<D> {
     ///   either side is incomplete, tones equal unless either side is
     ///   zero — so a tone-less query accepts every tone and an incomplete
     ///   syllable accepts every final;
-    /// * the surviving records, empty when the key is absent, an empty
+    /// * the surviving tokens, empty when the key is absent, an empty
     ///   marker, or no record matches. Upstream additionally requires the
     ///   record's library to be loaded; the dictionary layer applies that
     ///   when it resolves tokens. Use [`Self::key_exists`] for the
     ///   `SEARCH_CONTINUED` prefix probe, which needs no record decode.
-    pub(crate) fn search(&self, keys: &[ChewingKey]) -> Result<Vec<PinyinIndexItem>, DictError> {
+    pub(crate) fn search(&self, keys: &[ChewingKey]) -> Result<Vec<u32>, DictError> {
         if keys.is_empty() {
             return Ok(Vec::new());
         }
@@ -199,10 +199,16 @@ impl<D: ChewingDbm> ChewingTable<D> {
         if !self.dbm.get(&index_key(keys), &mut value)? || value.is_empty() {
             return Ok(Vec::new());
         }
-        Ok(decode_items(&value, keys.len())?
-            .into_iter()
-            .filter(|item| keys_match(keys, &item.keys))
-            .collect())
+        Ok(
+            crate::row_format::pinyin_index::item_views(&value, keys.len())?
+                .filter(|item| {
+                    keys.iter()
+                        .zip(item.keys())
+                        .all(|(q, s)| key_matches(q, &s))
+                })
+                .map(|item| item.token)
+                .collect(),
+        )
     }
 
     /// [`Self::search`] and [`Self::key_exists`] from one DBM get: whether
@@ -497,7 +503,7 @@ mod tests {
         let ba = ChewingKey::from_pinyin("ba").unwrap();
         let items = table.search(&[ba]).unwrap();
         assert_eq!(items.len(), 1);
-        assert_eq!(items[0].token, 0x0100_0001);
+        assert_eq!(items[0], 0x0100_0001);
     }
 
     #[test]
@@ -518,14 +524,44 @@ mod tests {
 
         let items = table.search(&[ba.with_tone(1)]).unwrap();
         assert_eq!(items.len(), 1);
-        assert_eq!(items[0].token, 0x0100_0001);
+        assert_eq!(items[0], 0x0100_0001);
 
         let items = table.search(&[ba.with_tone(3)]).unwrap();
         assert_eq!(items.len(), 1);
-        assert_eq!(items[0].token, 0x0100_0002);
+        assert_eq!(items[0], 0x0100_0002);
 
         let items = table.search(&[ba]).unwrap();
         assert_eq!(items.len(), 2);
+    }
+
+    #[test]
+    fn search_preserves_matching_token_order_and_duplicates_at_every_stride() {
+        let ba = ChewingKey::from_pinyin("ba").unwrap();
+        for length in 1..=16 {
+            let query = vec![ba.with_tone(1); length];
+            let mut value = Vec::new();
+            for (token, tone) in [(9, 3), (7, 1), (3, 0), (7, 1)] {
+                let keys = vec![ba.with_tone(tone); length];
+                let mut record = crate::row_format::pinyin_index::encode_item(token, &keys);
+                record[4 + 2 * length..].fill(0xff);
+                value.extend_from_slice(&record);
+            }
+            let dbm = MemoryDbm::new();
+            dbm.put(index_key(&query), value);
+            let table = ChewingTable::new(dbm);
+            assert_eq!(table.search(&query).unwrap(), [7, 3, 7], "L={length}");
+        }
+    }
+
+    #[test]
+    fn search_refuses_a_truncated_row_before_filtering() {
+        let ba = ChewingKey::from_pinyin("ba").unwrap();
+        let query = [ba.with_tone(1)];
+        let mut value = crate::row_format::pinyin_index::encode_item(9, &[ba.with_tone(3)]);
+        value.push(0);
+        let dbm = MemoryDbm::new();
+        dbm.put(index_key(&query), value);
+        assert!(ChewingTable::new(dbm).search(&query).is_err());
     }
 
     #[test]
@@ -626,7 +662,7 @@ mod tests {
         // those whose first syllable is `ni`.
         let items = table.search(&[ni, h]).unwrap();
         assert_eq!(items.len(), 1);
-        assert_eq!(items[0].token, 0x0100_0099);
+        assert_eq!(items[0], 0x0100_0099);
     }
 
     #[test]
