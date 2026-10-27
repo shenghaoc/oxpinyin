@@ -58,6 +58,7 @@ init	<core::fmt::Formatter>::pad_integral::write_prefix
 init	<core::hash::sip::Hasher<core::hash::sip::Sip13Rounds> as core::hash::Hasher>::write [instantiating crate: oxpinyin_engine]
 init	<core::iter::adapters::filter_map::FilterMap<core::iter::adapters::filter::Filter<core::iter::adapters::zip::Zip<core::ops::range::RangeFrom<u8>, core::slice::iter::Iter<oxpinyin_data::table_info::TableRow>>, <oxpinyin_data::table_info::TableConf>::rows_of::{closure#0}>, <oxpinyin_data::user_files::UserFileLayout>::from_conf::{closure#0}> as core::iter::traits::iterator::Iterator>::next
 init	<core::iter::adapters::filter_map::FilterMap<core::iter::sources::from_fn::FromFn<oxpinyin_data::user_files::log_records::{closure#0}>, <core::result::Result<oxpinyin_data::user_files::LogRecord<&[u8]>, oxpinyin_data::user_files::LogDecodeError>>::ok> as core::iter::traits::iterator::Iterator>::next [instantiating crate: oxpinyin_user]
+init	<core::iter::adapters::map::Map<core::iter::adapters::filter::Filter<core::iter::adapters::map::Map<core::slice::iter::ChunksExact<u8>, oxpinyin_data::row_format::pinyin_index::item_views::{closure#0}>, <oxpinyin_data::chewing_table::ChewingTable>::search::{closure#0}>, <oxpinyin_data::chewing_table::ChewingTable>::search::{closure#1}> as core::iter::traits::iterator::Iterator>::next
 init	<core::slice::iter::Iter<oxpinyin_engine::candidate::Candidate> as core::iter::traits::iterator::Iterator>::fold::<usize, core::iter::adapters::map::map_fold<&oxpinyin_engine::candidate::Candidate, usize, usize, pinyin::sentence::pinyin_guess_candidates::{closure#4}, <usize as core::iter::traits::accum::Sum>::sum<core::iter::adapters::map::Map<core::slice::iter::Iter<oxpinyin_engine::candidate::Candidate>, pinyin::sentence::pinyin_guess_candidates::{closure#4}>>::{closure#0}>::{closure#0}>
 init	<core::str::lossy::Utf8Chunks as core::iter::traits::iterator::Iterator>::next
 init	<f32 as core::str::traits::FromStr>::from_str
@@ -195,8 +196,8 @@ init	oxpinyin_data::dict::resolve_items
 init	oxpinyin_data::dict::syllables_to_chewing_keys
 init	oxpinyin_data::phrase_library::directory_reads_as_a_chunk
 init	oxpinyin_data::phrase_library::map_chunk
-init	oxpinyin_data::row_format::pinyin_index::decode_items
 init	oxpinyin_data::row_format::pinyin_index::encode_complete_key
+init	oxpinyin_data::row_format::pinyin_index::item_views
 init	oxpinyin_data::table_info::default_index
 init	oxpinyin_data::table_info::join_bytes
 init	oxpinyin_data::table_info::parse_decimal::<i32>
@@ -244,6 +245,13 @@ init	std::sys::args::unix::imp::ARGV_INIT_ARRAY::init_wrapper
 init	std::sys::fs::metadata
 init	std::sys::fs::unix::try_statx
 init	std::sys::random::linux::hashmap_random_keys
+init	<[&[u8]] as alloc::slice::Concat<u8>>::concat [instantiating crate: oxpinyin_data]
+init	<std::io::stdio::StderrRaw as std::io::Write>::write_all
+init	core::ptr::drop_glue::<core::result::Result<alloc::vec::Vec<u8>, std::io::error::Error>> [instantiating crate: oxpinyin_user]
+init	core::ptr::drop_glue::<oxpinyin_data::phrase_library::LibraryError>
+init	oxpinyin_data::phrase_library::map_chunk::{closure#0}
+init	oxpinyin_data::pin_stderr::emit
+init	std::sys::fs::remove_file
 steady	<alloc::sync::Arc<oxpinyin_core::graph::SegmentGraph>>::drop_slow [instantiating crate: oxpinyin_engine]
 steady	<oxpinyin_engine::session::buffer::InputBuffer>::clear
 steady	<oxpinyin_user::lookup::UserLookup>::phrase_prefix_exists
