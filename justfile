@@ -39,6 +39,11 @@ python:
     @uv python find --managed-python *> $null; if ($LASTEXITCODE -ne 0) { uv python install ((Get-Content .python-version -Raw).Trim() -replace '\+gil$', ''); if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } }
     @uv python find --managed-python *> $null; if ($LASTEXITCODE -ne 0) { [Console]::Error.WriteLine('the interpreter in .python-version does not resolve after installing it'); exit 1 }
 
+# Post-bootstrap cloud provisioning; the shell entry also installs uv if needed.
+[unix]
+provision *args: python
+    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev provision "$@"
+
 # Report native capabilities and the managed interpreter identity. Doctor
 # installs nothing: it names `just python` when the interpreter is missing.
 [unix]

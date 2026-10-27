@@ -211,6 +211,15 @@ HARNESS_DEPENDENCIES.update(dict.fromkeys((
     'tools/dev/compat/boundary.py',
 ), COMPAT_HARNESS))
 
+# U6-owned provisioner inputs; shared CLI, recipes, policies and docs stay broad.
+PROVISION_HARNESS = ('tools/dev/provision.test.py', 'tools/dev/doctor.test.py',
+                     'tools/dev/python-request.test.py', 'tools/dev/compat/memory.test.py',
+                     'tools/tkrzw/runtime.test.py', 'tools/dev/bash_floor.test.py')
+HARNESS_DEPENDENCIES.update(dict.fromkeys((
+    'tools/dev/provision.py', 'tools/cloud/setup.sh',
+    'tools/cloud/env.sh', 'tools/cloud/env.test.sh',
+), PROVISION_HARNESS))
+
 
 
 def changed_harness_files(files, paths):

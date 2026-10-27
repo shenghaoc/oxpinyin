@@ -2541,7 +2541,7 @@
       "{root}/tools/dev/native.py",
       "{root}/tools/tkrzw/runtime.py",
       "{root}/tools/tkrzw/distro-probe.sh",
-      "{root}/tools/cloud/env.sh"
+      "{root}/tools/dev/provision.py"
     ],
     "reason": "native sanitizer recipe; caller selects the backend; excluded from compatibility aggregate gates"
   },
