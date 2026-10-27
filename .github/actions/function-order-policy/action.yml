@@ -6,7 +6,7 @@ description: |-
   PR job; each caller owns its trigger, container, timeout, checkout and
   RUSTFLAGS, so the job name stays function-order-policy in both lanes.
 
-  The archive is the shipping one: tools/packaging/install.sh, which runs
+  The archive is the shipping one: just packaging install, which runs
   cargo-c with the release profile (fat LTO, one codegen unit) and the
   features the policies are generated from (docs/packaging.md,
   "Regeneration"). A plain `cargo build --release` archive is not a
@@ -86,10 +86,10 @@ runs:
           stage="$RUNNER_TEMP/function-order-$backend"
           build_start=$SECONDS
           echo "install.sh libpinyin ($backend: $feature,shipped)"
-          /usr/bin/time -f "$cost" tools/packaging/install.sh libpinyin --prefix="$stage" \
+          /usr/bin/time -f "$cost" uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev packaging install libpinyin --prefix="$stage" \
             -- --locked --release --no-default-features --features "$feature,shipped"
           echo "install.sh libzhuyin ($backend: $feature)"
-          /usr/bin/time -f "$cost" tools/packaging/install.sh libzhuyin --prefix="$stage" \
+          /usr/bin/time -f "$cost" uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev packaging install libzhuyin --prefix="$stage" \
             -- --locked --release --no-default-features --features "$feature"
           if [ "$backend" = tkrzw ]; then
             for facade in libpinyin libzhuyin; do
@@ -120,7 +120,7 @@ runs:
               failed=1
               continue
             fi
-            if errors=$(tools/packaging/function-order.sh resolve "$archive" "$policy" "$facade.so.15" 2>&1 >/dev/null); then
+            if errors=$(uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev packaging function-order resolve "$archive" "$policy" "$facade.so.15" 2>&1 >/dev/null); then
               echo "$policy resolves against $archive"
               # The resolver's C++ skip count ("N of M C++ policy paths are
               # not in this build; skipped"), printed on every resolve.

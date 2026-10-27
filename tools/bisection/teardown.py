@@ -836,8 +836,10 @@ def policy_prefix(library, facade):
         FUNCTION_ORDER['verify'](library, policy, facade)
     except (OSError, ValueError):
         return None
-    names = set(FUNCTION_ORDER['command'](['bash', ROOT / 'tools/packaging/function-order.sh', 'policy', policy,
-                                          f'lib{facade}.so.15']).splitlines())
+    policy_result = FUNCTION_ORDER['resolve']('policy', policy=policy, soname=f'lib{facade}.so.15')
+    if policy_result.status:
+        raise ValueError(policy_result.stderr.decode().strip())
+    names = set(policy_result.stdout.decode().splitlines())
     generator = FUNCTION_ORDER['GEN']
     nm = ['nm', '--format=sysv', '--defined-only', '--no-sort']
     raw = generator['symbols'](FUNCTION_ORDER['command']([*nm, '--no-demangle', library]))

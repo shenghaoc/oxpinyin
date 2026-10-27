@@ -122,7 +122,7 @@ class FakeTools(snapshot.Tools):
         command = [str(part) for part in command]
         self.events.append(('run', command, {'stderr': options.get('stdout') is sys.stderr,
                                               'target': (options.get('env') or {}).get('CARGO_TARGET_DIR')}))
-        if command[0] == 'tools/packaging/install.sh':
+        if command[:len(snapshot.INSTALL)] == snapshot.INSTALL:
             destdir = next(part for part in command if part.startswith('--destdir=')).split('=', 1)[1]
             self.work = Path(destdir).parent
             self.shipped = Path(destdir) / 'usr/lib/libpinyin.so.15.0.0'
@@ -417,7 +417,7 @@ class RunTests(Scratch):
                      '--toggle-collect=bisect_perf_steady_unit', f'--callgrind-out-file={work}/callgrind.out',
                      harness, '--perf', shipped, data]
         self.assertEqual(steps, [
-            ['run', ['tools/packaging/install.sh', 'libpinyin', '--prefix=/usr', f'--destdir={stage}', '--',
+            ['run', [*snapshot.INSTALL, 'libpinyin', '--prefix=/usr', f'--destdir={stage}', '--',
                      '--no-default-features', '--features', 'tkrzw,shipped', '--target-dir', f'{work}/target-shipped']],
             ['function_order', [['pinyin', shipped]]],
             ['run', ['strip', '--strip-all', shipped]],
@@ -451,14 +451,14 @@ class RunTests(Scratch):
         self.assertEqual(status, 1)
         self.assertEqual(err, 'function ordering: arm shipped/pinyin refused: not ordered\n')
         self.assertEqual(out, '==> building the shipped artifact (cinstall, the product path)\n')
-        self.assertEqual([command[0] for command in tools.commands('run')], ['tools/packaging/install.sh'])
+        self.assertEqual([command[0] for command in tools.commands('run')], [snapshot.INSTALL[0]])
         self.assertEqual(tools.commands('capture'), [])
         self.assertFalse(self.out.exists())
 
     def test_a_failed_install_ends_the_run_with_its_status_before_anything_else(self):
         class Failing(FakeTools):
             def run(self, command, **options):
-                if str(command[0]) == 'tools/packaging/install.sh':
+                if command[:len(snapshot.INSTALL)] == snapshot.INSTALL:
                     raise Finished(7)
                 return super().run(command, **options)
         tools = Failing()
@@ -469,7 +469,7 @@ class RunTests(Scratch):
     def test_an_install_that_leaves_no_library_is_refused(self):
         class Empty(FakeTools):
             def run(self, command, **options):
-                if str(command[0]) == 'tools/packaging/install.sh':
+                if command[:len(snapshot.INSTALL)] == snapshot.INSTALL:
                     self.events.append(('run', [str(part) for part in command], {}))
                     return 0
                 return super().run(command, **options)
@@ -526,7 +526,7 @@ class RunTests(Scratch):
                 'fixture_sha256': digest, 'cpu_pinned': True, 'harness_commit': HARNESS_COMMIT},
             'artifacts': {
                 'shipped_libpinyin': {
-                    'recipe': 'tools/packaging/install.sh libpinyin --prefix=/usr --destdir=<stage> -- '
+                    'recipe': 'just packaging install libpinyin --prefix=/usr --destdir=<stage> -- '
                               '--no-default-features --features tkrzw,shipped',
                     'sha256': hashlib.sha256(b'stripped').hexdigest(), 'bytes': 8},
                 'alloccount_libpinyin': {

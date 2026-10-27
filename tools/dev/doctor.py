@@ -123,7 +123,7 @@ def _dotted_key(text):
 # (2.43.1-15.fc42, dropped here) or a snapshot date after a dot (2.45.1.20251027, kept as a component).
 # Binutils numbers its development branch X.Y.50 once X.Y has branched, so a snapshot such as
 # 2.43.50.20240101 is newer than 2.43 and counts as 2.43.50; 2.42.50.<date> is the road to 2.43 and
-# does not reach it. function-order.sh still probes the linker's --help for --section-ordering-file.
+# does not reach it. The packaging service still probes the linker's --help for --section-ordering-file.
 _GNU_LD = re.compile(r'GNU ld (?:\(.*?\)|version)\s+(\d+(?:\.\d+)+)')
 
 

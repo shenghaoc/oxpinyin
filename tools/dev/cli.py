@@ -44,6 +44,12 @@ def oracle_versions_command(args):
     return _oracle_versions().main(forwarded)
 
 
+def packaging_command(args):
+    """Forward packaging options to the shared service."""
+    from . import packaging
+    return packaging.main(args.args)
+
+
 def measure_command(args):
     """Dispatch one measure recipe and return its status."""
     if args.recipe == 'cold-qualify':
@@ -285,6 +291,10 @@ def build_parser():
     _selection_arguments(p)
     p.set_defaults(func=plan_command)
 
+    p = sub.add_parser('packaging', help='install, relink, metadata and package assembly')
+    p.add_argument('args', nargs=argparse.REMAINDER)
+    p.set_defaults(func=packaging_command)
+
     p = sub.add_parser('measure', help='measurement and profile recipes')
     p.add_argument('recipe', choices=('startup', 'cold-qualify', *recipes.NAMES))
     p.add_argument('args', nargs=argparse.REMAINDER)
@@ -321,6 +331,9 @@ def main(argv=None):
     if argv[:1] == ['compat']:
         from .compat import commands
         return commands.main(argv[1:])
+    if argv[:1] == ['packaging']:
+        from . import packaging
+        return packaging.main(argv[1:])
     if argv[:1] == ['cell-artifacts']:
         return cell.main(argv[1:])
     if argv[:1] == ['abi']:

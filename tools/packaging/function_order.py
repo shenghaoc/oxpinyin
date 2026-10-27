@@ -15,9 +15,50 @@ from pathlib import Path
 import re
 import runpy
 import subprocess
+import tempfile
 
 HERE = Path(__file__).resolve().parent
 GEN = runpy.run_path(str(HERE.parent / 'generate-function-order.py'))
+
+
+def resolve(mode, archive=None, policy=None, soname=None, *, run=None):
+    """Run the existing nm/AWK resolver; keep policy semantics in one place.
+
+    Return (status, stdout, stderr), including nm's pipefail status. The
+    temporary nm input replaces the shell pipe and is removed on cancellation.
+    RUN is a captured process adapter; packaging supplies its pool launcher.
+    """
+    from tools.dev import pool, slot
+    context = pool.UnitContext('function-order', slot.CANCELLED,
+                               environment={**os.environ, 'LC_ALL': 'C'})
+    launch = run or context.launch
+    arguments = ['awk', '-v', f'mode={mode}']
+    if mode != 'inventory':
+        arguments += ['-v', f'policy={policy}', '-v', f'soname={soname}']
+    arguments += ['-f', str(HERE / 'function-order.awk')]
+    if mode == 'policy':
+        return launch([*arguments, str(policy)])
+    nm = launch(['nm', '--format=sysv', '--defined-only', '--no-sort', '--demangle=rust', str(archive)])
+    with tempfile.NamedTemporaryFile(prefix='function-order-') as source:
+        source.write(nm.stdout)
+        source.flush()
+        done = launch([*arguments, *([] if mode == 'inventory' else [str(policy)]), source.name])
+    output = done.stdout
+    if mode == 'inventory':
+        output = b''.join(line + b'\n' for line in sorted(set(output.splitlines())))
+    return pool.Completed(done.status or nm.status, output, nm.stderr + done.stderr)
+
+
+def supported(compiler, archive, scratch, *, run):
+    """Probe the actual compiler driver; gold and LLD never imply BFD semantics."""
+    base = [str(compiler), '-shared', '-o', str(Path(scratch) / 'probe'), '-Xlinker']
+    version = run([*base, '--version', str(archive)])
+    text = version.stdout.decode(errors='replace')
+    if version.status or not re.search(r'(^|\n)GNU ld \(', text) or 'gold' in text or 'LLD' in text:
+        return False
+    help_text = run([*base, '--help', str(archive)])
+    return not help_text.status and bool(re.search(r'--section-ordering-file([=\s]|$)',
+                                                   help_text.stdout.decode(errors='replace')))
 
 
 def command(arguments):
@@ -61,7 +102,7 @@ def check_policy_backend(policy, backend):
         raise ValueError(f'policy backend {directory.name} does not match {backend}')
 
 
-def verify(library, policy, facade):
+def verify(library, policy, facade, *, policy_reader=resolve):
     """Require every live policy family, in policy order, at the start of .text.
 
     Multiple bodies for one path must form one contiguous group. Aliases at
@@ -75,7 +116,10 @@ def verify(library, policy, facade):
     dynamic = command(['readelf', '-dW', library])
     if re.findall(r'\(SONAME\).*\[([^]]+)\]', dynamic) != [soname]:
         raise ValueError(f'expected SONAME {soname}')
-    names = command(['bash', HERE / 'function-order.sh', 'policy', policy, soname]).splitlines()
+    done = policy_reader('policy', policy=policy, soname=soname)
+    if done.status:
+        raise ValueError(f'awk: {done.stderr.decode().strip()}')
+    names = done.stdout.decode().splitlines()
     sections = command(['readelf', '-SW', library])
     starts = re.findall(r'\[\s*\d+\]\s+\.text\s+PROGBITS\s+([0-9a-fA-F]+)\s', sections)
     if len(starts) != 1:

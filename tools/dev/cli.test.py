@@ -237,7 +237,7 @@ class CliTests(unittest.TestCase):
         self.assertNotIn('cells: bdb,kc,tkrzw;', plan)
         self.assertIn('{env[OXPINYIN_METADATA_PIN_ROOT]}', plan)
         self.assertIn('command template:', plan)
-        self.assertIn('\n  implementation: legacy:tools/packaging/check-pc-metadata.sh\n', plan)
+        self.assertIn('\n  implementation: python:tools.dev\n', plan)
         test_support.assert_not_called(self, self.launch)
 
     def test_plan_prints_the_implementation_with_each_row(self):
@@ -245,7 +245,7 @@ class CliTests(unittest.TestCase):
             self.assertEqual(cli.main(['plan', '--runners', 'bisect,pc-metadata']), 0)
         lines = [line for line in output.getvalue().splitlines() if line.startswith('  implementation: ')]
         self.assertEqual(lines, ['  implementation: python:tools.dev',
-                                 '  implementation: legacy:tools/packaging/check-pc-metadata.sh'])
+                                 '  implementation: python:tools.dev'])
         test_support.assert_not_called(self, self.launch)
 
     def test_registry_commands_report_a_missing_implementation_without_tracebacks(self):

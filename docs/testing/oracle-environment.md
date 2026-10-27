@@ -173,11 +173,11 @@ held from 2026-09-06 to 2026-09-26 and no longer describes the tree.
   `tools/oracle/oracle-pin.txt`. Both capi build scripts read it
   (`crates/oxpinyin-capi/build_pin_version.rs`) and refuse a
   `[package.metadata.capi]` table that disagrees; the release scripts
-  read it through `tools/packaging/pc-version.sh`. A pin bump that edits
+  read it through `just packaging pc-version`. A pin bump that edits
   the record therefore moves the `.pc` `Version:`, the header
   subdirectory and the packages' versioned Provides with it.
-- **Checks:** `tools/packaging/check-pc-version.sh` (CI lint job) holds
-  the manifests to the record; `tools/packaging/check-pc-metadata.sh`
+- **Checks:** `just packaging check-pc-version` (CI lint job) holds
+  the manifests to the record; `just packaging check-pc-metadata`
   diffs an installed drop-in against a pin install (issue #537).
 
 ## Amendment — the parity oracle defaults to Berkeley DB (2026-09-27 UTC)

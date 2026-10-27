@@ -161,7 +161,7 @@ def library_symbols(library):
 
 def archive_paths(archive):
     result = defaultdict(set)
-    text = run(["bash", str(HERE / "packaging/function-order.sh"), "inventory", str(archive)])
+    text = run([sys.executable, "-X", "lazy_imports=normal", str(HERE / "dev/__main__.py"), "packaging", "function-order", "inventory", str(archive)])
     for line in text.splitlines():
         name, section = line.split("\t")
         result[name].add(section)

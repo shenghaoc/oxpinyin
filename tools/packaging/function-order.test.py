@@ -69,7 +69,7 @@ class ResolverTests(unittest.TestCase):
             (work / "nm").chmod(0o755)
             (work / "symbols").write_text(nm_text)
             (work / "policy").write_text(policy)
-            command = ["bash", str(HERE / "function-order.sh"), mode, "unused.a"]
+            command = [sys.executable, "-X", "lazy_imports=normal", str(ROOT / "tools/dev/__main__.py"), "packaging", "function-order", mode, "unused.a"]
             if mode == "resolve":
                 command += [str(work / "policy"), "libpinyin.so.15"]
             return subprocess.run(command, capture_output=True, text=True, check=False,
@@ -196,8 +196,11 @@ class CapabilityTests(unittest.TestCase):
                 '  --help) printf "%s\\n" "$TEST_LINKER_HELP"; exit 0;;\n'
                 'esac\ndone\nexit 1\n')
             compiler.chmod(0o755)
-            command = ['bash', '-c', 'source "$1"; function_order_supported "$2" unused.a "$3"',
-                       str(HERE / 'capability-test'), str(HERE / "function-order.sh"), str(compiler), str(work)]
+            command = [sys.executable, '-X', 'lazy_imports=normal', '-c',
+                       'import sys; from tools.dev.packaging import Tools; '
+                       'from tools.packaging.function_order import supported; '
+                       'sys.exit(0 if supported(sys.argv[1], "unused.a", sys.argv[2], run=Tools().capture) else 1)',
+                       str(compiler), str(work)]
             return subprocess.run(command, capture_output=True, text=True, check=False,
                                   env={**os.environ, "TEST_LINKER_VERSION": version,
                                        "TEST_LINKER_HELP": help_text})
@@ -216,7 +219,7 @@ class LinkedObjectTests(unittest.TestCase):
     def test_policy_reader_reuses_the_packaging_validation(self):
         with scratch() as work:
             policy = work / 'policy'
-            command = ['bash', str(HERE / 'function-order.sh'), 'policy', str(policy), 'libpinyin.so.15']
+            command = [sys.executable, '-X', 'lazy_imports=normal', str(ROOT / 'tools/dev/__main__.py'), 'packaging', 'function-order', 'policy', str(policy), 'libpinyin.so.15']
             policy.write_text(HEADER + 'init\ta\nsteady\tb\n')
             result = subprocess.run(command, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -242,7 +245,8 @@ class LinkedObjectTests(unittest.TestCase):
             return records if '--demangle=rust' in arguments else raw_records
 
         with mock.patch.dict(ORDER['verify'].__globals__, command=command):
-            return ORDER['verify'](LIBRARY, Path('/policy'), 'pinyin')
+            return ORDER['verify'](LIBRARY, Path('/policy'), 'pinyin',
+                policy_reader=lambda *args, **kwargs: pool.Completed(0, ('\n'.join(names) + '\n').encode(), b''))
 
     def test_ordered_passes_and_unordered_fails(self):
         self.assertEqual(self.check([('a', 0x100), ('b', 0x120), ('crt', 0x140)])['paths'], 2)
@@ -787,7 +791,9 @@ printf ' 0x000000000000000e (SONAME) Library soname: [libpinyin.so.15]\n'
     def relink(self, work, environment, policy=None, script=None, features=None):
         destination = work / "libpinyin.so.15.0.0"
         destination.write_bytes(b"original installed bytes")
-        command = ["bash", str(script or HERE / "relink-versioned.sh"), "--staticlib", str(work / "library.a"),
+        driver = 'import sys\nfrom pathlib import Path\nfrom tools.dev import packaging\nclass FixtureTools(packaging.Tools):\n def heavy(self, argv, **options): self.run(argv, **options)\nsys.exit(packaging.main(sys.argv[2:], tools=FixtureTools(root=Path(sys.argv[1]))))'
+        command = [sys.executable, '-X', 'lazy_imports=normal', '-c', driver,
+                   str(script.parent.parent.parent if script else ROOT), 'relink-versioned', "--staticlib", str(work / "library.a"),
                    "--ver", str(work / "version"), "--soname", "libpinyin.so.15", "--dest", str(destination),
                    "--cc", str(work / "compiler")]
         if policy is not None:
@@ -831,12 +837,8 @@ printf ' 0x000000000000000e (SONAME) Library soname: [libpinyin.so.15]\n'
         with scratch() as work:
             environment = self.prepare(work)
             _, base_args, base_bytes = self.relink(work, environment)
-            scripts = work / "packaging"
+            scripts = work / "tools/packaging"
             (scripts / "function-order/bdb").mkdir(parents=True)
-            for filename in ("relink-versioned.sh", "function-order.sh", "function-order.awk"):
-                shutil.copyfile(HERE / filename, scripts / filename)
-            (work / "lib").mkdir()
-            shutil.copyfile(HERE.parent / "lib/bash-floor.sh", work / "lib/bash-floor.sh")
             shutil.copyfile(work / "policy", scripts / "function-order/bdb/libpinyin.order")
             environment.pop("OXPINYIN_FUNCTION_ORDER_POLICY")
             ordered, args, _ = self.relink(work, environment, script=scripts / "relink-versioned.sh")
@@ -884,12 +886,8 @@ printf ' 0x000000000000000e (SONAME) Library soname: [libpinyin.so.15]\n'
     def test_missing_backend_directory_fails_without_consulting_bdb(self):
         with scratch() as work:
             environment = self.prepare(work)
-            scripts = work / "packaging"
+            scripts = work / "tools/packaging"
             (scripts / "function-order/bdb").mkdir(parents=True)
-            for filename in ("relink-versioned.sh", "function-order.sh", "function-order.awk"):
-                shutil.copyfile(HERE / filename, scripts / filename)
-            (work / "lib").mkdir()
-            shutil.copyfile(HERE.parent / "lib/bash-floor.sh", work / "lib/bash-floor.sh")
             # A policy no backend's archive satisfies: the BDB default must
             # not be consulted for the other backends at all.
             (scripts / "function-order/bdb/libpinyin.order").write_text(HEADER + "init\tbdb_only\n")
@@ -930,12 +928,8 @@ printf ' 0x000000000000000e (SONAME) Library soname: [libpinyin.so.15]\n'
         with scratch() as work:
             environment = self.prepare(work)
             environment.pop('OXPINYIN_FUNCTION_ORDER_POLICY')
-            scripts = work / 'packaging'
-            scripts.mkdir()
-            for filename in ('relink-versioned.sh', 'function-order.sh', 'function-order.awk'):
-                shutil.copyfile(HERE / filename, scripts / filename)
-            (work / 'lib').mkdir()
-            shutil.copyfile(HERE.parent / 'lib/bash-floor.sh', work / 'lib/bash-floor.sh')
+            scripts = work / 'tools/packaging'
+            scripts.mkdir(parents=True)
             for feature, backend in (('bdb', 'bdb'), ('kyotocabinet', 'kc'), ('tkrzw', 'tkrzw')):
                 policy = scripts / 'function-order' / backend / 'libpinyin.order'
                 policy.parent.mkdir(parents=True)

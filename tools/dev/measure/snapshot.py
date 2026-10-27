@@ -58,6 +58,7 @@ HELP = '''# snapshot — measure the tree once and emit one perf snapshot as JSO
 BACKENDS = {'tkrzw': 'tkt', 'kyotocabinet': 'kct'}
 # What the run needs on PATH, checked in this order before anything is built.
 REQUIRED_TOOLS = ('cargo', 'gcc', 'readelf', 'strip', 'nm')
+INSTALL = [sys.executable, '-X', 'lazy_imports=normal', str(bench.ROOT / 'tools/dev/__main__.py'), 'packaging', 'install']
 SHIPPED_NAME = 'libpinyin.so.15.0.0'
 # The sections whose sizes make the resolving size measure. Stripped file size is
 # page-quantized on these hosts (perf-so-size-2026-09.md measured seven distinct
@@ -206,7 +207,7 @@ def document(tools: 'Tools', env: Mapping[str, str], *, backend: str, pinned: bo
         },
         'artifacts': {
             'shipped_libpinyin': {
-                'recipe': ('tools/packaging/install.sh libpinyin --prefix=/usr --destdir=<stage> -- '
+                'recipe': ('just packaging install libpinyin --prefix=/usr --destdir=<stage> -- '
                            f'--no-default-features --features {backend},shipped'),
                 'sha256': hashlib.sha256(Path(shipped).read_bytes()).hexdigest(),
                 'bytes': os.path.getsize(shipped),
@@ -261,7 +262,7 @@ def build_shipped(tools: Tools, env: Mapping[str, str], options: Options, work: 
     """
     emit('==> building the shipped artifact (cinstall, the product path)')
     stage = work / 'stage'
-    tools.run(['tools/packaging/install.sh', 'libpinyin', '--prefix=/usr', f'--destdir={stage}', '--',
+    tools.run([*INSTALL, 'libpinyin', '--prefix=/usr', f'--destdir={stage}', '--',
                '--no-default-features', '--features', f'{options.backend},shipped',
                '--target-dir', str(work / 'target-shipped')], env=env, stdout=sys.stderr)
     shipped = bench.find_named(stage, SHIPPED_NAME, any_type=True)

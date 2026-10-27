@@ -2306,7 +2306,7 @@
   {
     "name": "pc-version",
     "kind": "gate",
-    "implementation": "legacy:tools/packaging/check-pc-version.sh",
+    "implementation": "python:tools.dev",
     "issues": [
       "register:oracle-pin.txt"
     ],
@@ -2324,8 +2324,17 @@
     "timeout": 900,
     "exclusive_resources": [],
     "command": [
-      "bash",
-      "{root}/tools/packaging/check-pc-version.sh"
+      "uv",
+      "run",
+      "--no-project",
+      "--managed-python",
+      "python",
+      "-X",
+      "lazy_imports=normal",
+      "-m",
+      "tools.dev",
+      "packaging",
+      "check-pc-version"
     ],
     "env": {},
     "input_paths": []
@@ -2333,7 +2342,7 @@
   {
     "name": "pc-metadata",
     "kind": "gate",
-    "implementation": "legacy:tools/packaging/check-pc-metadata.sh",
+    "implementation": "python:tools.dev",
     "issues": [
       "register:oracle-pin.txt"
     ],
@@ -2352,8 +2361,17 @@
     "timeout": 900,
     "exclusive_resources": [],
     "command": [
-      "bash",
-      "{root}/tools/packaging/check-pc-metadata.sh",
+      "uv",
+      "run",
+      "--no-project",
+      "--managed-python",
+      "python",
+      "-X",
+      "lazy_imports=normal",
+      "-m",
+      "tools.dev",
+      "packaging",
+      "check-pc-metadata",
       "--pin-root={env[OXPINYIN_METADATA_PIN_ROOT]}",
       "--subject-root={env[OXPINYIN_METADATA_SUBJECT_ROOT]}",
       "--prefix={env[OXPINYIN_METADATA_PREFIX]}"
