@@ -48,11 +48,13 @@ MODULES = {
     'contract_selection': (('SelectionError', 'case_names', 'family_of', 'normal_tag'), ()),
     'contract_execution': (('ordinary_jobs', 'positive_jobs', 'terminate_group', 'user_dir_listing'), ()),
     'contract_runner': (('Cancelled',), ()),
+    'contract_kit': ((), ('contract_abi',)),
 }
 
 # Driver functions that stay as adapters: the original signature, kept for every caller,
 # and the state they hand the module from the driver's own globals.
 ADAPTERS = {
+    'Kit': '(mode, so, data, scratch)',
     'index_file_rows': "(path, *, kind='tree', allow_empty=False, library=None)",
     'policy_expectations': '(spec)',
     'verdict_for': '(spec, pin, subject, expect_parent)',
