@@ -65,7 +65,7 @@ impl SegmenterPaths {
         let model = locate_model_dir().ok_or_else(|| SegmentError::MissingPath {
             detail: format!(
                 "no model20 cache at ${MODEL_DIR_ENV} / ${MODEL_CACHE_ENV} / \
-                 target/model20/extracted; run tools/model/fetch-model.sh"
+                 target/model20/extracted; run just fetch-model"
             ),
         })?;
         Ok(Self::from_dirs(&export, &model))

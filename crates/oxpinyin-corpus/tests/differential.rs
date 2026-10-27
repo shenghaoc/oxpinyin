@@ -65,7 +65,9 @@ struct RustChain {
 /// panic in an `--include-ignored` run says which it was.
 fn run_rust_chain(sample: &[u8]) -> Result<RustChain, String> {
     let export = locate_export_dir().ok_or_else(|| "missing input: system-table export not found (PINYIN_EXPORT_DIR; produce with oxpinyin-datagen compile)".to_owned())?;
-    let model = locate_model_dir().ok_or_else(|| "missing input: model20 cache not found (PINYIN_MODEL_DIR; run tools/model/fetch-model.sh)".to_owned())?;
+    let model = locate_model_dir().ok_or_else(|| {
+        "missing input: model20 cache not found (PINYIN_MODEL_DIR; run just fetch-model)".to_owned()
+    })?;
     let paths = SegmenterPaths::from_dirs(&export, &model);
     let segmenter =
         Segmenter::open(&paths, PINNED_LAMBDA).map_err(|e| format!("Segmenter::open: {e}"))?;

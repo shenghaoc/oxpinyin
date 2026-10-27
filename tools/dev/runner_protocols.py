@@ -294,7 +294,7 @@ def option_data(ctx: Context) -> Path:
                       "whose real unigrams are what the oracle scores against. Short of",
                       "them the comparison is flat-export unigrams versus the pin's real",
                       'ones -- a data mismatch that reports as a divergence. Fetch the',
-                      'model with tools/model/fetch-model.sh, or point',
+                      'model with just fetch-model, or point',
                       'OPTION_SWEEP_CAPI_DATA at a directory that already holds all four.']
             ctx.emit('\n'.join(lines), error=True)
             raise Finished(3)

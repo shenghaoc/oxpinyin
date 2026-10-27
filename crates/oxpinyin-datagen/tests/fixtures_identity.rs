@@ -6,7 +6,7 @@
 //! the record level for the DBMs (container bytes depend on the writing
 //! library's version) and byte-exact for the chunk files.
 //!
-//! Requires the model cache (`tools/model/fetch-model.sh`), so the test is
+//! Requires the model cache (`just fetch-model`), so the test is
 //! `#[ignore]`d: run it with `--include-ignored`, and a missing cache is
 //! then a failure, never a skip.
 
@@ -66,10 +66,10 @@ fn assert_same_rows(
 }
 
 #[test]
-#[ignore = "needs the model20 cache (tools/model/fetch-model.sh); run with --include-ignored"]
+#[ignore = "needs the model20 cache (just fetch-model); run with --include-ignored"]
 fn mini_compile_reproduces_the_committed_fixture_directory() {
     let Some(model) = model_dir() else {
-        panic!("missing input: model20 cache absent (run tools/model/fetch-model.sh)")
+        panic!("missing input: model20 cache absent (run just fetch-model)")
     };
     let backend = compiled_backend();
     let fixtures = fixtures_w3(backend);

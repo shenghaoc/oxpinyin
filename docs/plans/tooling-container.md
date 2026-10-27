@@ -125,7 +125,7 @@ Cloud sessions, including Claude and Codex cloud environments, are supported
 container hosts. Before any `just container` task, cloud setup starts the
 Docker daemon or checks that it runs. It checks access to the image registry,
 `deb.debian.org`, `downloads.sourceforge.net` and the SourceForge mirror
-hosts reached by the [model20 fetcher](../../tools/model/fetch-model.sh).
+hosts reached by the [model20 fetcher](../../tools/dev/model.py).
 If a host is blocked, provisioning fails and names that host. Never skip.
 When this implementation lands, AGENTS.md's “cloud sessions are a supported
 host for every gate” uses this container route instead of native provisioning.

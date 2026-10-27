@@ -335,7 +335,7 @@ uv run --no-project --managed-python python -B -X lazy_imports=normal tools/tkrz
    the script checks with `ldd` that the tkrzw oracle `libpinyin.so`
    resolves `libtkrzw.so.1` to `<cache>/tkrzw/lib`. A rerun skips the
    build when the cached revision is present and its probe passes.
-4. Uses model20 fetched early with `tools/model/fetch-model.sh` into
+4. Uses model20 fetched early with the model fetch (`tools/dev/model.py`) into
    `<cache>/model20`, runs `build-oracle.sh --regen-data` per cell inside
    the image, and re-verifies the installed files with the shared
    [data verification](#data-verification). The data is generated in a

@@ -29,7 +29,7 @@ the job log; any change to an input rebuilds and verifies.
 ## 1. Fetch the model (once per machine)
 
 ```sh
-tools/model/fetch-model.sh
+just fetch-model
 export PINYIN_MODEL_DIR="$PWD/target/model20/extracted"
 ```
 
@@ -152,7 +152,7 @@ The data directory is built from the model on your own machine, with
 this pin's data build, and then checked against the recorded manifest:
 
 ```sh
-tools/model/fetch-model.sh
+just fetch-model
 export PINYIN_MODEL_DIR="$PWD/target/model20/extracted"
 tools/oracle/build-oracle.sh --regen-data --dbm bdb --prefix "$dest/bdb" \
     --model-dir "$PINYIN_MODEL_DIR" --jobs "$(nproc)"

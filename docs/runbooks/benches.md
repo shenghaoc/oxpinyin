@@ -748,7 +748,7 @@ missing: `stage2` (oxpinyin-capi, `benches/support/mod.rs`), and
 That is the repository's fail-on-missing-input rule
 ([docs/testing/README.md](../testing/README.md)), not a defect, and no
 bench is excluded from the selection. Fetch the cache with
-`tools/model/fetch-model.sh`.
+`just fetch-model`.
 
 On a host with model20, `just bench -- --test` is the full start-up
 check. It runs every selected harness once: each Criterion bench runs

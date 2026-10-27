@@ -44,6 +44,11 @@ python:
 provision *args: python
     @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev provision "$@"
 
+# Fetch, verify and extract the pinned model20 archive into target/model20.
+[unix]
+fetch-model *args: python
+    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev fetch-model "$@"
+
 # Report native capabilities and the managed interpreter identity. Doctor
 # installs nothing: it names `just python` when the interpreter is missing.
 [unix]

@@ -38,8 +38,8 @@ IBUS_LIBPINYIN_GIT_URL=https://github.com/libpinyin/ibus-libpinyin.git
 MODEL_URL=https://downloads.sourceforge.net/libpinyin/models/model20.text.tar.gz
 MODEL_SHA256=59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155
 # The pinned model20 export inventory (interpolation2.text + seventeen .table
-# files). Keep in lockstep with tools/model/fetch-model.sh and
-# crates/pinyin-oracle/src/model_cache.rs (EXPECTED_MODEL_FILES).
+# files). Keep in lockstep with tools/dev/model.py and
+# crates/oxpinyin-testsupport/src/model_cache.rs (EXPECTED_MODEL_FILES).
 MODEL_FILES=(
 	art.table
 	culture.table
@@ -99,7 +99,7 @@ Options:
                        distinguishable from the unpatched pin. The install
                        prefix must also differ from the pinned build.
   --model-dir DIR      Use an already-extracted, SHA-verified model export (the
-                       product of tools/model/fetch-model.sh) instead of
+                       product of just fetch-model) instead of
                        downloading the pinned archive. DIR must contain all
                        eighteen export files. Reusing a cache does not relax the
                        SHA-256 check: the archive that produced DIR was verified
@@ -273,10 +273,10 @@ if [[ -n $model_dir ]]; then
 	done
 	if [[ -n $missing ]]; then
 		printf 'FAIL: --model-dir is missing:%s\n' "$missing" >&2
-		printf 'DIR must hold the verified model20 export (run tools/model/fetch-model.sh)\n' >&2
+		printf 'DIR must hold the verified model20 export (run just fetch-model)\n' >&2
 		exit 1
 	fi
-	# Require provenance: fetch-model.sh writes a marker recording the
+	# Require provenance: the model fetch writes a marker recording the
 	# SHA-256 of the archive that produced the extraction. Without it the
 	# bytes could be any eighteen files with the right names. The marker
 	# sits one level above the extracted dir (cache_dir/verified for
@@ -285,7 +285,7 @@ if [[ -n $model_dir ]]; then
 	if [[ ! -f $marker ]] || ! grep -qx "sha256=$MODEL_SHA256" "$marker"; then
 		printf 'FAIL: --model-dir lacks a matching provenance marker\n' >&2
 		printf '  expected sha256=%s in %s\n' "$MODEL_SHA256" "$marker" >&2
-		printf '  run tools/model/fetch-model.sh to produce a verified cache\n' >&2
+		printf '  run just fetch-model to produce a verified cache\n' >&2
 		exit 1
 	fi
 fi
@@ -362,7 +362,7 @@ export LDFLAGS="${LDFLAGS:+$LDFLAGS }-Wl,--build-id=none"
 
 # The model data is the 18-file model20 export that build-oracle.sh drops into
 # libpinyin's data dir (make install then ships it to $prefix/lib/libpinyin/data).
-# Prefer a pre-extracted export from tools/model/fetch-model.sh when given, so a
+# Prefer a pre-extracted export from just fetch-model when given, so a
 # rebuild of the oracle does not re-download the archive. The SHA-256 was already
 # verified against MODEL_SHA256 before that export was produced; applying it here
 # changes WHERE the bytes come from, never WHETHER they are checked. With no

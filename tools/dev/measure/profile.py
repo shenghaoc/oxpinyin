@@ -18,7 +18,7 @@ the order of the hot stacks is mostly sampling noise. The other profilers write 
 samply profile, print no total and keep their shorter default run.
 
 Requirements: exported tables (PINYIN_EXPORT_DIR or /tmp/oxpinyin-export), the
-pinned model20 cache (tools/model/fetch-model.sh), cargo-c, and on macOS samply
+pinned model20 cache (just fetch-model), cargo-c, and on macOS samply
 and OXPINYIN_TKRZW_PREFIX or OXPINYIN_TKRZW_LIBRARY, so the libtkrzw check can
 verify the staged dylib.
 
@@ -54,6 +54,7 @@ from collections.abc import Callable, Mapping, Sequence
 from .. import slot
 from ..runners import Finished, emit, status as shell_status, write
 from . import bench
+from ..model import EXPECTED_MODEL_FILES, FETCH_HINT, MODEL20_SHA256
 
 # The runner name the libtkrzw refusal has always carried.
 LABEL = 'run-w8-cycle.sh'
@@ -63,12 +64,6 @@ HERE = bench.ROOT / 'tools/profile'
 # prefix with `build-oracle.sh --dbm tkrzw`.
 PIN_REF = ('libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99'
            '+model20-59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155+dbm-tkrzw')
-MODEL20_SHA256 = '59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155'
-EXPECTED_MODEL_FILES = (
-    'art.table', 'culture.table', 'economy.table', 'gb_char.table', 'gbk_char.table',
-    'geology.table', 'history.table', 'interpolation2.text', 'life.table', 'merged.table',
-    'nature.table', 'opengram.table', 'people.table', 'punct.table', 'science.table',
-    'society.table', 'sport.table', 'technology.table')
 # A sampling profile ranks stacks by sample count, and samply takes about one
 # sample per CPU millisecond, so its default run is long enough to reach the level
 # extract-hot-stacks.py defines (MIN_SAMPLES). The other profilers keep the shorter
@@ -345,13 +340,13 @@ class W8:
             return False
 
     def verify_pinned_model(self) -> None:
-        """The extracted tree is the pin only when fetch-model.sh's `verified` marker matches.
+        """The extracted tree is the pin only when the model fetch's `verified` marker matches.
 
         The sibling archive's digest is the other proof. Either one makes the resolved directory the
         model directory for the rest of the run.
         """
         directory = self.model_dir
-        fetch = '  run: tools/model/fetch-model.sh'
+        fetch = f'  run: {FETCH_HINT}'
         if not Path(directory).is_dir():
             die(f'fatal: model dir is not a directory: {directory}', fetch)
         for name in EXPECTED_MODEL_FILES:

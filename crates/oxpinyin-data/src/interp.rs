@@ -47,7 +47,7 @@
 //! the rationale.
 //!
 //! The model archive is fetched at build time into an ignored cache
-//! (`tools/model/fetch-model.sh`); nothing in this module bakes frequencies in
+//! (`just fetch-model`); nothing in this module bakes frequencies in
 //! or discovers the cache path — the caller passes the extracted file.
 
 use std::fmt;

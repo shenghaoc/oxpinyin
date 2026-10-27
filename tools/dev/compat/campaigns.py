@@ -211,7 +211,7 @@ def docker_round_trip(argv, *, root=ROOT):
         fail('Supply a provisioned round-trip image; see docs/runbooks/setup.md. This is not ordinary setup.', 1)
     root = Path(root)
     if not (root / 'target/model20/extracted').is_dir():
-        fail('model20 cache missing; run: bash tools/model/fetch-model.sh')
+        fail('model20 cache missing; run: just fetch-model')
     mirror = root / 'target/mirrors/libpinyin.git'
     if not mirror.is_dir():
         print('libpinyin mirror missing; creating from a clone of the pin', file=sys.stderr)

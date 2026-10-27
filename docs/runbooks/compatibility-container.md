@@ -227,7 +227,7 @@ no model bytes or contributor source baked into the image. There is no
 second oracle implementation and no general development image.
 
 Inside the container, existing `tools/cloud/setup.sh --in-container` verifies
-reference hashes, reuses `tools/model/fetch-model.sh`, regenerates/validates
+reference hashes, reuses the model fetch (`tools/dev/model.py`), regenerates/validates
 backend data when needed, and writes an internal environment file. Existing
 cell selection, artifact building and `just runner run-all` perform the comparison.
 No nested container runtime is required. A clean container environment prevents
