@@ -2,7 +2,7 @@
 //!
 //! This crate defines an ordered byte-KV interface split into two
 //! capability tiers — [`ReadStore`] (point get, ranged scan, full scan,
-//! emptiness check) and [`WriteStore`] (creation, atomic multi-table
+//! emptiness check) and [`WriteStore`] (creation, multi-table
 //! writes, compaction) — and provides the peer implementations behind
 //! it:
 // Each peer's type exists only under its own feature, so a build links the one
@@ -205,12 +205,19 @@ pub type Flow = ControlFlow<()>;
 
 // ── traits ─────────────────────────────────────────────────────────
 
-/// An atomic write transaction over one or more tables.
+/// A write transaction over one or more tables.
 ///
 /// Operations see their own writes (read-your-writes within the closure).
-/// All modifications land atomically on commit or are fully rolled back.
+/// An `Err` from the closure writes nothing. A failure or crash during
+/// commit can leave part of the batch applied, as in libpinyin. See the
+/// "Atomicity" sections in the backend module docs:
+/// [Berkeley DB], [tkrzw], and [Kyoto Cabinet].
 /// Reached through [`WriteStore::write`] as the backend's own
 /// [`WriteStore::Txn`] type; the trait is not object safe.
+///
+/// [Berkeley DB]: https://github.com/shenghaoc/oxpinyin/blob/main/crates/oxpinyin-store/src/bdb/mod.rs
+/// [tkrzw]: https://github.com/shenghaoc/oxpinyin/blob/main/crates/oxpinyin-store/src/tkrzw/mod.rs
+/// [Kyoto Cabinet]: https://github.com/shenghaoc/oxpinyin/blob/main/crates/oxpinyin-store/src/kyotocabinet/mod.rs
 ///
 /// Opening a table inside a write transaction creates it when absent, so
 /// read-side methods ([`WriteTxn::get`], [`WriteTxn::range`],
@@ -442,7 +449,7 @@ pub trait ReadStore {
     fn is_empty(&self, table: &str) -> Result<bool, StoreError>;
 }
 
-/// The write tier: creation, atomic multi-table writes, and compaction.
+/// The write tier: creation, multi-table writes, and compaction.
 ///
 /// Adds mutation on top of [`ReadStore`], whose reads a writable backend
 /// necessarily also provides.
@@ -577,9 +584,9 @@ pub trait WriteStore: ReadStore {
         // Atomic replacement: build the whole container at a sibling
         // temporary, compact it, close it, then rename it over `path`.
         // Removing `path` up front and writing in place would destroy
-        // the previous profile if creation, insertion, or compaction
+        // the previous file if creation, insertion, or compaction
         // failed — and a rename(2) over an existing file is itself
-        // atomic, so the profile is always the old one or the new one,
+        // atomic, so this file is always the old one or the new one,
         // never a mix.
         let tmp = sibling_temp(path);
         // libpinyin unlinks the temporary before `save_db` creates it
@@ -606,13 +613,15 @@ pub trait WriteStore: ReadStore {
         Ok(())
     }
 
-    /// Run `f` inside an atomic write transaction.  All puts/removes in
-    /// `f` land together on `Ok`, or none land on `Err` (full rollback).
+    /// Run `f` inside a write transaction. An `Err` from `f` writes
+    /// nothing; `Ok` starts the commit. A failure or crash during commit
+    /// can leave part of the batch applied, as in libpinyin. See
+    /// [`WriteTxn`] for links to each backend's "Atomicity" section.
     /// The closure sees its own writes.
     ///
     /// # Durability
     ///
-    /// A commit that returns has left the process on every backend: it
+    /// A commit that returns `Ok` has left the process on every backend: it
     /// is visible to any other reader and survives a **process** crash.
     /// That is the floor the seam guarantees, and it is what `write`
     /// promises — no more.
@@ -647,15 +656,6 @@ pub trait WriteStore: ReadStore {
     /// call at all; only Berkeley DB, which has no softer tier, ends in
     /// `DB->sync`. A completed save is therefore not a promise that the
     /// profile is on the device, and callers must not read it as one.
-    ///
-    /// One residual difference, documented per backend: a crash
-    /// *during* the commit call itself can tear the batch on KC, tkrzw
-    /// and Berkeley DB (no write-ahead log). Berkeley DB reaching the
-    /// device on every commit does not buy atomicity back: it applies
-    /// the buffered rows one at a time and syncs after, so a crash
-    /// mid-apply leaves part of the batch applied — and a crash that
-    /// tears a page write can corrupt the file itself, recoverable
-    /// only from a known-good copy.
     ///
     /// The closure must not call [`WriteStore::write`] again. Backends may
     /// serialize write transactions, so a nested call can block forever.
@@ -1455,7 +1455,7 @@ mod tests {
         };
     }
 
-    /// The write tier: creation, atomic multi-table writes, compaction,
+    /// The write tier: creation, multi-table writes, compaction,
     /// and the read-only handle's refusal to mutate.
     macro_rules! store_write_tests {
         ($mod:ident, $store:ty, $ext:literal) => {

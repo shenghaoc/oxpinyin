@@ -113,9 +113,10 @@ toggle to suppress it; Debian's guidance notes packagers would otherwise need
 a "not-installed" rule to drop it. Decision: **ship the static library**. It
 adds negligible install size, is the cargo-c default, and removes per-packager
 variance — every packager produces the same artifact set. It installs as
-`libpinyin.a` beside the `.so`, and `libpinyin.pc`'s `Libs.private` lists the
-platform libraries a static link needs
-(`-lgcc_s -lutil -lrt -lpthread -lm -ldl -lc`).
+`libpinyin.a` beside the `.so`. The `.pc` files mirror the pin's and have no
+`Libs.private`. A static link against `libpinyin.a` must pass the platform
+libraries itself (`-lgcc_s -lutil -lrt -lpthread -lm -ldl -lc`), plus the
+selected backend library.
 
 ## The four version streams
 

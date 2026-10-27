@@ -12,20 +12,18 @@
 //!
 //! ## Panic discipline
 //!
-//! Nothing here may panic on any input: the library crates on this
+//! Nothing here may panic on any input. The library crates on this
 //! facade's path (`oxpinyin-core`, `-data`, `-store`, `-engine`, `-facade`,
 //! `-runtime`, `-user` and this crate) deny `clippy::unwrap_used`/
 //! `expect_used`/`panic`/`panic_in_result_fn` outside tests —
 //! `oxpinyin-chewing` and the macro-only `oxpinyin-capi-marshal` carry the
-//! same lints — so the engine layer returns
-//! `Result` everywhere and the entry-point bodies are panic-free by
-//! construction. Rust (since 1.81) aborts the process when a panic
-//! reaches an `extern "C"` boundary, so if a bug ever produced a panic
-//! the failure would be a loud abort, not undefined behaviour. There is
-//! deliberately no panic-catching wrapper: with the lints green one is
-//! operationally inert, and abort-at-ABI makes the outcome the same under
-//! either panic strategy (the release profile is `unwind`; `abort` was
-//! tried and reverted for its keystroke-cycle cost, see
+//! same lints. These deny `unwrap`, `expect`, `panic!`, and the panic
+//! sources covered by `panic_in_result_fn`; they do not exclude other
+//! panic sources. A panic that reaches an `extern "C"` boundary aborts
+//! the process. There is deliberately no panic-catching wrapper.
+//! Abort at the ABI boundary applies under either panic strategy (the
+//! release profile is `unwind`; `panic = "abort"` was tried and reverted
+//! for its keystroke-cycle cost, see
 //! docs/perf/perf-baseline-kc-2026-09.md).
 //!
 //! Opaque handles cross the boundary as `*mut T` via `Box::into_raw` /
