@@ -53,6 +53,7 @@ init	<compact_str::CompactString>::push
 init	<core::hash::sip::Hasher<core::hash::sip::Sip13Rounds> as core::hash::Hasher>::write [instantiating crate: oxpinyin_engine]
 init	<core::iter::adapters::filter_map::FilterMap<core::iter::adapters::filter::Filter<core::iter::adapters::zip::Zip<core::ops::range::RangeFrom<u8>, core::slice::iter::Iter<oxpinyin_data::table_info::TableRow>>, <oxpinyin_data::table_info::TableConf>::rows_of::{closure#0}>, <oxpinyin_data::user_files::UserFileLayout>::from_conf::{closure#0}> as core::iter::traits::iterator::Iterator>::next
 init	<core::iter::adapters::filter_map::FilterMap<core::iter::sources::from_fn::FromFn<oxpinyin_data::user_files::log_records::{closure#0}>, <core::result::Result<oxpinyin_data::user_files::LogRecord<&[u8]>, oxpinyin_data::user_files::LogDecodeError>>::ok> as core::iter::traits::iterator::Iterator>::next [instantiating crate: oxpinyin_user]
+init	<core::iter::adapters::map::Map<core::iter::adapters::filter::Filter<core::iter::adapters::map::Map<core::slice::iter::ChunksExact<u8>, oxpinyin_data::row_format::pinyin_index::item_views::{closure#0}>, <oxpinyin_data::chewing_table::ChewingTable>::search::{closure#0}>, <oxpinyin_data::chewing_table::ChewingTable>::search::{closure#1}> as core::iter::traits::iterator::Iterator>::next
 init	<core::str::lossy::Utf8Chunks as core::iter::traits::iterator::Iterator>::next
 init	<f32 as core::str::traits::FromStr>::from_str
 init	<hashbrown::raw::RawTableInner>::fallible_with_capacity::<alloc::alloc::Global> [instantiating crate: oxpinyin_engine]
@@ -101,6 +102,7 @@ init	<oxpinyin_facade::context::ContextCore>::take_layout_faults
 init	<oxpinyin_facade::instance::InstanceCore>::abi_columns_over
 init	<oxpinyin_facade::instance::InstanceCore>::mode_key_list
 init	<oxpinyin_facade::instance::InstanceCore>::reset_parse_state
+init	<oxpinyin_facade::snapshot::CandidateSnapshot<zhuyin::state::CapiCandidate>>::intern_nul_free
 init	<oxpinyin_runtime::FacadeBumps as core::default::Default>::default
 init	<oxpinyin_runtime::FacadeBumps>::token
 init	<oxpinyin_runtime::Runtime>::dict
@@ -176,8 +178,8 @@ init	oxpinyin_data::dict::resolve_items
 init	oxpinyin_data::dict::syllables_to_chewing_keys
 init	oxpinyin_data::phrase_library::directory_reads_as_a_chunk
 init	oxpinyin_data::phrase_library::map_chunk
-init	oxpinyin_data::row_format::pinyin_index::decode_items
 init	oxpinyin_data::row_format::pinyin_index::encode_complete_key
+init	oxpinyin_data::row_format::pinyin_index::item_views
 init	oxpinyin_data::table_info::default_index
 init	oxpinyin_data::table_info::join_bytes
 init	oxpinyin_data::table_info::parse_decimal::<i32>
@@ -190,7 +192,6 @@ init	oxpinyin_engine::session::dedup_ranked_by_text
 init	oxpinyin_engine::session::dynamic_adjust_bigram_possibility
 init	oxpinyin_engine::session::glib_rank_sort
 init	oxpinyin_engine::session::order_window_tail
-init	oxpinyin_facade::snapshot::span_ptr
 init	oxpinyin_runtime::open_user_store
 init	oxpinyin_runtime::require_file
 init	oxpinyin_store::bdb::ffi::check
