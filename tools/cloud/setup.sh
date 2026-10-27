@@ -523,7 +523,8 @@ deps_image=oxpinyin-oracle-deps:$(
 
 if ((!inside)); then
 	# Python has been provisioned above; preserve the selected runtime in this shell.
-	eval "$(uv run --no-project --managed-python --python "$python_request" python -X lazy_imports=normal "$repo/tools/dev/__main__.py" compat select-runtime --shell "${OXPINYIN_CONTAINER:-}")"
+    runtime_selection=$(uv run --no-project --managed-python --python "$python_request" python -X lazy_imports=normal "$repo/tools/dev/__main__.py" compat select-runtime --shell "${OXPINYIN_CONTAINER:-}") || exit "$?"
+    eval "$runtime_selection"
 	# shellcheck disable=SC2154  # emitted by the shared runtime selector.
 	[[ $(basename "$ctr") != container ]] || die 'normal cloud provisioning requires a Linux cloud runtime; use compat.sh for the Apple adapter'
 else

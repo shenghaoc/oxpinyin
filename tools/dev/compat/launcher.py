@@ -6,7 +6,6 @@ import re
 import shutil
 import subprocess
 import sys
-import tarfile
 import tempfile
 import time
 
@@ -156,7 +155,7 @@ def launch(argv, *, root=ROOT):
     def present(wanted):
         if kind == 'container':
             return wanted in text([runtime, 'image', 'list', '--quiet']).splitlines()
-        done = capture([runtime, 'image', 'inspect', wanted], check=False)
+        done = capture([runtime, 'image', 'inspect', wanted], check=False, stderr=False)
         return done.status == 0
 
     def reserved(name, options, payload, **kwargs):
@@ -212,7 +211,7 @@ def launch(argv, *, root=ROOT):
 
             def pull(wanted, error):
                 done = capture([runtime, *(['image', 'pull'] if kind == 'container' else ['pull']),
-                                *platform_args, wanted], check=False)
+                                *platform_args, wanted], check=False, stderr=False)
                 sys.stdout.buffer.write(done.stdout)
                 Path(error).write_bytes(done.stderr)
                 if done.status:
@@ -236,7 +235,7 @@ def launch(argv, *, root=ROOT):
                         build([*platform_args, *build_flags, '-f', 'tools/oracle/Dockerfile.oracle', '-t', reference, '.'])
                 build([*platform_args, *build_flags, '--build-arg', f'DEPS_IMAGE={deps}', '--build-arg', f'REFERENCE_IMAGE={reference}',
                        '--build-arg', f'CA_IDENTITY={ca_identity}', '-f', 'tools/oracle/Dockerfile.compat', '-t', image, '.'])
-            if capture([runtime, 'volume', 'inspect', volume], check=False).status:
+            if capture([runtime, 'volume', 'inspect', volume], check=False, stderr=False).status:
                 run([runtime, 'volume', 'create', *(['-s', '20G'] if kind == 'container' else []), volume])
             print(f'Compatibility: {platform}; native execution. No native performance claims.\nVolume: {volume}\nResults: {result_root}', flush=True)
             code = reserved(name, [*platform_args, *run_env, '-v', f'{volume}:/state',

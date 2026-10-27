@@ -333,6 +333,16 @@ class ProcessTests(Scratch):
             bench.run([sys.executable, '-c', 'print("hello")'], stdout=target)
         self.assertEqual((self.root / 'o.txt').read_text(), 'hello\n')
 
+    def test_run_forwards_stdin_and_can_merge_stderr_for_interchange(self):
+        source = self.root / 'input'
+        target = self.root / 'output'
+        source.write_bytes(b'interchange')
+        with source.open('rb') as stdin, target.open('wb') as stdout:
+            bench.run([sys.executable, '-c',
+                       'import sys; sys.stdout.buffer.write(sys.stdin.buffer.read()); sys.stdout.flush(); sys.stderr.write("diagnostic")'],
+                      stdin=stdin, stdout=stdout, stderr=subprocess.STDOUT)
+        self.assertEqual(target.read_bytes(), b'interchangediagnostic')
+
     def cancelled_while_running(self, launch, expected):
         """Cancel LAUNCH while its child and the child's own child sleep; both must be gone when it raises."""
         pids = self.root / 'pids'

@@ -26,9 +26,8 @@ def run(command, *, env=None, cwd=None, stdout=None, stdin=None, stderr=None, he
                 raise ValueError('heavy launches use inherited stdin/stderr')
             code = shell_status(slot.run_command(command, env=environment, cwd=cwd, stdout=stdout))
         else:
-            with subprocess.Popen(command, cwd=cwd, env=environment, stdin=stdin, stdout=stdout,
-                                  stderr=stderr, start_new_session=True) as child:
-                code = shell_status(slot.wait_child(child))
+            code = bench.run(command, cwd=cwd, env=environment, stdin=stdin, stdout=stdout,
+                             stderr=stderr, check_status=False)
     except OSError as error:
         print(f'{command[0]}: {error.strerror}', file=sys.stderr)
         code = launch_status(error)
@@ -37,10 +36,10 @@ def run(command, *, env=None, cwd=None, stdout=None, stdin=None, stderr=None, he
     return code
 
 
-def capture(command, *, env=None, cwd=None, check=True):
+def capture(command, *, env=None, cwd=None, check=True, stderr=True):
     """Capture a small host command with the shared cancellable process adapter."""
     done = bench.capture(command, env=env, cwd=cwd)
-    if done.stderr:
+    if stderr and done.stderr:
         bench.write(done.stderr, error=True)
     if check and done.status:
         raise Finished(done.status)

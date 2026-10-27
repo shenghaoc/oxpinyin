@@ -3,12 +3,14 @@ import hashlib
 import os
 from pathlib import Path
 import re
+import secrets
 import shutil
 import subprocess
 import tempfile
+import sys
 
 from .. import pool, slot
-from ..native import shell_status
+from ..runners import Finished
 from .identity import digest_file
 from .process import ROOT, capture, fail, run, text
 
@@ -66,13 +68,9 @@ def select_runtime(override='', *, env=None, host=None, output=print):
              'FAIL: wslc adapter not yet verified; select an exercised runtime explicitly with OXPINYIN_CONTAINER or --runtime')
     done = capture([selected, '--version'], env=environment, check=False)
     if done.status:
-        if done.stderr:
-            from ..runners import write
-            write(done.stderr, error=True)
         fail(f'FAIL: cannot query runtime version: {selected}')
     output(f'Runtime: {selected}; {done.stdout.decode().rstrip(chr(10))}')
     if Path(selected).name == 'container':
-        import sys
         print('Apple container interoperability and native-platform execution are not yet verified by the compat smoke.', file=sys.stderr)
     return selected
 
@@ -107,7 +105,8 @@ def verify_image(argv, *, root=ROOT):
     """Copy a scratch image's libraries, check frozen hashes and reject model data."""
     values = parse_options(argv, ('--engine', '--platform'), positional=True)
     if values.get('help'):
-        print('Usage: verify-oracle-image.sh [--engine docker|podman] [--platform PLATFORM] IMAGE')
+        from .help import TEXT
+        print(TEXT['verify-image'], end='')
         return 0
     image = values.get('image')
     if not image:
@@ -119,24 +118,29 @@ def verify_image(argv, *, root=ROOT):
     cid = ''
     with tempfile.TemporaryDirectory() as scratch:
         try:
-            cid = text([engine, 'create', '--platform', platform, image, '/none'])
+            created = capture([engine, 'create', '--platform', platform, image, '/none'], check=False)
+            cid = created.stdout.decode().rstrip('\n')
+            if created.status:
+                raise Finished(created.status)
             run([engine, 'cp', f'{cid}:/opt/pinyin-oracle', f'{scratch}/oracle'], stdout=subprocess.DEVNULL)
             status = 0
             for dbm in ('bdb', 'kc', 'tkrzw'):
                 for library in ('libpinyin', 'libzhuyin'):
                     path = Path(scratch) / 'oracle' / dbm / 'lib' / (library + '.so')
-                    actual = digest_file(path)
+                    try:
+                        actual = digest_file(path)
+                    except OSError as error:
+                        print(f'sha256sum: {path}: {error.strerror}', file=sys.stderr)
+                        raise Finished(1) from error
                     recorded = platform_field(Path(root) / 'tools/oracle/oracle-pin.txt', platform, f'{library}_sha256_{dbm}')
                     print(dbm, library, actual)
                     if not recorded or recorded != actual:
-                        import sys
                         print(f'FAIL: {dbm} {library} is {actual}, oracle-pin.txt records {recorded or "nothing"}', file=sys.stderr)
                         status = 1
             leaks = [str(path) for path in (Path(scratch) / 'oracle').rglob('*')
                      if str(path).endswith('/lib/libpinyin/data') or path.name == 'bigram.db'
                      or path.suffix in ('.bin', '.table', '.text')]
             if leaks:
-                import sys
                 print('FAIL: model-derived data in the image:\n' + '\n'.join(leaks), file=sys.stderr)
                 status = 1
             return status
@@ -159,13 +163,18 @@ def reproducible(argv, *, root=ROOT):
     """Run two independent clean builds per backend through the existing bounded pool."""
     values = parse_options(argv, ('--engine', '--image', '--jobs', '--platform'))
     if values.get('help'):
-        print('Usage: check-reproducible.sh [--engine docker|podman|container] [--image IMAGE] [--jobs N]\n                              [--platform linux/amd64|linux/arm64]')
+        from .help import TEXT
+        print(TEXT['reproducible'], end='')
         return 0
     platform = valid_platform(values.get('platform', 'linux/amd64'))
     engine = values.get('engine') or next((e for e in ('docker', 'podman', 'container') if shutil.which(e)), '')
     if not engine:
         fail('no docker, podman or container runtime found')
-    jobs = values.get('jobs', str(os.cpu_count() or 2))
+    try:
+        default_jobs = text(['nproc'], stderr=False)
+    except (OSError, Finished):
+        default_jobs = '2'
+    jobs = values.get('jobs', default_jobs)
     flags = ['--rm']
     if engine == 'podman':
         flags += ['--security-opt', 'label=disable']
@@ -184,23 +193,37 @@ def reproducible(argv, *, root=ROOT):
     if not image:
         image = 'oxpinyin-oracle-deps:check'
         extra = [] if platform == 'linux/amd64' else ['--build-arg', f'ORACLE_PLATFORM={platform}']
-        import sys
         run([engine, 'build', '--platform', platform, *extra, *build_flags, '--target', 'deps',
              '-f', Path(root) / 'tools/oracle/Dockerfile.oracle', '-t', image, root], heavy=True, stdout=sys.stderr)
     status = 0
     for dbm in ('bdb', 'kc', 'tkrzw'):
+        # Only this invocation's cidfile and token can authorize cleanup.
         def build(tag, work, prefix):
             def unit(context):
-                command = [engine, 'run', '--platform', platform, *flags,
-                           '-v', f'{root}/tools/oracle/build-oracle.sh:/usr/local/bin/build-oracle.sh:ro',
-                           image, 'bash', '-c', BUILD_SCRIPT, '--', dbm, work, prefix, jobs]
-                # The pool owns every child and joins/reaps before releasing admission.
-                return context.launch(command)
+                from ..native import launch_status
+                with tempfile.TemporaryDirectory(prefix='oracle-build.') as scratch:
+                    cidfile = Path(scratch) / 'container.cid'
+                    token = secrets.token_hex(16)
+                    label = 'io.oxpinyin.oracle-build'
+                    owned = pool.OwnedContainer((engine,), cidfile, label, token)
+                    options = [] if Path(engine).name == 'container' else ['--cidfile', str(cidfile), '--label', label + '=' + token]
+                    command = [engine, 'run', '--platform', platform, *flags, *options,
+                               '-v', f'{root}/tools/oracle/build-oracle.sh:/usr/local/bin/build-oracle.sh:ro',
+                               image, 'bash', '-c', BUILD_SCRIPT, '--', dbm, work, prefix, jobs]
+                    try:
+                        return context.launch(command)
+                    except OSError as error:
+                        return pool.Completed(launch_status(error), b'', f'{engine}: {error.strerror}\n'.encode())
+                    finally:
+                        # Docker and Podman report the owned ID/label even when a
+                        # client was cancelled. Apple retains its original --rm path.
+                        if options:
+                            pool.remove_owned(owned)
             return tag, unit
+        prepare = pool.admission_preparer(2, None, explicit=jobs) if re.fullmatch('[1-9][0-9]*', jobs) else None
         results = pool.run_admitted([build(dbm + '-a', '/build/a', f'/opt/oracle-a/{dbm}'),
                                      build(dbm + '-b', '/var/tmp/elsewhere/b', f'/opt/oracle-b/{dbm}')],
-                                    'oracle reproducibility', cancelled=slot.CANCELLED.is_set, max_workers=2)
-        import sys
+                                    'oracle reproducibility', cancelled=slot.CANCELLED.is_set, max_workers=2, prepare=prepare)
         from ..runners import write
         for result in results:
             write(result.stderr, error=True)

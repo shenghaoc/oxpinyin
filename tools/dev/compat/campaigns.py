@@ -3,11 +3,10 @@ import os
 from pathlib import Path
 import re
 import shutil
-import subprocess
 import sys
 
-from . import fixtures, images
-from .process import ROOT, PYTHON, capture, fail, run, text
+from . import images
+from .process import ROOT, PYTHON, fail, run, text
 
 # Paths are the upstream build tree's, shared by developer and fixture campaigns.
 TOOLS = {
@@ -37,13 +36,11 @@ def run_suite(title, command, *, env, report=False):
     """Run every selected suite, accumulating failures without masking an earlier one."""
     print(f'== {title} ==', flush=True)
     if report:
-        from ..measure import bench
         # The shared heavy launcher takes admission. A temporary file preserves
         # shell command-substitution output without buffering a pipe under slot.
         import tempfile
         with tempfile.TemporaryDirectory(prefix='oracle-suite.') as scratch:
             output = Path(scratch) / 'out'
-            from .process import tee
             # Only matching report lines are printed, just like the old report pipe.
             with output.open('wb') as stream:
                 wrapper = [sys.executable, '-c',
@@ -66,7 +63,8 @@ def differentials(argv):
     while rest:
         option = rest.pop(0)
         if option in ('-h', '--help'):
-            print('Usage: run-differentials.sh --libpinyin DIR --data DIR --export DIR --model DIR')
+            from .help import TEXT
+            print(TEXT['differentials'], end='')
             return 0
         if option not in ('--libpinyin', '--data', '--export', '--model'):
             fail(f'unknown option: {option}', 2)
