@@ -8,8 +8,9 @@ Each facade's startup set is the load constructors plus the measured
 pinyin_init/zhuyin_init subtree and the exports the worker calls from there
 to its M1 checkpoint, from the in-tree bisect worker. The steady set is the
 existing bisect perf workload. Use --demangle=no for Callgrind.
-nm supplies canonical demangled identity. Both facades and both startup
-profiles are required, with no default policy.
+nm supplies canonical demangled identity. Both facades and all three startup
+profiles are required, with no default policy. The populated profiles' init
+path leads the init tier; functions only the empty profile runs follow it.
 """
 
 import argparse
@@ -33,7 +34,13 @@ from itertools import zip_longest
 
 
 FACADES = ("pinyin", "zhuyin")
-PROFILES = ("phrases", "journals")
+# The populated profiles' startup set leads the init tier. The empty user
+# directory takes init's missing-profile path (check_format's absent marker,
+# the wipe of user files); the functions only it runs follow that set in the
+# init tier (#1090).
+POPULATED_PROFILES = ("phrases", "journals")
+EMPTY_PROFILE = "empty"
+PROFILES = (*POPULATED_PROFILES, EMPTY_PROFILE)
 HERE = Path(__file__).resolve().parent
 if str(HERE.parent) not in sys.path:
     sys.path.insert(0, str(HERE.parent))
@@ -506,7 +513,8 @@ def collection_units(args, libraries, work, backend, campaign):
                     shutil.copytree(args.profiles_dir / profile / 'user', user)
                     context.check()
                     functions = collect_toggle(local, facade, library, user, toggle, environment)
-                return (campaign, iteration, facade, 'steady' if profile is None else 'startup', functions,
+                tier = 'steady' if profile is None else 'startup' if profile in POPULATED_PROFILES else 'empty'
+                return (campaign, iteration, facade, tier, functions,
                         context.environment.get(pool.POOL_WORKERS))
         return collect
 
@@ -551,7 +559,7 @@ def collect_campaigns(campaigns, *, cpu=None, jobs=None, report=None):
                 STARTUP_PROFILE['check'](fixture / 'user', fixture / 'profile.manifest')
             work = scratch.enter_context(collection_scratch(args.work_dir))
             batches.append(collection_units(args, libraries, work, backend, index))
-            outputs.append([{facade: {'startup': set(), 'steady': set()} for facade in FACADES}
+            outputs.append([{facade: {'startup': set(), 'empty': set(), 'steady': set()} for facade in FACADES}
                             for _ in range(2 if args.repeat_output_dir else 1)])
         # Round-robin the backends as well as the passes so capacity can serve
         # all campaigns immediately instead of draining the first backend first.
@@ -570,8 +578,9 @@ def collect_campaigns(campaigns, *, cpu=None, jobs=None, report=None):
                 table, available = library_symbols(library), archive_paths(archives[facade])
                 for streams in outputs[index]:
                     startup = resolved_paths(streams[facade]['startup'], library, table, available)
+                    empty = resolved_paths(streams[facade]['empty'], library, table, available)
                     hot = resolved_paths(streams[facade]['steady'], library, table, available)
-                    streams[f'lib{facade}.order'] = policy(facade, startup, hot)
+                    streams[f'lib{facade}.order'] = policy(facade, startup, hot, empty)
                     del streams[facade]
             for profile in PROFILES:
                 fixture = args.profiles_dir / profile
@@ -725,9 +734,11 @@ def pairs(values, expected, option):
     return result
 
 
-def policy(facade, startup, steady):
+def policy(facade, startup, steady, empty=frozenset()):
+    """Init: the populated startup set, then the empty profile's own; then steady."""
     rows = [f"oxpinyin-function-order-v1\tlib{facade}.so.15"]
-    for tier, names in (("init", startup), ("steady", steady - startup)):
+    for tier, names in (("init", startup), ("init", empty - startup),
+                        ("steady", steady - startup - empty)):
         rows.extend(f"{tier}\t{name}" for name in sorted(names))
     return "\n".join(rows) + "\n"
 
@@ -780,10 +791,11 @@ def run_generation(args, parser):
                 symbol_table = library_symbols(library)
                 available = archive_paths(archives[facade])
                 init = set()
-                for profile in PROFILES:
+                for profile in POPULATED_PROFILES:
                     init |= measured_paths(startup[f"{facade}:{profile}"], library, symbol_table, available)
+                empty = measured_paths(startup[f"{facade}:{EMPTY_PROFILE}"], library, symbol_table, available)
                 hot = measured_paths(steady[facade], library, symbol_table, available)
-                outputs[f"lib{facade}.order"] = policy(facade, init, hot)
+                outputs[f"lib{facade}.order"] = policy(facade, init, hot, empty)
         # Validate all streams before writing either policy. No raw data is
         # copied; the only outputs are the production-layout policy inputs.
         if not args.bisect:
