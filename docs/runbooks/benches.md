@@ -163,25 +163,39 @@ zero. Memory-run timings are excluded.
 
 `--stage verify` stops after verification and separate hostile probes.
 `--stage instrument` also checks Linux Callgrind Ir. Init uses two fresh
-processes per arm and remains exact: any same-bytes variation returns 3.
+processes per arm. The [2026-10-23 11:04 UTC ruling](../findings/init-gap-1090-2026-10-23.md#rulings)
+identifies BDB init Ir as nondeterministic because libdb seeds `srandom_r`
+from PID, time and address. When every arm's checked `DT_NEEDED` backend is
+BDB, init reports each base/PR/control arm's process min–max as `bounds`, all
+original `counts` and raw profiles, with verdict `DIAGNOSTIC`, then continues.
+Non-BDB and unknown init backends retain the exact rule: any same-bytes
+variation returns 3 immediately. No tolerance is introduced.
 Under the 2026-10-24 UTC maintainer ruling (§7.5), first-candidate and steady
 Ir use five fresh processes per base/PR/control arm. Steady repeats the same
 candidate request on the initialized instance, in a separate profiler process.
-The control and PR min–max ranges must overlap. The further 2026-10-24 UTC
+The control and PR min–max ranges must overlap for range qualification. The further 2026-10-24 UTC
 ruling removes the span limit entirely. Claims are bounds: base min minus
 PR max through base max minus PR min, never a point or exact difference. Every PR/control exclusive function count is checked
 against the single `tools.dev.measure.instructions::RANDOMSTATE_ALLOWLIST`
 definition. Under the additional 2026-10-24 UTC attribution ruling, init
-passes on exact totals alone and does not require complete function naming.
+does not require complete function naming. Its exact and BDB diagnostic
+paths both validate creator, PID, command, Ir-only events and reconciled totals.
 For range metrics, unresolved sites use full object identity plus an offset
 from the object's load base, never raw ASLR addresses. The same-process worker
 reports loader PT_LOAD segments and load biases via `dl_iterate_phdr` after
 the units. The lowest runtime PT_LOAD address is the base; each unresolved
 object-relative instruction position plus its recorded load bias must map uniquely into an executable segment.
 Constant unresolved entries present in every PR/control process are allowed
-and reported by count and summed Ir. Varying or unmatched entries, missing
+and reported by count and summed Ir. Varying or unmatched unresolved entries, missing
 or ambiguous loader mappings, other named variation, profiler identity
-failure, or unreconciled exclusive totals are INVALID (status 3). Raw loader
+failure, or unreconciled exclusive totals are INVALID (status 3), including
+for diagnostics. The RandomState exception applies only to first-candidate
+and steady scopes with variation confined to that allowlist: a differing
+same-bytes control reports each arm's min–max `bounds`, every original count,
+and verdict `DIAGNOSTIC`, then continues even when the ranges do not overlap.
+This is diagnostic output, not a qualified comparison. It does not relax
+deterministic scopes or the profiler creator/PID/command/events checks.
+Raw loader
 records and profiler instruction positions remain in the output. The
 [Callgrind format](https://valgrind.org/docs/manual/cl-format.html#cl-format.reference.header)
 specifies object-relative instruction positions for identified objects; the
@@ -194,7 +208,8 @@ to form the key. Unknown object names alone do not cause rejection; missing
 or ambiguous mappings still do. Failed parsing retains the sample PID, raw
 stdout/profile bytes and loader records in the INVALID report, even when no
 parsed function table exists. No earlier failure is retroactively attributed.
-Accepted metrics report RANGE-QUALIFIED and their bounds, never exact.
+Qualified comparisons report RANGE-QUALIFIED and their bounds, never exact;
+the diagnostic cases above report DIAGNOSTIC.
 Every original timing sample, scoped total, per-function count and raw
 profile is reported; no normalization, hash reseeding or retrospective
 attribution of earlier phase-total-only differences is allowed.
@@ -212,7 +227,9 @@ complete range profiles with raw data, PIDs and loader records. It reparses
 originals and reports all counts and the new bounds; duplicate scopes/range
 PIDs or incomplete provenance refuse. Continuation additionally matches input
 digests, library hashes, worker source, binding and cache mode. Each qualified
-retained scope is skipped, while uncovered scopes (including zhuyin) still run.
+or validated diagnostic retained scope is skipped, while uncovered scopes
+(including zhuyin) still run. BDB init diagnostics require the recorded backend
+and the current checked backends to identify BDB; unknown backends stay exact.
 Fresh behavioral verification is a preflight; subsequent timing/memory are a
 separate measurement segment linked by the retained file SHA-256. Retained
 and new samples are never pooled or claimed as one original run.

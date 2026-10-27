@@ -411,19 +411,40 @@ def verify(campaign, libraries, facade, name, profiles):
     return rows
 
 
-def instrument(campaign, libraries, facade, name, user, references, *, completed=None):
+def instruction_range_result(counts, profiles):
+    """Keep RandomState attribution validation while reporting nonexact controls diagnostically."""
+    result = instructions.qualify(counts, profiles)
+    # The 2026-10-23 UTC diagnostic ruling (init-gap-1090-2026-10-23.md,
+    # "Rulings") and the native RandomState exception (§7.5 of the tooling
+    # consolidation findings) do not make a varying control an exact gate.
+    # Only first-candidate/steady use this path. Identity, exclusive accounting,
+    # the named allowlist and constant unresolved sites still have to pass.
+    if (len(set(counts['pr'] + counts['control'])) > 1 and result['pr_median'] > 0
+            and not result['outside_allowlist'] and not result['invalid_unresolved']):
+        result.update(verdict='DIAGNOSTIC', rule='randomstate')
+    return result
+
+
+def instrument(campaign, libraries, facade, name, user, references, *, completed=None, backends=None):
     """Run or reuse qualified instruction scopes and emit their control results.
 
     On Linux, take two init samples and five first-candidate/steady samples
-    per arm, requiring verified units digests and exact or range controls.
+    per arm, requiring verified units digests and exact or diagnostic controls.
     Report unavailable on macOS. Emit invalid evidence and raise NotResult
     when a required control or attribution check fails.
     """
     if sys.platform == 'darwin':
         emit('instructions', facade=facade, profile=name, verdict='unavailable', reason='native macOS Callgrind unavailable')
         return
+    # 2026-10-23 11:04 UTC ruling: BDB init Ir varies with libdb's srandom_r
+    # seeding. See docs/findings/init-gap-1090-2026-10-23.md, "Rulings".
+    # Select BDB only from every arm's checked DT_NEEDED backend, never an env
+    # default. Unknown and non-BDB init scopes keep the exact rule and STOP.
+    bdb_init = backends is not None and all(backends.get(arm) == 'bdb' for arm in ARMS)
     for scope in ('init', 'first_candidate', 'steady'):
-        if completed and completed.get((facade, name, scope), {}).get('verdict') in ('VALID', 'RANGE-QUALIFIED'):
+        retained = completed.get((facade, name, scope), {}) if completed else {}
+        if (retained.get('verdict') in ('VALID', 'RANGE-QUALIFIED', 'DIAGNOSTIC')
+                and not (scope == 'init' and retained.get('rule') == 'bdb-init' and not bdb_init)):
             emit('rechecked-instructions', facade=facade, profile=name, scope=scope,
                  **completed[facade, name, scope])
             continue
@@ -459,7 +480,7 @@ def instrument(campaign, libraries, facade, name, user, references, *, completed
                 # Stop at the first same-bytes mismatch, not after a campaign.
                 group = [v for a, values in counts.items() if worker.sha256(libraries[a][facade].read_bytes()) ==
                          worker.sha256(libraries[arm][facade].read_bytes()) for v in values]
-                if scope == 'init' and len(set(group)) > 1:
+                if scope == 'init' and not bdb_init and len(set(group)) > 1:
                     emit('instructions', facade=facade, profile=name, scope=scope, counts=counts,
                          raw_profiles_hex=raw_profiles, verdict='INVALID', rule='exact', stop=True)
                     raise NotResult(f'STOP: same-bytes {scope} Ir differ: {counts}')
@@ -473,12 +494,17 @@ def instrument(campaign, libraries, facade, name, user, references, *, completed
                 emit('instructions', facade=facade, profile=name, scope=scope, counts=counts,
                      raw_profiles_hex=raw_profiles, verdict='INVALID', reason=str(error), stop=True)
                 raise NotResult('INVALID: exact total profiler identity') from error
-            emit('instructions', facade=facade, profile=name, scope=scope, counts=counts,
-                 raw_profiles_hex=raw_profiles,
-                 control=stats.exact_control(counts['pr'][0], counts['control'][0]), verdict='VALID')
+            if bdb_init:
+                emit('instructions', facade=facade, profile=name, scope=scope, counts=counts,
+                     raw_profiles_hex=raw_profiles, rule='bdb-init', verdict='DIAGNOSTIC',
+                     bounds={arm: [min(values), max(values)] for arm, values in counts.items()})
+            else:
+                emit('instructions', facade=facade, profile=name, scope=scope, counts=counts,
+                     raw_profiles_hex=raw_profiles,
+                     control=stats.exact_control(counts['pr'][0], counts['control'][0]), verdict='VALID')
         else:
             try:
-                result = instructions.qualify(counts, profiles)
+                result = instruction_range_result(counts, profiles)
             except ValueError as error:
                 emit('instructions', facade=facade, profile=name, scope=scope, counts=counts,
                      profiles=profiles, raw_profiles_hex=raw_profiles, verdict='INVALID', reason=str(error), stop=True)
@@ -525,6 +551,7 @@ def _recheck_instructions(path):
             raise ValueError('duplicate retained profiler scope; do not mix runs')
         counts = row['counts']
         if row['scope'] == 'init':
+            bdb_init = all(start['libraries'][arm][row['facade']].get('backend') == 'bdb' for arm in ARMS)
             creators = set()
             for arm in ARMS:
                 originals = row['raw_profiles_hex'][arm]
@@ -537,14 +564,16 @@ def _recheck_instructions(path):
                     if sample['total'] != count:
                         raise ValueError('retained exact total differs from original')
                     creators.add(sample['creator'])
-                if len(set(counts[arm])) != 1:
+                if not bdb_init and len(set(counts[arm])) != 1:
                     raise NotResult('INVALID: retained init varies')
-            # The live exact path refuses a profiler identity change between samples.
+            # Both live total paths refuse a profiler identity change between samples.
             if len(creators) != 1:
                 raise NotResult('INVALID: retained exact profiler identity')
-            if counts['pr'][0] != counts['control'][0]:
+            if not bdb_init and counts['pr'][0] != counts['control'][0]:
                 raise NotResult('INVALID: retained exact control')
-            result = dict(verdict='VALID', rule='exact', creator=creators.pop())
+            result = (dict(verdict='DIAGNOSTIC', rule='bdb-init', creator=creators.pop(),
+                           bounds={arm: [min(values), max(values)] for arm, values in counts.items()})
+                      if bdb_init else dict(verdict='VALID', rule='exact', creator=creators.pop()))
         else:
             parsed = {}
             for arm in ARMS:
@@ -558,7 +587,7 @@ def _recheck_instructions(path):
                     p['pid'], p['loader_data']) for p in originals]
                 if [p['total'] for p in parsed[arm]] != counts[arm]:
                     raise ValueError('retained range totals differ from originals')
-            result = instructions.qualify(counts, parsed)
+            result = instruction_range_result(counts, parsed)
         qualified[key] = dict(result, counts=counts)
     if not qualified:
         raise ValueError('no retained instruction scopes')
@@ -589,9 +618,12 @@ def campaign_run(args, profiles, work, admission):
             destination = directory / source.name
             shutil.copyfile(source, destination)
             libraries[arm][facade] = destination
+    backends = {}
     if sys.platform == 'linux':
         checks = runpy.run_path(str(ROOT / 'tools/packaging/function_order.py'))
-        checks['check_arms'](args, libraries)
+        checked = checks['check_arms'](args, libraries)
+        backends = {arm: {facade: row['backend'] for facade, row in rows.items()}
+                    for arm, rows in checked.items()}
     else:
         emit('function-order', verdict='unavailable', reason='ELF policy is Linux-only')
     executable, record = worker.build(work, admission.env, admission.slot.pass_fds())
@@ -609,7 +641,8 @@ def campaign_run(args, profiles, work, admission):
              separate_measurement_segment=True)
     emit('start', host=platform.platform(), cpu=args.cpu, cache=args.cache, bind=args.bind,
          worker=record, input_digests=before,
-         libraries={a: {f: artifact(p) for f, p in paths.items()} for a, paths in libraries.items()},
+         libraries={a: {f: dict(artifact(p), **({'backend': backends[a][f]} if backends else {}))
+                        for f, p in paths.items()} for a, paths in libraries.items()},
          timing_rounds=args.rounds, warmups=args.warmups, memory_rounds=args.memory_rounds,
          memory_warmups=args.memory_warmups, native_information_only=True)
     for name, user in profiles.items():
@@ -630,7 +663,8 @@ def campaign_run(args, profiles, work, admission):
                 if args.stage == 'verify':
                     continue
                 instrument(campaign, libraries, facade, name, user, references,
-                           completed=retained['scopes'] if retained else None)
+                           completed=retained['scopes'] if retained else None,
+                           backends={a: rows[facade] for a, rows in backends.items()} if backends else None)
                 if args.stage == 'instrument':
                     continue
                 for memory, rounds, warmups in ((False, args.rounds, args.warmups),
