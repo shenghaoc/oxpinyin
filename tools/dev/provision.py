@@ -16,11 +16,10 @@ import sys
 import tempfile
 import time
 
-from . import doctor, pool, slot
+from . import doctor, slot
 from .compat import images
 from .compat.identity import digest_file
 from .compat.process import ROOT, capture, fail, run, text
-from .native import launch_status
 from .runners import Finished
 from tools.tkrzw import runtime
 
@@ -40,14 +39,24 @@ unset _oxp_cell _oxp_prefix _oxp_data _oxp_provisioned
 '''
 
 
-def quote(value):
-    """Quote generated assignments for Bash, including paths with control bytes."""
+def quote(value, *, always=False):
+    """Serialize Bash %q words and @Q path prefixes without evaluating values."""
     value = str(value)
-    if re.fullmatch(r'[a-zA-Z0-9_@%+=:,./-]+', value):
-        return value
     if not value:
         return "''"
-    return "'" + value.replace("'", "'\\''") + "'"
+    controls = {'\a': r'\a', '\b': r'\b', '\t': r'\t', '\n': r'\n',
+                '\v': r'\v', '\f': r'\f', '\r': r'\r', '\x1b': r'\E'}
+    if any(ord(char) < 32 or ord(char) == 127 for char in value):
+        escaped = ''.join(controls.get(char, '\\' + char if char in "'\\" else
+                                      r'\177' if ord(char) == 127 else
+                                      f'\\{ord(char):03o}' if ord(char) < 32 else char) for char in value)
+        return "$'" + escaped + "'"
+    if always:
+        return "'" + value.replace("'", "'\\''") + "'"
+    special = set(" ,'" + '"' + '\\' + '`$&|;()<>!*?[]{}')
+    return ''.join('\\' + char if char in special or char == '#' and index == 0 or
+                   char == '~' and (index == 0 or value[index - 1] in '=:') else char
+                   for index, char in enumerate(value))
 
 
 def assignments(path, names):
@@ -91,9 +100,12 @@ def without_prefix(value, prefix, env):
     """Remove every sourced cache and the current cache from a host search path."""
     excluded = [*env.get('OXPINYIN_TKRZW_PREFIXES', '').split(':'), str(prefix or ''),
                 tkrzw_env_prefix(env.get('OXPINYIN_ORACLE_ENV', str(Path.home() / '.oxpinyin-oracle.env')))]
-    # Bash's unquoted path splitting discards empty entries, including trailing ones.
-    return ':'.join(entry for entry in value.split(':') if entry and
-                    not any(p and (entry == p or entry.startswith(p + '/')) for p in excluded))
+    # Bash keeps leading/internal empty fields and discards a final empty field.
+    entries = value.split(':') if value else []
+    if value.endswith(':'):
+        entries.pop()
+    return ':'.join(entry for entry in entries
+                    if not any(p and (entry == p or entry.startswith(p + '/')) for p in excluded))
 
 
 def resolve_tkrzw(obj, env, root=ROOT):
@@ -109,27 +121,39 @@ def resolve_tkrzw(obj, env, root=ROOT):
     return '\n'.join(matches[:1] if host == 'Darwin' else matches)
 
 
-def probe_host(prefix='', *, env=None, root=ROOT, probe=None):
+def probe_host(prefix='', *, env=None, root=ROOT, probe=None, out=None):
     """Certify the host utility and loaded object after excluding all caches."""
+    def refused(reason):
+        print(f'host check: {reason}; no healthy host libtkrzw was certified',
+              file=sys.stderr, flush=True)
+        return ''
+
     environment = dict(os.environ if env is None else env)
     child = dict(environment, PATH=without_prefix(environment.get('PATH', ''), prefix, environment),
                  LD_LIBRARY_PATH=without_prefix(environment.get('LD_LIBRARY_PATH', ''), prefix, environment))
-    if run(['sh', probe or Path(root) / 'tools/tkrzw/distro-probe.sh'], env=child,
-           cwd=root, check=False):
-        return ''
+    status = run(['sh', probe or Path(root) / 'tools/tkrzw/distro-probe.sh'], env=child,
+                 cwd=root, stdout=out, check=False)
+    if status:
+        return refused(f'host distro-probe.sh failed (status {status})')
     util = shutil.which('tkrzw_dbm_util', path=child['PATH'])
     if not util:
-        return ''
+        return refused('tkrzw_dbm_util is not on the host PATH after excluding cached runtimes')
     try:
         so = resolve_tkrzw(util, child, root)
-    except Finished:
-        return ''
+    except Finished as error:
+        return refused(f'the host utility loader check failed (status {error.status})')
     libname = 'libtkrzw.dylib' if text(['uname', '-s'], env=child) == 'Darwin' else 'libtkrzw.so.1'
-    print(f'host check: {util} resolves {libname} to {so or "nothing"}', flush=True)
-    if not so or not Path(so).is_file() or without_prefix(so, prefix, environment) != so:
-        return ''
+    print(f'host check: {util} resolves {libname} to {so or "nothing"}', file=out or sys.stdout, flush=True)
+    if not so:
+        return refused('the host utility did not resolve libtkrzw')
+    if not Path(so).is_file():
+        return refused(f'resolved host libtkrzw is not a file: {so}')
+    if without_prefix(so, prefix, environment) != so:
+        return refused(f'resolved libtkrzw belongs to an excluded cache: {so}')
     real = str(Path(so).resolve())
-    return real if without_prefix(real, prefix, environment) == real else ''
+    if without_prefix(real, prefix, environment) != real:
+        return refused(f'resolved host libtkrzw points into an excluded cache: {real}')
+    return real
 
 
 class Provision:
@@ -142,13 +166,18 @@ class Provision:
         self.cache = Path(self.env.get('OXPINYIN_CLOUD_CACHE') or
                           str(Path(self.env.get('XDG_CACHE_HOME') or str(Path.home() / '.cache')) / 'oxpinyin'))
         self.cells = list(CELLS)
-        self.jobs = text(['nproc'], env=self.env, check=False, stderr=False) or '2'
+        try:
+            self.jobs = text(['nproc'], env=self.env, check=False, stderr=False) or '2'
+        except OSError:
+            self.jobs = '2'
         self.pull, self.inside, self.python_only = True, False, False
         self.platform = ''
-        self.started = time.monotonic()
+        self.started = time.monotonic() - int(self.env.get('OXPINYIN_CLOUD_BOOTSTRAP_SECONDS', '0'))
         self.tkrzw_local = False
         self.tkrzw_host_library = ''
         self.ctr = ''
+        self.custom_ca = False
+        self.empty_cache = False
         self.net_flags, self.env_flags = ['--network', 'host'], []
         self.uv_dir = str(Path(shutil.which('uv', path=self.env.get('PATH')) or 'uv').parent)
 
@@ -189,8 +218,9 @@ class Provision:
                 value = args.pop(0)
                 if option == '--cache-dir':
                     self.cache = Path(value)
+                    self.empty_cache = not value
                 elif option == '--cells':
-                    self.cells = value.split()
+                    self.cells = re.findall(r'[^ \t]+', value.partition('\n')[0])
                 else:
                     self.jobs = value
             elif option in ('--in-container', '--no-pull'):
@@ -380,18 +410,18 @@ class Provision:
         lines = ['# Written by tools/cloud/setup.sh; source it, do not edit it.',
                  '_oxp_provisioned=' + quote(' ' + ' '.join(env_cells) + ' '),
                  'export PINYIN_MODEL_DIR=' + quote(self.model_cache / 'extracted'),
-                 'export PATH=' + quote(self.uv_dir) + ':$PATH']
+                 'export PATH=' + quote(self.uv_dir, always=True) + ':$PATH']
         if library:
             lines.append('export OXPINYIN_TKRZW_LIBRARY=' + quote(library))
         if runtime_prefix:
             lines += ['export OXPINYIN_TKRZW_PREFIX=' + quote(runtime_prefix),
-                      'export OXPINYIN_TKRZW_PREFIXES=' + quote(runtime_prefix) + '${OXPINYIN_TKRZW_PREFIXES:+:$OXPINYIN_TKRZW_PREFIXES}']
+                      'export OXPINYIN_TKRZW_PREFIXES=' + quote(runtime_prefix, always=True) + '${OXPINYIN_TKRZW_PREFIXES:+:$OXPINYIN_TKRZW_PREFIXES}']
         if self.tkrzw_local:
-            lines += ['export PKG_CONFIG_PATH=' + quote(self.tkrzw_prefix) + '/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}',
-                      'export LD_LIBRARY_PATH=' + quote(self.tkrzw_prefix) + '/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}',
-                      'export PATH=' + quote(self.tkrzw_prefix) + '/bin:$PATH']
+            lines += ['export PKG_CONFIG_PATH=' + quote(self.tkrzw_prefix, always=True) + '/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}',
+                      'export LD_LIBRARY_PATH=' + quote(self.tkrzw_prefix, always=True) + '/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}',
+                      'export PATH=' + quote(self.tkrzw_prefix, always=True) + '/bin:$PATH']
         elif library and not runtime_prefix:
-            lines.append('export LD_LIBRARY_PATH=' + quote(Path(library).parent) + '${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}')
+            lines.append('export LD_LIBRARY_PATH=' + quote(Path(library).parent, always=True) + '${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}')
         elif kept_paths:
             lines.append(kept_paths)
         for cell in env_cells:
@@ -532,12 +562,12 @@ class Provision:
         if self.platform != 'linux/amd64':
             flags += ['--build-arg', f'ORACLE_PLATFORM={self.platform}']
         if self.proxy:
-            flags += ['--build-arg', f'https_proxy={self.proxy}', '--build-arg', f'HTTPS_PROXY={self.proxy}']
+            flags += ['--build-arg', 'https_proxy', '--build-arg', 'HTTPS_PROXY']
             if self.custom_ca:
                 flags += ['--secret', f'id=cacert,src={self.ca}']
         run([self.ctr, 'build', '--platform', self.platform, *flags, '--target', 'deps',
              '-f', self.root / 'tools/oracle/Dockerfile.oracle', '-t', self.deps_image, self.root],
-            env=dict(self.env, DOCKER_BUILDKIT='1'), stdout=sys.stderr, heavy=True)
+            env=dict(self.env, DOCKER_BUILDKIT='1', https_proxy=self.proxy, HTTPS_PROXY=self.proxy), stdout=2, heavy=True)
 
     def in_image_command(self, args, flags=()):
         """Keep pre-provisioned compat execution outside the native runtime path."""
@@ -688,20 +718,20 @@ class Provision:
     def execute(self, argv):
         self.options(argv)
         self.prerequisites()
-        self.log('using ' + text(['uv', '--version'], env=self.env))
+        if self.env.get('OXPINYIN_CLOUD_BOOTSTRAP_KEPT_UV', '1') == '1':
+            self.log('using ' + text(['uv', '--version'], env=self.env))
         # Bootstrap selected the managed interpreter. Doctor owns its policy;
         # setup retains the historical successful verification line.
-        doctor.identity(self.env)
-        managed = text(['uv', 'python', 'find', '--managed-python', doctor.MANAGED_REQUEST], env=self.env)
-        if Path(sys.executable).resolve() != Path(managed).resolve():
-            self.die('managed interpreter does not match uv selection')
-        print('Verified managed CPython', sys.version.split()[0], 'GIL build:', Path(managed).resolve(), flush=True)
+        identity = doctor.identity(self.env)
+        print('Verified managed CPython', identity['version'], 'GIL build:', identity['executable'], flush=True)
         if self.python_only:
             self.report_ext4()
             self.log('stopping after Python provisioning (--python-only)')
             return 0
         with ExitStack() as stack:
             self.proxy_ca(stack)
+            if self.empty_cache:
+                run(['mkdir', '-p', ''], env=self.env)
             self.cache.mkdir(parents=True, exist_ok=True)
             self.cache = self.cache.resolve()
             self.model_cache = Path(self.env.get('PINYIN_MODEL_CACHE') or str(self.cache / 'model20'))
@@ -769,6 +799,7 @@ class Provision:
 def main(argv=None):
     """Dispatch cloud provisioning after bootstrap, including native host callers."""
     args = list(sys.argv[1:] if argv is None else argv)
+    service = None
     try:
         with slot.cancellation_handlers():
             if args[:1] == ['probe-host']:
@@ -782,6 +813,7 @@ def main(argv=None):
                 service.options(['--cells', args[1]])
                 return 0 if service.data_ok(args[1], args[2]) else 1
             if args[:1] == ['build-tkrzw'] and len(args) == 4:
+                os.dup2(1, 2)
                 source, prefix, jobs = args[1:]
                 service = Provision()
                 run(['git', 'init', '-q', '.'], cwd=source)
@@ -796,17 +828,18 @@ def main(argv=None):
                 run(['git', 'checkout', '-q', 'FETCH_HEAD'], cwd=source)
                 env = {k: v for k, v in os.environ.items() if k not in ('CFLAGS', 'CXXFLAGS', 'LDFLAGS')}
                 run(['./configure', '--prefix=' + prefix], cwd=source, env=env)
-                run(['make', '-j' + jobs], cwd=source, env=env)
-                run(['make', 'install'], cwd=source, env=env)
+                run(['make', '-j' + jobs], cwd=source)
+                run(['make', 'install'], cwd=source)
                 return 0
-            return Provision().execute(args)
+            service = Provision()
+            return service.execute(args)
     except Finished as error:
         return error.status
     except slot.Cancelled:
-        return 1  # setup.sh's HUP/INT/TERM trap when a private CA copy exists
+        return 1 if service is not None and service.custom_ca and not service.inside else slot.cancellation_status()
     except OSError as error:
         print(f'FAIL: {error.strerror}', file=sys.stderr)
-        return launch_status(error)
+        return 1
     except (ValueError, doctor.DoctorError) as error:
         print(f'FAIL: {error}', file=sys.stderr)
         return 1

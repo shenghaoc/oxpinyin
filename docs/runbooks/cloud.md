@@ -619,9 +619,12 @@ one run, spread 0) needs only the Rust side.
 
 ## Failure modes
 
-- Missing Cargo/toolchain, Valgrind without root/sudo, or an unwritable uv
-  destination: setup exits 1 with the prerequisite and next action before
-  downloads. `--python-only` omits the Cargo/toolchain and Valgrind checks.
+- An unwritable uv destination: setup exits 1 with the prerequisite and
+  next action before any download.
+- Missing Cargo/toolchain, or Valgrind without root/sudo: setup exits 1 with
+  the prerequisite and next action after uv and managed-Python bootstrap,
+  but before oracle downloads. `--python-only` omits the Cargo/toolchain
+  and Valgrind checks.
 - The #1024 lane reported an OS read-only `/home/agent/.local/bin`, then
   successful pinned uv/managed-CPython provisioning using task-private
   overrides; full setup next stopped on missing Valgrind/sudo, and Cargo

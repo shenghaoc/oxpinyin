@@ -79,10 +79,8 @@ class Tools:
     def tkrzw_host(self, *, environment=None):
         """Return the exact host library certified by the provisioning service."""
         from .provision import probe_host
-        import contextlib
         settings = self.environment if environment is None else environment
-        with contextlib.redirect_stdout(sys.stderr):
-            library = probe_host(env=dict(settings), root=self.root)
+        library = probe_host(env=dict(settings), root=self.root, out=sys.stderr)
         if not library:
-            raise NativeRefused('probe_host exited 1')
+            raise NativeRefused('no healthy host libtkrzw was certified')
         return Path(library)

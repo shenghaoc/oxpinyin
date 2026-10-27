@@ -47,6 +47,13 @@ Python in the legacy supplied image. The fixtures are `tools/dev/compat/*.test.p
 and `tools/tkrzw/runtime.test.py`. U3 links below name the audited commit; the
 interface columns remain the contracts for the Python recipes.
 
+U6 now uses `just provision` / `python -m tools.dev provision`. The supported
+`tools/cloud/setup.sh` entry point retains only uv/interpreter bootstrap and
+hands off to `tools/dev/provision.py`; the environment helper and synthetic shell
+test have moved into that service and `tools/dev/provision.test.py` discovery.
+Identity, version/runtime selection, loader checks, process cancellation and the
+#1233 pool phase reuse the existing compat, doctor, native and pool/slot services.
+
 Source snapshot: `a04c91afa343428ba7294e86f217f3e4e286e890` (`origin/main`), 2026-10-26 UTC (`date -u`).
 All **100** tracked `*.sh` files under `tools/`, `tests/` and
 `.github/scripts/` are included. This is source analysis; no script was run.

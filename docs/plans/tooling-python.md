@@ -530,6 +530,19 @@ atomic publication. Its `pool_phase` already delegates to `tools.dev.pool`:
 [#1233](https://github.com/shenghaoc/oxpinyin/issues/1233) is complete at this
 base and is reused, not repeated.
 
+U6's deliberate diagnostic wording differences change no status. An
+unsuccessful native host qualification reports `no healthy host libtkrzw was
+certified` in place of `probe_host exited 1`, which described the retired shell
+function as a child process. Every empty host-probe result also names its cause
+on stderr, including a missing `tkrzw_dbm_util`; host-probe refusal retains
+status 1.
+
+U6's deliberate prerequisite-check ordering difference moves the Cargo,
+toolchain and Valgrind checks after uv and managed-interpreter bootstrap because
+those checks now run in Python. They still precede oracle downloads. An
+unwritable uv destination still fails before any download, and `--python-only`
+still omits the Cargo/toolchain and Valgrind checks.
+
 ### Shared machinery and active lanes
 
 | Concern | Single owner and migration disposition |
