@@ -45,7 +45,8 @@ def value(flag, default=''):
         elif word.startswith(flag+'='): found=word.split('=',1)[1]
     return found
 library='libzhuyin' if 'zhuyin' in Path.cwd().name else 'libpinyin'
-triple=Path(value('--target', os.environ.get('CARGO_BUILD_TARGET','fixture-target'))).name.removesuffix('.json')
+triple=Path(value('--target', os.environ.get('CARGO_BUILD_TARGET','fixture-target')).rstrip('/')).name
+if triple.endswith('.json') and triple!='.json':triple=triple[:-5]
 profile=value('--profile','release')
 profile='debug' if profile=='dev' else profile
 if '--debug' in args:profile='debug'
@@ -237,7 +238,7 @@ unified diff); 2 on a usage error or a missing input.
             self.assertIn(b'2.11.92', result.stdout)
 
     def test_missing_and_malformed_pin_status(self):
-        for text in ('libpinyin_tag=broken\n', 'no tag\n'):
+        for text in ('libpinyin_tag=broken\n', 'no tag\n', 'libpinyin_tag=2.11.92\r\n'):
             (self.root / 'tools/oracle/oracle-pin.txt').write_text(text)
             result = self.compare('pc-version')
             self.assertEqual(result.returncode, 1)
@@ -311,6 +312,11 @@ unified diff); 2 on a usage error or a missing input.
         self.assertIn('--target-dir=' + str(target), args)
         self.assertEqual(args[-1], '')
         self.assertTrue((target / 'fake/debug/libpinyin.pc.in.baked').is_file())
+
+    def test_custom_target_whose_entire_name_is_the_json_suffix(self):
+        result, _ = self.install(extra=['--', '--target=specs/.json', '--debug'])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.root / 'target/.json/debug/libpinyin.pc.in.baked').is_file())
 
     def test_target_environment_is_relative_to_packaging_directory(self):
         result, _ = self.install(env={'CARGO_TARGET_DIR': 'relative target'})

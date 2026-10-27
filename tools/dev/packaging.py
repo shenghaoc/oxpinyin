@@ -100,7 +100,7 @@ def option(argv, index):
 def version(root=ROOT):
     record = root / 'tools/oracle/oracle-pin.txt'
     try:
-        text = record.read_text()
+        text = record.read_text(newline='')
     except OSError as error:
         fail(f"sed: can't read {record}: {error.strerror}", 2)
     values = re.findall(r'^libpinyin_tag=(.*)$', text, re.M)
@@ -198,13 +198,19 @@ class Layout:
             target_path = Path(target) if target else tools.root / 'target'
             if not target_path.is_absolute():
                 target_path = tools.here / target_path
-            tools.run(['mkdir', '-p', '--', target_path])
+            if target:
+                tools.run(['mkdir', '-p', '--', target_path])
             # The shell's cd + pwd retains logical aliases such as /var.
             target_path = Path(os.path.abspath(target_path))
         triple = triple or tools.env.get('CARGO_BUILD_TARGET') or ''
         if not triple:
             triple = '\n'.join(re.findall(r'^host: (.*)$', tools.text(['rustc', '-vV']), re.M))
-        triple = os.path.basename(triple).removesuffix('.json')
+        if triple:
+            triple = triple.rstrip('/') or '/'
+            if triple != '/':
+                triple = triple.rsplit('/', 1)[-1]
+            if triple.endswith('.json') and triple != '.json':
+                triple = triple[:-5]
         if not triple:
             fail("error: could not determine the build target (rustc -vV had no 'host:' line)")
         return cls(library, prefix, values['libdir'] or prefix + '/lib',
