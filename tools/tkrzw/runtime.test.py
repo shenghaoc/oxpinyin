@@ -17,7 +17,9 @@ class AdapterControlTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
-        self.directory = Path(temporary.name)
+        # Darwin's /var temporary root aliases /private/var; loader identities
+        # are physical paths on every host, just like the retained ELF fixtures.
+        self.directory = Path(temporary.name).resolve()
         self.library = self.directory / 'libtkrzw.so.1'
         self.library.write_bytes(b'verified')
         self.other = self.directory / 'other.so'
