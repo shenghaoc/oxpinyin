@@ -757,6 +757,37 @@ class InitAttributionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'do not reconcile'):
             td.callgrind_costs(self.CALLGRIND.replace('totals: 111', 'totals: 112'), Path('/x'))
 
+    def test_inclusive_edges_do_not_enter_exclusive_totals(self):
+        costs = td.callgrind_costs(self.CALLGRIND, Path('/w/libraries/subject/libzhuyin.so'))
+        self.assertEqual(costs['inclusive_functions'][0],
+                         dict(object='SUBJECT', function='zhuyin_init', Ir=111))
+        self.assertEqual(costs['edges'], [dict(caller_object='SUBJECT', caller='zhuyin_init',
+                         callee_object='libc.so.6', callee='memcpy', Ir=100)])
+        self.assertEqual(sum(row['Ir'] for row in costs['functions']), costs['totals']['Ir'])
+
+    def test_callgrind_callee_without_object_uses_callers_object(self):
+        text = '\n'.join(('events: Ir', 'ob=/subject.so', 'fn=root', '1 2',
+                          'cob=/libc.so', 'cfn=copy', 'calls=1 1', '1 3',
+                          'cfn=local', 'calls=1 1', '1 5', 'fn=local', '1 5',
+                          'ob=/libc.so', 'fn=copy', '1 3', 'totals: 10'))
+        costs = td.callgrind_costs(text, Path('/subject.so'))
+        self.assertIn(dict(caller_object='SUBJECT', caller='root', callee_object='SUBJECT',
+                           callee='local', Ir=5), costs['edges'])
+        self.assertEqual(costs['inclusive_functions'][0]['Ir'], 10)
+        with self.assertRaisesRegex(ValueError, 'do not reconcile'):
+            td.callgrind_costs(text + '\ncob=/subject.so\ncfn=root\ncalls=1 1', Path('/subject.so'))
+
+    def test_profiler_summary_retains_full_tables_and_refuses_replacement(self):
+        costs = td.callgrind_costs(self.CALLGRIND, Path('/subject.so'))
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            path = td.retain_profiler_summary(directory, 'sample-1', dict(profile=costs))
+            self.assertEqual(json.loads(path.read_text()), dict(profile=costs))
+            before = path.read_bytes()
+            with self.assertRaises(FileExistsError):
+                td.retain_profiler_summary(directory, 'sample-1', dict(profile={}))
+            self.assertEqual(path.read_bytes(), before)
+
     def test_init_ir_is_exact_off_bdb_and_diagnostic_on_bdb(self):
         def costs(*values):
             return [dict(totals=dict(Ir=value), objects={}, functions=[]) for value in values]
