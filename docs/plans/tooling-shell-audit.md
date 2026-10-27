@@ -131,38 +131,22 @@ from a historical `U6_BASE` checkout, is removed with it.
 suffix, the absent-field result and the unsupported-platform failure match what
 the reader returned, against a `U3_BASE` tree that still carries it.
 
-Registry review: the only legacy entries are the two Python file commands
-`train-index-diff` and `transformed-options-sweep`, plus `fuzz` and `coverage`.
-`tools/dev/registry.py`'s `_check_implementation` accepts `python:<module>` only
-when every dotted component passes `str.isidentifier()`, the corresponding
-module file or package entry point exists, and the command contains matching
-`-m MODULE` arguments. The existing modules are
-`tools.bisection.train-index-diff` and `tools.oracle.transformed-options-sweep`:
-CPython resolves and executes both with `-m`, but the validator rejects their
-hyphenated names. The underscore spellings pass the name check but have no
-corresponding files. `tools/dev/runners.py`'s `main` has no recipe alias for
-either command.
+Registry state: `train-index-diff` now names
+`python:tools.bisection.train_index_diff`, and `transformed-options-sweep` names
+`python:tools.oracle.transformed_options_sweep`. The two existing Python scripts
+were renamed with `git mv`; their commands use matching `-m MODULE` arguments.
+No validator change or wrapper was needed. Explicit argparse `prog` values keep
+the historical usage/error text, and existing loader diagnostic labels remain
+unchanged. Worker launches continue to use each script's `__file__`.
 
-Both files' `__main__` guards reach their existing `main()` functions under
-`-m`; their `__file__`-relative inputs and worker launches still resolve to the
-same files. However, both `main()` functions construct `ArgumentParser` without
-an explicit `prog`. On the managed interpreter, file and module invocations of
-`--help`, no arguments and an invalid option retain statuses 0/2/2 but produce
-different help/usage bytes: for example, `usage: train-index-diff.py ...` becomes
-`usage: python3.15 -m tools.bisection.train-index-diff ...`. Thus module invocation
-alone neither satisfies validation nor preserves the recorded output contract.
-No existing normal Python representation can complete this conversion within
-the no-source-change/no-validator-change scope. Both rows remain unchanged;
-`just plan --runners train-index-diff,transformed-options-sweep` is byte-identical
-to the pre-check output, rather than evidence of a completed conversion.
-
-The minimal proposal awaiting a maintainer ruling is one thin module adapter
-beside each original script, using the underscore module name. Each adapter
-would replace its process with the same managed interpreter and original script
-through `os.execv`, preserving argv, cwd, environment, signals and the original
-argparse/traceback entry point. Only these two registry rows would change their
-implementation and invocation to `python:MODULE` / `-m MODULE`; validation and
-the original scripts would remain unchanged. No adapter is added in this check.
+For these two rows, `just list --runners train-index-diff,transformed-options-sweep`
+changes only the implementation field. `just plan` with the same selection also
+shows the directly corresponding command-template change from an absolute
+script-path template to `-m MODULE`. This presentation change is necessary for
+the accepted module form; all other registry metadata and the remaining rows
+are unchanged. `--help`, missing arguments and an invalid option are compared
+between the preserved old tree and renamed module entries for identical stdout,
+stderr and status. Dated findings keep their historical paths.
 
 - `fuzz` stays `legacy:justfile`: its command is the native just recipe, which supplies admission and the platform's fuzz launcher; the caller supplies target/duration.
 - `coverage` stays `legacy:justfile`: its command is the native just recipe, which supplies admission before tools.dev.coverage; the caller supplies scope/report options.

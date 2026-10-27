@@ -6,6 +6,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -107,6 +108,44 @@ class RecipeTests(unittest.TestCase):
         for cell in ('bdb', 'kc', 'tkrzw'):
             for field in ('libpinyin_sha256_', 'libzhuyin_sha256_', 'data_manifest_sha256_'):
                 self.assertRegex(images.platform_field(pin, 'linux/arm64', field + cell), '^[0-9a-f]{64}$')
+
+    def test_pin_field_reads_match_the_retired_shell_reader(self):
+        # tools/oracle/pin.sh's pin_platform_field printed KEY for linux/amd64 and
+        # KEY_linux_arm64 for linux/arm64, never falling back to the unqualified
+        # field, printed nothing for an absent field, and failed silently for
+        # any other platform. U3_BASE names a tree that still carries it.
+        pin = ROOT / 'tools/oracle/oracle-pin.txt'
+        text = pin.read_text()
+
+        def current(platform, key):
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                status = commands.main(['pin-field', '--platform', platform, key])
+            return status, out.getvalue()
+
+        def retired(platform, key):
+            done = subprocess.run(['bash', '-c', 'source "$1/tools/oracle/pin.sh" && pin_platform_field "$2" "$3" "$4"',
+                                   'fixture', str(self.base), str(pin), platform, key],
+                                  cwd=ROOT, env=self.env, capture_output=True, timeout=20)
+            return done.returncode, done.stdout.decode()
+
+        keys = ('platform', 'libpinyin_commit', 'base_image', 'absent_field', 'libpinyin_sha256_bdb',
+                'libzhuyin_sha256_tkrzw', 'data_manifest_sha256_kc')
+        for platform, suffix in (('linux/amd64', ''), ('linux/arm64', '_linux_arm64')):
+            for key in keys:
+                with self.subTest(platform=platform, key=key):
+                    match = re.search('^' + re.escape(key + suffix) + '=(.*)$', text, re.M)
+                    expected = (0, match.group(1) + '\n' if match else '')
+                    self.assertEqual(current(platform, key), expected)
+                    if self.base:
+                        self.assertEqual(retired(platform, key), expected)
+        self.assertEqual(current('linux/amd64', 'platform'), (0, 'linux/amd64\n'))
+        self.assertEqual(current('linux/arm64', 'platform'), (0, 'linux/arm64\n'))
+        self.assertEqual(current('linux/arm64', 'libpinyin_commit'), (0, ''))
+        status, output = current('linux/riscv64', 'libpinyin_sha256_bdb')
+        self.assertEqual((status != 0, output), (True, ''))
+        if self.base:
+            self.assertEqual(retired('linux/riscv64', 'libpinyin_sha256_bdb'), (1, ''))
 
     def test_staged_guest_is_bound_to_the_snapshot_and_input_identity(self):
         directory=self.directory / 'input'

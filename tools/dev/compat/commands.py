@@ -16,6 +16,7 @@ RECIPES = {
     'docker-round-trip-inside': campaigns.docker_inside,
     'verify-image': images.verify_image,
     'reproducible': images.reproducible,
+    'pin-field': images.pin_field,
 }
 NAMES = (*RECIPES, 'image-tag', 'select-runtime')
 

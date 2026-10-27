@@ -2,6 +2,7 @@
 """Unit tests for the registry catalog and its selection rules."""
 import json
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -48,6 +49,24 @@ class ImplementationTests(unittest.TestCase):
             with self.subTest(row=entry['name']):
                 self.assertIn(entry['implementation'].partition(':')[0], registry.IMPLEMENTATION_FORMS)
                 self.assertTrue(target_file(ROOT, entry['implementation']).is_file())
+
+    def test_renamed_python_entrypoints_keep_file_and_module_cli_bytes(self):
+        for module, program in (
+                ('tools.bisection.train_index_diff', 'train-index-diff.py'),
+                ('tools.oracle.transformed_options_sweep', 'transformed-options-sweep.py')):
+            path = ROOT.joinpath(*module.split('.')).with_suffix('.py')
+            python = [sys.executable, '-X', 'lazy_imports=normal']
+            for args, expected in ((['--help'], 0), ([], 2), (['--invalid-option'], 2)):
+                with self.subTest(module=module, args=args):
+                    direct = subprocess.run([*python, str(path), *args], cwd=ROOT,
+                                            capture_output=True)
+                    as_module = subprocess.run([*python, '-m', module, *args], cwd=ROOT,
+                                               capture_output=True)
+                    self.assertEqual(direct.returncode, expected)
+                    self.assertEqual((direct.returncode, direct.stdout, direct.stderr),
+                                     (as_module.returncode, as_module.stdout, as_module.stderr))
+                    usage = direct.stdout if expected == 0 else direct.stderr
+                    self.assertTrue(usage.startswith(f'usage: {program} '.encode()), usage)
 
     def test_checked_in_row_logic_resolves_python_modules_and_keeps_paths_literal(self):
         for implementation, expected in (('python:tools.dev.registry', 'tools/dev/registry.py'),

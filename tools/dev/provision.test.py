@@ -74,26 +74,6 @@ class ProvisionTests(unittest.TestCase):
         return subprocess.run(['bash', '-c', command, 'fixture', str(path or self.service.env_file)],
                               env=dict(self.env, PINYIN_ORACLE_DBM=cell), capture_output=True)
 
-    def old(self, action, args=()):
-        # Source only known repository helpers with a synthetic pin and output path.
-        script = '''source "$1/tools/cloud/env.sh"
-source "$1/tools/oracle/pin.sh"
-pin=$2; oracle_root=$3; model_cache=$4; uv_dir=$5; tkrzw_prefix=$6; tkrzw_local=$7
-platform=linux/amd64
-shift 7
-pinval_platform() { pin_platform_field "$pin" "$platform" "$1"; }
-log() { printf '%s\\n' "$*" >&2; }
-'''
-        if action == 'write':
-            script += 'cells=("$@"); write_oracle_env\n'
-            args = self.service.cells
-        else:
-            script += 'data_ok "$@"\n'
-        return subprocess.run(['bash', '-c', script, 'fixture', str(self.base), str(self.service.pin),
-                               str(self.service.oracle_root), str(self.service.model_cache), self.service.uv_dir,
-                               str(self.service.tkrzw_prefix), str(int(self.service.tkrzw_local)), *map(str, args)],
-                              env=self.env, capture_output=True)
-
     def test_data_manifest_cases_and_exact_diagnostics(self):
         for cell in provision.CELLS:
             self.assertTrue(self.service.libs_ok(cell))
@@ -115,10 +95,6 @@ log() { printf '%s\\n' "$*" >&2; }
                     current = subprocess.run([sys.executable, '-X', 'lazy_imports=normal', '-c', program,
                                               str(self.service.pin), str(prefix)], cwd=ROOT, env=self.env, capture_output=True)
                     self.assertEqual(current.returncode, 1)
-                    if self.base:
-                        old = self.old('data', ['bdb', prefix])
-                        self.assertEqual((current.returncode, current.stdout, current.stderr),
-                                         (old.returncode, old.stdout, old.stderr))
                     path.write_bytes(original)
         self.assertTrue(self.service.data_ok('bdb'))
 
@@ -128,37 +104,20 @@ log() { printf '%s\\n' "$*" >&2; }
             self.service.write_oracle_env()
         return err.getvalue()
 
-    def compare_writer(self):
-        before = self.service.env_file.read_bytes() if self.service.env_file.exists() else None
-        current_error = self.write()
-        current = [self.source(cell) for cell in provision.CELLS]
-        new_file = self.service.env_file.read_bytes()
-        if self.base:
-            if before is None:
-                self.service.env_file.unlink()
-            else:
-                self.service.env_file.write_bytes(before)
-            old = self.old('write')
-            self.assertEqual(old.returncode, 0, old.stderr.decode())
-            self.assertEqual(old.stderr.decode(), current_error)
-            self.assertEqual(self.service.env_file.read_bytes(), new_file)
-            legacy = [self.source(cell) for cell in provision.CELLS]
-            self.assertEqual([(p.returncode, p.stdout, p.stderr) for p in current],
-                             [(p.returncode, p.stdout, p.stderr) for p in legacy])
-            # Source semantics must match, including historical shell %q paths.
-            self.service.env_file.write_bytes(new_file)
-        return current
+    def write_and_source(self):
+        self.write()
+        return [self.source(cell) for cell in provision.CELLS]
 
     def test_writer_retains_cells_runtime_quotes_and_another_cache(self):
-        self.compare_writer()
+        self.write_and_source()
         self.service.cells = ['bdb']
         self.service.tkrzw_local = False
-        self.compare_writer()
+        self.write_and_source()
         old_root = self.service.oracle_root
         self.service.cache = self.work / 'another cache'
         (self.service.oracle_root).mkdir(parents=True)
         shutil.copytree(old_root / 'bdb', self.service.oracle_root / 'bdb')
-        results = self.compare_writer()
+        results = self.write_and_source()
         self.assertIn(str(self.service.oracle_root / 'bdb').encode(), results[0].stdout)
         self.assertIn(str(old_root / 'kc').encode(), results[1].stdout)
         self.assertIn(str(self.work / "cache '$`" / 'tkrzw').encode(), results[2].stdout)
@@ -168,12 +127,12 @@ log() { printf '%s\\n' "$*" >&2; }
             path = old_root / cell / name
             original = path.read_bytes()
             path.write_bytes(original + b'bad\n')
-            results = self.compare_writer()
+            results = self.write_and_source()
             self.assertEqual(results[provision.CELLS.index(cell)].returncode, 1)
             path.write_bytes(original)
             self.service.cache = old_root.parent
             self.service.cells = list(provision.CELLS)
-            self.compare_writer()
+            self.write_and_source()
             self.service.cache = self.work / 'another cache'
             self.service.cells = ['bdb']
 
