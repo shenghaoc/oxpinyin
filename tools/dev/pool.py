@@ -380,10 +380,12 @@ class UnitContext:
 
     def launch(self, argv: Sequence[str], *, env: Mapping[str, str] | None = None,
                pass_fds: Sequence[int] | None = None, poll: float = 0.1,
-               cwd: Path | None = None, merge_stderr: bool = False, umask: int = -1) -> Completed:
+               cwd: Path | None = None, merge_stderr: bool = False, umask: int = -1,
+               input: bytes = b'') -> Completed:
         """Run ARGV in its own session and return its status and captured output.
 
-        stdin is closed at once. Every POLL seconds the unit checks for a stop; on a
+        INPUT is written to stdin, then stdin is closed (empty by default).
+        Every POLL seconds the unit checks for a stop; on a
         stop, a timeout of the caller's making, or any other error the group gets
         SIGTERM, then SIGKILL through slot.terminate_group, and its leader is reaped before the
         error propagates. ENV defaults to the unit's environment, PASS_FDS to its slot
@@ -398,7 +400,7 @@ class UnitContext:
                 while True:
                     self.check()
                     try:
-                        stdout, stderr = process.communicate(b'' if first else None, timeout=poll)
+                        stdout, stderr = process.communicate(input if first else None, timeout=poll)
                         break
                     except subprocess.TimeoutExpired:
                         first = False

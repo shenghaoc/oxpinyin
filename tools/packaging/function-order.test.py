@@ -808,8 +808,36 @@ printf ' 0x000000000000000e (SONAME) Library soname: [libpinyin.so.15]\n'
         if (work / "args").exists():
             arguments = (work / "args").read_bytes().split(b"\0")[:-1]
             arguments[arguments.index(b"-o") + 1] = b"OUTPUT"
+        produced = destination.read_bytes()
+        if os.environ.get('OXPINYIN_PACKAGING_BASE'):
+            base = Path(os.environ['OXPINYIN_PACKAGING_BASE']) / 'tools/packaging'
+            control = work / 'old-packaging'
+            control.mkdir(exist_ok=True)
+            for name in ('relink-versioned.sh', 'function-order.sh', 'function-order.awk'):
+                shutil.copyfile(base / name, control / name)
+            (work / 'lib').mkdir(exist_ok=True)
+            shutil.copyfile(ROOT / 'tools/lib/bash-floor.sh', work / 'lib/bash-floor.sh')
+            shutil.rmtree(control / 'function-order', ignore_errors=True)
+            if script and (script.parent / 'function-order').exists():
+                shutil.copytree(script.parent / 'function-order', control / 'function-order', dirs_exist_ok=True)
+            destination.write_bytes(b'original installed bytes')
+            (work / 'args').unlink(missing_ok=True)
+            old = subprocess.run(['bash', str(control / 'relink-versioned.sh'), *command[7:]],
+                                 capture_output=True, text=True, check=False, env=environment)
+            self.assertEqual(produced, destination.read_bytes())
+            def normal(text):
+                text = text.replace(str(control), str(script.parent if script else HERE))
+                return re.sub(r'\.relink\.[A-Za-z0-9_]+(?:\.order\.[A-Za-z0-9_]+)?', '.relink.TEMP', text)
+            self.assertEqual((result.returncode, normal(result.stdout), normal(result.stderr)),
+                             (old.returncode, normal(old.stdout), normal(old.stderr)))
+            old_arguments = (work / 'args').read_bytes().split(b'\0')[:-1] if (work / 'args').exists() else None
+            self.assertEqual(arguments is None, old_arguments is None)
+            if old_arguments is not None:
+                old_arguments[old_arguments.index(b'-o') + 1] = b'OUTPUT'
+                clean = lambda words: [re.sub(rb'\.relink\.[A-Za-z0-9_]+(?:\.order\.[A-Za-z0-9_]+)?', b'.relink.TEMP', word) for word in words]
+                self.assertEqual(clean(arguments), clean(old_arguments))
         self.assertEqual(list(work.glob("*.relink.*")), [], "relink scratch leaked")
-        return result, arguments, destination.read_bytes()
+        return result, arguments, produced
 
     def test_explicit_empty_skips_query_and_fallback_preserves_link_arguments(self):
         with scratch() as work:

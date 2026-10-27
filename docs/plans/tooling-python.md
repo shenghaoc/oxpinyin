@@ -482,6 +482,28 @@ together and update caller provisioning; retain a thin shell interface only if
 an actual outside requirement or image-build caller is identified and recorded.
 This is not authority to change policy files, compiler recipes or exports.
 
+U4 is implemented by `just packaging COMMAND` (`python -m tools.dev packaging
+COMMAND`), `tools/dev/packaging.py` and the package metadata in
+`tools/dev/packaging_templates.py`. The ten shell entry points are removed.
+`tools/packaging/function_order.py` invokes the unchanged AWK resolver for
+installation, generation callers and measurement validation. Heavy work uses
+`slot.run_command`; captured processes use the pool, including nm-to-AWK stdin.
+Stages share their install tree/target, so their dependent facade installs stay
+serial. The release and function-order CI callers provision managed Python first.
+
+U4's deliberate diagnostic differences change no status. A missing required
+package argument prints `error: NAME required` with status 1, replacing Bash's
+`script: line N: K: NAME required`. Missing executables retain 127 and
+non-executable commands retain 126 with Python's OS error text in place of
+Bash's script/line diagnostic. Missing metadata roots retain status 2 and their
+`error: no pin/subject root` line without Bash's additional `cd` diagnostic.
+A malformed policy in linked-object measurement is attributed to `awk:` in
+place of the removed `bash:` launcher. The metadata usage restores the complete
+preserved shell header, including "unified diff); 2 on a usage error or a
+missing input."; the old sed range stopped at the preceding "Exits" line.
+Other usage, resolver diagnostics, package metadata, explicit refusals and
+cancellation statuses remain the same.
+
 U5 preserves lint diagnostics and 0/1/2 meanings, backend positive/negative
 checks, backend-specific sanitizer flags, toolchain/target selection, allow-skip
 behavior, Linux setarch and Darwin refusals/paths. Its entry points are
