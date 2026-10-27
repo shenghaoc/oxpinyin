@@ -71,6 +71,7 @@ if os.environ.get('AMBIGUOUS_BAKED'):
 lib=Path(value('--destdir')+value('--libdir'))
 lib.mkdir(parents=True,exist_ok=True)
 (lib/(library+'.so.15.0.0')).write_bytes(b'installed library')
+(lib/(library+'.15.0.0.dylib')).write_bytes(b'installed dylib')
 (lib/(library+'.a')).write_bytes(b'static archive')
 for suffix,target in [('.so.15',library+'.so.15.0.0'),('.so',library+'.so.15')]:
     path=lib/(library+suffix)
@@ -115,7 +116,9 @@ class PackagingTests(unittest.TestCase):
                     'CALLS': str(self.work / 'calls'), 'CARGO_BUILD_TARGET': 'fixture-target'}
         self.env.pop('CARGO_TARGET_DIR', None)
         self.fake('cargo', FAKE_CARGO)
-        self.fake('uname', "print('Darwin')")
+        # A host with no relink lane: the Linux relink has RelinkTests and the
+        # Mach-O relink MachoRelinkTests, both in tools/packaging/function-order.test.py.
+        self.fake('uname', "print('fixture-host')")
         self.fake('rustc', "print('host: fixture-target')")
         self.fake('dpkg', "print('fixture-architecture')")
         self.fake('nm','pass')
@@ -290,6 +293,177 @@ unified diff); 2 on a usage error or a missing input.
                 pc = (stage / 'usr/lib/pkgconfig' / (library + '.pc')).read_bytes()
                 self.assertIn(b'exec_prefix=${prefix}\nlibdir=${exec_prefix}/lib\nincludedir=${prefix}/include\n', pc)
                 shutil.rmtree(stage)
+
+    def test_macos_install_runs_the_mach_o_relink_lane(self):
+        # The Darwin host selects the facade's checked-in policy and relinks
+        # the installed dylib (MachoRelinkTests covers the relink itself); an
+        # explicit opt-out keeps cargo-c's object. No preserved-base control:
+        # the shell entry points had no Mach-O lane. Every tool the lane
+        # consults before the policy is a fake here, so the outcome is the
+        # same on a Linux host, which has no otool.
+        self.fake('uname', "print('Darwin')")
+        for tool in ('cc', 'nm', 'otool'):
+            self.fake(tool, 'pass')
+        self.env.pop('CC', None)
+        stage = self.work / 'stage'
+        for library in packaging.LIBRARIES:
+            with self.subTest(library=library):
+                shutil.rmtree(stage, ignore_errors=True)
+                result = self.invoke('install', [library, '--prefix=/usr', '--destdir=' + str(stage)],
+                                     env={'CARGO_BUILD_TARGET': 'aarch64-apple-darwin'})
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIn(b'policy not found: ' + os.fsencode(str(self.root / 'tools/packaging/function-order/bdb' / (library + '.order'))),
+                              result.stderr)
+                self.assertIn(b'(checked-in)', result.stderr)
+                self.assertEqual((stage / 'usr/lib' / (library + '.15.0.0.dylib')).read_bytes(), b'installed dylib')
+                shutil.rmtree(stage, ignore_errors=True)
+                result = self.invoke('install', [library, '--prefix=/usr', '--destdir=' + str(stage)],
+                                     env={'CARGO_BUILD_TARGET': 'aarch64-apple-darwin', 'OXPINYIN_FUNCTION_ORDER_POLICY': ''})
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(b'disabled by explicit opt-out; keeping the original Mach-O layout', result.stderr)
+                self.assertEqual((stage / 'usr/lib' / (library + '.15.0.0.dylib')).read_bytes(), b'installed dylib')
+
+    def macos_fakes(self):
+        """Fakes for every tool either relink consults; cc and rustc record their arguments.
+
+        nm answers each of the relinks' questions from the version script
+        FIXTURE_VER names: the Mach-O views of one text symbol, the exported
+        symbols, and the versioned ELF exports.
+        """
+        self.fake('uname', "print('Darwin')")
+        self.fake('rustc', r"""import json,os,sys
+from pathlib import Path
+args=sys.argv[1:]
+Path(os.environ['RUSTC_CALLS']).write_text(json.dumps(args))
+print('host: fixture-target' if '-vV' in args else 'MACOSX_DEPLOYMENT_TARGET=11.0')
+""")
+        self.fake('cc', r"""import json,os,sys
+from pathlib import Path
+args=sys.argv[1:]
+Path(os.environ['CC_CALLS']).write_text(json.dumps(args))
+if '-o' in args: Path(args[args.index('-o')+1]).write_bytes(b'synthetic linked bytes')
+""")
+        self.fake('nm', r"""import os,re,sys
+from pathlib import Path
+args=sys.argv[1:]
+names=re.findall(r'\b(?:pinyin|zhuyin)_\w+(?=\s*;)', Path(os.environ['FIXTURE_VER']).read_text())
+if '--format=darwin' in args:
+    print('0000000000000100 (__TEXT,__text) external _'+names[0])
+elif '-g' in args:
+    for name in names: print('0000000000000100 T _'+name)
+elif '-D' in args:
+    print('00000000 A LIBPINYIN')
+    for name in names: print('00000001 T '+name+'@@LIBPINYIN')
+else:
+    print('0000000000000100 T _'+names[0])
+""")
+        self.fake('otool', "print('Section\\n  sectname __text\\n   segname __TEXT\\n      addr 0x0000000000000100\\n      size 0x10')")
+        self.fake('readelf', "print(' 0x000000000000000e (SONAME) Library soname: [libpinyin.so.15]')")
+        self.env.update(CC_CALLS=str(self.work / 'cc-calls'), RUSTC_CALLS=str(self.work / 'rustc-calls'))
+        for name in ('CC', 'OXPINYIN_BDB_LIB_DIR', 'OXPINYIN_FUNCTION_ORDER_POLICY', 'OXPINYIN_RELINK_FEATURES'):
+            self.env.pop(name, None)
+
+    def relink_inputs(self, dest):
+        archive, ver, policy = (self.work / name for name in ('library.a', 'library.ver', 'policy.order'))
+        archive.write_bytes(b'synthetic archive')
+        ver.write_text('LIBPINYIN {\n global:\n pinyin_init;\n local:\n *;\n};\n')
+        policy.write_text('oxpinyin-function-order-v1\tlibpinyin.so.15\ninit\tpinyin_init\n')
+        dest.write_bytes(b'original installed bytes')
+        for name in ('cc-calls', 'rustc-calls'):
+            (self.work / name).unlink(missing_ok=True)
+        return archive, ver, policy
+
+    def recorded(self, name):
+        path = self.work / name
+        return json.loads(path.read_text()) if path.exists() else None
+
+    def macos_relink(self, arguments):
+        dest = self.work / 'libpinyin.15.0.0.dylib'
+        archive, ver, policy = self.relink_inputs(dest)
+        result = self.invoke('relink-macho', ['--staticlib', archive, '--ver', ver, '--soname', 'libpinyin.so.15',
+                                              '--dest', dest, '--install-name', '/opt/stage/lib/libpinyin.15.dylib',
+                                              '--function-order', policy, *arguments], env={'FIXTURE_VER': str(ver)})
+        return result, self.recorded('cc-calls'), self.recorded('rustc-calls'), dest.read_bytes()
+
+    def test_darwin_relink_links_the_kyoto_cabinet_shim_against_libcxx(self):
+        self.macos_fakes()
+        result, cc, _, data = self.macos_relink(['--features', 'kyotocabinet'])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(data, b'synthetic linked bytes')
+        self.assertIn('-lkyotocabinet', cc)
+        self.assertEqual(cc[cc.index('-lkyotocabinet') + 1], '-lc++')
+        self.assertNotIn('-lstdc++', cc)
+        # The Linux relink keeps libstdc++, the runtime its shim is built against.
+        self.fake('uname', "print('Linux')")
+        dest = self.work / 'libpinyin.so.15.0.0'
+        archive, ver, _ = self.relink_inputs(dest)
+        result = self.invoke('relink-versioned', ['--staticlib', archive, '--ver', ver, '--soname', 'libpinyin.so.15',
+                                                  '--dest', dest, '--features', 'kyotocabinet', '--function-order', ''],
+                             env={'FIXTURE_VER': str(ver)})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        cc = self.recorded('cc-calls')
+        self.assertEqual(cc[cc.index('-lkyotocabinet') + 1], '-lstdc++')
+        self.assertNotIn('-lc++', cc)
+        self.assertEqual(dest.read_bytes(), b'synthetic linked bytes')
+
+    def test_darwin_relink_target_selects_the_architecture_and_deployment_target(self):
+        self.macos_fakes()
+        for triple, arch in (('x86_64-apple-darwin', 'x86_64'), ('aarch64-apple-darwin', 'arm64')):
+            with self.subTest(triple=triple):
+                result, cc, rustc, data = self.macos_relink(['--target', triple])
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(data, b'synthetic linked bytes')
+                self.assertEqual(cc[:3], ['-dynamiclib', '-arch', arch])
+                self.assertEqual(rustc, ['--print', 'deployment-target', '--target', triple])
+                self.assertIn('-mmacosx-version-min=11.0', cc)
+
+    def test_darwin_install_passes_the_build_target_to_the_relink(self):
+        self.macos_fakes()
+        policy = self.root / 'tools/packaging/function-order/bdb/libpinyin.order'
+        policy.parent.mkdir(parents=True)
+        policy.write_text('oxpinyin-function-order-v1\tlibpinyin.so.15\ninit\tpinyin_init\n')
+        stage = self.work / 'stage'
+        result = self.invoke('install', ['libpinyin', '--prefix=/usr', '--destdir=' + str(stage)],
+                             env={'CARGO_BUILD_TARGET': 'x86_64-apple-darwin',
+                                  'FIXTURE_VER': str(self.root / 'crates/oxpinyin-capi/libpinyin.ver')})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        cc, rustc = self.recorded('cc-calls'), self.recorded('rustc-calls')
+        self.assertEqual(cc[:3], ['-dynamiclib', '-arch', 'x86_64'])
+        self.assertEqual(rustc, ['--print', 'deployment-target', '--target', 'x86_64-apple-darwin'])
+        self.assertIn('-Wl,-u,_pinyin_init', cc)
+        self.assertIn(os.fsdecode(str(self.root / 'target/x86_64-apple-darwin/release/libpinyin.a')), cc)
+        self.assertEqual((stage / 'usr/lib/libpinyin.15.0.0.dylib').read_bytes(), b'synthetic linked bytes')
+        self.assertIn(b'relinked ', result.stdout)
+
+    def test_darwin_relink_refuses_a_target_that_is_not_apple_darwin(self):
+        self.macos_fakes()
+        for triple in ('x86_64-unknown-linux-gnu', 'fixture-target', 'i686-apple-darwin'):
+            with self.subTest(triple=triple):
+                result, cc, rustc, data = self.macos_relink(['--target', triple])
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIsNone(cc)
+                self.assertIsNone(rustc)
+                self.assertEqual(data, b'original installed bytes')
+                self.assertIn(b'error: relink-macho', result.stderr)
+                self.assertIn(triple.encode(), result.stderr)
+
+    def test_darwin_relink_without_target_keeps_the_host_command_lines(self):
+        self.macos_fakes()
+        result, cc, rustc, data = self.macos_relink([])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(rustc, ['--print', 'deployment-target'])
+        self.assertNotIn('-arch', cc)
+        archive = cc.index(str(self.work / 'library.a'))
+        scratch = os.path.dirname(cc[4].removeprefix('-Wl,-order_file,'))
+        self.assertEqual(cc[:archive], [
+            '-dynamiclib', '-mmacosx-version-min=11.0', '-o', cc[3],
+            '-Wl,-order_file,' + scratch + '/order.txt', '-Wl,-S', '-Wl,-dead_strip',
+            '-Wl,-exported_symbols_list,' + scratch + '/exports.txt',
+            '-Wl,-install_name,/opt/stage/lib/libpinyin.15.dylib', '-Wl,-compatibility_version,15',
+            '-Wl,-current_version,15.0.0', '-Wl,-headerpad_max_install_names', '-Wl,-u,_pinyin_init'])
+        self.assertTrue(cc[3].startswith(str(self.work / 'libpinyin.15.0.0.relink.')))
+        self.assertEqual(sorted(cc[archive + 1:archive + 3]), ['-lglib-2.0', '-lgobject-2.0'])
+        self.assertEqual(cc[archive + 3:], ['-ldb', '-liconv'])
 
     def test_explicit_layout_and_special_replacement_bytes(self):
         result, stage = self.install(extra=['--libdir=/usr/lib & hash#dir', '--includedir=/usr/inc\\lude#&'])

@@ -130,6 +130,11 @@ The controller acquires `tools.dev.slot` for its worker build and whole run.
 It uses private, equal-length base/PR/control library paths and fresh user
 copies, checks each Linux arm with the shared function-order verifier, and
 removes temporary inputs even after failure. It writes no profiler capture.
+On macOS it reports `function-order` as `unavailable` and measures the
+supplied dylibs as they are; the ordered layout is applied and verified when
+the prefix is installed ([Mach-O order file](../packaging.md#mach-o-order-file-macos)),
+so a macOS base built with `OXPINYIN_FUNCTION_ORDER_POLICY=` is cargo-c's
+unordered object and a PR built without it is the ordered relink.
 Do not overlap measurement with builds; use the existing host-wide slot.
 The PR control is always a byte-for-byte copy. Explicit policy overrides
 use `--function-order ARM/FACADE=POLICY`; there is no unordered bypass.
@@ -365,6 +370,39 @@ cannot write as wholly resident, so a permission gap rejects samples instead
 of qualifying them. Files the sample does not own (libc, libstdc++, backend
 libraries) stay warm. Cold campaigns evict only named files; run them when
 no other measurement lane shares the host's page cache.
+
+### Processor Trace check (macOS)
+
+On an Apple M4 or newer Mac with Xcode 16.3 or newer, the Processor Trace
+instrument records every function call of one process from the CPU's branch
+trace. `just measure processor-trace` compares one startup's calls inside a
+facade dylib with the Mach-O order file the install derived
+([Mach-O order file](../packaging.md#mach-o-order-file-macos)): the
+functions executed and ordered, by policy tier; the executed functions the
+policy does not name, could not resolve, or names under another
+instantiating crate; and the ordered init-tier functions the trace did not
+execute. It changes no policy; its lists are proposals. Record the startup
+worker (`tools/workers/startup.c`, built as the controller builds it) in its
+`stop` mode at `init` or `first_candidate`, the policy's startup scope, then
+read the recording:
+
+```sh
+cc -std=gnu11 -Wall -Wextra -Werror -O2 -g -o "$WORK/startup" tools/workers/startup.c
+EXPORTS=$(grep -o 'pinyin_[A-Za-z0-9_]*[[:space:]]*;' crates/oxpinyin-capi/libpinyin.ver | sed 's/[[:space:]]*;//' | paste -sd, -)
+xcrun xctrace record --template 'Processor Trace' --output "$WORK/init.trace" --no-prompt \
+  --env "OXPINYIN_STARTUP_EXPORTS=$EXPORTS" --launch -- "$WORK/startup" stop pinyin \
+  "$PREFIX/lib/libpinyin.15.0.0.dylib" "$DATA" "$WORK/user" now first_candidate
+just measure processor-trace --trace "$WORK/init.trace" \
+  --library "$PREFIX/lib/libpinyin.15.0.0.dylib" --policy tools/packaging/function-order/bdb/libpinyin.order
+```
+
+`$WORK/user` is a fresh copy of the empty profile's `user` directory. The
+recipe exports the intervals table with `xctrace export` into a temporary
+directory (`--export-dir` keeps it, `--intervals` reads an existing export),
+attributes each call's Mach-O vm offset to the dylib's `__TEXT,__text`
+symbol with llvm-nm, and prints one JSON record. A Processor Trace holds a
+whole process, so the record also counts the binaries seen; only the named
+library is compared. Nothing is archived.
 
 ## Native teardown workload
 
