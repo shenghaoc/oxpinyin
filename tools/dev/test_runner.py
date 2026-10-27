@@ -172,6 +172,7 @@ HARNESS_DEPENDENCIES = {
     'tools/dev/measure/neutrality.py': ('tools/dev/measure/neutrality.test.py', 'tools/dev/measure/probes.test.py',
                                         'tools/dev/measure/valgrind.test.py'),
     'tools/dev/measure/probes.py': ('tools/dev/measure/probes.test.py',),
+    'tools/dev/measure/processor_trace.py': ('tools/dev/measure/processor_trace.test.py',),
     'tools/dev/measure/profile.py': ('tools/dev/measure/profile.test.py',),
     'tools/dev/measure/snapshot.py': ('tools/dev/measure/snapshot.test.py',),
     'tools/perf-gate/callgrind-ir.py': ('tools/perf-gate/callgrind-ir.test.py', 'tools/dev/measure/snapshot.test.py'),

@@ -6,6 +6,11 @@ The current compiler driver's linker is diagnostic only; the object's layout,
 not a build message or a capability probe, establishes ordering. No files are
 written. Policy validation and Rust identities reuse the packaging resolver
 and generator, including v0 instantiating crates and compiler clone families.
+
+The Mach-O functions derive Apple's -order_file from the same ELF policy and
+check the linked dylib's __TEXT,__text prefix with the same rule
+(docs/packaging.md, "Mach-O order file"). The policy's identities are
+target-independent; the raw Mach-O names they resolve to are not.
 """
 import argparse
 from collections import defaultdict
@@ -19,6 +24,15 @@ HERE = Path(__file__).resolve().parent
 GEN = runpy.run_path(str(HERE.parent / 'generate-function-order.py'))
 
 
+def launcher(run=None):
+    """RUN, a captured process adapter, or this tool's own pool launcher."""
+    if run is not None:
+        return run
+    from tools.dev import pool, slot
+    return pool.UnitContext('function-order', slot.CANCELLED,
+                            environment={**os.environ, 'LC_ALL': 'C'}).launch
+
+
 def resolve(mode, archive=None, policy=None, soname=None, *, run=None):
     """Run the existing nm/AWK resolver; keep policy semantics in one place.
 
@@ -26,10 +40,8 @@ def resolve(mode, archive=None, policy=None, soname=None, *, run=None):
     pool feeds the nm bytes to AWK on stdin, as the shell pipe did.
     RUN is a captured process adapter; packaging supplies its pool launcher.
     """
-    from tools.dev import pool, slot
-    context = pool.UnitContext('function-order', slot.CANCELLED,
-                               environment={**os.environ, 'LC_ALL': 'C'})
-    launch = run or context.launch
+    from tools.dev import pool
+    launch = launcher(run)
     arguments = ['awk', '-v', f'mode={mode}']
     if mode != 'inventory':
         arguments += ['-v', f'policy={policy}', '-v', f'soname={soname}']
@@ -135,21 +147,31 @@ def verify(library, policy, facade, *, policy_reader=resolve):
         if original[1:] != symbol[1:]:
             raise ValueError('raw/demangled symbol-table records disagree')
         if symbol[6] == '.text':
-            entries.append((GEN['stable_identity'](symbol[0], original[0]), original))
-    present = {name for name, _ in entries}
+            entries.append((GEN['stable_identity'](symbol[0], original[0]), int(original[1], 16),
+                            GEN['section_family'](original[0])))
+    present = {name for name, _, _ in entries}
     names = [name for name in names if name in present or not GEN['cxx_mangled'](name)]
+    return prefix_layout(names, entries, start)
+
+
+def prefix_layout(names, entries, start, section='.text'):
+    """Require NAMES, in order, as contiguous groups from the start of SECTION.
+
+    ENTRIES are (name, address, family) for every function in the section;
+    a name outside NAMES is an unselected function, retained to detect
+    interleaving. One policy name must map to one family of bodies.
+    """
     positions = {name: index for index, name in enumerate(names)}
     groups = defaultdict(set)
     families = defaultdict(set)
     found = set()
-    for name, original in entries:
+    for name, address, family in entries:
         index = positions.get(name)
-        address = int(original[1], 16)
         groups[address]  # retain unselected functions to detect interleaving
         if index is not None:
             groups[address].add(index)
             found.add(index)
-            families[index].add(GEN['section_family'](original[0]))
+            families[index].add(family)
     missing = [name for index, name in enumerate(names) if index not in found]
     if missing:
         raise ValueError(f'{len(missing)} policy paths missing (or stripped): {missing[0]}')
@@ -158,7 +180,7 @@ def verify(library, policy, facade, *, policy_reader=resolve):
             raise ValueError('ambiguous policy path: ' + names[index])
     addresses = sorted(groups)
     if not addresses or addresses[0] != start or 0 not in groups[addresses[0]]:
-        raise ValueError('first policy function is not at the start of .text')
+        raise ValueError(f'first policy function is not at the start of {section}')
     previous = 0
     ended = False
     for address in addresses:
@@ -175,6 +197,168 @@ def verify(library, policy, facade, *, policy_reader=resolve):
             raise ValueError(f'policy functions out of order at {address:#x}: {names[low]}')
         previous = high
     return dict(paths=len(names), text_start=hex(start))
+
+
+# Mach-O (macOS). Apple's linker lays out atoms, one per function, and
+# -order_file names them by symbol. Every C-level Mach-O name carries a leading
+# underscore, and a Rust name's crate disambiguators and hashes differ between
+# targets, so the policy (target-independent demangled identities) is resolved
+# against the archive this build links. llvm-nm supplies both views: the
+# darwin format carries the section, the demangled BSD format the identity.
+# --no-llvm-bc keeps nm on the Mach-O symbol tables; the archive's
+# compiler-builtins members embed bitcode from rustc's own LLVM, which Apple's
+# reader rejects.
+MACHO_NM = ('nm', '--no-sort', '--defined-only', '--no-llvm-bc')
+MACHO_TEXT = '__TEXT,__text'
+MACHO_RECORD = re.compile(r'([0-9a-fA-F]+) \(([^()\s]+)\) (?:\S.*\s)?(\S+)')
+MACHO_BSD_RECORD = re.compile(r'([0-9a-fA-F]+) ([A-Za-z]) (.+)')
+
+
+def macho_identity(raw, demangled):
+    """The stable identity of one Mach-O symbol, as the ELF resolver forms it, or None.
+
+    The leading underscore is Mach-O's, not the name's. A Rust name resolves
+    through llvm-nm's demangling plus the instantiating crate decoded from the
+    raw name; a Rust name nm could not demangle has no identity. A C++ (Itanium)
+    name is its own raw path; a C name is itself. A compiler clone's suffix
+    (".1482", which llvm-nm renders as " (.1482)") marks a body of the same
+    family, not another identity, as the ELF section family does.
+    """
+    bare = GEN['section_family'](raw[1:] if raw.startswith('_') else raw)
+    demangled = re.sub(r' \(\.[^()]*\)$', '', demangled)
+    if GEN['cxx_mangled'](bare):
+        return bare
+    if GEN['rust_mangled'](bare):
+        if demangled == raw:
+            return None
+        return GEN['stable_identity'](demangled, bare)
+    return GEN['stable_identity'](bare, bare)
+
+
+def macho_records(text):
+    """(raw name, address, section) per defined symbol of llvm-nm's darwin format.
+
+    Archive member headers and blank lines carry no symbol. The name is the
+    last field; the visibility words and annotations between the section and
+    the name ("private external", "[cold func]", "(was a private external)")
+    are not identity.
+    """
+    records = []
+    for line in text.splitlines():
+        match = MACHO_RECORD.fullmatch(line)
+        if match:
+            address, section, name = match.groups()
+            records.append((name, int(address, 16), section))
+    return records
+
+
+def macho_symbols(darwin, demangled):
+    """Join one file's darwin-format and demangled BSD records, in symbol-table order.
+
+    Return (identity, raw, address, section) per defined symbol. Both nm runs
+    list the same symbols; a count or address disagreement is an error, as the
+    ELF reader's is.
+    """
+    decoded = [match.groups() for match in map(MACHO_BSD_RECORD.fullmatch, demangled.splitlines()) if match]
+    records = macho_records(darwin)
+    if len(records) != len(decoded):
+        raise ValueError('raw/demangled symbol-table lengths differ')
+    symbols = []
+    for (raw, address, section), (value, _, name) in zip(records, decoded, strict=True):
+        if int(value, 16) != address:
+            raise ValueError('raw/demangled symbol-table records disagree')
+        symbols.append((macho_identity(raw, name), raw, address, section))
+    return symbols
+
+
+def macho_order(names, symbols):
+    """Resolve policy identities to raw __TEXT,__text symbol names, in policy order.
+
+    Return (ordered raw names, unresolved identities). A policy path this
+    build lacks is reported, not refused: the policy was generated from the
+    ELF build, and the targets' function sets differ. Every body of one
+    clone family is ordered, in symbol-table order; an identity with bodies
+    of two families is ambiguous, as on ELF.
+    """
+    bodies = defaultdict(dict)
+    for identity, raw, _, section in symbols:
+        if identity is not None and section == MACHO_TEXT:
+            bodies[identity].setdefault(GEN['section_family'](raw), []).append(raw)
+    ordered, unresolved, seen = [], [], set()
+    for name in names:
+        families = bodies.get(name, {})
+        if not families:
+            unresolved.append(name)
+            continue
+        if len(families) != 1:
+            raise ValueError('ambiguous policy path: ' + name)
+        for raw in next(iter(families.values())):
+            if raw not in seen:
+                seen.add(raw)
+                ordered.append(raw)
+    return ordered, unresolved
+
+
+def macho_tables(path, run=None, *, demangle=True):
+    """llvm-nm's darwin-format text of PATH, and its demangled BSD text when asked."""
+    launch = launcher(run)
+    texts = []
+    for flags in (('--format=darwin',), ('--demangle',))[:1 + demangle]:
+        done = launch([*MACHO_NM, *flags, str(path)])
+        if done.status:
+            raise ValueError(f'nm: {done.stderr.decode(errors="replace").strip()}')
+        texts.append(done.stdout.decode(errors='surrogateescape'))
+    return texts
+
+
+def macho_order_file(policy, archive, soname, *, run=None):
+    """Apple -order_file text for POLICY (an ELF policy of SONAME) against a Mach-O ARCHIVE.
+
+    Return (order-file bytes, policy paths, ordered raw names, unresolved
+    paths). The policy is validated by the AWK resolver's policy mode; every
+    resolved path keeps its position, with every body of its clone family.
+    """
+    done = resolve('policy', policy=policy, soname=soname, run=run)
+    if done.status:
+        raise ValueError(f'awk: {done.stderr.decode(errors="replace").strip()}')
+    names = done.stdout.decode().splitlines()
+    ordered, unresolved = macho_order(names, macho_symbols(*macho_tables(archive, run)))
+    if not ordered:
+        raise ValueError('no policy path resolves against the Mach-O archive')
+    lines = [f'# oxpinyin function order: {Path(policy).name} ({soname}) resolved against {Path(archive).name}',
+             *ordered]
+    return ''.join(line + '\n' for line in lines).encode(), names, ordered, unresolved
+
+
+def macho_text_start(text):
+    """The address of the one __TEXT,__text section in otool -l output."""
+    starts = re.findall(r'sectname __text\s*\n\s*segname __TEXT\s*\n\s*addr (0x[0-9a-fA-F]+)', text)
+    if len(starts) != 1:
+        raise ValueError('expected one Mach-O __TEXT,__text section')
+    return int(starts[0], 16)
+
+
+def verify_macho(library, ordered, *, run=None):
+    """Require ORDERED, in order, at the start of the linked dylib's __TEXT,__text.
+
+    ORDERED was resolved against the archive; a name the linked object lacks
+    was dead-stripped and is returned, not counted. The rest must form the
+    section's prefix in policy order with no unselected function between
+    them, as the ELF check requires. Return (layout, stripped names).
+    """
+    launch = launcher(run)
+    (darwin,) = macho_tables(library, launch, demangle=False)
+    entries = [(raw, address, raw) for raw, address, section in macho_records(darwin) if section == MACHO_TEXT]
+    done = launch(['otool', '-l', str(library)])
+    if done.status:
+        raise ValueError(f'otool: {done.stderr.decode(errors="replace").strip()}')
+    start = macho_text_start(done.stdout.decode(errors='surrogateescape'))
+    present = {raw for raw, _, _ in entries}
+    stripped = [raw for raw in ordered if raw not in present]
+    names = [raw for raw in ordered if raw in present]
+    if not names:
+        raise ValueError('no ordered function is in the linked object')
+    return prefix_layout(names, entries, start, MACHO_TEXT), stripped
 
 
 def add_arguments(parser):

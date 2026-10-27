@@ -1030,5 +1030,369 @@ printf ' 0x000000000000000e (SONAME) Library soname: [libpinyin.so.15]\n'
                 self.assertIn(b"--section-ordering-file", arguments)
 
 
+# Mach-O: llvm-nm's darwin format carries the section and raw name, its
+# demangled BSD format the identity; the order file names raw symbols.
+MACHO_DARWIN = """
+pinyin.pinyin.11abf23f73cf6425-cgu.0.rcgu.o:
+0000000000000100 (__TEXT,__text) external _pinyin_init
+0000000000000120 (__TEXT,__text) non-external __RNvCs1w45a2lSNJp_6pinyin4open
+0000000000000140 (__TEXT,__text) non-external [cold func] __RINvCsAAAA_13oxpinyin_core6insertReECs1w45a2lSNJp_6pinyin
+0000000000000160 (__TEXT,__text) non-external (was a private external) ___udivti3
+0000000000000180 (__TEXT,__text) private external __ZN12kyotocabinet6HashDB3getEv
+00000000000001a0 (__TEXT,__text) non-external __RNvCsBBBB_5crate4keep
+0000000000000010 (__TEXT,__gcc_except_tab) non-external GCC_except_table0
+0000000000000020 (__TEXT,__const) non-external __RNvCsBBBB_5crate5TABLE
+                 (undefined) external _write (from libSystem)
+"""
+MACHO_BSD = """
+pinyin.pinyin.11abf23f73cf6425-cgu.0.rcgu.o:
+0000000000000100 T _pinyin_init
+0000000000000120 t pinyin::open
+0000000000000140 t oxpinyin_core::insert::<&str>
+0000000000000160 t ___udivti3
+0000000000000180 t kyotocabinet::HashDB::get()
+00000000000001a0 t crate::keep
+0000000000000010 t GCC_except_table0
+0000000000000020 t crate::TABLE
+"""
+MACHO_NAMES = ['pinyin_init', 'oxpinyin_core::insert::<&str> [instantiating crate: pinyin]', '__udivti3',
+               '_ZN12kyotocabinet6HashDB3getEv', 'pinyin::open', 'std::sys::random::linux::hashmap_random_keys']
+MACHO_ORDERED = ['_pinyin_init', '__RINvCsAAAA_13oxpinyin_core6insertReECs1w45a2lSNJp_6pinyin', '___udivti3',
+                 '__ZN12kyotocabinet6HashDB3getEv', '__RNvCs1w45a2lSNJp_6pinyin4open']
+OTOOL = "Load command 1\n      cmd LC_SEGMENT_64\nSection\n  sectname __text\n   segname __TEXT\n      addr 0x%016x\n      size 0x0000000000000100\nSection\n  sectname __const\n   segname __TEXT\n      addr 0x0000000000001000\n"
+
+
+def darwin_records(entries):
+    return ''.join(f'{address:016x} (__TEXT,__text) non-external {name}\n' for name, address in entries)
+
+
+def fake_run(darwin, otool=OTOOL % 0x100, policy_output=None, status=0):
+    """A captured-process adapter answering nm, otool and the AWK policy reader."""
+    def run(command, **_):
+        if command[0] == 'awk':
+            return pool.Completed(status, (policy_output or '').encode(), b'bad policy\n' if status else b'')
+        if command[0] == 'otool':
+            return pool.Completed(0, otool.encode(), b'')
+        self_text = MACHO_BSD if '--demangle' in command else darwin
+        return pool.Completed(0, self_text.encode(), b'')
+    return run
+
+
+class MachoTests(unittest.TestCase):
+    def test_identity_removes_the_mach_o_underscore_and_decodes_the_instantiating_crate(self):
+        identity = ORDER['macho_identity']
+        self.assertEqual(identity('_pinyin_init', '_pinyin_init'), 'pinyin_init')
+        self.assertEqual(identity('___udivti3', '___udivti3'), '__udivti3')
+        self.assertEqual(identity('__RNvCs1w45a2lSNJp_6pinyin4open', 'pinyin::open'), 'pinyin::open')
+        self.assertEqual(identity('__RINvCsAAAA_13oxpinyin_core6insertReECs1w45a2lSNJp_6pinyin', 'oxpinyin_core::insert::<&str>'),
+                         'oxpinyin_core::insert::<&str> [instantiating crate: pinyin]')
+        self.assertEqual(identity('__ZN12kyotocabinet6HashDB3getEv', 'kyotocabinet::HashDB::get()'),
+                         '_ZN12kyotocabinet6HashDB3getEv')
+        self.assertIsNone(identity('__RNvCsBBBB_5crate4keep', '__RNvCsBBBB_5crate4keep'))
+        self.assertIsNone(identity('__ZN5crate4keep17h0123456789abcdefE', '__ZN5crate4keep17h0123456789abcdefE'))
+        self.assertEqual(identity('_crate_c_function.llvm.1234', '_crate_c_function.llvm.1234'), 'crate_c_function')
+        self.assertEqual(identity('__RNvCs1w45a2lSNJp_6pinyin4open.1482', 'pinyin::open (.1482)'), 'pinyin::open')
+
+    def test_symbols_join_both_nm_views_and_reject_disagreement(self):
+        symbols = ORDER['macho_symbols'](MACHO_DARWIN, MACHO_BSD)
+        self.assertEqual([(identity, section) for identity, _, _, section in symbols], [
+            ('pinyin_init', '__TEXT,__text'), ('pinyin::open', '__TEXT,__text'),
+            ('oxpinyin_core::insert::<&str> [instantiating crate: pinyin]', '__TEXT,__text'),
+            ('__udivti3', '__TEXT,__text'), ('_ZN12kyotocabinet6HashDB3getEv', '__TEXT,__text'),
+            ('crate::keep', '__TEXT,__text'), ('GCC_except_table0', '__TEXT,__gcc_except_tab'),
+            ('crate::TABLE', '__TEXT,__const')])
+        self.assertEqual([address for _, _, address, _ in symbols][:2], [0x100, 0x120])
+        with self.assertRaisesRegex(ValueError, 'lengths differ'):
+            ORDER['macho_symbols'](MACHO_DARWIN, MACHO_BSD + '0000000000000200 t extra\n')
+        with self.assertRaisesRegex(ValueError, 'records disagree'):
+            ORDER['macho_symbols'](MACHO_DARWIN, MACHO_BSD.replace('0000000000000120', '0000000000000124'))
+
+    def test_order_resolves_in_policy_order_reports_unresolved_and_refuses_ambiguity(self):
+        symbols = ORDER['macho_symbols'](MACHO_DARWIN, MACHO_BSD)
+        ordered, unresolved = ORDER['macho_order'](MACHO_NAMES, symbols)
+        self.assertEqual(ordered, MACHO_ORDERED)
+        self.assertEqual(unresolved, ['std::sys::random::linux::hashmap_random_keys'])
+        # Only __TEXT,__text bodies resolve; a repeated policy name maps to one body once.
+        self.assertEqual(ORDER['macho_order'](['crate::TABLE', 'pinyin_init', 'pinyin_init'], symbols),
+                         (['_pinyin_init'], ['crate::TABLE']))
+        twins = ORDER['macho_symbols'](
+            MACHO_DARWIN + '00000000000001c0 (__TEXT,__text) non-external __RNvCsCCCC_5crate4keep\n',
+            MACHO_BSD + '00000000000001c0 t crate::keep\n')
+        with self.assertRaisesRegex(ValueError, 'ambiguous policy path: crate::keep'):
+            ORDER['macho_order'](['crate::keep'], twins)
+        # Every body of one clone family is ordered, in symbol-table order.
+        clones = ORDER['macho_symbols'](
+            MACHO_DARWIN + '00000000000001c0 (__TEXT,__text) non-external __RNvCsBBBB_5crate4keep.1482\n',
+            MACHO_BSD + '00000000000001c0 t crate::keep (.1482)\n')
+        self.assertEqual(ORDER['macho_order'](['crate::keep'], clones),
+                         (['__RNvCsBBBB_5crate4keep', '__RNvCsBBBB_5crate4keep.1482'], []))
+
+    def test_order_file_reuses_the_policy_validation_and_needs_one_resolved_path(self):
+        run = fake_run(MACHO_DARWIN, policy_output='\n'.join(MACHO_NAMES) + '\n')
+        order, names, ordered, unresolved = ORDER['macho_order_file'](Path('/p/libpinyin.order'), '/a/libpinyin.a',
+                                                                     'libpinyin.so.15', run=run)
+        self.assertEqual((names, ordered), (MACHO_NAMES, MACHO_ORDERED))
+        self.assertEqual(unresolved, ['std::sys::random::linux::hashmap_random_keys'])
+        self.assertEqual(order.decode().splitlines(),
+                         ['# oxpinyin function order: libpinyin.order (libpinyin.so.15) resolved against libpinyin.a',
+                          *MACHO_ORDERED])
+        with self.assertRaisesRegex(ValueError, 'awk: bad policy'):
+            ORDER['macho_order_file'](Path('/p/libpinyin.order'), '/a/libpinyin.a', 'libpinyin.so.15',
+                                      run=fake_run(MACHO_DARWIN, policy_output='x\n', status=1))
+        with self.assertRaisesRegex(ValueError, 'no policy path resolves'):
+            ORDER['macho_order_file'](Path('/p/libpinyin.order'), '/a/libpinyin.a', 'libpinyin.so.15',
+                                      run=fake_run(MACHO_DARWIN, policy_output='absent\n'))
+
+    def test_text_start_requires_one_text_section(self):
+        self.assertEqual(ORDER['macho_text_start'](OTOOL % 0x2570), 0x2570)
+        for text in ('', OTOOL % 0x100 + OTOOL % 0x200, OTOOL.replace('segname __TEXT', 'segname __OTHER') % 0x100):
+            with self.subTest(text=text), self.assertRaisesRegex(ValueError, 'one Mach-O __TEXT,__text'):
+                ORDER['macho_text_start'](text)
+
+    def check(self, entries, ordered=('a', 'b'), start=0x100):
+        return ORDER['verify_macho'](Path('/synthetic/libpinyin.dylib'), list(ordered),
+                                     run=fake_run(darwin_records(entries), OTOOL % start))
+
+    def test_layout_prefix_passes_fails_and_reports_dead_stripped_entries(self):
+        layout, stripped = self.check([('a', 0x100), ('b', 0x120), ('crt', 0x140)])
+        self.assertEqual((layout['paths'], layout['text_start'], stripped), (2, '0x100', []))
+        layout, stripped = self.check([('a', 0x100), ('b', 0x100)])
+        self.assertEqual((layout['paths'], stripped), (2, []))
+        layout, stripped = self.check([('a', 0x100), ('c', 0x120), ('crt', 0x140)], ordered=('a', 'b', 'c'))
+        self.assertEqual((layout['paths'], stripped), (2, ['b']))
+        with self.assertRaisesRegex(ValueError, 'no ordered function'):
+            self.check([('crt', 0x100)])
+        with self.assertRaisesRegex(ValueError, 'start of __TEXT,__text'):
+            self.check([('crt', 0x100), ('a', 0x120), ('b', 0x140)])
+        with self.assertRaisesRegex(ValueError, 'start of __TEXT,__text'):
+            self.check([('a', 0x120), ('b', 0x140)])
+        with self.assertRaises(ValueError):
+            self.check([('b', 0x100), ('a', 0x120)])
+        with self.assertRaisesRegex(ValueError, 'out of order'):
+            self.check([('a', 0x100), ('c', 0x120), ('b', 0x140)], ordered=('a', 'b', 'c'))
+        with self.assertRaisesRegex(ValueError, 'interrupts policy prefix'):
+            self.check([('a', 0x100), ('crt', 0x120), ('b', 0x140)])
+        with self.assertRaisesRegex(ValueError, 'outside the prefix'):
+            self.check([('a', 0x100), ('b', 0x120), ('crt', 0x140), ('b', 0x160)])
+        # Symbols outside __TEXT,__text neither order nor interrupt.
+        run = fake_run(darwin_records([('a', 0x100), ('b', 0x120)]) +
+                       '0000000000000110 (__TEXT,__const) non-external table\n')
+        layout, _ = ORDER['verify_macho'](Path('/synthetic/libpinyin.dylib'), ['a', 'b'], run=run)
+        self.assertEqual(layout['paths'], 2)
+
+
+class MachoRelinkTests(unittest.TestCase):
+    def prepare(self, work):
+        scripts = {
+            "uname": "#!/bin/sh\nprintf '%s\\n' \"${TEST_UNAME:-Darwin}\"\n",
+            "rustc": "#!/bin/sh\nprintf 'MACOSX_DEPLOYMENT_TARGET=11.0\\n'\n",
+            "compiler": r"""#!/bin/sh
+printf '%s\000' "$@" > "$TEST_LINK_ARGS"
+out=''
+previous=''
+for arg; do
+  if [ "$previous" = '-o' ]; then out=$arg; fi
+  case "$arg" in
+    -Wl,-order_file,*) cp "${arg#-Wl,-order_file,}" "$TEST_ORDER_COPY";;
+    -Wl,-exported_symbols_list,*) cp "${arg#-Wl,-exported_symbols_list,}" "$TEST_EXPORTS_COPY";;
+  esac
+  previous=$arg
+done
+printf 'synthetic linked bytes\n' > "$out"
+exit "${TEST_LINK_EXIT:-0}"
+""",
+            "nm": r"""#!/bin/sh
+for arg; do last=$arg; done
+case " $* " in
+  *" --format=darwin "*) case "$last" in *.a) cat "$TEST_NM_DARWIN";; *) cat "$TEST_NM_LINKED";; esac;;
+  *" -g "*) cat "$TEST_NM_EXPORTS";;
+  *) cat "$TEST_NM_BSD";;
+esac
+""",
+            "otool": "#!/bin/sh\ncat \"$TEST_OTOOL\"\n",
+        }
+        for name, contents in scripts.items():
+            (work / name).write_text(contents)
+            (work / name).chmod(0o755)
+        (work / 'darwin').write_text(MACHO_DARWIN)
+        (work / 'linked').write_text(MACHO_DARWIN)
+        (work / 'bsd').write_text(MACHO_BSD)
+        (work / 'exports').write_text('0000000000000100 T _pinyin_init\n')
+        (work / 'otool.txt').write_text(OTOOL % 0x100)
+        (work / 'policy').write_text(HEADER + 'init\tpinyin_init\ninit\tpinyin::open\nsteady\tabsent::path\n')
+        (work / 'version').write_text('LIBPINYIN {\n global:\n pinyin_init;\n local:\n *;\n};\n')
+        (work / 'library.a').write_bytes(b'synthetic archive')
+        (work / 'no-pc').mkdir()
+        environment = {**os.environ, 'PATH': str(work) + os.pathsep + os.environ['PATH'],
+                       'TEST_LINK_ARGS': str(work / 'args'), 'TEST_ORDER_COPY': str(work / 'order-copy'),
+                       'TEST_EXPORTS_COPY': str(work / 'exports-copy'), 'TEST_NM_DARWIN': str(work / 'darwin'),
+                       'TEST_NM_LINKED': str(work / 'linked'), 'TEST_NM_BSD': str(work / 'bsd'),
+                       'TEST_NM_EXPORTS': str(work / 'exports'), 'TEST_OTOOL': str(work / 'otool.txt'),
+                       'PKG_CONFIG_LIBDIR': str(work / 'no-pc'), 'OXPINYIN_FUNCTION_ORDER_POLICY': ''}
+        environment.pop('OXPINYIN_BDB_LIB_DIR', None)
+        environment.pop('CC', None)
+        return environment
+
+    def relink(self, work, environment, policy=None, root=None, features=None):
+        destination = work / 'libpinyin.15.0.0.dylib'
+        destination.write_bytes(b'original installed bytes')
+        driver = 'import sys\nfrom pathlib import Path\nfrom tools.dev import packaging\nclass FixtureTools(packaging.Tools):\n def heavy(self, argv, **options): self.run(argv, **options)\nsys.exit(packaging.main(sys.argv[2:], tools=FixtureTools(root=Path(sys.argv[1]))))'
+        command = [sys.executable, '-X', 'lazy_imports=normal', '-c', driver, str(root or ROOT), 'relink-macho',
+                   '--staticlib', str(work / 'library.a'), '--ver', str(work / 'version'),
+                   '--soname', 'libpinyin.so.15', '--dest', str(destination),
+                   '--install-name', '/opt/stage/lib/libpinyin.15.dylib', '--cc', str(work / 'compiler')]
+        if policy is not None:
+            command += ['--function-order', str(policy)]
+        if features is not None:
+            command += ['--features', features]
+        for name in ('args', 'order-copy', 'exports-copy'):
+            (work / name).unlink(missing_ok=True)
+        result = subprocess.run(command, capture_output=True, text=True, check=False, env=environment)
+        arguments = None
+        if (work / 'args').exists():
+            arguments = (work / 'args').read_bytes().split(b'\0')[:-1]
+            arguments[arguments.index(b'-o') + 1] = b'OUTPUT'
+        self.assertEqual(list(work.glob('*.relink.*')), [], 'relink scratch leaked')
+        return result, arguments, destination.read_bytes()
+
+    def test_opt_out_keeps_the_original_object_without_linking(self):
+        with scratch() as work:
+            environment = self.prepare(work)
+            result, arguments, data = self.relink(work, environment)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIsNone(arguments)
+            self.assertEqual(data, b'original installed bytes')
+            self.assertIn('disabled by explicit opt-out', result.stderr)
+            self.assertNotIn('relinked', result.stdout)
+
+    def test_ordered_relink_passes_the_order_file_and_reports_resolution(self):
+        with scratch() as work:
+            environment = self.prepare(work)
+            result, arguments, data = self.relink(work, environment, work / 'policy')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(data, b'synthetic linked bytes\n')
+            order = [word for word in arguments if word.startswith(b'-Wl,-order_file,')]
+            self.assertEqual(len(order), 1)
+            self.assertTrue(order[0].endswith(b'/order.txt'))
+            self.assertEqual((work / 'order-copy').read_text().splitlines()[1:],
+                             ['_pinyin_init', '__RNvCs1w45a2lSNJp_6pinyin4open'])
+            self.assertTrue((work / 'order-copy').read_text().startswith('# oxpinyin function order: policy'))
+            self.assertEqual((work / 'exports-copy').read_text(), '_pinyin_init\n')
+            for word in (b'-dynamiclib', b'-mmacosx-version-min=11.0', b'-Wl,-S', b'-Wl,-dead_strip',
+                         b'-Wl,-install_name,/opt/stage/lib/libpinyin.15.dylib', b'-Wl,-compatibility_version,15',
+                         b'-Wl,-current_version,15.0.0', b'-Wl,-headerpad_max_install_names',
+                         b'-Wl,-u,_pinyin_init', b'-ldb', b'-liconv'):
+                self.assertIn(word, arguments)
+            # The archive loads on demand behind the export roots, before the libraries.
+            archive = arguments.index(os.fsencode(str(work / 'library.a')))
+            self.assertLess(arguments.index(b'-Wl,-u,_pinyin_init'), archive)
+            self.assertLess(archive, arguments.index(b'-ldb'))
+            self.assertNotIn(b'-Xlinker', arguments)
+            self.assertFalse([word for word in arguments if word.startswith(b'-Wl,-force_load')])
+            self.assertIn('2 of 3 policy paths resolve on Mach-O (2 symbols ordered); 1 unresolved', result.stderr)
+            self.assertIn('unresolved policy path on Mach-O: absent::path', result.stderr)
+            self.assertIn('using measured policy', result.stderr)
+            self.assertIn('2 ordered symbols form the __TEXT,__text prefix at 0x100; 0 dead-stripped', result.stderr)
+            self.assertIn('relinked ' + str(work / 'libpinyin.15.0.0.dylib'), result.stdout)
+            self.assertIn('exports: 1 (LIBPINYIN)', result.stdout)
+
+    def test_backend_library_directory_and_named_compiler_reach_the_link(self):
+        with scratch() as work:
+            environment = {**self.prepare(work), 'OXPINYIN_BDB_LIB_DIR': '/opt/keg/lib'}
+            result, arguments, _ = self.relink(work, environment, work / 'policy')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertLess(arguments.index(b'-L/opt/keg/lib'), arguments.index(b'-ldb'))
+            result, arguments, _ = self.relink(work, environment, work / 'policy', features='tkrzw')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn(b'-ltkrzw', arguments)
+            self.assertNotIn(b'-L/opt/keg/lib', arguments)
+
+    def test_checked_in_policy_follows_the_backend_and_foreign_policies_are_refused(self):
+        with scratch() as work:
+            environment = self.prepare(work)
+            environment.pop('OXPINYIN_FUNCTION_ORDER_POLICY')
+            scripts = work / 'tools/packaging'
+            for backend in ('bdb', 'kc', 'tkrzw'):
+                policy = scripts / 'function-order' / backend / 'libpinyin.order'
+                policy.parent.mkdir(parents=True)
+                shutil.copyfile(work / 'policy', policy)
+            for feature in ('bdb', 'kyotocabinet', 'tkrzw'):
+                with self.subTest(feature=feature):
+                    result, arguments, data = self.relink(work, environment, root=work, features=feature)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertIn('using measured policy ' + str(scripts / 'function-order'), result.stderr)
+                    self.assertEqual(data, b'synthetic linked bytes\n')
+            foreign = scripts / 'function-order/bdb/libpinyin.order'
+            result, arguments, data = self.relink(work, environment, foreign, root=work, features='kyotocabinet')
+            self.assertEqual(result.returncode, 1, result.stderr)
+            self.assertIsNone(arguments)
+            self.assertEqual(data, b'original installed bytes')
+            self.assertIn('policy backend bdb does not match kc', result.stderr)
+            (scripts / 'function-order/tkrzw/libpinyin.order').unlink()
+            result, arguments, data = self.relink(work, environment, root=work, features='tkrzw')
+            self.assertEqual(result.returncode, 1, result.stderr)
+            self.assertIsNone(arguments)
+            self.assertIn('policy not found', result.stderr)
+
+    def test_dead_stripped_ordered_paths_are_reported_not_refused(self):
+        with scratch() as work:
+            environment = self.prepare(work)
+            (work / 'linked').write_text(darwin_records([('_pinyin_init', 0x100), ('_crt', 0x120)]))
+            result, _, data = self.relink(work, environment, work / 'policy')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(data, b'synthetic linked bytes\n')
+            self.assertIn('dead-stripped): __RNvCs1w45a2lSNJp_6pinyin4open', result.stderr)
+            self.assertIn('1 ordered symbols form the __TEXT,__text prefix at 0x100; 1 dead-stripped', result.stderr)
+
+    def test_layout_export_and_link_failures_do_not_install(self):
+        with scratch() as work:
+            environment = self.prepare(work)
+            cases = {
+                'unordered layout': lambda: (work / 'linked').write_text(
+                    darwin_records([('_crt', 0x100), ('_pinyin_init', 0x120), ('__RNvCs1w45a2lSNJp_6pinyin4open', 0x140)])),
+                'interleaved layout': lambda: (work / 'linked').write_text(
+                    darwin_records([('_pinyin_init', 0x100), ('_crt', 0x120), ('__RNvCs1w45a2lSNJp_6pinyin4open', 0x140)])),
+                'extra export': lambda: (work / 'exports').write_text('0000000000000100 T _pinyin_init\n0000000000000200 T _leak\n'),
+            }
+            for case, arrange in cases.items():
+                with self.subTest(case=case):
+                    arrange()
+                    result, arguments, data = self.relink(work, environment, work / 'policy')
+                    self.assertEqual(result.returncode, 1, result.stderr)
+                    self.assertIsNotNone(arguments)
+                    self.assertEqual(data, b'original installed bytes')
+                    self.assertIn('layout check failed' if 'layout' in case else 'export set differs', result.stderr)
+                    (work / 'linked').write_text(MACHO_DARWIN)
+                    (work / 'exports').write_text('0000000000000100 T _pinyin_init\n')
+            result, arguments, data = self.relink(work, {**environment, 'TEST_LINK_EXIT': '1'}, work / 'policy')
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIsNotNone(arguments)
+            self.assertEqual(data, b'original installed bytes')
+
+    def test_unresolvable_policy_fails_before_the_link(self):
+        with scratch() as work:
+            environment = self.prepare(work)
+            (work / 'policy').write_text(HEADER + 'init\tabsent\n')
+            result, arguments, data = self.relink(work, environment, work / 'policy')
+            self.assertEqual(result.returncode, 1, result.stderr)
+            self.assertIsNone(arguments)
+            self.assertEqual(data, b'original installed bytes')
+            self.assertIn('no policy path resolves against the Mach-O archive', result.stderr)
+            (work / 'policy').write_text(HEADER + 'init\tabsent\ninit\tabsent\n')
+            result, arguments, _ = self.relink(work, environment, work / 'policy')
+            self.assertEqual(result.returncode, 1, result.stderr)
+            self.assertIsNone(arguments)
+            self.assertIn('invalid or duplicate policy row', result.stderr)
+
+    def test_other_hosts_are_refused(self):
+        with scratch() as work:
+            environment = {**self.prepare(work), 'TEST_UNAME': 'Linux'}
+            result, arguments, data = self.relink(work, environment, work / 'policy')
+            self.assertEqual(result.returncode, 1, result.stderr)
+            self.assertIsNone(arguments)
+            self.assertEqual(data, b'original installed bytes')
+            self.assertIn('macOS-only', result.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

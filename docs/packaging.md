@@ -445,6 +445,86 @@ Ordering adds no linker replacement. Packaging requires uv and the repository
 managed interpreter, provisioned before packaging by the release and policy CI
 callers. The relinker reuses binutils and the existing AWK policy resolver.
 
+### Mach-O order file (macOS)
+
+macOS is a measurement host, not a packaging target: the shipping objects are
+the Linux packages above. So that native macOS measurements see the same
+function order, `just packaging install` on macOS relinks the installed dylib
+after `cargo cinstall` through `just packaging relink-macho`, the counterpart
+of `relink-versioned`, with Apple's `-order_file`
+([ld documentation](https://developer.apple.com/library/archive/documentation/DeveloperTools/Reference/ld-man/index.html)).
+There is no separate macOS policy. The backend's ELF policy is the one source:
+`tools/packaging/function_order.py` reads it through the AWK resolver's
+policy mode and resolves each path against the Mach-O staticlib's own symbol
+table, by the identity the ELF resolver uses, so the two targets cannot drift.
+Every Mach-O name carries a leading underscore that is not part of the
+identity; llvm-nm's demangling (Xcode's `nm`) gives a Rust path, and the
+instantiating crate is decoded from the raw v0 name as on ELF. The crate
+disambiguators and hashes in raw names differ between targets, which is why
+the order file is derived from the build it links rather than committed.
+`nm` runs with `--no-llvm-bc`: the archive's compiler-builtins members embed
+bitcode from rustc's own LLVM, which Apple's bitcode reader rejects.
+
+A policy path the Mach-O build lacks is reported, not refused (the ELF rule
+is the opposite, because the policy was generated from that build): the
+relink prints `function ordering: N of M policy paths resolve on Mach-O; K
+unresolved` and one `unresolved policy path on Mach-O:` line per path. On
+2026-10-27 UTC (Rust 1.97.1, Xcode 27.1, BDB) 246 of 265 libpinyin paths and
+227 of 243 libzhuyin paths resolved; the rest are Linux-only std paths
+(`std::sys::fs::unix::try_statx`, `std::sys::random::linux::hashmap_random_keys`,
+`std::sys::sync::once::futex::Once::call`, the `ARGV_INIT_ARRAY` constructor)
+and generic bodies the macOS LTO inlined or merged differently (BTreeMap
+`dying_next` and `drop_glue` instantiations, `hash_one::<&u32>`). An
+ambiguous path, an invalid policy, a policy in another backend's directory
+and a policy with no resolvable path still fail before any link.
+
+The link is the one rustc makes for the cdylib, with the order file added:
+
+```sh
+cc -dynamiclib -arch arm64 -mmacosx-version-min=$(rustc --print deployment-target --target aarch64-apple-darwin | cut -d= -f2) \
+  -o libpinyin.15.0.0.dylib -Wl,-order_file,order.txt -Wl,-S -Wl,-dead_strip \
+  -Wl,-exported_symbols_list,exports.txt -Wl,-install_name,"$LIBDIR/libpinyin.15.dylib" \
+  -Wl,-compatibility_version,15 -Wl,-current_version,15.0.0 -Wl,-headerpad_max_install_names \
+  -Wl,-u,_pinyin_init ... libpinyin.a $(pkg-config --libs glib-2.0 gobject-2.0) -ldb -liconv
+```
+
+`exports.txt` is the version script's global list with the underscore
+prefix, so the export set is the Linux object's. The `-u` roots pull the
+facade's object out of the staticlib and the compiler-builtins members load
+on demand, exactly as rustc links them; `-force_load` would keep whole
+objects that have no subsections (the outline atomics) and every member's
+local labels. `-S` leaves out the debug map that Cargo's release profile
+strips after linking. Measured on 2026-10-27 UTC, the relinked libpinyin and
+cargo-c's own dylib have the same `__TEXT,__text` size, function set and
+symbol count; `strip -x` leaves both at 2,029,000 bytes, and the unstripped
+files differ by 48 bytes of symbol string table. The `-L` for Homebrew's
+keg-only Berkeley DB comes from `OXPINYIN_BDB_LIB_DIR`, as for the build. A
+Kyoto Cabinet relink adds `-lc++`, the runtime the cc crate builds the shim
+against on Darwin, where the Linux relink adds `-lstdc++`. The install passes
+its Cargo target as `--target`: the relink links `-arch arm64` for
+`aarch64-apple-darwin` and `-arch x86_64` for `x86_64-apple-darwin`, asks
+rustc for that target's deployment target, and refuses any other target.
+Without `--target`, `just packaging relink-macho` links for the host.
+The linker's "building for macOS-11.0, but linking with dylib ... built for
+newer version" warnings come from rustc's deployment target against the
+Homebrew dylibs; rustc's own link is in the same position.
+
+Before the relinked object replaces cargo-c's, the export set is checked
+against the version script and the layout against the policy, as the ELF
+check does: in `nm -n` of the linked dylib, the resolved functions must form
+a contiguous prefix of `__TEXT,__text` in policy order, with no unselected
+function between them. A resolved function the linker dead-stripped is
+reported and left out of that check; an out-of-order or interrupted prefix
+fails the install and leaves cargo-c's object in place.
+
+`OXPINYIN_FUNCTION_ORDER_POLICY=` opts out: the install keeps cargo-c's
+object untouched, because Mach-O has no symbol versioning to relink for. A
+named policy applies as on Linux. The lane needs Xcode's command-line tools
+(`cc`, `nm`, `otool`), `rustc` for the deployment target and pkg-config for
+GLib. The native startup controller does not verify Mach-O ordering itself
+yet; it reports `function-order` as `unavailable` on macOS and measures the
+installed objects as supplied.
+
 ### Regeneration
 
 Generation requires Linux with `taskset` and `valgrind` on `PATH`. The generator
