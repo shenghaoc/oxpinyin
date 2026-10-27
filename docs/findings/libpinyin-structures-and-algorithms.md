@@ -695,3 +695,21 @@ field conversion for their domain types, O(field length) time and no successful
 parse allocation. The [tool record](1297-tool-decimals.md) names the callers.
 Punctuation remains O(words) time/space; chunk payload retries preserve O(bytes)
 time and O(1) additional space, with the existing header/sync/rename contract.
+
+## Point-search pronunciation records (#1031; 2026-10-27 UTC)
+
+Read from the libpinyin tree at `074a2219`: candidate guess calls table search
+in `src/pinyin.cpp:2233-2253` and `src/zhuyin.cpp:1499-1510`. The BDB adapter
+borrows the returned row (`src/storage/chewing_large_table2_bdb.cpp:182-191`);
+`src/storage/chewing_large_table2.h:145-152` finds an equal range, then
+`:101-106` compares packed stored pronunciations and reads matching tokens.
+This work happens during guess, not init. For N records of L keys and M
+matches, the pin searches in O(L log N + ML), with output range storage.
+
+Rust `ChewingTable::search` keeps its linear filter and the owned DBM row
+buffer, but `pinyin_index::item_views` validates the row and borrows its keys.
+Only matching tokens are collected; `resolve_items` consumes those tokens.
+Worst-case time remains O(NL), while temporary space falls from O(B + NL)
+to O(B + M), for B row bytes. No key vector is allocated per record, and
+no work moves into init. Other consumers that need owned pronunciations
+still use `decode_items`, over the same validated record views.

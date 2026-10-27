@@ -29,7 +29,7 @@ use oxpinyin_core::{
 };
 use oxpinyin_store::{DefaultStore, ReadStore};
 
-use crate::chewing_table::{ChewingTable, PinyinIndexItem, RawChewingDbm, prefix_keys_match};
+use crate::chewing_table::{ChewingTable, RawChewingDbm, prefix_keys_match};
 use crate::phrase_libraries::PhraseLibraries;
 use crate::phrase_library::LibraryError;
 use crate::phrase_library::RowFault;
@@ -114,14 +114,14 @@ fn open_phrase_table(path: &Path) -> Result<PhraseTable, DictError> {
 fn resolve_items(
     libraries: &PhraseLibraries,
     pricing_keys: Option<&[ChewingKey]>,
-    items: &[PinyinIndexItem],
+    tokens: &[u32],
     out: &mut Vec<PhraseEntry>,
     user_nibbles: u32,
 ) -> bool {
     let mut unreadable = false;
-    for item in items {
-        let Some(entry) = resolve_item(libraries, pricing_keys, item.token) else {
-            unreadable |= library_loaded(libraries, user_nibbles, item.token);
+    for &token in tokens {
+        let Some(entry) = resolve_item(libraries, pricing_keys, token) else {
+            unreadable |= library_loaded(libraries, user_nibbles, token);
             continue;
         };
         out.push(entry);
@@ -524,8 +524,9 @@ impl SystemDictionary {
         ranges.convert(
             items
                 .iter()
-                .filter(|item| self.library_loaded(item.token) && visible(item.token))
-                .map(|item| (item.token, Some(()))),
+                .copied()
+                .filter(|&token| self.library_loaded(token) && visible(token))
+                .map(|token| (token, Some(()))),
         );
         Ok(())
     }

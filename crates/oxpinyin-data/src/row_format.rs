@@ -137,6 +137,52 @@ pub mod pinyin_index {
         pub keys: Vec<ChewingKey>,
     }
 
+    /// One validated record, borrowing its packed pronunciation from the row.
+    pub(crate) struct PinyinIndexItemView<'a> {
+        pub token: u32,
+        keys: &'a [u8],
+    }
+
+    impl PinyinIndexItemView<'_> {
+        pub(crate) fn keys(&self) -> impl ExactSizeIterator<Item = ChewingKey> + '_ {
+            self.keys
+                .chunks_exact(2)
+                .map(|bytes| ChewingKey::from_packed(u16::from_le_bytes([bytes[0], bytes[1]])))
+        }
+    }
+
+    /// Validates a whole row before yielding records without owning their keys.
+    pub(crate) fn item_views(
+        value: &[u8],
+        phrase_length: usize,
+    ) -> Result<impl ExactSizeIterator<Item = PinyinIndexItemView<'_>>, DictError> {
+        let (stride, key_bytes) = if value.is_empty() {
+            (1, 0)
+        } else {
+            if phrase_length == 0 {
+                return Err(DictError::Parse(
+                    "phrase_length must be at least 1".to_owned(),
+                ));
+            }
+            let stride = item2_stride(phrase_length);
+            if !value.len().is_multiple_of(stride) {
+                return Err(DictError::Parse(format!(
+                    "pinyin index value length {} is not a multiple of stride {} (L={})",
+                    value.len(),
+                    stride,
+                    phrase_length,
+                )));
+            }
+            (stride, 2 * phrase_length)
+        };
+        Ok(value
+            .chunks_exact(stride)
+            .map(move |record| PinyinIndexItemView {
+                token: u32::from_le_bytes([record[0], record[1], record[2], record[3]]),
+                keys: &record[4..4 + key_bytes],
+            }))
+    }
+
     /// Serialises one `PinyinIndexItem2<L>` record: token, then the
     /// stored keys (their original tones), then zero padding to
     /// [`item2_stride`].
@@ -206,48 +252,12 @@ pub mod pinyin_index {
         value: &[u8],
         phrase_length: usize,
     ) -> Result<Vec<PinyinIndexItem>, DictError> {
-        if value.is_empty() {
-            return Ok(Vec::new());
-        }
-        if phrase_length == 0 {
-            return Err(DictError::Parse(
-                "phrase_length must be at least 1".to_owned(),
-            ));
-        }
-        let stride = item2_stride(phrase_length);
-        if !value.len().is_multiple_of(stride) {
-            return Err(DictError::Parse(format!(
-                "pinyin index value length {} is not a multiple of stride {} (L={})",
-                value.len(),
-                stride,
-                phrase_length,
-            )));
-        }
-        let count = value.len() / stride;
-        let mut items = Vec::with_capacity(count);
-        for i in 0..count {
-            let base = i * stride;
-            let token = u32::from_le_bytes([
-                value[base],
-                value[base + 1],
-                value[base + 2],
-                value[base + 3],
-            ]);
-            let mut keys = Vec::with_capacity(phrase_length);
-            for j in 0..phrase_length {
-                let key_offset = base + 4 + j * 2;
-                if key_offset + 2 > value.len() {
-                    return Err(DictError::Parse(format!(
-                        "record {i} truncated at key {j} (offset {key_offset}, value len {})",
-                        value.len(),
-                    )));
-                }
-                let packed = u16::from_le_bytes([value[key_offset], value[key_offset + 1]]);
-                keys.push(ChewingKey::from_packed(packed));
-            }
-            items.push(PinyinIndexItem { token, keys });
-        }
-        Ok(items)
+        Ok(item_views(value, phrase_length)?
+            .map(|item| PinyinIndexItem {
+                token: item.token,
+                keys: item.keys().collect(),
+            })
+            .collect())
     }
 }
 
