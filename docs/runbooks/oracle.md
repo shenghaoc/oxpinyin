@@ -85,9 +85,10 @@ their hashes are recorded once per platform in
 `tools/oracle/oracle-pin.txt` (`libpinyin_sha256_<dbm>`,
 `libzhuyin_sha256_<dbm>`). The historical unqualified fields are
 **linux/amd64**; linux/arm64 adds the same fields with a `_linux_arm64`
-suffix. `tools/oracle/pin.sh` selects them; `tools/cloud/setup.sh` derives
-the platform from `uname -m` and refuses an architecture with no frozen
-hashes. The Dockerfile and the checks take `--platform`. CI
+suffix. `just compat pin-field --platform <platform> <field>` selects them;
+`tools/cloud/setup.sh` derives the platform from `uname -m` and refuses an
+architecture with no frozen hashes. The Dockerfile and the checks take
+`--platform`. CI
 (`oracle-image.yml`) builds the bdb, kc and tkrzw cells on native amd64 and
 arm64 runners. The amd64 tags are the historical
 
@@ -139,9 +140,8 @@ Check the libraries against the recorded recipe hashes (a mismatch means
 the image is not this repository's recipe — stop and report it):
 
 ```sh
-source tools/oracle/pin.sh
 for lib in libpinyin libzhuyin; do
-    want=$(pin_platform_field tools/oracle/oracle-pin.txt "$platform" "${lib}_sha256_bdb")
+    want=$(just compat pin-field --platform "$platform" "${lib}_sha256_bdb")
     echo "$want  $dest/bdb/lib/$lib.so" | sha256sum --check
 done
 ```
