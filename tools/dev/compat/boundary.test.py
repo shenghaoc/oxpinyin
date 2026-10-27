@@ -169,9 +169,9 @@ class IdentityTests(unittest.TestCase):
                 with self.subTest(cell=cell_name, run=run_id), \
                         self.assertRaisesRegex(ValueError, 'invalid container state namespace'):
                     identity.verify_state(IMAGE, SOURCE, cell_name, run_id, root)
-        inside = (ROOT / 'tools/oracle/compat-inside.sh').read_text()
-        check = inside.index('verify-state "$identity" "$source_identity" "$cell" "$run_id"')
-        self.assertLess(check, inside.index('mkdir -p'))
+        inside = (ROOT / 'tools/dev/compat/guest.py').read_text()
+        check = inside.index('identity.verify_state(image, source, cell, run_id)')
+        self.assertLess(check, inside.index('.mkdir('))
 
     def test_symlinked_ancestor_is_trusted_for_artifact_targets(self):
         with tempfile.TemporaryDirectory() as directory:

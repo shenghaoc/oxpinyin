@@ -187,7 +187,7 @@ environment and run from the repository root:
 
 Any object that resolves `libtkrzw` must use the runtime verified by setup,
 even when `PINYIN_ORACLE_DBM` is unset, `bdb` or `kc`.
-`tools/tkrzw/runtime.sh` contains the single check, using bash, `ldd`, awk
+`tools/tkrzw/runtime.py` contains the single check, using bash, `ldd`, awk
 and readlink; `runtime.py` is only an adapter for Python tools, which is how
 the measurement recipes call it. The check itself needs no uv or Python.
 The environment writer exports `OXPINYIN_TKRZW_LIBRARY`, the
@@ -291,7 +291,7 @@ uv run --no-project --managed-python python -B -X lazy_imports=normal tools/tkrz
    frozen hashes the pin records). If
    `ghcr.io/shenghaoc/oxpinyin-oracle:<tag>` exists for amd64, or
    `<tag>-arm64` for arm64, with `<tag>` printed by
-   `tools/oracle/image-tag.sh` (pin, base image codename and a hash
+   `just compat image-tag` (pin, base image codename and a hash
    of the recipe and `oracle-pin.txt`), it is pulled and the cells are copied out of it. A cell
    whose pulled hashes do not match `oracle-pin.txt` is discarded and built
    instead, as is every cell when no image exists: the pinned image's

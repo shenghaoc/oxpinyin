@@ -195,8 +195,10 @@ jobs:
           safe-directory: 'true'
           rustup: 'true'
           rust-cache: 'true'
+      - name: Provision managed Python
+        run: bash tools/cloud/setup.sh --python-only
       - name: Run the fixture-tier differentials
-        run: tools/oracle/nightly-fixture-differentials.sh
+        run: uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev compat nightly-fixtures
 
   # Latent-overflow lane: the releaseoptimized codepath with overflow
   # checks and debug assertions forced on (docs/safety/

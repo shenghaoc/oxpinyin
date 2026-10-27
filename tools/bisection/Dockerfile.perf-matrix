@@ -102,7 +102,7 @@ RUN cargo install cargo-c@0.10.25 --locked
 # in because the build has no checkout as its working directory yet; the version is not
 # restated here. uv 0.13.1 has no +gil archive, so tools/install-python.sh installs the
 # file's request without +gil. The libtkrzw runtime check stays the shell resolver
-# (tools/tkrzw/runtime.sh); installing uv does not establish trust in a runtime.
+# (tools/tkrzw/runtime.py); installing uv does not establish trust in a runtime.
 COPY .python-version /opt/python-pin/.python-version
 COPY tools/install-python.sh /opt/python-pin/tools/install-python.sh
 COPY tools/lib/bash-floor.sh /opt/python-pin/tools/lib/bash-floor.sh

@@ -53,6 +53,9 @@ runs:
       with:
         safe-directory: 'true'
         rustup: 'true'
+    - name: Provision managed Python
+      shell: bash
+      run: bash tools/cloud/setup.sh --python-only
     - name: Install cargo-c
       shell: bash
       run: cargo install cargo-c --version 0.10.25 --locked
@@ -63,7 +66,7 @@ runs:
         library="$(pkg-config --variable=libdir tkrzw)/libtkrzw.so"
         test -f "$library"
         export OXPINYIN_TKRZW_LIBRARY="$(readlink -f -- "$library")"
-        bash tools/tkrzw/runtime.sh --print-path tkrzw function-order-policy distro "$(command -v tkrzw_dbm_util)"
+        uv run --no-project --managed-python python -X lazy_imports=normal -m tools.tkrzw.runtime --print-path tkrzw function-order-policy distro "$(command -v tkrzw_dbm_util)"
         printf 'OXPINYIN_TKRZW_LIBRARY=%s\n' "$OXPINYIN_TKRZW_LIBRARY" >> "$GITHUB_ENV"
     # The release recipe of docs/packaging.md, "Regeneration": both
     # facades on every backend. cargo-c is installed once above; each
@@ -90,7 +93,7 @@ runs:
             -- --locked --release --no-default-features --features "$feature"
           if [ "$backend" = tkrzw ]; then
             for facade in libpinyin libzhuyin; do
-              bash tools/tkrzw/runtime.sh --print-path tkrzw function-order-policy "$facade" "$stage/lib/$facade.so.15.0.0"
+              uv run --no-project --managed-python python -X lazy_imports=normal -m tools.tkrzw.runtime --print-path tkrzw function-order-policy "$facade" "$stage/lib/$facade.so.15.0.0"
             done
           fi
           printf 'build\t%s\t%s\n' "$backend" "$((SECONDS - build_start))" >> "$cost_file"

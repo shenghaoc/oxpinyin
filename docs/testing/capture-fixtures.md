@@ -18,7 +18,7 @@ Reproduce from a clean ignored build directory:
 
 ```bash
 tools/oracle/build-oracle.sh --dbm tkrzw --work-dir target/oracle --jobs 4
-tools/capture/run-capture.sh target/oracle/prefix fixtures/foundation
+just compat capture target/oracle/prefix fixtures/foundation
 sha256sum fixtures/foundation/f-a.txt fixtures/foundation/f-c.txt
 ```
 

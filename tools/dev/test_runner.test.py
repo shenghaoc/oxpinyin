@@ -230,6 +230,38 @@ if __name__ == '__main__': unittest.main()
                                                          ['tools/dev/test_runner.py']),
                          ['tools/other.test.py'])
 
+    def test_shared_files_including_justfile_select_every_harness(self):
+        files = test_runner.harness_files()
+        self.assertIn('tools/dev/python-request.test.py', files)
+        self.assertGreater(len(files), len(test_runner.COMPAT_HARNESS))
+        shared = ('justfile', 'tools/bisection/runners.json', 'tools/dev/bash_floor.py',
+                  'tools/packaging/release-stage.sh',
+                  '.github/actions/function-order-policy/action.yml',
+                  '.github/workflows/oracle-image.yml', '.github/workflows/verify-nightly.yml',
+                  'tools/cloud/setup.sh', 'tools/cloud/env.sh', 'tools/cloud/env.test.sh')
+        for path in shared:
+            with self.subTest(path=path):
+                self.assertNotIn(path, test_runner.HARNESS_DEPENDENCIES)
+                self.assertEqual(test_runner.changed_harness_files(files, [path]), files)
+
+    def test_tooling_shell_audit_and_other_audited_text_select_their_reader(self):
+        # python-request.test.py reads every tracked text file outside its
+        # explicit allowlist, not just paths named literally in its source.
+        files = test_runner.harness_files()
+        reader = 'tools/dev/python-request.test.py'
+        self.assertIn(reader, files)
+        audited = ('ROADMAP.md', 'docs/plans/tooling-shell-audit.md',
+                   'docs/plans/tooling-python.md', 'docs/plans/tooling-just.md',
+                   'docs/runbooks/benches.md', 'docs/runbooks/cloud.md',
+                   'docs/runbooks/oracle.md', 'docs/testing/README.md',
+                   'docs/testing/capture-fixtures.md', 'docs/testing/oracle-environment.md',
+                   'fixtures/datagen-toned/README.md', 'tools/bisection/Dockerfile.callgrind',
+                   'tools/bisection/Dockerfile.perf-matrix')
+        for path in audited:
+            with self.subTest(path=path):
+                self.assertNotIn(path, test_runner.HARNESS_DEPENDENCIES)
+                self.assertIn(reader, test_runner.changed_harness_files(files, [path]))
+
     def test_changed_paths_include_all_git_states(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

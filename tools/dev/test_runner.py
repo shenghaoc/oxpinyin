@@ -120,6 +120,48 @@ HARNESS_DEPENDENCIES = {
     'tools/perf-gate/callgrind-ir.py': ('tools/perf-gate/callgrind-ir.test.py', 'tools/dev/measure/snapshot.test.py'),
     'tools/perf-gate/series.py': ('tools/perf-gate/series.test.py',),
 }
+# U3-owned compatibility services and entry points only. Shared callers and
+# documentation stay unmapped: repository-wide audits read their tracked text.
+COMPAT_HARNESS = (
+    'tools/dev/compat/boundary.test.py',
+    'tools/dev/compat/memory.test.py',
+    'tools/dev/compat/recipes.test.py',
+    'tools/tkrzw/runtime.test.py',
+    'tools/dev/bash_floor.test.py',
+    'tools/bisection/cell-identity.test.py',
+    'tools/dev/measure/bench.test.py',
+    'tools/dev/measure/profile.test.py',
+)
+HARNESS_DEPENDENCIES.update(dict.fromkeys((
+    'tools/capture/run-capture.sh',
+    'tools/container/runtime.sh',
+    'tools/datagen/libpinyin-drop-in-differential.sh',
+    'tools/dev/compat/identity.py',
+    'tools/oracle/check-reproducible.sh',
+    'tools/oracle/compat-inside.sh',
+    'tools/oracle/compat.sh',
+    'tools/oracle/docker-user-rt.sh',
+    'tools/oracle/image-tag.sh',
+    'tools/oracle/nightly-fixture-differentials.sh',
+    'tools/oracle/pin.test.sh',
+    'tools/oracle/run-differentials.sh',
+    'tools/oracle/user-dir-round-trip.sh',
+    'tools/oracle/verify-oracle-image.sh',
+    'tools/tkrzw/runtime.py',
+    'tools/tkrzw/runtime.sh',
+    'tools/dev/compat/campaigns.py',
+    'tools/dev/compat/commands.py',
+    'tools/dev/compat/fixtures.py',
+    'tools/dev/compat/guest.py',
+    'tools/dev/compat/help.txt',
+    'tools/dev/compat/help.py',
+    'tools/dev/compat/images.py',
+    'tools/dev/compat/launcher.py',
+    'tools/dev/compat/process.py',
+    'tools/oracle/round-trip-bootstrap.sh',
+    'tools/dev/compat/boundary.py',
+), COMPAT_HARNESS))
+
 
 
 def changed_harness_files(files, paths):

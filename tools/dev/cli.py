@@ -268,6 +268,10 @@ def build_parser():
     p.add_argument('args', nargs=argparse.REMAINDER)
     p.set_defaults(func=runner_command)
 
+    p = sub.add_parser('compat', help='oracle and isolated compatibility recipes')
+    p.add_argument('args', nargs=argparse.REMAINDER)
+    p.set_defaults(func=lambda args: __import__('tools.dev.compat.commands', fromlist=['main']).main(args.args))
+
     p = sub.add_parser('coverage', help='run cargo llvm-cov with temporary per-invocation state')
     p.add_argument('args', nargs=argparse.REMAINDER)
     p.set_defaults(func=coverage_command)
@@ -314,6 +318,9 @@ def main(argv=None):
     to their runners; report registry selection errors on stderr with status 2.
     """
     argv = list(sys.argv[1:] if argv is None else argv)
+    if argv[:1] == ['compat']:
+        from .compat import commands
+        return commands.main(argv[1:])
     if argv[:1] == ['cell-artifacts']:
         return cell.main(argv[1:])
     if argv[:1] == ['abi']:

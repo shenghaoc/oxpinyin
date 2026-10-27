@@ -388,7 +388,7 @@ container detection and db_dump comparison are unchanged.
 Peer container reads use a short-lived mode of the existing contract worker,
 not a backend CDLL retained in the measurement controller. Every native
 teardown launch, fixture-population launch and peer comparison worker checks
-the actual copied library through `tools/tkrzw/runtime.sh`. The tkrzw reader
+the actual copied library through `tools/tkrzw/runtime.py`. The tkrzw reader
 loads the exact certified resolution. A load, iterator, read, close or runtime
 failure refuses the comparison; an unreadable DB is never an empty DB.
 
@@ -1104,7 +1104,7 @@ then perf record, then Valgrind Callgrind. When Linux's samply supports the
 flag, it writes the same sidecar and the extractor reports the same way. On
 macOS samply is required and the recipe supplies Homebrew's GLib, Berkeley DB,
 tkrzw and codec paths. The
-launcher stages the tkrzw C ABI and uses `tools/tkrzw/runtime.sh`'s `otool`
+launcher stages the tkrzw C ABI and uses `tools/tkrzw/runtime.py`'s `otool`
 resolution for the staged dylib; set `OXPINYIN_TKRZW_PREFIX` (the recipe does)
 when running the script directly. There is no `setarch`, `taskset` or
 `DYLD_LIBRARY_PATH`: disabling ASLR is unnecessary, Mach affinity is a cache
