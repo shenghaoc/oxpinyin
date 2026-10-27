@@ -417,7 +417,26 @@ impl PhraseItemView<'_> {
     /// (where the pin's call answers NULL).
     #[must_use]
     pub fn phrase_text(&self) -> Option<PhraseText> {
-        PhraseText::from_stored_words(self.phrase_codes())
+        // Ordinary table phrases have at most 16 words. Each scalar needs
+        // at most four UTF-8 bytes; exceptional and longer items retain the
+        // generic stored-word construction and its complete validation.
+        const SCALAR_WORDS: usize = 16;
+        let fallback = || PhraseText::from_stored_words(self.phrase_codes());
+        if self.phrase_length() > SCALAR_WORDS {
+            return fallback();
+        }
+        let mut utf8 = [0_u8; 4 * SCALAR_WORDS];
+        let mut length = 0;
+        for word in self.phrase_codes() {
+            let word = word?;
+            let Some(character) = char::from_u32(word).filter(|_| word != 0) else {
+                return fallback();
+            };
+            length += character.encode_utf8(&mut utf8[length..]).len();
+        }
+        std::str::from_utf8(&utf8[..length])
+            .ok()
+            .map(PhraseText::from)
     }
 
     /// The phrase's stored UCS-4 words in order, `None` where the item's
@@ -479,6 +498,101 @@ impl PhraseItemView<'_> {
         ITEM_HEADER_SIZE
             .checked_add(4 * length)?
             .checked_add(per_pron)
+    }
+}
+
+#[cfg(test)]
+mod phrase_text_tests {
+    use super::{ITEM_HEADER_SIZE, PhraseItemView, PhraseText};
+
+    fn item_bytes(words: &[u32]) -> Vec<u8> {
+        let mut bytes = vec![0; ITEM_HEADER_SIZE];
+        bytes[0] = u8::try_from(words.len()).expect("test phrase length");
+        for word in words {
+            bytes.extend_from_slice(&word.to_le_bytes());
+        }
+        bytes
+    }
+
+    fn compare_with_generic(bytes: &[u8]) {
+        let item = PhraseItemView { bytes };
+        let expected = PhraseText::from_stored_words(item.phrase_codes());
+        let actual = item.phrase_text();
+        assert_eq!(actual.is_some(), expected.is_some(), "bytes {bytes:?}");
+        if let (Some(actual), Some(expected)) = (actual, expected) {
+            assert_eq!(actual.as_str(), expected.as_str());
+            assert_eq!(actual.stored_words(), expected.stored_words());
+            assert_eq!(actual.phrase_length(), expected.phrase_length());
+            assert_eq!(actual.is_inline(), expected.is_inline());
+            assert_eq!(
+                actual.outward_words().collect::<Vec<_>>(),
+                expected.outward_words().collect::<Vec<_>>()
+            );
+        }
+    }
+
+    #[test]
+    fn scalar_text_matches_generic_at_utf8_and_stack_boundaries() {
+        for word in [
+            1, 0x7f, 0x80, 0x7ff, 0x800, 0xd7ff, 0xe000, 0xffff, 0x10000, 0x10ffff,
+        ] {
+            for length in [0, 1, 7, 8, 9, 15, 16, 17, 255] {
+                compare_with_generic(&item_bytes(&vec![word; length]));
+            }
+        }
+        for text in [
+            "",
+            "abc",
+            "你好",
+            "aé中😀",
+            "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+        ] {
+            let bytes = item_bytes(&text.chars().map(u32::from).collect::<Vec<_>>());
+            compare_with_generic(&bytes);
+            assert_eq!(
+                PhraseItemView { bytes: &bytes }
+                    .phrase_text()
+                    .unwrap()
+                    .as_str(),
+                Some(text)
+            );
+        }
+    }
+
+    #[test]
+    fn exceptional_and_unreadable_text_matches_generic_after_a_scalar_prefix() {
+        for length in [1, 15, 16, 17, 255] {
+            for position in [0, length / 2, length - 1] {
+                for word in [
+                    0,
+                    0xd800,
+                    0xdfff,
+                    0x110000,
+                    0x7fffffff,
+                    0x80000000,
+                    u32::MAX,
+                ] {
+                    let mut words = vec![0x10ffff; length];
+                    words[position] = word;
+                    let bytes = item_bytes(&words);
+                    compare_with_generic(&bytes);
+                    for removed in 1..=4 {
+                        compare_with_generic(&bytes[..bytes.len() - removed]);
+                    }
+                }
+            }
+        }
+        for words in [
+            vec![0, 0x80000000, u32::MAX],
+            vec![0xd800, 0, 0x80000000],
+            vec![0xd800, 0x80000000],
+            [vec![0x10ffff; 15], vec![0, u32::MAX]].concat(),
+        ] {
+            let bytes = item_bytes(&words);
+            for end in 0..=bytes.len() {
+                compare_with_generic(&bytes[..end]);
+            }
+        }
     }
 }
 

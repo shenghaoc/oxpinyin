@@ -713,3 +713,21 @@ Worst-case time remains O(NL), while temporary space falls from O(B + NL)
 to O(B + M), for B row bytes. No key vector is allocated per record, and
 no work moves into init. Other consumers that need owned pronunciations
 still use `decode_items`, over the same validated record views.
+
+## Mapped scalar phrase text (#1031; 2026-10-27 UTC)
+
+At `074a2219`, `src/storage/phrase_index.cpp:103-105` copies a mapped
+item's declared UCS-4 words. `src/pinyin.cpp:1627-1644` converts them to
+UTF-8 during candidate string materialization (`:2298`); the Zhuyin
+equivalents are `src/zhuyin.cpp:1096-1112,1335-1338`. This work occurs
+during guess, not init.
+
+Rust `PhraseItemView::phrase_text` bulk-encodes ordinary nonzero scalar
+phrases of at most 16 words into a 64-byte stack buffer, then constructs
+`PhraseText` once. The existing generic stored-word constructor remains
+the fallback for a zero, non-scalar word or longer declared item;
+unreadable words still return `None`. Full declared lengths and stored
+suffixes after a zero retain their existing semantics. Both constructions
+are O(L) time and O(L) output space, with bounded O(1) stack scratch for
+the scalar path. No text is cached and no work moves into init.
+Performance qualification is pending.
