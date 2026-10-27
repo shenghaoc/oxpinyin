@@ -19,6 +19,8 @@ import hashlib
 import json
 from pathlib import Path
 import sys
+import struct
+from unittest import mock
 import tempfile
 import unittest
 
@@ -155,6 +157,25 @@ class PagesTests(unittest.TestCase):
         # _pages_third stops at the end of __text (0x504).
         self.assertEqual(rows[0x520]['macho_symbols'], ['_pages_table'])
 
+    def test_universal_selects_host_slice_and_reports_file_offsets(self):
+        arm, intel = ARM64.read_bytes(), X86_64.read_bytes()
+        arm_offset, intel_offset = 0x4000, 0x10000
+        header = (struct.pack('>II', 0xcafebabe, 2) +
+                  struct.pack('>IIIII', 0x01000007, 3, intel_offset, len(intel), 14) +
+                  struct.pack('>IIIII', 0x0100000c, 0, arm_offset, len(arm), 14))
+        data = bytearray(intel_offset + len(intel))
+        data[:len(header)] = header
+        data[arm_offset:arm_offset + len(arm)] = arm
+        data[intel_offset:] = intel
+        with mock.patch.object(pages.platform, 'machine', return_value='arm64'):
+            layout = pages.object_layout('universal', data=bytes(data))
+            row = pages.object_rows(layout, [arm_offset], 16384, 'facade')[0]
+            self.assertEqual(row['macho_segments'], ['__TEXT'])
+            self.assertIn('_pages_first', row['macho_symbols'])
+            self.assertEqual(pages._host_slice(bytes(data))[2], 'arm64')
+        with mock.patch.object(pages.platform, 'machine', return_value='x86_64'):
+            self.assertEqual(pages._host_slice(bytes(data))[1:], (intel_offset, 'x86_64'))
+
     def test_macho_x86_64_slice(self):
         rows = pages_at(X86_64, [0x1000, 0x2000], 4096)
         self.assertEqual(rows[0x1000]['macho_sections'],
@@ -180,8 +201,8 @@ class PagesTests(unittest.TestCase):
 
     def test_unsupported_objects_are_refused_with_the_path(self):
         cases = [
-            (b'\xca\xfe\xba\xbe' + bytes(28), 'fat Mach-O is not supported'),
-            (b'\xbf\xba\xfe\xca' + bytes(28), 'fat Mach-O is not supported'),
+            (b'\xca\xfe\xba\xbe' + bytes(28), 'no slice for host architecture'),
+            (b'\xbf\xba\xfe\xca' + bytes(28), 'no slice for host architecture'),
             (pages.MH_MAGIC.to_bytes(4, 'little') + bytes(28), 'only 64-bit'),
             (pages.MH_CIGAM_64.to_bytes(4, 'little') + bytes(28), 'only little-endian'),
             (b'SQLite format 3\0', 'unknown object format'),
@@ -203,7 +224,7 @@ class PagesTests(unittest.TestCase):
             # pages_first, .symtab entry 3, with st_shndx = SHN_XINDEX.
             (self.variant(ELF, [(0x7b8 + 3 * 24 + 6, b'\xff\xff')]), 'extended section indices'),
             (self.variant(ELF, size=100), 'truncated program header at offset 64'),
-            (self.variant(ARM64, size=40), 'truncated segment at offset 32'),
+            (self.variant(ARM64, size=40), 'load commands .* runs past the end'),
         ]
         for path, message in variants:
             with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):

@@ -247,8 +247,8 @@ metric with more than 2 rejected samples in any arm, or with no round in which
 every arm was accepted, is INCONCLUSIVE with no summaries or ratio. Any other
 metric follows the usual rules over the rounds in which every arm was accepted,
 so paired ratios and controls compare like with like. Status stays 0. The
-Darwin metric is `darwin_resident_pages`; it appears only in `cold` records,
-never in a Linux-named field.
+Darwin metric is `darwin_resident_pages`; it appears in `cold` and
+`page-residency` records, never in a Linux-named field.
 
 On Linux the controller prepares every timing and memory sample through
 `tools.dev.measure.cold_linux` ([Linux cold preparation](#linux-cold-preparation))
@@ -572,13 +572,17 @@ symbol it overlaps: ELF section headers with `.symtab` and `.dynsym`
 (`elf_sections`, `elf_symbols`), or thin arm64 and x86_64 Mach-O segments,
 sections and `LC_SYMTAB` symbols (`macho_segments`, `macho_sections`,
 `macho_symbols`). Data and user files are reported as byte ranges
-(`offset_range`). Fat Mach-O and other formats are refused.
+(`offset_range`). Universal Mach-O selects and identifies the host architecture
+slice; unsupported formats fall back to byte ranges with a reason.
 
-The teardown campaign's cold mode (`--teardown-cache cold`, native Linux) is
-the first caller; the native controller does not call it yet. No flag turns it
-on: the cold memory samples of `pilot` and `confirm`, and the cold init samples
-of the `init-attribute` stage's `count` probe, report. It adds only text to the
-existing output; nothing is archived or uploaded:
+The native macOS controller reports each cold memory round after the rounds
+finish, with adjacent checkpoints, `darwin_resident_pages`, and the host page
+size. It reads each cold file at the existing checkpoint pause; timing samples
+do not collect vectors. The teardown campaign's cold mode
+(`--teardown-cache cold`, native Linux) reports the cold memory samples of
+`pilot` and `confirm`, and the cold init samples of the `init-attribute` stage's
+`count` probe. Nothing is archived or uploaded. The details below describe
+the teardown report:
 
 - **Capture.** At each paused checkpoint the controller already reads every
   cold file's residency with `tools.dev.mman.vector`, the one `mincore` reader

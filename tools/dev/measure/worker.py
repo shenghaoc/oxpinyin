@@ -11,7 +11,7 @@ import subprocess
 import sys
 import time
 
-from .. import slot
+from .. import mman, slot
 from . import cold as cold_cache
 from . import cold_linux
 from . import native
@@ -69,7 +69,7 @@ def check_identity(executable, record):
         raise ValueError('worker executable/source does not match its identity record')
 
 
-def execute(command, *, env, pass_fds=(), memory=False, cpu=None, timeout=120):
+def execute(command, *, env, pass_fds=(), memory=False, cpu=None, timeout=120, residency=None):
     """Run a worker session, drain its pipes, and return status and observations.
 
     Timeout is in seconds and process_wall is elapsed ns. With memory enabled,
@@ -94,6 +94,7 @@ def execute(command, *, env, pass_fds=(), memory=False, cpu=None, timeout=120):
             ack_read = None
             streams = {'stdout': bytearray(), 'stderr': bytearray(), 'checkpoint': bytearray()}
             checkpoints = {}
+            vectors = {}
             with selectors.DefaultSelector() as selector:
                 selector.register(process.stdout, selectors.EVENT_READ, 'stdout')
                 selector.register(process.stderr, selectors.EVENT_READ, 'stderr')
@@ -129,6 +130,8 @@ def execute(command, *, env, pass_fds=(), memory=False, cpu=None, timeout=120):
                                     peak = int(parts[2]) if len(parts) == 3 else None
                                     checkpoints[POINTS[len(checkpoints)]] = native.read_memory(
                                         process.pid, resident_peak_bytes=peak)
+                                    if residency is not None:
+                                        vectors[POINTS[len(checkpoints) - 1]] = residency()
                                     os.write(ack_write, b'\n')
                     process.wait()
                     slot.check_cancelled()
@@ -138,8 +141,11 @@ def execute(command, *, env, pass_fds=(), memory=False, cpu=None, timeout=120):
                     slot.terminate_group(process)
                     raise
             elapsed = time.monotonic_ns() - started
-            return dict(status=process.returncode, pid=process.pid, stdout=bytes(streams['stdout']),
-                        stderr=bytes(streams['stderr']), checkpoints=checkpoints, process_wall=elapsed)
+            result = dict(status=process.returncode, pid=process.pid, stdout=bytes(streams['stdout']),
+                          stderr=bytes(streams['stderr']), checkpoints=checkpoints, process_wall=elapsed)
+            if residency is not None:
+                result['residency'] = vectors
+            return result
     finally:
         for fd in (checkpoint_read, checkpoint_write, ack_read, ack_write):
             if fd is not None:
@@ -230,6 +236,26 @@ def sample_directory(work):
         shutil.rmtree(path)
 
 
+def checkpoint_residency(library, data, user):
+    """Read the cold set at a pause, retaining identity and one vector per file."""
+    result = {}
+    for kind, root in (('object', Path(library)), ('data', Path(data)), ('user', Path(user))):
+        paths = [root] if root.is_file() else sorted(path for path in root.rglob('*') if path.is_file())
+        for path in paths:
+            label = kind if kind == 'object' else kind + '/' + str(path.relative_to(root))
+            with path.open('rb') as handle:
+                info = os.fstat(handle.fileno())
+                vector = mman.vector(handle.fileno())
+                end = os.fstat(handle.fileno())
+                if (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns) != \
+                        (end.st_dev, end.st_ino, end.st_size, end.st_mtime_ns):
+                    raise ValueError(f'file changed during residency observation: {path}')
+                result[label] = dict(path=str(path), kind=kind, identity=(info.st_dev, info.st_ino),
+                                     size=info.st_size, mtime_ns=info.st_mtime_ns,
+                                     pages=len(vector), vector=vector)
+    return result
+
+
 class Worker:
     """Run fresh startup processes against private profile copies.
 
@@ -290,8 +316,10 @@ class Worker:
                 env['OXPINYIN_STARTUP_LOADER'] = '1'
             if scope == 'steady':
                 env['OXPINYIN_STARTUP_STEADY'] = '1'
+            capture = (dict(residency=lambda: checkpoint_residency(library, self.data, user))
+                       if cold and memory and sys.platform == 'darwin' else {})
             result = execute(command, env=env, pass_fds=self.pass_fds, memory=memory, cpu=self.cpu,
-                             timeout=1800 if scope else 120)
+                             timeout=1800 if scope else 120, **capture)
             if probe is not None:
                 return dict(status=result['status'],
                             outcome='crashed' if result['status'] < 0 else 'refused' if result['status'] else 'answered',

@@ -21,7 +21,7 @@ data rows have offset_range. A Mach-O name never appears in an ELF-named field.
 Supported objects: ELF64 little-endian (sections from the section headers,
 symbols from .symtab and .dynsym) and thin 64-bit little-endian Mach-O for
 arm64 or x86_64 (LC_SEGMENT_64 segments and sections, LC_SYMTAB symbols).
-Anything else, including a fat Mach-O, raises ValueError. An ELF symbol spans
+Universal Mach-O selects the host architecture; unsupported formats raise ValueError. An ELF symbol spans
 its st_size; zero-size, section and file symbols are left out. A Mach-O symbol
 has no size, so it spans to the next symbol address in its section.
 
@@ -35,6 +35,7 @@ byte-identical copy.
 import bisect
 import json
 import os
+import platform
 from pathlib import Path
 import struct
 
@@ -209,6 +210,7 @@ def _macho(data):
         raise ValueError(f'unsupported Mach-O CPU type {cputype:#x}: only arm64 and x86_64 are mapped')
     segments, sections, table = set(), [], None
     offset, end = 32, 32 + sizeofcmds
+    _in_file(data, offset, end, 'load commands')
     for _ in range(ncmds):
         command, size = _unpack('<II', data, offset, 'load command')
         if size < 8 or offset + size > end:
@@ -238,6 +240,8 @@ def _macho(data):
     # n_sect numbers sections from 1 across all segments in load command order.
     defined = {}
     symoff, nsyms, stroff, strsize = table or (0, 0, 0, 0)
+    _in_file(data, symoff, symoff + nsyms * 16, 'symbol table')
+    _in_file(data, stroff, stroff + strsize, 'string table')
     for entry in range(nsyms):
         name, kind, ordinal, _, value = _unpack('<IBBHQ', data, symoff + 16 * entry, 'symbol')
         if kind & N_STAB or (kind & N_TYPE) != N_SECT or not 0 < ordinal <= len(sections):
@@ -263,6 +267,30 @@ def _macho(data):
                 macho_symbols=sorted(symbols))
 
 
+def _host_slice(data):
+    """Select a universal Mach-O slice and return bytes, offset and architecture."""
+    magic = data[:4]
+    endian = '>' if magic in (b'\xca\xfe\xba\xbe', b'\xca\xfe\xba\xbf') else '<'
+    wide = magic in (b'\xca\xfe\xba\xbf', b'\xbf\xba\xfe\xca')
+    _, count = _unpack(endian + 'II', data, 0, 'fat header')
+    architecture = platform.machine().lower()
+    architecture = {'aarch64': 'arm64', 'amd64': 'x86_64'}.get(architecture, architecture)
+    layout = endian + ('IIQQII' if wide else 'IIIII')
+    size = struct.calcsize(layout)
+    for index in range(count):
+        fields = _unpack(layout, data, 8 + index * size, 'fat architecture')
+        cpu, _, offset, length = fields[:4]
+        if CPU_TYPES.get(cpu) == architecture:
+            _in_file(data, offset, offset + length, 'fat slice')
+            if length < 32:
+                raise ValueError('truncated fat slice')
+            slice_data = data[offset:offset + length]
+            if _unpack('<I', slice_data, 4, 'slice CPU type')[0] != cpu:
+                raise ValueError('fat slice CPU type does not match its header')
+            return slice_data, offset, architecture
+    raise ValueError(f'fat Mach-O has no slice for host architecture {architecture}')
+
+
 def object_layout(path, *, data=None):
     """Read an object and return its named file ranges, keyed by output field.
 
@@ -275,7 +303,13 @@ def object_layout(path, *, data=None):
     if data is None:
         data = Path(path).read_bytes()
     try:
-        return _elf(data) if data[:4] == ELF_MAGIC else _macho(data)
+        if data[:4] == ELF_MAGIC:
+            return _elf(data)
+        if data[:4] in FAT_MAGICS:
+            slice_data, offset, _ = _host_slice(data)
+            return {field: [(start + offset, end + offset, name) for start, end, name in ranges]
+                    for field, ranges in _macho(slice_data).items()}
+        return _macho(data)
     except ValueError as error:
         raise ValueError(f'{path}: {error}') from None
 
