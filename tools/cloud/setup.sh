@@ -38,8 +38,10 @@ uv_at_least_floor() {
 }
 
 uv_install_dir=${UV_INSTALL_DIR:-$HOME/.local/bin}
+kept_uv=1
 if ! command -v uv >/dev/null 2>&1 || ! uv_at_least_floor ||
 	[[ -n ${UV_INSTALL_DIR:-} && $(command -v uv) != "$uv_install_dir/uv" ]]; then
+	kept_uv=0
 	# Probe the actual destination before fetching the archive. This catches
 	# read-only cloud mounts as well as ordinary directory permissions.
 	uv_write_error="uv installation directory is not writable: $uv_install_dir; set UV_INSTALL_DIR to a writable task-owned directory"
@@ -87,7 +89,10 @@ fi
 uv_at_least_floor ||
 	die "uv $uv_minimum or newer required; found: $(uv --version 2>/dev/null || echo missing)"
 # Keep a managed interpreter that is already there; install one only when none is.
-"$repo/tools/install-python.sh" ||
+if ! "$repo/tools/install-python.sh"; then
+	((kept_uv)) && log "using $(uv --version)"
 	die 'managed Python provisioning failed; check writable UV_PYTHON_INSTALL_DIR/UV_CACHE_DIR and access to github.com and release-assets.githubusercontent.com (docs/runbooks/cloud.md)'
+fi
+OXPINYIN_CLOUD_BOOTSTRAP_SECONDS=$SECONDS OXPINYIN_CLOUD_BOOTSTRAP_KEPT_UV=$kept_uv \
 exec uv run --no-project --managed-python --python "$python_request" python -X lazy_imports=normal \
     "$repo/tools/dev/__main__.py" provision "$@"

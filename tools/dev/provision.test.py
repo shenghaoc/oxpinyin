@@ -1,7 +1,6 @@
 #!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
 """Synthetic provisioning fixtures; U6_BASE also compares preserved shell entry points."""
 import contextlib
-import hashlib
 import io
 import os
 from pathlib import Path
@@ -17,11 +16,13 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-from tools.dev import provision, slot
+from tools.dev import provision
 from tools.dev.compat.identity import digest_file
+from tools.dev.native import NativeRefused, Tools
 from tools.dev.runners import Finished
 
 
+@unittest.skipUnless(sys.platform.startswith('linux'), 'Linux cloud provisioning fixtures')
 class ProvisionTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
@@ -140,6 +141,7 @@ log() { printf '%s\\n' "$*" >&2; }
             old = self.old('write')
             self.assertEqual(old.returncode, 0, old.stderr.decode())
             self.assertEqual(old.stderr.decode(), current_error)
+            self.assertEqual(self.service.env_file.read_bytes(), new_file)
             legacy = [self.source(cell) for cell in provision.CELLS]
             self.assertEqual([(p.returncode, p.stdout, p.stderr) for p in current],
                              [(p.returncode, p.stdout, p.stderr) for p in legacy])
@@ -262,6 +264,107 @@ log() { printf '%s\\n' "$*" >&2; }
         self.assertEqual(provision.tkrzw_env_prefix(self.service.env_file), '')
         self.assertIn(str(host / 'lib/libtkrzw.so.1').encode(), self.source('tkrzw').stdout)
 
+    def test_every_empty_host_probe_result_reports_its_reason_on_stderr(self):
+        library = self.work / 'host-libtkrzw.so.1'
+        library.touch()
+        cached = self.service.tkrzw_prefix / 'lib/libtkrzw.so.1'
+        cached.parent.mkdir(parents=True)
+        cached.touch()
+        alias = self.work / 'host-library-link'
+        alias.symlink_to(cached)
+        util = str(self.work / 'tkrzw_dbm_util')
+        cases = (
+            ('failed distro probe', 7, util, str(library), None,
+             'host distro-probe.sh failed (status 7)'),
+            ('missing utility', 0, None, str(library), None,
+             'tkrzw_dbm_util is not on the host PATH after excluding cached runtimes'),
+            ('failed loader', 0, util, str(library), Finished(126),
+             'the host utility loader check failed (status 126)'),
+            ('unresolved library', 0, util, '', None,
+             'the host utility did not resolve libtkrzw'),
+            ('missing library file', 0, util, str(self.work / 'absent-library'), None,
+             'resolved host libtkrzw is not a file:'),
+            ('excluded cache', 0, util, str(cached), None,
+             'resolved libtkrzw belongs to an excluded cache:'),
+            ('cache through symlink', 0, util, str(alias), None,
+             'resolved host libtkrzw points into an excluded cache:'),
+        )
+        for name, status, executable, resolved, error, reason in cases:
+            output, diagnostic = io.StringIO(), io.StringIO()
+            with self.subTest(path=name), \
+                    mock.patch.object(provision, 'run', return_value=status), \
+                    mock.patch.object(provision.shutil, 'which', return_value=executable), \
+                    mock.patch.object(provision, 'resolve_tkrzw', return_value=resolved,
+                                      side_effect=error), \
+                    mock.patch.object(provision, 'text', return_value='Linux'), \
+                    contextlib.redirect_stdout(output), contextlib.redirect_stderr(diagnostic):
+                self.assertEqual(provision.probe_host(self.service.tkrzw_prefix, env=self.env), '')
+            self.assertIn(reason, diagnostic.getvalue())
+            self.assertIn('no healthy host libtkrzw was certified', diagnostic.getvalue())
+            self.assertNotIn(reason, output.getvalue())
+
+    def test_uncertified_host_names_the_outcome_and_keeps_status_one(self):
+        with mock.patch.object(provision, 'probe_host', return_value=''):
+            with self.assertRaisesRegex(NativeRefused, '^no healthy host libtkrzw was certified$'):
+                Tools(environment=self.env).tkrzw_host()
+            self.assertEqual(provision.main(['probe-host']), 1)
+
+    def test_shell_quoting_matches_bash_and_never_evaluates_values(self):
+        for value in ("", "plain/a-b.c_+=,:%@", "quotes '\" and $dollars`", "a\nb\tc\r\x01\x7f", "~#&|;()<>!?[]{}*"):
+            for always in (False, True):
+                with self.subTest(value=value, always=always):
+                    script = 'value=$1; printf "%s" "${value@Q}"' if always else 'printf "%q" "$1"'
+                    old = subprocess.check_output(['bash', '-c', script, 'fixture', value], env=self.env).decode()
+                    self.assertEqual(provision.quote(value, always=always), old)
+                    decoded = subprocess.check_output(['bash', '-c', 'value=' + provision.quote(value, always=always) + '; printf "%s" "$value"'], env=self.env).decode()
+                    self.assertEqual(decoded, value)
+
+    def test_path_filter_preserves_bash_empty_fields(self):
+        for value in ('', ':a', 'a:', 'a::b:', ':a::', 'a:/cache/lib:/cache/bin:b'):
+            with self.subTest(value=value):
+                expected = subprocess.check_output(['bash', '-c',
+                    'source "$1/tools/cloud/env.sh"; tkrzw_prefix=/cache; without_prefix "$2"',
+                    'fixture', str(self.base), value], env=self.env).decode() if self.base else None
+                current = provision.without_prefix(value, '/cache', self.env)
+                if expected is not None:
+                    self.assertEqual(current, expected)
+
+    def test_ext4_reports_available_absent_overmounted_inaccessible_and_unknown(self):
+        mount = self.work / 'ext4 mount'
+        mount.mkdir()
+        findmnt = self.bin / 'findmnt'
+        findmnt.write_text(f"""#!{sys.executable}
+import os,sys
+mode=os.environ['FAKE_EXT4']
+if mode=='unknown': sys.exit(1)
+if sys.argv[1]=='--raw':
+    print('/ overlay')
+    if mode!='absent': print(os.environ['FAKE_MOUNT'].replace(' ', r'\\x20')+' ext4')
+else:
+    print('ext4' if mode=='available' and sys.argv[-1]==os.environ['FAKE_MOUNT'] else 'overlay')
+""")
+        findmnt.chmod(0o755)
+        self.service.env['FAKE_MOUNT'] = str(mount)
+        for mode, expected in (('available', f'ext4 path (readable, writable, searchable): {mount}'),
+                               ('absent', 'ext4 paths: none accessible'),
+                               ('overmounted', 'ext4 paths: none accessible'),
+                               ('unknown', 'ext4 paths: unknown (mount detection failed)')):
+            self.service.env['FAKE_EXT4'] = mode
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                self.service.report_ext4()
+            self.assertIn(expected, output.getvalue())
+            self.assertIn('does not verify all measured files are on ext4', output.getvalue())
+        mount.rmdir()
+        self.service.env['FAKE_EXT4'] = 'available'
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.service.report_ext4()
+        self.assertIn('ext4 paths: none accessible', output.getvalue())
+        with mock.patch.object(self.service, 'which', return_value=None), contextlib.redirect_stdout(output):
+            self.service.report_ext4()
+        self.assertIn('ext4 paths: unknown (findmnt unavailable)', output.getvalue())
+
     def test_pool_delegates_and_in_container_never_launches_a_runtime(self):
         self.service.inside = True
         with mock.patch.object(provision, 'run', return_value=19) as child:
@@ -302,16 +405,25 @@ class EntrypointTests(unittest.TestCase):
 import os,pathlib,sys,time
 name=pathlib.Path(sys.argv[0]).name; a=sys.argv[1:]
 if name=='uv':
-    if a==['--version']: print('uv 0.13.1 (synthetic)')
-    elif a[:2]==['python','find']: print(sys.executable)
+    if a==['--version']: print('uv '+os.environ.get('FAKE_UV_VERSION','0.13.1')+' (synthetic)')
+    elif a[:2]==['python','find']:
+        if os.environ.get('FAKE_PYTHON_FAILURE'): sys.exit(1)
+        print(sys.executable)
     elif a[:1]==['run']:
         i=a.index('python'); os.execv(sys.executable,[sys.executable,*a[i+1:]])
     else: sys.exit(97)
 elif name=='rustup': sys.exit(int(os.environ.get('FAKE_RUST','0')))
-elif name=='valgrind': print('valgrind-'+os.environ.get('FAKE_VALGRIND','3.25.1'))
+elif name=='valgrind':
+    if os.environ.get('FAKE_VALGRIND_MISSING'): sys.exit(1)
+    print('valgrind-'+os.environ.get('FAKE_VALGRIND','3.25.1'))
 elif name=='podman':
     if a==['--version']: print('podman (synthetic)')
     elif a==['info'] and os.environ.get('FAKE_RUNTIME_READY'): pass
+    elif a[:2]==['image','inspect'] and os.environ.get('FAKE_POOL'): pass
+    elif a[:1]==['run'] and os.environ.get('FAKE_POOL'):
+        volume=next(v for v in a if ':/opt/pinyin-oracle:z' in v).split(':/opt/pinyin-oracle:z')[0]
+        cell=a[a.index('--dbm')+1]; prefix=pathlib.Path(volume)/cell/'lib'; prefix.mkdir(parents=True,exist_ok=True)
+        for lib in ('libpinyin','libzhuyin'): (prefix/(lib+'.so')).write_text('synthetic wrong library\\n')
     elif a==['info'] and os.environ.get('FAKE_WAIT'):
         pathlib.Path(os.environ['READY']).touch(); time.sleep(60)
     else: sys.exit(97)
@@ -322,7 +434,7 @@ elif name in ('curl','apt-get','sudo'):
     with open(os.environ['CALLS'],'a') as f: f.write(name+' '+ ' '.join(a)+'\\n')
     sys.exit(97)
 '''
-        for name in ('uv', 'rustup', 'valgrind', 'podman', 'findmnt', 'curl', 'apt-get'):
+        for name in ('uv', 'rustup', 'valgrind', 'podman', 'findmnt', 'curl', 'apt-get', 'sudo'):
             path = self.bin / name
             path.write_text(program)
             path.chmod(0o755)
@@ -377,6 +489,41 @@ elif name in ('curl','apt-get','sudo'):
             self.assertEqual(done.stderr, (option + ': requires an argument\n').encode())
             if self.base:
                 self.assertEqual(self.run_entry([option], old=True).returncode, 1)
+
+    def test_uv_bootstrap_semver_and_install_failures(self):
+        for version in ('0.13.1', '0.14.2', '0.13.1+build.7', '0.14.0-beta.1', '0.13.2-rc.1+build.7'):
+            with self.subTest(version=version):
+                self.env['FAKE_UV_VERSION'] = version
+                self.compare(['--python-only'], 0)
+        for version in ('0.13.0', '0.13.1-beta.1', '0.13.1-rc.1+build.7', '0.13.1-0', '0.12.9-rc.1'):
+            with self.subTest(version=version):
+                self.env['FAKE_UV_VERSION'] = version
+                result = self.compare(['--python-only'], 1)
+                self.assertIn(b'FAIL: uv download failed', result.stderr)
+        self.env.pop('FAKE_UV_VERSION')
+        destination = self.work / 'regular-file'
+        destination.touch()
+        self.env['UV_INSTALL_DIR'] = str(destination)
+        self.assertIn(b'uv installation directory is not writable', self.compare(['--python-only'], 1).stderr)
+        self.env.pop('UV_INSTALL_DIR')
+        self.env['FAKE_PYTHON_FAILURE'] = '1'
+        self.assertIn(b'FAIL: managed Python provisioning failed', self.compare(['--python-only'], 1).stderr)
+        self.env.pop('FAKE_PYTHON_FAILURE')
+
+    def test_valgrind_minimum_and_install_retry_match_the_base(self):
+        for version in ('3.22.0', '3.27.1', '3.22.0.GIT', '3.21.0'):
+            with self.subTest(version=version):
+                self.env['FAKE_VALGRIND'] = version
+                result = self.compare(['--cells', 'bdb'], 1)
+                if version == '3.21.0':
+                    self.assertIn(b'FAIL: could not install valgrind with apt-get', result.stderr)
+                else:
+                    self.assertIn(b'FAIL: model20 is unavailable', result.stderr)
+        self.env.pop('FAKE_VALGRIND')
+        self.env['FAKE_VALGRIND_MISSING'] = '1'
+        result = self.compare(['--cells', 'bdb'], 1)
+        self.assertIn(b'FAIL: could not install valgrind with apt-get', result.stderr)
+        self.env.pop('FAKE_VALGRIND_MISSING')
 
     def test_native_prerequisite_failures_and_python_only_scope(self):
         (self.bin / 'cargo').unlink()
@@ -437,21 +584,44 @@ elif name in ('curl','apt-get','sudo'):
             self.assertEqual((cache / 'oracle' / cell / 'lib/pkgconfig/libpinyin.pc').read_text(),
                              'prefix=' + str(cache / 'oracle' / cell) + '\n')
 
-    def test_cancellation_reaps_fake_child_and_cleans_private_ca(self):
-        # Supply a fake verified model extraction, so cancellation reaches info.
+    def verified_model(self):
         model = self.work / 'model20'
         extracted = model / 'extracted'
-        extracted.mkdir(parents=True)
+        extracted.mkdir(parents=True, exist_ok=True)
         for name in ('art culture economy gb_char gbk_char geology history life merged nature opengram people punct science society sport technology'.split()):
             (extracted / (name + '.table')).touch()
         (extracted / 'interpolation2.text').touch()
         (model / 'verified').write_text('sha256=59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155\n')
+
+    def test_cold_no_pull_library_hash_mismatch_keeps_status_three(self):
+        self.verified_model()
+        self.env.update(FAKE_POOL='1', FAKE_RUNTIME_READY='1')
+        outcomes = []
+        for old in ([False, True] if self.base else [False]):
+            shutil.rmtree(self.work / 'cache', ignore_errors=True)
+            done = self.run_entry(['--cells', 'bdb', '--no-pull', '--jobs', '1'], old=old)
+            self.assertEqual(done.returncode, 3, done.stderr.decode())
+            diagnostic = done.stderr[done.stderr.index(b'MISMATCH bdb libpinyin'):]
+            products = [(self.work / 'cache/oracle/bdb/lib' / (lib + '.so')).read_bytes()
+                        for lib in ('libpinyin', 'libzhuyin')]
+            outcomes.append((done.stdout, diagnostic, products))
+        if len(outcomes) == 2:
+            self.assertEqual(outcomes[0], outcomes[1])
+
+    def test_cancellation_reaps_fake_child_and_cleans_private_ca(self):
+        # Supply a fake verified model extraction, so cancellation reaches info.
+        self.verified_model()
         ca = self.work / 'synthetic-ca'
         ca.write_text('synthetic CA\n')
         ready = self.work / 'ready'
-        self.env.update(FAKE_WAIT='1', READY=str(ready), OXPINYIN_PROXY_CA=str(ca))
+        self.env.update(FAKE_WAIT='1', READY=str(ready))
         outcomes = []
-        for old in ([False, True] if self.base else [False]):
+        cases = [(custom, old) for custom in (True, False) for old in ([False, True] if self.base else [False])]
+        for custom, old in cases:
+            if custom:
+                self.env['OXPINYIN_PROXY_CA'] = str(ca)
+            else:
+                self.env.pop('OXPINYIN_PROXY_CA', None)
             ready.unlink(missing_ok=True)
             setup = self.root / 'tools/cloud/setup.sh'
             setup.write_bytes((self.base / 'tools/cloud/setup.sh').read_bytes() if old else self.new_setup)
@@ -466,13 +636,15 @@ elif name in ('curl','apt-get','sudo'):
             self.assertTrue(ready.exists(), 'fake runtime did not reach cancellation boundary')
             os.killpg(child.pid, signal.SIGTERM)
             out, err = child.communicate(timeout=10)
-            self.assertEqual(child.returncode, 1, err.decode())
+            status = 128 - child.returncode if child.returncode < 0 else child.returncode
+            self.assertEqual(status, 1 if custom else 143, err.decode())
             self.assertFalse(any(path.name == 'ca.crt' for path in self.work.rglob('ca.crt')))
             outcomes.append((out, self.normalize(err)))
         # Status and owned cleanup are exact; process-termination diagnostics are
         # Bash-specific and not copied into the Python controller.
-        if len(outcomes) == 2:
+        if self.base:
             self.assertEqual(outcomes[0][0], outcomes[1][0])
+            self.assertEqual(outcomes[2][0], outcomes[3][0])
 
 
 if __name__ == '__main__':
