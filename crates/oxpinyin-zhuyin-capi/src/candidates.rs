@@ -384,41 +384,39 @@ pub fn snapshot_candidates(
         if sentence_rows_only && cand.kind() != CandidateKind::Sentence {
             continue;
         }
-        let bytes = phrase_text_bytes(cand.text());
-        let Some(text) = inst.candidates.intern(&bytes) else {
-            continue;
-        };
-        let consumed_bytes = zhuyin_parse.as_ref().map_or_else(
-            || cand.consumed_bytes(),
-            |parse| oxpinyin_facade::zhuyin_original_offset(parse, cand.consumed_bytes()),
-        );
-        let span_begin_session = anchor.saturating_add(cand.span_start());
-        let span_begin = zhuyin_parse.as_ref().map_or(span_begin_session, |parse| {
-            oxpinyin_facade::zhuyin_original_begin(parse, span_begin_session)
-        });
-        // Before-cursor law: only candidates whose span ENDS at the requested
-        // original-offset. At offset 0 no span ends there (nothing precedes
-        // the first key), so the before-cursor window is empty — not the whole
-        // composition — matching the pin's `guess_candidates_before_cursor`.
-        // The sentence rows are exempt: upstream prepends them regardless of
-        // the offset (`_prepend_sentence_candidates` has no offset condition,
-        // `zhuyin.cpp:1624-1626` at the pin), and a sentence's consumed span
-        // is the whole composition, not a lookup span.
-        if let Some(end) = before_end
-            && cand.kind() != CandidateKind::Sentence
-            && consumed_bytes != end
-        {
-            continue;
-        }
-        inst.candidates.push(CapiCandidate {
-            text,
-            text_ptr: std::ptr::null(),
-            candidate_type: match cand.kind() {
-                CandidateKind::Sentence => lookup_candidate_type_t::BEST_MATCH_CANDIDATE,
-                _ => normal_type,
-            },
-            source_index: u32::try_from(window_index).unwrap_or(u32::MAX),
-            span_begin: u32::try_from(span_begin).unwrap_or(u32::MAX),
+        inst.candidates.push_phrase(cand.text(), |text| {
+            let consumed_bytes = zhuyin_parse.as_ref().map_or_else(
+                || cand.consumed_bytes(),
+                |parse| oxpinyin_facade::zhuyin_original_offset(parse, cand.consumed_bytes()),
+            );
+            let span_begin_session = anchor.saturating_add(cand.span_start());
+            let span_begin = zhuyin_parse.as_ref().map_or(span_begin_session, |parse| {
+                oxpinyin_facade::zhuyin_original_begin(parse, span_begin_session)
+            });
+            // Before-cursor law: only candidates whose span ENDS at the requested
+            // original-offset. At offset 0 no span ends there (nothing precedes
+            // the first key), so the before-cursor window is empty — not the whole
+            // composition — matching the pin's `guess_candidates_before_cursor`.
+            // The sentence rows are exempt: upstream prepends them regardless of
+            // the offset (`_prepend_sentence_candidates` has no offset condition,
+            // `zhuyin.cpp:1624-1626` at the pin), and a sentence's consumed span
+            // is the whole composition, not a lookup span.
+            if let Some(end) = before_end
+                && cand.kind() != CandidateKind::Sentence
+                && consumed_bytes != end
+            {
+                return None;
+            }
+            Some(CapiCandidate {
+                text,
+                text_ptr: std::ptr::null(),
+                candidate_type: match cand.kind() {
+                    CandidateKind::Sentence => lookup_candidate_type_t::BEST_MATCH_CANDIDATE,
+                    _ => normal_type,
+                },
+                source_index: u32::try_from(window_index).unwrap_or(u32::MAX),
+                span_begin: u32::try_from(span_begin).unwrap_or(u32::MAX),
+            })
         });
     }
 }

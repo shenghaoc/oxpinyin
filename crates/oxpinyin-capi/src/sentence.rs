@@ -640,30 +640,30 @@ pub extern "C" fn pinyin_guess_candidates(
         {
             continue;
         }
-        let bytes = phrase_text_bytes(cand.text());
-        let Some(text) = inst.candidates.intern(&bytes) else {
-            continue;
-        };
-        inst.candidates.push(CapiCandidate {
-            text,
-            text_ptr: std::ptr::null(),
-            kind: cand.kind(),
-            type_tag: match cand.kind() {
-                oxpinyin_engine::CandidateKind::Sentence => {
-                    lookup_candidate_type_t::NBEST_MATCH_CANDIDATE
+        inst.candidates.push_phrase(cand.text(), |text| {
+            Some(CapiCandidate {
+                text,
+                text_ptr: std::ptr::null(),
+                kind: cand.kind(),
+                type_tag: match cand.kind() {
+                    oxpinyin_engine::CandidateKind::Sentence => {
+                        lookup_candidate_type_t::NBEST_MATCH_CANDIDATE
+                    }
+                    oxpinyin_engine::CandidateKind::Addon => {
+                        lookup_candidate_type_t::ADDON_CANDIDATE
+                    }
+                    oxpinyin_engine::CandidateKind::Phrase
+                    | oxpinyin_engine::CandidateKind::Fallback
+                    | _ if is_longer => lookup_candidate_type_t::LONGER_CANDIDATE,
+                    oxpinyin_engine::CandidateKind::Phrase
+                    | oxpinyin_engine::CandidateKind::Fallback
+                    | _ => lookup_candidate_type_t::NORMAL_CANDIDATE,
                 }
-                oxpinyin_engine::CandidateKind::Addon => lookup_candidate_type_t::ADDON_CANDIDATE,
-                oxpinyin_engine::CandidateKind::Phrase
-                | oxpinyin_engine::CandidateKind::Fallback
-                | _ if is_longer => lookup_candidate_type_t::LONGER_CANDIDATE,
-                oxpinyin_engine::CandidateKind::Phrase
-                | oxpinyin_engine::CandidateKind::Fallback
-                | _ => lookup_candidate_type_t::NORMAL_CANDIDATE,
-            }
-            .tag(),
-            nbest_index: cand.nbest_index(),
-            token: cand.token(),
-            source_index: u32::try_from(window_index).unwrap_or(u32::MAX),
+                .tag(),
+                nbest_index: cand.nbest_index(),
+                token: cand.token(),
+                source_index: u32::try_from(window_index).unwrap_or(u32::MAX),
+            })
         });
     }
     // Class (c), `pinyin.cpp:1859`: `assert(0 < total_freq)` while ranking a

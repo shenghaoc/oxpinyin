@@ -24,6 +24,9 @@
 use std::ffi::{CStr, c_char};
 use std::ops::{Deref, DerefMut};
 
+use oxpinyin_capi_marshal::phrase_text::phrase_text_bytes;
+use oxpinyin_core::PhraseText;
+
 /// One interned string's place in the snapshot's text buffer: the byte
 /// offset of its first byte and its length without the terminator.
 ///
@@ -154,6 +157,12 @@ impl<R: SnapshotRow> CandidateSnapshot<R> {
         if bytes.contains(&0) {
             return None;
         }
+        self.intern_nul_free(bytes)
+    }
+
+    // Only `intern`'s validated input and PhraseText's Scalar storage reach
+    // this helper. Scalar constructors exclude NUL; Stored is not trusted.
+    fn intern_nul_free(&mut self, bytes: &[u8]) -> Option<TextSpan> {
         let start = u32::try_from(self.text.len()).ok()?;
         let len = u32::try_from(bytes.len()).ok()?;
         // The terminator must fit the offsets too.
@@ -165,6 +174,39 @@ impl<R: SnapshotRow> CandidateSnapshot<R> {
             self.repoint();
         }
         Some(TextSpan { start, len })
+    }
+
+    /// Interns a phrase, then builds and appends its row when `build` keeps it.
+    ///
+    /// Scalar text is already NUL-free by `PhraseText`'s constructors, so its
+    /// freshly appended span needs no second validation. Stored words retain
+    /// the ordinary C-boundary encoding and byte/span validation, including
+    /// the first-zero outward cut and non-scalar encodings. A rejected row
+    /// still leaves its text interned, preserving zhuyin's filter order.
+    pub fn push_phrase(&mut self, text: &PhraseText, build: impl FnOnce(TextSpan) -> Option<R>) {
+        let scalar = text.outward_bytes();
+        let span = if let Some(bytes) = scalar {
+            self.intern_nul_free(bytes)
+        } else {
+            self.intern(&phrase_text_bytes(text))
+        };
+        let Some(span) = span else {
+            return;
+        };
+        let Some(mut row) = build(span) else {
+            return;
+        };
+        let ptr = if scalar.is_some() {
+            // `intern_nul_free` just appended this span and its terminator.
+            // Checked slicing avoids pointer arithmetic or an unsafe block.
+            self.text
+                .get(span.start as usize..)
+                .map_or(c"".as_ptr(), |bytes| bytes.as_ptr().cast())
+        } else {
+            span_ptr(&self.text, span)
+        };
+        row.set_text(span, ptr);
+        self.rows.push(row);
     }
 
     /// Appends one row, pointed at its span's string.
@@ -322,5 +364,54 @@ mod tests {
         for item in snapshot.iter() {
             assert_eq!(item.1, snapshot.text_ptr(item.0));
         }
+    }
+
+    #[test]
+    fn typed_append_matches_encoded_intern_and_push() {
+        let phrases = [
+            PhraseText::from(""),
+            PhraseText::from("abc"),
+            PhraseText::from("甲é🦀"),
+            PhraseText::from("甲\0乙"),
+            PhraseText::from_words([0, 0x4e59]).expect("stored zero"),
+            PhraseText::from_words([0x7532, 0xd800, 0x110000]).expect("non-scalars"),
+            PhraseText::from_stored_parts(vec![0x7532, 0, 0xffff_ffff], 7),
+        ];
+        let mut old = CandidateSnapshot::<Row>::new();
+        let mut typed = CandidateSnapshot::<Row>::new();
+        // Repeated appends exercise relocation as well as empty/nonempty text.
+        for phrase in phrases.iter().cycle().take(64) {
+            let saved = phrase.clone();
+            let span = old
+                .intern(&phrase_text_bytes(phrase))
+                .expect("encoded text");
+            old.push(row(span));
+            typed.push_phrase(phrase, |span| Some(row(span)));
+            assert_eq!(typed.text, old.text);
+            assert_eq!(typed.len(), old.len());
+            assert_eq!(phrase, &saved, "stored words and declared length survive");
+            assert_eq!(phrase.phrase_length(), saved.phrase_length());
+            assert_eq!(phrase.stored_words(), saved.stored_words());
+            for (new, previous) in typed.iter().zip(old.iter()) {
+                assert_eq!(new.0, previous.0);
+                assert_eq!(typed.text(new.0), old.text(previous.0));
+                assert_eq!(new.1, typed.text_ptr(new.0));
+                assert!(!new.1.is_null(), "empty text is distinct from NULL");
+            }
+        }
+    }
+
+    #[test]
+    fn typed_append_interns_before_filter_and_repoints_null_rows() {
+        let mut snapshot = CandidateSnapshot::<Row>::new();
+        snapshot.push(row(TextSpan::NULL));
+        snapshot.push_phrase(&PhraseText::from("skipped"), |_| None);
+        assert_eq!(snapshot.len(), 1);
+        assert_eq!(snapshot.text, b"skipped\0");
+        snapshot.push_phrase(&PhraseText::from("kept"), |span| Some(row(span)));
+        snapshot.reserve(1, 1024);
+        assert!(snapshot[0].1.is_null());
+        assert_eq!(snapshot.text(snapshot[1].0), c"kept");
+        assert_eq!(snapshot[1].1, snapshot.text_ptr(snapshot[1].0));
     }
 }

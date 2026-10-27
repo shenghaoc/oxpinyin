@@ -713,3 +713,54 @@ Worst-case time remains O(NL), while temporary space falls from O(B + NL)
 to O(B + M), for B row bytes. No key vector is allocated per record, and
 no work moves into init. Other consumers that need owned pronunciations
 still use `decode_items`, over the same validated record views.
+
+## Typed candidate snapshot append (#1031; 2026-10-27 UTC)
+
+Read from the libpinyin tree at `074a2219`: the guess path constructs row
+strings in `src/pinyin.cpp:1995-2031` (called at `:2298`) and
+`src/zhuyin.cpp:1318-1338`. Their token helpers (`pinyin.cpp:1627-1644`,
+`zhuyin.cpp:1096-1113`) convert stored words to C strings; getters merely
+return the cached pointer (`pinyin.cpp:2873-2877`, `zhuyin.cpp:1865-1869`).
+This work belongs to guess, not init.
+
+Rust's `oxpinyin-core/src/ucs4.rs::PhraseText` has private storage. Its
+`From<CompactString>` puts NUL-containing strings in Stored;
+`from_stored_words` switches to Stored at a zero or non-scalar and retains
+every stored word and the declared count. `from_words` delegates to it,
+and `from_stored_parts` always produces Stored. `Default`, the other
+`From` implementations, `skip_chars` and `PhraseTextConcat::finish` preserve
+that separation. Only Scalar's `outward_bytes` are trusted as NUL-free.
+
+Construction sources all use those constructors:
+
+- System files and addon tables: `oxpinyin-data/src/dict.rs`'s
+  `SystemDictionary::fill_lookup` and `AddonDictionary::fill_lookup` call
+  `resolve_items`/`resolve_item`, then `PhraseItemView::phrase_text` in
+  `phrase_library.rs` calls `PhraseText::from_stored_words`.
+- User files: `oxpinyin-user/src/phrase.rs::UserPhrase::phrase_text` calls
+  `from_stored_words`. `oxpinyin-runtime/src/lib.rs::RuntimeDict::token_text`
+  likewise constructs text from user words; effective system overrides
+  use `from_words`.
+- Add-phrase C APIs: `pinyin_iterator_add_phrase` and
+  `zhuyin_iterator_add_phrase` in the respective `iterators.rs` call
+  `oxpinyin-capi-marshal/src/input.rs::utf8_to_ucs4`. That converter uses
+  `PhraseText::from` for scalar UTF-8 or `from_words` for historical
+  encodings. Its input C string ends at its first NUL.
+
+`oxpinyin-capi-marshal/src/phrase_text.rs::phrase_text_bytes` borrows Scalar
+bytes. For Stored it encodes words until the first zero. Every emitted
+leading byte is nonzero and every continuation byte is at least 0x80.
+This is solely the C-visible cut: Stored words, including zeros and their
+suffix, and their full declared length are unchanged.
+
+`CandidateSnapshot::push_phrase` in `oxpinyin-facade/src/snapshot.rs`
+appends Scalar bytes and their terminator with the existing checked u32
+offsets, then sets the fresh row's pointer without scanning that span
+again. Stored retains ordinary encoding, byte validation and span
+validation. Generic arbitrary-byte `intern` is unchanged. Buffer growth
+still repairs every existing row pointer; NULL remains distinct from empty.
+The row factory runs after interning, preserving zhuyin's before-cursor
+filter order. For N rows and T encoded bytes, pre-reserved construction
+remains O(N + T) time and space with O(1) temporary space. The change
+removes redundant Scalar validation passes, not the whole snapshot cost;
+no work moves into init and no data is cached.
