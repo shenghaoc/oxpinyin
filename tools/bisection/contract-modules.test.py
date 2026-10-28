@@ -58,6 +58,13 @@ MODULES = {
          'axis_c_covered_residual', 'axis_c_first_difference'),
         ('contract_verdict',)),
     'contract_alloc_after_fini': ((), ('contract_abi',)),
+    'contract_default_options': ((), ('contract_abi',)),
+    'contract_invalid_input_bytes': ((), ('contract_abi',)),
+    'contract_negative_remember': ((), ('contract_abi',)),
+    'contract_input_length_cap': ((), ('contract_abi',)),
+    'contract_double_fini': ((), ('contract_abi',)),
+    'contract_non_utf8_directories': ((), ('contract_abi',)),
+    'contract_axis_j': ((), ('contract_abi',)),
     'contract_execution': (('ordinary_jobs', 'positive_jobs', 'terminate_group', 'user_dir_listing'), ()),
     'contract_runner': (('Cancelled',), ()),
     'contract_kit': ((), ('contract_abi',)),
@@ -298,6 +305,33 @@ class ModuleBoundaryTests(unittest.TestCase):
         self.assertEqual(names[index - 1:index + 2],
                          ['long-input-sentence', 'alloc-instance-after-fini', 'fini-twice'])
         self.assertEqual(driver.CASES[names[index]]['fn'].__module__, 'contract_alloc_after_fini')
+
+    def test_moved_case_sections_register_contiguously_at_their_original_positions(self):
+        names = list(driver.CASES)
+        sections = (
+            ('contract_default_options', 'c-string-input/zhuyin-character-offset-invalid-past-matrix',
+             'default-option-parse', 'explicit-incomplete-parse', 'bytes-parse-more-full', 4),
+            ('contract_invalid_input_bytes', 'explicit-incomplete-parse', 'bytes-parse-more-full',
+             'bytes-zhuyin-add-phrase', "zero-key-guess/pinyin/default/'/guess_sentence", 7),
+            ('contract_negative_remember', 'punct-alias/owned-predicted', 'remember-count-2',
+             'remember-count-seven', 'input-length-cap', 5),
+            ('contract_input_length_cap', 'remember-count-seven', 'input-length-cap', 'long-input-sentence',
+             'alloc-instance-after-fini', 2),
+            ('contract_double_fini', 'alloc-instance-after-fini', 'fini-twice', 'zhuyin-fini-twice',
+             'facade-total-zero-ranks-nothing-end-sort-3', 2),
+            ('contract_non_utf8_directories', 'guess-candidates-past-the-reserved-slot', 'non-utf8-directory-system',
+             'non-utf8-directory-zhuyin-both', 'user-library-token-unload-pinyin', 4),
+            ('contract_axis_j', 'nbest-user-table-order-zhuyin', 'j-choose-nbest-diff-result',
+             'j-chewing-multi-key-zhuyin-9', 'separator/pinyin/0/parse/0', 5))
+        for module, before, first, last, after, count in sections:
+            with self.subTest(module=module):
+                start, end = names.index(first), names.index(last)
+                self.assertEqual(end - start + 1, count)
+                self.assertEqual((names[start - 1], names[end + 1]), (before, after))
+                owners = {inspect.unwrap(driver.CASES[name]['fn']).__module__ for name in names[start:end + 1]}
+                self.assertEqual(owners, {module})
+                self.assertEqual([declared[0] for declared in sys.modules[module]._REGISTRATIONS],
+                                 names[start:end + 1])
 
     def test_timing_summary_totals_the_timings_the_driver_holds_now(self):
         with patch.object(driver, 'TIMINGS', [dict(execute=2, side='pin'), dict(execute=3)]):

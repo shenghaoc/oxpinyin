@@ -89,6 +89,26 @@ class EquivalenceTests(unittest.TestCase):
             self.assertNotEqual(moved.replace("name='moved'", "name='changed'"), changed)
             self.assertNotEqual(equivalence.function_ast(module.moved), moved)
 
+    def test_a_lambda_argument_is_compared_as_its_own_expression(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sources = {'before': 'register(\n    lambda k, a=1: run(k, a))\n',
+                       'after': 'x = 0\nregister(\n    lambda k, a=1: run(k, a))\n',
+                       'changed': 'register(\n    lambda k, a=2: run(k, a))\n',
+                       'paired': 'register(lambda k: k); register(lambda k: (k, k))\n'}
+            found = {}
+            for name, text in sources.items():
+                path = Path(tmp) / (name + '.py')
+                path.write_text('captured = []\nregister = captured.append\n' + text)
+                module_spec = importlib.util.spec_from_file_location(name, path)
+                module = importlib.util.module_from_spec(module_spec)
+                module_spec.loader.exec_module(module)
+                found[name] = module.captured[0]
+            self.assertEqual(equivalence.function_ast(found['before']), equivalence.function_ast(found['after']))
+            self.assertNotEqual(equivalence.function_ast(found['before']),
+                                equivalence.function_ast(found['changed']))
+            with self.assertRaisesRegex(TypeError, 'expected one lambda'):
+                equivalence.function_ast(found['paired'])
+
 
 if __name__ == '__main__':
     unittest.main()

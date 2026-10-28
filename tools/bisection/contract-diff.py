@@ -157,6 +157,13 @@ from contract_registry import case_spec  # registration metadata and checks
 import contract_measurement
 import contract_axis_c
 import contract_alloc_after_fini
+import contract_default_options
+import contract_invalid_input_bytes
+import contract_negative_remember
+import contract_input_length_cap
+import contract_double_fini
+import contract_non_utf8_directories
+import contract_axis_j
 import contract_kit
 import contract_runner
 from contract_runner import Cancelled
@@ -356,138 +363,12 @@ def worker(mode, so, data, name):
 # --------------------------------------------------------------------------
 
 
-# lane C, #532: the option word `pinyin_init` seeds is USE_TONE.
-@case('default-option-parse', issues=('532',))
-def _(k):
-    """Record consumed bytes for complete, incomplete and invalid default-option inputs.
-
-    Parse each spelling on a fresh instance without changing context options."""
-    return {t.decode(): consumed(k, 'parse_more_full_pinyins', t)
-            for t in (b'su3cl3', b'ni2hao', b'n', b'zzz', b'nihao', b'ni3')}
+# The #532 default-option cases stay at their original point in the registration sequence.
+contract_default_options.register(case)
 
 
-@case('default-option-single-key', issues=('532',))
-def _(k):
-    """Record single-key return flags and raw keys under the initial context options.
-
-    Reuse the cached instance for the tone, incomplete and invalid spellings."""
-    return {t.decode(): key_out(k, t) for t in (b'n', b'ni3', b'ni', b'a1', b'zhang', b'zzz')}
-
-
-@case('explicit-use-tone-parse', control=True, issues=('532',))
-def _(k):
-    """Set only USE_TONE and record consumed bytes for each spelling on a fresh instance."""
-    k.fn('set_options', B, P, U)(k.ctx, 1 << 5)
-    return {t.decode(): consumed(k, 'parse_more_full_pinyins', t)
-            for t in (b'su3cl3', b'ni2hao', b'n', b'zzz', b'nihao')}
-
-
-@case('explicit-incomplete-parse', control=True, issues=('532',))
-def _(k):
-    """Set only PINYIN_INCOMPLETE and record consumed bytes on fresh instances."""
-    k.fn('set_options', B, P, U)(k.ctx, 1 << 3)
-    return {t.decode(): consumed(k, 'parse_more_full_pinyins', t)
-            for t in (b'su3cl3', b'ni2hao', b'n', b'zzz', b'nihao')}
-
-
-# lane C, #587: valid pinyin followed by invalid UTF-8 keeps the prefix.
-@case('bytes-parse-more-full', issues=('587',))
-def _(k):
-    """Record full-pinyin byte consumption with invalid UTF-8 at several positions.
-
-    Use a fresh instance per byte string and repr(text) as the result key."""
-    return {repr(t): consumed(k, 'parse_more_full_pinyins', t)
-            for t in (b'ni\xffhao', b'nihao\xff', b'\xffnihao', b'ni\xe4\xbd', b'ni\xc0\x80hao')}
-
-
-@case('bytes-parse-more-double', issues=('587',))
-def _(k):
-    """Record double-pinyin byte consumption with invalid UTF-8 before, within and after input."""
-    return {repr(t): consumed(k, 'parse_more_double_pinyins', t)
-            for t in (b'ni\xffhk', b'nihk\xff', b'\xffnihk')}
-
-
-@case('bytes-parse-more-chewing', issues=('587',))
-def _(k):
-    """Record chewing byte consumption with invalid UTF-8 before, within and after input."""
-    return {repr(t): consumed(k, 'parse_more_chewings', t)
-            for t in (b'su\xff3', b'su3\xff', b'\xffsu3')}
-
-
-@case('bytes-add-phrase-pinyin', issues=('587',))
-def _(k):
-    """Add phrases with invalid pinyin bytes and enumerate the resulting library rows.
-
-    Write through an add iterator for library 7, then return its two success
-    flags and the phrase, reading and count from each exported row. Decode
-    and free exported strings; leave the get iterator allocated."""
-    rows = []
-    it = k.fn('begin_add_phrases', P, P, U)(k.ctx, 7)
-    add = k.fn('iterator_add_phrase', B, P, S, S, I)
-    ret = [add(it, '你好'.encode(), b"ni'ha\xffo", 1), add(it, '世界'.encode(), b"shi'jie\xff", 1)]
-    k.fn('end_add_phrases', None, P)(it)
-    out = k.fn('begin_get_phrases', P, P, U)(k.ctx, 7)
-    has = k.fn('iterator_has_next_phrase', B, P)
-    nxt = k.fn('iterator_get_next_phrase', B, P, C.POINTER(P), C.POINTER(P), C.POINTER(I))
-    while has(out):
-        ph, py, n = P(), P(), I()
-        nxt(out, C.byref(ph), C.byref(py), C.byref(n))
-        rows.append([k.text(ph.value), k.text(py.value), n.value])
-    return dict(added=ret, rows=rows)
-
-
-@case('bytes-whole-argument', control=True, issues=('587',))
-def _(k):
-    """Collect whole-argument API results for invalid UTF-8 in readings or phrases.
-
-    Reuse the cached instance for single-key parsing, token lookup, a valid
-    multi-key parse and remembering input. Also attempt a library-7 phrase
-    addition, closing its add iterator. Return the flags, key and parsed byte
-    count; the allocated token array is not freed here."""
-    # Entries that hand the whole argument to the pin keep refusing it.
-    out = {'parse_full_pinyin': key_out(k, b'ni\xff')}
-    arr = k.glib.g_array_new
-    arr.restype, arr.argtypes = P, [I, I, U]
-    tokens = arr(0, 0, 4)
-    out['lookup_tokens'] = k.fn('lookup_tokens', B, P, S, P)(k.inst, '你'.encode() + b'\xff', tokens)
-    parse_n = consumed(k, 'parse_more_full_pinyins', b'nihaoshijie', fresh=False)
-    out['remember'] = k.fn('remember_user_input', B, P, S, I)(k.inst, '你好世界'.encode() + b'\xff', 1)
-    it = k.fn('begin_add_phrases', P, P, U)(k.ctx, 7)
-    out['add_bad_phrase'] = k.fn('iterator_add_phrase', B, P, S, S, I)(
-        it, '你好'.encode() + b'\xff', b"ni'hao", 1)
-    k.fn('end_add_phrases', None, P)(it)
-    out['parsed'] = parse_n
-    return out
-
-
-@case('bytes-zhuyin-parse-more', mode='zhuyin', issues=('587',))
-def _(k):
-    """Record zhuyin-facade full-pinyin and chewing consumption around invalid bytes.
-
-    Use a fresh instance per spelling and label results by parser and byte repr."""
-    out = {}
-    for name, texts in (('parse_more_full_pinyins', (b'ni3\xffhao3', b'ni3hao3\xff', b'\xffni3')),
-                        ('parse_more_chewings', (b'su\xff3', b'su3\xff', b'\xffsu3'))):
-        for t in texts:
-            out[name + ' ' + repr(t)] = consumed(k, name, t)
-    return out
-
-
-# The zhuyin direct parser splits on spaces and apostrophes, so a reading
-# with an invalid byte in its last token is refused whole: unchanged.
-@case('bytes-zhuyin-add-phrase', mode='zhuyin', control=True, issues=('587',))
-def _(k):
-    """Compare phrase-add return flags for valid, trailing-invalid and middle-invalid zhuyin.
-
-    Attempt each addition to library 7 with its own add iterator, closing it
-    before the next attempt; all attempts share the same context."""
-    out = {}
-    for label, reading in (('whole', 'ㄋㄧˇ ㄏㄠˇ'.encode()), ('tail-invalid', 'ㄋㄧˇ ㄏㄠˇ'.encode() + b'\xff'),
-                           ('mid-invalid', 'ㄋㄧˇ'.encode() + b'\xff' + 'ㄏㄠˇ'.encode())):
-        it = k.fn('begin_add_phrases', P, P, U)(k.ctx, 7)
-        out[label] = k.fn('iterator_add_phrase', B, P, S, S, I)(it, '你好'.encode(), reading, 1)
-        k.fn('end_add_phrases', None, P)(it)
-    return out
+# The #587 invalid-byte cases stay at their original point in the registration sequence.
+contract_invalid_input_bytes.register(case)
 
 
 # #902: separators consume bytes without keys (074a2219,
@@ -1653,99 +1534,20 @@ for _source in ('candidates', 'predicted'):
          issues=('1272',))(punct_alias_case(_source, False))
 
 
-def remember_negative(count):
-    """Build a phrase-remembering case with the supplied signed count, including controls.
-
-    Pass count as a C signed int; negative and positive controls share the
-    same sequence."""
-    def run(k):
-        """Remember 你好世界 after parsing its input and enumerate library 7.
-
-        Return the remember flag and phrase/reading/count rows after the attempt.
-        Decode and free exported strings; leave the get iterator allocated and
-        the cached instance's parse and user-library changes in place."""
-        inst = k.inst
-        k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'nihaoshijie')
-        out = {'remember': k.fn('remember_user_input', B, P, S, I)(inst, '你好世界'.encode(), count)}
-        it = k.fn('begin_get_phrases', P, P, U)(k.ctx, 7)
-        has = k.fn('iterator_has_next_phrase', B, P)
-        nxt = k.fn('iterator_get_next_phrase', B, P, C.POINTER(P), C.POINTER(P), C.POINTER(I))
-        rows = []
-        while has(it):
-            ph, py, n = P(), P(), I()
-            nxt(it, C.byref(ph), C.byref(py), C.byref(n))
-            rows.append([k.text(ph.value), k.text(py.value), n.value])
-        out['rows'] = rows
-        return out
-    return run
+# The remember-count cases stay at their original point in the registration sequence.
+contract_negative_remember.register(case)
 
 
-for _count in (-2, -5, -2147483648):
-    case('remember-count-%d' % -_count if _count > -100 else 'remember-count-min')(remember_negative(_count))
-case('remember-count-default', control=True)(remember_negative(-1))
-case('remember-count-seven', control=True)(remember_negative(7))
-
-
-# batch2 group 9: the input length cap (PR 9, #540)
-@case('input-length-cap', issues=('540',))
-def _(k):
-    """Record parser and stored lengths for six ASCII inputs around size boundaries.
-
-    Create a fresh instance for each byte length from 4,096 through 65,537
-    listed in the fixture. Repeat ni and truncate to that byte length, then
-    return both native byte counts under its decimal label."""
-    out = {}
-    for length in (4096, 4097, 32766, 32767, 32768, 65537):
-        inst = k.alloc()
-        text = (b'ni' * length)[:length]
-        out[str(length)] = [k.fn('parse_more_full_pinyins', Z, P, S)(inst, text),
-                            k.fn('get_parsed_input_length', Z, P)(inst)]
-    return out
-
-
-@case('long-input-sentence', issues=('540',))
-def _(k):
-    """Parse 4,800 bytes of repeated ni and record guessing and sentence-length outputs.
-
-    Use a fresh instance and sentence index zero. Return parsed bytes, the
-    guess flag, and the sentence-accessor flag plus Python string length or
-    None. Any string returned by sentence_out, including its untouched marker,
-    is reduced to a length; decoded lengths count code points, not UTF-8 bytes."""
-    # A decode past the old cap: the sentence is as long as the pin's.
-    inst = k.alloc()
-    text = b'ni' * 2400
-    out = {'parsed': k.fn('parse_more_full_pinyins', Z, P, S)(inst, text),
-           'guess': k.fn('guess_sentence', B, P)(inst)}
-    row = sentence_out(k, inst, 0)
-    out['sentence'] = [row[0], len(row[1]) if isinstance(row[1], str) else row[1]]
-    return out
+# The #540 input-length cases stay at their original point in the registration sequence.
+contract_input_length_cap.register(case)
 
 
 # The #528 case stays at its original point in the registration sequence.
 contract_alloc_after_fini.register(case)
 
 
-# #573 (B battery): a second pinyin_fini / zhuyin_fini on one context
-def fini_twice(k):
-    """Finalize one independently initialized context twice and report only if both calls return.
-
-    Allocate and free a live instance before finalization. This deliberately
-    reuses the context address and can terminate the isolated worker. The
-    lifetime violation targets pinyin_fini in src/pinyin.cpp and zhuyin_fini
-    in src/zhuyin.cpp at pin 074a2219, both of which delete the context."""
-    # The pin reads and deletes the freed context again (pinyin.cpp:1194-1222,
-    # zhuyin.cpp:741-757) and dies of SIGSEGV, with stderr bytes read from
-    # freed memory; the ruled answer is a silent return (class (b), row 105).
-    context = k.init()
-    live = k.fn('alloc_instance', P, P)(context)
-    k.fn('free_instance', None, P)(live)
-    k.fn('fini', None, P)(context)
-    k.fn('fini', None, P)(context)
-    return {'second fini returned': True}
-
-
-case('fini-twice', crash={'second fini returned': True}, stderr_varies=True, issues=('573',))(fini_twice)
-case('zhuyin-fini-twice', mode='zhuyin', crash={'second fini returned': True}, stderr_varies=True, issues=('573',))(fini_twice)
+# The #573 double-fini cases stay at their original point in the registration sequence.
+contract_double_fini.register(case)
 
 
 # batch2 group 11: the facade unigram total wraps like the pin's (PR 11, #540)
@@ -4505,62 +4307,8 @@ def _(k):
     return out
 
 
-# batch2 group 13: directory names that are not UTF-8 (PR 13, #587)
-def non_utf8_dirs(k, bad_system, bad_user):
-    """Opens a context whose system and/or user directory name holds a 0xFF byte.
-
-    Create the optional system symlink and new user directory under scratch.
-    On successful pinyin initialization, parse, guess, train and save, then
-    list non-hidden user files using filesystem decoding. Leave the native
-    context and instance live."""
-    tag = str(os.getpid()).encode()
-    scratch = os.fsencode(k.scratch)
-    system = os.path.join(scratch, b'system-\xff' + tag) if bad_system else os.fsencode(k.data)
-    if bad_system:
-        os.symlink(os.fsencode(k.data), system)
-    user = os.path.join(scratch, b'user-\xff' + tag) if bad_user else os.fsencode(k.user)
-    if bad_user:
-        os.mkdir(user)
-    ctx = k.init(system=system, user=user)
-    out = {'init': bool(ctx)}
-    if ctx:
-        inst = k.fn('alloc_instance', P, P)(ctx)
-        k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'nihao')
-        out['guess'] = k.fn('guess_sentence', B, P)(inst)
-        out['train'] = k.fn('train', B, P, C.c_ubyte)(inst, 0)
-        out['save'] = k.fn('save', B, P)(ctx)
-        out['user files'] = sorted(os.fsdecode(n) for n in os.listdir(user) if not n.startswith(b'.'))
-    return out
-
-
-for _label, _system, _user in (('system', True, False), ('user', False, True), ('both', True, True)):
-    case('non-utf8-directory-' + _label, issues=('587',))(
-        lambda k, system=_system, user=_user: non_utf8_dirs(k, system, user))
-
-
-@case('non-utf8-directory-zhuyin-both', mode='zhuyin', issues=('587',))
-def _(k):
-    """Exercise zhuyin training and saving with 0xFF in both directory names.
-
-    Create a system symlink and user directory under scratch, returning init
-    and successful-init operation flags plus non-hidden filenames. Leave the
-    context and instance live."""
-    tag = str(os.getpid()).encode()
-    scratch = os.fsencode(k.scratch)
-    system = os.path.join(scratch, b'system-\xff' + tag)
-    os.symlink(os.fsencode(k.data), system)
-    user = os.path.join(scratch, b'user-\xff' + tag)
-    os.mkdir(user)
-    ctx = k.init(system=system, user=user)
-    out = {'init': bool(ctx)}
-    if ctx:
-        inst = k.fn('alloc_instance', P, P)(ctx)
-        k.fn('parse_more_chewings', Z, P, S)(inst, b'su3cl3')
-        out['guess'] = k.fn('guess_sentence', B, P)(inst)
-        out['train'] = k.fn('train', B, P)(inst)
-        out['save'] = k.fn('save', B, P)(ctx)
-        out['user files'] = sorted(os.fsdecode(n) for n in os.listdir(user) if not n.startswith(b'.'))
-    return out
+# The #587 directory-name cases stay at their original point in the registration sequence.
+contract_non_utf8_directories.register(case)
 
 
 # batch2 group 14: the zhuyin twins of the batch-1 contracts (PR 14, #542)
@@ -7080,45 +6828,8 @@ for _mode in ('pinyin', 'zhuyin'):
     case('nbest-user-table-order-' + _mode, mode=_mode, control=True, issues=('757',))(nbest_user_table_order)
 
 
-# Axis J targeted reachability controls, at libpinyin 074a2219:
-# pinyin.cpp:2515-2520 calls ForwardPhoneticConstraints::diff_result when
-# choosing a displayed NBEST row. No forged candidate or context is needed.
-@case('j-choose-nbest-diff-result', control=True)
-def _(k):
-    """Choose a displayed NBEST row and record its rank output and signed selection result.
-
-    Assert a row exists and initialize rank to 0xff without asserting getter success."""
-    inst = guessed(k)
-    candidate = row_of(k, inst, 1)
-    assert candidate, 'no displayed NBEST candidate'
-    rank = C.c_ubyte(0xff)
-    ranked = k.fn('get_candidate_nbest_index', B, P, P, C.POINTER(C.c_ubyte))(
-        inst, candidate, C.byref(rank))
-    chosen = k.fn('choose_candidate', I, P, Z, P)(inst, 0, candidate)
-    return {'ranked': ranked, 'rank': rank.value, 'chosen': chosen}
-
-
-# Scheme HSU (2) constructs ZhuyinDiscreteParser2; Dachen CP26 (9)
-# constructs ZhuyinDaChenCP26Parser2. Batch parse goes through their parse
-# virtuals (pinyin.cpp:1595 / zhuyin.cpp:1068), rather than one-key parsing.
-def j_multi_chewing(scheme):
-    """Build a multi-key chewing parse case for the selected facade scheme number."""
-    def probe(k):
-        """Select the facade's scheme, parse abc and record consumed and reported input lengths.
-
-        Record selection failure rather than asserting it; lengths are byte counts."""
-        setter = 'set_zhuyin_scheme' if k.mode == 'pinyin' else 'set_chewing_scheme'
-        selected = k.fn(setter, B, P, I)(k.ctx, scheme)
-        parsed = k.fn('parse_more_chewings', Z, P, S)(k.inst, b'abc')
-        length = k.fn('get_parsed_input_length', Z, P)(k.inst)
-        return {'scheme': scheme, 'selected': selected, 'parsed': parsed, 'length': length}
-    return probe
-
-
-for _j_mode in ('pinyin', 'zhuyin'):
-    for _j_scheme in (2, 9):
-        case(f'j-chewing-multi-key-{_j_mode}-{_j_scheme}', mode=_j_mode,
-             control=True)(j_multi_chewing(_j_scheme))
+# The axis J controls stay at their original point in the registration sequence.
+contract_axis_j.register(case)
 
 
 # Timing consumers and tests patch this list through the driver at call time.

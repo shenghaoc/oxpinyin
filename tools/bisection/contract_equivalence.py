@@ -85,9 +85,25 @@ def function_of(value):
     return value
 
 
+def lambda_ast(fn):
+    """The one lambda expression that starts on the function's first line of its file.
+
+    inspect.getsource returns whole lines, which need not parse on their own.
+    Two lambdas on one line cannot be told apart this way and fail closed."""
+    tree = ast.parse(Path(fn.__code__.co_filename).read_text())
+    nodes = [node for node in ast.walk(tree)
+             if isinstance(node, ast.Lambda) and node.lineno == fn.__code__.co_firstlineno]
+    if len(nodes) != 1:
+        raise TypeError('expected one lambda on line %d for %s' % (fn.__code__.co_firstlineno, fn))
+    return ast.dump(nodes[0], include_attributes=False)
+
+
 def function_ast(fn, injected=()):
     """Normalize only declared keyword-only state; keep decorators and bodies."""
-    node = ast.parse(textwrap.dedent(inspect.getsource(function_of(fn)))).body[0]
+    fn = function_of(fn)
+    if fn.__name__ == '<lambda>':
+        return lambda_ast(fn)
+    node = ast.parse(textwrap.dedent(inspect.getsource(fn))).body[0]
     if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
         raise TypeError('expected a function definition for %s' % fn)
     kept = [(arg, default) for arg, default in zip(node.args.kwonlyargs, node.args.kw_defaults)
