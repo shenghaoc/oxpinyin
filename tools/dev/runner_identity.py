@@ -166,6 +166,13 @@ DRIVERS = {
                                       ('overflow', '99999999999999999999'))),
                Case('dlopen-failure', ('none',), ('{empty}/absent.so', '{data}')),
                Case('usage', ('none',), ('{empty}/absent.so',)))),
+    'uncovered-surface-diff': Driver(
+        templates=('/tmp/uncoveredsurface-user-',),
+        cases=(Case('walk', ('pin', 'subject')),
+               Case('missing-symbol', ('stub',)),
+               Case('init-failure', ('pin', 'subject'), ('{so}', '{empty}')),
+               Case('dlopen-failure', ('none',), ('{empty}/absent.so', '{data}')),
+               Case('usage', ('none',), ('{empty}/absent.so',)))),
 }
 
 
