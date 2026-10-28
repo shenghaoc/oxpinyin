@@ -207,6 +207,9 @@ def callgrind_control(argv: Sequence[str], env: Mapping[str, str]) -> int:
 
 def callgrind_differential(argv: Sequence[str], env: Mapping[str, str]) -> int:
     """Instruction-level differential for the steady keystroke cycle: stages 0 through 7."""
+    if argv:
+        from . import sentence
+        return sentence.run(argv, env)
     label = CALLGRIND
     env = dict(env)
     out = Path(setting(env, 'CG_OUT', '/out'))

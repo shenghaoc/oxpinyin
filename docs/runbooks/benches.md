@@ -145,6 +145,88 @@ No runtime data or oracle build is needed for this check. The verbose build
 output records the order of the compiler flags; `readelf --debug-dump=info`
 on the profiled library displays its DWARF units.
 
+### Sentence and typing-sequence Callgrind campaign
+
+`just measure callgrind-differential --workload sentence|typing-sequence`
+extends the existing `bisect` driver (#1348). Its no-argument campaign and
+`bisect --perf` retain their original 20-input workload. The frozen
+`system-import-profile --sentence-fixture` mode still requires its 500-row
+fixture; it is not a general prefix-sequence driver.
+
+Both new workloads use the pinyin facade, options `0x18a`, an empty temporary
+user directory per process, and the same instance throughout each iteration.
+They never train or save. The default input is `nihaozhongguo`.
+
+| Workload | Setup outside collection | Collected anchor |
+| --- | --- | --- |
+| `sentence` | Reset and parse the complete input | `bisect_sentence_unit`: one `pinyin_guess_sentence` |
+| `typing-sequence` | One reset before the sequence | `bisect_typing_unit`: parse, `pinyin_guess_sentence`, then `pinyin_guess_candidates` at offset 0, sort `0x1e`, for each accumulated ASCII prefix |
+
+The sentence input/configuration are those of stage2's
+`guess_sentence_get_sentence_0/full_nbest_post_116`. Its collection measures
+sentence guessing alone: rank-0 retrieval and release happen afterwards.
+Typing collects all 13 prefixes, from `n` through `nihaozhongguo`, in order.
+Output records each operation's returns, rank-0 sentence, and every typing
+candidate's text/type/N-best index in physical order. Observation, printing,
+init, instance allocation and teardown are outside collection.
+
+Supply actual library files, a complete backend-matched system directory,
+and separately built plain shipping files for the two debug-info neutrality
+checks. Use the shipping Cargo profile and only
+`RUSTFLAGS="-Cdebuginfo=1 -Cstrip=none"` for the profiled files. Install through
+`just packaging install` to apply the shipping function order; the bare
+`cargo cinstall` commands above check codegen neutrality only. The campaign
+checks `DT_NEEDED` against `--cell`, function order, DWARF, code neutrality,
+and the sound-tkrzw runtime before collecting. It acquires the heavy slot
+for the harness build and all serial collections; do not overlap other work.
+
+```bash
+just measure callgrind-differential --workload sentence --cell tkrzw \
+  --main "$MAIN_PROFILE_SO" --pr "$PR_PROFILE_SO" --pin "$PIN_SO" \
+  --main-shipping "$MAIN_SHIPPING_SO" --pr-shipping "$PR_SHIPPING_SO" \
+  --system-dir "$DATA" --out "$WORK/sentence"
+just measure callgrind-differential --workload typing-sequence --cell tkrzw \
+  --main "$MAIN_PROFILE_SO" --pr "$PR_PROFILE_SO" --pin "$PIN_SO" \
+  --main-shipping "$MAIN_SHIPPING_SO" --pr-shipping "$PR_SHIPPING_SO" \
+  --system-dir "$DATA" --out "$WORK/typing-sequence"
+```
+
+For BDB use `--cell bdb` and BDB libraries/data. For the tooling smoke check,
+set main and PR to the same profiled file and both shipping arguments to
+the same plain file. `--input` accepts lowercase ASCII pinyin/apostrophes;
+`--iterations` defaults to 1, `--rounds` to 3 fresh processes per arm (minimum
+2), and `--cpu` to the first allowed CPU. No warmup is excluded: these are
+first-call/sequence scopes, not the legacy steady cycle.
+
+Every round rotates main, PR, pin and byte-identical copies of main and PR
+serially, using equal-length private library paths. A control passes only
+when all instruction totals in its identical pair are equal, with zero
+tolerance, and full observations agree. Main/PR observations must also agree.
+The pin observations are compared and reported separately; this campaign
+does not classify known pin divergences or replace the ranking/recount gates.
+Profiler creator/PID/command/Ir-only events and reconciled exclusive totals
+are required. Invalid controls, observations or collections return nonzero
+and suppress the per-invocation comparison. The startup RandomState range
+exception is not extended to the sentence workload. The typing sequence
+alone reports a varying control as `DIAGNOSTIC` (rule `randomstate`, ranges,
+no tolerance) when every varying function is `dedup_by_text_keep_first`,
+`dedup_ranked_by_text`, `order_window_tail` (std `HashSet`/`HashMap` with
+the per-process `RandomState` SipHash-1-3 keys) or `memcmp`, their equality
+callee; any other varying function is `INVALID`.
+
+The output directory must be new. `result.json` reports raw counts, control
+spread and Ir per sentence/complete typing sequence; `environment.json`
+records the host, inputs and library identities. Exact commands, worker
+output and profiles remain local for attribution with
+`callgrind_annotate --inclusive=yes`. They are disposable verification data,
+not PR attachments. Harness `elapsed_ns` is collected under Valgrind and is
+not a native timing result. These commands make no wall-time or heap claim.
+
+As in other measurement recipes, explicit `--function-order ARM/pinyin=POLICY`
+and `--unordered-arm ARM` options label layout experiments. Arm names are
+`main`, `pr__`, `mctl`, `pctl`, and the exempt reference `pin_`. An unordered
+smoke run validates tooling only and cannot establish shipping performance.
+
 The separate `probe-debuginfo-neutrality` diagnostic still compares independently
 compiled profiles and may fail. Changing Cargo's debug profile changes crate
 metadata, which can affect fat-LTO specialization as well as layout (#1337).
