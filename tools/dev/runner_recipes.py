@@ -544,6 +544,19 @@ def ordinary(ctx: Context, args: Sequence[str]) -> int:
     name = ctx.name
     if name == 'nbest-train-diff' and '--pin-witness-cases' in args:
         return nbest_witness(ctx, args)
+    surface_args = []
+    if name == 'nbest-train-diff':
+        parser = argparse.ArgumentParser(prog=name)
+        parser.add_argument('--surface-case')
+        parser.add_argument('--case-file', default=str(ctx.here / 'nbest-precondition-cases.tsv'))
+        options = parser.parse_args(args)
+        if options.surface_case is not None:
+            cases = nbest_witness_cases(ctx.path(options.case_file, caller=True))
+            if options.surface_case not in cases:
+                raise CellError(f'unknown n-best surface case: {options.surface_case}')
+            row = cases[options.surface_case]
+            surface_args = ['--surface-case', options.surface_case,
+                            *(row[key] for key in ('parser', 'scheme', 'options', 'input'))]
     driver, subject = build_subject(ctx, heading='abi-probe' if name == 'abi-probe-diff' else None)
     skip = 0 if name == 'live-typing-diff' else 77
     pin, pin_data = ctx.pin(missing=skip, hint=True, require_data=True)
@@ -575,7 +588,7 @@ def ordinary(ctx: Context, args: Sequence[str]) -> int:
             return 77
         user, augmented = ctx.env.get('NBESTTRAINDIFF_USER_ROUNDS') or '3', ctx.env.get('NBESTTRAINDIFF_ROUNDS') or '3'
         environment.update(NBESTTRAINDIFF_USER_ROUNDS=user, NBESTTRAINDIFF_ROUNDS=augmented)
-        driver_args = []
+        driver_args = surface_args
         capi_heading = f'--- capi side (user={user} augmented={augmented}) ---'
     else:
         value = ctx.env.get('UNCOVERED_SYSTEM') or ctx.env.get('OXPINYIN_SYSTEM_DIR') or ''
@@ -599,11 +612,11 @@ def ordinary(ctx: Context, args: Sequence[str]) -> int:
         if name == 'abi-probe-diff' and side == 'subject':
             ctx.emit('sort word: 0x' + driver_args[0])
         result = ctx.run(driver, so, [so, directory, *driver_args], side=side, env=environment,
-                         quiet=name == 'nbest-train-diff')
+                         quiet=name == 'nbest-train-diff' and not surface_args)
         if result.returncode:
             ctx.emit(f'FAIL: {name} crashed against ' + ('oxpinyin-capi' if side == 'subject' else 'the oracle' if name == 'abi-probe-diff' else 'oracle'))
             ctx.write(result.stdout)
-            if name != 'nbest-train-diff':
+            if name != 'nbest-train-diff' or surface_args:
                 ctx.emit('--- driver diagnostics (stderr) ---')
                 ctx.write(result.stderr)
             return 1
@@ -634,6 +647,13 @@ def ordinary(ctx: Context, args: Sequence[str]) -> int:
             return 1
         ctx.emit(f'NBEST rows active: capi={counts["subject"]} oracle={counts["pin"]}\n'
              '--- differential (full log: probe surface + user-store export) ---')
+        labels = dict.fromkeys(re.findall(rb'^probe:([^ ]+) guess=', logs['pin'], re.M))
+        for label in labels:
+            prefix = b'probe:' + label + b' '
+            rows = {side: [line for line in log.splitlines() if line.startswith(prefix)]
+                    for side, log in logs.items()}
+            verdict = 'IDENTICAL' if rows['pin'] == rows['subject'] else 'DIVERGENCE'
+            ctx.emit(f'case:{label.decode()} {verdict}')
         success, failure = 'nbest-train-diff: IDENTICAL', 'DIVERGENCE (probe surface or user-store export)'
     else:
         ctx.emit("--- prerequisite: every phase's surface is active on both sides ---")
@@ -652,7 +672,9 @@ def ordinary(ctx: Context, args: Sequence[str]) -> int:
     ctx.emit(success if rc == 0 else failure)
     if rc:
         ctx.write(diff)
-    elif name in ('live-typing-diff', 'nbest-train-diff'):
+    elif surface_args:
+        ctx.write(logs['subject'])
+    elif name in ('live-typing-diff', 'nbest-train-diff') and not surface_args:
         rows = b''.join(line for line in logs['subject'].splitlines(keepends=True) if re.match(rb'^(phrase|bigram):', line))
         ctx.write(rows)
         if not rows:

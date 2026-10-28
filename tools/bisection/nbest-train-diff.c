@@ -29,8 +29,8 @@
  *   export      — the user-store triple sets, proving both engines landed
  *                 the same trained state.
  *
- * Each probe prints pinyin_get_sentence rows 0..2 plus the candidate head
- * (type, n-best index, text) after guess_sentence → guess_candidates.
+ * Each probe prints up to three surviving NBEST sentence rows, in stored
+ * index order, plus the candidate head (type, n-best index, text).
  *
  * Requires a real-unigram system dir (interpolation2.text) on the capi
  * side; the fallback mini fixtures answer no n-best cost data.
@@ -271,7 +271,9 @@ static const char *type_name(int type) {
     }
 }
 
-/* guess_sentence → print sentence rows 0..2 and the candidate head.
+/* guess_sentence → guess_candidates → print surviving sentence rows and
+ * the candidate head. Duplicate-text stored rows are omitted by the pin's
+ * candidate deduplication (src/pinyin.cpp:2103-2112 at 074a2219).
  * Returns 1 on any C-ABI failure so the caller can bail through the
  * shared cleanup; every accessor is checked before the instance state
  * is reused. */
@@ -283,20 +285,6 @@ static int print_surface(const struct syms *s, pinyin_instance_t *inst,
         fprintf(stderr, "probe %s: guess_sentence failed\n", label);
         return 1;
     }
-    for (guint8 i = 0; i < 3; i++) {
-        gchar *text = NULL;
-        bool got = s->get_sentence(inst, i, &text);
-        if (got && !text) {
-            fprintf(stderr, "probe %s: get_sentence(%u) true with no text\n",
-                    label, i);
-            return 1;
-        }
-        /* `false` is the expected empty row (no n-best result at that
-         * index), not a failure — printed as "-". */
-        printf("probe:%s sentence[%u]=%s\n", label, i, got ? text : "-");
-        /* Caller-owned per the C ABI contract; g_free(NULL) is a no-op. */
-        g_free_fn(text);
-    }
     if (!s->guess(inst, 0, DEFAULT_SORT)) {
         fprintf(stderr, "probe %s: guess_candidates failed\n", label);
         return 1;
@@ -305,6 +293,41 @@ static int print_surface(const struct syms *s, pinyin_instance_t *inst,
     if (!s->getn(inst, &n)) {
         fprintf(stderr, "probe %s: get_n_candidate failed\n", label);
         return 1;
+    }
+    /* DEFAULT_SORT leaves SORT_WITHOUT_SENTENCE_CANDIDATE (0x1) clear.
+     * Each NBEST candidate carries a stored result index, even after
+     * deduplication; never infer the result count from the candidate count
+     * (src/pinyin.cpp:1934-1950,2295-2300,2880-2885 at 074a2219). */
+    bool indices[UINT8_MAX + 1] = {false};
+    for (guint i = 0; i < n; i++) {
+        lookup_candidate_t *cand = NULL;
+        int type = 0;
+        if (!s->getc(inst, i, &cand) || !cand ||
+            !s->gettype(inst, cand, &type)) {
+            fprintf(stderr, "probe %s: candidate %u lookup failed\n", label, i);
+            return 1;
+        }
+        if (type == 1) { /* NBEST_MATCH_CANDIDATE */
+            guint8 index = 0;
+            if (!s->getnbest(inst, cand, &index)) {
+                fprintf(stderr, "probe %s: candidate %u nbest index failed\n", label, i);
+                return 1;
+            }
+            indices[index] = true;
+        }
+    }
+    for (guint i = 0, printed = 0; i <= UINT8_MAX && printed < 3; i++) {
+        if (!indices[i])
+            continue;
+        gchar *text = NULL;
+        if (!s->get_sentence(inst, (guint8)i, &text) || !text) {
+            fprintf(stderr, "probe %s: get_sentence(%u) failed\n", label, i);
+            g_free_fn(text);
+            return 1;
+        }
+        printf("probe:%s sentence[%u]=%s\n", label, i, text);
+        g_free_fn(text);
+        printed++;
     }
     printf("probe:%s n=%u\n", label, n);
     guint limit = n < 8 ? n : 8;
@@ -404,8 +427,7 @@ static int train_pair(const struct syms *s, pinyin_instance_t *inst, int round,
 /* ── Main ─────────────────────────────────────────────────────────────── */
 
 /* The diagnostic pin captures the ranges inside guess_sentence. This path
- * intentionally needs no sentence accessor (the legacy print_surface's
- * unconditional indices are not valid for every nonempty result set). */
+ * intentionally needs no candidate enumeration or sentence accessor. */
 static int witness_cases(const struct syms *s, void *handle,
                          const char *systemdir, const char *casefile) {
     /* Suppress the older, exhaustive residue dump even if inherited. */
@@ -496,17 +518,63 @@ static int witness_cases(const struct syms *s, void *handle,
     return completed ? result : 1;
 }
 
+/* Read back one selected row from the same TSV inputs as witness_cases.
+ * The diagnostic --cases path above deliberately remains decode-only. */
+static int surface_case(const struct syms *s, void *handle,
+                        const char *systemdir, char **fields) {
+    const bool full = strcmp(fields[1], "full") == 0;
+    const bool double_pinyin = strcmp(fields[1], "double") == 0;
+    if ((!full && !double_pinyin) ||
+        strcmp(fields[2], full ? "1" : "2") != 0 ||
+        (strcmp(fields[3], "0x1fe00198") != 0 &&
+         strcmp(fields[3], "0x1fe00018") != 0)) {
+        fprintf(stderr, "case %s: unsupported parser, scheme or option word\n", fields[0]);
+        return 1;
+    }
+    typedef bool (*fn_options)(pinyin_context_t *, guint);
+    typedef bool (*fn_scheme)(pinyin_context_t *, int);
+    fn_options options = (fn_options)load("pinyin_set_options", handle);
+    fn_scheme scheme = (fn_scheme)load(full ? "pinyin_set_full_pinyin_scheme" :
+                                           "pinyin_set_double_pinyin_scheme", handle);
+    fn_parse parse = full ? s->parse :
+        (fn_parse)load("pinyin_parse_more_double_pinyins", handle);
+    char userdir[] = "nbest-surface-user-XXXXXX";
+    if (!mkdtemp(userdir)) {
+        perror("mkdtemp");
+        return 1;
+    }
+    int result = 1;
+    pinyin_context_t *ctx = s->init(systemdir, userdir);
+    pinyin_instance_t *inst = NULL;
+    if (ctx && options(ctx, (guint)strtoul(fields[3], NULL, 16)) &&
+        scheme(ctx, full ? 1 : 2)) {
+        inst = s->alloc(ctx);
+        if (inst && parse(inst, fields[4]) == strlen(fields[4]))
+            result = print_surface(s, inst, fields[0]);
+    }
+    if (result)
+        fprintf(stderr, "case %s: setup, complete parse or surface failed\n", fields[0]);
+    if (inst)
+        s->free_instance(inst);
+    if (ctx)
+        s->fini(ctx);
+    rm_rf(userdir);
+    return result;
+}
+
 int main(int argc, char **argv) {
     if (argc < 3) {
         fprintf(stderr, "Usage: %s <path-to-so> <systemdir>\n", argv[0]);
         return 1;
     }
-    if (argc != 3 && (argc != 5 || strcmp(argv[3], "--cases") != 0)) {
-        fprintf(stderr, "Usage: %s <path-to-so> <systemdir> [--cases <case-file.tsv>]\n", argv[0]);
+    if (argc != 3 && (argc != 5 || strcmp(argv[3], "--cases") != 0) &&
+        (argc != 9 || strcmp(argv[3], "--surface-case") != 0)) {
+        fprintf(stderr, "Usage: %s <path-to-so> <systemdir> [--cases <case-file.tsv> | "
+                "--surface-case <id> <parser> <scheme> <options> <input>]\n", argv[0]);
         return 1;
     }
 
-    if (argc == 5) {
+    if (argc != 3) {
         void *handle = dlopen(argv[1], RTLD_NOW);
         if (!handle) {
             fprintf(stderr, "dlopen: %s\n", dlerror());
@@ -514,7 +582,13 @@ int main(int argc, char **argv) {
         }
         struct syms s = {0};
         resolve_all(handle, &s);
-        int result = witness_cases(&s, handle, argv[2], argv[4]);
+        int result;
+        if (argc == 5) {
+            result = witness_cases(&s, handle, argv[2], argv[4]);
+        } else {
+            resolve_g_free();
+            result = surface_case(&s, handle, argv[2], &argv[4]);
+        }
         dlclose(handle);
         return result;
     }

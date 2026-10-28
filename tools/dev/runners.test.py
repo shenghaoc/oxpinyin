@@ -67,7 +67,9 @@ class NbestWitnessTests(unittest.TestCase):
 
     def test_fixed_case_set(self):
         cases = nbest_witness_cases(ROOT / 'tools/bisection/nbest-precondition-cases.tsv')
-        self.assertEqual(len(cases), 276)
+        self.assertEqual(len(cases), 277)
+        self.assertEqual(cases['surface-short-dia'],
+                         dict(parser='full', scheme='1', options='0x1fe00018', input='dia'))
         for category, count in [('divided', 40), ('resplit', 170), ('fixture', 58), ('double', 8)]:
             self.assertEqual(sum(name.startswith(category + '-') for name in cases), count)
         for name, row in cases.items():
@@ -158,6 +160,52 @@ class NbestWitnessTests(unittest.TestCase):
                 ctx.settings = replace(settings, cell='kc')
                 with self.assertRaises(CellError):
                     ordinary(ctx, args)
+
+
+class NbestSurfaceTests(unittest.TestCase):
+    def test_empty_case_is_rejected_before_build_or_pin_lookup(self):
+        with ExitStack() as stack:
+            settings = Settings.read({})
+            ctx = Context(settings, FixtureServices(settings), stack, ROOT, 'nbest-train-diff')
+            with mock.patch('tools.dev.runner_recipes.build_subject', side_effect=AssertionError('unexpected build')), \
+                 mock.patch.object(Context, 'pin', side_effect=AssertionError('unexpected pin lookup')):
+                with self.assertRaisesRegex(CellError, 'unknown n-best surface case:'):
+                    ordinary(ctx, ['--surface-case', ''])
+
+    def test_selected_case_reaches_both_libraries_without_requiring_exports(self):
+        with tempfile.TemporaryDirectory() as scratch, ExitStack() as stack:
+            root = Path(scratch).resolve()
+            pin, data, subject = root / 'pin', root / 'data', root / 'subject.so'
+            (pin / 'lib/libpinyin/data').mkdir(parents=True)
+            (pin / 'lib/libpinyin.so').touch()
+            (pin / 'lib/libpinyin/data/bigram.db').touch()
+            data.mkdir()
+            for name in ('pinyin_index.bin', 'phrase_index.bin', 'bigram.db', 'interpolation2.text'):
+                (data / name).touch()
+            (data / 'table.conf').write_text('database format:BerkeleyDB\n')
+            subject.touch()
+            settings = Settings.read(dict(PINYIN_ORACLE_PREFIX=str(pin), NBEST_CAPI_SYSTEM=str(data),
+                                          OXPINYIN_CAPI_SO=str(subject)))
+            (pin / 'oracle-pin.txt').write_text(settings.expected_pin + '\n')
+            output = b'probe:surface-short-dia guess=1\nprobe:surface-short-dia cand[0]=NBEST/0/x\n'
+
+            class SurfaceServices(FixtureServices):
+                def run(self, argv, obj, **options):
+                    self.arguments.append(list(map(str, argv[3:])))
+                    return super().run(argv, obj, **options)
+
+            services = SurfaceServices(settings, output=output)
+            services.arguments = []
+            ctx = Context(settings, services, stack, root, 'nbest-train-diff', events=[])
+            self.assertEqual(ordinary(ctx, ['--surface-case', 'surface-short-dia']), 0)
+            expected = ['--surface-case', 'surface-short-dia', 'full', '1', '0x1fe00018', 'dia']
+            self.assertEqual(services.arguments, [expected, expected])
+            rendered = b''.join(data for _, data in ctx.events)
+            self.assertIn(b'case:surface-short-dia IDENTICAL', rendered)
+            self.assertEqual([side for side, _ in services.launches], ['subject', 'pin'])
+            with self.assertRaisesRegex(CellError, 'unknown n-best surface case'):
+                ordinary(ctx, ['--surface-case', 'unknown-case'])
+            self.assertEqual(len(services.launches), 2)
 
 
 class LibraryPathTests(unittest.TestCase):

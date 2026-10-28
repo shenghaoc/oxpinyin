@@ -5,6 +5,8 @@
 # contract-diff aux split cases, MATRIX_RESPLIT_INPUTS and GLIB_SORT_TAIL_INPUTS.
 # IBus 2d2cdac0: Config::option and setPinyinOptions; table-off controls clear only bits 7/8.
 # Double: Microsoft scheme, src/storage/double_pinyin_table.h:9-66 at 074a2219.
+# Surface regression: dia has one model20 token (嗲); bigram/unigram paths give at most two tails.
+surface-short-dia	full	1	0x1fe00018	dia
 divided-bian-on	full	1	0x1fe00198	bian
 divided-bian-off	full	1	0x1fe00018	bian
 divided-bie-on	full	1	0x1fe00198	bie
