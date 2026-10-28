@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 
+use oxpinyin_data::{SystemDbm, table_info::TableConf};
 use pinyin_capi::{pinyin_fini, pinyin_init};
 
 /// Opaque `pinyin_context_t *`. C ABI symbols are `#[no_mangle]` on the
@@ -165,6 +166,10 @@ fn link_or_copy(src: &Path, dst: &Path) {
     if dst.exists() {
         return;
     }
+    assert!(src.is_file(), "system data missing at {}", src.display());
+    if let Some(parent) = dst.parent() {
+        std::fs::create_dir_all(parent).expect("create system data directory");
+    }
     #[cfg(unix)]
     {
         if std::os::unix::fs::symlink(src, dst).is_ok() {
@@ -183,18 +188,40 @@ pub fn staged_system_dir() -> &'static Path {
     static STAGED: OnceLock<PathBuf> = OnceLock::new();
     STAGED
         .get_or_init(|| {
-            let export = export_dir();
+            let export = export_dir().canonicalize().expect("resolve export dir");
             let model = model_dir();
             let staged =
                 std::env::temp_dir().join(format!("oxpinyin-stage2-system-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&staged);
             std::fs::create_dir_all(&staged).expect("stage system dir");
-            // Name the staged tables exactly as the export dir carries them
-            // and the runtime opens them (`SystemDbm::file_name`):
-            // libpinyin's own on Kyoto Cabinet, tkrzw and Berkeley DB,
-            // backend-named.
-            for name in oxpinyin_testsupport::model_cache::system_dbm_names() {
+            let conf_path = export.join("table.conf");
+            let conf = TableConf::read(&conf_path)
+                .expect("export table.conf missing")
+                .expect("invalid export table.conf");
+            link_or_copy(&conf_path, &staged.join("table.conf"));
+            for dbm in [
+                SystemDbm::PinyinIndex,
+                SystemDbm::PhraseIndex,
+                SystemDbm::Bigram,
+                SystemDbm::Punct,
+                SystemDbm::AddonPinyinIndex,
+                SystemDbm::AddonPhraseIndex,
+            ] {
+                let name = dbm.file_name();
                 link_or_copy(&export.join(&name), &staged.join(&name));
+            }
+            for (_, row) in conf.system_libraries().chain(conf.addon_rows()) {
+                if let Some(name) = &row.system {
+                    let relative = Path::new(name.as_ref());
+                    assert!(
+                        relative
+                            .components()
+                            .all(|part| matches!(part, std::path::Component::Normal(_))),
+                        "invalid system chunk path {}",
+                        relative.display()
+                    );
+                    link_or_copy(&name.under(&export), &name.under(&staged));
+                }
             }
             link_or_copy(
                 &model.join("interpolation2.text"),
