@@ -1,11 +1,12 @@
 #!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
 """Portable runner policy tests with explicit command and host observations."""
-from contextlib import ExitStack
+from contextlib import ExitStack, suppress
 from dataclasses import replace
 from pathlib import Path
 import inspect
 import os
 import json
+import shutil
 import signal
 import subprocess
 import sys
@@ -330,6 +331,38 @@ class LauncherTests(unittest.TestCase):
             self.assertEqual(result.stdout.decode().splitlines(), [str(Path(scratch).resolve()), 'diagnostic'])
 
 
+def live_descendants(pid, proc=Path('/proc')):
+    """Every executing descendant of PID as (pid, process group) pairs, from one read of /proc.
+
+    Zombies are left out: they hold no pipes and no work. One read is one
+    snapshot, so a caller tearing a tree down repeats it until nothing is left.
+    """
+    children = {}
+    for entry in proc.iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            fields = (entry / 'stat').read_text().rsplit(')', 1)[1].split()
+        except (FileNotFoundError, ProcessLookupError):
+            continue
+        if fields[0] not in ('Z', 'X'):
+            children.setdefault(int(fields[1]), []).append((int(entry.name), int(fields[2])))
+    found, pending = [], [pid]
+    while pending:
+        for member in children.get(pending.pop(), ()):
+            found.append(member)
+            pending.append(member[0])
+    return found
+
+
+# Ceiling, in seconds, on each wait the ownership exercise makes for an explicit
+# condition: the driver's ready marker, the signalled wrapper's exit, the killed
+# driver's disappearance. Unloaded, each condition holds within a fraction of a
+# second. The ceiling only bounds a starved host, and reaching it fails loudly
+# with the condition and the wrapper's output; it measures nothing.
+OWNERSHIP_CEILING = 60
+
+
 @unittest.skipUnless(sys.platform == 'linux' and Path('/proc/self/stat').is_file(),
                      'Linux /proc process-liveness and flock handoff facilities')
 class LinuxOwnershipTests(unittest.TestCase):
@@ -339,7 +372,56 @@ class LinuxOwnershipTests(unittest.TestCase):
         except FileNotFoundError:
             return False
 
+    def until(self, condition, what, process=None):
+        """Poll until CONDITION holds; fail naming WHAT if PROCESS ends first or the ceiling passes."""
+        deadline = time.monotonic() + OWNERSHIP_CEILING
+        while not condition():
+            if process is not None and process.poll() is not None:
+                self.fail(f'{what}: the wrapper exited with status {process.returncode} first')
+            if time.monotonic() >= deadline:
+                self.fail(f'{what} within {OWNERSHIP_CEILING}s')
+            time.sleep(0.02)
+
+    def stop(self, process, record, pids):
+        """Kill every session the exercise started, reap the outer wrapper and return its output.
+
+        The inner wrapper leads its own session and shares the outer wrapper's
+        stdout and stderr pipes; the driver leads another. Killing the outer alone
+        leaves the pipes open until the driver's sleep ends, so every session has
+        to be gone before the wait for the outer's output. The tree is read from
+        /proc while the outer is still alive, since a killed parent's children are
+        reparented away from it, and re-read until nothing it started executes.
+        No record is needed for this, so a start that never published one is torn
+        down the same way. The driver the SIGKILL case orphans is no longer a
+        descendant; the group `children` recorded covers it.
+        """
+        own = os.getpgrp()
+
+        def kill(pid, group):
+            with suppress(ProcessLookupError):
+                if group == own:
+                    os.kill(pid, signal.SIGKILL)
+                else:
+                    os.killpg(group, signal.SIGKILL)
+
+        for group in pids[:1]:
+            kill(group, group)
+        deadline = time.monotonic() + OWNERSHIP_CEILING
+        while process.poll() is None and (members := live_descendants(process.pid)):
+            for pid, group in members:
+                kill(pid, group)
+            if time.monotonic() >= deadline:
+                raise AssertionError(f'the wrapper tree still executed after {OWNERSHIP_CEILING}s: {members}')
+            time.sleep(0.02)
+        if process.poll() is None:
+            process.kill()
+        output = process.communicate(timeout=OWNERSHIP_CEILING)
+        if record.exists():
+            shutil.rmtree(json.loads(record.read_text())['work'], ignore_errors=True)
+        return output
+
     def exercise(self, terminate):
+        # Each record is renamed into place complete, so its existence is readiness.
         inner = '''
 from contextlib import ExitStack
 from pathlib import Path
@@ -354,8 +436,9 @@ with slot.cancellation_handlers(), ExitStack() as stack:
     assert context.fds, 'the runner lost the inherited slot descriptor'
     services = DriverServices(settings, context)
     work = Context(settings, services, stack, Path.cwd(), 'fixture').scratch()
-    Path(sys.argv[1]).write_text(json.dumps(dict(pid=os.getpid(), work=str(work))))
-    code = 'import json,os,subprocess,sys,time; child=subprocess.Popen([sys.executable,"-c","import time; time.sleep(60)"]); open(sys.argv[1],"w").write(json.dumps([os.getpid(),child.pid])); time.sleep(60)'
+    Path(sys.argv[1] + '.part').write_text(json.dumps(dict(pid=os.getpid(), work=str(work))))
+    os.replace(sys.argv[1] + '.part', sys.argv[1])
+    code = 'import json,os,subprocess,sys,time; from pathlib import Path; child=subprocess.Popen([sys.executable,"-c","import time; time.sleep(60)"]); Path(sys.argv[1]+".part").write_text(json.dumps([os.getpid(),child.pid])); os.replace(sys.argv[1]+".part",sys.argv[1]); time.sleep(60)'
     try:
         services.command([sys.executable, '-c', code, sys.argv[2]])
     except pool.UnitStopped:
@@ -376,16 +459,16 @@ raise SystemExit(result)
             env.pop('OXPINYIN_HEAVY_SLOT_HELD', None)
             process = subprocess.Popen([sys.executable, '-X', 'lazy_imports=normal', '-c', outer, str(record), str(children)],
                                        cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            pids = []
+            pids, failure = [], None
             try:
-                deadline = time.monotonic() + 10
-                while not children.exists() and time.monotonic() < deadline and process.poll() is None:
-                    time.sleep(0.02)
-                self.assertTrue(children.exists(), 'the admitted driver did not start')
+                self.until(children.exists, 'the admitted driver did not start', process)
                 pids = json.loads(children.read_text())
                 owner = json.loads(record.read_text())
                 os.kill(owner['pid'], terminate)
-                process.communicate(timeout=10)
+                try:
+                    process.communicate(timeout=OWNERSHIP_CEILING)
+                except subprocess.TimeoutExpired:
+                    self.fail(f'the signalled wrapper did not exit within {OWNERSHIP_CEILING}s')
                 self.assertEqual(process.returncode, 128 + terminate)
                 if terminate == signal.SIGTERM:
                     self.assertFalse(Path(owner['work']).exists(), 'cancelled runner kept its private scratch')
@@ -398,24 +481,17 @@ raise SystemExit(result)
                     self.assertEqual(result.returncode, 0, result.stderr)
                     self.assertEqual(result.stdout, 'blocked\n', 'a killed wrapper released its live driver’s slot')
                     os.killpg(pids[0], signal.SIGKILL)
-                    deadline = time.monotonic() + 5
-                    while self.live(pids[0]) and time.monotonic() < deadline:
-                        time.sleep(0.02)
+                    self.until(lambda: not self.live(pids[0]), 'the killed driver did not end')
                     result = subprocess.run([sys.executable, '-c', contender], cwd=ROOT, env=env, capture_output=True, text=True)
                     self.assertEqual(result.returncode, 0, result.stderr)
                     self.assertEqual(result.stdout, 'acquired\n', 'the ended driver leaked its slot descriptor')
+            except BaseException as error:
+                failure = error
+                raise
             finally:
-                for pid in pids[:1]:
-                    try:
-                        os.killpg(pid, signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
-                if process.poll() is None:
-                    process.kill()
-                process.communicate(timeout=10)
-                if record.exists():
-                    import shutil
-                    shutil.rmtree(json.loads(record.read_text())['work'], ignore_errors=True)
+                _, stderr = self.stop(process, record, pids)
+                if failure is not None:
+                    failure.add_note('wrapper stderr:\n' + stderr.decode(errors='replace'))
 
     def test_sigterm_reaps_descendants_and_removes_scratch(self):
         self.exercise(signal.SIGTERM)
