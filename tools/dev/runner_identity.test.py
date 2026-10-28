@@ -76,6 +76,14 @@ class IdentityTests(unittest.TestCase):
                          b'/tmp/residue-mech-XXXXXX /tmp/residue-mech-b-XXXXXX '
                          b'/tmp/residue-mech-abc {tmp}/bisect-user-XXXXXX')
 
+    def test_normalise_blanks_glib_log_prefixes_only_when_declared(self):
+        line = (b'(process:27440): libpinyin-WARNING **: 18:15:59.485: pinyin_reset: assertion failed\n'
+                b'  (process:1): kept\n')
+        self.assertEqual(identity.normalise(line, {}, ()), line)
+        self.assertEqual(identity.normalise(line, {}, (), glib_log=True),
+                         b'(process:PID): libpinyin-WARNING **: HH:MM:SS.mmm: pinyin_reset: assertion failed\n'
+                         b'  (process:1): kept\n')
+
     def test_differing_names_each_field(self):
         base = identity.Observation(0, b'a', b'b', ())
         self.assertEqual(identity.differing(base, base), [])
@@ -150,7 +158,7 @@ class IdentityTests(unittest.TestCase):
         stage = self.root / 'stage'
         stage.mkdir()
         ctx = SimpleNamespace(env={'PATH': '/usr/bin:/bin'}, name='driver-identity', services=Services(),
-                              here=ROOT / 'tools/bisection')
+                              here=ROOT / 'tools/bisection', settings=SimpleNamespace(root=ROOT, extension='db'))
         runs = self.root / 'runs'
         runs.mkdir()
         seen = [identity.observe(ctx, driver, binary, stage / 'probe',
