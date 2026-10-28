@@ -63,6 +63,19 @@ fn item_freq(gram: &[u8], index: usize) -> Option<u32> {
     (index < get_length(gram)).then(|| word(gram, offset))
 }
 
+/// Borrow whole records without decoding the row or discarding a partial tail.
+fn records(gram: &[u8]) -> Option<(&[[u8; ITEM_LEN]], &[u8])> {
+    Some(gram.get(TOTAL_LEN..)?.as_chunks())
+}
+
+fn record_token(record: &[u8; ITEM_LEN]) -> u32 {
+    u32::from_le_bytes([record[0], record[1], record[2], record[3]])
+}
+
+fn record_freq(record: &[u8; ITEM_LEN]) -> u32 {
+    u32::from_le_bytes([record[4], record[5], record[6], record[7]])
+}
+
 /// `SingleGram::get_total_freq`; `None` for a value shorter than the
 /// total, where the pin asserts (`memory_chunk.h:390`).
 #[must_use]
@@ -85,12 +98,24 @@ pub fn set_total_freq(gram: &mut Vec<u8>, total: u32) {
 /// middle when its token is less than `token`. Answers the item index.
 #[must_use]
 pub fn lower_bound(gram: &[u8], token: u32) -> usize {
+    let Some((records, _)) = records(gram) else {
+        return 0;
+    };
+    lower_bound_records(records, token)
+}
+
+fn lower_bound_records(records: &[[u8; ITEM_LEN]], token: u32) -> usize {
     let mut first = 0_usize;
-    let mut len = get_length(gram);
+    let mut len = records.len();
     while len > 0 {
         let half = len >> 1;
         let middle = first + half;
-        if item_token(gram, middle).is_some_and(|item| item < token) {
+        // first + len stays within records.len(), so middle names a whole
+        // record. Its fixed-size byte fields need no further range checks.
+        if records
+            .get(middle)
+            .is_some_and(|record| record_token(record) < token)
+        {
             first = middle + 1;
             len = len - half - 1;
         } else {
@@ -187,19 +212,20 @@ pub fn checked_search(
     end: u32,
     out: &mut Vec<(u32, u32)>,
 ) -> Result<(), GramFault> {
-    if gram.len() < TOTAL_LEN {
+    let Some((records, tail)) = records(gram) else {
         return Err(GramFault::Short);
-    }
-    for index in lower_bound(gram, begin)..get_length(gram) {
-        let (Some(item), Some(freq)) = (item_token(gram, index), item_freq(gram, index)) else {
-            return Err(GramFault::OverRead);
-        };
+    };
+    for record in records.iter().skip(lower_bound_records(records, begin)) {
+        let item = record_token(record);
+        let freq = record_freq(record);
         if item >= end {
             return Ok(());
         }
         out.push((item, freq));
     }
-    if has_partial_tail(gram) {
+    // A partial tail faults only when the physical walk reaches it. An
+    // earlier range-end stop still succeeds, including on unsorted rows.
+    if !tail.is_empty() {
         return Err(GramFault::OverRead);
     }
     Ok(())
@@ -366,6 +392,8 @@ pub fn new_gram() -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
+
     use super::{
         GramFault, checked_get_freq, checked_search, get_freq, get_length, get_total_freq,
         insert_freq, item_freq, item_offset, item_token, lower_bound, mask_out, merge_single_gram,
@@ -383,6 +411,108 @@ mod tests {
 
     fn items(bytes: &[u8]) -> Vec<(u32, u32)> {
         retrieve_all(bytes).collect()
+    }
+
+    // Pre-record-view routines from main. Keep their byte-based reads so
+    // generated malformed rows compare independent implementations.
+    fn old_lower_bound(gram: &[u8], token: u32) -> usize {
+        let mut first = 0_usize;
+        let mut len = get_length(gram);
+        while len > 0 {
+            let half = len >> 1;
+            let middle = first + half;
+            if item_token(gram, middle).is_some_and(|item| item < token) {
+                first = middle + 1;
+                len = len - half - 1;
+            } else {
+                len = half;
+            }
+        }
+        first
+    }
+
+    fn old_checked_search(
+        gram: &[u8],
+        begin: u32,
+        end: u32,
+        out: &mut Vec<(u32, u32)>,
+    ) -> Result<(), GramFault> {
+        if gram.len() < super::TOTAL_LEN {
+            return Err(GramFault::Short);
+        }
+        for index in old_lower_bound(gram, begin)..get_length(gram) {
+            let (Some(item), Some(freq)) = (item_token(gram, index), item_freq(gram, index)) else {
+                return Err(GramFault::OverRead);
+            };
+            if item >= end {
+                return Ok(());
+            }
+            out.push((item, freq));
+        }
+        if super::has_partial_tail(gram) {
+            return Err(GramFault::OverRead);
+        }
+        Ok(())
+    }
+
+    fn compare_searches(bytes: &[u8], begin: u32, end: u32) {
+        assert_eq!(lower_bound(bytes, begin), old_lower_bound(bytes, begin));
+        // Preserve the append contract, including output preceding a fault.
+        let mut old = vec![(u32::MAX, 17)];
+        let mut new = old.clone();
+        assert_eq!(
+            checked_search(bytes, begin, end, &mut new),
+            old_checked_search(bytes, begin, end, &mut old),
+            "row {bytes:?}, range {begin}..{end}"
+        );
+        assert_eq!(new, old, "row {bytes:?}, range {begin}..{end}");
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(256))]
+
+        #[test]
+        fn record_views_preserve_the_byte_search(
+            total in any::<u32>(),
+            row in prop::collection::vec(
+                (prop_oneof![0_u32..16, any::<u32>()], any::<u32>()), 0..128),
+            begin in any::<u32>(),
+            last in any::<u32>(),
+            tail in any::<[u8; 7]>(),
+        ) {
+            let mut sorted = row.clone();
+            sorted.sort_by_key(|&(token, _)| token);
+            let reversed: Vec<_> = sorted.iter().rev().copied().collect();
+            let duplicated: Vec<_> = row.iter().flat_map(|&item| [item, item]).collect();
+            let mut ranges = vec![
+                (begin, last.wrapping_add(1)),
+                (begin, begin),
+                (begin, begin.wrapping_add(1)),
+                (0, 0),
+                (0, u32::MAX),
+                (u32::MAX, 0),
+                (u32::MAX, u32::MAX),
+            ];
+            for &(token, _) in row.iter().take(3) {
+                ranges.extend([(token, token), (token, token.wrapping_add(1))]);
+            }
+            for ordered in [&row, &sorted, &reversed, &duplicated] {
+                for tail_len in 0..=tail.len() {
+                    let mut bytes = gram(total, ordered);
+                    bytes.extend_from_slice(&tail[..tail_len]);
+                    for &(first, end) in &ranges {
+                        compare_searches(&bytes, first, end);
+                    }
+                }
+            }
+            // Every short-header length, plus the complete empty row.
+            let empty = total.to_le_bytes();
+            for len in 0..=empty.len() {
+                for &(first, end) in &ranges {
+                    compare_searches(&empty[..len], first, end);
+                }
+            }
+        }
     }
 
     /// N2 refusals 4 and 6 (register row 98): the pin's `get_freq` walk
