@@ -385,6 +385,11 @@ class W8:
         if status:
             raise Finished(status)
 
+    def pkgconfig_dirs(self) -> list[str]:
+        """The staged pkgconfig directories: lib, lib64 or a multiarch lib/<triplet>, whichever the host uses."""
+        stage = glob.escape(self.stage)
+        return sorted(glob.glob(f'{stage}/usr/lib*/pkgconfig') + glob.glob(f'{stage}/usr/lib*/*/pkgconfig'))
+
     def install(self) -> None:
         """Stage the installed tree (or reuse the last one) and find the capi library in it."""
         stage, env = self.stage, self.env
@@ -394,41 +399,40 @@ class W8:
                 '--manifest-path', str(bench.ROOT / 'Cargo.toml')]
         previous = env.get('PKG_CONFIG_PATH')
         inherited = f':{previous}' if previous else ''
-        if self.darwin:
-            ready = (Path(f'{stage}/usr/lib/pkgconfig/libpinyin.pc').is_file()
-                     and bool(glob.glob(f'{glob.escape(stage)}/usr/lib/libpinyin*.dylib')) and reuse)
-            if ready:
-                say(f'--- reusing stage: {stage} ---')
-            else:
+        suffixes = ('.dylib', '.15.dylib', '.15.0.0.dylib') if self.darwin else ('.so', '.so.15', '.so.15.0.0')
+        ready = (any(Path(f'{d}/libpinyin.pc').is_file() for d in self.pkgconfig_dirs())
+                 and any(glob.glob(f'{glob.escape(stage)}/usr/lib*/**/libpinyin{suffix}', recursive=True)
+                         for suffix in suffixes)
+                 and reuse)
+        if ready:
+            say(f'--- reusing stage: {stage} ---')
+        else:
+            if self.darwin:
                 # Homebrew's native libraries are outside the shared cache; opt the
                 # profiling dylib out so the linker can bind them. The export stays
                 # for the rest of the run, as it did in the script.
                 flags = env.get('RUSTFLAGS')
                 env['RUSTFLAGS'] = (f'{flags} ' if flags else '') + '-C link-arg=-Wl,-not_for_dyld_shared_cache'
-                self.cinstall([*install, '--no-default-features', '--features', 'tkrzw', *tail])
-            env['PKG_CONFIG_PATH'] = f'{stage}/usr/lib/pkgconfig:{stage}/usr/lib64/pkgconfig{inherited}'
-            env['PKG_CONFIG_SYSROOT_DIR'] = stage
-            self.capi_libdir = self.libdir('libpinyin') or self.libdir('oxpinyin')
-            self.capi_so = ''
-            for candidate in ('libpinyin.dylib', 'libpinyin.15.dylib', 'libpinyin.15.0.0.dylib',
-                              'libpinyin_capi.dylib'):
-                if Path(f'{self.capi_libdir}/{candidate}').is_file():
-                    self.capi_so = f'{self.capi_libdir}/{candidate}'
-                    break
-        else:
-            ready = (Path(f'{stage}/usr/lib64/pkgconfig/oxpinyin.pc').is_file()
-                     and Path(f'{stage}/usr/lib64/libpinyin_capi.so').is_file() and reuse)
-            if ready:
-                say(f'--- reusing stage: {stage} ---')
-            else:
-                self.cinstall([*install, *tail])
-            env['PKG_CONFIG_PATH'] = f'{stage}/usr/lib64/pkgconfig{inherited}'
-            env['PKG_CONFIG_SYSROOT_DIR'] = stage
+            self.cinstall([*install, '--no-default-features', '--features', 'tkrzw', *tail])
+        env['PKG_CONFIG_PATH'] = ':'.join(self.pkgconfig_dirs() or [f'{stage}/usr/lib/pkgconfig']) + inherited
+        env['PKG_CONFIG_SYSROOT_DIR'] = stage
+        self.capi_libdir = self.libdir('libpinyin')
+        source = 'pkg-config libpinyin'
+        if not self.capi_libdir:
             self.capi_libdir = self.libdir('oxpinyin')
-            self.capi_so = f'{self.capi_libdir}/libpinyin_capi.so'
+            source = 'pkg-config oxpinyin, the fallback'
+        self.capi_so = ''
+        candidates = [f'libpinyin{suffix}' for suffix in suffixes]
+        if self.darwin:
+            candidates.append('libpinyin_capi.dylib')
+        for candidate in candidates:
+            if Path(f'{self.capi_libdir}/{candidate}').is_file():
+                self.capi_so = f'{self.capi_libdir}/{candidate}'
+                break
         self.capi_data = f'{stage}/usr/share/oxpinyin'
         if not Path(self.capi_so).is_file():
-            die(f'fatal: {self.capi_so} not found')
+            die(f'fatal: no capi library in {self.capi_libdir!r} (libdir from {source}); '
+                f'tried {", ".join(candidates)}')
 
     def stage_data(self) -> None:
         """cargo-c does not install data files; this is the documented packager step."""

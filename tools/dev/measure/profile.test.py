@@ -202,8 +202,8 @@ class Scenario:
             (destdir / 'usr/lib/libpinyin.15.dylib').write_text('dylib')
         else:
             (destdir / 'usr/lib64/pkgconfig').mkdir(parents=True)
-            (destdir / 'usr/lib64/pkgconfig/oxpinyin.pc').write_text('pc')
-            (destdir / 'usr/lib64/libpinyin_capi.so').write_text('so')
+            (destdir / 'usr/lib64/pkgconfig/libpinyin.pc').write_text('pc')
+            (destdir / 'usr/lib64/libpinyin.so').write_text('so')
 
     def compile(self, call):
         Path(option(call.command, '-o')).write_text('bisect')
@@ -244,6 +244,13 @@ class ScenarioTest(unittest.TestCase):
 
     def invoke(self, argv=()):
         return self.scenario.invoke(argv)
+
+    def not_found(self, source='pkg-config libpinyin'):
+        darwin = self.system == 'Darwin'
+        libdir = f"{self.scenario.stage}/usr/{'lib' if darwin else 'lib64'}"
+        names = ('libpinyin.dylib, libpinyin.15.dylib, libpinyin.15.0.0.dylib, libpinyin_capi.dylib' if darwin
+                 else 'libpinyin.so, libpinyin.so.15, libpinyin.so.15.0.0')
+        return f"fatal: no capi library in '{libdir}' (libdir from {source}); tried {names}"
 
     @staticmethod
     def lines(text):
@@ -427,7 +434,7 @@ class DarwinTests(ScenarioTest):
         lookup = self.commands.of('output', 'pkg-config')[0]
         self.assertEqual(lookup.command, ['pkg-config', '--variable=libdir', 'libpinyin'])
         stage = self.scenario.stage
-        self.assertEqual(lookup.env['PKG_CONFIG_PATH'], f'{stage}/usr/lib/pkgconfig:{stage}/usr/lib64/pkgconfig')
+        self.assertEqual(lookup.env['PKG_CONFIG_PATH'], f'{stage}/usr/lib/pkgconfig')
         self.assertEqual(lookup.env['PKG_CONFIG_SYSROOT_DIR'], str(stage))
 
     def test_an_empty_libpinyin_answer_falls_back_to_oxpinyin(self):
@@ -456,7 +463,7 @@ class DarwinTests(ScenarioTest):
         self.assertStatus(self.invoke(), 0)
         self.assertEqual(self.commands.of('guard')[0].command, [f'{self.scenario.stage}/usr/lib/libpinyin.15.dylib'])
 
-    def test_no_candidate_dylib_is_a_fatal_with_an_empty_name(self):
+    def test_no_candidate_dylib_is_a_fatal_naming_the_search(self):
         def stage_none(call):
             if call.kind != 'run':
                 return
@@ -466,7 +473,7 @@ class DarwinTests(ScenarioTest):
         self.commands.effects['cargo'] = stage_none
         result = self.invoke()
         self.assertStatus(result, 1)
-        self.assertEqual(self.lines(result.stderr)[-1], 'fatal:  not found')
+        self.assertEqual(self.lines(result.stderr)[-1], self.not_found())
         self.assertEqual(self.commands.of('guard'), [])
 
     def test_reports_the_dylib_and_copies_the_whole_export(self):
@@ -526,19 +533,49 @@ class DarwinTests(ScenarioTest):
 
 
 class LinuxStageTests(ScenarioTest):
-    def test_stages_with_the_default_features(self):
+    def test_stages_with_the_tkrzw_feature(self):
         self.assertStatus(self.invoke(), 0)
         install = self.commands.of('run', 'cargo')[0]
         self.assertEqual(install.command, [
-            'cargo', 'cinstall', '--locked', '--profile', 'profiling', '-p', 'oxpinyin-capi',
+            'cargo', 'cinstall', '--locked', '--profile', 'profiling', '--no-default-features', '--features',
+            'tkrzw', '-p', 'oxpinyin-capi',
             f'--destdir={self.scenario.stage}', '--prefix=/usr', '--manifest-path', str(ROOT / 'Cargo.toml')])
         self.assertNotIn('RUSTFLAGS', install.env)
+
+    def test_picks_the_first_candidate_library_in_the_documented_order(self):
+        def stage_all(call):
+            if call.kind != 'run':
+                return
+            destdir = staged(call)
+            (destdir / 'usr/lib64/pkgconfig').mkdir(parents=True)
+            (destdir / 'usr/lib64/pkgconfig/libpinyin.pc').write_text('pc')
+            for name in ('libpinyin.so.15.0.0', 'libpinyin.so.15'):
+                (destdir / 'usr/lib64' / name).write_text(name)
+        self.commands.effects['cargo'] = stage_all
+        self.assertStatus(self.invoke(), 0)
+        self.assertEqual(self.commands.of('guard')[0].command, [f'{self.scenario.stage}/usr/lib64/libpinyin.so.15'])
+
+    def test_finds_a_multiarch_stage(self):
+        triplet = 'usr/lib/x86_64-linux-gnu'
+
+        def stage_multiarch(call):
+            if call.kind != 'run':
+                return
+            destdir = staged(call)
+            (destdir / triplet / 'pkgconfig').mkdir(parents=True)
+            (destdir / triplet / 'pkgconfig/libpinyin.pc').write_text('pc')
+            (destdir / triplet / 'libpinyin.so').write_text('so')
+        self.commands.effects['cargo'] = stage_multiarch
+        self.commands.outputs['pkg-config'] = lambda call: f'{self.scenario.stage}/{triplet}\n'.encode()
+        self.assertStatus(self.invoke(), 0)
+        lookup = self.commands.of('output', 'pkg-config')[0]
+        self.assertEqual(lookup.env['PKG_CONFIG_PATH'], f'{self.scenario.stage}/{triplet}/pkgconfig')
 
     def test_exports_the_pkg_config_search_path_and_sysroot(self):
         self.env['PKG_CONFIG_PATH'] = '/inherited/pkgconfig'
         self.assertStatus(self.invoke(), 0)
         lookup = self.commands.of('output', 'pkg-config')[0]
-        self.assertEqual(lookup.command, ['pkg-config', '--variable=libdir', 'oxpinyin'])
+        self.assertEqual(lookup.command, ['pkg-config', '--variable=libdir', 'libpinyin'])
         self.assertEqual(lookup.env['PKG_CONFIG_PATH'],
                          f'{self.scenario.stage}/usr/lib64/pkgconfig:/inherited/pkgconfig')
         self.assertEqual(lookup.env['PKG_CONFIG_SYSROOT_DIR'], str(self.scenario.stage))
@@ -561,8 +598,8 @@ class LinuxStageTests(ScenarioTest):
     def test_the_reuse_test_looks_at_the_pc_file_and_the_library(self):
         stage = self.scenario.stage
         (stage / 'usr/lib64/pkgconfig').mkdir(parents=True)
-        (stage / 'usr/lib64/pkgconfig/oxpinyin.pc').write_text('pc')
-        (stage / 'usr/lib64/libpinyin_capi.so').write_text('so')
+        (stage / 'usr/lib64/pkgconfig/libpinyin.pc').write_text('pc')
+        (stage / 'usr/lib64/libpinyin.so').write_text('so')
         for value, reused in (('1', True), ('0', False), ('', False), ('yes', False)):
             with self.subTest(request=value):
                 self.commands.calls.clear()
@@ -576,7 +613,7 @@ class LinuxStageTests(ScenarioTest):
     def test_a_stage_with_only_the_pc_file_is_not_reused(self):
         stage = self.scenario.stage
         (stage / 'usr/lib64/pkgconfig').mkdir(parents=True)
-        (stage / 'usr/lib64/pkgconfig/oxpinyin.pc').write_text('pc')
+        (stage / 'usr/lib64/pkgconfig/libpinyin.pc').write_text('pc')
         self.env['PROFILE_REUSE_STAGE'] = '1'
         self.assertStatus(self.invoke(), 0)
         self.assertEqual(len(self.commands.of('run', 'cargo')), 1)
@@ -585,8 +622,16 @@ class LinuxStageTests(ScenarioTest):
         self.commands.effects['cargo'] = lambda call: None
         result = self.invoke()
         self.assertStatus(result, 1)
-        self.assertEqual(self.lines(result.stderr)[-1],
-                         f'fatal: {self.scenario.stage}/usr/lib64/libpinyin_capi.so not found')
+        self.assertEqual(self.lines(result.stderr)[-1], self.not_found())
+
+    def test_a_missing_library_names_the_fallback_lookup(self):
+        self.commands.effects['cargo'] = lambda call: None
+        stage = self.scenario.stage
+        answers = [b'\n', f'{stage}/usr/lib64\n'.encode()]
+        self.commands.outputs['pkg-config'] = lambda call: answers.pop(0)
+        result = self.invoke()
+        self.assertStatus(result, 1)
+        self.assertEqual(self.lines(result.stderr)[-1], self.not_found('pkg-config oxpinyin, the fallback'))
 
     def test_copies_the_three_tables_and_the_model_interpolation(self):
         result = self.invoke()
@@ -595,7 +640,7 @@ class LinuxStageTests(ScenarioTest):
         self.assertEqual(sorted(path.name for path in data.iterdir()),
                          ['bigram.db', 'interpolation2.text', 'phrase_index.bin', 'pinyin_index.bin'])
         self.assertEqual((data / 'interpolation2.text').read_text(), 'interpolation2.text')
-        self.assertIn(f'installed capi .so:  {self.scenario.stage}/usr/lib64/libpinyin_capi.so\n', result.stdout)
+        self.assertIn(f'installed capi .so:  {self.scenario.stage}/usr/lib64/libpinyin.so\n', result.stdout)
 
     def test_the_harness_builds_with_gcc_and_libdl(self):
         self.assertStatus(self.invoke(), 0)
@@ -766,7 +811,7 @@ class InputTests(ScenarioTest):
         stage = self.scenario.stage
         self.assertEqual((self.scenario.profile / 'header.txt').read_text(),
                          f'pin: {profile.PIN_REF}\nmodel20_sha256: {profile.MODEL20_SHA256}\n'
-                         f'so: {stage}/usr/lib64/libpinyin_capi.so\ndata: {stage}/usr/share/oxpinyin\n'
+                         f'so: {stage}/usr/lib64/libpinyin.so\ndata: {stage}/usr/share/oxpinyin\n'
                          f'cycles: {SAMPLY_CYCLES} (samply), {FALLBACK_CYCLES} (other profilers)\n'
                          'profile: profiling (release + line-tables-only + thin LTO)\n')
 
@@ -779,7 +824,7 @@ class GuardTests(ScenarioTest):
         self.assertStatus(result, 0)
         shape = self.commands.shape()
         self.assertLess(shape.index('guard:' + str(self.commands.of('guard')[0].name)), shape.index('tee:samply'))
-        so = f'{self.scenario.stage}/usr/lib64/libpinyin_capi.so'
+        so = f'{self.scenario.stage}/usr/lib64/libpinyin.so'
         self.assertEqual(self.commands.of('guard')[0].command, [so])
         launch = self.commands.of('tee', 'samply')[0]
         self.assertEqual(launch.command, [
