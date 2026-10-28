@@ -223,3 +223,11 @@ def owned_text(k,pointer):
 
     Delegate decoding with UTF-8 replacement and release to Kit.text."""
     return 'untouched' if pointer.value==UNTOUCHED else k.text(pointer.value)
+
+
+class Rest(C.Structure):
+    """Mirror the two unsigned 16-bit raw-input offsets of ChewingKeyRest.
+
+    The layout is _ChewingKeyRest in src/storage/chewing_key.h at pin
+    074a2219; begin and end measure byte positions in the parsed input."""
+    _fields_ = [('begin', C.c_ushort), ('end', C.c_ushort)]

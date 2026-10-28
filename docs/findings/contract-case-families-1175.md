@@ -25,21 +25,22 @@ each dependency outside the already-extracted ABI, fixture and verdict
 modules, standard-library imports and the `case` registration callback.
 Smaller, less coupled sections therefore tend to come first. Cross-section
 helpers, driver state, interleaved registrations and new main changes must be
-rechecked when each section is moved. Rows marked moved register from their
-own module through the driver's `case` at their original position; the
-remaining rows keep the proposed order. The remaining rows are planned as a
-linear stack on main `1e2736984d1a909828642b526c90d77e668cd15e`; "PR n" is its
-n-th member. PR 1 moves no rows: it moves the 47 helpers that several sections
-read into `contract_case_helpers`, and the driver re-exports them by
-assignment. Helpers that read the driver's `CELL`, directly or through one
-another (`_craft_db`, `_craft_hash`, `index_file_rows`, `token_reuse_files`,
-`token_reuse_sequence`, `crafted_bigram_context`, `predicted_bigram_context`,
-`addon_promote_sequence`, `items_system` and `phrase_text_system`), and
-`Rest`, which moved families capture, stay in the driver and are passed to the
-sections that use them. PR 7 moves the last section and settles what is left.
-Axis C remains one family: its three builders, five observation helpers and
-export case; its driver registration also owns `AXIS_C_GROUPS`,
-`AXIS_C_DEFINITION` and `AXIS_C_LAYOUT_COVERED`.
+rechecked when each section is moved. Every row is now moved: each registers
+from its own module through the driver's `case` at its original position. Rows
+29–67 moved as a linear stack on main
+`1e2736984d1a909828642b526c90d77e668cd15e`; "PR n" in the history of this
+table was its n-th member. PR 1 moved the 47 helpers several sections read
+into `contract_case_helpers`, which the driver re-exports by assignment. The
+helpers that read the driver's `CELL`, directly or through one another, now
+live in `contract_cell_fixtures`, each taking that state as keyword-only
+parameters; the driver keeps a same-signature adapter for each, so tests that
+patch `CELL` or a crafter through the driver, and the families that received
+the adapters at registration, see no change. `Rest` is in `contract_abi`,
+`glib_924_oom_array` in `contract_glib_arrays` and the sentence-tie
+regeneration in `contract_sentence_ties`. The driver now defines no case: it
+keeps the registry, the worker entry, the command line, the axis C
+registration tables it builds on every load, and the adapters and
+registrations that pass its per-run state to the modules beside it.
 
 | Order | Section (example case) | Cases | Builders/helpers | Needs from outside the section | Status |
 | --- | --- | ---: | --- | --- | --- |
@@ -109,4 +110,4 @@ export case; its driver registration also owns `AXIS_C_GROUPS`,
 | 64 | table.conf and scanner (`hash-path/system-directory-pinyin`) | 222 | `conf_system_bytes`, `conf_guess_rows`, `conf_sentence`, `conf_view`, `conf_session`, `hash_path_fixture`, `hash_path_session`, `addon_session`, `conf_case`, `conf_abort`, `header_probe`, `conf_919_case`, `one_line_conf`, `header_919`, `scanner_initialization`, `absolute_user_file`, `stderr_conf_case`, `candidates_probe` | moved (`contract_table_conf_scanner`) |
 | 65 | journal replay and removed items (`replay-unigram-add-live-item-pinyin`) | 177 | `_log_record`, `_item_size`, `_system_items`, `_item_with`, `_flip`, `_item_text`, `_observe_system_item`, `system_replay`, `_replay_case`, `_watch`, `unigram_lifecycle`, `unigram_null_user_save`, `_add_fresh`, `_matched_remove`, `_compare_case`, `_touched_order`, `_seed_mixed`, `_touched_sparse_edits`, `_modify_grow`, `_modify_in_place`, `_modify_empty`, `_watch_absent`, `_modify_absent_stale`, `_modify_absent_default`, `_cross_item_pair`, `_cross_item_records`, `_cross_item_records_past_area`, `_observe_replayed_item`, `_observe_cross_item`, `_watch_last`, `touched_many_invalid`, `_short_add`, `_pron_entries`, `_pron_shape`, `pron_lifecycle`, `pron_mixed`, `_removed_extension`, `_removed_candidate`, `_removed_predict_setup`, `_predicted_surface`, `_predicted_sole`, `_predicted_choose`, `_predicted_class_b`, `_predicted_stale_skip` | moved (`contract_journal_replay`) |
 | 66 | axis C cases (`axis-c-export-user`) | 888 | `axis_c_isolated`, `axis_c_surface`, `axis_c_options`, `axis_c_lookup`, `axis_c_import`, `axis_c_export_user`, `axis_c_encoding`, `axis_c_keyboard`, `axis_c_layout` | moved (`contract_axis_c_cases`) |
-| 67 | separator and before-cursor (`separator/pinyin/0/parse/0`) | 1360 | `borrowed_text`, `separator_case` | planned: PR 7 |
+| 67 | separator and before-cursor (`separator/pinyin/0/parse/0`) | 1360 | `borrowed_text`, `separator_case` | moved (`contract_separator_before_cursor`) |

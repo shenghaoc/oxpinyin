@@ -202,5 +202,13 @@ class TokenTests(unittest.TestCase):
                          [False, abi.UNTOUCHED])
 
 
+class RestLayoutTests(unittest.TestCase):
+    def test_rest_mirrors_two_unsigned_16_bit_offsets(self):
+        self.assertEqual([(name, kind) for name, kind in abi.Rest._fields_],
+                         [('begin', abi.C.c_ushort), ('end', abi.C.c_ushort)])
+        self.assertEqual(abi.C.sizeof(abi.Rest), 4)
+        rest = abi.Rest(3, 7)
+        self.assertEqual((rest.begin, rest.end), (3, 7))
+
 if __name__ == '__main__':
     unittest.main()
