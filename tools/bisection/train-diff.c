@@ -51,7 +51,6 @@
  */
 
 #define _POSIX_C_SOURCE 200809L
-#include <dirent.h>
 #include <dlfcn.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -59,7 +58,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
-#include <unistd.h>
+
+#include "driver-common.h"
 
 /* ── Opaque handle types (match pinyin.h) ─────────────────────────────── */
 
@@ -134,15 +134,6 @@ struct syms {
     fn_end_bigram end_bigram;
 };
 
-static void *load(const char *name, void *handle) {
-    void *symbol = dlsym(handle, name);
-    if (!symbol) {
-        fprintf(stderr, "  MISSING: %s\n", name);
-        exit(1);
-    }
-    return symbol;
-}
-
 static int file_exists(const char *dir, const char *name) {
     char path[4096];
     struct stat st;
@@ -152,34 +143,34 @@ static int file_exists(const char *dir, const char *name) {
 }
 
 static void resolve_all(void *handle, struct syms *s) {
-    s->init = (fn_init)load("pinyin_init", handle);
+    s->init = (fn_init)dc_require(handle, "pinyin_init");
     s->fixture_init = (fn_init)dlsym(handle, "oxpinyin_init_for_fixtures");
-    s->fini = (fn_fini)load("pinyin_fini", handle);
-    s->save = (fn_save)load("pinyin_save", handle);
-    s->alloc = (fn_alloc)load("pinyin_alloc_instance", handle);
-    s->free_instance = (fn_free_instance)load("pinyin_free_instance", handle);
-    s->set_options = (fn_set_options)load("pinyin_set_options", handle);
-    s->parse = (fn_parse)load("pinyin_parse_more_full_pinyins", handle);
-    s->sentence = (fn_sentence)load("pinyin_guess_sentence", handle);
-    s->guess = (fn_guess)load("pinyin_guess_candidates", handle);
-    s->getn = (fn_getn)load("pinyin_get_n_candidate", handle);
-    s->getc = (fn_getc)load("pinyin_get_candidate", handle);
-    s->getstr = (fn_getstr)load("pinyin_get_candidate_string", handle);
-    s->choose = (fn_choose)load("pinyin_choose_candidate", handle);
-    s->train = (fn_train)load("pinyin_train", handle);
-    s->reset = (fn_reset)load("pinyin_reset", handle);
-    s->remember = (fn_remember)load("pinyin_remember_user_input", handle);
-    s->mask_out = (fn_mask_out)load("pinyin_mask_out", handle);
-    s->begin_phrases = (fn_begin_phrases)load("pinyin_begin_get_phrases", handle);
-    s->has_next = (fn_has_next)load("pinyin_iterator_has_next_phrase", handle);
-    s->get_next = (fn_get_next)load("pinyin_iterator_get_next_phrase", handle);
-    s->end_phrases = (fn_end_phrases)load("pinyin_end_get_phrases", handle);
-    s->begin_bigram = (fn_begin_bigram)load("pinyin_begin_get_bigram_phrases", handle);
+    s->fini = (fn_fini)dc_require(handle, "pinyin_fini");
+    s->save = (fn_save)dc_require(handle, "pinyin_save");
+    s->alloc = (fn_alloc)dc_require(handle, "pinyin_alloc_instance");
+    s->free_instance = (fn_free_instance)dc_require(handle, "pinyin_free_instance");
+    s->set_options = (fn_set_options)dc_require(handle, "pinyin_set_options");
+    s->parse = (fn_parse)dc_require(handle, "pinyin_parse_more_full_pinyins");
+    s->sentence = (fn_sentence)dc_require(handle, "pinyin_guess_sentence");
+    s->guess = (fn_guess)dc_require(handle, "pinyin_guess_candidates");
+    s->getn = (fn_getn)dc_require(handle, "pinyin_get_n_candidate");
+    s->getc = (fn_getc)dc_require(handle, "pinyin_get_candidate");
+    s->getstr = (fn_getstr)dc_require(handle, "pinyin_get_candidate_string");
+    s->choose = (fn_choose)dc_require(handle, "pinyin_choose_candidate");
+    s->train = (fn_train)dc_require(handle, "pinyin_train");
+    s->reset = (fn_reset)dc_require(handle, "pinyin_reset");
+    s->remember = (fn_remember)dc_require(handle, "pinyin_remember_user_input");
+    s->mask_out = (fn_mask_out)dc_require(handle, "pinyin_mask_out");
+    s->begin_phrases = (fn_begin_phrases)dc_require(handle, "pinyin_begin_get_phrases");
+    s->has_next = (fn_has_next)dc_require(handle, "pinyin_iterator_has_next_phrase");
+    s->get_next = (fn_get_next)dc_require(handle, "pinyin_iterator_get_next_phrase");
+    s->end_phrases = (fn_end_phrases)dc_require(handle, "pinyin_end_get_phrases");
+    s->begin_bigram = (fn_begin_bigram)dc_require(handle, "pinyin_begin_get_bigram_phrases");
     s->bigram_has_next =
-        (fn_bigram_has_next)load("pinyin_bigram_iterator_has_next_phrase", handle);
+        (fn_bigram_has_next)dc_require(handle, "pinyin_bigram_iterator_has_next_phrase");
     s->bigram_get_next =
-        (fn_bigram_get_next)load("pinyin_bigram_iterator_get_next_phrase", handle);
-    s->end_bigram = (fn_end_bigram)load("pinyin_end_get_bigram_phrases", handle);
+        (fn_bigram_get_next)dc_require(handle, "pinyin_bigram_iterator_get_next_phrase");
+    s->end_bigram = (fn_end_bigram)dc_require(handle, "pinyin_end_get_bigram_phrases");
 }
 
 /* ── Caller-owned string release ──────────────────────────────────────── */
@@ -282,26 +273,6 @@ static void print_bigram_rows(const struct syms *s, pinyin_context_t *ctx,
         g_free_fn(pinyin);
     }
     s->end_bigram(iter);
-}
-
-/* ── Temp userdir cleanup ─────────────────────────────────────────────── */
-
-static void rm_rf(const char *dir) {
-    DIR *d = opendir(dir);
-    if (d) {
-        struct dirent *entry;
-        while ((entry = readdir(d)) != NULL) {
-            if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
-                continue;
-            char path[4096];
-            if (snprintf(path, sizeof(path), "%s/%s", dir, entry->d_name) >=
-                (int)sizeof(path))
-                continue;
-            unlink(path); /* the store writes regular files only */
-        }
-        closedir(d);
-    }
-    rmdir(dir);
 }
 
 /* ── Main ─────────────────────────────────────────────────────────────── */
@@ -575,7 +546,7 @@ int main(int argc, char **argv) {
     s.free_instance(inst);
     s.fini(ctx);
     dlclose(handle);
-    rm_rf(userdir);
+    dc_remove_dir_shallow(userdir);
     return 0;
 
     /* Shared cleanup: no exit path leaks the dlopen handle or the temp
@@ -590,6 +561,6 @@ fail_ctx:
         s.fini(ctx);
 fail_no_ctx:
     dlclose(handle);
-    rm_rf(userdir);
+    dc_remove_dir_shallow(userdir);
     return 1;
 }
