@@ -109,6 +109,19 @@ def lambda_ast(fn):
     return ast.dump(nodes[0], include_attributes=False)
 
 
+def partial_layers(value, sentinel):
+    """The bound arguments of each functools.partial around a case function, outermost first.
+
+    Any other wrapper fails closed: only the function underneath is compared by source."""
+    layers = []
+    while isinstance(value, functools.partial):
+        layers.append([value_shape(value.args, sentinel), value_shape(value.keywords, sentinel)])
+        value = value.func
+    if not isinstance(value, types.FunctionType):
+        raise TypeError('moved case is wrapped: %r' % (value,))
+    return layers
+
+
 def function_ast(fn, injected=()):
     """Normalize only declared keyword-only state; keep decorators and bodies."""
     fn = function_of(fn)
@@ -299,10 +312,9 @@ def snapshot(root, cell, moved, helpers, injected, source_modules=(), retained_s
     moved_source, used_injected = {}, set()
     for name in moved:
         fn = function_of(driver.CASES[name]['fn'])
-        if driver.CASES[name]['fn'] is not fn:
-            raise TypeError('moved case is wrapped: %s' % name)
-        moved_source[name] = {'module': fn.__module__, 'shape': function_shape(
-            fn, driver, sentinel, injected, source_modules, used=used_injected)}
+        moved_source[name] = {'module': fn.__module__, 'partial': partial_layers(driver.CASES[name]['fn'], sentinel),
+                              'shape': function_shape(fn, driver, sentinel, injected, source_modules,
+                                                      used=used_injected)}
     unused = set(injected) - used_injected - set(registration_injected)
     if unused:
         raise TypeError('unused injected names: %s' % sorted(unused))

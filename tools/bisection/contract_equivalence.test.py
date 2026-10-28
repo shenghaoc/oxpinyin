@@ -210,6 +210,18 @@ class EquivalenceTests(unittest.TestCase):
         with patch.dict(sys.modules, family_probe=module):
             self.assertEqual(equivalence.registration_parameters(['family_probe']), {'CASES', 'helper', 'other'})
 
+    def test_partial_wrapped_cases_compare_every_layer_of_bound_arguments(self):
+        def run(k, blocked=None, *, boundary=None):
+            return k
+        base = functools.partial(functools.partial(run, blocked='user.bin'), boundary='save-marker')
+        same = functools.partial(functools.partial(run, blocked='user.bin'), boundary='save-marker')
+        other = functools.partial(functools.partial(run, blocked='user.db'), boundary='save-marker')
+        self.assertEqual(equivalence.partial_layers(base, self.sentinel), equivalence.partial_layers(same, self.sentinel))
+        self.assertNotEqual(equivalence.partial_layers(base, self.sentinel), equivalence.partial_layers(other, self.sentinel))
+        self.assertEqual(equivalence.partial_layers(run, self.sentinel), [])
+        with self.assertRaisesRegex(TypeError, 'wrapped'):
+            equivalence.partial_layers(functools.partial(len), self.sentinel)
+
     def test_injected_driver_class_compares_its_definition(self):
         with tempfile.TemporaryDirectory() as tmp, patch.dict(sys.modules):
             shapes = []
