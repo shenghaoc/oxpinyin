@@ -156,6 +156,7 @@ import contract_registry
 from contract_registry import case_spec  # registration metadata and checks
 import contract_measurement
 import contract_axis_c
+import contract_alloc_after_fini
 import contract_kit
 import contract_runner
 from contract_runner import Cancelled
@@ -1720,28 +1721,8 @@ def _(k):
     return out
 
 
-# batch2 group 10: pinyin_alloc_instance on a finalised context (PR 10, #528)
-@case('alloc-instance-after-fini', issues=('528',))
-def _(k):
-    """Observe a native allocation attempt after freeing an instance and finalizing its context.
-
-    Create an independent context and record whether its initial instance was
-    non-NULL. Keep the post-finalization pointer's truth value only under a
-    tilde-prefixed diagnostic key, excluded by observed. Do not free that
-    second pointer. This is an isolated-worker case: the invalid lifetime
-    access can terminate the process before an observation is returned.
-    The pin path is pinyin_alloc_instance after pinyin_fini in src/pinyin.cpp
-    at 074a2219."""
-    # The pin reads the freed context (pinyin.cpp:1322) and survives by
-    # chance; the ruled answer here is NULL (class (b)), so the answer itself
-    # is left out of the comparison and the case holds the exit status: the
-    # parent build crashes where the pin does not.
-    context = k.init()
-    live = k.fn('alloc_instance', P, P)(context)
-    k.fn('free_instance', None, P)(live)
-    k.fn('fini', None, P)(context)
-    after = k.fn('alloc_instance', P, P)(context)
-    return {'live instance': bool(live), '~instance after fini': bool(after)}
+# The #528 case stays at its original point in the registration sequence.
+contract_alloc_after_fini.register(case)
 
 
 # #573 (B battery): a second pinyin_fini / zhuyin_fini on one context

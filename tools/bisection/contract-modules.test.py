@@ -57,6 +57,7 @@ MODULES = {
          'AXIS_C_ABORT_ROW_FIELDS', 'AXIS_C_REFUSAL_RESULT_FIELDS', 'axis_c_live', 'axis_c_licensed_remnant',
          'axis_c_covered_residual', 'axis_c_first_difference'),
         ('contract_verdict',)),
+    'contract_alloc_after_fini': ((), ('contract_abi',)),
     'contract_execution': (('ordinary_jobs', 'positive_jobs', 'terminate_group', 'user_dir_listing'), ()),
     'contract_runner': (('Cancelled',), ()),
     'contract_kit': ((), ('contract_abi',)),
@@ -290,6 +291,13 @@ class ModuleBoundaryTests(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertEqual(driver.CASES[name]['fn'].__module__, driver.__name__)
         self.assertLessEqual(set(driver.AXIS_C_LAYOUT_COVERED), set(driver.AXIS_C_GROUPS['layouts']))
+
+    def test_post_fini_case_is_registered_at_its_original_position(self):
+        names = list(driver.CASES)
+        index = names.index('alloc-instance-after-fini')
+        self.assertEqual(names[index - 1:index + 2],
+                         ['long-input-sentence', 'alloc-instance-after-fini', 'fini-twice'])
+        self.assertEqual(driver.CASES[names[index]]['fn'].__module__, 'contract_alloc_after_fini')
 
     def test_timing_summary_totals_the_timings_the_driver_holds_now(self):
         with patch.object(driver, 'TIMINGS', [dict(execute=2, side='pin'), dict(execute=3)]):
