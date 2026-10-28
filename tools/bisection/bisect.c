@@ -58,6 +58,8 @@
 #define PERF_EVENT_IOC_RESET 0
 #endif
 
+#include "driver-common.h"
+
 /* Registered class-(c) cursor assertion: probe only the first input. */
 static bool right_tail_case;
 
@@ -252,13 +254,8 @@ struct symbols {
 
 /* ── Symbol resolution ────────────────────────────────────────────────── */
 
-#define RESOLVE(handle, table, field, name) do {                \
-    (table).field = (typeof((table).field))dlsym(handle, name); \
-    if (!(table).field) {                                       \
-        fprintf(stderr, "  MISSING: %s\n", name);              \
-        missing++;                                              \
-    }                                                           \
-} while (0)
+#define RESOLVE(handle, table, field, name) \
+    ((table).field = (typeof((table).field))dc_resolve(handle, name, &missing))
 
 static int resolve_all(void *handle, struct symbols *s) {
     int missing = 0;
@@ -362,22 +359,6 @@ static void free_strv(gchar **v) {
     for (gchar **p = v; *p; p++)
         g_free_fn(*p);
     g_free_fn(v);
-}
-
-/* ── Candidate-type name ──────────────────────────────────────────────── */
-
-static const char *ctype_name(lookup_candidate_type_t t) {
-    switch (t) {
-    case NBEST_MATCH_CANDIDATE:          return "NBEST_MATCH";
-    case NORMAL_CANDIDATE:               return "NORMAL";
-    case ZOMBIE_CANDIDATE:               return "ZOMBIE";
-    case PREDICTED_BIGRAM_CANDIDATE:     return "PREDICTED_BIGRAM";
-    case PREDICTED_PREFIX_CANDIDATE:     return "PREDICTED_PREFIX";
-    case ADDON_CANDIDATE:                return "ADDON";
-    case LONGER_CANDIDATE:               return "LONGER";
-    case PREDICTED_PUNCTUATION_CANDIDATE: return "PREDICTED_PUNCT";
-    default:                             return "UNKNOWN";
-    }
 }
 
 /* ── Test inputs ──────────────────────────────────────────────────────── */
@@ -1339,7 +1320,7 @@ static void drive_input(const struct symbols *s, pinyin_instance_t *inst,
         }
 
         printf("  candidate[%u]: type=%s nbest=%s text=\"%s\"\n",
-               i, ctype_name(ctype), nbest_text,
+               i, dc_type_name(ctype), nbest_text,
                text ? text : "(null)");
     }
 
@@ -1543,10 +1524,8 @@ static void probe_remaining(const struct symbols *s, pinyin_context_t *ctx,
                 bool next = s->iterator_get_next(it, &phrase, &pinyin, &count);
                 printf("iterator_get_next: %s count=%d\n",
                        next ? "true" : "false", (int)count);
-                if (phrase)
-                    g_free_fn(phrase);
-                if (pinyin)
-                    g_free_fn(pinyin);
+                dc_release(g_free_fn, phrase);
+                dc_release(g_free_fn, pinyin);
             }
             if (s->end_get_phrases)
                 s->end_get_phrases(it);
@@ -1565,10 +1544,8 @@ static void probe_remaining(const struct symbols *s, pinyin_context_t *ctx,
                 bool next = s->bigram_get_next(it, &phrase, &pinyin, &count);
                 printf("bigram_get_next: %s count=%d\n",
                        next ? "true" : "false", (int)count);
-                if (phrase)
-                    g_free_fn(phrase);
-                if (pinyin)
-                    g_free_fn(pinyin);
+                dc_release(g_free_fn, phrase);
+                dc_release(g_free_fn, pinyin);
             }
             if (s->end_get_bigram)
                 s->end_get_bigram(it);

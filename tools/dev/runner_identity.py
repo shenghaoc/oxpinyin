@@ -26,7 +26,9 @@ from .runners import Context, Finished
 
 STRICT = ('-std=gnu11', '-Wall', '-Wextra', '-Werror', '-O2')
 SIDES = ('pin', 'patched', 'subject', 'stub', 'none')
-PLACEHOLDERS = ('so', 'data', 'pindata', 'here', 'user', 'empty', 'tmp')
+PLACEHOLDERS = ('so', 'data', 'pindata', 'here', 'w3', 'user', 'empty', 'tmp')
+GLIB_LOG_PREFIX = re.compile(rb'^\(process:[0-9]+\): ([A-Za-z0-9_-]+-(?:ERROR|CRITICAL|WARNING|Message|INFO|DEBUG)) '
+                             rb'\*\*: [0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}: ', re.M)
 
 
 @dataclass(frozen=True)
@@ -42,7 +44,9 @@ class Case:
 class Driver:
     """A driver's runner build and cases. TEMPLATES are its mkdtemp prefixes, absolute
     or as the driver names them relative to its working directory;
-    PIN_TABLES 'subject' gives the pin the subject's tables, as its registry row does."""
+    PIN_TABLES 'subject' gives the pin the subject's tables, as its registry row does;
+    GLIB_LOG blanks the PID and time in GLib's default log-line prefix, which the
+    subject's g_return_* warnings carry."""
     cases: tuple[Case, ...]
     templates: tuple[str, ...] = ()
     compiler: str = 'gcc'
@@ -50,6 +54,7 @@ class Driver:
     facade: str = 'pinyin'
     variant: str = 'unpatched'
     pin_tables: str = 'pin'
+    glib_log: bool = False
 
 
 @dataclass(frozen=True)
@@ -61,7 +66,8 @@ class Observation:
 
 
 # {pindata} lets the subject open the pin's tables, which lack interpolation2.text;
-# {here} is the working tree's tools/bisection, which holds the drivers' case files.
+# {here} is the working tree's tools/bisection, which holds the drivers' case files;
+# {w3} is the cell's mini fixture under fixtures/w3.
 USER_DIR = (('SCHEME_DIFF_USER_DIR', '{user}'),)
 
 # A missing symbol runs against the stub; usage and dlopen refusals need no library.
@@ -183,16 +189,36 @@ DRIVERS = {
                *(Case(f'bad-scheme-{value or "empty"}', ('none',), ('{empty}/absent.so', '{data}', value))
                  for value in ('7', '30', '0', '2junk', '')),
                Case('usage', ('none',), ('{empty}/absent.so',)))),
+    'bisect': Driver(
+        glib_log=True,
+        templates=('{tmp}/bisect-user-', '{tmp}/bisect-perf-', '{tmp}/bisect-sentence-'),
+        cases=(Case('w3', ('subject',), ('{so}', '{w3}')),
+               Case('full', ('pin', 'subject')),
+               Case('right-tail', ('pin', 'subject'), ('{so}', '{data}', '--right-tail-case')),
+               Case('missing-symbol', ('stub',)),
+               Case('perf-missing-symbol', ('stub',), ('--perf', '{so}', '{data}')),
+               Case('perf-zhuyin-missing-symbol', ('stub',), ('--perf', '{so}', '{data}'),
+                    (('PERF_FACADE', 'zhuyin'),)),
+               *(Case(f'{mode}-missing-symbol', ('stub',), (f'--{mode}', '{so}', '{data}', 'nihao', '1'))
+                 for mode in ('perf-sentence', 'perf-typing-sequence')),
+               Case('init-failure', ('pin', 'subject'), ('{so}', '{empty}')),
+               Case('dlopen-failure', ('none',), ('{empty}/absent.so', '{data}')),
+               Case('perf-usage', ('none',), ('--perf',)),
+               Case('usage', ('none',), ('{empty}/absent.so',)))),
 }
 
 
-def normalise(text: bytes, paths: Mapping[str, Path], templates: Sequence[str]) -> bytes:
-    """Name the run's own directories and blank the six-character mkdtemp suffixes."""
+def normalise(text: bytes, paths: Mapping[str, Path], templates: Sequence[str],
+              glib_log: bool = False) -> bytes:
+    """Name the run's own directories and blank the six-character mkdtemp suffixes
+    and, when asked, the PID and time of GLib log-line prefixes."""
     for name, path in sorted(paths.items(), key=lambda item: -len(str(item[1]))):
         text = text.replace(str(path).encode(), b'{' + name.encode() + b'}')
     for template in templates:
         prefix = template.encode()
         text = re.sub(re.escape(prefix) + rb'[A-Za-z0-9]{6}', lambda _: prefix + b'XXXXXX', text)
+    if glib_log:
+        text = GLIB_LOG_PREFIX.sub(rb'(process:PID): \1 **: HH:MM:SS.mmm: ', text)
     return text
 
 
@@ -285,6 +311,7 @@ def observe(ctx: Context, driver: Driver, binary: Path, stage: Path, case: Case,
     shutil.copy2(binary, stage)
     values = dict(so=str(library[0] or ''), data=str(library[1]), pindata=str(pin_data),
                   here=str(ctx.here),
+                  w3=str(ctx.settings.root / 'fixtures/w3' / ctx.settings.extension),
                   **{name: str(path) for name, path in directories.items() if name != 'cwd'})
     argv = [str(stage), *(argument.format(**values) for argument in case.args)]
     environment = dict(ctx.env, TMPDIR=str(directories['tmp']),
@@ -303,8 +330,8 @@ def observe(ctx: Context, driver: Driver, binary: Path, stage: Path, case: Case,
         else:
             path.unlink()
     paths = dict(directories, run=run)
-    return Observation(result.returncode, normalise(result.stdout, paths, driver.templates),
-                       normalise(result.stderr, paths, driver.templates),
+    return Observation(result.returncode, normalise(result.stdout, paths, driver.templates, driver.glib_log),
+                       normalise(result.stderr, paths, driver.templates, driver.glib_log),
                        tuple(normalise(entry.encode(), paths, driver.templates).decode() for entry in left))
 
 
