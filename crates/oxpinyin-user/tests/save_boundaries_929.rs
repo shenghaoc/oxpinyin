@@ -36,13 +36,9 @@ fn originals() -> SystemOriginals {
          default USER_DICTIONARY late.table late.bin late.dbin SYSTEM_FILE\n",
         SystemVersions::for_this_build(7, 14).database_format
     );
-    let layout = UserFileLayout::from_conf(
-        &TableConf::parse(
-            conf.as_bytes(),
-            oxpinyin_data::table_info::read_decimal_lambda,
-        )
-        .unwrap(),
-    );
+    let conf_dir = tempfile::tempdir().unwrap();
+    std::fs::write(conf_dir.path().join("table.conf"), conf).unwrap();
+    let layout = UserFileLayout::from_conf(&TableConf::load_from_dir(conf_dir.path()).unwrap());
     let library = SystemLibrary {
         total: 100,
         range_end: 2,
@@ -93,7 +89,7 @@ fn bytes(dir: &Path) -> BTreeMap<OsString, Vec<u8>> {
 }
 
 fn counter(dir: &Path) -> i32 {
-    UserTableInfo::parse(&std::fs::read(dir.join("user.conf")).unwrap())
+    UserTableInfo::load_path(&dir.join("user.conf"))
         .unwrap()
         .open_counter
 }

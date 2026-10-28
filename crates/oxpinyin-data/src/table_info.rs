@@ -2,9 +2,11 @@
 //! `SystemTableInfo2::load` reads it (`src/storage/table_info.cpp:194-294`
 //! at `074a2219`), and the library set its rows describe.
 //!
-//! Five headers declare versions, λ, source and database format, followed by
-//! six-word library rows. The caller supplies the λ reader: C facades use
-//! the host libc, while Rust tools can choose decimal conversions.
+//! The file is scanned with the pin's own `setlocale`, `fopen`, `fscanf`,
+//! `feof` and `atoi` calls through [`oxpinyin_input::config`]: five header
+//! directives declare versions, λ, source and database format, then the row
+//! loop reads six words at a time, across line breaks, as the scanner
+//! groups them. This module keeps what the pin does with each answer.
 //!
 //! # What the rows mean
 //!
@@ -12,7 +14,8 @@
 //! enum name (`RESERVED`, `GB_DICTIONARY`/`TSI_DICTIONARY` = 1,
 //! `GBK_DICTIONARY` = 2, `OPENGRAM_DICTIONARY` = 3, `MERGED_DICTIONARY` = 4,
 //! `ADDON_DICTIONARY` = 5, `NETWORK_DICTIONARY` = 6, `USER_DICTIONARY` = 7);
-//! an `addon` row names its sub-index by a decimal number in range. The three file columns are the model source table, the
+//! an `addon` row names its sub-index by `atoi` of its word, cut to a
+//! `guint8`. The three file columns are the model source table, the
 //! system chunk and the user chunk (`NULL` is no name); the last column is
 //! the file type that decides how the pin loads and saves the library.
 //! Slots no row names stay `NOT_USED`; a later row for the same slot
@@ -26,8 +29,10 @@
 //! `source table format:` line leaves the pin comparing an uninitialised
 //! buffer (`:228-229`): [`TableConfError::UninitialisedSourceFormat`].
 
-use std::ffi::{OsStr, OsString};
+use std::ffi::{CStr, OsStr, OsString};
 use std::path::{Path, PathBuf};
+
+use oxpinyin_input::config::SystemTableInfoReader;
 
 use crate::phrase_library::directory_reads_as_a_chunk;
 use crate::table_conf::{Lambda, PINNED_LAMBDA};
@@ -222,6 +227,8 @@ impl TableRow {
     }
 
     fn named(table: &[u8], system: &[u8], user: &[u8], file_type: FileType) -> Self {
+        // `to_string` (`table_info.cpp:163-167`): `NULL` is no name, any
+        // other word is `g_strdup`ed.
         let name = |text: &[u8]| (text != b"NULL").then(|| FileName::from_bytes(text));
         Self {
             table: name(table),
@@ -289,6 +296,11 @@ impl TableConfSite {
 /// Why a `table.conf` was refused.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TableConfError {
+    /// `fopen` answered NULL (`:199-202`): the pin has written `open %s
+    /// failed.\n` and returns `false`, after which `pinyin_init` writes
+    /// `load %s failed!` and answers NULL. A path holding a NUL, which no C
+    /// caller can pass, is refused here without a call.
+    Unopenable,
     /// One of the first three directives did not match: the pin's ordinary
     /// `false` return (`:209-224`), after which `pinyin_init` writes
     /// `load %s failed!` and answers NULL. No warning.
@@ -307,7 +319,7 @@ impl TableConfError {
     #[must_use]
     pub const fn warning(self) -> Option<&'static str> {
         match self {
-            Self::Header => None,
+            Self::Unopenable | Self::Header => None,
             Self::UninitialisedSourceFormat => {
                 Some("SystemTableInfo2::load: source table format line missing in table.conf")
             }
@@ -319,6 +331,7 @@ impl TableConfError {
 impl core::fmt::Display for TableConfError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
+            Self::Unopenable => f.write_str("table.conf cannot be opened"),
             Self::Header => f.write_str("table.conf header does not match"),
             Self::UninitialisedSourceFormat => {
                 f.write_str("table.conf has no source table format line")
@@ -329,13 +342,6 @@ impl core::fmt::Display for TableConfError {
 }
 
 impl std::error::Error for TableConfError {}
-
-/// A lambda conversion over the bytes after `lambda parameter:`.
-///
-/// Returns the float and consumed-byte count, including surrounding whitespace.
-/// A function pointer keeps the table and runtime construction path independent
-/// of the caller's reader type.
-pub type LambdaReader = fn(&[u8]) -> Option<(f32, usize)>;
 
 /// A parsed system `table.conf`.
 #[derive(Clone, Debug, PartialEq)]
@@ -398,60 +404,46 @@ impl TableConf {
         conf
     }
 
-    /// Reads `path` like `SystemTableInfo2::load`'s `fopen`; `None` when it
-    /// cannot be opened as a regular file.
-    #[must_use]
-    pub fn read(path: &Path, read_lambda: LambdaReader) -> Option<Result<Self, TableConfError>> {
-        // A FIFO would block `fopen`-style reads forever.
-        if !path.is_file() {
-            return None;
-        }
-        let bytes = std::fs::read(path).ok()?;
-        Some(Self::parse(&bytes, read_lambda))
-    }
-
-    /// `SystemTableInfo2::load` over the file's bytes.
+    /// `SystemTableInfo2::load(filename)`: the system `table.conf` as the
+    /// pin's scanner reads it, or the point at which the pin returns
+    /// `false` or dies.
     ///
-    /// `read_lambda` receives the remaining bytes after `lambda parameter:`.
-    /// It returns the value and bytes consumed, including leading and trailing
-    /// whitespace. The next header starts at that position. A C facade supplies
-    /// its host-libc `%f\n` reader; portable callers choose their own grammar.
+    /// The process's `LC_NUMERIC` is `"C"` afterwards, on every path, as
+    /// the pin leaves it (policy row 39).
     ///
     /// # Errors
     ///
     /// [`TableConfError`] where the pin returns `false` or dies.
-    pub fn parse(bytes: &[u8], read_lambda: LambdaReader) -> Result<Self, TableConfError> {
-        let mut lines = ConfigLines::new(bytes);
-        let binary_format_version = lines
-            .field(b"binary format version:")
-            .and_then(parse_decimal::<i32>)
+    pub fn load(filename: &CStr) -> Result<Self, TableConfError> {
+        let mut input =
+            SystemTableInfoReader::open(filename).map_err(|_| TableConfError::Unopenable)?;
+        // Each early return drops `input`: the pin's `fclose`, without its
+        // closing `setlocale` (`:209-224`).
+        let binary_format_version = input
+            .binary_format_version()
+            .assigned()
             .ok_or(TableConfError::Header)?;
-        let model_data_version = lines
-            .field(b"model data version:")
-            .and_then(parse_decimal::<i32>)
+        let model_data_version = input
+            .model_data_version()
+            .assigned()
             .ok_or(TableConfError::Header)?;
-        let lambda_input = lines
-            .remaining
-            .trim_ascii_start()
-            .strip_prefix(b"lambda parameter:")
+        let lambda = input
+            .lambda_parameter()
+            .assigned()
             .ok_or(TableConfError::Header)?;
-        let (lambda, consumed) = read_lambda(lambda_input).ok_or(TableConfError::Header)?;
-        let lambda_text = lambda_input.get(..consumed).ok_or(TableConfError::Header)?;
-        lines.remaining = lambda_input.get(consumed..).ok_or(TableConfError::Header)?;
-        let lambda_unit = std::str::from_utf8(lambda_text)
-            .ok()
-            .and_then(Lambda::from_decimal);
-        let phonetic = match lines
-            .field(b"source table format:")
-            .ok_or(TableConfError::UninitialisedSourceFormat)?
-        {
-            b"pinyin" => PhoneticType::Pinyin,
-            b"zhuyin" => PhoneticType::Zhuyin,
-            _ => return Err(TableConfError::Abort(TableConfSite::SourceFormat)),
+        // The two format directives' answers are not checked (`:228-233`):
+        // each mapping reads whatever `str` holds by then.
+        let _ = input.source_table_format();
+        let phonetic = match input.str().map(CStr::to_bytes) {
+            None => return Err(TableConfError::UninitialisedSourceFormat),
+            Some(b"pinyin") => PhoneticType::Pinyin,
+            Some(b"zhuyin") => PhoneticType::Zhuyin,
+            Some(_) => return Err(TableConfError::Abort(TableConfSite::SourceFormat)),
         };
-        let database_format = lines
-            .field(b"database format:")
-            .and_then(|word| std::str::from_utf8(word).ok())
+        let _ = input.database_format();
+        let database_format = input
+            .str()
+            .and_then(|token| token.to_str().ok())
             .and_then(DatabaseFormat::from_token)
             .ok_or(TableConfError::Abort(TableConfSite::DatabaseFormat))?;
 
@@ -459,39 +451,34 @@ impl TableConf {
             binary_format_version,
             model_data_version,
             lambda,
-            lambda_unit,
+            lambda_unit: Lambda::from_f32(lambda),
             phonetic,
             database_format,
             default: vec![TableRow::unused(); PHRASE_INDEX_LIBRARY_COUNT],
             addon: vec![TableRow::unused(); PHRASE_INDEX_LIBRARY_COUNT],
         };
 
-        // Each row owns its six fields; malformed short rows do not consume
-        // words from a following row (table_info.cpp:254-260).
-        for line in lines {
-            if line.starts_with(b"#") {
-                continue;
-            }
-            let row: Vec<&[u8]> = line
-                .split(u8::is_ascii_whitespace)
-                .filter(|word| !word.is_empty())
-                .collect();
-            let [target, index, table, system, user, file_type] = row.as_slice() else {
+        // `:254-287`, each row's checks in the pin's order.
+        while !input.eof() {
+            let Some([target, index, table, system, user, file_type]) = input.table_row() else {
                 continue;
             };
-            let is_default = match *target {
+            let is_default = match target.to_bytes() {
                 b"default" => true,
                 b"addon" => false,
                 _ => return Err(TableConfError::Abort(TableConfSite::Target)),
             };
             let index = if is_default {
-                default_index(index).ok_or(TableConfError::Abort(TableConfSite::DefaultIndex))?
+                default_index(index.to_bytes())
+                    .ok_or(TableConfError::Abort(TableConfSite::DefaultIndex))?
             } else {
-                parse_decimal::<usize>(index)
-                    .filter(|&index| index < PHRASE_INDEX_LIBRARY_COUNT)
-                    .ok_or(TableConfError::Abort(TableConfSite::AddonIndex))?
+                // `to_index_of_addon_tables` returns `atoi` as a `guint8`.
+                usize::from(oxpinyin_input::config::atoi(index) as u8)
             };
-            let file_type = match *file_type {
+            if index >= PHRASE_INDEX_LIBRARY_COUNT {
+                return Err(TableConfError::Abort(TableConfSite::AddonIndex));
+            }
+            let file_type = match file_type.to_bytes() {
                 b"NOT_USED" => FileType::NotUsed,
                 b"SYSTEM_FILE" => FileType::SystemFile,
                 b"DICTIONARY" => FileType::Dictionary,
@@ -504,11 +491,38 @@ impl TableConf {
                 conf.addon.get_mut(index)
             };
             if let Some(slot) = slot {
-                *slot =
-                    TableRow::named(c_string(table), c_string(system), c_string(user), file_type);
+                *slot = TableRow::named(
+                    table.to_bytes(),
+                    system.to_bytes(),
+                    user.to_bytes(),
+                    file_type,
+                );
             }
         }
+        input.finish();
         Ok(conf)
+    }
+
+    /// [`Self::load`] of `path`.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::load`]; a path holding a NUL is
+    /// [`TableConfError::Unopenable`].
+    pub fn load_path(path: &Path) -> Result<Self, TableConfError> {
+        let filename = oxpinyin_input::c_path(path).ok_or(TableConfError::Unopenable)?;
+        Self::load(&filename)
+    }
+
+    /// `SystemTableInfo2::load` of `table.conf` in `system_dir`, named as
+    /// `g_build_filename(system_dir, "table.conf", NULL)` names it
+    /// (`pinyin.cpp:335-337`, `zhuyin.cpp:279-281`).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::load_path`].
+    pub fn load_from_dir(system_dir: &Path) -> Result<Self, TableConfError> {
+        Self::load_path(&pin_join(system_dir, OsStr::new("table.conf")))
     }
 
     /// `binary format version:`.
@@ -529,9 +543,10 @@ impl TableConf {
         self.lambda
     }
 
-    /// `lambda parameter:` as the exact rational the decimal denotes when
-    /// the value is a plain decimal in `[0, 1]` — the decoder's integer
-    /// path; `None` for anything else the `%f` conversion accepts.
+    /// `lambda parameter:` as the exact rational the scanned `gfloat`'s
+    /// shortest round-tripping decimal denotes when that is a plain decimal
+    /// in `[0, 1]` — the decoder's integer path ([`Lambda::from_f32`]);
+    /// `None` for anything else.
     #[must_use]
     pub const fn lambda_unit(&self) -> Option<Lambda> {
         self.lambda_unit
@@ -642,11 +657,6 @@ impl TableConf {
     }
 }
 
-/// The bytes of a word up to its first NUL: what the C string sees.
-fn c_string(word: &[u8]) -> &[u8] {
-    word.split(|&byte| byte == 0).next().unwrap_or(&[])
-}
-
 /// `to_index_of_default_tables` (`:145-157`): `TSI_DICTIONARY` and
 /// `GB_DICTIONARY` are the same index (`novel_types.h:154-155`).
 fn default_index(name: &[u8]) -> Option<usize> {
@@ -663,69 +673,6 @@ fn default_index(name: &[u8]) -> Option<usize> {
     })
 }
 
-/// Decimal fields are complete tokens with a representable value.
-pub(crate) fn parse_decimal<T: std::str::FromStr>(text: &[u8]) -> Option<T> {
-    std::str::from_utf8(text).ok()?.parse().ok()
-}
-
-/// Reads a complete decimal λ token using Rust's `f32` conversion.
-///
-/// This is a portable reader for Rust tools and fixtures, passed explicitly to
-/// [`TableConf::parse`]. C facades supply their host-libc reader instead. The
-/// returned length includes whitespace surrounding the token.
-#[must_use]
-pub fn read_decimal_lambda(input: &[u8]) -> Option<(f32, usize)> {
-    let field = input.trim_ascii_start();
-    let end = field
-        .iter()
-        .position(u8::is_ascii_whitespace)
-        .unwrap_or(field.len());
-    let text = std::str::from_utf8(field.get(..end)?).ok()?;
-    let magnitude = text.trim_start_matches(['+', '-']);
-    if !magnitude
-        .as_bytes()
-        .first()
-        .is_some_and(|byte| byte.is_ascii_digit() || *byte == b'.')
-    {
-        return None;
-    }
-    let value = text.parse().ok()?;
-    let remaining = field.get(end..)?.trim_ascii_start();
-    Some((value, input.len() - remaining.len()))
-}
-
-/// Nonempty configuration lines, shared by the system and user markers.
-pub(crate) struct ConfigLines<'a> {
-    remaining: &'a [u8],
-}
-
-impl<'a> ConfigLines<'a> {
-    pub(crate) fn new(bytes: &'a [u8]) -> Self {
-        Self { remaining: bytes }
-    }
-
-    pub(crate) fn field(&mut self, name: &[u8]) -> Option<&'a [u8]> {
-        self.next()?.strip_prefix(name).map(<[u8]>::trim_ascii)
-    }
-}
-
-impl<'a> Iterator for ConfigLines<'a> {
-    type Item = &'a [u8];
-
-    fn next(&mut self) -> Option<Self::Item> {
-        while !self.remaining.is_empty() {
-            let mut lines = self.remaining.splitn(2, |byte| *byte == b'\n');
-            let line = lines.next()?;
-            self.remaining = lines.next().unwrap_or_default();
-            let line = line.trim_ascii();
-            if !line.is_empty() {
-                return Some(line);
-            }
-        }
-        None
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -738,8 +685,15 @@ mod tests {
         default USER_DICTIONARY NULL NULL user.bin USER_FILE\n\n\
         addon 4 art.table art.bin NULL DICTIONARY\n";
 
+    fn parse_bytes(bytes: &[u8]) -> Result<TableConf, TableConfError> {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("table.conf");
+        std::fs::write(&path, bytes).expect("write");
+        TableConf::load_path(&path)
+    }
+
     fn parse(text: &str) -> Result<TableConf, TableConfError> {
-        TableConf::parse(text.as_bytes(), crate::table_info::read_decimal_lambda)
+        parse_bytes(text.as_bytes())
     }
 
     #[test]
@@ -768,35 +722,67 @@ mod tests {
         assert_eq!(conf.system_libraries().count(), 0);
     }
 
+    /// `to_index_of_addon_tables` is `atoi` cut to a `guint8`, and only the
+    /// assert after it refuses (`table_info.cpp:159-161`, `:276`).
     #[test]
-    fn addon_indexes_require_decimal_slots() {
-        for word in ["256", "abc", "-1", "16", "4x", "99999999999999999999"] {
+    fn addon_indexes_are_atoi_cut_to_a_byte() {
+        for (word, slot) in [("256", 0), ("abc", 0), ("4x", 4), ("259", 3)] {
+            let text = format!("{STOCK}addon {word} w.table w.bin NULL DICTIONARY\n");
+            let conf = parse(&text).expect(word);
+            assert_eq!(
+                conf.addon_row(slot)
+                    .and_then(|row| row.system.as_ref())
+                    .map(|file| file.display().into_owned()),
+                Some("w.bin".to_owned()),
+                "{word}"
+            );
+        }
+        for word in ["-1", "16", "99", "255"] {
             let text = format!("{STOCK}addon {word} w.table w.bin NULL DICTIONARY\n");
             assert_eq!(
                 parse(&text).unwrap_err(),
-                TableConfError::Abort(TableConfSite::AddonIndex)
+                TableConfError::Abort(TableConfSite::AddonIndex),
+                "{word}"
             );
         }
     }
 
+    /// Fewer than six words before the end of input is a `continue`
+    /// (`:259-260`); a comment is three ordinary words.
     #[test]
-    fn short_and_trailing_words_are_dropped_not_errors() {
+    fn short_trailing_rows_are_dropped_not_errors() {
         let text = format!("{STOCK}default GB_DICTIONARY a b c\n");
         assert!(parse(&text).is_ok());
-        let text = format!("{STOCK}# comment\n");
+        let text = format!("{STOCK}# a comment\n");
         assert!(parse(&text).is_ok());
     }
 
+    /// The scanner groups words six at a time, wherever the lines break.
     #[test]
-    fn a_long_filename_stays_one_field() {
+    fn rows_are_six_words_across_line_breaks() {
+        let text =
+            format!("{STOCK}default GBK_DICTIONARY gbk.table\ngbk.bin gbk.dbin\nSYSTEM_FILE\n");
+        let conf = parse(&text).expect("parses");
+        let system: Vec<_> = conf.system_libraries().map(|(index, _)| index).collect();
+        assert_eq!(system, [1, 2]);
+        // A short row takes the first word of the next line as its sixth.
+        let text = format!(
+            "{STOCK}default GBK_DICTIONARY a b c\ndefault RESERVED NULL NULL NULL NOT_USED\n"
+        );
+        assert_eq!(
+            parse(&text).unwrap_err(),
+            TableConfError::Abort(TableConfSite::FileType)
+        );
+    }
+
+    /// `%255s` stores 255 bytes and leaves the rest for the next word.
+    #[test]
+    fn a_long_word_is_cut_into_two() {
         let name = "a".repeat(300);
         let text = format!("{STOCK}addon 3 art.table {name} NULL DICTIONARY\n");
-        let conf = parse(&text).expect("complete row");
         assert_eq!(
-            conf.addon_row(3)
-                .and_then(|row| row.system.as_ref())
-                .map(|file| file.display().into_owned()),
-            Some(name)
+            parse(&text).unwrap_err(),
+            TableConfError::Abort(TableConfSite::FileType)
         );
     }
 
@@ -862,31 +848,73 @@ mod tests {
         );
     }
 
+    /// λ is the host scanner's `%f`; its rational routing value is the
+    /// shortest decimal of that `gfloat` (maintainer ruling 2026-10-28 UTC,
+    /// D1).
     #[test]
-    fn decimal_reader_preserves_the_written_value() {
-        for (text, expected) in [("0.5", 0.5_f32), ("2", 2.0), ("-0.5", -0.5), ("5e-1", 0.5)] {
-            let conf = parse(&STOCK.replace("0.312699", text)).expect("parses");
+    fn lambda_is_the_scanned_float() {
+        for (text, expected) in [
+            ("0.5", 0.5_f32),
+            ("2", 2.0),
+            ("-0.5", -0.5),
+            ("5e-1", 0.5),
+            ("0x1p-1", 0.5),
+            ("1e-30", 1e-30),
+        ] {
+            let conf = parse(&STOCK.replace("0.312699", text)).expect(text);
             assert_eq!(conf.lambda_f32(), expected, "{text}");
         }
-        let conf = parse(&STOCK.replace("0.312699", "2")).expect("parses");
-        assert_eq!(conf.lambda_unit(), None);
+        let unit = |text: &str| {
+            parse(&STOCK.replace("0.312699", text))
+                .expect(text)
+                .lambda_unit()
+        };
+        assert_eq!(unit("5e-1"), Lambda::from_decimal("0.5"));
+        assert_eq!(unit("0.50"), Lambda::from_decimal("0.5"));
+        assert_eq!(
+            unit("1e-30"),
+            Lambda::from_decimal(&format!("0.{}1", "0".repeat(29)))
+        );
+        assert_eq!(unit("2"), None);
+        assert_eq!(unit("-0.5"), None);
+        // The smallest positive gfloat has a 45-digit decimal: no u128
+        // rational holds it.
+        assert_eq!(unit("1e-45"), None);
+        assert!(
+            parse(&STOCK.replace("0.312699", "nan"))
+                .expect("nan")
+                .lambda_f32()
+                .is_nan()
+        );
+        assert_eq!(unit("inf"), None);
+    }
+
+    /// Each header directive is one `fscanf`: whitespace directives cross
+    /// line breaks, and a field stops where the conversion stops.
+    #[test]
+    fn headers_follow_the_scanner() {
+        assert!(parse(&STOCK.replace('\n', " ")).is_ok());
+        assert!(
+            parse(&STOCK.replace("source table format:pinyin", "source table format:\npinyin"))
+                .is_ok()
+        );
+        assert_eq!(
+            parse(&STOCK.replace("version:7", "version:7x")).unwrap_err(),
+            TableConfError::Header
+        );
+        assert_eq!(
+            parse(&STOCK.replace("version:7", "version:x")).unwrap_err(),
+            TableConfError::Header
+        );
     }
 
     #[test]
-    fn headers_require_complete_decimal_values_on_their_line() {
-        for value in [
-            "nan", "nan(1)", "inf", "0x1p-1", "1e", "1e+", "1_0", "1.5.5",
-        ] {
-            assert!(parse(&STOCK.replace("0.312699", value)).is_err(), "{value}");
-        }
-        for value in ["2147483648", "7x", "999999999999999999999"] {
-            assert!(parse(&STOCK.replace("version:7", &format!("version:{value}"))).is_err());
-        }
-        assert!(
-            parse(&STOCK.replace("source table format:pinyin", "source table format:\npinyin"))
-                .is_err()
+    fn a_missing_file_is_unopenable() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        assert_eq!(
+            TableConf::load_from_dir(dir.path()).unwrap_err(),
+            TableConfError::Unopenable
         );
-        assert!(parse(&STOCK.replace('\n', " ")).is_err());
     }
 
     /// `g_build_filename(dir, name, NULL)` at GLib 2.89.4 (`gfileutils.c`,
@@ -936,8 +964,7 @@ mod tests {
             .position(|window| window == b"gb_char.dbin")
             .expect("marker");
         bytes.splice(at..at + 12, *b"gb\xff.dbin");
-        let conf =
-            TableConf::parse(&bytes, crate::table_info::read_decimal_lambda).expect("parses");
+        let conf = parse_bytes(&bytes).expect("parses");
         let user = conf
             .default_row(1)
             .and_then(|row| row.user.as_ref())

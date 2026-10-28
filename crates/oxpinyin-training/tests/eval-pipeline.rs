@@ -134,8 +134,7 @@ fn correction_rate_is_lambda_independent_here() {
     let dictionary = FixtureDictionary::parse(VOCAB).expect("vocab");
     let source = FixtureSource::new();
     for value in ["0.000000", "0.312699", "1.000000"] {
-        let lambda = oxpinyin_data::parse_table_conf_lambda(&format!("lambda parameter:{value}\n"))
-            .expect("lambda");
+        let lambda = oxpinyin_data::Lambda::from_decimal(value).expect("lambda");
         let model = EvalLanguageModel::from_counts(&counts, lambda);
         let report = correction_rate(&dictionary, &model, &source, &sentences()).expect("evaluate");
         assert_eq!(report.passed, 1, "λ={value}");

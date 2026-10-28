@@ -1,0 +1,35 @@
+[package]
+name = "oxpinyin-input"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "oxpinyin internal crate — no stability promise; use oxpinyin-engine."
+
+# The external-I/O boundary (docs/findings/external-io-boundary.md): the
+# crate root denies unsafe code and one module allows it, so the lints are
+# the workspace's plus the two that mechanize the constitution's
+# "// SAFETY: on every block" clause.
+[lints.rust]
+unsafe_code = "deny"
+unexpected_cfgs = "deny"
+missing_docs = "warn"
+unused_must_use = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+undocumented_unsafe_blocks = "deny"
+missing_safety_doc = "deny"
+must_use_candidate = "warn"
+
+[dependencies]
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[build-dependencies]
+# Compiles native/config.c against the target's own <stdio.h> and
+# <locale.h> (the same requirement oxpinyin-store's shim build uses).
+cc = "1.4.3"

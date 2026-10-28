@@ -465,6 +465,58 @@ fn user_file_tokens_are_priced_from_their_user_delta_alone() {
     }
 }
 
+/// A `table.conf` whose `lambda parameter:` is spelled `lambda`, loaded
+/// with the pin's scanner.
+fn conf_with_lambda(lambda: &str) -> oxpinyin_data::table_info::TableConf {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("table.conf"),
+        format!(
+            "binary format version:7\nmodel data version:12\nlambda parameter:{lambda}\n\
+             source table format:pinyin\ndatabase format:BerkeleyDB\n"
+        ),
+    )
+    .unwrap();
+    oxpinyin_data::table_info::TableConf::load_from_dir(dir.path()).unwrap()
+}
+
+/// The scanned `gfloat` is the only source of λ (maintainer ruling
+/// 2026-10-28 UTC, D1). `5e-1` scans to 0.5 and takes the rational path of
+/// `0.5`; `1e-30` has a rational whose products overflow `u128` with these
+/// totals, and the smallest positive `gfloat` has none: both price the step
+/// with the pin's float arithmetic instead of the floor. At these magnitudes
+/// `λ·bigram` vanishes against the unigram term, so both equal `-0`, whose
+/// `gfloat` path is the raw one throughout.
+#[test]
+fn lambda_routes_by_the_scanned_gfloat_and_overflow_takes_the_float_path() {
+    let fix = Fixture::new();
+    let (mut lm, _) = fix.open();
+    let ni = PhraseToken::new(NI);
+    let hao = PhraseToken::new(HAO);
+    let delta = UserCountDelta {
+        bigram_count: 1 << 30,
+        bigram_total: 1 << 31,
+        unigram_delta: 1 << 30,
+        unigram_total_delta: 1 << 31,
+    };
+    let mut costs = |lambda: &str| {
+        lm.set_lambda_from_conf(&conf_with_lambda(lambda));
+        (
+            lm.score_with_user_delta(&[ni], &hao, 0, delta).unwrap(),
+            lm.nbest_step_costs_with_user_delta(&ni, &hao, delta)
+                .unwrap(),
+        )
+    };
+    assert_eq!(costs("5e-1"), costs("0.5"));
+    let float = costs("-0");
+    for lambda in ["1e-30", "1e-45"] {
+        let (score, step) = costs(lambda);
+        assert_ne!(score, oxpinyin_core::cost::UNKNOWN_COST, "{lambda}");
+        assert!(step.blended.is_some() && step.unigram.is_some(), "{lambda}");
+        assert_eq!((score, step), float, "{lambda}");
+    }
+}
+
 /// The merged row prices each item as the per-pair overlay does wherever
 /// that overlay can express the row: one load and merge per predecessor,
 /// `get_freq` per successor. A stored zero-count user item is the one
@@ -482,8 +534,7 @@ fn merged_row_items_price_as_the_pair_overlay_at_wrap_presence_and_lambda_edges(
         (NIHAO, 0),
     ];
     for lambda in ["0.312699", "0.5", "0", "1e-1", "1e9999", "-1"] {
-        let conf = oxpinyin_data::table_info::TableConf::parse(format!(
-            "binary format version:7\nmodel data version:12\nlambda parameter:{lambda}\nsource table format:pinyin\ndatabase format:BerkeleyDB\n").as_bytes(), oxpinyin_data::table_info::read_decimal_lambda).unwrap();
+        let conf = conf_with_lambda(lambda);
         lm.set_lambda_from_conf(&conf);
         for prev in [NI, HAO] {
             for total in [0, u64::from(u32::MAX - 6), u64::from(u32::MAX), 17] {

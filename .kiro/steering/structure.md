@@ -8,6 +8,7 @@ inclusion: always
 | oxpinyin-core | parser, SegmentGraph, k-best, scoring traits | forbid | yes | via engine |
 | oxpinyin-chewing | chewing/zhuyin layer: the packed chewing key, its renderers, and the frozen content tables — a dependency-free leaf *under* core, not a module over it (core depends on chewing) | forbid | yes | via capi, engine |
 | oxpinyin-data | native readers for the backend's data files — the formats a libpinyin build on that backend uses (D3 route) | deny (+mmap), target forbid | yes | via engine |
+| oxpinyin-input | the external-I/O boundary: the pin's own C library calls through a small C shim built with `cc`, behind a safe API (stage 1: `table.conf`/`user.conf` and their `setlocale` calls) | deny, one scoped allow | yes | via data |
 | oxpinyin-user | ACID store over DefaultStore; no format-version row, matching libpinyin's unversioned user files (ruling 2026-09-08, `docs/findings/user-store.md` §4) | forbid | yes | via engine |
 | oxpinyin-engine | session API — an internal Rust surface for the in-tree C facades, tools and tests; not a supported external interface | forbid | yes | yes |
 | oxpinyin-facade | shared facade-orchestration layer (instance/context state machines, parse seams, cursor laws, the §9 user-data export materialization) consumed by both C-ABI facades; depends on core, engine, runtime and user — it holds the runtime's concrete dict/lm/user handles by value, so it forwards the whole backend feature matrix rather than staying generic over the engine traits | forbid | yes | via capi |
@@ -26,10 +27,12 @@ inclusion: always
 | oxpinyin-punct | punctuation-table generator (`genpunct.py` reproduction) — W9 | forbid | yes | never |
 | oxpinyin-word | word-recognition pipeline (populate/partialword/newword/markpinyin) — W9 | forbid | yes | never |
 
-**Planned:** `oxpinyin-input` owns bidirectional external calls in scoped
-unsafe modules. It is not present yet. The C facades retain ABI
-marshalling, and `oxpinyin-store` retains DBM backends. The stages and
-prerequisites are in `docs/findings/external-io-boundary.md`.
+**External I/O:** `oxpinyin-input` owns bidirectional external calls in
+scoped unsafe modules. Stage 1 (the `table.conf` and `user.conf` reader
+and writer and their locale calls) is in place; chunks, save/rename,
+diagnostics and tools are later stages. The C facades retain ABI
+marshalling, and `oxpinyin-store` retains DBM backends. The stages are in
+`docs/findings/external-io-boundary.md`.
 
 **Centralized assembly:** the concrete construction of a decodable engine
 (system tables + unigram model + λ + optional user store + addon/punct
@@ -50,7 +53,8 @@ all cited against the pin in its source.
 pinyin and phrase DBMs, the per-library `MemoryChunk` files (mmap,
 checksummed), `bigram.db`, `punct.bin`, the addon DBM pair — a handle plus
 a point read each, nothing scanned at open. `table.conf` is read once
-(`oxpinyin-data`'s `table_info`, the way `SystemTableInfo2::load` reads it):
+(`oxpinyin-data`'s `table_info` over `oxpinyin-input`'s scanner, with
+`SystemTableInfo2::load`'s own calls):
 its rows decide which libraries exist, what their files are called and
 which calls accept them; its header gives λ and the versions the user
 profile conforms against.

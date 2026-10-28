@@ -323,6 +323,7 @@ version = "0.1.0"
 dependencies = [
  "memmap2",
  "oxpinyin-core",
+ "oxpinyin-input",
  "oxpinyin-store",
 ]
 
@@ -357,6 +358,13 @@ dependencies = [
  "oxpinyin-engine",
  "oxpinyin-testsupport",
  "oxpinyin-user",
+]
+
+[[package]]
+name = "oxpinyin-input"
+version = "0.1.0"
+dependencies = [
+ "cc",
 ]
 
 [[package]]

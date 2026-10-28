@@ -25,7 +25,7 @@ pub use error::SegmentError;
 // Re-exported so the training-tool binaries name export tables in the
 // compiled-in backend's format without a direct oxpinyin-data edge.
 pub use lexicon::{MAX_PHRASE_LENGTH, PhraseLexicon};
-pub use model::{NULL_TOKEN, PINNED_LAMBDA, SENTENCE_START, SegmentModel, parse_table_conf_lambda};
+pub use model::{NULL_TOKEN, PINNED_LAMBDA, SENTENCE_START, SegmentModel, load_table_conf_lambda};
 pub use oxpinyin_data::SystemDbm;
 pub use paths::{
     DEFAULT_EXPORT_DIR, EXPORT_DBMS, EXPORT_DIR_ENV, MODEL_CACHE_ENV, MODEL_DIR_ENV, MODEL_FILES,

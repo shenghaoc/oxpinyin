@@ -1309,7 +1309,6 @@ mod phrase_cursor_tests {
                     None,
                     crate::PINYIN_DEFAULT_OPTION_WORD,
                     UserConfLaw::Pinyin,
-                    oxpinyin_runtime::read_decimal_lambda,
                 )
             })
             .expect("committed backend fixtures")

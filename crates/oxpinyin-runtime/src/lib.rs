@@ -48,7 +48,7 @@ pub use oxpinyin_data::phrase_library::{
     LayoutFault, LibraryError, PhraseItemView, RowFault, directory_reads_as_a_chunk,
 };
 pub use oxpinyin_data::table_info::{FileType, TableConfSite};
-pub use oxpinyin_data::table_info::{LambdaReader, TableConf, TableConfError, read_decimal_lambda};
+pub use oxpinyin_data::table_info::{TableConf, TableConfError};
 use oxpinyin_data::user_files::{SystemVersions, UserFileLayout};
 use oxpinyin_data::{
     AddonDictionary, BigramLanguageModel, DictError, LmError, PunctTable, SystemDbm,
@@ -2027,92 +2027,33 @@ pub struct Runtime {
     key_costs: RwLock<Option<(u32, Arc<[Cost]>)>>,
 }
 
-/// The system `table.conf` as `pinyin_init` finds it.
-enum ConfFile {
-    /// Not there: a fixture directory keeps the stock layout, and the
-    /// profile is judged late.
-    Missing,
-    /// There but not readable as a regular file.
-    Unreadable(std::io::Error),
-    /// Read and accepted.
-    Read(Box<TableConf>),
-}
-
-impl ConfFile {
-    /// The layout the rest of the open follows.
-    fn conf(&self) -> TableConf {
-        match self {
-            Self::Read(conf) => (**conf).clone(),
-            Self::Missing | Self::Unreadable(_) => TableConf::stock(),
-        }
-    }
-}
-
-/// `SystemTableInfo2::load`'s `fopen` and parse. A file the pin would refuse
-/// is an [`OpenError::TableConf`].
-fn read_conf_file(system_dir: &Path, read_lambda: LambdaReader) -> Result<ConfFile, OpenError> {
-    let path = system_dir.join("table.conf");
-    // A FIFO would block the read forever.
-    match std::fs::metadata(&path) {
-        Ok(meta) if !meta.is_file() => {
-            return Ok(ConfFile::Unreadable(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "not a regular file",
-            )));
-        }
-        Ok(_) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(ConfFile::Missing),
-        Err(error) => return Ok(ConfFile::Unreadable(error)),
-    }
-    match std::fs::read(&path) {
-        Ok(bytes) => TableConf::parse(&bytes, read_lambda)
-            .map(|conf| ConfFile::Read(Box::new(conf)))
-            .map_err(OpenError::TableConf),
-        Err(error) => Ok(ConfFile::Unreadable(error)),
-    }
-}
-
-/// The user profile's `check_format`, run ahead of the system libraries.
-enum EarlyProfile {
-    /// Not run here: no user dir, or no readable `table.conf` to judge
-    /// against; [`open_user_store`] judges it as before.
-    Unchecked,
-    /// Judged under these versions.
-    Checked(SystemVersions, oxpinyin_user::ProfileCheck),
-    /// The judgement could not be written; the store degrades to no user
-    /// state.
-    Degraded,
-}
-
 /// `check_format` where the pin runs it: right after `table.conf` loads,
 /// before any table or library (`pinyin.cpp:337-346`, `zhuyin.cpp:281-292`),
 /// so an init that fails later on a library has already written the
-/// profile's diagnostic, wiped what it wipes and marked it, as the pin has
-/// when it dies. Only a readable `table.conf` is judged against; a fixture
-/// dir without one keeps the late judgement.
+/// profile's diagnostic, written the marker and wiped what it wipes, as the
+/// pin has when it dies. Without a user dir the pin judges the marker it
+/// names `""`.
+///
+/// The marker save's answer is ignored, as the pin ignores it
+/// (`pinyin.cpp:187`; maintainer ruling 2026-10-28 UTC, D4), so the only
+/// failure is the database-format abort point.
 fn check_profile_early(
-    conf: &ConfFile,
-    user_dir: &Path,
+    conf: &TableConf,
+    user_dir: Option<&Path>,
     law: UserConfLaw,
-) -> Result<EarlyProfile, OpenError> {
-    let ConfFile::Read(conf) = conf else {
-        return Ok(EarlyProfile::Unchecked);
-    };
+) -> Result<Option<oxpinyin_user::ProfileCheck>, OpenError> {
     let versions = SystemVersions::from_conf(conf);
+    let Some(user_dir) = user_dir else {
+        UserStore::check_profile_unnamed(&versions, law);
+        return Ok(None);
+    };
     let layout = UserFileLayout::from_conf(conf);
     match UserStore::check_profile(user_dir, &versions, &layout, law) {
-        Ok(check) => Ok(EarlyProfile::Checked(versions, check)),
+        Ok(check) => Ok(Some(check)),
         Err(UserStoreError::UnknownDatabaseFormat) => {
             Err(OpenError::UnknownDatabaseFormat(user_dir.to_path_buf()))
         }
-        Err(error) => {
-            let user_dir = user_dir.display();
-            eprintln!(
-                "oxpinyin: user store degraded to no-user-state \
-                 (user dir {user_dir}: {error})"
-            );
-            Ok(EarlyProfile::Degraded)
-        }
+        Err(error) => Err(OpenError::Dict(DictError::Parse(error.to_string()))),
     }
 }
 
@@ -2129,41 +2070,16 @@ fn check_profile_early(
 /// [`OpenError::UnknownDatabaseFormat`], with nothing cleaned and no
 /// marker written — upstream never reaches its wipe either.
 fn open_user_store(
-    conf_file: &ConfFile,
+    conf: &TableConf,
     user_dir: &Path,
     dict: &SystemDictionary,
     law: UserConfLaw,
-    early: EarlyProfile,
+    check: oxpinyin_user::ProfileCheck,
 ) -> Result<Option<UserStore>, OpenError> {
-    let (judged, check) = match early {
-        EarlyProfile::Degraded => return Ok(None),
-        EarlyProfile::Checked(versions, check) => (Some(versions), Some(check)),
-        EarlyProfile::Unchecked => (None, None),
-    };
-    // An absent table.conf is the fixture-dir case: the pinned versions
-    // stand. An unreadable *existing* one must not fall back to them —
-    // the profile would be judged non-conforming against the wrong
-    // triple and wiped, so the store degrades to no-user-state instead.
-    let versions = match (judged, conf_file) {
-        (Some(versions), _) => versions,
-        (None, ConfFile::Read(conf)) => SystemVersions::from_conf(conf),
-        (None, ConfFile::Missing) => SystemVersions::from_conf(&TableConf::stock()),
-        (None, ConfFile::Unreadable(e)) => {
-            eprintln!(
-                "oxpinyin: table.conf unreadable ({e}); user store degraded to \
-                 no-user-state rather than risk wiping the profile"
-            );
-            return Ok(None);
-        }
-    };
-    let originals = oxpinyin_user::system_originals(
-        dict.libraries(),
-        UserFileLayout::from_conf(&conf_file.conf()),
-    );
-    let opened = match check {
-        Some(check) => UserStore::open_libpinyin_checked(user_dir, originals, versions, law, check),
-        None => UserStore::open_libpinyin(user_dir, originals, versions, law),
-    };
+    let versions = SystemVersions::from_conf(conf);
+    let originals =
+        oxpinyin_user::system_originals(dict.libraries(), UserFileLayout::from_conf(conf));
+    let opened = UserStore::open_libpinyin_checked(user_dir, originals, versions, law, check);
     match opened {
         Ok(store) => Ok(Some(store)),
         Err(UserStoreError::UnknownDatabaseFormat) => {
@@ -2186,11 +2102,10 @@ fn open_user_store(
 impl Runtime {
     /// Opens a system data directory the way `pinyin_init` does.
     ///
-    /// `system_dir` holds the compiled-in backend's DBMs
+    /// `system_dir` holds `table.conf`, the compiled-in backend's DBMs
     /// (`SystemDbm::file_name` — libpinyin's own names on Kyoto Cabinet,
-    /// tkrzw and Berkeley DB), the
-    /// per-library chunk files, and optionally `table.conf` (λ),
-    /// `punct.bin`, and the addon DBM pair — the backend's native data
+    /// tkrzw and Berkeley DB), the per-library chunk files, and optionally
+    /// `punct.bin` and the addon DBM pair — the backend's native data
     /// directory, opened as is.
     /// When `user_dir` is given, the learning store opens too (its
     /// creation or read failure degrades to "no user state", matching the
@@ -2200,18 +2115,17 @@ impl Runtime {
     /// `""` is, and stays relative for the life of the store.
     ///
     /// Nothing is read beyond the handles: the DBMs are opened, the chunk
-    /// files mapped and checksummed, `table.conf` parsed for λ.
+    /// files mapped and checksummed, `table.conf` scanned for its rows,
+    /// versions and λ.
     ///
     /// # Errors
     ///
-    /// Returns [`OpenError`] when a required file is missing or a DBM or
-    /// chunk file cannot be opened.
-    pub fn open(
-        system_dir: &Path,
-        user_dir: Option<&Path>,
-        read_lambda: LambdaReader,
-    ) -> Result<Self, OpenError> {
-        Self::open_with_law(system_dir, user_dir, UserConfLaw::Pinyin, read_lambda)
+    /// Returns [`OpenError`] when `table.conf` is one `SystemTableInfo2::load`
+    /// refuses, missing included (maintainer ruling 2026-10-28 UTC, D3), or
+    /// when a required file is missing or a DBM or chunk file cannot be
+    /// opened.
+    pub fn open(system_dir: &Path, user_dir: Option<&Path>) -> Result<Self, OpenError> {
+        Self::open_with_law(system_dir, user_dir, UserConfLaw::Pinyin)
     }
 
     /// [`Runtime::open`] with the user dir's `user.conf` law named: the
@@ -2230,21 +2144,17 @@ impl Runtime {
         system_dir: &Path,
         user_dir: Option<&Path>,
         law: UserConfLaw,
-        read_lambda: LambdaReader,
     ) -> Result<Self, OpenError> {
-        let conf_file = read_conf_file(system_dir, read_lambda)?;
-        let conf = conf_file.conf();
-        let early = match user_dir {
-            Some(dir) => check_profile_early(&conf_file, dir, law)?,
-            None => EarlyProfile::Unchecked,
-        };
+        // `SystemTableInfo2::load`, the pin's first step: every refusal,
+        // a missing file included, fails the init (`pinyin.cpp:335-340`,
+        // `zhuyin.cpp:279-284`).
+        let conf = TableConf::load_from_dir(system_dir).map_err(OpenError::TableConf)?;
+        let early = check_profile_early(&conf, user_dir, law)?;
         // The init loop over the default rows runs after `check_format`
         // (`pinyin.cpp:344`, `:377-392`), so a profile judgement has been
         // written when it dies.
-        if let ConfFile::Read(read) = &conf_file {
-            read.check_default_rows(user_dir)
-                .map_err(|site| OpenError::TableConf(TableConfError::Abort(site)))?;
-        }
+        conf.check_default_rows(user_dir)
+            .map_err(|site| OpenError::TableConf(TableConfError::Abort(site)))?;
         let pinyin_index = system_dir.join(SystemDbm::PinyinIndex.file_name());
         let phrase_index = system_dir.join(SystemDbm::PhraseIndex.file_name());
         let bigram = system_dir.join(SystemDbm::Bigram.file_name());
@@ -2263,8 +2173,7 @@ impl Runtime {
             Arc::clone(&library_mask),
         )
         .map_err(OpenError::Lm)?;
-        // λ rides the install's table.conf when one ships; absent, the
-        // pinned default stands.
+        // λ is the `gfloat` table.conf's scanner read.
         lm.set_lambda_from_conf(&conf);
 
         // `None` has transient user state without a directory (#642). An
@@ -2281,8 +2190,9 @@ impl Runtime {
         // check_format, the session runs in memory, and `pinyin_save`
         // writes the pin's files — a same-backend libpinyin picks them
         // up seamlessly.
-        let user = match user_dir {
-            None => Some(
+        let user = match (user_dir, early) {
+            (Some(dir), Some(check)) => open_user_store(&conf, dir, &dict, law, check)?,
+            _ => Some(
                 UserStore::open_transient(
                     oxpinyin_user::system_originals(
                         dict.libraries(),
@@ -2293,7 +2203,6 @@ impl Runtime {
                 )
                 .map_err(|error| OpenError::Dict(DictError::Parse(error.to_string())))?,
             ),
-            Some(dir) => open_user_store(&conf_file, dir, &dict, law, early)?,
         };
 
         let addons = Arc::new(RwLock::new(AddonSet {
@@ -2784,12 +2693,7 @@ mod tests {
 
     #[test]
     fn candidate_lookup_omits_prices_without_changing_live_priced_reads() {
-        let runtime = Runtime::open(
-            &w3_dir(),
-            None,
-            oxpinyin_data::table_info::read_decimal_lambda,
-        )
-        .unwrap();
+        let runtime = Runtime::open(&w3_dir(), None).unwrap();
         let dict = Arc::new(runtime.dict());
         let ni = SyllableKey::from_text("ni").unwrap();
         let token = dict.system().tokens_for_text("你").unwrap()[0];
@@ -2850,12 +2754,7 @@ mod tests {
     #[test]
     fn zhuyin_open_holds_no_addon_or_punct_handles() {
         let system = w3_dir();
-        let pinyin = Runtime::open(
-            &system,
-            None,
-            oxpinyin_data::table_info::read_decimal_lambda,
-        )
-        .expect("pinyin fixture opens");
+        let pinyin = Runtime::open(&system, None).expect("pinyin fixture opens");
         assert!(
             pinyin.dict.addons.read().unwrap().dict.has_open_indexes(),
             "vacuity guard: pinyin eagerly opens the fixture's addon indexes"
@@ -2867,13 +2766,8 @@ mod tests {
 
         let user = tempfile::tempdir().unwrap();
         for user_dir in [None, Some(user.path())] {
-            let zhuyin = Runtime::open_with_law(
-                &system,
-                user_dir,
-                UserConfLaw::Zhuyin,
-                oxpinyin_data::table_info::read_decimal_lambda,
-            )
-            .expect("zhuyin fixture opens");
+            let zhuyin = Runtime::open_with_law(&system, user_dir, UserConfLaw::Zhuyin)
+                .expect("zhuyin fixture opens");
             // An empty loaded-library set would also pass before the fix;
             // inspect the actual index handles, not just visible items.
             assert!(!zhuyin.dict.addons.read().unwrap().dict.has_open_indexes());
@@ -2918,13 +2812,8 @@ mod tests {
         std::fs::write(&conf_path, edited).unwrap();
 
         for user_dir in [None, Some(user.path())] {
-            let zhuyin = Runtime::open_with_law(
-                system.path(),
-                user_dir,
-                UserConfLaw::Zhuyin,
-                oxpinyin_data::table_info::read_decimal_lambda,
-            )
-            .expect("edited fixture opens");
+            let zhuyin = Runtime::open_with_law(system.path(), user_dir, UserConfLaw::Zhuyin)
+                .expect("edited fixture opens");
             let addons = zhuyin.dict.addons.read().unwrap();
             assert!(
                 !addons.dict.has_open_indexes(),
@@ -2946,12 +2835,7 @@ mod tests {
     #[test]
     fn tokens_for_text_reads_live_rows_without_rebuilding_user_lookup() {
         let dir = tempfile::tempdir().unwrap();
-        let runtime = Runtime::open(
-            &w3_dir(),
-            Some(dir.path()),
-            oxpinyin_data::table_info::read_decimal_lambda,
-        )
-        .unwrap();
+        let runtime = Runtime::open(&w3_dir(), Some(dir.path())).unwrap();
         let dict = runtime.dict();
         let phrase = "你鎄";
         assert!(dict.tokens_for_text(phrase).is_empty());
@@ -3024,12 +2908,7 @@ mod tests {
     #[test]
     fn tokens_for_text_retains_the_row_after_a_system_reading_merge() {
         let dir = tempfile::tempdir().unwrap();
-        let runtime = Runtime::open(
-            &w3_dir(),
-            Some(dir.path()),
-            oxpinyin_data::table_info::read_decimal_lambda,
-        )
-        .unwrap();
+        let runtime = Runtime::open(&w3_dir(), Some(dir.path())).unwrap();
         let dict = runtime.dict();
         let tokens = dict.tokens_for_text("你好");
         let token = tokens[0].value();
@@ -3068,12 +2947,7 @@ mod tests {
     // an opened runtime plus one session must leave the cache untouched.
     #[test]
     fn new_session_does_not_populate_the_key_cost_cache() {
-        let runtime = Runtime::open(
-            &w3_dir(),
-            None,
-            oxpinyin_data::table_info::read_decimal_lambda,
-        )
-        .expect("fixture opens");
+        let runtime = Runtime::open(&w3_dir(), None).expect("fixture opens");
         assert!(
             runtime.lm().has_real_unigrams(),
             "vacuity guard: a runtime-backed model must report real \
@@ -3128,12 +3002,7 @@ mod tests {
     fn key_costs_cache_stays_stamp_true_under_concurrent_visibility_flips() {
         const ROUNDS: usize = 12;
         const FLIP_PAIRS: usize = 20_000;
-        let runtime = Runtime::open(
-            &w3_dir(),
-            None,
-            oxpinyin_data::table_info::read_decimal_lambda,
-        )
-        .expect("fixture opens");
+        let runtime = Runtime::open(&w3_dir(), None).expect("fixture opens");
         let dict = runtime.dict();
         let lm = runtime.lm();
 

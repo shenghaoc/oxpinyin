@@ -7,12 +7,11 @@ use std::sync::Arc;
 use oxpinyin_core::{DoublePinyinScheme, FullPinyinScheme, OptionBits, ZhuyinScheme};
 use oxpinyin_engine::{Config, ConfigValue};
 use oxpinyin_runtime::{
-    FileType, LambdaReader, OpenError, RowFault, Runtime, TableConf, TableConfError,
-    directory_reads_as_a_chunk,
+    FileType, OpenError, RowFault, Runtime, TableConf, TableConfError, directory_reads_as_a_chunk,
 };
 use oxpinyin_user::SystemVersions;
-use oxpinyin_user::pin_stderr;
 use oxpinyin_user::{ChunkHeaderField, UserConfLaw, UserStore, UserStoreError};
+use oxpinyin_user::{c_stderr, pin_stderr};
 
 /// What `save_user` did, for the C facades' `pinyin_save` / `zhuyin_save`
 /// and the `pinyin_end_add_phrases` import commit.
@@ -262,11 +261,13 @@ fn null_chunk_line(dir: &Path, reads_as_a_chunk: impl FnOnce(&Path) -> bool) -> 
     (cfg!(unix) && !reads_as_a_chunk(dir)).then(|| pin_stderr::mmap_failed_line(dir))
 }
 
-/// Writes [`null_chunk_line`] for `dir`, if the pin writes it on this file
-/// system.
-fn null_chunk_refused(dir: &Path) {
-    if let Some(line) = null_chunk_line(dir, directory_reads_as_a_chunk) {
-        pin_stderr::emit(&[&line]);
+/// Writes [`null_chunk_line`] for `dir` with `report`, if the pin writes it
+/// on this file system: [`c_stderr::mmap_failed`] in the init, whose
+/// `check_format` lines are the shim's, [`pin_stderr::mmap_failed`] in an
+/// addon load.
+fn null_chunk_refused(dir: &Path, report: fn(&Path)) {
+    if null_chunk_line(dir, directory_reads_as_a_chunk).is_some() {
+        report(dir);
     }
 }
 
@@ -402,9 +403,8 @@ impl ContextCore {
         user_dir: Option<&Path>,
         option_word: u32,
         law: UserConfLaw,
-        read_lambda: LambdaReader,
     ) -> Option<Self> {
-        Self::try_open(system_dir, user_dir, option_word, law, read_lambda).ok()
+        Self::try_open(system_dir, user_dir, option_word, law).ok()
     }
 
     /// [`Self::open`] with the failure kept: the C facades log it before
@@ -419,25 +419,24 @@ impl ContextCore {
         user_dir: Option<&Path>,
         option_word: u32,
         law: UserConfLaw,
-        read_lambda: LambdaReader,
     ) -> Result<Self, OpenFailure> {
-        let runtime =
-            Runtime::open_with_law(system_dir, user_dir, law, read_lambda).map_err(|error| {
-                // A system library the pin cannot map: its line, then the
-                // pin dies on the empty chunk (`pinyin.cpp:256`,
-                // `zhuyin.cpp:200`); this open answers NULL as it did.
-                if let Some(path) = error.unmappable_library() {
-                    pin_stderr::mmap_failed(path);
-                } else if error.null_system_chunk() {
-                    null_chunk_refused(system_dir);
-                }
-                OpenFailure::Runtime(error)
-            })?;
+        let runtime = Runtime::open_with_law(system_dir, user_dir, law).map_err(|error| {
+            // A system library the pin cannot map: its line, then the
+            // pin dies on the empty chunk (`pinyin.cpp:256`,
+            // `zhuyin.cpp:200`); this open answers NULL as it did. The
+            // line follows `check_format`'s, so it is the shim's too.
+            if let Some(path) = error.unmappable_library() {
+                c_stderr::mmap_failed(path);
+            } else if error.null_system_chunk() {
+                null_chunk_refused(system_dir, c_stderr::mmap_failed);
+            }
+            OpenFailure::Runtime(error)
+        })?;
         // The libraries whose file is absent load as unloaded and the open
         // goes on; the pin's lines for them follow the user profile's
-        // (`check_format` runs before the library loop).
+        // (`check_format` runs before the library loop), on its stream.
         for path in runtime.unmapped_system_libraries() {
-            pin_stderr::mmap_failed(path);
+            c_stderr::mmap_failed(path);
         }
         let user = runtime.user_store();
         let mut load_warnings = Vec::new();
@@ -584,8 +583,9 @@ impl ContextCore {
         // on kills it there (`memory_chunk.h:493`). The layout refusal is
         // handled per library by the save hook below, at the pin's loop
         // position, so a fatal critical stops before the library's own
-        // write and after the earlier ones.
-        if self.check_system_libraries(None, false) {
+        // write and after the earlier ones. The lines go on the stream the
+        // save's rename and marker lines use.
+        if self.check_system_libraries(None, false, c_stderr::mmap_failed) {
             return SaveOutcome::ChunkHeaderRead;
         }
         let runtime = self.runtime.as_ref();
@@ -613,26 +613,24 @@ impl ContextCore {
             }
             Err(_) => return SaveOutcome::NotSaved,
         };
-        for (tmp, target) in &report.renames_failed {
-            pin_stderr::emit(&[
-                b"rename ",
-                pin_stderr::path_bytes(tmp),
-                b" to ",
-                pin_stderr::path_bytes(target),
-                b" failed.\n",
-            ]);
-        }
-        if let Some(conf) = &report.user_conf_write_failed {
-            pin_stderr::emit(&[b"write ", pin_stderr::path_bytes(conf), b" failed.\n"]);
-        }
+        // Each failed rename's `rename %s to %s failed.` line and a failed
+        // marker's `write %s failed.` line were written as they happened,
+        // in the pin's order, by the save itself.
+        let _ = report;
         SaveOutcome::Saved
     }
 
     /// The system libraries (with `only`, that one) whose file the pin would
     /// map again at this call and cannot: one `mmap %s failed!` each, in
-    /// library order. The pin dies on the first; nothing here does, and the
-    /// call answers what it answered before.
-    fn check_system_libraries(&self, only: Option<u8>, record_layout: bool) -> bool {
+    /// library order, written by `report` (the save's on the shim's stream,
+    /// [`c_stderr::mmap_failed`]). The pin dies on the first; nothing here
+    /// does, and the call answers what it answered before.
+    fn check_system_libraries(
+        &self,
+        only: Option<u8>,
+        record_layout: bool,
+        report: fn(&Path),
+    ) -> bool {
         let Some(runtime) = &self.runtime else {
             return false;
         };
@@ -641,7 +639,7 @@ impl ContextCore {
             return true;
         }
         for path in checked.unmappable {
-            pin_stderr::mmap_failed(&path);
+            report(&path);
         }
         false
     }
@@ -691,7 +689,7 @@ impl ContextCore {
     /// whose library bits match are merged. A refused mask leaves the store untouched,
     /// where the pin's partial reloads die with its abort.
     pub fn mask_out(&mut self, mask: u32, value: u32) -> MaskOutOutcome {
-        if self.check_system_libraries(None, false) {
+        if self.check_system_libraries(None, false, pin_stderr::mmap_failed) {
             return MaskOutOutcome::ChunkHeaderRead;
         }
         // The pin's mask loop walks `index` 1..`PHRASE_INDEX_LIBRARY_COUNT`
@@ -798,7 +796,7 @@ impl ContextCore {
         if runtime.dict().library_visible(index) {
             return Ok(false);
         }
-        if self.check_system_libraries(Some(row_index), false) {
+        if self.check_system_libraries(Some(row_index), false, pin_stderr::mmap_failed) {
             return Err(LibraryLoadFault::Row(LibraryRowAssert::ChunkHeaderRead));
         }
         // The sub-index `unload` freed comes back as the system chunk plus
@@ -847,7 +845,7 @@ impl ContextCore {
                 RowFault::NotDictionary => LibraryRowAssert::NotDictionary,
                 RowFault::NullChunkName => {
                     if let Some(dir) = runtime.system_dir() {
-                        null_chunk_refused(dir);
+                        null_chunk_refused(dir, pin_stderr::mmap_failed);
                     }
                     LibraryRowAssert::NullChunkName
                 }
@@ -948,7 +946,7 @@ mod open_failure_tests {
     use oxpinyin_user::UserConfLaw;
 
     #[test]
-    fn missing_system_dir_carries_the_runtime_error_and_path() {
+    fn missing_system_dir_carries_the_runtime_error() {
         // A child of a fresh dir this test owns: absent by construction, and
         // nothing another process does to a shared temp path can create it.
         let root = tempfile::Builder::new()
@@ -956,24 +954,21 @@ mod open_failure_tests {
             .tempdir()
             .expect("temp dir");
         let dir = root.path().join("system");
-        let failure = ContextCore::try_open(
-            &dir,
-            None,
-            WORD,
-            UserConfLaw::Pinyin,
-            oxpinyin_runtime::read_decimal_lambda,
-        )
-        .err()
-        .expect("a missing system dir cannot open");
+        let failure = ContextCore::try_open(&dir, None, WORD, UserConfLaw::Pinyin)
+            .err()
+            .expect("a missing system dir cannot open");
         let OpenFailure::Runtime(error) = &failure else {
             panic!("expected a runtime failure, got {failure:?}");
         };
-        assert!(matches!(error, OpenError::Missing(_)), "got {error:?}");
+        // `SystemTableInfo2::load` is the first step (maintainer ruling
+        // 2026-10-28 UTC, D3); its `open %s failed.` line and the init's
+        // `load %s failed!` name the file.
         assert!(
-            failure
-                .to_string()
-                .contains(dir.to_str().expect("UTF-8 temp path")),
-            "the message names the path: {failure}"
+            matches!(
+                error,
+                OpenError::TableConf(oxpinyin_runtime::TableConfError::Unopenable)
+            ),
+            "got {error:?}"
         );
         assert!(std::error::Error::source(&failure).is_some());
     }

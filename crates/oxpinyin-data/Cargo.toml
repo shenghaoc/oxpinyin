@@ -26,6 +26,9 @@ oxpinyin-core = { workspace = true }
 # The workspace table carries default-features = false for this edge; the
 # [features] block below forwards the backend selection.
 oxpinyin-store = { workspace = true }
+# table.conf and user.conf go through the pin's own C library calls
+# (docs/findings/external-io-boundary.md, stage 1).
+oxpinyin-input = { workspace = true }
 
 # Map phrase-library chunks on all targets.
 memmap2 = { workspace = true }

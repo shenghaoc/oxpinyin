@@ -55,15 +55,17 @@ pub type Token = u32;
 /// printed (`rename %s to %s failed.`, `pinyin.cpp:1061`…`:1123`), the
 /// marker write fails and is printed (`write %s failed.`,
 /// `table_info.cpp:382`), and the save answers `true`
-/// (`pinyin.cpp:1132-1147`). [`GenericUserStore::save_reporting`] returns
-/// those failures instead of printing them, so the caller can.
+/// (`pinyin.cpp:1132-1147`). [`GenericUserStore::save_reporting`] prints
+/// each line where the pin does, as the failure happens, and also returns
+/// the failures.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct SaveReport {
     /// `(tmp, final)` of every rename that failed, in the pin's order: the
     /// libraries by index, then the pinyin index, the phrase index and the
     /// bigram.
     pub renames_failed: Vec<(PathBuf, PathBuf)>,
-    /// The `user.conf` whose write failed, if it did.
+    /// The `user.conf` whose write failed, if it did; `UserTableInfo::save`
+    /// has written its `write %s failed.` line, after every rename line.
     pub user_conf_write_failed: Option<PathBuf>,
 }
 

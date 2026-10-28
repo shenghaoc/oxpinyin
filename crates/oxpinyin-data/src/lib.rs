@@ -26,6 +26,7 @@
 #![cfg_attr(not(test), deny(clippy::panic_in_result_fn))]
 
 pub mod bigram_table;
+pub mod c_stderr;
 pub(crate) mod chewing_table;
 pub mod chunk_format;
 pub mod chunk_write;
@@ -70,4 +71,4 @@ pub use system_files::{
     SystemDbm, addon_library_file,
 };
 pub use table::TableError;
-pub use table_conf::{Lambda, PINNED_LAMBDA, parse_table_conf_lambda, read_table_conf_lambda};
+pub use table_conf::{Lambda, PINNED_LAMBDA};

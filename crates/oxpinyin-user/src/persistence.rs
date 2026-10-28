@@ -44,7 +44,6 @@ use oxpinyin_data::chunk_write::{
     ChunkItem, PHRASE_MASK, build_chunk, decode_sub_phrase_index, encode_phrase_item,
 };
 use oxpinyin_data::phrase_libraries::PhraseLibraries;
-use oxpinyin_data::pin_stderr;
 use oxpinyin_data::row_format::pinyin_index::PinyinIndexItem;
 use oxpinyin_data::table_entries::pinyin_index_entries;
 use oxpinyin_data::table_info::FileName;
@@ -77,24 +76,24 @@ fn user_conf_path(dir: &Path) -> PathBuf {
     user_file(dir, USER_CONF)
 }
 
-/// Reads `user.conf`'s bytes, splitting upstream's two failure kinds the
-/// way `check_format` meets them.
+/// `UserTableInfo::load` of `filename` (`pinyin.cpp:178`, `zhuyin.cpp:132`),
+/// splitting upstream's two failure kinds the way `check_format` meets them.
 ///
-/// `Ok(None)` is a marker upstream's `load` cannot complete: the file is
-/// absent, or a version directive did not convert (`table_info.cpp:339-342`,
-/// `:345-348`). Upstream then runs its conformance check against the
-/// reset defaults, so the profile reads as non-conforming and is wiped —
-/// [`load`] does the same.
+/// `Ok(None)` is the load's `false`: `fopen` failed, after the pin's `open
+/// %s failed.` line, or a version directive did not convert
+/// (`table_info.cpp:330-348`). Upstream then runs its conformance check
+/// against the reset defaults, so the profile reads as non-conforming and is
+/// wiped — [`load`] does the same.
 ///
 /// `Err` is the class-(c) site: the `database format:` directive reached
 /// `to_table_database_format_type`, which `abort()`s upstream
 /// (`:122-133`, called at `:353-354`). No profile is judged and nothing
 /// is written or cleaned — the open fails, as `check_format` never gets
 /// to run.
-fn parse_user_conf(bytes: &[u8]) -> Result<Option<UserTableInfo>, PersistenceError> {
-    match UserTableInfo::parse(bytes) {
+fn load_user_conf(filename: &Path) -> Result<Option<UserTableInfo>, PersistenceError> {
+    match UserTableInfo::load_path(filename) {
         Ok(info) => Ok(Some(info)),
-        Err(UserConfError::Line(_)) => Ok(None),
+        Err(UserConfError::Unopenable | UserConfError::Line(_)) => Ok(None),
         Err(UserConfError::UnknownDatabaseFormat) => Err(PersistenceError::UnknownDatabaseFormat),
     }
 }
@@ -742,9 +741,10 @@ const fn token_of(nibble: u8, slot: u32) -> u32 {
 ///
 /// Returns [`PersistenceError::UnknownDatabaseFormat`] for the
 /// `database format:` abort point — the class-(c) refusal, raised before
-/// any judgement, wipe or write (see `parse_user_conf`) — and otherwise
-/// only when the `user.conf` write itself fails; unparsable profile files
-/// degrade per-file (see [`Loaded::skipped`]), as upstream's do.
+/// any judgement, wipe or write (see `load_user_conf`). A marker that
+/// cannot be written is not an error, as the pin ignores it; unparsable
+/// profile files degrade per-file (see [`Loaded::skipped`]), as upstream's
+/// do.
 pub fn load(
     dir: &Path,
     originals: &SystemOriginals,
@@ -784,31 +784,28 @@ pub struct ProfileCheck {
 }
 
 /// `check_format`'s half of [`load`]: judge the `user.conf` marker, raise
-/// the counter, wipe a non-conform profile and write the marker. The pin
-/// runs it first in `pinyin_init`, before any library is loaded
+/// the counter, write the marker and wipe a non-conform profile, in the
+/// pin's order (`pinyin.cpp:172-218`, `zhuyin.cpp:126-162`). The pin runs it
+/// first in `pinyin_init`, before any library is loaded
 /// (`pinyin.cpp:337-346`), so a facade whose init can fail later runs it
 /// ahead of those loads, then reads the profile with `load_checked`.
 ///
+/// The marker save's answer is ignored, as `check_format` ignores it
+/// (`pinyin.cpp:187`; maintainer ruling 2026-10-28 UTC, D4): a marker that
+/// cannot be written leaves the pin's `write %s failed.` line and the
+/// profile is judged and used as it would be otherwise.
+///
 /// # Errors
 ///
-/// As [`load`].
+/// [`PersistenceError::UnknownDatabaseFormat`], the abort point, before
+/// any write or wipe.
 pub(crate) fn check_format(
     dir: &Path,
     versions: &SystemVersions,
     layout: &UserFileLayout,
     law: UserConfLaw,
 ) -> Result<ProfileCheck, PersistenceError> {
-    let conf_path = user_conf_path(dir);
-    let existing = match std::fs::read(&conf_path) {
-        Ok(bytes) => parse_user_conf(&bytes)?,
-        Err(_) => {
-            // `UserTableInfo::load`'s raw `fprintf` (`table_info.cpp:332`):
-            // no newline, as the pin's has none, and the same line when the
-            // marker is absent as when it cannot be opened.
-            pin_stderr::emit(&[b"open ", pin_stderr::path_bytes(&conf_path), b" failed."]);
-            None
-        }
-    };
+    let existing = load_user_conf(&user_conf_path(dir))?;
 
     let conform = existing
         .as_ref()
@@ -828,11 +825,13 @@ pub(crate) fn check_format(
         UserConfLaw::Zhuyin => 0,
     };
 
+    // libpinyin saves the marker before it wipes (`:187`, `:194-215`): a
+    // profile file named `user.conf` is unlinked after the save.
+    if law == UserConfLaw::Pinyin {
+        let _ = write_marker(dir, versions, open_counter);
+    }
     if !conform {
         clean_user_files(dir, layout);
-    }
-    if law == UserConfLaw::Pinyin {
-        write_marker(dir, versions, open_counter)?;
     }
     Ok(ProfileCheck {
         open_counter,
@@ -938,38 +937,50 @@ pub const fn lowered_open_counter(open_counter: i32) -> i32 {
 /// (`pinyin_fini`, `pinyin.cpp:1195-1200`, whose `mark_version` runs
 /// whether or not a save came first); libzhuyin writes nothing
 /// (`zhuyin_fini`, `zhuyin.cpp:741-757`). Nothing else of the profile
-/// is touched.
+/// is touched. `dir` is `None` for a context without a user dir, whose
+/// marker the pin names `""`.
 ///
 /// A process that never reaches its fini leaves the load's raised value
-/// on disk, as upstream's does.
-///
-/// # Errors
-///
-/// Returns [`PersistenceError`] when the marker cannot be written.
-pub fn fini(
-    dir: &Path,
-    versions: &SystemVersions,
-    law: UserConfLaw,
-    open_counter: i32,
-) -> Result<(), PersistenceError> {
-    match law {
-        UserConfLaw::Pinyin => write_marker(dir, versions, lowered_open_counter(open_counter)),
-        UserConfLaw::Zhuyin => Ok(()),
+/// on disk, as upstream's does. The save's answer is ignored, as
+/// `pinyin_fini` ignores it (`:1200`).
+pub fn fini(dir: Option<&Path>, versions: &SystemVersions, law: UserConfLaw, open_counter: i32) {
+    if law == UserConfLaw::Pinyin {
+        let counter = lowered_open_counter(open_counter);
+        let _ = match dir {
+            Some(dir) => write_marker(dir, versions, counter),
+            None => write_unnamed_marker(versions, counter),
+        };
+    }
+}
+
+/// `check_format` for a context without a user dir: the pin keeps
+/// `m_user_dir` NULL, so `g_build_filename(NULL, "user.conf", NULL)` is
+/// `""` (`pinyin.cpp:176-178`, `zhuyin.cpp:130-132`). The load's `fopen("")`
+/// fails with its `open  failed.` line, and libpinyin's save
+/// (`pinyin.cpp:187`) fails with `write  failed.`. The wipe that follows
+/// names files under `""` too and removes nothing.
+pub fn check_format_unnamed(versions: &SystemVersions, law: UserConfLaw) {
+    let _ = UserTableInfo::load(c"");
+    if law == UserConfLaw::Pinyin {
+        let _ = write_unnamed_marker(versions, get_open_counter(0) + 1);
     }
 }
 
 /// `mark_version`'s write: the conform marker (`make_conform`) with
-/// `open_counter`, straight over `user.conf` as `UserTableInfo::save`'s
-/// `fopen("w")` does (`table_info.cpp:377-397`).
-fn write_marker(
-    dir: &Path,
-    versions: &SystemVersions,
-    open_counter: i32,
-) -> Result<(), PersistenceError> {
+/// `open_counter`, through `UserTableInfo::save`'s own `fopen("w")` and
+/// `fprintf` calls (`table_info.cpp:377-397`). Answers the save's `bool`,
+/// `false` after its `write %s failed.` line.
+fn write_marker(dir: &Path, versions: &SystemVersions, open_counter: i32) -> bool {
     let mut marker = UserTableInfo::conform_to(versions);
     marker.open_counter = open_counter;
-    std::fs::write(user_conf_path(dir), marker.to_text())?;
-    Ok(())
+    marker.save_path(&user_conf_path(dir))
+}
+
+/// [`write_marker`] for a context without a user dir: `UserTableInfo::save("")`.
+fn write_unnamed_marker(versions: &SystemVersions, open_counter: i32) -> bool {
+    let mut marker = UserTableInfo::conform_to(versions);
+    marker.open_counter = open_counter;
+    marker.save(c"")
 }
 
 /// `_clean_user_files` + the fixed names: every data file of the profile
@@ -1792,15 +1803,27 @@ pub(crate) fn save_reporting<B: FnMut(u8) -> SaveBaseline>(
             let tmp = name.with_suffix(".tmp").under(dir);
             let final_path = name.under(dir);
             if std::fs::rename(&tmp, &final_path).is_err() {
+                report_rename_failed(&tmp, &final_path);
                 outcome.renames_failed.push((tmp, final_path));
             }
         }
     }
-    if write_marker(dir, reporting.versions, reporting.open_counter).is_err() {
+    // `mark_version` (`pinyin.cpp:1143`, `zhuyin.cpp:695`): a failed save
+    // has written the pin's `write %s failed.` line itself.
+    if !write_marker(dir, reporting.versions, reporting.open_counter) {
         outcome.user_conf_write_failed = Some(user_conf_path(dir));
     }
     Ok(outcome)
 }
+/// The line a failed rename of a reporting save writes where the pin's
+/// `_rename_files` (`pinyin.cpp:1061-1123`) or `zhuyin_save`
+/// (`zhuyin.cpp:611-689`) writes it: as the rename fails, with the pin's
+/// `fprintf` on the stream `mark_version`'s own `write %s failed.` line
+/// follows it on.
+fn report_rename_failed(tmp: &Path, final_path: &Path) {
+    oxpinyin_data::c_stderr::rename_failed(tmp, final_path);
+}
+
 /// The files a save has written to `.tmp` siblings. libpinyin writes them
 /// all (`_write_files`) and then renames them all (`_rename_files`); libzhuyin
 /// renames each as soon as it is written (`zhuyin_save`), so a name two roles
@@ -1840,6 +1863,7 @@ impl Staged {
         if !self.immediate {
             self.pending.push((tmp, final_path));
         } else if std::fs::rename(&tmp, &final_path).is_err() {
+            report_rename_failed(&tmp, &final_path);
             self.failed.push((tmp, final_path));
         }
     }
@@ -2008,8 +2032,10 @@ fn finish_save(
             // `user.conf` last, and in place: `mark_version` runs after
             // the renames and `fopen`s the marker over the existing file
             // (`pinyin.cpp:1141-1143`, `zhuyin.cpp:695`), so the file
-            // keeps whatever mode it already had.
-            write_marker(dir, versions, open_counter)
+            // keeps whatever mode it already had. Its answer is ignored,
+            // as `pinyin_save` ignores it.
+            let _ = write_marker(dir, versions, open_counter);
+            Ok(())
         }
         Err(error) => {
             for (tmp, _) in staged {
@@ -2829,13 +2855,13 @@ mod tests {
     fn a_marker_the_load_cannot_complete_still_wipes() {
         let dir = tempdir("marker-incomplete");
         let originals = originals();
+        // A version directive that does not convert is the load's `false`
+        // (`table_info.cpp:338-348`).
         for body in [
             "",
             "binary format version:x\nmodel data version:14\n",
             "model data version:14\nbinary format version:7\ndatabase format:Tkrzw\nopen counter:5\n",
             "binary format version:7x\nmodel data version:14\ndatabase format:Tkrzw\nopen counter:5\n",
-            "binary format version:7\nmodel data version:14x\ndatabase format:Tkrzw\nopen counter:5\n",
-            "binary format version:7\nmodel data version:14\nopen counter:5\n",
         ] {
             save(&dir, &state(), &originals, &versions(), 1).expect("save");
             assert!(dir.join("user.bin").exists());
@@ -2846,6 +2872,29 @@ mod tests {
             assert_eq!(loaded.open_counter, 1, "{body:?}"); // 0 + the pin's raise
             assert_eq!(dir_snapshot(&dir).len(), 1, "{body:?}: only the marker");
             assert!(!dir.join("user.bin").exists(), "{body:?}");
+        }
+
+        // A `database format:` directive that does not match leaves `str`
+        // unwritten and the pin maps it anyway (`:352-354`): the abort
+        // point, before any write or wipe.
+        for body in [
+            "binary format version:7\nmodel data version:14x\ndatabase format:Tkrzw\nopen counter:5\n",
+            "binary format version:7\nmodel data version:14\nopen counter:5\n",
+        ] {
+            save(&dir, &state(), &originals, &versions(), 1).expect("save");
+            std::fs::write(dir.join(USER_CONF), body).expect("write");
+            assert!(
+                matches!(
+                    load(&dir, &originals, &versions(), UserConfLaw::Pinyin),
+                    Err(PersistenceError::UnknownDatabaseFormat)
+                ),
+                "{body:?}"
+            );
+            assert!(dir.join("user.bin").exists(), "{body:?}");
+            assert_eq!(
+                std::fs::read_to_string(dir.join(USER_CONF)).expect("marker"),
+                body
+            );
         }
 
         std::fs::remove_dir_all(&dir).expect("cleanup");
@@ -2907,8 +2956,7 @@ mod tests {
         );
         assert!(!dir.join("gb_char.dbin").exists());
         // The marker is rewritten conform.
-        let marker = UserTableInfo::parse(&std::fs::read(dir.join(USER_CONF)).expect("read"))
-            .expect("parse");
+        let marker = UserTableInfo::load_path(&dir.join(USER_CONF)).expect("parse");
         assert!(marker.is_conform(&versions()));
 
         std::fs::remove_dir_all(&dir).expect("cleanup");
@@ -3004,8 +3052,11 @@ mod tests {
 
     /// The counter `user.conf` holds, read back as the next init reads it.
     fn recorded_counter(dir: &Path) -> Option<i32> {
-        let bytes = std::fs::read(dir.join(USER_CONF)).ok()?;
-        Some(UserTableInfo::parse(&bytes).ok()?.open_counter)
+        Some(
+            UserTableInfo::load_path(&dir.join(USER_CONF))
+                .ok()?
+                .open_counter,
+        )
     }
 
     #[test]
@@ -3058,7 +3109,12 @@ mod tests {
                 Some(1),
                 "launch {launch}: the save writes back"
             );
-            fini(&dir, &versions(), UserConfLaw::Pinyin, loaded.open_counter).expect("fini");
+            fini(
+                Some(&dir),
+                &versions(),
+                UserConfLaw::Pinyin,
+                loaded.open_counter,
+            );
             assert_eq!(
                 recorded_counter(&dir),
                 Some(0),
@@ -3078,7 +3134,12 @@ mod tests {
         let before = std::fs::read(dir.join("user.bin")).expect("user.bin");
         let loaded = load(&dir, &originals, &versions(), UserConfLaw::Pinyin).expect("load");
         assert_eq!(recorded_counter(&dir), Some(1));
-        fini(&dir, &versions(), UserConfLaw::Pinyin, loaded.open_counter).expect("fini");
+        fini(
+            Some(&dir),
+            &versions(),
+            UserConfLaw::Pinyin,
+            loaded.open_counter,
+        );
         assert_eq!(recorded_counter(&dir), Some(0));
         // user.conf is the only file a fini writes.
         assert_eq!(
@@ -3124,7 +3185,12 @@ mod tests {
         let loaded = load(&dir, &originals, &versions(), UserConfLaw::Pinyin).expect("load");
         assert!(!loaded.wiped);
         assert_eq!(recorded_counter(&dir), Some(OPEN_COUNTER_LIMIT + 1));
-        fini(&dir, &versions(), UserConfLaw::Pinyin, loaded.open_counter).expect("fini");
+        fini(
+            Some(&dir),
+            &versions(),
+            UserConfLaw::Pinyin,
+            loaded.open_counter,
+        );
         assert_eq!(recorded_counter(&dir), Some(0));
         std::fs::remove_dir_all(&dir).expect("cleanup");
     }
@@ -3143,7 +3209,12 @@ mod tests {
             !dir.join(USER_CONF).exists(),
             "a zhuyin init wrote user.conf"
         );
-        fini(&dir, &versions(), UserConfLaw::Zhuyin, fresh.open_counter).expect("fini");
+        fini(
+            Some(&dir),
+            &versions(),
+            UserConfLaw::Zhuyin,
+            fresh.open_counter,
+        );
         assert!(
             !dir.join(USER_CONF).exists(),
             "a zhuyin fini wrote user.conf"
@@ -3158,7 +3229,12 @@ mod tests {
             let loaded = load(&dir, &originals, &versions(), UserConfLaw::Zhuyin).expect("load");
             assert!(!loaded.wiped, "zhuyin launch {launch} wiped");
             assert_eq!(loaded.state, state());
-            fini(&dir, &versions(), UserConfLaw::Zhuyin, loaded.open_counter).expect("fini");
+            fini(
+                Some(&dir),
+                &versions(),
+                UserConfLaw::Zhuyin,
+                loaded.open_counter,
+            );
             assert_eq!(std::fs::read(dir.join(USER_CONF)).expect("marker"), marker);
         }
         std::fs::remove_dir_all(&dir).expect("cleanup");
@@ -3209,12 +3285,15 @@ mod tests {
     }
 
     #[test]
-    fn a_hand_written_counter_parses_complete_decimal_fields() {
-        // The marker parses complete decimal fields. The counter's product
-        // law stays table_info.cpp:356-359,409-410: above 6 it decides the
-        // wipe. Libpinyin's init writes it
-        // raised through get_open_counter (pinyin.cpp:185-187) and its fini
-        // the lowered value (:1194-1200); libzhuyin writes neither.
+    fn a_hand_written_counter_is_the_scanners_int() {
+        // `fscanf("open counter:%d\n")`, and 0 when it assigns nothing
+        // (`table_info.cpp:356-359`). The counter's product law stays
+        // `:409-410`: above 6 it decides the wipe. Libpinyin's init writes
+        // it raised through get_open_counter (pinyin.cpp:185-187) and its
+        // fini the lowered value (:1194-1200); libzhuyin writes neither.
+        // The literal's space is a whitespace directive, which matches none
+        // as well as many. Values outside `int` take the host conversion and
+        // are left to the differential's reference host (`user-conf-920-*`).
         let originals = originals();
         let conform = UserTableInfo::conform_to(&versions()).to_text();
         let head = conform
@@ -3224,22 +3303,18 @@ mod tests {
             (&b"open counter:-3\n"[..], -2, 0, false),
             (b"open counter:+3\n", 4, 3, false),
             (b"open counter:+7\n", 1, 0, true),
-            (b"open counter:3x\n", 1, 0, true),
+            (b"open counter:3x\n", 4, 3, false),
             (b"open counter:7x\n", 1, 0, true),
-            (b"open counter:3\xff\n", 1, 0, true),
-            (b"opencounter:3\xff\n", 1, 0, false),
-            (b"open \n counter:3\xff\n", 1, 0, false),
-            (b"open counter:\xff\n", 1, 0, true),
-            (b"open counter:\x0b5\n", 1, 0, true),
-            (b"open counter:\n5\n", 1, 0, true),
+            (b"open counter:3\xff\n", 4, 3, false),
+            (b"opencounter:3\xff\n", 4, 3, false),
+            (b"open \n counter:3\xff\n", 4, 3, false),
+            (b"open counter:\xff\n", 1, 0, false),
+            (b"open counter:\x0b5\n", 6, 5, false),
+            (b"open counter:\n5\n", 6, 5, false),
             (b"  open counter:5\n", 6, 5, false),
-            (b"opencounter:5\n", 1, 0, false),
-            (b"open counter:2147483648\n", 1, 0, true),
-            (b"open counter:4294967303\n", 1, 0, true),
-            (b"open counter:-2147483649\n", 1, 0, true),
-            (b"open counter:99999999999999999999\n", 1, 0, true),
-            (b"open counter:\n", 1, 0, true),
-            (b"open counter:-\n", 1, 0, true),
+            (b"opencounter:5\n", 6, 5, false),
+            (b"open counter:\n", 1, 0, false),
+            (b"open counter:-\n", 1, 0, false),
             (b"", 1, 0, false),
         ] {
             for law in [UserConfLaw::Pinyin, UserConfLaw::Zhuyin] {
@@ -3258,11 +3333,11 @@ mod tests {
                     UserConfLaw::Pinyin => {
                         assert_eq!(loaded.open_counter, raised, "{case}");
                         assert_eq!(recorded_counter(&dir), Some(raised), "{case}");
-                        fini(&dir, &versions(), law, loaded.open_counter).expect("fini");
+                        fini(Some(&dir), &versions(), law, loaded.open_counter);
                         assert_eq!(recorded_counter(&dir), Some(lowered), "{case}");
                     }
                     UserConfLaw::Zhuyin => {
-                        fini(&dir, &versions(), law, loaded.open_counter).expect("fini");
+                        fini(Some(&dir), &versions(), law, loaded.open_counter);
                         assert_eq!(
                             std::fs::read(dir.join(USER_CONF)).expect("marker"),
                             marker,
@@ -3273,6 +3348,34 @@ mod tests {
                 std::fs::remove_dir_all(&dir).expect("cleanup");
             }
         }
+    }
+
+    /// libpinyin's `check_format` saves the marker (`pinyin.cpp:187`) and
+    /// only then wipes a non-conform profile (`:194-215`): a library whose
+    /// user file is named `user.conf` takes the fresh marker with it.
+    #[test]
+    fn the_marker_is_written_before_the_wipe() {
+        let dir = tempdir("marker-before-wipe");
+        let conf_dir = tempdir("marker-before-wipe-conf");
+        std::fs::write(
+            conf_dir.join("table.conf"),
+            format!(
+                "binary format version:7\nmodel data version:14\nlambda parameter:0.312699\n\
+                 source table format:pinyin\ndatabase format:{}\n\
+                 default USER_DICTIONARY NULL NULL user.conf USER_FILE\n",
+                versions().database_format
+            ),
+        )
+        .expect("table.conf");
+        let layout = UserFileLayout::from_conf(
+            &oxpinyin_data::table_info::TableConf::load_from_dir(&conf_dir).expect("table.conf"),
+        );
+        let check =
+            check_format(&dir, &versions(), &layout, UserConfLaw::Pinyin).expect("check_format");
+        assert!(!check.conform);
+        assert!(!dir.join(USER_CONF).exists(), "the wipe follows the save");
+        std::fs::remove_dir_all(&dir).expect("cleanup");
+        std::fs::remove_dir_all(&conf_dir).expect("cleanup");
     }
 
     #[test]

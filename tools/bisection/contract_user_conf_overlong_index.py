@@ -106,7 +106,7 @@ def register(case, *, _craft_db):
         return data
 
 
-    def _user_conf_920_session(edit, keep_state, policy=False):
+    def _user_conf_920_session(edit, keep_state):
         """Build a saved-profile reopen case with an edited user.conf.
 
         The callback edit(k) supplies replacement bytes. keep_state asserts retained
@@ -121,8 +121,6 @@ def register(case, *, _craft_db):
             when requested and reopen succeeds, unchanged trained/imported frequencies;
             return those observations and the resulting user-file inventory.
             """
-            if policy:
-                _write_user_conf(k)
             training = token_unigram_trained(k)
             imported = token_unigram_user(k, add_frequency=False)
             saved = k.fn('save', B, P)(k.ctx)
@@ -138,14 +136,10 @@ def register(case, *, _craft_db):
                 k._ctx = ctx
                 out['trained-after'] = unigram_of(k, int(training['token'], 16))
                 out['import-after'] = unigram_of(k, int(imported['token'], 16))
-                if keep_state and not policy:
+                if keep_state:
                     assert out['trained-after'] == training['after'], 'trained state was wiped'
                     assert out['import-after'] == imported['after'], 'imported state was wiped'
             out['files'] = user_listing(k)
-            if policy:
-                return {'reopen': out['reopen'],
-                        'trained-retained': out.get('trained-after') == training['after'],
-                        'import-retained': out.get('import-after') == imported['after']}
             return out
         return probe
 
@@ -158,10 +152,8 @@ def register(case, *, _craft_db):
         """
         for mode in ('pinyin', 'zhuyin'):
             suffix = '-zhuyin' if mode == 'zhuyin' else ''
-            policy = name in ('nul-database-token', 'version-overflow-conforms', 'counter-overflow-conforms')
-            record = ('1297-user-token.md' if name == 'nul-database-token' else '1297-user-decimals.md') if policy else None
             case('user-conf-920-' + name + suffix, mode=mode, issues=('920',),
-                 control=control, policy_record=record)(_user_conf_920_session(edit, keep_state, policy))
+                 control=control)(_user_conf_920_session(edit, keep_state))
 
 
     _user_conf_920_case('nul-database-token', _edit_user_conf_nul, True, False)
@@ -179,6 +171,23 @@ def register(case, *, _craft_db):
                          _edit_user_conf_missing_database, False, True)
     _user_conf_920_case('counter-missing',
                          _edit_user_conf_missing_counter, True, True)
+
+
+    # Maintainer ruling 2026-10-28 UTC (D4): check_format ignores the marker
+    # save's answer (074a2219 pinyin.cpp:187) and the context keeps its user
+    # state. A directory named user.conf opens for reading and reads as end of
+    # input, and cannot be opened for writing.
+    def _unwritable_marker(k):
+        """Train and save over a user dir whose user.conf is a directory."""
+        os.mkdir(os.path.join(k.user, 'user.conf'))
+        training = token_unigram_trained(k)
+        saved = k.fn('save', B, P)(k.ctx)
+        return {'training': training, 'save': saved, 'files': user_listing(k)}
+
+
+    for _mode in ('pinyin', 'zhuyin'):
+        case('user-conf-marker-unwritable' + ('-zhuyin' if _mode == 'zhuyin' else ''), mode=_mode,
+             stderr=True, issues=('920',))(_unwritable_marker)
 
 
     def overlong_index_context(k, parse=None, rows=None, options=None):

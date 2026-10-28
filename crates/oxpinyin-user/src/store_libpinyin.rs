@@ -51,7 +51,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use oxpinyin_data::chunk_write::ChunkItem;
-use oxpinyin_data::pin_stderr;
 use oxpinyin_data::user_files::SystemVersions;
 use oxpinyin_store::{
     DefaultStore, DefaultUserBigramDb, ReadStore, StoreError, UserBigramDb, WriteStore, WriteTxn,
@@ -271,25 +270,16 @@ impl FiniGuard {
 impl Drop for FiniGuard {
     fn drop(&mut self) {
         if let Some(target) = self.0.take() {
-            let Some(dir) = target.dir.as_deref() else {
-                // mark_version still attempts the empty filename at NULL
-                // (074a2219 pinyin.cpp:1194-1200); reproduce its diagnostic
-                // without issuing filesystem operations.
-                if target.law == UserConfLaw::Pinyin {
-                    pin_stderr::emit(&[b"write  failed.\n"]);
-                }
-                return;
-            };
             // `pinyin_fini` ignores `mark_version`'s result
-            // (`pinyin.cpp:1200`): a fini has no caller to answer, only the
-            // line `UserTableInfo::save` prints (`table_info.cpp:382`).
-            if persistence::fini(dir, &target.versions, target.law, target.open_counter).is_err() {
-                pin_stderr::emit(&[
-                    b"write ",
-                    &pin_stderr::build_filename(dir, "user.conf"),
-                    b" failed.\n",
-                ]);
-            }
+            // (`pinyin.cpp:1200`); a save that fails has written
+            // `UserTableInfo::save`'s line (`table_info.cpp:382`). Without a
+            // user dir the pin saves to `""`, which fails the same way.
+            persistence::fini(
+                target.dir.as_deref(),
+                &target.versions,
+                target.law,
+                target.open_counter,
+            );
         }
     }
 }
@@ -379,12 +369,11 @@ impl GenericUserStore<DefaultStore> {
 
     /// `check_format` alone, for an init that must judge the profile before
     /// it loads the system libraries, as the pin does: the `user.conf`
-    /// diagnostic, the wipe of a non-conform profile and the marker write.
+    /// diagnostic, the marker write and the wipe of a non-conform profile.
     ///
     /// # Errors
     ///
-    /// [`UserStoreError::UnknownDatabaseFormat`] at the abort point, or the
-    /// marker write failing.
+    /// [`UserStoreError::UnknownDatabaseFormat`] at the abort point.
     pub fn check_profile(
         user_dir: &Path,
         versions: &SystemVersions,
@@ -392,6 +381,13 @@ impl GenericUserStore<DefaultStore> {
         law: UserConfLaw,
     ) -> Result<crate::persistence::ProfileCheck, UserStoreError> {
         Ok(persistence::check_format(user_dir, versions, layout, law)?)
+    }
+
+    /// `check_format` for an init without a user dir, whose `user.conf` the
+    /// pin names `""` ([`crate::persistence::check_format_unnamed`]): the
+    /// pin's failed load and, under libpinyin's law, failed save.
+    pub fn check_profile_unnamed(versions: &SystemVersions, law: UserConfLaw) {
+        persistence::check_format_unnamed(versions, law);
     }
 
     fn open_session(
@@ -415,12 +411,9 @@ impl GenericUserStore<DefaultStore> {
                 None => persistence::load_profile(dir, &originals, &versions, law)?,
             }
         } else {
-            // check_format reads ""; pinyin also tries to write "".
-            // Neither operation can succeed. Do not redirect into cwd/temp.
-            pin_stderr::emit(&[b"open  failed."]);
-            if law == UserConfLaw::Pinyin {
-                pin_stderr::emit(&[b"write  failed.\n"]);
-            }
+            // Without a user dir the pin's `check_format` reads and writes
+            // `""`, which the init runs where the pin does
+            // ([`Self::check_profile_unnamed`]); there is no profile.
             persistence::LoadedProfile::default()
         };
         // A non-null-`MODIFY_HEADER` token is the pin's
@@ -2907,9 +2900,8 @@ mod tests {
 
     /// The open counter `user.conf` records, as the next init reads it.
     fn recorded_counter(dir: &Path) -> Option<i32> {
-        let bytes = std::fs::read(dir.join("user.conf")).ok()?;
         Some(
-            oxpinyin_data::user_files::UserTableInfo::parse(&bytes)
+            oxpinyin_data::user_files::UserTableInfo::load_path(&dir.join("user.conf"))
                 .ok()?
                 .open_counter,
         )

@@ -1,5 +1,12 @@
 # #1297 — Nonconforming decimal markers reset profiles
 
+**Reverted — 2026-10-28 UTC (external-I/O stage 1).** The `user.conf` decimal fields now goes
+through `oxpinyin-input`, which makes the pin's own call (`fscanf("%d")`) on
+`SystemTableInfo2::load`'s or `UserTableInfo::load`'s stream
+([external-io-boundary.md](external-io-boundary.md), stage 1). The cases
+below run their original probes and are gated as MATCH; no case registers
+this record. The record and its observations below remain historical.
+
 - **Status:** accepted · 2026-10-26 UTC · #1297 Phase 2.
 - **Disposition:** POLICY-ACCEPTED where the recorded artefact changes output; controls remain MATCH.
 - **Policy limb:** language artefact under #1304 (main `ab0b1da7`), not a new product rule or a class (a), (b), or (c) exception.
@@ -17,7 +24,7 @@
 {
   "schema": 1,
   "record": "1297-user-decimals",
-  "status": "current",
+  "status": "reverted",
   "disposition": "POLICY-ACCEPTED",
   "cases": {
     "user-conf-920-version-overflow-conforms": {

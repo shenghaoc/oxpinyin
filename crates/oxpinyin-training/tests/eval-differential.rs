@@ -42,7 +42,7 @@
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
-use oxpinyin_data::{SystemDictionary, parse_table_conf_lambda};
+use oxpinyin_data::SystemDictionary;
 use oxpinyin_training::eval::{
     PhraseSource, SystemPhraseSource, build_model, correction_rate, parse_eval_corpus,
     parse_interpolation2,
@@ -118,9 +118,10 @@ fn native_correction_rate_matches_pin_eval_correction_rate() {
     let counts = parse_interpolation2(
         &std::fs::read_to_string(&interpolation2).expect("interpolation2.text"),
     );
-    let lambda =
-        parse_table_conf_lambda(&std::fs::read_to_string(&table_conf).expect("table.conf"))
-            .expect("λ from table.conf");
+    let lambda = oxpinyin_data::table_info::TableConf::load_path(&table_conf)
+        .expect("table.conf")
+        .lambda_unit()
+        .expect("λ from table.conf");
     let library_dir = phrase_index
         .parent()
         .expect("phrase index has a parent directory");

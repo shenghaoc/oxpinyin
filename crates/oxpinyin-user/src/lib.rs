@@ -52,8 +52,8 @@ pub(crate) mod store_libpinyin;
 mod system_items;
 
 pub use lookup::UserLookup;
-pub use oxpinyin_data::pin_stderr;
 pub use oxpinyin_data::user_files::SystemVersions;
+pub use oxpinyin_data::{c_stderr, pin_stderr};
 pub use persistence::{
     ChunkHeaderField, ProfileCheck, SaveBaseline, SystemLibrary, SystemOriginals, UserConfLaw,
     system_originals,
