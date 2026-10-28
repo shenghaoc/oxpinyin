@@ -3,6 +3,7 @@
 from contextlib import ExitStack
 from dataclasses import replace
 from pathlib import Path
+import inspect
 import os
 import json
 import signal
@@ -16,7 +17,7 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-from tools.dev import test_support
+from tools.dev import host, test_support
 from tools.dev.cell import CellError, Settings, library_path, patch_digest
 from tools.dev.drivers import DriverServices
 from tools.dev.pool import UnitContext
@@ -269,14 +270,28 @@ raise SystemExit(result)
         self.exercise(signal.SIGKILL)
 
 
+def observe_group_live(group, timeout=1):
+    """Retry only unknown snapshots; preserve any executing survivor immediately."""
+    deadline = time.monotonic() + timeout
+    while True:
+        live = host.process_group_live(group)
+        if live is not None:
+            return live
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return None
+        time.sleep(min(0.01, remaining))
+
+
 # A residue-a-tail-diff runner whose driver steps are replaced, so that the next
 # real child is the RESIDUE_A_PROBE build. It records what became of that build.
 RESIDUE_RUNNER = '''
-import json, os, signal, subprocess, sys
+import json, os, signal, subprocess, sys, time
 from pathlib import Path
 from unittest import mock
 from tools.dev import host, runners
 from tools.dev.cell import Settings
+''' + inspect.getsource(observe_group_live) + '''
 fixture = json.loads(sys.argv[1])
 def run(driver, so, args, *, side, **options):
     if side == 'pin' and fixture['signal_before_build']:
@@ -295,7 +310,7 @@ if pids.exists():
         seen['reaped'] = False
     except ChildProcessError:
         seen['reaped'] = True
-    seen['group_live'] = host.process_group_live(leader)
+    seen['group_live'] = observe_group_live(leader)
 Path(fixture['result']).write_text(json.dumps(seen))
 '''
 
@@ -355,6 +370,37 @@ class ResidueProbeFixture(unittest.TestCase):
                 pass
 
 
+class GroupExitObservationTests(unittest.TestCase):
+    def test_retries_unknown_but_returns_known_observations_immediately(self):
+        for observations in ([None, False], [True, False]):
+            with self.subTest(observations=observations), \
+                    mock.patch.object(host, 'process_group_live', side_effect=observations) as live, \
+                    mock.patch.object(time, 'monotonic', return_value=0), \
+                    mock.patch.object(time, 'sleep') as sleep:
+                observed = observe_group_live(123)
+                if observations[0] is True:
+                    self.assertIs(observed, True)
+                    live.assert_called_once_with(123)
+                    sleep.assert_not_called()
+                    with self.assertRaises(AssertionError):
+                        self.assertIs(observed, False)
+                else:
+                    self.assertIs(observed, False)
+                    self.assertEqual(live.call_args_list, [mock.call(123)] * 2)
+                    sleep.assert_called_once_with(0.01)
+
+    def test_unknown_until_deadline_remains_a_failure(self):
+        with mock.patch.object(host, 'process_group_live', return_value=None) as live, \
+                mock.patch.object(time, 'monotonic', side_effect=[0, 0, 1]), \
+                mock.patch.object(time, 'sleep') as sleep:
+            observed = observe_group_live(123)
+        self.assertIsNone(observed)
+        self.assertEqual(live.call_args_list, [mock.call(123)] * 2)
+        sleep.assert_called_once_with(0.01)
+        with self.assertRaises(AssertionError):
+            self.assertIs(observed, False)
+
+
 @unittest.skipIf(sys.platform == 'win32', 'Unix process groups and signals')
 class ResidueProbeCancellationTests(ResidueProbeFixture):
     """SIGTERM before or during the residue probe build cancels the runner with status 128 + SIGTERM."""
@@ -373,7 +419,8 @@ class ResidueProbeCancellationTests(ResidueProbeFixture):
         seen, result = self.run_residue(signal_from_build=True)
         self.assertEqual(seen['status'], 128 + signal.SIGTERM, result.stderr)
         self.assertTrue(seen['reaped'], 'the probe build was not reaped by the runner')
-        self.assertIs(seen['group_live'], False, 'a member of the probe build group outlived the runner')
+        self.assertIs(seen['group_live'], False, 'a member of the probe build group outlived the runner '
+                      'or its termination could not be observed')
 
     def test_sigterm_before_the_probe_build_cancels_without_starting_it(self):
         seen, result = self.run_residue(signal_before_build=True)
