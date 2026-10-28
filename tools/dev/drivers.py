@@ -8,7 +8,7 @@ import sys
 
 from .cell import CellError, Settings
 from .pool import UnitContext
-from tools.tkrzw.runtime import RuntimeRefused, check
+from tools.tkrzw.runtime import RuntimeRefused, check, launched
 
 
 @dataclass(frozen=True)
@@ -64,8 +64,9 @@ class DriverServices:
         if not executable.is_absolute():
             executable = ((cwd / executable) if '/' in str(executable) else
                           Path(shutil.which(str(executable), path=environment.get('PATH')) or executable))
-        if executable.is_file() and executable != obj:
-            self.check_object(executable, runner=runner, side=side, environment=environment, cwd=cwd)
+        started = launched(executable, cwd)
+        if started is not None and started != obj:
+            self.check_object(started, runner=runner, side=side, environment=environment, cwd=cwd)
         return self.command(argv, cwd=cwd, environment=environment, capture=capture, merged=merged, umask=umask)
 
     def check_object(self, obj: Path, *, runner: str, side: str, cwd: Path,

@@ -2,6 +2,8 @@
 """Host-loader fixtures, optionally compared with the preserved migration base."""
 import os
 from pathlib import Path
+import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -10,6 +12,8 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
+from tools.dev.cell import CellError, Settings
+from tools.dev.drivers import DriverServices
 from tools.tkrzw import runtime
 
 
@@ -117,13 +121,35 @@ class AdapterControlTests(unittest.TestCase):
         self.assertEqual(self.invoke([]).returncode, 2)
         self.assertEqual(self.invoke(['bdb', 'fixture', 'pin', '/object', '--', 'not-a-real-command']).returncode, 1)
 
-    def test_binary_qualification_covers_elf_and_macho(self):
-        for magic in (b'\x7fELF', bytes.fromhex('cffaedfe'), bytes.fromhex('cefaedfe'), bytes.fromhex('feedfacf'), bytes.fromhex('feedface')):
-            path = self.directory / 'object'
-            path.write_bytes(magic + b'payload')
-            self.assertTrue(runtime.binary(path))
-        path.write_text('#!/bin/sh\n')
-        self.assertFalse(runtime.binary(path))
+    def test_scripts_launch_their_interpreter_and_other_files_themselves(self):
+        elf = self.directory / 'interpreter'
+        elf.write_bytes(b'\x7fELF' + b'payload')
+        script = self.directory / 'wrapper'
+        script.write_text(f'#!{elf} -e\nexec "$0.bin" "$@"\n')
+        nested = self.directory / 'nested'
+        nested.write_text(f'#! {script}\n')
+        relative = self.directory / 'relative'
+        relative.write_text('#!interpreter\n')
+        self.assertEqual(runtime.launched(script), elf)
+        self.assertEqual(runtime.launched(nested), elf)
+        self.assertEqual(runtime.launched(relative, self.directory), elf)
+        # Anything that is not a script, or a chain no kernel follows, is
+        # checked as itself, so the loader check still refuses what it cannot read.
+        loop = self.directory / 'loop'
+        loop.write_text(f'#!{loop}\n')
+        plain = self.directory / 'plain'
+        plain.write_text('exec true\n')
+        unreadable = self.directory / 'execute-only'
+        unreadable.write_bytes(b'\x7fELF')
+        unreadable.chmod(0o111)
+        fat = self.directory / 'universal'
+        fat.write_bytes(bytes.fromhex('cafebabe') + b'payload')
+        for path in (elf, fat, plain, loop, unreadable):
+            self.assertEqual(runtime.launched(path), path)
+        orphan = self.directory / 'orphan'
+        orphan.write_text(f'#!{self.directory / "missing"}\n')
+        for path in (self.directory / 'missing', self.directory, orphan):
+            self.assertIsNone(runtime.launched(path))
 
 
 @unittest.skipUnless(sys.platform.startswith('linux'), 'Linux ELF loader fixtures')
@@ -220,7 +246,8 @@ class LoaderTests(unittest.TestCase):
                                 cwd=self.cwd, env=self.env, capture_output=True, text=True)
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, 'RESULT\n', ''))
 
-    def test_linked_worker_is_checked_even_when_dlopen_subject_has_no_tkrzw(self):
+    def linked_worker(self):
+        """A plain dlopen subject and a worker linked against libtkrzw."""
         plain = self.cwd / 'plain.so'
         subprocess.run(['cc', '-shared', '-fPIC', str(self.root / 'dependency.c'),
                         '-o', str(plain)], check=True)
@@ -229,6 +256,10 @@ class LoaderTests(unittest.TestCase):
         worker = self.cwd / 'worker'
         subprocess.run(['cc', str(source), '-L' + str(self.cache / 'lib'),
                         '-l:libtkrzw.so.1064', '-o', str(worker)], check=True)
+        return plain, worker
+
+    def test_linked_worker_is_checked_even_when_dlopen_subject_has_no_tkrzw(self):
+        plain, worker = self.linked_worker()
         self.env['LD_LIBRARY_PATH'] = str(self.system / 'lib')
         script = Path(runtime.__file__)
         result = subprocess.run([sys.executable, str(script), 'bdb', 'linked-worker', 'pin',
@@ -239,6 +270,37 @@ class LoaderTests(unittest.TestCase):
         self.assertIn('linked-worker: pin:', result.stderr)
         self.assertIn(str(self.system / 'lib/libtkrzw.so.1064'), result.stderr)
         self.assertIn(str(worker), result.stderr)
+
+    def test_script_launcher_runs_with_its_interpreter_and_subject_checked(self):
+        # Debian's valgrind is a sh wrapper that execs valgrind.bin; ldd cannot read it.
+        launcher = self.cwd / 'launcher'
+        launcher.write_text(f'#!/bin/sh -e\nexec {shlex.quote(sys.executable)} "$@"\n')
+        launcher.chmod(0o755)
+
+        def run(command, obj):
+            return DriverServices(Settings.read(self.env)).run(
+                [str(command), '-c', 'print("launched")'], obj, runner='script-launcher',
+                side='subject', cwd=self.cwd)
+        result = run(launcher, self.obj)
+        self.assertEqual((result.returncode, result.stdout), (0, b'launched\n'))
+        self.env['LD_LIBRARY_PATH'] = str(self.system / 'lib')
+        with self.assertRaisesRegex(CellError, r'REFUSED: script-launcher: subject:.*system/lib/libtkrzw.so.1064'
+                                    rf'.*object {re.escape(str(self.obj))},'):
+            run(launcher, self.obj)
+        plain, worker = self.linked_worker()
+        interpreted = self.cwd / 'interpreted'
+        interpreted.write_text(f'#!{worker}\n')
+        interpreted.chmod(0o755)
+        with self.assertRaisesRegex(CellError, r'REFUSED: script-launcher: subject:.*system/lib/libtkrzw.so.1064'
+                                    rf'.*object {re.escape(str(worker))},'):
+            run(interpreted, plain)
+        result = subprocess.run([sys.executable, str(Path(runtime.__file__)), 'bdb', 'script-launcher', 'pin',
+                                 str(plain), '--', str(interpreted)], cwd=self.cwd, env=self.env,
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout, '')
+        self.assertIn(f'REFUSED: script-launcher: pin: libtkrzw resolved to {self.system}/lib/', result.stderr)
+        self.assertIn(f'(object {worker},', result.stderr)
 
     def test_an_unconfigured_cache_is_not_implicitly_trusted(self):
         self.env.pop('OXPINYIN_TKRZW_PREFIX', None)

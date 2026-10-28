@@ -124,26 +124,41 @@ def check(cell, runner, side, obj, *, env=None, cwd=None):
     return Path(resolved)
 
 
-def binary(path):
-    """Whether PATH is an ELF or Mach-O object, including directly linked workers."""
-    try:
-        with Path(path).open('rb') as stream:
-            return stream.read(4) in (b'\x7fELF', bytes.fromhex('cffaedfe'), bytes.fromhex('cefaedfe'),
-                                      bytes.fromhex('feedfacf'), bytes.fromhex('feedface'))
-    except OSError:
-        return False
+def launched(executable, cwd=None):
+    """The file the kernel loads for EXECUTABLE: itself, or a #! script's interpreter.
+
+    ldd cannot read a script, so a wrapper such as Debian's valgrind is checked
+    through its interpreter. What the script execs is not visible here; its
+    subject is checked explicitly by the caller. Every other file is checked
+    as itself. None means there is no file to launch.
+    """
+    path = Path(executable)
+    for _ in range(8):  # beyond the kernel's own interpreter nesting limit
+        try:
+            with path.open('rb') as stream:
+                line = stream.readline(256)
+        except OSError:
+            return path if path.is_file() else None
+        words = line[2:].split() if line.startswith(b'#!') else []
+        if not words:
+            return path
+        path = Path(os.fsdecode(words[0]))
+        if not path.is_absolute():
+            path = (Path.cwd() if cwd is None else Path(cwd)) / path
+    return path  # a chain no kernel follows; its check refuses the script
 
 
 def qualify(cell, runner, side, obj, command=(), *, env=None, cwd=None):
-    """Check OBJ and a directly linked command, preserving the shell wrapper rule."""
+    """Check OBJ and the file a command launches, a script through its interpreter."""
     resolved = check(cell, runner, side, obj, env=env, cwd=cwd)
     if command:
         environment = os.environ if env is None else env
         executable = shutil.which(str(command[0]), path=environment.get('PATH'))
         if executable is None:
             raise FileNotFoundError(str(command[0]))
-        if executable != str(obj) and binary(executable):
-            check(cell, runner, side, executable, env=env, cwd=cwd)
+        started = launched(executable, cwd)
+        if started is not None and str(started) != str(obj):
+            check(cell, runner, side, started, env=env, cwd=cwd)
     return resolved
 
 
