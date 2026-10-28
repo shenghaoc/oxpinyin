@@ -9,8 +9,10 @@
 //! wherever no apostrophe rides between keys). Nodes at a step are keyed by
 //! the phrase token ending there and keep the best [`NSTORE`] values; each
 //! step's beam keeps the best [`NBEAM`] values across nodes, ordered by the
-//! ported `trellis_value_less_than` — "worse-than" — comparator with the
-//! `log(1.2)` long-sentence penalty. Spans widen exactly while the phrase
+//! ordered adjusted cost and preselection batch position for pinyin, under
+//! S1/S2 of the compatibility policy's "witnessed algorithm-precondition
+//! violations (2026-10-28 UTC)" amendment. Zhuyin keeps the pin's comparison.
+//! Spans widen exactly while the phrase
 //! table reports a longer phrase could still start (`SEARCH_CONTINUED`),
 //! the same prefix-driven widening the window scan uses.
 //!
@@ -25,6 +27,7 @@
 //! (polyphone discounting, float accumulation).
 
 use std::cell::{OnceCell, RefCell};
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::hash::{BuildHasherDefault, Hasher};
@@ -180,28 +183,70 @@ impl Value {
 struct BeamEntry {
     value: Value,
     slot: u32,
+    /// Index in the complete candidate batch, before heap selection.
+    /// Independent of `slot`, which continues to identify the predecessor.
+    batch_position: usize,
 }
 
-/// 074a2219 phonetic_lookup.h:66-91, including the nstore gate. The
-/// longer-by-one branch is result-redundant: the final longer clause wins
-/// regardless. This comparator is cyclic; never pass it to a Rust sort.
-///
-/// The possibility comparisons are float comparisons at the pin, so a NaN
-/// cost makes every one of them false ([`cost_gt`]); only the length clause
-/// is left standing.
-fn loses_to(left: &Value, right: &Value, nstore: usize) -> bool {
-    (nstore > 1
-        && ((left.length.checked_add(1) == Some(right.length)
-            && cost_gt(left.cost, cost_add(right.cost, LONG_SENTENCE_PENALTY)))
-            || (left.length == right.length.saturating_add(1)
-                && cost_gt(cost_add(left.cost, LONG_SENTENCE_PENALTY), right.cost))))
-        || (left.length == right.length && cost_gt(left.cost, right.cost))
-        || left.length > right.length
+/// S1/S2 of the compatibility policy's "witnessed algorithm-precondition
+/// violations (2026-10-28 UTC)" amendment: `cost_add(cost, 263 * length)`.
+/// Widen before multiplying: even `u32::MAX * 263` fits in a finite Cost.
+/// `cost_add` preserves sentinels and saturates finite sums short of them.
+fn adjusted_cost(value: &Value) -> Cost {
+    cost_add(value.cost, Cost::from(value.length) * LONG_SENTENCE_PENALTY)
+}
+
+/// Best first, with the amendment's explicit special-cost completion.
+/// Sentinel encodings never participate in the finite integer comparison.
+fn ordered_cost_compare(left: Cost, right: Cost) -> Ordering {
+    let class = |cost| -> u8 {
+        match cost {
+            NEG_INF_COST => 0,
+            POS_INF_COST => 2,
+            NAN_COST => 3,
+            _ => 1,
+        }
+    };
+    let left_class = class(left);
+    let right_class = class(right);
+    left_class.cmp(&right_class).then_with(|| {
+        if left_class == 1 {
+            left.cmp(&right)
+        } else {
+            Ordering::Equal
+        }
+    })
+}
+
+/// The node uses adjusted cost alone: a tying newcomer cannot evict its
+/// front. The two-slot front-eviction algorithm itself remains the pin's.
+fn node_loses_to(left: &Value, right: &Value, nstore: usize) -> bool {
+    if nstore == 1 {
+        return zhuyin_loses_to(left, right);
+    }
+    ordered_cost_compare(adjusted_cost(left), adjusted_cost(right)).is_gt()
+}
+
+/// 074a2219 phonetic_lookup.h:66-91 with `nstore = 1`, unchanged.
+/// NaN suppresses the possibility comparison; the length clause still applies.
+fn zhuyin_loses_to(left: &Value, right: &Value) -> bool {
+    (left.length == right.length && cost_gt(left.cost, right.cost)) || left.length > right.length
+}
+
+/// S1/S2 selection key: adjusted cost, then earlier batch position. The
+/// position is assigned before selection and never participates in insertion.
+fn selection_loses_to(left: &BeamEntry, right: &BeamEntry, nstore: usize) -> bool {
+    if nstore == 1 {
+        return zhuyin_loses_to(&left.value, &right.value);
+    }
+    ordered_cost_compare(adjusted_cost(&left.value), adjusted_cost(&right.value))
+        .then_with(|| left.batch_position.cmp(&right.batch_position))
+        .is_gt()
 }
 
 // Literal libstdc++ stl_heap.h algorithms (__push_heap, __adjust_heap,
-// __pop_heap, __make_heap), not an ordered-sort approximation. Equal and
-// cyclic comparisons make each assignment and the right-child tie matter.
+// __pop_heap, __make_heap). Kept unchanged for this comparator-only repair,
+// including the right-child tie used by the unchanged zhuyin path.
 fn heap_push<T: Clone>(
     values: &mut [T],
     mut hole: usize,
@@ -511,8 +556,8 @@ impl Trellis {
     }
 
     /// 074a2219 phonetic_lookup_heap.h:56-81: a full heap replaces its
-    /// front when the newcomer wins. At equal length the front is BEST,
-    /// so reproducing the pin deliberately evicts the best stored value.
+    /// front when the newcomer wins. S1/S2 repairs only the pinyin comparison;
+    /// the pin's deliberate eviction of the best resident remains.
     fn insert(&mut self, position: usize, value: Value) {
         let nstore = self.shape.nstore();
         let Some(node) = self
@@ -522,7 +567,7 @@ impl Trellis {
         else {
             return;
         };
-        let less = |left: &Value, right: &Value| loses_to(left, right, nstore);
+        let less = |left: &Value, right: &Value| node_loses_to(left, right, nstore);
         let len = node.len as usize;
         if len < nstore.min(NSTORE) {
             node.values[len] = value;
@@ -548,7 +593,13 @@ impl Trellis {
                     node.values()
                         .iter()
                         .zip(0_u32..)
-                        .map(|(&value, slot)| BeamEntry { value, slot })
+                        .map(|(&value, slot)| (value, slot))
+                })
+                .enumerate()
+                .map(|(batch_position, (value, slot))| BeamEntry {
+                    value,
+                    slot,
+                    batch_position,
                 })
                 .collect()
         })
@@ -556,7 +607,7 @@ impl Trellis {
 
     fn beam(&mut self, position: usize) -> SmallVec<[BeamEntry; NBEAM]> {
         heap_top(self.candidates(position), NBEAM, |left, right| {
-            loses_to(&left.value, &right.value, self.shape.nstore())
+            selection_loses_to(left, right, self.shape.nstore())
         })
         .into_iter()
         .collect()
@@ -571,7 +622,7 @@ impl Trellis {
         let mut values: Vec<_> = heap_top(
             self.candidates(position),
             self.shape.nbest(),
-            |left, right| loses_to(&left.value, &right.value, self.shape.nstore()),
+            |left, right| selection_loses_to(left, right, self.shape.nstore()),
         )
         .into_iter()
         .map(|entry| entry.value)
@@ -1797,7 +1848,7 @@ mod tests {
     }
 
     fn loses_to(left: &Value, right: &Value) -> bool {
-        super::loses_to(left, right, 2)
+        super::node_loses_to(left, right, 2)
     }
 
     fn value(cost: Cost, length: u32, _seq: u64) -> Value {
@@ -1812,30 +1863,42 @@ mod tests {
         }
     }
 
-    /// A NaN cost makes every possibility comparison false, so only the
-    /// length clause of `trellis_value_less_than` is left (`:66-91`).
     #[test]
-    fn a_nan_cost_loses_only_by_length() {
+    fn special_adjusted_costs_have_the_approved_order() {
         use oxpinyin_core::cost::{NAN_COST, NEG_INF_COST, POS_INF_COST};
-        let nan = value(NAN_COST, 3, 0);
-        for other in [
-            value(10, 3, 0),
-            value(NAN_COST, 3, 0),
-            value(10, 2, 0),
-            value(10, 4, 0),
-        ] {
-            assert!(!loses_to(&nan, &other) || nan.length > other.length);
-            assert!(!loses_to(&other, &nan) || other.length > nan.length);
+        for left_length in [0, 1, 3, u32::MAX] {
+            for right_length in [0, 1, 3, u32::MAX] {
+                // S1/S2 amendment: NaN loses to every non-NaN, regardless of length.
+                for cost in [NEG_INF_COST, -100, 0, POS_INF_COST - 1, POS_INF_COST] {
+                    assert!(loses_to(
+                        &value(NAN_COST, left_length, 0),
+                        &value(cost, right_length, 0)
+                    ));
+                    assert!(!loses_to(
+                        &value(cost, right_length, 0),
+                        &value(NAN_COST, left_length, 0)
+                    ));
+                }
+                for sentinel in [NEG_INF_COST, POS_INF_COST, NAN_COST] {
+                    assert_eq!(
+                        super::adjusted_cost(&value(sentinel, left_length, 0)),
+                        sentinel
+                    );
+                    assert!(!loses_to(
+                        &value(sentinel, left_length, 0),
+                        &value(sentinel, right_length, 0)
+                    ));
+                }
+                assert!(loses_to(
+                    &value(0, left_length, 0),
+                    &value(NEG_INF_COST, right_length, 0)
+                ));
+                assert!(loses_to(
+                    &value(POS_INF_COST, left_length, 0),
+                    &value(0, right_length, 0)
+                ));
+            }
         }
-        assert!(loses_to(&value(NAN_COST, 4, 0), &value(10, 3, 0)));
-        // Infinities order as floats do: a possibility of +inf (cost -inf)
-        // beats any finite one, 0 (cost +inf) loses to it.
-        assert!(loses_to(&value(0, 3, 0), &value(NEG_INF_COST, 3, 0)));
-        assert!(loses_to(&value(POS_INF_COST, 3, 0), &value(0, 3, 0)));
-        assert!(!loses_to(
-            &value(POS_INF_COST, 3, 0),
-            &value(POS_INF_COST, 3, 0)
-        ));
     }
 
     /// GLib's merge sort over the pin's tail comparator with NaN keys. The
@@ -1928,9 +1991,16 @@ mod tests {
     }
 
     #[test]
-    fn a_gap_of_two_loses_for_the_longer_one() {
+    fn a_gap_of_two_requires_twice_the_penalty() {
         assert!(loses_to(&value(0, 5, 0), &value(100, 3, 1)));
         assert!(!loses_to(&value(100, 3, 0), &value(0, 5, 1)));
+        for advantage in [525, 526, 527] {
+            let longer = value(0, 5, 0);
+            let shorter = value(advantage, 3, 0);
+            // S1/S2 amendment: a two-character gap ties at 526 and wins above it.
+            assert_eq!(loses_to(&longer, &shorter), advantage < 526);
+            assert_eq!(loses_to(&shorter, &longer), advantage > 526);
+        }
     }
 
     #[test]
@@ -1944,27 +2014,28 @@ mod tests {
             &value(11 + LONG_SENTENCE_PENALTY, 2, 0),
             &value(10, 3, 1)
         ));
-        // The final longer clause loses regardless of cost; it does not
-        // depend on the shorter-by-one penalty clause.
+        // S1/S2 amendment: the reverse comparison also ties at the threshold.
         assert!(loses_to(
             &value(1, 3, 0),
             &value(LONG_SENTENCE_PENALTY, 2, 1)
         ));
-        assert!(loses_to(
+        assert!(!loses_to(
             &value(0, 3, 0),
             &value(LONG_SENTENCE_PENALTY, 2, 1)
         ));
     }
 
     #[test]
-    fn the_comparator_cycle_requires_heap_selection() {
+    fn the_former_cycle_is_ordered_by_adjusted_cost() {
         let a = value(70_848, 4, 0);
         let b = value(69_469, 5, 0);
         let c = value(68_730, 6, 0);
         assert!(loses_to(&a, &b));
         assert!(loses_to(&b, &c));
-        assert!(loses_to(&c, &a));
-        assert!(!super::loses_to(&a, &b, 1), "nstore gate");
+        // S1/S2 amendment: c is best; the former c -> a edge is removed.
+        assert!(!loses_to(&c, &a));
+        assert!(loses_to(&a, &c));
+        assert!(!super::node_loses_to(&a, &b, 1), "unchanged zhuyin gate");
     }
 
     #[test]
@@ -1976,6 +2047,291 @@ mod tests {
         let node = trellis.steps[1].node(1).expect("token 1 has a node");
         let costs: Vec<_> = node.values().iter().map(|item| item.cost).collect();
         assert_eq!(costs, [5, 20], "pin discards 10, despite it beating 20");
+    }
+
+    fn generated_values() -> Vec<Value> {
+        use oxpinyin_core::cost::{NAN_COST, NEG_INF_COST, POS_INF_COST};
+        let mut values = Vec::new();
+        for length in [0, 1, 2, 3, 100, u32::MAX - 1, u32::MAX] {
+            for cost in [
+                NAN_COST,
+                NEG_INF_COST,
+                NEG_INF_COST + 1,
+                -527,
+                -263,
+                -1,
+                0,
+                263,
+                526,
+                POS_INF_COST - 264,
+                POS_INF_COST - 263,
+                POS_INF_COST - 2,
+                POS_INF_COST - 1,
+                POS_INF_COST,
+            ] {
+                values.push(value(cost, length, 0));
+            }
+        }
+        let mut state = 0x853c_49e6_748f_ea9b_u64;
+        for _ in 0..64 {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            values.push(value(state as Cost, (state >> 32) as u32, 0));
+        }
+        values
+    }
+
+    #[test]
+    fn adjusted_cost_is_a_strict_weak_order() {
+        let values = generated_values();
+        let relation: Vec<Vec<_>> = values
+            .iter()
+            .map(|a| values.iter().map(|b| loses_to(a, b)).collect())
+            .collect();
+        for a in 0..values.len() {
+            assert!(!relation[a][a], "irreflexivity: {:?}", values[a]);
+            for b in 0..values.len() {
+                assert!(!(relation[a][b] && relation[b][a]), "asymmetry: {a}, {b}");
+                for c in 0..values.len() {
+                    if relation[a][b] && relation[b][c] {
+                        assert!(relation[a][c], "transitivity: {a}, {b}, {c}");
+                    }
+                    if !relation[a][b] && !relation[b][a] && !relation[b][c] && !relation[c][b] {
+                        assert!(
+                            !relation[a][c] && !relation[c][a],
+                            "transitive incomparability: {a}, {b}, {c}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn adjusted_cost_preserves_finite_saturation_boundaries() {
+        use oxpinyin_core::cost::{NEG_INF_COST, POS_INF_COST};
+        let finite_max = POS_INF_COST - 1;
+        for length in [0, 1, 2, u32::MAX] {
+            let penalty = Cost::from(length) * LONG_SENTENCE_PENALTY;
+            for cost in [NEG_INF_COST + 1, -1, 0, finite_max - penalty, finite_max] {
+                let expected = (i128::from(cost) + i128::from(penalty)).min(i128::from(finite_max));
+                assert_eq!(
+                    i128::from(super::adjusted_cost(&value(cost, length, 0))),
+                    expected
+                );
+            }
+        }
+        assert_eq!(
+            super::adjusted_cost(&value(finite_max - 262, 1, 0)),
+            finite_max
+        );
+        assert!(!loses_to(
+            &value(finite_max, 0, 0),
+            &value(finite_max - 262, 1, 0)
+        ));
+    }
+
+    #[test]
+    fn adjacent_lengths_are_equivalent_exactly_at_the_unsaturated_threshold() {
+        for length in [0, 1, 3, 100, u32::MAX - 1] {
+            for cost in [-1_000_000, -263, 0, 1_000_000] {
+                let shorter = value(cost, length, 0);
+                for advantage in [262, 263, 264] {
+                    let longer = value(cost - advantage, length + 1, 0);
+                    assert_eq!(loses_to(&shorter, &longer), advantage > 263);
+                    assert_eq!(loses_to(&longer, &shorter), advantage < 263);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_full_node_rejects_ties_without_a_batch_position() {
+        let mut trellis = Trellis::with_seeds(1, &[0], NbestShape::PINYIN);
+        for cost in [10, 20] {
+            trellis.insert(1, value(cost, 1, 0));
+        }
+        for (cost, length) in [(10, 1), (10 - LONG_SENTENCE_PENALTY, 2)] {
+            let newcomer = Value {
+                keys: 999,
+                prev_token: 99,
+                ..value(cost, length, 0)
+            };
+            trellis.insert(1, newcomer);
+            let entries = trellis.candidates(1);
+            assert_eq!(
+                entries
+                    .iter()
+                    .map(|entry| entry.value.cost)
+                    .collect::<Vec<_>>(),
+                [10, 20]
+            );
+            assert!(entries.iter().all(|entry| entry.value.keys != 999));
+        }
+    }
+
+    #[test]
+    fn beam_and_tails_break_ties_by_the_complete_batch_position() {
+        let mut trellis = Trellis::with_seeds(1, &[], NbestShape::PINYIN);
+        for identity in 0..40 {
+            trellis.insert(
+                1,
+                Value {
+                    token: identity / 2 + 1,
+                    keys: identity,
+                    ..value(10, 1, 0)
+                },
+            );
+        }
+        let batch = trellis.candidates(1);
+        for (position, entry) in batch.iter().enumerate() {
+            assert_eq!(entry.batch_position, position);
+            assert_eq!(entry.slot as usize, position % 2);
+        }
+        assert_eq!(
+            trellis
+                .beam(1)
+                .iter()
+                .map(|entry| entry.value.keys)
+                .collect::<Vec<_>>(),
+            (0..32).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            trellis
+                .tails()
+                .iter()
+                .map(|entry| entry.keys)
+                .collect::<Vec<_>>(),
+            [0, 1, 2]
+        );
+    }
+
+    #[test]
+    fn selection_orders_special_costs_before_breaking_batch_ties() {
+        use oxpinyin_core::cost::{NAN_COST, NEG_INF_COST, POS_INF_COST};
+        let mut trellis = Trellis::with_seeds(1, &[], NbestShape::PINYIN);
+        for (token, cost) in [
+            NAN_COST,
+            POS_INF_COST,
+            0,
+            NEG_INF_COST,
+            NAN_COST,
+            POS_INF_COST,
+            0,
+            NEG_INF_COST,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            trellis.insert(
+                1,
+                Value {
+                    token: token as u32 + 1,
+                    ..value(cost, 1, 0)
+                },
+            );
+        }
+        assert_eq!(
+            trellis
+                .beam(1)
+                .iter()
+                .map(|entry| entry.batch_position)
+                .collect::<Vec<_>>(),
+            [3, 7, 2, 6, 1, 5, 0, 4]
+        );
+    }
+
+    #[test]
+    fn zhuyin_comparison_is_unchanged_for_generated_values() {
+        for left in generated_values() {
+            for right in generated_values() {
+                let expected = (left.length == right.length
+                    && oxpinyin_core::cost::cost_gt(left.cost, right.cost))
+                    || left.length > right.length;
+                assert_eq!(super::node_loses_to(&left, &right, 1), expected);
+                for (left_position, right_position) in [(0, 1), (1, 0)] {
+                    assert_eq!(
+                        super::selection_loses_to(
+                            &super::BeamEntry {
+                                value: left,
+                                slot: 0,
+                                batch_position: left_position
+                            },
+                            &super::BeamEntry {
+                                value: right,
+                                slot: 0,
+                                batch_position: right_position
+                            },
+                            1
+                        ),
+                        expected
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn backtracking_uses_the_physical_slot_after_batch_selection() {
+        let mut trellis = Trellis::with_seeds(3, &[0], NbestShape::PINYIN);
+        for token in [7, 8] {
+            trellis.insert(
+                1,
+                Value {
+                    token,
+                    from: 0,
+                    ..value(0, 1, 0)
+                },
+            );
+        }
+        trellis.insert(
+            2,
+            Value {
+                token: 99,
+                ..value(0, 2, 0)
+            },
+        );
+        for (cost, prev_token) in [(100, 7), (200, 8)] {
+            trellis.insert(
+                2,
+                Value {
+                    token: 11,
+                    prev_token,
+                    from: 1,
+                    ..value(cost, 2, 0)
+                },
+            );
+        }
+        let beam = trellis.beam(2);
+        let predecessor = beam
+            .iter()
+            .find(|entry| entry.value.token == 11 && entry.slot == 1)
+            .unwrap();
+        assert_eq!(predecessor.batch_position, 2);
+        let paths = super::SpanPaths::default();
+        let model = Fixed {
+            blended: Some(0),
+            unigram: Some(0),
+        };
+        super::expand_one(
+            &super::SpanEntry {
+                token: 22,
+                path: 0,
+                keys: 1,
+                chars: 1,
+                pronunciation: None,
+            },
+            super::StepCtx::new(&paths, 2..3, &model),
+            predecessor,
+            &mut oxpinyin_core::NbestStepRow::default(),
+            &mut trellis,
+            super::Branch::Unigram,
+        )
+        .unwrap();
+        let tails = trellis.tails();
+        assert_eq!(tails[0].sub, 1);
+        assert_eq!(trellis.extract(&tails[0]), [(0, 8), (1, 11), (2, 22)]);
     }
 
     /// A model answering fixed step costs, so the tests measure the trellis

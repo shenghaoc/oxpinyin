@@ -9033,11 +9033,13 @@ def glib_sort_zhuyin_options(k):
         assert k.fn('set_options', B, P, U)(k.ctx, 1 << 5)
 
 
-def glib_sort_tails(k):
+def glib_sort_tails(k, texts=GLIB_SORT_TAIL_INPUTS, options=None):
     """Parse each tail input on a fresh instance, guess and read every sentence rank."""
     glib_sort_zhuyin_options(k)
+    if options is not None:
+        assert k.fn('set_options', B, P, U)(k.ctx, options)
     out = {}
-    for text in GLIB_SORT_TAIL_INPUTS:
+    for text in texts:
         inst = k.alloc()
         parsed = k.fn('parse_more_full_pinyins', Z, P, S)(inst, text.encode())
         guessed = k.fn('guess_sentence', B, P)(inst)
@@ -9074,6 +9076,20 @@ def _(k):
 for _mode in ('pinyin', 'zhuyin'):
     case('glib-sort-tails-' + _mode, mode=_mode, control=True, issues=('921',))(glib_sort_tails)
     case('glib-sort-candidates-' + _mode, mode=_mode, control=True, issues=('927',))(glib_sort_candidates)
+
+
+# S1/S2 of the witnessed algorithm-precondition amendment (2026-10-28 UTC).
+# Reuse the complete-rank observer for the captured witnesses and table-off controls.
+for _site, _text in (('resplit', 'jianai'), ('divided', 'bian')):
+    for _enabled, _options in (('on', 0x1fe00198), ('off', 0x1fe00018)):
+        case('trellis-adjusted-score/%s-%s-%s' % (_site, _text, _enabled),
+             control=True, issues=('1347',))(
+                 lambda k, text=_text, options=_options: glib_sort_tails(k, (text,), options))
+
+# Keep the full diagnostic envelope when registering the intentional S1/S2 differences.
+for _name in ('nbest-user-table-order-pinyin', 'table-conf-lambda-one-and-a-half',
+              'table-conf-lambda-two', 'table-conf-lambda-million'):
+    CASES[_name].update(stderr=True, policy_record='trellis-adjusted-cost-s1-s2.md')
 
 
 # #1275: the pin's SORT_BY_PINYIN_LENGTH key is `guint8 len = m_end -

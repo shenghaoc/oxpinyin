@@ -4131,3 +4131,13 @@ class (b)/(c); do not reproduce the pin's unsafe surrounding defect.
 - [Complete tool decimal fields](1297-tool-decimals.md): revert target, host `atoi`/`atol`.
 - [Native nonfinite tool formatting](1297-tool-special-values.md): revert target, pin's formatted call.
 - [Complete table words and exact enum tokens](1297-table-words.md): revert target, `%255s` and C-string comparisons.
+
+## Pinyin trellis adjusted cost — S1/S2 repair (2026-10-28 UTC)
+
+[Pinyin trellis adjusted-cost comparison](trellis-adjusted-cost-s1-s2.md)
+records the repair authorized by the witnessed algorithm-precondition amendment:
+ordered adjusted cost for node heaps and preselection batch-position ties for
+beam/final-tail selection. Four exact BDB case pairs report `POLICY-ACCEPTED`,
+each attributed in that record. This is the amendment's product-level ruling,
+not a new exception class. Row 83 remains historical; zhuyin, tail ordering,
+node front eviction, frequency wrap and lambda validation are unchanged.
