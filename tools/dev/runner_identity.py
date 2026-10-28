@@ -26,7 +26,7 @@ from .runners import Context, Finished
 
 STRICT = ('-std=gnu11', '-Wall', '-Wextra', '-Werror', '-O2')
 SIDES = ('pin', 'patched', 'subject', 'stub', 'none')
-PLACEHOLDERS = ('so', 'data', 'pindata', 'user', 'empty', 'tmp')
+PLACEHOLDERS = ('so', 'data', 'pindata', 'here', 'user', 'empty', 'tmp')
 
 
 @dataclass(frozen=True)
@@ -40,7 +40,8 @@ class Case:
 
 @dataclass(frozen=True)
 class Driver:
-    """A driver's runner build and cases. TEMPLATES are its mkdtemp prefixes;
+    """A driver's runner build and cases. TEMPLATES are its mkdtemp prefixes, absolute
+    or as the driver names them relative to its working directory;
     PIN_TABLES 'subject' gives the pin the subject's tables, as its registry row does."""
     cases: tuple[Case, ...]
     templates: tuple[str, ...] = ()
@@ -59,7 +60,8 @@ class Observation:
     left: tuple[str, ...]
 
 
-# {pindata} lets the subject open the pin's tables, which lack interpolation2.text.
+# {pindata} lets the subject open the pin's tables, which lack interpolation2.text;
+# {here} is the working tree's tools/bisection, which holds the drivers' case files.
 USER_DIR = (('SCHEME_DIFF_USER_DIR', '{user}'),)
 
 # A missing symbol runs against the stub; usage and dlopen refusals need no library.
@@ -125,6 +127,31 @@ DRIVERS = {
                Case('init-failure', ('pin', 'subject'), ('{so}', '{empty}')),
                Case('dlopen-failure', ('none',), ('{empty}/absent.so', '{data}')),
                Case('usage', ('none',), ()))),
+    'nbest-train-diff': Driver(
+        templates=('/tmp/nbesttraindiff-user-', 'nbest-witness-user-', 'nbest-surface-user-'),
+        cases=(Case('default', ('pin', 'subject')),
+               Case('rounds', ('pin', 'subject'),
+                    env=(('NBESTTRAINDIFF_ROUNDS', '2'), ('NBESTTRAINDIFF_USER_ROUNDS', '2'))),
+               Case('witness-cases', ('pin', 'subject'),
+                    ('{so}', '{data}', '--cases', '{here}/nbest-precondition-cases.tsv')),
+               *(Case(f'surface-{name}', ('pin', 'subject'),
+                      ('{so}', '{data}', '--surface-case', name, *row))
+                 for name, row in (('divided-bian-on', ('full', '1', '0x1fe00198', 'bian')),
+                                   ('double-xm-on', ('double', '2', '0x1fe00198', 'xm')))),
+               Case('surface-unsupported', ('pin',),
+                    ('{so}', '{data}', '--surface-case', 'x', 'full', '2', '0x1fe00198', 'bian')),
+               Case('missing-symbol', ('stub',)),
+               Case('missing-symbol-cases', ('stub',),
+                    ('{so}', '{data}', '--cases', '{here}/nbest-precondition-cases.tsv')),
+               Case('init-failure', ('pin', 'subject'), ('{so}', '{empty}')),
+               *(Case(f'bad-{variable.lower()}-{label}', ('none',), ('{empty}/absent.so', '{data}'),
+                      ((variable, value),))
+                 for variable in ('NBESTTRAINDIFF_ROUNDS', 'NBESTTRAINDIFF_USER_ROUNDS')
+                 for label, value in (('empty', ''), ('0', '0'), ('9', '9'), ('junk', '3junk'),
+                                      ('overflow', '99999999999999999999'))),
+               Case('dlopen-failure', ('none',), ('{empty}/absent.so', '{data}')),
+               Case('bad-mode', ('none',), ('{empty}/absent.so', '{data}', '--bogus')),
+               Case('usage', ('none',), ('{empty}/absent.so',)))),
 }
 
 
@@ -226,6 +253,7 @@ def observe(ctx: Context, driver: Driver, binary: Path, stage: Path, case: Case,
         directory.mkdir()
     shutil.copy2(binary, stage)
     values = dict(so=str(library[0] or ''), data=str(library[1]), pindata=str(pin_data),
+                  here=str(ctx.here),
                   **{name: str(path) for name, path in directories.items() if name != 'cwd'})
     argv = [str(stage), *(argument.format(**values) for argument in case.args)]
     environment = dict(ctx.env, TMPDIR=str(directories['tmp']),
@@ -259,7 +287,7 @@ def report(ctx: Context, name: str, base: Observation, head: Observation) -> Non
                  list(after) if field == 'left' else after.decode(errors='replace').splitlines())
         for line in list(difflib.unified_diff(*lines, f'base/{name}/{field}', f'head/{name}/{field}',
                                               lineterm=''))[:60]:
-            ctx.emit('  ' + line)
+            ctx.emit('  ' + line[:200])
 
 
 def identity(ctx: Context, args: Sequence[str]) -> int:
