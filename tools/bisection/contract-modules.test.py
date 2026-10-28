@@ -75,6 +75,16 @@ MODULES = {
     'contract_allocator_register': ((), ('contract_abi',)),
     'contract_cursor_sentence_refusals': ((), ('contract_abi',)),
     'contract_duplicate_phrase_add': ((), ('contract_abi', 'contract_fixtures')),
+    'contract_zhuyin_facade_twins': ((), ('contract_abi',)),
+    'contract_scheme_library_refusals': ((), ('contract_abi',)),
+    'contract_zero_consumption': ((), ('contract_abi',)),
+    'contract_row54_empty_forcing': ((), ('contract_abi',)),
+    'contract_glib_arrays': ((), ('contract_abi',)),
+    'contract_reading_256th': ((), ('contract_abi',)),
+    'contract_auxiliary_text': ((), ('contract_abi',)),
+    'contract_combined_import_nbest': ((), ('contract_abi',)),
+    'contract_stored_total_overflow': ((), ('contract_abi', 'contract_fixtures')),
+    'contract_zhuyin_per_entry': ((), ('contract_abi',)),
     'contract_execution': (('ordinary_jobs', 'positive_jobs', 'terminate_group', 'user_dir_listing'), ()),
     'contract_runner': (('Cancelled',), ()),
     'contract_kit': ((), ('contract_abi',)),
@@ -378,6 +388,66 @@ class ModuleBoundaryTests(unittest.TestCase):
                 self.assertEqual(end - start + 1, count)
                 self.assertEqual((names[start - 1], names[end + 1]), (before, after))
                 self.assertEqual({driver.CASES[name]['fn'].__module__ for name in names[start:end + 1]}, {module})
+
+    def test_following_case_sections_keep_their_positions_and_owners(self):
+        names = list(driver.CASES)
+        sections = (
+            ('contract_zhuyin_facade_twins', 'non-utf8-directory-zhuyin-both', 'user-library-token-unload-pinyin',
+             'zhuyin-alloc-instance-after-fini', 'stderr-save-one-tmp-blocked', 11),
+            ('contract_scheme_library_refusals', 'facade-total-zero', 'abort-set-full-pinyin-scheme-0',
+             'scheme-and-library-neighbours', 'abort-get-sentence-past-rows', 13),
+            ('contract_scheme_library_refusals', 'toned-initial-neighbours', 'abort-zhuyin-chewing-scheme-0',
+             'abort-zhuyin-unload-phrase-library-255', 'abort-zhuyin-get-left-zhuyin-offset-past-matrix', 10),
+            ('contract_zero_consumption', 'row54-forcing-zhuyin-no-empty', 'zero-consumption-pinyin-full_pinyins-n',
+             'zero-consumption-zhuyin-chewings-empty-prefix', 'parse-constraints-pinyin-changed-suffix-direct', 24),
+            ('contract_row54_empty_forcing', 'alloc-register-zhuyin_get_pinyin-real-key',
+             'row54-empty-pinyin-full_pinyins', 'row54-forcing-zhuyin-no-empty', 'zero-consumption-pinyin-full_pinyins-n', 16),
+            ('contract_glib_arrays', 'issue542-stale-user_phrase_index.bin-zhuyin', 'glib-924-array-lifecycle-pinyin',
+             'glib-924-segment-fatal-critical-zhuyin', 'glib-924-oom-array-growth-pinyin', 6),
+            ('contract_glib_arrays', 'glib-924-oom-array-growth-zhuyin', 'glib-924-null-array-lookup-pinyin',
+             'glib-924-null-array-pronunciation-zhuyin', 'issue542-phrase-segment-invalid-utf8-pinyin', 4),
+            ('contract_reading_256th', 'stored-count-headers-user-zhuyin', 'wrap-256th-reading',
+             'wrap-256th-reading-zhuyin-same-iterator', 'zhuyin-add-phrase-library-16', 4),
+            ('contract_auxiliary_text', 'sentence-with-prefix-bytes', 'aux-text-full-parse', 'aux-text-mixed-parses',
+             'system-zhuyin-only-readings', 14),
+            ('contract_combined_import_nbest', 'issue759-export-open-across-import-user',
+             'combined-library-sixth-add-pinyin', 'nbest-user-table-order-zhuyin', 'j-choose-nbest-diff-result', 10),
+            ('contract_stored_total_overflow', 'mask-out-after-compact-keeps-reload-offset',
+             'stored-total-overflow-below', 'log-headers-chained-both-apply', 'user-gram-unsorted-guess', 6),
+            ('contract_zhuyin_per_entry', 'guess-candidates-short-user-gram-dynamic-adjust-off',
+             'zhuyin-parse-chewing-key', 'zhuyin-token-get-phrase-optional-out', 'phrase-text/pinyin-valid-candidate', 16),
+        )
+        for module, before, first, last, after, count in sections:
+            with self.subTest(module=module, first=first):
+                start, end = names.index(first), names.index(last)
+                self.assertEqual(end - start + 1, count)
+                self.assertEqual((names[start - 1], names[end + 1]), (before, after))
+                self.assertEqual({driver.CASES[name]['fn'].__module__ for name in names[start:end + 1]}, {module})
+
+    def test_shared_helper_cases_keep_driver_ownership_and_registration_order(self):
+        names = list(driver.CASES)
+        groups = (
+            ('glib-924-segment-fatal-critical-zhuyin', 'glib-924-oom-array-growth-pinyin',
+             'glib-924-oom-array-growth-zhuyin', 'glib-924-null-array-lookup-pinyin', 2, driver.glib_924_oom_array.__code__),
+        )
+        for before, first, last, after, count, helper_code in groups:
+            with self.subTest(first=first):
+                start, end = names.index(first), names.index(last)
+                self.assertEqual(end - start + 1, count)
+                self.assertEqual((names[start - 1], names[end + 1]), (before, after))
+                helper_codes = {helper_code, *(c for c in helper_code.co_consts if isinstance(c, types.CodeType))}
+                for name in names[start:end + 1]:
+                    fn = driver.CASES[name]['fn']
+                    self.assertEqual(fn.__module__, driver.__name__)
+                    self.assertIn(fn.__code__, helper_codes)
+
+    def test_shared_oom_registration_receives_the_current_driver_function(self):
+        glib = sys.modules['contract_glib_arrays']
+        with patch.object(glib, 'register_oom', wraps=glib.register_oom) as oom:
+            spec = importlib.util.spec_from_file_location('contract_diff', HERE / 'contract-diff.py')
+            fresh = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(fresh)
+        self.assertIs(oom.call_args.kwargs['glib_924_oom_array'], fresh.glib_924_oom_array)
 
     def test_timing_summary_totals_the_timings_the_driver_holds_now(self):
         with patch.object(driver, 'TIMINGS', [dict(execute=2, side='pin'), dict(execute=3)]):

@@ -88,6 +88,14 @@ class EquivalenceTests(unittest.TestCase):
             with self.subTest(moved=moved), self.assertRaises(AssertionError):
                 equivalence.compare_snapshots(base, {**head, 'moved': moved}, {'a': 'family'})
 
+    def test_retained_helper_registrations_are_compared(self):
+        base = dict(records=[], tags='t', skips='s', selections=[], helpers={}, moved={},
+                    retained={'family:helper=1': {'cases': ['one'], 'shape': 'original'}})
+        equivalence.compare_snapshots(base, dict(base), 'family')
+        for change in ({'cases': ['two'], 'shape': 'original'}, {'cases': ['one'], 'shape': 'changed'}):
+            with self.subTest(change=change), self.assertRaisesRegex(AssertionError, 'retained driver helpers'):
+                equivalence.compare_snapshots(base, {**base, 'retained': {'family:helper=1': change}}, 'family')
+
     def test_ast_keeps_decorators_and_body_and_only_normalizes_declared_keyword_state(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / 'probe.py'
@@ -197,6 +205,48 @@ class EquivalenceTests(unittest.TestCase):
         for specs in (['one'], ['one=0'], ['one=-1'], ['one=1', 'one=1'], ['bad-name=1']):
             with self.subTest(specs=specs), self.assertRaises(ValueError):
                 equivalence.module_counts(specs)
+
+    def test_retained_helper_specs_require_unique_modules_helpers_and_positive_counts(self):
+        self.assertEqual(equivalence.retained_counts(['family:helper=2']), {'family:helper=2': ('family', 'helper', 2)})
+        for specs in (['family=1'], ['family:helper=0'], ['bad-name:helper=1'],
+                      ['family:helper=1', 'family:helper=1'], ['one:helper=1', 'two:helper=1']):
+            with self.subTest(specs=specs), self.assertRaises(ValueError):
+                equivalence.retained_counts(specs)
+
+    def test_retained_helper_identifies_only_callbacks_created_from_its_code(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(sys.modules):
+            root = Path(tmp)
+            path = root / 'tools/bisection/contract-diff.py'
+            path.parent.mkdir(parents=True)
+            path.write_text('NO_ABORT = object()\n\n'
+                            'def helper(value):\n    def run(k):\n        return value\n    return run\n\n'
+                            'def other(k):\n    return 3\n\n'
+                            'CASES = {"one": {"fn": helper(1)}, "two": {"fn": helper(2)},\n'
+                            '         "other": {"fn": other}}\n')
+            driver = equivalence.load_driver(root, 'bdb')
+            result = equivalence.retained_helpers(driver, ['family:helper=2'])
+            self.assertEqual(result['family:helper=2']['cases'], ['one', 'two'])
+            with self.assertRaisesRegex(AssertionError, 'has 2 distinct retained cases, expected 1'):
+                equivalence.retained_helpers(driver, ['family:helper=1'])
+            driver.CASES['two']['fn'] = driver.other
+            with self.assertRaisesRegex(AssertionError, 'has 1 distinct retained cases, expected 2'):
+                equivalence.retained_helpers(driver, ['family:helper=2'])
+            driver.helper.__module__ = 'elsewhere'
+            with self.assertRaisesRegex(TypeError, 'not a driver function'):
+                equivalence.retained_helpers(driver, ['family:helper=1'])
+
+    def test_driver_file_binding_is_normalized_only_for_the_actual_driver(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(sys.modules):
+            root = Path(tmp)
+            path = root / 'tools/bisection/contract-diff.py'
+            path.parent.mkdir(parents=True)
+            path.write_text('def read_path(k):\n    return __file__\n')
+            driver = equivalence.load_driver(root, 'bdb')
+            result = equivalence.function_shape(driver.read_path, driver, self.sentinel, (), ())
+            self.assertEqual(result['bindings']['__file__'], ['driver-file'])
+            driver.__file__ = str(root / 'wrong.py')
+            with self.assertRaisesRegex(TypeError, 'unrecognized __file__ binding'):
+                equivalence.function_shape(driver.read_path, driver, self.sentinel, (), ())
 
     def test_discovery_fails_when_a_module_has_the_wrong_case_count(self):
         with tempfile.TemporaryDirectory() as tmp, patch.dict(sys.modules):
