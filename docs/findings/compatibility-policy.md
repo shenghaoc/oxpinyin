@@ -54,6 +54,12 @@ difference is recorded without approval. Product-level changes need a
 ruling or Stage 3. This amends the 2026-10-14 stages ruling; the
 platform, boundary and maths wording is under "Native Rust
 implementation". The 2026-10-24 wording above is history.
+**Amended 2026-10-28 UTC (maintainer):** external I/O for the library
+and tools follows the pin's call. The #1304 language-artefact treatment
+no longer admits an external-I/O difference. Tool binaries are drop-in
+replacements for the pin's utilities. The current implementation and
+historical case markers still need the staged work in
+[external-io-boundary.md](external-io-boundary.md).
 
 ## Native Rust implementation
 
@@ -63,9 +69,37 @@ oxpinyin is a native Rust implementation of libpinyin and libzhuyin, not
 an emulator of the pin; it reproduces the pin's outward behaviour, at the
 C API and in persistent data, in idiomatic Rust.
 
-**Language artefacts.** The programming language is an implementation
-detail: what a user or a developer calling the shared object observes is
-the behaviour, and oxpinyin implements it in idiomatic Rust. No code is
+**External I/O (2026-10-28 UTC).** Every call across the program's
+edge, in library and tools and in both directions, is the pin's call:
+ISO C/POSIX through the host C library; GLib when the pin calls GLib;
+and C++ streams through a C++ shim for tools. A Rust equivalent is
+allowed only when source for both implementations proves identical
+observable results for every input. If equivalence is unsettled, use the
+pin's call. The inventory's NOT EQUIVALENT and UNSETTLED verdicts stand.
+The calls are placed in the planned `oxpinyin-input` boundary; DBM
+backends remain in `oxpinyin-store` and C ABI marshalling in the C
+adapters. Use narrow hand-written `extern "C"` declarations, a small C
+shim built with the existing `cc` build dependency for `FILE *`, macros,
+`off_t` and locale constants, and a tool-only C++ shim. Do not add a
+direct `libc` crate dependency.
+
+The call rule does not reproduce an undefined read or an abort in the
+pin's surrounding code. Existing class (b)/(c) records, including
+`1297-punct-words` and assertion refusals, stand. `LC_NUMERIC` row 39
+stands. Row 109's mapping call is a revert target; the post-fini
+residual mapping is a separate open question. The prior ruling on
+incidental `errno` after a successful exported call remains; it does not
+excuse using a different external I/O call.
+
+The tools are drop-in replacements for the pin's utilities, with the
+same binary names, options, help, messages, inputs and outputs. K-mixture
+working models use the pin's backend DBM through `oxpinyin-store`.
+`scripts2/` Python build generators are outside this tool scope.
+
+**Internal language artefacts.** Outside external I/O, the programming
+language is an implementation detail: what a user or a developer calling
+the shared object observes is the behaviour, and oxpinyin implements it
+in idiomatic Rust. No code is
 written to reproduce a behaviour of another programming language or of a
 library written for one: C or C++ semantics (an integer-returning
 comparator, unsigned wrap-around, float-to-integer truncation, an
@@ -93,17 +127,18 @@ a logic defect of libpinyin that idiomatic Rust reproduces as written)
 is not an artefact. It is reproduced bug for bug, and changing it needs
 a maintainer ruling or a Stage 3 feature.
 
-Where the pin's result depends on the host or its libc, oxpinyin uses
-Rust or the host's native facilities and need not reproduce the reference
-image's libc; the difference is recorded as platform-dependent.
+Where an external call's result depends on the host or its libc,
+oxpinyin calls the same native facility on that host; it does not
+substitute the reference image's libc. Internal host-dependent results
+follow the remaining language/runtime policy and are recorded as such.
 Platform-independent logic must not differ, and output stays deterministic
 on each host (constitution §6).
 This clause does not reverse an existing ruling, including `LC_NUMERIC`
 (row 39).
 
-C and GLib interoperability machinery (ABI objects, ownership
-conventions, diagnostics and boundary encodings) belongs in the C
-adapters; database interoperability belongs in the storage adapters.
+C ABI objects, ownership conventions and boundary encodings belong in
+the C adapters; external I/O belongs in `oxpinyin-input`; database
+interoperability belongs in `oxpinyin-store`.
 Core and engine code implement domain semantics in native Rust, even
 where those semantics are observable through the C interfaces. The C
 ABI, ownership, diagnostics and persistent data keep their existing
@@ -244,7 +279,8 @@ That goal sets the default: **oxpinyin reproduces the pin.** Divergence
 is not a design freedom to be exercised where the Rust is nicer. It is
 an exception that has to be argued into one of the three live classes
 below, (a)–(c), or into the recorded language/runtime-quirk exception
-(outside the classes), which covers every language artefact; everything
+(outside the classes), which covers internal language artefacts, not
+external I/O; everything
 else is a defect to be reverted.
 Class (d) was retired on 2026-09-06; its text is kept below as a record
 and no entry may be classified under it.
@@ -396,20 +432,22 @@ signatures is `docs/findings/abi-reference.md`.
 
 ## The language/runtime-quirk exception — outside the classes
 
-Maintainer rulings, 2026-10-24 UTC. The exception is defined by these
-rulings, not by a list of C mechanisms:
+Maintainer rulings, 2026-10-24 UTC, amended 2026-10-28 UTC. These
+internal-behaviour rulings do not override the external-I/O call rule:
 
 1. oxpinyin follows libpinyin’s outward behaviour unless that behaviour is
    against Rust.
 2. That behaviour is reproduced in natural, efficient Rust. Never write
-   inefficient code to imitate GLib, libc or C++ behaviour or internals.
+   inefficient code to imitate internal GLib, libc or C++ behaviour or
+   internals. External I/O instead uses the pin's call where equivalence
+   is not proved.
 3. Use Rust’s `std` maths at full speed. This is already recorded under
    class (a) above; cross-reference it, don’t duplicate it.
 4. No specialised maths dependencies (SIMD crates and the like).
 5. (2026-10-26 UTC, #1303.) No Rust is written to imitate another
-   language or a library written for one. A language artefact is not
-   reproduced on valid or malformed input; the difference is recorded
-   without approval.
+   language or a library written for one in internal behaviour. An
+   internal language artefact is not reproduced on valid or malformed
+   input; the difference is recorded without approval.
 
 The exception is outside the numbered classes: it changes no C-facing
 contract, so it is neither (a), (b) nor (c). It may change behaviour on
@@ -417,9 +455,10 @@ valid input when the difference is a language artefact; a product-level
 change is never a quirk (limb 4).
 
 **The test.** Would a language-neutral requirement for the behaviour
-mention it? If not, it is a language artefact and is not reproduced. If
-so, it is product behaviour, produced with idiomatic Rust — a byte scan,
-a raw comparison, `Vec<u8>` instead of `String` — never by emulating a
+mention it? Outside external I/O, if not, it is a language artefact and
+is not reproduced. If so, it is product behaviour, produced with
+idiomatic Rust — a byte scan, a raw comparison, `Vec<u8>` instead of
+`String` — never by emulating a
 GLib, libc or C++ mechanism.
 
 **Preserved exactly, with no quirk exception:** the C ABI and ABI
@@ -428,7 +467,7 @@ every other GLib-owned structure or allocation), every exported symbol,
 the on-disk system and user formats, data ownership, and observable
 product behaviour on valid supported input. A proposed change to any
 of these is not a quirk. Valid-input behaviour differs only where the
-difference is a language artefact; the others never change.
+difference is an internal language artefact; the others never change.
 
 **Decision order.** Every proposed difference is decided in this order;
 the first matching limb wins:
@@ -441,7 +480,10 @@ the first matching limb wins:
 2. **Class (a), (b) or (c).** If it is math, memory safety or
    availability, classify it in that class and follow the class's
    obligations.
-3. **Language artefact.** The programming language is an implementation
+3. **External I/O and internal language artefacts.** External I/O uses
+   the pin's call unless source for both sides proves a Rust equivalent
+   for every input. The following language-artefact rule applies only
+   outside that boundary. The programming language is an implementation
    detail: what a user or a developer calling the shared object observes
    is the behaviour, and oxpinyin implements it in idiomatic Rust. No
    code is written to reproduce a behaviour of another programming
@@ -468,12 +510,9 @@ the first matching limb wins:
    the reachable path and names the cases; one record does not admit
    another by analogy.
 
-   **Adapter placement (2026-10-24 UTC, #1182).** C, C++ and GLib
-   interoperability, and C-facing encodings, live only in the consumer C API
-   adapters (`oxpinyin-capi`, `oxpinyin-zhuyin-capi`,
-   `oxpinyin-capi-marshal`, and their shared `oxpinyin-facade` layer)
-   and the store backend adapters
-   (`oxpinyin-data` and `oxpinyin-user`). Core and engine types carry only
+   **Adapter placement (amended 2026-10-28 UTC).** External I/O calls
+   belong in `oxpinyin-input`, DBM backends in `oxpinyin-store`, and C ABI
+   marshalling in the C adapters. Core and engine types carry only
    what the pin's pre-C operations need: the stored length read by
    `_compute_phrase_length`; the outward code points read by candidate
    comparison and deduplication, sentence concatenation, export and the
@@ -532,8 +571,10 @@ The differential disposition vocabulary is:
   the child that first needs it adds the case marker; until then the
   case is selected by ID and judged against the record, not against
   `MATCH`.
-- **`HOST-DEPENDENT`** — the narrower existing disposition for the four
-  host-libc `%f` cases (row 78).
+- **`HOST-DEPENDENT`** — the existing disposition for the four
+  host-libc `%f` cases (row 78). Its historical marker does not excuse a
+  different scanner under the 2026-10-28 external-I/O ruling; the owning
+  implementation stage must update the cases after #1175's extraction.
 - **`SKIP`**, **`INVALID`**, **`TIMEOUT`** — unchanged.
 
 Historical case evidence is never removed when a disposition changes;
@@ -584,8 +625,8 @@ exceptions apply to.
 > `docs/testing/oracle-environment.md`) —
 > except where one of the named exceptions (a)/(b)/(c) ((d) retired
 > 2026-09-06) or a recorded language/runtime-quirk exception — every
-> language artefact, on valid or malformed input (2026-10-26 UTC,
-> #1303) — explicitly applies. Exporting a symbol that returns a wrong value is worse than
+> internal language artefact, on valid or malformed input (2026-10-26 UTC,
+> #1303; external I/O excluded 2026-10-28) — explicitly applies. Exporting a symbol that returns a wrong value is worse than
 > not exporting it: the consumer gets a silent wrong answer instead of a
 > link error. **A stub returning `false` is not compliance —
 > it is a defect.**
@@ -652,6 +693,16 @@ and rows 39–44 on 2026-09-27 by the round-2 reconciliation (#573).
 Every row from 17 on now has a register entry (`upstream-divergences.md`,
 "Entries registered 2026-09-27 UTC"). The work order for the
 revert targets is `revert-plan.md`.
+
+**2026-10-28 UTC:** row 109's historical CLOSED label and its statement
+that the mapping difference need not be reproduced are superseded for
+the mapping call: it is a **REVERT TARGET**. The residual mapping after
+fini is separately open, not decided. Row 39 and class (b)/(c) rows
+remain in force. The external scanner/writer records are listed in
+[the boundary finding](external-io-boundary.md); their old case markers
+remain until their implementation stages update them. Row 78's dated
+scanner descriptions and host-dependent markers are historical evidence,
+not proof that the current Rust parser follows the newly required call.
 
 | # | Entry | Class | Basis |
 | --- | --- | --- | --- |
@@ -767,7 +818,7 @@ revert targets is `revert-plan.md`.
 | 106a | A prediction candidate list over a system item a journal REMOVE took out of its sub-index (#1231) | **(b)** — NULL dereference; the pin segfaults with two or more pre-dedup rows, no safe construction reproduces it | registered 2026-10-25 UTC. The same missing-item state as row 106, reached by `_compute_predicted_prefix_candidates` (`src/pinyin.cpp:2389-2405` at 074a2219): the prefix pass calls `get_phrase_item` and ignores its result (`:2392`), so the loop-wide `PhraseItem` keeps the previous success's length, or the default zero, for the gate `> m_prefix_len * 2 + 1`; every successful read updates it before the check, including a read the check then skips (`:2393-2396`); a failed read leaves it unchanged. An appended missing token starts with `m_phrase_string = NULL` (`:107-115`); `_compute_phrase_strings_of_items` ignores the failed `_token_get_phrase` (`:2018-2022`, `:1635-1637`), so the NULL reaches `_remove_duplicated_items_by_phrase_string`'s `strcmp` (`:2041-2068`, `:2082`) when the pre-dedup list has two or more rows, including bigram rows and duplicate tokens. With exactly one row GLib's singleton sort calls no comparator and dedup saves the first row (`:2071-2080`), so the NULL row survives; the exported getters then answer count 1, type `PREDICTED_PREFIX_CANDIDATE`, `pinyin_get_candidate_string` true with NULL, `pinyin_token_get_phrase` false with both outputs unchanged, and `pinyin_is_user_candidate` false (`pinyin.cpp:2845-2885`, `:3712-3718`). `pinyin_choose_predicted_candidate` takes the prefix branch after `FacadePhraseIndex::add_unigram_frequency` advanced the loaded facade total by 483 modulo 2^32 and the sub-index write failed (`:2608-2616`, `phrase_index.h:628-634`); it returns true, writes no bigram, and leaves the total unchanged when the library was unloaded (no sub-index). Maintainer ruling 2026-10-25: reproduce the sole result and its choose-side effects; with two or more pre-dedup rows take row 106's answer (the missing token adds no candidate, normal return, no warning); a missing token the stale length skips adds nothing; no stale post-filter length or frequency cache is observable outside class (b). oxpinyin reproduces the filter as a plain `last_read_length` in `select_prefix_rows` (`crates/oxpinyin-capi/src/predict.rs`), keeps a sole missing row as a snapshot row with `TextSpan::NULL`, drops missing rows when any other pre-dedup row exists, and advances the facade total by 483 in `pinyin_choose_predicted_candidate` (`crates/oxpinyin-capi/src/candidates.rs`) through `RuntimeDict::add_unigram_delta`. The `.or(fallback)` phrase-table key text in `merged_suggestions` is removed; an absent item now reaches the caller as `None`. Held by `removed-predict-sole-pinyin`, `removed-predict-choose-pinyin`, `removed-predict-class-b-pinyin` (crash: pin SIGSEGV, subject true with the live row) and `removed-predict-stale-skip-pinyin` of `contract-diff.py`; bdb is the reference cell (the stale case is bdb-only by registration), and the other three also MATCH on kc and tkrzw. The same implementation applies the pin's `pinyin_is_user_candidate` type gate (`pinyin.cpp:3713-3715`), fixing a separate pre-existing defect where predicted bigram or prefix rows with a `USER_DICTIONARY` token answered true; `predicted-bigram-is-user-candidate` holds the false answer. |
 | 107 | A system journal record names a token the library does not hold, or leaves an item whose header names more bytes than were stored: REMOVE dereferences NULL, a growing MODIFY after an earlier MODIFY does too, and a later `get_phrase_item` reads past the item (#850) | **(b)** — NULL dereference and over-read; no safe construction reproduces them | registered 2026-10-17 UTC, amended 2026-10-18 UTC. At `074a2219`, `SubPhraseIndex::merge` (`src/storage/phrase_index.cpp:439-517`), reached at init through `_load_phrase_library` (`src/pinyin.cpp:276`, return value ignored; `zhuyin.cpp` likewise), takes `LOG_REMOVE_RECORD` (`:460-475`): `remove_phrase_item` (`:219-234`) returns at `:222-224` when `get_phrase_item` fails (`ERROR_OUT_OF_RANGE`/`ERROR_NO_ITEM`/`ERROR_FILE_CORRUPTION`, `:180-206`) and leaves `tmpitem` NULL, and `olditem != *tmpitem` (`:468`) dereferences it. MODIFY (`:477-501`) ignores `get_phrase_item`'s failure at `:478` and compares a stale `item`: before the first successful read that is the default `PhraseItem`, six zero bytes (`phrase_index.h:81-84`), so a non-zero old chunk fails the compare (`:483`, deterministic, the merge stops: the `replay-modify-absent` control, MATCH) and an all-zero one passes; a new chunk of six bytes or fewer is `memmove`d into that buffer (no item is created, the merge goes on, and a later absent MODIFY compares against the written bytes), a longer one reaches the NULL below. After an earlier MODIFY the stale `item` is that item's storage, so an old chunk equal to it passes. The same-size form then `memmove`s over the earlier item's bytes (`:495-500`; deterministic in the pin; #850 carries it), the growing form calls `remove_phrase_item` on the absent token and `assert(olditem == *tmpitem)` (`:489`) dereferences the NULL. A stale `item` into storage the pin allocated (an item an ADD or a growing MODIFY stored) is read after `add_phrase_item` may have moved `m_phrase_content`: a read of freed memory, which also ends the merge here; the shipped chunk's mapping never moves. Separately, the content is the pin's one buffer (`SubPhraseIndex::load`'s mmap'd item area, writable per `memory_chunk.h:505-506`; `add_phrase_item` copies it on the first append, `:208-217`). Neither MODIFY's new chunk nor an ADD payload is checked against its own header (`:477-501`, `:208-217`): a new chunk shorter than the visible item is written in place, so the stored header can name more bytes than were stored, and a later `get_phrase_item` (`:180-206`) hands that length out. A read that ends inside the buffer returns the following bytes (including a 0- or 1-byte payload's borrowed header when it is not last) and is reproduced; a read that ends past the buffer's end is class (b), and oxpinyin stops the merge at a record that would read it and drops it at the finish. The crash case is the last item of `gb_char.bin`'s item area with an in-place six-byte chunk whose header names 132,096 bytes, read after the trailing ADD has copied the item area: the read leaves the copy's allocation and the pin dies of SIGSEGV. Measured 2026-10-17 UTC on the bdb cell, linux/amd64: the pin is the oracle prefix from `tools/cloud/setup.sh` (`lib/libpinyin.so` SHA-256 `754499651c302efd91fe7f72dd6a791978400b268cb6206d2ebe644015721f30`, `lib/libzhuyin.so` `cf4ccbce9f70f6c7e412b92a52a243ba64fdea1ff197cbc44019c6b85650d53b`, equal to `tools/oracle/oracle-pin.txt`); the harness ran each case once per side, and `pinyin_init`/`zhuyin_init` died of SIGSEGV (exit -11, empty stderr) on the four absent-token cases and on `replay-modify-header-overlong-{pinyin,zhuyin}` (the last item of `gb_char.bin`'s item area, an in-place six-byte chunk whose header names 132,096 bytes, read after the trailing ADD has copied the item area; the read leaves the copy's allocation). oxpinyin keeps its answer: the REMOVE of an absent token is a no-op and the merge goes on; the growing stale MODIFY and the absent default's growing form stop at the record like any failed compare, the earlier records staying applied; the all-zero default's same-size writes go on and create no entry; an over-long item is skipped at the finish. Held by `replay-remove-absent-{pinyin,zhuyin}`, `replay-modify-absent-stale-grow-{pinyin,zhuyin}`, `replay-modify-absent-default-grow-{pinyin,zhuyin}` and `replay-modify-header-overlong-{pinyin,zhuyin}` of `contract-diff.py` (`crash=`), by `replay-modify-absent`, `replay-modify-absent-default-{pinyin,zhuyin}` and `replay-modify-absent-default-twice-{pinyin,zhuyin}` (MATCH; the absent-token controls), and by `replay-modify-header-overlong-small-{pinyin,zhuyin}` (MATCH; the in-buffer over-read): bdb only, per the verification-cells ruling. |
 | 108 | A system journal's ADD payload is shorter than the unigram `add_phrase_item` reads (`memory_chunk.h:390`, #850) | **(c)**, both halves met (2026-10-18 UTC) | At `074a2219`, `SubPhraseIndex::merge`'s `LOG_ADD_RECORD` (`src/storage/phrase_index.cpp:451-457`) hands the payload to `add_phrase_item` (`:208-217`), which stores it, sets the slot's offset, then adds `item->get_unigram_frequency()`: `PhraseItem::get_unigram_frequency` (`phrase_index.h:124-126`) reads four bytes at offset 2 through `MemoryChunk::get_content<guint32>` (`memory_chunk.h:388-392`), whose `check_result` is `assert` in the oracle build (`pinyin_utils.h:28-30`). Any payload of 0–5 bytes aborts `pinyin_init`/`zhuyin_init` (SIGABRT) at that record. Measured 2026-10-18 UTC on the bdb cell, linux/amd64: the pin is the oracle prefix from `tools/cloud/setup.sh`; `pinyin_init`/`zhuyin_init` died of SIGABRT (exit -6) with the assert's stderr line on the 1-byte and 5-byte payloads. oxpinyin stops that library's replay at the record before applying it, keeps the earlier records applied, sets the load's short-ADD warning, and init succeeds; the pin's abort leaves no observable state to reproduce. The facade logs exactly one warning in its own domain (`SHORT_ADD_WARNING`, `crates/oxpinyin-facade/src/context.rs`) and the C ABI answers a live context. Held by `replay-short-add-{one-byte,five-bytes}-{pinyin,zhuyin}` of `contract-diff.py` (`abort=`: pin SIGABRT, subject exit 0, `ret` true with one warning): bdb only, per the verification-cells ruling. |
-| 109 | A sparse chunk's whole mapping is retained after `fini` (`memory_chunk.h:72-78`, #865) | **CLOSED** — pin resource defect, not reproduced; no compatibility exception | At 074a2219 `MemoryChunk::mmap` maps the whole file (`memory_chunk.h:470-520`) but `freemem` unmaps only `header + capacity()` (`memory_chunk.h:72-78`), so a 2^32+8 header-only chunk leaves ~4 GiB of address space mapped after `pinyin_fini`/`zhuyin_fini` (measured in the #865 report). oxpinyin's `map_chunk` maps only `header + data_len` (8 bytes here) and `MappedFile::drop` releases that mapping; the retention is a pin resource defect, not an API answer, and is not reproduced. Held by `a_sparse_chunk_maps_only_its_chunk_extent` (`crates/oxpinyin-data/src/phrase_library.rs`). |
+| 109 | A sparse chunk's whole mapping is retained after `fini` (`memory_chunk.h:72-78`, #865) | **REVERT TARGET** — pin mapping call; post-fini residual open | **Historical observation:** At 074a2219 `MemoryChunk::mmap` maps the whole file (`memory_chunk.h:470-520`) but `freemem` unmaps only `header + capacity()` (`memory_chunk.h:72-78`), so a 2^32+8 header-only chunk leaves ~4 GiB of address space mapped after `pinyin_fini`/`zhuyin_fini` (measured in the #865 report). oxpinyin's `map_chunk` maps only `header + data_len` (8 bytes here) and `MappedFile::drop` releases that mapping; the retention is a pin resource defect, not an API answer, and is not reproduced. Held by `a_sparse_chunk_maps_only_its_chunk_extent` (`crates/oxpinyin-data/src/phrase_library.rs`). |
 
 
 

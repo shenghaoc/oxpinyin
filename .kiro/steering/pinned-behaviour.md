@@ -37,6 +37,12 @@ data they point to, written lengths, handle state transitions, files
 written, bytes written to stderr, and process-wide side effects. State
 includes the on-disk user state of a same-backend user dir.
 
+External input and output calls in the library and tools use the pin's
+call unless source proves a Rust equivalent for every input. Tools have
+the pin utilities' binary names, options, help, messages, inputs and
+outputs; K-mixture working files are backend DBMs. The `scripts2/`
+Python build generators are outside this tool scope.
+
 Not compared: the `errno` a successful call leaves behind, unless the
 API gives it a meaning (ruling 2026-10-08 UTC).
 
@@ -73,11 +79,11 @@ Examples already ruled:
 - Predicted-candidate ranking and training follow the pin's own rules,
   derived from its source — not tuned until examples agree.
 
-The only departures are the classes and recorded language artefacts
-(`oxpinyin-improvements.md`): behaviour that comes from another
-language or a library written for one is not reproduced, on valid or
-malformed input. The C ABI and ownership, the on-disk formats and data
-ownership are preserved exactly.
+The only departures are the classes and recorded internal language
+artefacts (`oxpinyin-improvements.md`). External I/O follows the pin's
+call; an undefined read or abort remains subject to its class (b)/(c)
+record. The C ABI and ownership, on-disk formats and data ownership are
+preserved exactly.
 
 See `docs/findings/compatibility-policy.md`, "Native Rust implementation" (#1303).
 

@@ -7,7 +7,7 @@ inclusion: always
 |---|---|---|---|---|
 | oxpinyin-core | parser, SegmentGraph, k-best, scoring traits | forbid | yes | via engine |
 | oxpinyin-chewing | chewing/zhuyin layer: the packed chewing key, its renderers, and the frozen content tables — a dependency-free leaf *under* core, not a module over it (core depends on chewing) | forbid | yes | via capi, engine |
-| oxpinyin-data | native readers for the backend's data files — the formats a libpinyin build on that backend uses (D3 route) | deny (+mmap) | yes | via engine |
+| oxpinyin-data | native readers for the backend's data files — the formats a libpinyin build on that backend uses (D3 route) | deny (+mmap), target forbid | yes | via engine |
 | oxpinyin-user | ACID store over DefaultStore; no format-version row, matching libpinyin's unversioned user files (ruling 2026-09-08, `docs/findings/user-store.md` §4) | forbid | yes | via engine |
 | oxpinyin-engine | session API — an internal Rust surface for the in-tree C facades, tools and tests; not a supported external interface | forbid | yes | yes |
 | oxpinyin-facade | shared facade-orchestration layer (instance/context state machines, parse seams, cursor laws, the §9 user-data export materialization) consumed by both C-ABI facades; depends on core, engine, runtime and user — it holds the runtime's concrete dict/lm/user handles by value, so it forwards the whole backend feature matrix rather than staying generic over the engine traits | forbid | yes | via capi |
@@ -25,6 +25,11 @@ inclusion: always
 | oxpinyin-kmm | K-mixture-model pipeline (generate/estimate/merge/validate/prune/export/import/→interpolation) — W9 | forbid | yes | never |
 | oxpinyin-punct | punctuation-table generator (`genpunct.py` reproduction) — W9 | forbid | yes | never |
 | oxpinyin-word | word-recognition pipeline (populate/partialword/newword/markpinyin) — W9 | forbid | yes | never |
+
+**Planned:** `oxpinyin-input` owns bidirectional external calls in scoped
+unsafe modules. It is not present yet. The C facades retain ABI
+marshalling, and `oxpinyin-store` retains DBM backends. The stages and
+prerequisites are in `docs/findings/external-io-boundary.md`.
 
 **Centralized assembly:** the concrete construction of a decodable engine
 (system tables + unigram model + λ + optional user store + addon/punct
@@ -67,7 +72,9 @@ See `docs/findings/compatibility-policy.md`, "Native Rust implementation" (#1303
 **Supported external interfaces:** the libpinyin-compatible C API/ABI
 (`oxpinyin-capi`) and the libzhuyin-compatible one
 (`oxpinyin-zhuyin-capi`), and only those (maintainer ruling 2026-10-18
-UTC; `/AGENTS.md`, "External interfaces"). Every crate's Rust interface,
+UTC; `/AGENTS.md`, "External interfaces"). The pin-compatible utilities
+also have a supported tool interface under the 2026-10-28 ruling. Every
+crate's Rust interface,
 `oxpinyin-engine`'s included, is an implementation detail with no
 stability promise: published crate names hold names, nothing more. No
 cargo-public-api snapshot exists and none is enforced. Extension traits

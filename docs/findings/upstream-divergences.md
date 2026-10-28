@@ -2973,6 +2973,11 @@ that also match the parent build.
 
 ### A sparse chunk's whole mapping is retained after `fini` (#865; policy row 109)
 
+**2026-10-28 UTC:** the mapping call is a revert target under the
+external-I/O ruling. The post-fini residual is a separate open question;
+the historical observation below does not decide it. See
+[external-io-boundary.md](external-io-boundary.md).
+
 - **Upstream source cite:** `src/include/memory_chunk.h:470-520`
   (`MemoryChunk::mmap` maps the whole file) and `:72-78`
   (`MemoryChunk::freemem` unmaps only `header + capacity()`).
@@ -2987,9 +2992,11 @@ that also match the parent build.
   `header + data_len` — 8 bytes for this chunk — and `MappedFile::drop`
   releases that whole mapping. The ~4 GiB virtual-address retention is a pin
   resource defect, not an API answer, and is not reproduced.
-- **Status:** **CLOSED** — pin resource defect, not reproduced; no
-  compatibility exception. (The safe construction releases the map; it is not
-  class (b) UB.)
+- **Status:** **REVERT TARGET** for the mapping call (external-I/O
+  ruling, 2026-10-28 UTC); **OPEN QUESTION** for the post-fini residual
+  mapping. The historical reading — pin resource defect, not reproduced; no
+  compatibility exception; the safe construction releases the map and is not
+  class (b) UB — does not decide either.
 - **Held by:** `a_sparse_chunk_maps_only_its_chunk_extent`
   (`crates/oxpinyin-data/src/phrase_library.rs`, the mapping is the chunk
   extent) and the #865 sparse measurement above.
@@ -4105,14 +4112,22 @@ non-empty valid controls.
 
 ## Native scanner and tool parsing (#1297 Phase 2)
 
-- [Decimal lambda grammar](1297-table-floats.md): language artefact; source trace, affected inputs and witnesses in the record.
-- [Representable version fields](1297-table-decimals.md): language artefact; source trace, affected inputs and witnesses in the record.
-- [Configuration line boundaries](1297-table-lines.md): language artefact; source trace, affected inputs and witnesses in the record.
-- [Addon indexes in the library range](1297-addon-index.md): language artefact; source trace, affected inputs and witnesses in the record.
-- [Nonconforming decimal markers reset profiles](1297-user-decimals.md): language artefact; source trace, affected inputs and witnesses in the record.
-- [Exact database marker tokens](1297-user-token.md): language artefact; source trace, affected inputs and witnesses in the record.
-- [Punctuation values contain whole words](1297-punct-words.md): language artefact; source trace, affected inputs and witnesses in the record.
-- [Complete chunk payload writes](1297-chunk-payload.md): language artefact; source trace, affected inputs and witnesses in the record.
-- [Complete tool decimal fields](1297-tool-decimals.md): language artefact; source trace, affected inputs and witnesses in the record.
-- [Native nonfinite tool formatting](1297-tool-special-values.md): language artefact; source trace, affected inputs and witnesses in the record.
-- [Complete table words and exact enum tokens](1297-table-words.md): language artefact; source trace, affected inputs and witnesses in the record.
+The 2026-10-28 UTC external-I/O ruling makes the ten scanner, writer and
+tool entries below **revert targets**. Their dated findings and existing
+case markers preserve the earlier evidence; neither the implementation
+nor the markers change in this documentation-only update. The pin call
+and staged work are in [external-io-boundary.md](external-io-boundary.md).
+The punctuation record's undefined-read safety treatment stands under
+class (b)/(c); do not reproduce the pin's unsafe surrounding defect.
+
+- [Decimal lambda grammar](1297-table-floats.md): revert target, host `fscanf` `%f`.
+- [Representable version fields](1297-table-decimals.md): revert target, host `fscanf` `%d`.
+- [Configuration line boundaries](1297-table-lines.md): revert target, pin's ordered stream formats.
+- [Addon indexes in the library range](1297-addon-index.md): revert target, host `atoi` and pin conversion.
+- [Nonconforming decimal markers reset profiles](1297-user-decimals.md): revert target, marker `fscanf` `%d`.
+- [Exact database marker tokens](1297-user-token.md): revert target, `%255s` and `strcmp`.
+- [Punctuation values contain whole words](1297-punct-words.md): existing safety treatment stands.
+- [Complete chunk payload writes](1297-chunk-payload.md): revert target, one host `write`.
+- [Complete tool decimal fields](1297-tool-decimals.md): revert target, host `atoi`/`atol`.
+- [Native nonfinite tool formatting](1297-tool-special-values.md): revert target, pin's formatted call.
+- [Complete table words and exact enum tokens](1297-table-words.md): revert target, `%255s` and C-string comparisons.

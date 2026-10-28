@@ -7,11 +7,11 @@ inclusion: always
 source of truth and CI respects it. Distribution-packaged Rust is unsupported
 for development; bumps use a dedicated human-reviewed PR.
 
-**unsafe tiers:** data `deny` (the documented mmap exception, `// SAFETY:`
-+ module soundness note) · every other portable crate `forbid` (the
-constitution's floor for user/engine is `deny`; they sit at `forbid` in
-practice) · capi/zhuyin-capi/oracle `allow` at FFI only, `// SAFETY:` on
-every block (mechanically enforced — AGENTS.md constitution §5).
+**unsafe tiers (target):** data, core, user, engine and runtime `forbid`;
+`oxpinyin-input` permits scoped external-I/O modules; store `deny` with
+scoped backend allows; capi/zhuyin-capi/oracle allow ABI FFI. Every block
+has `// SAFETY:`. The boundary is not implemented yet: data currently
+has `deny` and its mmap exception. See AGENTS.md constitution §5.
 
 **Errors:** every public API returns `Result`; nothing panics on any input — a
 panic is a defect of the same severity as data loss. Public error enums are
@@ -47,8 +47,10 @@ under the `kyotocabinet` feature. It constructs `TreeDB`, `HashDB`,
 `noexcept` C entry points (`shim.h`) always turn a C++ exception into a
 failure return. Like libpinyin, it therefore depends on the system
 library's C++ ABI: the facades import 68 `kyotocabinet::` names, 67 of
-them among the pin's 77. Nothing else vendors or compiles C or C++ into
-oxpinyin.
+them among the pin's 77. This is the current tree. The approved future
+`oxpinyin-input` boundary adds a small C shim and a tool-only C++ stream
+shim, built with the existing `cc` build dependency, with narrow
+hand-written extern declarations and no direct `libc` crate dependency.
 
 Kyoto Cabinet left `kclangc.h` on measurement (#1118, results:
 `docs/findings/kc-shim-1118.md`). `kclangc.h` reaches every class through
