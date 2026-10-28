@@ -7,6 +7,9 @@ with --module and --case, or all cases in each module with --module-cases
 MODULE=COUNT. --injected names the shared driver objects passed to registrations.
 --retained-helper MODULE:HELPER=COUNT covers cases still created by a shared
 driver helper. Helpers can also be named with --helper for source comparison.
+--moved-helper NAME compares a driver definition that moved, unchanged, into one
+of the --helper-module modules; those modules' functions are followed as driver
+code on both sides.
 """
 import argparse
 import ast
@@ -205,9 +208,52 @@ def load_driver(root, cell):
     return driver
 
 
-def snapshot(root, cell, moved, helpers, injected, source_modules=(), retained_specs=()):
+def class_ast(value):
+    tree = ast.parse(textwrap.dedent(inspect.getsource(value)))
+    if len(tree.body) != 1 or not isinstance(tree.body[0], ast.ClassDef):
+        raise TypeError('expected a class definition for %s' % value.__qualname__)
+    return ast.dump(tree.body[0], include_attributes=False)
+
+
+def moved_helper_shapes(driver, names, helper_modules, followed):
+    """Each named driver binding with its owner and its source or value shape.
+
+    The owner is the driver for its own definitions and otherwise the one helper
+    module that binds the same object; an object bound by no or several helper
+    modules, or by a helper module that was not declared, fails closed."""
+    result = {}
+    for name in names:
+        if not hasattr(driver, name):
+            raise TypeError('driver does not bind %s' % name)
+        value = getattr(driver, name)
+        owners = [module for module in helper_modules
+                  if module in sys.modules and getattr(sys.modules[module], name, object()) is value]
+        if isinstance(value, (types.FunctionType, type)):
+            module = value.__module__
+            if module != driver.__name__ and owners != [module]:
+                raise TypeError('%s is defined in %s, which is not one declared helper module' % (name, module))
+        else:
+            if len(owners) > 1:
+                raise TypeError('%s is bound by several helper modules: %s' % (name, owners))
+            module = owners[0] if owners else driver.__name__
+        if isinstance(value, types.FunctionType):
+            shape = ['function', function_shape(value, driver, driver.NO_ABORT, (), followed)]
+        elif isinstance(value, type):
+            shape = ['class', class_ast(value)]
+        else:
+            shape = ['value', value_shape(value, driver.NO_ABORT)]
+        result[name] = {'module': module, 'shape': shape}
+    return result
+
+
+def snapshot(root, cell, moved, helpers, injected, source_modules=(), retained_specs=(), moved_helpers=(),
+             helper_modules=()):
     """Read the entire registry, selections, plans and specified source ASTs."""
     driver = load_driver(root, cell)
+    for module in helper_modules:
+        if (root / 'tools/bisection' / (module + '.py')).exists():
+            importlib.import_module(module)
+    source_modules = (*source_modules, *helper_modules)
     sentinel = driver.NO_ABORT
     records = []
     for name, case in driver.CASES.items():
@@ -249,12 +295,14 @@ def snapshot(root, cell, moved, helpers, injected, source_modules=(), retained_s
         fn = getattr(owner, name)
         helper_source[name] = {'module': fn.__module__, 'ast': function_ast(fn, injected)}
     retained = retained_helpers(driver, retained_specs)
+    shared = moved_helper_shapes(driver, moved_helpers, helper_modules, source_modules)
     return {'records': records, 'tags': digest(tags), 'skips': digest([driver.platform_skips(case)
             for case in driver.CASES.values()]), 'selections': selections, 'moved': moved_source,
-            'helpers': helper_source, 'retained': retained}
+            'helpers': helper_source, 'retained': retained, 'moved_helpers': shared}
 
 
-def child_snapshot(root, cell, moved, helpers, injected, source_modules=(), retained_specs=()):
+def child_snapshot(root, cell, moved, helpers, injected, source_modules=(), retained_specs=(), moved_helpers=(),
+                   helper_modules=()):
     args = [sys.executable, '-X', 'lazy_imports=normal', str(Path(__file__).resolve()),
             '--snapshot', str(root), '--cell', cell]
     for flag, values in (('--case', moved), ('--helper', helpers), ('--injected', injected)):
@@ -264,6 +312,9 @@ def child_snapshot(root, cell, moved, helpers, injected, source_modules=(), reta
         args.extend(('--source-module', module))
     for spec in retained_specs:
         args.extend(('--retained-helper', spec))
+    for flag, values in (('--moved-helper', moved_helpers), ('--helper-module', helper_modules)):
+        for value in values:
+            args.extend((flag, value))
     result = subprocess.run(args, cwd=root, capture_output=True, text=True)
     if result.returncode:
         raise RuntimeError('snapshot failed for %s (%s):\n%s' % (root, cell, result.stderr))
@@ -280,6 +331,8 @@ def compare_snapshots(base, head, moved_module):
             raise AssertionError('%s differs' % field)
     if base.get('retained', {}) != head.get('retained', {}):
         raise AssertionError('retained driver helpers or their registrations differ')
+    compare_moved_helpers(base.get('moved_helpers', {}), head.get('moved_helpers', {}),
+                          head.get('helper_modules', ()))
     for field in ('moved', 'helpers'):
         if base[field].keys() != head[field].keys():
             raise AssertionError('%s names differ' % field)
@@ -291,6 +344,20 @@ def compare_snapshots(base, head, moved_module):
             expected = moved_module[name] if isinstance(moved_module, dict) else moved_module
             if before['module'] != 'contract_diff' or after['module'] != expected:
                 raise AssertionError('%s module did not move as expected: %s' % (field, name))
+
+
+def compare_moved_helpers(base, head, helper_modules=()):
+    """A moved helper keeps its shape, was the driver's own and is now one helper module's."""
+    if base.keys() != head.keys():
+        raise AssertionError('moved helper names differ')
+    for name, before in base.items():
+        after = head[name]
+        if before['shape'] != after['shape']:
+            raise AssertionError('moved helper differs: %s' % name)
+        if before['module'] != 'contract_diff':
+            raise AssertionError('moved helper was not defined by the base driver: %s' % name)
+        if after['module'] == 'contract_diff' or (helper_modules and after['module'] not in helper_modules):
+            raise AssertionError('moved helper is still the driver\'s or in an undeclared module: %s' % name)
 
 
 def invocation(root, cell, args):
@@ -415,6 +482,10 @@ def main():
     parser.add_argument('--case', action='append', default=[], help='moved case ID (repeatable)')
     parser.add_argument('--helper', action='append', default=[], help='moved helper re-exported by driver')
     parser.add_argument('--injected', action='append', default=[], help='shared driver object passed to the module')
+    parser.add_argument('--moved-helper', action='append', default=[], metavar='NAME',
+                        help='driver definition moved unchanged into a --helper-module (repeatable)')
+    parser.add_argument('--helper-module', action='append', default=[], metavar='MODULE',
+                        help='module holding moved helpers; followed as driver code on both sides')
     parser.add_argument('--snapshot', type=Path, help=argparse.SUPPRESS)
     parser.add_argument('--discover', type=Path, help=argparse.SUPPRESS)
     parser.add_argument('--cell', choices=CELLS, help=argparse.SUPPRESS)
@@ -425,7 +496,8 @@ def main():
         return
     if args.snapshot:
         print(json.dumps(snapshot(args.snapshot.resolve(), args.cell, args.case, args.helper, args.injected,
-                                  args.source_module, args.retained_helper)))
+                                  args.source_module, args.retained_helper, args.moved_helper,
+                                  args.helper_module)))
         return
     if not args.base:
         parser.error('base is required')
@@ -439,18 +511,27 @@ def main():
             raise AssertionError('a case belongs to more than one module')
         modules = list(found)
         selected = [names[0] for names in found.values()]
+    elif args.moved_helper and not (args.module or args.case or args.helper):
+        moved, modules, selected = {}, [], []
     else:
         if not (args.module and args.case):
-            parser.error('--module and at least one --case, or --module-cases, are required')
+            parser.error('--module and at least one --case, --module-cases or --moved-helper are required')
         moved = {name: args.module for name in args.case}
         modules = [args.module]
         selected = [args.case[0]]
     for _, (module, _, _) in retained_counts(args.retained_helper).items():
         if module not in modules:
             parser.error('--retained-helper requires its module in the comparison')
+    if args.moved_helper and not args.helper_module:
+        parser.error('--moved-helper requires --helper-module')
+    if len(set(args.moved_helper)) != len(args.moved_helper):
+        parser.error('--moved-helper names must be unique')
     for cell in CELLS:
-        before = child_snapshot(base, cell, moved, args.helper, args.injected, retained_specs=args.retained_helper)
-        after = child_snapshot(head, cell, moved, args.helper, args.injected, modules, args.retained_helper)
+        before = child_snapshot(base, cell, moved, args.helper, args.injected, retained_specs=args.retained_helper,
+                                moved_helpers=args.moved_helper, helper_modules=args.helper_module)
+        after = child_snapshot(head, cell, moved, args.helper, args.injected, modules, args.retained_helper,
+                               args.moved_helper, args.helper_module)
+        after['helper_modules'] = args.helper_module
         compare_snapshots(before, after, moved if not args.helper else args.module)
         retained = [name for group in after['retained'].values() for name in group['cases']]
         if set(retained).intersection(moved):
@@ -458,10 +539,11 @@ def main():
         plan_cases = selected + [group['cases'][0] for group in after['retained'].values()]
         tag_hash, plans = cli_comparison(base, head, cell, plan_cases)
         print('%s: %d registrations, default %d, %d selection scenarios, %d plans, %d modules / %d cases '
-              '(%d module-owned, %d retained driver callbacks); '
+              '(%d module-owned, %d retained driver callbacks), %d moved helpers; '
               '--list-tags SHA-256 %s' %
               (cell, len(before['records']), before['selections'][0][1], len(before['selections']), plans,
-               len(modules), len(moved) + len(retained), len(moved), len(retained), tag_hash))
+               len(modules), len(moved) + len(retained), len(moved), len(retained), len(args.moved_helper),
+               tag_hash))
 
 
 if __name__ == '__main__':

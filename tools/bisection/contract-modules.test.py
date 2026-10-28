@@ -6,6 +6,7 @@ global its functions read, imports nothing from the driver, and the driver
 re-exports its names, so the cases, the tests and the other tools resolve them
 where they always did."""
 
+import ast
 import builtins
 import dis
 import importlib.util
@@ -85,6 +86,17 @@ MODULES = {
     'contract_combined_import_nbest': ((), ('contract_abi',)),
     'contract_stored_total_overflow': ((), ('contract_abi', 'contract_fixtures')),
     'contract_zhuyin_per_entry': ((), ('contract_abi',)),
+    'contract_case_helpers': (
+        ('ADDON_PROMOTE_INPUTS', 'FACADE_TOTAL', 'LIBRARY_FACADES', 'PHRASE_TEXT_WORDS', 'PREFIX_WORDS',
+         'TOKEN_REUSE_PHRASES', 'USER_ALL', 'USER_INDEX_FILES', '_DALONG', '_PAST_RANGES', '_add_user_phrase',
+         '_chunk', '_dynamic_adjust_out', '_facade_total_out', '_gram_bytes', '_gram_items', '_guess_out',
+         '_modify_header', '_plant_user_grams', '_reload_pron_keys', '_replace_system_start_row',
+         '_replace_user_bigram', '_segment_out', '_stored_library_total', '_ucs4_key', '_user_candidate_rows',
+         '_write_log', 'candidate_rows', 'd18_bigram_db', 'd18_export_phrases', 'd18_gram', 'glib_utf8',
+         'guess_rows', 'log_walk', 'phrase_table_reopen', 'phrase_text_bytes', 'predicted_rows', 'remember_export',
+         'row58_rows', 'token_phrase_of', 'token_unigram_trained', 'token_unigram_user', 'train_once',
+         'train_selected_top', 'transient_files', 'wrap_total_to_zero', 'zhuyin_guess_rows'),
+        ('contract_abi', 'contract_fixtures')),
     'contract_execution': (('ordinary_jobs', 'positive_jobs', 'terminate_group', 'user_dir_listing'), ()),
     'contract_runner': (('Cancelled',), ()),
     'contract_kit': ((), ('contract_abi',)),
@@ -448,6 +460,17 @@ class ModuleBoundaryTests(unittest.TestCase):
             fresh = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(fresh)
         self.assertIs(oom.call_args.kwargs['glib_924_oom_array'], fresh.glib_924_oom_array)
+
+    def test_shared_helpers_are_reexported_by_assignment_so_driver_code_compiles_unchanged(self):
+        tree = ast.parse((HERE / 'contract-diff.py').read_text())
+        imported = {alias.asname or alias.name for node in tree.body if isinstance(node, ast.ImportFrom)
+                    and node.module == 'contract_case_helpers' for alias in node.names}
+        assigned = {node.targets[0].id for node in tree.body if isinstance(node, ast.Assign)
+                    and isinstance(node.value, ast.Attribute) and isinstance(node.value.value, ast.Name)
+                    and node.value.value.id == 'contract_case_helpers'
+                    and node.value.attr == node.targets[0].id}
+        self.assertEqual(imported, set())
+        self.assertEqual(assigned, set(MODULES['contract_case_helpers'][0]))
 
     def test_timing_summary_totals_the_timings_the_driver_holds_now(self):
         with patch.object(driver, 'TIMINGS', [dict(execute=2, side='pin'), dict(execute=3)]):

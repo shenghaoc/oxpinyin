@@ -248,6 +248,67 @@ class EquivalenceTests(unittest.TestCase):
             with self.assertRaisesRegex(TypeError, 'unrecognized __file__ binding'):
                 equivalence.function_shape(driver.read_path, driver, self.sentinel, (), ())
 
+    def moved_helper_tree(self, root, driver_source, helpers=None, extra=None):
+        """Write a driver (and optional helper modules) and load the driver as contract_diff."""
+        directory = root / 'tools/bisection'
+        directory.mkdir(parents=True)
+        (directory / 'contract-diff.py').write_text('NO_ABORT = object()\nCASES = {}\n' + driver_source)
+        for name, source in (helpers or {}).items():
+            (directory / (name + '.py')).write_text(source)
+        for name in (helpers or {}):
+            sys.modules.pop(name, None)
+        return equivalence.load_driver(root, 'bdb')
+
+    def test_a_helper_moved_unchanged_into_a_declared_module_compares_equal(self):
+        helper = 'LIMIT = 3\n\ndef scale(x):\n    """Scale."""\n    return x * LIMIT\n'
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(sys.modules):
+            base = self.moved_helper_tree(Path(tmp, 'base'), helper)
+            before = equivalence.moved_helper_shapes(base, ('scale', 'LIMIT'), ('shared',), ())
+            head = self.moved_helper_tree(Path(tmp, 'head'),
+                                          'import shared\nscale = shared.scale\nLIMIT = shared.LIMIT\n',
+                                          {'shared': helper})
+            after = equivalence.moved_helper_shapes(head, ('scale', 'LIMIT'), ('shared',), ('shared',))
+        self.assertEqual({name: entry['module'] for name, entry in before.items()},
+                         {'scale': 'contract_diff', 'LIMIT': 'contract_diff'})
+        self.assertEqual({name: entry['module'] for name, entry in after.items()}, {'scale': 'shared', 'LIMIT': 'shared'})
+        equivalence.compare_moved_helpers(before, after, ('shared',))
+
+    def test_a_changed_or_unmoved_helper_fails_closed(self):
+        helper = 'LIMIT = 3\n\ndef scale(x):\n    return x * LIMIT\n'
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(sys.modules):
+            base = self.moved_helper_tree(Path(tmp, 'base'), helper)
+            before = equivalence.moved_helper_shapes(base, ('scale', 'LIMIT'), ('shared',), ())
+            heads = {
+                'body': ('import shared\nscale = shared.scale\nLIMIT = shared.LIMIT\n',
+                         {'shared': helper.replace('x * LIMIT', 'x + LIMIT')}),
+                'value': ('import shared\nscale = shared.scale\nLIMIT = shared.LIMIT\n',
+                          {'shared': helper.replace('LIMIT = 3', 'LIMIT = 4')}),
+                'unmoved': (helper, {'shared': helper}),
+            }
+            for label, (driver_source, modules) in heads.items():
+                with self.subTest(label=label):
+                    head = self.moved_helper_tree(Path(tmp, label), driver_source, modules)
+                    after = equivalence.moved_helper_shapes(head, ('scale', 'LIMIT'), ('shared',), ('shared',))
+                    with self.assertRaises(AssertionError):
+                        equivalence.compare_moved_helpers(before, after, ('shared',))
+            with self.assertRaises(AssertionError):
+                equivalence.compare_moved_helpers(before, {'scale': before['scale']}, ('shared',))
+
+    def test_a_helper_in_an_undeclared_or_ambiguous_module_fails_closed(self):
+        helper = 'LIMIT = 3\n\ndef scale(x):\n    return x * LIMIT\n'
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(sys.modules):
+            head = self.moved_helper_tree(Path(tmp, 'undeclared'), 'import other\nscale = other.scale\n',
+                                          {'other': helper})
+            with self.assertRaisesRegex(TypeError, 'not one declared helper module'):
+                equivalence.moved_helper_shapes(head, ('scale',), ('shared',), ('shared',))
+            twice = self.moved_helper_tree(
+                Path(tmp, 'twice'), 'import first, second\nLIMIT = first.LIMIT\n',
+                {'first': 'LIMIT = (3,)\n', 'second': 'import first\nLIMIT = first.LIMIT\n'})
+            with self.assertRaisesRegex(TypeError, 'several helper modules'):
+                equivalence.moved_helper_shapes(twice, ('LIMIT',), ('first', 'second'), ('first', 'second'))
+            with self.assertRaisesRegex(TypeError, 'does not bind'):
+                equivalence.moved_helper_shapes(twice, ('missing',), ('first',), ('first',))
+
     def test_discovery_fails_when_a_module_has_the_wrong_case_count(self):
         with tempfile.TemporaryDirectory() as tmp, patch.dict(sys.modules):
             root = Path(tmp)
