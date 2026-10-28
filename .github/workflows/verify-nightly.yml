@@ -196,7 +196,10 @@ jobs:
           rustup: 'true'
           rust-cache: 'true'
       - name: Provision managed Python
-        run: bash tools/cloud/setup.sh --python-only
+        run: |
+          bash tools/cloud/setup.sh --python-only
+          # setup.sh's PATH export is local to its child shell.
+          printf '%s\n' "${UV_INSTALL_DIR:-$HOME/.local/bin}" >> "$GITHUB_PATH"
       - name: Run the fixture-tier differentials
         run: uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev compat nightly-fixtures
 
