@@ -23,7 +23,8 @@ from tools.dev.drivers import DriverServices
 from tools.dev.pool import UnitContext
 from tools.dev.runner_protocols import candidate_sequences, conf_body, text_order
 from tools.dev.runner_recipes import (SURFACES, active_rows, candidate_blocks, explicit_compare, pinyin_needed,
-                                      pinyin_resolved, residue, return_law, same_data)
+                                      pinyin_resolved, residue, return_law, same_data,
+                                      nbest_witness_cases, nbest_witness_results, ordinary)
 from tools.dev.runner_state import verify_steps
 from tools.dev.runners import Context
 from tools.dev.system_data import SystemData, data_extension
@@ -31,11 +32,12 @@ from tools.dev.system_data import SystemData, data_extension
 
 class FixtureServices:
     """A command adapter, rather than replacements for subprocess or os functions."""
-    def __init__(self, settings, output=b'fixture: identical\n'):
+    def __init__(self, settings, output=b'fixture: identical\n', diagnostics=b''):
         self.settings = settings
         self.context = None
         self.launches = []
         self.output = output
+        self.diagnostics = diagnostics
 
     def fork(self, settings, context, stdout, stderr):
         return self
@@ -51,7 +53,111 @@ class FixtureServices:
 
     def run(self, argv, obj, **options):
         self.launches.append((options['side'], options['environment'].get('LD_LIBRARY_PATH')))
-        return subprocess.CompletedProcess(argv, 0, self.output, b'')
+        return subprocess.CompletedProcess(argv, 0, self.output, self.diagnostics)
+
+
+class NbestWitnessTests(unittest.TestCase):
+    """Synthetic records test validation, never infer the pin's predicates."""
+    cases = {'fixture-on': dict(parser='full', scheme='1', options='0x1fe00198', input='a')}
+    stdout = (b'case\tid=fixture-on\tparser=full\tscheme=1\toptions=0x1fe00198'
+              b'\tinput=a\tparsed=1\tguess=1\ncases\tcompleted=1\n')
+    empty = (b'precondition\tcase=fixture-on\tsite=S1\tstep=0\tcount=1\tpairs=0\twitness=0\n'
+             b'precondition\tcase=fixture-on\tsite=S2\tstep=1\tcount=1\tpairs=0\twitness=0\n'
+             b'precondition\tcase=fixture-on\tsite=S3\tstep=1\tcount=1\twitness=0\n')
+
+    def test_fixed_case_set(self):
+        cases = nbest_witness_cases(ROOT / 'tools/bisection/nbest-precondition-cases.tsv')
+        self.assertEqual(len(cases), 276)
+        for category, count in [('divided', 40), ('resplit', 170), ('fixture', 58), ('double', 8)]:
+            self.assertEqual(sum(name.startswith(category + '-') for name in cases), count)
+        for name, row in cases.items():
+            if name.endswith('-on'):
+                other = cases[name.removesuffix('-on') + '-off']
+                self.assertEqual(row | {'options': '0x1fe00018'}, other)
+
+    def test_case_file_rejects_duplicates_and_invalid_parameters(self):
+        good = 'example\tfull\t1\t0x1fe00198\txian\n'
+        with tempfile.TemporaryDirectory() as scratch:
+            path = Path(scratch) / 'cases.tsv'
+            for content in ['', good * 2, good.replace('full', 'unknown'),
+                            good.replace('\t1\t', '\t2\t'), good.replace('1fe00198', '0'),
+                            good.replace('xian', '西安'), good.replace('\txian', '\txi\tan')]:
+                with self.subTest(content=content):
+                    path.write_text(content)
+                    with self.assertRaises(CellError):
+                        nbest_witness_cases(path)
+
+    def test_no_witness_and_exact_hex_witnesses(self):
+        summary = nbest_witness_results(self.cases, self.stdout,
+                                       b'open nbest-witness-user-test/user.conf failed.' + self.empty)
+        self.assertTrue(all(row['calls'] == 1 and row['first'] is None for row in summary.values()))
+        values = ''.join(f'\t{label}_position={index}\t{label}_length=2'
+                         f'\t{label}_poss=-0x1.23456p+4\t{label}_prev=0x00000001'
+                         f'\t{label}_token=0x01000002\t{label}_slot={index % 2}'
+                         for index, label in enumerate('abc'))
+        pair = values[:values.index('\tc_position')]
+        lines = [f'precondition\tcase=fixture-on\tsite={site}\tstep={step}'
+                 f'\tcount=3\tpairs=2\twitness=1{pair}\tless_ab=1\tless_ba=1'
+                 for site, step in [('S1', 0), ('S2', 1)]]
+        lines.append('precondition\tcase=fixture-on\tsite=S3\tstep=1\tcount=3\twitness=1' + values +
+                     '\tcompare_ab=0\tcompare_ba=0\tcompare_bc=0\tcompare_cb=0\tcompare_ac=1\tcompare_ca=-1')
+        summary = nbest_witness_results(self.cases, self.stdout, '\n'.join(lines).encode())
+        for site, line in zip(('S1', 'S2', 'S3'), lines):
+            self.assertEqual(summary[site]['first'], line)
+            self.assertEqual(summary[site]['witnessed_calls'], 1)
+        self.assertEqual(summary['S1']['pairs'], 2)
+        # Deliberately synthetic equal floats above prove the runner trusts the
+        # diagnostic predicate results instead of decimal/host recomputation.
+        for invalid in [lines[0].replace('less_ab=1', 'less_ab=0'),
+                        lines[0].replace('a_poss=-0x1.23456p+4', 'a_poss=-18.2'),
+                        lines[0].replace('pairs=2', 'pairs=4'),
+                        lines[0].replace('b_position=1', 'b_position=0')]:
+            with self.subTest(invalid=invalid), self.assertRaises(CellError):
+                nbest_witness_results(self.cases, self.stdout, '\n'.join([invalid, *lines[1:]]).encode())
+
+    def test_incomplete_or_duplicate_capture_fails(self):
+        for stdout, stderr in [(self.stdout.replace(b'guess=1', b'guess=0'), self.empty),
+                               (self.stdout.replace(b'completed=1', b'completed=2'), self.empty),
+                               (self.stdout, self.empty.split(b'\n', 1)[1]),
+                               (self.stdout, self.empty + self.empty),
+                               (self.stdout, self.empty.replace(b'step=0', b'step=2'))]:
+            with self.subTest(stdout=stdout, stderr=stderr), self.assertRaises(CellError):
+                nbest_witness_results(self.cases, stdout, stderr)
+
+    def test_diagnostic_dispatch_runs_only_pin_and_checks_identity(self):
+        with tempfile.TemporaryDirectory() as scratch, ExitStack() as stack:
+            root = Path(scratch).resolve()
+            cases = root / 'cases.tsv'
+            cases.write_text('fixture-on\tfull\t1\t0x1fe00198\ta\n')
+            prefix, data = root / 'pin', root / 'data'
+            prefix.mkdir()
+            data.mkdir()
+            (data / 'table.conf').write_text('database format:BerkeleyDB\n')
+            (data / 'bigram.db').touch()
+            settings = Settings.read({'PINYIN_ORACLE_DBM': 'bdb'})
+            digest = patch_digest(ROOT / 'tools/bisection/patches/nbest-tails-dump')
+            identity = f'{settings.expected_pin}+patches-{digest}\npatches_manifest_sha256={digest}\ndbm=BerkeleyDB\n'
+            (prefix / 'oracle-pin.txt').write_text(identity)
+            diagnostic = b'open nbest-witness-user-test/user.conf failed.' + self.empty
+            services = FixtureServices(settings, self.stdout, diagnostic)
+            ctx = Context(settings, services, stack, root, 'nbest-train-diff', events=[])
+            args = ['--pin-witness-cases', str(cases), '--prefix', str(prefix), '--data', str(data)]
+            with mock.patch('tools.dev.runner_recipes.build_subject', side_effect=AssertionError('subject build')), \
+                    mock.patch.object(Context, 'compile', return_value=root / 'driver'), \
+                    mock.patch.object(services, 'run', wraps=services.run) as run:
+                self.assertEqual(ordinary(ctx, args), 0)
+                self.assertEqual(run.call_count, 1)
+                self.assertEqual(run.call_args.kwargs['side'], 'pin')
+                self.assertEqual(run.call_args.args[0][-2:], ['--cases', str(cases)])
+                self.assertIn((True, diagnostic), ctx.events)
+                for bad in [identity.replace(digest, 'bad'), identity.replace('BerkeleyDB', 'KyotoCabinet')]:
+                    (prefix / 'oracle-pin.txt').write_text(bad)
+                    with self.assertRaises(CellError):
+                        ordinary(ctx, args)
+                self.assertEqual(run.call_count, 1)
+                ctx.settings = replace(settings, cell='kc')
+                with self.assertRaises(CellError):
+                    ordinary(ctx, args)
 
 
 class LibraryPathTests(unittest.TestCase):

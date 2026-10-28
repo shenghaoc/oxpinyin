@@ -1,9 +1,8 @@
 diff --git a/src/lookup/phonetic_lookup.h b/src/lookup/phonetic_lookup.h
-index c092e76..70036db 100644
 --- a/src/lookup/phonetic_lookup.h
 +++ b/src/lookup/phonetic_lookup.h
 @@ -24,6 +24,8 @@
- 
+
  #include <limits.h>
  #include <math.h>
 +#include <stdio.h>
@@ -11,7 +10,121 @@ index c092e76..70036db 100644
  #include "novel_types.h"
  #include "pinyin_utils.h"
  #include "phonetic_key_matrix.h"
-@@ -661,6 +663,11 @@ protected:
+@@ -177,6 +179,102 @@
+     return -((*lhs)->m_poss - (*rhs)->m_poss);
+ }
+
++/* Diagnostic only: inspect the unmodified algorithm input in pin arithmetic.
++ * The caller supplies a case identity; no pointers or host paths are printed. */
++static void dump_precondition_value(const char *label, guint position,
++                                    const trellis_value_t *value) {
++    fprintf(stderr, "\t%s_position=%u\t%s_length=%d\t%s_poss=%a"
++            "\t%s_prev=0x%08x\t%s_token=0x%08x\t%s_slot=%d",
++            label, position, label, value->m_sentence_length,
++            label, (double)value->m_poss, label, value->m_handles[0],
++            label, value->m_handles[1], label, value->m_current_index);
++}
++
++template <gint32 nstore>
++static void dump_precondition_pairs(const char *site, gint32 step,
++                                     const GPtrArray *candidates) {
++    const char *case_id = getenv("OXPINYIN_PRECONDITION_CASE");
++    if (NULL == case_id || 2 != nstore)
++        return;
++    size_t violations = 0;
++    guint first_a = 0, first_b = 0;
++    bool first_ab = false, first_ba = false;
++    for (guint a = 0; a < candidates->len; ++a) {
++        const trellis_value_t *lhs = (const trellis_value_t *)candidates->pdata[a];
++        for (guint b = a + 1; b < candidates->len; ++b) {
++            const trellis_value_t *rhs = (const trellis_value_t *)candidates->pdata[b];
++            const bool ab = trellis_value_less_than<nstore>(lhs, rhs);
++            const bool ba = trellis_value_less_than<nstore>(rhs, lhs);
++            if (ab && ba) {
++                if (0 == violations) {
++                    first_a = a; first_b = b;
++                    first_ab = ab; first_ba = ba;
++                }
++                ++violations;
++            }
++        }
++    }
++    fprintf(stderr, "precondition\tcase=%s\tsite=%s\tstep=%d\tcount=%u"
++            "\tpairs=%zu\twitness=%d", case_id, site, step, candidates->len,
++            violations, violations != 0);
++    if (violations) {
++        dump_precondition_value("a", first_a,
++            (const trellis_value_t *)candidates->pdata[first_a]);
++        dump_precondition_value("b", first_b,
++            (const trellis_value_t *)candidates->pdata[first_b]);
++        fprintf(stderr, "\tless_ab=%d\tless_ba=%d", first_ab, first_ba);
++    }
++    fprintf(stderr, "\n");
++}
++
++static void dump_precondition_tails(gint32 step, const GPtrArray *tails) {
++    const char *case_id = getenv("OXPINYIN_PRECONDITION_CASE");
++    if (NULL == case_id)
++        return;
++    fprintf(stderr, "precondition\tcase=%s\tsite=S3\tstep=%d\tcount=%u",
++            case_id, step, tails->len);
++    for (guint a = 0; a < tails->len; ++a) {
++        const trellis_value_t *lhs = (const trellis_value_t *)tails->pdata[a];
++        for (guint b = 0; b < tails->len; ++b) {
++            if (a == b)
++                continue;
++            const trellis_value_t *mid = (const trellis_value_t *)tails->pdata[b];
++            for (guint c = a + 1; c < tails->len; ++c) {
++                if (b == c)
++                    continue;
++                const trellis_value_t *rhs = (const trellis_value_t *)tails->pdata[c];
++                /* Out-of-range lambda/NaN is outside this finite witness set.
++                 * Do not introduce a float-to-gint UB probe in the diagnostic. */
++                if (!isfinite(lhs->m_poss) || !isfinite(mid->m_poss) ||
++                    !isfinite(rhs->m_poss) ||
++                    fabs((double)lhs->m_poss - mid->m_poss) >= G_MAXINT ||
++                    fabs((double)mid->m_poss - rhs->m_poss) >= G_MAXINT ||
++                    fabs((double)lhs->m_poss - rhs->m_poss) >= G_MAXINT)
++                    continue;
++                const gint ab = trellis_value_compare(&lhs, &mid);
++                const gint ba = trellis_value_compare(&mid, &lhs);
++                const gint bc = trellis_value_compare(&mid, &rhs);
++                const gint cb = trellis_value_compare(&rhs, &mid);
++                const gint ac = trellis_value_compare(&lhs, &rhs);
++                const gint ca = trellis_value_compare(&rhs, &lhs);
++                if (0 == ab && 0 == ba && 0 == bc && 0 == cb && ac != 0 && ca != 0) {
++                    fprintf(stderr, "\twitness=1");
++                    dump_precondition_value("a", a, lhs);
++                    dump_precondition_value("b", b, mid);
++                    dump_precondition_value("c", c, rhs);
++                    fprintf(stderr, "\tcompare_ab=%d\tcompare_ba=%d"
++                            "\tcompare_bc=%d\tcompare_cb=%d"
++                            "\tcompare_ac=%d\tcompare_ca=%d\n",
++                            ab, ba, bc, cb, ac, ca);
++                    return;
++                }
++            }
++        }
++    }
++    fprintf(stderr, "\twitness=0\n");
++}
++
++
+ template <gint32 nstore, gint32 nbest>
+ class ForwardPhoneticTrellis {
+ private:
+@@ -332,8 +430,10 @@
+
+         GPtrArray * candidates = g_ptr_array_new();
+         get_candidates(tail_index, candidates);
++        dump_precondition_pairs<nstore>("S2", tail_index, candidates);
+         get_top_results<nstore>(nbest, tails, candidates);
+
++        dump_precondition_tails(tail_index, tails);
+         g_ptr_array_sort(tails, (GCompareFunc)trellis_value_compare);
+
+         g_ptr_array_free(candidates, TRUE);
+@@ -661,6 +761,11 @@
          next_step.m_handles[0] = cur_step->m_handles[1]; next_step.m_handles[1] = token;
          next_step.m_sentence_length = cur_step->m_sentence_length + phrase_length;
          next_step.m_poss = cur_step->m_poss + log(elem_poss * pinyin_poss * unigram_lambda);
@@ -22,11 +135,11 @@ index c092e76..70036db 100644
 +                    pinyin_poss, cur_step->m_poss, next_step.m_poss);
          next_step.m_last_step = start;
          next_step.m_sub_index = cur_step->m_current_index;
- 
-@@ -752,6 +759,13 @@ public:
- 
+
+@@ -752,6 +857,13 @@
+
          m_trellis.fill_prefixes(prefixes);
- 
+
 +        /* diagnosis dump (oxpinyin residue A): env-gated, stderr only. */
 +        const bool dump_tails = NULL != getenv("OXPINYIN_DUMP_TAILS");
 +        if (dump_tails)
@@ -37,8 +150,16 @@ index c092e76..70036db 100644
          PhraseIndexRanges ranges;
          memset(ranges, 0, sizeof(PhraseIndexRanges));
          m_phrase_index->prepare_ranges(ranges);
-@@ -833,6 +847,19 @@ public:
- 
+@@ -768,6 +880,7 @@
+                 continue;
+
+             m_trellis.get_candidates(i, candidates);
++            dump_precondition_pairs<nstore>("S1", i, candidates);
+             get_top_results<nstore>(nbeam, topresults, candidates);
+
+             if (0 == topresults->len)
+@@ -833,6 +946,19 @@
+
              check_result(extract_result<nstore>(&m_trellis, tail, result));
              results->add_result(result);
 +
@@ -55,5 +176,5 @@ index c092e76..70036db 100644
 +                fprintf(stderr, "\n");
 +            }
          }
- 
+
          g_array_free(result, TRUE);
