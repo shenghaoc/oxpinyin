@@ -579,9 +579,15 @@ oxpinyin cannot follow. It is two things, both of which Rust can follow:
     and the same widen, add and round;
   - `pinyin_poss` is a float sum over the matrix walk, in its order
     (`storage/phonetic_key_matrix.cpp:534` onward);
-  - comparisons widen to double where the C does, for example
-    `LONG_SENTENCE_PENALTY`, `log(1.2f)` in double
-    (`lookup/phonetic_lookup.h:39`).
+  - comparisons run in the type the C gives them.
+    `LONG_SENTENCE_PENALTY`, `log(1.2f)` (`lookup/phonetic_lookup.h:39`),
+    is the float overload, folded to the f32 constant `0x3e3ab283`
+    (0.18232159316539764) and added and compared in single precision:
+    `addss`/`comiss` in `trellis_value_less_than<2>` of the amd64 BDB
+    `libpinyin.so.15` (0x96060–0x96072, 0x96080–0x96097) and
+    `fadd s`/`fcmpe s` on arm64 (0x79d60–0x79d78, 0x79d90–0x79da8).
+    Corrected 2026-10-28 UTC from "in double"; evidence in
+    [float-scoring-1378.md](float-scoring-1378.md), Appendix A, D-1.
 - *libm's `log`.* The one transcendental. The pin calls the platform
   libm's `log`. Rust's `f64::ln` documents unspecified precision that
   may vary by platform and Rust version, so whether a given oxpinyin
