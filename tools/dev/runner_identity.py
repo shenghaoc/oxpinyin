@@ -21,10 +21,11 @@ import shutil
 import tarfile
 import tempfile
 
+from .cell import patch_digest
 from .runners import Context, Finished
 
 STRICT = ('-std=gnu11', '-Wall', '-Wextra', '-Werror', '-O2')
-SIDES = ('pin', 'subject', 'stub', 'none')
+SIDES = ('pin', 'patched', 'subject', 'stub', 'none')
 PLACEHOLDERS = ('so', 'data', 'pindata', 'user', 'empty', 'tmp')
 
 
@@ -75,6 +76,19 @@ DRIVERS = {
                Case('missing-symbol', ('stub',), env=USER_DIR),
                Case('init-failure', ('pin', 'subject'), ('{so}', '{empty}'), USER_DIR),
                Case('dlopen-failure', ('none',), ('{empty}/absent.so', '{data}')),
+               Case('usage', ('none',), ('{empty}/absent.so',)))),
+    'fullpin-diff': Driver(
+        cases=(Case('hanyu', ('pin', 'subject'), ('{so}', '{data}', '1'), USER_DIR),
+               Case('hanyu-tone', ('pin', 'subject'), ('{so}', '{data}', '1'),
+                    (*USER_DIR, ('SCHEME_DIFF_TONE', '1'))),
+               Case('luoma', ('patched', 'subject'), ('{so}', '{data}', '2'), USER_DIR),
+               Case('secondary-zhuyin', ('patched', 'subject'), ('{so}', '{data}', '3'), USER_DIR),
+               Case('fixture-init', ('subject',), ('{so}', '{pindata}', '1'), USER_DIR),
+               Case('missing-symbol', ('stub',), ('{so}', '{data}', '1'), USER_DIR),
+               Case('init-failure', ('pin', 'subject'), ('{so}', '{empty}', '1'), USER_DIR),
+               Case('dlopen-failure', ('none',), ('{empty}/absent.so', '{data}', '1')),
+               *(Case(f'bad-scheme-{value or "empty"}', ('none',), ('{empty}/absent.so', '{data}', value))
+                 for value in ('0', '4', '2junk', '')),
                Case('usage', ('none',), ('{empty}/absent.so',)))),
 }
 
@@ -137,9 +151,23 @@ def pin(ctx: Context, driver: Driver) -> tuple[Path, Path]:
     return (so.parent / 'libzhuyin.so.15.0.0' if driver.facade == 'zhuyin' else so), data
 
 
+def patched(ctx: Context) -> tuple[Path, Path]:
+    """The scheme runner's tools/oracle/patches pin, which full schemes 2 and 3 need."""
+    prefix = ctx.path(ctx.env.get('PINYIN_PATCHED_ORACLE_PREFIX') or
+                      str(Path.home() / '.local/opt/pinyin-oracle-patched'))
+    record = prefix / 'oracle-pin.txt'
+    expected = ctx.settings.expected_pin + '+patches-' + patch_digest(ctx.settings.root / 'tools/oracle/patches')
+    if not record.is_file() or expected not in record.read_text().splitlines():
+        ctx.emit(f'FAIL: {prefix} is not the tools/oracle/patches oracle for the {ctx.settings.cell} cell')
+        raise Finished(1)
+    return prefix / 'lib/libpinyin.so', prefix / 'lib/libpinyin/data'
+
+
 def libraries(ctx: Context, driver: Driver, sides: set[str], root: Path) -> dict[str, tuple[Path | None, Path]]:
     pin_so, pin_data = pin(ctx, driver)
     inputs = {'pin': (pin_so, pin_data), 'none': (None, pin_data)}
+    if 'patched' in sides:
+        inputs['patched'] = patched(ctx)
     if 'subject' in sides:
         inputs['subject'] = (ctx.artifact(driver.facade), ctx.data.resolve('OXPINYIN_SYSTEM_DIR', 'driver-identity'))
     if 'stub' in sides:
@@ -164,8 +192,8 @@ def observe(ctx: Context, driver: Driver, binary: Path, stage: Path, case: Case,
                        **{name: value.format(**values) for name, value in case.env})
     before = scan(driver.templates)
     result = ctx.services.run(argv, library[0] or stage, runner=ctx.name,
-                              side='pin' if side == 'pin' else 'subject', cwd=directories['cwd'],
-                              environment=environment)
+                              side='pin' if side in ('pin', 'patched') else 'subject',
+                              cwd=directories['cwd'], environment=environment)
     leaked = sorted(scan(driver.templates) - before)
     left = [f'{{{name}}}/{path.relative_to(directories[name])}'
             for name in ('user', 'tmp', 'cwd') for path in sorted(directories[name].rglob('*'))]

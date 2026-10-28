@@ -35,6 +35,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "driver-common.h"
+
 typedef void pinyin_context_t;
 typedef void pinyin_instance_t;
 typedef void lookup_candidate_t;
@@ -93,35 +95,26 @@ struct symbols {
     fn_reset reset;
 };
 
-static void *resolve_symbol(void *handle, const char *name, int *missing) {
-    void *sym = dlsym(handle, name);
-    if (!sym) {
-        fprintf(stderr, "  MISSING: %s\n", name);
-        (*missing)++;
-    }
-    return sym;
-}
-
 static int resolve_all(void *handle, struct symbols *s) {
     int missing = 0;
-    s->init = (fn_init)resolve_symbol(handle, "pinyin_init", &missing);
+    s->init = (fn_init)dc_resolve(handle, "pinyin_init", &missing);
     s->fixture_init = (fn_init)dlsym(handle, "oxpinyin_init_for_fixtures");
-    s->fini = (fn_fini)resolve_symbol(handle, "pinyin_fini", &missing);
-    s->alloc = (fn_alloc)resolve_symbol(handle, "pinyin_alloc_instance", &missing);
-    s->free_instance = (fn_free_instance)resolve_symbol(handle, "pinyin_free_instance", &missing);
-    s->set_options = (fn_set_options)resolve_symbol(handle, "pinyin_set_options", &missing);
-    s->set_full_scheme = (fn_set_full_scheme)resolve_symbol(handle, "pinyin_set_full_pinyin_scheme", &missing);
-    s->parse_full = (fn_parse_full)resolve_symbol(handle, "pinyin_parse_more_full_pinyins", &missing);
-    s->parsed_len = (fn_parsed_len)resolve_symbol(handle, "pinyin_get_parsed_input_length", &missing);
-    s->guess_sentence = (fn_guess_sentence)resolve_symbol(handle, "pinyin_guess_sentence", &missing);
-    s->get_sentence = (fn_get_sentence)resolve_symbol(handle, "pinyin_get_sentence", &missing);
-    s->guess_candidates = (fn_guess_candidates)resolve_symbol(handle, "pinyin_guess_candidates", &missing);
-    s->get_n_candidate = (fn_get_n_candidate)resolve_symbol(handle, "pinyin_get_n_candidate", &missing);
-    s->get_candidate = (fn_get_candidate)resolve_symbol(handle, "pinyin_get_candidate", &missing);
-    s->get_candidate_type = (fn_get_candidate_type)resolve_symbol(handle, "pinyin_get_candidate_type", &missing);
-    s->get_candidate_string = (fn_get_candidate_string)resolve_symbol(handle, "pinyin_get_candidate_string", &missing);
-    s->get_full_aux = (fn_get_full_aux)resolve_symbol(handle, "pinyin_get_full_pinyin_auxiliary_text", &missing);
-    s->reset = (fn_reset)resolve_symbol(handle, "pinyin_reset", &missing);
+    s->fini = (fn_fini)dc_resolve(handle, "pinyin_fini", &missing);
+    s->alloc = (fn_alloc)dc_resolve(handle, "pinyin_alloc_instance", &missing);
+    s->free_instance = (fn_free_instance)dc_resolve(handle, "pinyin_free_instance", &missing);
+    s->set_options = (fn_set_options)dc_resolve(handle, "pinyin_set_options", &missing);
+    s->set_full_scheme = (fn_set_full_scheme)dc_resolve(handle, "pinyin_set_full_pinyin_scheme", &missing);
+    s->parse_full = (fn_parse_full)dc_resolve(handle, "pinyin_parse_more_full_pinyins", &missing);
+    s->parsed_len = (fn_parsed_len)dc_resolve(handle, "pinyin_get_parsed_input_length", &missing);
+    s->guess_sentence = (fn_guess_sentence)dc_resolve(handle, "pinyin_guess_sentence", &missing);
+    s->get_sentence = (fn_get_sentence)dc_resolve(handle, "pinyin_get_sentence", &missing);
+    s->guess_candidates = (fn_guess_candidates)dc_resolve(handle, "pinyin_guess_candidates", &missing);
+    s->get_n_candidate = (fn_get_n_candidate)dc_resolve(handle, "pinyin_get_n_candidate", &missing);
+    s->get_candidate = (fn_get_candidate)dc_resolve(handle, "pinyin_get_candidate", &missing);
+    s->get_candidate_type = (fn_get_candidate_type)dc_resolve(handle, "pinyin_get_candidate_type", &missing);
+    s->get_candidate_string = (fn_get_candidate_string)dc_resolve(handle, "pinyin_get_candidate_string", &missing);
+    s->get_full_aux = (fn_get_full_aux)dc_resolve(handle, "pinyin_get_full_pinyin_auxiliary_text", &missing);
+    s->reset = (fn_reset)dc_resolve(handle, "pinyin_reset", &missing);
     return missing;
 }
 
@@ -137,10 +130,6 @@ static void resolve_g_free(void) {
         if (sym)
             g_free_fn = sym;
     }
-}
-
-static const char *ctype_name(lookup_candidate_type_t t) {
-    return t == NBEST_MATCH_CANDIDATE ? "NBEST_MATCH" : "NORMAL";
 }
 
 /* ── Pinned index tables ──────────────────────────────────────────────── */
@@ -294,8 +283,7 @@ static void drive_input(const struct symbols *s, pinyin_instance_t *inst,
         bool ok = s->get_sentence(inst, 0, &sentence);
         printf("get_sentence: %s text=\"%s\"\n",
                ok ? "true" : "false", sentence ? sentence : "(null)");
-        if (sentence)
-            g_free_fn(sentence);
+        dc_release(g_free_fn, sentence);
     }
 
     bool gc = s->guess_candidates(inst, 0, DEFAULT_SORT);
@@ -318,7 +306,7 @@ static void drive_input(const struct symbols *s, pinyin_instance_t *inst,
         lookup_candidate_type_t ctype = NORMAL_CANDIDATE;
         s->get_candidate_type(inst, cand, &ctype);
         printf("  candidate[%u]: type=%s text=\"%s\"\n",
-               i, ctype_name(ctype), text ? text : "(null)");
+               i, dc_type_nbest_or_normal(ctype), text ? text : "(null)");
     }
 
     for (size_t cursor = 0; cursor <= consumed; cursor++) {
@@ -326,24 +314,12 @@ static void drive_input(const struct symbols *s, pinyin_instance_t *inst,
         bool ok = s->get_full_aux(inst, cursor, &aux);
         printf("full_aux(%zu): %s text=\"%s\"\n",
                cursor, ok ? "true" : "false", aux ? aux : "(null)");
-        if (aux)
-            g_free_fn(aux);
+        dc_release(g_free_fn, aux);
     }
 
     s->reset(inst);
     printf("reset_parsed_len: %zu\n", s->parsed_len(inst));
     printf("\n");
-}
-
-static int file_exists(const char *dir, const char *name) {
-    char path[4096];
-    snprintf(path, sizeof(path), "%s/%s", dir, name);
-    FILE *file = fopen(path, "rb");
-    if (file) {
-        fclose(file);
-        return 1;
-    }
-    return 0;
 }
 
 int main(int argc, char **argv) {
@@ -389,7 +365,7 @@ int main(int argc, char **argv) {
     }
 
     const char *user_dir = getenv("SCHEME_DIFF_USER_DIR");
-    fn_init init = (s.fixture_init && !file_exists(argv[2], "interpolation2.text"))
+    fn_init init = (s.fixture_init && !dc_file_readable(argv[2], "interpolation2.text"))
         ? s.fixture_init
         : s.init;
     pinyin_context_t *ctx = init(argv[2], user_dir ? user_dir : "");
