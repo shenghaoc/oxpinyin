@@ -104,7 +104,9 @@ static int run_sentence_perf_mode(int argc, char **argv) {
         return 2;
     bool typing = strcmp(argv[1], "--perf-typing-sequence") == 0;
     int status = 1;
-    char user_dir[] = "/tmp/bisect-sentence-XXXXXX";
+    char user_dir[4096];
+    if (!user_dir_template(user_dir, sizeof user_dir, "bisect-sentence"))
+        return 1;
     if (!mkdtemp(user_dir))
         return 1;
     void *handle = dlopen(argv[2], RTLD_NOW);

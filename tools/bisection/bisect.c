@@ -909,6 +909,18 @@ static void perf_remove_user_dir(char *user_dir) {
     (void)nftw(user_dir, perf_remove_entry, 16, FTW_DEPTH | FTW_PHYS);
 }
 
+static bool user_dir_template(char *path, size_t capacity, const char *prefix) {
+    const char *temp_root = getenv("TMPDIR");
+    if (temp_root == NULL || *temp_root == '\0')
+        temp_root = "/tmp";
+    int length = snprintf(path, capacity, "%s/%s-XXXXXX", temp_root, prefix);
+    if (length < 0 || (size_t)length >= capacity) {
+        fprintf(stderr, "fatal: TMPDIR path is too long\n");
+        return false;
+    }
+    return true;
+}
+
 static int run_perf_mode(int argc, char **argv) {
     if (argc < 3) {
         fprintf(stderr,
@@ -963,16 +975,9 @@ static int run_perf_mode(int argc, char **argv) {
     if (!rss_diag)
         diag_dir = NULL;
 
-    const char *temp_root = getenv("TMPDIR");
-    if (temp_root == NULL || *temp_root == '\0')
-        temp_root = "/tmp";
     char user_dir[4096];
-    int user_path_length = snprintf(user_dir, sizeof user_dir,
-                                    "%s/bisect-perf-XXXXXX", temp_root);
-    if (user_path_length < 0 || (size_t)user_path_length >= sizeof user_dir) {
-        fprintf(stderr, "fatal: TMPDIR path is too long\n");
+    if (!user_dir_template(user_dir, sizeof user_dir, "bisect-perf"))
         return 1;
-    }
     if (!mkdtemp(user_dir)) {
         perror("mkdtemp");
         return 1;
@@ -1601,7 +1606,9 @@ int main(int argc, char **argv) {
     const char *system_dir = argv[2];
 
     /* Create a temporary user directory. */
-    char user_dir[] = "/tmp/bisect-user-XXXXXX";
+    char user_dir[4096];
+    if (!user_dir_template(user_dir, sizeof user_dir, "bisect-user"))
+        return 1;
     if (!mkdtemp(user_dir)) {
         perror("mkdtemp");
         return 1;
