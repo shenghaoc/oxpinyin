@@ -6,6 +6,9 @@ ARG REFERENCE_IMAGE
 FROM ${REFERENCE_IMAGE} AS reference
 FROM ${DEPS_IMAGE}
 ARG CA_IDENTITY=no-custom-ca
+# `locales` and the generated zh_CN.UTF-8 are what the locale-diff runner
+# (register row 39) needs (#1395): the Debian way, /etc/locale.gen plus
+# locale-gen; the reference image is unchanged.
 RUN --mount=type=secret,id=cacert,required=false,mode=0444 \
     set -eu; set --; \
     if [ -s /run/secrets/cacert ]; then \
@@ -14,8 +17,11 @@ RUN --mount=type=secret,id=cacert,required=false,mode=0444 \
     apt-get "$@" update; \
     apt-get "$@" install -y --no-install-recommends \
       libclang-dev db5.3-util kyotocabinet-utils tkrzw-utils \
-      liblz4-dev libzstd-dev zlib1g-dev; \
+      liblz4-dev libzstd-dev zlib1g-dev locales; \
     rm -rf /var/lib/apt/lists/*; \
+    sed -i 's/^# *zh_CN\.UTF-8 UTF-8$/zh_CN.UTF-8 UTF-8/' /etc/locale.gen; \
+    locale-gen; \
+    locale -a | grep -qx 'zh_CN.utf8'; \
     python3 /usr/local/bin/versions.py \
       --manifest /usr/local/share/oxpinyin/version-manifest.json \
       --probe /usr/local/bin/distro-probe.sh \
