@@ -90,6 +90,15 @@ class NativeTests(unittest.TestCase):
         user = done.stderr.decode().splitlines()[0].removeprefix('USER:')
         self.assertFalse(Path(user).exists())
 
+    def test_elapsed_ns_accepts_zero_and_rejects_negative_or_non_int(self):
+        args = types.SimpleNamespace(workload='sentence', iterations=1, input='ni')
+        row = dict(pid=123, workload='sentence', iterations=1, observations=[[dict(
+            input='ni', parsed=2, guess_sentence=True, get_sentence=True, sentence='x')]])
+        self.assertEqual(sentence.observation(json.dumps(dict(row, elapsed_ns=0)), args)['elapsed_ns'], 0)
+        for bad in (-1, 1.0, '0', True, None):
+            with self.subTest(elapsed_ns=bad), self.assertRaises(ValueError):
+                sentence.observation(json.dumps(dict(row, elapsed_ns=bad)), args)
+
     def test_typing_reuses_instance_and_retains_every_candidate_in_order(self):
         done = self.launch('typing-sequence', 'ni')
         self.assertEqual(done.returncode, 0, done.stderr)

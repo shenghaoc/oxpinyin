@@ -72,9 +72,11 @@ def arguments(argv):
 def observation(raw, args):
     """Validate a complete worker reply before using its PID or any counters."""
     row = json.loads(raw)
+    # Zero is a valid elapsed_ns: macOS CLOCK_MONOTONIC has 1 microsecond resolution, and the
+    # campaign reports Callgrind Ir, not this timing.
     if (type(row.get('pid')) is not int or row['pid'] <= 0 or
             row.get('workload') != args.workload or row.get('iterations') != args.iterations or
-            type(row.get('elapsed_ns')) is not int or row['elapsed_ns'] <= 0):
+            type(row.get('elapsed_ns')) is not int or row['elapsed_ns'] < 0):
         raise ValueError('invalid worker identity/workload/count')
     expected = ([args.input[:i] for i in range(1, len(args.input) + 1)]
                 if args.workload == 'typing-sequence' else [args.input])
