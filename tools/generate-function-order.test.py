@@ -506,6 +506,19 @@ class GeneratorTests(unittest.TestCase):
         self.assertEqual(first, name + " [instantiating crate: oxpinyin_runtime]")
         self.assertNotEqual(first, identity(name, "_RIfakeECsNEW_15oxpinyin_facade"))
 
+    def test_cs_inside_a_disambiguator_decodes_one_root(self):
+        # The tkrzw libzhuyin.a witness: the zhuyin crate's disambiguator
+        # 4iCseHRioF7 contains Cs, so two matches decode the same root.
+        name = "<alloc::raw_vec::RawVecInner>::finish_grow"
+        identity = GENERATOR["stable_identity"]
+        witness = "_RNvMs4_NtCscdodAO9FK5_5alloc7raw_vecNtB5_11RawVecInner11finish_growCs4iCseHRioF7_6zhuyin"
+        self.assertEqual(identity(name, witness), name + " [instantiating crate: zhuyin]")
+        self.assertEqual(identity(name, witness[:-len("Cs4iCseHRioF7_6zhuyin")] + "B7_"), name)
+
+    def test_two_different_decoded_roots_stay_ambiguous(self):
+        name = "crate::f"
+        self.assertEqual(GENERATOR["stable_identity"](name, "_RfakeCs1_11abcCsZ_3xyz"), name)
+
     def test_both_facades_and_profiles_are_mandatory(self):
         with self.assertRaises(ValueError):
             GENERATOR["pairs"](["pinyin=one"], ("pinyin", "zhuyin"), "--library")
