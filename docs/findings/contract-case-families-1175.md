@@ -26,9 +26,9 @@ Smaller, less coupled sections therefore tend to come first. Cross-section
 helpers, driver state, interleaved registrations and new main changes must be
 rechecked when each section is moved. Rows marked moved live in their own
 module and register through the driver's `case` at their original position;
-the remaining rows keep the proposed order. Row 9 is next. Its
-`predicted_rows` is also read by row 52, so moving row 9 needs that helper
-passed in from the driver, the first section to need driver state. Axis C
+the remaining rows keep the proposed order. Row 19 is next. Shared helpers
+still needed by the driver remain there and are passed into the moved
+sections' registrations. Axis C
 remains one family: its three builders, five observation helpers and export
 case; its driver registration also owns `AXIS_C_GROUPS`, `AXIS_C_DEFINITION`
 and `AXIS_C_LAYOUT_COVERED`.
@@ -43,16 +43,16 @@ and `AXIS_C_LAYOUT_COVERED`.
 | 6 | non-UTF8 directories (`non-utf8-directory-system`) | 4 | `non_utf8_dirs` | `B`, `C`, `P`, `S`, `Z`, `case`, `os` | moved (`contract_non_utf8_directories`) |
 | 7 | axis J (`j-choose-nbest-diff-result`) | 5 | `j_multi_chewing` | `B`, `C`, `I`, `P`, `S`, `Z`, `case`, `guessed`, `row_of` | moved (`contract_axis_j`) |
 | 8 | negative remember counts (`remember-count-2`) | 5 | `remember_negative` | `B`, `C`, `I`, `P`, `S`, `U`, `Z`, `case` | moved (`contract_negative_remember`) |
-| 9 | predicted candidate type (`choose-predicted-types`) | 1 | `predicted_rows`, `choose_predicted_of` | `B`, `C`, `I`, `P`, `S`, `U`, `case` | |
-| 10 | facade total (`facade-total-zero-ranks-nothing-end-sort-3`) | 4 | `wrap_total_to_zero`, `_no_rank` | `B`, `C`, `P`, `S`, `U`, `Z`, `case` | |
-| 11 | stored count headers (`stored-count-headers-system-pinyin`) | 4 | `stored_count_headers` | `B`, `C`, `P`, `Path`, `U`, `UNTOUCHED`, `_chunk`, `_write_user_conf`, `case`, `conf_system` | |
-| 12 | remaining issue 542 (`issue542-phrase-segment-invalid-utf8-pinyin`) | 7 | `phrase_segment_invalid_utf8`, `train_no_choose_save` | `B`, `C`, `P`, `S`, `U`, `UNTOUCHED`, `Z`, `case`, `full_inst`, `key_out`, `os`, `sentence_out` | |
-| 13 | pinyin out parameters and returns (`empty-parse-sentence`) | 12 | `Rest` | `Arr`, `B`, `C`, `I`, `P`, `S`, `U`, `UNTOUCHED`, `Z`, `case`, `sentence_out`, `tokens_of` | |
-| 14 | candidate lookup offsets (`guess-candidates-lookup-offset`) | 3 | `candidate_rows`, `guess_rows`, `zhuyin_guess_rows` | `B`, `C`, `I`, `P`, `S`, `U`, `Z`, `case`, `full_inst` | |
-| 15 | remember tone (`remember-tones-pinyin`) | 4 | `remember_export`, `remember_tones`, `remember_review` | `B`, `C`, `I`, `P`, `S`, `U`, `Z`, `case` | |
-| 16 | allocator register (`alloc-register-pinyin_get_pinyin-zero-key`) | 14 | `alloc_register_case` | `B`, `C`, `P`, `S`, `U`, `UNTOUCHED`, `Z`, `case`, `owned_text` | |
-| 17 | cursor and sentence refusals (`abort-get-sentence-past-rows`) | 15 | `leading_apostrophe_aux` | `B`, `C`, `P`, `S`, `UNTOUCHED`, `Z`, `case`, `full_inst`, `sentence_out` | |
-| 18 | duplicate phrase add (`abort-zhuyin-add-phrase-duplicate-library-token`) | 6 | `_ucs4_key`, `_persist_pinyin_phrase`, `_add_pinyin_phrase_after_index` | `B`, `I`, `P`, `S`, `U`, `_craft_db`, `_write_user_conf`, `case`, `os`, `tokens_of` | |
+| 9 | predicted candidate type (`choose-predicted-types`) | 1 | `predicted_rows`, `choose_predicted_of` | `B`, `C`, `I`, `P`, `S`, `U`, `case` | moved (`contract_predicted_types`) |
+| 10 | facade total (`facade-total-zero-ranks-nothing-end-sort-3`) | 4 | `wrap_total_to_zero`, `_no_rank` | `B`, `C`, `P`, `S`, `U`, `Z`, `case` | moved (`contract_facade_total`) |
+| 11 | stored count headers (`stored-count-headers-system-pinyin`) | 4 | `stored_count_headers` | `B`, `C`, `P`, `Path`, `U`, `UNTOUCHED`, `_chunk`, `_write_user_conf`, `case`, `conf_system` | moved (`contract_stored_count_headers`) |
+| 12 | remaining issue 542 (`issue542-phrase-segment-invalid-utf8-pinyin`) | 7 | `phrase_segment_invalid_utf8`, `train_no_choose_save` | `B`, `C`, `P`, `S`, `U`, `UNTOUCHED`, `Z`, `case`, `full_inst`, `key_out`, `os`, `sentence_out` | moved (`contract_issue542_remaining`) |
+| 13 | pinyin out parameters and returns (`empty-parse-sentence`) | 12 | `Rest` | `Arr`, `B`, `C`, `I`, `P`, `S`, `U`, `UNTOUCHED`, `Z`, `case`, `sentence_out`, `tokens_of` | moved (`contract_pinyin_out_parameters`) |
+| 14 | candidate lookup offsets (`guess-candidates-lookup-offset`) | 3 | `candidate_rows`, `guess_rows`, `zhuyin_guess_rows` | `B`, `C`, `I`, `P`, `S`, `U`, `Z`, `case`, `full_inst` | moved (`contract_candidate_lookup_offsets`) |
+| 15 | remember tone (`remember-tones-pinyin`) | 4 | `remember_export`, `remember_tones`, `remember_review` | `B`, `C`, `I`, `P`, `S`, `U`, `Z`, `case` | moved (`contract_remember_tone`) |
+| 16 | allocator register (`alloc-register-pinyin_get_pinyin-zero-key`) | 14 | `alloc_register_case` | `B`, `C`, `P`, `S`, `U`, `UNTOUCHED`, `Z`, `case`, `owned_text` | moved (`contract_allocator_register`) |
+| 17 | cursor and sentence refusals (`abort-get-sentence-past-rows`) | 15 | `leading_apostrophe_aux` | `B`, `C`, `P`, `S`, `UNTOUCHED`, `Z`, `case`, `full_inst`, `sentence_out` | moved (`contract_cursor_sentence_refusals`) |
+| 18 | duplicate phrase add (`abort-zhuyin-add-phrase-duplicate-library-token`) | 6 | `_ucs4_key`, `_persist_pinyin_phrase`, `_add_pinyin_phrase_after_index` | `B`, `I`, `P`, `S`, `U`, `_craft_db`, `_write_user_conf`, `case`, `os`, `tokens_of` | moved (`contract_duplicate_phrase_add`) |
 | 19 | zhuyin facade twins (`user-library-token-unload-pinyin`) | 11 | `user_library_token_unload`, `zhuyin_candidates_at_start` | `Arr`, `B`, `C`, `I`, `P`, `Rest`, `S`, `U`, `UNTOUCHED`, `Z`, `case`, `tokens_of`, `zhuyin_chewing`, `zhuyin_sentence_out` | |
 | 20 | scheme and library refusals (`abort-set-full-pinyin-scheme-0`) | 23 | `ctx_call` | `B`, `C`, `I`, `P`, `U`, `UNTOUCHED`, `case` | |
 | 21 | zero consumption (`zero-consumption-pinyin-full_pinyins-n`) | 24 | `zero_consumption_sentence` | `B`, `C`, `P`, `S`, `U`, `UNTOUCHED`, `Z`, `case` | |
