@@ -4,10 +4,10 @@ Load the committed replacement definition, run the battery and the instance
 snapshot check through the driver's worker, and compare the repeated pin and
 subject observations row by row, with the register-covered class (c) layout
 rows licensed at the nested-observation level. The axis C cases themselves (the
-probe builders, their observation helpers and the registration loops) stay in
-contract-diff.py with the other case families. The registry, the worker
-callback and the definition and covered-row tables the registration builds are
-keyword-only parameters, passed by the driver's same-signature adapters.
+probe builders, their observation helpers and the registration loops) are the
+contract_axis_c_cases family. The registry, the worker callback and the
+definition and covered-row tables the registration builds are keyword-only
+parameters, passed by the driver's same-signature adapters.
 """
 import copy
 import hashlib

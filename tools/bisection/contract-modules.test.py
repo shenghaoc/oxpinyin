@@ -134,6 +134,7 @@ MODULES = {
     'contract_library_loading': ((), ('contract_abi', 'contract_case_helpers', 'contract_fixtures', 'contract_verdict')),
     'contract_table_conf_scanner': ((), ('contract_abi', 'contract_case_helpers', 'contract_fixtures', 'contract_verdict')),
     'contract_journal_replay': ((), ('contract_abi', 'contract_case_helpers', 'contract_fixtures')),
+    'contract_axis_c_cases': ((), ('contract_abi', 'contract_case_helpers', 'contract_fixtures')),
     'contract_execution': (('ordinary_jobs', 'positive_jobs', 'terminate_group', 'user_dir_listing'), ()),
     'contract_runner': (('Cancelled',), ()),
     'contract_kit': ((), ('contract_abi',)),
@@ -357,7 +358,7 @@ class ModuleBoundaryTests(unittest.TestCase):
             battery.assert_called_once_with('args', ['n'], CASES=registry, run_worker=worker,
                                             AXIS_C_LAYOUT_COVERED=covered, AXIS_C_DEFINITION=definition)
 
-    def test_the_axis_c_cases_stay_registered_by_the_driver_from_the_moved_definition(self):
+    def test_the_axis_c_cases_register_from_their_family_into_the_tables_this_driver_built(self):
         definition = sys.modules['contract_axis_c'].axis_c_definition()
         self.assertEqual(driver.AXIS_C_DEFINITION, definition)
         names = [name for name in driver.CASES if name.startswith('axis-c-')]
@@ -365,8 +366,17 @@ class ModuleBoundaryTests(unittest.TestCase):
         self.assertEqual(names[1:], sum(driver.AXIS_C_GROUPS.values(), []))
         for name in names:
             with self.subTest(name=name):
-                self.assertEqual(driver.CASES[name]['fn'].__module__, driver.__name__)
+                self.assertEqual(driver.CASES[name]['fn'].__module__, 'contract_axis_c_cases')
         self.assertLessEqual(set(driver.AXIS_C_LAYOUT_COVERED), set(driver.AXIS_C_GROUPS['layouts']))
+
+    def test_every_driver_load_builds_its_own_axis_c_tables(self):
+        spec = importlib.util.spec_from_file_location('contract_diff_again', HERE / 'contract-diff.py')
+        again = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(again)
+        for table in ('AXIS_C_GROUPS', 'AXIS_C_LAYOUT_COVERED'):
+            with self.subTest(table=table):
+                self.assertIsNot(getattr(again, table), getattr(driver, table))
+                self.assertEqual(getattr(again, table), getattr(driver, table))
 
     def test_post_fini_case_is_registered_at_its_original_position(self):
         names = list(driver.CASES)
