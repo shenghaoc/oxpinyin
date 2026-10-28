@@ -24,11 +24,11 @@ each dependency outside the already-extracted ABI, fixture and verdict
 modules, standard-library imports and the `case` registration callback.
 Smaller, less coupled sections therefore tend to come first. Cross-section
 helpers, driver state, interleaved registrations and new main changes must be
-rechecked when each section is moved. Rows marked moved live in their own
-module and register through the driver's `case` at their original position;
-the remaining rows keep the proposed order. Row 19 is next. Shared helpers
-still needed by the driver remain there and are passed into the moved
-sections' registrations. Axis C
+rechecked when each section is moved. Rows marked moved register from their
+own module through the driver's `case` at their original position; the
+remaining rows keep the proposed order. Row 29 is next. Shared helpers still
+needed by the driver remain there and are passed into the moved sections'
+registrations; cases using a retained helper keep its driver ownership. Axis C
 remains one family: its three builders, five observation helpers and export
 case; its driver registration also owns `AXIS_C_GROUPS`, `AXIS_C_DEFINITION`
 and `AXIS_C_LAYOUT_COVERED`.
@@ -53,16 +53,16 @@ and `AXIS_C_LAYOUT_COVERED`.
 | 16 | allocator register (`alloc-register-pinyin_get_pinyin-zero-key`) | 14 | `alloc_register_case` | `B`, `C`, `P`, `S`, `U`, `UNTOUCHED`, `Z`, `case`, `owned_text` | moved (`contract_allocator_register`) |
 | 17 | cursor and sentence refusals (`abort-get-sentence-past-rows`) | 15 | `leading_apostrophe_aux` | `B`, `C`, `P`, `S`, `UNTOUCHED`, `Z`, `case`, `full_inst`, `sentence_out` | moved (`contract_cursor_sentence_refusals`) |
 | 18 | duplicate phrase add (`abort-zhuyin-add-phrase-duplicate-library-token`) | 6 | `_ucs4_key`, `_persist_pinyin_phrase`, `_add_pinyin_phrase_after_index` | `B`, `I`, `P`, `S`, `U`, `_craft_db`, `_write_user_conf`, `case`, `os`, `tokens_of` | moved (`contract_duplicate_phrase_add`) |
-| 19 | zhuyin facade twins (`user-library-token-unload-pinyin`) | 11 | `user_library_token_unload`, `zhuyin_candidates_at_start` | `Arr`, `B`, `C`, `I`, `P`, `Rest`, `S`, `U`, `UNTOUCHED`, `Z`, `case`, `tokens_of`, `zhuyin_chewing`, `zhuyin_sentence_out` | |
-| 20 | scheme and library refusals (`abort-set-full-pinyin-scheme-0`) | 23 | `ctx_call` | `B`, `C`, `I`, `P`, `U`, `UNTOUCHED`, `case` | |
-| 21 | zero consumption (`zero-consumption-pinyin-full_pinyins-n`) | 24 | `zero_consumption_sentence` | `B`, `C`, `P`, `S`, `U`, `UNTOUCHED`, `Z`, `case` | |
-| 22 | row 54 empty and forcing (`row54-empty-pinyin-full_pinyins`) | 16 | `row54_empty`, `row54_unload`, `row54_forcing` | `B`, `C`, `I`, `P`, `S`, `U`, `UNTOUCHED`, `Z`, `case` | |
-| 23 | GLib arrays (`glib-924-array-lifecycle-pinyin`) | 12 | `glib_924_array_lifecycle`, `glib_924_segment_critical`, `glib_924_oom_array`, `glib_924_null_array` | `Arr`, `B`, `C`, `I`, `P`, `Path`, `S`, `U`, `UNTOUCHED`, `__file__`, `case`, `subprocess`, `tokens_of` | |
-| 24 | 256th reading (`wrap-256th-reading`) | 4 | `_wrap_pinyin_readings`, `_wrap_zhuyin_readings`, `_wrap_distinct`, `_wrap_item_reads`, `_wrap_export_rows`, `wrap_256th_reading` | `Arr`, `B`, `C`, `I`, `P`, `S`, `U`, `UNTOUCHED`, `case`, `hashlib`, `json`, `tempfile`, `tokens_of`, `unigram_of` | |
-| 25 | auxiliary text (`aux-text-full-parse`) | 14 | `aux_matrix`, `chewing_cursors`, `aux_cursors`, `aux_options` | `B`, `C`, `P`, `S`, `U`, `UNTOUCHED`, `Z`, `case` | |
-| 26 | combined import and nbest order (`combined-library-sixth-add-pinyin`) | 10 | `combined_import_bound`, `import_review`, `nbest_user_table_order` | `B`, `I`, `P`, `S`, `U`, `Z`, `case`, `remember_export`, `sentence_out`, `tokens_of`, `transient_files`, `unigram_of`, `zhuyin_sentence_out` | |
-| 27 | stored total overflow (`stored-total-overflow-below`) | 6 | `stored_total_overflow`, `log_headers` | `B`, `FACADE_TOTAL`, `P`, `U`, `_facade_total_out`, `_modify_header`, `_stored_library_total`, `_write_log`, `_write_user_conf`, `case`, `import_rows`, `tokens_of`, `unigram_of` | |
-| 28 | zhuyin per-entry contracts (`zhuyin-parse-chewing-key`) | 16 | `zy_strv`, `parse_chewing_probe`, `in_chewing_probe`, `key_rest_positions_probe`, `phrase_tokens_probe` | `B`, `C`, `I`, `P`, `S`, `U`, `UNTOUCHED`, `Z`, `case`, `owned_text`, `tokens_of`, `zhuyin_chewing` | |
+| 19 | zhuyin facade twins (`user-library-token-unload-pinyin`) | 11 | `user_library_token_unload`, `zhuyin_candidates_at_start` | `Arr`, `B`, `C`, `I`, `P`, `Rest`, `S`, `U`, `UNTOUCHED`, `Z`, `case`, `tokens_of`, `zhuyin_chewing`, `zhuyin_sentence_out` | moved (`contract_zhuyin_facade_twins`) |
+| 20 | scheme and library refusals (`abort-set-full-pinyin-scheme-0`) | 23 | `ctx_call` | `B`, `C`, `I`, `P`, `U`, `UNTOUCHED`, `case` | moved (`contract_scheme_library_refusals`) |
+| 21 | zero consumption (`zero-consumption-pinyin-full_pinyins-n`) | 24 | `zero_consumption_sentence` | `B`, `C`, `P`, `S`, `U`, `UNTOUCHED`, `Z`, `case` | moved (`contract_zero_consumption`) |
+| 22 | row 54 empty and forcing (`row54-empty-pinyin-full_pinyins`) | 16 | `row54_empty`, `row54_unload`, `row54_forcing` | `B`, `C`, `I`, `P`, `S`, `U`, `UNTOUCHED`, `Z`, `case` | moved (`contract_row54_empty_forcing`) |
+| 23 | GLib arrays (`glib-924-array-lifecycle-pinyin`) | 12 | `glib_924_array_lifecycle`, `glib_924_segment_critical`, `glib_924_oom_array`, `glib_924_null_array` | `Arr`, `B`, `C`, `I`, `P`, `Path`, `S`, `U`, `UNTOUCHED`, `__file__`, `case`, `subprocess`, `tokens_of` | moved (`contract_glib_arrays`) |
+| 24 | 256th reading (`wrap-256th-reading`) | 4 | `_wrap_pinyin_readings`, `_wrap_zhuyin_readings`, `_wrap_distinct`, `_wrap_item_reads`, `_wrap_export_rows`, `wrap_256th_reading` | `Arr`, `B`, `C`, `I`, `P`, `S`, `U`, `UNTOUCHED`, `case`, `hashlib`, `json`, `tempfile`, `tokens_of`, `unigram_of` | moved (`contract_reading_256th`) |
+| 25 | auxiliary text (`aux-text-full-parse`) | 14 | `aux_matrix`, `chewing_cursors`, `aux_cursors`, `aux_options` | `B`, `C`, `P`, `S`, `U`, `UNTOUCHED`, `Z`, `case` | moved (`contract_auxiliary_text`) |
+| 26 | combined import and nbest order (`combined-library-sixth-add-pinyin`) | 10 | `combined_import_bound`, `import_review`, `nbest_user_table_order` | `B`, `I`, `P`, `S`, `U`, `Z`, `case`, `remember_export`, `sentence_out`, `tokens_of`, `transient_files`, `unigram_of`, `zhuyin_sentence_out` | moved (`contract_combined_import_nbest`) |
+| 27 | stored total overflow (`stored-total-overflow-below`) | 6 | `stored_total_overflow`, `log_headers` | `B`, `FACADE_TOTAL`, `P`, `U`, `_facade_total_out`, `_modify_header`, `_stored_library_total`, `_write_log`, `_write_user_conf`, `case`, `import_rows`, `tokens_of`, `unigram_of` | moved (`contract_stored_total_overflow`) |
+| 28 | zhuyin per-entry contracts (`zhuyin-parse-chewing-key`) | 16 | `zy_strv`, `parse_chewing_probe`, `in_chewing_probe`, `key_rest_positions_probe`, `phrase_tokens_probe` | `B`, `C`, `I`, `P`, `S`, `U`, `UNTOUCHED`, `Z`, `case`, `owned_text`, `tokens_of`, `zhuyin_chewing` | moved (`contract_zhuyin_per_entry`) |
 | 29 | before-cursor and longer dedup (`before-cursor-frequency-dedup`) | 8 | `before_cursor_frequency_listing`, `longer_frequency_listing` | `B`, `C`, `I`, `P`, `S`, `U`, `Z`, `_gram_bytes`, `_replace_user_bigram`, `addon_promote_sequence`, `candidate_rows`, `case`, `guess_rows`, `row58_import`, `tokens_of` | |
 | 30 | token unigram and training (`system-zhuyin-only-readings`) | 14 | `token_unigram_system`, `token_unigram_user`, `zhuyin_only_readings`, `token_unigram_user_libraries`, `train_selected_top`, `token_unigram_trained` | `Arr`, `B`, `C`, `I`, `P`, `S`, `U`, `UNTOUCHED`, `Z`, `case`, `choose_text`, `final_step_sentences`, `tokens_of`, `unigram_of` | |
 | 31 | bigram removal (`removal-bigram-reported-mask-out-pinyin`) | 23 | `removal_bigram` | `B`, `C`, `P`, `Path`, `S`, `U`, `Z`, `_add_user_phrase`, `_user_candidate_rows`, `_write_user_conf`, `case`, `d18_bigram_db`, `d18_gram`, `tokens_of` | |

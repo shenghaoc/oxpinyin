@@ -5,7 +5,8 @@ This is a light, source-only check. Each checkout is loaded in its own Python
 process; no worker, shared library or differential is run. Specify case IDs
 with --module and --case, or all cases in each module with --module-cases
 MODULE=COUNT. --injected names the shared driver objects passed to registrations.
-Helpers can also be named with --helper for source comparison.
+--retained-helper MODULE:HELPER=COUNT covers cases still created by a shared
+driver helper. Helpers can also be named with --helper for source comparison.
 """
 import argparse
 import ast
@@ -161,7 +162,12 @@ def function_shape(fn, driver, sentinel, injected, moved_modules, active=(), use
             value = getattr(builtins, name)
         else:
             raise TypeError('unresolved global %s in %s' % (name, fn.__qualname__))
-        if name in injected:
+        if name == '__file__':
+            if (fn.__globals__ is not vars(driver) or not isinstance(value, str) or
+                    Path(value).resolve() != Path(driver.__spec__.origin).resolve()):
+                raise TypeError('unrecognized __file__ binding in %s' % fn.__qualname__)
+            bindings[name] = ['driver-file']
+        elif name in injected:
             used.add(name)
             if not hasattr(driver, name) or value is not getattr(driver, name):
                 raise TypeError('injected %s is not the driver binding' % name)
@@ -199,7 +205,7 @@ def load_driver(root, cell):
     return driver
 
 
-def snapshot(root, cell, moved, helpers, injected, source_modules=()):
+def snapshot(root, cell, moved, helpers, injected, source_modules=(), retained_specs=()):
     """Read the entire registry, selections, plans and specified source ASTs."""
     driver = load_driver(root, cell)
     sentinel = driver.NO_ABORT
@@ -242,12 +248,13 @@ def snapshot(root, cell, moved, helpers, injected, source_modules=()):
         owner = importlib.import_module(source_modules[0]) if source_modules else driver
         fn = getattr(owner, name)
         helper_source[name] = {'module': fn.__module__, 'ast': function_ast(fn, injected)}
+    retained = retained_helpers(driver, retained_specs)
     return {'records': records, 'tags': digest(tags), 'skips': digest([driver.platform_skips(case)
             for case in driver.CASES.values()]), 'selections': selections, 'moved': moved_source,
-            'helpers': helper_source}
+            'helpers': helper_source, 'retained': retained}
 
 
-def child_snapshot(root, cell, moved, helpers, injected, source_modules=()):
+def child_snapshot(root, cell, moved, helpers, injected, source_modules=(), retained_specs=()):
     args = [sys.executable, '-X', 'lazy_imports=normal', str(Path(__file__).resolve()),
             '--snapshot', str(root), '--cell', cell]
     for flag, values in (('--case', moved), ('--helper', helpers), ('--injected', injected)):
@@ -255,6 +262,8 @@ def child_snapshot(root, cell, moved, helpers, injected, source_modules=()):
             args.extend((flag, value))
     for module in source_modules:
         args.extend(('--source-module', module))
+    for spec in retained_specs:
+        args.extend(('--retained-helper', spec))
     result = subprocess.run(args, cwd=root, capture_output=True, text=True)
     if result.returncode:
         raise RuntimeError('snapshot failed for %s (%s):\n%s' % (root, cell, result.stderr))
@@ -269,6 +278,8 @@ def compare_snapshots(base, head, moved_module):
                     if pair[0] != pair[1]:
                         raise AssertionError('registration %d differs: %r != %r' % (index, *pair))
             raise AssertionError('%s differs' % field)
+    if base.get('retained', {}) != head.get('retained', {}):
+        raise AssertionError('retained driver helpers or their registrations differ')
     for field in ('moved', 'helpers'):
         if base[field].keys() != head[field].keys():
             raise AssertionError('%s names differ' % field)
@@ -330,6 +341,44 @@ def module_counts(specs):
     return result
 
 
+def retained_counts(specs):
+    result, helpers = {}, set()
+    for spec in specs:
+        pair, equals, count = spec.partition('=')
+        module, colon, helper = pair.partition(':')
+        if (not equals or not colon or not module.isidentifier() or not helper.isidentifier() or
+                not count.isdecimal() or int(count) < 1 or spec in result or helper in helpers):
+            raise ValueError('expected a unique module:helper=positive-count: %s' % spec)
+        result[spec] = (module, helper, int(count))
+        helpers.add(helper)
+    return result
+
+
+def nested_codes(code):
+    yield code
+    for item in code.co_consts:
+        if isinstance(item, types.CodeType):
+            yield from nested_codes(item)
+
+
+def retained_helpers(driver, specs):
+    """Compare driver helpers and identify their unchanged registered callbacks."""
+    result, seen = {}, set()
+    for spec, (_, name, count) in retained_counts(specs).items():
+        helper = getattr(driver, name)
+        if not isinstance(helper, types.FunctionType) or helper.__module__ != driver.__name__:
+            raise TypeError('%s is not a driver function' % name)
+        codes = tuple(nested_codes(helper.__code__))
+        names = [case_name for case_name, case in driver.CASES.items()
+                 if (fn := function_of(case['fn'])).__module__ == driver.__name__
+                 and any(fn.__code__ is code for code in codes)]
+        if len(names) != count or seen.intersection(names):
+            raise AssertionError('%s has %d distinct retained cases, expected %d' % (name, len(names), count))
+        seen.update(names)
+        result[spec] = {'cases': names, 'shape': function_shape(helper, driver, driver.NO_ABORT, (), ())}
+    return result
+
+
 def discover(root, specs):
     expected = module_counts(specs)
     driver = load_driver(root, CELLS[0])
@@ -361,6 +410,8 @@ def main():
     parser.add_argument('--module', help='module to which the cases and helpers moved')
     parser.add_argument('--module-cases', action='append', default=[], metavar='MODULE=COUNT',
                         help='compare every case owned by this module; repeat for a batch')
+    parser.add_argument('--retained-helper', action='append', default=[], metavar='MODULE:HELPER=COUNT',
+                        help='compare driver-owned cases created by a shared helper')
     parser.add_argument('--case', action='append', default=[], help='moved case ID (repeatable)')
     parser.add_argument('--helper', action='append', default=[], help='moved helper re-exported by driver')
     parser.add_argument('--injected', action='append', default=[], help='shared driver object passed to the module')
@@ -374,7 +425,7 @@ def main():
         return
     if args.snapshot:
         print(json.dumps(snapshot(args.snapshot.resolve(), args.cell, args.case, args.helper, args.injected,
-                                  args.source_module)))
+                                  args.source_module, args.retained_helper)))
         return
     if not args.base:
         parser.error('base is required')
@@ -394,15 +445,23 @@ def main():
         moved = {name: args.module for name in args.case}
         modules = [args.module]
         selected = [args.case[0]]
+    for _, (module, _, _) in retained_counts(args.retained_helper).items():
+        if module not in modules:
+            parser.error('--retained-helper requires its module in the comparison')
     for cell in CELLS:
-        before = child_snapshot(base, cell, moved, args.helper, args.injected)
-        after = child_snapshot(head, cell, moved, args.helper, args.injected, modules)
+        before = child_snapshot(base, cell, moved, args.helper, args.injected, retained_specs=args.retained_helper)
+        after = child_snapshot(head, cell, moved, args.helper, args.injected, modules, args.retained_helper)
         compare_snapshots(before, after, moved if not args.helper else args.module)
-        tag_hash, plans = cli_comparison(base, head, cell, selected)
-        print('%s: %d registrations, default %d, %d selection scenarios, %d plans, %d modules / %d cases; '
+        retained = [name for group in after['retained'].values() for name in group['cases']]
+        if set(retained).intersection(moved):
+            raise AssertionError('a retained case also belongs to a moved module')
+        plan_cases = selected + [group['cases'][0] for group in after['retained'].values()]
+        tag_hash, plans = cli_comparison(base, head, cell, plan_cases)
+        print('%s: %d registrations, default %d, %d selection scenarios, %d plans, %d modules / %d cases '
+              '(%d module-owned, %d retained driver callbacks); '
               '--list-tags SHA-256 %s' %
               (cell, len(before['records']), before['selections'][0][1], len(before['selections']), plans,
-               len(modules), len(moved), tag_hash))
+               len(modules), len(moved) + len(retained), len(moved), len(retained), tag_hash))
 
 
 if __name__ == '__main__':
