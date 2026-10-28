@@ -1496,3 +1496,6 @@ def import_diff(ctx: Context, args: Sequence[str]) -> int:
 
 
 RECIPES['import-diff'] = import_diff
+
+from .runner_identity import RECIPES as IDENTITY_RECIPES
+RECIPES.update(IDENTITY_RECIPES)
