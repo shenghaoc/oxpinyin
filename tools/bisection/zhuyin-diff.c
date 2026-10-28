@@ -28,6 +28,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "driver-common.h"
+
 typedef void zhuyin_context_t;
 typedef void zhuyin_instance_t;
 typedef void lookup_candidate_t;
@@ -95,36 +97,27 @@ struct symbols {
     fn_reset reset;
 };
 
-static void *resolve_symbol(void *handle, const char *name, int *missing) {
-    void *sym = dlsym(handle, name);
-    if (!sym) {
-        fprintf(stderr, "  MISSING: %s\n", name);
-        (*missing)++;
-    }
-    return sym;
-}
-
 static int resolve_all(void *handle, struct symbols *s) {
     int missing = 0;
-    s->init = (fn_init)resolve_symbol(handle, "zhuyin_init", &missing);
-    s->fini = (fn_fini)resolve_symbol(handle, "zhuyin_fini", &missing);
-    s->alloc = (fn_alloc)resolve_symbol(handle, "zhuyin_alloc_instance", &missing);
-    s->free_instance = (fn_free_instance)resolve_symbol(handle, "zhuyin_free_instance", &missing);
-    s->set_options = (fn_set_options)resolve_symbol(handle, "zhuyin_set_options", &missing);
-    s->set_chewing_scheme = (fn_set_chewing_scheme)resolve_symbol(handle, "zhuyin_set_chewing_scheme", &missing);
-    s->parse_chewing = (fn_parse_chewing)resolve_symbol(handle, "zhuyin_parse_more_chewings", &missing);
-    s->parsed_len = (fn_parsed_len)resolve_symbol(handle, "zhuyin_get_parsed_input_length", &missing);
-    s->in_chewing_keyboard = (fn_in_chewing_keyboard)resolve_symbol(handle, "zhuyin_in_chewing_keyboard", &missing);
-    s->guess_sentence = (fn_guess_sentence)resolve_symbol(handle, "zhuyin_guess_sentence", &missing);
-    s->get_sentence = (fn_get_sentence)resolve_symbol(handle, "zhuyin_get_sentence", &missing);
-    s->guess_after = (fn_guess_after)resolve_symbol(handle, "zhuyin_guess_candidates_after_cursor", &missing);
-    s->guess_before = (fn_guess_before)resolve_symbol(handle, "zhuyin_guess_candidates_before_cursor", &missing);
-    s->choose_candidate = (fn_choose)resolve_symbol(handle, "zhuyin_choose_candidate", &missing);
-    s->get_n_candidate = (fn_get_n_candidate)resolve_symbol(handle, "zhuyin_get_n_candidate", &missing);
-    s->get_candidate = (fn_get_candidate)resolve_symbol(handle, "zhuyin_get_candidate", &missing);
-    s->get_candidate_type = (fn_get_candidate_type)resolve_symbol(handle, "zhuyin_get_candidate_type", &missing);
-    s->get_candidate_string = (fn_get_candidate_string)resolve_symbol(handle, "zhuyin_get_candidate_string", &missing);
-    s->reset = (fn_reset)resolve_symbol(handle, "zhuyin_reset", &missing);
+    s->init = (fn_init)dc_resolve(handle, "zhuyin_init", &missing);
+    s->fini = (fn_fini)dc_resolve(handle, "zhuyin_fini", &missing);
+    s->alloc = (fn_alloc)dc_resolve(handle, "zhuyin_alloc_instance", &missing);
+    s->free_instance = (fn_free_instance)dc_resolve(handle, "zhuyin_free_instance", &missing);
+    s->set_options = (fn_set_options)dc_resolve(handle, "zhuyin_set_options", &missing);
+    s->set_chewing_scheme = (fn_set_chewing_scheme)dc_resolve(handle, "zhuyin_set_chewing_scheme", &missing);
+    s->parse_chewing = (fn_parse_chewing)dc_resolve(handle, "zhuyin_parse_more_chewings", &missing);
+    s->parsed_len = (fn_parsed_len)dc_resolve(handle, "zhuyin_get_parsed_input_length", &missing);
+    s->in_chewing_keyboard = (fn_in_chewing_keyboard)dc_resolve(handle, "zhuyin_in_chewing_keyboard", &missing);
+    s->guess_sentence = (fn_guess_sentence)dc_resolve(handle, "zhuyin_guess_sentence", &missing);
+    s->get_sentence = (fn_get_sentence)dc_resolve(handle, "zhuyin_get_sentence", &missing);
+    s->guess_after = (fn_guess_after)dc_resolve(handle, "zhuyin_guess_candidates_after_cursor", &missing);
+    s->guess_before = (fn_guess_before)dc_resolve(handle, "zhuyin_guess_candidates_before_cursor", &missing);
+    s->choose_candidate = (fn_choose)dc_resolve(handle, "zhuyin_choose_candidate", &missing);
+    s->get_n_candidate = (fn_get_n_candidate)dc_resolve(handle, "zhuyin_get_n_candidate", &missing);
+    s->get_candidate = (fn_get_candidate)dc_resolve(handle, "zhuyin_get_candidate", &missing);
+    s->get_candidate_type = (fn_get_candidate_type)dc_resolve(handle, "zhuyin_get_candidate_type", &missing);
+    s->get_candidate_string = (fn_get_candidate_string)dc_resolve(handle, "zhuyin_get_candidate_string", &missing);
+    s->reset = (fn_reset)dc_resolve(handle, "zhuyin_reset", &missing);
     return missing;
 }
 
@@ -245,8 +238,7 @@ static void dump_sentence(const struct symbols *s, zhuyin_instance_t *inst,
     bool ok = s->get_sentence && s->get_sentence(inst, &sent);
     printf("%s: %s text=\"%s\"\n", label, ok ? "true" : "false",
            ok && sent ? sent : "(null)");
-    if (sent)
-        g_free_fn(sent);
+    dc_release(g_free_fn, sent);
 }
 
 /* The head of the list only: the residual lives in row 1's span start,
@@ -448,8 +440,7 @@ int main(int argc, char **argv) {
                 bool ok = s.get_sentence(inst, &sent);
                 printf("get_sentence: %s text=\"%s\"\n",
                        ok ? "true" : "false", sent ? sent : "(null)");
-                if (sent)
-                    g_free_fn(sent);
+                dc_release(g_free_fn, sent);
             }
         }
 

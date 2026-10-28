@@ -40,13 +40,15 @@ class Case:
 
 @dataclass(frozen=True)
 class Driver:
-    """A driver's runner build and cases. TEMPLATES are its mkdtemp prefixes."""
+    """A driver's runner build and cases. TEMPLATES are its mkdtemp prefixes;
+    PIN_TABLES 'subject' gives the pin the subject's tables, as its registry row does."""
     cases: tuple[Case, ...]
     templates: tuple[str, ...] = ()
     compiler: str = 'gcc'
     flags: tuple[str, ...] = STRICT
     facade: str = 'pinyin'
     variant: str = 'unpatched'
+    pin_tables: str = 'pin'
 
 
 @dataclass(frozen=True)
@@ -89,6 +91,15 @@ DRIVERS = {
                Case('dlopen-failure', ('none',), ('{empty}/absent.so', '{data}', '1')),
                *(Case(f'bad-scheme-{value or "empty"}', ('none',), ('{empty}/absent.so', '{data}', value))
                  for value in ('0', '4', '2junk', '')),
+               Case('usage', ('none',), ('{empty}/absent.so',)))),
+    'zhuyin-diff': Driver(
+        compiler='cc', flags=('-O2', '-Wall', '-Wextra'), facade='zhuyin', pin_tables='subject',
+        cases=(Case('standard', ('pin', 'subject'), ('{so}', '{data}', '{user}')),
+               Case('noguess', ('pin', 'subject'), ('{so}', '{data}', '{user}', 'noguess')),
+               Case('choose', ('pin', 'subject'), ('{so}', '{data}', '{user}', 'choose')),
+               Case('missing-symbol', ('stub',), ('{so}', '{data}', '{user}')),
+               Case('init-failure', ('pin', 'subject'), ('{so}', '{empty}', '{user}')),
+               Case('dlopen-failure', ('none',), ('{empty}/absent.so', '{data}')),
                Case('usage', ('none',), ('{empty}/absent.so',)))),
 }
 
@@ -165,11 +176,16 @@ def patched(ctx: Context) -> tuple[Path, Path]:
 
 def libraries(ctx: Context, driver: Driver, sides: set[str], root: Path) -> dict[str, tuple[Path | None, Path]]:
     pin_so, pin_data = pin(ctx, driver)
+    # The subject's tables only when a subject side or the pin (pin_tables 'subject') reads them.
+    if 'subject' in sides or driver.pin_tables == 'subject':
+        subject_data = ctx.data.resolve('OXPINYIN_SYSTEM_DIR', 'driver-identity')
+        if driver.pin_tables == 'subject':
+            pin_data = subject_data
     inputs = {'pin': (pin_so, pin_data), 'none': (None, pin_data)}
     if 'patched' in sides:
         inputs['patched'] = patched(ctx)
     if 'subject' in sides:
-        inputs['subject'] = (ctx.artifact(driver.facade), ctx.data.resolve('OXPINYIN_SYSTEM_DIR', 'driver-identity'))
+        inputs['subject'] = (ctx.artifact(driver.facade), subject_data)
     if 'stub' in sides:
         source, stub = root / 'stub.c', root / 'libdriver-identity-stub.so'
         source.write_text('int driver_identity_stub;\n')
