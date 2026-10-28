@@ -8678,8 +8678,7 @@ for _mode in ('pinyin', 'zhuyin'):
     # it, a `0x` with no hex digit and `infin` fail the `%f` conversion.
     for _name, _spelling in (('exponent-without-digits', '1e'), ('hex-without-digits', '0x'),
                              ('hex-exponent-without-digits', '0x1p'), ('infin', 'infin')):
-        # glibc 2.42 first rejects incomplete exponents. Native pin acceptance
-        # is classified by source version below; Rust requires a complete field.
+        # Each host's libc decides acceptance identically for both facades.
         case('table-conf-lambda-' + _name + _suffix, mode=_mode, stderr=True,
              issues=('694', '525'))(header_probe(('lambda parameter:0.312699', 'lambda parameter:' + _spelling)))
 
@@ -8831,10 +8830,6 @@ def scanner_initialization(original):
     return probe
 
 _SCANNER_RECORDS = {
-    '1297-table-floats.md': (
-        'lambda-hex', 'lambda-hex-fraction', 'lambda-hex-upper', 'lambda-inf', 'lambda-nan',
-        '919-lambda-hex-no-exponent', '919-lambda-infinity', '919-lambda-nan-payload',
-        '919-lambda-hex-overflow'),
     '1297-table-decimals.md': ('919-versions-positive-overflow', '919-versions-int-wrap'),
     '1297-table-lines.md': ('919-header-one-line', '919-header-leading-space'),
     '1297-table-words.md': ('919-source-token-nul', '919-database-token-nul'),
@@ -8851,33 +8846,25 @@ for _record, _names in _SCANNER_RECORDS.items():
             _spec['fn'] = scanner_initialization(_original)
             _spec.update(policy_record=_record, host_scanf=(), issues=tuple(dict.fromkeys((*_spec['issues'], '919'))))
 
-# The old host_scanf tags belonged to the scanner imitation. Use source-derived
-# host-version classification for the pin only; no scanner probe is executed.
-# glibc 2.42 first rejected incomplete exponents (0a8e7ac95c); 2.43 first
-# rejected 0x. (b52ecff316). Both Rust and newer glibc reject these fields.
-def _scanner_host_policy():
-    """Register platform-dependent pin acceptance from its native libc version."""
-    try:
-        native = os.confstr('CS_GNU_LIBC_VERSION')
-    except (AttributeError, OSError, ValueError):
-        return  # registry/harness tests also run on non-glibc native hosts
-    if not native or not native.startswith('glibc '):
-        return
-    release = tuple(int(part) for part in native.removeprefix('glibc ').split('.')[:2])
-    exponents = ('lambda-exponent-without-digits', 'lambda-hex-exponent-without-digits',
-                 '919-lambda-exponent-sign-without-digits',
-                 '919-lambda-hex-exponent-sign-without-digits',
-                 '919-lambda-hex-exponent-minus-without-digits')
-    for stem in (*exponents, '919-lambda-hex-dot-without-digits'):
-        threshold = (2, 43) if stem.endswith('hex-dot-without-digits') else (2, 42)
-        for suffix in ('', '-zhuyin'):
-            spec = CASES['table-conf-' + stem + suffix]
-            if release < threshold:
-                spec['policy_record'] = '1297-table-floats.md'
-                spec['fn'] = scanner_initialization(spec['fn'])
-            spec['issues'] = tuple(dict.fromkeys((*spec['issues'], '919')))
+# Maintainer ruling 2026-10-28: both sides read lambda with the same host
+# libc. Preserve current main's initialization observations for these scanner
+# fixtures; every spelling must MATCH, including version-sensitive failures.
+for _name in ('lambda-hex', 'lambda-hex-fraction', 'lambda-hex-upper', 'lambda-inf', 'lambda-nan',
+              '919-lambda-hex-no-exponent', '919-lambda-infinity', '919-lambda-nan-payload',
+              '919-lambda-hex-overflow'):
+    for _suffix in ('', '-zhuyin'):
+        _spec = CASES['table-conf-' + _name + _suffix]
+        _spec['fn'] = scanner_initialization(_spec['fn'])
+        _spec['issues'] = tuple(dict.fromkeys((*_spec['issues'], '919')))
+for _name in ('lambda-exponent-without-digits', 'lambda-hex-exponent-without-digits',
+              '919-lambda-exponent-sign-without-digits',
+              '919-lambda-hex-exponent-sign-without-digits',
+              '919-lambda-hex-exponent-minus-without-digits',
+              '919-lambda-hex-dot-without-digits'):
+    for _suffix in ('', '-zhuyin'):
+        _spec = CASES['table-conf-' + _name + _suffix]
+        _spec['issues'] = tuple(dict.fromkeys((*_spec['issues'], '919')))
 
-_scanner_host_policy()
 for _suffix in ('', '-zhuyin'):
     CASES['table-conf-abort-919-word-width-overlong' + _suffix].update(
         policy_record='1297-table-words.md', control=False)

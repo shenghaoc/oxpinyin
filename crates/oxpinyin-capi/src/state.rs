@@ -64,6 +64,7 @@ impl CapiContext {
             user_dir,
             oxpinyin_facade::PINYIN_DEFAULT_OPTION_WORD,
             oxpinyin_user::UserConfLaw::Pinyin,
+            crate::locale::read_lambda,
         )?;
         // `table_info.cpp:220` scans λ straight into a `gfloat`; the exact
         // rational the decoder may hold is not that value.

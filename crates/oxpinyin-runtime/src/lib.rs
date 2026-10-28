@@ -48,7 +48,7 @@ pub use oxpinyin_data::phrase_library::{
     LayoutFault, LibraryError, PhraseItemView, RowFault, directory_reads_as_a_chunk,
 };
 pub use oxpinyin_data::table_info::{FileType, TableConfSite};
-pub use oxpinyin_data::table_info::{TableConf, TableConfError};
+pub use oxpinyin_data::table_info::{LambdaReader, TableConf, TableConfError, read_decimal_lambda};
 use oxpinyin_data::user_files::{SystemVersions, UserFileLayout};
 use oxpinyin_data::{
     AddonDictionary, BigramLanguageModel, DictError, LmError, PunctTable, SystemDbm,
@@ -2050,7 +2050,7 @@ impl ConfFile {
 
 /// `SystemTableInfo2::load`'s `fopen` and parse. A file the pin would refuse
 /// is an [`OpenError::TableConf`].
-fn read_conf_file(system_dir: &Path) -> Result<ConfFile, OpenError> {
+fn read_conf_file(system_dir: &Path, read_lambda: LambdaReader) -> Result<ConfFile, OpenError> {
     let path = system_dir.join("table.conf");
     // A FIFO would block the read forever.
     match std::fs::metadata(&path) {
@@ -2065,7 +2065,7 @@ fn read_conf_file(system_dir: &Path) -> Result<ConfFile, OpenError> {
         Err(error) => return Ok(ConfFile::Unreadable(error)),
     }
     match std::fs::read(&path) {
-        Ok(bytes) => TableConf::parse(&bytes)
+        Ok(bytes) => TableConf::parse(&bytes, read_lambda)
             .map(|conf| ConfFile::Read(Box::new(conf)))
             .map_err(OpenError::TableConf),
         Err(error) => Ok(ConfFile::Unreadable(error)),
@@ -2206,8 +2206,12 @@ impl Runtime {
     ///
     /// Returns [`OpenError`] when a required file is missing or a DBM or
     /// chunk file cannot be opened.
-    pub fn open(system_dir: &Path, user_dir: Option<&Path>) -> Result<Self, OpenError> {
-        Self::open_with_law(system_dir, user_dir, UserConfLaw::Pinyin)
+    pub fn open(
+        system_dir: &Path,
+        user_dir: Option<&Path>,
+        read_lambda: LambdaReader,
+    ) -> Result<Self, OpenError> {
+        Self::open_with_law(system_dir, user_dir, UserConfLaw::Pinyin, read_lambda)
     }
 
     /// [`Runtime::open`] with the user dir's `user.conf` law named: the
@@ -2226,8 +2230,9 @@ impl Runtime {
         system_dir: &Path,
         user_dir: Option<&Path>,
         law: UserConfLaw,
+        read_lambda: LambdaReader,
     ) -> Result<Self, OpenError> {
-        let conf_file = read_conf_file(system_dir)?;
+        let conf_file = read_conf_file(system_dir, read_lambda)?;
         let conf = conf_file.conf();
         let early = match user_dir {
             Some(dir) => check_profile_early(&conf_file, dir, law)?,
@@ -2779,7 +2784,12 @@ mod tests {
 
     #[test]
     fn candidate_lookup_omits_prices_without_changing_live_priced_reads() {
-        let runtime = Runtime::open(&w3_dir(), None).unwrap();
+        let runtime = Runtime::open(
+            &w3_dir(),
+            None,
+            oxpinyin_data::table_info::read_decimal_lambda,
+        )
+        .unwrap();
         let dict = Arc::new(runtime.dict());
         let ni = SyllableKey::from_text("ni").unwrap();
         let token = dict.system().tokens_for_text("你").unwrap()[0];
@@ -2840,7 +2850,12 @@ mod tests {
     #[test]
     fn zhuyin_open_holds_no_addon_or_punct_handles() {
         let system = w3_dir();
-        let pinyin = Runtime::open(&system, None).expect("pinyin fixture opens");
+        let pinyin = Runtime::open(
+            &system,
+            None,
+            oxpinyin_data::table_info::read_decimal_lambda,
+        )
+        .expect("pinyin fixture opens");
         assert!(
             pinyin.dict.addons.read().unwrap().dict.has_open_indexes(),
             "vacuity guard: pinyin eagerly opens the fixture's addon indexes"
@@ -2852,8 +2867,13 @@ mod tests {
 
         let user = tempfile::tempdir().unwrap();
         for user_dir in [None, Some(user.path())] {
-            let zhuyin = Runtime::open_with_law(&system, user_dir, UserConfLaw::Zhuyin)
-                .expect("zhuyin fixture opens");
+            let zhuyin = Runtime::open_with_law(
+                &system,
+                user_dir,
+                UserConfLaw::Zhuyin,
+                oxpinyin_data::table_info::read_decimal_lambda,
+            )
+            .expect("zhuyin fixture opens");
             // An empty loaded-library set would also pass before the fix;
             // inspect the actual index handles, not just visible items.
             assert!(!zhuyin.dict.addons.read().unwrap().dict.has_open_indexes());
@@ -2898,8 +2918,13 @@ mod tests {
         std::fs::write(&conf_path, edited).unwrap();
 
         for user_dir in [None, Some(user.path())] {
-            let zhuyin = Runtime::open_with_law(system.path(), user_dir, UserConfLaw::Zhuyin)
-                .expect("edited fixture opens");
+            let zhuyin = Runtime::open_with_law(
+                system.path(),
+                user_dir,
+                UserConfLaw::Zhuyin,
+                oxpinyin_data::table_info::read_decimal_lambda,
+            )
+            .expect("edited fixture opens");
             let addons = zhuyin.dict.addons.read().unwrap();
             assert!(
                 !addons.dict.has_open_indexes(),
@@ -2921,7 +2946,12 @@ mod tests {
     #[test]
     fn tokens_for_text_reads_live_rows_without_rebuilding_user_lookup() {
         let dir = tempfile::tempdir().unwrap();
-        let runtime = Runtime::open(&w3_dir(), Some(dir.path())).unwrap();
+        let runtime = Runtime::open(
+            &w3_dir(),
+            Some(dir.path()),
+            oxpinyin_data::table_info::read_decimal_lambda,
+        )
+        .unwrap();
         let dict = runtime.dict();
         let phrase = "你鎄";
         assert!(dict.tokens_for_text(phrase).is_empty());
@@ -2994,7 +3024,12 @@ mod tests {
     #[test]
     fn tokens_for_text_retains_the_row_after_a_system_reading_merge() {
         let dir = tempfile::tempdir().unwrap();
-        let runtime = Runtime::open(&w3_dir(), Some(dir.path())).unwrap();
+        let runtime = Runtime::open(
+            &w3_dir(),
+            Some(dir.path()),
+            oxpinyin_data::table_info::read_decimal_lambda,
+        )
+        .unwrap();
         let dict = runtime.dict();
         let tokens = dict.tokens_for_text("你好");
         let token = tokens[0].value();
@@ -3033,7 +3068,12 @@ mod tests {
     // an opened runtime plus one session must leave the cache untouched.
     #[test]
     fn new_session_does_not_populate_the_key_cost_cache() {
-        let runtime = Runtime::open(&w3_dir(), None).expect("fixture opens");
+        let runtime = Runtime::open(
+            &w3_dir(),
+            None,
+            oxpinyin_data::table_info::read_decimal_lambda,
+        )
+        .expect("fixture opens");
         assert!(
             runtime.lm().has_real_unigrams(),
             "vacuity guard: a runtime-backed model must report real \
@@ -3088,7 +3128,12 @@ mod tests {
     fn key_costs_cache_stays_stamp_true_under_concurrent_visibility_flips() {
         const ROUNDS: usize = 12;
         const FLIP_PAIRS: usize = 20_000;
-        let runtime = Runtime::open(&w3_dir(), None).expect("fixture opens");
+        let runtime = Runtime::open(
+            &w3_dir(),
+            None,
+            oxpinyin_data::table_info::read_decimal_lambda,
+        )
+        .expect("fixture opens");
         let dict = runtime.dict();
         let lm = runtime.lm();
 

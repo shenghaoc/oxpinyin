@@ -36,7 +36,13 @@ fn originals() -> SystemOriginals {
          default USER_DICTIONARY late.table late.bin late.dbin SYSTEM_FILE\n",
         SystemVersions::for_this_build(7, 14).database_format
     );
-    let layout = UserFileLayout::from_conf(&TableConf::parse(conf.as_bytes()).unwrap());
+    let layout = UserFileLayout::from_conf(
+        &TableConf::parse(
+            conf.as_bytes(),
+            oxpinyin_data::table_info::read_decimal_lambda,
+        )
+        .unwrap(),
+    );
     let library = SystemLibrary {
         total: 100,
         range_end: 2,

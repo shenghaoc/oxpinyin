@@ -66,6 +66,7 @@ mod instance;
 mod iterators;
 mod keys;
 mod live;
+#[path = "../../oxpinyin-capi/src/locale.rs"]
 mod locale;
 mod parse;
 mod phrase;

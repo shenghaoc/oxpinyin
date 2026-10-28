@@ -32,7 +32,13 @@ fn open_context(option_word: u32) -> ContextCore {
         if !dir.is_dir() {
             continue;
         }
-        if let Some(context) = ContextCore::open(&dir, None, option_word, UserConfLaw::Pinyin) {
+        if let Some(context) = ContextCore::open(
+            &dir,
+            None,
+            option_word,
+            UserConfLaw::Pinyin,
+            oxpinyin_runtime::read_decimal_lambda,
+        ) {
             return context;
         }
     }
@@ -198,8 +204,14 @@ fn fixture_dir() -> PathBuf {
         .map(|ext| root.join(ext))
         .find(|dir| {
             dir.is_dir()
-                && ContextCore::open(dir, None, PINYIN_DEFAULT_OPTION_WORD, UserConfLaw::Pinyin)
-                    .is_some()
+                && ContextCore::open(
+                    dir,
+                    None,
+                    PINYIN_DEFAULT_OPTION_WORD,
+                    UserConfLaw::Pinyin,
+                    oxpinyin_runtime::read_decimal_lambda,
+                )
+                .is_some()
         })
         .expect("a fixtures/w3/<backend> set opens under the compiled backend")
 }
@@ -214,9 +226,12 @@ fn user_dir_with_bigram_row(
     let dir = std::env::temp_dir().join(format!("oxpinyin-facade-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("user dir");
-    let conf = oxpinyin_runtime::TableConf::read(&system.join("table.conf"))
-        .and_then(Result::ok)
-        .unwrap_or_else(oxpinyin_runtime::TableConf::stock);
+    let conf = oxpinyin_runtime::TableConf::read(
+        &system.join("table.conf"),
+        oxpinyin_runtime::read_decimal_lambda,
+    )
+    .and_then(Result::ok)
+    .unwrap_or_else(oxpinyin_runtime::TableConf::stock);
     let state = persistence::UserState {
         bigram: vec![row],
         ..persistence::UserState::default()
@@ -255,6 +270,7 @@ fn a_short_start_gram_refuses_the_guess_before_any_training() {
         Some(&user),
         PINYIN_DEFAULT_OPTION_WORD,
         UserConfLaw::Pinyin,
+        oxpinyin_runtime::read_decimal_lambda,
     )
     .expect("context");
     let store = context.user_store().expect("user store");
@@ -297,6 +313,7 @@ fn training_that_would_miss_its_inserted_item_refuses_and_observes_nothing() {
             None,
             PINYIN_DEFAULT_OPTION_WORD,
             UserConfLaw::Pinyin,
+            oxpinyin_runtime::read_decimal_lambda,
         )
         .expect("context");
         let mut inst = context.alloc_instance().expect("instance");
@@ -323,6 +340,7 @@ fn training_that_would_miss_its_inserted_item_refuses_and_observes_nothing() {
         Some(&user),
         PINYIN_DEFAULT_OPTION_WORD,
         UserConfLaw::Pinyin,
+        oxpinyin_runtime::read_decimal_lambda,
     )
     .expect("context");
     let store = context.user_store().expect("user store");
@@ -358,6 +376,7 @@ fn ni_and_hao(system: &std::path::Path) -> (u32, u32) {
         None,
         PINYIN_DEFAULT_OPTION_WORD,
         UserConfLaw::Pinyin,
+        oxpinyin_runtime::read_decimal_lambda,
     )
     .expect("context");
     let mut inst = context.alloc_instance().expect("instance");
@@ -403,6 +422,7 @@ fn train_two_steps(
         Some(&user),
         PINYIN_DEFAULT_OPTION_WORD,
         UserConfLaw::Pinyin,
+        oxpinyin_runtime::read_decimal_lambda,
     )
     .expect("context");
     let store = context.user_store().expect("user store");
@@ -453,6 +473,7 @@ fn a_short_start_gram_leaves_the_parse_and_refuses_the_candidate_guess() {
         Some(&user),
         PINYIN_DEFAULT_OPTION_WORD | (1 << 9),
         UserConfLaw::Pinyin,
+        oxpinyin_runtime::read_decimal_lambda,
     )
     .expect("context");
     let store = context.user_store().expect("user store");

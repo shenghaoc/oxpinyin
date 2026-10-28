@@ -39,8 +39,12 @@ fn oxpinyin_trains_and_saves_its_own_profile() {
     let system = env("OX_SYSTEM_DIR");
     let owned = env("OX_OWNED_DIR");
 
-    let runtime = Runtime::open(Path::new(&system), Some(Path::new(&owned)))
-        .expect("the runtime opens the fresh dir");
+    let runtime = Runtime::open(
+        Path::new(&system),
+        Some(Path::new(&owned)),
+        oxpinyin_data::table_info::read_decimal_lambda,
+    )
+    .expect("the runtime opens the fresh dir");
     let mut store = runtime.user_store().expect("a fresh profile backs a store");
 
     // Train through the engine session — choose, then a sentence train —
@@ -136,8 +140,12 @@ fn a_pin_profile_loads_and_saves_back_in_place() {
     // user.conf, loads the bigram hash, the USER_FILE chunk stores and
     // replays the .dbin logs onto the system originals — exactly what
     // `pinyin_init(systemdir, userdir)` does upstream.
-    let runtime = Runtime::open(Path::new(&system), Some(Path::new(&pin_dir)))
-        .expect("the runtime opens the pin's system dir and profile");
+    let runtime = Runtime::open(
+        Path::new(&system),
+        Some(Path::new(&pin_dir)),
+        oxpinyin_data::table_info::read_decimal_lambda,
+    )
+    .expect("the runtime opens the pin's system dir and profile");
     let mut store = runtime
         .user_store()
         .expect("the profile backs a user store");
@@ -168,9 +176,12 @@ fn a_pin_profile_loads_and_saves_back_in_place() {
     // The rewrite re-reads value-stably: same bigram grams, same user
     // items. This is the load→save→load fixed point; the script's
     // pin-rendered diff is the cross-library authority on top of it.
-    let conf = TableConf::read(&Path::new(&system).join("table.conf"))
-        .and_then(Result::ok)
-        .unwrap_or_else(TableConf::stock);
+    let conf = TableConf::read(
+        &Path::new(&system).join("table.conf"),
+        oxpinyin_data::table_info::read_decimal_lambda,
+    )
+    .and_then(Result::ok)
+    .unwrap_or_else(TableConf::stock);
     let versions = SystemVersions::from_conf(&conf);
     let originals = system_originals(
         runtime.dict().system().libraries(),

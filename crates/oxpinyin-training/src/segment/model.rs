@@ -132,16 +132,17 @@ impl SegmentModel {
     }
 }
 
-/// Reads the λ of a `table.conf` body the way `SystemTableInfo2::load` does.
+/// Reads the λ of a `table.conf` body with the training tool's decimal reader.
 ///
-/// The pin parses the whole file as one `fscanf` stream
-/// (`src/storage/table_info.cpp:194-294`): the header directives, then the
-/// six-word rows. This reuses [`TableConf::parse`], so a valid file yields
-/// the same `gfloat` bits as the pin's `%f`, and a file the pin refuses
-/// yields `None` instead of a line-only approximation.
+/// Header and row validation reuse [`TableConf::parse`]. This portable tool
+/// chooses Rust's decimal conversion explicitly; only the C facades use the
+/// host-libc reader of `SystemTableInfo2::load` (`074a2219
+/// src/storage/table_info.cpp:220`).
 #[must_use]
 pub fn parse_table_conf_lambda(bytes: &[u8]) -> Option<f32> {
-    TableConf::parse(bytes).ok().map(|conf| conf.lambda_f32())
+    TableConf::parse(bytes, oxpinyin_data::table_info::read_decimal_lambda)
+        .ok()
+        .map(|conf| conf.lambda_f32())
 }
 
 #[cfg(test)]

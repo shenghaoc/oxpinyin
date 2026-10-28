@@ -406,7 +406,14 @@ constants on 2026-10-16 UTC; it is not yet proven complete (§11).
 | `OPEN_COUNTER_LIMIT` | 6 | `storage/table_info.cpp:32` (oxpinyin: `oxpinyin-data/src/user_files.rs`) |
 
 The pin also reads λ from the system `table.conf`; that is data, not a
-coefficient, and oxpinyin reads the same value.
+coefficient, and oxpinyin reads the same value. Ruling 2026-10-28 UTC:
+`SystemTableInfo2::load` sets `LC_NUMERIC="C"` and scans `%f\n` into a
+`gfloat` (`src/storage/table_info.cpp:197,220-224` at `074a2219`). The C
+facades inject the same host-libc conversion into `TableConf::parse`;
+`%n` records the next header's position after whitespace and pushback.
+The parser borrows the remaining bytes; the FFI reader makes one
+NUL-terminated copy. Time and total input space remain O(n). See the
+[source derivation and supersession](1297-table-floats.md).
 
 ### oxpinyin's own values, by call path
 
