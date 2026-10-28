@@ -1,0 +1,234 @@
+#!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
+"""Tests for the zero-key guess cases (#1175)."""
+import unittest
+
+import contract_zero_key_guess as family
+
+
+# (case ID, positional options, keyword options) in registration order.
+EXPECTED = [("zero-key-guess/pinyin/default/'/guess_sentence",
+             (),
+             {'control': True, 'issues': ('902',), 'mode': 'pinyin'}),
+            ("zero-key-guess/pinyin/default/'/guess_sentence_with_prefix",
+             (),
+             {'control': True, 'issues': ('902',), 'mode': 'pinyin'}),
+            ("zero-key-guess/pinyin/default/'/guess_candidates",
+             (),
+             {'control': True, 'issues': ('902',), 'mode': 'pinyin'}),
+            ("zero-key-guess/pinyin/default/''/guess_sentence",
+             (),
+             {'control': True, 'issues': ('902',), 'mode': 'pinyin'}),
+            ("zero-key-guess/pinyin/default/''/guess_sentence_with_prefix",
+             (),
+             {'control': True, 'issues': ('902',), 'mode': 'pinyin'}),
+            ("zero-key-guess/pinyin/default/''/guess_candidates",
+             (),
+             {'control': True, 'issues': ('902',), 'mode': 'pinyin'}),
+            ("zero-key-guess/pinyin/default/'''/guess_sentence",
+             (),
+             {'control': True, 'issues': ('902',), 'mode': 'pinyin'}),
+            ("zero-key-guess/pinyin/default/'''/guess_sentence_with_prefix",
+             (),
+             {'control': True, 'issues': ('902',), 'mode': 'pinyin'}),
+            ("zero-key-guess/pinyin/default/'''/guess_candidates",
+             (),
+             {'control': True, 'issues': ('902',), 'mode': 'pinyin'}),
+            ("zero-key-guess/pinyin/0x20/'/guess_sentence",
+             (),
+             {'control': True, 'issues': ('902',), 'mode': 'pinyin'}),
+            ("zero-key-guess/pinyin/0x20/'/guess_sentence_with_prefix",
+             (),
+             {'control': True, 'issues': ('902',), 'mode': 'pinyin'}),
+            ("zero-key-guess/pinyin/0x20/'/guess_candidates",
+             (),
+             {'control': True, 'issues': ('902',), 'mode': 'pinyin'}),
+            ("zero-key-guess/pinyin/0x20/''/guess_sentence",
+             (),
+             {'control': True, 'issues': ('902',), 'mode': 'pinyin'}),
+            ("zero-key-guess/pinyin/0x20/''/guess_sentence_with_prefix",
+             (),
+             {'control': True, 'issues': ('902',), 'mode': 'pinyin'}),
+            ("zero-key-guess/pinyin/0x20/''/guess_candidates",
+             (),
+             {'control': True, 'issues': ('902',), 'mode': 'pinyin'}),
+            ("zero-key-guess/pinyin/0x20/'''/guess_sentence",
+             (),
+             {'control': True, 'issues': ('902',), 'mode': 'pinyin'}),
+            ("zero-key-guess/pinyin/0x20/'''/guess_sentence_with_prefix",
+             (),
+             {'control': True, 'issues': ('902',), 'mode': 'pinyin'}),
+            ("zero-key-guess/pinyin/0x20/'''/guess_candidates",
+             (),
+             {'control': True, 'issues': ('902',), 'mode': 'pinyin'}),
+            ("zero-key-guess/pinyin/0x18a/'/guess_sentence",
+             (),
+             {'control': True, 'issues': ('902',), 'mode': 'pinyin'}),
+            ("zero-key-guess/pinyin/0x18a/'/guess_sentence_with_prefix",
+             (),
+             {'control': True, 'issues': ('902',), 'mode': 'pinyin'}),
+            ("zero-key-guess/pinyin/0x18a/'/guess_candidates",
+             (),
+             {'control': True, 'issues': ('902',), 'mode': 'pinyin'}),
+            ("zero-key-guess/pinyin/0x18a/''/guess_sentence",
+             (),
+             {'control': True, 'issues': ('902',), 'mode': 'pinyin'}),
+            ("zero-key-guess/pinyin/0x18a/''/guess_sentence_with_prefix",
+             (),
+             {'control': True, 'issues': ('902',), 'mode': 'pinyin'}),
+            ("zero-key-guess/pinyin/0x18a/''/guess_candidates",
+             (),
+             {'control': True, 'issues': ('902',), 'mode': 'pinyin'}),
+            ("zero-key-guess/pinyin/0x18a/'''/guess_sentence",
+             (),
+             {'control': True, 'issues': ('902',), 'mode': 'pinyin'}),
+            ("zero-key-guess/pinyin/0x18a/'''/guess_sentence_with_prefix",
+             (),
+             {'control': True, 'issues': ('902',), 'mode': 'pinyin'}),
+            ("zero-key-guess/pinyin/0x18a/'''/guess_candidates",
+             (),
+             {'control': True, 'issues': ('902',), 'mode': 'pinyin'}),
+            ("zero-key-guess/zhuyin/default/'/guess_sentence",
+             (),
+             {'control': False, 'issues': ('902',), 'mode': 'zhuyin'}),
+            ("zero-key-guess/zhuyin/default/'/guess_sentence_with_prefix",
+             (),
+             {'control': False, 'issues': ('902',), 'mode': 'zhuyin'}),
+            ("zero-key-guess/zhuyin/default/'/guess_candidates_after_cursor",
+             (),
+             {'control': False, 'issues': ('902',), 'mode': 'zhuyin'}),
+            ("zero-key-guess/zhuyin/default/'/guess_candidates_before_cursor",
+             (),
+             {'control': False, 'issues': ('902',), 'mode': 'zhuyin'}),
+            ("zero-key-guess/zhuyin/default/''/guess_sentence",
+             (),
+             {'control': False, 'issues': ('902',), 'mode': 'zhuyin'}),
+            ("zero-key-guess/zhuyin/default/''/guess_sentence_with_prefix",
+             (),
+             {'control': False, 'issues': ('902',), 'mode': 'zhuyin'}),
+            ("zero-key-guess/zhuyin/default/''/guess_candidates_after_cursor",
+             (),
+             {'control': False, 'issues': ('902',), 'mode': 'zhuyin'}),
+            ("zero-key-guess/zhuyin/default/''/guess_candidates_before_cursor",
+             (),
+             {'control': False, 'issues': ('902',), 'mode': 'zhuyin'}),
+            ("zero-key-guess/zhuyin/default/'''/guess_sentence",
+             (),
+             {'control': False, 'issues': ('902',), 'mode': 'zhuyin'}),
+            ("zero-key-guess/zhuyin/default/'''/guess_sentence_with_prefix",
+             (),
+             {'control': False, 'issues': ('902',), 'mode': 'zhuyin'}),
+            ("zero-key-guess/zhuyin/default/'''/guess_candidates_after_cursor",
+             (),
+             {'control': False, 'issues': ('902',), 'mode': 'zhuyin'}),
+            ("zero-key-guess/zhuyin/default/'''/guess_candidates_before_cursor",
+             (),
+             {'control': False, 'issues': ('902',), 'mode': 'zhuyin'}),
+            ("zero-key-guess/zhuyin/0x20/'/guess_sentence",
+             (),
+             {'control': False, 'issues': ('902',), 'mode': 'zhuyin'}),
+            ("zero-key-guess/zhuyin/0x20/'/guess_sentence_with_prefix",
+             (),
+             {'control': False, 'issues': ('902',), 'mode': 'zhuyin'}),
+            ("zero-key-guess/zhuyin/0x20/'/guess_candidates_after_cursor",
+             (),
+             {'control': False, 'issues': ('902',), 'mode': 'zhuyin'}),
+            ("zero-key-guess/zhuyin/0x20/'/guess_candidates_before_cursor",
+             (),
+             {'control': False, 'issues': ('902',), 'mode': 'zhuyin'}),
+            ("zero-key-guess/zhuyin/0x20/''/guess_sentence",
+             (),
+             {'control': False, 'issues': ('902',), 'mode': 'zhuyin'}),
+            ("zero-key-guess/zhuyin/0x20/''/guess_sentence_with_prefix",
+             (),
+             {'control': False, 'issues': ('902',), 'mode': 'zhuyin'}),
+            ("zero-key-guess/zhuyin/0x20/''/guess_candidates_after_cursor",
+             (),
+             {'control': False, 'issues': ('902',), 'mode': 'zhuyin'}),
+            ("zero-key-guess/zhuyin/0x20/''/guess_candidates_before_cursor",
+             (),
+             {'control': False, 'issues': ('902',), 'mode': 'zhuyin'}),
+            ("zero-key-guess/zhuyin/0x20/'''/guess_sentence",
+             (),
+             {'control': False, 'issues': ('902',), 'mode': 'zhuyin'}),
+            ("zero-key-guess/zhuyin/0x20/'''/guess_sentence_with_prefix",
+             (),
+             {'control': False, 'issues': ('902',), 'mode': 'zhuyin'}),
+            ("zero-key-guess/zhuyin/0x20/'''/guess_candidates_after_cursor",
+             (),
+             {'control': False, 'issues': ('902',), 'mode': 'zhuyin'}),
+            ("zero-key-guess/zhuyin/0x20/'''/guess_candidates_before_cursor",
+             (),
+             {'control': False, 'issues': ('902',), 'mode': 'zhuyin'}),
+            ("zero-key-guess/zhuyin/0x18a/'/guess_sentence",
+             (),
+             {'control': False, 'issues': ('902',), 'mode': 'zhuyin'}),
+            ("zero-key-guess/zhuyin/0x18a/'/guess_sentence_with_prefix",
+             (),
+             {'control': False, 'issues': ('902',), 'mode': 'zhuyin'}),
+            ("zero-key-guess/zhuyin/0x18a/'/guess_candidates_after_cursor",
+             (),
+             {'control': False, 'issues': ('902',), 'mode': 'zhuyin'}),
+            ("zero-key-guess/zhuyin/0x18a/'/guess_candidates_before_cursor",
+             (),
+             {'control': False, 'issues': ('902',), 'mode': 'zhuyin'}),
+            ("zero-key-guess/zhuyin/0x18a/''/guess_sentence",
+             (),
+             {'control': False, 'issues': ('902',), 'mode': 'zhuyin'}),
+            ("zero-key-guess/zhuyin/0x18a/''/guess_sentence_with_prefix",
+             (),
+             {'control': False, 'issues': ('902',), 'mode': 'zhuyin'}),
+            ("zero-key-guess/zhuyin/0x18a/''/guess_candidates_after_cursor",
+             (),
+             {'control': False, 'issues': ('902',), 'mode': 'zhuyin'}),
+            ("zero-key-guess/zhuyin/0x18a/''/guess_candidates_before_cursor",
+             (),
+             {'control': False, 'issues': ('902',), 'mode': 'zhuyin'}),
+            ("zero-key-guess/zhuyin/0x18a/'''/guess_sentence",
+             (),
+             {'control': False, 'issues': ('902',), 'mode': 'zhuyin'}),
+            ("zero-key-guess/zhuyin/0x18a/'''/guess_sentence_with_prefix",
+             (),
+             {'control': False, 'issues': ('902',), 'mode': 'zhuyin'}),
+            ("zero-key-guess/zhuyin/0x18a/'''/guess_candidates_after_cursor",
+             (),
+             {'control': False, 'issues': ('902',), 'mode': 'zhuyin'}),
+            ("zero-key-guess/zhuyin/0x18a/'''/guess_candidates_before_cursor",
+             (),
+             {'control': False, 'issues': ('902',), 'mode': 'zhuyin'})]
+
+
+def declarations():
+    cases = []
+
+    def case(name, *args, **kwargs):
+        def collect(fn):
+            cases.append((name, args, kwargs, fn))
+            return fn
+        return collect
+
+    family.register(case)
+    return cases
+
+
+class ZeroKeyGuessTests(unittest.TestCase):
+    def test_case_ids_order_and_metadata(self):
+        cases = declarations()
+        self.assertEqual([(name, args, kwargs) for name, args, kwargs, _ in cases], EXPECTED)
+
+    def test_every_case_function_belongs_to_this_module(self):
+        for name, _, _, fn in declarations():
+            while hasattr(fn, "func"):
+                fn = fn.func
+            with self.subTest(name=name):
+                self.assertIn(fn.__module__, (family.__name__, 'contract_case_helpers'))
+
+    def test_replay_registers_the_same_functions(self):
+        first, second = declarations(), declarations()
+        self.assertEqual([c[0] for c in first], [c[0] for c in second])
+        for (name, _, _, a), (_, _, _, b) in zip(first, second):
+            with self.subTest(name=name):
+                self.assertIs(a, b)
+
+
+if __name__ == '__main__':
+    unittest.main()
