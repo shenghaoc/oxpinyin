@@ -101,6 +101,23 @@ DRIVERS = {
                Case('init-failure', ('pin', 'subject'), ('{so}', '{empty}', '{user}')),
                Case('dlopen-failure', ('none',), ('{empty}/absent.so', '{data}')),
                Case('usage', ('none',), ('{empty}/absent.so',)))),
+    'train-diff': Driver(
+        templates=('/tmp/traindiff-user-',),
+        cases=(*(Case(f'rounds-{rounds}', ('pin', 'subject'), env=(('TRAINDIFF_ROUNDS', rounds),))
+                 for rounds in ('1', '8')),
+               *(Case(f'mask-{mask}', ('pin', 'subject'),
+                      env=(('TRAINDIFF_ROUNDS', '8'), ('TRAINDIFF_MASK', mask)))
+                 for mask in ('user', 'all')),
+               Case('dynamic-off-reopen', ('pin', 'subject'),
+                    env=(('TRAINDIFF_ROUNDS', '1'), ('TRAINDIFF_OPTIONS', '0x00000188'),
+                         ('TRAINDIFF_DUMP_CANDIDATES', '1'), ('TRAINDIFF_REOPEN', '1'))),
+               Case('bad-mask', ('pin',), env=(('TRAINDIFF_ROUNDS', '1'), ('TRAINDIFF_MASK', 'some'))),
+               Case('missing-symbol', ('stub',)),
+               Case('init-failure', ('pin', 'subject'), ('{so}', '{empty}')),
+               Case('bad-rounds', ('none',), ('{empty}/absent.so', '{data}'),
+                    (('TRAINDIFF_ROUNDS', '65'),)),
+               Case('dlopen-failure', ('none',), ('{empty}/absent.so', '{data}')),
+               Case('usage', ('none',), ('{empty}/absent.so',)))),
 }
 
 
