@@ -62,6 +62,21 @@ class EquivalenceTests(unittest.TestCase):
                 changed.__qualname__ = original.__qualname__
                 self.assertNotEqual(self.shape(original), self.shape(changed))
 
+    def test_a_captured_path_is_encoded_relative_to_the_root_and_fails_elsewhere(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            probe = make_function(0)
+            worker = root / 'contract-worker.py'
+            captured = (lambda path: (lambda k: path))(worker)
+            self.assertEqual(equivalence.value_shape(worker, self.sentinel, root), ['path', 'contract-worker.py'])
+            self.assertIn(['path', 'contract-worker.py'],
+                          equivalence.value_shape(captured, self.sentinel, root)[5])
+            with self.assertRaisesRegex(TypeError, 'outside the driver directory'):
+                equivalence.value_shape(root.parent, self.sentinel, root)
+            with self.assertRaisesRegex(TypeError, 'unsupported inventory value'):
+                equivalence.value_shape(worker, self.sentinel)
+            self.assertEqual(equivalence.value_shape(probe, self.sentinel, root), self.shape(probe))
+
     def test_unsupported_inventory_values_fail_closed(self):
         with self.assertRaises(TypeError):
             self.shape(object())

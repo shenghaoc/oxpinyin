@@ -35,11 +35,13 @@ import types
 CELLS = ('bdb', 'kc', 'tkrzw')
 
 
-def value_shape(value, sentinel):
+def value_shape(value, sentinel, root=None):
     """Encode values without addresses, source locations or function modules.
 
     Unknown values fail closed. Functions include their code, defaults and
-    closure recursively; partials include their bound arguments as well.
+    closure recursively; partials include their bound arguments as well. With a
+    root, a path under it (the driver's WORKER, captured by a case) is encoded
+    relative to it; any other path still fails.
     """
     if value is sentinel:
         return ['no-abort']
@@ -54,29 +56,34 @@ def value_shape(value, sentinel):
     if value is Ellipsis:
         return ['ellipsis']
     if isinstance(value, slice):
-        return ['slice', value_shape(value.start, sentinel), value_shape(value.stop, sentinel),
-                value_shape(value.step, sentinel)]
+        return ['slice', value_shape(value.start, sentinel, root), value_shape(value.stop, sentinel, root),
+                value_shape(value.step, sentinel, root)]
     if isinstance(value, types.CodeType):
         return ['code', value.co_name, value.co_code.hex(), value.co_exceptiontable.hex(),
                 value.co_argcount, value.co_posonlyargcount, value.co_kwonlyargcount, value.co_flags,
-                value.co_stacksize, value_shape(value.co_consts, sentinel), list(value.co_names),
+                value.co_stacksize, value_shape(value.co_consts, sentinel, root), list(value.co_names),
                 list(value.co_varnames), list(value.co_freevars), list(value.co_cellvars)]
     if isinstance(value, types.FunctionType):
-        return ['function', value.__qualname__, value_shape(value.__code__, sentinel),
-                value_shape(value.__defaults__, sentinel), value_shape(value.__kwdefaults__, sentinel),
-                [value_shape(cell.cell_contents, sentinel) for cell in value.__closure__ or ()]]
+        return ['function', value.__qualname__, value_shape(value.__code__, sentinel, root),
+                value_shape(value.__defaults__, sentinel, root), value_shape(value.__kwdefaults__, sentinel, root),
+                [value_shape(cell.cell_contents, sentinel, root) for cell in value.__closure__ or ()]]
     if isinstance(value, functools.partial):
-        return ['partial', value_shape(value.func, sentinel), value_shape(value.args, sentinel),
-                value_shape(value.keywords, sentinel)]
+        return ['partial', value_shape(value.func, sentinel, root), value_shape(value.args, sentinel, root),
+                value_shape(value.keywords, sentinel, root)]
     if isinstance(value, type):
         return ['type', value.__module__, value.__qualname__]
     if type(value) in (tuple, list):
-        return [type(value).__name__, [value_shape(item, sentinel) for item in value]]
+        return [type(value).__name__, [value_shape(item, sentinel, root) for item in value]]
     if type(value) in (set, frozenset):
-        items = [value_shape(item, sentinel) for item in value]
+        items = [value_shape(item, sentinel, root) for item in value]
         return [type(value).__name__, sorted(items, key=canonical)]
     if type(value) is dict:
-        return ['dict', [[value_shape(key, sentinel), value_shape(item, sentinel)] for key, item in value.items()]]
+        return ['dict', [[value_shape(key, sentinel, root), value_shape(item, sentinel, root)] for key, item in value.items()]]
+    if isinstance(value, PurePath) and root is not None:
+        try:
+            return ['path', Path(value).resolve().relative_to(root).as_posix()]
+        except ValueError:
+            raise TypeError('path outside the driver directory: %r' % (value,)) from None
     raise TypeError('unsupported inventory value: %r (%s)' % (value, type(value).__name__))
 
 
@@ -315,7 +322,7 @@ def snapshot(root, cell, moved, helpers, injected, source_modules=(), retained_s
         # The case's source and bindings are checked separately below; retain
         # every other registration field, in order, for all moved cases.
         value = {key: item for key, item in case.items() if key != 'fn'} if name in moved else case
-        records.append([name, digest(value_shape(value, sentinel))])
+        records.append([name, digest(value_shape(value, sentinel, Path(driver.__spec__.origin).resolve().parent))])
 
     tags = driver.tag_index()
     names = list(driver.CASES)
