@@ -201,7 +201,12 @@ The diagnostic names the runner, pin/subject side and path found. Every
 label uses the full resolved `ldd` dependency set, including transitive and
 preloaded libraries. Objects without tkrzw dependencies need no trusted
 tkrzw runtime. For a dlopen driver the subject library is checked, and a
-directly launched ELF executable is checked too.
+directly launched ELF executable is checked too. A launched `#!` script,
+such as the POSIX shell `valgrind` wrapper Debian and Ubuntu install, is
+checked through its interpreter, the ELF the kernel starts; `ldd` cannot
+read the script itself. What the script execs is not inspected, so the
+caller checks the subject it runs explicitly. Any other launched file is
+checked as itself, so a file the resolver cannot read is refused.
 
 The measurement images use the same shell check. Their entrypoints require
 an explicitly supplied verified runtime; they do not infer trust from their
