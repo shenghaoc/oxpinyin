@@ -65,6 +65,16 @@ MODULES = {
     'contract_double_fini': ((), ('contract_abi',)),
     'contract_non_utf8_directories': ((), ('contract_abi',)),
     'contract_axis_j': ((), ('contract_abi',)),
+    'contract_predicted_types': ((), ('contract_abi',)),
+    'contract_facade_total': ((), ('contract_abi',)),
+    'contract_stored_count_headers': ((), ('contract_abi', 'contract_fixtures')),
+    'contract_issue542_remaining': ((), ('contract_abi',)),
+    'contract_pinyin_out_parameters': ((), ('contract_abi',)),
+    'contract_candidate_lookup_offsets': ((), ('contract_abi',)),
+    'contract_remember_tone': ((), ('contract_abi',)),
+    'contract_allocator_register': ((), ('contract_abi',)),
+    'contract_cursor_sentence_refusals': ((), ('contract_abi',)),
+    'contract_duplicate_phrase_add': ((), ('contract_abi', 'contract_fixtures')),
     'contract_execution': (('ordinary_jobs', 'positive_jobs', 'terminate_group', 'user_dir_listing'), ()),
     'contract_runner': (('Cancelled',), ()),
     'contract_kit': ((), ('contract_abi',)),
@@ -332,6 +342,42 @@ class ModuleBoundaryTests(unittest.TestCase):
                 self.assertEqual(owners, {module})
                 self.assertEqual([declared[0] for declared in sys.modules[module]._REGISTRATIONS],
                                  names[start:end + 1])
+
+    def test_next_case_sections_keep_their_positions_and_owners(self):
+        names = list(driver.CASES)
+        sections = (
+            ('contract_predicted_types', 'predicted-unigram-overflow', 'choose-predicted-types',
+             'choose-predicted-types', 'punct-decode/valid', 1),
+            ('contract_facade_total', 'zhuyin-fini-twice', 'facade-total-zero-ranks-nothing-end-sort-3',
+             'facade-total-zero', 'abort-set-full-pinyin-scheme-0', 4),
+            ('contract_stored_count_headers', 'user-stored-words/zhuyin-7-nul', 'stored-count-headers-system-pinyin',
+             'stored-count-headers-user-zhuyin', 'wrap-256th-reading', 4),
+            ('contract_issue542_remaining', 'glib-924-null-array-pronunciation-zhuyin',
+             'issue542-phrase-segment-invalid-utf8-pinyin', 'issue542-alias-prefix-borrowed',
+             'removal-bigram-reported-mask-out-pinyin', 7),
+            ('contract_pinyin_out_parameters', "zero-key-guess/zhuyin/0x18a/'''/guess_candidates_before_cursor",
+             'empty-parse-sentence', 'sentence-with-prefix-bytes', 'aux-text-full-parse', 12),
+            ('contract_candidate_lookup_offsets', 'abort-guess-candidates-past-matrix',
+             'guess-candidates-lookup-offset', 'guess-candidates-past-the-reserved-slot', 'non-utf8-directory-system', 3),
+            ('contract_remember_tone', 'third-separator-library-init-zhuyin', 'remember-tones-pinyin',
+             'remember-api-absent-zhuyin', 'init-system-empty-pinyin', 2),
+            ('contract_remember_tone', 'glib-922-table-conf-rejected-dup-trailing-zhuyin',
+             'remember-cleared-tone-pinyin', 'remember-double-tone-pinyin', 'null-user-session-pinyin', 2),
+            ('contract_allocator_register', "allocator-zero/zhuyin/xi1'an1/key/4",
+             'alloc-register-pinyin_get_pinyin-zero-key', 'alloc-register-zhuyin_get_pinyin-real-key',
+             'row54-empty-pinyin-full_pinyins', 14),
+            ('contract_cursor_sentence_refusals', 'scheme-and-library-neighbours', 'abort-get-sentence-past-rows',
+             'cursor-and-sentence-neighbours', 'abort-get-candidate-nbest-index-normal-row', 15),
+            ('contract_duplicate_phrase_add', 'removed-predict-stale-skip-pinyin',
+             'abort-zhuyin-add-phrase-duplicate-library-token', 'abort-add-phrase-index-text-mismatch',
+             'phrase-table-mask-long-short', 6),
+        )
+        for module, before, first, last, after, count in sections:
+            with self.subTest(module=module, first=first):
+                start, end = names.index(first), names.index(last)
+                self.assertEqual(end - start + 1, count)
+                self.assertEqual((names[start - 1], names[end + 1]), (before, after))
+                self.assertEqual({driver.CASES[name]['fn'].__module__ for name in names[start:end + 1]}, {module})
 
     def test_timing_summary_totals_the_timings_the_driver_holds_now(self):
         with patch.object(driver, 'TIMINGS', [dict(execute=2, side='pin'), dict(execute=3)]):

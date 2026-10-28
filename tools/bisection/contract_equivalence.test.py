@@ -6,6 +6,8 @@ from pathlib import Path
 import tempfile
 import types
 import unittest
+from unittest.mock import patch
+import sys
 
 HERE = Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location('contract_equivalence', HERE / 'contract_equivalence.py')
@@ -45,7 +47,11 @@ class EquivalenceTests(unittest.TestCase):
     def test_each_requested_code_field_changes_the_fingerprint(self):
         original = make_function(3)
         code = original.__code__
-        for name, replacement in (('co_code', code.co_code + b'\x09\x00'),
+        for name, replacement in (('co_name', 'changed'),
+                                  ('co_code', code.co_code + b'\x09\x00'),
+                                  ('co_exceptiontable', code.co_exceptiontable + b'\x00'),
+                                  ('co_argcount', 0), ('co_posonlyargcount', 1),
+                                  ('co_flags', code.co_flags ^ (1 << 20)), ('co_stacksize', code.co_stacksize + 1),
                                   ('co_consts', code.co_consts + ('changed',)),
                                   ('co_names', code.co_names + ('changed',)),
                                   ('co_varnames', ('changed',))):
@@ -71,6 +77,16 @@ class EquivalenceTests(unittest.TestCase):
                              ('selections', [['default', 2, 'changed']])):
             with self.subTest(field=field), self.assertRaises(AssertionError):
                 equivalence.compare_snapshots(base, {**base, field: value}, 'family')
+
+    def test_moved_source_bindings_and_owner_are_checked(self):
+        base = dict(records=[], tags='t', skips='s', selections=[], helpers={},
+                    moved={'a': {'module': 'contract_diff', 'shape': {'ast': 'a', 'bindings': {'x': 1}}}})
+        head = {**base, 'moved': {'a': {'module': 'family', 'shape': {'ast': 'a', 'bindings': {'x': 1}}}}}
+        equivalence.compare_snapshots(base, head, {'a': 'family'})
+        for moved in ({'a': {'module': 'family', 'shape': {'ast': 'a', 'bindings': {'x': 2}}}},
+                      {'a': {'module': 'wrong', 'shape': {'ast': 'a', 'bindings': {'x': 1}}}}):
+            with self.subTest(moved=moved), self.assertRaises(AssertionError):
+                equivalence.compare_snapshots(base, {**head, 'moved': moved}, {'a': 'family'})
 
     def test_ast_keeps_decorators_and_body_and_only_normalizes_declared_keyword_state(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -108,6 +124,93 @@ class EquivalenceTests(unittest.TestCase):
                                 equivalence.function_ast(found['changed']))
             with self.assertRaisesRegex(TypeError, 'expected one lambda'):
                 equivalence.function_ast(found['paired'])
+
+    def test_moved_closures_compare_source_bindings_and_driver_identity(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            common = ('FACTOR = 7\n\ndef helper(x):\n    return x + FACTOR\n\n'
+                      'def inner_helper(x):\n    return x * 2\n\n')
+            original = common + 'def moved(k):\n    return helper(inner_helper(k))\n'
+            extracted = common + ('def register(*, helper):\n'
+                                  '    def moved(k):\n        return helper(inner_helper(k))\n'
+                                  '    return moved\n')
+            modules = []
+            for name, source in (('contract_diff', original), ('family', extracted)):
+                path = root / (name + '.py')
+                path.write_text(source)
+                module_spec = importlib.util.spec_from_file_location(name, path)
+                module = importlib.util.module_from_spec(module_spec)
+                module_spec.loader.exec_module(module)
+                modules.append(module)
+            before, after = modules
+            driver = types.ModuleType('contract_diff')
+            driver.helper = after.helper
+            reference = equivalence.function_shape(before.moved, before, self.sentinel, ('helper',), ())
+            candidate = after.register(helper=driver.helper)
+            self.assertEqual(reference, equivalence.function_shape(candidate, driver, self.sentinel,
+                                                                    ('helper',), ('family',)))
+            after.FACTOR = 8
+            self.assertNotEqual(reference, equivalence.function_shape(candidate, driver, self.sentinel,
+                                                                       ('helper',), ('family',)))
+            after.FACTOR = 7
+            with self.assertRaisesRegex(TypeError, 'not the driver binding'):
+                equivalence.function_shape(after.register(helper=before.helper), driver, self.sentinel,
+                                           ('helper',), ('family',))
+            with self.assertRaisesRegex(TypeError, 'must be declared as injected'):
+                equivalence.function_shape(candidate, driver, self.sentinel, (), ('family',))
+            after.inner_helper = lambda x: x * 3
+            self.assertNotEqual(reference, equivalence.function_shape(candidate, driver, self.sentinel,
+                                                                       ('helper',), ('family',)))
+            del after.inner_helper
+            with self.assertRaisesRegex(TypeError, 'unresolved global'):
+                equivalence.function_shape(candidate, driver, self.sentinel, ('helper',), ('family',))
+
+    def test_unknown_bindings_and_recursive_helpers_fail_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'contract_diff.py'
+            path.write_text('def reads(k):\n    return UNKNOWN\n\n'
+                            'def recursive(k):\n    return recursive(k)\n')
+            module_spec = importlib.util.spec_from_file_location('contract_diff', path)
+            driver = importlib.util.module_from_spec(module_spec)
+            module_spec.loader.exec_module(driver)
+            driver.UNKNOWN = object()
+            with self.assertRaisesRegex(TypeError, 'unsupported inventory value'):
+                equivalence.function_shape(driver.reads, driver, self.sentinel, (), ())
+            with self.assertRaisesRegex(TypeError, 'recursive helper graph'):
+                equivalence.function_shape(driver.recursive, driver, self.sentinel, (), ())
+
+    def test_injected_driver_class_compares_its_definition(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(sys.modules):
+            shapes = []
+            for index, marker in enumerate((1, 2)):
+                root = Path(tmp) / str(index)
+                path = root / 'tools/bisection/contract-diff.py'
+                path.parent.mkdir(parents=True)
+                path.write_text('class Rest:\n    marker = %d\n\n'
+                                'def case(k):\n    return Rest\n' % marker)
+                driver = equivalence.load_driver(root, 'bdb')
+                shapes.append(equivalence.function_shape(driver.case, driver, self.sentinel, ('Rest',), ()))
+            self.assertNotEqual(shapes[0], shapes[1])
+
+    def test_module_counts_require_unique_positive_expectations(self):
+        self.assertEqual(equivalence.module_counts(['one=1', 'two=2']), {'one': 1, 'two': 2})
+        for specs in (['one'], ['one=0'], ['one=-1'], ['one=1', 'one=1'], ['bad-name=1']):
+            with self.subTest(specs=specs), self.assertRaises(ValueError):
+                equivalence.module_counts(specs)
+
+    def test_discovery_fails_when_a_module_has_the_wrong_case_count(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(sys.modules):
+            root = Path(tmp)
+            path = root / 'tools/bisection/contract-diff.py'
+            path.parent.mkdir(parents=True)
+            path.write_text('def example(k):\n    pass\n'
+                            'example.__module__ = "family"\n'
+                            'CASES = {"case-one": {"fn": example}}\n')
+            self.assertEqual(equivalence.discover(root, ['family=1']), {'family': ['case-one']})
+            with self.assertRaisesRegex(AssertionError, 'has 1 cases, expected 2'):
+                equivalence.discover(root, ['family=2'])
+            with self.assertRaisesRegex(AssertionError, 'has 0 cases, expected 1'):
+                equivalence.discover(root, ['missing=1'])
 
 
 if __name__ == '__main__':
