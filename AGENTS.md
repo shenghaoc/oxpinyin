@@ -597,6 +597,7 @@ always".
    Rule 7's docs/comments-only case needs no backend-selection run.
    A result you believe is backend-dependent but that fails the check
    is a finding to report, not a licence to run three cells.
+   Function-order policies are per backend, so regenerating or checking them always covers bdb, kc and tkrzw, independent of `cells-for-diff.py`; see [docs/packaging.md, "Regeneration"](docs/packaging.md#regeneration).
 3. Every differential runs on all three cells once at the start of each
    sweep and once before a release. That run, not the per-change gate,
    is what covers kc and tkrzw.

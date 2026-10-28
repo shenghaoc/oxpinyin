@@ -1,6 +1,5 @@
 oxpinyin-function-order-v1	libzhuyin.so.15
 init	<&[u8] as <alloc::ffi::c_str::CString>::new::SpecNewImpl>::spec_new_impl
-init	<<oxpinyin_data::table_info::ConfigLines>::new::{closure#0} as core::ops::function::FnOnce<(&u8,)>>::call_once
 init	<alloc::collections::btree::map::BTreeMap<alloc::string::String, oxpinyin_engine::config::ConfigValue>>::insert [instantiating crate: oxpinyin_facade]
 init	<alloc::collections::btree::map::BTreeMap<alloc::vec::Vec<u8>, alloc::vec::Vec<u8>> as core::iter::traits::collect::FromIterator<(alloc::vec::Vec<u8>, alloc::vec::Vec<u8>)>>::from_iter::<alloc::vec::into_iter::IntoIter<(alloc::vec::Vec<u8>, alloc::vec::Vec<u8>)>> [instantiating crate: oxpinyin_user]
 init	<alloc::collections::btree::map::BTreeMap<alloc::vec::Vec<u8>, core::option::Option<alloc::vec::Vec<u8>>>>::insert [instantiating crate: oxpinyin_user]
@@ -23,6 +22,7 @@ init	<alloc::raw_vec::RawVec<oxpinyin_engine::candidate::Candidate>>::grow_one [
 init	<alloc::raw_vec::RawVec<oxpinyin_engine::cursor::MatrixKey>>::grow_one
 init	<alloc::raw_vec::RawVec<oxpinyin_engine::session::ScanKey>>::grow_one
 init	<alloc::raw_vec::RawVec<u32>>::grow_one [instantiating crate: oxpinyin_core]
+init	<alloc::raw_vec::RawVec<u8>>::grow_one
 init	<alloc::raw_vec::RawVecInner<_>>::reserve::do_reserve_and_handle::<alloc::alloc::Global> [instantiating crate: oxpinyin_data]
 init	<alloc::raw_vec::RawVecInner<_>>::reserve::do_reserve_and_handle::<alloc::alloc::Global> [instantiating crate: oxpinyin_engine]
 init	<alloc::raw_vec::RawVecInner<_>>::reserve::do_reserve_and_handle::<alloc::alloc::Global> [instantiating crate: oxpinyin_user]
@@ -43,7 +43,7 @@ init	<alloc::sync::Arc<std::sync::once_lock::OnceLock<u32>> as core::default::De
 init	<alloc::sync::Arc<std::sync::once_lock::OnceLock<u32>>>::drop_slow [instantiating crate: oxpinyin_data]
 init	<alloc::sync::Arc<std::sync::poison::mutex::Mutex<core::option::Option<(u64, alloc::sync::Arc<std::collections::hash::map::HashMap<alloc::vec::Vec<u8>, alloc::vec::Vec<(alloc::vec::Vec<oxpinyin_chewing::chewing_key::ChewingKey>, oxpinyin_core::vocab::PhraseEntry)>>>)>>> as core::default::Default>::default [instantiating crate: oxpinyin_runtime]
 init	<alloc::sync::Arc<std::sync::poison::mutex::Mutex<core::option::Option<oxpinyin_runtime::TextTokens>>> as core::default::Default>::default
-init	<alloc::vec::Vec<&[u8]> as alloc::vec::spec_from_iter_nested::SpecFromIterNested<&[u8], core::iter::adapters::filter::Filter<core::slice::iter::Split<u8, <u8>::is_ascii_whitespace>, <oxpinyin_data::table_info::TableConf>::parse::{closure#4}>>>::from_iter
+init	<alloc::vec::Vec<&[u8]> as alloc::vec::spec_from_iter_nested::SpecFromIterNested<&[u8], core::iter::adapters::filter::Filter<core::slice::iter::Split<u8, <u8>::is_ascii_whitespace>, <oxpinyin_data::table_info::TableConf>::parse::{closure#1}>>>::from_iter
 init	<alloc::vec::Vec<(oxpinyin_engine::session::RankKey, u32)> as alloc::vec::spec_from_iter::SpecFromIter<(oxpinyin_engine::session::RankKey, u32), core::iter::adapters::map::Map<core::iter::adapters::enumerate::Enumerate<core::iter::adapters::zip::Zip<core::slice::iter::Iter<oxpinyin_engine::candidate::Candidate>, alloc::vec::into_iter::IntoIter<u64>>>, <oxpinyin_engine::session::Session<oxpinyin_runtime::RuntimeDict, oxpinyin_runtime::RuntimeLm>>::scan_window::{closure#2}>>>::from_iter [instantiating crate: oxpinyin_facade]
 init	<alloc::vec::Vec<(u8, oxpinyin_data::table_info::FileName)> as alloc::vec::spec_from_iter_nested::SpecFromIterNested<(u8, oxpinyin_data::table_info::FileName), core::iter::adapters::filter_map::FilterMap<core::iter::adapters::filter::Filter<core::iter::adapters::zip::Zip<core::ops::range::RangeFrom<u8>, core::slice::iter::Iter<oxpinyin_data::table_info::TableRow>>, <oxpinyin_data::table_info::TableConf>::rows_of::{closure#0}>, <oxpinyin_data::user_files::UserFileLayout>::from_conf::{closure#0}>>>::from_iter
 init	<alloc::vec::Vec<alloc::string::String>>::dedup_by::<<alloc::vec::Vec<alloc::string::String>>::dedup::{closure#0}> [instantiating crate: oxpinyin_user]
@@ -58,7 +58,6 @@ init	<core::iter::adapters::filter_map::FilterMap<core::iter::sources::from_fn::
 init	<core::iter::adapters::map::Map<core::iter::adapters::filter::Filter<core::iter::adapters::map::Map<core::slice::iter::ChunksExact<u8>, oxpinyin_data::row_format::pinyin_index::item_views::{closure#0}>, <oxpinyin_data::chewing_table::ChewingTable>::search::{closure#0}>, <oxpinyin_data::chewing_table::ChewingTable>::search::{closure#1}> as core::iter::traits::iterator::Iterator>::next
 init	<core::str::iter::SplitInternal<char>>::next [instantiating crate: oxpinyin_store]
 init	<core::str::lossy::Utf8Chunks as core::iter::traits::iterator::Iterator>::next
-init	<f32 as core::str::traits::FromStr>::from_str
 init	<hashbrown::raw::RawTableInner>::fallible_with_capacity::<alloc::alloc::Global> [instantiating crate: oxpinyin_engine]
 init	<memmap2::os::MmapInner>::map_copy_read_only
 init	<oxpinyin_chewing::chewing_key::ChewingKey>::from_pinyin
@@ -280,6 +279,7 @@ init	std::sys::fs::unix::try_statx
 init	std::sys::random::linux::hashmap_random_keys
 init	zhuyin::candidates::snapshot_candidates
 init	zhuyin::context::log_layout_faults
+init	zhuyin::locale::read_lambda
 init	zhuyin::sentence::guess_candidates
 init	zhuyin_alloc_instance
 init	zhuyin_get_candidate

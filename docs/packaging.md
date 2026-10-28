@@ -533,7 +533,9 @@ refuses an unsupported host or a missing tool before taking heavy admission,
 starting workers or changing work/output directories.
 
 The policies are generated separately from each backend's shipping release inputs
-by `tools/generate-function-order.py`. The generator uses the in-tree
+by `tools/generate-function-order.py`. A change that removes or renames a function
+named by a policy regenerates all three backends' policies in the same PR.
+The generator uses the in-tree
 `tools/bisection/bisect.c` worker in its teardown mode: the load constructors,
 the `<facade>_init` subtree and the exports the worker calls from there to its
 `M1` checkpoint (options, one instance and the first candidate) supply the

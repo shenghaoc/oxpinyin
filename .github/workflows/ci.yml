@@ -66,7 +66,7 @@
 # and when a gated-out lane was skipped despite its paths changing.
 # The path-set bypass (a PR editing ci.yml to skip its own lanes) is
 # closed as far as this workflow can close it — the aggregate compares
-# each lane's conclusion against the same `changes` output — but a PR
+# each lane's conclusion against its `changes` flag — but a PR
 # that rewrites the workflow itself can always rewrite its gates; that
 # residual is a branch-protection policy question (enforce for
 # administrators), not a workflow one.
@@ -727,15 +727,13 @@ jobs:
   # Trigger: Cargo.lock or tools/packaging/function-order/**, the two
   # inputs behind #1210. A source rename or inlining can stale a policy
   # too, but that case stays with the nightly; the six release builds are
-  # too expensive for every PR. The job still reports on every PR: when
-  # neither path changes it reports `skipped`, a conclusion that reaches
-  # required-check accounting, so the maintainer can add the context to
-  # the ruleset. It is deliberately not in ci-aggregate; making it
-  # required is the maintainer's decision.
+  # too expensive for every PR. The required ci-aggregate checks this
+  # job's own event/path gate independently of normal tree reuse.
   function-order-policy:
     needs: changes
-    # PRs only: a push to main is the nightly's job, and this check exists
-    # to stop the merge, not to repeat the nightly's work.
+    # PRs only: main's policy check stays with the nightly. ci-aggregate
+    # requires success when function_order=true on a PR, skipped otherwise;
+    # tree reuse never bypasses this gate.
     if: ${{ github.event_name == 'pull_request' && needs.changes.outputs.function_order == 'true' }}
     runs-on: ubuntu-latest
     container:
@@ -755,17 +753,16 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/function-order-policy
 
-  # The required aggregate runs after failures, and remains cancellable. Red only
-  # when a lane that should have run ended as
-  # anything but success, or when the path gate said run but a lane
-  # was skipped anyway (a broken `if`, or a PR narrowing its own
-  # gates). `skipped` with run=false is green: those lanes had no
-  # inputs on this change, which is exactly what a path gate means.
+  # The required aggregate checks lint, test, test-macos and deny against
+  # run/reuse, plus function-order-policy against its PR/function_order gate.
+  # It runs after failures and remains cancellable. Every applicable lane
+  # must succeed; an inapplicable lane must be skipped. Tree reuse does not
+  # apply to function-order-policy, which runs on every policy-changing PR.
   # store-backends.yml and verify-nightly.yml keep their own triggers
   # and remain non-required lanes beside this one.
   ci-aggregate:
     needs:
-      [changes, lint, test, test-macos, deny]
+      [changes, lint, test, test-macos, deny, function-order-policy]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
