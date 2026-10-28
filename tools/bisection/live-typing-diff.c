@@ -35,15 +35,14 @@
  */
 
 #define _POSIX_C_SOURCE 200809L
-#include <dirent.h>
 #include <dlfcn.h>
-#include <errno.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
+
+#include "driver-common.h"
 
 /* ── Opaque handle types (match pinyin.h) ─────────────────────────────── */
 
@@ -128,45 +127,36 @@ struct syms {
     fn_end_bigram end_bigram;
 };
 
-static void *load(const char *name, void *handle) {
-    void *symbol = dlsym(handle, name);
-    if (!symbol) {
-        fprintf(stderr, "  MISSING: %s\n", name);
-        exit(1);
-    }
-    return symbol;
-}
-
 static void resolve_all(void *handle, struct syms *s) {
-    s->init = (fn_init)load("pinyin_init", handle);
-    s->fini = (fn_fini)load("pinyin_fini", handle);
-    s->alloc = (fn_alloc)load("pinyin_alloc_instance", handle);
-    s->free_instance = (fn_free_instance)load("pinyin_free_instance", handle);
-    s->parse = (fn_parse)load("pinyin_parse_more_full_pinyins", handle);
-    s->sentence = (fn_sentence)load("pinyin_guess_sentence", handle);
-    s->guess = (fn_guess)load("pinyin_guess_candidates", handle);
-    s->getn = (fn_getn)load("pinyin_get_n_candidate", handle);
-    s->getc = (fn_getc)load("pinyin_get_candidate", handle);
-    s->gettype = (fn_gettype)load("pinyin_get_candidate_type", handle);
-    s->getstr = (fn_getstr)load("pinyin_get_candidate_string", handle);
-    s->getnbest = (fn_getnbest)load("pinyin_get_candidate_nbest_index", handle);
-    s->get_sentence = (fn_get_sentence)load("pinyin_get_sentence", handle);
-    s->choose = (fn_choose)load("pinyin_choose_candidate", handle);
-    s->train = (fn_train)load("pinyin_train", handle);
+    s->init = (fn_init)dc_require(handle, "pinyin_init");
+    s->fini = (fn_fini)dc_require(handle, "pinyin_fini");
+    s->alloc = (fn_alloc)dc_require(handle, "pinyin_alloc_instance");
+    s->free_instance = (fn_free_instance)dc_require(handle, "pinyin_free_instance");
+    s->parse = (fn_parse)dc_require(handle, "pinyin_parse_more_full_pinyins");
+    s->sentence = (fn_sentence)dc_require(handle, "pinyin_guess_sentence");
+    s->guess = (fn_guess)dc_require(handle, "pinyin_guess_candidates");
+    s->getn = (fn_getn)dc_require(handle, "pinyin_get_n_candidate");
+    s->getc = (fn_getc)dc_require(handle, "pinyin_get_candidate");
+    s->gettype = (fn_gettype)dc_require(handle, "pinyin_get_candidate_type");
+    s->getstr = (fn_getstr)dc_require(handle, "pinyin_get_candidate_string");
+    s->getnbest = (fn_getnbest)dc_require(handle, "pinyin_get_candidate_nbest_index");
+    s->get_sentence = (fn_get_sentence)dc_require(handle, "pinyin_get_sentence");
+    s->choose = (fn_choose)dc_require(handle, "pinyin_choose_candidate");
+    s->train = (fn_train)dc_require(handle, "pinyin_train");
     s->clear_constraint =
-        (fn_clear_constraint)load("pinyin_clear_constraint", handle);
-    s->reset = (fn_reset)load("pinyin_reset", handle);
-    s->set_options = (fn_set_options)load("pinyin_set_options", handle);
-    s->begin_phrases = (fn_begin_phrases)load("pinyin_begin_get_phrases", handle);
-    s->has_next = (fn_has_next)load("pinyin_iterator_has_next_phrase", handle);
-    s->get_next = (fn_get_next)load("pinyin_iterator_get_next_phrase", handle);
-    s->end_phrases = (fn_end_phrases)load("pinyin_end_get_phrases", handle);
-    s->begin_bigram = (fn_begin_bigram)load("pinyin_begin_get_bigram_phrases", handle);
+        (fn_clear_constraint)dc_require(handle, "pinyin_clear_constraint");
+    s->reset = (fn_reset)dc_require(handle, "pinyin_reset");
+    s->set_options = (fn_set_options)dc_require(handle, "pinyin_set_options");
+    s->begin_phrases = (fn_begin_phrases)dc_require(handle, "pinyin_begin_get_phrases");
+    s->has_next = (fn_has_next)dc_require(handle, "pinyin_iterator_has_next_phrase");
+    s->get_next = (fn_get_next)dc_require(handle, "pinyin_iterator_get_next_phrase");
+    s->end_phrases = (fn_end_phrases)dc_require(handle, "pinyin_end_get_phrases");
+    s->begin_bigram = (fn_begin_bigram)dc_require(handle, "pinyin_begin_get_bigram_phrases");
     s->bigram_has_next =
-        (fn_bigram_has_next)load("pinyin_bigram_iterator_has_next_phrase", handle);
+        (fn_bigram_has_next)dc_require(handle, "pinyin_bigram_iterator_has_next_phrase");
     s->bigram_get_next =
-        (fn_bigram_get_next)load("pinyin_bigram_iterator_get_next_phrase", handle);
-    s->end_bigram = (fn_end_bigram)load("pinyin_end_get_bigram_phrases", handle);
+        (fn_bigram_get_next)dc_require(handle, "pinyin_bigram_iterator_get_next_phrase");
+    s->end_bigram = (fn_end_bigram)dc_require(handle, "pinyin_end_get_bigram_phrases");
 }
 
 /* ── Caller-owned string release ──────────────────────────────────────── */
@@ -185,48 +175,6 @@ static void resolve_g_free(void) {
 }
 
 /* ── Helpers (shared shape with nbest-train-diff.c) ───────────────────── */
-
-/* Removes `dir` and everything under it, so no exit path can leak the
- * mkdtemp userdir even when the engine already wrote user data into it. */
-static void rm_rf(const char *dir) {
-    DIR *d = opendir(dir);
-    if (d) {
-        struct dirent *entry;
-        while ((entry = readdir(d)) != NULL) {
-            if (strcmp(entry->d_name, ".") == 0 ||
-                strcmp(entry->d_name, "..") == 0)
-                continue;
-            char path[4096];
-            if (snprintf(path, sizeof(path), "%s/%s", dir, entry->d_name) >=
-                (int)sizeof(path))
-                continue;
-            unlink(path); /* the store writes regular files only */
-        }
-        closedir(d);
-    }
-    rmdir(dir);
-}
-
-/* Reads a rounds env var into `*out`, rejecting everything atoi would
- * silently accept: empty values, trailing text ("3junk"), conversion
- * errors, overflow, and anything outside 1..8. Unset keeps the caller's
- * default. */
-static int parse_rounds_env(const char *name, int *out) {
-    const char *value = getenv(name);
-    if (!value)
-        return 0;
-    char *end = NULL;
-    errno = 0;
-    long parsed = strtol(value, &end, 10);
-    if (value[0] == '\0' || *end != '\0' || errno != 0 ||
-        parsed < 1 || parsed > 8) {
-        fprintf(stderr, "%s must be an integer in 1..8, got \"%s\"\n",
-                name, value);
-        return 1;
-    }
-    *out = (int)parsed;
-    return 0;
-}
 
 /* Parses `input` and requires it to consume exactly `expect` bytes — a
  * partial parse would silently shrink every later surface. */
@@ -288,20 +236,6 @@ static lookup_candidate_t *find_phrase_by_text(const struct syms *s,
             return cand;
     }
     return NULL;
-}
-
-static const char *type_name(int type) {
-    switch (type) {
-    case 1: return "NBEST";
-    case 2: return "NORMAL";
-    case 3: return "ZOMBIE";
-    case 4: return "PRED_BIGRAM";
-    case 5: return "PRED_PREFIX";
-    case 6: return "ADDON";
-    case 7: return "LONGER";
-    case 8: return "PRED_PUNCT";
-    default: return "?";
-    }
 }
 
 /* Prints sentence rows 0..=upto (the get_sentence half of a probe). A
@@ -377,10 +311,10 @@ static int probe_at(const struct syms *s, pinyin_instance_t *inst,
             }
             if ((int)idx > proven)
                 proven = idx;
-            printf("probe:%s cand[%u]=%s/%u/%s\n", label, i, type_name(type),
+            printf("probe:%s cand[%u]=%s/%u/%s\n", label, i, dc_type_short_name(type),
                    (unsigned)idx, text ? text : "(null)");
         } else {
-            printf("probe:%s cand[%u]=%s/-/%s\n", label, i, type_name(type),
+            printf("probe:%s cand[%u]=%s/-/%s\n", label, i, dc_type_short_name(type),
                    text ? text : "(null)");
         }
     }
@@ -454,7 +388,7 @@ int main(int argc, char **argv) {
     }
 
     int rounds = 3;
-    if (parse_rounds_env("LIVETYPING_ROUNDS", &rounds))
+    if (dc_parse_rounds_env("LIVETYPING_ROUNDS", &rounds))
         return 1;
     /* The backspace-after-choose phase runs by default: the shrink ladder
      * and retype gate the parse-survival rule — constraints survive every
@@ -762,7 +696,7 @@ int main(int argc, char **argv) {
     s.free_instance(inst);
     s.fini(ctx);
     dlclose(handle);
-    rm_rf(userdir);
+    dc_remove_dir_shallow(userdir);
     return 0;
 
     /* Shared cleanup: no exit path leaks the mkdtemp userdir. */
@@ -772,6 +706,6 @@ fail_ctx:
     s.fini(ctx);
     dlclose(handle);
 fail:
-    rm_rf(userdir);
+    dc_remove_dir_shallow(userdir);
     return 1;
 }
