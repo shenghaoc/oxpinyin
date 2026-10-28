@@ -41,7 +41,6 @@
  */
 
 #define _POSIX_C_SOURCE 200809L
-#include <dirent.h>
 #include <dlfcn.h>
 #include <errno.h>
 #include <stdbool.h>
@@ -49,7 +48,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
+
+#include "driver-common.h"
 
 /* ── Opaque handle types (match pinyin.h) ─────────────────────────────── */
 
@@ -131,42 +131,33 @@ struct syms {
     fn_get_aux_text get_aux_text;
 };
 
-static void *load(const char *name, void *handle) {
-    void *symbol = dlsym(handle, name);
-    if (!symbol) {
-        fprintf(stderr, "  MISSING: %s\n", name);
-        exit(1);
-    }
-    return symbol;
-}
-
 static void resolve_all(void *handle, struct syms *s) {
-    s->init = (fn_init)load("pinyin_init", handle);
-    s->fini = (fn_fini)load("pinyin_fini", handle);
-    s->alloc = (fn_alloc)load("pinyin_alloc_instance", handle);
-    s->free_instance = (fn_free_instance)load("pinyin_free_instance", handle);
-    s->parse = (fn_parse)load("pinyin_parse_more_full_pinyins", handle);
-    s->sentence = (fn_sentence)load("pinyin_guess_sentence", handle);
-    s->guess = (fn_guess)load("pinyin_guess_candidates", handle);
-    s->predict_punct = (fn_predict_punct)load(
-        "pinyin_guess_predicted_candidates_with_punctuations", handle);
-    s->getn = (fn_getn)load("pinyin_get_n_candidate", handle);
-    s->getc = (fn_getc)load("pinyin_get_candidate", handle);
-    s->gettype = (fn_gettype)load("pinyin_get_candidate_type", handle);
-    s->getstr = (fn_getstr)load("pinyin_get_candidate_string", handle);
-    s->getnbest = (fn_getnbest)load("pinyin_get_candidate_nbest_index", handle);
-    s->get_sentence = (fn_get_sentence)load("pinyin_get_sentence", handle);
-    s->choose = (fn_choose)load("pinyin_choose_candidate", handle);
-    s->reset = (fn_reset)load("pinyin_reset", handle);
-    s->set_options = (fn_set_options)load("pinyin_set_options", handle);
+    s->init = (fn_init)dc_require(handle, "pinyin_init");
+    s->fini = (fn_fini)dc_require(handle, "pinyin_fini");
+    s->alloc = (fn_alloc)dc_require(handle, "pinyin_alloc_instance");
+    s->free_instance = (fn_free_instance)dc_require(handle, "pinyin_free_instance");
+    s->parse = (fn_parse)dc_require(handle, "pinyin_parse_more_full_pinyins");
+    s->sentence = (fn_sentence)dc_require(handle, "pinyin_guess_sentence");
+    s->guess = (fn_guess)dc_require(handle, "pinyin_guess_candidates");
+    s->predict_punct = (fn_predict_punct)dc_require(
+        handle, "pinyin_guess_predicted_candidates_with_punctuations");
+    s->getn = (fn_getn)dc_require(handle, "pinyin_get_n_candidate");
+    s->getc = (fn_getc)dc_require(handle, "pinyin_get_candidate");
+    s->gettype = (fn_gettype)dc_require(handle, "pinyin_get_candidate_type");
+    s->getstr = (fn_getstr)dc_require(handle, "pinyin_get_candidate_string");
+    s->getnbest = (fn_getnbest)dc_require(handle, "pinyin_get_candidate_nbest_index");
+    s->get_sentence = (fn_get_sentence)dc_require(handle, "pinyin_get_sentence");
+    s->choose = (fn_choose)dc_require(handle, "pinyin_choose_candidate");
+    s->reset = (fn_reset)dc_require(handle, "pinyin_reset");
+    s->set_options = (fn_set_options)dc_require(handle, "pinyin_set_options");
     s->get_pinyin_offset =
-        (fn_get_pinyin_offset)load("pinyin_get_pinyin_offset", handle);
+        (fn_get_pinyin_offset)dc_require(handle, "pinyin_get_pinyin_offset");
     s->get_left_offset =
-        (fn_get_left_offset)load("pinyin_get_left_pinyin_offset", handle);
+        (fn_get_left_offset)dc_require(handle, "pinyin_get_left_pinyin_offset");
     s->get_right_offset =
-        (fn_get_right_offset)load("pinyin_get_right_pinyin_offset", handle);
+        (fn_get_right_offset)dc_require(handle, "pinyin_get_right_pinyin_offset");
     s->get_aux_text =
-        (fn_get_aux_text)load("pinyin_get_full_pinyin_auxiliary_text", handle);
+        (fn_get_aux_text)dc_require(handle, "pinyin_get_full_pinyin_auxiliary_text");
 }
 
 /* ── Caller-owned string release ──────────────────────────────────────── */
@@ -185,41 +176,6 @@ static void resolve_g_free(void) {
 }
 
 /* ── Helpers (shared shape with live-typing-diff.c) ───────────────────── */
-
-/* Removes `dir` and everything under it, so no exit path can leak the
- * mkdtemp userdir even when the engine already wrote user data into it. */
-static void rm_rf(const char *dir) {
-    DIR *d = opendir(dir);
-    if (d) {
-        struct dirent *entry;
-        while ((entry = readdir(d)) != NULL) {
-            if (strcmp(entry->d_name, ".") == 0 ||
-                strcmp(entry->d_name, "..") == 0)
-                continue;
-            char path[4096];
-            if (snprintf(path, sizeof(path), "%s/%s", dir, entry->d_name) >=
-                (int)sizeof(path))
-                continue;
-            unlink(path); /* the store writes regular files only */
-        }
-        closedir(d);
-    }
-    rmdir(dir);
-}
-
-static const char *type_name(int type) {
-    switch (type) {
-    case 1: return "NBEST";
-    case 2: return "NORMAL";
-    case 3: return "ZOMBIE";
-    case 4: return "PRED_BIGRAM";
-    case 5: return "PRED_PREFIX";
-    case 6: return "ADDON";
-    case 7: return "LONGER";
-    case 8: return "PRED_PUNCT";
-    default: return "?";
-    }
-}
 
 /* Prints candidate rows `from`..`to` (exclusive) of the current window as
  * `prefix:row[i]=TYPE/nbest/text`. Returns the largest NBEST nbest_index
@@ -254,10 +210,10 @@ static int print_candidate_rows(const struct syms *s, pinyin_instance_t *inst,
             }
             if ((int)idx > proved)
                 proved = (int)idx;
-            printf("%s:row[%u]=%s/%u/%s\n", prefix, i, type_name(type),
+            printf("%s:row[%u]=%s/%u/%s\n", prefix, i, dc_type_short_name(type),
                    (unsigned)idx, text ? text : "(null)");
         } else {
-            printf("%s:row[%u]=%s/-/%s\n", prefix, i, type_name(type),
+            printf("%s:row[%u]=%s/-/%s\n", prefix, i, dc_type_short_name(type),
                    text ? text : "(null)");
         }
     }
@@ -403,7 +359,7 @@ static int paging_input(const struct syms *s, pinyin_instance_t *inst,
         const gchar *text = NULL;
         s->getstr(inst, cand, &text);
         printf("%s:deep-choose idx=%u type=%s text=%s\n", label, deep,
-               type_name(type), text ? text : "(null)");
+               dc_type_short_name(type), text ? text : "(null)");
         int cursor = s->choose(inst, 0, cand);
         printf("%s:cursor=%d\n", label, cursor);
         if (cursor >= 0) {
@@ -448,7 +404,7 @@ static int paging_last_row_choose(const struct syms *s, pinyin_instance_t *inst,
     const gchar *text = NULL;
     s->getstr(inst, cand, &text);
     printf("%s:tail-choose idx=%u type=%s text=%s\n", label, n - 1,
-           type_name(type), text ? text : "(null)");
+           dc_type_short_name(type), text ? text : "(null)");
     int cursor = s->choose(inst, 0, cand);
     printf("%s:cursor=%d\n", label, cursor);
     return 0;
@@ -485,7 +441,7 @@ static int punct_prefix(const struct syms *s, pinyin_instance_t *inst,
             fprintf(stderr, "punct-%s: get_candidate_string(%u) failed\n", tag, i);
             return 1;
         }
-        printf("punct-%s:head[%u]=%s/-/%s\n", tag, i, type_name(type),
+        printf("punct-%s:head[%u]=%s/-/%s\n", tag, i, dc_type_short_name(type),
                text ? text : "(null)");
     }
     /* Every PRED_PUNCT row in the full window, in order. */
@@ -916,7 +872,7 @@ int main(int argc, char **argv) {
     s.free_instance(inst);
     s.fini(ctx);
     dlclose(handle);
-    rm_rf(userdir);
+    dc_remove_dir_shallow(userdir);
     return 0;
 
     /* Shared cleanup: no exit path leaks the mkdtemp userdir. */
@@ -926,6 +882,6 @@ fail_ctx:
     s.fini(ctx);
     dlclose(handle);
 fail:
-    rm_rf(userdir);
+    dc_remove_dir_shallow(userdir);
     return 1;
 }
