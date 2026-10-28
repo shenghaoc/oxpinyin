@@ -111,7 +111,7 @@ class IdentityTests(unittest.TestCase):
         runs.mkdir()
         seen = [identity.observe(ctx, driver, binary, stage / 'probe',
                                  identity.Case('leak', ('none',), (template.removesuffix('-'), '{user}', status)),
-                                 'none', (None, self.root), runs)
+                                 'none', (None, self.root), self.root, runs)
                 for status in ('0', '0', '4')]
         self.assertEqual(seen[0], seen[1])
         self.assertEqual(seen[0].stdout, f'made {template}XXXXXX in {{tmp}}\n'.encode())

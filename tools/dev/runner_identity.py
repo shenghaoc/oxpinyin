@@ -25,7 +25,7 @@ from .runners import Context, Finished
 
 STRICT = ('-std=gnu11', '-Wall', '-Wextra', '-Werror', '-O2')
 SIDES = ('pin', 'subject', 'stub', 'none')
-PLACEHOLDERS = ('so', 'data', 'user', 'empty', 'tmp')
+PLACEHOLDERS = ('so', 'data', 'pindata', 'user', 'empty', 'tmp')
 
 
 @dataclass(frozen=True)
@@ -56,6 +56,9 @@ class Observation:
     left: tuple[str, ...]
 
 
+# {pindata} lets the subject open the pin's tables, which lack interpolation2.text.
+USER_DIR = (('SCHEME_DIFF_USER_DIR', '{user}'),)
+
 # A missing symbol runs against the stub; usage and dlopen refusals need no library.
 DRIVERS = {
     'residue-mechanism-diff': Driver(
@@ -65,6 +68,14 @@ DRIVERS = {
                Case('init-failure', ('pin', 'subject'), ('{so}', '{empty}')),
                Case('dlopen-failure', ('none',), ('{empty}/absent.so', '{data}')),
                Case('usage', ('none',), ()))),
+    'scheme-diff': Driver(
+        cases=(Case('double', ('pin', 'subject'), env=USER_DIR),
+               Case('zrm', ('pin', 'subject'), ('{so}', '{data}', '1'), USER_DIR),
+               Case('fixture-init', ('subject',), ('{so}', '{pindata}'), USER_DIR),
+               Case('missing-symbol', ('stub',), env=USER_DIR),
+               Case('init-failure', ('pin', 'subject'), ('{so}', '{empty}'), USER_DIR),
+               Case('dlopen-failure', ('none',), ('{empty}/absent.so', '{data}')),
+               Case('usage', ('none',), ('{empty}/absent.so',)))),
 }
 
 
@@ -140,13 +151,13 @@ def libraries(ctx: Context, driver: Driver, sides: set[str], root: Path) -> dict
 
 
 def observe(ctx: Context, driver: Driver, binary: Path, stage: Path, case: Case, side: str,
-            library: tuple[Path | None, Path], root: Path) -> Observation:
+            library: tuple[Path | None, Path], pin_data: Path, root: Path) -> Observation:
     run = Path(tempfile.mkdtemp(prefix='run-', dir=root))
     directories = {name: run / name for name in ('user', 'empty', 'tmp', 'cwd')}
     for directory in directories.values():
         directory.mkdir()
     shutil.copy2(binary, stage)
-    values = dict(so=str(library[0] or ''), data=str(library[1]),
+    values = dict(so=str(library[0] or ''), data=str(library[1]), pindata=str(pin_data),
                   **{name: str(path) for name, path in directories.items() if name != 'cwd'})
     argv = [str(stage), *(argument.format(**values) for argument in case.args)]
     environment = dict(ctx.env, TMPDIR=str(directories['tmp']),
@@ -211,7 +222,8 @@ def identity(ctx: Context, args: Sequence[str]) -> int:
     runs = divergent = 0
     for case in cases:
         for side in case.sides:
-            seen = {name: observe(ctx, driver, binary, stage, case, side, inputs[side], root)
+            seen = {name: observe(ctx, driver, binary, stage, case, side, inputs[side],
+                                  inputs['pin'][1], root)
                     for name, binary in builds.items()}
             label = f'{case.name}/{side}'
             runs += 1
