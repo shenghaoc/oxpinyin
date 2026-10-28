@@ -12,6 +12,7 @@ import importlib.util
 import inspect
 import json
 from pathlib import Path
+import runpy
 import subprocess
 import sys
 import tempfile
@@ -47,6 +48,10 @@ MODULES = {
         ()),
     'contract_selection': (('SelectionError', 'case_names', 'family_of', 'normal_tag'), ()),
     'contract_registry': (('case_spec',), ('contract_selection', 'contract_verdict')),
+    'contract_measurement': (
+        ('PER_CALL_OPS', 'PER_CALL_NAMES', 'PER_CALL_NATIVE', 'per_call_native', 'per_call_ir',
+         'per_call_profile', 'per_call_attribution', 'per_call_calibration'),
+        ('contract_abi',)),
     'contract_execution': (('ordinary_jobs', 'positive_jobs', 'terminate_group', 'user_dir_listing'), ()),
     'contract_runner': (('Cancelled',), ()),
     'contract_kit': ((), ('contract_abi',)),
@@ -72,6 +77,12 @@ ADAPTERS = {
     'run_case': '(spec, pin_so, subject_so, data, name, scratch, timeout)',
     'case_jobs': '(requested)',
     'case_results': '(args, names, data, scratch, jobs)',
+    'PerCallKit': '(mode, so, data, scratch, native, operations)',
+    'per_call_helper': '(scratch)',
+    'per_call_worker': '(mode, so, data, name, library, metric, operations)',
+    'per_call_run': '(mode, so, data, name, helper, metric, operations, scratch, cpu, attribution=False)',
+    'per_call_checked': '(spec, reference, sample, operations)',
+    'run_per_call': '(args, parser)',
 }
 
 spec = importlib.util.spec_from_file_location('contract_diff', HERE / 'contract-diff.py')
@@ -193,6 +204,59 @@ class ModuleBoundaryTests(unittest.TestCase):
             self.assertEqual(list(registry), ['late/bound'])
             self.assertEqual(registry['late/bound']['issues'], ('7',))
         self.assertNotIn('late/bound', driver.CASES)
+
+    def test_measurement_adapters_pass_current_driver_state_and_keep_the_kit_patch_point(self):
+        measurement = sys.modules['contract_measurement']
+        registry, ordering, native_source = {}, {'check_arms': object()}, 'source'
+        callbacks = {name: object() for name in ('check_tkrzw', 'check_cancelled', 'terminate_group',
+                                                  'user_dir_listing', 'per_call_ir', 'per_call_profile',
+                                                  'verdict_for', 'per_call_native', 'per_call_helper',
+                                                  'per_call_run', 'per_call_checked', 'per_call_calibration',
+                                                  'per_call_attribution', 'observed')}
+        self.assertTrue(issubclass(driver.PerCallKit, driver.Kit))
+        self.assertTrue(issubclass(driver.PerCallKit, measurement.PerCallKit))
+        with patch.object(driver, 'CASES', registry), patch.object(driver, 'CELL', 'kc'), \
+                patch.object(driver, 'FUNCTION_ORDER', ordering), patch.object(driver, 'PER_CALL_NATIVE', native_source), \
+                patch.object(measurement, 'per_call_helper', return_value='helper') as helper:
+            self.assertEqual(driver.per_call_helper('scratch'), 'helper')
+            helper.assert_called_once_with('scratch', PER_CALL_NATIVE=native_source)
+            with patch.multiple(driver, **{key: value for key, value in callbacks.items()
+                                           if key not in ('per_call_helper', 'per_call_run', 'per_call_checked')}), \
+                    patch.object(measurement, 'per_call_worker', return_value='worker') as worker, \
+                    patch.object(measurement, 'per_call_run', return_value='sample') as sample, \
+                    patch.object(measurement, 'per_call_checked', return_value='checked') as checked, \
+                    patch.object(measurement, 'run_per_call', return_value='controller') as controller:
+                self.assertEqual(driver.per_call_worker('p', 'so', 'data', 'name', 'lib', 'ir', 'add'), 'worker')
+                worker.assert_called_once_with('p', 'so', 'data', 'name', 'lib', 'ir', 'add',
+                                               PerCallKit=driver.PerCallKit, Kit=driver.Kit, CASES=registry,
+                                               per_call_native=callbacks['per_call_native'])
+                self.assertEqual(driver.per_call_run('p', 'so', 'data', 'name', 'helper', 'wall',
+                                                     'add', 'scratch', 2, True), 'sample')
+                sample.assert_called_once_with('p', 'so', 'data', 'name', 'helper', 'wall', 'add', 'scratch',
+                                               2, True, driver_file=driver.__file__, CELL='kc',
+                                               **{key: callbacks[key] for key in ('check_tkrzw', 'check_cancelled',
+                                                                                 'terminate_group', 'user_dir_listing',
+                                                                                 'per_call_ir', 'per_call_profile')})
+                self.assertEqual(driver.per_call_checked('spec', 'ref', 'sample', ('add',)), 'checked')
+                checked.assert_called_once_with('spec', 'ref', 'sample', ('add',), verdict_for=callbacks['verdict_for'])
+                self.assertEqual(driver.run_per_call('args', 'parser'), 'controller')
+                controller.assert_called_once_with('args', 'parser', CASES=registry, FUNCTION_ORDER=ordering,
+                                                   per_call_helper=driver.per_call_helper, per_call_run=driver.per_call_run,
+                                                   per_call_checked=driver.per_call_checked,
+                                                   per_call_calibration=callbacks['per_call_calibration'],
+                                                   per_call_attribution=callbacks['per_call_attribution'],
+                                                   observed=callbacks['observed'])
+
+    def test_per_call_worker_entry_dispatches_through_the_driver_adapter(self):
+        measurement = sys.modules['contract_measurement']
+        entry = HERE / 'contract-diff.py'
+        arguments = ['pinyin', 'so', 'data', 'calibrate', 'helper', 'ir', 'count']
+        with patch.object(sys, 'argv', [str(entry), '--per-call-worker', *arguments]), \
+                patch.object(measurement, 'per_call_worker') as worker:
+            runpy.run_path(str(entry), run_name='__main__')
+        self.assertEqual(worker.call_args.args, tuple(arguments))
+        self.assertIn('wrap-256th-reading', worker.call_args.kwargs['CASES'])
+        self.assertTrue(issubclass(worker.call_args.kwargs['PerCallKit'], worker.call_args.kwargs['Kit']))
 
     def test_timing_summary_totals_the_timings_the_driver_holds_now(self):
         with patch.object(driver, 'TIMINGS', [dict(execute=2, side='pin'), dict(execute=3)]):
