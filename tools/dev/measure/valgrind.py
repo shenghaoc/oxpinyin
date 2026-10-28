@@ -177,6 +177,34 @@ def annotate(out: Path) -> None:
                           cancel_error=slot.Cancelled, out=sys.stderr)
 
 
+def callgrind_control(argv: Sequence[str], env: Mapping[str, str]) -> int:
+    """Verify DWARF and code neutrality against a plain shipping cargo-c stage.
+
+    Usage: PROFILE-STAGE SHIPPING-STAGE. Both use the shipping Cargo profile;
+    only the profiled build adds RUSTFLAGS="-Cdebuginfo=1 -Cstrip=none" (#1337).
+    """
+    if len(argv) != 2:
+        fail('usage: callgrind-control PROFILE-STAGE SHIPPING-STAGE', 2)
+    libraries = []
+    for stage in map(Path, argv):
+        library = bench.find_named(stage, 'libpinyin.so')
+        if library is None:
+            fail(f'callgrind-control: no libpinyin.so in {stage}')
+        libraries.append(library)
+    info = bench.capture(['readelf', '--debug-dump=info', libraries[0]], env=env)
+    write(info.stderr, error=True)
+    if info.status:
+        raise Finished(info.status)
+    units = info.stdout.count(b'Compilation Unit @')
+    if not units:
+        fail('callgrind-control: profiled library has no DWARF compilation units')
+    emit(f'profiled DWARF compilation units: {units}')
+    from . import neutrality
+    status, report = neutrality.compare(*libraries)
+    write(report.encode('utf-8'))
+    return status
+
+
 def callgrind_differential(argv: Sequence[str], env: Mapping[str, str]) -> int:
     """Instruction-level differential for the steady keystroke cycle: stages 0 through 7."""
     label = CALLGRIND
@@ -280,7 +308,7 @@ def callgrind_differential(argv: Sequence[str], env: Mapping[str, str]) -> int:
     speed = out / 'speed.jsonl'
     speed.write_bytes(b'')
     emit(f'--- timing: {t_runs} alternating runs x {t_cycles} cycles x {t_repeats} passes ---')
-    bench.round_robin(t_runs, pair, lambda arm, mode: worker.sample(
+    bench.round_robin(t_runs, [(arms['lp'], 'speed'), (arms['nodebug'], 'speed')], lambda arm, mode: worker.sample(
         arm, mode, speed, out / 'speed.err', t_cycles, repeats=t_repeats))
     code, text = bench.report('tools/bisection/perf-ci.py',
                               [str(speed), '--metric', 'steady', '--metric', 'cold', '--format', 'md'])
@@ -344,4 +372,5 @@ def system_import_profile(argv: Sequence[str], env: Mapping[str, str]) -> int:
         fail(stop.code, slot.cancellation_status())
 
 
-RECIPES = {'callgrind-differential': callgrind_differential, 'system-import-profile': system_import_profile}
+RECIPES = {'callgrind-control': callgrind_control, 'callgrind-differential': callgrind_differential,
+           'system-import-profile': system_import_profile}

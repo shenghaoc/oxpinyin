@@ -1,9 +1,10 @@
 """Is a debug-info build the same code as one without? (#1290)
 
-The profiled artifact is built with debug info and the timed one without
-(CARGO_PROFILE_RELEASE_DEBUG feeds cargo's crate metadata hash, hence every
-mangled symbol name, hence link order), so the two .text sections hold the same
-functions at different addresses. `compare` classifies a pair. Three outcomes,
+The campaign compares a shipping-profile build with debug/strip RUSTFLAGS
+overrides against a plain shipping build; both have the same crate metadata.
+Independently changing CARGO_PROFILE_RELEASE_DEBUG changes Cargo's crate metadata
+hash and can change fat-LTO specialization, not just link order (#1337).
+`compare` also diagnoses independently built pairs. Three outcomes,
 and only the last is fatal:
 
   (a) identical .text bytes                  - fully neutral

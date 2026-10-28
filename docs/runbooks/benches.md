@@ -110,6 +110,46 @@ for `tools.dev.measure.startup`. Packaging's
 behavioral smoke checks, not measurements. Their ordinary fallback stays
 unchanged.
 
+## Callgrind debug-info control
+
+Both campaign arms use the unchanged shipping Cargo profile. The profiled arm
+adds `RUSTFLAGS="-Cdebuginfo=1 -Cstrip=none"`; Cargo appends these after its
+`-C strip=debuginfo`, so rustc's final strip setting retains DWARF without changing
+the profile/metadata hash. On Rust 1.97.1 its `.text` is byte-identical to plain
+shipping, including `Step::relax`, `order_window_tail` and both engine
+`reserve_rehash` instances. Debuginfo alone is stripped back out.
+
+`callgrind-control` verifies DWARF compilation units in the profiled library and
+runs the unchanged neutrality check against the separately built plain shipping
+library. The campaign checks neutrality again before collection and uses the
+plain shipping arm for wall-clock timing.
+
+To check preparation natively without running the pin or collecting profiles:
+
+```bash
+just heavy -- env RUSTFLAGS="-Cdebuginfo=1 -Cstrip=none" CARGO_TARGET_DIR=target/tkrzw \
+  cargo cinstall -v --locked --release -p oxpinyin-capi \
+  --no-default-features --features tkrzw \
+  --destdir=target/callgrind-tkrzw/profile --prefix=/usr
+just heavy -- env CARGO_TARGET_DIR=target/tkrzw \
+  cargo cinstall -v --locked --release -p oxpinyin-capi \
+  --no-default-features --features tkrzw \
+  --destdir=target/callgrind-tkrzw/control --prefix=/usr
+just measure callgrind-control target/callgrind-tkrzw/profile target/callgrind-tkrzw/control
+```
+
+Run from a shell with no Cargo profile or RUSTFLAGS overrides already exported.
+For BDB, replace `tkrzw` with `bdb` in the feature and output paths. Both
+comparisons must pass; these builds should be case (a), identical `.text`.
+No runtime data or oracle build is needed for this check. The verbose build
+output records the order of the compiler flags; `readelf --debug-dump=info`
+on the profiled library displays its DWARF units.
+
+The separate `probe-debuginfo-neutrality` diagnostic still compares independently
+compiled profiles and may fail. Changing Cargo's debug profile changes crate
+metadata, which can affect fat-LTO specialization as well as layout (#1337).
+That diagnostic does not create the campaign's control artifact.
+
 ## Native startup measurement
 
 The 2026-10-22 UTC ruling (§7.8 in the tooling consolidation findings) places

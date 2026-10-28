@@ -31,6 +31,45 @@ NM = ('0000000000001130 t bisect_perf_cold_unit\n0000000000001140 t bisect_perf_
       '0000000000001150 T main\n')
 
 
+class ControlTests(World):
+    def setUp(self):
+        super().setUp()
+        self.profile, self.shipping = self.root / 'profile', self.root / 'shipping'
+        for stage in (self.profile, self.shipping):
+            stage.mkdir()
+            (stage / 'libpinyin.so').write_bytes(b'library')
+
+    def control(self):
+        return self.execute(valgrind.callgrind_control, [str(self.profile), str(self.shipping)], {})
+
+    def test_dwarf_is_checked_and_the_neutrality_failure_propagates(self):
+        with mock.patch.object(valgrind.bench, 'capture', return_value=pool.Completed(
+                0, b'  Compilation Unit @ offset 0:\n', b'')) as readelf, mock.patch(
+                'tools.dev.measure.neutrality.compare', return_value=(1, 'FAIL (c)\n')) as compare:
+            status, out, err = self.control()
+        self.assertEqual((status, out, err), (1, 'profiled DWARF compilation units: 1\nFAIL (c)\n', ''))
+        readelf.assert_called_once_with(['readelf', '--debug-dump=info', self.profile / 'libpinyin.so'], env={})
+        compare.assert_called_once_with(self.profile / 'libpinyin.so', self.shipping / 'libpinyin.so')
+        for stage in (self.profile, self.shipping):
+            self.assertEqual((stage / 'libpinyin.so').read_bytes(), b'library')
+
+    def test_missing_dwarf_and_failed_readelf_stop_before_comparison(self):
+        for code, error in ((0, 'callgrind-control: profiled library has no DWARF compilation units\n'),
+                            (7, 'readelf failed\n')):
+            with self.subTest(code=code), mock.patch.object(valgrind.bench, 'capture', return_value=pool.Completed(
+                    code, b'', b'readelf failed\n' if code else b'')), mock.patch(
+                    'tools.dev.measure.neutrality.compare') as compare:
+                self.assertEqual(self.control(), (code or 1, '', error))
+                compare.assert_not_called()
+
+    def test_bad_arguments_and_either_missing_library_fail(self):
+        self.assertEqual(self.execute(valgrind.callgrind_control, [], {})[0], 2)
+        for index in range(2):
+            stages = [str(self.profile), str(self.shipping)]
+            stages[index] = str(self.root / 'missing')
+            self.assertEqual(self.execute(valgrind.callgrind_control, stages, {})[0], 1)
+
+
 class TableTests(World):
     def nm(self, text):
         return lambda command: pool.Completed(0, text.encode(), b'')
@@ -366,7 +405,7 @@ class DifferentialTests(World):
         native = [w for w in self.workers_of() if 'valgrind' not in w[6]]
         # hardware: 2 runs x 2 cells with PERF_HW, the allocation run, then the timing runs
         self.assertEqual([w[1] for w in native], ['libpinyin-tkrzw', 'oxpinyin-tkrzw'] * 2 + ['oxpinyin-alloccount']
-                         + ['libpinyin-tkrzw', 'oxpinyin-tkrzw'] * 2)
+                         + ['libpinyin-tkrzw', 'oxpinyin-nodebug'] * 2)
         self.assertEqual({w[3] for w in native}, {'8'})
         self.assertEqual(len(self.kinds('hardware')), 4)
         self.assertEqual([check[2] for check in self.kinds('check')[:4]], ['pin', 'subject', 'subject', 'subject'])

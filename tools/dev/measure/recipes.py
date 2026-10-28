@@ -16,7 +16,7 @@ from .. import runners
 # The names `measure` accepts besides its own startup and cold-qualify. A fixed
 # tuple keeps every `tools.dev` command from importing the recipe modules;
 # recipes.test.py checks it against what the modules contribute.
-NAMES = ('callgrind-differential', 'perf-baseline', 'perf-matrix', 'perf-same-data',
+NAMES = ('callgrind-control', 'callgrind-differential', 'perf-baseline', 'perf-matrix', 'perf-same-data',
          'probe-debuginfo-neutrality', 'probe-egress', 'processor-trace', 'profile-w8', 'rss-diag',
          'shipped-check', 'snapshot', 'system-import-profile', 'tree-recipe-control')
 

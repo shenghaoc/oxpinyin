@@ -21,16 +21,17 @@ driver's stage 2. Two things this exists to stop you getting wrong:
    -Cstrip=debuginfo whenever the profile itself asks for no debug info, so the
    flag emits DWARF and cargo strips it straight back out. Measured on rustc
    1.97.1: the RUSTFLAGS-only artifact carries zero .debug_* sections and is
-   byte-identical to the stock one. Debug info has to come from the profile,
-   CARGO_PROFILE_RELEASE_DEBUG=1, or from RUSTFLAGS with
-   CARGO_PROFILE_RELEASE_STRIP=none alongside it.
+   byte-identical to the stock one. Use RUSTFLAGS="-Cdebuginfo=1 -Cstrip=none"
+   to override Cargo's stripping without changing the profile or metadata hash.
 
-2. ENABLING IT IS NOT NEUTRAL, BUT IT IS NOT CODEGEN EITHER. Measured on
+2. ENABLING IT CAN CHANGE CODEGEN. The earlier measurement on
    2026-09-08 UTC, oxpinyin-capi with and without debug info has the same
    instruction multiset but different .text bytes: the profile's debug level
    feeds cargo's crate metadata hash, hence every mangled symbol name, hence link
-   order. Instruction counts are unaffected by that. SIMULATED cache and branch
-   figures are not: layout is exactly what they model.
+   order. That observation is not a guarantee: #1337 reproduced different
+   reserve_rehash specialization under fat LTO. The campaign now uses
+   both RUSTFLAGS overrides and callgrind-control to compare against shipping;
+   this probe keeps the independent profiles to diagnose their interaction.
 
 So the probe classifies rather than passing or failing on a hash:
 
@@ -208,7 +209,7 @@ def probe_debuginfo_neutrality(argv: Sequence[str], env: Mapping[str, str]) -> i
 
         if (work / 'stock.so').read_bytes() == (work / 'rustflags.so').read_bytes():
             emit('CONFIRMED: RUSTFLAGS=-Cdebuginfo=1 produced a byte-identical')
-            emit('           artifact — cargo stripped it. Use the profile.')
+            emit('           artifact — cargo stripped it. Add -Cstrip=none to RUSTFLAGS.')
         else:
             emit('NOTE: RUSTFLAGS=-Cdebuginfo=1 did change the artifact on this')
             emit('      toolchain; the strip-back behaviour above may have been fixed.')
