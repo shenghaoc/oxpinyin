@@ -118,6 +118,13 @@ DRIVERS = {
                     (('TRAINDIFF_ROUNDS', '65'),)),
                Case('dlopen-failure', ('none',), ('{empty}/absent.so', '{data}')),
                Case('usage', ('none',), ('{empty}/absent.so',)))),
+    'residue-a-tail-diff': Driver(
+        templates=('/tmp/residue-a-',), variant='bigram-export-strjoinv',
+        cases=(Case('walk', ('pin', 'subject')),
+               Case('missing-symbol', ('stub',)),
+               Case('init-failure', ('pin', 'subject'), ('{so}', '{empty}')),
+               Case('dlopen-failure', ('none',), ('{empty}/absent.so', '{data}')),
+               Case('usage', ('none',), ()))),
 }
 
 
