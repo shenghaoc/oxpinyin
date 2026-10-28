@@ -92,7 +92,7 @@ class IdentityTests(unittest.TestCase):
                 self.assertIn(driver.facade, ('pinyin', 'zhuyin'))
                 self.assertIn(driver.pin_tables, ('pin', 'subject'))
                 for template in driver.templates:
-                    self.assertTrue(template.startswith(('/', '{')), template)
+                    self.assertTrue(template.endswith('-') and ' ' not in template, template)
                 for case in driver.cases:
                     self.assertTrue(case.sides and set(case.sides) <= set(identity.SIDES), case)
                     for text in (*case.args, *(value for _, value in case.env)):
@@ -149,7 +149,8 @@ class IdentityTests(unittest.TestCase):
         driver = identity.Driver(cases=(), templates=(template,))
         stage = self.root / 'stage'
         stage.mkdir()
-        ctx = SimpleNamespace(env={'PATH': '/usr/bin:/bin'}, name='driver-identity', services=Services())
+        ctx = SimpleNamespace(env={'PATH': '/usr/bin:/bin'}, name='driver-identity', services=Services(),
+                              here=ROOT / 'tools/bisection')
         runs = self.root / 'runs'
         runs.mkdir()
         seen = [identity.observe(ctx, driver, binary, stage / 'probe',
