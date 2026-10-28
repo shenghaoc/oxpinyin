@@ -46,7 +46,6 @@
  */
 
 #define _POSIX_C_SOURCE 200809L
-#include <dirent.h>
 #include <dlfcn.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -54,7 +53,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
-#include <unistd.h>
+
+#include "driver-common.h"
 
 typedef void pinyin_context_t;
 typedef void pinyin_instance_t;
@@ -146,34 +146,7 @@ static fn_g_array_free g_array_free_fn;
 #define DYNAMIC_ADJUST_WORD 0x38au
 #define NBEST_MATCH_CANDIDATE 1
 
-static void *must(void *h, const char *name) {
-    void *s = dlsym(h, name);
-    if (!s) {
-        fprintf(stderr, "MISSING %s\n", name);
-        exit(1);
-    }
-    return s;
-}
-
 static const char *yesno(bool v) { return v ? "true" : "false"; }
-
-static void rm_rf(const char *dir) {
-    DIR *d = opendir(dir);
-    if (d) {
-        struct dirent *entry;
-        while ((entry = readdir(d)) != NULL) {
-            if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
-                continue;
-            char path[4096];
-            if (snprintf(path, sizeof(path), "%s/%s", dir, entry->d_name) >=
-                (int)sizeof(path))
-                continue;
-            unlink(path);
-        }
-        closedir(d);
-    }
-    rmdir(dir);
-}
 
 /* One fresh context in the ABI probe's import state, on its own user dir. */
 static pinyin_context_t *import_context(struct syms *s, const char *systemdir,
@@ -219,8 +192,7 @@ static void dump_tokens(struct syms *s, pinyin_instance_t *inst, const char *tag
         printf("%s:token[%u]=0x%08x lib=%u phrase=%s/%u/%s unigram=%s/%u\n", tag, i, t,
                (t >> 24) & 0xff, yesno(p1), len, p1 && ph ? ph : "(null)", yesno(u1),
                freq);
-        if (ph)
-            g_free_fn(ph);
+        dc_release(g_free_fn, ph);
     }
     g_array_free_fn(tokens, 1);
 }
@@ -248,27 +220,8 @@ static void dump_unigram_of(struct syms *s, pinyin_instance_t *inst, const char 
 }
 
 static void dump_bigram(struct syms *s, pinyin_context_t *ctx, const char *tag) {
-    bigram_export_iterator_t *it = s->begin_bigram(ctx);
-    printf("%s:begin_bigram=%s\n", tag, it ? "ok" : "NULL");
-    if (!it)
-        return;
-    unsigned row = 0;
-    while (s->bigram_has(it)) {
-        gchar *phrase = NULL, *pinyin = NULL;
-        gint count = 0;
-        bool ok = s->bigram_next(it, &phrase, &pinyin, &count);
-        printf("%s:bigram[%u]=%s %s|%s|%d\n", tag, row, yesno(ok),
-               phrase ? phrase : "(null)", pinyin ? pinyin : "(null)", count);
-        if (phrase)
-            g_free_fn(phrase);
-        if (pinyin)
-            g_free_fn(pinyin);
-        row++;
-        if (row > 32)
-            break;
-    }
-    printf("%s:bigram_rows=%u\n", tag, row);
-    s->end_bigram(it);
+    dc_dump_bigram(s->begin_bigram, s->bigram_has, s->bigram_next, s->end_bigram,
+                   g_free_fn, ctx, tag);
 }
 
 /* The window head: type, text, n-best rank (NBEST rows only), is_user.
@@ -345,8 +298,7 @@ static void dump_sentences(struct syms *s, pinyin_instance_t *inst, const char *
         char *sent = NULL;
         bool ok = s->get_sentence(inst, (uint8_t)i, &sent);
         printf("%s:sentence[%d]=%s text=%s\n", tag, i, yesno(ok), ok && sent ? sent : "(null)");
-        if (sent)
-            g_free_fn(sent);
+        dc_release(g_free_fn, sent);
     }
 }
 
@@ -380,36 +332,36 @@ int main(int argc, char **argv) {
     }
 
     struct syms s;
-    s.init = (fn_init)must(handle, "pinyin_init");
-    s.fini = (fn_fini)must(handle, "pinyin_fini");
-    s.alloc = (fn_alloc)must(handle, "pinyin_alloc_instance");
-    s.free_inst = (fn_free)must(handle, "pinyin_free_instance");
-    s.set_options = (fn_set_options)must(handle, "pinyin_set_options");
-    s.parse = (fn_parse)must(handle, "pinyin_parse_more_full_pinyins");
-    s.guess_sentence = (fn_guess_sentence)must(handle, "pinyin_guess_sentence");
-    s.get_sentence = (fn_get_sentence)must(handle, "pinyin_get_sentence");
-    s.guess_cands = (fn_guess_cands)must(handle, "pinyin_guess_candidates");
-    s.getn = (fn_getn)must(handle, "pinyin_get_n_candidate");
-    s.getc = (fn_getc)must(handle, "pinyin_get_candidate");
-    s.getstr = (fn_getstr)must(handle, "pinyin_get_candidate_string");
-    s.gettype = (fn_gettype)must(handle, "pinyin_get_candidate_type");
-    s.nbest = (fn_nbest)must(handle, "pinyin_get_candidate_nbest_index");
-    s.is_user = (fn_is_user)must(handle, "pinyin_is_user_candidate");
-    s.choose = (fn_choose)must(handle, "pinyin_choose_candidate");
-    s.clear = (fn_clear)must(handle, "pinyin_clear_constraint");
-    s.train = (fn_train)must(handle, "pinyin_train");
-    s.reset = (fn_reset)must(handle, "pinyin_reset");
-    s.save = (fn_save)must(handle, "pinyin_save");
-    s.begin_add = (fn_begin_add)must(handle, "pinyin_begin_add_phrases");
-    s.add_phrase = (fn_add_phrase)must(handle, "pinyin_iterator_add_phrase");
-    s.end_add = (fn_end_add)must(handle, "pinyin_end_add_phrases");
-    s.begin_bigram = (fn_begin_bigram)must(handle, "pinyin_begin_get_bigram_phrases");
-    s.bigram_has = (fn_bigram_has)must(handle, "pinyin_bigram_iterator_has_next_phrase");
-    s.bigram_next = (fn_bigram_next)must(handle, "pinyin_bigram_iterator_get_next_phrase");
-    s.end_bigram = (fn_end_bigram)must(handle, "pinyin_end_get_bigram_phrases");
-    s.lookup_tokens = (fn_lookup_tokens)must(handle, "pinyin_lookup_tokens");
-    s.token_unigram = (fn_token_unigram)must(handle, "pinyin_token_get_unigram_frequency");
-    s.token_phrase = (fn_token_phrase)must(handle, "pinyin_token_get_phrase");
+    s.init = (fn_init)dc_require_terse(handle, "pinyin_init");
+    s.fini = (fn_fini)dc_require_terse(handle, "pinyin_fini");
+    s.alloc = (fn_alloc)dc_require_terse(handle, "pinyin_alloc_instance");
+    s.free_inst = (fn_free)dc_require_terse(handle, "pinyin_free_instance");
+    s.set_options = (fn_set_options)dc_require_terse(handle, "pinyin_set_options");
+    s.parse = (fn_parse)dc_require_terse(handle, "pinyin_parse_more_full_pinyins");
+    s.guess_sentence = (fn_guess_sentence)dc_require_terse(handle, "pinyin_guess_sentence");
+    s.get_sentence = (fn_get_sentence)dc_require_terse(handle, "pinyin_get_sentence");
+    s.guess_cands = (fn_guess_cands)dc_require_terse(handle, "pinyin_guess_candidates");
+    s.getn = (fn_getn)dc_require_terse(handle, "pinyin_get_n_candidate");
+    s.getc = (fn_getc)dc_require_terse(handle, "pinyin_get_candidate");
+    s.getstr = (fn_getstr)dc_require_terse(handle, "pinyin_get_candidate_string");
+    s.gettype = (fn_gettype)dc_require_terse(handle, "pinyin_get_candidate_type");
+    s.nbest = (fn_nbest)dc_require_terse(handle, "pinyin_get_candidate_nbest_index");
+    s.is_user = (fn_is_user)dc_require_terse(handle, "pinyin_is_user_candidate");
+    s.choose = (fn_choose)dc_require_terse(handle, "pinyin_choose_candidate");
+    s.clear = (fn_clear)dc_require_terse(handle, "pinyin_clear_constraint");
+    s.train = (fn_train)dc_require_terse(handle, "pinyin_train");
+    s.reset = (fn_reset)dc_require_terse(handle, "pinyin_reset");
+    s.save = (fn_save)dc_require_terse(handle, "pinyin_save");
+    s.begin_add = (fn_begin_add)dc_require_terse(handle, "pinyin_begin_add_phrases");
+    s.add_phrase = (fn_add_phrase)dc_require_terse(handle, "pinyin_iterator_add_phrase");
+    s.end_add = (fn_end_add)dc_require_terse(handle, "pinyin_end_add_phrases");
+    s.begin_bigram = (fn_begin_bigram)dc_require_terse(handle, "pinyin_begin_get_bigram_phrases");
+    s.bigram_has = (fn_bigram_has)dc_require_terse(handle, "pinyin_bigram_iterator_has_next_phrase");
+    s.bigram_next = (fn_bigram_next)dc_require_terse(handle, "pinyin_bigram_iterator_get_next_phrase");
+    s.end_bigram = (fn_end_bigram)dc_require_terse(handle, "pinyin_end_get_bigram_phrases");
+    s.lookup_tokens = (fn_lookup_tokens)dc_require_terse(handle, "pinyin_lookup_tokens");
+    s.token_unigram = (fn_token_unigram)dc_require_terse(handle, "pinyin_token_get_unigram_frequency");
+    s.token_phrase = (fn_token_phrase)dc_require_terse(handle, "pinyin_token_get_phrase");
 
     fprintf(stderr, "so=%s\n", argv[1]);
     fprintf(stderr, "systemdir=%s\n", argv[2]);
@@ -456,7 +408,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "no row 0\n");
         s.free_inst(inst);
         s.fini(ctx);
-        rm_rf(userdir_a);
+        dc_remove_dir_shallow(userdir_a);
         return 1;
     }
     int ctype = -1;
@@ -479,7 +431,7 @@ int main(int argc, char **argv) {
     dump_train_unigrams(&s, inst, "B-train2");
     s.free_inst(inst);
     s.fini(ctx);
-    rm_rf(userdir_a);
+    dc_remove_dir_shallow(userdir_a);
 
     /* ── Phase X: choose the 你好时节 row — what the diff against the 1-best forces ── */
     printf("=== phase: X-cross ===\n");
@@ -528,7 +480,7 @@ int main(int argc, char **argv) {
     }
     s.free_inst(inst);
     s.fini(ctx);
-    rm_rf(userdir_x);
+    dc_remove_dir_shallow(userdir_x);
 
     /* ── Phase D: DYNAMIC_ADJUST reads result[0] at offset 5 ── */
     printf("=== phase: D-dynamic-adjust ===\n");
@@ -546,7 +498,7 @@ int main(int argc, char **argv) {
     dump_rows(&s, inst, "D-0", 4);
     s.free_inst(inst);
     s.fini(ctx);
-    rm_rf(userdir_d);
+    dc_remove_dir_shallow(userdir_d);
 
     /* ── Phase E: windows behind the composition offset ── */
     printf("=== phase: E-behind ===\n");
@@ -608,7 +560,7 @@ int main(int argc, char **argv) {
     }
     s.free_inst(inst);
     s.fini(ctx);
-    rm_rf(userdir_e);
+    dc_remove_dir_shallow(userdir_e);
 
     dlclose(handle);
     return 0;
