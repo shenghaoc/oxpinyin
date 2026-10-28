@@ -22,7 +22,6 @@
  */
 
 #define _POSIX_C_SOURCE 200809L
-#include <dirent.h>
 #include <dlfcn.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -30,7 +29,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
-#include <unistd.h>
+
+#include "driver-common.h"
 
 typedef void pinyin_context_t;
 typedef void pinyin_instance_t;
@@ -111,57 +111,11 @@ static fn_g_free g_free_fn;
 static fn_g_array_new g_array_new_fn;
 static fn_g_array_free g_array_free_fn;
 
-static void *must(void *h, const char *name) {
-    void *s = dlsym(h, name);
-    if (!s) {
-        fprintf(stderr, "MISSING %s\n", name);
-        exit(1);
-    }
-    return s;
-}
-
 static const char *yesno(bool v) { return v ? "true" : "false"; }
 
-static void rm_rf(const char *dir) {
-    DIR *d = opendir(dir);
-    if (d) {
-        struct dirent *entry;
-        while ((entry = readdir(d)) != NULL) {
-            if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
-                continue;
-            char path[4096];
-            if (snprintf(path, sizeof(path), "%s/%s", dir, entry->d_name) >=
-                (int)sizeof(path))
-                continue;
-            unlink(path);
-        }
-        closedir(d);
-    }
-    rmdir(dir);
-}
-
 static void dump_bigram(struct syms *s, pinyin_context_t *ctx, const char *tag) {
-    bigram_export_iterator_t *it = s->begin_bigram(ctx);
-    printf("%s:begin_bigram=%s\n", tag, it ? "ok" : "NULL");
-    if (!it)
-        return;
-    unsigned row = 0;
-    while (s->bigram_has(it)) {
-        gchar *phrase = NULL, *pinyin = NULL;
-        gint count = 0;
-        bool ok = s->bigram_next(it, &phrase, &pinyin, &count);
-        printf("%s:bigram[%u]=%s %s|%s|%d\n", tag, row, yesno(ok),
-               phrase ? phrase : "(null)", pinyin ? pinyin : "(null)", count);
-        if (phrase)
-            g_free_fn(phrase);
-        if (pinyin)
-            g_free_fn(pinyin);
-        row++;
-        if (row > 32)
-            break;
-    }
-    printf("%s:bigram_rows=%u\n", tag, row);
-    s->end_bigram(it);
+    dc_dump_bigram(s->begin_bigram, s->bigram_has, s->bigram_next, s->end_bigram,
+                   g_free_fn, ctx, tag);
 }
 
 int main(int argc, char **argv) {
@@ -186,33 +140,33 @@ int main(int argc, char **argv) {
     }
 
     struct syms s;
-    s.init = (fn_init)must(handle, "pinyin_init");
-    s.fini = (fn_fini)must(handle, "pinyin_fini");
-    s.alloc = (fn_alloc)must(handle, "pinyin_alloc_instance");
-    s.free_inst = (fn_free)must(handle, "pinyin_free_instance");
-    s.set_options = (fn_set_options)must(handle, "pinyin_set_options");
-    s.parse = (fn_parse)must(handle, "pinyin_parse_more_full_pinyins");
-    s.guess_sentence = (fn_guess_sentence)must(handle, "pinyin_guess_sentence");
-    s.guess_cands = (fn_guess_cands)must(handle, "pinyin_guess_candidates");
-    s.getn = (fn_getn)must(handle, "pinyin_get_n_candidate");
-    s.getc = (fn_getc)must(handle, "pinyin_get_candidate");
-    s.getstr = (fn_getstr)must(handle, "pinyin_get_candidate_string");
-    s.gettype = (fn_gettype)must(handle, "pinyin_get_candidate_type");
-    s.nbest = (fn_nbest)must(handle, "pinyin_get_candidate_nbest_index");
-    s.choose = (fn_choose)must(handle, "pinyin_choose_candidate");
-    s.clear = (fn_clear)must(handle, "pinyin_clear_constraint");
-    s.train = (fn_train)must(handle, "pinyin_train");
-    s.save = (fn_save)must(handle, "pinyin_save");
-    s.begin_add = (fn_begin_add)must(handle, "pinyin_begin_add_phrases");
-    s.add_phrase = (fn_add_phrase)must(handle, "pinyin_iterator_add_phrase");
-    s.end_add = (fn_end_add)must(handle, "pinyin_end_add_phrases");
-    s.begin_bigram = (fn_begin_bigram)must(handle, "pinyin_begin_get_bigram_phrases");
-    s.bigram_has = (fn_bigram_has)must(handle, "pinyin_bigram_iterator_has_next_phrase");
-    s.bigram_next = (fn_bigram_next)must(handle, "pinyin_bigram_iterator_get_next_phrase");
-    s.end_bigram = (fn_end_bigram)must(handle, "pinyin_end_get_bigram_phrases");
-    s.lookup_tokens = (fn_lookup_tokens)must(handle, "pinyin_lookup_tokens");
-    s.token_unigram = (fn_token_unigram)must(handle, "pinyin_token_get_unigram_frequency");
-    s.token_phrase = (fn_token_phrase)must(handle, "pinyin_token_get_phrase");
+    s.init = (fn_init)dc_require_terse(handle, "pinyin_init");
+    s.fini = (fn_fini)dc_require_terse(handle, "pinyin_fini");
+    s.alloc = (fn_alloc)dc_require_terse(handle, "pinyin_alloc_instance");
+    s.free_inst = (fn_free)dc_require_terse(handle, "pinyin_free_instance");
+    s.set_options = (fn_set_options)dc_require_terse(handle, "pinyin_set_options");
+    s.parse = (fn_parse)dc_require_terse(handle, "pinyin_parse_more_full_pinyins");
+    s.guess_sentence = (fn_guess_sentence)dc_require_terse(handle, "pinyin_guess_sentence");
+    s.guess_cands = (fn_guess_cands)dc_require_terse(handle, "pinyin_guess_candidates");
+    s.getn = (fn_getn)dc_require_terse(handle, "pinyin_get_n_candidate");
+    s.getc = (fn_getc)dc_require_terse(handle, "pinyin_get_candidate");
+    s.getstr = (fn_getstr)dc_require_terse(handle, "pinyin_get_candidate_string");
+    s.gettype = (fn_gettype)dc_require_terse(handle, "pinyin_get_candidate_type");
+    s.nbest = (fn_nbest)dc_require_terse(handle, "pinyin_get_candidate_nbest_index");
+    s.choose = (fn_choose)dc_require_terse(handle, "pinyin_choose_candidate");
+    s.clear = (fn_clear)dc_require_terse(handle, "pinyin_clear_constraint");
+    s.train = (fn_train)dc_require_terse(handle, "pinyin_train");
+    s.save = (fn_save)dc_require_terse(handle, "pinyin_save");
+    s.begin_add = (fn_begin_add)dc_require_terse(handle, "pinyin_begin_add_phrases");
+    s.add_phrase = (fn_add_phrase)dc_require_terse(handle, "pinyin_iterator_add_phrase");
+    s.end_add = (fn_end_add)dc_require_terse(handle, "pinyin_end_add_phrases");
+    s.begin_bigram = (fn_begin_bigram)dc_require_terse(handle, "pinyin_begin_get_bigram_phrases");
+    s.bigram_has = (fn_bigram_has)dc_require_terse(handle, "pinyin_bigram_iterator_has_next_phrase");
+    s.bigram_next = (fn_bigram_next)dc_require_terse(handle, "pinyin_bigram_iterator_get_next_phrase");
+    s.end_bigram = (fn_end_bigram)dc_require_terse(handle, "pinyin_end_get_bigram_phrases");
+    s.lookup_tokens = (fn_lookup_tokens)dc_require_terse(handle, "pinyin_lookup_tokens");
+    s.token_unigram = (fn_token_unigram)dc_require_terse(handle, "pinyin_token_get_unigram_frequency");
+    s.token_phrase = (fn_token_phrase)dc_require_terse(handle, "pinyin_token_get_phrase");
 
     char userdir[] = "/tmp/residue-mech-XXXXXX";
     if (!mkdtemp(userdir)) {
@@ -228,7 +182,7 @@ int main(int argc, char **argv) {
     pinyin_context_t *ctx_d = s.init(argv[2], userdir);
     if (!ctx_d) {
         fprintf(stderr, "init failed for phase D\n");
-        rm_rf(userdir);
+        dc_remove_dir_shallow(userdir);
         return 1;
     }
     s.set_options(ctx_d, 0x1e);
@@ -245,8 +199,7 @@ int main(int argc, char **argv) {
         bool p1 = s.token_phrase(inst_d, t0, &len, &ph);
         printf("token=0x%08x phrase=%s/%u/%s\n", t0, yesno(p1), len,
                p1 && ph ? ph : "(null)");
-        if (ph)
-            g_free_fn(ph);
+        dc_release(g_free_fn, ph);
         guint freq = 0;
         bool u1 = s.token_unigram(inst_d, t0, &freq);
         printf("token_unigram=%s/%u\n", yesno(u1), freq);
@@ -259,7 +212,7 @@ int main(int argc, char **argv) {
     char userdir_b[] = "/tmp/residue-mech-b-XXXXXX";
     if (!mkdtemp(userdir_b)) {
         perror("mkdtemp B");
-        rm_rf(userdir);
+        dc_remove_dir_shallow(userdir);
         return 1;
     }
     printf("=== phase: B-whole-row-train ===\n");
@@ -267,8 +220,8 @@ int main(int argc, char **argv) {
     pinyin_context_t *ctx = s.init(argv[2], userdir_b);
     if (!ctx) {
         fprintf(stderr, "init failed for phase B\n");
-        rm_rf(userdir);
-        rm_rf(userdir_b);
+        dc_remove_dir_shallow(userdir);
+        dc_remove_dir_shallow(userdir_b);
         return 1;
     }
     s.set_options(ctx, 0x1e);
@@ -293,8 +246,8 @@ int main(int argc, char **argv) {
     lookup_candidate_t *row0 = NULL;
     if (n == 0 || !s.getc(inst, 0, &row0) || !row0) {
         fprintf(stderr, "no row 0\n");
-        rm_rf(userdir);
-        rm_rf(userdir_b);
+        dc_remove_dir_shallow(userdir);
+        dc_remove_dir_shallow(userdir_b);
         return 1;
     }
     int ctype = -1;
@@ -322,7 +275,7 @@ int main(int argc, char **argv) {
     s.free_inst(inst);
     s.fini(ctx);
     dlclose(handle);
-    rm_rf(userdir);
-    rm_rf(userdir_b);
+    dc_remove_dir_shallow(userdir);
+    dc_remove_dir_shallow(userdir_b);
     return 0;
 }
