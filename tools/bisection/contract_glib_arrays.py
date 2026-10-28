@@ -1,5 +1,7 @@
 """GLib array lifecycle and null-array cases."""
 import ctypes as C
+from pathlib import Path
+import subprocess
 
 from contract_abi import Arr, B, I, P, S, U, UNTOUCHED, tokens_of
 
@@ -119,6 +121,28 @@ def register_array(case):
         # GLib 2.89.4 gmessages.c:1274-1313 applies the caller's fatal mask.
         case(f'glib-924-segment-fatal-critical-{_mode}', mode=_mode, fatal=True,
              both_abort=True, stderr=True, issues=('924',))(glib_924_segment_critical)
+
+
+def glib_924_oom_array(k):
+    """Require a failed real GArray growth to log an error and terminate."""
+    import shlex
+    root = Path(__file__).resolve().parents[2]
+    executable = Path(k.scratch) / 'alloc-failure'
+    flags = shlex.split(subprocess.check_output(
+        ['pkg-config', '--cflags', '--libs', 'glib-2.0'], text=True))
+    subprocess.run([
+        'g++', '-std=c++17', '-O0', '-g', '-Wall', '-Wextra', '-Werror',
+        '-fno-builtin', '-rdynamic', str(root / 'tools/abi/alloc-failure.cc'),
+        *flags, '-ldl', '-o', str(executable)], check=True, capture_output=True)
+    # Array-only has the same fatal expectation for both sides and needs no
+    # user directory or subject allocation site. No side-dependent policy
+    # exemption. The empty user directory is the pin side's, as in the ABI gate.
+    result = subprocess.run([
+        str(executable), str(k.lib._name), str(k.data), k.mode, 'pin', '',
+        'array-only'], check=True, capture_output=True, text=True)
+    expected = f'{k.mode} pin allocation-5: PASS (fatal GLib error)\n'
+    assert result.stdout == expected, result.stdout
+    return dict(injection=True, level=4, fatal=True)
 
 
 def register_oom(case, *, glib_924_oom_array):

@@ -8,7 +8,9 @@ where they always did."""
 
 import ast
 import builtins
+import collections
 import dis
+import functools
 import importlib.util
 import inspect
 import json
@@ -33,7 +35,7 @@ from tools.dev import test_runner
 # and the other helper modules it may import.
 MODULES = {
     'contract_abi': (
-        ('B', 'I', 'P', 'S', 'U', 'UNTOUCHED', 'Z', 'Arr', 'choose_text', 'consumed', 'final_step_sentences',
+        ('B', 'I', 'P', 'S', 'U', 'UNTOUCHED', 'Z', 'Arr', 'Rest', 'choose_text', 'consumed', 'final_step_sentences',
          'full_inst', 'guessed', 'key_out', 'owned_text', 'row_of', 'row_with_text', 'sentence_out', 'tokens_of',
          'unigram_of', 'zhuyin_chewing', 'zhuyin_sentence_out'),
         ()),
@@ -80,7 +82,7 @@ MODULES = {
     'contract_scheme_library_refusals': ((), ('contract_abi',)),
     'contract_zero_consumption': ((), ('contract_abi',)),
     'contract_row54_empty_forcing': ((), ('contract_abi',)),
-    'contract_glib_arrays': ((), ('contract_abi',)),
+    'contract_glib_arrays': (('glib_924_oom_array',), ('contract_abi',)),
     'contract_reading_256th': ((), ('contract_abi',)),
     'contract_auxiliary_text': ((), ('contract_abi',)),
     'contract_combined_import_nbest': ((), ('contract_abi',)),
@@ -135,6 +137,9 @@ MODULES = {
     'contract_table_conf_scanner': ((), ('contract_abi', 'contract_case_helpers', 'contract_fixtures', 'contract_verdict')),
     'contract_journal_replay': ((), ('contract_abi', 'contract_case_helpers', 'contract_fixtures')),
     'contract_axis_c_cases': ((), ('contract_abi', 'contract_case_helpers', 'contract_fixtures')),
+    'contract_separator_before_cursor': ((), ('contract_abi',)),
+    'contract_cell_fixtures': ((), ('contract_abi', 'contract_case_helpers', 'contract_fixtures')),
+    'contract_sentence_ties': (('declared_sentence_residuals', 'encode_sentence_tie'), ('contract_abi', 'contract_case_helpers', 'contract_fixtures')),
     'contract_execution': (('ordinary_jobs', 'positive_jobs', 'terminate_group', 'user_dir_listing'), ()),
     'contract_runner': (('Cancelled',), ()),
     'contract_kit': ((), ('contract_abi',)),
@@ -166,9 +171,38 @@ ADAPTERS = {
     'per_call_run': '(mode, so, data, name, helper, metric, operations, scratch, cpu, attribution=False)',
     'per_call_checked': '(spec, reference, sample, operations)',
     'run_per_call': '(args, parser)',
+    '_craft_db': '(path, rows, dbtype, keep=False, *, system_index=False)',
+    '_craft_hash': '(path, rows)',
+    'crafted_bigram_context': '(k, rows)',
+    'predicted_bigram_context': '(k, phrase, value)',
+    'token_reuse_sequence': '(k, steps, bigram_rows=None, library=7)',
+    'token_reuse_files': '(k)',
+    'addon_promote_sequence': '(k, mask_value)',
+    'phrase_text_system': '(k, variant)',
+    'items_system': '(k, items, total=200)',
+    'regenerate_sentence_ties': '(prefix, fixture)',
     'check_axis_c_snapshots': '(args)',
     'run_axis_c': '(args, names)',
 }
+
+# Everything contract-diff.py still defines (#1175): the registry, worker entry and CLI,
+# and same-signature adapters passing its per-run state to the modules beside it.
+DRIVER_DEFINITIONS = (
+    # registry and worker entry
+    'host_oracle_platform', 'case', 'tag_index', 'select_cases', 'plan_lines', 'Kit', 'worker', 'platform_skips',
+    # cell-bound fixture adapters (contract_cell_fixtures, contract_fixtures)
+    '_craft_db', '_craft_hash', 'crafted_bigram_context', 'predicted_bigram_context', 'token_reuse_sequence',
+    'index_file_rows', 'token_reuse_files', 'addon_promote_sequence', 'phrase_text_system', 'items_system',
+    # runner adapters (contract_runner)
+    '__getattr__', 'check_cancelled', 'cancellation_handlers', 'run_worker', 'run_case', 'case_jobs', 'case_results',
+    # mode adapters (contract_sentence_ties, contract_axis_c, contract_measurement)
+    'regenerate_sentence_ties', 'check_axis_c_snapshots', 'run_axis_c', 'PerCallKit', 'per_call_helper',
+    'per_call_worker', 'per_call_run', 'per_call_checked', 'run_per_call',
+    # verdict adapters (contract_verdict)
+    'policy_expectations', 'verdict_for', 'short_dir_chunk', 'matches',
+    # command line
+    'run_main', 'timing_summary', 'main',
+)
 
 spec = importlib.util.spec_from_file_location('contract_diff', HERE / 'contract-diff.py')
 driver = importlib.util.module_from_spec(spec)
@@ -483,7 +517,7 @@ class ModuleBoundaryTests(unittest.TestCase):
                 self.assertEqual((names[start - 1], names[end + 1]), (before, after))
                 self.assertEqual({driver.CASES[name]['fn'].__module__ for name in names[start:end + 1]}, {module})
 
-    def test_shared_helper_cases_keep_driver_ownership_and_registration_order(self):
+    def test_oom_cases_register_from_the_glib_family_in_their_original_order(self):
         names = list(driver.CASES)
         groups = (
             ('glib-924-segment-fatal-critical-zhuyin', 'glib-924-oom-array-growth-pinyin',
@@ -497,8 +531,9 @@ class ModuleBoundaryTests(unittest.TestCase):
                 helper_codes = {helper_code, *(c for c in helper_code.co_consts if isinstance(c, types.CodeType))}
                 for name in names[start:end + 1]:
                     fn = driver.CASES[name]['fn']
-                    self.assertEqual(fn.__module__, driver.__name__)
+                    self.assertEqual(fn.__module__, 'contract_glib_arrays')
                     self.assertIn(fn.__code__, helper_codes)
+        self.assertIs(driver.glib_924_oom_array, sys.modules['contract_glib_arrays'].glib_924_oom_array)
 
     def test_shared_oom_registration_receives_the_current_driver_function(self):
         glib = sys.modules['contract_glib_arrays']
@@ -518,6 +553,41 @@ class ModuleBoundaryTests(unittest.TestCase):
                     and node.value.attr == node.targets[0].id}
         self.assertEqual(imported, set())
         self.assertEqual(assigned, set(MODULES['contract_case_helpers'][0]))
+
+    def test_cell_and_tie_adapters_pass_the_driver_state_they_hold_at_call_time(self):
+        state = {'_craft_db': ('CELL', '_craft_bdb', '_craft_kc', '_craft_tkrzw'), '_craft_hash': ('_craft_db',),
+                 'crafted_bigram_context': ('_craft_hash',), 'predicted_bigram_context': ('_craft_hash',),
+                 'token_reuse_sequence': ('crafted_bigram_context', 'token_reuse_files'),
+                 'token_reuse_files': ('CELL', 'index_file_rows'), 'addon_promote_sequence': ('token_reuse_files',),
+                 'phrase_text_system': ('items_system',), 'items_system': ('_craft_db',),
+                 'regenerate_sentence_ties': ('Kit',)}
+        for name, names in state.items():
+            module = sys.modules['contract_sentence_ties' if name == 'regenerate_sentence_ties' else 'contract_cell_fixtures']
+            adapter = getattr(driver, name)
+            params = [p for p in inspect.signature(adapter).parameters.values()]
+            positional = [object() for p in params if p.default is inspect.Parameter.empty
+                          and p.kind is p.POSITIONAL_OR_KEYWORD]
+            current = {n: object() for n in names}
+            with self.subTest(name=name), patch.object(module, name, return_value='done') as moved, \
+                    patch.multiple(driver, **current):
+                self.assertEqual(adapter(*positional), 'done')
+                self.assertEqual({key: moved.call_args.kwargs[key] for key in names}, current)
+                self.assertEqual(moved.call_args.args[:len(positional)], tuple(positional))
+
+    def test_no_case_function_is_defined_in_the_driver(self):
+        owners = collections.Counter()
+        for spec in driver.CASES.values():
+            fn = spec['fn']
+            while isinstance(fn, functools.partial):
+                fn = fn.func
+            owners[fn.__module__] += 1
+        self.assertNotIn(driver.__name__, owners)
+        self.assertEqual(sum(owners.values()), len(driver.CASES))
+
+    def test_the_driver_defines_only_wiring_adapters_and_the_cli(self):
+        tree = ast.parse((HERE / 'contract-diff.py').read_text())
+        defined = sorted(node.name for node in tree.body if isinstance(node, (ast.FunctionDef, ast.ClassDef)))
+        self.assertEqual(defined, sorted(DRIVER_DEFINITIONS))
 
     def test_timing_summary_totals_the_timings_the_driver_holds_now(self):
         with patch.object(driver, 'TIMINGS', [dict(execute=2, side='pin'), dict(execute=3)]):

@@ -137,7 +137,7 @@ if _HERE not in sys.path:
 # gcov_measure resolve them here. A function that did read this module's state takes
 # it as an argument, and the adapter of the same name below passes it when called.
 from contract_abi import (  # ctypes aliases and facade call helpers
-    B, I, P, S, U, UNTOUCHED, Z, Arr, choose_text, consumed, final_step_sentences, full_inst, guessed,
+    B, I, P, S, U, UNTOUCHED, Z, Arr, Rest, choose_text, consumed, final_step_sentences, full_inst, guessed,
     key_out, owned_text, row_of, row_with_text, sentence_out, tokens_of, unigram_of, zhuyin_chewing,
     zhuyin_sentence_out)
 import contract_fixtures
@@ -276,6 +276,9 @@ import contract_table_conf_scanner
 hash_path_fixture = contract_table_conf_scanner.hash_path_fixture
 import contract_journal_replay
 import contract_axis_c_cases
+import contract_separator_before_cursor
+import contract_cell_fixtures
+import contract_sentence_ties
 import contract_kit
 import contract_runner
 from contract_runner import Cancelled
@@ -469,151 +472,37 @@ def worker(mode, so, data, name):
     os._exit(0)  # no atexit: a case never shares teardown with the next
 
 
-# Fixture helpers that read the per-run cell (`CELL`), directly or through one another.
-# They stay in the driver, where the tests patch `CELL` and the crafters, and are
-# defined above the families that receive them at registration.
+# Adapters for the fixtures that read the per-run cell (`CELL`), directly or through one
+# another (contract_cell_fixtures). Each passes the driver's current cell, crafters and
+# sibling adapters on every call, so tests that patch them here still reach the fixture;
+# they are defined above the families that receive them at registration.
 
 def _craft_db(path, rows, dbtype, keep=False, *, system_index=False):
-    """A user-table container of raw `key -> value` records in the running
-    cell's own format: a Berkeley DB `dbtype` container on bdb, the Kyoto
-    Cabinet snapshot the pin's `load_db` reads on kc (every user table
-    there is loaded with `load_snapshot`, `chewing_large_table2_kyotodb.cpp:106`,
-    `ngram_kyotodb.cpp:54`, `phrase_large_table3_kyotodb.cpp:109`), or the
-    tkrzw `TreeDBM` file the pin's `load_db` opens on tkrzw
-    (`chewing_large_table2_tkrzwdb.cpp:83`, `ngram_tkrzwdb.cpp:48`,
-    `phrase_large_table3_tkrzwdb.cpp:83`); the bigram is a `HashDBM` there
-    (`ngram_tkrzwdb.cpp:50`). `dbtype` picks the container kind (1 btree/tree,
-    2 hash); the rows are the same records in every cell. `keep=True` is
-    the fixture that adds rows to the copied system index: a native attached
-    TreeDB on kc (`chewing_large_table2_kyotodb.cpp:87-89`), a TreeDBM on
-    tkrzw (`chewing_large_table2_tkrzwdb.cpp:87-88`), and a btree on bdb.
-    `system_index=True` also selects that native format for a fresh index;
-    with `keep=False` it replaces the file instead of writing a KC snapshot.
-
-    Rows contain raw byte keys and values. Assert dbtype == 1 for KC when
-    keep or system_index selects native format. Without keep, replace the
-    target; keep updates existing rows. Delegate native failures to the
-    writer's assertions and return its result. tkrzw selects HashDBM for type two
-    and TreeDBM for other values."""
-    if CELL == 'kc':
-        assert not (keep or system_index) or dbtype == 1, 'KC system indexes are btrees'
-        if system_index:
-            return _craft_kc(path, rows, keep=keep, system_index=True)
-        return _craft_kc(path, rows, keep=keep)
-    if CELL == 'tkrzw':
-        return _craft_tkrzw(path, rows, 'HashDBM' if dbtype == 2 else 'TreeDBM', keep=keep)
-    return _craft_bdb(path, rows, dbtype, keep=keep)
+    """Pass the driver's current CELL, _craft_bdb, _craft_kc, _craft_tkrzw on every call (contract_cell_fixtures)."""
+    return contract_cell_fixtures._craft_db(path, rows, dbtype, keep, system_index=system_index, CELL=CELL,
+                                            _craft_bdb=_craft_bdb, _craft_kc=_craft_kc, _craft_tkrzw=_craft_tkrzw)
 
 
 def _craft_hash(path, rows):
-    """A Berkeley DB hash of `key -> value` records (the pin's user bigram
-    layout, `ngram_bdb.cpp:56`).
-
-    Dispatch through _craft_db with hash type two and raw byte key/value pairs,
-    replacing the current cell's container. The other supported formats are a
-    KC snapshot and tkrzw HashDBM."""
-    _craft_db(path, rows, 2)  # DB_HASH == 2
+    """Pass the driver's current _craft_db on every call (contract_cell_fixtures)."""
+    return contract_cell_fixtures._craft_hash(path, rows, _craft_db=_craft_db)
 
 
 def crafted_bigram_context(k, rows):
-    """A context whose user dir carries crafted `user_bigram.db` rows
-    (`(key_bytes, value_bytes)` records). The first init writes the
-    conforming `user.conf`; the rows are then written and the profile
-    reopened.
-
-    Write the raw records in the current cell's format and explicitly
-    overwrite user.conf before reopening. Assert both initializations;
-    the returned context is not cached or finalized here."""
-    ctx = k.init()
-    assert ctx, 'the first init failed'
-    k.fn('fini', None, P)(ctx)
-    _craft_hash(os.path.join(k.user, 'user_bigram.db'), rows)
-    _write_user_conf(k)
-    ctx = k.init()
-    assert ctx, 'the reopen failed'
-    return ctx
+    """Pass the driver's current _craft_hash on every call (contract_cell_fixtures)."""
+    return contract_cell_fixtures.crafted_bigram_context(k, rows, _craft_hash=_craft_hash)
 
 
 def predicted_bigram_context(k, phrase, value):
-    """A context whose user bigram carries `value` under every
-    phrase-table token of `phrase`, so `_compute_prefixes` reaches it. The
-    token is read from this side's own table, so the fixture matches the
-    pin and the subject alike.
-
-    UTF-8 encode phrase, assert token lookup and use four-byte little-endian
-    tokens as keys. Finalize the initial context and replace user_bigram.db
-    and user.conf before returning a separately initialized context. Free
-    the lookup instance but leave its GArray allocated; do not update kit caches."""
-    ctx = k.init()
-    assert ctx, 'the first init failed'
-    inst = k.fn('alloc_instance', P, P)(ctx)
-    new = k.glib.g_array_new
-    new.restype, new.argtypes = P, [I, I, U]
-    arr = new(0, 0, 4)
-    assert k.fn('lookup_tokens', B, P, S, P)(inst, phrase.encode(), arr)
-    view = C.cast(arr, C.POINTER(Arr)).contents
-    tokens = list(C.cast(view.data, C.POINTER(U))[:view.len])
-    k.fn('free_instance', None, P)(inst)
-    k.fn('fini', None, P)(ctx)
-    _craft_hash(os.path.join(k.user, 'user_bigram.db'),
-                [(token.to_bytes(4, 'little'), value) for token in tokens])
-    _write_user_conf(k)
-    ctx = k.init()
-    assert ctx, 'the reopen failed'
-    return ctx
+    """Pass the driver's current _craft_hash on every call (contract_cell_fixtures)."""
+    return contract_cell_fixtures.predicted_bigram_context(k, phrase, value, _craft_hash=_craft_hash)
 
 
 def token_reuse_sequence(k, steps, bigram_rows=None, library=7):
-    """Runs `steps` over the user library and reports what a caller can see:
-    each step's return, the user token of every phrase imported so far, and
-    the user files left behind. `('add', n)` imports phrase n, `('save',)`,
-    `('mask', mask, value)` and `('reopen',)` are the facade calls.
-    `bigram_rows` seeds `user_bigram.db` first, with rows that name the token
-    the first import will take.
-
-    Use the chosen library and facade reading column with import count 100.
-    A truthy bigram_rows replaces the seeded profile; otherwise use the cached
-    context. Reopen finalizes without implicitly saving or replacing the kit's
-    cache. Return action results, per-step token mappings and normalized files.
-    Unrecognized actions still produce a token snapshot."""
-    ctx = crafted_bigram_context(k, bigram_rows) if bigram_rows else k.ctx
-    column = 1 if k.mode == 'pinyin' else 2
-    out, seen = [], []
-
-    def tokens():
-        """Look up every seen phrase with a temporary instance and return hexadecimal token lists.
-
-        Free that instance after lookup; the per-phrase GArrays remain allocated."""
-        inst = k.fn('alloc_instance', P, P)(ctx)
-        new = k.glib.g_array_new
-        new.restype, new.argtypes = P, [I, I, U]
-        found = {}
-        for n in seen:
-            arr = new(0, 0, 4)
-            k.fn('lookup_tokens', B, P, S, P)(inst, TOKEN_REUSE_PHRASES[n][0].encode(), arr)
-            view = C.cast(arr, C.POINTER(Arr)).contents
-            found[TOKEN_REUSE_PHRASES[n][0]] = [hex(t) for t in C.cast(view.data, C.POINTER(U))[:view.len]]
-        k.fn('free_instance', None, P)(inst)
-        return found
-
-    for step in steps:
-        if step[0] == 'add':
-            it = k.fn('begin_add_phrases', P, P, U)(ctx, library)
-            assert it, 'the import iterator'
-            text, reading = TOKEN_REUSE_PHRASES[step[1]][0], TOKEN_REUSE_PHRASES[step[1]][column]
-            out.append(['add', bool(k.fn('iterator_add_phrase', B, P, S, S, I)(it, text.encode(), reading.encode(), 100))])
-            k.fn('end_add_phrases', None, P)(it)
-            seen.append(step[1])
-        elif step[0] == 'save':
-            out.append(['save', bool(k.fn('save', B, P)(ctx))])
-        elif step[0] == 'mask':
-            out.append(['mask', bool(k.fn('mask_out', B, P, U, U)(ctx, step[1], step[2]))])
-        elif step[0] == 'reopen':
-            k.fn('fini', None, P)(ctx)
-            ctx = k.init()
-            assert ctx, 'the reopen failed'
-        out.append(tokens())
-    return {'steps': out, 'files': token_reuse_files(k)}
+    """Pass the driver's current crafted_bigram_context, token_reuse_files on every call (contract_cell_fixtures)."""
+    return contract_cell_fixtures.token_reuse_sequence(k, steps, bigram_rows, library,
+                                                       crafted_bigram_context=crafted_bigram_context,
+                                                       token_reuse_files=token_reuse_files)
 
 
 def index_file_rows(path, *, kind='tree', allow_empty=False, library=None):
@@ -622,152 +511,23 @@ def index_file_rows(path, *, kind='tree', allow_empty=False, library=None):
 
 
 def token_reuse_files(k):
-    """The user files a save leaves, by content. The two user index
-    containers are compared record by record, a key whose value is empty
-    included ([`index_file_rows`]); a Berkeley DB user bigram is read back
-    through `db_dump` and only its non-empty rows are compared (on the other
-    backends only that the bigram container exists), `user.bin` is compared
-    whole except for the 4 timestamp bytes of its header, and every other file
-    is compared as written.
-
-    Skip non-regular entries and .tmp files; normalize pinyin-item padding
-    in index rows. Recognize BDB-magic containers for db5.3_dump. The header
-    bytes zeroed are 4..7, also in addon.bin and network.bin; other file content
-    is hex encoded. File, reader and subprocess failures propagate."""
-    files = {}
-    for name in sorted(os.listdir(k.user)):
-        path = Path(k.user, name)
-        if not path.is_file() or name.endswith('.tmp'):
-            continue
-        raw = path.read_bytes()
-        if name in USER_INDEX_FILES:
-            rows = index_file_rows(path)
-            if name == 'user_pinyin_index.bin':
-                rows = [[key, zero_item_padding(key, value)] for key, value in rows]
-            files[name] = rows
-        elif CELL != 'bdb' and name == 'user_bigram.db':
-            files[name] = len(raw) > 0  # another backend's container: only its presence is compared
-        elif raw[12:16] in (b'\x62\x31\x05\x00', b'\x61\x15\x06\x00'):
-            dump = subprocess.run(['db5.3_dump', str(path)], check=True, capture_output=True).stdout.decode()
-            body = dump.split('DATA=END')[0].split('HEADER=END\n')[1].split('\n')[:-1]
-            files[name] = [[body[i].strip(), body[i + 1].strip()] for i in range(0, len(body), 2) if body[i + 1].strip()]
-        elif name in ('user.bin', 'addon.bin', 'network.bin'):
-            files[name] = (raw[:4] + b'\0\0\0\0' + raw[8:]).hex()
-        else:
-            files[name] = raw.hex()
-    return files
+    """Pass the driver's current CELL, index_file_rows on every call (contract_cell_fixtures)."""
+    return contract_cell_fixtures.token_reuse_files(k, CELL=CELL, index_file_rows=index_file_rows)
 
 
 def addon_promote_sequence(k, mask_value):
-    """Promotes the addon candidates in turn (`pinyin_choose_candidate`); with
-    `mask_value`, masks that token after the third and before the fourth, with
-    no reopen between.
-
-    Load addon libraries four and five, save after the first three promotions
-    and again after the fourth. Assert library loads and candidate presence;
-    return selection/mask/save results, token observations and normalized files.
-    The cached context retains all changes."""
-    ctx = k.ctx
-    for index in (4, 5):
-        assert k.fn('load_addon_phrase_library', B, P, C.c_ubyte)(ctx, index)
-    out, texts = [], []
-
-    def promote(pinyin):
-        """Choose the first addon row for pinyin, append its result and free the temporary instance.
-
-        Assert a kind-6 candidate exists after parsing and guessing at byte zero."""
-        inst = k.fn('alloc_instance', P, P)(ctx)
-        k.fn('parse_more_full_pinyins', Z, P, S)(inst, pinyin.encode())
-        k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0)
-        row = row_of(k, inst, 6)
-        assert row, 'no addon candidate for ' + pinyin
-        out.append(['promote', pinyin, k.fn('choose_candidate', I, P, Z, P)(inst, 0, row)])
-        k.fn('free_instance', None, P)(inst)
-
-    def tokens():
-        """Return token IDs for all promoted texts using a temporary native instance.
-
-        Free the instance after lookup but retain the allocated GArrays."""
-        inst = k.fn('alloc_instance', P, P)(ctx)
-        new = k.glib.g_array_new
-        new.restype, new.argtypes = P, [I, I, U]
-        found = {}
-        for text in texts:
-            arr = new(0, 0, 4)
-            k.fn('lookup_tokens', B, P, S, P)(inst, text.encode(), arr)
-            view = C.cast(arr, C.POINTER(Arr)).contents
-            found[text] = [hex(t) for t in C.cast(view.data, C.POINTER(U))[:view.len]]
-        k.fn('free_instance', None, P)(inst)
-        return found
-
-    for pinyin, text in ADDON_PROMOTE_INPUTS[:3]:
-        promote(pinyin)
-        texts.append(text)
-        out.append(tokens())
-    out.append(['save', bool(k.fn('save', B, P)(ctx))])
-    if mask_value is not None:
-        out.append(['mask', bool(k.fn('mask_out', B, P, U, U)(ctx, 0xffffffff, mask_value))])
-        out.append(tokens())
-    promote(ADDON_PROMOTE_INPUTS[3][0])
-    texts.append(ADDON_PROMOTE_INPUTS[3][1])
-    out.append(tokens())
-    out.append(['save', bool(k.fn('save', B, P)(ctx))])
-    return {'steps': out, 'files': token_reuse_files(k)}
+    """Pass the driver's current token_reuse_files on every call (contract_cell_fixtures)."""
+    return contract_cell_fixtures.addon_promote_sequence(k, mask_value, token_reuse_files=token_reuse_files)
 
 
 def phrase_text_system(k, variant):
-    """Two native items: 甲<word>乙 / da1'da1'da1, then 丙 / ba1.
-
-    Layout: phrase_index.cpp's SubPhraseIndex; PinyinIndexItem2<L> at
-    pinyin_phrase3.h:181-197 (four-byte aligned token then packed keys).
-    ChewingKey at chewing_key.h:41-47 has tone at bit 12; da = 4|1<<7,
-    ba = 1|1<<7 (chewing_enum.h:16,19,65). No API import repairs the words.
-    """
-    word = PHRASE_TEXT_WORDS[variant]
-    items_system(k, [((0x7532, word, 0x4e59), (0x1084,) * 3, 100), ((0x4e19,), (0x1081,), 100)])
+    """Pass the driver's current items_system on every call (contract_cell_fixtures)."""
+    return contract_cell_fixtures.phrase_text_system(k, variant, items_system=items_system)
 
 
 def items_system(k, items, total=200):
-    """A private system whose library 1 holds exactly `items`, tokens 1, 2, ….
-
-    Each item is `(words, keys, unigram)`, written raw: no API import
-    repairs a non-scalar word. Items that share a reading share one
-    `pinyin_index.bin` value, in token order; every proper prefix of a
-    reading or a text is an empty marker row, as import writes them.
-    Replace the private links to gb_char.bin, pinyin_index.bin and
-    phrase_index.bin, write user.conf and point the kit at the system."""
-    system = private_system(k)
-    content, offsets = bytearray(8), [0]
-    phonetic, phrases = {}, {}
-    for slot, (text, reading, unigram) in enumerate(items, 1):
-        token = 0x01000000 | slot
-        raw_text = b''.join(value.to_bytes(4, 'little') for value in text)
-        raw_keys = b''.join(value.to_bytes(2, 'little') for value in reading)
-        offsets.append(len(content))
-        content += bytes((len(text), 1)) + unigram.to_bytes(4, 'little') + raw_text
-        content += raw_keys + (10).to_bytes(4, 'little')
-        index = b''.join((value & 0x0fff).to_bytes(2, 'little') for value in reading)
-        for end in range(2, len(index), 2):
-            phonetic.setdefault(index[:end], b'')
-        item = token.to_bytes(4, 'little') + raw_keys
-        phonetic[index] = phonetic.get(index, b'') + item + bytes((-len(item)) % 4)
-        for end in range(4, len(raw_text), 4):
-            phrases.setdefault(raw_text[:end], b'')
-        phrases[raw_text] = phrases.get(raw_text, b'') + token.to_bytes(4, 'little')
-    index_two = 17 + len(offsets) * 4 + 1
-    payload = b''.join(value.to_bytes(4, 'little') for value in
-                       (total, 17, index_two, index_two + len(content) + 1))
-    payload += b'#' + b''.join(value.to_bytes(4, 'little') for value in offsets)
-    payload += b'#' + content + b'#'
-    path = Path(system, 'gb_char.bin')
-    path.unlink()  # replace the private symlink, never the oracle's file
-    path.write_bytes(_chunk(payload))
-    for name, rows in (('pinyin_index.bin', phonetic), ('phrase_index.bin', phrases)):
-        path = Path(system, name)
-        path.unlink()
-        _craft_db(str(path), list(rows.items()), 1, system_index=True)
-    _write_user_conf(k)
-    k.data = system
+    """Pass the driver's current _craft_db on every call (contract_cell_fixtures)."""
+    return contract_cell_fixtures.items_system(k, items, total, _craft_db=_craft_db)
 
 
 # --------------------------------------------------------------------------
@@ -785,14 +545,6 @@ contract_invalid_input_bytes.register(case)
 
 
 contract_zero_key_guess.register(case)
-
-
-class Rest(C.Structure):
-    """Mirror the two unsigned 16-bit raw-input offsets of ChewingKeyRest.
-
-    The layout is _ChewingKeyRest in src/storage/chewing_key.h at pin
-    074a2219; begin and end measure byte positions in the parsed input."""
-    _fields_ = [('begin', C.c_ushort), ('end', C.c_ushort)]
 
 
 contract_pinyin_out_parameters.register(case, Rest=Rest)
@@ -1029,276 +781,7 @@ def case_results(args, names, data, scratch, jobs):
     return _RUNNER.case_results(args, names, data, scratch, jobs)
 
 
-# #640 leading separators, #698 retained before-cursor windows, #681 zero keys.
-# Calls reuse the existing isolated worker and distinguish NULL from untouched.
-def borrowed_text(pointer):
-    """Decode a borrowed C string without freeing it, preserving untouched and NULL outputs.
-
-    Return 'untouched' for the sentinel and None for NULL; invalid UTF-8 raises."""
-    if pointer.value==UNTOUCHED:
-        return 'untouched'
-    return C.string_at(pointer.value).decode() if pointer.value else None
-
-
-def separator_case(text, op, off, options=0x18a):
-    """Build a parse-and-query case for a full-pinyin string and byte offset.
-
-    options is passed to set_options. op selects parse, sentence, candidates,
-    before, left, right, offset, character, rest or render; other values query
-    a key. The returned callable records output sentinels and borrowed data."""
-
-    def probe(k):
-        """Parse with the selected options and collect the requested operation's outputs.
-
-        Guess a sentence unless op is parse. Preserve numeric and pointer sentinels,
-        record candidate type/text/rank where available, and copy key/rest bytes.
-        Render operations decode/free owned strings; candidate strings are borrowed.
-        Character queries choose 阿, 你好 or 你 from the input. No native objects
-        are finalized here."""
-        inst = k.inst
-        k.fn('set_options', B, P, U)(k.ctx, options)
-        parsed = k.fn('parse_more_full_pinyins', Z, P, S)(inst, text.encode())
-        out = {'parse_return_consumed': parsed, 'get_parsed_input_length': k.fn('get_parsed_input_length', Z, P)(inst)}
-        if op == 'parse':
-            return out
-        guessed = k.fn('guess_sentence', B, P)(inst)
-        out['guess_sentence'] = guessed
-        if op == 'sentence':
-            ptr = P(UNTOUCHED)
-            if k.mode == 'pinyin':
-                ret = k.fn('get_sentence', B, P, C.c_ubyte, C.POINTER(P))(inst, 0, C.byref(ptr))
-            else:
-                ret = k.fn('get_sentence', B, P, C.POINTER(P))(inst, C.byref(ptr))
-            out.update(ret=ret, sentence='untouched' if ptr.value == UNTOUCHED else k.text(ptr.value))
-            return out
-        if op in ['candidates', 'before']:
-            if k.mode == 'pinyin':
-                ret = k.fn('guess_candidates', B, P, Z, U)(inst, off, 0x1e)
-            else:
-                ret = k.fn('guess_candidates_before_cursor' if op == 'before' else 'guess_candidates_after_cursor', B, P, Z)(inst, off)
-            n = U(UNTOUCHED)
-            got = k.fn('get_n_candidate', B, P, C.POINTER(U))(inst, C.byref(n))
-            out.update(ret=ret, get_n=got, n=n.value)
-            rows = []
-            if got:
-                for index in range(n.value):
-                    candidate, kind, string = (P(UNTOUCHED), I(UNTOUCHED), P(UNTOUCHED))
-                    fetched = k.fn('get_candidate', B, P, U, C.POINTER(P))(inst, index, C.byref(candidate))
-                    typed = k.fn('get_candidate_type', B, P, P, C.POINTER(I))(inst, candidate, C.byref(kind))
-                    rendered = k.fn('get_candidate_string', B, P, P, C.POINTER(P))(inst, candidate, C.byref(string))
-                    row = [fetched, typed, kind.value, rendered, borrowed_text(string)]
-                    if k.mode == 'pinyin' and kind.value == 1:
-                        nbest = C.c_ubyte(0xab)
-                        row.extend([k.fn('get_candidate_nbest_index', B, P, P, C.POINTER(C.c_ubyte))(inst, candidate, C.byref(nbest)), nbest.value])
-                    rows.append(row)
-            out['rows'] = rows
-            return out
-        outval = Z(UNTOUCHED)
-        if op in ['left', 'right', 'offset']:
-            name = 'get_' + ('' + k.mode + '_offset' if op == 'offset' else op + '_' + k.mode + '_offset')
-            ret = k.fn(name, B, P, Z, C.POINTER(Z))(inst, off, C.byref(outval))
-            out.update(ret=ret, out=outval.value, untouched_output=outval.value == UNTOUCHED if not ret else True)
-            return out
-        if op == 'character':
-            phrase = '阿' if text == "'a" else '你好' if 'hao' in text else '你'
-            ret = k.fn('get_character_offset', B, P, S, Z, C.POINTER(Z))(inst, phrase.encode(), off, C.byref(outval))
-            out.update(ret=ret, out=outval.value, phrase=phrase, untouched_output=outval.value == UNTOUCHED if not ret else True)
-            return out
-        ptr = P(UNTOUCHED)
-        suffix = 'key_rest' if op == 'rest' else 'key'
-        ret = k.fn('get_' + k.mode + '_' + suffix, B, P, Z, C.POINTER(P))(inst, off, C.byref(ptr))
-        out.update(ret=ret, pointer='untouched' if ptr.value == UNTOUCHED else 'null' if not ptr.value else 'key')
-        if not ret:
-            out['untouched_or_null_pointer'] = ptr.value in (None, UNTOUCHED)
-        if ret and ptr.value:
-            out['bytes'] = C.string_at(ptr.value, 4 if op == 'rest' else 2).hex()
-            if op == 'rest':
-                begin, end, length = (C.c_ushort(0xbeef), C.c_ushort(0xbeef), C.c_ushort(0xbeef))
-                out['positions_ret'] = k.fn('get_' + k.mode + '_key_rest_positions', B, P, P, C.POINTER(C.c_ushort), C.POINTER(C.c_ushort))(inst, ptr, C.byref(begin), C.byref(end))
-                out['positions'] = [begin.value, end.value]
-                out['length_ret'] = k.fn('get_' + k.mode + '_key_rest_length', B, P, P, C.POINTER(C.c_ushort))(inst, ptr, C.byref(length))
-                out['length'] = length.value
-            if op == 'render':
-                for name in ['pinyin', 'zhuyin', 'luoma_pinyin', 'secondary_zhuyin'] if k.mode == 'pinyin' else ['zhuyin', 'pinyin']:
-                    string = P(UNTOUCHED)
-                    rendered = k.fn('get_' + name + '_string', B, P, P, C.POINTER(P))(inst, ptr, C.byref(string))
-                    out[name + '_string'] = [rendered, owned_text(k, string)]
-                if k.mode == 'pinyin':
-                    initial, final = (P(UNTOUCHED), P(UNTOUCHED))
-                    rendered = k.fn('get_pinyin_strings', B, P, P, C.POINTER(P), C.POINTER(P))(inst, ptr, C.byref(initial), C.byref(final))
-                    out['pinyin_strings'] = [rendered, owned_text(k, initial), owned_text(k, final)]
-        return out
-    return probe
-
-SEPARATOR_INPUTS=("'ni","''ni","'nihao","'ni'hao","'ni'","'a")
-SEPARATOR_ABORTS = {
-    'zhuyin/3/before': (4,),
-    'zhuyin/4/before': (4,),
-    'pinyin/0/right': (3,),
-    'pinyin/0/character': (0, 1, 2, 3),
-    'pinyin/1/right': (4,),
-    'pinyin/1/character': (0, 1, 2, 3, 4),
-    'pinyin/2/right': (6,),
-    'pinyin/2/character': (0, 1, 2, 3, 4, 5, 6),
-    'pinyin/3/left': (4,),
-    'pinyin/3/right': (4, 7),
-    'pinyin/3/character': (0, 1, 2, 3, 4, 5, 6, 7),
-    'pinyin/4/left': (4,),
-    'pinyin/4/right': (3, 4),
-    'pinyin/4/character': (0, 1, 2, 3, 4),
-    'pinyin/5/right': (2,),
-    'pinyin/5/character': (0, 1, 2),
-    'zhuyin/0/right': (3,),
-    'zhuyin/0/character': (0, 1, 2, 3),
-    'zhuyin/1/right': (4,),
-    'zhuyin/1/character': (0, 1, 2, 3, 4),
-    'zhuyin/2/right': (6,),
-    'zhuyin/2/character': (0, 1, 2, 3, 4, 5, 6),
-    'zhuyin/3/candidates': (4,),
-    'zhuyin/3/left': (4, 7),
-    'zhuyin/3/right': (4, 7),
-    'zhuyin/3/key': (4,),
-    'zhuyin/3/rest': (4,),
-    'zhuyin/3/character': (0, 1, 2, 3, 4, 5, 6, 7),
-    'zhuyin/4/candidates': (4,),
-    'zhuyin/4/left': (4,),
-    'zhuyin/4/right': (3, 4),
-    'zhuyin/4/character': (0, 1, 2, 3, 4),
-    'zhuyin/5/right': (2,),
-    'zhuyin/5/character': (0, 1, 2),
-}
-SEPARATOR_CONTROLS = {
-    'pinyin/0/parse': (0,),
-    'pinyin/0/offset': (0, 1, 2, 3),
-    'pinyin/0/left': (0, 1, 2, 3),
-    'pinyin/0/right': (0, 1, 2, 3),
-    'pinyin/0/key': (1, 2, 3),
-    'pinyin/0/rest': (1, 2, 3),
-    'pinyin/0/character': (0, 1, 2, 3),
-    'pinyin/1/parse': (0,),
-    'pinyin/1/offset': (0, 1, 2, 3, 4),
-    'pinyin/1/left': (0, 1, 2, 3, 4),
-    'pinyin/1/right': (0, 1, 2, 3, 4),
-    'pinyin/1/key': (2, 3, 4),
-    'pinyin/1/rest': (2, 3, 4),
-    'pinyin/1/character': (0, 1, 2, 3, 4),
-    'pinyin/2/parse': (0,),
-    'pinyin/2/offset': (0, 1, 2, 3, 4, 5, 6),
-    'pinyin/2/left': (0, 1, 2, 3, 4, 5, 6),
-    'pinyin/2/right': (0, 1, 2, 3, 4, 5, 6),
-    'pinyin/2/key': (1, 2, 3, 4, 5, 6),
-    'pinyin/2/rest': (1, 2, 3, 4, 5, 6),
-    'pinyin/2/character': (0, 1, 2, 3, 4, 5, 6),
-    'pinyin/3/parse': (0,),
-    'pinyin/3/offset': (0, 1, 2, 3, 4, 5, 6, 7),
-    'pinyin/3/left': (0, 1, 2, 3, 4, 5, 6, 7),
-    'pinyin/3/right': (0, 1, 2, 3, 4, 5, 6, 7),
-    'pinyin/3/key': (1, 2, 3, 4, 5, 6, 7),
-    'pinyin/3/rest': (1, 2, 3, 4, 5, 6, 7),
-    'pinyin/3/character': (0, 1, 2, 3, 4, 5, 6, 7),
-    'pinyin/4/parse': (0,),
-    'pinyin/4/offset': (0, 1, 2, 3, 4),
-    'pinyin/4/left': (0, 1, 2, 3, 4),
-    'pinyin/4/right': (0, 1, 2, 3, 4),
-    'pinyin/4/key': (1, 2, 4),
-    'pinyin/4/rest': (1, 2, 4),
-    'pinyin/4/character': (0, 1, 2, 3, 4),
-    'pinyin/5/parse': (0,),
-    'pinyin/5/offset': (0, 1, 2),
-    'pinyin/5/left': (0, 1, 2),
-    'pinyin/5/right': (0, 1, 2),
-    'pinyin/5/key': (1, 2),
-    'pinyin/5/rest': (1, 2),
-    'pinyin/5/character': (0, 1, 2),
-    'zhuyin/0/parse': (0,),
-    'zhuyin/0/offset': (0, 1, 2, 3),
-    'zhuyin/0/left': (0, 1, 2, 3),
-    'zhuyin/0/right': (0, 1, 2, 3),
-    'zhuyin/0/key': (1, 2, 3),
-    'zhuyin/0/rest': (1, 2, 3),
-    'zhuyin/0/character': (0, 1, 2),
-    'zhuyin/1/parse': (0,),
-    'zhuyin/1/offset': (0, 1, 2, 3, 4),
-    'zhuyin/1/left': (0, 1, 2, 3, 4),
-    'zhuyin/1/right': (0, 1, 2, 3, 4),
-    'zhuyin/1/key': (2, 3, 4),
-    'zhuyin/1/rest': (2, 3, 4),
-    'zhuyin/1/character': (0, 1, 2, 3),
-    'zhuyin/2/parse': (0,),
-    'zhuyin/2/offset': (0, 1, 2, 3, 4, 5, 6),
-    'zhuyin/2/left': (0, 1, 2, 3, 4, 5, 6),
-    'zhuyin/2/right': (0, 1, 2, 3, 4, 5, 6),
-    'zhuyin/2/key': (1, 2, 3, 4, 5, 6),
-    'zhuyin/2/rest': (1, 2, 3, 4, 5, 6),
-    'zhuyin/2/character': (0, 1, 2, 3, 4, 5),
-    'zhuyin/3/parse': (0,),
-    'zhuyin/3/offset': (0, 1, 2, 3, 4, 5, 6, 7),
-    'zhuyin/3/left': (0, 1, 2, 3, 4, 5, 6),
-    'zhuyin/3/right': (0, 1, 2, 3, 4, 5, 6, 7),
-    'zhuyin/3/key': (1, 2, 5, 6, 7),
-    'zhuyin/3/rest': (1, 2, 5, 6, 7),
-    'zhuyin/3/character': (0, 1, 2, 3, 4, 5, 6),
-    'zhuyin/4/parse': (0,),
-    'zhuyin/4/offset': (0, 1, 2, 3, 4),
-    'zhuyin/4/left': (0, 1, 2, 3, 4),
-    'zhuyin/4/right': (0, 1, 2, 3, 4),
-    'zhuyin/4/key': (1, 2, 4),
-    'zhuyin/4/rest': (1, 2, 4),
-    'zhuyin/4/character': (0, 1, 2, 3),
-    'zhuyin/5/parse': (0,),
-    'zhuyin/5/offset': (0, 1, 2),
-    'zhuyin/5/left': (0, 1, 2),
-    'zhuyin/5/right': (0, 1, 2),
-    'zhuyin/5/key': (1, 2),
-    'zhuyin/5/rest': (1, 2),
-    'zhuyin/5/character': (0, 1),
-}
-for mode in ('pinyin','zhuyin'):
-    for index,text in enumerate(SEPARATOR_INPUTS):
-        operations=['parse','sentence','candidates','offset','left','right','key','rest','character']
-        if mode=='zhuyin':
-            operations.append('before')
-        for op in operations:
-            for offset in ([0] if op in ('parse','sentence') else range(len(text)+1)):
-                identity=f'{mode}/{index}/{op}/{offset}'
-                kwargs={'mode':mode,'control':offset in SEPARATOR_CONTROLS.get(f'{mode}/{index}/{op}', ())}
-                if offset in SEPARATOR_ABORTS.get(f"{mode}/{index}/{op}", ()):
-                    kwargs['abort']=False
-                case('separator/'+identity,**kwargs, issues=('640',))(separator_case(text,op,offset))
-BEFORE_CURSOR_INPUTS=('ni','hao','wo','shi','zhong','guo','xian','tian',
-    'nihao','zhongguo','beijing','shanghai','renmin','nihaoshijie',
-    'zhonghuarenmin','beijingdaxue','shijieheping','nih','zhongg',
-    'beijin','nihaoshij','ni3','ni3hao3','zhong1guo2')
-BEFORE_CURSOR_CONTROLS=(('ni', 0), ('ni', 2), ('hao', 0), ('hao', 3), ('wo', 0), ('wo', 2), ('shi', 0), ('shi', 3), ('zhong', 0), ('zhong', 5), ('guo', 0), ('guo', 3), ('xian', 0), ('tian', 0), ('nihao', 0), ('nihao', 2), ('nihao', 5), ('zhongguo', 0), ('zhongguo', 5), ('zhongguo', 8), ('beijing', 0), ('beijing', 3), ('beijing', 7), ('shanghai', 0), ('shanghai', 5), ('shanghai', 8), ('renmin', 0), ('renmin', 3), ('renmin', 6), ('nihaoshijie', 0), ('nihaoshijie', 2), ('nihaoshijie', 5), ('nihaoshijie', 8), ('zhonghuarenmin', 0), ('zhonghuarenmin', 5), ('zhonghuarenmin', 8), ('zhonghuarenmin', 11), ('zhonghuarenmin', 14), ('beijingdaxue', 0), ('beijingdaxue', 3), ('beijingdaxue', 7), ('beijingdaxue', 9), ('beijingdaxue', 12), ('shijieheping', 0), ('shijieheping', 3), ('shijieheping', 8), ('shijieheping', 12), ('nih', 0), ('nih', 2), ('nih', 3), ('zhongg', 0), ('zhongg', 5), ('zhongg', 6), ('beijin', 0), ('beijin', 3), ('beijin', 6), ('nihaoshij', 0), ('nihaoshij', 2), ('nihaoshij', 5), ('nihaoshij', 8), ('nihaoshij', 9), ('ni3', 0), ('ni3', 3), ('ni3hao3', 0), ('ni3hao3', 3), ('ni3hao3', 7), ('zhong1guo2', 0), ('zhong1guo2', 6), ('zhong1guo2', 10))
-for text in BEFORE_CURSOR_INPUTS:
-    options=0x1aa if any(char.isdigit() for char in text) else 0x18a
-    for offset in range(len(text)+1):
-        case(f'before-cursor/{text}/{offset}',mode='zhuyin',
-             control=(text,offset) in BEFORE_CURSOR_CONTROLS, issues=('698',))(separator_case(text,'before',offset,options))
-        for op in ('candidates','key','rest'):
-            case(f'separator-free-control/{text}/{op}/{offset}',control=True, issues=('640', '698'))(
-                separator_case(text,op,offset,options))
-    case(f'separator-free-control/{text}/sentence',control=True, issues=('640', '698'))(
-        separator_case(text,'sentence',0,options))
-for mode in ('pinyin','zhuyin'):
-    for text in ("ni'","ni'hao","ni''hao","ni'hao'"):
-        for op in ('key','rest'):
-            for offset in range(len(text)+1):
-                previous_zero=offset>0 and text[offset-1]=="'"
-                is_zero=offset<len(text) and text[offset]=="'"
-                tail_zero=is_zero and all(char=="'" for char in text[offset:])
-                kwargs={'mode':mode,'control':not (tail_zero if mode=='pinyin' else is_zero) and not (mode=='zhuyin' and previous_zero and offset<len(text))}
-                if mode=='zhuyin' and previous_zero and offset<len(text):
-                    kwargs['abort']=False
-                case(f'zero-key/{mode}/{text}/{op}/{offset}',**kwargs, issues=('681',))(separator_case(text,op,offset))
-for mode,text,offset in (('pinyin',"xi'",2),('pinyin',"xi''",2),
-                         ('pinyin',"xi''",3),('zhuyin',"xi1'an1",3),
-                         ('zhuyin',"xi1'",3)):
-    for op in ('key','rest','render'):
-        case(f'allocator-zero/{mode}/{text}/{op}/{offset}',mode=mode, issues=('681',))(
-            separator_case(text,op,offset,0x1aa))
-case("allocator-zero/zhuyin/xi1'an1/key/4",mode='zhuyin',abort=False, issues=('681',))(
-    separator_case("xi1'an1",'key',4,0x1aa))
+contract_separator_before_cursor.register(case)
 
 
 contract_allocator_register.register(case)
@@ -1402,26 +885,7 @@ contract_glib_arrays.register_array(case)
 # Pin pinyin.cpp:2801-2818 / zhuyin.cpp:1793-1810; GLib 2.89.4
 # garray.c:1071-1100 and gmem.c:164-177. The harness checks injection,
 # GLib error and fatal signal; successful exit alone is insufficient.
-def glib_924_oom_array(k):
-    """Require a failed real GArray growth to log an error and terminate."""
-    import shlex
-    root = Path(__file__).resolve().parents[2]
-    executable = Path(k.scratch) / 'alloc-failure'
-    flags = shlex.split(subprocess.check_output(
-        ['pkg-config', '--cflags', '--libs', 'glib-2.0'], text=True))
-    subprocess.run([
-        'g++', '-std=c++17', '-O0', '-g', '-Wall', '-Wextra', '-Werror',
-        '-fno-builtin', '-rdynamic', str(root / 'tools/abi/alloc-failure.cc'),
-        *flags, '-ldl', '-o', str(executable)], check=True, capture_output=True)
-    # Array-only has the same fatal expectation for both sides and needs no
-    # user directory or subject allocation site. No side-dependent policy
-    # exemption. The empty user directory is the pin side's, as in the ABI gate.
-    result = subprocess.run([
-        str(executable), str(k.lib._name), str(k.data), k.mode, 'pin', '',
-        'array-only'], check=True, capture_output=True, text=True)
-    expected = f'{k.mode} pin allocation-5: PASS (fatal GLib error)\n'
-    assert result.stdout == expected, result.stdout
-    return dict(injection=True, level=4, fatal=True)
+glib_924_oom_array = contract_glib_arrays.glib_924_oom_array
 
 
 contract_glib_arrays.register_oom(case, glib_924_oom_array=glib_924_oom_array)
@@ -1522,136 +986,14 @@ contract_reading_256th.register(case)
 contract_zhuyin_null_arguments.register(case)
 
 
-def declared_sentence_residuals():
-    """Read membership from the frozen gate's §12 declaration, not a copy."""
-    root = Path(__file__).resolve().parents[2]
-    doc = (root / 'docs/findings/sentence-surface.md').read_text()
-    section = doc.split('\n## 12. ', 1)[1].split('\n## 13.', 1)[0]
-    declaration = section.split(
-        'Only the following six shared-comparison rows are class (a), as ruled.', 1)[1]
-    table = declaration.split('| Input | Pin deciding f32 bits | Subject native costs |\n', 1)[1]
-    names = set()
-    for line in table.splitlines()[1:]:
-        if not line.startswith('|'):
-            break
-        name = line.split('|')[1].strip().strip('`')
-        assert name not in names, 'duplicate declared residual'
-        names.add(name)
-    assert len(names) == 6, 'frozen declared residual count moved'
-    return names
-
-
-def encode_sentence_tie(row, guessed, sentences, nbest, residual_sentences, residual_nbest):
-    """Pool each text once per input; all displayed rows have NBEST type 1."""
-    texts = list(dict.fromkeys(sentences + residual_sentences))
-    ids = {text: index for index, text in enumerate(texts)}
-    def indexed(items):
-        """Encode texts as comma-separated IDs from the enclosing row's shared pool."""
-        return ','.join(str(ids[text]) for text in items)
-    def displayed(items):
-        """Encode displayed (index, text) pairs as index:pooled-ID entries in row order."""
-        return ','.join(f'{index}:{ids[text]}' for index, text in items)
-    return '\t'.join(row[:3] + [str(int(guessed)), '\x01'.join(texts),
-                                indexed(sentences), displayed(nbest),
-                                indexed(residual_sentences), displayed(residual_nbest)])
+# The sentence-tie fixture regeneration lives in contract_sentence_ties (#1175).
+declared_sentence_residuals = contract_sentence_ties.declared_sentence_residuals
+encode_sentence_tie = contract_sentence_ties.encode_sentence_tie
 
 
 def regenerate_sentence_ties(prefix, fixture):
-    """Refresh pin expectations; preserve the six approved exact subject rows.
-
-    The first three columns are historical native-tail selection metadata.
-    Text pooling keeps indexed duplicates and complete NBEST rows compact.
-    Membership comes only from the frozen §12 table; ordinary cases cannot
-    carry subject expectations. No observations or other outputs are saved.
-    """
-    suspend_offset = time.clock_gettime(time.CLOCK_BOOTTIME) - time.clock_gettime(time.CLOCK_MONOTONIC)
-
-    def fields(path):
-        """Read key=value lines, ignoring empty, comment and separator-free lines.
-
-        Split only the first equals sign and let later duplicate keys replace earlier
-        values; propagate file-read errors.
-        """
-        return dict(line.split('=', 1) for line in path.read_text().splitlines()
-                    if line and not line.startswith('#') and '=' in line)
-
-    manifest = fields(prefix / 'oracle-pin.txt')
-    source_pin = fields(Path(__file__).resolve().parents[2] / 'tools/oracle/oracle-pin.txt')
-    expected = (f"libpinyin-{source_pin['libpinyin_tag']}-{source_pin['libpinyin_commit']}"
-                f"+model20-{source_pin['model_archive_sha256']}+dbm-bdb")
-    assert manifest['pin_ref'] == expected and manifest['dbm'] == 'BerkeleyDB', 'off-pin bdb prefix'
-    so = prefix / 'lib/libpinyin.so'
-    assert hashlib.sha256(so.read_bytes()).hexdigest() == manifest['shared_object_sha256'], \
-        'pin library checksum differs'
-    verified_files = 0
-    for name, field in (('oracle-data.sha256', 'data_manifest_sha256'),
-                        ('oracle-data-unstable.sha256', 'data_unstable_manifest_sha256')):
-        raw = (prefix / name).read_bytes()
-        assert hashlib.sha256(raw).hexdigest() == manifest[field], 'pin data manifest checksum differs'
-        for line in raw.decode().splitlines():
-            digest, relative = line.split('  ', 1)
-            assert hashlib.sha256((prefix / relative).read_bytes()).hexdigest() == digest, \
-                'pin data checksum differs: ' + relative
-            verified_files += 1
-    print(f'pin verified: library and {verified_files} data files', flush=True)
-
-    raw = fixture.read_text()
-    headers = [line for line in raw.splitlines() if line.startswith('#')]
-    assert '# format=sentence-tie-order-v1' in headers, 'unsupported tie fixture format'
-    cases = [line.split('\t') for line in raw.splitlines() if not line.startswith('#')]
-    assert cases and all(len(row) == 9 and int(row[1]) > 0 for row in cases), 'bad tie fixture'
-    assert len({row[0] for row in cases}) == len(cases), 'duplicate selected input'
-    declared = declared_sentence_residuals()
-    recorded = {row[0] for row in cases if row[7] or row[8]}
-    assert recorded == declared, 'subject expectations must match the frozen declared membership exactly'
-    out = []
-    row_count = 0
-    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
-    with tempfile.TemporaryDirectory(prefix='sentence-ties-') as scratch:
-        k = Kit('pinyin', str(so.resolve()), str(prefix / 'lib/libpinyin/data'), scratch)
-        assert k.fn('set_options', B, P, U)(k.ctx, 0x18a)
-        try:
-            for ordinal, row in enumerate(cases, 1):
-                text = row[0]
-                pool = row[4].split('\x01')
-                residual_sentences = [pool[int(index)] for index in row[7].split(',')] if row[7] else []
-                residual_nbest = [(int(index), pool[int(text_id)])
-                                  for index, text_id in (item.split(':') for item in row[8].split(','))] if row[8] else []
-                assert k.fn('reset', B, P)(k.inst)
-                k.fn('parse_more_full_pinyins', Z, P, S)(k.inst, text.encode())
-                guessed = k.fn('guess_sentence', B, P)(k.inst)
-                assert k.fn('guess_candidates', B, P, Z, U)(k.inst, 0, 0x1e)
-                nbest = []
-                for index, candidate in enumerate(candidate_rows(k, k.inst)):
-                    assert candidate is not None, 'unreadable candidate for ' + repr(text)
-                    if candidate[0] == 1:
-                        pointer, rank = P(), C.c_ubyte(0xff)
-                        assert k.fn('get_candidate', B, P, U, C.POINTER(P))(
-                            k.inst, index, C.byref(pointer))
-                        assert k.fn('get_candidate_nbest_index', B, P, P, C.POINTER(C.c_ubyte))(
-                            k.inst, pointer, C.byref(rank))
-                        nbest.append((rank.value, candidate[1]))
-                sentences = final_step_sentences(k, k.inst)
-                out.append(encode_sentence_tie(row, guessed, sentences, nbest,
-                                              residual_sentences, residual_nbest))
-                row_count += len(nbest)
-                if ordinal % 1000 == 0:
-                    print(f'pin expectations: {ordinal}/{len(cases)}', flush=True)
-        finally:
-            if k._inst:
-                k.fn('free_instance', None, P)(k._inst)
-            if k._ctx:
-                k.fn('fini', None, P)(k._ctx)
-    headers = [line for line in headers if not line.startswith('# pin_ref=')]
-    headers.insert(1, '# pin_ref=' + manifest['pin_ref'])
-    elapsed_suspend = (time.clock_gettime(time.CLOCK_BOOTTIME) -
-                       time.clock_gettime(time.CLOCK_MONOTONIC) - suspend_offset)
-    assert abs(elapsed_suspend) < 0.01, 'discard: suspend overlapped pin regeneration'
-    fixture.write_text('\n'.join(headers + out) + '\n')
-    print(f'regenerated {fixture}: {len(cases)} distinct inputs, '
-          f'{sum(int(row[1]) for row in cases)} corpus entries, {row_count} ordered NBEST rows; '
-          f'pin-equal expectations {len(cases) - len(declared)}, exact residual expectations {len(declared)}', flush=True)
-    print(f'suspend overlap: none (clock delta {elapsed_suspend:.6f} seconds)', flush=True)
+    """Regenerate the sentence-tie fixture with the driver's Kit (contract_sentence_ties)."""
+    return contract_sentence_ties.regenerate_sentence_ties(prefix, fixture, Kit=Kit)
 
 
 # The replacement definition loader and the battery live in contract_axis_c (#1175).

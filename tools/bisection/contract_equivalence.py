@@ -35,14 +35,17 @@ import types
 CELLS = ('bdb', 'kc', 'tkrzw')
 
 
-def value_shape(value, sentinel, root=None):
+def value_shape(value, sentinel, root=None, aliases=None):
     """Encode values without addresses, source locations or function modules.
 
     Unknown values fail closed. Functions include their code, defaults and
     closure recursively; partials include their bound arguments as well. With a
     root, a path under it (the driver's WORKER, captured by a case) is encoded
-    relative to it; any other path still fails.
+    relative to it; any other path still fails. An object in aliases (a declared
+    moved class or adapted helper, compared on its own) is encoded by its alias.
     """
+    if aliases and id(value) in aliases:
+        return aliases[id(value)]
     if value is sentinel:
         return ['no-abort']
     if value is None or type(value) in (bool, int, str):
@@ -56,29 +59,29 @@ def value_shape(value, sentinel, root=None):
     if value is Ellipsis:
         return ['ellipsis']
     if isinstance(value, slice):
-        return ['slice', value_shape(value.start, sentinel, root), value_shape(value.stop, sentinel, root),
-                value_shape(value.step, sentinel, root)]
+        return ['slice', value_shape(value.start, sentinel, root, aliases), value_shape(value.stop, sentinel, root, aliases),
+                value_shape(value.step, sentinel, root, aliases)]
     if isinstance(value, types.CodeType):
         return ['code', value.co_name, value.co_code.hex(), value.co_exceptiontable.hex(),
                 value.co_argcount, value.co_posonlyargcount, value.co_kwonlyargcount, value.co_flags,
-                value.co_stacksize, value_shape(value.co_consts, sentinel, root), list(value.co_names),
+                value.co_stacksize, value_shape(value.co_consts, sentinel, root, aliases), list(value.co_names),
                 list(value.co_varnames), list(value.co_freevars), list(value.co_cellvars)]
     if isinstance(value, types.FunctionType):
-        return ['function', value.__qualname__, value_shape(value.__code__, sentinel, root),
-                value_shape(value.__defaults__, sentinel, root), value_shape(value.__kwdefaults__, sentinel, root),
-                [value_shape(cell.cell_contents, sentinel, root) for cell in value.__closure__ or ()]]
+        return ['function', value.__qualname__, value_shape(value.__code__, sentinel, root, aliases),
+                value_shape(value.__defaults__, sentinel, root, aliases), value_shape(value.__kwdefaults__, sentinel, root, aliases),
+                [value_shape(cell.cell_contents, sentinel, root, aliases) for cell in value.__closure__ or ()]]
     if isinstance(value, functools.partial):
-        return ['partial', value_shape(value.func, sentinel, root), value_shape(value.args, sentinel, root),
-                value_shape(value.keywords, sentinel, root)]
+        return ['partial', value_shape(value.func, sentinel, root, aliases), value_shape(value.args, sentinel, root, aliases),
+                value_shape(value.keywords, sentinel, root, aliases)]
     if isinstance(value, type):
         return ['type', value.__module__, value.__qualname__]
     if type(value) in (tuple, list):
-        return [type(value).__name__, [value_shape(item, sentinel, root) for item in value]]
+        return [type(value).__name__, [value_shape(item, sentinel, root, aliases) for item in value]]
     if type(value) in (set, frozenset):
-        items = [value_shape(item, sentinel, root) for item in value]
+        items = [value_shape(item, sentinel, root, aliases) for item in value]
         return [type(value).__name__, sorted(items, key=canonical)]
     if type(value) is dict:
-        return ['dict', [[value_shape(key, sentinel, root), value_shape(item, sentinel, root)] for key, item in value.items()]]
+        return ['dict', [[value_shape(key, sentinel, root, aliases), value_shape(item, sentinel, root, aliases)] for key, item in value.items()]]
     if isinstance(value, PurePath) and root is not None:
         try:
             return ['path', Path(value).resolve().relative_to(root).as_posix()]
@@ -153,6 +156,32 @@ def global_reads(code):
     return names
 
 
+def file_used_for_parents(fn):
+    """Every __file__ in the function is `Path(__file__).resolve().parents[N]` with N >= 1.
+
+    Such a use names a directory above this file's own, the same for any module beside
+    the driver; any other use (the name, the file itself) would differ and fails."""
+    tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
+    parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+    found = False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and node.id == '__file__':
+            found = True
+            call = parents.get(node)
+            resolve = parents.get(call)
+            resolved = parents.get(resolve)
+            attribute = parents.get(resolved)
+            subscript = parents.get(attribute)
+            if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == 'Path'
+                    and call.args == [node] and isinstance(resolve, ast.Attribute) and resolve.attr == 'resolve'
+                    and isinstance(resolved, ast.Call) and not resolved.args
+                    and isinstance(attribute, ast.Attribute) and attribute.attr == 'parents'
+                    and isinstance(subscript, ast.Subscript) and isinstance(subscript.slice, ast.Constant)
+                    and isinstance(subscript.slice.value, int) and subscript.slice.value >= 1):
+                return False
+    return found
+
+
 def function_shape(fn, driver, sentinel, injected, moved_modules, active=(), used=None):
     """Compare source and actual bindings, allowing driver globals to become closures.
 
@@ -188,8 +217,11 @@ def function_shape(fn, driver, sentinel, injected, moved_modules, active=(), use
         else:
             raise TypeError('unresolved global %s in %s' % (name, fn.__qualname__))
         if name == '__file__':
-            if (fn.__globals__ is not vars(driver) or not isinstance(value, str) or
-                    Path(value).resolve() != Path(driver.__spec__.origin).resolve()):
+            driver_file = Path(driver.__spec__.origin).resolve()
+            beside = (fn.__module__ in moved_modules and isinstance(value, str)
+                      and Path(value).resolve().parent == driver_file.parent and file_used_for_parents(fn))
+            if not beside and (fn.__globals__ is not vars(driver) or not isinstance(value, str) or
+                               Path(value).resolve() != driver_file):
                 raise TypeError('unrecognized __file__ binding in %s' % fn.__qualname__)
             bindings[name] = ['driver-file']
         elif name in injected:
@@ -308,8 +340,87 @@ def registration_parameters(modules):
     return names
 
 
+def adapted_specs(specs):
+    """NAME=STATE,STATE... -> {NAME: (STATE, ...)}; names unique, state names identifiers."""
+    result = {}
+    for spec in specs:
+        name, equals, state = spec.partition('=')
+        names = tuple(n for n in state.split(',') if n)
+        if not equals or not name.isidentifier() or name in result or not all(n.isidentifier() for n in names):
+            raise ValueError('expected a unique NAME=STATE[,STATE...]: %s' % spec)
+        result[name] = names
+    return result
+
+
+def adapter_target(fn, name, state, helper_modules):
+    """The module function a same-signature driver adapter forwards to, or None for an ordinary function.
+
+    An adapter's body is an optional docstring and `return MODULE.NAME(...)` forwarding each
+    of its own parameters (positionally in order, or by keyword as itself) and each declared
+    state name as `STATE=STATE`, nothing else; MODULE is a declared helper module whose NAME
+    takes exactly the adapter's parameters plus the state names as keyword-only parameters."""
+    node = ast.parse(textwrap.dedent(inspect.getsource(fn))).body[0]
+    body = node.body[1:] if node.body and isinstance(node.body[0], ast.Expr) and \
+        isinstance(node.body[0].value, ast.Constant) and isinstance(node.body[0].value.value, str) else node.body
+    if len(body) != 1 or not isinstance(body[0], ast.Return) or not isinstance(body[0].value, ast.Call):
+        return None
+    call = body[0].value
+    func = call.func
+    if not (isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) and func.attr == name):
+        return None
+    module = func.value.id
+    if module not in helper_modules:
+        raise TypeError('adapter %s forwards to an undeclared module %s' % (name, module))
+    target = getattr(sys.modules[module], name, None)
+    if not isinstance(target, types.FunctionType) or target.__module__ != module:
+        raise TypeError('adapter %s has no function %s.%s' % (name, module, name))
+    own = list(inspect.signature(fn).parameters.values())
+    wanted = own + [inspect.Parameter(n, inspect.Parameter.KEYWORD_ONLY) for n in state]
+    got = list(inspect.signature(target).parameters.values())
+    if [(p.name, p.kind) for p in got] != [(p.name, p.kind) for p in sorted(
+            wanted, key=lambda p: (p.kind, [q.name for q in wanted].index(p.name)))]:
+        raise TypeError('%s.%s does not take the adapter\'s parameters plus %s' % (module, name, list(state)))
+    positional = [a.id if isinstance(a, ast.Name) else None for a in call.args]
+    if positional != [p.name for p in own[:len(positional)]] or any(
+            p.kind not in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD) for p in own[:len(positional)]):
+        raise TypeError('adapter %s does not forward its positional parameters in order' % name)
+    keywords = {}
+    for keyword in call.keywords:
+        if keyword.arg is None or not isinstance(keyword.value, ast.Name) or keyword.value.id != keyword.arg:
+            raise TypeError('adapter %s forwards something other than NAME=NAME' % name)
+        keywords[keyword.arg] = True
+    if set(positional) | set(keywords) != {p.name for p in own} | set(state) or set(positional) & set(keywords):
+        raise TypeError('adapter %s does not forward exactly its parameters and %s' % (name, list(state)))
+    return target
+
+
+def adapted_helper_shapes(driver, specs, helper_modules, followed):
+    """A driver helper that became an adapter: compare its implementation with the original.
+
+    Base: the driver's own function, its bindings of the state names dropped (the adapter
+    passes the driver's current binding of each on every call). Head: the adapter's
+    implementation, its keyword-only state parameters normalized away. Source, defaults
+    and remaining bindings must agree; each state name must be a driver binding."""
+    result = {}
+    for name, state in adapted_specs(specs).items():
+        fn = getattr(driver, name, None)
+        if not isinstance(fn, types.FunctionType) or fn.__module__ != driver.__name__:
+            raise TypeError('%s is not a driver function' % name)
+        missing = [n for n in state if not hasattr(driver, n)]
+        if missing:
+            raise TypeError('adapter state %s is not bound by the driver' % missing)
+        target = adapter_target(fn, name, state, helper_modules)
+        implementation = target or fn
+        shape = function_shape(implementation, driver, driver.NO_ABORT, (), followed)
+        shape['ast'] = function_ast(implementation, state)
+        shape['bindings'] = {key: value for key, value in shape['bindings'].items() if key not in state}
+        result[name] = {'kind': 'adapted' if target else 'original',
+                        'module': target.__module__ if target else driver.__name__, 'shape': shape}
+    return result
+
+
 def snapshot(root, cell, moved, helpers, injected, source_modules=(), retained_specs=(), moved_helpers=(),
-             helper_modules=(), registration_injected=()):
+             helper_modules=(), registration_injected=(), adapted_helpers=()):
     """Read the entire registry, selections, plans and specified source ASTs."""
     driver = load_driver(root, cell)
     for module in helper_modules:
@@ -317,12 +428,19 @@ def snapshot(root, cell, moved, helpers, injected, source_modules=(), retained_s
             importlib.import_module(module)
     source_modules = (*source_modules, *helper_modules)
     sentinel = driver.NO_ABORT
+    aliases = {}
+    for name in moved_helpers:
+        if isinstance(getattr(driver, name, None), type):
+            aliases[id(getattr(driver, name))] = ['moved-class', name]
+    for name in adapted_specs(adapted_helpers):
+        aliases[id(getattr(driver, name))] = ['adapted-helper', name]
     records = []
     for name, case in driver.CASES.items():
         # The case's source and bindings are checked separately below; retain
         # every other registration field, in order, for all moved cases.
         value = {key: item for key, item in case.items() if key != 'fn'} if name in moved else case
-        records.append([name, digest(value_shape(value, sentinel, Path(driver.__spec__.origin).resolve().parent))])
+        records.append([name, digest(value_shape(value, sentinel, Path(driver.__spec__.origin).resolve().parent,
+                                                 aliases))])
 
     tags = driver.tag_index()
     names = list(driver.CASES)
@@ -363,13 +481,14 @@ def snapshot(root, cell, moved, helpers, injected, source_modules=(), retained_s
         helper_source[name] = {'module': fn.__module__, 'ast': function_ast(fn, injected)}
     retained = retained_helpers(driver, retained_specs)
     shared = moved_helper_shapes(driver, moved_helpers, helper_modules, source_modules)
+    adapted = adapted_helper_shapes(driver, adapted_helpers, helper_modules, source_modules)
     return {'records': records, 'tags': digest(tags), 'skips': digest([driver.platform_skips(case)
             for case in driver.CASES.values()]), 'selections': selections, 'moved': moved_source,
-            'helpers': helper_source, 'retained': retained, 'moved_helpers': shared}
+            'helpers': helper_source, 'retained': retained, 'moved_helpers': shared, 'adapted_helpers': adapted}
 
 
 def child_snapshot(root, cell, moved, helpers, injected, source_modules=(), retained_specs=(), moved_helpers=(),
-                   helper_modules=(), registration_injected=()):
+                   helper_modules=(), registration_injected=(), adapted_helpers=()):
     args = [sys.executable, '-X', 'lazy_imports=normal', str(Path(__file__).resolve()),
             '--snapshot', str(root), '--cell', cell]
     for flag, values in (('--case', moved), ('--helper', helpers), ('--injected', injected)):
@@ -380,7 +499,7 @@ def child_snapshot(root, cell, moved, helpers, injected, source_modules=(), reta
     for spec in retained_specs:
         args.extend(('--retained-helper', spec))
     for flag, values in (('--moved-helper', moved_helpers), ('--helper-module', helper_modules),
-                         ('--registration-injected', registration_injected)):
+                         ('--registration-injected', registration_injected), ('--adapted-helper', adapted_helpers)):
         for value in values:
             args.extend((flag, value))
     result = subprocess.run(args, cwd=root, capture_output=True, text=True)
@@ -401,6 +520,7 @@ def compare_snapshots(base, head, moved_module):
         raise AssertionError('retained driver helpers or their registrations differ')
     compare_moved_helpers(base.get('moved_helpers', {}), head.get('moved_helpers', {}),
                           head.get('helper_modules', ()))
+    compare_adapted_helpers(base.get('adapted_helpers', {}), head.get('adapted_helpers', {}))
     for field in ('moved', 'helpers'):
         if base[field].keys() != head[field].keys():
             raise AssertionError('%s names differ' % field)
@@ -426,6 +546,18 @@ def compare_moved_helpers(base, head, helper_modules=()):
             raise AssertionError('moved helper was not defined by the base driver: %s' % name)
         if after['module'] == 'contract_diff' or (helper_modules and after['module'] not in helper_modules):
             raise AssertionError('moved helper is still the driver\'s or in an undeclared module: %s' % name)
+
+
+def compare_adapted_helpers(base, head):
+    """The base driver function is now an adapter whose implementation keeps its shape."""
+    if base.keys() != head.keys():
+        raise AssertionError('adapted helper names differ')
+    for name, before in base.items():
+        after = head[name]
+        if before['kind'] != 'original' or after['kind'] != 'adapted':
+            raise AssertionError('%s is not a base driver function that became an adapter' % name)
+        if before['shape'] != after['shape']:
+            raise AssertionError('adapted helper differs: %s' % name)
 
 
 def invocation(root, cell, args):
@@ -514,7 +646,8 @@ def retained_helpers(driver, specs):
     return result
 
 
-def discover(root, specs):
+def discover(root, specs, check=True):
+    """Each named module's case IDs in the driver at root; with check, exactly the expected count."""
     expected = module_counts(specs)
     driver = load_driver(root, CELLS[0])
     found = {module: [] for module in expected}
@@ -523,15 +656,17 @@ def discover(root, specs):
         if module in found:
             found[module].append(name)
     for module, count in expected.items():
-        if len(found[module]) != count:
+        if check and len(found[module]) != count:
             raise AssertionError('%s has %d cases, expected %d' % (module, len(found[module]), count))
     return found
 
 
-def child_discover(root, specs):
+def child_discover(root, specs, check=True):
     args = [sys.executable, '-X', 'lazy_imports=normal', str(Path(__file__).resolve()), '--discover', str(root)]
     for spec in specs:
         args.extend(('--module-cases', spec))
+    if not check:
+        args.append('--any-count')
     result = subprocess.run(args, cwd=root, capture_output=True, text=True)
     if result.returncode:
         raise RuntimeError('module discovery failed for %s:\n%s' % (root, result.stderr))
@@ -554,20 +689,23 @@ def main():
                         help='driver definition moved unchanged into a --helper-module (repeatable)')
     parser.add_argument('--helper-module', action='append', default=[], metavar='MODULE',
                         help='module holding moved helpers; followed as driver code on both sides')
+    parser.add_argument('--adapted-helper', action='append', default=[], metavar='NAME=STATE[,STATE...]',
+                        help='driver helper now an adapter passing STATE to its --helper-module implementation')
     parser.add_argument('--registration-injected', action='append', default=[], metavar='NAME',
                         help='injected driver binding read only by a moved module\'s registration code')
     parser.add_argument('--snapshot', type=Path, help=argparse.SUPPRESS)
     parser.add_argument('--discover', type=Path, help=argparse.SUPPRESS)
+    parser.add_argument('--any-count', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--cell', choices=CELLS, help=argparse.SUPPRESS)
     parser.add_argument('--source-module', action='append', default=[], help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.discover:
-        print(json.dumps(discover(args.discover.resolve(), args.module_cases)))
+        print(json.dumps(discover(args.discover.resolve(), args.module_cases, check=not args.any_count)))
         return
     if args.snapshot:
         print(json.dumps(snapshot(args.snapshot.resolve(), args.cell, args.case, args.helper, args.injected,
                                   args.source_module, args.retained_helper, args.moved_helper,
-                                  args.helper_module, args.registration_injected)))
+                                  args.helper_module, args.registration_injected, args.adapted_helper)))
         return
     if not args.base:
         parser.error('base is required')
@@ -576,12 +714,15 @@ def main():
         if args.module or args.case or args.helper:
             parser.error('--module-cases cannot be combined with --module, --case or --helper')
         found = child_discover(head, args.module_cases)
+        already = child_discover(base, args.module_cases, check=False)
+        # A case its module already owned in the base did not move; its record is compared in full.
+        found = {module: [n for n in names if n not in set(already.get(module, ()))] for module, names in found.items()}
         moved = {name: module for module, names in found.items() for name in names}
         if len(moved) != sum(map(len, found.values())):
             raise AssertionError('a case belongs to more than one module')
         modules = list(found)
         selected = [names[0] for names in found.values()]
-    elif args.moved_helper and not (args.module or args.case or args.helper):
+    elif (args.moved_helper or args.adapted_helper) and not (args.module or args.case or args.helper):
         moved, modules, selected = {}, [], []
     else:
         if not (args.module and args.case):
@@ -594,16 +735,16 @@ def main():
             parser.error('--retained-helper requires its module in the comparison')
     if not set(args.registration_injected) <= set(args.injected):
         parser.error('--registration-injected names must also be --injected')
-    if args.moved_helper and not args.helper_module:
-        parser.error('--moved-helper requires --helper-module')
+    if (args.moved_helper or args.adapted_helper) and not args.helper_module:
+        parser.error('--moved-helper and --adapted-helper require --helper-module')
     if len(set(args.moved_helper)) != len(args.moved_helper):
         parser.error('--moved-helper names must be unique')
     for cell in CELLS:
         before = child_snapshot(base, cell, moved, args.helper, args.injected, retained_specs=args.retained_helper,
                                 moved_helpers=args.moved_helper, helper_modules=args.helper_module,
-                                registration_injected=args.registration_injected)
+                                registration_injected=args.registration_injected, adapted_helpers=args.adapted_helper)
         after = child_snapshot(head, cell, moved, args.helper, args.injected, modules, args.retained_helper,
-                               args.moved_helper, args.helper_module, args.registration_injected)
+                               args.moved_helper, args.helper_module, args.registration_injected, args.adapted_helper)
         after['helper_modules'] = args.helper_module
         compare_snapshots(before, after, moved if not args.helper else args.module)
         retained = [name for group in after['retained'].values() for name in group['cases']]
@@ -612,11 +753,11 @@ def main():
         plan_cases = selected + [group['cases'][0] for group in after['retained'].values()]
         tag_hash, plans = cli_comparison(base, head, cell, plan_cases)
         print('%s: %d registrations, default %d, %d selection scenarios, %d plans, %d modules / %d cases '
-              '(%d module-owned, %d retained driver callbacks), %d moved helpers; '
+              '(%d module-owned, %d retained driver callbacks), %d moved helpers, %d adapted helpers; '
               '--list-tags SHA-256 %s' %
               (cell, len(before['records']), before['selections'][0][1], len(before['selections']), plans,
                len(modules), len(moved) + len(retained), len(moved), len(retained), len(args.moved_helper),
-               tag_hash))
+               len(args.adapted_helper), tag_hash))
 
 
 if __name__ == '__main__':

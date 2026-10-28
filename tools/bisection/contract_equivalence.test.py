@@ -389,6 +389,75 @@ class EquivalenceTests(unittest.TestCase):
             with self.assertRaisesRegex(TypeError, 'does not bind'):
                 equivalence.moved_helper_shapes(twice, ('missing',), ('first',), ('first',))
 
+    ADAPTED_ORIGINAL = ('CELL = "bdb"\n\ndef craft(path, keep=False):\n'
+                        '    """Craft."""\n    return (path, keep, CELL)\n')
+    ADAPTER = ('import fixtures\nCELL = "bdb"\n\ndef craft(path, keep=False):\n'
+               '    """Adapter."""\n    return fixtures.craft(path, keep, CELL=CELL)\n')
+    IMPLEMENTATION = 'def craft(path, keep=False, *, CELL):\n    """Craft."""\n    return (path, keep, CELL)\n'
+
+    def test_an_adapter_forwarding_to_an_unchanged_implementation_compares_equal(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(sys.modules):
+            base = self.moved_helper_tree(Path(tmp, 'base'), self.ADAPTED_ORIGINAL)
+            head = self.moved_helper_tree(Path(tmp, 'head'), self.ADAPTER, {'fixtures': self.IMPLEMENTATION})
+            before = equivalence.adapted_helper_shapes(base, ['craft=CELL'], ('fixtures',), ('fixtures',))
+            after = equivalence.adapted_helper_shapes(head, ['craft=CELL'], ('fixtures',), ('fixtures',))
+        self.assertEqual((before['craft']['kind'], after['craft']['kind']), ('original', 'adapted'))
+        equivalence.compare_adapted_helpers(before, after)
+        with self.assertRaises(AssertionError):
+            equivalence.compare_adapted_helpers(after, after)
+
+    def test_a_changed_implementation_or_a_wrong_forward_fails_closed(self):
+        changed = self.IMPLEMENTATION.replace('(path, keep, CELL)', '(path, not keep, CELL)')
+        wrong_forwards = {
+            'missing state': self.ADAPTER.replace(', CELL=CELL', ''),
+            'renamed state': self.ADAPTER.replace('CELL=CELL', 'CELL=keep'),
+            'reordered': self.ADAPTER.replace('fixtures.craft(path, keep,', 'fixtures.craft(keep, path,'),
+            'extra': self.ADAPTER.replace('CELL=CELL)', 'CELL=CELL, extra=CELL)'),
+            'undeclared module': self.ADAPTER.replace('import fixtures', 'import fixtures, other').replace(
+                'fixtures.craft(', 'other.craft('),
+        }
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(sys.modules):
+            base = self.moved_helper_tree(Path(tmp, 'base'), self.ADAPTED_ORIGINAL)
+            before = equivalence.adapted_helper_shapes(base, ['craft=CELL'], ('fixtures',), ('fixtures',))
+            head = self.moved_helper_tree(Path(tmp, 'changed'), self.ADAPTER, {'fixtures': changed})
+            after = equivalence.adapted_helper_shapes(head, ['craft=CELL'], ('fixtures',), ('fixtures',))
+            with self.assertRaises(AssertionError):
+                equivalence.compare_adapted_helpers(before, after)
+            for label, source in wrong_forwards.items():
+                with self.subTest(label=label):
+                    head = self.moved_helper_tree(Path(tmp, label.replace(' ', '-')), source,
+                                                  {'fixtures': self.IMPLEMENTATION, 'other': self.IMPLEMENTATION})
+                    with self.assertRaises(TypeError):
+                        equivalence.adapted_helper_shapes(head, ['craft=CELL'], ('fixtures',), ('fixtures',))
+
+    def test_declared_aliases_replace_their_objects_in_records(self):
+        marker = object()
+        self.assertEqual(equivalence.value_shape((marker, 1), self.sentinel, None, {id(marker): ['moved-class', 'Rest']}),
+                         ['tuple', [['moved-class', 'Rest'], ['int', 1]]])
+        with self.assertRaises(TypeError):
+            equivalence.value_shape((marker, 1), self.sentinel)
+
+    def test_file_beside_the_driver_is_accepted_only_through_parents(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(sys.modules):
+            source = ('from pathlib import Path\n\ndef up(k):\n    return Path(__file__).resolve().parents[2]\n\n'
+                      'def name(k):\n    return Path(__file__).name\n\n'
+                      'def here(k):\n    return Path(__file__).resolve().parents[0]\n')
+            driver = self.moved_helper_tree(Path(tmp, 'tree'), 'import beside\n', {'beside': source})
+            module = sys.modules['beside']
+            self.assertTrue(equivalence.file_used_for_parents(module.up))
+            self.assertFalse(equivalence.file_used_for_parents(module.name))
+            self.assertFalse(equivalence.file_used_for_parents(module.here))
+            shape = equivalence.function_shape(module.up, driver, self.sentinel, (), ('beside',))
+            self.assertEqual(shape['bindings']['__file__'], ['driver-file'])
+            with self.assertRaisesRegex(TypeError, 'unrecognized __file__'):
+                equivalence.function_shape(module.name, driver, self.sentinel, (), ('beside',))
+
+    def test_adapted_specs_require_unique_names_and_identifier_state(self):
+        self.assertEqual(equivalence.adapted_specs(['a=X,Y', 'b=']), {'a': ('X', 'Y'), 'b': ()})
+        for specs in (['a'], ['a=X', 'a=Y'], ['a=X-Y'], ['1a=X']):
+            with self.subTest(specs=specs), self.assertRaises(ValueError):
+                equivalence.adapted_specs(specs)
+
     def test_discovery_fails_when_a_module_has_the_wrong_case_count(self):
         with tempfile.TemporaryDirectory() as tmp, patch.dict(sys.modules):
             root = Path(tmp)
