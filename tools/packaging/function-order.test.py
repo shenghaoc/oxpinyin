@@ -146,6 +146,23 @@ class ResolverTests(unittest.TestCase):
         self.assertNotIn("oxpinyin_facade", result.stdout)
         self.assertIn("oxpinyin_runtime", result.stdout)
 
+    def test_cs_inside_a_disambiguator_decodes_one_root(self):
+        # The tkrzw libzhuyin.a witness: the zhuyin crate's disambiguator
+        # 4iCseHRioF7 contains Cs, so two matches decode the same root.
+        name = "<alloc::raw_vec::RawVecInner>::finish_grow"
+        base = ".text.unlikely._RNvMs4_NtCscdodAO9FK5_5alloc7raw_vecNtB5_11RawVecInner11finish_grow"
+        data = row(name, base + "B7_") + row(name, base + "Cs4iCseHRioF7_6zhuyin")
+        self.assertEqual(self.invoke("inventory", data).stdout,
+                         f"{name}\t{base}B7_\n{name} [instantiating crate: zhuyin]\t{base}Cs4iCseHRioF7_6zhuyin\n")
+        result = self.invoke("resolve", data, HEADER + "init\t" + name + " [instantiating crate: zhuyin]\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Cs4iCseHRioF7_6zhuyin", result.stdout)
+        self.assertNotIn("B7_", result.stdout)
+
+    def test_two_different_decoded_roots_stay_ambiguous(self):
+        self.assertEqual(self.invoke("inventory", row("crate::f", ".text._RfakeCs1_11abcCsZ_3xyz")).stdout,
+                         "crate::f\t.text._RfakeCs1_11abcCsZ_3xyz\n")
+
     def test_recognized_clone_family_includes_every_body(self):
         name = "alloc::boxed::box_new_uninit"
         base = ".text._RNvFake14box_new_uninit"

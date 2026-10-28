@@ -42,7 +42,10 @@ function stable_name(name, section, raw, tail, position, rest, length_text, crat
     if (raw !~ /^_R/)
         return name
     # Rust v0's optional instantiating-crate root is omitted by GNU nm.
-    # Match the decoded crate name, not its Cs<disambiguator> value.
+    # Match the decoded crate name, not its Cs<disambiguator> value. A
+    # disambiguator can itself contain Cs; every match starting in that
+    # base-62 run decodes the same root, so a root counts once. Two
+    # different decoded names stay ambiguous.
     tail = raw
     while (match(tail, /Cs[0-9A-Za-z]+_[0-9]+[A-Za-z_][0-9A-Za-z_]*$/)) {
         position = RSTART
@@ -51,7 +54,7 @@ function stable_name(name, section, raw, tail, position, rest, length_text, crat
         length_text = rest
         sub(/[^0-9].*$/, "", length_text)
         crate = substr(rest, length(length_text) + 1)
-        if (length_text + 0 == length(crate)) {
+        if (length_text + 0 == length(crate) && (roots == 0 || crate != root)) {
             roots++
             root = crate
         }

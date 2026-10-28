@@ -87,19 +87,22 @@ def stable_identity(name, raw):
     can otherwise have the same displayed path. Decode only a validated
     terminal root, never use its disambiguator for identity or ordering.
     Backref/unsupported contexts remain conservative: ambiguity is rejected.
+    A base-62 disambiguator can itself contain `Cs`; every match starting in
+    that run ends at its `_` and decodes the same root, so roots are counted
+    by name. Two different decoded names stay ambiguous.
     https://doc.rust-lang.org/rustc/symbol-mangling/v0.html#instantiating-crate
     """
     name = canonical(name)
     raw = re.sub(r"\.llvm\.[0-9a-fA-F]+$", "", raw)
     raw = re.sub(r"\.[0-9]+$", "", raw)
     if raw.startswith("_R"):
-        roots = []
+        roots = set()
         for match in re.finditer(r"(?=Cs[0-9A-Za-z]+_([0-9]+)([A-Za-z_][0-9A-Za-z_]*)$)", raw):
             length, crate = match.groups()
             if int(length) == len(crate):
-                roots.append(crate)
+                roots.add(crate)
         if len(roots) == 1:
-            name += f" [instantiating crate: {roots[0]}]"
+            name += f" [instantiating crate: {roots.pop()}]"
     return name
 
 
