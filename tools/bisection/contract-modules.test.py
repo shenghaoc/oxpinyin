@@ -46,6 +46,7 @@ MODULES = {
          'strjoinv_fault', 'tkrzw_saved_bigram_bytes', 'tkrzw_saved_bigram_equal', 'valid_observation'),
         ()),
     'contract_selection': (('SelectionError', 'case_names', 'family_of', 'normal_tag'), ()),
+    'contract_registry': (('case_spec',), ('contract_selection', 'contract_verdict')),
     'contract_execution': (('ordinary_jobs', 'positive_jobs', 'terminate_group', 'user_dir_listing'), ()),
     'contract_runner': (('Cancelled',), ()),
     'contract_kit': ((), ('contract_abi',)),
@@ -60,6 +61,7 @@ ADAPTERS = {
     'verdict_for': '(spec, pin, subject, expect_parent)',
     'short_dir_chunk': '(spec)',
     'matches': '(spec, pin, subject)',
+    'case': '(name, *args, **kwargs)',
     'tag_index': '()',
     'select_cases': '(cases=None, issues=(), families=())',
     'plan_lines': '(names, reasons, pinyin_so, zhuyin_so, prefix, cell)',
@@ -179,6 +181,18 @@ class ModuleBoundaryTests(unittest.TestCase):
                              "  1 case skip on this cell (fixture in another backend's format)")
             with self.assertRaises(driver.SelectionError):
                 driver.select_cases('plain')
+
+    def test_case_registers_into_the_registry_the_driver_holds_when_the_decorator_is_applied(self):
+        registers = sys.modules['contract_registry']
+        decorate = driver.case('late/bound', mode='zhuyin', issues=('#7',))
+        fn = lambda k: {}
+        with patch.object(driver, 'CASES', {}) as registry, \
+                patch.object(registers, 'register', wraps=registers.register) as moved:
+            self.assertIs(decorate(fn), fn)
+            moved.assert_called_once_with(registry, 'late/bound', fn, mode='zhuyin', issues=('#7',))
+            self.assertEqual(list(registry), ['late/bound'])
+            self.assertEqual(registry['late/bound']['issues'], ('7',))
+        self.assertNotIn('late/bound', driver.CASES)
 
     def test_timing_summary_totals_the_timings_the_driver_holds_now(self):
         with patch.object(driver, 'TIMINGS', [dict(execute=2, side='pin'), dict(execute=3)]):
