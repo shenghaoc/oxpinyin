@@ -25,24 +25,16 @@
 #    without it callgrind has no symbol to attribute Ir to — the
 #    differential would be one unnamed blob. This is the one change the
 #    profile cannot be taken without.
-# 3. oxpinyin is built with debug info for line-level attribution, via
-#    CARGO_PROFILE_RELEASE_DEBUG and NOT via RUSTFLAGS="-Cdebuginfo=1".
-#    RUSTFLAGS alone is silently useless here: cargo passes
-#    -Cstrip=debuginfo whenever the *profile* asks for no debug info, so
-#    the flag emits DWARF and cargo strips it right back out — verified
-#    on rustc 1.97.1, where the RUSTFLAGS-only build carries zero
-#    .debug_* sections. libpinyin needs no counterpart: autotools'
-#    default CFLAGS are already `-g -O2`.
-#
-#    Debug info is NOT free of side effects on the artifact, and the
-#    differential run measures that rather than assuming it away. The
-#    profile's debug level feeds cargo's crate metadata hash, which feeds
-#    every mangled symbol name, which feeds link order: the debug build's
-#    .text has the same size and the same instruction multiset as the
-#    stock one but different bytes, because ~1,700 functions land at
-#    different addresses. Instruction counts are unaffected by that;
-#    simulated cache and branch figures are not. Stage 2 of
-#    the callgrind-differential recipe separates the two cases.
+# 3. Both oxpinyin arms keep the shipping Cargo profile. The profiled arm adds
+#    RUSTFLAGS="-Cdebuginfo=1 -Cstrip=none": Cargo appends these after its
+#    -Cstrip=debuginfo, and rustc uses the last strip setting. Debuginfo alone
+#    is silently stripped; overriding strip in RUSTFLAGS preserves DWARF without
+#    changing Cargo's profile/metadata hash. Verified with rustc 1.97.1: the
+#    profiled .text is byte-identical to the plain shipping arm (#1337).
+#    Changing CARGO_PROFILE_RELEASE_DEBUG instead changes fat-LTO specialization.
+#    callgrind-control verifies DWARF and neutrality at build time; stage 2
+#    checks neutrality again before collection. libpinyin's autotools default
+#    CFLAGS already include -g -O2.
 # 4. The datagen step is dropped. This is the drop-in configuration
 #    the perf-same-data recipe measures: both cells open libpinyin's own
 #    installed data directory, so there is no oxpinyin-generated data to
@@ -200,30 +192,29 @@ RUN cp -a /tmp/libpinyin-src /tmp/build-A-src \
     && rm -rf /tmp/build-A
 
 # ── oxpinyin + Tkrzw ────────────────────────────────────────────────
-# Same flags as the matrix recipe plus -Cdebuginfo=1. Not stripped.
+# Shipping profile and metadata, with DWARF retained by the final strip override.
 
-RUN CARGO_PROFILE_RELEASE_DEBUG=1 cargo cinstall --locked --release -p oxpinyin-capi \
+RUN RUSTFLAGS="-Cdebuginfo=1 -Cstrip=none" cargo cinstall --locked --release -p oxpinyin-capi \
     --no-default-features --features tkrzw \
     --destdir=/opt/oxpinyin-tkrzw/stage --prefix=/usr \
     --manifest-path /repo/Cargo.toml
 
 # ── debug-info neutrality control ───────────────────────────────────
-# The same crate built with debug info off, kept so the differential run
-# can compare the two .text sections and classify any difference:
-# identical bytes, or identical instruction multiset at different
-# addresses, or genuinely different codegen (which stops the run).
-
+# Build the timing arm with the plain shipping recipe, not a changed profile.
 RUN cargo cinstall --locked --release -p oxpinyin-capi \
     --no-default-features --features tkrzw \
     --destdir=/opt/oxpinyin-nodebug/stage --prefix=/usr \
     --manifest-path /repo/Cargo.toml
+
+RUN uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev measure \
+    callgrind-control /opt/oxpinyin-tkrzw/stage /opt/oxpinyin-nodebug/stage
 
 # ── Allocation-counter build (non-default feature) ──────────────────
 # Auxiliary artifact only: exports oxpinyin_alloc_count/_bytes, which the
 # harness reads through dlsym. Never the artifact the Ir differential
 # profiles, and never shipped.
 
-RUN CARGO_PROFILE_RELEASE_DEBUG=1 cargo cinstall --locked --release -p oxpinyin-capi \
+RUN RUSTFLAGS="-Cdebuginfo=1 -Cstrip=none" cargo cinstall --locked --release -p oxpinyin-capi \
     --no-default-features --features tkrzw,alloc-count \
     --destdir=/opt/oxpinyin-alloccount/stage --prefix=/usr \
     --manifest-path /repo/Cargo.toml

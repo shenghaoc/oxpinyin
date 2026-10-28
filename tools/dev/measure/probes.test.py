@@ -314,7 +314,7 @@ class DebugInfoProbeTests(unittest.TestCase):
                          + 'profile'.ljust(10) + ' ' + '13'.rjust(10) + f' B  sha256 {text_digest["profile"]}…\n'
                          '\n'
                          'CONFIRMED: RUSTFLAGS=-Cdebuginfo=1 produced a byte-identical\n'
-                         '           artifact — cargo stripped it. Use the profile.\n'
+                         '           artifact — cargo stripped it. Add -Cstrip=none to RUSTFLAGS.\n'
                          '\n'
                          '=== verdict: stock vs profile-debug ===\n'
                          'REPORT LINE\n')

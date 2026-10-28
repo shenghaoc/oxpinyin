@@ -166,7 +166,7 @@ HARNESS_DEPENDENCIES = {
     'tools/dev/measure/fake_world.py': ('tools/dev/measure/campaigns.test.py', 'tools/dev/measure/valgrind.test.py'),
     'tools/dev/measure/campaigns.py': ('tools/dev/measure/campaigns.test.py', 'tools/bisection/memory-defaults.test.py',
                                        'tools/packaging/function-order.test.py'),
-    'tools/dev/measure/valgrind.py': ('tools/dev/measure/valgrind.test.py', 'tools/dev/measure/campaigns.test.py',
+    'tools/dev/measure/valgrind.py': ('tools/dev/measure/neutrality.test.py', 'tools/dev/measure/valgrind.test.py', 'tools/dev/measure/campaigns.test.py',
                                       'tools/packaging/function-order.test.py'),
     'tools/dev/measure/recipes.py': ('tools/dev/measure/recipes.test.py', 'tools/dev/cli.test.py'),
     'tools/dev/measure/neutrality.py': ('tools/dev/measure/neutrality.test.py', 'tools/dev/measure/probes.test.py',

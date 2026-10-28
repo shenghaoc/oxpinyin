@@ -8,6 +8,7 @@ import collections
 import contextlib
 import hashlib
 import io
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -531,6 +532,26 @@ int get(int i) { return table[i & 3]; }
 
     def compare(self, first, second):
         return neutrality.compare(self.objects[first], self.objects[second])
+
+    def test_campaign_control_checks_dwarf_and_shipping_code_without_mutation(self):
+        from tools.dev.measure.valgrind import callgrind_control
+        with tempfile.TemporaryDirectory() as directory:
+            stages = [Path(directory) / tag for tag in ('profile', 'shipping')]
+            originals = []
+            for stage, name in zip(stages, ('base_g', 'base')):
+                stage.mkdir()
+                library = stage / 'libpinyin.so.15.0.0'
+                shutil.copy(self.objects[name], library)
+                originals.append(library.read_bytes())
+                (stage / 'libpinyin.so').symlink_to(library.name)
+            with Streams() as streams:
+                status = callgrind_control(list(map(str, stages)), os.environ)
+            self.assertEqual(status, 0, streams.stdout)
+            self.assertIn('PASS (a): identical .text', streams.stdout)
+            self.assertRegex(streams.stdout, r'profiled DWARF compilation units: [1-9][0-9]*')
+            for stage, original in zip(stages, originals):
+                self.assertEqual((stage / 'libpinyin.so').read_bytes(), original)
+                self.assertTrue((stage / 'libpinyin.so').is_symlink())
 
     def test_debug_info_alone_leaves_the_text_identical(self):
         status, report = self.compare('base_g', 'base')
