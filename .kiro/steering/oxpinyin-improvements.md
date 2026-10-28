@@ -13,9 +13,10 @@ difference. Canonical policy text: `docs/findings/compatibility-policy.md`.
 Anything observable outside these is a defect to revert, not an
 improvement to record. The decision order is in
 `docs/findings/compatibility-policy.md`: the C-facing contract first,
-then classes (a)–(c), then a recorded language/runtime quirk, then a
-defect or Stage 3. A new entry is argued into a class or admitted by its
-own discrepancy record; none is admitted by analogy.
+then classes (a)–(c), then the external-I/O pin-call rule or a recorded
+internal language/runtime quirk, then a defect or Stage 3. A new entry
+is argued into a class or admitted by its own discrepancy record; none
+is admitted by analogy.
 
 - **(a) MATH** — platform-dependent floating-point accumulation: a
   transcendental in the accumulation, not merely a float in the call
@@ -44,9 +45,11 @@ and is admitted only by a discrepancy record from
 `docs/findings/language-runtime-discrepancy-template.md`, registered by
 name in `docs/findings/upstream-divergences.md` and carried by a
 `POLICY-ACCEPTED` differential case. One record admits no other by
-analogy. A language artefact is not reproduced, on valid or malformed
-input, and needs no approval; a product-level change or a reversal of a
-prior ruling is a STOP.
+analogy. An internal language artefact is not reproduced, on valid or
+malformed input, and needs no approval. External I/O uses the pin's call
+unless source proves a Rust equivalent on every input. The same call
+does not reproduce undefined reads or aborts: class (b)/(c) stands. A
+product-level change or an unruled reversal of a prior ruling is a STOP.
 
 **Registered standing divergences** are individual entries under that
 exception (tkrzw's `SYSTEM_ERROR`/`UNKNOWN_ERROR` collapse through its C
@@ -61,16 +64,17 @@ after the rewrite.
   with `// SAFETY:`; output a pure function of (input, user state,
   config).
 - Loose coupling: oxpinyin exists to undo libpinyin's tight coupling
-  while keeping its behaviour. The 20 crates stay; the aim is fewer
-  unnecessary edges, not fewer crates, and no unrelated workspace
-  restructuring. Carrying a concrete type through the code that uses it
+  while keeping its behaviour. The planned `oxpinyin-input` boundary is
+  an additional crate; the aim is fewer unnecessary edges, not fewer
+  crates, and no unrelated workspace restructuring. Carrying a concrete type through the code that uses it
   is not a "generic-runtime rewrite": type erasure (`dyn`) stays only
   where a runtime heterogeneity, a standard or foreign interface, or a
   measured trade-off calls for it, never to keep a Rust signature.
 - Rust interfaces are not a compatibility boundary (maintainer ruling
   2026-10-18 UTC; `/AGENTS.md`, "External interfaces"). Only the C
-  APIs/ABIs are supported externally; Rust signatures change freely,
-  with every in-tree caller updated in the same change.
+  APIs/ABIs are supported external library interfaces; the tools are
+  drop-in pin-utility replacements. Rust signatures change freely, with
+  every in-tree caller updated in the same change.
 - Complexity: an internal change never worsens time and space both; a
   regression in one is traded against a gain in the other, minimized
   and justified.

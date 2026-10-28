@@ -37,8 +37,9 @@ Cabinet), Debian testing (tkrzw) and NixOS — 1,571/1,571 rows each.
 **Stage 2 — bug-for-bug compatibility and internal improvement
 (current, not complete).** The target is that every exported behaviour
 matches the pin, defects included, except the recorded exceptions and
-language artefacts, which are not reproduced. Performance, memory, safety and
-architecture work is allowed when output, files on disk and the ABI do
+internal language artefacts. Library and tool external I/O follows the
+pin's calls; the tools are drop-in replacements for its utilities.
+Performance, memory, safety and architecture work is allowed when output, files on disk and the ABI do
 not change. oxpinyin may be faster or smaller than the pin by any
 amount. This applies to the whole ABI and the user-store surfaces.
 The round-2 audit closed on 2026-10-17 (#573). The open work is the

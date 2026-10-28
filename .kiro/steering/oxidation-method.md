@@ -33,7 +33,8 @@ output moves towards the pin's is Stage 2 work, not a departure.
 The default build behaves as the pinned libpinyin does, bugs included,
 measured against the pin-built oracle. A language/runtime quirk is
 decided in the policy's order: the C-facing contract first, then classes
-(a)–(c), then a recorded language artefact, then a product-level change
+(a)–(c), then external I/O's pin-call rule or a recorded internal
+language artefact, then a product-level change
 (a ruling or Stage 3), then a defect.
 See `docs/findings/compatibility-policy.md`, "Native Rust implementation" (#1303).
 Never improvise a new exception. Record an accepted quirk in
@@ -47,7 +48,8 @@ Rust's `f32` and `f64` are the same IEEE formats as `gfloat` and
 requires in idiomatic Rust. Where the pin's result differs only through
 C or C++ semantics (implicit promotions or conversions, a float stored
 into an integer) or a compiler transformation (multiply-add contraction),
-that is a language artefact: record it, do not imitate it.
+that is an internal language artefact: record it, do not imitate it.
+External I/O instead follows the pin's call, including formatted output.
 
 **Transcendentals come from Rust's standard maths.** `log`, `exp`,
 `pow`, the trigonometric and hyperbolic functions, and the rest use
@@ -80,7 +82,8 @@ outputs match. Each one is recorded with its pin citation in
    with time and space complexity, each cited `file:line` at `074a2219`.
 2. **Design and analyse.** Choose oxpinyin's structure and algorithm.
    State why it produces the pin's product behaviour — including tie
-   orders and the product's own quirks, not language artefacts
+   orders and the product's own quirks, with internal language artefacts
+   and external I/O treated under their respective rules
    (`/AGENTS.md`, quirk decision order, limb 3) — and its time and space
    complexity against the pin's.
 3. **Implement** the required observable behaviour in natural, efficient
@@ -103,8 +106,9 @@ Work that predates this ruling is brought into the record by
   well. Express the pin's *behaviour* in idiomatic Rust: owned or
   borrowed slices, enums and `Result`, iterators, the standard
   collections. Never reproduce the pin's *code shape*: where a result
-  depends on it only through a C, C++ or library artefact, the Rust
-  result stands and the difference is recorded.
+  depends on it only through an internal C, C++ or library artefact, the
+  Rust result stands and the difference is recorded. External I/O calls
+  use the pin's call unless source proves a Rust equivalent.
 - **Never both worse.** For the same operation, oxpinyin's time and
   space complexity are never both worse than the pin's. A regression in
   one is accepted only when traded for a gain in the other, kept as

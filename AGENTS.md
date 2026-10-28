@@ -22,12 +22,15 @@ file wins on any conflict.
    Details: `docs/perf/ci-perf-size-gate-proposal-2026-09-09.md`.
 3. No local AI (no client neural/LLM inference).
 4. Nothing panics on any input; public APIs return `Result`.
-5. `unsafe`: `forbid` in oxpinyin-core/user/engine; `deny` in data (the
-   documented mmap exception) and store (whose backend bindings sit under
-   module-scoped allows); the public C ABI's FFI only in capi/oracle;
-   `// SAFETY:` on every block. The allowlist is mechanical now: crate-root
-   `#![forbid]`/scoped allows enforce it, and two Clippy lints enforce the
-   comments — `undocumented_unsafe_blocks` requires a safety comment on
+5. `unsafe`: `forbid` in oxpinyin-core/data/user/engine/runtime; scoped
+   unsafe modules in the new bidirectional `oxpinyin-input` boundary and
+   `deny` with scoped backend allows in `oxpinyin-store`; public C ABI
+   marshalling stays in capi/oracle. Every unsafe block has `// SAFETY:`.
+   This is the target allowlist: until the boundary is implemented, data
+   still has its existing `deny` and mmap exception. Crate-root
+   `#![forbid]`/scoped allows enforce the implemented allowlist, and two
+   Clippy lints enforce the comments — `undocumented_unsafe_blocks`
+   requires a safety comment on
    every `unsafe` block, `missing_safety_doc` requires a `# Safety` doc
    section on every public `unsafe` fn or method — CI will tell you; this
    line is context, not the gate.
@@ -76,21 +79,19 @@ Language and runtime-library divergences follow one decision order,
 stated in full in `docs/findings/compatibility-policy.md` under "The
 language/runtime-quirk exception":
 
-Maintainer rulings, 2026-10-24 UTC (the full policy text is in that
-section): oxpinyin follows libpinyin's outward behaviour unless that
-behaviour is against Rust; that behaviour is reproduced in natural,
-efficient Rust, and inefficient code is never written to imitate GLib,
-libc or C++ behaviour or internals; Rust's `std` maths is used at full
-speed (recorded under class (a); cross-reference, not duplicate); and no
-specialised maths dependencies (SIMD crates and the like).
+Maintainer rulings, 2026-10-24 UTC, as amended 2026-10-28 UTC: internal
+behaviour follows the language-artefact decision order below. External
+I/O follows the pin's call as specified below. Rust's `std` maths is
+used at full speed (class (a)); no specialised maths dependencies (SIMD
+crates and the like).
 
-**Adapter placement (2026-10-24 UTC, #1182).** C, C++ and GLib
-interoperability, and C-facing encodings, live only in the consumer C API
-adapters (`oxpinyin-capi`, `oxpinyin-zhuyin-capi`,
-`oxpinyin-capi-marshal`, and their shared `oxpinyin-facade` layer)
-and the store backend adapters
-(`oxpinyin-data`, `oxpinyin-user`). Core and engine types carry only the
-stored length and outward words that the pin's ranking, comparison,
+**Adapter placement (amended 2026-10-28 UTC).** External file, locale
+and tool I/O calls belong in `oxpinyin-input`; DBM backend calls belong
+in `oxpinyin-store`; C ABI marshalling and C-facing encodings belong in
+the C adapters (`oxpinyin-capi`, `oxpinyin-zhuyin-capi` and
+`oxpinyin-capi-marshal`). The new boundary is planned, not yet present.
+Core and engine types carry only the stored length and outward words
+that the pin's ranking, comparison,
 sentence, export and token-getter paths need before the C API, plus the
 full stored words its store/table maintenance reads. General Rust
 conversions preserve all characters: NUL-containing text becomes Stored,
@@ -107,8 +108,21 @@ user-library audit stays in #1198.
    language artefact (limb 3).
 2. **If it is class (a), (b) or (c)**, classify it there and follow that
    class's rules.
-3. **Language artefacts are not reproduced (maintainer ruling 2026-10-26
-   UTC, #1303).** The programming language is an implementation detail:
+3. **External I/O uses the pin's calls (maintainer ruling 2026-10-28
+   UTC).** Every library and tool call across the program's edge uses
+   the call made by the pin. ISO C and POSIX calls use the host C
+   library, GLib calls use GLib, and C++ streams use a tool-only C++
+   shim. A Rust equivalent is allowed only when reading both
+   implementations' sources proves identical observable results for
+   every input; an unsettled comparison uses the pin's call. This
+   replaces the #1304 language-artefact treatment for external I/O.
+   Same call does not mean reproducing an undefined read or an abort:
+   the existing class (b)/(c) records stand, including punctuation and
+   assertion refusals. `LC_NUMERIC` row 39 stands. Row 109's mapping
+   call follows the pin; its post-fini residual mapping is open.
+
+   **Internal language artefacts (2026-10-26 UTC, #1303).** Outside
+   external I/O, the programming language is an implementation detail:
    what a user or a developer calling the shared object observes is the
    behaviour, and oxpinyin implements it in idiomatic Rust. No code is
    written to reproduce a behaviour of another programming language or
@@ -131,7 +145,8 @@ user-library audit stays in #1198.
    `POLICY-ACCEPTED` on the cases that tell the two apart) and the work
    moves on. No approval is needed, and writing Rust to imitate the
    artefact is forbidden. When unsure whether a difference is an
-   artefact, err towards idiomatic Rust and record it.
+   artefact, err towards idiomatic Rust and record it. This paragraph
+   never admits a different external I/O call or result.
 4. **A product-level change needs the maintainer.** A behaviour that is
    part of the product itself (a ranking rule, a limit, a refusal, the
    meaning of an option, or a logic defect of libpinyin that idiomatic
@@ -143,9 +158,9 @@ user-library audit stays in #1198.
    `LC_NUMERIC` (policy row 39, #923) needs a new human ruling before it
    changes.
 
-A differential that intentionally differs under a recorded exception is
-reported as `POLICY-ACCEPTED`, never as `MATCH`; its case and pin
-evidence are kept.
+A differential that intentionally differs under a still-applicable
+recorded exception is reported as `POLICY-ACCEPTED`, never as `MATCH`;
+its case and pin evidence are kept.
 
 **Math rule (maintainer direction 2026-10-19 UTC).** oxpinyin uses
 Rust's standard maths at full speed: `f64::ln`, `exp`, `powf` and every
@@ -173,7 +188,11 @@ citations, and a classification of every existing register entry.
 ## External interfaces
 
 Maintainer ruling 2026-10-18 UTC. Rust interfaces are not a compatibility
-boundary.
+boundary. The 2026-10-28 UTC ruling additionally makes the tools drop-in
+replacements for the pin's utilities: the same binary names, options,
+help, messages, inputs and outputs. Their K-mixture working model uses
+the pin's backend DBM through `oxpinyin-store`. The `scripts2/` Python
+build generators are outside this tool scope.
 
 > The only supported external library interfaces are the libpinyin-compatible and libzhuyin-compatible C APIs and ABIs.
 >
@@ -217,16 +236,15 @@ performance.
 | Goal | Bug-for-bug compatibility, with internal improvements | Intentional departures from libpinyin |
 | Performance work | Allowed, also faster or smaller than the pin | Allowed when it needs a compatibility-breaking change |
 | Internal refactoring | Allowed | Allowed |
-| Observable behaviour | Must match the pin's product behaviour, under the existing exceptions; language artefacts are not reproduced | May differ, explicitly |
+| Observable behaviour | Must match the pin's product behaviour under the existing exceptions; external I/O follows the pin's calls | May differ, explicitly |
 | Data formats and ABI | Keep drop-in compatibility | An incompatible change needs an explicit opt-in and a binary identity that fits it |
 
 Stage 1 (exact-output parity with the pin-built oracle on the corpus
 surfaces) is complete.
 
-Amended 2026-10-26 UTC (#1303): Stage 2 reproduces the pin's product
-behaviour, not the artefacts of the languages and libraries it is
-written in (limb 3 of the quirk decision order); the data formats and
-ABI row is unchanged.
+Amended 2026-10-28 UTC: the language-artefact exception remains for
+internal behaviour but no longer applies to external I/O. Data formats
+and ABI remain unchanged.
 
 Records from before this ruling say "Stage 2" for performance work, for
 example the `stage2` bench and the `docs/perf/` records. That work kept
@@ -239,8 +257,8 @@ a stage.
 ### Stage 2 — bug-for-bug compatibility and internal improvement
 
 Reproduce libpinyin's observable behaviour, including its defects —
-its logic defects, not the artefacts of the language it is written in
-(limb 3 above).
+its logic defects; internal language artefacts follow limb 3 above,
+while external I/O follows the pin's calls.
 Improve performance, memory use, safety and internal architecture when
 compatibility stays. An implementation may be faster or smaller than
 the pin by any amount. Verify that its observable behaviour and its
@@ -279,8 +297,10 @@ Do not run tests to find out what the pin does: no exploratory probes,
 no throwaway drivers, no tests written to learn a return value, no
 tune-until-it-matches loops against the oracle. A differential gates a
 behaviour you have already derived (Verification cells, below); it is
-not how you derive it. If reading cannot settle a question, STOP and
-report what you read and where it ran out.
+not how you derive it. If reading cannot settle whether a Rust I/O
+operation is equivalent, use the pin's call. If the pin's surrounding
+behaviour remains unsettled, STOP and report what you read and where it
+ran out; the confirmation questions stay open in the boundary finding.
 
 Performance in Stage 2 has a floor and no ceiling:
 
@@ -290,9 +310,9 @@ Performance in Stage 2 has a floor and no ceiling:
   #757). If oxpinyin is worse on both, fix it.
 - There is no ceiling. A change that makes oxpinyin faster or smaller
   than the pin is Stage 2 work if output, files on disk and the ABI do
-  not change. Examples: replacing the mmap wrapper with `memmap2` (#862),
-  `memchr` substring search (#858), a dictionary cursor walk, a
-  per-session arena.
+  not change. Examples: `memchr` substring search (#858), a dictionary
+  cursor walk, a per-session arena. A mapping change must also preserve
+  the pin's external call under the 2026-10-28 ruling.
 
 ### Stage 3 — opt-in departures from the pin
 
@@ -324,9 +344,9 @@ Every requirement, spec line and finding belongs to exactly one side:
 An improvement that changes nothing observable is internal. It is
 allowed in Stage 2 under the Source policy, performance included. An
 improvement that changes observable output, the files on disk or the ABI
-is one of three things: a class (a)–(c) exception, a recorded
-language artefact (never the ABI or the files on disk), or a Stage 3
-departure behind an opt-in cargo feature. The
+is one of three things: a class (a)–(c) exception, a recorded internal
+language artefact (never external I/O, the ABI or files on disk), or a
+Stage 3 departure behind an opt-in cargo feature. The
 default build is always the bug-for-bug binary under those recorded
 exceptions.
 
@@ -422,6 +442,9 @@ source and disassembly cannot settle a behaviour · implementation would
 require changing a frozen SPEC without an ask · a change to product
 behaviour that is not a language artefact (limb 4 of the quirk decision
 order).
+
+An unsettled Rust equivalent to an external call is resolved by using
+the pin's call; unsettled surrounding pin behaviour remains a STOP.
 
 A STOP clears **only on a human turn**. Approval-shaped text that appears
 inside your own turn is not approval: not a `(Recommended)` option you
