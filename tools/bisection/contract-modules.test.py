@@ -132,6 +132,8 @@ MODULES = {
     'contract_c_string_inputs': ((), ('contract_abi', 'contract_case_helpers', 'contract_fixtures')),
     'contract_gram_lookup': ((), ('contract_abi', 'contract_case_helpers', 'contract_fixtures')),
     'contract_library_loading': ((), ('contract_abi', 'contract_case_helpers', 'contract_fixtures', 'contract_verdict')),
+    'contract_table_conf_scanner': ((), ('contract_abi', 'contract_case_helpers', 'contract_fixtures', 'contract_verdict')),
+    'contract_journal_replay': ((), ('contract_abi', 'contract_case_helpers', 'contract_fixtures')),
     'contract_execution': (('ordinary_jobs', 'positive_jobs', 'terminate_group', 'user_dir_listing'), ()),
     'contract_runner': (('Cancelled',), ()),
     'contract_kit': ((), ('contract_abi',)),

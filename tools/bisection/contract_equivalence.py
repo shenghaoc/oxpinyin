@@ -24,7 +24,7 @@ import importlib.util
 import inspect
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePath
 import subprocess
 import sys
 import tempfile
@@ -192,6 +192,13 @@ def function_shape(fn, driver, sentinel, injected, moved_modules, active=(), use
             if value is getattr(driver, 'CASES', None):
                 # The registry itself: its entries are the cases, compared record by record.
                 bindings[name] = ['injected-registry']
+            elif isinstance(value, PurePath):
+                # A path derived from the driver's location (WORKER): compare it relative to the driver.
+                home = Path(driver.__spec__.origin).resolve().parent
+                try:
+                    bindings[name] = ['injected-path', Path(value).resolve().relative_to(home).as_posix()]
+                except ValueError:
+                    raise TypeError('injected path %s is outside the driver directory' % name) from None
             elif isinstance(value, type) and value.__module__ == driver.__name__:
                 tree = ast.parse(textwrap.dedent(inspect.getsource(value)))
                 if len(tree.body) != 1 or not isinstance(tree.body[0], ast.ClassDef):
@@ -210,8 +217,27 @@ def function_shape(fn, driver, sentinel, injected, moved_modules, active=(), use
             bindings[name] = ['function', function_shape(value, driver, sentinel, injected, moved_modules, active, used)]
         else:
             bindings[name] = value_shape(value, sentinel)
-    return {'ast': function_ast(fn), 'defaults': value_shape(fn.__defaults__, sentinel),
-            'kwdefaults': value_shape(fn.__kwdefaults__, sentinel), 'bindings': bindings}
+    defaults = bound_values(fn.__defaults__, driver, sentinel, injected, moved_modules, active, used)
+    kwdefaults = bound_values(fn.__kwdefaults__, driver, sentinel, injected, moved_modules, active, used)
+    return {'ast': function_ast(fn), 'defaults': defaults, 'kwdefaults': kwdefaults, 'bindings': bindings}
+
+
+def bound_values(value, driver, sentinel, injected, moved_modules, active, used):
+    """Shape default values, comparing a driver or moved-module function by its source and bindings.
+
+    A function defined inside a moved register function gains a qualname prefix and the
+    nested-code flag; its source and bindings are what must agree. Every other value is
+    fingerprinted as before."""
+    if isinstance(value, types.FunctionType) and value.__module__ in (driver.__name__, *moved_modules):
+        return ['function', function_shape(value, driver, sentinel, injected, moved_modules, active, used)]
+    if type(value) in (tuple, list):
+        return [type(value).__name__, [bound_values(item, driver, sentinel, injected, moved_modules, active, used)
+                                       for item in value]]
+    if type(value) is dict:
+        return ['dict', [[value_shape(key, sentinel),
+                          bound_values(item, driver, sentinel, injected, moved_modules, active, used)]
+                         for key, item in value.items()]]
+    return value_shape(value, sentinel)
 
 
 def load_driver(root, cell):
