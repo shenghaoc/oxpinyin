@@ -1036,6 +1036,7 @@ mod tests {
         let declared = crate::table_info::TableConf::parse(
             b"binary format version:9\nmodel data version:20\nlambda parameter:1\n\
               source table format:pinyin\ndatabase format:Tkrzw\n",
+            crate::table_info::read_decimal_lambda,
         )
         .expect("parses");
         assert_eq!(

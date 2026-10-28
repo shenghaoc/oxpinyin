@@ -12,7 +12,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 
-use oxpinyin_data::{SystemDbm, table_info::TableConf};
+use oxpinyin_data::{
+    SystemDbm,
+    table_info::{TableConf, read_decimal_lambda},
+};
 use pinyin_capi::{pinyin_fini, pinyin_init};
 
 /// Opaque `pinyin_context_t *`. C ABI symbols are `#[no_mangle]` on the
@@ -195,7 +198,7 @@ pub fn staged_system_dir() -> &'static Path {
             let _ = std::fs::remove_dir_all(&staged);
             std::fs::create_dir_all(&staged).expect("stage system dir");
             let conf_path = export.join("table.conf");
-            let conf = TableConf::read(&conf_path)
+            let conf = TableConf::read(&conf_path, read_decimal_lambda)
                 .expect("export table.conf missing")
                 .expect("invalid export table.conf");
             link_or_copy(&conf_path, &staged.join("table.conf"));

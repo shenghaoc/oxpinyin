@@ -69,7 +69,11 @@ fn main() {
         eprintln!("usage: nbest_tail_probe <system_dir> <user_dir>");
         std::process::exit(2);
     };
-    let runtime = match Runtime::open(Path::new(system_dir), Some(Path::new(user_dir))) {
+    let runtime = match Runtime::open(
+        Path::new(system_dir),
+        Some(Path::new(user_dir)),
+        oxpinyin_data::table_info::read_decimal_lambda,
+    ) {
         Ok(runtime) => runtime,
         Err(error) => {
             eprintln!("open FAILED: {error}");

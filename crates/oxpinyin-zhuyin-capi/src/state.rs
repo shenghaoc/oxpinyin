@@ -51,6 +51,7 @@ impl CapiContext {
                 user_dir,
                 oxpinyin_facade::ZHUYIN_DEFAULT_OPTION_WORD,
                 oxpinyin_user::UserConfLaw::Zhuyin,
+                crate::locale::read_lambda,
             )?,
         })
     }

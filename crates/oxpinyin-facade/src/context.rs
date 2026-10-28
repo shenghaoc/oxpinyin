@@ -7,7 +7,8 @@ use std::sync::Arc;
 use oxpinyin_core::{DoublePinyinScheme, FullPinyinScheme, OptionBits, ZhuyinScheme};
 use oxpinyin_engine::{Config, ConfigValue};
 use oxpinyin_runtime::{
-    FileType, OpenError, RowFault, Runtime, TableConf, TableConfError, directory_reads_as_a_chunk,
+    FileType, LambdaReader, OpenError, RowFault, Runtime, TableConf, TableConfError,
+    directory_reads_as_a_chunk,
 };
 use oxpinyin_user::SystemVersions;
 use oxpinyin_user::pin_stderr;
@@ -401,8 +402,9 @@ impl ContextCore {
         user_dir: Option<&Path>,
         option_word: u32,
         law: UserConfLaw,
+        read_lambda: LambdaReader,
     ) -> Option<Self> {
-        Self::try_open(system_dir, user_dir, option_word, law).ok()
+        Self::try_open(system_dir, user_dir, option_word, law, read_lambda).ok()
     }
 
     /// [`Self::open`] with the failure kept: the C facades log it before
@@ -417,18 +419,20 @@ impl ContextCore {
         user_dir: Option<&Path>,
         option_word: u32,
         law: UserConfLaw,
+        read_lambda: LambdaReader,
     ) -> Result<Self, OpenFailure> {
-        let runtime = Runtime::open_with_law(system_dir, user_dir, law).map_err(|error| {
-            // A system library the pin cannot map: its line, then the
-            // pin dies on the empty chunk (`pinyin.cpp:256`,
-            // `zhuyin.cpp:200`); this open answers NULL as it did.
-            if let Some(path) = error.unmappable_library() {
-                pin_stderr::mmap_failed(path);
-            } else if error.null_system_chunk() {
-                null_chunk_refused(system_dir);
-            }
-            OpenFailure::Runtime(error)
-        })?;
+        let runtime =
+            Runtime::open_with_law(system_dir, user_dir, law, read_lambda).map_err(|error| {
+                // A system library the pin cannot map: its line, then the
+                // pin dies on the empty chunk (`pinyin.cpp:256`,
+                // `zhuyin.cpp:200`); this open answers NULL as it did.
+                if let Some(path) = error.unmappable_library() {
+                    pin_stderr::mmap_failed(path);
+                } else if error.null_system_chunk() {
+                    null_chunk_refused(system_dir);
+                }
+                OpenFailure::Runtime(error)
+            })?;
         // The libraries whose file is absent load as unloaded and the open
         // goes on; the pin's lines for them follow the user profile's
         // (`check_format` runs before the library loop).
@@ -952,9 +956,15 @@ mod open_failure_tests {
             .tempdir()
             .expect("temp dir");
         let dir = root.path().join("system");
-        let failure = ContextCore::try_open(&dir, None, WORD, UserConfLaw::Pinyin)
-            .err()
-            .expect("a missing system dir cannot open");
+        let failure = ContextCore::try_open(
+            &dir,
+            None,
+            WORD,
+            UserConfLaw::Pinyin,
+            oxpinyin_runtime::read_decimal_lambda,
+        )
+        .err()
+        .expect("a missing system dir cannot open");
         let OpenFailure::Runtime(error) = &failure else {
             panic!("expected a runtime failure, got {failure:?}");
         };

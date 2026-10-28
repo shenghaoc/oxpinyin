@@ -4120,7 +4120,7 @@ and staged work are in [external-io-boundary.md](external-io-boundary.md).
 The punctuation record's undefined-read safety treatment stands under
 class (b)/(c); do not reproduce the pin's unsafe surrounding defect.
 
-- [Decimal lambda grammar](1297-table-floats.md): revert target, host `fscanf` `%f`.
+- [Decimal lambda grammar](1297-table-floats.md): reverted for the lambda field by an interim host-libc reader; the call moves into `oxpinyin-input` at stage 1 of the external-I/O boundary plan.
 - [Representable version fields](1297-table-decimals.md): revert target, host `fscanf` `%d`.
 - [Configuration line boundaries](1297-table-lines.md): revert target, pin's ordered stream formats.
 - [Addon indexes in the library range](1297-addon-index.md): revert target, host `atoi` and pin conversion.

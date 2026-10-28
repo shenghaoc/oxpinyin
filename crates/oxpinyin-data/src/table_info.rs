@@ -2,9 +2,9 @@
 //! `SystemTableInfo2::load` reads it (`src/storage/table_info.cpp:194-294`
 //! at `074a2219`), and the library set its rows describe.
 //!
-//! Five line headers declare versions, decimal λ, source and database format,
-//! followed by six-word library rows. Parsing uses Rust's decimal conversions;
-//! libc scanner extensions are recorded in the #1297 scanner discrepancy.
+//! Five headers declare versions, λ, source and database format, followed by
+//! six-word library rows. The caller supplies the λ reader: C facades use
+//! the host libc, while Rust tools can choose decimal conversions.
 //!
 //! # What the rows mean
 //!
@@ -330,6 +330,13 @@ impl core::fmt::Display for TableConfError {
 
 impl std::error::Error for TableConfError {}
 
+/// A lambda conversion over the bytes after `lambda parameter:`.
+///
+/// Returns the float and consumed-byte count, including surrounding whitespace.
+/// A function pointer keeps the table and runtime construction path independent
+/// of the caller's reader type.
+pub type LambdaReader = fn(&[u8]) -> Option<(f32, usize)>;
+
 /// A parsed system `table.conf`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TableConf {
@@ -394,21 +401,26 @@ impl TableConf {
     /// Reads `path` like `SystemTableInfo2::load`'s `fopen`; `None` when it
     /// cannot be opened as a regular file.
     #[must_use]
-    pub fn read(path: &Path) -> Option<Result<Self, TableConfError>> {
+    pub fn read(path: &Path, read_lambda: LambdaReader) -> Option<Result<Self, TableConfError>> {
         // A FIFO would block `fopen`-style reads forever.
         if !path.is_file() {
             return None;
         }
         let bytes = std::fs::read(path).ok()?;
-        Some(Self::parse(&bytes))
+        Some(Self::parse(&bytes, read_lambda))
     }
 
     /// `SystemTableInfo2::load` over the file's bytes.
     ///
+    /// `read_lambda` receives the remaining bytes after `lambda parameter:`.
+    /// It returns the value and bytes consumed, including leading and trailing
+    /// whitespace. The next header starts at that position. A C facade supplies
+    /// its host-libc `%f\n` reader; portable callers choose their own grammar.
+    ///
     /// # Errors
     ///
     /// [`TableConfError`] where the pin returns `false` or dies.
-    pub fn parse(bytes: &[u8]) -> Result<Self, TableConfError> {
+    pub fn parse(bytes: &[u8], read_lambda: LambdaReader) -> Result<Self, TableConfError> {
         let mut lines = ConfigLines::new(bytes);
         let binary_format_version = lines
             .field(b"binary format version:")
@@ -418,24 +430,17 @@ impl TableConf {
             .field(b"model data version:")
             .and_then(parse_decimal::<i32>)
             .ok_or(TableConfError::Header)?;
-        let lambda_text = lines
-            .field(b"lambda parameter:")
-            .and_then(|text| std::str::from_utf8(text).ok())
+        let lambda_input = lines
+            .remaining
+            .trim_ascii_start()
+            .strip_prefix(b"lambda parameter:")
             .ok_or(TableConfError::Header)?;
-        // Rust also accepts NaN and infinity; those are outside the decimal
-        // grammar. Decimal overflow and subnormal rounding stay f32's.
-        let magnitude = lambda_text.trim_start_matches(['+', '-']);
-        if !magnitude
-            .as_bytes()
-            .first()
-            .is_some_and(|byte| byte.is_ascii_digit() || *byte == b'.')
-        {
-            return Err(TableConfError::Header);
-        }
-        let lambda = lambda_text
-            .parse::<f32>()
-            .map_err(|_| TableConfError::Header)?;
-        let lambda_unit = Lambda::from_decimal(lambda_text);
+        let (lambda, consumed) = read_lambda(lambda_input).ok_or(TableConfError::Header)?;
+        let lambda_text = lambda_input.get(..consumed).ok_or(TableConfError::Header)?;
+        lines.remaining = lambda_input.get(consumed..).ok_or(TableConfError::Header)?;
+        let lambda_unit = std::str::from_utf8(lambda_text)
+            .ok()
+            .and_then(Lambda::from_decimal);
         let phonetic = match lines
             .field(b"source table format:")
             .ok_or(TableConfError::UninitialisedSourceFormat)?
@@ -663,16 +668,40 @@ pub(crate) fn parse_decimal<T: std::str::FromStr>(text: &[u8]) -> Option<T> {
     std::str::from_utf8(text).ok()?.parse().ok()
 }
 
+/// Reads a complete decimal λ token using Rust's `f32` conversion.
+///
+/// This is a portable reader for Rust tools and fixtures, passed explicitly to
+/// [`TableConf::parse`]. C facades supply their host-libc reader instead. The
+/// returned length includes whitespace surrounding the token.
+#[must_use]
+pub fn read_decimal_lambda(input: &[u8]) -> Option<(f32, usize)> {
+    let field = input.trim_ascii_start();
+    let end = field
+        .iter()
+        .position(u8::is_ascii_whitespace)
+        .unwrap_or(field.len());
+    let text = std::str::from_utf8(field.get(..end)?).ok()?;
+    let magnitude = text.trim_start_matches(['+', '-']);
+    if !magnitude
+        .as_bytes()
+        .first()
+        .is_some_and(|byte| byte.is_ascii_digit() || *byte == b'.')
+    {
+        return None;
+    }
+    let value = text.parse().ok()?;
+    let remaining = field.get(end..)?.trim_ascii_start();
+    Some((value, input.len() - remaining.len()))
+}
+
 /// Nonempty configuration lines, shared by the system and user markers.
 pub(crate) struct ConfigLines<'a> {
-    lines: std::slice::Split<'a, u8, fn(&u8) -> bool>,
+    remaining: &'a [u8],
 }
 
 impl<'a> ConfigLines<'a> {
     pub(crate) fn new(bytes: &'a [u8]) -> Self {
-        Self {
-            lines: bytes.split(|byte| *byte == b'\n'),
-        }
+        Self { remaining: bytes }
     }
 
     pub(crate) fn field(&mut self, name: &[u8]) -> Option<&'a [u8]> {
@@ -684,10 +713,16 @@ impl<'a> Iterator for ConfigLines<'a> {
     type Item = &'a [u8];
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.lines
-            .by_ref()
-            .map(<[u8]>::trim_ascii)
-            .find(|line| !line.is_empty())
+        while !self.remaining.is_empty() {
+            let mut lines = self.remaining.splitn(2, |byte| *byte == b'\n');
+            let line = lines.next()?;
+            self.remaining = lines.next().unwrap_or_default();
+            let line = line.trim_ascii();
+            if !line.is_empty() {
+                return Some(line);
+            }
+        }
+        None
     }
 }
 
@@ -704,7 +739,7 @@ mod tests {
         addon 4 art.table art.bin NULL DICTIONARY\n";
 
     fn parse(text: &str) -> Result<TableConf, TableConfError> {
-        TableConf::parse(text.as_bytes())
+        TableConf::parse(text.as_bytes(), crate::table_info::read_decimal_lambda)
     }
 
     #[test]
@@ -828,7 +863,7 @@ mod tests {
     }
 
     #[test]
-    fn lambda_is_read_as_a_float_as_written() {
+    fn decimal_reader_preserves_the_written_value() {
         for (text, expected) in [("0.5", 0.5_f32), ("2", 2.0), ("-0.5", -0.5), ("5e-1", 0.5)] {
             let conf = parse(&STOCK.replace("0.312699", text)).expect("parses");
             assert_eq!(conf.lambda_f32(), expected, "{text}");
@@ -901,7 +936,8 @@ mod tests {
             .position(|window| window == b"gb_char.dbin")
             .expect("marker");
         bytes.splice(at..at + 12, *b"gb\xff.dbin");
-        let conf = TableConf::parse(&bytes).expect("parses");
+        let conf =
+            TableConf::parse(&bytes, crate::table_info::read_decimal_lambda).expect("parses");
         let user = conf
             .default_row(1)
             .and_then(|row| row.user.as_ref())

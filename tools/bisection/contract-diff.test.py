@@ -773,11 +773,25 @@ class VerdictTests(DriverFixtureCase):
             [(), ()],
         )
 
-    def test_native_scanner_policy_tolerates_non_glibc_hosts(self):
-        with patch.object(driver.os, 'confstr', side_effect=ValueError('unknown confstr name')):
-            driver._scanner_host_policy()
-        with patch.object(driver.os, 'confstr', return_value=None):
-            driver._scanner_host_policy()
+    def test_lambda_cases_require_a_match_without_scanner_policy(self):
+        names = ('lambda-hex', 'lambda-hex-fraction', 'lambda-hex-upper', 'lambda-inf',
+                 'lambda-nan', 'lambda-exponent-without-digits',
+                 'lambda-hex-exponent-without-digits', '919-lambda-hex-no-exponent',
+                 '919-lambda-infinity', '919-lambda-nan-payload', '919-lambda-hex-overflow',
+                 '919-lambda-exponent-sign-without-digits',
+                 '919-lambda-hex-exponent-sign-without-digits',
+                 '919-lambda-hex-exponent-minus-without-digits',
+                 '919-lambda-hex-dot-without-digits')
+        for name in names:
+            for suffix in ('', '-zhuyin'):
+                with self.subTest(name=name, suffix=suffix):
+                    spec = contract['CASES']['table-conf-' + name + suffix]
+                    self.assertIsNone(spec['policy_record'])
+                    self.assertEqual(spec['host_scanf'], ())
+                    pin = observation(result={'ctx': True})
+                    refused = observation(result={'ctx': False})
+                    self.assertEqual(self.decide(spec, pin, pin, False), ('MATCH', True, True))
+                    self.assertEqual(self.decide(spec, pin, refused, False), ('DIFFER', False, False))
 
     def plain(self, control=False):
         return dict(contract['CASES']['default-option-parse'], control=control)

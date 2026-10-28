@@ -12,7 +12,11 @@ fn main() {
         eprintln!("usage: open_probe <system_dir>");
         std::process::exit(2);
     };
-    match oxpinyin_runtime::Runtime::open(std::path::Path::new(&dir), None) {
+    match oxpinyin_runtime::Runtime::open(
+        std::path::Path::new(&dir),
+        None,
+        oxpinyin_data::table_info::read_decimal_lambda,
+    ) {
         Ok(runtime) => {
             let dict = runtime.dict();
             println!(
