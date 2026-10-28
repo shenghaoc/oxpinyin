@@ -28,11 +28,10 @@ inclusion: always
 | oxpinyin-word | word-recognition pipeline (populate/partialword/newword/markpinyin) — W9 | forbid | yes | never |
 
 **External I/O:** `oxpinyin-input` owns bidirectional external calls in
-scoped unsafe modules. Stage 1 (the `table.conf` and `user.conf` reader
-and writer and their locale calls) is in place; chunks, save/rename,
-diagnostics and tools are later stages. The C facades retain ABI
-marshalling, and `oxpinyin-store` retains DBM backends. The stages are in
-`docs/findings/external-io-boundary.md`.
+scoped unsafe modules. oxpinyin-input exists from stage 1 (library config
+read/write and locale); later stages are listed in
+docs/findings/external-io-boundary.md. The C facades retain ABI
+marshalling, and `oxpinyin-store` retains DBM backends.
 
 **Centralized assembly:** the concrete construction of a decodable engine
 (system tables + unigram model + λ + optional user store + addon/punct
