@@ -52,6 +52,11 @@ MODULES = {
         ('PER_CALL_OPS', 'PER_CALL_NAMES', 'PER_CALL_NATIVE', 'per_call_native', 'per_call_ir',
          'per_call_profile', 'per_call_attribution', 'per_call_calibration'),
         ('contract_abi',)),
+    'contract_axis_c': (
+        ('axis_c_definition', 'axis_c_canonical', 'axis_c_normalize_diagnostics', 'axis_c_covered_abort',
+         'AXIS_C_ABORT_ROW_FIELDS', 'AXIS_C_REFUSAL_RESULT_FIELDS', 'axis_c_live', 'axis_c_licensed_remnant',
+         'axis_c_covered_residual', 'axis_c_first_difference'),
+        ('contract_verdict',)),
     'contract_execution': (('ordinary_jobs', 'positive_jobs', 'terminate_group', 'user_dir_listing'), ()),
     'contract_runner': (('Cancelled',), ()),
     'contract_kit': ((), ('contract_abi',)),
@@ -83,6 +88,8 @@ ADAPTERS = {
     'per_call_run': '(mode, so, data, name, helper, metric, operations, scratch, cpu, attribution=False)',
     'per_call_checked': '(spec, reference, sample, operations)',
     'run_per_call': '(args, parser)',
+    'check_axis_c_snapshots': '(args)',
+    'run_axis_c': '(args, names)',
 }
 
 spec = importlib.util.spec_from_file_location('contract_diff', HERE / 'contract-diff.py')
@@ -257,6 +264,32 @@ class ModuleBoundaryTests(unittest.TestCase):
         self.assertEqual(worker.call_args.args, tuple(arguments))
         self.assertIn('wrap-256th-reading', worker.call_args.kwargs['CASES'])
         self.assertTrue(issubclass(worker.call_args.kwargs['PerCallKit'], worker.call_args.kwargs['Kit']))
+
+    def test_axis_c_adapters_pass_the_registry_worker_and_tables_the_driver_holds_now(self):
+        axis_c = sys.modules['contract_axis_c']
+        registry, worker = {'axis-c-options-single-00000008': {}}, object()
+        covered, definition = {'axis-c-layout-pinyin-9-00000000': '5c'}, {'mutations': {}}
+        with patch.object(driver, 'CASES', registry), patch.object(driver, 'run_worker', worker), \
+                patch.object(driver, 'AXIS_C_LAYOUT_COVERED', covered), \
+                patch.object(driver, 'AXIS_C_DEFINITION', definition), \
+                patch.object(axis_c, 'check_axis_c_snapshots', return_value=0) as snapshots, \
+                patch.object(axis_c, 'run_axis_c', return_value=1) as battery:
+            self.assertEqual(driver.check_axis_c_snapshots('args'), 0)
+            snapshots.assert_called_once_with('args', run_worker=worker)
+            self.assertEqual(driver.run_axis_c('args', ['n']), 1)
+            battery.assert_called_once_with('args', ['n'], CASES=registry, run_worker=worker,
+                                            AXIS_C_LAYOUT_COVERED=covered, AXIS_C_DEFINITION=definition)
+
+    def test_the_axis_c_cases_stay_registered_by_the_driver_from_the_moved_definition(self):
+        definition = sys.modules['contract_axis_c'].axis_c_definition()
+        self.assertEqual(driver.AXIS_C_DEFINITION, definition)
+        names = [name for name in driver.CASES if name.startswith('axis-c-')]
+        self.assertEqual(names[0], 'axis-c-export-user')
+        self.assertEqual(names[1:], sum(driver.AXIS_C_GROUPS.values(), []))
+        for name in names:
+            with self.subTest(name=name):
+                self.assertEqual(driver.CASES[name]['fn'].__module__, driver.__name__)
+        self.assertLessEqual(set(driver.AXIS_C_LAYOUT_COVERED), set(driver.AXIS_C_GROUPS['layouts']))
 
     def test_timing_summary_totals_the_timings_the_driver_holds_now(self):
         with patch.object(driver, 'TIMINGS', [dict(execute=2, side='pin'), dict(execute=3)]):
