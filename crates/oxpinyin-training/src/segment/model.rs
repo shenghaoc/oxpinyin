@@ -132,22 +132,20 @@ impl SegmentModel {
     }
 }
 
-/// Reads the λ of a `table.conf` body with the training tool's decimal reader.
-///
-/// Header and row validation reuse [`TableConf::parse`]. This portable tool
-/// chooses Rust's decimal conversion explicitly; only the C facades use the
-/// host-libc reader of `SystemTableInfo2::load` (`074a2219
-/// src/storage/table_info.cpp:220`).
+/// The λ of the `table.conf` at `path`, read by `SystemTableInfo2::load`'s
+/// own scanner ([`TableConf::load_path`], `074a2219
+/// src/storage/table_info.cpp:194-294`), the same reader both C facades
+/// use; `None` where that load refuses the file.
 #[must_use]
-pub fn parse_table_conf_lambda(bytes: &[u8]) -> Option<f32> {
-    TableConf::parse(bytes, oxpinyin_data::table_info::read_decimal_lambda)
+pub fn load_table_conf_lambda(path: &std::path::Path) -> Option<f32> {
+    TableConf::load_path(path)
         .ok()
         .map(|conf| conf.lambda_f32())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{PINNED_LAMBDA, parse_table_conf_lambda};
+    use super::{PINNED_LAMBDA, load_table_conf_lambda};
     use crate::segment::lexicon::PhraseLexicon;
     use crate::segment::model::SegmentModel;
     use std::collections::HashMap;
@@ -156,40 +154,34 @@ mod tests {
         lambda parameter:0.312699\nsource table format:pinyin\n\
         database format:BerkeleyDB\n";
 
-    #[test]
-    fn the_pinned_lambda_parses_the_table_conf_decimal() {
-        assert_eq!(
-            parse_table_conf_lambda(CONF.as_bytes()),
-            Some(PINNED_LAMBDA)
-        );
-        assert_eq!(parse_table_conf_lambda(b"binary format version:7\n"), None);
+    fn lambda_of(text: &str) -> Option<f32> {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("table.conf");
+        std::fs::write(&path, text).expect("write");
+        load_table_conf_lambda(&path)
     }
 
     #[test]
-    fn the_lambda_reader_uses_the_shared_decimal_grammar() {
+    fn the_pinned_lambda_is_the_scanned_gfloat() {
+        assert_eq!(lambda_of(CONF), Some(PINNED_LAMBDA));
+        assert_eq!(lambda_of("binary format version:7\n"), None);
+    }
+
+    /// The tools read λ as both facades do: the host `fscanf("%f")`.
+    #[test]
+    fn the_lambda_reader_is_the_pins_scanner() {
         let with_lambda = |spelling: &str| {
             CONF.replace(
                 "lambda parameter:0.312699",
                 &format!("lambda parameter:{spelling}"),
             )
         };
-        assert_eq!(
-            parse_table_conf_lambda(with_lambda("0x1p-1").as_bytes()),
-            None
-        );
-        assert_eq!(
-            parse_table_conf_lambda(with_lambda("5e-1").as_bytes()),
-            Some(0.5)
-        );
-        assert!(parse_table_conf_lambda(with_lambda("nan").as_bytes()).is_none());
+        assert_eq!(lambda_of(&with_lambda("0x1p-1")), Some(0.5));
+        assert_eq!(lambda_of(&with_lambda("5e-1")), Some(0.5));
+        assert!(lambda_of(&with_lambda("nan")).is_some_and(f32::is_nan));
         // The preceding `\n` in the pin's directive matches any whitespace.
         let spaced = CONF.replace("lambda parameter:", "   lambda parameter:");
-        assert_eq!(
-            parse_table_conf_lambda(spaced.as_bytes()),
-            Some(PINNED_LAMBDA)
-        );
-        // Complete decimal exponents are required; the native libc may differ.
-        assert_eq!(parse_table_conf_lambda(with_lambda("1e").as_bytes()), None);
+        assert_eq!(lambda_of(&spaced), Some(PINNED_LAMBDA));
     }
 
     #[test]

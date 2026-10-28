@@ -548,9 +548,9 @@ def register(case, *, CASES, WORKER):
                ('+', 'addon 99999999999999999999 art.table art.bin NULL DICTIONARY'),
                modes=('pinyin',), issues=('919',), control=True)
 
-    # #1297 Phase 2: these malformed headers now stop before a session exists.
-    # Keep each fixture and ID; observe initialization directly, without requiring
-    # the old scanner's successful initialization to reach the case's assertions.
+    # #1297 Phase 2 accepted these fixtures as policy divergences of a Rust
+    # scanner. External-I/O stage 1 reads table.conf with the pin's own
+    # fscanf/atoi calls, so they run their original sessions and MATCH.
     def scanner_initialization(original):
         """Keep the fixture while observing the header parser before user-state work."""
         def probe(k):
@@ -562,23 +562,6 @@ def register(case, *, CASES, WORKER):
             _write_user_conf(k)
             return {'ctx': bool(k.init(system=system))}
         return probe
-
-    _SCANNER_RECORDS = {
-        '1297-table-decimals.md': ('919-versions-positive-overflow', '919-versions-int-wrap'),
-        '1297-table-lines.md': ('919-header-one-line', '919-header-leading-space'),
-        '1297-table-words.md': ('919-source-token-nul', '919-database-token-nul'),
-        '1297-addon-index.md': ('addon-index-wraps', '919-addon-atoi-nondigit'),
-    }
-    for _record, _names in _SCANNER_RECORDS.items():
-        for _name in _names:
-            for _suffix in ('', '-zhuyin'):
-                _id = 'table-conf-' + _name + _suffix
-                if _id not in CASES:
-                    continue
-                _spec = CASES[_id]
-                _original = _spec['fn']
-                _spec['fn'] = scanner_initialization(_original)
-                _spec.update(policy_record=_record, host_scanf=(), issues=tuple(dict.fromkeys((*_spec['issues'], '919'))))
 
     # Maintainer ruling 2026-10-28: both sides read lambda with the same host
     # libc. Preserve current main's initialization observations for these scanner
@@ -599,12 +582,21 @@ def register(case, *, CASES, WORKER):
             _spec = CASES['table-conf-' + _name + _suffix]
             _spec['issues'] = tuple(dict.fromkeys((*_spec['issues'], '919')))
 
-    for _suffix in ('', '-zhuyin'):
-        CASES['table-conf-abort-919-word-width-overlong' + _suffix].update(
-            policy_record='1297-table-words.md', control=False)
-    for _suffix, _domain in (('', 'libpinyin'), ('-zhuyin', 'libzhuyin')):
-        _spec = CASES['table-conf-919-short-row-merged' + _suffix]
-        _spec['crash'] = {'ctx': False, 'logs': [[_domain, 16]]}
+
+    # Maintainer ruling 2026-10-28 UTC (D3): `SystemTableInfo2::load` is the
+    # first step, and a table.conf it cannot open fails the init however
+    # complete the rest of the directory is (074a2219 table_info.cpp:199-202,
+    # pinyin.cpp:335-340, zhuyin.cpp:279-284).
+    def missing_conf_with_dbms(k):
+        """Initialize a private system copy that has every file but table.conf."""
+        system = private_system(k)
+        os.unlink(os.path.join(system, 'table.conf'))
+        return {'ctx': bool(k.init(system=system))}
+
+
+    for _mode in ('pinyin', 'zhuyin'):
+        case('table-conf-missing-with-dbms' + ('-zhuyin' if _mode == 'zhuyin' else ''), mode=_mode,
+             stderr=True, issues=('545',))(missing_conf_with_dbms)
 
 
     # A file name never leaves its directory: `g_build_filename(user_dir,
@@ -653,6 +645,10 @@ def register(case, *, CASES, WORKER):
                      ('user.bin USER_FILE', 'shared.bin USER_FILE'))
     stderr_conf_case('library-named-like-an-index', ('user.bin USER_FILE', 'user_pinyin_index.bin USER_FILE'))
     stderr_conf_case('log-named-like-a-library', ('gb_char.dbin SYSTEM_FILE', 'user.bin SYSTEM_FILE'))
+    # libpinyin's check_format saves the marker, then wipes a non-conforming
+    # profile (074a2219 pinyin.cpp:187, :194-215): a library whose user file
+    # is user.conf takes the fresh marker with it.
+    stderr_conf_case('user-library-named-user-conf', ('user.bin USER_FILE', 'user.conf USER_FILE'))
 
 
     # Class (b): a library whose rows no longer match the index points the

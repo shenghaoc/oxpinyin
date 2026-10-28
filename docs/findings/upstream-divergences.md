@@ -2065,12 +2065,15 @@ section.
   `:199-202`), a failed version directive (`:339-348`) — skips the
   restore altogether. Either way the process's `LC_NUMERIC` is `"C"`
   after `pinyin_init` or `zhuyin_init`, successful or not.
-- **What oxpinyin does instead:** since #618 (merge commit `a3ef00f5`,
-  code `e5400598`, 2026-10-01 UTC) it installs `"C"` at the same
-  points, through the C library's own `setlocale`, in the two C-ABI
-  crates. Before that — the state this section was written against —
-  there was no `setlocale` call anywhere in `crates/`, so the host's
-  `LC_NUMERIC` survived init.
+- **What oxpinyin does instead:** since external-I/O stage 1
+  (2026-10-28 UTC) the `setlocale` calls are the pin's own, made inside
+  `oxpinyin-input`'s `table.conf`/`user.conf` reader and writer at the
+  pin's sites and in the pin's number: before `fopen`, and again after
+  `fclose` on the success path only. From #618 (merge commit `a3ef00f5`,
+  code `e5400598`, 2026-10-01 UTC) to stage 1 the two C-ABI crates
+  installed `"C"` once at each facade entry instead. Before #618 — the
+  state this section was written against — there was no `setlocale`
+  call anywhere in `crates/`, so the host's `LC_NUMERIC` survived init.
 - **Externally observable:** yes — audit D-17 (#539): with
   `LC_ALL=zh_CN.UTF-8` set by the host, `setlocale(LC_NUMERIC, NULL)`
   reads `C` after the pin's init and read `zh_CN.UTF-8` after
@@ -3020,9 +3023,11 @@ Registered 2026-10-10 UTC. Pin source read at `074a2219c90feaf962d0d24f034514033
 - **What oxpinyin did:** read the lambda and version lines only, and
   hard-coded the library layout. A valid but non-stock `table.conf` was
   ignored; a malformed one was accepted without a word.
-- **What it does now:** `oxpinyin_data::table_info::TableConf::parse` is the one
-  reader (the decoder's λ, the prediction λ, the user marker's versions and
-  database format and the library layout all come from it); the layout reaches
+- **What it does now:** `oxpinyin_data::table_info::TableConf::load` is the one
+  reader, over the pin's own `fscanf` stream since external-I/O stage 1
+  (2026-10-28 UTC; `TableConf::parse` over the file's bytes before it). The
+  decoder's λ, the prediction λ, the user marker's versions and
+  database format and the library layout all come from it; the layout reaches
   the system dictionary, the addon dictionary and the user store
   (`oxpinyin_user::SystemOriginals`, `UserStore::has_user_library`), and the
   two C ABIs' library calls follow the rows. Malformed files fail the call that
@@ -4113,24 +4118,25 @@ non-empty valid controls.
 ## Native scanner and tool parsing (#1297 Phase 2)
 
 The 2026-10-28 UTC external-I/O ruling makes the ten scanner, writer and
-tool entries below **revert targets**. Their dated findings and existing
-case markers preserve the earlier evidence; neither the implementation
-nor the markers change in this documentation-only update. The pin call
-and staged work are in [external-io-boundary.md](external-io-boundary.md).
+tool entries below **revert targets**. Their dated findings preserve the
+earlier evidence. Stage 1 of [external-io-boundary.md](external-io-boundary.md)
+(2026-10-28 UTC) reverted the seven `table.conf` and `user.conf` entries:
+`oxpinyin-input` makes the pin's own calls, their cases run their original
+probes as MATCH, and their records are no longer registered by any case.
 The punctuation record's undefined-read safety treatment stands under
 class (b)/(c); do not reproduce the pin's unsafe surrounding defect.
 
-- [Decimal lambda grammar](1297-table-floats.md): reverted for the lambda field by an interim host-libc reader; the call moves into `oxpinyin-input` at stage 1 of the external-I/O boundary plan.
-- [Representable version fields](1297-table-decimals.md): revert target, host `fscanf` `%d`.
-- [Configuration line boundaries](1297-table-lines.md): revert target, pin's ordered stream formats.
-- [Addon indexes in the library range](1297-addon-index.md): revert target, host `atoi` and pin conversion.
-- [Nonconforming decimal markers reset profiles](1297-user-decimals.md): revert target, marker `fscanf` `%d`.
-- [Exact database marker tokens](1297-user-token.md): revert target, `%255s` and `strcmp`.
+- [Decimal lambda grammar](1297-table-floats.md): reverted at stage 1, host `fscanf` `%f` on the pin stream.
+- [Representable version fields](1297-table-decimals.md): reverted at stage 1, host `fscanf` `%d`.
+- [Configuration line boundaries](1297-table-lines.md): reverted at stage 1, pin's ordered stream formats.
+- [Addon indexes in the library range](1297-addon-index.md): reverted at stage 1, host `atoi` and pin conversion.
+- [Nonconforming decimal markers reset profiles](1297-user-decimals.md): reverted at stage 1, marker `fscanf` `%d`.
+- [Exact database marker tokens](1297-user-token.md): reverted at stage 1, `%255s` and `strcmp`.
 - [Punctuation values contain whole words](1297-punct-words.md): existing safety treatment stands.
 - [Complete chunk payload writes](1297-chunk-payload.md): revert target, one host `write`.
 - [Complete tool decimal fields](1297-tool-decimals.md): revert target, host `atoi`/`atol`.
 - [Native nonfinite tool formatting](1297-tool-special-values.md): revert target, pin's formatted call.
-- [Complete table words and exact enum tokens](1297-table-words.md): revert target, `%255s` and C-string comparisons.
+- [Complete table words and exact enum tokens](1297-table-words.md): reverted at stage 1, `%255s` and C-string comparisons.
 
 ## Pinyin trellis adjusted cost — S1/S2 repair (2026-10-28 UTC)
 

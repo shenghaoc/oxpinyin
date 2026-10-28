@@ -23,7 +23,12 @@
 //! those files, and a same-backend oxpinyin pair is what stays conform.
 
 use crate::chunk_format::{CHUNK_HEADER_SIZE, chunk_checksum};
-use crate::table_info::{ConfigLines, FileName, parse_decimal};
+use std::ffi::{CStr, CString};
+
+use crate::table_info::FileName;
+use oxpinyin_input::config::{
+    Scanned, UserTableInfoFields, UserTableInfoReader, save_user_table_info,
+};
 use oxpinyin_store::DEFAULT_STORE_DB_FORMAT;
 
 /// A `MemoryChunk` file that does not frame a valid payload.
@@ -260,8 +265,9 @@ pub const fn get_open_counter(open_counter: i32) -> i32 {
 /// open counter:3
 /// ```
 ///
-/// The marker uses ordered line headers and exact decimal fields. Missing
-/// database and counter fields retain their UNKNOWN/0 defaults.
+/// [`UserTableInfo::load`] and [`UserTableInfo::save`] make the pin's own
+/// `fopen`, `fscanf`, `fprintf` and `setlocale` calls through
+/// [`oxpinyin_input::config`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UserTableInfo {
     /// `binary format version:`.
@@ -272,7 +278,7 @@ pub struct UserTableInfo {
     /// end of the file before it converted anything (`UNKNOWN_FORMAT`).
     /// Upstream recognises exactly `UPSTREAM_DB_FORMATS`; any other
     /// token reaches `to_table_database_format_type`'s `abort()`, which
-    /// [`UserTableInfo::parse`] answers with
+    /// [`UserTableInfo::load`] answers with
     /// [`UserConfError::UnknownDatabaseFormat`] instead.
     pub database_format: Option<String>,
     /// `open counter:` — upstream's `int m_open_counter`
@@ -301,40 +307,49 @@ impl UserTableInfo {
         }
     }
 
-    /// Parses the marker's line headers and complete decimal fields.
+    /// `UserTableInfo::load(filename)` (`table_info.cpp:325-375`).
+    ///
+    /// A missing `database format:` value (the directive ran into the end
+    /// of input) is `UNKNOWN_FORMAT`; a counter that does not convert is 0
+    /// (`:356-359`).
     ///
     /// # Errors
     ///
-    /// A malformed version or counter is a non-conforming marker. Unknown
-    /// database names keep the existing availability refusal; a NUL suffix
-    /// is malformed rather than a C string alias of a known name.
-    pub fn parse(bytes: &[u8]) -> Result<Self, UserConfError> {
-        let mut lines = ConfigLines::new(bytes);
-        let binary_format_version = lines
-            .field(b"binary format version:")
-            .and_then(parse_decimal::<i32>)
+    /// [`UserConfError::Unopenable`] and [`UserConfError::Line`] are the
+    /// load's `false` (the pin's open line has been written for the first).
+    /// [`UserConfError::UnknownDatabaseFormat`] is the abort point.
+    pub fn load(filename: &CStr) -> Result<Self, UserConfError> {
+        let mut input =
+            UserTableInfoReader::open(filename).map_err(|_| UserConfError::Unopenable)?;
+        // Each early return drops `input`: the pin's `fclose`, without its
+        // closing `setlocale` (`:339-348`).
+        let binary_format_version = input
+            .binary_format_version()
+            .assigned()
             .ok_or(UserConfError::Line("binary format version"))?;
-        let model_data_version = lines
-            .field(b"model data version:")
-            .and_then(parse_decimal::<i32>)
+        let model_data_version = input
+            .model_data_version()
+            .assigned()
             .ok_or(UserConfError::Line("model data version"))?;
-        let database_format = match lines.field(b"database format:") {
-            None => None,
-            Some(token) if token.contains(&0) => {
-                return Err(UserConfError::Line("database format"));
-            }
-            Some(token) => Some(
-                UPSTREAM_DB_FORMATS
-                    .into_iter()
-                    .find(|known| known.as_bytes() == token)
+        // `if (EOF != num) format = to_table_database_format_type(str);`
+        // (`:352-354`): a directive that did not match leaves `str` as it
+        // was, never written, and the mapping reads it all the same.
+        let database_format = match input.database_format() {
+            Scanned::Eof => None,
+            Scanned::Assigned(()) | Scanned::Unassigned => Some(
+                input
+                    .str()
+                    .and_then(|token| {
+                        UPSTREAM_DB_FORMATS
+                            .into_iter()
+                            .find(|known| known.as_bytes() == token.to_bytes())
+                    })
                     .ok_or(UserConfError::UnknownDatabaseFormat)?
                     .to_owned(),
             ),
         };
-        let open_counter = match lines.field(b"open counter:") {
-            None => 0,
-            Some(text) => parse_decimal::<i32>(text).ok_or(UserConfError::Line("open counter"))?,
-        };
+        let open_counter = input.open_counter().assigned().unwrap_or(0);
+        input.finish();
         Ok(Self {
             binary_format_version: binary_format_version.cast_unsigned(),
             model_data_version: model_data_version.cast_unsigned(),
@@ -343,8 +358,54 @@ impl UserTableInfo {
         })
     }
 
-    /// Serialises to `user.conf` text — `UserTableInfo::save`'s four
-    /// lines, in its order.
+    /// [`Self::load`] of `path`.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::load`]; a path holding a NUL is
+    /// [`UserConfError::Unopenable`].
+    pub fn load_path(path: &std::path::Path) -> Result<Self, UserConfError> {
+        let filename = oxpinyin_input::c_path(path).ok_or(UserConfError::Unopenable)?;
+        Self::load(&filename)
+    }
+
+    /// `UserTableInfo::save(filename)` (`table_info.cpp:377-397`): `false`
+    /// only when `fopen(filename, "w")` failed, after the pin's
+    /// `write %s failed.` line. The writes themselves are not checked, as
+    /// the pin does not check them.
+    ///
+    /// A marker without a database format never reaches a save at the pin
+    /// (`make_conform` copies the system's first); here it writes nothing
+    /// and answers `false`.
+    #[must_use]
+    pub fn save(&self, filename: &CStr) -> bool {
+        let Some(database_format) = self
+            .database_format
+            .as_deref()
+            .and_then(|token| CString::new(token).ok())
+        else {
+            return false;
+        };
+        save_user_table_info(
+            filename,
+            &UserTableInfoFields {
+                binary_format_version: self.binary_format_version.cast_signed(),
+                model_data_version: self.model_data_version.cast_signed(),
+                database_format: &database_format,
+                open_counter: self.open_counter,
+            },
+        )
+    }
+
+    /// [`Self::save`] to `path`; `false`, without a call, for a path
+    /// holding a NUL, which no C caller can pass.
+    #[must_use]
+    pub fn save_path(&self, path: &std::path::Path) -> bool {
+        oxpinyin_input::c_path(path).is_some_and(|filename| self.save(&filename))
+    }
+
+    /// The four lines [`Self::save`] writes, in its order, for composing
+    /// fixtures; the save itself prints them with the pin's `fprintf`.
     #[must_use]
     pub fn to_text(&self) -> String {
         let database_format = self.database_format.as_deref().unwrap_or("UNKNOWN");
@@ -386,6 +447,9 @@ impl UserTableInfo {
 /// What upstream makes of a `user.conf` its `load` cannot complete.
 #[derive(Debug)]
 pub enum UserConfError {
+    /// `fopen` answered NULL, which is the load's `false` (`:330-334`) after
+    /// its `open %s failed.` line.
+    Unopenable,
     /// A version directive did not convert, which is the load's `false`
     /// (`table_info.cpp:339-342`, `:345-348`): upstream leaves the marker
     /// at its reset defaults and the profile reads as non-conforming.
@@ -405,6 +469,7 @@ pub enum UserConfError {
 impl std::fmt::Display for UserConfError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Unopenable => f.write_str("user.conf: cannot be opened"),
             Self::Line(line) => {
                 write!(
                     f,
@@ -970,6 +1035,13 @@ mod tests {
         ));
     }
 
+    fn parse(bytes: &[u8]) -> Result<UserTableInfo, UserConfError> {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("user.conf");
+        std::fs::write(&path, bytes).expect("write");
+        UserTableInfo::load_path(&path)
+    }
+
     #[test]
     fn user_conf_round_trips_and_conforms() {
         let versions = SystemVersions::for_this_build(7, 14);
@@ -983,8 +1055,14 @@ mod tests {
                 "binary format version:7\nmodel data version:14\ndatabase format:{DEFAULT_STORE_DB_FORMAT}\nopen counter:0\n"
             )
         );
-        let parsed = UserTableInfo::parse(text.as_bytes()).expect("parse");
+        let parsed = parse(text.as_bytes()).expect("parse");
         assert_eq!(parsed, conform);
+        // `save` writes the same four lines with the pin's `fprintf`.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("user.conf");
+        let filename = oxpinyin_input::c_path(&path).expect("c path");
+        assert!(conform.save(&filename));
+        assert_eq!(std::fs::read_to_string(&path).expect("read"), text);
 
         // A stale model version never conforms.
         let stale = UserTableInfo {
@@ -1006,7 +1084,7 @@ mod tests {
         // refuses it where upstream's mapper aborts (#590).
         assert!(!conform_with("NotADbmLibrary").is_conform(&versions));
         assert!(matches!(
-            UserTableInfo::parse(
+            parse(
                 b"binary format version:7\nmodel data version:14\ndatabase format:NotADbmLibrary\n"
             ),
             Err(UserConfError::UnknownDatabaseFormat)
@@ -1033,12 +1111,14 @@ mod tests {
         assert_eq!(get_open_counter(i32::MIN), i32::MIN);
 
         // The marker conforms against what table.conf declares.
-        let declared = crate::table_info::TableConf::parse(
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            dir.path().join("table.conf"),
             b"binary format version:9\nmodel data version:20\nlambda parameter:1\n\
               source table format:pinyin\ndatabase format:Tkrzw\n",
-            crate::table_info::read_decimal_lambda,
         )
-        .expect("parses");
+        .expect("write");
+        let declared = crate::table_info::TableConf::load_from_dir(dir.path()).expect("parses");
         assert_eq!(
             SystemVersions::from_conf(&declared),
             SystemVersions {
@@ -1051,59 +1131,62 @@ mod tests {
         // The third directive running off the end of the file leaves
         // `format` at UNKNOWN_FORMAT — the one outcome that is not
         // upstream's abort.
-        let sparse = UserTableInfo::parse(b"binary format version:7\nmodel data version:14\n")
-            .expect("parse");
+        let sparse = parse(b"binary format version:7\nmodel data version:14\n").expect("parse");
         assert_eq!(sparse.database_format, None);
         assert_eq!(sparse.open_counter, 0);
         assert!(!sparse.is_conform(&versions));
         assert!(matches!(
-            UserTableInfo::parse(b"binary format version:x\n"),
+            parse(b"binary format version:x\n"),
             Err(UserConfError::Line("binary format version"))
         ));
         assert!(matches!(
-            UserTableInfo::parse(b""),
+            parse(b""),
             Err(UserConfError::Line("binary format version"))
         ));
     }
 
-    /// What each counter line reads as, per glibc's
-    /// `fscanf("open counter:%d\n")` in the 2.43 scanner the subject follows
-    /// (the trixie reference is 2.41; `%d` is unchanged for these values).
-    /// The seeded protocol of `tools/bisection/run-open-counter-diff.sh`
-    /// checks it against the pin.
+    /// Each directive is one `fscanf`: a field stops where `%d` stops, a
+    /// whitespace directive crosses line breaks, a counter that does not
+    /// convert is 0 and the database token is the C string `%255s` stored.
     #[test]
-    fn marker_fields_require_complete_decimal_values() {
+    fn marker_fields_follow_the_scanner() {
         let good = "binary format version:7\nmodel data version:14\ndatabase format:BerkeleyDB\nopen counter:3\n";
-        for value in ["3x", "2147483648", "99999999999999999999"] {
-            assert!(matches!(
-                UserTableInfo::parse(
-                    good.replace("counter:3", &format!("counter:{value}"))
-                        .as_bytes()
-                ),
-                Err(UserConfError::Line(_))
-            ));
-        }
-        for value in ["4294967303", "7x", "-9223372036854775808"] {
-            assert!(matches!(
-                UserTableInfo::parse(
-                    good.replace("version:7", &format!("version:{value}"))
-                        .as_bytes()
-                ),
-                Err(UserConfError::Line(_))
-            ));
-        }
+        let counter = |value: &str| {
+            parse(
+                good.replace("counter:3", &format!("counter:{value}"))
+                    .as_bytes(),
+            )
+            .expect(value)
+            .open_counter
+        };
+        assert_eq!(counter("3x"), 3);
+        assert_eq!(counter("x"), 0);
+        assert_eq!(counter("-3"), -3);
         assert!(matches!(
-            UserTableInfo::parse(good.replace("BerkeleyDB", "BerkeleyDB\0suffix").as_bytes()),
-            Err(UserConfError::Line(_))
+            parse(good.replace("version:7", "version:7x").as_bytes()),
+            Err(UserConfError::Line("model data version"))
         ));
-        assert!(UserTableInfo::parse(good.replace('\n', " ").as_bytes()).is_err());
-        let missing = good.replace("open counter:3\n", "");
         assert_eq!(
-            UserTableInfo::parse(missing.as_bytes())
-                .unwrap()
-                .open_counter,
-            0
+            parse(good.replace("BerkeleyDB", "BerkeleyDB\0suffix").as_bytes())
+                .expect("C string")
+                .database_format
+                .as_deref(),
+            Some("BerkeleyDB")
         );
+        assert_eq!(
+            parse(good.replace('\n', " ").as_bytes())
+                .expect("one line")
+                .open_counter,
+            3
+        );
+        let missing = good.replace("open counter:3\n", "");
+        assert_eq!(parse(missing.as_bytes()).unwrap().open_counter, 0);
+        // A directive that does not match leaves `str` unwritten: the abort
+        // point, not `UNKNOWN_FORMAT`.
+        assert!(matches!(
+            parse(good.replace("database format:", "database:").as_bytes()),
+            Err(UserConfError::UnknownDatabaseFormat)
+        ));
     }
 
     #[test]
@@ -1116,7 +1199,7 @@ mod tests {
         assert!(negative.is_conform(&versions));
         assert!(negative.to_text().ends_with("open counter:-3\n"));
         assert_eq!(
-            UserTableInfo::parse(negative.to_text().as_bytes()).expect("parse"),
+            parse(negative.to_text().as_bytes()).expect("parse"),
             negative
         );
     }
@@ -1132,7 +1215,7 @@ mod tests {
             text.starts_with("binary format version:-1\nmodel data version:-2147483648\n"),
             "{text}"
         );
-        assert_eq!(UserTableInfo::parse(text.as_bytes()).expect("parse"), info);
+        assert_eq!(parse(text.as_bytes()).expect("parse"), info);
     }
 
     fn conform_with(token: &str) -> UserTableInfo {

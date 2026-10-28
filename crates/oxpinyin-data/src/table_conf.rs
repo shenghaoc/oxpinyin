@@ -1,26 +1,16 @@
-//! Reader for the bigram interpolation weight λ in the model's `table.conf`.
+//! The bigram interpolation weight λ of the model's `table.conf`.
 //!
-//! The decoder reads λ from the model config rather than hardcoding it. The
-//! `table.conf` format and the pinned value are recorded in
-//! `docs/findings/data-formats.md` §3 (`lambda parameter:0.312699`, verified
-//! against the oracle's installed copy). `table.conf` is a config artifact,
-//! not part of the fetched `model20.text.tar.gz` (which carries only
-//! `interpolation2.text` + the `.table` files — see
-//! `docs/findings/model-provenance.md`); the fetched cache has none, so a
-//! caller reads one only when an install / data dir provides it (e.g. a C-ABI
-//! `system_dir`) and otherwise falls back to [`Lambda::PINNED`].
+//! [`crate::table_info::TableConf::load`] scans `lambda parameter:` with the
+//! pin's `fscanf("%f")` (`docs/findings/data-formats.md` §3 records the
+//! pinned `0.312699`). The scanned `gfloat` is λ; [`Lambda`] is the exact
+//! rational the decoder's integer path uses where that `gfloat` has one
+//! ([`Lambda::from_f32`]).
 //!
 //! Invariants:
 //!
-//! - λ ∈ `[0, 1]`. A `lambda parameter:` value `> 1` (or a non-decimal) is
-//!   rejected as if the line were absent, so the fallback stands.
-//! - λ is held as the **exact decimal rational** the file denotes, reduced to
-//!   lowest terms (`0.312699` → `312699 / 1_000_000`), so the decode
-//!   interpolation stays in the deterministic integer path (no float in the
-//!   hot path — constitution §6).
-
-use std::fs;
-use std::path::Path;
+//! - A [`Lambda`] is in `[0, 1]`; a value outside it has no rational and
+//!   the decoder runs the pin's float arithmetic on the `gfloat`.
+//! - λ is held reduced to lowest terms (`0.312699` → `312699 / 1_000_000`).
 
 /// λ recorded for the pinned model in `data-formats.md` §3
 /// (`lambda parameter:0.312699`), as an `f32`. Convenience for logging and
@@ -66,6 +56,26 @@ impl Lambda {
     #[must_use]
     pub fn as_f64(self) -> f64 {
         self.numerator as f64 / self.denominator as f64
+    }
+
+    /// The rational routing value of a scanned `gfloat` (maintainer ruling
+    /// 2026-10-28 UTC, D1): the exact rational of its shortest
+    /// round-tripping decimal, when that is a plain decimal in `[0, 1]`
+    /// whose denominator fits a `u128`. `None` sends the decoder to the
+    /// pin's float arithmetic on the `gfloat` itself.
+    ///
+    /// The scanned value is the only source of λ: the `table.conf` text is
+    /// never re-read. This bridge between the exact-rational decoder path
+    /// and the pin's `gfloat` is temporary; #1378 removes it.
+    #[must_use]
+    pub fn from_f32(value: f32) -> Option<Self> {
+        if !value.is_finite() {
+            return None;
+        }
+        // `Display` writes the shortest decimal that reads back as `value`,
+        // without an exponent; a negative value or zero keeps its sign and
+        // is refused below.
+        Self::from_decimal(&value.to_string())
     }
 
     /// Parses a decimal literal (`0.312699`, `0.5`, `1`) into the exact
@@ -134,98 +144,34 @@ const fn gcd(mut a: u128, mut b: u128) -> u128 {
     if a == 0 { 1 } else { a }
 }
 
-/// Parses the `lambda parameter:` line from a `table.conf` body into an exact
-/// rational (`data-formats.md` §3). Returns `None` when the line is absent or
-/// its value is not a plain decimal in `[0, 1]`.
-#[must_use]
-pub fn parse_table_conf_lambda(text: &str) -> Option<Lambda> {
-    for line in text.lines() {
-        if let Some(rest) = line.strip_prefix("lambda parameter:") {
-            return Lambda::from_decimal(rest);
-        }
-    }
-    None
-}
-
-/// Reads λ from a `table.conf` at `path`, returning `None` when the file is
-/// absent, not a regular file, unreadable, or carries no parsable
-/// `lambda parameter:` line.
-///
-/// The decoder falls back to [`Lambda::PINNED`] on `None`, so a missing
-/// `table.conf` (the normal fetched-cache case) is not an error.
-#[must_use]
-pub fn read_table_conf_lambda(path: &Path) -> Option<Lambda> {
-    // Not a regular file means "no config", the same answer every other
-    // optional-file path in this crate gives (`punct.rs`,
-    // `phrase_libraries.rs`, `dict.rs`). Without the check a FIFO here
-    // would not fail — `File::open` is `O_RDONLY` with no `O_NONBLOCK`,
-    // so the read blocks until a writer appears and `pinyin_init` never
-    // returns.
-    if !path.is_file() {
-        return None;
-    }
-    let text = fs::read_to_string(path).ok()?;
-    parse_table_conf_lambda(&text)
-}
-
 #[cfg(test)]
 mod tests {
-    #[cfg(unix)]
-    use super::read_table_conf_lambda;
-    use super::{Lambda, PINNED_LAMBDA, parse_table_conf_lambda};
+    use super::{Lambda, PINNED_LAMBDA};
 
-    /// A FIFO at the `table.conf` path must read as "no config", not block
-    /// `pinyin_init` forever waiting for a writer. Runs the read on a worker
-    /// so a regression fails the test instead of hanging the suite.
-    #[cfg(unix)]
     #[test]
-    fn a_fifo_table_conf_reads_as_absent_without_blocking() {
-        let dir = tempfile::Builder::new()
-            .prefix("oxpinyin-table-conf-")
-            .tempdir()
-            .expect("temp dir");
-        let path = dir.path().join("table.conf");
-        let made = std::process::Command::new("mkfifo")
-            .arg(&path)
-            .status()
-            .is_ok_and(|status| status.success());
-        if !made {
-            return; // no mkfifo on this host; nothing to assert
-        }
-
-        let (tx, rx) = std::sync::mpsc::channel();
-        let probe = path.clone();
-        std::thread::spawn(move || {
-            let _ = tx.send(read_table_conf_lambda(&probe));
-        });
-        let verdict = rx.recv_timeout(std::time::Duration::from_secs(10));
-
-        match verdict {
-            Ok(lambda) => assert!(lambda.is_none(), "a FIFO carries no lambda"),
-            Err(_) => panic!("read_table_conf_lambda blocked on a FIFO"),
-        }
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn a_directory_table_conf_reads_as_absent() {
-        let dir = tempfile::Builder::new()
-            .prefix("oxpinyin-table-conf-d-")
-            .tempdir()
-            .expect("temp dir");
-        let path = dir.path().join("table.conf");
-        std::fs::create_dir_all(&path).expect("temp dir");
-        assert!(read_table_conf_lambda(&path).is_none());
+    fn the_pinned_gfloat_routes_to_the_pinned_rational() {
+        assert_eq!(Lambda::from_f32(PINNED_LAMBDA), Some(Lambda::PINNED));
     }
 
     #[test]
-    fn pinned_table_conf_line_parses_to_the_pinned_rational() {
-        let lambda =
-            parse_table_conf_lambda("binary format version:7\nlambda parameter:0.312699\n")
-                .expect("parses");
-        assert_eq!(lambda, Lambda::PINNED);
-        assert_eq!(lambda.numerator(), 312_699);
-        assert_eq!(lambda.denominator(), 1_000_000);
+    fn a_gfloat_routes_by_its_shortest_decimal() {
+        assert_eq!(Lambda::from_f32(0.5), Lambda::from_decimal("0.5"));
+        assert_eq!(Lambda::from_f32(1.0), Lambda::from_decimal("1"));
+        assert_eq!(Lambda::from_f32(0.0), Lambda::from_decimal("0"));
+        assert_eq!(
+            Lambda::from_f32(1e-30),
+            Lambda::from_decimal(&format!("0.{}1", "0".repeat(29)))
+        );
+        for value in [
+            -0.0_f32,
+            -0.5,
+            1.5,
+            f32::from_bits(1),
+            f32::NAN,
+            f32::INFINITY,
+        ] {
+            assert_eq!(Lambda::from_f32(value), None, "{value}");
+        }
     }
 
     #[test]
@@ -260,10 +206,5 @@ mod tests {
         assert_eq!(Lambda::from_decimal("-0.3"), None);
         assert_eq!(Lambda::from_decimal("1e-3"), None);
         assert_eq!(Lambda::from_decimal("abc"), None);
-    }
-
-    #[test]
-    fn absent_line_is_none() {
-        assert_eq!(parse_table_conf_lambda("binary format version:7\n"), None);
     }
 }

@@ -128,6 +128,14 @@ class UserDirectoryListingTests(unittest.TestCase):
             'sub': None,
         })
 
+    def test_a_user_conf_directory_is_listed_as_a_non_file(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            user = Path(scratch) / 'user-dir-conf'
+            user.mkdir()
+            (user / 'user.conf').mkdir()
+            listing = execution.user_dir_listing(scratch, set())
+        self.assertEqual(listing, {'user.conf': None})
+
     def test_the_directories_it_lists_are_removed_and_the_others_stay(self):
         with tempfile.TemporaryDirectory() as scratch:
             root = Path(scratch)

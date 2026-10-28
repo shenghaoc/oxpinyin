@@ -64,7 +64,7 @@ after the rewrite.
   with `// SAFETY:`; output a pure function of (input, user state,
   config).
 - Loose coupling: oxpinyin exists to undo libpinyin's tight coupling
-  while keeping its behaviour. The planned `oxpinyin-input` boundary is
+  while keeping its behaviour. The `oxpinyin-input` boundary is
   an additional crate; the aim is fewer unnecessary edges, not fewer
   crates, and no unrelated workspace restructuring. Carrying a concrete type through the code that uses it
   is not a "generic-runtime rewrite": type erasure (`dyn`) stays only

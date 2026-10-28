@@ -129,9 +129,10 @@ const UNIGRAM_TIEBREAK_SCALE: i64 = 16;
 /// Interpolated `(numerator, denominator)` for `λ·b/bt + (1 − λ)·u/ut` over a
 /// common denominator, where `λ = lambda_num / lambda_den`.
 ///
-/// Returns `None` if any `u128` product overflows — reachable only for a
-/// pathological λ denominator, which the caller floors at `UNKNOWN_COST`
-/// rather than panicking (constitution §4). [`Lambda`] keeps
+/// Returns `None` if any `u128` product overflows — reachable for a λ whose
+/// decimal needs a large denominator (`1e-30`). The caller then prices the
+/// step with the pin's float arithmetic on the `gfloat` λ instead
+/// (maintainer ruling 2026-10-28 UTC, D1). [`Lambda`] keeps
 /// `lambda_num ≤ lambda_den`, so the `(1 − λ)` weight never underflows.
 fn interpolate_ratio(
     lambda_num: u128,
@@ -242,10 +243,12 @@ pub struct BigramLanguageModel {
     /// `data-formats.md` §3) otherwise. Read from config rather than
     /// hardcoded.
     lambda: Lambda,
-    /// λ as the pin's `gfloat` when `table.conf` spells a value the exact
-    /// decimal form cannot hold (outside `[0, 1]`, an exponent, `inf`,
-    /// `nan`): the interpolation then runs the pin's `gfloat`/`gdouble`
-    /// arithmetic (`phonetic_lookup.h:663`, `:693`) up to the `log`.
+    /// λ as the pin's `gfloat` when the scanned value has no exact
+    /// rational ([`Lambda::from_f32`]: outside `[0, 1]`, `inf`, `nan`, or a
+    /// decimal too long for a `u128`): the interpolation then runs the pin's
+    /// `gfloat`/`gdouble` arithmetic (`phonetic_lookup.h:663`, `:693`) up to
+    /// the `log`. A rational λ whose step overflows `u128` takes the same
+    /// arithmetic on [`Self::lambda_f32`] for that step.
     lambda_raw: Option<f32>,
     /// λ as the pin's `gfloat`, whichever way it was installed: the weight of
     /// the candidate frequency law.
@@ -384,22 +387,19 @@ impl BigramLanguageModel {
         }
     }
 
-    /// Reads λ from a model's `table.conf` and installs it (`data-formats.md`
-    /// §3).
+    /// Reads λ from a model's `table.conf` with the pin's scanner
+    /// ([`crate::table_info::TableConf::load_path`]) and installs it
+    /// (`data-formats.md` §3).
     ///
-    /// Returns `true` when a `table.conf` with a parsable `lambda parameter:`
-    /// line was found and applied; `false` when the file is absent or carries
-    /// no such line, in which case λ is left unchanged. Never errors: a
-    /// missing config is the normal case.
+    /// Returns `true` when the file loads as `SystemTableInfo2::load` would
+    /// accept it; `false` otherwise, in which case λ is left unchanged.
     pub fn set_lambda_from_table_conf(&mut self, table_conf_path: &Path) -> bool {
-        match crate::table_conf::read_table_conf_lambda(table_conf_path) {
-            Some(lambda) => {
-                self.lambda = lambda;
-                self.lambda_raw = None;
-                self.lambda_f32 = lambda.as_f64() as f32;
+        match crate::table_info::TableConf::load_path(table_conf_path) {
+            Ok(conf) => {
+                self.set_lambda_from_conf(&conf);
                 true
             }
-            None => false,
+            Err(_) => false,
         }
     }
 
@@ -581,8 +581,8 @@ impl BigramLanguageModel {
             Some((bigram_count, bigram_total, _)) => {
                 // λ·b/bt + (1 − λ)·u/ut over a common denominator, with λ =
                 // lambda_num / lambda_den from the model config. Checked
-                // arithmetic: a pathological λ denominator floors at
-                // UNKNOWN_COST rather than overflowing (constitution §4).
+                // arithmetic: where a product overflows `u128` the step takes
+                // the pin's float arithmetic on the `gfloat` λ (D1).
                 // The inputs are the merged counts; the formula is unchanged.
                 match interpolate_ratio(
                     self.lambda.numerator(),
@@ -596,7 +596,14 @@ impl BigramLanguageModel {
                         let (numerator, denominator) = reduce_ratio(numerator, denominator);
                         Ok(surprisal(numerator, denominator))
                     }
-                    None => Ok(UNKNOWN_COST),
+                    None => Ok(raw_blend_cost(
+                        self.lambda_f32,
+                        bigram_count,
+                        bigram_total,
+                        unigram,
+                        unigram_total,
+                    )
+                    .unwrap_or(UNKNOWN_COST)),
                 }
             }
             // Previous token absent from both grams (no evidence of this
@@ -831,15 +838,19 @@ impl BigramLanguageModel {
         let lambda_den = self.lambda.denominator();
         let one_minus_lambda = lambda_den.saturating_sub(lambda_num);
 
-        // The no-evidence branch: (1 − λ) · u / ut.
-        let unigram = (count > 0)
-            .then(|| {
-                one_minus_lambda
-                    .checked_mul(u128::from(count))
-                    .zip(lambda_den.checked_mul(u128::from(unigram_total)))
-            })
-            .flatten()
-            .and_then(|ratio| ratio_cost(ratio, memo));
+        // The no-evidence branch: (1 − λ) · u / ut, or the pin's float
+        // arithmetic where the product overflows `u128` (D1).
+        let unigram = if count > 0 {
+            match one_minus_lambda
+                .checked_mul(u128::from(count))
+                .zip(lambda_den.checked_mul(u128::from(unigram_total)))
+            {
+                Some(ratio) => ratio_cost(ratio, memo),
+                None => raw_unigram_cost(self.lambda_f32, count, unigram_total),
+            }
+        } else {
+            None
+        };
 
         // The blended branch, only when the merged bigram row actually
         // carries this successor: upstream's bigram expansion walks
@@ -854,27 +865,26 @@ impl BigramLanguageModel {
         let blended = match transition()? {
             Some((0, 0, true)) => Some(oxpinyin_core::cost::NAN_COST),
             Some((_, 0, true)) => Some(zero_total_bigram_cost(lambda_num)),
-            Some((bigram_count, bigram_total, true)) => interpolate_ratio(
+            Some((bigram_count, bigram_total, true)) => match interpolate_ratio(
                 lambda_num,
                 lambda_den,
                 u128::from(bigram_count),
                 u128::from(bigram_total),
                 u128::from(count),
                 u128::from(unigram_total),
-            )
-            .and_then(|ratio @ (numerator, denominator)| {
-                if numerator > denominator {
-                    raw_blend_cost(
-                        self.lambda_f32,
-                        bigram_count,
-                        bigram_total,
-                        count,
-                        unigram_total,
-                    )
-                } else {
+            ) {
+                Some(ratio @ (numerator, denominator)) if numerator <= denominator => {
                     ratio_cost(ratio, memo)
                 }
-            }),
+                // Above one, or a product that overflows `u128` (D1).
+                Some(_) | None => raw_blend_cost(
+                    self.lambda_f32,
+                    bigram_count,
+                    bigram_total,
+                    count,
+                    unigram_total,
+                ),
+            },
             _ => None,
         };
 

@@ -11,7 +11,7 @@ use std::path::PathBuf;
 
 use oxpinyin_core::{Dictionary, LanguageModel, PhraseToken, SyllableKey};
 use oxpinyin_engine::{EmptyConfigSource, KeyOutcome, Selection};
-use oxpinyin_runtime::{OpenError, Runtime, RuntimeSession};
+use oxpinyin_runtime::{OpenError, Runtime, RuntimeSession, TableConfError};
 use oxpinyin_user::{FIRST_USER_TOKEN, PinyinKey, SENTENCE_START};
 
 /// A fresh, uniquely named scratch dir, removed on drop (including unwind).
@@ -35,12 +35,7 @@ fn w3_dir() -> PathBuf {
 
 #[test]
 fn token_text_reads_live_items_and_obeys_library_visibility() {
-    let runtime = Runtime::open(
-        &w3_dir(),
-        None,
-        oxpinyin_data::table_info::read_decimal_lambda,
-    )
-    .expect("runtime");
+    let runtime = Runtime::open(&w3_dir(), None).expect("runtime");
     let dict = runtime.dict();
     let mut store = runtime.user_store().expect("transient user store");
     let system = dict.system().tokens_for_text("你").expect("lookup")[0];
@@ -88,12 +83,7 @@ fn token_text_reads_live_items_and_obeys_library_visibility() {
 fn trellis_records_filter_user_tones_and_refresh_after_import() {
     let tmp = scratch_dir("oxpinyin-trellis-records-");
     let dir = tmp.path().to_path_buf();
-    let runtime = Runtime::open(
-        &w3_dir(),
-        Some(&dir),
-        oxpinyin_data::table_info::read_decimal_lambda,
-    )
-    .expect("runtime");
+    let runtime = Runtime::open(&w3_dir(), Some(&dir)).expect("runtime");
     let dict = runtime.dict();
     let syllables = [
         SyllableKey::from_text("ni").unwrap(),
@@ -151,12 +141,7 @@ fn sends_and_syncs() {
 
 #[test]
 fn opens_the_w3_fixture_and_decodes_nihao() {
-    let runtime = Runtime::open(
-        &w3_dir(),
-        None,
-        oxpinyin_data::table_info::read_decimal_lambda,
-    )
-    .expect("the fixture dir opens");
+    let runtime = Runtime::open(&w3_dir(), None).expect("the fixture dir opens");
     let mut session = runtime.new_session(&EmptyConfigSource).expect("session");
     let outcome = session.type_pinyin("nihao").expect("batch typing");
     assert_eq!(outcome, KeyOutcome::Consumed);
@@ -173,11 +158,36 @@ fn opens_the_w3_fixture_and_decodes_nihao() {
     assert_eq!(best, "你好");
 }
 
+/// `SystemTableInfo2::load` is the pin's first step, and a `table.conf` it
+/// cannot open fails the init however complete the rest of the directory
+/// is (maintainer ruling 2026-10-28 UTC, D3).
+#[test]
+fn open_refuses_a_directory_without_table_conf() {
+    let tmp = scratch_dir("oxpinyin-runtime-no-conf-");
+    for entry in std::fs::read_dir(w3_dir()).expect("w3 fixture") {
+        let entry = entry.expect("w3 entry");
+        if entry.file_name() != "table.conf" {
+            std::fs::copy(entry.path(), tmp.path().join(entry.file_name())).expect("copy");
+        }
+    }
+    assert!(
+        tmp.path()
+            .join(oxpinyin_data::SystemDbm::PinyinIndex.file_name())
+            .exists()
+    );
+    match Runtime::open(tmp.path(), None) {
+        Err(OpenError::TableConf(TableConfError::Unopenable)) => {}
+        Err(other) => panic!("expected an unopenable table.conf, got {other}"),
+        Ok(_) => panic!("a directory without table.conf must not open"),
+    }
+}
+
 #[test]
 fn open_refuses_a_directory_without_the_dbms() {
     let tmp = scratch_dir("oxpinyin-runtime-empty-");
     let dir = tmp.path().to_path_buf();
-    match Runtime::open(&dir, None, oxpinyin_data::table_info::read_decimal_lambda) {
+    std::fs::copy(w3_dir().join("table.conf"), dir.join("table.conf")).expect("table.conf");
+    match Runtime::open(&dir, None) {
         Err(OpenError::Missing(path)) => {
             assert!(
                 path.ends_with(oxpinyin_data::SystemDbm::PinyinIndex.file_name()),
@@ -193,12 +203,7 @@ fn open_refuses_a_directory_without_the_dbms() {
 fn open_reads_no_records_beyond_the_handles() {
     // The fixture opens with real counts straight from the chunk files:
     // no interpolation text, no fixture mode.
-    let runtime = Runtime::open(
-        &w3_dir(),
-        None,
-        oxpinyin_data::table_info::read_decimal_lambda,
-    )
-    .expect("open");
+    let runtime = Runtime::open(&w3_dir(), None).expect("open");
     let lm = runtime.lm();
     assert!(LanguageModel::has_real_unigrams(&lm));
     let total = LanguageModel::unigram_total(&lm)
@@ -210,12 +215,7 @@ fn open_reads_no_records_beyond_the_handles() {
 
 #[test]
 fn selection_advances_and_commit_returns_the_chosen_text() {
-    let runtime = Runtime::open(
-        &w3_dir(),
-        None,
-        oxpinyin_data::table_info::read_decimal_lambda,
-    )
-    .expect("open");
+    let runtime = Runtime::open(&w3_dir(), None).expect("open");
     let mut session = runtime.new_session(&EmptyConfigSource).expect("session");
     session.type_pinyin("nihao").expect("typing");
     let advanced = session.select(0).expect("first candidate selects");
@@ -233,12 +233,7 @@ fn usable_user_dir_feeds_the_merged_lookup_and_overlay() {
     let tmp = scratch_dir("oxpinyin-runtime-user-");
     let dir = tmp.path().to_path_buf();
 
-    let runtime = Runtime::open(
-        &w3_dir(),
-        Some(&dir),
-        oxpinyin_data::table_info::read_decimal_lambda,
-    )
-    .expect("open");
+    let runtime = Runtime::open(&w3_dir(), Some(&dir)).expect("open");
     let mut store = runtime.user_store().expect("usable user dir opens a store");
     let syllables: Vec<SyllableKey> = ["ni", "hao"]
         .iter()
@@ -305,8 +300,12 @@ fn usable_user_dir_feeds_the_merged_lookup_and_overlay() {
     drop(store);
 }
 
+/// A regular file as the user dir cannot hold `user.conf`: the pin's
+/// `check_format` writes its `write %s failed.` line, ignores the save's
+/// answer (`pinyin.cpp:187`; maintainer ruling 2026-10-28 UTC, D4) and the
+/// context keeps its user state, which no save can write.
 #[test]
-fn regular_file_as_user_dir_degrades_to_no_user_state() {
+fn regular_file_as_user_dir_keeps_user_state() {
     let mut file = tempfile::Builder::new()
         .prefix("oxpinyin-runtime-file-user-")
         .suffix(".tmp")
@@ -316,17 +315,15 @@ fn regular_file_as_user_dir_degrades_to_no_user_state() {
     // Only the path is kept: no handle on the file stays open across the
     // open below.
     let marker = file.into_temp_path();
-    let runtime = Runtime::open(
-        &w3_dir(),
-        Some(&*marker),
-        oxpinyin_data::table_info::read_decimal_lambda,
-    );
-    // A non-directory user path must not fail init (capi contract); it
-    // simply leaves the engine without learning state.
+    let runtime = Runtime::open(&w3_dir(), Some(&*marker));
+    // A non-directory user path must not fail init (capi contract).
     if let Err(error) = &runtime {
         panic!("expected open to succeed over a file user dir: {error}");
     }
-    assert!(runtime.expect("open").user_store().is_none());
+    let runtime = runtime.expect("open");
+    let store = runtime.user_store().expect("user state");
+    assert!(store.has_user_directory());
+    drop(runtime);
     marker.close().expect("cleanup temp file");
 }
 
@@ -336,24 +333,14 @@ fn no_user_path_means_transient_user_state() {
     // `m_user_dir`). The empty path is a different argument — the
     // working directory, as the pin's `""` is — and writes there, so it
     // has an executable of its own: `tests/empty_user_dir.rs`.
-    let runtime = Runtime::open(
-        &w3_dir(),
-        None,
-        oxpinyin_data::table_info::read_decimal_lambda,
-    )
-    .expect("open");
+    let runtime = Runtime::open(&w3_dir(), None).expect("open");
     let store = runtime.user_store().expect("transient store");
     assert!(!store.has_user_directory());
 }
 
 #[test]
 fn addon_unigram_totals_stay_none_until_a_library_loads() {
-    let runtime = Runtime::open(
-        &w3_dir(),
-        None,
-        oxpinyin_data::table_info::read_decimal_lambda,
-    )
-    .expect("open");
+    let runtime = Runtime::open(&w3_dir(), None).expect("open");
     let lm = runtime.lm();
     assert_eq!(
         LanguageModel::addon_unigram_total(&lm).expect("infallible query"),
@@ -388,12 +375,7 @@ fn phrase_prefix_exists_survives_the_gbk_unload_and_the_reload_restores_the_fast
     // regress with the mask armed, and the dead-end guarantee
     // `nbest::widen_probe` needs for termination must survive both
     // branches (`mask == 0` fast path and the visibility-filtered probe).
-    let runtime = Runtime::open(
-        &w3_dir(),
-        None,
-        oxpinyin_data::table_info::read_decimal_lambda,
-    )
-    .expect("open");
+    let runtime = Runtime::open(&w3_dir(), None).expect("open");
     let dict = runtime.dict();
 
     let ni_hao: Vec<SyllableKey> = ["ni", "hao"]
@@ -446,12 +428,7 @@ fn phrase_prefix_exists_survives_the_gbk_unload_and_the_reload_restores_the_fast
 // `key_costs_cache_stays_stamp_true_under_concurrent_visibility_flips`.
 #[test]
 fn gbk_visibility_changes_the_key_cost_table() {
-    let runtime = Runtime::open(
-        &w3_dir(),
-        None,
-        oxpinyin_data::table_info::read_decimal_lambda,
-    )
-    .expect("open");
+    let runtime = Runtime::open(&w3_dir(), None).expect("open");
     let dict = runtime.dict();
     let lm = runtime.lm();
 
@@ -481,12 +458,7 @@ fn gbk_visibility_changes_the_key_cost_table() {
 
 #[test]
 fn rejected_unigram_add_keeps_item_and_library_counts_but_moves_facade_total() {
-    let runtime = Runtime::open(
-        &w3_dir(),
-        None,
-        oxpinyin_data::table_info::read_decimal_lambda,
-    )
-    .expect("open");
+    let runtime = Runtime::open(&w3_dir(), None).expect("open");
     let dict = runtime.dict();
     let store = runtime.user_store().expect("store");
     let before = runtime.lm().amplified_total() as u32;
@@ -528,12 +500,7 @@ fn rejected_unigram_add_keeps_item_and_library_counts_but_moves_facade_total() {
 /// `phrase_index.h:633`), whether or not the item accepts the delta.
 #[test]
 fn the_facade_total_delta_wraps_like_a_guint32() {
-    let runtime = Runtime::open(
-        &w3_dir(),
-        None,
-        oxpinyin_data::table_info::read_decimal_lambda,
-    )
-    .expect("open");
+    let runtime = Runtime::open(&w3_dir(), None).expect("open");
     let dict = runtime.dict();
     let before = runtime.lm().amplified_total() as u32;
     let token = dict
@@ -558,12 +525,7 @@ fn fresh_nbest_step_observes_training_store_writes_and_mask_out() {
     use oxpinyin_core::NbestStepRow;
     let tmp = scratch_dir("oxpinyin-nbest-step-");
     let dir = tmp.path().to_path_buf();
-    let runtime = Runtime::open(
-        &w3_dir(),
-        Some(&dir),
-        oxpinyin_data::table_info::read_decimal_lambda,
-    )
-    .unwrap();
+    let runtime = Runtime::open(&w3_dir(), Some(&dir)).unwrap();
     let mut store = runtime.user_store().unwrap();
     let keys: Vec<_> = ["ni", "hao"]
         .into_iter()
@@ -608,12 +570,7 @@ fn cached_nbest_row_observes_a_cloned_stores_committed_write() {
     use oxpinyin_core::{NbestStepRow, NbestSuccessors};
     let tmp = scratch_dir("oxpinyin-nbest-snapshot-");
     let dir = tmp.path().to_path_buf();
-    let runtime = Runtime::open(
-        &w3_dir(),
-        Some(&dir),
-        oxpinyin_data::table_info::read_decimal_lambda,
-    )
-    .unwrap();
+    let runtime = Runtime::open(&w3_dir(), Some(&dir)).unwrap();
     let mut store = runtime.user_store().unwrap();
     let keys: Vec<_> = ["ni", "hao"]
         .into_iter()
@@ -692,12 +649,7 @@ fn cached_nbest_row_observes_a_cloned_stores_committed_write() {
 fn trellis_ranges_continued_matches_the_ranges_and_prefix_pair() {
     let tmp = scratch_dir("oxpinyin-trellis-fused-");
     let dir = tmp.path().to_path_buf();
-    let runtime = Runtime::open(
-        &w3_dir(),
-        Some(&dir),
-        oxpinyin_data::table_info::read_decimal_lambda,
-    )
-    .expect("runtime");
+    let runtime = Runtime::open(&w3_dir(), Some(&dir)).expect("runtime");
     let dict = runtime.dict();
     let texts: [&[&str]; 9] = [
         &["ni"],
@@ -786,12 +738,7 @@ fn trellis_ranges_continued_matches_the_ranges_and_prefix_pair() {
 fn a_store_write_between_guesses_reaches_the_second_guess() {
     let tmp = scratch_dir("oxpinyin-guess-memo-");
     let dir = tmp.path().to_path_buf();
-    let runtime = Runtime::open(
-        &w3_dir(),
-        Some(&dir),
-        oxpinyin_data::table_info::read_decimal_lambda,
-    )
-    .unwrap();
+    let runtime = Runtime::open(&w3_dir(), Some(&dir)).unwrap();
     let mut store = runtime.user_store().unwrap();
     let mut session = runtime.new_session(&EmptyConfigSource).unwrap();
     session.type_pinyin("nihao").unwrap();
@@ -821,12 +768,7 @@ fn a_store_write_between_guesses_reaches_the_second_guess() {
 // `trellis_item` answers for each, the memo being filled by the first.
 #[test]
 fn a_path_memo_prices_as_trellis_item_does() {
-    let runtime = Runtime::open(
-        &w3_dir(),
-        None,
-        oxpinyin_data::table_info::read_decimal_lambda,
-    )
-    .unwrap();
+    let runtime = Runtime::open(&w3_dir(), None).unwrap();
     let dict = runtime.dict();
     let syllables = [
         SyllableKey::from_text("ni").unwrap(),

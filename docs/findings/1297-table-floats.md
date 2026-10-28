@@ -3,12 +3,11 @@
 **Reverted — 2026-10-28 UTC.** This record is one of the revert targets in
 [external-io-boundary.md](external-io-boundary.md): external behaviour must
 match libpinyin on the same system, and refusing hexadecimal λ, infinity and
-NaN was a defect. This change is an interim fix for the lambda field only;
-stage 1 of that plan moves the call into `oxpinyin-input` and covers the rest
-of the `table.conf` `fscanf` stream (`%d`, `%255s`, line handling). Both C
-facades now pass the host-libc reader from
-`oxpinyin-capi/src/locale.rs` through the runtime to `TableConf::parse`; data
-keeps `deny(unsafe_code)`. The lambda cases below no longer have active
+NaN was a defect. That change was an interim fix for the lambda field
+only. Stage 1 of that plan (2026-10-28 UTC) moved the call into
+`oxpinyin-input`: `TableConf::load` scans the whole `table.conf` stream with
+the pin's `fscanf` calls, `"lambda parameter:%f\n"` among them, for both
+facades and the tools alike, and the interim `sscanf` reader is gone. The lambda cases below no longer have active
 `POLICY-ACCEPTED` registrations. Incomplete exponents and `0x.` also require
 MATCH on every host; no libc-version branch selects an exemption. The older
 record and observations below remain historical.
@@ -72,7 +71,7 @@ The source-history correction is retained: incomplete exponent rejection arrived
 {
   "schema": 1,
   "record": "1297-table-floats",
-  "status": "current",
+  "status": "reverted",
   "disposition": "POLICY-ACCEPTED",
   "cases": {
     "table-conf-lambda-hex": {

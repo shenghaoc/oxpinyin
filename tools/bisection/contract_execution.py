@@ -45,7 +45,8 @@ def user_dir_listing(scratch, before):
 
     before is the set of prior scratch entries. Scan new user-* directories
     in sorted order, flattening by filename so later names overwrite earlier
-    ones. Replace user.conf newlines with '|'. Hash regular .tmp files and
+    ones. Replace newlines with '|' in a user.conf file; a user.conf that is
+    a directory, as a case can make one, is None like every other non-file. Hash regular .tmp files and
     non-user_ .bin/.dbin files with their sizes; record only size for other files
     and None for non-files.
     Ignore directory-removal errors; file read/stat errors propagate."""
@@ -56,7 +57,7 @@ def user_dir_listing(scratch, before):
             continue
         for name in sorted(os.listdir(path)):
             file = os.path.join(path, name)
-            if name == 'user.conf':
+            if name == 'user.conf' and os.path.isfile(file):
                 listing[name] = Path(file).read_text().replace('\n', '|')
             elif os.path.isfile(file) and (name.endswith('.tmp') or
                                            (not name.startswith('user_') and

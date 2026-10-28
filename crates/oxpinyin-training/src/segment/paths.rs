@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use oxpinyin_data::SystemDbm;
 
 use crate::segment::error::SegmentError;
-use crate::segment::model::parse_table_conf_lambda;
+use crate::segment::model::load_table_conf_lambda;
 
 /// Environment variable naming the extracted model20 directory.
 pub const MODEL_DIR_ENV: &str = "PINYIN_MODEL_DIR";
@@ -123,12 +123,10 @@ pub fn locate_model_dir() -> Option<PathBuf> {
     })
 }
 
-/// Reads λ from `table.conf` if the file exists and parses.
+/// Reads λ from `table.conf` with the pin's scanner, if the load accepts it.
 #[must_use]
 pub fn load_lambda(path: Option<&Path>) -> Option<f32> {
-    let path = path?;
-    let bytes = std::fs::read(path).ok()?;
-    parse_table_conf_lambda(&bytes)
+    load_table_conf_lambda(path?)
 }
 
 fn dir_has(dir: &Path, names: &[&str]) -> bool {

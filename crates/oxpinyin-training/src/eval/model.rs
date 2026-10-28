@@ -326,7 +326,6 @@ mod tests {
     }
 
     fn lambda(value: &str) -> Lambda {
-        oxpinyin_data::parse_table_conf_lambda(&format!("lambda parameter:{value}\n"))
-            .expect("valid lambda")
+        oxpinyin_data::Lambda::from_decimal(value).expect("valid lambda")
     }
 }

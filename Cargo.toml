@@ -4,6 +4,7 @@ members = [
   "crates/oxpinyin-chewing",
   "crates/oxpinyin-core",
   "crates/oxpinyin-data",
+  "crates/oxpinyin-input",
   "crates/oxpinyin-store",
   "crates/oxpinyin-user",
   "crates/oxpinyin-engine",
@@ -60,6 +61,8 @@ oxpinyin-core = { path = "crates/oxpinyin-core" }
 # that is built on its own keeps its `default` and peer features.
 oxpinyin-data = { path = "crates/oxpinyin-data", default-features = false }
 oxpinyin-runtime = { path = "crates/oxpinyin-runtime", default-features = false }
+# The external-I/O boundary: the pin's C library calls behind a safe API.
+oxpinyin-input = { path = "crates/oxpinyin-input" }
 oxpinyin-engine = { path = "crates/oxpinyin-engine" }
 oxpinyin-store = { path = "crates/oxpinyin-store", default-features = false }
 oxpinyin-user = { path = "crates/oxpinyin-user", default-features = false }

@@ -11,12 +11,6 @@ use crate::state::context_ref;
 use crate::types::PinyinContext;
 
 fn init_context(systemdir: *const c_char, userdir: *const c_char) -> *mut PinyinContext {
-    // The pin's first step is `SystemTableInfo2::load` on table.conf
-    // (`pinyin.cpp:337`), which resets the process's LC_NUMERIC to "C"
-    // before it can fail (`table_info.cpp:197`; register row 39), so an
-    // empty or missing system dir leaves the same locale behind as a
-    // successful init.
-    crate::locale::pin_table_info_locale();
     // The pin keeps `g_strdup` of both arguments and opens them by those
     // bytes, so the names are paths, not text (#587). g_build_filename
     // stops at NULL but drops an empty element (074a2219 pinyin.cpp:335,
@@ -24,7 +18,11 @@ fn init_context(systemdir: *const c_char, userdir: *const c_char) -> *mut Pinyin
     let Some(system_path) =
         oxpinyin_capi_marshal::input::filename(oxpinyin_capi_marshal::borrow_c_string!(systemdir))
     else {
-        oxpinyin_data::pin_stderr::emit(&[b"open  failed.\nload  failed!\n"]);
+        // `g_build_filename(NULL, "table.conf", NULL)` is `""`: the load's
+        // `setlocale` and failed `fopen("")` with its `open  failed.` line,
+        // then the init's `load  failed!` (`table_info.cpp:197-202`).
+        let _ = oxpinyin_data::table_info::TableConf::load(c"");
+        oxpinyin_data::c_stderr::table_conf_load_failed(None);
         return ptr::null_mut();
     };
     // The pin's guards test the user pointer (`pinyin.cpp:1133`, `:2671`):
@@ -67,15 +65,13 @@ fn init_context(systemdir: *const c_char, userdir: *const c_char) -> *mut Pinyin
                 );
             } else if let Some(conf_error) = error.table_conf_error() {
                 // A `table.conf` the pin refuses is `false` and one raw
-                // line; one it dies on is one warning (#694, #525).
+                // line (after the load's own `open %s failed.` when it
+                // could not be opened, #545); one it dies on is one warning
+                // (#694, #525).
                 match conf_error.warning() {
                     Some(text) => crate::ffi::log_warning(text),
-                    None => oxpinyin_data::pin_stderr::report_rejected_table_conf(&system_path),
+                    None => oxpinyin_data::c_stderr::table_conf_load_failed(Some(&system_path)),
                 }
-            } else if oxpinyin_data::pin_stderr::report_unopenable_table_conf(&system_path) {
-                // The pin stops at its first step, the `table.conf` it
-                // cannot open, and says so in two raw lines (#545); that is
-                // the whole report.
             } else {
                 crate::ffi::log_warning(&format!(
                     "pinyin_init: {error} (systemdir {system_path:?})"
@@ -206,10 +202,9 @@ pub extern "C" fn pinyin_fini(context: *mut PinyinContext) {
         return;
     }
 
-    // `mark_version`'s user.conf write (`pinyin.cpp:1200`) runs on every
-    // fini and resets LC_NUMERIC to "C" (`table_info.cpp:378`; register
-    // row 39).
-    crate::locale::pin_table_info_locale();
+    // `mark_version`'s user.conf write (`pinyin.cpp:1200`) runs when the
+    // user store drops, through `UserTableInfo::save`, which resets
+    // LC_NUMERIC to "C" (`table_info.cpp:378`; register row 39).
     // SAFETY: `context` was created by `pinyin_init` via `box_context`
     // (= `Box::into_raw`), the registry held its address and this call
     // removed it, so no other call can free it. The caller transfers
@@ -244,18 +239,10 @@ pub fn save_context(context: *mut PinyinContext) -> bool {
     // SAFETY: `context` is non-null and was produced by `pinyin_init`;
     // the unique borrow lasts only for the save call.
     let ctx = unsafe { context_mut(context) };
-    // Past both guards (`pinyin.cpp:1133-1137`) the pin's `mark_version`
-    // writes user.conf and resets LC_NUMERIC to "C" (`:1143`,
-    // `table_info.cpp:378`; register row 39); the two early returns do
+    // Past both guards the save's `mark_version` writes user.conf through
+    // `UserTableInfo::save`, which resets LC_NUMERIC to "C"
+    // (`table_info.cpp:378`; register row 39); the two early returns do
     // not reach it.
-    if ctx
-        .core
-        .user
-        .as_ref()
-        .is_some_and(|user| user.has_user_directory() && user.is_modified())
-    {
-        crate::locale::pin_table_info_locale();
-    }
     let outcome = ctx.save_user(&mut |fault| crate::ffi::log_critical(&fault.critical_message()));
     match outcome {
         // Class (c), `memory_chunk.h:543`/`:547`: a chunk file's header

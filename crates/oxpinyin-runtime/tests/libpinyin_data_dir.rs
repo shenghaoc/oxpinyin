@@ -65,8 +65,7 @@ fn an_unmodified_libpinyin_data_directory_opens_and_decodes() {
         assert!(dir.join(name).is_file(), "{name} missing");
     }
 
-    let runtime = Runtime::open(&dir, None, oxpinyin_data::table_info::read_decimal_lambda)
-        .expect("libpinyin's data dir opens as is");
+    let runtime = Runtime::open(&dir, None).expect("libpinyin's data dir opens as is");
     let dict = runtime.dict();
     let lm = runtime.lm();
 

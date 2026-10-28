@@ -1,13 +1,13 @@
 oxpinyin-function-order-v1	libpinyin.so.15
 init	<&[u8] as <alloc::ffi::c_str::CString>::new::SpecNewImpl>::spec_new_impl
-init	<&str as core::fmt::Display>::fmt [instantiating crate: pinyin]
+init	<&str as <alloc::ffi::c_str::CString>::new::SpecNewImpl>::spec_new_impl
 init	<alloc::collections::btree::map::BTreeMap<alloc::string::String, oxpinyin_engine::config::ConfigValue>>::insert [instantiating crate: oxpinyin_facade]
 init	<alloc::collections::btree::map::BTreeMap<alloc::vec::Vec<u8>, alloc::vec::Vec<u8>> as core::iter::traits::collect::FromIterator<(alloc::vec::Vec<u8>, alloc::vec::Vec<u8>)>>::from_iter::<alloc::vec::into_iter::IntoIter<(alloc::vec::Vec<u8>, alloc::vec::Vec<u8>)>> [instantiating crate: oxpinyin_user]
 init	<alloc::collections::btree::map::BTreeMap<alloc::vec::Vec<u8>, core::option::Option<alloc::vec::Vec<u8>>>>::insert [instantiating crate: oxpinyin_user]
 init	<alloc::collections::btree::map::BTreeMap<u8, u32>>::insert [instantiating crate: oxpinyin_user]
 init	<alloc::collections::btree::map::IntoIter<(u32, alloc::vec::Vec<u16>), alloc::collections::btree::set_val::SetValZST>>::dying_next [instantiating crate: oxpinyin_facade]
 init	<alloc::collections::btree::map::IntoIter<alloc::vec::Vec<u16>, alloc::collections::btree::set_val::SetValZST>>::dying_next [instantiating crate: oxpinyin_user]
-init	<alloc::collections::btree::map::IntoIter<alloc::vec::Vec<u8>, alloc::vec::Vec<u8>>>::dying_next [instantiating crate: pinyin]
+init	<alloc::collections::btree::map::IntoIter<alloc::vec::Vec<u8>, alloc::vec::Vec<u8>>>::dying_next [instantiating crate: oxpinyin_facade]
 init	<alloc::collections::btree::map::IntoIter<u32, alloc::vec::Vec<(u32, oxpinyin_user::phrase::UserPronunciation)>>>::dying_next
 init	<alloc::collections::btree::map::IntoIter<u8, alloc::collections::btree::map::BTreeMap<u32, core::option::Option<oxpinyin_data::chunk_write::ChunkItem>>>>::dying_next [instantiating crate: oxpinyin_facade]
 init	<alloc::collections::btree::map::IntoIter<u8, u32>>::dying_next [instantiating crate: oxpinyin_facade]
@@ -23,12 +23,10 @@ init	<alloc::raw_vec::RawVec<oxpinyin_engine::candidate::Candidate>>::grow_one [
 init	<alloc::raw_vec::RawVec<oxpinyin_engine::cursor::MatrixKey>>::grow_one
 init	<alloc::raw_vec::RawVec<oxpinyin_engine::session::ScanKey>>::grow_one
 init	<alloc::raw_vec::RawVec<u32>>::grow_one [instantiating crate: oxpinyin_core]
-init	<alloc::raw_vec::RawVec<u8>>::grow_one
 init	<alloc::raw_vec::RawVecInner<_>>::reserve::do_reserve_and_handle::<alloc::alloc::Global> [instantiating crate: oxpinyin_data]
 init	<alloc::raw_vec::RawVecInner<_>>::reserve::do_reserve_and_handle::<alloc::alloc::Global> [instantiating crate: oxpinyin_engine]
 init	<alloc::raw_vec::RawVecInner<_>>::reserve::do_reserve_and_handle::<alloc::alloc::Global> [instantiating crate: oxpinyin_user]
 init	<alloc::raw_vec::RawVecInner<_>>::reserve::do_reserve_and_handle::<alloc::alloc::Global> [instantiating crate: std]
-init	<alloc::raw_vec::RawVecInner>::finish_grow
 init	<alloc::raw_vec::RawVecInner>::finish_grow [instantiating crate: oxpinyin_core]
 init	<alloc::raw_vec::RawVecInner>::finish_grow [instantiating crate: oxpinyin_data]
 init	<alloc::raw_vec::RawVecInner>::finish_grow [instantiating crate: oxpinyin_engine]
@@ -37,6 +35,7 @@ init	<alloc::raw_vec::RawVecInner>::finish_grow [instantiating crate: oxpinyin_s
 init	<alloc::raw_vec::RawVecInner>::finish_grow [instantiating crate: oxpinyin_user]
 init	<alloc::raw_vec::RawVecInner>::finish_grow [instantiating crate: pinyin]
 init	<alloc::raw_vec::RawVecInner>::finish_grow [instantiating crate: std]
+init	<alloc::raw_vec::RawVecInner>::try_allocate_in [instantiating crate: oxpinyin_data]
 init	<alloc::raw_vec::RawVecInner>::try_allocate_in [instantiating crate: oxpinyin_runtime]
 init	<alloc::string::String as core::fmt::Write>::write_str
 init	<alloc::string::String>::from_utf8_lossy
@@ -45,26 +44,22 @@ init	<alloc::sync::Arc<std::sync::once_lock::OnceLock<u32>> as core::default::De
 init	<alloc::sync::Arc<std::sync::once_lock::OnceLock<u32>>>::drop_slow [instantiating crate: oxpinyin_data]
 init	<alloc::sync::Arc<std::sync::poison::mutex::Mutex<core::option::Option<(u64, alloc::sync::Arc<std::collections::hash::map::HashMap<alloc::vec::Vec<u8>, alloc::vec::Vec<(alloc::vec::Vec<oxpinyin_chewing::chewing_key::ChewingKey>, oxpinyin_core::vocab::PhraseEntry)>>>)>>> as core::default::Default>::default [instantiating crate: oxpinyin_runtime]
 init	<alloc::sync::Arc<std::sync::poison::mutex::Mutex<core::option::Option<oxpinyin_runtime::TextTokens>>> as core::default::Default>::default
-init	<alloc::vec::Vec<&[u8]> as alloc::vec::spec_from_iter_nested::SpecFromIterNested<&[u8], core::iter::adapters::filter::Filter<core::slice::iter::Split<u8, <u8>::is_ascii_whitespace>, <oxpinyin_data::table_info::TableConf>::parse::{closure#1}>>>::from_iter
-init	<alloc::vec::Vec<(oxpinyin_engine::session::RankKey, u32)> as alloc::vec::spec_from_iter::SpecFromIter<(oxpinyin_engine::session::RankKey, u32), core::iter::adapters::map::Map<core::iter::adapters::enumerate::Enumerate<core::iter::adapters::zip::Zip<core::slice::iter::Iter<oxpinyin_engine::candidate::Candidate>, alloc::vec::into_iter::IntoIter<u64>>>, <oxpinyin_engine::session::Session<oxpinyin_runtime::RuntimeDict, oxpinyin_runtime::RuntimeLm>>::scan_window::{closure#2}>>>::from_iter [instantiating crate: pinyin]
+init	<alloc::vec::Vec<(oxpinyin_engine::session::RankKey, u32)> as alloc::vec::spec_from_iter::SpecFromIter<(oxpinyin_engine::session::RankKey, u32), core::iter::adapters::map::Map<core::iter::adapters::enumerate::Enumerate<core::iter::adapters::zip::Zip<core::slice::iter::Iter<oxpinyin_engine::candidate::Candidate>, alloc::vec::into_iter::IntoIter<u64>>>, <oxpinyin_engine::session::Session<oxpinyin_runtime::RuntimeDict, oxpinyin_runtime::RuntimeLm>>::scan_window::{closure#2}>>>::from_iter [instantiating crate: oxpinyin_facade]
 init	<alloc::vec::Vec<(u8, oxpinyin_data::table_info::FileName)> as alloc::vec::spec_from_iter_nested::SpecFromIterNested<(u8, oxpinyin_data::table_info::FileName), core::iter::adapters::filter_map::FilterMap<core::iter::adapters::filter::Filter<core::iter::adapters::zip::Zip<core::ops::range::RangeFrom<u8>, core::slice::iter::Iter<oxpinyin_data::table_info::TableRow>>, <oxpinyin_data::table_info::TableConf>::rows_of::{closure#0}>, <oxpinyin_data::user_files::UserFileLayout>::from_conf::{closure#0}>>>::from_iter
 init	<alloc::vec::Vec<alloc::string::String>>::dedup_by::<<alloc::vec::Vec<alloc::string::String>>::dedup::{closure#0}> [instantiating crate: oxpinyin_user]
-init	<alloc::vec::Vec<oxpinyin_data::table_info::TableRow> as core::clone::Clone>::clone [instantiating crate: oxpinyin_runtime]
-init	<alloc::vec::Vec<oxpinyin_engine::session::RankKey> as alloc::vec::spec_from_iter::SpecFromIter<oxpinyin_engine::session::RankKey, core::iter::adapters::map::Map<alloc::vec::into_iter::IntoIter<(oxpinyin_engine::session::RankKey, u32)>, <oxpinyin_engine::session::Session<oxpinyin_runtime::RuntimeDict, oxpinyin_runtime::RuntimeLm>>::scan_window::{closure#3}>>>::from_iter [instantiating crate: pinyin]
+init	<alloc::vec::Vec<oxpinyin_engine::session::RankKey> as alloc::vec::spec_from_iter::SpecFromIter<oxpinyin_engine::session::RankKey, core::iter::adapters::map::Map<alloc::vec::into_iter::IntoIter<(oxpinyin_engine::session::RankKey, u32)>, <oxpinyin_engine::session::Session<oxpinyin_runtime::RuntimeDict, oxpinyin_runtime::RuntimeLm>>::scan_window::{closure#3}>>>::from_iter [instantiating crate: oxpinyin_facade]
 init	<alloc::vec::Vec<oxpinyin_engine::session::ScanKey> as alloc::vec::spec_from_elem::SpecFromElem>::from_elem::<alloc::alloc::Global>
 init	<alloc::vec::Vec<u32>>::retain::<<oxpinyin_user::replay::Merge>::finish_lazy<alloc::borrow::Cow<str>>::{closure#0}>::{closure#0}
 init	<compact_str::CompactString>::push
-init	<core::fmt::Formatter>::pad
-init	<core::fmt::Formatter>::pad_integral
-init	<core::fmt::Formatter>::pad_integral::write_prefix
-init	<core::hash::sip::Hasher<core::hash::sip::Sip13Rounds> as core::hash::Hasher>::write [instantiating crate: pinyin]
+init	<core::fmt::Formatter>::pad_formatted_parts
+init	<core::fmt::Formatter>::write_formatted_parts
+init	<core::hash::sip::Hasher<core::hash::sip::Sip13Rounds> as core::hash::Hasher>::write [instantiating crate: oxpinyin_engine]
 init	<core::iter::adapters::filter_map::FilterMap<core::iter::adapters::filter::Filter<core::iter::adapters::zip::Zip<core::ops::range::RangeFrom<u8>, core::slice::iter::Iter<oxpinyin_data::table_info::TableRow>>, <oxpinyin_data::table_info::TableConf>::rows_of::{closure#0}>, <oxpinyin_data::user_files::UserFileLayout>::from_conf::{closure#0}> as core::iter::traits::iterator::Iterator>::next
 init	<core::iter::adapters::filter_map::FilterMap<core::iter::sources::from_fn::FromFn<oxpinyin_data::user_files::log_records::{closure#0}>, <core::result::Result<oxpinyin_data::user_files::LogRecord<&[u8]>, oxpinyin_data::user_files::LogDecodeError>>::ok> as core::iter::traits::iterator::Iterator>::next [instantiating crate: oxpinyin_user]
 init	<core::iter::adapters::map::Map<core::iter::adapters::filter::Filter<core::iter::adapters::map::Map<core::slice::iter::ChunksExact<u8>, oxpinyin_data::row_format::pinyin_index::item_views::{closure#0}>, <oxpinyin_data::chewing_table::ChewingTable>::search::{closure#0}>, <oxpinyin_data::chewing_table::ChewingTable>::search::{closure#1}> as core::iter::traits::iterator::Iterator>::next
 init	<core::slice::iter::Iter<oxpinyin_engine::candidate::Candidate> as core::iter::traits::iterator::Iterator>::fold::<usize, core::iter::adapters::map::map_fold<&oxpinyin_engine::candidate::Candidate, usize, usize, pinyin::sentence::pinyin_guess_candidates::{closure#4}, <usize as core::iter::traits::accum::Sum>::sum<core::iter::adapters::map::Map<core::slice::iter::Iter<oxpinyin_engine::candidate::Candidate>, pinyin::sentence::pinyin_guess_candidates::{closure#4}>>::{closure#0}>::{closure#0}>
 init	<core::str::lossy::Utf8Chunks as core::iter::traits::iterator::Iterator>::next
 init	<hashbrown::raw::RawTableInner>::fallible_with_capacity::<alloc::alloc::Global> [instantiating crate: oxpinyin_engine]
-init	<i32 as core::fmt::Display>::fmt
 init	<memmap2::os::MmapInner>::map_copy_read_only
 init	<oxpinyin_chewing::chewing_key::ChewingKey>::from_pinyin
 init	<oxpinyin_core::graph::SegmentGraph>::build_with_options
@@ -74,6 +69,7 @@ init	<oxpinyin_data::chewing_table::ChewingTable>::key_exists
 init	<oxpinyin_data::chewing_table::ChewingTable>::search
 init	<oxpinyin_data::dict::AddonDictionary>::open_with
 init	<oxpinyin_data::dict::SystemDictionary>::fill_lookup
+init	<oxpinyin_data::dict::SystemDictionary>::open_with
 init	<oxpinyin_data::lm::BigramLanguageModel>::open_with_mask
 init	<oxpinyin_data::phrase_libraries::PhraseLibraries>::load
 init	<oxpinyin_data::phrase_libraries::PhraseLibraries>::unigram_count
@@ -83,14 +79,15 @@ init	<oxpinyin_data::phrase_library::PhraseLibrary>::item_at_slot
 init	<oxpinyin_data::phrase_library::PhraseLibrary>::open
 init	<oxpinyin_data::punct::PunctTable>::open_optional
 init	<oxpinyin_data::system_files::SystemDbm>::file_name
-init	<oxpinyin_data::table_conf::Lambda>::from_decimal
-init	<oxpinyin_data::table_info::ConfigLines as core::iter::traits::iterator::Iterator>::next
-init	<oxpinyin_data::table_info::ConfigLines>::field
+init	<oxpinyin_data::table_conf::Lambda>::from_f32
 init	<oxpinyin_data::table_info::DatabaseFormat>::from_token
+init	<oxpinyin_data::table_info::TableConf>::load
 init	<oxpinyin_data::table_info::TableRow as alloc::vec::spec_from_elem::SpecFromElem>::from_elem::<alloc::alloc::Global>
 init	<oxpinyin_data::table_info::TableRow as core::clone::Clone>::clone
 init	<oxpinyin_data::table_info::TableRow>::named
 init	<oxpinyin_data::user_files::UserDbm>::file_name
+init	<oxpinyin_data::user_files::UserTableInfo>::load
+init	<oxpinyin_data::user_files::UserTableInfo>::save
 init	<oxpinyin_engine::session::Session<oxpinyin_runtime::RuntimeDict, oxpinyin_runtime::RuntimeLm>>::build_graph_at [instantiating crate: oxpinyin_facade]
 init	<oxpinyin_engine::session::Session<oxpinyin_runtime::RuntimeDict, oxpinyin_runtime::RuntimeLm>>::build_graph_at [instantiating crate: pinyin]
 init	<oxpinyin_engine::session::Session<oxpinyin_runtime::RuntimeDict, oxpinyin_runtime::RuntimeLm>>::ensure_matrix [instantiating crate: oxpinyin_facade]
@@ -115,10 +112,11 @@ init	<oxpinyin_facade::instance::InstanceCore>::validate_abi_lookup_offset_over
 init	<oxpinyin_facade::snapshot::CandidateSnapshot<pinyin::state::CapiCandidate>>::intern
 init	<oxpinyin_facade::snapshot::CandidateSnapshot<pinyin::state::CapiCandidate>>::push
 init	<oxpinyin_facade::snapshot::CandidateSnapshot<pinyin::state::CapiCandidate>>::reserve
+init	<oxpinyin_input::config::SystemTableInfoReader>::str
+init	<oxpinyin_input::config::SystemTableInfoReader>::table_row
 init	<oxpinyin_runtime::FacadeBumps as core::default::Default>::default
 init	<oxpinyin_runtime::FacadeBumps>::token
 init	<oxpinyin_runtime::Runtime>::dict
-init	<oxpinyin_runtime::Runtime>::open_with_law
 init	<oxpinyin_runtime::RuntimeDict as oxpinyin_core::Dictionary>::lookup_addon_candidates_into
 init	<oxpinyin_runtime::RuntimeDict as oxpinyin_core::Dictionary>::phrase_prefix_exists
 init	<oxpinyin_runtime::RuntimeDict as oxpinyin_core::Dictionary>::phrase_prefix_exists_addon
@@ -147,35 +145,35 @@ init	<phf::map::Map<&str, u16>>::get_entry::<str> [instantiating crate: oxpinyin
 init	<pinyin::aux_matrix::SharedMatrix>::of_keys
 init	<std::fs::OpenOptions>::_open
 init	<std::hash::random::RandomState as core::hash::BuildHasher>::hash_one::<&&oxpinyin_core::ucs4::PhraseText> [instantiating crate: oxpinyin_engine]
-init	<std::hash::random::RandomState as core::hash::BuildHasher>::hash_one::<&u32> [instantiating crate: pinyin]
+init	<std::hash::random::RandomState as core::hash::BuildHasher>::hash_one::<&u32> [instantiating crate: oxpinyin_engine]
 init	<std::path::Path>::_join
 init	<std::path::Path>::is_file
 init	<std::path::Path>::join::<alloc::string::String> [instantiating crate: oxpinyin_runtime]
-init	<std::sync::once::Once>::call_once_force::<<std::sync::once_lock::OnceLock<alloc::sync::Arc<oxpinyin_core::graph::SegmentGraph>>>::initialize<<std::sync::once_lock::OnceLock<alloc::sync::Arc<oxpinyin_core::graph::SegmentGraph>>>::get_or_init<<std::sync::once_lock::OnceLock<alloc::sync::Arc<oxpinyin_core::graph::SegmentGraph>>>::try_insert::{closure#0}>::{closure#0}, !>::{closure#0}>::{closure#0} [instantiating crate: pinyin]
+init	<std::sync::once::Once>::call_once_force::<<std::sync::once_lock::OnceLock<alloc::sync::Arc<oxpinyin_core::graph::SegmentGraph>>>::initialize<<std::sync::once_lock::OnceLock<alloc::sync::Arc<oxpinyin_core::graph::SegmentGraph>>>::get_or_init<<std::sync::once_lock::OnceLock<alloc::sync::Arc<oxpinyin_core::graph::SegmentGraph>>>::try_insert::{closure#0}>::{closure#0}, !>::{closure#0}>::{closure#0} [instantiating crate: oxpinyin_facade]
 init	<std::sync::once_lock::OnceLock<alloc::sync::Arc<oxpinyin_core::graph::SegmentGraph>>>::initialize::<<std::sync::once_lock::OnceLock<alloc::sync::Arc<oxpinyin_core::graph::SegmentGraph>>>::get_or_init<<std::sync::once_lock::OnceLock<alloc::sync::Arc<oxpinyin_core::graph::SegmentGraph>>>::try_insert::{closure#0}>::{closure#0}, !> [instantiating crate: oxpinyin_facade]
 init	<std::sys::fs::unix::File>::open_c
 init	<std::sys::sync::once::futex::Once>::call
+init	<u128>::from_ascii_radix
 init	__rustc::__rust_alloc
 init	__rustc::__rust_realloc
 init	__udivti3
 init	__umodti3
 init	alloc::boxed::box_new_uninit
-init	alloc::fmt::format::format_inner
-init	core::fmt::write
+init	core::fmt::float::float_to_decimal_common_shortest::<f32>
+init	core::num::imp::flt2dec::digits_to_dec_str
 init	core::ptr::drop_glue::<alloc::collections::btree::dedup_sorted_iter::DedupSortedIter<alloc::string::String, oxpinyin_engine::config::ConfigValue, alloc::vec::into_iter::IntoIter<(alloc::string::String, oxpinyin_engine::config::ConfigValue)>>>
 init	core::ptr::drop_glue::<alloc::collections::btree::map::BTreeMap<u32, alloc::vec::Vec<oxpinyin_user::phrase::UserPronunciation>>>
 init	core::ptr::drop_glue::<alloc::collections::btree::map::BTreeMap<u32, core::option::Option<oxpinyin_data::chunk_write::ChunkItem>>> [instantiating crate: oxpinyin_user]
 init	core::ptr::drop_glue::<alloc::collections::btree::map::BTreeMap<u32, u32>> [instantiating crate: oxpinyin_user]
 init	core::ptr::drop_glue::<alloc::collections::btree::map::BTreeMap<u8, alloc::collections::btree::map::BTreeMap<u32, core::option::Option<oxpinyin_data::chunk_write::ChunkItem>>>> [instantiating crate: oxpinyin_facade]
-init	core::ptr::drop_glue::<alloc::collections::btree::map::IntoIter<alloc::string::String, alloc::collections::btree::map::BTreeMap<alloc::vec::Vec<u8>, core::option::Option<alloc::vec::Vec<u8>>>>> [instantiating crate: pinyin]
+init	core::ptr::drop_glue::<alloc::collections::btree::map::IntoIter<alloc::string::String, alloc::collections::btree::map::BTreeMap<alloc::vec::Vec<u8>, core::option::Option<alloc::vec::Vec<u8>>>>> [instantiating crate: oxpinyin_facade]
 init	core::ptr::drop_glue::<alloc::vec::Vec<(u32, oxpinyin_data::chunk_write::ChunkItem)>>
-init	core::ptr::drop_glue::<alloc::vec::drain::Drain<oxpinyin_core::vocab::PhraseEntry>> [instantiating crate: pinyin]
+init	core::ptr::drop_glue::<alloc::vec::drain::Drain<oxpinyin_core::vocab::PhraseEntry>> [instantiating crate: oxpinyin_facade]
 init	core::ptr::drop_glue::<alloc::vec::into_iter::IntoIter<oxpinyin_user::phrase::UserPhrase>>
 init	core::ptr::drop_glue::<core::result::Result<core::option::Option<usize>, oxpinyin_engine::error::EngineError>> [instantiating crate: pinyin]
 init	core::ptr::drop_glue::<oxpinyin_data::table_info::TableRow>
 init	core::ptr::drop_glue::<oxpinyin_engine::config::ConfigValues> [instantiating crate: oxpinyin_facade]
-init	core::ptr::drop_glue::<oxpinyin_engine::session::Scratch> [instantiating crate: pinyin]
-init	core::ptr::drop_glue::<oxpinyin_runtime::ConfFile>
+init	core::ptr::drop_glue::<oxpinyin_engine::session::Scratch> [instantiating crate: oxpinyin_facade]
 init	core::ptr::drop_glue::<oxpinyin_user::persistence::Loaded> [instantiating crate: oxpinyin_runtime]
 init	core::ptr::drop_glue::<oxpinyin_user::replay::Merge>
 init	core::ptr::drop_glue::<oxpinyin_user::replay::Origin>
@@ -196,8 +194,6 @@ init	oxpinyin_data::row_format::pinyin_index::item_views
 init	oxpinyin_data::table_entries::pinyin_index_entries
 init	oxpinyin_data::table_info::default_index
 init	oxpinyin_data::table_info::join_bytes
-init	oxpinyin_data::table_info::parse_decimal::<i32>
-init	oxpinyin_data::table_info::parse_decimal::<usize>
 init	oxpinyin_data::user_files::decode_log_record_at
 init	oxpinyin_engine::cursor::matrix_keys
 init	oxpinyin_engine::nbest::glib_merge_sort::<(oxpinyin_engine::session::RankKey, u32), oxpinyin_engine::session::glib_rank_sort::{closure#0}>
@@ -208,6 +204,20 @@ init	oxpinyin_engine::session::dynamic_adjust_bigram_possibility
 init	oxpinyin_engine::session::glib_rank_sort
 init	oxpinyin_engine::session::order_window_tail
 init	oxpinyin_facade::snapshot::span_ptr
+init	oxpinyin_input_atoi
+init	oxpinyin_input_fclose
+init	oxpinyin_input_feof
+init	oxpinyin_input_fopen_read
+init	oxpinyin_input_fopen_write
+init	oxpinyin_input_print_user_table_info
+init	oxpinyin_input_scan_binary_format_version
+init	oxpinyin_input_scan_database_format
+init	oxpinyin_input_scan_lambda_parameter
+init	oxpinyin_input_scan_model_data_version
+init	oxpinyin_input_scan_open_counter
+init	oxpinyin_input_scan_source_table_format
+init	oxpinyin_input_scan_table_row
+init	oxpinyin_input_setlocale_numeric
 init	oxpinyin_runtime::open_user_store
 init	oxpinyin_runtime::require_file
 init	oxpinyin_store::tkrzw::drive_scan
@@ -229,7 +239,6 @@ init	oxpinyin_user::store_libpinyin::backed_readings
 init	oxpinyin_user::store_libpinyin::loaded_pronunciation_counts
 init	oxpinyin_user::store_libpinyin::seed_txn_with_replay::<oxpinyin_user::session_values::SessionTxn> [instantiating crate: oxpinyin_runtime]
 init	pinyin::context::log_layout_faults
-init	pinyin::locale::read_lambda
 init	pinyin::sentence::refuse_toned_matrix
 init	pinyin_alloc_instance
 init	pinyin_get_candidate
@@ -247,13 +256,19 @@ init	std::sys::args::unix::imp::ARGV_INIT_ARRAY::init_wrapper
 init	std::sys::fs::metadata
 init	std::sys::fs::unix::try_statx
 init	std::sys::random::linux::hashmap_random_keys
-init	<[&[u8]] as alloc::slice::Concat<u8>>::concat [instantiating crate: oxpinyin_data]
+init	<&str as core::fmt::Display>::fmt [instantiating crate: oxpinyin_user]
 init	<alloc::raw_vec::RawVecInner<_>>::reserve::do_reserve_and_handle::<alloc::alloc::Global>
-init	<std::io::stdio::StderrRaw as std::io::Write>::write_all
-init	core::ptr::drop_glue::<core::result::Result<alloc::vec::Vec<u8>, std::io::error::Error>> [instantiating crate: oxpinyin_user]
+init	<alloc::raw_vec::RawVecInner>::finish_grow
+init	<core::fmt::Formatter>::pad
+init	<core::fmt::Formatter>::pad_integral
+init	<core::fmt::Formatter>::pad_integral::write_prefix
+init	<i32 as core::fmt::Display>::fmt
+init	alloc::fmt::format::format_inner
+init	core::fmt::write
 init	core::ptr::drop_glue::<oxpinyin_data::phrase_library::LibraryError>
+init	core::ptr::drop_glue::<std::io::error::Error> [instantiating crate: oxpinyin_facade]
 init	oxpinyin_data::phrase_library::map_chunk::{closure#0}
-init	oxpinyin_data::pin_stderr::emit
+init	oxpinyin_input_report_user_open_failed
 init	oxpinyin_store::tkrzw::last_status
 init	oxpinyin_store::tkrzw::status_error
 init	std::sys::fs::remove_file

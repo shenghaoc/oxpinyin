@@ -104,7 +104,6 @@ mod cursor;
 mod instance;
 mod iterators;
 mod live;
-mod locale;
 mod parse;
 mod predict;
 mod sentence;

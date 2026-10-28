@@ -7,6 +7,11 @@
 //! lines that are not tied to one crate's work live here as functions of
 //! their own; the callers decide when a line is due, from the error they
 //! hold, never from a message.
+//!
+//! These lines go to Rust's stderr. A line that shares a failure sequence
+//! with one the `oxpinyin-input` shim writes is [`crate::c_stderr`]'s
+//! instead; the rest move to the pin's calls at stage 4 of
+//! `docs/findings/external-io-boundary.md`.
 
 use std::io::Write as _;
 use std::path::Path;
@@ -38,34 +43,12 @@ pub fn build_filename(dir: &Path, name: &str) -> Vec<u8> {
     crate::table_info::join_bytes(path_bytes(dir), name.as_bytes())
 }
 
-/// The pin's own report of a `table.conf` it cannot open
-/// (`table_info.cpp:201`, then `pinyin.cpp:338` and `zhuyin.cpp:282`): two
-/// lines naming the file as `g_build_filename` spells it, and the init is
-/// over. Writes them and answers `true` when `system_dir/table.conf` cannot
-/// be opened; answers `false`, writing nothing, when it can.
-#[must_use]
-pub fn report_unopenable_table_conf(system_dir: &Path) -> bool {
-    if std::fs::File::open(system_dir.join("table.conf")).is_ok() {
-        return false;
-    }
-    let name = build_filename(system_dir, "table.conf");
-    emit(&[b"open ", &name, b" failed.\nload ", &name, b" failed!\n"]);
-    true
-}
-
-/// The pin's report of a `table.conf` it opened but whose header does not
-/// match (`SystemTableInfo2::load` answers `false` at `table_info.cpp:209-224`,
-/// then `pinyin.cpp:338` / `zhuyin.cpp:282`): the single line `load %s
-/// failed!` naming the file as `g_build_filename` spells it.
-pub fn report_rejected_table_conf(system_dir: &Path) {
-    let name = build_filename(system_dir, "table.conf");
-    emit(&[b"load ", &name, b" failed!\n"]);
-}
-
-/// `mmap %s failed!\n`: `MemoryChunk::mmap` refused `path`
-/// (`pinyin.cpp:256`, `:290`, `:956`, `:1265`; `zhuyin.cpp:200`, `:589`,
-/// `:800`). The pin carries on with an empty chunk and dies reading it; the
-/// line is all of its output.
+/// `mmap %s failed!\n`: `MemoryChunk::mmap` refused `path` in a call the
+/// shim writes nothing in: `mask_out` (`pinyin.cpp:1265`, `zhuyin.cpp:800`)
+/// and the library load calls (`pinyin.cpp:256`, `:290` through `:446` and
+/// `:477`). The pin carries on with an empty chunk and dies reading it; the
+/// line is all of its output. The init's and the save's are
+/// [`crate::c_stderr::mmap_failed`].
 pub fn mmap_failed(path: &Path) {
     emit(&[&mmap_failed_line(path)]);
 }
