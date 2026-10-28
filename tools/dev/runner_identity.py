@@ -152,6 +152,20 @@ DRIVERS = {
                Case('dlopen-failure', ('none',), ('{empty}/absent.so', '{data}')),
                Case('bad-mode', ('none',), ('{empty}/absent.so', '{data}', '--bogus')),
                Case('usage', ('none',), ('{empty}/absent.so',)))),
+    'live-typing-diff': Driver(
+        templates=('/tmp/livetypingdiff-user-',),
+        cases=(Case('default', ('pin', 'subject')),
+               *(Case(f'rounds-{rounds}', ('pin', 'subject'),
+                      env=(('LIVETYPING_ROUNDS', rounds),))
+                 for rounds in ('1', '8')),
+               Case('missing-symbol', ('stub',)),
+               Case('init-failure', ('pin', 'subject'), ('{so}', '{empty}')),
+               *(Case(f'bad-rounds-{label}', ('none',), ('{empty}/absent.so', '{data}'),
+                      (('LIVETYPING_ROUNDS', value),))
+                 for label, value in (('empty', ''), ('0', '0'), ('9', '9'), ('junk', '3junk'),
+                                      ('overflow', '99999999999999999999'))),
+               Case('dlopen-failure', ('none',), ('{empty}/absent.so', '{data}')),
+               Case('usage', ('none',), ('{empty}/absent.so',)))),
 }
 
 
