@@ -46,6 +46,7 @@ series lives in `../perf/`.
 | [`berkeleydb-compat-phase1`](berkeleydb-compat-phase1.md) | BerkeleyDB compatibility — Phase 1 survey | landed 2026-09-12 (→ `berkeleydb-backend.md`) |
 | [`bigram-punct-format-2026-09-01`](bigram-punct-format-2026-09-01.md) | libpinyin bigram and punctuation formats — P4 source-level findings | verified (P4) |
 | [`bopomofo-spec`](bopomofo-spec.md) | Bopomofo/Zhuyin scheme SPEC | frozen |
+| [`branch-audit-2026-10-28`](branch-audit-2026-10-28.md) | Remote branch audit: which `origin` branches have landed on main, their PRs, and a proposed delete list | audit |
 | [`build-flags-audit`](build-flags-audit.md) | build-flags-audit.md — the configure flags the pin exposes vs oxpinyin | audit |
 | [`candidate-construction`](candidate-construction.md) | Candidate-construction SPEC (Discrepancy 2) | record |
 | [`chewing-crate-seam`](chewing-crate-seam.md) | Findings — the oxpinyin-chewing crate seam (D6) | design rationale |
