@@ -222,6 +222,36 @@ class EquivalenceTests(unittest.TestCase):
         with self.assertRaisesRegex(TypeError, 'wrapped'):
             equivalence.partial_layers(functools.partial(len), self.sentinel)
 
+    def test_an_injected_path_compares_relative_to_the_driver_and_fails_outside_it(self):
+        shapes = []
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(sys.modules):
+            for index in range(2):
+                root = Path(tmp) / str(index)
+                driver = self.moved_helper_tree(root, 'from pathlib import Path\n'
+                                                'WORKER = Path(__file__).resolve().with_name("contract-worker.py")\n'
+                                                'OUTSIDE = Path(__file__).resolve().parents[3]\n'
+                                                'def case(k):\n    return WORKER\n\n'
+                                                'def outside(k):\n    return OUTSIDE\n')
+                shapes.append(equivalence.function_shape(driver.case, driver, self.sentinel, ('WORKER',), ()))
+                with self.assertRaisesRegex(TypeError, 'outside the driver directory'):
+                    equivalence.function_shape(driver.outside, driver, self.sentinel, ('OUTSIDE',), ())
+        self.assertEqual(shapes[0], shapes[1])
+        self.assertEqual(shapes[0]['bindings']['WORKER'], ['injected-path', 'contract-worker.py'])
+
+    def test_a_default_function_compares_by_source_whether_or_not_it_is_nested(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(sys.modules):
+            base = self.moved_helper_tree(Path(tmp, 'base'), 'def case(k, mutate=(lambda found: found + 1,)):\n'
+                                          '    return mutate\n')
+            head = self.moved_helper_tree(Path(tmp, 'head'), 'import family\ncase = family.register()\n', {
+                'family': 'def register():\n    def case(k, mutate=(lambda found: found + 1,)):\n'
+                          '        return mutate\n    return case\n'})
+            changed = self.moved_helper_tree(Path(tmp, 'changed'), 'import family\ncase = family.register()\n', {
+                'family': 'def register():\n    def case(k, mutate=(lambda found: found + 2,)):\n'
+                          '        return mutate\n    return case\n'})
+            shape = lambda driver: equivalence.function_shape(driver.case, driver, self.sentinel, (), ('family',))
+            self.assertEqual(shape(base)['defaults'], shape(head)['defaults'])
+            self.assertNotEqual(shape(base)['defaults'], shape(changed)['defaults'])
+
     def test_injected_driver_class_compares_its_definition(self):
         with tempfile.TemporaryDirectory() as tmp, patch.dict(sys.modules):
             shapes = []
