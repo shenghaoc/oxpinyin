@@ -83,6 +83,30 @@ class EvidenceTests(unittest.TestCase):
     def test_same_tree_on_own_pr_reuses(self):
         self.assertEqual(self.evidence(API(), 'pull_request'), 100)
 
+    def test_function_order_is_not_a_full_or_reused_tree_evidence_lane(self):
+        for names in (PROFILE.lanes, PROFILE.needs, PROFILE.skipped_lanes):
+            self.assertNotIn('function-order-policy', names)
+        for event in ('push', 'pull_request'):
+            for result in (None, 'success', 'skipped'):
+                with self.subTest(event=event, function_order=result):
+                    api = API()
+                    policy = [] if result is None else [dict(
+                        name='function-order-policy', status='completed', conclusion=result)]
+                    api.jobs += policy
+                    self.assertEqual(self.evidence(api, event), 100)
+
+                    api = API()
+                    latest = {**run_fixture(), 'id': 101}
+                    api.runs = [latest]
+                    reused = [dict(name=name, status='completed', conclusion='skipped')
+                              for name in PROFILE.skipped_lanes]
+                    reused += [successful_job(PROFILE.aggregate),
+                               successful_job('reused tree ' + TREE + ' from run 100'), *policy]
+                    original_get, original_pages = api.get, api.pages
+                    api.get = lambda path: run_fixture() if path == '/actions/runs/100' else original_get(path)
+                    api.pages = lambda path, key=None: reused if '/runs/101/attempts/' in path else original_pages(path, key)
+                    self.assertEqual(self.evidence(api, event), 100)
+
     def test_changed_tree_runs_full_ci(self):
         api = API()
         api.tree = 'f' * 40
@@ -317,6 +341,14 @@ class EvidenceTests(unittest.TestCase):
 
 
 class MigratedWorkflowTests(unittest.TestCase):
+    def test_function_order_is_required_by_aggregate_without_changing_its_gate(self):
+        workflow = (ROOT / PROFILE.path).read_text()
+        aggregate = workflow.split('\n  ci-aggregate:\n', 1)[1].split('\n  tree-evidence:', 1)[0]
+        self.assertIn('[changes, lint, test, test-macos, deny, function-order-policy]', aggregate)
+        policy = workflow.split('\n  function-order-policy:\n', 1)[1].split('\n  ci-aggregate:', 1)[0]
+        self.assertIn("    if: ${{ github.event_name == 'pull_request' && needs.changes.outputs.function_order == 'true' }}\n", policy)
+        self.assertNotIn('outputs.reuse', policy)
+
     def test_migrated_gates_keep_the_tree_reuse_guard(self):
         workflow = (ROOT / PROFILE.path).read_text()
         commands = {
@@ -396,6 +428,48 @@ class RefreshTests(unittest.TestCase):
 
 
 class AggregateTests(unittest.TestCase):
+    def invoke_main(self, workflow, event, outputs, results):
+        profile = ci_tree.WORKFLOWS[workflow]
+        needs = {job: {'result': results[name]} for name, job in zip(profile.lanes, profile.needs)}
+        needs['changes'] = {'result': 'success', 'outputs': outputs}
+        if workflow == 'ci':
+            needs['function-order-policy'] = {'result': results['function-order-policy']}
+        with mock.patch.object(sys, 'argv', ['ci_tree.py', 'aggregate', workflow]), \
+                mock.patch.dict(ci_tree.os.environ, {'NEEDS': json.dumps(needs), 'EVENT_NAME': event}, clear=True), \
+                contextlib.redirect_stdout(io.StringIO()):
+            return ci_tree.main()
+
+    def test_function_order_uses_its_own_flag_and_event_regardless_of_run_or_reuse(self):
+        for event in ('push', 'pull_request'):
+            for flag in ('true', 'false'):
+                expected = 'success' if event == 'pull_request' and flag == 'true' else 'skipped'
+                for gated in ('true', 'false'):
+                    for reuse in ('true', 'false'):
+                        results = {name: 'success' if gated == 'true' and (
+                            reuse == 'false' or (event == 'push' and name in PROFILE.cached)) else 'skipped'
+                                   for name in PROFILE.lanes}
+                        for result in ('success', 'failure', 'skipped', 'cancelled'):
+                            with self.subTest(event=event, flag=flag, gated=gated, reuse=reuse, result=result):
+                                actual = {**results, 'function-order-policy': result}
+                                self.assertEqual(self.invoke_main('ci', event,
+                                    {'run': gated, 'reuse': reuse, 'function_order': flag}, actual),
+                                    0 if result == expected else 1)
+
+    def test_function_order_missing_or_non_boolean_flag_fails_closed(self):
+        results = {**dict.fromkeys(PROFILE.lanes, 'skipped'), 'function-order-policy': 'skipped'}
+        for event in ('push', 'pull_request'):
+            outputs = {'run': 'false', 'reuse': 'false'}
+            self.assertEqual(self.invoke_main('ci', event, outputs, results), 1)
+            for flag in (None, True, False, 0, 1, [], {}, '', 'yes', 'TRUE'):
+                with self.subTest(event=event, flag=flag):
+                    self.assertEqual(self.invoke_main('ci', event,
+                        {**outputs, 'function_order': flag}, results), 1)
+
+    def test_store_aggregate_does_not_require_function_order(self):
+        profile = ci_tree.WORKFLOWS['store']
+        self.assertEqual(self.invoke_main('store', 'pull_request',
+            {'run': 'true', 'reuse': 'false'}, dict.fromkeys(profile.lanes, 'success')), 0)
+
     def test_full_success_and_real_failures(self):
         for profile in ci_tree.WORKFLOWS.values():
             results = dict.fromkeys(profile.lanes, 'success')
