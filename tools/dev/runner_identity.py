@@ -173,6 +173,16 @@ DRIVERS = {
                Case('init-failure', ('pin', 'subject'), ('{so}', '{empty}')),
                Case('dlopen-failure', ('none',), ('{empty}/absent.so', '{data}')),
                Case('usage', ('none',), ('{empty}/absent.so',)))),
+    'chewing-diff': Driver(
+        cases=(*(Case(f'scheme-{scheme}', ('pin', 'subject'), ('{so}', '{data}', scheme), USER_DIR)
+                 for scheme in ('1', '2', '3', '4', '5', '6', '8', '9')),
+               Case('fixture-init', ('subject',), ('{so}', '{pindata}', '1'), USER_DIR),
+               Case('missing-symbol', ('stub',), ('{so}', '{data}', '1'), USER_DIR),
+               Case('init-failure', ('pin', 'subject'), ('{so}', '{empty}', '1'), USER_DIR),
+               Case('dlopen-failure', ('none',), ('{empty}/absent.so', '{data}', '1')),
+               *(Case(f'bad-scheme-{value or "empty"}', ('none',), ('{empty}/absent.so', '{data}', value))
+                 for value in ('7', '30', '0', '2junk', '')),
+               Case('usage', ('none',), ('{empty}/absent.so',)))),
 }
 
 
