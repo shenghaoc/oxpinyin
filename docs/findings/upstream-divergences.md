@@ -4141,3 +4141,15 @@ beam/final-tail selection. Four exact BDB case pairs report `POLICY-ACCEPTED`,
 each attributed in that record. This is the amendment's product-level ruling,
 not a new exception class. Row 83 remains historical; zhuyin, tail ordering,
 node front eviction, frequency wrap and lambda validation are unchanged.
+
+## Stable raw-cost tail ordering — S3 repair (2026-10-28 UTC)
+
+[Stable raw-cost tail ordering](trellis-tail-sort-s3.md) records the S3
+repair authorized by the witnessed algorithm-precondition amendment:
+stable raw possibility descending, equal-cost input order preserved and
+NaN last. Both facades share the final sort; zhuyin selects at most one tail.
+The focused BDB selection has no new movement: four MATCH controls and the
+four existing S1/S2 POLICY-ACCEPTED cases retain their complete observations.
+The S1/S2 record remains unchanged. No new case exemption is registered.
+Selection, node front eviction, candidate/prediction frequency wrap,
+lambda validation, external calls, persistent formats and C ABI are unchanged.

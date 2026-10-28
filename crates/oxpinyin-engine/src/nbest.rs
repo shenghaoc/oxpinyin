@@ -325,41 +325,11 @@ fn heap_top<T: Clone>(mut values: Vec<T>, count: usize, less: impl Fn(&T, &T) ->
     result
 }
 
-/// `m_poss` of a cost: the natural-log possibility the pin keeps in a
-/// `gfloat`.
-fn poss(cost: Cost) -> f32 {
-    match cost {
-        NAN_COST => f32::NAN,
-        POS_INF_COST => f32::NEG_INFINITY,
-        NEG_INF_COST => f32::INFINITY,
-        _ => (-(cost as f64) * core::f64::consts::LN_2 / 1000.0) as f32,
-    }
-}
-
-/// A C float converted to `gint` as x86-64 does it (`cvttss2si`): anything
-/// that does not fit, NaN included, is `INT_MIN`.
-fn c_float_to_gint(value: f32) -> i32 {
-    if value.is_nan() || !(-2_147_483_648.0..2_147_483_648.0).contains(&value) {
-        i32::MIN
-    } else {
-        value as i32
-    }
-}
-
-/// The final tail comparison (074a2219 phonetic_lookup.h:174-178):
-/// `-(lhs->m_poss - rhs->m_poss)` in `float`, truncated to `gint`. A NaN
-/// difference is `INT_MIN` for both orders, so NaN sorts before everything
-/// and before itself. Finite scores less than one unit apart compare 0, so
-/// the comparator is not transitive on valid input either: the order that
-/// results is the sort algorithm's (below).
-fn tail_compare(left: &Value, right: &Value) -> i32 {
-    c_float_to_gint(-(poss(left.cost) - poss(right.cost)))
-}
-
 /// GLib's stable merge sort, kept because the pin's comparators are not
 /// total orders on input the C API reaches (#921, #927).
 ///
-/// Every sort this crate and the C API adapters reproduce goes through
+/// The candidate and predicted sorts this crate and the C API adapters
+/// reproduce go through
 /// `g_sort_array` (GLib 2.84.4 `glib/gqsort.c:197-281`, `msort_r`, behind
 /// `g_ptr_array_sort`, `g_array_sort` and `g_array_sort_with_data` in
 /// `glib/garray.c:919-965,2409-2421`). For every element size it runs
@@ -370,21 +340,14 @@ fn tail_compare(left: &Value, right: &Value) -> i32 {
 /// comparisons.
 ///
 /// For a total order every stable sort gives this order, and a slice
-/// `sort_by` would do. None of the callers has one:
-///
-/// - The n-best tails (`trellis_value_compare`, 074a2219
-///   `phonetic_lookup.h:174-178`) return `-(lhs - rhs)` of two `gfloat`
-///   possibilities as a `gint`, truncated toward zero. Two scores less than
-///   one natural-log unit apart compare equal, so ordinary finite scores are
-///   not transitive: −10.0 ~ −10.6 ~ −11.2, yet −10.0 sorts before −11.2.
-///   NaN (a `table.conf` λ above 1, policy row 83) compares below everything
-///   and below itself.
-/// - The candidate and predicted lists (`compare_item_with_sort_option`,
-///   `pinyin.cpp:1678-1709`; `compare_item_with_length_and_frequency`,
-///   `zhuyin.cpp:1129-1144`) return `-(freq_lhs - freq_rhs)` in `guint32`
-///   arithmetic as a `gint`. With λ in `[0, 1]` every frequency is below
-///   2²⁴ and the key is a total order; a `table.conf` λ outside it makes
-///   frequency gaps of 2³¹ or more, which flip sign and form cycles.
+/// `sort_by` would do. The candidate and predicted lists
+/// (`compare_item_with_sort_option`, `pinyin.cpp:1678-1709`;
+/// `compare_item_with_length_and_frequency`, `zhuyin.cpp:1129-1144`)
+/// return `-(freq_lhs - freq_rhs)` in `guint32` arithmetic as a `gint`.
+/// With λ in `[0, 1]` every frequency is below 2²⁴ and the key is a total
+/// order; a `table.conf` λ outside it makes frequency gaps of 2³¹ or more,
+/// which flip sign and form cycles. N-best tails instead use the ordered
+/// raw-cost comparison under S3 of the compatibility-policy amendment.
 ///
 /// On such a comparator the order is this recursion's, and the standard
 /// library's sorts may order differently or panic (Rust 1.81). This merge
@@ -419,10 +382,11 @@ pub fn glib_merge_sort<T: Copy>(values: &mut [T], compare: &impl Fn(&T, &T) -> i
     values[out..out + left.len() - l].copy_from_slice(&left[l..]);
 }
 
-/// `g_ptr_array_sort(tails, trellis_value_compare)`: GLib's merge order,
-/// which the comparator's truncation makes observable on ordinary scores.
+/// S3: stably order the selected tails by raw possibility descending
+/// (`phonetic_lookup.h:174-178,337 at 074a2219`), without integer truncation.
+/// Raw Cost ascends as possibility descends; adjusted S is selection-only.
 fn tail_merge(values: &mut [Value]) {
-    glib_merge_sort(values, &tail_compare);
+    values.sort_by(|left, right| ordered_cost_compare(left.cost, right.cost));
 }
 
 /// A multiplicative hasher for the trellis's `u32` token keys.
@@ -614,7 +578,7 @@ impl Trellis {
     }
 
     /// 074a2219 phonetic_lookup.h:329-339: only the fixed final step,
-    /// heap selection, then GLib's stable merge with gint comparison.
+    /// heap selection, then S3's stable ordering by raw possibility.
     /// Fewer final-step values yield fewer tails; an empty final step
     /// never falls back to an earlier populated step (#594).
     fn tails(&mut self) -> Vec<Value> {
@@ -1901,39 +1865,110 @@ mod tests {
         }
     }
 
-    /// GLib's merge sort over the pin's tail comparator with NaN keys. The
-    /// order for `[-9.25, nan, -1.5, nan]` is glib 2.90's (measured; a plain
-    /// insertion sort over the same comparator leaves `[0, 1, 2, 3]`), and
-    /// `INT_MIN` (x86-64) and `0` (arm64) for the NaN comparison never give
-    /// different orders: a left element wins every `<= 0` merge step either
-    /// way, so the architecture's float-to-int conversion is not observable.
     #[test]
-    fn the_tail_sort_is_glibs_merge_and_blind_to_the_nan_conversion() {
-        use super::{c_float_to_gint, glib_merge_sort};
-        let sorted = |poss: &[f32], nan_as_zero: bool| {
-            let mut items: Vec<(f32, usize)> = poss.iter().copied().zip(0..).collect();
-            glib_merge_sort(&mut items, &|a: &(f32, usize), b: &(f32, usize)| {
-                let difference = -(a.0 - b.0);
-                if nan_as_zero && difference.is_nan() {
-                    0
-                } else {
-                    c_float_to_gint(difference)
-                }
-            });
-            items.into_iter().map(|item| item.1).collect::<Vec<_>>()
-        };
+    fn tails_order_raw_costs_including_sub_unit_possibility_differences() {
+        // One Cost unit is ln(2) / 1000 natural-log units. All differences
+        // here truncated to zero under the former gint comparator.
+        let mut tails = [value(1002, 1, 0), value(1001, 1, 0), value(1000, 100, 0)];
+        assert!(super::adjusted_cost(&tails[2]) > super::adjusted_cost(&tails[0]));
+        super::tail_merge(&mut tails);
+        assert_eq!(tails.map(|tail| tail.cost), [1000, 1001, 1002]);
+    }
+
+    #[test]
+    fn equal_raw_tail_costs_keep_input_order_despite_length_and_identity() {
+        let mut tails = [
+            Value {
+                token: 9,
+                ..value(1000, 100, 0)
+            },
+            Value {
+                token: 3,
+                ..value(1000, 1, 0)
+            },
+            Value {
+                token: 7,
+                ..value(1000, 2, 0)
+            },
+        ];
+        super::tail_merge(&mut tails);
+        assert_eq!(tails.map(|tail| tail.token), [9, 3, 7]);
+    }
+
+    #[test]
+    fn tails_stably_order_special_costs_with_nan_last() {
+        use oxpinyin_core::cost::{NAN_COST, NEG_INF_COST, POS_INF_COST};
+
+        let costs = [
+            NAN_COST,
+            POS_INF_COST,
+            10,
+            NEG_INF_COST,
+            -10,
+            NAN_COST,
+            NEG_INF_COST,
+            POS_INF_COST,
+        ];
+        let mut tails: Vec<_> = costs
+            .into_iter()
+            .enumerate()
+            .map(|(identity, cost)| Value {
+                token: identity as u32,
+                ..value(cost, identity as u32, 0)
+            })
+            .collect();
+        super::tail_merge(&mut tails);
         assert_eq!(
-            sorted(&[-9.25, f32::NAN, -1.5, f32::NAN], false),
-            [2, 0, 1, 3]
+            tails.iter().map(|tail| tail.token).collect::<Vec<_>>(),
+            [3, 6, 4, 2, 1, 7, 0, 5]
         );
-        let values = [f32::NAN, -1.5, -9.25, -20.5];
-        for count in 2..=6_u32 {
-            for code in 0..4_usize.pow(count) {
-                let poss: Vec<f32> = (0..count)
-                    .map(|slot| values[(code >> (2 * slot)) & 3])
-                    .collect();
-                assert_eq!(sorted(&poss, false), sorted(&poss, true), "{poss:?}");
-            }
+        assert_eq!(
+            tails.iter().map(|tail| tail.cost).collect::<Vec<_>>(),
+            [
+                NEG_INF_COST,
+                NEG_INF_COST,
+                -10,
+                10,
+                POS_INF_COST,
+                POS_INF_COST,
+                NAN_COST,
+                NAN_COST
+            ]
+        );
+    }
+
+    #[test]
+    fn qian_witness_tails_order_a_b_c_by_raw_possibility() {
+        // The registered S3 pre-sort triple in
+        // algorithm-precondition-witnesses-2026-10-28.md: A, B, C have
+        // m_poss -0x1.c9dc3cp+2, -0x1.dda91p+2, -0x1.0a68dp+3.
+        // Express those scores on the native round(-poss * 1000 / ln(2))
+        // scale. Permute them to expose the old non-transitive ties too.
+        let witnesses = [
+            Value {
+                token: 0,
+                ..value(10321, 1, 0)
+            },
+            Value {
+                token: 1,
+                ..value(10767, 1, 0)
+            },
+            Value {
+                token: 2,
+                ..value(12011, 1, 0)
+            },
+        ];
+        for order in [
+            [0, 1, 2],
+            [0, 2, 1],
+            [1, 0, 2],
+            [1, 2, 0],
+            [2, 0, 1],
+            [2, 1, 0],
+        ] {
+            let mut tails = order.map(|index| witnesses[index]);
+            super::tail_merge(&mut tails);
+            assert_eq!(tails.map(|tail| tail.token), [0, 1, 2]);
         }
     }
 
@@ -2789,9 +2824,9 @@ mod glib_merge_sort_tests {
         values[..tmp.len()].copy_from_slice(&tmp);
     }
 
-    /// `trellis_value_compare` over plain `f32` possibilities.
-    fn truncated(left: &(f32, usize), right: &(f32, usize)) -> i32 {
-        (-(left.0 - right.0)) as i32
+    /// The retained candidate/prediction frequency comparison.
+    fn frequency(left: &(u32, usize), right: &(u32, usize)) -> i32 {
+        right.0.wrapping_sub(left.0) as i32
     }
 
     #[test]
@@ -2804,40 +2839,26 @@ mod glib_merge_sort_tests {
         );
     }
 
-    /// Scores within one natural-log unit tie, so the order depends on the
-    /// merge: here −10.6 stays ahead of −10.0, which a total order on the
-    /// scores would not allow.
-    #[test]
-    fn near_equal_tails_take_the_merge_order() {
-        let mut items: Vec<(f32, usize)> = [-10.6, -11.2, -10.0].into_iter().zip(0..).collect();
-        glib_merge_sort(&mut items, &truncated);
-        assert_eq!(
-            items.iter().map(|item| item.1).collect::<Vec<_>>(),
-            [0, 2, 1]
-        );
-    }
-
-    /// Every array of up to seven scores drawn from four values that tie
-    /// pairwise but not across the range, plus NaN and a far score: the
-    /// in-place merge makes the reference's choices.
+    /// Exercise ties and the retained wrapping frequency cycle: the in-place
+    /// merge makes the reference's choices even without a total order.
     #[test]
     fn the_in_place_merge_matches_the_transcribed_one() {
-        let values = [-10.0, -10.6, -11.2, f32::NAN, -30.0];
+        let values = [0, 1, (1 << 30) + 1, (1 << 31) + 2, u32::MAX];
         for count in 0..=7_u32 {
             for code in 0..5_usize.pow(count) {
                 let mut digits = code;
-                let poss: Vec<(f32, usize)> = (0..count as usize)
+                let items: Vec<(u32, usize)> = (0..count as usize)
                     .map(|slot| {
                         let value = values[digits % 5];
                         digits /= 5;
                         (value, slot)
                     })
                     .collect();
-                let mut ours = poss.clone();
-                let mut theirs = poss;
-                glib_merge_sort(&mut ours, &truncated);
-                reference(&mut theirs, &truncated);
-                let order = |items: &[(f32, usize)]| items.iter().map(|i| i.1).collect::<Vec<_>>();
+                let mut ours = items.clone();
+                let mut theirs = items;
+                glib_merge_sort(&mut ours, &frequency);
+                reference(&mut theirs, &frequency);
+                let order = |items: &[(u32, usize)]| items.iter().map(|i| i.1).collect::<Vec<_>>();
                 assert_eq!(order(&ours), order(&theirs));
             }
         }

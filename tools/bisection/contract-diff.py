@@ -7309,8 +7309,16 @@ def _(k):
 
 
 for _mode in ('pinyin', 'zhuyin'):
-    case('glib-sort-tails-' + _mode, mode=_mode, control=True, issues=('921',))(glib_sort_tails)
+    case('glib-sort-tails-' + _mode, mode=_mode, control=True, stderr=True, issues=('921',))(glib_sort_tails)
     case('glib-sort-candidates-' + _mode, mode=_mode, control=True, issues=('927',))(glib_sort_candidates)
+
+
+# S3's registered finite triple: the captured qian pre-sort tails, plus
+# the same input with the divided/resplit tables disabled. Reuse the
+# complete-rank observer; no diagnostic pin or new driver is needed.
+for _enabled, _options in (('on', 0x1fe00198), ('off', 0x1fe00018)):
+    case('trellis-tail-sort/qian-' + _enabled, control=True, stderr=True, issues=('1347', '921'))(
+        lambda k, options=_options: glib_sort_tails(k, ('qian',), options))
 
 
 # S1/S2 of the witnessed algorithm-precondition amendment (2026-10-28 UTC).
