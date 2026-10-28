@@ -333,6 +333,94 @@ Library visibility filters the cached raw tokens on every query.
 | Phrase segmentation | `PhraseLookup` (`lookup/phrase_lookup.cpp:119`), one value per (step, token), `save_next_step` (`:348`) replaces on strictly better, `final_step` (`:382`) | `phrase_segment`, `Step::relax`, `Step::best` (`oxpinyin-engine/src/phrase.rs`) | same / class (a) — fixed-point scores |
 | Per-keystroke work | trellis rebuilt and bigram rows reloaded and merged for each predecessor and span | trellis rebuilt; merged rows cached per predecessor and step (`NbestStepRow`), parse graph cached | different / unverified — caching only |
 
+### Heap-port optimisation assessment — 2026-10-28 UTC
+
+**Not pursued (2026-10-28 UTC).** The estimated 0.2–0.5% keystroke
+instruction saving is below what the timing and instruction controls can
+establish, so no heap change was made. This records the measurement; it
+does not rule out later work. This is a single-build attribution, not a
+measured speedup or a neutrality-checked differential.
+
+Measured tree: `1cb70696ecf8f80aa1fdcf3e2ba62ba7e0d27fd7`, after #1339
+and #1342. Host: Ubuntu 26.10, x86_64 Intel i7-9750H, Rust 1.97.1,
+Valgrind 3.27.1, healthy tkrzw 1.0.34. The health probe passed and `ldd`
+resolved both subject and pin to that library. The complete model20 tkrzw
+export and verified model20 cache supplied the data; user directories
+were fresh and on ext4. The stage2 executable used the release profile
+(opt-level 3, fat LTO, one codegen unit), with
+`RUSTFLAGS="-Cdebuginfo=1 -Cstrip=none"`, not `CARGO_PROFILE_RELEASE_DEBUG`.
+The host's sole heavy slot was held through building and collection, then
+released.
+
+The profile predates the 2026-10-28 algorithm-precondition amendment
+(#1347), so it measures the pin's comparator as ported (`loses_to`), not
+the repaired S1/S2 ordering implemented in #1352.
+
+All four cases use `nihaozhongguo`. Collection was restricted to the named
+C API call; the averages include calls during Criterion warm-up.
+
+| Stage2 case | Collected API | Calls | Ir/call |
+| --- | --- | ---: | ---: |
+| `parse_more_full_pinyins/medium` | `pinyin_parse_more_full_pinyins` | 12,216 | 49,862.19 |
+| `guess_sentence_get_sentence_0/full_nbest_post_116` | `pinyin_guess_sentence` | 40 | 4,474,725.68 |
+| `guess_candidates/offset_0` | `pinyin_guess_candidates` | 1,023 | 380,925.47 |
+| `guess_candidates/mid_phrase` | `pinyin_guess_candidates` | 1,326 | 277,795.40 |
+
+`nbest.rs`'s `heap_make`, `heap_adjust`, `heap_push`, `heap_pop` and
+`loses_to` total **4,023,960 Ir / 178,989,027 sentence Ir = 2.248%**:
+3,765,840 in separately named heap functions, plus 258,120 inlined into
+callers. Source-line attribution includes generated copies and the
+comparator's `cost.rs`/standard-library helpers, identified through DWARF
+inline chains; inclusive callees are counted once. Adding `heap_top`'s
+remaining wrapper/allocation work gives 2.349%; also adding
+`Trellis::candidates` gives 2.988%.
+
+One parse + sentence + candidate call totals 4,905,513.33 Ir at offset 0
+or 4,802,383.26 mid-phrase. The heap/comparator shares are **2.051%** and
+**2.095%** respectively; those other APIs execute no heap-selection work.
+These are sums of independent stage2 averages, not captured consecutive
+keystrokes.
+
+| Constant-factor idea | Estimated keystroke Ir saving | Basis in the profile and code |
+| --- | ---: | --- |
+| Compact beam handles | 0–0.15% | Value-copy loads/stores cost about 0.30%; handles add dereferences. |
+| Cache comparator inputs | 0–0.10% | Cost and length are already stored; penalty-add branches are not executed here. Length helpers cost about 0.30%, before preparation/storage costs. |
+| Reuse selection scratch | 0.15–0.30% | Candidate-buffer growth and selection allocation callees cost about 0.32%. |
+| Expose proven index bounds in safe Rust | 0–0.10% | Identified bounds-check pairs cost about 0.14%; some checks must remain. |
+| Inline comparator | Approximately 0% | Already inlined into the sift loops. |
+
+These planning estimates overlap; the combined estimate is 0.2–0.5%,
+not their sum. No change was implemented or compared with controls.
+
+To reproduce, use the [native setup](../runbooks/setup.md) and the
+[benchmark inputs](../runbooks/benches.md#criterion-benches). Set
+`PINYIN_MODEL_DIR`, `PINYIN_EXPORT_DIR` (complete model20 tkrzw export),
+`TMPDIR` (ext4), and the healthy tkrzw prefix's `PATH`, `PKG_CONFIG_PATH`
+and `LD_LIBRARY_PATH`. On the measurement host, run the following inside
+the exclusive hold (`just heavy -- bash` held its sole slot). Set `BENCH`
+to Cargo's printed executable and repeat the collection command for each
+`CASE`/`API` pair above, using a distinct `PROFILE` file:
+
+```bash
+unset CARGO_PROFILE_RELEASE_DEBUG
+export RUSTFLAGS="-Cdebuginfo=1 -Cstrip=none"
+cargo bench -v --locked -p oxpinyin-capi --no-default-features \
+  --features tkrzw --bench stage2 --no-run
+taskset -c 0 valgrind --tool=callgrind --collect-atstart=no \
+  --toggle-collect="$API" --read-inline-info=yes --dump-instr=yes \
+  --cache-sim=no --branch-sim=no --callgrind-out-file="$PROFILE" \
+  "$BENCH" "$CASE" --bench --profile-time 3
+callgrind_annotate --inclusive=yes --tree=caller --threshold=100 \
+  --auto=no "$PROFILE" crates/oxpinyin-engine/src/nbest.rs
+callgrind_annotate --inclusive=no --threshold=100 --auto=no \
+  "$PROFILE" crates/oxpinyin-engine/src/nbest.rs crates/oxpinyin-core/src/cost.rs
+exit # release the hold
+```
+
+For supporting inline sites, pass the profile's instruction addresses to
+`addr2line -afiC -e "$BENCH"` on standard input. Use exclusive source
+costs for inlined code and do not add a callee's inclusive cost again.
+
 ## 5. Candidate list
 
 | Item | Pin (`pinyin.cpp`) | oxpinyin | Mark |
