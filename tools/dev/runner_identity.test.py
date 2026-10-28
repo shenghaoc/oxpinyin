@@ -13,7 +13,9 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 from tools.dev import runner_identity as identity
+from tools.dev.cell import CellError, Settings
 from tools.dev.runner_recipes import RECIPES
+from tools.dev.system_data import SystemData
 
 # Darwin declares mkdtemp(3) in <unistd.h>, and only under _DARWIN_C_SOURCE, as in
 # bisect.c and startup.c.
@@ -41,6 +43,16 @@ int main(int argc, char **argv) {
 class Services:
     def run(self, argv, obj, *, runner, side, cwd, environment):
         return subprocess.run(argv, cwd=cwd, env=environment, capture_output=True)
+
+
+class Data:
+    """SystemData over ENVIRONMENT that records each lookup."""
+    def __init__(self, environment):
+        self.system, self.lookups = SystemData(Settings.read(environment)), []
+
+    def resolve(self, variable, label):
+        self.lookups.append(variable)
+        return self.system.resolve(variable, label)
 
 
 class IdentityTests(unittest.TestCase):
@@ -78,6 +90,7 @@ class IdentityTests(unittest.TestCase):
                 names = [case.name for case in driver.cases]
                 self.assertEqual(len(names), len(set(names)))
                 self.assertIn(driver.facade, ('pinyin', 'zhuyin'))
+                self.assertIn(driver.pin_tables, ('pin', 'subject'))
                 for template in driver.templates:
                     self.assertTrue(template.startswith(('/', '{')), template)
                 for case in driver.cases:
@@ -95,6 +108,36 @@ class IdentityTests(unittest.TestCase):
         self.assertTrue((tree / 'bisect.c').is_file())
         self.assertTrue((tree / 'teardown.h').is_file())
         self.assertFalse(any(tree.glob('*.py')))
+
+    def test_libraries_resolves_subject_tables_only_when_a_side_reads_them(self):
+        tables, absent = self.root / 'tables', self.root / 'absent'
+        tables.mkdir()
+        for name in ('gb_char.bin', 'pinyin_index.bin', 'phrase_index.bin', 'bigram.db'):
+            (tables / name).touch()
+        (tables / 'table.conf').write_text('database format:BerkeleyDB\n')
+        pin_so, pin_data = Path('/pin/lib/libpinyin.so'), Path('/pin/lib/libpinyin/data')
+
+        def libraries(stem, sides, environment):
+            ctx = SimpleNamespace(pin=lambda require_data: (pin_so, pin_data), data=Data(environment),
+                                  artifact=lambda facade: Path(f'/subject/{facade}.so'))
+            return identity.libraries(ctx, identity.DRIVERS[stem], sides, self.root), ctx.data.lookups
+
+        # A refusal-only selection (scheme-diff --case usage) opens no tables.
+        for environment in ({}, {'OXPINYIN_SYSTEM_DIR': str(absent)}):
+            with self.subTest(environment=environment):
+                inputs, lookups = libraries('scheme-diff', {'none'}, environment)
+                self.assertEqual(lookups, [])
+                self.assertEqual(inputs, {'pin': (pin_so, pin_data), 'none': (None, pin_data)})
+        inputs, lookups = libraries('scheme-diff', {'subject'}, {'OXPINYIN_SYSTEM_DIR': str(tables)})
+        self.assertEqual(lookups, ['OXPINYIN_SYSTEM_DIR'])
+        self.assertEqual(inputs['subject'], (Path('/subject/pinyin.so'), tables))
+        self.assertEqual(inputs['pin'], (pin_so, pin_data))
+        # zhuyin's pin reads the subject's tables, so even its refusal cases resolve them.
+        inputs, lookups = libraries('zhuyin-diff', {'none'}, {'OXPINYIN_SYSTEM_DIR': str(tables)})
+        self.assertEqual(lookups, ['OXPINYIN_SYSTEM_DIR'])
+        self.assertEqual(inputs, {'pin': (pin_so.parent / 'libzhuyin.so.15.0.0', tables), 'none': (None, tables)})
+        with self.assertRaisesRegex(CellError, 'system directory is incomplete'):
+            libraries('zhuyin-diff', {'none'}, {'OXPINYIN_SYSTEM_DIR': str(absent)})
 
     @unittest.skipUnless(shutil.which('cc'), 'needs a C compiler')
     def test_observe_normalises_fresh_directories_and_reports_leaks(self):
