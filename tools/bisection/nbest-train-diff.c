@@ -38,6 +38,8 @@
  * Usage:
  *   NBESTTRAINDIFF_USER_ROUNDS=<n> NBESTTRAINDIFF_ROUNDS=<n> \
  *     ./nbest-train-diff <path-to-so> <systemdir>
+ *   Diagnostic only (no training, candidates or sentence readback):
+ *     ./nbest-train-diff <path-to-so> <systemdir> --cases <case-file.tsv>
  */
 
 #define _POSIX_C_SOURCE 200809L
@@ -401,10 +403,120 @@ static int train_pair(const struct syms *s, pinyin_instance_t *inst, int round,
 
 /* ── Main ─────────────────────────────────────────────────────────────── */
 
+/* The diagnostic pin captures the ranges inside guess_sentence. This path
+ * intentionally needs no sentence accessor (the legacy print_surface's
+ * unconditional indices are not valid for every nonempty result set). */
+static int witness_cases(const struct syms *s, void *handle,
+                         const char *systemdir, const char *casefile) {
+    /* Suppress the older, exhaustive residue dump even if inherited. */
+    unsetenv("OXPINYIN_DUMP_TAILS");
+    typedef bool (*fn_options)(pinyin_context_t *, guint);
+    typedef bool (*fn_scheme)(pinyin_context_t *, int);
+    fn_options options = (fn_options)load("pinyin_set_options", handle);
+    fn_scheme full_scheme = (fn_scheme)load("pinyin_set_full_pinyin_scheme", handle);
+    fn_scheme double_scheme = (fn_scheme)load("pinyin_set_double_pinyin_scheme", handle);
+    fn_parse double_parse = (fn_parse)load("pinyin_parse_more_double_pinyins", handle);
+    FILE *file = fopen(casefile, "r");
+    if (!file) {
+        perror("case file");
+        return 1;
+    }
+    char *line = NULL;
+    size_t capacity = 0, completed = 0;
+    int result = 0;
+    while (getline(&line, &capacity, file) >= 0) {
+        line[strcspn(line, "\r\n")] = '\0';
+        if (line[0] == '#' || line[0] == '\0')
+            continue;
+        char *fields[5], *save = NULL;
+        char *field = strtok_r(line, "\t", &save);
+        size_t count = 0;
+        while (field && count < 5) {
+            fields[count++] = field;
+            field = strtok_r(NULL, "\t", &save);
+        }
+        if (count != 5 || field) {
+            fprintf(stderr, "case file: expected id, parser, scheme, options, input\n");
+            result = 1;
+            break;
+        }
+        const bool full = strcmp(fields[1], "full") == 0;
+        const bool double_pinyin = strcmp(fields[1], "double") == 0;
+        if ((!full && !double_pinyin) ||
+            strcmp(fields[2], full ? "1" : "2") != 0 ||
+            (strcmp(fields[3], "0x1fe00198") != 0 &&
+             strcmp(fields[3], "0x1fe00018") != 0)) {
+            fprintf(stderr, "case %s: unsupported parser, scheme or option word\n", fields[0]);
+            result = 1;
+            break;
+        }
+        /* Relative to the runner's private scratch directory. */
+        char userdir[] = "nbest-witness-user-XXXXXX";
+        if (!mkdtemp(userdir)) {
+            perror("mkdtemp");
+            result = 1;
+            break;
+        }
+        pinyin_context_t *ctx = s->init(systemdir, userdir);
+        pinyin_instance_t *inst = NULL;
+        size_t parsed = 0;
+        bool guessed = false;
+        if (ctx && options(ctx, (guint)strtoul(fields[3], NULL, 16)) &&
+            (full ? full_scheme(ctx, 1) : double_scheme(ctx, 2))) {
+            inst = s->alloc(ctx);
+            if (inst && setenv("OXPINYIN_PRECONDITION_CASE", fields[0], 1) == 0) {
+                parsed = (full ? s->parse : double_parse)(inst, fields[4]);
+                if (parsed == strlen(fields[4]))
+                    guessed = s->sentence(inst);
+            }
+        }
+        printf("case\tid=%s\tparser=%s\tscheme=%s\toptions=%s\tinput=%s"
+               "\tparsed=%zu\tguess=%d\n", fields[0], fields[1], fields[2],
+               fields[3], fields[4], parsed, guessed);
+        unsetenv("OXPINYIN_PRECONDITION_CASE");
+        if (inst)
+            s->free_instance(inst);
+        if (ctx)
+            s->fini(ctx);
+        rm_rf(userdir);
+        if (!guessed) {
+            fprintf(stderr, "case %s: setup, complete parse or guess_sentence failed\n", fields[0]);
+            result = 1;
+            break;
+        }
+        ++completed;
+    }
+    if (ferror(file)) {
+        perror("read case file");
+        result = 1;
+    }
+    free(line);
+    fclose(file);
+    printf("cases\tcompleted=%zu\n", completed);
+    return completed ? result : 1;
+}
+
 int main(int argc, char **argv) {
     if (argc < 3) {
         fprintf(stderr, "Usage: %s <path-to-so> <systemdir>\n", argv[0]);
         return 1;
+    }
+    if (argc != 3 && (argc != 5 || strcmp(argv[3], "--cases") != 0)) {
+        fprintf(stderr, "Usage: %s <path-to-so> <systemdir> [--cases <case-file.tsv>]\n", argv[0]);
+        return 1;
+    }
+
+    if (argc == 5) {
+        void *handle = dlopen(argv[1], RTLD_NOW);
+        if (!handle) {
+            fprintf(stderr, "dlopen: %s\n", dlerror());
+            return 1;
+        }
+        struct syms s = {0};
+        resolve_all(handle, &s);
+        int result = witness_cases(&s, handle, argv[2], argv[4]);
+        dlclose(handle);
+        return result;
     }
 
     int rounds = 3;

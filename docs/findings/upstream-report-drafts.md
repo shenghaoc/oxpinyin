@@ -13,8 +13,10 @@ DB handles leak on failed user-database loads (#993). An eighth, item 8,
 was added 2026-10-22 UTC: every Berkeley DB `save_db` passes the wrong
 handle to `DB->sync`, which has no observable effect. A ninth, item 9,
 was added 2026-10-26 UTC: the `SORT_BY_PINYIN_LENGTH` key wraps at 8 bits
-(#1275). The file now holds nine drafts; items 7, 8 and 9 are ready to file
-as separate reports.
+(#1275). Items 10–12 were added 2026-10-28 UTC: reachable heap-comparator
+and tail-sort precondition violations, and the source-established node
+front-eviction inversion. The file now holds twelve drafts; items 7–12
+are separate reports. Items 10–12 use libpinyin 074a2219.
 Filing is the
 maintainer's action (and account); nothing here has been posted. The
 collection mandate is `AGENTS.md`'s ("collected to report back to
@@ -741,6 +743,114 @@ oxpinyin reproduces the wrap (#1275; contract-diff
 
 ---
 
+## 10. Beam and final-tail heap selection receive a non-strict comparator
+
+`trellis_value_less_than<2>` can return true in both directions for two
+candidates from the same live selection range. The enabled
+"allow longer sentence" branch lets an adjacent longer sentence beat
+the shorter one by `log(1.2f)`, while the unconditional shorter-sentence
+fallback returns true in the reverse direction
+(`src/lookup/phonetic_lookup.h:39,65–90 at 074a2219`).
+
+Captured with reference BDB data, full-pinyin scheme 1, options
+`0x1fe00198`, a fresh user directory, parse then `guess_sentence`:
+
+| Site and input | Step | Candidate A: position, length, `%a m_poss` | Candidate B: position, length, `%a m_poss` | Predicate results |
+| --- | ---: | --- | --- | --- |
+| Beam, `jianai` | 4 | 0, 1, `-0x1.b84bb8p+3` | 124, 2, `-0x1.85afap+3` | `less(A,B)=true`, `less(B,A)=true` |
+| Final tails, `bian` | 4 | 1, 1, `-0x1.99254p+3` | 50, 2, `-0x1.9235c4p+3` | `less(A,B)=true`, `less(B,A)=true` |
+
+The first range has 490 candidates and 4,791 violating pairs; the second
+has 221 candidates and 776 violating pairs. The predicates were evaluated
+inside the diagnostic pin using its live values, before selection.
+`get_top_results` passes this comparator to `std::make_heap` and
+`std::pop_heap` (`src/lookup/phonetic_lookup.h:143–171 at 074a2219`),
+called at `src/lookup/phonetic_lookup.h:770–771,331–335 at 074a2219`.
+The two-way result violates asymmetry, hence C++
+[`[alg.sorting.general]`](https://eel.is/c++draft/alg.sorting.general)'s
+strict weak ordering requirement. No particular downstream heap order
+is claimed to be portable.
+
+**Suggested repair:** rank by `poss − length · ln(1.2)`, with an explicit
+tie order for batch selection. This preserves the adjacent-length margin
+intent; for length gaps d≥2 it replaces unconditional shorter preference
+with a probability-ratio threshold `1.2^d`, a deliberate semantic choice.
+Keep the node admission tie rule separate from the selection tie key.
+
+Full candidate identities, the complete case set, environment and
+reproduction commands are in
+`docs/findings/algorithm-precondition-witnesses-2026-10-28.md`. Across the
+276 cases, 26 beam ranges and 32 final-tail ranges contain witnesses.
+No repair is implemented in this diagnostic lane. Nothing is filed upstream.
+
+---
+
+## 11. Tail sorting truncates score differences into non-transitive equality
+
+`trellis_value_compare` returns `-(lhs->m_poss - rhs->m_poss)` as `gint`
+(`src/lookup/phonetic_lookup.h:174–178 at 074a2219`). Two scores less
+than one log unit apart therefore compare equal. This is incompatible
+with the consistent total ordering required by the qsort-style contract
+of `g_ptr_array_sort`, called at
+`src/lookup/phonetic_lookup.h:337 at 074a2219`.
+
+For `qian`, full-pinyin scheme 1, options `0x1fe00198`, reference BDB data
+and a fresh user directory, parse then `guess_sentence` reaches this
+three-element pre-sort array at step 4:
+
+| Position | Length | `%a m_poss` | Current token | Slot |
+| ---: | ---: | --- | --- | ---: |
+| 0 (A) | 1 | `-0x1.c9dc3cp+2` | `0x010017b3` | 0 |
+| 1 (B) | 1 | `-0x1.dda91p+2` | `0x010017b3` | 1 |
+| 2 (C) | 1 | `-0x1.0a68dp+3` | `0x010017af` | 0 |
+
+The pin comparator returns zero for AB, BA, BC and CB, −1 for AC, and
++1 for CA. Thus A~B and B~C but A≁C. All three previous tokens are
+`0x00000001`. The diagnostic evaluates the actual comparator before
+sorting; this is not an arbitrary synthetic triple.
+
+**Suggested repair:** keep the source's "in descending order" criterion
+and use a stable descending `m_poss` comparison without truncation. Do
+not substitute the adjusted selection score. Policy for NaN from a
+λ outside `[0, 1]` is a separate question.
+
+The 276-case BDB set witnesses this defect in 37 pre-sort arrays. Full
+results and commands are in
+`docs/findings/algorithm-precondition-witnesses-2026-10-28.md`; the
+[GLib 2.84.4 sort contract](https://github.com/GNOME/glib/blob/2.84.4/glib/garray.c#L2240-L2295)
+and [C11 §7.22.5 paragraph 4](https://www.open-std.org/jtc1/sc22/wg14/www/docs/n1570.pdf)
+state the comparator requirements. Nothing is filed upstream.
+
+---
+
+## 12. The two-slot trellis node evicts its best resident
+
+Source-derived defect, not a captured execution witness. The comments
+"min heap here", "invariant: min heap", and "find minium item" describe
+a worst-at-front bounded queue, but `trellis_value_comp` uses the ordinary
+less-than direction with `std::push_heap` and `std::pop_heap`
+(`src/lookup/phonetic_lookup_heap.h:25–36,56–81 at 074a2219`).
+`src/include/stl_lite.h:38–44 at 074a2219` imports those standard algorithms.
+For equal-length finite candidates, less-than orders by possibility,
+so the heap front is the best resident. A full node admits only a
+newcomer better than that front and evicts the front, retaining the
+weaker resident.
+
+For example, with equal lengths and resident scores −10 and −20, the
+source admits −5 and retains {−5, −20}, discarding −10. A newcomer −15
+would instead be rejected despite beating the −20 resident. These
+numbers illustrate the source-derived algorithm; they are not runtime
+captures. The comparator on these same-length scores satisfies the heap
+contract, so this is an algorithm defect independent of item 10.
+
+**Suggested upstream repair:** put the worst resident at the front with
+the inverse valid heap order, preserving the separate admission test and
+rejecting tying newcomers. oxpinyin retains the pin's front eviction
+bug-for-bug; changing it requires a separate maintainer ruling or Stage 3.
+Nothing is filed upstream.
+
+---
+
 ## Filing notes
 
 - Independence: no fix touches another; file items 1–4 as four issues.
@@ -750,6 +860,8 @@ oxpinyin reproduces the wrap (#1275; contract-diff
   Item 8 is a separate BDB report with no observable effect; it can go
   with item 7 or on its own.
   Item 9 is a separate ranking report.
+  Items 10 and 11 report distinct comparator contracts; item 12 reports
+  a contract-valid algorithm defect and must not be conflated with them.
 - Order: 1 (info leak) → 2 (API inconsistency) → 3, 4 (abort classes).
 - Credit line per `AGENTS.md` attribution rules is the maintainer's to
   place; the reproductions above stand alone.

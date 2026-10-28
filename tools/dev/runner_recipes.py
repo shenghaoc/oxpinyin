@@ -2,6 +2,7 @@
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
+import argparse
 import os
 import re
 import shutil
@@ -388,8 +389,161 @@ def active_rows(log: bytes, patterns: Sequence[str]) -> bool:
     return all(re.search(pattern, log.decode(errors='replace'), re.M) for pattern in patterns)
 
 
+def nbest_witness_cases(path: Path) -> dict[str, dict[str, str]]:
+    """Read the diagnostic driver's fixed TSV grammar before starting the pin."""
+    cases = {}
+    for number, line in enumerate(path.read_text().splitlines(), 1):
+        if not line or line.startswith('#'):
+            continue
+        fields = line.split('\t')
+        if len(fields) != 5:
+            raise CellError(f'{path.name}:{number}: expected five tab-separated fields')
+        case_id, parser, scheme, options, text = fields
+        if not re.fullmatch(r'[a-zA-Z0-9_.-]+', case_id) or case_id in cases:
+            raise CellError(f'{path.name}:{number}: invalid or duplicate case id')
+        if (parser, scheme) not in (('full', '1'), ('double', '2')) or options not in ('0x1fe00198', '0x1fe00018'):
+            raise CellError(f'{path.name}:{number}: unsupported parser, scheme or options')
+        if not re.fullmatch(r"[a-z;']+", text):
+            raise CellError(f'{path.name}:{number}: expected nonempty ASCII pinyin')
+        cases[case_id] = dict(parser=parser, scheme=scheme, options=options, input=text)
+    if not cases:
+        raise CellError('empty n-best witness case file')
+    return cases
+
+
+def nbest_witness_results(cases: dict[str, dict[str, str]], stdout: bytes, stderr: bytes) -> dict:
+    """Validate capture completeness; keep pin floats as strings, never recompute predicates."""
+    def fields(line):
+        result = {}
+        for field in line.split('\t')[1:]:
+            key, separator, value = field.partition('=')
+            if not separator or key in result:
+                raise CellError('malformed n-best witness record')
+            result[key] = value
+        return result
+
+    try:
+        completed, totals = {}, []
+        for line in stdout.decode().splitlines():
+            if line.startswith('case\t'):
+                row = fields(line)
+                case_id = row.pop('id')
+                if case_id not in cases or case_id in completed:
+                    raise CellError('unexpected or duplicate completed case')
+                expected = dict(cases[case_id], parsed=str(len(cases[case_id]['input'])), guess='1')
+                if row != expected:
+                    raise CellError(f'{case_id}: incomplete parse, failed guess or wrong case parameters')
+                completed[case_id] = row
+            elif line.startswith('cases\t'):
+                totals.append(fields(line))
+        if list(completed) != list(cases) or totals != [dict(completed=str(len(cases)))]:
+            raise CellError('incomplete n-best witness case set')
+
+        seen = {case_id: {'S1': set(), 'S2': set(), 'S3': set()} for case_id in cases}
+        summary = {site: dict(calls=0, witnessed_calls=0, pairs=0, first=None) for site in ('S1', 'S2', 'S3')}
+        for line in stderr.decode().splitlines():
+            # A fresh user directory makes the pin print a user.conf message
+            # without a newline immediately before the first beam record.
+            _, marker, record = line.partition('precondition\t')
+            if not marker:
+                continue
+            line = marker + record
+            row = fields(line)
+            case_id, site = row['case'], row['site']
+            step, count = int(row['step']), int(row['count'])
+            witnessed = int(row['witness'])
+            if case_id not in cases or site not in summary or step < 0 or count < 0 or witnessed not in (0, 1):
+                raise CellError('invalid n-best witness range')
+            if step in seen[case_id][site]:
+                raise CellError(f'{case_id}: duplicate {site} range at step {step}')
+            seen[case_id][site].add(step)
+            if site == 'S3':
+                if count > 3:
+                    raise CellError('pre-sort tails exceeds nbest=3')
+            else:
+                pairs = int(row['pairs'])
+                if not 0 <= pairs <= count * (count - 1) // 2 or witnessed != (pairs > 0):
+                    raise CellError('inconsistent violating-pair count')
+                summary[site]['pairs'] += pairs
+            if witnessed:
+                labels = 'abc' if site == 'S3' else 'ab'
+                positions = []
+                for label in labels:
+                    position = int(row[label + '_position'])
+                    positions.append(position)
+                    if not 0 <= position < count or int(row[label + '_length']) < 0 or int(row[label + '_slot']) not in (0, 1):
+                        raise CellError('invalid witness candidate identity')
+                    for token in ('prev', 'token'):
+                        if not re.fullmatch(r'0x[0-9a-f]{8}', row[label + '_' + token]):
+                            raise CellError('invalid witness token')
+                    if not re.fullmatch(r'-?0x[0-9a-f]+\.[0-9a-f]*p[+-][0-9]+|-?0x[0-9a-f]+p[+-][0-9]+', row[label + '_poss']):
+                        raise CellError('witness must contain finite hexadecimal floats')
+                if len(set(positions)) != len(positions):
+                    raise CellError('witness reuses a candidate')
+                if site == 'S3':
+                    if any(row['compare_' + pair] != '0' for pair in ('ab', 'ba', 'bc', 'cb')) or \
+                            int(row['compare_ac']) * int(row['compare_ca']) >= 0:
+                        raise CellError('invalid pin triple predicate results')
+                elif row['less_ab'] != '1' or row['less_ba'] != '1':
+                    raise CellError('invalid pin pair predicate results')
+                if summary[site]['first'] is None:
+                    summary[site]['first'] = line
+            summary[site]['calls'] += 1
+            summary[site]['witnessed_calls'] += witnessed
+        for case_id, sites in seen.items():
+            length = len(cases[case_id]['input'])
+            if sites != {'S1': set(range(length)), 'S2': {length}, 'S3': {length}}:
+                raise CellError(f'{case_id}: missing or unexpected diagnostic ranges')
+        return summary
+    except (KeyError, ValueError, UnicodeError) as error:
+        raise CellError(f'malformed n-best witness output: {error}') from error
+
+
+def nbest_witness(ctx: Context, args: Sequence[str]) -> int:
+    """Run one case file on the diagnostic BDB pin, without building a subject."""
+    parser = argparse.ArgumentParser(prog='nbest-train-diff')
+    parser.add_argument('--pin-witness-cases', required=True)
+    parser.add_argument('--prefix', required=True)
+    parser.add_argument('--data', required=True)
+    options = parser.parse_args(args)
+    if ctx.settings.cell != 'bdb':
+        raise CellError('n-best precondition witnesses require the BDB cell')
+    case_file = ctx.path(options.pin_witness_cases, caller=True).resolve()
+    cases = nbest_witness_cases(case_file)
+    prefix = ctx.path(options.prefix, caller=True).resolve()
+    data = ctx.path(options.data, caller=True).resolve()
+    digest = patch_digest(ctx.settings.root / 'tools/bisection/patches/nbest-tails-dump')
+    identity = (prefix / 'oracle-pin.txt').read_text().splitlines()
+    if ctx.settings.expected_pin + '+patches-' + digest not in identity or \
+            'patches_manifest_sha256=' + digest not in identity or 'dbm=BerkeleyDB' not in identity:
+        raise CellError('diagnostic pin has the wrong revision, backend or patch identity')
+    if not (data / 'bigram.db').is_file() or 'database format:BerkeleyDB' not in (data / 'table.conf').read_text().splitlines():
+        raise CellError('n-best witness data must be the reference BDB system data')
+    pin = prefix / 'lib/libpinyin.so'
+    work = ctx.scratch()
+    driver = ctx.compile('nbest-train-diff', work / 'driver')
+    result = ctx.run(driver, pin, [pin, data, '--cases', case_file], side='pin', cwd=work,
+                     loader=True)
+    ctx.write(result.stdout)
+    ctx.write(result.stderr, error=True)
+    if result.returncode:
+        raise CellError(f'n-best witness driver failed with status {status(result.returncode)}')
+    summary = nbest_witness_results(cases, result.stdout, result.stderr)
+    ctx.emit(f'n-best witnesses: {len(cases)}/{len(cases)} cases completed (bdb)')
+    for site, row in summary.items():
+        if row['first'] is None:
+            ctx.emit(f'{site}: none found in the case set ({row["calls"]} ranges)')
+        else:
+            ctx.emit(f'{site}: witness found in {row["witnessed_calls"]}/{row["calls"]} ranges' +
+                     (f'; {row["pairs"]} violating pairs' if site != 'S3' else ''))
+            ctx.emit(row['first'])
+    return 0
+
+
 def ordinary(ctx: Context, args: Sequence[str]) -> int:
     name = ctx.name
+    if name == 'nbest-train-diff' and '--pin-witness-cases' in args:
+        return nbest_witness(ctx, args)
     driver, subject = build_subject(ctx, heading='abi-probe' if name == 'abi-probe-diff' else None)
     skip = 0 if name == 'live-typing-diff' else 77
     pin, pin_data = ctx.pin(missing=skip, hint=True, require_data=True)
