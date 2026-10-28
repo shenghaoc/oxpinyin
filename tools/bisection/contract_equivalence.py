@@ -9,7 +9,9 @@ MODULE=COUNT. --injected names the shared driver objects passed to registrations
 driver helper. Helpers can also be named with --helper for source comparison.
 --moved-helper NAME compares a driver definition that moved, unchanged, into one
 of the --helper-module modules; those modules' functions are followed as driver
-code on both sides.
+code on both sides. --registration-injected NAME is a driver binding a moved module's
+registration code reads but no moved case function does (its effect is in the records);
+it must be a keyword-only parameter of that module's register function.
 """
 import argparse
 import ast
@@ -174,7 +176,10 @@ def function_shape(fn, driver, sentinel, injected, moved_modules, active=(), use
             used.add(name)
             if not hasattr(driver, name) or value is not getattr(driver, name):
                 raise TypeError('injected %s is not the driver binding' % name)
-            if isinstance(value, type) and value.__module__ == driver.__name__:
+            if value is getattr(driver, 'CASES', None):
+                # The registry itself: its entries are the cases, compared record by record.
+                bindings[name] = ['injected-registry']
+            elif isinstance(value, type) and value.__module__ == driver.__name__:
                 tree = ast.parse(textwrap.dedent(inspect.getsource(value)))
                 if len(tree.body) != 1 or not isinstance(tree.body[0], ast.ClassDef):
                     raise TypeError('expected a class definition for %s' % name)
@@ -246,8 +251,19 @@ def moved_helper_shapes(driver, names, helper_modules, followed):
     return result
 
 
+def registration_parameters(modules):
+    """Keyword-only parameters of every register* function in the named modules."""
+    names = set()
+    for module in modules:
+        for attr, value in vars(sys.modules[module]).items():
+            if attr.startswith('register') and isinstance(value, types.FunctionType):
+                names.update(p.name for p in inspect.signature(value).parameters.values()
+                             if p.kind is inspect.Parameter.KEYWORD_ONLY)
+    return names
+
+
 def snapshot(root, cell, moved, helpers, injected, source_modules=(), retained_specs=(), moved_helpers=(),
-             helper_modules=()):
+             helper_modules=(), registration_injected=()):
     """Read the entire registry, selections, plans and specified source ASTs."""
     driver = load_driver(root, cell)
     for module in helper_modules:
@@ -287,8 +303,14 @@ def snapshot(root, cell, moved, helpers, injected, source_modules=(), retained_s
             raise TypeError('moved case is wrapped: %s' % name)
         moved_source[name] = {'module': fn.__module__, 'shape': function_shape(
             fn, driver, sentinel, injected, source_modules, used=used_injected)}
-    if set(injected) != used_injected:
-        raise TypeError('unused injected names: %s' % sorted(set(injected) - used_injected))
+    unused = set(injected) - used_injected - set(registration_injected)
+    if unused:
+        raise TypeError('unused injected names: %s' % sorted(unused))
+    case_modules = [module for module in source_modules if module not in helper_modules]
+    if case_modules:
+        missing = set(registration_injected) - registration_parameters(case_modules)
+        if missing:
+            raise TypeError('registration-injected names no moved register function takes: %s' % sorted(missing))
     helper_source = {}
     for name in helpers:
         owner = importlib.import_module(source_modules[0]) if source_modules else driver
@@ -302,7 +324,7 @@ def snapshot(root, cell, moved, helpers, injected, source_modules=(), retained_s
 
 
 def child_snapshot(root, cell, moved, helpers, injected, source_modules=(), retained_specs=(), moved_helpers=(),
-                   helper_modules=()):
+                   helper_modules=(), registration_injected=()):
     args = [sys.executable, '-X', 'lazy_imports=normal', str(Path(__file__).resolve()),
             '--snapshot', str(root), '--cell', cell]
     for flag, values in (('--case', moved), ('--helper', helpers), ('--injected', injected)):
@@ -312,7 +334,8 @@ def child_snapshot(root, cell, moved, helpers, injected, source_modules=(), reta
         args.extend(('--source-module', module))
     for spec in retained_specs:
         args.extend(('--retained-helper', spec))
-    for flag, values in (('--moved-helper', moved_helpers), ('--helper-module', helper_modules)):
+    for flag, values in (('--moved-helper', moved_helpers), ('--helper-module', helper_modules),
+                         ('--registration-injected', registration_injected)):
         for value in values:
             args.extend((flag, value))
     result = subprocess.run(args, cwd=root, capture_output=True, text=True)
@@ -486,6 +509,8 @@ def main():
                         help='driver definition moved unchanged into a --helper-module (repeatable)')
     parser.add_argument('--helper-module', action='append', default=[], metavar='MODULE',
                         help='module holding moved helpers; followed as driver code on both sides')
+    parser.add_argument('--registration-injected', action='append', default=[], metavar='NAME',
+                        help='injected driver binding read only by a moved module\'s registration code')
     parser.add_argument('--snapshot', type=Path, help=argparse.SUPPRESS)
     parser.add_argument('--discover', type=Path, help=argparse.SUPPRESS)
     parser.add_argument('--cell', choices=CELLS, help=argparse.SUPPRESS)
@@ -497,7 +522,7 @@ def main():
     if args.snapshot:
         print(json.dumps(snapshot(args.snapshot.resolve(), args.cell, args.case, args.helper, args.injected,
                                   args.source_module, args.retained_helper, args.moved_helper,
-                                  args.helper_module)))
+                                  args.helper_module, args.registration_injected)))
         return
     if not args.base:
         parser.error('base is required')
@@ -522,15 +547,18 @@ def main():
     for _, (module, _, _) in retained_counts(args.retained_helper).items():
         if module not in modules:
             parser.error('--retained-helper requires its module in the comparison')
+    if not set(args.registration_injected) <= set(args.injected):
+        parser.error('--registration-injected names must also be --injected')
     if args.moved_helper and not args.helper_module:
         parser.error('--moved-helper requires --helper-module')
     if len(set(args.moved_helper)) != len(args.moved_helper):
         parser.error('--moved-helper names must be unique')
     for cell in CELLS:
         before = child_snapshot(base, cell, moved, args.helper, args.injected, retained_specs=args.retained_helper,
-                                moved_helpers=args.moved_helper, helper_modules=args.helper_module)
+                                moved_helpers=args.moved_helper, helper_modules=args.helper_module,
+                                registration_injected=args.registration_injected)
         after = child_snapshot(head, cell, moved, args.helper, args.injected, modules, args.retained_helper,
-                               args.moved_helper, args.helper_module)
+                               args.moved_helper, args.helper_module, args.registration_injected)
         after['helper_modules'] = args.helper_module
         compare_snapshots(before, after, moved if not args.helper else args.module)
         retained = [name for group in after['retained'].values() for name in group['cases']]

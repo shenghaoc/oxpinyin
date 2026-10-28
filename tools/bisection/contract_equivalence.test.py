@@ -187,6 +187,29 @@ class EquivalenceTests(unittest.TestCase):
             with self.assertRaisesRegex(TypeError, 'recursive helper graph'):
                 equivalence.function_shape(driver.recursive, driver, self.sentinel, (), ())
 
+    def test_the_injected_registry_is_compared_by_identity_with_the_driver_registry(self):
+        driver = types.ModuleType('contract_diff')
+        driver.CASES = {'a': {'fn': make_function(1)}}
+        def reads(k):
+            return CASES
+        reads.__globals__['CASES'] = driver.CASES
+        shape = equivalence.function_shape(reads, driver, self.sentinel, ('CASES',), ())
+        self.assertEqual(shape['bindings']['CASES'], ['injected-registry'])
+        driver.CASES['b'] = {'fn': make_function(2)}
+        self.assertEqual(equivalence.function_shape(reads, driver, self.sentinel, ('CASES',), ()), shape)
+        reads.__globals__['CASES'] = dict(driver.CASES)
+        with self.assertRaisesRegex(TypeError, 'not the driver binding'):
+            equivalence.function_shape(reads, driver, self.sentinel, ('CASES',), ())
+        del reads.__globals__['CASES']
+
+    def test_registration_parameters_are_the_keyword_only_parameters_of_register_functions(self):
+        module = types.ModuleType('family_probe')
+        exec('def register(case, *, CASES, helper):\n    pass\n\n'
+             'def register_2(case, *, other):\n    pass\n\n'
+             'def unrelated(*, hidden):\n    pass\n', module.__dict__)
+        with patch.dict(sys.modules, family_probe=module):
+            self.assertEqual(equivalence.registration_parameters(['family_probe']), {'CASES', 'helper', 'other'})
+
     def test_injected_driver_class_compares_its_definition(self):
         with tempfile.TemporaryDirectory() as tmp, patch.dict(sys.modules):
             shapes = []

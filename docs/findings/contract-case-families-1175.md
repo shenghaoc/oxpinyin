@@ -1,13 +1,14 @@
 # Contract case-family extraction inventory (#1175)
 
-This inventory describes `contract-diff.py` at main
+This inventory began with `contract-diff.py` at main
 `b363ef9af5c4e6ae811e2a98a74c024834942d41`, before the first family move.
+The counts also include the two sort-family cases added in #1373.
 The sections group the driver's adjacent issue-specific definitions; the two
 remember-tone portions and the three axis-C builders are grouped together.
 The zhuyin allocation-after-fini twin remains in the zhuyin facade twins
 section. The final C-string cases register after the CLI definitions.
 
-The 67 sections account for all 4,184 registered IDs. Counts assign each ID
+The 67 sections account for all 4,186 registered IDs. Counts assign each ID
 to the section defining its case function or generated probe, including
 partials and closures; they are not counts of the `--family` selector. The
 first example ID identifies the section. Builders/helpers lists named
@@ -70,22 +71,22 @@ export case; its driver registration also owns `AXIS_C_GROUPS`,
 | 26 | combined import and nbest order (`combined-library-sixth-add-pinyin`) | 10 | `combined_import_bound`, `import_review`, `nbest_user_table_order` | `B`, `I`, `P`, `S`, `U`, `Z`, `case`, `remember_export`, `sentence_out`, `tokens_of`, `transient_files`, `unigram_of`, `zhuyin_sentence_out` | moved (`contract_combined_import_nbest`) |
 | 27 | stored total overflow (`stored-total-overflow-below`) | 6 | `stored_total_overflow`, `log_headers` | `B`, `FACADE_TOTAL`, `P`, `U`, `_facade_total_out`, `_modify_header`, `_stored_library_total`, `_write_log`, `_write_user_conf`, `case`, `import_rows`, `tokens_of`, `unigram_of` | moved (`contract_stored_total_overflow`) |
 | 28 | zhuyin per-entry contracts (`zhuyin-parse-chewing-key`) | 16 | `zy_strv`, `parse_chewing_probe`, `in_chewing_probe`, `key_rest_positions_probe`, `phrase_tokens_probe` | `B`, `C`, `I`, `P`, `S`, `U`, `UNTOUCHED`, `Z`, `case`, `owned_text`, `tokens_of`, `zhuyin_chewing` | moved (`contract_zhuyin_per_entry`) |
-| 29 | before-cursor and longer dedup (`before-cursor-frequency-dedup`) | 8 | `before_cursor_frequency_listing`, `longer_frequency_listing` | planned: PR 2 |
-| 30 | token unigram and training (`system-zhuyin-only-readings`) | 14 | `token_unigram_system`, `token_unigram_user`, `zhuyin_only_readings`, `token_unigram_user_libraries`, `train_selected_top`, `token_unigram_trained` | planned: PR 2 |
-| 31 | bigram removal (`removal-bigram-reported-mask-out-pinyin`) | 23 | `removal_bigram` | planned: PR 2 |
-| 32 | candidate removals and refusals (`abort-get-candidate-nbest-index-normal-row`) | 15 | `predicted`, `_add_user_phrase`, `_user_candidate_rows`, `_guessed_user_phrase`, `_removable_user_bigram_context`, `choose_without_sentence` | planned: PR 2 |
-| 33 | null user and library operations (`null-user-session-pinyin`) | 30 | `transient_files`, `null_user_session`, `transient_library` | planned: PR 2 |
-| 34 | bigram mask and prediction (`issue1114-collision-load-save-pinyin`) | 14 | `crafted_bigram_context`, `predicted_bigram_context`, `issue1114_collision_saves`, `predicted_bigram_row_context`, `issue677_sequence` | planned: PR 2 |
-| 35 | sort and pinyin length (`glib-sort-predicted`) | 15 | `glib_sort_zhuyin_options`, `glib_sort_tails`, `glib_sort_candidates`, `pinyin_length_rows` | planned: PR 2 |
-| 36 | system mask out (`mask-out-system-unsaved-pinyin`) | 20 | `token_phrase_of`, `mask_out_system_reload`, `mask_out_system_modify` | planned: PR 2 |
-| 37 | phrase-index logger (`abort-init-log-header-token-pinyin`) | 16 | `_chunk`, `_modify_header`, `_write_log`, `logger_init_probe`, `logger_mask_out_probe`, `logger_mask_out_unloaded_probe`, `logger_mask_out_untouched` | planned: PR 2 |
-| 38 | phrase table mask (`phrase-table-mask-long-short`) | 7 | `phrase_table_lookup`, `phrase_table_reopen`, `phrase_table_mask_records`, `phrase_table_raw_key_prediction` | planned: PR 2 |
-| 39 | punctuation (`punct-decode/valid`) | 22 | `punct_words`, `punct_fixture`, `punct_rows`, `punct_decode_case`, `punct_dedup_case`, `punct_alias_case` | planned: PR 2 |
-| 40 | training and constraints (`abort-zhuyin-train-stale-forcing`) | 19 | `forced_sentence`, `constraint_phrases`, `candidate_heads`, `constraint_instance`, `constraint_survives`, `constraint_survives_reconcile`, `constraint_stale_item`, `reparse_after_choose` | planned: PR 2 |
-| 41 | user stored words (`user-stored-words/pinyin-1-valid`) | 32 | `user_stored_words` | planned: PR 2 |
-| 42 | toned keys and zhuyin refusals (`abort-is-incomplete-toned-initial`) | 24 | `toned_initial`, `offset_call`, `guess_call`, `key_call`, `char_offset_call`, `_no_rank_z` | planned: PR 2 |
-| 43 | final step surface (`final-step-pinyin-ba'kua-20`) | 50 | `final_step_surface` | planned: PR 2 |
-| 44 | zero-key guess (`zero-key-guess/pinyin/default/'/guess_sentence`) | 63 | `zero_key_guess_case` | planned: PR 2 |
+| 29 | before-cursor and longer dedup (`before-cursor-frequency-dedup`) | 8 | `before_cursor_frequency_listing`, `longer_frequency_listing` | moved (`contract_before_cursor_dedup`) |
+| 30 | token unigram and training (`system-zhuyin-only-readings`) | 14 | `token_unigram_system`, `token_unigram_user`, `zhuyin_only_readings`, `token_unigram_user_libraries`, `train_selected_top`, `token_unigram_trained` | moved (`contract_token_unigram_training`) |
+| 31 | bigram removal (`removal-bigram-reported-mask-out-pinyin`) | 23 | `removal_bigram` | moved (`contract_bigram_removal`) |
+| 32 | candidate removals and refusals (`abort-get-candidate-nbest-index-normal-row`) | 15 | `predicted`, `_add_user_phrase`, `_user_candidate_rows`, `_guessed_user_phrase`, `_removable_user_bigram_context`, `choose_without_sentence` | moved (`contract_candidate_removals`) |
+| 33 | null user and library operations (`null-user-session-pinyin`) | 30 | `transient_files`, `null_user_session`, `transient_library` | moved (`contract_null_user_library`) |
+| 34 | bigram mask and prediction (`issue1114-collision-load-save-pinyin`) | 14 | `crafted_bigram_context`, `predicted_bigram_context`, `issue1114_collision_saves`, `predicted_bigram_row_context`, `issue677_sequence` | moved (`contract_bigram_mask_prediction`) |
+| 35 | sort and pinyin length (`glib-sort-predicted`) | 17 | `glib_sort_zhuyin_options`, `glib_sort_tails`, `glib_sort_candidates`, `pinyin_length_rows` | moved (`contract_sort_pinyin_length`) |
+| 36 | system mask out (`mask-out-system-unsaved-pinyin`) | 20 | `token_phrase_of`, `mask_out_system_reload`, `mask_out_system_modify` | moved (`contract_system_mask_out`) |
+| 37 | phrase-index logger (`abort-init-log-header-token-pinyin`) | 16 | `_chunk`, `_modify_header`, `_write_log`, `logger_init_probe`, `logger_mask_out_probe`, `logger_mask_out_unloaded_probe`, `logger_mask_out_untouched` | moved (`contract_phrase_index_logger`) |
+| 38 | phrase table mask (`phrase-table-mask-long-short`) | 7 | `phrase_table_lookup`, `phrase_table_reopen`, `phrase_table_mask_records`, `phrase_table_raw_key_prediction` | moved (`contract_phrase_table_mask`) |
+| 39 | punctuation (`punct-decode/valid`) | 22 | `punct_words`, `punct_fixture`, `punct_rows`, `punct_decode_case`, `punct_dedup_case`, `punct_alias_case` | moved (`contract_punctuation`) |
+| 40 | training and constraints (`abort-zhuyin-train-stale-forcing`) | 19 | `forced_sentence`, `constraint_phrases`, `candidate_heads`, `constraint_instance`, `constraint_survives`, `constraint_survives_reconcile`, `constraint_stale_item`, `reparse_after_choose` | moved (`contract_training_constraints`) |
+| 41 | user stored words (`user-stored-words/pinyin-1-valid`) | 32 | `user_stored_words` | moved (`contract_user_stored_words`) |
+| 42 | toned keys and zhuyin refusals (`abort-is-incomplete-toned-initial`) | 24 | `toned_initial`, `offset_call`, `guess_call`, `key_call`, `char_offset_call`, `_no_rank_z` | moved (`contract_toned_keys_zhuyin_refusals`) |
+| 43 | final step surface (`final-step-pinyin-ba'kua-20`) | 50 | `final_step_surface` | moved (`contract_final_step_surface`) |
+| 44 | zero-key guess (`zero-key-guess/pinyin/default/'/guess_sentence`) | 63 | `zero_key_guess_case` | moved (`contract_zero_key_guess`) |
 | 45 | token reuse and addon import (`issue762-token-reuse-no-mask-pinyin`) | 30 | `token_reuse_sequence`, `index_file_rows`, `token_reuse_files`, `addon_promote_sequence`, `addon_promoted_listing` | planned: PR 3 |
 | 46 | system phrase text (`phrase-text/pinyin-valid-candidate`) | 32 | `phrase_text_system`, `items_system`, `phrase_text_bytes`, `phrase_text_rows`, `phrase_text_choose`, `phrase_text_probe` | planned: PR 3 |
 | 47 | prefix conversion (`prefix-convert/predicted-valid`) | 28 | `glib_utf8`, `prefix_system`, `prefix_argument`, `prefix_prediction_case`, `prefix_sentence_case` | planned: PR 3 |
