@@ -89,7 +89,9 @@ crates and the like).
 and tool I/O calls belong in `oxpinyin-input`; DBM backend calls belong
 in `oxpinyin-store`; C ABI marshalling and C-facing encodings belong in
 the C adapters (`oxpinyin-capi`, `oxpinyin-zhuyin-capi` and
-`oxpinyin-capi-marshal`). The new boundary is planned, not yet present.
+`oxpinyin-capi-marshal`). oxpinyin-input exists from stage 1 (library
+config read/write and locale); later stages are listed in
+docs/findings/external-io-boundary.md.
 Core and engine types carry only the stored length and outward words
 that the pin's ranking, comparison,
 sentence, export and token-getter paths need before the C API, plus the
