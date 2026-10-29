@@ -146,5 +146,6 @@ series lives in `../perf/`.
 | [`upstream-divergences`](upstream-divergences.md) | Upstream divergences | register (living) |
 | [`upstream-report-drafts`](upstream-report-drafts.md) | Upstream report drafts — the libpinyin report-back batch | open (drafts, not filed) |
 | [`upstream-schema`](upstream-schema.md) | Findings — upstream GSettings schema | historical (pre-P6) |
+| [`user-phrase-representation-2026-10-29`](user-phrase-representation-2026-10-29.md) | User-phrase representation — the pin's `SubPhraseIndex` and item layout beside oxpinyin's row tables, the identical-key question, and a phrase-centric arena design with its migration plan and required measurements | design (read-only; awaits maintainer review) |
 | [`user-store`](user-store.md) | libpinyin user store — behaviour characterization (W6-T0) | characterization (W6) |
 | [`verify-nightly`](verify-nightly.md) | verify-nightly failure record | record |
