@@ -66,7 +66,11 @@ Maintainer rulings, 2026-10-28 UTC, recorded 2026-10-28 17:57 UTC
   calculation takes over on overflow. A finite pin score never becomes
   `UNKNOWN_COST` or a missing step because `u128` overflowed. Tested with
   `5e-1`, `1e-30` and the smallest positive `f32` in a nonzero bigram
-  context. The bridge is temporary; #1378 removes it.
+  context. **Retired from real-table sentence and phrase scoring by
+  #1406:** these paths use the scanned `f32` directly. The pre-frequency
+  fallback scorer still uses the rational routing and overflow fallback;
+  #1378 PR C retains them to preserve that scorer's behavior. See
+  [the reachability inventory](float-scoring-1378.md#61-pr-c-reachability-and-retained-code).
 - **D2, diagnostics.** `table_info.cpp`'s three `fprintf(stderr)` calls
   (`:201`, `:332`, `:382`) move in stage 1 with their native I/O
   sequences: exact calls, bytes, channel and order. A context without a
