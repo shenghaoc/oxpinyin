@@ -2,7 +2,7 @@
 """Case-driven pin-against-subject contract differential (lane C).
 
 Usage: contract-diff.py CELL PREFIX PINYIN_SO [--zhuyin-so PATH]
-                        [--cases a,b,...] [--issue N]... [--family F]...
+                        [--cases a,b,...] [--issue N]... [--family F]... [--cases-prefix P,Q,...]
                         [--expect-parent] [--plan-only] [--case-timeout SECONDS] [--jobs N]
        contract-diff.py CELL PREFIX PINYIN_SO --zhuyin-so PATH
                         --per-call wrap|lookup-only [--base-pinyin-so PATH]
@@ -86,11 +86,16 @@ with one deadline; verdicts and observations stay in selection order.
 Selection. --cases names case IDs. --issue N (repeatable; `#N`, `W11` and
 `row:54` forms as the registry uses them) selects every case registered with
 that tag in its `case(..., issues=(...))` call, and --family F every case
-whose ID starts with `F/` (separator, before-cursor, zero-key, ...). An
+whose ID starts with `F/` (separator, before-cursor, zero-key, ...).
+--cases-prefix P,Q,... selects IDs beginning with each prefix from the full
+registry, including untagged cases. Every prefix must match. Selectors form
+a union: explicit IDs first, then issues, families and prefixes; matches
+within each issue, family or prefix are sorted, with duplicates kept once
+and all selection reasons retained. An
 unknown tag, or a selection that matches nothing, is an error that lists the
 registered tags; it never falls back to the default suite. --list-tags
 prints the tag index as JSON (`tags`: tag to case IDs, with `family/<F>`
-entries; `modes`: case ID to facade). Before running, the plan goes to stderr: the
+entries; `modes`: every registered case ID to facade). Before running, the plan goes to stderr: the
 selected IDs and why each was selected, the facades and the artifacts the
 selection needs; --plan-only stops there. Axis C cases carry no tags and are
 never selected by tag; they run through --axis-c-replacement.
@@ -408,9 +413,9 @@ def tag_index():
     return contract_selection.tag_index(CASES)
 
 
-def select_cases(cases=None, issues=(), families=()):
+def select_cases(cases=None, issues=(), families=(), prefixes=None):
     """Return case IDs in selection order and the reasons accumulated per ID (contract_selection)."""
-    return contract_selection.select_cases(CASES, cases, issues, families)
+    return contract_selection.select_cases(CASES, cases, issues, families, prefixes)
 
 
 def plan_lines(names, reasons, pinyin_so, zhuyin_so, prefix, cell):
@@ -1207,6 +1212,9 @@ def run_main():
     parser.add_argument('--base-pinyin-so', type=Path)
     parser.add_argument('--base-zhuyin-so', type=Path)
     parser.add_argument('--cases')
+    parser.add_argument('--cases-prefix', metavar='P[,P...]',
+                        help='union of ID prefixes from the full registry, including untagged cases; '
+                             'every prefix must match')
     parser.add_argument('--issue', action='append', default=[], metavar='TAG',
                         help='select every case registered with this issue, row or lane tag')
     parser.add_argument('--family', action='append', default=[], metavar='F',
@@ -1238,14 +1246,20 @@ def run_main():
             case_names(args.cases)
         except SelectionError as error:
             parser.error(str(error))
+    try:
+        contract_selection.prefix_matches(CASES, args.cases_prefix)
+    except SelectionError as error:
+        parser.error(str(error))
+    if args.cases_prefix is not None and (args.teardown or args.per_call or args.axis_c_replacement or
+            args.axis_c_mutation or args.axis_c_snapshot_check or args.regenerate_sentence_ties):
+        parser.error('--cases-prefix selects ordinary cases only')
     if not 0 < args.case_timeout < float('inf'):
         parser.error('--case-timeout must be a positive finite number of seconds')
     if args.jobs not in (None, 1) and (args.teardown or args.per_call or args.axis_c_replacement or
                            args.axis_c_mutation or args.axis_c_snapshot_check or args.regenerate_sentence_ties):
         parser.error('--jobs applies to ordinary contract cases only')
     if args.list_tags:
-        print(json.dumps(dict(tags=tag_index(), modes={name: spec['mode'] for name, spec in CASES.items()
-                                                       if not name.startswith('axis-c-')}), indent=1))
+        print(json.dumps(dict(tags=tag_index(), modes={name: spec['mode'] for name, spec in CASES.items()}), indent=1))
         return 0
     if not (args.cell and args.prefix and args.pinyin_so):
         parser.error('CELL, PREFIX and PINYIN_SO are required')
@@ -1309,7 +1323,7 @@ def run_main():
     # names nothing (`--cases ,`), an unknown tag or a tag that matches
     # nothing is an error, never a request for everything.
     try:
-        names, reasons = select_cases(args.cases, args.issue, args.family)
+        names, reasons = select_cases(args.cases, args.issue, args.family, args.cases_prefix)
     except SelectionError as error:
         parser.error(str(error))
     for line in plan_lines(names, reasons, args.pinyin_so, args.zhuyin_so, args.prefix, args.cell):

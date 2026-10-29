@@ -185,6 +185,21 @@ same-data-directory differential:
 bash tools/oracle/compat.sh --runtime podman --cell bdb --runners same-data-dir-diff
 ```
 
+For contract cases with IDs that share a prefix, including untagged cases:
+
+```bash
+bash tools/oracle/compat.sh --cell bdb --runners contract-diff \
+    --cases-prefix table-conf-,user-conf-,glib-922-save-,stderr-save-,stderr-fini-
+```
+
+`--cases-prefix` takes comma-separated, literal ID prefixes from the full
+contract registry. Each prefix must match at least one case or the selection
+fails. It forms a union with `--cases` and issue selections; overlapping
+matches run once. `--family` in the contract driver means IDs starting with
+`F/`, so it does not select hyphenated groups such as `table-conf-*`.
+The shared CLI accepts the same flag as `just compat --runners contract-diff
+--cases-prefix table-conf-,user-conf-`.
+
 The small runtime adapters use each CLI's actual documented interfaces
 ([Apple command reference](https://github.com/apple/container/blob/main/docs/command-reference.md),
 [Podman run](https://docs.podman.io/en/latest/markdown/podman-run.1.html)).

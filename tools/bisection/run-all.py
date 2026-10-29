@@ -26,6 +26,7 @@ from tools.dev import host as _host
 from tools.dev import registry as _registry
 from tools.dev import slot as _slot
 from tools.dev.cell import Settings as CellSettings
+from tools.bisection.contract_selection import prefix_matches
 
 RUSTC_PEAK_MIB = _host.RUSTC_PEAK_MIB
 TEST_THREAD_PEAK_MIB = _host.TEST_THREAD_PEAK_MIB
@@ -445,6 +446,9 @@ def run_main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--runners', help='comma-separated registry names (default: every gate)')
     parser.add_argument('--cases', help='comma-separated contract-diff case IDs (requires contract-diff)')
+    parser.add_argument('--cases-prefix', metavar='P[,P...]',
+                        help='union of contract case ID prefixes from the full registry, including untagged '
+                             'cases; every prefix must match (requires contract-diff)')
     parser.add_argument('--cells', default='bdb', help='comma-separated bdb,kc,tkrzw')
     parser.add_argument('--issue', action='append', default=[],
                         help='issue number, W tag, or row:N; selects the runners and the exact '
@@ -521,6 +525,16 @@ def run_main():
             parser.error('unknown contract case(s): ' + ', '.join(sorted(unknown_cases)))
         for name in requested_cases:
             contract_cases.setdefault(name, ['--cases'])
+    if args.cases_prefix is not None:
+        if 'contract-diff' not in selected:
+            parser.error('--cases-prefix requires --runners contract-diff')
+        index = index or contract_tag_index()
+        try:
+            matches = prefix_matches(index['modes'], args.cases_prefix)
+        except ValueError as error:
+            parser.error(str(error))
+        for name, selectors in matches.items():
+            contract_cases.setdefault(name, []).extend(selectors)
     runner_tags = {normal_tag(tag) for row in catalog for tag in row.get('issues', [])}
     known_issues = runner_tags | {normal_tag(tag) for tag in (index or {}).get('tags', {})}
     unknown_issues = requested_issues - known_issues

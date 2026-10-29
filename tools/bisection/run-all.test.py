@@ -95,6 +95,23 @@ class RunnerSelectionTests(unittest.TestCase):
                                                    *extra, index=index)
                     self.assertIn('--cases', message)
 
+    def test_prefixes_use_untagged_registry_entries_and_union_with_other_selectors(self):
+        index = {'tags': {'532': ['table-conf-tagged']},
+                 'modes': dict.fromkeys(['table-conf-untagged', 'table-conf-tagged', 'explicit'], 'pinyin')}
+        rows = self.list_rows('--runners', 'contract-diff', '--issue', '532', '--cases', 'explicit',
+                              '--cases-prefix', 'table-conf-', index=index)
+        self.assertEqual(rows[0]['command'][-3:],
+                         ['--', '--cases', 'table-conf-tagged,explicit,table-conf-untagged'])
+
+    def test_each_prefix_is_validated_before_scheduling(self):
+        for value in ('', 'default-,', 'default-,nope'):
+            message = self.selection_error('--runners', 'contract-diff', '--cases-prefix', value,
+                                           index=self.index)
+            self.assertIn('--cases-prefix', message)
+            self.assertNotIn('unrecognized arguments', message)
+        self.assertIn('--cases-prefix requires --runners contract-diff',
+                      self.selection_error('--runners', 'bisect', '--cases-prefix', 'default-'))
+
     def test_empty_cases_exit_two_from_the_command_line(self):
         script = Path(__file__).with_name('run-all.py')
         for value in ('', ' , '):

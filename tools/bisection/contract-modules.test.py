@@ -158,7 +158,7 @@ ADAPTERS = {
     'matches': '(spec, pin, subject)',
     'case': '(name, *args, **kwargs)',
     'tag_index': '()',
-    'select_cases': '(cases=None, issues=(), families=())',
+    'select_cases': '(cases=None, issues=(), families=(), prefixes=None)',
     'plan_lines': '(names, reasons, pinyin_so, zhuyin_so, prefix, cell)',
     'timing_summary': '(names, compare_seconds, total)',
     'check_cancelled': '()',
@@ -313,6 +313,8 @@ class ModuleBoundaryTests(unittest.TestCase):
         with patch.object(driver, 'CASES', registry):
             self.assertEqual(driver.select_cases(), (['only/one'], {'only/one': ['default suite']}))
             self.assertEqual(driver.select_cases(issues=['#7'])[0], ['only/one'])
+            self.assertEqual(driver.select_cases(prefixes='only/'),
+                             (['only/one'], {'only/one': ['prefix only/']}))
             self.assertEqual(driver.tag_index(), {'7': ['only/one'], 'family/only': ['only/one']})
             names, reasons = driver.select_cases('only/one')
             self.assertEqual(driver.plan_lines(names, reasons, Path('/s'), Path('/z'), Path('/pin'), 'bdb')[1],

@@ -1,6 +1,6 @@
 """Case selection for the contract differential (contract-diff.py).
 
-Resolve --cases, --issue and --family to case IDs and the reasons each was
+Resolve --cases, --issue, --family and --cases-prefix to case IDs and the reasons each was
 chosen, build the tag index --list-tags prints, and word the plan that precedes
 a run. The registry is a parameter: contract-diff.py passes its own CASES when
 it calls, so a registry the tests swap in is the one selected from, and every
@@ -53,14 +53,35 @@ def case_names(value):
     return names
 
 
-def select_cases(registry, cases=None, issues=(), families=()):
+def prefix_matches(registry, value):
+    """Map full-registry case IDs to reasons for comma-separated ID prefixes.
+
+    Preserve prefix order and sort each prefix's matches. Every prefix must
+    be nonempty and match at least one ID, even if another selector matches.
+    """
+    if value is None:
+        return {}
+    prefixes = value.split(',')
+    if any(not prefix.strip() for prefix in prefixes):
+        raise SelectionError('--cases-prefix must not contain an empty value')
+    chosen = {}
+    for prefix in prefixes:
+        names = sorted(name for name in registry if name.startswith(prefix))
+        if not names:
+            raise SelectionError('--cases-prefix matched no cases: %r' % prefix)
+        for name in names:
+            chosen.setdefault(name, []).append('prefix ' + prefix)
+    return chosen
+
+
+def select_cases(registry, cases=None, issues=(), families=(), prefixes=None):
     """Return case IDs in selection order and the reasons accumulated per ID.
 
-    Process explicit IDs first, then issue selectors, then families; each
-    issue or family contributes sorted IDs. Keep the first occurrence's
+    Process explicit IDs first, then issue selectors, families and prefixes;
+    each issue, family or prefix contributes sorted IDs. Keep the first occurrence's
     position and append all reasons, including repeated selectors. With no
     selectors, choose every non-axis-C case in sorted order. Axis C can be
-    selected explicitly but is absent from issue and family indexes.
+    selected explicitly or by prefix but is absent from issue and family indexes.
     Raise SelectionError for unknown selectors, empty comma components or
     an empty selection; never fall back to the default suite on an error."""
     index = tag_index(registry)
@@ -83,7 +104,9 @@ def select_cases(registry, cases=None, issues=(), families=()):
             raise SelectionError('unknown family %r; registered families: %s' % (family, known))
         for name in index[key]:
             chosen.setdefault(name, []).append('family ' + family)
-    if cases is None and not (issues or families):
+    for name, reasons in prefix_matches(registry, prefixes).items():
+        chosen.setdefault(name, []).extend(reasons)
+    if cases is None and not (issues or families) and prefixes is None:
         chosen = {n: ['default suite'] for n in sorted(n for n in registry if not n.startswith('axis-c-'))}
     if not chosen:
         raise SelectionError('no cases selected')

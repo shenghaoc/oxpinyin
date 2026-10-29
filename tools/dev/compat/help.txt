@@ -6,6 +6,8 @@ Options:
   --platform linux/amd64|linux/arm64  Override the host architecture
   --cell bdb|kc|tkrzw               Default: bdb; one backend on both sides
   --cases ID[,ID...]                Contract-diff case IDs (requires contract-diff)
+  --cases-prefix P[,P...]           Union of ID prefixes, including untagged cases; every prefix
+                                   must match (requires --runners contract-diff)
   --archive PATH                    Optional local model20 archive (checksum verified)
   --jobs N                          Build/runner concurrency (default 2)
   --memory-mib N                    Hard limit and native reservation (default 2560 MiB)
