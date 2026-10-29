@@ -28,6 +28,7 @@ from tools.dev.runner_recipes import (SURFACES, active_rows, candidate_blocks, e
                                       nbest_witness_cases, nbest_witness_results, ordinary)
 from tools.dev.runner_state import verify_steps
 from tools.dev.runners import Context
+from tools.dev import runners
 from tools.dev.system_data import SystemData, data_extension
 
 
@@ -55,6 +56,25 @@ class FixtureServices:
     def run(self, argv, obj, **options):
         self.launches.append((options['side'], options['environment'].get('LD_LIBRARY_PATH')))
         return subprocess.CompletedProcess(argv, 0, self.output, self.diagnostics)
+
+
+class ContractSelectorTests(unittest.TestCase):
+    def test_prefix_flag_reaches_driver_with_or_without_separator_and_zhuyin(self):
+        for extra in ([], ['--'], ['/subject/zhuyin.so', '--']):
+            args = ['contract-diff', 'bdb', '/pin', '/subject/pinyin.so', *extra,
+                    '--cases-prefix', 'table-conf-,user-conf-']
+            with self.subTest(extra=extra), mock.patch.object(runners.os, 'execv', side_effect=SystemExit) as launch:
+                with self.assertRaises(SystemExit):
+                    runners.main(args)
+                forwarded = launch.call_args.args[1]
+                self.assertEqual(forwarded[-2:], ['--cases-prefix', 'table-conf-,user-conf-'])
+                self.assertEqual('--zhuyin-so' in forwarded, bool(extra and extra[0] != '--'))
+
+    def test_runner_help_exposes_driver_flags_without_artifacts(self):
+        with mock.patch.object(runners.os, 'execv', side_effect=SystemExit) as launch:
+            with self.assertRaises(SystemExit):
+                runners.main(['contract-diff', '--help'])
+            self.assertEqual(launch.call_args.args[1][-1], '--help')
 
 
 class NbestWitnessTests(unittest.TestCase):

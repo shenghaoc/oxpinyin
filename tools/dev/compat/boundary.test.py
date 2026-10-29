@@ -71,6 +71,14 @@ class BoundaryTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'cannot select'):
                 boundary.validate([mode, '--archive', '/unused/model'], {})
 
+    def test_prefixes_require_contract_diff_and_are_preserved(self):
+        for argv in (['--runners', 'pc-version'], ['--list'], ['--issue', '919']):
+            with self.subTest(argv=argv), self.assertRaisesRegex(
+                    ValueError, '--cases-prefix requires --runners contract-diff'):
+                boundary.validate([*argv, '--cases-prefix', 'table-conf-'], {})
+        args = boundary.validate(['--runners', 'contract-diff', '--cases-prefix', 'table-conf-,user-conf-'], {})
+        self.assertEqual(args.cases_prefix, 'table-conf-,user-conf-')
+
     def test_wrong_model_fails_without_runtime(self):
         with tempfile.TemporaryDirectory() as directory:
             model = Path(directory) / 'model-input'

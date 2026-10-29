@@ -352,7 +352,7 @@ just heavy -- cargo test -p oxpinyin-runtime --no-default-features --features tk
 ### The full default contract selection
 
 "The full default contract selection" is the contract driver run with no
-`--cases`, `--issue` or `--family`, on one cell:
+`--cases`, `--issue`, `--family` or `--cases-prefix`, on one cell:
 
 ```sh
 just heavy -- just runner contract-diff bdb "$PINYIN_ORACLE_PREFIX" \
@@ -367,6 +367,25 @@ whenever a case is registered, so report the count from the run. Add
 `plan: <N> cases (default suite: every registered non-axis-C case)`. Two
 runs that report different counts ran different registries. For example,
 2,865 is the registry at `b587d599`, before `074f0b36` added cases.
+
+For a smaller selection, `--cases-prefix P,Q,...` selects literal ID prefixes
+from the full registry, including untagged cases and IDs without `/`:
+
+```sh
+just runner contract-diff bdb "$PINYIN_ORACLE_PREFIX" \
+    <target>/debug/libpinyin_capi.so <target>/debug/libzhuyin_capi.so -- \
+    --cases-prefix table-conf-,user-conf-,glib-922-save-,stderr-save-,stderr-fini- --plan-only
+```
+
+Every prefix must match; an empty component or an unmatched prefix is an
+error, even alongside another selector. The driver unions explicit `--cases`
+IDs, repeatable `--issue` tags, repeatable `--family F` selections (`F/` IDs),
+then prefixes, in that order. Each issue, family and prefix contributes
+sorted IDs; overlapping selections keep the first position and all reasons
+in the plan. `just runner contract-diff --help` exposes the driver flags.
+`just runner run-all --runners contract-diff --cases-prefix table-conf- --list`
+lists the resolved command without building or running cases; the same flag
+is supported by `tools/oracle/compat.sh`.
 
 Ordinary cases remain serial by default. Add `-- --jobs N` to request
 at most N active cases in the existing contract driver. Each case has its

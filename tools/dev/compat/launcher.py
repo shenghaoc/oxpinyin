@@ -43,11 +43,11 @@ def arguments(argv):
             smoke |= option == '--memory-smoke'
             listing |= option == '--list'
             continue
-        if option.startswith(('--runners=', '--issue=')):
+        if option.startswith(('--runners=', '--issue=', '--cases-prefix=')):
             option, value = option.split('=', 1)
             args.insert(0, value)
         if option not in ('--runtime', '--platform', '--cell', '--archive', '--jobs', '--memory-mib',
-                          '--runners', '--issue', '--cases', '--timeout', '--runner-timeout'):
+                          '--runners', '--issue', '--cases', '--cases-prefix', '--timeout', '--runner-timeout'):
             print(f'unknown option: {option}', file=sys.stderr)
             usage(True)
             raise Finished(2)

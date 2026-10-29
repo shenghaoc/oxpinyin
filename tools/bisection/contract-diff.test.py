@@ -1340,6 +1340,33 @@ class SelectionTests(DriverFixtureCase):
         self.assertEqual(set(names), {n for n in contract['CASES'] if n.startswith('zero-key/')})
         self.assertEqual(reasons[names[0]], ['family zero-key'])
 
+    def test_prefix_selects_untagged_cases_from_the_full_driver_registry(self):
+        names, _ = driver.select_cases(prefixes='table-conf-,user-conf-,remember-count-')
+        expected = sorted(n for n in driver.CASES if n.startswith('table-conf-'))
+        expected += sorted(n for n in driver.CASES if n.startswith('user-conf-'))
+        expected += sorted(n for n in driver.CASES if n.startswith('remember-count-'))
+        self.assertEqual(names, expected)
+        self.assertTrue(any(not driver.CASES[n]['issues'] for n in names))
+
+    def test_listing_exposes_full_registry_for_prefix_selection(self):
+        with patch.object(sys, 'argv', ['driver', '--list-tags']), \
+                contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(driver.main(), 0)
+        listing = json.loads(output.getvalue())
+        self.assertEqual(listing['modes'], {name: spec['mode'] for name, spec in driver.CASES.items()})
+        self.assertFalse(any(name.startswith('axis-c-') for names in listing['tags'].values() for name in names))
+
+    def test_bad_prefix_cli_exits_two_before_inputs_or_workers(self):
+        for value in ('', 'table-conf-,', 'table-conf-,no-such-case-prefix'):
+            with self.subTest(value=value), patch.object(sys, 'argv', ['driver', '--cases-prefix', value]), \
+                    patch.object(driver, 'case_results') as workers, \
+                    contextlib.redirect_stderr(io.StringIO()) as error, self.assertRaises(SystemExit) as caught:
+                driver.main()
+            self.assertEqual(caught.exception.code, 2)
+            self.assertIn('--cases-prefix', error.getvalue())
+            self.assertNotIn('unrecognized arguments', error.getvalue())
+            workers.assert_not_called()
+
     def test_explicit_cases_keep_their_order_and_combine(self):
         names, reasons = contract['select_cases']('fini-twice,default-option-parse', issues=['532'])
         self.assertEqual(names[:2], ['fini-twice', 'default-option-parse'])

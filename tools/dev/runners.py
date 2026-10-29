@@ -261,6 +261,9 @@ def main(argv: Sequence[str]) -> int:
         command = [sys.executable, '-X', 'lazy_imports=normal', str(ROOT / 'tools/bisection/run-all.py'), *args]
         os.execv(sys.executable, command)
     if recipe == 'contract-diff':
+        if args in (['-h'], ['--help']):
+            os.execv(sys.executable, [sys.executable, '-X', 'lazy_imports=normal',
+                                     str(ROOT / 'tools/bisection/contract-diff.py'), *args])
         if len(args) < 3:
             emit('expected backend, oracle prefix and subject libpinyin', error=True)
             return 1
@@ -269,7 +272,7 @@ def main(argv: Sequence[str]) -> int:
             emit(f'unknown backend: {cell}', error=True)
             return 1
         forwarded = [cell, prefix, pinyin]
-        if tail and tail[0] != '--':
+        if tail and not tail[0].startswith('-'):
             forwarded += ['--zhuyin-so', tail.pop(0)]
         if tail[:1] == ['--']:
             tail = tail[1:]

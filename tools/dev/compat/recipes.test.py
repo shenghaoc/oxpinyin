@@ -62,6 +62,32 @@ class RecipeTests(unittest.TestCase):
             with self.subTest(args=args):
                 self.assertEqual(self.compare('tools/oracle/compat.sh', [], args).returncode, code)
 
+    def test_compat_shell_passes_prefixes_through_shared_cli_and_launcher(self):
+        uv = self.directory / 'uv'
+        uv.write_text(f'''#!{sys.executable}
+import json,sys
+sys.path.insert(0, {str(ROOT)!r})
+from tools.dev import cli
+from tools.dev.compat import launcher
+args = sys.argv[sys.argv.index('-m') + 2:]
+def launch(argv):
+    print(json.dumps(launcher.arguments(argv)[1]))
+    return 0
+launcher.launch = launch
+raise SystemExit(cli.main(args))
+''')
+        # The shell runs this executable at the checkout root.
+        env = dict(self.env)
+        env.pop('UV_CACHE_DIR', None)
+        result = subprocess.run(['bash', 'tools/oracle/compat.sh', '--runners', 'contract-diff',
+                                 '--cases', 'default-option-parse',
+                                 '--cases-prefix', 'table-conf-,user-conf-'],
+                                cwd=ROOT, env=env, capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), ['--runners', 'contract-diff', '--cases',
+                                                    'default-option-parse', '--cases-prefix',
+                                                    'table-conf-,user-conf-'])
+
     def test_developer_input_errors_match_the_base(self):
         for args in ([], ['--unknown'], ['--libpinyin', '/absent']):
             self.assertEqual(self.compare('tools/oracle/run-differentials.sh', ['differentials'], args).returncode, 2)

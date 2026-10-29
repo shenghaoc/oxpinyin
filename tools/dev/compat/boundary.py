@@ -80,8 +80,8 @@ def validate(argv, environ=None):
     """Parse and validate launcher inputs without accessing a container runtime.
 
     Check environment, result namespace, gate selection, timeouts, and any
-    model archive digest against tools/oracle/oracle-pin.txt. ``--cases``
-    needs ``--runners`` naming contract-diff; run-all.py checks the case IDs
+    model archive digest against tools/oracle/oracle-pin.txt. ``--cases`` and ``--cases-prefix``
+    need ``--runners`` naming contract-diff; run-all.py checks the case IDs
     against the contract index inside the container. Return the parsed
     namespace. Read the registry and, when needed, run the contract tag
     listing; reject invalid inputs with parser exits or value errors.
@@ -101,6 +101,7 @@ def validate(argv, environ=None):
     parser.add_argument('--runners')
     parser.add_argument('--issue', action='append')
     parser.add_argument('--cases')
+    parser.add_argument('--cases-prefix')
     parser.add_argument('--timeout', type=positive)
     parser.add_argument('--runner-timeout', action='append', default=[])
     args = parser.parse_args(argv)
@@ -114,6 +115,9 @@ def validate(argv, environ=None):
     if args.cases is not None and (args.runners is None
                                    or 'contract-diff' not in registry.names(args.runners)):
         raise ValueError('--cases requires --runners contract-diff')
+    if args.cases_prefix is not None and (args.runners is None
+                                          or 'contract-diff' not in registry.names(args.runners)):
+        raise ValueError('--cases-prefix requires --runners contract-diff')
     if args.memory_smoke or args.list:
         if args.runners is not None or args.issue is not None or args.archive is not None or args.timeout or args.runner_timeout:
             raise ValueError('list/memory smoke cannot select task inputs or runners')

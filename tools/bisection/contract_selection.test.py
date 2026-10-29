@@ -98,6 +98,28 @@ class SelectTests(unittest.TestCase):
     def test_an_axis_c_case_is_never_chosen_by_tag(self):
         self.assertNotIn('axis-c-options', self.select(issues=['640'])[0])
 
+    def test_prefixes_select_the_full_registry_without_tags_or_slashes(self):
+        names, reasons = self.select(prefixes='axis-c-,kc-,separator/')
+        self.assertEqual(names, ['axis-c-options', 'kc-only', 'separator/1/x'])
+        self.assertEqual(reasons['separator/1/x'], ['prefix separator/'])
+
+    def test_prefixes_union_with_ids_issues_and_families_in_selection_order(self):
+        names, reasons = self.select('zero-key/b', issues=['532'], families=['zero-key'],
+                                     prefixes='zero-,separator/,zero-key/a')
+        self.assertEqual(names, ['zero-key/b', 'kc-only', 'plain', 'zero-key/a', 'separator/1/x'])
+        self.assertEqual(reasons['zero-key/b'], ['--cases', 'family zero-key', 'prefix zero-'])
+        self.assertEqual(reasons['zero-key/a'], ['family zero-key', 'prefix zero-', 'prefix zero-key/a'])
+
+    def test_each_prefix_must_match_even_beside_other_selectors(self):
+        for value in ('nope', 'zero-,nope'):
+            with self.subTest(value=value), self.assertRaisesRegex(
+                    selection.SelectionError, "--cases-prefix matched no cases: 'nope'"):
+                self.select('plain', prefixes=value)
+        for value in ('', ' ', ',', 'zero-,', 'zero-, ,kc-'):
+            with self.subTest(value=value), self.assertRaisesRegex(
+                    selection.SelectionError, '--cases-prefix must not contain an empty value'):
+                self.select('plain', prefixes=value)
+
     def test_unknown_selectors_name_what_is_registered_and_never_fall_back(self):
         with self.assertRaises(selection.SelectionError) as caught:
             self.select(issues=['9999'])
