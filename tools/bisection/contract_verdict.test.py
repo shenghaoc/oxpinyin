@@ -17,6 +17,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import contract_policy
 import contract_verdict as verdict
 
 
@@ -295,8 +296,16 @@ class PolicyTests(unittest.TestCase):
         self.write(dict(pin=self.PIN, subject=self.SUBJECT))
 
     def write(self, pair, **metadata):
-        record = dict(schema=1, record='rec', status='current', disposition='POLICY-ACCEPTED',
-                      cases={'family/case': pair}, **metadata)
+        """Record `pair` ({'pin': obs, 'subject': obs}, or {'cells': {cell: pair}}) in the digest form."""
+        if set(pair) == {'cells'}:
+            kept = {'cells': {cell: contract_policy.entry(p['pin'], p['subject']) for cell, p in pair['cells'].items()}}
+        else:
+            kept = contract_policy.entry(pair['pin'], pair['subject'])
+        self.write_entry(kept, **metadata)
+
+    def write_entry(self, kept, schema=contract_policy.SCHEMA, **metadata):
+        record = dict(schema=schema, record='rec', status='current', disposition='POLICY-ACCEPTED',
+                      cases={'family/case': kept}, **metadata)
         (self.root / 'rec.md').write_text('# Record\n\n```contract-diff-policy\n' + json.dumps(record) + '\n```\n')
 
     def decide(self, pin=None, subject=None, parent=False, **state):
@@ -344,9 +353,44 @@ class PolicyTests(unittest.TestCase):
             verdict.policy_expectations(self.spec, policy_root=self.root, cell='bdb')
 
     def test_a_record_that_records_parity_is_refused(self):
-        self.write(dict(pin=self.PIN, subject=self.PIN))
+        kept = contract_policy.entry(self.PIN, self.SUBJECT)
+        kept['subject'] = kept['pin']
+        self.write_entry(kept)
         with self.assertRaisesRegex(ValueError, 'difference, not parity'):
             verdict.policy_expectations(self.spec, policy_root=self.root, cell='bdb')
+
+    def test_a_schema_1_record_of_complete_observations_is_refused_by_name(self):
+        self.write_entry(dict(pin=self.PIN, subject=self.SUBJECT), schema=1)
+        with self.assertRaisesRegex(ValueError, 'schema 1.*policy-record'):
+            verdict.policy_expectations(self.spec, policy_root=self.root, cell='bdb')
+        self.assertEqual(self.decide(), ('INVALID', False, False))
+        self.write_entry(contract_policy.entry(self.PIN, self.SUBJECT), schema=3)
+        self.assertEqual(self.decide(), ('INVALID', False, False))
+
+    def test_a_malformed_entry_is_invalid(self):
+        kept = contract_policy.entry(self.PIN, self.SUBJECT)
+        for broken in (dict(kept, divergence=[]), {k: v for k, v in kept.items() if k != 'subject'},
+                       dict(kept, pin=dict(kept['pin'], sha256='short')), dict(kept, pin={'sha256': kept['pin']['sha256']})):
+            with self.subTest(broken=broken):
+                self.write_entry(broken)
+                self.assertEqual(self.decide(), ('INVALID', False, False))
+
+    def test_an_accepted_pair_must_still_be_one_the_record_could_hold(self):
+        pin = dict(self.PIN, result={'ret': True})  # no logs
+        self.write(dict(pin=pin, subject=self.SUBJECT))
+        self.assertEqual(self.decide(pin=dict(pin, stderr_lines=0, userfiles={})), ('INVALID', False, False))
+
+    def test_the_diagnosis_names_the_side_and_the_fields_that_moved(self):
+        moved = dict(self.SUBJECT, result=dict(self.SUBJECT['result'], ret=False, extra=1), stderr_lines=0, userfiles={})
+        report = verdict.policy_diagnosis(self.spec, dict(self.PIN, stderr_lines=0, userfiles={}), moved,
+                                          policy_root=self.root, cell='bdb')
+        self.assertEqual(report['summary'], 'pin matches; subject moved in result.ret, +result.extra')
+        self.assertTrue(report['pin']['matches'])
+        self.assertEqual(report['subject'], dict(matches=False, moved=['result.ret'], added=['result.extra'], missing=[]))
+        self.assertIsNone(verdict.policy_diagnosis(self.spec, dict(self.PIN, stderr_lines=0, userfiles={}),
+                                                   dict(self.SUBJECT, stderr_lines=0, userfiles={}),
+                                                   policy_root=self.root, cell='bdb'))
+        self.assertIsNone(verdict.policy_diagnosis(self.spec, self.PIN, moved, policy_root=self.root / 'missing', cell='bdb'))
 
     def test_a_recorded_observation_holds_exactly_the_keys_the_case_compares(self):
         self.assertEqual(verdict.policy_observation(self.spec, dict(self.PIN, userfiles={'a': 'b'}, stderr_lines=3)),

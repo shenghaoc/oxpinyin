@@ -22,82 +22,106 @@ this record. The record and its observations below remain historical.
 
 ```contract-diff-policy
 {
-  "schema": 1,
+  "schema": 2,
   "record": "1297-table-decimals",
   "status": "reverted",
   "disposition": "POLICY-ACCEPTED",
   "cases": {
     "table-conf-919-versions-positive-overflow": {
       "pin": {
-        "exit": 0,
-        "result": {
-          "ctx": true,
-          "logs": []
-        },
-        "stderr": ""
+        "sha256": "096171703e12a07648d9b811395629efc91d77ae4eb46936e25151db1001429a",
+        "fields": {
+          "exit": "5feceb66ffc86f38",
+          "result.ctx": "b5bea41b6c623f7c",
+          "result.logs": "4f53cda18c2baa0c",
+          "stderr": "12ae32cb1ec02d01"
+        }
       },
       "subject": {
-        "exit": 0,
-        "result": {
-          "ctx": false,
-          "logs": []
-        },
-        "stderr": "load SCRATCH/sys-X/table.conf failed!\n"
-      }
+        "sha256": "c302191f2c479bf4048203961481c53e3c988e4878cc1b9293c31e440782fcb2",
+        "fields": {
+          "exit": "5feceb66ffc86f38",
+          "result.ctx": "fcbcf165908dd18a",
+          "result.logs": "4f53cda18c2baa0c",
+          "stderr": "4fb43233d5f48d1b"
+        }
+      },
+      "divergence": [
+        "result.ctx: pin true; subject false",
+        "stderr: pin \"\"; subject \"load SCRATCH/sys-X/table.conf failed!\\n\""
+      ]
     },
     "table-conf-919-versions-positive-overflow-zhuyin": {
       "pin": {
-        "exit": 0,
-        "result": {
-          "ctx": true,
-          "logs": []
-        },
-        "stderr": ""
+        "sha256": "096171703e12a07648d9b811395629efc91d77ae4eb46936e25151db1001429a",
+        "fields": {
+          "exit": "5feceb66ffc86f38",
+          "result.ctx": "b5bea41b6c623f7c",
+          "result.logs": "4f53cda18c2baa0c",
+          "stderr": "12ae32cb1ec02d01"
+        }
       },
       "subject": {
-        "exit": 0,
-        "result": {
-          "ctx": false,
-          "logs": []
-        },
-        "stderr": "load SCRATCH/sys-X/table.conf failed!\n"
-      }
+        "sha256": "c302191f2c479bf4048203961481c53e3c988e4878cc1b9293c31e440782fcb2",
+        "fields": {
+          "exit": "5feceb66ffc86f38",
+          "result.ctx": "fcbcf165908dd18a",
+          "result.logs": "4f53cda18c2baa0c",
+          "stderr": "4fb43233d5f48d1b"
+        }
+      },
+      "divergence": [
+        "result.ctx: pin true; subject false",
+        "stderr: pin \"\"; subject \"load SCRATCH/sys-X/table.conf failed!\\n\""
+      ]
     },
     "table-conf-919-versions-int-wrap": {
       "pin": {
-        "exit": 0,
-        "result": {
-          "ctx": true,
-          "logs": []
-        },
-        "stderr": ""
+        "sha256": "096171703e12a07648d9b811395629efc91d77ae4eb46936e25151db1001429a",
+        "fields": {
+          "exit": "5feceb66ffc86f38",
+          "result.ctx": "b5bea41b6c623f7c",
+          "result.logs": "4f53cda18c2baa0c",
+          "stderr": "12ae32cb1ec02d01"
+        }
       },
       "subject": {
-        "exit": 0,
-        "result": {
-          "ctx": false,
-          "logs": []
-        },
-        "stderr": "load SCRATCH/sys-X/table.conf failed!\n"
-      }
+        "sha256": "c302191f2c479bf4048203961481c53e3c988e4878cc1b9293c31e440782fcb2",
+        "fields": {
+          "exit": "5feceb66ffc86f38",
+          "result.ctx": "fcbcf165908dd18a",
+          "result.logs": "4f53cda18c2baa0c",
+          "stderr": "4fb43233d5f48d1b"
+        }
+      },
+      "divergence": [
+        "result.ctx: pin true; subject false",
+        "stderr: pin \"\"; subject \"load SCRATCH/sys-X/table.conf failed!\\n\""
+      ]
     },
     "table-conf-919-versions-int-wrap-zhuyin": {
       "pin": {
-        "exit": 0,
-        "result": {
-          "ctx": true,
-          "logs": []
-        },
-        "stderr": ""
+        "sha256": "096171703e12a07648d9b811395629efc91d77ae4eb46936e25151db1001429a",
+        "fields": {
+          "exit": "5feceb66ffc86f38",
+          "result.ctx": "b5bea41b6c623f7c",
+          "result.logs": "4f53cda18c2baa0c",
+          "stderr": "12ae32cb1ec02d01"
+        }
       },
       "subject": {
-        "exit": 0,
-        "result": {
-          "ctx": false,
-          "logs": []
-        },
-        "stderr": "load SCRATCH/sys-X/table.conf failed!\n"
-      }
+        "sha256": "c302191f2c479bf4048203961481c53e3c988e4878cc1b9293c31e440782fcb2",
+        "fields": {
+          "exit": "5feceb66ffc86f38",
+          "result.ctx": "fcbcf165908dd18a",
+          "result.logs": "4f53cda18c2baa0c",
+          "stderr": "4fb43233d5f48d1b"
+        }
+      },
+      "divergence": [
+        "result.ctx: pin true; subject false",
+        "stderr: pin \"\"; subject \"load SCRATCH/sys-X/table.conf failed!\\n\""
+      ]
     }
   }
 }

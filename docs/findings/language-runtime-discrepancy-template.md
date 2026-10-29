@@ -99,31 +99,62 @@ settle it).
 Register an ordinary surviving case with `policy_record="<record>.md"`
 in `tools/bisection/contract-diff.py`. The filename is relative to
 `docs/findings`; the register must link it. The record contains exactly
-one `contract-diff-policy` fenced JSON block:
+one `contract-diff-policy` fenced JSON block, which `just policy-record`
+writes from the differential's `--observations` capture:
 
 ```json
 {
-  "schema": 1,
+  "schema": 2,
   "record": "<record>",
   "status": "current",
   "disposition": "POLICY-ACCEPTED",
   "cases": {
     "<exact case ID>": {
-      "pin": {"exit": 0, "result": {"ret": true, "logs": []}, "stderr": ""},
-      "subject": {"exit": 0, "result": {"ret": false, "logs": []}, "stderr": ""}
+      "cells": {
+        "bdb": {
+          "pin": {"sha256": "<64 hex>", "fields": {"exit": "<16 hex>", "result.logs": "<16 hex>", "result.ret": "<16 hex>", "stderr": "<16 hex>"}},
+          "subject": {"sha256": "<64 hex>", "fields": {"exit": "<16 hex>", "result.logs": "<16 hex>", "result.ret": "<16 hex>", "stderr": "<16 hex>"}},
+          "divergence": ["result.ret: pin true; subject false"]
+        }
+      }
     }
   }
 }
 ```
 
-Derive the complete observations from source before executing the case;
-the block is part of the reviewed discrepancy record. Results use the
-case's full JSON shape, including logs; stderr uses the driver's existing
-scratch-path normalization. There are no wildcards or ignored `~` fields.
-Both sides must terminate normally and match their respective expected
-observations exactly. A missing, unregistered, superseded or malformed
-record is INVALID; an unexpected observation is DIFFER and fails even
-under `--expect-parent`. Equality cannot turn a marked case into MATCH.
+Derive the complete observations from source before executing the case,
+then record the capture:
+
+```sh
+just runner contract-diff bdb "$PINYIN_ORACLE_PREFIX" <capi.so> <zhuyin.so> -- --cases <case> --observations obs.jsonl
+just policy-record docs/findings/<record>.md obs.jsonl
+```
+
+The block is part of the reviewed discrepancy record, but it holds no
+observation. Each side keeps the SHA-256 of its complete stable observation
+(exit, result with its logs, stderr in the driver's scratch-path
+normalization, and userfiles for a user-directory case), a 16-hex digest per
+top-level field for diagnosis, and the pin-to-subject divergence as text:
+one line per moved field, with list edits in the pin's indices. The serialized
+divergence field is limited to 4,096 UTF-8 bytes per case/backend pair,
+including JSON escaping, indentation and an omission marker. Bounded previews
+show affected paths, lengths and representative changes; rendering stops when
+the budget is exhausted. Full observations still determine acceptance. An entry
+escapes surrogate code points in values and paths for UTF-8 output while
+keeping ordinary non-ASCII text. Digests use a single canonical JSON encoding
+(sorted keys, no spaces, ASCII escapes), including invalid UTF-8 stderr bytes
+preserved by the driver's `surrogateescape` decoding. An entry
+under `cells` applies to that DBM cell; an entry without `cells` applies to
+every cell. A POLICY-ACCEPTED verdict needs both complete observations to
+digest to the recorded values: there are no wildcards, ignored `~` fields or
+partial matches. Both sides must terminate normally (or the pin as a
+registered abort) and match their recorded digests exactly; a mismatch is
+DIFFER and the report names the side and the fields whose digests moved. A
+missing, unregistered, superseded, schema-1 or malformed record is INVALID;
+an unexpected observation is DIFFER and fails even under `--expect-parent`.
+Equality cannot turn a marked case into MATCH. Record the case again with
+`just policy-record` when its accepted observation legitimately changes; the
+command replaces only that case's entry for the captured cell.
 The accepted case reports its record and both observations, and contributes
 only to the separate POLICY-ACCEPTED count. Existing abort/crash and
 host-dependent markers cannot be combined with this marker; those cases

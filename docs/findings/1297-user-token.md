@@ -22,54 +22,66 @@ this record. The record and its observations below remain historical.
 
 ```contract-diff-policy
 {
-  "schema": 1,
+  "schema": 2,
   "record": "1297-user-token",
   "status": "reverted",
   "disposition": "POLICY-ACCEPTED",
   "cases": {
     "user-conf-920-nul-database-token": {
       "pin": {
-        "exit": 0,
-        "result": {
-          "reopen": true,
-          "trained-retained": true,
-          "import-retained": true,
-          "logs": []
-        },
-        "stderr": ""
+        "sha256": "249a1d365fcb33cd660be5ccb26cc109fc64b9a8465c939ffd0aeba6d5d651d0",
+        "fields": {
+          "exit": "5feceb66ffc86f38",
+          "result.import-retained": "b5bea41b6c623f7c",
+          "result.logs": "4f53cda18c2baa0c",
+          "result.reopen": "b5bea41b6c623f7c",
+          "result.trained-retained": "b5bea41b6c623f7c",
+          "stderr": "12ae32cb1ec02d01"
+        }
       },
       "subject": {
-        "exit": 0,
-        "result": {
-          "reopen": true,
-          "trained-retained": false,
-          "import-retained": false,
-          "logs": []
-        },
-        "stderr": ""
-      }
+        "sha256": "231ad5fe14c54bf5e71458f116064788245c8c8212c22adc407dba126f6418a4",
+        "fields": {
+          "exit": "5feceb66ffc86f38",
+          "result.import-retained": "fcbcf165908dd18a",
+          "result.logs": "4f53cda18c2baa0c",
+          "result.reopen": "b5bea41b6c623f7c",
+          "result.trained-retained": "fcbcf165908dd18a",
+          "stderr": "12ae32cb1ec02d01"
+        }
+      },
+      "divergence": [
+        "result.import-retained: pin true; subject false",
+        "result.trained-retained: pin true; subject false"
+      ]
     },
     "user-conf-920-nul-database-token-zhuyin": {
       "pin": {
-        "exit": 0,
-        "result": {
-          "reopen": true,
-          "trained-retained": true,
-          "import-retained": true,
-          "logs": []
-        },
-        "stderr": ""
+        "sha256": "249a1d365fcb33cd660be5ccb26cc109fc64b9a8465c939ffd0aeba6d5d651d0",
+        "fields": {
+          "exit": "5feceb66ffc86f38",
+          "result.import-retained": "b5bea41b6c623f7c",
+          "result.logs": "4f53cda18c2baa0c",
+          "result.reopen": "b5bea41b6c623f7c",
+          "result.trained-retained": "b5bea41b6c623f7c",
+          "stderr": "12ae32cb1ec02d01"
+        }
       },
       "subject": {
-        "exit": 0,
-        "result": {
-          "reopen": true,
-          "trained-retained": false,
-          "import-retained": false,
-          "logs": []
-        },
-        "stderr": ""
-      }
+        "sha256": "231ad5fe14c54bf5e71458f116064788245c8c8212c22adc407dba126f6418a4",
+        "fields": {
+          "exit": "5feceb66ffc86f38",
+          "result.import-retained": "fcbcf165908dd18a",
+          "result.logs": "4f53cda18c2baa0c",
+          "result.reopen": "b5bea41b6c623f7c",
+          "result.trained-retained": "fcbcf165908dd18a",
+          "stderr": "12ae32cb1ec02d01"
+        }
+      },
+      "divergence": [
+        "result.import-retained: pin true; subject false",
+        "result.trained-retained: pin true; subject false"
+      ]
     }
   }
 }

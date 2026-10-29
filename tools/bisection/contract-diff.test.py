@@ -23,6 +23,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from tools.dev import test_support
+from tools.dev import policy as policy_command
+import contract_policy
 
 spec = importlib.util.spec_from_file_location('contract_diff', Path(__file__).with_name('contract-diff.py'))
 driver = importlib.util.module_from_spec(spec)
@@ -42,11 +44,14 @@ class PolicyAcceptedTests(unittest.TestCase):
         self.spec = driver.case_spec(policy_record='test-record.md', case_id=self.name, control=True)
         self.pin = dict(exit=0, result={'ret': True, 'rows': [[2, 'e794b2']], 'logs': []}, stderr='')
         self.subject = dict(exit=0, result={'ret': True, 'rows': [], 'logs': []}, stderr='')
-        self.record = dict(schema=1, record='test-record', status='current',
-                           disposition='POLICY-ACCEPTED',
-                           cases={self.name: dict(pin=self.pin, subject=self.subject)})
+        self.record = dict(schema=contract_policy.SCHEMA, record='test-record', status='current',
+                           disposition='POLICY-ACCEPTED', cases={self.name: self.entry()})
         (self.root / 'upstream-divergences.md').write_text('[record](test-record.md)\n')
         self.write_record()
+
+    def entry(self, pin=None, subject=None):
+        """The digest entry of the fixture's current pin and subject."""
+        return contract_policy.entry(self.pin if pin is None else pin, self.subject if subject is None else subject)
 
     def write_record(self):
         (self.root / 'test-record.md').write_text(
@@ -90,6 +95,7 @@ class PolicyAcceptedTests(unittest.TestCase):
     def test_registered_pin_abort_requires_the_exact_recorded_observations(self):
         self.spec['abort'] = False
         self.pin.update(exit=-signal.SIGABRT, result=None)
+        self.record['cases'][self.name] = self.entry()
         self.write_record()
         self.assertEqual(self.verdict(), ('POLICY-ACCEPTED', True, False))
         for exit_code in (-signal.SIGSEGV, 1, 0):
@@ -104,8 +110,7 @@ class PolicyAcceptedTests(unittest.TestCase):
         self.spec['userdir'] = True
         self.pin['userfiles'] = {}
         self.subject['userfiles'] = {'user.conf': 'canonical marker'}
-        pair = self.record['cases'][self.name]
-        self.record['cases'][self.name] = {'cells': {'selected-cell': pair}}
+        self.record['cases'][self.name] = {'cells': {'selected-cell': self.entry()}}
         self.write_record()
         with patch.dict(driver.os.environ, CONTRACT_DIFF_CELL='selected-cell'):
             self.assertEqual(self.verdict(), ('POLICY-ACCEPTED', True, False))
@@ -122,7 +127,7 @@ class PolicyAcceptedTests(unittest.TestCase):
         self.assertEqual(self.verdict(), ('INVALID', False, False))
 
     def test_incorrect_or_stale_record_metadata_is_invalid(self):
-        for key, value in (('schema', 2), ('record', 'other'), ('status', 'superseded'),
+        for key, value in (('schema', 1), ('schema', 3), ('record', 'other'), ('status', 'superseded'),
                            ('disposition', 'MATCH'), ('cases', {})):
             with self.subTest(key=key):
                 record = copy.deepcopy(self.record)
@@ -131,23 +136,35 @@ class PolicyAcceptedTests(unittest.TestCase):
                 self.assertEqual(self.verdict(parent=True), ('INVALID', False, False))
                 self.record = record
 
-    def test_record_requires_complete_distinct_observations(self):
-        for missing in ('pin', 'subject', 'exit', 'result', 'stderr', 'logs'):
+    def test_record_requires_complete_distinct_digests(self):
+        for missing in ('pin', 'subject', 'divergence', 'sha256', 'fields', 'exit'):
             with self.subTest(missing=missing):
                 record = copy.deepcopy(self.record)
-                pair = self.record['cases'][self.name]
-                if missing in ('pin', 'subject'):
-                    del pair[missing]
-                elif missing == 'logs':
-                    del pair['subject']['result']['logs']
+                kept = self.record['cases'][self.name]
+                if missing in ('pin', 'subject', 'divergence'):
+                    del kept[missing]
+                elif missing == 'exit':
+                    del kept['subject']['fields']['exit']
+                    kept['subject']['fields'] = {}
                 else:
-                    del pair['subject'][missing]
+                    del kept['subject'][missing]
                 self.write_record()
                 self.assertEqual(self.verdict(), ('INVALID', False, False))
                 self.record = record
-        self.record['cases'][self.name]['subject'] = self.pin
+        self.record['cases'][self.name]['subject'] = self.record['cases'][self.name]['pin']
         self.write_record()
         self.assertEqual(self.verdict(), ('INVALID', False, False))
+        self.record['cases'][self.name] = dict(pin=self.pin, subject=self.subject)
+        self.record['schema'] = 1
+        self.write_record()
+        self.assertEqual(self.verdict(), ('INVALID', False, False), 'complete observations are no longer read')
+
+    def test_a_mismatch_is_diagnosed_by_side_and_field(self):
+        moved = copy.deepcopy(self.subject)
+        moved['result']['ret'] = False
+        self.assertEqual(driver.policy_diagnosis(self.spec, self.pin, moved)['summary'],
+                         'pin matches; subject moved in result.ret')
+        self.assertIsNone(driver.policy_diagnosis(self.spec, self.pin, self.subject))
 
     def test_failed_worker_cannot_be_accepted(self):
         for value in (None, -signal.SIGSEGV, 1):
@@ -381,16 +398,72 @@ class DriverFixtureCase(unittest.TestCase):
 
 
 class PolicyReportingTests(DriverFixtureCase):
+    def test_invalid_utf8_worker_stderr_survives_capture_record_and_exact_verdict(self):
+        name = 'synthetic/surrogate-stderr'
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            (root / 'lib/libpinyin/data').mkdir(parents=True)
+            (root / 'lib/libpinyin.so').touch()
+            (root / 'lib/subject.so').touch()
+            (root / 'lib/libpinyin/data/bigram.db').touch()
+            (root / 'oracle-pin.txt').write_text(
+                'libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99+dbm-bdb\n')
+            record = root / 'synthetic-record.md'
+            record.write_text('# Synthetic record\n')
+            (root / 'upstream-divergences.md').write_text('[record](synthetic-record.md)\n')
+            capture = root / 'observations.jsonl'
+            args = ['driver', 'bdb', str(root), str(root / 'lib/subject.so'),
+                    '--cases', name, '--observations', str(capture)]
+            spec = driver.case_spec(policy_record=record.name, case_id=name, stderr=True)
+            document = json.dumps({'logs': [], '甲\udcff': '乙'}).encode('ascii')
+            pin_bytes = '甲'.encode() + b'\xff\n'
+            subject_bytes = '乙'.encode() + b'\xfe\n'
+            (root / 'document').write_bytes(document)
+            (root / 'pin-stderr').write_bytes(pin_bytes)
+            worker = root / 'worker.py'
+            worker.write_text(
+                'from pathlib import Path\nimport sys\n'
+                'root = Path(__file__).parent\n'
+                'side = "subject" if Path(sys.argv[2]).name == "subject.so" else "pin"\n'
+                'sys.stdout.buffer.write((root / "document").read_bytes() + b"\\n")\n'
+                'sys.stderr.buffer.write((root / (side + "-stderr")).read_bytes())\n')
+
+            def run(stderr):
+                (root / 'subject-stderr').write_bytes(stderr)
+                output = io.StringIO()
+                with patch.object(driver, 'POLICY_ROOT', root), patch.dict(driver.CASES, {name: spec}), \
+                        patch.object(driver.sys, 'argv', args), \
+                        patch.object(driver, 'WORKER', worker), \
+                        contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()):
+                    status = driver.main()
+                rows = [json.loads(line) for line in output.getvalue().splitlines() if line.startswith('{')]
+                return status, next(row for row in rows if 'case' in row)
+
+            self.assertEqual(run(subject_bytes)[0], 1)
+            captured = json.loads(capture.read_text(encoding='utf-8'))
+            self.assertEqual(captured['pin']['stderr'], '甲\udcff\n')
+            self.assertEqual(captured['subject']['stderr'], '乙\udcfe\n')
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(policy_command.main([str(record), str(capture)]), 0)
+            text = record.read_text(encoding='utf-8')
+            self.assertIn('甲', text)
+            self.assertIn('乙', text)
+            self.assertIn('\\udcff', text)
+            status, accepted = run(subject_bytes)
+            self.assertEqual((status, accepted['verdict']), (0, 'POLICY-ACCEPTED'))
+            for changed in (subject_bytes.replace(b'\xfe', b'\xff'), '乙\ufffd\n'.encode()):
+                status, mismatch = run(changed)
+                self.assertEqual((status, mismatch['verdict']), (1, 'DIFFER'))
+                self.assertEqual(mismatch['policy']['summary'], 'pin matches; subject moved in stderr')
+
     def test_main_retains_observations_and_counts_policy_separately(self):
         name = 'synthetic/policy-reporting'
         pin = observation(result={'ret': True, 'rows': [[2, 'e794b2']], 'logs': []})
         subject = observation(result={'ret': True, 'rows': [], 'logs': []})
-        record = dict(schema=1, record='synthetic-record', status='current',
+        record = dict(schema=contract_policy.SCHEMA, record='synthetic-record', status='current',
                       disposition='POLICY-ACCEPTED',
-                      cases={name: {
-                          side: {key: value[key] for key in ('exit', 'result', 'stderr')}
-                          for side, value in (('pin', pin), ('subject', subject))
-                      }})
+                      cases={name: contract_policy.entry(*({key: value[key] for key in ('exit', 'result', 'stderr')}
+                                                           for value in (pin, subject)))})
         with tempfile.TemporaryDirectory() as findings:
             root = Path(findings)
             (root / 'synthetic-record.md').write_text(
@@ -398,8 +471,9 @@ class PolicyReportingTests(DriverFixtureCase):
             (root / 'upstream-divergences.md').write_text('[record](synthetic-record.md)\n')
             spec = driver.case_spec(policy_record='synthetic-record.md', case_id=name)
             with patch.object(driver, 'POLICY_ROOT', root), patch.dict(driver.CASES, {name: spec}):
-                pair = driver.policy_expectations(spec)
-                self.assertEqual(pair['pin'], {key: pin[key] for key in ('exit', 'result', 'stderr')})
+                kept = driver.policy_expectations(spec)
+                self.assertEqual(kept['pin']['sha256'],
+                                 contract_policy.digest({key: pin[key] for key in ('exit', 'result', 'stderr')}))
                 for broken in (False, True):
                     with self.subTest(broken=broken), tempfile.TemporaryDirectory() as scratch:
                         prefix = Path(scratch)
@@ -425,6 +499,12 @@ class PolicyReportingTests(DriverFixtureCase):
                         self.assertEqual(rows[0]['record'], spec['policy_record'])
                         self.assertEqual(rows[0]['pin'], pin)
                         self.assertEqual(rows[0]['subject'], actual_subject)
+                        if broken:
+                            self.assertEqual(rows[0]['policy']['summary'], 'pin matches; subject moved in result.ret')
+                            self.assertIn('  policy synthetic-record.md: pin matches; subject moved in result.ret\n',
+                                          output.getvalue())
+                        else:
+                            self.assertNotIn('policy', rows[0])
                         self.assertEqual(next(row['verdict_counts'] for row in rows if 'verdict_counts' in row),
                                          {verdict: 1})
 
@@ -898,11 +978,11 @@ class RegisteredTerminationDefaultTests(unittest.TestCase):
                  if driver.registered_termination(case)}
         self.assertTrue(cases)
         for name, case in cases.items():
-            policy_pair = None
+            policy_kept = None
             policy_invalid = False
             if case['policy_record'] is not None:
                 try:
-                    policy_pair = driver.policy_expectations(case)
+                    policy_kept = driver.policy_expectations(case)
                 except (OSError, ValueError, KeyError, TypeError):
                     policy_invalid = True
             observations = [observation(exit=code) for code in
@@ -915,8 +995,8 @@ class RegisteredTerminationDefaultTests(unittest.TestCase):
                               case['crash'] or {}, case['pin_not_run'] or {})]
             observations += [dict(side, stderr='different diagnostic', userfiles={'changed': 'bytes'})
                              for side in observations[-2:]]
-            if policy_pair is not None:
-                observations += [observation(**side) for side in policy_pair.values()]
+            # A record keeps digests, not observations, so the accepted pair cannot be
+            # rebuilt here; PolicyAcceptedTests covers acceptance with synthetic records.
             for reads in (False, True):
                 with patch.object(driver, 'directory_reads_as_a_chunk', return_value=reads):
                     for pin in observations:
@@ -929,7 +1009,7 @@ class RegisteredTerminationDefaultTests(unittest.TestCase):
                                                   subject=driver.policy_observation(case, subject))
                                     legacy = (('INVALID', False, False) if policy_invalid else
                                               ('POLICY-ACCEPTED', True, False)
-                                              if json.dumps(actual, sort_keys=True) == json.dumps(policy_pair, sort_keys=True)
+                                              if contract_policy.accepted(policy_kept, actual)
                                               else ('DIFFER', False, False))
                                 self.assertEqual(driver.verdict_for(case, pin, subject, False), legacy)
 

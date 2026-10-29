@@ -15,57 +15,60 @@
 
 ```contract-diff-policy
 {
-  "schema": 1,
+  "schema": 2,
   "record": "1297-punct-words",
   "status": "current",
   "disposition": "POLICY-ACCEPTED",
   "cases": {
     "punct-decode/misaligned-terminated": {
       "pin": {
-        "exit": 0,
-        "result": {
-          "ret": true,
-          "puncts": [
-            "efbc8c",
-            ""
-          ],
-          "logs": []
-        },
-        "stderr": ""
+        "sha256": "5db4978593c6727f3b7acf17a2a1fdb84231f458a03a2c659bb4ffeb0b859cae",
+        "fields": {
+          "exit": "5feceb66ffc86f38",
+          "result.logs": "4f53cda18c2baa0c",
+          "result.puncts": "cd2313461356b4cc",
+          "result.ret": "b5bea41b6c623f7c",
+          "stderr": "12ae32cb1ec02d01"
+        }
       },
       "subject": {
-        "exit": 0,
-        "result": {
-          "ret": true,
-          "puncts": [
-            "efbc8c"
-          ],
-          "logs": []
-        },
-        "stderr": ""
-      }
+        "sha256": "df958b1ec943d41ea08a0fadb59bb793a750d00a92bad3036fdc65d22dfbfb06",
+        "fields": {
+          "exit": "5feceb66ffc86f38",
+          "result.logs": "4f53cda18c2baa0c",
+          "result.puncts": "53f8b1f94edd3d2a",
+          "result.ret": "b5bea41b6c623f7c",
+          "stderr": "12ae32cb1ec02d01"
+        }
+      },
+      "divergence": [
+        "result.puncts[1:2]: subject drops [\"\"]"
+      ]
     },
     "punct-decode/misaligned-short": {
       "pin": {
-        "exit": 0,
-        "result": {
-          "ret": true,
-          "puncts": [
-            ""
-          ],
-          "logs": []
-        },
-        "stderr": ""
+        "sha256": "740ceb7b715fa9442ced83ac3ba56e4f0700269df73818914cf6e2722dd6f42b",
+        "fields": {
+          "exit": "5feceb66ffc86f38",
+          "result.logs": "4f53cda18c2baa0c",
+          "result.puncts": "055539df4a0b804c",
+          "result.ret": "b5bea41b6c623f7c",
+          "stderr": "12ae32cb1ec02d01"
+        }
       },
       "subject": {
-        "exit": 0,
-        "result": {
-          "ret": true,
-          "puncts": [],
-          "logs": []
-        },
-        "stderr": ""
-      }
+        "sha256": "8a4aef0cf40281c803b2777c95a491887ab9bf6d7b84b2a2407c304f9233288f",
+        "fields": {
+          "exit": "5feceb66ffc86f38",
+          "result.logs": "4f53cda18c2baa0c",
+          "result.puncts": "4f53cda18c2baa0c",
+          "result.ret": "b5bea41b6c623f7c",
+          "stderr": "12ae32cb1ec02d01"
+        }
+      },
+      "divergence": [
+        "result.puncts[0:1]: subject drops [\"\"]"
+      ]
     }
   }
 }

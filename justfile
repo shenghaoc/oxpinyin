@@ -95,6 +95,15 @@ test *args: python
 test-tools *args: python
     @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev test-tools "$@"
 
+# Record policy-accepted observations from contract-diff --observations captures.
+[unix]
+policy-record *args: python
+    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev policy-record "$@"
+
+[windows]
+policy-record *args: python
+    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev policy-record @args; exit $LASTEXITCODE
+
 # Run doctests separately; nextest does not run them.
 [unix]
 test-doc *args: python
