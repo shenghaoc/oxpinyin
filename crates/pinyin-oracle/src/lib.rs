@@ -45,6 +45,7 @@
 #![cfg_attr(not(test), deny(clippy::panic_in_result_fn))]
 #![warn(missing_docs)]
 
+pub mod candidate_fixture;
 pub mod capture;
 pub mod corpus;
 pub mod differential;

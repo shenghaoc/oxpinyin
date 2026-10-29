@@ -28,15 +28,15 @@
 //! and scoring path as the corpus pass.
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use oxpinyin_core::{OptionBits, PINYIN_CORRECT_GN_NG, PINYIN_CORRECT_MG_NG, PINYIN_CORRECT_UE_VE};
 use oxpinyin_data::{BigramLanguageModel, SystemDbm, SystemDictionary};
 use oxpinyin_engine::{EmptyConfigSource, Session, StoragePaths};
+use pinyin_oracle::candidate_fixture::{CandidateFixture, STRUCTURE_FIXTURE};
 use pinyin_oracle::corpus;
 
-const CANDIDATES_FIXTURE: &str = "fixtures/w4/oracle-candidates.txt";
 const CAPTURE_DEPTH: usize = 10;
 
 /// The six all-off TEXT-set tail inputs of `docs/findings/option-bits.md`
@@ -77,23 +77,6 @@ fn export_dir() -> Result<PathBuf, String> {
     }
 }
 
-fn load_fixture(path: &Path) -> Result<BTreeMap<String, Vec<String>>, String> {
-    let raw = std::fs::read_to_string(path)
-        .map_err(|error| format!("cannot read fixture {}: {error}", path.display()))?;
-    let mut by_input: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for line in raw.lines() {
-        if line.starts_with('#') || line.is_empty() {
-            continue;
-        }
-        let mut parts = line.split('\t');
-        let input = parts.next().unwrap_or("").to_owned();
-        let _rank = parts.next();
-        let cand = parts.next().unwrap_or("").to_owned();
-        by_input.entry(input).or_default().push(cand);
-    }
-    Ok(by_input)
-}
-
 /// The shared read-only environment of both passes: exported tables,
 /// real unigrams, a fresh session, and the frozen oracle fixture.
 struct TailEnv {
@@ -114,7 +97,9 @@ fn open_env() -> Result<TailEnv, String> {
     lm.set_lambda_from_table_conf(&dir.join("table.conf"));
     let session = Session::new(&EmptyConfigSource, StoragePaths::new("user"), dict, lm)
         .map_err(|error| format!("cannot create Session: {error}"))?;
-    let fixture = load_fixture(&repo_root().join(CANDIDATES_FIXTURE))?;
+    let fixture = CandidateFixture::read(repo_root().join(STRUCTURE_FIXTURE))
+        .map_err(|error| format!("cannot read candidate structure: {error}"))?
+        .candidate_lists();
     Ok(TailEnv { session, fixture })
 }
 

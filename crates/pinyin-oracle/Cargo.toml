@@ -58,10 +58,6 @@ name = "oracle-paths"
 path = "src/bin/oracle_paths.rs"
 
 [[bin]]
-name = "oracle-candidates"
-path = "src/bin/oracle_candidates.rs"
-
-[[bin]]
 name = "oracle-candidate-structure"
 path = "src/bin/oracle_candidate_structure.rs"
 

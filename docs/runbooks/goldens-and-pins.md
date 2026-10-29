@@ -9,7 +9,7 @@ differential, and a maintainer ruling recorded in the findings.
 | what | where | regenerate with |
 | --- | --- | --- |
 | the mini data set, per backend | `fixtures/w3/<ext>/` | `oxpinyin-datagen compile --mini --backend <b> --model-dir $PINYIN_MODEL_DIR --out-dir fixtures/w3/<ext>` on a build enabling `<b>`, where `<ext>` is the backend's store extension (`kyotocabinet`→`kct`, `tkrzw`→`tkt`, `bdb`→`db`; `db` is the default build's since 2026-09-20); `fixtures_identity` (ignored) proves the compile reproduces the tree byte for byte |
-| W4 oracle goldens (candidates, structure, paths) | `fixtures/w4/oracle-*.txt` | the `pinyin-oracle` bins `oracle-candidates` (~3 h, full corpus), `oracle-candidate-structure`, `oracle-paths`, `oracle_sentence_surface` (~1 min; auto-discovered from `src/bin/`, so it has no `[[bin]]` entry); the ignored `*_fixture_is_fresh` tests re-derive and compare |
+| W4 oracle goldens (candidate structure, paths) | `fixtures/w4/oracle-*.txt` | the `pinyin-oracle` bins `oracle-candidate-structure` (~3 h, full corpus), `oracle-paths`, `oracle_sentence_surface` (~1 min; auto-discovered from `src/bin/`, so it has no `[[bin]]` entry); the ignored `*_fixture_is_fresh` tests re-derive and compare |
 | trainer manifests and goldens | `fixtures/w9/` (`segmenter-han.txt`, `segmenter-ngseg.txt`, `counter-ngram.manifest`, `interpolation2.manifest`, `lambda-estimate.manifest`) | the ignored differential tests in counter, emitter, lambda and segment compare against these; regenerate with the pin tool the test names and commit only when it agrees |
 
 A missing golden is a test failure, never a skip (#373). Regenerate,

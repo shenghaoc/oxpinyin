@@ -1,14 +1,13 @@
-//! Writes `fixtures/w4/oracle-candidate-structure.txt` — the sibling of
-//! `oracle-candidates.txt` that additionally records, per candidate, the two
+//! Writes `fixtures/w4/oracle-candidate-structure.txt`, the single candidate
+//! capture. Alongside input, rank and text it records the two
 //! fields the pinned public API exports: `pinyin_get_candidate_type` and
 //! `pinyin_get_candidate_nbest_index`. This is W2-CAND
 //! (`docs/findings/candidate-construction.md` §1.6).
 //!
-//! The `(input, rank, candidate_text)` columns are byte-identical to the sister
-//! fixture by construction — both come from the same `collect_candidates` under
-//! the same `0x1e` sort — so the two files are line-comparable. Nothing else
-//! about a candidate (segmentation, tokens, offsets, score) is reachable from
-//! the public header and none is recorded.
+//! Candidate-only consumers project `(input, rank, candidate_text)` through
+//! `pinyin_oracle::candidate_fixture`. Nothing else about a candidate
+//! (segmentation, tokens, offsets, score) is reachable from the public header
+//! and none is recorded.
 //!
 //! ```bash
 //! cargo run -p pinyin-oracle --features oracle-ffi --bin oracle-candidate-structure -- fixtures/w4/oracle-candidate-structure.txt
@@ -84,8 +83,7 @@ fn run(out: &std::path::Path) -> Result<String, String> {
     eprintln!("corpus total_inputs={total_inputs}");
 
     // Collect distinct inputs -> candidate infos, deduplicating cross-strata
-    // repeats exactly as `oracle_candidates.rs` does, so the two fixtures share
-    // the same input set and ordering.
+    // repeats so every input has one captured candidate list.
     let mut by_input: BTreeMap<String, Vec<CandidateInfo>> = BTreeMap::new();
 
     let mut observed_inputs = 0_usize;
@@ -145,9 +143,6 @@ fn run(out: &std::path::Path) -> Result<String, String> {
     lines.push(
         "# deduplicated by input: corpus cross-strata duplicates share the same oracle output"
             .to_owned(),
-    );
-    lines.push(
-        "# (input,rank,candidate_text) columns match fixtures/w4/oracle-candidates.txt".to_owned(),
     );
 
     for (input, infos) in &by_input {
