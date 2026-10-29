@@ -86,6 +86,49 @@ Stage 1 also fixes #1350: the negative-overflow `table.conf` cases and
 the `open-counter-diff` seeds that the strict Rust grammar refused are
 read by the host scanner.
 
+### Native text-mode line endings
+
+Recorded 2026-10-29 UTC. Under constitution §6 and #1303, `user.conf`
+line endings are **platform-dependent native-host behaviour**. At
+`074a2219`, `UserTableInfo::save` opens with `fopen(filename, "w")`
+(`src/storage/table_info.cpp:380`) and prints four newline-terminated
+directives with `fprintf` (`:386-390`). `UserTableInfo::load` opens with
+`fopen(filename, "r")` (`:330`) and scans them with `fscanf`
+(`:338-357`). These pinned blobs were read directly from a libpinyin
+clone and verified against that commit.
+
+The host C runtime therefore writes LF on Linux/macOS and CRLF on
+Windows, where text-mode input translates CRLF back to LF. A Windows
+build of the pin follows the same text-mode round trip. The shim keeps
+the pin's `"w"` and `"r"` calls under the 2026-10-28 external-I/O
+ruling; it does not force binary mode or normalize the written bytes.
+`user_files::tests::user_conf_round_trips_and_conforms` and
+`config::tests::the_writer_prints_the_four_lines` assert the exact
+host-native bytes and read the saved file through the shim's scanner.
+The former also checks that the reloaded marker conforms. The LF text
+returned by `UserTableInfo::to_text` remains a fixture composer.
+
+Native scanning also governs malformed identity bytes. Microsoft UCRT's
+[`input_adapter_character_source`](https://github.com/huangqinjin/ucrt/blob/d6e817a4cc90f6f1fe54f8a0aa4af4fff0bb647d/inc/corecrt_internal_strtox.h#L1956-L1980)
+(Microsoft source read from that mirror) narrows an input byte to `char`
+and skips pushback when it compares equal to EOF. Its integer parser
+pushes back the first non-digit (`parse_integer`, same file, `:301-324`).
+With signed `char`, `0xFF` after the binary version is consumed instead
+of restored; the following whitespace directive and model directive can
+then succeed. Windows run
+[40853563512](https://github.com/shenghaoc/oxpinyin/actions/runs/40853563512/job/123378779863)
+at `2e80cb49` confirmed that this marker kept the profile. This is
+native-host behaviour, not permission to alter the pin's scanner calls
+(`table_info.cpp:338-348`).
+`persistence::tests::stray_identity_bytes_follow_the_native_scanner`
+keeps the `0xFF` case and checks both facade lifecycles against the
+explicit native-host result: the marker conforms on MSVC Windows and
+is refused on Linux/macOS, where the non-digit remains for the next
+directive. The test asserts that scanner result and the corresponding
+profile retention or wipe. A separate `0xFE` case must fail
+the directive and wipe the profile; both bytes are invalid UTF-8, so
+the original protection against lossy decoding remains covered.
+
 ## How to read the inventory
 
 **EQUIVALENT** means both implementation sources establish the same

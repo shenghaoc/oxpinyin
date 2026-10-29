@@ -3241,46 +3241,59 @@ mod tests {
     }
 
     #[test]
-    fn a_stray_byte_before_the_counter_line_wipes() {
+    fn stray_identity_bytes_follow_the_native_scanner() {
         // #584 review: invalid bytes amid the identity fields must not
-        // be hidden by lossy decoding, even though arbitrary trailing
-        // bytes in the counter value are accepted. The stray byte stops
-        // the next `fscanf`'s literal, `load` fails on the reset fields
-        // (table_info.cpp:318-321, :338-351) and `check_format` wipes
-        // (pinyin.cpp:191-215, zhuyin.cpp:138-161). libpinyin's rewrite
-        // then records a conform marker with counter 1
-        // (`pinyin.cpp:185-187`); libzhuyin wrote nothing and leaves the
-        // non-conform marker as it was (`zhuyin.cpp:126-162`).
-        for law in [UserConfLaw::Pinyin, UserConfLaw::Zhuyin] {
-            let dir = tempdir("stray-byte");
-            let originals = originals();
-            save(&dir, &state(), &originals, &versions(), 0).expect("seed");
-            let mut marker = UserTableInfo::conform_to(&versions())
-                .to_text()
-                .into_bytes();
-            let after_version = marker
-                .iter()
-                .position(|&byte| byte == b'\n')
-                .expect("a line end");
-            marker.splice(after_version..after_version, *b"\xFF");
-            std::fs::write(dir.join(USER_CONF), &marker).expect("corrupt marker");
+        // be hidden by lossy decoding. 0xFE stops the next `fscanf`'s
+        // literal, so `load` fails on the reset fields and `check_format`
+        // wipes (table_info.cpp:338-348; pinyin.cpp:191-215,
+        // zhuyin.cpp:138-161). 0xFF instead collides with EOF in UCRT's
+        // integer scanner's signed-char pushback and is consumed there.
+        // Assert that host difference as well as the profile lifecycle
+        // (constitution §6; docs/findings/external-io-boundary.md).
+        for byte in [0xFE, 0xFF] {
+            for law in [UserConfLaw::Pinyin, UserConfLaw::Zhuyin] {
+                let case = format!("{law:?} byte {byte:#04x}");
+                let dir = tempdir("stray-byte");
+                let originals = originals();
+                save(&dir, &state(), &originals, &versions(), 0).expect("seed");
+                let mut marker = UserTableInfo::conform_to(&versions())
+                    .to_text()
+                    .into_bytes();
+                let after_version = marker
+                    .iter()
+                    .position(|&byte| byte == b'\n')
+                    .expect("a line end");
+                marker.insert(after_version, byte);
+                std::fs::write(dir.join(USER_CONF), &marker).expect("corrupt marker");
 
-            let loaded = load(&dir, &originals, &versions(), law).expect("load");
-            assert!(loaded.wiped, "{law:?} kept a profile past a stray byte");
-            assert_eq!(loaded.state, UserState::default());
-            assert!(
-                !dir.join("user.bin").exists(),
-                "{law:?}: profile file survived the wipe"
-            );
-            match law {
-                UserConfLaw::Pinyin => assert_eq!(recorded_counter(&dir), Some(1)),
-                UserConfLaw::Zhuyin => assert_eq!(
-                    std::fs::read(dir.join(USER_CONF)).expect("marker"),
-                    marker,
-                    "zhuyin rewrote the non-conform marker"
-                ),
+                let conform = UserTableInfo::load_path(&dir.join(USER_CONF))
+                    .is_ok_and(|info| info.is_conform(&versions()));
+                let expected_conform = byte == 0xFF && cfg!(all(windows, target_env = "msvc"));
+                assert_eq!(conform, expected_conform, "{case}: native scanner");
+                let loaded = load(&dir, &originals, &versions(), law).expect("load");
+                assert_eq!(loaded.wiped, !expected_conform, "{case}");
+                assert_eq!(
+                    loaded.state,
+                    if expected_conform {
+                        state()
+                    } else {
+                        UserState::default()
+                    },
+                    "{case}"
+                );
+                assert_eq!(dir.join("user.bin").exists(), expected_conform, "{case}");
+                match law {
+                    // Pinyin rewrites the marker with its raised counter
+                    // (`pinyin.cpp:185-187`); zhuyin leaves its bytes alone.
+                    UserConfLaw::Pinyin => assert_eq!(recorded_counter(&dir), Some(1)),
+                    UserConfLaw::Zhuyin => assert_eq!(
+                        std::fs::read(dir.join(USER_CONF)).expect("marker"),
+                        marker,
+                        "{case}: zhuyin rewrote the marker"
+                    ),
+                }
+                std::fs::remove_dir_all(&dir).expect("cleanup");
             }
-            std::fs::remove_dir_all(&dir).expect("cleanup");
         }
     }
 

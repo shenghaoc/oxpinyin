@@ -392,11 +392,19 @@ mod tests {
             open_counter: 3,
         };
         assert!(save_user_table_info(&name, &fields));
-        assert_eq!(
-            std::fs::read(&path).expect("read"),
-            b"binary format version:-1\nmodel data version:14\n\
-              database format:KyotoCabinet\nopen counter:3\n"
+        // The pin's `fopen("w")` uses the host C runtime's text mode.
+        let newline = if cfg!(windows) { "\r\n" } else { "\n" };
+        let expected = format!(
+            "binary format version:-1{newline}model data version:14{newline}database format:KyotoCabinet{newline}open counter:3{newline}"
         );
+        assert_eq!(std::fs::read(&path).expect("read"), expected.as_bytes());
+        let mut reader = UserTableInfoReader::open(&name).expect("reopen saved file");
+        assert_eq!(reader.binary_format_version(), Scanned::Assigned(-1));
+        assert_eq!(reader.model_data_version(), Scanned::Assigned(14));
+        assert_eq!(reader.database_format(), Scanned::Assigned(()));
+        assert_eq!(reader.str(), Some(c"KyotoCabinet"));
+        assert_eq!(reader.open_counter(), Scanned::Assigned(3));
+        reader.finish();
         let missing = crate::c_path(&dir.path().join("absent/user.conf")).expect("c path");
         assert!(!save_user_table_info(&missing, &fields));
     }

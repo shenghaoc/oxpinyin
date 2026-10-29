@@ -1057,12 +1057,22 @@ mod tests {
         );
         let parsed = parse(text.as_bytes()).expect("parse");
         assert_eq!(parsed, conform);
-        // `save` writes the same four lines with the pin's `fprintf`.
+        // `save` uses the pin's `fopen("w")` and `fprintf`: the host C
+        // runtime writes CRLF on Windows and LF on Linux/macOS.
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("user.conf");
         let filename = oxpinyin_input::c_path(&path).expect("c path");
         assert!(conform.save(&filename));
-        assert_eq!(std::fs::read_to_string(&path).expect("read"), text);
+        let newline = if cfg!(windows) { "\r\n" } else { "\n" };
+        let expected = format!(
+            "binary format version:7{newline}model data version:14{newline}database format:{DEFAULT_STORE_DB_FORMAT}{newline}open counter:0{newline}"
+        );
+        assert_eq!(std::fs::read(&path).expect("read"), expected.as_bytes());
+        // Read the file the shim actually wrote through its `fopen("r")`
+        // and scanner, including native text-mode translation.
+        let reloaded = UserTableInfo::load(&filename).expect("reload saved marker");
+        assert_eq!(reloaded, conform);
+        assert!(reloaded.is_conform(&versions));
 
         // A stale model version never conforms.
         let stale = UserTableInfo {
