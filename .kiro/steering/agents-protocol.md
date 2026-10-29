@@ -50,12 +50,16 @@ E2E I/O is what the pin produces given the same inputs and state
 internal language artefacts in `oxpinyin-improvements.md`. External I/O
 uses the pin's call unless source proves a Rust equivalent for every
 input; internal language artefacts are recorded instead. The C ABI,
-ownership, the on-disk formats and data ownership never change. Nothing
-panics on any input, and public APIs return `Result` (constitution §4 — the broad
-rule stands on its own). Class (c) is narrower: where the pin asserts or
-aborts on input a caller or file can supply, the C ABI returns
-`false`/`Err` and logs the point; it does not mask internal invariant
-failures and does not govern the return types of unrelated errors.
+ownership, the on-disk formats and data ownership never change. Panics and
+error handling follow constitution §4: a Rust panic is permitted only where
+the pin asserts or aborts on the corresponding condition, unless an existing
+compatibility ruling requires a different outcome. Where the pin continues
+or returns an error, Rust must not introduce a panic. Internal Rust APIs
+are not universally required to return `Result`. Existing class (b)/(c)
+rulings remain authoritative. Class (c) refusals still return `false`/`Err`
+and emit exactly one warning per occurrence; this policy reverses none of
+them. Permitted lint expectations follow `rust-conventions.md`; the lint
+only sees the construct and does not prove correspondence with the pin.
 Engine output is a pure function of (input, user state, config) on each host.
 
 See `docs/findings/compatibility-policy.md`, "Native Rust implementation" (#1303).

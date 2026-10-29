@@ -14,9 +14,39 @@ has `// SAFETY:`. Stage 1 of the boundary is in place (`oxpinyin-input`,
 crate-root `deny` with one scoped allow); data keeps `deny` and its mmap
 exception until stage 2 moves the mapping. See AGENTS.md constitution §5.
 
-**Errors:** every public API returns `Result`; nothing panics on any input — a
-panic is a defect of the same severity as data loss. Public error enums are
-`#[non_exhaustive]`.
+**Panics and errors (maintainer decision 2026-10-29 UTC):** follow constitution
+§4 and libpinyin `074a2219c90feaf962d0d24f034514033ece5f99`'s observable
+failure behaviour. A panic is permitted only for a corresponding pin
+assertion or abort, except where an existing compatibility ruling requires
+a different outcome. Where the pin continues or returns an error, Rust must
+not introduce a panic, including through ordinary operations or assertions.
+Use idiomatic error handling; internal Rust APIs need not universally return
+`Result`. Existing class (b)/(c) rulings remain authoritative: class (c)
+refusals keep `false`/`Err` and exactly one warning per occurrence.
+Public error enums are `#[non_exhaustive]`.
+
+**Integer arithmetic.** Where the pin's unsigned arithmetic wraps and the
+result is observable, use the matching standard method (`wrapping_add`,
+`wrapping_sub`, `wrapping_mul`). Never use a plain operator where overflow
+is reachable from input: it panics in debug builds. Use `checked_*` where
+the pin checks and refuses. Use checked or widened arithmetic for bounds
+the pin lacks, such as sizes, offsets and indexes computed from external
+input, where an overflow would be memory-unsafe (class (b)).
+
+Keep the non-test crate-root denials of `clippy::unwrap_used`,
+`clippy::expect_used`, `clippy::panic` and `clippy::panic_in_result_fn`.
+For a permitted site, use the narrowest scoped
+`#[expect(..., reason = "...")]`, citing the pin's exact abort site or
+an established invariant that makes the failure unreachable. A `panic!`
+in a `Result`-returning function must account for both panic lints if both
+fire. No broad module-level suppressions, no relaxed crate-wide denials,
+and no new `arithmetic_side_effects` or `indexing_slicing` restrictions.
+An `#[expect]` proves only that Clippy saw the construct, not that its
+failure condition matches the pin; that correspondence still needs review.
+
+Where a permitted panic reproduces a pin assertion's process termination,
+the different Rust and C assertion messages are a language artefact; do not
+imitate glibc's message format. Existing diagnostic contracts still govern.
 
 **Determinism:** engine output is a pure function of (input, user state,
 config). Graphs use index-based arenas.

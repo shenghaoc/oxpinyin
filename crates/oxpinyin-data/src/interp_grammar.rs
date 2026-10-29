@@ -47,9 +47,10 @@
 //! wraps it in `check_result` (`src/include/pinyin_utils.h:26-31`), which
 //! is `assert(expr)` unless the build defines `NDEBUG` or
 //! `G_DISABLE_ASSERT` — the pin's `configure.ac` defines neither, so the
-//! pin-built tools **abort** on a refused line. Constitution item 4
-//! (nothing panics on any input) rules that out here: a refusal is a typed
-//! [`GrammarError`] and the caller decides. Two upstream crash paths are
+//! pin-built tools **abort** on a refused line. The existing compatibility
+//! decision in `docs/findings/interpolation2-grammar.md` remains in force
+//! under constitution §4: a refusal is a typed [`GrammarError`] and the
+//! caller decides. Two upstream crash paths are
 //! answered the same way, both null-pointer dereferences rather than
 //! aborts — see [`GrammarError::EmptyLine`] and
 //! [`GrammarError::UnterminatedEscape`].

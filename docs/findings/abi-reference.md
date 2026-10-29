@@ -777,8 +777,12 @@ The consumer uses `assert()` in a few places:
 ### Implications for oxpinyin-capi
 
 A Rust implementation should:
-1. Return `Result` from all public APIs (per AGENTS.md constitution §4).
-2. Never panic on any input.
+1. Use idiomatic Rust error handling; internal APIs need not universally
+   return `Result` (constitution §4, amended 2026-10-29 UTC).
+2. Follow the pin's observable failure behaviour: permit a panic only for
+   a corresponding pin assertion or abort, subject to existing class
+   (b)/(c) rulings. Where the pin continues or returns an error, introduce
+   no panic. Class (c) refusals keep `false`/`Err` and one warning.
 3. Treat the consumer's unchecked calls as implicit contracts: these
    functions must succeed for in-range inputs with valid state. An
    implementation that returned errors in these cases would break the

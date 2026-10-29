@@ -22,9 +22,12 @@
 //! No C types cross this boundary: the crates above this one own the
 //! `#[repr(C)]` shapes, the pointer casts, and the `CString` snapshots.
 
-// Constitution §4, mechanically: library builds may not unwrap, expect,
-// or panic. Inline #[cfg(test)] modules are exempt (see the allow below
-// their declaration); tests/, benches/ and examples/ are separate crates.
+// Constitution §4: keep these non-test denials. A permitted site needs the
+// narrowest justified #[expect], citing the pin's abort site or an invariant
+// making failure unreachable; see .kiro/steering/rust-conventions.md.
+// An expectation proves lint coverage, not correspondence with the pin.
+// Inline #[cfg(test)] modules are exempt; tests/, benches/ and examples/
+// are separate crates.
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 #![cfg_attr(not(test), deny(clippy::expect_used))]
 #![cfg_attr(not(test), deny(clippy::panic))]

@@ -21,7 +21,15 @@ file wins on any conflict.
    changes need no size build or report. No pin +10% cap.
    Details: `docs/perf/ci-perf-size-gate-proposal-2026-09-09.md`.
 3. No local AI (no client neural/LLM inference).
-4. Nothing panics on any input; public APIs return `Result`.
+4. **Panics and error handling.** oxpinyin follows the pinned libpinyin
+   implementation’s observable failure behaviour. A Rust panic is permitted
+   only where the pin asserts or aborts on the corresponding condition,
+   except where an existing compatibility ruling requires a different
+   outcome. Where the pin continues or returns an error, oxpinyin must not
+   introduce a panic. Use idiomatic Rust error handling; internal Rust APIs
+   are not universally required to return `Result`. Ordinary operations and
+   assertions are permitted only when their potential failure paths respect
+   this rule. Existing class (b)/(c) rulings remain authoritative.
 5. `unsafe`: `forbid` in oxpinyin-core/data/user/engine/runtime; scoped
    unsafe modules in the new bidirectional `oxpinyin-input` boundary and
    `deny` with scoped backend allows in `oxpinyin-store`; public C ABI
@@ -41,6 +49,12 @@ file wins on any conflict.
    libpinyin is a test/migration **subject**, not a linked dependency of
    shipping code.
 8. When in doubt, STOP — do not improvise.
+
+Constitution §4 amended by maintainer decision 2026-10-29 UTC; pin:
+libpinyin `074a2219c90feaf962d0d24f034514033ece5f99`. Existing class (c)
+refusals still return `false`/`Err` and emit exactly one warning per
+occurrence. Scoped lint expectations and their limits are documented in
+`.kiro/steering/rust-conventions.md` and safety-profile Layer 3.
 
 ## Source policy
 
@@ -129,7 +143,7 @@ user-library audit stays in #1198.
    behaviour, and oxpinyin implements it in idiomatic Rust. No code is
    written to reproduce a behaviour of another programming language or
    of a library written for one: C or C++ semantics (an
-   integer-returning comparator, unsigned wrap-around, float-to-integer
+   integer-returning comparator, float-to-integer
    truncation, an integer width chosen for storage), GLib, glibc or
    another libc, libstdc++, or compiler or processor behaviour. The test
    is whether a language-neutral requirement for the behaviour would
@@ -149,6 +163,15 @@ user-library audit stays in #1198.
    artefact is forbidden. When unsure whether a difference is an
    artefact, err towards idiomatic Rust and record it. This paragraph
    never admits a different external I/O call or result.
+
+   **Contract, not implementation.** (Maintainer decision 2026-10-29 UTC.)
+   Reproduce what the language or library contract guarantees; never what
+   one implementation happens to do. C defines unsigned arithmetic to wrap,
+   and code may rely on it, so where the pin's unsigned wrap is observable
+   it is reproduced with Rust's `wrapping_*` methods. Signed overflow has no
+   C contract and falls under class (b). A documented guarantee such as
+   `g_array_sort`'s stability is contract; the order among equal heap
+   elements, a search result on unsorted input, or a float's last bit is not.
 
    **No ported external-library internals (maintainer ruling
    2026-10-29 UTC).** oxpinyin implements libpinyin's own algorithms.
@@ -383,7 +406,7 @@ Every requirement, spec line and finding belongs to exactly one side:
 - **oxpinyin improvements** — everything oxpinyin does that the pin does
   not: the classes (a)–(c) and the log line (c) owes, the registered
   standing divergences, recorded language artefacts, the
-  constitution's no-panic,
+  constitution's pin-matched panic/error-handling,
   `unsafe` and determinism rules, internal architecture and crate
   decoupling, performance, and the Stage 3 departures. Kiro:
   `.kiro/steering/oxpinyin-improvements.md`, `.kiro/specs/bug-for-bug/`

@@ -1,5 +1,5 @@
-//! Errors the λ estimator reports. Nothing here panics on caller input
-//! (constitution §4: public APIs return `Result`).
+//! Errors the λ estimator reports. Existing typed refusals are preserved
+//! under constitution §4's pin-matched failure policy.
 
 use std::fmt;
 
