@@ -30,11 +30,15 @@ pub fn rank_by_frequency<T>(items: &mut [T], key: impl Fn(&T) -> (usize, u8, u32
         let (right_length, right_span, _) = key(right);
         (left_length, left_span) == (right_length, right_span)
     }) {
-        if frequency_order_is_consistent(group.iter().map(|row| key(row).2)) {
-            group.sort_by(|left, right| frequency_compare(key(left).2, key(right).2));
-        } else {
-            group.sort_by_key(|row| std::cmp::Reverse(key(row).2));
-        }
+        let consistent = frequency_order_is_consistent(group.iter().map(|row| key(row).2));
+        group.sort_by(|left, right| {
+            let (left, right) = (key(left).2, key(right).2);
+            if consistent {
+                frequency_compare(left, right)
+            } else {
+                right.cmp(&left)
+            }
+        });
     }
 }
 

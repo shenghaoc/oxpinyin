@@ -186,6 +186,22 @@ output and profiles remain local for attribution with
 not PR attachments. Harness `elapsed_ns` is collected under Valgrind and is
 not a native timing result. These commands make no wall-time or heap claim.
 
+For a same-run native time comparison, add `--native-rounds 40
+--native-iterations 20`. This optional phase runs before Callgrind, using
+separate equal-length copies of the supplied **plain shipping** libraries,
+the same CPU pin and worker anchors, and rotating base, PR, pin and both
+same-bytes controls. It validates every complete observation and reports
+native `elapsed_ns` per invocation in `native.json`, independently of the
+profiled arm's counters. `--native-rounds` requires at least 20; its default
+is zero (off), while `--native-iterations` defaults to 20 and does not alter
+Callgrind's `--iterations`. No warmup is discarded; all invocations of the
+native process are included. The shared paired-bootstrap statistics give
+PR/base median ratios and 95% intervals, plus the existing same-bytes time
+control stability check. Unstable controls are DIAGNOSTIC; their tolerance
+is not permission for a product regression. Report the interval and control
+limits, rather than treating an interval containing one as proof of exact
+time equality. This phase measures no heap usage.
+
 The separate `probe-debuginfo-neutrality` diagnostic still compares independently
 compiled profiles and may fail. Changing Cargo's debug profile changes crate
 metadata, which can affect fat-LTO specialization as well as layout (#1337).

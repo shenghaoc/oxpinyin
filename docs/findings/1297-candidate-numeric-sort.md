@@ -268,3 +268,107 @@ passing base's policy explicitly for `main/pinyin` and `mctl/pinyin`,
 and the regenerated policy for `pr__/pinyin` and `pctl/pinyin`. Install
 plain and profiled libraries through `just packaging install` using the
 same locked release profile; only the profiling flags differ.
+
+## Separate size follow-up to `7a958bdc`
+
+The maintainer explicitly authorized publishing the correction unchanged,
+then investigating its size in a separate commit. The comparison here uses
+that exact correction as its baseline; it does not reuse the original-main
+counts above as a performance baseline. The host, shipping features,
+toolchain, ext4 paths and heavy-work isolation remain as described above.
+
+Attribution reads the existing unstripped release objects with
+`nm --size-sort --print-size --defined-only --demangle=rust`. Count each
+physical `(address, size)` text symbol once, so linker aliases do not inflate
+the totals. Group the `core::slice::sort` symbols whose concrete type names
+contain `rank_by_frequency`. The correction instantiated leading-field,
+wrapping-frequency and numeric-fallback stable sorts separately for both
+`(RankKey, u32)` and `Predicted`; zhuyin uses only the former type.
+
+| Sort instantiation | Correction text bytes | Follow-up text bytes |
+| --- | ---: | ---: |
+| Cached candidate leading fields | 5,551 | 5,551 |
+| Cached candidate wrapping / fallback | 4,641 + 4,599 | 5,540 combined |
+| Predicted leading fields | 5,005 | 5,005 |
+| Predicted wrapping / fallback | 5,120 + 5,006 | 5,854 combined |
+| All relevant pinyin sort code | 29,922 | 21,950 |
+| All relevant zhuyin sort code | 14,791 | 11,091 |
+
+For context, original-main's removed GLib sort code occupies 1,289 / 782
+text bytes. Total unique release text grows from 1,988,907 / 1,783,429 bytes
+on original main to 2,019,139 / 1,798,266 in the correction. Thus the new
+sort instantiations account for most of that growth; stripped ELF file
+growth also includes padding, unwind information and other code generation.
+The follow-up's total unique text is 2,011,363 / 1,794,682 bytes.
+
+`candidate::rank_by_frequency` now passes one comparator closure for both
+frequency modes. Its captured consistency flag selects wrapping comparison
+or numeric fallback inside that closure. This combines two monomorphized
+sort pipelines for each row type; it introduces no indirect call, new
+dependency, representation change or guard allocation. Leading keys, guard,
+stable ties, cyclic fallback and complexity bounds are unchanged. The two
+row types remain separate: sharing their representation would reintroduce
+the index-to-row work that the earlier design experiment found slower.
+
+All six policies were regenerated twice byte-identically from the proper
+backend shipping inputs and unchanged pin-provisioned profiles (396
+collections, eight admitted workers). This is required because the old
+frequency `insertion_sort_shift_left` path no longer resolves. Generation
+removes that one path from each policy; the six final linked libraries check
+as ordered, with pinyin/zhuyin counts BDB 281/262, KC 363/345 and sound-tkrzw
+293/275. The final stripped BDB shipping objects measure:
+
+| Library | Correction bytes | Follow-up bytes | Reduction | Remaining increase over original main |
+| --- | ---: | ---: | ---: | ---: |
+| libpinyin.so.15.0.0 | 2,507,560 | 2,499,368 | 8,192 | 20,480 (0.83%) |
+| libzhuyin.so.15.0.0 | 2,237,224 | 2,233,128 | 4,096 | 12,288 (0.55%) |
+
+The same 126 explicit sort/row58 cases retain 118 MATCH and eight existing
+POLICY-ACCEPTED per registered cell. All four signed row58 witnesses remain
+unregistered MATCH at both dynamic-adjust settings. Touched engine/capi
+tests pass (366 tests, two isolated diagnostics ignored), as do all-target
+Clippy with warnings denied, fmt and diff checks. The differential did not
+change, so the successful correction mutation is not repeated.
+
+One same-run before/after campaign per workload compares the correction,
+follow-up, pin and both same-bytes controls. Each has three serial rotating
+Callgrind rounds, one iteration, and passing identical-`.text` debug-info
+neutrality checks. All complete observations agree across every arm.
+
+| Workload | Correction Ir | Follow-up Ir | Pin Ir | Result |
+| --- | ---: | ---: | ---: | --- |
+| Sentence | 2,470,932 | 2,470,932 | 3,833,276 | VALID, exact controls |
+| Complete typing sequence | 65,155,110–65,156,552 | 65,206,693–65,211,270 | 77,108,522 | DIAGNOSTIC, RandomState scopes only |
+
+Typing adds 50,141–56,160 instructions (about 0.077–0.086%). Same-bytes
+control spreads are 1,561 / 4,577, with no varying function outside the
+existing allowlist. This is a bounded diagnostic instruction comparison,
+not an exact instruction result.
+
+The existing campaign now optionally times the same scoped worker natively
+with plain shipping objects before Callgrind. The extension is necessary
+because elapsed time collected under Valgrind cannot answer the maintainer's
+time requirement. Its 23 harness tests pass. Both workloads use 40 rotating
+fresh-process rounds, 20 invocations per process, CPU 0, no discarded warmup,
+and the shared paired-median bootstrap statistics (4,000 resamples).
+
+| Workload | Correction median ns/invocation | Follow-up median ns/invocation | Paired PR/base median | 95% interval |
+| --- | ---: | ---: | ---: | --- |
+| Sentence | 561,849.5 | 561,931.6 | 1.00010 | 0.99853–1.00165 |
+| Complete typing sequence | 10,115,714.2 | 10,132,667.5 | 1.00270 | 0.99603–1.01197 |
+
+Native controls are VALID under the existing stability rule: sentence
+control intervals are 0.99610–1.00587 / 0.99582–1.00643, and typing intervals
+0.98571–1.00438 / 0.99522–1.01289. These control bounds are not a product
+regression tolerance. No native slowdown is detected, supporting retaining
+the reduction at this measurement resolution; exact equality is not proved,
+and a small slowdown, up to the reported interval limits, is not excluded.
+There is no new heap measurement claim.
+
+Reproduce with the same shipping installation, stripping and policy
+generation recipes cited above, using `7a958bdc` for the before worktree.
+Run both sentence/typing campaign commands with `--native-rounds 40
+--native-iterations 20`, the correction's policy explicitly for `main/pinyin`
+and `mctl/pinyin`, and the regenerated policy for the follow-up arms. The
+[runbook](../runbooks/benches.md#sentence-and-typing-sequence-callgrind-campaign)
+documents the optional native phase and its interpretation.
