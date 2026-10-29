@@ -26,180 +26,217 @@ this record. The record and its observations below remain historical.
 
 ```contract-diff-policy
 {
-  "schema": 1,
+  "schema": 2,
   "record": "1297-table-words",
   "status": "reverted",
   "disposition": "POLICY-ACCEPTED",
   "cases": {
     "table-conf-919-source-token-nul": {
       "pin": {
-        "exit": 0,
-        "result": {
-          "ctx": true,
-          "logs": []
-        },
-        "stderr": ""
+        "sha256": "096171703e12a07648d9b811395629efc91d77ae4eb46936e25151db1001429a",
+        "fields": {
+          "exit": "5feceb66ffc86f38",
+          "result.ctx": "b5bea41b6c623f7c",
+          "result.logs": "4f53cda18c2baa0c",
+          "stderr": "12ae32cb1ec02d01"
+        }
       },
       "subject": {
-        "exit": 0,
-        "result": {
-          "ctx": false,
-          "logs": [
-            [
-              "libpinyin",
-              16
-            ]
-          ]
-        },
-        "stderr": ""
-      }
+        "sha256": "4b7a8f5f4fd127c85608b11ed8b2e3f7060b5d26a24dc2842a3e5ce7e6fcf5b3",
+        "fields": {
+          "exit": "5feceb66ffc86f38",
+          "result.ctx": "fcbcf165908dd18a",
+          "result.logs": "48e0515226f51417",
+          "stderr": "12ae32cb1ec02d01"
+        }
+      },
+      "divergence": [
+        "result.ctx: pin true; subject false",
+        "result.logs[0]: subject inserts [[\"libpinyin\", 16]]"
+      ]
     },
     "table-conf-919-source-token-nul-zhuyin": {
       "pin": {
-        "exit": 0,
-        "result": {
-          "ctx": true,
-          "logs": []
-        },
-        "stderr": ""
+        "sha256": "096171703e12a07648d9b811395629efc91d77ae4eb46936e25151db1001429a",
+        "fields": {
+          "exit": "5feceb66ffc86f38",
+          "result.ctx": "b5bea41b6c623f7c",
+          "result.logs": "4f53cda18c2baa0c",
+          "stderr": "12ae32cb1ec02d01"
+        }
       },
       "subject": {
-        "exit": 0,
-        "result": {
-          "ctx": false,
-          "logs": [
-            [
-              "libzhuyin",
-              16
-            ]
-          ]
-        },
-        "stderr": ""
-      }
+        "sha256": "061d77d2e0320ad253965099ecf08761cb7b07e39bdd941e667aef9f180b6b69",
+        "fields": {
+          "exit": "5feceb66ffc86f38",
+          "result.ctx": "fcbcf165908dd18a",
+          "result.logs": "60f3675ebcb31138",
+          "stderr": "12ae32cb1ec02d01"
+        }
+      },
+      "divergence": [
+        "result.ctx: pin true; subject false",
+        "result.logs[0]: subject inserts [[\"libzhuyin\", 16]]"
+      ]
     },
     "table-conf-919-database-token-nul": {
       "pin": {
-        "exit": 0,
-        "result": {
-          "ctx": true,
-          "logs": []
-        },
-        "stderr": ""
+        "sha256": "096171703e12a07648d9b811395629efc91d77ae4eb46936e25151db1001429a",
+        "fields": {
+          "exit": "5feceb66ffc86f38",
+          "result.ctx": "b5bea41b6c623f7c",
+          "result.logs": "4f53cda18c2baa0c",
+          "stderr": "12ae32cb1ec02d01"
+        }
       },
       "subject": {
-        "exit": 0,
-        "result": {
-          "ctx": false,
-          "logs": [
-            [
-              "libpinyin",
-              16
-            ]
-          ]
-        },
-        "stderr": ""
-      }
+        "sha256": "4b7a8f5f4fd127c85608b11ed8b2e3f7060b5d26a24dc2842a3e5ce7e6fcf5b3",
+        "fields": {
+          "exit": "5feceb66ffc86f38",
+          "result.ctx": "fcbcf165908dd18a",
+          "result.logs": "48e0515226f51417",
+          "stderr": "12ae32cb1ec02d01"
+        }
+      },
+      "divergence": [
+        "result.ctx: pin true; subject false",
+        "result.logs[0]: subject inserts [[\"libpinyin\", 16]]"
+      ]
     },
     "table-conf-919-database-token-nul-zhuyin": {
       "pin": {
-        "exit": 0,
-        "result": {
-          "ctx": true,
-          "logs": []
-        },
-        "stderr": ""
+        "sha256": "096171703e12a07648d9b811395629efc91d77ae4eb46936e25151db1001429a",
+        "fields": {
+          "exit": "5feceb66ffc86f38",
+          "result.ctx": "b5bea41b6c623f7c",
+          "result.logs": "4f53cda18c2baa0c",
+          "stderr": "12ae32cb1ec02d01"
+        }
       },
       "subject": {
-        "exit": 0,
-        "result": {
-          "ctx": false,
-          "logs": [
-            [
-              "libzhuyin",
-              16
-            ]
-          ]
-        },
-        "stderr": ""
-      }
+        "sha256": "061d77d2e0320ad253965099ecf08761cb7b07e39bdd941e667aef9f180b6b69",
+        "fields": {
+          "exit": "5feceb66ffc86f38",
+          "result.ctx": "fcbcf165908dd18a",
+          "result.logs": "60f3675ebcb31138",
+          "stderr": "12ae32cb1ec02d01"
+        }
+      },
+      "divergence": [
+        "result.ctx: pin true; subject false",
+        "result.logs[0]: subject inserts [[\"libzhuyin\", 16]]"
+      ]
     },
     "table-conf-abort-919-word-width-overlong": {
       "cells": {
         "bdb": {
           "pin": {
-            "exit": -6,
-            "result": null,
-            "stderr": "",
-            "userfiles": {}
+            "sha256": "8eab0f11d36b912d5a373dce6c67a9ff5914743ed61ab7281a6e0e5340336ae8",
+            "fields": {
+              "exit": "03b26944890929ff",
+              "result": "74234e98afe7498f",
+              "stderr": "12ae32cb1ec02d01",
+              "userfiles": "44136fa355b3678a"
+            }
           },
           "subject": {
-            "exit": 0,
-            "result": {
-              "ret": true,
-              "logs": []
-            },
-            "stderr": "open SCRATCH/user-X/user.conf failed.",
-            "userfiles": {
-              "user.conf": "binary format version:7|model data version:14|database format:BerkeleyDB|open counter:1|"
+            "sha256": "0b72a387315ca409abe08646b665ef33900d3f8e6b190ce8008401717a64e93a",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.ret": "b5bea41b6c623f7c",
+              "stderr": "c48a0964ed0c5485",
+              "userfiles": "50d8d2b377dbe6af"
             }
-          }
+          },
+          "divergence": [
+            "exit: pin -6; subject 0",
+            "result: pin null; subject {\"ret\": true, \"logs\": []}",
+            "stderr: pin \"\"; subject \"open SCRATCH/user-X/user.conf failed.\"",
+            "userfiles.user.conf: subject only \"binary format version:7|model data version:14|database format:BerkeleyDB|open counter:1|\""
+          ]
         },
         "kc": {
           "pin": {
-            "exit": -6,
-            "result": null,
-            "stderr": "",
-            "userfiles": {}
+            "sha256": "8eab0f11d36b912d5a373dce6c67a9ff5914743ed61ab7281a6e0e5340336ae8",
+            "fields": {
+              "exit": "03b26944890929ff",
+              "result": "74234e98afe7498f",
+              "stderr": "12ae32cb1ec02d01",
+              "userfiles": "44136fa355b3678a"
+            }
           },
           "subject": {
-            "exit": 0,
-            "result": {
-              "ret": true,
-              "logs": []
-            },
-            "stderr": "open SCRATCH/user-X/user.conf failed.",
-            "userfiles": {
-              "user.conf": "binary format version:7|model data version:14|database format:KyotoCabinet|open counter:1|"
+            "sha256": "8813473b919a31e6822eb4d3d0335f79b7d38c790d518072125b06933eaf8026",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.ret": "b5bea41b6c623f7c",
+              "stderr": "c48a0964ed0c5485",
+              "userfiles": "5f0faba001a5acbc"
             }
-          }
+          },
+          "divergence": [
+            "exit: pin -6; subject 0",
+            "result: pin null; subject {\"ret\": true, \"logs\": []}",
+            "stderr: pin \"\"; subject \"open SCRATCH/user-X/user.conf failed.\"",
+            "userfiles.user.conf: subject only \"binary format version:7|model data version:14|database format:KyotoCabinet|open counter:1|\""
+          ]
         },
         "tkrzw": {
           "pin": {
-            "exit": -6,
-            "result": null,
-            "stderr": "",
-            "userfiles": {}
+            "sha256": "8eab0f11d36b912d5a373dce6c67a9ff5914743ed61ab7281a6e0e5340336ae8",
+            "fields": {
+              "exit": "03b26944890929ff",
+              "result": "74234e98afe7498f",
+              "stderr": "12ae32cb1ec02d01",
+              "userfiles": "44136fa355b3678a"
+            }
           },
           "subject": {
-            "exit": 0,
-            "result": {
-              "ret": true,
-              "logs": []
-            },
-            "stderr": "open SCRATCH/user-X/user.conf failed.",
-            "userfiles": {
-              "user.conf": "binary format version:7|model data version:14|database format:Tkrzw|open counter:1|"
+            "sha256": "15a4edb7f3cfcdd9625719c898157148acf0142086e92f85d2a4484ff573ca97",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.ret": "b5bea41b6c623f7c",
+              "stderr": "c48a0964ed0c5485",
+              "userfiles": "dd19ff5920baae75"
             }
-          }
+          },
+          "divergence": [
+            "exit: pin -6; subject 0",
+            "result: pin null; subject {\"ret\": true, \"logs\": []}",
+            "stderr: pin \"\"; subject \"open SCRATCH/user-X/user.conf failed.\"",
+            "userfiles.user.conf: subject only \"binary format version:7|model data version:14|database format:Tkrzw|open counter:1|\""
+          ]
         }
       }
     },
     "table-conf-abort-919-word-width-overlong-zhuyin": {
       "pin": {
-        "exit": -6,
-        "result": null,
-        "stderr": "",
-        "userfiles": {}
+        "sha256": "8eab0f11d36b912d5a373dce6c67a9ff5914743ed61ab7281a6e0e5340336ae8",
+        "fields": {
+          "exit": "03b26944890929ff",
+          "result": "74234e98afe7498f",
+          "stderr": "12ae32cb1ec02d01",
+          "userfiles": "44136fa355b3678a"
+        }
       },
       "subject": {
-        "exit": 0,
-        "result": {
-          "ret": true,
-          "logs": []
-        },
-        "stderr": "open SCRATCH/user-X/user.conf failed.",
-        "userfiles": {}
-      }
+        "sha256": "dbc2514f35044ce0d6609b7375ea868c36684d1c24d9e963d46c6df7373fe58e",
+        "fields": {
+          "exit": "5feceb66ffc86f38",
+          "result.logs": "4f53cda18c2baa0c",
+          "result.ret": "b5bea41b6c623f7c",
+          "stderr": "c48a0964ed0c5485",
+          "userfiles": "44136fa355b3678a"
+        }
+      },
+      "divergence": [
+        "exit: pin -6; subject 0",
+        "result: pin null; subject {\"ret\": true, \"logs\": []}",
+        "stderr: pin \"\"; subject \"open SCRATCH/user-X/user.conf failed.\""
+      ]
     }
   }
 }

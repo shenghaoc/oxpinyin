@@ -22,56 +22,58 @@ this record. The record and its observations below remain historical.
 
 ```contract-diff-policy
 {
-  "schema": 1,
+  "schema": 2,
   "record": "1297-addon-index",
   "status": "reverted",
   "disposition": "POLICY-ACCEPTED",
   "cases": {
     "table-conf-addon-index-wraps": {
       "pin": {
-        "exit": 0,
-        "result": {
-          "ctx": true,
-          "logs": []
-        },
-        "stderr": ""
+        "sha256": "096171703e12a07648d9b811395629efc91d77ae4eb46936e25151db1001429a",
+        "fields": {
+          "exit": "5feceb66ffc86f38",
+          "result.ctx": "b5bea41b6c623f7c",
+          "result.logs": "4f53cda18c2baa0c",
+          "stderr": "12ae32cb1ec02d01"
+        }
       },
       "subject": {
-        "exit": 0,
-        "result": {
-          "ctx": false,
-          "logs": [
-            [
-              "libpinyin",
-              16
-            ]
-          ]
-        },
-        "stderr": ""
-      }
+        "sha256": "4b7a8f5f4fd127c85608b11ed8b2e3f7060b5d26a24dc2842a3e5ce7e6fcf5b3",
+        "fields": {
+          "exit": "5feceb66ffc86f38",
+          "result.ctx": "fcbcf165908dd18a",
+          "result.logs": "48e0515226f51417",
+          "stderr": "12ae32cb1ec02d01"
+        }
+      },
+      "divergence": [
+        "result.ctx: pin true; subject false",
+        "result.logs[0]: subject inserts [[\"libpinyin\", 16]]"
+      ]
     },
     "table-conf-919-addon-atoi-nondigit": {
       "pin": {
-        "exit": 0,
-        "result": {
-          "ctx": true,
-          "logs": []
-        },
-        "stderr": ""
+        "sha256": "096171703e12a07648d9b811395629efc91d77ae4eb46936e25151db1001429a",
+        "fields": {
+          "exit": "5feceb66ffc86f38",
+          "result.ctx": "b5bea41b6c623f7c",
+          "result.logs": "4f53cda18c2baa0c",
+          "stderr": "12ae32cb1ec02d01"
+        }
       },
       "subject": {
-        "exit": 0,
-        "result": {
-          "ctx": false,
-          "logs": [
-            [
-              "libpinyin",
-              16
-            ]
-          ]
-        },
-        "stderr": ""
-      }
+        "sha256": "4b7a8f5f4fd127c85608b11ed8b2e3f7060b5d26a24dc2842a3e5ce7e6fcf5b3",
+        "fields": {
+          "exit": "5feceb66ffc86f38",
+          "result.ctx": "fcbcf165908dd18a",
+          "result.logs": "48e0515226f51417",
+          "stderr": "12ae32cb1ec02d01"
+        }
+      },
+      "divergence": [
+        "result.ctx: pin true; subject false",
+        "result.logs[0]: subject inserts [[\"libpinyin\", 16]]"
+      ]
     }
   }
 }

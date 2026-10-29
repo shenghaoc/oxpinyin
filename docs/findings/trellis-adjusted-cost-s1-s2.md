@@ -87,7 +87,7 @@ flags, serialized-file observations and diagnostics remain unchanged.
 
 ```contract-diff-policy
 {
-  "schema": 1,
+  "schema": 2,
   "record": "trellis-adjusted-cost-s1-s2",
   "status": "current",
   "disposition": "POLICY-ACCEPTED",
@@ -96,59 +96,33 @@ flags, serialized-file observations and diagnostics remain unchanged.
       "cells": {
         "bdb": {
           "pin": {
-            "exit": 0,
-            "result": {
-              "guess": true,
-              "logs": [],
-              "parsed": 4,
-              "sentences": [
-                [
-                  true,
-                  "龘龘"
-                ],
-                [
-                  true,
-                  "靐靐"
-                ],
-                [
-                  true,
-                  "大大"
-                ]
-              ],
-              "tokens": [
-                "0x7000001",
-                "0x7000002"
-              ]
-            },
-            "stderr": "open SCRATCH/user-X/user.conf failed."
+            "sha256": "230618673887b264fd2ab073e6f48bd098c815a713947488a89d2f133bdd2ba4",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.guess": "b5bea41b6c623f7c",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.parsed": "4b227777d4dd1fc6",
+              "result.sentences": "1422b22e90caaabe",
+              "result.tokens": "920d9f0a3cf6e8f6",
+              "stderr": "c48a0964ed0c5485"
+            }
           },
           "subject": {
-            "exit": 0,
-            "result": {
-              "guess": true,
-              "logs": [],
-              "parsed": 4,
-              "sentences": [
-                [
-                  true,
-                  "靐靐"
-                ],
-                [
-                  true,
-                  "龘龘"
-                ],
-                [
-                  true,
-                  "大大"
-                ]
-              ],
-              "tokens": [
-                "0x7000001",
-                "0x7000002"
-              ]
-            },
-            "stderr": "open SCRATCH/user-X/user.conf failed."
-          }
+            "sha256": "5909151a43070ed65f3d9f5fe5e2bc87bbc1ef1150e217d8f66f6bef35dbecc6",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.guess": "b5bea41b6c623f7c",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.parsed": "4b227777d4dd1fc6",
+              "result.sentences": "f0205e082cc82619",
+              "result.tokens": "920d9f0a3cf6e8f6",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.sentences[0]: subject inserts [[true, \"靐靐\"]]",
+            "result.sentences[1:2]: subject drops [[true, \"靐靐\"]]"
+          ]
         }
       }
     },
@@ -156,131 +130,37 @@ flags, serialized-file observations and diagnostics remain unchanged.
       "cells": {
         "bdb": {
           "pin": {
-            "exit": 0,
-            "result": {
-              "add": true,
-              "files": {
-                "addon.bin": 27,
-                "gb_char.dbin": 26,
-                "gbk_char.dbin": 26,
-                "merged.dbin": 26,
-                "network.bin": 27,
-                "opengram.dbin": 26,
-                "user.bin": 71,
-                "user.conf": "binary format version:7|model data version:14|database format:BerkeleyDB|open counter:0|",
-                "user_bigram.db": null,
-                "user_phrase_index.bin": "dbm",
-                "user_pinyin_index.bin": "dbm"
-              },
-              "logs": [],
-              "save": true,
-              "train": true,
-              "view": {
-                "nihao": [
-                  "鯓虠",
-                  true,
-                  130,
-                  [
-                    "鯓虠",
-                    "鯓号",
-                    "鯓嚆",
-                    "你好吗",
-                    "疒",
-                    "祢",
-                    "禰",
-                    "妳",
-                    "呢",
-                    "堄",
-                    "逆",
-                    "猊"
-                  ]
-                ],
-                "yishu": [
-                  "呭䜹",
-                  true,
-                  608,
-                  [
-                    "呭䜹",
-                    "呭墅",
-                    "呭疋",
-                    "艺术家",
-                    "艾",
-                    "饎",
-                    "搋",
-                    "眙",
-                    "扡",
-                    "誃",
-                    "昳",
-                    "斁"
-                  ]
-                ]
-              }
-            },
-            "stderr": "open SCRATCH/user-X/user.conf failed."
+            "sha256": "0892a14248fce3a653b275f99ac7dab46e6b7b76bbdd2016802fd34494a6b988",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.add": "b5bea41b6c623f7c",
+              "result.files": "721d12a09e791bca",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.save": "b5bea41b6c623f7c",
+              "result.train": "b5bea41b6c623f7c",
+              "result.view": "2d64dda9ed3c8c54",
+              "stderr": "c48a0964ed0c5485"
+            }
           },
           "subject": {
-            "exit": 0,
-            "result": {
-              "add": true,
-              "files": {
-                "addon.bin": 27,
-                "gb_char.dbin": 26,
-                "gbk_char.dbin": 26,
-                "merged.dbin": 26,
-                "network.bin": 27,
-                "opengram.dbin": 26,
-                "user.bin": 71,
-                "user.conf": "binary format version:7|model data version:14|database format:BerkeleyDB|open counter:0|",
-                "user_bigram.db": null,
-                "user_phrase_index.bin": "dbm",
-                "user_pinyin_index.bin": "dbm"
-              },
-              "logs": [],
-              "save": true,
-              "train": true,
-              "view": {
-                "nihao": [
-                  "你好",
-                  true,
-                  128,
-                  [
-                    "你好",
-                    "拟好",
-                    "你好吗",
-                    "疒",
-                    "祢",
-                    "禰",
-                    "妳",
-                    "呢",
-                    "堄",
-                    "逆",
-                    "猊",
-                    "霓"
-                  ]
-                ],
-                "yishu": [
-                  "艺术",
-                  true,
-                  606,
-                  [
-                    "艺术",
-                    "一书",
-                    "亦属",
-                    "艺术家",
-                    "艾",
-                    "饎",
-                    "搋",
-                    "眙",
-                    "扡",
-                    "誃",
-                    "昳",
-                    "斁"
-                  ]
-                ]
-              }
-            },
-            "stderr": "open SCRATCH/user-X/user.conf failed."
-          }
+            "sha256": "87711d1f62881f51efb6bb51ff9e36ef415bb507af28b7c8c2332c050ef8320d",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.add": "b5bea41b6c623f7c",
+              "result.files": "721d12a09e791bca",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.save": "b5bea41b6c623f7c",
+              "result.train": "b5bea41b6c623f7c",
+              "result.view": "d84626b538139986",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.view.nihao[0:1]: pin [\"鯓虠\"]; subject [\"你好\"]",
+            "result.view.nihao[2:4]: pin [130, [\"鯓虠\", \"鯓号\", \"鯓嚆\", \"你好吗\", \"疒\", \"祢\", \"禰\", \"妳\", \"呢\", \"堄\", \"逆\", \"猊\"]]; subject [128, [\"你好\", \"拟好\", \"你好吗\", \"疒\", \"祢\", \"禰\", \"妳\", \"呢\", \"堄\", \"逆\", \"猊\", \"霓\"]]",
+            "result.view.yishu[0:1]: pin [\"呭䜹\"]; subject [\"艺术\"]",
+            "result.view.yishu[2:4]: pin [608, [\"呭䜹\", \"呭墅\", \"呭疋\", \"艺术家\", \"艾\", \"饎\", \"搋\", \"眙\", \"扡\", \"誃\", \"昳\", \"斁\"]]; subject [606, [\"艺术\", \"一书\", \"亦属\", \"艺术家\", \"艾\", \"饎\", \"搋\", \"眙\", \"扡\", \"誃\", \"昳\", \"斁\"]]"
+          ]
         }
       }
     },
@@ -288,131 +168,37 @@ flags, serialized-file observations and diagnostics remain unchanged.
       "cells": {
         "bdb": {
           "pin": {
-            "exit": 0,
-            "result": {
-              "add": true,
-              "files": {
-                "addon.bin": 27,
-                "gb_char.dbin": 26,
-                "gbk_char.dbin": 26,
-                "merged.dbin": 26,
-                "network.bin": 27,
-                "opengram.dbin": 26,
-                "user.bin": 71,
-                "user.conf": "binary format version:7|model data version:14|database format:BerkeleyDB|open counter:0|",
-                "user_bigram.db": null,
-                "user_phrase_index.bin": "dbm",
-                "user_pinyin_index.bin": "dbm"
-              },
-              "logs": [],
-              "save": true,
-              "train": true,
-              "view": {
-                "nihao": [
-                  "鯓虠",
-                  true,
-                  130,
-                  [
-                    "鯓虠",
-                    "鯓号",
-                    "鯓嚆",
-                    "你好吗",
-                    "疒",
-                    "祢",
-                    "禰",
-                    "妳",
-                    "呢",
-                    "堄",
-                    "逆",
-                    "猊"
-                  ]
-                ],
-                "yishu": [
-                  "呭䜹",
-                  true,
-                  608,
-                  [
-                    "呭䜹",
-                    "呭墅",
-                    "呭疋",
-                    "艺术家",
-                    "艾",
-                    "饎",
-                    "搋",
-                    "眙",
-                    "扡",
-                    "誃",
-                    "昳",
-                    "斁"
-                  ]
-                ]
-              }
-            },
-            "stderr": "open SCRATCH/user-X/user.conf failed."
+            "sha256": "0892a14248fce3a653b275f99ac7dab46e6b7b76bbdd2016802fd34494a6b988",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.add": "b5bea41b6c623f7c",
+              "result.files": "721d12a09e791bca",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.save": "b5bea41b6c623f7c",
+              "result.train": "b5bea41b6c623f7c",
+              "result.view": "2d64dda9ed3c8c54",
+              "stderr": "c48a0964ed0c5485"
+            }
           },
           "subject": {
-            "exit": 0,
-            "result": {
-              "add": true,
-              "files": {
-                "addon.bin": 27,
-                "gb_char.dbin": 26,
-                "gbk_char.dbin": 26,
-                "merged.dbin": 26,
-                "network.bin": 27,
-                "opengram.dbin": 26,
-                "user.bin": 71,
-                "user.conf": "binary format version:7|model data version:14|database format:BerkeleyDB|open counter:0|",
-                "user_bigram.db": null,
-                "user_phrase_index.bin": "dbm",
-                "user_pinyin_index.bin": "dbm"
-              },
-              "logs": [],
-              "save": true,
-              "train": true,
-              "view": {
-                "nihao": [
-                  "你好",
-                  true,
-                  128,
-                  [
-                    "你好",
-                    "拟好",
-                    "你好吗",
-                    "疒",
-                    "祢",
-                    "禰",
-                    "妳",
-                    "呢",
-                    "堄",
-                    "逆",
-                    "猊",
-                    "霓"
-                  ]
-                ],
-                "yishu": [
-                  "一书",
-                  true,
-                  606,
-                  [
-                    "一书",
-                    "亦属",
-                    "医术",
-                    "艺术家",
-                    "艾",
-                    "饎",
-                    "搋",
-                    "眙",
-                    "扡",
-                    "誃",
-                    "昳",
-                    "斁"
-                  ]
-                ]
-              }
-            },
-            "stderr": "open SCRATCH/user-X/user.conf failed."
-          }
+            "sha256": "50abae6089fcf29ed83759a7346449056b855e9bc402219f23fdd369821bd116",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.add": "b5bea41b6c623f7c",
+              "result.files": "721d12a09e791bca",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.save": "b5bea41b6c623f7c",
+              "result.train": "b5bea41b6c623f7c",
+              "result.view": "9bb3651ca99bff08",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.view.nihao[0:1]: pin [\"鯓虠\"]; subject [\"你好\"]",
+            "result.view.nihao[2:4]: pin [130, [\"鯓虠\", \"鯓号\", \"鯓嚆\", \"你好吗\", \"疒\", \"祢\", \"禰\", \"妳\", \"呢\", \"堄\", \"逆\", \"猊\"]]; subject [128, [\"你好\", \"拟好\", \"你好吗\", \"疒\", \"祢\", \"禰\", \"妳\", \"呢\", \"堄\", \"逆\", \"猊\", \"霓\"]]",
+            "result.view.yishu[0:1]: pin [\"呭䜹\"]; subject [\"一书\"]",
+            "result.view.yishu[2:4]: pin [608, [\"呭䜹\", \"呭墅\", \"呭疋\", \"艺术家\", \"艾\", \"饎\", \"搋\", \"眙\", \"扡\", \"誃\", \"昳\", \"斁\"]]; subject [606, [\"一书\", \"亦属\", \"医术\", \"艺术家\", \"艾\", \"饎\", \"搋\", \"眙\", \"扡\", \"誃\", \"昳\", \"斁\"]]"
+          ]
         }
       }
     },
@@ -420,131 +206,37 @@ flags, serialized-file observations and diagnostics remain unchanged.
       "cells": {
         "bdb": {
           "pin": {
-            "exit": 0,
-            "result": {
-              "add": true,
-              "files": {
-                "addon.bin": 27,
-                "gb_char.dbin": 26,
-                "gbk_char.dbin": 26,
-                "merged.dbin": 26,
-                "network.bin": 27,
-                "opengram.dbin": 26,
-                "user.bin": 71,
-                "user.conf": "binary format version:7|model data version:14|database format:BerkeleyDB|open counter:0|",
-                "user_bigram.db": null,
-                "user_phrase_index.bin": "dbm",
-                "user_pinyin_index.bin": "dbm"
-              },
-              "logs": [],
-              "save": true,
-              "train": true,
-              "view": {
-                "nihao": [
-                  "鯓虠",
-                  true,
-                  130,
-                  [
-                    "鯓虠",
-                    "鯓号",
-                    "鯓嚆",
-                    "你好吗",
-                    "疒",
-                    "祢",
-                    "禰",
-                    "妳",
-                    "呢",
-                    "堄",
-                    "逆",
-                    "猊"
-                  ]
-                ],
-                "yishu": [
-                  "呭䜹",
-                  true,
-                  608,
-                  [
-                    "呭䜹",
-                    "呭墅",
-                    "呭疋",
-                    "艺术家",
-                    "艾",
-                    "饎",
-                    "搋",
-                    "眙",
-                    "扡",
-                    "誃",
-                    "昳",
-                    "斁"
-                  ]
-                ]
-              }
-            },
-            "stderr": "open SCRATCH/user-X/user.conf failed."
+            "sha256": "0892a14248fce3a653b275f99ac7dab46e6b7b76bbdd2016802fd34494a6b988",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.add": "b5bea41b6c623f7c",
+              "result.files": "721d12a09e791bca",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.save": "b5bea41b6c623f7c",
+              "result.train": "b5bea41b6c623f7c",
+              "result.view": "2d64dda9ed3c8c54",
+              "stderr": "c48a0964ed0c5485"
+            }
           },
           "subject": {
-            "exit": 0,
-            "result": {
-              "add": true,
-              "files": {
-                "addon.bin": 27,
-                "gb_char.dbin": 26,
-                "gbk_char.dbin": 26,
-                "merged.dbin": 26,
-                "network.bin": 27,
-                "opengram.dbin": 26,
-                "user.bin": 71,
-                "user.conf": "binary format version:7|model data version:14|database format:BerkeleyDB|open counter:0|",
-                "user_bigram.db": null,
-                "user_phrase_index.bin": "dbm",
-                "user_pinyin_index.bin": "dbm"
-              },
-              "logs": [],
-              "save": true,
-              "train": true,
-              "view": {
-                "nihao": [
-                  "拟好",
-                  true,
-                  128,
-                  [
-                    "拟好",
-                    "你好",
-                    "你好吗",
-                    "疒",
-                    "祢",
-                    "禰",
-                    "妳",
-                    "呢",
-                    "堄",
-                    "逆",
-                    "猊",
-                    "霓"
-                  ]
-                ],
-                "yishu": [
-                  "亦属",
-                  true,
-                  608,
-                  [
-                    "亦属",
-                    "亦舒",
-                    "忆述",
-                    "艺术家",
-                    "艾",
-                    "饎",
-                    "搋",
-                    "眙",
-                    "扡",
-                    "誃",
-                    "昳",
-                    "斁"
-                  ]
-                ]
-              }
-            },
-            "stderr": "open SCRATCH/user-X/user.conf failed."
-          }
+            "sha256": "4845e87768041f239c36a4a0c8fc167941bb75ef2c55a9fac09436291832e9d6",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.add": "b5bea41b6c623f7c",
+              "result.files": "721d12a09e791bca",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.save": "b5bea41b6c623f7c",
+              "result.train": "b5bea41b6c623f7c",
+              "result.view": "77790fd42bca7411",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.view.nihao[0:1]: pin [\"鯓虠\"]; subject [\"拟好\"]",
+            "result.view.nihao[2:4]: pin [130, [\"鯓虠\", \"鯓号\", \"鯓嚆\", \"你好吗\", \"疒\", \"祢\", \"禰\", \"妳\", \"呢\", \"堄\", \"逆\", \"猊\"]]; subject [128, [\"拟好\", \"你好\", \"你好吗\", \"疒\", \"祢\", \"禰\", \"妳\", \"呢\", \"堄\", \"逆\", \"猊\", \"霓\"]]",
+            "result.view.yishu[0:1]: pin [\"呭䜹\"]; subject [\"亦属\"]",
+            "result.view.yishu[3][0:3]: pin [\"呭䜹\", \"呭墅\", \"呭疋\"]; subject [\"亦属\", \"亦舒\", \"忆述\"]"
+          ]
         }
       }
     }

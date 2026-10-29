@@ -203,6 +203,12 @@ def runner_command(args):
     return runners.main(args.args)
 
 
+def policy_record_command(args):
+    """Write or update discrepancy-record entries from contract-diff observation captures."""
+    from . import policy
+    return policy.main(args.args[1:] if args.args[:1] == ['--'] else args.args)
+
+
 def build_parser():
     """Build the native service CLI with dispatch callbacks on each subcommand."""
     parser = argparse.ArgumentParser(prog='python -m tools.dev',
@@ -269,6 +275,10 @@ def build_parser():
     p = sub.add_parser('abi', help='check exports and allocation contracts through shared services')
     p.add_argument('args', nargs=argparse.REMAINDER)
     p.set_defaults(func=lambda args: abi.main(args.args))
+
+    p = sub.add_parser('policy-record', help='record policy-accepted observations into a findings record')
+    p.add_argument('args', nargs=argparse.REMAINDER)
+    p.set_defaults(func=policy_record_command)
 
     p = sub.add_parser('runner', help='execute one registry recipe through shared driver services')
     p.add_argument('args', nargs=argparse.REMAINDER)

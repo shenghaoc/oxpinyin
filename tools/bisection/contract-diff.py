@@ -46,7 +46,13 @@ unclassified DIFFER. A current discrepancy record
 its expected non-MATCH; the disposition is POLICY-ACCEPTED. The case keeps
 its pin and subject observations, and it is never deleted or relabelled
 MATCH. `policy_record=` links a registered, current record whose
-`contract-diff-policy` JSON block specifies both complete observations.
+`contract-diff-policy` JSON block keeps, per case and cell, the SHA-256 of
+each side's complete stable observation, a digest per top-level field and
+the pin-to-subject divergence as text (`just policy-record` writes it from
+an `--observations` capture). The verdict compares the digests, so the
+accepted pair is still the complete observation on both sides, with no
+wildcard, ignored field or partial match; a pair that differs from the
+record is DIFFER, reported with the side and field that moved.
 
 --expect-parent runs the same cases against a parent build: a case marked
 `control` must still match, every other case must differ.
@@ -1056,6 +1062,11 @@ def verdict_for(spec, pin, subject, expect_parent):
                                         directory_probe=directory_reads_as_a_chunk)
 
 
+def policy_diagnosis(spec, pin, subject):
+    """Which side and field moved against the case's record, or None (contract_verdict)."""
+    return contract_verdict.policy_diagnosis(spec, pin, subject, policy_root=POLICY_ROOT, cell=CELL)
+
+
 def short_dir_chunk(spec):
     """A `dir_chunk` case on a host where the pin does not reach its assert (contract_verdict)."""
     return contract_verdict.short_dir_chunk(spec, directory_probe=directory_reads_as_a_chunk)
@@ -1339,7 +1350,10 @@ def run_main():
                 check_cancelled()
                 if args.observations:
                     with args.observations.open('a') as capture:
-                        capture.write(json.dumps(dict(cell=args.cell,case=n,pin=pin,subject=subject),ensure_ascii=True)+'\n')
+                        capture.write(json.dumps(dict(cell=args.cell, case=n, userdir=spec['userdir'],
+                                                      abort=spec['abort'] is not NO_ABORT,
+                                                      policy_record=spec['policy_record'], pin=pin, subject=subject),
+                                                 ensure_ascii=True) + '\n')
                 compared = time.monotonic()
                 if (any(side['exit'] == 'TIMEOUT' for side in (pin, subject))
                         and (not args.expect_parent or not registered_termination(spec)
@@ -1360,6 +1374,10 @@ def run_main():
                            stderr_lines=[pin['stderr_lines'], subject['stderr_lines']])
                 if spec['policy_record'] is not None:
                     row.update(record=spec['policy_record'], pin=pin, subject=subject)
+                    if verdict == 'DIFFER':
+                        diagnosis = policy_diagnosis(spec, pin, subject)
+                        if diagnosis is not None:
+                            row['policy'] = diagnosis
                 print(json.dumps(row,
                                  sort_keys=True), flush=True)
                 if host_dependent:
@@ -1374,6 +1392,8 @@ def run_main():
                                 print('  %s userfiles=%s' % (side, json.dumps(r['userfiles'], sort_keys=True)))
                             if spec['stderr']:
                                 print('  %s stderr=%r' % (side, r['stderr']))
+                        if 'policy' in row:
+                            print('  policy %s: %s' % (spec['policy_record'], row['policy']['summary']))
         print(json.dumps(dict(verdict_counts=verdict_counts), sort_keys=True), flush=True)
         print(json.dumps(dict(timing=dict(timing_summary(names, compare_seconds, time.monotonic() - started), jobs=jobs)),
                          sort_keys=True), flush=True)

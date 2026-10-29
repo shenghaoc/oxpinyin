@@ -3,8 +3,8 @@
 From one case's registered spec and its pin and subject observations, decide
 MATCH, DIFFER, INVALID or POLICY-ACCEPTED: the exit and stderr conditions of
 the class (b) and (c) sites, the `~` fields left out of the comparison, the
-discrepancy-record check, the host-dependent table.conf refusal and the #1114
-saved-bigram mask. What the rules read from the driver's per-run state, the
+discrepancy-record digests (contract_policy), the host-dependent table.conf
+refusal and the #1114 saved-bigram mask. What the rules read from the driver's per-run state, the
 findings directory, the DBM cell and the directory-size probe, is a keyword
 argument: contract-diff.py passes its own globals at call time, which is where
 its tests patch them. The driver re-exports every name.
@@ -17,6 +17,8 @@ from pathlib import Path
 import re
 import signal
 import tempfile
+
+import contract_policy
 
 
 NO_ABORT = object()
@@ -75,11 +77,15 @@ def valid_parent_observations(spec, pin, subject, *, directory_probe):
 def policy_expectations(spec, *, policy_root, cell):
     """Read the current registered record, never a cached exemption.
 
-    Each case lists complete exit/result/stderr observations for both sides.
-    No wildcards, ignored result fields or partial-dict matching are allowed.
-    Rejected metadata is INVALID, including under --expect-parent.
+    Each case keeps, per cell or once for every cell, the SHA-256 of each
+    side's complete stable observation, a short digest per top-level field
+    and the pin-to-subject divergence as text (contract_policy). The record
+    holds no observation and allows no wildcard, ignored result field or
+    partial-dict match: the digests decide. Rejected metadata is INVALID,
+    including under --expect-parent. A schema-1 record, which held the
+    complete observations, is refused by name.
 
-    The record is read from policy_root. cell is the DBM cell whose observations
+    The record is read from policy_root. cell is the DBM cell whose entry
     a per-cell record supplies when CONTRACT_DIFF_CELL is unset.
     """
     name = spec['policy_record']
@@ -95,41 +101,39 @@ def policy_expectations(spec, *, policy_root, cell):
     if len(blocks) != 1:
         raise ValueError('policy record needs exactly one observations block')
     record = json.loads(blocks[0])
-    if (not isinstance(record, dict) or type(record.get('schema')) is not int or record.get('schema') != 1
+    if isinstance(record, dict) and record.get('schema') == 1:
+        raise ValueError('policy record holds complete observations (schema 1); '
+                         'record its cases again with just policy-record')
+    if (not isinstance(record, dict) or type(record.get('schema')) is not int
+            or record.get('schema') != contract_policy.SCHEMA
             or record.get('record') != path.stem or record.get('status') != 'current'
             or record.get('disposition') != 'POLICY-ACCEPTED'):
         raise ValueError('policy record is not current or has incompatible metadata')
-    pair = record['cases'][spec['case_id']]
-    if isinstance(pair, dict) and set(pair) == {'cells'}:
-        pair = pair['cells'][os.environ.get('CONTRACT_DIFF_CELL', cell)]
-    if not isinstance(pair, dict) or set(pair) != {'pin', 'subject'}:
-        raise ValueError('policy case must specify both observations')
-    keys = {'exit', 'result', 'stderr'} | ({'userfiles'} if spec['userdir'] else set())
-    for name, side in pair.items():
-        if (not isinstance(side, dict) or set(side) != keys
-                or type(side['exit']) is not int
-                or not isinstance(side['stderr'], str)):
-            raise ValueError('policy observation must be complete')
-        if spec['userdir'] and (not isinstance(side['userfiles'], dict)
-                               or any(not isinstance(key, str) or not isinstance(value, str)
-                                      for key, value in side['userfiles'].items())):
-            raise ValueError('policy user-directory listing must be complete')
-        if name == 'pin' and side['exit'] == -signal.SIGABRT and spec['abort'] is not NO_ABORT:
-            if side['result'] is not None:
-                raise ValueError('aborted pin cannot have a result document')
-        elif (side['exit'] != 0 or not isinstance(side['result'], dict)
-              or 'logs' not in side['result']
-              or any(key.startswith('~') for key in side['result'])):
-            raise ValueError('policy observation must normally terminate or hold a registered pin abort')
-    if pair['pin'] == pair['subject']:
-        raise ValueError('policy case must record a difference, not parity')
-    return pair
+    kept = record['cases'][spec['case_id']]
+    if isinstance(kept, dict) and set(kept) == {'cells'}:
+        kept = kept['cells'][os.environ.get('CONTRACT_DIFF_CELL', cell)]
+    return contract_policy.check_entry(kept)
 
 
 def policy_observation(spec, side):
-    """The full stable observation, excluding worker timings only."""
-    keys = ('exit', 'result', 'stderr', *(['userfiles'] if spec['userdir'] else []))
-    return {key: side[key] for key in keys}
+    """The complete stable observation, excluding worker timings only."""
+    return contract_policy.stable_observation(side, spec['userdir'])
+
+
+def policy_diagnosis(spec, pin, subject, *, policy_root, cell):
+    """Which side and which field moved against the record, from its field
+    digests: per side `matches`, `moved`, `added` and `missing` fields and a
+    one-line `summary`. None when the record cannot be read (the verdict is
+    INVALID) or when both sides digest to the record (POLICY-ACCEPTED)."""
+    try:
+        kept = policy_expectations(spec, policy_root=policy_root, cell=cell)
+        actual = dict(pin=policy_observation(spec, pin), subject=policy_observation(spec, subject))
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    if contract_policy.accepted(kept, actual):
+        return None
+    report = contract_policy.diagnose(kept, actual)
+    return dict(report, summary=contract_policy.describe(report))
 
 
 def verdict_for(spec, pin, subject, expect_parent, *, policy_root, cell, directory_probe):
@@ -142,11 +146,17 @@ def verdict_for(spec, pin, subject, expect_parent, *, policy_root, cell, directo
     DIFFER by `matches`, and expected when it is what the mode asks for: a
     MATCH, or under --expect-parent a DIFFER from a non-control case.
 
+    A policy case is POLICY-ACCEPTED only when both complete stable
+    observations digest to the record's SHA-256 values and could have been
+    recorded (a normal termination with a complete document, or the pin of a
+    registered abort site); any other pair of valid observations is DIFFER,
+    and `policy_diagnosis` says which side and field moved.
+
     policy_root and cell locate the discrepancy record (policy_expectations) and
     directory_probe is the host's directory-size probe (short_dir_chunk)."""
     if spec['policy_record'] is not None:
         try:
-            expected_pair = policy_expectations(spec, policy_root=policy_root, cell=cell)
+            kept = policy_expectations(spec, policy_root=policy_root, cell=cell)
             actual = dict(pin=policy_observation(spec, pin), subject=policy_observation(spec, subject))
         except (OSError, ValueError, KeyError, TypeError):
             return 'INVALID', False, False
@@ -154,7 +164,11 @@ def verdict_for(spec, pin, subject, expect_parent, *, policy_root, cell, directo
                  else all(valid_observation(spec, side) for side in (pin, subject)))
         if not valid:
             return 'INVALID', False, False
-        if json.dumps(actual, sort_keys=True) == json.dumps(expected_pair, sort_keys=True):
+        if contract_policy.accepted(kept, actual):
+            if any(contract_policy.observation_problem(
+                    actual[side], pin_abort=side == 'pin' and spec['abort'] is not NO_ABORT)
+                   for side in contract_policy.SIDES):
+                return 'INVALID', False, False
             # An existing accepted quirk is a control on its parent too.
             return 'POLICY-ACCEPTED', True, False
         # A bad record observation is never an expected parent difference.
