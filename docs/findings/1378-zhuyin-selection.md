@@ -74,6 +74,23 @@ pin and subject observation, with field digests and bounded divergence text
 for diagnosis. The four cases above are re-recorded on BDB, KC and sound-tkrzw;
 the earlier broad selections are historical evidence, not new rebase runs.
 
+## Candidate-sort amendment (#1297 item A)
+
+The selection/sentence results above stay as recorded. The maintainer
+decision dated 2026-10-30 preserves the wrapping product comparison,
+allowing defined fallback only for cyclic lists. On BDB, KC and sound-tkrzw,
+λ=1.5 and λ=2 restore exactly main's previous complete subject observations;
+their accepted differences remain the independent selection ruling above.
+Only λ=million retains a new candidate-view difference: cyclic groups use
+stable numeric fallback while consistent groups retain wrapping order.
+Its guard, scope and source proof are in
+[1297-candidate-numeric-sort](1297-candidate-numeric-sort.md). All three
+existing entries are refreshed with `just policy-record` and revalidated
+as POLICY-ACCEPTED on each cell. Pin digests do not move; the changed field
+is subject `result.view`. All four
+`row58-signed-{score,duplicate}-{off,on}` cases MATCH on every cell; this
+record never registers them as differences.
+
 ```contract-diff-policy
 {
   "schema": 2,
@@ -189,7 +206,7 @@ the earlier broad selections are historical evidence, not new rebase runs.
             }
           },
           "subject": {
-            "sha256": "59d936b00e99ae188df32547680e0714d034193d9437a02cdc6bef86a5b90394",
+            "sha256": "376535e8b2c6088070797ea532201bab0a2bbe7f7afc11b0f190c8d575fe6288",
             "fields": {
               "exit": "5feceb66ffc86f38",
               "result.add": "b5bea41b6c623f7c",
@@ -197,7 +214,7 @@ the earlier broad selections are historical evidence, not new rebase runs.
               "result.logs": "4f53cda18c2baa0c",
               "result.save": "b5bea41b6c623f7c",
               "result.train": "b5bea41b6c623f7c",
-              "result.view": "d4dc15fd11d86bf4",
+              "result.view": "281ea688b204d8b2",
               "stderr": "c48a0964ed0c5485"
             }
           },
@@ -222,7 +239,7 @@ the earlier broad selections are historical evidence, not new rebase runs.
             }
           },
           "subject": {
-            "sha256": "86e58c5a47d1824e8442a41714165722eada3ee5356aed7f83f4190e8b237a29",
+            "sha256": "3e2db513a9371d82fe54f9b027db1434dd2115ad2f21b94144713112fe6f6e34",
             "fields": {
               "exit": "5feceb66ffc86f38",
               "result.add": "b5bea41b6c623f7c",
@@ -230,7 +247,7 @@ the earlier broad selections are historical evidence, not new rebase runs.
               "result.logs": "4f53cda18c2baa0c",
               "result.save": "b5bea41b6c623f7c",
               "result.train": "b5bea41b6c623f7c",
-              "result.view": "d4dc15fd11d86bf4",
+              "result.view": "281ea688b204d8b2",
               "stderr": "c48a0964ed0c5485"
             }
           },
@@ -255,7 +272,7 @@ the earlier broad selections are historical evidence, not new rebase runs.
             }
           },
           "subject": {
-            "sha256": "b5b11a71c778e24c89bb98fe22ec2762d8f670199c2b2e14adfc9aafa2fca0b1",
+            "sha256": "8856a925aeecd6e6b7a9ac2989572572a71edfd06b63c6b3f845e3cca1d31b73",
             "fields": {
               "exit": "5feceb66ffc86f38",
               "result.add": "b5bea41b6c623f7c",
@@ -263,7 +280,7 @@ the earlier broad selections are historical evidence, not new rebase runs.
               "result.logs": "4f53cda18c2baa0c",
               "result.save": "b5bea41b6c623f7c",
               "result.train": "b5bea41b6c623f7c",
-              "result.view": "d4dc15fd11d86bf4",
+              "result.view": "281ea688b204d8b2",
               "stderr": "c48a0964ed0c5485"
             }
           },

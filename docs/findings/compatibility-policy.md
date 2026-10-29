@@ -790,9 +790,19 @@ sequence or other implementation detail.
   recorded, and memory safety and the existing refusal rules remain
   intact.
 - **Specific rules.**
-  - Candidate-frequency sorting uses ordinary numerical comparison, not
-    wrapping subtraction. This closes the frequency-comparator wrap
-    above.
+  - libpinyin’s frequency comparator is reproduced, using Rust’s defined
+    wrapping arithmetic; only lists on which it is cyclic may differ.
+    Maintainer decision dated 2026-10-30 UTC; recorded
+    2026-10-29T17:31:36Z (`date -u` on the executing host). This supersedes
+    the numerical-frequency sentence of the 2026-10-29 ruling. Stable std
+    sorting uses `rhs.wrapping_sub(lhs) as i32` only after proving that
+    every frequency tie group under the preceding key fields has a
+    consistent order. Antipodal pairs are included among rejected cycles.
+    A cyclic group uses defined stable numeric-descending fallback; no
+    port of the library's sorting internals or new dependency is authorized.
+    The four `row58-signed-{score,duplicate}-{off,on}` cases must MATCH
+    and are not registered as differences. See the proof and tests in
+    [the item A finding](1297-candidate-numeric-sort.md).
   - Zhuyin selection remains length-first. At equal length it uses
     descending raw score, with NaN last and signed zeros equal, followed
     by earlier batch position. Its single-slot admission rule remains

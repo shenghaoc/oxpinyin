@@ -4086,25 +4086,106 @@ fn candidate_scores_wrap_like_the_pinned_conversion() {
     assert_eq!(super::guint32_of_score(8_589_934_592.0), 0);
 }
 
-/// `-(freq_lhs - freq_rhs)` in `guint32` arithmetic returned as a `gint`: a
-/// difference of 2³¹ or more flips sign, so the larger frequency can sort
-/// after the smaller (`pinyin.cpp:1700-1705`).
+/// The pin's own unsigned difference is taken as signed, including wrap.
 #[test]
-fn the_candidate_comparator_wraps_large_frequency_gaps() {
+fn candidate_rank_compares_frequencies_with_defined_unsigned_wrap() {
     let key = |frequency| super::RankKey {
         phrase_length: 1,
         pinyin_span: 1,
         frequency,
         m_freq: frequency,
     };
-    assert!(key(10).pin_compare(&key(5)) < 0, "higher frequency first");
-    assert!(key(5).pin_compare(&key(10)) > 0);
-    assert_eq!(key(7).pin_compare(&key(7)), 0);
-    assert!(
-        key(1).pin_compare(&key(u32::MAX)) < 0,
-        "the wrap puts 1 first"
+    assert!(key(10).compare_descending(&key(5)).is_lt());
+    assert!(key(5).compare_descending(&key(10)).is_gt());
+    assert!(key(7).compare_descending(&key(7)).is_eq());
+    assert!(key(u32::MAX).compare_descending(&key(1)).is_gt());
+    assert!(key(1).compare_descending(&key(u32::MAX)).is_lt());
+    // Antipodal pairs are inconsistent in either direction; the guard
+    // rejects their group before std sorting ever sees this comparator.
+    assert!(key(0).compare_descending(&key(1 << 31)).is_lt());
+    assert!(key(1 << 31).compare_descending(&key(0)).is_lt());
+}
+
+#[test]
+fn candidate_rank_respects_every_sort_word_and_disabled_dimension() {
+    use std::cmp::Ordering;
+    for word in 0..32 {
+        let base = super::RankKey::for_sort_word(2, 4, 7, word);
+        for (length, span, frequency, bit) in [(3, 4, 7, 4), (2, 5, 7, 8), (2, 4, 8, 16)] {
+            let higher = super::RankKey::for_sort_word(length, span, frequency, word);
+            assert_eq!(
+                higher.compare_descending(&base),
+                if word & bit == 0 {
+                    Ordering::Equal
+                } else {
+                    Ordering::Less
+                },
+                "sort word {word:#x}, dimension {bit:#x}"
+            );
+        }
+        assert_eq!(base.m_freq, 7, "dedup always keeps the original frequency");
+        let mut other = base;
+        other.m_freq = u32::MAX;
+        assert!(
+            base.compare_descending(&other).is_eq(),
+            "m_freq is never a sort key"
+        );
+    }
+}
+
+#[test]
+fn candidate_rank_is_a_total_preorder_when_each_frequency_group_is_consistent() {
+    let keys: Vec<_> = [0, 1, usize::MAX]
+        .into_iter()
+        .flat_map(|length| {
+            [0, 255, 256, 257].into_iter().flat_map(move |span| {
+                [u32::MAX, 0, 1, 2].into_iter().map(move |frequency| {
+                    super::RankKey::for_sort_word(length, span, u64::from(frequency), 0x1c)
+                })
+            })
+        })
+        .collect();
+    for a in &keys {
+        assert!(a.compare_descending(a).is_eq());
+        for b in &keys {
+            assert_eq!(a.compare_descending(b), b.compare_descending(a).reverse());
+            for c in &keys {
+                if a.compare_descending(b).is_le() && b.compare_descending(c).is_le() {
+                    assert!(a.compare_descending(c).is_le());
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn candidate_rank_sort_keeps_equal_keys_and_aligns_dedup_frequencies() {
+    use crate::candidate::{Candidate, CandidateKind};
+    let mut rows: Vec<_> = ["first", "long", "second", "short"]
+        .into_iter()
+        .map(|text| Candidate::new(text, CandidateKind::Phrase, 1, 1, 0, None, None))
+        .collect();
+    let mut keys: Vec<_> = [(2, 7), (3, 5), (2, 9), (1, 11)]
+        .into_iter()
+        .enumerate()
+        .map(|(i, (length, frequency))| {
+            (
+                super::RankKey::for_sort_word(length, 1, frequency, 4),
+                i as u32,
+            )
+        })
+        .collect();
+    super::rank_candidates(&mut rows, &mut keys);
+    assert_eq!(
+        rows.iter()
+            .map(|r| r.text_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["long", "first", "second", "short"]
     );
-    assert!(key(u32::MAX).pin_compare(&key(1)) > 0);
+    assert_eq!(
+        keys.iter().map(|(k, _)| k.m_freq).collect::<Vec<_>>(),
+        [5, 7, 9, 11]
+    );
 }
 
 /// The pinyin-length key is the pin's `guint8` span (`pinyin.cpp:1692-1694`):
@@ -4113,13 +4194,25 @@ fn the_candidate_comparator_wraps_large_frequency_gaps() {
 fn the_pinyin_length_key_wraps_at_eight_bits() {
     let key = |span| super::RankKey::for_sort_word(1, span, 0, super::SORT_BY_PINYIN_LENGTH);
     assert!(
-        key(255).pin_compare(&key(2)) < 0,
+        key(255).compare_descending(&key(2)).is_lt(),
         "longer span first below 256"
     );
-    assert!(key(256).pin_compare(&key(2)) > 0, "256 wraps to 0");
-    assert!(key(257).pin_compare(&key(255)) > 0, "257 wraps to 1");
-    assert_eq!(key(258).pin_compare(&key(2)), 0, "258 and 2 tie");
-    assert!(key(600).pin_compare(&key(100)) > 0, "600 wraps to 88");
+    assert!(
+        key(256).compare_descending(&key(2)).is_gt(),
+        "256 wraps to 0"
+    );
+    assert!(
+        key(257).compare_descending(&key(255)).is_gt(),
+        "257 wraps to 1"
+    );
+    assert!(
+        key(258).compare_descending(&key(2)).is_eq(),
+        "258 and 2 tie"
+    );
+    assert!(
+        key(600).compare_descending(&key(100)).is_gt(),
+        "600 wraps to 88"
+    );
 }
 
 /// Of two rows with one text the larger `m_freq` survives wherever the sort
@@ -4553,4 +4646,146 @@ fn candidate_collection_uses_unpriced_system_and_addon_operations() {
     assert_eq!(addon.len(), 1);
     assert_eq!(system[0].token(), Some(PhraseToken::new(0x0100_0001)));
     assert_eq!(addon[0].token(), Some(PhraseToken::new(0x0400_0001)));
+}
+
+/// Isolated design experiment, not a timing assertion in the test gate.
+/// Inputs and their clones are prepared outside each timed batch; key building,
+/// sorting, permutation and materializing aligned dedup keys are inside it.
+#[test]
+#[ignore = "needs isolated release timing on an idle host"]
+fn candidate_sort_design_measurement() {
+    use super::{RankKey, rank_candidates};
+    use crate::candidate::{Candidate, CandidateKind};
+    use std::hint::black_box;
+    use std::time::Instant;
+
+    type Rows = Vec<Candidate>;
+    type Output = (Rows, Vec<RankKey>);
+    type Sort = fn(Rows, Vec<u64>, u32) -> Output;
+    fn key(row: &Candidate, frequency: u64, word: u32) -> RankKey {
+        RankKey::for_sort_word(row.phrase_length(), row.consumed_bytes(), frequency, word)
+    }
+    fn cached(mut rows: Rows, frequencies: Vec<u64>, word: u32) -> Output {
+        let mut keys: Vec<_> = rows
+            .iter()
+            .zip(frequencies)
+            .enumerate()
+            .map(|(i, (row, frequency))| (key(row, frequency, word), i as u32))
+            .collect();
+        rank_candidates(&mut rows, &mut keys);
+        (rows, keys.into_iter().map(|(key, _)| key).collect())
+    }
+    fn indices(mut rows: Rows, frequencies: Vec<u64>, word: u32) -> Output {
+        let mut keys: Vec<_> = rows
+            .iter()
+            .zip(frequencies)
+            .map(|(row, frequency)| key(row, frequency, word))
+            .collect();
+        let mut order: Vec<_> = (0..rows.len() as u32).collect();
+        crate::rank_by_frequency(&mut order, |&index| {
+            let key = keys[index as usize];
+            (key.phrase_length, key.pinyin_span, key.frequency)
+        });
+        for i in 0..order.len() {
+            let mut index = order[i] as usize;
+            while index < i {
+                index = order[index] as usize;
+            }
+            order[i] = index as u32;
+            rows.swap(i, index);
+            keys.swap(i, index);
+        }
+        (rows, keys)
+    }
+    fn decorated(rows: Rows, frequencies: Vec<u64>, word: u32) -> Output {
+        let mut decorated: Vec<_> = rows
+            .into_iter()
+            .zip(frequencies)
+            .map(|(row, frequency)| (key(&row, frequency, word), row))
+            .collect();
+        crate::rank_by_frequency(&mut decorated, |(key, _)| {
+            (key.phrase_length, key.pinyin_span, key.frequency)
+        });
+        let (keys, rows) = decorated.into_iter().unzip();
+        (rows, keys)
+    }
+    fn repeated(rows: Rows, frequencies: Vec<u64>, word: u32) -> Output {
+        let mut decorated: Vec<_> = rows.into_iter().zip(frequencies).collect();
+        crate::rank_by_frequency(&mut decorated, |(row, frequency)| {
+            let key = key(row, *frequency, word);
+            (key.phrase_length, key.pinyin_span, key.frequency)
+        });
+        let (rows, keys) = decorated
+            .into_iter()
+            .map(|(row, frequency)| {
+                let key = key(&row, frequency, word);
+                (row, key)
+            })
+            .unzip();
+        (rows, keys)
+    }
+    let variants: [(&str, Sort); 4] = [
+        ("cached-keys", cached),
+        ("bare-indices", indices),
+        ("decorated-rows", decorated),
+        ("comparison-keys", repeated),
+    ];
+    println!(
+        "candidate={} key={} cached={} decorated={} comparison={}",
+        size_of::<Candidate>(),
+        size_of::<RankKey>(),
+        size_of::<(RankKey, u32)>(),
+        size_of::<(RankKey, Candidate)>(),
+        size_of::<(Candidate, u64)>()
+    );
+    for count in [8, 32, 128, 512] {
+        let rows: Rows = (0..count)
+            .map(|i| {
+                Candidate::new(
+                    "中".repeat(1 + (i * 13 % 8)),
+                    CandidateKind::Phrase,
+                    1,
+                    1 + i * 17 % 300,
+                    0,
+                    Some(PhraseToken::new(i as u32 + 1)),
+                    None,
+                )
+            })
+            .collect();
+        let frequencies: Vec<_> = (0..count)
+            .map(|i| (i as u64 * 2654435761) % (1 << 32))
+            .collect();
+        for word in [0, 0x1c] {
+            let expected = cached(rows.clone(), frequencies.clone(), word);
+            for (_, sort) in variants {
+                assert_eq!(sort(rows.clone(), frequencies.clone(), word), expected);
+            }
+            let batches = 8192 / count;
+            let mut samples: [Vec<f64>; 4] = std::array::from_fn(|_| Vec::new());
+            for round in 0..21 {
+                for offset in 0..variants.len() {
+                    let index = (round + offset) % variants.len();
+                    let inputs: Vec<_> = (0..batches)
+                        .map(|_| (rows.clone(), frequencies.clone()))
+                        .collect();
+                    let start = Instant::now();
+                    for (rows, frequencies) in inputs {
+                        black_box(variants[index].1(
+                            black_box(rows),
+                            black_box(frequencies),
+                            black_box(word),
+                        ));
+                    }
+                    samples[index].push(start.elapsed().as_nanos() as f64 / batches as f64);
+                }
+            }
+            for ((name, _), mut values) in variants.into_iter().zip(samples) {
+                values.sort_by(f64::total_cmp);
+                println!(
+                    "sort-design n={count} word={word:#x} variant={name} ns={:.1} range={:.1}..{:.1}",
+                    values[10], values[0], values[20]
+                );
+            }
+        }
+    }
 }

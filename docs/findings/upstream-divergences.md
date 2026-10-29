@@ -625,6 +625,18 @@ line.)
   `phrase-surface` / `predict` / `punct` / `addon` / `user-candidate` /
   `import` / `key-surface` differential, is identical on the pin's data.
 
+### Candidate sorting guards the wrapping frequency order (#1297 item A)
+
+The maintainer decision dated 2026-10-30 preserves libpinyin's frequency
+comparison as `rhs.wrapping_sub(lhs) as i32`. Stable std sorting replaces
+GLib's merge after guarding each enabled length/span tie group. Only cyclic
+groups may use stable numeric-descending fallback; equal complete keys keep
+collection order, and dedup-only `m_freq` never breaks ties. The guard proof,
+source derivation and verification are in
+[1297-candidate-numeric-sort](1297-candidate-numeric-sort.md). The four
+`row58-signed-{score,duplicate}-{off,on}` cases must MATCH and are not
+accepted by this registration.
+
 ### Zhuyin selection uses length, raw score and batch position (#1378)
 
 The 2026-10-29 “No ported external-library internals” ruling orders zhuyin

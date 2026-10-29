@@ -949,25 +949,23 @@ pub enum CandidateRanking {
     LengthThenFrequency,
 }
 
-/// The three sort keys of the pinned candidate construction.
-///
-/// `Ord` derives the pinned precedence: phrase length first, then pinyin
-/// span, then frequency. All comparisons run descending, so the stable sort
-/// keeps collection order exactly when all three tie.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+/// Enabled candidate sort fields, plus the unmodified frequency for dedup.
+/// The explicit comparator ignores `m_freq`, including when frequency sorting
+/// is disabled. Equal keys keep collection order.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct RankKey {
     /// Unicode scalar count of the candidate text.
     phrase_length: usize,
     /// Bytes of the raw input the candidate covers, as the pin's `guint8`
     /// key holds them: the low 8 bits.
     pinyin_span: u8,
-    /// Real unigram count from the model's frequency table.
+    /// Scaled candidate frequency, zero when frequency sorting is disabled.
     frequency: u32,
     /// The pin's `m_freq` whatever the sort word: the string dedup reads it
     /// when `SORT_BY_FREQUENCY` is clear and `frequency` is zeroed. Not a
-    /// sort key; `pin_compare` never reads it. Both are `guint32` in the pin
-    /// (`lookup_candidate_t::m_freq`, `pinyin.cpp:105`), so the key keeps its
-    /// 24 bytes.
+    /// sort key; `compare_descending` never reads it. Both are `guint32`
+    /// in the pin (`lookup_candidate_t::m_freq`, `pinyin.cpp:105`), so the
+    /// key keeps its 24 bytes.
     m_freq: u32,
 }
 
@@ -985,23 +983,17 @@ const SORT_WITHOUT_SENTENCE_CANDIDATE: u32 = 0x1;
 /// the LONGER row is suppressed (`pinyin.cpp:2292-2293`).
 const SORT_WITHOUT_LONGER_CANDIDATE: u32 = 0x2;
 
-/// The pin's candidate comparators (`compare_item_with_sort_option`,
-/// `pinyin.cpp:1678-1709`; `compare_item_with_length_and_frequency`,
-/// `zhuyin.cpp:1129-1144`) under GLib's stable merge sort
-/// (`g_array_sort_with_data`, `g_array_sort`): descending on each enabled key.
-/// The frequency key is `-(freq_lhs - freq_rhs)` in `guint32` arithmetic
-/// returned as a `gint`, so a difference of 2³¹ or more flips sign and the
-/// comparator stops being transitive — which a λ in `[0, 1]` never reaches
-/// (the frequencies stay below 2²⁴) and a `table.conf` λ outside it does
-/// (`(1−λ)` negative wraps the stored `guint32`). The order is then the merge
-/// sort's, so the sort is GLib's recursion ([`crate::glib_merge_sort`]),
-/// not the standard library's.
+/// Stably rank candidates by enabled phrase length and pinyin span, descending,
+/// then guarded wrapping frequency. The pin's stable-sort contract is preserved
+/// (`pinyin.cpp:1678-1709,2286`; `zhuyin.cpp:1129-1144,1529,1610`).
 ///
-/// `keys[i]` is `(candidates[i]`'s key, `i)`. The merge runs over the
-/// 32-byte key rows; the 72-byte candidates move once each.
-fn glib_rank_sort(candidates: &mut [Candidate], keys: &mut [(RankKey, u32)]) {
+/// `keys[i]` is `(candidates[i]`'s key, `i)`. Sort compact cached keys, then
+/// permute the larger candidates while retaining the keys used by dedup.
+fn rank_candidates(candidates: &mut [Candidate], keys: &mut [(RankKey, u32)]) {
     debug_assert_eq!(candidates.len(), keys.len());
-    crate::nbest::glib_merge_sort(keys, &|left, right| left.0.pin_compare(&right.0));
+    crate::rank_by_frequency(keys, |(key, _)| {
+        (key.phrase_length, key.pinyin_span, key.frequency)
+    });
     // Apply the sorted order with swaps, following each displaced element
     // to where an earlier swap moved it (the standard library's
     // `sort_by_cached_key` scheme): no second candidate buffer, no
@@ -1018,27 +1010,13 @@ fn glib_rank_sort(candidates: &mut [Candidate], keys: &mut [(RankKey, u32)]) {
 }
 
 impl RankKey {
-    /// The comparator's `gint` for `self` against `other`; only its sign
-    /// matters to a merge, and it is the pin's, wrap included.
-    fn pin_compare(&self, other: &Self) -> i32 {
-        if self.phrase_length != other.phrase_length {
-            return if self.phrase_length > other.phrase_length {
-                -1
-            } else {
-                1
-            };
-        }
-        if self.pinyin_span != other.pinyin_span {
-            return if self.pinyin_span > other.pinyin_span {
-                -1
-            } else {
-                1
-            };
-        }
-        if self.frequency != other.frequency {
-            return other.frequency.wrapping_sub(self.frequency) as i32;
-        }
-        0
+    /// The pin's three enabled fields, with its own frequency comparison.
+    /// List sorting guards frequency cycles before this can reach std.
+    #[cfg(test)]
+    fn compare_descending(&self, other: &Self) -> std::cmp::Ordering {
+        (other.phrase_length, other.pinyin_span)
+            .cmp(&(self.phrase_length, self.pinyin_span))
+            .then_with(|| crate::candidate::frequency_compare(self.frequency, other.frequency))
     }
 
     /// The key `compare_item_with_sort_option` sees under `sort_word`
