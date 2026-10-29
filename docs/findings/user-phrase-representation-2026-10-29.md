@@ -4,8 +4,9 @@ Status: design (read-only; no code change). Pin: libpinyin
 `074a2219c90feaf962d0d24f034514033ece5f99`, read from a depth-1 clone of
 `libpinyin/libpinyin` fetched at that commit for this record (`git rev-parse
 HEAD` = `074a2219c90feaf962d0d24f034514033ece5f99`); every `path:line` below
-is that tree. oxpinyin: `main` at `fcabbbf9`; oxpinyin code is cited by file
-and item, never by line. Scope: the `USER_FILE` sub-indexes (nibbles 5, 6, 7)
+is that tree. oxpinyin: `main` at `fcabbbf9`, re-checked at `9e89b49`, which
+changes none of the cited files; oxpinyin code is cited by file and item,
+never by line. Scope: the `USER_FILE` sub-indexes (nibbles 5, 6, 7)
 and the init replay that loads them. On-disk formats and the C ABI are out of
 scope for change and unchanged by every proposal here. Std only; no new
 dependency.
@@ -19,16 +20,24 @@ dependency.
    that differs in initial, middle, final or tone (`phrase_index.cpp:56-93`).
    Every API path that adds a reading goes through it. The collapse is
    therefore reachable only from a profile the pin did not write, and the
-   design continues. Two seam losses that do exist are recorded in §3.3; the
-   proposed representation removes them without a rule change.
-2. **The pin's user phrase index is already phrase-centric** (§1): one
+   design continues. The maintainer has ruled such profiles out of scope
+   beyond never panicking (§5).
+2. **A separate compatibility defect was found** (§3.3). The open path
+   drops a stored reading whose spelling is outside the dense inventory's
+   full-pinyin tiers, and the pin's own import writes such readings: the
+   witness is importing `嗯` with pinyin `egn` into library 7, which the pin
+   stores and exports as `eng` and oxpinyin loses at the next open. It is
+   reported for its own fix and is not part of this design. Rebuilding saved
+   key words from the spelling never changes the bytes of a reading the pin
+   can write (§3.4).
+3. **The pin's user phrase index is already phrase-centric** (§1): one
    contiguous item per token (header, text, readings), a dense offset array
    per sub-index, `O(1)` zero-allocation reads, append-on-grow and compaction
    at save. oxpinyin decomposes each item into five ordered-map rows and
    rebuilds owned `UserPhrase` values on every read (§2), at `O(log n)` per
    row and roughly four allocations plus one per reading per materialised
    item, and its open path copies every reading three times.
-3. **Proposal** (§4): hold each `USER_FILE` library as the pin's own
+4. **Proposal** (§4): hold each `USER_FILE` library as the pin's own
    structure, owned — an item-body arena in the pin's item encoding with a
    dense slot-to-offset vector that falls back to an ordered map when the
    token space is sparse — read through the existing `PhraseItemView`, and
@@ -402,26 +411,96 @@ two identical key runs, so there is no case on which oxpinyin collapses what
 the pin keeps separate. The remaining exposure is a `user.bin` the pin did
 not write through its API; a profile the pin's own `check_format` accepts
 can carry one, and oxpinyin then reports one reading where the pin reports
-two. That is a robustness difference on foreign data, recorded here, not a
-defect that stops this design.
+two. That is a robustness difference on foreign data, not a defect that
+stops this design. Maintainer ruling (§5): such files are out of scope
+beyond never panicking. Any representation must load, read, export and
+save them without a panic; which of the duplicate entries survives is not
+specified.
 
-### 3.3 Seam losses that do exist
+### 3.3 Defect: readings dropped at open
 
-Read while deriving §3.2; both vanish under §4 because the item keeps the
-pin's packed words.
+**Mechanism (oxpinyin).** `seed_txn_with_replay`
+(`crates/oxpinyin-user/src/store_libpinyin.rs`) converts each stored reading
+with `packed_to_pinyin_keys` and skips the reading when that answers `None`.
+`packed_to_pinyin_keys` resolves a key's spelling through
+`SyllableKey::from_text` (`crates/oxpinyin-core/src/vocab.rs`), which covers
+only the 405 full-pinyin syllables and the 23 initial-only keys. It omits the
+two option-only syllables `eng` and `nun` and the ten zhuyin-only syllables
+(`chua`, `den`, `din`, `fe`, `kei`, `len`, `nia`, `rua`, `yai`, `zhei`;
+`crates/oxpinyin-core/src/syllables.rs`), which `from_canonical_text` alone
+resolves. Tones need no separate check: the pin's tones run 0 to 5
+(`chewing_enum.h:92-99`), the full-pinyin parser accepts tone digits 1 to 5
+only (`pinyin_parser2.cpp:176-183`), and `MAX_KEY_TONE` is 5.
 
-- `packed_to_pinyin_keys` answers `None`, and `seed_txn_with_replay` then
-  **drops the reading**, when a stored key's spelling is outside
-  `SyllableKey::from_text` (the option-only and zhuyin-only tiers are only
-  in `from_canonical_text`) or its tone is above `MAX_KEY_TONE`. A reading
-  that reaches the file can therefore disappear from the item at the next
-  open, with `pronunciation_counts` still reporting the header count. Which
-  spellings the pin's parsers can actually store in a user item is a
-  separate reading task; this record only notes that the seam is lossy
-  where the pin's item is not.
-- `pinyin_keys_to_packed` rebuilds the packed word from the spelling, so
-  the saved bytes are the canonical key for that spelling. The pin writes
-  back the bytes it loaded.
+**The pin writes such readings.**
+
+- **libpinyin import.** `pinyin_iterator_add_phrase` parses with
+  `FullPinyinParser2` under `PINYIN_CORRECT_ALL | USE_TONE`
+  (`pinyin.cpp:630-638`). `PINYIN_CORRECT_ALL` is `0xFF << 21`
+  (`pinyin_custom2.h:79`), which includes `PINYIN_CORRECT_GN_NG`,
+  `PINYIN_CORRECT_MG_NG` and `PINYIN_CORRECT_UEN_UN` (`:71`, `:72`, `:75`).
+  `check_pinyin_options` admits a correction row when its bit is set
+  (`pinyin_parser2.cpp:38-58`), so the rows `egn` and `emg` resolve to
+  content row 88, `eng`, and `nuen` to row 248, `nun`
+  (`pinyin_parser_table.h:132`, `:134`, `:375`; rows at `:4065` and
+  `:4225`). The key is that row's `m_chewing_key`
+  (`pinyin_parser2.cpp:146`). `_add_phrase` then stores it in a new item and
+  indexes it (`pinyin.cpp:584-609`).
+- **libzhuyin import.** `zhuyin_iterator_add_phrase` parses with
+  `ZhuyinDirectParser2` under `USE_TONE | FORCE_TONE` (`zhuyin.cpp:515-523`),
+  whose table is `zhuyin_index` (`zhuyin_parser2.cpp:854-857`). That table
+  maps `ㄉㄣ` to row 68, `den`, and `ㄥ` to row 88, `eng`, with no option
+  flag (`pinyin_parser_table.h:1591`, `:2518`); the key is again the content
+  row's (`zhuyin_parser2.cpp:95`).
+- **Remember.** `_remember_phrase_recur` stores whatever keys the input
+  matrix carries (`pinyin.cpp:3578-3667`), so a chewing-input session can
+  reach the same rows. The import cases above are smaller.
+
+**Smallest case.** On the libpinyin facade:
+`pinyin_begin_add_phrases(ctx, 7)`, then
+`pinyin_iterator_add_phrase(iter, "嗯", "egn", -1)`, then
+`pinyin_end_add_phrases(iter)` and `pinyin_save(ctx)`. The pin's `user.bin`
+holds `嗯` with one reading, the `eng` key, count 5. After
+`pinyin_fini` and a fresh `pinyin_init` on the same directory, the pin's
+export of library 7 yields `嗯`, `eng`, 5 (`pinyin.cpp:662-768`). oxpinyin
+opening the same directory seeds no reading row, so the export probe finds
+no first pronunciation and skips the token (`PhraseExportCursor::probe_user`,
+`crates/oxpinyin-facade/src/export_rows.rs`). The export yields no row, and
+the user lookup no longer finds `嗯` under `eng`. By reading
+`parse_import_pinyin` (`crates/oxpinyin-capi/src/iterators.rs`), oxpinyin's
+own import of the same row stores the option-tier key, so its own save and
+reopen loses the reading the same way. On the libzhuyin facade the
+equivalent case is `扽` with `ㄉㄣˋ`.
+
+This is a compatibility defect for the maintainer, outside this design.
+The design neither depends on it nor fixes it as a feature. §4.6 says how
+the two interact.
+
+### 3.4 Rebuilt key words do not change the pin's bytes
+
+At save, `pinyin_keys_to_packed` rebuilds each word from the spelling:
+`SyllableKey::from_index`, then `ChewingKey::from_pinyin`, whose table holds
+all 441 content rows (`crates/oxpinyin-chewing/src/chewing_key.rs`), then the
+tone. For a reading the pin can write, the rebuilt word equals the loaded
+one:
+
+- Every pin parser takes its key from a `content_table` row
+  (`pinyin_parser2.cpp:114`, `:146`; `zhuyin_parser2.cpp:95`), and both
+  `ChewingKey` constructors clear the padding bit (`chewing_key.h:49-64`).
+  No other code under `src` writes `m_zero_padding`.
+- `get_table_index` maps `(initial, middle, final)` through
+  `chewing_key_table` (`chewing_key.cpp:29-36`). That table has 1,728
+  entries: 1,288 are `-1` and the other 440 name 440 distinct rows
+  (`pinyin_parser_table.h:4420-6151`, counted for this record). The
+  map is injective, so a key with valid fields is exactly its row's
+  canonical key, whichever parser or fuzzy step produced it.
+- The tone is carried unchanged in its three bits.
+
+The rebuilt bytes can differ only on data the pin did not write. A word
+with the padding bit set is saved with the bit cleared, where the pin saves
+it unchanged. A word whose fields map to `-1` has no spelling and is
+dropped, the §3.3 path. Both fall under the out-of-scope ruling for foreign
+files. §4 keeps the loaded words verbatim, so neither arises there.
 
 ## 4. Proposed representation
 
@@ -533,7 +612,8 @@ the pin's 26. It is simpler to mutate but strictly worse than the pin in
 memory and in open time (one decode per item). The arena is the pin's
 structure and so cannot be worse on the pin's workloads; it reuses the view
 type oxpinyin already maintains for the shipped chunks and the replay
-`Content`, and it saves the loaded bytes verbatim, which closes §3.3.
+`Content`, and it saves the loaded bytes verbatim, so the §3.3 and §3.4
+conversions disappear from the load and save paths.
 
 ### 4.4 Expected memory
 
@@ -583,9 +663,9 @@ Expectation, stated plainly:
   86% of the zhuyin facade's init instructions
   (`init-attribution-1090-2026-10-27.md`, `load_logs_with_mask` and
   `Merge::finish_lazy`). That path already uses
-  the arena shape this design proposes for user libraries; unifying the two
-  (§4.6 phase 3) is where those profiles could move, and it is not claimed
-  here.
+  the arena shape this design proposes for user libraries. Unifying the two
+  is where those profiles could move; the maintainer has deferred it to
+  #1090, and nothing here claims it.
 - Export: on the four profiles the export walks system libraries with
   overrides and is unchanged. On a profile with `P` user items the walk
   drops from `Σ (k_i + 4)` allocations and `O(S log)` reads to `O(S)`
@@ -600,37 +680,43 @@ importing into library 7.
 Each phase is a separate PR, green on its own, with the §4.7 measurements
 where it changes shipping code.
 
-1. **Library type and open/save.** Add `UserLibrary` and `Slots`; load a
+1. **Library type and load.** Add `UserLibrary` and `Slots`, and load a
    `USER_FILE` file into it in `load_libraries` (frame check, then the
-   offsets and the arena copied once) instead of decoding to `ChunkItem`s;
-   save by `compact` plus the pin's `store` layout and assert byte equality
-   with `build_chunk` in the existing round-trip tests. `UserState::libraries`
-   becomes the libraries themselves. ADD-record items of system libraries
-   keep taking this path, now as views.
-2. **Readers over views.** `phrase`, `phrases`, `export_phrases_in`,
-   `item_pronunciations`, `user_pronunciation_count`, `phrase_text`,
-   `user_library_token_end` and the export cursor read the library; the
-   `PHRASE`, `PHRASE_BY_TEXT`, `PHRASE_BY_LIB_TEXT` and `PRONUNCIATION` rows
-   and `pronunciation_counts`, `kept_index`, `backed_readings` and
-   `ImportReadings` go. `indexed()` becomes set membership. The lookup
-   rebuild and the trellis index take one shared pass over views.
-3. **Writers.** `add_phrase_in`, `promote_addon_phrase`,
-   `train_pronunciations`, `remove_user_phrase`, `mask_out` and the library
-   load/unload paths edit the arena; the `UNIGRAM` rows of user tokens fold
-   into the item. Optionally unify with `replay::Content` so that MODIFY
-   items are the same type; measured separately on `phrases` and
-   `journals`.
-4. **Standalone store.** `UserStore::open` and `create_standalone` (tests
-   and benches only, no shipping caller) persist each library as one DBM row
-   holding the chunk bytes, so one code path serves both; needs a maintainer
-   decision because it changes the plain store's file content.
+   offsets and the arena copied once) instead of decoding to `ChunkItem`s.
+   The session rows are still seeded from it, through the same conversion,
+   and the save path is unchanged. A test asserts that the library's own
+   `store` output equals `build_chunk` over the loaded items. ADD-record
+   items of system libraries take the same path, as views.
+2. **The session moves to the arena.** Readers and writers move together,
+   so no state is ever split between rows and arena. The readers are
+   `phrase`, `phrases`, `export_phrases_in`, `item_pronunciations`,
+   `user_pronunciation_count`, `phrase_text`, `user_library_token_end` and
+   the export cursor. The writers are `add_phrase_in`,
+   `promote_addon_phrase`, `train_pronunciations`, `remove_user_phrase`,
+   `mask_out` and the library load and unload paths. Save becomes `compact`
+   plus the pin's `store` layout. The `PHRASE`, `PHRASE_BY_TEXT`,
+   `PHRASE_BY_LIB_TEXT` and `PRONUNCIATION` rows, the user tokens' `UNIGRAM`
+   rows, and `pronunciation_counts`, `kept_index`, `backed_readings` and
+   `ImportReadings` are retired. `indexed()` becomes set membership.
+3. **Consumers.** The user lookup rebuild and the trellis index share one
+   pass over views per phrase generation, and the export cursor probes
+   headers without building `UserPhrase`. Performance only; no behaviour
+   moves. Unification with `replay::Content` is deferred to #1090.
 
-Phase 1 keeps every observable behaviour: the same bytes are read and
-written, and the row model still serves reads until phase 2. The
-differentials that gate the lane are the existing import, export and
-user-store contract cases on the reference cell (`import-diff`,
-`export-diff`, the `save_*` and `user_store_*` crate tests); phases 2 and 3
-add nothing to the C surface.
+The standalone store (`UserStore::open`, `create_standalone`; tests and
+benches only, no shipping caller) keeps its current persistence in the
+implementation PR, by maintainer ruling. Its rows may be read into the new
+in-memory form at open and written back from it, but its file content does
+not change.
+
+Phase 1 changes nothing observable: the rows, reads and saved bytes are
+as before. Phase 2 stops dropping the §3.3 readings, which changes an
+observable result toward the pin. If the §3.3 defect is still open then,
+either its fix lands first or phase 2 carries its witness case as a named
+change; the maintainer chooses. The differentials that gate the lane are
+the existing import, export and user-store contract cases on the reference
+cell (`import-diff`, `export-diff`, the `save_*` and `user_store_*` crate
+tests). No phase adds to the C surface.
 
 ### 4.7 What an implementation PR must show
 
@@ -667,15 +753,18 @@ Measured in one run on one host, base / PR / pin, with the commands in
    (`crates/oxpinyin-user/benches`) before and after, as supporting numbers
    only; the profile measurements above are the gate.
 
-## 5. Open questions for the maintainer
+## 5. Settled questions
 
-1. Whether a foreign `user.bin` with two identical key runs in one item is
-   in scope at all (§3.2). The arena keeps such an item verbatim, so the
-   proposal removes the difference without a ruling, but a ruling settles
-   what the row model must do until then.
-2. Whether the readings `packed_to_pinyin_keys` drops today (§3.3) are
-   reachable from the pin's parsers; if they are, the drop is a current
-   defect and phase 1 fixes it.
-3. The standalone store's persistence (§4.6 phase 4).
-4. Whether phase 3's unification with the journal replay arena is wanted
-   in this lane or left to #1090.
+Maintainer answers, recorded 2026-10-29 UTC:
+
+1. **Foreign `user.bin` files with duplicate key runs** (§3.2) are out of
+   scope beyond never panicking.
+2. **Dropped spellings** (§3.3) are reachable from the pin's own import
+   paths. This is a compatibility defect, reported for its own fix; the
+   smallest case is in §3.3.
+3. **Rebuilt key words** (§3.4) never change the bytes of a reading the pin
+   can write.
+4. **The standalone store** keeps its current persistence behaviour in the
+   implementation PR (§4.6).
+5. **Unifying with the journal replay arena** is deferred to #1090 (§4.5,
+   §4.6).
