@@ -216,7 +216,8 @@ constant `0x3e3ab283` (D-1).
 
 Maintainer approval (2026-10-29 UTC), recorded at 2026-10-29T08:32:25Z (`date -u`):
 items 1–8 and the §8.1 frozen changes are approved as proposed. PR B
-implements this disposition; PR C removes the remaining rational path.
+implements this disposition; PR C removes unused helpers while preserving
+the fallback and training uses inventoried in §6.1.
 
 1. **The FROZEN register entry** ("N-best trellis accumulates gfloat log
    costs"). Mark it superseded in place when PR B lands, citing the
@@ -261,7 +262,7 @@ implements this disposition; PR C removes the remaining rational path.
 | --- | --- | --- |
 | A (this record) | Design record, Appendix A, proposed policy text; the structures record §11 correction | Rule 7 docs case: fmt, `git diff --check` |
 | B (behaviour) | **Model:** the language model returns pre-log pieces (the bigram blend `s`; `elem_poss` and `unigram_lambda`) and applies the pin's ε gates, with `lambda_f32` throughout. **Engine:** `poss: f32`; S1, S2, S3, the node rule and zhuyin in float; `phrase.rs` with the pin's `<` and `>`. **Tests:** near-threshold pairs, including pairs whose exact S differ but round to the same `f32`; special values, including λ ∈ {−0.5, 0, 1, 1.5, 2, 1e6, inf, nan}. **Policy:** the ruled form of §5. | fmt, clippy and `cargo test -p` for core, data, engine, runtime and testsupport through `just heavy`; cells from `tools/bisection/cells-for-diff.py`; full differentials on a bdb debug build, including the ignored real-table sentence-surface tests; revert-and-check with a named mutation on bdb; sentence and typing Callgrind campaigns, base / PR / pin in one run; stripped shipping sizes; function-order policies for bdb, kc and tkrzw; `readelf` of the shipping object for the `log` import (D-7) |
-| C (removal, after external-I/O stage 1) | Delete the rational path: data `interpolate_ratio`, the rational `Lambda`, `lambda_unit`, `lambda_raw`, `ratio_cost`, `probability_cost`, `zero_total_bigram_cost`; core `reduce_ratio`, `Log2Memo`, `surprisal_with_memo`, `cost_of_probability`, the sentinel costs; the training and testsupport copies; the D1 bridge (§8) | fmt, clippy, unit tests of the touched crates; the 70 `table-conf` lambda contract cases on bdb; training lambda and eval tests; stripped sizes |
+| C (removal, after external-I/O stage 1) | Remove the unused core `Log2Memo`, `surprisal_with_memo`, `cost_is_nan`, `cost_add` and `cost_gt`, and their tests. Retire D1 from real-table scoring; retain the rational fallback and training code identified in §6.1. PR B already removed `ratio_cost`, `raw_unigram_cost` and the row memo. | fmt, clippy, unit tests of core and its dependents through `just heavy`; the 70 `table-conf` lambda contract cases on bdb; training lambda and eval tests; stripped sizes against the immediate stack parent |
 
 Expected cost: each step drops the `u128` products, the ratio reduction
 and the logarithm memo, and takes one `ln`. A trellis `Value` shrinks
@@ -269,6 +270,41 @@ from 32 to 28 bytes, and each `NbestStepRow` loses its 32-byte memo.
 Neither time nor space is expected to worsen; PR B measures both. The
 fallback scorer keeps its own `Cost` until spec task 4a; it is outside
 #1378.
+
+### 6.1 PR C reachability and retained code
+
+Source review date: 2026-10-30 UTC (`date -u`). Review checkpoint: the
+libstdc++-heap replacement PR #1415 at
+`ebb8756a041d8d9b52b7dda1f24bcbe4db9cbc8e`, the tree this dated review
+read. PR C changes no scoring behavior.
+The original §2 inventory describes the pre-float tree, not the remaining
+call graph.
+
+Real-table sessions take `session/guess.rs` and `session/lookup.rs`'s
+`has_real_unigrams()` branches. Data `BigramLanguageModel::nbest_step_costs_using`
+uses only `lambda_f32` for the blend and unigram weight. Engine
+`nbest::expand_one` and `phrase::phrase_segment` take Rust std `ln` and
+accumulate in `f32`. Neither route calls the rational interpolation,
+integer sentinels or logarithm memo. PR B removed the memo from
+`NbestStepRow` and removed the private `ratio_cost` and `raw_unigram_cost`
+pricing helpers. The remaining `Log2Memo`, `surprisal_with_memo`,
+`cost_is_nan`, `cost_add` and `cost_gt` have no callers outside their own
+tests, so PR C deletes them and those tests.
+
+The deletion list is constrained by the fallback and training exclusions:
+
+| Retained items | Live use and reason |
+| --- | --- |
+| Data `interpolate_ratio`, rational `Lambda`, `lambda_raw`, `probability_cost`, `raw_blend_cost`, `unigram_lambda`, `zero_total_bigram_cost` | `BigramLanguageModel::model_cost`, reached by `score_with_user_delta` and `score_with_merged_row`, still implements the fallback integer cost law. Preserve its rational result, special values and overflow routing. |
+| `TableConf::lambda_unit`, `Lambda::from_f32`, `BigramLanguageModel::set_lambda_from_conf`'s rational routing | Install the fallback's λ from the same scanned `f32`. Deleting D1's configuration bridge would change the retained scorer. Real-table scoring already reads `lambda_f32` directly. |
+| Core `Cost`, `COST_PER_BIT`, `UNKNOWN_COST`, `surprisal`, `reduce_ratio`, `cost_of_probability`, `NAN_COST`, `POS_INF_COST`, `NEG_INF_COST` | Core `Scorer` and data's fallback methods still consume integer costs. The retained fallback probability conversion and zero-total handling use the special values; interpolation uses `reduce_ratio`. |
+| Training `eval/model.rs`'s rational interpolation and `Lambda`; `eval::lambda_from_f64`, `eval::estimate_lambda`, `train/pipeline.rs`'s `average_lambda` | Evaluation model `LanguageModel::score` retains its fallback law. The training pipeline still applies the six-decimal λ conversion and carries its exact rational value; `EvalLanguageModel::lambda_f32` also derives the evaluator's float weight from it. |
+| Testsupport `FixtureLanguageModel::model_cost`'s rational interpolation | The fixture model defaults to `has_real_unigrams() == false`, exercising the pre-frequency scorer. Removing its interpolation would change fallback test behavior. |
+| Training `lambda/interpolation.rs`'s separate `Lambda` | This is the deleted-interpolation EM result, not the data rational type. It remains required by training. |
+
+The retained arithmetic and tests are unchanged. D1 is retired as a
+real-table decoder bridge (§8); its fallback use remains until that
+scorer is separately replaced.
 
 ## 7. Pre-existing differences found while reading
 
@@ -319,8 +355,11 @@ remain open.
 - A finite pin score never becomes `UNKNOWN_COST` or a missing step
   because of overflow.
 
-PR C removes the bridge (§6). §7 items 3 and 4 describe the base tree
-`0a69da74`, before stage 1.
+PR B (#1406) retired this bridge from real-table sentence and phrase
+scoring: both use `lambda_f32` directly. PR C removes only the remaining
+unused helpers and preserves D1's fallback configuration and arithmetic
+because their callers remain live (§6.1). §7 items 3 and 4 describe the
+base tree `0a69da74`, before stage 1.
 
 ## Appendix A. Object evidence for D-1 to D-7
 
@@ -557,7 +596,8 @@ The score-shift assertions now bind these f32 log-possibility bits:
 `nuanmanqianzhaofang c225aaba`, `nic c144ff96`.
 The fallback scorer keeps its integer costs. PR B removes the row's
 logarithm memo and the private pricing helpers that become unused; the
-remaining rational/D1 fallback and training path is PR C.
+remaining rational/D1 fallback and training path is retained by PR C
+where its callers remain live (§6.1).
 
 D-7 is resolved by the installed PR B shipping object: `readelf
 --dyn-syms -r -V -W` shows an undefined `log@GLIBC_2.29`, an

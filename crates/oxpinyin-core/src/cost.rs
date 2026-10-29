@@ -1,4 +1,6 @@
-//! Deterministic cost arithmetic.
+//! Deterministic cost arithmetic for the pre-frequency fallback scorer.
+//!
+//! Real-table sentence decoding accumulates float log probabilities directly.
 //!
 //! **The scale: [`COST_PER_BIT`] is 1,000, and it is one bit of surprisal.**
 //! An event the model gives half its mass to costs 1,000, a quarter 2,000, an
@@ -27,10 +29,9 @@ pub const COST_PER_BIT: i64 = 1_000;
 /// wins.
 pub const UNKNOWN_COST: Cost = 40 * COST_PER_BIT;
 
-/// A cost that is not a number: the pin's `m_poss` after a `log` of a
-/// negative argument, or `inf - inf`. It is sticky under [`cost_add`] and
-/// compares false against everything ([`cost_gt`]), as a NaN does. Reached
-/// only through a `lambda parameter:` outside `[0, 1]`.
+/// A cost that is not a number in the fallback model: a `log` of a
+/// negative argument or `inf - inf`. The fallback score methods preserve
+/// it before adding the edge cost.
 pub const NAN_COST: Cost = Cost::MIN;
 
 /// A cost of `+inf` — a possibility of 0, `log(0) = -inf` in the pin.
@@ -38,43 +39,6 @@ pub const POS_INF_COST: Cost = Cost::MAX;
 
 /// A cost of `-inf` — a possibility of `+inf`, which `log(inf)` gives the pin.
 pub const NEG_INF_COST: Cost = Cost::MIN + 1;
-
-/// Whether `cost` is [`NAN_COST`].
-#[must_use]
-pub const fn cost_is_nan(cost: Cost) -> bool {
-    cost == NAN_COST
-}
-
-/// `a + b` with the IEEE rules for the special costs: NaN is sticky,
-/// `+inf + -inf` is NaN, an infinity absorbs a finite cost, and finite sums
-/// saturate short of the reserved values.
-#[must_use]
-pub const fn cost_add(a: Cost, b: Cost) -> Cost {
-    if a == NAN_COST || b == NAN_COST {
-        return NAN_COST;
-    }
-    match (a, b) {
-        (POS_INF_COST, NEG_INF_COST) | (NEG_INF_COST, POS_INF_COST) => NAN_COST,
-        (POS_INF_COST, _) | (_, POS_INF_COST) => POS_INF_COST,
-        (NEG_INF_COST, _) | (_, NEG_INF_COST) => NEG_INF_COST,
-        _ => {
-            let sum = a.saturating_add(b);
-            if sum == POS_INF_COST {
-                POS_INF_COST - 1
-            } else if sum <= NEG_INF_COST {
-                NEG_INF_COST + 1
-            } else {
-                sum
-            }
-        }
-    }
-}
-
-/// `a > b` as C compares two floats: false whenever either is NaN.
-#[must_use]
-pub const fn cost_gt(a: Cost, b: Cost) -> bool {
-    a != NAN_COST && b != NAN_COST && a > b
-}
 
 /// The cost of a probability `x` that may lie outside `(0, 1]`: `-log2(x)` on
 /// the fixed-point scale. `x` above one costs less than nothing; `0` is
@@ -115,23 +79,6 @@ pub fn surprisal(count: u64, total: u64) -> Cost {
     bits_to_cost(log2(total) - log2(count))
 }
 
-/// [`surprisal`] with `log2(total)` taken from `memo` when `total` is one of
-/// the last two denominators it saw.
-///
-/// The memo is keyed by the exact argument of the logarithm and the logarithm
-/// is a pure function, so the cost is bit-identical to [`surprisal`]'s.
-#[must_use]
-pub fn surprisal_with_memo(count: u64, total: u64, memo: &mut Log2Memo) -> Cost {
-    if count == 0 || total == 0 {
-        return UNKNOWN_COST;
-    }
-    let count = count.min(total);
-    if count == total {
-        return 0;
-    }
-    bits_to_cost(memo.log2(total) - log2(count))
-}
-
 /// A surprisal in bits, rounded to cost units and floored at
 /// [`UNKNOWN_COST`].
 fn bits_to_cost(bits: f64) -> Cost {
@@ -140,37 +87,6 @@ fn bits_to_cost(bits: f64) -> Cost {
         UNKNOWN_COST
     } else {
         scaled as Cost
-    }
-}
-
-/// The last two logarithms [`surprisal_with_memo`] took, keyed by their
-/// exact argument.
-///
-/// One n-best step divides by the same few denominators over and over: the
-/// unigram branch by `λ_den · total`, the blended branch by
-/// `λ_den · bigram_total · total`, both after [`reduce_ratio`]. Two slots
-/// hold one of each. Keying by the exact argument means a total that moves
-/// (training, import, mask, unload) is a miss, never a stale hit.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct Log2Memo {
-    /// `(argument, log2(argument))`, most recent first. An argument of zero
-    /// marks an empty slot: the logarithm is never asked for zero.
-    entries: [(u64, f64); 2],
-}
-
-impl Log2Memo {
-    fn log2(&mut self, value: u64) -> f64 {
-        let [first, second] = self.entries;
-        if first.0 == value {
-            return first.1;
-        }
-        if second.0 == value {
-            self.entries = [second, first];
-            return second.1;
-        }
-        let log = log2(value);
-        self.entries = [(value, log), first];
-        log
     }
 }
 
@@ -202,21 +118,10 @@ pub fn reduce_ratio(numerator: u128, denominator: u128) -> (u64, u64) {
 
 #[cfg(test)]
 mod tests {
-    use super::{NAN_COST, NEG_INF_COST, POS_INF_COST, cost_add, cost_gt, cost_of_probability};
-
-    #[test]
-    fn special_costs_follow_ieee_addition_and_comparison() {
-        assert_eq!(cost_add(NAN_COST, 5), NAN_COST);
-        assert_eq!(cost_add(5, NAN_COST), NAN_COST);
-        assert_eq!(cost_add(POS_INF_COST, NEG_INF_COST), NAN_COST);
-        assert_eq!(cost_add(POS_INF_COST, 7), POS_INF_COST);
-        assert_eq!(cost_add(-7, NEG_INF_COST), NEG_INF_COST);
-        assert_eq!(cost_add(POS_INF_COST - 1, 10), POS_INF_COST - 1);
-        assert_eq!(cost_add(3, -8), -5);
-        assert!(cost_gt(2, 1) && !cost_gt(1, 2) && !cost_gt(1, 1));
-        assert!(!cost_gt(NAN_COST, 1) && !cost_gt(1, NAN_COST) && !cost_gt(NAN_COST, NAN_COST));
-        assert!(cost_gt(POS_INF_COST, 1) && cost_gt(1, NEG_INF_COST));
-    }
+    use super::{
+        COST_PER_BIT, NAN_COST, NEG_INF_COST, POS_INF_COST, UNKNOWN_COST, cost_of_probability,
+        log2, reduce_ratio, surprisal,
+    };
 
     #[test]
     fn probabilities_outside_the_unit_interval_have_their_ieee_costs() {
@@ -232,10 +137,6 @@ mod tests {
         // A subnormal still has a finite cost: 2^-1074 is 1074 bits.
         assert_eq!(cost_of_probability(f64::from_bits(1)), 1074 * COST_PER_BIT);
     }
-    use super::{
-        COST_PER_BIT, Log2Memo, UNKNOWN_COST, log2, reduce_ratio, surprisal, surprisal_with_memo,
-    };
-
     #[test]
     fn exact_powers_of_two_have_exact_logarithms() {
         for exponent in 0..64_u32 {
@@ -282,62 +183,6 @@ mod tests {
                 (u128::MAX >> (127 - width), 7),
             ] {
                 assert_eq!(reduce_ratio(n, d), looped(n, d), "{n} {d}");
-            }
-        }
-    }
-
-    #[test]
-    fn the_memo_path_matches_surprisal_bit_for_bit() {
-        // Totals the n-best pricing divides by: 0, 1, every u32 bit edge,
-        // the u32 totals #801's wrapping facade total can land on (small
-        // values just past a wrap, and u32::MAX itself), and each of those
-        // times the pinned λ denominator, as the unigram branch passes it.
-        let mut totals = vec![0_u64, 1, 2, 3];
-        for width in 0..=32_u32 {
-            let edge = 1_u64 << width;
-            totals.extend([edge - 1, edge, edge + 1]);
-        }
-        totals.extend((0..300).map(|wrapped| u64::from(u32::MAX) - wrapped));
-        totals.extend(1..300);
-        let lambda_den = 1_000_000_u64;
-        totals.extend(
-            totals
-                .clone()
-                .iter()
-                .map(|total| total.saturating_mul(lambda_den)),
-        );
-        totals.extend([u64::MAX, u64::MAX - 1, 1 << 62, (1 << 63) - 1]);
-        let mut counts = vec![0_u64, 1, 2, 3, u64::from(u32::MAX), u64::MAX];
-        for width in 0..64_u32 {
-            let edge = 1_u64 << width;
-            counts.extend([edge - 1, edge, edge + 1]);
-        }
-
-        // One memo across the sweep, so hits, the second-slot swap and
-        // eviction are all exercised: each total is priced against every
-        // count, interleaved with its neighbour as the unigram and blended
-        // branches interleave inside one step.
-        let mut memo = Log2Memo::default();
-        for pair in totals.windows(2) {
-            let (total, other) = (pair[0], pair[1]);
-            for &count in &counts {
-                for (c, t) in [(count, total), (count, other), (count.min(total), total)] {
-                    assert_eq!(
-                        surprisal_with_memo(c, t, &mut memo),
-                        surprisal(c, t),
-                        "{c}/{t}"
-                    );
-                }
-            }
-        }
-        // A fresh memo per call is the uncached computation.
-        for &total in &totals {
-            for &count in &counts {
-                assert_eq!(
-                    surprisal_with_memo(count, total, &mut Log2Memo::default()),
-                    surprisal(count, total),
-                    "{count}/{total}"
-                );
             }
         }
     }
