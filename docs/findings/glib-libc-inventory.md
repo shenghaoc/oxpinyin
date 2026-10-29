@@ -989,6 +989,160 @@ correction's gate status are in
 
 **Design notes.** All cites are at the pin.
 
+**Item B: std selection and direct node slots (2026-10-30T05:29:46Z).**
+The direct parent is #1414 at
+`32a7c378280c68d73be47e4e78ea920d6a7d77e3`, on main
+`575a65cb060377d984e64a19a9e4f5ad1b50feaa`. B is one commit above it;
+the old A commit `c05a0fec` is not retained. B's implementation, tests and
+named mutation are unchanged from published `7dd13491`. A's guarded
+wrapping comparator and shared frequency-sort implementation are unchanged.
+
+`nbest.rs` removes all five `heap_*` transcriptions. `Node::keep` writes
+physical slots directly. Beam and final-tail selection call the same
+fixed-row `select_top(Vec<BeamEntry>, count, nstore)` helper and comparator
+closure; the mode is captured, rather than adding per-facade sort bodies.
+A sorts `(RankKey, u32)` and `Predicted` by frequency. B sorts `BeamEntry`
+by adjusted/raw f32 score and batch position; reusing A's instantiations
+would change the row representation or ordering. S3's stable raw-score
+`tail_merge` is unchanged, as is zhuyin's raw single-slot admission.
+
+The pin was read from Git tree `074a2219c90feaf962d0d24f034514033ece5f99`:
+`src/lookup/phonetic_lookup_heap.h` blob `299ddedfa55e` and
+`src/lookup/phonetic_lookup.h` blob `c092e7610cb0`. Two-slot transitions
+come from `phonetic_lookup_heap.h:56-81`; the single-slot rule is
+`:108-122`. `number()` (`:49-53`) supplies physical slots during expansion
+(`phonetic_lookup.h:282-293`); successors store them at `:665,695` and
+advance to later steps at `:667,697`, after predecessor slots are final.
+
+Closed #1314 and the retained `wip/1297-ranking*` checkpoints supplied
+reusable node-slot analysis and test scenarios. Its loser tree retained a
+cyclic comparator and established no speed gain, while leaving peak heap
+unchanged and growing stripped libraries by 4–12 KiB. That implementation
+and its measurements are not adopted.
+
+**Measured choice (comparison at B `7dd13491`).** Keep selection followed
+by sorting the retained prefix.
+The maintained Criterion comparison uses the production `BeamEntry` layout
+and complete keys, both facades' beam/tail limits, mixed IEEE-special and
+tied batches of 8/32/128/512, 20 samples, one-second warmup and collection,
+with cloning outside timing. Selection has the lower point estimate in
+29/32 pairs; the unweighted geometric mean of select/heap estimates is
+0.4905, a fixture summary rather than a corpus result. BinaryHeap wins
+pinyin beam/512-mixed (select/heap 1.357), tail/32-tied (1.199) and
+tail/512-mixed (1.396). All 16 zhuyin fixtures favour selection.
+Selection costs O(m + k log k), in place over the existing batch without
+a separate result allocation. Heapify-and-pop costs O(m + k log m) and
+O(k) separate result storage. Direct node transitions cost O(1) time/space.
+The test-only heap and Criterion code do not enter shipping libraries.
+
+**Current restack gate.** Rule 7 on the touched engine crate passes:
+238 tests, two ignored; all-target Clippy with warnings denied, fmt and
+parent-relative whitespace checks pass. All six shipping inputs below are
+rebuilt from this combined tree. The unchanged B implementation does not
+repeat the earlier differential, mutation, algorithm or sentence/typing
+campaigns under the maintainer's proportional re-gate instruction.
+
+**Earlier functional gate, B `7dd13491` on A `7d6a9e85`.** Ubuntu BDB
+debug full/default registry:
+**3,309 cases: 3,287 MATCH, 20 existing POLICY-ACCEPTED, two backend-format
+skips, zero DIFFER**. All four `row58-signed-{score,duplicate}-{off,on}`
+witnesses MATCH; A's cyclic classifications and #1378 records remain valid.
+No registration, digest or accepted scope changed. The path selector chooses
+BDB only. Crate gates for engine, runtime, facade, both C adapters, dictool
+and oracle pass: 588 tests, eight ignored; all-target Clippy denies warnings.
+The three targeted contract harnesses pass all 26 tests; fmt passes.
+
+The earlier named mutation `1297-reverse-selection-batch-position.patch`: both
+`nbest-user-table-order-*` witnesses DIFFER, both `glib-sort-tails-*`
+controls MATCH. Byte-for-byte source restoration, rebuild and the same
+four cases give two existing POLICY-ACCEPTED and two MATCH.
+
+**Shipping and policies against A `32a7c378`.** All six policies were regenerated unconditionally
+from backend-specific shipping inputs and the unchanged pin-provisioned
+profiles, in two independent byte-identical passes (396 collections,
+nine admitted workers). Every output also matches A's policy byte for byte.
+All six resolve and all twelve A/B linked objects are ordered: pinyin/zhuyin
+path counts BDB 280/261, KC 362/344, sound-tkrzw 292/274. The tkrzw health
+probe passes, and both pin and subject facades resolve the cache library.
+
+| Backend / library | A bytes | B bytes | Increase |
+| --- | ---: | ---: | ---: |
+| bdb/pinyin | 2,474,792 | 2,495,272 | 20,480 |
+| bdb/zhuyin | 2,204,456 | 2,229,032 | 24,576 |
+| kc/pinyin | 2,833,672 | 2,854,152 | 20,480 |
+| kc/zhuyin | 2,563,336 | 2,596,104 | 32,768 |
+| tkrzw/pinyin | 2,515,744 | 2,536,224 | 20,480 |
+| tkrzw/zhuyin | 2,249,504 | 2,274,080 | 24,576 |
+
+
+`nm --size-sort --print-size --defined-only --demangle=rust`, counting each
+physical `(address, size)` text symbol once, gives the same attribution in
+all six libraries: `select_top` 3,360 B plus std selection/sort helpers
+19,921 B; removed heap text −450 B; rewritten
+`nbest_sentences_with_seeds_generation` −1,731 B and `expand_one` +25 B.
+Net unique-text growth is 21,125 B. The largest new helpers are
+`select::median_of_medians` (4,902 B), unstable quicksort (3,965 B) and
+`small_sort_general` (2,219 B), all for the same `BeamEntry`/selector closure.
+A's physical frequency-sort totals remain 21,950 B pinyin / 11,091 B zhuyin
+on every backend, with no multiplied A pipelines. ELF `.text` grows
+21,200 B (21,184 B on KC), plus unwind/relocation/constant data and alignment;
+these section changes and stripped-file deltas are distinct from symbol sums.
+The larger standard-library implementation is the binary-size cost of this
+measured choice; the shared B helper avoids separate beam/tail/mode pipelines.
+
+**Historical same-run campaigns — measured against A at `7d6a9e85`.**
+B is the production tree of `7dd13491`; these results were not rerun or
+relabeled as a comparison against `32a7c378`. Ubuntu 26.10 linux/amd64, Intel i7-9750H,
+Rust 1.97.1, GNU ld 2.47, Valgrind 3.27.1; ext4 work/artifacts/TMPDIR,
+shared heavy admission, CPU 0, default `nihaozhongguo`, options `0x18a`.
+Plain shipping features are `bdb,shipped` for pinyin and `bdb` for zhuyin.
+Profiled pinyin differs only by `RUSTFLAGS="-Cdebuginfo=1 -Cstrip=none"`;
+DWARF, both code-neutrality checks, loader and linked-order guards pass.
+The historical A shipping/profile objects have the identical production inputs
+of its documentation-only `7d6a9e85` head. A, B, pin and both same-byte
+controls run together in each campaign. All complete observations agree.
+
+| Workload | A Ir | B Ir | Pin Ir | Qualification |
+| --- | ---: | ---: | ---: | --- |
+| Sentence | 2,470,913 | 2,418,714 | 3,825,927 | VALID; exact controls |
+| Complete typing sequence | 65,215,125–65,217,439 | 63,983,718–63,986,972 | 77,108,897 | DIAGNOSTIC; RandomState scopes only |
+
+Three rotating fresh-process rounds, one invocation per round. Typing ranges
+include the corresponding same-byte control. Sentence
+saves exactly 52,199 Ir. Typing's control spreads are 2,314 / 3,254 Ir;
+its ranges are diagnostic and do not establish an exact instruction gain.
+Native time uses plain shipping objects, 40 rotating rounds × 20 iterations,
+with shared paired-bootstrap 95% intervals and valid controls for both:
+
+| Workload | A median µs | B median µs | Pin median µs | Paired B/A, 95% interval |
+| --- | ---: | ---: | ---: | --- |
+| Sentence | 596.135 | 593.981 | 747.074 | 0.9878 [0.9673, 0.9967] |
+| Complete typing sequence | 13,335.380 | 13,236.133 | 14,383.075 | 0.9804 [0.9668, 1.0085] |
+
+Native control intervals (A-copy/A; B-copy/B) are sentence
+[0.9821, 1.0203] / [0.9841, 1.0133], typing
+[0.9822, 1.0027] / [0.9796, 1.0109], within the maintained [0.95, 1.05]
+rule. Typing's timing interval includes one, so it establishes no timing
+gain. These campaigns do not measure heap usage or establish a corpus-wide
+performance improvement. C ABI, ownership and persistent formats are unchanged.
+
+Reproduce the current rule-7 gate with `just heavy -- cargo test --locked
+-p oxpinyin-engine` and `just heavy -- cargo clippy --locked -p
+oxpinyin-engine --all-targets -- -D warnings`. Reproduce the historical full
+gate/campaigns at B `7dd13491`, A `7d6a9e85`, with the seven-package
+selection above through `just heavy`, `just heavy -- just cell-artifacts --artifacts
+pinyin-capi,zhuyin-capi`, and
+`just heavy -- just runner contract-diff bdb "$PINYIN_ORACLE_PREFIX" "$B_PY_SO" "$B_ZH_SO"`.
+Apply/reverse the named mutation and select its four explicit cases.
+Run `just heavy -- cargo test --release --locked -p oxpinyin-engine
+measure_selection_algorithms -- --ignored --nocapture` for the choice.
+Use [policy regeneration](../packaging.md#regeneration) with
+`repeat_output_dir` for every backend, then the maintained linked-layout
+checker and `strip --strip-unneeded`. Run both
+[sentence/typing campaigns](../runbooks/benches.md#sentence-and-typing-sequence-callgrind-campaign)
+with exact A/B/pin objects, plain-shipping counterparts, A/B policy overrides,
+`--native-rounds 40 --native-iterations 20` and new output directories.
+
 1. **Candidate sort key.** The key is explicit, with three fields
    compared in order: phrase length, pinyin span, frequency. Each is
    length/span descending, frequency by the guarded wrapping comparison,

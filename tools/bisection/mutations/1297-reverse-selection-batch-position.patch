@@ -1,0 +1,14 @@
+diff --git a/crates/oxpinyin-engine/src/nbest.rs b/crates/oxpinyin-engine/src/nbest.rs
+--- a/crates/oxpinyin-engine/src/nbest.rs
++++ b/crates/oxpinyin-engine/src/nbest.rs
+@@ -229,8 +229,8 @@ fn selection_compare(left: &BeamEntry, right: &BeamEntry, nstore: usize) -> Ordering
+             .length
+             .cmp(&right.value.length)
+             .then_with(|| ordered_poss_compare(left.value.poss, right.value.poss))
+-            .then_with(|| left.batch_position.cmp(&right.batch_position));
++            .then_with(|| right.batch_position.cmp(&left.batch_position));
+     }
+     ordered_poss_compare(adjusted_poss(&left.value), adjusted_poss(&right.value))
+-        .then_with(|| left.batch_position.cmp(&right.batch_position))
++        .then_with(|| right.batch_position.cmp(&left.batch_position))
+ }
