@@ -75,6 +75,41 @@ because a timed or resident-set sample belongs to its arm only if nothing runs
 beside it. The builds are not samples: `shipped-check` and `tree-recipe-control`
 build their independent artifacts as units of one admitted pool.
 
+### Base, PR and pin steady lookup comparison
+
+`steady-comparison` uses the existing `bisect --perf` workload and worker.
+It compares supplied ordered shipping libraries in one job on one Linux host,
+rotating base, PR, pin and byte-identical base/PR controls serially. It also
+rotates separate base/PR `alloc-count` fixtures. Build those fixtures with
+`cargo build --locked --release -p oxpinyin-capi --no-default-features
+--features <backend>,alloc-count`, through `just heavy`; they are never
+installed or reported as shipping artifacts.
+
+```bash
+just heavy -- just measure steady-comparison --cell bdb \
+  --base "$BASE_SO" --pr "$PR_SO" --pin "$PIN_SO" \
+  --base-alloc "$BASE_ALLOC_SO" --pr-alloc "$PR_ALLOC_SO" \
+  --system-dir "$DATA" --out "$WORK/steady"
+```
+
+All libraries, data, work and `TMPDIR` must be on ext4. Each process performs
+eight cycles by default; the first is warmup and is excluded from every
+reported metric. Twenty native rounds report medians and ranges of time per
+steady cycle. Three allocation rounds report the requested Rust allocation
+count and bytes per cycle, excluding DBM/libc allocations; pin allocation
+counts are unavailable. Two Callgrind rounds report total instructions per
+cycle under the existing `bisect_perf_steady_unit` anchor, including external
+library work. Ir ranges are retained, never relabelled exact when controls
+vary. Compare the base/PR effect with the same-bytes control spread; overlapping
+ranges do not establish an instruction reduction.
+
+The worker's return/count checksum must be stable and agree between base,
+PR, controls and allocation fixtures. The pin checksum comparison is reported
+separately; full observable equivalence belongs to the contract differentials.
+This is a whole lookup workload, not an isolated measurement of a particular
+internal search. In particular, a workload without carried user entries
+does not establish a speedup for that rare edit path.
+
 Legacy recipes do not gain the shipping relink merely by enabling `shipped`.
 They now refuse unordered artifacts by default. To reproduce an intentional
 original-layout experiment, pass `--unordered-arm ARM` for each such arm,

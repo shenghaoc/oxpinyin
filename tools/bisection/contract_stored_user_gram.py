@@ -212,7 +212,8 @@ def train_unsorted_set_freq_miss(k):
 
 
 for _mode in ('pinyin', 'zhuyin'):
-    case(f'abort-train-unsorted-set-freq-miss-{_mode}', mode=_mode, abort=False, issues=('757',))(
+    case(f'abort-train-unsorted-set-freq-miss-{_mode}', mode=_mode, abort=False, issues=('757',),
+         policy_record='1297-gram-partition-training.md')(
         train_unsorted_set_freq_miss)
 
 

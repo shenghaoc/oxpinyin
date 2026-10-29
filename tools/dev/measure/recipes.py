@@ -18,7 +18,7 @@ from .. import runners
 # recipes.test.py checks it against what the modules contribute.
 NAMES = ('callgrind-control', 'callgrind-differential', 'perf-baseline', 'perf-matrix', 'perf-same-data',
          'probe-debuginfo-neutrality', 'probe-egress', 'processor-trace', 'profile-w8', 'rss-diag',
-         'shipped-check', 'snapshot', 'system-import-profile', 'tree-recipe-control')
+         'shipped-check', 'snapshot', 'steady-comparison', 'system-import-profile', 'tree-recipe-control')
 
 
 def table() -> dict:

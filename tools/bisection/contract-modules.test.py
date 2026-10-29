@@ -238,6 +238,12 @@ def unbound_globals(module):
 
 
 class ModuleBoundaryTests(unittest.TestCase):
+    def test_stored_search_selection_keeps_the_registered_inventory_cases(self):
+        names = (ROOT / 'fixtures/w4/1297-search-cases.txt').read_text().splitlines()
+        selected, _ = driver.select_cases(issues=('757', '785'))
+        self.assertEqual(names, [name for name in selected if name != 'nbest-user-table-order-pinyin'])
+        self.assertEqual(len(names), len(set(names)))
+
     def test_the_scan_checks_the_underlying_decorated_method_not_the_library_wrapper(self):
         probe = types.ModuleType('decorated_probe')
         exec('import contextlib\n\nclass Holder:\n'

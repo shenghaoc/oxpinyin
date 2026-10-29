@@ -10,7 +10,7 @@ import contract_gram_lookup as family
 # (case ID, positional options, keyword options) in registration order.
 EXPECTED = [('user-gram-unsorted-guess', (), {'control': False, 'issues': ('757',)}),
             ('user-gram-unsorted-dynamic-adjust', (), {'control': False, 'issues': ('757',)}),
-            ('user-gram-unsorted-phrase-segment', (), {'control': False, 'issues': ('757',)}),
+            ('user-gram-unsorted-phrase-segment', (), {'control': False, 'issues': ('757',), 'policy_record': '1297-gram-partition-segmentation.md'}),
             ('user-gram-duplicate-guess', (), {'control': False, 'issues': ('757',)}),
             ('user-gram-duplicate-dynamic-adjust', (), {'control': False, 'issues': ('757',)}),
             ('user-gram-duplicate-phrase-segment', (), {'control': True, 'issues': ('757',)}),

@@ -31,8 +31,10 @@ def register(registry, name, fn, *args, **kwargs):
     """Store the case specification in `registry` and return the original function.
 
     Reject duplicate IDs with ValueError and assert the required option
-    combinations before modifying the registry. Policy records cannot be combined
-    with the signal, host-dependent or profile-comparison exceptions."""
+    combinations before modifying the registry. A policy record may retain
+    an existing pin abort, whose exact observation its record must hold.
+    Other signal, host-dependent and profile-comparison exceptions cannot
+    be combined with policy records."""
     if name in registry:
         raise ValueError('duplicate case name: %s' % name)
     spec = case_spec(*args, fn=fn, case_id=name, **kwargs)
@@ -44,7 +46,7 @@ def register(registry, name, fn, *args, **kwargs):
         or spec['strjoinv_over_read'] or spec['dir_chunk'] or spec['userdir'] or spec['stderr']
         or spec['policy_record'] is not None), name
     if spec['policy_record'] is not None:
-        assert not (spec['abort'] is not NO_ABORT or spec['crash'] is not None
+        assert not (spec['crash'] is not None
                     or spec['both_abort'] or spec['strjoinv_over_read']
                     or spec['host_scanf'] or spec['dir_chunk'] or spec['userdir']), name
     registry[name] = spec
