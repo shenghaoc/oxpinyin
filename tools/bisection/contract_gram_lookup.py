@@ -1,6 +1,8 @@
 """Gram lookup cases (inventory row 62, #1175).
 """
 import ctypes as C
+import hashlib
+import json
 from pathlib import Path
 
 from contract_abi import B, P, S, U, Z, tokens_of
@@ -8,6 +10,27 @@ from contract_case_helpers import (
     _DALONG, _PAST_RANGES, _chunk, _dynamic_adjust_out, _gram_bytes, _gram_items, _guess_out, _plant_user_grams,
     _replace_system_start_row, _replace_user_bigram, _segment_out, d18_bigram_db, guess_rows)
 from contract_fixtures import _write_user_conf, private_system
+
+
+_INTERLEAVE_FIXTURE = Path(__file__).resolve().parents[2] / 'fixtures/w4/gram-interleave-miss.json'
+
+
+def _interleave_miss_layout(system, token):
+    """Return the stored [token, z, a] layout for the frozen system start row.
+
+    The former selector captured a gram that get_freq finds alone but misses
+    after merge_single_gram's stored-order interleave (074a2219
+    ngram.cpp:239,308-349; stl_lite.h:29). Keep its data and provenance in the
+    fixture. Loading it does not recompute a search schedule.
+    A different frozen input must be reconciled explicitly, never reselected.
+    """
+    fixture = json.loads(_INTERLEAVE_FIXTURE.read_text())
+    digest = hashlib.sha256(b''.join(item.to_bytes(4, 'little') for item in system)).hexdigest()
+    assert fixture['schema'] == 1
+    assert token == fixture['boosted_token'], 'the boosted phrase token changed'
+    assert len(system) == fixture['system_token_count'], 'the system start gram changed'
+    assert digest == fixture['system_tokens_sha256'], 'the stored system token sequence changed'
+    return [tuple(item) for item in fixture['items']]
 
 
 def register(case, *, _craft_db):
@@ -45,49 +68,6 @@ def register(case, *, _craft_db):
         """
         raw = d18_bigram_db(k, Path(k.data, 'bigram.db'), read_keys=(b'\x01\x00\x00\x00',))[0]
         return [token for token, _ in _gram_items(raw)[1]]
-
-
-    def _pin_lower_bound(at, length, token):
-        """Return the index reached by libstdc++'s halving lower-bound search.
-
-        Read values through at(index) over [0, length), preserving the search path
-        even for unsorted input. This models the std::lower_bound call used by
-        SingleGram::get_freq at 074a2219 ngram.cpp:239, exposed through stl_lite.h:29;
-        it does not sort or validate the sequence.
-        """
-        # libstdc++'s __lower_bound, as SingleGram's std_lite::lower_bound runs.
-        first = 0
-        while length > 0:
-            half = length >> 1
-            if at(first + half) < token:
-                first, length = first + half + 1, length - half - 1
-            else:
-                length = half
-        return first
-
-
-    def _interleave_miss_layout(system, token):
-        """A user gram [token, z, a] (a < token < z) that get_freq finds on its
-        own but misses once merged with the sorted system gram `system`: the
-        merge keeps the user order and places `a` after `z`, out of order, and
-        `z` is picked so that the merged lower_bound probes `a`, steps past it
-        and lands beyond `token` (ngram.cpp:308-349, :231-250)."""
-        assert system == sorted(system), 'the installed start gram is sorted'
-        present, below = set(system), sum(1 for item in system if item < token)
-        tied = int(token in present)
-        a = next(t for t in range(token - 1, 0, -1) if t not in present)
-        gaps = [item + 1 for item in system[below:] if item + 1 not in present and item + 1 > token]
-        if token + 1 not in present:
-            gaps.insert(0, token + 1)
-        for z in gaps:
-            before_z = sum(1 for item in system if item < z)
-            merged = (system[:below] + [token] + system[below + tied:before_z] + [z, a]
-                      + system[before_z:])
-            start = _pin_lower_bound(lambda i: merged[i], len(merged), token)
-            walk = next((t for t in merged[start:] if t >= token), None)
-            if walk != token:
-                return [(token, _BOOST), (z, 1), (a, 1)]
-        raise AssertionError('no interleave misses the token')
 
 
     # 尼 is a ni reading the n-best and the candidate list rank below 你; the
