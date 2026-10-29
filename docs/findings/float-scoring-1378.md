@@ -1,8 +1,8 @@
 # Float scoring for the sentence decoder (#1378): Phase 1 design record
 
 Date: 2026-10-28 UTC (`date -u`). Status: record. This is the read-only
-Phase 1 design for #1378. The policy text in §5 is **proposed, not
-ruled**. Base: origin/main `0a69da749c13`. Pin: libpinyin 2.11.92 at
+Phase 1 design for #1378. The §5 disposition and §8.1 frozen edits were approved by the maintainer
+on 2026-10-29 UTC; ruled text recorded at 2026-10-29T08:32:25Z (`date -u`). Base: origin/main `0a69da749c13`. Pin: libpinyin 2.11.92 at
 `074a2219c90feaf962d0d24f034514033ece5f99`; pin citations are
 `file:line` at that commit. oxpinyin code is cited by file and item.
 
@@ -212,11 +212,11 @@ constant `0x3e3ab283` (D-1).
   but round to the same `f32`.
 - `f64` is revisited only if a measurement shows a ranking reason.
 
-## 5. Compatibility-policy disposition — proposed, not ruled
+## 5. Compatibility-policy disposition — ruled 2026-10-29 UTC
 
-> **Proposed, not ruled.** Nothing below changes `compatibility-policy.md`,
-> `upstream-divergences.md`, `scoring-spec.md`, `sentence-surface.md` or
-> the 2026-10-28 amendment. Ruled text, if approved, lands with PR B.
+Maintainer approval (2026-10-29 UTC), recorded at 2026-10-29T08:32:25Z (`date -u`):
+items 1–8 and the §8.1 frozen changes are approved as proposed. PR B
+implements this disposition; PR C removes the remaining rational path.
 
 1. **The FROZEN register entry** ("N-best trellis accumulates gfloat log
    costs"). Mark it superseded in place when PR B lands, citing the
@@ -272,8 +272,11 @@ fallback scorer keeps its own `Cost` until spec task 4a; it is outside
 
 ## 7. Pre-existing differences found while reading
 
-These are derived from the source only. None was run, and none is fixed
-here.
+These were derived from source for the original design record, before any
+run. PR B fixes items 1 and 2 through its float scoring path; the original
+observations are retained below. Items 3 and 4 describe the pre-stage-1
+base, as explained in §8. The facade-total ruling and pronunciation audit
+remain open.
 
 1. **`phrase.rs` adds sentinel costs with plain `i64` `+`**
    (`phrase_segment`). Debug builds panic on overflow, against
@@ -297,7 +300,7 @@ here.
 
 ## 8. Open questions
 
-1. **Frozen items** needing explicit approval before PR B: the
+1. **Frozen items approved by the maintainer, 2026-10-29 UTC:** the
    `scoring-spec.md` cost scale; the `sentence-surface.md` §12
    declaration, its tie fixture and `sentence_surface_parity.rs`; the
    FROZEN register entry; the amendment's Cost-form wording.
@@ -306,8 +309,7 @@ here.
 
 "D1 bridge" and "D1 routing" name stage 1's D1 ruling (maintainer,
 2026-10-28 UTC). The stage-1 PR records it in `external-io-boundary.md`.
-No such PR is open at this writing (2026-10-28 UTC); this record cites
-it once it exists. Under D1:
+#1404 implemented stage 1 and merged before PR B. Under D1:
 
 - λ comes only from the scanned `f32`.
 - The rational routing value derives from that `f32`'s shortest

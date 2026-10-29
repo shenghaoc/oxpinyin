@@ -68,9 +68,11 @@ P(w_n | w_n-1) = λ · P_bigram(w_n | w_n-1) + (1 − λ) · P_unigram(w_n)
 model_cost     = −log₂ P(w_n | w_n-1) × COST_PER_BIT
 ```
 
-Evaluated as **one exact integer ratio** — numerator and denominator combined
-before the logarithm — so no intermediate rounding enters and the result is
-identical on every platform.
+The numerator and denominator are combined as **one exact integer ratio**
+before the logarithm, without intermediate rounding. The cost derived from
+Rust std `f64::log2()` is deterministic per host
+([constitution §6](../../AGENTS.md#constitution)), not guaranteed identical
+across hosts. A last-bit difference between hosts is class (a).
 
 | Constant | Value | Status |
 |---|---|---|
