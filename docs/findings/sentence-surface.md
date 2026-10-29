@@ -1,11 +1,11 @@
 # Sentence surface (W14)
 
-Date: 2026-08-17 · Current status: the lane-D amendment in §12 supersedes
-its historical blanket classification. The approved selection port and coverage extension measure
-500 / 500 / 500 after the #639 resplit repair (was 499 / 499 / 499); only
-six named shared-comparison rows are class (a). Four separator rows
-(`'`, `''`, `'''`, `'ni`) remain unattributed. §§1–11 and the earlier
-§12 rulings retain the historical characterization and decision record.
+Date: 2026-08-17 · Current status: #1378's re-measurement at the end
+of §12 supersedes the integer-era counts and math declaration. The
+500-row gate is 496 / 492 / 491; the supplementary fixture has 8,436
+pin-equal inputs and 156 exact ruled selection residuals. The earlier
+sections retain their historical measurements and decisions.
+
 
 The three-part W14 divergence (#100): sentence candidates do not emit with
 real unigrams, the merged rows are not typed `NBEST_MATCH`, and
@@ -137,6 +137,14 @@ The raw scheme keystroke buffer / session preedit is never an answer.
    penalty, beam 32, two stores per (step, token), unigram expansion only
    from the beam head, λ-blended bigram/unigram costs on the same counts
    the engine's `LanguageModel` already exposes.
+
+**#1378 PR B, maintainer approval 2026-10-29 UTC; recorded
+2026-10-29T08:32:25Z (`date -u`).** The fixed-point and 40-bit-floor
+differences below are superseded. Real-table scoring uses f32 accumulation
+of std `f64::ln` and the pin's pre-log epsilon gates. First-path-only
+pronunciation remains; its stored sums are unchanged. The earlier text
+and §12 table retain the historical measurements pending the PR B
+re-measurement.
 
 Ported divergences (recorded, not chased):
 
@@ -901,3 +909,191 @@ both guards pass after byte-for-byte source restoration. The 50 facade
 cases also match under this single-rule mutation and again after restoration:
 these current-model controls confirm parity; the direct engine guard supplies
 the fallback-rule sensitivity. No wider differential was run.
+
+### #1378 current sentence-selection residuals
+
+Maintainer approval of 2026-10-29 UTC permits this re-measurement and the
+corresponding frozen fixture/test updates. Recorded 2026-10-29T09:07:22Z (`date -u`).
+The old six-row math declaration above is historical. Five now match the
+pin (`bo`, `quguan`, `huilianpei`, `yunhoulvlvlunqianaonaoruoqubeiji`,
+`nou'y`). `kaliantai` remains a selection residual, not class (a): both
+current main and PR B choose `卡利安胎` at rank 2 where the pin chooses
+`卡连太`, with ranks 0–1 identical. It is unchanged by the float scale.
+
+The supplementary fixture contains 8,592 distinct inputs (8,744 corpus
+occurrences). Current main `9015a178` has 163 actual pin differences;
+PR B has 156, all byte-for-byte identical to main. Exactly seven surfaces
+move, all to pin equality. The five legacy math-row closures include
+`quguan` and `nou'y`, which already matched on current main. The seven
+PR B movements are recorded in [float-scoring-1378.md](float-scoring-1378.md).
+
+The remaining cases pass only against their complete exact subject surfaces
+in `oracle-sentence-tie-order.txt`, with POLICY-ACCEPTED under the registered
+S1/S2/S3 repairs. This does not create another precondition-violation site.
+The source is the same beam, node and tail path described by the
+2026-10-28 amendment: adjusted S and earlier batch ties in S1/S2, followed
+by S3's stable descending raw score. The pin uses its pairwise length
+predicate and truncated tail comparison. These current-main selection
+residuals are not attributed to libm or silently called MATCH. Pin captures,
+selected inputs, native selection metadata and existing pool entries are
+preserved; only measured subject vectors change. No new PR B regression
+is accepted by this table.
+
+| Input | Disposition |
+| --- | --- |
+| `diu` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `ri` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `seng` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `tuan` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `pingshuan` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `baori` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `lianting` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `jiangtuan` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `ponuan` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `jiadiu` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `qiaxian` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `gediu` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `chuanseng` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `shuanxiu` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `miaori` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `foudiu` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `jiangseng` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `heiri` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `luanseng` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `dianzhuang` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `binri` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `zangdiu` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `pengnuan` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `naidiu` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `rengnuan` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `rangdiu` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `daizuan` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `potuan` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `maidiu` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `wairi` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `raori` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `xieaituan` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `geizuiri` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `tuanbeiseng` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `niuanshuannuan` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `baobangshuan` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `zeniangsongdiu` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `songhaituan` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `yingzuanzhou` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `xiongkenxiongtuan` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `xinzuiliuzuan` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `yuqiamenuan` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `jiangniemanuan` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `xikabendiu` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `kuishakuangdiu` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `zashuanpaqing` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `tapikaori` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `kaliantai` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `liaoqianuo` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `qianzhaokongceng` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `senyangtuan` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `shehecairi` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `juedaozuan` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `xuanshuanpaoshan` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `zengongdiu` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `zangnanuan` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `tuangeidong` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `tetianyun` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `chongfangzongdiu` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `shuanfousha` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `bangzhuaishuailozengbeilandiu` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `junshuiyunxianshoukuanshangniukeniu` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `kuogaishaoniangtuanfu` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `popashangqianguokuazhushuan` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `dianchangyoutengkuangliaocituan` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `saibiaoshuanxingmudun` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `touzhuoguarennengailuchouyangkuidiu` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `nuanzuanduiguafa` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `funuanchaneiwudingoukuaipingceng` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `caidunshaosongleisibaoruanxuanzuan` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `hunbiankuafengzanxiahangshuan` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `baishuangjianluzhuwawuwoyaoqinri` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `futaixieliangseng` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `zhinaikaoniaozhengshuanlengerchangseng` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `shuangmiaozuanqingtawolaocucaogou` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `biraoguofenshenshuangxianrun` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `tianchushugubanzunhahanyeshuangtuanfu` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `qunruihuoshuisongchonggaohuainaoounvenuan` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `tunshicehongshuanxiangxingmeng` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `dupanggentuanming` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `difolandaochediu` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `chanshuanguadiebaizezarengwangguigui` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `liekuairichazeng` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `wujuebeiminchenshuanzonghao` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `cicangcuohuangheizahuangaiguodiu` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `mangmiaoerkaosawangliaomiunglengbieyu` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `chuaiernaoshuansheguitao` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `benchehaishuannuan` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `diancuchuaijuanyuancui` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `zhuainukuaitiluo` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `zaicuituanshidie` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `junsantuoliaolan` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `guanwaimushuanbenfanraokang` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `naduanriyannuanshoushuanshenzhouruisong` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `quanqiongbingaoreayuanfengshuanzetian` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `ranjieruipaodiu` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `paipieshunmouruogengaineshaihuannuan` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `maiduandouhadiu` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `tanggoutaoshuandiukuanniecailanseque` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `liaonipuluosang` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `huanlingaojingkuncadiu` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `geiersichanshuandengruandanglangduoheian` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `paojuanmangaopadianzhaicenggehunguaimei` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `paimanqusengkasiqieguanchaihuichawa` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `zhi'maofeng'reze'lun'lianzhuang'bin` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `qian'ce'tai'pan'han'yuanshuan'shunguai'tiechen` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `tunen'shang'zaoyu'souzen'liecai'couling'ruhuan'diu` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `fojin'haotie` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `pan'chuangga'xue'leng'katuan` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `menxia'sunchou'men'shuan'wan'bi'shuo'rao` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `qinglei'rengning'bu'shuan'li'maohuai'diaozou'er` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `sanxia'fang'chidiao'dai'taihuang'shun'youbing'pengdiu` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `rongkan'mu'nenlin'duo'zen'xiucou'pian'chuan` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `zi'weng'pendian` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `pan'lian'a` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `peiku'tuan` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `jianshai'hengwai'sun'xianzui'rongnve'nurui'liaoka` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `ruo'cuo'hao'gunnuan'tao'tuan` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `fankai'ng'lieduan'se'kengri` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `hun'liao'zou'chuogang'cengtuan` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `suiman'zhi'lengtuan` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `zha'shuo'he'luoao'chanzuan` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `ruanxun'shu'oulao'shuan'wangshuan'sengruo'tiao` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `pao'nenfou'shuannu'yuken` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `ga'yao'kongo'pa'longri` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `chou'mieshuan'pinpie'gengchang'jiang` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `fenbiao'jie'lang'pinxun'neinuan` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `fen'wo'hun'huochui'saoting'jile'gui'zuanbo` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `shuangluanheixion` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `luantia` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `huikangyuantia` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `goug` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `banrengou'gon` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `tunshuanzengch` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `tuanduanluanra` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `luotuanquans` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `leichel` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `piaonuan` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `piaotuan` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `bieyuemian` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `shengseng` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `gangnuochuangnuan` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `piexiannuochang` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `yangdianlingduan` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `dangshuandie` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `zuoqiebang` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `xuanshuanhang` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `nvetiantuan` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `diajiongjuantuan` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `xingshuan` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `piaomiequanseng` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `kuangshuansao` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `hengshuaiseng` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `tingshuanduanhuo` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `seng)` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+| `shenzuanjiao%` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |

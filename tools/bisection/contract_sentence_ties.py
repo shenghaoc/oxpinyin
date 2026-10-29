@@ -19,10 +19,8 @@ def declared_sentence_residuals():
     """Read membership from the frozen gate's §12 declaration, not a copy."""
     root = Path(__file__).resolve().parents[2]
     doc = (root / 'docs/findings/sentence-surface.md').read_text()
-    section = doc.split('\n## 12. ', 1)[1].split('\n## 13.', 1)[0]
-    declaration = section.split(
-        'Only the following six shared-comparison rows are class (a), as ruled.', 1)[1]
-    table = declaration.split('| Input | Pin deciding f32 bits | Subject native costs |\n', 1)[1]
+    section = doc.split('### #1378 current sentence-selection residuals', 1)[1]
+    table = section.split('| Input | Disposition |\n', 1)[1]
     names = set()
     for line in table.splitlines()[1:]:
         if not line.startswith('|'):
@@ -30,7 +28,7 @@ def declared_sentence_residuals():
         name = line.split('|')[1].strip().strip('`')
         assert name not in names, 'duplicate declared residual'
         names.add(name)
-    assert len(names) == 6, 'frozen declared residual count moved'
+    assert len(names) == 156, 'declared selection residual count moved'
     return names
 
 
@@ -46,16 +44,16 @@ def encode_sentence_tie(row, guessed, sentences, nbest, residual_sentences, resi
         return ','.join(f'{index}:{ids[text]}' for index, text in items)
     return '\t'.join(row[:3] + [str(int(guessed)), '\x01'.join(texts),
                                 indexed(sentences), displayed(nbest),
-                                indexed(residual_sentences), displayed(residual_nbest)])
+                                indexed(residual_sentences) or '-', displayed(residual_nbest) or '-'])
 
 
 def regenerate_sentence_ties(prefix, fixture, *, Kit):
-    """Refresh pin expectations; preserve the six approved exact subject rows.
+    """Refresh pin expectations; preserve the current exact subject rows.
 
     The first three columns are historical native-tail selection metadata.
     Text pooling keeps indexed duplicates and complete NBEST rows compact.
     Membership comes only from the frozen §12 table; ordinary cases cannot
-    carry subject expectations. No observations or other outputs are saved.
+    carry differing subject expectations. No observations or other outputs are saved.
     """
     suspend_offset = time.clock_gettime(time.CLOCK_BOOTTIME) - time.clock_gettime(time.CLOCK_MONOTONIC)
 
@@ -95,7 +93,7 @@ def regenerate_sentence_ties(prefix, fixture, *, Kit):
     assert cases and all(len(row) == 9 and int(row[1]) > 0 for row in cases), 'bad tie fixture'
     assert len({row[0] for row in cases}) == len(cases), 'duplicate selected input'
     declared = declared_sentence_residuals()
-    recorded = {row[0] for row in cases if row[7] or row[8]}
+    recorded = {row[0] for row in cases if row[7] not in ('', '-') or row[8] not in ('', '-')}
     assert recorded == declared, 'subject expectations must match the frozen declared membership exactly'
     out = []
     row_count = 0
@@ -107,9 +105,9 @@ def regenerate_sentence_ties(prefix, fixture, *, Kit):
             for ordinal, row in enumerate(cases, 1):
                 text = row[0]
                 pool = row[4].split('\x01')
-                residual_sentences = [pool[int(index)] for index in row[7].split(',')] if row[7] else []
+                residual_sentences = [pool[int(index)] for index in row[7].split(',')] if row[7] not in ('', '-') else []
                 residual_nbest = [(int(index), pool[int(text_id)])
-                                  for index, text_id in (item.split(':') for item in row[8].split(','))] if row[8] else []
+                                  for index, text_id in (item.split(':') for item in row[8].split(','))] if row[8] not in ('', '-') else []
                 assert k.fn('reset', B, P)(k.inst)
                 k.fn('parse_more_full_pinyins', Z, P, S)(k.inst, text.encode())
                 guessed = k.fn('guess_sentence', B, P)(k.inst)

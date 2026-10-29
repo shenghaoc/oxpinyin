@@ -43,9 +43,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use oxpinyin_core::cost::{
-    Log2Memo, UNKNOWN_COST, cost_of_probability, reduce_ratio, surprisal, surprisal_with_memo,
-};
+use oxpinyin_core::cost::{UNKNOWN_COST, cost_of_probability, reduce_ratio, surprisal};
 use oxpinyin_core::{Cost, LanguageModel, PhraseToken, UserCountDelta, single_gram};
 
 use crate::bigram_table::BigramTable;
@@ -277,16 +275,6 @@ fn probability_cost(x: f64) -> Option<Cost> {
         UNKNOWN_COST => None,
         cost => Some(cost),
     }
-}
-
-/// `log(elem_poss * unigram_lambda)` without the pronunciation factor
-/// (`phonetic_lookup.h:663`).
-fn raw_unigram_cost(lambda: f32, unigram: u64, unigram_total: u64) -> Option<Cost> {
-    if unigram == 0 || unigram_total == 0 {
-        return None;
-    }
-    let elem_poss = unigram as f64 / unigram_total as f64;
-    probability_cost(elem_poss * f64::from(unigram_lambda(lambda)))
 }
 
 /// `log(bigram_lambda * bigram_poss + unigram_lambda * unigram_poss)`
@@ -749,7 +737,7 @@ impl BigramLanguageModel {
         user: UserCountDelta,
         imported_item: bool,
     ) -> Result<oxpinyin_core::NbestStepCosts, LmError> {
-        self.nbest_step_costs_using(token, user, imported_item, &mut Log2Memo::default(), || {
+        self.nbest_step_costs_using(token, user, imported_item, || {
             self.merged_transition(prev.value(), token.value(), user)
         })
     }
@@ -768,24 +756,7 @@ impl BigramLanguageModel {
         imported_item: bool,
         item: Option<(u32, u32)>,
     ) -> Result<oxpinyin_core::NbestStepCosts, LmError> {
-        self.nbest_item_costs_with_memo(token, user, imported_item, item, &mut Log2Memo::default())
-    }
-
-    /// [`Self::nbest_item_costs`] taking the denominators' logarithms from
-    /// `memo`, the predecessor row's ([`oxpinyin_core::NbestStepRow::log2_memo`]).
-    /// The memo is keyed by exact argument, so the costs are bit-identical.
-    ///
-    /// # Errors
-    /// None today; the signature keeps the cost law's error type.
-    pub fn nbest_item_costs_with_memo(
-        &self,
-        token: &PhraseToken,
-        user: UserCountDelta,
-        imported_item: bool,
-        item: Option<(u32, u32)>,
-        memo: &mut Log2Memo,
-    ) -> Result<oxpinyin_core::NbestStepCosts, LmError> {
-        self.nbest_step_costs_using(token, user, imported_item, memo, || {
+        self.nbest_step_costs_using(token, user, imported_item, || {
             Ok(item.map(|(freq, total)| (u64::from(freq), u64::from(total), true)))
         })
     }
@@ -795,7 +766,6 @@ impl BigramLanguageModel {
         token: &PhraseToken,
         user: UserCountDelta,
         imported_item: bool,
-        memo: &mut Log2Memo,
         transition: impl FnOnce() -> Result<Option<(u64, u64, bool)>, LmError>,
     ) -> Result<oxpinyin_core::NbestStepCosts, LmError> {
         // The pin's presence gate is `get_phrase_item` over the token's
@@ -817,78 +787,35 @@ impl BigramLanguageModel {
         };
         let count = merge_unigram_counts(count, user.unigram_delta);
         let unigram_total = self.facade_total(user.unigram_total_delta);
-        if unigram_total == 0 {
-            return Ok(oxpinyin_core::NbestStepCosts::default());
-        }
-
-        if let Some(lambda) = self.lambda_raw {
-            let blended = match transition()? {
-                Some((bigram_count, bigram_total, true)) => {
-                    raw_blend_cost(lambda, bigram_count, bigram_total, count, unigram_total)
-                }
-                _ => None,
-            };
-            return Ok(oxpinyin_core::NbestStepCosts {
-                blended,
-                unigram: raw_unigram_cost(lambda, count, unigram_total),
-            });
-        }
-
-        let lambda_num = self.lambda.numerator();
-        let lambda_den = self.lambda.denominator();
-        let one_minus_lambda = lambda_den.saturating_sub(lambda_num);
-
-        // The no-evidence branch: (1 − λ) · u / ut, or the pin's float
-        // arithmetic where the product overflows `u128` (D1).
-        let unigram = if count > 0 {
-            match one_minus_lambda
-                .checked_mul(u128::from(count))
-                .zip(lambda_den.checked_mul(u128::from(unigram_total)))
-            {
-                Some(ratio) => ratio_cost(ratio, memo),
-                None => raw_unigram_cost(self.lambda_f32, count, unigram_total),
-            }
-        } else {
+        // Pre-log pieces, with the pin's epsilon gates before weighting.
+        // IEEE division deliberately carries zero totals and NaN through.
+        let elem = count as f64 / unigram_total as f64;
+        let unigram_lambda = (1.0_f64 - f64::from(self.lambda_f32)) as f32;
+        let unigram = if elem < f64::EPSILON {
             None
+        } else {
+            Some(elem)
         };
-
-        // The blended branch, only when the merged bigram row actually
-        // carries this successor: upstream's bigram expansion walks
-        // merged-gram successors (`search_bigram2`). Stored records survive
-        // a wrapped count of zero; absence, rather than count, gates the walk.
-        // A wrapped total below the stored count puts the blend above one, and
-        // the pin takes `log` of it uncapped (`phonetic_lookup.h:692-693`), so
-        // that is priced as a negative cost, not clamped. Above one, preserve
-        // the pin's gfloat bigram division/multiplication and gdouble sum
-        // (074a2219 `phonetic_lookup.h:605-608`, `:692-693`). Ratios up to
-        // one keep the registered fixed-point divergence's exact path.
         let blended = match transition()? {
-            Some((0, 0, true)) => Some(oxpinyin_core::cost::NAN_COST),
-            Some((_, 0, true)) => Some(zero_total_bigram_cost(lambda_num)),
-            Some((bigram_count, bigram_total, true)) => match interpolate_ratio(
-                lambda_num,
-                lambda_den,
-                u128::from(bigram_count),
-                u128::from(bigram_total),
-                u128::from(count),
-                u128::from(unigram_total),
-            ) {
-                Some(ratio @ (numerator, denominator)) if numerator <= denominator => {
-                    ratio_cost(ratio, memo)
+            Some((freq, total, true)) => {
+                let bigram = freq as f32 / total as f32;
+                if bigram < f32::EPSILON && elem < f64::EPSILON {
+                    None
+                } else {
+                    let weighted = self.lambda_f32 * bigram;
+                    Some(f64::from(weighted) + f64::from(unigram_lambda) * elem)
                 }
-                // Above one, or a product that overflows `u128` (D1).
-                Some(_) | None => raw_blend_cost(
-                    self.lambda_f32,
-                    bigram_count,
-                    bigram_total,
-                    count,
-                    unigram_total,
-                ),
-            },
+            }
             _ => None,
         };
-
-        Ok(oxpinyin_core::NbestStepCosts { blended, unigram })
+        if blended.is_none() && unigram.is_none() {
+            return Ok(oxpinyin_core::NbestStepCosts::default());
+        }
+        Ok(oxpinyin_core::NbestStepCosts {
+            blended,
+            unigram,
+            unigram_lambda,
+        })
     }
 }
 
@@ -938,9 +865,9 @@ impl LanguageModel for BigramLanguageModel {
         _prev: &Self::Token,
         token: &Self::Token,
         item: Option<(u32, u32)>,
-        row: &mut oxpinyin_core::NbestStepRow,
+        _row: &mut oxpinyin_core::NbestStepRow,
     ) -> Result<oxpinyin_core::NbestStepCosts, Self::Error> {
-        self.nbest_item_costs_with_memo(token, UserCountDelta::ZERO, false, item, row.log2_memo())
+        self.nbest_item_costs(token, UserCountDelta::ZERO, false, item)
     }
 
     fn nbest_successors_in_row<'a>(
@@ -955,17 +882,6 @@ impl LanguageModel for BigramLanguageModel {
                     oxpinyin_core::NbestSuccessors::Row,
                 ),
         ))
-    }
-}
-
-/// Surprisal of one ratio, `None` when the reduced parts do not fit `u64`
-/// (a pathological λ; the step then reports no cost, like a below-ε
-/// possibility upstream).
-fn ratio_cost((numerator, denominator): (u128, u128), memo: &mut Log2Memo) -> Option<Cost> {
-    let (numerator, denominator) = reduce_ratio(numerator, denominator);
-    match surprisal_with_memo(numerator, denominator, memo) {
-        UNKNOWN_COST => None,
-        cost => Some(cost),
     }
 }
 

@@ -2,18 +2,17 @@
 //! get_best_match` (`src/lookup/phrase_lookup.cpp:121-157` at the pin).
 //!
 //! A span DP over the sentence's characters: step 0 holds one virtual
-//! `sentence_start` node at zero cost (`populate_prefixes`,
-//! `phrase_lookup.cpp:36-53` — `log(1.0)`, exactly representable in the
-//! fixed-point scale); every span `[i, j)` within
+//! `sentence_start` node at +0.0f32 (`populate_prefixes`,
+//! `phrase_lookup.cpp:36-53` — `log(1.0)`); every span `[i, j)` within
 //! [`MAX_PHRASE_LENGTH`] whose text is a stored phrase relaxes the node
-//! at step `j` for each candidate token. Two cost branches per
+//! at step `j` for each candidate token. Two probability branches per
 //! candidate, straight from the pin: the bigram branch rides **every**
 //! node of the from-step with the blended law
 //! (`bigram_gen_next_step`, `phrase_lookup.cpp:327-344`), and the
 //! unigram branch rides only the from-step's **best** node
 //! (`search_unigram2` picks the step's maximum,
 //! `phrase_lookup.cpp:217-241`) with the unigram law. Relaxation keeps
-//! the best cost per (step, token) (`save_next_step`,
+//! the best possibility per (step, token) (`save_next_step`,
 //! `:348-377`); the final step picks the best node of the last step and
 //! backtracks, writing each token at its span's start position in a
 //! character-length array (`final_step`, `:382-428` — "no need to
@@ -23,10 +22,8 @@
 //! null-filled **before** the empty-last-step check that returns
 //! `false`, so a failed match leaves a fully sized, all-null array —
 //! `pinyin_get_n_phrase` afterwards reports the character count, not
-//! zero. Costs ride the model's fixed-point step costs, the same
-//! ported blend the sentence trellis uses; the recorded float-log
-//! divergence class applies to near-tie segmentation choices
-//! (`docs/findings/upstream-divergences.md`).
+//! zero. Scores accumulate as `(f64::from(poss) + probability.ln()) as
+//! f32`, with pre-log branches supplied by the language model.
 
 use std::collections::HashMap;
 
@@ -51,12 +48,11 @@ struct Node {
     token: PhraseToken,
     /// The predecessor node's token (`m_handles[0]`).
     prev: PhraseToken,
-    /// `m_last_step` — the span's start position; [`SENTINEL_START`]
+    /// `m_last_step` — the span's start position; [`START_SENTINEL`]
     /// marks the virtual start node.
     last_step: usize,
-    /// Accumulated cost (upstream `m_poss`, on the fixed-point
-    /// surprisal scale — lower is better).
-    cost: i64,
+    /// Accumulated f32 log possibility (upstream `m_poss`).
+    poss: f32,
 }
 
 /// The virtual start's `m_last_step` (upstream leaves it at the
@@ -76,7 +72,7 @@ impl Step {
     fn relax(&mut self, node: Node) {
         if let Some(&position) = self.index.get(&node.token.value()) {
             let existing = &mut self.content[position];
-            if node.cost < existing.cost {
+            if existing.poss < node.poss {
                 *existing = node;
             }
         } else {
@@ -88,13 +84,14 @@ impl Step {
     /// The step's best node — upstream's max-`m_poss` scan, first wins
     /// on ties (array order).
     fn best(&self) -> Option<&Node> {
-        self.content.iter().min_by(|a, b| {
-            a.cost.cmp(&b.cost).then_with(|| {
-                let a_order = self.index.get(&a.token.value());
-                let b_order = self.index.get(&b.token.value());
-                a_order.cmp(&b_order)
-            })
-        })
+        let mut nodes = self.content.iter();
+        let mut best = nodes.next()?;
+        for node in nodes {
+            if node.poss > best.poss {
+                best = node;
+            }
+        }
+        Some(best)
     }
 }
 
@@ -214,7 +211,7 @@ where
         token: PhraseToken::new(SENTENCE_START),
         prev: null,
         last_step: START_SENTINEL,
-        cost: 0,
+        poss: 0.0,
     });
 
     for i in 0..n {
@@ -252,7 +249,7 @@ where
                             token,
                             prev: node.token,
                             last_step: i,
-                            cost: node.cost + blended,
+                            poss: (f64::from(node.poss) + blended.ln()) as f32,
                         });
                     }
                     // Unigram branch: the from-step's best node only.
@@ -260,17 +257,17 @@ where
                         && from.token == node.token
                         && let Some(unigram) = costs.unigram
                     {
-                        unigrams.push((token, unigram));
+                        unigrams.push((token, unigram * f64::from(costs.unigram_lambda)));
                     }
                 }
             }
-            for (token, cost) in unigrams {
+            for (token, probability) in unigrams {
                 if let Some(from) = &uni_from {
                     step.relax(Node {
                         token,
                         prev: from.token,
                         last_step: i,
-                        cost: from.cost + cost,
+                        poss: (f64::from(from.poss) + probability.ln()) as f32,
                     });
                 }
             }
@@ -383,12 +380,10 @@ mod tests {
         fn unigram(&self, token: &PhraseToken) -> Option<NbestStepCosts> {
             let &(_, count) = self.unigrams.iter().find(|(t, _)| *t == token.value())?;
             debug_assert!(self.total > 0);
-            // The test only needs a monotone scale of the same shape:
-            // surprisal of the token's unigram possibility.
-            let cost = (1000.0 * ((self.total as f64) / (count as f64)).log2()) as i64;
             Some(NbestStepCosts {
                 blended: None,
-                unigram: Some(cost),
+                unigram: Some(count as f64 / self.total as f64),
+                unigram_lambda: 1.0,
             })
         }
     }
@@ -414,6 +409,8 @@ mod tests {
             Ok(self.unigram(token).unwrap_or(NbestStepCosts {
                 blended: None,
                 unigram: None,
+
+                unigram_lambda: 1.0,
             }))
         }
     }
@@ -517,7 +514,9 @@ mod tests {
             ) -> Result<NbestStepCosts, Self::Error> {
                 Ok(NbestStepCosts {
                     blended: None,
-                    unigram: Some(1),
+                    unigram: Some(2.0_f64.powf(-0.001)),
+
+                    unigram_lambda: 1.0,
                 })
             }
         }
@@ -573,8 +572,14 @@ mod tests {
                     (4, 5) => Err("first span's second predecessor"),
                     (3, 6) => Err("later span's first predecessor"),
                     _ => Ok(NbestStepCosts {
-                        blended: Some(1),
-                        unigram: Some(1),
+                        blended: (Some(1)).map(|cost: i64| {
+                            (-(cost as f64) * std::f64::consts::LN_2 / 1000.0).exp()
+                        }),
+                        unigram: (Some(1)).map(|cost: i64| {
+                            (-(cost as f64) * std::f64::consts::LN_2 / 1000.0).exp()
+                        }),
+
+                        unigram_lambda: 1.0,
                     }),
                 }
             }
@@ -679,8 +684,11 @@ mod tests {
             _: &mut oxpinyin_core::NbestStepRow,
         ) -> Result<NbestStepCosts, Self::Error> {
             Ok(NbestStepCosts {
-                blended: item.map(|(freq, _)| i64::from(freq)),
+                blended: (item.map(|(freq, _)| i64::from(freq)))
+                    .map(|cost: i64| (-(cost as f64) * std::f64::consts::LN_2 / 1000.0).exp()),
                 unigram: None,
+
+                unigram_lambda: 1.0,
             })
         }
     }
@@ -727,5 +735,62 @@ mod tests {
         let (matched, result) = phrase_segment(&dictionary, &whole, "你").unwrap();
         assert!(matched);
         assert_eq!(result[0].value(), 3);
+    }
+    #[test]
+    fn ieee_relax_and_best_keep_first_on_ties_and_nan() {
+        use super::{Node, Step};
+        let node = |token, poss| Node {
+            token: PhraseToken::new(token),
+            prev: PhraseToken::new(1),
+            last_step: 0,
+            poss,
+        };
+        let mut step = Step::default();
+        step.relax(node(3, f32::NAN));
+        step.relax(node(3, 10.0));
+        step.relax(node(4, f32::INFINITY));
+        assert!(step.best().unwrap().poss.is_nan());
+        let mut step = Step::default();
+        step.relax(node(3, f32::NEG_INFINITY));
+        step.relax(node(4, f32::NEG_INFINITY));
+        assert_eq!(step.best().unwrap().token.value(), 3);
+        step.relax(node(3, f32::NAN));
+        assert_eq!(step.best().unwrap().poss, f32::NEG_INFINITY);
+        step.relax(node(4, 1.0));
+        assert_eq!(step.best().unwrap().token.value(), 4);
+    }
+    #[test]
+    fn special_steps_accumulate_without_integer_sentinel_overflow() {
+        struct Special(f64);
+        impl LanguageModel for Special {
+            type Token = PhraseToken;
+            type Error = core::convert::Infallible;
+            fn score(
+                &self,
+                _: &[PhraseToken],
+                _: &PhraseToken,
+                cost: i64,
+            ) -> Result<i64, Self::Error> {
+                Ok(cost)
+            }
+            fn nbest_step_costs(
+                &self,
+                _: &PhraseToken,
+                _: &PhraseToken,
+            ) -> Result<NbestStepCosts, Self::Error> {
+                Ok(NbestStepCosts {
+                    blended: Some(self.0),
+                    unigram: Some(self.0),
+                    unigram_lambda: 1.0,
+                })
+            }
+        }
+        let dictionary = Dict::parse(&[("a", 3), ("b", 4)]);
+        for probability in [0.0, -1.0, f64::INFINITY, f64::NAN] {
+            let (matched, tokens) =
+                phrase_segment(&dictionary, &Special(probability), "ab").unwrap();
+            assert!(matched);
+            assert_eq!(tokens, [PhraseToken::new(3), PhraseToken::new(4)]);
+        }
     }
 }

@@ -8,8 +8,8 @@ import re
 import subprocess
 import sys
 
-from contract_abi import B, I, P, S, U, UNTOUCHED, Z, unigram_of
-from contract_case_helpers import token_unigram_trained, token_unigram_user
+from contract_abi import B, I, P, S, U, UNTOUCHED, Z, unigram_of, final_step_sentences
+from contract_case_helpers import token_unigram_trained, token_unigram_user, d18_bigram_db
 from contract_fixtures import _write_user_conf, conf_system, private_system, user_listing
 from contract_verdict import WARNING_DOMAIN
 
@@ -230,6 +230,31 @@ def register(case, *, CASES, WORKER):
             case('table-conf-' + name + ('-zhuyin' if mode == 'zhuyin' else ''), mode=mode,
                  **{'control': control, **options}, issues=issues)(probe)
 
+
+    # #1378, phonetic_lookup.h:651-663: the epsilon gate is on elem_poss,
+    # before weighting. At lambda=1 the unigram step still exists at log(0).
+    # An empty valid system bigram makes this the only first-step branch.
+    # Observe branch presence, not the unrelated equal-score tail tie order.
+    def unigram_only_session(k, system):
+        path = Path(system, 'bigram.db')
+        path.unlink()  # private_system's link; never modify the pin data
+        d18_bigram_db(k, path, [])
+        ctx = k.init(system=system)
+        assert ctx
+        inst = k.fn('alloc_instance', P, P)(ctx)
+        text = b'ni' if k.mode == 'pinyin' else b'ni3'
+        parsed = k.fn('parse_more_full_pinyins', Z, P, S)(inst, text)
+        guessed = k.fn('guess_sentence', B, P)(inst)
+        out = dict(parsed=parsed, guessed=guessed,
+                   has_sentence=bool(final_step_sentences(k, inst)))
+        k.fn('free_instance', None, P)(inst)
+        return out
+
+    for _name, _lambda, _control in (('one', '1', False), ('zero-control', '0', True)):
+        conf_case('1378-unigram-lambda-' + _name,
+                  ('lambda parameter:0.312699', 'lambda parameter:' + _lambda),
+                  session=unigram_only_session, issues=('1378',),
+                  control=_control, stderr=True)
 
     # Valid files that are not the stock one: the pin follows the rows.
     _STOCK_DBIN = 'gb_char.dbin SYSTEM_FILE'

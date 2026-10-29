@@ -1229,6 +1229,7 @@ fn a_fallback_sentence_never_records_row_tokens() {
     // fallback list also offers, so a fallback sentence candidate sits
     // beyond the row at a known place.
     session.sentence.rows = vec![NbestRow {
+        poss: None,
         text: "\u{884}".into(),
         tokens: vec![PhraseToken::new(9)],
         spans: Vec::new(),
@@ -1255,6 +1256,7 @@ fn a_fallback_sentence_never_records_row_tokens() {
     session.reset();
     session.type_pinyin("nihao").expect("typing cannot fail");
     session.sentence.rows = vec![NbestRow {
+        poss: None,
         text: "\u{884}".into(),
         tokens: vec![PhraseToken::new(9)],
         spans: Vec::new(),
@@ -1292,6 +1294,7 @@ fn a_shifted_row_records_its_own_rank_not_its_position() {
     // (the 你→浩 training divergence, `sentence-surface.md` §8).
     session.sentence.rows = vec![
         NbestRow {
+            poss: None,
             text: "\u{597d}".into(),
             tokens: vec![PhraseToken::new(0x100)],
             spans: Vec::new(),
@@ -1300,6 +1303,7 @@ fn a_shifted_row_records_its_own_rank_not_its_position() {
             cost: 10,
         },
         NbestRow {
+            poss: None,
             text: "\u{597d}".into(),
             tokens: vec![PhraseToken::new(0x101)],
             spans: Vec::new(),
@@ -1308,6 +1312,7 @@ fn a_shifted_row_records_its_own_rank_not_its_position() {
             cost: 20,
         },
         NbestRow {
+            poss: None,
             text: "\u{6d69}".into(),
             tokens: vec![PhraseToken::new(0x102)],
             spans: Vec::new(),
@@ -1348,6 +1353,7 @@ fn an_nbest_row_chosen_from_a_reanchored_window_commits_only_its_text() {
     // the row's text alone — never the typed-but-unselected gap (which
     // would duplicate the raw prefix).
     session.sentence.rows = vec![NbestRow {
+        poss: None,
         text: "你好".into(),
         tokens: vec![PhraseToken::new(0x100), PhraseToken::new(0x101)],
         spans: Vec::new(),
@@ -2324,8 +2330,12 @@ impl LanguageModel for TrellisModel {
         _token: &PhraseToken,
     ) -> Result<NbestStepCosts, EngineError> {
         Ok(NbestStepCosts {
-            blended: Some(self.blended),
-            unigram: Some(self.unigram),
+            blended: (Some(self.blended))
+                .map(|cost: i64| (-(cost as f64) * std::f64::consts::LN_2 / 1000.0).exp()),
+            unigram: (Some(self.unigram))
+                .map(|cost: i64| (-(cost as f64) * std::f64::consts::LN_2 / 1000.0).exp()),
+
+            unigram_lambda: 1.0,
         })
     }
 }
@@ -2768,6 +2778,7 @@ fn a_fresh_composition_row_choose_records_its_forcing() {
     // the shifted-row shape (`sentence-surface.md` §8).
     session.sentence.rows = vec![
         crate::nbest::NbestRow {
+            poss: None,
             text: "\u{597d}".into(),
             tokens: vec![PhraseToken::new(0x100)],
             spans: vec![crate::constraint::PhraseSpan {
@@ -2780,6 +2791,7 @@ fn a_fresh_composition_row_choose_records_its_forcing() {
             cost: 10,
         },
         crate::nbest::NbestRow {
+            poss: None,
             text: "\u{6d69}".into(),
             tokens: vec![PhraseToken::new(0x102)],
             spans: vec![crate::constraint::PhraseSpan {
@@ -2984,6 +2996,7 @@ fn candidates_at_mid_syllable_keeps_the_prepended_nbest_rows() {
         .type_pinyin("nihaoshijie")
         .expect("typing cannot fail");
     session.sentence.rows = vec![NbestRow {
+        poss: None,
         text: "你好世界".into(),
         tokens: vec![
             PhraseToken::new(0x100),
@@ -3020,6 +3033,7 @@ fn the_zhuyin_display_law_prepends_only_the_one_best_row() {
     use crate::nbest::NbestRow;
 
     let row = |text: &str, cost: i64| NbestRow {
+        poss: None,
         text: text.into(),
         tokens: vec![PhraseToken::new(0x100)],
         spans: Vec::new(),
@@ -3160,6 +3174,7 @@ fn candidates_ending_at_walks_the_spans_that_end_there() {
 
     // A guessed sentence rides the prepend at any offset.
     session.sentence.rows = vec![NbestRow {
+        poss: None,
         text: "你好".into(),
         tokens: vec![PhraseToken::new(0x100)],
         spans: Vec::new(),
