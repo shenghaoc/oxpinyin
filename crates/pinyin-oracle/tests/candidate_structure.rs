@@ -1,165 +1,55 @@
-//! W2-CAND: `fixtures/w4/oracle-candidate-structure.txt`.
-//!
-//! Two tiers, mirroring `real_tables_integration.rs`:
-//!
-//! - **Portable** (`structure_fixture_matches_sister_triples`): no `oracle-ffi`.
-//!   Asserts the new fixture's `(input, rank, candidate_text)` columns are
-//!   byte-identical to `oracle-candidates.txt`, and that every `type` /
-//!   `nbest_index` value is well-formed and within the set the `0x1e`
-//!   guess-candidates path can emit (`candidate-construction.md` §1.6).
-//!
-//! - **Freshness** (`structure_fixture_is_fresh`, `oracle-ffi` only): re-runs
-//!   the capture over the whole W2 corpus and asserts the frozen file matches.
-//!   Regenerate with
-//!   `cargo run -p pinyin-oracle --features oracle-ffi --bin oracle-candidate-structure`.
+//! W2-CAND: format, candidate types and live freshness of the single W4 capture.
 
+use pinyin_oracle::OracleCandidateType;
+use pinyin_oracle::candidate_fixture::{CandidateFixture, STRUCTURE_FIXTURE};
 use std::path::PathBuf;
 
-const SISTER_FIXTURE: &str = "fixtures/w4/oracle-candidates.txt";
-const STRUCTURE_FIXTURE: &str = "fixtures/w4/oracle-candidate-structure.txt";
 #[cfg(feature = "oracle-ffi")]
 const CAPTURE_DEPTH: usize = 10;
 
 fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-}
-
-/// Reads a committed fixture. Absence is a failure, not a skip: the W4
-/// fixtures are tracked, and a test that silently passed without them
-/// would report parity it never checked. (The `#[ignore]`d freshness test
-/// regenerates them.)
-fn load(relative: &str) -> String {
-    let path = repo_root().join(relative);
-    match std::fs::read_to_string(&path) {
-        Ok(text) => text,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            panic!(
-                "committed fixture missing at {}: restore it or regenerate with bin oracle-candidate-structure",
-                path.display()
-            )
-        }
-        Err(error) => panic!(
-            "fixture at {} is present but unreadable: {error}",
-            path.display()
-        ),
-    }
-}
-
-/// Payload (non-comment, non-empty) lines of a fixture, in file order.
-fn payload(raw: &str) -> impl Iterator<Item = &str> {
-    raw.lines()
-        .filter(|line| !line.starts_with('#') && !line.is_empty())
-}
-
-/// The pin reference stamped in a fixture's `# pin_ref=` header.
-fn pin_ref(raw: &str) -> Option<&str> {
-    raw.lines().find_map(|line| line.strip_prefix("# pin_ref="))
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
 #[test]
-fn structure_fixture_matches_sister_triples() {
-    let sister = load(SISTER_FIXTURE);
-    let structure = load(STRUCTURE_FIXTURE);
-
-    // Both fixtures must be stamped by the same pin, and it must be the frozen
-    // one; otherwise the two are not comparable.
-    let sister_pin = pin_ref(&sister).expect("sister fixture has a # pin_ref header");
-    let structure_pin = pin_ref(&structure).expect("structure fixture has a # pin_ref header");
-    assert_eq!(
-        sister_pin, structure_pin,
-        "the two fixtures were captured under different pins"
-    );
-    assert_eq!(
-        structure_pin,
-        pinyin_oracle::EXPECTED_PIN_REF,
-        "structure fixture pin_ref does not match the frozen pin"
-    );
-
-    // Sister triples: input <TAB> rank <TAB> candidate_text.
-    let sister_triples: Vec<(&str, &str, &str)> = payload(&sister)
-        .map(|line| {
-            let mut parts = line.split('\t');
-            let input = parts.next().unwrap_or_default();
-            let rank = parts.next().expect("sister line has a rank field");
-            let text = parts.next().expect("sister line has a candidate field");
+fn structure_fixture_has_valid_format_and_candidate_types() {
+    let raw = std::fs::read_to_string(repo_root().join(STRUCTURE_FIXTURE))
+        .expect("committed structure fixture");
+    let fixture = CandidateFixture::parse(&raw).expect("well-formed structure fixture");
+    assert_eq!(fixture.pin_ref, pinyin_oracle::EXPECTED_PIN_REF);
+    let header_triples: usize = raw
+        .lines()
+        .find_map(|line| line.strip_prefix("# total_triples="))
+        .and_then(|rest| rest.split_whitespace().next())
+        .expect("total_triples header")
+        .parse()
+        .expect("numeric total_triples");
+    assert_eq!(fixture.rows.len(), header_triples);
+    let mut previous_input = None;
+    let mut expected_rank = 1;
+    for row in &fixture.rows {
+        if previous_input != Some(row.input.as_str()) {
             assert!(
-                parts.next().is_none(),
-                "sister line has extra tabs: {line:?}"
+                previous_input.is_none_or(|previous| previous < row.input.as_str()),
+                "inputs sorted bytewise"
             );
-            (input, rank, text)
-        })
-        .collect();
-
-    // Structure records: input <TAB> rank <TAB> text <TAB> type <TAB> nbest_index.
-    // Project to the triple for the equality check, and validate the two new
-    // columns while we walk.
-    let mut structure_triples: Vec<(&str, &str, &str)> = Vec::with_capacity(sister_triples.len());
-    for line in payload(&structure) {
-        let mut parts = line.split('\t');
-        let input = parts.next().unwrap_or_default();
-        let rank = parts.next().expect("structure line has a rank field");
-        let text = parts.next().expect("structure line has a candidate field");
-        let cand_type = parts.next().expect("structure line has a type field");
-        let nbest = parts
-            .next()
-            .expect("structure line has an nbest_index field");
-        assert!(
-            parts.next().is_none(),
-            "structure line has extra tabs: {line:?}"
-        );
-
-        // `type` is a frozen public enum name, and one the 0x1e path can emit:
-        // LONGER is excluded by SORT_WITHOUT_LONGER_CANDIDATE and no PREDICTED_*
-        // is produced without a guess_predicted call (§1.6).
-        let parsed = pinyin_oracle::OracleCandidateType::from_wire(cand_type);
-        assert!(
-            parsed.is_some(),
-            "unknown candidate type {cand_type:?} in {line:?}"
-        );
-        assert_ne!(
-            cand_type, "LONGER_CANDIDATE",
-            "LONGER must be sorted out: {line:?}"
-        );
-        assert!(
-            !cand_type.starts_with("PREDICTED_"),
-            "predicted types cannot appear on the guess_candidates path: {line:?}"
-        );
-
-        // `nbest_index` is `-` or a u8.
-        assert!(
-            nbest == "-" || nbest.parse::<u8>().is_ok(),
-            "malformed nbest_index {nbest:?} in {line:?}"
-        );
-        // §7.2: the numeric index is present iff the candidate is NBEST_MATCH.
+            expected_rank = 1;
+        }
         assert_eq!(
-            nbest != "-",
-            cand_type == "NBEST_MATCH_CANDIDATE",
-            "nbest_index is defined iff the candidate is NBEST_MATCH (§7.2): {line:?}"
+            row.rank, expected_rank,
+            "consecutive ranks for {:?}",
+            row.input
         );
-
-        structure_triples.push((input, rank, text));
-    }
-
-    assert_eq!(
-        structure_triples.len(),
-        sister_triples.len(),
-        "triple counts differ: structure has {}, sister has {}",
-        structure_triples.len(),
-        sister_triples.len()
-    );
-    // The construction guarantee: the two share the same input set and the same
-    // per-input candidate order, so the projected triples are identical. Walk in
-    // step so a divergence names the first bad line instead of dumping ~97k rows.
-    for (index, (structure_triple, sister_triple)) in
-        structure_triples.iter().zip(&sister_triples).enumerate()
-    {
+        assert!(row.rank <= 10, "capture depth is ten");
+        // The 0x1e guess-candidates path excludes LONGER and cannot emit predictions.
+        assert_ne!(row.candidate_type, OracleCandidateType::Longer);
+        assert!(!row.candidate_type.as_wire().starts_with("PREDICTED_"));
         assert_eq!(
-            structure_triple, sister_triple,
-            "structure fixture (input, rank, text) diverges from the sister at \
-             0-based line {index}: structure {structure_triple:?} vs sister {sister_triple:?}"
+            row.nbest_index.is_some(),
+            row.candidate_type == OracleCandidateType::NbestMatch
         );
+        previous_input = Some(row.input.as_str());
+        expected_rank += 1;
     }
 }
 
@@ -178,15 +68,31 @@ fn structure_fixture_is_fresh() {
     use pinyin_oracle::corpus;
     use pinyin_oracle::{Oracle, OracleFlags, OraclePrefix};
 
-    let structure = load(STRUCTURE_FIXTURE);
+    let structure =
+        CandidateFixture::read(repo_root().join(STRUCTURE_FIXTURE)).expect("structure fixture");
     assert_eq!(
-        pin_ref(&structure).expect("pin_ref header"),
+        structure.pin_ref,
         pinyin_oracle::EXPECTED_PIN_REF,
         "structure fixture pin_ref does not match the frozen pin"
     );
 
     // Committed payload, verbatim, in file order.
-    let committed: Vec<&str> = payload(&structure).collect();
+    let committed: Vec<String> = structure
+        .rows
+        .iter()
+        .map(|row| {
+            let nbest = row
+                .nbest_index
+                .map_or_else(|| "-".to_owned(), |index| index.to_string());
+            format!(
+                "{}\t{}\t{}\t{}\t{nbest}",
+                row.input,
+                row.rank,
+                row.text,
+                row.candidate_type.as_wire()
+            )
+        })
+        .collect();
 
     let prefix = OraclePrefix::locate().expect("oracle prefix");
     let mut oracle = Oracle::open_with_temp_user_dir(prefix).expect("oracle opens");

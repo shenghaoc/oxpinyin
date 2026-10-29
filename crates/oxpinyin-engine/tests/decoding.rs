@@ -385,7 +385,7 @@ fn batch_accepts_junk_key_by_key_ignores_it() {
 ///
 /// Incomplete `b` expands to complete keys (`bu`, `bing`, …). `不` rides on
 /// `bu` (cheaper unigram) and `并` on `bing`. Fixture justification:
-/// `fixtures/w4/oracle-candidates.txt` has `b#ing\t1\t不` and `bing\t1\t并`.
+/// `fixtures/w4/oracle-candidate-structure.txt` has `b#ing\t1\t不` and `bing\t1\t并`.
 const JUNK_VOCAB: &str = "\
 token=1\tkeys=bu\ttext=不\tunigram=1000
 token=2\tkeys=bing\ttext=并\tunigram=100

@@ -4,15 +4,15 @@
 //! cargo run -p pinyin-oracle --release --bin parity-worst
 //! ```
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 use oxpinyin_data::{BigramLanguageModel, SystemDbm, SystemDictionary};
 use oxpinyin_engine::{EmptyConfigSource, Session, StoragePaths};
+use pinyin_oracle::candidate_fixture::{CandidateFixture, STRUCTURE_FIXTURE};
 use pinyin_oracle::corpus;
 
-const CANDIDATES_FIXTURE: &str = "fixtures/w4/oracle-candidates.txt";
 const WORST_N: usize = 50;
 
 fn repo_root() -> PathBuf {
@@ -48,18 +48,9 @@ fn main() -> ExitCode {
     let mut session =
         Session::new(&EmptyConfigSource, StoragePaths::new("user"), dict, lm).expect("session");
 
-    let raw = std::fs::read_to_string(repo_root().join(CANDIDATES_FIXTURE)).expect("fixture");
-    let mut fixture: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for line in raw.lines() {
-        if line.starts_with('#') || line.is_empty() {
-            continue;
-        }
-        let mut p = line.split('\t');
-        let input = p.next().unwrap_or("").to_owned();
-        let _rank = p.next();
-        let cand = p.next().unwrap_or("").to_owned();
-        fixture.entry(input).or_default().push(cand);
-    }
+    let fixture = CandidateFixture::read(repo_root().join(STRUCTURE_FIXTURE))
+        .expect("candidate structure fixture")
+        .candidate_lists();
 
     let corpus_dir = repo_root().join(corpus::CORPUS_DIR);
     let mut inputs = Vec::new();

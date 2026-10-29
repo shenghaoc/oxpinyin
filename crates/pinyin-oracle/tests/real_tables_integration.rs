@@ -16,13 +16,12 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 #[cfg(feature = "oracle-ffi")]
+use pinyin_oracle::candidate_fixture::{CandidateFixture, STRUCTURE_FIXTURE};
+#[cfg(feature = "oracle-ffi")]
 use pinyin_oracle::corpus;
 
 #[cfg(feature = "oracle-ffi")]
 const CAPTURE_DEPTH: usize = 10;
-
-#[cfg(feature = "oracle-ffi")]
-const CANDIDATES_FIXTURE: &str = "fixtures/w4/oracle-candidates.txt";
 
 #[cfg(feature = "oracle-ffi")]
 fn repo_root() -> PathBuf {
@@ -68,79 +67,7 @@ fn load_w2_corpus() -> Option<Vec<String>> {
     Some(all_inputs)
 }
 
-#[cfg(feature = "oracle-ffi")]
-struct CandidateFixture {
-    /// Pin reference stamped in the header (`# pin_ref=...`).
-    pin_ref: String,
-    /// `input -> candidates` in rank order (1..n, n ≤ 10), deduplicated and sorted.
-    by_input: BTreeMap<String, Vec<String>>,
-}
-
-#[cfg(feature = "oracle-ffi")]
-fn load_candidate_fixture() -> Option<CandidateFixture> {
-    let path = repo_root().join(CANDIDATES_FIXTURE);
-    let raw = match std::fs::read_to_string(&path) {
-        Ok(text) => text,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            eprintln!(
-                "candidate fixture not found at {}; skipping \
-                 (run cargo run -p pinyin-oracle --features oracle-ffi --bin oracle_candidates)",
-                path.display()
-            );
-            return None;
-        }
-        Err(error) => panic!(
-            "candidate fixture at {} is present but unreadable: {error}",
-            path.display()
-        ),
-    };
-
-    let mut pin_ref = String::new();
-    let mut by_input: BTreeMap<String, Vec<String>> = BTreeMap::new();
-
-    for line in raw.lines() {
-        if let Some(value) = line.strip_prefix("# pin_ref=") {
-            pin_ref = value.to_owned();
-            continue;
-        }
-        if line.starts_with('#') || line.is_empty() {
-            continue;
-        }
-        let mut parts = line.split('\t');
-        let input = parts.next().unwrap_or("").to_owned();
-        let Some(rank_str) = parts.next() else {
-            panic!("malformed fixture line (missing rank): {line:?}");
-        };
-        let Some(candidate) = parts.next() else {
-            panic!("malformed fixture line (missing candidate): {line:?}");
-        };
-        let candidate = candidate.to_owned();
-        assert!(
-            parts.next().is_none(),
-            "malformed fixture line (extra tab): {line:?}"
-        );
-        let Ok(rank) = rank_str.parse::<usize>() else {
-            panic!("malformed rank {rank_str:?} in {line:?}");
-        };
-        let entry = by_input.entry(input.clone()).or_default();
-        assert_eq!(
-            rank,
-            entry.len() + 1,
-            "fixture not sorted or rank gap for input {input:?} in {line:?}"
-        );
-        entry.push(candidate);
-    }
-
-    assert!(
-        !pin_ref.is_empty(),
-        "candidate fixture at {} is present but has no # pin_ref header",
-        path.display()
-    );
-
-    Some(CandidateFixture { pin_ref, by_input })
-}
-
-/// Live-oracle freshness check for `fixtures/w4/oracle-candidates.txt`.
+/// Live-oracle freshness check for the candidate-only view of `fixtures/w4/oracle-candidate-structure.txt`.
 ///
 /// Re-queries the pin-built oracle over the whole W2 corpus (~3 hours) and
 /// asserts the frozen file matches. Ignored by default; re-run with:
@@ -154,16 +81,16 @@ fn load_candidate_fixture() -> Option<CandidateFixture> {
 /// When the pin changes, regenerate first:
 ///
 /// ```text
-/// cargo run -p pinyin-oracle --features oracle-ffi --bin oracle-candidates
+/// cargo run -p pinyin-oracle --features oracle-ffi --bin oracle-candidate-structure
 /// ```
 #[cfg(feature = "oracle-ffi")]
 #[test]
-#[ignore = "full-corpus live oracle run (~3h); regenerate with bin oracle-candidates"]
+#[ignore = "full-corpus live oracle run (~3h); regenerate with bin oracle-candidate-structure"]
 fn oracle_candidates_fixture_is_fresh() {
     use pinyin_oracle::{Oracle, OracleFlags, OraclePrefix};
 
-    let fixture =
-        load_candidate_fixture().expect("candidate fixture missing; cannot check freshness");
+    let fixture = CandidateFixture::read(repo_root().join(STRUCTURE_FIXTURE))
+        .expect("candidate structure fixture");
 
     assert_eq!(
         fixture.pin_ref,
@@ -173,8 +100,10 @@ fn oracle_candidates_fixture_is_fresh() {
         pinyin_oracle::EXPECTED_PIN_REF
     );
 
+    let by_input = fixture.candidate_lists();
+
     // Header total_triples must match the parsed payload.
-    let path = repo_root().join(CANDIDATES_FIXTURE);
+    let path = repo_root().join(STRUCTURE_FIXTURE);
     let raw = std::fs::read_to_string(&path).expect("fixture readable");
     let mut header_triples: Option<usize> = None;
     for line in raw.lines() {
@@ -183,7 +112,7 @@ fn oracle_candidates_fixture_is_fresh() {
             header_triples = num.parse().ok();
         }
     }
-    let actual_triples: usize = fixture.by_input.values().map(Vec::len).sum();
+    let actual_triples: usize = by_input.values().map(Vec::len).sum();
     if let Some(expected) = header_triples {
         assert_eq!(
             expected, actual_triples,
@@ -216,11 +145,7 @@ fn oracle_candidates_fixture_is_fresh() {
             .unwrap_or_else(|e| panic!("oracle observe failed for {input:?}: {e}"));
         let live: Vec<String> = obs.candidates.into_iter().take(CAPTURE_DEPTH).collect();
         live_triples += live.len();
-        let frozen_list: &[String] = fixture
-            .by_input
-            .get(input)
-            .map(Vec::as_slice)
-            .unwrap_or(&[]);
+        let frozen_list: &[String] = by_input.get(input).map(Vec::as_slice).unwrap_or(&[]);
 
         if live != frozen_list {
             mismatch_count += 1;
@@ -243,7 +168,7 @@ fn oracle_candidates_fixture_is_fresh() {
     assert!(
         mismatch_count == 0,
         "candidate fixture is stale ({mismatch_count} mismatches, showing {}): {}\n\
-         re-run: cargo run -p pinyin-oracle --features oracle-ffi --bin oracle-candidates -- {}",
+         re-run: cargo run -p pinyin-oracle --features oracle-ffi --bin oracle-candidate-structure -- {}",
         sample_mismatches.len(),
         sample_mismatches.join("\n"),
         path.display()
@@ -258,9 +183,9 @@ fn oracle_candidates_fixture_is_fresh() {
             regenerated_payload.push(format!("{input}\t{}\t{cand}", idx + 1));
         }
     }
-    let committed_payload: Vec<&str> = raw
-        .lines()
-        .filter(|line| !line.starts_with('#') && !line.is_empty())
+    let committed_payload: Vec<String> = fixture
+        .candidates()
+        .map(|(input, rank, text)| format!("{input}\t{rank}\t{text}"))
         .collect();
     assert_eq!(
         committed_payload,

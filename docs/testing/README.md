@@ -9,6 +9,18 @@ For the live ABI gate registry, cell selection, prebuilt artifacts and aggregate
 result protocol, see [live parity gates](../runbooks/parity-gates.md). The
 [tooling-lane run](../findings/tooling-lane-gates.md) records the three-cell table.
 
+## Candidate capture
+
+`fixtures/w4/oracle-candidate-structure.txt` is the single W4 candidate
+capture. Use `pinyin_oracle::candidate_fixture::CandidateFixture` for its
+structured rows or its `(input, rank, text)` projection; both retain input
+identity, row order, duplicates and the captured pin reference. The
+`oracle-candidate-structure` binary is the capture generator, and
+`candidate_structure` tests its format, candidate types and live freshness.
+The candidate-only `oracle-candidates.txt` and its generator were removed
+after a byte-for-byte migration check. Dated findings below retain their
+historical file names and measurements.
+
 ## Tests that need inputs CI never has
 
 A test that needs the model20 cache, the system-table export, a
