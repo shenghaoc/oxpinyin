@@ -35,14 +35,10 @@ const IMPORTS: [(&str, &str, u64); 3] = [
     ("测试", "ce'shi", 3),
 ];
 
-fn nats(cost: i64) -> f64 {
-    cost as f64 / 1000.0 * std::f64::consts::LN_2
-}
-
-fn fmt_cost(cost: Option<i64>) -> String {
+fn fmt_cost(cost: Option<f64>) -> String {
     cost.map_or_else(
         || "None".to_owned(),
-        |c| format!("Some({c} = {:.6} nats)", nats(c)),
+        |c| format!("Some({c} pre-log, ln={:.6})", c.ln()),
     )
 }
 
@@ -219,12 +215,12 @@ fn main() {
                     continue;
                 }
                 println!(
-                    "row rank={:?} text={} keys={} cost={} nats={:.9}",
+                    "row rank={:?} text={} keys={} fallback_cost={} poss={:?}",
                     candidate.nbest_row(),
                     candidate.text(),
                     candidate.consumed_keys(),
                     candidate.cost(),
-                    nats(candidate.cost()),
+                    session.sentence_log_possibility(candidate.nbest_index()),
                 );
             }
             println!("candidates n = {}", list.len());

@@ -1,8 +1,8 @@
 # Float scoring for the sentence decoder (#1378): Phase 1 design record
 
 Date: 2026-10-28 UTC (`date -u`). Status: record. This is the read-only
-Phase 1 design for #1378. The policy text in §5 is **proposed, not
-ruled**. Base: origin/main `0a69da749c13`. Pin: libpinyin 2.11.92 at
+Phase 1 design for #1378. The §5 disposition and §8.1 frozen edits were approved by the maintainer
+on 2026-10-29 UTC; ruled text recorded at 2026-10-29T08:32:25Z (`date -u`). Base: origin/main `0a69da749c13`. Pin: libpinyin 2.11.92 at
 `074a2219c90feaf962d0d24f034514033ece5f99`; pin citations are
 `file:line` at that commit. oxpinyin code is cited by file and item.
 
@@ -212,11 +212,11 @@ constant `0x3e3ab283` (D-1).
   but round to the same `f32`.
 - `f64` is revisited only if a measurement shows a ranking reason.
 
-## 5. Compatibility-policy disposition — proposed, not ruled
+## 5. Compatibility-policy disposition — ruled 2026-10-29 UTC
 
-> **Proposed, not ruled.** Nothing below changes `compatibility-policy.md`,
-> `upstream-divergences.md`, `scoring-spec.md`, `sentence-surface.md` or
-> the 2026-10-28 amendment. Ruled text, if approved, lands with PR B.
+Maintainer approval (2026-10-29 UTC), recorded at 2026-10-29T08:32:25Z (`date -u`):
+items 1–8 and the §8.1 frozen changes are approved as proposed. PR B
+implements this disposition; PR C removes the remaining rational path.
 
 1. **The FROZEN register entry** ("N-best trellis accumulates gfloat log
    costs"). Mark it superseded in place when PR B lands, citing the
@@ -272,8 +272,11 @@ fallback scorer keeps its own `Cost` until spec task 4a; it is outside
 
 ## 7. Pre-existing differences found while reading
 
-These are derived from the source only. None was run, and none is fixed
-here.
+These were derived from source for the original design record, before any
+run. PR B fixes items 1 and 2 through its float scoring path; the original
+observations are retained below. Items 3 and 4 describe the pre-stage-1
+base, as explained in §8. The facade-total ruling and pronunciation audit
+remain open.
 
 1. **`phrase.rs` adds sentinel costs with plain `i64` `+`**
    (`phrase_segment`). Debug builds panic on overflow, against
@@ -297,7 +300,7 @@ here.
 
 ## 8. Open questions
 
-1. **Frozen items** needing explicit approval before PR B: the
+1. **Frozen items approved by the maintainer, 2026-10-29 UTC:** the
    `scoring-spec.md` cost scale; the `sentence-surface.md` §12
    declaration, its tie fixture and `sentence_surface_parity.rs`; the
    FROZEN register entry; the amendment's Cost-form wording.
@@ -306,8 +309,7 @@ here.
 
 "D1 bridge" and "D1 routing" name stage 1's D1 ruling (maintainer,
 2026-10-28 UTC). The stage-1 PR records it in `external-io-boundary.md`.
-No such PR is open at this writing (2026-10-28 UTC); this record cites
-it once it exists. Under D1:
+#1404 implemented stage 1 and merged before PR B. Under D1:
 
 - λ comes only from the scanned `f32`.
 - The rational routing value derives from that `f32`'s shortest
@@ -512,3 +514,53 @@ just heavy -- just packaging install libpinyin --prefix="$STAGE" \
   -- --locked --release --no-default-features --features bdb,shipped
 readelf --dyn-syms -r -V -W "$STAGE/lib/libpinyin.so.15.0.0" | grep -E 'log|libm'
 ```
+
+## PR B re-measurement (2026-10-29 UTC)
+
+Historical measurements before the record-format rebase; no campaign or size
+measurement was rerun for that follow-up. Base: main `9015a178`. Native Ubuntu 26.10, x86_64,
+Core i7-9750H, Rust 1.97.1, glibc 2.44, Valgrind 3.27.1. Both arms use
+matching provisioned BDB model20 tables. The 3,304-case debug contract
+runs have exactly four verdict movements, all MATCH to the ruled zhuyin
+ordering differences in [1378-zhuyin-selection.md](1378-zhuyin-selection.md).
+The seven pre-existing DIFFERs on that main revision follow the S1/S2
+ruling: three longer-normal cases and four GB/negative-lambda cases. #1400
+subsequently supplied the latter four registrations and KC/tkrzw entries for
+three positive-lambda cases; the three longer-normal registrations remain in
+PR B until PR 3 replaces them. The original four BDB S1/S2 pairs are unchanged.
+
+The supplementary fixture's pin data, historical selection costs and input
+set stay fixed. Its actual pin differences fall from 163 to 156. Every
+remaining surface is identical to current main. All seven changes become
+pin-equal; their cause is replacing the rational/integer scoring path and
+its per-step millibit grid with the pin's pre-log float sequence and f32
+accumulation. No std-math difference is needed to explain these matches.
+
+| Input | Main → PR B (= pin), changed indexed ranks |
+| --- | --- |
+| `bo` | rank 2 博 → 波 |
+| `sao` | rank 2 骚 → 嫂 |
+| `lagai` | rank 2 拉盖 → 拉改 |
+| `xiehenshuaitong` | ranks 1–2 写很率同 / 写很帅通 → 写很帅通 / 写很率同; the old 47,380 / 47,380 grid tie is separated |
+| `huilianpei` | rank 1 会连佩 → 惠连佩 |
+| `liekuoouyangzhangzaique` | rank 2 列阔欧阳章在阙 → 列阔欧阳章在确 |
+| `yunhoulvlvlunqianaonaoruoqubeiji` | rank 2 云后旅旅伦卡闹闹若区被及 → 云后旅旅伦卡闹闹若去被及 |
+
+The 500-row fixture measures main 496 / 491 / 489 (1-best / distinct-set /
+ordered); PR B measures 496 / 492 / 491. Candidate-row agreement moves
+489 → 491. The four 1-best misses are unchanged. The current counts and
+156 exact ruled selection residuals replace stale integer-era test
+expectations; no new PR B non-MATCH is accepted there.
+
+The score-shift assertions now bind these f32 log-possibility bits:
+`yaomeichong c1b595f0`, `xiehenshuaitong c201bc36`,
+`nuanmanqianzhaofang c225aaba`, `nic c144ff96`.
+The fallback scorer keeps its integer costs. PR B removes the row's
+logarithm memo and the private pricing helpers that become unused; the
+remaining rational/D1 fallback and training path is PR C.
+
+D-7 is resolved by the installed PR B shipping object: `readelf
+--dyn-syms -r -V -W` shows an undefined `log@GLIBC_2.29`, an
+`R_X86_64_GLOB_DAT` relocation to it, and `libm.so.6` as the version-needed
+provider. This is the result of Rust std `f64::ln`; no libc implementation
+or instruction sequence is imitated.

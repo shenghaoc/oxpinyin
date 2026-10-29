@@ -288,6 +288,7 @@ where
                     keys: candidate.consumed_keys(),
                     span: candidate.consumed_bytes(),
                     cost: candidate.cost(),
+                    poss: None,
                 })
                 .collect()
         };

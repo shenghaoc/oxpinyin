@@ -8,6 +8,15 @@ its named source blobs were read at that revision. Base: `2506b264`.
 
 ## Scope and derivation
 
+PR B of #1378 re-measured these four BDB observation pairs on 2026-10-29
+UTC against main `9015a178`; all four are unchanged. The integer cost
+derivation below describes the original implementation. PR B implements
+the same ruled ordering on the float scale: `S = poss - length * P`,
+with `P = f32::from_bits(0x3e3ab283)`, separate f32 multiplication and
+subtraction, larger S first, NaN last, and signed zeros equivalent.
+The node compares S alone; S1/S2 complete ties with earlier batch position.
+See [the approved float-scoring record](float-scoring-1378.md#pr-b-re-measurement-2026-10-29-utc).
+
 `src/lookup/phonetic_lookup.h:39,65-91 at 074a2219` provides the adjacent-length
 margin. The amendment completes it as `cost_add(cost, 263 * length)`, best first:
 negative infinity, finite ascending, positive infinity, NaN. Multiplication
@@ -31,6 +40,11 @@ complexities are unchanged. `BeamEntry` adds one batch-position integer per
 candidate; node storage does not grow.
 
 ## CI expectation audit
+
+This records the original S1/S2 repair's audit. PR B's approved subsequent
+re-measurement replaces the stale six-residual expectations with the 156
+unchanged selection residuals of current main; see
+[the current sentence declaration, §12](sentence-surface.md).
 
 Before implementation, `ci.yml`, `store-backends.yml`, `verify-nightly.yml`,
 `coverage.yml` and the nextest configuration were inspected. The ordinary
@@ -60,16 +74,11 @@ controls. Every intentionally moved case must match one complete pin/subject
 pair below and report `POLICY-ACCEPTED`; other observations fail. The broader
 behavioral campaign, including corpus-wide movements, is PR4.
 
-## Exact registered expectations
+## Exact verified-cell expectations
 
-Status: accepted under the S1/S2 ruling. `nbest-user-table-order-pinyin`
-registers BDB observations only. The three lambda cases of the original
-selection and the four cases added in #1400 (`table-conf-row-removed-gb`,
-`table-conf-not-used-gb`, `table-conf-lambda-negative-half`,
-`table-conf-lambda-negative-two`) register bdb, kc and tkrzw, the cells their
-case registrations cover. No other backend receives an unverified exemption. Each
-case has one recorded pin/subject pair per registered cell, including the
-unchanged fresh-profile diagnostic: the block keeps the SHA-256 of each
+Status: accepted under the S1/S2 ruling. Each case has one registered
+pin/subject pair per verified cell (BDB, KC and sound-tkrzw), including the
+unchanged fresh-profile diagnostic. The block keeps the SHA-256 of each
 side's complete observation, a digest per field and the divergence as text,
 written by `just policy-record` from the differential's `--observations`
 capture.
@@ -80,6 +89,9 @@ capture.
 | `table-conf-lambda-one-and-a-half` | S1/S2 special-cost completion: finite blended paths precede NaN unigram paths in beam and final-tail selection; only sentence/NBEST-prefix observations change. |
 | `table-conf-lambda-two` | S1/S2 special-cost completion: finite blended paths precede NaN unigram paths in beam and final-tail selection; only sentence/NBEST-prefix observations change. |
 | `table-conf-lambda-million` | S1/S2 special-cost completion: finite blended paths precede NaN unigram paths in beam and final-tail selection; only sentence/NBEST-prefix observations change. |
+| `longer-normal-frequency-dedup` | S2 orders the planted two-key 甲乙 sentence before one-key 县 and 现; the pin's adjacent-length predicate is cyclic on those tails (`phonetic_lookup.h:66-90,330-339`). NBEST-over-phrase dedup then retains the NBEST 甲乙 row (`pinyin.cpp:2116-2125`). Only `with_sentence` moves; the #913 dedup observations remain identical. |
+| `longer-normal-frequency-tie` | The same S2 ordering makes NBEST 甲乙 replace the LONGER 甲乙 row. |
+| `longer-normal-disabled` | The same S2 ordering without a LONGER row makes NBEST 甲乙 replace NORMAL 甲乙. |
 | `table-conf-row-removed-gb` | S2 tie rule: with the GB dictionary row removed, 蠔, 獆, 皥 and 滈 tie at count 2 among the final tails. The pin breaks the tie by heap pop order (`get_top_results`, `src/lookup/phonetic_lookup.h:142-171 at 074a2219`, over the candidates `get_candidates` lists in node and slot order, `:272-297`, from `get_tails`, `:330-341`) and gets 獆; the ruled key breaks it by earlier batch position and gets 蠔. |
 | `table-conf-not-used-gb` | The same S2 tie rule with `gb_char.dbin NOT_USED`: the pin's heap pops 獆, the ruled key keeps 蠔. |
 | `table-conf-lambda-negative-half` | S1/S2 special-cost completion: a negative λ leaves `bigram_lambda` negative and `unigram_lambda = 1 − λ` above one (`src/lookup/phonetic_lookup.h:712-713 at 074a2219`), so unigram steps stay finite (`:663`) while a blended step (`:692-693`) takes the log of a negative number, NaN, wherever −λ·b > (1−λ)·u. The ruled order puts NaN last; the pin's comparator does not order NaN at all. |
@@ -97,6 +109,29 @@ does not claim that their effects can be isolated from each other. The
 normal-candidate frequency comparator, lambda acceptance, training/save
 flags, serialized-file observations and diagnostics remain unchanged.
 
+The historical PR B sweep on main `9015a178` and PR B found identical
+complete observations for the seven additional rows above. They follow the
+existing S1/S2 ruling. The three longer-normal fixtures plant a sentence-start
+bigram of 1,000,000 / 1,000,000 for library-6 xi'an → 甲乙; the pin's additive
+merge feeds that tail beside the one-key tails. Their `at_end`,
+`without_sentence` and `sentence_suppressed` observations remain pin-equal.
+These three registrations remain until the separate #913/#1398 PR 3 replaces
+them.
+
+After #1400 merged, PR B rebased onto `9789880a`. The four GB/negative-lambda
+registrations and KC/tkrzw entries for the three positive-lambda cases now
+come from main. Their complete pin and subject digests are identical to PR B's
+prior observations; float scoring does not change them. PR B adds no duplicate
+registration or replacement record for those seven cases. The original BDB
+S1/S2 pairs are also unchanged. KC/tkrzw user-table-order pairs and the three
+longer-normal cases retain this PR's registrations.
+
+`just policy-record --migrate` converts the prior complete observations to
+schema 2. Acceptance still requires the digest of each complete observation;
+field digests and bounded divergence text provide diagnostics, not a weaker
+acceptance condition. The historical performance and size results were not
+rerun for this rebase.
+
 ```contract-diff-policy
 {
   "schema": 2,
@@ -107,6 +142,66 @@ flags, serialized-file observations and diagnostics remain unchanged.
     "nbest-user-table-order-pinyin": {
       "cells": {
         "bdb": {
+          "pin": {
+            "sha256": "230618673887b264fd2ab073e6f48bd098c815a713947488a89d2f133bdd2ba4",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.guess": "b5bea41b6c623f7c",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.parsed": "4b227777d4dd1fc6",
+              "result.sentences": "1422b22e90caaabe",
+              "result.tokens": "920d9f0a3cf6e8f6",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "5909151a43070ed65f3d9f5fe5e2bc87bbc1ef1150e217d8f66f6bef35dbecc6",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.guess": "b5bea41b6c623f7c",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.parsed": "4b227777d4dd1fc6",
+              "result.sentences": "f0205e082cc82619",
+              "result.tokens": "920d9f0a3cf6e8f6",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.sentences[0]: subject inserts [[true, \"靐靐\"]]",
+            "result.sentences[1:2]: subject drops [[true, \"靐靐\"]]"
+          ]
+        },
+        "tkrzw": {
+          "pin": {
+            "sha256": "230618673887b264fd2ab073e6f48bd098c815a713947488a89d2f133bdd2ba4",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.guess": "b5bea41b6c623f7c",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.parsed": "4b227777d4dd1fc6",
+              "result.sentences": "1422b22e90caaabe",
+              "result.tokens": "920d9f0a3cf6e8f6",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "5909151a43070ed65f3d9f5fe5e2bc87bbc1ef1150e217d8f66f6bef35dbecc6",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.guess": "b5bea41b6c623f7c",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.parsed": "4b227777d4dd1fc6",
+              "result.sentences": "f0205e082cc82619",
+              "result.tokens": "920d9f0a3cf6e8f6",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.sentences[0]: subject inserts [[true, \"靐靐\"]]",
+            "result.sentences[1:2]: subject drops [[true, \"靐靐\"]]"
+          ]
+        },
+        "kc": {
           "pin": {
             "sha256": "230618673887b264fd2ab073e6f48bd098c815a713947488a89d2f133bdd2ba4",
             "fields": {
@@ -849,6 +944,324 @@ flags, serialized-file observations and diagnostics remain unchanged.
           ]
         }
       }
+    },
+    "longer-normal-disabled": {
+      "cells": {
+        "bdb": {
+          "pin": {
+            "sha256": "f77294124a561ed33b213d534d702f05163aad4398acd08503f5f04a90f8ee10",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.at_end": "397f7abadf8dfd54",
+              "result.guess_sentence": "b5bea41b6c623f7c",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.parsed": "4b227777d4dd1fc6",
+              "result.sentence_suppressed": "b0a778beb09e6626",
+              "result.with_sentence": "c99c1698f8f015fc",
+              "result.without_sentence": "b0a778beb09e6626",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "ce3eb1e67bcf1fa1cc4a8290c0a697383f9a061a82d4066eaa78214444964297",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.at_end": "397f7abadf8dfd54",
+              "result.guess_sentence": "b5bea41b6c623f7c",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.parsed": "4b227777d4dd1fc6",
+              "result.sentence_suppressed": "b0a778beb09e6626",
+              "result.with_sentence": "97f0e82c2117dee7",
+              "result.without_sentence": "b0a778beb09e6626",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.with_sentence.rows (list lengths pin 757, subject 757; first change [0]): pin [1, \"县\"]; subject [1, \"甲乙\"]",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        },
+        "tkrzw": {
+          "pin": {
+            "sha256": "f77294124a561ed33b213d534d702f05163aad4398acd08503f5f04a90f8ee10",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.at_end": "397f7abadf8dfd54",
+              "result.guess_sentence": "b5bea41b6c623f7c",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.parsed": "4b227777d4dd1fc6",
+              "result.sentence_suppressed": "b0a778beb09e6626",
+              "result.with_sentence": "c99c1698f8f015fc",
+              "result.without_sentence": "b0a778beb09e6626",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "ce3eb1e67bcf1fa1cc4a8290c0a697383f9a061a82d4066eaa78214444964297",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.at_end": "397f7abadf8dfd54",
+              "result.guess_sentence": "b5bea41b6c623f7c",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.parsed": "4b227777d4dd1fc6",
+              "result.sentence_suppressed": "b0a778beb09e6626",
+              "result.with_sentence": "97f0e82c2117dee7",
+              "result.without_sentence": "b0a778beb09e6626",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.with_sentence.rows (list lengths pin 757, subject 757; first change [0]): pin [1, \"县\"]; subject [1, \"甲乙\"]",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        },
+        "kc": {
+          "pin": {
+            "sha256": "f77294124a561ed33b213d534d702f05163aad4398acd08503f5f04a90f8ee10",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.at_end": "397f7abadf8dfd54",
+              "result.guess_sentence": "b5bea41b6c623f7c",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.parsed": "4b227777d4dd1fc6",
+              "result.sentence_suppressed": "b0a778beb09e6626",
+              "result.with_sentence": "c99c1698f8f015fc",
+              "result.without_sentence": "b0a778beb09e6626",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "ce3eb1e67bcf1fa1cc4a8290c0a697383f9a061a82d4066eaa78214444964297",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.at_end": "397f7abadf8dfd54",
+              "result.guess_sentence": "b5bea41b6c623f7c",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.parsed": "4b227777d4dd1fc6",
+              "result.sentence_suppressed": "b0a778beb09e6626",
+              "result.with_sentence": "97f0e82c2117dee7",
+              "result.without_sentence": "b0a778beb09e6626",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.with_sentence.rows (list lengths pin 757, subject 757; first change [0]): pin [1, \"县\"]; subject [1, \"甲乙\"]",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        }
+      }
+    },
+    "longer-normal-frequency-dedup": {
+      "cells": {
+        "bdb": {
+          "pin": {
+            "sha256": "2b314a72547e582423a57afe740f244e48667396b8b601e689391be8a123a139",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.at_end": "3dc198fc3a79a439",
+              "result.guess_sentence": "b5bea41b6c623f7c",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.parsed": "4b227777d4dd1fc6",
+              "result.sentence_suppressed": "b0a778beb09e6626",
+              "result.with_sentence": "c99c1698f8f015fc",
+              "result.without_sentence": "b0a778beb09e6626",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "e1c1d0ca40f86be66cf5055bd1cf1c3dc485d2ee839a8ee2f0379425d45cb165",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.at_end": "3dc198fc3a79a439",
+              "result.guess_sentence": "b5bea41b6c623f7c",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.parsed": "4b227777d4dd1fc6",
+              "result.sentence_suppressed": "b0a778beb09e6626",
+              "result.with_sentence": "97f0e82c2117dee7",
+              "result.without_sentence": "b0a778beb09e6626",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.with_sentence.rows (list lengths pin 757, subject 757; first change [0]): pin [1, \"县\"]; subject [1, \"甲乙\"]",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        },
+        "tkrzw": {
+          "pin": {
+            "sha256": "2b314a72547e582423a57afe740f244e48667396b8b601e689391be8a123a139",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.at_end": "3dc198fc3a79a439",
+              "result.guess_sentence": "b5bea41b6c623f7c",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.parsed": "4b227777d4dd1fc6",
+              "result.sentence_suppressed": "b0a778beb09e6626",
+              "result.with_sentence": "c99c1698f8f015fc",
+              "result.without_sentence": "b0a778beb09e6626",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "e1c1d0ca40f86be66cf5055bd1cf1c3dc485d2ee839a8ee2f0379425d45cb165",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.at_end": "3dc198fc3a79a439",
+              "result.guess_sentence": "b5bea41b6c623f7c",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.parsed": "4b227777d4dd1fc6",
+              "result.sentence_suppressed": "b0a778beb09e6626",
+              "result.with_sentence": "97f0e82c2117dee7",
+              "result.without_sentence": "b0a778beb09e6626",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.with_sentence.rows (list lengths pin 757, subject 757; first change [0]): pin [1, \"县\"]; subject [1, \"甲乙\"]",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        },
+        "kc": {
+          "pin": {
+            "sha256": "2b314a72547e582423a57afe740f244e48667396b8b601e689391be8a123a139",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.at_end": "3dc198fc3a79a439",
+              "result.guess_sentence": "b5bea41b6c623f7c",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.parsed": "4b227777d4dd1fc6",
+              "result.sentence_suppressed": "b0a778beb09e6626",
+              "result.with_sentence": "c99c1698f8f015fc",
+              "result.without_sentence": "b0a778beb09e6626",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "e1c1d0ca40f86be66cf5055bd1cf1c3dc485d2ee839a8ee2f0379425d45cb165",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.at_end": "3dc198fc3a79a439",
+              "result.guess_sentence": "b5bea41b6c623f7c",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.parsed": "4b227777d4dd1fc6",
+              "result.sentence_suppressed": "b0a778beb09e6626",
+              "result.with_sentence": "97f0e82c2117dee7",
+              "result.without_sentence": "b0a778beb09e6626",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.with_sentence.rows (list lengths pin 757, subject 757; first change [0]): pin [1, \"县\"]; subject [1, \"甲乙\"]",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        }
+      }
+    },
+    "longer-normal-frequency-tie": {
+      "cells": {
+        "bdb": {
+          "pin": {
+            "sha256": "f845e56618866877f020933bbf4064bbf9d8942d0676a7ffe9e2666192848b50",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.at_end": "3dc198fc3a79a439",
+              "result.guess_sentence": "b5bea41b6c623f7c",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.parsed": "4b227777d4dd1fc6",
+              "result.sentence_suppressed": "5b6bca58f38e944b",
+              "result.with_sentence": "f411572f72a44457",
+              "result.without_sentence": "5b6bca58f38e944b",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "359898a59396becebbc84a28ed582f9796799b7275503cae8626a819a2fe0e81",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.at_end": "3dc198fc3a79a439",
+              "result.guess_sentence": "b5bea41b6c623f7c",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.parsed": "4b227777d4dd1fc6",
+              "result.sentence_suppressed": "5b6bca58f38e944b",
+              "result.with_sentence": "97f0e82c2117dee7",
+              "result.without_sentence": "5b6bca58f38e944b",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.with_sentence.rows (list lengths pin 757, subject 757; first change [0]): pin [1, \"县\"]; subject [1, \"甲乙\"]",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        },
+        "tkrzw": {
+          "pin": {
+            "sha256": "f845e56618866877f020933bbf4064bbf9d8942d0676a7ffe9e2666192848b50",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.at_end": "3dc198fc3a79a439",
+              "result.guess_sentence": "b5bea41b6c623f7c",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.parsed": "4b227777d4dd1fc6",
+              "result.sentence_suppressed": "5b6bca58f38e944b",
+              "result.with_sentence": "f411572f72a44457",
+              "result.without_sentence": "5b6bca58f38e944b",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "359898a59396becebbc84a28ed582f9796799b7275503cae8626a819a2fe0e81",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.at_end": "3dc198fc3a79a439",
+              "result.guess_sentence": "b5bea41b6c623f7c",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.parsed": "4b227777d4dd1fc6",
+              "result.sentence_suppressed": "5b6bca58f38e944b",
+              "result.with_sentence": "97f0e82c2117dee7",
+              "result.without_sentence": "5b6bca58f38e944b",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.with_sentence.rows (list lengths pin 757, subject 757; first change [0]): pin [1, \"县\"]; subject [1, \"甲乙\"]",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        },
+        "kc": {
+          "pin": {
+            "sha256": "f845e56618866877f020933bbf4064bbf9d8942d0676a7ffe9e2666192848b50",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.at_end": "3dc198fc3a79a439",
+              "result.guess_sentence": "b5bea41b6c623f7c",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.parsed": "4b227777d4dd1fc6",
+              "result.sentence_suppressed": "5b6bca58f38e944b",
+              "result.with_sentence": "f411572f72a44457",
+              "result.without_sentence": "5b6bca58f38e944b",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "359898a59396becebbc84a28ed582f9796799b7275503cae8626a819a2fe0e81",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.at_end": "3dc198fc3a79a439",
+              "result.guess_sentence": "b5bea41b6c623f7c",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.parsed": "4b227777d4dd1fc6",
+              "result.sentence_suppressed": "5b6bca58f38e944b",
+              "result.with_sentence": "97f0e82c2117dee7",
+              "result.without_sentence": "5b6bca58f38e944b",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.with_sentence.rows (list lengths pin 757, subject 757; first change [0]): pin [1, \"县\"]; subject [1, \"甲乙\"]",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        }
+      }
     }
   }
 }
@@ -871,9 +1284,8 @@ their bdb, kc and tkrzw pairs, and the three lambda cases of the original
 selection gained their kc and tkrzw pairs at the same time. The focused
 seven-case registration check reports 7 POLICY-ACCEPTED on each of bdb, kc
 and tkrzw, with no policy diagnosis. All retained entries are unchanged from
-the previous #1400 head. The three `longer-normal-*` cases are not registered
-here; the separate #913/#1398 split owns their deduplication fixture and S2
-witness.
+the previous #1400 head. The three `longer-normal-*` cases were excluded from #1400; PR B
+keeps their registrations until the separate #913/#1398 PR 3 replaces them.
 
 Original repair verification: 196 unit tests, 39 integration tests and four doctests
 passed. The focused contract-driver and verdict harnesses passed 163 and 35

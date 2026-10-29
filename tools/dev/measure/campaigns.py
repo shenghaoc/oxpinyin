@@ -14,16 +14,20 @@ admitted pool, and perf-same-data builds in sequence because its two builds
 share one target directory.
 """
 import glob
+import argparse
+import json
 import os
 from pathlib import Path
 import re
 import shutil
+import statistics
 import subprocess
 import sys
 import tempfile
 from collections.abc import Mapping, Sequence
 
 from ..runners import Finished, emit, write
+from .. import slot
 from . import bench, identity, reports
 from .bench import Arm, Bench, fail, setting
 
@@ -782,5 +786,149 @@ def rss_diag(argv: Sequence[str], env: Mapping[str, str]) -> int:
     return 0
 
 
+def steady_sample(done, cycles):
+    """Read one successful bisect row, requiring a complete steady window."""
+    if done.status:
+        write(done.stderr, error=True)
+        raise Finished(done.status)
+    rows = [json.loads(line) for line in done.stdout.decode().splitlines() if line.startswith('{')]
+    if len(rows) != 1:
+        raise ValueError('steady comparison requires one worker row')
+    row = rows[0]
+    if (len(row.get('cycles_ns', [])) != cycles
+            or any(type(n) is not int or n <= 0 for n in row['cycles_ns'])
+            or not re.fullmatch(r'[0-9a-f]{16}', row.get('workload_checksum', ''))):
+        raise ValueError('steady comparison has an incomplete window or checksum')
+    return row
+
+
+def steady_summary(times, ir, allocations):
+    """Report paired controls and ranges without treating varying Ir as exact."""
+    medians = {name: statistics.median(values) for name, values in times.items()}
+    base = medians['base']
+    return dict(
+        wall_ns_per_cycle={name: dict(median=value, minimum=min(times[name]), maximum=max(times[name]),
+                                     ratio_to_base=value / base) for name, value in medians.items()},
+        ir_per_cycle={name: [min(values), max(values)] for name, values in ir.items()},
+        base_minus_pr_ir_bounds=[min(ir['base']) - max(ir['pr__']), max(ir['base']) - min(ir['pr__'])],
+        same_bytes_wall_delta_ns={name: medians[control] - medians[name]
+                                  for name, control in (('base', 'bctl'), ('pr__', 'pctl'))},
+        allocations_per_cycle={name: {metric: [min(row[metric] for row in rows),
+                                               max(row[metric] for row in rows)]
+                                     for metric in ('count', 'bytes')} for name, rows in allocations.items()})
+
+
+def steady_comparison_inner(argv: Sequence[str], env: Mapping[str, str]) -> int:
+    """Compare supplied base/PR/pin artifacts with the existing steady worker.
+
+    Run through just heavy. All native, allocation and Ir launches are serial;
+    the warmup cycle is excluded. Allocation fixtures are never shipping arms.
+    """
+    from ...packaging import function_order
+    from ...bisection.teardown import callgrind_costs
+    from . import native
+    if sys.platform != 'linux':
+        fail('steady-comparison requires Linux, ext4 and Valgrind', 2)
+    parser = argparse.ArgumentParser(description=steady_comparison_inner.__doc__)
+    parser.add_argument('--cell', required=True, choices=('bdb', 'kc', 'tkrzw'))
+    for name in ('base', 'pr', 'pin', 'base-alloc', 'pr-alloc', 'system-dir', 'out'):
+        parser.add_argument('--' + name, required=True, type=Path)
+    parser.add_argument('--rounds', type=int, default=20)
+    parser.add_argument('--ir-rounds', type=int, default=2)
+    parser.add_argument('--cycles', type=int, default=8)
+    parser.add_argument('--cpu', type=int, default=min(os.sched_getaffinity(0)))
+    args = parser.parse_args(argv)
+    if args.rounds < 20 or args.ir_rounds < 2 or args.cycles < 2:
+        parser.error('need at least 20 native rounds, 2 Ir rounds and 2 cycles')
+    if args.cpu not in os.sched_getaffinity(0):
+        parser.error('--cpu is outside this process affinity')
+    sources = dict(base=args.base, pr__=args.pr, pin_=args.pin, bctl=args.base, pctl=args.pr)
+    fixtures = dict(ball=args.base_alloc, pall=args.pr_alloc)
+    for name, path in {**sources, **fixtures}.items():
+        if function_order.library_backend(path) != args.cell:
+            raise ValueError(f'{name}: library backend differs from --cell')
+    bench.check_function_order([(name + '/pinyin', path) for name, path in sources.items()], [],
+                               references=['pin_'], env=env)
+    args.out.mkdir(parents=True)
+    native.check_filesystems([args.out, args.system_dir, Path(env.get('TMPDIR') or tempfile.gettempdir()),
+                              *sources.values(), *fixtures.values()])
+    arms = {}
+    for name, source in {**sources, **fixtures}.items():
+        directory = args.out / name
+        directory.mkdir()
+        library = directory / 'libpinyin.so'
+        shutil.copyfile(source, library)
+        if identity.sha256(source) != identity.sha256(library):
+            raise ValueError(name + ': copy is not byte-identical')
+        arms[name] = Arm(name, library, args.system_dir, directory)
+    harness = args.out / 'bisect'
+    bench.run(bench.harness_build(harness), env=env)
+    worker = measured(env, 'steady-comparison', harness, str(args.cpu), cell=args.cell, required=True)
+    for name, arm in arms.items():
+        worker.standalone('pin' if name == 'pin_' else 'subject', arm)
+    metadata = dict(captured_utc=bench.utc_now(), cell=args.cell, cpu=args.cpu, cycles=args.cycles,
+                    native_rounds=args.rounds, ir_rounds=args.ir_rounds, system_dir=str(args.system_dir),
+                    kernel=identity.uname('srvm'), cpu_model=identity.cpu_model(),
+                    artifacts={name: dict(path=str(path), sha256=identity.sha256(path))
+                               for name, path in {**sources, **fixtures}.items()})
+    (args.out / 'environment.json').write_text(json.dumps(metadata, indent=2) + '\n')
+    checksums, times, counts = {}, {name: [] for name in sources}, {name: [] for name in sources}
+    allocations = {name: [] for name in fixtures}
+
+    def sample(name, prefix=()):
+        row = steady_sample(worker.launch(arms[name], 'speed', args.cycles, repeats=1, prefix=prefix,
+                                         extra={'PERF_WORKLOAD_CHECKSUM': '1'}), args.cycles)
+        checksum = row['workload_checksum']
+        if name in checksums and checksums[name] != checksum:
+            raise ValueError(name + ': fresh-process checksum changed')
+        checksums[name] = checksum
+        return row
+
+    # Rotate equal-length private library paths so drift reaches each arm.
+    names = list(sources)
+    for number in range(args.rounds):
+        emit(f'steady native round {number + 1}/{args.rounds}')
+        for name in names[number % len(names):] + names[:number % len(names)]:
+            row = sample(name)
+            times[name].append(statistics.median(row['cycles_ns'][1:]))
+    for number in range(3):
+        emit(f'steady allocation round {number + 1}/3')
+        for name in list(fixtures)[number % 2:] + list(fixtures)[:number % 2]:
+            row = sample(name)
+            if row.get('steady_alloc_cycles') != args.cycles - 1:
+                raise ValueError(name + ': allocation counters unavailable or incomplete')
+            values = {metric: row['steady_alloc_' + metric] / row['steady_alloc_cycles']
+                      for metric in ('count', 'bytes')}
+            if any(value < 0 for value in values.values()):
+                raise ValueError(name + ': negative allocation counters')
+            allocations[name].append(values)
+    for number in range(args.ir_rounds):
+        for name in names[number % len(names):] + names[:number % len(names)]:
+            emit(f'steady Ir round {number + 1}/{args.ir_rounds}: {name}')
+            profile = args.out / f'{name}.{number}.callgrind'
+            sample(name, ['valgrind', '--tool=callgrind', '--collect-atstart=no', '--cache-sim=no',
+                          '--branch-sim=no', '--toggle-collect=bisect_perf_steady_unit',
+                          '--callgrind-out-file=' + str(profile)])
+            parsed = callgrind_costs(profile.read_text(), arms[name].so)
+            if set(parsed['totals']) != {'Ir'} or parsed['totals']['Ir'] <= 0:
+                raise ValueError(name + ': invalid Callgrind instruction total')
+            counts[name].append(parsed['totals']['Ir'] / (args.cycles - 1))
+    if len({checksums[name] for name in ('base', 'pr__', 'bctl', 'pctl', 'ball', 'pall')}) != 1:
+        raise ValueError('base/PR/control/allocation-fixture checksums differ')
+    result = dict(steady_summary(times, counts, allocations), checksums=checksums,
+                  pin_checksum_equal=checksums['pin_'] == checksums['base'])
+    (args.out / 'result.json').write_text(json.dumps(result, indent=2) + '\n')
+    emit(json.dumps(result, indent=2))
+    return 0
+
+
+def steady_comparison(argv: Sequence[str], env: Mapping[str, str]) -> int:
+    """Hold heavy admission for the complete serial steady comparison."""
+    with slot.cancellation_handlers():
+        with slot.HeavyAdmission('steady comparison', dict(env), runner=True) as admission:
+            return steady_comparison_inner(argv, admission.env)
+
+
 RECIPES = {'perf-baseline': perf_baseline, 'perf-matrix': perf_matrix, 'perf-same-data': perf_same_data,
-           'shipped-check': shipped_check, 'tree-recipe-control': tree_recipe_control, 'rss-diag': rss_diag}
+           'shipped-check': shipped_check, 'tree-recipe-control': tree_recipe_control, 'rss-diag': rss_diag,
+           'steady-comparison': steady_comparison}

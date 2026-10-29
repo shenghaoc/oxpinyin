@@ -30,6 +30,15 @@ Source policy. The values below are still marked provisional: they were
 settled by the parity sweep, not yet source-verified against the pinned
 upstream implementation.
 
+## Scope after float scoring (#1378)
+
+Maintainer ruling, 2026-10-29 UTC; recorded 2026-10-29T08:32:25Z (`date -u`).
+The normative cost scale below applies to the pre-frequency fallback
+scorer only. Real-table sentence and phrase scoring follows
+[float-scoring-1378.md](float-scoring-1378.md): pre-log f32/f64 pieces,
+Rust std `f64::ln`, and f32 accumulation. The fallback's cost scale,
+constants, sign convention, tie rules and fixtures are unchanged.
+
 ## Cost scale
 
 Costs are `i64` on the fixed-point negative-log₂ scale of
@@ -44,10 +53,10 @@ Costs are `i64` on the fixed-point negative-log₂ scale of
 - All accumulation saturates. No addition, multiplication or subtraction in
   the scorer may panic, whatever a backend returns.
 
-**No floating point anywhere.** `f64::ln` is not required to be bit-identical
-across platforms and libms, and constitution item 6 makes engine output a pure
-function of (input, user state, config) on every operating system. The
-fixed-point logarithm is integer squaring and shifting.
+**Fallback representation only.** Costs stay integers on this scale. The
+logarithm uses Rust std `f64::log2`; determinism is per host. The former
+cross-platform argument for keeping real-table scores on this grid is
+superseded by the 2026-10-29 ruling above.
 
 ## The interpolated bigram
 
@@ -59,9 +68,11 @@ P(w_n | w_n-1) = λ · P_bigram(w_n | w_n-1) + (1 − λ) · P_unigram(w_n)
 model_cost     = −log₂ P(w_n | w_n-1) × COST_PER_BIT
 ```
 
-Evaluated as **one exact integer ratio** — numerator and denominator combined
-before the logarithm — so no intermediate rounding enters and the result is
-identical on every platform.
+The numerator and denominator are combined as **one exact integer ratio**
+before the logarithm, without intermediate rounding. The cost derived from
+Rust std `f64::log2()` is deterministic per host
+([constitution §6](../../AGENTS.md#constitution)), not guaranteed identical
+across hosts. A last-bit difference between hosts is class (a).
 
 | Constant | Value | Status |
 |---|---|---|

@@ -1,0 +1,40 @@
+{
+  "schema": 1,
+  "case": "user-gram-unsorted-phrase-segment",
+  "provenance": {
+    "libpinyin_commit": "074a2219c90feaf962d0d24f034514033ece5f99",
+    "model_sha256": "59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155",
+    "fixture_source_revision": "9015a17864dc0731804eb0f63eadbc0a12830e42",
+    "fixture_source": "tools/bisection/contract_gram_lookup.py, _interleave_miss_layout and _pin_lower_bound",
+    "pin_sites": [
+      "src/storage/ngram.cpp:239",
+      "src/storage/ngram.cpp:308-349",
+      "src/include/stl_lite.h:29"
+    ],
+    "capture": "Existing layout selector evaluated on the frozen BDB system sentence-start row; data read only, no libpinyin execution.",
+    "pin_derivation": {
+      "merged_length": 49739,
+      "lower_bound_index": 14878,
+      "first_walk_token": 16800254,
+      "finds_boosted_token": false
+    }
+  },
+  "system_token_count": 49737,
+  "system_tokens_sha256": "6b86d8c6f6284dd6f69e61e0727bc49e56a0c322bc14c6fedb1ef0fb54d6d2c9",
+  "boosted_token": 16800245,
+  "total": 2147483650,
+  "items": [
+    [
+      16800245,
+      2147483648
+    ],
+    [
+      16800252,
+      1
+    ],
+    [
+      16800244,
+      1
+    ]
+  ]
+}

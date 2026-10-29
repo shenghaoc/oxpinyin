@@ -21,11 +21,101 @@ ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from tools.dev import runners
+from tools.dev import pool, runners
 from tools.dev.measure import bench, campaigns, identity, valgrind
 from tools.dev.measure.fake_world import Stream, World
 
 SHA_X = 'bf8d3b5707b5bc1bafc09670185b96770b73f596dd2eb57b8a9cba46bad4aec8'
+
+
+class SteadyComparisonTests(unittest.TestCase):
+    def test_sample_refuses_failed_missing_and_incomplete_windows(self):
+        good = dict(cycles_ns=[90, 10, 12], workload_checksum='0' * 16)
+        done = lambda row: pool.Completed(0, (json.dumps(row) + '\n').encode(), b'')
+        self.assertEqual(campaigns.steady_sample(done(good), 3), good)
+        for row in ({}, dict(good, cycles_ns=[90, 10]), dict(good, cycles_ns=[90, 0, 12]),
+                    dict(good, workload_checksum='missing')):
+            with self.subTest(row=row), self.assertRaises(ValueError):
+                campaigns.steady_sample(done(row), 3)
+        with self.assertRaises(runners.Finished) as raised:
+            campaigns.steady_sample(pool.Completed(7, b'', b''), 3)
+        self.assertEqual(raised.exception.args, (7,))
+
+    def test_summary_keeps_control_spread_and_instruction_ranges(self):
+        times = dict(base=[10, 12], pr__=[8, 10], pin_=[20, 22], bctl=[11, 13], pctl=[9, 11])
+        ir = dict(base=[100, 103], pr__=[90, 94], pin_=[200, 201], bctl=[101, 104], pctl=[91, 95])
+        result = campaigns.steady_summary(times, ir, dict(ball=[dict(count=10, bytes=100)],
+                                                         pall=[dict(count=9, bytes=80)]))
+        self.assertEqual(result['wall_ns_per_cycle']['pr__']['median'], 9)
+        self.assertEqual(result['same_bytes_wall_delta_ns'], dict(base=1, pr__=1))
+        self.assertEqual(result['ir_per_cycle']['base'], [100, 103])
+        self.assertEqual(result['base_minus_pr_ir_bounds'], [6, 13])
+        self.assertEqual(result['allocations_per_cycle']['pall'], dict(count=[9, 9], bytes=[80, 80]))
+
+    def campaign(self, *, checksum_change=False, missing_alloc=False):
+        from tools.packaging import function_order
+        from tools.bisection import teardown
+        from tools.dev.measure import native
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            paths = {name: root / (name + '.so') for name in ('base', 'pr', 'pin', 'base-alloc', 'pr-alloc')}
+            for path in paths.values():
+                path.write_bytes(b'object')
+            events = []
+            worker = mock.Mock()
+
+            def launch(arm, mode, cycles, *, repeats, prefix, extra):
+                events.append((arm.label, bool(prefix)))
+                value = '1' * 16 if checksum_change and arm.label == 'pr__' else '0' * 16
+                row = dict(cycles_ns=[999] + [10] * (cycles - 1), workload_checksum=value)
+                if arm.label in ('ball', 'pall') and not missing_alloc:
+                    row.update(steady_alloc_cycles=cycles - 1, steady_alloc_count=70, steady_alloc_bytes=700)
+                if prefix:
+                    output = next(item.split('=', 1)[1] for item in prefix
+                                  if item.startswith('--callgrind-out-file='))
+                    Path(output).write_text('profile')
+                return pool.Completed(0, (json.dumps(row) + '\n').encode(), b'')
+
+            worker.launch.side_effect = launch
+            argv = ['--cell', 'bdb', '--system-dir', str(root), '--out', str(root / 'out')]
+            for name, path in paths.items():
+                argv += ['--' + name, str(path)]
+            with contextlib.ExitStack() as stack:
+                stack.enter_context(mock.patch.object(campaigns.sys, 'platform', 'linux'))
+                stack.enter_context(mock.patch.object(campaigns.os, 'sched_getaffinity', return_value={0}, create=True))
+                stack.enter_context(mock.patch.object(function_order, 'library_backend', return_value='bdb'))
+                stack.enter_context(mock.patch.object(bench, 'check_function_order'))
+                stack.enter_context(mock.patch.object(native, 'check_filesystems'))
+                stack.enter_context(mock.patch.object(bench, 'run'))
+                stack.enter_context(mock.patch.object(campaigns, 'measured', return_value=worker))
+                stack.enter_context(mock.patch.object(teardown, 'callgrind_costs', return_value=dict(totals=dict(Ir=700))))
+                stack.enter_context(mock.patch.object(campaigns, 'emit'))
+                status = campaigns.steady_comparison_inner(argv, {})
+            return status, events, json.loads((root / 'out/result.json').read_text())
+
+    def test_campaign_rotates_all_arms_and_excludes_warmup(self):
+        status, events, result = self.campaign()
+        self.assertEqual(status, 0)
+        self.assertEqual([name for name, _ in events[:10]],
+                         ['base', 'pr__', 'pin_', 'bctl', 'pctl', 'pr__', 'pin_', 'bctl', 'pctl', 'base'])
+        self.assertEqual(len(events), 100 + 6 + 10)
+        self.assertEqual(result['wall_ns_per_cycle']['base']['median'], 10)
+        self.assertEqual(result['ir_per_cycle']['base'], [100, 100])
+        self.assertEqual(result['allocations_per_cycle']['ball']['count'], [10, 10])
+
+    def test_campaign_refuses_changed_answers_and_missing_counters(self):
+        with self.assertRaisesRegex(ValueError, 'checksums differ'):
+            self.campaign(checksum_change=True)
+        with self.assertRaisesRegex(ValueError, 'allocation counters unavailable'):
+            self.campaign(missing_alloc=True)
+
+    def test_recipe_holds_admission_for_the_whole_comparison(self):
+        admitted = mock.Mock(env={'admitted': 'yes'})
+        with mock.patch.object(campaigns.slot, 'HeavyAdmission', return_value=contextlib.nullcontext(admitted)) as heavy:
+            with mock.patch.object(campaigns, 'steady_comparison_inner', return_value=0) as inner:
+                self.assertEqual(campaigns.steady_comparison(['--cell', 'bdb'], {'source': 'yes'}), 0)
+        heavy.assert_called_once_with('steady comparison', {'source': 'yes'}, runner=True)
+        inner.assert_called_once_with(['--cell', 'bdb'], {'admitted': 'yes'})
 
 
 class CountTests(World):

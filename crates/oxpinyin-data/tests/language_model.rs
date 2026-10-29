@@ -170,11 +170,12 @@ fn wrapped_bigram_fields_keep_record_presence_and_nan_costs() {
             NAN_COST
         );
     }
-    assert_eq!(
+    assert!(
         lm.nbest_step_costs_with_user_delta(&ni, &hao, delta)
             .unwrap()
-            .blended,
-        Some(NAN_COST)
+            .blended
+            .unwrap()
+            .is_nan()
     );
     // A user-only positive successor survives a wrapped total of zero.
     let delta = UserCountDelta {
@@ -190,7 +191,7 @@ fn wrapped_bigram_fields_keep_record_presence_and_nan_costs() {
         lm.nbest_step_costs_with_user_delta(&hao, &ni, delta)
             .unwrap()
             .blended,
-        Some(NEG_INF_COST)
+        Some(f64::INFINITY)
     );
     // The same predecessor total does not invent a missing successor.
     let absent = UserCountDelta {
@@ -262,7 +263,7 @@ fn a_blend_above_one_from_a_wrapped_total_is_a_negative_cost() {
     // f32(λ * f32(10 / 1)) = 3.1269898414611816;
     // f32(1 - f64(λ)) * (5 / 19) = 0.1808686946567736 in f64.
     // The f64 sum is 3.3078585361179553: -1725.89753753063 millibits.
-    let expected = Some(-1726);
+    let expected = Some(3.3078585361179553);
     let pair = lm
         .nbest_step_costs_with_user_delta(&ni, &hao, delta)
         .unwrap();
@@ -278,7 +279,10 @@ fn a_blend_above_one_from_a_wrapped_total_is_a_negative_cost() {
     );
     assert_eq!(raw.blended, expected);
     assert_eq!(raw.unigram, pair.unigram);
-    assert!(pair.unigram.unwrap() > 0, "the unigram branch is a cost");
+    assert!(
+        pair.unigram.unwrap() > 0.0,
+        "the pre-log unigram is positive"
+    );
 }
 
 /// Codex P2 on #796: an above-one blend at a millibit rounding boundary.
@@ -308,7 +312,7 @@ fn an_above_one_blend_keeps_the_pins_mixed_precision_rounding() {
     let pair = lm
         .nbest_step_costs_with_user_delta(&ni, &hao, delta)
         .unwrap();
-    assert_eq!(pair.blended, Some(-152));
+    assert_eq!(pair.blended, Some(1.1114937993141745));
 
     let raw = merged_row_costs(
         &lm,
@@ -317,7 +321,7 @@ fn an_above_one_blend_keeps_the_pins_mixed_precision_rounding() {
         delta,
         (delta.bigram_total, vec![(HAO, delta.bigram_count)]),
     );
-    assert_eq!(raw.blended, Some(-152));
+    assert_eq!(raw.blended, Some(1.1114937993141745));
     assert_eq!(raw.unigram, pair.unigram);
 }
 
@@ -417,7 +421,7 @@ fn user_file_tokens_are_priced_from_their_user_delta_alone() {
             },
         )
         .unwrap();
-    assert!(bigger.unigram.unwrap() < priced.unigram.unwrap());
+    assert!(bigger.unigram.unwrap() > priced.unigram.unwrap());
     for token in [0x0500_0001_u32, 0x0600_0001, 0x0700_0002] {
         let step = lm
             .nbest_step_costs_with_user_delta(&start, &PhraseToken::new(token), delta)
@@ -576,7 +580,19 @@ fn merged_row_items_price_as_the_pair_overlay_at_wrap_presence_and_lambda_edges(
                         assert_eq!(actual.unigram, expected.unigram);
                         assert!(actual.blended.is_some(), "prev={prev} total={total}");
                     } else {
-                        assert_eq!(actual, expected, "prev={prev} token={token} total={total}");
+                        assert_eq!(
+                            actual.blended.map(f64::to_bits),
+                            expected.blended.map(f64::to_bits),
+                            "prev={prev} token={token} total={total}"
+                        );
+                        assert_eq!(
+                            actual.unigram.map(f64::to_bits),
+                            expected.unigram.map(f64::to_bits)
+                        );
+                        assert_eq!(
+                            actual.unigram_lambda.to_bits(),
+                            expected.unigram_lambda.to_bits()
+                        );
                     }
                 }
                 assert_eq!(loads, 1, "one load/merge for all successors");
@@ -658,4 +674,58 @@ fn row_and_pair_read_a_stored_unsorted_row_through_the_pins_lower_bound() {
             lm.nbest_step_costs(&prev, &token).unwrap()
         );
     }
+}
+
+/// The scanned f32 coefficient and epsilon gates precede log and weighting.
+#[test]
+fn prelog_branches_preserve_ieee_lambda_edges_and_epsilon_gates() {
+    let fix = Fixture::new();
+    let (mut lm, _) = fix.open();
+    for text in ["-0.5", "0", "1", "1.5", "2", "1e6", "inf", "nan"] {
+        let conf = conf_with_lambda(text);
+        let lambda = conf.lambda_f32();
+        lm.set_lambda_from_conf(&conf);
+        let branches = lm
+            .nbest_item_costs(
+                &PhraseToken::new(HAO),
+                UserCountDelta::ZERO,
+                false,
+                Some((7, 7)),
+            )
+            .unwrap();
+        assert_eq!(branches.unigram, Some(5.0 / 19.0));
+        let unilambda = (1.0_f64 - f64::from(lambda)) as f32;
+        assert_eq!(branches.unigram_lambda.to_bits(), unilambda.to_bits());
+        let expected = f64::from(lambda * 1.0_f32) + f64::from(unilambda) * (5.0 / 19.0);
+        let actual = branches.blended.unwrap();
+        if expected.is_nan() {
+            assert!(actual.is_nan(), "{text}");
+        } else {
+            assert_eq!(actual.to_bits(), expected.to_bits(), "{text}");
+        }
+        let weighted = branches.unigram.unwrap() * f64::from(unilambda);
+        match text {
+            "1" => assert_eq!(weighted.ln(), f64::NEG_INFINITY),
+            "1.5" | "2" | "1e6" => assert!(weighted.ln().is_nan()),
+            "inf" | "nan" => assert!(actual.is_nan()),
+            _ => assert!(weighted.ln().is_finite()),
+        }
+    }
+    lm.set_lambda_from_conf(&conf_with_lambda("0.5"));
+    let zero = PhraseToken::new(0x0700_0002);
+    for (total, present) in [(1 << 24, false), (1 << 23, true)] {
+        let step = lm
+            .nbest_item_costs(&zero, UserCountDelta::ZERO, true, Some((1, total)))
+            .unwrap();
+        assert!(step.unigram.is_none());
+        assert_eq!(step.blended.is_some(), present);
+    }
+    // A zero-total stored gram is present; IEEE 0/0 passes the `<` gate.
+    assert!(
+        lm.nbest_item_costs(&zero, UserCountDelta::ZERO, true, Some((0, 0)))
+            .unwrap()
+            .blended
+            .unwrap()
+            .is_nan()
+    );
 }
