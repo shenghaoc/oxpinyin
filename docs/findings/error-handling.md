@@ -12,6 +12,13 @@ binary edges, no `unwrap`/`expect` on public or C-ABI paths. This note
 records what is already true. It does not add those crates, invent new
 public error enums, or change the session / n-best / sentence surface.
 
+Amendment 2026-10-29 UTC: the audit below retains its dated results and
+policy quotations. Current panic/error guidance is constitution §4 and
+[the compatibility-policy amendment](compatibility-policy.md#amendment--pin-matched-panics-and-error-handling):
+internal Rust APIs need not universally return `Result`, and panics must
+follow the pin subject to existing compatibility rulings. Existing typed
+refusals and class (b)/(c) decisions are unchanged.
+
 ## Policy this audit holds
 
 1. Library crates keep typed, `#[non_exhaustive]` error enums that

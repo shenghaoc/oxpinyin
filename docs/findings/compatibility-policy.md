@@ -69,6 +69,56 @@ recorded in the amendment below accepts special-cost ordering for all
 reachable special values. This amendment changes no
 production code.
 
+**Amended 2026-10-29 UTC (maintainer):** constitution §4 now follows the pin's
+observable failure behaviour under the amendment below. Existing class
+(b)/(c) rulings, warning obligations, diagnostic contracts and register
+rows remain authoritative and unchanged.
+
+## Amendment — pin-matched panics and error handling
+
+Maintainer decision 2026-10-29 UTC, dated with `date -u`. Pin:
+libpinyin `074a2219c90feaf962d0d24f034514033ece5f99`.
+
+oxpinyin follows the pinned libpinyin implementation's observable failure
+behaviour. A Rust panic is permitted only where the pin asserts or aborts
+on the corresponding condition, except where an existing compatibility
+ruling requires a different outcome. Where the pin continues or returns
+an error, oxpinyin must not introduce a panic. Use idiomatic Rust error
+handling; internal Rust APIs are not universally required to return
+`Result`. Ordinary operations and assertions are permitted only when
+their potential failure paths respect this rule. Existing class (b)/(c)
+rulings remain authoritative.
+
+This replaces constitution §4's blanket no-panic/`Result` rule. Its
+quotation in the historical class (c) justification below records the
+rule when that decision was made; it is not current general guidance.
+The class (c) decision itself stands: existing deliberate `false`/`Err`
+refusals still emit exactly one `g_warning`-level log line per occurrence.
+This amendment reverses none of those rulings and changes no behaviour,
+classification, differential expectation or register row.
+
+The non-test crate-root denials of `clippy::unwrap_used`,
+`clippy::expect_used`, `clippy::panic` and `clippy::panic_in_result_fn`
+stay. Permitted sites use the narrowest scoped
+`#[expect(..., reason = "...")]`, citing the pin's exact abort site or
+an established invariant that makes failure unreachable; a `panic!` in a
+`Result`-returning function accounts for both panic lints if both fire.
+No broad module-level suppressions, relaxed crate-wide denials or new
+`arithmetic_side_effects`/`indexing_slicing` restrictions are introduced.
+An `#[expect]` only proves that Clippy saw the construct, not that its
+failure condition matches the pin. No new production panic is needed.
+
+Where a permitted panic reproduces a pin assertion's process termination,
+the different Rust and C assertion messages are a language artefact, not
+a reason to imitate glibc's message format. This does not override any
+existing diagnostic contract.
+
+This amendment leaves the rejected 2026-09-05 `panic = "abort"`
+experiment and the release/profiling profiles unchanged. The facade-total
+`checked_add` decision and #1378's `phrase.rs` correction are outside
+this amendment; both prevent Rust-specific failures where the pin
+continues.
+
 ## Native Rust implementation
 
 Maintainer ruling 2026-10-26 UTC (#1303)
@@ -369,9 +419,10 @@ This class is therefore **not** a language-mechanism residue — it is a
 deliberate product decision, and it must be labelled as one rather than
 smuggled in as something Rust forced.
 
-**Justification — MISRA C:2025 guideline D.4.1 (Required), assessed for
-Rust.** MISRA C Directive 4.1, "Run-time failures shall be minimized",
-is category Required. MISRA C:2025 Addendum 6 ("Applicability of MISRA
+**Historical justification (constitution §4 quotation superseded
+2026-10-29 UTC; class (c) decision preserved) — MISRA C:2025 guideline D.4.1
+(Required), assessed for Rust.** MISRA C Directive 4.1, "Run-time failures
+shall be minimized", is category Required. MISRA C:2025 Addendum 6 ("Applicability of MISRA
 C:2025 to the Rust Programming Language", March 2025 —
 [`MISRA-C-2025-ADD6`](https://misra.org.uk/app/uploads/2025/03/MISRA-C-2025-ADD6.pdf))
 assesses D.4.1 as applicable to Rust, keeps its adjusted category

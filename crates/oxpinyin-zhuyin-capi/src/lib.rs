@@ -25,14 +25,18 @@
 //!
 //! ## Panic discipline
 //!
-//! Nothing here may panic on any input. The library crates on this
+//! Panics follow constitution §4's pin-matched failure policy; existing
+//! class (b)/(c) rulings remain authoritative, including class (c)'s
+//! `false`/`Err` plus exactly one warning. The library crates on this
 //! facade's path (`oxpinyin-core`, `-data`, `-store`, `-engine`, `-facade`,
 //! `-runtime`, `-user` and this crate) deny `clippy::unwrap_used`/
 //! `expect_used`/`panic`/`panic_in_result_fn` outside tests —
 //! `oxpinyin-chewing` and the macro-only `oxpinyin-capi-marshal` carry the
-//! same lints. These deny `unwrap`, `expect`, `panic!`, and the panic
-//! sources covered by `panic_in_result_fn`; they do not exclude other
-//! panic sources. A panic that reaches an `extern "C"` boundary aborts
+//! same lints. Permitted sites require narrowly scoped, justified
+//! `#[expect]` attributes under `rust-conventions.md`; these prove Clippy
+//! saw a construct, not that its failure condition matches the pin.
+//! Other panic sources also need to respect §4. A panic that reaches an
+//! `extern "C"` boundary aborts
 //! the process. There is deliberately no panic-catching wrapper.
 //! Abort at the ABI boundary applies under either panic strategy (the
 //! release profile is `unwind`; `panic = "abort"` was tried and reverted

@@ -59,10 +59,14 @@ after the rewrite.
 
 ## Internal improvements — no observable change
 
-- The constitution (`/AGENTS.md`): nothing panics on any input; public
-  Rust APIs return `Result`; `unsafe` only on the allowlist, each block
-  with `// SAFETY:`; output a pure function of (input, user state,
-  config).
+- The constitution (`/AGENTS.md`): panics and error handling follow the
+  pin's observable failure behaviour under §4, with existing class (b)/(c)
+  rulings authoritative. Class (c) refusals retain `false`/`Err` and exactly
+  one warning; no ruling is reversed. Internal Rust APIs need not all
+  return `Result`. The lint denials and narrow, justified expectations are
+  in `rust-conventions.md`; they do not prove behavioural correspondence.
+  `unsafe` only on the allowlist, each block with `// SAFETY:`; output a
+  pure function of (input, user state, config).
 - Loose coupling: oxpinyin exists to undo libpinyin's tight coupling
   while keeping its behaviour. The `oxpinyin-input` boundary is
   an additional crate; the aim is fewer unnecessary edges, not fewer

@@ -9,6 +9,15 @@ Amended 2026-10-18 UTC: in the historical Constitution items 1–3 row,
 the size budget is superseded by Constitution §2 binary-size recording
 and disclosure of increases, with no size gate.
 
+Amended 2026-10-29 UTC: the panic/failure rows below retain the study's
+historical wording and measurements. Current constitution §4 and
+[profile Layer 3](oxpinyin-safety-profile.md#layer-3--panic--failure-policy-hard-ci-gate--human-review)
+permit only pin-matched panics subject to existing compatibility rulings.
+The four non-test lint denials remain; narrow justified expectations
+prove lint coverage, not behavioural correspondence. Internal Rust APIs
+are not universally required to return `Result`. Class (b)/(c) decisions
+and the 2026-09-05 profile decision below remain unchanged.
+
 ## A. Language & memory safety
 
 | Rule | Today | Proposed | Mechanism |

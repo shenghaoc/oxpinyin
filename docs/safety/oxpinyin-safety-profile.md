@@ -44,31 +44,61 @@ Deviation mechanism: none for `forbid` crates (by design — that is the
 point); for capi/oracle/store/data the `// SAFETY:` comment *is* the deviation
 record, enforced present-but-not-verified by Clippy, verified by review.
 
-## Layer 3 — panic & failure policy (HARD CI GATE for library code)
+## Layer 3 — panic & failure policy (HARD CI GATE + HUMAN REVIEW)
 
-1. Public APIs return `Result`/`Option` for every fallible operation
-   (constitution §4) — enforced by type-system convention + review.
-2. **Library crates** (twenty-four crate roots: core/engine/user/data/store/segment,
-   runtime, facade, datagen, capi, zhuyin-capi, pinyin-oracle,
-   plus capi-marshal, chewing, corpus, counter, emitter, eval, kmm, lambda,
-   punct, train and word; two workspace members excluded: testsupport — never
-   a dependency of shipping code — and dictool — CLI tool, not a library
-   crate): `unwrap_used`,
-   `expect_used`, `panic`, `panic_in_result_fn` denied at crate root;
-   `#[cfg(test)]` modules carry a single justified `#![allow]` each. Today
-   this passes with **zero** code changes (measured) — it locks the
-   status quo against regressions.
-3. `assert!`/`debug_assert!` policy: FFI input validation always-on;
-   provable internal invariants may be `debug_assert!`; each surviving
-   release `assert` (2 today, in `parser.rs`) carries its "internal bug
-   trip" justification comment. Asserts in tests unrestricted.
+Maintainer amendment 2026-10-29 UTC; constitution §4 is authoritative. Pin:
+libpinyin `074a2219c90feaf962d0d24f034514033ece5f99`.
+
+1. Follow the pin's observable failure behaviour. A Rust panic is permitted
+   only where the pin asserts or aborts on the corresponding condition,
+   except where an existing compatibility ruling requires a different
+   outcome. Where the pin continues or returns an error, Rust must not
+   introduce a panic. Use idiomatic error handling; internal Rust APIs are
+   not universally required to return `Result`. Ordinary operations and
+   assertions must respect this rule, including their potential failure
+   paths. Existing class (b)/(c) rulings remain authoritative: class (c)
+   refusals keep returning `false`/`Err` and emitting exactly one warning
+   per occurrence. This amendment reverses none of those rulings.
+   **Integer arithmetic.** Where the pin's unsigned arithmetic wraps and the
+   result is observable, use the matching standard method (`wrapping_add`,
+   `wrapping_sub`, `wrapping_mul`). Never use a plain operator where overflow
+   is reachable from input: it panics in debug builds. Use `checked_*` where
+   the pin checks and refuses. Use checked or widened arithmetic for bounds
+   the pin lacks, such as sizes, offsets and indexes computed from external
+   input, where an overflow would be memory-unsafe (class (b)).
+2. Keep the non-test crate-root denials of `clippy::unwrap_used`,
+   `clippy::expect_used`, `clippy::panic` and `clippy::panic_in_result_fn`.
+   Permitted sites use the narrowest scoped
+   `#[expect(..., reason = "...")]`, citing either the pin's exact abort
+   site or the established invariant that makes failure unreachable. For
+   `panic!` in a `Result`-returning function, account for both panic lints
+   if both fire. No broad module-level suppressions or relaxed crate-wide
+   denials; no new `arithmetic_side_effects` or `indexing_slicing`
+   restrictions. An `#[expect]` only proves that Clippy saw the construct,
+   not that its failure condition matches the pin. Review must establish
+   that correspondence; these lints do not exclude all panic sources.
+3. Assertions, including `debug_assert!`, follow rule 1; a comment calling
+   something an internal invariant is not by itself proof. Assertions in
+   tests remain unrestricted. Where a permitted panic reproduces a pin
+   assertion's process termination, the different Rust and C assertion
+   messages are a language artefact, not a reason to imitate glibc's
+   message format. Existing diagnostic contracts remain authoritative.
 4. FFI boundary: the `ffi_catch` wrapper (53 of 55 entry points at
-   2382bdd) was removed 2026-09-05 (b6dd5c6f). Containment is structural:
-   the Layer 3.2 no-panic lints plus Rust ≥1.81's abort-at-ABI.
+   2382bdd) was removed 2026-09-05 (b6dd5c6f). A panic reaching an
+   `extern "C"` boundary aborts the process; there is no catch wrapper.
+   The lint denials in rule 2 assist review of permitted failure paths;
+   they do not prove panic freedom or pin correspondence.
 5. `panic = "abort"` is **not** in the release profile: tried and
    reverted 2026-09-05 for its measured keystroke-cycle cost
-   (`enforcement-matrix.md` §C). Abort-at-ABI is the backstop for
-   *escapes*, which Layer 3.2 makes structurally unlikely.
+   (`enforcement-matrix.md` §C). This decision leaves the release profile
+   and the profiling profile's explicit `panic = "unwind"` unchanged.
+
+Historical study evidence: the library-crate lint adoption passed with
+zero code changes; the release-assert inventory was two commented
+`parser.rs` assertions. These are the original measurements, not a claim
+about today's counts or an unconditional no-panic requirement. Test-module
+exemptions remain unchanged. No new production panic is needed to
+demonstrate this policy.
 
 ## Layer 4 — arithmetic & conversion policy (HARD CI GATE + WARNING)
 
@@ -150,8 +180,9 @@ the highest-risk surfaces identified in `oxpinyin-audit.md`.
 
 Mechanized: the 79-symbol `pinyin_*` and 52-symbol `zhuyin_*` ABIs are pinned to the checked-in `libpinyin.ver`/`libzhuyin.ver` and headers (`tools/abi/check-exports.sh`, every PR),
 verified further by the C++ smoke gate and contract tests; SAFETY comments
-enforced (Layer 2); panic containment structural since the `ffi_catch`
-removal (the Layer 3.2 lints plus abort-at-ABI).
+enforced (Layer 2); a panic reaching the C ABI aborts since the
+`ffi_catch` removal. Layer 3 governs permitted failure paths; its lint
+denials assist review rather than proving panic freedom.
 
 Allocator pairing joined the mechanized set on 2026-09-09
 (`docs/findings/abi-allocator-pairing.md`). Every pointer-shaped slot the

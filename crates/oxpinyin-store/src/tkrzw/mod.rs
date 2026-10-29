@@ -521,8 +521,9 @@ where
     if in_bounds(user_key, shared.lo, shared.hi) {
         // The visitor runs inside tkrzw's call stack, reached through the
         // C ABI. Store errors surface through `shared.error` and stop the
-        // walk; a panic in `row` (a bug — visitors are panic-free by the
-        // no-panic lints) reaches this callback's `extern "C"` boundary,
+        // walk. Visitor failure paths follow constitution §4; the lint
+        // denials alone do not prove panic freedom. A panic in `row`
+        // reaches this callback's `extern "C"` boundary,
         // where Rust aborts the process; it is never allowed to run on
         // into tkrzw's frames.
         match (ctx.row)(user_key, value) {

@@ -6,6 +6,11 @@ libpinyin at **`074a2219c90feaf962d0d24f034514033ece5f99`** (2.11.92, the
 oracle pin from `tools/oracle/build-oracle.sh`), fetched by commit SHA
 into a scratch checkout and verified with `git rev-parse`.
 
+Amendment 2026-10-29 UTC: the constitution §4 quotation below is historical;
+current guidance is [the pin-matched panic amendment](compatibility-policy.md#amendment--pin-matched-panics-and-error-handling).
+The recorded typed refusals, class (b)/(c) dispositions and results below
+remain unchanged. The new policy reverses none of these decisions.
+
 ## What this is about
 
 Two readers of the same `interpolation2.text` had drifted in four
