@@ -5,8 +5,10 @@ selected workloads compare main/PR/pin, with an exact same-bytes instruction
 control for each Rust arm. They do not extend startup's RandomState exception,
 except that the typing sequence reports a varying control as DIAGNOSTIC when
 every varying function is a RANDOMSTATE_TYPING scope.
+Optional native rounds time the same worker with plain shipping objects.
 """
 import argparse
+import copy
 import json
 import os
 from pathlib import Path
@@ -16,7 +18,7 @@ import shutil
 from .. import slot
 from ..runners import emit
 from ...bisection.teardown import callgrind_costs
-from . import bench, identity, instructions, neutrality
+from . import bench, identity, instructions, neutrality, stats
 
 ANCHORS = {'sentence': 'bisect_sentence_unit', 'typing-sequence': 'bisect_typing_unit'}
 ARMS = ('main', 'pr__', 'pin_', 'mctl', 'pctl')
@@ -44,10 +46,16 @@ def arguments(argv):
     parser.add_argument('--input', default='nihaozhongguo')
     parser.add_argument('--rounds', type=positive, default=3)
     parser.add_argument('--iterations', type=positive, default=1)
+    parser.add_argument('--native-rounds', type=positive, default=0,
+                        help='also time plain shipping libraries in rotating native rounds (minimum 20)')
+    parser.add_argument('--native-iterations', type=positive, default=20,
+                        help='invocations per native process; independent of Callgrind --iterations')
     parser.add_argument('--cpu', type=int, default=min(os.sched_getaffinity(0)))
     args = parser.parse_args(argv)
     if args.rounds < 2:
         parser.error('--rounds must be at least 2 (fresh-process controls)')
+    if args.native_rounds and args.native_rounds < 20:
+        parser.error('--native-rounds must be at least 20 (paired timing intervals)')
     if not re.fullmatch("[a-z']{1,255}", args.input):
         parser.error('--input must contain 1..255 lowercase ASCII pinyin letters/apostrophes')
     if args.cpu not in os.sched_getaffinity(0):
@@ -163,6 +171,70 @@ def prepare(args, env):
     return copies
 
 
+def native_campaign(args, env, harness):
+    """Time the same scoped worker natively, using plain shipping objects.
+
+    Every round pairs base/PR and same-bytes controls, with the pin reported
+    independently. No profiler prefix or Valgrind elapsed_ns is used. The
+    shared statistics report intervals and control stability; no time-change
+    tolerance is invented here.
+    """
+    directory = args.out / 'native'
+    directory.mkdir()
+    sources = dict(main=args.main_shipping, pr__=args.pr_shipping,
+                   pin_=args.pin, mctl=args.main_shipping, pctl=args.pr_shipping)
+    libraries = {}
+    for arm, source in sources.items():
+        destination = directory / arm / 'libpinyin.so'
+        destination.parent.mkdir()
+        shutil.copyfile(source, destination)
+        if identity.sha256(source) != identity.sha256(destination):
+            bench.fail(arm + ': native library copy is not byte-identical')
+        libraries[arm] = destination
+    observed = copy.copy(args)
+    observed.iterations = args.native_iterations
+    samples = {arm: [] for arm in ARMS}
+    answers = {}
+    for round_index in range(args.native_rounds):
+        order = ARMS[round_index % len(ARMS):] + ARMS[:round_index % len(ARMS)]
+        for arm in order:
+            library = libraries[arm]
+            command = [str(harness), '--perf-' + args.workload, str(library),
+                       str(args.system_dir), args.input, str(args.native_iterations)]
+            child_env = dict(env, LD_LIBRARY_PATH=bench.loader_path(library.parent,
+                                                                  env.get('LD_LIBRARY_PATH')))
+            bench.guard('native sentence campaign', args.cell, 'pin' if arm == 'pin_' else 'subject',
+                        library, command, env=child_env)
+            done = bench.capture(bench.pinned(command, args.cpu), env=child_env)
+            stem = directory / f'{arm}.{round_index}'
+            Path(str(stem) + '.stdout').write_bytes(done.stdout)
+            Path(str(stem) + '.stderr').write_bytes(done.stderr)
+            if done.status:
+                bench.fail(f'{arm} native round {round_index}: worker failed ({done.status})')
+            try:
+                row = observation(done.stdout, observed)
+            except (ValueError, KeyError, TypeError) as error:
+                bench.fail(f'{arm}: invalid native observation: {error}', 3)
+            if row['elapsed_ns'] <= 0:
+                bench.fail(arm + ': native elapsed_ns must be positive', 3)
+            if arm in answers and answers[arm] != row['observations']:
+                bench.fail(arm + ': native fresh-process observations differ', 3)
+            answers[arm] = row['observations']
+            samples[arm].append(row['elapsed_ns'] / args.native_iterations)
+    if not (answers['main'] == answers['mctl'] == answers['pr__'] == answers['pctl']):
+        bench.fail('native base/PR/control observations differ', 3)
+    controls = {arm: stats.stable_control(samples[arm], samples[control])
+                for arm, control in (('main', 'mctl'), ('pr__', 'pctl'))}
+    result = dict(verdict='VALID' if all(row['stable'] for row in controls.values()) else 'DIAGNOSTIC',
+                  rounds=args.native_rounds, iterations=args.native_iterations,
+                  ns_per_invocation=samples, summaries={arm: stats.summary(values) for arm, values in samples.items()},
+                  pr_over_main=stats.paired_ratio(samples['pr__'], samples['main']), controls=controls,
+                  main_pr_observations_equal=True, main_pin_observations_equal=answers['main'] == answers['pin_'])
+    (args.out / 'native.json').write_text(json.dumps(result, indent=2) + '\n')
+    emit(json.dumps(result, indent=2))
+    return result
+
+
 def campaign(args, env):
     libraries = prepare(args, env)
     harness = args.out / 'bisect'
@@ -175,6 +247,8 @@ def campaign(args, env):
         bench.fail('sentence collection anchors missing or folded together')
     metadata = dict(workload=args.workload, input=args.input, cell=args.cell,
                     iterations=args.iterations, rounds=args.rounds, cpu=args.cpu,
+                    native_rounds=getattr(args, 'native_rounds', 0),
+                    native_iterations=getattr(args, 'native_iterations', 20),
                     captured_utc=bench.utc_now(), system_dir=str(args.system_dir),
                     kernel=identity.uname('srvm'), cpu_model=identity.cpu_model(),
                     libraries={arm: dict(path=str(path), sha256=identity.sha256(path))
@@ -182,6 +256,8 @@ def campaign(args, env):
                     sources=dict(main=str(args.main), pr=str(args.pr), pin=str(args.pin)),
                     shipping=dict(main=str(args.main_shipping), pr=str(args.pr_shipping)))
     (args.out / 'environment.json').write_text(json.dumps(metadata, indent=2) + '\n')
+    if getattr(args, 'native_rounds', 0):
+        native_campaign(args, env, harness)
     counts = {arm: [] for arm in ARMS}
     profiles = {arm: [] for arm in ARMS}
     answers = {}

@@ -286,6 +286,63 @@ class NativeTests(unittest.TestCase):
 
 
 class CampaignTests(unittest.TestCase):
+    def native_fixture(self, *, changed=False, elapsed=1000):
+        root = Path(self.enterContext(tempfile.TemporaryDirectory(prefix='sentence-native-')))
+        paths = {name: root / name for name in ('base-plain', 'pr-plain', 'pin')}
+        for name, path in paths.items():
+            path.write_text(name)
+        args = types.SimpleNamespace(out=root, workload='typing-sequence', input='ni', cell='bdb',
+            iterations=1, rounds=2, native_iterations=2, native_rounds=2, cpu=0,
+            main_shipping=paths['base-plain'], pr_shipping=paths['pr-plain'], pin=paths['pin'],
+            system_dir=Path('/data'))
+        commands = []
+
+        def capture(command, **kwargs):
+            self.assertEqual(command[:3], ['taskset', '-c', '0'])
+            self.assertNotIn('valgrind', command)
+            self.assertEqual(command[-1], '2')
+            commands.append(command)
+            arm = Path(command[-4]).parent.name
+            steps = [dict(input=i, parsed=len(i), guess_sentence=True, get_sentence=True, sentence=i,
+                          guess_candidates=True, candidates=[]) for i in ('n', 'ni')]
+            if changed and arm == 'pr__':
+                steps[1]['sentence'] = 'changed'
+            row = dict(pid=123, workload=args.workload, iterations=2, elapsed_ns=elapsed,
+                       observations=[steps, steps])
+            return types.SimpleNamespace(status=0, stdout=json.dumps(row).encode(), stderr=b'')
+
+        with mock.patch.object(bench, 'capture', side_effect=capture), \
+                mock.patch.object(bench, 'guard'), \
+                contextlib.redirect_stdout(io.StringIO()):
+            result = sentence.native_campaign(args, {}, root / 'bisect')
+        return root, commands, result
+
+    def test_native_rounds_use_plain_copies_rotate_and_report_paired_time(self):
+        root, commands, result = self.native_fixture()
+        self.assertEqual([Path(c[-4]).parent.name for c in commands],
+                         list(sentence.ARMS) + list(sentence.ARMS[1:] + sentence.ARMS[:1]))
+        self.assertEqual((root / 'native/main/libpinyin.so').read_bytes(), b'base-plain')
+        self.assertEqual((root / 'native/pr__/libpinyin.so').read_bytes(), b'pr-plain')
+        self.assertEqual((root / 'native/mctl/libpinyin.so').read_bytes(), b'base-plain')
+        self.assertEqual(result['pr_over_main'], dict(median=1.0, ci95=[1.0, 1.0]))
+        self.assertEqual(result['ns_per_invocation']['main'], [500, 500])
+        self.assertEqual(result['verdict'], 'VALID')
+        self.assertTrue((root / 'native/main.0.stdout').is_file())
+        self.assertTrue((root / 'native/main.1.stdout').is_file())
+
+    def test_native_refuses_changed_observations_and_zero_time(self):
+        for options in (dict(changed=True), dict(elapsed=0)):
+            with self.subTest(options=options), self.assertRaises(Finished):
+                self.native_fixture(**options)
+
+    def test_native_short_round_request_is_rejected_before_inputs(self):
+        with mock.patch.object(os, 'sched_getaffinity', return_value={0}, create=True), \
+                contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            sentence.arguments(['--workload', 'sentence', '--cell', 'bdb', '--main', '/missing',
+                '--pr', '/missing', '--pin', '/missing', '--main-shipping', '/missing',
+                '--pr-shipping', '/missing', '--system-dir', '/missing', '--out', '/missing',
+                '--native-rounds', '2'])
+
     def fake_campaign(self, *, changed_answer=False, varying_control=False, vary='f', workload='typing-sequence',
                       changed=None, vary_arm='pctl'):
         temporary = self.enterContext(tempfile.TemporaryDirectory(prefix='sentence-campaign-'))
