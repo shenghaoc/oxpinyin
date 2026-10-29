@@ -94,9 +94,7 @@ def register(case, *, CASES):
     for _name in ('nbest-user-table-order-pinyin', 'table-conf-lambda-one-and-a-half',
                   'table-conf-lambda-two', 'table-conf-lambda-million',
                   'table-conf-lambda-negative-half', 'table-conf-lambda-negative-two',
-                  'table-conf-row-removed-gb', 'table-conf-not-used-gb',
-                  'longer-normal-frequency-dedup', 'longer-normal-frequency-tie',
-                  'longer-normal-disabled'):
+                  'table-conf-row-removed-gb', 'table-conf-not-used-gb'):
         CASES[_name].update(stderr=True, policy_record='trellis-adjusted-cost-s1-s2.md')
 
 

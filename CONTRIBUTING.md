@@ -31,6 +31,8 @@ Advanced [backend](docs/runbooks/backends.md), [oracle](docs/runbooks/oracle.md)
 procedures apply only when that task needs them. Keep model downloads and
 derived data local; they never belong in Git or published images.
 
+A new regression identifies the behaviour it protects, uses reduced input, and explains any substantial fixture or runtime cost. Extend existing cases and helpers where that keeps the test clear. Don't commit bulk observations when a live comparison or a compact expectation suffices.
+
 ## Results and reproduction
 
 A PR or findings document reports what a paper reports: the results, plus

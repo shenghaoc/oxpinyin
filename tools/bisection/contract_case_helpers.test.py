@@ -6,7 +6,7 @@ facades are covered through the families that use them."""
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import contract_case_helpers as helpers
 
@@ -49,6 +49,45 @@ class ByteLayoutTests(unittest.TestCase):
         self.assertEqual(len(helpers.glib_utf8([0x110000])), 4)
         self.assertEqual(len(helpers.glib_utf8([0x200000])), 5)
         self.assertEqual(len(helpers.glib_utf8([0x4000000])), 6)
+
+
+class BigramContainerTests(unittest.TestCase):
+    def test_kc_system_bigram_is_native_hash_and_user_bigram_is_snapshot(self):
+        with tempfile.TemporaryDirectory() as root:
+            Path(root, 'table.conf').write_text('database format:KyotoCabinet\n')
+            kit = Mock(data=root)
+            for name in ('bigram.db', 'user_bigram.db'):
+                for writable in (False, True):
+                    with self.subTest(name=name, writable=writable):
+                        path, db = Path(root, name), Mock()
+                        db.kcdbnew.return_value = 123
+                        with patch('ctypes.util.find_library', return_value='libkyotocabinet.so.16'), \
+                                patch.object(helpers.C, 'CDLL', return_value=db):
+                            helpers.d18_bigram_db(kit, path, [] if writable else None)
+                        snapshot = name == 'user_bigram.db'
+                        target = b'-' if snapshot else (str(path) + '#type=kch').encode()
+                        db.kcdbopen.assert_called_once_with(123, target, 6 if writable or snapshot else 1)
+                        if snapshot and writable:
+                            db.kcdbdumpsnap.assert_called_once_with(123, str(path).encode())
+                        else:
+                            db.kcdbdumpsnap.assert_not_called()
+                        if snapshot and not writable:
+                            db.kcdbloadsnap.assert_called_once_with(123, str(path).encode())
+                        else:
+                            db.kcdbloadsnap.assert_not_called()
+                        db.kcdbclose.assert_called_once_with(123)
+                        db.kcdbdel.assert_called_once_with(123)
+
+    def test_tkrzw_system_bigram_opens_as_native_hash(self):
+        with tempfile.TemporaryDirectory() as root:
+            Path(root, 'table.conf').write_text('database format:Tkrzw\n')
+            path, db, libc = Path(root, 'bigram.db'), Mock(), Mock()
+            db.tkrzw_dbm_open.return_value = 123
+            with patch('ctypes.util.find_library', return_value='libtkrzw.so.1'), \
+                    patch.object(helpers.C, 'CDLL', side_effect=[db, libc]):
+                helpers.d18_bigram_db(Mock(data=root), path, [])
+            db.tkrzw_dbm_open.assert_called_once_with(str(path).encode(), True, b'dbm=HashDBM')
+            db.tkrzw_dbm_close.assert_called_once_with(123)
 
 
 class ObservationTests(unittest.TestCase):

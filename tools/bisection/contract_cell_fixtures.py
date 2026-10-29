@@ -11,7 +11,7 @@ from pathlib import Path
 import subprocess
 
 from contract_abi import Arr, B, I, P, S, U, Z, row_of
-from contract_case_helpers import ADDON_PROMOTE_INPUTS, PHRASE_TEXT_WORDS, TOKEN_REUSE_PHRASES, USER_INDEX_FILES, _chunk
+from contract_case_helpers import ADDON_PROMOTE_INPUTS, PHRASE_TEXT_WORDS, TOKEN_REUSE_PHRASES, USER_INDEX_FILES, _chunk, d18_bigram_db
 from contract_fixtures import _write_user_conf, private_system, zero_item_padding
 
 
@@ -264,7 +264,7 @@ def phrase_text_system(k, variant, *, items_system):
     items_system(k, [((0x7532, word, 0x4e59), (0x1084,) * 3, 100), ((0x4e19,), (0x1081,), 100)])
 
 
-def items_system(k, items, total=200, *, _craft_db):
+def items_system(k, items, total=200, *, isolated=False, _craft_db):
     """A private system whose library 1 holds exactly `items`, tokens 1, 2, ….
 
     Each item is `(words, keys, unigram)`, written raw: no API import
@@ -272,7 +272,9 @@ def items_system(k, items, total=200, *, _craft_db):
     `pinyin_index.bin` value, in token order; every proper prefix of a
     reading or a text is an empty marker row, as import writes them.
     Replace the private links to gb_char.bin, pinyin_index.bin and
-    phrase_index.bin, write user.conf and point the kit at the system."""
+    phrase_index.bin, write user.conf and point the kit at the system.
+    With isolated=True, load only library 1 and replace inherited addon indexes
+    and the system bigram with empty containers before opening the context."""
     system = private_system(k)
     content, offsets = bytearray(8), [0]
     phonetic, phrases = {}, {}
@@ -303,5 +305,22 @@ def items_system(k, items, total=200, *, _craft_db):
         path = Path(system, name)
         path.unlink()
         _craft_db(str(path), list(rows.items()), 1, system_index=True)
+    if isolated:
+        path = Path(system, 'table.conf')
+        lines = path.read_text().splitlines(True)
+        path.unlink()
+        path.write_text(''.join(line for line in lines if not line.startswith(('default ', 'addon '))
+                               or line.startswith('default GB_DICTIONARY ')))
+        for name in ('addon_pinyin_index.bin', 'addon_phrase_index.bin'):
+            path = Path(system, name)
+            path.unlink()
+            _craft_db(str(path), [], 1, system_index=True)
+        path = Path(system, 'bigram.db')
+        path.unlink()
+        # KC attaches the system gram as HashDB, not the user snapshot
+        # (ngram_kyotodb.cpp:110-119 at 074a2219). This shared writer also
+        # uses the native HashDBM that tkrzw attaches
+        # (ngram_tkrzwdb.cpp:86-98 at 074a2219).
+        d18_bigram_db(k, path, [])
     _write_user_conf(k)
     k.data = system

@@ -181,7 +181,7 @@ ADAPTERS = {
     'token_reuse_files': '(k)',
     'addon_promote_sequence': '(k, mask_value)',
     'phrase_text_system': '(k, variant)',
-    'items_system': '(k, items, total=200)',
+    'items_system': '(k, items, total=200, *, isolated=False)',
     'regenerate_sentence_ties': '(prefix, fixture)',
     'check_axis_c_snapshots': '(args)',
     'run_axis_c': '(args, names)',
@@ -238,6 +238,15 @@ def unbound_globals(module):
 
 
 class ModuleBoundaryTests(unittest.TestCase):
+    def test_reduced_longer_normal_cases_keep_their_own_policy_metadata(self):
+        for name in ('longer-normal-frequency-dedup', 'longer-normal-frequency-tie', 'longer-normal-disabled'):
+            with self.subTest(name=name):
+                self.assertIsNone(driver.CASES[name]['policy_record'])
+                self.assertIn('913', driver.CASES[name]['issues'])
+        witness = driver.CASES['s2-nbest-longer-normal-precedence']
+        self.assertEqual(witness['policy_record'], 'trellis-adjusted-cost-s1-s2.md')
+        self.assertEqual(witness['cells'], ('bdb',))
+
     def test_stored_search_selection_keeps_the_registered_inventory_cases(self):
         names = (ROOT / 'fixtures/w4/1297-search-cases.txt').read_text().splitlines()
         selected, _ = driver.select_cases(issues=('757', '785'))

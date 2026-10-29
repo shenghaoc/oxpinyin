@@ -536,9 +536,9 @@ def phrase_text_system(k, variant):
     return contract_cell_fixtures.phrase_text_system(k, variant, items_system=items_system)
 
 
-def items_system(k, items, total=200):
+def items_system(k, items, total=200, *, isolated=False):
     """Pass the driver's current _craft_db on every call (contract_cell_fixtures)."""
-    return contract_cell_fixtures.items_system(k, items, total, _craft_db=_craft_db)
+    return contract_cell_fixtures.items_system(k, items, total, isolated=isolated, _craft_db=_craft_db)
 
 
 # --------------------------------------------------------------------------
@@ -665,7 +665,7 @@ contract_bigram_mask_prediction.register(
 contract_token_reuse_addon_import.register(case, token_reuse_sequence=token_reuse_sequence)
 
 
-contract_before_cursor_dedup.register(case, addon_promote_sequence=addon_promote_sequence)
+contract_before_cursor_dedup.register(case, addon_promote_sequence=addon_promote_sequence, items_system=items_system)
 
 
 contract_user_index_phrase_mask.register(
