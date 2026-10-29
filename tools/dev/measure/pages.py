@@ -1,9 +1,10 @@
 """Map newly resident file pages to object sections and symbols (#1163).
 
 The shared core of per-page residency attribution. The teardown campaign's
-cold mode (tools/bisection/teardown.py) reports through it; the native
-controller does not call it yet. Standard library only: objects are parsed
-with struct, never readelf, nm or otool.
+cold mode (tools/bisection/teardown.py) and the native startup controller's
+cold memory samples on Linux and macOS (tools/dev/measure/startup.py) report
+through it. Standard library only: objects are parsed with struct, never
+readelf, nm or otool.
 
 A residency vector is one file's mincore result (tools.dev.mman.vector): one
 byte per host page, resident when bit 0 is set (Darwin sets other flag bits

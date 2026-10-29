@@ -752,14 +752,40 @@ sections and `LC_SYMTAB` symbols (`macho_segments`, `macho_sections`,
 (`offset_range`). Universal Mach-O selects and identifies the host architecture
 slice; unsupported formats fall back to byte ranges with a reason.
 
-The native macOS controller reports each cold memory round after the rounds
-finish, with adjacent checkpoints, `darwin_resident_pages`, and the host page
-size. It reads each cold file at the existing checkpoint pause; timing samples
-do not collect vectors. The teardown campaign's cold mode
-(`--teardown-cache cold`, native Linux) reports the cold memory samples of
-`pilot` and `confirm`, and the cold init samples of the `init-attribute` stage's
-`count` probe. Nothing is archived or uploaded. The details below describe
-the teardown report:
+Two controllers report through it. Nothing is archived or uploaded.
+
+The native startup controller (`just measure startup --cache cold`, native
+Linux on ext4 and native macOS on APFS) reads each cold file of a cold memory
+sample at the worker's existing checkpoint pauses (`start`, `lib_load`,
+`init`, `config`, `alloc`, `first_candidate`, `end`), with
+`tools.dev.mman.vector`, the read that `tools.dev.measure.worker` makes while
+the child waits. The cold files are those its preparation evicted: the copied
+facade (`object`), each system-data file (`data/<path>`) and each private user
+file (`user/<path>`); libc and backend libraries stay warm and are not
+reported. Timing samples, warm samples and rejected samples collect no
+vectors. Once all memory rounds for one facade and profile finish, it prints
+one `page-residency` record per arm, accepted round and pair of neighbouring
+checkpoints. Rejected rounds have no vectors and are skipped. Each record has
+`facade`, `profile`, `arm`, `round`, `checkpoints`, `page_size`,
+`metric`, `limits` and `files`. The metric names the host:
+`linux_resident_pages` on Linux, `darwin_resident_pages` on macOS. Each file
+with a newly resident page carries that metric's page count and its `rows`; a
+file that appeared, disappeared or was replaced between the checkpoints
+carries a `reason` instead. `lib_load` to `init` is the teardown campaign's M0
+to I1. The facade is parsed after the rounds, from a descriptor whose device,
+inode, size and modification time match the checkpoint; otherwise its rows are
+byte ranges and `layout_error` names why. A universal Mach-O also names its
+`macho_slice`.
+
+```sh
+# The records of a native startup run whose standard output is in $startup_run:
+grep '"startup": "page-residency"' "$startup_run"
+```
+
+The teardown campaign's cold mode (`--teardown-cache cold`, native Linux)
+reports the cold memory samples of `pilot` and `confirm`, and the cold init
+samples of the `init-attribute` stage's `count` probe. The details below
+describe the teardown report:
 
 - **Capture.** At each paused checkpoint the controller already reads every
   cold file's residency with `tools.dev.mman.vector`, the one `mincore` reader
@@ -808,7 +834,8 @@ the teardown report:
 grep '"teardown": "page-residency"' "$cold_run"
 ```
 
-Three limits apply to every result, and every record repeats them in `limits`:
+Three limits apply to every result of either controller, and every record
+repeats them in `limits`:
 
 - A `mincore` difference includes readahead. A page that became resident
   between two checkpoints was not necessarily faulted; the kernel may have
@@ -820,8 +847,8 @@ Three limits apply to every result, and every record repeats them in `limits`:
   rewritten shows its written pages as newly resident, whether or not anything
   read them.
 
-A page with `in_rounds` below `rounds` was newly resident in only some of the
-rounds.
+In a teardown record, a page with `in_rounds` below `rounds` was newly
+resident in only some of the rounds. A startup record holds one round.
 
 ## Criterion benches
 
