@@ -1324,17 +1324,9 @@ pub struct NbestStepRow {
     // The generation tag adds one word per cached row. None means unloaded;
     // a loaded missing gram still has a nonzero generation tag.
     generation: Option<core::num::NonZeroU64>,
-    /// The step's repeated denominators' logarithms. Lives and dies with
-    /// the row, so it never outlasts one step of one guess.
-    log2: cost::Log2Memo,
 }
 
 impl NbestStepRow {
-    /// The logarithm memo the pricing of this row's steps shares.
-    pub fn log2_memo(&mut self) -> &mut cost::Log2Memo {
-        &mut self.log2
-    }
-
     /// Loads once on success, including a missing row. Errors are propagated
     /// without turning corruption into a cached miss.
     ///
@@ -1497,21 +1489,15 @@ pub trait LanguageModel {
         Ok(None)
     }
 
-    /// The two per-step costs of the n-best sentence trellis (W14).
+    /// The two pre-log branches of the n-best sentence trellis.
     ///
-    /// Upstream `PhoneticLookup` steps carry `log((λ·b + (1−λ)·u) · p)` when
-    /// the previous token has bigram evidence for `token`, and
-    /// `log(u · (1−λ) · p)` otherwise (`phonetic_lookup.h:628-676`); the
-    /// pronunciation term `p` belongs to the caller (the span match), not the
-    /// model. This method reports both branches as fixed-point surprisal so
-    /// the engine can pick per step exactly like upstream: the blended cost
-    /// when `blended` is `Some`, else `unigram`.
-    ///
-    /// `None` in either field means the branch's possibility is below
-    /// upstream's epsilon floor (`bigram_poss < FLT_EPSILON &&
-    /// unigram_poss < DBL_EPSILON` skips the step). A model that answers
-    /// `None` overall — the default — carries no n-best cost data, and the
-    /// engine's trellis yields no rows for it.
+    /// `blended` is `f64::from(lambda * bigram_poss) +
+    /// f64::from(unigram_lambda) * elem_poss`, where the first product is
+    /// f32. `unigram` is the unweighted f64 `elem_poss`, accompanied by
+    /// `unigram_lambda`. The model applies the pin's epsilon gates before
+    /// weighting; None skips a branch. The engine supplies pronunciation,
+    /// then takes f64::ln and narrows the accumulated sum to f32.
+    /// See `phonetic_lookup.h:646-697` at 074a2219.
     ///
     /// # Errors
     ///
@@ -1591,28 +1577,40 @@ pub trait LanguageModel {
     }
 }
 
-/// The branch costs of [`LanguageModel::nbest_step_costs`].
-///
-/// Both are surprisal on the core fixed-point scale: lower is better, and
-/// they are summed along a path.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+/// Pre-log pieces returned by [`LanguageModel::nbest_step_costs`].
+/// The method names are shared with the row-reading seam; these values
+/// are probabilities, never integer costs or precomputed logarithms.
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct NbestStepCosts {
-    /// `-log2(λ·bigram_poss + (1−λ)·unigram_poss)`: the branch with bigram
-    /// evidence. `None` when the blend's possibility is below the floor.
-    pub blended: Option<Cost>,
-    /// `-log2((1−λ) · unigram_poss)`: the no-evidence branch. `None` when
-    /// the unigram possibility is below the floor (count 0 or no table).
-    pub unigram: Option<Cost>,
+    /// Weighted blend before pronunciation and log; absent only below
+    /// the pin's combined bigram/unigram epsilon gate or without an item.
+    pub blended: Option<f64>,
+    /// Unweighted f64 frequency/total; absent below DBL_EPSILON or
+    /// without a visible phrase item. NaN passes the pin's `<` gate.
+    pub unigram: Option<f64>,
+    /// `(1.0_f64 - lambda_f32 as f64) as f32`. Kept separate so the
+    /// engine evaluates `(elem_poss * pinyin_poss) * unigram_lambda`.
+    pub unigram_lambda: f32,
+}
+
+impl Default for NbestStepCosts {
+    fn default() -> Self {
+        Self {
+            blended: None,
+            unigram: None,
+            unigram_lambda: 1.0,
+        }
+    }
 }
 
 impl NbestStepCosts {
-    /// The cost upstream charges for this step: the blended branch when it
-    /// exists, else the unigram branch. `None` skips the step entirely.
+    /// Pre-log probability without pronunciation: blend if present, else
+    /// the weighted unigram. None skips the step entirely.
     #[must_use]
-    pub const fn step(&self) -> Option<Cost> {
+    pub fn step(&self) -> Option<f64> {
         match (self.blended, self.unigram) {
             (Some(blended), _) => Some(blended),
-            (None, Some(unigram)) => Some(unigram),
+            (None, Some(unigram)) => Some(unigram * f64::from(self.unigram_lambda)),
             (None, None) => None,
         }
     }

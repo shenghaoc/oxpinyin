@@ -625,7 +625,26 @@ line.)
   `phrase-surface` / `predict` / `punct` / `addon` / `user-candidate` /
   `import` / `key-surface` differential, is identical on the pin's data.
 
+### Zhuyin selection uses length, raw score and batch position (#1378)
+
+The 2026-10-29 “No ported external-library internals” ruling orders zhuyin
+selection by length, descending raw possibility (NaN last, signed zeros
+equal), then earlier batch position. The equal-count user-phrase case
+`nbest-user-table-order-zhuyin` and the three NaN-producing λ cases are
+POLICY-ACCEPTED; complete observations
+and derivation: [1378-zhuyin-selection](1378-zhuyin-selection.md).
+Single-slot admission stays unchanged.
+
 ### N-best trellis accumulates gfloat log costs — not reproducible in fixed point, FROZEN as a permanent Stage-1 divergence
+
+**Superseded by #1378 PR B (maintainer approval 2026-10-29 UTC;
+recorded 2026-10-29T08:32:25Z, `date -u`).** Real-table trellis and phrase scores
+now accumulate in f32 after Rust std `f64::ln`. The permanent fixed-point
+divergence and its cross-platform premise are retired; the historical
+record below remains. Only a demonstrated std-math precision difference
+remains class (a). Compiler contraction is a separate internal language
+artefact, never imitated with `mul_add`. §12 records the PR B re-measurement: seven supplementary surfaces become
+pin-equal, and 156 exact selection residuals are unchanged from main.
 
 **Current scope (2026-10-04 UTC, lane D):** selection is ported. Only bo, quguan, kaliantai, huilianpei, yunhoulvlvlunqianaonaoruoqubeiji and nou'y are class (a); the four separator residuals remain unattributed by name in sentence-surface.md §12's lane-D amendment. Current gate: 500/500/500 of 500 after the #639 resplit repair (495/495/495 of 496 at the port; corpus 14/10,465 before the repair). The historical record below is superseded for current scope and counts.
 

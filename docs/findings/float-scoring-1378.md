@@ -512,3 +512,53 @@ just heavy -- just packaging install libpinyin --prefix="$STAGE" \
   -- --locked --release --no-default-features --features bdb,shipped
 readelf --dyn-syms -r -V -W "$STAGE/lib/libpinyin.so.15.0.0" | grep -E 'log|libm'
 ```
+
+## PR B re-measurement (2026-10-29 UTC)
+
+Historical measurements before the record-format rebase; no campaign or size
+measurement was rerun for that follow-up. Base: main `9015a178`. Native Ubuntu 26.10, x86_64,
+Core i7-9750H, Rust 1.97.1, glibc 2.44, Valgrind 3.27.1. Both arms use
+matching provisioned BDB model20 tables. The 3,304-case debug contract
+runs have exactly four verdict movements, all MATCH to the ruled zhuyin
+ordering differences in [1378-zhuyin-selection.md](1378-zhuyin-selection.md).
+The seven pre-existing DIFFERs on that main revision follow the S1/S2
+ruling: three longer-normal cases and four GB/negative-lambda cases. #1400
+subsequently supplied the latter four registrations and KC/tkrzw entries for
+three positive-lambda cases; the three longer-normal registrations remain in
+PR B until PR 3 replaces them. The original four BDB S1/S2 pairs are unchanged.
+
+The supplementary fixture's pin data, historical selection costs and input
+set stay fixed. Its actual pin differences fall from 163 to 156. Every
+remaining surface is identical to current main. All seven changes become
+pin-equal; their cause is replacing the rational/integer scoring path and
+its per-step millibit grid with the pin's pre-log float sequence and f32
+accumulation. No std-math difference is needed to explain these matches.
+
+| Input | Main → PR B (= pin), changed indexed ranks |
+| --- | --- |
+| `bo` | rank 2 博 → 波 |
+| `sao` | rank 2 骚 → 嫂 |
+| `lagai` | rank 2 拉盖 → 拉改 |
+| `xiehenshuaitong` | ranks 1–2 写很率同 / 写很帅通 → 写很帅通 / 写很率同; the old 47,380 / 47,380 grid tie is separated |
+| `huilianpei` | rank 1 会连佩 → 惠连佩 |
+| `liekuoouyangzhangzaique` | rank 2 列阔欧阳章在阙 → 列阔欧阳章在确 |
+| `yunhoulvlvlunqianaonaoruoqubeiji` | rank 2 云后旅旅伦卡闹闹若区被及 → 云后旅旅伦卡闹闹若去被及 |
+
+The 500-row fixture measures main 496 / 491 / 489 (1-best / distinct-set /
+ordered); PR B measures 496 / 492 / 491. Candidate-row agreement moves
+489 → 491. The four 1-best misses are unchanged. The current counts and
+156 exact ruled selection residuals replace stale integer-era test
+expectations; no new PR B non-MATCH is accepted there.
+
+The score-shift assertions now bind these f32 log-possibility bits:
+`yaomeichong c1b595f0`, `xiehenshuaitong c201bc36`,
+`nuanmanqianzhaofang c225aaba`, `nic c144ff96`.
+The fallback scorer keeps its integer costs. PR B removes the row's
+logarithm memo and the private pricing helpers that become unused; the
+remaining rational/D1 fallback and training path is PR C.
+
+D-7 is resolved by the installed PR B shipping object: `readelf
+--dyn-syms -r -V -W` shows an undefined `log@GLIBC_2.29`, an
+`R_X86_64_GLOB_DAT` relocation to it, and `libm.so.6` as the version-needed
+provider. This is the result of Rust std `f64::ln`; no libc implementation
+or instruction sequence is imitated.
