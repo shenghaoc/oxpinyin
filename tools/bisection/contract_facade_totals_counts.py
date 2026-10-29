@@ -1,11 +1,12 @@
 """Facade totals and counts cases (inventory row 48, #1175).
 """
 from pathlib import Path
+from functools import partial
 
 from contract_abi import B, I, P, S, U, Z, final_step_sentences, row_of, tokens_of, unigram_of
 from contract_case_helpers import (
     FACADE_TOTAL, _chunk, _facade_total_out, _guess_out, _segment_out, _stored_library_total, guess_rows)
-from contract_fixtures import _write_user_conf, import_rows
+from contract_fixtures import _write_user_conf, conf_system, import_rows
 
 
 _REGISTRATIONS = []
@@ -212,7 +213,42 @@ def unload_accepted_bump(k):
 case('unload-drops-accepted-bump', issues=('801',))(unload_accepted_bump)
 
 
-def register(driver_case):
+def nonwrapping_denominator_candidates(k, *, items_system, _craft_db):
+    """An unrelated ABI add makes two ordinary candidates tie after amplification.
+
+    Pin 074a2219: phrase_index.h:628-635 raises the facade total;
+    pinyin.cpp:1855-1866 divides by it, amplifies by 2^24 and truncates.
+    With lambda zero, counts 1 and 2 at total 2^24 score 1 and 2.
+    Adding 3*2^24 to the unrelated third item makes total 2^26: both
+    scores truncate to zero. Stable collection order then puts 甲 before
+    乙 (pinyin.cpp:1769-1788, 2285-2288), instead of the initial 乙, 甲.
+    Every item and library count stays below the unsigned wrap boundary.
+    """
+    k.data = conf_system(k, ('re', r'lambda parameter:[^\n]*', 'lambda parameter:0'),
+                         ('-', 'default GBK_DICTIONARY'), ('-', 'default OPENGRAM_DICTIONARY'),
+                         ('-', 'default MERGED_DICTIONARY'))
+    total = 1 << 24
+    # ba1 = 0x1081 and da1 = 0x1084 (chewing_key.h:41-47,
+    # chewing_enum.h:16,19,65); raw item counts, without import scaling.
+    items_system(k, [((0x7532,), (0x1081,), 1), ((0x4e59,), (0x1081,), 2),
+                     ((0x4e19,), (0x1084,), total - 3)], total=total)
+    # Neither addon hits nor full-model bigrams belong to this fixture.
+    for name, dbtype, system_index in (('addon_pinyin_index.bin', 1, True),
+                                       ('addon_phrase_index.bin', 1, True), ('bigram.db', 2, False)):
+        path = Path(k.data, name)
+        path.unlink()
+        _craft_db(str(path), [], dbtype, system_index=system_index)
+    assert k.fn('set_options', B, P, U)(k.ctx, 1 << 5)  # USE_TONE, no DYNAMIC_ADJUST
+    assert k.fn('parse_more_full_pinyins', Z, P, S)(k.inst, b'ba1') == 3
+    # SORT_BY_FREQUENCY | SORT_WITHOUT_SENTENCE | SORT_WITHOUT_LONGER.
+    before = guess_rows(k, k.inst, 0, 0x13)
+    added = k.fn('token_add_unigram_frequency', B, P, U, U)(k.inst, 0x01000003, 3 * total)
+    return {'before': before, 'add': added, 'after': guess_rows(k, k.inst, 0, 0x13)}
+
+
+def register(driver_case, *, items_system, _craft_db):
     """Register the declarations with the driver's current decorator, in their original order."""
     for name, args, kwargs, fn in _REGISTRATIONS:
         driver_case(name, *args, **kwargs)(fn)
+    driver_case('token-add-unigram-denominator-candidates', issues=('540',))(
+        partial(nonwrapping_denominator_candidates, items_system=items_system, _craft_db=_craft_db))
