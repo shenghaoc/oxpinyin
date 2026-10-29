@@ -27,7 +27,7 @@ use oxpinyin_core::ChewingKey;
 use oxpinyin_data::row_format::pinyin_index::{
     encode_complete_key, encode_incomplete_key, encode_item, item2_stride,
 };
-use oxpinyin_data::table_entries::{Entries, exact_compare2};
+use oxpinyin_data::table_entries::Entries;
 
 use crate::persistence::{IndexKeys, SystemOriginals, UserState};
 use crate::phrase::MAX_PHRASE_LENGTH;
@@ -97,77 +97,26 @@ impl<'a> Entry<'a> {
         ])
     }
 
-    fn keys(&self, index: usize) -> Vec<ChewingKey> {
-        let base = index * self.stride + 4;
-        (0..self.len)
-            .map(|word| {
-                ChewingKey::from_packed(u16::from_le_bytes([
-                    self.bytes[base + 2 * word],
-                    self.bytes[base + 2 * word + 1],
-                ]))
-            })
-            .collect()
-    }
-
-    fn less(&self, index: usize, value: &[ChewingKey]) -> bool {
-        exact_compare2(&self.keys(index), value).is_lt()
-    }
-
-    fn greater(&self, index: usize, value: &[ChewingKey]) -> bool {
-        exact_compare2(value, &self.keys(index)).is_lt()
-    }
-
-    /// `std::lower_bound` over `first..last`.
-    fn lower_bound(&self, mut first: usize, last: usize, value: &[ChewingKey]) -> usize {
-        let mut len = last - first;
-        while len > 0 {
-            let half = len >> 1;
-            let middle = first + half;
-            if self.less(middle, value) {
-                first = middle + 1;
-                len = len - half - 1;
-            } else {
-                len = half;
-            }
-        }
-        first
-    }
-
-    /// `std::upper_bound` over `first..last`.
-    fn upper_bound(&self, mut first: usize, last: usize, value: &[ChewingKey]) -> usize {
-        let mut len = last - first;
-        while len > 0 {
-            let half = len >> 1;
-            let middle = first + half;
-            if self.greater(middle, value) {
-                len = half;
-            } else {
-                first = middle + 1;
-                len = len - half - 1;
-            }
-        }
-        first
-    }
-
-    /// `std::equal_range` with `phrase_exact_less_than2`.
+    /// Two standard partition searches in exact key order.
+    /// Foreign or mask-carried unpartitioned records
+    /// retain their bytes and use std's unspecified search result.
     fn equal_range(&self, value: &[ChewingKey]) -> (usize, usize) {
-        let mut first = 0;
-        let mut len = self.count();
-        while len > 0 {
-            let half = len >> 1;
-            let middle = first + half;
-            if self.less(middle, value) {
-                first = middle + 1;
-                len = len - half - 1;
-            } else if self.greater(middle, value) {
-                len = half;
-            } else {
-                let left = self.lower_bound(first, middle, value);
-                let right = self.upper_bound(middle + 1, first + len, value);
-                return (left, right);
-            }
+        if value.len() != self.len {
+            return (0, 0);
         }
-        (first, first)
+        // Lengths 1..=16 have eight strides. Borrow the whole records;
+        // as_chunks leaves the same partial tail that count() excludes.
+        match self.stride {
+            8 => search_records::<8>(self.bytes, value),
+            12 => search_records::<12>(self.bytes, value),
+            16 => search_records::<16>(self.bytes, value),
+            20 => search_records::<20>(self.bytes, value),
+            24 => search_records::<24>(self.bytes, value),
+            28 => search_records::<28>(self.bytes, value),
+            32 => search_records::<32>(self.bytes, value),
+            36 => search_records::<36>(self.bytes, value),
+            _ => (0, 0),
+        }
     }
 
     /// `ChewingTableEntry::add_index`: `false` when the item exists.
@@ -215,6 +164,41 @@ impl<'a> Entry<'a> {
             }
         }
     }
+}
+
+/// Compare packed keys in place, without allocating or decoding a row.
+/// `pinyin_exact_compare2` (pinyin_phrase3.h:33-65 at 074a2219) compares
+/// all initials, then each middle/final pair, then all tones. Neither the
+/// token nor record padding participates.
+fn compare_record(record: &[u8], value: &[ChewingKey]) -> std::cmp::Ordering {
+    let (words, _) = record[4..].as_chunks::<2>();
+    let keys = || {
+        words
+            .iter()
+            .take(value.len())
+            .map(|word| ChewingKey::from_packed(u16::from_le_bytes(*word)))
+    };
+    keys()
+        .map(|key| key.initial)
+        .cmp(value.iter().map(|key| key.initial))
+        .then_with(|| {
+            keys()
+                .map(|key| (key.middle, key.final_))
+                .cmp(value.iter().map(|key| (key.middle, key.final_)))
+        })
+        .then_with(|| {
+            keys()
+                .map(|key| key.tone)
+                .cmp(value.iter().map(|key| key.tone))
+        })
+}
+
+fn search_records<const N: usize>(bytes: &[u8], value: &[ChewingKey]) -> (usize, usize) {
+    let (records, _) = bytes.as_chunks::<N>();
+    let first = records.partition_point(|record| compare_record(record, value).is_lt());
+    let last =
+        first + records[first..].partition_point(|record| !compare_record(record, value).is_gt());
+    (first, last)
 }
 
 /// The two keys `ChewingLargeTable2::add_index` / `remove_index` address,
@@ -470,6 +454,9 @@ pub(crate) fn file_tails(
 
 #[cfg(test)]
 mod tests {
+    use oxpinyin_data::table_entries::exact_compare2;
+    use proptest::prelude::*;
+
     use super::*;
 
     fn key(initial: u8) -> ChewingKey {
@@ -505,6 +492,139 @@ mod tests {
         assert!(entry.remove_index(&a, 7));
         entry.mask_out(0xffff_ffff, 5);
         assert_eq!(*entry.bytes, record(&[(9, &b)]));
+    }
+
+    #[test]
+    fn packed_comparison_uses_phrase_field_precedence() {
+        let examples = [
+            // The second initial outranks the first syllable's other fields.
+            ([ChewingKey::new(3, 3, 31, 7), key(2)], [key(3), key(3)]),
+            // The first middle/final pair outranks the second pair.
+            (
+                [ChewingKey::new(3, 1, 2, 7), ChewingKey::new(3, 3, 31, 7)],
+                [ChewingKey::new(3, 1, 3, 0), ChewingKey::new(3, 0, 0, 0)],
+            ),
+            // The second middle/final pair outranks the first tone.
+            (
+                [ChewingKey::new(3, 1, 1, 7), ChewingKey::new(3, 0, 0, 7)],
+                [key(3), ChewingKey::new(3, 1, 1, 0)],
+            ),
+            // Tone order is lexicographic only after the other fields tie.
+            (
+                [ChewingKey::new(3, 1, 1, 0), ChewingKey::new(3, 1, 1, 7)],
+                [ChewingKey::new(3, 1, 1, 1), ChewingKey::new(3, 1, 1, 0)],
+            ),
+        ];
+        for (lhs, rhs) in examples {
+            assert!(compare_record(&encode_item(1, &lhs), &rhs).is_lt());
+            assert!(compare_record(&encode_item(1, &rhs), &lhs).is_gt());
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn packed_comparison_preserves_every_field_precedence(
+            left in any::<[u16; MAX_PHRASE_LENGTH]>(),
+            right in any::<[u16; MAX_PHRASE_LENGTH]>(),
+            len in 1..=MAX_PHRASE_LENGTH,
+        ) {
+            let lhs: Vec<_> = left[..len].iter().copied().map(ChewingKey::from_packed).collect();
+            let rhs: Vec<_> = right[..len].iter().copied().map(ChewingKey::from_packed).collect();
+            let mut packed = encode_item(u32::MAX, &lhs);
+            // The stored key's spare bit and record's alignment bytes have
+            // no place in the comparison.
+            for high in packed[5..4 + 2 * len].iter_mut().step_by(2) {
+                *high |= 0x80;
+            }
+            packed[4 + 2 * len..].fill(0xff);
+            prop_assert_eq!(compare_record(&packed, &rhs), exact_compare2(&lhs, &rhs));
+        }
+
+        #[test]
+        fn unpartitioned_ranges_are_bounded_and_preserve_stored_order(
+            row in prop::collection::vec(any::<u16>(), 0..64),
+            probe in any::<u16>(),
+            len in 1..=MAX_PHRASE_LENGTH,
+        ) {
+            let mut bytes: Vec<_> = row.iter().enumerate().flat_map(|(n, word)| {
+                encode_item(u32::try_from(n).expect("small fixture"),
+                            &vec![ChewingKey::from_packed(*word); len])
+            }).collect();
+            bytes.extend_from_slice(&[0xff; 3]);
+            let before = bytes.clone();
+            let (first, last) = Entry::new(&mut bytes, len)
+                .equal_range(&vec![ChewingKey::from_packed(probe); len]);
+            // No position or membership is promised on unpartitioned
+            // input. Searching the upper suffix still bounds the range.
+            prop_assert!(first <= last && last <= row.len());
+            prop_assert_eq!(bytes, before);
+        }
+    }
+
+    #[test]
+    fn every_stride_finds_equal_keys_and_keeps_the_partial_tail() {
+        for len in 1..=MAX_PHRASE_LENGTH {
+            let mut rows: Vec<_> = (1..=12)
+                .map(|n| {
+                    let mut keys = vec![key(3); len];
+                    keys[len - 1] = ChewingKey::new(n % 4, n % 3, n, n % 5);
+                    keys
+                })
+                .collect();
+            rows.sort_by(|a, b| exact_compare2(a, b));
+            // Equal keys with distinct tokens must span the full range.
+            rows.insert(4, rows[4].clone());
+            let pristine: Vec<_> = rows
+                .iter()
+                .enumerate()
+                .flat_map(|(n, keys)| encode_item(u32::try_from(n).expect("small fixture"), keys))
+                .collect();
+            for tail_len in 0..item2_stride(len) {
+                let mut bytes = pristine.clone();
+                bytes.extend(std::iter::repeat_n(0xa5, tail_len));
+                let before = bytes.clone();
+                let entry = Entry::new(&mut bytes, len);
+                let below = vec![ChewingKey::new(0, 0, 0, 0); len];
+                let above = vec![ChewingKey::new(31, 3, 31, 7); len];
+                assert!(exact_compare2(&below, &rows[0]).is_lt());
+                assert!(exact_compare2(&above, &rows[rows.len() - 1]).is_gt());
+                for probe in rows.iter().chain([&below, &above]) {
+                    let first = rows
+                        .iter()
+                        .position(|keys| !exact_compare2(keys, probe).is_lt())
+                        .unwrap_or(rows.len());
+                    let last = first
+                        + rows[first..]
+                            .iter()
+                            .take_while(|keys| exact_compare2(keys, probe).is_eq())
+                            .count();
+                    assert_eq!(entry.equal_range(probe), (first, last), "length {len}");
+                }
+                assert_eq!(*entry.bytes, before);
+            }
+        }
+    }
+
+    #[test]
+    fn every_stride_handles_empty_records_and_retains_trailing_bytes_on_edits() {
+        for len in 1..=MAX_PHRASE_LENGTH {
+            let keys = vec![key(3); len];
+            for tail_len in 0..item2_stride(len) {
+                let tail = vec![0xa5; tail_len];
+                let mut bytes = tail.clone();
+                let mut entry = Entry::new(&mut bytes, len);
+                assert_eq!(entry.equal_range(&keys), (0, 0));
+                assert!(!entry.remove_index(&keys, 7));
+                assert_eq!(*entry.bytes, tail);
+                assert!(entry.add_index(&keys, 7));
+                let mut expected = encode_item(7, &keys);
+                expected.extend_from_slice(&tail);
+                assert_eq!(*entry.bytes, expected);
+                assert!(!entry.add_index(&keys, 7));
+                assert!(entry.remove_index(&keys, 7));
+                assert_eq!(*entry.bytes, tail);
+            }
+        }
     }
 
     #[test]
