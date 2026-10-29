@@ -183,7 +183,7 @@ impl Value {
 struct BeamEntry {
     value: Value,
     slot: u32,
-    /// Index in the complete candidate batch, before heap selection.
+    /// Index in the complete candidate batch, before selection.
     /// Independent of `slot`, which continues to identify the predecessor.
     batch_position: usize,
 }
@@ -221,100 +221,35 @@ fn zhuyin_loses_to(left: &Value, right: &Value) -> bool {
 
 /// S1/S2 selection key: adjusted score, then earlier batch position. The
 /// position is assigned before selection and never participates in insertion.
-fn selection_loses_to(left: &BeamEntry, right: &BeamEntry, nstore: usize) -> bool {
+fn selection_compare(left: &BeamEntry, right: &BeamEntry, nstore: usize) -> Ordering {
     if nstore == 1 {
         return left
             .value
             .length
             .cmp(&right.value.length)
             .then_with(|| ordered_poss_compare(left.value.poss, right.value.poss))
-            .then_with(|| left.batch_position.cmp(&right.batch_position))
-            .is_gt();
+            .then_with(|| left.batch_position.cmp(&right.batch_position));
     }
     ordered_poss_compare(adjusted_poss(&left.value), adjusted_poss(&right.value))
         .then_with(|| left.batch_position.cmp(&right.batch_position))
-        .is_gt()
 }
 
-// Literal libstdc++ stl_heap.h algorithms (__push_heap, __adjust_heap,
-// __pop_heap, __make_heap). Replacing these existing routines is inventory
-// item B's separate follow-up; this PR completes the selection keys only.
-fn heap_push<T: Clone>(
-    values: &mut [T],
-    mut hole: usize,
-    top: usize,
-    value: T,
-    less: &impl Fn(&T, &T) -> bool,
-) {
-    while hole > top {
-        let parent = (hole - 1) / 2;
-        if !less(&values[parent], &value) {
-            break;
-        }
-        values[hole] = values[parent].clone();
-        hole = parent;
+/// Select on the complete key, then order just the kept prefix. Batch
+/// positions are unique, so unstable selection cannot reorder equal keys.
+/// O(m + k log k) time and no allocation beyond the candidate batch.
+fn select_top(mut values: Vec<BeamEntry>, count: usize, nstore: usize) -> Vec<BeamEntry> {
+    let count = count.min(values.len());
+    if count == 0 {
+        values.clear();
+        return values;
     }
-    values[hole] = value;
-}
-
-fn heap_adjust<T: Clone>(
-    values: &mut [T],
-    mut hole: usize,
-    len: usize,
-    value: T,
-    less: &impl Fn(&T, &T) -> bool,
-) {
-    let top = hole;
-    let mut child = hole;
-    while child < (len - 1) / 2 {
-        child = 2 * (child + 1);
-        if less(&values[child], &values[child - 1]) {
-            child -= 1;
-        }
-        values[hole] = values[child].clone();
-        hole = child;
+    let compare = |left: &BeamEntry, right: &BeamEntry| selection_compare(left, right, nstore);
+    if count < values.len() {
+        values.select_nth_unstable_by(count - 1, compare);
+        values.truncate(count);
     }
-    if len.is_multiple_of(2) && child == (len - 2) / 2 {
-        child = 2 * (child + 1);
-        values[hole] = values[child - 1].clone();
-        hole = child - 1;
-    }
-    heap_push(values, hole, top, value, less);
-}
-
-fn heap_pop<T: Clone>(values: &mut [T], less: &impl Fn(&T, &T) -> bool) {
-    if values.len() > 1 {
-        let last = values.len() - 1;
-        let value = values[last].clone();
-        values[last] = values[0].clone();
-        heap_adjust(values, 0, last, value, less);
-    }
-}
-
-fn heap_make<T: Clone>(values: &mut [T], less: &impl Fn(&T, &T) -> bool) {
-    if values.len() < 2 {
-        return;
-    }
-    let mut parent = (values.len() - 2) / 2;
-    loop {
-        let value = values[parent].clone();
-        heap_adjust(values, parent, values.len(), value, less);
-        if parent == 0 {
-            break;
-        }
-        parent -= 1;
-    }
-}
-
-fn heap_top<T: Clone>(mut values: Vec<T>, count: usize, less: impl Fn(&T, &T) -> bool) -> Vec<T> {
-    heap_make(&mut values, &less);
-    let mut result = Vec::with_capacity(count.min(values.len()));
-    while !values.is_empty() && result.len() < count {
-        result.push(values[0].clone());
-        heap_pop(&mut values, &less);
-        values.pop();
-    }
-    result
+    values.sort_unstable_by(compare);
+    values
 }
 
 /// S3: stably order the selected tails by raw possibility descending
@@ -356,7 +291,7 @@ type TokenMap<V> = HashMap<u32, V, BuildHasherDefault<TokenHasher>>;
 
 /// One `(position, token)` node: the pin's `trellis_node<nstore>`
 /// (074a2219 phonetic_lookup_heap.h:31-82), a fixed array whose first
-/// `len` values are the pinned heap. The rest are unused.
+/// `len` values occupy their physical backtracking slots. The rest are unused.
 #[derive(Clone, Copy, Debug)]
 struct Node {
     /// `m_nelem`, at most `nstore`.
@@ -371,13 +306,34 @@ impl Node {
         values: [Value::seed(0); NSTORE],
     };
 
-    /// The stored values in their physical heap slots.
+    /// The stored values in their physical backtracking slots.
     fn values(&self) -> &[Value] {
         self.values.get(..self.len as usize).unwrap_or_default()
     }
 
-    fn values_mut(&mut self) -> &mut [Value] {
-        self.values.get_mut(..self.len as usize).unwrap_or_default()
+    /// 074a2219 phonetic_lookup_heap.h:56-81: a full two-slot node
+    /// evicts its front only for a strictly better newcomer. The ordered
+    /// pinyin key makes that newcomer better than the back too.
+    fn keep(&mut self, value: Value, nstore: usize) {
+        match self.len {
+            0 => {
+                self.values[0] = value;
+                self.len = 1;
+            }
+            1 if nstore == NSTORE => {
+                if node_loses_to(&self.values[0], &value, nstore) {
+                    self.values[1] = self.values[0];
+                    self.values[0] = value;
+                } else {
+                    self.values[1] = value;
+                }
+                self.len = 2;
+            }
+            _ if node_loses_to(&self.values[0], &value, nstore) => {
+                self.values[0] = value;
+            }
+            _ => {}
+        }
     }
 }
 
@@ -454,9 +410,8 @@ impl Trellis {
         }
     }
 
-    /// 074a2219 phonetic_lookup_heap.h:56-81: a full heap replaces its
-    /// front when the newcomer wins. S1/S2 repairs only the pinyin comparison;
-    /// the pin's deliberate eviction of the best resident remains.
+    /// Preserve front eviction and physical slots before any successor
+    /// records its predecessor slot (074a2219 phonetic_lookup.h:282-293,665,695).
     fn insert(&mut self, position: usize, value: Value) {
         let nstore = self.shape.nstore();
         let Some(node) = self
@@ -466,21 +421,7 @@ impl Trellis {
         else {
             return;
         };
-        let less = |left: &Value, right: &Value| node_loses_to(left, right, nstore);
-        let len = node.len as usize;
-        if len < nstore.min(NSTORE) {
-            node.values[len] = value;
-            node.len += 1;
-            heap_push(node.values_mut(), len, 0, value, &less);
-        } else if node
-            .values()
-            .first()
-            .is_some_and(|front| less(front, &value))
-        {
-            let values = node.values_mut();
-            heap_pop(values, &less);
-            heap_push(values, len - 1, 0, value, &less);
-        }
+        node.keep(value, nstore);
     }
 
     /// 074a2219 phonetic_lookup.h:272-297: creation order, physical slots.
@@ -505,23 +446,21 @@ impl Trellis {
     }
 
     fn beam(&mut self, position: usize) -> SmallVec<[BeamEntry; NBEAM]> {
-        heap_top(self.candidates(position), NBEAM, |left, right| {
-            selection_loses_to(left, right, self.shape.nstore())
-        })
-        .into_iter()
-        .collect()
+        select_top(self.candidates(position), NBEAM, self.shape.nstore())
+            .into_iter()
+            .collect()
     }
 
     /// 074a2219 phonetic_lookup.h:329-339: only the fixed final step,
-    /// heap selection, then S3's stable ordering by raw possibility.
+    /// complete-key selection, then S3's stable ordering by raw possibility.
     /// Fewer final-step values yield fewer tails; an empty final step
     /// never falls back to an earlier populated step (#594).
     fn tails(&mut self) -> Vec<Value> {
         let position = self.steps.len().saturating_sub(1);
-        let mut values: Vec<_> = heap_top(
+        let mut values: Vec<_> = select_top(
             self.candidates(position),
             self.shape.nbest(),
-            |left, right| selection_loses_to(left, right, self.shape.nstore()),
+            self.shape.nstore(),
         )
         .into_iter()
         .map(|entry| entry.value)
@@ -1775,6 +1714,258 @@ mod tests {
     }
 
     #[test]
+    fn complete_selection_keys_obey_ordering_laws() {
+        let mut entries = Vec::new();
+        for length in [0, 1, u32::MAX] {
+            for poss in [
+                f32::NAN,
+                f32::from_bits(0xffc00001),
+                f32::INFINITY,
+                f32::NEG_INFINITY,
+                f32::MAX,
+                -f32::MAX,
+                0.0,
+                -0.0,
+                -1.0,
+            ] {
+                entries.push(super::BeamEntry {
+                    value: scored(poss, length),
+                    slot: 1,
+                    batch_position: entries.len(),
+                });
+            }
+        }
+        for shape in [NbestShape::PINYIN, NbestShape::ZHUYIN] {
+            let less = |a, b| super::selection_compare(a, b, shape.nstore()).is_gt();
+            for a in &entries {
+                assert!(!less(a, a));
+                for b in &entries {
+                    assert_eq!(
+                        less(a, b),
+                        !less(b, a) && a.batch_position != b.batch_position
+                    );
+                    for c in &entries {
+                        if less(a, b) && less(b, c) {
+                            assert!(less(a, c));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn node_transitions_preserve_physical_slots() {
+        let mut trellis = Trellis::with_seeds(1, &[], NbestShape::PINYIN);
+        let insert = |trellis: &mut Trellis, poss, identity| {
+            trellis.insert(
+                1,
+                Value {
+                    prev_token: identity,
+                    ..scored(poss, 1)
+                },
+            );
+        };
+        let slots = |trellis: &Trellis| {
+            trellis
+                .candidates(1)
+                .iter()
+                .map(|entry| (entry.slot, entry.value.prev_token))
+                .collect::<Vec<_>>()
+        };
+        assert!(slots(&trellis).is_empty());
+        insert(&mut trellis, -10.0, 1);
+        assert_eq!(slots(&trellis), [(0, 1)]);
+        insert(&mut trellis, -20.0, 2);
+        assert_eq!(slots(&trellis), [(0, 1), (1, 2)]);
+        insert(&mut trellis, -15.0, 3); // Beats the back only: reject.
+        assert_eq!(slots(&trellis), [(0, 1), (1, 2)]);
+        insert(&mut trellis, -10.0, 4); // Ties the front: reject.
+        assert_eq!(slots(&trellis), [(0, 1), (1, 2)]);
+        insert(&mut trellis, -5.0, 5); // Evicts the front, keeps slot 1.
+        assert_eq!(slots(&trellis), [(0, 5), (1, 2)]);
+
+        for (poss, expected) in [(-5.0, [2, 1]), (-10.0, [1, 2]), (-20.0, [1, 2])] {
+            let mut trellis = Trellis::with_seeds(1, &[], NbestShape::PINYIN);
+            insert(&mut trellis, -10.0, 1);
+            insert(&mut trellis, poss, 2);
+            assert_eq!(slots(&trellis), [(0, expected[0]), (1, expected[1])]);
+        }
+    }
+
+    #[test]
+    fn selection_keeps_the_complete_key_at_each_limit() {
+        for shape in [NbestShape::PINYIN, NbestShape::ZHUYIN] {
+            for limit in [0, 1, 3, super::NBEAM] {
+                for size in [0, limit.saturating_sub(1), limit, limit + 1] {
+                    for tied in [false, true] {
+                        let entries: Vec<_> = (0..size)
+                            .rev()
+                            .map(|position| super::BeamEntry {
+                                value: scored(if tied { -1.0 } else { -(position as f32) }, 1),
+                                slot: (position % 2) as u32,
+                                batch_position: position,
+                            })
+                            .collect();
+                        let selected = super::select_top(entries, limit, shape.nstore());
+                        assert_eq!(
+                            selected
+                                .iter()
+                                .map(|entry| entry.batch_position)
+                                .collect::<Vec<_>>(),
+                            (0..size.min(limit)).collect::<Vec<_>>()
+                        );
+                        assert!(
+                            selected
+                                .iter()
+                                .all(|entry| entry.slot as usize == entry.batch_position % 2)
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// The standard-heap alternative uses exactly the production key. A
+    /// max heap needs the reverse of the best-first selection comparator.
+    #[derive(Clone, Copy, Debug)]
+    struct HeapEntry<const S: usize>(super::BeamEntry);
+
+    impl<const S: usize> Ord for HeapEntry<S> {
+        fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+            super::selection_compare(&other.0, &self.0, S)
+        }
+    }
+
+    impl<const S: usize> PartialOrd for HeapEntry<S> {
+        fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+            Some(self.cmp(other))
+        }
+    }
+
+    impl<const S: usize> PartialEq for HeapEntry<S> {
+        fn eq(&self, other: &Self) -> bool {
+            self.cmp(other).is_eq()
+        }
+    }
+
+    impl<const S: usize> Eq for HeapEntry<S> {}
+
+    fn binary_heap_top<const S: usize>(
+        values: Vec<super::BeamEntry>,
+        count: usize,
+    ) -> Vec<super::BeamEntry> {
+        let mut heap = std::collections::BinaryHeap::from(
+            values.into_iter().map(HeapEntry::<S>).collect::<Vec<_>>(),
+        );
+        (0..count)
+            .map_while(|_| heap.pop().map(|entry| entry.0))
+            .collect()
+    }
+
+    fn selection_batch(size: usize, tied: bool) -> Vec<super::BeamEntry> {
+        (0..size)
+            .rev()
+            .map(|position| super::BeamEntry {
+                value: scored(
+                    if tied {
+                        -1.0
+                    } else {
+                        [
+                            f32::NAN,
+                            f32::INFINITY,
+                            f32::NEG_INFINITY,
+                            0.0,
+                            -0.0,
+                            -1.0,
+                            -20.0,
+                        ][position % 7]
+                    },
+                    if tied { 1 } else { (position % 3) as u32 },
+                ),
+                slot: (position % 2) as u32,
+                batch_position: position,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn selection_agrees_with_std_heap_on_mixed_keys() {
+        for size in [0, 1, 2, 3, 31, 32, 33, 128] {
+            for count in [0, 1, 3, super::NBEAM, 129] {
+                for tied in [false, true] {
+                    let entries = selection_batch(size, tied);
+                    let ids = |entries: Vec<super::BeamEntry>| {
+                        entries
+                            .into_iter()
+                            .map(|entry| (entry.batch_position, entry.slot))
+                            .collect::<Vec<_>>()
+                    };
+                    assert_eq!(
+                        ids(super::select_top(entries.clone(), count, 1)),
+                        ids(binary_heap_top::<1>(entries.clone(), count))
+                    );
+                    assert_eq!(
+                        ids(super::select_top(entries.clone(), count, 2)),
+                        ids(binary_heap_top::<2>(entries, count))
+                    );
+                }
+            }
+        }
+    }
+
+    /// Run only on the isolated measurement host. Both alternatives consume
+    /// identical real BeamEntry layouts and keys; cloning is outside timing.
+    #[test]
+    #[ignore = "needs isolated measurement host; Criterion selection comparison"]
+    fn measure_selection_algorithms() {
+        use criterion::{BatchSize, BenchmarkId, Criterion};
+        use std::hint::black_box;
+        use std::time::Duration;
+
+        let mut criterion = Criterion::default()
+            .sample_size(20)
+            .warm_up_time(Duration::from_secs(1))
+            .measurement_time(Duration::from_secs(1));
+        for (name, nstore, count) in [
+            ("pinyin-beam", 2, super::NBEAM),
+            ("pinyin-tail", 2, 3),
+            ("zhuyin-beam", 1, super::NBEAM),
+            ("zhuyin-tail", 1, 1),
+        ] {
+            let mut group = criterion.benchmark_group(name);
+            for size in [8, 32, 128, 512] {
+                for tied in [false, true] {
+                    let entries = selection_batch(size, tied);
+                    let input = format!("{size}-{}", if tied { "tied" } else { "mixed" });
+                    group.bench_function(BenchmarkId::new("select-sort", &input), |b| {
+                        b.iter_batched(
+                            || entries.clone(),
+                            |entries| black_box(super::select_top(entries, count, nstore)),
+                            BatchSize::SmallInput,
+                        );
+                    });
+                    group.bench_function(BenchmarkId::new("binary-heap", &input), |b| {
+                        b.iter_batched(
+                            || entries.clone(),
+                            |entries| {
+                                black_box(if nstore == 1 {
+                                    binary_heap_top::<1>(entries, count)
+                                } else {
+                                    binary_heap_top::<2>(entries, count)
+                                })
+                            },
+                            BatchSize::SmallInput,
+                        );
+                    });
+                }
+            }
+            group.finish();
+        }
+        criterion.final_summary();
+    }
+
+    #[test]
     fn float_trellis_storage_shrinks() {
         assert_eq!(std::mem::size_of::<Value>(), 28);
         assert_eq!(std::mem::size_of::<super::Node>(), 60);
@@ -1938,21 +2129,15 @@ mod tests {
             slot: 0,
             batch_position,
         };
-        assert!(super::selection_loses_to(
-            &entry(f32::INFINITY, 2, 0),
-            &entry(f32::NAN, 1, 1),
-            1
-        ));
-        assert!(super::selection_loses_to(
-            &entry(f32::NAN, 1, 0),
-            &entry(f32::NEG_INFINITY, 1, 1),
-            1
-        ));
-        assert!(super::selection_loses_to(
-            &entry(-0.0, 1, 1),
-            &entry(0.0, 1, 0),
-            1
-        ));
+        assert!(
+            super::selection_compare(&entry(f32::INFINITY, 2, 0), &entry(f32::NAN, 1, 1), 1)
+                .is_gt()
+        );
+        assert!(
+            super::selection_compare(&entry(f32::NAN, 1, 0), &entry(f32::NEG_INFINITY, 1, 1), 1)
+                .is_gt()
+        );
+        assert!(super::selection_compare(&entry(-0.0, 1, 1), &entry(0.0, 1, 0), 1).is_gt());
         // Zhuyin's single-slot admission remains raw IEEE <, including NaN.
         assert!(!super::node_loses_to(
             &scored(f32::NAN, 1),
