@@ -1,6 +1,6 @@
 # #1297 — Native nonfinite tool formatting
 
-- **Status:** accepted · 2026-10-26 UTC · #1297 Phase 2.
+- **Status:** superseded · 2026-10-29 UTC, by the 2026-10-28 UTC external-I/O ruling (AGENTS.md limb 3) and the 2026-10-28 UTC tools drop-in ruling; revert target at external-I/O stage 5. Accepted 2026-10-26 UTC · #1297 Phase 2.
 - **Disposition:** POLICY-ACCEPTED where the recorded artefact changes output; controls remain MATCH.
 - **Policy limb:** language artefact under #1304 (main `ab0b1da7`), not a new product rule or a class (a), (b), or (c) exception.
 - **Pin:** libpinyin `074a2219c90feaf962d0d24f034514033ece5f99`; source read from a checkout at 074a2219 whose cited blobs were hashed against the pin. `src/storage/table_info.cpp` blob `07b20e4ee9f061251d62efd2e4c4b09e55119d26`; `utils/utils_helper.h` blob `385415f7244a131dec378ce22436ce32ac45714b`. Reference image glibc 2.41; this native Ubuntu host uses glibc 2.44. Both facades, all backends unless stated otherwise.

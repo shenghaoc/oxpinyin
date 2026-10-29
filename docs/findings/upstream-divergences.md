@@ -4132,10 +4132,10 @@ class (b)/(c); do not reproduce the pin's unsafe surrounding defect.
 - [Addon indexes in the library range](1297-addon-index.md): reverted at stage 1, host `atoi` and pin conversion.
 - [Nonconforming decimal markers reset profiles](1297-user-decimals.md): reverted at stage 1, marker `fscanf` `%d`.
 - [Exact database marker tokens](1297-user-token.md): reverted at stage 1, `%255s` and `strcmp`.
-- [Punctuation values contain whole words](1297-punct-words.md): existing safety treatment stands.
-- [Complete chunk payload writes](1297-chunk-payload.md): revert target, one host `write`.
-- [Complete tool decimal fields](1297-tool-decimals.md): revert target, host `atoi`/`atol`.
-- [Native nonfinite tool formatting](1297-tool-special-values.md): revert target, pin's formatted call.
+- [Punctuation values contain whole words](1297-punct-words.md): not superseded; the existing class (b)/(c) safety treatment stands under the 2026-10-28 UTC ruling.
+- [Complete chunk payload writes](1297-chunk-payload.md): superseded (2026-10-29 UTC) by the 2026-10-28 UTC external-I/O ruling; revert target at stage 2, one host `write`.
+- [Complete tool decimal fields](1297-tool-decimals.md): superseded (2026-10-29 UTC) by the 2026-10-28 UTC external-I/O ruling and the tools drop-in ruling; revert target at stage 5, host `atoi`/`atol`.
+- [Native nonfinite tool formatting](1297-tool-special-values.md): superseded (2026-10-29 UTC) by the 2026-10-28 UTC external-I/O ruling and the tools drop-in ruling; revert target at stage 5, pin's formatted call.
 - [Complete table words and exact enum tokens](1297-table-words.md): reverted at stage 1, `%255s` and C-string comparisons.
 
 ## Pinyin trellis adjusted cost — S1/S2 repair (2026-10-28 UTC)

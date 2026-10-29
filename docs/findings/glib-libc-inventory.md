@@ -852,6 +852,82 @@ the cleanup):
 **Not in either lane:** row 34 needs no change; the excluded rows 7 and 8
 stay with #1279.
 
+### Status on main (2026-10-29 UTC)
+
+Reconciled at `main` `c33023c` by reading the code and the records.
+Nothing was built or run. The table below gives one line for each
+language-artefact row or artefact part above.
+
+The following question is **awaiting a maintainer ruling** and is not
+classified further here:
+
+- **The frequency-comparator wrap** (old rows 11–14 and 17). The
+  2026-10-28 UTC amendment leaves it open.
+
+| Row | Status |
+| --- | --- |
+| 11 | **Tails overtaken; the rest awaits the ruling.** The tails are overtaken by S3 (#1373, `8cf8e23`, [trellis-tail-sort-s3.md](trellis-tail-sort-s3.md)): they now use a stable `sort_by`. The candidate and predicted uses of `nbest::glib_merge_sort` are **awaiting ruling** (frequency-comparator wrap), and so is its rename. |
+| 12 | **Overtaken** by S3 (#1373, `8cf8e23`). `tail_compare`, `c_float_to_gint` and the `poss` round trip are gone. `tail_merge` now sorts by raw `Cost`, with the amendment's NaN-last order. The float scale itself belongs to #1378. |
+| 13 | **Wrap awaits the ruling; span key open.** The wrapping difference in `RankKey::pin_compare`, and `glib_rank_sort`, are **awaiting ruling** (frequency-comparator wrap). The `pinyin_span as u8` cut in `RankKey::for_sort_word` (#1275) is open; see item 4 below. |
+| 14 | **Awaiting ruling** (frequency-comparator wrap): `capi/src/predict.rs` `sort_predicted`. |
+| 17 | **Awaiting ruling** (frequency-comparator wrap): `guint32_of_score` and both `amplified_frequency` copies. |
+| 21 | **Done, then overtaken.** Done in `0147535`, [1297-chunk-payload](1297-chunk-payload.md): the payload uses `write_all`. Overtaken by the 2026-10-28 UTC external-I/O ruling: the record is a revert target, and stage 2 of [external-io-boundary.md](external-io-boundary.md) restores one host `write`. `wip/stage1-io` does not cover it. |
+| 23 | **Done and standing.** Done in `0147535`, [1297-punct-words](1297-punct-words.md). The external-I/O ruling keeps it: whole-word decoding is the class (b)/(c) treatment of the pin's undefined read. |
+| 24 | **Done, then overtaken.** Done in `0147535`, recorded in [1297-table-lines](1297-table-lines.md), [1297-table-words](1297-table-words.md), [1297-table-decimals](1297-table-decimals.md), [1297-table-floats](1297-table-floats.md) and [1297-addon-index](1297-addon-index.md). Overtaken by the external-I/O ruling. The λ field is already reverted on main by `f9663f1`, through the host-libc `read_lambda`. `wip/stage1-io` implements the rest: the pin's `fopen`/`fscanf`/`atoi` in `oxpinyin-input`. |
+| 25 | **Done, then overtaken.** Done in `0147535`, recorded in [1297-user-decimals](1297-user-decimals.md) and [1297-user-token](1297-user-token.md). Overtaken by the external-I/O ruling; `wip/stage1-io` implements the reversal. |
+| 28 | **Done before #1297, then overtaken.** `interp_grammar::is_graph` was already Rust's predicate ([interpolation2-grammar.md](interpolation2-grammar.md), 2026-09-10). Overtaken by the external-I/O ruling and the 2026-10-28 UTC tools drop-in ruling: it is a revert target to GLib's `g_unichar_isgraph` at stage 5. |
+| 29 | **Done, then overtaken.** Done in `0147535`, [1297-tool-decimals](1297-tool-decimals.md): `kmm::numeric::decimal_field` replaced `cnum.rs`. Overtaken by the external-I/O and tools drop-in rulings: host `atoi`/`atol` at stage 5. |
+| 30 | **Done, then overtaken.** Done in `0147535`, [1297-tool-special-values](1297-tool-special-values.md): `numeric::format_six_decimals` with Rust spellings. Overtaken by the external-I/O and tools drop-in rulings: the pin's `printf("%f")` at stage 5. |
+| 33 | **Pinyin overtaken; zhuyin open.** The pinyin path is overtaken by S1/S2 (#1352, `49fbc45`, [trellis-adjusted-cost-s1-s2.md](trellis-adjusted-cost-s1-s2.md)). Its comparator is now a total key (ordered adjusted cost, then batch position), so the `stl_heap.h` port no longer decides anything there; item 5 below covers replacing it. The zhuyin path (`nstore = 1`) is item 3 below. |
+| 34 | **Stored widths: no change.** The on-disk `guint32` and `guint8` widths stay. |
+
+**Open Phase 2 items not owned elsewhere.** Items 1–4 were missing from
+the 2026-10-26 table. Their pin cites are at `074a2219`, read from a
+fetch of that commit with `HEAD` checked against the SHA.
+
+1. **`oxpinyin-core/src/single_gram.rs` `lower_bound`, `lower_bound_records`,
+   `find`.** These reproduce libstdc++'s halving probe sequence for
+   `std_lite::lower_bound` (`src/storage/ngram.cpp:161,185,215,239,259`;
+   `src/include/stl_lite.h:29`). They run over gram values the pin never
+   checks for order. On an unpartitioned array the probe sequence decides
+   the index. The 2026-10-28 amendment registers no site here. Not yet
+   classified.
+2. **`oxpinyin-user/src/pinyin_chain.rs` `lower_bound`, `upper_bound`,
+   `equal_range`.** These are the same probe sequences for
+   `std_lite::equal_range` (`src/storage/chewing_large_table2.h:149,202,216,241`;
+   `stl_lite.h:35`). They run over stored KC and tkrzw entry chunks, which
+   the module records can keep a previous record's tail after a mask walk
+   (#785). Not yet classified.
+3. **The zhuyin trellis comparator: `nbest.rs` `zhuyin_loses_to`, under
+   the `heap_*` port.**
+   - Pin cites: `trellis_value_less_than<1>` (`src/lookup/phonetic_lookup.h:65-91`),
+     selected by `get_top_results<1>` (`:141-172`) at `:771` (beam) and
+     `:335` (tails), for `PhoneticLookup<1, 1>` (`src/zhuyin.cpp:50`).
+   - Strict weak order: it is one only while no same-length value is NaN.
+   - How NaN arises: with λ outside `[0, 1]`, a unigram step takes `log`
+     of a negative product (`:663`, `unigram_lambda = 1 − λ`), while a
+     bigram step can stay finite (`:692-693`).
+   - Consequence: NaN and finite values of one length meet in one
+     selection, and libstdc++'s `make_heap`/`pop_heap` sequence decides.
+   - The amendment registers only the `<2>` sites. Not yet classified.
+4. **The 8-bit span key.** `RankKey::for_sort_word` reproduces
+   `guint8 len = m_end - m_begin` (`src/pinyin.cpp:1692-1697`). With
+   `ni`, 251 apostrophes and `hao`, the span is 256 bytes and the key
+   wraps to 0. Under `SORT_BY_PINYIN_LENGTH` the pin ranks 你好 after 你;
+   the full span would rank it first. The existing cases are
+   `pinyin-length-wrap/span-256`, `span-257` and `span-512`.
+   Replacement and record remain.
+5. **The pinyin `heap_*` port.** Replace it with an idiomatic top-k
+   selection over the S1/S2 total key. The result is unchanged, so no
+   record is needed.
+
+**Owned elsewhere:**
+
+- The frequency-comparator wrap above is awaiting ruling.
+- The float scale belongs to #1378.
+- Rows 21, 24, 25 and 28–30 belong to the external-I/O stages.
+- The C-string rows 7 and 8 belong to #1279.
+
 ## C-maths imitation — record only
 
 No production code is changed here and no child issue is opened for a
