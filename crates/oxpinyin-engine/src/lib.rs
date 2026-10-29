@@ -71,7 +71,7 @@ mod preedit;
 mod session;
 mod storage;
 
-pub use candidate::{Candidate, CandidateKind, CandidateList};
+pub use candidate::{Candidate, CandidateKind, CandidateList, rank_by_frequency};
 pub use char_offset::character_offset_over_keys;
 pub use config::{
     Config, ConfigError, ConfigLayer, ConfigSource, ConfigValue, EmptyConfigSource,
@@ -83,7 +83,7 @@ pub use cursor::{
 };
 pub use error::{EngineError, TrainingSpanFault};
 pub use key::{KeyInput, LogicalKey, Modifiers};
-pub use nbest::{NbestShape, glib_merge_sort};
+pub use nbest::NbestShape;
 pub use preedit::{Preedit, PreeditSpan, SpanStyle};
 pub use session::{
     CandidateRanking, KeyOutcome, MAX_INPUT_BYTES, Selection, Session, check_lookup_offset_range,

@@ -9,6 +9,63 @@ use core::slice;
 
 use oxpinyin_core::{Cost, PhraseText, PhraseToken};
 
+/// Stably rank rows by descending phrase length and pinyin span, then by
+/// libpinyin's wrapping frequency comparison (`pinyin.cpp:1678-1709` at
+/// 074a2219). `key` returns those three stored fields and must be pure.
+///
+/// Frequency is compared only inside equal length/span groups. Each group
+/// is guarded before sorting: a consistent group uses the pin's defined
+/// `rhs.wrapping_sub(lhs) as i32`; a cyclic group falls back to stable
+/// numeric descending frequency. No inconsistent comparator reaches std.
+/// The two stable sorts retain original order among equal complete keys.
+/// Worst-case time is O(n log n), auxiliary space O(n), and guarding O(n).
+pub fn rank_by_frequency<T>(items: &mut [T], key: impl Fn(&T) -> (usize, u8, u32)) {
+    items.sort_by(|left, right| {
+        let (left_length, left_span, _) = key(left);
+        let (right_length, right_span, _) = key(right);
+        (right_length, right_span).cmp(&(left_length, left_span))
+    });
+    for group in items.chunk_by_mut(|left, right| {
+        let (left_length, left_span, _) = key(left);
+        let (right_length, right_span, _) = key(right);
+        (left_length, left_span) == (right_length, right_span)
+    }) {
+        if frequency_order_is_consistent(group.iter().map(|row| key(row).2)) {
+            group.sort_by(|left, right| frequency_compare(key(left).2, key(right).2));
+        } else {
+            group.sort_by_key(|row| std::cmp::Reverse(key(row).2));
+        }
+    }
+}
+
+/// This is libpinyin's product comparator, not a sort algorithm. Antipodal
+/// values compare Less in both directions; callers must guard the list.
+pub(crate) fn frequency_compare(left: u32, right: u32) -> std::cmp::Ordering {
+    (right.wrapping_sub(left) as i32).cmp(&0)
+}
+
+/// A circular interval of width strictly below 2^31 is exactly the domain
+/// where the wrapping comparison is consistent. In a consistent list the
+/// tournament scan finds its maximum; checking that every value is less
+/// than half a circle behind it proves the interval exists. An antipodal
+/// pair fails the strict bound, as does any longer circular cycle.
+/// Empty lists and ties pass. No allocation, unchecked access or arithmetic
+/// overflow is possible; both scans are linear and use defined wrapping.
+fn frequency_order_is_consistent(mut frequencies: impl Iterator<Item = u32> + Clone) -> bool {
+    let Some(first) = frequencies.next() else {
+        return true;
+    };
+    let mut maximum = first;
+    for frequency in frequencies.clone() {
+        if frequency_compare(frequency, maximum).is_lt() {
+            maximum = frequency;
+        }
+    }
+    std::iter::once(first)
+        .chain(frequencies)
+        .all(|frequency| maximum.wrapping_sub(frequency) < (1 << 31))
+}
+
 /// Where a candidate came from.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum CandidateKind {
@@ -286,6 +343,84 @@ mod tests {
     use oxpinyin_core::PhraseToken;
 
     use super::{Candidate, CandidateKind, CandidateList};
+
+    #[test]
+    fn frequency_guard_agrees_with_the_order_laws_at_wrap_boundaries() {
+        use super::{frequency_compare, frequency_order_is_consistent};
+        let values = [
+            0,
+            1,
+            0x6000_0000,
+            0x7fff_ffff,
+            0x8000_0000,
+            0x8000_0001,
+            0xc000_0000,
+            u32::MAX,
+        ];
+        for a in values {
+            for b in values {
+                for c in values {
+                    let rows = [a, b, c];
+                    // Independent definition of a consistent comparison:
+                    // antisymmetry and transitivity on this complete list.
+                    let consistent = rows.iter().all(|&x| {
+                        rows.iter().all(|&y| {
+                            frequency_compare(x, y) == frequency_compare(y, x).reverse()
+                                && rows.iter().all(|&z| {
+                                    !(frequency_compare(x, y).is_le()
+                                        && frequency_compare(y, z).is_le())
+                                        || frequency_compare(x, z).is_le()
+                                })
+                        })
+                    });
+                    assert_eq!(
+                        frequency_order_is_consistent(rows.into_iter()),
+                        consistent,
+                        "{rows:?}"
+                    );
+                }
+            }
+        }
+        assert!(frequency_order_is_consistent([].into_iter()));
+        assert!(frequency_order_is_consistent([7].into_iter()));
+        assert!(frequency_order_is_consistent([7, 7, 7].into_iter()));
+        assert!(!frequency_order_is_consistent([0, 1 << 31].into_iter()));
+        assert!(!frequency_order_is_consistent(
+            [0, 0x6000_0000, 0xc000_0000].into_iter()
+        ));
+        assert!(frequency_order_is_consistent([u32::MAX, 0, 1].into_iter()));
+        assert!(frequency_order_is_consistent([0, 0x7fff_ffff].into_iter()));
+    }
+
+    #[test]
+    fn frequency_sort_guards_each_leading_key_group_and_preserves_ties() {
+        // The first group cycles and falls back numerically. The second
+        // crosses zero consistently and must keep wrapping order, despite
+        // the cycle elsewhere. Different leading fields never compare freq.
+        let mut rows = vec![
+            (2, 1, 0, 'a'),
+            (1, 1, u32::MAX, 'b'),
+            (2, 1, 0x6000_0000, 'c'),
+            (1, 1, 1, 'd'),
+            (2, 1, 0xc000_0000, 'e'),
+            (1, 1, 1, 'f'),
+            (1, 2, 1 << 31, 'g'),
+            (2, 0, 0, 'h'),
+        ];
+        super::rank_by_frequency(&mut rows, |&(length, span, freq, _)| (length, span, freq));
+        assert_eq!(
+            rows.iter().map(|row| row.3).collect::<Vec<_>>(),
+            ['e', 'c', 'a', 'h', 'g', 'd', 'f', 'b']
+        );
+    }
+
+    #[test]
+    fn frequency_sort_has_a_defined_antipodal_fallback() {
+        let mut rows = [(1, 0), (0, 1 << 31), (2, 0), (3, 1 << 31)];
+        super::rank_by_frequency(&mut rows, |&(_, freq)| (0, 0, freq));
+        assert_eq!(rows, [(0, 1 << 31), (3, 1 << 31), (1, 0), (2, 0)]);
+        super::rank_by_frequency::<(usize, u32)>(&mut [], |&(_, freq)| (0, 0, freq));
+    }
 
     fn list() -> CandidateList {
         CandidateList::from_vec(vec![

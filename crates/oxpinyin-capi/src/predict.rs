@@ -202,40 +202,10 @@ fn guess_predicted_result(
     Ok(true)
 }
 
-/// `g_array_sort_with_data(candidates, compare_item_with_sort_option,
-/// SORT_BY_PHRASE_LENGTH | SORT_BY_FREQUENCY)` (`pinyin.cpp:2440-2445`):
-/// phrase length descending, then `-(freq_lhs - freq_rhs)` in `guint32`
-/// arithmetic as a `gint` (`:1701-1705`). A λ outside `[0, 1]` makes that
-/// wrap and the comparator cyclic, so the order is GLib's merge
-/// (`oxpinyin_engine::glib_merge_sort`). Sorts indices and permutes in
-/// place: O(n log n) time; the index array, its destinations and the
-/// merge's half copies, all `usize`.
+/// Stably rank predicted rows by phrase length and guarded wrapping frequency
+/// (`pinyin.cpp:2440-2445`). Prediction has no pinyin-span key.
 fn sort_predicted(items: &mut [Predicted]) {
-    let mut order: Vec<usize> = (0..items.len()).collect();
-    oxpinyin_engine::glib_merge_sort(&mut order, &|&lhs, &rhs| {
-        let (left, right) = (&items[lhs], &items[rhs]);
-        if left.phrase_length != right.phrase_length {
-            return if left.phrase_length > right.phrase_length {
-                -1
-            } else {
-                1
-            };
-        }
-        (right.frequency as u32).wrapping_sub(left.frequency as u32) as i32
-    });
-    let mut scratch = vec![0; items.len()];
-    // Reuse scratch for old-index -> new-index destinations. Cycle swaps
-    // move Strings without cloning them or using unchecked accesses.
-    for (new, old) in order.into_iter().enumerate() {
-        scratch[old] = new;
-    }
-    for index in 0..items.len() {
-        while scratch[index] != index {
-            let target = scratch[index];
-            items.swap(index, target);
-            scratch.swap(index, target);
-        }
-    }
+    oxpinyin_engine::rank_by_frequency(items, |row| (row.phrase_length, 0, row.frequency as u32));
 }
 
 /// Whether `prefix` is one of the instance's own candidate strings; if so,
@@ -547,6 +517,105 @@ pub(crate) fn phrase_text(dict: &SharedDict, store: &UserStore, token: u32) -> O
 
 #[cfg(test)]
 mod tests {
+    /// Compare row movement with cached-key/index sorting without fixture setup
+    /// in the timer. Run separately from the ordinary completion gate.
+    #[test]
+    #[ignore = "needs isolated release timing on an idle host"]
+    fn predicted_sort_design_measurement() {
+        use super::{Predicted, sort_predicted};
+        use std::hint::black_box;
+        use std::time::Instant;
+
+        fn rows(count: usize) -> Vec<Predicted> {
+            (0..count)
+                .map(|i| Predicted {
+                    text: oxpinyin_core::PhraseText::from("中"),
+                    phrase_length: 1 + i * 13 % 8,
+                    token: i as u32,
+                    candidate_type:
+                        crate::types::lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE,
+                    frequency: (i as u64 * 2654435761) % (1 << 32),
+                })
+                .collect()
+        }
+        fn indexed(items: &mut [Predicted]) {
+            let mut keys: Vec<_> = items
+                .iter()
+                .enumerate()
+                .map(|(i, row)| ((row.phrase_length, row.frequency as u32), i))
+                .collect();
+            oxpinyin_engine::rank_by_frequency(&mut keys, |row| (row.0.0, 0, row.0.1));
+            for i in 0..keys.len() {
+                let mut index = keys[i].1;
+                while index < i {
+                    index = keys[index].1;
+                }
+                keys[i].1 = index;
+                items.swap(i, index);
+            }
+        }
+        type Sort = fn(&mut [Predicted]);
+        let variants: [(&str, Sort); 2] =
+            [("direct-rows", sort_predicted), ("cached-indices", indexed)];
+        println!(
+            "predicted={} cached={}",
+            size_of::<Predicted>(),
+            size_of::<((usize, u32), usize)>()
+        );
+        for count in [8, 32, 128, 512] {
+            let mut direct = rows(count);
+            sort_predicted(&mut direct);
+            let mut indirect = rows(count);
+            indexed(&mut indirect);
+            assert_eq!(
+                direct.iter().map(|r| r.token).collect::<Vec<_>>(),
+                indirect.iter().map(|r| r.token).collect::<Vec<_>>()
+            );
+            let batches = 8192 / count;
+            let mut samples: [Vec<f64>; 2] = std::array::from_fn(|_| Vec::new());
+            for round in 0..21 {
+                for offset in 0..variants.len() {
+                    let index = (round + offset) % variants.len();
+                    let inputs: Vec<_> = (0..batches).map(|_| rows(count)).collect();
+                    let start = Instant::now();
+                    for mut items in inputs {
+                        variants[index].1(black_box(&mut items));
+                        black_box(items);
+                    }
+                    samples[index].push(start.elapsed().as_nanos() as f64 / batches as f64);
+                }
+            }
+            for ((name, _), mut values) in variants.into_iter().zip(samples) {
+                values.sort_by(f64::total_cmp);
+                println!(
+                    "predict-design n={count} variant={name} ns={:.1} range={:.1}..{:.1}",
+                    values[10], values[0], values[20]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn predicted_sort_is_stable_and_uses_wrapping_frequency_after_length() {
+        use super::{Predicted, sort_predicted};
+        use crate::types::lookup_candidate_type_t;
+        use oxpinyin_core::PhraseText;
+        let mut items: Vec<_> = [(1, 2, 1), (2, 3, 0), (3, 2, u32::MAX), (4, 2, 1), (5, 2, 0)]
+            .into_iter()
+            .map(|(token, phrase_length, frequency)| Predicted {
+                text: PhraseText::from("test"),
+                phrase_length,
+                token,
+                candidate_type: lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE,
+                frequency: u64::from(frequency),
+            })
+            .collect();
+        sort_predicted(&mut items);
+        assert_eq!(
+            items.iter().map(|i| i.token).collect::<Vec<_>>(),
+            [2, 1, 4, 5, 3]
+        );
+    }
     use super::select_prefix_rows;
     use oxpinyin_core::PhraseText;
 

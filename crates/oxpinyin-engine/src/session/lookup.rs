@@ -296,7 +296,7 @@ where
             // Stable sort, all three keys descending: an all-equal tie keeps
             // the collection order, which the scan now lays down in the
             // pin's array order (per window, token-ascending).
-            glib_rank_sort(collected, &mut keys);
+            rank_candidates(collected, &mut keys);
             let mut keys: Vec<RankKey> = keys.into_iter().map(|(key, _)| key).collect();
 
             // The pin prepends LONGER before the frequency dedup
@@ -843,7 +843,7 @@ where
                     (key, index as u32)
                 },
             ));
-            glib_rank_sort(&mut group, &mut slice_keys);
+            rank_candidates(&mut group, &mut slice_keys);
             keys.extend(slice_keys.iter().map(|(key, _)| *key));
             out.append(&mut group);
         }
