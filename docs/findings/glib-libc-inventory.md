@@ -1,8 +1,9 @@
 # GLib and libc at the pin: reachable calls and oxpinyin counterparts
 
 Status: **current audit** (#917) · 2026-10-24 UTC · Parent: #915 ·
-#1297 Phase 1 classification added 2026-10-26 UTC (see "Classification
-of the remaining GLib- and libc-shaped code").
+#1297 Phase 1 classification added 2026-10-26 UTC and redone 2026-10-29
+UTC under the 2026-10-28 rulings (see "#1297 classification under the
+2026-10-28 rulings").
 Pin: libpinyin 2.11.92 at `074a2219c90feaf962d0d24f034514033ece5f99`.
 Oracle image: `debian:trixie` (Debian 13.7, the current stable codename)
 from the default mirrors, linux/amd64. **GLib 2.84.4-3~deb13u5**,
@@ -596,7 +597,177 @@ child column is the audit that must decide it.
 | `capi/src/dict.rs`, `zhuyin-capi/src/dict.rs` direct `g_array_*` | real GLib `GArray` mutation | `pinyin.cpp:2805,2817`; `zhuyin.cpp:1797,1809` | #924 |
 | `capi/src/ffi.rs` `owned_cstr`, `owned_cstr_list`, `log_warning`, `log_critical`; `phrase.rs` `g_return_if_fail_warning` (the `g_free` of a GLib buffer is gone since #1279) | `g_strdup` / `g_strfreev` / `g_log` / `g_return_val_if_fail` | `pinyin.cpp` diagnostics; `phrase_index.cpp:354-356` | #924 |
 
-## Classification of the remaining GLib- and libc-shaped code (#1297, Phase 1)
+This table and its child column are the #917 record. Some of its items
+no longer exist (`tail_compare`, `c_float_to_gint`, both `Scan` types,
+`atoi_guint8`, `hex_float`, `cnum.rs`). The current disposition of every
+item is the next section.
+
+## #1297 classification under the 2026-10-28 rulings
+
+Recorded 2026-10-29 UTC at `main` `c33023c`. This is Phase 1 of #1297.
+It is documentation only and changes no code. It replaces the
+2026-10-26 classification below, which predates two maintainer rulings
+of 2026-10-28 UTC:
+
+- external I/O uses the pin's calls (limb 3,
+  [external-io-boundary.md](external-io-boundary.md));
+- witnessed algorithm-precondition violations
+  ([compatibility-policy.md](compatibility-policy.md), "Amendment —
+  witnessed algorithm-precondition violations"). This amendment rules
+  S1–S3. It leaves the frequency-comparator wrap and λ validation open,
+  and reserves their remedies for a maintainer ruling.
+
+**Source read.** The pin was a fresh fetch of commit
+`074a2219c90feaf962d0d24f034514033ece5f99` from
+`github.com/libpinyin/libpinyin`, with `HEAD` checked against that SHA.
+The GLib, glibc and libstdc++ behaviour cited here is taken from the
+readings already recorded in this file, in
+[921-927-glib-sorts.md](921-927-glib-sorts.md) and in
+[external-io-boundary.md](external-io-boundary.md); none was re-read.
+Every row was settled from source. No disassembly was needed, and
+nothing was run.
+
+**Sweep.** Every crate under `crates/` was searched, except the
+test-only `pinyin-oracle`. The search covered:
+
+- item names that carry a GLib, libc or libstdc++ name;
+- comments that cite one of those libraries;
+- wrapping arithmetic and narrowing casts;
+- re-expressed sorts, searches, scanners, joins and writers.
+
+The C-string conversions (#1279) are excluded, as is anything a
+maintainer ruling settled; both are listed under "Excluded" below.
+
+**Buckets.**
+
+- **B, boundary-required.** A C ABI object or convention, diagnostic
+  bytes, an on-disk format, or external I/O under limb 3. The item is
+  kept. External-I/O items are owned by the stages of
+  [external-io-boundary.md](external-io-boundary.md), not by #1297.
+- **R, required inside by observable behaviour.** The item is kept,
+  written as plain Rust and named for its behaviour.
+- **I, imitation with no observable reason.** Limb 3 forbids these, and
+  Phase 2 replaces them. The row says whether idiomatic Rust gives the
+  pin's result. Where it does not, the row names the case that tells
+  the two apart, and Phase 2 records it as a language artefact.
+
+| # | Pin cite at 074a2219 | oxpinyin item | Bucket | Reason | Phase 2 action |
+| --- | --- | --- | --- | --- | --- |
+| 1 | `src/pinyin.cpp:2805,2817`; `src/zhuyin.cpp:1797,1809` | `oxpinyin-capi/src/dict.rs`, `oxpinyin-zhuyin-capi/src/dict.rs`: `glib_sys::g_array_set_size`, `g_array_append_vals` on the caller's array | B | The caller owns a real `GArray` (limb 1, #924). | None. |
+| 2 | `src/pinyin.cpp:715` (a `g_ucs4_to_utf8` string the caller frees); the `.alloc` registers | `oxpinyin-capi/src/ffi.rs` and the zhuyin twin: `owned_cstr`, `take_owned_cstr`, `owned_cstr_list`, `malloc_cstr_with`, `malloc_cstr_with_warning`, `malloc_cstr_with_policy` | B | The ownership and lifetime of returned strings are ABI. | None. |
+| 3 | `src/pinyin.cpp:1450-1454`; `src/storage/phrase_index.cpp:354-356,361` | `ffi.rs` (both facades) `log_warning`, `log_critical` (`glib_sys::g_log`); `oxpinyin-capi/src/phrase.rs` `pinyin_phrase_segment` and the zhuyin twin (`glib_sys::g_return_if_fail_warning`) | B | These are GLib's own diagnostic calls, which a caller's log handler observes. | None. |
+| 4 | `src/pinyin.h`, `src/zhuyin.h` signatures; `src/storage/chewing_key.h:111-113` | `oxpinyin-capi/src/types.rs` `GUint`, `GInt`, `GChar`, `PhraseTokenT`; `oxpinyin-chewing/src/chewing_key.rs` packed key; the casts at exported parameters in `cursor.rs`, `iterators.rs`, `user_data.rs` | B | The exported signatures and the stored key prescribe these widths. | None. |
+| 5 | `src/pinyin.cpp:1644` (`g_ucs4_to_utf8`) | `oxpinyin-capi-marshal/src/phrase_text.rs` `phrase_text_bytes`, `stored_words_match` | B | This is the C-string form of stored words: a C string cannot hold a zero (#1182). | None. |
+| 6 | `src/storage/punct_table.cpp:56-94` | `oxpinyin-data/src/row_format.rs` `decode_puncts`, `punct_text` | B | The `punct.bin` value layout. The misaligned rows stay class (b) under [1297-punct-words](1297-punct-words.md), which the external-I/O ruling keeps. | None. |
+| 7 | `src/storage/ngram.cpp:305,333`; `src/storage/phrase_index.cpp:169-175`; `src/storage/phrase_index.h:73` | stored-count wraps: `oxpinyin-core/src/single_gram.rs` `merge_single_gram`, `remove_freq`; `oxpinyin-data/src/lm/mod.rs` `merge_unigram_counts`, `pin_merge`; the `guint32` and `guint8` wraps in `oxpinyin-user` (`store.rs`, `store_libpinyin.rs`, `replay.rs`, `seed.rs`) | B | These wrap fields that the on-disk gram, phrase-item and pronunciation-count formats store as `guint32` and `guint8`. | None. |
+| 8 | `src/storage/table_info.cpp:159-161,194-294` | `oxpinyin-data/src/table_info.rs` `TableConf::read`, `TableConf::parse`, `ConfigLines`, `parse_decimal`, `c_string`; `oxpinyin-data/src/table_conf.rs` `read_table_conf_lambda`, `parse_table_conf_lambda`, `Lambda::from_decimal`; `oxpinyin-capi/src/locale.rs` `read_lambda`, compiled into both facades (host `sscanf`) | B (limb 3) | `table.conf` is external input; the comparison is **NOT EQUIVALENT** ([external-io-boundary.md](external-io-boundary.md), input rows 1–3). | Not #1297. External-I/O stage 1: the pin's `fopen`/`fscanf`/`atoi` in `oxpinyin-input`. The rational `Lambda` also goes under #1378. |
+| 9 | `src/storage/table_info.cpp:325-373,377-395` | `oxpinyin-data/src/user_files.rs` `UserTableInfo::parse`, `UserTableInfo::to_text`; `oxpinyin-user/src/persistence.rs` `write_marker` | B (limb 3) | `user.conf` input and output; **NOT EQUIVALENT**. | Not #1297. External-I/O stage 1. |
+| 10 | `src/include/memory_chunk.h:416-463,475-524` | `oxpinyin-data/src/phrase_library.rs` `map_chunk`, `MappedFile`, `directory_chunk_fault`, `directory_end`; `oxpinyin-data/src/user_files.rs` `read_chunk_payload`; `persistence.rs` `load_libraries` | B (limb 3) | Chunk load and map calls; **NOT EQUIVALENT**. | Not #1297. External-I/O stage 2, including the row 109 revert. |
+| 11 | `src/include/memory_chunk.h:536-557` | `persistence.rs` `write_chunk_file`, `write_chunk`, `write_header_word`, `ChunkSink` | B (limb 3) | Chunk save: `write_all` retries where the pin's one `write` stops; **NOT EQUIVALENT**. | Not #1297. External-I/O stage 2 reverts [1297-chunk-payload](1297-chunk-payload.md). |
+| 12 | `g_build_filename`, `unlink`, `g_rename`: `src/pinyin.cpp:150-215,940-1128`; `src/zhuyin.cpp:104-159,554-689` | `table_info.rs` `FileName`, `pin_join`, `join_bytes`; `persistence.rs` `user_file`, `user_conf_path`, `clean_user_files`, `pin_rename_order`, `stage_chunk`, `save_reporting`, `save_session`; `oxpinyin-data/src/pin_stderr.rs` `build_filename` | B (limb 3) | Path bytes, the files on disk and their order (#922, #929); **UNSETTLED** on some platforms. | Not #1297. External-I/O stage 3 calls `g_build_filename` itself, so the GLib-named re-implementations go rather than being renamed. |
+| 13 | `src/storage/table_info.cpp:201,332,382`; `src/pinyin.cpp:255-259,289-293,338,955-959,1061,1080,1096,1110,1123,1264-1268`; `src/zhuyin.cpp:199-203,233-237,282,588-592,611,637,657,674,689,799-803` | `pin_stderr.rs` `emit`, `path_bytes`, `report_unopenable_table_conf`, `report_rejected_table_conf`, `mmap_failed`, `mmap_failed_line`; the `rename %s to %s failed.` lines in `persistence.rs` | B (limb 3) | stderr bytes (ruling 2026-10-03 UTC); the sinks are **UNSETTLED**. | Not #1297. External-I/O stage 4. |
+| 14 | `utils/utils_helper.h:27-69`; `utils/storage/import_interpolation.cpp:135-182` | `oxpinyin-kmm/src/numeric.rs` `decimal_field`; `oxpinyin-training/src/counter/parse.rs` `parse_segmented_line`; `oxpinyin-kmm/src/text.rs` `import` | B (limb 3) | Tool input through `atoi`, `atol` and `g_strsplit_set`; **NOT EQUIVALENT**. | Not #1297. External-I/O stage 5 reverts [1297-tool-decimals](1297-tool-decimals.md). |
+| 15 | `utils/training/estimate_interpolation.cpp:129,139`; `estimate_k_mixture_model.cpp:141,152`; `eval_correction_rate.cpp:203` | `numeric.rs` `format_six_decimals`; `oxpinyin-training/src/eval/decode.rs` `EvalReport::correction_rate_line`; `lambda/interpolation.rs` `mean_of_no_contexts` | B (limb 3) | Tool output through `printf("%f")`; **NOT EQUIVALENT** for NaN. | Not #1297. External-I/O stage 5 reverts [1297-tool-special-values](1297-tool-special-values.md). |
+| 16 | `src/storage/tag_utility.cpp:118-170` (`g_unichar_isspace`, `g_unichar_isgraph` at `:127,152`) | `oxpinyin-data/src/interp_grammar.rs` `read`, `Tokens`, `is_graph`; `interp.rs` `parse_interpolation2` | B (limb 3) | The record grammar is the tools' product. Character classification is the pin's GLib call; **NOT EQUIVALENT** (U+200B). | Not #1297. External-I/O stage 5 calls GLib. |
+| 17 | `src/storage/table_text_parser.h:34-121`; `utils/storage/gen_binary_files.cpp:36-105`; `utils/utils_helper.h:97-145` | `oxpinyin-datagen/src/table.rs`, `punct.rs`, `system.rs` parsers; `oxpinyin-datagen/src/bin/oxpinyin-datagen.rs` `write_chunk_file` | B (limb 3) | Tool input (`fgets`, `g_ascii_strtoull`) and chunk output; **NOT EQUIVALENT**. | Not #1297. External-I/O stage 5. |
+| 18 | `g_option_context_parse`, e.g. `utils/storage/gen_binary_files.cpp:112-130`; the `std::getline` sites in [external-io-boundary.md](external-io-boundary.md) | `oxpinyin-training/src/segment/tool_cli.rs` `ToolArgs::parse`, `read_input`; `oxpinyin-kmm/src/bin/oxpinyin-kmm.rs` `read_text`, `read_stdin` | B (limb 3) | Tool arguments and streams: **UNSETTLED** and **NOT EQUIVALENT**. | Not #1297. External-I/O stage 5. |
+| 19 | `src/pinyin.cpp:2041-2068,2082-2138`; `src/zhuyin.cpp:1360-1416` | `oxpinyin-engine/src/session/mod.rs` `dedup_ranked_by_text`, `dedup_by_text_keep_first` | R | One row per string, using the pin's winner rules (#913, #914). `-strcmp` is a total order on NUL-free strings, so every stable sort agrees and the existing map gives the pin's result. The `m_freq` comparisons use row 26's key. | None. |
+| 20 | `src/pinyin.cpp:2468-2494` | `oxpinyin-capi/src/predict.rs` `prepend_punctuations` | R | Observable: distinct punctuation strings, in prefix order then table order (#928). Already written as a `HashSet` walk. | None. |
+| 21 | `src/pinyin.cpp:3518-3576` (`g_utf8_substring` at `:3557-3558`) | `oxpinyin-capi/src/aux_matrix.rs` `AuxMatrix::full`, `double`, `chewing`, `split_zhuyin` | R | A byte delta used as a character offset is libpinyin's logic defect, reproduced as written (limb 4). | None. |
+| 22 | `src/storage/ngram.cpp:161,185,215,239,259` (`std_lite::lower_bound`; `src/include/stl_lite.h:29`) | `oxpinyin-core/src/single_gram.rs` `lower_bound`, `lower_bound_records`, `find` | R | A gram is a DBM value whose order the pin never checks. On an unpartitioned array, libstdc++'s halving probe sequence decides the index. The amendment registers no site here, so the pin is followed. On every sorted array, `partition_point` would agree. | Rename `lower_bound` → `halving_search` (and `lower_bound_records` to match). |
+| 23 | `src/storage/chewing_large_table2.h:149,202,216,241` (`std_lite::equal_range`; `stl_lite.h:35`) | `oxpinyin-user/src/pinyin_chain.rs` `lower_bound`, `upper_bound`, `equal_range` | R | Same reason as row 22, for stored KC and tkrzw entry chunks. The module records that a mask walk stores a record with the previous record's tail (#785), and every record is read unchecked. | Rename to `first_not_below`, `first_above`, `matching_run`; the doc comments state the halving probe order. |
+| 24 | `src/pinyin.cpp:1678-1709` sorted at `:2286`; `src/zhuyin.cpp:1129-1144` sorted at `:1529,1610`; GLib 2.84.4 `gqsort.c:69-281` | `oxpinyin-engine/src/nbest.rs` `glib_merge_sort` (re-exported from `lib.rs`); `session/mod.rs` `glib_rank_sort`, `RankKey::pin_compare` | R | The frequency key `-(freq_lhs - freq_rhs)` is computed in `guint32` and returned as a `gint`, so it is not a total order once λ is outside `[0, 1]` (#1274). The amendment leaves that wrap open and reserves its remedy for a maintainer ruling. Until then, the order on such input is the merge's comparison sequence. | Rename `glib_merge_sort` → `halving_merge_sort`, `glib_rank_sort` → `rank_candidates`, `RankKey::pin_compare` → `RankKey::wrapping_compare`. |
+| 25 | `src/pinyin.cpp:2440-2445` | `oxpinyin-capi/src/predict.rs` `sort_predicted` | R | As row 24, over phrase length and frequency. | None of its own. It follows row 24's rename. |
+| 26 | `src/pinyin.cpp:105,1821-1824,1838-1841,1862-1866`; `src/zhuyin.cpp:1264-1268` | `session/mod.rs` `amplified_frequency`, `amplified_frequency_with_bigram`, `guint32_of_score`, the frequency field of `RankKey::for_sort_word`; `predict.rs` `amplified_frequency` (a private copy) | I | The truncation of `score × 2²⁴` into the internal `guint32` `m_freq` is float-to-integer truncation into a storage width. The out-of-range branch is amd64 `cvttss2si` behaviour; the arm64 pin saturates, see [arm64-pin-portability-1137.md](arm64-pin-portability-1137.md). Idiomatic Rust, which orders by the `f32` score itself, does **not** give the pin's result. Distinguishing case: two same-length candidates whose scaled scores truncate to one integer, for example unigram counts `u` and `u + 1` when the facade total exceeds `2²⁴ / (1 − λ)`. The pin keeps collection order; Rust orders by count. | **Held.** Removing the truncation also removes the frequency wrap that row 24 keeps and the amendment reserves. Replace it together with row 24's merge, record the difference, and fold the `predict.rs` copy into the session's, after that ruling. |
+| 27 | `src/pinyin.cpp:1692-1697` | `RankKey::for_sort_word`: `pinyin_span as u8` | I | The `guint8` is a local width. #1275 (closed 2026-10-26 07:37 UTC, before PR #1304 merged) reproduced it; under limb 3 it is an artefact. A wrapped span is still a total preorder, so this row does not depend on row 24. Idiomatic Rust (the full span) does **not** give the pin's result: `ni`, 251 apostrophes, `hao` under `SORT_BY_PINYIN_LENGTH` has a 256-byte span. The pin ranks 你好 after 你; Rust ranks it first. | Replace with the full span. Record the difference. `pinyin-length-wrap/span-256`, `span-257` and `span-512` become `POLICY-ACCEPTED`; the controls stay `MATCH`. |
+| 28 | `src/lookup/phonetic_lookup_heap.h:56-81` (node, nstore 2); `src/lookup/phonetic_lookup.h:141-172` at `:771` (beam) and `:335` (tails); `src/pinyin.cpp:55` (`PhoneticLookup<2, 3>`) | `nbest.rs` `heap_push`, `heap_adjust`, `heap_pop`, `heap_make`, `heap_top` (a port of libstdc++ `stl_heap.h`) under `node_loses_to` and `selection_loses_to` with `nstore = 2` | I | Under S1/S2 the beam and tail key is total: ordered S, then batch position. The node compares ordered S alone and rejects a tying newcomer. Every correct top-k selection returns the same values in the same order. A written-out two-slot node gives the pin's front and its eviction, a defect kept bug for bug. So idiomatic Rust **does** give the current, ruled result, and no new record is needed. | Replace the beam and tail selection with `select_nth_unstable_by` plus `sort_by` on the total key: O(m + k log k) time against the heap's O(m + k log m), with the same space. Replace the node with the two-slot keep rule. Gate on the S1/S2 cases. |
+| 29 | `src/lookup/phonetic_lookup.h:65-91` with `nstore = 1`, `:141-172` at `:771,335`, `:663,692-693`; `src/lookup/phonetic_lookup_heap.h:89-123`; `src/zhuyin.cpp:50` (`PhoneticLookup<1, 1>`) | `nbest.rs` `zhuyin_loses_to` with the same `heap_*` port | R | `trellis_value_less_than<1>` is a strict weak order only while no same-length value is NaN. With λ outside `[0, 1]`, a unigram step takes `log` of a negative product (`:663`, `unigram_lambda = 1 − λ`) while a bigram step can stay finite (`:692-693`). NaN and finite values of one length then meet in one selection, and the pin's `make_heap`/`pop_heap` sequence decides. The amendment registers only the `<2>` sites (S1, S2), so the pin is followed. | Keep the port for this path only, after row 28. The names are already behavioural; the doc comment states the reason. |
+| 30 | none: ibus-libpinyin `PYLibPinyin.cc:249` | `oxpinyin-dictool/src/format.rs` `split_classic` | R | This is dictool's own frozen import grammar (#1226). It has no pin call, so limb 3 does not apply ([external-io-boundary.md](external-io-boundary.md), records table). | None. |
+
+### Excluded
+
+These were checked and left out of the table:
+
+- **Settled by #1279.** The C-string conversions:
+  `oxpinyin-capi-marshal/src/input.rs` `utf8_to_ucs4`, `scalar_text`,
+  `parser_prefix`, `direct_zhuyin_reading`, `filename`, and `ucs4.rs`.
+- **Settled by ruling.**
+  - `pin_table_info_locale` in `oxpinyin-capi/src/locale.rs`, compiled into both facades: `LC_NUMERIC`,
+    row 39, #923.
+  - The S1/S2 comparators (`adjusted_cost`, `ordered_cost_compare`,
+    `node_loses_to`, `selection_loses_to`) and the S3 tail sort
+    (`tail_merge`): the 2026-10-28 amendment. `tail_merge` is now a
+    `sort_by`, and its name predates #1373. `sort_tails_by_possibility`
+    would describe it, and no policy names it.
+  - The `Cost` scale in `oxpinyin-core/src/cost.rs` and the rational λ:
+    the #1378 maintainer decision of 2026-10-28 UTC.
+  - The in-memory facade unigram total, which wraps in `guint32`
+    (`src/storage/phrase_index.h:633`; `oxpinyin-runtime/src/lib.rs`,
+    `oxpinyin-data/src/phrase_libraries.rs`): policy row 61. That row is
+    class (c), whose trigger is the wrap to zero, so limb 2 decides it
+    before limb 3. Row 56 settles the sub-index refusal.
+- **Native already.** `oxpinyin-core/src/ucs4.rs` `PhraseText` and
+  `oxpinyin-data/src/phrase_library.rs` `phrase_codes`, `phrase_chars`
+  are stored code points with no C shape. The static-table searches
+  (`partition_point` in `oxpinyin-core/src/scheme.rs` and
+  `oxpinyin-chewing/src/static_strings.rs`) run over sorted built-in
+  tables, so every search agrees (`src/storage/pinyin_parser2.cpp:102,134`;
+  `src/storage/zhuyin_parser2.cpp:82`).
+- **Not an imitation.**
+  - The input caps `MAX_INPUT_BYTES` and `MAX_GRAPH_INPUT` are product
+    limits.
+  - The store's byte-order key comparison is the backend's own order.
+  - The probe-only `TokenHasher` maps never reach an order.
+  - The deterministic hash in `oxpinyin-core/src/kbest.rs` is oxpinyin's
+    own.
+  - `pinyin-oracle` is a test harness.
+
+### Phase 2 work and function-order cost
+
+Phase 2 starts after external-I/O stage 1 (`wip/stage1-io`) lands.
+
+- **Replace.** Rows 27 and 28.
+- **Rename.** Rows 22, 23 and 24.
+- **Held for a ruling.** Row 26 waits for the maintainer's ruling on the
+  frequency-comparator wrap. That ruling also decides whether rows 24
+  and 25 stay required or become imitations.
+- **Not #1297.** Rows 8–18 belong to the external-I/O stages.
+
+Renames that touch a function-order policy:
+
+| Rename | Policy lines | Policies |
+| --- | --- | --- |
+| `oxpinyin_engine::nbest::glib_merge_sort` → `halving_merge_sort` | the `<(RankKey, u32), glib_rank_sort::{closure#0}>` instantiation | all six: `tools/packaging/function-order/{bdb,kc,tkrzw}/lib{pinyin,zhuyin}.order` |
+| `oxpinyin_engine::session::glib_rank_sort` → `rank_candidates` | its own line, and the closure inside the instantiation above | all six |
+
+Both renames therefore regenerate all three backends' policies in one PR,
+as `docs/packaging.md` "Regeneration" prescribes. That means two
+generator passes per backend, byte-identical, never hand-edited.
+
+No other row's item is named in a policy: `RankKey::pin_compare`,
+`sort_predicted`, the `heap_*` functions, `single_gram::lower_bound`,
+the `pinyin_chain` searches, `tail_merge`, `guint32_of_score` and
+`amplified_frequency*` are absent from all six. Rows 27 and 28 still
+change code in the policies' crates, so their PR runs
+`tools/packaging/function_order.py` against all six policies, and it
+regenerates the policies if a named path stops resolving.
+
+Policy paths that the external-I/O stages will remove are those stages'
+cost, not #1297's: `table_info::parse_decimal`, `join_bytes`,
+`ConfigLines`, `Lambda::from_decimal`, `pin_stderr::emit`, and both
+facades' `locale::read_lambda`.
+
+## Classification of the remaining GLib- and libc-shaped code (#1297, Phase 1, 2026-10-26 UTC, superseded)
+
+Superseded by "#1297 classification under the 2026-10-28 rulings"
+above. This section is kept as the dated record of `main` `ab0b1da`.
+Several of its entries no longer hold:
+
+- Its scanner-lane rows (21, 23–25, 29, 30) are external-I/O revert
+  targets under the 2026-10-28 ruling.
+- Its ranking-lane plan for rows 11–14 and 33 is replaced by the S1–S3
+  amendment and the new rows 22–29.
+- Its row 34 is now split between new row 7 and the row 61 exclusion.
 
 Recorded 2026-10-26 UTC at `main` `ab0b1da` and classified under the
 maintainer ruling of 2026-10-26 UTC (#1303, merged as PR #1304):
