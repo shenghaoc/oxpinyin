@@ -10,6 +10,7 @@ import sys
 
 from . import slot
 from .cell import CellError, Settings, patch_digest
+from .frontend import frontend_source
 from .runners import Context, Finished, emit, python_script, status, write
 from .system_data import NAMES, data_extension
 
@@ -1408,14 +1409,11 @@ def import_diff(ctx: Context, args: Sequence[str]) -> int:
     ctx.emit('import-diff: IDENTICAL\n\n--- classic-format frontend interop ---')
     fixture = ctx.path(ctx.env.get('IMPORT_FIXTURE') or str(ctx.here / 'classic-import.txt'))
 
-    def ibus_source(build: Path) -> Path | None:
-        return next((source for source in sorted((build / 'src').glob('ibus-libpinyin-*')) if list((source / 'src').glob('*.o'))), None)
-
     build_value = ctx.env.get('PINYIN_IBUS_BUILD_DIR')
     build = ctx.path(build_value) if build_value else next((candidate for candidate in (
         ctx.settings.root / 'target/oracle-pin-build', ctx.settings.root / 'target/oracle-tkrzw-build',
-        ctx.settings.root / 'target/oracle-w2') if ibus_source(candidate) is not None), None)
-    source = ibus_source(build) if build is not None else None
+        ctx.settings.root / 'target/oracle-w2') if frontend_source(candidate) is not None), None)
+    source = frontend_source(build) if build is not None else None
     schema = source / 'data/com.github.libpinyin.ibus-libpinyin.gschema.xml' if source is not None else None
     if build is None or source is None or schema is None or not schema.is_file():
         ctx.emit('SKIP: ibus-libpinyin build tree not found (set PINYIN_IBUS_BUILD_DIR)')

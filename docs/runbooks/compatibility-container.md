@@ -224,9 +224,10 @@ container's memory (`docs/runbooks/oracle.md`).
 Apple builds use its `--cpus` setting. The
 existing registry's `--timeout` and `--runner-timeout NAME=SECONDS` options
 are accepted; no skip-as-pass override or arbitrary host artifact paths are
-forwarded. Some specialized registry entries require extra installations or
-patched reference variants; their missing-input result is a failure, not a
-claim that the basic environment covers every advanced task.
+forwarded. Selected compatibility gates prepare their registered frontend,
+patched reference and model-text inputs automatically. Entries marked
+`not-a-gate` remain native or measurement recipes with caller-selected inputs;
+the compatibility launcher rejects them.
 
 ## What happens and what success means
 
@@ -237,7 +238,9 @@ pull diagnostics; they do not silently start an expensive fallback. The base
 image is pulled only if a local fallback build needs it.
 
 `tools/oracle/Dockerfile.compat` adds the repository-selected Rust toolchain,
-libclang and backend dump utilities to that same trixie environment, with
+libclang, backend dump utilities, Valgrind, distro cargo-c, IBus development
+files, the sqlite3 CLI and the generated `zh_CN.UTF-8` locale to that same
+trixie environment, with
 no model bytes or contributor source baked into the image. There is no
 second oracle implementation and no general development image.
 
@@ -247,6 +250,136 @@ backend data when needed, and writes an internal environment file. Existing
 cell selection, artifact building and `just runner run-all` perform the comparison.
 No nested container runtime is required. A clean container environment prevents
 host library/artifact/backend overrides from contaminating the comparison.
+
+`tools.dev.compat.prepared` reads the selected registry rows after oracle
+provisioning. For `import-diff`, it calls the existing full
+`tools/oracle/build-oracle.sh` recipe once per cell and passes its work directory
+through run-all's existing `--ibus-build CELL=DIR`. That recipe owns the only
+frontend version/commit pin and verifies the fetched commit. Its full mode
+builds a private libpinyin prefix, model data and frontend objects; the interop
+harness links those objects against the canonical cell prefix. No frontend
+build runs for other selections. Successful builds are cached by image, build
+recipe and cell; an incomplete object/schema build is rebuilt on resumption.
+
+Rows declaring an `oracle_variant` build that separately identified prefix
+with `--libs-only --apply-patches`, reusing the verified unpatched system
+tables. Rows requiring `interpolation2.text` get a separate copy of the pin's
+tables plus the verified model text through `--data CELL=DIR`; the original
+pin manifests and table bytes are untouched. `pc-metadata` stages the pin and
+both subject installations at the same prefix with the existing packaging
+installer, in a separate development target, and supplies its three internal
+environment inputs. These preparations run under the existing volume lock;
+compilation also uses heavy admission.
+
+## Registry input audit
+
+This source audit covers all 60 entries at base `3467bd45`, including the 12
+explicitly excluded native/measurement recipes. It follows `runners.json` into
+`tools.dev.runner_recipes`, `runner_protocols`, `runner_state`, `abi`,
+`compat.fixtures`, `packaging`, the two directly registered Python runners,
+and `measure.{campaigns,valgrind,startup}`. The frontend's `configure.ac` at
+the commit pinned in `build-oracle.sh` requires both the `ibus-1.0`/`sqlite3`
+pkg-config modules and the sqlite3 executable; the optional Python GI probe
+is nonfatal. Disabled frontend extensions need no Boost, Lua, OpenCC,
+libnotify or cloud-input libraries.
+
+The package groups below name distro packages, including shared build inputs:
+
+- **B**: inherited `build-essential` (C/C++, binutils and libc headers),
+  `pkg-config`, `libglib2.0-dev`, selected DBM development library
+  (`libdb-dev`, `libkyotocabinet-dev` or `libtkrzw-dev`), plus compat's
+  `libclang-dev`, `liblz4-dev`, `libzstd-dev`, `zlib1g-dev`. Bash, coreutils,
+  findutils, diffutils, awk, sed and libc runtime tools come from Debian.
+  Rust and managed Python/uv come from the image's existing pinned bootstrap.
+- **D**: `db5.3-util`, `kyotocabinet-utils`, `tkrzw-utils` (per-cell dump tools).
+- **F**: `libibus-1.0-dev`, `libsqlite3-dev` (already inherited), `sqlite3`,
+  and GLib's schema compiler; upstream preparation also uses inherited
+  `autoconf automake autopoint libtool gettext gnome-common git curl tar patch`.
+- **L**: `locales` plus generated `zh_CN.UTF-8`.
+- **V**: `valgrind` (including Callgrind/Massif and headers).
+- **C**: distro `cargo-c`, for installation-tree preparation. Trixie's
+  package is below the repository floor, so the image installs its dependencies
+  from trixie and downloads only [`cargo-c` from Debian's signed forky archive](https://packages.debian.org/forky/cargo-c).
+  `dpkg --install` must satisfy that tool's dependencies using the existing
+  trixie libraries; no forky dependency upgrade is performed. The temporary
+  forky source is removed. Metadata preparation enforces the shared doctor
+  floor before building. This changes the packaging tool, not the frozen
+  reference environment or the version floor.
+
+**P** means the verified per-cell pin libraries, headers, pkg-config files and
+regenerated system data; **Z** adds libzhuyin; **S** means the selected subject
+artifacts built by run-all; **W3** means committed per-cell miniature tables.
+"Provided" compares the original image plus oracle/subject preparation;
+"added" identifies the gaps fixed here. Every gate still needs B's shared
+toolchain/runtime, even when its driver is Python. No runners other than
+`import-diff` were executed for this change.
+
+| Registered runner | System packages | Prepared inputs | Before → after |
+| --- | --- | --- | --- |
+| abi-probe-diff | B | P, S, full system tables | Provided |
+| addon-candidate-diff | B | P, S, W3 | Provided |
+| bigram-export-diff | B | S, `bigram-export-strjoinv` prefix and pin data | Missing variant → added |
+| bisect | B, V | P, S, W3; explicit LD_PRELOAD integration is optional | V absent → added; optional engine check remains opt-in |
+| callgrind-differential | B, V, util-linux (`taskset`) | Four installed measurement arms, pin data, anchored harness | Native/measurement recipe; caller prepares arms |
+| candidate-assembly-diff | B | P+Z, S | Provided |
+| contract-diff | B, D | P+Z, S, registered cases and policy records | Provided |
+| cpp-smoke | B (`g++`, `readelf`, `ldd`) | S, W3 | Provided |
+| dict-surface-diff | B | P, S, full tables + `interpolation2.text` | Model fetched but not passed with tables → added |
+| dynamic-adjust-diff | B | P, S, full system tables | Provided |
+| export-diff | B | P, S | Provided |
+| import-diff | B, F | P, S including dictool, W3, classic-import fixture, pinned frontend objects/schema | IBus dev/CLI and frontend absent → added |
+| import-semantics-diff | B | P, S | Provided |
+| key-surface-diff | B | P, S, full tables + `interpolation2.text` | Model/table directory gap → added |
+| live-typing-diff | B | P, S, full system tables | Provided |
+| locale-diff | B, L | P+Z, S | Provided |
+| nbest-choose-train-diff | B, D | P+Z, S, committed witness cases | Provided |
+| nbest-train-diff | B | P, S, full system tables | Provided |
+| open-counter-diff | B | P+Z, S | Provided |
+| option-sweep | B | P, S, full system tables, W3 | Provided; PINYIN_MODEL_DIR already supplied |
+| perf-baseline | B, C, util-linux | Installed subject, pin, full export, function-order policies | Native/measurement recipe; caller supplies workload/install scope |
+| perf-matrix | B, util-linux | Four preinstalled KC/tkrzw arms, harness, full data, policies | Native/measurement recipe; caller prepares arms |
+| perf-same-data | B, C, util-linux | Same-data measurement arms/exports, policies | Native/measurement recipe; caller prepares arms |
+| phrase-surface-diff | B | P, S, full tables + `interpolation2.text` | Model/table directory gap → added |
+| pred-order-diff | B | P, S, full system tables | Provided |
+| predict-diff | B | P, S | Provided |
+| punct-diff | B | P, S | Provided |
+| residue-a-tail-diff | B | S, full tables, `bigram-export-strjoinv` prefix | Missing variant → added |
+| residue-mechanism-diff | B | P, S, full system tables; runtime probe built by recipe | Provided |
+| rss-diag | B, V, util-linux | Caller-selected libraries/data and function-order policies | Native/measurement recipe |
+| same-data-dir-diff | B | P, S | Provided |
+| scheme-diff | B | P, S, full system tables | Provided |
+| session-fork-diff | B, coreutils (`timeout`) | P+Z, S | Provided |
+| shipped-check | B, C, util-linux | Current source, preinstalled tkrzw pin/data, image harness and policies | Native/measurement recipe |
+| system-import-profile | B, V | Caller-selected pin/subject/data, new work directory and policies | Native/measurement recipe |
+| system-import-round-trip | B | P, S | Provided |
+| train-diff-dynamic-off | B | P, S, W3 | Provided |
+| train-diff | B | P, S, full system tables | Provided |
+| tree-recipe-control | B, C, util-linux | Old/current source trees, preinstalled tkrzw pin/data, image harness, policies | Native/measurement recipe |
+| two-context-diff | B | P+Z, S | Provided |
+| uncovered-surface-diff | B | P, S, full system tables | Provided |
+| union-diff | B, selected backend dev files | P, S, W3, compiled bigram planter | Provided |
+| user-candidate-diff | B | P, S | Provided |
+| user-file-modes-diff | B | P+Z, S | Provided |
+| w11-diff | B | P, S, full system tables | Provided |
+| zhuyin-diff | B | P+Z, S, byte-identical full tables + `interpolation2.text` | Model/table directory gap → added |
+| zhuyin-import-diff | B | P+Z, S | Provided |
+| system-import-round-trip-zhuyin | B | P+Z, subject zhuyin | Provided |
+| train-index-diff | B, D | P+Z, S | Provided |
+| transformed-options-sweep | B | P, S, committed transformed inputs/word lists | Provided |
+| abi-exports | B (`nm`) | S, registered headers/version scripts | Provided; no oracle needed |
+| abi-alloc-failure | B (glibc/C++) | P+Z, S, allocation-failure C++ harness | Provided |
+| abi-alloc | B (compiler ASan/LSan runtime) | S, registered headers/version scripts | Provided; no oracle needed |
+| pc-version | B | Registered pin and Cargo metadata | Provided; no artifact build needed |
+| pc-metadata | B, C | Matching staged pin/subject installations and prefix | C and both roots absent → added |
+| user-dir-round-trip | B | P, S, built user-round-trip integration executable | Provided |
+| fuzz | B, util-linux (`setarch`) | cargo-fuzz, its separately named nightly/rust-src, target/duration, ASLR permission | Native recipe; deliberately excluded |
+| coverage | B | cargo-llvm-cov, matching llvm-tools-preview, crate/backend/report scope | Native recipe; deliberately excluded |
+| sanitize | B, util-linux (`setarch`) | Sanitizer nightly, backend selection, ASLR permission for tkrzw, healthy tkrzw | Native recipe; deliberately excluded |
+| native-startup | B, Linux perf support or native macOS tools | Base/PR installs, system directory, pin-provisioned startup profiles | Native recipe; deliberately excluded |
+
+The native/measurement entries require workloads, multiple revisions or host
+permissions which cannot be inferred from `--cell`. Their exclusion is a
+registry contract, not a missing-input skip inside the compatibility gate.
 
 Success requires exit zero and **PASS for every selected registry row**.
 FAIL, SKIPPED, a missing model/archive, hash mismatch, unavailable runtime or

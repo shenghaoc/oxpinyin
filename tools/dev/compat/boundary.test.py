@@ -57,6 +57,13 @@ class BoundaryTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'unknown issue'):
                 boundary.validate(['--runners', 'contract-diff', '--issue', 'not-known'], {})
 
+    def test_preparation_receives_only_gates_selected_by_runner_cell_and_issue(self):
+        args = boundary.validate(['--cell', 'kc', '--runners', 'import-diff,pc-version'], {})
+        self.assertEqual([row['name'] for row in args.rows], ['import-diff', 'pc-version'])
+        tag = args.rows[0]['issues'][0]
+        filtered = boundary.validate(['--cell', 'kc', '--runners', 'import-diff,pc-version', '--issue', tag], {})
+        self.assertEqual([row['name'] for row in filtered.rows], ['import-diff'])
+
     def test_cases_need_contract_diff_in_runners(self):
         for argv in (['--runners', 'pc-version', '--cases', 'default-option-parse'],
                      ['--issue', '919', '--cases', 'default-option-parse'],

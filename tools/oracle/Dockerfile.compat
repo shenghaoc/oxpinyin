@@ -17,7 +17,19 @@ RUN --mount=type=secret,id=cacert,required=false,mode=0444 \
     apt-get "$@" update; \
     apt-get "$@" install -y --no-install-recommends \
       libclang-dev db5.3-util kyotocabinet-utils tkrzw-utils \
-      liblz4-dev libzstd-dev zlib1g-dev locales; \
+      liblz4-dev libzstd-dev zlib1g-dev locales \
+      libibus-1.0-dev sqlite3 valgrind cargo-c; \
+    # Trixie's cargo-c is below the repository tool floor. Install only the \
+    # newer distro tool; dpkg refuses unsatisfied dependencies rather than \
+    # upgrading the trixie libc, GLib, compiler or backend libraries. \
+    printf '%s\n' 'deb [signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] https://deb.debian.org/debian forky main' \
+      > /etc/apt/sources.list.d/compat-cargo-c.list; \
+    apt-get "$@" update; \
+    mkdir /tmp/compat-cargo-c; \
+    (cd /tmp/compat-cargo-c && apt-get "$@" download cargo-c/forky); \
+    dpkg --install /tmp/compat-cargo-c/*.deb; \
+    rm /etc/apt/sources.list.d/compat-cargo-c.list; \
+    rm -rf /tmp/compat-cargo-c; \
     rm -rf /var/lib/apt/lists/*; \
     sed -i 's/^# *zh_CN\.UTF-8 UTF-8$/zh_CN.UTF-8 UTF-8/' /etc/locale.gen; \
     locale-gen; \

@@ -83,7 +83,8 @@ def validate(argv, environ=None):
     model archive digest against tools/oracle/oracle-pin.txt. ``--cases`` and ``--cases-prefix``
     need ``--runners`` naming contract-diff; run-all.py checks the case IDs
     against the contract index inside the container. Return the parsed
-    namespace. Read the registry and, when needed, run the contract tag
+    namespace, including the selected gate ``rows`` for guest preparation.
+    Read the registry and, when needed, run the contract tag
     listing; reject invalid inputs with parser exits or value errors.
     """
     environ = os.environ if environ is None else environ
@@ -143,6 +144,7 @@ def validate(argv, environ=None):
     rows = [row for row in rows if row.get('kind') == 'gate']
     if not rows:
         raise ValueError('selection contains no gates')
+    args.rows = rows
     selected = {row['name'] for row in rows}
     for value in args.runner_timeout:
         name, separator, seconds = value.partition('=')
