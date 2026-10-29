@@ -925,7 +925,7 @@ contract_bigram_removal.register(case)
 contract_stored_user_gram.register(case)
 
 
-contract_facade_totals_counts.register(case)
+contract_facade_totals_counts.register(case, items_system=items_system, _craft_db=_craft_db)
 
 
 contract_library_reload.register(case)

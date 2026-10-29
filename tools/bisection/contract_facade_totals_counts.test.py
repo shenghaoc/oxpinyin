@@ -1,6 +1,7 @@
 #!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
 """Tests for the facade totals and counts cases (#1175)."""
 import unittest
+from unittest.mock import Mock
 
 import contract_facade_totals_counts as family
 
@@ -15,7 +16,8 @@ EXPECTED = [('import-wrapped-facade-total-guess', (), {'issues': ('798',)}),
             ('system-add-reload-facade-total-small', (), {'control': True}),
             ('token-add-unigram-numerator-guess', (), {'issues': ('801',)}),
             ('longer-choices-numerator-guess', (), {'issues': ('801',)}),
-            ('unload-drops-accepted-bump', (), {'issues': ('801',)})]
+            ('unload-drops-accepted-bump', (), {'issues': ('801',)}),
+            ('token-add-unigram-denominator-candidates', (), {'issues': ('540',)})]
 
 
 def declarations():
@@ -27,7 +29,7 @@ def declarations():
             return fn
         return collect
 
-    family.register(case)
+    family.register(case, items_system=Mock(), _craft_db=Mock())
     return cases
 
 
@@ -48,6 +50,7 @@ class FacadeTotalsCountsTests(unittest.TestCase):
         self.assertEqual([c[0] for c in first], [c[0] for c in second])
         for (name, _, _, a), (_, _, _, b) in zip(first, second):
             with self.subTest(name=name):
+                a, b = getattr(a, 'func', a), getattr(b, 'func', b)
                 self.assertIs(a, b)
 
 
