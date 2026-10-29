@@ -4144,7 +4144,10 @@ class (b)/(c); do not reproduce the pin's unsafe surrounding defect.
 records the repair authorized by the witnessed algorithm-precondition amendment:
 ordered adjusted cost for node heaps and preselection batch-position ties for
 beam/final-tail selection. Four exact BDB case pairs report `POLICY-ACCEPTED`,
-each attributed in that record. This is the amendment's product-level ruling,
+each attributed in that record; since #1400, the two gb table.conf cases
+moved by the S2 tie rule hold their bdb, kc and tkrzw pairs there too, as do the
+two negative-lambda cases moved by the special-cost completion, and the
+three lambda cases' kc and tkrzw pairs. This is the amendment's product-level ruling,
 not a new exception class. Row 83 remains historical; zhuyin, tail ordering,
 node front eviction, frequency wrap and lambda validation are unchanged.
 

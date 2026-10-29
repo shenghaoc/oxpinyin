@@ -88,9 +88,13 @@ def register(case, *, CASES):
                  control=True, issues=('1347',))(
                      lambda k, text=_text, options=_options: glib_sort_tails(k, (text,), options))
 
-    # Keep the full diagnostic envelope when registering the intentional S1/S2 differences.
+    # Keep the full diagnostic envelope when registering the intentional S1/S2 differences:
+    # the special-cost completion (lambda above one, and negative lambda since #1400) and
+    # the S2 tie rule (the gb table.conf cases, #1400).
     for _name in ('nbest-user-table-order-pinyin', 'table-conf-lambda-one-and-a-half',
-                  'table-conf-lambda-two', 'table-conf-lambda-million'):
+                  'table-conf-lambda-two', 'table-conf-lambda-million',
+                  'table-conf-lambda-negative-half', 'table-conf-lambda-negative-two',
+                  'table-conf-row-removed-gb', 'table-conf-not-used-gb'):
         CASES[_name].update(stderr=True, policy_record='trellis-adjusted-cost-s1-s2.md')
 
 
