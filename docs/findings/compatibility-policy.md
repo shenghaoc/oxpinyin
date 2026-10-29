@@ -699,14 +699,62 @@ fix needs a separate maintainer ruling or Stage 3.
 
 NaN ordering for the repaired comparators is the special-cost ordering
 ruled above (2026-10-28 UTC). NaN input validation (whether to reject λ
-outside `[0, 1]`) remains open. Frequency-comparator wrap also remains open.
-`docs/findings/921-927-glib-sorts.md` records their mechanisms. This case
-set does not register frequency-comparator wrap or λ input validation;
-their remedies require an explicit maintainer ruling.
+outside `[0, 1]`) remains open. The frequency-comparator wrap is
+**closed** by the 2026-10-29 UTC ruling below.
+`docs/findings/921-927-glib-sorts.md` records the mechanisms of both. This
+case set does not register λ input validation, whose remedy still requires
+an explicit maintainer ruling.
 Row 83 remains the historical implementation
 record, with its GLib version corrected to 2.84.4. No shipping behavior
 changes in this amendment; a later implementation must report an
 intentional difference under this ruling as `POLICY-ACCEPTED`, not MATCH.
+
+**Ruling — no ported external-library internals (2026-10-29 UTC).**
+oxpinyin implements libpinyin's own algorithms. It does not transcribe the
+internal algorithms of GLib, libstdc++, libc++, glibc or another external
+library to preserve that implementation's comparison schedule, probe
+sequence or other implementation detail.
+
+- **What to use instead.** Use the Rust standard-library API that has the
+  corresponding documented semantics. Necessary representation adapters
+  and libpinyin-specific product logic remain ordinary Rust code. A new
+  dependency requires maintainer approval; none is authorized by this
+  ruling.
+  Where the pin uses a library routine within its documented preconditions,
+  the Rust standard-library replacement must reproduce its result exactly,
+  choosing the API's arguments (predicate, comparator, key, tie-break) to
+  do so. Only results that depend on a violated precondition may differ,
+  and each such difference is recorded as POLICY-ACCEPTED.
+- **What stays.** Preserve libpinyin's product rules, ranking keys,
+  limits, C ABI, ownership and persistent formats, except for departures
+  specifically recorded under this ruling or another existing ruling.
+  Observable differences caused by replacing implementation-specific
+  behaviour are evidenced and recorded as `POLICY-ACCEPTED`.
+- **Ordering requirements.** Sort and selection comparisons must provide
+  a consistent ordering, including explicit special-value and tie
+  treatment where necessary. `partition_point` predicates must be
+  partitioned on valid data. Malformed stored data is not silently sorted
+  or cleaned to force that condition. Any resulting difference is
+  recorded, and memory safety and the existing refusal rules remain
+  intact.
+- **Specific rules.**
+  - Candidate-frequency sorting uses ordinary numerical comparison, not
+    wrapping subtraction. This closes the frequency-comparator wrap
+    above.
+  - Zhuyin selection remains length-first. At equal length it uses
+    descending raw score, with NaN last and signed zeros equal, followed
+    by earlier batch position. Its single-slot admission rule remains
+    unchanged.
+  - Pinyin's two-slot node preserves front eviction and physical-slot
+    semantics.
+- **Scope.** ABI-prescribed encoding implementations are boundary code,
+  not external-algorithm ports. The existing C ABI and external-I/O
+  policies remain in force. This ruling does not authorize an exhaustive
+  search for unrelated upstream defects.
+
+The executable copies this ruling removes, and their replacements, are
+inventoried in [glib-libc-inventory.md](glib-libc-inventory.md) under
+"Executable copies of external-library algorithms".
 
 ## Registered standing divergences — outside the classes
 

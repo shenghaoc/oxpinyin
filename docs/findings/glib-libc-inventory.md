@@ -854,62 +854,62 @@ stay with #1279.
 
 ### Status on main (2026-10-29 UTC)
 
-Reconciled at `main` `c33023c` by reading the code and the records.
+Reconciled at `main` `9015a178` by reading the code and the records.
 Nothing was built or run. The table below gives one line for each
 language-artefact row or artefact part above.
 
-The following question is **awaiting a maintainer ruling** and is not
-classified further here:
+**Rulings that bear on this table.**
 
-- **The frequency-comparator wrap** (old rows 11–14 and 17). The
-  2026-10-28 UTC amendment leaves it open.
+- The frequency-comparator wrap (old rows 11–14 and 17) is now ruled.
+  The maintainer ruling of 2026-10-29 UTC, "No ported external-library
+  internals", is in `AGENTS.md` beside the language-artefact paragraph
+  and in [compatibility-policy.md](compatibility-policy.md) under the
+  2026-10-28 amendment. Candidate-frequency sorting uses ordinary
+  numerical comparison.
 
 | Row | Status |
 | --- | --- |
-| 11 | **Tails overtaken; the rest awaits the ruling.** The tails are overtaken by S3 (#1373, `8cf8e23`, [trellis-tail-sort-s3.md](trellis-tail-sort-s3.md)): they now use a stable `sort_by`. The candidate and predicted uses of `nbest::glib_merge_sort` are **awaiting ruling** (frequency-comparator wrap), and so is its rename. |
+| 11 | **Tails overtaken; the rest open under the 2026-10-29 ruling.** The tails are overtaken by S3 (#1373, `8cf8e23`, [trellis-tail-sort-s3.md](trellis-tail-sort-s3.md)): they now use a stable `sort_by`. The candidate and predicted uses of `nbest::glib_merge_sort` are open; they are replaced as inventory item A below. |
 | 12 | **Overtaken** by S3 (#1373, `8cf8e23`). `tail_compare`, `c_float_to_gint` and the `poss` round trip are gone. `tail_merge` now sorts by raw `Cost`, with the amendment's NaN-last order. The float scale itself belongs to #1378. |
-| 13 | **Wrap awaits the ruling; span key open.** The wrapping difference in `RankKey::pin_compare`, and `glib_rank_sort`, are **awaiting ruling** (frequency-comparator wrap). The `pinyin_span as u8` cut in `RankKey::for_sort_word` (#1275) is open; see item 4 below. |
-| 14 | **Awaiting ruling** (frequency-comparator wrap): `capi/src/predict.rs` `sort_predicted`. |
-| 17 | **Awaiting ruling** (frequency-comparator wrap): `guint32_of_score` and both `amplified_frequency` copies. |
+| 13 | **Open under the 2026-10-29 ruling.** The wrapping difference in `RankKey::pin_compare` and `glib_rank_sort` are replaced as inventory item A. Separately, the `pinyin_span as u8` cut in `RankKey::for_sort_word` (#1275) is open; see item 4 below. |
+| 14 | **Open under the 2026-10-29 ruling.** `capi/src/predict.rs` `sort_predicted` is replaced as inventory item A. |
+| 17 | **Comparison ruled; value with #1378.** The comparison of the key is closed by the ruling (rows 13 and 14). The ruling keeps the scaled `guint32` value as a ranking key. `guint32_of_score` and both `amplified_frequency` copies compute that value; their float computation and out-of-range conversion stay with #1378. |
 | 21 | **Done, then overtaken.** Done in `0147535`, [1297-chunk-payload](1297-chunk-payload.md): the payload uses `write_all`. Overtaken by the 2026-10-28 UTC external-I/O ruling: the record is a revert target, and stage 2 of [external-io-boundary.md](external-io-boundary.md) restores one host `write`. `wip/stage1-io` does not cover it. |
 | 23 | **Done and standing.** Done in `0147535`, [1297-punct-words](1297-punct-words.md). The external-I/O ruling keeps it: whole-word decoding is the class (b)/(c) treatment of the pin's undefined read. |
-| 24 | **Done, then overtaken.** Done in `0147535`, recorded in [1297-table-lines](1297-table-lines.md), [1297-table-words](1297-table-words.md), [1297-table-decimals](1297-table-decimals.md), [1297-table-floats](1297-table-floats.md) and [1297-addon-index](1297-addon-index.md). Overtaken by the external-I/O ruling. The λ field is already reverted on main by `f9663f1`, through the host-libc `read_lambda`. `wip/stage1-io` implements the rest: the pin's `fopen`/`fscanf`/`atoi` in `oxpinyin-input`. |
-| 25 | **Done, then overtaken.** Done in `0147535`, recorded in [1297-user-decimals](1297-user-decimals.md) and [1297-user-token](1297-user-token.md). Overtaken by the external-I/O ruling; `wip/stage1-io` implements the reversal. |
+| 24 | **Merged in #1404.** Done in `0147535`, recorded in [1297-table-lines](1297-table-lines.md), [1297-table-words](1297-table-words.md), [1297-table-decimals](1297-table-decimals.md), [1297-table-floats](1297-table-floats.md) and [1297-addon-index](1297-addon-index.md). Overtaken by the external-I/O ruling. #1404 (external-I/O stage 1, merged as `9015a178`) reverted all five divergences through `oxpinyin-input`, replacing the interim host-libc `read_lambda` from `f9663f1` as well. Its status lines and register entries are preserved. |
+| 25 | **Merged in #1404.** Done in `0147535`, recorded in [1297-user-decimals](1297-user-decimals.md) and [1297-user-token](1297-user-token.md). Overtaken by the external-I/O ruling. #1404 (merged as `9015a178`) reverted both divergences through `oxpinyin-input`. Its status lines and register entries are preserved. |
 | 28 | **Done before #1297, then overtaken.** `interp_grammar::is_graph` was already Rust's predicate ([interpolation2-grammar.md](interpolation2-grammar.md), 2026-09-10). Overtaken by the external-I/O ruling and the 2026-10-28 UTC tools drop-in ruling: it is a revert target to GLib's `g_unichar_isgraph` at stage 5. |
 | 29 | **Done, then overtaken.** Done in `0147535`, [1297-tool-decimals](1297-tool-decimals.md): `kmm::numeric::decimal_field` replaced `cnum.rs`. Overtaken by the external-I/O and tools drop-in rulings: host `atoi`/`atol` at stage 5. |
 | 30 | **Done, then overtaken.** Done in `0147535`, [1297-tool-special-values](1297-tool-special-values.md): `numeric::format_six_decimals` with Rust spellings. Overtaken by the external-I/O and tools drop-in rulings: the pin's `printf("%f")` at stage 5. |
-| 33 | **Pinyin overtaken; zhuyin open.** The pinyin path is overtaken by S1/S2 (#1352, `49fbc45`, [trellis-adjusted-cost-s1-s2.md](trellis-adjusted-cost-s1-s2.md)). Its comparator is now a total key (ordered adjusted cost, then batch position), so the `stl_heap.h` port no longer decides anything there; item 5 below covers replacing it. The zhuyin path (`nstore = 1`) is item 3 below. |
+| 33 | **Open under the 2026-10-29 ruling.** The pinyin comparator is overtaken by S1/S2 (#1352, `49fbc45`, [trellis-adjusted-cost-s1-s2.md](trellis-adjusted-cost-s1-s2.md)). The `stl_heap.h` port is still in place for both facades and is replaced as inventory item B, with zhuyin as ruled. |
 | 34 | **Stored widths: no change.** The on-disk `guint32` and `guint8` widths stay. |
 
 **Open Phase 2 items not owned elsewhere.** Items 1–4 were missing from
 the 2026-10-26 table. Their pin cites are at `074a2219`, read from a
-fetch of that commit with `HEAD` checked against the SHA.
+fetch of that commit with `HEAD` checked against the SHA. Items 1–3 and
+5 are now settled by the 2026-10-29 ruling and are scheduled as
+inventory items C, D and B below.
 
 1. **`oxpinyin-core/src/single_gram.rs` `lower_bound`, `lower_bound_records`,
    `find`.** These reproduce libstdc++'s halving probe sequence for
    `std_lite::lower_bound` (`src/storage/ngram.cpp:161,185,215,239,259`;
    `src/include/stl_lite.h:29`). They run over gram values the pin never
-   checks for order. On an unpartitioned array the probe sequence decides
-   the index. The 2026-10-28 amendment registers no site here. Not yet
-   classified.
+   checks for order. This is inventory item C.
 2. **`oxpinyin-user/src/pinyin_chain.rs` `lower_bound`, `upper_bound`,
    `equal_range`.** These are the same probe sequences for
    `std_lite::equal_range` (`src/storage/chewing_large_table2.h:149,202,216,241`;
-   `stl_lite.h:35`). They run over stored KC and tkrzw entry chunks, which
-   the module records can keep a previous record's tail after a mask walk
-   (#785). Not yet classified.
+   `stl_lite.h:35`), over stored KC and tkrzw entry chunks (#785). This
+   is inventory item D.
 3. **The zhuyin trellis comparator: `nbest.rs` `zhuyin_loses_to`, under
    the `heap_*` port.**
    - Pin cites: `trellis_value_less_than<1>` (`src/lookup/phonetic_lookup.h:65-91`),
-     selected by `get_top_results<1>` (`:141-172`) at `:771` (beam) and
-     `:335` (tails), for `PhoneticLookup<1, 1>` (`src/zhuyin.cpp:50`).
+     selected by `get_top_results<1>` (`:141-172`) at `:771` and `:335`,
+     for `PhoneticLookup<1, 1>` (`src/zhuyin.cpp:50`).
    - Strict weak order: it is one only while no same-length value is NaN.
    - How NaN arises: with λ outside `[0, 1]`, a unigram step takes `log`
      of a negative product (`:663`, `unigram_lambda = 1 − λ`), while a
      bigram step can stay finite (`:692-693`).
-   - Consequence: NaN and finite values of one length meet in one
-     selection, and libstdc++'s `make_heap`/`pop_heap` sequence decides.
-   - The amendment registers only the `<2>` sites. Not yet classified.
+   - The 2026-10-29 ruling sets the zhuyin key. This is inventory item B.
 4. **The 8-bit span key.** `RankKey::for_sort_word` reproduces
    `guint8 len = m_end - m_begin` (`src/pinyin.cpp:1692-1697`). With
    `ni`, 251 apostrophes and `hao`, the span is 256 bytes and the key
@@ -917,16 +917,140 @@ fetch of that commit with `HEAD` checked against the SHA.
    the full span would rank it first. The existing cases are
    `pinyin-length-wrap/span-256`, `span-257` and `span-512`.
    Replacement and record remain.
-5. **The pinyin `heap_*` port.** Replace it with an idiomatic top-k
-   selection over the S1/S2 total key. The result is unchanged, so no
-   record is needed.
+5. **The pinyin `heap_*` port.** Inventory item B.
 
 **Owned elsewhere:**
 
-- The frequency-comparator wrap above is awaiting ruling.
 - The float scale belongs to #1378.
-- Rows 21, 24, 25 and 28–30 belong to the external-I/O stages.
+- Rows 24 and 25, with their seven config records, were reverted by #1404, merged as `9015a178`. Rows 21 and 28–30 belong to the later external-I/O stages.
 - The C-string rows 7 and 8 belong to #1279.
+
+### Executable copies of external-library algorithms (2026-10-29 UTC)
+
+This inventory follows the maintainer ruling of 2026-10-29 UTC, "No
+ported external-library internals". It was taken at `main` `0f1df85` and
+covers `crates/` and `tools/`. Nothing was built or run.
+
+- **Search.** The search looked for code that transcribes GLib,
+  libstdc++, libc++ or glibc algorithms to keep their comparison or probe
+  order: hand-written sorts, heaps and binary searches, and the comments
+  that cite those libraries.
+- **No other copies.** None exist outside the five items below. The
+  matches under `tools/bisection/coverage_review_rules/` are review prose.
+  `tools/audit/glib_call_sites.py` lists call sites; it does not port
+  them.
+- **Test-only references.** Two test-only transcriptions pin the old
+  behaviour and go with their items: `old_lower_bound` in the
+  `single_gram` tests, and the `msort_with_tmp` transcription in
+  `glib_merge_sort_tests`.
+
+**Compliant, not ports:**
+
+- `oxpinyin-data/src/table_entries.rs` calls `Vec::binary_search` on a
+  token list that its own `insert` keeps sorted. That is the standard
+  API with its documented semantics.
+- The `oxpinyin-capi-marshal` UTF-8 codecs are ABI-prescribed boundary
+  code, not external-algorithm ports: `input.rs` `utf8_to_ucs4`,
+  `ucs4.rs` `decode`, and `phrase_text.rs` `encode_words`/`encode_word`.
+  They give the C strings the bytes GLib's `g_utf8_to_ucs4` and
+  `g_ucs4_to_utf8` would.
+
+**Schedule.**
+
+- The prerequisite #1404 (external-I/O stage 1) has merged as `9015a178`. The
+  `nbest.rs` items (A's merge, B) are coordinated with #1378 PR B, which
+  moves the trellis to `f32`.
+- Each replacement PR measures time, allocations, instruction counts and
+  stripped size against base.
+- This section changes no code and no test expectation.
+
+| Item | Copy and callers | Replacement | Parity | Inputs that differ; cases that become `POLICY-ACCEPTED` | Tests that pin the old behaviour |
+| --- | --- | --- | --- | --- | --- |
+| A | `oxpinyin-engine/src/nbest.rs` `glib_merge_sort`, a transcription of GLib 2.84.4 `msort_with_tmp` (`gqsort.c:69-281`) and re-exported from `lib.rs`. Callers: `session/mod.rs` `glib_rank_sort` with `RankKey::pin_compare`, which sorts candidates (pin `src/pinyin.cpp:1678-1709` at `:2286`; `src/zhuyin.cpp:1129-1144` at `:1529,1610`); and `oxpinyin-capi/src/predict.rs` `sort_predicted` (pin `src/pinyin.cpp:2440-2445`). | `slice::sort_by`, which is stable as `g_array_sort` is, with an explicit three-field key (design note 1). | Wherever every frequency gap is below 2³¹, so that the wrapped `gint` has the numeric sign. The comparator is then a total preorder and every stable sort returns the merge's order. With λ in `[0, 1]` every `m_freq` is below 2²⁴ (`pinyin.cpp:1820`, "possibility value <= 1.0"). | λ outside `[0, 1]`, where a negative or out-of-range score's stored `guint32` makes gaps of 2³¹ or more, and so cycles. Candidates: `glib-sort-candidates-pinyin`, `glib-sort-candidates-zhuyin`, `glib-sort-predicted`, and the `table-conf-lambda-{million,nan,inf,negative-half,negative-two,one-and-a-half,two}` pinyin and `-zhuyin` cases whose candidate order the wrap decides. The PR attributes each case that changes. | `nbest.rs` module `glib_merge_sort_tests`, including `the_in_place_merge_matches_the_transcribed_one` and `a_wrapping_frequency_cycle_takes_the_merge_order`. |
+| B | `nbest.rs` `heap_push`, `heap_adjust`, `heap_pop`, `heap_make`, `heap_top`, a transcription of libstdc++ `stl_heap.h`. Callers: the two-slot node insert (pin `src/lookup/phonetic_lookup_heap.h:56-81`), beam selection (`heap_top` with `NBEAM`; pin `src/lookup/phonetic_lookup.h:770-771`) and final-tail selection (`heap_top` then `tail_merge`; pin `:331-337`). Pinyin compares with `node_loses_to`/`selection_loses_to`, zhuyin with `zhuyin_loses_to`. | Beam and tails: select-then-sort-the-prefix on a complete key (design note 2). Node: direct two-slot transitions (design note 3). | **Pinyin: everywhere.** The S1/S2 key (adjusted S, then batch position) is already total, and the node transitions are derived from the pin. **Zhuyin:** wherever the comparator is a strict weak order and no two values tie on both length and score. | **Zhuyin only.** (1) λ outside `[0, 1]`, where NaN and finite scores of one length meet in one selection and libstdc++'s sequence decides. (2) Exact ties of length and score, where the heap's positional order differs from batch order. Candidates: the `-zhuyin` `table-conf-lambda-*` cases, `nbest-user-table-order-zhuyin` and `glib-sort-tails-zhuyin`; the PR attributes each. | `the_zhuyin_shape_has_its_own_single_tail_heap_order` and `zhuyin_comparison_is_unchanged_for_generated_values`. The pinyin tests pin ruled behaviour and must still pass: `a_full_store_evicts_its_best_cost_and_preserves_slots`, `a_full_node_rejects_ties_without_a_batch_position`, `beam_and_tails_break_ties_by_the_complete_batch_position`, `selection_orders_special_costs_before_breaking_batch_ties`, `backtracking_uses_the_physical_slot_after_batch_selection`. |
+| C | `oxpinyin-core/src/single_gram.rs` `lower_bound_records`, a transcription of libstdc++ `__lower_bound`, behind `lower_bound` and `find`. It serves `get_freq`, `set_freq`, `insert_freq`, `remove_freq` and the search walk (pin `src/storage/ngram.cpp:161,185,215,239,259`; `src/include/stl_lite.h:29`). | `records.partition_point(\|r\| record_token(r) < token)` on the existing `[[u8; ITEM_LEN]]` view. Unpartitioned stored data is deliberately not checked for order, sorted or cleaned because a per-lookup sortedness check would make the search linear; on such data, `partition_point` stays memory-safe and deterministic, but its result is unspecified and not the pin's; observable differences are recorded as `POLICY-ACCEPTED` ([#1405](https://github.com/shenghaoc/oxpinyin/pull/1405)), and the existing structural checks for truncated records, invalid lengths and other unsafe conditions still apply in full. | Wherever `item < probe` is partitioned over the stored items. That includes every gram the pin's writers produce, since `insert_freq` inserts at the lower bound (`ngram.cpp:185-200`). | Stored grams where an item below the probe follows one at or above it: foreign or hand-edited DBM values, or a user gram stored out of order and interleaved by `merge_single_gram` (`ngram.cpp:308-349`). The standard library leaves `partition_point` unspecified on an unpartitioned slice. Its answer is deterministic for one toolchain, and the record names the toolchain. Nothing is sorted or cleaned. Candidates: `user-gram-unsorted-phrase-segment`, whose layout is chosen to need the halving path. `user-gram-unsorted-guess`, `-dynamic-adjust`, `user-gram-unsorted-range-boundary` and `system-gram-unsorted-guess` are re-derived and attributed. | `record_views_preserve_the_byte_search` (against `old_lower_bound` on reversed arrays), `an_unsorted_pair_misses_and_inserts_a_duplicate`, `set_freq_can_miss_the_item_insert_freq_added`, and the "later smaller items" clause of `checked_search_asserts_short_and_faults_past_a_partial_tail`. |
+| D | `oxpinyin-user/src/pinyin_chain.rs` `Entry::lower_bound`, `upper_bound`, `equal_range`, a transcription of libstdc++ `equal_range`. Callers: `Entry::add_index` and `Entry::remove_index` (pin `src/storage/chewing_large_table2.h:208-255`, `phrase_exact_less_than2`). | Two `partition_point`s over `as_chunks::<N>()` (design note 4). Unpartitioned stored data is deliberately not checked for order, sorted or cleaned because a per-lookup sortedness check would make the search linear; on such data, `partition_point` stays memory-safe and deterministic, but its result is unspecified and not the pin's; observable differences are recorded as `POLICY-ACCEPTED` ([#1405](https://github.com/shenghaoc/oxpinyin/pull/1405)), and the existing structural checks for truncated records, invalid lengths and other unsafe conditions still apply in full. | Wherever the entry's items are ordered by `phrase_exact_less_than2`, as the pin's `add_index` keeps them (`:216-229`). | KC and tkrzw entry chunks whose order a mask walk broke by leaving a previous record's tail (#785, module docs). Candidates: the #785 mask families in `tools/bisection/contract_user_index_phrase_mask.py` on the kc and tkrzw cells. | `pinyin_chain.rs` `entry_ops_keep_the_pins_order_and_report_presence` covers sorted entries and should hold. The #785 mask cases are re-derived. |
+| E | `tools/bisection/contract_gram_lookup.py` `_pin_lower_bound`, a Python transcription of libstdc++ `__lower_bound`. Its one caller, `_interleave_miss_layout`, chooses the user gram for `user-gram-unsorted-phrase-segment`. | Remove the executable search. Store the layout it selects on the frozen system data as fixture data. | The case's captured pin observations and provenance stay: the docstrings citing `ngram.cpp:239,308-349` and `stl_lite.h:29`. | The case becomes `POLICY-ACCEPTED` when item C lands, if the subject's answer differs. | The `contract_gram_lookup` fixture: `_interleave_miss_layout` and the case registration in `contract_gram_lookup.test.py`. The fixture keeps its captured data and provenance. |
+
+**Design notes.** All cites are at the pin.
+
+1. **Candidate sort key.** The key is explicit, with three fields
+   compared in order: phrase length, pinyin span, frequency. Each is
+   descending, and a field whose sort bit is clear is zero
+   (`pinyin.cpp:1684-1706`; zhuyin uses phrase length and frequency,
+   `zhuyin.cpp:1134-1143`). Frequency compares as `u32::cmp`, not by
+   wrapping subtraction. Do not use the derived `RankKey::Ord`: it orders
+   ascending, and it includes `m_freq`, which the dedup reads
+   (`pinyin.cpp:2092,2130`) but the sort ignores when `SORT_BY_FREQUENCY`
+   is clear. The dedup keeps reading `m_freq`.
+2. **Selection keys.** Use complete keys.
+   - Pinyin: adjusted S, compared by `ordered_cost_compare(adjusted_cost(..))`,
+     then batch position.
+   - Zhuyin, as ruled: shorter `m_sentence_length` first, as the pin's
+     length clause has it (`phonetic_lookup.h:86-88`). Then raw score
+     descending, with NaN last and signed zeros equal, then earlier batch
+     position.
+   - Beam (32, `:37`) and tails (`nbest` 3 or 1): replace `heap_top` with
+     `select_nth_unstable_by` at `k − 1`, then sort the `k`-prefix. That
+     is O(m + k log k) time and no extra space. The PR compares it
+     against `std::collections::BinaryHeap` on identical keys:
+     heapify-and-pop is O(m + k log m), and a bounded heap is
+     O(m log k) time and O(k) space. It keeps the faster one.
+   - Tails are then ordered by S3's `tail_merge`, unchanged.
+3. **Two-slot node** (`phonetic_lookup_heap.h:56-81`, `nstore = 2`). The
+   comparator is "loses to", so the front is the better value.
+   - **Empty node:** store A in slot 0.
+   - **One value A, newcomer X:** `push_heap` moves X to the front only
+     when A loses to X (`:65`). The result is `[X, A]` if X is strictly
+     better, otherwise `[A, X]`. A tie keeps A in front.
+   - **Full node `[F, B]`, newcomer X:** X is admitted only when F loses
+     to X, that is, when X is strictly better than the front (`:73`).
+     Then:
+     - `pop_heap` on two elements swaps them, giving `[B, F]` (`:74`);
+     - slot 1 is overwritten with X, which evicts F, the best value
+       (`:75`);
+     - `push_heap` moves X in front of B (`:76`), giving `[X, B]`.
+     A tying or worse X is rejected.
+   - **Back-pointers.** `number()` assigns `m_current_index` as the
+     physical slot (`:49-53`). This happens when `get_candidates` expands
+     step `i` (`phonetic_lookup.h:282-293`, called at `:770`). Successors
+     record it as `m_sub_index` (`:665,695`). Every successor lands at a
+     later step (`save_next_step(end, …)` with `end > start`, `:667,697`),
+     so a node's slots are final before any back-pointer is taken. The
+     S1/S2 ruling's "rejects a tying newcomer" is this rule.
+   - **Zhuyin.** The single-slot node (`:108-122`) is unchanged.
+4. **`pinyin_chain` search.**
+   - The stride is `item2_stride(len)`, one of 8, 12, …, 36 bytes, for
+     lengths 1–16 (`row_format::pinyin_index::item2_stride`).
+   - Dispatch with a `match` to a generic `search::<N>` over
+     `bytes.as_chunks::<N>()` (stable since Rust 1.88; the toolchain is
+     1.97.1). Then call `partition_point` twice, for the lower and the
+     upper bound, with `exact_compare2` reading the packed key words in
+     place from each `[u8; N]` chunk.
+   - There is no per-search decoding: no `Vec<ChewingKey>` per probe, as
+     `Entry::keys` builds today, and no decode of the record before the
+     search.
+   - The `as_chunks` remainder is dropped, as `count()` floors today.
+5. **Float keys** (with #1378 PR B, when scores become `f32`).
+   `f32::total_cmp` alone would order `-0.0` before `+0.0` and order NaNs
+   by sign, so the comparator handles both explicitly:
+   - NaN against NaN is equal, and NaN against a number is last;
+   - otherwise compare `(b + 0.0).total_cmp(&(a + 0.0))` for descending
+     order. Adding `+0.0` maps `-0.0` to `+0.0` under round-to-nearest.
+   - Until PR B, the `Cost`-scale equivalent is `ordered_cost_compare`'s
+     class order.
+
+**Function-order policy paths the removals touch.** All six policies are
+affected: `tools/packaging/function-order/{bdb,kc,tkrzw}/lib{pinyin,zhuyin}.order`.
+
+| Removal | Policy lines |
+| --- | --- |
+| Item A | `oxpinyin_engine::nbest::glib_merge_sort::<(oxpinyin_engine::session::RankKey, u32), oxpinyin_engine::session::glib_rank_sort::{closure#0}>` and `oxpinyin_engine::session::glib_rank_sort` |
+| Items B–D | No policy line names `heap_*`, `single_gram::lower_bound*` or the `pinyin_chain` searches. Their PRs still run `tools/packaging/function_order.py` against all six policies. |
+| Item E | Tool code only; no policy. |
+
+Item A therefore regenerates the bdb, kc and tkrzw policies in the same
+PR, following [docs/packaging.md, "Regeneration"](../packaging.md#regeneration).
 
 ## C-maths imitation — record only
 
