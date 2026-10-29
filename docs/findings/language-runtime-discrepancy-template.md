@@ -156,6 +156,8 @@ Equality cannot turn a marked case into MATCH. Record the case again with
 `just policy-record` when its accepted observation legitimately changes; the
 command replaces only that case's entry for the captured cell.
 The accepted case reports its record and both observations, and contributes
-only to the separate POLICY-ACCEPTED count. Existing abort/crash and
-host-dependent markers cannot be combined with this marker; those cases
-keep their existing class-specific comparison rules.
+only to the separate POLICY-ACCEPTED count. An existing `abort=` case may
+retain its pin SIGABRT with a null result and exact stderr; the subject
+must terminate normally. A different pin signal remains invalid. Other
+crash and host-dependent markers cannot be combined with this marker;
+those cases keep their existing class-specific comparison rules.

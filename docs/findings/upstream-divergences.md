@@ -4181,3 +4181,38 @@ four existing S1/S2 POLICY-ACCEPTED cases retain their complete observations.
 The S1/S2 record remains unchanged. No new case exemption is registered.
 Selection, node front eviction, candidate/prediction frequency wrap,
 lambda validation, external calls, persistent formats and C ABI are unchanged.
+
+## Standard-library searches of stored records (#1297)
+
+### Stored gram partitions: phrase segmentation — inventory C
+
+- **Record:** [1297-gram-partition-segmentation](1297-gram-partition-segmentation.md).
+- **Status:** accepted. `user-gram-unsorted-phrase-segment` is
+  POLICY-ACCEPTED on bdb, kc and sound tkrzw, with its complete-observation
+  digests recorded separately for each cell.
+- **Upstream source cite:** `src/storage/ngram.cpp:231–250,308–349`
+  and `src/lookup/phrase_lookup.cpp:268–290` at `074a2219`.
+- **Mechanism:** the stored-order merge of an out-of-order gram violates
+  the search predicate's partition requirement. `single_gram::lower_bound_records`
+  uses `slice::partition_point` on whole stored records without sorting or cleaning.
+- **Externally observable:** the pin segments 今天天气 as one phrase; Rust
+  selects 今天 and 天气 separately after reaching the boosted 今天 record.
+  Both segmenters return true. Ordered duplicates retain first-not-less
+  semantics; existing refusals, persistent formats and C ABI are unchanged.
+
+### Stored gram partitions: training — inventory C
+
+- **Record:** [1297-gram-partition-training](1297-gram-partition-training.md).
+- **Status:** accepted. `abort-train-unsorted-set-freq-miss-pinyin` and
+  `abort-train-unsorted-set-freq-miss-zhuyin` are POLICY-ACCEPTED on bdb,
+  kc and sound tkrzw, each with complete-observation digests recorded
+  separately for each cell.
+- **Upstream source cite:** `src/storage/ngram.cpp:178–205,231–271`
+  and `src/lookup/phonetic_lookup.h:888–903` at `074a2219`.
+- **Mechanism:** an out-of-order user gram violates the search predicate's
+  partition requirement. `single_gram::lower_bound_records` uses
+  `slice::partition_point` on whole stored records without sorting or cleaning.
+- **Externally observable:** the pin's final set-freq search misses after
+  insertion and training aborts; Rust reaches the inserted item and training
+  returns true with no warning. An actual post-insertion miss still uses the
+  existing refusal. Persistent formats and C ABI are unchanged.

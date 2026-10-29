@@ -130,7 +130,9 @@ def register(case, *, _craft_db):
             # merge sums the first duplicate with the system item and appends
             # the second after it, so get_freq meets the same first match.
             control = (_kind, _operation) == ('duplicate', 'phrase-segment')
-            case(f'user-gram-{_kind}-{_operation}', control=control, issues=('757',))(
+            policy = ({'policy_record': '1297-gram-partition-segmentation.md'}
+                      if (_kind, _operation) == ('unsorted', 'phrase-segment') else {})
+            case(f'user-gram-{_kind}-{_operation}', control=control, issues=('757',), **policy)(
                 user_gram_lookup(_kind, _operation))
 
 

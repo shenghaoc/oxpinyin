@@ -4,12 +4,10 @@
 //! A gram is the value a bigram container stores under a predecessor: a
 //! little-endian `guint32` `total_freq`, then packed eight-byte
 //! `SingleGramItem { m_token, m_freq }` records. The pin never checks that
-//! the records are sorted or unique; it searches the stored array with
-//! `std_lite::lower_bound` (= `std::lower_bound`, `stl_lite.h:29`) and walks
-//! on from there, so an unsorted or duplicated array gets a deterministic
-//! answer that these functions reproduce: [`lower_bound`] is libstdc++'s
-//! `__lower_bound`, whose partition check is compiled out of a release
-//! build.
+//! the records are sorted or unique. [`slice::partition_point`] finds
+//! the first-not-less item on partitioned records. On
+//! unpartitioned records std's answer is unspecified; stored order is
+//! preserved rather than sorted or cleaned (2026-10-29 ruling, inventory C).
 //!
 //! The item count is `(len − 4) / 8`, the pin's `end − begin` over whole
 //! items; every walk here stops at the last whole item. A value shorter
@@ -92,10 +90,9 @@ pub fn set_total_freq(gram: &mut Vec<u8>, total: u32) {
     put_word(gram, 0, total);
 }
 
-/// `std::lower_bound(begin, end, token, token_less_than)` over the stored
-/// items, as libstdc++'s `__lower_bound` (`bits/stl_algobase.h`) runs it
-/// with the partition check compiled out: halve the length, step past the
-/// middle when its token is less than `token`. Answers the item index.
+/// Partition the stored items by `item.token < token`, returning the item
+/// index. On unpartitioned input the result is unspecified, as for
+/// [`slice::partition_point`]; the stored bytes are never reordered.
 #[must_use]
 pub fn lower_bound(gram: &[u8], token: u32) -> usize {
     let Some((records, _)) = records(gram) else {
@@ -105,24 +102,7 @@ pub fn lower_bound(gram: &[u8], token: u32) -> usize {
 }
 
 fn lower_bound_records(records: &[[u8; ITEM_LEN]], token: u32) -> usize {
-    let mut first = 0_usize;
-    let mut len = records.len();
-    while len > 0 {
-        let half = len >> 1;
-        let middle = first + half;
-        // first + len stays within records.len(), so middle names a whole
-        // record. Its fixed-size byte fields need no further range checks.
-        if records
-            .get(middle)
-            .is_some_and(|record| record_token(record) < token)
-        {
-            first = middle + 1;
-            len = len - half - 1;
-        } else {
-            len = half;
-        }
-    }
-    first
+    records.partition_point(|record| record_token(record) < token)
 }
 
 /// The walk `get_freq`, `set_freq` and `remove_freq` share: from
@@ -413,105 +393,55 @@ mod tests {
         retrieve_all(bytes).collect()
     }
 
-    // Pre-record-view routines from main. Keep their byte-based reads so
-    // generated malformed rows compare independent implementations.
-    fn old_lower_bound(gram: &[u8], token: u32) -> usize {
-        let mut first = 0_usize;
-        let mut len = get_length(gram);
-        while len > 0 {
-            let half = len >> 1;
-            let middle = first + half;
-            if item_token(gram, middle).is_some_and(|item| item < token) {
-                first = middle + 1;
-                len = len - half - 1;
-            } else {
-                len = half;
-            }
-        }
-        first
-    }
-
-    fn old_checked_search(
-        gram: &[u8],
-        begin: u32,
-        end: u32,
-        out: &mut Vec<(u32, u32)>,
-    ) -> Result<(), GramFault> {
-        if gram.len() < super::TOTAL_LEN {
-            return Err(GramFault::Short);
-        }
-        for index in old_lower_bound(gram, begin)..get_length(gram) {
-            let (Some(item), Some(freq)) = (item_token(gram, index), item_freq(gram, index)) else {
-                return Err(GramFault::OverRead);
-            };
-            if item >= end {
-                return Ok(());
-            }
-            out.push((item, freq));
-        }
-        if super::has_partial_tail(gram) {
-            return Err(GramFault::OverRead);
-        }
-        Ok(())
-    }
-
-    fn compare_searches(bytes: &[u8], begin: u32, end: u32) {
-        assert_eq!(lower_bound(bytes, begin), old_lower_bound(bytes, begin));
-        // Preserve the append contract, including output preceding a fault.
-        let mut old = vec![(u32::MAX, 17)];
-        let mut new = old.clone();
-        assert_eq!(
-            checked_search(bytes, begin, end, &mut new),
-            old_checked_search(bytes, begin, end, &mut old),
-            "row {bytes:?}, range {begin}..{end}"
-        );
-        assert_eq!(new, old, "row {bytes:?}, range {begin}..{end}");
-    }
-
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(256))]
 
         #[test]
-        fn record_views_preserve_the_byte_search(
+        fn partitioned_records_find_the_first_not_less(
             total in any::<u32>(),
-            row in prop::collection::vec(
+            mut row in prop::collection::vec(
                 (prop_oneof![0_u32..16, any::<u32>()], any::<u32>()), 0..128),
             begin in any::<u32>(),
-            last in any::<u32>(),
+            end in any::<u32>(),
             tail in any::<[u8; 7]>(),
         ) {
-            let mut sorted = row.clone();
-            sorted.sort_by_key(|&(token, _)| token);
-            let reversed: Vec<_> = sorted.iter().rev().copied().collect();
-            let duplicated: Vec<_> = row.iter().flat_map(|&item| [item, item]).collect();
-            let mut ranges = vec![
-                (begin, last.wrapping_add(1)),
-                (begin, begin),
-                (begin, begin.wrapping_add(1)),
-                (0, 0),
-                (0, u32::MAX),
-                (u32::MAX, 0),
-                (u32::MAX, u32::MAX),
-            ];
-            for &(token, _) in row.iter().take(3) {
-                ranges.extend([(token, token), (token, token.wrapping_add(1))]);
+            row.sort_by_key(|&(token, _)| token);
+            let first = row.iter().position(|&(token, _)| token >= begin).unwrap_or(row.len());
+            for tail_len in 0..=tail.len() {
+                let mut bytes = gram(total, &row);
+                bytes.extend_from_slice(&tail[..tail_len]);
+                prop_assert_eq!(lower_bound(&bytes, begin), first);
+                let expected: Vec<_> = row[first..].iter().copied()
+                    .take_while(|&(token, _)| token < end).collect();
+                prop_assert_eq!(search(&bytes, begin, end).collect::<Vec<_>>(), expected.clone());
+                let mut out = vec![(u32::MAX, 17)];
+                let status = checked_search(&bytes, begin, end, &mut out);
+                let reached_tail = first + expected.len() == row.len() && tail_len != 0;
+                prop_assert_eq!(status, if reached_tail { Err(GramFault::OverRead) } else { Ok(()) });
+                prop_assert_eq!(&out[1..], &expected);
+                prop_assert_eq!(out[0], (u32::MAX, 17));
             }
-            for ordered in [&row, &sorted, &reversed, &duplicated] {
-                for tail_len in 0..=tail.len() {
-                    let mut bytes = gram(total, ordered);
-                    bytes.extend_from_slice(&tail[..tail_len]);
-                    for &(first, end) in &ranges {
-                        compare_searches(&bytes, first, end);
-                    }
-                }
-            }
-            // Every short-header length, plus the complete empty row.
-            let empty = total.to_le_bytes();
-            for len in 0..=empty.len() {
-                for &(first, end) in &ranges {
-                    compare_searches(&empty[..len], first, end);
-                }
-            }
+        }
+
+        #[test]
+        fn unpartitioned_records_use_std_without_cleaning(
+            total in any::<u32>(),
+            row in prop::collection::vec((any::<u32>(), any::<u32>()), 0..128),
+            probe in any::<u32>(),
+            tail in any::<[u8; 7]>(),
+        ) {
+            let mut bytes = gram(total, &row);
+            bytes.extend_from_slice(&tail);
+            let before = bytes.clone();
+            // Unpartitioned input has no promised search position. It must
+            // still return an in-bounds suffix without changing storage.
+            let first = lower_bound(&bytes, probe);
+            prop_assert!(first <= row.len());
+            let expected: Vec<_> = row[first..].iter().copied()
+                .take_while(|&(token, _)| token < u32::MAX).collect();
+            prop_assert_eq!(search(&bytes, probe, u32::MAX).collect::<Vec<_>>(), expected);
+            prop_assert_eq!(retrieve_all(&bytes).collect::<Vec<_>>(), row);
+            prop_assert_eq!(bytes, before);
         }
     }
 
@@ -558,20 +488,10 @@ mod tests {
             checked_search(&tailed, 2, 6, &mut out),
             Err(GramFault::OverRead)
         );
-        out.clear();
-        assert_eq!(
-            checked_search(&gram(1, &[(3, 1), (3, 2), (1, 7)]), 3, 4, &mut out),
-            Ok(())
-        );
-        assert_eq!(
-            out,
-            [(3, 1), (3, 2), (1, 7)],
-            "duplicates and later smaller items"
-        );
     }
 
-    /// The reference `__lower_bound` on a sorted array is the usual first
-    /// position not less than the probe.
+    /// On sorted records the lower bound is the first item not less than
+    /// the probe, including the first of several equal items.
     #[test]
     fn lower_bound_is_the_first_not_less_on_a_sorted_array() {
         let bytes = gram(0, &[(2, 0), (4, 0), (4, 0), (8, 0)]);
@@ -582,38 +502,68 @@ mod tests {
         assert_eq!(lower_bound(&new_gram(), 7), 0);
     }
 
-    /// Q1: on `[high, low]` the halving lands on index 0, sees `high > low`
-    /// and misses; `insert_freq` after the miss inserts at the same place,
-    /// so the array gains a duplicate instead of answering `false`.
     #[test]
-    fn an_unsorted_pair_misses_and_inserts_a_duplicate() {
-        let mut bytes = gram(10, &[(9, 4), (3, 6)]);
-        assert_eq!(lower_bound(&bytes, 3), 0);
-        assert_eq!(get_freq(&bytes, 3), None);
-        assert!(insert_freq(&mut bytes, 3, 0));
-        assert_eq!(items(&bytes), [(3, 0), (9, 4), (3, 6)]);
-        assert!(set_freq(&mut bytes, 3, 69));
-        assert_eq!(items(&bytes), [(3, 69), (9, 4), (3, 6)]);
-        assert_eq!(get_total_freq(&bytes), Some(10));
+    fn empty_and_short_records_keep_their_refusal_contracts() {
+        for len in 0..super::TOTAL_LEN {
+            let mut bytes = vec![0xa5; len];
+            let before = bytes.clone();
+            let mut out = vec![(7, 9)];
+            assert_eq!(lower_bound(&bytes, 0), 0);
+            assert_eq!(get_freq(&bytes, 0), None);
+            assert_eq!(checked_get_freq(&bytes, 0), Err(GramFault::OverRead));
+            assert_eq!(
+                checked_search(&bytes, 0, 1, &mut out),
+                Err(GramFault::Short)
+            );
+            assert_eq!(out, [(7, 9)]);
+            assert!(!set_freq(&mut bytes, 0, 1));
+            assert_eq!(remove_freq(&mut bytes, 0), None);
+            assert_eq!(bytes, before);
+        }
+        let mut empty = new_gram();
+        let mut out = vec![(7, 9)];
+        assert_eq!(lower_bound(&empty, u32::MAX), 0);
+        assert_eq!(checked_get_freq(&empty, 0), Ok(None));
+        assert_eq!(checked_search(&empty, 0, 1, &mut out), Ok(()));
+        assert_eq!(out, [(7, 9)]);
+        assert!(insert_freq(&mut empty, 3, 4));
+        assert!(!insert_freq(&mut empty, 3, 5));
+        assert_eq!(items(&empty), [(3, 4)]);
     }
 
-    /// Training's `get_freq` miss, `insert_freq`, then `set_freq`
-    /// (`phonetic_lookup.h:888-903`): on `[1, 2, 3, 6, 4]` the insert of 5
-    /// appends, and the second `lower_bound` lands on 6 > 5, so `set_freq`
-    /// misses the item it was meant to set — the pin's `check_result`
-    /// abort.
+    /// A partitioned predicate need not imply a globally sorted row.
+    /// The physical walk still yields later smaller items.
     #[test]
-    fn set_freq_can_miss_the_item_insert_freq_added() {
-        let mut bytes = gram(0, &[(1, 1), (2, 1), (3, 1), (6, 1), (4, 1)]);
-        assert_eq!(get_freq(&bytes, 5), None);
-        assert!(insert_freq(&mut bytes, 5, 0));
-        assert_eq!(
-            items(&bytes),
-            [(1, 1), (2, 1), (3, 1), (6, 1), (4, 1), (5, 0)]
-        );
-        assert_eq!(lower_bound(&bytes, 5), 3);
-        assert!(!set_freq(&mut bytes, 5, 69));
-        assert_eq!(get_freq(&bytes, 5), None);
+    fn a_partitioned_search_preserves_the_unsorted_suffix() {
+        let bytes = gram(1, &[(0, 1), (3, 2), (2, 7)]);
+        let mut out = Vec::new();
+        assert_eq!(checked_search(&bytes, 2, 4, &mut out), Ok(()));
+        assert_eq!(out, [(3, 2), (2, 7)]);
+    }
+
+    #[test]
+    fn unpartitioned_mutations_start_from_the_std_partition() {
+        let row = [(9, 4), (3, 6), (7, 2)];
+        let mut bytes = gram(12, &row);
+        let first = lower_bound(&bytes, 3);
+        let hit = row[first..]
+            .iter()
+            .take_while(|&&(token, _)| token <= 3)
+            .position(|&(token, _)| token == 3)
+            .map(|at| first + at);
+        assert_eq!(get_freq(&bytes, 3), hit.map(|at| row[at].1));
+        assert_eq!(set_freq(&mut bytes, 3, 69), hit.is_some());
+        let mut expected = row.to_vec();
+        if let Some(at) = hit {
+            expected[at].1 = 69;
+        }
+        assert_eq!(items(&bytes), expected);
+        assert_eq!(get_total_freq(&bytes), Some(12));
+        assert_eq!(remove_freq(&mut bytes, 3), hit.map(|_| 69));
+        if let Some(at) = hit {
+            expected.remove(at);
+        }
+        assert_eq!(items(&bytes), expected);
     }
 
     /// Q2: get/set act on the first match; mask removes every match and

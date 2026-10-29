@@ -72,7 +72,8 @@ class RegisterTests(unittest.TestCase):
     def test_valid_exception_combinations_register(self):
         valid = (dict(either=True, abort=0, crash={}), dict(fatal=True, both_abort=True),
                  dict(dir_chunk='system', abort=0), dict(pin_not_run={'ret': 0}),
-                 dict(policy_record='r.md', stderr=True, control=True))
+                 dict(policy_record='r.md', stderr=True, control=True),
+                 dict(policy_record='r.md', abort=False))
         for options in valid:
             with self.subTest(options=options):
                 cases = {}

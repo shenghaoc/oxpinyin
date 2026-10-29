@@ -1387,13 +1387,11 @@ mod tests {
         std::fs::remove_dir_all(&dir).expect("cleanup");
     }
 
-    /// Q1's abort: on `[1, 2, 3, 6, 4]` training 5 misses, appends, and
-    /// `set_freq` misses the appended item, where the pin's
-    /// `check_result(user->set_freq(token, freq + seed))` dies
-    /// (`phonetic_lookup.h:903`). The store refuses before anything is
-    /// written, and the step check names the predecessor.
+    /// Preflight replays training on copies. Whether an unpartitioned
+    /// gram trains or refuses, applying the same step must agree and
+    /// must not reorder or clean its existing records.
     #[test]
-    fn a_set_freq_miss_refuses_training_and_observes_nothing() {
+    fn training_preflight_and_apply_agree_without_reordering_stored_grams() {
         let dir = tempdir("set-freq-miss");
         std::fs::write(
             dir.join("user.conf"),
@@ -1415,44 +1413,51 @@ mod tests {
             ],
         );
         store.plant_raw_bigram(2, &gram);
-        // The step checks replay the call's steps on copies and name the
-        // predecessor whose step misses.
+        let generation = store.generation();
         store.begin_training_steps();
         store
             .check_training_step(3, token(1))
             .expect("a clean step");
-        assert!(matches!(
-            store.check_training_step(2, token(5)),
-            Err(UserStoreError::TrainingSetFreqMiss)
-        ));
+        let preflight = store.check_training_step(2, token(5));
+        let refused = matches!(preflight, Err(UserStoreError::TrainingSetFreqMiss));
+        assert!(preflight.is_ok() || refused);
         assert_eq!(
             store.take_training_fault(),
-            Some(crate::TrainingFault::SetFreqMiss(2))
+            refused.then_some(crate::TrainingFault::SetFreqMiss(2))
         );
-        store.begin_training_steps();
-        store
-            .check_training_step(2, token(6))
-            .expect("a hit trains");
-        assert_eq!(store.take_training_fault(), None);
-        let generation = store.generation();
-        assert!(matches!(
-            store.observe_selection(2, token(5)),
-            Err(UserStoreError::TrainingSetFreqMiss)
-        ));
-        assert_eq!(store.generation(), generation, "nothing was written");
+        assert_eq!(store.generation(), generation, "preflight writes nothing");
+        assert_eq!(store.bigram_row(2).expect("row"), Some(gram.clone()));
         assert_eq!(store.unigram_delta(token(5)).expect("delta"), 0);
-        assert_eq!(store.bigram_row(2).expect("row"), Some(gram));
         assert!(!store.is_modified());
+        store.begin_training_steps();
+        let applied = store.observe_selection(2, token(5));
+        assert_eq!(applied.is_ok(), preflight.is_ok());
+        if refused {
+            assert!(matches!(applied, Err(UserStoreError::TrainingSetFreqMiss)));
+            assert_eq!(store.generation(), generation, "a refusal writes nothing");
+            assert_eq!(store.unigram_delta(token(5)).expect("delta"), 0);
+            assert_eq!(store.bigram_row(2).expect("row"), Some(gram));
+            assert!(!store.is_modified());
+        } else {
+            let trained = store.bigram_row(2).expect("row").expect("stored gram");
+            let original: Vec<_> = oxpinyin_core::single_gram::retrieve_all(&gram).collect();
+            let retained: Vec<_> = oxpinyin_core::single_gram::retrieve_all(&trained)
+                .filter(|&(item, _)| item != token(5))
+                .collect();
+            assert_eq!(retained, original);
+            assert_eq!(store.bigram_count(2, token(5)).expect("trained count"), 69);
+            assert!(store.is_modified());
+        }
         drop(store);
         std::fs::remove_dir_all(&dir).expect("cleanup");
     }
 
-    /// Q1: training searches the stored items as the pin does. On
-    /// `[high, low]` `get_freq(low)` misses from the libstdc++ lower bound
-    /// and `insert_freq(low, 0)` lands at the same place, so the gram
-    /// gains a duplicate seeded with 69 (`phonetic_lookup.h:888-903`).
+    /// Every token in `[high, low]` is at least `low`, so the predicate
+    /// is partitioned despite the stored order. Its first-not-less item
+    /// is `high`; the training walk stops there and inserts a duplicate
+    /// without sorting the row (`phonetic_lookup.h:888-903` at 074a2219).
     #[test]
-    fn training_over_an_unsorted_gram_inserts_where_the_pin_does() {
+    fn training_preserves_a_partitioned_unsorted_gram_and_its_duplicates() {
         let dir = tempdir("unsorted-gram-train");
         std::fs::write(
             dir.join("user.conf"),
