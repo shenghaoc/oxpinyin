@@ -7,7 +7,7 @@ from contract_case_helpers import _gram_bytes, _replace_user_bigram, candidate_r
 from contract_fixtures import row58_import
 
 
-def register(case, *, addon_promote_sequence):
+def register(case, *, addon_promote_sequence, items_system):
     """Register these cases at their original driver position."""
     # At 074a2219, each before-cursor slice keeps its `m_freq` when appended
     # (`zhuyin.cpp:1607-1612`). The final dedup compares all slices (:1630,
@@ -60,12 +60,12 @@ def register(case, *, addon_promote_sequence):
     # is NORMAL on the divided path; the second is LONGER on the whole key.
     # LONGER has only a unigram term (pinyin.cpp:1916-1927), while NORMAL gets
     # the planted bigram (:1845-1866). The final dedup sees both (:2292-2300).
-    def longer_frequency_listing(k, dynamic, longer=True):
+    def s2_nbest_precedence(k):
         """Compare normal and longer rows for two imported readings of 甲乙.
 
         Import into libraries 6 and 7, save and replace the user bigram to favor
-        the library-6 token. Enable divided/resplit parsing and optional dynamic
-        adjustment, assert a complete xian parse and, when requested, the longer
+        the library-6 token. Enable divided/resplit parsing and dynamic
+        adjustment, assert a complete xian parse and the longer
         row at end. Return candidate lists before/after sentence guessing and with
         sentence rows suppressed, retaining the cached context's mutations."""
         for library, reading in ((6, "xi1'an1"), (7, "xian1'ni1")):
@@ -77,18 +77,58 @@ def register(case, *, addon_promote_sequence):
         token, = (token for token in tokens_of(k, '甲乙') if token >> 24 == 6)
         assert k.fn('save', B, P)(k.ctx)
         _replace_user_bigram(k, [(1, _gram_bytes(1000000, [(token, 1000000)]))])
+        assert k.fn('set_options', B, P, U)(k.ctx, 0x38a)
+        inst = k.inst
+        parsed = k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'xian')
+        assert parsed == 4
+        sort = 1
+        out = dict(parsed=parsed, at_end=guess_rows(k, inst, parsed, sort))
+        assert [7, '甲乙'] in out['at_end']['rows'], 'the LONGER fixture row is missing'
+        out['without_sentence'] = guess_rows(k, inst, 0, sort)
+        out['guess_sentence'] = k.fn('guess_sentence', B, P)(inst)
+        out['with_sentence'] = guess_rows(k, inst, 0, sort & ~1)
+        out['sentence_suppressed'] = guess_rows(k, inst, 0, sort)
+        return out
+
+
+    def longer_frequency_listing(k, dynamic, longer=True):
+        """Two items, one complete sentence path, no inherited model candidates.
+
+        At 074a2219, chewing_key.h:43-48 and chewing_enum.h:35,51,67 encode
+        xi1/an1/xian1/ni1 as 0x1034/0x1180/0x11b4/0x102b. The divided path
+        is special_table.h:27 and phonetic_key_matrix.cpp:169-217. Library 1
+        holds only two 100-count readings of 甲乙. The sole sentence path is
+        xi'an; S2 cannot choose another text. Empty addon indexes and system
+        bigrams prevent the full model from leaking into the observation.
+
+        NORMAL gets the sentence-start bigram when dynamic adjustment is on
+        (pinyin.cpp:1845-1866); LONGER gets only unigram (:1916-1927).
+        With adjustment off the frequencies tie, so the prepended LONGER wins
+        (:2128-2138,2292-2300). After guess, NBEST wins (:2116-2125).
+        These complete typed lists are derived before running the differential.
+        """
+        items_system(k, [((0x7532, 0x4e59), (0x1034, 0x1180), 100),
+                         ((0x7532, 0x4e59), (0x11b4, 0x102b), 100)], isolated=True)
+        _replace_user_bigram(k, [(1, _gram_bytes(1, [(0x01000001, 1)]))])
         assert k.fn('set_options', B, P, U)(k.ctx, 0x18a | (0x200 if dynamic else 0))
         inst = k.inst
         parsed = k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'xian')
         assert parsed == 4
         sort = 1 if longer else 3
         out = dict(parsed=parsed, at_end=guess_rows(k, inst, parsed, sort))
-        if longer:
-            assert [7, '甲乙'] in out['at_end']['rows'], 'the LONGER fixture row is missing'
         out['without_sentence'] = guess_rows(k, inst, 0, sort)
         out['guess_sentence'] = k.fn('guess_sentence', B, P)(inst)
         out['with_sentence'] = guess_rows(k, inst, 0, sort & ~1)
         out['sentence_suppressed'] = guess_rows(k, inst, 0, sort)
+        expected = {
+            'at_end': [[7, '甲乙']] if longer else [],
+            'without_sentence': [[2 if dynamic or not longer else 7, '甲乙']],
+            'with_sentence': [[1, '甲乙']],
+            'sentence_suppressed': [[2 if dynamic or not longer else 7, '甲乙']],
+        }
+        assert out['guess_sentence']
+        for state, rows in expected.items():
+            assert out[state] == dict(ret=True, rows=rows), (state, out[state], rows)
         return out
 
 
@@ -100,6 +140,12 @@ def register(case, *, addon_promote_sequence):
         lambda k: longer_frequency_listing(k, False))
     case('longer-normal-disabled', control=True, issues=('913',))(
         lambda k: longer_frequency_listing(k, True, longer=False))
+
+    # Preserve the former full-model observation separately. Its sentence tails
+    # exercise S2; NBEST precedence can then replace a same-text phrase row.
+    # This one witness retains full lists to register the complete policy pair.
+    case('s2-nbest-longer-normal-precedence', cells=('bdb',), issues=('1398', '1347'), stderr=True,
+         policy_record='trellis-adjusted-cost-s1-s2.md')(s2_nbest_precedence)
 
     case('issue762-addon-promote-no-mask', control=True, issues=('762',))(lambda k: addon_promote_sequence(k, None))
     case('issue762-addon-promote-mask-highest', issues=('762',))(lambda k: addon_promote_sequence(k, 0x05000003))
