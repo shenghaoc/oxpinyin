@@ -50,6 +50,7 @@ def main(argv=None):
         from tools.dev.runners import guarded
         from tools.dev.compat.identity import seal_results
         from tools.dev import model
+        from tools.dev.compat import boundary, prepared
         environment = dict(os.environ, OXPINYIN_ORACLE_ENV=f'/state/cache/{reference}/oracle.env',
                            PINYIN_MODEL_CACHE='/state/model20', PINYIN_ORACLE_DBM=cell,
                            OXPINYIN_TARGET_ROOT=f'/state/container/{image}/targets/{source}')
@@ -64,10 +65,14 @@ def main(argv=None):
             environment.update(os.fsdecode(entry).split('=', 1) for entry in done.stdout.split(b'\0') if entry)
             print('Subject Rust toolchain: ', end='', flush=True)
             run(['rustup', 'show', 'active-toolchain'], env=environment)
+            rows = boundary.validate(['--cell', cell, *selection], environ={}).rows
+            prepared_options = prepared.prepare(
+                cell, rows, Path(environment['PINYIN_ORACLE_PREFIX']),
+                Path(f'/state/container/{image}/prepared'), environment)
             status = tee([sys.executable, '-X', 'lazy_imports=normal', '-m', 'tools.dev', 'runner', 'run-all',
                           '--cells', cell, '--oracle', cell + '=' + environment['PINYIN_ORACLE_PREFIX'],
                           '--target-root', environment['OXPINYIN_TARGET_ROOT'], '--json', str(result / 'results.json'),
-                          '--log-dir', str(result / 'logs'), *selection], result / 'comparison.log', env=environment)
+                          '--log-dir', str(result / 'logs'), *prepared_options, *selection], result / 'comparison.log', env=environment)
             os.environ.update(environment)
             seal_results(result, environment['OXPINYIN_TARGET_ROOT'], cell)
             print(f'Compatibility command exit: {status} (missing/skipped inputs are not passes)')
