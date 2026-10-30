@@ -1067,7 +1067,7 @@ class Campaign:
         return self.work / ('%s-%06d' % (self.prefix, self.serial))
 
     def run(self, facade, library, profile, *, mode='time', save=False, scenario='first-candidate',
-            rows=None, instances=1, cycles=1, inputs=None, reopen=False, profiler=None, probe=None):
+            rows=None, instances=1, cycles=1, inputs=None, reopen=False, profiler=None, probe=None, user_memory=False):
         """Run one native workload against a disposable copy of the profile.
 
         Return observations, timings, checkpoints, command, and final raw-profile
@@ -1158,6 +1158,9 @@ class Campaign:
             env['OXPINYIN_TEARDOWN_PROBE_WINDOW'] = self.attribute_window
         env.pop('OXPINYIN_TEARDOWN_MARKER_FD', None)
         env.pop('OXPINYIN_USER_ROWS', None)
+        env.pop('OXPINYIN_USER_MEMORY', None)
+        if mode == 'user' and user_memory:
+            env['OXPINYIN_USER_MEMORY'] = '1'
         if mode == 'user' and rows is not None:
             env['OXPINYIN_USER_ROWS'] = str(rows)
         if inputs is not None:
@@ -1292,9 +1295,11 @@ class Campaign:
             self.driver.check_cancelled()
             if status:
                 raise ValueError(f'native teardown failed ({status}): {bytes(errors)[-3000:]!r}')
-            if mode == 'user' and boundaries != [('M0', 0), ('I1', 1), ('R0', 1), ('R1', 1),
-                                                ('N1', 1), ('E1', 1), ('W0', 1), ('W1', 1)]:
-                raise ValueError('native user checkpoint boundaries are out of order')
+            if mode == 'user':
+                expected = [('M0', 0), ('I1', 1), ('R0', 1), ('R1', 1), ('N1', 1), ('E1', 1), ('W0', 1), ('W1', 1)] \
+                    if user_memory else []
+                if boundaries != expected:
+                    raise ValueError('native user checkpoint boundaries are out of order')
             if file_set(profile) != expected_source:
                 raise ValueError('source profile was changed')
             stderr = errors.decode('utf-8', 'surrogateescape').replace(str(user), '$USER')
@@ -1622,6 +1627,12 @@ def execute(campaign, args, subjects, profiles, cases, facades, driver):
             matches = all(row['observation'] == reference for row in readings.values())
             comparable[facade, case] = matches
             references[facade, case] = {side: workload_observation(row) for side, row in readings.items()}
+            if getattr(campaign, 'summary_dir', None) is not None:
+                path = retain_profiler_summary(campaign.summary_dir, facade + '-' + case + '-preflight',
+                    dict(identity=campaign.summary_identity,
+                         observations={side: row['observation'] for side, row in readings.items()},
+                         digests={side: identity(row['observation']) for side, row in readings.items()}))
+                print_record('preflight-summary', facade=facade, case=case, path=str(path))
             print_record('equivalence', facade=facade, case=case,
                          verdict='COMPARABLE' if matches else 'NOT COMPARABLE',
                          digests={side: identity(row['observation']) for side, row in readings.items()},
@@ -2208,8 +2219,9 @@ def user_phrase_measure(campaign, subjects, profiles, cases, *, verify=False):
             raise ValueError('missing user phrase result')
         return dict({key: value for key, value in documents[0].items() if key != 'times'},
                     saved_user_bin_sha256=row['user_bin_sha256']), documents[0]['times']
-    def run(side, case, profiler=None):
-        row = campaign.run('pinyin', subjects[side]['pinyin'], profiles[case], mode='user', rows=write_rows, profiler=profiler)
+    def run(side, case, profiler=None, *, memory=False):
+        row = campaign.run('pinyin', subjects[side]['pinyin'], profiles[case], mode='user', rows=write_rows,
+                           profiler=profiler, user_memory=memory or profiler in ('xtree', 'massif'))
         if profiler is None and row['observation']['stderr']:
             raise ValueError('NOT COMPARABLE: user workload emitted diagnostics: ' + row['observation']['stderr'])
         answer, times = observe(row)
@@ -2249,17 +2261,23 @@ def user_phrase_measure(campaign, subjects, profiles, cases, *, verify=False):
                          ox_pin_ratio=paired_ratio(values['ox'], values['pin']) if control['stable'] else None,
                          ox_base_ratio=paired_ratio(values['ox'], values['base'])
                          if control['stable'] and 'base' in values else None)
+        memory_rows = {side: [] for side in subjects}
+        for index in range(MEMORY_ROUNDS + MEMORY_WARMUPS):
+            for side in rotation(index, subjects):
+                row, _, _ = run(side, case, memory=True)
+                if index >= MEMORY_WARMUPS:
+                    memory_rows[side].append(row)
         for point, cycle in (('M0', 0), ('I1', 1)):
-            groups = sorted({key for samples in rows.values() for row in samples
+            groups = sorted({key for samples in memory_rows.values() for row in samples
                              for key in row['checkpoints'][cycle][point]['groups']})
             for group in groups:
                 values = {side: [row['checkpoints'][cycle][point]['groups'].get(group, {}).get('Pss', 0)
-                                 for row in samples] for side, samples in rows.items()}
+                                 for row in samples] for side, samples in memory_rows.items()}
                 print_record('user-pss', case=case, point=point, mapping=group,
                              summaries={side: summary(value) for side, value in values.items()},
                              control=stable_residency(values['ox'], values['control']))
             values = {side: [row['checkpoints'][cycle][point]['totals']['Pss'] for row in samples]
-                      for side, samples in rows.items()}
+                      for side, samples in memory_rows.items()}
             print_record('user-pss-total', case=case, point=point,
                          summaries={side: summary(value) for side, value in values.items()},
                          control=stable_residency(values['ox'], values['control']))

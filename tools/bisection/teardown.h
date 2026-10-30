@@ -829,7 +829,7 @@ uint64_t bisect_user_export_unit(const struct td_api *api, void *context) {
 }
 
 static void td_user_measure(const struct td_api *api, void *handle, void *context,
-                             unsigned slots, struct td_clock init) {
+                             unsigned slots, struct td_clock init, bool observe) {
     struct td_user_api user;
     *(void **)(&user.text) = td_symbol(handle, "pinyin", "token_get_phrase");
     *(void **)(&user.count) = td_symbol(handle, "pinyin", "token_get_n_pronunciation");
@@ -842,26 +842,26 @@ static void td_user_measure(const struct td_api *api, void *handle, void *contex
     void *instance = api->common.alloc_instance(context);
     struct td_keys *keys = user.array_new(false, false, sizeof(uint16_t), 16);
     if (!instance || !keys) exit(1);
-    td_checkpoint("R0", 1, true);
+    td_checkpoint("R0", 1, observe);
     struct td_clock start = td_now();
     uint64_t read = bisect_user_read_unit(api, &user, instance, keys, slots);
     struct td_clock reading = td_elapsed(start);
-    td_checkpoint("R1", 1, true);
+    td_checkpoint("R1", 1, observe);
     start = td_now();
     uint64_t enumerate = bisect_user_enumerate_unit(api, &user, instance, keys, slots);
     struct td_clock enumeration = td_elapsed(start);
-    td_checkpoint("N1", 1, true);
+    td_checkpoint("N1", 1, observe);
     start = td_now();
     uint64_t export = bisect_user_export_unit(api, context);
     struct td_clock exporting = td_elapsed(start);
-    td_checkpoint("E1", 1, true);
+    td_checkpoint("E1", 1, observe);
     user.array_free(keys, true);
     api->common.free_instance(instance);
     const char *rows = getenv("OXPINYIN_USER_ROWS");
     unsigned writes = 0;
     struct td_clock writing = {0};
     bool saved = false;
-    td_checkpoint("W0", 1, true);
+    td_checkpoint("W0", 1, observe);
     if (rows && slots) {
         start = td_now();
         writes = bisect_user_write_unit(api, &user, context, rows, slots);
@@ -869,7 +869,7 @@ static void td_user_measure(const struct td_api *api, void *handle, void *contex
         writing = td_elapsed(start);
         if (!saved) exit(1);
     }
-    td_checkpoint("W1", 1, true);
+    td_checkpoint("W1", 1, observe);
     printf("{\"user_phrase\":true,\"read_hash\":\"%016llx\",\"enumerate_hash\":\"%016llx\","
            "\"export_hash\":\"%016llx\",\"write_cycles\":%u,\"saved\":%s,\"times\":{", (unsigned long long)read,
            (unsigned long long)enumerate, (unsigned long long)export, writes, saved ? "true" : "false");
@@ -901,6 +901,7 @@ static int run_teardown_mode(int argc, char **argv) {
     bool observing = strcmp(mode, "observe") == 0;
     char *end;
     bool user_mode = strcmp(mode, "user") == 0;
+    bool user_memory = user_mode && getenv("OXPINYIN_USER_MEMORY");
     if (!wait && !init_mode && !populate && !exporting && !observing && !user_mode && strcmp(mode, "time")) return 2;
     unsigned user_slots = 0;
     if (user_mode) {
@@ -928,7 +929,7 @@ static int run_teardown_mode(int argc, char **argv) {
     if (first_window && (!init_mode || instances != 1 || cycles != 1 || dirty || multi)) return 2;
     struct td_probe probe;
     td_probe_open(&probe, init_mode);
-    if (wait || init_mode || user_mode) {
+    if (wait || init_mode || user_memory) {
         /* Fault the pipe/stdio wait path before load and M0, rather than
          * racing its first-use residency against the parent's smaps read. */
         puts("{\"teardown\":\"ready\"}");
@@ -944,7 +945,7 @@ static int run_teardown_mode(int argc, char **argv) {
     struct td_api api;
     td_resolve(handle, argv[2], &api);
     struct td_clock load = td_elapsed(start);
-    if (!first_window) td_checkpoint("M0", 0, wait || init_mode || user_mode);
+    if (!first_window) td_checkpoint("M0", 0, wait || init_mode || user_memory);
     for (int cycle = 1; cycle <= cycles; cycle++) {
         void *allocated[TD_MAX_INSTANCES] = {0};
         struct td_clock beginning = td_now();
@@ -960,12 +961,12 @@ static int run_teardown_mode(int argc, char **argv) {
         if (!first_window) td_probe_toggle(&probe, false);
         if (!context) { fputs("teardown init returned NULL\n", stderr); return 1; }
         if (!first_window) {
-            td_checkpoint("I1", cycle, init_mode || user_mode);
+            td_checkpoint("I1", cycle, init_mode || user_memory);
             td_probe_report(&probe);
             td_probe_close(&probe);
         }
         if (user_mode) {
-            td_user_measure(&api, handle, context, user_slots, init);
+            td_user_measure(&api, handle, context, user_slots, init, user_memory);
             api.common.fini(context);
             if (dlclose(handle)) return 1;
             return 0;

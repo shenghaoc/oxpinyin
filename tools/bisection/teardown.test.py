@@ -406,6 +406,58 @@ class PureTests(unittest.TestCase):
                 'fn=(2) caller\ncfn=(3) other\ncalls=100 0\n0 3\ncfn=(1)\ncalls=15 0\n0 7\n')
         self.assertEqual(td.compaction_calls(text), {'pinyin::FacadePhraseIndex::compact()': 17})
 
+    def test_user_timing_and_smaps_use_separate_native_processes(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / 'user8').mkdir()
+            (root / 'user8/rows.tsv').write_text("7\t测试\tce4'shi4\t5\n" * 8)
+            calls = []
+            def run(*args, **kwargs):
+                calls.append(kwargs)
+                times = {name: dict(wall_ns=100) for name, _, _ in td.USER_WINDOWS}
+                result = dict(observation=dict(stderr='', userfiles={}, documents=[dict(user_phrase=True, times=times)]),
+                              user_bin_sha256='same')
+                if kwargs.get('user_memory'):
+                    result['checkpoints'] = {0: {'M0': dict(groups={}, totals=dict(Pss=100))},
+                                             1: {'I1': dict(groups={}, totals=dict(Pss=100))}}
+                return result
+            campaign = SimpleNamespace(worker=Path('worker'), work=root, run=run)
+            subjects = {side: dict(pinyin=Path('library')) for side in ('ox', 'control', 'pin', 'base')}
+            with patch.object(td, 'user_library_shape', return_value=dict(items=10000, readings={1: 10000})), \
+                    patch.object(td, 'build_worker', return_value=(Path('instrumented'), {})), \
+                    patch.object(td, 'allocation_windows', return_value={}), \
+                    patch.object(td, 'user_massif', return_value={}), \
+                    patch.object(td, 'callgrind_costs', return_value=dict(totals=dict(Ir=1))), \
+                    patch.object(td, 'print_record'), \
+                    patch.object(td, 'TIMING_ROUNDS', 1), patch.object(td, 'TIMING_WARMUPS', 0), \
+                    patch.object(td, 'MEMORY_ROUNDS', 1), patch.object(td, 'MEMORY_WARMUPS', 0):
+                self.assertEqual(td.user_phrase_measure(campaign, subjects,
+                    dict(user=root / 'user', user8=root / 'user8/user'), ['user']), 0)
+            native = [call for call in calls if call.get('profiler') is None]
+            self.assertEqual([call.get('user_memory', False) for call in native], [False] * 4 + [True] * 4)
+
+    def test_failed_preflight_can_retain_complete_observations_without_waiving_it(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / 'summaries').mkdir()
+            observations = {}
+            def run(facade, library, **kwargs):
+                observation = dict(samples=[], stderr='', userfiles={'user.bin': 'unchanged'},
+                                   documents=[dict(transcript="ai'hu", type=2 if library == Path('pin') else 1)],
+                                   reopen=dict(result='retained'))
+                observations[str(library)] = observation
+                return dict(observation=observation, raw_profile_identity='raw')
+            campaign = SimpleNamespace(work=root, provisioner=Path('pin'), run=run,
+                                       summary_dir=root / 'summaries', summary_identity={'source_revision': 'current'})
+            with patch.object(td, 'prepare_witnesses', return_value={'empty': root / 'witness'}), \
+                    patch.object(td, 'print_record'):
+                self.assertEqual(td.execute(campaign, SimpleNamespace(teardown_stage='verify'),
+                    {'pin': {'pinyin': Path('pin')}, 'ox': {'pinyin': Path('ox')}},
+                    {'empty': root}, ['empty'], ['pinyin'], None), 3)
+            saved = json.loads((root / 'summaries/pinyin-empty-preflight.json').read_text())
+            self.assertEqual(saved['observations'], observations)
+            self.assertEqual(saved['digests'], {name: td.identity(value) for name, value in observations.items()})
+
     def test_precise_equivalence_difference(self):
         self.assertEqual(td.first_difference({'a': [{'x': 1}]}, {'a': [{'x': 2}]}),
                          {'path': '$.a[0].x', 'pin': 1, 'subject': 2})

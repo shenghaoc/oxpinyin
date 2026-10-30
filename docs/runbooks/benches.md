@@ -805,9 +805,13 @@ just heavy -- uv run --no-project --managed-python python -B -X lazy_imports=nor
 full candidate transcripts and reopen behavior; a mismatch there stays
 NOT COMPARABLE and must be reported separately. A passing bounded preflight
 does not establish end-to-end candidate equivalence.
+Pass the existing `--teardown-summary-dir` option with an empty local
+directory to retain complete preflight observations and their hashes for
+diagnosis, including failures. This never changes the preflight verdict.
 
 `user-phrase` rotates base, PR, the byte-identical PR control and pin. It uses
-60 native rounds after three discarded rounds, then separate fresh-process
+60 native timing rounds after three discarded rounds and 30 separate smaps
+rounds after two discarded rounds, then separate fresh-process
 Memcheck, Massif and three Callgrind rounds per operation. Its boundaries are:
 
 | Window | Work |
