@@ -119,7 +119,8 @@ def parser():
     p.add_argument('--work-dir', type=Path, help='owned parent directory; default is TMPDIR')
     p.add_argument('--facades', choices=('pinyin', 'zhuyin', 'both'), default='both')
     p.add_argument('--profiles', default=','.join(PROFILES))
-    p.add_argument('--stage', choices=('verify', 'instrument', 'run'), default='run')
+    p.add_argument('--stage', choices=('verify', 'instrument', 'run', 'memory'), default='run',
+                   help='memory skips timing/profilers; Linux retains full smaps at lib_load/init')
     p.add_argument('--rounds', type=positive, help='timed rounds, default 60 (30 with lazy binding)')
     p.add_argument('--warmups', type=nonnegative, default=3)
     p.add_argument('--memory-rounds', type=positive, default=30)
@@ -643,8 +644,11 @@ def campaign_run(args, profiles, work, admission):
          worker=record, input_digests=before,
          libraries={a: {f: dict(artifact(p), **({'backend': backends[a][f]} if backends else {}))
                         for f, p in paths.items()} for a, paths in libraries.items()},
-         timing_rounds=args.rounds, warmups=args.warmups, memory_rounds=args.memory_rounds,
-         memory_warmups=args.memory_warmups, native_information_only=True)
+         timing_rounds=0 if args.stage == 'memory' else args.rounds,
+         warmups=0 if args.stage == 'memory' else args.warmups, memory_rounds=args.memory_rounds,
+         memory_warmups=args.memory_warmups, native_information_only=True,
+         **(dict(memory_only=True, smaps_points=['lib_load', 'init'] if sys.platform == 'linux' else [])
+            if args.stage == 'memory' else {}))
     for name, user in profiles.items():
         path = user.parent / 'witness.txt'
         emit('profile', profile=name, manifest_sha256=worker.sha256((user.parent / 'profile.manifest').read_bytes()),
@@ -662,20 +666,25 @@ def campaign_run(args, profiles, work, admission):
                 references = verify(campaign, libraries, facade, name, profiles)
                 if args.stage == 'verify':
                     continue
-                instrument(campaign, libraries, facade, name, user, references,
-                           completed=retained['scopes'] if retained else None,
-                           backends={a: rows[facade] for a, rows in backends.items()} if backends else None)
+                if args.stage != 'memory':
+                    instrument(campaign, libraries, facade, name, user, references,
+                               completed=retained['scopes'] if retained else None,
+                               backends={a: rows[facade] for a, rows in backends.items()} if backends else None)
                 if args.stage == 'instrument':
                     continue
-                for memory, rounds, warmups in ((False, args.rounds, args.warmups),
-                                                (True, args.memory_rounds, args.memory_warmups)):
+                sampling = ((True, args.memory_rounds, args.memory_warmups),)
+                if args.stage != 'memory':
+                    sampling = ((False, args.rounds, args.warmups), *sampling)
+                for memory, rounds, warmups in sampling:
                     samples = {arm: [] for arm in ARMS}
                     warmup_rejected = dict.fromkeys(ARMS, 0)
                     for index in range(rounds + warmups):
                         for arm in order(index):
                             try:
+                                capture = (dict(smaps_points=('lib_load', 'init'))
+                                           if args.stage == 'memory' and sys.platform == 'linux' else {})
                                 row = campaign.run(libraries[arm][facade], facade, user, memory=memory,
-                                                   cold=cold_sample)
+                                                   cold=cold_sample, **capture)
                             except cold.Rejected as error:
                                 # A rejected sample keeps its round: reported, never pooled, never rerun.
                                 emit('sample', facade=facade, profile=name, arm=arm, round=index,

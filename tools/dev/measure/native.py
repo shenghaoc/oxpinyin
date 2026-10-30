@@ -79,7 +79,7 @@ def _kib(value):
     return None if value is None else int(value) // 1024
 
 
-def read_memory(pid, *, proc_root=Path('/proc'), resident_peak_bytes=None):
+def read_memory(pid, *, proc_root=Path('/proc'), resident_peak_bytes=None, include_smaps=False):
     """Read memory observations for a child paused at a checkpoint.
 
     Sizes are KiB and counts are counts. Linux reads /proc status,
@@ -137,6 +137,11 @@ def read_memory(pid, *, proc_root=Path('/proc'), resident_peak_bytes=None):
                   anonymous=rollup['Anonymous'], file_backed=rollup['Rss'] - rollup['Anonymous'],
                   private_dirty=rollup['Private_Dirty'], pss=rollup['Pss'],
                   minor_faults=int(stat[7]), major_faults=int(stat[9]))
+    if include_smaps:
+        # Keep the complete mapping snapshot, including addresses, file offsets,
+        # permissions and Pss. It is a separate read from smaps_rollup; consumers
+        # must sum these mappings and report any rollup discrepancy explicitly.
+        result['smaps_raw'] = (proc / 'smaps').read_text()
     return result
 
 
