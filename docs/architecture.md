@@ -77,7 +77,7 @@ Like libpinyin, it depends on the system library's C++ ABI.
 The facades import 68 `kyotocabinet::` names, 67 among the pin's 77.
 This describes the current tree.
 The `oxpinyin-input` boundary has a small C shim, `native/config.c`, in stage 1.
-It will add a tool-only C++ stream shim using the existing `cc` build dependency.
+Its `tools` feature adds `native/tool.c`, compiled against GLib's headers found with `pkg-config`, and the tool-only C++ stream shim `native/tool_stream.cc`, both through the existing `cc` build dependency.
 Use narrow hand-written extern declarations and no direct `libc` crate dependency.
 
 Kyoto Cabinet left `kclangc.h` after measurement in #1118.

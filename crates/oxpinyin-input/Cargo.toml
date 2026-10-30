@@ -24,6 +24,11 @@ undocumented_unsafe_blocks = "deny"
 missing_safety_doc = "deny"
 must_use_candidate = "warn"
 
+[features]
+# The pin utilities' boundary (stage 5): GLib option, text and C++ stream
+# calls. Tools only; it links GLib and the C++ runtime.
+tools = []
+
 [dependencies]
 
 [dev-dependencies]
@@ -31,5 +36,6 @@ tempfile.workspace = true
 
 [build-dependencies]
 # Compiles native/config.c against the target's own <stdio.h> and
-# <locale.h> (the same requirement oxpinyin-store's shim build uses).
+# <locale.h> (the same requirement oxpinyin-store's shim build uses), and
+# with `tools` native/tool.c against GLib's headers and the C++ stream shim.
 cc = "1.4.3"
