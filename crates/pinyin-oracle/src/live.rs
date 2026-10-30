@@ -19,7 +19,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
-use crate::differential::{ObservationSource, Source as DiffSource};
 use crate::flags::SORT_BY_PHRASE_LENGTH_AND_PINYIN_LENGTH_AND_FREQUENCY;
 use crate::observation::{
     CandidateInfo, MAX_CAPTURED_CANDIDATES, OracleCandidateType, OracleCompleteness,
@@ -1107,35 +1106,6 @@ impl Drop for Session<'_> {
         // exactly once here. The borrow on the `Oracle` guarantees the context
         // outlives this call.
         unsafe { ffi::pinyin_free_instance(self.instance) };
-    }
-}
-
-/// Adapts a [`Session`] to the differential runner's producer seam.
-///
-/// Reuses one instance across the corpus, clearing state with `pinyin_reset`
-/// between inputs. `session_reset_agrees_with_a_fresh_instance` pins that this
-/// is equivalent to the frozen fresh-instance protocol, so the cheap path cannot
-/// drift from the protocol the fixtures were captured under.
-#[derive(Debug)]
-pub struct LiveSource<'oracle> {
-    session: Session<'oracle>,
-}
-
-impl<'oracle> LiveSource<'oracle> {
-    /// Wraps `session`.
-    #[must_use]
-    pub const fn new(session: Session<'oracle>) -> Self {
-        Self { session }
-    }
-}
-
-impl ObservationSource for LiveSource<'_> {
-    fn observe(&mut self, input: &[u8]) -> Result<OracleObservation, OracleError> {
-        self.session.observe(input)
-    }
-
-    fn source(&self) -> DiffSource {
-        DiffSource::Live
     }
 }
 

@@ -1,5 +1,13 @@
 # Developer-tooling consolidation — Phase 1 (research and architecture)
 
+> **W2 retirement update.** The `pinyin-oracle` parse comparator
+> (`src/differential.rs`, `src/taxonomy.rs`, `parity-diff`,
+> `tests/differential_replay.rs`, `tests/taxonomy_replay.rs` and
+> `tests/differential_live.rs`) and its W2-only `LiveSource` adapter have
+> been retired. Their records and extraction proposals below are historical.
+> Corpus generation, capture/FFI support and graph-path fixtures remain;
+> `oracle-paths` remains an importer of historical W2 logs.
+
 > **Historical inventory snapshot — not active policy.** This record reflects
 > the named tree. The `Assisted-by` commit-trailer policy and its linter, hook,
 > test harness, and CI jobs were later retired; their references here are

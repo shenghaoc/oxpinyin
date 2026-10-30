@@ -1,5 +1,10 @@
 # Test-suite audit, Phase 1
 
+> **W2 retirement update.** `pinyin-oracle`'s `differential_replay`,
+> `taxonomy_replay` and `differential_live` suites and their comparator have
+> been retired. The measurements below describe the audited revision. The
+> unique live sentinel assertions now live in `tests/graph_paths.rs`.
+
 Date: 2026-10-22 (UTC) · Issue: #1005 · Status: **audit, read-only. No code,
 test, workflow or `.config/nextest.toml` change. Each implementation PR is
 its own decision (§9).**

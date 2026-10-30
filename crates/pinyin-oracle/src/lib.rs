@@ -19,10 +19,9 @@
 //!   `just fetch-model` has populated the build cache;
 //! - `live` is the FFI producer, behind the non-default `oracle-ffi` feature.
 //!
-//! Because a replayed capture fixture and a live FFI run both yield an
-//! [`OracleObservation`], the comparison logic can be exercised in portable CI
-//! against `fixtures/foundation/f-a.txt` and then run unchanged against the real
-//! oracle on Linux.
+//! Capture fixtures and live FFI runs both yield an [`OracleObservation`].
+//! Portable graph/decode tests use frozen fixtures; live tests verify the FFI
+//! against the pin. The obsolete W2 path-set comparator has been retired.
 //!
 //! # Building against the oracle
 //!
@@ -48,7 +47,6 @@
 pub mod candidate_fixture;
 pub mod capture;
 pub mod corpus;
-pub mod differential;
 mod error;
 pub mod flags;
 pub mod model_cache;
@@ -56,7 +54,6 @@ pub mod observation;
 pub mod pin;
 mod pin_ref;
 pub mod sentence_tail;
-pub mod taxonomy;
 
 #[cfg(feature = "oracle-ffi")]
 mod ffi;
@@ -75,10 +72,9 @@ pub use observation::{
     OracleObservation, OracleSegment,
 };
 pub use pin::{EXPECTED_PIN_REF, OraclePrefix, PinManifest, VerifiedPin, bench_pin_ref};
-pub use taxonomy::{BudgetVerdict, DivergenceClass, Taxonomy};
 
 #[cfg(feature = "oracle-ffi")]
-pub use live::{ExportedPhrase, LiveSource, Oracle, Session};
+pub use live::{ExportedPhrase, Oracle, Session};
 
 /// Whether this build can drive a live oracle.
 ///

@@ -1,5 +1,9 @@
 # Oracle pin 0c5e80e1 → 074a2219 — verification record
 
+> **W2 retirement update.** The `parity-diff` run cited below is historical;
+> that comparator has been retired. The recovered graph-path fixture and its
+> portable tests remain in use.
+
 Date: 2026-09-06 UTC · Status: verification for the pin-change PR
 (`chore/oracle-pin-074a221`); human rulings 2026-09-06 UTC accepted V2's
 withdrawal and V3's reframing.

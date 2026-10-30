@@ -124,9 +124,10 @@ prefix with no letter cannot have produced a key. The condition is therefore
 "the oracle claims to have parsed something that cannot contain a key".
 
 The guard **does not hide the defect**. `<no-key-columns>` is a sentinel, so
-`OracleObservation::has_sentinel_segment` is true and the differential runner
-reports the input as a divergence with reason `oracle-sentinel`. The affected
-inputs appear in the divergence log rather than silently passing.
+`OracleObservation::has_sentinel_segment` is true. The historical W2 runner
+reported `oracle-sentinel`; that comparator has been retired. The live guard
+and missing-string assertions now run in `pinyin-oracle/tests/graph_paths.rs`
+with `oracle-ffi`, alongside production graph checks for these inputs.
 
 Under the parity corpus the guard fires on exactly the three apostrophe-only
 inputs in `09-edge.txt`.
