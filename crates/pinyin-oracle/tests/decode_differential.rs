@@ -17,7 +17,7 @@ use oxpinyin_core::SyllableKey;
 use oxpinyin_core::graph::SegmentGraph;
 use oxpinyin_core::kbest::k_best;
 use oxpinyin_core::scoring::{Scorer, ScoringConfig};
-use oxpinyin_engine::{EmptyConfigSource, KeyInput, Session, StoragePaths};
+use oxpinyin_engine::{EmptyConfigSource, Session};
 use oxpinyin_testsupport::{FixtureDictionary, FixtureLanguageModel};
 use pinyin_oracle::capture::unescape;
 
@@ -198,7 +198,6 @@ fn candidate_differential_over_the_capture_families() {
 
         let mut session: Session<FixtureDictionary, FixtureLanguageModel> = Session::new(
             &EmptyConfigSource,
-            StoragePaths::new("user"),
             FixtureDictionary::parse(VOCAB).expect("committed fixture"),
             FixtureLanguageModel::parse(VOCAB, BIGRAM).expect("committed fixtures"),
         )
@@ -206,7 +205,7 @@ fn candidate_differential_over_the_capture_families() {
 
         for character in case.input.chars() {
             session
-                .process_key(&KeyInput::character(character))
+                .type_pinyin(character.encode_utf8(&mut [0; 4]))
                 .expect("typing cannot fail");
         }
 

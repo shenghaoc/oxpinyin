@@ -137,16 +137,16 @@ Its rows determine which libraries exist, their filenames and which calls accept
 Its header supplies λ and the versions used to check the user profile.
 Runtime opens the same system directory as `pinyin_init` for that backend.
 Either libpinyin tools or `oxpinyin-datagen compile` can produce it.
-The caller supplies `StoragePaths`.
+The caller supplies directories to `Runtime`, which retains `StoragePaths`.
 Do not auto-detect a distribution layout.
 
 ## Portability
 
 Keep the engine session API independent of frameworks.
-It uses abstract `KeyInput`, preedit spans with a style enum, and candidate iteration.
-Inject configuration and storage paths as data.
+It exposes parsing, candidate iteration, selection, training and reset operations.
+Inject configuration and backend handles as data; runtime owns storage paths.
 Do not add platform services or `cfg(target_os)` to portable crates.
-Keep IBus keysym translation in oxpinyin-capi, never in the engine.
+Frontends handle key dispatch and preedit display through the C API.
 Sessions are instance-per-context and suitable for the TSF, IMK and ArkTS main-thread models.
 See the [native Rust policy](findings/compatibility-policy.md#native-rust-implementation).
 
@@ -157,18 +157,10 @@ The export check in `ci.yml` gates the C export set.
 
 ## Configuration
 
-Apply configuration in this order:
-
-1. The frozen [upstream defaults](findings/upstream-schema.md), verbatim.
-2. System drop-ins.
-3. A user layer supplied by the shell as data.
-
-The shell can supply a `ConfigLayer` file or construct it from its own settings store.
+Keep `Config::default()` equal to the captured [upstream defaults](findings/upstream-schema.md).
+The C adapters retain typed configuration and apply live option words through the session's setters.
 Neither libpinyin nor the engine has a settings store.
-Merge layers with a pure core function.
-Keep `Config::default()` equal to the captured upstream defaults.
-The default is the parity configuration used by S1b.
-Use data overlays for rules, maps and schemes, and live preferences for customization.
+The engine has no configuration-file parser or layer merger.
 Engine weights and language-model order are never user configuration.
 
 ## Decoder

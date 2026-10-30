@@ -1,12 +1,7 @@
 //! The session state machine.
 //!
-//! One session per input context. Nothing here is `Send` or `Sync` by
-//! requirement, because the TSF, IMK and `ArkTS` models all want a
-//! main-thread-friendly, instance-per-context object.
-//!
-//! The decoder behind it is parse -> graph -> k-best -> lookup, wired in at
-//! W4-T4 **behind the signatures** `docs/findings/session-api.md` froze at
-//! W4-T0. Not one of them changed.
+//! One session per input context, with parse, candidate, selection and
+//! training operations shared by the in-tree consumers.
 
 use core::fmt::Display;
 use std::collections::hash_map::Entry;
@@ -25,9 +20,6 @@ use oxpinyin_core::{
 use crate::candidate::{Candidate, CandidateKind, CandidateList};
 use crate::config::ConfigSource;
 use crate::error::EngineError;
-use crate::key::{KeyInput, LogicalKey};
-use crate::preedit::{Preedit, PreeditSpan, SpanStyle};
-use crate::storage::StoragePaths;
 
 /// Largest raw input a session accepts, in bytes.
 ///
@@ -40,12 +32,6 @@ use crate::storage::StoragePaths;
 /// The fuzz targets keep their own, shorter input length; the cap is not what
 /// they exercise.
 pub const MAX_INPUT_BYTES: usize = 32_767;
-
-/// Configuration key for the candidate page size.
-const KEY_PAGE_SIZE: &str = "lookup-table-page-size";
-
-/// Page size used when the configuration source does not carry the key.
-const DEFAULT_PAGE_SIZE: usize = 5;
 
 /// Configuration key for whether initial-only keys are admitted.
 const KEY_INCOMPLETE: &str = "incomplete-pinyin";
@@ -73,16 +59,13 @@ pub const MAX_PHRASE_LENGTH: usize = 16;
 /// longer all-initial span.
 pub const SCAN_EXPANSION_LIMIT: usize = 4_096;
 
-/// What a session did with a key.
+/// Whether an input-editing operation changed the session.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum KeyOutcome {
-    /// The session did not use the key and is unchanged.
+    /// The session accepted no input and is unchanged.
     Ignored,
-    /// The session used the key.
+    /// The session changed its input or selection.
     Consumed,
-    /// The session used the key and finished a composition
-    /// ([`Session::commit`]'s text).
-    Commit(PhraseText),
 }
 
 /// What choosing a candidate left behind.
@@ -97,17 +80,11 @@ pub enum Selection {
 /// Settings a session reads once, at construction.
 #[derive(Clone, Copy, Debug)]
 struct Settings {
-    page_size: usize,
     options: OptionBits,
 }
 
 impl Settings {
     fn read(config: &impl ConfigSource) -> Self {
-        let page_size = config
-            .get_int(KEY_PAGE_SIZE)
-            .and_then(|value| usize::try_from(value).ok())
-            .filter(|value| *value > 0)
-            .unwrap_or(DEFAULT_PAGE_SIZE);
         // The captured parity profile is `PINYIN_INCOMPLETE |
         // USE_DIVIDED_TABLE | USE_RESPLIT_TABLE`, and every reference
         // consumer (ibus-libpinyin `PYLibPinyin.cc:195-196`) ORs the table
@@ -119,7 +96,7 @@ impl Settings {
             .with(oxpinyin_core::PINYIN_INCOMPLETE, incomplete)
             .with(oxpinyin_core::USE_DIVIDED_TABLE, true)
             .with(oxpinyin_core::USE_RESPLIT_TABLE, true);
-        Self { page_size, options }
+        Self { options }
     }
 
     /// Whether the `PINYIN_INCOMPLETE` bit is set.
@@ -133,21 +110,12 @@ impl Settings {
 /// Swapping fixture adapters for table-backed loaders is a change of `D` and
 /// `L` and nothing else.
 ///
-/// **Keep in sync with `docs/findings/session-api.md`.** That SPEC's
-/// "deliberately absent" list — no keysyms, no `GSettings`, no path discovery,
-/// no `cfg(target_os)`, no threading or clock contract — is the freeze this
-/// type implements, and later findings add cross-references to it
-/// (`config-layering.md` for where configuration actually comes from,
-/// `session-replay.md` for what consumes the seam). A change here that admits
-/// one of those must amend the SPEC's list in the same commit, or the list
-/// silently stops describing the code.
 #[derive(Clone, Debug)]
 pub struct Session<D, L> {
     // Backends and configuration. Read at construction (and, for the
     // options, remasked live); never composition state.
     dictionary: D,
     model: L,
-    paths: StoragePaths,
     settings: Settings,
     scoring: ScoringConfig,
     /// Per-key costs for the pre-frequency fallback scorer, and **empty
@@ -1126,23 +1094,13 @@ fn dedup_ranked_by_text(ranked: &mut Vec<Candidate>, keys: &[RankKey]) {
     });
 }
 
-/// Whether the interactive key path accepts `character`.
-///
-/// `docs/findings/session-api.md` / `docs/findings/parser-spec.md`: only
-/// lowercase ASCII `a`–`z` and the ASCII apostrophe. Everything else belongs
-/// to the shell (`KeyOutcome::Ignored`).
-const fn is_input_character(character: char) -> bool {
-    character.is_ascii_lowercase() || character == '\''
-}
-
 /// Whether the engine batch path ([`Session::type_pinyin`]) accepts
 /// `character`.
 ///
 /// Printable ASCII (`0x21..=0x7E`), including junk the parity corpus embeds
 /// in inputs. The decoder (`SegmentGraph`) treats non-`a-z`/`'` bytes as
 /// hard boundaries; see `docs/testing/f1-junk-aware-parse.md`. Space and
-/// controls are excluded so they cannot bypass `LogicalKey::Space` / `Tab`
-/// / `Enter`.
+/// controls are excluded from this batch-input surface.
 ///
 /// This filter belongs to `type_pinyin` ONLY. The capi parse seam
 /// ([`Session::replace_raw`]) keeps every character so the decoder sees —

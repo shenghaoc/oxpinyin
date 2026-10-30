@@ -214,14 +214,17 @@ fn open_reads_no_records_beyond_the_handles() {
 }
 
 #[test]
-fn selection_advances_and_commit_returns_the_chosen_text() {
+fn selection_advances_and_reset_clears_the_chosen_text() {
     let runtime = Runtime::open(&w3_dir(), None).expect("open");
     let mut session = runtime.new_session(&EmptyConfigSource).expect("session");
     session.type_pinyin("nihao").expect("typing");
     let advanced = session.select(0).expect("first candidate selects");
     assert_eq!(advanced, Selection::Completed);
-    assert_eq!(session.commit().expect("commit"), "你好");
+    assert_eq!(session.selected_text(), "你好");
+    assert_eq!(session.composition_offset(), "nihao".len());
+    session.reset();
     assert!(!session.is_composing());
+    assert!(session.selected_text().is_empty());
 }
 
 #[test]

@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use oxpinyin_data::{BigramLanguageModel, SystemDbm, SystemDictionary};
-use oxpinyin_engine::{EmptyConfigSource, Session, StoragePaths};
+use oxpinyin_engine::{EmptyConfigSource, Session};
 use pinyin_oracle::candidate_fixture::{CandidateFixture, STRUCTURE_FIXTURE};
 use pinyin_oracle::corpus;
 
@@ -45,8 +45,7 @@ fn main() -> ExitCode {
     )
     .expect("lm");
     lm.set_lambda_from_table_conf(&dir.join("table.conf"));
-    let mut session =
-        Session::new(&EmptyConfigSource, StoragePaths::new("user"), dict, lm).expect("session");
+    let mut session = Session::new(&EmptyConfigSource, dict, lm).expect("session");
 
     let fixture = CandidateFixture::read(repo_root().join(STRUCTURE_FIXTURE))
         .expect("candidate structure fixture")

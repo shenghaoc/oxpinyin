@@ -11,9 +11,7 @@
 
 use std::collections::BTreeMap;
 
-use oxpinyin_engine::{
-    Config, ConfigLayer, ConfigSource, ConfigValue, UPSTREAM_DEFAULT_COUNT, merge,
-};
+use oxpinyin_engine::{Config, ConfigSource, ConfigValue, UPSTREAM_DEFAULT_COUNT};
 
 const SCHEMA: &str = include_str!("../../../docs/findings/upstream-schema.md");
 const SCHEMA_ID: &str = "com.github.libpinyin.ibus-libpinyin.libpinyin";
@@ -184,7 +182,7 @@ fn editing_a_default_before_or_after_materialization_matches_an_explicit_map() {
             ("network-dictionary-start-timestamp", ConfigValue::Int64(-1)),
             ("opencc-config", ConfigValue::Text(String::new())),
             ("future-key", ConfigValue::Text("kept".to_owned())),
-            // Direct set permits type changes; merge alone rejects them.
+            // Direct set permits type changes.
             (
                 "incomplete-pinyin",
                 ConfigValue::Text("changed type".to_owned()),
@@ -204,25 +202,6 @@ fn editing_a_default_before_or_after_materialization_matches_an_explicit_map() {
         assert_eq!(config.get_text("opencc-config"), Some(""));
         assert_eq!(config.get_text("future-key"), Some("kept"));
     }
-}
-
-#[test]
-fn merging_default_and_explicit_maps_preserves_results_and_errors() {
-    let default = Config::default();
-    let explicit = Config::from_map(captured_defaults());
-    let layers = [
-        ConfigLayer::new("system")
-            .with("lookup-table-page-size", ConfigValue::Int(9))
-            .with("future-key", ConfigValue::Text("kept".to_owned())),
-        ConfigLayer::new("user").with("lookup-table-page-size", ConfigValue::Int(7)),
-    ];
-    assert_eq!(merge(&default, &layers), merge(&explicit, &layers));
-    let mismatched = [ConfigLayer::new("user").with(
-        "lookup-table-page-size",
-        ConfigValue::Text("nine".to_owned()),
-    )];
-    assert_eq!(merge(&default, &mismatched), merge(&explicit, &mismatched));
-    assert_eq!(default, explicit);
 }
 
 #[test]

@@ -74,7 +74,11 @@ fn oxpinyin_trains_and_saves_its_own_profile() {
         // the test rather than silently skipping the phrase (a skip
         // would leave user.bin unexercised and the phase green for
         // nothing).
-        let committed = session.preedit().text().to_owned();
+        let committed = session
+            .selected_text()
+            .as_str()
+            .expect("fixture sentence is UTF-8")
+            .to_owned();
         assert!(!committed.is_empty(), "a committed sentence exists");
         let keys: Vec<oxpinyin_user::PinyinKey> = session
             .composition_keys()

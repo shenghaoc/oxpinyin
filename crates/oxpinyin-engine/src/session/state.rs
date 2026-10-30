@@ -1,4 +1,4 @@
-//! Lifecycle and settings: opening a session, resetting it, replacing the raw buffer, the live option and shape switches, and the read-only accessors (preedit, candidates, composition offset).
+//! Lifecycle and settings: opening a session, resetting it, replacing the raw buffer, the live option and shape switches, and the read-only accessors (raw input, candidates, composition offset).
 //!
 //! One of the `impl Session` slices `session/mod.rs` declares; every
 //! method here was moved verbatim from the single 5,800-line
@@ -17,7 +17,7 @@ where
 {
     /// Opens a session over the supplied backends.
     ///
-    /// Configuration and storage locations arrive as data; the session reads
+    /// Configuration and backend handles arrive as data; the session reads
     /// no environment and discovers no path.
     ///
     /// # Errors
@@ -27,12 +27,7 @@ where
     /// backend fails while the key-cost table is walked. A model carrying
     /// real unigram frequencies never walks, so no such rejection exists
     /// for it and construction currently always succeeds.
-    pub fn new(
-        config: &impl ConfigSource,
-        paths: StoragePaths,
-        dictionary: D,
-        model: L,
-    ) -> Result<Self, EngineError> {
+    pub fn new(config: &impl ConfigSource, dictionary: D, model: L) -> Result<Self, EngineError> {
         // Only the fallback scorer reads the table (see `key_costs`), and
         // it is unreachable under real frequencies. The fallback keeps the
         // SPEC's construction-time walk verbatim: costs complete before any
@@ -45,7 +40,6 @@ where
         };
         Ok(Self::init(
             Settings::read(config),
-            paths,
             dictionary,
             model,
             key_costs,
@@ -73,27 +67,19 @@ where
     /// aligned with [`Self::new`], whose fallback walk can fail.
     pub fn new_with_key_costs(
         config: &impl ConfigSource,
-        paths: StoragePaths,
         dictionary: D,
         model: L,
         key_costs: Vec<Cost>,
     ) -> Result<Self, EngineError> {
         Ok(Self::init(
             Settings::read(config),
-            paths,
             dictionary,
             model,
             key_costs,
         ))
     }
 
-    pub(super) fn init(
-        settings: Settings,
-        paths: StoragePaths,
-        dictionary: D,
-        model: L,
-        key_costs: Vec<Cost>,
-    ) -> Self {
+    pub(super) fn init(settings: Settings, dictionary: D, model: L, key_costs: Vec<Cost>) -> Self {
         // The `key_costs` field documents a two-sided invariant: the table
         // is empty exactly when the model carries real unigram
         // frequencies. Neither side is enforced by the type, and neither
@@ -116,7 +102,6 @@ where
         Self {
             dictionary,
             model,
-            paths,
             settings,
             scoring: ScoringConfig::default(),
             key_costs,
@@ -195,8 +180,8 @@ where
     ///
     /// The raw buffer is NOT cleared here: a cleared raw with a surviving
     /// cursor would leave `consumed > raw.len()` observable, and every
-    /// `raw[consumed..]` slice (`preedit`, `commit`) would panic — the
-    /// constitution forbids that window. The input replacement is atomic
+    /// `raw[consumed..]` slice in the remaining-input sentence walk would
+    /// panic — the constitution forbids that window. Input replacement is atomic
     /// in [`Session::replace_raw`], which clears, refills, clamps, and
     /// refreshes in one call, so this reset alone always leaves a
     /// consistent session.
@@ -213,7 +198,7 @@ where
     /// not extend the covered selection span — a clamp below it, or a
     /// byte divergence inside it — reconciles the record from a temporary
     /// constraint copy (`Session::reconcile_replaced_selection`), so
-    /// [`Session::commit`] answers only text valid for the current
+    /// [`Session::selected_text`] retains only text valid for the current
     /// input.
     ///
     /// Keeps every character: the pin's parser accepts any input string
@@ -327,8 +312,8 @@ where
     /// lives in these canonical bytes: a replacement that passes those
     /// checks but does not extend the covered span — a scheme switch
     /// that decodes the same codes to a different spelling, any
-    /// transform divergence — must reconcile, or [`Session::commit`]
-    /// combines the stale selection with the new raw suffix.
+    /// transform divergence — must reconcile, or [`Session::selected_text`]
+    /// retains stale text alongside the new raw input.
     pub(super) fn replacement_extends_selection(&self, text: &str) -> bool {
         text.as_bytes()
             .starts_with(&self.input.as_bytes()[..self.record.consumed()])
@@ -337,7 +322,7 @@ where
     /// Reconciles the selection record to the new input without changing
     /// the stored constraints. Upstream has no selection record, and its
     /// parse never touches m_constraints (074a2219, pinyin.cpp:1497-1525).
-    /// Validate a temporary copy so commit/preedit cannot use stale text;
+    /// Validate a temporary copy so the record cannot retain stale text;
     /// the real store is resized and validated at the next guess.
     pub(super) fn reconcile_replaced_selection(&mut self) -> Result<(), EngineError> {
         if self.record.consumed() == 0 {
@@ -548,7 +533,7 @@ where
     /// Off by default: each builds it, as the session API always has. On,
     /// the parse seams and the guesses still build the scan matrix, so its
     /// errors surface where they did, and all three leave the list stale.
-    /// [`Session::select`], [`Session::select_promoted`] and the `Space` key
+    /// [`Session::select`], [`Session::select_promoted`]
     /// rebuild a stale list before indexing it; a reader of
     /// [`Session::candidates`] or [`Session::parsed_prefix_len`] calls
     /// [`Session::refresh_candidates`] first. A failure of the deferred build then surfaces from that call
@@ -571,38 +556,6 @@ where
     /// next sentence lookup.
     pub const fn set_nbest_shape(&mut self, shape: crate::nbest::NbestShape) {
         self.nbest_shape = shape;
-    }
-
-    /// What the shell should display.
-    #[must_use]
-    pub fn preedit(&self) -> Preedit {
-        // Display text for a Rust shell; no C entry point reads it. The
-        // chosen phrases' outward text, with a non-scalar word shown as
-        // U+FFFD: a C client's bytes come from `phrase_text_bytes` instead.
-        let selected: String = self
-            .record
-            .selected()
-            .outward_words()
-            .map(|word| char::from_u32(word).unwrap_or(char::REPLACEMENT_CHARACTER))
-            .collect();
-        let remaining = &self.input.as_str()[self.record.consumed()..];
-        if selected.is_empty() && remaining.is_empty() {
-            return Preedit::default();
-        }
-
-        let mut text = selected.clone();
-        text.push_str(remaining);
-
-        let mut spans = Vec::with_capacity(2);
-        if !selected.is_empty() {
-            spans.push(PreeditSpan::new(0, selected.len(), SpanStyle::Selected));
-        }
-        if !remaining.is_empty() {
-            spans.push(PreeditSpan::new(selected.len(), text.len(), SpanStyle::Raw));
-        }
-
-        let cursor = text.len();
-        Preedit::new(text, spans, cursor)
     }
 
     /// The current candidates, in rank order.
@@ -678,19 +631,6 @@ where
     #[must_use]
     pub const fn composition_offset(&self) -> usize {
         self.record.consumed()
-    }
-
-    /// Candidates per page, from the configuration the session was opened
-    /// with.
-    #[must_use]
-    pub const fn page_size(&self) -> usize {
-        self.settings.page_size
-    }
-
-    /// The storage locations the session was opened with.
-    #[must_use]
-    pub const fn paths(&self) -> &StoragePaths {
-        &self.paths
     }
 
     /// The dictionary backend.

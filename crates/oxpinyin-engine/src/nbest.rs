@@ -1621,7 +1621,6 @@ mod tests {
     use crate::config::EmptyConfigSource;
     use crate::error::EngineError;
     use crate::session::build_scan_matrix;
-    use crate::storage::StoragePaths;
 
     #[derive(Debug)]
     struct TextError;
@@ -2588,7 +2587,6 @@ mod tests {
     fn session_types_compose() {
         let session = crate::Session::<FixtureDictionary, FixtureLanguageModel>::new(
             &EmptyConfigSource,
-            StoragePaths::new("user"),
             FixtureDictionary::default(),
             FixtureLanguageModel::default(),
         )
