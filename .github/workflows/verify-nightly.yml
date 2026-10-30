@@ -446,9 +446,10 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/function-order-policy
 
-  # The full Windows workspace: the portable workspace (all but capi,
-  # zhuyin-capi, and the backend-independent corpus, KMM, punctuation, and
-  # word tools) linked against vcpkg's Berkeley DB 4.8. Moved here from
+  # The full Windows workspace: clippy and the tests over the portable
+  # workspace (all but capi, zhuyin-capi, and the backend-independent
+  # corpus, KMM, punctuation, and word tools) linked against vcpkg's
+  # Berkeley DB 4.8. Moved here from
   # ci.yml on 2026-10-22: it runs every night and on manual dispatch, not on
   # every PR. Dispatch it on the branch (windows_only: true) before merging
   # changes to Windows-sensitive storage, filesystem or native-build code,
@@ -478,6 +479,7 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/bootstrap
         with:
+          rustup-components: clippy
           rust-cache: 'true'
       - run: rustup show active-toolchain
       # vcpkg's binary cache, persisted across runs. vcpkg writes one zip per
@@ -569,6 +571,15 @@ jobs:
       # The workspace default is Berkeley DB, so this lane no longer
       # passes `--features bdb`. The vcpkg provisioning above is what
       # makes that default link. Same exclusions as the macOS job.
+      # Clippy runs first, over the same set, so a lint in Windows-only
+      # code fails here rather than nowhere.
+      - name: Clippy (Windows)
+        run: >
+          cargo clippy --locked --workspace --all-targets
+          --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi
+          --exclude oxpinyin-corpus --exclude oxpinyin-kmm --exclude oxpinyin-punct
+          --exclude oxpinyin-word
+          -- -D warnings
       - run: >
           cargo test --locked --workspace
           --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi
