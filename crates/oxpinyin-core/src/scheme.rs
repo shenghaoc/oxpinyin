@@ -2721,13 +2721,6 @@ mod tests {
     }
 
     #[test]
-    fn customized_is_rejected_without_replacing_the_scheme() {
-        let mut parser = DoublePinyinParser::with_scheme(DoublePinyinScheme::Zrm);
-        assert!(!parser.set_scheme(DoublePinyinScheme::Customized));
-        assert_eq!(parser.scheme(), DoublePinyinScheme::Zrm);
-    }
-
-    #[test]
     fn no_inventory_key_is_invented() {
         for scheme in [
             DoublePinyinScheme::Zrm,

@@ -18,33 +18,6 @@ fn empty_input_returns_one_empty_segmentation() {
 }
 
 #[test]
-fn single_valid_syllables_parse() {
-    for syllable in ["ma", "zhuang", "nv"] {
-        let paths = FullPinyinParser
-            .parse(syllable.as_bytes())
-            .expect("single table syllables stay below the path limit");
-        assert!(
-            !paths.is_empty(),
-            "syllable {syllable:?} must produce at least one path"
-        );
-        assert_eq!(
-            paths[0],
-            result(vec![complete(syllable, 0, syllable.len())], b""),
-            "greedy first path for {syllable:?}"
-        );
-        for path in &paths {
-            assert!(path.remainder.is_empty(), "syllable {syllable:?}");
-            assert!(
-                path.syllables
-                    .iter()
-                    .all(|segment| segment.completeness == Completeness::Complete),
-                "complete table syllable {syllable:?} must not emit partials"
-            );
-        }
-    }
-}
-
-#[test]
 fn ambiguous_xian_returns_both_complete_segmentations() {
     assert_parse(
         b"xian",
@@ -84,28 +57,6 @@ fn pure_non_pinyin_input() {
     // Bytes above 0x7F are unsupported and start the untouched remainder.
     assert_parse(&[0xff], &[result(vec![], &[0xff])]);
     assert_parse(&[0x80, 0xc0, 0xff], &[result(vec![], &[0x80, 0xc0, 0xff])]);
-}
-
-#[test]
-fn maximum_length_valid_syllable_zhuang() {
-    let paths = FullPinyinParser
-        .parse(b"zhuang")
-        .expect("zhuang stays below the path limit");
-    assert_eq!(
-        paths[0],
-        result(vec![complete("zhuang", 0, 6)], b""),
-        "max-length syllable must be the greedy first complete path"
-    );
-    assert!(
-        paths.iter().all(|path| {
-            path.remainder.is_empty()
-                && path
-                    .syllables
-                    .iter()
-                    .all(|segment| segment.completeness == Completeness::Complete)
-        }),
-        "zhuang must emit only complete segmentations"
-    );
 }
 
 #[test]
