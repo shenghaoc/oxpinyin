@@ -333,22 +333,19 @@ fn pinyin_to_keys(pinyin: &str) -> Option<Vec<PinyinKey>> {
 /// System items are stored as packed 16-bit `ChewingKey` words, and the
 /// pin's `get_nth_pronunciation` copies those words verbatim
 /// (`phrase_index.cpp:33-50`); USER_FILE items carry structured keys.
-pub enum IntroPronunciation {
+pub enum TokenPronunciationKeys {
     /// The item's stored words, copied as the pin hands them out.
     Stored(Vec<u16>),
     /// A USER_FILE reading's structured (syllable-id + tone) keys.
     Structured(Vec<PinyinKey>),
 }
 
-/// One token's dictionary introspection: the `pinyin_token_*` read
-/// surface's answer, assembled per library seam.
-pub struct TokenIntrospection {
-    /// The phrase text.
-    pub text: PhraseText,
-    /// The item's stored character count.
+/// One token reading, without the text or any other reading's keys.
+pub struct TokenPronunciation {
+    /// Stored character count, also used for the out-of-range C result.
     pub phrase_length: usize,
-    /// Pronunciations as `(keys, count)` pairs.
-    pub pronunciations: Vec<(IntroPronunciation, u64)>,
+    /// `None` when the item exists but the requested reading does not.
+    pub keys: Option<TokenPronunciationKeys>,
 }
 
 /// The pin's query keys for `syllables`.
@@ -1217,84 +1214,82 @@ impl RuntimeDict {
         }
     }
 
-    /// `FacadePhraseIndex::get_phrase_item`'s dispatch by library
-    /// nibble, for the token-introspection surface. `None` when the
-    /// library is missing/unloaded (`ERROR_NO_SUB_PHRASE_INDEX`) or the
-    /// token is absent (`ERROR_NO_ITEM`).
+    /// Whether the default facade owns this item. Missing/unloaded libraries
+    /// and absent slots both answer false, as `get_phrase_item` does
+    /// (074a2219 `phrase_index.h:646-652`, `phrase_index.cpp:180-205`).
+    /// No text or pronunciation payload is decoded.
     #[must_use]
-    pub fn token_introspection(&self, token: u32) -> Option<TokenIntrospection> {
-        let nibble = token >> 24;
-        match nibble {
+    pub fn token_exists(&self, token: u32) -> bool {
+        match token >> 24 {
+            1..=4 => {
+                self.library_visible_token(token)
+                    && (self.user.as_ref().is_some_and(|store| {
+                        store.with_effective_system_item(token, |_| ()).is_some()
+                    }) || self
+                        .system
+                        .libraries()
+                        .library(token)
+                        .is_some_and(|library| library.pronunciation_count(token).is_some()))
+            }
+            5..=7 => {
+                self.library_visible(token >> 24)
+                    && self
+                        .user
+                        .as_ref()
+                        .is_some_and(|store| store.phrase_exists(token).unwrap_or(false))
+            }
+            _ => false,
+        }
+    }
+
+    /// Read only the nth insertion-ordered key list and the stored length.
+    /// `None` means a missing item/library; a present item with no nth reading
+    /// retains its length for the existing class-(b) zero-key C result
+    /// (074a2219 `pinyin.cpp:2801-2818`, `zhuyin.cpp:1793-1810`).
+    #[must_use]
+    pub fn token_nth_pronunciation(&self, token: u32, nth: usize) -> Option<TokenPronunciation> {
+        match token >> 24 {
             1..=4 => {
                 if !self.library_visible_token(token) {
                     return None;
                 }
-                // The facade reads the replaced item, not the immutable
-                // shipped chunk (074a2219 phrase_index.h:646-657).
-                let override_item = self
-                    .user
-                    .as_ref()
-                    .and_then(|store| store.system_item_override(token).ok().flatten());
-                let (text, phrase_length, pronunciations) = if let Some(item) = override_item {
-                    let length = item.phrase.len();
-                    let text = PhraseText::from_words(item.phrase)?;
-                    let pronunciations = item
-                        .prons
-                        .into_iter()
-                        .map(|(keys, frequency)| {
-                            (IntroPronunciation::Stored(keys), u64::from(frequency))
-                        })
-                        .collect();
-                    (text, length, pronunciations)
-                } else {
-                    let text = self.system.phrase_text(token)?;
-                    let length = self
-                        .system
-                        .libraries()
-                        .phrase_char_count(token)
-                        .map_or_else(|| text.phrase_length(), |count| count as usize);
-                    let pronunciations = self
-                        .system
-                        .libraries()
-                        .pronunciation_keys(token)?
-                        .into_iter()
-                        .map(|(keys, frequency)| (IntroPronunciation::Stored(keys), frequency))
-                        .collect();
-                    (text, length, pronunciations)
-                };
-                Some(TokenIntrospection {
-                    text,
-                    phrase_length,
-                    pronunciations,
+                if let Some(reading) = self.user.as_ref().and_then(|store| {
+                    store.with_effective_system_item(token, |item| TokenPronunciation {
+                        phrase_length: item.phrase.len(),
+                        keys: item
+                            .prons
+                            .get(nth)
+                            .map(|(keys, _)| TokenPronunciationKeys::Stored(keys.clone())),
+                    })
+                }) {
+                    return Some(reading);
+                }
+                let library = self.system.libraries().library(token)?;
+                let item = library.item(token)?;
+                Some(TokenPronunciation {
+                    phrase_length: item.phrase_length(),
+                    keys: item.pronunciation(nth).map(|reading| {
+                        TokenPronunciationKeys::Stored(
+                            reading
+                                .keys
+                                .chunks_exact(2)
+                                .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+                                .collect(),
+                        )
+                    }),
                 })
             }
-            // The default facade's USER_FILE sub-indexes (addon.bin /
-            // network.bin / user.bin): the pin's `get_phrase_item` reads the
-            // item from the sub-index the token's nibble names
-            // (`phrase_index.h:646-657`, the default table set's
-            // `ADDON_DICTIONARY` / `NETWORK_DICTIONARY` / `USER_DICTIONARY`
-            // rows of `data/table.conf.in`) — never the addon facade, whose
-            // own nibbles 4..15 are a different token space (the
-            // `DICTIONARY` rows, art.bin … technology.bin).
             5..=7 => {
-                if !self.library_visible(nibble) {
+                if !self.library_visible(token >> 24) {
                     return None;
                 }
                 let store = self.user.as_ref()?;
-                let phrase = store.phrase(token).ok()??;
-                Some(TokenIntrospection {
-                    text: phrase.phrase_text()?,
-                    phrase_length: phrase.words().len(),
-                    pronunciations: phrase
-                        .pronunciations()
-                        .iter()
-                        .map(|pronunciation| {
-                            (
-                                IntroPronunciation::Structured(pronunciation.keys().to_vec()),
-                                pronunciation.count(),
-                            )
-                        })
-                        .collect(),
+                Some(TokenPronunciation {
+                    phrase_length: store.phrase_length(token).ok()??,
+                    keys: store
+                        .nth_pronunciation(token, nth)
+                        .ok()?
+                        .map(TokenPronunciationKeys::Structured),
                 })
             }
             _ => None,

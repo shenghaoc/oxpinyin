@@ -92,7 +92,7 @@ pub fn merged_suggestions(
             // A failed item read leaves no text; it must still reach the
             // caller's stale-length filter and sole-NULL/class-(b) split
             // (074a2219 pinyin.cpp:2393–2451).
-            (token, dict.token_introspection(token).map(|item| item.text))
+            (token, dict.token_text(token))
         })
         .collect()
 }
