@@ -51,6 +51,16 @@ def entry_of(where, row):
         raise RecordError(f'{where}: unknown cell {row["cell"]!r}')
     if type(row['userdir']) is not bool or type(row['abort']) is not bool:
         raise RecordError(f'{where}: userdir and abort must be booleans')
+    if row.get('runner') == 'tool-diff':
+        for side in contract_policy.SIDES:
+            problem = contract_policy.tool_observation_problem(
+                row[side], pin_signal=row.get('pin_signal') if side == 'pin' else None)
+            if problem:
+                raise RecordError(f'{where}: {side} {problem}')
+        try:
+            return contract_policy.entry(row['pin'], row['subject'])
+        except ValueError as error:
+            raise RecordError(f'{where}: {error}') from None
     sides = {}
     for side in contract_policy.SIDES:
         try:

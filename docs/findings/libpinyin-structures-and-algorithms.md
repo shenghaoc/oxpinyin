@@ -934,3 +934,32 @@ this trade on 2026-10-30 UTC. User-phrase representation work in #1418 will
 replace this path. The native commands and the memory-only smaps capture are
 documented in `docs/runbooks/benches.md`; policy regeneration and pin profile
 provisioning are in `docs/packaging.md`.
+
+## Stage 5 table generators (2026-10-30 UTC)
+
+Read from `/workspace/eio-env/libpinyin-src` at 074a2219 before cases ran.
+`utils/storage/gen_zhuyin_table.cpp:45-49,101-138` uses the same GLib
+options as the pinyin utility, including its "pinyin" help description.
+`:140-164` opens C++ ifstreams, reads getline, splits on single spaces
+at most twice, calls atoi, then checks field count. `:168-195` counts
+characters, rejects length >= 16, converts UCS-4, and parses direct zhuyin
+under USE_TONE | FORCE_TONE. `src/storage/zhuyin_parser2.cpp:858-958`
+defaults to tone 1, consumes apostrophe/space-separated keys, skips repeated
+separators, and stops at the first unparseable key. Rendering omits first
+tone and appends the other tone symbols (`chewing_key.cpp:74-89`).
+
+The phrase tree compares length then native-endian UCS-4 bytes
+(`gen_zhuyin_table.cpp:90-98`); readings retain insertion order, duplicates
+add wrapping u32 frequency (`:197-237`). Stable per-length sorting uses
+the first reading's exact key ordering (`:241-262`). Output opens after
+all inputs and the node count, assigns one token per phrase, floors
+frequencies at 3, and uses fprintf/fclose (`:267-334`).
+
+`oxpinyin-utils::gen_pinyin_table::Table` shares that tree, stable sort
+and output loop with `gen_zhuyin_table`. Each utility supplies its parser
+and renderer. BTreeMap uses the same phrase order; lookup is O(L log N),
+reading duplicate search O(R L), sorting O(N log N L), space O(N R L),
+as for the pin (L < 16, R readings per phrase, N distinct phrases).
+The boundary keeps native options, C++ streams, GLib text calls and C
+formatted writes in their source order. Undefined reads follow the two
+registered class (b) records; no crash or lost buffered output is emulated.

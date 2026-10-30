@@ -2582,5 +2582,51 @@
     "env": {},
     "timeout": 1800,
     "exclusive_resources": []
+  },
+  {
+    "name": "tool-diff",
+    "kind": "gate",
+    "implementation": "python:tools.dev",
+    "issues": [
+      "1436",
+      "eio-stage5"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "heavy": true,
+    "artifacts": [
+      "gen-pinyin-table",
+      "gen-zhuyin-table"
+    ],
+    "required_inputs": [
+      "pin-built utilities in OXPINYIN_TOOL_PIN_BUILD (oracle libpinyin build tree)",
+      "PINYIN_MODEL_DIR verified model20 tables"
+    ],
+    "timeout": 900,
+    "exclusive_resources": [],
+    "command": [
+      "uv",
+      "run",
+      "--no-project",
+      "--managed-python",
+      "python",
+      "-X",
+      "lazy_imports=normal",
+      "-m",
+      "tools.dev",
+      "runner",
+      "tool-diff",
+      "--observations",
+      "{work}/observations.log"
+    ],
+    "env": {},
+    "input_paths": [],
+    "required_env": [
+      "OXPINYIN_TOOL_PIN_BUILD",
+      "PINYIN_MODEL_DIR"
+    ]
   }
 ]

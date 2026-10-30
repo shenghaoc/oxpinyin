@@ -170,6 +170,14 @@ class HeavyLaunchTests(unittest.TestCase):
             self.assert_admitted_here(call)
         self.assertEqual(os.readlink(self.target / 'debug/user-dir-round-trip-test'), self.row()['executable'])
 
+    def test_table_utilities_share_one_package_build(self):
+        settings = Settings.read(self.env)
+        with self.recording(), mock.patch.object(Settings, 'record'):
+            self.assertEqual(settings.build(['gen-pinyin-table', 'gen-zhuyin-table']), 0)
+        self.assertEqual(len(self.calls), 1)
+        self.assertEqual(self.calls[0]['argv'].count('oxpinyin-utils'), 1)
+        self.assert_admitted_here(self.calls[0])
+
     def test_windows_builds_take_the_job_object_path_without_pass_fds(self):
         library = self.target / 'debug/libpinyin_capi.so'
         library.parent.mkdir(parents=True)

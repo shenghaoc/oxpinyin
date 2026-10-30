@@ -18,7 +18,10 @@ import re
 import signal
 import tempfile
 
-import contract_policy
+try:
+    from . import contract_policy
+except ImportError:  # standalone contract driver
+    import contract_policy
 
 
 NO_ABORT = object()

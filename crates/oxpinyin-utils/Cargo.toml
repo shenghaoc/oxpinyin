@@ -32,3 +32,7 @@ tempfile.workspace = true
 [[bin]]
 name = "gen_pinyin_table"
 path = "src/bin/gen_pinyin_table.rs"
+
+[[bin]]
+name = "gen_zhuyin_table"
+path = "src/bin/gen_zhuyin_table.rs"
