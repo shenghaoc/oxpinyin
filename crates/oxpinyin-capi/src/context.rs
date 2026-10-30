@@ -3,6 +3,8 @@
 use std::os::raw::c_char;
 use std::ptr;
 
+use oxpinyin_data::phrase_library::SUB_PHRASE_LOAD_SIGNATURE;
+
 use crate::state::{CapiContext, box_context, context_mut};
 // Only the harness-gated fixture hooks below take a shared context ref; the
 // shipped build (--features shipped) does not compile them.
@@ -86,7 +88,7 @@ fn init_context(systemdir: *const c_char, userdir: *const c_char) -> *mut Pinyin
 /// recorded, in the order the pin emits them.
 pub(crate) fn log_layout_faults(ctx: &CapiContext) {
     for fault in ctx.take_layout_faults() {
-        crate::ffi::log_critical(&fault.critical_message());
+        crate::ffi::return_if_fail_warning(SUB_PHRASE_LOAD_SIGNATURE, fault.expression);
     }
 }
 
@@ -243,7 +245,9 @@ pub fn save_context(context: *mut PinyinContext) -> bool {
     // `UserTableInfo::save`, which resets LC_NUMERIC to "C"
     // (`table_info.cpp:378`; register row 39); the two early returns do
     // not reach it.
-    let outcome = ctx.save_user(&mut |fault| crate::ffi::log_critical(&fault.critical_message()));
+    let outcome = ctx.save_user(&mut |fault| {
+        crate::ffi::return_if_fail_warning(SUB_PHRASE_LOAD_SIGNATURE, fault.expression)
+    });
     match outcome {
         // Class (c), `memory_chunk.h:543`/`:547`: a chunk file's header
         // write failed and the pin `assert`s there. The save fails and

@@ -1,8 +1,7 @@
 /*
  * The C library calls of libpinyin's table.conf and user.conf readers and
- * writer (074a2219 src/storage/table_info.cpp:194-397), and the init's and
- * the save's lines that share a failure sequence with those: one call per
- * function, with the pin's own format strings, so the host libc parses,
+ * writer (074a2219 src/storage/table_info.cpp:194-397), with their own
+ * diagnostics: one call per function, with the pin's own format strings, so the host libc parses,
  * prints and sets the locale exactly as the pin's does. Rust passes no
  * format string and makes no variadic call; it chooses which of these to
  * run and in what order.
@@ -101,31 +100,4 @@ void oxpinyin_input_report_user_open_failed(const char *filename) {
 /* table_info.cpp:382. */
 void oxpinyin_input_report_user_write_failed(const char *filename) {
     fprintf(stderr, "write %s failed.\n", filename);
-}
-
-/*
- * pinyin.cpp:1061, :1080, :1096, :1110, :1123; zhuyin.cpp:611, :637, :657,
- * :674, :689: a save's failed rename, on the stream mark_version's
- * table_info.cpp:382 line follows it on.
- */
-void oxpinyin_input_report_rename_failed(const char *from, const char *to) {
-    fprintf(stderr, "rename %s to %s failed.\n", from, to);
-}
-
-/*
- * pinyin.cpp:338, zhuyin.cpp:282: the init's report of a table.conf
- * SystemTableInfo2::load refused, after the load's own table_info.cpp:201
- * line when the file did not open.
- */
-void oxpinyin_input_report_load_failed(const char *filename) {
-    fprintf(stderr, "load %s failed!\n", filename);
-}
-
-/*
- * pinyin.cpp:256, :290 (the init's library loop), :956 (the save's
- * _write_files); zhuyin.cpp:200, :234, :589: a library MemoryChunk::mmap
- * refused, in the sequence check_format's and mark_version's lines share.
- */
-void oxpinyin_input_report_mmap_failed(const char *filename) {
-    fprintf(stderr, "mmap %s failed!\n", filename);
 }

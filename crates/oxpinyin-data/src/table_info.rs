@@ -173,19 +173,20 @@ pub fn pin_join(dir: &Path, name: &OsStr) -> PathBuf {
     }
 }
 
+/// Whether `byte` is a directory separator to `g_build_filename`: `/` on
+/// Unix; `/` and `\` on Windows, where GLib accepts both.
+const fn is_separator(byte: u8) -> bool {
+    byte == std::path::MAIN_SEPARATOR as u8 || (cfg!(windows) && byte == b'/')
+}
+
 /// [`pin_join`] on the parts' bytes.
 pub(crate) fn join_bytes(dir: &[u8], name: &[u8]) -> Vec<u8> {
     if dir.is_empty() || name.is_empty() {
         return [dir, name].concat();
     }
-    let is_separator = |byte: &u8| crate::pin_stderr::is_separator(*byte);
-    let leading = |part: &[u8]| part.iter().take_while(|byte| is_separator(byte)).count();
-    let trailing = |part: &[u8]| {
-        part.iter()
-            .rev()
-            .take_while(|byte| is_separator(byte))
-            .count()
-    };
+    let separator = |byte: &&u8| is_separator(**byte);
+    let leading = |part: &[u8]| part.iter().take_while(separator).count();
+    let trailing = |part: &[u8]| part.iter().rev().take_while(separator).count();
     let dir_start = leading(dir);
     let dir_end = dir_start.max(dir.len() - trailing(dir));
     let name_start = leading(name);

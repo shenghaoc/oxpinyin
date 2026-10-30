@@ -3,8 +3,10 @@
 
 fn main() {
     println!("cargo:rerun-if-changed=native/config.c");
+    println!("cargo:rerun-if-changed=native/diagnostic.c");
     cc::Build::new()
         .file("native/config.c")
+        .file("native/diagnostic.c")
         .warnings(true)
         .flag_if_supported("-Wformat=2")
         .flag_if_supported("-fvisibility=hidden")
