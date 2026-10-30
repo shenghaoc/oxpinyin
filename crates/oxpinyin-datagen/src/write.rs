@@ -46,8 +46,7 @@ pub enum Backend {
     KyotoCabinet,
     /// Berkeley DB — libpinyin's `--with-dbm=BerkeleyDB` files (its
     /// original DBM and the configure default). Requires the `bdb` cargo
-    /// feature (on by default — Berkeley DB is the workspace's default
-    /// selection, matching a bare libpinyin `./configure`).
+    /// feature.
     BerkeleyDb,
 }
 
@@ -63,14 +62,13 @@ impl Backend {
 
     /// The default selected backend for a normal `oxpinyin-datagen
     /// compile` run — matches `oxpinyin_store::DefaultStore` under the
-    /// workspace's default feature set (Berkeley DB, the analogue of a
-    /// bare libpinyin `./configure`).
+    /// `--no-default-features --features bdb` build.
     #[cfg(feature = "bdb")]
     pub const DEFAULT: Self = Self::BerkeleyDb;
 
     /// The default selected backend for a normal `oxpinyin-datagen
-    /// compile` run — matches `oxpinyin_store::DefaultStore` under a
-    /// `--no-default-features --features tkrzw` build.
+    /// compile` run — matches `oxpinyin_store::DefaultStore` under the
+    /// workspace's default feature set (tkrzw).
     #[cfg(feature = "tkrzw")]
     pub const DEFAULT: Self = Self::Tkrzw;
 

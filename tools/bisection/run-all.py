@@ -450,7 +450,7 @@ def run_main():
     parser.add_argument('--cases-prefix', metavar='P[,P...]',
                         help='union of contract case ID prefixes from the full registry, including untagged '
                              'cases; every prefix must match (requires contract-diff)')
-    parser.add_argument('--cells', default='bdb', help='comma-separated bdb,kc,tkrzw')
+    parser.add_argument('--cells', default='tkrzw', help='comma-separated bdb,kc,tkrzw')
     parser.add_argument('--issue', action='append', default=[],
                         help='issue number, W tag, or row:N; selects the runners and the exact '
                              'contract-diff cases registered under it')

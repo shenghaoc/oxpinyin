@@ -68,9 +68,21 @@ doctor:
 packaging *args: python
     @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev packaging "$@"
 
-# Run one native setup check: bdb, tkrzw or kyotocabinet.
-check backend="bdb": python
+# Run one native setup check: tkrzw (default), bdb or kyotocabinet.
+check backend="tkrzw": python
     @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev check {{backend}}
+
+# A distro tkrzw is found through pkg-config with nothing more. To use this
+# build instead, put DIR/lib/pkgconfig on PKG_CONFIG_PATH and DIR/lib on the
+# runtime library path (DIR/bin on Windows), as CI's tkrzw action does.
+# Build upstream tkrzw at the provisioning revision into an empty DIR.
+[unix]
+tkrzw-build prefix: python
+    @just heavy -- uv run --no-project --managed-python python -X lazy_imports=normal -m tools.tkrzw.build build --prefix "$1"
+
+[windows]
+tkrzw-build prefix: python
+    @just heavy -- uv run --no-project --managed-python python -X lazy_imports=normal -m tools.tkrzw.build build --prefix "{{prefix}}"; exit $LASTEXITCODE
 
 # Run a command inside the native heavy slot and memory admission.
 [unix]
@@ -189,15 +201,13 @@ profile-w8 *args:
 fuzz *args:
     @just heavy -- setarch "$(uname -m)" -R cargo +nightly-2026-08-01 fuzz run "$@"
 
-# cargo-fuzz supports Darwin. Homebrew supplies the facade's GLib and the
-# default store backend; the paths are selected explicitly, as in CI.
+# cargo-fuzz supports Darwin. pkg-config finds the facade's GLib and the
+# default store backend, tkrzw. Homebrew's tkrzw.pc names its compression
+# libraries without their directory, so Homebrew's lib joins LIBRARY_PATH.
 [macos]
 fuzz *args:
     @just heavy -- env \
-        OXPINYIN_BDB_INCLUDE_DIR="$(brew --prefix berkeley-db@5)/include" \
-        OXPINYIN_BDB_LIB_DIR="$(brew --prefix berkeley-db@5)/lib" \
-        PKG_CONFIG_PATH="$(brew --prefix glib)/lib/pkgconfig:$(brew --prefix berkeley-db@5)/lib/pkgconfig" \
-        LIBRARY_PATH="$(brew --prefix berkeley-db@5)/lib" \
+        LIBRARY_PATH="$(brew --prefix)/lib${LIBRARY_PATH:+:$LIBRARY_PATH}" \
         cargo +nightly-2026-08-01 fuzz run "$@"
 
 # Windows transport is unverified (#950); setarch is Linux-only.
@@ -215,17 +225,17 @@ coverage *args: python
 coverage *args: python
     @just heavy -- uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev coverage @args; exit $LASTEXITCODE
 
-# Run one store backend's sanitizer gate (bdb, kc or tkrzw), or all three,
+# Run one store backend's sanitizer gate (tkrzw by default, bdb or kc), or all three,
 # with address (default), thread, leak or memory instrumentation.
 [linux]
-sanitize backend="bdb" sanitizer="address": python
+sanitize backend="tkrzw" sanitizer="address": python
     @just heavy -- uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev sanitize "$1" "$2"
 
 # Darwin uses Homebrew's Berkeley DB 5.3, Kyoto Cabinet and tkrzw. The recipe
 # selects Darwin paths and omits Linux setarch. The tkrzw gate certifies the
 # host library through distro-probe.sh; put Homebrew's tkrzw_dbm_util on PATH.
 [macos]
-sanitize backend="bdb" sanitizer="address": python
+sanitize backend="tkrzw" sanitizer="address": python
     @just heavy -- env \
         OXPINYIN_BDB_INCLUDE_DIR="$(brew --prefix berkeley-db@5)/include" \
         OXPINYIN_BDB_LIB_DIR="$(brew --prefix berkeley-db@5)/lib" \
@@ -237,7 +247,7 @@ sanitize backend="bdb" sanitizer="address": python
 
 # The gates are Linux/Darwin native builds; Windows transport is unverified (#950).
 [windows]
-sanitize backend="bdb" sanitizer="address":
+sanitize backend="tkrzw" sanitizer="address":
     @echo "sanitize is unsupported on Windows: the sanitizer gates are Linux/Darwin native builds."
     @exit 1
 

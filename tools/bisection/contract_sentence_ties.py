@@ -14,6 +14,10 @@ import time
 from contract_abi import B, P, S, U, Z, final_step_sentences
 from contract_case_helpers import candidate_rows
 
+# Regeneration reads the reference cell's pin (docs/runbooks/verification.md,
+# rule 1: tkrzw since the maintainer decision of 2026-10-30 UTC).
+REFERENCE_CELL, REFERENCE_DBM = 'tkrzw', 'Tkrzw'
+
 
 def declared_sentence_residuals():
     """Read membership from the frozen gate's §12 declaration, not a copy."""
@@ -69,8 +73,9 @@ def regenerate_sentence_ties(prefix, fixture, *, Kit):
     manifest = fields(prefix / 'oracle-pin.txt')
     source_pin = fields(Path(__file__).resolve().parents[2] / 'tools/oracle/oracle-pin.txt')
     expected = (f"libpinyin-{source_pin['libpinyin_tag']}-{source_pin['libpinyin_commit']}"
-                f"+model20-{source_pin['model_archive_sha256']}+dbm-bdb")
-    assert manifest['pin_ref'] == expected and manifest['dbm'] == 'BerkeleyDB', 'off-pin bdb prefix'
+                f"+model20-{source_pin['model_archive_sha256']}+dbm-{REFERENCE_CELL}")
+    assert manifest['pin_ref'] == expected and manifest['dbm'] == REFERENCE_DBM, \
+        f'off-pin {REFERENCE_CELL} prefix'
     so = prefix / 'lib/libpinyin.so'
     assert hashlib.sha256(so.read_bytes()).hexdigest() == manifest['shared_object_sha256'], \
         'pin library checksum differs'

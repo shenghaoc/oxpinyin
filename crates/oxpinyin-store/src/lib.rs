@@ -16,10 +16,11 @@
 //! All are first-class and interchangeable: any oxpinyin binary
 //! picks exactly one at compile time via the cargo features and calls it
 //! through the same trait surface, and a table produced by any of them
-//! satisfies the same logical contract as the others. Berkeley DB is the
-//! default *selection* (the feature enabled when no other is named — the
-//! same default a bare libpinyin `./configure` picks), not
-//! a privileged implementation. Consumers depend on the narrowest tier
+//! satisfies the same logical contract as the others. tkrzw is oxpinyin's
+//! default *selection* (the feature enabled when no other is named), not a
+//! privileged implementation. Berkeley DB is libpinyin's own autoconf
+//! default, the backend a bare `./configure` picks; oxpinyin does not
+//! follow it. Consumers depend on the narrowest tier
 //! they need; the concrete backend the current build resolves to is the
 //! [`DefaultStore`] alias.
 //!
@@ -57,7 +58,7 @@
 // implementations behind the store's trait surface, and every oxpinyin
 // build has exactly one of them. Cargo features are additive under
 // unification, so a plausible-looking `cargo build --features kyotocabinet`
-// silently combines kyotocabinet with the default bdb feature — precisely the
+// silently combines kyotocabinet with the default tkrzw feature — precisely the
 // slide these guards refuse. Every consumer crate forwards its own
 // `{kyotocabinet, tkrzw, bdb}` features onto this crate, so
 // this one guard suffices for the whole workspace.
@@ -70,10 +71,9 @@
 #[cfg(not(any(feature = "kyotocabinet", feature = "tkrzw", feature = "bdb",)))]
 compile_error!(
     "oxpinyin-store: no store backend selected. Enable exactly one of \
-     `bdb` (the default, as in a bare libpinyin `./configure`), \
-     `kyotocabinet`, or `tkrzw`. On the \
-     command line: `cargo build` for the default (BDB), or \
-     `cargo build --no-default-features --features {kyotocabinet|tkrzw}` \
+     `tkrzw` (the default), `kyotocabinet`, or `bdb`. On the \
+     command line: `cargo build` for the default (tkrzw), or \
+     `cargo build --no-default-features --features {kyotocabinet|bdb}` \
      for a peer."
 );
 
@@ -1004,7 +1004,7 @@ pub const RAW_TABLE: &str = "data";
 // exactly that selection: it picks the enabled backend feature; a
 // multi-feature build resolves deterministically along the chain order
 // (kyotocabinet > tkrzw > bdb). The chain order is a
-// tie-break for the additive unification, not a hierarchy — Berkeley DB
+// tie-break for the additive unification, not a hierarchy — tkrzw
 // is only the enabled feature that the workspace's default set carries,
 // and any single `--features <backend>` on `--no-default-features`
 // selects that backend's peer implementation instead.
@@ -1019,14 +1019,15 @@ pub const RAW_TABLE: &str = "data";
 #[cfg(feature = "kyotocabinet")]
 pub type DefaultStore = KcStore;
 
-/// The default store backend — tkrzw, on
-/// `--no-default-features --features tkrzw`.
+/// The default store backend — tkrzw, the feature enabled in the
+/// workspace's default set (maintainer decision 2026-10-30 UTC: tkrzw is
+/// maintained upstream; Berkeley DB and Kyoto Cabinet are not).
 #[cfg(feature = "tkrzw")]
 pub type DefaultStore = TkrzwStore;
 
-/// The default store backend — Berkeley DB, the feature enabled in the
-/// workspace's default set (the analogue of a bare libpinyin
-/// `./configure`, whose `configure.ac` defaults `DBM` to `BerkeleyDB`).
+/// The selected store backend on `--no-default-features --features bdb`:
+/// Berkeley DB, libpinyin's original DBM and its `configure.ac` default
+/// (`DBM` is `BerkeleyDB`), not oxpinyin's default.
 #[cfg(feature = "bdb")]
 pub type DefaultStore = BdbStore;
 
@@ -2073,7 +2074,7 @@ mod tests {
     //
     // The workspace policy: the peer backends (KC,
     // tkrzw, BDB) are equal implementations behind the store's trait
-    // surface; Berkeley DB is the default *selection* (the feature
+    // surface; tkrzw is the default *selection* (the feature
     // enabled by the workspace's default set), not a privileged one. These tests
     // catch any accidental slide back to another default (or any other
     // silent reordering) — a plain string check on `DEFAULT_STORE_EXT`

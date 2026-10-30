@@ -34,7 +34,7 @@ pkg-config = { version = "0.3.34", optional = true }
 # facade -> runtime -> user -> data -> store (one backend per binary; see
 # oxpinyin-store's [features] for the model and precedence). Dictool no longer depends on the C ABI crate, so it is
 # pure Rust under any backend and portable to macOS and Windows.
-default = ["bdb"]
+default = ["tkrzw"]
 kyotocabinet = ["oxpinyin-facade/kyotocabinet", "dep:pkg-config"]
 bdb = ["oxpinyin-facade/bdb"]
 tkrzw = ["oxpinyin-facade/tkrzw"]

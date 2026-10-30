@@ -1,18 +1,17 @@
 //! Generates the C backends' bindings.
 //!
-//! Berkeley DB is the workspace's default selected backend, so a normal
-//! build runs bindgen over `db.h` and links the system libdb. With
+//! tkrzw is the workspace's default selected backend, so a normal
+//! build runs bindgen over `tkrzw_langc.h` and links libtkrzw. With
 //! `--no-default-features` — and with no C backend feature enabled —
 //! this script does nothing: no bindgen, no extra library. Selecting a
 //! peer backend explicitly (`--no-default-features --features
-//! {kyotocabinet|tkrzw}`) skips the C-binding step for the ones
+//! {kyotocabinet|bdb}`) skips the C-binding step for the ones
 //! it does not build.
 //!
 //! * `kyotocabinet` — the C entry points (`shim.h`) of a C++ shim over
 //!   Kyoto Cabinet's classes, which this script also compiles with `cc`.
-//! * `tkrzw` — the tkrzw C API (`tkrzw_langc.h`).
-//! * `bdb` — the Berkeley DB C API (`db.h`), from the system libdb, on by
-//!   default.
+//! * `tkrzw` — the tkrzw C API (`tkrzw_langc.h`), on by default.
+//! * `bdb` — the Berkeley DB C API (`db.h`), from the system libdb.
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
@@ -175,8 +174,8 @@ mod tkrzw {
             .probe("tkrzw")
             .unwrap_or_else(|error| {
                 panic!(
-                    "libtkrzw required: the `tkrzw` feature finds tkrzw \
-                     through pkg-config, which failed ({error}). Make tkrzw.pc \
+                    "libtkrzw required: the `tkrzw` feature (the default backend) finds \
+                     tkrzw through pkg-config, which failed ({error}). Make tkrzw.pc \
                      visible to pkg-config, or select another backend with \
                      `--no-default-features --features bdb` or `--features kyotocabinet`."
                 )

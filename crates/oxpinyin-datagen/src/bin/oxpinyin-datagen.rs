@@ -49,10 +49,10 @@ impl Default for Options {
         Self {
             model_dir: None,
             out_dir: None,
-            // Default selection from `Backend::DEFAULT` (Berkeley DB),
+            // Default selection from `Backend::DEFAULT` (tkrzw),
             // which mirrors `oxpinyin_store::DefaultStore` under the
             // workspace's default feature set. Each other peer backend
-            // (kyotocabinet, tkrzw) is reachable through the corresponding
+            // (kyotocabinet, bdb) is reachable through the corresponding
             // `--no-default-features --features <backend>` build plus
             // `--backend <backend>` at the CLI.
             backend: Backend::DEFAULT,

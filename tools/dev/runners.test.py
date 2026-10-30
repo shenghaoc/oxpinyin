@@ -206,7 +206,7 @@ class NbestSurfaceTests(unittest.TestCase):
             (data / 'table.conf').write_text('database format:BerkeleyDB\n')
             subject.touch()
             settings = Settings.read(dict(PINYIN_ORACLE_PREFIX=str(pin), NBEST_CAPI_SYSTEM=str(data),
-                                          OXPINYIN_CAPI_SO=str(subject)))
+                                          OXPINYIN_CAPI_SO=str(subject), PINYIN_ORACLE_DBM='bdb'))
             (pin / 'oracle-pin.txt').write_text(settings.expected_pin + '\n')
             output = b'probe:surface-short-dia guess=1\nprobe:surface-short-dia cand[0]=NBEST/0/x\n'
 
@@ -320,7 +320,7 @@ class DataTests(unittest.TestCase):
             for file in ('gb_char.bin', 'table.conf', 'pinyin_index.bin', 'phrase_index.bin', 'bigram.db'):
                 (directory / file).touch()
             (directory / 'table.conf').write_text('database format:BerkeleyDB\n')
-            settings = Settings.read({'OXPINYIN_SYSTEM_DIR': str(directory)})
+            settings = Settings.read({'OXPINYIN_SYSTEM_DIR': str(directory), 'PINYIN_ORACLE_DBM': 'bdb'})
             service = SystemData(settings)
             self.assertEqual(data_extension(directory), 'db')
             self.assertEqual(service.detect(directory), 'bin')

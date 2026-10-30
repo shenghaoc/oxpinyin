@@ -14,17 +14,16 @@ description = "model20 → oxpinyin runtime tables compiler for every storage ba
 pkg-config = { version = "0.3.34", optional = true }
 
 [features]
-# Berkeley DB is the default selected backend (matching oxpinyin-store's
-# workspace-default feature set, the analogue of a bare libpinyin
-# `./configure`) so a plain
-# `cargo run -p oxpinyin-datagen -- compile ...` produces a BDB data dir.
-# The other producers (kyotocabinet, tkrzw) are peer
+# tkrzw is the default selected backend (matching oxpinyin-store's
+# workspace-default feature set) so a plain
+# `cargo run -p oxpinyin-datagen -- compile ...` produces a tkrzw data dir.
+# The other producers (kyotocabinet, bdb) are peer
 # implementations behind the same `WriteStore` trait; each is chosen
 # explicitly with `--no-default-features --features
-# {kyotocabinet|tkrzw}` on the build and `--backend
-# {kyotocabinet|tkrzw}` on the run. Only the producers whose
+# {kyotocabinet|bdb}` on the build and `--backend
+# {kyotocabinet|bdb}` on the run. Only the producers whose
 # cargo features are enabled are available at runtime.
-default = ["bdb"]
+default = ["tkrzw"]
 # Enable the Kyoto Cabinet producer (`--backend kyotocabinet`); mirrors
 # oxpinyin-store.
 kyotocabinet = ["oxpinyin-store/kyotocabinet", "dep:pkg-config"]

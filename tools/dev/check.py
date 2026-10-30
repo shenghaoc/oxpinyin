@@ -21,12 +21,12 @@ USAGE = 'usage: tools/dev/check.sh [bdb|tkrzw|kyotocabinet]'
 def run(backend=None, out=sys.stdout, err=sys.stderr, env=None):
     """Check native prerequisites, then build and run the selected backend tests.
 
-    Default to Berkeley DB and include the C API tests on Linux. Print tool
+    Default to tkrzw and include the C API tests on Linux. Print tool
     and backend diagnostics; return 2 for an unknown backend, 1 for missing
     tools or slot errors, or the failing child status. The optional env is
     used only for the Cargo child admitted through the heavy slot.
     """
-    backend = backend or 'bdb'
+    backend = backend or 'tkrzw'
     if backend not in BACKENDS:
         print(USAGE, file=err, flush=True)
         return 2

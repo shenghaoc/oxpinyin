@@ -10,8 +10,8 @@ set -euo pipefail
 # Build dependencies: autotools (autoconf, automake, autopoint, libtool),
 # a C/C++ toolchain and make, pkg-config, gettext, gnome-common, curl,
 # tar, python3, and development headers for GLib 2.0, IBus 1.0, SQLite 3,
-# and the DBM backend selected by --dbm (Berkeley DB by default, or
-# Tkrzw / Kyoto Cabinet).
+# and the DBM backend selected by --dbm (Tkrzw by default, or
+# Berkeley DB / Kyoto Cabinet).
 
 # Both upstreams are fetched by commit SHA and verified by commit SHA. For
 # libpinyin this is forced: no release tag carries this pin (2.11.92 is
@@ -65,14 +65,15 @@ prefix=
 jobs=1
 apply_patches_dir=
 model_dir=
-# The parity oracle defaults to Berkeley DB: the reference build is a bare
-# `./configure`, which selects BerkeleyDB (configure.ac:94 at the pin) —
-# human ruling 2026-09-27 UTC, following Q1. tkrzw and kc stay selectable
-# with --dbm. The frozen capture goldens and the pinyin-oracle crate's
-# EXPECTED_PIN_REF are still the tkrzw cell (+dbm-tkrzw); build those
-# prefixes with `--dbm tkrzw` (tools/capture/run-capture.sh,
-# `just profile-w8`, docs/testing/capture-fixtures.md).
-dbm=bdb
+# The parity oracle defaults to tkrzw, the reference cell (maintainer
+# decision 2026-10-30 UTC: tkrzw is maintained upstream; Berkeley DB and
+# Kyoto Cabinet are not). It supersedes the 2026-09-27 UTC ruling that made
+# the bare `./configure` BerkeleyDB build (configure.ac:94 at the pin) the
+# default. bdb and kc stay selectable with --dbm. The frozen capture goldens
+# and the pinyin-oracle crate's EXPECTED_PIN_REF are the tkrzw cell too
+# (+dbm-tkrzw; tools/capture/run-capture.sh, `just profile-w8`,
+# docs/testing/capture-fixtures.md).
+dbm=tkrzw
 enable_libzhuyin=0
 # full: libraries, ibus-libpinyin and the model-derived data (the default).
 # libs: libraries, headers and oracle-pin.txt only — no model, no data. This
@@ -109,14 +110,14 @@ Options:
                        lib/libzhuyin.so beside libpinyin.so, which the zhuyin,
                        candidate-assembly, two-context and open-counter
                        differentials need.
-  --dbm NAME           DBM backend libpinyin is configured with: bdb
-                       (default — the bare ./configure reference build),
-                       kc, or tkrzw. Recorded in the pin ref (+dbm-<name>)
+  --dbm NAME           DBM backend libpinyin is configured with: tkrzw
+                       (default — the reference cell), bdb, or kc.
+                       Recorded in the pin ref (+dbm-<name>)
                        and the oracle-pin.txt dbm= field. Differentials
                        select the matching cell with PINYIN_ORACLE_DBM
                        (tools/bisection/oracle-cell.sh). The capture
-                       goldens and the pinyin-oracle crate need
-                       --dbm tkrzw (their frozen pin ref is +dbm-tkrzw).
+                       goldens and the pinyin-oracle crate use the
+                       default (their frozen pin ref is +dbm-tkrzw).
   --libs-only          Build only the libraries, headers, pkg-config files and
                        oracle-pin.txt: no model, no ibus-libpinyin, no data.
                        The result is byte-reproducible (see below) and is what

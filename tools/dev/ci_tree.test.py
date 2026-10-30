@@ -347,7 +347,7 @@ class MigratedWorkflowTests(unittest.TestCase):
         also = re.findall(r'--also (\S+)', gate)
         self.assertEqual(also, [
             '.github/workflows/store-backends.yml', 'tools/bisection/cells-for-diff.py',
-            'tools/bdb', 'tools/tkrzw', 'tools/dev/check.py', 'tools/dev/test_runner.py',
+            'tools/bdb', 'tools/tkrzw', '.github/actions/tkrzw', 'tools/dev/check.py', 'tools/dev/test_runner.py',
             'rust-toolchain.toml'])
         for path in also:
             with self.subTest(path=path):
@@ -393,8 +393,8 @@ class RefreshTests(unittest.TestCase):
                          ('cargo', 'build', '--locked', '--workspace', '--tests'))
         portable = ci_tree.refresh_commands('test-macos')[0].argv
         self.assertIn('oxpinyin-capi', portable)
-        self.assertEqual(portable[portable.index('--features') + 1], 'bdb')
-        for backend in ('kyotocabinet', 'tkrzw'):
+        self.assertEqual(portable[portable.index('--features') + 1], 'tkrzw')
+        for backend in ('bdb', 'kyotocabinet', 'tkrzw'):
             alternate = ci_tree.refresh_commands('store-features', backend)[0].argv
             self.assertNotIn('oxpinyin-capi', alternate)
             self.assertEqual(alternate[alternate.index('--features') + 1], backend)

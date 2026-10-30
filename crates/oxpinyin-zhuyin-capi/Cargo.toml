@@ -31,7 +31,7 @@ capi = []
 # `CARGO_FEATURE_<PEER>` of this crate to bake `database_format` into the
 # generated libzhuyin.pc, and because `cargo cinstall --features <peer>`
 # names them.
-default = ["bdb"]
+default = ["tkrzw"]
 kyotocabinet = ["oxpinyin-facade/kyotocabinet"]
 bdb = ["oxpinyin-facade/bdb"]
 tkrzw = ["oxpinyin-facade/tkrzw"]

@@ -972,6 +972,9 @@ if __name__ == '__main__':
         parser.add_argument('--config', type=Path, required=True)
         parser.add_argument('--oracle', type=Path, required=True)
         parser.add_argument('--build', type=Path, required=True)
+        # bdb on purpose, not the reference cell: the axis-J ledgers are
+        # measured on bdb, the base the kc and tkrzw delta ledgers inherit from
+        # (docs/runbooks/axis-j-ledgers.md).
         parser.add_argument('--cell', choices=sorted(CELLS), default='bdb')
         args = parser.parse_args()
         print(build(args.pin.resolve(), args.config.resolve(), args.build.resolve(), args.oracle.resolve(), args.cell))

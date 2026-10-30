@@ -181,9 +181,9 @@ RUN cp -a /tmp/libpinyin-src /tmp/build-B-src \
 #
 # Pinned to Kyoto Cabinet (2026-09-27 UTC, #552): this cell pairs with
 # cell B and was written when Kyoto Cabinet was the workspace default
-# (2026-08-29 → 2026-09-05). The default is Berkeley DB since
-# 2026-09-20 (`default = ["bdb"]`), so both commands name the backend
-# explicitly rather than taking default features.
+# (2026-08-29 → 2026-09-05). The default was Berkeley DB from
+# 2026-09-20 to 2026-10-30 and is tkrzw since, so both commands name the
+# backend explicitly rather than taking default features.
 
 RUN cargo cinstall --locked --release -p oxpinyin-capi \
     --no-default-features --features kyotocabinet \

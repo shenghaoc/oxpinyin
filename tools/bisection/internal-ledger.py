@@ -397,6 +397,9 @@ def main(contract_results=None, gate_receipt=None):
     """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--pin", type=Path, required=True)
+    # bdb on purpose, not the reference cell: the axis-J ledgers are measured on
+    # bdb, the base the kc and tkrzw delta ledgers inherit from
+    # (docs/runbooks/axis-j-ledgers.md).
     parser.add_argument("--cell", choices=sorted(gcov_measure.CELLS), default="bdb", help="the pin's DBM cell: its Makefile.am conditional and config.h")
     parser.add_argument("--delta-from", type=Path, help="bdb ledger to inherit from; emits only the cell's conditional-source rows and the shared rows whose reachability differs (kc/tkrzw only)")
     parser.add_argument("--config", type=Path, required=True, help="existing autoconf config.h of the selected cell (read-only)")

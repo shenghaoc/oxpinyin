@@ -80,13 +80,16 @@ jobs:
       - name: Bootstrap the bare runner essentials (apt)
         run: |
           apt-get update -qq
-          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl gcc g++ make libc6-dev pkg-config libclang-dev libdb-dev libglib2.0-dev util-linux
+          apt-get install -y --no-install-recommends bash python3 tar gzip zstd git ca-certificates curl gcc g++ make libc6-dev pkg-config libclang-dev libglib2.0-dev util-linux
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: ./.github/actions/bootstrap
         with:
           safe-directory: 'true'
+      # The fuzz targets build the workspace default backend, tkrzw.
+      - name: Provision tkrzw (built at the setup.sh revision and cached)
+        uses: ./.github/actions/tkrzw
       # One nightly toolchain serves both cargo-fuzz's build and the runs
       # (cargo install works on nightly; no second toolchain needed).
       - name: Install the pinned nightly with Rust sources
@@ -187,7 +190,7 @@ jobs:
       - name: Bootstrap the runner essentials and oracle build deps (apt)
         run: |
           apt-get update -qq
-          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl gcc g++ make pkg-config autoconf automake autopoint libtool gettext libglib2.0-dev libtkrzw-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev libclang-dev
+          apt-get install -y --no-install-recommends bash python3 tar gzip zstd git ca-certificates curl gcc g++ make pkg-config autoconf automake autopoint libtool gettext libglib2.0-dev libclang-dev
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -196,6 +199,10 @@ jobs:
           safe-directory: 'true'
           rustup: 'true'
           rust-cache: 'true'
+      # The pin's configure (PKG_CHECK_MODULES) and the subject both find
+      # this tkrzw through PKG_CONFIG_PATH.
+      - name: Provision tkrzw (built at the setup.sh revision and cached)
+        uses: ./.github/actions/tkrzw
       - name: Provision managed Python
         run: |
           bash tools/cloud/setup.sh --python-only
@@ -290,18 +297,19 @@ jobs:
         with:
           safe-directory: 'true'
           rustup: 'true'
-      # The snapshot runs tkrzw explicitly (the w3 fixture directory its
-      # tooling opens is the tkrzw one); the workspace default moved to
-      # Berkeley DB on 2026-09-20. valgrind supplies the instruction
+      # The snapshot runs tkrzw (the w3 fixture directory its tooling
+      # opens is the tkrzw one), the workspace default again since
+      # 2026-10-30, from the tkrzw action below. valgrind supplies the instruction
       # count; it is optional by design — the snapshot recipe records null
       # rather than zero when it is absent, so losing it degrades the sample
       # instead of corrupting the series.
       - name: Install build and measurement dependencies (apt)
         run: |
           apt-get install -y --no-install-recommends \
-            gcc g++ make pkg-config libclang-dev libtkrzw-dev liblzma-dev \
-            liblz4-dev libzstd-dev zlib1g-dev libglib2.0-dev libssl-dev \
+            gcc g++ make pkg-config libclang-dev libglib2.0-dev libssl-dev \
             binutils valgrind python3 util-linux
+      - name: Provision tkrzw (built at the setup.sh revision and cached)
+        uses: ./.github/actions/tkrzw
       # libssl-dev above: cargo-c pulls openssl-sys through the cargo crate,
       # and without it the build script dies with "Could not find directory of
       # OpenSSL installation". Confirmed by dispatching this lane once
@@ -423,8 +431,8 @@ jobs:
 
   # The full Windows workspace: clippy and the tests over the portable
   # workspace (all but capi, zhuyin-capi, and the backend-independent
-  # corpus, KMM, punctuation, and word tools) linked against vcpkg's
-  # Berkeley DB 4.8. Moved here from
+  # corpus, KMM, punctuation, and word tools) on the default backend,
+  # tkrzw, built with MSVC by the tkrzw action. Moved here from
   # ci.yml on 2026-10-22: it runs every night and on manual dispatch, not on
   # every PR. Dispatch it on the branch (windows_only: true) before merging
   # changes to Windows-sensitive storage, filesystem or native-build code,
@@ -433,10 +441,8 @@ jobs:
   test-windows:
     runs-on: windows-latest
     timeout-minutes: 45
-    # windows-latest defaults every `run:` to pwsh. The provisioning step
-    # is bash (`$VCPKG_INSTALLATION_ROOT`, `>> "$GITHUB_ENV"`); under pwsh
-    # those names are unset and the redirections write nowhere, so the
-    # lane never reaches a build.
+    # windows-latest defaults every `run:` to pwsh; every step here is bash
+    # (`>> "$GITHUB_ENV"`, `sha256sum`), which under pwsh would write nowhere.
     defaults:
       run:
         shell: bash
@@ -444,10 +450,8 @@ jobs:
     env:
       CARGO_TERM_COLOR: always
       RUSTFLAGS: -D warnings
-      # The package specs (port[features]:triplet) passed to `vcpkg install`,
-      # space-separated. The binary cache key hashes this value, so adding a
-      # port or feature here gives the cache a new key.
-      VCPKG_PACKAGES: berkeleydb:x64-windows
+      # bindgen reads tkrzw_langc.h through the runner's preinstalled LLVM.
+      LIBCLANG_PATH: C:\Program Files\LLVM\bin
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -457,95 +461,12 @@ jobs:
           rustup-components: clippy
           rust-cache: 'true'
       - run: rustup show active-toolchain
-      # vcpkg's binary cache, persisted across runs. vcpkg writes one zip per
-      # built package, named by the package's ABI hash, to the files provider
-      # below, and `vcpkg install` still runs every time: it computes each
-      # ABI hash itself (port files, triplet, compiler, dependencies) and
-      # restores only an archive whose hash matches, so a stale entry is
-      # never used, only rebuilt. The installed tree is not cached.
-      #
-      # The cache key changes whenever an input to those hashes can: the
-      # vcpkg checkout revision (ports and baseline), the triplet, the runner
-      # image (compiler and SDK), the requested package specs
-      # (VCPKG_PACKAGES), and any vcpkg manifest, configuration, overlay or
-      # triplet file in this repository (none today). The restore-keys fall
-      # back to the newest entry for the same revision and image, then for
-      # the same image OS and triplet; vcpkg's own hash check decides what in
-      # it is reusable.
-      #
-      # Restore and save are separate steps. The save runs right after
-      # `vcpkg install`, before the build and tests, so a red test run still
-      # keeps the archives it built; it is skipped when the restore matched
-      # the primary key exactly, because that entry already exists.
-      - name: Compute the vcpkg binary cache key
-        id: vcpkg-cache-key
-        run: |
-          set -euo pipefail
-          if vcpkg_rev=$(git -C "$VCPKG_INSTALLATION_ROOT" rev-parse HEAD 2>/dev/null); then
-            echo "vcpkg revision: $vcpkg_rev"
-          else
-            vcpkg_rev=baseline-$(sha256sum "$VCPKG_INSTALLATION_ROOT/versions/baseline.json" | cut -c1-40)
-            echo "vcpkg checkout has no git metadata; keyed on $vcpkg_rev"
-          fi
-          image="${ImageOS:?runner image OS unknown}-${ImageVersion:?runner image version unknown}"
-          cache_dir="${RUNNER_TEMP//\\//}/vcpkg-binary-cache"
-          mkdir -p "$cache_dir"
-          echo "VCPKG_BINARY_SOURCES=clear;files,$cache_dir,readwrite" >> "$GITHUB_ENV"
-          packages=$(printf '%s' "$VCPKG_PACKAGES" | sha256sum | cut -c1-16)
-          echo "vcpkg packages: $VCPKG_PACKAGES (key component $packages)"
-          {
-            echo "dir=$cache_dir"
-            echo "prefix=vcpkg-bin-$ImageOS-x64-windows-"
-            echo "key=vcpkg-bin-$ImageOS-x64-windows-$vcpkg_rev-$image"
-            echo "packages=$packages"
-          } >> "$GITHUB_OUTPUT"
-      - name: Restore the vcpkg binary cache
-        id: vcpkg-cache-restore
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ steps.vcpkg-cache-key.outputs.dir }}
-          key: ${{ steps.vcpkg-cache-key.outputs.key }}-pkgs-${{ steps.vcpkg-cache-key.outputs.packages }}-manifest-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-overlays/**', 'triplets/**') || 'none' }}
-          restore-keys: |
-            ${{ steps.vcpkg-cache-key.outputs.key }}-
-            ${{ steps.vcpkg-cache-key.outputs.prefix }}
-      # vcpkg's berkeleydb port: 4.8.30, the Sleepycat line, the same
-      # family as the 5.3 the Linux lanes link. The port installs
-      # libdb48.lib / libdb48.dll and the build_windows headers. The
-      # store build script is pointed at that tree; the import library
-      # is named explicitly because the bare `-ldb` fallback does not
-      # match libdb48.lib; the DLL directory joins PATH for the test
-      # binaries; bindgen gets the runner's preinstalled LLVM.
-      - name: Install the store backend (vcpkg Berkeley DB)
-        run: |
-          read -ra specs <<< "$VCPKG_PACKAGES"
-          vcpkg install "${specs[@]}"
-          # `vcpkg list` prints "<port>:<triplet>  <version>#<port-version>  <description>".
-          # The port name is followed by ":x64-windows", not whitespace, and
-          # the version carries a "#<n>" suffix, so a pattern expecting
-          # "berkeleydb" then spaces then "4.8" matches nothing and the
-          # lane dies before the build. Pin the 4.8 line; a bump off it
-          # fails here.
-          vcpkg list berkeleydb:x64-windows | grep -Eq 'berkeleydb:x64-windows[[:space:]]+4[.]8[.]' \
-            || { echo "::error::vcpkg berkeleydb is not the documented 4.8 line: $(vcpkg list berkeleydb:x64-windows)"; exit 1; }
-          echo "OXPINYIN_BDB_INCLUDE_DIR=$VCPKG_INSTALLATION_ROOT\\installed\\x64-windows\\include" >> "$GITHUB_ENV"
-          echo "OXPINYIN_BDB_LIB_DIR=$VCPKG_INSTALLATION_ROOT\\installed\\x64-windows\\lib" >> "$GITHUB_ENV"
-          echo "OXPINYIN_BDB_LIB_NAME=libdb48" >> "$GITHUB_ENV"
-          # vcpkg's berkeleydb port is 4.8.30. The store refuses any libdb
-          # other than the surveyed 5.3 unless this is set, and it is set
-          # only here: it covers that one comparison, and the process
-          # prints a warning naming both versions. No other lane sets it.
-          echo "OXPINYIN_BDB_ALLOW_UNSURVEYED_VERSION=1" >> "$GITHUB_ENV"
-          echo 'LIBCLANG_PATH=C:\Program Files\LLVM\bin' >> "$GITHUB_ENV"
-          echo "$VCPKG_INSTALLATION_ROOT\\installed\\x64-windows\\bin" >> "$GITHUB_PATH"
-      - name: Save the vcpkg binary cache
-        if: steps.vcpkg-cache-restore.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ steps.vcpkg-cache-key.outputs.dir }}
-          key: ${{ steps.vcpkg-cache-restore.outputs.cache-primary-key }}
-      # The workspace default is Berkeley DB, so this lane no longer
-      # passes `--features bdb`. The vcpkg provisioning above is what
-      # makes that default link. The macOS job's exclusions, plus
+      # nmake in the Visual Studio developer environment, a static tkrzw.lib
+      # with the DLL C runtime, and a tkrzw.pc the store build script finds
+      # through PKG_CONFIG_PATH (tools/tkrzw/build.py).
+      - name: Provision tkrzw (built at the setup.sh revision and cached)
+        uses: ./.github/actions/tkrzw
+      # The default backend. The macOS job's exclusions, plus
       # oxpinyin-utils: like the C facades it links GLib (through
       # oxpinyin-input's `tools` boundary), which this lane does not
       # provision; macOS installs GLib and tests it.

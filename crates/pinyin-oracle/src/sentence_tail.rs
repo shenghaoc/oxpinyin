@@ -39,7 +39,7 @@ pub fn repo_root() -> PathBuf {
 /// when it holds all three tables in the compiled-in backend's format.
 ///
 /// The tables carry libpinyin's own file names on every backend
-/// (`SystemDbm::file_name`; Berkeley DB is the default build's);
+/// (`SystemDbm::file_name`; tkrzw is the default build's);
 /// `None` otherwise (so callers can skip).
 #[must_use]
 pub fn export_dir() -> Option<PathBuf> {

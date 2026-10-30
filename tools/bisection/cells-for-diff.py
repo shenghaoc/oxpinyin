@@ -44,7 +44,7 @@ import sys
 # The backends as the checks name them, and the cells a differential runs.
 BACKENDS = ('bdb', 'tkrzw', 'kyotocabinet')
 CELLS = ('bdb', 'kc', 'tkrzw')
-REFERENCE_CELL = 'bdb'
+REFERENCE_CELL = 'tkrzw'
 STORE_DIR = 'crates/oxpinyin-store/'
 # Rule 2's grep -E pattern as written; git grep -E reads the same syntax.
 FEATURE_GATE = 'feature *= *"(' + '|'.join(BACKENDS) + ')"'
