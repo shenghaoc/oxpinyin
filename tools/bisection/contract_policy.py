@@ -93,6 +93,22 @@ def observation_problem(side, *, pin_abort=False):
     return None
 
 
+def tool_observation_problem(side, *, pin_signal=None):
+    """Tool observations include all bytes; only a source-registered pin may signal."""
+    if not isinstance(side, dict) or set(side) != {'exit', 'stdout', 'stderr', 'files'}:
+        return 'needs complete exit, stdout, stderr and files'
+    code = side['exit']
+    if type(code) is not int or (code < 0 and code != pin_signal):
+        return 'unexpected process termination'
+    if not all(isinstance(side[key], str) for key in ('stdout', 'stderr')):
+        return 'streams must preserve bytes as surrogateescaped text'
+    if not isinstance(side['files'], dict) or any(
+            not isinstance(key, str) or not isinstance(value, str)
+            for key, value in side['files'].items()):
+        return 'file listing must be complete'
+    return None
+
+
 def _utf8_text(text):
     """Escape surrogate code points without escaping ordinary non-ASCII text."""
     return text.encode('utf-8', 'backslashreplace').decode('utf-8')

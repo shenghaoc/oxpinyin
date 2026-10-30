@@ -92,19 +92,19 @@ pub fn print_nnodes(nnodes: c_int) {
 }
 
 /// `Too long phrase:%s\t%s\t%d\n` on `stderr` (`:169`).
-pub fn report_too_long(input: &TableInput) {
-    native_tool::gpt_report_too_long(input.phrase(), input.pinyin(), input.freq);
+pub fn report_too_long(phrase: &CStr, pinyin: &CStr, freq: u32) {
+    native_tool::gpt_report_too_long(phrase, pinyin, freq);
 }
 
 /// `Invalid pinyin:%s\t%s\t%d\n` on `stderr` (`:186`).
-pub fn report_invalid_pinyin(input: &TableInput) {
-    native_tool::gpt_report_invalid_pinyin(input.phrase(), input.pinyin(), input.freq);
+pub fn report_invalid_pinyin(phrase: &CStr, pinyin: &CStr, freq: u32) {
+    native_tool::gpt_report_invalid_pinyin(phrase, pinyin, freq);
 }
 
 /// `Duplicate item: phrase:%s\tpinyin:%s\tfreq:%u\n` on `stderr`
 /// (`:215-216`).
-pub fn report_duplicate(input: &TableInput) {
-    native_tool::gpt_report_duplicate(input.phrase(), input.pinyin(), input.freq);
+pub fn report_duplicate(phrase: &CStr, pinyin: &CStr, freq: u32) {
+    native_tool::gpt_report_duplicate(phrase, pinyin, freq);
 }
 
 /// `gen_pinyin_table: invalid UTF-8 phrase: %s\n` on `stderr`: not a pin

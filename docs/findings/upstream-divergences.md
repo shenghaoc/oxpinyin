@@ -4280,3 +4280,8 @@ numbered in that order, so a little-endian and a big-endian host number
 such phrases differently. oxpinyin compares the words' native-endian bytes
 and reproduces the pin on each host (constitution §6, #1303). Held by
 `rows_follow_length_then_first_reading_then_phrase_bytes`.
+
+The shared `tool-diff` runner binds the pinyin and zhuyin invalid-UTF-8
+cases to [eio-table-generator-invalid-utf8.md](eio-table-generator-invalid-utf8.md).
+The zhuyin utility's earlier missing-frequency null read is separately
+recorded in [eio-zhuyin-missing-frequency.md](eio-zhuyin-missing-frequency.md).

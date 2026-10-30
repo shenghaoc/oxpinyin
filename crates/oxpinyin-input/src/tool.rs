@@ -15,6 +15,7 @@ use std::ffi::{CStr, CString, OsString, c_int, c_long};
 use crate::native_tool::{self, Istream, OptionSpec, OptionValue as RawValue, Output};
 
 pub mod gen_pinyin_table;
+pub mod gen_zhuyin_table;
 
 /// `setlocale(LC_ALL, "")`, the first call of every utility's `main`
 /// (074a2219 `utils/segment/ngseg.cpp:111`); whether it answered a name.

@@ -662,7 +662,7 @@ with mock.patch.object(Path,'read_text',read), mock.patch.object(sys,'argv',[scr
         rows = json.loads((HERE / 'runners.json').read_text())
         heavy = sorted(r['name'] for r in rows if run_all['is_heavy'](r))
         self.assertEqual(heavy, ['abi-alloc-failure', 'bisect', 'contract-diff', 'coverage', 'fuzz', 'native-startup',
-                                'open-counter-diff', 'sanitize', 'transformed-options-sweep'])
+                                'open-counter-diff', 'sanitize', 'tool-diff', 'transformed-options-sweep'])
 
     def test_a_stale_slot_is_reclaimed_with_a_message(self):
         dead = subprocess.Popen([sys.executable, '-c', 'pass'])

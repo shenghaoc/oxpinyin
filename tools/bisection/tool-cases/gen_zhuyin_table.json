@@ -1,0 +1,216 @@
+{
+  "schema": 1,
+  "cases": [
+    {
+      "id": "zhuyin-normal",
+      "utility": "gen_zhuyin_table",
+      "source": "utils/storage/gen_zhuyin_table.cpp at 074a2219: 101-334",
+      "args": [
+        "-t",
+        "3",
+        "-o",
+        "out.table",
+        "in.txt"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      },
+      "files": {
+        "in.txt": {
+          "text": "你好 10 ㄋㄧˇ ㄏㄠˇ\n你 5 ㄋㄧˇ\n尼 2 ㄋㄧˇ\n你好 4 ㄋㄧˇ'ㄏㄠˇ\n呢 1 ㄋㄜ\n好 7 ㄏㄠˇ\n好 2 ㄏㄠˋ\n你们 3 ㄋㄧ\n一二三四五六七八九十一二三四五六 1 ㄧ\n你 5\n"
+        }
+      }
+    },
+    {
+      "id": "zhuyin-no-final-newline",
+      "utility": "gen_zhuyin_table",
+      "source": "utils/storage/gen_zhuyin_table.cpp at 074a2219: 101-334",
+      "args": [
+        "in.txt"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      },
+      "files": {
+        "in.txt": {
+          "text": "你 5 ㄋㄧ\n好 3 ㄏㄠ"
+        }
+      }
+    },
+    {
+      "id": "zhuyin-help",
+      "utility": "gen_zhuyin_table",
+      "source": "utils/storage/gen_zhuyin_table.cpp at 074a2219: 101-334",
+      "args": [
+        "--help"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      }
+    },
+    {
+      "id": "zhuyin-bad-option",
+      "utility": "gen_zhuyin_table",
+      "source": "utils/storage/gen_zhuyin_table.cpp at 074a2219: 101-334",
+      "args": [
+        "--bogus"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      }
+    },
+    {
+      "id": "zhuyin-missing-input",
+      "utility": "gen_zhuyin_table",
+      "source": "utils/storage/gen_zhuyin_table.cpp at 074a2219: 101-334",
+      "args": [
+        "absent.txt"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      }
+    },
+    {
+      "id": "zhuyin-empty-phrase",
+      "utility": "gen_zhuyin_table",
+      "source": "utils/storage/gen_zhuyin_table.cpp at 074a2219: 101-334",
+      "args": [
+        "in.txt"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      },
+      "files": {
+        "in.txt": {
+          "text": " 1 \n你 5 ㄋㄧ\n"
+        }
+      }
+    },
+    {
+      "id": "zhuyin-output-failure",
+      "utility": "gen_zhuyin_table",
+      "source": "utils/storage/gen_zhuyin_table.cpp at 074a2219: 101-334",
+      "args": [
+        "-o",
+        "missing/out.table"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      }
+    },
+    {
+      "id": "zhuyin-no-input",
+      "utility": "gen_zhuyin_table",
+      "source": "utils/storage/gen_zhuyin_table.cpp at 074a2219: 101-334",
+      "args": [],
+      "env": {
+        "LC_ALL": "C"
+      }
+    },
+    {
+      "id": "zhuyin-invalid-utf8",
+      "utility": "gen_zhuyin_table",
+      "source": "utils/storage/gen_zhuyin_table.cpp at 074a2219: 101-334",
+      "args": [
+        "in.txt"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      },
+      "files": {
+        "in.txt": {
+          "hex": "ff203120e3849a0a"
+        }
+      },
+      "policy_record": "eio-table-generator-invalid-utf8.md",
+      "pin_signal": -11
+    },
+    {
+      "id": "zhuyin-invalid-utf8-after-row",
+      "utility": "gen_zhuyin_table",
+      "source": "utils/storage/gen_zhuyin_table.cpp at 074a2219: 101-334",
+      "args": [
+        "in.txt"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      },
+      "files": {
+        "in.txt": {
+          "hex": "e4bda0203520e3848be384a70affff203120e3849a27e3849a0a"
+        }
+      },
+      "policy_record": "eio-table-generator-invalid-utf8.md",
+      "pin_signal": -11
+    },
+    {
+      "id": "zhuyin-missing-frequency",
+      "utility": "gen_zhuyin_table",
+      "source": "utils/storage/gen_zhuyin_table.cpp at 074a2219: 101-334",
+      "args": [
+        "in.txt"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      },
+      "files": {
+        "in.txt": {
+          "text": "你好\n"
+        }
+      },
+      "policy_record": "eio-zhuyin-missing-frequency.md",
+      "pin_signal": -11
+    },
+    {
+      "id": "zhuyin-model20-gb_char",
+      "utility": "gen_zhuyin_table",
+      "source": "utils/storage/gen_zhuyin_table.cpp at 074a2219: 101-334",
+      "args": [
+        "in.txt"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      },
+      "files": {
+        "in.txt": {
+          "model_table": "gb_char.table",
+          "format": "zhuyin"
+        }
+      }
+    },
+    {
+      "id": "zhuyin-model20-gbk_char",
+      "utility": "gen_zhuyin_table",
+      "source": "utils/storage/gen_zhuyin_table.cpp at 074a2219: 101-334",
+      "args": [
+        "in.txt"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      },
+      "files": {
+        "in.txt": {
+          "model_table": "gbk_char.table",
+          "format": "zhuyin"
+        }
+      }
+    },
+    {
+      "id": "zhuyin-model20-merged",
+      "utility": "gen_zhuyin_table",
+      "source": "utils/storage/gen_zhuyin_table.cpp at 074a2219: 101-334",
+      "args": [
+        "in.txt"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      },
+      "files": {
+        "in.txt": {
+          "model_table": "merged.table",
+          "format": "zhuyin"
+        }
+      }
+    }
+  ]
+}

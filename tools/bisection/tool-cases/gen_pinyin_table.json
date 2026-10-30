@@ -1,0 +1,147 @@
+{
+  "schema": 1,
+  "cases": [
+    {
+      "id": "pinyin-normal",
+      "utility": "gen_pinyin_table",
+      "source": "utils/storage/gen_pinyin_table.cpp at 074a2219: 97-322",
+      "args": [
+        "-t",
+        "3",
+        "-o",
+        "out.table",
+        "in.txt"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      },
+      "files": {
+        "in.txt": {
+          "text": "你好 ni'hao 10\n你 ni 5\n尼 ni 2\n你好 nihao 4\n呢 ne 1\n好 hao3 7\n好 hao4 2\n你们 ni 3\n一二三四五六七八九十一二三四五六 yi 1\n"
+        }
+      }
+    },
+    {
+      "id": "pinyin-no-final-newline",
+      "utility": "gen_pinyin_table",
+      "source": "utils/storage/gen_pinyin_table.cpp at 074a2219: 97-322",
+      "args": [
+        "in.txt"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      },
+      "files": {
+        "in.txt": {
+          "text": "你 ni 5\n好 hao 3"
+        }
+      }
+    },
+    {
+      "id": "pinyin-missing-input",
+      "utility": "gen_pinyin_table",
+      "source": "utils/storage/gen_pinyin_table.cpp at 074a2219: 97-322",
+      "args": [
+        "absent.txt"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      }
+    },
+    {
+      "id": "pinyin-bad-option",
+      "utility": "gen_pinyin_table",
+      "source": "utils/storage/gen_pinyin_table.cpp at 074a2219: 97-322",
+      "args": [
+        "--bogus"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      }
+    },
+    {
+      "id": "pinyin-empty-phrase",
+      "utility": "gen_pinyin_table",
+      "source": "utils/storage/gen_pinyin_table.cpp at 074a2219: 97-322",
+      "args": [
+        "in.txt"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      },
+      "files": {
+        "in.txt": {
+          "hex": "00202d20310ae4bda0206e6920350a"
+        }
+      }
+    },
+    {
+      "id": "pinyin-help",
+      "utility": "gen_pinyin_table",
+      "source": "utils/storage/gen_pinyin_table.cpp at 074a2219: 97-322",
+      "args": [
+        "--help"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      }
+    },
+    {
+      "id": "pinyin-output-failure",
+      "utility": "gen_pinyin_table",
+      "source": "utils/storage/gen_pinyin_table.cpp at 074a2219: 97-322",
+      "args": [
+        "-o",
+        "missing/out.table"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      }
+    },
+    {
+      "id": "pinyin-no-input",
+      "utility": "gen_pinyin_table",
+      "source": "utils/storage/gen_pinyin_table.cpp at 074a2219: 97-322",
+      "args": [],
+      "env": {
+        "LC_ALL": "C"
+      }
+    },
+    {
+      "id": "pinyin-invalid-utf8",
+      "utility": "gen_pinyin_table",
+      "source": "utils/storage/gen_pinyin_table.cpp at 074a2219: 97-322",
+      "args": [
+        "in.txt"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      },
+      "files": {
+        "in.txt": {
+          "hex": "ff206120310a"
+        }
+      },
+      "policy_record": "eio-table-generator-invalid-utf8.md",
+      "pin_signal": -11
+    },
+    {
+      "id": "pinyin-invalid-utf8-after-row",
+      "utility": "gen_pinyin_table",
+      "source": "utils/storage/gen_pinyin_table.cpp at 074a2219: 97-322",
+      "args": [
+        "in.txt"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      },
+      "files": {
+        "in.txt": {
+          "hex": "e4bda0206e6920350affff2061276120310a"
+        }
+      },
+      "policy_record": "eio-table-generator-invalid-utf8.md",
+      "pin_signal": -11
+    }
+  ]
+}

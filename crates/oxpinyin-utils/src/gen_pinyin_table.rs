@@ -13,7 +13,7 @@
 
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
-use std::ffi::{CString, OsString, c_int};
+use std::ffi::{CStr, CString, OsString, c_int};
 
 use oxpinyin_core::graph::SegmentGraph;
 use oxpinyin_core::{ChewingKey, OptionBits, PINYIN_CORRECT_ALL, USE_TONE};
@@ -33,7 +33,7 @@ const PHRASE_MASK: u32 = 0x00FF_FFFF;
 
 /// The pin's `static GOptionEntry entries[]` (`:38-43`): `phrase_index`
 /// starts at 0 and `outputfile` at `"temp.out"`.
-fn entries() -> [OptionEntry; 2] {
+pub(crate) fn entries() -> [OptionEntry; 2] {
     [
         OptionEntry {
             long_name: c"phraseindex",
@@ -147,26 +147,40 @@ impl Table {
     /// keeps its NULL `uniphrase`, so the run reaches the output as the
     /// pin's does.
     pub fn feed_line(&mut self, input: &TableInput) {
-        let length = usize::try_from(input.phrase_utf8_strlen()).unwrap_or(0);
+        self.feed_parts(
+            input.phrase(),
+            input.pinyin(),
+            input.freq(),
+            usize::try_from(input.phrase_utf8_strlen()).unwrap_or(0),
+            parse_keys,
+        );
+    }
+
+    /// Shared phrase/reading tree; each caller supplies its own pin parser.
+    pub(crate) fn feed_parts(
+        &mut self,
+        phrase: &CStr,
+        pinyin: &CStr,
+        freq: u32,
+        length: usize,
+        parse: fn(&[u8]) -> Vec<ChewingKey>,
+    ) {
         if length >= MAX_PHRASE_LENGTH {
-            edge::report_too_long(input);
+            edge::report_too_long(phrase, pinyin, freq);
             return;
         }
-        let (uniphrase, _) = utf8_to_ucs4(input.phrase());
-        let keys = parse_keys(input.pinyin().to_bytes());
+        let (uniphrase, _) = utf8_to_ucs4(phrase);
+        let keys = parse(pinyin.to_bytes());
         if keys.len() != length {
-            edge::report_invalid_pinyin(input);
+            edge::report_invalid_pinyin(phrase, pinyin, freq);
             return;
         }
         let uniphrase = uniphrase.map_or_else(
-            || Uniphrase::Unconverted(input.phrase().to_bytes().to_vec()),
+            || Uniphrase::Unconverted(phrase.to_bytes().to_vec()),
             Uniphrase::Converted,
         );
         let item = PhraseItem { length, uniphrase };
-        let reading = Reading {
-            keys,
-            freq: input.freq(),
-        };
+        let reading = Reading { keys, freq };
         let Some(readings) = self.tree.get_mut(&item) else {
             self.tree.insert(item, vec![reading]);
             return;
@@ -174,7 +188,7 @@ impl Table {
         let mut found = false;
         for current in readings.iter_mut() {
             if exact_compare2(&reading.keys, &current.keys).is_eq() {
-                edge::report_duplicate(input);
+                edge::report_duplicate(phrase, pinyin, freq);
                 current.freq = current.freq.wrapping_add(reading.freq);
                 found = true;
             }
@@ -224,6 +238,23 @@ impl Sorted<'_> {
     /// `stderr` and exits 1 through `exit`, which flushes what was
     /// written.
     pub fn write(&self, output: &OutputStream, phrase_index: c_int) {
+        self.write_with(
+            output,
+            phrase_index,
+            ChewingKey::pinyin_string,
+            edge::report_unconverted_phrase,
+        );
+    }
+
+    /// The generators share numbering/output calls; only the key renderer and
+    /// the class (b) refusal name differ (gen_zhuyin_table.cpp:286-325).
+    pub(crate) fn write_with(
+        &self,
+        output: &OutputStream,
+        phrase_index: c_int,
+        render: fn(ChewingKey) -> String,
+        refuse: fn(&CStr),
+    ) {
         let library = phrase_index.cast_unsigned().wrapping_shl(24) & LIBRARY_MASK;
         let mut token: u32 = 1;
         for array in self.0.iter().skip(1) {
@@ -231,16 +262,14 @@ impl Sorted<'_> {
                 let uniphrase = match &item.uniphrase {
                     Uniphrase::Converted(words) => words,
                     Uniphrase::Unconverted(bytes) => {
-                        edge::report_unconverted_phrase(
-                            &CString::new(bytes.clone()).unwrap_or_default(),
-                        );
+                        refuse(&CString::new(bytes.clone()).unwrap_or_default());
                         tool::exit(1);
                     }
                 };
                 let phrase_str = ucs4_to_utf8(uniphrase).and_then(|bytes| CString::new(bytes).ok());
                 for reading in readings.iter() {
                     let pinyins: Vec<String> =
-                        reading.keys.iter().map(|key| key.pinyin_string()).collect();
+                        reading.keys.iter().map(|&key| render(key)).collect();
                     let pinyin_str = CString::new(pinyins.join("'")).unwrap_or_default();
                     // `if (freq < 3) freq = 3;` (`:311-312`).
                     let freq = reading.freq.max(3);
