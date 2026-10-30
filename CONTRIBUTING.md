@@ -36,6 +36,11 @@ together, so you do not install libpinyin or reconstruct its environment.
 Native tests and differentials provide different evidence.
 Package-manager examples and runtime adapters are not extra test targets.
 
+Before changing code, read the [architecture](docs/architecture.md) to see
+which crate owns the behaviour and what it may depend on. Read the
+[Rust conventions](docs/rust-conventions.md) before writing Rust; they cover
+the lints, panics, matches and arithmetic that review checks.
+
 Advanced [backend](docs/runbooks/backends.md), [oracle](docs/runbooks/oracle.md),
 [packaging](docs/packaging.md), [release](docs/runbooks/release.md) and
 [measurement](docs/runbooks/benches.md) procedures apply only when that task needs them. Keep model downloads and
