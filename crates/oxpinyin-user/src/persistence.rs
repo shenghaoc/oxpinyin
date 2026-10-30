@@ -1305,7 +1305,14 @@ fn load_libraries(
                     }
                 }
             }
-            Err(error) => loaded.skipped.push(format!("{name}: {error}")),
+            Err(error) => {
+                loaded.skipped.push(format!("{name}: {error}"));
+                if let Some(libraries) = libraries.as_deref_mut()
+                    && let Ok(headers) = UserLibrary::load_headers(&bytes)
+                {
+                    libraries.insert(nibble, headers);
+                }
+            }
         }
     }
 }
