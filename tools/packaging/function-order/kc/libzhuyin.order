@@ -7,7 +7,6 @@ init	<alloc::collections::btree::map::BTreeMap<u8, u32>>::insert [instantiating 
 init	<alloc::collections::btree::map::IntoIter<(u32, alloc::vec::Vec<u16>), alloc::collections::btree::set_val::SetValZST>>::dying_next [instantiating crate: oxpinyin_user]
 init	<alloc::collections::btree::map::IntoIter<alloc::vec::Vec<u16>, alloc::collections::btree::set_val::SetValZST>>::dying_next [instantiating crate: oxpinyin_user]
 init	<alloc::collections::btree::map::IntoIter<alloc::vec::Vec<u8>, alloc::vec::Vec<u8>>>::dying_next [instantiating crate: oxpinyin_user]
-init	<alloc::collections::btree::map::IntoIter<u32, alloc::vec::Vec<(u32, oxpinyin_user::phrase::UserPronunciation)>>>::dying_next
 init	<alloc::collections::btree::map::IntoIter<u8, alloc::collections::btree::map::BTreeMap<u32, core::option::Option<oxpinyin_data::chunk_write::ChunkItem>>>>::dying_next [instantiating crate: oxpinyin_user]
 init	<alloc::collections::btree::map::IntoIter<u8, u32>>::dying_next [instantiating crate: oxpinyin_facade]
 init	<alloc::collections::btree::map::Iter<(u32, alloc::vec::Vec<u16>), alloc::collections::btree::set_val::SetValZST> as core::iter::traits::iterator::Iterator>::next [instantiating crate: oxpinyin_user]
@@ -204,7 +203,6 @@ init	alloc::boxed::box_new_uninit
 init	core::fmt::float::float_to_decimal_common_shortest::<f32>
 init	core::num::imp::flt2dec::digits_to_dec_str
 init	core::ptr::drop_glue::<alloc::collections::btree::dedup_sorted_iter::DedupSortedIter<alloc::string::String, oxpinyin_engine::config::ConfigValue, alloc::vec::into_iter::IntoIter<(alloc::string::String, oxpinyin_engine::config::ConfigValue)>>>
-init	core::ptr::drop_glue::<alloc::collections::btree::map::BTreeMap<u32, alloc::vec::Vec<oxpinyin_user::phrase::UserPronunciation>>>
 init	core::ptr::drop_glue::<alloc::collections::btree::map::BTreeMap<u32, core::option::Option<oxpinyin_data::chunk_write::ChunkItem>>> [instantiating crate: oxpinyin_user]
 init	core::ptr::drop_glue::<alloc::collections::btree::map::BTreeMap<u32, u32>> [instantiating crate: oxpinyin_user]
 init	core::ptr::drop_glue::<alloc::collections::btree::map::BTreeMap<u8, alloc::collections::btree::map::BTreeMap<u32, core::option::Option<oxpinyin_data::chunk_write::ChunkItem>>>> [instantiating crate: oxpinyin_facade]
@@ -212,6 +210,7 @@ init	core::ptr::drop_glue::<alloc::collections::btree::map::IntoIter<alloc::stri
 init	core::ptr::drop_glue::<alloc::vec::Vec<(u32, oxpinyin_data::chunk_write::ChunkItem)>>
 init	core::ptr::drop_glue::<alloc::vec::drain::Drain<oxpinyin_core::vocab::PhraseEntry>> [instantiating crate: oxpinyin_facade]
 init	core::ptr::drop_glue::<alloc::vec::into_iter::IntoIter<oxpinyin_user::phrase::UserPhrase>>
+init	core::ptr::drop_glue::<core::iter::adapters::map::Map<alloc::vec::into_iter::IntoIter<oxpinyin_user::store::PhraseRead>, <oxpinyin_user::store::GenericUserStore<oxpinyin_store::kyotocabinet::KcStore>>::phrases::{closure#0}>>
 init	core::ptr::drop_glue::<oxpinyin_data::table_info::TableRow>
 init	core::ptr::drop_glue::<oxpinyin_engine::config::ConfigValues> [instantiating crate: oxpinyin_facade]
 init	core::ptr::drop_glue::<oxpinyin_engine::session::Scratch> [instantiating crate: oxpinyin_facade]
