@@ -373,6 +373,29 @@ pub fn decode_phrase_item(bytes: &[u8]) -> Result<ChunkItem, ChunkWriteError> {
 pub fn decode_sub_phrase_index(
     payload: &[u8],
 ) -> Result<(u32, Vec<(u32, ChunkItem)>), ChunkWriteError> {
+    let (total, offset_array, entry_area) = sub_phrase_index_sections(payload)?;
+    let mut items = Vec::new();
+    for (slot, window) in offset_array.chunks_exact(4).enumerate() {
+        let offset = u32::from_le_bytes([window[0], window[1], window[2], window[3]]) as usize;
+        if offset == 0 {
+            continue;
+        }
+        let bytes = entry_area.get(offset..).ok_or_else(|| {
+            ChunkWriteError(format!("sub phrase index: slot {slot} offset out of range"))
+        })?;
+        let item = decode_phrase_item(bytes)
+            .map_err(|error| ChunkWriteError(format!("sub phrase index: slot {slot}: {error}")))?;
+        items.push((u32::try_from(slot).unwrap_or(u32::MAX), item));
+    }
+    Ok((total, items))
+}
+
+/// Borrow the stored total, offset-array bytes and item arena without decoding
+/// any items. Uses exactly [`decode_sub_phrase_index`]'s layout checks.
+///
+/// # Errors
+/// Refuses a short header, invalid separator or section bounds.
+pub fn sub_phrase_index_sections(payload: &[u8]) -> Result<(u32, &[u8], &[u8]), ChunkWriteError> {
     let header = payload
         .get(..16)
         .ok_or_else(|| ChunkWriteError("sub phrase index: short header".to_owned()))?;
@@ -422,20 +445,7 @@ pub fn decode_sub_phrase_index(
         .get(index_two..index_three - 1)
         .ok_or_else(|| ChunkWriteError("sub phrase index: no entry area".to_owned()))?;
 
-    let mut items = Vec::new();
-    for (slot, window) in offset_array.chunks_exact(4).enumerate() {
-        let offset = u32::from_le_bytes([window[0], window[1], window[2], window[3]]) as usize;
-        if offset == 0 {
-            continue;
-        }
-        let bytes = entry_area.get(offset..).ok_or_else(|| {
-            ChunkWriteError(format!("sub phrase index: slot {slot} offset out of range"))
-        })?;
-        let item = decode_phrase_item(bytes)
-            .map_err(|error| ChunkWriteError(format!("sub phrase index: slot {slot}: {error}")))?;
-        items.push((u32::try_from(slot).unwrap_or(u32::MAX), item));
-    }
-    Ok((total, items))
+    Ok((total, offset_array, entry_area))
 }
 
 #[cfg(test)]

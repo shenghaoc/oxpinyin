@@ -40,9 +40,7 @@ use std::path::{Path, PathBuf};
 
 use oxpinyin_core::ChewingKey;
 use oxpinyin_data::chunk_format::{CHUNK_HEADER_SIZE, build_memory_chunk};
-use oxpinyin_data::chunk_write::{
-    ChunkItem, PHRASE_MASK, build_chunk, decode_sub_phrase_index, encode_phrase_item,
-};
+use oxpinyin_data::chunk_write::{ChunkItem, PHRASE_MASK, build_chunk, encode_phrase_item};
 use oxpinyin_data::phrase_libraries::PhraseLibraries;
 use oxpinyin_data::row_format::pinyin_index::PinyinIndexItem;
 use oxpinyin_data::table_entries::pinyin_index_entries;
@@ -58,6 +56,7 @@ use oxpinyin_store::{
 
 use crate::replay::{Merge, ReplayedLibrary, Stop, raw_unigram};
 use crate::store::SaveReport;
+use crate::user_library::UserLibrary;
 
 /// `USER_TABLE_INFO` (`pinyin_internal.h:56`).
 const USER_CONF: &str = "user.conf";
@@ -554,6 +553,8 @@ pub struct Loaded {
 /// the user pinyin index's key metadata needed by session wiring.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct LoadedProfile {
+    /// USER_FILE arenas used only while seeding the existing session rows.
+    pub(crate) user_libraries: BTreeMap<u8, UserLibrary>,
     /// Completed private views retained by session opens.
     pub(crate) replayed: BTreeMap<u8, ReplayedLibrary>,
     /// The public load result.
@@ -621,6 +622,15 @@ impl IndexKeys {
 /// libraries carry and `state.indexed` names, and the indexed readings of
 /// items added to a system library.
 pub(crate) fn chewing_rows(state: &UserState, originals: &SystemOriginals) -> Vec<PinyinIndexItem> {
+    chewing_rows_with_views(state, originals, &BTreeMap::new(), &BTreeMap::new())
+}
+
+fn chewing_rows_with_views(
+    state: &UserState,
+    originals: &SystemOriginals,
+    libraries: &BTreeMap<u8, UserLibrary>,
+    replayed: &BTreeMap<u8, ReplayedLibrary>,
+) -> Vec<PinyinIndexItem> {
     // The pinyin index holds the readings `add_index` saw. The phrase
     // index is independently stored and copied verbatim below.
     let mut chewing_rows: Vec<PinyinIndexItem> = Vec::new();
@@ -665,6 +675,42 @@ pub(crate) fn chewing_rows(state: &UserState, originals: &SystemOriginals) -> Ve
                             .collect(),
                     });
                 }
+            }
+        }
+    }
+    let mut append_view =
+        |nibble, slot, item: oxpinyin_data::phrase_library::PhraseItemView<'_>| {
+            let token = token_of(nibble, slot);
+            for pron in item.pronunciations() {
+                let packed: Vec<_> = pron
+                    .keys
+                    .chunks_exact(2)
+                    .map(|b| u16::from_le_bytes([b[0], b[1]]))
+                    .collect();
+                if state.indexed.contains(&(token, packed.clone())) {
+                    chewing_rows.push(PinyinIndexItem {
+                        token,
+                        keys: packed.into_iter().map(ChewingKey::from_packed).collect(),
+                    });
+                }
+            }
+        };
+    for (&nibble, library) in libraries {
+        for (slot, item) in library.items() {
+            append_view(nibble, slot, item);
+        }
+    }
+    for (&nibble, library) in replayed {
+        for slot in library.add_candidates().filter(|slot| {
+            !originals
+                .get(&nibble)
+                .is_some_and(|original| original.contains_item(*slot))
+        }) {
+            if let Some(bytes) = library.bytes(slot)
+                && let Some(item) =
+                    oxpinyin_data::phrase_library::PhraseItemView::from_bytes(&bytes)
+            {
+                append_view(nibble, slot, item);
             }
         }
     }
@@ -873,12 +919,19 @@ fn load_checked_impl(
             ..Loaded::default()
         },
         replayed: BTreeMap::new(),
+        user_libraries: BTreeMap::new(),
         overlong_index_keys: Vec::new(),
         index_keys: BTreeSet::new(),
         index_file_keys: IndexKeys::default(),
     };
     if check.conform {
-        load_libraries(dir, originals.layout(), &mut profile.loaded, None);
+        load_libraries(
+            dir,
+            originals.layout(),
+            &mut profile.loaded,
+            None,
+            lazy.then_some(&mut profile.user_libraries),
+        );
         #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
         let mut records = Vec::new();
         load_user_pinyin_index(
@@ -911,12 +964,14 @@ fn load_checked_impl(
         // derive keeps its bytes (#785).
         #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
         {
-            profile.index_file_keys.tails = crate::pinyin_chain::file_tails(
+            let rows = chewing_rows_with_views(
                 &profile.loaded.state,
                 originals,
-                &profile.index_file_keys.pinyin,
-                records,
+                &profile.user_libraries,
+                &profile.replayed,
             );
+            profile.index_file_keys.tails =
+                crate::pinyin_chain::file_tails(&rows, &profile.index_file_keys.pinyin, records);
         }
     }
     profile
@@ -1197,7 +1252,13 @@ pub(crate) fn load_user_bigram_db(dir: &Path) -> Result<DefaultUserBigramDb, Per
 }
 
 /// The `USER_FILE` chunk stores, or only library `only`'s.
-fn load_libraries(dir: &Path, layout: &UserFileLayout, loaded: &mut Loaded, only: Option<u8>) {
+fn load_libraries(
+    dir: &Path,
+    layout: &UserFileLayout,
+    loaded: &mut Loaded,
+    only: Option<u8>,
+    mut libraries: Option<&mut BTreeMap<u8, UserLibrary>>,
+) {
     for (nibble, file) in layout.user_libraries() {
         let nibble = *nibble;
         if only.is_some_and(|only| only != nibble) {
@@ -1218,24 +1279,30 @@ fn load_libraries(dir: &Path, layout: &UserFileLayout, loaded: &mut Loaded, only
                 continue;
             }
         };
-        let payload = match read_chunk_payload(&bytes) {
-            Ok(payload) => payload,
-            Err(error) => {
-                loaded.skipped.push(format!("{name}: {error}"));
-                continue;
-            }
-        };
-        match decode_sub_phrase_index(payload) {
-            Ok((total, items)) => {
-                loaded.library_totals.insert(nibble, total);
+        match UserLibrary::load(&bytes) {
+            Ok(library) => {
+                loaded.library_totals.insert(nibble, library.total());
                 // An absent library and an empty one are the same state;
                 // keep the map absent so save/load are byte- and
                 // value-stable round trips.
-                if !items.is_empty() {
-                    loaded
-                        .state
-                        .libraries
-                        .insert(nibble, items.into_iter().collect());
+                if !library.is_empty() {
+                    if let Some(libraries) = libraries.as_deref_mut() {
+                        libraries.insert(nibble, library);
+                    } else {
+                        // Value-only persistence callers retain their existing
+                        // owned output; session init consumes the views directly.
+                        loaded.state.libraries.insert(
+                            nibble,
+                            library
+                                .items()
+                                .filter_map(|(slot, view)| {
+                                    oxpinyin_data::chunk_write::decode_phrase_item(view.as_bytes())
+                                        .ok()
+                                        .map(|item| (slot, item))
+                                })
+                                .collect(),
+                        );
+                    }
                 }
             }
             Err(error) => loaded.skipped.push(format!("{name}: {error}")),
@@ -1291,7 +1358,7 @@ pub(crate) fn load_user_library(
     nibble: u8,
 ) -> (UserState, BTreeMap<u8, u32>) {
     let mut loaded = Loaded::default();
-    load_libraries(dir, layout, &mut loaded, Some(nibble));
+    load_libraries(dir, layout, &mut loaded, Some(nibble), None);
     (loaded.state, loaded.library_totals)
 }
 
@@ -1492,7 +1559,7 @@ fn load_logs_with_mask(
             }
         }
         let (total, overrides) = if let Some(replayed) = replayed.as_deref_mut() {
-            let (total, overrides, retained) = merge.finish_lazy(&mut loaded.skipped, &name);
+            let (total, overrides, retained) = merge.finish_views(&mut loaded.skipped, &name);
             if let Some(retained) = retained {
                 replayed.insert(nibble, retained);
             }
@@ -2421,6 +2488,17 @@ mod tests {
     use super::*;
     use oxpinyin_data::user_files::OPEN_COUNTER_LIMIT;
 
+    #[test]
+    fn user_library_store_matches_existing_persistence_fixtures() {
+        let mut fixtures: Vec<_> = state().libraries.into_values().collect();
+        fixtures.extend(originals().values().map(|library| library.items.clone()));
+        for items in fixtures {
+            let file = build_chunk(&items.into_iter().collect::<Vec<_>>()).unwrap();
+            let library = UserLibrary::load(&file).unwrap();
+            assert_eq!(library.store().unwrap(), file);
+        }
+    }
+
     fn item(phrase: &[u32], unigram: u32, prons: &[(Vec<u16>, u32)]) -> ChunkItem {
         ChunkItem {
             phrase: phrase.to_vec(),
@@ -2572,6 +2650,21 @@ mod tests {
             ..saved
         };
         let mut actual = loaded.loaded.state;
+        for (nibble, library) in loaded.user_libraries {
+            actual.libraries.insert(
+                nibble,
+                library
+                    .items()
+                    .map(|(slot, item)| {
+                        (
+                            slot,
+                            oxpinyin_data::chunk_write::decode_phrase_item(item.as_bytes())
+                                .unwrap(),
+                        )
+                    })
+                    .collect(),
+            );
+        }
         for (library, replayed) in loaded.replayed {
             for slot in replayed.slots() {
                 actual

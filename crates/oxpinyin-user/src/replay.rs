@@ -347,6 +347,9 @@ pub(crate) struct Merge {
     /// Slots whose unigram changed, or whose write needs a conservative check.
     /// Payloads and unchanged reading-only slots are never staged here.
     unigram_changes: Vec<u32>,
+    /// Validation retained an item absent from the replay origin. Without one,
+    /// ADD-view consumers need not revisit every retained original slot.
+    has_added_items: bool,
     /// A finished in-place write's header claims more than the slot it wrote.
     overreach: bool,
     /// Relocated or removed slots only; in-place writes keep mapped offsets.
@@ -371,6 +374,7 @@ impl Merge {
             content,
             touched: Vec::new(),
             unigram_changes: Vec::new(),
+            has_added_items: false,
             overreach: false,
             offsets: BTreeMap::new(),
             total: original.map(|library| library.total),
@@ -807,6 +811,16 @@ impl ReplayedLibrary {
     pub(crate) fn slots(&self) -> impl DoubleEndedIterator<Item = u32> + '_ {
         self.0.touched.iter().copied()
     }
+    /// Skip ADD discovery for MODIFY-only views. Mixed views keep the existing
+    /// original-item filter at the caller, including inline fixture overrides.
+    pub(crate) fn add_candidates(&self) -> impl Iterator<Item = u32> + '_ {
+        let slots = if self.0.has_added_items {
+            self.0.touched.as_slice()
+        } else {
+            &[]
+        };
+        slots.iter().copied()
+    }
     /// Only slots that may need a stored unigram delta. Repeated changes are
     /// visited once, and rejected/removed slots never reach this iterator.
     pub(crate) fn unigram_slots(&self) -> impl Iterator<Item = u32> + '_ {
@@ -872,6 +886,7 @@ impl Merge {
         skipped: &mut Vec<String>,
         name: &impl std::fmt::Display,
         next: &mut Vec<u32>,
+        retain_adds: bool,
     ) -> bool {
         let relocated = self.offsets.get(&slot).copied();
         let offset = relocated.unwrap_or_else(|| self.original_offset(slot));
@@ -921,6 +936,18 @@ impl Merge {
                     }
                 }
                 None => {
+                    if retain_adds {
+                        if let Some(bytes) = self.content.item(offset, len) {
+                            match validate_phrase_item(&bytes) {
+                                Ok(()) => {
+                                    self.has_added_items = true;
+                                    return true;
+                                }
+                                Err(error) => skipped.push(format!("{name}: {error}")),
+                            }
+                        }
+                        return false;
+                    }
                     if let Some(bytes) = self.content.item(offset, len) {
                         match decode_phrase_item(&bytes) {
                             Ok(item) => {
@@ -942,11 +969,12 @@ impl Merge {
         typed: &mut BTreeMap<u32, Option<ChunkItem>>,
         skipped: &mut Vec<String>,
         name: &impl std::fmt::Display,
+        retain_adds: bool,
     ) {
         let mut slots = std::mem::take(&mut self.touched);
         let mut processed: BTreeSet<u32> = slots.iter().copied().collect();
         let mut extra = Vec::new();
-        slots.retain(|&slot| self.finish_slot(slot, typed, skipped, name, &mut extra));
+        slots.retain(|&slot| self.finish_slot(slot, typed, skipped, name, &mut extra, retain_adds));
         extra.sort_unstable();
         extra.dedup();
         extra.retain(|slot| processed.insert(*slot));
@@ -954,7 +982,7 @@ impl Merge {
         while !extra.is_empty() {
             let mut next = Vec::new();
             for slot in extra {
-                if self.finish_slot(slot, typed, skipped, name, &mut next) {
+                if self.finish_slot(slot, typed, skipped, name, &mut next, retain_adds) {
                     slots.push(slot);
                     added = true;
                 }
@@ -972,10 +1000,38 @@ impl Merge {
 
     /// Keep original live slots as one private view. Added and removed slots
     /// still use the session's existing value/index/removal paths.
+    #[cfg(test)]
     pub(crate) fn finish_lazy(
+        self,
+        skipped: &mut Vec<String>,
+        name: &impl std::fmt::Display,
+    ) -> (
+        Option<u32>,
+        BTreeMap<u32, Option<ChunkItem>>,
+        Option<ReplayedLibrary>,
+    ) {
+        self.finish_lazy_impl(skipped, name, false)
+    }
+
+    /// Retain ADD bodies as views too; the session seeds their rows through
+    /// the same conversion as USER_FILE items.
+    pub(crate) fn finish_views(
+        self,
+        skipped: &mut Vec<String>,
+        name: &impl std::fmt::Display,
+    ) -> (
+        Option<u32>,
+        BTreeMap<u32, Option<ChunkItem>>,
+        Option<ReplayedLibrary>,
+    ) {
+        self.finish_lazy_impl(skipped, name, true)
+    }
+
+    fn finish_lazy_impl(
         mut self,
         skipped: &mut Vec<String>,
         name: &impl std::fmt::Display,
+        retain_adds: bool,
     ) -> (
         Option<u32>,
         BTreeMap<u32, Option<ChunkItem>>,
@@ -1039,6 +1095,18 @@ impl Merge {
                             return true;
                         }
                         if let Some(bytes) = self.content.item(offset, len) {
+                            if retain_adds {
+                                return match validate_phrase_item(&bytes) {
+                                    Ok(()) => {
+                                        self.has_added_items = true;
+                                        true
+                                    }
+                                    Err(error) => {
+                                        skipped.push(format!("{name}: {error}"));
+                                        false
+                                    }
+                                };
+                            }
                             match decode_phrase_item(&bytes) {
                                 Ok(item) => {
                                     typed.insert(slot, Some(item));
@@ -1051,7 +1119,7 @@ impl Merge {
                 }
             });
         } else {
-            self.finish_overreach(&mut typed, skipped, name);
+            self.finish_overreach(&mut typed, skipped, name, retain_adds);
         }
         self.touched.shrink_to_fit();
         self.unigram_changes.sort_unstable();
@@ -1101,6 +1169,98 @@ mod tests {
         assert_eq!(view.slots().collect::<Vec<_>>(), [1, 2]);
         assert_eq!(view.unigram_slots().collect::<Vec<_>>(), [2]);
         assert_eq!(view.item(2).expect("restored item").unigram, 50);
+    }
+
+    #[test]
+    fn add_candidates_skip_modify_only_and_original_slot_add_records() {
+        let original = library();
+        for replacement in [false, true] {
+            let mut merge = Merge::new(Some(&original));
+            let changed = with_freq(one(), 77);
+            let record = if replacement {
+                LogRecord::Add {
+                    token: 1,
+                    new_item: changed,
+                }
+            } else {
+                modify(1, one(), changed)
+            };
+            assert!(merge.apply(record).is_ok());
+            let mut skipped = Vec::new();
+            let (_, _, view) = merge.finish_views(&mut skipped, &"test");
+            let view = view.expect("retained original");
+            assert!(skipped.is_empty());
+            assert_eq!(view.slots().collect::<Vec<_>>(), [1]);
+            assert!(view.add_candidates().next().is_none());
+            assert_eq!(view.item(1).unwrap().prons[0].1, 77);
+        }
+    }
+
+    #[test]
+    fn add_candidates_preserve_mixed_sparse_and_overreach_views() {
+        let original = library();
+        for overreach in [false, true] {
+            let mut merge = if overreach {
+                over_length_merge()
+            } else {
+                Merge::new(Some(&original))
+            };
+            if !overreach {
+                assert!(merge.apply(modify(1, one(), with_freq(one(), 77))).is_ok());
+            }
+            for record in [
+                LogRecord::Add {
+                    token: 1024,
+                    new_item: one(),
+                },
+                LogRecord::Add {
+                    token: 2048,
+                    new_item: one(),
+                },
+                LogRecord::Remove {
+                    token: 2048,
+                    old_item: one(),
+                },
+            ] {
+                assert!(merge.apply(record).is_ok());
+            }
+            let mut skipped = Vec::new();
+            let (_, _, view) = merge.finish_views(&mut skipped, &"test");
+            let view = view.expect("retained originals and addition");
+            assert!(skipped.is_empty());
+            let expected: Vec<_> = view
+                .slots()
+                .filter(|&slot| !original.contains_item(slot))
+                .collect();
+            let actual: Vec<_> = view
+                .add_candidates()
+                .filter(|&slot| !original.contains_item(slot))
+                .collect();
+            assert_eq!(expected, [1024]);
+            assert_eq!(actual, expected);
+            assert_eq!(view.item(1024), decode_phrase_item(&one()).ok());
+        }
+    }
+
+    #[test]
+    fn add_candidates_ignore_rejected_additions_and_original_overreach() {
+        for rejected_add in [false, true] {
+            let mut merge = over_length_merge();
+            if rejected_add {
+                assert!(
+                    merge
+                        .apply(LogRecord::Add {
+                            token: 1024,
+                            new_item: bytes_with(&[255, 255], 1),
+                        })
+                        .is_ok()
+                );
+            }
+            let (_, _, view) = merge.finish_views(&mut Vec::new(), &"test");
+            let view = view.expect("retained overreach originals");
+            assert_eq!(view.slots().collect::<Vec<_>>(), [1, 2]);
+            assert!(view.add_candidates().next().is_none());
+        }
     }
 
     #[test]
