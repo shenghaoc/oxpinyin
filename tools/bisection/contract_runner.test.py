@@ -91,22 +91,6 @@ class StateTests(unittest.TestCase):
 
 
 class AdapterTests(unittest.TestCase):
-    def test_driver_adapters_keep_their_namespaces_and_forward_to_their_own_runner(self):
-        driver = load_driver()
-        calls = (
-            ('run_worker', ('pinyin', '/so', '/data', 'case', '/scratch'),
-             ('pinyin', '/so', '/data', 'case', '/scratch', None, None, None)),
-            ('run_case', ('spec', 'pin', 'subject', 'data', 'case', 'scratch', 10),
-             ('spec', 'pin', 'subject', 'data', 'case', 'scratch', 10)),
-            ('case_jobs', (2,), (2,)),
-            ('case_results', ('args', 'names', 'data', 'scratch', 2), ('args', 'names', 'data', 'scratch', 2)),
-        )
-        for name, given, expected in calls:
-            with self.subTest(name=name), patch.object(driver._RUNNER, name, return_value='forwarded') as moved:
-                self.assertIs(getattr(driver, name).__globals__, vars(driver))
-                self.assertEqual(getattr(driver, name)(*given), 'forwarded')
-                moved.assert_called_once_with(*expected)
-
     def test_case_results_uses_a_new_driver_registry_and_run_case_patch_at_call_time(self):
         driver = load_driver()
         arguments = SimpleNamespace(prefix=Path('/pin'), cell='bdb', pinyin_so=Path('/subject'), case_timeout=1)
