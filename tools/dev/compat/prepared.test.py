@@ -61,6 +61,28 @@ class PreparedTests(unittest.TestCase):
             self.assertEqual(self.prepare('same-data-dir-diff'), [])
             run.assert_not_called()
 
+    def test_tool_builds_are_cached_only_when_both_binaries_exist(self):
+        def build(command, **options):
+            self.assertTrue(options['heavy'])
+            if command[0] == 'bash':
+                self.assertIn('--libs-only', command)
+                work = Path(command[command.index('--work-dir') + 1])
+                (work / 'src/libpinyin-pin/utils/storage').mkdir(parents=True, exist_ok=True)
+            else:
+                self.assertEqual(command[0], 'make')
+                self.assertEqual(command[-2:], ['gen_pinyin_table', 'gen_zhuyin_table'])
+                for name in command[-2:]:
+                    (Path(command[2]) / name).touch()
+        with patch.object(prepared, 'run', side_effect=build) as run:
+            self.assertEqual(self.prepare('tool-diff'), [])
+            self.assertEqual(run.call_count, 2)
+            source = Path(self.env['OXPINYIN_TOOL_PIN_BUILD'])
+            self.assertEqual(self.prepare('tool-diff'), [])
+            self.assertEqual(run.call_count, 2)
+            (source / 'utils/storage/gen_zhuyin_table').unlink()
+            self.prepare('tool-diff')
+            self.assertEqual(run.call_count, 4)
+
     def test_frontend_full_recipe_and_cell_assignment_are_cached(self):
         with patch.object(prepared, 'run', side_effect=self.fake_build) as run:
             options = self.prepare('import-diff')

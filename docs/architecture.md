@@ -19,7 +19,7 @@
 | oxpinyin-dictool | Conversions and standalone vocabulary export through facade §9 import/export. Pure Rust, with no C-ABI dependency. | forbid | yes | yes |
 | oxpinyin-store | Ordered byte-KV interface with one compile-time Berkeley DB, Kyoto Cabinet or tkrzw backend. See backend dependencies below. | deny | yes | via engine |
 | oxpinyin-datagen | model20 compiler for each backend's native runtime files. Shares layouts with data readers. | forbid | yes | never |
-| oxpinyin-utils | libpinyin's utilities under their own names and interfaces, through `oxpinyin-input`'s `tools` boundary (stage 5 of `docs/findings/external-io-boundary.md`): `gen_pinyin_table`. | forbid | Linux, macOS (needs GLib) | never |
+| oxpinyin-utils | libpinyin's utilities under their own names and interfaces, through `oxpinyin-input`'s `tools` boundary (stage 5 of `docs/findings/external-io-boundary.md`): `gen_pinyin_table` and `gen_zhuyin_table`. | forbid | Linux, macOS (needs GLib) | never |
 | oxpinyin-corpus | Training corpus frontend: zhwiki dump to ngseg raw text. | forbid | yes | never |
 | oxpinyin-training | Backend-sensitive training modules: segment, counter, lambda, emitter, eval and train. Existing stage binary names remain. One backend selection covers all modules. | forbid | yes | never |
 | oxpinyin-testsupport | Shared fixture Dictionary/LanguageModel doubles, model20 cache locator and scorer suites. See test-support dependencies below. | forbid | yes | never |
