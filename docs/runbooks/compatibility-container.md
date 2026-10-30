@@ -1,6 +1,6 @@
 # Canonical Debian compatibility verification
 
-[Provisioned cloud sessions](cloud.md) are first-class supported hosts for
+[Provisioned remote Linux hosts](cloud.md) are first-class supported hosts for
 every gate. This container procedure is a second supported route. First
 [develop and test natively](setup.md). Use this procedure only when a
 change requires comparison with the pinned upstream implementation. It

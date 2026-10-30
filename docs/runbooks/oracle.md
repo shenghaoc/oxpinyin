@@ -1,7 +1,7 @@
 # Oracle — building the pin and running the differentials
 
 For contributor compatibility verification, use a supported
-[cloud session](cloud.md) provisioned for every gate, or the second supported
+[remote Linux host](cloud.md) provisioned for every gate, or the second supported
 [canonical Debian compatibility container](compatibility-container.md).
 The latter executes subject, reference and harness together on Linux storage.
 Ordinary work uses [native setup](setup.md), without an oracle or container.
@@ -263,7 +263,7 @@ files; the committed synthetic fixtures do not replace these inputs. Ordinary `c
 one fails when a required input is missing (`docs/testing/README.md`).
 Report each result or outstanding input limitation before release.
 
-Use prefixes verified by `tools/cloud/setup.sh` ([cloud setup](cloud.md)),
+Use prefixes verified by `tools/cloud/setup.sh` ([remote Linux setup](cloud.md)),
 and set `TMPDIR` on disk with room for scratch data. On Ubuntu, tkrzw
 must use setup's sound libtkrzw, pass `tools/tkrzw/distro-probe.sh`, and
 resolve both the oracle and subject to that library with `ldd`

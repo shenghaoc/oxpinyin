@@ -1,21 +1,21 @@
-# Cloud sessions — provisioning an agent-platform cloud host
+# Remote Linux development
 
-Cloud sessions meeting the general host requirements below can run
-non-measurement gates. Measurement gates also require the ext4 paths below.
-Provision one with `tools/cloud/setup.sh`; this route includes Valgrind for
-measurement tasks. A cloud session is not automatically provisionable just
-because it is supplied by an agent platform. Ordinary native development
-uses [native setup](setup.md) and does not require it. The
+A remote Linux host that meets the requirements below can run every
+non-measurement gate; measurement gates also need the ext4 paths below.
+Provision it with `tools/cloud/setup.sh`, which also installs Valgrind for
+measurement work. Ordinary native development uses [native setup](setup.md)
+and does not need a remote host. The
 [canonical compatibility container](compatibility-container.md) is a second
-supported route, not a replacement for cloud provisioning.
+supported route for compatibility work, not a replacement for this one.
 
-Agent-platform cloud hosts may supply root containers, a container runtime,
-and an egress proxy. The provisioner handles those capabilities, scopes custom
-trust to existing session certificates or an explicit CA path, and verifies
-the same frozen oracle/data contracts. It does not require a particular IDE.
-Use task-owned `OXPINYIN_ORACLE_ENV` and `--cache-dir` paths for concurrent
-worktrees. `--in-container` is the behavioural adapter for the second route;
-it neither installs nor requires Valgrind.
+The host may be a root container, may supply its own container runtime, and
+may reach the network only through an HTTPS proxy. The provisioner handles
+each case, scopes custom trust to an existing proxy certificate or an
+explicit CA path, and verifies the same frozen oracle and data contracts.
+No particular editor or IDE is required. Give each worktree its own
+`OXPINYIN_ORACLE_ENV` and `--cache-dir` paths when several share a host.
+`--in-container` is the behavioural adapter for the container route; it
+neither installs nor requires Valgrind.
 
 ## Host requirements
 
@@ -36,7 +36,7 @@ The script also requires:
   Valgrind already available.
 - A writable uv installation directory when uv needs installing or replacing
   (default `$HOME/.local/bin`), plus writable managed-Python/cache locations.
-  Setup probes the uv destination before downloading. If a cloud image mounts
+  Setup probes the uv destination before downloading. If the host image mounts
   it read-only, set `UV_INSTALL_DIR`, `UV_PYTHON_INSTALL_DIR` and `UV_CACHE_DIR`
   to task-owned writable paths; put `UV_INSTALL_DIR` on `PATH` afterward.
   An existing suitable uv can be reused without writing its installation
@@ -48,7 +48,7 @@ The script also requires:
   that step prints its apt command and does not use sudo.
 - Network access to the [download hosts](#allowlist-domains) needed by any
   uncached step. In particular, model20 needs `downloads.sourceforge.net`
-  and its selected `*.dl.sourceforge.net` redirect target. Cloud policy can
+  and its selected `*.dl.sourceforge.net` redirect target. Network policy can
   refuse either host. Setup resolves model20 through the existing fetcher
   before image pulls or library builds when a requested cell needs data;
   verified cached data/model inputs avoid that download.
@@ -57,7 +57,7 @@ Measurement tasks (teardown, startup controller and cold mode) additionally
 need an accessible, writable ext4 path for libraries, data, profiles, the
 work directory and `TMPDIR`. Check each actual path with `findmnt -T <path>`;
 the reported `FSTYPE` must be `ext4`. An ext4 mount elsewhere does not prove
-that the measured files are on ext4. Some cloud sessions have only overlay
+that the measured files are on ext4. Some hosts have only overlay
 and tmpfs paths. Without an ext4 path, measurement gates cannot run; move
 measurement work to a suitable host. Non-measurement setup remains supported.
 Setup reports accessible ext4 candidates, or explicitly none/unknown, without
@@ -65,7 +65,7 @@ failing setup or creating a filesystem. Verify all measurement paths yourself
 even when it reports a candidate.
 
 On a host lacking these capabilities, stop at the named prerequisite and
-ask the environment owner to provide it, or move to a suitable cloud host.
+ask the environment owner to provide it, or move to a suitable host.
 Do not route around network policy. The canonical compatibility container
 can supply the reference/subject environment for compatibility work; it
 does not establish the host Valgrind measurement gate. `--python-only`
@@ -74,10 +74,9 @@ Valgrind, backend utilities or container runtime.
 
 ## Setup command
 
-**When to run it.** The environment's setup script stays empty. A lane runs
-the setup only when its task needs the pin oracle (a differential, a
-same-run measurement against the pin, a data check); a lane that does not
-touch the oracle never pays for it. From the checkout:
+**When to run it.** Run the setup only when the work needs the pin oracle
+(a differential, a same-run measurement against the pin, a data check);
+work that does not touch the oracle does not need it. From the checkout:
 
 ```sh
 tools/cloud/setup.sh
@@ -95,9 +94,9 @@ stdout includes an informational ext4 path report and one line per cell:
 bdb prefix=<dir> libpinyin=<sha256> libzhuyin=<sha256> data manifest OK
 ```
 
-### Python-only tools.dev sessions
+### Python-only tools.dev hosts
 
-For a Linux x86_64 or arm64 session that only needs `tools.dev`, provision Python
+For a Linux x86_64 or arm64 host that only needs `tools.dev`, provision Python
 without the oracle setup:
 
 ```sh
@@ -126,7 +125,7 @@ interpreter and download-cache locations.
 ### The environment file
 
 On success full setup writes `~/.oxpinyin-oracle.env` (`OXPINYIN_ORACLE_ENV`
-overrides the path), rewritten on every run. A lane sources it before a
+overrides the path), rewritten on every run. Source it before a
 runner:
 
 ```sh
@@ -263,7 +262,7 @@ uv run --no-project --managed-python python -B -X lazy_imports=normal tools/tkrz
    Requires backend dump utilities for the requested cells: `db5.3_dump`
    (`db5.3-util`) and `kchashmgr` (`kyotocabinet-utils`). Root containers may
    install them with apt; ordinary accounts get an explicit missing-package
-   error. Install them deliberately before running setup. Normal cloud
+   error. Install them deliberately before running setup. Normal
    provisioning installs Valgrind idempotently when
    `valgrind --version` fails and prints its version in the summary. The
    `--in-container` behavioural path omits that requirement; see [benches](benches.md).
@@ -271,12 +270,13 @@ uv run --no-project --managed-python python -B -X lazy_imports=normal tools/tkrz
    is Windows: wslc/Podman/Docker; macOS: Apple container/Podman/Docker;
    Linux: Podman/Docker. Explicit `OXPINYIN_CONTAINER` wins; no available candidate
    is an error. wslc is blocked as not yet verified, and the Apple adapter is
-   not yet verified (use compat.sh rather than the Linux cloud provisioner).
+   not yet verified (use compat.sh rather than this Linux provisioner).
    Every container call uses the resolved runtime. Only the Docker path
    starts `dockerd` (detached, `setsid
    nohup dockerd`) unless `docker info` already answers, and waits for it.
-   If the session certificate
-   `/root/.ccr/agent-proxy-ca.crt` exists, this path installs it into the system
+   If a proxy certificate exists at
+   `/root/.ccr/agent-proxy-ca.crt` (the path some hosted Linux environments
+   use), this path installs it into the system
    trust store for the daemon's own proxy access; an ordinary proxy setting
    does not imply that this file exists. podman needs no daemon, no
    root and no `sudo`: `podman info` must answer, and the pulls, the
@@ -354,7 +354,7 @@ uv run --no-project --managed-python python -B -X lazy_imports=normal tools/tkrz
 ### How containers get out
 
 Processes in a container cannot reach the proxy at `127.0.0.1` and do not
-trust its CA (`/root/.ccr/README.md`, "docker build / docker run"), so
+trust its CA, so
 every Docker/Podman run here uses `--network host`, passes `https_proxy` and
 the CA (`GIT_SSL_CAINFO`, `SSL_CERT_FILE`, `CURL_CA_BUNDLE`) and mounts
 `/root/.ccr/ca-bundle.crt` only when that bundle exists (or an explicit
@@ -370,7 +370,7 @@ The fallback proves only that a non-empty bundle is present. It does not show
 that the proxy's interception certificate is trusted, so it does not prevent a
 TLS failure; step 0 says so, and a failure there is resolved by setting
 `OXPINYIN_PROXY_CA` to the proxy's CA bundle. No network probe checks it.
-An ordinary HTTPS proxy does not require Claude files. The `deps` build passes the proxy as a build
+An ordinary HTTPS proxy needs no files under `/root/.ccr`. The `deps` build passes the proxy as a build
 arg and the CA as the optional BuildKit secret `cacert`
 (`tools/oracle/Dockerfile.oracle`); with the secret, apt trusts that CA for
 any https source. The base image keeps its default Debian mirrors either
@@ -378,8 +378,8 @@ way, so the installed packages, hence the toolchain, are the same.
 
 ## Allowlist domains
 
-Network access must be Limited-with-allowed-domains or broader. Hosts the
-setup contacts, and what a session showed on 2026-10-16 UTC:
+The host's network policy must allow at least the hosts below. Hosts the
+setup contacts, and what one host showed on 2026-10-16 UTC:
 
 | Host | Used for | Seen |
 | --- | --- | --- |
@@ -392,17 +392,17 @@ setup contacts, and what a session showed on 2026-10-16 UTC:
 | `index.crates.io`, `static.crates.io` | cargo | reachable |
 
 The reachable entries are historical observations, not guarantees for another
-session. The #1055 report records a cloud session refusing
+host. The #1055 report records a host refusing
 `downloads.sourceforge.net` on 2026-10-22 UTC. Request the required allowlist
 change from the environment owner or use an already verified local cache;
 model20 must not be mirrored or published by the project.
 
 **Current package mirror.** The trixie toolchain installs from
-`deb.debian.org`, the Debian stable package mirror, which a session's network
+`deb.debian.org`, the Debian stable package mirror, which the host's network
 policy has to allow; setup no longer contacts `snapshot.debian.org`. No
-session has been recorded reaching `deb.debian.org`, so that access is
-unverified. Observed in a cloud session on 2026-10-25 UTC: `deb.debian.org`
-was blocked and `snapshot.debian.org` was reachable. A session's network
+host has been recorded reaching `deb.debian.org`, so that access is
+unverified. Observed on a remote host on 2026-10-25 UTC: `deb.debian.org`
+was blocked and `snapshot.debian.org` was reachable. The host's network
 policy therefore has to allow `deb.debian.org` for the trixie image builds;
 reaching `snapshot.debian.org` does not substitute for it. `--regen-data` compiles the pin's data build, so both the library
 build and the data step need the `deps` image. The normal image workflow now
@@ -415,189 +415,27 @@ pull stderr is retained in `<cache>/pull-deps.err`. Anonymous access to this
 newly published tag must be checked after normal publication. Historical
 measurements below predate this optimization.
 
-## Setup time and disk use
+## Time and disk use
 
-Measured on 2026-10-16 UTC in a 4-core, 15 GiB cloud session (x86_64,
-`/dev/vda`, `docker` 29.8.2). No oracle image was reachable in that run, so
-only the build path ("without the published image") was measured here; the
-"with" column is measured end to end in "With the published image, from
-scratch" below, not step by step.
-
-**Base image of these runs.** Every timing in this section was taken on
-2026-10-16 UTC, before the move to trixie: the base was the pinned
-`debian:testing@sha256:dab11cdb…` digest, and the `deps` stage installed its
-toolchain from the `20260831T000000Z` snapshot.debian.org snapshot. Setup
-now pulls the rolling `debian:trixie` tag and installs from the default
-Debian mirrors (step 2 and "Allowlist domains" above); the figures below
-are not trixie measurements.
-
-**Starting state of the from-scratch figures.** Docker emptied and stopped,
-and the cache removed, then `df` read before and after:
-
-```sh
-docker rm -f $(docker ps -aq); docker system prune -af; docker builder prune -af
-pkill -x dockerd; sleep 3; rm -rf /var/lib/docker/* ~/.cache/oxpinyin
-df --output=used -k / | tail -1        # before: 12716192
-SECONDS=0; tools/cloud/setup.sh > /dev/null 2> setup.err
-echo "total=${SECONDS}s"               # bash's elapsed seconds: 353
-df --output=used -k / | tail -1        # after: 14773784
-```
-
-Each step's time is the difference between consecutive `[ Ns ]` offsets
-that `setup.sh` prints on stderr (the offset is bash's `$SECONDS` since the
-script started); a step ends where the next one starts.
-
-| Step (stderr offsets) | Without the published image | With the published image |
-| --- | --- | --- |
-| `dockerd` start and pinned `debian:testing` digest pull (`0` to `6`) | 6 s | same |
-| `deps` image build (`6` to `68`) | 62 s | same (the data step needs it) |
-| libraries bdb, kc, tkrzw (`68` to `96`, `96` to `148`, `148` to `180`) | 28 s, 52 s, 32 s (112 s) | not measured |
-| model20 fetch, once, and `--regen-data` bdb, kc, tkrzw (`180` to `224`, `224` to `301`, `301` to `353`) | 44 s, 77 s, 52 s (173 s) | not measured |
-| setup, end to end (`total=` above) | **353 s** | not measured |
-
-The model fetch (`tools/model/fetch-model.sh --cache-dir
-~/.cache/oxpinyin/model20`) runs inside the bdb data step and is not timed
-on its own.
-
-**Second run, everything present.** Run immediately after the first, with
-nothing removed: `time tools/cloud/setup.sh > /dev/null 2>&1` reported
-`real 0m0.332s`.
-
-**Disk.** `df` used space rose by 2,057,592 KiB (about 2.0 GB: 14773784
-minus 12716192 above). Its parts, read after the run:
-
-```sh
-du -sh ~/.cache/oxpinyin/model20                  # 105M (archive and extraction)
-du -sh ~/.cache/oxpinyin/oracle/{bdb,kc,tkrzw}    # 63M, 78M, 54M (193M together, with data)
-docker system df                                  # images 1.03GB, build cache 1.028GB
-```
-
-The build cache shares its layers with the images (`docker system df`
-reports 12.29 kB of it reclaimable), so the two Docker figures are not
-additive. `docker builder prune -af` after the setup drops the cache copy.
+A cold full setup on a 4-core x86_64 host took 5 to 10 minutes: about 4.5
+minutes when the published oracle image was pulled and the host's tkrzw
+passed the probe, and up to 10 minutes when the libraries, the `deps` image
+and tkrzw were all built locally. A rerun with everything present only
+re-verifies and finishes in a few seconds. A full setup adds about 2 GB:
+the model20 cache (about 105 MB), the three oracle prefixes (about 195 MB
+together, with data) and the container images and build cache (about 1 GB
+each, sharing layers). `docker builder prune -af` after setup drops the
+build-cache copy. These figures predate the move to the trixie base image.
 
 ### tkrzw step and the CI child
 
 CI's tkrzw jobs use the `libtkrzw` that `debian:testing` ships, built
 without LTO: 1.0.34-1 on 2026-10-23 UTC (`apt-cache policy libtkrzw-dev` in
-that image; it is unpinned, so the version moves). The cloud setup builds
+that image; it is unpinned, so the version moves). Setup builds
 upstream 1.0.34 (`9ee8416`) when the host's library fails the probe. Both
 pass `tools/tkrzw/distro-probe.sh` (`RESULT : healthy`), which is the
 criterion the setup enforces. With no setup environment in CI, the
 `tkrzw-sanitizers` job runs that probe through `probe_host` before its gate.
-
-### Rootless podman on a workstation
-
-Measured 2026-10-16 UTC on the maintainer's own host (Ubuntu 26.10, 12
-cores, 15 GiB, podman 5.8.6 rootless, no `sudo`, no Docker; the host's
-`libtkrzw` 1.0.32 is Ubuntu's and fails the probe). Not a cloud session, so
-these figures are **not** the cloud figures above. The podman image store
-already held the pinned base image and the `deps` image, so neither was
-pulled or built; the cache directory was new and empty. `db5.3_dump` and
-`kchashmgr` were unpacked from the distribution `.deb`s onto `PATH`
-(`apt-get download`, `dpkg -x`) because the host user cannot install
-packages. The published oracle image existed on this host's registry
-path and was pulled, so the libraries came from it, not from a build.
-
-`SECONDS` offsets from the stderr of `tools/cloud/setup.sh --cache-dir
-<new>`:
-
-| Step | Seconds |
-| --- | --- |
-| podman check, base image present (`0` to `1`) | 1 |
-| published image pull, three cells copied out, hashes match (`1` to `7`) | 6 |
-| tkrzw: probe, source fetch, configure, `make -j12`, install, probe, `ldd` (`7` to `45`) | 38 |
-| model20 fetch and `--regen-data` bdb, kc, tkrzw (`45` to `114`, `114` to `205`, `205` to `279`) | 69 (including the 20 s fetch), 91, 74 |
-| setup, end to end (`time`) | **278.6 s** |
-
-Rerun with nothing removed: `real 0m1.959s`; it re-probes the host
-library, probes the cached build, and re-runs the `ldd` check. The cached
-build is `120M`.
-
-After sourcing the generated environment file, the tkrzw oracle
-`libpinyin.so`, the `oxpinyin-capi` tkrzw `libpinyin_capi.so` and an
-`oxpinyin-store` test binary built with `--features tkrzw`
-(`cargo test -p oxpinyin-store --no-default-features --features tkrzw
---no-run`) all resolve `libtkrzw.so.1` to `<cache>/tkrzw/lib`; the store
-test binary also carries that directory as its `RUNPATH`. On this host the
-`issue784-index-keys-*` contract-diff cases (26, pinyin and zhuyin) ran
-`MATCH` 26 of 26 on bdb, kc and tkrzw.
-
-### This change in a Claude Code cloud session
-
-Measured 2026-10-16 UTC in a Claude Code cloud session with this change at
-`c270ad8`: 4 cores, x86_64, root, `docker` 29.8.2, no `podman`. This is the
-session's own host, not the maintainer's workstation above, and not the
-earlier 15 GiB session in "Setup time and disk use". `~/.cache/oxpinyin`
-did not exist before the first run.
-
-**Image and tkrzw.** In this run no oracle image was found at the tag the script
-tries (`ghcr.io/shenghaoc/oxpinyin-oracle:074a2219c90f-…`), so the libraries
-were **built**, not pulled, and the `deps` image was built. The host
-`libtkrzw` failed the probe, so the **tkrzw source build ran** (upstream
-`9ee8416`). `db5.3-util` and `kyotocabinet-utils` were installed with
-`apt-get` (root).
-
-`SECONDS` offsets from the stderr of `bash tools/cloud/setup.sh`:
-
-| Step | Seconds |
-| --- | --- |
-| dump utilities (`1` to `4`, including the `dockerd` start) | 3 |
-| base image pull and the published-image attempt (`4` to `8`) | 4 |
-| `deps` image build (`8` to `94`) | 86 |
-| libraries bdb, kc, tkrzw (`94` to `142`, `142` to `212`, `212` to `267`) | 48, 70, 55 |
-| tkrzw: probe, source build, install, probe, `ldd` (`267` to `329`) | 62 |
-| model20 fetch and `--regen-data` bdb, kc, tkrzw (`329` to `398`, `398` to `516`, `516` to `596`) | 69, 118, 80 |
-| setup, end to end (`time`) | **595.98 s** |
-
-Rerun with nothing removed: `real 0m1.164s`.
-
-**Capi and contract diff.** `oxpinyin-capi` and `oxpinyin-zhuyin-capi` debug
-builds, one target directory per cell (`--no-default-features --features
-bdb|kyotocabinet|tkrzw`), then `just runner contract-diff` with
-`--cases` set to the 26 `issue784-index-keys-*` cases (pinyin and zhuyin),
-after `source ~/.oxpinyin-oracle.env`:
-
-| Cell | Capi build (`oxpinyin-capi`) | `issue784-index-keys-*` |
-| --- | --- | --- |
-| bdb | 24.3 s | 26 of 26 `MATCH` |
-| kc | 20.0 s | 26 of 26 `MATCH` |
-| tkrzw | 21.1 s | 26 of 26 `MATCH` |
-
-`ldd` on the tkrzw `libpinyin_capi.so` resolves `libtkrzw.so.1` to
-`~/.cache/oxpinyin/tkrzw/lib/libtkrzw.so.1`; the bdb and kc ones resolve
-`libdb-5.3.so` and `libkyotocabinet.so.16` from `/lib/x86_64-linux-gnu`.
-`issue785` has no cases of its own in `contract-diff.py`; its mask behaviour
-is inside the 784 mask cases.
-
-### With the published image, from scratch
-
-Measured 2026-10-16 UTC on the same 4-core cloud host as above, after the
-session's network policy allowed `ghcr.io` and
-`pkg-containers.githubusercontent.com`. The container was restarted, so
-`db5.3-util` and `kyotocabinet-utils` were still installed from the earlier
-run (no install step), and `~/.cache/oxpinyin` and `/var/lib/docker` were
-emptied before the run, so everything else started from nothing.
-
-The published oracle image **was pulled** (`ghcr.io/shenghaoc/oxpinyin-oracle:074a2219c90f-…`),
-and all three cells' libraries matched `oracle-pin.txt`, so no library was
-built. The tkrzw source build still ran (the host library failed the probe),
-and the `deps` image was still built, because `--regen-data` needs it.
-
-`SECONDS` offsets from the stderr of `bash tools/cloud/setup.sh`:
-
-| Step | Seconds |
-| --- | --- |
-| `dockerd` start and pinned `debian:testing` digest pull, two retries (`1` to `17`) | 16 |
-| published image pull, three cells copied out, hashes match (`17` to `21`) | 4 |
-| tkrzw: probe, source build, install, probe, `ldd` (`21` to `86`) | 65 |
-| `deps` image build (starts at `89`) and model20 fetch, inside the bdb data step (`86` to `244`) | 158 for the step |
-| `--regen-data` kc, tkrzw (`244` to `359`, `359` to `441`) | 115, 82 |
-| setup, end to end (`time`) | **440.71 s** |
-
-Against the 595.98 s build-only run above, the image saves the three
-library builds (173 s there) and adds a 4 s pull; the other steps differ
-between runs by amounts the two runs do not separate.
 
 ### When the published image cannot be pulled
 
@@ -607,20 +445,16 @@ last five lines, and says which case it is before building the libraries:
 (network, auth or proxy, not "not found")` for anything else. Both fall
 back to the build.
 
-### Not measured here
+## Gates on a remote host
 
-Disk use in this session and whether `podman info` or `docker info` works
-in a Codex cloud environment were not measured.
-
-## Gates in a cloud session
-
-On a host meeting the requirements above, `AGENTS.md` ("Verification cells")
-runs as on any Linux host; the cells are the prefixes setup prints.
-Do not assume a session already carries Cargo, the repository Rust toolchain,
-Valgrind or a native compiler. Same-run callgrind measurements (`benches.md`)
-require those host tools and the oracle for the pin side.
-A main-against-main control (two builds of one commit, measured in
-one run, spread 0) needs only the Rust side.
+On a host meeting the requirements above, the
+[verification procedure](verification.md) runs as on any Linux host; the
+cells are the prefixes setup prints. Do not assume the host already has
+Cargo, the repository Rust toolchain, Valgrind or a native compiler.
+Same-run callgrind measurements ([benches](benches.md)) need those host
+tools and the oracle for the pin side. A main-against-main control (two
+builds of one commit, measured in one run, spread 0) needs only the Rust
+side.
 
 ## Failure modes
 
@@ -630,10 +464,10 @@ one run, spread 0) needs only the Rust side.
   the prerequisite and next action after uv and managed-Python bootstrap,
   but before oracle downloads. `--python-only` omits the Cargo/toolchain
   and Valgrind checks.
-- The #1024 lane reported an OS read-only `/home/agent/.local/bin`, then
-  successful pinned uv/managed-CPython provisioning using task-private
+- #1024 reported a read-only `~/.local/bin` on a remote image, then
+  successful pinned uv/managed-CPython provisioning using private
   overrides; full setup next stopped on missing Valgrind/sudo, and Cargo
-  was absent. That cloud image is unavailable locally. The OS read-only
+  was absent. That image is unavailable locally. The OS read-only
   mount was not reproduced on the Ubuntu maintainer host; synthetic PATH
   stubs and an unwritable uv directory cover the failure paths without
   installing prerequisites on that host.
@@ -652,7 +486,7 @@ calls the single `tools.dev provision` service. `just provision` uses an already
 provisioned interpreter. The function-order policy action continues to call
 `tools/cloud/setup.sh --python-only` unchanged.
 
-Run the synthetic cloud fixtures through normal Python discovery:
+Run the synthetic provisioning fixtures through normal Python discovery:
 
 ```sh
 just test-tools tools/dev/provision.test.py

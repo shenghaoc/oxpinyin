@@ -2,86 +2,156 @@
 
 Read the [constitution](docs/constitution.md) and [source policy](docs/source-policy.md) before changing the project.
 
-Start with **native development**: edit, compile, debug and test on your own
-operating system. You need Git, the repository-selected Rust toolchain and
-a native compiler/linker; the [setup guide](docs/runbooks/setup.md) gives
-complete commands for Linux, macOS and native Windows, including a first
-passing test and fresh-terminal resumption. No container, libpinyin oracle,
-or model download is required for ordinary work.
+The usual workflow is:
 
-A Rust **crate** is a package. A storage **backend** is the native library
-selected when building storage-dependent packages; Berkeley DB is the
-default, while the maintained macOS route selects tkrzw explicitly. Packages
-that use that library are called storage-dependent.
+1. Set up native development with the [setup guide](docs/runbooks/setup.md)
+   and run its first passing test.
+2. Make the change on a branch and add or extend tests for it.
+3. Run the [checks for your contribution](docs/runbooks/setup.md#contribution-checks)
+   and the [verification procedure](docs/runbooks/verification.md).
+4. When the change affects compatibility with libpinyin, run its
+   differential on the oracle, as described below.
+5. Open a pull request whose description reports the results and how to
+   reproduce them.
+
+Native development means editing, compiling, debugging and testing on your
+own operating system: Linux, macOS or native Windows. You need Git, the
+repository-selected Rust toolchain and a native compiler and linker; the
+setup guide gives complete commands for each platform, including a first
+passing test and resuming in a fresh terminal. No container, libpinyin
+oracle or model download is required for ordinary work.
+
+A Rust **crate** is a package. A storage **backend** is the native DBM
+library that storage-dependent crates are built against; the
+[setup guide](docs/runbooks/setup.md#storage-backend) names the default and
+how each platform installs it.
 
 When a change needs **compatibility verification**, compare it with the
-**oracle** (the fixed upstream libpinyin implementation) using the
-[canonical Debian compatibility procedure](docs/runbooks/compatibility-container.md).
-It runs oxpinyin, the pinned reference and the comparison harness (the test driver) together;
-you do not install libpinyin or reconstruct its environment on your host.
-A **differential** runs the same behavior against both implementations.
-Native tests and Debian-container differentials provide different evidence.
-Linux, macOS and Windows are the three native targets. Agent-platform cloud
-sessions are also first-class supported hosts for every gate: use the
-[cloud provisioner](docs/runbooks/cloud.md). The canonical Debian container
-is a second supported route using the same frozen reference contracts.
+**oracle** (the fixed upstream libpinyin implementation). A
+**differential** runs the same behaviour against both implementations.
+Run it on a [provisioned remote Linux host](docs/runbooks/cloud.md) or with
+the [canonical Debian compatibility procedure](docs/runbooks/compatibility-container.md),
+which runs oxpinyin, the pinned reference and the comparison harness
+together, so you do not install libpinyin or reconstruct its environment.
+Native tests and differentials provide different evidence.
 Package-manager examples and runtime adapters are not extra test targets.
 
-After the first test, follow [checks for your contribution](docs/runbooks/setup.md#contribution-checks).
 Advanced [backend](docs/runbooks/backends.md), [oracle](docs/runbooks/oracle.md),
-[packaging](docs/packaging.md) and [measurement](docs/runbooks/benches.md)
-procedures apply only when that task needs them. Keep model downloads and
+[packaging](docs/packaging.md), [release](docs/runbooks/release.md) and
+[measurement](docs/runbooks/benches.md) procedures apply only when that task needs them. Keep model downloads and
 derived data local; they never belong in Git or published images.
 
 A new regression identifies the behaviour it protects, uses reduced input, and explains any substantial fixture or runtime cost. Extend existing cases and helpers where that keeps the test clear. Don't commit bulk observations when a live comparison or a compact expectation suffices.
 
+## Contributor responsibility
+
+Understand, review, test and maintain every change you submit, including tool-assisted changes.
+Keep `README.md` and `README.中文.md` consistent.
+Update both in the same PR when their content changes.
+A Chinese wording correction that does not change content needs no English change.
+The [roadmap](ROADMAP.md) records the current stage and remaining work.
+
 ## Results and reproduction
 
-A PR or findings document reports what a paper reports: the results, plus
-the tools that produced them. Readers reproduce those results with the
-supplied tools and commands; they do not need a narrative of intermediate
-checks, selections or execution steps.
-
-The deliverable is the software and maintained tooling that lets another
-contributor reproduce its results from a checkout. Use the repository's
-`just` recipes and in-tree Python tools with the managed interpreter from
-the setup guide (`just python` provisions it). Extend shared tooling when a
-required capability is missing; do not depend on a session-only script or an agent's private environment.
+Deliver the software, maintained tooling and a concise final result with reproducible commands.
+Use repository `just` recipes and in-tree Python tools with managed CPython.
+Provision the interpreter with `just python`.
+Extend shared tooling when a required capability is missing.
+Do not depend on scripts or environments that exist only on your machine.
 Existing documented shell entry points remain supported during migration.
 
-Report the conclusion, relevant final results, and the commands to reproduce
-them. Identify the revisions, inputs, build options and environment needed
-to interpret and repeat the comparison. One command can cover a whole table;
-link existing setup instructions instead of copying an execution transcript.
-A short PR needs no separate findings document.
+Report the conclusion, relevant final results and reproduction commands.
+Identify only the revisions, inputs, build options and environment details needed to interpret and repeat the result.
+One command can reproduce a whole table.
+Link existing setup instructions instead of copying an execution transcript.
+Do not report intermediate checks, selections or execution steps as a chronological narrative.
+A separate findings document is optional.
 
-Raw logs, profiler captures and intermediate output are disposable local
-working data. Do not commit, attach, upload, archive or mirror them as routine
-evidence, or create manifests merely to certify a run. Supply diagnostic files
-only when a maintainer explicitly requests them. Do not ask a maintainer to
-sign in to an agent browser or another service to upload verification output.
-Missing or discarded captures are not a completion or merge blocker and need
-no replacement disclaimer. Source, test fixtures, pin/configuration files and
-release packages remain normal project inputs or deliverables.
+Treat raw logs, profiler captures and intermediate output as disposable local working data.
+Do not commit, attach, upload, archive or mirror them unless a maintainer explicitly requests specific diagnostic material.
+Do not create replacement manifests, checksum inventories or evidence-unavailable statements for missing captures.
+Missing captures do not block completion or merging.
+Source, functional fixtures, pins, configuration files and release packages follow their own procedures.
+These reporting rules concern verification output.
 
-If the documented procedure cannot be run, or its results contradict a claim
-beyond the measurement method's expected variability, investigate it as a bug
-in the software, tooling, environment assumptions or documentation. Fix the
-cause and correct or withdraw the affected claim. Reproduction must work
-without the author's old captures; timing results need not be bit-identical.
+Investigate a broken reproduction command as a bug.
+Investigate a result that contradicts the claim beyond the method's expected variability.
+Fix the software, tooling, environment assumptions or documentation that caused the problem.
+Correct or withdraw the claim.
+Do not replace the investigation with an evidence package.
+Reproduction must work without the author's old captures.
+Timing results need not be bit-identical.
 
-Run the checks applicable to the change and stop when they pass and concrete
-failures are addressed. Keep repetitions required by the measurement method;
-do not add reruns or broader sweeps merely to accumulate evidence. Report
-required checks that failed or could not run as limitations, with a brief
-relevant diagnostic when useful. Omit inventories of passed or inapplicable
-checks. This reporting policy supersedes older capture-retention and
-publication instructions.
+Run the checks required by the [verification procedure](docs/runbooks/verification.md).
+Stop when they pass and concrete failures are addressed.
+Keep repetitions prescribed by the measurement method.
+Do not add reruns or broader sweeps merely to collect more evidence.
+Report failed or unrun required checks as limitations.
+Include a brief relevant diagnostic when useful.
+Omit inventories of passed or inapplicable checks.
+This policy supersedes older reporting requirements in runbooks and findings.
 
-`README.md` and `README.中文.md` state the same content. A PR that changes
-the content of either updates the other in the same PR. A correction to
-Chinese wording alone that does not change content needs no English change.
+### Measurements
 
-Every contributor remains responsible for understanding, reviewing, testing
-and maintaining their submitted changes. [ROADMAP.md](ROADMAP.md) describes
-the current compatibility stage and remaining work.
+Run base, PR and pin in one job on one machine for a measuring PR.
+Report only that run's numbers and ratios.
+Do not use an absolute figure from another run, host or CPU as a baseline.
+Follow the [measurement procedure](docs/runbooks/benches.md).
+
+## Dates and shell placement
+
+Capture freeze-document, findings and patch-metadata dates with `date -u` on the machine executing the step.
+Capture them at run time.
+Do not write dates by hand.
+A local time zone ahead of UTC can date a record into the future (PR #363).
+Follow the [Python orchestration and shell-placement rule](docs/plans/tooling-python.md#shell-placement-rule-1260).
+
+## Toolchain and platforms
+
+Use only the toolchain selected by `rust-toolchain.toml`.
+Portable crates support Linux, macOS and Windows, on x86_64 and arm64.
+Oracle and capi work is Linux-first.
+Linux/amd64 is the reference for pin comparisons.
+Do not use emulation for work that does not compare against the pin.
+
+A remote Linux host that meets the [remote Linux requirements](docs/runbooks/cloud.md#host-requirements) supports every gate.
+Provision it with `tools/cloud/setup.sh`.
+Compatibility work can also use `tools/oracle/compat.sh`, which runs subject, pin and harness together in the [canonical Debian Linux amd64 environment](docs/runbooks/compatibility-container.md).
+
+## Checkpoints and rebases
+
+Push a `wip/<issue>` branch at each checkpoint.
+Treat every machine as disposable: work held only in a local checkout or container can be lost.
+
+Fetch and rebase onto the current landing tip immediately before every push and before any merge.
+Check `git log origin/main..HEAD`.
+It must contain only this workstream's commits, with no rewritten copies of landed work.
+Inspect the diffstat for deletions of work the branch does not own.
+Do not delete that work.
+A stale base can make other contributors' merged work appear as deletions.
+
+A conflict-free rebase does not verify a changed generation scheme.
+A dependency can change manifest layouts, fixture formats or builder recipes while old generated artifacts survive the textual rebase.
+After rebasing:
+
+1. List committed artifacts whose generators changed on main since the branch point.
+2. Regenerate those artifacts.
+3. Re-run pins if the rebase changes engine, capi or data crates.
+
+See PR #363 against #358 for the oracle-data manifest split example.
+The contributor who merges later re-measures the affected pins.
+Do not assume pre-rebase measurements remain valid.
+Fmt failures block merging.
+A reviewed, formatting-only commit is safe when its diff contains only formatting.
+
+## Stack placement
+
+Put a fix on the stack member whose change produces the symptom.
+Keep each stack member green when tested alone.
+This preserves bisection and bottom-up merging.
+A fix above the failing member leaves that lower member broken until the upper one lands.
+If member N exposes a pre-existing defect, put its fix on member N.
+Examples include a harness leak, missing teardown or latent undefined behaviour.
+Keep the tree correct at every stack level.
+The capi-commands fuzz leak fix belonged on #502, which made BDB the default and exposed the failure.
+Its initial placement on #512 was wrong.
