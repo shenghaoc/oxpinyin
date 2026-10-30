@@ -1,7 +1,13 @@
 #!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
 """Tests for the phrase table mask cases (#1175)."""
+from pathlib import Path
+import sys
+
 import unittest
 from unittest.mock import Mock
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from tools.dev.test_support import collect_declarations
 
 import contract_phrase_table_mask as family
 
@@ -22,16 +28,7 @@ def stub(name):
 
 
 def declarations(state):
-    cases = []
-
-    def case(name, *args, **kwargs):
-        def collect(fn):
-            cases.append((name, args, kwargs, fn))
-            return fn
-        return collect
-
-    family.register(case, _craft_db=state['_craft_db'], index_file_rows=state['index_file_rows'])
-    return cases
+    return collect_declarations(family.register, _craft_db=state['_craft_db'], index_file_rows=state['index_file_rows'])
 
 
 class PhraseTableMaskTests(unittest.TestCase):

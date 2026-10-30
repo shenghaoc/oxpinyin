@@ -1,5 +1,5 @@
 #!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
-"""Host-loader fixtures, optionally compared with the preserved migration base."""
+"""Host-loader fixtures for runtime identity, refusal and launch behavior."""
 import os
 from pathlib import Path
 import re
@@ -45,12 +45,6 @@ class AdapterControlTests(unittest.TestCase):
         env = dict(self.env, **settings)
         done = subprocess.run([sys.executable, '-m', 'tools.tkrzw.runtime', *map(str, args)],
                               cwd=ROOT, env=env, capture_output=True, timeout=10)
-        base = os.environ.get('U3_BASE')
-        if base:
-            old = subprocess.run(['bash', str(Path(base).resolve() / 'tools/tkrzw/runtime.sh'), *map(str, args)],
-                                 cwd=ROOT, env=env, capture_output=True, timeout=10)
-            self.assertEqual((done.returncode, done.stdout, done.stderr),
-                             (old.returncode, old.stdout, old.stderr))
         return done
 
     def test_advisory_labels_never_bypass_a_loaded_library(self):

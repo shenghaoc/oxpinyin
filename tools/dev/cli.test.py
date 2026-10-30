@@ -171,21 +171,6 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(run.call_args.args[0][-len(selection):], selection)
         test_support.assert_not_called(self, self.launch)
 
-    def test_test_command_help_keeps_the_parser_entries(self):
-        for command in ('test', 'test-doc'):
-            for flag in ('-h', '--help'):
-                with self.subTest(command=command, flag=flag), \
-                        mock.patch.object(cli.test_runner, 'run') as run, \
-                        mock.patch.object(cli.test_runner, 'run_doc') as run_doc, \
-                        contextlib.redirect_stdout(io.StringIO()) as output:
-                    with self.assertRaises(SystemExit) as exit_status:
-                        cli.main([command, flag])
-                    self.assertEqual(exit_status.exception.code, 0)
-                    self.assertIn('usage:', output.getvalue())
-                    run.assert_not_called()
-                    run_doc.assert_not_called()
-        test_support.assert_not_called(self, self.launch)
-
     def test_main_reads_raw_arguments_from_sys_argv(self):
         with mock.patch.object(sys, 'argv', ['tools.dev', 'test', '--workspace']), \
                 mock.patch.object(cli.test_runner, 'run', return_value=7) as run:

@@ -1,23 +1,20 @@
 #!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
 """Tests for predicted candidate selection and its shared reader."""
+from pathlib import Path
+import sys
+
 import ctypes as C
 import unittest
 from unittest.mock import Mock
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from tools.dev.test_support import collect_declarations
 
 import contract_predicted_types as family
 
 
 def declarations(reader):
-    result = {}
-
-    def case(name, **metadata):
-        def collect(fn):
-            result[name] = (metadata, fn)
-            return fn
-        return collect
-
-    family.register(case, predicted_rows=reader)
-    return result
+    return {name: (metadata, fn) for name, _, metadata, fn in collect_declarations(family.register, predicted_rows=reader)}
 
 
 class PredictedTypesTests(unittest.TestCase):

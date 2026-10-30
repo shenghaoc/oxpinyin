@@ -1,6 +1,12 @@
 #!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
 """Tests for the user key spelling cases (#1418)."""
+from pathlib import Path
+import sys
+
 import unittest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from tools.dev.test_support import collect_declarations
 
 import contract_user_key_spellings as family
 
@@ -15,16 +21,7 @@ EXPECTED = [
 
 
 def declarations():
-    cases = []
-
-    def case(name, *args, **kwargs):
-        def collect(fn):
-            cases.append((name, args, kwargs, fn))
-            return fn
-        return collect
-
-    family.register(case)
-    return cases
+    return collect_declarations(family.register)
 
 
 class UserKeySpellingTests(unittest.TestCase):

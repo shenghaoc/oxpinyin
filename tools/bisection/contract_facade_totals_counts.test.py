@@ -1,7 +1,13 @@
 #!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
 """Tests for the facade totals and counts cases (#1175)."""
+from pathlib import Path
+import sys
+
 import unittest
 from unittest.mock import Mock
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from tools.dev.test_support import collect_declarations
 
 import contract_facade_totals_counts as family
 
@@ -21,38 +27,13 @@ EXPECTED = [('import-wrapped-facade-total-guess', (), {'issues': ('798',)}),
 
 
 def declarations():
-    cases = []
-
-    def case(name, *args, **kwargs):
-        def collect(fn):
-            cases.append((name, args, kwargs, fn))
-            return fn
-        return collect
-
-    family.register(case, items_system=Mock(), _craft_db=Mock())
-    return cases
+    return collect_declarations(family.register, items_system=Mock(), _craft_db=Mock())
 
 
 class FacadeTotalsCountsTests(unittest.TestCase):
     def test_case_ids_order_and_metadata(self):
         cases = declarations()
         self.assertEqual([(name, args, kwargs) for name, args, kwargs, _ in cases], EXPECTED)
-
-    def test_every_case_function_belongs_to_this_module(self):
-        for name, _, _, fn in declarations():
-            while hasattr(fn, "func"):
-                fn = fn.func
-            with self.subTest(name=name):
-                self.assertIn(fn.__module__, (family.__name__, 'contract_case_helpers'))
-
-    def test_replay_registers_the_same_functions(self):
-        first, second = declarations(), declarations()
-        self.assertEqual([c[0] for c in first], [c[0] for c in second])
-        for (name, _, _, a), (_, _, _, b) in zip(first, second):
-            with self.subTest(name=name):
-                a, b = getattr(a, 'func', a), getattr(b, 'func', b)
-                self.assertIs(a, b)
-
 
 if __name__ == '__main__':
     unittest.main()

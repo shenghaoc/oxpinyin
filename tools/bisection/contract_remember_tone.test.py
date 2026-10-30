@@ -1,23 +1,20 @@
 #!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
 """Tests for the two remember-tone registration points."""
+from pathlib import Path
+import sys
+
 import types
 import unittest
 from unittest.mock import Mock
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from tools.dev.test_support import collect_declarations
 
 import contract_remember_tone as family
 
 
 def declarations(register, reader):
-    result = {}
-
-    def case(name, **metadata):
-        def collect(fn):
-            result[name] = (metadata, fn)
-            return fn
-        return collect
-
-    register(case, remember_export=reader)
-    return result
+    return {name: (metadata, fn) for name, _, metadata, fn in collect_declarations(register, remember_export=reader)}
 
 
 class RememberToneTests(unittest.TestCase):

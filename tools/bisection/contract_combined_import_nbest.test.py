@@ -1,22 +1,19 @@
 #!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
 """Tests for combined import and n-best ordering cases."""
+from pathlib import Path
+import sys
+
 import unittest
 from unittest.mock import Mock, patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from tools.dev.test_support import collect_declarations
 
 import contract_combined_import_nbest as family
 
 
 def declarations(export, files):
-    result = {}
-
-    def case(name, **metadata):
-        def collect(fn):
-            result[name] = (metadata, fn)
-            return fn
-        return collect
-
-    family.register(case, remember_export=export, transient_files=files)
-    return result
+    return {name: (metadata, fn) for name, _, metadata, fn in collect_declarations(family.register, remember_export=export, transient_files=files)}
 
 
 class CombinedImportNbestTests(unittest.TestCase):

@@ -1,23 +1,19 @@
 #!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
 """Tests for stored-total overflow and header cases."""
+from pathlib import Path
+import sys
+
 import unittest
 from unittest.mock import Mock, patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from tools.dev.test_support import collect_declarations
 
 import contract_stored_total_overflow as family
 
 
 def declarations(total, stored, facade, modify, write):
-    result = {}
-
-    def case(name, **metadata):
-        def collect(fn):
-            result[name] = (metadata, fn)
-            return fn
-        return collect
-
-    family.register(case, FACADE_TOTAL=total, _stored_library_total=stored,
-                    _facade_total_out=facade, _modify_header=modify, _write_log=write)
-    return result
+    return {name: (metadata, fn) for name, _, metadata, fn in collect_declarations(family.register, FACADE_TOTAL=total, _stored_library_total=stored, _facade_total_out=facade, _modify_header=modify, _write_log=write)}
 
 
 class StoredTotalOverflowTests(unittest.TestCase):

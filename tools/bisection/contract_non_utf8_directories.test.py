@@ -3,24 +3,21 @@
 
 The directory names are created through patched calls: some file systems
 (APFS) refuse a name that is not UTF-8, and the cases run on Linux."""
+from pathlib import Path
+import sys
+
 import os
 import unittest
 from unittest.mock import Mock, patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from tools.dev.test_support import collect_declarations
 
 import contract_non_utf8_directories as family
 
 
 def declarations():
-    cases = {}
-
-    def case(name, *args, **kwargs):
-        def collect(fn):
-            cases[name] = (args, kwargs, fn)
-            return fn
-        return collect
-
-    family.register(case)
-    return cases
+    return {name: (args, kwargs, fn) for name, args, kwargs, fn in collect_declarations(family.register)}
 
 
 def kit():

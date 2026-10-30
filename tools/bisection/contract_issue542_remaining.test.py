@@ -1,22 +1,19 @@
 #!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
 """Tests for the remaining issue 542 cases."""
+from pathlib import Path
+import sys
+
 import unittest
 from unittest.mock import Mock, patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from tools.dev.test_support import collect_declarations
 
 import contract_issue542_remaining as family
 
 
 def declarations():
-    result = {}
-
-    def case(name, **metadata):
-        def collect(fn):
-            result[name] = (metadata, fn)
-            return fn
-        return collect
-
-    family.register(case)
-    return result
+    return {name: (metadata, fn) for name, _, metadata, fn in collect_declarations(family.register)}
 
 
 class Issue542RemainingTests(unittest.TestCase):

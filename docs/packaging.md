@@ -869,12 +869,6 @@ does not answer as libpinyin/libzhuyin, or cannot open the system's model.
 
 ### Packaging migration comparison
 
-Preserve the base checkout before changing its entry points. Run
-`OXPINYIN_PACKAGING_BASE=/path/to/base just test-tools --changed origin/main`
-for identical-input fake comparisons, including metadata and package payloads,
-policy refusals, child failures and SIGINT/SIGTERM cleanup. Without the base
-override, those fixtures assert the migrated behavior under the normal suite.
-
 For real output, run
 `just packaging compare-installs --base=/path/to/base --work=/path/to/private-work`.
 It installs each facade separately through both entry points on BDB, using
