@@ -1699,7 +1699,7 @@ composition**; multi-syllable before-cursor is a genuine engine gap.
   caller passes that begin as the choose offset, where this facade
   deliberately ignores its `offset` argument. Closing it needs `Candidate`
   to carry its span start plus an end-anchored `Session::select_*` — both
-  changes to `oxpinyin-engine`'s supported surface, so AGENTS.md's STOP
+  changes to `oxpinyin-engine`'s supported surface, so the contributor approval
   ("needs interface change") applies and the gap is registered rather than
   improvised. (The paragraph's pin-side claims were written without an
   oracle on the authoring host and are superseded by the measured record

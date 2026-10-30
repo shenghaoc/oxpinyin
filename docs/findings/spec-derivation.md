@@ -80,7 +80,7 @@ gate; the language does not prevent every class.
 Architect agents write the capture harness, run captures and draft SPECs. The
 human verifies the protocol, re-derives sampled constants, explains back and
 freezes. Each scoped derivation PR merges before its separate implementation
-PR. Implementers read upstream implementation source under AGENTS.md's Source
+PR. Implementers read upstream implementation source under the contributor rules' Source
 policy.
 
 Goldens regenerate only against a changed reference freeze, in a dedicated

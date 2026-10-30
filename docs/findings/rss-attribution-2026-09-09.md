@@ -608,7 +608,7 @@ marshalling — and does not pass through Rust's `GlobalAlloc` at all.
    should not be conflated. *(Note added 2026-10-18 UTC: the 2026-10-14
    restaging puts the compiled binary text model in Stage 3, because it
    changes the system data files. See
-   `.kiro/specs/stage3-departures/`.)*
+   `docs/specs/stage3-departures/`.)*
 
 6. **Timing was not measured and is not claimed.** The cycle timings the
    harness emits were not analysed and no timing figure appears in this

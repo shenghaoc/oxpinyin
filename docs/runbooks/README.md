@@ -14,6 +14,6 @@ the reasoning behind each procedure lives in the findings it links.
 | [`axis-j-ledgers.md`](axis-j-ledgers.md) | what may be expected of an axis-J ledger at a later `main`, and when to regenerate one |
 | [`release.md`](release.md) | cutting a release and what the packaging pipeline gates |
 
-Rules the runbooks assume: `AGENTS.md` (STOP conditions, the frozen
-SPECs, the rebase discipline) and `docs/findings/compatibility-policy.md`
-(what may diverge from the pin).
+Read the [contributor procedures](../../CONTRIBUTING.md) for approval conditions, frozen SPECs and rebases.
+Use the [verification rules](verification.md) to select checks.
+The [compatibility policy](../findings/compatibility-policy.md) defines permitted divergences.

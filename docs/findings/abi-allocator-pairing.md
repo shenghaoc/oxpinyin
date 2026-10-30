@@ -346,4 +346,4 @@ reverted afterwards; each is reproducible from the description alone:
   `docs/findings/rss-attribution-2026-09-09.md`'s subject, not this one's.
 - **Non-Linux hosts.** LeakSanitizer's stop-the-world does not run under
   macOS's sandbox. `--static-only` is the portable half; the C ABIs are
-  Linux-first regardless (AGENTS.md).
+  Linux-first regardless (../../CONTRIBUTING.md).

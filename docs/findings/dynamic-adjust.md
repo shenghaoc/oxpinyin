@@ -53,7 +53,7 @@ plumbing one.** The pin merges the *whole gram* once per guess (Gate 2,
 outside the candidate loop) and then indexes the merged gram per
 candidate. oxpinyin's `merge_bigram` merges *one* pair. Calling it per
 candidate turns one gram load plus O(1) lookups into O(candidates)
-bigram lookups. AGENTS.md forbids worsening time and space together, so
+bigram lookups. contributor guidance forbids worsening time and space together, so
 Phase 2 must hoist the merged gram to the guess, matching Gate 2's
 placement rather than only its arithmetic.
 

@@ -363,7 +363,7 @@ version row without a fresh ask.
 > **Source note.** The user/system bigram merge lives inside the decode lookup
 > path (`src/lookup/pinyin_lookup2.cpp`), which is decode-library internals.
 > Characterizing the user store's *merge and precedence* required reading it;
-> AGENTS.md's Source policy permits reading upstream C++ as the reproduction
+> The source policy permits reading upstream C++ as the reproduction
 > target. The facts below are limited to *where and how user data combines
 > with system data*; the Viterbi/k-best decode and the λ scoring formula are
 > already frozen in `docs/findings/scoring-spec.md`,
@@ -629,7 +629,7 @@ project memory).
 
 - `redb` as the `oxpinyin-user` backend — *intended* (per the crate doc) but
   **not yet a dependency** (`crates/oxpinyin-user/Cargo.toml`). Adding it is a
-  `Cargo.toml` change and therefore a maintainer-ask per AGENTS.md "Hard
+  `Cargo.toml` change and therefore a maintainer-ask per contributor guidance "Hard
   forbids"; W6-T1 must raise it, not slip it in.
 - The `UserModel` seam (`crates/oxpinyin-core/src/lib.rs:87`) and the engine
   `Session` (`crates/oxpinyin-engine/src/session.rs`).

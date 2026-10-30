@@ -46,7 +46,7 @@ upstream's current default branch. The tree identity names the complete
 checkout; it does not claim every source file was semantically audited.
 
 **Source-derived evidence basis.** The oxpinyin main snapshot is
-`27c785c07d30ae4332647d76b106c1bafaf71958`. Read #1231, `AGENTS.md`, steering,
+`27c785c07d30ae4332647d76b106c1bafaf71958`. Read #1231, the contributor rules, steering,
 cloud/native setup runbooks, policy rows 102/106 and the
 `removed-candidate-*` / `removed-extension-*` registrations and shared
 `_removed_extension` builder in `tools/bisection/contract-diff.py`.
@@ -525,7 +525,7 @@ system CA bundle), then setup reported
 was installed. The separate source clone succeeded and was verified as above.
 No behavioral runs followed; full BDB provisioning is not claimed complete.
 
-The applicable gate is `AGENTS.md` verification rule 7: review the text and
+The applicable gate is the contributor rules verification rule 7: review the text and
 links, then `git diff --check`. Markdown-only changes need no Rust formatter,
 build, test, clippy, backend-selection or behavioral gate. No logs or dumps
 are included in this deliverable.

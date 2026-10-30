@@ -3,7 +3,7 @@
 > **Supersession note (2026-10-18 UTC):** the `public-api` job (CI-23), its
 > `cargo-public-api` tool and the `docs/api/oxpinyin-engine.public-api.txt`
 > snapshot named below were retired when the C APIs/ABIs became the only
-> supported external interfaces (`AGENTS.md`, "External interfaces"). The
+> supported external interfaces ([interface ruling](../constitution.md#external-interfaces)). The
 > rows are kept as the record of that tree.
 >
 > **Historical inventory snapshot — not active policy.** This record reflects
@@ -2052,7 +2052,7 @@ How a case states its expectation (`matches(spec, pin, subject)`, shared with gc
 | Platform | portable (Python ≥ 3.11 for tomllib). |
 | Consumers | `render_ledger.py`, `internal-ledger.py` (`--tier-preview`), `delta_ledger.py` (`facility`, `FACILITIES`), tests; cited in `docs/findings/axis-j-bdb-ledger.md`. |
 | State | none. |
-| Overlap | Its `CITATION` regex is a second parser of `file:line` citations (AGENTS.md says cite pin by file:line). |
+| Overlap | Its `CITATION` regex is a second parser of `file:line` citations (contributor guidance says cite pin by file:line). |
 | Constraints | `CITATION_LIMITS` pins the reviewed exclusion of `SubPhraseIndex::add_unigram_frequency` ↔ `store.rs add_unigram_frequency`; `FACILITIES` lines (`memory_chunk.h` ≠136, `unaligned_memory.h`, `chewing_large_table2.{h,cpp}` lines 26/68/52/55/74/86) are pin-line-specific; 5 % sample `math.ceil(len*0.05)` with `random.Random(seed)`. |
 
 ### BIS-P-15 — tools/bisection/coverage_review_rules/ (package, 12 modules)
@@ -2542,7 +2542,7 @@ Tree read: detached worktree at origin/main `e67f19d1` (`/tmp/claude-1000/.../sc
 | Inputs | argv: mode, system dir, user dir, inputs. No env. |
 | Outputs | Stdout: export rows (bigram count is the stored count × 2, the pin's rendering). Exit 0; 1 on any API failure (`parse failed`, `guess failed`, `no normal candidate`, `choose failed`, `train failed`, `remember failed`, `save failed`); 2 usage. |
 | Platform | Linux (pin ABI). |
-| Consumers | user-dir-round-trip.sh only. Referenced by tools/bisection/gcov_measure.py and open-counter-diff.c (comments), docs/findings/berkeleydb-backend.md, user-store.md, .kiro/specs/drop-in/tasks.md, ROADMAP.md. |
+| Consumers | user-dir-round-trip.sh only. Referenced by tools/bisection/gcov_measure.py and open-counter-diff.c (comments), docs/findings/berkeleydb-backend.md, user-store.md, docs/specs/drop-in/tasks.md, ROADMAP.md. |
 | State | None. |
 | Overlap | Other pin drivers in tools/bisection (`train-diff.c`, `open-counter-diff.c`, `system-import-profile.c`) re-implement the same ibus call order; this one is the documented reference for why candidate 0 (n-best) must be skipped (`pinyin.cpp:1934`, `:2515-2521`, `phonetic_lookup.h:866`). |
 | Constraints | Upstream citations by file:line at the pin; `phrases` mode exists to avoid the registered class-(b) use-after-free in the pin's bigram export iterator (`pinyin.cpp:842-872`). Sort option must not be 0 (comment: rare single characters' grams segfault the BDB export). |
@@ -2574,7 +2574,7 @@ Tree read: detached worktree at origin/main `e67f19d1` (`/tmp/claude-1000/.../sc
 | Inputs | `tools/oracle/oracle-pin.txt` (`base_image`, `platform`, six `*_sha256_*`, three `data_manifest_sha256_*`), `tools/oracle/Dockerfile.oracle`, `tools/oracle/build-oracle.sh`, `tools/oracle/oracle-pin.txt` (bind-mounted into the container beside build-oracle.sh). Network: docker.io, ghcr.io, snapshot.debian.org, github.com, downloads.sourceforge.net. Env read: `OXPINYIN_CLOUD_CACHE`, `XDG_CACHE_HOME`, `HOME`, `HTTPS_PROXY`/`https_proxy`, `NO_PROXY`/`no_proxy`, `OXPINYIN_PROXY_CA` (default `/root/.ccr/ca-bundle.crt`; single-cert `/root/.ccr/agent-proxy-ca.crt` hard-coded), `OXPINYIN_ORACLE_ENV` (env-file path), `EUID`, `SECONDS`. |
 | Outputs | Stderr `[ Ns] …` progress; stdout one line per cell `<dbm> prefix=<dir> libpinyin=<sha> libzhuyin=<sha> data manifest OK`. Writes `~/.oxpinyin-oracle.env` (exports `PINYIN_MODEL_DIR`, `OXPINYIN_ORACLE_PREFIX_<CELL>`, `OXPINYIN_ORACLE_DATA_<CELL>`, `PINYIN_ORACLE_DBM` default, and recomputes `PINYIN_ORACLE_PREFIX` + `OXPINYIN_LIBPINYIN_DATA_DIR` on every `source`; bash-only). Logs `$cache/build-<dbm>.log`, `$cache/data-<dbm>.log`, `/var/log/dockerd.log`. Exit 0; **3** on a library-hash MISMATCH (libraries left in place for readelf/cmp); 1 (`FAIL:`) on everything else; 2 usage/unknown cell. |
 | Platform | Linux root container, linux/amd64 (pulls/builds with `--platform`), docker required. |
-| Consumers | AGENTS.md ("Cloud sessions are a supported host for every gate: provision one with `tools/cloud/setup.sh`"), docs/runbooks/cloud.md, benches.md (valgrind), oracle.md §2a. Not in runners.json. |
+| Consumers | contributor guidance ("Cloud sessions are a supported host for every gate: provision one with `tools/cloud/setup.sh`"), docs/runbooks/cloud.md, benches.md (valgrind), oracle.md §2a. Not in runners.json. |
 | State | Cache `${OXPINYIN_CLOUD_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/oxpinyin}` with `model20/` (fetch-model cache) and `oracle/<dbm>/` (prefixes, mounted at `/opt/pinyin-oracle` in the container). Docker images: `$base_image`, `oxpinyin-oracle-deps:<Dockerfile hash12>`, published image. `retry` backoff 2/4/8/16 s for 429s; dockerd readiness wait 60 × 1 s. Rewrites each cell's `.pc` `prefix=` to the host path. No locks; a second run re-verifies only (0.33 s measured). |
 | Overlap | Duplicates check-reproducible.sh's proxy/CA flag assembly, deps-image build, in-image `build-oracle.sh --libs-only --enable-libzhuyin` invocation, and the six-hash compare; duplicates verify-oracle-image.sh's `docker create /none` + `docker cp` extraction; duplicates oracle.md §2a's manual steps (pull, cp, sed .pc, hash check, `--regen-data`). |
 | Constraints | A pulled image is trusted only as far as its hashes match the pin (a non-matching cell is discarded and rebuilt). Exit 3 on MISMATCH "is the result to report" (do not edit the record). Published image name `ghcr.io/shenghaoc/oxpinyin-oracle` is hard-coded here and in the workflow and oracle.md. The env file header says "source it, do not edit it". Lanes run it only when a task needs the pin oracle (cloud.md); the environment's own setup script stays empty. |
@@ -2655,8 +2655,8 @@ Sources: `gh pr view 819` (merged 2026-10-16T08:35:11Z; three commits `8a9af94`�
 
 **Commit footprint (observed, `git log --stat`):**
 - `6bf9228b` feat(oracle): oracle-image.yml (+126), Dockerfile.oracle (+53), build-oracle.sh (+266/−60), check-reproducible.sh (+119), image-tag.sh (+41), oracle-pin.txt (+32/−1), verify-oracle-image.sh (+78).
-- `30ff85e3` docs: AGENTS.md (+10), axis-j-{bdb,kc,tkrzw}-ledger.md (digest lines), benches.md (+31), oracle.md (+114/−1).
-- `3b2bfdfe` feat(cloud): AGENTS.md (+3), docs/runbooks/README.md (+1), cloud.md (+193), tools/cloud/setup.sh (+360), Dockerfile.oracle (+42/−11: proxy build arg + `cacert` secret), check-reproducible.sh (+18/−1: proxy flags).
+- `30ff85e3` docs: contributor guidance (+10), axis-j-{bdb,kc,tkrzw}-ledger.md (digest lines), benches.md (+31), oracle.md (+114/−1).
+- `3b2bfdfe` feat(cloud): contributor guidance (+3), docs/runbooks/README.md (+1), cloud.md (+193), tools/cloud/setup.sh (+360), Dockerfile.oracle (+42/−11: proxy build arg + `cacert` secret), check-reproducible.sh (+18/−1: proxy flags).
 - `8eae92de` fix(bisection): run-addon-candidate-diff.sh (+3/−19), run-import-diff.sh (+7/−25), run-train-diff-dynamic-off.sh (+19/−13), run-union-diff.sh (+4/−13).
 
 ### (a) How oracle libraries are made reproducible (established; must be preserved)
@@ -2686,12 +2686,12 @@ Observed:
 
 ### (c) The "same-run measurement" rule and the "wip" rule, as written
 
-AGENTS.md at origin/main, section "## Measurement and lane state" (added by `30ff85e3`; observed verbatim):
+contributor guidance at origin/main, section "## Measurement and lane state" (added by `30ff85e3`; observed verbatim):
 
 > - **Measure in one run.** A measuring PR runs base, PR and pin in one job on one machine and reports only those numbers and their ratios. No absolute figure from another run, host or CPU is ever a baseline (`docs/runbooks/benches.md`).
 > - **Push, don't hoard.** A lane pushes `wip/<issue>` at every checkpoint. Work that exists only in a local worktree or container does not exist: treat every machine as disposable.
 
-AGENTS.md "## Toolchain" (added by `3b2bfdfe`): "Cloud sessions are a supported host for every gate: provision one with `tools/cloud/setup.sh` (`docs/runbooks/cloud.md`)."
+contributor guidance "## Toolchain" (added by `3b2bfdfe`): "Cloud sessions are a supported host for every gate: provision one with `tools/cloud/setup.sh` (`docs/runbooks/cloud.md`)."
 
 docs/runbooks/benches.md "### Measure base, PR and pin in one run" (observed verbatim, key sentences):
 
@@ -2702,7 +2702,7 @@ and "### State the Valgrind version":
 
 > Every measurement report states the Valgrind version it used, as printed by `valgrind --version`, next to the figures.
 
-Observed in cloud.md: "A lane runs the setup only when its task needs the pin oracle (a differential, a same-run measurement against the pin, a data check); a lane that does not touch the oracle never pays for it." The user's shared checkout at `8efd2543` (the AGENTS.md quoted in this session's system context) predates `30ff85e3`/`3b2bfdfe` and lacks both sections; origin/main has them. *(Interpretation: issue #818's fourth target "Optionally, a CI workflow does this on demand for a PR" was not implemented — no workflow in the tree runs base/PR/pin measurements.)*
+Observed in cloud.md: "A lane runs the setup only when its task needs the pin oracle (a differential, a same-run measurement against the pin, a data check); a lane that does not touch the oracle never pays for it." The user's shared checkout at `8efd2543` (the contributor guidance quoted in this session's system context) predates `30ff85e3`/`3b2bfdfe` and lacks both sections; origin/main has them. *(Interpretation: issue #818's fourth target "Optionally, a CI workflow does this on demand for a PR" was not implemented — no workflow in the tree runs base/PR/pin measurements.)*
 
 ### (d) What the cloud session setup provisions, in order
 
@@ -3073,7 +3073,7 @@ Tree read: detached worktree at origin/main `e67f19d1` (`scratchpad/ox`). Every 
 | Consumers | **None executes it.** `store-backends.yml` mentions it only in comments (lines 82/100); there is no kc sanitizer job — only `tkrzw-sanitizers` (inline RUSTFLAGS) and `bdb-sanitizers` (runs `tools/bdb/run-sanitizers.sh`). Referenced by `docs/findings/kyotocabinet-backend.md`. |
 | State | none |
 | Overlap | sibling of `tools/bdb/run-sanitizers.sh` (different default nightly: 2026-08-01 vs 2026-09-07; different target default: fixed x86_64 vs `rustc -vV` host; this one lacks `-Cdebuginfo=1` and uses `--features kyotocabinet` without `--no-default-features`). |
-| Constraints | self-skip via `OXPINYIN_SANITIZER_ALLOW_SKIP` contradicts AGENTS.md "Do not add a self-skipping test" in spirit (observation). Library internals not instrumented. |
+| Constraints | self-skip via `OXPINYIN_SANITIZER_ALLOW_SKIP` contradicts contributor guidance "Do not add a self-skipping test" in spirit (observation). Library internals not instrumented. |
 
 ### TLS-22 — tools/bdb/run-sanitizers.sh
 
@@ -3310,10 +3310,10 @@ Tree read: detached worktree at origin/main `e67f19d1` (`scratchpad/ox`). Every 
 | Inputs | git history or message file; env `GITHUB_STEP_SUMMARY` (writes a per-commit table). |
 | Outputs | `::error::<sha> <subject>: R2 — <detail>` lines; `::notice::` on empty range; markdown summary table `| commit | subject | R2 (Assisted-by) |`; exit 0 pass, 1 lint failure, 2 usage/env (bad sha, old git). |
 | Platform | portable |
-| Consumers | `commit-trailers.yml` job `trailer-lint` (`lint-commits.sh "${MB}" "${HEAD_SHA}"`), `.githooks/commit-msg` (`--hook`), `tests/lint-commits.test.sh`, `docs/findings/commit-hygiene-failures.md`; AGENTS.md "Attribution" describes R2. |
+| Consumers | `commit-trailers.yml` job `trailer-lint` (`lint-commits.sh "${MB}" "${HEAD_SHA}"`), `.githooks/commit-msg` (`--hook`), `tests/lint-commits.test.sh`, `docs/findings/commit-hygiene-failures.md`; contributor guidance "Attribution" describes R2. |
 | State | none |
 | Overlap | none |
-| Constraints | regex constants are the frozen rule text (AGENTS.md: `Grok:4.6` fails, `Grok:grok-4.6` passes). |
+| Constraints | regex constants are the frozen rule text (contributor guidance: `Grok:4.6` fails, `Grok:grok-4.6` passes). |
 
 ### TLS-37 — .github/scripts/lint-crate-cfg-placement.sh
 
@@ -3558,7 +3558,7 @@ Observations (what the code does) unless marked *interpretation*.
 
 ## Disposition of PR #767
 
-**PR #767** — "Publish measured BDB profiling workloads for #757–#759" (branch `perf/757-759-harness`, merged 2026-10-14T04:45:04Z; two commits, `Assisted-by: Codex:gpt-6`: `4f430509` "Publish measured BDB profiling driver and recipe" and `56affabf` "Validate profiling inputs and refresh BDB baselines"; landed on main as `cfc1950b` and `1be0b4fd`). Files: `tools/bisection/system-import-profile.c` (+176/−2, then +40/−13) and `docs/runbooks/benches.md` (+106, then +80). PR body: an "existing-driver extension satisfying AGENTS.md rule 6; it adds no product code or new general driver"; path check named the BDB reference cell.
+**PR #767** — "Publish measured BDB profiling workloads for #757–#759" (branch `perf/757-759-harness`, merged 2026-10-14T04:45:04Z; two commits, `Assisted-by: Codex:gpt-6`: `4f430509` "Publish measured BDB profiling driver and recipe" and `56affabf` "Validate profiling inputs and refresh BDB baselines"; landed on main as `cfc1950b` and `1be0b4fd`). Files: `tools/bisection/system-import-profile.c` (+176/−2, then +40/−13) and `docs/runbooks/benches.md` (+106, then +80). PR body: an "existing-driver extension satisfying verification rule 6; it adds no product code or new general driver"; path check named the BDB reference cell.
 
 ### The driver (`tools/bisection/system-import-profile.c`, 279 lines at origin/main)
 
@@ -3602,7 +3602,7 @@ Observation-derived (the runbook and driver define the bar; this list restates i
 2. Same call sequence per row (the tables above), same option word `0x18a`, same sort mask `0x1e`, `train_top` preconditions (full consumption, successful guess, `train(0)`), one `pinyin_save` at the end of training/import, export over touched libraries only, fresh empty user dir enforced.
 3. Same measurement: whole-process Callgrind `Ir` (`--cache-sim=no --branch-sim=no`) and Massif `mem_heap_B` (`--time-unit=i --heap=yes --stacks=no --peak-inaccuracy=0.0 --detailed-freq=1 --max-snapshots=1000`), three runs, medians, `(max−min)/median` spread, `taskset -c 0`, suspend-overlap discard; no wall clock; profiler output streamed, nothing captured in-tree.
 4. Same provenance statement: driver source and executable SHA-256, pin SO SHA-256, subject build command line (`install.sh … --features bdb,shipped`), subject `.so` size/SHA-256/`NEEDED` list, Valgrind version, host/CPU, fixture SHA-256, phrase-input SHA-256 — and, since the harness itself would now be part of the measured process, a demonstration that the replacement harness's own Ir/heap overhead outside the dlopened SO is accounted for (the C driver is thin; a Rust harness adds a runtime to the whole-process figure — *interpretation*).
-5. Dynamic loading of the SO under test by path (the driver `dlopen`s pin and subject alike), so the same binary drives both sides; and the AGENTS.md rule 6 stance the PR invoked ("no new bespoke driver … where an existing driver can take a case file") means a Rust replacement must justify retiring the existing driver rather than extending it.
+5. Dynamic loading of the SO under test by path (the driver `dlopen`s pin and subject alike), so the same binary drives both sides; and the verification rule 6 stance the PR invoked ("no new bespoke driver … where an existing driver can take a case file") means a Rust replacement must justify retiring the existing driver rather than extending it.
 
 
 ---
@@ -3654,7 +3654,7 @@ Shared facts (stated once, referenced below):
 Workflow: `name: CI`; `on: push: branches [main]`, `pull_request: branches
 [main]`. No workflow-level path filter — the `changes` job is the gate.
 Header documents the gated path set and the "deliberately NOT gated" set
-(docs/**, reference/**, .kiro/**, root *.md, store-backends.yml). Required
+(docs/**, reference/**, the steering/specification paths, root *.md, store-backends.yml). Required
 checks on main: `ci-aggregate`, `trailer-lint`, `trailer-test`.
 
 ### CI-01 — .github/workflows/ci.yml (job: changes)
@@ -4151,7 +4151,7 @@ nextest" — **perf-snapshot is absent from that header list** (drift).
 | Inputs | argv; `GITHUB_STEP_SUMMARY` (optional); regexes `ASSISTED_SHAPE_RE='^Assisted-by: [[:alnum:]][[:alnum:]._-]*:[[:alnum:]][[:alnum:].+_-]*$'`, `ASSISTED_PLACEHOLDER_RE='^Assisted-by: (AGENT\|AGENT_NAME):\|:(MODEL\|MODEL_VERSION)([[:space:]]\|$)\|\[\|\]'`; condition 2 = MODEL token has ≥1 ASCII letter; condition 4 = no duplicate identical lines |
 | Outputs | Exit `0 = pass, 1 = lint failure, 2 = usage/environment error`; `::error::<sha> <subject>: R2 — …` lines; `::notice::` on empty range; markdown summary table (`commit \| subject \| R2`) to step summary or stdout |
 | Platform | Portable POSIX sh + git |
-| Consumers | `trailer-lint` (CI-08), `.githooks/commit-msg` (CI-29), `tests/lint-commits.test.sh` (CI-09), `.kiro/steering/agents-protocol.md` (quotes the regex) |
+| Consumers | `trailer-lint` (CI-08), `.githooks/commit-msg` (CI-29), `tests/lint-commits.test.sh` (CI-09), the historical protocol (quotes the regex) |
 | State | none |
 | Overlap | none |
 | Constraints | "Conditions 1, 3, 4 are lifted verbatim from the repo's former `.githooks/commit-msg`"; "Semantics beyond shape remain human attestation"; only R2 exists ("no R3 was ever adopted", enforcement-matrix §J) |
@@ -4218,7 +4218,7 @@ nextest" — **perf-snapshot is absent from that header list** (drift).
 | Consumers | deny job relies on it ("--locked pins both root graphs to the committed Cargo.lock, which Dependabot maintains"); action SHA pins are bumped by it but comments say "do not bump without re-verifying" |
 | State | — |
 | Overlap | — |
-| Constraints | AGENTS.md hard forbid "Add/upgrade deps without ask" is a process rule above this automation |
+| Constraints | contributor guidance hard forbid "Add/upgrade deps without ask" is a process rule above this automation |
 
 ---
 
@@ -4270,25 +4270,25 @@ Quoted verbatim (short) with file path and the nearest heading.
 
 **Tests must fail rather than skip on missing inputs**
 - docs/testing/README.md "## Tests that need inputs CI never has": "A test that needs the model20 cache, the system-table export, a pin-built libpinyin tool or data dir, or opencc is `#[ignore = "needs …; run with --include-ignored"]`, and once run it panics on a missing input instead of printing "skipping" and passing" … "A committed golden or fixture that is missing is a failure too." … "Do not add a new self-skipping test".
-- AGENTS.md "## Operational rules that live with their procedures": "are `#[ignore = "needs …"]` and fail on a missing input, never skip … Do not add a self-skipping test."
+- contributor guidance "## Operational rules that live with their procedures": "are `#[ignore = "needs …"]` and fail on a missing input, never skip … Do not add a self-skipping test."
 - docs/runbooks/goldens-and-pins.md "## 1. Committed fixtures and goldens": "A missing golden is a test failure, never a skip (#373)."
 - .github/scripts/lint-crate-cfg-placement.sh (comment): "Skipping a typo silently would report "no violations" for a file nobody read, which is the one answer a linter must never give."
 - tools/bdb/run-sanitizers.sh: "ERROR: %s is not installed; sanitizer gate did NOT run." (exit 1). Counter-example to keep visible: tools/kc/run-sanitizers.sh has `OXPINYIN_SANITIZER_ALLOW_SKIP` → "SKIP … the gate did NOT run" exit 0.
 
 **Which cells run when**
-- AGENTS.md "## Verification cells": "1. The reference cell is Berkeley DB (`PINYIN_ORACLE_DBM=bdb`, the default). Baseline, differential, revert-and-check and the gate run there and nowhere else by default." "2. Run all three cells (bdb, kc, tkrzw) only when the diff touches backend code. Decide by path check, not by judgement" (the three checks: `crates/oxpinyin-store/` in `git diff --name-only origin/main...HEAD`; a changed file containing `feature = "bdb|tkrzw|kyotocabinet"`; a Cargo.toml diff line naming a backend). "State the check's output in the PR body." "3. Every differential runs on all three cells once at the start of each sweep and once before a release." "4. Revert-and-check runs on the reference cell only."
+- contributor guidance "## Verification cells": "1. The reference cell is Berkeley DB (`PINYIN_ORACLE_DBM=bdb`, the default). Baseline, differential, revert-and-check and the gate run there and nowhere else by default." "2. Run all three cells (bdb, kc, tkrzw) only when the diff touches backend code. Decide by path check, not by judgement" (the three checks: `crates/oxpinyin-store/` in `git diff --name-only origin/main...HEAD`; a changed file containing `feature = "bdb|tkrzw|kyotocabinet"`; a Cargo.toml diff line naming a backend). "State the check's output in the PR body." "3. Every differential runs on all three cells once at the start of each sweep and once before a release." "4. Revert-and-check runs on the reference cell only."
 - docs/runbooks/parity-gates.md: "Use Berkeley DB for a lane's ordinary before/after verification. Select all three cells for the start-of-sweep and pre-release differential run."
-- AGENTS.md "## Verification cells" 5: "The local test gate is `cargo test -p <crate>` for each crate the diff touches, plus fmt and clippy on those crates. The workspace sweep is CI's job; do not run it locally as a gate." 6: "No new bespoke driver plus runner per issue where an existing driver can take a case file." 7: "Re-verification is proportional to what changed since the last green gate" (docs-only: fmt then push; review fix: fmt, clippy, `cargo test -p`, only that issue's differential on the reference cell; conflict-free rebase touching no lane file: no local re-gate; stack: re-gate only the changed commit and those above touching the same files). "The report states which of these cases applied and why".
+- contributor guidance "## Verification cells" 5: "The local test gate is `cargo test -p <crate>` for each crate the diff touches, plus fmt and clippy on those crates. The workspace sweep is CI's job; do not run it locally as a gate." 6: "No new bespoke driver plus runner per issue where an existing driver can take a case file." 7: "Re-verification is proportional to what changed since the last green gate" (docs-only: fmt then push; review fix: fmt, clippy, `cargo test -p`, only that issue's differential on the reference cell; conflict-free rebase touching no lane file: no local re-gate; stack: re-gate only the changed commit and those above touching the same files). "The report states which of these cases applied and why".
 
 **Same-run measurement**
-- AGENTS.md "## Measurement and lane state": "**Measure in one run.** A measuring PR runs base, PR and pin in one job on one machine and reports only those numbers and their ratios. No absolute figure from another run, host or CPU is ever a baseline".
+- contributor guidance "## Measurement and lane state": "**Measure in one run.** A measuring PR runs base, PR and pin in one job on one machine and reports only those numbers and their ratios. No absolute figure from another run, host or CPU is ever a baseline".
 - docs/runbooks/benches.md "### Measure base, PR and pin in one run": "**A measurement is the ratio of artifacts timed in the same job on the same machine, never a number carried over from another run.**" … "**interleaving** the base, PR and pin artifacts run by run" … "Earlier snapshots in this repository remain records of what was measured where; they are not baselines to subtract from."
 - docs/runbooks/benches.md (intro): "Four tiers, none run by CI (`verify-nightly` has no perf lane)" … "Numbers are only comparable within one container on one host".
-- AGENTS.md "## Rebase discipline": "Re-run pins after any rebase that changes the engine, capi, or data crates. Whoever merges later re-measures those pins rather than assuming the pre-rebase numbers still hold."
+- contributor guidance "## Rebase discipline": "Re-run pins after any rebase that changes the engine, capi, or data crates. Whoever merges later re-measures those pins rather than assuming the pre-rebase numbers still hold."
 - verify-nightly.yml perf-snapshot comment: "Record freely, threshold almost nothing. A flag means "a human should look", never "this merge is bad"." … "Only the schedule writes the series."
 
 **Golden refresh procedure**
-- docs/runbooks/goldens-and-pins.md (intro): "All three are STOP-class under AGENTS.md: an ask, a measured differential, and a maintainer ruling recorded in the findings."
+- docs/runbooks/goldens-and-pins.md (intro): "All three are STOP-class under contributor guidance: an ask, a measured differential, and a maintainer ruling recorded in the findings."
 - "## 1. Committed fixtures and goldens": "Regenerate, diff, and commit the golden in the same change as the code that moved it, with the before/after numbers in the message." Public API row: "A diff is a supported-surface change, so it is an ask; commit the regenerated file in the same change with the additions and removals named in the message".
 - "## 2. The frozen parity numbers": steps "1. Run the parity suite against the oracle … 2. Classify the delta under `compatibility-policy.md` … 3. Ask. The re-freeze is the maintainer's ruling … 4. Update the asserted numbers in the same commit as the ruling."
 - ci.yml test comment (w3 manifest): "running that in CI would overwrite the very drift this must catch, so this is a check".
@@ -4309,19 +4309,19 @@ Quoted verbatim (short) with file path and the nearest heading.
 - docs/runbooks/parity-gates.md: "`tools/bisection/run-all.sh` … does not provision or patch the oracle, cache oracle output, run a workspace test sweep, or execute performance recipes." … "Provision separate prefixes; never patch the original installations." … "Do not modify the reference installation to satisfy a runner."
 
 **Debug vs release for differentials; target directory retention**
-- AGENTS.md "## Verification cells" 8: "Differentials build debug, never release. Keep one target directory per cell and reuse it; do not delete target directories between issues. Clean once, at the end of the lane."
+- contributor guidance "## Verification cells" 8: "Differentials build debug, never release. Keep one target directory per cell and reuse it; do not delete target directories between issues. Clean once, at the end of the lane."
 - docs/runbooks/parity-gates.md: "`oracle-cell.sh` owns backend selection and target resolution. It exports `CARGO_PROFILE_DEV_OPT_LEVEL=1`; no Cargo manifest or shipped source is changed." … "Each cell has a separate retained Cargo target under `--target-root` (default `target/cells`). … Keep these targets between issues. No runner should rebuild a supplied library".
 - docs/findings/tooling-lane-gates.md (intro): "Parity artifacts use the dev profile with `CARGO_PROFILE_DEV_OPT_LEVEL=1`, one retained target per cell."
 
 **Frozen SPEC / golden / CI-policy edit rules**
-- AGENTS.md "## Hard forbids": "Add/upgrade deps without ask · edit frozen SPECs/goldens/CI policy without ask · `unsafe` outside allowlisted crates · silence lints."
-- AGENTS.md "## STOP → do not improvise": "implementation would require changing a frozen SPEC without an ask." "A STOP clears **only on a human turn**."
-- .kiro/steering/agents-protocol.md: "Implement from frozen SPECs/fixtures only."
+- contributor guidance "## Hard forbids": "Add/upgrade deps without ask · edit frozen SPECs/goldens/CI policy without ask · `unsafe` outside allowlisted crates · silence lints."
+- contributor guidance "## STOP → do not improvise": "implementation would require changing a frozen SPEC without an ask." "A STOP clears **only on a human turn**."
+- the historical protocol: "Implement from frozen SPECs/fixtures only."
 - docs/safety/enforcement-matrix.md "## J. Process & meta rules": "Freeze discipline (SPECs, scorer API, path-set parity) | already enforced by review + oracle differentials; linting "don't change frozen semantics" is not mechanizable".
 - Ratchets: coverage.yml comment "Raise it when the number rises, never lower it to pass."; docs/safety/ci-strategy.md "## Tier 3" Failure policy: "they do not auto-block unless a ratchet exists (coverage/Lizard/complexity ratchets only ever tighten)."
 - Images/pins: store-backends.yml header "Do NOT pin this image by digest or let a later change "stabilise" it." (repeated in every container job: "deliberately unpinned"); store-backends.yml tkrzw-sanitizers: "bump the date deliberately, in its own commit"; commit-trailers.yml/bootstrap: "(do not bump without re-verifying)".
 - ci.yml `changes` comment: "The pathspec list is the one the header documents; keep the two in lockstep."
-- AGENTS.md "## Attribution" / commit-trailers: "`Assisted-by: AGENT:MODEL` shape with nothing after the model … no placeholder text; no duplicate lines (set semantics)."
+- contributor guidance "## Attribution" / commit-trailers: "`Assisted-by: AGENT:MODEL` shape with nothing after the model … no placeholder text; no duplicate lines (set semantics)."
 
 ---
 
@@ -4437,7 +4437,7 @@ Conventions used in this file:
 | Inputs | Features: `default = ["bdb"]`; `oracle-ffi = ["dep:glib-sys"]`; `kyotocabinet`/`bdb`/`tkrzw` forwarded to `oxpinyin-data/*`. `build = "build.rs"`. |
 | Outputs | Lib `pinyin_oracle`; bins `parity-corpus`, `parity-diff`, `oracle-paths`, `oracle-candidates`, `oracle-candidate-structure`, `parity-sweep`, `parity-worst`, `corpus-tail`, `sentence-tail` (note: `oracle_sentence_surface` has NO `[[bin]]` entry — auto-discovered from `src/bin/`, so its cargo name is the underscore form `oracle_sentence_surface`); benches `scan_perf`, `alloc_profile`, `dbm_bench` (`required-features = ["oracle-ffi"]`). |
 | Platform | Portable with `oracle-ffi` off; Linux-first with it on (glib-sys dep is `[target.'cfg(target_os = "linux")']`). |
-| Consumers | Workspace member (`Cargo.toml:14`); `ci.yml` `cargo test --locked --workspace` (feature off); macOS lane runs `--no-default-features --features tkrzw` explicitly to keep `oracle-ffi` off; `tools/bisection/delta_ledger.py` / `render_ledger.py` build `-p pinyin-oracle --test sentence_surface_parity`; `.kiro/steering/structure.md:18` (unsafe allow, Linux, never ships). |
+| Consumers | Workspace member (`Cargo.toml:14`); `ci.yml` `cargo test --locked --workspace` (feature off); macOS lane runs `--no-default-features --features tkrzw` explicitly to keep `oracle-ffi` off; `tools/bisection/delta_ledger.py` / `render_ledger.py` build `-p pinyin-oracle --test sentence_surface_parity`; the historical crate map (line 18) (unsafe allow, Linux, never ships). |
 | State | none |
 | Overlap | `oxpinyin-testsupport/Cargo.toml` has the same backend-forwarding `[features]` block (kyotocabinet/bdb/tkrzw → `oxpinyin-store/*`), with `default = []` instead of `["bdb"]`. |
 | Constraints | Lints: `unsafe_code = "allow"` (only crate besides capi/store with FFI), `undocumented_unsafe_blocks = "deny"`, `missing_safety_doc = "deny"`, `clippy::all = deny`. Comment: the package name, "wire/pin schemas and the default oracle prefix are behavior, not names". `dbm_bench` must keep `required-features` so plain `cargo bench -p pinyin-oracle` on oracle-less hosts skips rather than fails to link. |
@@ -5129,7 +5129,7 @@ Portable = runs with `oracle-ffi` off on all three CI OSes. "Needs oracle" = `#!
 | Consumers | dev-deps of oxpinyin-core, -engine, -capi (benches), -corpus, -training, -datagen (the one non-dev consumer, "which itself never ships"), pinyin-oracle (normal dep), fuzz crate. 41 files reference it (see grep in Architecture notes). |
 | State | — |
 | Overlap | — |
-| Constraints | "No default backend: … a hard default would re-enable kyotocabinet through the path dev-dependencies on macOS." `.kiro/steering/structure.md:24`: forbid unsafe, portable, never ships. |
+| Constraints | "No default backend: … a hard default would re-enable kyotocabinet through the path dev-dependencies on macOS." the historical crate map (line 24): forbid unsafe, portable, never ships. |
 
 ### RS-45 — crates/oxpinyin-testsupport/src/model_cache.rs
 
@@ -5354,7 +5354,7 @@ Portable = runs with `oracle-ffi` off on all three CI OSes. "Needs oracle" = `#!
 | Inputs | bytes; seed corpus `fuzz/corpus/parser/zhuan`. |
 | Outputs | libFuzzer. |
 | Platform | Linux nightly. |
-| Consumers | fuzz-soak; cited by `docs/testing/upstream-test-coverage.md`, `.kiro/specs/foundation/tasks.md`. |
+| Consumers | fuzz-soak; cited by `docs/testing/upstream-test-coverage.md`, `docs/specs/foundation/tasks.md`. |
 | State | none |
 | Overlap | — |
 | Constraints | — |
@@ -5485,7 +5485,7 @@ Portable = runs with `oracle-ffi` off on all three CI OSes. "Needs oracle" = `#!
 | Platform | Linux nightly (ASan+LSan). |
 | Consumers | fuzz-soak; `docs/testing/upstream-test-strategies.md:138`. |
 | State | `static SESSION: OnceLock<Session>`, `static mut TEARDOWN_*` raw pointers; temp user dir never removed. |
-| Overlap | Same symbol names as pinyin-oracle `ffi.rs` but a different library (oxpinyin-capi, not libpinyin). Fix placement precedent in AGENTS.md ("capi-commands fuzz leak fix … belonged on #502"). |
+| Overlap | Same symbol names as pinyin-oracle `ffi.rs` but a different library (oxpinyin-capi, not libpinyin). Fix placement precedent in contributor guidance ("capi-commands fuzz leak fix … belonged on #502"). |
 | Constraints | Mispaired iterator lifecycles are UB by contract (audit F-6), so begin/end always pair within one command. Strings capped at 64 bytes, NUL-truncated. |
 
 ## Count

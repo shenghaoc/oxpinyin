@@ -117,7 +117,7 @@ first-match renderer equivalence, all existing scheme and key tests and
 property tests. `cargo fmt --all --check` passes. `cargo clippy -p
 oxpinyin-core -p oxpinyin-chewing --all-targets --locked -- -D warnings`
 passes after moving the test module below production items (no lint suppression).
-The three AGENTS.md backend checks each output nothing: no store paths,
+The three backend-selection checks each output nothing: no store paths,
 no matching backend feature condition in changed non-Markdown files, no
 backend Cargo.toml changes. BDB only is selected mechanically.
 
@@ -320,7 +320,7 @@ The harness also emits ns fields; they are deliberately not used for latency
 claims because of the observed desktop activity and single-sample design.
 
 Acceptance fails on the stable 18.8–21.7% affected parser instruction increase.
-Under the clarified ruling in #864 (AGENTS.md Constitution §2 and Source
+Under the clarified ruling in #864 (docs/constitution.md §2 and Source
 policy), binary file size is outside the runtime time/space trade rule.
 The 320 KiB paired stripped-file saving cannot compensate for a runtime
 regression. Runtime instructions increased 10–22% while heap use and

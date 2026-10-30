@@ -45,7 +45,7 @@ surface:
 
 So nothing here is a class (a)/(b)/(c) entry, nothing here belongs in
 `upstream-divergences.md`, and the register is deliberately not amended.
-What does govern it is AGENTS.md's source policy — *external interface
+What does govern it is the source policy — *external interface
 behaviour must be unchanged* — applied to the **format**: the grammar the
 file is written in is upstream's, and reading it differently in two
 places is a defect regardless of which surface it sits on.

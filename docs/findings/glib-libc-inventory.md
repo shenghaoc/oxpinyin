@@ -862,7 +862,7 @@ language-artefact row or artefact part above.
 
 - The frequency-comparator wrap (old rows 11–14 and 17) is now ruled.
   The maintainer ruling of 2026-10-29 UTC, "No ported external-library
-  internals", is in `AGENTS.md` beside the language-artefact paragraph
+  internals", is in the [source policy](../source-policy.md#internal-language-artefacts)
   and in [compatibility-policy.md](compatibility-policy.md) under the
   2026-10-28 amendment. Candidate-frequency sorting uses ordinary
   numerical comparison.

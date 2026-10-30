@@ -2,7 +2,7 @@
 
 `oxpinyin-store` compiles exactly one peer backend per binary;
 the store refuses zero or more than one with a `compile_error!`. Berkeley DB is
-the workspace default. The crate map (`.kiro/steering/structure.md`) and
+the workspace default. The crate map (`docs/architecture.md`) and
 `docs/findings/backend-selection-audit.md` carry the why.
 
 ## Selecting a backend

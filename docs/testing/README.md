@@ -31,7 +31,7 @@ panics on a missing input instead of printing "skipping" and passing
 nothing). A committed golden or fixture that is missing is a failure
 too. `cargo test` shows them as ignored; `just compat differentials`
 and the datagen drop-in differential pass `--include-ignored`. Do not
-add a new self-skipping test (AGENTS.md points here).
+add a new self-skipping test (contributor guidance points here).
 
 | Document | Subject |
 | --- | --- |

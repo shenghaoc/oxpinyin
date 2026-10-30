@@ -16,7 +16,7 @@ S1–S3 rulings onto floats. It also proposes a policy disposition and a
 PR split. Appendix A settles, from the pin-built objects, the seven
 points the source could not settle (D-1 to D-7).
 
-`.kiro/specs/oxidation-record/requirements.md` Requirement 4,
+`docs/specs/oxidation-record/requirements.md` Requirement 4,
 criterion 3, already requires the sentence decoder to score with the
 pin's float types, conversion points and order of operations.
 
@@ -238,8 +238,8 @@ implements this disposition; PR C removes the remaining rational path.
 4. **The six §12 class (a) rows** (`bo`, `quguan`, `kaliantai`,
    `huilianpei`, `yunhoulvlvlunqianaonaoruoqubeiji`, `nou'y`). Re-measure
    them under PR B. A row that matches leaves class (a). A row that still
-   differs is investigated before it is classified (Kiro Requirement 4,
-   criterion 3). The frozen §12 declaration,
+   differs is investigated before it is classified (the oxidation-record
+   specification, [Requirement 4, criterion 3](../specs/oxidation-record/requirements.md#requirement-4-known-defects-are-fixed-bug-for-bug)). The frozen §12 declaration,
    `fixtures/w4/oracle-sentence-tie-order.txt` and
    `crates/pinyin-oracle/tests/sentence_surface_parity.rs` change only
    with explicit approval.

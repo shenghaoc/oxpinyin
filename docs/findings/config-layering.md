@@ -5,7 +5,7 @@
 
 Date: 2026-08-09 · Status: **frozen for W4-T0c**
 
-`.kiro/steering/structure.md` states the configuration model in three lines.
+`docs/architecture.md` states the configuration model in three lines.
 This finding turns it into the contract a shell and a test harness both
 implement, and pins the one claim that has to be checked by machine rather
 than believed: **`Config::default()` equals the captured upstream defaults,

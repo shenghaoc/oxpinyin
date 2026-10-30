@@ -6,7 +6,7 @@ first surveyed at `origin/main` `3b2bfdf`; rows updated 2026-10-18 UTC
 at `84b7e79` for #828 (merged as `928466f7`) and #832 (merged as
 `1726f685`).
 
-This is the record that `.kiro/steering/oxidation-method.md` asks for:
+This is the record that `docs/source-policy.md` asks for:
 what the pin stores and computes, subsystem by subsystem, and what
 oxpinyin does in its place. Pin code is cited `file:line` under `src/`;
 oxpinyin code by file and item.
@@ -37,7 +37,7 @@ to the pin's (`oxpinyin-datagen`'s system files).
 
 A row is a survey result, not a proof of equivalence. Rows whose
 behaviour is unverified, and the open gaps, are listed at the end and
-tracked by `.kiro/specs/oxidation-record/`.
+tracked by `docs/specs/oxidation-record/`.
 
 ## 0. Components and modularisation
 
@@ -130,12 +130,12 @@ design — `KeyInput`, `process_key`, `type_pinyin`, `Preedit`, `commit`
 — which no C-ABI path calls; the oracle tools and tests use it. For the
 bug-for-bug build the operations are the Rust surface that matters; the
 key-driven layer belongs in an optional adapter on top of them, not in
-the same type (`.kiro/specs/oxidation-record/` task 9).
+the same type (`docs/specs/oxidation-record/` task 9).
 
 ### How oxpinyin divides it
 
 oxpinyin keeps the pin's layers but makes each a crate with explicit
-dependencies (`.kiro/steering/structure.md` has the full map):
+dependencies (`docs/architecture.md` has the full map):
 
 | Pin layer | oxpinyin crates |
 | --- | --- |
@@ -515,7 +515,7 @@ shortest decimal (`Lambda::from_f32`). See the
 
 ## 10. Where oxpinyin keeps the pin's code shape
 
-`.kiro/steering/oxidation-method.md` prefers idiomatic Rust and keeps the
+`docs/source-policy.md` prefers idiomatic Rust and keeps the
 pin's code shape only where behaviour depends on it. The places found so
 far where oxpinyin keeps C-shaped code:
 

@@ -121,15 +121,15 @@ until their compatibility smoke passes. Task launchers do not install or start
 host services. Cloud setup follows the rule below.
 Do not dispatch work to a remote machine implicitly.
 
-Cloud sessions, including Claude and Codex cloud environments, are supported
+Remote Linux hosts that meet the [remote Linux requirements](../runbooks/cloud.md#host-requirements) are supported
 container hosts. Before any `just container` task, cloud setup starts the
 Docker daemon or checks that it runs. It checks access to the image registry,
 `deb.debian.org`, `downloads.sourceforge.net` and the SourceForge mirror
 hosts reached by the [model20 fetcher](../../tools/dev/model.py).
 If a host is blocked, provisioning fails and names that host. Never skip.
-When this implementation lands, AGENTS.md's “cloud sessions are a supported
-host for every gate” uses this container route instead of native provisioning.
-This plan changes no current AGENTS.md rule.
+When this implementation lands, the contributor rule that a provisioned remote Linux host supports
+every gate uses this container route instead of native provisioning.
+This plan changes no current verification rule.
 
 Functional differentials may use amd64 emulation after runtime validation.
 Pin timing, base/PR/pin gates and comparisons with Linux measurements require
@@ -325,7 +325,7 @@ retirement in the replacement PR after proof, consumer migration and named
 maintainer approval. T14 keeps final repository-wide reconciliation.
 
 Keep BDB as the default comparison cell. Use all three cells only when
-AGENTS.md's mechanical path check selects them. Keep the start-of-sweep and
+the contributor rules' mechanical path check selects them. Keep the start-of-sweep and
 pre-release cross-cell obligations. Use sound tkrzw only. Report suspected
 backend dependence without a path trigger as a finding, not permission to
 run extra cells. Each CI migration needs separate approval and comparison.

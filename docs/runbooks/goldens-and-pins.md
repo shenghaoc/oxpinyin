@@ -1,7 +1,7 @@
 # Goldens and pins — refreshing what is frozen
 
 Three different things are "frozen" here, with three different
-procedures. All three are STOP-class under AGENTS.md: an ask, a measured
+procedures. All three are STOP-class under the [approval conditions](../../CONTRIBUTING.md#approval-conditions): an ask, a measured
 differential, and a maintainer ruling recorded in the findings.
 
 ## 1. Committed fixtures and goldens
@@ -57,6 +57,6 @@ model SHA-256, DBM) are one identity; change every field together. The
    rebuilt pin (issue #537).
 
 Re-run the pins after any rebase that touches engine, capi or data
-(AGENTS.md, "Rebase discipline"); whoever merges later re-measures.
+([rebase procedure](../../CONTRIBUTING.md#checkpoints-and-rebases)); whoever merges later re-measures.
 
 2026-09-27: #612 corrects oxpinyin-generated `RECORDS_GOLDEN`’s `.dbin` MODIFY token from `0x01000001` to local slot `0x00000001`; pin `074a2219` (`phrase_index.cpp:394–442`) reproduces all 62 payload bytes with only offset 25 changing `01` → `00` (maintainer-approved).

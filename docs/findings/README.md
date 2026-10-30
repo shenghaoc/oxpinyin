@@ -11,7 +11,7 @@ tell a frozen SPEC from a measurement from a note the architecture has
 since moved past. Statuses:
 
 - **frozen / policy / contract / pinned** — normative; changing one is a
-  STOP (AGENTS.md).
+  STOP (../../CONTRIBUTING.md).
 - **register** — living lists (divergences, F-E evidence).
 - **record / verified / measured / audit / report** — what was found
   when; the numbers hold for the tree they cite — and, for a perf record,

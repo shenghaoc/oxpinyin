@@ -46,7 +46,7 @@ recorded in every `fixtures/foundation/f-a.txt` record.
 Hand-written declarations, not `bindgen`.
 
 `bindgen` would add a build-dependency tree to the workspace, and adding
-dependencies without an explicit ask is a hard forbid in `AGENTS.md`. The
+dependencies without an explicit ask is a hard forbid in the contributor rules. The
 required surface was 17 functions over five opaque types at W2-T1 (the
 original text said four; the binding's first revision and the list below
 both had five) and is 29 over six today, so a hand-written

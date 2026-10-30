@@ -3,7 +3,7 @@
 Portable Rust re-expression of
 [libpinyin](https://github.com/libpinyin/libpinyin).
 Project rules: [constitution](docs/constitution.md) and [source policy](docs/source-policy.md).
-Crate roles: `.kiro/steering/structure.md`.
+Crate roles: `docs/architecture.md`.
 
 > **Project identity:** **oxpinyin** (repo, crate, docs). The prior
 > project name is retained in git history only.
@@ -16,8 +16,8 @@ Crate roles: `.kiro/steering/structure.md`.
 |---|---|
 | **0** | Scaffold, pin, SPECs/fixtures (complete) |
 | **1** | Exact-output parity with the pin-built libpinyin oracle (differential testing) — complete: candidate surface bit-identical on all 10,190 corpus rows (`docs/testing/corpus-tail.md`); the sentence-trellis float band stays the frozen exception (row 11) |
-| **2** | **Current.** Bug-for-bug compatibility with the pin across the whole exported ABI and the user-store surfaces, defects included, with internal improvements (ruling 2026-10-14 UTC). Behaviour is derived by reading the pin's source, then its disassembly — never by running experiments. Performance, memory, safety and architecture work is allowed when output, files on disk and the ABI do not change; oxpinyin may be faster or smaller than the pin by any amount. Floor: never worse than the pin on both time and space (axis L, #757). See the [stage rules](docs/source-policy.md#stages). Spec: `.kiro/specs/bug-for-bug/` |
-| **3** | Opt-in departures from the pin: for example a new language model (trigram/KN), typo edges, own data, or an incompatible data format. Each departure sits behind an opt-in cargo feature, off by default; the default build stays bug-for-bug. A build that breaks the ABI or the data formats does not claim libpinyin's binary identity. After Stage 2. Spec: `.kiro/specs/stage3-departures/` |
+| **2** | **Current.** Bug-for-bug compatibility with the pin across the whole exported ABI and the user-store surfaces, defects included, with internal improvements (ruling 2026-10-14 UTC). Behaviour is derived by reading the pin's source, then its disassembly — never by running experiments. Performance, memory, safety and architecture work is allowed when output, files on disk and the ABI do not change; oxpinyin may be faster or smaller than the pin by any amount. Floor: never worse than the pin on both time and space (axis L, #757). See the [stage rules](docs/source-policy.md#stages). Spec: `docs/specs/bug-for-bug/` |
+| **3** | Opt-in departures from the pin: for example a new language model (trigram/KN), typo edges, own data, or an incompatible data format. Each departure sits behind an opt-in cargo feature, off by default; the default build stays bug-for-bug. A build that breaks the ABI or the data formats does not claim libpinyin's binary identity. After Stage 2. Spec: `docs/specs/stage3-departures/` |
 
 Stage 1 uses the backend's native tables (no redistribution required:
 `docs/findings/model-provenance.md` — build-time fetch of the pinned model20
@@ -51,16 +51,16 @@ In Stage 2, step 1 is done by reading: the pin's source at the pin, then the
 pin-built object's disassembly. Differentials gate a behaviour once it is
 derived; they are not how it is found ([source-reading procedure](docs/source-policy.md#stage-2)).
 
-Detailed task cards live under `.kiro/specs/` as they are derived. Until a
+Detailed task cards live under `docs/specs/` as they are derived. Until a
 SPEC is frozen, do not implement that slice.
 
 ## Phase 0 (recorded; closed)
 
-Recorded — see `.kiro/specs/foundation/tasks.md` and findings. The last
-Phase 0 item, the consolidated F-E cross-lane evidence register
+Recorded — see `docs/specs/foundation/tasks.md` and findings. The last
+Phase 0 item, the consolidated F-E cross-workstream evidence register
 (foundation task 4), is `docs/findings/robustness-evidence.md`: all 14
 cases (F-E-01..13 from the spec, F-E-14 registered 2026-09-05), each
-with its lane and evidence entry, on main since 2026-08-30. Closed
+with its workstream and evidence entry, on main since 2026-08-30. Closed
 2026-09-08. The W8 drop-in user dir, the last Stage 1 item listed below,
 landed 2026-09-09 as the backend's native user files (maintainer ruling
 2026-09-09; `docs/findings/compatibility-policy.md`).
@@ -71,7 +71,7 @@ landed 2026-09-09 as the backend's native user files (maintainer ruling
 | ABI surface | `docs/findings/abi-reference.md` (living reference: the full 79/79 export set) |
 | Upstream schema | `docs/findings/upstream-schema.md` (recorded) |
 | Parser / path-set / scoring SPECs | frozen 2026-08-09: `docs/findings/parser-spec.md`, `parser-path-set.md`, `scoring-spec.md` |
-| Data load route (D3) | decided: oxpinyin-data loads the backend's native tables (`.kiro/steering/structure.md`); native production of those tables is W15 |
+| Data load route (D3) | decided: oxpinyin-data loads the backend's native tables (`docs/architecture.md`); native production of those tables is W15 |
 | Capture harness + F-A fixtures | built: `tools/capture/`, `docs/testing/capture-fixtures.md`, `fixtures/foundation/f-a.txt`, `f-c.txt`; F-E register: `docs/findings/robustness-evidence.md` (14 cases) |
 
 ## Stage 1 workstreams (names only)
@@ -85,7 +85,7 @@ landed 2026-09-09 as the backend's native user files (maintainer ruling
 | W5 | C ABI (began as the consumer subset; the full 79-symbol surface closed under W8) | oxpinyin-capi |
 | W6 | User store (ACID store over the compiled-in `DefaultStore`; began on redb) | oxpinyin-user, oxpinyin-store |
 | W7 | Classic text-format interop via oxpinyin-dictool (import + export) | oxpinyin-dictool, oxpinyin-capi |
-| W8 | libpinyin drop-in: full 79-symbol `.so` ABI under `libpinyin.so.15` (see `.kiro/specs/drop-in/`) | oxpinyin-capi |
+| W8 | libpinyin drop-in: full 79-symbol `.so` ABI under `libpinyin.so.15` (see `docs/specs/drop-in/`) | oxpinyin-capi |
 | W9 | Training toolchain — full trainer-workflow parity (KMM in scope; see `docs/findings/trainer-parity-audit.md`) | oxpinyin-training (`segment`, `counter`, `lambda`, `emitter`, `eval`, `train` modules), oxpinyin-kmm, oxpinyin-corpus, oxpinyin-word, oxpinyin-punct |
 | W10 | Option bits: correction, fuzzy/ambiguity, dynamic-adjust gating | oxpinyin-core, oxpinyin-engine |
 | W11 | Phrase-index union at lookup (user, network, addon) | oxpinyin-engine, oxpinyin-data, oxpinyin-user |
@@ -94,7 +94,7 @@ landed 2026-09-09 as the backend's native user files (maintainer ruling
 | W14 | Sentence surface (n-best emission, NBEST_MATCH typing, get_sentence) | oxpinyin-capi, oxpinyin-engine |
 | W15 | model20-native runtime-data production, every backend — since P5/P6 in each backend's native file formats, opened directly by the runtime | oxpinyin-datagen, oxpinyin-store, oxpinyin-data, oxpinyin-runtime |
 
-Crates outside the Stage 1 table (roles in `.kiro/steering/structure.md`):
+Crates outside the Stage 1 table (roles in `docs/architecture.md`):
 `oxpinyin-facade` and `oxpinyin-runtime` (the shared orchestration and
 assembly layers under both C ABIs),
 `oxpinyin-chewing` (the excisable zhuyin layer, D6 seam:
@@ -228,7 +228,7 @@ parked.
   `libpinyin.so.15`, put it on the library path, and unmodified consumers
   work against the data already on the system
   (`docs/findings/compatibility-policy.md`). The spec is
-  `.kiro/specs/drop-in/`; the supersession record is
+  `docs/specs/drop-in/`; the supersession record is
   `docs/findings/abi-reference.md` (3d918866).
 
   This supersedes the earlier 51-symbol bootstrap contract for the
@@ -398,9 +398,9 @@ Maintainer ruling 2026-10-14 UTC. The behaviour target is what the pin
 does, defects included: an observable pin defect is reproduced and recorded
 as an upstream defect, not fixed; a departure needs a class in
 `docs/findings/compatibility-policy.md`. Pinned behaviour and oxpinyin's
-own improvements are kept apart (`.kiro/steering/pinned-behaviour.md`,
-`.kiro/steering/oxpinyin-improvements.md`). Work, in order
-(`.kiro/specs/bug-for-bug/tasks.md`; the issues are the tracker):
+own improvements are kept apart (`docs/pinned-behaviour.md`,
+`docs/oxpinyin-improvements.md`). Work, in order
+(`docs/specs/bug-for-bug/tasks.md`; the issues are the tracker):
 1. The round-2 audit issues
    (`docs/findings/bug-for-bug-audit-r2-2026-09-23.md`). Done: the audit
    tracker #573 closed on 2026-10-17.
@@ -458,11 +458,11 @@ than the shipping `cargo cinstall` library
 (`docs/findings/perf-build-recipe-audit-2026-09-10.md`). The next measured
 target is allocation churn on the steady cycle, per the IR differential. The
 internal items of the 2026-09 direction are Stage 2 work
-(`.kiro/specs/bug-for-bug/design.md`, "Internal improvement").
+(`docs/specs/bug-for-bug/design.md`, "Internal improvement").
 
 ## Stage 3 — opt-in departures (after Stage 2)
 
-Nothing has landed. The candidates are in `.kiro/specs/stage3-departures/`:
+Nothing has landed. The candidates are in `docs/specs/stage3-departures/`:
 the model upgrades (trigram/KN, typo edges, own data) and the data-format
 changes from the 2026-09 direction. Each sits behind an opt-in cargo feature,
 off by default.

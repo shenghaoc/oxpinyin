@@ -19,7 +19,7 @@ front-eviction inversion. The file now holds twelve drafts; items 7–12
 are separate reports. Items 10–12 use libpinyin 074a2219.
 Filing is the
 maintainer's action (and account); nothing here has been posted. The
-collection mandate is `AGENTS.md`'s ("collected to report back to
+collection mandate is the contributor rules' ("collected to report back to
 libpinyin once the rewrite is complete") — filing earlier than
 rewrite-completion is the maintainer's call to make; the drafts keep
 either timing cheap.
@@ -863,7 +863,7 @@ Nothing is filed upstream.
   Items 10 and 11 report distinct comparator contracts; item 12 reports
   a contract-valid algorithm defect and must not be conflated with them.
 - Order: 1 (info leak) → 2 (API inconsistency) → 3, 4 (abort classes).
-- Credit line per `AGENTS.md` attribution rules is the maintainer's to
+- Credit line under the historical attribution convention is the maintainer's to
   place; the reproductions above stand alone.
 - After filing, mark each entry in `upstream-divergences.md` and
   `reference/memory-safety-bugs.md` §1.4 with the issue links so the

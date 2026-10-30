@@ -333,7 +333,7 @@ their domain logic stays put.
 
 **Do not start implementation before #1175's last extraction lands.** Then each numbered stage is a separately reviewable,
 independently gated change. Keep the selected backend and applicable
-verification-cell rules from `AGENTS.md`; do not alter frozen cases or
+verification-cell rules from the contributor rules; do not alter frozen cases or
 specifications in advance of the stage that owns them.
 
 1. **Library config read/write and locale** (implemented 2026-10-28

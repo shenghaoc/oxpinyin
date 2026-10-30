@@ -19,7 +19,7 @@ Justify a new entry under its class or its own discrepancy record.
 Do not admit one by analogy.
 
 - **(a) MATH:** platform-dependent floating-point accumulation with a transcendental, not merely a float in the call graph.
-  The sentence surface's six remaining rows belong here after lane D ported the trellis selection rules (row 11, #535).
+  The sentence surface's six remaining rows belong here after the trellis selection rules were ported (row 11, #535).
   Use Rust's standard maths at full speed.
   Record resulting last-bit differences as class (a).
   Do not chase them.

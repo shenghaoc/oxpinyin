@@ -275,7 +275,7 @@ Three readings:
   mechanism is not investigated here; the abort commit's report and the
   size doc measured size and a criterion micro-bench, not this harness.
   **Open Stage-2 item:** the trade needs a decision with both numbers
-  on the table, since AGENTS.md accepts a regression on one axis only
+  on the table, since contributor guidance accepts a regression on one axis only
   when it is traded against, minimised, and justified in the change's
   report — and this one was not measured there.
   **Resolved 2026-09-05:** `panic = "abort"` reverted from

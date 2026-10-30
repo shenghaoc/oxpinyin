@@ -431,7 +431,7 @@ re-verified bit-identical after this change (see the PR report);
 fmt/clippy/tests green. The 2026-08-25 amendment (B1 consequence, C2
 framing, priorities) is docs-only and re-verified the same way: the
 branch delta vs `origin/main` is `tools/bisection/` + this doc +
-`docs/findings/upstream-divergences.md` + `AGENTS.md` + one
+`docs/findings/upstream-divergences.md` + the contributor rules + one
 `.gitignore` line, so no pin can move.
 
 ## Amendment (2026-08-27) — every class but B1's order closed; the standing residual measured

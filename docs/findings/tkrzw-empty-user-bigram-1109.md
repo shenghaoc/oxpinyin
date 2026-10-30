@@ -213,7 +213,7 @@ metadata writes in that byte, and the pin's save writes the metadata twice
 more than oxpinyin's. The rows match, which is what `contract-diff`
 compares. It is reported for its own issue.
 
-### Path check (AGENTS.md verification rule 2)
+### Path check (verification rule 2)
 
 - `git diff --name-only origin/main...HEAD` lists
   `crates/oxpinyin-store/build.rs` and

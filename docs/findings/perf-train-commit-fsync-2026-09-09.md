@@ -321,7 +321,7 @@ place, and it is option 1's — noted there.
 
 Listed with the argument each had to clear. This is an externally-visible
 durability contract, documented on `WriteStore::write` and in two
-backends' module docs, and AGENTS.md's STOP list covers it, so none was
+backends' module docs, and the contributor approval list covers it, so none was
 implemented until the maintainer chose one. **Option 2 was chosen and is
 implemented (§7.1); options 1 and 3 were not taken.**
 

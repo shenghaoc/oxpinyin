@@ -3,14 +3,14 @@
 Date: 2026-08-09 · Status: **frozen for W4-T0** (behavioural contract); the
 Rust-signature freeze below was **retired 2026-10-18 UTC** by the maintainer's
 ruling that the C APIs/ABIs are the only supported external interfaces
-(`AGENTS.md`, "External interfaces")
+([interface ruling](../constitution.md#external-interfaces))
 
 This SPEC freezes the `oxpinyin-engine` session surface before any decoder work
 lands on top of it. Every later W4 task fills these signatures in; none of them
 may change one. A signature change after this branch is an Architect+human
 correction, recorded in the log at the end of this file.
 
-The rules it implements are already stated in `.kiro/steering/structure.md`
+The rules it implements are already stated in `docs/architecture.md`
 under **Portability seam**. This finding turns them into a named, frozen API so
 that a shell author — IBus today, TSF/IMK/ArkTS later — can read one document
 and know exactly what they consume.

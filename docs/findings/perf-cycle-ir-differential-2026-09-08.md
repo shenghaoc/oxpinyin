@@ -914,7 +914,7 @@ Recorded, not fixed here: the neutrality check had been amd64-only-correct
 since it was written — the same defect class as the latent
 `RUSTFLAGS`-vs-profile debuginfo trap in `Dockerfile.perf-matrix`: a
 single-arch assumption baked into a tool that is cross-arch by contract.
-Both instances argue for an AGENTS.md line on the pattern; that is a
+Both instances argue for an contributor guidance line on the pattern; that is a
 separate PR, and this capture fixes only the instance it hit.
 
 **Stage 5 degraded exactly as designed, confirmed live:** the hardware

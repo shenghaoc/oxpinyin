@@ -11,13 +11,13 @@ roadmap identifiers. Named `register:` tags identify the relevant ABI or pin
 register. The table reports the expected pin reference for the selected cell;
 the manifest must match it before any oracle gate executes.
 
-Use Berkeley DB for a lane's ordinary before/after verification. Select all
+Use Berkeley DB for a change's ordinary before/after verification. Select all
 three cells for the start-of-sweep and pre-release differential run. The
 aggregate changes no CI policy; direct `just runner live-typing-diff` keeps its legacy
 missing-oracle exit behavior for CI.
 
 ```sh
-# A lane's named runners on the reference cell.
+# A change's named runners on the reference cell.
 just runner run-all --cells bdb \
   --runners addon-candidate-diff,union-diff \
   --oracle bdb=/path/to/oracle/bdb --data bdb=/path/to/bdb-data
@@ -112,7 +112,7 @@ resource lock. `--build-timeout N` bounds each cell's build separately.
 profiles permit independent supplied-artifact gates to overlap. The registry
 locks the remaining source-directory outputs across cells and aggregate
 invocations. These locks do not protect against someone directly launching a
-legacy runner into the same checkout: use a lane-owned worktree. Explicit
+legacy runner into the same checkout: use a separate worktree. Explicit
 caller-owned output/profile paths remain the caller's responsibility.
 
 `--json FILE` writes the same result rows for machine consumption. Raw execution

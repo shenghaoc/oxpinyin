@@ -6,7 +6,7 @@
 > 2026-10-19 UTC. Original amendment: 2026-10-18 UTC.
 > Preserve the original Phase 1 records and the later d8539e96 corrections.
 > Amended 2026-10-22 UTC: §7.8 records the native startup ruling.
-> This reconciliation changes no code, tool config, workflow or AGENTS.md rule.
+> This reconciliation changes no code, tool config, workflow or verification rule.
 
 ## 0. Purpose and layer ownership
 
@@ -955,7 +955,7 @@ Tooling stages T8 and T9 retain `non-utf8-directory-system`, `non-utf8-directory
 They enforce compatibility-policy row 49's raw Unix path bytes.
 
 Use BDB by default for container comparisons. Run all three cells only when
-AGENTS.md rule 2's mechanical path check fires. Rule 3 supplies start-of-sweep
+verification rule 2's mechanical path check fires. Rule 3 supplies start-of-sweep
 and pre-release coverage. Apply this to §§5.3–5.4 and tooling stages T4–T11.
 Use sound tkrzw only. Without a path trigger, suspected backend dependence
 is a finding, not permission for extra cells.
@@ -1028,7 +1028,7 @@ fixes nor classifies it.
 - [Retirement record](superseded-tooling-prs.md),
   [startup audit](startup-initialization-audit.md),
   [startup baseline](../perf/startup-baseline-2026-10.md).
-- [AGENTS.md](../../AGENTS.md), [compatibility policy](compatibility-policy.md),
+- [Contributor procedures](../../CONTRIBUTING.md), [compatibility policy](compatibility-policy.md),
   [bench procedures](../runbooks/benches.md), [testing policy](../testing/README.md).
 - [GitHub stacked pull requests](https://docs.github.com/en/pull-requests/how-tos/stacked-pull-requests)
   and [creation guidance](https://docs.github.com/en/pull-requests/how-tos/create-pull-requests/creating-stacked-pull-requests),
