@@ -29,7 +29,7 @@ class ToolDiffTests(unittest.TestCase):
                           'sys.stdout.buffer.write(sys.stdin.buffer.read()+b"\\xff"); '
                           'sys.stderr.write(os.environ["VALUE"]); '
                           'Path("nested").mkdir(); Path("nested/empty").touch(); '
-                          'Path("input").write_bytes(b"changed"); sys.exit(2)'], env={'VALUE': 'diagnostic'})
+                          'Path("input").write_bytes(b"changed"); sys.exit(2)'], env={'VALUE': 'diagnostic', 'LC_ALL': 'C'})
         result = tool_diff.observation(ctx, Path(sys.executable), case, self.root / 'run',
                                       {'input': b'original'}, b'stdin', time.monotonic() + 5)
         self.assertEqual(result, dict(exit=2, stdout='stdin\udcff', stderr='diagnostic',
@@ -41,6 +41,11 @@ class ToolDiffTests(unittest.TestCase):
         value = "\n** (process:123): CRITICAL **: 12:34:56.789: message 123\nfile:456 time 12:34:56.789\n"
         self.assertEqual(tool_diff.GLIB_PREFIX.sub(r'\1PID\2TIME: ', value),
             "\n** (process:PID): CRITICAL **: TIME: message 123\nfile:456 time 12:34:56.789\n")
+
+    def test_glib_domain_prefix_keeps_domain_and_utility(self):
+        value = "\n(gen_zhuyin_table:123): GLib-CRITICAL **: 12:34:56.789: assertion failed\n"
+        self.assertEqual(tool_diff.GLIB_PREFIX.sub(r'\1PID\2TIME: ', value),
+                         "\n(gen_zhuyin_table:PID): GLib-CRITICAL **: TIME: assertion failed\n")
 
     def test_policy_record_binds_both_complete_observations(self):
         case = dict(id='invalid', policy_record='record.md', pin_signal=-11)

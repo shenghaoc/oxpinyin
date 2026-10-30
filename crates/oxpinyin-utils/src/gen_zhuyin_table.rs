@@ -67,13 +67,15 @@ pub fn main(args: impl IntoIterator<Item = OsString>) {
     let Ok(parsed) = tool::parse_options(c"- generate pinyin table", &entries(), args) else {
         tool::exit(tool::einval());
     };
-    let phrase_index = match parsed.values[0] {
-        OptionValue::Int(value) => value,
-        _ => 0,
+    let phrase_index = if let OptionValue::Int(value) = parsed.values[0] {
+        value
+    } else {
+        0
     };
-    let outputfile = match &parsed.values[1] {
-        OptionValue::Filename(Some(name)) => CString::new(name.clone()).unwrap_or_default(),
-        _ => CString::default(),
+    let outputfile = if let OptionValue::Filename(Some(name)) = &parsed.values[1] {
+        CString::new(name.clone()).unwrap_or_default()
+    } else {
+        CString::default()
     };
     let mut table = Table::default();
     for arg in parsed.args.iter().skip(1) {

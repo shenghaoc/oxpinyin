@@ -50,7 +50,9 @@ def prepare(cell, rows, prefix, cache, environment, *, root=ROOT):
         work = cache / 'tools'
         sources = list((work / 'src').glob('libpinyin-*'))
         marker = work / '.complete'
-        if not marker.is_file() or len(sources) != 1:
+        if (not marker.is_file() or len(sources) != 1 or any(
+                not (sources[0] / 'utils/storage' / name).is_file()
+                for name in ('gen_pinyin_table', 'gen_zhuyin_table'))):
             run([*common, '--libs-only', '--work-dir', work, '--prefix', work / 'prefix'],
                 env=environment, cwd=root, heavy=True)
             sources = list((work / 'src').glob('libpinyin-*'))
