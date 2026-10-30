@@ -642,7 +642,6 @@ dependencies = [
  "compact_str",
  "criterion",
  "oxpinyin-chewing",
- "oxpinyin-testsupport",
  "phf",
  "phf_codegen",
  "proptest",

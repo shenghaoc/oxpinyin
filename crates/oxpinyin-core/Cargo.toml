@@ -23,11 +23,6 @@ oxpinyin-chewing = { path = "../oxpinyin-chewing" }
 phf_codegen.workspace = true
 
 [dev-dependencies]
-# Fixture-backed Dictionary/LanguageModel doubles for the integration tests.
-# The crate's own cfg(test) unit tests must not import it: the dev-cycle
-# (testsupport depends on core) would build two instances of core and trait
-# impls would not unify.
-oxpinyin-testsupport = { path = "../oxpinyin-testsupport" }
 proptest = { version = "=1.12.0", default-features = false, features = ["std"] }
 # Micro-benches (benches/); workspace lock pins 0.8.
 criterion = "0.8"

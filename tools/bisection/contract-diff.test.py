@@ -471,7 +471,7 @@ class PolicyReportingTests(DriverFixtureCase):
             (root / 'upstream-divergences.md').write_text('[record](synthetic-record.md)\n')
             spec = driver.case_spec(policy_record='synthetic-record.md', case_id=name)
             with patch.object(driver, 'POLICY_ROOT', root), patch.dict(driver.CASES, {name: spec}):
-                kept = driver.policy_expectations(spec)
+                kept = driver.contract_verdict.policy_expectations(spec, policy_root=driver.POLICY_ROOT, cell=driver.CELL)
                 self.assertEqual(kept['pin']['sha256'],
                                  contract_policy.digest({key: pin[key] for key in ('exit', 'result', 'stderr')}))
                 for broken in (False, True):
@@ -982,7 +982,7 @@ class RegisteredTerminationDefaultTests(unittest.TestCase):
             policy_invalid = False
             if case['policy_record'] is not None:
                 try:
-                    policy_kept = driver.policy_expectations(case)
+                    policy_kept = driver.contract_verdict.policy_expectations(case, policy_root=driver.POLICY_ROOT, cell=driver.CELL)
                 except (OSError, ValueError, KeyError, TypeError):
                     policy_invalid = True
             observations = [observation(exit=code) for code in

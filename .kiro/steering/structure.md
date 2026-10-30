@@ -22,7 +22,7 @@ inclusion: always
 | oxpinyin-datagen | model20 → runtime data compiler for every backend, writing each backend's native files (the names and formats a libpinyin build on that backend uses); takes the on-disk layouts from `oxpinyin-data` — the `MemoryChunk`/`SubPhraseIndex` constants and checksum from `chunk_format`, the four DBM row schemas and the library name tables from `row_format`/`system_files`, so reader and writer share one definition | forbid | yes | never |
 | oxpinyin-corpus | training corpus front-end (zhwiki dump → ngseg raw text) | forbid | yes | never |
 | oxpinyin-training | backend-sensitive training package; named modules `segment`, `counter`, `lambda`, `emitter`, `eval`, `train`; existing stage binary names remain; one backend feature selection for all | forbid | yes | never |
-| oxpinyin-testsupport | shared test doubles (fixture Dictionary/LanguageModel) plus the model20 cache locator; dev-lane only — its one non-dev consumer is datagen, which itself never ships | forbid | yes | never |
+| oxpinyin-testsupport | shared test doubles (fixture Dictionary/LanguageModel) plus the model20 cache locator, and the scorer suites that use the doubles (`tests/scoring.rs`, `tests/scoring_fixture.rs`), held here so core never dev-depends on this crate; dev-lane only — its one non-dev consumer is datagen, which itself never ships | forbid | yes | never |
 | oxpinyin-kmm | K-mixture-model pipeline (generate/estimate/merge/validate/prune/export/import/→interpolation) — W9 | forbid | yes | never |
 | oxpinyin-punct | punctuation-table generator (`genpunct.py` reproduction) — W9 | forbid | yes | never |
 | oxpinyin-word | word-recognition pipeline (populate/partialword/newword/markpinyin) — W9 | forbid | yes | never |

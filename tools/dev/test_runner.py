@@ -202,7 +202,6 @@ HARNESS_DEPENDENCIES = {
                     'contract_row54_empty_forcing', 'contract_glib_arrays', 'contract_reading_256th',
                     'contract_auxiliary_text', 'contract_combined_import_nbest', 'contract_stored_total_overflow',
                     'contract_zhuyin_per_entry')},
-    'tools/bisection/contract_equivalence.py': ('tools/bisection/contract_equivalence.test.py',),
     'tools/bisection/contract_case_helpers.py': ('tools/bisection/contract_case_helpers.test.py',
                                                 'tools/bisection/contract-modules.test.py',
                                                 'tools/bisection/contract-diff.test.py',
