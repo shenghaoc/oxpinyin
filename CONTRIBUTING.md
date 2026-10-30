@@ -1,5 +1,7 @@
 # Contributing
 
+Read the [constitution](docs/constitution.md) and [source policy](docs/source-policy.md) before changing the project.
+
 Start with **native development**: edit, compile, debug and test on your own
 operating system. You need Git, the repository-selected Rust toolchain and
 a native compiler/linker; the [setup guide](docs/runbooks/setup.md) gives

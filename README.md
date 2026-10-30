@@ -56,7 +56,8 @@ the reference backend shared with Linux; tkrzw is an optional backend.
 |---|---|
 | `crates/*` | 20 workspace packages, none stubs (grouped below); crate map in `.kiro/steering/structure.md` |
 | `ROADMAP.md` | Stages, pin, workstream names |
-| `AGENTS.md` | Agent/collaborator contract |
+| [docs/constitution.md](docs/constitution.md) | Project rules and supported external interfaces |
+| [docs/source-policy.md](docs/source-policy.md) | Source-reading method, compatibility decisions and stage rules |
 | `docs/runbooks/` | How to: backends, the oracle and differentials, benches, goldens and pins, releases |
 | `docs/findings/` | Decisions, divergence records, audit trail — indexed with a status per file |
 | `docs/perf/` | Performance measurement snapshots |
