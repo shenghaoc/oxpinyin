@@ -20,6 +20,11 @@ Git reads a pathspec relative to the directory it runs in, so every git command 
 from the top of the work tree (git rev-parse --show-toplevel). The answer does not
 depend on the directory the script is run from, and the script reads no file itself.
 
+--run-flag prints one line instead, run=true when a check fired or the diff touches a
+--also pathspec and run=false otherwise, in the key=value form a GitHub Actions step
+appends to $GITHUB_OUTPUT. --also names the paths a caller adds to the rule, such as a
+workflow's own infrastructure; it needs --run-flag.
+
 Exit status: 0 when the checks ran, whichever cells they selected; 1 when git failed,
 BASE is not a commit here, or the directory is not in a git work tree; 2 for a usage
 error. Standard library only.
@@ -28,6 +33,7 @@ Usage:
     cells-for-diff.py                  # origin/main...HEAD
     cells-for-diff.py BASE             # BASE...HEAD
     cells-for-diff.py --limit 0 BASE   # list every match, not the first 10 per check
+    cells-for-diff.py --run-flag --also tools/bdb BASE   # run=true or run=false
 """
 import argparse
 import os
@@ -182,6 +188,15 @@ def report(base, merge_base, head, results, limit):
     return '\n'.join(lines) + '\n'
 
 
+def run_flag(base, also=(), repo=None):
+    """run=true when a check fires for base...HEAD or the diff touches an also pathspec."""
+    merge_base, head, results = run_checks(base, repo)
+    selected = any(matches for _, _, matches in results)
+    if not selected and also:
+        selected = bool(changed_paths(merge_base, head, pathspec=also, repo=work_tree_root(repo)))
+    return f"run={'true' if selected else 'false'}\n"
+
+
 def non_negative(value):
     """Convert a CLI integer, rejecting negative values with ArgumentTypeError."""
     number = int(value)
@@ -200,7 +215,16 @@ def main(argv=None):
                         help='base ref of the diff BASE...HEAD (default: origin/main)')
     parser.add_argument('--limit', type=non_negative, default=10, metavar='N',
                         help='matches shown per check; 0 shows all (default: 10)')
+    parser.add_argument('--run-flag', action='store_true',
+                        help='print run=true or run=false instead of the report')
+    parser.add_argument('--also', action='append', default=[], metavar='PATHSPEC',
+                        help='a changed path matching PATHSPEC also sets run=true; needs --run-flag')
     args = parser.parse_args(argv)
+    if args.also and not args.run_flag:
+        parser.error('--also needs --run-flag')
+    if args.run_flag:
+        sys.stdout.write(run_flag(args.base, args.also))
+        return 0
     merge_base, head, results = run_checks(args.base)
     sys.stdout.write(report(args.base, merge_base, head, results, args.limit))
     return 0

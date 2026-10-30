@@ -363,17 +363,25 @@ class MigratedWorkflowTests(unittest.TestCase):
                 self.assertIn("        if: needs.changes.outputs.reuse != 'true'\n", step)
                 self.assertIn('        run: ' + command + '\n', step)
 
-    def test_workflow_script_paths_exist_and_shared_inputs_trigger_store_checks(self):
+    def test_workflow_script_paths_exist_and_store_infrastructure_triggers_store_checks(self):
         for profile in ci_tree.WORKFLOWS.values():
             workflow = (ROOT / profile.path).read_text()
             for path in re.findall(r'\btools/(?:[\w.-]+/)*[\w.-]+\.(?:py|sh)\b', workflow):
                 with self.subTest(workflow=profile.path, path=path):
                     self.assertTrue((ROOT / path).is_file(), path)
+        # The backend selection is cells-for-diff.py's; --also names only this
+        # workflow's own infrastructure (maintainer decision 2026-10-30 UTC).
         store = (ROOT / ci_tree.WORKFLOWS['store'].path).read_text()
-        paths = store.split('          paths=(\n', 1)[1].split('\n          )', 1)[0]
-        for path in ('tools/dev', 'justfile', 'uv.toml', '.python-version', 'tools/install-python.sh'):
+        gate = store.split('python3 tools/bisection/cells-for-diff.py --run-flag', 1)[1]
+        gate = gate.split('>> "$GITHUB_OUTPUT"', 1)[0]
+        also = re.findall(r'--also (\S+)', gate)
+        self.assertEqual(also, [
+            '.github/workflows/store-backends.yml', 'tools/bisection/cells-for-diff.py',
+            'tools/bdb', 'tools/tkrzw', 'tools/dev/check.py', 'tools/dev/test_runner.py',
+            'rust-toolchain.toml'])
+        for path in also:
             with self.subTest(path=path):
-                self.assertIn('            ' + path + '\n', paths + '\n')
+                self.assertTrue((ROOT / path).exists(), path)
 
 
 class RefreshTests(unittest.TestCase):
