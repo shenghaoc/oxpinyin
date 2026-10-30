@@ -715,6 +715,10 @@ carries `getrusage` user/sys time, minor/major faults and context switches;
 under tick CPU accounting the user/sys split of a 2 ms interval is quantized.
 One probe runs per sample, in the rotating order:
 
+The existing `count` probe also reports absolute M0/I1 Pss per mapping and
+the total from that same smaps read, with the residency control above.
+These values never come from the later rollup read.
+
 For first-candidate attribution (#1031), select
 `--teardown-attribute-window first-candidate` with the warm `init-attribute`
 stage and `--teardown-cases phrases,journals`. The window starts after init,

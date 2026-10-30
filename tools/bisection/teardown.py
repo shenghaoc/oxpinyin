@@ -1867,6 +1867,7 @@ def report_init_counts(facade, case, rows, cache, window='init'):
     Keep refused events as NOT RUN. Report duration in ns, RSS growth in KiB,
     and file residency in pages, with paired differences where applicable.
     """
+    report_checkpoint_pss(rows, window, facade=facade, case=case)
     values = {side: {field: [row['samples'][0]['times']['init_ns' if window == 'init' else 'first_candidate_ns'][field] for row in samples]
                      for field in CLOCK_FIELDS} for side, samples in rows.items()}
     print_record(window + '-resources', facade=facade, case=case, cache=cache, rounds=len(rows['ox']),
@@ -2294,20 +2295,7 @@ def user_phrase_measure(campaign, subjects, profiles, cases, *, verify=False):
                 row, _, _ = run(side, case, memory=True)
                 if index >= MEMORY_WARMUPS:
                     memory_rows[side].append(row)
-        for point, cycle in (('M0', 0), ('I1', 1)):
-            groups = sorted({key for samples in memory_rows.values() for row in samples
-                             for key in row['checkpoints'][cycle][point]['groups']})
-            for group in groups:
-                values = {side: [row['checkpoints'][cycle][point]['groups'].get(group, {}).get('Pss', 0)
-                                 for row in samples] for side, samples in memory_rows.items()}
-                print_record('user-pss', case=case, point=point, mapping=group,
-                             summaries={side: summary(value) for side, value in values.items()},
-                             control=stable_residency(values['ox'], values['control']))
-            values = {side: [row['checkpoints'][cycle][point]['totals']['Pss'] for row in samples]
-                      for side, samples in memory_rows.items()}
-            print_record('user-pss-total', case=case, point=point,
-                         summaries={side: summary(value) for side, value in values.items()},
-                         control=stable_residency(values['ox'], values['control']))
+        report_checkpoint_pss(memory_rows, 'user', case=case)
         for profiler in ('xtree', 'massif'):
             campaign.worker = builds[profiler]
             costs = {}
@@ -2342,6 +2330,28 @@ def user_phrase_measure(campaign, subjects, profiles, cases, *, verify=False):
                              arena_bounds='not applicable to the row representation; no arena counters added in this phase')
     campaign.worker = worker
     return 1 if invalid else 0
+
+
+def report_checkpoint_pss(rows, prefix, **labels):
+    """Retain M0/I1 mapping Pss and totals from the same smaps read, in KiB.
+
+    Init's existing count probe and user memory rounds already collect these
+    checkpoints. A later rollup is diagnostic and never supplies these values.
+    """
+    for point, cycle in (('M0', 0), ('I1', 1)):
+        groups = sorted({key for samples in rows.values() for row in samples
+                         for key in row['checkpoints'][cycle][point]['groups']})
+        for group in groups:
+            values = {side: [row['checkpoints'][cycle][point]['groups'].get(group, {}).get('Pss', 0)
+                             for row in samples] for side, samples in rows.items()}
+            print_record(prefix + '-pss', **labels, point=point, mapping=group,
+                         summaries={side: summary(value) for side, value in values.items()},
+                         control=stable_residency(values['ox'], values['control']))
+        values = {side: [row['checkpoints'][cycle][point]['totals']['Pss'] for row in samples]
+                  for side, samples in rows.items()}
+        print_record(prefix + '-pss-total', **labels, point=point,
+                     summaries={side: summary(value) for side, value in values.items()},
+                     control=stable_residency(values['ox'], values['control']))
 
 
 def user_massif(text):

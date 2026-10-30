@@ -471,6 +471,24 @@ class PureTests(unittest.TestCase):
         self.assertEqual(td.first_difference({'a': [{'x': 1}]}, {'a': [{'x': 2}]}),
                          {'path': '$.a[0].x', 'pin': 1, 'subject': 2})
 
+    def test_checkpoint_pss_reports_each_mapping_and_the_same_smaps_total(self):
+        rows = {arm: [dict(checkpoints={0: {'M0': dict(groups={'SUBJECT:text': {'Pss': 12}},
+                        totals={'Pss': 12}, rollup={'Pss': 999})},
+                    1: {'I1': dict(groups={'SUBJECT:text': {'Pss': 16}, 'ANON:[heap]': {'Pss': 24}},
+                        totals={'Pss': 40}, rollup={'Pss': 999})}})]
+                for arm in ('base', 'ox', 'control', 'pin')}
+        with patch.object(td, 'print_record') as emit:
+            td.report_checkpoint_pss(rows, 'init', facade='pinyin', case='user')
+        records = [(call.args[0], call.kwargs) for call in emit.call_args_list]
+        totals = [row for kind, row in records if kind == 'init-pss-total']
+        self.assertEqual([(row['point'], row['summaries']['ox']['median']) for row in totals],
+                         [('M0', 12), ('I1', 40)])
+        self.assertTrue(all(row['control']['stable'] for row in totals))
+        groups = [row for kind, row in records if kind == 'init-pss']
+        self.assertEqual({row['mapping'] for row in groups}, {'SUBJECT:text', 'ANON:[heap]'})
+        self.assertEqual(next(row for row in groups if row['point'] == 'I1' and
+                             row['mapping'] == 'ANON:[heap]')['summaries']['pin']['median'], 24)
+
     def scoped_preflight(self, stage, changed=None):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
