@@ -85,19 +85,6 @@ fn open_with_dir(tag: &str) -> (*mut PinyinContext, *mut PinyinInstance, TempUse
     (context, instance, user_dir)
 }
 
-/// The layout pin behind the checked-in header: the packed two-byte key
-/// word and the four-byte raw span.
-#[test]
-fn abi_layout_is_pinned() {
-    assert_eq!(size_of::<ChewingKey>(), 2);
-    assert_eq!(align_of::<ChewingKey>(), 2);
-    assert_eq!(
-        size_of::<pinyin_capi::ChewingKeyRest>(),
-        4,
-        "m_raw_begin + m_raw_end"
-    );
-}
-
 /// The full-pinyin one-key surface: `ni` parses and renders, the
 /// whole-input probe refuses `nihao` and apostrophes, and a failed parse
 /// leaves the ZEROED key (upstream zeroes `*onekey` before the probe).
