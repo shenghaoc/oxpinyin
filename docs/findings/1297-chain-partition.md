@@ -4,7 +4,7 @@ Status: **retained as normal parity on the registered cases** ·
 2026-10-29T09:47:05Z (`date -u`) · Refs #1297.
 
 The 2026-10-29 UTC “No ported external-library internals” ruling in
-[AGENTS.md, Source policy](../../AGENTS.md#source-policy), merged in #1402,
+[Source policy](../source-policy.md), merged in #1402,
 requires std searches. The [inventory](glib-libc-inventory.md#executable-copies-of-external-library-algorithms-2026-10-29-utc)
 identifies carried pinyin entry searches as D. The pin at `074a2219c90feaf962d0d24f034514033ece5f99` was read
 with `git show 074a2219:<path>` from the local libpinyin repository:

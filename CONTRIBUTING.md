@@ -155,3 +155,97 @@ Examples include a harness leak, missing teardown or latent undefined behaviour.
 Keep the tree correct at every stack level.
 The capi-commands fuzz leak fix belonged on #502, which made BDB the default and exposed the failure.
 Its initial placement on #512 was wrong.
+
+## Approval conditions
+
+Stop and ask the maintainer when any condition below applies:
+
+- The task is ambiguous.
+- The change requires a C interface, ABI or dependency change.
+- A test cannot pass without breaking the constitution.
+- A SPEC contradicts the pin's source.
+- The pin's source and disassembly cannot settle a behaviour.
+- The implementation requires an unapproved change to a frozen SPEC.
+- A product-behaviour change is not a language artefact under the source policy's decision order.
+
+Use the pin's external call when a Rust equivalent is unsettled.
+Unsettled surrounding pin behaviour still requires a decision.
+Rust interfaces remain internal under the [interface ruling](docs/constitution.md#external-interfaces).
+
+Obtain approval before adding or upgrading dependencies, or changing frozen SPECs, goldens or CI policy.
+Implement from frozen behavioural SPECs and fixtures.
+A freeze of a Rust signature alone no longer binds.
+Keep unsafe code within the [constitution's allowlist](docs/constitution.md).
+Do not silence lints.
+Use only the narrow, justified expectations permitted by the [panic amendment](docs/findings/compatibility-policy.md#amendment--pin-matched-panics-and-error-handling).
+
+## Pull request descriptions
+
+Use the [PR template](.github/PULL_REQUEST_TEMPLATE.md) for every PR, including CLI and API submissions.
+Keep its headings and their order.
+Write the body to a file.
+Use `gh pr create --body-file <file>`, not `--fill`.
+
+Use short, factual sentences.
+Do not use emoji, badges, decorative headings or generic checklists.
+Do not paste chronological logs, status updates or transcripts.
+When results change, update the existing sections.
+Do not append another report at the end.
+Describe only a stacked PR's own diff.
+Name its direct parent PR.
+
+Keep ordinary PRs brief.
+The 150–300 word range is a guide, not a minimum.
+Report final results and reproduction commands under the [reporting policy](#results-and-reproduction).
+Add detail only when it helps assess the change.
+The [verification rules](docs/runbooks/verification.md) remain authoritative.
+These description rules change only the format.
+
+## Issue descriptions
+
+Before creating an issue:
+
+1. Search open and closed issues.
+2. Link existing work instead of creating duplicates.
+3. Choose the appropriate [issue template](.github/ISSUE_TEMPLATE/): bug report, task/proposal or tracking issue.
+4. Preserve its headings and their order.
+5. For CLI or API submission, write a completed body file without YAML front matter or instruction comments.
+6. Submit it with `gh issue create --body-file <file>`.
+
+If GraphQL is unavailable, use `gh api repos/shenghaoc/oxpinyin/issues -f title=<title> -F body=@<file>`.
+Apply suitable existing labels, such as bug-for-bug, axis:*, severity:* or backend:*.
+Do not create new labels.
+
+Use a specific, factual title and short sentences.
+Do not include emoji, badges, decorative headings, authorship fields, transcripts or chronological execution logs.
+Use checkboxes only for concrete outcomes or linked work items.
+Do not use them for generic assurances.
+
+Separate observations, source-derived conclusions, hypotheses and proposals.
+Identify the revision relevant to the evidence.
+Use "Unknown" or "Not reproduced" when appropriate.
+Never invent results, dependencies, issue numbers, approvals or acceptance thresholds.
+
+Keep each non-tracking issue focused on one outcome.
+Describe the problem before proposing a solution.
+Leave implementation choices open unless an explicit requirement settles them.
+Link extensive analysis instead of duplicating it.
+Do not create extra issues merely to fill a template.
+
+Keep the body current within its existing sections.
+Use comments for meaningful new evidence or decisions.
+Do not post repeated status dumps.
+Preserve links to decisions when summarizing them.
+Do not erase their history.
+
+Creating an issue does not authorize implementation or change project policy.
+Approval, compatibility and verification requirements still apply.
+Issue templates change only reporting format.
+
+## Stack merges
+
+Merge stacks from bottom to top through the PR button.
+Manage stacks with the `github/gh-stack` extension.
+Install it with `gh extension install github/gh-stack`.
+Use `gh stack rebase` for a cascading rebase across the stack.
+Follow the [rebase procedure](#checkpoints-and-rebases) before each push and merge.
