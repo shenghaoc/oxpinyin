@@ -1143,7 +1143,7 @@ class Campaign:
             elif profiler.startswith('callgrind-user-'):
                 operation = profiler.removeprefix('callgrind-user-')
                 anchor = facade + '_init' if operation == 'open' else 'bisect_user_' + operation + '_unit'
-                command += ['--collect-atstart=no', '--cache-sim=no', '--branch-sim=no',
+                command += ['--collect-atstart=no', '--cache-sim=no', '--branch-sim=no', '--read-inline-info=yes',
                             '--callgrind-out-file=/dev/stderr', '--toggle-collect=' + anchor]
             else:
                 raise ValueError('unknown profiler')
