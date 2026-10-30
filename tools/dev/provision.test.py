@@ -1,5 +1,5 @@
 #!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
-"""Synthetic provisioning fixtures; U6_BASE also compares preserved shell entry points."""
+"""Synthetic provisioning fixtures with fake host processes."""
 import contextlib
 import io
 import os
@@ -44,7 +44,6 @@ class ProvisionTests(unittest.TestCase):
         self.service.cells = ['bdb', 'kc', 'tkrzw']
         self.service.tkrzw_local = True
         self.service.log = lambda value: print(value, file=sys.stderr)
-        self.base = Path(os.environ['U6_BASE']) if os.environ.get('U6_BASE') else None
         for cell in provision.CELLS:
             self.fixture(cell)
 
@@ -268,25 +267,12 @@ class ProvisionTests(unittest.TestCase):
                 Tools(environment=self.env).tkrzw_host()
             self.assertEqual(provision.main(['probe-host']), 1)
 
-    def test_shell_quoting_matches_bash_and_never_evaluates_values(self):
+    def test_shell_quoting_round_trips_without_evaluating_values(self):
         for value in ("", "plain/a-b.c_+=,:%@", "quotes '\" and $dollars`", "a\nb\tc\r\x01\x7f", "~#&|;()<>!?[]{}*"):
             for always in (False, True):
                 with self.subTest(value=value, always=always):
-                    script = 'value=$1; printf "%s" "${value@Q}"' if always else 'printf "%q" "$1"'
-                    old = subprocess.check_output(['bash', '-c', script, 'fixture', value], env=self.env).decode()
-                    self.assertEqual(provision.quote(value, always=always), old)
                     decoded = subprocess.check_output(['bash', '-c', 'value=' + provision.quote(value, always=always) + '; printf "%s" "$value"'], env=self.env).decode()
                     self.assertEqual(decoded, value)
-
-    def test_path_filter_preserves_bash_empty_fields(self):
-        for value in ('', ':a', 'a:', 'a::b:', ':a::', 'a:/cache/lib:/cache/bin:b'):
-            with self.subTest(value=value):
-                expected = subprocess.check_output(['bash', '-c',
-                    'source "$1/tools/cloud/env.sh"; tkrzw_prefix=/cache; without_prefix "$2"',
-                    'fixture', str(self.base), value], env=self.env).decode() if self.base else None
-                current = provision.without_prefix(value, '/cache', self.env)
-                if expected is not None:
-                    self.assertEqual(current, expected)
 
     def test_ext4_reports_available_absent_overmounted_inaccessible_and_unknown(self):
         mount = self.work / 'ext4 mount'
@@ -345,7 +331,7 @@ else:
 
 @unittest.skipUnless(sys.platform.startswith('linux'), 'Linux provisioning')
 class EntrypointTests(unittest.TestCase):
-    """Run real old/new entry points with identical fake host processes."""
+    """Run the setup entry point with fake host processes."""
     def setUp(self):
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
@@ -356,7 +342,6 @@ class EntrypointTests(unittest.TestCase):
         shutil.copytree(ROOT / 'tools', self.root / 'tools', ignore=shutil.ignore_patterns('__pycache__'))
         for name in ('.python-version', 'rust-toolchain.toml'):
             shutil.copyfile(ROOT / name, self.root / name)
-        self.base = Path(os.environ['U6_BASE']) if os.environ.get('U6_BASE') else None
         self.bin = self.work / 'bin'
         self.bin.mkdir()
         self.calls = self.work / 'calls'
@@ -405,82 +390,63 @@ elif name in ('curl','apt-get','sudo'):
         # Keep host executables isolated; cargo and dump utilities never execute.
         for name in ('cargo', 'db5.3_dump'):
             (self.bin / name).symlink_to('/bin/true')
-        self.new_setup = (self.root / 'tools/cloud/setup.sh').read_bytes()
 
-    def run_entry(self, args, old=False):
-        setup = self.root / 'tools/cloud/setup.sh'
-        if old:
-            setup.write_bytes((self.base / 'tools/cloud/setup.sh').read_bytes())
-            shutil.copyfile(self.base / 'tools/cloud/env.sh', self.root / 'tools/cloud/env.sh')
-        else:
-            setup.write_bytes(self.new_setup)
-        done = subprocess.run(['bash', str(setup), *args], cwd=self.root, env=self.env,
-                              capture_output=True, timeout=25)
-        return done
+    def run_entry(self, args):
+        return subprocess.run(['bash', str(self.root / 'tools/cloud/setup.sh'), *args],
+                              cwd=self.root, env=self.env, capture_output=True, timeout=25)
 
-    def normalize(self, data):
-        data = re.sub(rb'\[\s*\d+s\]', b'[TIME]', data)
-        data = re.sub(rb'at /[^\n]+/ca.crt \(mode', b'at <private>/ca.crt (mode', data)
-        return data
-
-    def compare(self, args, expected):
+    def check_entry(self, args, expected):
         current = self.run_entry(args)
         self.assertEqual(current.returncode, expected, current.stderr.decode())
-        if self.base:
-            old = self.run_entry(args, old=True)
-            self.assertEqual((current.returncode, self.normalize(current.stdout), self.normalize(current.stderr)),
-                             (old.returncode, self.normalize(old.stdout), self.normalize(old.stderr)))
         self.assertFalse(any(path.name == 'ca.crt' for path in self.work.rglob('ca.crt')))
         return current
 
     def test_usage_options_and_missing_argument_statuses(self):
         for args in (['--unknown'], ['--cells', 'bad'], ['--cells', ''], ['--in-container']):
             with self.subTest(args=args):
-                self.compare(args, 2)
+                self.check_entry(args, 2)
         for option in ('--cells', '--jobs', '--cache-dir', '--no-pull', '--in-container'):
             args = ['--python-only', option] + (['bdb' if option == '--cells' else '1'] if option in ('--cells', '--jobs', '--cache-dir') else [])
-            self.compare(args, 2)
+            self.check_entry(args, 2)
         for option in ('--cells', '--jobs', '--cache-dir'):
             # Bash-specific unbound-variable diagnostic is deliberately retired;
             # status remains 1, and Python names the missing option.
             done = self.run_entry([option])
             self.assertEqual(done.returncode, 1)
             self.assertEqual(done.stderr, (option + ': requires an argument\n').encode())
-            if self.base:
-                self.assertEqual(self.run_entry([option], old=True).returncode, 1)
 
     def test_uv_bootstrap_semver_and_install_failures(self):
         for version in ('0.13.1', '0.14.2', '0.13.1+build.7', '0.14.0-beta.1', '0.13.2-rc.1+build.7'):
             with self.subTest(version=version):
                 self.env['FAKE_UV_VERSION'] = version
-                self.compare(['--python-only'], 0)
+                self.check_entry(['--python-only'], 0)
         for version in ('0.13.0', '0.13.1-beta.1', '0.13.1-rc.1+build.7', '0.13.1-0', '0.12.9-rc.1'):
             with self.subTest(version=version):
                 self.env['FAKE_UV_VERSION'] = version
-                result = self.compare(['--python-only'], 1)
+                result = self.check_entry(['--python-only'], 1)
                 self.assertIn(b'FAIL: uv download failed', result.stderr)
         self.env.pop('FAKE_UV_VERSION')
         destination = self.work / 'regular-file'
         destination.touch()
         self.env['UV_INSTALL_DIR'] = str(destination)
-        self.assertIn(b'uv installation directory is not writable', self.compare(['--python-only'], 1).stderr)
+        self.assertIn(b'uv installation directory is not writable', self.check_entry(['--python-only'], 1).stderr)
         self.env.pop('UV_INSTALL_DIR')
         self.env['FAKE_PYTHON_FAILURE'] = '1'
-        self.assertIn(b'FAIL: managed Python provisioning failed', self.compare(['--python-only'], 1).stderr)
+        self.assertIn(b'FAIL: managed Python provisioning failed', self.check_entry(['--python-only'], 1).stderr)
         self.env.pop('FAKE_PYTHON_FAILURE')
 
-    def test_valgrind_minimum_and_install_retry_match_the_base(self):
+    def test_valgrind_minimum_and_install_retry(self):
         for version in ('3.22.0', '3.27.1', '3.22.0.GIT', '3.21.0'):
             with self.subTest(version=version):
                 self.env['FAKE_VALGRIND'] = version
-                result = self.compare(['--cells', 'bdb'], 1)
+                result = self.check_entry(['--cells', 'bdb'], 1)
                 if version == '3.21.0':
                     self.assertIn(b'FAIL: could not install valgrind with apt-get', result.stderr)
                 else:
                     self.assertIn(b'FAIL: model20 is unavailable', result.stderr)
         self.env.pop('FAKE_VALGRIND')
         self.env['FAKE_VALGRIND_MISSING'] = '1'
-        result = self.compare(['--cells', 'bdb'], 1)
+        result = self.check_entry(['--cells', 'bdb'], 1)
         self.assertIn(b'FAIL: could not install valgrind with apt-get', result.stderr)
         self.env.pop('FAKE_VALGRIND_MISSING')
 
@@ -489,22 +455,22 @@ elif name in ('curl','apt-get','sudo'):
         # /usr/bin may contain cargo on some hosts; fake path must then be masked.
         with mock.patch.object(provision.shutil, 'which', return_value=None), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(Finished):
             provision.Provision(env=self.env).prerequisites()
-        self.compare(['--python-only'], 0)
+        self.check_entry(['--python-only'], 0)
         (self.bin / 'cargo').symlink_to('/bin/true')
         self.env['FAKE_RUST'] = '1'
-        self.compare(['--cells', 'bdb'], 1)
+        self.check_entry(['--cells', 'bdb'], 1)
         self.env.pop('FAKE_RUST')
-        self.compare(['--cells', 'bdb'], 1)  # model access refusal before runtime provisioning
+        self.check_entry(['--cells', 'bdb'], 1)  # model access refusal before runtime provisioning
         for settings in ({'HTTPS_PROXY': 'http://127.0.0.1:1'},
                          {'OXPINYIN_PROXY_CA': str(self.work / 'missing')},
                          {'OXPINYIN_PROXY_CA': str(self.work / 'fake-ca')}):
             (self.work / 'fake-ca').write_text('synthetic CA\n')
             self.env.update(settings)
-            self.compare(['--cells', 'bdb'], 1)
+            self.check_entry(['--cells', 'bdb'], 1)
             for key in settings:
                 self.env.pop(key)
         self.env['FAKE_EXT4'] = 'unknown'
-        self.compare(['--python-only'], 0)
+        self.check_entry(['--python-only'], 0)
 
     def test_cached_full_setup_preserves_result_order_files_and_selection(self):
         cache = self.work / 'cache'
@@ -531,7 +497,7 @@ elif name in ('curl','apt-get','sudo'):
         pin.write_text(fields)
         self.env['FAKE_RUNTIME_READY'] = '1'
         (self.bin / 'kchashmgr').symlink_to('/bin/true')
-        current = self.compare(['--cells', 'kc bdb'], 0)
+        current = self.check_entry(['--cells', 'kc bdb'], 0)
         rows = [line for line in current.stdout.decode().splitlines() if 'data manifest OK' in line]
         self.assertEqual([line.split()[0] for line in rows], ['kc', 'bdb'])
         for cell in ('bdb', 'kc'):
@@ -555,17 +521,11 @@ elif name in ('curl','apt-get','sudo'):
     def test_cold_no_pull_library_hash_mismatch_keeps_status_three(self):
         self.verified_model()
         self.env.update(FAKE_POOL='1', FAKE_RUNTIME_READY='1')
-        outcomes = []
-        for old in ([False, True] if self.base else [False]):
-            shutil.rmtree(self.work / 'cache', ignore_errors=True)
-            done = self.run_entry(['--cells', 'bdb', '--no-pull', '--jobs', '1'], old=old)
-            self.assertEqual(done.returncode, 3, done.stderr.decode())
-            diagnostic = done.stderr[done.stderr.index(b'MISMATCH bdb libpinyin'):]
-            products = [(self.work / 'cache/oracle/bdb/lib' / (lib + '.so')).read_bytes()
-                        for lib in ('libpinyin', 'libzhuyin')]
-            outcomes.append((done.stdout, diagnostic, products))
-        if len(outcomes) == 2:
-            self.assertEqual(outcomes[0], outcomes[1])
+        done = self.run_entry(['--cells', 'bdb', '--no-pull', '--jobs', '1'])
+        self.assertEqual(done.returncode, 3, done.stderr.decode())
+        self.assertIn(b'MISMATCH bdb libpinyin', done.stderr)
+        for library in ('libpinyin', 'libzhuyin'):
+            self.assertTrue((self.work / 'cache/oracle/bdb/lib' / (library + '.so')).is_file())
 
     def test_cancellation_reaps_fake_child_and_cleans_private_ca(self):
         # Supply a fake verified model extraction, so cancellation reaches info.
@@ -574,18 +534,13 @@ elif name in ('curl','apt-get','sudo'):
         ca.write_text('synthetic CA\n')
         ready = self.work / 'ready'
         self.env.update(FAKE_WAIT='1', READY=str(ready))
-        outcomes = []
-        cases = [(custom, old) for custom in (True, False) for old in ([False, True] if self.base else [False])]
-        for custom, old in cases:
+        for custom in (True, False):
             if custom:
                 self.env['OXPINYIN_PROXY_CA'] = str(ca)
             else:
                 self.env.pop('OXPINYIN_PROXY_CA', None)
             ready.unlink(missing_ok=True)
             setup = self.root / 'tools/cloud/setup.sh'
-            setup.write_bytes((self.base / 'tools/cloud/setup.sh').read_bytes() if old else self.new_setup)
-            if old:
-                shutil.copyfile(self.base / 'tools/cloud/env.sh', self.root / 'tools/cloud/env.sh')
             child = subprocess.Popen(['bash', str(setup), '--cells', 'bdb'], cwd=self.root, env=self.env,
                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
             self.addCleanup(lambda: child.poll() is not None or os.killpg(child.pid, signal.SIGKILL))
@@ -594,16 +549,10 @@ elif name in ('curl','apt-get','sudo'):
                 time.sleep(.02)
             self.assertTrue(ready.exists(), 'fake runtime did not reach cancellation boundary')
             os.killpg(child.pid, signal.SIGTERM)
-            out, err = child.communicate(timeout=10)
+            _, err = child.communicate(timeout=10)
             status = 128 - child.returncode if child.returncode < 0 else child.returncode
             self.assertEqual(status, 1 if custom else 143, err.decode())
             self.assertFalse(any(path.name == 'ca.crt' for path in self.work.rglob('ca.crt')))
-            outcomes.append((out, self.normalize(err)))
-        # Status and owned cleanup are exact; process-termination diagnostics are
-        # Bash-specific and not copied into the Python controller.
-        if self.base:
-            self.assertEqual(outcomes[0][0], outcomes[1][0])
-            self.assertEqual(outcomes[2][0], outcomes[3][0])
 
 
 if __name__ == '__main__':

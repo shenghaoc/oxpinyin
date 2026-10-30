@@ -1,14 +1,10 @@
-"""Packaging boundary fixtures; optional preserved-base comparisons, with no builds.
+"""Packaging boundary fixtures with no builds.
 
-OXPINYIN_PACKAGING_BASE names the unmodified checkout for U4's old/new control.
-Both entry points see the same private checkout, fakes, argv, paths and bytes.
-The fixtures also run in CI without that control, asserting their expected
-statuses and outputs. Fake compilers/builders use an explicit Tools adapter.
+Assert statuses, payloads and outputs using explicit fake Tools adapters.
 """
 import json
 import os
 from pathlib import Path
-import re
 import shutil
 import signal
 import subprocess
@@ -21,7 +17,6 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 from tools.dev import packaging
 
-BASE = Path(os.environ['OXPINYIN_PACKAGING_BASE']) if os.environ.get('OXPINYIN_PACKAGING_BASE') else None
 DRIVER = '''import sys
 from pathlib import Path
 from tools.dev import packaging
@@ -103,13 +98,6 @@ class PackagingTests(unittest.TestCase):
                 if source.is_file():
                     shutil.copyfile(source, self.root / 'crates' / crate / source.name)
         shutil.copyfile(ROOT / 'tools/oracle/oracle-pin.txt', self.root / 'tools/oracle/oracle-pin.txt')
-        if BASE:
-            # Only the preserved shell control sources the removed runtime shim.
-            shutil.copy(BASE / 'tools/tkrzw/runtime.sh', self.root / 'tools/tkrzw/runtime.sh')
-            for source in (BASE / 'tools/packaging').glob('*'):
-                if source.is_file():
-                    shutil.copy(source, self.root / 'tools/packaging' / source.name)
-            shutil.copy(ROOT / 'tools/lib/bash-floor.sh', self.root / 'tools/lib/bash-floor.sh')
         self.bin = self.work / 'bin'
         self.bin.mkdir()
         self.env = {**os.environ, 'PATH': str(self.bin) + os.pathsep + os.environ['PATH'],
@@ -159,91 +147,34 @@ if lines:sys.stdout.buffer.write(separator.join(sorted(lines,key=key))+separator
         (self.root / 'tools/install-python.sh').chmod(0o755)
         self.fake('uv', 'import sys; from pathlib import Path; sys.path.insert(0, ' + repr(str(ROOT)) + '); from tools.dev.cell import main; sys.exit(main(["--shell"], root=Path.cwd()))')
 
-
     def fake(self, name, source):
         path = self.bin / name
         path.write_text('#!' + sys.executable + '\n' + source)
         path.chmod(0o755)
 
-    def invoke(self, name, args=(), *, old=False, env=None):
-        command = (['bash', str(self.root / 'tools/packaging' / (name + '.sh'))] if old else
-                   [sys.executable, '-X', 'lazy_imports=normal', '-c', DRIVER, str(self.root), name])
+    def invoke(self, name, args=(), *, env=None):
+        command = [sys.executable, '-X', 'lazy_imports=normal', '-c', DRIVER, str(self.root), name]
         return subprocess.run([*command, *map(str, args)], env={**self.env, **(env or {})},
                               cwd=ROOT, capture_output=True, timeout=20)
 
-    def normalize(self, result):
-        def normal(data):
-            data = data.replace(os.fsencode(str(self.root) + '/'), b'')
-            return re.sub(rb'(?:tmp\.[A-Za-z0-9]+|tmp[A-Za-z0-9_]+)', b'TEMP', data)
-        return result.returncode, normal(result.stdout), normal(result.stderr)
-
-    def compare(self, name, args=(), *, env=None, reset=None, files=None, diagnostics=True, artifacts=()):
-        result = self.invoke(name, args, env=env)
-        contents = tree(files) if files else None
-        calls = self.work / 'calls'
-        arguments = calls.read_bytes() if calls.exists() else None
-        produced = [path.read_bytes() for path in artifacts]
-        if BASE:
-            if reset:
-                reset()
-            control = self.invoke(name, args, old=True, env=env)
-            self.assertEqual(result.returncode, control.returncode)
-            if arguments is not None:
-                self.assertEqual(arguments, calls.read_bytes())
-            if diagnostics:
-                self.assertEqual(self.normalize(result), self.normalize(control))
-            if files:
-                self.assertEqual(contents, tree(files))
-            self.assertEqual(produced, [path.read_bytes() for path in artifacts])
-        return result
-
     def install(self, library='libpinyin', extra=(), env=None):
         stage = self.work / 'stage'
-        def reset():
-            shutil.rmtree(stage, ignore_errors=True)
-            shutil.rmtree(self.root / 'target', ignore_errors=True)
-        reset()
-        result = self.compare('install', [library, '--prefix=/usr', '--destdir=' + str(stage), *extra],
-                              env=env, reset=reset, files=stage)
+        shutil.rmtree(stage, ignore_errors=True)
+        shutil.rmtree(self.root / 'target', ignore_errors=True)
+        result = self.invoke('install', [library, '--prefix=/usr', '--destdir=' + str(stage), *extra],
+                              env=env)
         return result, stage
-
-    def test_metadata_usage_equals_complete_preserved_shell_header(self):
-        from tools.dev.packaging_templates import METADATA_USAGE
-        # Complete usage header from e79802e8:tools/packaging/check-pc-metadata.sh.
-        # Kept independently of the production template and available in shallow CI.
-        preserved = r'''Usage: tools/packaging/check-pc-metadata.sh --pin-root=DIR --subject-root=DIR
-           --prefix=DIR [--libdir=DIR] [--includedir=DIR]
-           [--build-subject=FEATURES] [--modules="libpinyin libzhuyin"]
-  --build-subject  run install.sh for both libraries into --subject-root
-                   first (emptying it), with `--profile dev --locked
-                   --no-default-features --features FEATURES` (libpinyin
-                   also gets `shipped`); FEATURES is the backend
-                   (bdb|kyotocabinet|tkrzw).
-  --libdir / --includedir  the values BOTH sides were installed with;
-                   omitted means autoconf's defaults (<prefix>/lib,
-                   <prefix>/include), the tree layout either side produces
-                   without the flag.
-
-Exits 0 when every item matches; 1 on any difference (each one printed as a
-unified diff); 2 on a usage error or a missing input.
-'''
-        self.assertEqual(METADATA_USAGE, preserved)
-        if BASE:
-            source = (BASE / 'tools/packaging/check-pc-metadata.sh').read_text()
-            header = source[source.index('# Usage:'):source.index('\n\n# shellcheck')]
-            self.assertEqual(preserved, '\n'.join(
-                line[2:] if line.startswith('# ') else '' for line in header.splitlines()) + '\n')
 
     def test_pin_version_and_static_declarations(self):
         for name in ('pc-version', 'check-pc-version'):
-            result = self.compare(name)
+            result = self.invoke(name)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn(b'2.11.92', result.stdout)
 
     def test_missing_and_malformed_pin_status(self):
         for text in ('libpinyin_tag=broken\n', 'no tag\n', 'libpinyin_tag=2.11.92\r\n'):
             (self.root / 'tools/oracle/oracle-pin.txt').write_text(text)
-            result = self.compare('pc-version')
+            result = self.invoke('pc-version')
             self.assertEqual(result.returncode, 1)
             self.assertIn(b'no well-formed', result.stderr)
 
@@ -256,9 +187,7 @@ unified diff); 2 on a usage error or a missing input.
                                  ('function-order', []), ('function-order', ['resolve']),
                                  ('check-pc-metadata', []), ('check-pc-metadata', ['--unknown'])]:
             with self.subTest(name=name, arguments=arguments):
-                # The old usage printer stopped at its first "Exits" line.
-                # The complete preserved header is now restored and checked above.
-                result = self.compare(name, arguments, diagnostics=name != 'check-pc-metadata')
+                result = self.invoke(name, arguments)
                 self.assertEqual(result.returncode, 2)
                 if name == 'check-pc-metadata':
                     from tools.dev.packaging_templates import METADATA_USAGE
@@ -266,18 +195,18 @@ unified diff); 2 on a usage error or a missing input.
 
     def test_missing_pin_and_command_execution_statuses(self):
         (self.root / 'tools/oracle/oracle-pin.txt').unlink()
-        self.assertEqual(self.compare('pc-version').returncode, 2)
+        self.assertEqual(self.invoke('pc-version').returncode, 2)
         self.env['PATH'] = str(self.bin) + ':/usr/bin:/bin'
         (self.bin / 'cargo').chmod(0o644)
         args = ['libpinyin','--prefix=/usr','--destdir='+str(self.work/'stage')]
-        self.assertEqual(self.compare('install',args,diagnostics=False).returncode,126)
+        self.assertEqual(self.invoke('install',args).returncode,126)
         (self.bin / 'cargo').unlink()
         args = ['libpinyin','--prefix=/usr','--destdir='+str(self.work/'stage')]
-        self.assertEqual(self.compare('install',args,diagnostics=False).returncode,127)
+        self.assertEqual(self.invoke('install',args).returncode,127)
 
     def test_package_required_arguments_keep_status(self):
         for name in ('release-deb', 'release-rpm', 'release-arch'):
-            result = self.compare(name, diagnostics=False)
+            result = self.invoke(name)
             self.assertEqual(result.returncode, 1)
             self.assertIn(b'backend required', result.stderr)
 
@@ -297,8 +226,7 @@ unified diff); 2 on a usage error or a missing input.
     def test_macos_install_runs_the_mach_o_relink_lane(self):
         # The Darwin host selects the facade's checked-in policy and relinks
         # the installed dylib (MachoRelinkTests covers the relink itself); an
-        # explicit opt-out keeps cargo-c's object. No preserved-base control:
-        # the shell entry points had no Mach-O lane. Every tool the lane
+        # explicit opt-out keeps cargo-c's object. Every tool the lane
         # consults before the policy is a fake here, so the outcome is the
         # same on a Linux host, which has no otool.
         self.fake('uname', "print('Darwin')")
@@ -528,8 +456,7 @@ else:
             ('release-rpm',['tkrzw','1','stage','out'],1),
             ('release-deb',['bdb','1','stage','/usr/lib','out'],1)]:
             with self.subTest(name=name, args=args):
-                self.assertEqual(self.compare(name,args).returncode, expected)
-
+                self.assertEqual(self.invoke(name,args).returncode, expected)
 
     def test_installed_metadata_matches_and_reports_a_real_difference(self):
         result, stage = self.install()
@@ -537,12 +464,12 @@ else:
         pin = self.work / 'pin'
         shutil.copytree(stage, pin)
         arguments = ['--pin-root=' + str(pin), '--subject-root=' + str(stage), '--prefix=/usr', '--modules=libpinyin']
-        result = self.compare('check-pc-metadata', arguments)
+        result = self.invoke('check-pc-metadata', arguments)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(b'OK: packaging metadata matches', result.stdout)
         path = stage / 'usr/lib/pkgconfig/libpinyin.pc'
         path.write_bytes(path.read_bytes().replace(b'BerkeleyDB', b'Tkrzw'))
-        result = self.compare('check-pc-metadata', arguments)
+        result = self.invoke('check-pc-metadata', arguments)
         self.assertEqual(result.returncode, 1, result.stderr)
         self.assertIn(b'FAIL:', result.stderr)
 
@@ -575,11 +502,8 @@ package.write_bytes(b'deb package')
 os.utime(package,(1,1))
 """)
         payload = self.work / 'payload'
-        def reset():
-            shutil.rmtree(out, ignore_errors=True)
-            shutil.rmtree(payload, ignore_errors=True)
-        result = self.compare('release-deb', ['bdb','0.1.0',stage,'/usr/lib',out],
-                              env={'PAYLOAD':str(payload)}, reset=reset, files=payload)
+        result = self.invoke('release-deb', ['bdb','0.1.0',stage,'/usr/lib',out],
+                              env={'PAYLOAD':str(payload)})
         self.assertEqual(result.returncode, 0, result.stderr)
         control = (payload / 'runtime/DEBIAN/control').read_text()
         self.assertIn('Depends: libc6 (>= 2.17), libglib2.0-0t64', control)
@@ -587,7 +511,7 @@ os.utime(package,(1,1))
         self.assertIn('Conflicts: libpinyin15, libzhuyin15', control)
         dev_control = (payload / 'dev/DEBIAN/control').read_text()
         self.assertIn('Depends: oxpinyin-libpinyin15-bdb (= 0.1.0-1), libglib2.0-dev\n', dev_control)
-        result = self.compare('release-deb', ['bdb','0.1.0',stage,'/usr/lib',out], env={'FAIL_PACKAGE':'1'})
+        result = self.invoke('release-deb', ['bdb','0.1.0',stage,'/usr/lib',out], env={'FAIL_PACKAGE':'1'})
         self.assertEqual(result.returncode, 39)
 
     def test_rpm_spec_payload_and_no_output_refusal(self):
@@ -604,11 +528,11 @@ if not os.environ.get('NO_RPM'):
     os.utime(package,(1,1))
 """)
         self.fake('rpm', 'print("/usr/lib/libpinyin.so.15")')
-        result = self.compare('release-rpm', ['tkrzw','0.1.0',stage,out], env={'PAYLOAD':str(payload)}, artifacts=(payload,))
+        result = self.invoke('release-rpm', ['tkrzw','0.1.0',stage,out], env={'PAYLOAD':str(payload)})
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('Provides:       libpinyin = 2.11.92 libzhuyin = 2.11.92', payload.read_text())
         self.assertIn('Obsoletes:      libpinyin libzhuyin', payload.read_text())
-        result = self.compare('release-rpm', ['tkrzw','0.1.0',stage,out], env={'PAYLOAD':str(payload),'NO_RPM':'1'})
+        result = self.invoke('release-rpm', ['tkrzw','0.1.0',stage,out], env={'PAYLOAD':str(payload),'NO_RPM':'1'})
         self.assertEqual(result.returncode, 1)
         self.assertIn(b'produced no RPMs', result.stderr)
 
@@ -631,13 +555,12 @@ package=out/'oxpinyin-libpinyin-kyotocabinet-0.1.0-1-x86_64.pkg.tar.zst'
 package.write_bytes(b'arch package')
 os.utime(package,(1,1))
 """)
-        result = self.compare('release-arch', ['kyotocabinet','0.1.0',stage,out,'--data='+str(data),'--data-version=2.10.3-2'], env={'PAYLOAD':str(payload)}, artifacts=(payload,))
+        result = self.invoke('release-arch', ['kyotocabinet','0.1.0',stage,out,'--data='+str(data),'--data-version=2.10.3-2'], env={'PAYLOAD':str(payload)})
         self.assertEqual(result.returncode, 0, result.stderr)
         text = payload.read_text()
         self.assertIn('model data from Arch libpinyin 2.10.3-2', text)
         self.assertIn('libpinyin.so=15-64 libzhuyin.so=15-64', text)
         self.assertEqual(Path(str(payload)+'.data').read_bytes(), b'data')
-
 
     def test_relink_cancellation_status_original_file_and_cleanup(self):
         self.fake('uname', "print('Linux')")
@@ -648,26 +571,20 @@ os.utime(package,(1,1))
         self.fake('cc', "import os,time; from pathlib import Path; Path(os.environ['READY']).write_text('ready'); time.sleep(.8)")
         arguments = ['--staticlib',str(archive),'--ver',str(ver),'--soname','libpinyin.so.15','--dest',str(dest),'--function-order','']
         for sig in (signal.SIGINT, signal.SIGTERM):
-            outcomes = []
-            for old in ([False, True] if BASE else [False]):
-                dest.write_bytes(b'original')
-                ready.unlink(missing_ok=True)
-                command = (['bash',str(self.root/'tools/packaging/relink-versioned.sh')] if old else
-                           [sys.executable,'-X','lazy_imports=normal','-c',DRIVER,str(self.root),'relink-versioned'])
-                with subprocess.Popen([*command,*arguments],cwd=ROOT,env={**self.env,'READY':str(ready)},
-                                      stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True) as process:
-                    deadline = time.monotonic()+5
-                    while not ready.exists() and process.poll() is None and time.monotonic()<deadline:
-                        time.sleep(.01)
-                    self.assertTrue(ready.exists(), 'compiler fixture did not start')
-                    process.send_signal(sig)
-                    stdout, stderr = process.communicate(timeout=10)
-                    self.assertEqual(process.returncode,128+sig)
-                    outcomes.append((process.returncode,stdout,stderr))
-                self.assertEqual(dest.read_bytes(),b'original')
-                self.assertEqual(list(self.work.glob('*.relink.*')),[])
-            if BASE:
-                self.assertEqual(outcomes[0],outcomes[1])
+            dest.write_bytes(b'original')
+            ready.unlink(missing_ok=True)
+            command = [sys.executable,'-X','lazy_imports=normal','-c',DRIVER,str(self.root),'relink-versioned']
+            with subprocess.Popen([*command,*arguments],cwd=ROOT,env={**self.env,'READY':str(ready)},
+                                  stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True) as process:
+                deadline = time.monotonic()+5
+                while not ready.exists() and process.poll() is None and time.monotonic()<deadline:
+                    time.sleep(.01)
+                self.assertTrue(ready.exists(), 'compiler fixture did not start')
+                process.send_signal(sig)
+                process.communicate(timeout=10)
+                self.assertEqual(process.returncode,128+sig)
+            self.assertEqual(dest.read_bytes(),b'original')
+            self.assertEqual(list(self.work.glob('*.relink.*')),[])
 
     def stage_fakes(self):
         self.env['CHECKOUT'] = str(self.root)
@@ -717,12 +634,12 @@ for line in text.split('global:')[1].split('local:')[0].splitlines():
         self.stage_fakes()
         stage = self.work / 'stage'
         arguments = ['bdb','--prefix=/usr','--libdir=/usr/lib','--dest='+str(stage)]
-        result = self.compare('release-stage',arguments,files=stage)
+        result = self.invoke('release-stage',arguments)
         self.assertEqual(result.returncode,0,result.stderr)
         self.assertIn(b'release-stage gates passed (backend: bdb)',result.stdout)
         self.assertIn(b'pinyin=fixture',result.stdout)
         self.assertIn(b'zhuyin=fixture',result.stdout)
-        result = self.compare('release-stage',arguments,env={'LIBPINYIN_DATABASE_FORMAT':'Tkrzw'},files=stage)
+        result = self.invoke('release-stage',arguments,env={'LIBPINYIN_DATABASE_FORMAT':'Tkrzw'})
         self.assertEqual(result.returncode,1,result.stderr)
         self.assertIn(b'GATE FAILED: libpinyin database_format',result.stderr)
 

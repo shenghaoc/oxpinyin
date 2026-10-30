@@ -1,4 +1,4 @@
-"""Shared harness test assertions that never print a call's arguments.
+"""Shared harness test helpers and assertions that never print a call's arguments.
 
 A failing Mock.assert_not_called or assert_called_once_with prints every
 recorded call, and assertIn or assertEqual on a mapping prints the mapping.
@@ -121,3 +121,26 @@ def _differences(actual, expected):
                if name not in actual.kwargs or name not in expected.kwargs
                or actual.kwargs[name] != expected.kwargs[name]]
     return labels
+
+
+def collect_declarations(*registrars, registry=None, **injected):
+    """Collect contract (name, args, metadata, function) declarations for harness assertions.
+
+    Keep registration order and pass injected fixture helpers to each registrar.
+    When a family decorates earlier cases during registration, publish each
+    declaration into its registry immediately. Return the original function
+    from the decorator, just as the driver does.
+    """
+    cases = []
+
+    def case(name, *args, **metadata):
+        def collect(fn):
+            cases.append((name, args, metadata, fn))
+            if registry is not None:
+                registry[name] = dict(metadata, fn=fn)
+            return fn
+        return collect
+
+    for register in registrars:
+        register(case, **injected)
+    return cases

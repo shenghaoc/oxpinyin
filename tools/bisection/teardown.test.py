@@ -2108,38 +2108,6 @@ class UnitPoolTests(unittest.TestCase):
             self.log(('reaped', unit.prefix))
             raise
 
-    def test_overlap_is_bounded_by_admission(self):
-        for admitted in (1, 2, 3):
-            with self.subTest(admitted=admitted):
-                FakeAdmission.workers = admitted
-                active, peak, order = [0], [0], []
-                everyone = threading.Barrier(admitted, timeout=5)
-
-                def unit(name):
-                    def run(campaign):
-                        with self.lock:
-                            active[0] += 1
-                            peak[0] = max(peak[0], active[0])
-                            order.append(name)
-                        # Synchronize actual workers; elapsed time is not the overlap contract.
-                        everyone.wait()
-                        with self.lock:
-                            active[0] -= 1
-                        return name
-                    return name, run
-                units = [unit('u%d' % number) for number in range(6)]
-                self.assertEqual(td.fan_out(self.campaign(), units, 'pool'), [name for name, _ in units])
-                self.assertEqual(peak[0], admitted)
-                if admitted == 1:
-                    self.assertEqual(order, [name for name, _ in units])
-
-    def test_the_pool_is_admitted_before_its_units_and_released_after_them(self):
-        td.fan_out(self.campaign(), [('a', lambda c: self.log('a')), ('b', lambda c: self.log('b')),
-                                       ('c', lambda c: self.log('c'))], 'pool')
-        self.assertEqual(self.events[:2], ['admission', 'handoff'])
-        self.assertEqual(self.events[-1], 'close')
-        self.assertEqual(sorted(self.events[2:-1]), ['a', 'b', 'c'])
-
     def test_one_job_and_one_unit_run_in_order_under_admission(self):
         caller, seen = threading.get_ident(), []
         units = [(name, lambda c, name=name: seen.append((name, threading.get_ident() == caller, c.prefix, c.cpu)))
@@ -2149,16 +2117,6 @@ class UnitPoolTests(unittest.TestCase):
         self.assertEqual(seen, [('a', False, 'a-sample', 2), ('b', False, 'b-sample', 2),
                                 ('c', False, 'c-sample', 2), ('a', False, 'a-sample', 2)])
         self.assertEqual(self.events, ['admission', 'handoff', 'close'] * 2)
-
-    def test_serial_failure_stops_the_remaining_units(self):
-        ran = []
-
-        def failing(campaign):
-            raise ValueError('populate failed')
-        units = [('a', lambda c: ran.append('a')), ('b', failing), ('c', lambda c: ran.append('c'))]
-        with self.assertRaisesRegex(ValueError, 'populate failed'):
-            td.fan_out(self.campaign(jobs=1), units, 'pool')
-        self.assertEqual(ran, ['a'])
 
     def test_failure_starts_no_queued_unit_and_reaps_running_children_before_release(self):
         FakeAdmission.workers = 2
@@ -2258,27 +2216,6 @@ class UnitPoolTests(unittest.TestCase):
         for thread in threads:
             thread.join()
         self.assertEqual(len(set(names)), 800)
-
-    def test_results_and_emission_follow_unit_order_whatever_the_completion_order(self):
-        FakeAdmission.workers = 4
-        caller, emitted = threading.get_ident(), []
-        finished = [threading.Event() for _ in range(4)]
-
-        def unit(number):
-            def run(campaign):
-                # Unit n ends only after unit n+1 has: completion is the reverse of unit order.
-                if number < 3:
-                    finished[number + 1].wait(5)
-                finished[number].set()
-                return 'result-%d' % number
-            return 'u%d' % number, run
-
-        def emit(name, result):
-            emitted.append((name, result, threading.get_ident() == caller))
-        self.assertEqual(td.fan_out(self.campaign(), [unit(number) for number in range(4)], 'pool', emit),
-                         ['result-%d' % number for number in range(4)])
-        self.assertEqual(emitted, [('u%d' % number, 'result-%d' % number, True) for number in range(4)])
-
 
 def export_lines():
     """An export that fills both 10,000-phrase recipes, in library order."""

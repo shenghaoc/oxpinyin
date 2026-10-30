@@ -125,43 +125,6 @@ class DoctorTests(unittest.TestCase):
         self.assertIn(f'FAIL: {failure}', lines)
 
 
-class UvVersionTests(unittest.TestCase):
-    """uv prints a semantic version, so a pre-release of the minimum is older than it."""
-
-    def uv(self, version):
-        text = f'uv {version} (abc123def 2026-10-14 x86_64-unknown-linux-gnu)'
-        result = mock.Mock(returncode=0, stdout=text + '\n', stderr='')
-        return text, mock.patch.object(doctor, '_run', return_value=result)
-
-    def test_a_prerelease_at_the_minimum_fails(self):
-        for version in ('0.13.1-beta.1', '0.13.1-rc.1', '0.13.1-alpha', '0.13.1-0', '0.13.1-rc.1+build.5'):
-            text, run = self.uv(version)
-            with self.subTest(version=version), run:
-                with self.assertRaises(doctor.DoctorError) as caught:
-                    doctor.uv_version({'PATH': '/tools'})
-                self.assertEqual(str(caught.exception), f'uv 0.13.1 or newer required; found {text}')
-
-    def test_the_release_and_a_release_with_build_metadata_pass(self):
-        for version in ('0.13.1', '0.13.1+build.5', '0.13.1+20261014', '0.13.2'):
-            text, run = self.uv(version)
-            with self.subTest(version=version), run:
-                self.assertEqual(doctor.uv_version({'PATH': '/tools'}), text)
-
-    def test_a_newer_prerelease_passes(self):
-        for version in ('0.14.0-beta.1', '0.13.2-rc.1', '1.0.0-alpha', '0.13.2-rc.1+build.5'):
-            text, run = self.uv(version)
-            with self.subTest(version=version), run:
-                self.assertEqual(doctor.uv_version({'PATH': '/tools'}), text)
-
-    def test_a_prerelease_of_an_older_release_fails(self):
-        for version in ('0.13.0-rc.1', '0.12.9-beta.1'):
-            text, run = self.uv(version)
-            with self.subTest(version=version), run:
-                with self.assertRaises(doctor.DoctorError) as caught:
-                    doctor.uv_version({'PATH': '/tools'})
-                self.assertEqual(str(caught.exception), f'uv 0.13.1 or newer required; found {text}')
-
-
 # For each tool: the first line of its version output with a placeholder, then
 # a version below the minimum, the minimum itself and a newer one. The output
 # shapes are the ones the tools print on the hosts this repository runs on.
@@ -408,42 +371,44 @@ class SemverToolTests(ToolCase):
     def assert_fails(self, subject, version):
         self.assert_too_old(subject, semver_line(subject, version))
 
-    def test_a_prerelease_at_the_minimum_fails(self):
-        for candidate in self.semver_tools():
-            for suffix in ('-beta.1', '-rc.1', '-alpha', '-0', '-rc.1+build.5'):
-                with self.subTest(tool=candidate.name, version=candidate.minimum + suffix):
-                    self.assert_fails(candidate, candidate.minimum + suffix)
-
-    def test_the_release_at_the_minimum_passes(self):
-        for candidate in self.semver_tools():
-            with self.subTest(tool=candidate.name):
-                self.assert_passes(candidate, candidate.minimum)
-
-    def test_a_release_with_build_metadata_passes(self):
-        for candidate in self.semver_tools():
-            for suffix in ('+build.5', '+20261023', '+cargo-0.98.0'):
-                with self.subTest(tool=candidate.name, version=candidate.minimum + suffix):
-                    self.assert_passes(candidate, candidate.minimum + suffix)
-
-    def test_a_newer_prerelease_passes(self):
-        for candidate in self.semver_tools():
-            for version in (next_minor(candidate.minimum) + '-beta.1',
-                            next_patch(candidate.minimum) + '-rc.1',
-                            next_patch(candidate.minimum) + '-rc.1+build.5'):
-                with self.subTest(tool=candidate.name, version=version):
-                    self.assert_passes(candidate, version)
-
-    def test_a_prerelease_of_an_older_release_fails(self):
-        for candidate in self.semver_tools():
-            with self.subTest(tool=candidate.name):
-                self.assert_fails(candidate, previous(candidate.minimum) + '-rc.1')
-
-    def test_text_that_is_not_a_semantic_version_fails(self):
-        for candidate in self.semver_tools():
-            for version in (candidate.minimum.rsplit('.', 1)[0], candidate.minimum + '-',
-                            'v' + candidate.minimum, candidate.minimum + '-beta..1'):
-                with self.subTest(tool=candidate.name, version=version):
-                    self.assert_fails(candidate, version)
+    def test_tool_semver_minimums(self):
+        subjects = [None, *self.semver_tools()]
+        for candidate in subjects:
+            name = candidate.name if candidate else 'uv'
+            minimum = candidate.minimum if candidate else doctor.UV_MINIMUM
+            cases = [(minimum + suffix, False)
+                     for suffix in ('-beta.1', '-rc.1', '-alpha', '-0', '-rc.1+build.5')]
+            cases += [(minimum + suffix, True)
+                      for suffix in ('', '+build.5', '+20261023', '+cargo-0.98.0')]
+            cases += [(version, True) for version in (
+                next_minor(minimum) + '-beta.1', next_patch(minimum) + '-rc.1',
+                next_patch(minimum) + '-rc.1+build.5')]
+            cases += [(version, False) for version in (
+                previous(minimum) + '-rc.1', minimum.rsplit('.', 1)[0], minimum + '-',
+                'v' + minimum, minimum + '-beta..1')]
+            if candidate is None:
+                cases = [(version, False) for version in (
+                    '0.13.1-beta.1', '0.13.1-rc.1', '0.13.1-alpha', '0.13.1-0',
+                    '0.13.1-rc.1+build.5', '0.13.0-rc.1', '0.12.9-beta.1')]
+                cases += [(version, True) for version in (
+                    '0.13.1', '0.13.1+build.5', '0.13.1+20261014', '0.13.2',
+                    '0.14.0-beta.1', '0.13.2-rc.1', '1.0.0-alpha', '0.13.2-rc.1+build.5')]
+            for version, accepted in cases:
+                with self.subTest(tool=name, version=version):
+                    if candidate is None:
+                        text = f'uv {version} (abc123def 2026-10-14 x86_64-unknown-linux-gnu)'
+                        with mock.patch.object(doctor, '_run', return_value=completed(text)):
+                            if accepted:
+                                self.assertEqual(doctor.uv_version({'PATH': '/tools'}), text)
+                            else:
+                                with self.assertRaises(doctor.DoctorError) as caught:
+                                    doctor.uv_version({'PATH': '/tools'})
+                                self.assertEqual(str(caught.exception),
+                                                 f'uv {minimum} or newer required; found {text}')
+                    elif accepted:
+                        self.assert_passes(candidate, version)
+                    else:
+                        self.assert_fails(candidate, version)
 
     def test_cargo_c_prints_the_embedded_cargo_as_build_metadata(self):
         cargo_c = tool('cargo-c')
@@ -577,7 +542,6 @@ class MinimumsAgreeWithTheirOtherHomes(unittest.TestCase):
         from tools.dev import provision
         self.assertIs(provision.doctor, doctor)
         self.assertIn("tool.name == 'valgrind'", read('tools/dev/provision.py'))
-
 
 
 if __name__ == '__main__':

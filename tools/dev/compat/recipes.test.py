@@ -1,5 +1,5 @@
 #!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
-"""Oracle controller fixtures and optional preserved-base entrypoint comparisons."""
+"""Oracle controller fixtures with fake host adapters."""
 import contextlib
 import hashlib
 import io
@@ -27,7 +27,6 @@ class RecipeTests(unittest.TestCase):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         self.directory = Path(directory.name)
-        self.base = Path(os.environ['U3_BASE']).resolve() if os.environ.get('U3_BASE') else None
         self.env = dict(os.environ, UV_NO_CACHE='1')
         for key in tuple(self.env):
             if key in launcher.boundary.STATE_SETTINGS or key.startswith(('OXPINYIN_', 'PINYIN_', 'ORACLE_', 'UV_PYTHON_')):
@@ -38,29 +37,19 @@ class RecipeTests(unittest.TestCase):
         uv.chmod(0o755)
         self.env['PATH'] = str(self.directory) + os.pathsep + self.env['PATH']
 
-    def compare(self, script, recipe, args, *, streams=True, produced=()):
+    def invoke(self, recipe, args):
         program = "import os,sys,threading\nfrom tools.dev.compat import commands,fixtures,images\nfrom tools.dev import pool\nif os.environ.get('FAKE_CAMPAIGN'):\n    import subprocess\n    from tools.dev.compat import process\n    process.slot.run_command=lambda command,env=None,cwd=None,stdout=None,**options: subprocess.run(command,env=env,cwd=cwd,stdout=stdout).returncode\nif os.environ.get('FAKE_INTERCHANGE'):\n    original=fixtures.run\n    def intercepted(command,**options):\n        if 'system-import-round-trip' in command:\n            print('system-import: OK'); return int(os.environ.get('FAKE_INTERCHANGE_STATUS','0'))\n        return original(command,**options)\n    fixtures.run=intercepted\nif sys.argv[1:2]==['reproducible']:\n    def admitted(units,*args,**kwargs):\n        return [function(pool.UnitContext(name,threading.Event(),environment=dict(os.environ))) for name,function in units]\n    images.pool.run_admitted=admitted\nraise SystemExit(commands.main(sys.argv[1:]))\n"
         current = subprocess.run([sys.executable, '-X', 'lazy_imports=normal', '-c', program, *recipe, *args],
                                  cwd=ROOT, env=self.env, capture_output=True, timeout=20)
-        products = {path: path.read_bytes() for path in produced if path.is_file()}
-        if self.base:
-            old = subprocess.run(['bash', str(self.base / script), *args], cwd=ROOT, env=self.env, capture_output=True, timeout=20)
-            self.assertEqual(current.returncode, old.returncode, current.stderr.decode() + old.stderr.decode())
-            self.assertEqual(products, {path: path.read_bytes() for path in produced if path.is_file()})
-            if streams:
-                def normalized(data):
-                    return data.replace(str(self.base).encode(), b'<root>').replace(str(ROOT).encode(), b'<root>')
-                self.assertEqual(normalized(current.stdout), normalized(old.stdout))
-                self.assertEqual(normalized(current.stderr), normalized(old.stderr))
         return current
 
-    def test_compat_first_pass_invalid_arguments_match_the_base(self):
+    def test_compat_first_pass_argument_statuses(self):
         for args, code in (([], 2), (['--cell', 'invalid', '--list'], 2), (['--jobs', '0', '--list'], 2),
                            (['--memory-mib', '00', '--list'], 2), (['--runners', ', ,'], 2),
                            (['--unknown'], 2), (['--runtime'], 2), (['--memory-smoke', '--runners', 'bisect'], 1),
                            (['--help'], 0)):
             with self.subTest(args=args):
-                self.assertEqual(self.compare('tools/oracle/compat.sh', [], args).returncode, code)
+                self.assertEqual(self.invoke([], args).returncode, code)
 
     def test_compat_shell_passes_prefixes_through_shared_cli_and_launcher(self):
         uv = self.directory / 'uv'
@@ -88,29 +77,22 @@ raise SystemExit(cli.main(args))
                                                     'default-option-parse', '--cases-prefix',
                                                     'table-conf-,user-conf-'])
 
-    def test_developer_input_errors_match_the_base(self):
+    def test_developer_input_error_statuses(self):
         for args in ([], ['--unknown'], ['--libpinyin', '/absent']):
-            self.assertEqual(self.compare('tools/oracle/run-differentials.sh', ['differentials'], args).returncode, 2)
-        done = self.compare('tools/oracle/user-dir-round-trip.sh', ['user-round-trip'], ['/missing-prefix'])
+            self.assertEqual(self.invoke(['differentials'], args).returncode, 2)
+        done = self.invoke(['user-round-trip'], ['/missing-prefix'])
         self.assertEqual(done.returncode, 77)
-        self.assertEqual(self.compare('tools/datagen/libpinyin-drop-in-differential.sh', ['drop-in'], ['invalid', str(self.directory)]).returncode, 2)
+        self.assertEqual(self.invoke(['drop-in'], ['invalid', str(self.directory)]).returncode, 2)
 
-    def test_image_options_and_invalid_platform_match_the_base(self):
-        for script, recipe in (('tools/oracle/verify-oracle-image.sh', 'verify-image'),
-                               ('tools/oracle/check-reproducible.sh', 'reproducible')):
+    def test_image_options_and_invalid_platform_statuses(self):
+        for recipe in ('verify-image', 'reproducible'):
             for args in (['--unknown'], ['--platform', 'linux/riscv64', 'image'] if recipe == 'verify-image'
                          else ['--platform', 'linux/riscv64']):
-                self.assertEqual(self.compare(script, [recipe], args).returncode, 2)
-        self.assertEqual(self.compare('tools/oracle/verify-oracle-image.sh', ['verify-image'], []).returncode, 2)
-
-    def test_migrated_help_streams_match_the_base(self):
-        for script, recipe in (('tools/oracle/verify-oracle-image.sh', 'verify-image'),
-                               ('tools/oracle/check-reproducible.sh', 'reproducible'),
-                               ('tools/oracle/run-differentials.sh', 'differentials')):
-            self.assertEqual(self.compare(script, [recipe], ['--help']).returncode, 0)
+                self.assertEqual(self.invoke([recipe], args).returncode, 2)
+        self.assertEqual(self.invoke(['verify-image'], []).returncode, 2)
 
     def test_reference_tag_keeps_its_original_input_order_and_digest(self):
-        result = self.compare('tools/oracle/image-tag.sh', ['image-tag'], [])
+        result = self.invoke(['image-tag'], [])
         self.assertEqual(result.stdout.decode().strip(), images.image_tag())
         before = images.image_tag()
         copied = self.directory / 'tree'
@@ -135,11 +117,9 @@ raise SystemExit(cli.main(args))
             for field in ('libpinyin_sha256_', 'libzhuyin_sha256_', 'data_manifest_sha256_'):
                 self.assertRegex(images.platform_field(pin, 'linux/arm64', field + cell), '^[0-9a-f]{64}$')
 
-    def test_pin_field_reads_match_the_retired_shell_reader(self):
-        # tools/oracle/pin.sh's pin_platform_field printed KEY for linux/amd64 and
-        # KEY_linux_arm64 for linux/arm64, never falling back to the unqualified
-        # field, printed nothing for an absent field, and failed silently for
-        # any other platform. U3_BASE names a tree that still carries it.
+    def test_pin_field_reads_use_platform_fields_without_fallback(self):
+        # Platform fields do not fall back to unqualified fields; missing fields
+        # print nothing and unsupported platforms fail silently.
         pin = ROOT / 'tools/oracle/oracle-pin.txt'
         text = pin.read_text()
 
@@ -149,12 +129,6 @@ raise SystemExit(cli.main(args))
                 status = commands.main(['pin-field', '--platform', platform, key])
             return status, out.getvalue()
 
-        def retired(platform, key):
-            done = subprocess.run(['bash', '-c', 'source "$1/tools/oracle/pin.sh" && pin_platform_field "$2" "$3" "$4"',
-                                   'fixture', str(self.base), str(pin), platform, key],
-                                  cwd=ROOT, env=self.env, capture_output=True, timeout=20)
-            return done.returncode, done.stdout.decode()
-
         keys = ('platform', 'libpinyin_commit', 'base_image', 'absent_field', 'libpinyin_sha256_bdb',
                 'libzhuyin_sha256_tkrzw', 'data_manifest_sha256_kc')
         for platform, suffix in (('linux/amd64', ''), ('linux/arm64', '_linux_arm64')):
@@ -163,15 +137,11 @@ raise SystemExit(cli.main(args))
                     match = re.search('^' + re.escape(key + suffix) + '=(.*)$', text, re.M)
                     expected = (0, match.group(1) + '\n' if match else '')
                     self.assertEqual(current(platform, key), expected)
-                    if self.base:
-                        self.assertEqual(retired(platform, key), expected)
         self.assertEqual(current('linux/amd64', 'platform'), (0, 'linux/amd64\n'))
         self.assertEqual(current('linux/arm64', 'platform'), (0, 'linux/arm64\n'))
         self.assertEqual(current('linux/arm64', 'libpinyin_commit'), (0, ''))
         status, output = current('linux/riscv64', 'libpinyin_sha256_bdb')
         self.assertEqual((status != 0, output), (True, ''))
-        if self.base:
-            self.assertEqual(retired('linux/riscv64', 'libpinyin_sha256_bdb'), (1, ''))
 
     def test_staged_guest_is_bound_to_the_snapshot_and_input_identity(self):
         directory=self.directory / 'input'
@@ -209,13 +179,13 @@ if sys.argv[1]=='cp': sys.exit(19)
 ''')
         engine.chmod(0o755)
         args = ['--engine', str(engine), 'image']
-        self.assertEqual(self.compare('tools/oracle/verify-oracle-image.sh', ['verify-image'], args).returncode, 19)
+        self.assertEqual(self.invoke(['verify-image'], args).returncode, 19)
         rows = [json.loads(line) for line in log.read_text().splitlines()]
         self.assertTrue(all(row == ['rm', '-f', 'owned-id'] for row in rows if row[0] == 'rm'))
 
     def test_capture_refuses_missing_oracle_without_writing_outputs(self):
         output = self.directory / 'output'
-        done = self.compare('tools/capture/run-capture.sh', ['capture'], [str(self.directory), str(output)])
+        done = self.invoke(['capture'], [str(self.directory), str(output)])
         self.assertEqual(done.returncode, 1)
         self.assertFalse(output.exists())
 
@@ -228,7 +198,7 @@ if sys.argv[1]=='cp': sys.exit(19)
         (prefix / 'lib/libpinyin/data').mkdir(parents=True)
         (prefix / 'oracle-pin.txt').write_text('schema=wrong\n')
         output = self.directory / 'output'
-        done = self.compare('tools/capture/run-capture.sh', ['capture'], [str(prefix), str(output)])
+        done = self.invoke(['capture'], [str(prefix), str(output)])
         self.assertEqual(done.stderr, b'unsupported oracle manifest schema\n')
         self.assertFalse(output.exists())
 
@@ -250,11 +220,10 @@ if sys.argv[1]=='cp': sys.exit(19)
         self.assertNotIn('FAILED: second', output.getvalue())
 
 
-
 class InterchangeTests(unittest.TestCase):
-    """Complete capture and interchange paths with the same fake host adapters on both trees."""
+    """Complete capture and interchange paths with fake host adapters."""
     setUp = RecipeTests.setUp
-    compare = RecipeTests.compare
+    invoke = RecipeTests.invoke
 
     def tools(self):
         driver = f'''#!{sys.executable}
@@ -281,17 +250,6 @@ out=pathlib.Path(sys.argv[sys.argv.index('-o')+1]); out.write_text({driver!r}); 
             path = self.directory / name
             path.write_text('#!/bin/sh\nexit 0\n')
             path.chmod(0o755)
-        # The old shell's terminal runner call goes through uv. The new recipe
-        # reaches the same shared runner directly; both are replaced at that boundary.
-        uv = self.directory / 'uv'
-        uv.write_text(f'''#!{sys.executable}
-import os,sys
-a=sys.argv[1:]
-if a[:2]==['python','find']: print(sys.executable); raise SystemExit(0)
-if 'system-import-round-trip' in a:
-    print('system-import: OK'); raise SystemExit(int(os.environ.get('FAKE_INTERCHANGE_STATUS','0')))
-i=a.index('python'); os.execv(sys.executable,[sys.executable,*a[i+1:]])
-''')
         subject = self.directory / 'subject-test'
         subject.write_text(f'''#!{sys.executable}
 import os,pathlib,sys
@@ -324,26 +282,26 @@ if 'OX_PIN_DIR' in os.environ: assert (pathlib.Path(os.environ['OX_PIN_DIR'])/'t
         (prefix / 'oracle-pin.txt').write_text(''.join(f'{key}={value}\n' for key,value in record.items()))
         return prefix
 
-    def test_capture_formats_and_payload_checks_match_the_base(self):
+    def test_capture_formats_and_payload_checks(self):
         self.tools()
         prefix = self.prefix(capture=True)
         output = self.directory / 'captured'
         paths = [output / name for name in ('f-a.txt','f-c.txt','zhuyin-parse.txt')]
-        result = self.compare('tools/capture/run-capture.sh', ['capture'], [str(prefix), str(output)], produced=paths)
+        result = self.invoke(['capture'], [str(prefix), str(output)])
         self.assertEqual(result.returncode, 0, result.stderr.decode())
         for family,path in zip(('F-A','F-C','ZH'),paths):
             self.assertEqual(path.read_text(), family+' '+fixtures.CAPTURE_PIN+'\n')
         (prefix / 'lib/libpinyin/data/table.conf').write_bytes(b'tampered')
-        result = self.compare('tools/capture/run-capture.sh', ['capture'], [str(prefix), str(output)])
+        result = self.invoke(['capture'], [str(prefix), str(output)])
         self.assertEqual(result.returncode, 1)
         self.assertIn(b'oracle data payload checksum mismatch',result.stderr)
 
-    def test_both_interchange_directions_and_child_failures_match_the_base(self):
+    def test_both_interchange_directions_and_child_failures(self):
         subject = self.tools()
         prefix = self.prefix()
         self.env.update(OXPINYIN_USER_RT_TEST=str(subject), OXPINYIN_CAPI_SO=str(prefix / 'lib/libpinyin.so'), FAKE_INTERCHANGE='1')
         args = [str(prefix), 'nihao', 'nisha', 'nihaoa']
-        result = self.compare('tools/oracle/user-dir-round-trip.sh', ['user-round-trip'], args)
+        result = self.invoke(['user-round-trip'], args)
         self.assertEqual(result.returncode,0,result.stderr.decode())
         self.assertIn(b'IDENTICAL:',result.stdout)
         self.assertIn(b'READABLE:',result.stdout)
@@ -351,14 +309,14 @@ if 'OX_PIN_DIR' in os.environ: assert (pathlib.Path(os.environ['OX_PIN_DIR'])/'t
         for key,code in (('FAKE_PIN_STATUS',19),('FAKE_SUBJECT_STATUS',17),('FAKE_INTERCHANGE_STATUS',23)):
             with self.subTest(key=key):
                 self.env[key]=str(code)
-                self.assertEqual(self.compare('tools/oracle/user-dir-round-trip.sh',['user-round-trip'],args).returncode,code)
+                self.assertEqual(self.invoke(['user-round-trip'],args).returncode,code)
                 self.env.pop(key)
         for key in ('FAKE_EMPTY','FAKE_NO_BIGRAM'):
             self.env[key]='1'
-            self.assertEqual(self.compare('tools/oracle/user-dir-round-trip.sh',['user-round-trip'],args).returncode,1)
+            self.assertEqual(self.invoke(['user-round-trip'],args).returncode,1)
             self.env.pop(key)
 
-    def test_developer_campaign_wiring_reports_and_aggregate_failures_match_the_base(self):
+    def test_developer_campaign_wiring_reports_and_aggregate_failures(self):
         library = self.directory / 'libpinyin'
         data,exported,model = (self.directory / name for name in ('data','export','model'))
         for path in (library / 'src/.libs/libpinyin.so.15', data / 'table.conf', data / 'phrase_index.bin',
@@ -377,15 +335,15 @@ if 'OX_PIN_DIR' in os.environ: assert (pathlib.Path(os.environ['OX_PIN_DIR'])/'t
         cargo.chmod(0o755)
         self.env['FAKE_CAMPAIGN']='1'
         args=['--libpinyin',str(library),'--data',str(data),'--export',str(exported),'--model',str(model)]
-        self.assertEqual(self.compare('tools/oracle/run-differentials.sh',['differentials'],args).returncode,0)
+        self.assertEqual(self.invoke(['differentials'],args).returncode,0)
         self.env['FAKE_SUITE_FAILURE']='cross_backend'
-        result=self.compare('tools/oracle/run-differentials.sh',['differentials'],args)
+        result=self.invoke(['differentials'],args)
         self.assertEqual(result.returncode,1)
         self.assertIn(b'FAILED: datagen:',result.stdout)
         self.assertIn(b'counter: gen_ngram',result.stdout)
         self.assertNotIn(b'not in the report',result.stdout)
 
-    def test_reproducibility_hashes_and_aggregate_failures_match_the_base(self):
+    def test_reproducibility_hashes_and_aggregate_failures(self):
         engine = self.directory / 'docker'
         engine.write_text(f'''#!{sys.executable}
 import os,pathlib,sys
@@ -401,10 +359,10 @@ if os.environ.get('FAKE_BUILD_FAILURE')==dbm and '/oracle-a/' in prefix: raise S
         engine.chmod(0o755)
         self.env['FAKE_PIN_PATH']=str(ROOT / 'tools/oracle/oracle-pin.txt')
         args=['--engine',str(engine),'--image','fixture','--jobs','2']
-        self.assertEqual(self.compare('tools/oracle/check-reproducible.sh',['reproducible'],args).returncode,0)
+        self.assertEqual(self.invoke(['reproducible'],args).returncode,0)
         for key in ('FAKE_HASH_DIFFER','FAKE_BUILD_FAILURE'):
             self.env[key]='kc'
-            result=self.compare('tools/oracle/check-reproducible.sh',['reproducible'],args)
+            result=self.invoke(['reproducible'],args)
             self.assertEqual(result.returncode,1)
             self.assertIn(b'FAIL: kc',result.stderr)
             self.assertIn(b'tkrzw libzhuyin',result.stdout)

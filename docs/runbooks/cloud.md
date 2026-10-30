@@ -490,12 +490,9 @@ Run the synthetic provisioning fixtures through normal Python discovery:
 
 ```sh
 just test-tools tools/dev/provision.test.py
-U6_BASE=/absolute/path/to/preserved/base just test-tools tools/dev/provision.test.py
 ```
 
-The optional preserved tree compares shell and Python entry points with the same
-fake host, pins, data, proxy CA and generated environment paths. Times and private
-temporary paths retain their meaning but vary by invocation. Missing option values
-retain status 1 with Python's `--option: requires an argument` diagnostic; Bash's
-unbound-variable and signal job messages are not reproduced. On a fresh host,
+Fixtures check the setup entry point with fake host tools, pins, data, proxy CA
+and generated environment paths. Missing option values return status 1 with an
+`--option: requires an argument` diagnostic. On a fresh host,
 uv/interpreter bootstrap precedes Python-owned native prerequisite checks.

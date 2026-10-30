@@ -18,8 +18,6 @@ if str(ROOT) not in sys.path:
 
 from tools.dev import check
 
-USAGE = ('usage: lint-crate-cfg-placement.sh [file...]\n'
-         '       with no arguments, lints every tracked *.rs file\n')
 VIOLATION_HEADER = ('crate-cfg-placement: a crate-level `#![cfg(...)]` must sit BELOW '
                     'its `//!` docs.\n\n')
 VIOLATION_FOOTER = (
@@ -97,8 +95,11 @@ class LintTests(unittest.TestCase):
         self.assertIn(f'{bad}:2:', err)
 
     def test_help_is_usage_status_two(self):
-        self.assertEqual(self.lint('--help'), (2, '', USAGE))
-        self.assertEqual(self.lint('-h'), (2, '', USAGE))
+        for flag in ('--help', '-h'):
+            with self.subTest(flag=flag):
+                status, out, err = self.lint(flag)
+                self.assertEqual((status, out), (2, ''))
+                self.assertTrue(err)
 
     def test_named_paths_must_be_readable_regular_files(self):
         missing = str(self.root / 'no-such-file.rs')

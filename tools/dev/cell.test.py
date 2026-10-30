@@ -15,7 +15,7 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from tools.dev import host, slot, test_support
-from tools.dev.cell import CellError, ROOT, Settings, bash_word, library_path
+from tools.dev.cell import CellError, ROOT, Settings, library_path
 from tools.dev.cell import main as cell_main
 
 
@@ -24,12 +24,6 @@ def snapshot():
 
 
 class SettingsTests(unittest.TestCase):
-    def test_invalid_setting_diagnostics_keep_shell_escaping(self):
-        self.assertEqual(bash_word('bad value'), r'bad\ value')
-        self.assertEqual(bash_word('bad;value'), r'bad\;value')
-        self.assertEqual(bash_word('bad\nvalue'), "$'bad\\nvalue'")
-        self.assertEqual(bash_word(''), "''")
-
     def test_cells_are_explicit_and_preserve_overrides(self):
         for cell, feature, extension in [('bdb', 'bdb', 'db'), ('kc', 'kyotocabinet', 'kct'),
                                           ('tkrzw', 'tkrzw', 'tkt')]:

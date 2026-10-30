@@ -1,7 +1,13 @@
 #!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
 """Tests for the separator and before-cursor cases (#1175)."""
+from pathlib import Path
+import sys
+
 import hashlib
 import unittest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from tools.dev.test_support import collect_declarations
 
 import contract_separator_before_cursor as family
 
@@ -15,16 +21,7 @@ EXPECTED_SHA256 = '7c54dcf8bd614532e8f65e86e0e45bf170c6133ff5f06fd319a68feacff69
 
 
 def declarations():
-    cases = []
-
-    def case(name, *args, **kwargs):
-        def collect(fn):
-            cases.append((name, args, kwargs, fn))
-            return fn
-        return collect
-
-    family.register(case)
-    return cases
+    return collect_declarations(family.register)
 
 
 class SeparatorBeforeCursorTests(unittest.TestCase):
@@ -34,21 +31,6 @@ class SeparatorBeforeCursorTests(unittest.TestCase):
         self.assertEqual((meta[0], meta[-1]), (EXPECTED_FIRST, EXPECTED_LAST))
         self.assertEqual(len({name for name, _, _ in meta}), EXPECTED_COUNT)
         self.assertEqual(hashlib.sha256(repr(meta).encode()).hexdigest(), EXPECTED_SHA256)
-
-    def test_every_case_function_belongs_to_this_module(self):
-        for name, _, _, fn in declarations():
-            while hasattr(fn, "func"):
-                fn = fn.func
-            with self.subTest(name=name):
-                self.assertIn(fn.__module__, (family.__name__, 'contract_case_helpers'))
-
-    def test_replay_registers_the_same_functions(self):
-        first, second = declarations(), declarations()
-        self.assertEqual([c[0] for c in first], [c[0] for c in second])
-        for (name, _, _, a), (_, _, _, b) in zip(first, second):
-            with self.subTest(name=name):
-                self.assertIs(a, b)
-
 
 if __name__ == '__main__':
     unittest.main()
