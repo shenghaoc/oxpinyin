@@ -243,6 +243,23 @@ if __name__ == '__main__': unittest.main()
                 self.assertNotIn(path, test_runner.HARNESS_DEPENDENCIES)
                 self.assertEqual(test_runner.changed_harness_files(files, [path]), files)
 
+    def test_contract_families_keep_own_tests_integration_and_policy_edges(self):
+        files = test_runner.harness_files()
+        shared = {'tools/bisection/contract-modules.test.py', 'tools/bisection/contract-diff.test.py',
+                  'tools/bisection/teardown.test.py'}
+        for name in ('abi', 'user_key_spellings', 'runner'):
+            with self.subTest(module=name):
+                expected = shared | {f'tools/bisection/contract_{name}.test.py'}
+                self.assertEqual(test_runner.changed_harness_files(files, [f'tools/bisection/contract_{name}.py']),
+                                 [path for path in files if path in expected])
+        policy = {'tools/bisection/contract_policy.test.py', 'tools/bisection/contract_verdict.test.py',
+                  'tools/bisection/contract-modules.test.py', 'tools/bisection/contract-diff.test.py',
+                  'tools/dev/policy.test.py'}
+        self.assertEqual(test_runner.changed_harness_files(files, ['tools/bisection/contract_policy.py']),
+                         [path for path in files if path in policy])
+        self.assertEqual(test_runner.changed_harness_files(files, ['tools/bisection/contract_equivalence.py']),
+                         files)
+
     def test_provision_owned_file_selects_its_readers_and_justfile_selects_all(self):
         files = test_runner.harness_files()
         selected = test_runner.changed_harness_files(files, ['tools/dev/provision.py'])
