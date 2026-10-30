@@ -15,7 +15,7 @@ from dataclasses import replace
 from tools.bisection import contract_policy, contract_verdict
 from . import pool
 
-GLIB_PREFIX = re.compile(r'(\*\* \([^():\n]+:)\d+(\): (?:CRITICAL|WARNING|MESSAGE|ERROR|DEBUG|INFO) \*\*: )'
+GLIB_PREFIX = re.compile(r'(?m)^((?:\*\* )?\([^():\n]+:)\d+(\): (?:[A-Za-z0-9_.-]+-)?(?:CRITICAL|WARNING|MESSAGE|ERROR|DEBUG|INFO) \*\*: )'
                          r'\d\d:\d\d:\d\d\.\d+: ')
 
 
@@ -41,7 +41,7 @@ def payload(value, root, model):
         if value['format'] == 'zhuyin':
             # The committed original spelling rows, not a query of either binary.
             table = (root / 'crates/oxpinyin-core/src/table_data/zhuyin_indexes.rs').read_text()
-            table = table.split('];', 1)[0]
+            table = table.split('] }', 1)[0]
             mapping = {pinyin: zhuyin for _, zhuyin, pinyin in re.findall(
                 r'\("([^"]*)", "([^"]*)", "([^"]*)", 0\)', table)}
         elif value['format'] != 'pinyin':
@@ -111,7 +111,7 @@ def observation(ctx, binary, case, directory, inputs, stdin, deadline):
         destination = directory / relative(name)
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(content)
-    environment = dict(ctx.env, LC_ALL='C', **case.get('env', {}))
+    environment = {**ctx.env, 'LC_ALL': 'C', **case.get('env', {})}
     # Keep argv[0]'s basename identical (including --help) using the built
     # utility, rather than libtool's lt-* executable in .libs.
     parent = ctx.services.context

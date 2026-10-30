@@ -235,7 +235,7 @@ The scope includes both installed and `noinst_PROGRAMS` utilities.
 | `import_interpolation` | datagen `system::read_interpolation` | **GAP** — no same-name standalone tool. |
 | `export_interpolation` | `oxpinyin-emitter` | **GAP** — different name/interface. |
 | `gen_pinyin_table` | `oxpinyin-utils` `gen_pinyin_table` | **Ported** at stage 5 (2026-10-30 UTC, #1436): the pin's name, options, messages, input scanner and output. |
-| `gen_zhuyin_table` | none identified | **GAP**. |
+| `gen_zhuyin_table` | `oxpinyin-utils` `gen_zhuyin_table` | **Ported** at stage 5 (2026-10-30 UTC): direct zhuyin rows, native calls, and registered `tool-diff` cases. |
 | `ngseg` | `oxpinyin-segment` | **GAP** — different name/interface. |
 | `spseg` | `oxpinyin-spseg` | **GAP** — different name/interface. |
 | `mergeseq` | `oxpinyin-mergeseq` | **GAP** — different name/interface. |
@@ -384,3 +384,8 @@ resolution, and no confirmation was run for this document:
 
 The row-109 post-fini residual mapping is separately open, as ruled
 above; this document does not decide whether to retain the residual.
+
+Stage 5 follow-up: `gen_zhuyin_table` now uses the same tool boundary and
+shared phrase tree as `gen_pinyin_table`. The registered
+[`tool-diff` runner](../runbooks/tool-diff.md) compares both generators'
+case files, including source-derived class (b) refusal records.
