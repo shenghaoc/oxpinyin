@@ -40,15 +40,12 @@ CI tests Linux x86_64 and macOS arm64 on each PR that changes code, and Windows 
 Start at [CONTRIBUTING.md](CONTRIBUTING.md). It walks through prerequisites,
 native Linux/macOS/Windows setup, a first link-and-run test, and returning
 in a fresh terminal. Ordinary development does not need an oracle, model20,
-or container. For compatibility gates, use a supported [cloud session](docs/runbooks/cloud.md)
+or container. For compatibility gates, use a provisioned [remote Linux host](docs/runbooks/cloud.md)
 or the [canonical Debian trixie compatibility container](docs/runbooks/compatibility-container.md),
 which runs the subject, reference and harness together.
 
-On macOS, install `brew install berkeley-db@5 glib pkgconf` and set
-`OXPINYIN_BDB_INCLUDE_DIR="$(brew --prefix berkeley-db@5)/include"` and
-`OXPINYIN_BDB_LIB_DIR="$(brew --prefix berkeley-db@5)/lib"` with `export`.
-The [macOS setup guide](docs/runbooks/setup.md#macos) uses Berkeley DB 5.3,
-the reference backend shared with Linux; tkrzw is an optional backend.
+The [setup guide](docs/runbooks/setup.md#storage-backend) names the default
+storage backend and gives each platform's packages and settings for it.
 
 ## Layout
 

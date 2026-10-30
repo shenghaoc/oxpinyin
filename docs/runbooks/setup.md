@@ -8,6 +8,13 @@ shows its exit status (zero means success); PowerShell uses `$LASTEXITCODE`.
 Choose your operating system below. Ordinary native work
 requires no container, oracle or model20 (upstream reference model data).
 
+## Storage backend
+
+Storage-dependent crates build against one DBM backend per build. The
+default is Berkeley DB 5.3, the reference backend, on Linux and macOS alike;
+the Linux and macOS sections below install it. Kyoto Cabinet and tkrzw are
+optional backends ([backends](backends.md)).
+
 Every repository shell script requires Bash 5.0 or newer on Linux and macOS.
 `just doctor` reports the `bash` that `env bash` selects and fails below 5.0.
 Linux distributions provide it; the macOS section installs Homebrew's Bash and
@@ -529,8 +536,7 @@ just check bdb
 ```
 
 `export` sets a setting inherited by commands in this terminal. Both Berkeley
-DB paths are needed because Homebrew's `berkeley-db@5` is keg-only. macOS uses
-the same Berkeley DB 5.3 reference backend as Linux. This is a real storage
+DB paths are needed because Homebrew's `berkeley-db@5` is keg-only. This is a real storage
 link/run check; a mere `cargo check` does not execute the tests.
 In a fresh Bash terminal, return to the checkout, source Cargo's environment,
 repeat all three exports and the check. Linux C-ABI packaging and Linux reference
@@ -696,14 +702,14 @@ when changing backends; see [backends](backends.md). Ordinary native tests
 are not proof of bug-for-bug compatibility with upstream.
 
 Changes to parsing/candidate behavior, native data/user files or C API
-behavior need a relevant differential. Use a [provisioned cloud session](cloud.md)
+behavior need a relevant differential. Use a [provisioned remote Linux host](cloud.md)
 or the second supported [Debian-container route](compatibility-container.md).
 For example, key parsing/surface changes use the existing
 `same-data-dir-diff` gate shown there. The registry records issue associations;
 use an associated issue/check, or ask the maintainer if no matching check is
 apparent rather than guessing that ordinary unit tests establish parity. The normal cell
-(one backend on both sides) is BDB. Backend-affecting changes use the existing
-path rules in [oracle](oracle.md); they do not require every ordinary
+(one backend on both sides) is BDB. Backend-affecting changes use the
+[backend selection rules](verification.md#2-backend-selection); they do not require every ordinary
 contributor to provision all backends. Packaging and performance tools belong
 to their existing task runbooks.
 
