@@ -1134,8 +1134,8 @@ selection above through `just heavy`, `just heavy -- just cell-artifacts --artif
 pinyin-capi,zhuyin-capi`, and
 `just heavy -- just runner contract-diff bdb "$PINYIN_ORACLE_PREFIX" "$B_PY_SO" "$B_ZH_SO"`.
 Apply/reverse the named mutation and select its four explicit cases.
-Run `just heavy -- cargo test --release --locked -p oxpinyin-engine
-measure_selection_algorithms -- --ignored --nocapture` for the choice.
+The measured choice above came from the ignored Criterion test
+`measure_selection_algorithms`, run at B `7dd13491` and since removed.
 Use [policy regeneration](../packaging.md#regeneration) with
 `repeat_output_dir` for every backend, then the maintained linked-layout
 checker and `strip --strip-unneeded`. Run both

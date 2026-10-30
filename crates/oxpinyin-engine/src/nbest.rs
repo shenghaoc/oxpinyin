@@ -1914,57 +1914,6 @@ mod tests {
         }
     }
 
-    /// Run only on the isolated measurement host. Both alternatives consume
-    /// identical real BeamEntry layouts and keys; cloning is outside timing.
-    #[test]
-    #[ignore = "needs isolated measurement host; Criterion selection comparison"]
-    fn measure_selection_algorithms() {
-        use criterion::{BatchSize, BenchmarkId, Criterion};
-        use std::hint::black_box;
-        use std::time::Duration;
-
-        let mut criterion = Criterion::default()
-            .sample_size(20)
-            .warm_up_time(Duration::from_secs(1))
-            .measurement_time(Duration::from_secs(1));
-        for (name, nstore, count) in [
-            ("pinyin-beam", 2, super::NBEAM),
-            ("pinyin-tail", 2, 3),
-            ("zhuyin-beam", 1, super::NBEAM),
-            ("zhuyin-tail", 1, 1),
-        ] {
-            let mut group = criterion.benchmark_group(name);
-            for size in [8, 32, 128, 512] {
-                for tied in [false, true] {
-                    let entries = selection_batch(size, tied);
-                    let input = format!("{size}-{}", if tied { "tied" } else { "mixed" });
-                    group.bench_function(BenchmarkId::new("select-sort", &input), |b| {
-                        b.iter_batched(
-                            || entries.clone(),
-                            |entries| black_box(super::select_top(entries, count, nstore)),
-                            BatchSize::SmallInput,
-                        );
-                    });
-                    group.bench_function(BenchmarkId::new("binary-heap", &input), |b| {
-                        b.iter_batched(
-                            || entries.clone(),
-                            |entries| {
-                                black_box(if nstore == 1 {
-                                    binary_heap_top::<1>(entries, count)
-                                } else {
-                                    binary_heap_top::<2>(entries, count)
-                                })
-                            },
-                            BatchSize::SmallInput,
-                        );
-                    });
-                }
-            }
-            group.finish();
-        }
-        criterion.final_summary();
-    }
-
     #[test]
     fn float_trellis_storage_shrinks() {
         assert_eq!(std::mem::size_of::<Value>(), 28);
