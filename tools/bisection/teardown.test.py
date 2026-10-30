@@ -425,6 +425,56 @@ class PureTests(unittest.TestCase):
             native = [call for call in calls if call.get('profiler') is None]
             self.assertEqual([call.get('user_memory', False) for call in native[:8]], [False] * 4 + [True] * 4)
 
+    def test_user_selection_defaults_and_invalid_combinations(self):
+        def error(message):
+            raise ValueError(message)
+        parser = SimpleNamespace(error=error)
+        self.assertEqual(td.user_selection(SimpleNamespace(teardown_stage='user-phrase'), parser),
+                         (td.USER_STAGES, False))
+        for stages, window, stage in [('timing,timing', 'all', 'user-phrase'),
+                                      ('unknown', 'all', 'user-phrase'),
+                                      ('', 'all', 'user-phrase'),
+                                      ('memory,instructions', 'read', 'user-phrase'),
+                                      ('instructions', 'read', 'confirm')]:
+            with self.subTest(stages=stages, window=window, stage=stage), self.assertRaises(ValueError):
+                td.user_selection(SimpleNamespace(teardown_stage=stage, teardown_user_stages=stages,
+                                                  teardown_user_ir_window=window), parser)
+
+    def test_read_instructions_only_preflights_then_rotates_three_rounds_without_other_stages(self):
+        with tempfile.TemporaryDirectory() as temp:
+            calls = []
+            changed = False
+            def run(facade, library, profile, **options):
+                calls.append((str(library), options))
+                answer = 'changed' if changed and library == Path('pin') else 'same'
+                return dict(observation=dict(stderr='', userfiles={}, documents=[dict(
+                    user_phrase=True, read_only=True, read_hash=answer, times={})]), user_bin_sha256='same')
+            root = Path(temp)
+            campaign = SimpleNamespace(worker=Path('worker'), work=root, run=run)
+            subjects = {side: dict(pinyin=Path(side)) for side in ('base', 'ox', 'pin', 'control')}
+            with patch.object(td, 'user_library_shape', return_value=dict(readings={8: 10000})), \
+                    patch.object(td, 'build_worker', side_effect=AssertionError('no memory worker')), \
+                    patch.object(td, 'callgrind_costs', return_value=dict(totals=dict(Ir=100))), \
+                    patch.object(td, 'print_record') as record:
+                self.assertEqual(td.user_phrase_measure(campaign, subjects, {'user8': root / 'user8'},
+                                 ['user8'], stages=('instructions',), read_only=True), 0)
+                self.assertEqual([side for side, _ in calls],
+                                 td.rotation(0, subjects) + sum([td.rotation(i, subjects) for i in range(3)], []))
+                self.assertEqual([options['profiler'] for _, options in calls],
+                                 [None] * 4 + ['callgrind-user-read'] * 12)
+                self.assertTrue(all(options['user_read_only'] and options['rows'] is None
+                                    and not options['user_memory'] for _, options in calls))
+                self.assertEqual([call.args[0] for call in record.call_args_list],
+                                 ['user-selection', 'user-profile', 'user-equivalence', 'user-ir'])
+                self.assertEqual(record.call_args.kwargs['counts'], {side: [100] * 3 for side in subjects})
+                self.assertFalse((root / 'user-write.tsv').exists())
+                calls.clear()
+                changed = True
+                with self.assertRaisesRegex(ValueError, 'NOT COMPARABLE'):
+                    td.user_phrase_measure(campaign, subjects, {'user8': root / 'user8'},
+                                           ['user8'], stages=('instructions',), read_only=True)
+                self.assertTrue(all(options['profiler'] is None for _, options in calls))
+
     def test_failed_preflight_can_retain_complete_observations_without_waiving_it(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -1349,7 +1399,7 @@ PERF_VOLATILE = ('init_ns', 'alloc_ns', 'rss_kib', 'hwm_kib', 'vm_size_kib',
                  'rss_anon_kib', 'rss_file_kib')
 
 
-def build_stub(root):
+def build_stub(root, extra=''):
     pairs = dict(init='init', fini='fini', alloc_instance='alloc', free_instance='free', set_options='options',
                  parse_more_full_pinyins='parse', parse_more_chewings='parse', reset='true',
                  guess_sentence='true', get_sentence='sentence', get_n_candidate='count',
@@ -1387,7 +1437,7 @@ def build_stub(root):
     }
     # Mach-O has no alias attribute, so export wrappers instead.
     overrides = {('zhuyin', 'get_sentence'): ('bool', 'void *p, char **text', 'p, text')}
-    source = STUB
+    source = STUB + extra
     for facade in ('pinyin', 'zhuyin'):
         names = dict(pairs)
         if facade == 'zhuyin':
@@ -1540,6 +1590,52 @@ class NativeTests(unittest.TestCase):
         with patch.object(td, 'exports', return_value=['pinyin_init']):
             row = campaign.run('pinyin', self.library, self.profile)
         self.assertEqual(row['command'][:3], [td.shutil.which('taskset'), '-c', str(campaign.cpu)])
+
+    def test_selected_read_worker_calls_only_ten_thousand_token_reads(self):
+        # Extra operations abort: this exercises the native branch, not a mocked launch.
+        with tempfile.TemporaryDirectory(dir=self.root) as directory:
+            root = Path(directory)
+            library = build_stub(root, r'''
+struct keys { uint16_t *data; unsigned len; };
+static unsigned reads, counts, frequencies, readings;
+bool pinyin_token_get_phrase(void *p, uint32_t token, unsigned *length, char **text) {
+    if (!p || token != 0x07000001 || ++reads > 10000) abort();
+    *length = 1; *text = strdup("x"); return true;
+}
+bool pinyin_token_get_n_pronunciation(void *p, uint32_t token, unsigned *count) {
+    if (!p || token != 0x07000001 || ++counts > 10000) abort();
+    *count = 8; return true;
+}
+bool pinyin_token_get_unigram_frequency(void *p, uint32_t token, unsigned *frequency) {
+    if (!p || token != 0x07000001 || ++frequencies > 10000) abort();
+    *frequency = 5; return true;
+}
+bool pinyin_token_get_nth_pronunciation(void *p, uint32_t token, unsigned nth, struct keys *keys) {
+    if (!p || token != 0x07000001 || nth != readings++ % 8) abort();
+    keys->len = 1; keys->data[0] = (uint16_t)(nth + 1); return true;
+}
+void *g_array_sized_new(int zero, int clear, unsigned width, unsigned capacity) {
+    if (zero || clear || width != 2 || capacity != 16) abort();
+    struct keys *keys = calloc(1, sizeof *keys); keys->data = calloc(capacity, width); return keys;
+}
+char *g_array_free(struct keys *keys, int segment) {
+    if (!segment || reads != 10000 || counts != 10000 || frequencies != 10000 || readings != 80000) abort();
+    free(keys->data); free(keys); return NULL;
+}
+bool pinyin_mask_out(void *p, uint32_t mask, uint32_t value) { (void)p; (void)mask; (void)value; abort(); }
+void *forbidden_begin(void *p, uint8_t index) { (void)p; (void)index; abort(); }
+#define fake_begin forbidden_begin
+''')
+            profile = root / 'user'
+            profile.mkdir()
+            (profile / 'user.bin').write_bytes(b'fixture')
+            with patch.object(td, 'exports', return_value=['pinyin_init']), \
+                    patch.object(td, 'user_library_shape', return_value=dict(slots=10001)):
+                row = self.campaign().run('pinyin', library, profile, mode='user', user_read_only=True)
+            document, = row['observation']['documents']
+            self.assertTrue(document['read_only'])
+            self.assertEqual(document['times'], {})
+            self.assertEqual(row['observation']['stderr'], 'INIT\nALLOC\nFREE\nFINI\n')
 
     def test_population_accepts_user_library_and_refuses_unrequested_libraries(self):
         campaign = self.campaign()
@@ -2263,6 +2359,19 @@ class FixtureFlowTests(unittest.TestCase):
                          {name: path.relative_to(self.root / 'pooled') for name, path in pooled_profiles.items()})
         self.assertEqual(self.tree(self.root / 'serial'), self.tree(self.root / 'pooled'))
         self.assertEqual(FakeAdmission.events, ['admission', 'handoff', 'close'] * 2)
+
+    def test_selected_user8_provision_does_not_populate_other_profiles(self):
+        root = self.root / 'selected'
+        def populate(campaign, pin, user, rows, **kwargs):
+            (user / 'user.bin').write_bytes(b'fixture')
+        with patch.object(td, 'populate_user', side_effect=populate) as populate_mock, \
+                patch.object(td.Campaign, 'run', return_value=dict(observation=dict(documents=export_lines()))):
+            profiles = td.provision(self.campaign(1), Path('pin'), root, names=('user8',))
+        self.assertEqual(list(profiles), ['user8'])
+        self.assertEqual(populate_mock.call_count, 1)
+        with patch.object(td, 'populate_user', side_effect=AssertionError('already provisioned')), \
+                patch.object(td.Campaign, 'run', side_effect=AssertionError('no export needed')):
+            self.assertEqual(td.provision(self.campaign(1), Path('pin'), root, names=('user8',)), profiles)
 
     def test_provision_failure_in_one_profile_raises_after_the_export_and_stops_the_rest(self):
         FakeAdmission.workers = 1

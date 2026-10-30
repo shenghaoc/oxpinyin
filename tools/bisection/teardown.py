@@ -1042,7 +1042,8 @@ class Campaign:
         return self.work / ('%s-%06d' % (self.prefix, self.serial))
 
     def run(self, facade, library, profile, *, mode='time', save=False, scenario='first-candidate',
-            rows=None, instances=1, cycles=1, inputs=None, reopen=False, profiler=None, probe=None, user_memory=False):
+            rows=None, instances=1, cycles=1, inputs=None, reopen=False, profiler=None, probe=None, user_memory=False,
+            user_read_only=False):
         """Run one native workload against a disposable copy of the profile.
 
         Return observations, timings, checkpoints, command, and final raw-profile
@@ -1055,6 +1056,9 @@ class Campaign:
         on collection errors. The guarded launch removes sample scratch on exit;
         earlier setup failures can leave it behind. Reopen launches another sample.
         """
+        if user_read_only and (mode != 'user' or user_memory or rows is not None
+                               or profiler not in (None, 'callgrind-user-read')):
+            raise ValueError('read-only user instructions cannot request memory or writes')
         cold = self.cache == 'cold' and mode in ('time', 'memory', 'init')
         if cold and (cycles != 1 or profiler):
             raise ValueError('cold samples require one native lifecycle without a profiler')
@@ -1134,6 +1138,9 @@ class Campaign:
         env.pop('OXPINYIN_TEARDOWN_MARKER_FD', None)
         env.pop('OXPINYIN_USER_ROWS', None)
         env.pop('OXPINYIN_USER_MEMORY', None)
+        env.pop('OXPINYIN_USER_READ_ONLY', None)
+        if user_read_only:
+            env['OXPINYIN_USER_READ_ONLY'] = '1'
         if mode == 'user' and user_memory:
             env['OXPINYIN_USER_MEMORY'] = '1'
         if mode == 'user' and rows is not None:
@@ -1372,18 +1379,19 @@ def fan_out(campaign, units, label, emit=None):
                              cancel_error=getattr(campaign.driver, 'Cancelled', pool.UnitsCancelled))
 
 
-def provision(campaign, pin, root):
+def provision(campaign, pin, root, names=None):
     """Create pin-populated fixture profiles, or validate existing profile manifests.
 
     Write recipes, manifests, and empty witness inputs under root; print
     fixture identities for newly generated profiles and return name-to-user
-    paths. Existing roots must contain every expected verified profile.
+    paths. With names supplied, only those profiles are populated or validated.
+    The default keeps the full profile set.
     The export runs first, alone: recipe selection reads it. The profiles
     are independent of each other and populate as units (fan_out); each
     unit keeps its own steps in order, and the fixture records print in
     profile order.
     """
-    profiles = {name: root / name / 'user' for name in PROFILES}
+    profiles = {name: root / name / 'user' for name in (PROFILES if names is None else names)}
     existing = {name: user for name, user in profiles.items() if user.parent.exists()}
     if root.exists():
         for user in existing.values():
@@ -1400,9 +1408,10 @@ def provision(campaign, pin, root):
         library, phrase, pinyin, count = line.split('\t')
         exported.append((int(library), phrase, pinyin, int(count)))
     shutil.rmtree(export_user)
-    recipes = dict(empty=[], modest=modest_rows(), phrases=select_rows(exported), journals=select_rows(exported, True),
-                   user=user_rows(exported), user8=user_rows(exported, 8), usersparse=user_rows(exported))
-    recipes = {name: rows for name, rows in recipes.items() if name not in existing}
+    recipes = dict(empty=lambda: [], modest=modest_rows, phrases=lambda: select_rows(exported),
+                   journals=lambda: select_rows(exported, True), user=lambda: user_rows(exported),
+                   user8=lambda: user_rows(exported, 8), usersparse=lambda: user_rows(exported))
+    recipes = {name: recipes[name]() for name in profiles if name not in existing}
 
     def fixture(name, rows):
         """Build one profile: recipe, population, manifest, empty witness, in that order."""
@@ -1480,6 +1489,7 @@ def run(args, driver, parser):
     if args.per_call or args.cases or args.issue or args.family or args.expect_parent or args.observations or args.plan_only or args.axis_c_replacement or args.axis_c_mutation or args.axis_c_snapshot_check or args.regenerate_sentence_ties:
         parser.error('--teardown is a separate workload; contract/profiler modes cannot be combined')
     cache = getattr(args, 'teardown_cache', 'warm')
+    user_stages, user_read_only = user_selection(args, parser)
     window = getattr(args, 'teardown_attribute_window', 'init')
     if window != 'init' and (args.teardown_stage != 'init-attribute' or cache != 'warm'):
         parser.error('first-candidate attribution requires the warm init-attribute stage')
@@ -1496,6 +1506,9 @@ def run(args, driver, parser):
     cases = tuple(args.teardown_cases.split(','))
     if not cases or len(set(cases)) != len(cases) or any(name not in CASES for name in cases):
         parser.error('unknown or repeated --teardown-cases')
+    if args.teardown_stage in ('user-verify', 'user-phrase'):
+        if args.teardown_facades != 'pinyin' or cache != 'warm' or any(case not in ('empty', 'user', 'user8', 'usersparse') for case in cases):
+            parser.error('user-phrase requires warm pinyin and empty/user/user8/usersparse cases')
     allowed = host.allowed_cpus()
     cpu = args.teardown_cpu if args.teardown_cpu is not None else min(allowed)
     if cpu not in allowed:
@@ -1561,11 +1574,13 @@ def run(args, driver, parser):
     if campaign.provisioner is None:
         campaign.provisioner = libraries / LIBRARY_DIRECTORIES['pin'] / 'libpinyin.so'
         shutil.copyfile(args.prefix / 'lib' / 'libpinyin.so', campaign.provisioner)
-    profiles = provision(campaign, campaign.provisioner, work / 'profiles')
+    selected_profiles = None
+    if getattr(args, 'teardown_user_stages', None) is not None or user_read_only:
+        selected_profiles = cases if user_read_only else tuple(dict.fromkeys((*cases, 'user8')))
+    profiles = provision(campaign, campaign.provisioner, work / 'profiles', names=selected_profiles)
     if args.teardown_stage in ('user-verify', 'user-phrase'):
-        if facades != ('pinyin',) or cache != 'warm' or any(case not in ('empty', 'user', 'user8', 'usersparse') for case in cases):
-            parser.error('user-phrase requires warm pinyin and empty/user/user8/usersparse cases')
-        return user_phrase_measure(campaign, subjects, profiles, cases, verify=args.teardown_stage == 'user-verify')
+        return user_phrase_measure(campaign, subjects, profiles, cases, verify=args.teardown_stage == 'user-verify',
+                                   stages=user_stages, read_only=user_read_only)
     if args.teardown_stage == 'provision':
         prepare_witnesses(campaign, campaign.provisioner, profiles)
         return 0
@@ -2116,6 +2131,21 @@ def case_options(case, profiles, dirty_rows):
 
 USER_WINDOWS = [('open', 'M0', 'I1'), ('read', 'R0', 'R1'),
                 ('enumerate', 'R1', 'N1'), ('export', 'N1', 'E1'), ('write', 'W0', 'W1')]
+USER_STAGES = ('timing', 'memory', 'allocations', 'heap', 'instructions')
+
+
+def user_selection(args, parser):
+    """Validate opt-in user-stage selectors before staging or launching anything."""
+    selected = getattr(args, 'teardown_user_stages', None)
+    read_only = getattr(args, 'teardown_user_ir_window', 'all') == 'read'
+    if (selected is not None or read_only) and args.teardown_stage not in ('user-verify', 'user-phrase'):
+        parser.error('user selectors require user-verify or user-phrase')
+    stages = USER_STAGES if selected is None else tuple(selected.split(','))
+    if not stages or len(set(stages)) != len(stages) or any(stage not in USER_STAGES for stage in stages):
+        parser.error('unknown or repeated --teardown-user-stages')
+    if read_only and stages != ('instructions',):
+        parser.error('the read window requires --teardown-user-stages instructions')
+    return stages, read_only
 
 
 def allocation_windows(text, windows=USER_WINDOWS):
@@ -2185,7 +2215,7 @@ def user_library_shape(path):
                 content_bytes=len(content), file_bytes=len(raw))
 
 
-def user_phrase_measure(campaign, subjects, profiles, cases, *, verify=False):
+def user_phrase_measure(campaign, subjects, profiles, cases, *, verify=False, stages=USER_STAGES, read_only=False):
     """Measure the library-7 baseline in the existing worker/controller.
 
     Native rounds are primary wall samples; fresh profiler runs separately
@@ -2193,21 +2223,30 @@ def user_phrase_measure(campaign, subjects, profiles, cases, *, verify=False):
     Exact allocation/heap controls must pass. RandomState/BDB Ir keeps ranges.
     """
     worker = campaign.worker
-    builds = {} if verify else {kind: build_worker(campaign.work, kind)[0] for kind in ('xtree', 'massif')}
+    builds = {} if verify else {kind: build_worker(campaign.work, kind)[0]
+                               for stage, kind in (('allocations', 'xtree'), ('heap', 'massif')) if stage in stages}
     references = {}
     final_profiles = {}
     native_diagnostics = {}
-    write_rows = campaign.work / 'user-write.tsv'
-    write_rows.write_text('\n'.join((profiles['user8'].parent / 'rows.tsv').read_text().splitlines()[:8]) + '\n')
+    write_rows = None
+    if not read_only:
+        write_rows = campaign.work / 'user-write.tsv'
+        write_rows.write_text('\n'.join((profiles['user8'].parent / 'rows.tsv').read_text().splitlines()[:8]) + '\n')
+    if stages != USER_STAGES or read_only:
+        print_record('user-selection', stages=list(stages), instruction_window='read' if read_only else 'all',
+                     equivalence_scope='read' if read_only else 'full')
     def observe(row):
         documents = [doc for doc in row['observation']['documents'] if doc.get('user_phrase')]
         if len(documents) != 1:
             raise ValueError('missing user phrase result')
+        if bool(documents[0].get('read_only')) != read_only:
+            raise ValueError('wrong user workload scope')
         return dict({key: value for key, value in documents[0].items() if key != 'times'},
                     saved_user_bin_sha256=row['user_bin_sha256']), documents[0]['times']
     def run(side, case, profiler=None, *, memory=False):
         row = campaign.run('pinyin', subjects[side]['pinyin'], profiles[case], mode='user', rows=write_rows,
-                           profiler=profiler, user_memory=memory or profiler in ('xtree', 'massif'))
+                           profiler=profiler, user_memory=memory or profiler in ('xtree', 'massif'),
+                           user_read_only=read_only)
         if profiler is None:
             diagnostics = row['observation']['stderr']
             if diagnostics != native_diagnostics.setdefault(case, diagnostics):
@@ -2228,7 +2267,8 @@ def user_phrase_measure(campaign, subjects, profiles, cases, *, verify=False):
             raise ValueError('user profile does not have its required item/reading counts')
         print_record('user-profile', case=case, **shape)
         rows = {side: [] for side in subjects}
-        for index in range(1 if verify else TIMING_ROUNDS + TIMING_WARMUPS):
+        native_rounds = TIMING_ROUNDS + TIMING_WARMUPS if 'timing' in stages and not verify else 1
+        for index in range(native_rounds):
             for side in rotation(index, subjects):
                 row, answer, times = run(side, case)
                 references.setdefault(case, answer)
@@ -2237,26 +2277,28 @@ def user_phrase_measure(campaign, subjects, profiles, cases, *, verify=False):
         print_record('user-equivalence', case=case, verdict='COMPARABLE', diagnostics=native_diagnostics[case], **references[case])
         if verify:
             continue
-        for operation, _, _ in USER_WINDOWS:
-            if operation == 'write' and case == 'empty':
-                continue
-            values = {side: [observe(row)[1][operation]['wall_ns'] for row in samples]
-                      for side, samples in rows.items()}
-            control = stable_control(values['ox'], values['control'])
-            print_record('user-time', case=case, operation=operation, control=control,
-                         verdict='STABLE' if control['stable'] else 'INCONCLUSIVE',
-                         summaries={side: summary(value) for side, value in values.items()},
-                         ox_pin_ratio=paired_ratio(values['ox'], values['pin']) if control['stable'] else None,
-                         ox_base_ratio=paired_ratio(values['ox'], values['base'])
-                         if control['stable'] and 'base' in values else None)
-        memory_rows = {side: [] for side in subjects}
-        for index in range(MEMORY_ROUNDS + MEMORY_WARMUPS):
-            for side in rotation(index, subjects):
-                row, _, _ = run(side, case, memory=True)
-                if index >= MEMORY_WARMUPS:
-                    memory_rows[side].append(row)
-        report_checkpoint_pss(memory_rows, 'user', case=case)
-        for profiler in ('xtree', 'massif'):
+        if 'timing' in stages:
+            for operation, _, _ in USER_WINDOWS:
+                if operation == 'write' and case == 'empty':
+                    continue
+                values = {side: [observe(row)[1][operation]['wall_ns'] for row in samples]
+                          for side, samples in rows.items()}
+                control = stable_control(values['ox'], values['control'])
+                print_record('user-time', case=case, operation=operation, control=control,
+                             verdict='STABLE' if control['stable'] else 'INCONCLUSIVE',
+                             summaries={side: summary(value) for side, value in values.items()},
+                             ox_pin_ratio=paired_ratio(values['ox'], values['pin']) if control['stable'] else None,
+                             ox_base_ratio=paired_ratio(values['ox'], values['base'])
+                             if control['stable'] and 'base' in values else None)
+        if 'memory' in stages:
+            memory_rows = {side: [] for side in subjects}
+            for index in range(MEMORY_ROUNDS + MEMORY_WARMUPS):
+                for side in rotation(index, subjects):
+                    row, _, _ = run(side, case, memory=True)
+                    if index >= MEMORY_WARMUPS:
+                        memory_rows[side].append(row)
+            report_checkpoint_pss(memory_rows, 'user', case=case)
+        for profiler in builds:
             campaign.worker = builds[profiler]
             costs = {}
             for side in rotation(0, subjects):
@@ -2272,22 +2314,23 @@ def user_phrase_measure(campaign, subjects, profiles, cases, *, verify=False):
             print_record('user-' + profiler, case=case, verdict='VALID' if exact else 'INVALID',
                          counts=costs if exact else {'control': costs['control']}, profiler_only=True)
         campaign.worker = worker
-        for operation, _, _ in USER_WINDOWS:
-            if operation == 'write' and case == 'empty':
-                continue
-            counts = {side: [] for side in subjects}
-            compactions = {side: [] for side in subjects}
-            for index in range(INIT_IR_ROUNDS):
-                for side in rotation(index, subjects):
-                    row, _, _ = run(side, case, 'callgrind-user-' + operation)
-                    counts[side].append(callgrind_costs(row['observation']['stderr'], subjects[side]['pinyin'])['totals']['Ir'])
-                    if operation == 'write':
-                        compactions[side].append(compaction_calls(row['observation']['stderr']))
-            print_record('user-ir', case=case, operation=operation, diagnostic=True, counts=counts,
-                         ranges={side: [min(value), max(value)] for side, value in counts.items()})
-            if operation == 'write':
-                print_record('user-compactions', case=case, calls=compactions, profiler_only=True,
-                             arena_bounds='not applicable to the row representation; no arena counters added in this phase')
+        if 'instructions' in stages:
+            for operation in (('read',) if read_only else tuple(name for name, _, _ in USER_WINDOWS)):
+                if operation == 'write' and case == 'empty':
+                    continue
+                counts = {side: [] for side in subjects}
+                compactions = {side: [] for side in subjects}
+                for index in range(INIT_IR_ROUNDS):
+                    for side in rotation(index, subjects):
+                        row, _, _ = run(side, case, 'callgrind-user-' + operation)
+                        counts[side].append(callgrind_costs(row['observation']['stderr'], subjects[side]['pinyin'])['totals']['Ir'])
+                        if operation == 'write':
+                            compactions[side].append(compaction_calls(row['observation']['stderr']))
+                print_record('user-ir', case=case, operation=operation, diagnostic=True, counts=counts,
+                             ranges={side: [min(value), max(value)] for side, value in counts.items()})
+                if operation == 'write':
+                    print_record('user-compactions', case=case, calls=compactions, profiler_only=True,
+                                 arena_bounds='not applicable to the row representation; no arena counters added in this phase')
     campaign.worker = worker
     return 1 if invalid else 0
 

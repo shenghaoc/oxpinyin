@@ -847,6 +847,13 @@ static void td_user_measure(const struct td_api *api, void *handle, void *contex
     uint64_t read = bisect_user_read_unit(api, &user, instance, keys, slots);
     struct td_clock reading = td_elapsed(start);
     td_checkpoint("R1", 1, observe);
+    if (getenv("OXPINYIN_USER_READ_ONLY")) {
+        user.array_free(keys, true);
+        api->common.free_instance(instance);
+        printf("{\"user_phrase\":true,\"read_only\":true,\"read_hash\":\"%016llx\",\"times\":{}}\n",
+               (unsigned long long)read);
+        return;
+    }
     start = td_now();
     uint64_t enumerate = bisect_user_enumerate_unit(api, &user, instance, keys, slots);
     struct td_clock enumeration = td_elapsed(start);
