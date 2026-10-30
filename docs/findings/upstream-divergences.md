@@ -3972,20 +3972,25 @@ previous token's gram).
   holds the pin's false.
 - **Not changed:** the zhuyin facade has no predicted-candidate path.
 
-## Pin portability defects found on arm64 (#1137, 2026-10-24 UTC)
+## Pin portability defects found on arm64 (#1137, 2026-10-24 UTC; amended 2026-10-30 UTC, #1416)
 
-These entries are not oxpinyin divergences. On amd64 oxpinyin reproduces
-the pin byte for byte; on arm64 the pin itself departs from that
-reference because it assigns an out-of-range `float` expression to a
-`guint32`. The amd64 answer is the Stage 2 target and policy row 83
-already records the deliberate `cvttss2si` store, so no class (a), (b)
-or (c) exception applies and no oxpinyin change is owed. They are
-recorded here for the upstream report-back batch, one entry per
-independent defect. The full diagnosis, the instruction sequences and
-the proposed issue texts are in
+On arm64 the pin departs from its own amd64 reference because it
+assigns an out-of-range `float` expression to a `guint32`, a conversion
+C leaves undefined. Until #1416 oxpinyin reproduced the amd64
+`cvttss2si` store on both architectures (`score as i64 as u32`) and
+these entries recorded no oxpinyin divergence. #1416 removed that
+imitation of processor behaviour (decision-order limb 3 ([source policy](../source-policy.md#internal-language-artefacts))): the score is
+stored with Rust's `as u32`, which in range truncates like both pins
+and out of range stores what the arm64 pin's `fcvtzu` stores. Against
+the amd64 pin the out-of-range cases are therefore class (b)
+divergences, `POLICY-ACCEPTED` and held by the cases named in each
+entry; in range nothing changes. They remain pin portability defects
+for the upstream report-back batch, one entry per independent defect.
+The full diagnosis, the instruction sequences and the proposed issue
+texts are in
 [`arm64-pin-portability-1137.md`](arm64-pin-portability-1137.md).
 
-### Pinyin candidate frequency: out-of-range `float`-to-`guint32` store (#1137; pin portability, not an oxpinyin divergence)
+### Pinyin candidate frequency: out-of-range `float`-to-`guint32` store (#1137, #1416; class (b))
 
 - **Upstream source cite:** `src/pinyin.cpp:1813-1826` (predicted-prefix
   branch), `:1829-1843` (addon branch) and `:1855-1868` (ordinary branch)
@@ -4002,34 +4007,41 @@ the proposed issue texts are in
   the arm64 conversion is `libpinyin.so.15.0.0+0x72644`
   (predicted-prefix) and the shared store is `+0x72530`; the amd64
   conversion is `+0x8fcce` and the store is `+0x8fb6e`.
-- **What oxpinyin does instead:** `oxpinyin_capi::predict::amplified_frequency`
-  reproduces the amd64 `cvttss2si` result (`score as i64 as u32`, with
-  non-finite and 64-bit-out-of-range scores as 0), and
-  `oxpinyin_engine::session::guint32_of_score` is the same law for the
-  ordinary candidate lists. Both architectures therefore get the amd64
-  key; `oxpinyin_engine::session::glib_rank_sort` and
-  `RankKey::pin_compare` reproduce the pin's `guint32` comparator and
-  GLib's merge.
-- **Externally observable:** yes, on arm64 only, in the candidate order.
-  `row58-unsigned-score-off` and `row58-unsigned-score-on` of
-  `contract-diff.py`: import `我甲甲` with count 1431655631, bring the
-  facade total to 10000000 through the absent-token delta, then call
+- **What oxpinyin does instead:** since #1416,
+  `oxpinyin_engine::session::amplified_frequency_with_bigram`, which the
+  predicted rows (`oxpinyin_capi::predict::predicted_frequency`) and the
+  ordinary candidate lists share, stores the `f32` score with Rust's
+  `as u32`: in range it truncates like the pin; a negative or NaN score
+  is 0 and a score at or above 2³² is `0xffffffff`. The earlier
+  `score as i64 as u32` imitation of the amd64 `cvttss2si` result (the
+  `predict.rs` copy and `oxpinyin_engine::session::guint32_of_score`)
+  is removed under decision-order limb 3. The rows are still ordered with the
+  pin's `guint32` comparator (`oxpinyin_engine::candidate::rank_by_frequency`).
+- **Externally observable:** yes, in the candidate order, only when a
+  score is out of range. `row58-unsigned-score-off` and
+  `row58-unsigned-score-on` of `contract-diff.py`: import `我甲甲` with
+  count 1431655631, bring the facade total to 10000000 through the
+  absent-token delta, then call
   `pinyin_guess_predicted_candidates("我")`. The frequency is
-  `4952525312.0f`; amd64 stores `0x27318a00 = 657558016` and lists `甲甲`
-  first, arm64 stores `0xffffffff` and lists it last among the
-  two-character rows. The amd64 pin and the amd64 subject are
-  byte-identical; the arm64 subject also matches the amd64 pin.
-- **Classification:** pin portability defect to report upstream; not an
-  oxpinyin divergence and no class (a)/(b)/(c) exception. The observed
-  amd64 behaviour is the Stage 2 target (policy row 83); the arm64 pin is
-  the outlier.
-- **Held by:** `row58-unsigned-score-off` and `row58-unsigned-score-on`
-  (arm64-excluded by #1137; amd64 MATCH on bdb, kc and tkrzw).
+  `4952525312.0f`; the amd64 pin stores `0x27318a00 = 657558016` and
+  lists `甲甲` first; oxpinyin stores `0xffffffff` and lists it last
+  among the two-character rows, as the arm64 pin does. The other 167
+  rows are in the same order on both sides.
+- **Classification:** class (b). C leaves the conversion undefined and
+  the pin's own result differs between x86-64 and AArch64; oxpinyin's
+  saturating store is the language's defined result and is not tuned to
+  either target. Also a pin portability defect to report upstream.
+- **Held by:** `row58-unsigned-score-off` and `row58-unsigned-score-on`,
+  `POLICY-ACCEPTED` on bdb, kc and sound tkrzw against the amd64 pin,
+  with the digests in
+  [`arm64-pin-portability-1137.md`](arm64-pin-portability-1137.md)
+  (recorded 2026-10-30 UTC, #1416; before #1416 they were MATCH on the
+  three cells and arm64-excluded by #1137).
 - **Proposed upstream report:** issue A in
   `arm64-pin-portability-1137.md` ("pinyin candidate frequency:
   undefined float-to-`guint32` conversion is target-dependent").
 
-### Zhuyin candidate frequency: negative `float`-to-`guint32` store at λ > 1 (#1137; pin portability, not an oxpinyin divergence)
+### Zhuyin candidate frequency: negative `float`-to-`guint32` store at λ > 1 (#1137, #1416; class (b))
 
 - **Upstream source cite:** `src/zhuyin.cpp:1229-1270`
   (`_compute_frequency_of_items`), the conversion in the
@@ -4044,12 +4056,13 @@ the proposed issue texts are in
   `fcvtzu` for arm64 (`+0x70938`, store `+0x7093c`). amd64 keeps the
   low 32 bits of `-k` (for `0 < k < 2³²`, that is `2³² - k`); arm64
   stores 0, so every negative key is equal.
-- **What oxpinyin does instead:** the shared engine law
-  `oxpinyin_engine::session::amplified_frequency_with_bigram` and
-  `guint32_of_score` produces the amd64 low-32 key on both
-  architectures, and `glib_rank_sort` / `RankKey::pin_compare` order the
-  rows with the pin's `guint32` comparator. The arm64 subject therefore
-  matches the amd64 pin row for row.
+- **What oxpinyin does instead:** since #1416 the shared engine law
+  `oxpinyin_engine::session::amplified_frequency_with_bigram` stores a
+  negative score as 0 (Rust's `as u32`), so for λ > 1 every
+  positive-unigram candidate has the key 0 and the rows keep their
+  collection order under the pin's comparator, as on the arm64 pin.
+  Before #1416 `guint32_of_score` produced the amd64 low-32 key on both
+  architectures; that imitation is removed under decision-order limb 3.
 - **Externally observable:** yes, on arm64 only, in
   `zhuyin_guess_candidates_after_cursor`. With
   `lambda parameter:1.5`, `2` and `1e6` in `table.conf`, the arm64 pin's
@@ -4059,12 +4072,17 @@ the proposed issue texts are in
   λ. The sentences are identical on both targets. The λ < 0, `inf` and
   `nan` cases match because their keys are in range or equal on both
   architectures.
-- **Classification:** pin portability defect to report upstream; not an
-  oxpinyin divergence and no class (a)/(b)/(c) exception (policy row 83).
+- **Classification:** class (b). C leaves the conversion undefined and
+  the pin's own result differs between x86-64 and AArch64 (policy row
+  83 keeps λ outside `[0, 1]` itself as reproduced input handling). Also
+  a pin portability defect to report upstream.
 - **Held by:** `table-conf-lambda-million-zhuyin`,
   `table-conf-lambda-one-and-a-half-zhuyin` and
-  `table-conf-lambda-two-zhuyin` (arm64-excluded by #1137; amd64 MATCH
-  on bdb, kc and tkrzw).
+  `table-conf-lambda-two-zhuyin`, `POLICY-ACCEPTED` on bdb, kc and
+  sound tkrzw against the amd64 pin with the digests in
+  [`1378-zhuyin-selection.md`](1378-zhuyin-selection.md), whose entries
+  already held the #1378 selection difference in the same cases
+  (re-recorded 2026-10-30 UTC, #1416, on the three cells).
 - **Proposed upstream report:** issue B in
   `arm64-pin-portability-1137.md` ("libzhuyin candidate frequency: λ > 1
   orders candidates differently on arm64").

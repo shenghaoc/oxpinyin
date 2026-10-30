@@ -12,7 +12,8 @@ PR B of #1378 re-measured these four BDB observation pairs on 2026-10-29
 UTC against main `9015a178`; all four are unchanged. The integer cost
 derivation below describes the original implementation. PR B implements
 the same ruled ordering on the float scale: `S = poss - length * P`,
-with `P = f32::from_bits(0x3e3ab283)`, separate f32 multiplication and
+with `P = 1.2_f32.ln()` (#1416; the pin's folded `0x3e3ab283` on this
+host, class (a) elsewhere), separate f32 multiplication and
 subtraction, larger S first, NaN last, and signed zeros equivalent.
 The node compares S alone; S1/S2 complete ties with earlier batch position.
 See [the approved float-scoring record](float-scoring-1378.md#pr-b-re-measurement-2026-10-29-utc).

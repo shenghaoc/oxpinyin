@@ -86,7 +86,7 @@ pub use key::{KeyInput, LogicalKey, Modifiers};
 pub use nbest::NbestShape;
 pub use preedit::{Preedit, PreeditSpan, SpanStyle};
 pub use session::{
-    CandidateRanking, KeyOutcome, MAX_INPUT_BYTES, Selection, Session, check_lookup_offset_range,
-    normalize_lookup_offset,
+    CandidateRanking, KeyOutcome, MAX_INPUT_BYTES, Selection, Session, amplified_frequency,
+    check_lookup_offset_range, normalize_lookup_offset,
 };
 pub use storage::StoragePaths;

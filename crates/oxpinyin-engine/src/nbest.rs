@@ -106,9 +106,6 @@ impl Default for NbestShape {
 /// Beam width per step (`nbeam`).
 const NBEAM: usize = 32;
 
-/// The pin's folded f32 `log(1.2f)` (`phonetic_lookup.h:39`, design D-1).
-const LONG_SENTENCE_PENALTY: f32 = f32::from_bits(0x3e3ab283);
-
 /// The sentence-start seed token (`novel_types.h`: `sentence_start = 1`).
 pub const SENTENCE_START: u32 = 1;
 
@@ -188,9 +185,11 @@ struct BeamEntry {
     batch_position: usize,
 }
 
-/// S1/S2: two f32 roundings, without contraction or widening.
+/// S1/S2: two f32 roundings, without contraction or widening. The penalty
+/// is the pin's `LONG_SENTENCE_PENALTY`, `log(1.2f)`
+/// (`phonetic_lookup.h:39`), in Rust's `f32` maths (class (a)).
 fn adjusted_poss(value: &Value) -> f32 {
-    value.poss - value.length as f32 * LONG_SENTENCE_PENALTY
+    value.poss - value.length as f32 * 1.2_f32.ln()
 }
 
 /// Best first: +infinity, finite descending, -infinity, NaN last.
@@ -1610,7 +1609,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{LONG_SENTENCE_PENALTY, NbestRow, NbestShape, Trellis, Value, nbest_sentences};
+    use super::{NbestRow, NbestShape, Trellis, Value, nbest_sentences};
     use crate::session::ScanKey;
     use oxpinyin_core::graph::SegmentGraph;
     use oxpinyin_core::{
@@ -1948,7 +1947,7 @@ mod tests {
 
     #[test]
     fn adjusted_score_rounds_product_then_difference_and_ties() {
-        let p = LONG_SENTENCE_PENALTY;
+        let p = 1.2_f32.ln();
         for advantage in [p.next_down(), p, p.next_up()] {
             let short = scored(0.0, 0);
             let long = scored(advantage, 1);

@@ -490,9 +490,20 @@ here.
 
 ## Oxpinyin's position
 
-Oxpinyin reproduces the amd64 pin, not the arm64 pin, on both
-architectures, and that is the Stage 2 target (the contributor rules, "Stage 2";
-`docs/findings/compatibility-policy.md` row 83). The relevant code is:
+**Superseded 2026-10-30 UTC (#1416).** The low-32-bit imitation
+described below was removed under decision-order limb 3 (processor and
+compiler behaviour is not reproduced; [source policy](../source-policy.md#internal-language-artefacts)). `oxpinyin_engine::session::
+amplified_frequency_with_bigram`, which the predicted rows now call too,
+stores the score with Rust's `as u32`: in range it truncates like both
+pins; a negative or NaN score is 0 and a score at or above 2³² is
+`0xffffffff`, which is what the arm64 pin's `fcvtzu` stores. The
+amd64-only wrap is class (b) (C leaves the conversion undefined), held
+POLICY-ACCEPTED by the cases named in `upstream-divergences.md`. The
+text below records the position at the time of the #1137 reading.
+
+Oxpinyin reproduced the amd64 pin, not the arm64 pin, on both
+architectures, and that was the Stage 2 target (the contributor rules, "Stage 2";
+`docs/findings/compatibility-policy.md` row 83). The relevant code was:
 
 - Predicted candidates: `oxpinyin_capi::predict::amplified_frequency`
   computes the same `f32` expression and converts with
@@ -723,3 +734,178 @@ amd64 command; `oracle-arm64-1132.md` records the arm64 one and the
   separately recorded in #1132. The five conversion differences do not
   depend on libc (they are in the generated code), but the eight crash
   signals may.
+
+```contract-diff-policy
+{
+  "schema": 2,
+  "record": "arm64-pin-portability-1137",
+  "status": "current",
+  "disposition": "POLICY-ACCEPTED",
+  "cases": {
+    "row58-unsigned-score-off": {
+      "cells": {
+        "bdb": {
+          "pin": {
+            "sha256": "a22dc0b88ecc7679d817dceefd888a6c2aa12a68d287b6520726e4f6e69c5f55",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.absent_add": "fcbcf165908dd18a",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.prediction": "64e70f03c9bab24b",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "ac3a8cae5af2b755c085e44cdae61940e141f7eb821c4eae5702e7c4507d0858",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.absent_add": "fcbcf165908dd18a",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.prediction": "7b6fc3478e1f7c17",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.prediction.rows (list lengths pin 169, subject 169; first change [0]): pin [5, \"甲甲\"]; subject [5, \"爱你\"]",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        },
+        "kc": {
+          "pin": {
+            "sha256": "a22dc0b88ecc7679d817dceefd888a6c2aa12a68d287b6520726e4f6e69c5f55",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.absent_add": "fcbcf165908dd18a",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.prediction": "64e70f03c9bab24b",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "ac3a8cae5af2b755c085e44cdae61940e141f7eb821c4eae5702e7c4507d0858",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.absent_add": "fcbcf165908dd18a",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.prediction": "7b6fc3478e1f7c17",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.prediction.rows (list lengths pin 169, subject 169; first change [0]): pin [5, \"甲甲\"]; subject [5, \"爱你\"]",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        },
+        "tkrzw": {
+          "pin": {
+            "sha256": "a22dc0b88ecc7679d817dceefd888a6c2aa12a68d287b6520726e4f6e69c5f55",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.absent_add": "fcbcf165908dd18a",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.prediction": "64e70f03c9bab24b",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "ac3a8cae5af2b755c085e44cdae61940e141f7eb821c4eae5702e7c4507d0858",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.absent_add": "fcbcf165908dd18a",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.prediction": "7b6fc3478e1f7c17",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.prediction.rows (list lengths pin 169, subject 169; first change [0]): pin [5, \"甲甲\"]; subject [5, \"爱你\"]",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        }
+      }
+    },
+    "row58-unsigned-score-on": {
+      "cells": {
+        "bdb": {
+          "pin": {
+            "sha256": "a22dc0b88ecc7679d817dceefd888a6c2aa12a68d287b6520726e4f6e69c5f55",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.absent_add": "fcbcf165908dd18a",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.prediction": "64e70f03c9bab24b",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "ac3a8cae5af2b755c085e44cdae61940e141f7eb821c4eae5702e7c4507d0858",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.absent_add": "fcbcf165908dd18a",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.prediction": "7b6fc3478e1f7c17",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.prediction.rows (list lengths pin 169, subject 169; first change [0]): pin [5, \"甲甲\"]; subject [5, \"爱你\"]",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        },
+        "kc": {
+          "pin": {
+            "sha256": "a22dc0b88ecc7679d817dceefd888a6c2aa12a68d287b6520726e4f6e69c5f55",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.absent_add": "fcbcf165908dd18a",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.prediction": "64e70f03c9bab24b",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "ac3a8cae5af2b755c085e44cdae61940e141f7eb821c4eae5702e7c4507d0858",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.absent_add": "fcbcf165908dd18a",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.prediction": "7b6fc3478e1f7c17",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.prediction.rows (list lengths pin 169, subject 169; first change [0]): pin [5, \"甲甲\"]; subject [5, \"爱你\"]",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        },
+        "tkrzw": {
+          "pin": {
+            "sha256": "a22dc0b88ecc7679d817dceefd888a6c2aa12a68d287b6520726e4f6e69c5f55",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.absent_add": "fcbcf165908dd18a",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.prediction": "64e70f03c9bab24b",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "ac3a8cae5af2b755c085e44cdae61940e141f7eb821c4eae5702e7c4507d0858",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.absent_add": "fcbcf165908dd18a",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.prediction": "7b6fc3478e1f7c17",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.prediction.rows (list lengths pin 169, subject 169; first change [0]): pin [5, \"甲甲\"]; subject [5, \"爱你\"]",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        }
+      }
+    }
+  }
+}
+```
