@@ -1615,7 +1615,7 @@ def execute(campaign, args, subjects, profiles, cases, facades, driver):
         dirty_rows[facade] = campaign.work / ('dirty-' + facade + '.tsv')
         dirty_rows[facade].write_text(row_text([(1, '测试', reading, 20000)]))
     witnesses = prepare_witnesses(campaign, getattr(campaign, 'provisioner', None) or subjects['pin']['pinyin'], profiles)
-    comparable, references = {}, {}
+    comparable, references, workload_comparable = {}, {}, {}
     for facade in facades:
         for case in cases:
             options = case_options(case, profiles, dirty_rows[facade])
@@ -1627,6 +1627,8 @@ def execute(campaign, args, subjects, profiles, cases, facades, driver):
             matches = all(row['observation'] == reference for row in readings.values())
             comparable[facade, case] = matches
             references[facade, case] = {side: workload_observation(row) for side, row in readings.items()}
+            scoped = references[facade, case]
+            workload_comparable[facade, case] = all(value == scoped['pin'] for value in scoped.values())
             if getattr(campaign, 'summary_dir', None) is not None:
                 path = retain_profiler_summary(campaign.summary_dir, facade + '-' + case + '-preflight',
                     dict(identity=campaign.summary_identity,
@@ -1639,20 +1641,40 @@ def execute(campaign, args, subjects, profiles, cases, facades, driver):
                          raw_final_profile_identities={side: row['raw_profile_identity'] for side, row in readings.items()},
                          differences={} if matches else {side: first_difference(reference, row['observation'])
                                                         for side, row in readings.items() if row['observation'] != reference})
+    if args.teardown_stage in ('verify', 'confirm', 'init-attribute'):
+        for key, matches in workload_comparable.items():
+            scoped = references[key]
+            print_record('workload-equivalence', facade=key[0], case=key[1],
+                scope=['samples', 'stderr', 'userfiles'], verdict='COMPARABLE' if matches else 'NOT COMPARABLE',
+                digests={side: identity(value) for side, value in scoped.items()},
+                differences={} if matches else {side: first_difference(scoped['pin'], value)
+                    for side, value in scoped.items() if value != scoped['pin']})
     # Report a safe checkpoint before starting any ratio campaign. A mismatch
     # is an observation to report, never permission to repair shipping behavior.
     if not all(comparable.values()):
         print_record('checkpoint', status='equivalence-blocked', comparable=[list(key) for key, value in comparable.items() if value])
-        return 3
+        if args.teardown_stage not in ('confirm', 'init-attribute'):
+            return 3
     if args.teardown_stage == 'verify':
         user_cases = [case for case in cases if case in ('user', 'user8', 'usersparse')]
         if user_cases and 'pinyin' in facades:
             return user_phrase_measure(campaign, subjects, profiles, user_cases, verify=True)
         return 0
+    scoped_blocked = False
+    if args.teardown_stage in ('confirm', 'init-attribute'):
+        # The observer additionally runs the witness script and reopen. The
+        # measured worker runs nihao only. Keep its existing exact sample,
+        # diagnostic and final-file scope; never waive a broad observation or
+        # discard candidate fields inside the actual measured workload.
+        scoped_blocked = not all(workload_comparable.values())
+        references = {key: value for key, value in references.items() if workload_comparable[key]}
     if args.teardown_stage in ('pilot', 'confirm'):
         pilot = args.teardown_stage == 'pilot'
+        invalid = False
         for facade in facades:
             for case in cases:
+                if (facade, case) not in references:
+                    continue
                 options = case_options(case, profiles, dirty_rows[facade])
                 for mode, rounds, warmups in (('time', 5 if pilot else TIMING_ROUNDS, 1 if pilot else TIMING_WARMUPS),
                                               ('memory', 3 if pilot else MEMORY_ROUNDS, 1 if pilot else MEMORY_WARMUPS)):
@@ -1682,9 +1704,8 @@ def execute(campaign, args, subjects, profiles, cases, facades, driver):
                     finally:
                         campaign.worker = worker
                     print_record('diagnostic-worker', tool='massif', profiler_only=True, worker=worker_identity)
-                    if report_exact('startup-heap', facade, case, heaps, massif_counts):
-                        return 1
-        return 0
+                    invalid |= report_exact('startup-heap', facade, case, heaps, massif_counts)
+        return 1 if invalid else 3 if scoped_blocked else 0
     if args.teardown_stage in ('repeat', 'multi'):
         populated = args.teardown_attribution_case.split('-')[0]
         if populated == 'empty':
@@ -1702,7 +1723,8 @@ def execute(campaign, args, subjects, profiles, cases, facades, driver):
                                  observations_equal=all(value == row['observation']['samples'][0] for value in row['observation']['samples']))
         return 0
     if args.teardown_stage == 'init-attribute':
-        return init_attribute(campaign, subjects, profiles, cases, facades, references, dirty_rows)
+        status = init_attribute(campaign, subjects, profiles, cases, facades, references, dirty_rows)
+        return status or (3 if scoped_blocked else 0)
     if args.teardown_stage == 'attribute':
         diagnostic_workers = {tool: build_worker(campaign.work, tool) for tool in ('massif', 'memcheck')}
         for tool, (_, worker_identity) in diagnostic_workers.items():
@@ -1784,6 +1806,8 @@ def init_attribute(campaign, subjects, profiles, cases, facades, references, dir
     invalid = False
     for facade in facades:
         for case in cases:
+            if (facade, case) not in references:
+                continue
             options = case_options(case, profiles, dirty_rows[facade])
             bitmaps = None
             for probe in probes:

@@ -471,6 +471,60 @@ class PureTests(unittest.TestCase):
         self.assertEqual(td.first_difference({'a': [{'x': 1}]}, {'a': [{'x': 2}]}),
                          {'path': '$.a[0].x', 'pin': 1, 'subject': 2})
 
+    def scoped_preflight(self, stage, changed=None):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            def run(facade, library, **kwargs):
+                obs = dict(samples=[dict(candidate='nihao')], stderr='', userfiles={'user.bin': 'same'},
+                           documents=[dict(script_type=2 if library == Path('pin') else 1)])
+                if changed and library == Path('ox') and kwargs['profile'] == root / 'modest':
+                    obs[changed] = {'samples': [dict(candidate='different')], 'stderr': 'warning',
+                                    'userfiles': {'user.bin': 'different'}}[changed]
+                return dict(observation=obs, raw_profile_identity='raw')
+            campaign = SimpleNamespace(work=root, provisioner=Path('pin'), run=run)
+            records = []
+            with patch.object(td, 'prepare_witnesses', return_value=dict.fromkeys(('empty', 'modest'), root)), \
+                    patch.object(td, 'print_record', side_effect=lambda kind, **row: records.append((kind, row))), \
+                    patch.object(td, 'init_attribute', return_value=0) as measured, \
+                    patch.object(td, 'report_times') as times, patch.object(td, 'report_memory'), \
+                    patch.object(td, 'TIMING_ROUNDS', 1), patch.object(td, 'TIMING_WARMUPS', 0), \
+                    patch.object(td, 'MEMORY_ROUNDS', 1), patch.object(td, 'MEMORY_WARMUPS', 0):
+                status = td.execute(campaign, SimpleNamespace(teardown_stage=stage, teardown_startup_heap=False),
+                    {side: {'pinyin': Path(side)} for side in ('pin', 'ox', 'control')},
+                    {name: root / name for name in ('empty', 'modest')}, ['empty', 'modest'], ['pinyin'], None)
+            return status, records, measured, times
+
+    def test_scoped_workload_keeps_broad_candidate_failure_strict(self):
+        status, records, measured, times = self.scoped_preflight('verify')
+        self.assertEqual(status, 3)
+        measured.assert_not_called()
+        times.assert_not_called()
+        self.assertEqual([row['verdict'] for kind, row in records if kind == 'equivalence'],
+                         ['NOT COMPARABLE', 'NOT COMPARABLE'])
+
+    def test_script_difference_does_not_block_identical_measured_workload(self):
+        for stage in ('confirm', 'init-attribute'):
+            with self.subTest(stage=stage):
+                status, records, measured, times = self.scoped_preflight(stage)
+                self.assertEqual(status, 0)
+                self.assertEqual([row['verdict'] for kind, row in records if kind == 'workload-equivalence'],
+                                 ['COMPARABLE', 'COMPARABLE'])
+                if stage == 'confirm':
+                    self.assertEqual(times.call_count, 2)
+                else:
+                    self.assertEqual(set(measured.call_args.args[5]), {('pinyin', 'empty'), ('pinyin', 'modest')})
+
+    def test_changed_scoped_samples_diagnostics_or_files_block_only_their_case(self):
+        for changed in ('samples', 'stderr', 'userfiles'):
+            for stage in ('confirm', 'init-attribute'):
+                with self.subTest(changed=changed, stage=stage):
+                    status, _, measured, times = self.scoped_preflight(stage, changed)
+                    self.assertEqual(status, 3)
+                    if stage == 'confirm':
+                        self.assertEqual(times.call_count, 1)
+                    else:
+                        self.assertEqual(set(measured.call_args.args[5]), {('pinyin', 'empty')})
+
     def test_full_export_sets(self):
         self.assertEqual(len(td.exports('pinyin')), 79)
         self.assertEqual(len(td.exports('zhuyin')), 52)

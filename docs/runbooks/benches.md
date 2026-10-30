@@ -805,6 +805,13 @@ just heavy -- uv run --no-project --managed-python python -B -X lazy_imports=nor
 full candidate transcripts and reopen behavior; a mismatch there stays
 NOT COMPARABLE and must be reported separately. A passing bounded preflight
 does not establish end-to-end candidate equivalence.
+`confirm` and `init-attribute` also report the existing worker-workload
+scope (`samples`, diagnostics and final files) separately from the broader
+witness script. A script-only difference limits that end-to-end comparison;
+it does not block an identical measured workload. Every candidate field in
+the measured sample remains compared, and a changed sample, diagnostic or
+file blocks that case. Other verified cases continue. `verify` retains its
+strict broad verdict and complete-observation hashes.
 Pass the existing `--teardown-summary-dir` option with an empty local
 directory to retain complete preflight observations and their hashes for
 diagnosis, including failures. This never changes the preflight verdict.
