@@ -131,8 +131,18 @@ impl UserLibrary {
     pub(crate) fn store(&self) -> Result<Vec<u8>, String> {
         let mut content = Vec::with_capacity(self.live.saturating_add(8));
         let mut offsets = Vec::new();
-        let mut total = 0_u32;
+        let mut total = 0_u64;
         for (slot, view) in self.items() {
+            if slot > oxpinyin_data::chunk_write::PHRASE_MASK {
+                return Err(format!(
+                    "chunk write error: chunk slot {slot:#010x} exceeds PHRASE_MASK"
+                ));
+            }
+            if view.phrase_length() == 0 {
+                return Err(format!(
+                    "chunk write error: chunk slot {slot:#010x} phrase length 0 out of range"
+                ));
+            }
             if content.is_empty() {
                 content.resize(8, 0);
             }
@@ -140,8 +150,10 @@ impl UserLibrary {
             offsets.resize(slot as usize + 1, 0_u32);
             offsets[slot as usize] = offset;
             content.extend_from_slice(view.as_bytes());
-            total = total.wrapping_add(view.unigram());
+            total += u64::from(view.unigram());
         }
+        let total = u32::try_from(total)
+            .map_err(|_| "chunk write error: chunk total_freq overflows u32".to_owned())?;
         let index_two = 18_u32
             .checked_add(u32::try_from(offsets.len() * 4).map_err(|e| e.to_string())?)
             .ok_or("offset array too large")?;
@@ -211,6 +223,10 @@ mod tests {
                     })
                     .collect();
                 assert_eq!(decoded, items);
+                assert_eq!(
+                    library.store(),
+                    build_chunk(&items).map_err(|e| e.to_string())
+                );
                 assert_eq!(
                     library.live,
                     library.items().map(|(_, item)| item.as_bytes().len()).sum()
