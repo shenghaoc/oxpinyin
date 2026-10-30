@@ -763,34 +763,12 @@ def __getattr__(name):
     raise AttributeError(name)
 
 
-def check_cancelled():
-    """Driver patch point for contract_runner.Runner.check_cancelled."""
-    return _RUNNER.check_cancelled()
-
-
-def cancellation_handlers():
-    """Driver patch point for contract_runner.Runner.cancellation_handlers."""
-    return _RUNNER.cancellation_handlers()
-
-
-def run_worker(mode, so, data, name, scratch, extra_env=None, timeout=None, entry=None):
-    """Driver patch point for contract_runner.Runner.run_worker."""
-    return _RUNNER.run_worker(mode, so, data, name, scratch, extra_env, timeout, entry)
-
-
-def run_case(spec, pin_so, subject_so, data, name, scratch, timeout):
-    """Driver patch point for contract_runner.Runner.run_case."""
-    return _RUNNER.run_case(spec, pin_so, subject_so, data, name, scratch, timeout)
-
-
-def case_jobs(requested):
-    """Driver patch point for contract_runner.Runner.case_jobs."""
-    return _RUNNER.case_jobs(requested)
-
-
-def case_results(args, names, data, scratch, jobs):
-    """Driver patch point for contract_runner.Runner.case_results."""
-    return _RUNNER.case_results(args, names, data, scratch, jobs)
+check_cancelled = _RUNNER.check_cancelled
+cancellation_handlers = _RUNNER.cancellation_handlers
+run_worker = _RUNNER.run_worker
+run_case = _RUNNER.run_case
+case_jobs = _RUNNER.case_jobs
+case_results = _RUNNER.case_results
 
 
 contract_separator_before_cursor.register(case)
@@ -1055,13 +1033,7 @@ def run_axis_c(args, names):
 POLICY_ROOT = Path(__file__).resolve().parents[2] / 'docs/findings'
 
 
-# The rules are in contract_verdict. These keep their names and signatures and hand
-# them the state this module owns, read when they are called.
-def policy_expectations(spec):
-    """Read the current registered record, never a cached exemption (contract_verdict)."""
-    return contract_verdict.policy_expectations(spec, policy_root=POLICY_ROOT, cell=CELL)
-
-
+# Bind the verdict rules to this run's findings directory, cell and host probe.
 def verdict_for(spec, pin, subject, expect_parent):
     """The driver's decision for one case: (verdict, expected_ok, same) (contract_verdict)."""
     return contract_verdict.verdict_for(spec, pin, subject, expect_parent, policy_root=POLICY_ROOT, cell=CELL,
@@ -1071,11 +1043,6 @@ def verdict_for(spec, pin, subject, expect_parent):
 def policy_diagnosis(spec, pin, subject):
     """Which side and field moved against the case's record, or None (contract_verdict)."""
     return contract_verdict.policy_diagnosis(spec, pin, subject, policy_root=POLICY_ROOT, cell=CELL)
-
-
-def short_dir_chunk(spec):
-    """A `dir_chunk` case on a host where the pin does not reach its assert (contract_verdict)."""
-    return contract_verdict.short_dir_chunk(spec, directory_probe=directory_reads_as_a_chunk)
 
 
 def matches(spec, pin, subject):
