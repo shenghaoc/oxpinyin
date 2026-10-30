@@ -1082,43 +1082,90 @@ fn remove_pronunciations(txn: &mut impl WriteTxn, token: Token) -> Result<(), St
     Ok(())
 }
 
-/// Every pronunciation of `tokens`, grouped by token, from **one** ordered
-/// walk of the pronunciation table.
-///
-/// The table's keys are a big-endian token prefix plus a key tail, so a
-/// single ascending walk yields each token's rows contiguously, in the
-/// same per-token order the per-token [`pronunciation_range`] scan
-/// produced. Multi-token readers use this instead of one `range` scan —
-/// each with its own read transaction and cursor — per token.
+// The phrase output buffer while its pronunciations are collected. The two
+// ordering tags live in each output reading's buffer, not in a side index.
+type OrderedPronunciation = (u32, usize, UserPronunciation);
+
+struct PhraseRead {
+    token: Token,
+    text: Vec<u32>,
+    pronunciations: Vec<OrderedPronunciation>,
+}
+
+fn collect_phrase_rows(
+    store: &impl ReadStore,
+    library: Option<u8>,
+) -> Result<Vec<PhraseRead>, UserStoreError> {
+    let mut phrases = Vec::new();
+    store.for_each(PHRASE, |key, value| {
+        let token = codec::decode_token(key)
+            .map_err(|_| StoreError::Backend("corrupt phrase token".into()))?;
+        if library.is_some_and(|library| phrase_index_library_index(token) != library) {
+            return Ok(());
+        }
+        let text = codec::decode_words(value)
+            .map_err(|_| StoreError::Backend("corrupt phrase text".into()))?;
+        phrases.push(PhraseRead {
+            token,
+            text,
+            pronunciations: Vec::new(),
+        });
+        Ok(())
+    })?;
+    collect_pronunciations_for_tokens(store, &mut phrases)?;
+    Ok(phrases)
+}
+
+/// Merge the token-ordered phrase output with one pronunciation-table walk.
+/// Both keys start with the same four big-endian token bytes; table framing
+/// preserves their order on every backend, as do SessionValues' BTreeMaps.
+/// The phrase cursor advances only forwards. Repeated decoded phrase tokens
+/// each receive their readings, just as the old grouped result was cloned.
 fn collect_pronunciations_for_tokens(
     store: &impl ReadStore,
-    tokens: &std::collections::HashSet<Token>,
-) -> Result<std::collections::BTreeMap<Token, Vec<UserPronunciation>>, UserStoreError> {
-    let mut out: std::collections::BTreeMap<Token, Vec<(u32, UserPronunciation)>> =
-        std::collections::BTreeMap::new();
-    if tokens.is_empty() {
-        return Ok(std::collections::BTreeMap::new());
+    phrases: &mut [PhraseRead],
+) -> Result<(), UserStoreError> {
+    if phrases.is_empty() {
+        return Ok(());
     }
+    let mut first = 0;
     store.for_each(PRONUNCIATION, |key, value| {
         let (token, key_bytes) = codec::decode_token_bytes(key)
             .map_err(|_| StoreError::Backend("corrupt pronunciation key".into()))?;
-        if !tokens.contains(&token) {
+        while first < phrases.len() && phrases[first].token < token {
+            first += 1;
+        }
+        if phrases
+            .get(first)
+            .is_none_or(|phrase| phrase.token != token)
+        {
+            // Keep decoding keys after the final selected token: a truncated
+            // key there is still an error, while an unselected value is not.
             return Ok(());
         }
         let value = PronValue::decode(value)?;
-        out.entry(token).or_default().push((
-            value.seq,
-            UserPronunciation::new(phrase::decode_keys(key_bytes), value.count, value.indexed),
-        ));
+        for phrase in phrases[first..]
+            .iter_mut()
+            .take_while(|phrase| phrase.token == token)
+        {
+            let rows = &mut phrase.pronunciations;
+            rows.push((
+                value.seq,
+                rows.len(),
+                UserPronunciation::new(phrase::decode_keys(key_bytes), value.count, value.indexed),
+            ));
+        }
         Ok(())
     })?;
-    Ok(out
-        .into_iter()
-        .map(|(token, mut rows)| {
-            sort_by_insertion(&mut rows, |row| row.0);
-            (token, rows.into_iter().map(|(_, row)| row).collect())
-        })
-        .collect())
+    for phrase in phrases {
+        // The scan position makes every key unique, preserving the old stable
+        // sequence sort, including ties and duplicate decoded readings, with
+        // std's allocation-free unstable sort. No reading is deduplicated.
+        phrase
+            .pronunciations
+            .sort_unstable_by_key(|(sequence, position, _)| (*sequence, *position));
+    }
+    Ok(())
 }
 
 /// The pronunciation key tails owned by `tokens`, from **one** ordered
@@ -1126,18 +1173,24 @@ fn collect_pronunciations_for_tokens(
 /// [`collect_pronunciations_for_tokens`], for callers that remove the
 /// rows afterwards. Returns `(token, key tail)` pairs so each removal can
 /// rebuild its full key with [`codec::encode_token_bytes`].
+/// `tokens` is the nondecreasing selection from the phrase-table walk;
+/// duplicate selected tokens do not duplicate the returned keys.
 fn collect_pronunciation_keys_from_txn(
     txn: &impl WriteTxn,
-    tokens: &std::collections::HashSet<Token>,
+    tokens: impl Iterator<Item = Token>,
 ) -> Result<Vec<(Token, Vec<u8>)>, StoreError> {
     let mut out = Vec::new();
-    if tokens.is_empty() {
+    let mut tokens = tokens.peekable();
+    if tokens.peek().is_none() {
         return Ok(out);
     }
     txn.for_each(PRONUNCIATION, |key, _value| {
         let (token, key_bytes) = codec::decode_token_bytes(key)
             .map_err(|_| StoreError::Backend("corrupt pronunciation key".into()))?;
-        if tokens.contains(&token) {
+        while tokens.peek().is_some_and(|&selected| selected < token) {
+            tokens.next();
+        }
+        if tokens.peek() == Some(&token) {
             out.push((token, key_bytes.to_vec()));
         }
         Ok(())
@@ -1437,9 +1490,8 @@ fn mask_phrase_rows(txn: &mut impl WriteTxn, mask: Token, value: Token) -> Resul
     // One ordered walk collects every matched token's
     // pronunciation keys, instead of a per-token range scan
     // (and cursor) inside the remove loop below.
-    let matched_tokens: std::collections::HashSet<Token> =
-        matched.iter().map(|(token, _)| *token).collect();
-    let pron_keys = collect_pronunciation_keys_from_txn(txn, &matched_tokens)?;
+    let pron_keys =
+        collect_pronunciation_keys_from_txn(txn, matched.iter().map(|(token, _)| *token))?;
     for (token, text) in matched {
         txn.remove(PHRASE, &codec::encode_token(token))?;
         if phrase_index_library_index(token) == USER_DICTIONARY {
@@ -3496,31 +3548,15 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// Returns [`UserStoreError`] when the store cannot be read.
     pub fn export_phrases_in(&self, library: u8) -> Result<Vec<ExportedPhrase>, UserStoreError> {
         let db = self.database();
-        let mut rows = Vec::new();
-        db.for_each(PHRASE, |k, v| {
-            let token = codec::decode_token(k)
-                .map_err(|_| StoreError::Backend("corrupt phrase token".into()))?;
-            if phrase_index_library_index(token) != library {
-                return Ok(());
-            }
-            let text = codec::decode_words(v)
-                .map_err(|_| StoreError::Backend("corrupt phrase text".into()))?;
-            // Buffer rows so pronunciations are collected after iteration,
-            // when the store is no longer borrowed by this callback.
-            rows.push((token, text.to_owned()));
-            Ok(())
-        })?;
-        let tokens: std::collections::HashSet<Token> =
-            rows.iter().map(|(token, _)| *token).collect();
-        let pronunciations = collect_pronunciations_for_tokens(&*db, &tokens)?;
+        let rows = collect_phrase_rows(&*db, Some(library))?;
         let mut out = Vec::new();
-        for (token, text) in rows {
-            for pronunciation in pronunciations.get(&token).into_iter().flatten() {
+        for row in rows {
+            for (_, _, pronunciation) in row.pronunciations {
                 let Some(pinyin) = pronunciation.render_pinyin() else {
                     continue;
                 };
                 out.push(ExportedPhrase {
-                    text: text.clone(),
+                    text: row.text.clone(),
                     pinyin,
                     count: pronunciation.count(),
                 });
@@ -3536,25 +3572,19 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// Returns [`UserStoreError`] when the store cannot be read.
     pub fn phrases(&self) -> Result<Vec<UserPhrase>, UserStoreError> {
         let db = self.database();
-        let mut tokens_and_texts = Vec::new();
-        db.for_each(PHRASE, |k, v| {
-            let token = codec::decode_token(k)
-                .map_err(|_| StoreError::Backend("corrupt phrase token".into()))?;
-            let text = codec::decode_words(v)
-                .map_err(|_| StoreError::Backend("corrupt phrase text".into()))?
-                .to_owned();
-            tokens_and_texts.push((token, text));
-            Ok(())
-        })?;
-        let tokens: std::collections::HashSet<Token> =
-            tokens_and_texts.iter().map(|(token, _)| *token).collect();
-        let pronunciations = collect_pronunciations_for_tokens(&*db, &tokens)?;
-        let mut out = Vec::new();
-        for (token, text) in tokens_and_texts {
-            let pronunciations = pronunciations.get(&token).cloned().unwrap_or_default();
-            out.push(UserPhrase::new(token, text, pronunciations));
-        }
-        Ok(out)
+        Ok(collect_phrase_rows(&*db, None)?
+            .into_iter()
+            .map(|row| {
+                UserPhrase::new(
+                    row.token,
+                    row.text,
+                    row.pronunciations
+                        .into_iter()
+                        .map(|(_, _, reading)| reading)
+                        .collect(),
+                )
+            })
+            .collect())
     }
 
     /// `SingleGram::retrieve_all` on `prev`'s raw gram: its whole items as
@@ -5648,6 +5678,138 @@ mod tests {
                     let store = Store::create_standalone(&path).unwrap();
                     assert!(store.phrase(FIRST_USER_TOKEN).unwrap().is_none());
                     assert!(store.phrase(0x0100_0001).unwrap().is_none());
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn bulk_join_preserves_token_groups_reading_order_and_duplicates() {
+                    for memory in [false, true] {
+                        let path = temp_path(&format!("bulk-join-order-{memory}"));
+                        let store = Store::create_standalone(&path).unwrap();
+                        if memory {
+                            *store.database() = SessionValues::transient();
+                        }
+                        store.database().write(|txn| {
+                            for (token, tail, word) in [
+                                (u32::MAX, &[][..], 0x4e94_u32),
+                                (256, &[0][..], 0x4e09),
+                                (255, &[][..], 0x4e8c),
+                                (1, &[][..], 0x4e00),
+                                (256, &[][..], 0x56db),
+                            ] {
+                                txn.put(PHRASE, &codec::encode_token_bytes(token, tail), &word.to_le_bytes())?;
+                            }
+                            for (token, keys, count, seq, indexed) in [
+                                (1, &[1, 0][..], 11, 5, false),
+                                (1, &[2, 0][..], 22, 1, true),
+                                (1, &[3, 0][..], 33, 1, false),
+                                (1, &[3, 0, 127][..], 44, 1, true),
+                                (256, &[9, 0][..], u64::MAX, 0, false),
+                                (u32::MAX, &[][..], 55, 0, true),
+                            ] {
+                                txn.put(PRONUNCIATION, &codec::encode_token_bytes(token, keys),
+                                    &PronValue { count, seq, indexed }.encode())?;
+                            }
+                            txn.put(PRONUNCIATION, &codec::encode_token_bytes(256, &[8, 0]),
+                                &codec::encode_u64(99))?;
+                            // Values outside the selected tokens are not decoded.
+                            txn.put(PRONUNCIATION, &codec::encode_token_bytes(2, &[1]), &[0])
+                        }).unwrap();
+                        let first = vec![
+                            UserPronunciation::new(vec![2], 22, true),
+                            UserPronunciation::new(vec![3], 33, false),
+                            UserPronunciation::new(vec![3], 44, true),
+                            UserPronunciation::new(vec![1], 11, false),
+                        ];
+                        let middle = vec![
+                            UserPronunciation::new(vec![9], u64::MAX, false),
+                            UserPronunciation::new(vec![8], 99, true),
+                        ];
+                        assert_eq!(store.phrases().unwrap(), vec![
+                            UserPhrase::new(1, vec![0x4e00], first),
+                            UserPhrase::new(255, vec![0x4e8c], vec![]),
+                            UserPhrase::new(256, vec![0x56db], middle.clone()),
+                            UserPhrase::new(256, vec![0x4e09], middle),
+                            UserPhrase::new(u32::MAX, vec![0x4e94], vec![UserPronunciation::new(vec![], 55, true)]),
+                        ]);
+                        drop(store);
+                        cleanup(&path);
+                    }
+                }
+
+                #[test]
+                fn bulk_join_keeps_corrupt_record_errors_and_empty_fast_path() {
+                    for memory in [false, true] {
+                        for (tag, phrase_key, phrase_value, pron_key, pron_value, expected) in [
+                            ("empty", None, vec![], vec![255], vec![], None),
+                            ("phrase-key", Some(vec![0]), vec![0], vec![255], vec![], Some("corrupt phrase token")),
+                            ("phrase-value", Some(codec::encode_token(1).to_vec()), vec![0], vec![0], vec![], Some("corrupt phrase text")),
+                            ("pron-key-before", Some(codec::encode_token(1).to_vec()), vec![], vec![0], vec![], Some("corrupt pronunciation key")),
+                            ("pron-key-after", Some(codec::encode_token(1).to_vec()), vec![], vec![255], vec![], Some("corrupt pronunciation key")),
+                            ("pron-value", Some(codec::encode_token(1).to_vec()), vec![], codec::encode_token(1).to_vec(), vec![0; 12], Some("corrupt pronunciation value")),
+                            ("unselected-before", Some(codec::encode_token(1).to_vec()), vec![], codec::encode_token(0).to_vec(), vec![], None),
+                            ("unselected-after", Some(codec::encode_token(1).to_vec()), vec![], codec::encode_token(u32::MAX).to_vec(), vec![], None),
+                        ] {
+                            let path = temp_path(&format!("bulk-join-{tag}-{memory}"));
+                            let store = Store::create_standalone(&path).unwrap();
+                            if memory {
+                                *store.database() = SessionValues::transient();
+                            }
+                            store.database().write(|txn| {
+                                if let Some(key) = &phrase_key {
+                                    txn.put(PHRASE, key, &phrase_value)?;
+                                }
+                                txn.put(PRONUNCIATION, &pron_key, &pron_value)
+                            }).unwrap();
+                            match (store.phrases(), expected) {
+                                (Err(UserStoreError::Store(StoreError::Backend(message))), Some(expected)) => assert_eq!(message.message(), expected),
+                                (Ok(rows), None) => assert_eq!(rows.len(), usize::from(phrase_key.is_some())),
+                                (result, expected) => panic!("{tag}: {result:?}, expected {expected:?}"),
+                            }
+                            drop(store);
+                            cleanup(&path);
+                        }
+                    }
+                }
+
+                #[test]
+                fn bulk_join_mask_key_collection_preserves_order_and_multiplicity() {
+                    let path = temp_path("bulk-join-mask-keys");
+                    let store = Store::create_standalone(&path).unwrap();
+                    let tokens = [1, 1, 256];
+                    store.database().write(|txn| {
+                        for (token, tail) in [(1, &[1, 0][..]), (1, &[1, 0, 127][..]), (2, &[][..]), (256, &[0][..]), (u32::MAX, &[][..])] {
+                            txn.put(PRONUNCIATION, &codec::encode_token_bytes(token, tail), &[])?;
+                        }
+                        assert_eq!(collect_pronunciation_keys_from_txn(txn, tokens.into_iter())?, vec![
+                            (1, vec![1, 0]), (1, vec![1, 0, 127]), (256, vec![0]),
+                        ]);
+                        txn.put(PRONUNCIATION, &[255], &[])?;
+                        assert!(matches!(collect_pronunciation_keys_from_txn(txn, tokens.into_iter()), Err(StoreError::Backend(message)) if message.message() == "corrupt pronunciation key"));
+                        assert!(collect_pronunciation_keys_from_txn(txn, std::iter::empty())?.is_empty());
+                        Ok(())
+                    }).unwrap();
+                    drop(store);
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn bulk_join_export_filters_before_decoding_other_library_text() {
+                    let path = temp_path("bulk-join-export");
+                    let store = Store::create_standalone(&path).unwrap();
+                    let ni = u16::try_from(SyllableKey::from_text("ni").unwrap().index()).unwrap();
+                    store.database().write(|txn| {
+                        txn.put(PHRASE, &codec::encode_token(FIRST_USER_TOKEN), &0x4f60_u32.to_le_bytes())?;
+                        txn.put(PHRASE, &codec::encode_token(first_library_token(NETWORK_DICTIONARY)), &[0])?;
+                        txn.put(PRONUNCIATION, &codec::encode_token_bytes(FIRST_USER_TOKEN, &phrase::encode_keys(&[ni])),
+                            &PronValue { count: 5, seq: 0, indexed: true }.encode())?;
+                        txn.put(PRONUNCIATION, &codec::encode_token(first_library_token(NETWORK_DICTIONARY)), &[0])
+                    }).unwrap();
+                    assert_eq!(store.export_phrases().unwrap(), vec![ExportedPhrase {
+                        text: vec![0x4f60], pinyin: "ni".into(), count: 5,
+                    }]);
+                    assert!(matches!(store.phrases(), Err(UserStoreError::Store(StoreError::Backend(message))) if message.message() == "corrupt phrase text"));
+                    drop(store);
                     cleanup(&path);
                 }
 

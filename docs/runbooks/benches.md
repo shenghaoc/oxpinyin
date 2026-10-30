@@ -817,6 +817,27 @@ byte ranges and `layout_error` names why. A universal Mach-O also names its
 grep '"startup": "page-residency"' "$startup_run"
 ```
 
+For memory attribution without timing or profiler sampling, select the native
+controller's `memory` stage. It keeps verification/reopen comparisons and the
+usual memory rounds and warmups, and emits no timing or instruction results.
+On Linux, each memory sample also retains the complete `/proc/<pid>/smaps`
+text in `checkpoints.lib_load.smaps_raw` and `checkpoints.init.smaps_raw`, read
+while the existing worker handshake pauses at M0 and I1. Shipping objects and
+the worker's behavior are unchanged.
+
+```sh
+just initbench --stage memory --cache cold --profiles modest --facades pinyin \
+  --base "$BASE" --pr "$PR" --system-dir "$DATA" --profiles-dir "$PROFILES"
+```
+
+Sum per-mapping `Pss` from those snapshots, distinguishing `[heap]`, other
+anonymous VMAs, the subject's access classes, data files and other mappings.
+Private anonymous/COW pages within file-named mappings remain in those mapping
+classes. The existing `pss` field comes from a separate `smaps_rollup` read;
+report its discrepancy from the sum explicitly. Kernel per-mapping rounding
+and the sequential reads need not give identical totals. Mincore page-cache
+records are not per-process RSS/PSS attribution.
+
 The teardown campaign's cold mode (`--teardown-cache cold`, native Linux)
 reports the cold memory samples of `pilot` and `confirm`, and the cold init
 samples of the `init-attribute` stage's `count` probe. The details below
