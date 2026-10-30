@@ -25,7 +25,9 @@ EXPECTED = [('issue790-export-after-train-system', (), {'issues': ('790',)}),
             ('issue790-guess-after-train-system', (), {'issues': ('790',)}),
             ('issue790-character-offset-after-train-system', (), {'issues': ('790',)}),
             ('issue759-export-open-across-import-system', (), {'issues': ('759',)}),
-            ('issue759-export-open-across-import-user', (), {'issues': ('759',)})]
+            ('issue759-export-open-across-import-user', (), {'issues': ('759',)}),
+            ('user-library-training-bytes-pinyin', (), {'mode': 'pinyin'}),
+            ('user-library-training-bytes-zhuyin', (), {'mode': 'zhuyin'})]
 
 
 def declarations():

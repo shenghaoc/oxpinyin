@@ -186,6 +186,7 @@ enum RowSource<'a> {
     /// points, the pronunciation as packed `ChewingKey` bytes.
     Mapped {
         item: PhraseItemView<'a>,
+        user: bool,
         keys: &'a [u8],
         count: u32,
     },
@@ -336,6 +337,12 @@ impl ExportRow<'_> {
     pub fn key_assert(&self) -> Option<ExportAssert> {
         match &self.0 {
             RowSource::User { keys, .. } => keys.iter().find_map(|&key| user_key_assert(key)),
+            RowSource::Mapped {
+                user: true, keys, ..
+            } => keys.chunks_exact(2).find_map(|bytes| {
+                let key = ChewingKey::from_packed(u16::from_le_bytes([bytes[0], bytes[1]]));
+                (key.tone > MAX_KEY_TONE).then_some(ExportAssert::KeyTone)
+            }),
             RowSource::Mapped { .. } | RowSource::Override { .. } => None,
         }
     }
@@ -413,6 +420,7 @@ impl ExportRow<'_> {
 /// One item under a token, wherever it lives.
 enum ItemRef<'a> {
     Mapped(PhraseItemView<'a>),
+    Arena(PhraseItemView<'a>),
     Override {
         phrase: &'a [u32],
         prons: &'a [(Vec<u16>, u32)],
@@ -424,7 +432,7 @@ impl ItemRef<'_> {
     /// `item.get_n_pronunciation()`.
     fn n_pronunciations(&self) -> usize {
         match self {
-            Self::Mapped(item) => item.n_pronunciations(),
+            Self::Mapped(item) | Self::Arena(item) => item.n_pronunciations(),
             Self::Override { prons, .. } => prons.len(),
             Self::User(phrase) => phrase.pronunciations().len(),
         }
@@ -448,10 +456,11 @@ impl ItemRef<'_> {
     /// (`pinyin.cpp:724`), `None` where the item does not hold it.
     fn row(&self, nth: usize) -> Option<ExportRow<'_>> {
         Some(ExportRow(match self {
-            Self::Mapped(item) => {
+            Self::Mapped(item) | Self::Arena(item) => {
                 let pronunciation = item.pronunciation(nth)?;
                 RowSource::Mapped {
                     item: *item,
+                    user: matches!(self, Self::Arena(_)),
                     keys: pronunciation.keys,
                     count: pronunciation.freq,
                 }
@@ -634,6 +643,11 @@ impl PhraseExportCursor {
                 continue;
             }
             let replaced = self.user.as_ref().and_then(|user| {
+                if let Some(found) =
+                    user.with_user_item(token, |item| ItemRef::Mapped(item).first_pronunciation())
+                {
+                    return Some(found);
+                }
                 user.with_effective_system_item(token, |item| {
                     ItemRef::Override {
                         phrase: &item.phrase,
@@ -673,9 +687,7 @@ impl PhraseExportCursor {
         let end = self.memo.user_end;
         let mut token = start;
         while token < end {
-            let found = match self
-                .with_user_item(token, |phrase| ItemRef::User(phrase).first_pronunciation())
-            {
+            let found = match self.with_user_item(token, |item| item.first_pronunciation()) {
                 Ok(found) => found.flatten(),
                 Err(error) if assert_for(&error).is_some() => Some(0),
                 Err(error) => return Err(error),
@@ -708,6 +720,18 @@ impl PhraseExportCursor {
                     return Ok(None);
                 }
                 let mut read = Some(read);
+                if let Some(out) = self
+                    .user
+                    .as_ref()
+                    .and_then(|user| {
+                        user.with_user_item(token, |item| {
+                            read.take().map(|read| read(ItemRef::Mapped(item)))
+                        })
+                    })
+                    .flatten()
+                {
+                    return Ok(Some(out));
+                }
                 if self.memo.plain_token != token
                     && let Some(user) = self.user.as_ref()
                     && let Some(out) = user
@@ -735,7 +759,7 @@ impl PhraseExportCursor {
                 Ok(Some(read(ItemRef::Mapped(item))))
             }
             ADDON_DICTIONARY | NETWORK_DICTIONARY | USER_DICTIONARY => {
-                self.with_user_item(token, |phrase| read(ItemRef::User(phrase)))
+                self.with_user_item(token, read)
             }
             _ => Ok(None),
         }
@@ -747,9 +771,21 @@ impl PhraseExportCursor {
     fn with_user_item<R>(
         &mut self,
         token: u32,
-        read: impl FnOnce(&UserPhrase) -> R,
+        read: impl FnOnce(ItemRef<'_>) -> R,
     ) -> Result<Option<R>, UserStoreError> {
         let Some(user) = self.user.as_ref() else {
+            return Ok(None);
+        };
+        let mut read = Some(read);
+        if let Some(out) = user
+            .with_user_item(token, |item| {
+                read.take().map(|read| read(ItemRef::Arena(item)))
+            })
+            .flatten()
+        {
+            return Ok(Some(out));
+        }
+        let Some(read) = read else {
             return Ok(None);
         };
         let Some(generation) = self.memo.generation else {
@@ -772,7 +808,7 @@ impl PhraseExportCursor {
         let Some(current) = self.current.as_ref() else {
             return Ok(None);
         };
-        Ok(Some(read(&current.phrase)))
+        Ok(Some(read(ItemRef::User(&current.phrase))))
     }
 }
 
@@ -1389,6 +1425,16 @@ mod phrase_cursor_tests {
             ("table", KEY_SYLLABLE_MASK, ExportAssert::KeyTable),
         ] {
             let mut ctx = open();
+            let standalone = tempfile::tempdir().expect("standalone directory");
+            if tag == "table" {
+                // A dense Rust ID outside the syllable inventory has no
+                // ChewingKey encoding. Only the standalone row store can
+                // hold that synthetic input; C parsers produce packed keys.
+                ctx.user = Some(
+                    oxpinyin_user::UserStore::create_standalone(&standalone.path().join("phrases"))
+                        .expect("standalone store"),
+                );
+            }
             let store = ctx.user.as_mut().unwrap();
             store
                 .add_phrase_in(
@@ -1400,7 +1446,7 @@ mod phrase_cursor_tests {
                 .expect("first");
             store
                 .add_phrase_in(USER_DICTIONARY, &"甲".into(), &[key], Some(2))
-                .expect("the add checks lengths only");
+                .expect("representable session key or standalone row");
             let mut cursor = ctx
                 .phrase_export_cursor(u32::from(USER_DICTIONARY))
                 .expect("begin");
@@ -1421,6 +1467,17 @@ mod phrase_cursor_tests {
                 "{tag}: no partial snapshot"
             );
         }
+    }
+
+    #[test]
+    fn session_rejects_a_rust_key_without_a_packed_representation() {
+        let mut ctx = open();
+        let store = ctx.user.as_mut().unwrap();
+        assert!(matches!(
+            store.add_phrase_in(USER_DICTIONARY, &"甲".into(), &[KEY_SYLLABLE_MASK], Some(2)),
+            Err(UserStoreError::InvalidPhrase)
+        ));
+        assert!(store.phrases().unwrap().is_empty());
     }
 
     /// A present item the store cannot decode is read at the pin and dies

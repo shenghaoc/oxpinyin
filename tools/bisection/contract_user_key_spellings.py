@@ -1,6 +1,7 @@
 """User readings whose key is not a typed-input spelling (#1418).
 """
 import ctypes as C
+from pathlib import Path
 
 from contract_abi import B, I, P, S, U, UNTOUCHED, Z, tokens_of, unigram_of
 from contract_case_helpers import _reload_pron_keys, phrase_text_bytes
@@ -78,6 +79,10 @@ def register(case):
             assert import_rows(k, LIBRARY, [(phrase, reading, 5)]) == [True]
             out = {'imported': observe(k)}
             out['saved'] = k.fn('save', B, P)(k.ctx)
+            # Compare the complete chunk bytes, including the compacted
+            # offsets and packed key words (074a2219 phrase_index.cpp:365-390,
+            # :648-675; pinyin.cpp:978-993, :1139).
+            out['saved_chunk'] = Path(k.user, 'user.bin').read_bytes().hex()
             k.fn('free_instance', None, P)(k.inst)
             k.fn('fini', None, P)(k.ctx)
             k._ctx = k._inst = None

@@ -252,10 +252,10 @@ fn a_replayed_item_opens_without_reading_rows_and_trains_from_its_counts() {
     assert_eq!(store.unigram_delta(LIBRARY | 1).expect("delta"), 50);
     assert_eq!(store.unigram_total().expect("total"), 50);
 
-    // One accepted path adds the seed to the matching reading alone, and the
-    // row it writes is that reading's delta over the original.
+    // One accepted path adds the seed to the matching live reading alone.
+    // Session training no longer writes pronunciation rows.
     train(&mut store, 1, key("ni", 3), 1);
-    assert_eq!(pronunciation_rows(&store), 1);
+    assert_eq!(pronunciation_rows(&store), 0);
     assert_eq!(counts(&store, 1), [176, 40]);
     assert_eq!(exported(&store, &base, 1), [176, 40]);
     assert!(store.save().expect("save"));
@@ -514,8 +514,8 @@ fn a_populated_user_library_and_an_independent_index_beside_a_replayed_item() {
     drop(plain);
 
     let mut store = open(&dir, &base);
-    // One reading row: the user phrase's. The replayed item has none.
-    assert_eq!(pronunciation_rows(&store), 1);
+    // Both the user arena and the replayed item own their reading counts.
+    assert_eq!(pronunciation_rows(&store), 0);
     assert_eq!(counts(&store, 1), [130]);
     assert_eq!(view, user_view(&store));
     let phrases = store
@@ -658,9 +658,8 @@ fn a_mixed_profile_keeps_shipped_appended_and_user_state_apart() {
         ],
     );
     let tokens = [LIBRARY | 1, LIBRARY | 2, LIBRARY | 3];
-    // The shipped items own no reading row; the appended item's reading has
-    // one, and so do its text and unigram.
-    assert_eq!(pronunciation_rows(&store), 1);
+    // The appended item has one arena body; no session pronunciation rows.
+    assert_eq!(pronunciation_rows(&store), 0);
     assert_eq!(counts(&store, 1), [107]);
     assert_eq!(counts(&store, 2), [50]);
     assert_eq!(counts(&store, 3), [33]);

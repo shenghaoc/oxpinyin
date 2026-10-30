@@ -272,6 +272,43 @@ case('issue759-export-open-across-import-system', issues=('759',))(export_open_a
 case('issue759-export-open-across-import-user', issues=('759',))(export_open_across_import_user)
 
 
+def user_library_training_bytes(k):
+    """Compare complete USER_FILE chunks after import, training and mask-out.
+
+    At 074a2219, phrase_index.cpp:114-143 trains every wildcard-matching
+    reading; :648-675 compacts the live items and :365-390 stores their
+    packed bytes. pinyin.cpp:1139 and zhuyin.cpp:554 compact before save.
+    The two distinct readings remain in insertion order through that cycle.
+    """
+    phrase = '龘龘'
+    readings = (["da3'da3", "da2'da2"] if k.mode == 'pinyin'
+                else ['ㄉㄚˇ ㄉㄚˇ', 'ㄉㄚˊ ㄉㄚˊ'])
+    out = {'imported': import_rows(k, 7, [(phrase, reading, 5) for reading in readings])}
+    token = [token for token in tokens_of(k, phrase) if token >> 24 == 7][0]
+
+    def save(tag):
+        """Save and record every chunk byte for the current mutation stage."""
+        out[tag + '-saved'] = k.fn('save', B, P)(k.ctx)
+        out[tag + '-bytes'] = Path(k.user, 'user.bin').read_bytes().hex()
+
+    save('import')
+    # USE_TONE without FORCE_TONE admits the zero-tone wildcard on both
+    # facades (074a2219 pinyin_custom2.h:36-37).
+    assert k.fn('set_options', B, P, U)(k.ctx, 1 << 5)
+    assert k.fn('parse_more_full_pinyins', Z, P, S)(k.inst, b'dada') == 4
+    out['trained'] = train_selected_top(k, phrase, token)
+    save('train')
+    out['masked'] = k.fn('mask_out', B, P, U, U)(k.ctx, 0xffffffff, token)
+    # End an empty import batch to mark the context modified after masking.
+    assert import_rows(k, 7, []) == []
+    save('mask')
+    return out
+
+
+for _mode in ('pinyin', 'zhuyin'):
+    case('user-library-training-bytes-' + _mode, mode=_mode)(user_library_training_bytes)
+
+
 def register(driver_case):
     """Register the declarations with the driver's current decorator, in their original order."""
     for name, args, kwargs, fn in _REGISTRATIONS:
