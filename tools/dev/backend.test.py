@@ -56,35 +56,29 @@ class BackendMatrixTests(unittest.TestCase):
 
     def matrix(self, **values):
         out, err = io.StringIO(), io.StringIO()
-        status = check.backend_matrix(out=out, err=err,
-                                      tools=check.native.Tools(
-                                          environment=self.tools.environment(**values)))
+        tools = check.native.Tools(environment=self.tools.environment(**values))
+        with mock.patch.object(tools, 'run', wraps=tools.run) as run:
+            status = check.backend_matrix(out=out, err=err, tools=tools)
+        prefix = ['cargo', 'check', '--locked', '-p', 'oxpinyin-store']
+        selections = [[], ['--no-default-features', '--features', 'kyotocabinet'],
+                      ['--no-default-features', '--features', 'tkrzw'],
+                      ['--no-default-features', '--features', 'bdb'],
+                      ['--no-default-features', '--features', 'kyotocabinet,tkrzw'],
+                      ['--no-default-features', '--features', 'kyotocabinet,bdb'],
+                      ['--no-default-features', '--features', 'tkrzw,bdb'],
+                      ['--no-default-features', '--features', 'kyotocabinet,tkrzw,bdb'],
+                      ['--no-default-features']]
+        self.assertEqual([call.args[0] for call in run.call_args_list],
+                         [prefix + args for args in selections])
         return status, out.getvalue(), err.getvalue()
 
     def test_valid_and_invalid_selections_report_nine_passes(self):
         status, out, err = self.matrix()
         self.assertEqual((status, err), (0, ''))
-        self.assertEqual(out, '''── valid: default (bdb)
-   PASS
-── valid: --no-default-features --features kyotocabinet
-   PASS
-── valid: --no-default-features --features tkrzw
-   PASS
-── valid: --no-default-features --features bdb
-   PASS
-── invalid: --features kyotocabinet,tkrzw
-   PASS (refused by the exactly-one-backend guard)
-── invalid: --features kyotocabinet,bdb
-   PASS (refused by the exactly-one-backend guard)
-── invalid: --features tkrzw,bdb
-   PASS (refused by the exactly-one-backend guard)
-── invalid: --features kyotocabinet,tkrzw,bdb
-   PASS (refused by the exactly-one-backend guard)
-── invalid: --no-default-features (zero backends)
-   PASS (refused by the exactly-one-backend guard)
-
-summary: 9 passed, 0 failed
-''')
+        self.assertEqual([line.strip() for line in out.splitlines()
+                          if line.lstrip().startswith(('PASS', 'FAIL'))],
+                         ['PASS'] * 4 + ['PASS (refused by the exactly-one-backend guard)'] * 5)
+        self.assertIn('summary: 9 passed, 0 failed', out)
 
     def test_a_failing_valid_build_prints_the_tail_and_fails(self):
         cargo = '''#!/bin/sh
@@ -136,31 +130,12 @@ esac
                                  (127, 'cargo: command not found\n'))
         status, out, err = self.matrix()
         self.assertEqual((status, err), (1, ''))
-        self.assertEqual(out, '''── valid: default (bdb)
-   FAIL — expected a clean build; tail:
-     cargo: command not found
-── valid: --no-default-features --features kyotocabinet
-   FAIL — expected a clean build; tail:
-     cargo: command not found
-── valid: --no-default-features --features tkrzw
-   FAIL — expected a clean build; tail:
-     cargo: command not found
-── valid: --no-default-features --features bdb
-   FAIL — expected a clean build; tail:
-     cargo: command not found
-── invalid: --features kyotocabinet,tkrzw
-   FAIL — build refused for another reason:
-── invalid: --features kyotocabinet,bdb
-   FAIL — build refused for another reason:
-── invalid: --features tkrzw,bdb
-   FAIL — build refused for another reason:
-── invalid: --features kyotocabinet,tkrzw,bdb
-   FAIL — build refused for another reason:
-── invalid: --no-default-features (zero backends)
-   FAIL — build refused for another reason:
-
-summary: 0 passed, 9 failed
-''')
+        self.assertEqual([line.strip() for line in out.splitlines()
+                          if line.lstrip().startswith(('PASS', 'FAIL'))],
+                         ['FAIL — expected a clean build; tail:'] * 4
+                         + ['FAIL — build refused for another reason:'] * 5)
+        self.assertEqual(out.count('cargo: command not found'), 4)
+        self.assertIn('summary: 0 passed, 9 failed', out)
 
     def test_a_non_executable_cargo_is_status_126_for_every_valid_selection(self):
         self.tools.add('cargo', '#!/bin/sh\nexit 0\n').chmod(0o644)

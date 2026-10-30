@@ -350,20 +350,40 @@ print('END ' + name, file=sys.stderr, flush=True)
         self.assertNotIn('RuntimeError', out)
         self.assertIn('one or more tools/ Python harness tests failed', err)
 
-    def test_memory_backed_tmpdir_refuses_full_and_selected_runs(self):
+    def test_memory_backed_tmpdir_refuses_only_selections_needing_eviction(self):
+        cold = 'tools/bisection/teardown.test.py'
+        sources = {cold: "print('cold')", 'tools/a.test.py': "print('launched')"}
         for kind in ('tmpfs', 'ramfs'):
-            for files in ((), ['tools/a.test.py']):
+            for files in ((), [cold], [cold, 'tools/a.test.py']):
                 with self.subTest(kind=kind, files=files):
-                    status, out, err = self.fake_run({'tools/a.test.py': "print('launched')"},
-                                                     files, filesystem=kind)
+                    status, out, err = self.fake_run(sources, files, filesystem=kind)
                     self.assertEqual(status, 2)
                     self.assertEqual(out, '')
                     self.assertIn('disk-backed TMPDIR', err)
                     self.assertIn('on ' + kind, err)
+            with mock.patch.object(test_runner, 'memory_backed_tmpdir') as probe:
+                status, out, err = self.fake_run(sources, ['tools/a.test.py'], filesystem=kind)
+            self.assertEqual(status, 0, err)
+            self.assertIn('launched', out)
+            probe.assert_not_called()
+
+    def test_changed_selection_precedes_the_tmpdir_requirement(self):
+        cold = 'tools/bisection/teardown.test.py'
+        sources = {cold: "print('cold')", 'tools/dev/backend.test.py': "print('launched')"}
+        for paths, expected in ((['tools/dev/backend.test.py'], 0), ([cold], 2), (['unknown'], 2), ([], 0)):
+            with self.subTest(paths=paths), \
+                    mock.patch.object(test_runner, 'changed_paths', return_value=paths):
+                status, out, err = self.fake_run(sources, changed='HEAD', filesystem='tmpfs')
+            self.assertEqual(status, expected, out + err)
+            self.assertEqual('disk-backed TMPDIR' in err, expected == 2)
+        status, out, err = self.fake_run(sources, ['tools/missing.test.py'], filesystem='tmpfs')
+        self.assertEqual((status, out), (2, ''))
+        self.assertIn('not a discovered harness file', err)
 
     def test_disk_backed_or_unreadable_tmpdir_runs(self):
         for kind in ('ext4', 'overlay', None):
-            status, out, err = self.fake_run({'tools/a.test.py': "print('launched')"}, filesystem=kind)
+            status, out, err = self.fake_run({'tools/bisection/teardown.test.py': "print('launched')"},
+                                             filesystem=kind)
             self.assertEqual(status, 0, err)
             self.assertIn('launched', out)
         for error in (OSError('unreadable'), ValueError('unknown')):

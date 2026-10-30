@@ -381,7 +381,8 @@ files select themselves; `HARNESS_DEPENDENCIES` in `tools/dev/test_runner.py`
 maps known modules to their tests. Any unknown path or missing mapped test
 selects the full suite. An empty diff selects no files. Explicit files and
 `--changed` cannot be combined. Every mode retains the credential filter,
-existing exclusions and refusal of memory-backed TMPDIRs.
+existing exclusions. Memory-backed TMPDIRs are refused only when the selection
+includes `tools/bisection/teardown.test.py`, whose cold tests need real eviction.
 
 `--changed` is iteration feedback only: `HARNESS_DEPENDENCIES` is hand-maintained
 and can under-select. The full `just test-tools` remains the completion gate.
