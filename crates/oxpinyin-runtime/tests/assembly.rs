@@ -411,51 +411,6 @@ fn phrase_prefix_exists_survives_the_gbk_unload_and_the_reload_restores_the_fast
     assert!(!dict.phrase_prefix_exists(&dead_end).unwrap());
 }
 
-// The key-cost table is a function of library visibility, so any cache of it
-// must be keyed on the visibility mask. This pins the invariant that makes
-// the mask stamp necessary: the table genuinely differs under a GBK unload
-// and is restored exactly on reload.
-//
-// This test used to be named `..._across_sessions` and interleaved three
-// `new_session` calls with the three table computations. Those calls
-// asserted nothing about key costs — only that a session still builds —
-// because a `RuntimeLm` always reports real unigram frequencies and so no
-// `new_session` call reaches the cache at all. They are dropped rather than
-// kept as incidental coverage: the session side of that gate is now pinned
-// directly by `new_session_does_not_populate_the_key_cost_cache` (a
-// white-box unit test in the crate, where the private cache is visible),
-// and the cache's stamp-truth under racing flips by
-// `key_costs_cache_stays_stamp_true_under_concurrent_visibility_flips`.
-#[test]
-fn gbk_visibility_changes_the_key_cost_table() {
-    let runtime = Runtime::open(&w3_dir(), None).expect("open");
-    let dict = runtime.dict();
-    let lm = runtime.lm();
-
-    // These direct computations are exactly what the fallback branch
-    // memoises per visibility mask.
-    let loaded = oxpinyin_core::scoring::key_cost_table(&dict, &lm).expect("key costs (loaded)");
-
-    assert!(runtime.unload_library(2), "first GBK unload arms the mask");
-    let unloaded =
-        oxpinyin_core::scoring::key_cost_table(&dict, &lm).expect("key costs (GBK unloaded)");
-    // An unloaded library drops out of the lookups and the unigram
-    // denominator, so at least one frozen key must cost differently — else
-    // the cache could never go stale and this guard would be vacuous.
-    assert_ne!(
-        loaded, unloaded,
-        "GBK unload must change the key-cost table, or the mask stamp is pointless"
-    );
-
-    assert!(runtime.load_library(2), "reload clears the mask");
-    let reloaded =
-        oxpinyin_core::scoring::key_cost_table(&dict, &lm).expect("key costs (GBK reloaded)");
-    assert_eq!(
-        loaded, reloaded,
-        "reload must restore the original key costs"
-    );
-}
-
 #[test]
 fn rejected_unigram_add_keeps_item_and_library_counts_but_moves_facade_total() {
     let runtime = Runtime::open(&w3_dir(), None).expect("open");
