@@ -843,6 +843,13 @@ its arena length and the proposed arena's garbage bounds are inapplicable
 until that representation exists. Neither file length nor total heap is
 relabeled as a measured arena peak.
 
+For an init-only comparison, `just measure startup --instruction-scopes init`
+captures only the requested instruction window. The default still captures
+init, first candidate and steady. Record selected windows with the results;
+selecting init does not qualify a failed first-candidate or steady scope.
+`--instructions-from` can reuse already qualified windows from a retained
+segment after checking its input, worker and shipping-library hashes.
+
 For the steady cycle, pass `--user-dir "$WORK/profiles/user/user"` (and then
 `user8/user`) to `just measure steady-comparison`. Every native, allocation
 and Callgrind launch gets a fresh private copy, removed by the controller;
