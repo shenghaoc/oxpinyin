@@ -4174,6 +4174,7 @@ impl<S: WriteStore> GenericUserStore<S> {
             if matches!(change, LibraryChange::UserLoad(_)) {
                 counts.extend(crate::store_libpinyin::loaded_pronunciation_counts(
                     state,
+                    &Default::default(),
                     target.dir.as_deref(),
                     originals.layout(),
                     Some(library),

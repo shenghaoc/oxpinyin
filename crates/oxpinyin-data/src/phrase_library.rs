@@ -370,6 +370,17 @@ pub struct PhraseItemView<'a> {
 }
 
 impl<'a> PhraseItemView<'a> {
+    /// Read a complete item from its wire bytes, ignoring trailing bytes as
+    /// `get_phrase_item` does. Refuse a truncated header, text or reading.
+    #[must_use]
+    pub fn from_bytes(bytes: &'a [u8]) -> Option<Self> {
+        crate::chunk_write::validate_phrase_item(bytes).ok()?;
+        let view = Self { bytes };
+        Some(Self {
+            bytes: bytes.get(..view.total_size()?)?,
+        })
+    }
+
     /// The item's bytes as `get_phrase_item` hands them out: the header-derived
     /// length from its offset, nothing beyond it.
     #[must_use]

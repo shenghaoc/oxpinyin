@@ -78,6 +78,7 @@ pub(crate) type KeptIndex = std::collections::BTreeMap<u8, BTreeSet<(u32, Vec<u1
 /// count getter checks only the two header bytes, not the text or keys.
 pub(crate) fn loaded_pronunciation_counts(
     state: &UserState,
+    libraries: &BTreeMap<u8, crate::user_library::UserLibrary>,
     dir: Option<&Path>,
     layout: &oxpinyin_data::user_files::UserFileLayout,
     only: Option<u8>,
@@ -88,7 +89,14 @@ pub(crate) fn loaded_pronunciation_counts(
         if only.is_some_and(|only| only != library) {
             continue;
         }
-        if let Some(items) = state.libraries.get(&library) {
+        if let Some(items) = libraries.get(&library) {
+            counts.extend(items.items().map(|(slot, item)| {
+                (
+                    (u32::from(library) << 24) | slot,
+                    item.n_pronunciations() as u32,
+                )
+            }));
+        } else if let Some(items) = state.libraries.get(&library) {
             counts.extend(
                 items.iter().map(|(&slot, item)| {
                     ((u32::from(library) << 24) | slot, item.prons.len() as u32)
@@ -426,6 +434,7 @@ impl GenericUserStore<DefaultStore> {
         let persistence::LoadedProfile {
             mut loaded,
             replayed,
+            user_libraries,
             overlong_index_keys,
             index_keys,
             index_file_keys,
@@ -433,9 +442,47 @@ impl GenericUserStore<DefaultStore> {
         // Armed as soon as the load has raised the counter: an open that
         // fails from here on drops it and lowers the counter again, so a
         // failed open reads as a finished session, not a crash.
-        let kept_index = unbacked_index(&loaded.state, &originals);
-        let pronunciation_counts =
-            loaded_pronunciation_counts(&loaded.state, user_dir, originals.layout(), None);
+        let mut backed = backed_readings(&loaded.state, &originals);
+        for (&nibble, library) in &user_libraries {
+            for (slot, item) in library.items() {
+                backed.extend(
+                    item.pronunciations()
+                        .map(|pron| ((u32::from(nibble) << 24) | slot, packed_words(pron.keys))),
+                );
+            }
+        }
+        for (&nibble, library) in &replayed {
+            for slot in library.add_candidates().filter(|slot| {
+                !originals
+                    .get(&nibble)
+                    .is_some_and(|original| original.contains_item(*slot))
+            }) {
+                if let Some(bytes) = library.bytes(slot)
+                    && let Some(item) =
+                        oxpinyin_data::phrase_library::PhraseItemView::from_bytes(&bytes)
+                {
+                    backed.extend(
+                        item.pronunciations().map(|pron| {
+                            ((u32::from(nibble) << 24) | slot, packed_words(pron.keys))
+                        }),
+                    );
+                }
+            }
+        }
+        let mut kept_index = KeptIndex::new();
+        for entry in loaded.state.indexed.difference(&backed) {
+            kept_index
+                .entry(phrase_index_library_index(entry.0))
+                .or_default()
+                .insert(entry.clone());
+        }
+        let pronunciation_counts = loaded_pronunciation_counts(
+            &loaded.state,
+            &user_libraries,
+            user_dir,
+            originals.layout(),
+            None,
+        );
         let target = Arc::new(Target {
             dir: user_dir.map(Path::to_path_buf),
             originals: std::sync::RwLock::new(originals),
@@ -457,6 +504,7 @@ impl GenericUserStore<DefaultStore> {
                 &target.originals(),
                 &loaded.library_totals,
                 &replayed,
+                &user_libraries,
             )?;
             Ok((count_tables(txn)?, offset))
         })?;
@@ -564,18 +612,6 @@ pub(crate) fn backed_readings(
     backed
 }
 
-/// The index entries of `state` that no item reading backs, by library.
-pub(crate) fn unbacked_index(state: &UserState, originals: &SystemOriginals) -> KeptIndex {
-    let backed = backed_readings(state, originals);
-    let mut kept = KeptIndex::new();
-    for entry in state.indexed.difference(&backed) {
-        kept.entry(phrase_index_library_index(entry.0))
-            .or_default()
-            .insert(entry.clone());
-    }
-    kept
-}
-
 /// Writes the loaded profile's values into a fresh session store — the
 /// seed half of the value mapping.
 ///
@@ -603,110 +639,68 @@ pub(crate) fn seed_txn(
     originals: &SystemOriginals,
     library_totals: &BTreeMap<u8, u32>,
 ) -> Result<BTreeMap<u8, u32>, StoreError> {
-    seed_txn_with_replay(txn, state, originals, library_totals, &BTreeMap::new())
+    seed_txn_with_replay(
+        txn,
+        state,
+        originals,
+        library_totals,
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+    )
 }
 
-fn seed_txn_with_replay(
+/// The existing owned fixture values and the load's borrowed item share the
+/// same row conversion; no session reader or writer uses these views yet.
+enum SeedItem<'a> {
+    Owned(&'a ChunkItem),
+    View(oxpinyin_data::phrase_library::PhraseItemView<'a>),
+}
+
+fn packed_words(bytes: &[u8]) -> Vec<u16> {
+    bytes
+        .chunks_exact(2)
+        .map(|b| u16::from_le_bytes([b[0], b[1]]))
+        .collect()
+}
+
+impl SeedItem<'_> {
+    fn unigram(&self) -> u32 {
+        match self {
+            Self::Owned(item) => item.unigram,
+            Self::View(item) => item.unigram(),
+        }
+    }
+    fn text(&self) -> std::borrow::Cow<'_, [u8]> {
+        match self {
+            Self::Owned(item) => crate::phrase_table::key_ucs4(&item.phrase).into(),
+            Self::View(item) => (&item.as_bytes()[6..6 + 4 * item.phrase_length()]).into(),
+        }
+    }
+    fn readings(&self) -> impl Iterator<Item = (std::borrow::Cow<'_, [u16]>, u32)> {
+        let count = match self {
+            Self::Owned(item) => item.prons.len(),
+            Self::View(item) => item.n_pronunciations(),
+        };
+        (0..count).filter_map(|i| match self {
+            Self::Owned(item) => item
+                .prons
+                .get(i)
+                .map(|(keys, freq)| (keys.as_slice().into(), *freq)),
+            Self::View(item) => item
+                .pronunciation(i)
+                .map(|pron| (packed_words(pron.keys).into(), pron.freq)),
+        })
+    }
+}
+
+fn seed_system_unigram_deltas(
     txn: &mut impl WriteTxn,
     state: &UserState,
     originals: &SystemOriginals,
-    library_totals: &BTreeMap<u8, u32>,
     replayed: &BTreeMap<u8, crate::replay::ReplayedLibrary>,
-) -> Result<BTreeMap<u8, u32>, StoreError> {
-    let mut unigram_total = 0_u64;
-    // The unigrams seeded per library, as the facade would sum them.
-    let mut seeded: BTreeMap<u8, u32> = BTreeMap::new();
-    let mut alloc_cursor: BTreeMap<u8, Token> = BTreeMap::new();
-
-    // ADD records own text/index rows just like USER_FILE items. MODIFY
-    // records do not gain index rows (pinyin.cpp:566-607 at 074a2219).
-    let mut libraries = state.libraries.clone();
-    for (&nibble, original) in originals.iter() {
-        txn.put(
-            SYSTEM_BASE,
-            &codec::encode_u8(nibble),
-            &codec::encode_u64(u64::from(original.total)),
-        )?;
-        alloc_cursor.insert(
-            nibble,
-            (u32::from(nibble) << 24) | original.range_end.max(1).saturating_sub(1),
-        );
-    }
-    for (&nibble, overrides) in &state.system_overrides {
-        for (&slot, item) in overrides {
-            let Some(item) = item else {
-                continue;
-            };
-            if !originals
-                .get(&nibble)
-                .is_some_and(|original| original.contains_item(slot))
-            {
-                libraries
-                    .entry(nibble)
-                    .or_default()
-                    .insert(slot, item.clone());
-            }
-        }
-    }
-    for (&nibble, items) in &libraries {
-        for (&slot, item) in items {
-            let token = (u32::from(nibble) << 24) | slot;
-            let text = crate::phrase_table::key_ucs4(&item.phrase);
-            txn.put(PHRASE, &codec::encode_token(token), &text)?;
-            let mut library_text = vec![nibble];
-            library_text.extend_from_slice(&text);
-            txn.put(
-                PHRASE_BY_LIB_TEXT,
-                &library_text,
-                &codec::encode_token(token),
-            )?;
-            if nibble == crate::phrase::USER_DICTIONARY {
-                txn.put(PHRASE_BY_TEXT, &text, &codec::encode_token(token))?;
-            }
-            for (seq, (keys, freq)) in (0_u32..).zip(&item.prons) {
-                // The store's pronunciation table keys on the dense
-                // syllable id (`PinyinKey`), while the pin's file format
-                // carries packed `ChewingKey` words — the conversion
-                // belongs here, at the seam between the two models. A
-                // key that names no syllable in this engine's frozen
-                // inventory cannot be represented, so the reading is
-                // dropped rather than stored as a wrong id. The item's
-                // reading order is the insertion order; the user pinyin
-                // index says which readings lookup finds.
-                let Some(ids) = packed_to_pinyin_keys(keys) else {
-                    continue;
-                };
-                let value = PronValue {
-                    count: u64::from(*freq),
-                    seq,
-                    indexed: state.indexed.contains(&(token, keys.clone())),
-                };
-                txn.put(
-                    PRONUNCIATION,
-                    &codec::encode_token_bytes(token, &phrase::encode_keys(&ids)),
-                    &value.encode(),
-                )?;
-            }
-            txn.put(
-                UNIGRAM,
-                &codec::encode_token(token),
-                &codec::encode_u64(u64::from(item.unigram)),
-            )?;
-            unigram_total = unigram_total.saturating_add(u64::from(item.unigram));
-            let sum = seeded.entry(nibble).or_insert(0);
-            *sum = sum.wrapping_add(item.unigram);
-            let cursor = alloc_cursor.entry(nibble).or_insert(0);
-            if token > *cursor {
-                *cursor = token;
-            }
-        }
-    }
-
-    // load_db copies records without normalizing tokens or recreating prefixes.
-    for (key, value) in &state.phrase_table {
-        txn.put(crate::phrase_table::TABLE, key, value)?;
-    }
-
+    unigram_total: &mut u64,
+    seeded: &mut BTreeMap<u8, u32>,
+) -> Result<(), StoreError> {
     // System-token deltas: the training mass on top of the originals. Only
     // the unigram is a stored delta here (the count reads and the library
     // totals consult it); the readings' counts stay in the live items.
@@ -740,7 +734,7 @@ fn seed_txn_with_replay(
                 &key,
                 &codec::encode_u64(prev.saturating_add(delta)),
             )?;
-            unigram_total = unigram_total.saturating_add(delta);
+            *unigram_total = unigram_total.saturating_add(delta);
             let sum = seeded.entry(nibble).or_insert(0);
             *sum = sum.wrapping_add(delta as u32);
         }
@@ -772,11 +766,154 @@ fn seed_txn_with_replay(
                 &key,
                 &codec::encode_u64(prev.saturating_add(delta)),
             )?;
-            unigram_total = unigram_total.saturating_add(delta);
+            *unigram_total = unigram_total.saturating_add(delta);
             let sum = seeded.entry(nibble).or_insert(0);
             *sum = sum.wrapping_add(delta as u32);
         }
     }
+
+    Ok(())
+}
+
+fn seed_txn_with_replay(
+    txn: &mut impl WriteTxn,
+    state: &UserState,
+    originals: &SystemOriginals,
+    library_totals: &BTreeMap<u8, u32>,
+    replayed: &BTreeMap<u8, crate::replay::ReplayedLibrary>,
+    user_libraries: &BTreeMap<u8, crate::user_library::UserLibrary>,
+) -> Result<BTreeMap<u8, u32>, StoreError> {
+    let mut unigram_total = 0_u64;
+    // The unigrams seeded per library, as the facade would sum them.
+    let mut seeded: BTreeMap<u8, u32> = BTreeMap::new();
+    let mut alloc_cursor: BTreeMap<u8, Token> = BTreeMap::new();
+
+    // ADD records own text/index rows just like USER_FILE items. MODIFY
+    // records do not gain index rows (pinyin.cpp:566-607 at 074a2219).
+    let mut libraries: BTreeMap<u8, BTreeMap<u32, &ChunkItem>> = state
+        .libraries
+        .iter()
+        .map(|(&nibble, items)| {
+            (
+                nibble,
+                items.iter().map(|(&slot, item)| (slot, item)).collect(),
+            )
+        })
+        .collect();
+    for (&nibble, original) in originals.iter() {
+        txn.put(
+            SYSTEM_BASE,
+            &codec::encode_u8(nibble),
+            &codec::encode_u64(u64::from(original.total)),
+        )?;
+        alloc_cursor.insert(
+            nibble,
+            (u32::from(nibble) << 24) | original.range_end.max(1).saturating_sub(1),
+        );
+    }
+    for (&nibble, overrides) in &state.system_overrides {
+        for (&slot, item) in overrides {
+            let Some(item) = item else {
+                continue;
+            };
+            if !originals
+                .get(&nibble)
+                .is_some_and(|original| original.contains_item(slot))
+            {
+                libraries.entry(nibble).or_default().insert(slot, item);
+            }
+        }
+    }
+    let mut seed = |nibble: u8, slot: u32, item: SeedItem<'_>| -> Result<(), StoreError> {
+        let token = (u32::from(nibble) << 24) | slot;
+        let text = item.text();
+        txn.put(PHRASE, &codec::encode_token(token), &text)?;
+        let mut library_text = vec![nibble];
+        library_text.extend_from_slice(&text);
+        txn.put(
+            PHRASE_BY_LIB_TEXT,
+            &library_text,
+            &codec::encode_token(token),
+        )?;
+        if nibble == crate::phrase::USER_DICTIONARY {
+            txn.put(PHRASE_BY_TEXT, &text, &codec::encode_token(token))?;
+        }
+        for (seq, (keys, freq)) in (0_u32..).zip(item.readings()) {
+            // The store's pronunciation table keys on the dense
+            // syllable id (`PinyinKey`), while the pin's file format
+            // carries packed `ChewingKey` words — the conversion
+            // belongs here, at the seam between the two models. A
+            // key that names no syllable in this engine's frozen
+            // inventory cannot be represented, so the reading is
+            // dropped rather than stored as a wrong id. The item's
+            // reading order is the insertion order; the user pinyin
+            // index says which readings lookup finds.
+            let Some(ids) = packed_to_pinyin_keys(&keys) else {
+                continue;
+            };
+            let value = PronValue {
+                count: u64::from(freq),
+                seq,
+                indexed: state.indexed.contains(&(token, keys.into_owned())),
+            };
+            txn.put(
+                PRONUNCIATION,
+                &codec::encode_token_bytes(token, &phrase::encode_keys(&ids)),
+                &value.encode(),
+            )?;
+        }
+        txn.put(
+            UNIGRAM,
+            &codec::encode_token(token),
+            &codec::encode_u64(u64::from(item.unigram())),
+        )?;
+        unigram_total = unigram_total.saturating_add(u64::from(item.unigram()));
+        let sum = seeded.entry(nibble).or_insert(0);
+        *sum = sum.wrapping_add(item.unigram());
+        let cursor = alloc_cursor.entry(nibble).or_insert(0);
+        if token > *cursor {
+            *cursor = token;
+        }
+        Ok(())
+    };
+    for (&nibble, items) in &libraries {
+        for (&slot, item) in items {
+            seed(nibble, slot, SeedItem::Owned(item))?;
+        }
+    }
+    for (&nibble, library) in user_libraries {
+        for (slot, item) in library.items() {
+            seed(nibble, slot, SeedItem::View(item))?;
+        }
+    }
+    for (&nibble, library) in replayed {
+        for slot in library.add_candidates().filter(|slot| {
+            !originals
+                .get(&nibble)
+                .is_some_and(|original| original.contains_item(*slot))
+        }) {
+            if let Some(bytes) = library.bytes(slot)
+                && let Some(item) =
+                    oxpinyin_data::phrase_library::PhraseItemView::from_bytes(&bytes)
+            {
+                seed(nibble, slot, SeedItem::View(item))?;
+            }
+        }
+    }
+
+    // load_db copies records without normalizing tokens or recreating prefixes.
+    for (key, value) in &state.phrase_table {
+        txn.put(crate::phrase_table::TABLE, key, value)?;
+    }
+
+    seed_system_unigram_deltas(
+        txn,
+        state,
+        originals,
+        replayed,
+        &mut unigram_total,
+        &mut seeded,
+    )?;
 
     // The alloc cursors: one past the highest loaded token per library.
     for (nibble, max_token) in alloc_cursor {
@@ -1063,6 +1200,96 @@ mod tests {
 
     fn versions() -> SystemVersions {
         SystemVersions::for_this_build(7, 14)
+    }
+
+    #[test]
+    fn user_library_and_add_views_seed_identical_rows_to_owned_items() {
+        use crate::session_values::SessionValues;
+        use crate::user_library::UserLibrary;
+        use oxpinyin_data::chunk_write::{build_chunk, encode_phrase_item};
+        use oxpinyin_data::user_files::LogRecord;
+
+        let ni = ChewingKey::from_pinyin("ni").unwrap().to_packed();
+        let eng = ChewingKey::from_pinyin("eng").unwrap().to_packed();
+        let items = BTreeMap::from([
+            (
+                1,
+                ChunkItem {
+                    phrase: vec![0x4f60],
+                    unigram: 11,
+                    prons: vec![
+                        (vec![ni], 3),
+                        (vec![eng], 7),
+                        (vec![ni], 9),
+                        (vec![0xffff], 1),
+                    ],
+                },
+            ),
+            (
+                1024,
+                ChunkItem {
+                    phrase: vec![0x8000_0000, 0],
+                    unigram: 13,
+                    prons: vec![(vec![ni, ni], 13)],
+                },
+            ),
+        ]);
+        let added = ChunkItem {
+            phrase: vec![0x597d],
+            unigram: 17,
+            prons: vec![(vec![ni | 0x8000], 5), (vec![ni], 12)],
+        };
+        let originals = originals();
+        let legacy = UserState {
+            libraries: BTreeMap::from([(5, items.clone()), (7, items.clone())]),
+            system_overrides: BTreeMap::from([(1, BTreeMap::from([(3, Some(added.clone()))]))]),
+            ..UserState::default()
+        }
+        .index_every_reading();
+        let mut views = legacy.clone();
+        views.libraries.clear();
+        views.system_overrides.clear();
+        let libraries: BTreeMap<_, _> = [5, 7]
+            .into_iter()
+            .map(|nibble| {
+                let file = build_chunk(&items.clone().into_iter().collect::<Vec<_>>()).unwrap();
+                (nibble, UserLibrary::load(&file).unwrap())
+            })
+            .collect();
+        let mut merge = crate::replay::Merge::new(originals.get(&1));
+        assert!(
+            merge
+                .apply(LogRecord::Add {
+                    token: 0x0100_0003,
+                    new_item: encode_phrase_item(&added).unwrap(),
+                })
+                .is_ok()
+        );
+        let mut skipped = Vec::new();
+        let (_, owned, retained) = merge.finish_views(&mut skipped, &"test");
+        assert!(
+            owned.is_empty(),
+            "ADD must remain a view until rows are seeded"
+        );
+        assert!(skipped.is_empty());
+        let replayed = BTreeMap::from([(1, retained.unwrap())]);
+        let totals = BTreeMap::from([(1, 117), (5, 1000), (7, 24)]);
+        let before = SessionValues::<DefaultStore>::transient();
+        let after = SessionValues::<DefaultStore>::transient();
+        let before_offsets = before
+            .write(|txn| seed_txn(txn, &legacy, &originals, &totals))
+            .unwrap();
+        let after_offsets = after
+            .write(|txn| {
+                seed_txn_with_replay(txn, &views, &originals, &totals, &replayed, &libraries)
+            })
+            .unwrap();
+        assert_eq!(before_offsets, after_offsets);
+        let snapshot = |db: &SessionValues<DefaultStore>| match db {
+            SessionValues::Memory(tables) => tables.borrow().clone(),
+            SessionValues::Native(_) => panic!("test uses session rows"),
+        };
+        assert_eq!(snapshot(&before), snapshot(&after));
     }
 
     fn tempdir(name: &str) -> PathBuf {

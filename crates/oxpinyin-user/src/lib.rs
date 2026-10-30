@@ -53,6 +53,7 @@ mod session_values;
 mod store;
 pub(crate) mod store_libpinyin;
 mod system_items;
+mod user_library;
 
 pub use lookup::UserLookup;
 pub use oxpinyin_data::c_stderr;

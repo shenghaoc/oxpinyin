@@ -29,7 +29,7 @@ use oxpinyin_data::row_format::pinyin_index::{
 };
 use oxpinyin_data::table_entries::Entries;
 
-use crate::persistence::{IndexKeys, SystemOriginals, UserState};
+use crate::persistence::IndexKeys;
 use crate::phrase::MAX_PHRASE_LENGTH;
 
 /// What one key length's entry holds.
@@ -430,14 +430,12 @@ impl IndexKeys {
 /// The records of the loaded file that the loaded readings do not derive,
 /// by key: the pin keeps every record as it read it, tails included.
 pub(crate) fn file_tails(
-    state: &UserState,
-    originals: &SystemOriginals,
+    rows: &[oxpinyin_data::row_format::pinyin_index::PinyinIndexItem],
     keys: &std::collections::BTreeSet<Vec<u8>>,
     records: Vec<(Vec<u8>, Vec<u8>)>,
 ) -> BTreeMap<Vec<u8>, Vec<u8>> {
-    let rows = crate::persistence::chewing_rows(state, originals);
     let derived: BTreeMap<Vec<u8>, Vec<u8>> = crate::persistence::with_kept_keys(
-        oxpinyin_data::table_entries::pinyin_index_entries(&rows),
+        oxpinyin_data::table_entries::pinyin_index_entries(rows),
         keys,
     )
     .into_iter()
