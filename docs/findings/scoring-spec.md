@@ -25,8 +25,7 @@ first, second, third. Ordinal evidence constrains the constants — it produces
 inequalities — but does not determine them. This SPEC states the inequalities
 it can prove and picks values satisfying them.
 
-Reading upstream C++ to recover the numbers is expected under AGENTS.md's
-Source policy. The values below are still marked provisional: they were
+Reading upstream C++ to recover the numbers follows the [source policy](../source-policy.md). The values below are still marked provisional: they were
 settled by the parity sweep, not yet source-verified against the pinned
 upstream implementation.
 
@@ -71,7 +70,7 @@ model_cost     = −log₂ P(w_n | w_n-1) × COST_PER_BIT
 The numerator and denominator are combined as **one exact integer ratio**
 before the logarithm, without intermediate rounding. The cost derived from
 Rust std `f64::log2()` is deterministic per host
-([constitution §6](../../AGENTS.md#constitution)), not guaranteed identical
+([constitution §6](../constitution.md)), not guaranteed identical
 across hosts. A last-bit difference between hosts is class (a).
 
 | Constant | Value | Status |

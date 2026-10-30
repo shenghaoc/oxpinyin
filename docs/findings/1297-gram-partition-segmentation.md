@@ -2,7 +2,7 @@
 
 Status: **accepted** · 2026-10-29T13:19:09Z (`date -u`) · Refs #1297.
 Policy: the 2026-10-29 UTC “No ported external-library internals” ruling
-in [AGENTS.md, Source policy](../../AGENTS.md#source-policy), merged in #1402.
+in [Source policy](../source-policy.md), merged in #1402.
 The [inventory](glib-libc-inventory.md#executable-copies-of-external-library-algorithms-2026-10-29-utc) identifies
 stored gram searches as C and carried pinyin entry searches as D.
 Records use the digest format merged in #1400.
