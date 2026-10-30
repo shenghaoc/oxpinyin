@@ -984,8 +984,9 @@ pub fn export_state<S: WriteStore>(
 type StoredReading = (u32, Vec<u16>, u64, bool);
 
 /// The store's dense syllable ids for a reading's packed `ChewingKey`
-/// words; `None` when any word names no syllable in the frozen
-/// inventory. This is the boundary conversion the two key models need —
+/// words, decoded from the words' fields; `None` when any word is one no
+/// pin parser writes (the zero key, an invalid field combination, a tone
+/// past 5). This is the boundary conversion the two key models need —
 /// `SyllableKey::index()` is a dense id, `ChewingKey::to_packed()` the
 /// 16-bit bit-field the pin's files carry.
 pub(crate) fn packed_to_pinyin_keys(packed: &[u16]) -> Option<Vec<crate::phrase::PinyinKey>> {
@@ -993,7 +994,7 @@ pub(crate) fn packed_to_pinyin_keys(packed: &[u16]) -> Option<Vec<crate::phrase:
         .iter()
         .map(|&bits| {
             let key = oxpinyin_core::ChewingKey::from_packed(bits);
-            let syllable = oxpinyin_core::SyllableKey::from_text(key.pinyin_spelling())?;
+            let syllable = oxpinyin_core::SyllableKey::from_chewing_key(key)?;
             phrase::toned_key(syllable.index(), key.tone)
         })
         .collect()
@@ -2181,6 +2182,106 @@ mod tests {
         assert_eq!(kept(&store), set_aside);
         assert!(readings(&store).is_empty());
         drop(store);
+        std::fs::remove_dir_all(dir).expect("cleanup");
+    }
+
+    /// Every key the pin's parsers can write is a `content_table` row
+    /// (`pinyin_parser2.cpp:114`, `:146`, `zhuyin_parser2.cpp:95`), so each
+    /// of the 440 syllable keys decodes from its packed fields and renders
+    /// back to the same packed word at every tone the pin allows (0..=5,
+    /// `chewing_enum.h:92-99`) — the option-only `eng`/`nun` and the
+    /// zhuyin-only `den` included.
+    #[test]
+    fn every_pin_producible_key_decodes_and_renders() {
+        use oxpinyin_core::{SYLLABLE_KEY_COUNT, SyllableKey};
+        for index in 0..SYLLABLE_KEY_COUNT {
+            let syllable = SyllableKey::from_index(index).expect("index");
+            let chewing = ChewingKey::from_pinyin(syllable.text()).expect("content row");
+            for tone in 0..=5 {
+                let packed = chewing.with_tone(tone).to_packed();
+                let ids = packed_to_pinyin_keys(&[packed])
+                    .unwrap_or_else(|| panic!("{} tone {tone} dropped", syllable.text()));
+                assert_eq!(ids, [phrase::toned_key(index, tone).expect("toned")]);
+                assert_eq!(pinyin_keys_to_packed(&ids), Some(vec![packed]));
+            }
+        }
+        for (spelling, tone) in [("eng", 0), ("eng", 5), ("nun", 1), ("den", 4)] {
+            let packed = ChewingKey::from_pinyin(spelling)
+                .expect("content row")
+                .with_tone(tone)
+                .to_packed();
+            let ids = packed_to_pinyin_keys(&[packed]).expect("decoded");
+            assert_eq!(phrase::key_tone(ids[0]), tone);
+            assert_eq!(
+                SyllableKey::from_index(phrase::key_syllable(ids[0])).map(SyllableKey::text),
+                Some(spelling)
+            );
+        }
+    }
+
+    /// A word no pin parser writes (a foreign file) has no key and must not
+    /// panic: the zero key, a field combination `chewing_key_table` marks
+    /// invalid, a tone past 5, and the padding bit alone.
+    #[test]
+    fn foreign_packed_words_decode_to_none_without_panic() {
+        let invalid = ChewingKey::new(31, 3, 31, 0).to_packed();
+        for packed in [0_u16, invalid, 0xffff, 0x8000] {
+            assert_eq!(packed_to_pinyin_keys(&[packed]), None, "{packed:#06x}");
+        }
+        let ni = ChewingKey::from_pinyin("ni").expect("ni");
+        for tone in [6, 7] {
+            assert_eq!(
+                packed_to_pinyin_keys(&[ni.with_tone(tone).to_packed()]),
+                None
+            );
+        }
+    }
+
+    /// The pin's import writes `eng` (from `egn`, `emg`), `nun` (from
+    /// `nuen`) and `den` (zhuyin `ㄉㄣ`); a save and reopen keeps each
+    /// reading, as the pin's does.
+    #[test]
+    fn option_and_zhuyin_only_readings_survive_save_and_reopen() {
+        use oxpinyin_core::SyllableKey;
+        let dir = tempdir("option-only-reopen");
+        let cases = [("嗯", "eng"), ("嫩", "nun"), ("扽", "den")];
+        let mut tokens = Vec::new();
+        {
+            let mut store =
+                UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+                    .expect("open");
+            for (text, spelling) in cases {
+                let index = SyllableKey::from_canonical_text(spelling)
+                    .expect("key")
+                    .index();
+                let keys = vec![phrase::toned_key(index, 0).expect("key")];
+                tokens.push(
+                    store
+                        .add_phrase_in(crate::USER_DICTIONARY, &text.into(), &keys, Some(5))
+                        .expect("add"),
+                );
+            }
+            // `pinyin_end_add_phrases` arms the save (`pinyin.cpp:657-658`).
+            store.mark_modified();
+            assert!(store.save().expect("save"));
+        }
+        let store = UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+            .expect("reopen");
+        for (token, (_, spelling)) in tokens.into_iter().zip(cases) {
+            let phrase = store.phrase(token).expect("phrase").expect("present");
+            let spellings: Vec<_> = phrase
+                .pronunciations()
+                .iter()
+                .map(|reading| {
+                    reading
+                        .keys()
+                        .iter()
+                        .map(|&key| phrase::key_pinyin_string(key))
+                        .collect::<Vec<_>>()
+                })
+                .collect();
+            assert_eq!(spellings, [vec![Some(spelling.to_owned())]]);
+        }
         std::fs::remove_dir_all(dir).expect("cleanup");
     }
 
