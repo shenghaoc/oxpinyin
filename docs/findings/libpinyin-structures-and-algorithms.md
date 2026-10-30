@@ -816,6 +816,43 @@ to O(B + M), for B row bytes. No key vector is allocated per record, and
 no work moves into init. Other consumers that need owned pronunciations
 still use `decode_items`, over the same validated record views.
 
+## Narrow token getters (2026-10-30 UTC)
+
+Sources read in `/workspace/token-getters-pin`, checked out at
+`074a2219c90feaf962d0d24f034514033ece5f99`: `src/pinyin.cpp:1627-1645,
+2786-2833`, `src/zhuyin.cpp:1096-1113,1778-1825`,
+`src/storage/phrase_index.h:100-125,646-652`, and
+`src/storage/phrase_index.cpp:33-43,56-92,180-205`.
+The facade selects the loaded sub-index and the token's offset. A missing
+library or slot fails before phrase outputs are written. Count and frequency
+outputs are zeroed first; the nth getter clears its GArray first. Text copies
+the stored words and uses GLib-owned output. The nth getter copies the selected
+insertion-ordered reading, ignoring its failure result; the existing class-(b)
+zero-key treatment for out-of-range readings remains. Appending a new reading
+keeps earlier positions; accumulating an existing reading does not reorder it.
+The pin's field reads take O(1) for metadata and O(L) for text or one reading,
+where L is the stored phrase length, without materializing other readings.
+
+`RuntimeDict::token_text`, `token_pronunciation_count`, `token_exists` and
+`token_nth_pronunciation` keep those fields separate for mapped system items,
+live system overrides and USER_FILE items. Both C facades and prediction text
+assembly use these narrow reads. No caller needs the old whole-item
+`token_introspection`, so it is removed. C allocation, array operations and
+structured-key packing remain at the existing boundaries.
+
+The current user row store has pronunciation keys in table order and insertion
+sequences in their values. `UserStore::nth_pronunciation` selects the nth
+`(sequence, scan position)` metadata pair, then copies and decodes only that
+row's keys. Gaps, equal sequences and legacy tail rows retain the existing
+stable order. For k readings, this takes O(k + L) time and O(k + L) temporary
+space rather than rebuilding text and all keys and sorting in O(k log k + kL)
+time with O(kL) space on every nth call. The mapped and override paths copy
+only O(L) keys. Text reads never decode readings, and existence/length reads
+do not copy their payload. These methods expose no row-store layout to runtime;
+UserLibrary can replace the remaining metadata scan behind the same seam.
+The row-store asymptotic gap against the pin remains; no constant-time user
+reading claim or instruction-count improvement is inferred without measurement.
+
 ## Ordered bulk user-phrase reads (2026-10-29 UTC)
 
 Pin sources read with `git show 074a2219:<path>` in

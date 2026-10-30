@@ -11,7 +11,9 @@ use std::path::PathBuf;
 
 use oxpinyin_core::{Dictionary, LanguageModel, PhraseToken, SyllableKey};
 use oxpinyin_engine::{EmptyConfigSource, KeyOutcome, Selection};
-use oxpinyin_runtime::{OpenError, Runtime, RuntimeSession, TableConfError};
+use oxpinyin_runtime::{
+    OpenError, Runtime, RuntimeSession, TableConfError, TokenPronunciationKeys,
+};
 use oxpinyin_user::{FIRST_USER_TOKEN, PinyinKey, SENTENCE_START};
 
 /// A fresh, uniquely named scratch dir, removed on drop (including unwind).
@@ -77,6 +79,71 @@ fn token_text_reads_live_items_and_obeys_library_visibility() {
         );
     }
     assert_eq!(dict.token_text(0), None);
+}
+
+#[test]
+fn narrow_token_reads_preserve_item_order_and_visibility() {
+    let runtime = Runtime::open(&w3_dir(), None).expect("runtime");
+    let dict = runtime.dict();
+    let mut store = runtime.user_store().expect("transient user store");
+    let system = dict.system().tokens_for_text("你").expect("lookup")[0];
+    let packed = |token, nth| {
+        let reading = dict.token_nth_pronunciation(token, nth).expect("item");
+        assert_eq!(reading.phrase_length, 1);
+        reading.keys.map(|keys| match keys {
+            TokenPronunciationKeys::Stored(keys) => keys,
+            TokenPronunciationKeys::Structured(keys) => keys
+                .into_iter()
+                .map(|key| {
+                    let syllable =
+                        SyllableKey::from_index(oxpinyin_user::key_syllable(key)).unwrap();
+                    oxpinyin_core::ChewingKey::from_pinyin(syllable.text())
+                        .unwrap()
+                        .with_tone(oxpinyin_user::key_tone(key))
+                        .to_packed()
+                })
+                .collect(),
+        })
+    };
+    let original = packed(system, 0).expect("system reading");
+    assert!(dict.token_exists(system));
+    assert_eq!(packed(system, usize::MAX), None);
+    let ni = SyllableKey::from_text("ni").unwrap();
+    let keys = [oxpinyin_user::toned_key(ni.index(), 3).unwrap()];
+    store
+        .add_system_phrase_in(1, Some(system), &"你".into(), &keys, Some(5))
+        .expect("override");
+    assert_eq!(packed(system, 0).as_ref(), Some(&original));
+    // Descending tones make insertion order differ from table-key order.
+    let user = store.add_phrase(&"词".into(), &keys, Some(5)).unwrap();
+    let second = [oxpinyin_user::toned_key(ni.index(), 1).unwrap()];
+    store.add_phrase(&"词".into(), &second, Some(9)).unwrap();
+    for (nth, tone) in [(0, 3), (1, 1)] {
+        assert_eq!(
+            packed(user, nth),
+            Some(vec![
+                oxpinyin_core::ChewingKey::from_pinyin("ni")
+                    .unwrap()
+                    .with_tone(tone)
+                    .to_packed()
+            ])
+        );
+    }
+    assert_eq!(dict.token_pronunciation_count(user), Some(2));
+    assert_eq!(packed(user, 2), None);
+    for (library, token) in [(1, system), (7, user)] {
+        assert!(dict.token_exists(token));
+        assert!(dict.unload_library(library));
+        assert!(!dict.token_exists(token));
+        assert!(dict.token_nth_pronunciation(token, 0).is_none());
+        assert_eq!(dict.token_pronunciation_count(token), None);
+        assert!(dict.load_library(library));
+        assert!(dict.token_exists(token));
+    }
+    for token in [0, 0x01ff_ffff, 0x07ff_ffff, u32::MAX] {
+        assert!(!dict.token_exists(token));
+        assert!(dict.token_nth_pronunciation(token, 0).is_none());
+    }
 }
 
 #[test]
