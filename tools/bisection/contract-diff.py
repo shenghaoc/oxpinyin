@@ -1151,7 +1151,7 @@ def run_main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     FUNCTION_ORDER['add_arguments'](parser)
     parser.add_argument('--teardown', action='store_true', help='native teardown measurement workload')
-    parser.add_argument('--teardown-stage', choices=('provision', 'verify', 'pilot', 'confirm', 'repeat', 'multi', 'attribute', 'init-attribute'), default='verify')
+    parser.add_argument('--teardown-stage', choices=('provision', 'verify', 'pilot', 'confirm', 'repeat', 'multi', 'attribute', 'init-attribute', 'user-verify', 'user-phrase'), default='verify')
     parser.add_argument('--teardown-attribute-window', choices=('init', 'first-candidate'), default='init',
                         help='window for the existing init-attribute probes; first-candidate retains RandomState Ir ranges')
     parser.add_argument('--teardown-init-probes', default='count,sample,sample-coarse,faults,trace,pages',

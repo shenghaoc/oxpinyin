@@ -16,7 +16,6 @@ from .. import mman, slot
 from . import cold, cold_linux, instructions, native, pages, stats, worker
 
 ROOT = Path(__file__).resolve().parents[3]
-PROFILES = ('empty', 'modest', 'phrases', 'journals')
 ARMS = ('base', 'pr', 'control')
 TIMING_METRICS = ('lib_load', 'init', 'config', 'alloc', 'first_candidate_phase', 'ttfc',
                   'setup_plus_first_candidate', 'drop_instance', 'fini', 'process_wall')
@@ -43,6 +42,8 @@ def module(path, name):
 
 
 PROFILE = module(ROOT / 'tools/bisection/startup_profile.py', 'startup_profile')
+PROFILES = PROFILE.PROFILES
+DEFAULT_PROFILES = ('empty', 'modest', 'phrases', 'journals')
 
 
 def emit(kind, **values):
@@ -118,7 +119,7 @@ def parser():
     p.add_argument('--profiles-dir', type=Path)
     p.add_argument('--work-dir', type=Path, help='owned parent directory; default is TMPDIR')
     p.add_argument('--facades', choices=('pinyin', 'zhuyin', 'both'), default='both')
-    p.add_argument('--profiles', default=','.join(PROFILES))
+    p.add_argument('--profiles', default=','.join(DEFAULT_PROFILES))
     p.add_argument('--stage', choices=('verify', 'instrument', 'run', 'memory'), default='run',
                    help='memory skips timing/profilers; Linux retains full smaps at lib_load/init')
     p.add_argument('--rounds', type=positive, help='timed rounds, default 60 (30 with lazy binding)')
@@ -132,6 +133,8 @@ def parser():
     p.add_argument('--function-order', action='append', default=[], metavar='ARM/FACADE=POLICY')
     p.add_argument('--recheck-instructions', type=Path, help='re-evaluate retained JSONL without running workers')
     p.add_argument('--instructions-from', type=Path, help='reuse qualified retained profiler scopes; new verification/timing/memory are a separate segment')
+    p.add_argument('--instruction-scopes', default='init,first_candidate,steady',
+                   help='comma-separated instruction windows; default captures all three')
     return p
 
 
@@ -175,10 +178,15 @@ def validate(args):
     selected = args.profiles.split(',')
     if not selected or len(set(selected)) != len(selected) or any(name not in PROFILES for name in selected):
         raise ValueError('unknown or repeated profile')
+    scopes = args.instruction_scopes.split(',')
+    if len(set(scopes)) != len(scopes) or any(scope not in ('init', 'first_candidate', 'steady') for scope in scopes):
+        raise ValueError('unknown or repeated instruction scope')
     profiles = {}
     for name in selected:
         root = args.profiles_dir / name
         user, witness, manifest = root / 'user', root / 'witness.txt', root / 'profile.manifest'
+        if not manifest.is_file():
+            raise ValueError(f'missing profile manifest: {manifest} (provision through the pin)')
         PROFILE.check(user, manifest)
         if name != 'empty' and (not witness.is_file() or not witness.read_text().strip()):
             raise ValueError(f'populated profile {name} requires a nonempty witness.txt (provision through the pin)')
@@ -426,7 +434,8 @@ def instruction_range_result(counts, profiles):
     return result
 
 
-def instrument(campaign, libraries, facade, name, user, references, *, completed=None, backends=None):
+def instrument(campaign, libraries, facade, name, user, references, *, completed=None, backends=None,
+               scopes=('init', 'first_candidate', 'steady')):
     """Run or reuse qualified instruction scopes and emit their control results.
 
     On Linux, take two init samples and five first-candidate/steady samples
@@ -442,7 +451,7 @@ def instrument(campaign, libraries, facade, name, user, references, *, completed
     # Select BDB only from every arm's checked DT_NEEDED backend, never an env
     # default. Unknown and non-BDB init scopes keep the exact rule and STOP.
     bdb_init = backends is not None and all(backends.get(arm) == 'bdb' for arm in ARMS)
-    for scope in ('init', 'first_candidate', 'steady'):
+    for scope in scopes:
         retained = completed.get((facade, name, scope), {}) if completed else {}
         if (retained.get('verdict') in ('VALID', 'RANGE-QUALIFIED', 'DIAGNOSTIC')
                 and not (scope == 'init' and retained.get('rule') == 'bdb-init' and not bdb_init)):
@@ -646,7 +655,8 @@ def campaign_run(args, profiles, work, admission):
                         for f, p in paths.items()} for a, paths in libraries.items()},
          timing_rounds=0 if args.stage == 'memory' else args.rounds,
          warmups=0 if args.stage == 'memory' else args.warmups, memory_rounds=args.memory_rounds,
-         memory_warmups=args.memory_warmups, native_information_only=True,
+         memory_warmups=args.memory_warmups, instruction_scopes=args.instruction_scopes.split(','),
+         native_information_only=True,
          **(dict(memory_only=True, smaps_points=['lib_load', 'init'] if sys.platform == 'linux' else [])
             if args.stage == 'memory' else {}))
     for name, user in profiles.items():
@@ -669,6 +679,7 @@ def campaign_run(args, profiles, work, admission):
                 if args.stage != 'memory':
                     instrument(campaign, libraries, facade, name, user, references,
                                completed=retained['scopes'] if retained else None,
+                               scopes=args.instruction_scopes.split(','),
                                backends={a: rows[facade] for a, rows in backends.items()} if backends else None)
                 if args.stage == 'instrument':
                     continue
