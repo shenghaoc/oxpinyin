@@ -705,7 +705,37 @@ just heavy -- uv run --no-project --managed-python python -B -X lazy_imports=nor
 # After the bounded preflight passes, change user-verify to user-phrase.
 ```
 
-`user-verify` checks the census, getter/enumeration/export hashes and saved
+To select only needed collections, `--teardown-user-stages` accepts a
+comma-separated subset of `timing,memory,allocations,heap,instructions`.
+Omitting it retains all stages and their existing rounds. A selection without
+timing still runs one untimed equivalence pass per arm before collecting.
+Explicit selections provision only the named cases, plus `user8` when the
+full workload needs its write recipe; existing manifests are validated and reused.
+
+For only `user8`'s R0–R1 instruction counts, use the existing read anchor:
+
+```bash
+just heavy -- uv run --no-project --managed-python python -B -X lazy_imports=normal \
+  tools/bisection/contract-diff.py bdb "$PIN_PREFIX" "$PR_PREFIX/lib/libpinyin.so" \
+  --base-pinyin-so "$BASE_PREFIX/lib/libpinyin.so" --teardown \
+  --teardown-stage user-phrase --teardown-facades pinyin --teardown-cases user8 \
+  --teardown-user-stages instructions --teardown-user-ir-window read \
+  --teardown-work-dir "$WORK"
+```
+
+`read` requires the instruction-only selection. The same native worker executes
+the unchanged 10,000-read unit and cleans up without enumeration, export or
+writes. Init and instance/GArray allocation remain outside the collection window.
+One untimed read-equivalence pass checks all arms' read hashes, diagnostics and
+final profiles, followed by three fresh Callgrind rounds per arm, with the existing
+rotation, parser and byte-identical PR control. No timing, smaps, allocation or
+Massif collection runs. The `user-selection` record names the narrower scope;
+it does not establish equivalence for omitted operations. `user-verify` accepts
+the same selectors for a standalone preflight, but the instruction run already
+performs it. Report `user-ir`'s counts and ranges from one run; do not retry an
+inconclusive comparison.
+
+By default, `user-verify` checks the census, getter/enumeration/export hashes and saved
 `user.bin` bytes against the pin. The broader `verify` stage still checks its
 full candidate transcripts and reopen behavior; a mismatch there stays
 NOT COMPARABLE and must be reported separately. A passing bounded preflight
@@ -721,7 +751,7 @@ Pass the existing `--teardown-summary-dir` option with an empty local
 directory to retain complete preflight observations and their hashes for
 diagnosis, including failures. This never changes the preflight verdict.
 
-`user-phrase` rotates base, PR, the byte-identical PR control and pin. It uses
+`user-phrase` rotates base, PR, the byte-identical PR control and pin. By default it uses
 60 native timing rounds after three discarded rounds and 30 separate smaps
 rounds after two discarded rounds, then separate fresh-process
 Memcheck, Massif and three Callgrind rounds per operation. Its boundaries are:
