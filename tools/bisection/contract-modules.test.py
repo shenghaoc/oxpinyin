@@ -113,6 +113,7 @@ MODULES = {
     'contract_punctuation': ((), ('contract_abi', 'contract_fixtures')),
     'contract_training_constraints': ((), ('contract_abi',)),
     'contract_user_stored_words': ((), ('contract_abi', 'contract_case_helpers', 'contract_fixtures')),
+    'contract_user_key_spellings': ((), ('contract_abi', 'contract_case_helpers', 'contract_fixtures')),
     'contract_toned_keys_zhuyin_refusals': ((), ('contract_abi', 'contract_case_helpers', 'contract_fixtures')),
     'contract_final_step_surface': ((), ('contract_abi', 'contract_case_helpers', 'contract_fixtures')),
     'contract_zero_key_guess': ((), ('contract_abi',)),
@@ -441,7 +442,7 @@ class ModuleBoundaryTests(unittest.TestCase):
     def test_moved_case_sections_register_contiguously_at_their_original_positions(self):
         names = list(driver.CASES)
         sections = (
-            ('contract_default_options', 'c-string-input/zhuyin-character-offset-invalid-past-matrix',
+            ('contract_default_options', 'user-key-spelling/zhuyin-eng',
              'default-option-parse', 'explicit-incomplete-parse', 'bytes-parse-more-full', 4),
             ('contract_invalid_input_bytes', 'explicit-incomplete-parse', 'bytes-parse-more-full',
              'bytes-zhuyin-add-phrase', "zero-key-guess/pinyin/default/'/guess_sentence", 7),
