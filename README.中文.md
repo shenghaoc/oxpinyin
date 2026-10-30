@@ -26,7 +26,8 @@ Stage 3 构建需显式启用。只改变可观察输出的 Stage 3 构建保留
 |---|---|
 | `crates/*` | 20 个工作区包，没有占位包（分组见下）；crate 映射见 `.kiro/steering/structure.md` |
 | `ROADMAP.md` | 阶段、pin、工作流名称 |
-| `AGENTS.md` | Agent/协作者契约 |
+| [docs/constitution.md](docs/constitution.md) | 项目规则与受支持的外部接口 |
+| [docs/source-policy.md](docs/source-policy.md) | 源码阅读方法、兼容性决策与阶段规则 |
 | `docs/runbooks/` | 操作指南：后端、oracle 与差分测试、基准测试、golden 与 pin、发布 |
 | `docs/findings/` | 决策、偏离记录、审计轨迹——已建立索引，并为每个文件标注状态 |
 | `docs/perf/` | 性能测量快照 |

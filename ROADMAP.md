@@ -1,8 +1,9 @@
 # Roadmap
 
 Portable Rust re-expression of
-[libpinyin](https://github.com/libpinyin/libpinyin). Constitution and agent
-rules: `AGENTS.md`. Crate roles: `.kiro/steering/structure.md`.
+[libpinyin](https://github.com/libpinyin/libpinyin).
+Project rules: [constitution](docs/constitution.md) and [source policy](docs/source-policy.md).
+Crate roles: `.kiro/steering/structure.md`.
 
 > **Project identity:** **oxpinyin** (repo, crate, docs). The prior
 > project name is retained in git history only.
@@ -15,7 +16,7 @@ rules: `AGENTS.md`. Crate roles: `.kiro/steering/structure.md`.
 |---|---|
 | **0** | Scaffold, pin, SPECs/fixtures (complete) |
 | **1** | Exact-output parity with the pin-built libpinyin oracle (differential testing) — complete: candidate surface bit-identical on all 10,190 corpus rows (`docs/testing/corpus-tail.md`); the sentence-trellis float band stays the frozen exception (row 11) |
-| **2** | **Current.** Bug-for-bug compatibility with the pin across the whole exported ABI and the user-store surfaces, defects included, with internal improvements (ruling 2026-10-14 UTC). Behaviour is derived by reading the pin's source, then its disassembly — never by running experiments. Performance, memory, safety and architecture work is allowed when output, files on disk and the ABI do not change; oxpinyin may be faster or smaller than the pin by any amount. Floor: never worse than the pin on both time and space (axis L, #757). See `AGENTS.md`, "Stages". Spec: `.kiro/specs/bug-for-bug/` |
+| **2** | **Current.** Bug-for-bug compatibility with the pin across the whole exported ABI and the user-store surfaces, defects included, with internal improvements (ruling 2026-10-14 UTC). Behaviour is derived by reading the pin's source, then its disassembly — never by running experiments. Performance, memory, safety and architecture work is allowed when output, files on disk and the ABI do not change; oxpinyin may be faster or smaller than the pin by any amount. Floor: never worse than the pin on both time and space (axis L, #757). See the [stage rules](docs/source-policy.md#stages). Spec: `.kiro/specs/bug-for-bug/` |
 | **3** | Opt-in departures from the pin: for example a new language model (trigram/KN), typo edges, own data, or an incompatible data format. Each departure sits behind an opt-in cargo feature, off by default; the default build stays bug-for-bug. A build that breaks the ABI or the data formats does not claim libpinyin's binary identity. After Stage 2. Spec: `.kiro/specs/stage3-departures/` |
 
 Stage 1 uses the backend's native tables (no redistribution required:
@@ -42,14 +43,13 @@ carries a prebuilt oracle at `/opt/libpinyin-tkrzw` for the perf work.
 
 1. **Freeze behaviour** into `docs/findings/` SPECs and golden fixtures
    (characterisation of the pin first; see `docs/findings/spec-derivation.md`).
-2. **Implement** under the Source policy in `AGENTS.md` (copy upstream,
-   rewrite in Rust, then oxidize), with frozen SPECs/fixtures as the gate.
+2. **Implement** under the [source policy](docs/source-policy.md), with frozen SPECs and fixtures as the gate.
 3. **Prove** with fixture tests everywhere; live oracle diff on Linux is the
    verification tier for Stage 1 gates.
 
 In Stage 2, step 1 is done by reading: the pin's source at the pin, then the
 pin-built object's disassembly. Differentials gate a behaviour once it is
-derived; they are not how it is found (`AGENTS.md`).
+derived; they are not how it is found ([source-reading procedure](docs/source-policy.md#stage-2)).
 
 Detailed task cards live under `.kiro/specs/` as they are derived. Until a
 SPEC is frozen, do not implement that slice.
