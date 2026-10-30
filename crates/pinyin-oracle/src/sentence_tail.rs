@@ -185,13 +185,12 @@ fn render_row(cand: &Candidate) -> String {
         CandidateKind::Phrase => "N",
         CandidateKind::Addon => "a",
         CandidateKind::Fallback => "f",
-        _ => "?",
     };
     let nbest = match cand.kind() {
         CandidateKind::Sentence => cand
             .nbest_row()
             .map_or_else(|| "-".to_owned(), |rank| rank.to_string()),
-        _ => "-".to_owned(),
+        CandidateKind::Phrase | CandidateKind::Addon | CandidateKind::Fallback => "-".to_owned(),
     };
     format!("{letter}/{nbest}/{}", cand.text())
 }

@@ -37,7 +37,6 @@ pub use oxpinyin_data::SystemDbm as DbmFile;
 /// `oxpinyin_store::DefaultStore`; it names the selected backend, not a
 /// privileged implementation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[non_exhaustive]
 pub enum Backend {
     /// Tkrzw — libpinyin's `--with-dbm=Tkrzw` files. Requires the `tkrzw`
     /// cargo feature.

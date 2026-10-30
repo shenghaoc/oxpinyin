@@ -132,7 +132,6 @@ pub enum Line<'a> {
 /// upstream's `taglib_read` returning `false` (an `assert` abort under the
 /// pin's build); the last two are upstream crashing outright.
 #[derive(Clone, Debug, Eq, PartialEq)]
-#[non_exhaustive]
 pub enum GrammarError {
     /// `tokens[0]` matched no registered tag
     /// (`tag_utility.cpp:196-197`). Upstream's callers `abort()` on the

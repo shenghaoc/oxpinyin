@@ -95,7 +95,6 @@ pub type Entries = Vec<(Vec<u8>, Vec<u8>)>;
 
 /// Errors from compiling model20 text or writing a runtime table.
 #[derive(Debug)]
-#[non_exhaustive]
 pub enum DatagenError {
     /// An I/O failure reading the model or writing the output.
     Io(std::io::Error),
@@ -147,7 +146,7 @@ impl std::error::Error for DatagenError {
         match self {
             Self::Io(e) => Some(e),
             Self::Store(e) => Some(e),
-            _ => None,
+            Self::MissingModel { .. } | Self::Parse { .. } | Self::Consistency(_) => None,
         }
     }
 }

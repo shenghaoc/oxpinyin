@@ -59,7 +59,6 @@ use crate::interp_grammar::{self, BIGRAM_VALUES, Line, UNIGRAM_VALUES};
 
 /// Why an interpolation2.text read failed.
 #[derive(Debug)]
-#[non_exhaustive]
 pub enum InterpolationError {
     /// The file could not be opened or read.
     Read {
@@ -99,7 +98,7 @@ impl std::error::Error for InterpolationError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Read { source, .. } => Some(source),
-            _ => None,
+            Self::Parse { .. } | Self::MissingOneGram => None,
         }
     }
 }

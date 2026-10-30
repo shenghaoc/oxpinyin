@@ -9,7 +9,6 @@ use crate::segment::SegmentError;
 
 /// Why writing `interpolation2.text` failed.
 #[derive(Debug)]
-#[non_exhaustive]
 pub enum EmitterError {
     /// Opening the phrase index (the phrase-text source) failed.
     Segment(SegmentError),

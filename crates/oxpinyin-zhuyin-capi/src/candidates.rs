@@ -302,7 +302,6 @@ pub extern "C" fn zhuyin_train(instance: *mut ZhuyinInstance) -> bool {
                 oxpinyin_engine::TrainingSpanFault::EndEmptyColumn => {
                     "matrix->get_column_size(end) > 0"
                 }
-                _ => "matrix->get_column_size(start) > 0",
             };
             crate::ffi::log_warning(&format!("zhuyin_train: assertion '{assertion}' failed"));
             false
@@ -415,7 +414,9 @@ pub fn snapshot_candidates(
             text_ptr: std::ptr::null(),
             candidate_type: match cand.kind() {
                 CandidateKind::Sentence => lookup_candidate_type_t::BEST_MATCH_CANDIDATE,
-                _ => normal_type,
+                CandidateKind::Phrase | CandidateKind::Addon | CandidateKind::Fallback => {
+                    normal_type
+                }
             },
             source_index: u32::try_from(window_index).unwrap_or(u32::MAX),
             span_begin: u32::try_from(span_begin).unwrap_or(u32::MAX),

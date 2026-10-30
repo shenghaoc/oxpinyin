@@ -5,7 +5,6 @@
 
 /// How a shell should present one preedit span.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-#[non_exhaustive]
 pub enum SpanStyle {
     /// Input the user typed that the engine has not converted.
     Raw,

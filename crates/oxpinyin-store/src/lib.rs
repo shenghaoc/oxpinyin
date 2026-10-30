@@ -100,7 +100,6 @@ use std::path::Path;
 /// backend type, so callers can branch on I/O failures independently of
 /// which backend produced them.
 #[derive(Debug)]
-#[non_exhaustive]
 pub enum StoreError {
     /// An I/O error from the underlying storage layer.
     Io(std::io::Error),

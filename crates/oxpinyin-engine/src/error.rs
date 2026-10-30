@@ -9,7 +9,6 @@ use oxpinyin_core::scoring::ScoringError;
 /// Which `increase_pronunciation_possibility` precondition a stale
 /// training span violates (`storage/phonetic_key_matrix.cpp` at the pin).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[non_exhaustive]
 pub enum TrainingSpanFault {
     /// `assert(end < matrix->size())` — the span's end sits past the
     /// current matrix (`phonetic_key_matrix.cpp:661`).
@@ -28,13 +27,11 @@ pub enum TrainingSpanFault {
 
 /// Anything a session can fail at.
 ///
-/// `#[non_exhaustive]`, so later tasks add variants without breaking callers.
 /// Backend failures arrive as text because the frozen `Dictionary` and
 /// `LanguageModel` seams leave their `Error` types unbounded: the engine
 /// renders them at the boundary rather than leaking an associated type into
 /// its public surface.
 #[derive(Clone, Debug, Eq, PartialEq)]
-#[non_exhaustive]
 pub enum EngineError {
     /// A candidate index was out of range, most likely a stale one.
     CandidateIndexOutOfRange {

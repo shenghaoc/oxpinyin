@@ -25,7 +25,6 @@ pub const MAX_K: usize = 4_096;
 
 /// Why a search could not run.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[non_exhaustive]
 pub enum DecodeError {
     /// `k` is beyond [`MAX_K`].
     KTooLarge {
@@ -311,7 +310,7 @@ mod tests {
                 .wrapping_add(match edge.kind() {
                     EdgeKind::Exact => 1,
                     EdgeKind::Segmentation => 2,
-                    _ => 3,
+                    EdgeKind::Incomplete => 3,
                 });
             Cost::from(u16::try_from(mixed % 4_096).unwrap_or(u16::MAX))
         }

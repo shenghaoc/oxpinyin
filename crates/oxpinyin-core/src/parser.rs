@@ -48,7 +48,6 @@ pub struct FullPinyinParser;
 
 /// Failure to represent the complete parser path set.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[non_exhaustive]
 pub enum ParseError {
     /// The exhaustive path set exceeds the frozen materialization limit.
     TooManyAlternatives {

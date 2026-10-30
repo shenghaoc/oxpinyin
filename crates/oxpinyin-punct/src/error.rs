@@ -6,7 +6,6 @@ use std::path::PathBuf;
 
 /// Why a punctuation operation failed.
 #[derive(Debug)]
-#[non_exhaustive]
 pub enum PunctError {
     /// A path could not be read or written.
     Io {

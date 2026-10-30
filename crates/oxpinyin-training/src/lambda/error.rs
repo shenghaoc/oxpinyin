@@ -7,7 +7,6 @@ use crate::counter::CounterError;
 
 /// Why λ estimation failed.
 #[derive(Debug)]
-#[non_exhaustive]
 pub enum LambdaError {
     /// Parsing the held-out ngseg stream failed.
     Count(CounterError),

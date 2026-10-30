@@ -102,7 +102,6 @@ pub fn merge_suggestion_rows(system: &[u32], user_rows: &[(u32, Vec<u8>)]) -> Ve
 /// present-but-unreadable/unparsable ones, so adapters can raise
 /// `FileNotFoundError`, `OSError` and friends without string matching.
 #[derive(Debug)]
-#[non_exhaustive]
 pub enum OpenError {
     /// A required path does not exist.
     Missing(PathBuf),
@@ -156,7 +155,14 @@ impl OpenError {
     pub fn unmappable_library(&self) -> Option<&Path> {
         match self {
             Self::Dict(DictError::Library(error)) => error.unmappable_path(),
-            _ => None,
+            Self::Missing(_)
+            | Self::Io(..)
+            | Self::NotRegularFile(_)
+            | Self::Dict(_)
+            | Self::Lm(_)
+            | Self::UnknownDatabaseFormat(_)
+            | Self::TableConf(_)
+            | Self::CorruptLogHeader(_) => None,
         }
     }
 

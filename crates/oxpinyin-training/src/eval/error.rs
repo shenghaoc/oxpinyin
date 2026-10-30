@@ -6,7 +6,6 @@ use std::path::PathBuf;
 
 /// Why evaluation failed.
 #[derive(Debug)]
-#[non_exhaustive]
 pub enum EvalError {
     /// A path could not be read.
     Io {
@@ -75,7 +74,12 @@ impl std::error::Error for EvalError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Io { source, .. } => Some(source),
-            _ => None,
+            Self::Malformed { .. }
+            | Self::Lambda { .. }
+            | Self::NoPronunciation { .. }
+            | Self::NoText { .. }
+            | Self::Undecodable { .. }
+            | Self::Backend { .. } => None,
         }
     }
 }

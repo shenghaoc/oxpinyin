@@ -24,7 +24,6 @@ pub const MAX_GRAPH_INPUT: usize = 65_535;
 
 /// Why a graph could not be built.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[non_exhaustive]
 pub enum GraphError {
     /// The input is longer than [`MAX_GRAPH_INPUT`].
     InputTooLong {
@@ -113,9 +112,8 @@ impl std::error::Error for GraphError {}
 ///
 /// `Fuzzy`, `Typo` and `Abbrev` are reserved for Stage 3 and deliberately not
 /// declared: an unimplemented variant is a promise the decoder would have to
-/// keep. The enum is `#[non_exhaustive]` so adding them is not a break.
+/// keep.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-#[non_exhaustive]
 pub enum EdgeKind {
     /// The longest complete syllable that matches at this position.
     Exact,

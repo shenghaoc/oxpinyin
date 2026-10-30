@@ -65,7 +65,6 @@ pub const EXPECTED_MODEL_FILES: &[&str] = &[
 
 /// Why a candidate model directory is not usable.
 #[derive(Debug, Clone, Eq, PartialEq)]
-#[non_exhaustive]
 pub enum ModelDirError {
     /// The path is missing or is not a directory.
     NotADirectory {

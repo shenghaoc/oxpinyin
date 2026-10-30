@@ -52,7 +52,17 @@ where
                 }
             }
             LogicalKey::Space => self.accept_first(),
-            _ => Ok(KeyOutcome::Ignored),
+            LogicalKey::Delete
+            | LogicalKey::Tab
+            | LogicalKey::Left
+            | LogicalKey::Right
+            | LogicalKey::Up
+            | LogicalKey::Down
+            | LogicalKey::Home
+            | LogicalKey::End
+            | LogicalKey::PageUp
+            | LogicalKey::PageDown
+            | LogicalKey::Unknown => Ok(KeyOutcome::Ignored),
         }
     }
 

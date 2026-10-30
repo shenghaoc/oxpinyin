@@ -82,7 +82,6 @@ impl BitOr for Modifiers {
 
 /// A key, named by what it means rather than by how a platform encodes it.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-#[non_exhaustive]
 pub enum LogicalKey {
     /// A key that produces a character.
     Character(char),
