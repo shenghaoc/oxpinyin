@@ -17,7 +17,7 @@ use oxpinyin_core::{Cost, LanguageModel, PhraseToken, UserCountDelta};
 use oxpinyin_data::{
     BigramLanguageModel, LmError, SystemDbm, SystemDictionary, parse_interpolation2,
 };
-use oxpinyin_engine::{EmptyConfigSource, Session, StoragePaths};
+use oxpinyin_engine::{EmptyConfigSource, Session};
 use oxpinyin_user::{SENTENCE_START, UserStore};
 
 #[path = "support/mod.rs"]
@@ -115,7 +115,7 @@ fn decode_session<'a>(
     dict: &'a SystemDictionary,
     lm: &'a BenchLm<'a>,
 ) -> Session<&'a SystemDictionary, &'a BenchLm<'a>> {
-    Session::new(&EmptyConfigSource, StoragePaths::new("user"), dict, lm).expect("Session::new")
+    Session::new(&EmptyConfigSource, dict, lm).expect("Session::new")
 }
 
 fn decode_cycle(session: &mut Session<&SystemDictionary, &BenchLm<'_>>) {

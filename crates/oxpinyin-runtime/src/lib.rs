@@ -2232,7 +2232,7 @@ impl Runtime {
     /// Builds a fresh session over this backend set. Sessions are cheap:
     /// they share the table handles.
     ///
-    /// Configuration arrives per call (`oxpinyin-capi` passes its layered
+    /// Configuration arrives per call (`oxpinyin-capi` passes its
     /// `Config`; simple embedders pass
     /// [`EmptyConfigSource`](oxpinyin_engine::EmptyConfigSource)), because the
     /// session reads it once at construction.
@@ -2244,15 +2244,8 @@ impl Runtime {
     /// real unigram frequencies, so [`Session::new`] skips the fallback
     /// key-cost walk and reads no dictionary or model records.
     pub fn new_session(&self, config: &impl ConfigSource) -> Result<RuntimeSession, EngineError> {
-        // The session reads no storage path (the runtime owns every store
-        // it decodes over), so it gets the empty set, which allocates
-        // nothing, instead of a copy of the runtime's.
-        Session::new(
-            config,
-            StoragePaths::default(),
-            self.dict.clone(),
-            self.lm.clone(),
-        )
+        // The runtime owns the paths and stores; sessions share their handles.
+        Session::new(config, self.dict.clone(), self.lm.clone())
     }
 
     /// A handle clone of the merged dictionary backend.

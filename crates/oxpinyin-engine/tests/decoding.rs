@@ -5,10 +5,7 @@
 //! `fixtures/foundation/f-a.txt`, restricted to what the mini vocabulary can
 //! reach.
 
-use oxpinyin_engine::{
-    Candidate, CandidateKind, EmptyConfigSource, KeyInput, LogicalKey, Selection, Session,
-    StoragePaths,
-};
+use oxpinyin_engine::{Candidate, CandidateKind, EmptyConfigSource, Selection, Session};
 use oxpinyin_testsupport::{FixtureDictionary, FixtureLanguageModel};
 
 const VOCAB: &str = include_str!("../../../fixtures/w4/mini-vocab.txt");
@@ -19,7 +16,6 @@ type Fixtures = Session<FixtureDictionary, FixtureLanguageModel>;
 fn session() -> Fixtures {
     Session::new(
         &EmptyConfigSource,
-        StoragePaths::new("user"),
         FixtureDictionary::parse(VOCAB).expect("committed fixture"),
         FixtureLanguageModel::parse(VOCAB, BIGRAM).expect("committed fixtures"),
     )
@@ -30,7 +26,7 @@ fn typed(text: &str) -> Fixtures {
     let mut session = session();
     for character in text.chars() {
         session
-            .process_key(&KeyInput::character(character))
+            .type_pinyin(character.encode_utf8(&mut [0; 4]))
             .expect("typing cannot fail");
     }
     session
@@ -39,7 +35,6 @@ fn typed(text: &str) -> Fixtures {
 fn session_from(vocab: &str) -> Fixtures {
     Session::new(
         &EmptyConfigSource,
-        StoragePaths::new("user"),
         FixtureDictionary::parse(vocab).expect("test vocabulary"),
         FixtureLanguageModel::parse(vocab, "# no bigrams\n").expect("test model"),
     )
@@ -180,7 +175,11 @@ fn choosing_advances_the_composition_and_feeds_the_bigram() {
         session.select(first).expect("the index is live"),
         Selection::Continued
     );
-    assert_eq!(session.preedit().text(), "你好zhongguo");
+    assert_eq!(session.selected_text(), "你好");
+    assert_eq!(
+        &session.raw_input()[session.composition_offset()..],
+        "zhongguo"
+    );
 
     let texts = texts(&session);
     assert_eq!(texts[0], "中国", "the remaining input decodes on its own");
@@ -189,7 +188,8 @@ fn choosing_advances_the_composition_and_feeds_the_bigram() {
         session.select(0).expect("the index is live"),
         Selection::Completed
     );
-    assert_eq!(session.commit().expect("committing"), "你好中国");
+    assert_eq!(session.selected_text().clone(), "你好中国");
+    session.reset();
     assert!(!session.is_composing());
 }
 
@@ -216,7 +216,7 @@ fn a_row_choice_after_a_normal_selection_records_the_row_path_only() {
             Selection::Completed
         );
         let tokens = session.selected_tokens().to_vec();
-        (session.commit().expect("committing"), tokens)
+        (session.selected_text().clone(), tokens)
     };
     assert_eq!(text, "你好中国");
     assert!(
@@ -256,7 +256,7 @@ fn a_row_choice_after_a_normal_selection_records_the_row_path_only() {
         Selection::Completed
     );
     let recorded = session.selected_tokens().to_vec();
-    assert_eq!(session.commit().expect("committing"), text);
+    assert_eq!(session.selected_text().clone(), text);
     assert_eq!(
         recorded, tokens,
         "the row choice must replace the record, not extend the stale one"
@@ -341,7 +341,7 @@ fn decoding_is_deterministic() {
 
 #[test]
 fn batch_and_key_by_key_agree_on_composing_inputs() {
-    // Pure a-z/`'` only: `type_pinyin` and per-key `process_key` must agree
+    // Pure a-z/`'` only: bulk `type_pinyin` and one-character `type_pinyin` must agree
     // when no mid-composition selection intervenes. The parity harness relies
     // on one refresh per input matching that final state.
     for input in ["nihao", "zhongguo", "xian", "chang'an"] {
@@ -355,30 +355,6 @@ fn batch_and_key_by_key_agree_on_composing_inputs() {
         let keyed = texts(&typed(input));
         assert_eq!(batch, keyed, "batch vs key-by-key diverged for {input:?}");
     }
-}
-
-#[test]
-fn batch_accepts_junk_key_by_key_ignores_it() {
-    // F1: intentional interactive-vs-batch divergence on junk-bearing inputs.
-    // type_pinyin keeps printable junk; process_key ignores non-a-z/`'`.
-    let mut batch = session();
-    batch
-        .type_pinyin("b#ing")
-        .expect("batch typing cannot fail");
-    assert_eq!(batch.raw_input(), "b#ing");
-
-    let mut keyed = session();
-    for character in "b#ing".chars() {
-        keyed
-            .process_key(&KeyInput::character(character))
-            .expect("typing cannot fail");
-    }
-    assert_eq!(keyed.raw_input(), "bing");
-    assert_ne!(
-        texts(&batch),
-        texts(&keyed),
-        "junk must make batch and key-by-key candidate lists diverge"
-    );
 }
 
 /// Authored mini-vocab so hard-stop-at-`b` and full `bing` can be told apart.
@@ -397,7 +373,6 @@ fn type_pinyin_b_hash_ing_prefers_bu_family_not_bing() {
     // Re-filtering junk in type_pinyin would collapse to bing and regress.
     let mut session = Session::new(
         &EmptyConfigSource,
-        StoragePaths::new("user"),
         FixtureDictionary::parse(JUNK_VOCAB).expect("junk vocab"),
         FixtureLanguageModel::parse(JUNK_VOCAB, "").expect("junk unigrams"),
     )
@@ -421,7 +396,6 @@ fn type_pinyin_b_hash_ing_prefers_bu_family_not_bing() {
     // Contrast: filtered collapse would type as bing and prefer 并.
     let mut collapsed = Session::new(
         &EmptyConfigSource,
-        StoragePaths::new("user"),
         FixtureDictionary::parse(JUNK_VOCAB).expect("junk vocab"),
         FixtureLanguageModel::parse(JUNK_VOCAB, "").expect("junk unigrams"),
     )
@@ -463,13 +437,12 @@ fn every_candidate_reports_a_span_it_could_really_absorb() {
 
 #[test]
 fn turning_incomplete_pinyin_off_stops_at_the_initial() {
-    use oxpinyin_engine::{Config, ConfigLayer, ConfigValue, merge};
+    use oxpinyin_engine::{Config, ConfigValue};
 
-    let layer = ConfigLayer::new("user").with("incomplete-pinyin", ConfigValue::Bool(false));
-    let config = merge(&Config::default(), &[layer]).expect("well typed");
+    let mut config = Config::default();
+    config.set("incomplete-pinyin", ConfigValue::Bool(false));
     let mut session = Session::new(
         &config,
-        StoragePaths::new("user"),
         FixtureDictionary::parse(VOCAB).expect("committed fixture"),
         FixtureLanguageModel::parse(VOCAB, BIGRAM).expect("committed fixtures"),
     )
@@ -477,7 +450,7 @@ fn turning_incomplete_pinyin_off_stops_at_the_initial() {
 
     for character in "nih".chars() {
         session
-            .process_key(&KeyInput::character(character))
+            .type_pinyin(character.encode_utf8(&mut [0; 4]))
             .expect("typing cannot fail");
     }
 
@@ -488,17 +461,6 @@ fn turning_incomplete_pinyin_off_stops_at_the_initial() {
         .collect();
     assert_eq!(texts[0], "你", "without the incomplete key, nih is just ni");
     assert!(!texts.contains(&"你好"));
-}
-
-#[test]
-fn enter_commits_the_raw_text_when_nothing_is_chosen() {
-    let mut session = typed("nihao");
-    assert_eq!(
-        session
-            .process_key(&KeyInput::plain(LogicalKey::Enter))
-            .expect("no failure"),
-        oxpinyin_engine::KeyOutcome::Commit("nihao".into())
-    );
 }
 
 #[test]

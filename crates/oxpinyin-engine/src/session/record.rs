@@ -23,7 +23,7 @@ use oxpinyin_core::{PhraseText, PhraseTextConcat, PhraseToken};
 /// The user's selections in this composition.
 #[derive(Clone, Debug, Default)]
 pub(super) struct SelectionRecord {
-    /// The text chosen so far — the selected span of the preedit. A
+    /// The text retained by selections so far, including raw gaps. A
     /// chosen phrase keeps its [`PhraseText`], stored words included, and
     /// each part is cut at its own first zero when joined (the pin converts
     /// every phrase separately, `src/lookup/lookup.cpp:39-68` at 074a2219).
@@ -50,12 +50,6 @@ impl SelectionRecord {
     /// The text chosen so far.
     pub(super) const fn selected(&self) -> &PhraseText {
         &self.selected
-    }
-
-    /// Moves the chosen text out, leaving it empty — the commit path, which
-    /// resets the whole record immediately after.
-    pub(super) fn take_selected(&mut self) -> PhraseText {
-        core::mem::take(&mut self.selected)
     }
 
     /// The pinned tokens in selection order.

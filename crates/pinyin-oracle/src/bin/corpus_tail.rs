@@ -33,7 +33,7 @@ use std::process::ExitCode;
 
 use oxpinyin_core::{OptionBits, PINYIN_CORRECT_GN_NG, PINYIN_CORRECT_MG_NG, PINYIN_CORRECT_UE_VE};
 use oxpinyin_data::{BigramLanguageModel, SystemDbm, SystemDictionary};
-use oxpinyin_engine::{EmptyConfigSource, Session, StoragePaths};
+use oxpinyin_engine::{EmptyConfigSource, Session};
 use pinyin_oracle::candidate_fixture::{CandidateFixture, STRUCTURE_FIXTURE};
 use pinyin_oracle::corpus;
 
@@ -95,7 +95,7 @@ fn open_env() -> Result<TailEnv, String> {
     )
     .map_err(|error| format!("cannot open BigramLanguageModel: {error}"))?;
     lm.set_lambda_from_table_conf(&dir.join("table.conf"));
-    let session = Session::new(&EmptyConfigSource, StoragePaths::new("user"), dict, lm)
+    let session = Session::new(&EmptyConfigSource, dict, lm)
         .map_err(|error| format!("cannot create Session: {error}"))?;
     let fixture = CandidateFixture::read(repo_root().join(STRUCTURE_FIXTURE))
         .map_err(|error| format!("cannot read candidate structure: {error}"))?

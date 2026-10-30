@@ -10,11 +10,11 @@
 //!
 //! The oxpinyin seam is the internal engine `Session` API over the
 //! `oxpinyin-testsupport` fixture doubles. Chewing's commit/preedit
-//! buffer mechanics map onto `commit()`/`preedit()`; its config setters
+//! buffer checks use selected text and raw-input offsets; its config setters
 //! map onto `set_options`/`set_incomplete_pinyin`/`set_scoring_config`.
 
 use oxpinyin_core::OptionBits;
-use oxpinyin_engine::{EmptyConfigSource, KeyOutcome, Selection, Session, StoragePaths};
+use oxpinyin_engine::{EmptyConfigSource, KeyOutcome, Selection, Session};
 use oxpinyin_testsupport::{FixtureDictionary, FixtureLanguageModel};
 
 const VOCAB: &str = include_str!("../../../fixtures/w4/mini-vocab.txt");
@@ -25,13 +25,7 @@ type TestSession = Session<FixtureDictionary, FixtureLanguageModel>;
 fn session() -> TestSession {
     let dictionary = FixtureDictionary::parse(VOCAB).expect("committed fixture");
     let model = FixtureLanguageModel::parse(VOCAB, BIGRAM).expect("committed fixtures");
-    Session::new(
-        &EmptyConfigSource,
-        StoragePaths::default(),
-        dictionary,
-        model,
-    )
-    .expect("session builds")
+    Session::new(&EmptyConfigSource, dictionary, model).expect("session builds")
 }
 
 // ── libchewing test-reset.c ─────────────────────────────────────────
@@ -45,28 +39,22 @@ fn reset_clears_the_composition_but_not_the_configuration() {
     session
         .set_incomplete_pinyin(false)
         .expect("the option toggles");
-    let page_size = session.page_size();
-    assert!(page_size > 0);
+    let options = session.options();
 
     session.type_pinyin("nihao").expect("typing");
     assert!(session.is_composing());
 
     session.reset();
     assert!(!session.is_composing());
-    assert!(session.commit().expect("commit").is_empty());
+    assert!(session.selected_text().is_empty());
 
-    // Configuration survived: page size unchanged, the incomplete option
-    // is still off, and conversion still works.
-    assert_eq!(session.page_size(), page_size);
-    let outcome = session
-        .process_key(&oxpinyin_engine::KeyInput::plain(
-            oxpinyin_engine::LogicalKey::Character('n'),
-        ))
-        .expect("keys still processed");
-    assert!(matches!(
-        outcome,
-        KeyOutcome::Consumed | KeyOutcome::Commit(_)
-    ));
+    // The live option survives reset and still controls decoding.
+    assert_eq!(session.options(), options);
+    assert_eq!(
+        session.type_pinyin("n").expect("typing"),
+        KeyOutcome::Consumed
+    );
+    assert_eq!(session.parsed_prefix_len(), 0);
 }
 
 #[test]
@@ -106,13 +94,7 @@ fn reset_composition_keeps_the_parse_more_split_state() {
     session.type_pinyin("ni").expect("typing");
     session.reset_composition();
     // The parse state is gone; the session survives and accepts input.
-    assert!(
-        session
-            .process_key(&oxpinyin_engine::KeyInput::plain(
-                oxpinyin_engine::LogicalKey::Character('h')
-            ))
-            .is_ok()
-    );
+    assert!(session.type_pinyin("h").is_ok());
 }
 
 // ── libchewing test-keyboardless.c: programmatic selection ─────────
@@ -131,10 +113,14 @@ fn choosing_without_a_composition_fails() {
 #[test]
 fn an_out_of_range_choice_fails_and_leaves_the_composition() {
     // `cand_choose_out_of_range`: index == count and index past the end
-    // both fail; the preedit is unchanged afterwards.
+    // both fail; the composition state is unchanged afterwards.
     let mut session = session();
     session.type_pinyin("ni").expect("typing");
-    let before = session.preedit().text().to_owned();
+    let before = (
+        session.raw_input().to_owned(),
+        session.selected_text().clone(),
+        session.composition_offset(),
+    );
     let count = session.candidates().len();
     assert!(count > 0, "the mini table offers ni candidates");
     assert!(session.select(count).is_err(), "index == count must fail");
@@ -143,7 +129,11 @@ fn an_out_of_range_choice_fails_and_leaves_the_composition() {
         "index past the end must fail"
     );
     assert_eq!(
-        session.preedit().text(),
+        (
+            session.raw_input().to_owned(),
+            session.selected_text().clone(),
+            session.composition_offset()
+        ),
         before,
         "failed choices change nothing"
     );
@@ -151,9 +141,8 @@ fn an_out_of_range_choice_fails_and_leaves_the_composition() {
 }
 
 #[test]
-fn a_programmatic_choice_commits_the_chosen_phrase() {
-    // `cand_choose_word`: choosing by index selects the exact phrase; a
-    // completed selection commits through `commit()`.
+fn a_programmatic_choice_retains_the_chosen_phrase() {
+    // `cand_choose_word`: choosing by index retains the exact phrase.
     let mut session = session();
     session.type_pinyin("ni,hao").expect("typing");
     let chosen = session
@@ -171,12 +160,16 @@ fn a_programmatic_choice_commits_the_chosen_phrase() {
     // chosen phrase into the preedit too).
     assert_eq!(session.select(0).expect("choose"), Selection::Continued);
     assert!(
-        session.preedit().text().starts_with(chosen.as_str()),
-        "the chosen phrase is in the preedit: {:?}",
-        session.preedit().text()
+        session
+            .selected_text()
+            .as_str()
+            .unwrap()
+            .starts_with(chosen.as_str()),
+        "the chosen phrase is retained in the record: {:?}",
+        session.selected_text()
     );
 
-    // Completing the rest and committing is covered by the decoding
+    // Completing the rest and resetting is covered by the decoding
     // suite (`choosing_advances_the_composition_...`); this port stops at
     // the single-choice invariant the chewing test protects.
     assert!(session.is_composing());
@@ -186,10 +179,10 @@ fn a_programmatic_choice_commits_the_chosen_phrase() {
 fn a_mid_composition_choice_targets_the_offset_window() {
     // `test_select_candidate_in_middle`: choosing can address a sub-span
     // of the composition through `candidates_at` + `select_anchored`,
-    // leaving the rest of the preedit in place.
+    // retaining the raw input alongside the selected text.
     let mut session = session();
     session.type_pinyin("ni,hao,zhong,guo").expect("typing");
-    let full = session.preedit().text().to_owned();
+    let full = session.raw_input().to_owned();
     assert!(!full.is_empty());
 
     // The offset window after the first two syllables offers candidates
@@ -208,7 +201,9 @@ fn a_mid_composition_choice_targets_the_offset_window() {
         .select_anchored(0, &window, offset)
         .expect("the anchored selection succeeds over a live window");
     // The composition stays live and bounded after the anchored choice.
-    assert!(session.preedit().text().len() <= full.len() + 8);
+    assert_eq!(session.raw_input(), full);
+    assert!(session.composition_offset() <= full.len());
+    assert!(!session.selected_text().is_empty());
 }
 
 #[test]

@@ -1968,8 +1968,6 @@ fn a_selection_committed_composition_reparses_with_its_store() {
 /// the pre-fix continuation answered.
 #[test]
 fn a_shrinking_reparse_reconciles_the_committed_selection() {
-    use oxpinyin_engine::{KeyInput, KeyOutcome, LogicalKey};
-
     let user_dir = TempUserDir::new("constraint-committed-shrink");
     let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
 
@@ -2017,24 +2015,11 @@ fn a_shrinking_reparse_reconciles_the_committed_selection() {
         );
     }
 
-    // Enter commits the raw input — the session's Enter law — and the
-    // committed text is now valid for the two-byte input. The pre-fix
-    // continuation answered the stale \u{4f60}\u{597d} here: a selection
-    // whose span reached past the current input, with the overrun
-    // forcing still live behind it.
-    let outcome = {
-        // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
-        let inst = unsafe { instance_mut(instance) };
-        inst.core
-            .session
-            .process_key(&KeyInput::plain(LogicalKey::Enter))
-            .expect("enter on a composing session cannot fail")
-    };
-    assert_eq!(
-        outcome,
-        KeyOutcome::Commit("ni".into()),
-        "the commit answers text valid for the current input"
-    );
+    // The shortened input must not retain text from the old selection.
+    // SAFETY: `instance` remains live until the teardown below.
+    let inst = unsafe { instance_ref(instance) };
+    assert!(inst.core.session.selected_text().is_empty());
+    assert_eq!(inst.core.session.raw_input(), "ni");
 
     crate::instance::pinyin_free_instance(instance);
     crate::context::pinyin_fini(context);
@@ -2341,16 +2326,15 @@ fn choosing_from_a_reanchored_window_uses_the_anchored_span() {
     // The skipped prefix (the raw bytes [0, 2) before the anchor) is
     // retained in the committed text: a re-anchored selection must not
     // drop the typed-but-unselected bytes (the gap
-    // `rebuild_selection_from_constraints` preserves). commit() resets the
-    // session, so it is read last.
+    // `rebuild_selection_from_constraints` preserves).
     let committed = {
-        // SAFETY: the instance is live; commit takes &mut and resets.
+        // SAFETY: the instance is live; this reads the retained selection.
         unsafe {
-            crate::state::instance_mut(instance)
+            crate::state::instance_ref(instance)
                 .core
                 .session
-                .commit()
-                .expect("commit")
+                .selected_text()
+                .clone()
         }
     };
     assert_eq!(

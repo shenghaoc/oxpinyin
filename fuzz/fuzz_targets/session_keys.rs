@@ -13,20 +13,16 @@
 //!
 //! - no panic, abort, or sanitizer report on any command sequence
 //!   (constitution rule 4; the fuzz crate's ASan default);
-//! - the preedit law: spans ascending, non-overlapping, together
-//!   covering `text` exactly, cursor within `text` on a character
-//!   boundary (`Preedit`'s own doc contract);
+//! - the composition offset stays within the raw input at a character boundary;
 //! - a lookup offset past the raw buffer is a typed refusal
 //!   (`EngineError::LookupOffsetOutOfRange`), never a panic — the pin
 //!   reads out of bounds there, so this is exactly the class of input
 //!   the seam must refuse;
 //! - `reset` returns to the initial state (empty raw input, empty
-//!   preedit) from any state whatever.
+//!   selection text and token history) from any state whatever.
 
 use libfuzzer_sys::fuzz_target;
-use oxpinyin_engine::{
-    EmptyConfigSource, EngineError, KeyInput, LogicalKey, Session, StoragePaths,
-};
+use oxpinyin_engine::{EmptyConfigSource, EngineError, Session};
 use oxpinyin_testsupport::{FixtureDictionary, FixtureLanguageModel};
 
 const VOCAB: &str = include_str!("../../fixtures/w4/mini-vocab.txt");
@@ -37,69 +33,14 @@ type Fixtures = Session<FixtureDictionary, FixtureLanguageModel>;
 fn session() -> Fixtures {
     let dictionary = FixtureDictionary::parse(VOCAB).expect("committed fixture");
     let model = FixtureLanguageModel::parse(VOCAB, BIGRAM).expect("committed fixture");
-    Session::new(
-        &EmptyConfigSource,
-        StoragePaths::new("user"),
-        dictionary,
-        model,
-    )
-    .expect("the fixtures open")
+    Session::new(&EmptyConfigSource, dictionary, model).expect("the fixtures open")
 }
 
-/// The `Preedit` doc contract, checked after every mutating command:
-/// ascending non-overlapping spans covering `text` exactly, cursor in
-/// range on a character boundary.
-fn check_preedit(session: &Fixtures) {
-    let preedit = session.preedit();
-    let text = preedit.text();
-    let mut covered = 0_usize;
-    for span in preedit.spans() {
-        assert_eq!(
-            span.start(),
-            covered,
-            "preedit span {}..{} leaves a gap, overlaps, or regresses (cursor {covered})",
-            span.start(),
-            span.end()
-        );
-        assert!(span.end() > span.start(), "empty preedit span");
-        assert!(
-            span.end() <= text.len(),
-            "preedit span {}..{} runs past the text (len {})",
-            span.start(),
-            span.end(),
-            text.len()
-        );
-        covered = span.end();
-    }
-    assert_eq!(
-        covered,
-        text.len(),
-        "preedit spans must partition the text exactly"
-    );
-    let cursor = preedit.cursor();
-    assert!(cursor <= text.len(), "cursor {cursor} past the text");
-    assert!(
-        text.is_char_boundary(cursor),
-        "cursor {cursor} inside a character"
-    );
-}
-
-/// One non-text key per selector value; `Character` comes from the
-/// payload byte so the raw buffer sees both ASCII and Latin-1.
-fn plain_key(selector: u8) -> LogicalKey {
-    match selector % 11 {
-        0 => LogicalKey::Backspace,
-        1 => LogicalKey::Delete,
-        2 => LogicalKey::Enter,
-        3 => LogicalKey::Escape,
-        4 => LogicalKey::Space,
-        5 => LogicalKey::Tab,
-        6 => LogicalKey::Left,
-        7 => LogicalKey::Right,
-        8 => LogicalKey::Up,
-        9 => LogicalKey::Down,
-        _ => LogicalKey::Unknown,
-    }
+/// Selection and raw input share the same bounded byte coordinate space.
+fn check_composition(session: &Fixtures) {
+    let offset = session.composition_offset();
+    assert!(offset <= session.raw_input().len());
+    assert!(session.raw_input().is_char_boundary(offset));
 }
 
 fuzz_target!(|data: &[u8]| {
@@ -116,15 +57,20 @@ fuzz_target!(|data: &[u8]| {
                 let byte = payload.first().copied().unwrap_or(b'a');
                 let character = char::from_u32(u32::from(byte)).expect("byte is a scalar");
                 let _ = session
-                    .process_key(&KeyInput::character(character))
-                    .expect("process_key is total");
+                    .type_pinyin(character.encode_utf8(&mut [0; 4]))
+                    .expect("type_pinyin is total");
             }
-            // a non-text key from the command byte
-            1 => {
-                let _ = session
-                    .process_key(&KeyInput::plain(plain_key(command >> 3)))
-                    .expect("process_key is total");
-            }
+            // Direct editing and reset operations, without key dispatch.
+            1 => match (command >> 3) % 3 {
+                0 => {
+                    let _ = session.erase().expect("erase is total");
+                }
+                1 => session.reset(),
+                _ => {
+                    let _ = session
+                        .clear_constraint(usize::from(payload.first().copied().unwrap_or(0)));
+                }
+            },
             // bulk pinyin text from the payload, capped like capi_commands
             // so the fuzzer explores parse states, not multi-KB memcpys
             2 => {
@@ -145,7 +91,11 @@ fuzz_target!(|data: &[u8]| {
                         let index =
                             usize::from(payload.get(1).or(payload.first()).copied().unwrap_or(0))
                                 % list.len();
-                        let _ = session.select(index);
+                        let _ = session.select_anchored(
+                            index,
+                            &list,
+                            offset.min(session.raw_input().len()),
+                        );
                     }
                 }
                 let far = session.raw_input().len() + 64;
@@ -175,10 +125,18 @@ fuzz_target!(|data: &[u8]| {
                     session.raw_input().is_empty(),
                     "reset must clear the raw input"
                 );
-                assert!(session.preedit().is_empty(), "reset must clear the preedit");
+                assert!(
+                    session.selected_text().is_empty(),
+                    "reset must clear selected text"
+                );
+                assert!(
+                    session.selected_tokens().is_empty(),
+                    "reset must clear token history"
+                );
+                assert_eq!(session.composition_offset(), 0);
             }
         }
-        check_preedit(&session);
+        check_composition(&session);
     }
-    check_preedit(&session);
+    check_composition(&session);
 });

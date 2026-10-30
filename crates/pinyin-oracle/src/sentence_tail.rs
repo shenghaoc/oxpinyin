@@ -12,7 +12,7 @@
 use std::path::{Path, PathBuf};
 
 use oxpinyin_data::{BigramLanguageModel, SystemDbm, SystemDictionary};
-use oxpinyin_engine::{Candidate, CandidateKind, EmptyConfigSource, Session, StoragePaths};
+use oxpinyin_engine::{Candidate, CandidateKind, EmptyConfigSource, Session};
 
 /// The concrete port session the measurement drives.
 pub type PortSession = Session<SystemDictionary, BigramLanguageModel>;
@@ -81,7 +81,7 @@ pub fn open_session_from_env() -> Result<Option<PortSession>, String> {
     )
     .map_err(|error| format!("cannot open BigramLanguageModel: {error}"))?;
     lm.set_lambda_from_table_conf(&dir.join("table.conf"));
-    let session = Session::new(&EmptyConfigSource, StoragePaths::new("user"), dict, lm)
+    let session = Session::new(&EmptyConfigSource, dict, lm)
         .map_err(|error| format!("cannot create Session: {error}"))?;
     Ok(Some(session))
 }

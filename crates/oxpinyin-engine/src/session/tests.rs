@@ -31,7 +31,7 @@ fn ignored_type_input_preserves_exact_mode() {
 }
 
 #[test]
-fn a_rejected_character_preserves_exact_mode_and_backspace_clears_it() {
+fn erasing_clears_the_exact_chain() {
     let mut session = session();
     let segments: Vec<oxpinyin_core::graph::ExactSegment> = {
         use oxpinyin_core::graph::ExactSegment;
@@ -39,14 +39,8 @@ fn a_rejected_character_preserves_exact_mode_and_backspace_clears_it() {
         vec![ExactSegment::new(0, 2, ni, 0)]
     };
     session.replace_raw_exact("ni", &segments).expect("replace");
-    // An over-capacity or non-input character is Ignored: exact mode
-    // survives because raw never changed.
-    assert_eq!(
-        session
-            .process_key(&KeyInput::plain(LogicalKey::Backspace))
-            .expect("erase"),
-        KeyOutcome::Consumed
-    );
+    // Removing raw input invalidates the saved exact chain.
+    assert_eq!(session.erase().expect("erase"), KeyOutcome::Consumed);
     assert!(
         session.input.exact().is_empty(),
         "erase must drop the exact chain"
@@ -113,9 +107,6 @@ use oxpinyin_testsupport::{
 use super::{KeyOutcome, MAX_INPUT_BYTES, Selection, Session};
 use crate::config::EmptyConfigSource;
 use crate::error::{EngineError, TrainingSpanFault};
-use crate::key::{KeyInput, LogicalKey, Modifiers};
-use crate::preedit::SpanStyle;
-use crate::storage::StoragePaths;
 
 /// A backend that answers nothing, so these tests measure the state
 /// machine and not a data set.
@@ -147,46 +138,21 @@ impl LanguageModel for Silent {
 }
 
 fn session() -> Session<Silent, Silent> {
-    Session::new(
-        &EmptyConfigSource,
-        StoragePaths::new("user"),
-        Silent,
-        Silent,
-    )
-    .expect("opening a session cannot fail yet")
+    Session::new(&EmptyConfigSource, Silent, Silent).expect("opening a session cannot fail yet")
 }
 
 fn type_text(session: &mut Session<Silent, Silent>, text: &str) {
     for character in text.chars() {
         session
-            .process_key(&KeyInput::character(character))
+            .type_pinyin(character.encode_utf8(&mut [0; 4]))
             .expect("typing cannot fail");
     }
 }
 
 #[test]
-fn only_parser_syntax_extends_the_composition() {
-    let mut session = session();
-    type_text(&mut session, "ni'hao");
-    assert_eq!(session.raw_input(), "ni'hao");
-    assert!(session.is_composing());
-
-    for ignored in ['N', '1', ' ', '!', '\u{4f60}'] {
-        assert_eq!(
-            session
-                .process_key(&KeyInput::character(ignored))
-                .expect("ignored keys cannot fail"),
-            KeyOutcome::Ignored,
-            "character: {ignored:?}"
-        );
-    }
-    assert_eq!(session.raw_input(), "ni'hao");
-}
-
-#[test]
 fn type_pinyin_keeps_printable_junk_in_the_raw_buffer() {
     // Batch path (parity harness): printable ASCII including junk is kept
-    // so the decoder sees the fixture string; process_key still ignores it.
+    // so the decoder sees the fixture string; the decoder stops at the junk byte.
     let mut session = session();
     session
         .type_pinyin("b#ing")
@@ -256,116 +222,25 @@ fn replace_raw_consumes_trailing_and_standalone_apostrophe_runs() {
 }
 
 #[test]
-fn command_modifiers_leave_the_session_alone() {
-    let mut session = session();
-    type_text(&mut session, "ni");
-
-    for modifier in [Modifiers::CONTROL, Modifiers::ALT, Modifiers::SUPER] {
-        let input = KeyInput::new(LogicalKey::Character('h'), modifier, "h");
-        assert_eq!(
-            session.process_key(&input).expect("no failure"),
-            KeyOutcome::Ignored
-        );
-    }
-    assert_eq!(session.raw_input(), "ni");
-
-    let shifted = KeyInput::new(LogicalKey::Character('h'), Modifiers::SHIFT, "H");
-    assert_eq!(
-        session.process_key(&shifted).expect("no failure"),
-        KeyOutcome::Consumed
-    );
-    assert_eq!(session.raw_input(), "nih");
-}
-
-#[test]
 fn backspace_erases_then_reports_nothing_to_do() {
     let mut session = session();
     type_text(&mut session, "ni");
 
-    let backspace = KeyInput::plain(LogicalKey::Backspace);
-    assert_eq!(
-        session.process_key(&backspace).expect("no failure"),
-        KeyOutcome::Consumed
-    );
+    assert_eq!(session.erase().expect("no failure"), KeyOutcome::Consumed);
     assert_eq!(session.raw_input(), "n");
-    session.process_key(&backspace).expect("no failure");
+    session.erase().expect("no failure");
     assert_eq!(session.raw_input(), "");
-    assert_eq!(
-        session.process_key(&backspace).expect("no failure"),
-        KeyOutcome::Ignored
-    );
+    assert_eq!(session.erase().expect("no failure"), KeyOutcome::Ignored);
 }
 
 #[test]
-fn enter_commits_and_escape_discards() {
+fn reset_discards_the_composition() {
     let mut session = session();
     type_text(&mut session, "nihao");
-    assert_eq!(
-        session
-            .process_key(&KeyInput::plain(LogicalKey::Enter))
-            .expect("no failure"),
-        KeyOutcome::Commit("nihao".into())
-    );
+    session.reset();
     assert!(!session.is_composing());
-    assert_eq!(
-        session
-            .process_key(&KeyInput::plain(LogicalKey::Enter))
-            .expect("no failure"),
-        KeyOutcome::Ignored
-    );
-
-    type_text(&mut session, "nihao");
-    assert_eq!(
-        session
-            .process_key(&KeyInput::plain(LogicalKey::Escape))
-            .expect("no failure"),
-        KeyOutcome::Consumed
-    );
+    assert!(session.selected_text().is_empty());
     assert_eq!(session.raw_input(), "");
-}
-
-#[test]
-fn keys_the_session_does_not_use_change_nothing() {
-    let mut session = session();
-    type_text(&mut session, "ni");
-
-    for key in [
-        LogicalKey::Tab,
-        LogicalKey::Delete,
-        LogicalKey::Left,
-        LogicalKey::Right,
-        LogicalKey::Up,
-        LogicalKey::Down,
-        LogicalKey::Home,
-        LogicalKey::End,
-        LogicalKey::PageUp,
-        LogicalKey::PageDown,
-        LogicalKey::Unknown,
-    ] {
-        assert_eq!(
-            session
-                .process_key(&KeyInput::plain(key))
-                .expect("no failure"),
-            KeyOutcome::Ignored,
-            "key: {key:?}"
-        );
-    }
-    assert_eq!(session.raw_input(), "ni");
-}
-
-#[test]
-fn the_preedit_covers_its_text_exactly() {
-    let mut session = session();
-    assert!(session.preedit().is_empty());
-
-    type_text(&mut session, "nihao");
-    let preedit = session.preedit();
-    assert_eq!(preedit.text(), "nihao");
-    assert_eq!(preedit.cursor(), 5);
-    assert_eq!(preedit.spans().len(), 1);
-    assert_eq!(preedit.spans()[0].style(), SpanStyle::Raw);
-    assert_eq!(preedit.spans()[0].start(), 0);
-    assert_eq!(preedit.spans()[0].end(), preedit.text().len());
 }
 
 #[test]
@@ -394,31 +269,11 @@ fn choosing_the_fallback_completes_the_composition() {
         Selection::Completed
     );
 
-    let preedit = session.preedit();
-    assert_eq!(preedit.text(), "nihao");
-    assert_eq!(preedit.spans().len(), 1);
-    assert_eq!(preedit.spans()[0].style(), SpanStyle::Selected);
+    assert_eq!(session.selected_text(), "nihao");
+    assert_eq!(session.composition_offset(), 5);
     assert!(session.candidates().is_empty());
-    assert_eq!(session.commit().expect("no failure"), "nihao");
-}
-
-#[test]
-fn space_accepts_the_first_candidate_and_commits() {
-    let mut session = session();
-    type_text(&mut session, "nihao");
-    assert_eq!(
-        session
-            .process_key(&KeyInput::plain(LogicalKey::Space))
-            .expect("no failure"),
-        KeyOutcome::Commit("nihao".into())
-    );
-    assert!(!session.is_composing());
-    assert_eq!(
-        session
-            .process_key(&KeyInput::plain(LogicalKey::Space))
-            .expect("no failure"),
-        KeyOutcome::Ignored
-    );
+    session.reset();
+    assert!(session.selected_text().is_empty());
 }
 
 #[test]
@@ -427,13 +282,10 @@ fn backspace_undoes_a_selection_before_reporting_nothing_to_do() {
     type_text(&mut session, "nihao");
     session.select(0).expect("the fallback exists");
 
-    let backspace = KeyInput::plain(LogicalKey::Backspace);
-    assert_eq!(
-        session.process_key(&backspace).expect("no failure"),
-        KeyOutcome::Consumed
-    );
-    assert_eq!(session.preedit().text(), "nihao");
-    assert_eq!(session.preedit().spans()[0].style(), SpanStyle::Raw);
+    assert_eq!(session.erase().expect("no failure"), KeyOutcome::Consumed);
+    assert_eq!(session.raw_input(), "nihao");
+    assert_eq!(session.composition_offset(), 0);
+    assert!(session.selected_text().is_empty());
 }
 
 #[test]
@@ -448,25 +300,10 @@ fn a_full_buffer_ignores_further_input() {
         .expect("no failure");
     assert_eq!(session.raw_input().len(), MAX_INPUT_BYTES, "clamped");
     assert_eq!(
-        session
-            .process_key(&KeyInput::character('\''))
-            .expect("no failure"),
+        session.type_pinyin("'").expect("no failure"),
         KeyOutcome::Ignored
     );
     assert_eq!(session.raw_input().len(), MAX_INPUT_BYTES);
-}
-
-#[test]
-fn configuration_and_paths_are_the_injected_data() {
-    let session = session();
-    assert_eq!(session.page_size(), 5);
-    assert_eq!(session.paths().user_data_dir().to_str(), Some("user"));
-}
-
-#[test]
-fn commit_on_an_empty_session_is_empty_text() {
-    let mut session = session();
-    assert_eq!(session.commit().expect("no failure"), "");
 }
 
 /// §9's authored vocabulary: a one-key phrase with a two-key extension,
@@ -507,14 +344,13 @@ fn a_longer_row_surfaces_when_bit_2_clear_and_vanishes_when_set() {
     // (`has_real_unigrams`, `lookup.rs`).
     let mut session = Session::new(
         &EmptyConfigSource,
-        StoragePaths::new("user"),
         FixtureDictionary::parse(LONGER_VOCAB).expect("authored fixture"),
         FrequencyFixtureModel::parse(LONGER_VOCAB, "").expect("authored fixture"),
     )
     .expect("the fixtures open");
     for character in "fang".chars() {
         session
-            .process_key(&KeyInput::character(character))
+            .type_pinyin(character.encode_utf8(&mut [0; 4]))
             .expect("typing cannot fail");
     }
     session
@@ -560,7 +396,6 @@ fn a_longer_row_surfaces_when_bit_2_clear_and_vanishes_when_set() {
 fn longer_session(defer: bool) -> Session<FixtureDictionary, FrequencyFixtureModel> {
     let mut session = Session::new(
         &EmptyConfigSource,
-        StoragePaths::new("user"),
         FixtureDictionary::parse(LONGER_VOCAB).expect("authored fixture"),
         FrequencyFixtureModel::parse(LONGER_VOCAB, "").expect("authored fixture"),
     )
@@ -594,15 +429,14 @@ fn a_deferred_list_is_the_eager_list_at_every_read() {
     assert_eq!(deferred.selected_tokens(), eager.selected_tokens());
     assert_eq!(deferred.candidates(), eager.candidates());
 
-    // `Space` reads the deferred list too.
+    // A direct selection reads the deferred list after another parse.
     eager.reset();
     deferred.reset();
     eager.replace_raw("fang").expect("parse");
     deferred.replace_raw("fang").expect("parse");
-    let space = KeyInput::plain(LogicalKey::Space);
     assert_eq!(
-        deferred.process_key(&space).expect("space"),
-        eager.process_key(&space).expect("space")
+        deferred.select(0).expect("select"),
+        eager.select(0).expect("select")
     );
     assert_eq!(deferred.selected_tokens(), eager.selected_tokens());
 }
@@ -668,7 +502,6 @@ fn a_failed_deferred_build_stays_stale_and_is_retried() {
     let open = |defer: bool| {
         let mut session = Session::new(
             &EmptyConfigSource,
-            StoragePaths::new("user"),
             Flaky {
                 inner: FixtureDictionary::parse(LONGER_VOCAB).expect("authored fixture"),
                 failures: core::cell::Cell::new(0),
@@ -710,14 +543,13 @@ fn a_longer_row_rides_an_empty_column_and_the_reserved_slot() {
     // regardless of the lookup offset.
     let mut session = Session::new(
         &EmptyConfigSource,
-        StoragePaths::new("user"),
         FixtureDictionary::parse(LONGER_VOCAB).expect("authored fixture"),
         FrequencyFixtureModel::parse(LONGER_VOCAB, "").expect("authored fixture"),
     )
     .expect("the fixtures open");
     for character in "fang".chars() {
         session
-            .process_key(&KeyInput::character(character))
+            .type_pinyin(character.encode_utf8(&mut [0; 4]))
             .expect("typing cannot fail");
     }
     session
@@ -766,7 +598,6 @@ impl UserModel for Recorder {
 fn train_session() -> Session<FixtureDictionary, FixtureLanguageModel> {
     Session::new(
         &EmptyConfigSource,
-        StoragePaths::new("user"),
         FixtureDictionary::parse(TRAIN_VOCAB).expect("authored fixture"),
         FixtureLanguageModel::parse(TRAIN_VOCAB, "").expect("authored fixture"),
     )
@@ -783,7 +614,7 @@ fn type_and_select(
 ) {
     for character in text.chars() {
         session
-            .process_key(&KeyInput::character(character))
+            .type_pinyin(character.encode_utf8(&mut [0; 4]))
             .expect("typing cannot fail");
     }
     let index = session
@@ -831,7 +662,7 @@ fn train_nbest_observes_partial_selection_for_fallback_model() {
     type_and_select(&mut session, "ni", 1);
     for character in "hao".chars() {
         session
-            .process_key(&KeyInput::character(character))
+            .type_pinyin(character.encode_utf8(&mut [0; 4]))
             .expect("typing cannot fail");
     }
     assert_eq!(session.selected_tokens(), [PhraseToken::new(1)]);
@@ -1106,25 +937,19 @@ fn a_stored_phrase_trains_with_its_stored_length() {
 /// (074a2219 `pinyin.cpp:2577-2587`); its sentence converts each phrase
 /// from the stored words (`src/lookup/lookup.cpp:39-68`).
 #[test]
-fn a_chosen_phrase_keeps_its_text_through_the_record_and_commit() {
+fn a_chosen_phrase_keeps_its_text_through_the_record() {
     let cases = [
         (
             oxpinyin_core::PhraseText::from_words([0x4F60, 0xD800]).expect("stored words"),
-            "你\u{fffd}hao",
             vec![0x4F60, 0xD800],
         ),
         (
             oxpinyin_core::PhraseText::from_words([0x4F60, 0, 0x597D]).expect("stored words"),
-            "你hao",
             vec![0x4F60],
         ),
-        (
-            oxpinyin_core::PhraseText::from("你\0好"),
-            "你hao",
-            vec![0x4F60],
-        ),
+        (oxpinyin_core::PhraseText::from("你\0好"), vec![0x4F60]),
     ];
-    for (text, preedit, outward) in cases {
+    for (text, outward) in cases {
         let mut session = trellis_session();
         session.replace_raw("nihao").expect("parse");
         let window =
@@ -1155,12 +980,7 @@ fn a_chosen_phrase_keeps_its_text_through_the_record_and_commit() {
             outward,
             "{text:?} is the record's outward text"
         );
-        assert_eq!(session.preedit().text(), preedit);
-
-        let committed = session.commit().expect("commit");
-        let mut expected = outward.clone();
-        expected.extend("hao".chars().map(u32::from));
-        assert_eq!(committed.outward_words().collect::<Vec<_>>(), expected);
+        assert_eq!(&session.raw_input()[session.composition_offset()..], "hao");
     }
 }
 
@@ -1375,11 +1195,11 @@ fn an_nbest_row_chosen_from_a_reanchored_window_commits_only_its_text() {
         .select_anchored(nbest, &window, 2)
         .expect("selection cannot fail");
     // The row's span is the whole composition, so the selection consumes
-    // everything; commit() returns the row text with no raw prefix.
+    // everything; the record holds the row text with no raw prefix.
     assert_eq!(
-        session.commit().expect("commit cannot fail"),
+        session.selected_text(),
         "你好",
-        "an n-best row from a re-anchored window commits its own text,\n\
+        "an n-best row from a re-anchored window retains its own text,\n\
          not the gap-prefixed duplicate"
     );
 }
@@ -1698,7 +1518,6 @@ fn dynamic_adjust_run(
         .collect();
     let mut session = Session::new(
         &EmptyConfigSource,
-        StoragePaths::new("user"),
         SystemPhrases(phrases),
         CountingBigrams {
             unigrams: FixedUnigrams {
@@ -1998,7 +1817,6 @@ impl LanguageModel for FixedUnigrams {
 fn real_unigrams_skip_the_key_cost_walk_but_the_fallback_keeps_it() {
     let real = Session::new(
         &EmptyConfigSource,
-        StoragePaths::new("user"),
         Silent,
         FixedUnigrams {
             system: 14,
@@ -2014,13 +1832,7 @@ fn real_unigrams_skip_the_key_cost_walk_but_the_fallback_keeps_it() {
         "a real-frequency model must not walk the key inventory it cannot read"
     );
 
-    let fallback = Session::new(
-        &EmptyConfigSource,
-        StoragePaths::new("user"),
-        Silent,
-        Silent,
-    )
-    .expect("Session::new");
+    let fallback = Session::new(&EmptyConfigSource, Silent, Silent).expect("Session::new");
     assert!(!fallback.model.has_real_unigrams());
     assert_eq!(
         fallback.key_costs.len(),
@@ -2039,13 +1851,7 @@ fn real_unigrams_skip_the_key_cost_walk_but_the_fallback_keeps_it() {
 fn fallback_model_with_an_empty_key_cost_table_is_rejected() {
     // The harmful direction: without the table the fallback scorer prices
     // every edge at UNKNOWN_COST and decodes wrongly in silence.
-    let _ = Session::new_with_key_costs(
-        &EmptyConfigSource,
-        StoragePaths::new("user"),
-        Silent,
-        Silent,
-        Vec::new(),
-    );
+    let _ = Session::new_with_key_costs(&EmptyConfigSource, Silent, Silent, Vec::new());
 }
 
 #[cfg(debug_assertions)]
@@ -2056,7 +1862,6 @@ fn real_unigram_model_with_a_populated_key_cost_table_is_rejected() {
     // from the constructor's side.
     let _ = Session::new_with_key_costs(
         &EmptyConfigSource,
-        StoragePaths::new("user"),
         Silent,
         FixedUnigrams {
             system: 14,
@@ -2081,7 +1886,6 @@ fn addon_candidates_rank_on_their_own_amplified_scale() {
     // lands on 3 over 51,051,831 but 6 over the half-size addon total.
     let session = Session::new(
         &EmptyConfigSource,
-        StoragePaths::new("user"),
         Silent,
         FixedUnigrams {
             system: 14,
@@ -2153,7 +1957,6 @@ fn window_scan_emits_system_candidates_before_addon_candidates() {
     // (`pinyin.cpp:1769-1791`) lays down.
     let mut session = Session::new(
         &EmptyConfigSource,
-        StoragePaths::new("user"),
         TwoFacadeDict {
             system: PhraseEntry::new(PhraseToken::new(0x0100_0001), "系".to_owned()),
             addon: PhraseEntry::new(PhraseToken::new(0x0500_0002), "附".to_owned()),
@@ -2343,7 +2146,6 @@ impl LanguageModel for TrellisModel {
 fn trellis_session() -> Session<FixtureDictionary, TrellisModel> {
     Session::new(
         &EmptyConfigSource,
-        StoragePaths::new("user"),
         FixtureDictionary::parse(TRAIN_VOCAB).expect("authored fixture"),
         TrellisModel {
             blended: 100,
@@ -2361,7 +2163,7 @@ where
 {
     for character in text.chars() {
         session
-            .process_key(&KeyInput::character(character))
+            .type_pinyin(character.encode_utf8(&mut [0; 4]))
             .expect("typing cannot fail");
     }
     let index = session
@@ -2422,7 +2224,7 @@ fn the_forcing_survives_typing_and_releases_only_on_reset() {
     type_and_select_over(&mut session, "nihao", 1);
     for character in "s".chars() {
         session
-            .process_key(&KeyInput::character(character))
+            .type_pinyin(character.encode_utf8(&mut [0; 4]))
             .expect("typing cannot fail");
     }
     assert!(
@@ -2446,7 +2248,7 @@ fn the_forcing_survives_typing_and_releases_only_on_reset() {
     );
     for character in "nihaos".chars() {
         session
-            .process_key(&KeyInput::character(character))
+            .type_pinyin(character.encode_utf8(&mut [0; 4]))
             .expect("typing cannot fail");
     }
     assert!(
@@ -2492,7 +2294,7 @@ fn clearing_a_tail_forcing_reopens_a_committed_composition() {
     let mut session = trellis_session();
     for character in "nihaoshijie".chars() {
         session
-            .process_key(&KeyInput::character(character))
+            .type_pinyin(character.encode_utf8(&mut [0; 4]))
             .expect("typing cannot fail");
     }
     let select_token = |session: &mut Session<FixtureDictionary, TrellisModel>, token| {
@@ -2530,7 +2332,7 @@ fn clearing_a_tail_forcing_reopens_a_committed_composition() {
     // Further typing keeps the surviving 你 forcing alive.
     for character in "s".chars() {
         session
-            .process_key(&KeyInput::character(character))
+            .type_pinyin(character.encode_utf8(&mut [0; 4]))
             .expect("typing cannot fail");
     }
     assert!(
@@ -2554,14 +2356,14 @@ fn clearing_a_tail_forcing_reopens_a_committed_composition() {
 /// `diff_result` writes no run — the store stays empty. A shrinking
 /// re-parse then clamps the cursor backward with nothing to drop,
 /// and the rebuild must run anyway: the record's coverage exceeds
-/// the new input, and Enter would commit the stale row text for an
-/// input that can no longer produce it.
+/// the new input, retaining stale row text for an input that can no
+/// longer produce it.
 #[test]
 fn a_shrinking_reparse_reconciles_a_constraint_free_row_selection() {
     let mut session = trellis_session();
     for character in "nihao".chars() {
         session
-            .process_key(&KeyInput::character(character))
+            .type_pinyin(character.encode_utf8(&mut [0; 4]))
             .expect("typing cannot fail");
     }
     assert!(session.guess_sentence().expect("guess cannot fail"));
@@ -2595,14 +2397,11 @@ fn a_shrinking_reparse_reconciles_a_constraint_free_row_selection() {
         "the composition re-opened at 0"
     );
 
-    let outcome = session
-        .process_key(&KeyInput::plain(LogicalKey::Enter))
-        .expect("enter on a composing session cannot fail");
-    assert_eq!(
-        outcome,
-        KeyOutcome::Commit("ni".into()),
-        "the commit answers the current input, never the stale row text"
+    assert!(
+        session.selected_text().is_empty(),
+        "the stale selection is gone"
     );
+    assert_eq!(session.raw_input(), "ni");
 }
 
 /// Review regression: the reconcile must fire on canonical
@@ -2621,7 +2420,7 @@ fn a_divergent_replacement_reconciles_the_committed_selection() {
     let mut session = trellis_session();
     for character in "nihao".chars() {
         session
-            .process_key(&KeyInput::character(character))
+            .type_pinyin(character.encode_utf8(&mut [0; 4]))
             .expect("typing cannot fail");
     }
     for token in [1_u32, 2] {
@@ -2649,14 +2448,11 @@ fn a_divergent_replacement_reconciles_the_committed_selection() {
         "the composition re-opened at 0"
     );
 
-    let outcome = session
-        .process_key(&KeyInput::plain(LogicalKey::Enter))
-        .expect("enter on a composing session cannot fail");
-    assert_eq!(
-        outcome,
-        KeyOutcome::Commit("mixxo".into()),
-        "the commit answers the current input, never the stale selection"
+    assert!(
+        session.selected_text().is_empty(),
+        "the stale selection is gone"
     );
+    assert_eq!(session.raw_input(), "mixxo");
 }
 
 /// A temporary edit sanitises the engine's selection record without
@@ -2705,7 +2501,7 @@ fn the_forcing_survives_the_engine_backspace_and_retype() {
     let mut session = trellis_session();
     for character in "nihaoshijie".chars() {
         session
-            .process_key(&KeyInput::character(character))
+            .type_pinyin(character.encode_utf8(&mut [0; 4]))
             .expect("typing cannot fail");
     }
     let index = session
@@ -2718,7 +2514,7 @@ fn the_forcing_survives_the_engine_backspace_and_retype() {
     // Backspace the buffer down to the forcing's floor.
     for _ in 0..9 {
         assert_eq!(
-            session.process_key(&KeyInput::plain(LogicalKey::Backspace)),
+            session.erase(),
             Ok(KeyOutcome::Consumed),
             "erase pops while input remains"
         );
@@ -2737,7 +2533,7 @@ fn the_forcing_survives_the_engine_backspace_and_retype() {
     // The re-type continues the open composition with the forcing.
     for character in "haoshijie".chars() {
         session
-            .process_key(&KeyInput::character(character))
+            .type_pinyin(character.encode_utf8(&mut [0; 4]))
             .expect("typing cannot fail");
     }
     assert!(
@@ -2757,7 +2553,7 @@ fn the_forcing_survives_the_engine_backspace_and_retype() {
     // The all-or-nothing erase (nothing left to pop) un-selects
     // everything, store included.
     for _ in 0..11 {
-        let _ = session.process_key(&KeyInput::plain(LogicalKey::Backspace));
+        let _ = session.erase();
     }
     assert!(
         !session.clear_constraint(0),
@@ -2819,7 +2615,7 @@ fn a_fresh_composition_row_choose_records_its_forcing() {
 
 /// Review regression: the record rebuild keeps the raw text of the
 /// gaps between forcings — `diff_result` leaves unchanged phrases
-/// free, and the preedit must not drop exactly those bytes.
+/// free, and the selection record must not drop exactly those bytes.
 #[test]
 fn a_record_rebuild_keeps_the_gap_text_between_forcings() {
     let mut session = train_session();
@@ -2836,11 +2632,14 @@ fn a_record_rebuild_keeps_the_gap_text_between_forcings() {
         .constraints
         .add(5, 10, PhraseToken::new(2), "\u{4e16}\u{754c}".into());
     session.rebuild_selection_from_constraints();
-    let preedit = session.preedit();
     assert!(
-        preedit.text().starts_with("\u{4f60}hao\u{4e16}\u{754c}"),
+        session
+            .selected_text()
+            .as_str()
+            .unwrap()
+            .starts_with("\u{4f60}hao\u{4e16}\u{754c}"),
         "the gap's raw bytes survived the rebuild: got {:?}",
-        preedit.text()
+        session.selected_text()
     );
 }
 
@@ -2849,7 +2648,7 @@ fn a_row_zero_choose_trains_nothing_even_with_recorded_tokens() {
     let mut session = trellis_session();
     for character in "nihao".chars() {
         session
-            .process_key(&KeyInput::character(character))
+            .type_pinyin(character.encode_utf8(&mut [0; 4]))
             .expect("typing cannot fail");
     }
     assert!(
@@ -3135,7 +2934,7 @@ fn choosing_a_before_cursor_row_constrains_its_own_span() {
         "the constraint is the row's own span, not [0, offset)"
     );
     assert_eq!(
-        session.preedit().text(),
+        session.selected_text(),
         "ni好",
         "the leading key stays typed-but-unselected, as an after-cursor re-anchor keeps it"
     );
@@ -3298,7 +3097,6 @@ fn candidates_at_a_divided_split_column_answers_the_split_window() {
     let split_session = || {
         Session::new(
             &EmptyConfigSource,
-            StoragePaths::new("user"),
             FixtureDictionary::parse(SPLIT_VOCAB).expect("authored fixture"),
             FixtureLanguageModel::parse(SPLIT_VOCAB, "").expect("authored fixture"),
         )
@@ -3745,7 +3543,6 @@ fn choosing_behind_the_composition_moves_the_record_back() {
                          token=3\tkeys=ni,hao\ttext=你好\tunigram=800\n";
     let mut session = Session::new(
         &EmptyConfigSource,
-        StoragePaths::new("user"),
         FixtureDictionary::parse(VOCAB).expect("authored fixture"),
         FixtureLanguageModel::parse(VOCAB, "").expect("authored fixture"),
     )
@@ -3775,7 +3572,8 @@ fn choosing_behind_the_composition_moves_the_record_back() {
         (runs[0].0, runs[0].1, &runs[0].3),
         (0, 2, &oxpinyin_core::PhraseText::from("你"))
     );
-    assert_eq!(session.preedit().text(), "你hao");
+    assert_eq!(session.selected_text(), "你");
+    assert_eq!(&session.raw_input()[session.composition_offset()..], "hao");
 }
 
 /// One phrase stored as `ni3'hao3`:
@@ -3823,7 +3621,6 @@ fn typed_tones_keep_only_user_phrases_with_a_matching_stored_tone() {
     let texts = |input: &str| -> Vec<String> {
         let mut session = Session::new(
             &EmptyConfigSource,
-            StoragePaths::new("user"),
             StoredTone3,
             FixedUnigrams {
                 system: 14,
@@ -3956,7 +3753,6 @@ fn chained_resplit_and_divided_windows_read_the_retained_matrix() {
     for (raw, offset, wanted, end) in [("banangang", 6, "昂", 9), ("lianai", 2, "安", 4)] {
         let mut session = Session::new(
             &EmptyConfigSource,
-            StoragePaths::new("user"),
             FixtureDictionary::parse(HALF_VOCAB).expect("fixture"),
             FixedUnigrams {
                 system: 1000,
@@ -3987,7 +3783,6 @@ fn changing_sentence_collapse_rebuilds_full_pinyin_split_windows() {
     for (raw, offset, wanted, end) in [("banangang", 6, "昂", 9), ("lianai", 2, "安", 4)] {
         let mut session = Session::new(
             &EmptyConfigSource,
-            StoragePaths::new("user"),
             FixtureDictionary::parse(HALF_VOCAB).expect("fixture"),
             FixedUnigrams {
                 system: 1000,
@@ -4043,7 +3838,6 @@ fn retained_exact_key_windows_search_the_reserved_end_slot() {
 
     let mut session = Session::new(
         &EmptyConfigSource,
-        StoragePaths::new("user"),
         FixtureDictionary::parse(EXACT_VOCAB).expect("fixture"),
         FixedUnigrams {
             system: 1000,
@@ -4506,7 +4300,6 @@ fn wide_abbreviation_session(
 ) -> Session<ItemDictionary, TrellisModel> {
     let mut session = Session::new(
         &EmptyConfigSource,
-        StoragePaths::new("user"),
         ItemDictionary {
             inner: FixtureDictionary::parse(TRAIN_VOCAB).expect("authored fixture"),
             items: item.into_iter().map(|rows| (7, rows)).collect(),
@@ -4634,7 +4427,6 @@ fn candidate_collection_uses_unpriced_system_and_addon_operations() {
     let dictionary = CandidateDict;
     let session = Session::new_with_key_costs(
         &EmptyConfigSource,
-        StoragePaths::new("user"),
         &dictionary,
         Silent,
         vec![oxpinyin_core::cost::UNKNOWN_COST; oxpinyin_core::SYLLABLE_KEY_COUNT],

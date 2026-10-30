@@ -1,4 +1,4 @@
-//! Selection and constraints: choosing a candidate from the cached list or a re-anchored window, the §3 constraint writes, the selection record, training, commit.
+//! Selection and constraints: choosing a candidate from the cached list or a re-anchored window, the §3 constraint writes, the selection record and training.
 //!
 //! One of the `impl Session` slices `session/mod.rs` declares; every
 //! method here was moved verbatim from the single 5,800-line
@@ -182,7 +182,7 @@ where
         // The raw bytes between the composition offset and the span start
         // were typed without being selected. For a re-anchored selection
         // (span start > composition offset) they would otherwise be dropped
-        // from the committed/preedit text — the same gap the constraint
+        // from the retained selection text — the same gap the constraint
         // rebuild preserves (`rebuild_selection_from_constraints`). The
         // composition-anchored path (span start == composition offset) has
         // an empty gap.
@@ -536,7 +536,7 @@ where
     /// coordinate space (raw-buffer byte positions, #141's law); a hit
     /// anywhere inside a forced run un-forces the whole run. The
     /// selection record follows the surviving forcings, so the cleared
-    /// phrase's text leaves the preedit and its token leaves the record.
+    /// phrase's text and token leave the record.
     ///
     /// Returns `false` for a free cell or an out-of-range offset —
     /// upstream's own defined return, never an abort.
@@ -557,7 +557,7 @@ where
         // Gaps between forced runs are free spans (diff_result forces only
         // the differing phrases); their text is the current buffer's bytes,
         // so the rebuilt record never drops raw input the forcings skip
-        // over — the preedit would otherwise lose exactly that gap. The
+        // over — the selected text would otherwise lose exactly that gap. The
         // record owns the rebuild (and the commit-branch flag it clears):
         // this seam only hands it the surviving runs and the buffer.
         let runs = self.constraints.runs();
@@ -600,24 +600,12 @@ where
             .collect())
     }
 
-    /// Finishes the composition and returns its text: the chosen phrases,
-    /// stored words kept and each cut at its own first zero, then the raw
-    /// input no selection consumed. A C client's bytes come from
-    /// `phrase_text_bytes` at its own boundary.
-    ///
-    /// Never fails on an empty composition: the text is then empty too.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`EngineError`] when a backend fails while the session resets.
-    pub fn commit(&mut self) -> Result<PhraseText, EngineError> {
-        let mut text = PhraseTextConcat::new();
-        text.push(&self.record.take_selected());
-        text.push(&PhraseText::from(
-            &self.input.as_str()[self.record.consumed()..],
-        ));
-        self.reset();
-        Ok(text.finish())
+    /// Text retained by selections, including raw gaps before anchored choices.
+    /// Unselected trailing input remains in [`Session::raw_input`] after
+    /// [`Session::composition_offset`].
+    #[must_use]
+    pub const fn selected_text(&self) -> &PhraseText {
+        self.record.selected()
     }
 }
 

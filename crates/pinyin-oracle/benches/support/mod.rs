@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use oxpinyin_core::{Dictionary, LanguageModel, PhraseEntry, PhraseToken, SyllableKey};
 use oxpinyin_data::{BigramLanguageModel, SystemDbm, SystemDictionary};
-use oxpinyin_engine::{EmptyConfigSource, Session, StoragePaths};
+use oxpinyin_engine::{EmptyConfigSource, Session};
 // Canonical export-dir resolution, shared with the capi benches.
 pub use oxpinyin_testsupport::model_cache::export_dir;
 use pinyin_oracle::model_cache;
@@ -131,7 +131,7 @@ pub fn counting_session<'a>(
     dict: CountingDict<'a>,
     lm: &'a BigramLanguageModel,
 ) -> Session<CountingDict<'a>, &'a BigramLanguageModel> {
-    Session::new(&EmptyConfigSource, StoragePaths::new("user"), dict, lm).expect("Session::new")
+    Session::new(&EmptyConfigSource, dict, lm).expect("Session::new")
 }
 
 /// Session over the real tables.
@@ -139,7 +139,7 @@ pub fn real_session<'a>(
     dict: &'a SystemDictionary,
     lm: &'a BigramLanguageModel,
 ) -> Session<&'a SystemDictionary, &'a BigramLanguageModel> {
-    Session::new(&EmptyConfigSource, StoragePaths::new("user"), dict, lm).expect("Session::new")
+    Session::new(&EmptyConfigSource, dict, lm).expect("Session::new")
 }
 
 /// Types `input` one character at a time, refreshing after each.
