@@ -6,6 +6,8 @@ oxpinyin implements libpinyin and libzhuyin in native Rust. It preserves the pin
 
 The human documents hold every project rule:
 
+- [Product](docs/product.md) and [architecture](docs/architecture.md).
+- [Rust conventions](docs/rust-conventions.md).
 - [Constitution and external interfaces](docs/constitution.md).
 - [Source policy and stages](docs/source-policy.md).
 - [Candidate-frequency comparator ruling](docs/source-policy.md#internal-language-artefacts).
