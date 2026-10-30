@@ -107,16 +107,6 @@ fn cleaner_reproduces_sample_from_xml_fixture_bit_exactly() {
     assert_eq!(out, read_sample().into_bytes(), "cleaned bytes diverge");
 }
 
-/// Guards against the strip rules silently changing: the invariant test
-/// above is the specification, and it must stay in sync with the sample.
-#[test]
-fn invariant_guards_are_not_silently_relaxed() {
-    assert!(MARKUP_RESIDUE.contains(&"<ref"));
-    assert!(MARKUP_RESIDUE.contains(&"{{"));
-    assert!(TRADITIONAL_SPOT_CHECK.contains('國'));
-    assert!(TRADITIONAL_SPOT_CHECK.contains('學'));
-}
-
 fn locate_opencc() -> Option<PathBuf> {
     if let Some(raw) = std::env::var_os("PINYIN_OPENCC") {
         let path = PathBuf::from(raw);

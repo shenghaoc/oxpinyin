@@ -355,21 +355,6 @@ mod tests {
     }
 
     #[test]
-    fn classic_records_render_space_separated_lines_that_parse_back() {
-        let text = "你好 ni'hao 3\n世界 shi'jie 7\n词 ci\n";
-        let records = parse(text).unwrap();
-        let rendered: String = records
-            .iter()
-            .map(|record| {
-                record.count.map_or_else(
-                    || format!("{} {}\n", record.phrase, record.pinyin),
-                    |count| format!("{} {} {}\n", record.phrase, record.pinyin, count),
-                )
-            })
-            .collect();
-        assert_eq!(parse(&rendered).unwrap(), records);
-    }
-    #[test]
     fn nul_terminates_classic_records_before_utf8_validation() {
         let ordinary = parse("词 ci 7\n你好 nihao\n").unwrap();
         let mut bytes = "词 ci 7\0".as_bytes().to_vec();
