@@ -253,8 +253,7 @@ each; their headers say what they prove.
 
 ### Pre-release real-installation checks
 
-Before each release, run the three-cell sweep required by `AGENTS.md`,
-verification rule 3. The tkrzw suites above own `cross_backend` with
+Before each release, run the three-cell sweep required by [verification rule 3](verification.md#3-sweep-and-release-coverage). The tkrzw suites above own `cross_backend` with
 model20 and `libpinyin_data_dir` on tkrzw. This pre-release procedure owns
 `cross_backend` with model20 on BDB and KC, `bdb_libpinyin_files` (BDB),
 `reads_a_real_libpinyin_installation` (the BDB reference installation),
@@ -268,8 +267,8 @@ and set `TMPDIR` on disk with room for scratch data. On Ubuntu, tkrzw
 must use setup's sound libtkrzw, pass `tools/tkrzw/distro-probe.sh`, and
 resolve both the oracle and subject to that library with `ldd`
 (verification rule 9). Keep one target directory per cell. When setup is
-needed in a concurrent lane, set `OXPINYIN_ORACLE_ENV` to a lane-private
-file; do not overwrite another lane's environment registration.
+needed in a second worktree on the same host, set `OXPINYIN_ORACLE_ENV` to a
+worktree-private file; do not overwrite another worktree's environment registration.
 
 The input identity authority is `tools/oracle/oracle-pin.txt`:
 
@@ -506,7 +505,7 @@ first (`pinyin.cpp:2676` at the pin) — it does not consume the candidate
 list from `pinyin_guess_candidates`. `Session::train_top` in
 `pinyin-oracle` exists to make this impossible to get wrong; harness
 and bench authors call it rather than `pinyin_train` directly
-(AGENTS.md points here).
+(see [verification](verification.md#procedure-specific-rules)).
 
 ## 5. What to do with a divergence
 

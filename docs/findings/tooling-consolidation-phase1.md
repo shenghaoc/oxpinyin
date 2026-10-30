@@ -75,7 +75,7 @@ The ruling approves Stage 0 now, authorises Stage 1 after Stage 0 is
 accepted, leaves Stages 2–13 unauthorised, and approves no deletion. It is
 an approval of the specific design choices below, not permission to resolve
 further architectural questions independently; a genuinely new ABI,
-dependency or policy decision remains a STOP under AGENTS.md.
+dependency or policy decision remains a STOP under contributor guidance.
 
 | Decision | Ruling | Conditions recorded |
 | --- | --- | --- |
@@ -206,7 +206,7 @@ pass unchanged.
    include the driver's own work, and the runbook records the driver's source
    and executable SHA-256 next to the figures (benches.md, 2026-10-14
    refresh). A Rust driver cannot reproduce those figures; it can only start
-   a new same-run series. AGENTS.md "Measure in one run" and benches.md
+   a new same-run series. contributor guidance "Measure in one run" and benches.md
    "Measure base, PR and pin in one run" (added by PR #819) make
    cross-run comparison invalid anyway, which is what makes a re-baseline
    possible without loss, but only by maintainer decision (E, D4).
@@ -214,7 +214,7 @@ pass unchanged.
     `libloading` or `libc` as direct dependencies (all five are in
     `Cargo.lock` transitively through `bindgen` and `criterion`). Rust std
     has no `dlopen`. A dlopen-based generic subject is impossible without a
-    direct dependency, which AGENTS.md makes an ask (E, D1). The Python layer
+    direct dependency, which contributor guidance makes an ask (E, D1). The Python layer
     is stdlib-only by stated policy; the shell layer needs gcc, pkg-config,
     glib, nm, diff, docker, valgrind, taskset, and the three backend dump
     utilities (`db5.3_dump`, `kchashmgr`, `tkrzw_dbm_util`; #826).
@@ -336,7 +336,7 @@ work dirs and prefixes and `cmp`s the hash listings and the record;
 data; `cloud/setup.sh` pulls or builds, discards any cell whose hashes
 differ, regenerates data per cell with a staged swap only on manifest
 match, writes `~/.oxpinyin-oracle.env`, exits 3 on MISMATCH. Rules added to
-AGENTS.md: "Measure in one run" and "Push, don't hoard" (quoted in Appendix
+contributor guidance: "Measure in one run" and "Push, don't hoard" (quoted in Appendix
 A, ORC §(c)). **Consequence for consolidation:** any byte change to
 `build-oracle.sh` or `Dockerfile.oracle` retags the image; a consolidation
 that moves identity logic out of those scripts must re-run
@@ -620,7 +620,7 @@ within section 0's corrections; Stages 2–13 not authorised and each needs
 its own review; no retirement authorised (D11). The stage table is the plan,
 not a licence.
 
-Rules the whole sequence obeys (from AGENTS.md and the runbooks, quoted in
+Rules the whole sequence obeys (from contributor guidance and the runbooks, quoted in
 Appendix A CI "Policy sentences"): verification cells (reference cell bdb,
 three cells only when the path check says backend code changed, plus
 start-of-sweep and pre-release); runner protocol 0/77/other and "Allowances
@@ -717,7 +717,7 @@ and stay valid; the harness merely stops hard-coding that cell.
 **D4. Native instruments.** `system-import-profile.c` and `bisect.c`'s
 perf/rss modes are the measured executables of every registered figure
 (their source SHA-256s are in the runbook). Options: (a) retain them
-permanently as C, orchestrated by Rust (recommended; AGENTS.md rule 6 and
+permanently as C, orchestrated by Rust (recommended; verification rule 6 and
 the PR #767 bar both point here); (b) write Rust instruments and start a
 new same-run series, declaring the old figures historical. (b) is
 permitted by "Measure in one run" but discards the only cross-PR instrument

@@ -135,8 +135,8 @@ podman info
 
 It must exit zero and describe the engine. If it fails, retain the error and
 repair access using the official instructions or ask the environment owner.
-Do not continue to a compatibility claim. No commercial desktop application,
-IDE or coding-agent provider is required.
+Do not continue to a compatibility claim. No commercial desktop application
+or particular IDE is required.
 
 Small runtime alternatives use the same recipe: [Docker Engine](https://docs.docker.com/engine/install/)
 (`docker info`, then `--runtime docker`) or [Apple container (not yet verified)](https://github.com/apple/container/blob/main/docs/tutorial.md)

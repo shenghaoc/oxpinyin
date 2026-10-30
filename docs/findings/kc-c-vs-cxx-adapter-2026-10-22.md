@@ -367,7 +367,7 @@ rebased stack (this branch, then #1043's code commit) shows the two Kyoto
 Cabinet adapter commits as `=`. The measured stack's §7.5 controls commit
 is dropped, because main carries its own version of those controls
 (b1a659c2). Two commits are added, this document and the steering
-paragraph in `.kiro/steering/rust-conventions.md`. Two commits differ
+paragraph in `docs/rust-conventions.md`. Two commits differ
 from the measured ones, neither in measured code:
 
 - the measurement-harness commit, in `tools/bisection/store-ops.py` only:

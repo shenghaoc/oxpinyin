@@ -16,7 +16,7 @@ target.
   cargo-nextest 0.9.143, the version and checksum `ci.yml` installs.
 - Feature set: the CI Linux `test` job's selection, `--workspace` with
   default features (Berkeley DB). Other cells were not measured (§6).
-- One run, one host (AGENTS.md "Measure in one run"). All figures below
+- One run, one host (contributor guidance "Measure in one run"). All figures below
   come from the commands in §2, run on 2026-10-22 between 05:24Z and
   06:19Z. The host was shared with other agent sessions doing cell builds
   and differentials. Absolute seconds are therefore noisy. The comparisons
@@ -86,7 +86,7 @@ their cell. The tkrzw library is
 the one `tools/cloud/setup.sh` builds into `~/.cache/oxpinyin/tkrzw` and
 probes before writing its `REV`. In C11, C13 and C14, `ldd` showed
 `differential_live`, `live_smoke` and `export_seam` resolving `libtkrzw.so.1` and
-`libpinyin.so.15` from those prefixes, not from `/usr/lib` (AGENTS.md
+`libpinyin.so.15` from those prefixes, not from `/usr/lib` (contributor guidance
 Verification cells, rule 9). C11 is a cost measurement. It is not a
 tkrzw cell result, and no DIFFER is reported from it. All 21 tests
 passed under both harnesses.

@@ -491,7 +491,7 @@ here.
 ## Oxpinyin's position
 
 Oxpinyin reproduces the amd64 pin, not the arm64 pin, on both
-architectures, and that is the Stage 2 target (`AGENTS.md`, "Stage 2";
+architectures, and that is the Stage 2 target (the contributor rules, "Stage 2";
 `docs/findings/compatibility-policy.md` row 83). The relevant code is:
 
 - Predicted candidates: `oxpinyin_capi::predict::amplified_frequency`

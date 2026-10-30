@@ -8,7 +8,7 @@ and the method that follows from it. The guiding principle, stated in
 hindsight: reproduce the existing system's observable behaviour before
 improving its internal design — optimise for compatibility in the first
 release, and for elegance, extensibility and performance afterwards.
-The method itself is `.kiro/steering/oxidation-method.md`; the
+The method itself is `docs/source-policy.md`; the
 structure-by-structure record is
 `docs/findings/libpinyin-structures-and-algorithms.md`.
 
@@ -143,7 +143,7 @@ the size budget, with the idiomatic version preferred on a tie.
 ## What is still open
 
 The open gaps are listed in the record's §11 and tracked as tasks in
-`.kiro/specs/oxidation-record/`: the distance tie-break, removing the
+`docs/specs/oxidation-record/`: the distance tie-break, removing the
 fitted weights after the first release, and the equivalence arguments
 the survey found plausible but did not write down.
 
@@ -172,5 +172,5 @@ and is left as written; these notes say what has changed since.
   spec task 10 say what has to be verified, and a difference that
   remains is to be investigated, not attributed to the host.
 - **"After the first release"** in the open items above: since
-  `/AGENTS.md`'s Stage ruling, removing the fitted weights is internal
+  the contributor rules' Stage ruling, removing the fitted weights is internal
   work that Stage 2 allows; it does not gate compatibility.

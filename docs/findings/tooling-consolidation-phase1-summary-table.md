@@ -3,7 +3,7 @@
 > **Supersession note (2026-10-18 UTC):** the `public-api` job (CI-23), its
 > `cargo-public-api` tool and the `docs/api/oxpinyin-engine.public-api.txt`
 > snapshot named below were retired when the C APIs/ABIs became the only
-> supported external interfaces (`AGENTS.md`, "External interfaces"). The
+> supported external interfaces ([interface ruling](../constitution.md#external-interfaces)). The
 > rows are kept as the record of that tree.
 >
 > **Historical inventory snapshot — not active policy.** This record reflects

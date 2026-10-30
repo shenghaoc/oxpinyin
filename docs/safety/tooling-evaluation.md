@@ -116,7 +116,7 @@ rely on the workspace deny; structure.md says core=forbid, data=deny(+mmap),
 others=deny — matching reality except that the *distinction* is only
 documented, not uniformly mechanized.
 
-**Proposal (ADOPT)**: move the distinction into Cargo so AGENTS.md prose isn't
+**Proposal (ADOPT)**: move the distinction into Cargo so contributor guidance prose isn't
 load-bearing:
 
 ```toml

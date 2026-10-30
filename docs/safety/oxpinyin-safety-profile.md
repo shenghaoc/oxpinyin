@@ -7,8 +7,8 @@ in `tooling-evaluation.md`.
 
 ## Design principle
 
-> A human contributor and an AI coding agent must hit the same compiler,
-> linter, test, and CI failures when they break the same rule.
+> Every contributor, with or without tool assistance, must hit the same
+> compiler, linter, test, and CI failures when they break the same rule.
 
 Every rule below is tagged with an enforcement tier:
 
@@ -126,7 +126,7 @@ demonstrate this policy.
 - Error enums may stay `#[non_exhaustive]` where it helps in-tree matching;
   that is a style choice, not a stability promise. The 2026-09 structure.md
   freeze (extension traits grow only by defaulted methods) was retired
-  2026-10-18 UTC (`AGENTS.md`, "External interfaces").
+  2026-10-18 UTC ([interface ruling](../constitution.md#external-interfaces)).
 
 ## Layer 6 — dependency & supply chain (HARD CI GATE)
 
@@ -258,4 +258,4 @@ follow-up PRs, not part of PR-1.
 4. **PR-4 (trials)**: scoped cargo-mutants; nextest adoption for the
    unit lane. (Kani was scoped here too, then dropped: no release
    supports the pinned toolchain — see tooling-evaluation §19.)
-5. AGENTS.md shrinks as rules land (see `AGENTS-reduction.md`).
+5. contributor guidance shrinks as rules land (see `rules-enforcement-study.md`).

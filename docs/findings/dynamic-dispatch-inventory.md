@@ -32,8 +32,7 @@ baseline, `85cfdcd` on `main` `6d9e23b`) with the code commits of this
 change. That record predates the incoming-file overlap audited above;
 its figures are not post-rebase results.
 
-Authority: Rust interfaces are not a compatibility boundary (`AGENTS.md`,
-"External interfaces"; maintainer ruling 2026-10-18 UTC). The C APIs and
+Authority: Rust interfaces are not a compatibility boundary ([interface ruling](../constitution.md#external-interfaces); maintainer ruling 2026-10-18 UTC). The C APIs and
 ABIs, their behaviour, the supported persistent data and the required
 diagnostics are untouched; every Rust signature below was free to change
 and every in-tree caller changed with it.
@@ -214,7 +213,7 @@ through a C consumer other than the profile harness.
 * It is not a claim that every `Box` or `dyn` is gone: the table above lists
   what remains and why.
 * It does not make the Rust interfaces any more or less stable: there is
-  nothing to stabilise (`AGENTS.md`, "External interfaces").
+  nothing to stabilise ([interface ruling](../constitution.md#external-interfaces)).
 
 
 ## Current-base verification
@@ -525,6 +524,6 @@ The cold layout-fault hook is already dyn; its historical 16.5 KB avoidance is n
 
 The argument is explicit internal contracts: associated transaction/memo types, direct error data and ControlFlow instead of sentinel errors/downcasts, with all in-tree callers migrated and the supported C boundaries gated. The existing shared-body commit minimizes the initial code growth, and the cold layout-fault callback remains erased. Current measurements show approximately 0.50–0.67% fewer instructions for guesses and 0.36–0.77% fewer for training, alongside approximately 0.08–0.10% more for imports; peak requested heap changes are −96 to +32 B. These are limited workload counter results, not proof of a wall-clock speedup.
 
-The cost is the disclosed 2.82–3.33% shipping ELF-text increase and 1.05–1.79% stripped file increase per facade. Current AGENTS.md Constitution §2 governs binary-size disclosure separately from runtime time/space complexity; the old pin +10% cap is retired. No runtime asymptotic complexity change is intended or justified here. I would submit the measured instruction reduction and stronger internal invariants for consideration against that size cost, while explicitly acknowledging the lack of a demonstrated latency gain and the import instruction increase. This report does not declare the regression accepted.
+The cost is the disclosed 2.82–3.33% shipping ELF-text increase and 1.05–1.79% stripped file increase per facade. Current docs/constitution.md §2 governs binary-size disclosure separately from runtime time/space complexity; the old pin +10% cap is retired. No runtime asymptotic complexity change is intended or justified here. I would submit the measured instruction reduction and stronger internal invariants for consideration against that size cost, while explicitly acknowledging the lack of a demonstrated latency gain and the import instruction increase. This report does not declare the regression accepted.
 
 **STOP: maintainer ruling pending. No further trimming, merge or auto-merge is authorized by these measurements.**

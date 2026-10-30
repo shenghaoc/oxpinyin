@@ -155,7 +155,7 @@ from the rebased tree:
 - **Tests (post-rebase)**: `pinyin-oracle` lib 68 passed / 0 failed;
   `live_smoke` against the live prefix 9 passed / 0 failed.
 - **Dates**: every stamp in this changeset re-dated to UTC (they were
-  hand-written from SGT local, a day ahead); AGENTS.md now carries the
+  hand-written from SGT local, a day ahead); contributor guidance now carries the
   UTC-date convention.
 - **Perf notes**: rewritten to state that timing at `074a2219` was not
   measured and every commit's basis for "no Linux runtime-path change";

@@ -80,7 +80,7 @@ Survivors, classified:
 | F-9 | info | `data/src/initials.rs:205-207` | `slot_shift` would underflow u32 for position ≥ 25; callers cap at 24 — pin with `debug_assert!` | hardening | **FIXED** (51eeb40: debug_assert pins the slot bound) |
 | F-10 | info | `data/content.rs:391-421`, `user/codec.rs:57-157`, all of `store` | `#[must_use]` gaps (queries/getters/encoders) | hygiene | **FIXED** (4ea4355: 23-site sweep + must_use_candidate warn) |
 | F-11 | info | oracle `live.rs:626-629` | GArray struct-layout read (two public fields) — documented, mitigated by pinned element size | FFI residual | open (documented residual) |
-| F-12 | info | AGENTS.md vs Cargo | AGENTS/structure.md say "forbid in core, deny elsewhere"; mechanics are workspace-`deny` + inner attributes in 7 crates — engine/user/store/dictool rely on inheritance only; the *distinction* is prose, not Cargo | policy mechanization (this study's PR-1) | **FIXED** (94682d5: per-target forbid closes the prose gap) |
+| F-12 | info | contributor guidance vs Cargo | the historical guidance and crate map say "forbid in core, deny elsewhere"; mechanics are workspace-`deny` + inner attributes in 7 crates — engine/user/store/dictool rely on inheritance only; the *distinction* is prose, not Cargo | policy mechanization (this study's PR-1) | **FIXED** (94682d5: per-target forbid closes the prose gap) |
 
 No high-severity defects were found. The three medium findings are all in
 fixture/data-ingest paths, not the shipped decode path. Status: F-1, F-2,

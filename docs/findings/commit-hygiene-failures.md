@@ -84,7 +84,7 @@ every line parsed as a trailer.
 
 [PR #95](https://github.com/shenghaoc/oxpinyin/pull/95) removes R3 and
 all `AI-session:` logic from `.github/scripts/lint-commits.sh`, the
-commit-msg hook, and `tests/lint-commits.test.sh`. `AGENTS.md` keeps
+commit-msg hook, and `tests/lint-commits.test.sh`. the contributor rules keeps
 one positive line: emit exactly one trailer,
 `Assisted-by: <AgentName>:<model-id>`. That is the correct fix: remove
 the teacher, do not reword the lesson.

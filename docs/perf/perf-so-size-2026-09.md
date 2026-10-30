@@ -252,7 +252,7 @@ x86_64/redb says about the shape of the problem:
 - **`panic_immediate_abort` (`-Z build-std-features`)** — the only
   known lever that removes the symbolizer, and **not available**: `-Z`
   requires nightly, and `rust-toolchain.toml` (stable 1.97.1) is the
-  only supported toolchain per AGENTS.md. Confirmed by attempt —
+  only supported toolchain per contributor guidance. Confirmed by attempt —
   `cargo build -Z build-std=std,panic_abort -Z
   build-std-features=panic_immediate_abort` on the pinned toolchain
   fails with "the `-Z` flag is only accepted on the nightly channel of

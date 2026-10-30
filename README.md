@@ -51,7 +51,7 @@ storage backend and gives each platform's packages and settings for it.
 
 | Path | What |
 |---|---|
-| `crates/*` | 20 workspace packages, none stubs (grouped below); crate map in `.kiro/steering/structure.md` |
+| `crates/*` | 20 workspace packages, none stubs (grouped below); crate map in `docs/architecture.md` |
 | `ROADMAP.md` | Stages, pin, workstream names |
 | [docs/constitution.md](docs/constitution.md) | Project rules and supported external interfaces |
 | [docs/source-policy.md](docs/source-policy.md) | Source-reading method, compatibility decisions and stage rules |
@@ -63,7 +63,7 @@ storage backend and gives each platform's packages and settings for it.
 | `docs/packaging.md` | cargo-c packaging and installed-tree layout |
 | `docs/oxidation-journey.md` | How libpinyin has been turned into Rust so far, and the method that follows from it |
 | `tools/oracle/` | Pin build recipe (`docs/runbooks/oracle.md`) |
-| `.kiro/` | Steering and specs in Kiro's documented layout (<https://kiro.dev/docs/>), split into pinned libpinyin behaviour (`steering/pinned-behaviour.md`; spec `drop-in`; spec `bug-for-bug` Requirements 1–3) and oxpinyin's improvements (`steering/oxpinyin-improvements.md`; spec `bug-for-bug` Requirements 4–5; spec `stage3-departures`); the format is used, the Kiro IDE and CLI are not |
+| [docs/specs/](docs/specs/) | Requirements, designs and task records for foundation, drop-in compatibility, oxidation and Stage 3 |
 
 | Group | Crates |
 |---|---|

@@ -40,7 +40,7 @@ The later container layer owns its separate environment.
 
 Python provides the scripting layer. `just` provides the command interface.
 The nextest layer owns Rust test orchestration. Keep these responsibilities
-separate. This reconciliation changes no code or AGENTS.md rule.
+separate. This reconciliation changes no code or verification rule.
 Each remaining implementation PR needs its own approval.
 
 ## 2. Interpreter contract

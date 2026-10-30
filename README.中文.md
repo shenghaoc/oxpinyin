@@ -24,7 +24,7 @@ Stage 3 构建需显式启用。只改变可观察输出的 Stage 3 构建保留
 
 | 路径 | 内容 |
 |---|---|
-| `crates/*` | 20 个工作区包，没有占位包（分组见下）；crate 映射见 `.kiro/steering/structure.md` |
+| `crates/*` | 20 个工作区包，没有占位包（分组见下）；crate 映射见 `docs/architecture.md` |
 | `ROADMAP.md` | 阶段、pin、工作流名称 |
 | [docs/constitution.md](docs/constitution.md) | 项目规则与受支持的外部接口 |
 | [docs/source-policy.md](docs/source-policy.md) | 源码阅读方法、兼容性决策与阶段规则 |
@@ -36,7 +36,7 @@ Stage 3 构建需显式启用。只改变可观察输出的 Stage 3 构建保留
 | `docs/packaging.md` | cargo-c 打包与安装树布局 |
 | `docs/oxidation-journey.md` | 迄今为止将 libpinyin 转写为 Rust 的历程，以及由此总结出的方法 |
 | `tools/oracle/` | pin 构建配方（`docs/runbooks/oracle.md`） |
-| `.kiro/` | 按 Kiro 文档描述的布局（<https://kiro.dev/docs/>）组织的 steering 与 specs，分为固定版本 libpinyin 的行为（`steering/pinned-behaviour.md`；spec `drop-in`；spec `bug-for-bug` Requirements 1–3）和 oxpinyin 的改进（`steering/oxpinyin-improvements.md`；spec `bug-for-bug` Requirements 4–5；spec `stage3-departures`）；只采用该格式，不使用 Kiro IDE 和 CLI |
+| [docs/specs/](docs/specs/) | 基础、直接替换兼容性、Rust 转写与 Stage 3 的需求、设计和任务记录 |
 
 | 分组 | crate |
 |---|---|

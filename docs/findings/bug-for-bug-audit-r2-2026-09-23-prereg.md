@@ -39,7 +39,7 @@ not reported.
 `docs/findings/compatibility-policy.md` defines four exception classes,
 (a) MATH, (b) MEMORY SAFETY, (c) AVAILABILITY, and (d) CONSUMER SCOPE,
 and marks (d) RETIRED (2026-09-06; "no new entry may be classified
-(d)"). There are therefore **three live classes**. AGENTS.md says the
+(d)"). There are therefore **three live classes**. contributor guidance says the
 same. The policy's own lead-in (lines 107-110) still says "one of four
 classes" and "There are four, and no others". That wording is an axis-K
 candidate, recorded here only as a prediction to be verified.
@@ -48,7 +48,7 @@ The **standing divergence** (tkrzw binding-ABI error-origin collapse,
 `SYSTEM_ERROR`/`UNKNOWN_ERROR`) is defined in
 `docs/findings/tkrzw-langc-exception-classification.md` ("Registered as
 a standing divergence … ruled accepted 2026-08-28"). A grep of
-`compatibility-policy.md` and `AGENTS.md` for `SYSTEM_ERROR`,
+`compatibility-policy.md` and the contributor rules for `SYSTEM_ERROR`,
 `tkrzw-langc`, `standing` and `information loss` finds no mention of it
 in either. Whether the policy register should carry it is an axis-K
 question. It is **not** a class, and it justifies only the exact

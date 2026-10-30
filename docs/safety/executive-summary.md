@@ -17,7 +17,7 @@ state — unsafe compiled only in the C-ABI, oracle, store and data-mmap crates,
 coverage, zero unwrap/expect/panic in library production code,
 saturating arithmetic on the decode path, clean `clippy::all`. What is
 missing is *mechanization*: most of that excellence is prose-enforced
-(AGENTS.md) rather than compiler-enforced. The proposed changes are small
+(../../CONTRIBUTING.md) rather than compiler-enforced. The proposed changes are small
 (attribute-level), measured green against the current tree, and convert the
 biggest rules to hard failures.
 
@@ -219,14 +219,14 @@ semantics · ownership-lifetime contracts of borrowed FFI pointers ·
 "broad appeal" product judgment · the frozen-freeze discipline · "when in
 doubt, STOP".
 
-## U. AGENTS.md rules that become removable after implementation
+## U. verification rules that become removable after implementation
 
 §5's unsafe allowlist text (→ Cargo `[lints]` + Clippy) · §4's no-panic
 half (→ library-crate lint denies + fuzz) · the SAFETY-comment clause
 (→ Clippy) · license compatibility half of the source policy (→
 `cargo deny licenses`). Keep as one-line pointers; full mapping in
-`AGENTS-reduction.md`. Roughly 15% of AGENTS.md's normative lines shrink;
-nothing judgment-bearing is deleted.
+`rules-enforcement-study.md`. Judgment-bearing rules stay prose and
+are enforced by review.
 
 ---
 
@@ -241,6 +241,6 @@ nothing judgment-bearing is deleted.
 | `enforcement-matrix.md` | every rule → mechanism → tier |
 | `oxpinyin-audit.md` | source-tree findings register F-1…F-12 |
 | `ci-strategy.md` | 4-tier CI design |
-| `AGENTS-reduction.md` | prose → mechanics migration table |
+| `rules-enforcement-study.md` | prose → mechanics migration table |
 | `../testing/upstream-test-strategies.md` | libpinyin/libchewing tests+fuzzer study and imports |
 | `proposed-config-diffs.md` | reviewable patches for Cargo/CI/clippy/deny/hooks |

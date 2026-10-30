@@ -167,7 +167,7 @@ just fmt --all --check
 
 ### Heavy-work admission
 
-`AGENTS.md`, "Verification cells", rule 8 (maintainer ruling 2026-10-19 UTC)
+[verification rules](verification.md), rule 8 (maintainer ruling 2026-10-19 UTC)
 keeps the principles and the list of what is heavy. This section holds the
 mechanics, as `tools/dev/slot.py` and `tools/dev/host.py` implement them;
 `tools/bisection/run-all.py` applies them to cell builds and heavy runners.

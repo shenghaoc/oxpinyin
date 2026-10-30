@@ -10,7 +10,7 @@ PR [#943](https://github.com/shenghaoc/oxpinyin/pull/943) is merged.
 | Native profiles and resource groups (§2) | Implemented in #943: local uses admitted num-cpus; ci uses four threads; retries are zero and fail-fast is false. The store-backend group has one thread; selected real-data binaries take the full budget. |
 | Shared admission and explicit nextest concurrency (§3) | Implemented in #943 on #941's shared slot. CLI counts precede NEXTEST_TEST_THREADS, then profile settings. Unsupported or ambiguous overrides fail closed. |
 | Equivalence across every native CI scope (§5) | Partial. #943 records six accepted Linux rows only at `7991ec6b17509980f42a59d72531617059f109d6`. The macOS tkrzw equivalence at `b034e834` on 2026-10-20 UTC is historical. The current macOS CI BDB scope passed at `219f420` on 2026-10-20 UTC: 1,218 passed and 22 ignored; identities and verdicts match. [#968](https://github.com/shenghaoc/oxpinyin/pull/968) (merge `c017ebee`) compared all 1,531 Linux and 1,246 macOS crate/binary-qualified identities and verdicts against cargo test; all matched, and both doctest sets matched six identities (four passed, two ignored). Other scopes and sanitizer equivalence remain unverified. |
-| CI and AGENTS.md rule 5 cutover (§5) | Partial T13N: [#968](https://github.com/shenghaoc/oxpinyin/pull/968) (merge `c017ebee`) switched `ci.yml` test (Linux) and test-macos to pinned nextest 0.9.143 with `--profile ci` and separate `cargo test --doc` steps. Features, exclusions and ignored-test behavior are preserved. Windows stays on cargo test (#950). Other workflows and AGENTS.md rule 5 are unchanged. |
+| CI and verification rule 5 cutover (§5) | Partial T13N: [#968](https://github.com/shenghaoc/oxpinyin/pull/968) (merge `c017ebee`) switched `ci.yml` test (Linux) and test-macos to pinned nextest 0.9.143 with `--profile ci` and separate `cargo test --doc` steps. Features, exclusions and ignored-test behavior are preserved. Windows stays on cargo test (#950). Other workflows and verification rule 5 are unchanged. |
 | Pin-dependent test route | Proposed under Layer 4; no container profile exists yet. |
 
 macOS: bounded checks passed on 2026-10-20 UTC at
@@ -163,16 +163,16 @@ The six macOS/Windows exclusions are `oxpinyin-capi`, `oxpinyin-zhuyin-capi`,
 `oxpinyin-corpus`, `oxpinyin-kmm`, `oxpinyin-punct` and `oxpinyin-word`.
 Keep the Windows CI dependency/version exception confined to that CI scope.
 Do not claim a validated local storage setup from CI alone.
-The local completion gate stays limited to touched crates under AGENTS.md.
+The local completion gate stays limited to touched crates under contributor guidance.
 The workspace sweep remains CI's job. Each workflow edit needs separate
 approval; the T13N exception above covers only the two approved CI jobs.
 
-After equivalence passes, the cutover implementation updates AGENTS.md rule 5.
+After equivalence passes, the cutover implementation updates verification rule 5.
 Replace its `cargo test -p <crate>` completion gate with the native `just test`
 nextest route. Keep the same touched-crate scope and feature selection.
 Keep doctests on `cargo test --doc` through `just test-doc` under heavy-slot admission.
 Keep fmt and clippy obligations. Do not add a local workspace sweep.
-This is a planned policy edit; this docs-only PR changes no AGENTS.md rule.
+This is a planned policy edit; this docs-only PR changes no verification rule.
 
 ## 6. Inspected source pattern
 

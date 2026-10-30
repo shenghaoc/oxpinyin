@@ -92,7 +92,7 @@ unchanged in order and arithmetic (`phrase_index.cpp` `merge`,
 - `session_owns_the_replayed_overrides_it_was_opened_with`: modify, remove and
   no-journal profiles, `has_system_items` (true for a removal-only journal, as
   before), and save then reopen.
-- Pin differential, full default case set, all three cells (`AGENTS.md`'s
+- Pin differential, full default case set, all three cells (the contributor rules'
   path check lists two changed files that contain `feature = "bdb|tkrzw|kyotocabinet"`
   — `persistence.rs` and `store_libpinyin.rs`, whose cfg lines this change does
   not touch — so rule 2 applies although the diff changes no `oxpinyin-store`

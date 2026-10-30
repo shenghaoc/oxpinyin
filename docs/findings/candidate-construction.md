@@ -338,7 +338,7 @@ whose phrase text equals the string, so it **cannot** disambiguate homographs
 returns a post-choose cursor but is mutating and would have to be followed by a
 reset. Neither is part of the frozen capture; either may be used in *analysis*
 (§6) with these caveats stated. Recovering the hidden fields by reading the
-upstream C/C++ struct layout is allowed by AGENTS.md's Source policy, but the
+upstream C/C++ struct layout is allowed by The source policy, but the
 frozen capture protocol does not do it, so the absence of a public accessor
 still means the capture-level claims stay inferred.
 
@@ -377,7 +377,7 @@ does not populate them.
   installed **public header** is the same established practice `ffi.rs` embodies,
   and is categorically distinct from reading upstream **C/C++ implementation**.
   The oracle is a test subject, never
-  shipped (`.kiro/steering/structure.md`).
+  shipped (`docs/architecture.md`).
 - **What it settles, and what it does not.** It settles §1.4.3: whether the
   oracle's rank-1 (in the near-miss buckets, where we already hold the phrase) is
   a `NORMAL` phrase candidate or an `NBEST_MATCH` sentence candidate — which is
@@ -457,7 +457,7 @@ not a taste one.
 
 Stage-1 call sites must stay valid. The `Dictionary`, `LanguageModel` (and
 `UserModel`) traits are unsealed and **grow only by defaulted methods**
-(`.kiro/steering/structure.md`; the pattern F4 assumed in
+(`docs/architecture.md`; the pattern F4 assumed in
 `parity-climb-residual.md`).
 
 - **Strategy B** needs **no new trait method**: it is engine-local

@@ -69,7 +69,7 @@ run; do **not** gate S1b or the W2 runner on it until a decoder exists and
 ### `path-set`
 
 The two sides admit **different sets of paths** for a feature both implement.
-This is the class `.kiro/steering/structure.md` has in mind with "neither more
+This is the class `docs/architecture.md` has in mind with "neither more
 paths nor fewer".
 
 *Worked example (measured).* Input `yingchon` under the parity profile `0x18a`.

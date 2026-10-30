@@ -1,4 +1,4 @@
-# AGENTS.md reduction — prose rules that can become mechanics
+# Rules enforcement study
 
 > **Status (2026-09-12):** measured at `2382bdd` (2026-08-27); every line
 > anchor, count and "today" statement below is that tree's. Since then:
@@ -15,19 +15,17 @@ superseded by Constitution §2 binary-size recording and disclosure of
 increases. Size pins are not a gate; the pin remains the behaviour/ABI
 oracle.
 
-Companion to the profile. Principle: AGENTS.md should keep architecture,
-workflow, rationale, commands, and inherently-contextual instructions; every
-rule that a tool can enforce should migrate to Cargo/CI and then *shrink to a
-pointer* in AGENTS.md (or be deleted once CI enforces it).
+Companion to the profile. It records which project requirements Cargo,
+Clippy, fuzzing and CI enforce, and which need review.
 
-Legend: **mechanized** = delete the rule text after PR-1 lands, keep at most
-a one-line pointer; **assisted** = keep the rule, add the named mechanical
-tripwire that catches the common violation; **stays prose** = no honest
-mechanization exists.
+Legend: **mechanized** = the compiler, Clippy or CI fails on a violation;
+**assisted** = a mechanical tripwire catches the common violation and review
+decides the rest; **stays prose** = no honest mechanization exists, so review
+enforces it.
 
 ## Constitution items
 
-| AGENTS.md clause | Today | After this study | Disposition |
+| Historical guidance clause | Today | After this study | Disposition |
 |---|---|---|---|
 | §4 "Nothing panics on any input; public APIs return `Result`" | prose + de-facto true | `clippy::unwrap_used/expect_used/panic/panic_in_result_fn` denied in library crates; `unused_must_use` denied; fuzz targets | **mechanized** (the Result half stays prose — type design is judgment; the panic half now fails compile) |
 | §5 `unsafe`: forbid in core; deny in data/user/engine; FFI only in capi/oracle/migrate with `// SAFETY:` per block | workspace `deny` + per-crate allows + prose | per-crate `forbid`/scoped-allow in Cargo; `undocumented_unsafe_blocks` + `missing_safety_doc` denied in FFI crates; `unsafe_op_in_unsafe_fn` denied | **mechanized** (structure.md's unsafe column becomes generated-by-Cargo truth; F-12 closes) |
@@ -46,16 +44,10 @@ mechanization exists.
 | "`unsafe` outside allowlisted crates" | **mechanized** (see §5 above) |
 | "silence lints" | **assisted**: `#[allow]`/`--cap-lints` greps in review; a deny-by-default lint surface makes silence *visible* (each allow needs a justification comment per profile) — stays review because legitimate allows exist |
 
-## Attribution (commit trailers) — retired
+## Workflow rules
 
-The former `Assisted-by` trailer policy and its hook and CI enforcement were
-retired. This section is retained only as a record of the earlier study; no
-AI-attribution trailer is required.
-
-## Toolchain / rebase / worktree / concurrent-session sections
-
-Workflow prose; no honest mechanization (branch-name cops cause more harm
-than good). **Stays prose**, exactly as written.
+Toolchain, rebase and stack procedures have no honest mechanization
+(branch-name checks cause more harm than good). **Stays prose.**
 
 ## Source-policy & divergence notes
 
@@ -63,20 +55,13 @@ Rationale + method; the LICENSE compatibility is enforced by
 `cargo deny licenses` (GPL-3.0-or-later list). **Assisted only** for the
 license half; the method text stays.
 
-## Suggested AGENTS.md delta — LANDED (now `AGENTS.md`, constitution §5)
+## Where the mechanized rules live
 
-```diff
- 5. `unsafe`: `forbid` in oxpinyin-core; `deny` in data/user/engine …
-+5. The allowlist is mechanical: safe crates carry crate-root
-+   `#![forbid(unsafe_code)]` (oxpinyin-runtime and oxpinyin-facade
-+   carry both the attribute and a `[lints]` table); `data` stays
-+   `#![deny]` reserving its documented mmap exception; store scopes
-+   allows to lmdb.rs/tkrzw; capi/oracle allow with `// SAFETY:` per
-+   block, enforced by Clippy's undocumented_unsafe_blocks/
-+   missing_safety_doc — CI will tell you; this line is context, not
-+   the gate.
-```
-
-Net effect: roughly 15% of AGENTS.md's normative lines become pointers to
-mechanics; the document keeps its role as the *why* + workflow authority.
-Nothing is deleted that a human or agent actually needs for judgment.
+The [constitution](../constitution.md) (§5) states the unsafe allowlist.
+Safe crates carry crate-root `#![forbid(unsafe_code)]` (oxpinyin-runtime and
+oxpinyin-facade also carry a `[lints]` table); `data` stays `#![deny]` with
+its documented mmap exception; store scopes its allows to the backend
+modules; capi and oracle allow unsafe code with a `// SAFETY:` comment per
+block, enforced by Clippy's `undocumented_unsafe_blocks` and
+`missing_safety_doc`. The [enforcement matrix](enforcement-matrix.md)
+carries the current state.

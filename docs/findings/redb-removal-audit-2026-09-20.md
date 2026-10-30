@@ -79,11 +79,11 @@ in `5e7bfd98`), so the removal has **no platform consequence**.
   libpinyin-format writer emits libpinyin's own names). Both gates can
   therefore only ever SKIP. Recorded per the review ruling; they get
   their own PR after this stack merges.
-- `.kiro/steering/rust-conventions.md`'s Dependencies ruling keeps
+- `docs/rust-conventions.md`'s Dependencies ruling keeps
   its force. The parenthetical that named redb as the worked example
   of "a Rust library is used as Rust" now says that example was removed
   2026-09-22 and the tree has no pure-Rust database in its place.
-- `.kiro/steering/compatibility-policy.md:42` needed no amendment: it
+- the historical compatibility summary (line 42) needed no amendment: it
   states the per-KV-backend-family ruling without naming any removed
   backend's builds.
 

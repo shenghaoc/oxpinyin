@@ -38,7 +38,7 @@ What that means at a later `main`:
   `crates/` can trigger this when it alters the built facades, such as the
   toolchain or `Cargo.lock`.
 - A failing full `--check` at a later `main` is expected, not a regression.
-- Line numbers cited in a ledger belong to the tree it names (`AGENTS.md`:
+- Line numbers cited in a ledger belong to the tree it names ([source citations](../source-policy.md#source-citations):
   dated records keep the line numbers of the tree they name).
 - Regenerate a ledger only when its manual sample is re-reviewed, never to
   turn `--check` green.

@@ -224,7 +224,7 @@ Do not weaken byte-exact fixtures or wire formats. Record untested cases.
 
 The #905/#906/#903 stack is merged. `run-all.py --heavy-slot --` remains
 available through #941's adapter to the shared core. PR #942 changed
-AGENTS.md to use `just heavy --` for direct heavy commands and runner builds.
+contributor guidance to use `just heavy --` for direct heavy commands and runner builds.
 Layer 1 limits the native slot to its environment. The recipe migration above
 that remains open is ci;
 the `ci.yml` Linux and macOS test cutover landed in #968 (merge `c017ebee`).

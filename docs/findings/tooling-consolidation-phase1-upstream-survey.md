@@ -162,7 +162,7 @@ line per dictionary slot: `default <NAME> <table> <bin> <dbin> <type>` and
 | OBSERVATION | `.github/workflows/make-check.yml`: Fedora rawhide container, `--with-dbm=BerkeleyDB`, `./autogen.sh`, `make V=1`, `make check`, `make distcheck`. `.github/workflows/cmake.yml`: Fedora rawhide, `kyotocabinet-devel`, `cmake -G Ninja -DCMAKE_BUILD_TYPE=Release`, build, install to DESTDIR, `ctest --output-on-failure`, `find .` listing. Both trigger on push/PR to `main`. |
 | OBSERVATION | Because `make check` needs `../data` populated, each CI job performs the SourceForge download at build time. Tkrzw (the third backend in `configure.ac`) has no CI lane. |
 | OBSERVATION | Release metadata: `configure.ac` `libpinyin_released` flag appends a datestamp to the version when 0; `Makefile.am` `dist-hook` writes `git log --name-status --date=iso` into `ChangeLog`; `NEWS` is hand-maintained; `libpinyin.spec.in` carries an RPM changelog frozen at 2012. No lint, no formatter, no pre-commit hook, no release script. |
-| INTERPRETATION | CI's job is "compiles and smoke-runs on one backend per build system". It does not catch behavioural regressions. oxpinyin's per-crate `cargo test` + fmt + clippy gate plus the oracle cells is already strictly stronger; the one thing to carry over is the per-backend lane matrix idea, applied by the AGENTS.md path check rather than always.
+| INTERPRETATION | CI's job is "compiles and smoke-runs on one backend per build system". It does not catch behavioural regressions. oxpinyin's per-crate `cargo test` + fmt + clippy gate plus the oracle cells is already strictly stronger; the one thing to carry over is the per-backend lane matrix idea, applied by the verification path check rather than always.
 
 ### 1.9 Ideas worth borrowing / not copying (INTERPRETATION)
 
@@ -172,7 +172,7 @@ Borrow:
 2. **Corpus-as-pinyin evaluation** (`utils/training/eval_correction_rate.cpp`): deriving pinyin input from the model's own top pronunciation lets any segmented Chinese corpus serve as an accuracy test set. Keep the sentence-exact-match metric; add per-sentence output and a CLI.
 3. **Segmentation pipeline as composable filters** (`utils/segment/spseg.cpp` → `mergeseq.cpp` → `gen_ngram.cpp`): each tool reads and writes the same `token phrase` line format with `0 ` sentinels, so the corpus pipeline is Unix-pipeable. A unified Rust toolchain should keep one line format shared by segmenters, trainers and evaluators.
 4. **Generated-header templates** (`scripts2/generateheader.py`, `templates/*.h.in`): `@TABLE@` placeholders expanded by a generator with a "generated, don't edit" banner. Good shape for Rust `include!` tables or `build.rs` output.
-5. **Backend lane matrix in CI** (`.github/workflows/make-check.yml` vs `cmake.yml`): one lane per DBM backend. Already policy in oxpinyin's AGENTS.md verification cells; the upstream shape confirms kc/tkrzw must each get a lane at sweep time.
+5. **Backend lane matrix in CI** (`.github/workflows/make-check.yml` vs `cmake.yml`): one lane per DBM backend. Already policy in oxpinyin's verification cells; the upstream shape confirms kc/tkrzw must each get a lane at sweep time.
 
 Do not copy:
 

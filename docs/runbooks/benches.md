@@ -543,7 +543,7 @@ file must be on ext4. Since Linux 5.2, `mincore` reports a file the caller
 cannot write as wholly resident, so a permission gap rejects samples instead
 of qualifying them. Files the sample does not own (libc, libstdc++, backend
 libraries) stay warm. Cold campaigns evict only named files; run them when
-no other measurement lane shares the host's page cache.
+no other measurement run shares the host's page cache.
 
 ### Processor Trace check (macOS)
 
@@ -665,9 +665,9 @@ vector, and a `page-residency` record per pair of neighbouring checkpoints
 names the pages that became resident between them (see "Per-page residency
 attribution"). Equivalence/provisioning observations stay warm;
 `verify` performs no cold samples. Cold mode refuses profiling and repeated
-in-process lifecycles. Run cold campaigns only when other measurement lanes
+in-process lifecycles. Run cold campaigns only when other measurement runs
 are idle and the heavy slot is available: dependency and system-data cache
-pages can be shared across lanes.
+pages can be shared across runs.
 
 Save, each instance free, all frees, fini and dlclose have separate wall/CPU
 times. `teardown_total_ns` sums the free-call and fini durations. The full
@@ -932,7 +932,7 @@ without it the target fails to resolve the dependency instead of being
 skipped. Run one bench with `--bench <name>`; without it cargo also runs
 the lib under libtest, which rejects criterion flags such as
 `--profile-time`. To run a bench in debug mode: `cargo test --bench
-<name>` (AGENTS.md points here).
+<name>` (see [verification](verification.md#procedure-specific-rules)).
 
 ### `just bench` and `just bench-smoke`
 
@@ -1226,13 +1226,14 @@ This refresh uses Fedora 45 on Linux `7.2.9-300.fc45.x86_64`, an
 Intel Core i7-9750H, CPU 0, GCC 16.2.1, Valgrind 3.27.1, cargo/rustc
 1.97.1, and cargo-c 0.10.24. GitHub `main` was still
 `d2a5d20776612b438aff183632ef4de6fa33857f` when checked for this
-run. Its BDB subject was built from that exact commit with:
+run. Its BDB subject was built from that exact commit, with `$WORK` a scratch
+directory:
 
 ```sh
-CARGO_BUILD_JOBS=1 CARGO_TARGET_DIR=/home/sheng/Documents/Codex/2026-10-14/task-4/target-main-bdb \
+CARGO_BUILD_JOBS=1 CARGO_TARGET_DIR=$WORK/target-main-bdb \
   just packaging install libpinyin \
-    --prefix=/home/sheng/Documents/Codex/2026-10-14/task-4/stage-main-shipped \
-    --libdir=/home/sheng/Documents/Codex/2026-10-14/task-4/stage-main-shipped/lib \
+    --prefix=$WORK/stage-main-shipped \
+    --libdir=$WORK/stage-main-shipped/lib \
     -- --locked --release --jobs 1 --no-default-features --features bdb,shipped
 ```
 
@@ -1481,7 +1482,7 @@ the revisions, workload, backend, build recipe, host/container and controls
 needed to interpret the comparison. One invocation may reproduce a whole
 table. Link existing setup procedures; a separate findings file is optional.
 A change that trades time for space or the reverse must say so and justify
-it (AGENTS.md, "Source policy"). Historical reports are examples of results,
+it ([source policy](../source-policy.md)). Historical reports are examples of results,
 not templates requiring their full provenance sections to be copied.
 
 ### Measure base, PR and pin in one run
@@ -1532,7 +1533,7 @@ contributions.
 Identify each timed subject by revision, backend and build recipe, including
 the profile and relevant flags. A maintained recipe and its arguments can
 provide the build command; do not duplicate it for every figure. Report
-shipping-library sizes when applicable under AGENTS.md Constitution 2.
+shipping-library sizes when applicable under [constitution §2](../constitution.md).
 Hashes and loaded-library checks needed by the tools remain tool-internal
 checks; a report needs the results and reproduction recipe, not a checklist
 of their verdicts, checksum manifest or full `NEEDED` inventory. Include a

@@ -125,8 +125,7 @@ These are independent and move for different reasons:
 1. **Crate version** — `0.1.0`, pre-1.0. The C surface is free to evolve after
    the first release, so the crate stays `0.x` and makes no semver-compat
    promise at the C-ABI level. It makes none for Rust either: native Rust
-   interfaces are not supported externally (`AGENTS.md`, "External
-   interfaces").
+   interfaces are not supported externally ([interface ruling](constitution.md#external-interfaces)).
 2. **`.so` SONAME** — `libpinyin.so.15` (`libzhuyin.so.15`), from
    `[package.metadata.capi.library] version = "15.0.0"`. This is upstream's
    own ABI number (`libpinyin_abi_current=15` in its configure.ac), and it
