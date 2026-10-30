@@ -346,9 +346,7 @@ fn heap_top<T: Clone>(mut values: Vec<T>, count: usize, less: impl Fn(&T, &T) ->
 /// makes the pin's comparisons in the pin's sequence and so returns the
 /// pin's order on every input, total or not.
 ///
-/// Recursive, so the function itself is each instantiation's symbol (the
-/// function-order policies under `tools/packaging/function-order/` name
-/// it); each merge copies only its left half.
+/// Each merge copies only its left half.
 pub fn glib_merge_sort<T: Copy>(values: &mut [T], compare: &impl Fn(&T, &T) -> i32) {
     if values.len() < 2 {
         return;

@@ -2,7 +2,7 @@
 
 The shell runners each repeated the same machinery around the `bisect --perf`
 harness. It lives here once: refusing a count that is not a plain decimal, the
-function-order guard that runs before any worker starts, the libtkrzw runtime
+libtkrzw runtime
 check on every object a worker opens, building the harness, launching a measured
 worker pinned to a CPU with the object's directory first on the loader path, and
 a build under the heavy slot. Recipes (recipes.py) compose these.
@@ -38,7 +38,6 @@ BISECT = ROOT / 'tools/bisection'
 HARNESS_SOURCE = BISECT / 'bisect.c'
 # The flags every harness build uses; recipes add -g or drop -Werror as their script did.
 STRICT_FLAGS = ('-std=gnu11', '-Wall', '-Wextra', '-Werror', '-O2')
-FUNCTION_ORDER_OPTIONS = ('--function-order', '--unordered-arm')
 MACH_O_MAGIC = (b'\xcf\xfa\xed\xfe', b'\xce\xfa\xed\xfe', b'\xfe\xed\xfa\xcf', b'\xfe\xed\xfa\xce')
 
 
@@ -89,22 +88,10 @@ def count(label: str, env: Mapping[str, str], name: str, default: str) -> Count:
     return decimal_count(label, name, setting(env, name, default))
 
 
-def function_order_arguments(argv: Sequence[str]) -> list[str]:
-    """Validate the legacy runners' only options: `--function-order ARM/FACADE=POLICY` and `--unordered-arm ARM`.
-
-    Each takes a non-empty value; a missing or empty value stops with status 2 and
-    no message, anything else with status 2 naming it. Return the flat option list
-    for `check_function_order`.
-    """
-    options, rest = [], list(argv)
-    while rest:
-        flag = rest.pop(0)
-        if flag not in FUNCTION_ORDER_OPTIONS:
-            fail(f'unknown function-order argument: {flag}', 2)
-        if not rest or not rest[0]:
-            raise Finished(2)
-        options += [flag, rest.pop(0)]
-    return options
+def no_arguments(argv: Sequence[str]) -> None:
+    """Refuse unexpected options before a worker or output starts."""
+    if argv:
+        fail(f'unknown argument: {argv[0]}', 2)
 
 
 @functools.cache
@@ -112,7 +99,7 @@ def script(relative: str):
     """Load a repository script by its path below the checkout.
 
     Scripts with a hyphen in their name cannot be imported; this is how the
-    report and policy tools are reused without a second copy of their logic.
+    report tools are reused without a second copy of their logic.
     """
     path = ROOT / relative
     spec = importlib.util.spec_from_file_location(re.sub(r'\W', '_', path.stem), path)
@@ -139,32 +126,6 @@ def exported(variables: Mapping[str, str] | None) -> Iterator[None]:
     finally:
         os.environ.clear()
         os.environ.update(saved)
-
-
-def check_function_order(libraries: Sequence[tuple[str, Path]], options: Sequence[str], *,
-                         references: Sequence[str] = (), arm: str | None = None,
-                         env: Mapping[str, str] | None = None) -> None:
-    """Refuse an unordered shipping library before any output is created or worker started.
-
-    LIBRARIES are ('ARM/FACADE', object) pairs in the order the runner named them;
-    REFERENCES are the arms that are measured but never ordered; ARM names the
-    arm for unqualified 'FACADE' keys; ENV is the environment the script had
-    exported by then, when that is more than the caller's own. A refusal prints
-    the policy tool's own message and stops with status 1, as `function_order.py`
-    did when run alone.
-    """
-    argv = []
-    if arm is not None:
-        argv += ['--arm', arm]
-    for key, path in libraries:
-        argv += ['--library', f'{key}={path}']
-    for reference in references:
-        argv += ['--reference-arm', reference]
-    try:
-        with exported(env):
-            script('tools/packaging/function_order.py').main([*argv, *options])
-    except SystemExit as refusal:
-        raise Finished(refusal.code if isinstance(refusal.code, int) else 1) from None
 
 
 def runtime_check(label: str, cell: str, side: str, obj, *, env: Mapping[str, str],

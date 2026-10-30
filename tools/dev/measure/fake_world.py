@@ -1,6 +1,6 @@
 """A world without tools for the measurement recipes' tests (#1290).
 
-Every seam bench.py gives a recipe (capture, run, heavy, the function-order guard, the
+Every seam bench.py gives a recipe (capture, run, heavy, the
 libtkrzw check, the report scripts and the pool of builds) is replaced by a fake that writes an
 ordered event log, so a test can pin what a runner did: its counts and banners, the order of arms
 and modes, the files it leaves and the statuses it stops with. Nothing needs taskset, binutils,
@@ -42,9 +42,8 @@ class World(unittest.TestCase):
         self.builds = []
         self.reports = []
         self.report_status = {}
-        self.function_order = None     # a Finished to raise from the guard
         fakes = dict(capture=self.fake_capture, run=self.fake_run, heavy=self.fake_heavy, check=self.fake_check,
-                     check_function_order=self.fake_guard, report=self.fake_report, build_all=self.fake_build_all,
+                     report=self.fake_report, build_all=self.fake_build_all,
                      utc_now=lambda: '2026-10-27T00:00:00Z')
         for name, fake in fakes.items():
             self.enterContext(mock.patch.object(bench, name, fake))
@@ -109,11 +108,6 @@ class World(unittest.TestCase):
 
     guard_env = None
 
-    def fake_guard(self, libraries, options, *, references=(), arm=None, env=None):
-        self.guard_env = env
-        self.log.append(('order', [key for key, _ in libraries], list(options), list(references)))
-        if self.function_order is not None:
-            raise self.function_order
 
     def fake_report(self, script, argv):
         self.reports.append((script, list(argv)))
@@ -147,11 +141,6 @@ class World(unittest.TestCase):
             status = runners.guarded(lambda: recipe(list(argv), dict(env or {})))
         return status, out.text(), err.text()
 
-    def assert_guarded_before_work(self):
-        """The function-order guard ran, and before the first worker started."""
-        kinds = [event[0] for event in self.log]
-        self.assertIn('order', kinds)
-        self.assertLess(kinds.index('order'), kinds.index('worker'))
 
     def kinds(self, kind):
         return [event for event in self.log if event[0] == kind]

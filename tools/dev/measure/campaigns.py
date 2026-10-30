@@ -99,7 +99,7 @@ def perf_baseline(argv: Sequence[str], env: Mapping[str, str]) -> int:
     label = BASELINE
     env = dict(env)
     with bench.working_directory(bench.BISECT):
-        options = bench.function_order_arguments(argv)
+        bench.no_arguments(argv)
         home = Path(env['HOME']) if env.get('HOME') else Path.home()
         oracle_prefix = Path(setting(env, 'PINYIN_ORACLE_PREFIX', str(home / '.local/opt/pinyin-oracle')))
         work = Path(setting(env, 'OXPINYIN_PERF_WORK', str(bench.ROOT / 'target/perf-baseline')))
@@ -150,8 +150,6 @@ def perf_baseline(argv: Sequence[str], env: Mapping[str, str]) -> int:
         emit(f'installed capi .so:         {capi_so}')
         if not capi_so.is_file():
             fail(f'fatal: {capi_so} not found')
-        bench.check_function_order([('ox/pinyin', capi_so), ('pin/pinyin', oracle_so)], options,
-                                   references=['pin'], env=env)
 
         oracle = Arm('oracle', oracle_so, oracle_data, oracle_prefix / 'lib')
         oxpinyin = Arm('oxpinyin', capi_so, capi_data, Path(libdir))
@@ -235,7 +233,7 @@ def perf_matrix(argv: Sequence[str], env: Mapping[str, str]) -> int:
     label = MATRIX
     env = dict(env)
     with bench.working_directory(bench.BISECT):
-        options = bench.function_order_arguments(argv)
+        bench.no_arguments(argv)
         out = Path(setting(env, 'MATRIX_OUT', '/out'))
         cpu = setting(env, 'PERF_CPU', '0')
         runs = bench.count(label, env, 'PERF_RUNS', '20')
@@ -247,8 +245,6 @@ def perf_matrix(argv: Sequence[str], env: Mapping[str, str]) -> int:
         cells = matrix_cells()
         arms = [Arm(name, so, data, so.parent) for name, so, data in cells]
         a, b, c, d = arms
-        bench.check_function_order([('C/pinyin', c.so), ('D/pinyin', d.so), ('A/pinyin', a.so),
-                                    ('B/pinyin', b.so)], options, references=['A', 'B'])
         worker = measured(env, label, bench.BISECT / 'bisect', cpu)
         worker.standalone('pin', a, 'tkrzw')
         worker.standalone('subject', c, 'tkrzw')
@@ -338,7 +334,7 @@ def perf_same_data(argv: Sequence[str], env: Mapping[str, str]) -> int:
     label = SAME_DATA
     env = dict(env)
     with bench.working_directory(bench.BISECT):
-        options = bench.function_order_arguments(argv)
+        bench.no_arguments(argv)
         out = Path(setting(env, 'MATRIX_OUT', '/out'))
         cpu = setting(env, 'PERF_CPU', '0')
         runs = bench.count(label, env, 'PERF_RUNS', '20')
@@ -371,8 +367,6 @@ def perf_same_data(argv: Sequence[str], env: Mapping[str, str]) -> int:
 
         a_so, b_so = bench.find_library(LIBPINYIN_TKRZW), bench.find_library(LIBPINYIN_KC)
         a_data, b_data = LIBPINYIN_TKRZW / DATA_SUBDIRECTORY, LIBPINYIN_KC / DATA_SUBDIRECTORY
-        bench.check_function_order([('C/pinyin', tkrzw_so), ('D/pinyin', kc_so), ('A/pinyin', a_so),
-                                    ('B/pinyin', b_so)], options, references=['A', 'B'])
         arms = [Arm('libpinyin-tkrzw', a_so, a_data, a_so.parent), Arm('libpinyin-kc', b_so, b_data, b_so.parent),
                 Arm('oxpinyin-tkrzw', tkrzw_so, a_data, tkrzw_so.parent),
                 Arm('oxpinyin-kc', kc_so, b_data, kc_so.parent)]
@@ -465,7 +459,7 @@ def shipped_check(argv: Sequence[str], env: Mapping[str, str]) -> int:
     """Is cinstall --features shipped, the product, the same as cinstall alone, within one session?"""
     label = SHIPPED
     env = dict(env)
-    options = bench.function_order_arguments(argv)
+    bench.no_arguments(argv)
     src = control_sources(env)
     cfg = settings_of(label, env, '8 16')
     out, runs, cycles, sizes, cpu, tools = (cfg[key] for key in ('out', 'runs', 'cycles', 'sizes', 'cpu', 'tools'))
@@ -477,8 +471,6 @@ def shipped_check(argv: Sequence[str], env: Mapping[str, str]) -> int:
     z_so, s_so = SCRATCH / 'Z-plain.so', SCRATCH / 'S-shipped.so'
     bench.build_all([('Z', cinstall(src, z_so, 'tkrzw')), ('S', cinstall(src, s_so, 'tkrzw,shipped'))],
                     'shipped-check builds', env=env)
-    bench.check_function_order([('Z/pinyin', z_so), ('S/pinyin', s_so), ('L/pinyin', l_so)], options,
-                               references=['L'])
     worker = measured(env, label, SCRATCH / 'bisect', cpu, cell='tkrzw', required=True)
     arms = [Arm(l_label, l_so, data, l_so.parent), Arm(z_label, z_so, data, z_so.parent),
             Arm(s_label, s_so, data, s_so.parent)]
@@ -538,7 +530,7 @@ def tree_recipe_control(argv: Sequence[str], env: Mapping[str, str]) -> int:
     """Separate the engine-tree effect from the build-recipe effect on the steady-cycle ratio."""
     label = TREE
     env = dict(env)
-    options = bench.function_order_arguments(argv)
+    bench.no_arguments(argv)
     old, src = Path(setting(env, 'SRC_OLD', '/src-old')), control_sources(env)
     cfg = settings_of(label, env, '1 8 16')
     out, runs, cycles, sizes, cpu, tools = (cfg[key] for key in ('out', 'runs', 'cycles', 'sizes', 'cpu', 'tools'))
@@ -567,8 +559,6 @@ def tree_recipe_control(argv: Sequence[str], env: Mapping[str, str]) -> int:
     bench.build_all([('X', cargo_build(old, x_so)), ('Y', cargo_build(src, y_so)),
                      ('Z', cinstall(src, z_so, 'tkrzw')), ('S', cinstall(src, s_so, 'tkrzw,shipped'))],
                     'tree-recipe-control builds', env=env)
-    bench.check_function_order([('X/pinyin', x_so), ('Y/pinyin', y_so), ('Z/pinyin', z_so), ('S/pinyin', s_so),
-                                ('L/pinyin', l_so)], options, references=['L'])
     worker = measured(env, label, SCRATCH / 'bisect', cpu, cell='tkrzw', required=True)
     arms = [Arm(labels[tag], so, data, so.parent) for tag, so in (('L', l_so), ('X', x_so), ('Y', y_so),
                                                                   ('Z', z_so), ('S', s_so))]
@@ -672,7 +662,7 @@ def rss_usage():
 
 def rss_options(argv: Sequence[str]) -> dict:
     """Parse rss-diag's options as the shell loop did; anything unknown or missing prints the usage."""
-    values = dict(lp='', ox='', data='', out='', rounds=10, cycles='8', function_order=[])
+    values = dict(lp='', ox='', data='', out='', rounds=10, cycles='8')
     rest = list(argv)
 
     def operand(flag):
@@ -691,8 +681,6 @@ def rss_options(argv: Sequence[str]) -> dict:
             values['rounds'] = int(value)
         elif flag == '--cycles':
             values['cycles'] = operand(flag)
-        elif flag in bench.FUNCTION_ORDER_OPTIONS:
-            values['function_order'] += [flag, operand(flag)]
         elif flag in ('-h', '--help'):
             rss_usage()
         else:
@@ -734,8 +722,6 @@ def rss_diag(argv: Sequence[str], env: Mapping[str, str]) -> int:
         lp, ox = Path(options['lp']), Path(options['ox'])
         cpu = setting(env, 'PERF_CPU', '0')
         cycles, rounds = options['cycles'], options['rounds']
-        bench.check_function_order([('S/pinyin', ox), ('L/pinyin', lp)], options['function_order'],
-                                   references=['L'])
         out = Path(options['out'] or '/tmp/rss-diag')
         arms = dict(L=Arm('L', lp, Path(options['data'])), S=Arm('S', ox, Path(options['data'])))
         harness = bench.BISECT / 'bisect'
@@ -824,7 +810,6 @@ def steady_comparison_inner(argv: Sequence[str], env: Mapping[str, str]) -> int:
     Run through just heavy. All native, allocation and Ir launches are serial;
     the warmup cycle is excluded. Allocation fixtures are never shipping arms.
     """
-    from ...packaging import function_order
     from ...bisection import startup_profile
     from ...bisection.teardown import callgrind_costs
     from . import native
@@ -849,10 +834,8 @@ def steady_comparison_inner(argv: Sequence[str], env: Mapping[str, str]) -> int:
     sources = dict(base=args.base, pr__=args.pr, pin_=args.pin, bctl=args.base, pctl=args.pr)
     fixtures = dict(ball=args.base_alloc, pall=args.pr_alloc)
     for name, path in {**sources, **fixtures}.items():
-        if function_order.library_backend(path) != args.cell:
+        if identity.library_backend(path) != args.cell:
             raise ValueError(f'{name}: library backend differs from --cell')
-    bench.check_function_order([(name + '/pinyin', path) for name, path in sources.items()], [],
-                               references=['pin_'], env=env)
     args.out.mkdir(parents=True)
     native.check_filesystems([args.out, args.system_dir, Path(env.get('TMPDIR') or tempfile.gettempdir()),
                               *sources.values(), *fixtures.values(), *([args.user_dir] if args.user_dir else [])])

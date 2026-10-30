@@ -483,8 +483,7 @@ side.
 
 `tools/cloud/setup.sh` retains the pre-interpreter uv/bootstrap step and then
 calls the single `tools.dev provision` service. `just provision` uses an already
-provisioned interpreter. The function-order policy action continues to call
-`tools/cloud/setup.sh --python-only` unchanged.
+provisioned interpreter.
 
 Run the synthetic provisioning fixtures through normal Python discovery:
 

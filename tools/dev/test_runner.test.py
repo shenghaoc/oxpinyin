@@ -235,7 +235,7 @@ if __name__ == '__main__': unittest.main()
         self.assertIn('tools/dev/python-request.test.py', files)
         self.assertGreater(len(files), len(test_runner.COMPAT_HARNESS))
         shared = ('justfile', 'tools/bisection/runners.json', 'tools/dev/bash_floor.py',
-                  '.github/actions/function-order-policy/action.yml',
+                  '.github/actions/example/action.yml',
                   '.github/workflows/oracle-image.yml', '.github/workflows/verify-nightly.yml',
                   'docs/plans/tooling-shell-audit.md')
         for path in shared:
@@ -290,10 +290,10 @@ if __name__ == '__main__': unittest.main()
                       test_runner.changed_harness_files(files, ['tools/dev/doctor.py']))
         for path in ('justfile', '.github/workflows/ci.yml',
                      '.github/workflows/release-packages.yml',
-                     '.github/actions/function-order-policy/action.yml',
+                     '.github/actions/example/action.yml',
                      'tools/bisection/runners.json', 'tools/dev/pool.py',
                      'tools/dev/bash_floor.py', 'tools/dev/doctor.py',
-                     'tools/generate-function-order.py', 'docs/packaging.md',
+                     'tools/example.py', 'docs/packaging.md',
                      'docs/plans/tooling-shell-audit.md', 'docs/plans/tooling-python.md',
                      'docs/runbooks/benches.md', 'docs/runbooks/goldens-and-pins.md',
                      'docs/runbooks/release.md', 'docs/testing/oracle-environment.md'):

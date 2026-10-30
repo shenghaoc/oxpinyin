@@ -79,9 +79,9 @@ class CommandLineTests(unittest.TestCase):
 
     def test_the_command_forwards_a_recipe_name_and_arguments_to_the_dispatcher(self):
         with mock.patch.object(recipes, 'main', return_value=4) as main:
-            status = cli.main(['measure', 'perf-baseline', '--function-order', 'a=b'])
+            status = cli.main(['measure', 'system-import-profile', '--jobs', '1'])
         self.assertEqual(status, 4)
-        main.assert_called_once_with('perf-baseline', ['--function-order', 'a=b'])
+        main.assert_called_once_with('system-import-profile', ['--jobs', '1'])
 
     def test_an_unknown_recipe_is_refused_by_the_parser(self):
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as stop:

@@ -273,18 +273,16 @@ Audit at `27c785c0` (follow-ups retain their own implementation gates):
 
 | Tool | Classification and disposition |
 | --- | --- |
-| `generate-function-order.py` | Independent constructor/profile/toggle and steady runs use `pool.run_admitted`, including a campaign spanning backends and repeat passes. CPU leases use `host.allowed_cpus`; each collection keeps a private profile copy and unions before sorting. |
 | `cloud/setup.sh` | Common dependency-image/model setup and final environment publication are dependencies. Per-cell builds/data regeneration run through the shared pool, with nested make jobs included in the admitted CPU and memory budget (merged #1261): [#1233](https://github.com/shenghaoc/oxpinyin/issues/1233). |
 | `oracle/Dockerfile.oracle` | Backend builds have distinct work/prefix directories. The maintainer retained the serial backend loop: copying host tooling into the image would couple image rebuilds to unrelated tooling changes; the measured saving did not justify that cost (#1263 closed unmerged): [#1234](https://github.com/shenghaoc/oxpinyin/issues/1234). |
 | `bisection/teardown.py` | Export must precede recipe selection; mutation within a profile is ordered. Independent profile population and witness checks run as units in one admitted pool, each with its own sample names, counter and CPU lease; records print in profile order, and `--jobs 1` is the serial reference ([#1235](https://github.com/shenghaoc/oxpinyin/issues/1235)). Timing, residency and measurement phases remain isolated and start only after the pool is released. |
-| `measure-function-order.py` | Required isolation: paired native timings, page-cache and parent-observed memory measurements share host resources. Keep the measurement campaign serial. |
 | `just profile-w8` (`tools.dev.measure.profile`, formerly `profile/run-w8-cycle.sh`) | Profiler attempts form a fallback chain, each conditional on failure of its predecessor. Sampling and native timing need isolation; no independent campaign loop to parallelize. |
 | `measure system-import-profile` (formerly `bisection/run-system-import-profile.sh`) | Side/mode collections use private users and instruction/allocation counters; the serialization was accidental. `system_import_profile.py` now runs the six collections in one admitted pool and reports in a fixed order; `--jobs 1` is the serial reference ([#1236](https://github.com/shenghaoc/oxpinyin/issues/1236)). Attempts within each retry chain remain dependent and sequential. |
 | `measure perf-baseline`, `perf-matrix`, `perf-same-data`, `rss-diag`, `callgrind-differential`, `snapshot` | Every sample is a timed, resident-set or hardware-counter observation of one arm, pinned to the caller's one `PERF_CPU`; `bench.round_robin` runs them one process at a time and interleaves the arms so host drift lands on all of them. Serial by measurement isolation. `callgrind-differential` stage 4 (Callgrind is exact) pins its runs to that same CPU, so pooling them would only time-share it. |
 | `measure shipped-check`, `tree-recipe-control` (#1290) | The two or four builds are independent (private target and stage directories): units of one admitted pool (`bench.build_all`) that `pool.plan` sizes from the admitted CPUs and memory at a rustc allowance (600 MiB) per Cargo job. Both how many builds overlap and the jobs each gets come from the plan, so a host with many CPUs and little memory builds one at a time with fewer jobs. An explicit `CARGO_BUILD_JOBS` is kept as given and charged in full (rule 8): only the overlap adapts, and a host that cannot hold one build at that count refuses it. The sampling that follows is serial, as above. |
 | `measure callgrind-differential` annotations (#1290) | The two `callgrind_annotate` runs (self and inclusive) over each profile are independent post-processing of files on disk: units of one admitted pool (`pool.run_admitted`), each charged the runner allowance (1,024 MiB; the old script ran them one at a time and Valgrind documents no figure). The slot is taken, or inherited, and the memory reserved before any starts, so a host short of memory annotates one at a time and a direct run, such as the image's command, never starts more than it holds. |
 | `measure perf-same-data` builds (#1290) | The two builds share one target directory and copy `libpinyin_capi.so` out before the next replaces it: dependent, so serial. |
-| `measure snapshot` builds (#1290) | The function-order check must refuse an unordered shipped artifact before the alloc-count fixture is built (pinned by `snapshot.test.py`): ordered, so serial. |
+| `measure snapshot` builds (#1290) | The shipping artifact and the alloc-count fixture use separate build steps. |
 | `measure probe-egress` (#1290) | A diagnostic: eight short requests whose table prints in a fixed order. It must not hold the heavy slot or wait behind a build to make them, so it takes no admission. |
 | `measure probe-debuginfo-neutrality` builds (#1290) | The three builds share `target/release` and each artifact is copied out before the next replaces it: serial. |
 
@@ -377,7 +375,7 @@ own scopes and decisions.
 | U1 | 43 | Registry/ABI runners: run-all.py and runners.json; shared build, artifact identity, cell/system-data, C-driver execution and comparison services; reuse contract-diff. | [#1289](https://github.com/shenghaoc/oxpinyin/issues/1289) |
 | U2 | 15 | Measurement/profile controllers: tools.dev.measure and existing perf-gate/bisection parsers; registry, nightly snapshot, profile-w8 and image CMD callers. | [#1290](https://github.com/shenghaoc/oxpinyin/issues/1290) |
 | U3 | 14 | Oracle/compat orchestration: tools.dev.compat and existing identity/boundary/memory, oracle fixture and tkrzw runtime services; host launchers, workflows and aggregate harnesses. | [#1291](https://github.com/shenghaoc/oxpinyin/issues/1291) |
-| U4 | 10 | Packaging: one tools.dev packaging layer for version/layout/install/relink/metadata/package assembly; reuse function_order.py; release workflow and layout action callers. | [#1292](https://github.com/shenghaoc/oxpinyin/issues/1292) |
+| U4 | 10 | Packaging: one tools.dev packaging layer for version/layout/install/relink/metadata/package assembly; release workflow callers. | [#1292](https://github.com/shenghaoc/oxpinyin/issues/1292) |
 | U5 | 9 | Native validation: tools.dev.check, test_runner and native; shared lint/backend/sanitizer services; just check/sanitize, registry, workflow and fixture-test callers (migrated). | [#1293](https://github.com/shenghaoc/oxpinyin/issues/1293) |
 | U6 | 3 | Post-bootstrap provisioning: one tools.dev provisioning layer using pool and compat services; setup.sh handoff, environment writer and synthetic-fixture tests. | [#1294](https://github.com/shenghaoc/oxpinyin/issues/1294) |
 
@@ -405,7 +403,7 @@ measure RECIPE`) for `perf-baseline`, `perf-matrix`, `perf-same-data`,
 `shipped-check`, `tree-recipe-control`, `rss-diag`, `callgrind-differential`,
 `system-import-profile`, `snapshot`, `probe-debuginfo-neutrality` and
 `probe-egress`, and `just profile-w8`. The shared services are
-`tools/dev/measure/bench.py` (counts, the function-order guard, the libtkrzw
+`tools/dev/measure/bench.py` (counts, the libtkrzw
 check through its adapter, harness builds, pinned launches, heavy builds, the
 pool of independent builds, arm scheduling), `identity.py`, `reports.py`,
 `neutrality.py` and the recipe modules `campaigns.py`, `valgrind.py`, `probes.py`,
@@ -478,22 +476,15 @@ base/worktree and private scratch locations.
 
 U4 preserves the complete staged tree and package identity, one-facade install,
 Cargo target/profile and argument forwarding, DESTDIR/prefix/libdir/includedir,
-pkg-config/header bytes, ELF version/export/SONAME checks, function-order policy
-resolution and opt-out. `function-order.sh`'s existing comment excludes Python
-from link inputs, but its link callers are repository packaging controllers;
-none proves an unavoidable pre-Python environment at this base. Migrate them
-together and update caller provisioning; retain a thin shell interface only if
-an actual outside requirement or image-build caller is identified and recorded.
-This is not authority to change policy files, compiler recipes or exports.
+pkg-config/header bytes and ELF version/export/SONAME checks.
+For function layout, see the [maintainer ruling](../packaging.md#function-layout).
 
 U4 is implemented by `just packaging COMMAND` (`python -m tools.dev packaging
 COMMAND`), `tools/dev/packaging.py` and the package metadata in
 `tools/dev/packaging_templates.py`. The ten shell entry points are removed.
-`tools/packaging/function_order.py` invokes the unchanged AWK resolver for
-installation, generation callers and measurement validation. Heavy work uses
-`slot.run_command`; captured processes use the pool, including nm-to-AWK stdin.
+Heavy work uses `slot.run_command`; captured processes use the pool.
 Stages share their install tree/target, so their dependent facade installs stay
-serial. The release and function-order CI callers provision managed Python first.
+serial. The release CI callers provision managed Python first.
 
 U4's deliberate diagnostic differences change no status. A missing required
 package argument prints `error: NAME required` with status 1, replacing Bash's

@@ -96,13 +96,13 @@ class FakeTools(snapshot.Tools):
 
     def __init__(self, *, present=snapshot.REQUIRED_TOOLS + ('taskset', 'valgrind'), alloc=None,
                  rss=None, readelf=READELF, nm=b'T oxpinyin_init\n', valgrind_status=0, callgrind_ir=1234,
-                 order_error=None, answers=None):
+                 answers=None):
         self.present = set(present)
         self.alloc = alloc if alloc is not None else row(steady_alloc_cycles=4, steady_alloc_count=100,
                                                          steady_alloc_bytes=4098)
         self.rss = list(rss if rss is not None else [(0, rss_row(100, 200))] * 5)
         self.readelf, self.nm = readelf, nm
-        self.valgrind_status, self.callgrind_ir, self.order_error = valgrind_status, callgrind_ir, order_error
+        self.valgrind_status, self.callgrind_ir = valgrind_status, callgrind_ir
         self.answers = {('git', 'rev-parse', 'HEAD'): COMMIT,
                         ('git', 'log', '-1', '--format=%H', '--', 'tools/bisection/bisect.c',
                          'tools/perf-gate'): HARNESS_COMMIT,
@@ -165,11 +165,6 @@ class FakeTools(snapshot.Tools):
         self.events.append(('query', list(command)))
         return self.answers.get(command, 'unknown')
 
-    def function_order(self, libraries, options, **keywords):
-        self.events.append(('function_order', [(key, str(path)) for key, path in libraries], list(options),
-                            keywords))
-        if self.order_error is not None:
-            bench.fail(self.order_error, 1)
 
     def object_ir(self, path, want):
         self.events.append(('object_ir', str(path), want))
@@ -306,23 +301,13 @@ class PureTests(unittest.TestCase):
 
 class OptionTests(Scratch):
     def test_defaults_and_every_option(self):
-        self.assertEqual(snapshot.parse_options(['--out', 'x.json']), snapshot.Options('x.json', 'tkrzw', ()))
-        parsed = snapshot.parse_options(['--out', 'x.json', '--backend', 'kyotocabinet',
-                                         '--function-order', 'shipped/pinyin=/p/libpinyin.order',
-                                         '--unordered-arm', 'shipped'])
-        self.assertEqual(parsed, snapshot.Options('x.json', 'kyotocabinet', (
-            '--function-order', 'shipped/pinyin=/p/libpinyin.order', '--unordered-arm', 'shipped')))
+        self.assertEqual(snapshot.parse_options(['--out', 'x.json']), snapshot.Options('x.json', 'tkrzw'))
+        parsed = snapshot.parse_options(['--out', 'x.json', '--backend', 'kyotocabinet'])
+        self.assertEqual(parsed, snapshot.Options('x.json', 'kyotocabinet'))
 
     def test_the_last_value_of_a_repeated_option_wins(self):
         self.assertEqual(snapshot.parse_options(['--out', 'a', '--out', 'b']).out, 'b')
 
-    def test_a_function_order_option_needs_a_value_which_may_be_empty(self):
-        for flag in ('--function-order', '--unordered-arm'):
-            with self.subTest(flag=flag), captured() as (out, err), self.assertRaises(Finished) as finished:
-                snapshot.parse_options(['--out', 'x', flag])
-            self.assertEqual(finished.exception.status, 2)
-            self.assertEqual(err.getvalue().decode(), f'fatal: {flag} needs a value\n')
-        self.assertEqual(snapshot.parse_options(['--function-order', '']).function_order, ('--function-order', ''))
 
     def test_an_unknown_argument_stops_at_the_first_one(self):
         with captured() as (out, err), self.assertRaises(Finished) as finished:
@@ -407,7 +392,7 @@ class RunTests(Scratch):
             '==> measuring',
             f'wrote {self.out}'])
         steps = [self.normal(tools, event[:2]) for event in tools.events
-                 if event[0] in ('run', 'capture', 'function_order')]
+                 if event[0] in ('run', 'capture')]
         stage, work = '<work>/stage', '<work>'
         shipped, alloc = f'{stage}/usr/lib/libpinyin.so.15.0.0', f'{work}/target-alloc/release/libpinyin_capi.so'
         data = str(self.root / 'fixtures/w3/tkt')
@@ -419,7 +404,6 @@ class RunTests(Scratch):
         self.assertEqual(steps, [
             ['run', [*snapshot.INSTALL, 'libpinyin', '--prefix=/usr', f'--destdir={stage}', '--',
                      '--no-default-features', '--features', 'tkrzw,shipped', '--target-dir', f'{work}/target-shipped']],
-            ['function_order', [['pinyin', shipped]]],
             ['run', ['strip', '--strip-all', shipped]],
             ['capture', ['nm', '-D', shipped]],
             ['run', ['cargo', 'build', '--locked', '--release', '-p', 'oxpinyin-capi', '--no-default-features',
@@ -438,22 +422,6 @@ class RunTests(Scratch):
         self.assertEqual(cargo[2]['target'], str(tools.work / 'target-alloc'))
         self.assertIsNone(install[2]['target'])
 
-    def test_the_function_order_guard_names_the_shipped_arm_and_forwards_the_options(self):
-        tools, _ = self.happy(['--out', str(self.out), '--function-order', 'shipped/pinyin=/p/order',
-                               '--unordered-arm', 'x'])
-        (event,) = [event for event in tools.events if event[0] == 'function_order']
-        self.assertEqual(event[2:], (['--function-order', 'shipped/pinyin=/p/order', '--unordered-arm', 'x'],
-                                     {'arm': 'shipped'}))
-
-    def test_an_unordered_artifact_is_refused_before_it_is_stripped_or_the_fixture_is_built(self):
-        tools = FakeTools(order_error='function ordering: arm shipped/pinyin refused: not ordered')
-        status, out, err = self.run_snapshot(['--out', str(self.out)], tools)
-        self.assertEqual(status, 1)
-        self.assertEqual(err, 'function ordering: arm shipped/pinyin refused: not ordered\n')
-        self.assertEqual(out, '==> building the shipped artifact (cinstall, the product path)\n')
-        self.assertEqual([command[0] for command in tools.commands('run')], [snapshot.INSTALL[0]])
-        self.assertEqual(tools.commands('capture'), [])
-        self.assertFalse(self.out.exists())
 
     def test_a_failed_install_ends_the_run_with_its_status_before_anything_else(self):
         class Failing(FakeTools):
@@ -476,7 +444,6 @@ class RunTests(Scratch):
         tools = Empty()
         status, out, err = self.run_snapshot(['--out', str(self.out)], tools)
         self.assertEqual((status, err), (2, 'fatal: cinstall produced no libpinyin.so.15.0.0\n'))
-        self.assertEqual([event for event in tools.events if event[0] == 'function_order'], [])
 
     def test_a_shipped_artifact_that_exports_the_alloc_readers_is_refused_before_the_fixture_build(self):
         tools = FakeTools(nm=b'0000 T oxpinyin_init\n0000 T oxpinyin_alloc_count\n')
@@ -680,7 +647,7 @@ class RunTests(Scratch):
     def test_the_work_directory_is_removed_after_a_run_and_after_a_refusal(self):
         tools, _ = self.happy()
         self.assertFalse(tools.work.exists())
-        refused = FakeTools(order_error='refused')
+        refused = FakeTools(valgrind_status=1)
         self.run_snapshot(['--out', str(self.out)], refused)
         self.assertFalse(refused.work.exists())
 

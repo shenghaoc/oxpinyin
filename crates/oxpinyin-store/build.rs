@@ -114,9 +114,7 @@ fn split_shell_words(line: &str) -> Vec<String> {
 ///
 /// The shim is compiled with `cc` at `-O2`, the pin's autoconf default,
 /// with hidden visibility, so the libraries export nothing beyond their
-/// version scripts. `cc`'s default `-ffunction-sections` lets the
-/// function-order policy place the shim's sections. `cpp(true)` links
-/// libstdc++, which libkyotocabinet already maps.
+/// version scripts. `cpp(true)` links libstdc++, which libkyotocabinet already maps.
 ///
 /// # Why generated fresh, not checked in
 ///

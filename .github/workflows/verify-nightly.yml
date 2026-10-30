@@ -14,7 +14,7 @@ name: verify-nightly
 # no continue-on-error lanes; every job in this workflow must be green.
 # Surviving lanes: fuzz-soak, differentials, overflow-lane, coverage (via
 # coverage.yml, also an advisory path-filtered PR check), perf-snapshot,
-# function-order-policy (added 2026-10-23), test-windows (moved from ci.yml
+# test-windows (moved from ci.yml
 # on 2026-10-22).
 # A separate nextest lane over the Kyoto Cabinet workspace was removed on
 # 2026-10-22: overflow-lane runs the same workspace test inventory under
@@ -420,32 +420,6 @@ jobs:
           # The step is always() so a failed measurement still uploads what it
           # got; when it got nothing, say so quietly instead of warning.
           if-no-files-found: ignore
-
-  # Function-order policies (#1071). The build-and-resolve steps are the
-  # shared action in .github/actions/function-order-policy, called here
-  # and by ci.yml's PR job; the two lanes cannot drift. This caller keeps
-  # the nightly schedule and manual dispatch. It reports a stale policy
-  # that reaches main; it does not block a merge.
-  function-order-policy:
-    # Skipped by a windows_only dispatch; runs on the schedule.
-    if: ${{ !inputs.windows_only }}
-    runs-on: ubuntu-latest
-    container:
-      image: debian:testing # deliberately unpinned; see the header comment
-    timeout-minutes: 60
-    defaults:
-      run:
-        shell: bash
-    env:
-      CARGO_TERM_COLOR: always
-      DEBIAN_FRONTEND: noninteractive
-      # The shared action must see the same empty RUSTFLAGS as the PR caller.
-      RUSTFLAGS: ''
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/function-order-policy
 
   # The full Windows workspace: clippy and the tests over the portable
   # workspace (all but capi, zhuyin-capi, and the backend-independent

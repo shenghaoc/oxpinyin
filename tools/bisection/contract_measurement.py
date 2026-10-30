@@ -438,7 +438,7 @@ def per_call_calibration(total, calls=1000):
     return total // calls - 3
 
 
-def run_per_call(args, parser, *, CASES, FUNCTION_ORDER, per_call_helper, per_call_run,
+def run_per_call(args, parser, *, CASES, per_call_helper, per_call_run,
                  per_call_checked, per_call_calibration, per_call_attribution, observed):
     """Validate and run the selected per-call comparison, emitting JSON measurements.
 
@@ -471,8 +471,6 @@ def run_per_call(args, parser, *, CASES, FUNCTION_ORDER, per_call_helper, per_ca
             if not artifacts[mode] or not artifacts[mode].is_file():
                 parser.error('missing %s %s library' % (side, mode))
             artifacts[mode] = artifacts[mode].resolve()
-    FUNCTION_ORDER['check_arms'](args, {side: {mode: paths[mode] for mode in modes}
-                                      for side, paths in sides.items()}, references=('pin',))
     from tools.dev import host
     allowed = host.allowed_cpus()
     cpu = args.per_call_cpu if args.per_call_cpu is not None else min(allowed)

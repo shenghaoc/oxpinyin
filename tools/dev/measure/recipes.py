@@ -17,15 +17,15 @@ from .. import runners
 # tuple keeps every `tools.dev` command from importing the recipe modules;
 # recipes.test.py checks it against what the modules contribute.
 NAMES = ('callgrind-control', 'callgrind-differential', 'perf-baseline', 'perf-matrix', 'perf-same-data',
-         'probe-debuginfo-neutrality', 'probe-egress', 'processor-trace', 'profile-w8', 'rss-diag',
+         'probe-debuginfo-neutrality', 'probe-egress', 'profile-w8', 'rss-diag',
          'shipped-check', 'snapshot', 'steady-comparison', 'system-import-profile', 'tree-recipe-control')
 
 
 def table() -> dict:
     """Every recipe by name; the modules load on first use."""
-    from . import campaigns, probes, processor_trace, profile, snapshot, valgrind
+    from . import campaigns, probes, profile, snapshot, valgrind
     recipes = {}
-    for module in (campaigns, probes, processor_trace, profile, snapshot, valgrind):
+    for module in (campaigns, probes, profile, snapshot, valgrind):
         recipes.update(module.RECIPES)
     return recipes
 

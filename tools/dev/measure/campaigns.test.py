@@ -3,7 +3,7 @@
 tree-recipe-control and rss-diag.
 
 Each recipe runs in a world without tools. The seams bench.py gives them (capture, run, heavy,
-the function-order guard, the libtkrzw check, the report scripts and the pool of builds) are
+the libtkrzw check, the report scripts and the pool of builds) are
 replaced by fakes that write an ordered event log, so a test pins what the shell runners did:
 their counts and banners, the order of arms and modes, the files they leave, and the statuses
 they stop with. Nothing needs taskset, binutils, cargo or /proc, so the file runs on macOS and Linux.
@@ -55,7 +55,7 @@ class SteadyComparisonTests(unittest.TestCase):
 
     def campaign(self, *, checksum_change=False, missing_alloc=False, profile=False,
                  mutate_source=False, inherited_user_dir=None):
-        from tools.packaging import function_order
+        from tools.dev.measure import identity
         from tools.bisection import startup_profile, teardown
         from tools.dev.measure import native
         with tempfile.TemporaryDirectory() as temp:
@@ -99,8 +99,7 @@ class SteadyComparisonTests(unittest.TestCase):
             with contextlib.ExitStack() as stack:
                 stack.enter_context(mock.patch.object(campaigns.sys, 'platform', 'linux'))
                 stack.enter_context(mock.patch.object(campaigns.os, 'sched_getaffinity', return_value={0}, create=True))
-                stack.enter_context(mock.patch.object(function_order, 'library_backend', return_value='bdb'))
-                stack.enter_context(mock.patch.object(bench, 'check_function_order'))
+                stack.enter_context(mock.patch.object(identity, 'library_backend', return_value='bdb'))
                 stack.enter_context(mock.patch.object(native, 'check_filesystems'))
                 stack.enter_context(mock.patch.object(bench, 'run'))
                 stack.enter_context(mock.patch.object(campaigns, 'measured', return_value=worker))
@@ -149,7 +148,7 @@ class SteadyComparisonTests(unittest.TestCase):
         self.assertIsNone(result['user_profile_identity'])
 
     def test_review_output_inside_profile_is_refused_before_any_output(self):
-        from tools.packaging import function_order
+        from tools.dev.measure import identity
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             user = root / 'user'
@@ -164,7 +163,7 @@ class SteadyComparisonTests(unittest.TestCase):
                 with self.subTest(out=out):
                     with mock.patch.object(campaigns.sys, 'platform', 'linux'), \
                         mock.patch.object(campaigns.os, 'sched_getaffinity', return_value={0}, create=True), \
-                        mock.patch.object(function_order, 'library_backend',
+                        mock.patch.object(identity, 'library_backend',
                                           side_effect=AssertionError('artifact validation must not run')), \
                         contextlib.redirect_stderr(io.StringIO()) as error, \
                         self.assertRaises(SystemExit) as raised:
@@ -243,18 +242,16 @@ class BaselineTests(World):
             (stage / 'share/oxpinyin' / name).write_bytes(b'')
 
     def test_a_full_run_stages_checks_then_alternates_oracle_and_oxpinyin(self):
-        status, out, err = self.execute(campaigns.perf_baseline, ['--unordered-arm', 'ox'], self.env)
+        status, out, err = self.execute(campaigns.perf_baseline, [], self.env)
         self.assertEqual(status, 0, err)
         heavy = self.kinds('heavy')
         self.assertEqual(heavy[0][1][:7], ['cargo', 'cinstall', '--locked', '--release', '-p', 'oxpinyin-capi',
                                            f'--destdir={self.work}/stage'])
-        self.assertEqual([event[0] for event in self.log if event[0] in ('run', 'heavy', 'order', 'check')][:4],
-                         ['run', 'heavy', 'order', 'check'])
+        self.assertEqual([event[0] for event in self.log if event[0] in ('run', 'heavy', 'check')][:3],
+                         ['run', 'heavy', 'check'])
         self.assertEqual([(w[1], w[2]) for w in self.workers_of()],
                          [('oracle', 'speed'), ('oxpinyin', 'speed')] * 2
                          + [('oracle', 'ram-init'), ('oxpinyin', 'ram-init'), ('oracle', 'ram-cycle'), ('oxpinyin', 'ram-cycle')])
-        self.assertEqual(self.kinds('order')[0][1:], (['ox/pinyin', 'pin/pinyin'], ['--unordered-arm', 'ox'], ['pin']))
-        self.assert_guarded_before_work()
         self.assertEqual(out.splitlines()[0:2], ['--- building bisect harness ---', 'build: ok'])
         self.assertIn(f'--- cargo cinstall oxpinyin-capi -> {self.work}/stage ---', out)
         self.assertIn('pkg-config oxpinyin cflags: -I/stage/usr/include ', out)
@@ -266,14 +263,9 @@ class BaselineTests(World):
         self.assertEqual((self.work / 'speed-report.md').read_text(), 'REPORT perf-baseline.py\n')
         self.assertEqual([r[1][0] for r in self.reports], ['summarize-speed', 'summarize-ram', 'size'])
 
-    def test_the_guard_sees_the_exports_the_script_had_made_by_then(self):
-        self.execute(campaigns.perf_baseline, ['--unordered-arm', 'ox'], self.env)
-        self.assertEqual({name: self.guard_env.get(name) for name in ('PINYIN_ORACLE_PREFIX', 'PKG_CONFIG_SYSROOT_DIR')},
-                         {'PINYIN_ORACLE_PREFIX': str(self.oracle), 'PKG_CONFIG_SYSROOT_DIR': f'{self.work}/stage'})
-        self.assertTrue(self.guard_env['PKG_CONFIG_PATH'].startswith(f'{self.work}/stage/usr/lib/pkgconfig'))
 
     def test_workers_get_the_libdir_first_and_no_repeats(self):
-        self.execute(campaigns.perf_baseline, ['--unordered-arm', 'ox'], {**self.env, 'LD_LIBRARY_PATH': '/inherited'})
+        self.execute(campaigns.perf_baseline, [], {**self.env, 'LD_LIBRARY_PATH': '/inherited'})
         oracle, oxpinyin = self.workers_of('speed')[:2]
         self.assertEqual(oracle[5], f'{self.oracle}/lib:/inherited')
         self.assertEqual(oxpinyin[5], f'{self.work}/stage/usr/lib:/inherited')
@@ -305,7 +297,7 @@ class BaselineTests(World):
         status, _, err = self.execute(campaigns.perf_baseline, [], {**self.env, 'PERF_RUNS': 'x', 'PERF_RAM_RUNS': 'y'})
         self.assertIn('PERF_RUNS', err)
         status, _, err = self.execute(campaigns.perf_baseline, ['--nope'], {**self.env, 'PERF_RUNS': 'x'})
-        self.assertEqual((status, err), (2, 'unknown function-order argument: --nope\n'))
+        self.assertEqual((status, err), (2, 'unknown argument: --nope\n'))
 
     def test_a_missing_or_off_pin_oracle_stops_with_the_runbook_message(self):
         (self.oracle / 'oracle-pin.txt').unlink()
@@ -407,7 +399,7 @@ class MatrixTests(World):
             (label, so, data) for label, (so, data) in self.data.items()]))
 
     def test_four_cells_are_measured_round_robin_with_the_repeats_everywhere(self):
-        status, out, err = self.execute(campaigns.perf_matrix, ['--unordered-arm', 'C'], self.env)
+        status, out, err = self.execute(campaigns.perf_matrix, [], self.env)
         self.assertEqual(status, 0, err)
         labels = ['libpinyin-tkrzw', 'libpinyin-kc', 'oxpinyin-tkrzw', 'oxpinyin-kc']
         speed = [(w[1], w[2]) for w in self.workers_of('speed')]
@@ -415,9 +407,6 @@ class MatrixTests(World):
         ram = [(w[1], w[2]) for w in self.workers_of() if w[2] != 'speed']
         self.assertEqual(ram, [(label, mode) for label in labels for mode in ('ram-init', 'ram-cycle')])
         self.assertEqual({w[4] for w in self.workers_of()}, {'3'})
-        self.assertEqual(self.kinds('order')[0][1:], (['C/pinyin', 'D/pinyin', 'A/pinyin', 'B/pinyin'],
-                                                       ['--unordered-arm', 'C'], ['A', 'B']))
-        self.assert_guarded_before_work()
         standalone = [(c[2], c[1]) for c in self.kinds('check')[:2]]
         self.assertEqual(standalone, [('pin', 'tkrzw'), ('subject', 'tkrzw')])
         self.assertIn('=== Matrix Configuration ===', out)
@@ -469,7 +458,7 @@ class SameDataTests(World):
         kc, tkrzw = self.root / 'prebuilt-kc.so', self.root / 'prebuilt-tkrzw.so'
         for path in (kc, tkrzw):
             path.write_bytes(b'')
-        status, out, err = self.execute(campaigns.perf_same_data, ['--unordered-arm', 'C', '--unordered-arm', 'D'], {
+        status, out, err = self.execute(campaigns.perf_same_data, [], {
             **self.env, 'OXPINYIN_KC_SO': str(kc), 'OXPINYIN_TKRZW_SO': str(tkrzw)})
         self.assertEqual(status, 0, err)
         self.assertEqual(self.kinds('heavy'), [])
@@ -480,13 +469,10 @@ class SameDataTests(World):
         self.assertEqual(workers[('oxpinyin-tkrzw', 'speed')][6][-1], str(self.root / 'pin-tkrzw/lib/libpinyin/data'))
         self.assertEqual(workers[('oxpinyin-kc', 'speed')][6][-1], str(self.root / 'pin-kc/lib/libpinyin/data'))
         self.assertTrue(out.endswith('--- summary (medians) ---\nSUMMARY\n'))
-        self.assertEqual(self.kinds('order')[0][1:], (['C/pinyin', 'D/pinyin', 'A/pinyin', 'B/pinyin'],
-                                                       ['--unordered-arm', 'C', '--unordered-arm', 'D'], ['A', 'B']))
-        self.assert_guarded_before_work()
         self.assertEqual(self.reports, [])
 
     def test_unset_libraries_are_built_in_sequence_stripped_and_copied_out(self):
-        status, out, err = self.execute(campaigns.perf_same_data, ['--unordered-arm', 'C', '--unordered-arm', 'D'], self.env)
+        status, out, err = self.execute(campaigns.perf_same_data, [], self.env)
         self.assertEqual(status, 0, err)
         builds = [event[1] for event in self.kinds('heavy')]
         self.assertEqual([build[build.index('--features') + 1] for build in builds], ['kyotocabinet', 'tkrzw'])
@@ -546,13 +532,11 @@ class ControlTests(World):
         self.enterContext(mock.patch.object(campaigns, 'SCRATCH', self.root / 'scratch'))
 
     def test_shipped_check_builds_two_artifacts_then_samples_l_z_s_for_each_size(self):
-        status, out, err = self.execute(campaigns.shipped_check, ['--unordered-arm', 'Z', '--unordered-arm', 'S'], self.env)
+        status, out, err = self.execute(campaigns.shipped_check, [], self.env)
         self.assertEqual(status, 0, err)
         self.assertEqual(self.kinds('builds'), [('builds', 'shipped-check builds', ['Z', 'S'])])
-        self.assert_guarded_before_work()
         features = [command[command.index('--features') + 1] for command in self.builds]
         self.assertEqual(features, ['tkrzw', 'tkrzw,shipped'])
-        self.assertEqual(self.kinds('order')[0][1:], (['Z/pinyin', 'S/pinyin', 'L/pinyin'], ['--unordered-arm', 'Z', '--unordered-arm', 'S'], ['L']))
         order = [(w[1], w[4]) for w in self.workers_of()]
         cells = ['libpinyin-tkrzw', 'oxpinyin-cur-cinstall', 'oxpinyin-shipped']
         self.assertEqual(order, [(cell, '1') for cell in cells] * 2 + [(cell, '8') for cell in cells] * 2)
@@ -570,7 +554,7 @@ class ControlTests(World):
 
     def test_the_control_runners_use_the_image_harness_source_and_do_not_move_directory(self):
         before = os.getcwd()
-        self.execute(campaigns.shipped_check, ['--unordered-arm', 'Z', '--unordered-arm', 'S'], self.env)
+        self.execute(campaigns.shipped_check, [], self.env)
         harness = [event[1] for event in self.kinds('run')][0]
         self.assertEqual(harness[harness.index('-o') + 2], str(campaigns.IMAGE_HARNESS_SOURCE))
         self.assertEqual(os.getcwd(), before)
@@ -582,7 +566,7 @@ class ControlTests(World):
 
     def test_tree_recipe_control_gates_on_the_record_artifact_before_any_sample(self):
         with mock.patch.object(identity, 'sha256', lambda path: 'f' * 64):
-            status, out, err = self.execute(campaigns.tree_recipe_control, ['--unordered-arm', 'X'], self.env)
+            status, out, err = self.execute(campaigns.tree_recipe_control, [], self.env)
         self.assertEqual(status, 1)
         self.assertEqual(err, "FATAL: cell X is not the record's artifact.\n  built:  " + 'f' * 64 + f"\n  record: {SHA_X}\n"
                               "The control cannot proceed: X must reproduce the record's build before\n"
@@ -594,13 +578,10 @@ class ControlTests(World):
 
     def test_tree_recipe_control_samples_l_x_y_z_s_and_writes_ratios_and_decomposition(self):
         with mock.patch.object(identity, 'sha256', lambda path: SHA_X):
-            status, out, err = self.execute(campaigns.tree_recipe_control, ['--unordered-arm', 'X'],
+            status, out, err = self.execute(campaigns.tree_recipe_control, [],
                                             {**self.env, 'CTRL_COMMIT': 'abc123'})
         self.assertEqual(status, 0, err)
         self.assertIn(f"GATE: X reproduces the record's artifact byte-for-byte ({SHA_X})", out)
-        self.assertEqual(self.kinds('order')[0][1:], (['X/pinyin', 'Y/pinyin', 'Z/pinyin', 'S/pinyin', 'L/pinyin'],
-                                                       ['--unordered-arm', 'X'], ['L']))
-        self.assert_guarded_before_work()
         order = [(w[1], w[4]) for w in self.workers_of()]
         cells = ['libpinyin-tkrzw', 'oxpinyin-old-cargo', 'oxpinyin-cur-cargo', 'oxpinyin-cur-cinstall', 'oxpinyin-cur-shipped']
         self.assertEqual(order, [(cell, '1') for cell in cells] * 2 + [(cell, '8') for cell in cells] * 2)
@@ -629,7 +610,7 @@ class ControlTests(World):
     def test_a_pin_root_that_is_not_there_is_finds_own_complaint(self):
         missing = self.root / 'no-pin'
         with mock.patch.object(campaigns, 'LIBPINYIN_TKRZW', missing):
-            status, out, err = self.execute(campaigns.shipped_check, ['--unordered-arm', 'Z', '--unordered-arm', 'S'],
+            status, out, err = self.execute(campaigns.shipped_check, [],
                                             self.env)
         self.assertEqual((status, out, err), (1, '', f"find: '{missing}': No such file or directory\n"))
 
@@ -637,13 +618,13 @@ class ControlTests(World):
         empty = self.root / 'empty-pin'
         empty.mkdir()
         with mock.patch.object(campaigns, 'LIBPINYIN_TKRZW', empty):
-            status, _, err = self.execute(campaigns.shipped_check, ['--unordered-arm', 'Z', '--unordered-arm', 'S'],
+            status, _, err = self.execute(campaigns.shipped_check, [],
                                           self.env)
         self.assertEqual((status, err), (1, f'fatal: libpinyin.so not found under {empty}\n'))
 
     def test_a_failing_ratio_script_leaves_the_header_and_what_it_printed_and_ends_the_run(self):
         self.report_status = {'perf-ratio.py': 3}
-        status, _, _ = self.execute(campaigns.shipped_check, ['--unordered-arm', 'Z', '--unordered-arm', 'S'], self.env)
+        status, _, _ = self.execute(campaigns.shipped_check, [], self.env)
         self.assertEqual(status, 3)
         self.assertEqual((self.out / 'shipped-ratios-n1.md').read_text(), '## n=1\nREPORT perf-ratio.py\n')
         self.assertEqual(sorted(path.name for path in self.out.glob('shipped-ratios*')), ['shipped-ratios-n1.md'])
@@ -651,7 +632,7 @@ class ControlTests(World):
 
     def test_a_failing_worker_stops_the_control_with_its_status(self):
         self.worker_status = {3: 9}
-        status, _, _ = self.execute(campaigns.shipped_check, ['--unordered-arm', 'Z', '--unordered-arm', 'S'], self.env)
+        status, _, _ = self.execute(campaigns.shipped_check, [], self.env)
         self.assertEqual((status, len(self.workers_of())), (9, 3))
         self.assertEqual(list(self.out.glob('shipped-ratios*')), [])
 
@@ -673,7 +654,7 @@ class RssDiagTests(World):
         self.enterContext(mock.patch.object(identity, 'needed', lambda library, **k: ['libtkrzw.so.1']))
 
     def test_rounds_alternate_l_and_s_then_one_mapping_round_per_cell(self):
-        status, out, err = self.execute(campaigns.rss_diag, self.args + ['--unordered-arm', 'S'], {'PERF_CPU': '2'})
+        status, out, err = self.execute(campaigns.rss_diag, self.args + [], {'PERF_CPU': '2'})
         self.assertEqual(status, 0, err)
         self.assertEqual([(w[1], w[2], w[3]) for w in self.workers_of()], [('L', 'rss-diag', '3'), ('S', 'rss-diag', '3')] * 2
                          + [('L', 'rss-diag', '3'), ('S', 'rss-diag', '3')])
@@ -683,8 +664,6 @@ class RssDiagTests(World):
         self.assertEqual(rounds[0]['loadavg_before'], '0.1 0.2 0.3')
         self.assertEqual(rounds[0]['result']['mode'], 'rss-diag')
         self.assertEqual({tag for tag in (self.out / 'maps').iterdir()}, {self.out / 'maps/L-round.json', self.out / 'maps/S-round.json'})
-        self.assertEqual(self.kinds('order')[0][1:], (['S/pinyin', 'L/pinyin'], ['--unordered-arm', 'S'], ['L']))
-        self.assert_guarded_before_work()
 
     def test_the_mapping_round_alone_sets_the_diagnostic_directory(self):
         seen = []
@@ -694,7 +673,7 @@ class RssDiagTests(World):
             seen.append((env.get('RSS_DIAG_DIR'), env.get('RSS_DIAG_TAG')))
             return original(command, env=env, **kw)
         with mock.patch.object(bench, 'capture', capture):
-            self.execute(campaigns.rss_diag, self.args + ['--unordered-arm', 'S'], {})
+            self.execute(campaigns.rss_diag, self.args + [], {})
         self.assertEqual(seen, [(None, None)] * 4 + [(str(self.out / 'maps'), 'L'), (str(self.out / 'maps'), 'S')])
 
     def test_the_identity_names_everything_the_numbers_depend_on(self):
@@ -709,7 +688,7 @@ class RssDiagTests(World):
         self.assertEqual(text[-1], '  needed=libtkrzw.so.1 ')
 
     def test_the_harness_is_rebuilt_only_when_missing_or_older_than_its_source(self):
-        self.execute(campaigns.rss_diag, self.args + ['--unordered-arm', 'S'], {})
+        self.execute(campaigns.rss_diag, self.args + [], {})
         self.assertEqual(len([e for e in self.kinds('run') if e[1][0] == 'gcc']), 1)
         harness = self.bisect / 'bisect'
         harness.write_bytes(b'ok')
@@ -717,10 +696,10 @@ class RssDiagTests(World):
         os.utime(harness, (2_000_000_000, 2_000_000_000))
         os.utime(self.bisect / 'bisect.c', (1_000_000_000, 1_000_000_000))
         self.log.clear()
-        self.execute(campaigns.rss_diag, self.args + ['--unordered-arm', 'S'], {})
+        self.execute(campaigns.rss_diag, self.args + [], {})
         self.assertEqual([e for e in self.kinds('run') if e[1][0] == 'gcc'], [])
         os.utime(self.bisect / 'bisect.c', (3_000_000_000, 3_000_000_000))
-        self.execute(campaigns.rss_diag, self.args + ['--unordered-arm', 'S'], {})
+        self.execute(campaigns.rss_diag, self.args + [], {})
         self.assertEqual(len([e for e in self.kinds('run') if e[1][0] == 'gcc']), 1)
 
     def test_help_and_every_usage_error_print_the_header_through_usage_and_exit_2(self):

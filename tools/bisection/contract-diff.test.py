@@ -741,7 +741,6 @@ class ProfileRowsTests(DriverFixtureCase):
         tk.tkrzw_dbm_close.assert_not_called()
 
 
-
 class FatalLogTests(DriverFixtureCase):
     def setUp(self):
         self.spec = contract['CASES']['save-fatal-valid-to-invalid']
@@ -2013,8 +2012,7 @@ class CancellationTests(DriverFixtureCase):
                     "sys.exit(module.main())")
             command = [sys.executable, '-c', code, str(Path(driver.__file__).resolve()),
                        str(worker), 'bdb', str(prefix), str(prefix / 'lib/libpinyin.so'),
-                       *(['--per-call', 'lookup-only', '--per-call-facades', 'pinyin',
-                          '--unordered-arm', 'subject'] if per_call else
+                       *(['--per-call', 'lookup-only', '--per-call-facades', 'pinyin'] if per_call else
                          ['--cases', 'default-option-parse' + (',explicit-use-tone-parse' if jobs > 1 else ''),
                           '--jobs', str(jobs)])]
             env = os.environ.copy()
@@ -2222,23 +2220,6 @@ class ProcessObservationTests(DriverFixtureCase):
 
 
 class PerCallTests(DriverFixtureCase):
-    @unittest.skipUnless(sys.platform.startswith('linux'), 'Linux measurement controller')
-    def test_unordered_subject_is_refused_before_helper_or_measurements(self):
-        from argparse import Namespace
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            (root / 'lib').mkdir()
-            (root / 'lib/libpinyin.so').write_bytes(b'not an ordered ELF')
-            args = Namespace(cases='', issue=[], family=[], expect_parent=False, observations=None,
-                             plan_only=False, regenerate_sentence_ties=None, axis_c_replacement=None,
-                             axis_c_mutation=None, axis_c_snapshot_check=False, per_call='lookup-only',
-                             per_call_facades='pinyin', per_call_operations=None,
-                             per_call_attribution_limit=25, prefix=root, pinyin_so=root / 'lib/libpinyin.so',
-                             zhuyin_so=None, base_pinyin_so=None, base_zhuyin_so=None)
-            with patch.object(driver, 'per_call_helper') as helper:
-                with self.assertRaisesRegex(ValueError, 'function ordering: arm subject/pinyin refused'):
-                    driver.run_per_call(args, None)
-                helper.assert_not_called()
 
     def test_wait_errors_stop_and_reap_the_per_call_group(self):
         for error in (KeyboardInterrupt(), RuntimeError('wait failed')):
@@ -2444,8 +2425,7 @@ totals: 5
                              per_call_facades='pinyin', per_call_cpu=None, prefix=root,
                              per_call_operations=None, per_call_attribution=False, per_call_attribution_limit=25,
                              pinyin_so=root / 'subject.so', zhuyin_so=None,
-                             base_pinyin_so=root / 'base.so', base_zhuyin_so=None,
-                             unordered_arm=['base', 'subject'])
+                             base_pinyin_so=root / 'base.so', base_zhuyin_so=None)
             import contextlib, io
             with patch.dict(globals_, per_call_helper=lambda scratch: root / 'helper.so', per_call_run=run), \
                  contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):

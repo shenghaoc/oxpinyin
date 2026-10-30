@@ -23,6 +23,22 @@ NEEDED = re.compile(r'Shared library: \[(.*)\]')
 Run = Callable[..., 'bench.pool.Completed'] | None    # None: bench.capture, looked up at call time
 
 
+def library_backend(library, *, run: Run = None):
+    """Identify the linked object's backend, not the caller's environment."""
+    result = (run or bench.capture)(['readelf', '-dW', library])
+    if result.status:
+        raise ValueError('cannot read library backend: ' + result.stderr.decode(errors='replace'))
+    needed = re.findall(r'\(NEEDED\).*\[([^]]+)\]', result.stdout.decode())
+    patterns = {'bdb': r'libdb(?:-[0-9.]+)?\.so(?:\.[0-9.]+)?',
+                'kc': r'libkyotocabinet\.so(?:\.[0-9.]+)?',
+                'tkrzw': r'libtkrzw\.so(?:\.[0-9.]+)?'}
+    backends = [backend for name in needed for backend, pattern in patterns.items()
+                if re.fullmatch(pattern, name)]
+    if len(backends) != 1:
+        raise ValueError('expected exactly one backend in DT_NEEDED: ' + ', '.join(needed))
+    return backends[0]
+
+
 def sha256(path) -> str:
     """The hex SHA-256 digest of the file at PATH."""
     digest = hashlib.sha256()

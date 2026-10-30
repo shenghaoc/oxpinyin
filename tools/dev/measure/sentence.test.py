@@ -297,7 +297,7 @@ class CampaignTests(unittest.TestCase):
         args = types.SimpleNamespace(out=root, workload=workload, input='ni', cell='bdb',
                                      iterations=1, rounds=2, cpu=0, main=Path('/main'), pr=Path('/pr'),
                                      pin=Path('/pin'), main_shipping=Path('/ship-main'),
-                                     pr_shipping=Path('/ship-pr'), system_dir=Path('/data'), unordered_arm=[])
+                                     pr_shipping=Path('/ship-pr'), system_dir=Path('/data'))
         commands = []
 
         def capture(command, **kwargs):
@@ -405,7 +405,7 @@ class CampaignTests(unittest.TestCase):
 
     def test_wrong_cell_is_refused_before_output_or_workers(self):
         args = types.SimpleNamespace(main=Path('/main'), pr=Path('/pr'), pin=Path('/pin'), cell='bdb')
-        with mock.patch.object(sentence.function_order, 'library_backend', return_value='tkrzw'), \
+        with mock.patch.object(sentence.identity, 'library_backend', return_value='tkrzw'), \
                 mock.patch.object(bench, 'capture') as capture, contextlib.redirect_stderr(io.StringIO()), \
                 self.assertRaises(Finished):
             sentence.prepare(args, {})

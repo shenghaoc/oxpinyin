@@ -336,7 +336,7 @@ toolchain/runtime, even when its driver is Python. No runners other than
 | nbest-train-diff | B | P, S, full system tables | Provided |
 | open-counter-diff | B | P+Z, S | Provided |
 | option-sweep | B | P, S, full system tables, W3 | Provided; PINYIN_MODEL_DIR already supplied |
-| perf-baseline | B, C, util-linux | Installed subject, pin, full export, function-order policies | Native/measurement recipe; caller supplies workload/install scope |
+| perf-baseline | B, C, util-linux | Installed subject, pin, full export | Native/measurement recipe; caller supplies workload/install scope |
 | perf-matrix | B, util-linux | Four preinstalled KC/tkrzw arms, harness, full data, policies | Native/measurement recipe; caller prepares arms |
 | perf-same-data | B, C, util-linux | Same-data measurement arms/exports, policies | Native/measurement recipe; caller prepares arms |
 | phrase-surface-diff | B | P, S, full tables + `interpolation2.text` | Model/table directory gap → added |
@@ -345,7 +345,7 @@ toolchain/runtime, even when its driver is Python. No runners other than
 | punct-diff | B | P, S | Provided |
 | residue-a-tail-diff | B | S, full tables, `bigram-export-strjoinv` prefix | Missing variant → added |
 | residue-mechanism-diff | B | P, S, full system tables; runtime probe built by recipe | Provided |
-| rss-diag | B, V, util-linux | Caller-selected libraries/data and function-order policies | Native/measurement recipe |
+| rss-diag | B, V, util-linux | Caller-selected libraries/data | Native/measurement recipe |
 | same-data-dir-diff | B | P, S | Provided |
 | scheme-diff | B | P, S, full system tables | Provided |
 | session-fork-diff | B, coreutils (`timeout`) | P+Z, S | Provided |
