@@ -62,10 +62,6 @@ name = "oracle-candidate-structure"
 path = "src/bin/oracle_candidate_structure.rs"
 
 [[bin]]
-name = "parity-sweep"
-path = "src/bin/parity_sweep.rs"
-
-[[bin]]
 name = "parity-worst"
 path = "src/bin/parity_worst.rs"
 
