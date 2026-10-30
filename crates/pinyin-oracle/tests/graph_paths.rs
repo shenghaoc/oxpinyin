@@ -8,7 +8,7 @@
 //! represents without trying.
 //!
 //! The fixture is the pin's own answer for all 10,459 non-sentinel corpus
-//! inputs, recovered by `cargo run -p pinyin-oracle --bin oracle-paths`. No
+//! inputs, recovered from historical W2 logs by the `oracle-paths` importer. No
 //! oracle build is needed to run this, which is the point: the check belongs
 //! in ordinary portable CI, not behind a Linux-only feature.
 
@@ -173,12 +173,41 @@ fn every_captured_oracle_path_is_a_graph_path() {
 
 #[test]
 fn the_incomplete_key_divergences_are_resolved() {
+    // Keep the named W2 witnesses on the graph path that shipping uses. Their
+    // selected paths are already in the frozen fixture; no live oracle is
+    // needed to check these formerly live-only assertions in per-PR CI.
+    let records = records();
+    for (input, path) in [
+        (
+            "yingchon",
+            "ying@0:4:complete,ch@4:6:partial,o@6:7:complete,n@7:8:partial",
+        ),
+        (
+            "fanrufe",
+            "fan@0:3:complete,ru@3:5:complete,f@5:6:partial,e@6:7:complete",
+        ),
+        ("ngannve", "n@0:1:partial,gan@1:4:complete,nve@4:7:complete"),
+        (
+            "zzzzzzzz",
+            "z@0:1:partial,z@1:2:partial,z@2:3:partial,z@3:4:partial,z@4:5:partial,z@5:6:partial,z@6:7:partial,z@7:8:partial",
+        ),
+    ] {
+        let record = records
+            .iter()
+            .find(|record| record.input == input.as_bytes())
+            .expect("named W2 witness is in the frozen corpus");
+        assert_eq!(record.segments, parse_path(path), "{input}");
+        let graph = SegmentGraph::build(input.as_bytes()).expect("short input");
+        assert_eq!(walk(&graph, &record.segments), Ok(()), "{input}");
+        assert_eq!(graph.consumed(), input.len(), "{input}");
+    }
+
     // The population the graph was built for: paths carrying an initial-only
     // key that is not the final segment, which no Vec<Parse> path set can
     // hold. Every one of them must walk.
     let mut checked = 0;
 
-    for record in records() {
+    for record in records {
         let has_mid_partial =
             record
                 .segments
@@ -205,6 +234,82 @@ fn the_incomplete_key_divergences_are_resolved() {
         checked >= 481,
         "expected the measured path-set population, saw {checked}"
     );
+}
+
+// These six sentinel inputs cannot appear in the ordinary path fixture. Keep
+// the live oracle's guard assertions when retiring the W2 comparator, and
+// check the production graph beside them. See oracle-apostrophe-abort.md.
+#[cfg(feature = "oracle-ffi")]
+mod live_sentinels {
+    use super::{SegmentGraph, parse_path, walk};
+    use pinyin_oracle::capture::segments_to_wire;
+    use pinyin_oracle::{Oracle, OracleFlags, OraclePrefix, OracleSegment};
+
+    fn oracle() -> Oracle {
+        let prefix = OraclePrefix::locate().expect("pin-verified oracle prefix");
+        Oracle::open_with_temp_user_dir(prefix).expect("oracle context opens")
+    }
+
+    #[test]
+    fn the_abort_guard_fires_exactly_on_apostrophe_only_inputs() {
+        let mut oracle = oracle();
+        for input in ["'", "''", "'''"] {
+            let observed = oracle
+                .observe(input.as_bytes(), OracleFlags::DEFAULT)
+                .expect("guarded, so observable");
+            assert_eq!(
+                observed.segments,
+                vec![OracleSegment::NoKeyColumns {
+                    parsed_len: input.len()
+                }],
+                "{input:?}"
+            );
+            assert!(observed.has_sentinel_segment());
+            assert_eq!(observed.parsed_input_length, input.len());
+            let graph = SegmentGraph::build(input.as_bytes()).expect("short input");
+            assert_eq!(graph.consumed(), input.len());
+            assert!(graph.edges().is_empty());
+        }
+
+        for input in ["'ni", "a'a", "ni'h", "xi'an", "q"] {
+            let observed = oracle
+                .observe(input.as_bytes(), OracleFlags::DEFAULT)
+                .expect("observable");
+            assert!(
+                !observed
+                    .segments
+                    .iter()
+                    .any(|segment| matches!(segment, OracleSegment::NoKeyColumns { .. })),
+                "guard fired on {input:?}"
+            );
+            let graph = SegmentGraph::build(input.as_bytes()).expect("short input");
+            let path = parse_path(&segments_to_wire(&observed.segments));
+            assert_eq!(walk(&graph, &path), Ok(()), "{input:?}");
+            assert_eq!(graph.consumed(), observed.parsed_input_length);
+        }
+    }
+
+    #[test]
+    fn the_live_f_e_01_shape_is_recorded_rather_than_crashing() {
+        let mut oracle = oracle();
+        for input in ["ni'", "ni'!", "ni'i"] {
+            let observed = oracle
+                .observe(input.as_bytes(), OracleFlags::DEFAULT)
+                .expect("observable");
+            assert_eq!(
+                segments_to_wire(&observed.segments),
+                "ni@0:2:complete,<missing-pinyin>@2",
+                "{input:?}"
+            );
+            let graph = SegmentGraph::build(input.as_bytes()).expect("short input");
+            assert_eq!(graph.consumed(), 3, "{input:?}");
+            assert_eq!(
+                walk(&graph, &parse_path("ni@0:2:complete")),
+                Ok(()),
+                "{input:?}"
+            );
+        }
+    }
 }
 
 #[test]

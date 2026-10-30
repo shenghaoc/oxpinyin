@@ -50,10 +50,6 @@ name = "parity-corpus"
 path = "src/bin/parity_corpus.rs"
 
 [[bin]]
-name = "parity-diff"
-path = "src/bin/parity_diff.rs"
-
-[[bin]]
 name = "oracle-paths"
 path = "src/bin/oracle_paths.rs"
 
@@ -76,7 +72,7 @@ path = "src/bin/sentence_tail.rs"
 [dependencies]
 dhat = { version = "0.3", optional = true }
 # Internal workspace crate: the corpus is generated from the frozen syllable
-# inventory, and W2-T3 compares against this parser. Not an external dependency.
+# inventory, and graph/decode tests exercise core. Not an external dependency.
 oxpinyin-core = { path = "../oxpinyin-core" }
 # Session + exported tables for portable parity tooling (never ships).
 # default-features = false so `--no-default-features` builds actually reach

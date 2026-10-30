@@ -1,5 +1,10 @@
 # Findings — W2-T5 divergence taxonomy
 
+> **Retired W2 implementation.** `src/taxonomy.rs` and the W2 parse
+> comparator have been removed from `pinyin-oracle`. The counts and proposed
+> budget below are historical, not current acceptance criteria. Graph-path
+> tests and the [live parity gates](../runbooks/parity-gates.md) remain.
+
 Date: 2026-08-09 · Source tier: Architect derivation.
 Status: **frozen** (maintainer decisions 2026-08-09 on budget meaning and
 when the budget gates). Class set and classification rules stand as proposed;

@@ -63,8 +63,8 @@ series lives in `../perf/`.
 | [`datagen-model20`](datagen-model20.md) | Native model20 data production — the canonical-source invariant | implemented (canonical-source invariant) |
 | [`decode-differential`](decode-differential.md) | Decode-level differential SPEC | frozen |
 | [`dictool-format`](dictool-format.md) | oxpinyin-dictool and the classic libpinyin user-dictionary interchange (W7-T1) | pinned |
-| [`differential-log`](differential-log.md) | Findings — W2-T3 differential runner and log schema | record (W2 schema) |
-| [`divergence-taxonomy`](divergence-taxonomy.md) | Findings — W2-T5 divergence taxonomy | frozen |
+| [`differential-log`](differential-log.md) | Findings — W2-T3 differential runner and log schema | historical (retired W2 schema) |
+| [`divergence-taxonomy`](divergence-taxonomy.md) | Findings — W2-T5 divergence taxonomy | historical (retired W2 classifier) |
 | [`double-pinyin-spec`](double-pinyin-spec.md) | Double-pinyin scheme SPEC | frozen |
 | [`drop-in-abi-identity`](drop-in-abi-identity.md) | What `dlopen("libpinyin.so.15")` actually requires | record |
 | [`dynamic-adjust`](dynamic-adjust.md) | DYNAMIC_ADJUST | record (implemented, #204) |

@@ -157,13 +157,17 @@ It was recovered from a W2-T3 live run, in two halves:
   F-E-01 missing-string shape). They have no usable path and are excluded,
   which is why the fixture holds 10,459 and not 10,465.
 
-Regenerate with:
+The W2 comparator and `parity-diff` have been retired. The committed fixture
+remains the portable regression input; it does not need regeneration for an
+ordinary test run. `oracle-paths` is retained only to import an existing pair
+of historical W2 logs:
 
 ```bash
-bash tools/oracle/build-oracle.sh --prefix "$HOME/.local/opt/pinyin-oracle"
-cargo run -p pinyin-oracle --features oracle-ffi --bin parity-diff -- target/parity
-cargo run -p pinyin-oracle --bin oracle-paths -- target/parity fixtures/w4/oracle-paths.txt
+just heavy -- cargo run -p pinyin-oracle --bin oracle-paths -- /path/to/historical-w2-run /tmp/oracle-paths.txt
 ```
+
+The unique live assertions for the six excluded sentinel inputs are retained
+in `tests/graph_paths.rs`, alongside checks of the production graph.
 
 Format: a leading `#` header block, then one record per line with three
 TAB-separated fields — escaped input, consumed length, and the path in

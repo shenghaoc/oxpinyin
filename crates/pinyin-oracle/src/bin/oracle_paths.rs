@@ -1,6 +1,7 @@
 //! Recovers the oracle's selected segmentation for every parity-corpus input.
 //!
-//! The W2-T3 live run already measured all 10,465 inputs; it wrote the answer
+//! This imports historical W2-T3 logs; the comparator that produced them has
+//! been retired. The original live run measured all 10,465 inputs and wrote the answer
 //! in two halves. `divergences.tsv` spells the oracle's path out verbatim for
 //! the 485 inputs whose path we did not enumerate. `comparisons.tsv` records,
 //! for the other 9,974, the `rank` of the oracle's path inside our ordered
@@ -133,7 +134,7 @@ fn run(run_dir: &Path, out: &Path) -> Result<String, String> {
 fn read(path: &Path) -> Result<String, String> {
     std::fs::read_to_string(path).map_err(|error| {
         format!(
-            "cannot read {}: {error}\nrun parity-diff first (see the module docs)",
+            "cannot read {}: {error}\nprovide historical W2 comparisons.tsv and divergences.tsv (see the module docs)",
             path.display()
         )
     })
