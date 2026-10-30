@@ -66,6 +66,8 @@ The tree has no pure-Rust database replacement.
 Link Kyoto Cabinet, tkrzw and Berkeley DB to the distribution's libraries.
 Use tkrzw and Berkeley DB through their maintainer-provided C ABIs, `tkrzw_langc.h` and `db.h`.
 Generate bindings with bindgen over system headers.
+Find tkrzw, Kyoto Cabinet, Berkeley DB where it ships a `.pc` file, and GLib with the `pkg-config` crate, a build-dependency of `oxpinyin-store`, `oxpinyin-input`, `oxpinyin-datagen`, `oxpinyin-dictool` and `oxpinyin-training` (maintainer approval 2026-10-30 UTC).
+Berkeley DB falls back to fixed header directories and the `OXPINYIN_BDB_*` overrides, because the distributions and Homebrew install no `.pc` file for it.
 Do not use tkrzw's C++ interface.
 It has no ABI stability across compilers, standard libraries or library versions.
 Its C API is the maintainer's stability promise.
@@ -78,7 +80,7 @@ Like libpinyin, it depends on the system library's C++ ABI.
 The facades import 68 `kyotocabinet::` names, 67 among the pin's 77.
 This describes the current tree.
 The `oxpinyin-input` boundary has a small C shim, `native/config.c`, in stage 1.
-Its `tools` feature adds `native/tool.c`, compiled against GLib's headers found with `pkg-config`, and the tool-only C++ stream shim `native/tool_stream.cc`, both through the existing `cc` build dependency.
+Its `tools` feature adds `native/tool.c`, compiled against GLib's headers found with the `pkg-config` crate, and the tool-only C++ stream shim `native/tool_stream.cc`, both through the existing `cc` build dependency.
 Use narrow hand-written extern declarations and no direct `libc` crate dependency.
 
 Kyoto Cabinet left `kclangc.h` after measurement in #1118.

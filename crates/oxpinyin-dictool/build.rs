@@ -13,13 +13,10 @@
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
-    // The same env/pkg-config selectors the store's build script tracks,
-    // for the same reason: any of them can point the discovery at a
-    // different Kyoto Cabinet.
+    // The same selector the store's build script tracks, for the same
+    // reason: it can point the discovery at a different Kyoto Cabinet. The
+    // probe tracks the PKG_CONFIG_* variables itself.
     println!("cargo:rerun-if-env-changed=OXPINYIN_KC_LIB_DIR");
-    println!("cargo:rerun-if-env-changed=PKG_CONFIG_PATH");
-    println!("cargo:rerun-if-env-changed=PKG_CONFIG_LIBDIR");
-    println!("cargo:rerun-if-env-changed=PKG_CONFIG_SYSROOT_DIR");
     #[cfg(feature = "kyotocabinet")]
     emit_kc_rpath();
 }
@@ -33,17 +30,17 @@ fn emit_kc_rpath() {
     if let Ok(dir) = std::env::var("OXPINYIN_KC_LIB_DIR") {
         println!("cargo:rustc-link-arg=-Wl,-rpath,{dir}");
     }
-    let output = std::process::Command::new("pkg-config")
-        .arg("--libs")
-        .arg("kyotocabinet")
-        .output();
-    if let Ok(output) = output
-        && output.status.success()
+    // Only the directories are wanted: the store links the library, so the
+    // probe emits no link metadata. System directories stay out, as in the
+    // store, so no rpath names one.
+    if let Ok(library) = pkg_config::Config::new()
+        .cargo_metadata(false)
+        .probe_cflags(false)
+        .print_system_libs(false)
+        .probe("kyotocabinet")
     {
-        for flag in String::from_utf8_lossy(&output.stdout).split_whitespace() {
-            if let Some(path) = flag.strip_prefix("-L") {
-                println!("cargo:rustc-link-arg=-Wl,-rpath,{path}");
-            }
+        for path in &library.link_paths {
+            println!("cargo:rustc-link-arg=-Wl,-rpath,{}", path.display());
         }
     }
 }

@@ -187,10 +187,12 @@ const STATUS_NOT_FOUND_ERROR: i32 = 7;
 
 // The C enum in tkrzw_langc.h is the ABI (numbering identical to the
 // C++ Status::Code it casts from); the generated constants must agree
-// with the pinned numbers above or every mapping below is wrong.
-const _: () = assert!(ffi::TKRZW_STATUS_SUCCESS == STATUS_SUCCESS as u32);
-const _: () = assert!(ffi::TKRZW_STATUS_SYSTEM_ERROR == STATUS_SYSTEM_ERROR as u32);
-const _: () = assert!(ffi::TKRZW_STATUS_NOT_FOUND_ERROR == STATUS_NOT_FOUND_ERROR as u32);
+// with the pinned numbers above or every mapping below is wrong. bindgen
+// types the enum's constants as the target's C enum type (i32 on MSVC,
+// u32 elsewhere), so both sides widen to i64.
+const _: () = assert!(ffi::TKRZW_STATUS_SUCCESS as i64 == STATUS_SUCCESS as i64);
+const _: () = assert!(ffi::TKRZW_STATUS_SYSTEM_ERROR as i64 == STATUS_SYSTEM_ERROR as i64);
+const _: () = assert!(ffi::TKRZW_STATUS_NOT_FOUND_ERROR as i64 == STATUS_NOT_FOUND_ERROR as i64);
 
 // ── errors ────────────────────────────────────────────────────────
 

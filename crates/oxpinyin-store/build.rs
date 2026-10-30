@@ -24,78 +24,6 @@ fn main() {
     bdb::build();
 }
 
-/// Asks `pkg-config` for one field of `package`, split into individual
-/// flags. Shared by both backend modules; shelling out avoids a
-/// `pkg-config` crate dependency for the handful of calls this script makes.
-/// Kyoto Cabinet does not always install a `.pc` file, so a miss is not
-/// fatal there — the caller falls back to the library name.
-#[cfg(any(feature = "kyotocabinet", feature = "tkrzw", feature = "bdb"))]
-fn pkg_config(flag: &str, package: &str) -> Option<Vec<String>> {
-    let output = std::process::Command::new("pkg-config")
-        .arg(flag)
-        .arg(package)
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    Some(split_shell_words(&String::from_utf8_lossy(&output.stdout)))
-}
-
-/// Splits pkg-config output into flags the way a shell would read it:
-/// whitespace separates words, a backslash escapes the next character,
-/// and quotes group — so a pkg-config-escaped path containing spaces
-/// (`-I/opt/my\ headers`) stays one flag instead of being cut in two.
-#[cfg(any(feature = "kyotocabinet", feature = "tkrzw", feature = "bdb"))]
-fn split_shell_words(line: &str) -> Vec<String> {
-    let mut words = Vec::new();
-    let mut word = String::new();
-    let mut quote = None;
-    let mut escaped = false;
-    let mut has_word = false;
-    for c in line.chars() {
-        if escaped {
-            word.push(c);
-            escaped = false;
-            has_word = true;
-            continue;
-        }
-        match quote {
-            Some('\'') if c != '\'' => word.push(c),
-            Some(q) if c == q => quote = None,
-            Some(_) => {
-                if c == '\\' {
-                    escaped = true;
-                } else {
-                    word.push(c);
-                }
-                has_word = true;
-            }
-            None => match c {
-                '\\' => escaped = true,
-                '"' | '\'' => {
-                    quote = Some(c);
-                    has_word = true;
-                }
-                c if c.is_whitespace() => {
-                    if has_word {
-                        words.push(std::mem::take(&mut word));
-                        has_word = false;
-                    }
-                }
-                c => {
-                    word.push(c);
-                    has_word = true;
-                }
-            },
-        }
-    }
-    if has_word {
-        words.push(word);
-    }
-    words
-}
-
 /// Kyoto Cabinet: a C++ shim and the bindgen declarations of its C entry
 /// points.
 ///
@@ -134,25 +62,6 @@ mod kyotocabinet {
         println!("cargo:rerun-if-env-changed=BINDGEN_EXTRA_CLANG_ARGS");
         println!("cargo:rerun-if-env-changed=OXPINYIN_KC_INCLUDE_DIR");
         println!("cargo:rerun-if-env-changed=OXPINYIN_KC_LIB_DIR");
-        // All three pkg-config selectors, as the tkrzw branch tracks:
-        // PKG_CONFIG_LIBDIR replaces the search-directory list outright and
-        // PKG_CONFIG_SYSROOT_DIR rewrites every discovered path, so either one
-        // alone can point pkg-config at a different Kyoto Cabinet.
-        println!("cargo:rerun-if-env-changed=PKG_CONFIG_PATH");
-        println!("cargo:rerun-if-env-changed=PKG_CONFIG_LIBDIR");
-        println!("cargo:rerun-if-env-changed=PKG_CONFIG_SYSROOT_DIR");
-
-        let mut clang_args: Vec<String> = Vec::new();
-        if let Some(cflags) = super::pkg_config("--cflags", "kyotocabinet") {
-            clang_args.extend(cflags);
-        }
-        // The override goes ahead of pkg-config's directories, as for BDB.
-        // The shim compiles Kyoto Cabinet's headers into the facade, so they
-        // must come from the installation OXPINYIN_KC_LIB_DIR links, whose
-        // link-search path is likewise emitted first (docs/packaging.md).
-        if let Ok(dir) = std::env::var("OXPINYIN_KC_INCLUDE_DIR") {
-            clang_args.insert(0, format!("-I{dir}"));
-        }
 
         // A `rustc-link-search` reaches every later link in the graph, but a
         // build script's `rustc-link-arg` is package-scoped: cargo applies
@@ -169,21 +78,35 @@ mod kyotocabinet {
             println!("cargo:rustc-link-search=native={dir}");
             println!("cargo:rustc-link-arg=-Wl,-rpath,{dir}");
         }
-        match super::pkg_config("--libs", "kyotocabinet") {
-            Some(libs) => {
-                for lib in &libs {
-                    if let Some(name) = lib.strip_prefix("-l") {
-                        println!("cargo:rustc-link-lib={name}");
-                    } else if let Some(path) = lib.strip_prefix("-L") {
-                        println!("cargo:rustc-link-search=native={path}");
-                        println!("cargo:rustc-link-arg=-Wl,-rpath,{path}");
-                    }
+        // The probe emits the link-search paths and libraries itself, after
+        // the override above. Kyoto Cabinet does not always install a .pc
+        // file, so a miss is not fatal: name the library directly. A distro
+        // package puts it on the default search path. System link paths stay
+        // out, as pkg-config itself leaves them, so no rpath names one.
+        let include_paths = match pkg_config::Config::new()
+            .print_system_libs(false)
+            .probe("kyotocabinet")
+        {
+            Ok(library) => {
+                for path in &library.link_paths {
+                    println!("cargo:rustc-link-arg=-Wl,-rpath,{}", path.display());
                 }
+                library.include_paths
             }
-            // No .pc file: name the library directly. A distro package
-            // puts it on the default search path.
-            None => println!("cargo:rustc-link-lib=kyotocabinet"),
-        }
+            Err(_) => {
+                println!("cargo:rustc-link-lib=kyotocabinet");
+                Vec::new()
+            }
+        };
+        // The override goes ahead of pkg-config's directories, as for BDB.
+        // The shim compiles Kyoto Cabinet's headers into the facade, so they
+        // must come from the installation OXPINYIN_KC_LIB_DIR links, whose
+        // link-search path is likewise emitted first (docs/packaging.md).
+        let include_paths: Vec<PathBuf> = std::env::var_os("OXPINYIN_KC_INCLUDE_DIR")
+            .map(PathBuf::from)
+            .into_iter()
+            .chain(include_paths)
+            .collect();
 
         // The shim (see the module comment): Kyoto Cabinet's headers and a
         // C++ compiler are what it needs; bindgen below reads only shim.h.
@@ -195,10 +118,8 @@ mod kyotocabinet {
             .opt_level(2)
             .flag_if_supported("-fvisibility=hidden")
             .flag_if_supported("-fvisibility-inlines-hidden");
-        for arg in &clang_args {
-            if let Some(dir) = arg.strip_prefix("-I") {
-                shim.include(dir);
-            }
+        for dir in &include_paths {
+            shim.include(dir);
         }
         shim.compile("oxpinyin_kc_shim");
 
@@ -213,8 +134,8 @@ mod kyotocabinet {
             .derive_debug(false)
             .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()));
 
-        for arg in clang_args {
-            builder = builder.clang_arg(arg);
+        for dir in &include_paths {
+            builder = builder.clang_arg(format!("-I{}", dir.display()));
         }
 
         let bindings = match builder.generate() {
@@ -240,81 +161,38 @@ mod kyotocabinet {
 
 #[cfg(feature = "tkrzw")]
 mod tkrzw {
-    /// Locates `tkrzw_langc.h` under the discovered include path, falling
-    /// back to the compiler's default include directory. The C API is the
-    /// only header this build may bind: no C++ header and no other tkrzw
-    /// API crosses the ABI.
-    fn langc_header(cflags: &[String]) -> Option<std::path::PathBuf> {
-        let mut dirs: Vec<std::path::PathBuf> = cflags
-            .iter()
-            .filter_map(|flag| flag.strip_prefix("-I"))
-            .map(std::path::PathBuf::from)
-            .collect();
-        dirs.push(std::path::PathBuf::from("/usr/include"));
-        dirs.into_iter()
-            .map(|dir| dir.join("tkrzw_langc.h"))
-            .find(|path| path.is_file())
-    }
-
     pub fn build() {
         println!("cargo:rerun-if-env-changed=BINDGEN_EXTRA_CLANG_ARGS");
-        println!("cargo:rerun-if-env-changed=OXPINYIN_TKRZW_INCLUDE_DIR");
-        println!("cargo:rerun-if-env-changed=OXPINYIN_TKRZW_LIB_DIR");
-        println!("cargo:rerun-if-env-changed=OXPINYIN_TKRZW_LIB_NAME");
-        // The pkg-config lookup below decides the include path, the link
-        // path and the embedded rpath; repointing it at a different tkrzw
-        // installation must rerun this script, not reuse cached flags.
-        // PKG_CONFIG_LIBDIR replaces the search directory list outright
-        // and PKG_CONFIG_SYSROOT_DIR rewrites every discovered path, so
-        // either one alone can select a different installation.
-        println!("cargo:rerun-if-env-changed=PKG_CONFIG_PATH");
-        println!("cargo:rerun-if-env-changed=PKG_CONFIG_LIBDIR");
-        println!("cargo:rerun-if-env-changed=PKG_CONFIG_SYSROOT_DIR");
 
-        // pkg-config first where it exists (Linux distros, Homebrew), then
-        // the explicit override ahead of it: an installation outside the
-        // default prefix that ships no `.pc` file — the normal case on
-        // Windows, where tkrzw's VCMakefile does not install one — is
-        // otherwise unreachable. The Kyoto Cabinet and Berkeley DB modules
-        // carry the same pair for the same reason.
-        let mut cflags: Vec<String> = super::pkg_config("--cflags", "tkrzw").unwrap_or_default();
-        if let Ok(dir) = std::env::var("OXPINYIN_TKRZW_INCLUDE_DIR") {
-            cflags.insert(0, format!("-I{dir}"));
-        }
-        if let Ok(dir) = std::env::var("OXPINYIN_TKRZW_LIB_DIR") {
-            println!("cargo:rustc-link-search=native={dir}");
-            // Package-scoped, like every build-script `rustc-link-arg`
-            // (see the Kyoto Cabinet module): this rpath reaches this
-            // package's own lib, test and bench artifacts and nothing
-            // else. Any other artifact must find the library through
-            // LD_LIBRARY_PATH or its own rpath.
-            println!("cargo:rustc-link-arg=-Wl,-rpath,{dir}");
-        }
-        let Some(header) = langc_header(&cflags) else {
+        // tkrzw is found only through `pkg-config tkrzw`, as libpinyin's
+        // configure finds it (`PKG_CHECK_MODULES(TKRZW, [tkrzw])`, no
+        // version constraint). The probe emits the link-search paths and
+        // libraries, and reruns this script when a PKG_CONFIG_* variable
+        // changes. System link paths stay out, as pkg-config itself leaves
+        // them, so no rpath names one.
+        let library = pkg_config::Config::new()
+            .print_system_libs(false)
+            .probe("tkrzw")
+            .unwrap_or_else(|error| {
+                panic!(
+                    "libtkrzw required: the `tkrzw` feature finds tkrzw \
+                     through pkg-config, which failed ({error}). Make tkrzw.pc \
+                     visible to pkg-config, or select another backend with \
+                     `--no-default-features --features bdb` or `--features kyotocabinet`."
+                )
+            });
+
+        // The C API is the only header this build may bind: no C++ header
+        // and no other tkrzw API crosses the ABI.
+        let Some(header) = library
+            .include_paths
+            .iter()
+            .map(|dir| dir.join("tkrzw_langc.h"))
+            .find(|path| path.is_file())
+        else {
             panic!(
-                "libtkrzw required: the `tkrzw` feature needs the tkrzw library with its \
-                 C API header tkrzw_langc.h, which was found neither under \
-                 `pkg-config --cflags tkrzw` nor via OXPINYIN_TKRZW_INCLUDE_DIR. Build \
-                 tkrzw from source (https://dbmx.net/tkrzw/: POSIX: ./configure \
-                 --prefix=DIR && make && make install; Windows: nmake -f VCMakefile && \
-                 nmake -f VCMakefile install) and either put DIR/lib/pkgconfig on \
-                 PKG_CONFIG_PATH or point OXPINYIN_TKRZW_INCLUDE_DIR and \
-                 OXPINYIN_TKRZW_LIB_DIR at the installation directly, or build without \
-                 --features tkrzw.\n\n\
-                 Do not use any Ubuntu libtkrzw-dev package. Ubuntu applies two build \
-                 flags that each break tkrzw independently, silently, and in different \
-                 ways; Debian applies neither, and neither fixes the other. (1) -flto \
-                 duplicates the RecordProcessor NOOP/REMOVE backing literals across LTO \
-                 partitions, so Remove() stores a tombstone instead of deleting and a NOOP \
-                 processor overwrites the record. (2) -Wl,-Bsymbolic-functions resolves \
-                 libtkrzw's references to its own copies of the key comparators, so a \
-                 TreeDBM records comparator type 255 and can never be reopened \
-                 (BROKEN_DATA_ERROR: invalid_key_comparator). Confirmed on noble's \
-                 1.0.27-1.1build1 and resolute's 1.0.32-1build1. Arch enables LTO only, so \
-                 it has defect 1 and not defect 2. Ubuntu LP #2142937 carries a patch that \
-                 disables LTO: it resolves defect 1 and leaves defect 2 exactly as it was. \
-                 Check a candidate with tools/tkrzw/distro-probe.sh, which tests both. See \
-                 docs/findings/tkrzw-distro-compat.md."
+                "libtkrzw required: pkg-config's include path for tkrzw names no directory \
+                 holding the C API header tkrzw_langc.h."
             );
         };
         println!("cargo:rerun-if-changed={}", header.display());
@@ -355,8 +233,8 @@ mod tkrzw {
             .allowlist_var("TKRZW_STATUS_NOT_FOUND_ERROR")
             .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()));
 
-        for arg in &cflags {
-            builder = builder.clang_arg(arg);
+        for dir in &library.include_paths {
+            builder = builder.clang_arg(format!("-I{}", dir.display()));
         }
 
         let bindings = builder
@@ -367,38 +245,20 @@ mod tkrzw {
             .write_to_file(std::path::Path::new(&out_dir).join("tkrzw_langc.rs"))
             .expect("writing the generated tkrzw bindings must succeed");
 
-        if let Ok(name) = std::env::var("OXPINYIN_TKRZW_LIB_NAME") {
-            // Explicit library name wins over pkg-config: vcpkg, static-
-            // only builds, or any platform where the installed name is
-            // not "tkrzw".
-            println!("cargo:rustc-link-lib={name}");
-        } else {
-            match super::pkg_config("--libs", "tkrzw") {
-                Some(libs) => {
-                    for lib in &libs {
-                        if let Some(name) = lib.strip_prefix("-l") {
-                            println!("cargo:rustc-link-lib={name}");
-                        } else if let Some(path) = lib.strip_prefix("-L") {
-                            println!("cargo:rustc-link-search=native={path}");
-                            // A tkrzw outside the default loader path —
-                            // the usual case, since the library often has
-                            // to be made by hand — would otherwise link
-                            // but fail to start.
-                            //
-                            // Package-scoped, like every build-script
-                            // `rustc-link-arg` (see the Kyoto Cabinet
-                            // module): this rpath reaches this package's
-                            // own lib, test and bench artifacts and
-                            // nothing else.
-                            println!("cargo:rustc-link-arg=-Wl,-rpath,{path}");
-                        }
-                    }
-                }
-                // No `.pc` file (Windows nmake install, or a from-source
-                // prefix without pkg-config): name the library directly
-                // and let OXPINYIN_TKRZW_LIB_DIR or the loader's default
-                // path resolve it.
-                None => println!("cargo:rustc-link-lib=tkrzw"),
+        // PE targets have no rpath, and link.exe reports the raw flag as
+        // LNK4044, which the `linker_messages` lint turns into a failed
+        // build under `-D warnings`; see the Berkeley DB module.
+        if std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default() != "windows" {
+            for path in &library.link_paths {
+                // A library outside the loader's default path would
+                // otherwise link but fail to start.
+                //
+                // Package-scoped, like every build-script `rustc-link-arg`
+                // (see the Kyoto Cabinet module): this rpath reaches this
+                // package's own lib, test and bench artifacts and nothing
+                // else. Any other artifact finds the library through the
+                // runtime library path or its own rpath.
+                println!("cargo:rustc-link-arg=-Wl,-rpath,{}", path.display());
             }
         }
     }
@@ -470,18 +330,35 @@ mod bdb {
         println!("cargo:rerun-if-env-changed=OXPINYIN_BDB_INCLUDE_DIR");
         println!("cargo:rerun-if-env-changed=OXPINYIN_BDB_LIB_DIR");
         println!("cargo:rerun-if-env-changed=OXPINYIN_BDB_LIB_NAME");
-        // All three pkg-config selectors, as the sibling modules track:
-        // either one alone can point pkg-config at a different libdb.
-        println!("cargo:rerun-if-env-changed=PKG_CONFIG_PATH");
-        println!("cargo:rerun-if-env-changed=PKG_CONFIG_LIBDIR");
-        println!("cargo:rerun-if-env-changed=PKG_CONFIG_SYSROOT_DIR");
 
         // pkg-config first (a hit is a bonus — no target distro ships a
         // db.pc), then the explicit override ahead of it, then the fixed
-        // header directories.
-        let mut clang_args: Vec<String> = super::pkg_config("--cflags", "libdb")
-            .or_else(|| super::pkg_config("--cflags", "db"))
-            .unwrap_or_default();
+        // header directories. The probe only reads: the library is linked
+        // below, after the OXPINYIN_BDB_LIB_NAME override has had its say,
+        // so it emits no link metadata. It tracks the PKG_CONFIG_*
+        // variables itself. System paths stay out, as for `pkg-config
+        // --cflags` and `--libs` without the allow-system variables.
+        let library = ["libdb", "db"].iter().find_map(|name| {
+            pkg_config::Config::new()
+                .cargo_metadata(false)
+                .print_system_cflags(false)
+                .print_system_libs(false)
+                .probe(name)
+                .ok()
+        });
+        let mut clang_args: Vec<String> = Vec::new();
+        if let Some(library) = &library {
+            clang_args.extend(
+                library
+                    .include_paths
+                    .iter()
+                    .map(|dir| format!("-I{}", dir.display())),
+            );
+            clang_args.extend(library.defines.iter().map(|(name, value)| match value {
+                Some(value) => format!("-D{name}={value}"),
+                None => format!("-D{name}"),
+            }));
+        }
         if let Ok(dir) = std::env::var("OXPINYIN_BDB_INCLUDE_DIR") {
             clang_args.insert(0, format!("-I{dir}"));
         }
@@ -520,24 +397,22 @@ mod bdb {
         // `-ldb` paths below cannot express (vcpkg's `berkeleydb` port
         // installs `libdb48.lib`): name it directly, in the same shape as
         // the INCLUDE_DIR/LIB_DIR overrides above. Precedence, exactly:
-        // this override (if set) skips pkg-config for `--libs` entirely;
-        // otherwise pkg-config's `libdb`/`db` is tried, then the bare
+        // this override (if set) skips the probed libraries entirely;
+        // otherwise pkg-config's `libdb`/`db` is used, then the bare
         // `-ldb` fallback.
         if let Ok(name) = std::env::var("OXPINYIN_BDB_LIB_NAME") {
             println!("cargo:rustc-link-lib={name}");
         } else {
-            match super::pkg_config("--libs", "libdb").or_else(|| super::pkg_config("--libs", "db"))
-            {
-                Some(libs) => {
-                    for lib in &libs {
-                        if let Some(name) = lib.strip_prefix("-l") {
-                            println!("cargo:rustc-link-lib={name}");
-                        } else if let Some(path) = lib.strip_prefix("-L") {
-                            println!("cargo:rustc-link-search=native={path}");
-                            // Package-scoped, like every build-script
-                            // `rustc-link-arg` (see the Kyoto Cabinet module).
-                            println!("cargo:rustc-link-arg=-Wl,-rpath,{path}");
-                        }
+            match &library {
+                Some(library) => {
+                    for name in &library.libs {
+                        println!("cargo:rustc-link-lib={name}");
+                    }
+                    for path in &library.link_paths {
+                        println!("cargo:rustc-link-search=native={}", path.display());
+                        // Package-scoped, like every build-script
+                        // `rustc-link-arg` (see the Kyoto Cabinet module).
+                        println!("cargo:rustc-link-arg=-Wl,-rpath,{}", path.display());
                     }
                 }
                 // No `.pc` on either target distro: name the library directly

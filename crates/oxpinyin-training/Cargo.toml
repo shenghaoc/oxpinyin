@@ -11,12 +11,17 @@ description = "Private training stages and command-line tools; never ships."
 [lints]
 workspace = true
 
+[build-dependencies]
+# Reads Kyoto Cabinet's library directories for the rpath, as oxpinyin-store
+# does (#1434).
+pkg-config = { version = "0.3.34", optional = true }
+
 [features]
 default = ["bdb"]
 # The shared segment/data path opens phrase-index and related system files
 # using the selected on-disk backend. Every backend-sensitive stage and
 # command therefore shares this single selection.
-kyotocabinet = ["oxpinyin-data/kyotocabinet"]
+kyotocabinet = ["oxpinyin-data/kyotocabinet", "dep:pkg-config"]
 bdb = ["oxpinyin-data/bdb"]
 tkrzw = ["oxpinyin-data/tkrzw"]
 

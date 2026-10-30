@@ -8,6 +8,11 @@ rust-version.workspace = true
 publish = false
 description = "model20 → oxpinyin runtime tables compiler for every storage backend. Never ships."
 
+[build-dependencies]
+# Reads Kyoto Cabinet's library directories for the rpath, as oxpinyin-store
+# does (#1434).
+pkg-config = { version = "0.3.34", optional = true }
+
 [features]
 # Berkeley DB is the default selected backend (matching oxpinyin-store's
 # workspace-default feature set, the analogue of a bare libpinyin
@@ -22,7 +27,7 @@ description = "model20 → oxpinyin runtime tables compiler for every storage ba
 default = ["bdb"]
 # Enable the Kyoto Cabinet producer (`--backend kyotocabinet`); mirrors
 # oxpinyin-store.
-kyotocabinet = ["oxpinyin-store/kyotocabinet"]
+kyotocabinet = ["oxpinyin-store/kyotocabinet", "dep:pkg-config"]
 # Enable the Berkeley DB producer (`--backend bdb`); mirrors oxpinyin-store.
 bdb = ["oxpinyin-store/bdb"]
 # Enable the Tkrzw producer (`--backend tkrzw`); mirrors oxpinyin-store.

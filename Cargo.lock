@@ -677,6 +677,7 @@ dependencies = [
  "oxpinyin-data",
  "oxpinyin-store",
  "oxpinyin-testsupport",
+ "pkg-config",
  "tempfile",
 ]
 
@@ -687,6 +688,7 @@ dependencies = [
  "oxpinyin-core",
  "oxpinyin-facade",
  "oxpinyin-user",
+ "pkg-config",
  "tempfile",
 ]
 
@@ -718,6 +720,7 @@ name = "oxpinyin-input"
 version = "0.1.0"
 dependencies = [
  "cc",
+ "pkg-config",
  "tempfile",
 ]
 
@@ -750,6 +753,7 @@ dependencies = [
  "bindgen",
  "cc",
  "criterion",
+ "pkg-config",
 ]
 
 [[package]]
@@ -768,6 +772,7 @@ dependencies = [
  "oxpinyin-data",
  "oxpinyin-kmm",
  "oxpinyin-testsupport",
+ "pkg-config",
  "tempfile",
 ]
 
