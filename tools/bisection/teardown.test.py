@@ -415,14 +415,14 @@ class PureTests(unittest.TestCase):
             def run(*args, **kwargs):
                 calls.append(kwargs)
                 times = {name: dict(wall_ns=100) for name, _, _ in td.USER_WINDOWS}
-                result = dict(observation=dict(stderr='', userfiles={}, documents=[dict(user_phrase=True, times=times)]),
+                result = dict(observation=dict(stderr='open $USER/user.conf failed.\n', userfiles={}, documents=[dict(user_phrase=True, times=times)]),
                               user_bin_sha256='same')
                 if kwargs.get('user_memory'):
                     result['checkpoints'] = {0: {'M0': dict(groups={}, totals=dict(Pss=100))},
                                              1: {'I1': dict(groups={}, totals=dict(Pss=100))}}
                 return result
             campaign = SimpleNamespace(worker=Path('worker'), work=root, run=run)
-            subjects = {side: dict(pinyin=Path('library')) for side in ('ox', 'control', 'pin', 'base')}
+            subjects = {side: dict(pinyin=Path(side)) for side in ('ox', 'control', 'pin', 'base')}
             with patch.object(td, 'user_library_shape', return_value=dict(items=10000, readings={1: 10000})), \
                     patch.object(td, 'build_worker', return_value=(Path('instrumented'), {})), \
                     patch.object(td, 'allocation_windows', return_value={}), \
@@ -433,8 +433,17 @@ class PureTests(unittest.TestCase):
                     patch.object(td, 'MEMORY_ROUNDS', 1), patch.object(td, 'MEMORY_WARMUPS', 0):
                 self.assertEqual(td.user_phrase_measure(campaign, subjects,
                     dict(user=root / 'user', user8=root / 'user8/user'), ['user']), 0)
+                def changed_diagnostic(*args, **kwargs):
+                    result = run(*args, **kwargs)
+                    if args[1] == Path('pin'):
+                        result['observation']['stderr'] += 'unexpected warning\n'
+                    return result
+                campaign.run = changed_diagnostic
+                with self.assertRaisesRegex(ValueError, 'diagnostics changed'):
+                    td.user_phrase_measure(campaign, subjects,
+                        dict(user=root / 'user', user8=root / 'user8/user'), ['user'], verify=True)
             native = [call for call in calls if call.get('profiler') is None]
-            self.assertEqual([call.get('user_memory', False) for call in native], [False] * 4 + [True] * 4)
+            self.assertEqual([call.get('user_memory', False) for call in native[:8]], [False] * 4 + [True] * 4)
 
     def test_failed_preflight_can_retain_complete_observations_without_waiving_it(self):
         with tempfile.TemporaryDirectory() as temp:

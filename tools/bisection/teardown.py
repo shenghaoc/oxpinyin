@@ -2211,6 +2211,7 @@ def user_phrase_measure(campaign, subjects, profiles, cases, *, verify=False):
     builds = {} if verify else {kind: build_worker(campaign.work, kind)[0] for kind in ('xtree', 'massif')}
     references = {}
     final_profiles = {}
+    native_diagnostics = {}
     write_rows = campaign.work / 'user-write.tsv'
     write_rows.write_text('\n'.join((profiles['user8'].parent / 'rows.tsv').read_text().splitlines()[:8]) + '\n')
     def observe(row):
@@ -2222,8 +2223,10 @@ def user_phrase_measure(campaign, subjects, profiles, cases, *, verify=False):
     def run(side, case, profiler=None, *, memory=False):
         row = campaign.run('pinyin', subjects[side]['pinyin'], profiles[case], mode='user', rows=write_rows,
                            profiler=profiler, user_memory=memory or profiler in ('xtree', 'massif'))
-        if profiler is None and row['observation']['stderr']:
-            raise ValueError('NOT COMPARABLE: user workload emitted diagnostics: ' + row['observation']['stderr'])
+        if profiler is None:
+            diagnostics = row['observation']['stderr']
+            if diagnostics != native_diagnostics.setdefault(case, diagnostics):
+                raise ValueError('NOT COMPARABLE: user workload diagnostics changed: ' + side)
         answer, times = observe(row)
         if case in references and answer != references[case]:
             raise ValueError('NOT COMPARABLE: user phrase getters or export changed: ' + side)
@@ -2246,7 +2249,7 @@ def user_phrase_measure(campaign, subjects, profiles, cases, *, verify=False):
                 references.setdefault(case, answer)
                 if index >= TIMING_WARMUPS:
                     rows[side].append(row)
-        print_record('user-equivalence', case=case, verdict='COMPARABLE', **references[case])
+        print_record('user-equivalence', case=case, verdict='COMPARABLE', diagnostics=native_diagnostics[case], **references[case])
         if verify:
             continue
         for operation, _, _ in USER_WINDOWS:
