@@ -8,7 +8,6 @@ use std::path::PathBuf;
 /// Every variant is a reported failure rather than a panic: the harness must
 /// survive a missing prefix, an off-pin prefix, and a hostile oracle response.
 #[derive(Debug)]
-#[non_exhaustive]
 pub enum OracleError {
     /// The pin manifest could not be read from the prefix.
     ManifestUnreadable {
@@ -238,7 +237,26 @@ impl std::error::Error for OracleError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::ManifestUnreadable { source, .. } => Some(source),
-            _ => None,
+            Self::ManifestNotUtf8 { .. }
+            | Self::ManifestFieldMissing { .. }
+            | Self::ManifestFieldMismatch { .. }
+            | Self::ManifestFieldRepeated { .. }
+            | Self::PrefixArtefactMissing { .. }
+            | Self::PrefixNotFound { .. }
+            | Self::InteriorNul { .. }
+            | Self::PathNotRepresentable { .. }
+            | Self::ContextInitFailed { .. }
+            | Self::InstanceAllocFailed
+            | Self::DynamicAdjustRejected { .. }
+            | Self::Call { .. }
+            | Self::TrainPreconditionFailed { .. }
+            | Self::NonUtf8 { .. }
+            | Self::UnknownCandidateType { .. }
+            | Self::ParsedLengthOutOfRange { .. }
+            | Self::CaptureFieldMissing { .. }
+            | Self::CaptureFieldMalformed { .. }
+            | Self::ReplayInputMissing { .. }
+            | Self::CaptureRecordInvalid { .. } => None,
         }
     }
 }

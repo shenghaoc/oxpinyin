@@ -41,7 +41,6 @@ use std::sync::OnceLock;
 /// The four variants mirror the `GSettings` types the frozen upstream schema in
 /// `docs/findings/upstream-schema.md` actually uses: `b`, `i`, `x` and `s`.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-#[non_exhaustive]
 pub enum ConfigValue {
     /// `GSettings` `b`.
     Bool(bool),
@@ -59,7 +58,7 @@ impl ConfigValue {
     pub const fn as_bool(&self) -> Option<bool> {
         match self {
             Self::Bool(value) => Some(*value),
-            _ => None,
+            Self::Int(_) | Self::Int64(_) | Self::Text(_) => None,
         }
     }
 
@@ -68,7 +67,7 @@ impl ConfigValue {
     pub const fn as_int(&self) -> Option<i32> {
         match self {
             Self::Int(value) => Some(*value),
-            _ => None,
+            Self::Bool(_) | Self::Int64(_) | Self::Text(_) => None,
         }
     }
 
@@ -77,7 +76,7 @@ impl ConfigValue {
     pub const fn as_int64(&self) -> Option<i64> {
         match self {
             Self::Int64(value) => Some(*value),
-            _ => None,
+            Self::Bool(_) | Self::Int(_) | Self::Text(_) => None,
         }
     }
 
@@ -86,7 +85,7 @@ impl ConfigValue {
     pub fn as_text(&self) -> Option<&str> {
         match self {
             Self::Text(value) => Some(value),
-            _ => None,
+            Self::Bool(_) | Self::Int(_) | Self::Int64(_) => None,
         }
     }
 
@@ -94,10 +93,8 @@ impl ConfigValue {
     #[must_use]
     pub const fn type_letter(&self) -> char {
         // Exhaustive on purpose, with no catch-all arm: a new ConfigValue
-        // variant must update this. The enum is #[non_exhaustive] for
-        // downstream crates, which does not relax matching inside this one, so
-        // adding a variant breaks this match at compile time — which is the
-        // point. A `_ =>` arm here would let a new type silently report
+        // variant must update this. Adding a variant breaks this match at
+        // compile time, which is the point. A `_ =>` arm here would let a new type silently report
         // someone else's letter, and `merge` rejects a layer by comparing
         // exactly these letters.
         match self {
@@ -625,7 +622,6 @@ pub fn merge(base: &Config, layers: &[ConfigLayer]) -> Result<Config, ConfigErro
 
 /// Why a configuration could not be read or merged.
 #[derive(Clone, Debug, Eq, PartialEq)]
-#[non_exhaustive]
 pub enum ConfigError {
     /// An overlay record is missing a required field.
     MissingField {

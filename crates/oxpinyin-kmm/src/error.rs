@@ -6,7 +6,6 @@ use std::path::PathBuf;
 
 /// Why a KMM operation failed.
 #[derive(Debug)]
-#[non_exhaustive]
 pub enum KmmError {
     /// A path could not be read or written.
     Io {
@@ -51,7 +50,7 @@ impl std::error::Error for KmmError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Io { source, .. } => Some(source),
-            _ => None,
+            Self::Malformed { .. } | Self::Invalid { .. } | Self::Domain { .. } => None,
         }
     }
 }

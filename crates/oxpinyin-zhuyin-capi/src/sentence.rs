@@ -55,7 +55,23 @@ pub(crate) fn refuse_lookup_gram(name: &str, error: &oxpinyin_engine::EngineErro
             "a user bigram check found a value, then its read failed \
              (upstream aborts, ngram_kyotodb.cpp:138-139)"
         }
-        _ => return false,
+        oxpinyin_engine::EngineError::CandidateIndexOutOfRange { .. }
+        | oxpinyin_engine::EngineError::LookupOffsetPastSeparator { .. }
+        | oxpinyin_engine::EngineError::LookupOffsetOutOfRange { .. }
+        | oxpinyin_engine::EngineError::LookupOffsetInsideCharacter { .. }
+        | oxpinyin_engine::EngineError::SelectionAnchorBeforeComposition { .. }
+        | oxpinyin_engine::EngineError::ZeroKeyOffsetCheck { .. }
+        | oxpinyin_engine::EngineError::MatrixColumnAssert { .. }
+        | oxpinyin_engine::EngineError::StaleTrainingConstraint { .. }
+        | oxpinyin_engine::EngineError::UnsafeTrainingPredecessor { .. }
+        | oxpinyin_engine::EngineError::ShortTrainingPredecessor { .. }
+        | oxpinyin_engine::EngineError::TrainingSetFreqMiss { .. }
+        | oxpinyin_engine::EngineError::StaleTrainingSpan { .. }
+        | oxpinyin_engine::EngineError::OverlongUserIndexKey { .. }
+        | oxpinyin_engine::EngineError::UserModel(_)
+        | oxpinyin_engine::EngineError::Graph(_)
+        | oxpinyin_engine::EngineError::Decode(_)
+        | oxpinyin_engine::EngineError::Scoring(_) => return false,
     };
     crate::ffi::log_warning(&format!("{name}: {message}"));
     true

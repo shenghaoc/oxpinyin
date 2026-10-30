@@ -721,7 +721,11 @@ mod tests {
         let error = parse_page(block, 1000).expect_err("invalid title utf-8");
         match error {
             crate::error::CorpusError::InvalidUtf8 { offset } => assert_eq!(offset, 1011),
-            other => panic!("expected InvalidUtf8, got {other}"),
+            other @ (crate::error::CorpusError::Io(_)
+            | crate::error::CorpusError::MalformedXml { .. }
+            | crate::error::CorpusError::Convert { .. }) => {
+                panic!("expected InvalidUtf8, got {other}")
+            }
         }
     }
 

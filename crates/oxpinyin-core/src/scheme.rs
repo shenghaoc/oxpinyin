@@ -102,7 +102,6 @@ impl DoublePinyinParse {
 /// `abort()` slot is deliberately not modelled here (contract-lock
 /// workstream).
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-#[non_exhaustive]
 pub enum FullPinyinScheme {
     /// Hanyu pinyin (the default).
     #[default]
@@ -121,14 +120,13 @@ impl FullPinyinScheme {
         match self {
             Self::Luoma => Some(crate::full_pinyin_index::luoma_pinyin_index()),
             Self::SecondaryZhuyin => Some(crate::full_pinyin_index::secondary_zhuyin_index()),
-            _ => None,
+            Self::Hanyu => None,
         }
     }
 }
 
 /// `DoublePinyinScheme` from `src/storage/pinyin_custom2.h:108-117`.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-#[non_exhaustive]
 pub enum DoublePinyinScheme {
     /// Ziranma.
     Zrm = 1,
@@ -959,7 +957,6 @@ fn parse_fallback(input: &[u8], tables: SchemeTables) -> Option<SyllableKey> {
 /// `docs/findings/upstream-divergences.md`), and the oxpinyin setters
 /// report `false` there until it becomes a table-addition port.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-#[non_exhaustive]
 pub enum ZhuyinScheme {
     /// Standard keyboard.
     #[default]
@@ -1735,7 +1732,11 @@ impl ZhuyinScheme {
                 tones: ETEN_TONES,
                 index: crate::zhuyin_map::zhuyin_pinyin_map(),
             }),
-            _ => None,
+            Self::Hsu
+            | Self::Eten26
+            | Self::StandardDvorak
+            | Self::HsuDvorak
+            | Self::DachenCp26 => None,
         }
     }
 
@@ -1772,7 +1773,12 @@ impl ZhuyinScheme {
                 index: crate::zhuyin_map::hsu_zhuyin_index(),
                 correction: ZHUYIN_CORRECT_HSU,
             }),
-            _ => None,
+            Self::Standard
+            | Self::Ibm
+            | Self::Ginyieh
+            | Self::Eten
+            | Self::StandardDvorak
+            | Self::DachenCp26 => None,
         }
     }
 
@@ -1785,7 +1791,14 @@ impl ZhuyinScheme {
                 finals: CP26_FINALS,
                 tones: CP26_TONES,
             }),
-            _ => None,
+            Self::Standard
+            | Self::Hsu
+            | Self::Ibm
+            | Self::Ginyieh
+            | Self::Eten
+            | Self::Eten26
+            | Self::StandardDvorak
+            | Self::HsuDvorak => None,
         }
     }
 

@@ -6,7 +6,6 @@ use std::fmt;
 
 /// A corpus-cleaning failure.
 #[derive(Debug)]
-#[non_exhaustive]
 pub enum CorpusError {
     /// An I/O read or write failed.
     Io(std::io::Error),
@@ -45,7 +44,7 @@ impl std::error::Error for CorpusError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Io(error) => Some(error),
-            _ => None,
+            Self::MalformedXml { .. } | Self::InvalidUtf8 { .. } | Self::Convert { .. } => None,
         }
     }
 }

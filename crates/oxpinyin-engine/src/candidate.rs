@@ -11,7 +11,6 @@ use oxpinyin_core::{Cost, PhraseText, PhraseToken};
 
 /// Where a candidate came from.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-#[non_exhaustive]
 pub enum CandidateKind {
     /// A dictionary phrase covering part of the composition.
     Phrase,

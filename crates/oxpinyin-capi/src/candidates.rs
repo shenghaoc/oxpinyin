@@ -787,7 +787,6 @@ pub extern "C" fn pinyin_train(instance: *mut PinyinInstance, index: u8) -> bool
                 oxpinyin_engine::TrainingSpanFault::EndEmptyColumn => {
                     "matrix->get_column_size(end) > 0"
                 }
-                _ => "matrix->get_column_size(start) > 0",
             };
             crate::ffi::log_warning(&format!("pinyin_train: assertion '{assertion}' failed"));
             false

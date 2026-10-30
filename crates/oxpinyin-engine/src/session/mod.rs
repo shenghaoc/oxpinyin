@@ -75,7 +75,6 @@ pub const SCAN_EXPANSION_LIMIT: usize = 4_096;
 
 /// What a session did with a key.
 #[derive(Clone, Debug, Eq, PartialEq)]
-#[non_exhaustive]
 pub enum KeyOutcome {
     /// The session did not use the key and is unchanged.
     Ignored,
@@ -88,7 +87,6 @@ pub enum KeyOutcome {
 
 /// What choosing a candidate left behind.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[non_exhaustive]
 pub enum Selection {
     /// Input remains; more candidates are offered.
     Continued,

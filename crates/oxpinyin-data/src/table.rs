@@ -53,7 +53,10 @@ impl From<StoreError> for TableError {
     fn from(e: StoreError) -> Self {
         match e {
             StoreError::Io(io) => Self::Io(io),
-            other => Self::Store(other),
+            other @ (StoreError::Backend(_)
+            | StoreError::ReadOnly
+            | StoreError::InvalidInput(_)
+            | StoreError::ReadAfterCheck) => Self::Store(other),
         }
     }
 }

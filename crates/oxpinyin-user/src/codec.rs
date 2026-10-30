@@ -12,7 +12,6 @@ use crate::store::Token;
 
 /// Error returned when stored codec bytes cannot be decoded.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[non_exhaustive]
 pub enum DecodeError {
     /// The input did not contain the required fixed-width prefix.
     Truncated {

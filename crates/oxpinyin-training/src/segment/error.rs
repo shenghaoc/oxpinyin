@@ -8,7 +8,6 @@ use oxpinyin_data::{DictError, InterpolationError, LmError, TableError};
 
 /// Why constructing or running the segmenter failed.
 #[derive(Debug)]
-#[non_exhaustive]
 pub enum SegmentError {
     /// A system table could not be opened or read.
     Table(TableError),

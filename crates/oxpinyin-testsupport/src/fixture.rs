@@ -43,7 +43,6 @@ const LAMBDA_DENOMINATOR: u128 = 2;
 
 /// Why a fixture could not be read.
 #[derive(Clone, Debug, Eq, PartialEq)]
-#[non_exhaustive]
 pub enum FixtureError {
     /// A record is missing a required field.
     MissingField {

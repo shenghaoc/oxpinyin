@@ -117,7 +117,6 @@ impl MaskOutOutcome {
 /// behind NULL. Carried out of [`ContextCore::try_open`] so the facades
 /// can log it; the return value stays NULL either way.
 #[derive(Debug)]
-#[non_exhaustive]
 pub enum OpenFailure {
     /// Legacy empty-path failure, retained for source compatibility.
     /// Current opens resolve an empty system path against the working directory.
@@ -194,7 +193,7 @@ impl OpenFailure {
     pub fn table_conf_error(&self) -> Option<TableConfError> {
         match self {
             Self::Runtime(oxpinyin_runtime::OpenError::TableConf(error)) => Some(*error),
-            _ => None,
+            Self::EmptySystemDir | Self::Runtime(_) => None,
         }
     }
 

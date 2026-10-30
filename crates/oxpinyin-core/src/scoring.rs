@@ -46,7 +46,6 @@ pub const WEIGHT_SCALE: i64 = 100;
 /// Backend failures arrive as text because the frozen `Dictionary` and
 /// `LanguageModel` seams leave their `Error` types unbounded.
 #[derive(Clone, Debug, Eq, PartialEq)]
-#[non_exhaustive]
 pub enum ScoringError {
     /// The dictionary backend failed.
     Dictionary(String),
@@ -141,7 +140,7 @@ impl ScoringConfig {
         match kind {
             EdgeKind::Exact => self.exact_penalty,
             EdgeKind::Segmentation => self.segmentation_penalty,
-            _ => self.incomplete_penalty,
+            EdgeKind::Incomplete => self.incomplete_penalty,
         }
     }
 

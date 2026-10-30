@@ -8,7 +8,6 @@ use crate::segment::SegmentError;
 
 /// Why counting failed.
 #[derive(Debug)]
-#[non_exhaustive]
 pub enum CounterError {
     /// A segmented line did not split into exactly two `token phrase`
     /// fields (`TAGLIB_PARSE_SEGMENTED_LINE` aborts on this shape).
