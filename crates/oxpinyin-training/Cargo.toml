@@ -17,7 +17,7 @@ workspace = true
 pkg-config = { version = "0.3.34", optional = true }
 
 [features]
-default = ["bdb"]
+default = ["tkrzw"]
 # The shared segment/data path opens phrase-index and related system files
 # using the selected on-disk backend. Every backend-sensitive stage and
 # command therefore shares this single selection.

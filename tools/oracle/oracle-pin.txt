@@ -36,7 +36,11 @@ model_archive_sha256=59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defc
 # follows Q1, the bare ./configure reference build). The tkrzw and kc
 # cells stay selectable; the frozen capture goldens remain the tkrzw
 # cell.
-dbm=BerkeleyDB
+# 2026-10-30 UTC: dbm moves BerkeleyDB -> Tkrzw with build-oracle.sh's
+# --dbm default (maintainer decision: tkrzw, maintained upstream, is the
+# reference cell; this supersedes the 2026-09-27 ruling). bdb and kc stay
+# selectable. Every per-cell digest below is unchanged.
+dbm=Tkrzw
 #
 # v4 (2026-10-16 UTC, issue #818): the library build is reproducible, so the
 # digests below are the output of the RECIPE, not of one host's build. The

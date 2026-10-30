@@ -231,7 +231,7 @@ def build_parser():
     p.set_defaults(func=host_command)
 
     p = sub.add_parser('check', help='run one native setup check')
-    p.add_argument('backend', nargs='?', default='bdb')
+    p.add_argument('backend', nargs='?', default='tkrzw')
     p.set_defaults(func=check_command)
 
     p = sub.add_parser('lint-crate-cfg-placement',

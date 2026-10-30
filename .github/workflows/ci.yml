@@ -219,11 +219,10 @@ jobs:
           rust-cache-key: lint-job
       - run: rustup show active-toolchain
       - name: Install build dependencies (apt)
-        # Berkeley DB is the default store backend (the analogue of a
-        # bare libpinyin ./configure); bindgen (libclang) reads the
-        # system db.h at build time. test-macos installs Homebrew
-        # berkeley-db@5, so that job does not use this apt line.
-        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libdb-dev libglib2.0-dev
+        # tkrzw is the default store backend (maintainer decision 2026-10-30
+        # UTC); the tkrzw action builds it, with this g++ and make, and
+        # points pkg-config at it. bindgen (libclang) reads tkrzw_langc.h.
+        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libglib2.0-dev
       # The distribution package supplies ShellCheck; the checked minimum is
       # the version whose findings this tree is clean under. No installer.
       - name: ShellCheck tracked scripts (>= 0.11.0)
@@ -306,6 +305,8 @@ jobs:
       # needs the pin-built libpinyin, which CI never has.
       - run: uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev packaging check-pc-version
         if: needs.changes.outputs.reuse != 'true'
+      - name: Provision tkrzw (built at the setup.sh revision and cached)
+        uses: ./.github/actions/tkrzw
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
         if: needs.changes.outputs.reuse != 'true'
       # Complexity ratchet: no function may exceed CCN 40 (current max is
@@ -359,11 +360,10 @@ jobs:
           rust-cache-key: test-job
       - run: rustup show active-toolchain
       - name: Install build dependencies (apt)
-        # Berkeley DB is the default store backend (the analogue of a
-        # bare libpinyin ./configure); bindgen (libclang) reads the
-        # system db.h at build time. test-macos installs Homebrew
-        # berkeley-db@5, so that job does not use this apt line.
-        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libdb-dev libglib2.0-dev
+        # tkrzw is the default store backend (maintainer decision 2026-10-30
+        # UTC); the tkrzw action builds it, with this g++ and make, and
+        # points pkg-config at it. bindgen (libclang) reads tkrzw_langc.h.
+        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libglib2.0-dev
       - name: Set up pinned repository Python
         if: needs.changes.outputs.reuse != 'true'
         run: |
@@ -436,6 +436,10 @@ jobs:
       - name: Verify the w3 fixture checksums
         if: needs.changes.outputs.reuse != 'true'
         run: sha256sum -c fixtures/w3/fixtures.sha256
+      # After the harness tests, so its PKG_CONFIG_PATH, LD_LIBRARY_PATH and
+      # PATH reach only the builds; before the cache refresh too.
+      - name: Provision tkrzw (built at the setup.sh revision and cached)
+        uses: ./.github/actions/tkrzw
       - name: Install pinned cargo-nextest
         if: needs.changes.outputs.reuse != 'true'
         run: |
@@ -478,14 +482,14 @@ jobs:
       # uses the development build (#970). Only oxpinyin-capi rebuilds for
       # it, and that build replaces the development one: the crate's lib
       # target is a cdylib, so cargo writes both feature sets to the same
-      # files and fingerprint in target/cells/bdb. A development-build gate
+      # files and fingerprint in target/cells/tkrzw. A development-build gate
       # after this step would compile oxpinyin-capi again.
       - name: ABI export gate (shipped build)
         if: needs.changes.outputs.reuse != 'true'
         run: just heavy -- just abi exports --shipped
 
-  # macOS links a C store backend: Homebrew's keg-only berkeley-db@5 (the
-  # path README.md documents), selected explicitly. #501 removed redb. The
+  # macOS links the default store backend, tkrzw, from the tkrzw action,
+  # selected explicitly so pinyin-oracle's oracle-ffi stays off. The
   # job excludes the two C-ABI crates (their facade tests are Linux-first;
   # GLib and cargo-c themselves are available from Homebrew) and the
   # backend-independent corpus, KMM, punctuation, and word tools. The
@@ -599,28 +603,19 @@ jobs:
         if: needs.changes.outputs.reuse != 'true'
         shell: bash
         run: just test-tools
-      # The macOS reference backend uses the same libdb release as Linux;
-      # tkrzw stays covered on Linux. Homebrew's keg-only berkeley-db@5
-      # needs explicit include and library paths, as documented in README.md.
-      # `--no-default-features` also keeps
-      # pinyin-oracle's Linux-only `oracle-ffi` off.
-      - name: Install the store backend (Homebrew Berkeley DB 5.3)
-        run: |
-          brew install berkeley-db@5 glib pkgconf
-          echo "OXPINYIN_BDB_INCLUDE_DIR=$(brew --prefix berkeley-db@5)/include" >> "$GITHUB_ENV"
-          echo "OXPINYIN_BDB_LIB_DIR=$(brew --prefix berkeley-db@5)/lib" >> "$GITHUB_ENV"
-          # `brew list --versions` prints "<name> <cellar-version>..."
-          # (space-separated; a second installed version is another field
-          # on the same line). Pin the surveyed 5.3.x line; a version
-          # bump fails here instead of silently.
-          brew list --versions berkeley-db@5 | grep -Eq '^berkeley-db@5 5[.]3[.]' \
-            || { echo "::error::Homebrew berkeley-db@5 is not the documented 5.3.x line: $(brew list --versions berkeley-db@5)"; exit 1; }
+      # GLib and pkg-config from Homebrew; tkrzw from the tkrzw action, which
+      # puts its build first on PKG_CONFIG_PATH. `--no-default-features
+      # --features tkrzw` keeps pinyin-oracle's Linux-only `oracle-ffi` off.
+      - name: Install GLib and pkg-config (Homebrew)
+        run: brew install glib pkgconf
+      - name: Provision tkrzw (built at the setup.sh revision and cached)
+        uses: ./.github/actions/tkrzw
       # Clippy over the lane's own feature set and exclusions, so a lint in
       # macOS-only code fails here rather than nowhere.
       - name: Clippy (macOS)
         if: needs.changes.outputs.reuse != 'true'
         run: >
-          cargo clippy --locked --workspace --all-targets --no-default-features --features bdb
+          cargo clippy --locked --workspace --all-targets --no-default-features --features tkrzw
           --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi
           --exclude oxpinyin-corpus --exclude oxpinyin-kmm --exclude oxpinyin-punct
           --exclude oxpinyin-word
@@ -639,14 +634,14 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - if: needs.changes.outputs.reuse != 'true'
         run: >
-          cargo nextest run --locked --profile ci --status-level skip --workspace --no-default-features --features bdb
+          cargo nextest run --locked --profile ci --status-level skip --workspace --no-default-features --features tkrzw
           --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi
           --exclude oxpinyin-corpus --exclude oxpinyin-kmm --exclude oxpinyin-punct
           --exclude oxpinyin-word
       # nextest does not run doctests; keep the same features and exclusions.
       - if: needs.changes.outputs.reuse != 'true'
         run: >
-          cargo test --locked --doc --workspace --no-default-features --features bdb
+          cargo test --locked --doc --workspace --no-default-features --features tkrzw
           --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi
           --exclude oxpinyin-corpus --exclude oxpinyin-kmm --exclude oxpinyin-punct
           --exclude oxpinyin-word

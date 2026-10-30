@@ -48,12 +48,12 @@ WORKFLOWS: dict[str, Workflow] = {
     "store": Workflow(
         ".github/workflows/store-backends.yml",
         "store backends (kyotocabinet / tkrzw / bdb)",
-        ("store backend (kyotocabinet)", "store backend (tkrzw)",
+        ("store backend (bdb)", "store backend (kyotocabinet)", "store backend (tkrzw)",
          "backend-matrix (exactly-one-backend gate)", "tkrzw FFI under address",
          "bdb backend sanitizers", "kc backend sanitizers"),
-        frozenset({"store backend (kyotocabinet)", "store backend (tkrzw)",
+        frozenset({"store backend (bdb)", "store backend (kyotocabinet)", "store backend (tkrzw)",
                    "backend-matrix (exactly-one-backend gate)"}),
-        ("store-features", "store-features", "backend-matrix", "tkrzw-sanitizers",
+        ("store-features", "store-features", "store-features", "backend-matrix", "tkrzw-sanitizers",
          "bdb-sanitizers", "kc-sanitizers"),
         ("store backend (${{ matrix.backend }})", "backend-matrix (exactly-one-backend gate)",
          "tkrzw FFI under address", "bdb backend sanitizers", "kc backend sanitizers")),
@@ -290,14 +290,14 @@ def refresh_commands(lane: str, backend: str | None = None) -> tuple[CompileComm
         return (CompileCommand(("cargo", "build", "--locked", "--workspace", "--tests")),)
     if lane == "test-macos":
         return (CompileCommand(("cargo", "build", "--locked", "--workspace", "--tests",
-                                "--no-default-features", "--features", "bdb", *PORTABLE_EXCLUDES)),)
+                                "--no-default-features", "--features", "tkrzw", *PORTABLE_EXCLUDES)),)
     if lane == "store-features":
-        if backend not in {"kyotocabinet", "tkrzw"}:
-            raise ValueError("cache refresh requires an alternate backend")
+        if backend not in BACKENDS:
+            raise ValueError("cache refresh requires a store backend")
         return (CompileCommand(("cargo", "build", "--locked", "--workspace", "--tests",
                                 "--no-default-features", "--features", backend, *BACKEND_EXCLUDES)),)
     # Match the backend-matrix service's four valid package checks, including both
-    # default and explicit bdb. Its invalid-combination checks remain in the
+    # default and explicit tkrzw. Its invalid-combination checks remain in the
     # normal verification step. Rustdoc uses the lane's existing flags.
     check = ("cargo", "check", "--locked", "-p", "oxpinyin-store")
     checks = (CompileCommand(check), *(CompileCommand((*check, "--no-default-features", "--features", peer))
@@ -323,7 +323,7 @@ def main() -> int:
         commands.add_parser(name).add_argument("workflow", choices=WORKFLOWS)
     refresh = commands.add_parser("refresh")
     refresh.add_argument("lane", choices=CACHE_LANES)
-    refresh.add_argument("--backend", choices=("kyotocabinet", "tkrzw"))
+    refresh.add_argument("--backend", choices=BACKENDS)
     args = parser.parse_args()
     if args.command == "refresh":
         refresh_cache(args.lane, args.backend)

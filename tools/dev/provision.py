@@ -22,10 +22,9 @@ from .compat.identity import digest_file
 from .compat.process import ROOT, capture, fail, run, text
 from .runners import Finished
 from tools.tkrzw import runtime
+from tools.tkrzw.build import TKRZW_REV
 
 CELLS = ('bdb', 'kc', 'tkrzw')
-TKRZW_REV = '9ee84164cf45e441aa8186418c03a02c9b89f08b'
-TKRZW_URL = 'https://github.com/estraier/tkrzw'
 SELECT = '''case $_oxp_provisioned in
     *" $PINYIN_ORACLE_DBM "*) ;;
     *) echo "cell $PINYIN_ORACLE_DBM was not provisioned by this environment file" >&2; unset _oxp_provisioned; return 1 ;;
@@ -397,7 +396,7 @@ class Provision:
                             taking = False
                     kept_paths = '\n'.join(lines)
                     kept_library = assignments(path, ['OXPINYIN_TKRZW_LIBRARY']).get('OXPINYIN_TKRZW_LIBRARY', '')
-        default = 'bdb' if 'bdb' in env_cells else env_cells[0]
+        default = 'tkrzw' if 'tkrzw' in env_cells else env_cells[0]
         runtime_prefix = str(self.tkrzw_prefix) if self.tkrzw_local else ''
         library = self.tkrzw_host_library
         if not runtime_prefix and not library and kept_paths:
@@ -698,8 +697,9 @@ class Provision:
             source.mkdir(parents=True)
             # All compilation, including the local runtime, uses slot.run_command
             # through compat.process; the build remains one sequential unit.
-            status = run([sys.executable, '-X', 'lazy_imports=normal', '-m', 'tools.dev', 'provision',
-                          'build-tkrzw', str(source), str(prefix), str(self.jobs)], cwd=self.root,
+            # tools/tkrzw/build.py is the one recipe; CI's tkrzw action runs it too.
+            status = run([sys.executable, '-X', 'lazy_imports=normal', '-m', 'tools.tkrzw.build', 'build',
+                          '--prefix', str(prefix), '--source', str(source), '--jobs', str(self.jobs)], cwd=self.root,
                          env=self.env, stdout=(output := (self.cache / 'tkrzw-build.log').open('wb')), heavy=True, check=False)
             output.close()
             if status:
@@ -814,25 +814,6 @@ def main(argv=None):
                 service = Provision()
                 service.options(['--cells', args[1]])
                 return 0 if service.data_ok(args[1], args[2]) else 1
-            if args[:1] == ['build-tkrzw'] and len(args) == 4:
-                os.dup2(1, 2)
-                source, prefix, jobs = args[1:]
-                service = Provision()
-                run(['git', 'init', '-q', '.'], cwd=source)
-                # Fetch/retry is the shared launch adapter; no new controller.
-                for delay in (2, 4, 8, 16, None):
-                    if not run(['git', 'fetch', '-q', '--depth=1', TKRZW_URL, TKRZW_REV], cwd=source, check=False):
-                        break
-                    if delay is None:
-                        raise Finished(1)
-                    service.log(f'retrying in {delay}s: git fetch -q --depth=1 {TKRZW_URL} {TKRZW_REV}')
-                    run(['sleep', str(delay)])
-                run(['git', 'checkout', '-q', 'FETCH_HEAD'], cwd=source)
-                env = {k: v for k, v in os.environ.items() if k not in ('CFLAGS', 'CXXFLAGS', 'LDFLAGS')}
-                run(['./configure', '--prefix=' + prefix], cwd=source, env=env)
-                run(['make', '-j' + jobs], cwd=source)
-                run(['make', 'install'], cwd=source)
-                return 0
             service = Provision()
             return service.execute(args)
     except Finished as error:

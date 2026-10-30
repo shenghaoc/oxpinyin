@@ -260,7 +260,7 @@ class CommandTests(unittest.TestCase):
     def test_exit_status_reports_success_not_the_selection(self):
         everything = Repo(self, {'a.txt': 'a\n'}, {'crates/oxpinyin-store/src/lib.rs': 'a\n'})
         nothing = Repo(self, {'a.txt': 'a\n'}, {'a.txt': 'b\n'})
-        for repo, cells in ((everything, 'bdb,kc,tkrzw'), (nothing, 'bdb')):
+        for repo, cells in ((everything, 'bdb,kc,tkrzw'), (nothing, 'tkrzw')):
             with self.subTest(cells=cells):
                 result = repo.cli('base')
                 self.assertEqual(result.returncode, 0, result.stderr)
@@ -302,7 +302,7 @@ class CommandTests(unittest.TestCase):
         result = Repo(self, {'a.txt': 'a\n'}, {'a.txt': 'b\n'}).cli('base')
         self.assertEqual(re.sub(r'\b[0-9a-f]{8}\b', 'HASH', result.stdout), '\n'.join([
             'Diff: base...HEAD (merge base HASH, head HASH).',
-            'Cells: bdb (the reference cell; no check fired).',
+            'Cells: tkrzw (the reference cell; no check fired).',
             '',
             'Check 1, a changed path under crates/oxpinyin-store/: not fired',
             'Check 2, a feature = "<backend>" line in a changed non-Markdown file: not fired',

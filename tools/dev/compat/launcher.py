@@ -30,7 +30,7 @@ def usage(error=False):
 def arguments(argv):
     """Keep the shell's first validation pass and diagnostic/status precedence."""
     args = list(argv)
-    values = dict(runtime=os.environ.get('OXPINYIN_CONTAINER', ''), platform='', cell='bdb',
+    values = dict(runtime=os.environ.get('OXPINYIN_CONTAINER', ''), platform='', cell='tkrzw',
                   archive='', jobs='2', memory_mib=os.environ.get('OXPINYIN_CONTAINER_MEMORY_MIB', '2560'))
     selection = []
     selected = smoke = listing = False

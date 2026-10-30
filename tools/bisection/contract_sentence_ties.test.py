@@ -1,7 +1,10 @@
 #!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
 """Tests for the sentence-tie fixture regeneration (#1175)."""
 import inspect
+from pathlib import Path
+import tempfile
 import unittest
+from unittest import mock
 
 import contract_sentence_ties as ties
 
@@ -27,6 +30,18 @@ class SentenceTieTests(unittest.TestCase):
         params = inspect.signature(ties.regenerate_sentence_ties).parameters
         self.assertEqual(list(params), ['prefix', 'fixture', 'Kit'])
         self.assertIs(params['Kit'].kind, inspect.Parameter.KEYWORD_ONLY)
+
+    def test_regeneration_refuses_a_prefix_outside_the_reference_cell(self):
+        source = (Path(__file__).resolve().parents[2] / 'tools/oracle/oracle-pin.txt').read_text()
+        pin = dict(line.split('=', 1) for line in source.splitlines() if line and not line.startswith('#') and '=' in line)
+        base = f"libpinyin-{pin['libpinyin_tag']}-{pin['libpinyin_commit']}+model20-{pin['model_archive_sha256']}"
+        with tempfile.TemporaryDirectory() as scratch:
+            prefix = Path(scratch)
+            (prefix / 'oracle-pin.txt').write_text(f'pin_ref={base}+dbm-bdb\ndbm=BerkeleyDB\n')
+            # CLOCK_BOOTTIME is Linux-only; the check under test runs before it matters.
+            with mock.patch.object(ties.time, 'CLOCK_BOOTTIME', ties.time.CLOCK_MONOTONIC, create=True), \
+                    self.assertRaisesRegex(AssertionError, '^off-pin tkrzw prefix$'):
+                ties.regenerate_sentence_ties(prefix, prefix / 'fixture', Kit=None)
 
 
 if __name__ == '__main__':

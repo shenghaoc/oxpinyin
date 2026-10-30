@@ -26,8 +26,8 @@ tempfile.workspace = true
 [features]
 # Backend selection, forwarded to oxpinyin-user, which carries it down
 # user -> data -> store (one backend per binary; see oxpinyin-store's
-# [features] for the peer model). Berkeley DB is the default selection.
-default = ["bdb"]
+# [features] for the peer model). tkrzw is the default selection.
+default = ["tkrzw"]
 kyotocabinet = ["oxpinyin-user/kyotocabinet"]
 bdb = ["oxpinyin-user/bdb"]
 tkrzw = ["oxpinyin-user/tkrzw"]

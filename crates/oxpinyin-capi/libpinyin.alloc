@@ -58,7 +58,7 @@
 #   <verified>  How <notes> was established. The gate checks that every
 #            line carries one of these kinds, never the evidence it names:
 #     pin-probe:<case>       measured at the pin and on oxpinyin, identical,
-#                            on the reference cell (bdb) by <case>: a
+#                            on the reference cell (tkrzw; bdb to 2026-10-30) by <case>: a
 #                            `tools/bisection/contract-diff.py` case, or a
 #                            runner in `tools/bisection/`.
 #     pin-aborts:row<N>      the path the gate probes aborts the pin; <notes>

@@ -147,7 +147,7 @@ class HeavyLaunchTests(unittest.TestCase):
             self.assertEqual(settings.artifact('OXPINYIN_CAPI_SO', 'libpinyin_capi.so', 'oxpinyin-capi'), library)
         [call] = self.calls
         self.assertEqual(call['argv'], ['cargo', 'build', '--locked', '--manifest-path', str(ROOT / 'Cargo.toml'),
-                                        '-p', 'oxpinyin-capi', '--no-default-features', '--features', 'bdb'])
+                                        '-p', 'oxpinyin-capi', '--no-default-features', '--features', 'tkrzw'])
         self.assertEqual((call['cwd'], call['stdout']), (ROOT, 2))
         self.assert_admitted_here(call)
         self.assertIn('resources (admitted)', self.out.getvalue())
@@ -159,7 +159,7 @@ class HeavyLaunchTests(unittest.TestCase):
             self.assertEqual(settings.build(['pinyin-capi', 'zhuyin-capi', 'user-rt-test']), 0)
         self.assertEqual(record.call_count, 1)
         common = ['--locked', '--manifest-path', str(ROOT / 'Cargo.toml')]
-        features = ['--no-default-features', '--features', 'bdb']
+        features = ['--no-default-features', '--features', 'tkrzw']
         self.assertEqual([call['argv'] for call in self.calls], [
             ['cargo', 'build', *common, '-p', 'oxpinyin-capi', '-p', 'oxpinyin-zhuyin-capi', *features],
             ['cargo', 'test', *common, '--profile', 'dev', '--no-run', '--message-format=json',

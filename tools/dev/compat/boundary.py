@@ -92,7 +92,7 @@ def validate(argv, environ=None):
     parser = argparse.ArgumentParser(prog=str(Path(__file__)), allow_abbrev=False)
     parser.add_argument('--runtime')
     parser.add_argument('--platform', choices=('linux/amd64', 'linux/arm64'))
-    parser.add_argument('--cell', choices=('bdb', 'kc', 'tkrzw'), default='bdb')
+    parser.add_argument('--cell', choices=('bdb', 'kc', 'tkrzw'), default='tkrzw')
     parser.add_argument('--archive', type=Path)
     parser.add_argument('--jobs', type=positive, default=2)
     parser.add_argument('--memory-mib', type=positive,

@@ -3,8 +3,10 @@ name: Store backends
 # Backend coverage for the peer store backends on a rolling
 # toolchain. The peers (Kyoto Cabinet, tkrzw, Berkeley
 # DB) are equal implementations behind the store's trait surface;
-# Berkeley DB is the workspace's default selection since 2026-09-20 (the
-# analogue of a bare libpinyin ./configure); tkrzw was before that.
+# tkrzw is the workspace's default selection since 2026-10-30 UTC
+# (maintainer decision: tkrzw is maintained upstream; Berkeley DB and Kyoto
+# Cabinet are not). Berkeley DB was the default from 2026-09-20 to then,
+# and tkrzw before that.
 # Exactly one peer is compiled per
 # build — the exactly-one-backend invariant is enforced at compile
 # time by two `compile_error!` guards in `crates/oxpinyin-store/src/lib.rs`
@@ -20,15 +22,15 @@ name: Store backends
 #     base runs everything.
 #     The other jobs need it and run only when `run` is true; when it is
 #     false they report `skipped`, which still reaches the aggregate.
-#   - store-features is a matrix over the non-default peer backends
-#     (Kyoto Cabinet and tkrzw). Each child
+#   - store-features is a matrix over all three peer backends. Each child
 #     runs the workspace's backend-relevant crates (everything but the
 #     backend-independent corpus, KMM, punctuation, and word packages)
 #     under exactly ONE peer, on its
 #     own runner, so the sweeps run in PARALLEL (fail-fast: false,
-#     max-parallel: 4) instead of sequentially inside one job. Berkeley DB
-#     has no child: it is the workspace default, and ci.yml's Linux test
-#     job already runs the whole workspace under it. Every pass
+#     max-parallel: 4) instead of sequentially inside one job. The tkrzw
+#     child repeats the default that ci.yml's Linux test job also runs; the
+#     Berkeley DB and Kyoto Cabinet children are where those non-default
+#     backends' workspace suites run. Every pass
 #     decodes real queries through the fixture tables, not just the store's
 #     own unit tests. The matrix value only selects one of the fixed,
 #     repository-controlled cargo invocations (see the case in the test
@@ -79,8 +81,9 @@ name: Store backends
 # from it); RHEL, the other ecosystem's root, is the primary development
 # platform, so CI on Debian Testing covers both lineages. Do NOT pin
 # this image by digest or let a later change "stabilise" it. libtkrzw
-# comes from libtkrzw-dev: part of the rolling build environment,
-# recorded by the provenance step below.
+# comes from the tkrzw action (.github/actions/tkrzw): upstream tkrzw at
+# the revision tools/cloud/setup.sh provisions, built and cached, found
+# through PKG_CONFIG_PATH. libdb and libkyotocabinet come from the image.
 #
 # The pin-built oracle and the model20 archive are deliberately NOT CI
 # concerns: provisioning them (just fetch-model,
@@ -180,7 +183,8 @@ jobs:
           # a path under crates/oxpinyin-store/, a feature = "<backend>" line
           # in a changed non-Markdown file, or a Cargo.toml line naming a
           # backend. --also adds this workflow's own infrastructure: the
-          # workflow, the backend provisioning under tools/bdb and tools/tkrzw,
+          # workflow, the backend provisioning under tools/bdb, tools/tkrzw and
+          # .github/actions/tkrzw,
           # the backend-matrix service (tools/dev/check.py), the sanitizer
           # service (tools/dev/test_runner.py), the toolchain pin and this
           # gate's own script.
@@ -189,6 +193,7 @@ jobs:
             --also tools/bisection/cells-for-diff.py \
             --also tools/bdb \
             --also tools/tkrzw \
+            --also .github/actions/tkrzw \
             --also tools/dev/check.py \
             --also tools/dev/test_runner.py \
             --also rust-toolchain.toml \
@@ -197,7 +202,7 @@ jobs:
   store-features:
     needs: changes
     if: needs.changes.outputs.run == 'true' && (needs.changes.outputs.reuse != 'true' || github.event_name == 'push')
-    # One matrix child per non-default backend, each on its own runner:
+    # One matrix child per backend, each on its own runner:
     # every such backend is
     # exercised through the backend-relevant workspace (the seven
     # backend-independent training crates are excluded — see the test
@@ -223,6 +228,7 @@ jobs:
       max-parallel: 4
       matrix:
         backend:
+          - bdb
           - kyotocabinet
           - tkrzw
 
@@ -257,16 +263,17 @@ jobs:
         # Every matrix child installs the full set so each lane is
         # self-contained regardless of scheduling order; the marginal apt
         # cost is deliberate (correctness over shaving install seconds).
-        # libtkrzw-dev: the explicit tkrzw child builds against the
-        # distro library through pkg-config.
+        # libdb-dev: the explicit bdb child links the system libdb.
         # libclang-dev: bindgen's runtime dependency for generating the
-        # tkrzw and Kyoto Cabinet FFI declarations from their headers.
-        # Debian's libtkrzw-dev builds tkrzw with compression, so tkrzw.pc
-        # demands -llzma -llz4 -lzstd -lz at link time; their -dev packages
-        # must be present or every final link dies.
+        # three backends' FFI declarations from their headers.
         # libkyotocabinet-dev: the explicit kyotocabinet child links the
         # distro Kyoto Cabinet; bindgen reads kclangc.h at build time.
-        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libkyotocabinet-dev libtkrzw-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev libglib2.0-dev
+        # The tkrzw child's library comes from the tkrzw action below.
+        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libdb-dev libkyotocabinet-dev zlib1g-dev libglib2.0-dev
+
+      - name: Provision tkrzw (built at the setup.sh revision and cached)
+        if: matrix.backend == 'tkrzw'
+        uses: ./.github/actions/tkrzw
 
       # This child runs exactly one of the fixed cargo invocations, selected
       # by the matrix backend through a case over a closed set (fail-closed
@@ -313,6 +320,10 @@ jobs:
           # `docs/findings/backend-selection-audit.md`. The
           # exactly-one-backend invariant is unchanged; the
           # `backend-matrix` job proves it separately.
+          bdb)
+            echo "--- bdb (explicit) ---"
+            cargo test --locked --workspace --no-default-features --features bdb "${excludes[@]}"
+            ;;
           kyotocabinet)
             echo "--- kyotocabinet (explicit) ---"
             cargo test --locked --workspace --no-default-features --features kyotocabinet "${excludes[@]}"
@@ -397,15 +408,18 @@ jobs:
       - name: Install build dependencies (apt)
         # The matrix `cargo check`s the valid peer selections in
         # turn, so it needs every peer's build-time C dependencies:
-        # libkyotocabinet-dev + libtkrzw-dev (+ its compression -dev
-        # packages) + libdb-dev, and libclang-dev for
+        # libkyotocabinet-dev + libdb-dev here, tkrzw from the tkrzw
+        # action below, and libclang-dev for
         # bindgen, which generates the C backends' declarations.
         # libglib2.0-dev is a Tier-C
         # requirement: `pinyin_lookup_tokens` /
         # `pinyin_token_get_nth_pronunciation` delegate to
         # `g_array_append_vals` / `g_array_set_size`, so the shipped
         # `.so` NEEDS `libglib-2.0`.
-        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libkyotocabinet-dev libtkrzw-dev libdb-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev libglib2.0-dev
+        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libkyotocabinet-dev libdb-dev zlib1g-dev libglib2.0-dev
+
+      - name: Provision tkrzw (built at the setup.sh revision and cached)
+        uses: ./.github/actions/tkrzw
 
       - name: Set up pinned repository Python
         if: needs.changes.outputs.reuse != 'true'
@@ -632,12 +646,14 @@ jobs:
 
       - name: Install build dependencies (apt)
         # On Debian, libasan ships with gcc and is not a separate package.
-        # libtkrzw-dev provides the distro library the backend links
-        # against; libclang-dev is bindgen's runtime dependency.
-        # tkrzw-utils: with no setup.sh environment here, the gate trusts
-        # the distro libtkrzw only after tools/tkrzw/distro-probe.sh, which
-        # runs tkrzw_dbm_util, passes it (Ubuntu's build fails that probe).
-        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config util-linux libclang-dev libtkrzw-dev tkrzw-utils liblzma-dev liblz4-dev libzstd-dev zlib1g-dev
+        # libclang-dev is bindgen's runtime dependency.
+        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config util-linux libclang-dev
+
+      # The library the backend links against. With no setup.sh environment
+      # here, the gate trusts it only after tools/tkrzw/distro-probe.sh,
+      # which runs the tkrzw_dbm_util the action puts first on PATH.
+      - name: Provision tkrzw (built at the setup.sh revision and cached)
+        uses: ./.github/actions/tkrzw
 
       - name: Install nightly Rust (sanitizer support)
         run: |

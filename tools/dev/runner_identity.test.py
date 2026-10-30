@@ -48,7 +48,8 @@ class Services:
 class Data:
     """SystemData over ENVIRONMENT that records each lookup."""
     def __init__(self, environment):
-        self.system, self.lookups = SystemData(Settings.read(environment)), []
+        # The fixtures are BerkeleyDB tables; bdb stays a selectable cell.
+        self.system, self.lookups = SystemData(Settings.read(dict(environment, PINYIN_ORACLE_DBM='bdb'))), []
 
     def resolve(self, variable, label):
         self.lookups.append(variable)

@@ -4,7 +4,7 @@ Usage: bash tools/oracle/compat.sh [OPTIONS] --runners NAME[,NAME...]
 Options:
   --runtime docker|podman|container|wslc  Override platform-native, Podman, Docker order
   --platform linux/amd64|linux/arm64  Override the host architecture
-  --cell bdb|kc|tkrzw               Default: bdb; one backend on both sides
+  --cell bdb|kc|tkrzw               Default: tkrzw; one backend on both sides
   --cases ID[,ID...]                Contract-diff case IDs (requires contract-diff)
   --cases-prefix P[,P...]           Union of ID prefixes, including untagged cases; every prefix
                                    must match (requires --runners contract-diff)

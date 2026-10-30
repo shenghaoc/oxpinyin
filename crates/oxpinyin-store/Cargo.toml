@@ -42,10 +42,11 @@ pkg-config = { version = "0.3.34", optional = true }
 # unselected peer's dependency (bindgen) is not pulled in
 # either.
 #
-# `bdb` is the enabled feature in the workspace's default set,
-# which is what "default" means here — select any peer explicitly with
+# `tkrzw` is the enabled feature in the workspace's default set
+# (maintainer decision 2026-10-30 UTC: maintained upstream), which is what
+# "default" means here — select any peer explicitly with
 # `--no-default-features --features {kyotocabinet|tkrzw|bdb}`.
-default = ["bdb"]
+default = ["tkrzw"]
 tkrzw = ["dep:bindgen", "dep:pkg-config"]
 # Kyoto Cabinet backend. bindgen is build-time only (it needs libclang);
 # the runtime dependency is the system libkyotocabinet the distro already

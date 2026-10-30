@@ -1,0 +1,130 @@
+name: 'tkrzw'
+description: |-
+  Upstream tkrzw at the revision tools/cloud/setup.sh provisions
+  (tools/tkrzw/build.py, TKRZW_REV), built by that recipe and cached, on
+  Linux, macOS and Windows. CI always uses this build (maintainer decision
+  2026-10-30 UTC); the fixed upstream release is not yet in every distro
+  (docs/findings/tkrzw-distro-compat.md).
+
+  The cache key names everything the build depends on: the tkrzw revision,
+  the OS and architecture, the runner image (compiler and SDK), the
+  toolchain inside a container job (the compiler and /etc/os-release; a
+  rolling debian:testing changes them without changing the runner image),
+  the install prefix (the macOS install name and tkrzw.pc record it), and a
+  hash of the recipe. A miss builds, probes with distro-probe.sh and saves;
+  a hit restores and re-probes.
+
+  Afterwards the build is found the way a developer points at a self-built
+  tkrzw: DIR/lib/pkgconfig first on PKG_CONFIG_PATH, DIR/lib on the runtime
+  library path (LD_LIBRARY_PATH on Linux, DYLD_LIBRARY_PATH on macOS) and
+  DIR/bin on PATH (the runtime path on Windows, where tkrzw.lib is static;
+  everywhere it puts tkrzw_dbm_util first for distro-probe.sh). On Linux it
+  also sets OXPINYIN_TKRZW_PREFIX, the verified runtime the loader checks in
+  tools/tkrzw/runtime.py certify against.
+  On Windows, where the image has no pkg-config, it installs vcpkg's
+  pkgconf port and sets PKG_CONFIG to it.
+
+  The recipe runs with the runner's own Python, not the managed one: it is
+  standard-library Python 3.9, and test-windows and some Linux jobs install
+  no managed interpreter. Call this after checkout and, in container jobs,
+  after the apt step that installs g++, make and git.
+
+outputs:
+  prefix:
+    description: 'The installed prefix.'
+    value: ${{ steps.key.outputs.prefix }}
+  cache-hit:
+    description: "'true' when the build was restored from the cache."
+    value: ${{ steps.restore.outputs.cache-hit }}
+
+runs:
+  using: composite
+  steps:
+    - name: Compute the tkrzw cache key
+      id: key
+      shell: bash
+      run: |
+        set -euo pipefail
+        python=$(command -v python3 || command -v python) || { echo '::error::the tkrzw action needs python3 or python'; exit 1; }
+        prefix="${RUNNER_TEMP//\\//}/tkrzw"
+        rev=$("$python" -m tools.tkrzw.build rev)
+        {
+          printf '%s\n' "$prefix"
+          if [ "$RUNNER_OS" != Windows ]; then
+            c++ --version 2>&1 | head -1 || true
+            cat /etc/os-release 2>/dev/null || true
+          fi
+        } > "$RUNNER_TEMP/tkrzw-toolchain"
+        toolchain=$("$python" -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest()[:16])' "$RUNNER_TEMP/tkrzw-toolchain")
+        {
+          echo "python=$python"
+          echo "prefix=$prefix"
+          echo "key=tkrzw-$rev-$RUNNER_OS-$RUNNER_ARCH-${ImageOS:-unknown}-${ImageVersion:-unknown}-$toolchain"
+        } >> "$GITHUB_OUTPUT"
+        echo "tkrzw $rev into $prefix"
+
+    - name: Restore the tkrzw build
+      id: restore
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.key.outputs.prefix }}
+        key: ${{ steps.key.outputs.key }}-recipe-${{ hashFiles('tools/tkrzw/build.py', 'tools/tkrzw/distro-probe.sh', 'tools/tkrzw/runtime.py', '.github/actions/tkrzw/action.yml') }}
+
+    - name: Build tkrzw (cache miss)
+      if: steps.restore.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        PYTHON: ${{ steps.key.outputs.python }}
+        PREFIX: ${{ steps.key.outputs.prefix }}
+      run: |
+        set -euo pipefail
+        rm -rf "$PREFIX"
+        "$PYTHON" -m tools.tkrzw.build build --prefix "$PREFIX"
+
+    - name: Probe the restored tkrzw (cache hit)
+      if: steps.restore.outputs.cache-hit == 'true'
+      shell: bash
+      env:
+        PYTHON: ${{ steps.key.outputs.python }}
+        PREFIX: ${{ steps.key.outputs.prefix }}
+      run: '"$PYTHON" -m tools.tkrzw.build probe --prefix "$PREFIX"'
+
+    # Saved right after the build, before the caller's own steps, so a red
+    # test run still keeps the build; skipped on an exact hit.
+    - name: Save the tkrzw build
+      if: steps.restore.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.key.outputs.prefix }}
+        key: ${{ steps.restore.outputs.cache-primary-key }}
+
+    - name: Point pkg-config and the loader at the tkrzw build
+      shell: bash
+      env:
+        PREFIX: ${{ steps.key.outputs.prefix }}
+      run: |
+        set -euo pipefail
+        sep=:
+        [ "$RUNNER_OS" != Windows ] || sep=';'
+        {
+          echo "PKG_CONFIG_PATH=$PREFIX/lib/pkgconfig${PKG_CONFIG_PATH:+$sep$PKG_CONFIG_PATH}"
+          case $RUNNER_OS in
+            # OXPINYIN_TKRZW_PREFIX names this probed build as the verified
+            # runtime that tools/tkrzw/runtime.py certifies loaders against
+            # (docs/runbooks/verification.md rule 9), as tools/cloud/setup.sh's environment does.
+            Linux) echo "LD_LIBRARY_PATH=$PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+                   echo "OXPINYIN_TKRZW_PREFIX=$PREFIX" ;;
+            macOS) echo "DYLD_LIBRARY_PATH=$PREFIX/lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}" ;;
+          esac
+        } | tee -a "$GITHUB_ENV"
+        echo "$PREFIX/bin" >> "$GITHUB_PATH"
+        pkg_config=pkg-config
+        if [ "$RUNNER_OS" = Windows ]; then
+          # The Windows image has no pkg-config; vcpkg's pkgconf port is the
+          # implementation for it, and PKG_CONFIG names it to the store's
+          # build script.
+          vcpkg install pkgconf:x64-windows
+          pkg_config="${VCPKG_INSTALLATION_ROOT//\\//}/installed/x64-windows/tools/pkgconf/pkgconf.exe"
+          echo "PKG_CONFIG=$pkg_config" | tee -a "$GITHUB_ENV"
+        fi
+        PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig${PKG_CONFIG_PATH:+$sep$PKG_CONFIG_PATH}" "$pkg_config" --modversion --cflags --libs tkrzw

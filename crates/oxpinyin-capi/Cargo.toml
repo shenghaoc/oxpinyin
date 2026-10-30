@@ -34,7 +34,7 @@ fuzz-api = []
 # `CARGO_FEATURE_<PEER>` of this crate to bake `database_format` into the
 # generated libpinyin.pc, and because `cargo cinstall --features <peer>`
 # names them.
-default = ["bdb"]
+default = ["tkrzw"]
 kyotocabinet = ["oxpinyin-facade/kyotocabinet"]
 bdb = ["oxpinyin-facade/bdb"]
 tkrzw = ["oxpinyin-facade/tkrzw"]
@@ -51,7 +51,7 @@ tkrzw = ["oxpinyin-facade/tkrzw"]
 # Deliberately a subtractive feature, which cargo features usually should not
 # be. The additive spelling (a default-on `harness` feature switched off with
 # --no-default-features) would tie the hooks to the SAME switch that selects
-# the store backend: `default = ["bdb"]` already rides on default features,
+# the store backend: `default = ["tkrzw"]` already rides on default features,
 # so every non-default-backend build would silently drop the hooks too and
 # every in-tree run-*.sh would have to spell `--features tkrzw,harness`.
 # (An earlier note here claimed cargo-c does not forward

@@ -124,7 +124,7 @@ class Settings:
     @classmethod
     def read(cls, environment: Mapping[str, str], root: Path = ROOT) -> 'Settings':
         root = root.resolve()
-        cell = environment.get('PINYIN_ORACLE_DBM') or 'bdb'
+        cell = environment.get('PINYIN_ORACLE_DBM') or 'tkrzw'
         choices = {'bdb': ('bdb', 'db', 'BerkeleyDB'),
                    'kc': ('kyotocabinet', 'kct', 'KyotoCabinet'),
                    'tkrzw': ('tkrzw', 'tkt', 'Tkrzw')}
