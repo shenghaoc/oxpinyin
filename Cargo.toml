@@ -5,6 +5,7 @@ members = [
   "crates/oxpinyin-core",
   "crates/oxpinyin-data",
   "crates/oxpinyin-input",
+  "crates/oxpinyin-utils",
   "crates/oxpinyin-store",
   "crates/oxpinyin-user",
   "crates/oxpinyin-engine",

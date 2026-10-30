@@ -178,3 +178,88 @@ void oxpinyin_tool_exit(int status) {
 int oxpinyin_tool_einval(void) {
     return EINVAL;
 }
+
+/* ENOENT as the target's <errno.h> defines it. */
+int oxpinyin_tool_enoent(void) {
+    return ENOENT;
+}
+
+/* fopen(filename, "r") and feof(stream), for the utilities' C input. */
+FILE *oxpinyin_tool_fopen_read(const char *filename) {
+    return fopen(filename, "r");
+}
+
+int oxpinyin_tool_feof(FILE *stream) {
+    return feof(stream);
+}
+
+/*
+ * gen_pinyin_table (utils/storage/gen_pinyin_table.cpp at 074a2219): its
+ * scanner, its GLib calls on the scanned phrase and its formatted lines.
+ */
+
+/* feed_file's fscanf (:145). */
+int oxpinyin_tool_gpt_scan(FILE *infile, char phrase[1024], char pinyin[1024],
+                           guint32 *freq) {
+    return fscanf(infile, "%1023s %1023s %u", phrase, pinyin, freq);
+}
+
+/* feed_file's open failure (:140). */
+void oxpinyin_tool_gpt_report_open_failed(const char *filename) {
+    fprintf(stderr, "Can't open file %s.\n", filename);
+}
+
+/* gen_phrase_file's open failure (:263). */
+void oxpinyin_tool_gpt_report_write_failed(const char *filename) {
+    fprintf(stderr, "Can't write file %s.\n", filename);
+}
+
+/* main's node count (:114). */
+void oxpinyin_tool_gpt_print_nnodes(int nnodes) {
+    printf("nnodes: %d\n", nnodes);
+}
+
+/* feed_line's refusals (:169, :186) and duplicate (:215-216). */
+void oxpinyin_tool_gpt_report_too_long(const char *phrase, const char *pinyin,
+                                       guint32 freq) {
+    fprintf(stderr, "Too long phrase:%s\t%s\t%d\n", phrase, pinyin, freq);
+}
+
+void oxpinyin_tool_gpt_report_invalid_pinyin(const char *phrase,
+                                             const char *pinyin, guint32 freq) {
+    fprintf(stderr, "Invalid pinyin:%s\t%s\t%d\n", phrase, pinyin, freq);
+}
+
+void oxpinyin_tool_gpt_report_duplicate(const char *phrase, const char *pinyin,
+                                        guint32 freq) {
+    fprintf(stderr, "Duplicate item: phrase:%s\tpinyin:%s\tfreq:%u\n", phrase,
+            pinyin, freq);
+}
+
+/*
+ * store_one_item's g_array_append_val(g_item_array[0], item) for a phrase
+ * of length zero (:240): g_item_array[0] is NULL (:117), so GLib's own
+ * precondition logs its critical and appends nothing.
+ */
+void oxpinyin_tool_gpt_store_into_null_array(void) {
+    GArray *array = NULL;
+    int item = 0;
+    g_array_append_val(array, item);
+}
+
+/*
+ * Not a pin line: oxpinyin's report of a phrase g_utf8_to_ucs4 refused
+ * (:174), where the pin's g_ucs4_to_utf8 (:280-281) reads through the NULL
+ * it kept (class (b)). Written on the C stderr stream with the pin's other
+ * lines; the phrase bytes as they were scanned.
+ */
+void oxpinyin_tool_gpt_report_unconverted_phrase(const char *phrase) {
+    fprintf(stderr, "gen_pinyin_table: invalid UTF-8 phrase: %s\n", phrase);
+}
+
+/* gen_phrase_file's row (:314-316). */
+void oxpinyin_tool_gpt_print_row(FILE *outfile, const char *pinyin_str,
+                                 const char *phrase_str, int token,
+                                 guint32 freq) {
+    fprintf(outfile, "%s\t%s\t%d\t%d\n", pinyin_str, phrase_str, token, freq);
+}

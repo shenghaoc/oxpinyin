@@ -784,6 +784,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxpinyin-utils"
+version = "0.1.0"
+dependencies = [
+ "oxpinyin-core",
+ "oxpinyin-data",
+ "oxpinyin-input",
+ "tempfile",
+]
+
+[[package]]
 name = "oxpinyin-word"
 version = "0.1.0"
 

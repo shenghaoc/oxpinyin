@@ -68,7 +68,35 @@ unsafe extern "C" {
     fn oxpinyin_tool_fclose(stream: *mut File) -> c_int;
     fn oxpinyin_tool_perror(s: *const c_char);
     fn oxpinyin_tool_exit(status: c_int) -> !;
+    fn oxpinyin_tool_gpt_report_unconverted_phrase(phrase: *const c_char);
     fn oxpinyin_tool_einval() -> c_int;
+    fn oxpinyin_tool_enoent() -> c_int;
+    fn oxpinyin_tool_fopen_read(filename: *const c_char) -> *mut File;
+    fn oxpinyin_tool_feof(stream: *mut File) -> c_int;
+    fn oxpinyin_tool_gpt_scan(
+        infile: *mut File,
+        phrase: *mut c_char,
+        pinyin: *mut c_char,
+        freq: *mut u32,
+    ) -> c_int;
+    fn oxpinyin_tool_gpt_report_open_failed(filename: *const c_char);
+    fn oxpinyin_tool_gpt_report_write_failed(filename: *const c_char);
+    fn oxpinyin_tool_gpt_print_nnodes(nnodes: c_int);
+    fn oxpinyin_tool_gpt_report_too_long(phrase: *const c_char, pinyin: *const c_char, freq: u32);
+    fn oxpinyin_tool_gpt_report_invalid_pinyin(
+        phrase: *const c_char,
+        pinyin: *const c_char,
+        freq: u32,
+    );
+    fn oxpinyin_tool_gpt_report_duplicate(phrase: *const c_char, pinyin: *const c_char, freq: u32);
+    fn oxpinyin_tool_gpt_store_into_null_array();
+    fn oxpinyin_tool_gpt_print_row(
+        outfile: *mut File,
+        pinyin_str: *const c_char,
+        phrase_str: *const c_char,
+        token: c_int,
+        freq: u32,
+    );
     fn oxpinyin_tool_istream_cin() -> *mut IstreamHandle;
     fn oxpinyin_tool_istream_open(filename: *const c_char) -> *mut IstreamHandle;
     fn oxpinyin_tool_istream_good(stream: *const IstreamHandle) -> c_int;
@@ -159,6 +187,21 @@ pub(crate) fn option_string(value: OptionValue) -> *mut c_char {
     // SAFETY: the slot was initialised as a NULL `string` and GLib writes a
     // `gchar *` there.
     unsafe { value.string }
+}
+
+/// A parsed `G_OPTION_ARG_FILENAME` slot that started at `default`: the
+/// default's bytes when GLib left it, else GLib's string, copied and freed.
+pub(crate) fn take_option_filename(value: OptionValue, default: *mut c_char) -> Option<Vec<u8>> {
+    let string = option_string(value);
+    if string == default {
+        if string.is_null() {
+            return None;
+        }
+        // SAFETY: the default is a `'static` NUL-terminated string the
+        // caller passed in; GLib did not replace or free it.
+        return Some(unsafe { CStr::from_ptr(string) }.to_bytes().to_vec());
+    }
+    take_glib_string(string)
 }
 
 /// Copies a GLib-allocated option string and frees it with `g_free`.
@@ -274,6 +317,147 @@ pub(crate) fn einval() -> c_int {
     unsafe { oxpinyin_tool_einval() }
 }
 
+/// The target's `ENOENT`.
+pub(crate) fn enoent() -> c_int {
+    // SAFETY: a constant read.
+    unsafe { oxpinyin_tool_enoent() }
+}
+
+/// An input `FILE *` opened with `fopen(filename, "r")`, owned here.
+pub(crate) struct Input(NonNull<File>);
+
+impl Input {
+    /// `fopen(filename, "r")`.
+    pub(crate) fn open_read(filename: &CStr) -> Option<Self> {
+        // SAFETY: `filename` is NUL-terminated and outlives the call.
+        NonNull::new(unsafe { oxpinyin_tool_fopen_read(filename.as_ptr()) }).map(Self)
+    }
+
+    /// `feof(stream)`.
+    pub(crate) fn eof(&mut self) -> bool {
+        // SAFETY: the stream is open and owned.
+        unsafe { oxpinyin_tool_feof(self.0.as_ptr()) != 0 }
+    }
+
+    /// `fscanf(infile, "%1023s %1023s %u", phrase, pinyin, &freq)`.
+    pub(crate) fn scan_pinyin_table_line(
+        &mut self,
+        phrase: &mut [u8; PINYIN_TABLE_FIELD],
+        pinyin: &mut [u8; PINYIN_TABLE_FIELD],
+        freq: &mut u32,
+    ) -> c_int {
+        // SAFETY: the stream is open and owned; each buffer holds at least
+        // the 1023 bytes and NUL a `%1023s` stores; `freq` is a writable
+        // `guint32` for the `%u`.
+        unsafe {
+            oxpinyin_tool_gpt_scan(
+                self.0.as_ptr(),
+                phrase.as_mut_ptr().cast(),
+                pinyin.as_mut_ptr().cast(),
+                freq,
+            )
+        }
+    }
+
+    /// `fclose(stream)` at the point the pin closes it.
+    pub(crate) fn close(self) {
+        let input = core::mem::ManuallyDrop::new(self);
+        // SAFETY: the stream is open and owned; `ManuallyDrop` keeps `Drop`
+        // from closing it again.
+        unsafe {
+            oxpinyin_tool_fclose(input.0.as_ptr());
+        }
+    }
+}
+
+impl Drop for Input {
+    fn drop(&mut self) {
+        // SAFETY: the stream is open, owned and never used again.
+        unsafe {
+            oxpinyin_tool_fclose(self.0.as_ptr());
+        }
+    }
+}
+
+/// The size of gen_pinyin_table's `char phrase[1024], pinyin[1024]`
+/// (`gen_pinyin_table.cpp:136`) plus eight zero bytes past them, so a
+/// `g_utf8_next_char` step over a truncated sequence at the end of a
+/// `%1023s` word stays inside the buffer.
+pub(crate) const PINYIN_TABLE_FIELD: usize = 1024 + 8;
+
+/// `g_utf8_strlen(buffer, -1)` over a scanner buffer, stale bytes included.
+pub(crate) fn utf8_strlen_in_field(field: &[u8; PINYIN_TABLE_FIELD]) -> c_long {
+    // SAFETY: `%1023s` (or the zeroed buffer) leaves a NUL within the first
+    // 1024 bytes, and `g_utf8_strlen` steps at most six bytes past the last
+    // lead byte before it reads that NUL or one of the eight zero bytes
+    // after the 1024, so every byte it reads is in the buffer.
+    unsafe { oxpinyin_tool_utf8_strlen(field.as_ptr().cast()) }
+}
+
+/// The gen_pinyin_table diagnostics, one shim call each.
+pub(crate) fn gpt_report_open_failed(filename: &CStr) {
+    // SAFETY: `filename` is NUL-terminated and outlives the call.
+    unsafe { oxpinyin_tool_gpt_report_open_failed(filename.as_ptr()) }
+}
+
+pub(crate) fn gpt_report_write_failed(filename: &CStr) {
+    // SAFETY: as `gpt_report_open_failed`.
+    unsafe { oxpinyin_tool_gpt_report_write_failed(filename.as_ptr()) }
+}
+
+pub(crate) fn gpt_print_nnodes(nnodes: c_int) {
+    // SAFETY: a plain value call.
+    unsafe { oxpinyin_tool_gpt_print_nnodes(nnodes) }
+}
+
+pub(crate) fn gpt_report_too_long(phrase: &CStr, pinyin: &CStr, freq: u32) {
+    // SAFETY: both strings are NUL-terminated and outlive the call.
+    unsafe { oxpinyin_tool_gpt_report_too_long(phrase.as_ptr(), pinyin.as_ptr(), freq) }
+}
+
+pub(crate) fn gpt_report_invalid_pinyin(phrase: &CStr, pinyin: &CStr, freq: u32) {
+    // SAFETY: as `gpt_report_too_long`.
+    unsafe { oxpinyin_tool_gpt_report_invalid_pinyin(phrase.as_ptr(), pinyin.as_ptr(), freq) }
+}
+
+pub(crate) fn gpt_report_duplicate(phrase: &CStr, pinyin: &CStr, freq: u32) {
+    // SAFETY: as `gpt_report_too_long`.
+    unsafe { oxpinyin_tool_gpt_report_duplicate(phrase.as_ptr(), pinyin.as_ptr(), freq) }
+}
+
+pub(crate) fn gpt_report_unconverted_phrase(phrase: &CStr) {
+    // SAFETY: `phrase` is NUL-terminated and outlives the call.
+    unsafe { oxpinyin_tool_gpt_report_unconverted_phrase(phrase.as_ptr()) }
+}
+
+pub(crate) fn gpt_store_into_null_array() {
+    // SAFETY: the shim passes GLib a NULL array, which GLib's own
+    // precondition refuses before reading the item.
+    unsafe { oxpinyin_tool_gpt_store_into_null_array() }
+}
+
+/// `fprintf(outfile, "%s\t%s\t%d\t%d\n", …)`; a `None` phrase is the NULL
+/// the pin would pass.
+pub(crate) fn gpt_print_row(
+    output: &Output,
+    pinyin_str: &CStr,
+    phrase_str: Option<&CStr>,
+    token: c_int,
+    freq: u32,
+) {
+    // SAFETY: the stream is open; the strings are NUL-terminated and
+    // outlive the call, or NULL where the pin's would be.
+    unsafe {
+        oxpinyin_tool_gpt_print_row(
+            output.as_ptr(),
+            pinyin_str.as_ptr(),
+            phrase_str.map_or(core::ptr::null(), CStr::as_ptr),
+            token,
+            freq,
+        );
+    }
+}
+
 /// An output `FILE *`: `stdout`, which is never closed here, or a stream
 /// this handle owns.
 pub(crate) struct Output {
@@ -298,6 +482,11 @@ impl Output {
             stream,
             owned: true,
         })
+    }
+
+    /// The stream, for the utilities' own formatted calls.
+    pub(crate) fn as_ptr(&self) -> *mut File {
+        self.stream.as_ptr()
     }
 
     /// `fclose(output)`, as the pin closes a named output file.
