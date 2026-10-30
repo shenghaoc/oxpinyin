@@ -410,7 +410,7 @@ const PIN_LAMBDA_F32: f32 = 0.312_699;
 
 /// The pin's candidate `m_freq` under the default profile: the unigram
 /// possibility `(1−λ)·unigram/total` computed and amplified by 2²⁴ in C
-/// `float` arithmetic, then truncated like the `guint32` assignment
+/// `float` arithmetic, then truncated into the `guint32` field
 /// (`pinyin.cpp:1862-1866`; `DYNAMIC_ADJUST` clear ⇒ bigram term zero).
 ///
 /// The truncation is load-bearing, not a rounding detail: it collapses
@@ -419,7 +419,11 @@ const PIN_LAMBDA_F32: f32 = 0.312_699;
 /// mirrors the C expression left-to-right (`f32` throughout, the three
 /// `* 256` factors kept as written); any `f64` intermediate or a
 /// pre-combined `* 2²⁴` risks drifting off the tie boundary.
-fn amplified_frequency(unigram: u64, total: u64, lambda: f32) -> u64 {
+///
+/// The predicted-candidate path (`pinyin.cpp:1811-1824`) stores the same
+/// expression, so `oxpinyin-capi` calls this function for its rows.
+#[must_use]
+pub fn amplified_frequency(unigram: u64, total: u64, lambda: f32) -> u32 {
     amplified_frequency_with_bigram(unigram, total, 0.0, lambda)
 }
 
@@ -452,25 +456,25 @@ const AMPLIFY_SCALE_F32: f32 = 256.0 * 256.0 * 256.0;
 /// `0.0 + x == x` in IEEE-754, so the DYNAMIC_ADJUST-clear path is
 /// bit-identical to the pre-existing unigram-only law by construction —
 /// not merely by the frozen words happening to leave the bit clear.
-fn amplified_frequency_with_bigram(unigram: u64, total: u64, bigram_poss: f32, lambda: f32) -> u64 {
+///
+/// A zero total is the pin's early return (compatibility policy row 61).
+/// The final store is Rust's `as u32`: in range it truncates like the
+/// pin's; a negative, NaN or over-range score, which C leaves undefined
+/// and the pin's x86-64 and AArch64 builds already store differently,
+/// saturates (class (b), `docs/findings/upstream-divergences.md`).
+#[must_use]
+pub fn amplified_frequency_with_bigram(
+    unigram: u64,
+    total: u64,
+    bigram_poss: f32,
+    lambda: f32,
+) -> u32 {
     if total == 0 {
         return 0;
     }
     let possibility = lambda * bigram_poss * BIGRAM_FREQUENCY_DISCOUNT_F32
         + (1.0_f32 - lambda) * unigram as f32 / total as f32;
-    guint32_of_score(possibility * AMPLIFY_SCALE_F32)
-}
-
-/// The `guint32` the pinned x86-64 build stores for a `float` score
-/// (`pinyin.cpp:1821-1824`): `cvttss2si` to a 64-bit integer, then the low
-/// 32 bits. A negative score therefore wraps (`-3.7` is `2³² − 3`) and one
-/// that does not fit 64 bits, NaN and infinity included, is `INT64_MIN`,
-/// whose low bits are 0.
-fn guint32_of_score(score: f32) -> u64 {
-    if !score.is_finite() || score >= i64::MAX as f32 || score < i64::MIN as f32 {
-        return 0;
-    }
-    u64::from(score as i64 as u32)
+    (possibility * AMPLIFY_SCALE_F32) as u32
 }
 
 /// One resplit pair the scan matrix admits alongside the selected parse,
@@ -1027,12 +1031,9 @@ impl RankKey {
     const fn for_sort_word(
         phrase_length: usize,
         pinyin_span: usize,
-        frequency: u64,
+        frequency: u32,
         sort_word: u32,
     ) -> Self {
-        // The scale never leaves `guint32`: `guint32_of_score` is the only
-        // source of a frequency.
-        let frequency = frequency as u32;
         Self {
             phrase_length: if sort_word & SORT_BY_PHRASE_LENGTH != 0 {
                 phrase_length

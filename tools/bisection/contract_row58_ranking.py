@@ -233,7 +233,8 @@ for _dynamic in (False, True):
     _state = 'on' if _dynamic else 'off'
     case('row58-signed-score-' + _state, issues=('697', 'row:58'))(row58_signed_score(_dynamic))
     case('row58-signed-duplicate-' + _state, issues=('697', 'row:58'))(row58_signed_score(_dynamic, True))
-    case('row58-unsigned-score-' + _state, issues=('697', 'row:58'))(row58_signed_score(_dynamic, denominator=10000000))
+    case('row58-unsigned-score-' + _state, issues=('697', 'row:58'),
+         policy_record='arm64-pin-portability-1137.md')(row58_signed_score(_dynamic, denominator=10000000))
 
 
 def row58_zero_total(dynamic, punct=False):

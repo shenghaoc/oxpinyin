@@ -173,7 +173,8 @@ constant `0x3e3ab283` (D-1).
 ## 4. S1, S2, S3 and the node rule on the float scale
 
 - **S1 and S2.** `S = poss − (length as f32) × P` in `f32`, where P is
-  the pin's `LONG_SENTENCE_PENALTY`, f32 `0x3e3ab283` =
+  `1.2_f32.ln()` (#1416), Rust's `f32` logarithm of `1.2f`, which on this
+  host is the pin's `LONG_SENTENCE_PENALTY`, f32 `0x3e3ab283` =
   0.18232159316539764 (D-1); the precision is ruled below. The ordering
   puts NaN last; otherwise it compares S descending with `partial_cmp`.
   That gives the ruled order: +∞, finite scores descending, −∞, NaN.
@@ -201,7 +202,11 @@ constant `0x3e3ab283` (D-1).
 **S precision (maintainer ruling, 2026-10-28 UTC): `f32`.**
 
 - S is computed as `S = poss − (length as f32) × P`, with
-  `P = f32::from_bits(0x3e3ab283)`, the pin's constant.
+  `P = 1.2_f32.ln()`, Rust's `f32` logarithm of `1.2f` (#1416, the Math
+  rule; until then `f32::from_bits(0x3e3ab283)`, the pin's constant,
+  which is the same value on this host). A last-bit difference on
+  another host is class (a); the S1/S2 sentence cases matched the pin
+  on bdb after the change, so none is recorded.
 - There are two `f32` roundings, as written: the product, then the
   difference. No `mul_add` and no widening.
 - Equal S values tie and are resolved by the existing rules: batch

@@ -1067,8 +1067,8 @@ where
         collected: &[Candidate],
         gram: Option<(u32, &MergedGram)>,
         gate: bool,
-    ) -> Result<Option<Vec<u64>>, EngineError> {
-        let mut frequencies: Option<Vec<u64>> = None;
+    ) -> Result<Option<Vec<u32>>, EngineError> {
+        let mut frequencies: Option<Vec<u32>> = None;
         // The facade total, `get_phrase_index_total_freq()`: the sum of
         // every item's stored unigram (`gen_unigram`'s +1 included).
         let lambda = self.model.amplification_lambda();

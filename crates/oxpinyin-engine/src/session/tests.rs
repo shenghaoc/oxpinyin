@@ -4073,17 +4073,28 @@ fn retained_exact_key_windows_search_the_reserved_end_slot() {
     assert!(rows.iter().any(|row| row.text() == "好"));
 }
 
-/// The pin stores the candidate frequency as `cvttss2si` to 64 bits, low 32
-/// kept: a negative score wraps, NaN and the out-of-range are 0.
+/// The candidate frequency is Rust's `as u32` of the amplified score: in
+/// range it truncates; a negative score and NaN are 0 and a score above
+/// `u32::MAX` saturates (class (b): C leaves the conversion undefined).
 #[test]
-fn candidate_scores_wrap_like_the_pinned_conversion() {
-    assert_eq!(super::guint32_of_score(3.9), 3);
-    assert_eq!(super::guint32_of_score(-3.7), 4_294_967_293);
-    assert_eq!(super::guint32_of_score(f32::NAN), 0);
-    assert_eq!(super::guint32_of_score(f32::INFINITY), 0);
-    assert_eq!(super::guint32_of_score(-1.0e30), 0);
-    assert_eq!(super::guint32_of_score(4_294_967_296.0), 0);
-    assert_eq!(super::guint32_of_score(8_589_934_592.0), 0);
+fn candidate_scores_follow_rusts_saturating_conversion() {
+    let score = |unigram, total, lambda| super::amplified_frequency(unigram, total, lambda);
+    // In range: (1 − 0.5) · 10 / 2 · 2²⁴ = 41 943 040 exactly.
+    assert_eq!(score(10, 2, 0.5), 41_943_040);
+    // In range with a fraction: (1 − 0.5) · 7 / 3 · 2²⁴ truncates.
+    assert_eq!(score(7, 3, 0.5), 19_573_418);
+    // λ above one makes the possibility negative.
+    assert_eq!(score(10, 2, 1.5), 0);
+    // λ = NaN and λ = ∞ make the score NaN.
+    assert_eq!(score(10, 2, f32::NAN), 0);
+    assert_eq!(score(10, 2, f32::INFINITY), 0);
+    // A unigram far above the total overflows `u32`; so does a hugely
+    // negative λ. (λ = −∞ is NaN instead: its zero bigram term is −∞ · 0.)
+    assert_eq!(score(1_000, 1, 0.0), u32::MAX);
+    assert_eq!(score(10, 2, -1.0e9), u32::MAX);
+    assert_eq!(score(10, 2, f32::NEG_INFINITY), 0);
+    // The pin's own early return at a zero total (policy row 61).
+    assert_eq!(score(10, 0, 0.5), 0);
 }
 
 /// The pin's own unsigned difference is taken as signed, including wrap.
@@ -4140,7 +4151,7 @@ fn candidate_rank_is_a_total_preorder_when_each_frequency_group_is_consistent() 
         .flat_map(|length| {
             [0, 255, 256, 257].into_iter().flat_map(move |span| {
                 [u32::MAX, 0, 1, 2].into_iter().map(move |frequency| {
-                    super::RankKey::for_sort_word(length, span, u64::from(frequency), 0x1c)
+                    super::RankKey::for_sort_word(length, span, frequency, 0x1c)
                 })
             })
         })

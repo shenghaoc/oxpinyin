@@ -91,6 +91,19 @@ is subject `result.view`. All four
 `row58-signed-{score,duplicate}-{off,on}` cases MATCH on every cell; this
 record never registers them as differences.
 
+## Conversion amendment (#1416)
+
+#1416 stores the candidate frequency with Rust's `as u32` instead of the
+amd64 `cvttss2si` imitation (decision-order limb 3 ([source policy](../source-policy.md#internal-language-artefacts))). For λ > 1 every
+positive-unigram candidate score is negative and now stores 0, so the
+length-1 rows keep their collection order instead of the wrapped-key
+order the amd64 pin produces; the arm64 pin stores 0 too. The three
+λ > 1 entries below are re-recorded on bdb, kc and sound tkrzw on
+2026-10-30 UTC with that subject `result.view`; their pin digests do
+not move. The difference is class (b) in
+`upstream-divergences.md` ("Zhuyin candidate frequency: negative
+`float`-to-`guint32` store at λ > 1").
+
 ```contract-diff-policy
 {
   "schema": 2,
@@ -206,7 +219,7 @@ record never registers them as differences.
             }
           },
           "subject": {
-            "sha256": "376535e8b2c6088070797ea532201bab0a2bbe7f7afc11b0f190c8d575fe6288",
+            "sha256": "423617c1efd0900b7114df1407a1450b151dcdec9b256e8a8b6a9f725f0e972a",
             "fields": {
               "exit": "5feceb66ffc86f38",
               "result.add": "b5bea41b6c623f7c",
@@ -214,7 +227,7 @@ record never registers them as differences.
               "result.logs": "4f53cda18c2baa0c",
               "result.save": "b5bea41b6c623f7c",
               "result.train": "b5bea41b6c623f7c",
-              "result.view": "281ea688b204d8b2",
+              "result.view": "65c7c6855f403860",
               "stderr": "c48a0964ed0c5485"
             }
           },
@@ -239,7 +252,7 @@ record never registers them as differences.
             }
           },
           "subject": {
-            "sha256": "3e2db513a9371d82fe54f9b027db1434dd2115ad2f21b94144713112fe6f6e34",
+            "sha256": "0baad65ff301a7e5f30682838f4ba7589c69efc8a39f26302e467e9242b8e680",
             "fields": {
               "exit": "5feceb66ffc86f38",
               "result.add": "b5bea41b6c623f7c",
@@ -247,7 +260,7 @@ record never registers them as differences.
               "result.logs": "4f53cda18c2baa0c",
               "result.save": "b5bea41b6c623f7c",
               "result.train": "b5bea41b6c623f7c",
-              "result.view": "281ea688b204d8b2",
+              "result.view": "65c7c6855f403860",
               "stderr": "c48a0964ed0c5485"
             }
           },
@@ -272,7 +285,7 @@ record never registers them as differences.
             }
           },
           "subject": {
-            "sha256": "8856a925aeecd6e6b7a9ac2989572572a71edfd06b63c6b3f845e3cca1d31b73",
+            "sha256": "5496494dbfa498ce0969f584cf211b3715914d40eb2ced477b6b2a2484960272",
             "fields": {
               "exit": "5feceb66ffc86f38",
               "result.add": "b5bea41b6c623f7c",
@@ -280,7 +293,7 @@ record never registers them as differences.
               "result.logs": "4f53cda18c2baa0c",
               "result.save": "b5bea41b6c623f7c",
               "result.train": "b5bea41b6c623f7c",
-              "result.view": "281ea688b204d8b2",
+              "result.view": "65c7c6855f403860",
               "stderr": "c48a0964ed0c5485"
             }
           },
@@ -309,7 +322,7 @@ record never registers them as differences.
             }
           },
           "subject": {
-            "sha256": "fd4658f58e56a110c7bbc7b5396fd38222a6fe37b0ea095909d8fabf3da35d0f",
+            "sha256": "3dce8d6762e04017dae20de11b2f74efce11e620d8de27e829b97d02d739d475",
             "fields": {
               "exit": "5feceb66ffc86f38",
               "result.add": "b5bea41b6c623f7c",
@@ -317,7 +330,7 @@ record never registers them as differences.
               "result.logs": "4f53cda18c2baa0c",
               "result.save": "b5bea41b6c623f7c",
               "result.train": "b5bea41b6c623f7c",
-              "result.view": "303c3751d89c9df9",
+              "result.view": "7a47c28fd792d262",
               "stderr": "c48a0964ed0c5485"
             }
           },
@@ -342,7 +355,7 @@ record never registers them as differences.
             }
           },
           "subject": {
-            "sha256": "3cde87366437e29cf44c3043c204d8972d6b29fb10bfb025d3c44dea2481264e",
+            "sha256": "bd1412a439e29981946e3f107e0de0071facb5b99e1b1cf5ecbd2423c0f82cb4",
             "fields": {
               "exit": "5feceb66ffc86f38",
               "result.add": "b5bea41b6c623f7c",
@@ -350,7 +363,7 @@ record never registers them as differences.
               "result.logs": "4f53cda18c2baa0c",
               "result.save": "b5bea41b6c623f7c",
               "result.train": "b5bea41b6c623f7c",
-              "result.view": "303c3751d89c9df9",
+              "result.view": "7a47c28fd792d262",
               "stderr": "c48a0964ed0c5485"
             }
           },
@@ -375,7 +388,7 @@ record never registers them as differences.
             }
           },
           "subject": {
-            "sha256": "52245a761f447ee883689fc7974068182439fe910b722e6ce4a70d3ad48f14fa",
+            "sha256": "12b6a86304521d3f3fbda6fb4a7ac50a3140c7f5299695d12ff3fe016bb8bfdf",
             "fields": {
               "exit": "5feceb66ffc86f38",
               "result.add": "b5bea41b6c623f7c",
@@ -383,7 +396,7 @@ record never registers them as differences.
               "result.logs": "4f53cda18c2baa0c",
               "result.save": "b5bea41b6c623f7c",
               "result.train": "b5bea41b6c623f7c",
-              "result.view": "303c3751d89c9df9",
+              "result.view": "7a47c28fd792d262",
               "stderr": "c48a0964ed0c5485"
             }
           },
@@ -412,7 +425,7 @@ record never registers them as differences.
             }
           },
           "subject": {
-            "sha256": "d9b91b5d4731eff38343b99b286da9f3e78123334e388650f07ff86fd50bd7d2",
+            "sha256": "75aa49f2a01eee03837d7c4f6882952f92df95df5c6fe323ffe92322ea70697f",
             "fields": {
               "exit": "5feceb66ffc86f38",
               "result.add": "b5bea41b6c623f7c",
@@ -420,7 +433,7 @@ record never registers them as differences.
               "result.logs": "4f53cda18c2baa0c",
               "result.save": "b5bea41b6c623f7c",
               "result.train": "b5bea41b6c623f7c",
-              "result.view": "9c0e3f0e0e33d57b",
+              "result.view": "239408984bfd96d3",
               "stderr": "c48a0964ed0c5485"
             }
           },
@@ -445,7 +458,7 @@ record never registers them as differences.
             }
           },
           "subject": {
-            "sha256": "942caee812bd631dee926bb8caa8128b47aa10162aa3f3c1af9e423cd292c545",
+            "sha256": "6f1b1030f8e7c3f5eab40530ad080b1b8c959aa1230fea4a9f9d42c3f7661a8a",
             "fields": {
               "exit": "5feceb66ffc86f38",
               "result.add": "b5bea41b6c623f7c",
@@ -453,7 +466,7 @@ record never registers them as differences.
               "result.logs": "4f53cda18c2baa0c",
               "result.save": "b5bea41b6c623f7c",
               "result.train": "b5bea41b6c623f7c",
-              "result.view": "9c0e3f0e0e33d57b",
+              "result.view": "239408984bfd96d3",
               "stderr": "c48a0964ed0c5485"
             }
           },
@@ -478,7 +491,7 @@ record never registers them as differences.
             }
           },
           "subject": {
-            "sha256": "8fff335fa3b11da0b34898787a8022f4164281bbf01a33248baeb98547b14690",
+            "sha256": "5bce136ffb5d45f5339977e6a194d90f3a5ed6835a6e97118cd69db548b067cc",
             "fields": {
               "exit": "5feceb66ffc86f38",
               "result.add": "b5bea41b6c623f7c",
@@ -486,7 +499,7 @@ record never registers them as differences.
               "result.logs": "4f53cda18c2baa0c",
               "result.save": "b5bea41b6c623f7c",
               "result.train": "b5bea41b6c623f7c",
-              "result.view": "9c0e3f0e0e33d57b",
+              "result.view": "239408984bfd96d3",
               "stderr": "c48a0964ed0c5485"
             }
           },

@@ -2045,8 +2045,8 @@ fn predicted_tie_groups_are_text_ascending_including_user_rows() {
     use crate::sentence::pinyin_guess_predicted_candidates_with_punctuations;
     use crate::types::lookup_candidate_type_t;
 
-    /// Mirror of predict.rs's private `amplified_frequency` — the same
-    /// mirroring convention as `amplified_law_mirrors_the_session_pinning_values`.
+    /// Mirror of the engine's `amplified_frequency` at the pinned λ, so
+    /// the expected order is computed without the production code.
     fn amplified(baked: u64, total: u64) -> u64 {
         if total == 0 {
             return 0;
