@@ -336,6 +336,76 @@ class PureTests(unittest.TestCase):
         self.assertEqual([sum(row[0] == library for row in balanced) for library in range(1, 5)], [3000, 3000, 3000, 1000])
         self.assertEqual(td.witness_inputs(rows), ["ce'shi", "ce'ce"])
 
+    def test_user_recipes_have_ten_thousand_items_and_distinct_ordered_readings(self):
+        exported = [(1, f'词{i:05}', "ci2'yi1'er4'san1'si4'wu3", 20) for i in range(10000)]
+        for readings in (1, 8):
+            rows = td.user_rows(exported, readings)
+            self.assertEqual(len(rows), 10000 * readings)
+            self.assertEqual({row[0] for row in rows}, {7})
+            for start in range(0, len(rows), readings):
+                group = rows[start:start + readings]
+                self.assertEqual(len({row[1] for row in group}), 1)
+                self.assertEqual(len({row[2] for row in group}), readings)
+                self.assertEqual(group[0][2], exported[start // readings][2])
+                self.assertEqual({row[3] for row in group}, {5})
+
+    def test_user_recipes_require_enough_multi_character_items(self):
+        with self.assertRaisesRegex(ValueError, '10,000'):
+            td.user_rows([(1, '词', 'ci2', 20)] * 10000, 8)
+        with self.assertRaisesRegex(ValueError, 'one or eight'):
+            td.user_rows([], 2)
+
+    def test_startup_and_teardown_share_user_profile_names(self):
+        from tools.dev.measure import startup
+        self.assertEqual(startup.PROFILES, td.PROFILES)
+        self.assertTrue({'user', 'user8'}.issubset(td.PROFILES))
+
+    def test_allocation_windows_count_freed_blocks_and_file_read_buffers(self):
+        def point(name, live, blocks, total, allocated):
+            return (f'TEARDOWN_ALLOC {name} BEGIN\nevents: curB curBk totB totBk totFdB totFdBk\n'
+                    f'totals: {live} {blocks} {total} {allocated} 0 0\nTEARDOWN_ALLOC {name} END\n')
+        text = point('M0', 10, 1, 20, 2) + point('I1', 30, 2, 120, 6)
+        result = td.allocation_windows(text, [('open', 'M0', 'I1')])
+        self.assertEqual(result, dict(open=dict(allocated_bytes=100, allocations=4,
+                                                retained_bytes=20, retained_blocks=1)))
+        for broken in (text.replace('totals:', 'unknown:'), text + point('I1', 30, 2, 120, 6),
+                       text.replace('120 6', '120 1')):
+            with self.assertRaises(ValueError):
+                td.allocation_windows(broken, [('open', 'M0', 'I1')])
+
+    def test_user_census_distinguishes_dense_and_sparse_offsets(self):
+        import struct
+        from contract_case_helpers import _chunk
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / 'user.bin'
+            body = bytes([2, 1]) + struct.pack('<IIIHHI', 15, ord('测'), ord('试'), 1, 2, 5)
+            for offsets in ([0, 8, 30], [0, 8] + [0] * 20 + [30]):
+                one, two = 17, 18 + 4 * len(offsets)
+                content = b'\0' * 8 + body * 2
+                payload = struct.pack('<IIII', 30, one, two, two + len(content) + 1)
+                payload += b'#' + struct.pack('<' + 'I' * len(offsets), *offsets) + b'#' + content + b'#'
+                path.write_bytes(_chunk(payload))
+                shape = td.user_library_shape(path)
+                self.assertEqual(shape['items'], 2)
+                self.assertEqual(shape['slots'], len(offsets))
+                self.assertEqual(shape['readings'], {1: 2})
+                self.assertEqual(shape['live_body_bytes'], 44)
+            path.write_bytes(path.read_bytes()[:-1])
+            with self.assertRaisesRegex(ValueError, 'frame'):
+                td.user_library_shape(path)
+
+    def test_sampled_heap_peaks_are_not_exact_control_counts(self):
+        a = {'open': dict(before_bytes=10, after_bytes=20, sampled_peak_bytes=30)}
+        b = {'open': dict(before_bytes=10, after_bytes=20, sampled_peak_bytes=31)}
+        self.assertEqual(td.user_heap_counts(a), td.user_heap_counts(b))
+        b['open']['after_bytes'] += 1
+        self.assertNotEqual(td.user_heap_counts(a), td.user_heap_counts(b))
+
+    def test_compaction_call_counts_resolve_compressed_function_names(self):
+        text = ('fn=(1) pinyin::FacadePhraseIndex::compact()\ncfn=(1)\ncalls=2 0\n0 9\n'
+                'fn=(2) caller\ncfn=(3) other\ncalls=100 0\n0 3\ncfn=(1)\ncalls=15 0\n0 7\n')
+        self.assertEqual(td.compaction_calls(text), {'pinyin::FacadePhraseIndex::compact()': 17})
+
     def test_precise_equivalence_difference(self):
         self.assertEqual(td.first_difference({'a': [{'x': 1}]}, {'a': [{'x': 2}]}),
                          {'path': '$.a[0].x', 'pin': 1, 'subject': 2})
@@ -1360,6 +1430,18 @@ class NativeTests(unittest.TestCase):
             row = campaign.run('pinyin', self.library, self.profile)
         self.assertEqual(row['command'][:3], [td.shutil.which('taskset'), '-c', str(campaign.cpu)])
 
+    def test_population_accepts_user_library_and_refuses_unrequested_libraries(self):
+        campaign = self.campaign()
+        rows = self.root / 'user-rows.tsv'
+        with patch.object(td, 'exports', return_value=['pinyin_init']):
+            for library in (1, 4, 7):
+                rows.write_text(f"{library}\t测试\tce4'shi4\t5\n")
+                td.populate_user(campaign, self.library, self.profile, rows)
+            for library in (0, 5, 6, 8):
+                rows.write_text(f"{library}\t测试\tce4'shi4\t5\n")
+                with self.assertRaisesRegex(ValueError, 'population failed'):
+                    td.populate_user(campaign, self.library, self.profile, rows)
+
     def require_eviction(self, directory):
         """Fail, naming the file system, where fadvise cannot evict the directory's files.
 
@@ -2069,7 +2151,10 @@ def export_lines():
     """An export that fills both 10,000-phrase recipes, in library order."""
     lines = []
     for library, count in ((1, 4000), (2, 4000), (3, 4000), (4, 1500)):
-        lines.extend('%d\t词%d_%d\tci%d\t7' % (library, library, number, number) for number in range(count))
+        for number in range(count):
+            phrase = f'词{library}_{number}'
+            reading = "'".join(['ci2'] * len(phrase))
+            lines.append(f'{library}\t{phrase}\t{reading}\t7')
     return lines
 
 
@@ -2099,10 +2184,10 @@ class FixtureFlowTests(unittest.TestCase):
 
     def provisioned(self, name, jobs):
         """Run provision under fake population that finishes in reverse profile order."""
-        order = ['empty', 'modest', 'phrases', 'journals']
+        order = list(td.PROFILES)
         done = {}
 
-        def populate(campaign, pin, user, rows):
+        def populate(campaign, pin, user, rows, **kwargs):
             profile = user.parent.name
             # A later profile finishes first, when the pool lets it.
             later = order[order.index(profile) + 1:]
@@ -2135,7 +2220,7 @@ class FixtureFlowTests(unittest.TestCase):
         FakeAdmission.workers = 1
         seen = []
 
-        def populate(campaign, pin, user, rows):
+        def populate(campaign, pin, user, rows, **kwargs):
             seen.append(user.parent.name)
             if user.parent.name == 'modest':
                 raise ValueError('fixture population failed')
@@ -2161,7 +2246,7 @@ class FixtureFlowTests(unittest.TestCase):
                 if profile != 'empty' else []))
             profiles[profile] = directory / 'user'
         (self.root / name / 'phrases' / 'witness.txt').write_text('kept\n')
-        order = ['modest', 'phrases', 'journals']
+        order = list(td.PROFILES[1:])
         done = {}
 
         def run(self_, facade, library, profile, *, mode='time', inputs=None, **kwargs):
@@ -2185,7 +2270,7 @@ class FixtureFlowTests(unittest.TestCase):
         pooled = self.witnesses('pooled', None)
         self.assertEqual(list(serial[0]), list(td.PROFILES))
         self.assertEqual([(kind, values['profile']) for kind, values in serial[1]],
-                         [('witness', 'modest'), ('witness', 'phrases'), ('witness', 'journals')])
+                         [('witness', name) for name in td.PROFILES[1:]])
         self.assertEqual(serial[1], pooled[1])
         self.assertEqual(serial[2], pooled[2])
         self.assertEqual(serial[2]['phrases/witness.txt'], b'kept\n')

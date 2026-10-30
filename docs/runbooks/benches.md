@@ -775,6 +775,77 @@ because libdb seeds `srandom_r` from the process. With `--teardown-cache cold`,
 each sample evicts as above and Callgrind is NOT RUN. None of these samples is
 a primary timing sample; report primary timings from `confirm`.
 
+### Populated USER_FILE baseline
+
+The shared startup/teardown profiles also include `user`, `user8` and
+`usersparse`. The first two import the same 10,000 distinct two-or-more-character
+phrases from the pin's system export into library 7, at count 5, with one and
+eight readings per phrase. The original reading comes first; additional
+readings vary only tones, in lexical tone order. `usersparse` imports `user`
+and uses the pin's mask API to retain slots congruent to 1 modulo 16: 625 live
+items across nearly 10,000 slots. Existing profile recipes are unchanged.
+Provisioning validates existing manifests and fills only missing profiles.
+
+The dedicated stages below extend `contract-diff.py --teardown`, its existing
+`bisect.c` worker and its private-profile restoration. No shipping code or
+private Rust API is instrumented. Use the ordered shipping prefixes built
+above, an ext4 `TMPDIR`, and an owned ext4 work directory:
+
+```bash
+just heavy -- uv run --no-project --managed-python python -B -X lazy_imports=normal \
+  tools/bisection/contract-diff.py bdb "$PIN_PREFIX" "$PR_PREFIX/lib/libpinyin.so" \
+  --base-pinyin-so "$BASE_PREFIX/lib/libpinyin.so" --teardown \
+  --teardown-stage user-verify --teardown-facades pinyin \
+  --teardown-cases empty,user,user8,usersparse --teardown-work-dir "$WORK"
+# After the bounded preflight passes, change user-verify to user-phrase.
+```
+
+`user-verify` checks the census, getter/enumeration/export hashes and saved
+`user.bin` bytes against the pin. The broader `verify` stage still checks its
+full candidate transcripts and reopen behavior; a mismatch there stays
+NOT COMPARABLE and must be reported separately. A passing bounded preflight
+does not establish end-to-end candidate equivalence.
+
+`user-phrase` rotates base, PR, the byte-identical PR control and pin. It uses
+60 native rounds after three discarded rounds, then separate fresh-process
+Memcheck, Massif and three Callgrind rounds per operation. Its boundaries are:
+
+| Window | Work |
+| --- | --- |
+| M0–I1, open | The complete `pinyin_init`, after dlopen and export resolution. |
+| R0–R1, read | 10,000 reads of slot 1: text, count, unigram and every nth reading. The instance and a 16-key GArray are allocated before R0. |
+| R1–N1, enumerate | Probe every slot, skipping holes, and read each existing item's fields and readings. |
+| N1–E1, export | Library-7 export iterator to exhaustion, including rendering and freeing returned text/readings; hash results without stdout formatting. |
+| W0–W1, write | Eight cycles removing the first phrase's current token and reimporting its eight readings, then save. Each cycle calls mask-out and import-end; save is included. |
+
+Pss at M0 and I1 comes from each mapping in one `/proc/<pid>/smaps` read,
+including separate anonymous, shipping-library, dependency and data-file
+groups. The later smaps_rollup remains diagnostic. Memcheck's full
+`xtmemory` `totBk` and `totB` differences count all heap allocation events and
+bytes, including transient buffers that are freed before return. `curBk`
+and `curB` differences separately report retained blocks and bytes. These
+are whole public-call windows, including both implementations' C-boundary
+copies and all heaps; the open count includes system/configuration work and
+the user indexes, not just `user.bin`. Compare the empty open separately;
+do not label its subtraction as an isolated item-arena allocation count.
+
+Massif reports boundary live heap and sampled peaks in those windows. The
+existing exact control rule applies to boundary heaps and allocation
+counters; sampled peaks are diagnostic and do not have an exact control
+requirement. Ir retains fresh-process ranges rather than claiming exact
+counts under BDB/RandomState. The write profile also counts the pin's
+`PhraseIndex::compact` calls. The row representation has no item arena:
+its arena length and the proposed arena's garbage bounds are inapplicable
+until that representation exists. Neither file length nor total heap is
+relabeled as a measured arena peak.
+
+For the steady cycle, pass `--user-dir "$WORK/profiles/user/user"` (and then
+`user8/user`) to `just measure steady-comparison`. Every native, allocation
+and Callgrind launch gets a fresh private copy, removed by the controller;
+the source profile is unchanged. Without this option the existing empty
+profile workload remains unchanged. The native startup controller accepts
+these same profile names through its existing `--profiles` selection.
+
 ## Per-page residency attribution
 
 `tools/dev/measure/pages.py` (#1163) names the file pages that become resident

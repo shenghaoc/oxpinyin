@@ -13,6 +13,7 @@ from pathlib import Path
 import re
 
 SCHEMA = 'oxpinyin-startup-profile-v1'
+PROFILES = ('empty', 'modest', 'phrases', 'journals', 'user', 'user8', 'usersparse')
 LINE = re.compile(r'([0-9]+)\t([0-9a-f]{64})\t(.+)')
 
 

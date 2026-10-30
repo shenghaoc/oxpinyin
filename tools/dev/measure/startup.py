@@ -16,7 +16,6 @@ from .. import mman, slot
 from . import cold, cold_linux, instructions, native, pages, stats, worker
 
 ROOT = Path(__file__).resolve().parents[3]
-PROFILES = ('empty', 'modest', 'phrases', 'journals')
 ARMS = ('base', 'pr', 'control')
 TIMING_METRICS = ('lib_load', 'init', 'config', 'alloc', 'first_candidate_phase', 'ttfc',
                   'setup_plus_first_candidate', 'drop_instance', 'fini', 'process_wall')
@@ -43,6 +42,7 @@ def module(path, name):
 
 
 PROFILE = module(ROOT / 'tools/bisection/startup_profile.py', 'startup_profile')
+PROFILES = PROFILE.PROFILES
 
 
 def emit(kind, **values):

@@ -886,6 +886,8 @@ static int perf_remove_entry(const char *path, const struct stat *st,
 }
 
 static void perf_remove_user_dir(char *user_dir) {
+    const char *supplied = getenv("PERF_USER_DIR");
+    if (supplied && *supplied && !strcmp(supplied, user_dir)) return;
     /* Best-effort cleanup of our own mkdtemp directory. */
     (void)nftw(user_dir, perf_remove_entry, 16, FTW_DEPTH | FTW_PHYS);
 }
@@ -957,11 +959,20 @@ static int run_perf_mode(int argc, char **argv) {
         diag_dir = NULL;
 
     char user_dir[4096];
-    if (!user_dir_template(user_dir, sizeof user_dir, "bisect-perf"))
-        return 1;
-    if (!mkdtemp(user_dir)) {
-        perror("mkdtemp");
-        return 1;
+    const char *supplied_user = getenv("PERF_USER_DIR");
+    if (supplied_user && *supplied_user) {
+        struct stat info;
+        if (snprintf(user_dir, sizeof user_dir, "%s", supplied_user) >= (int)sizeof user_dir ||
+            stat(user_dir, &info) || !S_ISDIR(info.st_mode)) {
+            fputs("PERF_USER_DIR must name an existing private profile directory\n", stderr);
+            return 1;
+        }
+    } else {
+        if (!user_dir_template(user_dir, sizeof user_dir, "bisect-perf")) return 1;
+        if (!mkdtemp(user_dir)) {
+            perror("mkdtemp");
+            return 1;
+        }
     }
 
     void *handle = dlopen(so_path, RTLD_NOW);

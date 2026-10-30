@@ -833,6 +833,7 @@ def steady_comparison_inner(argv: Sequence[str], env: Mapping[str, str]) -> int:
     parser.add_argument('--cell', required=True, choices=('bdb', 'kc', 'tkrzw'))
     for name in ('base', 'pr', 'pin', 'base-alloc', 'pr-alloc', 'system-dir', 'out'):
         parser.add_argument('--' + name, required=True, type=Path)
+    parser.add_argument('--user-dir', type=Path, help='starting profile, copied privately for every launch')
     parser.add_argument('--rounds', type=int, default=20)
     parser.add_argument('--ir-rounds', type=int, default=2)
     parser.add_argument('--cycles', type=int, default=8)
@@ -851,7 +852,7 @@ def steady_comparison_inner(argv: Sequence[str], env: Mapping[str, str]) -> int:
                                references=['pin_'], env=env)
     args.out.mkdir(parents=True)
     native.check_filesystems([args.out, args.system_dir, Path(env.get('TMPDIR') or tempfile.gettempdir()),
-                              *sources.values(), *fixtures.values()])
+                              *sources.values(), *fixtures.values(), *([args.user_dir] if args.user_dir else [])])
     arms = {}
     for name, source in {**sources, **fixtures}.items():
         directory = args.out / name
@@ -869,6 +870,7 @@ def steady_comparison_inner(argv: Sequence[str], env: Mapping[str, str]) -> int:
     metadata = dict(captured_utc=bench.utc_now(), cell=args.cell, cpu=args.cpu, cycles=args.cycles,
                     native_rounds=args.rounds, ir_rounds=args.ir_rounds, system_dir=str(args.system_dir),
                     kernel=identity.uname('srvm'), cpu_model=identity.cpu_model(),
+                    user_dir=str(args.user_dir) if args.user_dir else None,
                     artifacts={name: dict(path=str(path), sha256=identity.sha256(path))
                                for name, path in {**sources, **fixtures}.items()})
     (args.out / 'environment.json').write_text(json.dumps(metadata, indent=2) + '\n')
@@ -876,8 +878,14 @@ def steady_comparison_inner(argv: Sequence[str], env: Mapping[str, str]) -> int:
     allocations = {name: [] for name in fixtures}
 
     def sample(name, prefix=()):
-        row = steady_sample(worker.launch(arms[name], 'speed', args.cycles, repeats=1, prefix=prefix,
-                                         extra={'PERF_WORKLOAD_CHECKSUM': '1'}), args.cycles)
+        with tempfile.TemporaryDirectory(prefix='profile-', dir=args.out) as scratch:
+            extra = {'PERF_WORKLOAD_CHECKSUM': '1'}
+            if args.user_dir:
+                user = Path(scratch) / 'user'
+                shutil.copytree(args.user_dir, user)
+                extra['PERF_USER_DIR'] = str(user)
+            row = steady_sample(worker.launch(arms[name], 'speed', args.cycles, repeats=1, prefix=prefix,
+                                             extra=extra), args.cycles)
         checksum = row['workload_checksum']
         if name in checksums and checksums[name] != checksum:
             raise ValueError(name + ': fresh-process checksum changed')

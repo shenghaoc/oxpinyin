@@ -52,7 +52,7 @@ class SteadyComparisonTests(unittest.TestCase):
         self.assertEqual(result['base_minus_pr_ir_bounds'], [6, 13])
         self.assertEqual(result['allocations_per_cycle']['pall'], dict(count=[9, 9], bytes=[80, 80]))
 
-    def campaign(self, *, checksum_change=False, missing_alloc=False):
+    def campaign(self, *, checksum_change=False, missing_alloc=False, profile=False):
         from tools.packaging import function_order
         from tools.bisection import teardown
         from tools.dev.measure import native
@@ -66,6 +66,10 @@ class SteadyComparisonTests(unittest.TestCase):
 
             def launch(arm, mode, cycles, *, repeats, prefix, extra):
                 events.append((arm.label, bool(prefix)))
+                if profile:
+                    copied = Path(extra['PERF_USER_DIR'])
+                    self.assertEqual((copied / 'user.bin').read_bytes(), b'user fixture')
+                    (copied / 'user.bin').write_bytes(b'modified private copy')
                 value = '1' * 16 if checksum_change and arm.label == 'pr__' else '0' * 16
                 row = dict(cycles_ns=[999] + [10] * (cycles - 1), workload_checksum=value)
                 if arm.label in ('ball', 'pall') and not missing_alloc:
@@ -80,6 +84,11 @@ class SteadyComparisonTests(unittest.TestCase):
             argv = ['--cell', 'bdb', '--system-dir', str(root), '--out', str(root / 'out')]
             for name, path in paths.items():
                 argv += ['--' + name, str(path)]
+            if profile:
+                user = root / 'user'
+                user.mkdir()
+                (user / 'user.bin').write_bytes(b'user fixture')
+                argv += ['--user-dir', str(user)]
             with contextlib.ExitStack() as stack:
                 stack.enter_context(mock.patch.object(campaigns.sys, 'platform', 'linux'))
                 stack.enter_context(mock.patch.object(campaigns.os, 'sched_getaffinity', return_value={0}, create=True))
@@ -91,6 +100,8 @@ class SteadyComparisonTests(unittest.TestCase):
                 stack.enter_context(mock.patch.object(teardown, 'callgrind_costs', return_value=dict(totals=dict(Ir=700))))
                 stack.enter_context(mock.patch.object(campaigns, 'emit'))
                 status = campaigns.steady_comparison_inner(argv, {})
+            if profile:
+                self.assertEqual((user / 'user.bin').read_bytes(), b'user fixture')
             return status, events, json.loads((root / 'out/result.json').read_text())
 
     def test_campaign_rotates_all_arms_and_excludes_warmup(self):
@@ -108,6 +119,11 @@ class SteadyComparisonTests(unittest.TestCase):
             self.campaign(checksum_change=True)
         with self.assertRaisesRegex(ValueError, 'allocation counters unavailable'):
             self.campaign(missing_alloc=True)
+
+    def test_steady_profile_is_restored_for_every_arm_and_profiler_launch(self):
+        status, events, result = self.campaign(profile=True)
+        self.assertEqual(status, 0)
+        self.assertEqual(len(events), 116)
 
     def test_recipe_holds_admission_for_the_whole_comparison(self):
         admitted = mock.Mock(env={'admitted': 'yes'})

@@ -15,7 +15,7 @@
 #if !defined(CLOCK_MONOTONIC_RAW)
 #define CLOCK_MONOTONIC_RAW CLOCK_MONOTONIC
 #endif
-#if defined(OXPINYIN_TEARDOWN_MASSIF) || defined(OXPINYIN_TEARDOWN_MEMCHECK)
+#if defined(OXPINYIN_TEARDOWN_MASSIF) || defined(OXPINYIN_TEARDOWN_MEMCHECK) || defined(OXPINYIN_TEARDOWN_XTREE)
 #include <valgrind/valgrind.h>
 #endif
 #ifdef OXPINYIN_TEARDOWN_MEMCHECK
@@ -225,6 +225,11 @@ static void td_print_observation(const struct td_api *api, const struct td_obser
 
 static void td_checkpoint(const char *point, int cycle, bool wait) {
     if (!wait) return;
+#ifdef OXPINYIN_TEARDOWN_XTREE
+    fprintf(stderr, "TEARDOWN_ALLOC %s BEGIN\n", point);
+    if (VALGRIND_MONITOR_COMMAND("xtmemory /dev/stderr")) exit(1);
+    fprintf(stderr, "TEARDOWN_ALLOC %s END\n", point);
+#endif
 #ifdef OXPINYIN_TEARDOWN_MASSIF
     if (strcmp(point, "reset")) {
         fprintf(stderr, "TEARDOWN_HEAP %s BEGIN\n", point);
@@ -363,7 +368,7 @@ static bool td_populate(const struct td_api *api, void *context, const char *pat
         *tab1 = *tab2 = *tab3 = '\0';
         char *end;
         unsigned long library = strtoul(line, &end, 10);
-        if (*end || library < 1 || library > 4) { valid = false; break; }
+        if (*end || !((library >= 1 && library <= 4) || library == 7)) { valid = false; break; }
         long frequency = strtol(tab3 + 1, &end, 10);
         if ((*end && strcmp(end, "\n")) || frequency < 1 || frequency > INT_MAX) {
             valid = false; break;
@@ -732,12 +737,156 @@ static void td_probe_close(struct td_probe *probe) {
     for (unsigned i = 0; i < TD_PROBE_EVENTS; i++) probe->fds[i] = -1;
 }
 
+/* USER_FILE measurements use public calls, not private Rust fixtures. The
+ * pin's pinyin.cpp:2786-2834 copies keys to a caller-owned GArray and returns
+ * caller-owned text. Reserve that GArray before the counted windows. */
+struct td_keys { uint16_t *data; unsigned len; };
+struct td_user_api {
+    bool (*text)(void *, uint32_t, unsigned *, char **);
+    bool (*count)(void *, uint32_t, unsigned *);
+    bool (*nth)(void *, uint32_t, unsigned, struct td_keys *);
+    bool (*unigram)(void *, uint32_t, unsigned *);
+    struct td_keys *(*array_new)(int, int, unsigned, unsigned);
+    char *(*array_free)(struct td_keys *, int);
+    bool (*mask)(void *, uint32_t, uint32_t);
+};
+
+static uint64_t td_hash(uint64_t hash, const void *bytes, size_t size) {
+    const unsigned char *data = bytes;
+    for (size_t i = 0; i < size; i++) hash = (hash ^ data[i]) * 1099511628211ULL;
+    return hash;
+}
+
+static bool td_user_item(const struct td_api *api, const struct td_user_api *user,
+                         void *instance, struct td_keys *keys, uint32_t token, uint64_t *hash) {
+    unsigned length = 0, count = 0, frequency = 0;
+    char *text = NULL;
+    if (!user->text(instance, token, &length, &text) || !text ||
+        !user->count(instance, token, &count) || !user->unigram(instance, token, &frequency)) return false;
+    *hash = td_hash(*hash, text, strlen(text));
+    api->free_memory(text);
+    *hash = td_hash(*hash, &frequency, sizeof frequency);
+    for (unsigned reading = 0; reading < count; reading++) {
+        if (!user->nth(instance, token, reading, keys) || keys->len != length) return false;
+        *hash = td_hash(*hash, keys->data, keys->len * sizeof(uint16_t));
+    }
+    return true;
+}
+
+__attribute__((noinline))
+uint64_t bisect_user_read_unit(const struct td_api *api, const struct td_user_api *user,
+                              void *instance, struct td_keys *keys, unsigned slots) {
+    uint64_t hash = 1469598103934665603ULL;
+    if (!slots) return hash;
+    for (unsigned i = 0; i < 10000; i++)
+        if (!td_user_item(api, user, instance, keys, 0x07000001, &hash)) exit(1);
+    return hash;
+}
+
+__attribute__((noinline))
+unsigned bisect_user_write_unit(const struct td_api *api, const struct td_user_api *user, void *context,
+                               const char *rows, unsigned slots) {
+    uint32_t token = 0x07000001;
+    for (unsigned cycle = 0; cycle < 8; cycle++) {
+        if (!user->mask(context, UINT32_MAX, token) || !td_populate(api, context, rows)) exit(1);
+        /* Removing slot 1 leaves the highest slot alive. Later iterations
+         * remove that newly appended last slot, so the pin reuses it. */
+        token = 0x07000000 | slots;
+    }
+    if (!api->common.save(context)) exit(1);
+    return 8;
+}
+
+__attribute__((noinline))
+uint64_t bisect_user_enumerate_unit(const struct td_api *api, const struct td_user_api *user,
+                                   void *instance, struct td_keys *keys, unsigned slots) {
+    uint64_t hash = 1469598103934665603ULL;
+    for (unsigned slot = 1; slot < slots; slot++) {
+        unsigned count = 0;
+        if (user->count(instance, 0x07000000 | slot, &count) && count &&
+            !td_user_item(api, user, instance, keys, 0x07000000 | slot, &hash)) exit(1);
+    }
+    return hash;
+}
+
+__attribute__((noinline))
+uint64_t bisect_user_export_unit(const struct td_api *api, void *context) {
+    uint64_t hash = 1469598103934665603ULL;
+    void *iterator = api->common.begin_get_phrases(context, 7);
+    if (!iterator) exit(1);
+    while (api->common.iterator_has_next(iterator)) {
+        char *text = NULL, *reading = NULL;
+        int count = 0;
+        if (!api->common.iterator_get_next(iterator, &text, &reading, &count) || !text || !reading) exit(1);
+        hash = td_hash(hash, text, strlen(text));
+        hash = td_hash(hash, reading, strlen(reading));
+        hash = td_hash(hash, &count, sizeof count);
+        api->free_memory(text);
+        api->free_memory(reading);
+    }
+    api->common.end_get_phrases(iterator);
+    return hash;
+}
+
+static void td_user_measure(const struct td_api *api, void *handle, void *context,
+                             unsigned slots, struct td_clock init) {
+    struct td_user_api user;
+    *(void **)(&user.text) = td_symbol(handle, "pinyin", "token_get_phrase");
+    *(void **)(&user.count) = td_symbol(handle, "pinyin", "token_get_n_pronunciation");
+    *(void **)(&user.nth) = td_symbol(handle, "pinyin", "token_get_nth_pronunciation");
+    *(void **)(&user.unigram) = td_symbol(handle, "pinyin", "token_get_unigram_frequency");
+    *(void **)(&user.mask) = td_symbol(handle, "pinyin", "mask_out");
+    *(void **)(&user.array_new) = dlsym(handle, "g_array_sized_new");
+    *(void **)(&user.array_free) = dlsym(handle, "g_array_free");
+    if (!user.array_new || !user.array_free) exit(1);
+    void *instance = api->common.alloc_instance(context);
+    struct td_keys *keys = user.array_new(false, false, sizeof(uint16_t), 16);
+    if (!instance || !keys) exit(1);
+    td_checkpoint("R0", 1, true);
+    struct td_clock start = td_now();
+    uint64_t read = bisect_user_read_unit(api, &user, instance, keys, slots);
+    struct td_clock reading = td_elapsed(start);
+    td_checkpoint("R1", 1, true);
+    start = td_now();
+    uint64_t enumerate = bisect_user_enumerate_unit(api, &user, instance, keys, slots);
+    struct td_clock enumeration = td_elapsed(start);
+    td_checkpoint("N1", 1, true);
+    start = td_now();
+    uint64_t export = bisect_user_export_unit(api, context);
+    struct td_clock exporting = td_elapsed(start);
+    td_checkpoint("E1", 1, true);
+    user.array_free(keys, true);
+    api->common.free_instance(instance);
+    const char *rows = getenv("OXPINYIN_USER_ROWS");
+    unsigned writes = 0;
+    struct td_clock writing = {0};
+    bool saved = false;
+    td_checkpoint("W0", 1, true);
+    if (rows && slots) {
+        start = td_now();
+        writes = bisect_user_write_unit(api, &user, context, rows, slots);
+        saved = true;
+        writing = td_elapsed(start);
+        if (!saved) exit(1);
+    }
+    td_checkpoint("W1", 1, true);
+    printf("{\"user_phrase\":true,\"read_hash\":\"%016llx\",\"enumerate_hash\":\"%016llx\","
+           "\"export_hash\":\"%016llx\",\"write_cycles\":%u,\"saved\":%s,\"times\":{", (unsigned long long)read,
+           (unsigned long long)enumerate, (unsigned long long)export, writes, saved ? "true" : "false");
+    td_print_time("open", init, false);
+    td_print_time("read", reading, true);
+    td_print_time("enumerate", enumeration, true);
+    td_print_time("export", exporting, true);
+    td_print_time("write", writing, true);
+    puts("}}");
+}
+
 static int run_teardown_mode(int argc, char **argv) {
     struct rlimit no_core = {0, 0};
     if (setrlimit(RLIMIT_CORE, &no_core)) { perror("teardown core limit"); return 1; }
     if (argc != 12 || (strcmp(argv[2], "pinyin") && strcmp(argv[2], "zhuyin"))) {
         fputs("usage: bisect --teardown pinyin|zhuyin SO DATA USER "
-              "time|memory|init|export|populate|observe SAVE INSTANCES CYCLES "
+              "time|memory|init|export|populate|observe|user SAVE INSTANCES CYCLES "
               "first-candidate|dirty|multi ROWS_OR_DASH\n", stderr);
         return 2;
     }
@@ -750,9 +899,17 @@ static int run_teardown_mode(int argc, char **argv) {
     bool populate = strcmp(mode, "populate") == 0;
     bool exporting = strcmp(mode, "export") == 0;
     bool observing = strcmp(mode, "observe") == 0;
-    if (!wait && !init_mode && !populate && !exporting && !observing && strcmp(mode, "time")) return 2;
-    if (strcmp(argv[7], "0") && !save) return 2;
     char *end;
+    bool user_mode = strcmp(mode, "user") == 0;
+    if (!wait && !init_mode && !populate && !exporting && !observing && !user_mode && strcmp(mode, "time")) return 2;
+    unsigned user_slots = 0;
+    if (user_mode) {
+        if (strcmp(argv[2], "pinyin")) return 2;
+        unsigned long slots = strtoul(argv[11], &end, 10);
+        if (*end || slots == 1 || slots > 0x1000000) return 2;
+        user_slots = (unsigned)slots;
+    }
+    if (strcmp(argv[7], "0") && !save) return 2;
     long instances = strtol(argv[8], &end, 10);
     if (*end || instances < 1 || instances > TD_MAX_INSTANCES) return 2;
     long cycles = strtol(argv[9], &end, 10);
@@ -771,7 +928,7 @@ static int run_teardown_mode(int argc, char **argv) {
     if (first_window && (!init_mode || instances != 1 || cycles != 1 || dirty || multi)) return 2;
     struct td_probe probe;
     td_probe_open(&probe, init_mode);
-    if (wait || init_mode) {
+    if (wait || init_mode || user_mode) {
         /* Fault the pipe/stdio wait path before load and M0, rather than
          * racing its first-use residency against the parent's smaps read. */
         puts("{\"teardown\":\"ready\"}");
@@ -787,7 +944,7 @@ static int run_teardown_mode(int argc, char **argv) {
     struct td_api api;
     td_resolve(handle, argv[2], &api);
     struct td_clock load = td_elapsed(start);
-    if (!first_window) td_checkpoint("M0", 0, wait || init_mode);
+    if (!first_window) td_checkpoint("M0", 0, wait || init_mode || user_mode);
     for (int cycle = 1; cycle <= cycles; cycle++) {
         void *allocated[TD_MAX_INSTANCES] = {0};
         struct td_clock beginning = td_now();
@@ -803,9 +960,15 @@ static int run_teardown_mode(int argc, char **argv) {
         if (!first_window) td_probe_toggle(&probe, false);
         if (!context) { fputs("teardown init returned NULL\n", stderr); return 1; }
         if (!first_window) {
-            td_checkpoint("I1", cycle, init_mode);
+            td_checkpoint("I1", cycle, init_mode || user_mode);
             td_probe_report(&probe);
             td_probe_close(&probe);
+        }
+        if (user_mode) {
+            td_user_measure(&api, handle, context, user_slots, init);
+            api.common.fini(context);
+            if (dlclose(handle)) return 1;
+            return 0;
         }
         if (exporting) {
             int status = api.zhuyin ? 2 : td_export(&api, context);
@@ -815,6 +978,12 @@ static int run_teardown_mode(int argc, char **argv) {
         }
         if (populate) {
             bool ok = td_populate(&api, context, argv[11]);
+            if (ok && getenv("OXPINYIN_TEARDOWN_SPARSE")) {
+                bool (*mask)(void *, uint32_t, uint32_t);
+                *(void **)(&mask) = td_symbol(handle, "pinyin", "mask_out");
+                for (unsigned residue = 0; residue < 16; residue++)
+                    if (residue != 1 && !mask(context, 0x0F00000F, 0x07000000 | residue)) ok = false;
+            }
             bool saved = ok && api.common.save(context);
             api.common.fini(context);
             dlclose(handle);

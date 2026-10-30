@@ -10,6 +10,7 @@ import contextlib
 import copy
 import hashlib
 import importlib.util
+import itertools
 import json
 import os
 from pathlib import Path
@@ -18,6 +19,7 @@ import runpy
 import selectors
 import shutil
 import stat
+import struct
 import subprocess
 import sys
 import threading
@@ -36,8 +38,6 @@ from tools.dev.measure.stats import (
 )
 from tools.dev.mounts import filesystem
 FIELDS = ('Rss', 'Pss', 'Anonymous', 'Private_Clean', 'Private_Dirty', 'Shared_Clean')
-PROFILES = ('empty', 'modest', 'phrases', 'journals')
-CASES = (*PROFILES, 'modest-unsaved', 'modest-saved')
 # The control is the subject's bytes at a second path. With `libraries/ox`
 # against `libraries/control`, #1030 measured the control at 15 B more heap and
 # 12-354 more Ir, consistent with its 5-byte longer path (the loader and the
@@ -71,6 +71,8 @@ def sibling(name):
 
 SMAPS = sibling('rss-smaps')
 STARTUP_PROFILE = sibling('startup_profile')
+PROFILES = STARTUP_PROFILE.PROFILES
+CASES = (*PROFILES, 'modest-unsaved', 'modest-saved')
 FUNCTION_ORDER = runpy.run_path(str(ROOT / 'tools/packaging/function_order.py'))
 
 
@@ -153,11 +155,11 @@ def exports(facade):
 def build_worker(work, instrumentation=None):
     """Compile a native teardown executable in work and return its build identity.
 
-    Accept optional Massif or Memcheck instrumentation; reject other values
+    Accept optional Massif, Memcheck or allocation-xtree instrumentation; reject other values
     with ValueError. Return the executable and command, byte size, and source/
     executable hashes; compiler failures propagate.
     """
-    if instrumentation not in (None, 'massif', 'memcheck'):
+    if instrumentation not in (None, 'massif', 'memcheck', 'xtree'):
         raise ValueError('unknown worker instrumentation')
     executable = work / ('bisect-teardown' + ('-' + instrumentation if instrumentation else ''))
     command = ['cc', '-std=gnu11', '-Wall', '-Wextra', '-Werror', '-O2', '-g',
@@ -470,6 +472,37 @@ def modest_rows():
     """Build the repeated two-phrase fixture recipe for all four libraries at frequency 5."""
     return [(library, phrase, pinyin, 5) for library in range(1, 5) for _ in range(10)
             for phrase, pinyin in (('测试', "ce4'shi4"), ('测侧', "ce4'ce4"))]
+
+
+def user_rows(exported, readings=1):
+    """Import 10,000 distinct multi-character items into USER_FILE library 7.
+
+    Keep the first exported reading, then distinct tone variants in lexical
+    tone order. All variants use the same inventory syllables. Frequency 5
+    keeps the pin's u32 library total below overflow even with eight readings.
+    The single-reading and eight-reading recipes select the same phrases.
+    """
+    if readings not in (1, 8):
+        raise ValueError('user profile requires one or eight readings')
+    seen, rows = set(), []
+    for _, phrase, pronunciation, _ in exported:
+        if phrase in seen or not 2 <= len(phrase) < 16:
+            continue
+        stems = [re.sub('[1-5]$', '', key) for key in pronunciation.split("'")]
+        if len(stems) != len(phrase) or any(not re.fullmatch('[a-z]+', key) for key in stems):
+            continue
+        seen.add(phrase)
+        variants = [pronunciation]
+        for tones in itertools.product(range(6), repeat=len(stems)):
+            if len(variants) == readings:
+                break
+            variant = "'".join(stem + (str(tone) if tone else '') for stem, tone in zip(stems, tones))
+            if variant not in variants:
+                variants.append(variant)
+        rows.extend((7, phrase, variant, 5) for variant in variants)
+        if len(seen) == 10000:
+            return rows
+    raise ValueError('export cannot supply 10,000 multi-character user items')
 
 
 def row_text(rows):
@@ -1084,7 +1117,8 @@ class Campaign:
             command += ['valgrind', '--tool=lackey', '--trace-mem=yes', '--log-fd=%d' % trace_write,
                         '--vgdb-prefix=' + str(scratch / 'vgdb')]
         if profiler:
-            command += ['valgrind', '--tool=' + profiler.removesuffix('-init'), '--vgdb-prefix=' + str(scratch / 'vgdb')]
+            tool = 'memcheck' if profiler == 'xtree' else profiler.split('-')[0]
+            command += ['valgrind', '--tool=' + tool, '--vgdb-prefix=' + str(scratch / 'vgdb')]
             if profiler == 'callgrind':
                 command += ['--collect-atstart=no', '--cache-sim=no', '--branch-sim=no',
                             '--read-inline-info=yes', '--callgrind-out-file=/dev/stderr',
@@ -1103,16 +1137,29 @@ class Campaign:
             elif profiler == 'memcheck':
                 command += ['--leak-check=no', '--show-leak-kinds=all', '--num-callers=24',
                             '--undef-value-errors=no']
+            elif profiler == 'xtree':
+                command += ['--leak-check=no', '--undef-value-errors=no', '--xtree-memory=full',
+                            '--xtree-memory-file=/dev/null', '--num-callers=30']
+            elif profiler.startswith('callgrind-user-'):
+                operation = profiler.removeprefix('callgrind-user-')
+                anchor = facade + '_init' if operation == 'open' else 'bisect_user_' + operation + '_unit'
+                command += ['--collect-atstart=no', '--cache-sim=no', '--branch-sim=no',
+                            '--callgrind-out-file=/dev/stderr', '--toggle-collect=' + anchor]
             else:
                 raise ValueError('unknown profiler')
+        operand = str(user_library_shape(profile / 'user.bin')['slots'] if (profile / 'user.bin').exists() else 0) \
+            if mode == 'user' else str(rows) if rows else '-'
         command += [str(self.worker), '--teardown', facade, str(library), str(self.data), str(user),
-                    mode, str(int(save)), str(instances), str(cycles), scenario, str(rows) if rows else '-']
+                    mode, str(int(save)), str(instances), str(cycles), scenario, operand]
         env = dict(os.environ, **self.environment, OXPINYIN_TEARDOWN_EXPORTS=','.join(exports(facade)))
         env.pop('OXPINYIN_TEARDOWN_INIT_PROBE', None)
         env.pop('OXPINYIN_TEARDOWN_PROBE_WINDOW', None)
         if mode == 'init':
             env['OXPINYIN_TEARDOWN_PROBE_WINDOW'] = self.attribute_window
         env.pop('OXPINYIN_TEARDOWN_MARKER_FD', None)
+        env.pop('OXPINYIN_USER_ROWS', None)
+        if mode == 'user' and rows is not None:
+            env['OXPINYIN_USER_ROWS'] = str(rows)
         if inputs is not None:
             env['OXPINYIN_TEARDOWN_INPUTS'] = str(inputs)
         if probe not in (None, 'none'):
@@ -1210,10 +1257,11 @@ class Campaign:
                                     if cold_set is not None and mode == 'memory':
                                         memory['residency'] = file_residency(cold_set, library, self.data, user,
                                                                              vectors=True, rows=rows)
-                                    if mode == 'init':
+                                    if mode in ('init', 'user'):
                                         # Private paths differ per sample; name them by role.
                                         memory['groups'] = {key.replace(str(user), '$USER'): value
                                                             for key, value in memory['groups'].items()}
+                                    if mode == 'init':
                                         memory['residency'] = residency(files, library, self.data, user,
                                                                         vectors=cold, rows=rows)
                                         memory['maps'] = process_maps(process.pid)
@@ -1244,12 +1292,15 @@ class Campaign:
             self.driver.check_cancelled()
             if status:
                 raise ValueError(f'native teardown failed ({status}): {bytes(errors)[-3000:]!r}')
+            if mode == 'user' and boundaries != [('M0', 0), ('I1', 1), ('R0', 1), ('R1', 1),
+                                                ('N1', 1), ('E1', 1), ('W0', 1), ('W1', 1)]:
+                raise ValueError('native user checkpoint boundaries are out of order')
             if file_set(profile) != expected_source:
                 raise ValueError('source profile was changed')
             stderr = errors.decode('utf-8', 'surrogateescape').replace(str(user), '$USER')
             observation = dict(samples=[{key: row[key] for key in ('options', 'saved', 'observations')} for row in samples],
                                stderr=stderr, userfiles=profile_contents(self.driver, user, library=library), documents=documents)
-            if mode not in ('export', 'populate'):
+            if mode not in ('export', 'populate', 'user'):
                 if len(samples) != cycles or closed is None or closed['status'] != 0:
                     raise ValueError('native lifecycle did not complete')
                 if mode == 'init' and boundaries != [('M0', 0), ('I1', 1)]:
@@ -1288,6 +1339,8 @@ class Campaign:
                 observation['reopen'] = self.run(facade, library, user, mode='observe', inputs=inputs)['observation']
             result = dict(observation=observation, samples=samples, checkpoints=checkpoints, command=command,
                           raw_profile_identity=identity(file_set(user)))
+            if mode == 'user':
+                result['user_bin_sha256'] = digest_bytes((user / 'user.bin').read_bytes()) if (user / 'user.bin').exists() else None
             if mode == 'init':
                 probes = [value for value in documents if isinstance(value, dict) and 'init_probe' in value]
                 if len(probes) != (probe in ('count', 'faults', *INIT_SAMPLE_PERIOD_NS)):
@@ -1350,12 +1403,15 @@ def provision(campaign, pin, root):
     unit keeps its own steps in order, and the fixture records print in
     profile order.
     """
+    profiles = {name: root / name / 'user' for name in PROFILES}
+    existing = {name: user for name, user in profiles.items() if user.parent.exists()}
     if root.exists():
-        profiles = {name: root / name / 'user' for name in PROFILES}
-        for user in profiles.values():
+        for user in existing.values():
             STARTUP_PROFILE.check(user, user.parent / 'profile.manifest')
-        return profiles
-    root.mkdir()
+        if len(existing) == len(profiles):
+            return profiles
+    else:
+        root.mkdir()
     export_user = root / 'export-user'
     export_user.mkdir()
     export = campaign.run('pinyin', pin, export_user, mode='export')['observation']['documents']
@@ -1364,7 +1420,9 @@ def provision(campaign, pin, root):
         library, phrase, pinyin, count = line.split('\t')
         exported.append((int(library), phrase, pinyin, int(count)))
     shutil.rmtree(export_user)
-    recipes = dict(empty=[], modest=modest_rows(), phrases=select_rows(exported), journals=select_rows(exported, True))
+    recipes = dict(empty=[], modest=modest_rows(), phrases=select_rows(exported), journals=select_rows(exported, True),
+                   user=user_rows(exported), user8=user_rows(exported, 8), usersparse=user_rows(exported))
+    recipes = {name: rows for name, rows in recipes.items() if name not in existing}
 
     def fixture(name, rows):
         """Build one profile: recipe, population, manifest, empty witness, in that order."""
@@ -1378,7 +1436,7 @@ def provision(campaign, pin, root):
             if rows:
                 # Populate through a private working copy, then move its resulting
                 # profile into place. run() intentionally never mutates its input.
-                populate_user(unit, pin, user, path)
+                populate_user(unit, pin, user, path, **({'sparse': True} if name == 'usersparse' else {}))
             files = file_set(user)
             (destination / 'profile.manifest').write_text(STARTUP_PROFILE.manifest(user))
             (destination / 'witness.txt').write_text('')
@@ -1390,10 +1448,10 @@ def provision(campaign, pin, root):
         print_record('fixture', **result[1])
     built = fan_out(campaign, [fixture(name, rows) for name, rows in recipes.items()],
                       'teardown fixture population', record)
-    return {name: result[0] for name, result in zip(recipes, built)}
+    return profiles
 
 
-def populate_user(campaign, pin, user, rows):
+def populate_user(campaign, pin, user, rows, *, sparse=False):
     # Fixture generation is untimed. This is the same native executable and
     # facade machinery, with no external workload dependency.
     """Populate and save a fixture through the pin's native pinyin worker.
@@ -1405,6 +1463,9 @@ def populate_user(campaign, pin, user, rows):
     command = [str(campaign.worker), '--teardown', 'pinyin', str(pin), str(campaign.data), str(user),
                'populate', '1', '1', '1', 'first-candidate', str(rows)]
     env = dict(os.environ, **campaign.environment, OXPINYIN_TEARDOWN_EXPORTS=','.join(exports('pinyin')))
+    env.pop('OXPINYIN_TEARDOWN_SPARSE', None)
+    if sparse:
+        env['OXPINYIN_TEARDOWN_SPARSE'] = '1'
     campaign.driver.check_cancelled()
     campaign.driver.check_tkrzw(os.environ.get('CONTRACT_DIFF_CELL', 'bdb'),
                                'teardown.py/populate', 'pin', pin, env=env)
@@ -1467,7 +1528,7 @@ def run(args, driver, parser):
     subjects = {'ox': dict(pinyin=args.pinyin_so, zhuyin=args.zhuyin_so),
                 'pin': {facade: args.prefix / 'lib' / ('lib' + facade + '.so') for facade in facades}}
     if getattr(args, 'base_pinyin_so', None) or getattr(args, 'base_zhuyin_so', None):
-        if args.teardown_stage not in ('verify', 'confirm', 'init-attribute'):
+        if args.teardown_stage not in ('verify', 'confirm', 'init-attribute', 'user-verify', 'user-phrase'):
             parser.error('a teardown base arm supports verify, confirm and init-attribute')
         subjects['base'] = dict(pinyin=args.base_pinyin_so, zhuyin=args.base_zhuyin_so)
     for paths in subjects.values():
@@ -1523,6 +1584,10 @@ def run(args, driver, parser):
         campaign.provisioner = libraries / LIBRARY_DIRECTORIES['pin'] / 'libpinyin.so'
         shutil.copyfile(args.prefix / 'lib' / 'libpinyin.so', campaign.provisioner)
     profiles = provision(campaign, campaign.provisioner, work / 'profiles')
+    if args.teardown_stage in ('user-verify', 'user-phrase'):
+        if facades != ('pinyin',) or cache != 'warm' or any(case not in ('empty', 'user', 'user8', 'usersparse') for case in cases):
+            parser.error('user-phrase requires warm pinyin and empty/user/user8/usersparse cases')
+        return user_phrase_measure(campaign, subjects, profiles, cases, verify=args.teardown_stage == 'user-verify')
     if args.teardown_stage == 'provision':
         prepare_witnesses(campaign, campaign.provisioner, profiles)
         return 0
@@ -1569,6 +1634,9 @@ def execute(campaign, args, subjects, profiles, cases, facades, driver):
         print_record('checkpoint', status='equivalence-blocked', comparable=[list(key) for key, value in comparable.items() if value])
         return 3
     if args.teardown_stage == 'verify':
+        user_cases = [case for case in cases if case in ('user', 'user8', 'usersparse')]
+        if user_cases and 'pinyin' in facades:
+            return user_phrase_measure(campaign, subjects, profiles, user_cases, verify=True)
         return 0
     if args.teardown_stage in ('pilot', 'confirm'):
         pilot = args.teardown_stage == 'pilot'
@@ -2048,6 +2116,232 @@ def case_options(case, profiles, dirty_rows):
     """Map a case name to its base profile, dirty rows, scenario, and save flag."""
     return dict(profile=profiles[case.split('-')[0]], scenario='dirty' if '-' in case else 'first-candidate',
                 rows=dirty_rows if '-' in case else None, save=case.endswith('-saved'))
+
+
+USER_WINDOWS = [('open', 'M0', 'I1'), ('read', 'R0', 'R1'),
+                ('enumerate', 'R1', 'N1'), ('export', 'N1', 'E1'), ('write', 'W0', 'W1')]
+
+
+def allocation_windows(text, windows=USER_WINDOWS):
+    """Difference full Memcheck xtmemory totals, including freed allocations.
+
+    Valgrind's totBk/totB include transient blocks and file-read buffers;
+    curBk/curB differences are retained blocks/bytes, not allocation counts.
+    These are process-wide libc/C++/Rust totals inside the named C ABI windows.
+    """
+    points = {}
+    for point, body in re.findall(r'TEARDOWN_ALLOC (\w+) BEGIN\n(.*?)TEARDOWN_ALLOC \1 END', text, re.S):
+        events = re.findall(r'^events:\s*(.+)$', body, re.M)
+        totals = re.findall(r'^totals:\s*(.+)$', body, re.M)
+        if point in points or len(events) != 1 or len(totals) != 1:
+            raise ValueError('invalid or duplicate allocation snapshot: ' + point)
+        values = dict(zip(events[0].split(), map(int, totals[0].split()), strict=True))
+        if set(values) != {'curB', 'curBk', 'totB', 'totBk', 'totFdB', 'totFdBk'}:
+            raise ValueError('allocation snapshot has incomplete events')
+        points[point] = values
+    result = {}
+    for operation, before, after in windows:
+        if before not in points or after not in points:
+            raise ValueError('missing allocation window: ' + operation)
+        delta = signed_delta(points[after], points[before])
+        if any(delta[field] < 0 for field in ('totB', 'totBk', 'totFdB', 'totFdBk')):
+            raise ValueError('allocation totals went backwards')
+        result[operation] = dict(allocations=delta['totBk'], allocated_bytes=delta['totB'],
+                                 retained_blocks=delta['curBk'], retained_bytes=delta['curB'])
+    return result
+
+
+def user_library_shape(path):
+    """Validate and count pin-format user items without materializing their readings.
+
+    This controller-only census proves that the profile loads USER_FILE items,
+    and reports slots, live body bytes and reading histogram for the baseline.
+    """
+    raw = Path(path).read_bytes()
+    if len(raw) < 27:
+        raise ValueError('short user library')
+    size, checksum = struct.unpack_from('<II', raw)
+    payload = raw[8:]
+    calculated = 0
+    for offset in range(0, len(payload), 4):
+        calculated ^= int.from_bytes(payload[offset:offset + 4], 'little')
+    if size != len(payload) or checksum != calculated:
+        raise ValueError('user library frame differs')
+    _, one, two, three = struct.unpack_from('<IIII', payload)
+    if not (one == 17 and one < two < three == len(payload) and (two - one - 1) % 4 == 0) or \
+            any(payload[index - 1] != ord('#') for index in (one, two, three)):
+        raise ValueError('invalid user library sections')
+    offsets = struct.unpack('<' + 'I' * ((two - one - 1) // 4), payload[one:two - 1])
+    content, histogram, live, items = payload[two:three - 1], {}, 0, 0
+    for offset in offsets:
+        if not offset:
+            continue
+        if offset < 8 or offset + 6 > len(content):
+            raise ValueError('invalid user item offset')
+        length, readings = content[offset:offset + 2]
+        body = 6 + 4 * length + readings * (2 * length + 4)
+        if not 0 < length < 16 or offset + body > len(content):
+            raise ValueError('invalid user item body')
+        histogram[readings] = histogram.get(readings, 0) + 1
+        items += 1
+        live += body
+    return dict(items=items, slots=len(offsets), readings=histogram, live_body_bytes=live,
+                content_bytes=len(content), file_bytes=len(raw))
+
+
+def user_phrase_measure(campaign, subjects, profiles, cases, *, verify=False):
+    """Measure the library-7 baseline in the existing worker/controller.
+
+    Native rounds are primary wall samples; fresh profiler runs separately
+    count allocations (all heaps), instructions and sampled peak live heap.
+    Exact allocation/heap controls must pass. RandomState/BDB Ir keeps ranges.
+    """
+    worker = campaign.worker
+    builds = {} if verify else {kind: build_worker(campaign.work, kind)[0] for kind in ('xtree', 'massif')}
+    references = {}
+    final_profiles = {}
+    write_rows = campaign.work / 'user-write.tsv'
+    write_rows.write_text('\n'.join((profiles['user8'].parent / 'rows.tsv').read_text().splitlines()[:8]) + '\n')
+    def observe(row):
+        documents = [doc for doc in row['observation']['documents'] if doc.get('user_phrase')]
+        if len(documents) != 1:
+            raise ValueError('missing user phrase result')
+        return dict({key: value for key, value in documents[0].items() if key != 'times'},
+                    saved_user_bin_sha256=row['user_bin_sha256']), documents[0]['times']
+    def run(side, case, profiler=None):
+        row = campaign.run('pinyin', subjects[side]['pinyin'], profiles[case], mode='user', rows=write_rows, profiler=profiler)
+        if profiler is None and row['observation']['stderr']:
+            raise ValueError('NOT COMPARABLE: user workload emitted diagnostics: ' + row['observation']['stderr'])
+        answer, times = observe(row)
+        if case in references and answer != references[case]:
+            raise ValueError('NOT COMPARABLE: user phrase getters or export changed: ' + side)
+        files = row['observation']['userfiles']
+        if case in final_profiles and files != final_profiles[case]:
+            raise ValueError('NOT COMPARABLE: user profile changed: ' + side)
+        final_profiles.setdefault(case, files)
+        return row, answer, times
+    invalid = False
+    for case in cases:
+        shape = user_library_shape(profiles[case] / 'user.bin') if case != 'empty' else dict(items=0, slots=0, readings={})
+        expected = {} if case == 'empty' else {8 if case == 'user8' else 1: 625 if case == 'usersparse' else 10000}
+        if shape['readings'] != expected:
+            raise ValueError('user profile does not have its required item/reading counts')
+        print_record('user-profile', case=case, **shape)
+        rows = {side: [] for side in subjects}
+        for index in range(1 if verify else TIMING_ROUNDS + TIMING_WARMUPS):
+            for side in rotation(index, subjects):
+                row, answer, times = run(side, case)
+                references.setdefault(case, answer)
+                if index >= TIMING_WARMUPS:
+                    rows[side].append(row)
+        print_record('user-equivalence', case=case, verdict='COMPARABLE', **references[case])
+        if verify:
+            continue
+        for operation, _, _ in USER_WINDOWS:
+            if operation == 'write' and case == 'empty':
+                continue
+            values = {side: [observe(row)[1][operation]['wall_ns'] for row in samples]
+                      for side, samples in rows.items()}
+            control = stable_control(values['ox'], values['control'])
+            print_record('user-time', case=case, operation=operation, control=control,
+                         verdict='STABLE' if control['stable'] else 'INCONCLUSIVE',
+                         summaries={side: summary(value) for side, value in values.items()},
+                         ox_pin_ratio=paired_ratio(values['ox'], values['pin']) if control['stable'] else None,
+                         ox_base_ratio=paired_ratio(values['ox'], values['base'])
+                         if control['stable'] and 'base' in values else None)
+        for point, cycle in (('M0', 0), ('I1', 1)):
+            groups = sorted({key for samples in rows.values() for row in samples
+                             for key in row['checkpoints'][cycle][point]['groups']})
+            for group in groups:
+                values = {side: [row['checkpoints'][cycle][point]['groups'].get(group, {}).get('Pss', 0)
+                                 for row in samples] for side, samples in rows.items()}
+                print_record('user-pss', case=case, point=point, mapping=group,
+                             summaries={side: summary(value) for side, value in values.items()},
+                             control=stable_residency(values['ox'], values['control']))
+            values = {side: [row['checkpoints'][cycle][point]['totals']['Pss'] for row in samples]
+                      for side, samples in rows.items()}
+            print_record('user-pss-total', case=case, point=point,
+                         summaries={side: summary(value) for side, value in values.items()},
+                         control=stable_residency(values['ox'], values['control']))
+        for profiler in ('xtree', 'massif'):
+            campaign.worker = builds[profiler]
+            costs = {}
+            for side in rotation(0, subjects):
+                row, _, _ = run(side, case, profiler)
+                text = row['observation']['stderr']
+                if profiler == 'xtree':
+                    costs[side] = allocation_windows(text)
+                else:
+                    costs[side] = user_massif(text)
+            exact = (user_heap_counts(costs['ox']) == user_heap_counts(costs['control'])
+                     if profiler == 'massif' else costs['ox'] == costs['control'])
+            invalid |= not exact
+            print_record('user-' + profiler, case=case, verdict='VALID' if exact else 'INVALID',
+                         counts=costs if exact else {'control': costs['control']}, profiler_only=True)
+        campaign.worker = worker
+        for operation, _, _ in USER_WINDOWS:
+            if operation == 'write' and case == 'empty':
+                continue
+            counts = {side: [] for side in subjects}
+            compactions = {side: [] for side in subjects}
+            for index in range(INIT_IR_ROUNDS):
+                for side in rotation(index, subjects):
+                    row, _, _ = run(side, case, 'callgrind-user-' + operation)
+                    counts[side].append(callgrind_costs(row['observation']['stderr'], subjects[side]['pinyin'])['totals']['Ir'])
+                    if operation == 'write':
+                        compactions[side].append(compaction_calls(row['observation']['stderr']))
+            print_record('user-ir', case=case, operation=operation, diagnostic=True, counts=counts,
+                         ranges={side: [min(value), max(value)] for side, value in counts.items()})
+            if operation == 'write':
+                print_record('user-compactions', case=case, calls=compactions, profiler_only=True,
+                             arena_bounds='not applicable to the row representation; no arena counters added in this phase')
+    campaign.worker = worker
+    return 1 if invalid else 0
+
+
+def user_massif(text):
+    """Sampled live-heap peaks and exact boundary heaps for the user windows."""
+    boundaries = {}
+    for point, body in re.findall(r'TEARDOWN_HEAP (\w+) BEGIN\n(.*?)TEARDOWN_HEAP \1 END', text, re.S):
+        samples = massif_snapshots(body)
+        if point in boundaries or len(samples) != 1:
+            raise ValueError('invalid user heap checkpoint')
+        boundaries[point] = samples[0]
+    all_samples = massif_snapshots(text)
+    result = {}
+    for operation, before, after in USER_WINDOWS:
+        if before not in boundaries or after not in boundaries:
+            raise ValueError('missing user heap boundary: ' + operation)
+        low, high = boundaries[before], boundaries[after]
+        result[operation] = dict(before_bytes=low['mem_heap_B'], after_bytes=high['mem_heap_B'],
+            sampled_peak_bytes=max(value['mem_heap_B'] for value in all_samples
+                                   if low['time'] <= value['time'] <= high['time']))
+    return result
+
+
+def user_heap_counts(costs):
+    """Apply the existing exact boundary-heap rule; sampled peaks stay diagnostic."""
+    return {operation: {field: value for field, value in counts.items() if field != 'sampled_peak_bytes'}
+            for operation, counts in costs.items()}
+
+
+def compaction_calls(text):
+    """Count the pin's compact calls in the scoped write Callgrind profile.
+
+    The current row store has no UserLibrary arena or counter. Keep that
+    absence explicit instead of inventing an arena length from heap totals.
+    """
+    names, callee, counts = {}, '', {}
+    for line in text.splitlines():
+        match = re.match(r'^(c?)fn=(?:\((\d+)\))?\s*(.*)$', line)
+        if match:
+            if match[2] and match[3]:
+                names[match[2]] = match[3]
+            if match[1]:
+                callee = match[3] or names.get(match[2], '')
+        elif line.startswith('calls=') and 'PhraseIndex::compact(' in callee:
+            counts[callee] = counts.get(callee, 0) + int(line.split()[0].split('=')[1])
+    return counts
 
 
 def require_profile_controls(row, reference):
