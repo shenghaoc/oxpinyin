@@ -10,8 +10,6 @@
 mod fixture_provenance;
 mod parser_acceptance;
 mod scheme_parsers;
-mod scoring;
-mod scoring_fixture;
 mod zhuyin_parse_parity;
 
 /// With `autotests = false`, cargo builds only declared targets, so an

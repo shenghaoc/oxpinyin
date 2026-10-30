@@ -1,12 +1,12 @@
 //! Scorer behaviour against the shared fixture doubles.
 //!
-//! Moved out of `src/scoring.rs`'s inline tests: they exercise the public
-//! `Scorer` through the fixture-backed `Dictionary`/`LanguageModel` from
-//! `oxpinyin-testsupport`, which a `cfg(test)` build of `oxpinyin-core`
-//! itself cannot link (the dev-dependency cycle would build two instances
-//! of the crate, and trait impls would not unify). These are integration
-//! tests in the Rust sense anyway — components working together across the
-//! public seam.
+//! These tests exercise `oxpinyin-core`'s public `Scorer` through the
+//! fixture-backed `Dictionary`/`LanguageModel` this crate provides. They
+//! live under this crate, not under `oxpinyin-core/tests/`, because this
+//! crate depends on core: a core dev-dependency on it would close a cycle
+//! that rust-analyzer reports and that builds two instances of core, whose
+//! trait impls do not unify. They are integration tests in the Rust sense
+//! anyway — components working together across the public seam.
 
 use oxpinyin_core::cost::UNKNOWN_COST;
 use oxpinyin_core::graph::{EdgeKind, SegmentGraph};
