@@ -10,13 +10,15 @@ and the result.
 <!--
 Use a few bullets for substantive changes. Do not repeat the file list.
 If you add a new driver, state why no existing driver could take the case
-(Verification cells, rule 6).
+(docs/runbooks/verification.md, rule 6).
 -->
 
 ## Results
 
 <!--
 State the results and the command or just recipe that reproduces them.
+CI on the PR head provides the clippy and Rust-test results (verification
+rule 5); state the local checks CI does not cover.
 Disclose any required check that failed or could not run as a limitation.
 Omit checks that do not apply. Keep historical results clearly identified.
 Follow CONTRIBUTING.md#results-and-reproduction: no raw logs, captures,

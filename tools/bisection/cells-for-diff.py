@@ -1,5 +1,5 @@
 #!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
-"""Select the verification cells for a diff: AGENTS.md "Verification cells", rule 2.
+"""Select the verification cells for a diff: docs/runbooks/verification.md, rule 2.
 
 Runs rule 2's three checks on BASE...HEAD and prints the cells to run, which check
 fired and the matching paths and lines, as plain text for a PR body. A check that

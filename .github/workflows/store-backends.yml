@@ -14,8 +14,8 @@ name: Store backends
 # Seven jobs:
 #   - changes is the path gate. It runs first on every push and PR to
 #     main and sets `run` when tools/bisection/cells-for-diff.py selects
-#     all three cells for the event's base...HEAD (AGENTS.md "Verification
-#     cells", rule 2, the rule local verification uses) or the diff touches
+#     all three cells for the event's base...HEAD (docs/runbooks/verification.md,
+#     rule 2, the rule local verification uses) or the diff touches
 #     this workflow's own infrastructure, listed in the gate step. A missing
 #     base runs everything.
 #     The other jobs need it and run only when `run` is true; when it is
@@ -175,7 +175,7 @@ jobs:
             echo 'run=true' >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          # The backend rule is AGENTS.md "Verification cells", rule 2, as
+          # The backend rule is docs/runbooks/verification.md, rule 2, as
           # tools/bisection/cells-for-diff.py implements it for local runs:
           # a path under crates/oxpinyin-store/, a feature = "<backend>" line
           # in a changed non-Markdown file, or a Cargo.toml line naming a

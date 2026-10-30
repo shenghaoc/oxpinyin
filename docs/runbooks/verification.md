@@ -47,9 +47,17 @@ Never mutate the pin.
 
 ## 5. Local test gate
 
-Run `cargo test -p <crate>`, fmt and clippy for each crate the diff touches.
-CI runs the workspace sweep.
-Do not run that sweep as a local gate.
+CI is the routine clippy and Rust-test gate (maintainer ruling 2026-10-30 UTC).
+Each stack member must pass its required verification independently.
+Successful CI on that member's final source tree satisfies the required clippy and Rust-test checks for the required package, feature and platform scope.
+Do not repeat an equivalent passing CI check locally.
+A check that is missing, cancelled or skipped when it applies does not count as a pass.
+A check skipped because it does not apply to the change is not a failure.
+Run fmt locally; it is cheap.
+Run locally the required checks that CI does not cover: the issue's differentials, revert-and-check, function-order policy regeneration, sizes and measurements.
+These checks keep their current rules.
+All commands stay documented and runnable without CI.
+Run them locally to reproduce a CI failure.
 Apply the heavy-work admission procedure in rule 8 to commands that compile.
 
 ## 6. Shared tooling
@@ -81,25 +89,29 @@ Choose checks from the changes since the last green gate:
   Markdown-only changes need no Rust formatter.
   Do not run builds, tests, clippy, differentials or backend-selection checks.
   This case overrides rule 2, including comments-only changes in backend files.
-- **A review fix in code:** run fmt, clippy and `cargo test -p` for touched crates.
-  Run only the issue's differentials, on the reference cell.
+- **A review fix in code:** run fmt, focused tests and the issue's differentials on the reference cell.
+  CI provides clippy and the test suites.
 - **Revert-and-check:** repeat it only if the differential changed.
-- **A conflict-free rebase:** no local gate is needed if it brings in no file the branch touches.
-  CI covers this case.
-- **A stack:** repeat the gate only for the changed commit and higher commits that touch the same files.
+- **A conflict-free rebase:** CI on the new head is the gate for clippy and tests.
+  Local work is limited to the checks CI does not run.
+  None is needed if the rebase brings in no file the branch touches.
+- **A stack:** CI on each member's new head is the gate for clippy and tests.
+  Repeat the local checks CI does not run only for the changed commit and higher commits that touch the same files.
 
 Stop when applicable checks pass and concrete failures are addressed.
 Additional runs require a relevant input change, a specific unresolved failure or an explicit maintainer request.
 Do not repeat runs merely to collect more evidence.
 Keep repetitions required by the measurement method.
 
-Rules 5 and 7 describe the **completion gate** (maintainer ruling
-2026-10-19 UTC).
+Rules 5 and 7 describe the **completion gate** (maintainer rulings
+2026-10-19 UTC and 2026-10-30 UTC).
 
-Run the completion gate when a coherent fix is ready, before a push for review.
+Run the local checks that CI does not cover when a coherent fix is ready, before a push for review.
 Between completion gates, use iteration feedback while the fix is taking shape:
 
-1. Run named unit tests of the touched crate: `cargo test -p <crate> <test name>`.
+1. Run named unit tests of the touched crate.
+   Select the test target as well as the test name: `cargo test -p <crate> --lib <name>` or `cargo test -p <crate> --test <target> <name>`.
+   A name filter alone still compiles every test target in the crate.
 2. Select a small, explicit set of differential cases that reaches the changed behaviour.
 3. Name the defect's witness case and its neighbours by case ID.
 
@@ -109,7 +121,8 @@ Iteration feedback is not a gate result.
 Do not report it as one.
 Report final results and reproduction commands.
 Disclose failed or unrun required checks as limitations.
-A fix without a completion gate is not ready to push for review.
+A fix is ready for review when the local checks that CI does not cover pass.
+A PR is not ready to merge until CI passes on its head.
 A `wip/` checkpoint push does not require a completion gate.
 
 ## 8. Builds and resource admission
