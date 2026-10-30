@@ -23,7 +23,16 @@ not introduce a panic, including through ordinary operations or assertions.
 Use idiomatic error handling; internal Rust APIs need not universally return
 `Result`. Existing class (b)/(c) rulings remain authoritative: class (c)
 refusals keep `false`/`Err` and exactly one warning per occurrence.
-Public error enums are `#[non_exhaustive]`.
+
+**Enums and matches (maintainer decision 2026-10-30 UTC):**
+`#[non_exhaustive]` is for public APIs that other teams use (Google Rust
+style guide). oxpinyin has no such API, because its Rust interfaces are
+internal (2026-10-18 ruling). Do not mark an enum or a struct
+`#[non_exhaustive]`. A match on an oxpinyin enum lists every variant and
+has no wildcard arm. Then the compiler flags every in-tree match when a
+variant is added. If only one variant is necessary, use `if let`,
+`let ... else` or `matches!`. A match on literals, ranges, or std or
+foreign types can use `_`.
 
 **Integer arithmetic.** Where the pin's unsigned arithmetic wraps and the
 result is observable, use the matching standard method (`wrapping_add`,
