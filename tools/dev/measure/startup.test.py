@@ -591,6 +591,46 @@ class ControllerTests(unittest.TestCase):
         self.assertTrue(all(v['summaries']['pr']['n'] == 2 and v['summaries']['pr']['median'] == .1 for v in times))
         self.assertTrue(all(v['pr_base_ratio']['median'] == 1 for v in times))
 
+    def test_memory_stage_has_no_timing_or_profiler_calls_and_requests_mapping_boundaries(self):
+        library = self.root / 'lib.so'
+        library.write_bytes(b'synthetic oxpinyin')
+        work = self.root / 'memory-work'
+        work.mkdir()
+        args = st.parser().parse_args([*self.argv, '--stage', 'memory', '--profiles', 'empty',
+                                      '--facades', 'pinyin', '--cache', 'cold',
+                                      '--memory-rounds', '2', '--memory-warmups', '1'])
+        args.cpu = None
+        seen, printed = [], []
+        def run(path, facade, profile, *, memory, cold, smaps_points):
+            self.assertTrue(memory and cold)
+            self.assertEqual(smaps_points, ('lib_load', 'init'))
+            seen.append(path.parent.name)
+            points = {point: {metric: 100 for metric in native.MEMORY_FIELDS} for point in worker.POINTS}
+            return dict(digest='same', stderr=b'', userfiles={}, documents=[],
+                        checkpoints=points, process_wall=1)
+        with mock.patch.object(st.sys, 'platform', 'linux'), \
+                mock.patch.object(st, 'os', SimpleNamespace(**(vars(os) | dict(
+                    sched_getaffinity=lambda _: {0}, sched_setaffinity=lambda *_: None)))), \
+                mock.patch.object(st.native, 'check_filesystems'), \
+                mock.patch.object(st, 'library', return_value=library), \
+                mock.patch.object(st.runpy, 'run_path', return_value={'check_arms': lambda *_:
+                    {arm: {'pinyin': dict(backend='bdb')} for arm in st.ARMS}}), \
+                mock.patch.object(worker, 'build', return_value=(Path('worker'), {})), \
+                mock.patch.object(st, 'artifact', return_value={}), \
+                mock.patch.object(worker, 'Worker', return_value=SimpleNamespace(run=run)), \
+                mock.patch.object(st, 'verify', return_value={a: dict(digest='same', unit_stderr=b'',
+                                                                     unit_userfiles={}) for a in st.ARMS}), \
+                mock.patch.object(st, 'instrument', side_effect=AssertionError('profiler called')), \
+                mock.patch.object(st, 'emit', side_effect=lambda kind, **v: printed.append((kind, v))):
+            status = st.campaign_run(args, {'empty': self.root / 'profiles/empty/user'}, work,
+                                     SimpleNamespace(env={}, slot=SimpleNamespace(pass_fds=lambda: ())))
+        self.assertEqual(status, 0)
+        self.assertEqual(len(seen), 9)
+        self.assertFalse(any(kind in ('timing', 'instructions') for kind, _ in printed))
+        start = next(row for kind, row in printed if kind == 'start')
+        self.assertTrue(start['memory_only'])
+        self.assertEqual((start['timing_rounds'], start['warmups']), (0, 0))
+
     def test_campaign_passes_cold_to_timed_and_memory_samples_and_records_the_metric(self):
         library = self.root / 'lib.so'
         library.write_bytes(b'synthetic oxpinyin')
@@ -1203,6 +1243,8 @@ class ControllerTests(unittest.TestCase):
         (proc / 'status').write_text('VmRSS: 8 kB\nVmHWM: 10 kB\nVmSize: 100 kB\n')
         (proc / 'smaps_rollup').write_text('Rss: 8 kB\nAnonymous: 3 kB\nPss: 6 kB\nPrivate_Dirty: 2 kB\n')
         (proc / 'stat').write_text('123 (a ) long name) S ' + ' '.join(str(i) for i in range(4, 40)))
+        smaps = ('1000-2000 rw-p 00000000 00:00 0 [heap]\nPss: 6 kB\nRss: 8 kB\n')
+        (proc / 'smaps').write_text(smaps)
         # The /proc fixture is Linux's reader; select it explicitly so a macOS host does not run ps on pid 123.
         with mock.patch.object(native.sys, 'platform', 'linux'):
             memory = native.read_memory(123, proc_root=self.root)
@@ -1210,6 +1252,10 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual((memory['peak_rss'], memory['virtual_size'], memory['anonymous'], memory['private_dirty'], memory['pss']),
                          (10, 100, 3, 2, 6))
         self.assertIsNone(memory['rss_delta'])
+        self.assertNotIn('smaps_raw', memory)
+        with mock.patch.object(native.sys, 'platform', 'linux'):
+            captured = native.read_memory(123, proc_root=self.root, include_smaps=True)
+        self.assertEqual(captured['smaps_raw'], smaps)
 
     def test_darwin_binding_fields_map_to_darwin_names_in_kib(self):
         usage = SimpleNamespace(
@@ -1345,14 +1391,16 @@ class WorkerIntegration(unittest.TestCase):
         self.enterContext(mock.patch.object(worker, 'exports', self.stub_exports))
 
     def test_parent_reads_live_stopped_child_at_every_handshake(self):
-        pids, peaks = [], []
+        pids, peaks, full_smaps = [], [], []
         def read(pid, **kwargs):
             os.kill(pid, 0)
             pids.append(pid)
             peaks.append(kwargs.get('resident_peak_bytes'))
+            full_smaps.append(kwargs.get('include_smaps', False))
             return dict(rss=10)
         with mock.patch.object(native, 'read_memory', side_effect=read):
-            row = self.campaign.run(self.stub, 'pinyin', self.profile, memory=True)
+            capture = dict(smaps_points=('lib_load', 'init')) if sys.platform == 'linux' else {}
+            row = self.campaign.run(self.stub, 'pinyin', self.profile, memory=True, **capture)
         self.assertEqual(tuple(row['checkpoints']), worker.POINTS)
         self.assertEqual(len(pids), 7)
         self.assertEqual(len(set(pids)), 1)
@@ -1361,6 +1409,7 @@ class WorkerIntegration(unittest.TestCase):
             self.assertTrue(all(isinstance(peak, int) and peak > 0 for peak in peaks))
         else:
             self.assertEqual(peaks, [None] * len(worker.POINTS))
+            self.assertEqual(full_smaps, [False, True, True, False, False, False, False])
         verify = self.campaign.run(self.stub, 'pinyin', self.profile, mode='verify')
         self.assertEqual(verify['digest'], row['digest'])
         self.assertFalse((self.root / 'sample').exists())

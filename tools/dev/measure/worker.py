@@ -69,7 +69,8 @@ def check_identity(executable, record):
         raise ValueError('worker executable/source does not match its identity record')
 
 
-def execute(command, *, env, pass_fds=(), memory=False, cpu=None, timeout=120, residency=None):
+def execute(command, *, env, pass_fds=(), memory=False, cpu=None, timeout=120, residency=None,
+            smaps_points=()):
     """Run a worker session, drain its pipes, and return status and observations.
 
     Timeout is in seconds and process_wall is elapsed ns. With memory enabled,
@@ -128,8 +129,10 @@ def execute(command, *, env, pass_fds=(), memory=False, cpu=None, timeout=120, r
                                             (len(parts) == 3 and sys.platform != 'darwin')):
                                         raise ValueError('worker checkpoint sequence changed: ' + repr(line))
                                     peak = int(parts[2]) if len(parts) == 3 else None
-                                    checkpoints[POINTS[len(checkpoints)]] = native.read_memory(
-                                        process.pid, resident_peak_bytes=peak)
+                                    point = POINTS[len(checkpoints)]
+                                    capture = dict(include_smaps=True) if point in smaps_points else {}
+                                    checkpoints[point] = native.read_memory(
+                                        process.pid, resident_peak_bytes=peak, **capture)
                                     if residency is not None:
                                         vectors[POINTS[len(checkpoints) - 1]] = residency()
                                     os.write(ack_write, b'\n')
@@ -268,7 +271,7 @@ class Worker:
         self.env, self.pass_fds, self.cpu, self.bind = env, pass_fds, cpu, bind
 
     def run(self, library, facade, profile, *, mode='measure', witness=None, memory=False,
-            probe=None, scope=None, cold=False):
+            probe=None, scope=None, cold=False, smaps_points=()):
         """Run one worker with a fresh user directory and verify its executable identity.
 
         Copy the guarded profile under work/sample and remove it after completion.
@@ -318,6 +321,10 @@ class Worker:
                 env['OXPINYIN_STARTUP_STEADY'] = '1'
             capture = (dict(residency=lambda: checkpoint_residency(library, self.data, user))
                        if cold and memory else {})
+            if smaps_points:
+                if not memory or sys.platform != 'linux':
+                    raise ValueError('per-mapping smaps requires a Linux memory sample')
+                capture['smaps_points'] = smaps_points
             result = execute(command, env=env, pass_fds=self.pass_fds, memory=memory, cpu=self.cpu,
                              timeout=1800 if scope else 120, **capture)
             if probe is not None:
