@@ -10,8 +10,12 @@
 //! with the crates that own those records; this crate answers only what each
 //! C call answered.
 //!
-//! Unsafe code is confined to one module; every block carries a `// SAFETY:`
-//! comment and no raw pointer leaves it.
+//! Stage 5's tool boundary ([`tool`], the `tools` feature) holds the pin
+//! utilities' locale, GLib option, C++ stream and text calls; the shipping
+//! libraries never enable it.
+//!
+//! Unsafe code is confined to the native modules; every block carries a
+//! `// SAFETY:` comment and no raw pointer leaves them.
 
 #![deny(unsafe_code)]
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
@@ -22,6 +26,11 @@ pub mod config;
 pub mod diagnostic;
 #[allow(unsafe_code)]
 mod native;
+#[cfg(feature = "tools")]
+#[allow(unsafe_code)]
+mod native_tool;
+#[cfg(feature = "tools")]
+pub mod tool;
 
 use std::ffi::CString;
 use std::path::Path;
