@@ -4,6 +4,7 @@ import contextlib
 import io
 import json
 import os
+import shutil
 import subprocess
 from pathlib import Path
 import sys
@@ -96,6 +97,25 @@ class ControllerTests(unittest.TestCase):
             with contextlib.redirect_stderr(io.StringIO()):
                 self.assertEqual(st.main([*self.argv, '--profiles', 'empty']), 1)
 
+    def test_review_default_preserves_four_profiles_and_user_profiles_are_explicit(self):
+        explicit = st.parser().parse_args([*self.argv, '--profiles', 'user,user8,usersparse'])
+        self.assertEqual(list(st.validate(explicit)), ['user', 'user8', 'usersparse'])
+        for name in ('user', 'user8', 'usersparse'):
+            shutil.rmtree(self.root / 'profiles' / name)
+        default = st.parser().parse_args(self.argv)
+        self.assertEqual(list(st.validate(default)), ['empty', 'modest', 'phrases', 'journals'])
+
+    def test_review_missing_manifest_has_a_designed_error_before_admission(self):
+        for name in ('empty', 'user'):
+            (self.root / 'profiles' / name / 'profile.manifest').unlink()
+            with self.subTest(profile=name), mock.patch.object(slot, 'HeavyAdmission') as admission, \
+                    contextlib.redirect_stderr(io.StringIO()) as error:
+                self.assertEqual(st.main([*self.argv, '--profiles', name]), 1)
+            test_support.assert_not_called(self, admission)
+            self.assertIn('missing profile manifest', error.getvalue())
+            self.assertIn('provision through the pin', error.getvalue())
+            self.assertNotIn('Traceback', error.getvalue())
+
     def test_cold_is_refused_on_windows_before_filesystem_or_slot(self):
         # Cold mode exists on Linux and macOS only; any other host refuses before admission.
         for system, extra in (('win32', []), ('win32', ['--cache', 'cold']), ('freebsd14', ['--cache', 'cold'])):
@@ -112,6 +132,19 @@ class ControllerTests(unittest.TestCase):
         for system in ('darwin', 'linux'):
             with self.subTest(system=system), mock.patch.object(st.sys, 'platform', system):
                 self.assertEqual(st.validate(args), {'empty': self.root / 'profiles/empty/user'})
+
+    def test_instruction_scope_selection_is_explicit_and_validated(self):
+        args = st.parser().parse_args([*self.argv, '--profiles', 'empty', '--instruction-scopes', 'init'])
+        self.assertEqual(st.validate(args), {'empty': self.root / 'profiles/empty/user'})
+        for scopes in ('', 'init,init', 'unknown', 'init,'):
+            args.instruction_scopes = scopes
+            with self.subTest(scopes=scopes), self.assertRaisesRegex(ValueError, 'unknown or repeated instruction scope'):
+                st.validate(args)
+
+    def test_init_only_does_not_launch_unrequested_instruction_scopes(self):
+        records, visits = self.range_campaign(scopes=('init',))
+        self.assertEqual(visits, {('init', arm): 2 for arm in st.ARMS})
+        self.assertEqual([(row['scope'], row['verdict']) for row in records], [('init', 'VALID')])
 
     def test_cold_refuses_a_work_directory_that_is_not_ext4_on_linux(self):
         args = st.parser().parse_args([*self.argv, '--profiles', 'empty', '--cache', 'cold'])
@@ -259,7 +292,8 @@ class ControllerTests(unittest.TestCase):
         self.assertNotIn('pr_base_ratio', emit.call_args.kwargs)
 
     def range_campaign(self, *, wide=False, outside=False, init_variation=False, init_unresolved=False,
-                       backend='kc', profile_edit=None, nonoverlap=False):
+                       backend='kc', profile_edit=None, nonoverlap=False,
+                       scopes=('init', 'first_candidate', 'steady')):
         libraries = {a: {'pinyin': self.root / (a + '.so')} for a in st.ARMS}
         for paths in libraries.values():
             paths['pinyin'].write_bytes(b'identical')
@@ -286,7 +320,7 @@ class ControllerTests(unittest.TestCase):
                 mock.patch.object(st, 'emit', side_effect=lambda kind, **row: records.append(row)):
             try:
                 st.instrument(campaign, libraries, 'pinyin', 'empty', self.root,
-                              {a: dict(digest='same') for a in st.ARMS}, backends=dict.fromkeys(st.ARMS, backend))
+                              {a: dict(digest='same') for a in st.ARMS}, backends=dict.fromkeys(st.ARMS, backend), scopes=scopes)
             except st.NotResult:
                 pass
         return records, visits

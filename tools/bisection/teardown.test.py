@@ -336,9 +336,212 @@ class PureTests(unittest.TestCase):
         self.assertEqual([sum(row[0] == library for row in balanced) for library in range(1, 5)], [3000, 3000, 3000, 1000])
         self.assertEqual(td.witness_inputs(rows), ["ce'shi", "ce'ce"])
 
+    def test_user_recipes_have_ten_thousand_items_and_distinct_ordered_readings(self):
+        exported = [(1, f'词{i:05}', "ci2'yi1'er4'san1'si4'wu3", 20) for i in range(10000)]
+        for readings in (1, 8):
+            rows = td.user_rows(exported, readings)
+            self.assertEqual(len(rows), 10000 * readings)
+            self.assertEqual({row[0] for row in rows}, {7})
+            for start in range(0, len(rows), readings):
+                group = rows[start:start + readings]
+                self.assertEqual(len({row[1] for row in group}), 1)
+                self.assertEqual(len({row[2] for row in group}), readings)
+                self.assertEqual(group[0][2], exported[start // readings][2])
+                self.assertEqual({row[3] for row in group}, {5})
+
+    def test_user_recipes_require_enough_multi_character_items(self):
+        with self.assertRaisesRegex(ValueError, '10,000'):
+            td.user_rows([(1, '词', 'ci2', 20)] * 10000, 8)
+        with self.assertRaisesRegex(ValueError, 'one or eight'):
+            td.user_rows([], 2)
+
+    def test_startup_and_teardown_share_user_profile_names(self):
+        from tools.dev.measure import startup
+        self.assertEqual(startup.PROFILES, td.PROFILES)
+        self.assertTrue({'user', 'user8'}.issubset(td.PROFILES))
+
+    def test_allocation_windows_count_freed_blocks_and_file_read_buffers(self):
+        def point(name, live, blocks, total, allocated):
+            return (f'TEARDOWN_ALLOC {name} BEGIN\nevents: curB curBk totB totBk totFdB totFdBk\n'
+                    f'totals: {live} {blocks} {total} {allocated} 0 0\nTEARDOWN_ALLOC {name} END\n')
+        text = point('M0', 10, 1, 20, 2) + point('I1', 30, 2, 120, 6)
+        result = td.allocation_windows(text, [('open', 'M0', 'I1')])
+        self.assertEqual(result, dict(open=dict(allocated_bytes=100, allocations=4,
+                                                retained_bytes=20, retained_blocks=1)))
+        for broken in (text.replace('totals:', 'unknown:'), text + point('I1', 30, 2, 120, 6),
+                       text.replace('120 6', '120 1')):
+            with self.assertRaises(ValueError):
+                td.allocation_windows(broken, [('open', 'M0', 'I1')])
+
+    def test_user_census_distinguishes_dense_and_sparse_offsets(self):
+        import struct
+        from contract_case_helpers import _chunk
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / 'user.bin'
+            body = bytes([2, 1]) + struct.pack('<IIIHHI', 15, ord('测'), ord('试'), 1, 2, 5)
+            for offsets in ([0, 8, 30], [0, 8] + [0] * 20 + [30]):
+                one, two = 17, 18 + 4 * len(offsets)
+                content = b'\0' * 8 + body * 2
+                payload = struct.pack('<IIII', 30, one, two, two + len(content) + 1)
+                payload += b'#' + struct.pack('<' + 'I' * len(offsets), *offsets) + b'#' + content + b'#'
+                path.write_bytes(_chunk(payload))
+                shape = td.user_library_shape(path)
+                self.assertEqual(shape['items'], 2)
+                self.assertEqual(shape['slots'], len(offsets))
+                self.assertEqual(shape['readings'], {1: 2})
+                self.assertEqual(shape['live_body_bytes'], 44)
+            path.write_bytes(path.read_bytes()[:-1])
+            with self.assertRaisesRegex(ValueError, 'frame'):
+                td.user_library_shape(path)
+
+    def test_sampled_heap_peaks_are_not_exact_control_counts(self):
+        a = {'open': dict(before_bytes=10, after_bytes=20, sampled_peak_bytes=30)}
+        b = {'open': dict(before_bytes=10, after_bytes=20, sampled_peak_bytes=31)}
+        self.assertEqual(td.user_heap_counts(a), td.user_heap_counts(b))
+        b['open']['after_bytes'] += 1
+        self.assertNotEqual(td.user_heap_counts(a), td.user_heap_counts(b))
+
+    def test_compaction_call_counts_resolve_compressed_function_names(self):
+        text = ('fn=(1) pinyin::FacadePhraseIndex::compact()\ncfn=(1)\ncalls=2 0\n0 9\n'
+                'fn=(2) caller\ncfn=(3) other\ncalls=100 0\n0 3\ncfn=(1)\ncalls=15 0\n0 7\n')
+        self.assertEqual(td.compaction_calls(text), {'pinyin::FacadePhraseIndex::compact()': 17})
+
+    def test_user_timing_and_smaps_use_separate_native_processes(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / 'user8').mkdir()
+            (root / 'user8/rows.tsv').write_text("7\t测试\tce4'shi4\t5\n" * 8)
+            calls = []
+            def run(*args, **kwargs):
+                calls.append(kwargs)
+                times = {name: dict(wall_ns=100) for name, _, _ in td.USER_WINDOWS}
+                result = dict(observation=dict(stderr='open $USER/user.conf failed.\n', userfiles={}, documents=[dict(user_phrase=True, times=times)]),
+                              user_bin_sha256='same')
+                if kwargs.get('user_memory'):
+                    result['checkpoints'] = {0: {'M0': dict(groups={}, totals=dict(Pss=100))},
+                                             1: {'I1': dict(groups={}, totals=dict(Pss=100))}}
+                return result
+            campaign = SimpleNamespace(worker=Path('worker'), work=root, run=run)
+            subjects = {side: dict(pinyin=Path(side)) for side in ('ox', 'control', 'pin', 'base')}
+            with patch.object(td, 'user_library_shape', return_value=dict(items=10000, readings={1: 10000})), \
+                    patch.object(td, 'build_worker', return_value=(Path('instrumented'), {})), \
+                    patch.object(td, 'allocation_windows', return_value={}), \
+                    patch.object(td, 'user_massif', return_value={}), \
+                    patch.object(td, 'callgrind_costs', return_value=dict(totals=dict(Ir=1))), \
+                    patch.object(td, 'print_record'), \
+                    patch.object(td, 'TIMING_ROUNDS', 1), patch.object(td, 'TIMING_WARMUPS', 0), \
+                    patch.object(td, 'MEMORY_ROUNDS', 1), patch.object(td, 'MEMORY_WARMUPS', 0):
+                self.assertEqual(td.user_phrase_measure(campaign, subjects,
+                    dict(user=root / 'user', user8=root / 'user8/user'), ['user']), 0)
+                def changed_diagnostic(*args, **kwargs):
+                    result = run(*args, **kwargs)
+                    if args[1] == Path('pin'):
+                        result['observation']['stderr'] += 'unexpected warning\n'
+                    return result
+                campaign.run = changed_diagnostic
+                with self.assertRaisesRegex(ValueError, 'diagnostics changed'):
+                    td.user_phrase_measure(campaign, subjects,
+                        dict(user=root / 'user', user8=root / 'user8/user'), ['user'], verify=True)
+            native = [call for call in calls if call.get('profiler') is None]
+            self.assertEqual([call.get('user_memory', False) for call in native[:8]], [False] * 4 + [True] * 4)
+
+    def test_failed_preflight_can_retain_complete_observations_without_waiving_it(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / 'summaries').mkdir()
+            observations = {}
+            def run(facade, library, **kwargs):
+                observation = dict(samples=[], stderr='', userfiles={'user.bin': 'unchanged'},
+                                   documents=[dict(transcript="ai'hu", type=2 if library == Path('pin') else 1)],
+                                   reopen=dict(result='retained'))
+                observations[str(library)] = observation
+                return dict(observation=observation, raw_profile_identity='raw')
+            campaign = SimpleNamespace(work=root, provisioner=Path('pin'), run=run,
+                                       summary_dir=root / 'summaries', summary_identity={'source_revision': 'current'})
+            with patch.object(td, 'prepare_witnesses', return_value={'empty': root / 'witness'}), \
+                    patch.object(td, 'print_record'):
+                self.assertEqual(td.execute(campaign, SimpleNamespace(teardown_stage='verify'),
+                    {'pin': {'pinyin': Path('pin')}, 'ox': {'pinyin': Path('ox')}},
+                    {'empty': root}, ['empty'], ['pinyin'], None), 3)
+            saved = json.loads((root / 'summaries/pinyin-empty-preflight.json').read_text())
+            self.assertEqual(saved['observations'], observations)
+            self.assertEqual(saved['digests'], {name: td.identity(value) for name, value in observations.items()})
+
     def test_precise_equivalence_difference(self):
         self.assertEqual(td.first_difference({'a': [{'x': 1}]}, {'a': [{'x': 2}]}),
                          {'path': '$.a[0].x', 'pin': 1, 'subject': 2})
+
+    def test_checkpoint_pss_reports_each_mapping_and_the_same_smaps_total(self):
+        rows = {arm: [dict(checkpoints={0: {'M0': dict(groups={'SUBJECT:text': {'Pss': 12}},
+                        totals={'Pss': 12}, rollup={'Pss': 999})},
+                    1: {'I1': dict(groups={'SUBJECT:text': {'Pss': 16}, 'ANON:[heap]': {'Pss': 24}},
+                        totals={'Pss': 40}, rollup={'Pss': 999})}})]
+                for arm in ('base', 'ox', 'control', 'pin')}
+        with patch.object(td, 'print_record') as emit:
+            td.report_checkpoint_pss(rows, 'init', facade='pinyin', case='user')
+        records = [(call.args[0], call.kwargs) for call in emit.call_args_list]
+        totals = [row for kind, row in records if kind == 'init-pss-total']
+        self.assertEqual([(row['point'], row['summaries']['ox']['median']) for row in totals],
+                         [('M0', 12), ('I1', 40)])
+        self.assertTrue(all(row['control']['stable'] for row in totals))
+        groups = [row for kind, row in records if kind == 'init-pss']
+        self.assertEqual({row['mapping'] for row in groups}, {'SUBJECT:text', 'ANON:[heap]'})
+        self.assertEqual(next(row for row in groups if row['point'] == 'I1' and
+                             row['mapping'] == 'ANON:[heap]')['summaries']['pin']['median'], 24)
+
+    def scoped_preflight(self, stage, changed=None):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            def run(facade, library, **kwargs):
+                obs = dict(samples=[dict(candidate='nihao')], stderr='', userfiles={'user.bin': 'same'},
+                           documents=[dict(script_type=2 if library == Path('pin') else 1)])
+                if changed and library == Path('ox') and kwargs['profile'] == root / 'modest':
+                    obs[changed] = {'samples': [dict(candidate='different')], 'stderr': 'warning',
+                                    'userfiles': {'user.bin': 'different'}}[changed]
+                return dict(observation=obs, raw_profile_identity='raw')
+            campaign = SimpleNamespace(work=root, provisioner=Path('pin'), run=run)
+            records = []
+            with patch.object(td, 'prepare_witnesses', return_value=dict.fromkeys(('empty', 'modest'), root)), \
+                    patch.object(td, 'print_record', side_effect=lambda kind, **row: records.append((kind, row))), \
+                    patch.object(td, 'init_attribute', return_value=0) as measured, \
+                    patch.object(td, 'report_times') as times, patch.object(td, 'report_memory'), \
+                    patch.object(td, 'TIMING_ROUNDS', 1), patch.object(td, 'TIMING_WARMUPS', 0), \
+                    patch.object(td, 'MEMORY_ROUNDS', 1), patch.object(td, 'MEMORY_WARMUPS', 0):
+                status = td.execute(campaign, SimpleNamespace(teardown_stage=stage, teardown_startup_heap=False),
+                    {side: {'pinyin': Path(side)} for side in ('pin', 'ox', 'control')},
+                    {name: root / name for name in ('empty', 'modest')}, ['empty', 'modest'], ['pinyin'], None)
+            return status, records, measured, times
+
+    def test_scoped_workload_keeps_broad_candidate_failure_strict(self):
+        status, records, measured, times = self.scoped_preflight('verify')
+        self.assertEqual(status, 3)
+        measured.assert_not_called()
+        times.assert_not_called()
+        self.assertEqual([row['verdict'] for kind, row in records if kind == 'equivalence'],
+                         ['NOT COMPARABLE', 'NOT COMPARABLE'])
+
+    def test_script_difference_does_not_block_identical_measured_workload(self):
+        for stage in ('confirm', 'init-attribute'):
+            with self.subTest(stage=stage):
+                status, records, measured, times = self.scoped_preflight(stage)
+                self.assertEqual(status, 0)
+                self.assertEqual([row['verdict'] for kind, row in records if kind == 'workload-equivalence'],
+                                 ['COMPARABLE', 'COMPARABLE'])
+                if stage == 'confirm':
+                    self.assertEqual(times.call_count, 2)
+                else:
+                    self.assertEqual(set(measured.call_args.args[5]), {('pinyin', 'empty'), ('pinyin', 'modest')})
+
+    def test_changed_scoped_samples_diagnostics_or_files_block_only_their_case(self):
+        for changed in ('samples', 'stderr', 'userfiles'):
+            for stage in ('confirm', 'init-attribute'):
+                with self.subTest(changed=changed, stage=stage):
+                    status, _, measured, times = self.scoped_preflight(stage, changed)
+                    self.assertEqual(status, 3)
+                    if stage == 'confirm':
+                        self.assertEqual(times.call_count, 1)
+                    else:
+                        self.assertEqual(set(measured.call_args.args[5]), {('pinyin', 'empty')})
 
     def test_full_export_sets(self):
         self.assertEqual(len(td.exports('pinyin')), 79)
@@ -1360,6 +1563,18 @@ class NativeTests(unittest.TestCase):
             row = campaign.run('pinyin', self.library, self.profile)
         self.assertEqual(row['command'][:3], [td.shutil.which('taskset'), '-c', str(campaign.cpu)])
 
+    def test_population_accepts_user_library_and_refuses_unrequested_libraries(self):
+        campaign = self.campaign()
+        rows = self.root / 'user-rows.tsv'
+        with patch.object(td, 'exports', return_value=['pinyin_init']):
+            for library in (1, 4, 7):
+                rows.write_text(f"{library}\t测试\tce4'shi4\t5\n")
+                td.populate_user(campaign, self.library, self.profile, rows)
+            for library in (0, 5, 6, 8):
+                rows.write_text(f"{library}\t测试\tce4'shi4\t5\n")
+                with self.assertRaisesRegex(ValueError, 'population failed'):
+                    td.populate_user(campaign, self.library, self.profile, rows)
+
     def require_eviction(self, directory):
         """Fail, naming the file system, where fadvise cannot evict the directory's files.
 
@@ -2069,7 +2284,10 @@ def export_lines():
     """An export that fills both 10,000-phrase recipes, in library order."""
     lines = []
     for library, count in ((1, 4000), (2, 4000), (3, 4000), (4, 1500)):
-        lines.extend('%d\t词%d_%d\tci%d\t7' % (library, library, number, number) for number in range(count))
+        for number in range(count):
+            phrase = f'词{library}_{number}'
+            reading = "'".join(['ci2'] * len(phrase))
+            lines.append(f'{library}\t{phrase}\t{reading}\t7')
     return lines
 
 
@@ -2099,10 +2317,10 @@ class FixtureFlowTests(unittest.TestCase):
 
     def provisioned(self, name, jobs):
         """Run provision under fake population that finishes in reverse profile order."""
-        order = ['empty', 'modest', 'phrases', 'journals']
+        order = list(td.PROFILES)
         done = {}
 
-        def populate(campaign, pin, user, rows):
+        def populate(campaign, pin, user, rows, **kwargs):
             profile = user.parent.name
             # A later profile finishes first, when the pool lets it.
             later = order[order.index(profile) + 1:]
@@ -2135,7 +2353,7 @@ class FixtureFlowTests(unittest.TestCase):
         FakeAdmission.workers = 1
         seen = []
 
-        def populate(campaign, pin, user, rows):
+        def populate(campaign, pin, user, rows, **kwargs):
             seen.append(user.parent.name)
             if user.parent.name == 'modest':
                 raise ValueError('fixture population failed')
@@ -2161,7 +2379,7 @@ class FixtureFlowTests(unittest.TestCase):
                 if profile != 'empty' else []))
             profiles[profile] = directory / 'user'
         (self.root / name / 'phrases' / 'witness.txt').write_text('kept\n')
-        order = ['modest', 'phrases', 'journals']
+        order = list(td.PROFILES[1:])
         done = {}
 
         def run(self_, facade, library, profile, *, mode='time', inputs=None, **kwargs):
@@ -2185,7 +2403,7 @@ class FixtureFlowTests(unittest.TestCase):
         pooled = self.witnesses('pooled', None)
         self.assertEqual(list(serial[0]), list(td.PROFILES))
         self.assertEqual([(kind, values['profile']) for kind, values in serial[1]],
-                         [('witness', 'modest'), ('witness', 'phrases'), ('witness', 'journals')])
+                         [('witness', name) for name in td.PROFILES[1:]])
         self.assertEqual(serial[1], pooled[1])
         self.assertEqual(serial[2], pooled[2])
         self.assertEqual(serial[2]['phrases/witness.txt'], b'kept\n')
