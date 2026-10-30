@@ -1,6 +1,7 @@
 # Verification
 
 Maintainer ruling 2026-10-04 UTC.
+The maintainer decision of 2026-10-30 UTC supersedes its choice of Berkeley DB as the reference cell, because tkrzw is maintained upstream.
 
 A cell uses one DBM backend on both sides of a comparison.
 [`tools/dev/cell.py`](../../tools/dev/cell.py) manages cells.
@@ -8,12 +9,14 @@ These rules replace older instructions that require all three cells for every ch
 
 ## 1. Reference cell
 
-Use Berkeley DB (`PINYIN_ORACLE_DBM=bdb`, the default).
+Use tkrzw (`PINYIN_ORACLE_DBM=tkrzw`, the default; maintainer decision 2026-10-30 UTC).
+Berkeley DB was the reference cell from 2026-10-04 to 2026-10-30 UTC.
 Run baselines, differentials, revert-and-check and the gate there by default.
 
 ## 2. Backend selection
 
-Run all three cells, bdb, kc and tkrzw, only when a backend path check selects them.
+Run all three cells, tkrzw, bdb and kc, only when a backend path check selects them.
+The non-default bdb and kc cells thereby still gate any change that can reach them.
 Use these three checks:
 
 1. The diff lists a file under `crates/oxpinyin-store/`.
@@ -34,11 +37,11 @@ See the [function-layout ruling](../packaging.md#function-layout) for shipping b
 
 Run every differential on all three cells once at the start of each sweep.
 Repeat that coverage once before a release.
-These runs cover kc and tkrzw outside the per-change gate.
+These runs cover bdb and kc outside the per-change gate.
 
 ## 4. Revert-and-check
 
-Run revert-and-check only on the reference cell.
+Run revert-and-check only on the reference cell, tkrzw.
 Use a deliberate, named mutation of oxpinyin when there is no fix to revert.
 This applies when the differential covers behaviour that oxpinyin already reproduces, as in the round-2 audit.
 Never mutate the pin.
@@ -165,9 +168,10 @@ See [heavy-work admission](setup.md#heavy-work-admission) for mechanics, setting
 
 ## 9. Sound tkrzw library
 
-Run the tkrzw cell only against a sound libtkrzw.
+Run the tkrzw cell, the reference cell, only against a sound libtkrzw.
 `tools/tkrzw/distro-probe.sh` must report it healthy.
 `tools/cloud/setup.sh` provides a sound library when the packaged one is defective.
+CI's tkrzw action provides one on every OS.
 See the [Ubuntu library finding](../findings/tkrzw-distro-compat.md).
 
 A result against a defective libtkrzw is invalid.

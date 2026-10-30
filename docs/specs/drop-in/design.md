@@ -46,7 +46,7 @@ See `docs/findings/abi-reference.md` and `tools/abi/check-exports.sh`.
 
 ### Storage (`oxpinyin-store`, `oxpinyin-data`, `oxpinyin-runtime`)
 
-Select one cargo backend feature: `bdb` by default, `kyotocabinet` or `tkrzw`.
+Select one cargo backend feature: `tkrzw` by default, `bdb` or `kyotocabinet`.
 This mirrors libpinyin's `--with-dbm`.
 Store rejects zero or multiple backends.
 Open the system directory through `Runtime::open(system_dir, user_dir)` as `pinyin_init` does.

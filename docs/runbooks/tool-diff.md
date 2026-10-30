@@ -9,7 +9,7 @@ Provision per [cloud.md](cloud.md), then run the full utility set in the
 canonical image:
 
 ```sh
-bash tools/oracle/compat.sh --cell bdb --runners tool-diff
+bash tools/oracle/compat.sh --cell tkrzw --runners tool-diff
 ```
 
 Compatibility preparation builds the unmodified pin's libraries with
@@ -24,7 +24,7 @@ same runner accepts explicit cases:
 
 ```sh
 just runner tool-diff --pin-build /path/to/oracle/src/libpinyin-074a2219c90feaf962d0d24f034514033ece5f99 \
-  --subject-dir target/cells/bdb/debug --cases zhuyin-normal
+  --subject-dir target/cells/tkrzw/debug --cases zhuyin-normal
 ```
 
 Case files in `tools/bisection/tool-cases/` declare a utility, arguments,
@@ -44,7 +44,7 @@ invalid unless a source-derived case registers the pin signal and a named
 policy record; subject signals and incomplete/timed-out observations fail.
 
 `--observations PATH` writes local JSON lines. Registry runs keep this
-capture as `tool-diff-bdb/observations.log` alongside local comparison logs.
+capture as `tool-diff-tkrzw/observations.log` alongside local comparison logs.
 Use the shared writer to bind named cases:
 
 ```sh

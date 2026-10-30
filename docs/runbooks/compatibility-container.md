@@ -182,13 +182,13 @@ inputs, backend cells and issue association. Start with this representative
 same-data-directory differential:
 
 ```bash
-bash tools/oracle/compat.sh --runtime podman --cell bdb --runners same-data-dir-diff
+bash tools/oracle/compat.sh --runtime podman --runners same-data-dir-diff
 ```
 
 For contract cases with IDs that share a prefix, including untagged cases:
 
 ```bash
-bash tools/oracle/compat.sh --cell bdb --runners contract-diff \
+bash tools/oracle/compat.sh --runners contract-diff \
     --cases-prefix table-conf-,user-conf-,glib-922-save-,stderr-save-,stderr-fini-
 ```
 
@@ -211,9 +211,9 @@ every host/runtime combination.
 For another contribution, replace `same-data-dir-diff` with its existing
 registry name, or select associated checks with `--issue NUMBER` (replace
 NUMBER with the issue number). Explicit selection avoids accidentally
-launching the entire registry. BDB is the default **cell**: both sides use
-the same Berkeley DB backend. `--cell kc` and `--cell tkrzw` select the
-existing peer backends. Follow the repository's touched-path backend rules
+launching the entire registry. tkrzw is the default **cell**, the reference
+cell (maintainer decision 2026-10-30 UTC: tkrzw is maintained upstream): both sides use the same tkrzw backend.
+`--cell bdb` and `--cell kc` select the non-default backends. Follow the repository's touched-path backend rules
 in [oracle procedures](oracle.md) before deciding which cells to run.
 
 Use `--jobs 2` (the default) to bound compiler and runner concurrency and
@@ -428,7 +428,7 @@ Model20 and all derived files remain local under the existing data policy.
 If you already have the pinned archive, avoid downloading it again:
 
 ```bash
-bash tools/oracle/compat.sh --runtime podman --archive "$HOME/Downloads/model20.text.tar.gz" --cell bdb --runners same-data-dir-diff
+bash tools/oracle/compat.sh --runtime podman --archive "$HOME/Downloads/model20.text.tar.gz" --runners same-data-dir-diff
 ```
 
 Replace that archive path with your actual file. The existing fetcher checks

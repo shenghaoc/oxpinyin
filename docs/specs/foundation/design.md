@@ -32,8 +32,9 @@ Do not detect layouts.
 P6 replaced #228's reader; see `docs/findings/runtime-direct-libpinyin-data-2026-09-02.md`.
 
 **Storage model.** Select bdb, kyotocabinet or tkrzw through the `DefaultStore` `#[cfg]` chain.
-Berkeley DB became default on 2026-09-20, matching bare `./configure`.
-This is Q1, recorded 2026-09-27 UTC, #593 item 1, in the compatibility policy's "Amendment — rulings recorded".
+tkrzw became default on 2026-10-30 UTC, the maintainer decision that tkrzw is maintained upstream and Berkeley DB and Kyoto Cabinet are not.
+Berkeley DB was default from 2026-09-20 to 2026-10-30, matching bare `./configure`.
+That was Q1, recorded 2026-09-27 UTC, #593 item 1, in the compatibility policy's "Amendment — rulings recorded".
 Tkrzw was default from 2026-09-05 to 2026-09-20; redb was removed 2026-09-20.
 Compile exactly one backend per binary.
 Use `compile_error!` to reject zero or multiple selections.

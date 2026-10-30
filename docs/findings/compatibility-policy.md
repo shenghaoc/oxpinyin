@@ -334,6 +334,23 @@ unchanged and unaware.
 > tkrzw, bdb and kc — whichever one a given release lane pins. Earlier
 > prose in this document that calls tkrzw or Kyoto Cabinet the default
 > is history, dated where it stands.
+> **(Default backend and reference cell, maintainer decision 2026-10-30
+> UTC.)** tkrzw is the workspace default backend and the differential
+> reference cell, because tkrzw is maintained upstream and Berkeley DB and
+> Kyoto Cabinet are not. Every crate that selects a store backend now
+> carries `default = ["tkrzw"]`, and `tools/oracle/build-oracle.sh`
+> defaults to `--dbm tkrzw`. This supersedes the ruling above as to the
+> default and the reference cell only: the reference build is still the
+> pin's autoconf build, and a bare `./configure` still selects Berkeley
+> DB. Berkeley DB and Kyoto Cabinet stay non-default backends with full
+> drop-in compatibility, and parity coverage still includes all three
+> cells. As on 2026-09-20, a from-source build that takes the default
+> changes backend family (`database format` `BerkeleyDB` → `Tkrzw`,
+> `DEFAULT_STORE_EXT` `db` → `tkt`), so a profile written by a default
+> build of the previous two months is non-conform and wiped on open;
+> released packages pin their backend explicitly and are unaffected.
+> Prose calling Berkeley DB the default or the reference cell is history
+> from this date.
 
 That goal sets the default: **oxpinyin reproduces the pin.** Divergence
 is not a design freedom to be exercised where the Rust is nicer. It is
@@ -1396,6 +1413,9 @@ where a ruling was given earlier, its own date is stated too.
    §9 of the audit report also records the provenance gap this ruling
    closes: before it, no written human decision for the Berkeley DB
    default existed.
+   *Superseded as to the default and the reference cell by the
+   maintainer decision of 2026-10-30 UTC (tkrzw, maintained upstream);
+   see "Default backend and reference cell" in the goal section.*
 2. **Version — the drop-in identity follows the pin.** *Given
    2026-09-26 UTC*, landed in `e1d915d0` (PR #592): the drop-in
    version is 2.11.92, derived from `libpinyin_tag` in

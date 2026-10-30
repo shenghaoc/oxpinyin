@@ -46,3 +46,8 @@ What that means at a later `main`:
 The ledgers, `render_ledger.py` and `delta_ledger.py` generate and own
 their own headers; this page is the hand-written place for the rule. The
 regeneration commands are in each ledger's header.
+
+The ledgers are measured on the bdb cell on purpose, independent of the
+reference cell: the bdb ledger is the base that the kc and tkrzw ledgers
+inherit from with `--delta-from`, so `--cell` defaults to `bdb` in
+`internal-ledger.py` and `gcov_measure.py`.
