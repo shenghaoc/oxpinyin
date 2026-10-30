@@ -538,7 +538,7 @@ fn choosing_a_sole_missing_prefix_row_advances_the_facade_total() {
     // item read fails exactly as a journal-removed phrase item does.
     let token = 0x0100_FFFE;
     assert!(inst.core.dict.phrase_table_token_enabled(token));
-    assert!(inst.core.dict.token_introspection(token).is_none());
+    assert!(!inst.core.dict.token_exists(token));
     inst.candidates.push(CapiCandidate {
         text: TextSpan::NULL,
         text_ptr: ptr::null(),

@@ -3396,6 +3396,85 @@ impl<S: WriteStore> GenericUserStore<S> {
             .transpose()
     }
 
+    /// Whether this store owns the phrase, without materializing its fields.
+    ///
+    /// # Errors
+    /// Returns an error when the store cannot be read.
+    pub fn phrase_exists(&self, token: Token) -> Result<bool, UserStoreError> {
+        Ok(self
+            .database()
+            .read_with(PHRASE, &codec::encode_token(token), |_| ())?
+            .is_some())
+    }
+
+    /// The stored word count without copying or decoding the phrase text.
+    ///
+    /// # Errors
+    /// Returns a backend error or [`UserStoreError::Decode`] for a partial word.
+    pub fn phrase_length(&self, token: Token) -> Result<Option<usize>, UserStoreError> {
+        self.database()
+            .read_with(PHRASE, &codec::encode_token(token), |bytes| {
+                if bytes.len().is_multiple_of(4) {
+                    Ok(bytes.len() / 4)
+                } else {
+                    Err(UserStoreError::Decode)
+                }
+            })?
+            .transpose()
+    }
+
+    /// One reading's keys in insertion order, without rebuilding the phrase
+    /// or decoding the other readings. Missing readings answer `None`.
+    ///
+    /// The row store indexes keys, not insertion positions. Select a row from
+    /// sequence metadata first, retaining table order for equal sequences,
+    /// then decode only its keys. No text or frequency is returned or copied.
+    /// This keeps the storage representation behind the user-store boundary.
+    ///
+    /// # Errors
+    /// Returns a backend error or [`UserStoreError::DecodePronunciation`] for
+    /// malformed pronunciation metadata.
+    pub fn nth_pronunciation(
+        &self,
+        token: Token,
+        nth: usize,
+    ) -> Result<Option<Vec<PinyinKey>>, UserStoreError> {
+        let db = self.database();
+        let (lo, hi) = pronunciation_range(token);
+        let lo = lo.as_ref().map(<[u8; 4]>::as_slice);
+        let hi = hi.as_ref().map(<[u8; 4]>::as_slice);
+        let mut positions = Vec::new();
+        let mut undecodable = false;
+        db.range(PRONUNCIATION, lo, hi, |key, value| {
+            let (Ok(_), Ok(value)) = (codec::decode_token_bytes(key), PronValue::decode(value))
+            else {
+                undecodable = true;
+                return Ok(());
+            };
+            positions.push((value.seq, positions.len()));
+            Ok(())
+        })?;
+        if undecodable {
+            return Err(UserStoreError::DecodePronunciation);
+        }
+        if nth >= positions.len() {
+            return Ok(None);
+        }
+        let (_, &mut (_, selected), _) = positions.select_nth_unstable(nth);
+        let mut position = 0;
+        let mut keys = None;
+        db.scan(PRONUNCIATION, lo, hi, |key, _| {
+            if position == selected {
+                // The first pass validated every key's token prefix.
+                keys = key.get(4..).map(phrase::decode_keys);
+                return Ok(std::ops::ControlFlow::Break(()));
+            }
+            position += 1;
+            Ok(std::ops::ControlFlow::Continue(()))
+        })?;
+        Ok(keys)
+    }
+
     /// Phrase text and pronunciations for `token`, if this store owns it.
     ///
     /// # Errors
@@ -6274,6 +6353,8 @@ mod tests {
                         .write(|txn| txn.put(PHRASE, &text_key, &[0xff, 0xfe]))
                         .unwrap();
                     assert!(matches!(store.phrase(token), Err(UserStoreError::Decode)));
+                    assert!(store.phrase_exists(token).unwrap());
+                    assert!(matches!(store.phrase_length(token), Err(UserStoreError::Decode)));
                     assert!(matches!(
                         store.phrase_text(token),
                         Err(UserStoreError::Decode)
@@ -6298,6 +6379,36 @@ mod tests {
                         store.phrase_text(token).unwrap().as_deref(),
                         Some(&[0x7532][..])
                     );
+                    assert_eq!(store.phrase_length(token).unwrap(), Some(1));
+                    assert!(matches!(store.nth_pronunciation(token, 0), Err(UserStoreError::DecodePronunciation)));
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn nth_reading_keeps_sequence_gaps_ties_and_legacy_tail() {
+                    let path = temp_path("nth-reading");
+                    let mut store = Store::create_standalone(&path).unwrap();
+                    let token = store.add_phrase(&"甲".into(), &[key("jia")], Some(3)).unwrap();
+                    store.database().write(|txn| {
+                        remove_pronunciations(txn, token)?;
+                        // Sequence ties retain table-key order; legacy rows
+                        // follow every sequenced row, also in table order.
+                        for (keys, seq) in [(vec![9], Some(8)), (vec![3], Some(2)),
+                                            (vec![5], Some(2)), (vec![1], None), (vec![2], None)] {
+                            let row = codec::encode_token_bytes(token, &phrase::encode_keys(&keys));
+                            let value = seq.map_or_else(|| codec::encode_u64(1).to_vec(), |seq|
+                                PronValue { count: 1, seq, indexed: true }.encode().to_vec());
+                            txn.put(PRONUNCIATION, &row, &value)?;
+                        }
+                        Ok(())
+                    }).unwrap();
+                    for (nth, key) in [3, 5, 9, 1, 2].into_iter().enumerate() {
+                        assert_eq!(store.nth_pronunciation(token, nth).unwrap(), Some(vec![key]));
+                    }
+                    assert_eq!(store.nth_pronunciation(token, 5).unwrap(), None);
+                    assert_eq!(store.nth_pronunciation(token, usize::MAX).unwrap(), None);
+                    assert!(!store.phrase_exists(token + 1).unwrap());
+                    assert_eq!(store.phrase_length(token + 1).unwrap(), None);
                     cleanup(&path);
                 }
             }

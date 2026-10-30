@@ -136,17 +136,17 @@ pub extern "C" fn pinyin_token_get_phrase(
     let inst = unsafe { instance_ref(instance) };
     // An unknown token answers `false` with both out-params untouched
     // (`_token_get_phrase` returns before writing, `pinyin.cpp:1627`).
-    let Some(intro) = inst.core.dict.token_introspection(token) else {
+    let Some(text) = inst.core.dict.token_text(token) else {
         return false;
     };
     if !len.is_null() {
         // SAFETY: Null-checked above.
         unsafe {
-            *len = GUint::try_from(intro.phrase_length).unwrap_or(GUint::MAX);
+            *len = GUint::try_from(text.phrase_length()).unwrap_or(GUint::MAX);
         }
     }
     if !utf8_str.is_null() {
-        let text = phrase_text_bytes(&intro.text);
+        let text = phrase_text_bytes(&text);
         let rendered = crate::ffi::malloc_cstr_with(text.len(), |out| {
             out.copy_from_slice(&text);
             text.len()
@@ -240,13 +240,13 @@ pub extern "C" fn pinyin_token_get_nth_pronunciation(
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
     let inst = unsafe { instance_ref(instance) };
-    let Some(intro) = inst.core.dict.token_introspection(token) else {
+    let Some(reading) = inst.core.dict.token_nth_pronunciation(token, nth as usize) else {
         return false;
     };
-    let Some((keys_list, _count)) = intro.pronunciations.get(nth as usize) else {
+    let Some(keys_list) = reading.keys.as_ref() else {
         // Past the last reading: `phrase_length` keys of indeterminate
         // content at the pin; zeroed here.
-        let zeroed = vec![0_u16; intro.phrase_length];
+        let zeroed = vec![0_u16; reading.phrase_length];
         // SAFETY: GLib checks NULL and logs a critical before any access.
         // the caller creates the keys array
         // with element_size = sizeof(u16), as for the in-range path.
@@ -262,10 +262,10 @@ pub extern "C" fn pinyin_token_get_nth_pronunciation(
     // A system item hands out the stored words directly; a USER_FILE item
     // carries structured keys and packs them the same way.
     let packed: std::borrow::Cow<'_, [u16]> = match keys_list {
-        oxpinyin_runtime::IntroPronunciation::Stored(keys) => {
+        oxpinyin_runtime::TokenPronunciationKeys::Stored(keys) => {
             std::borrow::Cow::Borrowed(keys.as_slice())
         }
-        oxpinyin_runtime::IntroPronunciation::Structured(keys) => {
+        oxpinyin_runtime::TokenPronunciationKeys::Structured(keys) => {
             let mut packed: Vec<u16> = Vec::with_capacity(keys.len());
             for &key in keys {
                 let Some(syllable) =
@@ -341,9 +341,7 @@ pub extern "C" fn pinyin_token_get_unigram_frequency(
     let nibble = token >> 24;
     let base = match nibble {
         1..=4 => {
-            if !inst.core.dict.library_visible_token(token)
-                || inst.core.dict.system_unigram_count(token).is_none()
-            {
+            if !inst.core.dict.token_exists(token) {
                 // Unloaded library or no such item — nothing is
                 // reported (matches the visibility filter every other
                 // Tier-C read honours).
@@ -367,10 +365,8 @@ pub extern "C" fn pinyin_token_get_unigram_frequency(
             .core
             .user
             .as_ref()
-            .and_then(|store| match store.phrase(token) {
-                Ok(Some(_)) => store.unigram_delta(token).ok(),
-                _ => None,
-            }),
+            .filter(|_| inst.core.dict.token_exists(token))
+            .and_then(|store| store.unigram_delta(token).ok()),
         _ => None,
     };
     let Some(base) = base else {
