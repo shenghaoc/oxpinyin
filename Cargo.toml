@@ -82,6 +82,24 @@ memmap2 = { version = "0.9.11", default-features = false }
 # Never a dependency of a shipping crate's normal or build graph.
 tempfile = "3.27"
 
+# Keep workspace file and line numbers in panic backtraces. The test
+# profile inherits dev; differential cells use dev at opt-level 1.
+[profile.dev]
+debug = "line-tables-only"
+
+# This wildcard excludes workspace members.
+[profile.dev.package."*"]
+debug = 0
+
+# Interactive debugging needs types and local variables, including those
+# in dependencies. Override the inherited wildcard as well as the profile.
+[profile.dev-full]
+inherits = "dev"
+debug = 2
+
+[profile.dev-full.package."*"]
+debug = 2
+
 # Release .so size/speed lever: fat LTO + one codegen unit lets the linker
 # drop cross-crate dead code and duplicate generic instantiations that
 # per-CGU codegen keeps. Measured effect: docs/perf/perf-so-size-2026-09.md.

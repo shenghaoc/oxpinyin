@@ -667,6 +667,34 @@ its Bash terminal. [Microsoft recommends the Linux filesystem](https://learn.mic
 for Linux checkouts/builds (`~/src`, not `/mnt/c`). WSL may also host the
 compatibility runtime without replacing the native Windows workflow.
 
+## Development debug information
+
+Normal builds and tests keep file and line numbers for workspace code.
+Panic backtraces show these locations when `RUST_BACKTRACE=1` is set.
+External dependencies have no debug information in these builds.
+Types and local variables need the `dev-full` profile:
+
+```bash
+just heavy -- cargo build --locked --profile dev-full -p oxpinyin-capi
+just heavy -- cargo test --locked --profile dev-full -p oxpinyin-engine --no-run
+```
+
+Use the files in `target/dev-full/` with your debugger.
+This profile includes full debug information for workspace code and dependencies.
+It keeps the normal development optimization level, debug assertions and overflow checks.
+It does not change release or profiling builds.
+
+Verification cells continue to use `dev` at optimization level 1.
+Their identity record still names that profile and level.
+Do not put a `dev-full` build in a claimed cell target directory.
+For a diagnostic runner that accepts `OXPINYIN_CAPI_SO`, build separately
+and give it the path to `target/dev-full/libpinyin_capi.so`.
+
+Sanitizer gates use their existing compiler flags for symbolisation.
+Coverage uses LLVM coverage maps, which do not need type or variable information.
+The Callgrind and Massif shipping-library procedures use their own supplied
+libraries and retain their existing debug settings.
+
 ## Contribution checks
 
 CI is the routine Clippy and Rust-test gate ([verification rule 5](verification.md#5-local-test-gate)):
