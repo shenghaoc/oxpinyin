@@ -319,5 +319,77 @@ class CommandTests(unittest.TestCase):
         self.assertNotIn('more', everything)
 
 
+class RunFlagTests(unittest.TestCase):
+    """--run-flag, the line store-backends.yml's changes job appends to $GITHUB_OUTPUT."""
+
+    BASE = {'README.md': 'a\n', 'crates/oxpinyin-store/src/lib.rs': 'fn a() {}\n',
+            'crates/oxpinyin-engine/src/lib.rs': 'fn a() {}\n',
+            'crates/oxpinyin-user/Cargo.toml': '[features]\nold = []\n',
+            'tools/bdb/build.sh': 'a\n', 'tools/dev/check.py': 'a\n'}
+    ALSO = ('--also', 'tools/bdb', '--also', 'tools/dev/check.py')
+
+    def flag(self, head, *also):
+        result = Repo(self, self.BASE, head).cli('--run-flag', *also, 'base')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout
+
+    def test_each_kind_of_change_sets_the_flag(self):
+        cases = (('store change', {'crates/oxpinyin-store/src/lib.rs': 'fn b() {}\n'}, 'true'),
+                 ('feature line', {'crates/oxpinyin-engine/src/lib.rs': gate('kyotocabinet') + '\n'}, 'true'),
+                 ('backend Cargo.toml line', {'crates/oxpinyin-user/Cargo.toml': '[features]\nold = []\nbdb = []\n'},
+                  'true'),
+                 ('infrastructure change', {'tools/bdb/build.sh': 'b\n'}, 'true'),
+                 ('infrastructure file', {'tools/dev/check.py': 'b\n'}, 'true'),
+                 ('engine-only change', {'crates/oxpinyin-engine/src/lib.rs': 'fn b() {}\n'}, 'false'),
+                 ('docs-only change', {'README.md': gate('tkrzw') + '\n'}, 'false'))
+        for name, head, expected in cases:
+            with self.subTest(name):
+                self.assertEqual(self.flag(head, *self.ALSO), f'run={expected}\n')
+
+    def test_an_infrastructure_path_counts_only_when_named(self):
+        head = {'tools/bdb/build.sh': 'b\n'}
+        self.assertEqual(self.flag(head), 'run=false\n')
+        self.assertEqual(self.flag(head, '--also', 'tools/bdb'), 'run=true\n')
+
+    def test_also_needs_run_flag(self):
+        result = Repo(self, self.BASE, {'README.md': 'b\n'}).cli('--also', 'tools/bdb', 'base')
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, '')
+        self.assertIn('--also needs --run-flag', result.stderr)
+
+    def test_a_base_that_is_not_a_commit_still_fails(self):
+        result = Repo(self, self.BASE, {'README.md': 'b\n'}).cli('--run-flag', 'no-such-ref')
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout, '')
+
+    def gate_step(self):
+        """store-backends.yml's gate script, for a push whose previous head is the branch `base`."""
+        workflow = (SCRIPT.parents[2] / '.github/workflows/store-backends.yml').read_text()
+        step = workflow.split('      - name: Compute the path-gate flag\n', 1)[1]
+        script = step.split('        run: |\n', 1)[1].split('\n\n', 1)[0]
+        lines = [line[10:] for line in script.split('\n')]
+        return '\n'.join(lines).replace("'${{ github.event.before }}'", '"$(git rev-parse base)"')
+
+    def test_the_workflow_runs_every_job_for_a_base_with_no_merge_base(self):
+        repo = Repo(self, self.BASE, {'README.md': 'b\n'})
+        repo.git('checkout', '-q', '--orphan', 'unrelated')
+        repo.git('rm', '-rq', '--cached', '.')
+        repo.commit({'other.txt': 'a\n'})
+        repo.git('branch', '-f', 'base')
+        repo.git('checkout', '-q', '-f', 'main')
+        output = repo.root.parent / (repo.root.name + '.output')
+        self.addCleanup(output.unlink, missing_ok=True)
+        env = {**BUILD_ENV, 'GITHUB_EVENT_NAME': 'push', 'GITHUB_OUTPUT': str(output)}
+        result = subprocess.run(('bash', '-c', self.gate_step()), cwd=repo.root, env=env,
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('no merge base with ', result.stdout)
+        self.assertEqual(output.read_text(), 'run=true\n')
+
+    def test_the_workflow_runs_the_flag(self):
+        workflow = (SCRIPT.parents[2] / '.github/workflows/store-backends.yml').read_text()
+        self.assertTrue('tools/bisection/cells-for-diff.py --run-flag' in workflow)
+
+
 if __name__ == '__main__':
     unittest.main()

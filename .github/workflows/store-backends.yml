@@ -13,8 +13,11 @@ name: Store backends
 #
 # Seven jobs:
 #   - changes is the path gate. It runs first on every push and PR to
-#     main, diffs the event's base against HEAD, and sets `run` when the
-#     diff touches any path in its list. A missing base runs everything.
+#     main and sets `run` when tools/bisection/cells-for-diff.py selects
+#     all three cells for the event's base...HEAD (AGENTS.md "Verification
+#     cells", rule 2, the rule local verification uses) or the diff touches
+#     this workflow's own infrastructure, listed in the gate step. A missing
+#     base runs everything.
 #     The other jobs need it and run only when `run` is true; when it is
 #     false they report `skipped`, which still reaches the aggregate.
 #   - store-features is a matrix over the non-default peer backends
@@ -87,7 +90,7 @@ name: Store backends
 
 on:
   # No paths filter here: the gate must report on every push and PR to
-  # main. The path list lives in the changes job, which decides whether
+  # main. The selection lives in the changes job, which decides whether
   # the jobs that do the work run.
   push:
     branches: [main]
@@ -122,14 +125,14 @@ jobs:
   # if: needs.changes.outputs.run == 'true' so it reports skipped, a
   # conclusion that still reaches required-check accounting (a
   # workflow-level path filter would suppress the whole run). No
-  # third-party filter action: checkout with full history and diff against
-  # the event's base (the PR base sha; the previous pushed head on main). A
-  # missing base (first push, force-push rewrite, rebased base) falls back
-  # to running everything, the over-trigger direction, never the skip
-  # direction. Diffing the event base directly (not the merge-base) can only
-  # pick up extra files when the base moved under the event; that
-  # over-triggers too. The pathspec list is the one the triggers carried;
-  # keep it in lockstep with the inputs the jobs consume.
+  # third-party filter action: checkout with full history and hand the
+  # event's base (the PR base sha; the previous pushed head on main) to
+  # tools/bisection/cells-for-diff.py, which diffs base...HEAD from the
+  # merge base. A missing base (first push, force-push rewrite, rebased
+  # base) or one with no merge base falls back to running everything, the over-trigger direction,
+  # never the skip direction. The --also list is this workflow's own
+  # infrastructure; keep it in lockstep with the inputs only these jobs
+  # consume.
   changes:
     name: store-backends changes
     runs-on: ubuntu-latest
@@ -165,34 +168,31 @@ jobs:
             echo 'run=true' >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          paths=(
-            crates
-            Cargo.toml
-            Cargo.lock
-            rust-toolchain.toml
-            .github/workflows/store-backends.yml
-            # Direct inputs: every child decodes the fixture tables;
-            # backend-matrix runs the tools.dev backend-matrix service; the
-            # sanitizer jobs run the tools.dev sanitizer service (the tkrzw
-            # path also uses tools/dev/provision.py and the shared cell service);
-            # every job runs the bootstrap composite action.
-            fixtures
-            tools/dev
-            justfile
-            uv.toml
-            .python-version
-            tools/install-python.sh
-            tools/bdb
-            tools/tkrzw
-            tools/dev/provision.py
-            .github/actions
-          )
-          changed=$(git diff --name-only "$base" HEAD -- "${paths[@]}")
-          if [ -n "$changed" ]; then
+          # cells-for-diff.py diffs from the merge base; a base with none (an
+          # unrelated history) over-triggers like an unavailable one.
+          if ! git merge-base "$base" HEAD >/dev/null 2>&1; then
+            echo "no merge base with $base; running every job"
             echo 'run=true' >> "$GITHUB_OUTPUT"
-          else
-            echo 'run=false' >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          # The backend rule is AGENTS.md "Verification cells", rule 2, as
+          # tools/bisection/cells-for-diff.py implements it for local runs:
+          # a path under crates/oxpinyin-store/, a feature = "<backend>" line
+          # in a changed non-Markdown file, or a Cargo.toml line naming a
+          # backend. --also adds this workflow's own infrastructure: the
+          # workflow, the backend provisioning under tools/bdb and tools/tkrzw,
+          # the backend-matrix service (tools/dev/check.py), the sanitizer
+          # service (tools/dev/test_runner.py), the toolchain pin and this
+          # gate's own script.
+          python3 tools/bisection/cells-for-diff.py --run-flag \
+            --also .github/workflows/store-backends.yml \
+            --also tools/bisection/cells-for-diff.py \
+            --also tools/bdb \
+            --also tools/tkrzw \
+            --also tools/dev/check.py \
+            --also tools/dev/test_runner.py \
+            --also rust-toolchain.toml \
+            "$base" >> "$GITHUB_OUTPUT"
 
   store-features:
     needs: changes
