@@ -4247,3 +4247,66 @@ lambda validation, external calls, persistent formats and C ABI are unchanged.
   insertion and training aborts; Rust reaches the inserted item and training
   returns true with no warning. An actual post-insertion miss still uses the
   existing refusal. Persistent formats and C ABI are unchanged.
+
+## libpinyin utilities (external-I/O boundary stage 5)
+
+`oxpinyin-utils` ports the pin's utilities under their own names, with every
+edge call made through `oxpinyin-input`'s `tools` boundary
+([external-io-boundary.md](external-io-boundary.md), stage 5). Pin citations
+are `utils/storage/gen_pinyin_table.cpp` at
+`074a2219c90feaf962d0d24f034514033ece5f99`.
+
+### gen_pinyin_table invalid UTF-8 phrase (class (b), 2026-10-30 UTC)
+
+- **Upstream source cite:** `main` (`:97-131`), `feed_line` (`:160-232`),
+  `phrase_item_compare` (`:85-94`), `gen_phrase_file` (`:259-322`).
+- **Mechanism:** a phrase that is not valid UTF-8 can pass both of
+  `feed_line`'s checks (`g_utf8_strlen` counts lead bytes, and a pinyin of
+  that many keys parses), while `g_utf8_to_ucs4` answers NULL (`:174`). The
+  item enters the tree with that NULL `uniphrase`. `main` reads every input
+  file (`:110-112`), prints `nnodes` (`:114`), stores and sorts
+  (`:116-127`), and `gen_phrase_file` opens the output with `fopen(outputfile,
+  "w")` (`:261`) before `g_ucs4_to_utf8` reads through the NULL
+  (`:280-281`): undefined behaviour, a SIGSEGV on the reference host. The
+  buffered `nnodes` line and any rows already printed are lost with the
+  process. Where the tree compares the item with another phrase of its
+  length, `phrase_item_compare`'s `memcmp` reads through the NULL earlier,
+  before the output is opened, at a point GLib's tree shape decides.
+- **What oxpinyin does instead:** it keeps the item unconverted, reads
+  every input and opens the output at the pin's point (`:261`). At the row
+  where the pin reads through the NULL (`:280-281`) it writes
+  `gen_pinyin_table: invalid UTF-8 phrase: <phrase bytes>` on `stderr` and
+  exits 1 through `exit`, which flushes what it wrote. The pin crashes
+  there (a SIGSEGV on the reference host); oxpinyin exits 1 with that
+  message. stdout and any partial output may differ, because the pin's
+  crash discards whatever its C streams still buffer (the `nnodes` line
+  and rows already printed, depending on whether stdout is a pipe or a
+  terminal); that loss is the effect of the undefined behaviour and libc
+  buffering, not behaviour oxpinyin reproduces. An unconverted phrase
+  sorts before the converted phrases of its length, so the earlier
+  `memcmp` death is not reproduced.
+- **Externally observable:** the exit status, oxpinyin's message, and
+  stdout and the output file where the pin's buffers were lost. Held by
+  `an_unconvertible_phrase_is_refused_at_the_pins_row_after_the_output_opens`
+  (`crates/oxpinyin-utils/tests/gen_pinyin_table.rs`). Against the pin-built
+  utility (#1436) the two invalid-UTF-8 cases are POLICY-ACCEPTED under
+  this record.
+- **Also class (b), no observable choice made:** `g_utf8_strlen` over a
+  truncated sequence at the end of a `%1023s` word steps past its NUL into
+  the indeterminate bytes of the pin's `char phrase[1024]` (`:136`, `:162`);
+  oxpinyin's buffer keeps the earlier words' bytes as the pin's frame does,
+  starts zeroed and has eight zero bytes past the 1024. A `-t` index of 128
+  or more, or a negative one, overflows the pin's `int` shift in
+  `PHRASE_INDEX_MAKE_TOKEN` (`src/include/novel_types.h:45-46`); oxpinyin
+  wraps the shift and keeps the masked bits.
+
+### gen_pinyin_table phrase order is a native-host result (2026-10-30 UTC)
+
+Not a divergence. `phrase_item_compare` orders equal-length phrases by
+`memcmp` over their UCS-4 words in host byte order, and the stable
+`g_array_sort_with_data` (`:124-126`; GLib's documented guarantee since 2.32)
+keeps that order among phrases whose first readings are equal. Tokens are
+numbered in that order, so a little-endian and a big-endian host number
+such phrases differently. oxpinyin compares the words' native-endian bytes
+and reproduces the pin on each host (constitution §6, #1303). Held by
+`rows_follow_length_then_first_reading_then_phrase_bytes`.
