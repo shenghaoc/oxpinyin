@@ -127,7 +127,14 @@ parked.
 
 ### Workstream notes (recorded as decisions settle)
 
-- **Berkeley DB is the default selected backend** (2026-09-20; the two
+- **tkrzw is the default selected backend and the reference cell**
+  (maintainer decision 2026-10-30 UTC): tkrzw is maintained upstream;
+  Berkeley DB and Kyoto Cabinet are not, and stay non-default backends with
+  full drop-in compatibility. CI builds tkrzw with `.github/actions/tkrzw`
+  on Linux, macOS and Windows. Packaging is unchanged: release lanes pin
+  their backend explicitly.
+- **Berkeley DB was the default selected backend** (2026-09-20 →
+  2026-10-30; the two
   notes below are the dated record of how the default got here — tkrzw
   since 05688575, 2026-09-05, Kyoto Cabinet since 2026-08-29 before
   that). A bare libpinyin `./configure` sets `DBM=BerkeleyDB` in

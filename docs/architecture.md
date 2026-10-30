@@ -32,9 +32,9 @@ It depends on core, engine, runtime and user.
 It holds runtime's concrete dictionary, language-model and user handles by value.
 It therefore forwards the complete backend feature matrix instead of staying generic over engine traits.
 
-Berkeley DB has been the default backend since 2026-09-20.
+tkrzw has been the default backend since 2026-10-30 (maintainer decision 2026-10-30 UTC).
 The store backends are system C-library dependencies, verified on Linux and buildable on macOS through Homebrew.
-Portable CI lanes install each operating system's backend.
+CI's Linux, macOS and Windows lanes build tkrzw with `.github/actions/tkrzw`.
 The peer matrix remains on Linux.
 
 Datagen uses `MemoryChunk`/`SubPhraseIndex` constants and the checksum from `chunk_format`.
@@ -49,7 +49,7 @@ Testsupport is for development except for its datagen consumer, which never ship
 
 Select exactly one backend per binary at compile time.
 `DefaultStore` is a `#[cfg]` alias for the enabled backend feature.
-Select a peer with `--no-default-features --features {kyotocabinet|tkrzw}`.
+Select a peer with `--no-default-features --features {bdb|kyotocabinet}`.
 This follows libpinyin's `--with-dbm` model.
 Do not add runtime dispatch or fallback.
 `oxpinyin-store` emits `compile_error!` when zero or multiple backends are enabled.

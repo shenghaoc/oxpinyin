@@ -11,9 +11,11 @@ requires no container, oracle or model20 (upstream reference model data).
 ## Storage backend
 
 Storage-dependent crates build against one DBM backend per build. The
-default is Berkeley DB 5.3, the reference backend, on Linux and macOS alike;
-the Linux and macOS sections below install it. Kyoto Cabinet and tkrzw are
-optional backends ([backends](backends.md)).
+default is tkrzw, the reference cell, on Linux, macOS and Windows alike
+(maintainer decision 2026-10-30 UTC: tkrzw is maintained upstream; Berkeley
+DB and Kyoto Cabinet are not). The build finds tkrzw through pkg-config;
+the platform sections below install it. Berkeley DB 5.3 and Kyoto Cabinet
+are non-default backends ([backends](backends.md)).
 
 Every repository shell script requires Bash 5.0 or newer on Linux and macOS.
 `just doctor` reports the `bash` that `env bash` selects and fails below 5.0.
@@ -29,8 +31,10 @@ The **linker** connects compiled code into executables and native libraries.
 
 Use Bash 5.0 or newer. Linux is one native platform target. You need Git,
 curl and CA certificates, a C/C++ compiler and linker, Make, pkg-config,
-libclang, Berkeley DB **5.3** development headers/libraries and GLib
-development files.
+libclang, tkrzw development files (the default store backend, maintainer
+decision 2026-10-30 UTC: tkrzw is maintained upstream) and GLib development
+files. Berkeley DB **5.3** and Kyoto Cabinet are needed only to build those
+non-default backends.
 A development package supplies the headers and libraries needed to
 compile against a native library. Package names depend on your system; that
 does not change the build or create another compatibility environment.
@@ -40,18 +44,27 @@ as described below.
 If these prerequisites are missing, install them with your system's package
 manager. `sudo` asks for administrator permission to install system packages.
 These are common package-manager examples, not separate supported/tested
-distribution targets; check that your packages provide Berkeley DB 5.3:
+distribution targets:
 
 ```bash
 # Systems using apt:
 sudo apt-get update
-sudo apt-get install -y build-essential git curl ca-certificates pkg-config libclang-dev libdb-dev libglib2.0-dev
+sudo apt-get install -y build-essential git curl ca-certificates pkg-config libclang-dev libtkrzw-dev tkrzw-utils libglib2.0-dev
 ```
 
 ```bash
 # Systems using dnf:
-sudo dnf install gcc gcc-c++ make git curl ca-certificates pkgconf-pkg-config clang-devel libdb-devel glib2-devel
+sudo dnf install gcc gcc-c++ make git curl ca-certificates pkgconf-pkg-config clang-devel tkrzw-devel glib2-devel
 ```
+
+The build finds tkrzw only through pkg-config (`pkg-config tkrzw`), as
+libpinyin's configure does, so a package installed this way needs nothing
+more. To use a tkrzw you built yourself instead, put its `lib/pkgconfig`
+first on `PKG_CONFIG_PATH` and its `lib` on `LD_LIBRARY_PATH`;
+`just tkrzw-build DIR` builds the upstream revision CI uses into `DIR`.
+Some packaged libtkrzw builds are defective
+([`tkrzw-distro-compat.md`](../findings/tkrzw-distro-compat.md));
+`tools/tkrzw/distro-probe.sh` checks the one on `PATH`.
 
 Repository Python uses uv and its managed CPython 3.15 series with the GIL.
 `uv.toml` sets uv's floor, 0.13.1; CI installs exactly that version.
@@ -415,14 +428,12 @@ The native Rust test entry point uses cargo-nextest at or above the
 needs it); `just doctor` reports it. Install it with
 `cargo install cargo-nextest --locked` (or the prebuilt release). `just test` calls `slot.run_command` directly through
 `tools.dev.test_runner` with the local profile. Pass the same crate and
-feature selection as cargo test (the default workspace feature is Berkeley
-DB). Set `NEXTEST_PROFILE=ci` for the CI limits. `just test-doc` runs
+feature selection as cargo test (the default workspace feature is tkrzw). Set `NEXTEST_PROFILE=ci` for the CI limits. `just test-doc` runs
 `cargo test --doc` under heavy-slot admission.
 
 Use your system's official package documentation if names or enabled
-repositories differ. The native check below prints the actual Berkeley DB
-header version and rejects unsupported versions during the build; do not
-copy CI-only version overrides to work around that check.
+repositories differ. The native check below prints the tkrzw version
+pkg-config reports.
 
 In a managed environment with these packages already present, skip their
 installation. Root development environments omit `sudo`. Without installation
@@ -464,11 +475,12 @@ installation:
 . "$HOME/.cargo/env"
 rustup show
 cargo test --locked -p oxpinyin-chewing -p oxpinyin-core -p oxpinyin-engine
-just check bdb
+just check
 ```
 
-The `cargo test` command tests native Rust packages; `just check bdb` additionally links
-and executes storage and C-library tests against Berkeley DB 5.3. Headers
+The `cargo test` command tests native Rust packages; `just check` (tkrzw by
+default; `just check bdb` or `just check kyotocabinet` for the others)
+additionally links and executes storage and C-library tests. Headers
 are the native library declarations used by the compiler; libclang reads
 them, and pkg-config locates native library installations. The check prints
 the selected toolchain, architecture and backend. It installs nothing.
@@ -483,7 +495,7 @@ In a fresh Bash terminal, use your actual checkout directory if different:
 ```bash
 cd ~/src/oxpinyin
 . "$HOME/.cargo/env"
-just check bdb
+just check
 ```
 
 Cargo reuses downloaded dependencies and that checkout's `target/` outputs.
@@ -512,7 +524,7 @@ put Homebrew's `bin` directory before `/bin` on `PATH` in your shell profile
 and open a new terminal.
 
 ```bash
-brew install berkeley-db@5 glib pkgconf
+brew install tkrzw glib pkgconf
 mkdir -p ~/src
 cd ~/src
 git clone https://github.com/shenghaoc/oxpinyin.git
@@ -529,23 +541,26 @@ and run:
 . "$HOME/.cargo/env"
 rustup show
 cargo test --locked -p oxpinyin-chewing -p oxpinyin-core -p oxpinyin-engine
-export OXPINYIN_BDB_INCLUDE_DIR="$(brew --prefix berkeley-db@5)/include"
-export OXPINYIN_BDB_LIB_DIR="$(brew --prefix berkeley-db@5)/lib"
-export CARGO_TARGET_DIR=target/bdb
-just check bdb
+export LIBRARY_PATH="$(brew --prefix)/lib${LIBRARY_PATH:+:$LIBRARY_PATH}"
+export CARGO_TARGET_DIR=target/tkrzw
+just check
 ```
 
-`export` sets a setting inherited by commands in this terminal. Both Berkeley
-DB paths are needed because Homebrew's `berkeley-db@5` is keg-only. This is a real storage
-link/run check; a mere `cargo check` does not execute the tests.
+`export` sets a setting inherited by commands in this terminal. pkg-config
+finds Homebrew's tkrzw, the default backend on every OS; its `tkrzw.pc` names
+the lz4, lzma and zstd libraries without their directory, which
+`LIBRARY_PATH` supplies. To use a tkrzw you built yourself (`just tkrzw-build
+DIR`), put `DIR/lib/pkgconfig` first on `PKG_CONFIG_PATH` and `DIR/lib` on
+`DYLD_LIBRARY_PATH` instead. This is a real storage link/run check; a mere
+`cargo check` does not execute the tests.
 In a fresh Bash terminal, return to the checkout, source Cargo's environment,
-repeat all three exports and the check. Linux C-ABI packaging and Linux reference
+repeat both exports and the check. Linux C-ABI packaging and Linux reference
 differentials are separate evidence, not permanent restrictions on portability.
 
 The existing macOS CI uses this broader portable scope:
 
 ```bash
-cargo test --locked --workspace --no-default-features --features bdb \
+cargo test --locked --workspace --no-default-features --features tkrzw \
   --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi \
   --exclude oxpinyin-corpus --exclude oxpinyin-kmm \
   --exclude oxpinyin-punct --exclude oxpinyin-word
@@ -555,11 +570,11 @@ The [validation status](#validated-on--not-validated) distinguishes native macOS
 from hands-on setup evidence. The current CI exclusions describe maintained
 build integration, not permanent limitations of the portable Rust code.
 
-tkrzw remains optional and stays covered on Linux CI. To use it locally,
-install `brew install tkrzw`, set
-`export LIBRARY_PATH="$(brew --prefix)/lib${LIBRARY_PATH:+:$LIBRARY_PATH}"`
-so its lz4/lzma/zstd dependencies link, and select
-`export CARGO_TARGET_DIR=target/tkrzw` followed by `just check tkrzw`.
+CI's macOS job builds tkrzw with `.github/actions/tkrzw` instead of
+Homebrew's. Berkeley DB is a non-default backend: `brew install berkeley-db@5`,
+`export OXPINYIN_BDB_INCLUDE_DIR="$(brew --prefix berkeley-db@5)/include"`
+and `OXPINYIN_BDB_LIB_DIR="$(brew --prefix berkeley-db@5)/lib"` (it is
+keg-only), `export CARGO_TARGET_DIR=target/bdb`, then `just check bdb`.
 Keep each backend's target and user-data directories separate.
 
 Fuzzing and the backend sanitizer gates run natively on macOS. The recipes
@@ -567,7 +582,7 @@ select Homebrew's Berkeley DB 5.3, Kyoto Cabinet and tkrzw and use the pinned
 nightlies; no Linux `setarch`:
 
 ```bash
-brew install kyoto-cabinet tkrzw
+brew install berkeley-db@5 kyoto-cabinet
 rustup toolchain install nightly-2026-08-01 --profile minimal
 rustup toolchain install nightly-2026-09-07 --profile minimal
 just fuzz parser -- -runs=100
@@ -579,8 +594,8 @@ just sanitize tkrzw address
 just sanitize tkrzw thread
 ```
 
-`capi-commands` also runs natively; the fuzz recipe supplies the facade's
-GLib and Berkeley DB paths. AddressSanitizer runs with leak detection off on
+`capi-commands` also runs natively; pkg-config finds the facade's GLib and
+tkrzw, and the fuzz recipe adds Homebrew's lib to `LIBRARY_PATH`. AddressSanitizer runs with leak detection off on
 Darwin. Standalone LeakSanitizer is refused on macOS arm64, and
 MemorySanitizer has no Darwin target; both refusals name the host. Linux
 keeps its existing sanitizer commands and paths.
@@ -621,18 +636,24 @@ repository toolchain automatically. Editors/debuggers use this same native
 MSVC environment and toolchain; no project-specific IDE is required.
 
 **Storage-dependent native Windows scope:** the Windows CI job runs clippy,
-`cargo nextest run --profile ci` and the doctests over the
-portable workspace with vcpkg `berkeleydb:x64-windows` (4.8), explicit include,
-library, DLL and LLVM paths, and an **unsurveyed-version exception reserved
-for CI**. Do not copy that exception into developer or production setup.
-The repository has no validated contributor recipe for surveyed Berkeley DB
-5.3 on MSVC yet. That is a native dependency/version-survey gap, not evidence
-that Windows is inherently unsupported. Native Rust-only work above is
-available now; storage-dependent work uses the Windows CI evidence and needs
-a validated 5.3 installation before claiming a supported native local run.
+`cargo nextest run --profile ci` and the doctests over the portable
+workspace on the default backend, tkrzw. `.github/actions/tkrzw` builds the
+upstream revision `tools/cloud/setup.sh` provisions with `nmake -f
+VCMakefile` in the Visual Studio developer environment (a static
+`tkrzw.lib` with the DLL C runtime that Rust's MSVC targets link) and
+writes a `tkrzw.pc`, which the store build script finds through
+`PKG_CONFIG_PATH`. The Windows image has no pkg-config, so the action
+installs vcpkg's `pkgconf` and sets `PKG_CONFIG` to its `pkgconf.exe`.
+To do the same
+locally, run `just tkrzw-build DIR` from Developer PowerShell (it loads the
+developer environment through `vswhere` when it is not already loaded),
+put `DIR\lib\pkgconfig` on `PKG_CONFIG_PATH` and `DIR\bin` on `PATH`, and
+set `PKG_CONFIG` to a `pkgconf.exe` (for example from `vcpkg install
+pkgconf:x64-windows`). No local Windows storage run has been
+executed; CI is the evidence.
 
 The existing CI exclusion set is the same six packages shown in the macOS
-command, with default BDB instead of explicit backend selection. The oracle's Linux
+command, on the default backend. The oracle's Linux
 FFI feature is not selected. Native Windows C-ABI/oracle behavior is not
 established by those tests. Physical Windows hardware is not needed to use
 this CI coverage.
@@ -647,7 +668,8 @@ following, dispatch the job on the branch with `windows_only` set:
   (the store backends and their build scripts, path and file handling,
   build scripts that compile or link native code);
 - toolchain updates and relevant dependency updates (`rust-toolchain.toml`,
-  `Cargo.lock` changes that reach the portable workspace, the vcpkg port);
+  `Cargo.lock` changes that reach the portable workspace, the tkrzw
+  revision in `tools/tkrzw/build.py`);
 - releases.
 
 ```bash
@@ -716,14 +738,15 @@ just clippy --locked -p oxpinyin-core --all-targets -- -D warnings
 just heavy -- cargo test --locked -p oxpinyin-core
 ```
 
-For a storage-dependent macOS package, use the explicit backend arguments:
+For a storage-dependent package on a non-default backend, use the explicit
+backend arguments:
 
 ```bash
 just clippy --locked -p oxpinyin-store --all-targets --no-default-features --features bdb -- -D warnings
 just heavy -- cargo test --locked -p oxpinyin-store --no-default-features --features bdb
 ```
 
-`--no-default-features` turns off the default Berkeley DB selection;
+`--no-default-features` turns off the default tkrzw selection;
 `--features bdb` selects Berkeley DB explicitly (exactly one backend is allowed).
 Clippy's `--` separates Cargo options from the lint options that follow.
 Use your preferred native editor/debugger with this same toolchain and
@@ -739,7 +762,7 @@ For example, key parsing/surface changes use the existing
 `same-data-dir-diff` gate shown there. The registry records issue associations;
 use an associated issue/check, or ask the maintainer if no matching check is
 apparent rather than guessing that ordinary unit tests establish parity. The normal cell
-(one backend on both sides) is BDB. Backend-affecting changes use the
+(one backend on both sides) is tkrzw, the reference cell. Backend-affecting changes use the
 [backend selection rules](verification.md#2-backend-selection); they do not require every ordinary
 contributor to provision all backends. Packaging and performance tools belong
 to their existing task runbooks.
@@ -758,16 +781,17 @@ of completing a contribution.
 - Missing MSVC `link.exe` or Windows SDK: use Developer PowerShell and check
   the Visual Studio workload. Native Windows does not use Unix `cc` or
   `pkg-config` for the Rust-only command above.
-- Missing `db.h`, libclang or native libraries: repeat your OS prerequisite
+- Missing `tkrzw_langc.h` (`pkg-config ... tkrzw` failed), `db.h`, libclang
+  or native libraries: repeat your OS prerequisite
   checks. The error identifies the missing header/library; ordinary users
   need the environment owner if package installation is restricted. Send
   that owner the exact failing command and complete error. On Linux,
-  `pkg-config --modversion glib-2.0` checks GLib discovery; the setup check
-  prints the compiler's Berkeley DB header version and bindgen's missing
-  libclang diagnostic, so retain those lines too.
-- macOS cannot find Berkeley DB headers/libraries: repeat both
-  `OXPINYIN_BDB_INCLUDE_DIR` and `OXPINYIN_BDB_LIB_DIR` exports above. For optional
-  tkrzw, repeat `LIBRARY_PATH` if lz4/lzma/zstd cannot link. Do not treat a
+  `pkg-config --modversion glib-2.0` and `pkg-config --modversion tkrzw`
+  check discovery; the setup check prints the backend version and bindgen's
+  missing libclang diagnostic, so retain those lines too.
+- macOS cannot link tkrzw's lz4/lzma/zstd: repeat the `LIBRARY_PATH` export
+  above. For Berkeley DB, repeat both `OXPINYIN_BDB_INCLUDE_DIR` and
+  `OXPINYIN_BDB_LIB_DIR` exports. Do not treat a
   successful Clippy/check as a link test.
 - Missing oracle/model inputs do not block ordinary native tests. They must
   be supplied for the selected compatibility checks, where a skipped/missing
@@ -783,8 +807,8 @@ of completing a contribution.
   workspace scope; the narrower `just check bdb` was not run separately.
 - Native Windows: the maintained CI scope passed at `56618e7f`.
   No local Windows storage installation was executed.
-  Supported local BDB5.3/MSVC provisioning remains a gap; CI's BDB4.8
-  exception is not a contributor default.
+  That run used vcpkg's Berkeley DB 4.8, then the default; since 2026-10-30
+  the job runs the default tkrzw built with MSVC by `.github/actions/tkrzw`.
 - Canonical Debian/Linux amd64 compatibility environment: BDB `same-data-dir-diff` and cache/
   environment-isolation resume passed on rootless Podman. Other runtime
   interoperability was not executed. Apple's volume-reader result retrieval

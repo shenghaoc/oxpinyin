@@ -16,7 +16,8 @@ Intentional departures belong to [Stage 3](../stage3-departures/requirements.md)
 ## Glossary
 
 - **Pin:** libpinyin at the commit in `tools/oracle/oracle-pin.txt` (2.11.92, `074a2219`).
-- **Reference cell:** Berkeley DB on both sides, `PINYIN_ORACLE_DBM=bdb`.
+- **Reference cell:** tkrzw on both sides, `PINYIN_ORACLE_DBM=tkrzw`.
+  The maintainer decision of 2026-10-30 UTC superseded the 2026-10-04 choice of Berkeley DB.
 - **Pin defect:** observable product behaviour upstream would call a bug, reproduced as written by idiomatic Rust.
 - **Product behaviour:** observations that a language-neutral requirement would state.
   These include candidate selection/order/options, saved and loaded state, C returns/ownership/freeing, and files.

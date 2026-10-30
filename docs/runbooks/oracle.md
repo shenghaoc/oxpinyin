@@ -9,9 +9,9 @@ The direct build/runner operations below expose the existing machinery used
 by both routes; extracting libraries alone is not passing parity evidence.
 
 The oracle is libpinyin built from the pinned commit, with the pinned
-model20 data, on the Berkeley DB backend by default (the reference
-build is a bare `./configure`); Kyoto Cabinet and tkrzw prefixes are
-built with `--dbm kc` / `--dbm tkrzw`, and a differential picks its cell
+model20 data, on the tkrzw backend by default (the reference cell,
+maintainer decision 2026-10-30 UTC: tkrzw is maintained upstream); Berkeley DB and Kyoto Cabinet prefixes are
+built with `--dbm bdb` / `--dbm kc`, and a differential picks its cell
 with `PINYIN_ORACLE_DBM`. Every parity claim in this repository is a
 differential against it. Its identity is `tools/oracle/oracle-pin.txt`
 (mirrored by constants in `tools/oracle/build-oracle.sh`); the history of
@@ -40,13 +40,13 @@ extracted directory.
 
 Build dependencies: autotools, a C/C++ toolchain, pkg-config, gettext,
 gnome-common, curl, python3, and the dev headers for GLib 2.0, IBus 1.0,
-SQLite 3 and the DBM (`libdb-dev` for the default Berkeley DB cell;
-`--dbm kc` needs `libkyotocabinet-dev`, `--dbm tkrzw` needs
-`libtkrzw-dev`). The parity oracle defaults to Berkeley DB (ruling
-2026-09-27 UTC, following Q1); differentials pick the cell with
-`PINYIN_ORACLE_DBM`. The capture goldens and the `pinyin-oracle`
-crate's tests still need the tkrzw cell: build that prefix with
-`--dbm tkrzw`.
+SQLite 3 and the DBM (a sound tkrzw that pkg-config finds for the default
+tkrzw cell, [verification rule 9](verification.md#9-sound-tkrzw-library); `--dbm bdb` needs `libdb-dev`, `--dbm kc`
+needs `libkyotocabinet-dev`). The parity oracle defaults to tkrzw
+(maintainer decision 2026-10-30 UTC: tkrzw is maintained upstream; it supersedes the 2026-09-27 UTC ruling that
+made Berkeley DB the default); differentials pick the cell with
+`PINYIN_ORACLE_DBM`. The capture goldens and the `pinyin-oracle` crate's
+tests use the tkrzw cell too.
 Add `--enable-libzhuyin` to also build libzhuyin, which the zhuyin, candidate-assembly, two-context and open-counter differentials need.
 
 ```sh

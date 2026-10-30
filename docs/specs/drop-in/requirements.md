@@ -33,7 +33,8 @@ Use the same backend and files as the replaced libpinyin build.
 
 1. Build with exactly one of Berkeley DB, Kyoto Cabinet or tkrzw, selected at compile time.
    Use no other backend.
-   Default to `bdb`, matching bare `./configure`.
+   Default to `tkrzw` (maintainer decision 2026-10-30 UTC: tkrzw is maintained upstream).
+   Bare `./configure` still selects Berkeley DB.
 2. Open the system directory supplied to `pinyin_init` as the pin does.
    Use its backend DBMs, `MemoryChunk` files and `table.conf`.
    Do not convert data or detect layouts.

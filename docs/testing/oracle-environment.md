@@ -182,6 +182,9 @@ held from 2026-09-06 to 2026-09-26 and no longer describes the tree.
 
 ## Amendment — the parity oracle defaults to Berkeley DB (2026-09-27 UTC)
 
+*(Superseded 2026-10-30 UTC: the parity oracle defaults to tkrzw again; see
+`docs/runbooks/verification.md`.)*
+
 Human ruling, 2026-09-27 UTC: the parity oracle defaults to Berkeley DB,
 following Q1 — the reference build is the pin's autoconf build with a
 bare `./configure`, which selects `BerkeleyDB` (`configure.ac:94` at

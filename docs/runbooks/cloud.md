@@ -129,7 +129,7 @@ overrides the path), rewritten on every run. Source it before a
 runner:
 
 ```sh
-. ~/.oxpinyin-oracle.env                       # reference cell, bdb
+. ~/.oxpinyin-oracle.env                       # reference cell, tkrzw
 PINYIN_ORACLE_DBM=kc . ~/.oxpinyin-oracle.env  # another cell
 ```
 
@@ -146,7 +146,7 @@ It exports, for each provisioned cell `<C>` in `BDB`, `KC`, `TKRZW`:
 `OXPINYIN_ORACLE_PREFIX_<C>` (the oracle prefix) and
 `OXPINYIN_ORACLE_DATA_<C>` (its `lib/libpinyin/data`); `PINYIN_MODEL_DIR`
 (the extracted model20 cache); and, for the cell named by
-`PINYIN_ORACLE_DBM` (the caller's value, else `bdb`, else the first
+`PINYIN_ORACLE_DBM` (the caller's value, else `tkrzw`, else the first
 provisioned cell), `PINYIN_ORACLE_PREFIX` and `OXPINYIN_LIBPINYIN_DATA_DIR`,
 recomputed each time the file is sourced. Naming a cell the setup did not
 provision stops the `source` with an error. The file needs bash.
@@ -327,7 +327,8 @@ uv run --no-project --managed-python python -B -X lazy_imports=normal tools/tkrz
    3b. The tkrzw cell's host library. `tools/tkrzw/distro-probe.sh` is run
    against the host's `libtkrzw` (`tkrzw_dbm_util` on `PATH`). If it
    exits 0 nothing more happens. If it reports a defect, or finds no
-   tkrzw, upstream tkrzw is built from source at
+   tkrzw, upstream tkrzw is built from source by `tools/tkrzw/build.py`
+   (the recipe CI's `.github/actions/tkrzw` also runs) at
    `9ee84164cf45e441aa8186418c03a02c9b89f08b` (1.0.34: its sentinel fix
    makes defect 1 immune to LTO; 1.0.32 is healthy only without LTO,
    `docs/findings/tkrzw-distro-compat.md`) with `env -u CFLAGS -u CXXFLAGS
