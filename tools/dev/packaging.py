@@ -18,7 +18,6 @@ from . import pool, slot
 from .runners import Finished, emit, guarded, status, write
 
 ROOT = Path(__file__).resolve().parents[2]
-HERE = ROOT / 'tools/packaging'
 LIBRARIES = {'libpinyin': 'oxpinyin-capi', 'libzhuyin': 'oxpinyin-zhuyin-capi'}
 HEADERS = ('novel_types.h', 'pinyin_custom2.h')
 NAMES = ('install', 'relink-versioned', 'pc-version', 'check-pc-version', 'check-pc-metadata',
@@ -45,7 +44,6 @@ class Tools:
     """Process boundary, injectable for fixtures without replacing global services."""
     def __init__(self, env=None, *, root=ROOT):
         self.root = Path(root)
-        self.here = self.root / "tools/packaging"
         self.env = dict(os.environ if env is None else env)
 
     def capture(self, argv, *, cwd=None, env=None, merge_stderr=False, input=b''):
@@ -192,14 +190,19 @@ class Layout:
                     profile = 'debug' if word == '--debug' else 'release'
                 passthru.append(word)
                 index += 1
-        with directory(tools.here):
+        with directory(tools.root):
             target_path = Path(target) if target else tools.root / 'target'
             if not target_path.is_absolute():
-                target_path = tools.here / target_path
+                target_path = tools.root / target_path
             if target:
                 tools.run(['mkdir', '-p', '--', target_path])
             # The shell's cd + pwd retains logical aliases such as /var.
             target_path = Path(os.path.abspath(target_path))
+            # cargo cinstall runs in the crate directory, so a relative
+            # destdir is made absolute here, from the repository root.
+            destdir = values['destdir']
+            if destdir and not os.path.isabs(destdir):
+                destdir = os.path.abspath(destdir)
         triple = triple or tools.env.get('CARGO_BUILD_TARGET') or ''
         if not triple:
             triple = '\n'.join(re.findall(r'^host: (.*)$', tools.text(['rustc', '-vV']), re.M))
@@ -212,7 +215,7 @@ class Layout:
         if not triple:
             fail("error: could not determine the build target (rustc -vV had no 'host:' line)")
         return cls(library, prefix, values['libdir'] or prefix + '/lib',
-                   values['includedir'] or prefix + '/include', values['destdir'],
+                   values['includedir'] or prefix + '/include', destdir,
                    values['libdir'] or '${exec_prefix}/lib', values['includedir'] or '${prefix}/include',
                    target_path, triple, profile, passthru)
 
@@ -245,7 +248,7 @@ class Layout:
 
 
 def install(argv, tools):
-    with directory(tools.here):
+    with directory(tools.root):
         return install_library(argv, tools)
 
 
@@ -269,7 +272,7 @@ def install_library(argv, tools):
     system = tools.text(['uname', '-s'])
     features = ['--features', layout.features()] if layout.features() else []
     if system == 'Linux':
-        with directory(tools.here):
+        with directory(tools.root):
             relink(['--staticlib', str(layout.qualified / (layout.library + '.a')),
                     '--ver', str(crate / (layout.library + '.ver')),
                     '--soname', layout.library + '.so.15',
@@ -625,6 +628,8 @@ def release_stage(argv, tools):
     prefix, libdir = values['prefix'], values['libdir']
     if not prefix or not libdir:
         fail(usage, 2)
+    if values['dest'] and not os.path.isabs(values['dest']):
+        fail(f"error: --dest '{values['dest']}' must be an absolute path", 2)
     dest = values['dest'] or str(tools.root / 'target/release-stage' / backend)
     if dest in ('/', prefix, libdir):
         fail(f"error: --dest '{dest}' collides with a real install root", 2)
@@ -635,7 +640,7 @@ def release_stage(argv, tools):
     companion_headers(stage=True, root=tools.root)
     if not tools.which('cargo-cinstall'):
         fail("error: cargo-c (cargo cinstall) is required; install the distro's cargo-c package")
-    with directory(tools.here):
+    with directory(tools.root):
         tools.run(['rm', '-rf', '--', dest])
         for library in LIBRARIES:
             suffix = ', features: shipped' if library == 'libpinyin' else ''
@@ -730,6 +735,8 @@ def metadata(argv, tools):
         values[name] = value
     if not all(values[name] for name in ('pin_root', 'subject_root', 'prefix')):
         fail(templates.METADATA_USAGE.rstrip('\n'), 2)
+    if not os.path.isabs(values['subject_root']):
+        fail(f"error: --subject-root '{values['subject_root']}' must be an absolute path", 2)
     if not tools.which('pkg-config'):
         fail('error: pkg-config not found', 2)
     from .cell import Settings
@@ -746,7 +753,7 @@ def metadata(argv, tools):
                 'OXPINYIN_CAPI_SO', 'OXPINYIN_ZHUYIN_SO'):
         if key in settings.environment:
             tools.env[key] = settings.environment[key]
-    with directory(tools.here):
+    with directory(tools.root):
         if backend:
             tools.run(['rm', '-rf', '--', values['subject_root']])
             layout = [f'--prefix={values["prefix"]}', f'--destdir={values["subject_root"]}']

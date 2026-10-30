@@ -91,7 +91,7 @@ class PackagingTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.work = Path(self.temp.name)
         self.root = self.work / 'checkout'
-        for relative in ['crates/oxpinyin-capi', 'crates/oxpinyin-zhuyin-capi', 'tools/oracle', 'tools/lib', 'tools/tkrzw', 'tools/packaging']:
+        for relative in ['crates/oxpinyin-capi', 'crates/oxpinyin-zhuyin-capi', 'tools/oracle', 'tools/lib', 'tools/tkrzw']:
             (self.root / relative).mkdir(parents=True)
         for crate in packaging.LIBRARIES.values():
             for source in (ROOT / 'crates' / crate).iterdir():
@@ -261,10 +261,33 @@ if lines:sys.stdout.buffer.write(separator.join(sorted(lines,key=key))+separator
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue((self.root / 'target/.json/debug/libpinyin.pc.in.baked').is_file())
 
-    def test_target_environment_is_relative_to_packaging_directory(self):
+    def test_target_environment_is_relative_to_the_repository_root(self):
         result, _ = self.install(env={'CARGO_TARGET_DIR': 'relative target'})
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertTrue((self.root / 'tools/packaging/relative target/fixture-target/release/libpinyin.pc.in.baked').is_file())
+        self.assertTrue((self.root / 'relative target/fixture-target/release/libpinyin.pc.in.baked').is_file())
+
+    def test_install_needs_no_tools_packaging_directory(self):
+        # #1452 removed the directory's last files; a checkout no longer has it.
+        self.assertFalse((self.root / 'tools/packaging').exists())
+        result = self.invoke('install', ['libpinyin', '--prefix=/usr', '--destdir=relative stage'])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.root / 'relative stage/usr/lib/pkgconfig/libpinyin.pc').is_file())
+        self.assertTrue((self.root / 'relative stage/usr/lib/libpinyin.so.15.0.0').is_file())
+        self.assertFalse((self.root / 'tools/packaging').exists())
+
+    def test_relative_staging_roots_are_refused_before_removal(self):
+        # Relative paths resolve from the repository root, so 'target' would name Cargo's target directory.
+        sentinel = self.root / 'target/keep'
+        for name, arguments in [('release-stage', ['bdb', '--prefix=/usr', '--libdir=/usr/lib', '--dest=target']),
+                                ('check-pc-metadata', ['--pin-root=' + str(self.work), '--subject-root=target',
+                                                       '--prefix=/usr', '--build-subject=bdb'])]:
+            with self.subTest(name=name):
+                sentinel.parent.mkdir(parents=True, exist_ok=True)
+                sentinel.write_text('kept')
+                result = self.invoke(name, arguments)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn(b"'target' must be an absolute path", result.stderr)
+                self.assertTrue(sentinel.is_file())
 
     def test_baked_fallback_and_ambiguity(self):
         result, _ = self.install(env={'FALLBACK_BAKED': '1'})

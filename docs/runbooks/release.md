@@ -42,7 +42,7 @@ not ship.
 
 ```sh
 just packaging release-stage tkrzw --prefix=/usr --libdir=/usr/lib/x86_64-linux-gnu \
-    --dest=target/release-stage/tkrzw
+    --dest="$PWD/target/release-stage/tkrzw"
 just packaging release-deb  tkrzw <version> target/release-stage/tkrzw /usr/lib/x86_64-linux-gnu <outdir>
 just packaging release-rpm  kyotocabinet <version> target/release-stage/kyotocabinet <outdir>
 just packaging release-arch kyotocabinet <version> target/release-stage/kyotocabinet <outdir> --data=<arch data dir> --data-version=<ver>  # without --data the package cannot init on the system it replaced
