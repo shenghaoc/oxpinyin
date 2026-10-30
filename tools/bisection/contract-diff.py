@@ -259,6 +259,7 @@ import contract_phrase_table_mask
 import contract_punctuation
 import contract_training_constraints
 import contract_user_stored_words
+import contract_user_key_spellings
 import contract_toned_keys_zhuyin_refusals
 import contract_final_step_surface
 import contract_zero_key_guess
@@ -1436,6 +1437,9 @@ def main():
 
 
 contract_c_string_inputs.register(case, items_system=items_system)
+
+
+contract_user_key_spellings.register(case)
 
 
 if __name__ == '__main__':
