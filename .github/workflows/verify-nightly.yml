@@ -19,6 +19,7 @@ name: verify-nightly
 # A separate nextest lane over the Kyoto Cabinet workspace was removed on
 # 2026-10-22: overflow-lane runs the same workspace test inventory under
 # Kyoto Cabinet, and ci.yml's Linux and macOS test jobs already run nextest.
+# test-windows has run nextest too since 2026-10-30.
 #
 # Every Linux job runs in a debian:testing container in the
 # store-backends.yml style (test-windows runs on windows-latest): the nightly lanes exist to surface drift early, and the rolling
@@ -580,8 +581,31 @@ jobs:
           --exclude oxpinyin-corpus --exclude oxpinyin-kmm --exclude oxpinyin-punct
           --exclude oxpinyin-word
           -- -D warnings
+      # The same pinned cargo-nextest as ci.yml's Linux and macOS jobs, in
+      # its Windows build; the checksum is the release's published
+      # cargo-nextest-<ver>-x86_64-pc-windows-msvc.sha256. The binary goes
+      # to ~/.cargo/bin, which the bootstrap action already puts on PATH.
+      - name: Install pinned cargo-nextest
+        run: |
+          set -euo pipefail
+          # Exact on purpose (#1074): a checksum is only known for a known version.
+          ver=0.9.143
+          sum=c42a1dbde532da06dc9b4a43d44fd0ce668b836c2ab7388410f10ff9834476a2
+          curl -sSfL -o cargo-nextest.tar.gz "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-${ver}/cargo-nextest-${ver}-x86_64-pc-windows-msvc.tar.gz"
+          echo "${sum}  cargo-nextest.tar.gz" | sha256sum -c -
+          tar xzf cargo-nextest.tar.gz
+          mkdir -p ~/.cargo/bin
+          install -m755 cargo-nextest.exe ~/.cargo/bin
+          rm cargo-nextest.tar.gz cargo-nextest.exe
+          cargo nextest --version
       - run: >
-          cargo test --locked --workspace
+          cargo nextest run --locked --profile ci --status-level skip --workspace
+          --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi
+          --exclude oxpinyin-corpus --exclude oxpinyin-kmm --exclude oxpinyin-punct
+          --exclude oxpinyin-word
+      # nextest does not run doctests; keep the same exclusions.
+      - run: >
+          cargo test --locked --doc --workspace
           --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi
           --exclude oxpinyin-corpus --exclude oxpinyin-kmm --exclude oxpinyin-punct
           --exclude oxpinyin-word
