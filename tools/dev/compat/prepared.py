@@ -46,6 +46,21 @@ def prepare(cell, rows, prefix, cache, environment, *, root=ROOT):
         shutil.copyfile(model / 'interpolation2.text', data / 'interpolation2.text')
         options += ['--data', f'{cell}={data}']
 
+    if 'tool-diff' in names:
+        work = cache / 'tools'
+        sources = list((work / 'src').glob('libpinyin-*'))
+        marker = work / '.complete'
+        if not marker.is_file() or len(sources) != 1:
+            run([*common, '--libs-only', '--work-dir', work, '--prefix', work / 'prefix'],
+                env=environment, cwd=root, heavy=True)
+            sources = list((work / 'src').glob('libpinyin-*'))
+            if len(sources) != 1:
+                raise ValueError(f'expected one pin source tree in {work}')
+            run(['make', '-C', sources[0] / 'utils/storage', 'gen_pinyin_table', 'gen_zhuyin_table'],
+                env=environment, cwd=root, heavy=True)
+            marker.touch()
+        environment['OXPINYIN_TOOL_PIN_BUILD'] = str(sources[0])
+
     if 'import-diff' in names:
         work = cache / 'frontend'
         marker = work / '.complete'

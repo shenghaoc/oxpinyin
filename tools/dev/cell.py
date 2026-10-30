@@ -221,7 +221,8 @@ class Settings:
 
     def build(self, wanted: Sequence[str]) -> int:
         packages = {'pinyin-capi': 'oxpinyin-capi', 'zhuyin-capi': 'oxpinyin-zhuyin-capi',
-                    'dictool': 'oxpinyin-dictool'}
+                    'dictool': 'oxpinyin-dictool', 'gen-pinyin-table': 'oxpinyin-utils',
+                    'gen-zhuyin-table': 'oxpinyin-utils'}
         for item in wanted:
             if item and item not in (*packages, 'user-rt-test'):
                 raise CellError(f"fatal: unknown artifact '{item}' (pinyin-capi, zhuyin-capi, dictool, user-rt-test)", 2)
@@ -230,7 +231,8 @@ class Settings:
         self.claim()
         common = ['--locked', '--manifest-path', str(self.root / 'Cargo.toml')]
         features = ['--no-default-features', '--features', self.feature]
-        selected = [part for item in wanted if item in packages for part in ('-p', packages[item])]
+        selected = [part for package in dict.fromkeys(packages[item] for item in wanted if item in packages)
+                    for part in ('-p', package)]
         if selected:
             status = slot.run_command(['cargo', 'build', *common, *selected, *features],
                                       env=self.environment, out=sys.stderr, cwd=self.root)
@@ -275,7 +277,8 @@ class Settings:
                           tracked_diff_sha256=hashlib.sha256(output('git', 'diff', 'HEAD', '--', '.').encode()).hexdigest())
         artifacts = {}
         for name, filename in (('pinyin-capi', 'libpinyin_capi.so'), ('zhuyin-capi', 'libzhuyin_capi.so'),
-                               ('dictool', 'oxpinyin-dictool'), ('user-rt-test', 'user-dir-round-trip-test')):
+                               ('dictool', 'oxpinyin-dictool'), ('user-rt-test', 'user-dir-round-trip-test'),
+                               ('gen-pinyin-table', 'gen_pinyin_table'), ('gen-zhuyin-table', 'gen_zhuyin_table')):
             file = self.target / 'debug' / filename
             if file.exists():
                 stat = file.stat()

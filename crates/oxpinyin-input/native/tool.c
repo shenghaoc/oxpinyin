@@ -263,3 +263,13 @@ void oxpinyin_tool_gpt_print_row(FILE *outfile, const char *pinyin_str,
                                  guint32 freq) {
     fprintf(outfile, "%s\t%s\t%d\t%d\n", pinyin_str, phrase_str, token, freq);
 }
+
+/* gen_zhuyin_table.cpp:156-159 at 074a2219. */
+void oxpinyin_tool_gzt_wrong_line(const char *line) {
+    fprintf(stderr, "wrong line format:%s\n", line);
+}
+
+/* Class (b) refusal at gen_zhuyin_table.cpp:153 or :286-287. */
+void oxpinyin_tool_gzt_refuse(const char *reason, const char *text) {
+    fprintf(stderr, "gen_zhuyin_table: %s: %s\n", reason, text);
+}

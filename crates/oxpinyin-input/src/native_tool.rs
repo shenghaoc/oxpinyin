@@ -40,6 +40,8 @@ pub(crate) union OptionValue {
 }
 
 unsafe extern "C" {
+    fn oxpinyin_tool_gzt_wrong_line(line: *const c_char);
+    fn oxpinyin_tool_gzt_refuse(reason: *const c_char, text: *const c_char);
     fn oxpinyin_tool_setlocale_all_environment() -> *mut c_char;
     fn oxpinyin_tool_parse_options(
         parameter_string: *const c_char,
@@ -554,4 +556,14 @@ impl Drop for Istream {
         // SAFETY: the handle is owned and never used again.
         unsafe { oxpinyin_tool_istream_close(self.0.as_ptr()) }
     }
+}
+
+pub(crate) fn gzt_wrong_line(line: &CStr) {
+    // SAFETY: the NUL-terminated line outlives the formatted write.
+    unsafe { oxpinyin_tool_gzt_wrong_line(line.as_ptr()) }
+}
+
+pub(crate) fn gzt_refuse(reason: &CStr, text: &CStr) {
+    // SAFETY: both NUL-terminated strings outlive the formatted write.
+    unsafe { oxpinyin_tool_gzt_refuse(reason.as_ptr(), text.as_ptr()) }
 }

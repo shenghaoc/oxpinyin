@@ -10,3 +10,5 @@
 #![cfg_attr(not(test), deny(clippy::panic))]
 
 pub mod gen_pinyin_table;
+
+pub mod gen_zhuyin_table;
