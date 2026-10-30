@@ -8,7 +8,6 @@
 
 use core::fmt;
 
-use crate::PhraseText;
 use crate::options::{
     OptionBits, PINYIN_AMB_AN_ANG, PINYIN_AMB_C_CH, PINYIN_AMB_EN_ENG, PINYIN_AMB_F_H,
     PINYIN_AMB_G_K, PINYIN_AMB_IN_ING, PINYIN_AMB_L_N, PINYIN_AMB_L_R, PINYIN_AMB_S_SH,
@@ -18,6 +17,7 @@ use crate::syllables::{
     FULL_PINYIN_SYLLABLE_MAP, INCOMPLETE_PINYIN_KEY_MAP, OPTION_ONLY_COMPLETE_SYLLABLE_MAP,
     ZHUYIN_ONLY_COMPLETE_SYLLABLE_MAP,
 };
+use crate::{ChewingKey, PhraseText};
 use crate::{
     Completeness, FULL_PINYIN_SYLLABLE_COUNT, INCOMPLETE_PINYIN_KEY_COUNT, INCOMPLETE_PINYIN_KEYS,
     OPTION_ONLY_COMPLETE_SYLLABLE_COUNT, OPTION_ONLY_COMPLETE_SYLLABLES,
@@ -94,6 +94,24 @@ impl SyllableKey {
         ZHUYIN_ONLY_COMPLETE_SYLLABLE_MAP
             .get(text)
             .and_then(|&index| Self::from_index(zhuyin_start + index as usize))
+    }
+
+    /// The key a stored [`ChewingKey`] names, decoded from its initial,
+    /// middle and final fields through the pin's `chewing_key_table`
+    /// (`chewing_key.cpp:29-36` at 074a2219), tone ignored.
+    ///
+    /// Every key a pin parser can write is a `content_table` row
+    /// (`pinyin_parser2.cpp:114`, `:146`; `zhuyin_parser2.cpp:95`), and
+    /// every row has a key here, so no pin-written key is left out,
+    /// including the option-only `eng`/`nun` and the zhuyin-only `den`.
+    /// `None` for the zero key and for fields the table marks invalid,
+    /// which only a file the pin did not write can carry.
+    #[must_use]
+    pub fn from_chewing_key(key: ChewingKey) -> Option<Self> {
+        if key.table_index() == 0 {
+            return None;
+        }
+        Self::from_canonical_text(key.pinyin_spelling())
     }
 
     /// Returns the key for `text` under parser option bits.
@@ -399,6 +417,7 @@ impl PhraseEntry {
 #[cfg(test)]
 mod tests {
     use super::{PhraseEntry, PhraseToken, SYLLABLE_KEY_COUNT, SyllableKey};
+    use crate::ChewingKey;
     use crate::OptionBits;
     use crate::{
         Completeness, INCOMPLETE_PINYIN_KEYS, OPTION_ONLY_COMPLETE_SYLLABLES, full_pinyin_syllables,
@@ -414,6 +433,34 @@ mod tests {
             assert!(!key.is_empty());
         }
         assert_eq!(SyllableKey::from_index(SYLLABLE_KEY_COUNT), None);
+    }
+
+    /// Every key decodes from the fields of its own `content_table` row,
+    /// whatever its tier, and fields outside the table decode to nothing.
+    #[test]
+    fn every_key_decodes_from_its_chewing_fields() {
+        for index in 0..SYLLABLE_KEY_COUNT {
+            let key = SyllableKey::from_index(index).expect("index is in range");
+            let chewing = ChewingKey::from_pinyin(key.text()).expect("content row");
+            assert_eq!(SyllableKey::from_chewing_key(chewing), Some(key));
+            assert_eq!(chewing.pinyin_spelling(), key.text());
+            for tone in 1..=5 {
+                assert_eq!(
+                    SyllableKey::from_chewing_key(chewing.with_tone(tone)),
+                    Some(key)
+                );
+            }
+        }
+        for spelling in ["eng", "nun", "den"] {
+            let chewing = ChewingKey::from_pinyin(spelling).expect("content row");
+            let key = SyllableKey::from_chewing_key(chewing).expect("decoded");
+            assert_eq!(key.text(), spelling);
+        }
+        assert_eq!(SyllableKey::from_chewing_key(ChewingKey::ZERO), None);
+        assert_eq!(
+            SyllableKey::from_chewing_key(ChewingKey::new(31, 3, 31, 0)),
+            None
+        );
     }
 
     #[test]
