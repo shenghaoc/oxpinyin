@@ -30,6 +30,8 @@ criterion = "0.8"
 bindgen = { workspace = true, optional = true }
 # Compiles the Kyoto Cabinet C++ shim (#1118).
 cc = { version = "1.4.3", optional = true }
+# Finds tkrzw, Kyoto Cabinet and, where a .pc file exists, Berkeley DB (#1434).
+pkg-config = { version = "0.3.34", optional = true }
 
 [features]
 # The backends (kyotocabinet, tkrzw, bdb) are peer
@@ -44,16 +46,16 @@ cc = { version = "1.4.3", optional = true }
 # which is what "default" means here — select any peer explicitly with
 # `--no-default-features --features {kyotocabinet|tkrzw|bdb}`.
 default = ["bdb"]
-tkrzw = ["dep:bindgen"]
+tkrzw = ["dep:bindgen", "dep:pkg-config"]
 # Kyoto Cabinet backend. bindgen is build-time only (it needs libclang);
 # the runtime dependency is the system libkyotocabinet the distro already
 # ships.
-kyotocabinet = ["dep:bindgen", "dep:cc"]
+kyotocabinet = ["dep:bindgen", "dep:cc", "dep:pkg-config"]
 # Berkeley DB backend — libpinyin's original DBM and the third drop-in
 # set. bindgen is build-time only; the runtime dependency is the system
 # libdb 5.3 the distro already ships (Debian libdb-dev, Fedora
 # libdb-devel), the same library that wrote the files it must read.
-bdb = ["dep:bindgen"]
+bdb = ["dep:bindgen", "dep:pkg-config"]
 # `bench-internal` — exposes hidden test/bench-only helpers that would
 # otherwise be `pub(crate)`. Off by default; not part of `default`, not
 # reached by any shipping build. Currently just widens the Kyoto Cabinet

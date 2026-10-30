@@ -27,7 +27,7 @@ must_use_candidate = "warn"
 [features]
 # The pin utilities' boundary (stage 5): GLib option, text and C++ stream
 # calls. Tools only; it links GLib and the C++ runtime.
-tools = []
+tools = ["dep:pkg-config"]
 
 [dependencies]
 
@@ -39,3 +39,5 @@ tempfile.workspace = true
 # <locale.h> (the same requirement oxpinyin-store's shim build uses), and
 # with `tools` native/tool.c against GLib's headers and the C++ stream shim.
 cc = "1.4.3"
+# Finds GLib for the `tools` shim, as oxpinyin-store finds its backends.
+pkg-config = { version = "0.3.34", optional = true }
