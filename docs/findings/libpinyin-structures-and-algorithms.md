@@ -815,3 +815,122 @@ Worst-case time remains O(NL), while temporary space falls from O(B + NL)
 to O(B + M), for B row bytes. No key vector is allocated per record, and
 no work moves into init. Other consumers that need owned pronunciations
 still use `decode_items`, over the same validated record views.
+
+## Ordered bulk user-phrase reads (2026-10-29 UTC)
+
+Pin sources read with `git show 074a2219:<path>` in
+`/home/sheng/repos/libpinyin`: the phrase index stores token-indexed item
+slots (`storage/phrase_index.cpp:624-645`), and each item's packed readings
+retain insertion order (`:56-91`). The export iterator walks increasing tokens
+and then each item's reading positions (`pinyin.cpp:662-687`, `:698-768`).
+It needs no hash join between a phrase and its readings. Its traversal is
+linear in the token range
+and stored readings, with output storage proportional to the returned data.
+
+oxpinyin's `UserStore::phrases` and `UserStore::export_phrases_in`
+(`crates/oxpinyin-user/src/store.rs`) read separate PHRASE and PRONUNCIATION
+tables. Both keys begin with the same four big-endian token bytes
+(`codec::encode_token`, `codec::encode_token_bytes`). The store's `table\0key`
+framing preserves that order. BDB's framed store uses a default-comparator
+DB_BTREE, KC uses TreeDB's lexical comparator, and tkrzw uses TreeDBM's default
+LexicalKeyComparator; each walk advances its ordered cursor. SessionValues'
+BTreeMaps and the transaction scans preserve the same order. Extra key tails
+can produce duplicate decoded phrase tokens, but those tokens remain adjacent.
+
+The former join built a randomly seeded membership HashSet and a grouped
+BTreeMap. It never iterated the HashSet for output: seeds changed probe cost,
+while the ordered walks and sequence sort determined candidate and export
+order. A fixed hasher would retain the extra index and collision behavior;
+an ordered membership set would add logarithmic lookup cost and allocation.
+The merge instead uses the ordering already guaranteed by every store. The
+startup controller's RandomState allowlist is unchanged.
+
+`collect_phrase_rows` materializes the phrase output first, preserving phrase
+validation before pronunciation validation and library filtering before text
+decoding. `collect_pronunciations_for_tokens` advances one phrase cursor while
+walking the pronunciation table once. It fills each matching output row
+directly, including every duplicate phrase row. No HashSet or grouped side map
+is needed. A reading's sequence and original scan position travel in its output
+buffer; `sort_unstable_by_key` on that pair preserves the former stable sequence
+order, including duplicate decoded readings and ties, without sort scratch.
+The join costs O(P + R + E), where E counts emitted readings including duplicate
+phrase multiplicity. The existing per-phrase sequence ordering costs
+O(sum(r_i log r_i)); no stronger bound is claimed for malformed unbounded groups.
+Storage is O(P + E + returned text/key bytes), without an auxiliary join index.
+The std owned-iterator conversions consume the output buffers.
+
+The write-side `collect_pronunciation_keys_from_txn` likewise merges the
+nondecreasing tokens selected by `mask_phrase_rows` with one pronunciation walk.
+Repeated selected tokens do not duplicate the returned raw keys. Empty
+selection skips the pronunciation scan; otherwise all pronunciation keys are
+validated, even after the final selected token, and unselected values remain
+undecoded. Unit tests cover these rules, legacy values, odd truncated key tails,
+corrupt keys/text/values, duplicate phrase tokens and duplicate readings. This
+changes the join's cost, not its candidate, export or persisted-file order.
+
+### Measured result and accepted trade-off (2026-10-30 UTC)
+
+The preserved native shipping baseline was built from `fcabbbf9`; later
+documentation-only rebases do not relabel that baseline. The candidate's
+shipping Rust sources and six generated function-order policies are unchanged
+from the measured candidate. Both facades used release shipping builds; the
+native measurements used BDB, Ubuntu 26.10 x86_64, CPU 0, eager binding and
+ext4, with the same pin-provisioned model20 profiles and system data per arm.
+The diagnostic controller and worker's measured C source did not change the
+shipping objects. The pin comparisons were separate debug compatibility runs.
+
+In the cold campaign's modest first-candidate scope,
+`UserLookup::from_store` took 8,350 Ir in every candidate and same-bytes control
+sample (five each), against 10,454–10,466 on base. All twelve instruction
+checks continued under the existing BDB/RandomState diagnostic rules. The
+first-candidate and steady attributions reported no functions outside the
+unchanged RandomState allowlist; BDB init remained diagnostic.
+The selected contract cases were 21 MATCH on each of BDB, KC and tkrzw.
+Empty, modest, phrases and journals completed. Of forty phase timing results,
+twelve were STABLE and twenty-eight INCONCLUSIVE, including drop/fini on the
+populated profiles. No slowdown was detected, but the inconclusive controls do
+not disprove one; this is not a no-regression result.
+
+The separately authorized, single cold modest memory-only run retained full
+per-mapping smaps at M0 (after load) and I1 (after init). Mean PSS in KiB:
+
+| Mapping class | Base M0 to I1 | Candidate M0 to I1 | Candidate minus base at I1 |
+| --- | ---: | ---: | ---: |
+| Named `[heap]` | 88 to 244 | 88 to 244 | 0 |
+| Other anonymous VMAs | 60 to 2,608 | 60 to 2,608 | 0 |
+| Library executable mapping | 184 to 744 | 192 to 788 | +44 |
+| Library read-only mappings | 120 to 268 | 120 to 288 | +20 |
+| Library writable mapping | 4 to 4 | 4 to 4 | 0 |
+| System-data mappings | 0 to 4,132 | 0 to 4,132 | 0 |
+| User-file mappings | 0 to 0 | 0 to 0 | 0 |
+| Other libraries, worker, stack/kernel | 294.33 to 1,580.67 | 294.50 to 1,580.83 | +0.17 |
+| Sum of mappings | 750.33 to 9,580.67 | 758.50 to 9,644.83 | +64.17 |
+
+Mapping sums reconcile exactly per sample before averaging; rounding the
+displayed means can affect their sum. The separately read smaps_rollup PSS
+exceeds the sum by 8–10 KiB, retained as a diagnostic rather than assigned to
+a mapping. Anonymous/COW pages inside file-named VMAs remain in those mapping
+classes, distinct from `[heap]` and other anonymous VMAs.
+
+The library's I1 increase is exactly 64 KiB in every retained round: 44 KiB
+in the executable mapping at file offset `0x11000` and 20 KiB in the read-only
+data/unwind mapping (base `0x1fb000`, candidate `0x1f4000`). Both growing
+mappings have Anonymous=0; headers, RELRO and writable pages are unchanged.
+Eight KiB is already present at M0, so the excess M0-to-I1 growth is 56 KiB
+(paired CI95 [56, 56]). Named heap and other anonymous PSS do not decrease at
+init; these checkpoints precede the first-candidate join. The total paired
+I1 median difference is 64 KiB (CI95 [63.5, 65]); the earlier rollup-only
+67 KiB difference is not reproduced exactly and its remaining 3 KiB cannot
+be assigned retrospectively. All thirty retained rounds per arm qualified
+cold, with zero retained rejections; one initial warmup per arm was rejected
+and excluded. Output was COMPARABLE and residency controls STABLE.
+
+The measured trade is deterministic instruction cost and no first-candidate
+hash join against increased library residency at init. The already regenerated
+function-order policies are the policies measured above and did not recover
+that increase. A separate policy-tuning experiment was not performed; whether
+a different policy could recover it remains untested. The maintainer accepted
+this trade on 2026-10-30 UTC. User-phrase representation work in #1418 will
+replace this path. The native commands and the memory-only smaps capture are
+documented in `docs/runbooks/benches.md`; policy regeneration and pin profile
+provisioning are in `docs/packaging.md`.
