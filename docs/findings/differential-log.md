@@ -1,5 +1,11 @@
 # Findings — W2-T3 differential runner and log schema
 
+> **Retired W2 implementation.** The parse comparison against
+> `FullPinyinParser`'s path set, its logs and `parity-diff` have been removed.
+> This document records their historical schema. Current graph-path coverage
+> is in `crates/pinyin-oracle/tests/graph_paths.rs`; the shipping C path uses
+> the [live parity gates](../runbooks/parity-gates.md).
+
 Date: 2026-08-09 · Source tier: Architect derivation; human freeze pending.
 
 This finding freezes what the differential runner compares, how it decides

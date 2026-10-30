@@ -190,7 +190,7 @@ prefix, FFI, capture). `ModelDirError` is `NotADirectory` /
 Bins:
 
 - `oracle_sentence_surface`, `oracle_paths`, `oracle_candidates`,
-  `oracle_candidate_structure`, `parity_diff`: `Result<_, String>` or
+  `oracle_candidate_structure`: `Result<_, String>` or
   `match` on `OracleError`, exit 1/2. Appropriate `anyhow` slot.
 - `parity_sweep`, `parity_worst`: `expect` on dictionary / LM / session
   / corpus fixture load. A failed load must abort the tool; leave them.

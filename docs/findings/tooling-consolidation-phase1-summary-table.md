@@ -1,5 +1,13 @@
 # Appendix A1 — inventory summary and destination per record
 
+> **W2 retirement update.** The `pinyin-oracle` parse comparator
+> (`src/differential.rs`, `src/taxonomy.rs`, `parity-diff`,
+> `tests/differential_replay.rs`, `tests/taxonomy_replay.rs` and
+> `tests/differential_live.rs`) and its W2-only `LiveSource` adapter have
+> been retired. Their records and extraction proposals below are historical.
+> Corpus generation, capture/FFI support and graph-path fixtures remain;
+> `oracle-paths` remains an importer of historical W2 logs.
+
 > **Supersession note (2026-10-18 UTC):** the `public-api` job (CI-23), its
 > `cargo-public-api` tool and the `docs/api/oxpinyin-engine.public-api.txt`
 > snapshot named below were retired when the C APIs/ABIs became the only
