@@ -472,12 +472,11 @@ class SystemImportProfileTests(World):
         compile_command = self.kinds('run')[0][1]
         self.assertEqual(compile_command[:6], ['cc', '-std=gnu11', '-Wall', '-Wextra', '-Werror', '-O2'])
         self.assertEqual(compile_command[-3:], ['-ldl', '-o', str(self.out.resolve() / 'driver')])
-        self.assertEqual(self.kinds('order')[0][1:], (['ox/pinyin', 'pin/pinyin'], [], ['pin']))
 
     def test_the_workload_argument_and_cold_open_come_before_the_options(self):
         for arguments, workload, jobs in ((['30'], '30', []), (['--cold-open'], '--cold-open', []),
                                            (['--jobs', '2'], '1000', ['--jobs', '2']),
-                                           (['5', '--jobs', '1', '--unordered-arm', 'ox'], '5', ['--jobs', '1'])):
+                                           (['5', '--jobs', '1'], '5', ['--jobs', '1'])):
             with self.subTest(arguments=arguments):
                 self.calls.clear()
                 shutil.rmtree(self.out, ignore_errors=True)
@@ -485,7 +484,6 @@ class SystemImportProfileTests(World):
                 self.assertEqual(status, 0, err)
                 self.assertEqual(self.calls[0][:len(jobs)], jobs)
                 self.assertEqual(self.calls[0][-1], workload)
-        self.assertEqual(self.kinds('order')[-1][2], ['--unordered-arm', 'ox'])
 
     def test_jobs_needs_a_count(self):
         for arguments in (['--jobs'], ['--jobs', '']):
@@ -535,9 +533,9 @@ class SystemImportProfileTests(World):
         self.assertEqual(self.kinds('run'), [])
         self.assertEqual(self.calls, [])
 
-    def test_a_function_order_error_comes_before_the_directory_is_made(self):
+    def test_an_argument_error_comes_before_the_directory_is_made(self):
         status, _, err = self.run_recipe('30', '--bogus')
-        self.assertEqual((status, err), (2, 'unknown function-order argument: --bogus\n'))
+        self.assertEqual((status, err), (2, 'unknown argument: --bogus\n'))
         self.assertFalse(self.out.exists())
 
 

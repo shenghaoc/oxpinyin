@@ -28,9 +28,7 @@ Rule 7's documentation and comments case needs no backend-selection run.
 Report apparent backend dependence that fails these checks as a finding.
 It does not authorize a three-cell run.
 
-Function-order policies are separate for each backend.
-Always regenerate or check them for bdb, kc and tkrzw, independently of `cells-for-diff.py`.
-See [packaging regeneration](../packaging.md#regeneration).
+See the [function-layout ruling](../packaging.md#function-layout) for shipping builds.
 
 ## 3. Sweep and release coverage
 
@@ -54,7 +52,7 @@ Do not repeat an equivalent passing CI check locally.
 A check that is missing, cancelled or skipped when it applies does not count as a pass.
 A check skipped because it does not apply to the change is not a failure.
 Run fmt locally; it is cheap.
-Run locally the required checks that CI does not cover: the issue's differentials, revert-and-check, function-order policy regeneration, sizes and measurements.
+Run locally the required checks that CI does not cover: the issue's differentials, revert-and-check, sizes and measurements.
 These checks keep their current rules.
 All commands stay documented and runnable without CI.
 Run them locally to reproduce a CI failure.

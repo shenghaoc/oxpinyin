@@ -6,14 +6,13 @@ import os
 from pathlib import Path
 import platform
 import re
-import runpy
 import shutil
 import subprocess
 import sys
 import tempfile
 
 from .. import mman, slot
-from . import cold, cold_linux, instructions, native, pages, stats, worker
+from . import cold, cold_linux, identity, instructions, native, pages, stats, worker
 
 ROOT = Path(__file__).resolve().parents[3]
 ARMS = ('base', 'pr', 'control')
@@ -129,8 +128,6 @@ def parser():
     p.add_argument('--cache', choices=('warm', 'cold'), default='warm')
     p.add_argument('--bind', choices=('now', 'lazy'), default='now')
     p.add_argument('--cpu', type=nonnegative)
-    # Every native shipping arm must pass #1062. No silent unordered fallback.
-    p.add_argument('--function-order', action='append', default=[], metavar='ARM/FACADE=POLICY')
     p.add_argument('--recheck-instructions', type=Path, help='re-evaluate retained JSONL without running workers')
     p.add_argument('--instructions-from', type=Path, help='reuse qualified retained profiler scopes; new verification/timing/memory are a separate segment')
     p.add_argument('--instruction-scopes', default='init,first_candidate,steady',
@@ -169,8 +166,6 @@ def validate(args):
         raise ValueError('native pin rows require the Layer 4 container path: just container run (T11C)')
     if sys.platform not in ('linux', 'darwin'):
         raise ValueError('native startup supports Linux/macOS; Windows is deferred (#950)')
-    if sys.platform == 'darwin' and args.function_order:
-        raise ValueError('ELF function-order policies are unsupported on macOS')
     for name in ('base', 'pr', 'system_dir', 'profiles_dir'):
         path = getattr(args, name)
         if path is None or not path.is_dir():
@@ -630,12 +625,8 @@ def campaign_run(args, profiles, work, admission):
             libraries[arm][facade] = destination
     backends = {}
     if sys.platform == 'linux':
-        checks = runpy.run_path(str(ROOT / 'tools/packaging/function_order.py'))
-        checked = checks['check_arms'](args, libraries)
-        backends = {arm: {facade: row['backend'] for facade, row in rows.items()}
-                    for arm, rows in checked.items()}
-    else:
-        emit('function-order', verdict='unavailable', reason='ELF policy is Linux-only')
+        backends = {arm: {facade: identity.library_backend(path) for facade, path in paths.items()}
+                    for arm, paths in libraries.items()}
     executable, record = worker.build(work, admission.env, admission.slot.pass_fds())
     retained = recheck_instructions(args.instructions_from) if args.instructions_from else None
     if retained:

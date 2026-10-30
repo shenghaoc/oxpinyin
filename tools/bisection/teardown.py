@@ -15,7 +15,6 @@ import json
 import os
 from pathlib import Path
 import re
-import runpy
 import selectors
 import shutil
 import stat
@@ -73,7 +72,6 @@ SMAPS = sibling('rss-smaps')
 STARTUP_PROFILE = sibling('startup_profile')
 PROFILES = STARTUP_PROFILE.PROFILES
 CASES = (*PROFILES, 'modest-unsaved', 'modest-saved')
-FUNCTION_ORDER = runpy.run_path(str(ROOT / 'tools/packaging/function_order.py'))
 
 
 def digest_bytes(value):
@@ -878,29 +876,6 @@ def symbol_at(layout, address):
     return span[2] if span else None
 
 
-def policy_prefix(library, facade):
-    """[start, end) of the ordered startup prefix of .text, from the policy the
-    packaging check verifies; None when the object has no applicable policy."""
-    try:
-        backend = FUNCTION_ORDER['library_backend'](library)
-        policy = ROOT / 'tools/packaging/function-order' / backend / f'lib{facade}.order'
-        FUNCTION_ORDER['verify'](library, policy, facade)
-    except (OSError, ValueError):
-        return None
-    policy_result = FUNCTION_ORDER['resolve']('policy', policy=policy, soname=f'lib{facade}.so.15')
-    if policy_result.status:
-        raise ValueError(policy_result.stderr.decode().strip())
-    names = set(policy_result.stdout.decode().splitlines())
-    generator = FUNCTION_ORDER['GEN']
-    nm = ['nm', '--format=sysv', '--defined-only', '--no-sort']
-    raw = generator['symbols'](FUNCTION_ORDER['command']([*nm, '--no-demangle', library]))
-    decoded = generator['symbols'](FUNCTION_ORDER['command']([*nm, '--demangle=rust', library]))
-    spans = [(int(original[1], 16), int(original[1], 16) + int(original[4] or '0', 16))
-             for original, symbol in zip(raw, decoded, strict=True)
-             if symbol[6] == '.text' and generator['stable_identity'](symbol[0], original[0]) in names]
-    return (min(start for start, _ in spans), max(end for _, end in spans)) if spans else None
-
-
 def file_offset(address, maps, library):
     """Translate an address in a facade mapping to a file byte offset, or return None."""
     for start, end, perms, path, offset in maps:
@@ -1560,8 +1535,6 @@ def run(args, driver, parser):
             subjects[subject][facade] = target
             provenance[subject][facade] = dict(path=str(target), sha256=digest_bytes(target.read_bytes()),
                                               bytes=target.stat().st_size, filesystem=library_fs)
-    FUNCTION_ORDER['check_arms'](args, {side: {facade: paths[facade] for facade in facades}
-                                      for side, paths in subjects.items()}, references=('pin',))
     if args.teardown_stage not in ('provision', 'verify') and not shutil.which('taskset'):
         parser.error('measured teardown stages require taskset')
     worker, worker_identity = build_worker(work)
@@ -1796,7 +1769,7 @@ def init_attribute(campaign, subjects, profiles, cases, facades, references, dir
     fails the stage), diagnostic on BDB, where libdb seeds srandom_r from
     PID, time and address. Cold mode skips Ir, which the page cache cannot
     change. The `pages` probe (Lackey) maps the facade pages init reads, runs
-    and touches onto the object's layout and ordered startup prefix.
+    and touches onto the object's section and symbol layout.
     """
     cell = os.environ.get('CONTRACT_DIFF_CELL', 'bdb')
     probes = getattr(campaign, 'init_probes', list(INIT_PROBE_ROUNDS))
@@ -1997,26 +1970,22 @@ def report_init_faults(facade, case, rows, subjects, campaign, cache):
 def report_init_pages(facade, case, rows, bitmaps, subjects, cache):
     """Which facade pages init reads into the page cache (count samples' M0
     and I1 bitmaps), against what init executes and the data it touches
-    (Lackey), the object's section and symbol layout and its ordered prefix.
+    (Lackey), the object's section and symbol layout.
     Every page index is a host page (`SC_PAGE_SIZE`), the unit of the mincore
     bitmaps."""
     page_size = os.sysconf('SC_PAGE_SIZE')
     for side in subjects:
         library = subjects[side][facade].resolve()
         layout = library_layout(library)
-        prefix = policy_prefix(library, facade) if side != 'pin' else None
         def address_offset(address):
             """Translate a virtual address through its allocated ELF section to a file offset."""
             section = next((value for value in layout['sections']
                             if value['address'] <= address < value['address'] + value['size']), None)
             return address - section['address'] + section['offset'] if section else None
-        prefix_pages = ([address_offset(prefix[0]) // page_size, address_offset(prefix[1] - 1) // page_size + 1]
-                        if prefix else None)
         record = dict(facade=facade, case=case, side=side, cache=cache, page_size=page_size,
                       sections={section['name']: [section['offset'] // page_size,
                                                   (section['offset'] + section['size'] - 1) // page_size + 1]
-                                for section in layout['sections']},
-                      prefix=dict(start=hex(prefix[0]), end=hex(prefix[1]), pages=prefix_pages) if prefix else None)
+                                for section in layout['sections']})
         read_in = None
         if bitmaps:
             sets = []
@@ -2046,11 +2015,9 @@ def report_init_pages(facade, case, rows, bitmaps, subjects, cache):
                 # units can share a demangled name. The name is for display.
                 key = span[0] if span else section_at(layout, offset) or 'unknown'
                 entry = functions.setdefault(key, dict(name=span[2] if span else key, instructions=0,
-                                                       pages=set(), in_prefix=None, bytes=span[1] if span else 0))
+                                                       pages=set(), bytes=span[1] if span else 0))
                 entry['instructions'] += 1
                 entry['pages'].add(offset // page_size)
-                if prefix:
-                    entry['in_prefix'] = prefix[0] <= address - base < prefix[1]
             data_pages = {}
             for line in accesses['data_lines']:
                 offset = file_offset(line << 6, maps, library)
@@ -2065,14 +2032,8 @@ def report_init_pages(facade, case, rows, bitmaps, subjects, cache):
                 instructions=sum(entry['instructions'] for entry in functions.values()),
                 function_bytes=function_bytes, contiguous_pages=-(-function_bytes // page_size),
                 largest=[dict(function=entry['name'], instructions=entry['instructions'],
-                              pages=page_ranges(entry['pages']), in_prefix=entry['in_prefix'])
-                         for entry in sorted(functions.values(), key=lambda entry: -entry['instructions'])[:40]],
-                outside_prefix=None if not prefix else sorted(
-                    (dict(function=entry['name'], pages=sorted(entry['pages']), instructions=entry['instructions'])
-                     for entry in functions.values() if entry['in_prefix'] is False),
-                    key=lambda value: -value['instructions']),
-                pages_in_prefix=None if not prefix else len({page for entry in functions.values() if entry['in_prefix']
-                                                             for page in entry['pages']}))
+                              pages=page_ranges(entry['pages']))
+                         for entry in sorted(functions.values(), key=lambda entry: -entry['instructions'])[:40]])
             record['data_touched'] = dict(pages=len(data_pages), lines_by_section=dict(touched.most_common()),
                                           pages_by_section=dict(collections.Counter(
                                               page_section(layout, page, page_size) for page in data_pages).most_common()))
@@ -2094,7 +2055,6 @@ def report_init_pages(facade, case, rows, bitmaps, subjects, cache):
             record['pages'] = [dict(page=page, section=page_section(layout, page, page_size),
                                     read_in=None if read_in is None else page in read_in,
                                     executed=page in executed, data=bool(rows) and page in data_pages,
-                                    in_prefix=bool(prefix_pages) and prefix_pages[0] <= page < prefix_pages[1],
                                     symbols=[name for name, _ in held[page].most_common(3)])
                                for page in sorted(pages)]
         print_record('init-pages', **record)

@@ -7,47 +7,12 @@ sizing it, and a sampled profile of the keystroke cycle. Numbers are only
 comparable within one container on one host; every published snapshot
 (`docs/perf/`, `docs/findings/perf-*.md`) names both.
 
-## Verify function ordering before shipping measurements
+## Shipping measurement inputs
 
-Packaging links the original layout on a linker without
-`--section-ordering-file`, on an explicit opt-out, or for a backend without a
-registered checked-in policy; a selected policy that does not
-resolve fails the relink (`docs/packaging.md`, "Policy selection by
-backend"). Every shipping arm below runs the shared
-`tools/packaging/function_order.py` check before measurements. It reads the
-linked ELF's SONAME, `.text` start and address-sorted function symbols. Every
-policy path must resolve to one clone family, its bodies must be contiguous,
-and the groups must form the policy prefix at the start of `.text`. Missing,
-ambiguous, out-of-order or stripped symbols refuse the arm. Check the
-unstripped linked object before stripping a private copy for size reporting.
+Use ordinary shipping builds. See the [function-layout ruling](../packaging.md#function-layout).
+Keep the backend, artifact identity, input-digest and runtime checks for each campaign.
 
-Each arm/facade prints a JSON result: `ordered`, `refused`,
-`intentional-unordered`, or `reference` for the pinned upstream library. A
-refusal names the arm, policy and current compiler driver's linker probe.
-That probe is diagnostic; it does not identify a prebuilt object's linker or
-substitute for inspecting the object. GNU BFD ld at or above its minimum
-(`just doctor` checks it on Linux) and an applicable policy are needed to
-build the ordered shipping path. A successful install
-and its stderr do not establish that ordering applied.
-
-The measurement inventory (arm names are command-line names):
-
-| Tool | Shipping expectations and build route |
-| --- | --- |
-| `just measure startup` / `just initbench` | Both facades of native `base`, `pr`, and byte-identical `control`; supplied oxpinyin installed prefixes. Every Linux arm is ordered; pin rows are refused. |
-| `tools/measure-function-order.py` | Both facades of `base`, `pr`, `control`; supplied installed prefixes. `pin` is the reference. |
-| `tools/bisection/contract-diff.py --teardown` / `teardown.py` | Selected facades of `ox` and its byte-identical `control`; supplied libraries, copied then checked before building a worker. `pin` is the reference. This includes the provision stage. |
-| `tools/bisection/contract-diff.py --per-call` | Selected facades of `subject` and optional `base`; supplied libraries. `pin` is the reference. Ordinary behavioral differentials have no shipping-layout requirement. |
-| `just measure snapshot` | `shipped/pinyin`; calls `install.sh`, hence `relink-versioned.sh`, then checks before strip. The separate `alloc-count` artifact is a fixture. This is the only measurement caller of those packaging scripts in this tree. |
-| `just measure rss-diag` | `S/pinyin`; supplied shipping library. `L` is the reference. |
-| `just measure system-import-profile` | `ox/pinyin`; supplied library for the import/save and cold-open profiles. `pin` is the reference. Ordering options follow the optional workload argument. |
-| `just measure perf-baseline` | `ox/pinyin`; reusable installed stage or bare `cargo cinstall` stage. `pin` is the reference. |
-| `just measure perf-matrix` | `C/pinyin`, `D/pinyin`; installed container libraries. `A`, `B` are references. |
-| `just measure perf-same-data` | `C/pinyin`, `D/pinyin`; supplied libraries or legacy `cargo build` fixtures. `A`, `B` are references. |
-| `just measure shipped-check` | `Z/pinyin`, `S/pinyin`; legacy bare `cargo cinstall` comparison, whose `S` description claims the product. `L` is the reference. |
-| `just measure tree-recipe-control` | `X/pinyin`, `Y/pinyin`, `Z/pinyin`, `S/pinyin`; historical cargo-build/cinstall recipe comparison. `L` is the reference. |
-
-These measurement and profile tools were shell runners under `tools/bisection/`,
+The measurement and profile tools were shell runners under `tools/bisection/`,
 `tools/perf-gate/`, `tools/env-probe/` and `tools/profile/`; each is now a
 recipe of `python -m tools.dev measure RECIPE [ARGS]` (`just measure RECIPE`; the
 measurement images have no `just` and run the `uv run` form). Their environment
@@ -78,7 +43,7 @@ build their independent artifacts as units of one admitted pool.
 ### Base, PR and pin steady lookup comparison
 
 `steady-comparison` uses the existing `bisect --perf` workload and worker.
-It compares supplied ordered shipping libraries in one job on one Linux host,
+It compares supplied shipping libraries in one job on one Linux host,
 rotating base, PR, pin and byte-identical base/PR controls serially. It also
 rotates separate base/PR `alloc-count` fixtures. Build those fixtures with
 `cargo build --locked --release -p oxpinyin-capi --no-default-features
@@ -109,41 +74,6 @@ separately; full observable equivalence belongs to the contract differentials.
 This is a whole lookup workload, not an isolated measurement of a particular
 internal search. In particular, a workload without carried user entries
 does not establish a speedup for that rare edit path.
-
-Legacy recipes do not gain the shipping relink merely by enabling `shipped`.
-They now refuse unordered artifacts by default. To reproduce an intentional
-original-layout experiment, pass `--unordered-arm ARM` for each such arm,
-for example `--unordered-arm C --unordered-arm D` for the same-data runner's
-cargo-build fixtures. Those rows are explicitly non-shipping experiments.
-Do not report their numbers as shipping figures. Environment variables and
-swallowed build warnings are not opt-outs.
-
-All these tools accept repeated `--function-order ARM/FACADE=POLICY` overrides
-for matched historical or experimental policies, for example
-`--function-order base/pinyin=/path/to/base/libpinyin.order`. Defaults are the
-current checked-in policies in `function-order/<backend>/`, with the backend
-derived from each object's `DT_NEEDED`, independently of build environment
-overrides. A named policy in another backend's directory is refused, including
-through a symlink. Name `base` explicitly with `--unordered-arm base` when the
-function-order campaign compares an intentionally unordered baseline. Its
-same-bytes control is still checked as its own arm; specify that arm's policy
-or unordered experiment too. Unknown/repeated names or conflicting
-declarations fail. A check can run alone without starting a campaign:
-
-```sh
-uv run --no-project --managed-python \
-  python -X lazy_imports=normal tools/packaging/function_order.py \
-  --arm subject --library "pinyin=$SUBJECT_PREFIX/lib/libpinyin.so.15.0.0"
-```
-
-`tools/generate-function-order.py` intentionally profiles unordered inputs to
-derive policies; its output is a policy, not shipping performance figures.
-`just profile-w8` uses the thin-LTO `profiling` recipe and makes
-no shipping-performance claim. `tools/workers/startup.c` is the native worker
-for `tools.dev.measure.startup`. Packaging's
-`release-stage.sh` and `check-pc-metadata.sh` call `install.sh` for release or
-behavioral smoke checks, not measurements. Their ordinary fallback stays
-unchanged.
 
 ## Callgrind debug-info control
 
@@ -209,9 +139,8 @@ Supply actual library files, a complete backend-matched system directory,
 and separately built plain shipping files for the two debug-info neutrality
 checks. Use the shipping Cargo profile and only
 `RUSTFLAGS="-Cdebuginfo=1 -Cstrip=none"` for the profiled files. Install through
-`just packaging install` to apply the shipping function order; the bare
-`cargo cinstall` commands above check codegen neutrality only. The campaign
-checks `DT_NEEDED` against `--cell`, function order, DWARF, code neutrality,
+`just packaging install` for the shipping artifact. The campaign
+checks `DT_NEEDED` against `--cell`, DWARF, code neutrality,
 and the sound-tkrzw runtime before collecting. It acquires the heavy slot
 for the harness build and all serial collections; do not overlap other work.
 
@@ -257,11 +186,6 @@ output and profiles remain local for attribution with
 not PR attachments. Harness `elapsed_ns` is collected under Valgrind and is
 not a native timing result. These commands make no wall-time or heap claim.
 
-As in other measurement recipes, explicit `--function-order ARM/pinyin=POLICY`
-and `--unordered-arm ARM` options label layout experiments. Arm names are
-`main`, `pr__`, `mctl`, `pctl`, and the exempt reference `pin_`. An unordered
-smoke run validates tooling only and cannot establish shipping performance.
-
 The separate `probe-debuginfo-neutrality` diagnostic still compares independently
 compiled profiles and may fail. Changing Cargo's debug profile changes crate
 metadata, which can affect fat-LTO specialization as well as layout (#1337).
@@ -273,7 +197,7 @@ The 2026-10-22 UTC ruling (§7.8 in the tooling consolidation findings) places
 oxpinyin-only startup in `just measure startup`, also available as
 `just initbench`. Supply installed unstripped oxpinyin base and PR prefixes,
 one system directory and pin-provisioned profiles from
-[Regeneration](../packaging.md#regeneration). Native measurement only verifies
+the [native teardown provision stage](#native-teardown-workload). Native measurement only verifies
 these inputs; populated profiles need nonempty `witness.txt` files.
 
 ```sh
@@ -285,16 +209,10 @@ Create the owned temporary parent first. Linux requires ext4 for every
 library, system file, profile and work path; macOS requires one APFS volume.
 The controller acquires `tools.dev.slot` for its worker build and whole run.
 It uses private, equal-length base/PR/control library paths and fresh user
-copies, checks each Linux arm with the shared function-order verifier, and
-removes temporary inputs even after failure. It writes no profiler capture.
-On macOS it reports `function-order` as `unavailable` and measures the
-supplied dylibs as they are; the ordered layout is applied and verified when
-the prefix is installed ([Mach-O order file](../packaging.md#mach-o-order-file-macos)),
-so a macOS base built with `OXPINYIN_FUNCTION_ORDER_POLICY=` is cargo-c's
-unordered object and a PR built without it is the ordered relink.
+copies, identifies each Linux arm's backend, and removes temporary inputs even after failure.
+It writes no profiler capture.
 Do not overlap measurement with builds; use the existing host-wide slot.
-The PR control is always a byte-for-byte copy. Explicit policy overrides
-use `--function-order ARM/FACADE=POLICY`; there is no unordered bypass.
+The PR control is always a byte-for-byte copy.
 
 Native verification compares U1–U6, the full script, witness answers,
 save/reopen observations, stderr, the user filename set and raw non-database
@@ -544,39 +462,6 @@ cannot write as wholly resident, so a permission gap rejects samples instead
 of qualifying them. Files the sample does not own (libc, libstdc++, backend
 libraries) stay warm. Cold campaigns evict only named files; run them when
 no other measurement run shares the host's page cache.
-
-### Processor Trace check (macOS)
-
-On an Apple M4 or newer Mac with Xcode 16.3 or newer, the Processor Trace
-instrument records every function call of one process from the CPU's branch
-trace. `just measure processor-trace` compares one startup's calls inside a
-facade dylib with the Mach-O order file the install derived
-([Mach-O order file](../packaging.md#mach-o-order-file-macos)): the
-functions executed and ordered, by policy tier; the executed functions the
-policy does not name, could not resolve, or names under another
-instantiating crate; and the ordered init-tier functions the trace did not
-execute. It changes no policy; its lists are proposals. Record the startup
-worker (`tools/workers/startup.c`, built as the controller builds it) in its
-`stop` mode at `init` or `first_candidate`, the policy's startup scope, then
-read the recording:
-
-```sh
-cc -std=gnu11 -Wall -Wextra -Werror -O2 -g -o "$WORK/startup" tools/workers/startup.c
-EXPORTS=$(grep -o 'pinyin_[A-Za-z0-9_]*[[:space:]]*;' crates/oxpinyin-capi/libpinyin.ver | sed 's/[[:space:]]*;//' | paste -sd, -)
-xcrun xctrace record --template 'Processor Trace' --output "$WORK/init.trace" --no-prompt \
-  --env "OXPINYIN_STARTUP_EXPORTS=$EXPORTS" --launch -- "$WORK/startup" stop pinyin \
-  "$PREFIX/lib/libpinyin.15.0.0.dylib" "$DATA" "$WORK/user" now first_candidate
-just measure processor-trace --trace "$WORK/init.trace" \
-  --library "$PREFIX/lib/libpinyin.15.0.0.dylib" --policy tools/packaging/function-order/bdb/libpinyin.order
-```
-
-`$WORK/user` is a fresh copy of the empty profile's `user` directory. The
-recipe exports the intervals table with `xctrace export` into a temporary
-directory (`--export-dir` keeps it, `--intervals` reads an existing export),
-attributes each call's Mach-O vm offset to the dylib's `__TEXT,__text`
-symbol with llvm-nm, and prints one JSON record. A Processor Trace holds a
-whole process, so the record also counts the binaries seen; only the named
-library is compared. Nothing is archived.
 
 ## Native teardown workload
 

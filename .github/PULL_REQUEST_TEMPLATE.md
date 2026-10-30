@@ -36,6 +36,7 @@ may cover the whole table; include inputs/build/environment details that matter.
 For changes affecting shipping libraries, record stripped library file sizes and
 note increases over base (Constitution 2); docs-only work needs no size build.
 Justify each time/space trade-off (Source policy).
+See docs/packaging.md#function-layout for the function-layout ruling.
 Write "None" when nothing applies.
 -->
 

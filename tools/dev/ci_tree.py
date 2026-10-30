@@ -242,18 +242,12 @@ def find_evidence(api: GitHub, workflow: Workflow, event: dict[str, Any],
 
 
 def aggregate(changes: str, gated: str, reuse: str,
-              results: dict[str, str], cached: frozenset[str], event_name: str = "push",
-              function_order: str = "") -> bool:
+              results: dict[str, str], cached: frozenset[str], event_name: str = "push") -> bool:
     """Failures and unjustified skips fail; cancellation is handled by job if."""
     if changes != "success" or gated not in {"true", "false"} or reuse not in {"true", "false"}:
         return False
-    if "function-order-policy" in results and function_order not in ("true", "false"):
-        return False
     for name, result in results.items():
-        if name == "function-order-policy":
-            expected = "success" if event_name == "pull_request" and function_order == "true" else "skipped"
-        else:
-            expected = "success" if gated == "true" and (reuse != "true" or (event_name == "push" and name in cached)) else "skipped"
+        expected = "success" if gated == "true" and (reuse != "true" or (event_name == "push" and name in cached)) else "skipped"
         if result != expected:
             return False
     return True
@@ -325,12 +319,8 @@ def main() -> int:
     if args.command == "aggregate":
         needs = json.loads(os.environ["NEEDS"])
         results = {name: needs[job]["result"] for name, job in zip(workflow.lanes, workflow.needs)}
-        # This PR-only gate is independent of the lanes reused as tree evidence.
-        if args.workflow == "ci":
-            results["function-order-policy"] = needs["function-order-policy"]["result"]
         passed = aggregate(needs["changes"]["result"], needs["changes"]["outputs"].get("run", ""),
-                           needs["changes"]["outputs"].get("reuse", ""), results, workflow.cached, os.environ["EVENT_NAME"],
-                           needs["changes"]["outputs"].get("function_order", ""))
+                           needs["changes"]["outputs"].get("reuse", ""), results, workflow.cached, os.environ["EVENT_NAME"])
         print(json.dumps({"changes": needs["changes"], "lanes": results, "passed": passed}))
         return 0 if passed else 1
     tree = git_tree("HEAD")

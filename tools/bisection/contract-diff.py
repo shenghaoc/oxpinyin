@@ -1094,13 +1094,10 @@ def per_call_checked(spec, reference, sample, operations):
 
 def run_per_call(args, parser):
     """Run the controller using the driver's current registry and patch points."""
-    return contract_measurement.run_per_call(args, parser, CASES=CASES, FUNCTION_ORDER=FUNCTION_ORDER,
+    return contract_measurement.run_per_call(args, parser, CASES=CASES,
                                             per_call_helper=per_call_helper, per_call_run=per_call_run,
                                             per_call_checked=per_call_checked, per_call_calibration=per_call_calibration,
                                             per_call_attribution=per_call_attribution, observed=observed)
-
-
-FUNCTION_ORDER = runpy.run_path(str(Path(__file__).resolve().parents[1] / 'packaging/function_order.py'))
 
 
 # The pin crashes (SIGBUS/SIGTRAP) or orders candidates differently on
@@ -1149,7 +1146,6 @@ def run_main():
     input assertions abort before ordinary case execution.
     """
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    FUNCTION_ORDER['add_arguments'](parser)
     parser.add_argument('--teardown', action='store_true', help='native teardown measurement workload')
     parser.add_argument('--teardown-stage', choices=('provision', 'verify', 'pilot', 'confirm', 'repeat', 'multi', 'attribute', 'init-attribute', 'user-verify', 'user-phrase'), default='verify')
     parser.add_argument('--teardown-attribute-window', choices=('init', 'first-candidate'), default='init',
@@ -1257,8 +1253,6 @@ def run_main():
         return teardown.run(args, sys.modules[__name__], parser)
     if args.per_call:
         return run_per_call(args, parser)
-    if args.function_order or args.unordered_arm:
-        parser.error('function-order expectations require --teardown or --per-call')
     if args.base_pinyin_so or args.base_zhuyin_so or args.per_call_attribution or args.per_call_operations:
         parser.error('base paths, attribution and operation selection require --per-call')
     if args.axis_c_replacement or args.axis_c_mutation or args.axis_c_snapshot_check:

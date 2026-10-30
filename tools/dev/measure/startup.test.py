@@ -590,9 +590,9 @@ class ControllerTests(unittest.TestCase):
             return dict(digest='same', stderr=b'', userfiles={}, documents=[dict(startup='times', **times)],
                         checkpoints=points, process_wall=100000)
         fake = SimpleNamespace(run=run)
-        checks = mock.Mock(return_value={arm: {'pinyin': dict(backend='kc')} for arm in st.ARMS})
+        checks = mock.Mock(return_value='kc')
         with mock.patch.object(st.native, 'check_filesystems'), mock.patch.object(st, 'library', return_value=library), \
-                mock.patch.object(st.runpy, 'run_path', return_value={'check_arms': checks}), \
+                mock.patch.object(st.identity, 'library_backend', checks), \
                 mock.patch.object(worker, 'build', return_value=(Path('worker'), {})), \
                 mock.patch.object(st, 'artifact', return_value={}), mock.patch.object(worker, 'Worker', return_value=fake), \
                 mock.patch.object(st, 'verify', return_value={a: dict(digest='same', unit_stderr=b'', unit_userfiles={}) for a in st.ARMS}), \
@@ -605,21 +605,14 @@ class ControllerTests(unittest.TestCase):
                                                        'subject', 'control', 'baseobj', 'control', 'baseobj', 'subject')])
         self.assertTrue(all(memory for _, memory in seen[9:]))
         self.assertEqual(len(seen), 18)
-        orders = [v for k, v in printed if k == 'function-order']
         if sys.platform == 'linux':
-            # #1062: every Linux shipping arm goes through the shared ELF ordering checker.
-            self.assertEqual(set(checks.call_args.args[1]), set(st.ARMS))
+            self.assertEqual(checks.call_count, len(st.ARMS))
             self.assertEqual(instrument.call_args.kwargs['backends'], dict.fromkeys(st.ARMS, 'kc'))
             start = next(v for kind, v in printed if kind == 'start')
             self.assertEqual({arm: rows['pinyin']['backend'] for arm, rows in start['libraries'].items()},
                              dict.fromkeys(st.ARMS, 'kc'))
-            self.assertEqual(orders, [])
         else:
-            # Mach-O has no function-order policy. The controller records the check as
-            # unavailable once, claims no ordered arm and refuses none: all 18 runs above happened.
             checks.assert_not_called()
-            self.assertEqual(orders, [dict(verdict='unavailable', reason='ELF policy is Linux-only')])
-            self.assertFalse(any('ordered' in v.values() for _, v in printed))
         times = [v for k, v in printed if k == 'timing']
         self.assertEqual(len(times), len(st.TIMING_METRICS))
         self.assertTrue(all(v['summaries']['pr']['n'] == 2 and v['summaries']['pr']['median'] == .1 for v in times))
@@ -647,8 +640,7 @@ class ControllerTests(unittest.TestCase):
                     sched_getaffinity=lambda _: {0}, sched_setaffinity=lambda *_: None)))), \
                 mock.patch.object(st.native, 'check_filesystems'), \
                 mock.patch.object(st, 'library', return_value=library), \
-                mock.patch.object(st.runpy, 'run_path', return_value={'check_arms': lambda *_:
-                    {arm: {'pinyin': dict(backend='bdb')} for arm in st.ARMS}}), \
+                mock.patch.object(st.identity, 'library_backend', return_value='bdb'), \
                 mock.patch.object(worker, 'build', return_value=(Path('worker'), {})), \
                 mock.patch.object(st, 'artifact', return_value={}), \
                 mock.patch.object(worker, 'Worker', return_value=SimpleNamespace(run=run)), \
@@ -795,8 +787,7 @@ class ControllerTests(unittest.TestCase):
                 mock.patch.object(st.cold_linux.mman, 'residency', side_effect=residency), \
                 mock.patch.object(st.cold_linux, 'evict'), \
                 mock.patch.object(st.cold_linux.native, 'filesystem', return_value=('ext4', '0:1')), \
-                mock.patch.object(st, 'runpy', SimpleNamespace(run_path=lambda _: dict(check_arms=lambda *_:
-                    {arm: {'pinyin': dict(backend='kc')} for arm in st.ARMS}))):
+                mock.patch.object(st.identity, 'library_backend', return_value='kc'):
             status = st.campaign_run(args, {'empty': self.root / 'profiles/empty/user'}, work,
                                      SimpleNamespace(env={}, slot=SimpleNamespace(pass_fds=lambda: ())))
         return status, printed

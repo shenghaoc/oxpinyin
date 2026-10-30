@@ -87,21 +87,25 @@ class CountTests(unittest.TestCase):
         self.assertEqual(bench.setting({'A': '0'}, 'A', 'x'), '0')
 
 
-class FunctionOrderArgumentTests(unittest.TestCase):
-    def test_only_the_two_options_with_values_are_accepted(self):
-        argv = ['--function-order', 'pr/pinyin=/p.order', '--unordered-arm', 'pr', '--function-order', 'a=b']
-        self.assertEqual(bench.function_order_arguments(argv), argv)
-        self.assertEqual(bench.function_order_arguments([]), [])
+class BackendIdentityTests(unittest.TestCase):
+    def test_exactly_one_backend_is_required_from_the_linked_library(self):
+        for library, expected in [('libdb-5.3.so', 'bdb'), ('libdb.so.6', 'bdb'),
+                                  ('libkyotocabinet.so.16', 'kc'), ('libtkrzw.so.1', 'tkrzw')]:
+            with self.subTest(library=library):
+                output = f'(NEEDED) [{library}]\n(NEEDED) [libc.so.6]'.encode()
+                self.assertEqual(identity.library_backend('/subject', run=lambda _: bench.pool.Completed(0, output, b'')), expected)
+        for output in (b'(NEEDED) [libc.so.6]', b'(NEEDED) [libdb.so]\n(NEEDED) [libtkrzw.so.1]'):
+            with self.assertRaisesRegex(ValueError, 'expected exactly one backend'):
+                identity.library_backend('/subject', run=lambda _: bench.pool.Completed(0, output, b''))
+        with self.assertRaisesRegex(ValueError, 'cannot read library backend'):
+            identity.library_backend('/subject', run=lambda _: bench.pool.Completed(1, b'', b'invalid ELF'))
 
-    def test_a_missing_or_empty_value_stops_silently_with_status_2(self):
-        for argv in (['--function-order'], ['--unordered-arm', ''], ['--unordered-arm', 'x', '--function-order']):
-            with self.subTest(argv=argv):
-                _, status, out, err = stopped(bench.function_order_arguments, argv)
-                self.assertEqual((status, out, err), (2, '', ''))
 
-    def test_anything_else_names_itself(self):
-        _, status, _, err = stopped(bench.function_order_arguments, ['--unordered-arm', 'x', '--bogus'])
-        self.assertEqual((status, err), (2, 'unknown function-order argument: --bogus\n'))
+class ArgumentTests(unittest.TestCase):
+    def test_unknown_options_are_refused(self):
+        self.assertIsNone(bench.no_arguments([]))
+        _, status, _, err = stopped(bench.no_arguments, ['--bogus'])
+        self.assertEqual((status, err), (2, 'unknown argument: --bogus\n'))
 
 
 class PathTests(Scratch):
@@ -485,22 +489,6 @@ class ExportedTests(unittest.TestCase):
         with bench.exported(None):
             self.assertEqual(dict(os.environ), before)
         self.assertEqual(dict(os.environ), before)
-
-    def test_the_function_order_tool_runs_in_the_environment_it_was_given(self):
-        seen = []
-
-        class Tool:
-            @staticmethod
-            def main(argv):
-                seen.append((list(argv), os.environ.get('PKG_CONFIG_PATH')))
-
-        with mock.patch.object(bench, 'script', return_value=Tool):
-            bench.check_function_order([('ox/pinyin', Path('/a.so'))], ['--unordered-arm', 'ox'],
-                                       references=['pin'], env={'PKG_CONFIG_PATH': '/stage'})
-            bench.check_function_order([('ox/pinyin', Path('/a.so'))], [])
-        self.assertEqual(seen, [(['--library', 'ox/pinyin=/a.so', '--reference-arm', 'pin', '--unordered-arm', 'ox'],
-                                 '/stage'),
-                                (['--library', 'ox/pinyin=/a.so'], os.environ.get('PKG_CONFIG_PATH'))])
 
 
 class FakeAdmission:

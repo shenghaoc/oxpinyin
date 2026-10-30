@@ -16,7 +16,6 @@ import shutil
 from .. import slot
 from ..runners import emit
 from ...bisection.teardown import callgrind_costs
-from ...packaging import function_order
 from . import bench, identity, instructions, neutrality
 
 ANCHORS = {'sentence': 'bisect_sentence_unit', 'typing-sequence': 'bisect_typing_unit'}
@@ -46,8 +45,6 @@ def arguments(argv):
     parser.add_argument('--rounds', type=positive, default=3)
     parser.add_argument('--iterations', type=positive, default=1)
     parser.add_argument('--cpu', type=int, default=min(os.sched_getaffinity(0)))
-    parser.add_argument('--function-order', action='append', default=[], metavar='ARM/FACADE=POLICY')
-    parser.add_argument('--unordered-arm', action='append', default=[], metavar='ARM')
     args = parser.parse_args(argv)
     if args.rounds < 2:
         parser.error('--rounds must be at least 2 (fresh-process controls)')
@@ -139,15 +136,11 @@ def prepare(args, env):
     libraries = dict(main=args.main, pr__=args.pr, pin_=args.pin,
                      mctl=args.main, pctl=args.pr)
     for arm, library in libraries.items():
-        backend = function_order.library_backend(library)
+        backend = identity.library_backend(library)
         if backend != args.cell:
             bench.fail(f'{arm}: expected {args.cell}, library requires {backend}')
         bench.runtime_check('sentence campaign', args.cell, 'pin' if arm == 'pin_' else 'subject',
                             library, env=env)
-    options = [item for value in args.function_order for item in ('--function-order', value)]
-    options += [item for value in args.unordered_arm for item in ('--unordered-arm', value)]
-    bench.check_function_order([(arm + '/pinyin', lib) for arm, lib in libraries.items()], options,
-                               references=['pin_'], env=env)
     for arm, profile, shipping in (('main', args.main, args.main_shipping),
                                     ('pr', args.pr, args.pr_shipping)):
         info = bench.capture(['readelf', '--debug-dump=info', profile], env=env)
@@ -187,7 +180,6 @@ def campaign(args, env):
                     libraries={arm: dict(path=str(path), sha256=identity.sha256(path))
                                for arm, path in libraries.items()},
                     sources=dict(main=str(args.main), pr=str(args.pr), pin=str(args.pin)),
-                    unordered_experiment=args.unordered_arm,
                     shipping=dict(main=str(args.main_shipping), pr=str(args.pr_shipping)))
     (args.out / 'environment.json').write_text(json.dumps(metadata, indent=2) + '\n')
     counts = {arm: [] for arm in ARMS}

@@ -9,7 +9,7 @@ same. Nothing here interprets the numbers; the decision rule lives in the
 findings document.
 
 system-import-profile prepares what system_import_profile.py needs (the arms'
-function-order guard, a fresh work directory and the compiled driver) and hands
+a fresh work directory and the compiled driver) and hands
 it the collections, which already run as units of one admitted pool.
 """
 import contextlib
@@ -329,7 +329,7 @@ def system_import_profile(argv: Sequence[str], env: Mapping[str, str]) -> int:
     """Instruction counts, peak heap and mapped pages for import/save or cold open, pin and subject.
 
     Usage: PIN-SO OX-SO SYSTEM-DATA-DIR NEW-WORK-DIR [ITERATIONS|--cold-open]
-    [--function-order ARM/FACADE=POLICY] [--unordered-arm ARM] [--jobs N]. The
+    [--jobs N]. The
     collections (pin and ox, each under Callgrind, Massif heap and Massif pages) are
     independent, so system_import_profile.py runs them in an admitted pool and reports
     in a fixed order; --jobs 1 runs them one after another.
@@ -342,7 +342,7 @@ def system_import_profile(argv: Sequence[str], env: Mapping[str, str]) -> int:
     pin, ox, data = (os.path.realpath(value) for value in arguments[:3])
     out, rest = arguments[3], arguments[4:]
     iterations = '1000'
-    if rest and rest[0] not in ('--function-order', '--unordered-arm', '--jobs'):
+    if rest and rest[0] not in ('--jobs',):
         iterations, rest = rest[0], rest[1:]
     jobs, leftover = [], []
     while rest:
@@ -353,8 +353,7 @@ def system_import_profile(argv: Sequence[str], env: Mapping[str, str]) -> int:
             rest = rest[2:]
         else:
             leftover.append(rest.pop(0))
-    options = bench.function_order_arguments(leftover)
-    bench.check_function_order([('ox/pinyin', ox), ('pin/pinyin', pin)], options, references=['pin'])
+    bench.no_arguments(leftover)
     try:
         os.mkdir(out)
     except OSError as error:

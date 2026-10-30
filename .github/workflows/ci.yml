@@ -3,9 +3,7 @@
 # and deny entirely. The gate moved from the workflow trigger to
 # the jobs themselves (2026-09-08): the workflow always starts, the
 # `changes` job computes one `run` flag from the path set below, and
-# every lane carries `if: needs.changes.outputs.run == 'true'`. The
-# function-order-policy lane has its own, much smaller input set
-# (Cargo.lock and the policies) and its own `function_order` flag.
+# every lane carries `if: needs.changes.outputs.run == 'true'`.
 #
 # The skip claim above holds only for a branch up to date with main: the
 # `changes` job computes its flag with a two-dot diff (git diff
@@ -28,8 +26,7 @@
 #     the tools/abi/ export and allocator-pairing gates, so changes to
 #     those scripts are CI inputs
 #   - Cargo.toml / Cargo.lock — workspace manifest and lockfile: a
-#     dependency or feature change reaches lint, test and deny;
-#     Cargo.lock alone also reaches function-order-policy
+#     dependency or feature change reaches lint, test and deny
 #   - deny.toml — the deny job reads this directly
 #   - rust-toolchain.toml — a toolchain change affects every job
 #   - justfile / uv.toml / .python-version — tooling commands and managed Python
@@ -110,24 +107,13 @@ concurrency:
 #   deny — supply-chain gate: RustSec advisories, licenses, sources,
 #          duplicate-version drift (docs/safety/oxpinyin-safety-profile.md
 #          layer 6)
-#   function-order-policy — build the shipping staticlibs with the release
-#          recipe and resolve every checked-in function-order policy, as
-#          verify-nightly.yml does, but before merge. It runs only on PRs
-#          that change Cargo.lock or a policy: a lockfile-only dependency
-#          update can move the generic Rust instances a policy names
-#          (cc 1.4.3 -> 1.9.0 did, #1210). A source change that renames or
-#          inlines a policy path is still the nightly's to report. The six
-#          release builds are too expensive for every PR but affordable for
-#          the two inputs behind #1210.
 # Fuzzing is not a PR lane: every target builds and soaks nightly in
 # verify-nightly.yml's fuzz-soak (moved there 2026-09-23 — the per-PR
 # build-and-smoke of every target cost more than it caught).
 
 jobs:
-  # The path gate as a job: one `run` flag for the four code lanes (they
-  # share one input set) and a second `function_order` flag for the
-  # policy-resolution lane, whose inputs are only Cargo.lock and the
-  # checked-in policies. Runs first on every push and PR; each lane
+  # The path gate computes one `run` flag for the four code lanes.
+  # It runs first on every push and PR; each lane
   # carries an `if` on its flag so it reports `skipped` — a conclusion,
   # which unlike a workflow-level path filter still reaches
   # required-check accounting.
@@ -147,7 +133,6 @@ jobs:
       reuse: ${{ steps.evidence.outputs.reuse }}
       tree: ${{ steps.evidence.outputs.tree }}
       source_run: ${{ steps.evidence.outputs.source_run }}
-      function_order: ${{ steps.gate.outputs.function_order }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -173,7 +158,6 @@ jobs:
           if [ -z "$base" ] || ! git cat-file -e "$base" 2>/dev/null; then
             echo "base $base unavailable; running every lane"
             echo 'run=true' >> "$GITHUB_OUTPUT"
-            echo 'function_order=true' >> "$GITHUB_OUTPUT"
             exit 0
           fi
           changed=$(git diff --name-only "$base" HEAD --             crates fuzz tools '*.sh'             Cargo.toml Cargo.lock rust-toolchain.toml deny.toml clippy.toml             justfile uv.toml .python-version             .github/workflows/ci.yml             tools/dev/check.py             tools/dev/lint-crate-cfg-placement.test.py             fixtures tests/parity .github/actions .config/nextest.toml)
@@ -181,17 +165,6 @@ jobs:
             echo 'run=true' >> "$GITHUB_OUTPUT"
           else
             echo 'run=false' >> "$GITHUB_OUTPUT"
-          fi
-          # The policy resolver's inputs behind #1210: the lockfile selects
-          # the release build, and the policies are the files it resolves.
-          # A source rename or inlining can stale a policy too, but that
-          # case is left to the nightly; this lane stays off every other
-          # PR.
-          policy_inputs=$(git diff --name-only "$base" HEAD -- Cargo.lock tools/packaging/function-order)
-          if [ -n "$policy_inputs" ]; then
-            echo 'function_order=true' >> "$GITHUB_OUTPUT"
-          else
-            echo 'function_order=false' >> "$GITHUB_OUTPUT"
           fi
 
   lint:
@@ -728,52 +701,14 @@ jobs:
       # was in the tree; that backend now binds a system C library, so
       # heed, heed-types and bincode are all gone.
 
-  # The PR half of verify-nightly.yml's function-order-policy job (#1071).
-  # A lockfile-only dependency update can make a checked-in policy stale:
-  # the cc 1.4.3 -> 1.9.0 bump (f9257eae) made both KC policies stop
-  # resolving (#1210). The build-and-resolve steps are the shared action
-  # in .github/actions/function-order-policy, called here and by the
-  # nightly; the two lanes cannot drift.
-  #
-  # Trigger: Cargo.lock or tools/packaging/function-order/**, the two
-  # inputs behind #1210. A source rename or inlining can stale a policy
-  # too, but that case stays with the nightly; the six release builds are
-  # too expensive for every PR. The required ci-aggregate checks this
-  # job's own event/path gate independently of normal tree reuse.
-  function-order-policy:
-    needs: changes
-    # PRs only: main's policy check stays with the nightly. ci-aggregate
-    # requires success when function_order=true on a PR, skipped otherwise;
-    # tree reuse never bypasses this gate.
-    if: ${{ github.event_name == 'pull_request' && needs.changes.outputs.function_order == 'true' }}
-    runs-on: ubuntu-latest
-    container:
-      image: debian:testing # deliberately unpinned; see store-backends.yml header
-    timeout-minutes: 60
-    defaults:
-      run:
-        shell: bash
-    env:
-      CARGO_TERM_COLOR: always
-      DEBIAN_FRONTEND: noninteractive
-      # The shared action runs outside ci.yml's workflow RUSTFLAGS.
-      RUSTFLAGS: ''
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/function-order-policy
-
   # The required aggregate checks lint, test, test-macos and deny against
-  # run/reuse, plus function-order-policy against its PR/function_order gate.
-  # It runs after failures and remains cancellable. Every applicable lane
-  # must succeed; an inapplicable lane must be skipped. Tree reuse does not
-  # apply to function-order-policy, which runs on every policy-changing PR.
+  # run/reuse. Every applicable lane must succeed; an inapplicable lane
+  # must be skipped. It runs after failures and remains cancellable.
   # store-backends.yml and verify-nightly.yml keep their own triggers
   # and remain non-required lanes beside this one.
   ci-aggregate:
     needs:
-      [changes, lint, test, test-macos, deny, function-order-policy]
+      [changes, lint, test, test-macos, deny]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:

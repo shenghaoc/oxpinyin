@@ -4,9 +4,8 @@ Schema `oxpinyin-startup-profile-v1`
 (docs/findings/tooling-consolidation-python-just.md section 7.4): a header
 line, then one line per regular file, `size<TAB>sha256<TAB>relative path`,
 in path-component order. tools/bisection/teardown.py's provisioner writes
-it as `profile.manifest`. tools/generate-function-order.py and
-tools/measure-function-order.py compare it and hash it as the system-data
-identity. A symlink or any other non-regular entry is an error.
+it as `profile.manifest`. Measurement tools compare it and hash it as the
+system-data identity. A symlink or any other non-regular entry is an error.
 """
 import hashlib
 from pathlib import Path

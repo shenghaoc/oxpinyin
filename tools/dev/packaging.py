@@ -1,7 +1,6 @@
 """Install, validate and assemble the drop-in packages (#1292).
 
-One layout and process adapter serve every entry point. Policy identities and
-resolution remain in tools.packaging.function_order and its existing AWK program.
+One layout and process adapter serve every entry point.
 Cargo and package builders use the shared heavy admission; captured tools use
 pool.UnitContext, which reaps their process groups on cancellation.
 """
@@ -17,14 +16,13 @@ import tempfile
 
 from . import pool, slot
 from .runners import Finished, emit, guarded, status, write
-from tools.packaging import function_order
 
 ROOT = Path(__file__).resolve().parents[2]
 HERE = ROOT / 'tools/packaging'
 LIBRARIES = {'libpinyin': 'oxpinyin-capi', 'libzhuyin': 'oxpinyin-zhuyin-capi'}
 HEADERS = ('novel_types.h', 'pinyin_custom2.h')
-NAMES = ('install', 'relink-versioned', 'relink-macho', 'pc-version', 'check-pc-version', 'check-pc-metadata',
-         'function-order', 'release-stage', 'release-deb', 'release-rpm', 'release-arch', 'compare-installs')
+NAMES = ('install', 'relink-versioned', 'pc-version', 'check-pc-version', 'check-pc-metadata',
+         'release-stage', 'release-deb', 'release-rpm', 'release-arch', 'compare-installs')
 
 
 def fail(message='', code=1):
@@ -277,14 +275,6 @@ def install_library(argv, tools):
                     '--soname', layout.library + '.so.15',
                     '--dest', layout.destdir + layout.libdir + '/' + layout.library + '.so.15.0.0',
                     *features], tools)
-    elif system == 'Darwin':
-        with directory(tools.here):
-            relink_macho(['--staticlib', str(layout.qualified / (layout.library + '.a')),
-                          '--ver', str(crate / (layout.library + '.ver')),
-                          '--soname', layout.library + '.so.15',
-                          '--dest', layout.destdir + layout.libdir + '/' + layout.library + '.15.0.0.dylib',
-                          '--install-name', layout.libdir + '/' + layout.library + '.15.dylib',
-                          '--target', layout.triple, *features], tools)
     return 0
 
 
@@ -306,18 +296,16 @@ def backend_flags(backend, tools, cxx):
 
 def relink(argv, tools):
     values = dict(staticlib='', ver='', soname='', dest='', features=tools.env.get('OXPINYIN_RELINK_FEATURES') or '',
-                  cc=tools.env.get('CC') or 'cc', function_order=tools.env.get('OXPINYIN_FUNCTION_ORDER_POLICY', ''))
-    selected = 'OXPINYIN_FUNCTION_ORDER_POLICY' in tools.env
+                  cc=tools.env.get('CC') or 'cc')
     index = 0
     usage = ('usage: tools/packaging/relink-versioned.sh --staticlib PATH --ver PATH --soname NAME '
-             '--dest PATH [--features LIST] [--cc CC] [--function-order POLICY]')
+             '--dest PATH [--features LIST] [--cc CC]')
     while index < len(argv):
         key, value, index = option(argv, index)
         name = key.removeprefix('--').replace('-', '_')
         if not key.startswith('--') or name not in values:
             fail(usage, 2)
         values[name] = value
-        selected |= name == 'function_order'
     archive, ver, soname, dest = (values[key] for key in ('staticlib', 'ver', 'soname', 'dest'))
     if not all((archive, ver, soname, dest)):
         fail(usage, 2)
@@ -337,45 +325,12 @@ def relink(argv, tools):
     glib = optional_pkg_config(['--libs', 'glib-2.0', 'gobject-2.0'], tools)
     flags = glib.stdout.decode().split() if not glib.status else ['-lglib-2.0', '-lgobject-2.0']
     flags += backend_flags(backend, tools, '-lstdc++')
-    policy_backend = 'kc' if backend == 'kyotocabinet' else backend
-    policy = values['function_order']
-    source = ('named' if policy else 'opt-out') if selected else 'checked-in'
-    if not selected:
-        policy = str(tools.here / 'function-order' / policy_backend / (soname.split('.so')[0] + '.order'))
     destination = Path(dest)
     # As mktemp ${DEST%.so*}.relink.XXXXXX: scratch stays beside the object,
     # so the verified replacement is atomic and its symlinks keep resolving.
     temporary = tools.text(['mktemp', str(destination).rsplit('.so', 1)[0] + '.relink.XXXXXX'])
     try:
-        order = []
-        if source == 'opt-out':
-            emit('function ordering: disabled by explicit opt-out; using the original layout', error=True)
-        else:
-            if not Path(policy).is_file():
-                fail(f'error: function ordering: policy not found: {policy} ({source})')
-            try:
-                function_order.check_policy_backend(Path(policy), policy_backend)
-            except ValueError as error:
-                fail('error: function ordering: ' + str(error))
-            with temporary_directory(tools, temporary + '.order.XXXXXX') as scratch:
-                done = function_order.resolve('resolve', archive, policy, soname,
-                    run=lambda command, **options: tools.capture(command, env={**tools.env, 'LC_ALL': 'C'}, **options))
-                write(done.stderr, error=True)
-                order_file = Path(scratch) / 'order.ld'
-                order_file.write_bytes(done.stdout)
-                if done.status:
-                    fail(f'error: function ordering: policy {policy} does not resolve against {archive}; '
-                         'regenerate it (docs/packaging.md, "Regeneration") or disable ordering explicitly '
-                         "with --function-order ''")
-                if function_order.supported(cc, archive, scratch,
-                        run=lambda command, **options: tools.capture(command, env={**tools.env, 'LC_ALL': 'C'}, **options)):
-                    order = ['-Xlinker', '--section-ordering-file', '-Xlinker', str(order_file)]
-                    emit(f'function ordering: using measured policy {policy}', error=True)
-                else:
-                    emit('function ordering: the linker does not support --section-ordering-file; using the original layout', error=True)
-                link_and_verify(cc, temporary, order, ver, soname, archive, flags, tools)
-        if source == 'opt-out':
-            link_and_verify(cc, temporary, order, ver, soname, archive, flags, tools)
+        link_and_verify(cc, temporary, ver, soname, archive, flags, tools)
         # mv -f replaces a symlink at DEST, rather than writing through it.
         os.replace(temporary, dest)
     finally:
@@ -384,147 +339,6 @@ def relink(argv, tools):
     emit(f'relinked {dest}')
     emit(f'  soname: {soname} · version node: {node} · exports: {len(exports)} versioned (backend: {backend})')
     return 0
-
-
-def relink_macho(argv, tools):
-    """Relink the installed dylib from the staticlib with the policy's Mach-O order file.
-
-    The macOS counterpart of relink (docs/packaging.md, "Mach-O order file").
-    The backend's ELF policy is resolved against the archive's own symbol
-    table; unresolved paths are reported, and the linked object's
-    __TEXT,__text prefix is verified before it replaces cargo-c's. An
-    explicit opt-out keeps cargo-c's object untouched: Mach-O has no symbol
-    versioning to relink for. --target, the install's Cargo target, selects
-    the architecture cc links for and the deployment target rustc reports;
-    without it the host's apply.
-    """
-    values = dict(staticlib='', ver='', soname='', dest='', install_name='', minos='', target='',
-                  features=tools.env.get('OXPINYIN_RELINK_FEATURES') or '',
-                  cc=tools.env.get('CC') or 'cc', function_order=tools.env.get('OXPINYIN_FUNCTION_ORDER_POLICY', ''))
-    selected = 'OXPINYIN_FUNCTION_ORDER_POLICY' in tools.env
-    index = 0
-    usage = ('usage: just packaging relink-macho --staticlib PATH --ver PATH --soname NAME --dest PATH '
-             '--install-name NAME [--target TRIPLE] [--features LIST] [--cc CC] [--minos VERSION] '
-             '[--function-order POLICY]')
-    while index < len(argv):
-        key, value, index = option(argv, index)
-        name = key.removeprefix('--').replace('-', '_')
-        if not key.startswith('--') or name not in values:
-            fail(usage, 2)
-        values[name] = value
-        selected |= name == 'function_order'
-    archive, ver, soname, dest, install_name = (values[key] for key in ('staticlib', 'ver', 'soname', 'dest', 'install_name'))
-    if not all((archive, ver, soname, dest, install_name)):
-        fail(usage, 2)
-    if tools.text(['uname', '-s']) != 'Darwin':
-        fail('error: relink-macho is macOS-only (Mach-O order file); Linux installs relink through relink-versioned')
-    backend = 'bdb'
-    for feature in values['features'].replace(',', ' ').split():
-        if feature in ('tkrzw', 'kyotocabinet', 'bdb'):
-            backend = feature
-    policy_backend = 'kc' if backend == 'kyotocabinet' else backend
-    policy = values['function_order']
-    source = ('named' if policy else 'opt-out') if selected else 'checked-in'
-    if source == 'opt-out':
-        emit('function ordering: disabled by explicit opt-out; keeping the original Mach-O layout', error=True)
-        return 0
-    target = values['target']
-    arch = ''
-    if target:
-        if not target.endswith('-apple-darwin'):
-            fail(f'error: relink-macho links Mach-O for an Apple Darwin target: {target} is not <arch>-apple-darwin')
-        arch = {'aarch64': 'arm64', 'x86_64': 'x86_64'}.get(target.split('-', 1)[0], '')
-        if not arch:
-            fail(f'error: relink-macho supports the aarch64 and x86_64 Darwin targets: not {target}')
-    if not selected:
-        policy = str(tools.here / 'function-order' / policy_backend / (soname.split('.so')[0] + '.order'))
-    cc = values['cc']
-    for tool in (cc, 'nm', 'otool'):
-        if not tools.which(tool):
-            fail(f"error: required tool '{tool}' not found")
-    for path, label in ((archive, 'staticlib'), (ver, 'version script'), (dest, 'installed object')):
-        if not Path(path).is_file():
-            fail(f'error: {label} not found: {path}')
-    if not Path(policy).is_file():
-        fail(f'error: function ordering: policy not found: {policy} ({source})')
-    try:
-        function_order.check_policy_backend(Path(policy), policy_backend)
-    except ValueError as error:
-        fail('error: function ordering: ' + str(error))
-    minos = values['minos'] or deployment_target(tools, target)
-    glib = optional_pkg_config(['--libs', 'glib-2.0', 'gobject-2.0'], tools)
-    flags = glib.stdout.decode().split() if not glib.status else ['-lglib-2.0', '-lgobject-2.0']
-    # The cc crate builds the Kyoto Cabinet shim against libc++ on Darwin.
-    flags += backend_flags(backend, tools, '-lc++')
-    # Homebrew's berkeley-db@5 is keg-only: the build found it through this
-    # directory, and so must the relink (docs/runbooks/setup.md).
-    if backend == 'bdb' and tools.env.get('OXPINYIN_BDB_LIB_DIR'):
-        flags.insert(0, '-L' + tools.env['OXPINYIN_BDB_LIB_DIR'])
-    flags.append('-liconv')
-    node, exports = version_exports(ver)
-    destination = Path(dest)
-    temporary = tools.text(['mktemp', str(destination).rsplit('.dylib', 1)[0] + '.relink.XXXXXX'])
-    launch = lambda command, **options: tools.capture(command, env={**tools.env, 'LC_ALL': 'C'}, **options)
-    try:
-        with temporary_directory(tools, temporary + '.order.XXXXXX') as scratch:
-            try:
-                order, names, ordered, unresolved = function_order.macho_order_file(Path(policy), archive, soname,
-                                                                                    run=launch)
-            except ValueError as error:
-                fail(f'error: function ordering: {error}; policy {policy} against {archive}')
-            emit(f'function ordering: {len(names) - len(unresolved)} of {len(names)} policy paths resolve on '
-                 f'Mach-O ({len(ordered)} symbols ordered); {len(unresolved)} unresolved', error=True)
-            for name in unresolved:
-                emit('function ordering: unresolved policy path on Mach-O: ' + name, error=True)
-            order_file = Path(scratch) / 'order.txt'
-            order_file.write_bytes(order)
-            export_list = Path(scratch) / 'exports.txt'
-            export_list.write_text(''.join('_' + name + '\n' for name in exports))
-            emit(f'function ordering: using measured policy {policy} (Mach-O order file)', error=True)
-            # The link rustc makes for the cdylib, with the order file added:
-            # -u pulls the facade's object out of the archive, and the rest of
-            # the archive (compiler-builtins) loads on demand, as rustc links
-            # it; -S leaves out the debug map that Cargo's release profile
-            # strips (strip = "debuginfo"). -force_load would keep whole
-            # objects that have no subsections (the outline atomics) and
-            # every member's local labels.
-            tools.heavy([cc, '-dynamiclib', *(['-arch', arch] if arch else []), f'-mmacosx-version-min={minos}',
-                         '-o', temporary,
-                         '-Wl,-order_file,' + str(order_file), '-Wl,-S', '-Wl,-dead_strip',
-                         '-Wl,-exported_symbols_list,' + str(export_list), '-Wl,-install_name,' + install_name,
-                         '-Wl,-compatibility_version,15', '-Wl,-current_version,15.0.0',
-                         '-Wl,-headerpad_max_install_names',
-                         *('-Wl,-u,_' + name for name in exports), archive, *flags])
-            raw = tools.text(['nm', '-g', '--defined-only', '--no-llvm-bc', temporary])
-            actual = sorted(line.split()[-1] for line in raw.splitlines() if line.split())
-            expected = ['_' + name for name in exports]
-            if expected != actual:
-                emit(f"error: relinked object's export set differs from {ver}:", error=True)
-                emit('\n'.join('  ' + name for name in sorted(set(expected) ^ set(actual))[:40]), error=True)
-                raise Finished(1)
-            try:
-                layout, stripped = function_order.verify_macho(temporary, ordered, run=launch)
-            except ValueError as error:
-                fail(f'error: function ordering: Mach-O layout check failed: {error}')
-            for name in stripped:
-                emit('function ordering: ordered path absent from the linked object (dead-stripped): ' + name, error=True)
-            emit(f'function ordering: {layout["paths"]} ordered symbols form the {function_order.MACHO_TEXT} '
-                 f'prefix at {layout["text_start"]}; {len(stripped)} dead-stripped', error=True)
-        os.replace(temporary, dest)
-    finally:
-        Path(temporary).unlink(missing_ok=True)
-    emit(f'relinked {dest}')
-    emit(f'  install name: {install_name} · exports: {len(exports)} ({node}) · backend: {backend}')
-    return 0
-
-
-def deployment_target(tools, target=''):
-    """rustc's macOS deployment target for TARGET (or the host), which the archive's objects were built for."""
-    text = tools.text(['rustc', '--print', 'deployment-target', *(['--target', target] if target else [])])
-    values = re.findall(r'^[A-Z_]*DEPLOYMENT_TARGET=([0-9][0-9.]*)$|^deployment_target=([0-9][0-9.]*)$', text, re.M)
-    if len(values) != 1:
-        fail('error: rustc --print deployment-target gave no deployment target')
-    return next(value for value in values[0] if value)
 
 
 def version_exports(ver):
@@ -544,8 +358,8 @@ def version_exports(ver):
     return nodes[0], sorted(symbol for symbol in symbols if symbol)
 
 
-def link_and_verify(cc, temporary, order, ver, soname, archive, flags, tools):
-    tools.heavy([cc, '-shared', '-o', temporary, *order, '-Wl,-z,defs', f'-Wl,-soname,{soname}',
+def link_and_verify(cc, temporary, ver, soname, archive, flags, tools):
+    tools.heavy([cc, '-shared', '-o', temporary, '-Wl,-z,defs', f'-Wl,-soname,{soname}',
                  f'-Wl,--version-script={ver}', '-Wl,--gc-sections', '-Wl,--whole-archive', archive,
                  '-Wl,--no-whole-archive', *flags, '-lpthread', '-ldl', '-lm'])
     node, expected = version_exports(ver)
@@ -1010,21 +824,6 @@ def metadata(argv, tools):
     return 0
 
 
-def function_order_command(argv, tools):
-    if not argv or argv[0] not in ('inventory', 'resolve', 'policy'):
-        fail('usage: tools/packaging/function-order.sh inventory ARCHIVE | resolve ARCHIVE POLICY SONAME | policy POLICY SONAME', 2)
-    mode = argv[0]
-    if len(argv) != {'inventory': 2, 'resolve': 4, 'policy': 3}[mode]:
-        raise Finished(2)
-    fields = {'inventory': dict(archive=argv[1]), 'resolve': dict(archive=argv[1], policy=argv[2] if len(argv) > 2 else '', soname=argv[3] if len(argv) > 3 else ''),
-              'policy': dict(policy=argv[1], soname=argv[2] if len(argv) > 2 else '')}[mode]
-    done = function_order.resolve(mode, **fields,
-        run=lambda command, **options: tools.capture(command, env={**tools.env, 'LC_ALL': 'C'}, **options))
-    write(done.stdout)
-    write(done.stderr, error=True)
-    return status(done.status)
-
-
 def installed_tree(root):
     """Relative entries, including directories and symlinks, without following them."""
     return {str(path.relative_to(root)): path for path in root.rglob('*')}
@@ -1119,8 +918,8 @@ def main(argv=None, *, tools=None):
         return 2
     name, rest = argv[0], argv[1:]
     functions = {'compare-installs': compare_installs, 'install': install, 'relink-versioned': relink,
-                 'relink-macho': relink_macho, 'check-pc-version': check_version,
-                 'check-pc-metadata': metadata, 'function-order': function_order_command,
+                 'check-pc-version': check_version,
+                 'check-pc-metadata': metadata,
                  'release-stage': release_stage, 'release-deb': release_deb, 'release-rpm': release_rpm,
                  'release-arch': release_arch}
     def call():

@@ -76,37 +76,31 @@ ALLOC_SYMBOL = b'oxpinyin_alloc_'
 
 @dataclasses.dataclass(frozen=True)
 class Options:
-    """The parsed command line: where to write, which backend, and the function-order pairs."""
+    """The parsed command line: where to write and which backend."""
     out: str
     backend: str
-    function_order: tuple[str, ...]
 
 
 def parse_options(argv: Sequence[str]) -> Options:
     """Parse the command line in order, as the script's `case` loop did.
 
     `--out` and `--backend` take the next word (empty when there is none, which
-    the later checks then refuse); `--function-order` and `--unordered-arm` need
-    a value, which may be empty; `-h` prints the header and ends the run with 0.
+    the later checks then refuse); `-h` prints the header and ends the run with 0.
     """
-    out, backend, options, rest = '', 'tkrzw', [], list(argv)
+    out, backend, rest = '', 'tkrzw', list(argv)
     while rest:
         flag = rest.pop(0)
         if flag == '--out':
             out = rest.pop(0) if rest else ''
         elif flag == '--backend':
             backend = rest.pop(0) if rest else ''
-        elif flag in bench.FUNCTION_ORDER_OPTIONS:
-            if not rest:
-                bench.fail(f'fatal: {flag} needs a value', 2)
-            options += [flag, rest.pop(0)]
         elif flag in ('-h', '--help'):
             sys.stdout.write(HELP)
             sys.stdout.flush()
             raise Finished(0)
         else:
             bench.fail(f'fatal: unknown argument {flag}', 2)
-    return Options(out, backend, tuple(options))
+    return Options(out, backend)
 
 
 def section_sum(readelf_text: str) -> int:
@@ -241,9 +235,6 @@ class Tools:
             return 'unknown'
         return done.stdout.strip().split('\n')[0] or 'unknown'
 
-    def function_order(self, libraries, options, **keywords) -> None:
-        """Refuse an unordered shipping library (bench.check_function_order)."""
-        bench.check_function_order(libraries, options, **keywords)
 
     def object_ir(self, path, want: str):
         """Total self Ir attributed to the object whose name contains WANT, or None."""
@@ -255,11 +246,7 @@ class Tools:
 
 
 def build_shipped(tools: Tools, env: Mapping[str, str], options: Options, work: Path) -> Path:
-    """Install the shipped artifact (the product path), refuse it unless ordered, strip it, return its path.
-
-    The two builds are ordered, not independent: an unordered artifact is refused
-    here, before it is stripped and before the alloc-count fixture is built.
-    """
+    """Install and strip the shipping artifact, then return its path."""
     emit('==> building the shipped artifact (cinstall, the product path)')
     stage = work / 'stage'
     tools.run([*INSTALL, 'libpinyin', '--prefix=/usr', f'--destdir={stage}', '--',
@@ -268,7 +255,6 @@ def build_shipped(tools: Tools, env: Mapping[str, str], options: Options, work: 
     shipped = bench.find_named(stage, SHIPPED_NAME, any_type=True)
     if shipped is None:
         bench.fail(f'fatal: cinstall produced no {SHIPPED_NAME}', 2)
-    tools.function_order([('pinyin', shipped)], options.function_order, arm='shipped')
     tools.run(['strip', '--strip-all', shipped], env=env)
     # The runbook's rule, enforced rather than trusted: the alloc-count readers are
     # never in a shipped artifact. A failed nm proves nothing, so it refuses nothing.

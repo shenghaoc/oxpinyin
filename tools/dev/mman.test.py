@@ -43,7 +43,7 @@ class MmanTests(unittest.TestCase):
         self.assertIs(darwin.unmap, mman.unmap)
         self.assertIs(darwin.file_residency, mman.residency)
         # No second declaration of the shared calls in any of its users.
-        for path in (darwin.__file__, cold_linux.__file__, ROOT / 'tools/measure-function-order.py',
+        for path in (darwin.__file__, cold_linux.__file__,
                      ROOT / 'tools/bisection/teardown.py'):
             tree = ast.parse(Path(path).read_text())
             declared = {node.value.attr for node in ast.walk(tree)

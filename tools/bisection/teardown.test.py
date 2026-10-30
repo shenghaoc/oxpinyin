@@ -27,24 +27,6 @@ from tools.dev import pool, test_support
 
 
 class PureTests(unittest.TestCase):
-    @unittest.skipUnless(sys.platform.startswith('linux'), 'Linux measurement controller')
-    def test_unordered_subject_is_refused_before_building_or_running_worker(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            (root / 'lib').mkdir()
-            (root / 'lib/libpinyin.so').write_bytes(b'not an ordered ELF')
-            args = SimpleNamespace(cell='bdb', per_call=None, cases='', issue=[], family=[],
-                                   expect_parent=False, observations=None, plan_only=False,
-                                   axis_c_replacement=None, axis_c_mutation=None,
-                                   axis_c_snapshot_check=False, regenerate_sentence_ties=None,
-                                   teardown_work_dir=root, teardown_cases='empty',
-                                   teardown_cpu=min(os.sched_getaffinity(0)), teardown_facades='pinyin',
-                                   pinyin_so=root / 'lib/libpinyin.so', zhuyin_so=None, prefix=root)
-            with patch.object(td, 'filesystem', return_value='ext4'), \
-                    patch.object(td, 'build_worker') as worker:
-                with self.assertRaisesRegex(ValueError, 'function ordering: arm ox/pinyin refused'):
-                    td.run(args, None, None)
-                worker.assert_not_called()
 
     @unittest.skipUnless(sys.platform.startswith('linux'), 'Linux measurement controller')
     def test_zhuyin_only_provision_prepares_witnesses_with_the_pinyin_provisioner(self):
@@ -64,7 +46,6 @@ class PureTests(unittest.TestCase):
                                    pinyin_so=None, zhuyin_so=root / 'ox-libzhuyin.so', prefix=root)
             profiles = dict(empty=root / 'profiles/empty/user')
             with patch.object(td, 'filesystem', return_value='ext4'), \
-                    patch.dict(td.FUNCTION_ORDER, check_arms=lambda *a, **k: None), \
                     patch.object(td, 'build_worker', return_value=(Path('worker'), {})), \
                     patch.object(td, 'Campaign', lambda *a, **k: SimpleNamespace()), \
                     patch.object(td, 'print_record'), \
@@ -117,8 +98,7 @@ class PureTests(unittest.TestCase):
                         patch.object(td.host, 'allowed_cpus', return_value={3}), \
                         patch.object(td.shutil, 'which', return_value=None), \
                         patch.object(td, 'filesystem', return_value='ext4'), \
-                        patch.dict(td.FUNCTION_ORDER, check_arms=lambda *a, **k: None), \
-                        patch.object(td, 'build_worker') as build, \
+                            patch.object(td, 'build_worker') as build, \
                         patch.object(td.subprocess, 'Popen') as launch:
                     message = self.refusal(teardown_stage=stage, teardown_cache=cache,
                                            teardown_work_dir=root, teardown_cases='empty', teardown_cpu=3,
@@ -1184,7 +1164,6 @@ class InitAttributionTests(unittest.TestCase):
         bitmaps = {'ox': [dict(checkpoints=[dict(M0=dict(residency=dict(SUBJECT=dict(ranges=[])))),
                                             dict(I1=dict(residency=dict(SUBJECT=dict(ranges=read_in))))])]}
         with patch.object(td, 'library_layout', return_value=layout), \
-                patch.object(td, 'policy_prefix', return_value=(0x10000, 0x30000)), \
                 patch.object(td.os, 'sysconf', return_value=page_size), patch.object(td, 'print_record') as record:
             td.report_init_pages('zhuyin', 'phrases', rows, bitmaps, {'ox': {'zhuyin': library}}, 'cold')
         return record.call_args.kwargs
@@ -1194,7 +1173,6 @@ class InitAttributionTests(unittest.TestCase):
         shown = self.init_pages(0x10000, [[1, 3]])
         self.assertEqual(shown['page_size'], 0x10000)
         self.assertEqual(shown['sections'], {'.text': [1, 4], '.rodata': [4, 5]})
-        self.assertEqual(shown['prefix']['pages'], [1, 3])
         self.assertEqual(shown['executed']['pages'], 2)
         self.assertEqual((shown['executed']['function_bytes'], shown['executed']['contiguous_pages']), (0x2100, 1))
         self.assertEqual((shown['read_in']['executed'], shown['read_in']['neither']), (2, 0))

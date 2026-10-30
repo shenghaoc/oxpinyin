@@ -222,7 +222,6 @@ class ControllerTests(TestCase):
             with patch.object(host, 'allowed_cpus', return_value={4, 5}), \
                     contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(io.StringIO()):
                 status = measurement.run_per_call(args, None, CASES={'wrap-256th-reading': {'mode': 'pinyin'}},
-                                                  FUNCTION_ORDER={'check_arms': check_arms},
                                                   per_call_helper=lambda _: Path('/helper.so'), per_call_run=run,
                                                   per_call_checked=checked,
                                                   per_call_calibration=measurement.per_call_calibration,
@@ -237,7 +236,6 @@ class ControllerTests(TestCase):
                              [(side, op) for side in ('libpinyin.so', 'base.so', 'subject.so')
                               for op in ('add', 'count', 'lookup')])
             self.assertEqual(checked.call_count, 18)
-            check_arms.assert_called_once()
             rows = [json.loads(line) for line in stdout.getvalue().splitlines()]
             results = [row for row in rows if row['per_call'] == 'result']
             self.assertEqual(len(results), 9)
