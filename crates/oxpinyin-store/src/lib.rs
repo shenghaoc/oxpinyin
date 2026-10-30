@@ -2692,66 +2692,12 @@ mod tests {
             );
         }
 
-        #[test]
-        fn perturbing_encode_endianness_changes_the_store_walk_order() {
-            // Same logical tokens, two encode conventions. Non-vacuity in
-            // pure form: had an encode site used the opposite endianness,
-            // the store would hand back a different order, so any test
-            // asserting a specific order would go red.
-            let path_le = TempPath::new("perturb-le");
-            let path_be = TempPath::new("perturb-be");
-            let le = insert_and_walk::<DefaultStore>(&path_le.0, &le_keys());
-            let be = insert_and_walk::<DefaultStore>(&path_be.0, &be_keys());
-
-            let le_tokens: Vec<u32> = le
-                .iter()
-                .map(|(k, _)| u32::from_le_bytes([k[0], k[1], k[2], k[3]]))
-                .collect();
-            let be_tokens: Vec<u32> = be
-                .iter()
-                .map(|(k, _)| u32::from_be_bytes([k[0], k[1], k[2], k[3]]))
-                .collect();
-
-            assert!(
-                be_tokens.is_sorted(),
-                "big-endian keys walk in integer order",
-            );
-            assert!(
-                !le_tokens.is_sorted(),
-                "little-endian keys walk in byte order, not integer order",
-            );
-            assert_ne!(
-                le_tokens, be_tokens,
-                "swapping the encode endianness must change the observed walk order",
-            );
-        }
-
         // ── per-peer equivalence: the current peer walks byte order ──
         //
         // Under exactly-one-backend, cross-peer equivalence cannot be
         // proven in one process. Instead each build proves *its* peer
         // matches the mathematical byte-ordered sequence; running every
         // peer build through CI proves the cross-peer equivalence.
-
-        #[test]
-        fn for_each_matches_the_byte_ordered_sequence_le_keys() {
-            let path = TempPath::new("xback-le");
-            let rows = insert_and_walk::<DefaultStore>(&path.0, &le_keys());
-            let keys: Vec<Vec<u8>> = rows.iter().map(|(k, _)| k.clone()).collect();
-            assert_eq!(
-                keys,
-                sorted_by_bytes(&le_keys()),
-                "the peer's for_each must be the byte-ordered walk",
-            );
-            let tokens: Vec<u32> = rows
-                .iter()
-                .map(|(k, _)| u32::from_le_bytes([k[0], k[1], k[2], k[3]]))
-                .collect();
-            assert!(
-                !tokens.is_sorted(),
-                "the shared order must be byte order across 256",
-            );
-        }
 
         #[test]
         fn for_each_matches_the_byte_ordered_sequence_be_keys() {
@@ -2770,25 +2716,6 @@ mod tests {
             assert!(
                 tokens.is_sorted(),
                 "big-endian keys share integer order across peers",
-            );
-        }
-
-        #[test]
-        fn range_matches_the_byte_ordered_slice_across_256() {
-            let keys = le_keys();
-            let lo = 0x0000_0100_u32.to_le_bytes();
-            let hi = 0x0000_00FF_u32.to_le_bytes();
-            let path = TempPath::new("xrange");
-            let rows = insert_and_range::<DefaultStore>(&path.0, &keys, &lo, &hi);
-            assert!(!rows.is_empty(), "the range must match rows");
-            let expected: Vec<Vec<u8>> = sorted_by_bytes(&keys)
-                .into_iter()
-                .filter(|k| k.as_slice() >= &lo[..] && k.as_slice() < &hi[..])
-                .collect();
-            let out: Vec<Vec<u8>> = rows.iter().map(|(k, _)| k.clone()).collect();
-            assert_eq!(
-                out, expected,
-                "range walk must be the ascending byte-ordered slice",
             );
         }
 

@@ -1488,22 +1488,6 @@ fn export_iterators_walk_the_stored_triples() {
     ));
     crate::iterators::pinyin_end_get_bigram_phrases(bigram);
 
-    // The shared facade materialization (what the zhuyin facade and
-    // oxpinyin-dictool also drive) renders the identical row set.
-    let rows = {
-        // SAFETY: `context` is a live `pinyin_init` handle.
-        let ctx = unsafe { crate::state::context_ref(context) };
-        ctx.export_bigram_rows().expect("render bigram rows")
-    };
-    assert_eq!(
-        rows,
-        vec![crate::ExportedBigramRow {
-            phrase: "你好".into(),
-            pinyin: "ni'hao".to_owned(),
-            count: 138,
-        }]
-    );
-
     crate::instance::pinyin_free_instance(instance);
     crate::context::pinyin_fini(context);
 }

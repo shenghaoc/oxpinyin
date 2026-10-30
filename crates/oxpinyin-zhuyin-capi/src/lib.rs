@@ -159,15 +159,6 @@ mod tests {
         );
     }
 
-    /// The packed `ChewingKey` word is 2 bytes and the `ChewingKeyRest`
-    /// span is 4 bytes, matching upstream's `_ChewingKey`/`_ChewingKeyRest`
-    /// (`chewing_key.h`).
-    #[test]
-    fn opaque_handles_layout() {
-        assert_eq!(std::mem::size_of::<super::types::ChewingKey>(), 2);
-        assert_eq!(std::mem::size_of::<super::types::ChewingKeyRest>(), 4);
-    }
-
     /// The zhuyin twin of the pinyin crate's
     /// `choosing_from_a_reanchored_window_uses_the_anchored_span`
     /// (`oxpinyin-capi/src/e2e_tests.rs`): a

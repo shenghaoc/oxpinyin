@@ -215,12 +215,6 @@ impl CapiContext {
     pub(crate) fn has_non_token_bigram_key(&self) -> bool {
         self.core.has_non_token_bigram_key()
     }
-
-    /// §9 bigram-export rows, shared: [`ContextCore::export_bigram_rows`].
-    #[cfg(test)]
-    pub(crate) fn export_bigram_rows(&self) -> Option<Vec<ExportedBigramRow>> {
-        self.core.export_bigram_rows()
-    }
 }
 
 // ── Instance ────────────────────────────────────────────────────────────

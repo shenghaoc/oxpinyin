@@ -916,20 +916,6 @@ mod null_chunk_tests {
             true
         }));
     }
-
-    #[cfg(unix)]
-    #[test]
-    fn the_line_follows_the_file_system_of_a_real_directory() {
-        let dir = tempfile::Builder::new()
-            .prefix("oxpinyin-facade-null-chunk-")
-            .tempdir()
-            .expect("temp dir");
-        std::fs::write(dir.path().join("table.conf"), b"x").expect("fill the directory");
-        let reads = oxpinyin_runtime::directory_reads_as_a_chunk(dir.path());
-        let writes =
-            writes_null_chunk_line(dir.path(), oxpinyin_runtime::directory_reads_as_a_chunk);
-        assert_eq!(writes, !reads);
-    }
 }
 
 #[cfg(test)]

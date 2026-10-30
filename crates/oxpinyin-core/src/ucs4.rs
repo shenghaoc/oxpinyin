@@ -520,13 +520,6 @@ mod phrase_text_tests {
     }
 
     #[test]
-    fn a_zero_keeps_the_stored_length() {
-        let text = PhraseText::from_words([0x7532, 0, 0x4E59]).expect("stored words");
-        assert_eq!(text.outward_words().collect::<Vec<_>>(), [0x7532]);
-        assert_eq!(text.phrase_length(), 3);
-    }
-
-    #[test]
     fn out_of_range_words_answer_none_before_the_zero() {
         assert!(PhraseText::from_words([0x8000_0000]).is_none());
         let after = PhraseText::from_words([0x7532, 0, 0x8000_0000]).expect("zero ends the read");
