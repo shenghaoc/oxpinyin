@@ -301,7 +301,6 @@ init	oxpinyin_user::store::get_u64::<oxpinyin_user::session_values::SessionValue
 init	oxpinyin_user::store_libpinyin::backed_readings
 init	oxpinyin_user::store_libpinyin::loaded_pronunciation_counts
 init	oxpinyin_user::store_libpinyin::seed_txn_with_replay::<oxpinyin_user::session_values::SessionTxn> [instantiating crate: oxpinyin_runtime]
-init	pinyin::context::log_layout_faults
 init	pinyin::sentence::refuse_toned_matrix
 init	pinyin_alloc_instance
 init	pinyin_get_candidate

@@ -2913,8 +2913,9 @@ call measured here, not every independent caller of reduce_tokens.
   instantiated nowhere in `src/`, `tests/` or `utils/`; `libpinyin.so.15` and
   `libzhuyin.so.15` define no symbol of either class.
 - **What oxpinyin does instead:** writes the pin's `mmap <path> failed!` line,
-  the path as its bytes, at each reachable site on both facades, from
-  `oxpinyin_data::pin_stderr`, and answers what it answered before: NULL with
+  the path as its bytes, at each reachable site on both facades, with the
+  pin's own `fprintf(stderr, …)` through `oxpinyin_data::c_stderr` (stage 4
+  of `external-io-boundary.md`), and answers what it answered before: NULL with
   one GLib warning from an init whose library is short or corrupt, non-NULL
   from one whose library is absent (the library stays unloaded), `true` from a
   reload, a modified save and a mask-out, `false` from the addon load. It

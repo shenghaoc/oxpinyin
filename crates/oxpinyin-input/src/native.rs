@@ -1,6 +1,7 @@
 //! The only unsafe code in the crate: the declarations of `native/config.c`
-//! and the two owned handles over what it returns, a `FILE *` and the name
-//! `setlocale` answered. Every function here makes exactly one shim call.
+//! and `native/diagnostic.c`, and the two owned handles over what they
+//! return, a `FILE *` and the name `setlocale` answered. Every function here
+//! makes exactly one shim call.
 
 use core::ffi::{c_char, c_float, c_int};
 use core::marker::{PhantomData, PhantomPinned};

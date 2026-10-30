@@ -226,7 +226,6 @@ init	std::sys::fs::metadata
 init	std::sys::fs::unix::try_statx
 init	std::sys::random::linux::hashmap_random_keys
 init	zhuyin::candidates::snapshot_candidates
-init	zhuyin::context::log_layout_faults
 init	zhuyin::sentence::guess_candidates
 init	zhuyin_alloc_instance
 init	zhuyin_get_candidate

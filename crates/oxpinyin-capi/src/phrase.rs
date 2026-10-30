@@ -255,6 +255,27 @@ mod tests {
     }
 
     #[test]
+    fn a_layout_critical_is_the_pins_return_if_fail_warning() {
+        let _logs = LogHandler::new();
+        crate::ffi::return_if_fail_warning(
+            oxpinyin_data::phrase_library::SUB_PHRASE_LOAD_SIGNATURE,
+            "index_three <= end",
+        );
+        LOGS.with(|logs| {
+            let logs = logs.borrow();
+            let logs = logs.as_ref().expect("capture active");
+            assert_eq!(logs.len(), 1);
+            assert_eq!(logs[0].0, None);
+            assert_eq!(logs[0].1, glib_sys::G_LOG_LEVEL_CRITICAL);
+            assert_eq!(
+                logs[0].2,
+                "bool pinyin::SubPhraseIndex::load(pinyin::MemoryChunk*, table_offset_t, \
+                 table_offset_t): assertion 'index_three <= end' failed"
+            );
+        });
+    }
+
+    #[test]
     fn read_after_check_emits_one_class_c_warning() {
         let _logs = LogHandler::new();
         let error = oxpinyin_engine::EngineError::ReadAfterCheck { token: 0x0100_0001 };

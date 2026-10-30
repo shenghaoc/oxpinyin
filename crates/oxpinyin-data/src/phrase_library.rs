@@ -59,8 +59,9 @@ use crate::chunk_format::{
 use oxpinyin_core::PhraseText;
 
 /// The pin's `G_STRFUNC` for `SubPhraseIndex::load`: the C++
-/// `__PRETTY_FUNCTION__` the measured critical carries (the pin logs it in
-/// domain NULL at level `G_LOG_LEVEL_CRITICAL`).
+/// `__PRETTY_FUNCTION__` its `g_return_val_if_fail` passes to
+/// `g_return_if_fail_warning`, in domain NULL (the oracle object's `.rodata`
+/// string).
 pub const SUB_PHRASE_LOAD_SIGNATURE: &str =
     "bool pinyin::SubPhraseIndex::load(pinyin::MemoryChunk*, table_offset_t, table_offset_t)";
 
@@ -77,18 +78,6 @@ pub struct LayoutFault {
     /// `m_total_freq` as the pin read it before the failing check — 0 when
     /// the four-word header itself is short.
     pub total_freq: u32,
-}
-
-impl LayoutFault {
-    /// The pin's critical message, as `g_return_if_fail_warning` formats it:
-    /// `G_STRFUNC: assertion 'expr' failed`.
-    #[must_use]
-    pub fn critical_message(&self) -> String {
-        format!(
-            "{SUB_PHRASE_LOAD_SIGNATURE}: assertion '{}' failed",
-            self.expression
-        )
-    }
 }
 
 /// Why a phrase library could not be opened.

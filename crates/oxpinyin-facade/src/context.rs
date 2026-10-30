@@ -10,8 +10,8 @@ use oxpinyin_runtime::{
     FileType, OpenError, RowFault, Runtime, TableConf, TableConfError, directory_reads_as_a_chunk,
 };
 use oxpinyin_user::SystemVersions;
+use oxpinyin_user::c_stderr;
 use oxpinyin_user::{ChunkHeaderField, UserConfLaw, UserStore, UserStoreError};
-use oxpinyin_user::{c_stderr, pin_stderr};
 
 /// What `save_user` did, for the C facades' `pinyin_save` / `zhuyin_save`
 /// and the `pinyin_end_add_phrases` import commit.
@@ -245,28 +245,27 @@ pub enum LibraryLoadFault {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct StoreWriteFailed;
 
-/// The line the pin writes for a row that names no chunk, when it writes
-/// one. `g_build_filename(dir, NULL, NULL)` is `dir`, so `MemoryChunk::mmap`
+/// Whether the pin writes its `mmap %s failed!` line for a row that names no
+/// chunk. `g_build_filename(dir, NULL, NULL)` is `dir`, so `MemoryChunk::mmap`
 /// opens the directory itself (`pinyin.cpp:252-256`, `:286-290`,
 /// `zhuyin.cpp:196-200` at 074a2219). Where the directory reads as a chunk,
 /// the `read` of its length word fails and the pin asserts
 /// (`memory_chunk.h:493`) before writing anything. Where `lseek(SEEK_END)`
 /// fails or answers under the header (tmpfs), `mmap` refuses it
-/// (`memory_chunk.h:486-489`), the pin writes `mmap %s failed!` and then
-/// dies of SIGSEGV on the empty chunk (`phrase_index.cpp:354`). The answer
-/// and warning stay the abort site's either way. Unix only, as
+/// (`memory_chunk.h:486-489`), the pin writes `mmap %s failed!` naming `dir`
+/// and then dies of SIGSEGV on the empty chunk (`phrase_index.cpp:354`). The
+/// answer and warning stay the abort site's either way. Unix only, as
 /// `phrase_library::directory_chunk_fault` is.
-fn null_chunk_line(dir: &Path, reads_as_a_chunk: impl FnOnce(&Path) -> bool) -> Option<Vec<u8>> {
-    (cfg!(unix) && !reads_as_a_chunk(dir)).then(|| pin_stderr::mmap_failed_line(dir))
+fn writes_null_chunk_line(dir: &Path, reads_as_a_chunk: impl FnOnce(&Path) -> bool) -> bool {
+    cfg!(unix) && !reads_as_a_chunk(dir)
 }
 
-/// Writes [`null_chunk_line`] for `dir` with `report`, if the pin writes it
-/// on this file system: [`c_stderr::mmap_failed`] in the init, whose
-/// `check_format` lines are the shim's, [`pin_stderr::mmap_failed`] in an
-/// addon load.
-fn null_chunk_refused(dir: &Path, report: fn(&Path)) {
-    if null_chunk_line(dir, directory_reads_as_a_chunk).is_some() {
-        report(dir);
+/// Writes the pin's `mmap %s failed!` line for `dir` with
+/// [`c_stderr::mmap_failed`], if [`writes_null_chunk_line`] says the pin
+/// writes it on this file system.
+fn null_chunk_refused(dir: &Path) {
+    if writes_null_chunk_line(dir, directory_reads_as_a_chunk) {
+        c_stderr::mmap_failed(dir);
     }
 }
 
@@ -427,7 +426,7 @@ impl ContextCore {
             if let Some(path) = error.unmappable_library() {
                 c_stderr::mmap_failed(path);
             } else if error.null_system_chunk() {
-                null_chunk_refused(system_dir, c_stderr::mmap_failed);
+                null_chunk_refused(system_dir);
             }
             OpenFailure::Runtime(error)
         })?;
@@ -584,7 +583,7 @@ impl ContextCore {
         // position, so a fatal critical stops before the library's own
         // write and after the earlier ones. The lines go on the stream the
         // save's rename and marker lines use.
-        if self.check_system_libraries(None, false, c_stderr::mmap_failed) {
+        if self.check_system_libraries(None, false) {
             return SaveOutcome::ChunkHeaderRead;
         }
         let runtime = self.runtime.as_ref();
@@ -621,15 +620,9 @@ impl ContextCore {
 
     /// The system libraries (with `only`, that one) whose file the pin would
     /// map again at this call and cannot: one `mmap %s failed!` each, in
-    /// library order, written by `report` (the save's on the shim's stream,
-    /// [`c_stderr::mmap_failed`]). The pin dies on the first; nothing here
-    /// does, and the call answers what it answered before.
-    fn check_system_libraries(
-        &self,
-        only: Option<u8>,
-        record_layout: bool,
-        report: fn(&Path),
-    ) -> bool {
+    /// library order ([`c_stderr::mmap_failed`]). The pin dies on the first;
+    /// nothing here does, and the call answers what it answered before.
+    fn check_system_libraries(&self, only: Option<u8>, record_layout: bool) -> bool {
         let Some(runtime) = &self.runtime else {
             return false;
         };
@@ -638,7 +631,7 @@ impl ContextCore {
             return true;
         }
         for path in checked.unmappable {
-            report(&path);
+            c_stderr::mmap_failed(&path);
         }
         false
     }
@@ -688,7 +681,7 @@ impl ContextCore {
     /// whose library bits match are merged. A refused mask leaves the store untouched,
     /// where the pin's partial reloads die with its abort.
     pub fn mask_out(&mut self, mask: u32, value: u32) -> MaskOutOutcome {
-        if self.check_system_libraries(None, false, pin_stderr::mmap_failed) {
+        if self.check_system_libraries(None, false) {
             return MaskOutOutcome::ChunkHeaderRead;
         }
         // The pin's mask loop walks `index` 1..`PHRASE_INDEX_LIBRARY_COUNT`
@@ -795,7 +788,7 @@ impl ContextCore {
         if runtime.dict().library_visible(index) {
             return Ok(false);
         }
-        if self.check_system_libraries(Some(row_index), false, pin_stderr::mmap_failed) {
+        if self.check_system_libraries(Some(row_index), false) {
             return Err(LibraryLoadFault::Row(LibraryRowAssert::ChunkHeaderRead));
         }
         // The sub-index `unload` freed comes back as the system chunk plus
@@ -844,7 +837,7 @@ impl ContextCore {
                 RowFault::NotDictionary => LibraryRowAssert::NotDictionary,
                 RowFault::NullChunkName => {
                     if let Some(dir) = runtime.system_dir() {
-                        null_chunk_refused(dir, pin_stderr::mmap_failed);
+                        null_chunk_refused(dir);
                     }
                     LibraryRowAssert::NullChunkName
                 }
@@ -852,7 +845,7 @@ impl ContextCore {
             }),
             Err(error) => {
                 if let Some(path) = error.unmappable_path() {
-                    pin_stderr::mmap_failed(path);
+                    c_stderr::mmap_failed(path);
                 }
                 Ok(false)
             }
@@ -901,25 +894,27 @@ impl ContextCore {
 
 #[cfg(test)]
 mod null_chunk_tests {
-    use super::null_chunk_line;
+    use super::writes_null_chunk_line;
     use std::path::Path;
 
     #[cfg(unix)]
     #[test]
     fn a_directory_that_does_not_read_as_a_chunk_gets_the_pin_line_once() {
         let mut asked = 0;
-        let line = null_chunk_line(Path::new("/scratch/sys-1"), |dir| {
+        let writes = writes_null_chunk_line(Path::new("/scratch/sys-1"), |dir| {
             asked += 1;
             assert_eq!(dir, Path::new("/scratch/sys-1"));
             false
         });
         assert_eq!(asked, 1);
-        assert_eq!(line.as_deref(), Some(&b"mmap /scratch/sys-1 failed!\n"[..]));
+        assert!(writes);
     }
 
     #[test]
     fn a_directory_that_reads_as_a_chunk_gets_no_line() {
-        assert_eq!(null_chunk_line(Path::new("/scratch/sys-1"), |_| true), None);
+        assert!(!writes_null_chunk_line(Path::new("/scratch/sys-1"), |_| {
+            true
+        }));
     }
 
     #[cfg(unix)]
@@ -931,8 +926,9 @@ mod null_chunk_tests {
             .expect("temp dir");
         std::fs::write(dir.path().join("table.conf"), b"x").expect("fill the directory");
         let reads = oxpinyin_runtime::directory_reads_as_a_chunk(dir.path());
-        let line = null_chunk_line(dir.path(), oxpinyin_runtime::directory_reads_as_a_chunk);
-        assert_eq!(line.is_none(), reads);
+        let writes =
+            writes_null_chunk_line(dir.path(), oxpinyin_runtime::directory_reads_as_a_chunk);
+        assert_eq!(writes, !reads);
     }
 }
 

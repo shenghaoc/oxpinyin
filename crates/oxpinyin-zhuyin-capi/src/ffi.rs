@@ -151,23 +151,26 @@ pub fn log_warning(message: &str) {
     }
 }
 
-/// The pin's `g_return_val_if_fail` line: domain NULL (the pin leaves
-/// `G_LOG_DOMAIN` undefined there) at `G_LOG_LEVEL_CRITICAL`, exactly the
-/// channel `SubPhraseIndex::load` uses (`phrase_index.cpp:354-356`). A
-/// message with an interior NUL is dropped rather than truncated.
-pub fn log_critical(message: &str) {
-    let Ok(message) = CString::new(message) else {
+/// The pin's `g_return_val_if_fail` in `SubPhraseIndex::load`
+/// (074a2219 `phrase_index.cpp:354-356`, `:361`), made with the call the macro
+/// expands to: `g_return_if_fail_warning(G_LOG_DOMAIN, G_STRFUNC, #expr)`,
+/// with the domain NULL (the pin leaves `G_LOG_DOMAIN` undefined there; the
+/// oracle object passes zero at `SubPhraseIndex::load+492`, `+552`, `+576`
+/// and `+608`). GLib formats and logs the critical. An argument with an
+/// interior NUL is dropped rather than truncated; neither caller's has one.
+pub fn return_if_fail_warning(pretty_function: &str, expression: &str) {
+    let (Ok(pretty_function), Ok(expression)) =
+        (CString::new(pretty_function), CString::new(expression))
+    else {
         return;
     };
-    // SAFETY: `g_log` is variadic; the `%s` format consumes exactly one
-    // `const char *`. The NULL domain is the pin's own, and the message is
-    // a NUL-terminated buffer that outlives the call.
+    // SAFETY: both strings are NUL-terminated buffers that outlive the call,
+    // and GLib accepts NULL for its default log domain.
     unsafe {
-        glib_sys::g_log(
+        glib_sys::g_return_if_fail_warning(
             std::ptr::null(),
-            glib_sys::G_LOG_LEVEL_CRITICAL,
-            c"%s".as_ptr(),
-            message.as_ptr(),
+            pretty_function.as_ptr(),
+            expression.as_ptr(),
         );
     }
 }
