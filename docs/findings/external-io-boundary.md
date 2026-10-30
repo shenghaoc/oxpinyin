@@ -1,7 +1,7 @@
 # External I/O boundary
 
 Date: 2026-10-28 UTC · Status: **maintainer ruling and implementation
-plan; stage 1 implemented (2026-10-28 UTC), stage 4 implemented (2026-10-30 UTC, #1437), stages 2, 3 and 5 not implemented**. The pin is libpinyin
+plan; stage 1 implemented (2026-10-28 UTC), stage 4 implemented (2026-10-30 UTC, #1437), stage 5 in progress (#1436), stages 2 and 3 not implemented**. The pin is libpinyin
 `074a2219c90feaf962d0d24f034514033ece5f99`; oxpinyin source is main
 `a52461cc297a4e67b07406167e6581e0e9f211fa`. The pin source read was the
 clean `/tmp/libpinyin-src` checkout at that commit. Pin citations below
@@ -234,7 +234,7 @@ The scope includes both installed and `noinst_PROGRAMS` utilities.
 | `gen_binary_files` | `oxpinyin-datagen compile` | **GAP** — combined compiler, different name/interface. |
 | `import_interpolation` | datagen `system::read_interpolation` | **GAP** — no same-name standalone tool. |
 | `export_interpolation` | `oxpinyin-emitter` | **GAP** — different name/interface. |
-| `gen_pinyin_table` | none identified | **GAP**. |
+| `gen_pinyin_table` | `oxpinyin-utils` `gen_pinyin_table` | **Ported** at stage 5 (2026-10-30 UTC, #1436): the pin's name, options, messages, input scanner and output. |
 | `gen_zhuyin_table` | none identified | **GAP**. |
 | `ngseg` | `oxpinyin-segment` | **GAP** — different name/interface. |
 | `spseg` | `oxpinyin-spseg` | **GAP** — different name/interface. |
@@ -360,7 +360,12 @@ specifications in advance of the stage that owns them.
    missing table generators. Move KMM working files to native backend
    DBMs through store; a change touching backend code follows the
    three-cell path rule. Gate each utility or cohesive small family on
-   its own rather than waiting for the whole tools set.
+   its own rather than waiting for the whole tools set. **In progress:**
+   the boundary (`oxpinyin-input` `tools`) and `gen_pinyin_table`
+   (`oxpinyin-utils`) landed together (2026-10-30 UTC, #1436), so CI
+   builds and tests the boundary through its first user. Utilities that
+   load chunks (`MemoryChunk::load`, e.g. `ngseg`, `gen_binary_files`)
+   follow stage 2's chunk calls.
 
 Each stage derives expected behavior from the pin and its native library
 sources before using a differential as a gate. The present docs-only

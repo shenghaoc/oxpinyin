@@ -1,0 +1,34 @@
+[package]
+name = "oxpinyin-utils"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+description = "libpinyin's utilities under their own names and interfaces (external-I/O boundary stage 5). Never ships."
+
+[features]
+# The data layer's backend selection, forwarded as oxpinyin-datagen does;
+# gen_pinyin_table itself reads and writes no DBM.
+default = ["bdb"]
+kyotocabinet = ["oxpinyin-data/kyotocabinet"]
+bdb = ["oxpinyin-data/bdb"]
+tkrzw = ["oxpinyin-data/tkrzw"]
+
+[lints]
+workspace = true
+
+[dependencies]
+oxpinyin-core = { workspace = true }
+# pinyin_exact_compare2, shared with the table writers.
+oxpinyin-data = { workspace = true }
+# The utilities' edge calls: GLib options and text, C++ streams, C stdio.
+oxpinyin-input = { workspace = true, features = ["tools"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[[bin]]
+name = "gen_pinyin_table"
+path = "src/bin/gen_pinyin_table.rs"

@@ -14,6 +14,8 @@ use std::ffi::{CStr, CString, OsString, c_int, c_long};
 
 use crate::native_tool::{self, Istream, OptionSpec, OptionValue as RawValue, Output};
 
+pub mod gen_pinyin_table;
+
 /// `setlocale(LC_ALL, "")`, the first call of every utility's `main`
 /// (074a2219 `utils/segment/ngseg.cpp:111`); whether it answered a name.
 #[must_use]
@@ -31,8 +33,9 @@ pub enum OptionArg {
     Int(i32),
     /// `G_OPTION_ARG_DOUBLE` over a `gdouble`.
     Double(f64),
-    /// `G_OPTION_ARG_FILENAME` over a `gchar *` that starts NULL.
-    Filename,
+    /// `G_OPTION_ARG_FILENAME` over a `gchar *` that starts at this
+    /// string, or NULL.
+    Filename(Option<&'static CStr>),
 }
 
 impl OptionArg {
@@ -41,7 +44,7 @@ impl OptionArg {
         match self {
             Self::Flag(_) => 0,
             Self::Int(_) => 1,
-            Self::Filename => 2,
+            Self::Filename(_) => 2,
             Self::Double(_) => 3,
         }
     }
@@ -53,8 +56,8 @@ impl OptionArg {
             },
             Self::Int(integer) => RawValue { integer },
             Self::Double(number) => RawValue { number },
-            Self::Filename => RawValue {
-                string: core::ptr::null_mut(),
+            Self::Filename(default) => RawValue {
+                string: default.map_or(core::ptr::null_mut(), |text| text.as_ptr().cast_mut()),
             },
         }
     }
@@ -86,7 +89,8 @@ pub enum OptionValue {
     Int(i32),
     /// A `gdouble`.
     Double(f64),
-    /// A filename's bytes, or `None` for the NULL it started as.
+    /// A filename's bytes: GLib's, or the default the entry started at;
+    /// `None` for a NULL default left unset.
     Filename(Option<Vec<u8>>),
 }
 
@@ -165,8 +169,9 @@ fn read_value(arg: &OptionArg, value: RawValue) -> OptionValue {
         OptionArg::Flag(_) => OptionValue::Flag(native_tool::option_flag(value)),
         OptionArg::Int(_) => OptionValue::Int(native_tool::option_int(value)),
         OptionArg::Double(_) => OptionValue::Double(native_tool::option_double(value)),
-        OptionArg::Filename => OptionValue::Filename(native_tool::take_glib_string(
-            native_tool::option_string(value),
+        OptionArg::Filename(default) => OptionValue::Filename(native_tool::take_option_filename(
+            value,
+            default.map_or(core::ptr::null_mut(), |text| text.as_ptr().cast_mut()),
         )),
     }
 }
@@ -315,6 +320,13 @@ pub fn exit(status: c_int) -> ! {
     native_tool::exit(status)
 }
 
+/// The target's `ENOENT`, the pin's exit status for a file it cannot open
+/// (`gen_pinyin_table.cpp:141`, `:264`).
+#[must_use]
+pub fn enoent() -> c_int {
+    native_tool::enoent()
+}
+
 /// The target's `EINVAL`, the pin's exit status for a refused option or
 /// argument (`ngseg.cpp:119`).
 #[must_use]
@@ -361,7 +373,7 @@ mod tests {
                 long_name: c"outputfile",
                 short_name: b'o',
                 flags: 0,
-                arg: OptionArg::Filename,
+                arg: OptionArg::Filename(None),
                 description: Some(c"output"),
                 arg_description: Some(c"filename"),
             },
