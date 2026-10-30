@@ -35,13 +35,12 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 /// `PHRASE_INDEX_LIBRARY_COUNT` (`phrase_index.h`): sixteen sub-indices.
 const PHRASE_INDEX_LIBRARY_COUNT: u32 = 16;
 use std::sync::{Arc, Mutex, RwLock};
 
-use oxpinyin_core::scoring::key_cost_table;
 use oxpinyin_core::{
     Cost, Dictionary, LanguageModel, MergedGram, NbestStepCosts, PhraseEntry, PhraseIndexRanges,
     PhraseItemRead, PhraseText, PhraseToken, SyllableKey, TrellisItem, TrellisPathMemo,
@@ -465,16 +464,6 @@ pub struct RuntimeDict {
     /// ever sets bit 2 (`GBK_DICTIONARY`, `pinyin.cpp:464-472`); the zhuyin
     /// ABI any bit but 1 (`zhuyin.cpp:378-388`).
     library_mask: Arc<AtomicU32>,
-    /// Seqlock epoch bracketing every [`RuntimeDict::load_library`] /
-    /// [`RuntimeDict::unload_library`] mask flip: each bumps it once
-    /// before and once after the flip. Readers that must not observe a
-    /// torn visibility window — the key-cost walk behind
-    /// [`Runtime::new_session`] — load it before and after the walk and
-    /// discard the walk when it moved. The protocol leans on the
-    /// `library_mask` reads inside those walks staying `SeqCst` (the
-    /// single total order keeps `SeqCst` operations in program order),
-    /// so keep every mask read `SeqCst`.
-    library_epoch: Arc<AtomicU64>,
 }
 
 impl RuntimeDict {
@@ -899,17 +888,12 @@ impl RuntimeDict {
             return false;
         }
         let mask = 1u32 << index;
-        // The flip is bracketed by epoch bumps so a concurrent key-cost
-        // walk can detect that visibility moved under it and retry
-        // (see `library_epoch`).
-        self.library_epoch.fetch_add(1, Ordering::SeqCst);
         let newly_unloaded = self.library_mask.fetch_or(mask, Ordering::SeqCst) & mask == 0;
         // The freed sub-index takes its accepted bumps with it, and a
         // reload maps the library's items as stored (`phrase_index.cpp:261-269`).
         if newly_unloaded {
             self.bumps.drop_libraries(|nibble| nibble == index);
         }
-        self.library_epoch.fetch_add(1, Ordering::SeqCst);
         true
     }
 
@@ -927,15 +911,10 @@ impl RuntimeDict {
         if index >= PHRASE_INDEX_LIBRARY_COUNT {
             return false;
         }
-        // Bracketed like `unload_library`'s flip (see `library_epoch`).
-        self.library_epoch.fetch_add(1, Ordering::SeqCst);
-        let newly_loaded = self
-            .library_mask
+        self.library_mask
             .fetch_and(!(1u32 << index), Ordering::SeqCst)
             & (1u32 << index)
-            != 0;
-        self.library_epoch.fetch_add(1, Ordering::SeqCst);
-        newly_loaded
+            != 0
     }
 
     /// Whether library `nibble` is visible (not unloaded). Shared
@@ -2018,21 +1997,6 @@ pub struct Runtime {
     lm: RuntimeLm,
     user: Option<UserStore>,
     conf: Arc<TableConf>,
-    /// The per-key initial cost table, memoised alongside the
-    /// library-visibility mask it was computed under. Deferred out of
-    /// [`Runtime::open`]: computing it walks the dictionary, which dominates
-    /// `pinyin_init`, so it is filled lazily on the first
-    /// [`Runtime::new_session`]. Its values depend on which phrase libraries
-    /// are visible — an unloaded library's items drop out of the lookups and
-    /// the unigram denominator — so every session build compares the current
-    /// mask against the stored one and rebuilds when a
-    /// [`Runtime::load_library`]/[`Runtime::unload_library`] has changed
-    /// visibility since. Rebuilds are epoch-validated: a mask stamp is
-    /// only published when the visibility epoch held steady across the
-    /// rebuild walk, so a concurrent flip can never leave a table
-    /// stamped with a mask it was not computed under. Addon load/unload
-    /// never touch the mask, so they never invalidate it.
-    key_costs: RwLock<Option<(u32, Arc<[Cost]>)>>,
 }
 
 /// `check_format` where the pin runs it: right after `table.conf` loads,
@@ -2239,7 +2203,6 @@ impl Runtime {
             punct: Arc::new(punct),
             bumps: Arc::clone(&bumps),
             library_mask,
-            library_epoch: Arc::new(AtomicU64::new(0)),
         };
         let lm = RuntimeLm {
             inner: Arc::new(lm),
@@ -2255,7 +2218,6 @@ impl Runtime {
             lm,
             user,
             conf: Arc::new(conf),
-            key_costs: RwLock::new(None),
         })
     }
 
@@ -2277,117 +2239,20 @@ impl Runtime {
     ///
     /// # Errors
     ///
-    /// Returns [`EngineError`] when the key-cost table cannot be computed —
-    /// a backend failure while walking the dictionary, on the first build or
-    /// the first after a library-visibility change — and otherwise forwards
-    /// any [`EngineError`] from session construction (itself currently
-    /// infallible over valid backends).
-    ///
-    /// The walk runs only for a model without real unigram frequencies. A
-    /// runtime over [`BigramLanguageModel`] always has them, so in practice
-    /// this allocates the session and reads nothing.
+    /// Forwards any [`EngineError`] from session construction, currently
+    /// infallible for the runtime's [`BigramLanguageModel`]. It always has
+    /// real unigram frequencies, so [`Session::new`] skips the fallback
+    /// key-cost walk and reads no dictionary or model records.
     pub fn new_session(&self, config: &impl ConfigSource) -> Result<RuntimeSession, EngineError> {
-        // Real frequencies mean the session decodes through the pinned
-        // construction, which prices each candidate inline from the phrase
-        // item it has already fetched — upstream's
-        // `unigram_gen_next_step`/`bigram_gen_next_step`
-        // (`src/lookup/phonetic_lookup.h:643-698` at the pin `0c5e80e1`),
-        // whose `pinyin_alloc_instance` reads nothing at all. The key-cost
-        // table is read only by the pre-frequency fallback scorer, which
-        // that branch cannot reach, so walking the frozen key inventory
-        // here would spend 42–57 ms on a value no decode consults
-        // (`docs/findings/perf-backend-matrix-2026-09.md`). Skip the walk
-        // and the cache with it; `BigramLanguageModel` always reports real
-        // unigrams, so this is the live path for every runtime-backed
-        // session.
-        let key_costs = if self.lm.has_real_unigrams() {
-            Vec::new()
-        } else {
-            self.cached_key_costs()?.to_vec()
-        };
         // The session reads no storage path (the runtime owns every store
         // it decodes over), so it gets the empty set, which allocates
         // nothing, instead of a copy of the runtime's.
-        Session::new_with_key_costs(
+        Session::new(
             config,
             StoragePaths::default(),
             self.dict.clone(),
             self.lm.clone(),
-            key_costs,
         )
-    }
-
-    /// The visibility-stamped key-cost table, walked on demand and shared
-    /// by every later session built under the same mask.
-    ///
-    /// Only [`Self::new_session`]'s pre-frequency fallback branch needs
-    /// this; a model with real unigram frequencies decodes through the
-    /// pinned construction and never reads a key-cost table.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`EngineError`] when a backend fails during the walk.
-    fn cached_key_costs(&self) -> Result<Arc<[Cost]>, EngineError> {
-        // The key-cost table is filled on first use rather than at open,
-        // keeping `pinyin_init` off the dictionary walk. Its values depend on
-        // the library-visibility mask (an unloaded library's items leave the
-        // lookups and the unigram denominator), so the cache is stamped with
-        // the mask it was built under and rebuilt whenever a
-        // load/unload_library has changed visibility since — each session
-        // decodes with the visibility in effect when it is built.
-        let mask = self.dict.library_mask.load(Ordering::Acquire);
-        // Fast path: shared read lock — concurrent `new_session` calls with
-        // an unchanged mask do not contend. Published stamps are always
-        // epoch-validated (slow path below), so a hit serves the true table
-        // for its mask even under a concurrent flip; the flip at worst
-        // linearizes this session just before it.
-        let cached = {
-            let cache = self
-                .key_costs
-                .read()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            match cache.as_ref() {
-                Some((cached_mask, table)) if *cached_mask == mask => Some(Arc::clone(table)),
-                _ => None,
-            }
-        };
-        if let Some(key_costs) = cached {
-            return Ok(key_costs);
-        }
-
-        // Slow path — mask changed or cache empty. The walk runs unlocked
-        // (fast-path readers keep going) but bracketed by the library
-        // epoch: a load/unload_library flip during the walk would compute
-        // the table under a mix of visibilities while stamping it with the
-        // pre-walk mask, and that poisoned entry would then be served to
-        // every later session under the same mask (mask values repeat —
-        // an unload/reload pair returns to the same stamp). The epoch
-        // check discards such a walk and retries, so a published stamp
-        // always names the exact visibility the table was computed under.
-        // Retrying can only starve under visibility flips faster than
-        // every walk; flips are rare, user-driven operations.
-        let key_costs: Arc<[Cost]> = loop {
-            let epoch = self.dict.library_epoch.load(Ordering::SeqCst);
-            let mask = self.dict.library_mask.load(Ordering::SeqCst);
-            let computed: Arc<[Cost]> = Arc::from(key_cost_table(&self.dict, &self.lm)?);
-            if self.dict.library_epoch.load(Ordering::SeqCst) != epoch {
-                continue;
-            }
-            // The mask read sat between two unchanged epoch reads, so the
-            // walk ran under exactly this mask.
-            let mut cache = self
-                .key_costs
-                .write()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            match cache.as_ref() {
-                Some((cached_mask, table)) if *cached_mask == mask => break Arc::clone(table),
-                _ => {
-                    *cache = Some((mask, Arc::clone(&computed)));
-                    break computed;
-                }
-            }
-        };
-        Ok(key_costs)
     }
 
     /// A handle clone of the merged dictionary backend.
@@ -2551,6 +2416,7 @@ impl Runtime {
     /// zhuyin.cpp:788-808. Unloaded libraries and rows without a user file
     /// are skipped. Failed mappings keep the existing safe fallback;
     /// the facade reports their mmap diagnostic before calling this.
+    #[must_use]
     pub fn reload_system_libraries(&self) -> oxpinyin_user::SystemOriginals {
         self.remap_system_libraries(1..16, false)
     }
@@ -2562,6 +2428,7 @@ impl Runtime {
     /// (the `USER_FILE` row, the unused rows) and for an unreadable file.
     /// Call it before [`Runtime::load_library`] makes the library visible,
     /// so no reader sees the session's state of the freed sub-index.
+    #[must_use]
     pub fn reload_system_library(&self, index: u8) -> oxpinyin_user::SystemOriginals {
         self.remap_system_libraries(index..index.saturating_add(1), true)
     }
@@ -2570,6 +2437,7 @@ impl Runtime {
     /// mapped now, without mapping it again: what `unload` frees
     /// (074a2219 `phrase_index.cpp:261-268`). Empty for a row with no
     /// system chunk and no user file, and for a library already unloaded.
+    #[must_use]
     pub fn current_system_library(&self, index: u8) -> oxpinyin_user::SystemOriginals {
         let layout = UserFileLayout::from_conf(&self.conf);
         let mut originals = oxpinyin_user::SystemOriginals::new(Default::default(), layout);
@@ -2937,136 +2805,6 @@ mod tests {
             .unwrap();
         assert!(store.phrase_table_generation() > generation);
         assert_eq!(dict.tokens_for_text("你鎄"), [PhraseToken::new(added)]);
-    }
-
-    // `new_session`'s own gate, pinned. The engine gate has
-    // `real_unigrams_skip_the_key_cost_walk_but_the_fallback_keeps_it`;
-    // this one had nothing — the concurrency test below deliberately
-    // drives `cached_key_costs` directly, and `tests/assembly.rs`'s
-    // visibility test says in its own comment that its `new_session`
-    // calls assert nothing about the cache. So reverting the gate hunk
-    // at `new_session` and putting the unconditional
-    // `cached_key_costs()?.to_vec()` back would have left every test
-    // green while restoring the ~430-lookup walk on the shipped path.
-    //
-    // A white-box test is the only way to see this: the cache is a
-    // private field, so an integration test cannot observe whether a
-    // session populated it. `RuntimeLm` always reports real unigrams, so
-    // an opened runtime plus one session must leave the cache untouched.
-    #[test]
-    fn new_session_does_not_populate_the_key_cost_cache() {
-        let runtime = Runtime::open(&w3_dir(), None).expect("fixture opens");
-        assert!(
-            runtime.lm().has_real_unigrams(),
-            "vacuity guard: a runtime-backed model must report real \
-             unigrams, or the gate under test is never taken"
-        );
-        assert!(
-            runtime
-                .key_costs
-                .read()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .is_none(),
-            "a freshly opened runtime has not walked the key inventory"
-        );
-
-        runtime
-            .new_session(&oxpinyin_engine::EmptyConfigSource)
-            .expect("session");
-
-        assert!(
-            runtime
-                .key_costs
-                .read()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .is_none(),
-            "new_session must not walk the key inventory for a \
-             real-unigram model: the table it would build has no reader \
-             on this path"
-        );
-    }
-
-    // The key-cost cache stamp must always name the visibility the table
-    // was actually computed under, even when library visibility flips
-    // race the rebuild walk: a torn walk published under a stale stamp
-    // would serve wrong costs to every later session under that mask.
-    //
-    // Each round pins the cache to the unloaded stamp, then races one
-    // rebuild against a bounded flip storm. Without epoch validation the
-    // racing build snapshots mask 0 (a miss against the 0b100 pin), walks
-    // while the flipper tears visibility, and publishes that torn walk
-    // stamped 0 — which the quiesced probe then serves. With it, a
-    // published stamp always names the visibility the table was computed
-    // under, so the probe must see exactly the loaded table. (The flipper
-    // is bounded by count, not a reader-set flag: the rebuild's retry loop
-    // can only settle once the flips stop.)
-    //
-    // Driven through `cached_key_costs` rather than `new_session`: only
-    // the pre-frequency fallback branch consults the cache, and a
-    // `RuntimeLm` always reports real unigram frequencies, so no
-    // `new_session` call can reach it. The cache and its epoch validation
-    // stay covered here for the branch that does.
-    #[test]
-    fn key_costs_cache_stays_stamp_true_under_concurrent_visibility_flips() {
-        const ROUNDS: usize = 12;
-        const FLIP_PAIRS: usize = 20_000;
-        let runtime = Runtime::open(&w3_dir(), None).expect("fixture opens");
-        let dict = runtime.dict();
-        let lm = runtime.lm();
-
-        let loaded = key_cost_table(&dict, &lm).expect("walk (loaded)");
-        assert!(runtime.unload_library(2), "first GBK unload arms the mask");
-        let unloaded = key_cost_table(&dict, &lm).expect("walk (GBK unloaded)");
-        assert_ne!(
-            loaded, unloaded,
-            "vacuity guard: the loaded and unloaded tables must differ"
-        );
-        assert!(runtime.load_library(2), "reload clears the mask");
-
-        for _ in 0..ROUNDS {
-            let _ = runtime.unload_library(2);
-            runtime
-                .cached_key_costs()
-                .expect("pin the cache (GBK unloaded)");
-
-            std::thread::scope(|scope| {
-                scope.spawn(|| {
-                    for _ in 0..FLIP_PAIRS {
-                        let _ = runtime.unload_library(2);
-                        let _ = runtime.load_library(2);
-                    }
-                });
-                // Wait until the flipper is provably mid-storm — its
-                // first load has landed (the pin left the mask at
-                // 0b100) — so the racing build's snapshot happens under
-                // flapping visibility, not before the thread is ever
-                // scheduled.
-                for _ in 0..100_000 {
-                    if runtime.dict.library_mask.load(Ordering::SeqCst) == 0 {
-                        break;
-                    }
-                    std::thread::yield_now();
-                }
-                runtime.cached_key_costs().expect("build mid-storm");
-            });
-
-            // Quiesced: the flip pairs leave GBK loaded, so the probe
-            // must hold the true loaded-visibility table under stamp 0.
-            runtime.cached_key_costs().expect("probe build");
-            let cache = runtime
-                .key_costs
-                .read()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let (stamp, table) = cache
-                .as_ref()
-                .expect("a rebuild leaves the cache populated");
-            assert_eq!(*stamp, 0, "final visibility is all-loaded");
-            assert_eq!(
-                table.as_ref(),
-                loaded.as_slice(),
-                "cached table must be the true loaded-visibility table, not a torn walk"
-            );
-        }
     }
 
     #[test]
