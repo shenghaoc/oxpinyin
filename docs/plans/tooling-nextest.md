@@ -163,15 +163,16 @@ The six macOS/Windows exclusions are `oxpinyin-capi`, `oxpinyin-zhuyin-capi`,
 `oxpinyin-corpus`, `oxpinyin-kmm`, `oxpinyin-punct` and `oxpinyin-word`.
 Keep the Windows CI dependency/version exception confined to that CI scope.
 Do not claim a validated local storage setup from CI alone.
-The local completion gate stays limited to touched crates under contributor guidance.
+Local Rust test runs follow [verification rule 5](../runbooks/verification.md#5-local-test-gate):
+CI is the routine clippy and test gate; local runs reproduce CI failures or give iteration feedback.
 The workspace sweep remains CI's job. Each workflow edit needs separate
 approval; the T13N exception above covers only the two approved CI jobs.
 
 After equivalence passes, the cutover implementation updates verification rule 5.
-Replace its `cargo test -p <crate>` completion gate with the native `just test`
+Replace its documented `cargo test -p <crate>` command with the native `just test`
 nextest route. Keep the same touched-crate scope and feature selection.
 Keep doctests on `cargo test --doc` through `just test-doc` under heavy-slot admission.
-Keep fmt and clippy obligations. Do not add a local workspace sweep.
+Keep the fmt obligation. Do not add a local workspace sweep.
 This is a planned policy edit; this docs-only PR changes no verification rule.
 
 ## 6. Inspected source pattern

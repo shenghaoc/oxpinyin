@@ -669,11 +669,14 @@ compatibility runtime without replacing the native Windows workflow.
 
 ## Contribution checks
 
-From the native repository root, use `just` for fmt, tests and Clippy for each
-touched package. For a changed file under `crates/`, find the containing package's
-`Cargo.toml` and copy its `[package]` → `name` value into the `-p` argument.
-Repeat the package commands for each affected package; the example below
-uses `oxpinyin-core`. For documentation-only edits, check the changed text,
+CI is the routine Clippy and Rust-test gate ([verification rule 5](verification.md#5-local-test-gate)):
+a passing CI run on your final source tree satisfies those checks, so do not
+repeat them locally. Run `just fmt --all --check` locally; it is cheap. From the
+native repository root, use the `just` commands below to reproduce a CI failure
+or for iteration feedback on a touched package. For a changed file under `crates/`,
+find the containing package's `Cargo.toml` and copy its `[package]` → `name` value
+into the `-p` argument; the example below uses `oxpinyin-core`. For
+documentation-only edits, check the changed text,
 instructions/links and `git diff --check`; no Rust formatter, build, tests,
 Clippy or backend selection is needed. Source-comment edits also run fmt.
 For repository build/config changes, identify affected packages or ask the maintainer when

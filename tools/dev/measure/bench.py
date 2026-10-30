@@ -359,10 +359,11 @@ def build_all(builds: Sequence[tuple[str, Callable[[pool.UnitContext, int], byte
     (pool.plan, a rustc allowance per job): how many builds overlap and the Cargo jobs
     each one builds with, so a host with many CPUs and little memory builds them one
     by one with fewer jobs, as the heavy-slot builds did. An explicit CARGO_BUILD_JOBS
-    stays as given and is charged in full (AGENTS.md, rule 8): only the overlap
-    adapts, and a host that cannot hold one build at that count refuses it. A unit
-    returns the bytes its build printed, replayed on stderr in build order whatever
-    order they finish in; the earliest failure ends the run with its status.
+    stays as given and is charged in full (docs/runbooks/verification.md, rule 8):
+    only the overlap adapts, and a host that cannot hold one build at that count
+    refuses it. A unit returns the bytes its build printed, replayed on stderr in
+    build order whatever order they finish in; the earliest failure ends the run
+    with its status.
     """
     environment = dict(os.environ if env is None else env)
 
