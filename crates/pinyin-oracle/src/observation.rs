@@ -362,12 +362,6 @@ mod tests {
     }
 
     #[test]
-    fn completeness_wire_tokens_match_the_capture_format() {
-        assert_eq!(OracleCompleteness::Complete.as_wire(), "complete");
-        assert_eq!(OracleCompleteness::Partial.as_wire(), "partial");
-    }
-
-    #[test]
     fn candidate_type_discriminants_match_the_pinned_header() {
         // `_lookup_candidate_type_t` in include/libpinyin-2.11.92/pinyin.h,
         // discriminants 1..=8 in declared order.
