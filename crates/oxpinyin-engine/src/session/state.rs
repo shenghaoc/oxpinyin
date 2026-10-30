@@ -54,13 +54,10 @@ where
 
     /// Builds a session over a caller-supplied key-cost table.
     ///
-    /// `oxpinyin_runtime::Runtime::new_session` uses this to avoid
-    /// recomputing [`key_cost_table`] for every session. The table is
-    /// **not** computed at `Runtime::open` time: `87f9a49e` deferred the
-    /// walk to the first session allocation, and `6886dc1f` removed it
-    /// from the real-unigram path altogether. A runtime-backed session
-    /// therefore passes an empty table, and only the pre-frequency
-    /// fallback branch walks one and memoises it per visibility mask.
+    /// Callers can reuse a precomputed [`key_cost_table`] for fallback
+    /// models. Models with real unigram frequencies require an empty
+    /// table. [`Self::new`] selects and builds the appropriate table when
+    /// no precomputed table is available.
     ///
     /// # Panics
     ///

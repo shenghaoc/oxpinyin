@@ -116,7 +116,6 @@ Its deliberate pinned algorithms are:
 - The user-count overlay feed.
   Arithmetic lives in data's `*_with_user_delta` methods.
   Gate 2 merges whole rows through `load_merged_row` over core's `MergedGram`.
-- The key-cost cache's seqlock.
 - Suggestion row order through `merge_suggestion_rows`.
   C facades consume it through `oxpinyin-facade::merged_suggestions`.
 
