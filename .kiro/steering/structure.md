@@ -83,7 +83,7 @@ stability promise: published crate names hold names, nothing more. No
 cargo-public-api snapshot exists and none is enforced. Extension traits
 (`Dictionary`, `UserModel`, `LanguageModel`) may change incompatibly,
 lose object safety and lose defaulted methods when the implementation
-is better for it; the same holds for error enums and `#[non_exhaustive]`.
+is better for it. Error enums can change in the same way.
 The C export set is gated by the export check in ci.yml.
 
 **Configuration model:** layered — the frozen upstream defaults
@@ -98,7 +98,8 @@ preferences; engine weights and LM order are never user configuration.
 
 **Decoder:** a weighted SegmentGraph from day one (index-based arenas, not
 references). EdgeKind: Exact + Segmentation now; Fuzzy/Typo/Abbrev are
-Stage 3 model-upgrade candidates (they change output), behind an opt-in compile flag. **The scorer API accepts edge costs from the first
-implementation — hard freeze.** Parity mode mirrors upstream's
+Stage 3 model-upgrade candidates (they change output), behind an opt-in compile flag.
+The scorer accepts edge costs. The Rust scorer API is internal and can
+change (External interfaces ruling, 2026-10-18 UTC). Parity mode mirrors upstream's
 path-enumeration policy per the path-set SPEC — neither more paths nor
 fewer.

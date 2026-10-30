@@ -37,7 +37,6 @@ issue list.
 - [ ] 5. Remove reproduced language artefacts from the tree (2026-10-26
   ruling, #1303), each with its record and `POLICY-ACCEPTED` cases. The
   classification is #1297 (#1306); known examples are the 8-bit span
-  key (#1275), the wrapping frequency key, the tail comparator's
-  truncation, the libstdc++ heap tie order, glibc's `%f` extensions and
+  key (#1275), the tail comparator's truncation, the libstdc++ heap tie order, glibc's `%f` extensions and
   the amd64 out-of-range conversions. It does not block task 4.
   _Requirements: 6_
