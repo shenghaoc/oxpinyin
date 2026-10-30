@@ -140,8 +140,8 @@ where
     /// Replaces the scoring weights used by subsequent refreshes.
     ///
     /// Does not recompute the per-key cost table (that depends only on the
-    /// dictionary and language model). Intended for constant sweeps and
-    /// measurements; interactive shells normally keep [`ScoringConfig::default`].
+    /// dictionary and language model). Interactive shells normally keep
+    /// [`ScoringConfig::default`].
     pub const fn set_scoring_config(&mut self, config: ScoringConfig) {
         self.scoring = config;
     }

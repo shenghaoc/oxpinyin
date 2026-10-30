@@ -84,8 +84,9 @@ phrase_key_bonus      = 1000
 expansion_limit       = 64    (unchanged)
 ```
 
-Re-run the sweep with `cargo run -p pinyin-oracle --release --bin parity-sweep`
-if the scorer form or the data tables change.
+The retired sweep's source is available at
+[`dcbb1416`](https://github.com/shenghaoc/oxpinyin/blob/dcbb1416057b0e3f5f6411ef0dc4c6c24ca77ce8/crates/pinyin-oracle/src/bin/parity_sweep.rs),
+the last revision containing it. Coefficients follow the pin rather than fitting.
 
 ## λ read from config (2026-08-15)
 
