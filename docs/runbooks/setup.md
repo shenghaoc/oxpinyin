@@ -614,7 +614,8 @@ use your real directory for an existing checkout. Rustup chooses the same
 repository toolchain automatically. Editors/debuggers use this same native
 MSVC environment and toolchain; no project-specific IDE is required.
 
-**Storage-dependent native Windows scope:** the Windows CI job runs the
+**Storage-dependent native Windows scope:** the Windows CI job runs clippy,
+`cargo nextest run --profile ci` and the doctests over the
 portable workspace with vcpkg `berkeleydb:x64-windows` (4.8), explicit include,
 library, DLL and LLVM paths, and an **unsurveyed-version exception reserved
 for CI**. Do not copy that exception into developer or production setup.
