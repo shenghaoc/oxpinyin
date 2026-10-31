@@ -8,7 +8,9 @@ sweep** — the LMDB and redb peers were removed 2026-09-20
 peer enumerations below name the surviving set, the LMDB backend's
 comparator section is deleted rather than annotated — it documented a
 configuration that no longer exists — and every figure measured on a
-removed peer stands as measured at its own date) · Status:
+removed peer stands as measured at its own date; **2026-10-31** adds the
+`FlexibleBigram` training-container layout and its backend-native walk) ·
+Status:
 **audit finding** (verification + tests only; no key encoding changed) ·
 Branch: `audit/store-key-ordering`.
 
@@ -225,6 +227,97 @@ byte order and integer order diverge, so only such a set can tell a correct
 encoding from a broken one. Every ordering test here crosses 256 deliberately;
 a small-id-only fixture is the blind spot that would let an ordering defect
 pass unseen.
+
+## FlexibleBigram: the pin's hash training container (2026-10-31)
+
+`crates/oxpinyin-store/src/flexible_ngram.rs` carries libpinyin's
+`FlexibleBigram` training container (`src/storage/flexible_ngram*.h`,
+`src/storage/flexible_single_gram.h` at 074a2219) on all three backends. It
+is **not** an ordered table, and the one rule above deliberately does not
+apply to it: the pin opens a hash container in every backend and walks it
+with the library's own cursor for `get_all_items`, so the layer uses the
+hash constructors and reproduces that native walk rather than sorting.
+
+### Container class and open
+
+| Pin backend | Pin open | Store constructor |
+|---|---|---|
+| Berkeley DB | `DB_HASH`, `0644`, `ATTACH_CREATE` adds `DB_CREATE` (`flexible_ngram_bdb.h:94-153`) | `WriteStore::create_hash` / `RawReadStore::open_hash_read_only` |
+| Kyoto Cabinet | `HashDB`, `OREADER\|OWRITER` then `\|OCREATE` (`flexible_ngram_kyotodb.h:129-180`) | same |
+| tkrzw | `HashDBM`, `Open(path, writable, OPEN_NO_CREATE)` then the create form (`flexible_ngram_tkrzwdb.h:128-188`) | same |
+
+These are the same constructors datagen's `write_hash_with` uses for
+libpinyin's `bigram.db`, so the container class matches the pin's `attach`.
+
+### Records
+
+All integers are host-native `guint32`/`phrase_token_t` fields, `memcpy`d
+as structs; there is no length prefix, padding or normalised byte order.
+On the linux/amd64 reference that is little-endian and the KMM types below
+are 8, 16, 12 and 20 bytes.
+
+| Record | Key bytes | Value bytes | Pin site |
+|---|---|---|---|
+| Magic | 8 zero bytes — `phrase_token_t m_magic_header_index[2]`, both `null_token` (`:47,69-70`) | `char m_magic_number[4]` (KMM: `KMMP`), then `MagicHeader` (KMM: 12 bytes); a fresh container holds the magic number alone (4 bytes) | `flexible_ngram_bdb.h:118-131`; `flexible_ngram_kyotodb.h:157-161`; `flexible_ngram_tkrzwdb.h:161-167` |
+| Single gram | one 4-byte `phrase_token_t` | `ArrayHeader` (KMM: 8 bytes), then one `ArrayItemWithToken` per item, ascending by numeric token: 4-byte token + `ArrayItem` (KMM: 16 bytes) | `flexible_single_gram.h:57-60,75-78,151-181`; value write `flexible_ngram_*db.h` `store` |
+
+The magic record is read and written with `MagicHeader` at offset 4 and
+the array header at offset 0. Berkeley DB does this with
+`DB_DBT_PARTIAL`: `doff=4, dlen=sizeof(MagicHeader)` for the magic header
+and `doff=0, dlen=sizeof(ArrayHeader)` for the array header
+(`flexible_ngram_bdb.h:309-326,342-355,379-389,406-418`); the create put
+is `doff=0, dlen=4` (`:118-131`). KC and tkrzw load the whole value,
+overwrite the wanted prefix and store it back
+(`flexible_ngram_kyotodb.h:385-408`,
+`flexible_ngram_tkrzwdb.h:402-430`). The layer writes the same final bytes
+on every backend, so an array-header write leaves the items intact and a
+missing token becomes a header-only record, as the pin's 074a2219 Tkrzw
+`set_array_header` does (see `kmm-arithmetic-audit.md`).
+
+### Order
+
+The container's keys have no order contract; the pin's `get_all_items`
+appends every four-byte key in the backend's own cursor order and skips
+the eight-byte magic key. It is not `memcmp` sequence, and the layer does
+not sort it:
+
+- Berkeley DB: `DB_NEXT` cursor (`flexible_ngram_bdb.h:245-291`);
+  `flexible_ngram.rs` reads it through `RawReadStore::native_keys`, whose
+  Berkeley DB arm is a `DB_FIRST`/`DB_NEXT` cursor.
+- Kyoto Cabinet: `iterate`, skipped by key size in the visitor
+  (`flexible_ngram_kyotodb.h:38-62,262-272`); `native_keys`'s Kyoto
+  Cabinet arm is the same `kcdbiterate` key walk.
+- tkrzw: `ProcessEach` (`flexible_ngram_tkrzwdb.h:38-60,274-282`);
+  `native_keys`'s tkrzw arm calls `tkrzw_dbm_process_each`.
+
+**The tkrzw walk is not its iterator.** On a pin-written three-record
+file, the layer's first implementation through
+`tkrzw_dbm_iter_first`/`_iter_next` produced `[1, 16780275, 16786821]`
+while the pin's `export_k_mixture_model` (which calls `get_all_items`)
+produced `[16780275, 1, 16786821]`. `DBM::ProcessEach` visits the hash
+buckets in an order the iterator does not reproduce; `tkrzw_dbm_process_each`
+is the pin's call and is what the shared `native_keys` walk uses.
+
+Within one single gram the items ascend by **numeric token**, the pin's
+`std_lite::lower_bound` with `token_less_than`
+(`flexible_single_gram.h:62-66,151-181`), not by key bytes. The layer's
+`SingleGram` keeps the same order and its item operations are the pin's
+`lower_bound` loop.
+
+### Tests that pin this
+
+`crates/oxpinyin-store/tests/flexible_bigram.rs` round-trips every
+operation on whichever backend the build selects, and its two ignored
+cases cross-read the pin: a `gen_k_mixture_model` file is opened
+read-only and every header, item and `get_all_items` token is compared to
+the pin's own `export_k_mixture_model` output (including the token order);
+a layer-written file is accepted by `validate_k_mixture_model` and
+re-exported. Run them with `--include-ignored` and
+`PINYIN_PIN_TOOLS_DIR` naming the matching backend's pin
+`utils/training` directory. The pin file's magic key sorts before the
+four-byte token keys under `memcmp`, but that fact is never used: the
+magic key is recognised by its eight-byte length, as in the pin's
+visitors.
 
 ## Deferred to Stage 2: the hash/tree split the type system does not carry
 

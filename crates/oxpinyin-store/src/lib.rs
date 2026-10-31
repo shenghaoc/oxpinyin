@@ -279,6 +279,21 @@ pub trait WriteTxn {
         self.put(RAW_TABLE, key, value)
     }
 
+    /// Remove a raw (unframed) `key` — the write half of
+    /// [`RawReadStore::get_raw`] and the removal counterpart of
+    /// [`WriteTxn::put_raw`]. No-op when the key is absent.
+    ///
+    /// Backends with a flat keyspace override this to delete the file's
+    /// bare key; a backend without one delegates to the well-known
+    /// [`RAW_TABLE`], the same delegation the raw reads and writes use.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the backend write fails.
+    fn remove_raw(&mut self, key: &[u8]) -> Result<(), StoreError> {
+        self.remove(RAW_TABLE, key)
+    }
+
     /// Remove `key` from `table` (no-op if absent).
     ///
     /// # Errors
@@ -1122,6 +1137,12 @@ pub use bdb::{BdbStore, BdbTxn, BdbUserBigramDb};
 pub mod kyotocabinet;
 #[cfg(feature = "kyotocabinet")]
 pub use kyotocabinet::{KcStore, KcTxn, KcUserBigramDb};
+
+mod flexible_ngram;
+pub use flexible_ngram::{
+    ArrayItemWithToken, DefaultFlexibleBigram, FixedRecord, FlexibleBigram, FlexibleGramSpec,
+    MAGIC_KEY, SingleGram, SpecGram,
+};
 
 // ── tests ──────────────────────────────────────────────────────────
 

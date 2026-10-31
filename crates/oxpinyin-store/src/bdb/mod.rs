@@ -529,6 +529,13 @@ impl WriteTxn for BdbTxn<'_> {
         Ok(())
     }
 
+    /// The removal half of [`WriteTxn::put_raw`]: a bare key, no framing.
+    #[inline(never)]
+    fn remove_raw(&mut self, key: &[u8]) -> Result<(), StoreError> {
+        self.buffer.insert(key.to_vec(), None);
+        Ok(())
+    }
+
     #[inline(never)]
     fn remove(&mut self, table: &str, key: &[u8]) -> Result<(), StoreError> {
         validate_table_name(table)?;

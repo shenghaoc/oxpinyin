@@ -632,6 +632,12 @@ impl WriteTxn for KcTxn<'_> {
     }
 
     #[inline(never)]
+    fn remove_raw(&mut self, key: &[u8]) -> Result<(), StoreError> {
+        // The removal half of `put_raw`, on the same bare keyspace.
+        self.store.db.remove(key)
+    }
+
+    #[inline(never)]
     fn remove(&mut self, table: &str, key: &[u8]) -> Result<(), StoreError> {
         validate_table_name(table)?;
         self.store.db.remove(&frame(table, key))
