@@ -58,6 +58,7 @@ use crate::replay::{Merge, ReplayedLibrary, Stop, raw_unigram};
 use crate::store::SaveReport;
 use crate::user_index::UserIndex;
 use crate::user_library::UserLibrary;
+use crate::user_phrase_table::UserPhraseTable;
 
 /// `USER_TABLE_INFO` (`pinyin_internal.h:56`).
 const USER_CONF: &str = "user.conf";
@@ -577,6 +578,9 @@ pub(crate) struct LoadedProfile {
     /// The user pinyin index's stored records, loaded once from the DBM
     /// and edited in the session's overlay.
     pub(crate) index: UserIndex,
+    /// The user phrase table's stored records, loaded once from the DBM
+    /// and edited in the session's overlay.
+    pub(crate) phrase_table: UserPhraseTable,
 }
 
 /// The readings `add_index` saw, as the pinyin index's rows: those the
@@ -855,6 +859,7 @@ fn load_checked_impl(
         user_libraries: BTreeMap::new(),
         overlong_index_keys: Vec::new(),
         index: UserIndex::default(),
+        phrase_table: UserPhraseTable::default(),
     };
     if check.conform {
         load_libraries(
@@ -875,6 +880,8 @@ fn load_checked_impl(
             dir,
             &mut profile.loaded.skipped,
             &mut profile.loaded.state.phrase_table,
+            &mut profile.phrase_table,
+            lazy,
         );
         if lazy {
             load_logs_with_mask(
@@ -1080,6 +1087,8 @@ fn load_user_phrase_index(
     dir: &Path,
     skipped: &mut Vec<String>,
     table: &mut BTreeMap<Vec<u8>, Vec<u8>>,
+    arena: &mut UserPhraseTable,
+    lazy: bool,
 ) {
     let path = user_file(dir, &UserDbm::PhraseIndex.file_name());
     if !path.exists() {
@@ -1093,7 +1102,10 @@ fn load_user_phrase_index(
         }
     };
     let mut visit = |key: &[u8], value: &[u8]| -> Result<(), StoreError> {
-        table.insert(key.to_vec(), value.to_vec());
+        arena.push_record(key, value);
+        if !lazy {
+            table.insert(key.to_vec(), value.to_vec());
+        }
         Ok(())
     };
     if let Err(error) = store.range_raw(
@@ -1103,6 +1115,7 @@ fn load_user_phrase_index(
     ) {
         skipped.push(format!("{}: {error}", UserDbm::PhraseIndex.file_name()));
     }
+    arena.finish_load();
 }
 
 /// `pinyin_init`'s `m_user_bigram->load_db(user_bigram.db)`
@@ -1575,6 +1588,7 @@ pub fn save_with_bigram(
             libraries: None,
             state,
             index: &index,
+            phrase_table: None,
             compacted: &[],
         },
         originals,
@@ -1591,6 +1605,7 @@ pub(crate) struct SaveSource<'a> {
     pub(crate) state: &'a UserState,
     pub(crate) libraries: Option<&'a BTreeMap<u8, UserLibrary>>,
     pub(crate) index: &'a UserIndex,
+    pub(crate) phrase_table: Option<&'a UserPhraseTable>,
     /// The nibbles whose live empty sub-index the pin's `compact` rebuilt
     /// from no items; their log header's new total is zero.
     pub(crate) compacted: &'a [u8],
@@ -1871,6 +1886,7 @@ fn stage_rest<B: FnMut(u8) -> SaveBaseline>(
     let SaveSource {
         state,
         index,
+        phrase_table,
         compacted,
         libraries,
     } = source;
@@ -1949,18 +1965,19 @@ fn stage_rest<B: FnMut(u8) -> SaveBaseline>(
             reporting.lenient,
             stage_dbm(dir, UserDbm::PinyinIndex, &index.rows(), staged),
         )?;
-        tolerate(
-            reporting.lenient,
-            stage_dbm(
-                dir,
-                UserDbm::PhraseIndex,
-                &state
+        let phrase_rows = phrase_table.map_or_else(
+            || {
+                state
                     .phrase_table
                     .iter()
                     .map(|(k, v)| (k.clone(), v.clone()))
-                    .collect::<Vec<_>>(),
-                staged,
-            ),
+                    .collect::<Vec<_>>()
+            },
+            UserPhraseTable::rows,
+        );
+        tolerate(
+            reporting.lenient,
+            stage_dbm(dir, UserDbm::PhraseIndex, &phrase_rows, staged),
         )?;
 
         Ok(())
@@ -2510,6 +2527,7 @@ mod tests {
             libraries: None,
             state: &saved,
             index: &index,
+            phrase_table: None,
             compacted: &[],
         };
         save_session(&dir, source, &originals, &versions(), 1, None).expect("save");
@@ -2540,7 +2558,7 @@ mod tests {
 
         let loaded =
             load_profile(&dir, &originals, &versions(), UserConfLaw::Pinyin).expect("load");
-        assert!(loaded.loaded.state.phrase_table.contains_key(&gone));
+        assert!(loaded.phrase_table.contains_key(&gone));
         assert!(loaded.index.contains_key(&gone_reading));
         // The session's profile read leaves the user bigram to its
         // container (`load_user_bigram_db`).
@@ -2550,6 +2568,7 @@ mod tests {
         };
         let mut actual = loaded.loaded.state;
         actual.indexed = loaded.index.indexed_set();
+        actual.phrase_table = loaded.phrase_table.rows().into_iter().collect();
         for (nibble, library) in loaded.user_libraries {
             actual.libraries.insert(
                 nibble,
@@ -3447,6 +3466,7 @@ mod tests {
             libraries: None,
             state: &state,
             index: &UserIndex::default(),
+            phrase_table: None,
             compacted: &[],
         };
         let error =

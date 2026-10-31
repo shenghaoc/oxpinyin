@@ -132,7 +132,7 @@ impl PhraseTableEntry {
     }
 
     #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
-    fn set_content(&mut self, bytes: &[u8]) -> Result<(), StoreError> {
+    pub(crate) fn set_content(&mut self, bytes: &[u8]) -> Result<(), StoreError> {
         validate(bytes)?;
         if bytes.len() > self.bytes.len() {
             self.bytes.resize(bytes.len(), 0);

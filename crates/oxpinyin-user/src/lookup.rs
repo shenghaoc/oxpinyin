@@ -34,7 +34,7 @@ use crate::store::{UserStore, UserStoreError};
 pub struct UserLookup {
     generation: u64,
     index: crate::user_index::UserIndex,
-    text_tokens: BTreeMap<Vec<u8>, Vec<u32>>,
+    phrase_table: crate::user_phrase_table::UserPhraseTable,
     token_text: BTreeMap<u32, PhraseText>,
 }
 
@@ -85,14 +85,7 @@ impl UserLookup {
                 index
             }
         };
-        let mut text_tokens: BTreeMap<Vec<u8>, Vec<u32>> = BTreeMap::new();
-        for (key, value) in store.phrase_table_records()? {
-            let entry =
-                crate::phrase_table::PhraseTableEntry::from_bytes(value).unwrap_or_default();
-            let mut tokens = Vec::new();
-            entry.search(&mut tokens, |_| true);
-            text_tokens.insert(key, tokens);
-        }
+        let phrase_table = store.user_phrase_table_snapshot().unwrap_or_default();
         let mut token_text = BTreeMap::new();
         for phrase in store.phrases()? {
             if let Some(text) = phrase.phrase_text() {
@@ -102,7 +95,7 @@ impl UserLookup {
         Ok(Self {
             generation,
             index,
-            text_tokens,
+            phrase_table,
             token_text,
         })
     }
@@ -198,10 +191,10 @@ impl UserLookup {
     /// Tokens whose stored UCS-4 key is exactly `words`, non-scalar words
     /// included.
     #[must_use]
-    pub fn tokens_for_ucs4(&self, words: &[u32]) -> &[u32] {
-        self.text_tokens
-            .get(&crate::phrase_table::key_ucs4(words))
-            .map_or(&[], Vec::as_slice)
+    pub fn tokens_for_ucs4(&self, words: &[u32]) -> Vec<u32> {
+        self.phrase_table
+            .tokens(&crate::phrase_table::key_ucs4(words))
+            .unwrap_or_default()
     }
 
     /// `ChewingLargeTable2::search_suggestion` over the user seam — the
@@ -243,22 +236,16 @@ impl UserLookup {
     #[must_use]
     pub fn suggest_after(&self, prefix: &[u32]) -> Vec<(u32, Vec<u8>)> {
         let prefix = crate::phrase_table::key_ucs4(prefix);
-        if !self.text_tokens.contains_key(&prefix) {
+        let Ok(rows) = self.phrase_table.suggest_after(&prefix) else {
             return Vec::new();
-        }
+        };
         let mut out = Vec::new();
-        for (key, tokens) in self.text_tokens.range(prefix.clone()..) {
-            if !key.starts_with(&prefix) {
-                break;
-            }
-            if key == &prefix {
-                continue;
-            }
+        for (key, tokens) in rows {
             // The pin compares raw UCS-4 bytes without Unicode validation
             // (074a2219 phrase_large_table3_bdb.cpp:249-252). Resolve display
             // text through the token's live item after ordering these rows.
             for token in tokens {
-                out.push((*token, key.clone()));
+                out.push((token, key.clone()));
             }
         }
         out
