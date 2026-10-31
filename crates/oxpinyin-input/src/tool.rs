@@ -36,6 +36,12 @@ pub const ENOENT: c_int = libc::ENOENT;
 /// The target's `ENODATA`, the pin's exit status for an empty or wrong
 /// model (`k_mixture_model_to_interpolation.cpp:200`, `:204`).
 pub const ENODATA: c_int = libc::ENODATA;
+/// The target's `EOVERFLOW`, `merge_k_mixture_model`'s exit status for a
+/// magic header that would overflow (`merge_k_mixture_model.cpp:233`).
+pub const EOVERFLOW: c_int = libc::EOVERFLOW;
+/// The target's `EDOM`, `prune_k_mixture_model`'s exit status for a
+/// probability outside `[0, 1]` (`prune_k_mixture_model.cpp:79`).
+pub const EDOM: c_int = libc::EDOM;
 
 /// `setlocale(LC_ALL, "")`, the first call of every utility's `main`
 /// (074a2219 `utils/segment/ngseg.cpp:111`); whether it answered a name.
@@ -644,6 +650,9 @@ impl<R: BufRead> LineReader<R> {
         }
     }
 
+    /// The failing `open`'s `errno`, where `std::ifstream` would leave one
+    /// (`gen_k_mixture_model.cpp:353-357`).
+    #[must_use]
     pub fn open_error(&self) -> Option<c_int> {
         self.open_errno
     }
@@ -1590,6 +1599,126 @@ pub mod training {
     }
 }
 
+/// `GHashTable` over `g_direct_hash`/`g_direct_equal` keys and pointer
+/// values — the pin's per-document tables (`gen_k_mixture_model.cpp:106-131`,
+/// `:290-299`). Iteration is GLib's own order, which the pin's DBM writes
+/// and exports preserve; a hand-written hash table would change it.
+pub struct DirectHashTable {
+    raw: NonNull<glib_sys::GHashTable>,
+}
+
+impl DirectHashTable {
+    /// `g_hash_table_new(g_direct_hash, g_direct_equal)`.
+    #[must_use]
+    pub fn new() -> Self {
+        // SAFETY: the hash and equality functions are GLib's own; the table
+        // owns no key or value destructor.
+        let raw = unsafe {
+            glib_sys::g_hash_table_new(
+                Some(glib_sys::g_direct_hash),
+                Some(glib_sys::g_direct_equal),
+            )
+        };
+        Self {
+            raw: NonNull::new(raw).unwrap_or_else(|| {
+                // GLib's `g_hash_table_new` aborts on allocation failure.
+                std::process::abort()
+            }),
+        }
+    }
+
+    fn key(token: u32) -> glib_sys::gpointer {
+        token as usize as glib_sys::gpointer
+    }
+
+    fn value(token: u32) -> glib_sys::gpointer {
+        token as usize as glib_sys::gpointer
+    }
+
+    /// `g_hash_table_insert(table, GUINT_TO_POINTER(key),
+    /// GUINT_TO_POINTER(value))`.
+    pub fn insert(&mut self, token: u32, value: u32) {
+        // SAFETY: the table is live; the key and value are the pointers GLib
+        // stores, and a NULL pointer for zero is a permitted value.
+        unsafe {
+            glib_sys::g_hash_table_insert(self.raw.as_ptr(), Self::key(token), Self::value(value));
+        }
+    }
+
+    /// `g_hash_table_lookup_extended`, which distinguishes an absent key from
+    /// a NULL value.
+    #[must_use]
+    pub fn lookup(&self, token: u32) -> Option<u32> {
+        let mut value: glib_sys::gpointer = core::ptr::null_mut();
+        // SAFETY: the table is live and `value` is a writable pointer slot;
+        // the original-key out-parameter is NULL, which GLib permits.
+        let found = unsafe {
+            glib_sys::g_hash_table_lookup_extended(
+                self.raw.as_ptr(),
+                Self::key(token),
+                core::ptr::null_mut(),
+                &raw mut value,
+            )
+        };
+        (found != 0).then_some(value as usize as u32)
+    }
+
+    /// `g_hash_table_steal` (`gen_k_mixture_model.cpp:161`, `:188`).
+    pub fn steal(&mut self, token: u32) {
+        // SAFETY: the table is live; no destroy function is installed, so
+        // stealing the entry leaks nothing.
+        unsafe {
+            glib_sys::g_hash_table_steal(self.raw.as_ptr(), Self::key(token));
+        }
+    }
+
+    /// `g_hash_table_iter_next` over every key: GLib's order, which the
+    /// pin's DBM insertion order follows.
+    #[must_use]
+    pub fn keys(&self) -> Vec<u32> {
+        let mut iter = glib_sys::GHashTableIter {
+            dummy1: core::ptr::null_mut(),
+            dummy2: core::ptr::null_mut(),
+            dummy3: core::ptr::null_mut(),
+            dummy4: 0,
+            dummy5: 0,
+            dummy6: core::ptr::null_mut(),
+        };
+        // SAFETY: the table is live and `iter` is a writable iterator; the
+        // iteration outlives no mutation.
+        unsafe { glib_sys::g_hash_table_iter_init(&raw mut iter, self.raw.as_ptr()) };
+        let mut keys = Vec::new();
+        loop {
+            let mut key: glib_sys::gpointer = core::ptr::null_mut();
+            let mut value: glib_sys::gpointer = core::ptr::null_mut();
+            // SAFETY: the iterator is initialised over the live table; the
+            // two out-parameters are writable pointer slots.
+            let more = unsafe {
+                glib_sys::g_hash_table_iter_next(&raw mut iter, &raw mut key, &raw mut value)
+            };
+            if more == 0 {
+                break;
+            }
+            keys.push(key as usize as u32);
+        }
+        keys
+    }
+}
+
+impl Default for DirectHashTable {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Drop for DirectHashTable {
+    fn drop(&mut self) {
+        // SAFETY: this wrapper owns one reference and does not use the table
+        // after the unref.
+        unsafe { glib_sys::g_hash_table_unref(self.raw.as_ptr()) };
+    }
+}
+
 /// `G_OPTION_FLAG_REVERSE`, the flag `gen_k_mixture_model`'s
 /// `--skip-pi-gram-training` carries (`gen_k_mixture_model.cpp:57`).
 pub const OPTION_FLAG_REVERSE: c_int = glib_sys::G_OPTION_FLAG_REVERSE as c_int;
@@ -1628,9 +1757,7 @@ pub fn format_f64(value: f64) -> Vec<u8> {
 /// `guint32` as the signed `int` the pin's format reads; `%f` is the
 /// [`format_f64`] spelling.
 pub mod k_mixture_model {
-    use super::{
-        OutputStream, c_int, c_stderr, print_literal, print_text,
-    };
+    use super::{OutputStream, c_int, c_stderr, print_literal, print_text};
     use std::ffi::CStr;
 
     /// `no magic header in k mixture model.\\n` (`validate:31`,
@@ -1666,7 +1793,13 @@ pub mod k_mixture_model {
     /// `word count in magic header:%d\\n` (`validate:64`).
     pub fn print_expected_word_count(value: c_int) {
         // SAFETY: the format takes one `int`.
-        unsafe { libc::fprintf(c_stderr(), c"word count in magic header:%d\n".as_ptr(), value) };
+        unsafe {
+            libc::fprintf(
+                c_stderr(),
+                c"word count in magic header:%d\n".as_ptr(),
+                value,
+            )
+        };
     }
 
     /// `sum of word count in array headers:%d\\n` (`validate:66`).
@@ -1689,7 +1822,13 @@ pub mod k_mixture_model {
     /// `total freq in magic header:%d\\n` (`validate:71`).
     pub fn print_expected_total_freq(value: c_int) {
         // SAFETY: the format takes one `int`.
-        unsafe { libc::fprintf(c_stderr(), c"total freq in magic header:%d\n".as_ptr(), value) };
+        unsafe {
+            libc::fprintf(
+                c_stderr(),
+                c"total freq in magic header:%d\n".as_ptr(),
+                value,
+            )
+        };
     }
 
     /// `sum of freqs in array headers:%d\\n` (`validate:73`).
@@ -1706,10 +1845,7 @@ pub mod k_mixture_model {
 
     /// `the total freq differs from sum of freqs.\\n` (`validate:74`).
     pub fn report_total_freq_sum_differs() {
-        print_literal(
-            c_stderr(),
-            c"the total freq differs from sum of freqs.\n",
-        );
+        print_literal(c_stderr(), c"the total freq differs from sum of freqs.\n");
     }
 
     /// `in the array header of token %d:\\n` (`validate:104`, `:112`).
@@ -1774,19 +1910,13 @@ pub mod k_mixture_model {
     /// `the m_WC integer in magic header overflows.\\n` (`merge:110`,
     /// `gen:274`).
     pub fn report_magic_wc_overflow() {
-        print_literal(
-            c_stderr(),
-            c"the m_WC integer in magic header overflows.\n",
-        );
+        print_literal(c_stderr(), c"the m_WC integer in magic header overflows.\n");
     }
 
     /// `the m_total_freq in magic header overflows.\\n` (`merge:116`,
     /// `gen:304`).
     pub fn report_magic_total_freq_overflow() {
-        print_literal(
-            c_stderr(),
-            c"the m_total_freq in magic header overflows.\n",
-        );
+        print_literal(c_stderr(), c"the m_total_freq in magic header overflows.\n");
     }
 
     /// `fprintf(stderr, "*")` (`prune:144`).
@@ -1830,13 +1960,7 @@ pub mod k_mixture_model {
     /// `token:%d lambda:%f\\n` (`estimate:141`).
     pub fn print_token_lambda(token: c_int, lambda: f64) {
         // SAFETY: the format takes one `int` and one `double`.
-        unsafe {
-            libc::printf(
-                c"token:%d lambda:%f\n".as_ptr(),
-                token,
-                lambda,
-            )
-        };
+        unsafe { libc::printf(c"token:%d lambda:%f\n".as_ptr(), token, lambda) };
     }
 
     /// `average lambda:%f\\n` (`estimate:152`).
@@ -1882,9 +2006,7 @@ pub mod k_mixture_model {
     /// `error: unknown token:%d.\\n` (`tag_utility.cpp:398`, `:376`).
     pub fn report_unknown_token(token: c_int) {
         // SAFETY: the format takes one `int`.
-        unsafe {
-            libc::fprintf(c_stderr(), c"error: unknown token:%d.\n".as_ptr(), token)
-        };
+        unsafe { libc::fprintf(c_stderr(), c"error: unknown token:%d.\n".as_ptr(), token) };
     }
 
     /// `can't open file: %s.\\n` (`gen:355`).
@@ -1951,6 +2073,7 @@ pub mod k_mixture_model {
 
     /// `\item %d %s %d %s count %d T %d N_n_0 %d n_1 %d Mr %d\n`
     /// (`export:90-94`).
+    #[allow(clippy::too_many_arguments)]
     pub fn print_bigram_item(
         output: &OutputStream,
         token1: c_int,

@@ -27,8 +27,8 @@ pub mod segment;
 
 pub mod storage;
 
-pub mod training;
 pub mod merge_k_mixture_model;
+pub mod training;
 
 pub mod phrase_index;
 

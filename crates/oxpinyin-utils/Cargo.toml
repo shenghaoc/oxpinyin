@@ -109,6 +109,8 @@ path = "src/bin/estimate_interpolation.rs"
 [[bin]]
 name = "eval_correction_rate"
 path = "src/bin/eval_correction_rate.rs"
+
+[[bin]]
 name = "validate_k_mixture_model"
 path = "src/bin/validate_k_mixture_model.rs"
 
