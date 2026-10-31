@@ -65,10 +65,17 @@ below):
      evals2.text (a segmented, null_token-separated corpus in the system
      token space — e.g. the pin's own `ngseg` over raw text) in that dir;
      without them the evaluator gate is reported as skipped, not failed.
-  3. The oxpinyin-format model export (tkrzw), produced by:
-       cargo run -p oxpinyin-datagen --no-default-features --features tkrzw -- \
-           compile --backend tkrzw \
-           --model-dir <model20 dir> --out-dir <export dir>
+  3. The model export (tkrzw), produced by libpinyin's own sequence with
+     oxpinyin-utils' pinned binaries — the pin's configure writes table.conf
+     from data/table.conf.in, so the export starts from the pin's own
+     data/table.conf (an installed one, or fixtures/w3/tkt/table.conf):
+       cd <export dir> && cp <pin data>/table.conf .
+       cargo run -p oxpinyin-utils --no-default-features --features tkrzw \
+           --bin gen_binary_files -- --gen-punct-table --table-dir <model20 dir>
+       cargo run -p oxpinyin-utils --no-default-features --features tkrzw \
+           --bin import_interpolation -- --table-dir <model20 dir> < <model20 dir>/interpolation2.text
+       cargo run -p oxpinyin-utils --no-default-features --features tkrzw \
+           --bin gen_unigram -- --table-dir <model20 dir>
   4. The extracted model20 directory (--model), also used by the
      cross_backend read-back test. The runtime data-directory test reads
      --data unchanged; both new suites use the same tkrzw cell.

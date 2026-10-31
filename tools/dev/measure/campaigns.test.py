@@ -357,7 +357,8 @@ class BaselineTests(World):
         self.assertEqual(status, 1)
         self.assertIn('--- populating oxpinyin data from export + model cache ---', out)
         self.assertEqual(err, f'fatal: exported file(s) pinyin_index.bin phrase_index.bin bigram.db table.conf not found at {export};\n'
-                              '  generate with: cargo run --release -p oxpinyin-datagen -- compile --out-dir DIR\n')
+                              '  generate it with gen_binary_files / import_interpolation / gen_unigram (see docs/runbooks/setup.md);\n'
+                              '  the pin\'s configure writes table.conf from data/table.conf.in\n')
         for name in ('pinyin_index.bin', 'phrase_index.bin', 'bigram.db', 'table.conf', 'extra.table'):
             (export / name).write_bytes(name.encode())
         (export / 'link.bin').symlink_to(export / 'bigram.db')

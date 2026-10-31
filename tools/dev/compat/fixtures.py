@@ -232,7 +232,7 @@ def drop_in(argv):
         fail(f'unknown backend {backend} (kc or tkrzw)', 2)
     work = Path(argv[2] if len(argv) > 2 else '/tmp/drop-in-' + backend)
     prefix = Path('/opt/libpinyin-' + backend)
-    features = [] if backend == 'kc' else ['--no-default-features', '--features', 'tkrzw']
+    features = ['--no-default-features', '--features', 'kyotocabinet' if backend == 'kc' else 'tkrzw']
     theirs, ours = work / 'libpinyin', work / 'oxpinyin'
     shutil.rmtree(work, ignore_errors=True)
     theirs.mkdir(parents=True)
@@ -244,17 +244,23 @@ def drop_in(argv):
     run([prefix / 'bin/gen_unigram', '--table-dir', model], cwd=theirs)
     print(f'libpinyin ({backend}) wrote:')
     run(['ls', theirs])
-    run(['cargo', 'run', '--locked', '-q', '-p', 'oxpinyin-datagen', *features, '--', 'compile',
-         '--backend', 'kyotocabinet' if backend == 'kc' else backend, '--model-dir', model, '--out-dir', ours], heavy=True)
+    # The same three programs under their pin names from oxpinyin-utils; the
+    # table.conf is the pin's own configured file, as configure writes it.
+    shutil.copyfile(prefix / 'lib/libpinyin/data/table.conf', ours / 'table.conf')
+    base = ['cargo', 'run', '--locked', '-q', '-p', 'oxpinyin-utils', *features, '--bin']
+    run([*base, 'gen_binary_files', '--', '--gen-punct-table', '--table-dir', model], cwd=ours, heavy=True)
+    with (model / 'interpolation2.text').open('rb') as source:
+        run([*base, 'import_interpolation', '--', '--table-dir', model], cwd=ours, stdin=source)
+    run([*base, 'gen_unigram', '--', '--table-dir', model], cwd=ours, heavy=True)
     print(f'oxpinyin ({backend}) wrote:')
     run(['ls', ours])
-    run(['cargo', 'test', '--locked', '-p', 'oxpinyin-datagen', *features, '--test', 'libpinyin_parity', '--',
-         '--include-ignored', '--nocapture'], heavy=True,
-        env=dict(os.environ, OXPINYIN_LIBPINYIN_DATA_DIR=str(theirs), PINYIN_MODEL_DIR=str(model)))
     for chunk in sorted(theirs.glob('*.bin')):
         if chunk.name in ('pinyin_index.bin', 'phrase_index.bin', 'addon_pinyin_index.bin', 'addon_phrase_index.bin', 'punct.bin'):
             continue
         run(['cmp', chunk, ours / chunk.name])
         print(chunk.name + ': byte-exact')
+    # The DBM containers are the writing library's own layout (tie-broken by
+    # a random file id), so they are not byte-compared; their rows are
+    # covered by the tool-diff cases and the training live tests.
     print(f'drop-in differential ({backend}, {model}): OK')
     return 0

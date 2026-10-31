@@ -324,7 +324,7 @@ if 'OX_PIN_DIR' in os.environ: assert (pathlib.Path(os.environ['OX_PIN_DIR'])/'t
             path.parent.mkdir(parents=True,exist_ok=True)
             path.touch()
         exported.mkdir()
-        (exported / 'datagen-manifest.txt').write_text('backend=tkt\n')
+        (exported / 'table.conf').write_text('database format:Tkrzw\n')
         for relative in campaigns.TOOLS.values():
             path=library / relative
             path.parent.mkdir(parents=True,exist_ok=True)

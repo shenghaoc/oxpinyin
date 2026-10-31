@@ -2,7 +2,7 @@
 //! `eval_correction_rate` (`utils/training/eval_correction_rate.cpp`).
 //!
 //! This isolates the **decode + correction-rate** path, which is separate
-//! from the λ estimator (`oxpinyin-lambda`, which has its own bit-exact
+//! from the λ estimator (`estimate_interpolation`, which has its own bit-exact
 //! differential). The native side is fed the
 //! *same* λ the pin reads — `system_table_info.get_lambda()`, i.e. the value
 //! `table.conf` carries (`eval_correction_rate.cpp:157`) — rather than

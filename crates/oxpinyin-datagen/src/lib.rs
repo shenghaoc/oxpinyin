@@ -57,6 +57,20 @@
 //! This crate is data-prep tooling for packagers, CI, and differentials; it
 //! never ships in an oxpinyin installation.
 //!
+//! # No command line
+//!
+//! The system data directory is built by libpinyin's own three programs,
+//! which `oxpinyin-utils` provides under their pin names
+//! (`gen_binary_files --gen-punct-table`, `import_interpolation`, then
+//! `gen_unigram`; `data/Makefile.am:60-62`), not by this crate. What
+//! remains here is the producer library the `fixtures/w3` `--mini`
+//! reproduction and the drop-in parity tests need: nothing in the pin
+//! reproduces that fixture subset, so it is retained as a test-only
+//! producer rather than reimplemented. `datagen-manifest.txt` was written
+//! by the removed command; the committed fixture manifests remain as
+//! frozen inputs, and the tooling reads `table.conf`'s
+//! `database format:` when no manifest is present.
+//!
 //! # Placement
 //!
 //! This is the counterpart of libpinyin's build-time data tools

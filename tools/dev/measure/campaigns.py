@@ -201,7 +201,8 @@ def populate_data(destination: Path, export: Path) -> None:
     if missing:
         emit(f'fatal: exported file(s){"".join(" " + name for name in missing)} not found at {export};',
              error=True)
-        fail('  generate with: cargo run --release -p oxpinyin-datagen -- compile --out-dir DIR')
+        fail('  generate it with gen_binary_files / import_interpolation / gen_unigram (see docs/runbooks/setup.md);\n'
+             '  the pin\'s configure writes table.conf from data/table.conf.in')
     destination.mkdir(parents=True, exist_ok=True)
 
     def expand(pattern: str) -> list[str]:

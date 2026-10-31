@@ -14,7 +14,6 @@ mod error;
 mod lexicon;
 mod model;
 mod paths;
-pub mod tool_cli;
 
 pub use error::SegmentError;
 // Re-exported so the training-tool binaries name export tables in the
