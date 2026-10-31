@@ -32,9 +32,6 @@ fn init_context(systemdir: *const c_char, userdir: *const c_char) -> *mut Pinyin
         oxpinyin_capi_marshal::input::filename(oxpinyin_capi_marshal::borrow_c_string!(userdir));
     match CapiContext::try_new(&system_path, user_path.as_deref()) {
         Ok(context) => {
-            for warning in context.core.load_warnings() {
-                crate::ffi::log_warning(warning);
-            }
             let handle = box_context(context);
             crate::live::register(handle);
             handle
@@ -52,6 +49,15 @@ fn init_context(systemdir: *const c_char, userdir: *const c_char) -> *mut Pinyin
             {
                 std::process::abort();
             }
+            // Register rows 91 and 108: a default library's `.dbin` merge
+            // reached `next_record`'s `assert(token == null_token)`
+            // (`phrase_index_logger.h:202`) or `add_phrase_item`'s unigram
+            // read (`memory_chunk.h:390`, via `phrase_index.cpp:457`,
+            // `:215`). The open stopped there, after `check_format`'s
+            // writes and the libraries before it, as the pin's init does.
+            if error.journal_fault().is_some() {
+                std::process::abort();
+            }
             if error.chunk_header_read() {
                 // Class (c), `memory_chunk.h:493`: a system library is a
                 // directory whose reported size passes the header check and
@@ -59,15 +65,6 @@ fn init_context(systemdir: *const c_char, userdir: *const c_char) -> *mut Pinyin
                 crate::ffi::log_warning(
                     "pinyin_init: a system library is a directory the chunk header cannot be \
                      read from (upstream asserts, memory_chunk.h:493)",
-                );
-            } else if error.corrupt_log_header() {
-                // Class (c), `phrase_index_logger.h:202`: a system
-                // library's user .dbin carries a non-null-token
-                // MODIFY_HEADER and the pin's `next_record` assert dies
-                // during init's library load.
-                crate::ffi::log_warning(
-                    "pinyin_init: a system library's user .dbin carries a non-null-token \
-                     MODIFY_HEADER (upstream asserts, phrase_index_logger.h:202)",
                 );
             } else if let Some(conf_error) = error.table_conf_error() {
                 // A `table.conf` the pin refuses is `false` and one raw

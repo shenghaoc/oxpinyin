@@ -136,13 +136,11 @@ pub enum OpenError {
     /// every other kind a class-(b)/(c) site the C ABI answers with NULL and
     /// one warning.
     TableConf(TableConfError),
-    /// A `SYSTEM_FILE`/`DICTIONARY` library's user `.dbin` carries a
-    /// non-null-token `MODIFY_HEADER` record. `PhraseIndexLogger::next_record`
-    /// asserts `token == null_token` there (`phrase_index_logger.h:202`),
-    /// reached while the library loads at init. The class-(c) availability
-    /// answer: the open fails and the C ABI answers NULL, where upstream
-    /// takes the process down.
-    CorruptLogHeader(PathBuf),
+    /// A `SYSTEM_FILE` library's user `.dbin` replay reached a pin
+    /// assertion while the library loop merged it
+    /// ([`oxpinyin_user::JournalFault`], rows 91 and 108): the open stops at
+    /// that library, after `check_format`'s writes, and the C adapters abort.
+    Journal(oxpinyin_user::JournalFault),
 }
 
 impl OpenError {
@@ -161,7 +159,7 @@ impl OpenError {
             | Self::Lm(_)
             | Self::UnknownDatabaseFormat(_)
             | Self::TableConf(_)
-            | Self::CorruptLogHeader(_) => None,
+            | Self::Journal(_) => None,
         }
     }
 
@@ -206,12 +204,7 @@ impl core::fmt::Display for OpenError {
                 path.join("user.conf").display()
             ),
             Self::TableConf(error) => write!(f, "table.conf: {error}"),
-            Self::CorruptLogHeader(path) => write!(
-                f,
-                "a system library's user .dbin under {} carries a non-null-token \
-                 MODIFY_HEADER (upstream asserts, phrase_index_logger.h:202)",
-                path.display()
-            ),
+            Self::Journal(fault) => write!(f, "journal replay: {fault}"),
         }
     }
 }
@@ -2025,9 +2018,7 @@ fn open_user_store(
         Err(UserStoreError::UnknownDatabaseFormat) => {
             Err(OpenError::UnknownDatabaseFormat(user_dir.to_path_buf()))
         }
-        Err(UserStoreError::SystemLogHeaderToken) => {
-            Err(OpenError::CorruptLogHeader(user_dir.to_path_buf()))
-        }
+        Err(UserStoreError::Journal(fault)) => Err(OpenError::Journal(fault)),
         Err(error) => {
             let user_dir = user_dir.display();
             eprintln!(

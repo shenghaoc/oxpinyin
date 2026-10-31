@@ -33,8 +33,9 @@
 //! * The first failure ends the merge and the records before it stay applied
 //!   (`pinyin.cpp:276` ignores the answer).
 //!
-//! Session opens structurally validate each retained payload, then keep its private
-//! byte view. Typed [`ChunkItem`]s are cached on use; value-only callers use
+//! The records come from [`oxpinyin_data::user_files::log_records`], the pin's
+//! own walk; the walk's and the merge's assertions are [`JournalFault`]s.
+//! Session opens keep each retained payload's private byte view. Typed [`ChunkItem`]s are cached on use; value-only callers use
 //! [`Merge::finish`].
 
 use std::borrow::Cow;
@@ -54,9 +55,111 @@ pub(crate) enum Stop {
     Mismatch(&'static str, u32),
     /// An ADD payload shorter than the unigram `add_phrase_item` reads:
     /// the pin's `get_unigram_frequency` asserts (`memory_chunk.h:390`,
-    /// class (c), row 108). The record is not applied.
+    /// reached from `phrase_index.cpp:457` through `:215`; row 108). The
+    /// caller returns [`JournalFault::ShortAdd`].
     ShortAdd(u32),
 }
+
+/// A pin assertion a system library's `.dbin` walk reaches (074a2219). The
+/// shared Rust crates return it at the pin's point, after the records the pin
+/// applied before it; the C adapters abort on it. Each names the library
+/// (sub-index) whose log reached it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum JournalFault {
+    /// `PhraseIndexLogger::next_record`'s `assert(token == null_token)` on a
+    /// `MODIFY_HEADER` record (`phrase_index_logger.h:202`), reached by
+    /// `merge` and by `merge_with_mask`'s `_peek_header` (row 91).
+    HeaderToken {
+        /// The library whose log holds the record.
+        library: u8,
+        /// The record's token.
+        token: u32,
+    },
+    /// `merge`'s ADD stores a payload shorter than six bytes and
+    /// `add_phrase_item` reads its unigram through
+    /// `PhraseItem::get_unigram_frequency`, whose `check_result` asserts
+    /// (`memory_chunk.h:390` via `phrase_index.cpp:457`, `:215`; row 108).
+    ShortAdd {
+        /// The library whose log holds the record.
+        library: u8,
+        /// The record's token.
+        token: u32,
+    },
+    /// `_peek_header`'s `assert(1 >= header_count)` (`phrase_index.cpp:745`),
+    /// reached only by `merge_with_mask` (row 92).
+    MultipleHeaders {
+        /// The library whose log holds the headers.
+        library: u8,
+    },
+    /// `_compute_new_header` reads the unigram of every record the mask keeps
+    /// (`phrase_index.cpp:778`, `:785`, `:791`, `:795`): a payload shorter
+    /// than six bytes asserts in `get_unigram_frequency`'s `check_result`
+    /// (`memory_chunk.h:390`), the read of row 108 on `mask_out`'s path.
+    ShortMaskedItem {
+        /// The library whose log holds the record.
+        library: u8,
+        /// The record's token.
+        token: u32,
+    },
+    /// `_mask_out_records` hands every kept record to `append_record` with
+    /// both chunk pointers (`phrase_index.cpp:838`): a kept ADD fails
+    /// `assert(NULL == oldone)` (`phrase_index_logger.h:245`, row 97) and a
+    /// kept REMOVE fails `assert(NULL == newone)` (`:257`).
+    SurvivingRecord {
+        /// The library whose log holds the record.
+        library: u8,
+        /// The record's token.
+        token: u32,
+    },
+}
+
+impl JournalFault {
+    /// The library (sub-index) whose log reached the assertion.
+    #[must_use]
+    pub fn library(self) -> u8 {
+        match self {
+            Self::HeaderToken { library, .. }
+            | Self::ShortAdd { library, .. }
+            | Self::MultipleHeaders { library }
+            | Self::ShortMaskedItem { library, .. }
+            | Self::SurvivingRecord { library, .. } => library,
+        }
+    }
+}
+
+impl std::fmt::Display for JournalFault {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::HeaderToken { library, token } => write!(
+                f,
+                "library {library}'s log: MODIFY_HEADER token {token:#010x} \
+                 (upstream asserts, phrase_index_logger.h:202)"
+            ),
+            Self::ShortAdd { library, token } => write!(
+                f,
+                "library {library}'s log: ADD payload under six bytes for {token:#010x} \
+                 (upstream asserts, memory_chunk.h:390)"
+            ),
+            Self::MultipleHeaders { library } => write!(
+                f,
+                "library {library}'s log: more than one MODIFY_HEADER \
+                 (upstream asserts, phrase_index.cpp:745)"
+            ),
+            Self::ShortMaskedItem { library, token } => write!(
+                f,
+                "library {library}'s log: kept payload under six bytes for {token:#010x} \
+                 (upstream asserts, memory_chunk.h:390)"
+            ),
+            Self::SurvivingRecord { library, token } => write!(
+                f,
+                "library {library}'s log: kept ADD or REMOVE for {token:#010x} \
+                 (upstream asserts, phrase_index_logger.h:245/257)"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for JournalFault {}
 
 /// `phrase_item_header` at 074a2219: the two length bytes and the unigram.
 const PHRASE_ITEM_HEADER: usize = 6;
@@ -525,7 +628,7 @@ impl Merge {
 
     pub(crate) fn apply(&mut self, record: LogRecord<impl AsRef<[u8]>>) -> Result<(), Stop> {
         match record {
-            LogRecord::Add { token, new_item } => self.add(token & PHRASE_MASK, new_item.as_ref()),
+            LogRecord::Add { token, new_item } => self.add(token, new_item.as_ref()),
             LogRecord::Remove { token, old_item } => self.remove(token, old_item.as_ref()),
             LogRecord::Modify {
                 token,
@@ -550,14 +653,15 @@ impl Merge {
         }
     }
 
-    fn add(&mut self, slot: u32, payload: &[u8]) -> Result<(), Stop> {
+    fn add(&mut self, token: u32, payload: &[u8]) -> Result<(), Stop> {
+        let slot = token & PHRASE_MASK;
         // `add_phrase_item` stores the payload as it stands (`:208-217`); it
         // does not read the header, then reads the payload's unigram
         // (`phrase_index.h:124-126`). A payload shorter than six bytes
-        // aborts the pin at `memory_chunk.h:390` (class (c), row 108): the
-        // record is not applied and the replay stops there.
+        // aborts the pin at `memory_chunk.h:390` (row 108): the caller
+        // returns the fault, and what the pin stored first dies with it.
         if payload.len() < PHRASE_ITEM_HEADER {
-            return Err(Stop::ShortAdd(slot));
+            return Err(Stop::ShortAdd(token));
         }
         let unigram = raw_unigram(payload);
         let offset = self.content.append(payload);
@@ -2069,11 +2173,11 @@ mod tests {
     }
 
     #[test]
-    fn a_short_add_stops_the_replay_before_it_applies() {
+    fn a_short_add_is_reported_after_the_records_before_it() {
         // A payload shorter than the unigram the ADD reads aborts the pin
-        // (`memory_chunk.h:390`, row 108). The replay stops at that record:
-        // the earlier MODIFY stays, the short ADD and everything after it
-        // do not apply.
+        // (`memory_chunk.h:390`, row 108). The merge reports the record by
+        // its raw token after applying the earlier MODIFY; the caller returns
+        // the fault, so nothing after it applies.
         let records = vec![
             modify(1, one(), with_freq(one(), 77)),
             LogRecord::Add {

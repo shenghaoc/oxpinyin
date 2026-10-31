@@ -10,7 +10,7 @@ use oxpinyin_runtime::{
     FileType, OpenError, RowFault, Runtime, TableConfError, directory_reads_as_a_chunk,
 };
 use oxpinyin_user::c_stderr;
-use oxpinyin_user::{ChunkHeaderField, UserConfLaw, UserStore, UserStoreError};
+use oxpinyin_user::{ChunkHeaderField, JournalFault, UserConfLaw, UserStore, UserStoreError};
 
 /// What `save_user` did, for the C facades' `pinyin_save` / `zhuyin_save`
 /// and the `pinyin_end_add_phrases` import commit.
@@ -84,23 +84,15 @@ pub enum MaskOutOutcome {
     /// `ngram_bdb.cpp:243`). The C ABI answers `false` and logs one
     /// warning.
     ResidualUserBigramGram,
-    /// A `SYSTEM_FILE`/`DICTIONARY` library's user `.dbin` carries a
-    /// non-null-token `MODIFY_HEADER` record; `PhraseIndexLogger::next_record`
-    /// asserts (`phrase_index_logger.h:202`). The C ABI answers `false`
-    /// and logs one warning.
-    SystemLogHeaderToken,
-    /// A `SYSTEM_FILE`/`DICTIONARY` library's user `.dbin` carries more
-    /// than one `MODIFY_HEADER` record; `_peek_header` asserts
-    /// `1 >= header_count` (`phrase_index.cpp:745`). The C ABI answers
-    /// `false` and logs one warning.
-    SystemLogMultipleHeaders,
     /// A loaded system library's file is a directory the pin reloads and
     /// asserts on (`memory_chunk.h:493`, `pinyin.cpp:1265`,
     /// `zhuyin.cpp:800`). The C ABI answers `false` and logs one warning.
     ChunkHeaderRead,
-    /// A surviving ADD record violates `NULL == oldone` while the pin
-    /// writes the masked log (`phrase_index_logger.h:245`, row 97).
-    SystemLogSurvivingAdd,
+    /// A loaded system library's user `.dbin`, reloaded through
+    /// `merge_with_mask` after the user tables were masked, reached a pin
+    /// assertion ([`JournalFault`], rows 91, 92, 97 and 108). The pin dies
+    /// there; the C adapters abort.
+    Journal(JournalFault),
 }
 
 impl MaskOutOutcome {
@@ -142,14 +134,6 @@ impl std::error::Error for OpenFailure {
     }
 }
 
-/// A system journal's ADD payload is shorter than the unigram
-/// `add_phrase_item` reads from it (`phrase_index.h:124-126`); the pin's
-/// `get_content` asserts (`memory_chunk.h:388-392`) and dies at init
-/// (class (c), register row 108). The replay stops at the record and the
-/// facades log this one warning; init goes on.
-pub const SHORT_ADD_WARNING: &str =
-    "journal replay: an ADD payload shorter than six bytes (upstream asserts, memory_chunk.h:390)";
-
 impl OpenFailure {
     /// Whether this failure is the user marker's unknown format: a
     /// `user.conf` whose `database format:` field upstream's
@@ -187,16 +171,15 @@ impl OpenFailure {
         }
     }
 
-    /// Whether a `SYSTEM_FILE`/`DICTIONARY` library's user `.dbin` carried a
-    /// non-null-token `MODIFY_HEADER` record, where the pin's
-    /// `PhraseIndexLogger::next_record` asserts (`phrase_index_logger.h:202`).
-    /// The C facades answer NULL and log one warning in their own domain.
+    /// The pin assertion a default library's `.dbin` merge reached at init
+    /// ([`JournalFault`], rows 91 and 108), if that is why the open stopped.
+    /// The C facades abort on it.
     #[must_use]
-    pub fn corrupt_log_header(&self) -> bool {
-        matches!(
-            self,
-            Self::Runtime(oxpinyin_runtime::OpenError::CorruptLogHeader(_))
-        )
+    pub fn journal_fault(&self) -> Option<JournalFault> {
+        match self {
+            Self::Runtime(oxpinyin_runtime::OpenError::Journal(fault)) => Some(*fault),
+            Self::EmptySystemDir | Self::Runtime(_) => None,
+        }
     }
 }
 
@@ -226,6 +209,10 @@ pub enum LibraryLoadFault {
     /// The user store could not take the library's replacement; the runtime
     /// was left as it was.
     StoreWrite(StoreWriteFailed),
+    /// The reloaded system library's `.dbin` merge reached a pin assertion
+    /// ([`JournalFault`], rows 91 and 108; `pinyin.cpp:276`,
+    /// `zhuyin.cpp:219`). The library stays unloaded; the C adapters abort.
+    Journal(JournalFault),
 }
 
 /// The user store refused the write a library load or unload makes. The pin
@@ -371,9 +358,6 @@ pub struct ContextCore {
     pub user: Option<UserStore>,
     /// The live option/scheme word, shared with every instance.
     pub live: LiveOptions,
-    /// Class-(c) load warnings the facades log once after a successful
-    /// open, in order. Today only the short-ADD replay stop (row 108).
-    load_warnings: Vec<&'static str>,
 }
 
 impl ContextCore {
@@ -437,23 +421,12 @@ impl ContextCore {
             c_stderr::mmap_failed(path);
         }
         let user = runtime.user_store();
-        let mut load_warnings = Vec::new();
-        if user.as_ref().is_some_and(|store| store.short_add_payload()) {
-            load_warnings.push(SHORT_ADD_WARNING);
-        }
         Ok(Self {
             config: Config::default(),
             runtime: Some(runtime),
             user,
             live: LiveOptions::new(option_word),
-            load_warnings,
         })
-    }
-
-    /// The class-(c) warnings the load met that do not fail it.
-    #[must_use]
-    pub fn load_warnings(&self) -> &[&'static str] {
-        &self.load_warnings
     }
 
     /// `set_options`'s law: the word is stored, the bools it carries are
@@ -604,76 +577,53 @@ impl ContextCore {
     /// reports it as [`UserStoreError::OverlongIndexKey`] and this answers
     /// [`MaskOutOutcome::OverlongIndexKey`] so the facade can log it.
     ///
-    /// Before any state changes, every loaded `SYSTEM_FILE`/`DICTIONARY`
-    /// library's user `.dbin` is read from disk and validated
-    /// ([`UserStore::validate_system_logs`]): the pin's `merge_with_mask`
-    /// asserts on a non-null-token `MODIFY_HEADER`
-    /// (`phrase_index_logger.h:202`) and on more than one `MODIFY_HEADER`
-    /// (`phrase_index.cpp:745`), and a surviving ADD violates
-    /// `NULL == oldone` (`phrase_index_logger.h:245`, row 97). Only logs
-    /// whose library bits match are merged. A refused mask leaves the store untouched,
-    /// where the pin's partial reloads die with its abort.
+    /// Then, in the pin's order, each loaded `SYSTEM_FILE`/`DICTIONARY`
+    /// library is mapped again and takes its user `.dbin` through
+    /// `merge_with_mask` ([`UserStore::reload_system_libraries`]); the first
+    /// pin assertion a log reaches answers [`MaskOutOutcome::Journal`], after
+    /// the user tables were masked and the libraries before it reloaded.
     pub fn mask_out(&mut self, mask: u32, value: u32) -> MaskOutOutcome {
         if self.check_system_libraries(None) {
             return MaskOutOutcome::ChunkHeaderRead;
         }
-        // The pin's mask loop walks `index` 1..`PHRASE_INDEX_LIBRARY_COUNT`
-        // and skips a sub-index `get_range` reports missing
-        // (`pinyin.cpp:1235-1241`, `zhuyin.cpp:770-776`); the runtime's
-        // visibility mask is that unloaded set.
-        let visible = |nibble: u8| {
-            self.runtime
-                .as_ref()
-                .is_none_or(|runtime| runtime.dict().library_visible(u32::from(nibble)))
-        };
         let Some(store) = self.user.as_mut() else {
             return MaskOutOutcome::Done(false);
         };
-        let logs = match store.validate_system_logs(visible, mask, value) {
-            Ok(logs) => logs,
-            Err(UserStoreError::SystemLogHeaderToken) => {
-                return MaskOutOutcome::SystemLogHeaderToken;
+        // The user tables first (`pinyin.cpp:1228-1230`,
+        // `zhuyin.cpp:763-765`).
+        match store.mask_out(mask, value) {
+            Ok(()) => {}
+            Err(UserStoreError::OverlongIndexKey) => return MaskOutOutcome::OverlongIndexKey,
+            Err(UserStoreError::NonTokenUserBigramKey) => {
+                return MaskOutOutcome::NonTokenUserBigramKey;
             }
-            Err(UserStoreError::SystemLogMultipleHeaders) => {
-                return MaskOutOutcome::SystemLogMultipleHeaders;
+            Err(UserStoreError::ShortUserBigramValue) => {
+                return MaskOutOutcome::ShortUserBigramValue;
             }
-            Err(UserStoreError::SystemLogSurvivingAdd) => {
-                return MaskOutOutcome::SystemLogSurvivingAdd;
+            Err(UserStoreError::ResidualUserBigramGram) => {
+                return MaskOutOutcome::ResidualUserBigramGram;
             }
             Err(_) => return MaskOutOutcome::Done(false),
-        };
-        match store.mask_out(mask, value) {
-            Ok(()) => {
-                // Replace each loaded system sub-index before replaying its
-                // disk log with the mask (074a2219 pinyin.cpp:1253-1285,
-                // zhuyin.cpp:788-820). The separate phrase table is retained.
-                if let Some(runtime) = self.runtime.as_ref() {
-                    let originals = runtime.reload_system_libraries();
-                    if store
-                        .reload_system_libraries(originals, mask, value, logs)
-                        .is_err()
-                    {
-                        return MaskOutOutcome::Done(false);
-                    }
-                    // The mask ends with a compact (`pinyin.cpp:1294`,
-                    // `zhuyin.cpp:829`); the failed empty sub-index's local
-                    // total becomes zero.
-                    let _compacted = runtime.compact_layout_failed();
-                }
-                store.compact_libraries();
-                MaskOutOutcome::Done(true)
-            }
-            Err(UserStoreError::OverlongIndexKey) => MaskOutOutcome::OverlongIndexKey,
-            Err(UserStoreError::NonTokenUserBigramKey) => MaskOutOutcome::NonTokenUserBigramKey,
-            Err(UserStoreError::ShortUserBigramValue) => MaskOutOutcome::ShortUserBigramValue,
-            Err(UserStoreError::ResidualUserBigramGram) => MaskOutOutcome::ResidualUserBigramGram,
-            Err(UserStoreError::SystemLogHeaderToken) => MaskOutOutcome::SystemLogHeaderToken,
-            Err(UserStoreError::SystemLogMultipleHeaders) => {
-                MaskOutOutcome::SystemLogMultipleHeaders
-            }
-            Err(UserStoreError::SystemLogSurvivingAdd) => MaskOutOutcome::SystemLogSurvivingAdd,
-            Err(_) => MaskOutOutcome::Done(false),
         }
+        // Then the phrase index loop: each loaded system sub-index is
+        // replaced before its disk log is replayed with the mask; the loop
+        // skips a sub-index `get_range` reports missing (074a2219
+        // pinyin.cpp:1234-1291, zhuyin.cpp:769-826), which the runtime's
+        // remap leaves out. The separate phrase table is retained.
+        if let Some(runtime) = self.runtime.as_ref() {
+            let originals = runtime.reload_system_libraries();
+            match store.reload_system_libraries(originals, mask, value) {
+                Ok(()) => {}
+                Err(UserStoreError::Journal(fault)) => return MaskOutOutcome::Journal(fault),
+                Err(_) => return MaskOutOutcome::Done(false),
+            }
+            // The mask ends with a compact (`pinyin.cpp:1294`,
+            // `zhuyin.cpp:829`); the failed empty sub-index's local
+            // total becomes zero.
+            let _compacted = runtime.compact_layout_failed();
+        }
+        store.compact_libraries();
+        MaskOutOutcome::Done(true)
     }
 
     /// Whether `user_bigram.db` carried a key that is not a four-byte
@@ -737,18 +687,32 @@ impl ContextCore {
         // when there is none (`pinyin.cpp:303-321`, `zhuyin.cpp:247-265`);
         // a token the dropped session had allocated dangles as in policy
         // row 102, and a refused store write is row 103.
+        //
+        // The saved `.dbin`'s merge can reach a pin assertion (rows 91 and
+        // 108, `pinyin.cpp:276`, `zhuyin.cpp:219`): that is returned with
+        // nothing replaced and the library still unloaded.
         let user_file = matches!(row.file_type, FileType::UserFile);
         let originals = runtime.reload_system_library(row_index);
         let mut store = self.user.clone();
-        store_first(
+        let mut journal = None;
+        let loaded = store_first(
             || match store.as_mut() {
                 Some(store) if user_file => store.load_user_library(row_index),
-                Some(store) if !originals.is_empty() => store.load_system_libraries(originals),
+                Some(store) if !originals.is_empty() => {
+                    store.load_system_libraries(originals).inspect_err(|error| {
+                        if let UserStoreError::Journal(fault) = error {
+                            journal = Some(*fault);
+                        }
+                    })
+                }
                 _ => Ok(()),
             },
             || runtime.load_library(index),
-        )
-        .map_err(LibraryLoadFault::StoreWrite)
+        );
+        if let Some(fault) = journal {
+            return Err(LibraryLoadFault::Journal(fault));
+        }
+        loaded.map_err(LibraryLoadFault::StoreWrite)
     }
 
     /// `load_addon_phrase_library`'s body: the runtime's addon load, with

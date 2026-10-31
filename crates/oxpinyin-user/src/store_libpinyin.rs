@@ -103,10 +103,6 @@ pub struct Target {
     /// of every row a mask or a removal took out of the store since. The
     /// save writes back the ones no remaining row writes, empty.
     pub(crate) index_file_keys: std::sync::Mutex<IndexKeys>,
-    /// A system journal's ADD payload was shorter than its unigram; the
-    /// replay stopped at that record and the facade logs one warning
-    /// (class (c), register row 108).
-    pub(crate) short_add_payload: bool,
 }
 
 impl Target {
@@ -357,12 +353,12 @@ impl GenericUserStore<DefaultStore> {
             // ([`Self::check_profile_unnamed`]); there is no profile.
             persistence::LoadedProfile::default()
         };
-        // A non-null-`MODIFY_HEADER` token is the pin's
-        // `assert(token == null_token)` during the library load's `merge`
-        // (`phrase_index_logger.h:202`): the session open fails here, with
-        // the profile's open counter left raised as the pin leaves it.
-        if profile.loaded.strict_log_fault.is_some() {
-            return Err(UserStoreError::SystemLogHeaderToken);
+        // A system library's log replay reached a pin assertion (the
+        // library loop's `merge`, rows 91 and 108): the session open
+        // returns it here, after `check_format`'s writes and the libraries
+        // before it, with the open counter left raised as the pin leaves it.
+        if let Some(fault) = profile.loaded.journal_fault {
+            return Err(UserStoreError::Journal(fault));
         }
         let persistence::LoadedProfile {
             mut loaded,
@@ -382,7 +378,6 @@ impl GenericUserStore<DefaultStore> {
             versions,
             law,
             open_counter: loaded.open_counter,
-            short_add_payload: loaded.short_add_payload,
             overlong_index_keys,
             index_keys,
             index_file_keys: std::sync::Mutex::new(index_file_keys),
@@ -1571,12 +1566,7 @@ mod tests {
         // The reload drops library 1's rows: the trained unigram was the
         // only table row.
         store
-            .reload_system_libraries(
-                originals(),
-                0xffff_ffff,
-                0x0100_0002,
-                persistence::SystemLogSnapshot::default(),
-            )
+            .reload_system_libraries(originals(), 0xffff_ffff, 0x0100_0002)
             .expect("reload");
         assert_eq!(store.unigram_delta(0x0100_0001).expect("delta"), 0);
         assert_eq!(store.bigram_row(1).expect("row"), gram);
@@ -1851,12 +1841,13 @@ mod tests {
     }
 
     #[test]
-    fn mask_out_replays_only_the_validated_system_log_snapshot() {
+    fn mask_out_replays_the_log_it_reads_and_returns_its_faults() {
+        use crate::JournalFault;
         use oxpinyin_data::chunk_format::build_memory_chunk;
         use oxpinyin_data::chunk_write::encode_phrase_item;
         use oxpinyin_data::user_files::{LogRecord, encode_log_records};
 
-        let dir = tempdir("mask-snapshot");
+        let dir = tempdir("mask-faults");
         let original = originals();
         let old = original[&1].item(1).expect("original item");
         let mut new = old.clone();
@@ -1865,60 +1856,92 @@ mod tests {
             old_total: 100,
             new_total: 100,
         };
-        let payload = encode_log_records(&[
-            header.clone(),
-            LogRecord::Modify {
-                token: 1,
-                old_item: encode_phrase_item(&old).expect("old item"),
-                new_item: encode_phrase_item(&new).expect("new item"),
-            },
-        ])
-        .expect("valid log");
-        let valid = build_memory_chunk(&payload).expect("valid frame");
+        let modify = LogRecord::Modify {
+            token: 1,
+            old_item: encode_phrase_item(&old).expect("old item"),
+            new_item: encode_phrase_item(&new).expect("new item"),
+        };
+        let valid = encode_log_records(&[header.clone(), modify.clone()]).expect("valid log");
         let mut non_null_header =
-            encode_log_records(std::slice::from_ref(&header)).expect("header");
-        non_null_header[4..8].copy_from_slice(&1_u32.to_le_bytes());
+            encode_log_records(&[modify.clone(), header.clone()]).expect("header");
+        let at = non_null_header.len() - 18 + 4;
+        non_null_header[at..at + 4].copy_from_slice(&1_u32.to_le_bytes());
         let duplicate_headers =
             encode_log_records(&[header.clone(), header.clone()]).expect("duplicate headers");
         let surviving_add = encode_log_records(&[
-            header,
+            header.clone(),
             LogRecord::Add {
                 token: 2,
                 new_item: encode_phrase_item(&new).expect("added item"),
             },
         ])
         .expect("surviving ADD");
+        let surviving_remove = encode_log_records(&[
+            header.clone(),
+            LogRecord::Remove {
+                token: 1,
+                old_item: encode_phrase_item(&old).expect("removed item"),
+            },
+        ])
+        .expect("surviving REMOVE");
+        // `_compute_new_header` runs over every kept record before
+        // `_mask_out_records`: a short kept MODIFY after a kept ADD faults
+        // first.
+        let short_kept = encode_log_records(&[
+            header.clone(),
+            LogRecord::Add {
+                token: 2,
+                new_item: encode_phrase_item(&new).expect("added item"),
+            },
+            LogRecord::Modify {
+                token: 3,
+                old_item: vec![0; 5],
+                new_item: vec![0; 6],
+            },
+        ])
+        .expect("short kept payload");
         let mut store =
             UserStore::open_libpinyin(&dir, original.clone(), versions(), UserConfLaw::Pinyin)
                 .expect("open");
         let path = dir.join("gb_char.dbin");
-        for replacement in [non_null_header, duplicate_headers, surviving_add] {
-            std::fs::write(&path, &valid).expect("validated log");
-            let logs = store
-                .validate_system_logs(|_| true, 0x00ff_ffff, 0)
-                .expect("preflight");
-            // A concurrent atomic save changes the path after preflight.
-            // Replay must consume the snapshot, never this abort-shaped log.
-            let tmp = dir.join("gb_char.dbin.tmp");
-            std::fs::write(
-                &tmp,
-                build_memory_chunk(&replacement).expect("replacement frame"),
-            )
-            .expect("replacement");
-            std::fs::rename(tmp, &path).expect("atomic replacement");
-            store.mask_out(0x00ff_ffff, 0).expect("mask tables");
-            store
-                .reload_system_libraries(original.clone(), 0x00ff_ffff, 0, logs)
-                .expect("snapshot replay");
-            assert_eq!(
-                store
-                    .system_item_override(0x0100_0001)
-                    .expect("item")
-                    .expect("override"),
-                new,
-            );
-            assert!(store.phrase(0x0100_0002).expect("absent ADD").is_none());
+        let library = 1;
+        for (log, fault) in [
+            (
+                non_null_header,
+                JournalFault::HeaderToken { library, token: 1 },
+            ),
+            (duplicate_headers, JournalFault::MultipleHeaders { library }),
+            (
+                surviving_add,
+                JournalFault::SurvivingRecord { library, token: 2 },
+            ),
+            (
+                surviving_remove,
+                JournalFault::SurvivingRecord { library, token: 1 },
+            ),
+            (
+                short_kept,
+                JournalFault::ShortMaskedItem { library, token: 3 },
+            ),
+        ] {
+            std::fs::write(&path, build_memory_chunk(&log).expect("frame")).expect("log");
+            assert!(matches!(
+                store.reload_system_libraries(original.clone(), 0x00ff_ffff, 0),
+                Err(UserStoreError::Journal(found)) if found == fault
+            ));
         }
+        std::fs::write(&path, build_memory_chunk(&valid).expect("frame")).expect("log");
+        store.mask_out(0x00ff_ffff, 0).expect("mask tables");
+        store
+            .reload_system_libraries(original.clone(), 0x00ff_ffff, 0)
+            .expect("replay");
+        assert_eq!(
+            store
+                .system_item_override(0x0100_0001)
+                .expect("item")
+                .expect("override"),
+            new,
+        );
         drop(store);
         std::fs::remove_dir_all(dir).expect("cleanup");
     }

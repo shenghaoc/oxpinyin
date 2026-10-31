@@ -46,15 +46,14 @@ use oxpinyin_data::row_format::pinyin_index::PinyinIndexItem;
 use oxpinyin_data::table_entries::pinyin_index_entries;
 use oxpinyin_data::table_info::FileName;
 use oxpinyin_data::user_files::{
-    LogRecord, SystemVersions, UserConfError, UserDbm, UserFileLayout, UserTableInfo,
-    decode_log_records, encode_log_records, get_open_counter, log_records, read_chunk_payload,
-    validate_log_records,
+    LogFault, LogRecord, SystemVersions, UserConfError, UserDbm, UserFileLayout, UserTableInfo,
+    encode_log_records, get_open_counter, log_records, read_chunk_payload,
 };
 use oxpinyin_store::{
     DefaultStore, DefaultUserBigramDb, RawReadStore, StoreError, UserBigramDb, WriteStore,
 };
 
-use crate::replay::{Merge, ReplayedLibrary, Stop, raw_unigram};
+use crate::replay::{JournalFault, Merge, ReplayedLibrary, Stop, raw_unigram};
 use crate::store::SaveReport;
 use crate::user_library::UserLibrary;
 
@@ -524,20 +523,12 @@ pub struct Loaded {
     /// them (upstream's own degrade — `chunk->load` failure leaves an
     /// empty library, never a failed init).
     pub skipped: Vec<String>,
-    /// A `SYSTEM_FILE`/`DICTIONARY` `.dbin` carried an ADD payload shorter
-    /// than six bytes. `add_phrase_item` reads such a payload's unigram
-    /// through `get_unigram_frequency` (`phrase_index.h:124-126`), whose
-    /// `get_content` asserts (`memory_chunk.h:388-392`); the oracle build
-    /// dies there (class (c), row 108). The replay stops at the record and
-    /// the facade logs one warning; init goes on.
-    pub short_add_payload: bool,
-    /// A `SYSTEM_FILE`/`DICTIONARY` `.dbin` whose `MODIFY_HEADER` record
-    /// carried a non-null token. Upstream `assert(token == null_token)`s
-    /// there (`phrase_index_logger.h:202`), so this is a class (c) abort
-    /// site, not the graceful [`Self::skipped`] list: the session open
-    /// fails and the facade logs one warning in its own domain. Recorded
-    /// as `(file name, token)`.
-    pub strict_log_fault: Option<(String, u32)>,
+    /// The pin assertion a `SYSTEM_FILE` library's `.dbin` replay reached,
+    /// in library order: the first library whose log reaches one, after the
+    /// libraries before it replayed. The pin dies there
+    /// ([`JournalFault`]); the session open returns it and the C adapters
+    /// abort. No later library is replayed.
+    pub journal_fault: Option<JournalFault>,
     /// The total each library the profile filled holds once loaded, as the
     /// pin keeps it: a `USER_FILE` library's is the total stored in its
     /// file (074a2219 `phrase_index.cpp:345`), not a sum of its items; a
@@ -949,14 +940,15 @@ fn load_checked_impl(
             &mut profile.loaded.state.phrase_table,
         );
         if lazy {
-            load_logs_with_mask(
-                SystemLogSource::Directory(dir),
+            profile.loaded.journal_fault = replay_logs(
+                dir,
                 originals,
                 &mut profile.loaded,
                 None,
                 false,
                 Some(&mut profile.replayed),
-            );
+            )
+            .err();
         } else {
             load_logs(dir, originals, &mut profile.loaded);
         }
@@ -1318,40 +1310,32 @@ fn load_libraries(
 }
 
 /// The `.dbin` logs, replayed onto the original system chunks —
-/// `FacadePhraseIndex::merge`. A record whose old payload does not
-/// match the current item stops that library's replay (upstream's
-/// `merge` returns false mid-log and `_load_phrase_library` keeps the
-/// partially-merged index).
+/// `FacadePhraseIndex::merge`, library by library in the init loop's order
+/// (074a2219 `pinyin.cpp:374-391`, `zhuyin.cpp:318-335`). A record whose old
+/// payload does not match the current item stops that library's replay
+/// (upstream's `merge` returns false mid-log and `_load_phrase_library`
+/// keeps the partially-merged index); an assertion is recorded in
+/// [`Loaded::journal_fault`] and ends the replay.
 fn load_logs(dir: &Path, originals: &SystemOriginals, loaded: &mut Loaded) {
-    load_logs_with_mask(
-        SystemLogSource::Directory(dir),
-        originals,
-        loaded,
-        None,
-        false,
-        None,
-    );
+    loaded.journal_fault = replay_logs(dir, originals, loaded, None, false, None).err();
 }
 
 /// One reloaded library's saved state: the `.dbin` log in the user
 /// directory replayed onto the freshly mapped system original —
 /// `_load_phrase_library`'s `load` then `merge` (074a2219
-/// `pinyin.cpp:264-277`, `zhuyin.cpp:298-312`). Only the libraries in
+/// `pinyin.cpp:264-277`, `zhuyin.cpp:208-221`). Only the libraries in
 /// `originals` are read; unsaved session state never enters it.
+///
+/// # Errors
+///
+/// The [`JournalFault`] the merge reaches (rows 91 and 108).
 pub(crate) fn load_library_logs(
     dir: &Path,
     originals: &SystemOriginals,
-) -> (UserState, BTreeMap<u8, u32>) {
+) -> Result<(UserState, BTreeMap<u8, u32>), JournalFault> {
     let mut loaded = Loaded::default();
-    load_logs_with_mask(
-        SystemLogSource::Directory(dir),
-        originals,
-        &mut loaded,
-        None,
-        true,
-        None,
-    );
-    (loaded.state, loaded.library_totals)
+    replay_logs(dir, originals, &mut loaded, None, true, None)?;
+    Ok((loaded.state, loaded.library_totals))
 }
 
 /// One reloaded `USER_FILE` library's saved state: its chunk in the user
@@ -1375,69 +1359,54 @@ pub(crate) fn load_user_library(
     })
 }
 
-/// Decoded system logs read and validated before mask_out mutates state.
-/// Replay consumes these same records without reopening any .dbin, matching
-/// the pin's single MemoryChunk read (074a2219 pinyin.cpp:1278-1285,
-/// zhuyin.cpp:813-820).
-#[derive(Debug, Default)]
-pub struct SystemLogSnapshot {
-    pub(crate) records: BTreeMap<u8, Vec<LogRecord>>,
-}
-
-/// The pin's masked logger: check the library bits, require a header,
-/// keep only unselected slot records, then replay the new logger over
-/// the freshly mapped system original (074a2219 phrase_index.cpp:301-330,
-/// :850-875). The caller has already validated the log's abort sites.
+/// `mask_out`'s reload of each loaded system library: the library bits
+/// checked, then the log read from the user directory and filtered by
+/// `mask_out_phrase_index_logger`, then merged over the freshly mapped
+/// original (074a2219 `phrase_index.cpp:301-330`, `:844-869`), library by
+/// library in the mask loop's order (`pinyin.cpp:1234-1291`,
+/// `zhuyin.cpp:769-826`).
+///
+/// # Errors
+///
+/// The [`JournalFault`] the first library's log reaches (rows 91, 92, 97 and
+/// 108's read in `_compute_new_header`); no later library is read.
 pub(crate) fn load_masked_logs(
+    dir: &Path,
     originals: &SystemOriginals,
     mask: u32,
     value: u32,
-    snapshot: SystemLogSnapshot,
-) -> (UserState, BTreeMap<u8, u32>) {
+) -> Result<(UserState, BTreeMap<u8, u32>), JournalFault> {
     let mut loaded = Loaded::default();
-    load_logs_with_mask(
-        SystemLogSource::Snapshot(snapshot),
+    replay_logs(
+        dir,
         originals,
         &mut loaded,
         Some((mask, value)),
         false,
         None,
-    );
-    (loaded.state, loaded.library_totals)
+    )?;
+    Ok((loaded.state, loaded.library_totals))
 }
 
-enum Journal {
-    Owned(Vec<LogRecord>),
-    Bytes(Vec<u8>),
-}
-
-impl Journal {
-    fn records(&self) -> Box<dyn Iterator<Item = LogRecord<&[u8]>> + '_> {
-        match self {
-            Self::Owned(records) => Box::new(records.iter().map(LogRecord::as_ref)),
-            Self::Bytes(bytes) => Box::new(log_records(&bytes[8..]).filter_map(Result::ok)),
-        }
-    }
-}
-
-enum SystemLogSource<'a> {
-    Directory(&'a Path),
-    Snapshot(SystemLogSnapshot),
-}
-
-fn load_logs_with_mask(
-    mut source: SystemLogSource<'_>,
+/// The replay of every `SYSTEM_FILE` library's log, in sub-index order: the
+/// pin's merge (or, with `mask`, `merge_with_mask`) per library. The first
+/// assertion ends it.
+fn replay_logs(
+    dir: &Path,
     originals: &SystemOriginals,
     loaded: &mut Loaded,
     mask: Option<(u32, u32)>,
     only_originals: bool,
     mut replayed: Option<&mut BTreeMap<u8, ReplayedLibrary>>,
-) {
+) -> Result<(), JournalFault> {
     for (nibble, file) in originals.layout().system_logs() {
         let nibble = *nibble;
         if only_originals && !originals.contains_key(&nibble) {
             continue;
         }
+        // `merge_with_mask` returns before it reads the log when the
+        // library bits do not match (`phrase_index.cpp:309-313`); an
+        // unloaded library is skipped by the mask loop's `get_range`.
         if mask.is_some_and(|(mask, value)| {
             !originals.contains_key(&nibble)
                 || (nibble & crate::phrase::phrase_index_library_index(mask))
@@ -1446,107 +1415,23 @@ fn load_logs_with_mask(
             continue;
         }
         let name = file.display();
-        let mut journal = match &mut source {
-            SystemLogSource::Snapshot(snapshot) => {
-                let Some(records) = snapshot.records.remove(&nibble) else {
-                    continue;
-                };
-                Journal::Owned(records)
-            }
-            SystemLogSource::Directory(dir) => {
-                let path = file.under(dir);
-                let mut bytes = match std::fs::read(&path) {
-                    Ok(bytes) => bytes,
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                        continue;
-                    }
-                    Err(e) => {
-                        loaded.skipped.push(format!("{name}: {e}"));
-                        continue;
-                    }
-                };
-                let payload = match read_chunk_payload(&bytes) {
-                    Ok(payload) => payload,
-                    Err(error) => {
-                        loaded.skipped.push(format!("{name}: {error}"));
-                        continue;
-                    }
-                };
-                let end = 8 + payload.len();
-                let validation = validate_log_records(payload);
-                match validation {
-                    Ok(()) => {
-                        bytes.truncate(end);
-                        Journal::Bytes(bytes)
-                    }
-                    Err(error) => {
-                        // A non-null-`MODIFY_HEADER` token is the pin's
-                        // `assert(token == null_token)` (`phrase_index_logger.h:202`):
-                        // a class (c) abort site, recorded for the session open to
-                        // fail on. Every other malformed stream is the pin's
-                        // graceful `next_record` false and stays a skip.
-                        if let Some(token) = error.non_null_header_token() {
-                            loaded.strict_log_fault = Some((name.to_string(), token));
-                        } else {
-                            loaded.skipped.push(format!("{name}: {error}"));
-                        }
-                        continue;
-                    }
-                }
+        // An absent or unreadable `.dbin` is an empty log: `MemoryChunk::load`
+        // fails and leaves the chunk empty, and the merge reads nothing.
+        let bytes = match std::fs::read(file.under(dir)) {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => {
+                loaded.skipped.push(format!("{name}: {e}"));
+                continue;
             }
         };
-        if let Some((mask, value)) = mask {
-            let mut records = match journal {
-                Journal::Owned(records) => records,
-                Journal::Bytes(bytes) => match read_chunk_payload(&bytes)
-                    .ok()
-                    .and_then(|payload| decode_log_records(payload).ok())
-                {
-                    Some(records) => records,
-                    None => continue,
-                },
-            };
-            let Some(old_total) = records.iter().find_map(|record| match record {
-                LogRecord::ModifyHeader { old_total, .. } => Some(*old_total),
-                _ => None,
-            }) else {
-                continue; // _peek_header's false: the new logger is empty
-            };
-            records.retain(|record| match record {
-                LogRecord::Add { token, .. }
-                | LogRecord::Remove { token, .. }
-                | LogRecord::Modify { token, .. } => {
-                    (token & (mask & PHRASE_MASK)) != (value & PHRASE_MASK)
-                }
-                LogRecord::ModifyHeader { .. } => false,
-            });
-            // The generated logger writes its header first, regardless of
-            // where the old logger held it. Its new total is the old one
-            // moved by every record kept, read from the records' own
-            // payloads (`_compute_new_header`, 074a2219
-            // `phrase_index.cpp:750-804`).
-            let new_total = records
-                .iter()
-                .fold(old_total, |total, record| match record {
-                    LogRecord::Add { new_item, .. } => total.wrapping_add(raw_unigram(new_item)),
-                    LogRecord::Remove { old_item, .. } => total.wrapping_sub(raw_unigram(old_item)),
-                    LogRecord::Modify {
-                        old_item, new_item, ..
-                    } => total
-                        .wrapping_sub(raw_unigram(old_item))
-                        .wrapping_add(raw_unigram(new_item)),
-                    LogRecord::ModifyHeader { .. } => total,
-                });
-            records.insert(
-                0,
-                LogRecord::ModifyHeader {
-                    old_total,
-                    new_total,
-                },
-            );
-            journal = Journal::Owned(records);
-        }
-
+        let payload = match read_chunk_payload(&bytes) {
+            Ok(payload) => payload,
+            Err(error) => {
+                loaded.skipped.push(format!("{name}: {error}"));
+                continue;
+            }
+        };
         // The pin emits local slots, but its reader masks high bits even
         // in hand-written records (074a2219 phrase_index.cpp:180-215, 219-232).
         // `SubPhraseIndex::merge` over the records, in the pin's own terms:
@@ -1554,21 +1439,39 @@ fn load_logs_with_mask(
         // end (`phrase_index.cpp:439-517`). Session opens retain the byte
         // views; value-only callers decode the final touched slots.
         let mut merge = Merge::new(originals.get(&nibble));
-        for record in journal.records() {
-            if let Err(stop) = merge.apply(record) {
-                loaded.skipped.push(match stop {
-                    Stop::ShortAdd(token) => {
-                        loaded.short_add_payload = true;
-                        format!("{name}: an ADD payload shorter than its unigram for {token:#010x}")
-                    }
-                    Stop::Mismatch("header", _) => {
-                        format!("{name}: replay stopped at a mismatched header")
-                    }
-                    Stop::Mismatch(kind, token) => {
-                        format!("{name}: replay stopped at a mismatched {kind} for {token:#010x}")
-                    }
-                });
-                break;
+        match mask {
+            None => {
+                // A payload past the log's end is the pin's over-read (class
+                // (b)), outside this change: the log is skipped whole, as the
+                // parent's `load_logs_with_mask` did when `validate_log_records`
+                // refused it. The walk reaches it only past every record before
+                // it, so a header token earlier in the log still faults.
+                if log_records(payload).any(|record| matches!(record, Err(LogFault::OverRead))) {
+                    loaded
+                        .skipped
+                        .push(format!("{name}: a record's payload runs past the log"));
+                    continue;
+                }
+                merge_log(
+                    &mut merge,
+                    log_records(payload),
+                    nibble,
+                    &mut loaded.skipped,
+                    &name,
+                )?;
+            }
+            Some((mask, value)) => {
+                // `_peek_header`'s false: the new logger is empty.
+                let Some(records) = masked_log(payload, mask, value, nibble)? else {
+                    continue;
+                };
+                merge_log(
+                    &mut merge,
+                    records.into_iter().map(Ok),
+                    nibble,
+                    &mut loaded.skipped,
+                    &name,
+                )?;
             }
         }
         let (total, overrides) = if let Some(replayed) = replayed.as_deref_mut() {
@@ -1588,6 +1491,137 @@ fn load_logs_with_mask(
             loaded.state.system_overrides.insert(nibble, overrides);
         }
     }
+    Ok(())
+}
+
+/// `SubPhraseIndex::merge`'s loop over one logger (074a2219
+/// `phrase_index.cpp:439-517`): each record the walk answers is applied in
+/// order. A mismatch ends the merge with the earlier records applied.
+///
+/// # Errors
+///
+/// [`JournalFault::HeaderToken`] where `next_record` asserts
+/// (`phrase_index_logger.h:202`) and [`JournalFault::ShortAdd`] where
+/// `add_phrase_item` does (`memory_chunk.h:390`).
+fn merge_log<'a>(
+    merge: &mut Merge,
+    records: impl Iterator<Item = Result<LogRecord<&'a [u8]>, LogFault>>,
+    library: u8,
+    skipped: &mut Vec<String>,
+    name: &str,
+) -> Result<(), JournalFault> {
+    for record in records {
+        let record = match record {
+            Ok(record) => record,
+            Err(LogFault::HeaderToken(token)) => {
+                return Err(JournalFault::HeaderToken { library, token });
+            }
+            // `replay_logs` skips such a log before the merge, and the
+            // masked records hold only the walk's prefix.
+            Err(LogFault::OverRead) => break,
+        };
+        if let Err(stop) = merge.apply(record) {
+            skipped.push(match stop {
+                Stop::ShortAdd(token) => return Err(JournalFault::ShortAdd { library, token }),
+                Stop::Mismatch("header", _) => {
+                    format!("{name}: replay stopped at a mismatched header")
+                }
+                Stop::Mismatch(kind, token) => {
+                    format!("{name}: replay stopped at a mismatched {kind} for {token:#010x}")
+                }
+            });
+            break;
+        }
+    }
+    Ok(())
+}
+
+/// `mask_out_phrase_index_logger` over one log (074a2219
+/// `phrase_index.cpp:721-869`), walk by walk as the pin takes them:
+///
+/// 1. `_peek_header` walks every record, so a non-null header token anywhere
+///    asserts first (`phrase_index_logger.h:202`); then it asserts on more
+///    than one header (`:745`). No header is an empty new logger: `None`.
+/// 2. `_compute_new_header` moves the old total by every record the mask
+///    keeps, reading each kept payload's unigram (`:778-795`), which
+///    asserts on a payload under six bytes (`memory_chunk.h:390`).
+/// 3. `_mask_out_records` appends each kept record with both chunk pointers
+///    (`:838`); a kept ADD or REMOVE asserts in `append_record`
+///    (`phrase_index_logger.h:245`, `:257`), so the new logger can only hold
+///    the header, written first, and the kept MODIFY records.
+///
+/// A payload past the log's end (the pin's over-read, class (b)) ends every
+/// walk there, keeping the records before it, as the parent's
+/// `validate_system_logs` snapshot of `decode_log_records_partial` did.
+fn masked_log(
+    payload: &[u8],
+    mask: u32,
+    value: u32,
+    library: u8,
+) -> Result<Option<Vec<LogRecord<&[u8]>>>, JournalFault> {
+    let (mask, value) = (mask & PHRASE_MASK, value & PHRASE_MASK);
+    let kept = |token: u32| (token & mask) != value;
+    let mut records = Vec::new();
+    for record in log_records(payload) {
+        match record {
+            Ok(record) => records.push(record),
+            Err(LogFault::HeaderToken(token)) => {
+                return Err(JournalFault::HeaderToken { library, token });
+            }
+            Err(LogFault::OverRead) => break,
+        }
+    }
+    let mut headers = records.iter().filter_map(|record| match record {
+        LogRecord::ModifyHeader { old_total, .. } => Some(*old_total),
+        _ => None,
+    });
+    let Some(old_total) = headers.next() else {
+        return Ok(None);
+    };
+    if headers.next().is_some() {
+        return Err(JournalFault::MultipleHeaders { library });
+    }
+    let unigram = |item: &[u8], token: u32| {
+        if item.len() < 6 {
+            Err(JournalFault::ShortMaskedItem { library, token })
+        } else {
+            Ok(raw_unigram(item))
+        }
+    };
+    let mut new_total = old_total;
+    for record in &records {
+        match *record {
+            LogRecord::Add { token, new_item } if kept(token) => {
+                new_total = new_total.wrapping_add(unigram(new_item, token)?);
+            }
+            LogRecord::Remove { token, old_item } if kept(token) => {
+                new_total = new_total.wrapping_sub(unigram(old_item, token)?);
+            }
+            LogRecord::Modify {
+                token,
+                old_item,
+                new_item,
+            } if kept(token) => {
+                new_total = new_total.wrapping_sub(unigram(old_item, token)?);
+                new_total = new_total.wrapping_add(unigram(new_item, token)?);
+            }
+            _ => {}
+        }
+    }
+    let mut masked = vec![LogRecord::ModifyHeader {
+        old_total,
+        new_total,
+    }];
+    for record in records {
+        match record {
+            LogRecord::Add { token, .. } | LogRecord::Remove { token, .. } if kept(token) => {
+                return Err(JournalFault::SurvivingRecord { library, token });
+            }
+            LogRecord::Modify { token, .. } if kept(token) => masked.push(record),
+            _ => {}
+        }
+    }
+    Ok(Some(masked))
 }
 
 /// An item serialised as the pin stores it (`PhraseItem`: the two length
@@ -2891,8 +2925,9 @@ mod tests {
         // The header-only diff log: the frame decodes to one header
         // record with old == new totals.
         let log = std::fs::read(dir.join("merged.dbin")).expect("absent lib log");
-        let records =
-            decode_log_records(read_chunk_payload(&log).expect("frame")).expect("records");
+        let records = log_records(read_chunk_payload(&log).expect("frame"))
+            .collect::<Result<Vec<_>, _>>()
+            .expect("records");
         assert_eq!(records.len(), 1);
         assert_eq!(
             records[0],
@@ -4105,6 +4140,139 @@ mod tests {
         );
 
         std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    /// Loads a conforming profile whose `gb_char.dbin` holds `payload`.
+    fn load_with_log(name: &str, payload: &[u8]) -> Loaded {
+        let dir = tempdir(name);
+        std::fs::write(
+            dir.join("gb_char.dbin"),
+            build_memory_chunk(payload).expect("frame"),
+        )
+        .expect("write");
+        std::fs::write(
+            dir.join(USER_CONF),
+            UserTableInfo::conform_to(&versions()).to_text(),
+        )
+        .expect("marker");
+        let loaded = load(&dir, &originals(), &versions(), UserConfLaw::Pinyin).expect("load");
+        std::fs::remove_dir_all(&dir).expect("cleanup");
+        loaded
+    }
+
+    /// A `MODIFY_HEADER` record carrying `token`, as no writer emits it.
+    fn header_with_token(token: u32) -> Vec<u8> {
+        let mut record = 4_u32.to_le_bytes().to_vec();
+        record.extend_from_slice(&token.to_le_bytes());
+        record.extend_from_slice(&4_u16.to_le_bytes());
+        record.extend_from_slice(&[0; 8]);
+        record
+    }
+
+    /// The header and a MODIFY of slot 1 that the originals accept.
+    fn accepted_modify() -> (Vec<LogRecord>, ChunkItem) {
+        let old = originals()[&1].item(1).expect("original");
+        let mut new = old.clone();
+        new.prons[0].1 += 7;
+        (
+            vec![
+                LogRecord::ModifyHeader {
+                    old_total: 150,
+                    new_total: 150,
+                },
+                LogRecord::Modify {
+                    token: 1,
+                    old_item: encode_phrase_item(&old).expect("old payload"),
+                    new_item: encode_phrase_item(&new).expect("new payload"),
+                },
+            ],
+            new,
+        )
+    }
+
+    #[test]
+    fn a_header_token_the_merge_reaches_is_the_load_fault() {
+        let (records, _) = accepted_modify();
+        let mut payload = encode_log_records(&records).expect("log");
+        payload.extend_from_slice(&header_with_token(0x0100_0001));
+        let loaded = load_with_log("header-token", &payload);
+        assert_eq!(
+            loaded.journal_fault,
+            Some(JournalFault::HeaderToken {
+                library: 1,
+                token: 0x0100_0001,
+            })
+        );
+    }
+
+    #[test]
+    fn a_header_token_after_a_mismatch_is_never_read() {
+        // `merge` returns at the mismatched REMOVE (`phrase_index.cpp:468-471`)
+        // before `next_record` reads the bad header: the load completes with
+        // the records before the stop applied.
+        let (mut records, new) = accepted_modify();
+        records.push(LogRecord::Remove {
+            token: 2,
+            old_item: vec![0; 6],
+        });
+        let mut payload = encode_log_records(&records).expect("log");
+        payload.extend_from_slice(&header_with_token(0x0100_0001));
+        let loaded = load_with_log("header-token-after-stop", &payload);
+        assert_eq!(loaded.journal_fault, None);
+        assert_eq!(loaded.state.system_overrides[&1][&1], Some(new));
+    }
+
+    #[test]
+    fn a_short_add_payload_is_the_load_fault() {
+        let (mut records, _) = accepted_modify();
+        records.push(LogRecord::Add {
+            token: 0x0100_0005,
+            new_item: vec![1, 0, 0, 0, 0],
+        });
+        let loaded = load_with_log("short-add", &encode_log_records(&records).expect("log"));
+        assert_eq!(
+            loaded.journal_fault,
+            Some(JournalFault::ShortAdd {
+                library: 1,
+                token: 0x0100_0005,
+            })
+        );
+    }
+
+    #[test]
+    fn a_payload_past_the_log_skips_the_whole_log_as_before() {
+        // Class (b), unchanged by member 5a: the parent skipped the whole log
+        // (`validate_log_records` refused it in `load_logs_with_mask`), so the
+        // accepted MODIFY before the truncated ADD is not applied either.
+        let (records, _) = accepted_modify();
+        let mut payload = encode_log_records(&records).expect("log");
+        payload.extend_from_slice(&1_u32.to_le_bytes());
+        payload.extend_from_slice(&0x0100_0005_u32.to_le_bytes());
+        payload.extend_from_slice(&6_u16.to_le_bytes());
+        payload.extend_from_slice(&[1, 0, 0]);
+        let loaded = load_with_log("over-read", &payload);
+        assert_eq!(loaded.journal_fault, None);
+        assert!(
+            loaded
+                .state
+                .system_overrides
+                .get(&1)
+                .is_none_or(std::collections::BTreeMap::is_empty)
+        );
+        assert!(!loaded.library_totals.contains_key(&1));
+        assert_eq!(loaded.skipped.len(), 1, "{:?}", loaded.skipped);
+    }
+
+    #[test]
+    fn an_unknown_record_type_keeps_the_records_before_it() {
+        // `next_record` answers false and the merge ends; the earlier
+        // records stay applied (`phrase_index_logger.h:214-216`).
+        let (records, new) = accepted_modify();
+        let mut payload = encode_log_records(&records).expect("log");
+        payload.extend_from_slice(&[9, 0, 0, 0, 1, 0, 0, 0]);
+        let loaded = load_with_log("unknown-type", &payload);
+        assert_eq!(loaded.journal_fault, None);
+        assert_eq!(loaded.state.system_overrides[&1][&1], Some(new));
     }
 
     #[test]

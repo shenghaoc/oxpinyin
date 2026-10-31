@@ -562,7 +562,9 @@ impl<P: AsRef<[u8]>> LogRecord<P> {
 }
 
 impl LogRecord<&[u8]> {
-    fn into_owned(self) -> LogRecord {
+    /// Copy a borrowed record's payloads into an owned record.
+    #[must_use]
+    pub fn into_owned(self) -> LogRecord {
         match self {
             Self::Add { token, new_item } => LogRecord::Add {
                 token,
@@ -592,317 +594,209 @@ impl LogRecord<&[u8]> {
     }
 }
 
-/// Walk a logger's records as borrowed byte slices, stopping at its first error.
-/// Payloads retain their raw sizes, including trailing bytes.
-pub fn log_records(bytes: &[u8]) -> impl Iterator<Item = Result<LogRecord<&[u8]>, LogDecodeError>> {
-    let mut offset = 0;
-    std::iter::from_fn(move || {
-        if offset >= bytes.len() {
+/// Why a [`LogReader`] walk ends at a record instead of answering it.
+///
+/// `PhraseIndexLogger::next_record` (074a2219
+/// `src/storage/phrase_index_logger.h:158-215`) answers `false` only for an
+/// unknown `LOG_TYPE`, and the walk then simply ends; these are the two
+/// records it does not answer at all.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LogFault {
+    /// A `MODIFY_HEADER` record whose token is not `null_token`: the pin's
+    /// `assert(token == null_token)` (`phrase_index_logger.h:202`) aborts
+    /// while reading it.
+    HeaderToken(u32),
+    /// A payload whose declared length runs past the logger's end: the pin's
+    /// `set_content` copies that many bytes from past its chunk, an
+    /// over-read with no defined result (class (b)). The walk stops here.
+    OverRead,
+}
+
+impl std::fmt::Display for LogFault {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::HeaderToken(token) => write!(
+                f,
+                "phrase index logger: MODIFY_HEADER record carries token {token:#010x}"
+            ),
+            Self::OverRead => write!(f, "phrase index logger: a payload runs past the log"),
+        }
+    }
+}
+
+impl std::error::Error for LogFault {}
+
+/// `PhraseIndexLogger`'s record walk over a log's bytes, record by record,
+/// as `has_next_record` and `next_record` take it (074a2219
+/// `src/storage/phrase_index_logger.h:127-215`).
+///
+/// * The walk goes on while the offset is inside the log.
+/// * Each fixed field (`LOG_TYPE`, token, `guint16` lengths) is read with
+///   `MemoryChunk::get_content`, which reads nothing past the end and leaves
+///   the field at its initial value (`memory_chunk.h:372-377`): the type at
+///   `LOG_INVALID_RECORD`, the token at `null_token`, a length at 0. The
+///   offset moves past the field either way.
+/// * An unknown type sets `m_error`: the walk ends.
+/// * A payload of length 0 is empty wherever it starts; a longer one that
+///   ends past the log is [`LogFault::OverRead`].
+/// * A `MODIFY_HEADER` with a non-null token is [`LogFault::HeaderToken`],
+///   before its length is read. Its totals are the first four bytes of each
+///   run; a run shorter than four bytes reads as 0, as `merge`'s and
+///   `_peek_header`'s `get_content` into a zeroed `guint32` does
+///   (`phrase_index.cpp:503-514`, `:721-746`).
+///
+/// After a fault the walk yields nothing more.
+#[derive(Clone, Debug)]
+pub struct LogReader<'a> {
+    bytes: &'a [u8],
+    offset: usize,
+    done: bool,
+}
+
+/// Walk a logger's records as borrowed byte slices, the pin's way
+/// ([`LogReader`]). Payloads keep their raw sizes, trailing bytes included.
+#[must_use]
+pub fn log_records(bytes: &[u8]) -> LogReader<'_> {
+    LogReader {
+        bytes,
+        offset: 0,
+        done: false,
+    }
+}
+
+impl<'a> Iterator for LogReader<'a> {
+    type Item = Result<LogRecord<&'a [u8]>, LogFault>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.done || self.offset >= self.bytes.len() {
             return None;
         }
-        match decode_log_record_at(bytes, offset) {
-            Ok((record, next)) => {
-                offset = next;
+        let step = self.step();
+        match step {
+            Some(Ok((record, next))) => {
+                self.offset = next;
                 Some(Ok(record))
             }
-            Err(error) => {
-                offset = bytes.len();
-                Some(Err(error))
+            Some(Err(fault)) => {
+                self.done = true;
+                Some(Err(fault))
+            }
+            None => {
+                self.done = true;
+                None
             }
         }
-    })
+    }
+}
+
+/// One `next_record` call: the record and the offset after it, a fault, or
+/// `None` where the pin's walk ends.
+type Step<'a> = Option<Result<(LogRecord<&'a [u8]>, usize), LogFault>>;
+
+impl<'a> LogReader<'a> {
+    fn step(&self) -> Step<'a> {
+        let bytes = self.bytes;
+        let u32_at = |at: usize| {
+            bytes
+                .get(at..at.checked_add(4)?)
+                .and_then(|word| word.try_into().ok())
+                .map(u32::from_le_bytes)
+        };
+        let u16_at = |at: usize| {
+            bytes
+                .get(at..at.saturating_add(2))
+                .and_then(|word| word.try_into().ok())
+                .map_or(0, u16::from_le_bytes)
+        };
+        let take = |at: usize, len: u16| -> Result<&'a [u8], LogFault> {
+            if len == 0 {
+                return Ok(&[]);
+            }
+            bytes
+                .get(at..at.saturating_add(usize::from(len)))
+                .ok_or(LogFault::OverRead)
+        };
+        let mut offset = self.offset;
+        // `LOG_INVALID_RECORD` when the type is not there: `m_error`.
+        let log_type = u32_at(offset)?;
+        offset += LOG_TYPE_SIZE;
+        let token = u32_at(offset).unwrap_or(0);
+        offset += 4;
+        let record = match log_type {
+            1 | 2 => {
+                let len = u16_at(offset);
+                offset += 2;
+                let payload = match take(offset, len) {
+                    Ok(payload) => payload,
+                    Err(fault) => return Some(Err(fault)),
+                };
+                offset += usize::from(len);
+                if log_type == 1 {
+                    LogRecord::Add {
+                        token,
+                        new_item: payload,
+                    }
+                } else {
+                    LogRecord::Remove {
+                        token,
+                        old_item: payload,
+                    }
+                }
+            }
+            3 => {
+                let old_len = u16_at(offset);
+                let new_len = u16_at(offset + 2);
+                offset += 4;
+                let old_item = match take(offset, old_len) {
+                    Ok(payload) => payload,
+                    Err(fault) => return Some(Err(fault)),
+                };
+                offset += usize::from(old_len);
+                let new_item = match take(offset, new_len) {
+                    Ok(payload) => payload,
+                    Err(fault) => return Some(Err(fault)),
+                };
+                offset += usize::from(new_len);
+                LogRecord::Modify {
+                    token,
+                    old_item,
+                    new_item,
+                }
+            }
+            4 => {
+                if token != 0 {
+                    return Some(Err(LogFault::HeaderToken(token)));
+                }
+                let len = u16_at(offset);
+                offset += 2;
+                let old_run = match take(offset, len) {
+                    Ok(payload) => payload,
+                    Err(fault) => return Some(Err(fault)),
+                };
+                offset += usize::from(len);
+                let new_run = match take(offset, len) {
+                    Ok(payload) => payload,
+                    Err(fault) => return Some(Err(fault)),
+                };
+                offset += usize::from(len);
+                let total = |run: &[u8]| {
+                    run.get(..4)
+                        .and_then(|word| word.try_into().ok())
+                        .map_or(0, u32::from_le_bytes)
+                };
+                LogRecord::ModifyHeader {
+                    old_total: total(old_run),
+                    new_total: total(new_run),
+                }
+            }
+            _ => return None,
+        };
+        Some(Ok((record, offset)))
+    }
 }
 
 /// `sizeof(LOG_TYPE)` — the unscoped enum's underlying `int`.
 const LOG_TYPE_SIZE: usize = 4;
-
-/// A malformed `PhraseIndexLogger` record stream.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct LogDecodeError(LogDecodeFault);
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum LogDecodeFault {
-    Head(usize),
-    U16(usize),
-    Payload { start: usize, len: u16 },
-    HeaderToken(u32),
-    HeaderTotal,
-    HeaderNewRun,
-    Type { value: u32, offset: usize },
-}
-
-impl LogDecodeError {
-    /// [`decode_log_records`]'s rejection of a `MODIFY_HEADER` record whose
-    /// token is not `null_token`. Upstream `assert(token == null_token)`s
-    /// there (`phrase_index_logger.h:202`), so it is a class (c) abort site
-    /// rather than a graceful malformed-stream return.
-    fn header_token(token: u32) -> Self {
-        Self(LogDecodeFault::HeaderToken(token))
-    }
-
-    /// The offending token when this error is the non-null-`MODIFY_HEADER`
-    /// rejection (`phrase_index_logger.h:202`), `None` for any other
-    /// malformed stream.
-    #[must_use]
-    pub fn non_null_header_token(&self) -> Option<u32> {
-        match self.0 {
-            LogDecodeFault::HeaderToken(token) => Some(token),
-            _ => None,
-        }
-    }
-
-    /// The decoded records' `MODIFY_HEADER` count when `bytes` decodes
-    /// cleanly; `None` when it does not. The pin's `_peek_header` asserts
-    /// `1 >= header_count` (`phrase_index.cpp:745`) once a mask-out walks
-    /// the stream.
-    #[must_use]
-    pub fn decoded_header_count(bytes: &[u8]) -> Option<usize> {
-        decode_log_records(bytes).ok().map(|records| {
-            records
-                .iter()
-                .filter(|record| matches!(record, LogRecord::ModifyHeader { .. }))
-                .count()
-        })
-    }
-}
-
-impl std::fmt::Display for LogDecodeError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "phrase index logger: ")?;
-        match self.0 {
-            LogDecodeFault::Head(offset) => write!(f, "truncated record head at {offset}"),
-            LogDecodeFault::U16(offset) => write!(f, "truncated u16 at {offset}"),
-            LogDecodeFault::Payload { start, len } => {
-                write!(f, "truncated {len}-byte payload at {start}")
-            }
-            LogDecodeFault::HeaderToken(token) => {
-                write!(f, "MODIFY_HEADER record carries token {token:#010x}")
-            }
-            LogDecodeFault::HeaderTotal => write!(f, "MODIFY_HEADER payload has no total"),
-            LogDecodeFault::HeaderNewRun => write!(f, "MODIFY_HEADER has no new-total run"),
-            LogDecodeFault::Type { value, offset } => {
-                write!(f, "invalid record type {value} at {offset}")
-            }
-        }
-    }
-}
-
-impl std::error::Error for LogDecodeError {}
-
-/// Check a whole logger's framing without allocating or constructing records.
-/// Item payloads remain opaque: replay, rather than framing, decides what
-/// their bytes mean. The first error and its abort-site token match decoding.
-///
-/// # Errors
-/// Returns the same framing error as [`decode_log_records`], including its
-/// first-error order. Even the error value needs no allocation.
-pub fn validate_log_records(bytes: &[u8]) -> Result<(), LogDecodeError> {
-    let mut offset = 0;
-    while offset < bytes.len() {
-        offset = validate_log_record_at(bytes, offset)?;
-    }
-    Ok(())
-}
-
-fn validate_log_record_at(bytes: &[u8], mut offset: usize) -> Result<usize, LogDecodeError> {
-    let take_u16 = |offset: &mut usize| {
-        let lo = *offset;
-        if bytes.len() < lo + 2 {
-            return Err(LogDecodeError(LogDecodeFault::U16(lo)));
-        }
-        *offset += 2;
-        Ok(u16::from_le_bytes([bytes[lo], bytes[lo + 1]]))
-    };
-    let skip = |offset: &mut usize, len: u16| {
-        let start = *offset;
-        let end = start + usize::from(len);
-        if bytes.len() < end {
-            return Err(LogDecodeError(LogDecodeFault::Payload { start, len }));
-        }
-        *offset = end;
-        Ok(())
-    };
-    if bytes.len() < offset + LOG_TYPE_SIZE + 4 {
-        return Err(LogDecodeError(LogDecodeFault::Head(offset)));
-    }
-    let log_type = u32::from_le_bytes([
-        bytes[offset],
-        bytes[offset + 1],
-        bytes[offset + 2],
-        bytes[offset + 3],
-    ]);
-    offset += LOG_TYPE_SIZE + 4;
-    match log_type {
-        1 | 2 => {
-            let len = take_u16(&mut offset)?;
-            skip(&mut offset, len)?;
-        }
-        3 => {
-            let old_len = take_u16(&mut offset)?;
-            let new_len = take_u16(&mut offset)?;
-            skip(&mut offset, old_len)?;
-            skip(&mut offset, new_len)?;
-        }
-        4 => {
-            let token = u32::from_le_bytes([
-                bytes[offset - 4],
-                bytes[offset - 3],
-                bytes[offset - 2],
-                bytes[offset - 1],
-            ]);
-            if token != 0 {
-                return Err(LogDecodeError::header_token(token));
-            }
-            let len = take_u16(&mut offset)?;
-            if len < 4 {
-                return Err(LogDecodeError(LogDecodeFault::HeaderTotal));
-            }
-            skip(&mut offset, len)?;
-            if bytes.len() < offset + usize::from(len) {
-                return Err(LogDecodeError(LogDecodeFault::HeaderNewRun));
-            }
-            offset += usize::from(len);
-        }
-        value => return Err(LogDecodeError(LogDecodeFault::Type { value, offset })),
-    }
-    Ok(offset)
-}
-
-/// Decodes a record stream (`PhraseIndexLogger::next_record`'s loop).
-///
-/// # Errors
-///
-/// Fails on an invalid record type, a truncated payload, or a
-/// `MODIFY_HEADER` record whose token is not `null_token`.
-pub fn decode_log_records(bytes: &[u8]) -> Result<Vec<LogRecord>, LogDecodeError> {
-    let (records, error) = decode_log_records_partial(bytes);
-    match error {
-        Some(error) => Err(error),
-        None => Ok(records),
-    }
-}
-
-/// [`decode_log_records`] with the partial result kept: the records that
-/// decoded before the first malformed one, plus that error when the
-/// stream did not end cleanly.
-///
-/// Upstream's `_peek_header` counts each successful `next_record` before
-/// it breaks on a `false` and asserts on the accumulated count
-/// (`phrase_index.cpp:721-746`), so a trailing malformed record does not
-/// erase the headers already read. A caller reproducing that assert must
-/// see the records up to the error, not an empty list.
-#[must_use]
-pub fn decode_log_records_partial(bytes: &[u8]) -> (Vec<LogRecord>, Option<LogDecodeError>) {
-    let mut records = Vec::new();
-    let mut offset = 0_usize;
-    while offset < bytes.len() {
-        match decode_log_record_at(bytes, offset) {
-            Ok((record, next)) => {
-                records.push(record.into_owned());
-                offset = next;
-            }
-            Err(error) => return (records, Some(error)),
-        }
-    }
-    (records, None)
-}
-
-/// Decodes the record starting at `offset`, returning it with the offset
-/// one past its payload.
-fn decode_log_record_at(
-    bytes: &[u8],
-    mut offset: usize,
-) -> Result<(LogRecord<&[u8]>, usize), LogDecodeError> {
-    let take_u16 = |offset: &mut usize| -> Result<u16, LogDecodeError> {
-        let lo = *offset;
-        let hi = lo + 2;
-        if bytes.len() < hi {
-            return Err(LogDecodeError(LogDecodeFault::U16(lo)));
-        }
-        let value = u16::from_le_bytes([bytes[lo], bytes[lo + 1]]);
-        *offset = hi;
-        Ok(value)
-    };
-    let take_bytes = |offset: &mut usize, len: u16| -> Result<&[u8], LogDecodeError> {
-        let start = *offset;
-        let end = start + usize::from(len);
-        if bytes.len() < end {
-            return Err(LogDecodeError(LogDecodeFault::Payload { start, len }));
-        }
-        *offset = end;
-        Ok(&bytes[start..end])
-    };
-
-    if bytes.len() < offset + LOG_TYPE_SIZE + 4 {
-        return Err(LogDecodeError(LogDecodeFault::Head(offset)));
-    }
-    let log_type = u32::from_le_bytes([
-        bytes[offset],
-        bytes[offset + 1],
-        bytes[offset + 2],
-        bytes[offset + 3],
-    ]);
-    let token = u32::from_le_bytes([
-        bytes[offset + 4],
-        bytes[offset + 5],
-        bytes[offset + 6],
-        bytes[offset + 7],
-    ]);
-    offset += LOG_TYPE_SIZE + 4;
-
-    let record = match log_type {
-        1 => {
-            let len = take_u16(&mut offset)?;
-            let new_item = take_bytes(&mut offset, len)?;
-            LogRecord::Add { token, new_item }
-        }
-        2 => {
-            let len = take_u16(&mut offset)?;
-            let old_item = take_bytes(&mut offset, len)?;
-            LogRecord::Remove { token, old_item }
-        }
-        3 => {
-            let old_len = take_u16(&mut offset)?;
-            let new_len = take_u16(&mut offset)?;
-            let old_item = take_bytes(&mut offset, old_len)?;
-            let new_item = take_bytes(&mut offset, new_len)?;
-            LogRecord::Modify {
-                token,
-                old_item,
-                new_item,
-            }
-        }
-        4 => {
-            if token != 0 {
-                return Err(LogDecodeError::header_token(token));
-            }
-            let len = take_u16(&mut offset)?;
-            if usize::from(len) < 4 {
-                return Err(LogDecodeError(LogDecodeFault::HeaderTotal));
-            }
-            // Two consecutive `len`-byte runs: the old totals, then
-            // the new — `next_record` hands one run to each payload.
-            let old_run = take_bytes(&mut offset, len)?;
-            if bytes.len() < offset + usize::from(len) {
-                return Err(LogDecodeError(LogDecodeFault::HeaderNewRun));
-            }
-            let new_run = take_bytes(&mut offset, len)?;
-            let old_total = u32::from_le_bytes([old_run[0], old_run[1], old_run[2], old_run[3]]);
-            let new_total = u32::from_le_bytes([new_run[0], new_run[1], new_run[2], new_run[3]]);
-            LogRecord::ModifyHeader {
-                old_total,
-                new_total,
-            }
-        }
-        other => {
-            return Err(LogDecodeError(LogDecodeFault::Type {
-                value: other,
-                offset,
-            }));
-        }
-    };
-    Ok((record, offset))
-}
 
 /// A record payload whose length does not fit the format's `u16` length
 /// field.
@@ -1274,8 +1168,11 @@ mod tests {
         expected.extend_from_slice(&[1, 1, 69, 0, 0, 0]);
         assert_eq!(&bytes[..expected.len()], &expected[..]);
 
-        assert_eq!(decode_log_records(&bytes).expect("decode"), records);
-        assert!(decode_log_records(&[]).expect("decode").is_empty());
+        assert_eq!(
+            owned(&bytes),
+            records.into_iter().map(Ok).collect::<Vec<_>>()
+        );
+        assert!(owned(&[]).is_empty());
     }
 
     #[test]
@@ -1292,158 +1189,178 @@ mod tests {
         );
     }
 
+    fn owned(bytes: &[u8]) -> Vec<Result<LogRecord, LogFault>> {
+        log_records(bytes)
+            .map(|record| record.map(LogRecord::into_owned))
+            .collect()
+    }
+
+    fn record(kind: u32, token: u32, tail: &[u8]) -> Vec<u8> {
+        [
+            kind.to_le_bytes().as_slice(),
+            token.to_le_bytes().as_slice(),
+            tail,
+        ]
+        .concat()
+    }
+
     #[test]
-    fn log_validation_matches_every_decoder_rejection() {
-        let record = |kind: u32, token: u32, tail: &[u8]| {
-            [
-                kind.to_le_bytes().as_slice(),
-                token.to_le_bytes().as_slice(),
-                tail,
-            ]
-            .concat()
+    fn an_unknown_or_missing_type_ends_the_walk_after_the_records_before_it() {
+        let add = record(1, 7, &[6, 0, 0, 0, 1, 0, 0, 0]);
+        let add_record = LogRecord::Add {
+            token: 7,
+            new_item: vec![0, 0, 1, 0, 0, 0],
         };
-        let cases = [
-            (vec![0; 3], "truncated record head at 0"),
-            (record(9, 0, &[]), "invalid record type 9 at 8"),
-            (record(1, 1, &[]), "truncated u16 at 8"),
-            (record(2, 1, &[0]), "truncated u16 at 8"),
-            (record(3, 1, &[]), "truncated u16 at 8"),
-            (record(3, 1, &[3, 0]), "truncated u16 at 10"),
-            (record(4, 0, &[]), "truncated u16 at 8"),
-            (
-                record(1, 1, &[3, 0, 1, 2]),
-                "truncated 3-byte payload at 10",
-            ),
-            (
-                record(2, 1, &[3, 0, 1, 2]),
-                "truncated 3-byte payload at 10",
-            ),
-            (
-                record(3, 1, &[3, 0, 1, 0, 1, 2]),
-                "truncated 3-byte payload at 12",
-            ),
-            (
-                record(3, 1, &[3, 0, 2, 0, 1, 2, 3, 4]),
-                "truncated 2-byte payload at 15",
-            ),
-            (
-                record(4, 1, &[]),
-                "MODIFY_HEADER record carries token 0x00000001",
-            ),
-            (record(4, 0, &[3, 0]), "MODIFY_HEADER payload has no total"),
-            (
-                record(4, 0, &[4, 0, 1, 2, 3]),
-                "truncated 4-byte payload at 10",
-            ),
-            (
-                record(4, 0, &[4, 0, 1, 2, 3, 4, 5]),
-                "MODIFY_HEADER has no new-total run",
-            ),
-        ];
-        let mut mismatches = Vec::new();
-        for (index, (bytes, reason)) in cases.iter().enumerate() {
-            let expected = format!("phrase index logger: {reason}");
-            let decoded = decode_log_records(bytes).expect_err("decoder rejects");
-            let validated = validate_log_records(bytes);
-            if validated.as_ref().map_err(ToString::to_string) != Err(expected.clone())
-                || decoded.to_string() != expected
-                || validated
-                    .err()
-                    .and_then(|error| error.non_null_header_token())
-                    != decoded.non_null_header_token()
-            {
-                mismatches.push(index);
-            }
-        }
-        assert!(
-            mismatches.is_empty(),
-            "mismatched rejection paths: {mismatches:?}"
+        // `m_error` on an unknown type: the earlier record stays.
+        let unknown = [add.clone(), record(9, 0, &[1, 2, 3])].concat();
+        assert_eq!(owned(&unknown), vec![Ok(add_record.clone())]);
+        assert_eq!(owned(&record(0, 0, &[])), vec![]);
+        // Fewer than four bytes: the type is `LOG_INVALID_RECORD`.
+        let short_head = [add, vec![1, 0, 0]].concat();
+        assert_eq!(owned(&short_head), vec![Ok(add_record)]);
+    }
+
+    #[test]
+    fn a_field_past_the_end_reads_as_its_initial_value() {
+        // A type without its token: `null_token`, then a length of 0.
+        assert_eq!(
+            owned(&1_u32.to_le_bytes()),
+            vec![Ok(LogRecord::Add {
+                token: 0,
+                new_item: vec![],
+            })]
+        );
+        assert_eq!(
+            owned(&record(2, 5, &[3])),
+            vec![Ok(LogRecord::Remove {
+                token: 5,
+                old_item: vec![],
+            })]
+        );
+        // MODIFY reads the new length after a failed old one.
+        assert_eq!(
+            owned(&record(3, 5, &[])),
+            vec![Ok(LogRecord::Modify {
+                token: 5,
+                old_item: vec![],
+                new_item: vec![],
+            })]
+        );
+        // A header without a length, or with runs shorter than a total.
+        assert_eq!(
+            owned(&record(4, 0, &[])),
+            vec![Ok(LogRecord::ModifyHeader {
+                old_total: 0,
+                new_total: 0,
+            })]
+        );
+        assert_eq!(
+            owned(&record(4, 0, &[3, 0, 1, 2, 3, 4, 5, 6])),
+            vec![Ok(LogRecord::ModifyHeader {
+                old_total: 0,
+                new_total: 0,
+            })]
         );
     }
 
     #[test]
-    fn log_validation_matches_prefixes_and_opaque_payloads() {
+    fn a_payload_past_the_end_is_an_over_read() {
+        let add = encode_log_records(&[LogRecord::Add {
+            token: 1,
+            new_item: vec![1, 2, 3],
+        }])
+        .expect("encode");
+        assert_eq!(owned(&add[..add.len() - 1]), vec![Err(LogFault::OverRead)]);
+        assert_eq!(
+            owned(&record(4, 0, &[4, 0, 1, 2, 3, 4, 5, 6, 7])),
+            vec![Err(LogFault::OverRead)]
+        );
+        assert_eq!(
+            owned(&record(3, 1, &[1, 0, 2, 0, 9, 8])),
+            vec![Err(LogFault::OverRead)]
+        );
+    }
+
+    #[test]
+    fn a_header_token_faults_where_the_header_is_read() {
+        let mut header = encode_log_records(&[
+            LogRecord::Remove {
+                token: 1,
+                old_item: vec![1],
+            },
+            LogRecord::ModifyHeader {
+                old_total: 1,
+                new_total: 2,
+            },
+            LogRecord::Remove {
+                token: 2,
+                old_item: vec![2],
+            },
+        ])
+        .expect("encode");
+        header[11 + 4] = 1; // the header's token
+        assert_eq!(
+            owned(&header),
+            vec![
+                Ok(LogRecord::Remove {
+                    token: 1,
+                    old_item: vec![1],
+                }),
+                Err(LogFault::HeaderToken(1)),
+            ]
+        );
+        // A token cut short reads as `null_token`: no assert.
+        assert_eq!(
+            owned(
+                &4_u32
+                    .to_le_bytes()
+                    .into_iter()
+                    .chain([1, 0, 0])
+                    .collect::<Vec<_>>()
+            ),
+            vec![Ok(LogRecord::ModifyHeader {
+                old_total: 0,
+                new_total: 0,
+            })]
+        );
+        assert_eq!(
+            owned(&record(4, 0x0100_0001, &[])),
+            vec![Err(LogFault::HeaderToken(0x0100_0001))]
+        );
+    }
+
+    #[test]
+    fn opaque_payloads_and_header_padding_are_kept() {
         let mut bytes = encode_log_records(&[
             LogRecord::Add {
                 token: 1,
                 new_item: vec![255],
-            },
-            LogRecord::Remove {
-                token: 2,
-                old_item: vec![],
             },
             LogRecord::Modify {
                 token: 3,
                 old_item: vec![255, 255],
                 new_item: vec![],
             },
-            LogRecord::ModifyHeader {
-                old_total: u32::MAX,
-                new_total: 0,
-            },
         ])
         .expect("encode");
-        // A header may carry padding after each total; those bytes are opaque.
-        bytes.extend_from_slice(&[4, 0, 0, 0, 0, 0, 0, 0, 6, 0]);
-        bytes.extend_from_slice(&[255; 12]);
-        for end in 0..=bytes.len() {
-            assert_eq!(
-                validate_log_records(&bytes[..end]).map_err(|error| error.to_string()),
-                decode_log_records(&bytes[..end])
-                    .map(|_| ())
-                    .map_err(|error| error.to_string()),
-                "prefix {end}"
-            );
-        }
-        assert!(validate_log_records(&bytes).is_ok());
-        assert!(decode_log_records(&bytes).is_ok());
-    }
-
-    #[test]
-    fn log_decode_rejects_hostile_streams() {
-        // Truncated head.
-        assert!(decode_log_records(&[0, 0, 0]).is_err());
-        // Invalid type.
-        assert!(decode_log_records(&[9, 0, 0, 0, 0, 0, 0, 0]).is_err());
-        // Truncated payload.
-        let add = encode_log_records(&[LogRecord::Add {
-            token: 1,
-            new_item: vec![1, 2, 3],
-        }])
-        .expect("encode");
-        assert!(decode_log_records(&add[..add.len() - 1]).is_err());
-        // MODIFY_HEADER must carry null_token.
-        let mut bad_header = encode_log_records(&[LogRecord::ModifyHeader {
-            old_total: 1,
-            new_total: 2,
-        }])
-        .expect("encode");
-        bad_header[4] = 1; // corrupt the token's low byte
-        let error = decode_log_records(&bad_header).expect_err("non-null header token");
-        assert_eq!(error.non_null_header_token(), Some(1));
-        // A truncation is a different fault kind, not the abort-site one.
-        let truncated = decode_log_records(&add[..add.len() - 1]).expect_err("truncated");
-        assert_eq!(truncated.non_null_header_token(), None);
-        // The mask-out header count: two headers is the `_peek_header`
-        // abort shape (`phrase_index.cpp:745`); one is the normal case.
-        let two_headers = encode_log_records(&[
-            LogRecord::ModifyHeader {
-                old_total: 1,
-                new_total: 2,
-            },
-            LogRecord::ModifyHeader {
-                old_total: 2,
-                new_total: 3,
-            },
-        ])
-        .expect("encode");
-        assert_eq!(LogDecodeError::decoded_header_count(&two_headers), Some(2));
-        let one_header = encode_log_records(&[LogRecord::ModifyHeader {
-            old_total: 1,
-            new_total: 2,
-        }])
-        .expect("encode");
-        assert_eq!(LogDecodeError::decoded_header_count(&one_header), Some(1));
-        assert_eq!(LogDecodeError::decoded_header_count(&bad_header), None);
+        bytes.extend_from_slice(&record(4, 0, &[6, 0, 1, 0, 0, 0, 9, 9, 2, 0, 0, 0, 9, 9]));
+        assert_eq!(
+            owned(&bytes),
+            vec![
+                Ok(LogRecord::Add {
+                    token: 1,
+                    new_item: vec![255],
+                }),
+                Ok(LogRecord::Modify {
+                    token: 3,
+                    old_item: vec![255, 255],
+                    new_item: vec![],
+                }),
+                Ok(LogRecord::ModifyHeader {
+                    old_total: 1,
+                    new_total: 2,
+                }),
+            ]
+        );
     }
 }
