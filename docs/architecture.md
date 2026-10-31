@@ -77,6 +77,7 @@ Compile `crates/oxpinyin-store/src/kyotocabinet/shim.cc` with `cc` under the `ky
 It constructs `TreeDB`, `HashDB`, `StashDB` and `ProtoTreeDB` from build-time headers.
 Its `noexcept` C entry points in `shim.h` always turn C++ exceptions into failure returns.
 Like libpinyin, it depends on the system library's C++ ABI.
+The no-shims ruling retains it under the [Kyoto Cabinet exception](source-policy.md#kyoto-cabinet-exception).
 The facades import 68 `kyotocabinet::` names, 67 among the pin's 77.
 This describes the current tree.
 The `oxpinyin-input` boundary calls the C library through the `libc` crate, with no build step (maintainer ruling 2026-10-31 UTC: no hand-written C or C++ shims).
