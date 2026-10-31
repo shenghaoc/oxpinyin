@@ -397,6 +397,20 @@ pub fn txn_get_u64_or(
     Ok(txn_get_u64(txn, table, key)?.unwrap_or(default))
 }
 
+/// A library transition's write to a libpinyin session's own values. The
+/// pin's transitions are in memory and cannot fail (`FacadePhraseIndex::load`
+/// and `unload`, `phrase_index.cpp:237-268` at 074a2219), and neither can
+/// these: the session's values are process memory
+/// ([`SessionValues::Memory`](crate::session_values::SessionValues), made by
+/// `open_session`, the only constructor of a libpinyin target), whose
+/// transaction refuses only an empty or NUL table name or a re-entrant
+/// borrow, and whose rows the store's codec wrote itself. The generic table
+/// API still carries a `Result`; on this path it is always `Ok`, so the
+/// transition answers no refusal (policy row 103).
+fn in_session<R>(written: Result<R, impl Sized>) -> Option<R> {
+    written.ok()
+}
+
 fn bump_unigram_total(txn: &mut impl WriteTxn, delta: u64) -> Result<(), StoreError> {
     let key = codec::encode_u8(UNIGRAM_TOTAL_KEY);
     let prev = txn_get_u64_or(txn, UNIGRAM_TOTAL, &key, 0)?;
@@ -2014,8 +2028,6 @@ impl<S: WriteStore> GenericUserStore<S> {
             write_generation: AtomicU64::new(0),
             phrase_generation: AtomicU64::new(0),
             phrase_table_generation: AtomicU64::new(0),
-            #[cfg(test)]
-            fail_replace: AtomicBool::new(false),
             has_user_data: AtomicBool::new(has_user_data),
             facade_offset: std::sync::atomic::AtomicU32::new(0),
             has_library_offsets: AtomicBool::new(false),
@@ -2735,12 +2747,6 @@ impl<S: WriteStore> GenericUserStore<S> {
             phrases[at].index_reading(keys);
         }
         Ok(phrases)
-    }
-
-    /// Test only: the next library replacement's write is refused.
-    #[cfg(test)]
-    pub(crate) fn fail_next_replace(&self) {
-        self.inner.fail_replace.store(true, Ordering::SeqCst);
     }
 
     /// The complete independent user pinyin index, for the save to write.
@@ -3483,7 +3489,7 @@ impl<S: WriteStore> GenericUserStore<S> {
                 dir,
                 crate::persistence::SaveSource {
                     state: &state,
-                    libraries: Some(&phrases.libraries),
+                    libraries: Some(&phrases),
                     kept: &kept,
                     compacted: &[],
                 },
@@ -3585,7 +3591,7 @@ impl<S: WriteStore> GenericUserStore<S> {
                     dir,
                     crate::persistence::SaveSource {
                         state: &state,
-                        libraries: Some(&phrases.libraries),
+                        libraries: Some(&phrases),
                         kept: &kept,
                         compacted,
                     },
@@ -3637,43 +3643,44 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// (`pinyin.cpp:1253-1285`, `zhuyin.cpp:788-820` at 074a2219).
     ///
     /// # Errors
-    /// [`UserStoreError::Journal`] at the first library whose log reaches a
-    /// pin assertion, with nothing replaced; another [`UserStoreError`] when
-    /// the session values cannot be written.
+    /// The [`JournalFault`](crate::JournalFault) of the first library whose log reaches a pin
+    /// assertion, with nothing replaced.
     pub fn reload_system_libraries(
         &mut self,
         originals: crate::persistence::SystemOriginals,
         mask: Token,
         value: Token,
-    ) -> Result<(), UserStoreError> {
+    ) -> Result<(), crate::JournalFault> {
         let Some(target) = self.inner.libpinyin.as_ref() else {
             return Ok(());
         };
         let (state, library_totals) = match target.dir.clone() {
-            Some(dir) => crate::persistence::load_masked_logs(&dir, &originals, mask, value)
-                .map_err(UserStoreError::Journal)?,
+            Some(dir) => crate::persistence::load_masked_logs(&dir, &originals, mask, value)?,
             None => Default::default(),
         };
-        self.replace_system_libraries(originals, &state, &library_totals)
+        self.replace_system_libraries(originals, &state, &library_totals);
+        Ok(())
     }
 
     /// `_load_phrase_library`'s system branch for the libraries in
-    /// `originals`: each is mapped again and only its saved `.dbin` is
-    /// merged, so everything the session changed since the last save
-    /// (trained unigrams, imported readings and items, removals) goes with
-    /// the sub-index `unload` freed (074a2219 `pinyin.cpp:264-277`,
-    /// `phrase_index.cpp:261-268`; `zhuyin.cpp:298-312`). The independent
-    /// phrase-table membership stays in place, separate from the
-    /// sub-index.
+    /// `originals` (074a2219 `pinyin.cpp:246-277`, `zhuyin.cpp:190-221`):
+    /// each is mapped again and only its saved `.dbin` is merged, so
+    /// everything the session changed since the last save (trained
+    /// unigrams, imported readings and items, removals) goes with the
+    /// sub-index `unload` freed (`phrase_index.cpp:261-268`). A `.dbin`
+    /// that cannot be read is an empty log (`MemoryChunk::load` fails and
+    /// leaves the chunk empty), so the library comes back as its system
+    /// chunk alone. The independent phrase-table membership stays in place,
+    /// separate from the sub-index. Like the pin's, the transition is in
+    /// memory and has no failure of its own: nothing is written to disk.
     ///
     /// # Errors
-    /// [`UserStoreError::Journal`] where the merge reaches a pin assertion
-    /// (rows 91 and 108), with nothing replaced; another [`UserStoreError`]
-    /// when the session values cannot be written.
+    /// The [`JournalFault`](crate::JournalFault) where the merge reaches a pin assertion (rows 91
+    /// and 108), with nothing replaced.
     pub fn load_system_libraries(
         &mut self,
         originals: crate::persistence::SystemOriginals,
-    ) -> Result<(), UserStoreError> {
+    ) -> Result<(), crate::JournalFault> {
         let Some(dir) = self
             .inner
             .libpinyin
@@ -3682,89 +3689,89 @@ impl<S: WriteStore> GenericUserStore<S> {
         else {
             return Ok(());
         };
-        let (state, library_totals) = crate::persistence::load_library_logs(&dir, &originals)
-            .map_err(UserStoreError::Journal)?;
-        self.replace_system_libraries(originals, &state, &library_totals)
+        let (state, library_totals) = crate::persistence::load_library_logs(&dir, &originals)?;
+        self.replace_system_libraries(originals, &state, &library_totals);
+        Ok(())
     }
 
     /// `FacadePhraseIndex::unload` for the libraries in `originals`: the
     /// sub-index goes with everything the session changed in it and with
     /// its share of the facade total, whatever was saved (074a2219
     /// `phrase_index.cpp:261-268`). The user index tables keep their
-    /// entries.
-    ///
-    /// # Errors
-    /// Returns [`UserStoreError`] when the session values cannot be written.
-    pub fn unload_system_libraries(
-        &mut self,
-        originals: crate::persistence::SystemOriginals,
-    ) -> Result<(), UserStoreError> {
+    /// entries. In memory, as the pin's: nothing is written to disk, and a
+    /// save skips the library while it is unloaded (`pinyin.cpp:928-933`).
+    pub fn unload_system_libraries(&mut self, originals: crate::persistence::SystemOriginals) {
         self.replace_system_libraries(
             originals,
             &crate::persistence::UserState::default(),
             &std::collections::BTreeMap::new(),
-        )
+        );
     }
 
     /// `_load_phrase_library`'s `USER_FILE` branch for `library`: its
     /// sub-index comes back from the saved chunk, or empty when there is
-    /// none, so everything the session changed since the last save goes
-    /// (074a2219 `pinyin.cpp:303-321`, `zhuyin.cpp:247-265`). The phrase
-    /// table and the user pinyin index keep their entries, separate from
-    /// the sub-index: a reading the index carried stays indexed on the item
-    /// the chunk brings back.
-    ///
-    /// # Errors
-    /// Returns [`UserStoreError`] when the session values cannot be written.
-    pub fn load_user_library(&mut self, library: u8) -> Result<(), UserStoreError> {
-        let Some((dir, layout)) = self.inner.libpinyin.as_ref().and_then(|target| {
-            target
-                .dir
-                .clone()
-                .map(|dir| (dir, target.originals().layout().clone()))
-        }) else {
-            return Ok(());
+    /// none or it cannot be read (`create_sub_phrase`), so everything the
+    /// session changed since the last save goes (074a2219
+    /// `pinyin.cpp:303-321`, `zhuyin.cpp:247-265`). The phrase table and the
+    /// user pinyin index keep their entries, separate from the sub-index: a
+    /// reading the index carried stays indexed on the item the chunk brings
+    /// back. In memory, with no failure of its own.
+    pub fn load_user_library(&mut self, library: u8) {
+        let Some((dir, layout)) = self
+            .inner
+            .libpinyin
+            .as_ref()
+            .map(|target| (target.dir.clone(), target.originals().layout().clone()))
+        else {
+            return;
         };
         if !layout.has_user_library(library) {
-            return Ok(());
+            return;
         }
-        let loaded = crate::persistence::load_user_library(&dir, &layout, library);
-        self.replace_user_arena(library, loaded)
+        // No user directory, no chunk, or one that does not load:
+        // `create_sub_phrase`, an empty sub-index.
+        let loaded =
+            dir.and_then(|dir| crate::persistence::load_user_library(&dir, &layout, library));
+        self.replace_user_arena(library, Some(loaded.unwrap_or_default()));
     }
 
     /// `FacadePhraseIndex::unload` for the `USER_FILE` `library`: the
     /// sub-index goes with everything in it and with its share of the
     /// facade total, saved or not (074a2219 `phrase_index.cpp:261-268`).
-    /// The phrase table and the user pinyin index keep their entries.
-    ///
-    /// # Errors
-    /// Returns [`UserStoreError`] when the session values cannot be written.
-    pub fn unload_user_library(&mut self, library: u8) -> Result<(), UserStoreError> {
+    /// The phrase table and the user pinyin index keep their entries. In
+    /// memory, with no failure of its own; a save skips the library while
+    /// it is unloaded (`pinyin.cpp:928-933`).
+    pub fn unload_user_library(&mut self, library: u8) {
         let Some(layout) = self
             .inner
             .libpinyin
             .as_ref()
             .map(|target| target.originals().layout().clone())
         else {
-            return Ok(());
+            return;
         };
         if !layout.has_user_library(library) {
-            return Ok(());
+            return;
         }
-        self.replace_user_arena(library, None)
+        self.replace_user_arena(library, None);
     }
 
+    /// The session side of a system library transition: the reloaded
+    /// libraries' arenas, overrides, unigram deltas and facade share are
+    /// replaced by `state`'s. A libpinyin session's values are process
+    /// memory (see [`in_session`]), so this cannot fail, as
+    /// `FacadePhraseIndex::load`/`unload` cannot.
     fn replace_system_libraries(
         &mut self,
         originals: crate::persistence::SystemOriginals,
         state: &crate::persistence::UserState,
         library_totals: &std::collections::BTreeMap<u8, u32>,
-    ) -> Result<(), UserStoreError> {
-        self.flush_system_unigrams()?;
+    ) {
         let Some(target) = self.inner.libpinyin.clone() else {
-            return Ok(());
+            return;
         };
-        let replacement = self.arena_replacement(&originals, state)?;
+        in_session(self.flush_system_unigrams());
+        let replacement = self.arena_replacement(&originals, state);
         let surviving = target.phrases();
         let arena_libraries = || {
             replacement
@@ -3793,7 +3800,7 @@ impl<S: WriteStore> GenericUserStore<S> {
         // exist, and cleared below only once the transaction leaves none,
         // still under the database lock.
         self.inner.has_library_offsets.store(true, Ordering::SeqCst);
-        let (has_user_data, moved, offsets_left) = db.write(|txn| {
+        let written = db.write(|txn| {
             // `FacadePhraseIndex::load` and `merge_with_mask` take the old
             // sub-index's total out of the facade and put the new one's in
             // (`phrase_index.cpp:237-248`, `:301-332`): each reloaded
@@ -3809,10 +3816,6 @@ impl<S: WriteStore> GenericUserStore<S> {
             remove_system_unigrams(txn, reloaded)?;
             let reseeded =
                 crate::store_libpinyin::seed_txn(txn, state, &originals, library_totals)?;
-            #[cfg(test)]
-            if self.inner.fail_replace.swap(false, Ordering::SeqCst) {
-                return Err(StoreError::Backend("injected write failure".into()));
-            }
             moved = reseeded
                 .values()
                 .fold(moved, |moved, &offset| moved.wrapping_add(offset));
@@ -3820,7 +3823,10 @@ impl<S: WriteStore> GenericUserStore<S> {
             store_unigram_total(txn)?;
             bump_unigram_total(txn, arena_total)?;
             Ok((has_user_data_in_write_txn(txn)?, moved, offsets_left))
-        })?;
+        });
+        // Unreachable `None`: keep the offsets flag set and the user-data
+        // gate open, the answers that read every row there is.
+        let (has_user_data, moved, offsets_left) = in_session(written).unwrap_or((true, 0, true));
         {
             let mut phrases = target.phrases();
             phrases
@@ -3871,7 +3877,6 @@ impl<S: WriteStore> GenericUserStore<S> {
             .container()
             .is_some_and(|container| container.keys().is_ok_and(|keys| !keys.is_empty()));
         self.mark_committed_phrase_write(db, has_user_data || has_grams || arena_live);
-        Ok(())
     }
 
     fn clear_masked_system_items(&self, mask: Token, value: Token) {

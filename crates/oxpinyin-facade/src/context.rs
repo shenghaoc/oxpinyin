@@ -206,21 +206,11 @@ pub enum LibraryRowAssert {
 pub enum LibraryLoadFault {
     /// The pin `assert`s on the library's row.
     Row(LibraryRowAssert),
-    /// The user store could not take the library's replacement; the runtime
-    /// was left as it was.
-    StoreWrite(StoreWriteFailed),
     /// The reloaded system library's `.dbin` merge reached a pin assertion
     /// ([`JournalFault`], rows 91 and 108; `pinyin.cpp:276`,
     /// `zhuyin.cpp:219`). The library stays unloaded; the C adapters abort.
     Journal(JournalFault),
 }
-
-/// The user store refused the write a library load or unload makes. The pin
-/// cannot fail here: `unload` is in memory and an unreadable `.dbin` is an
-/// empty log (`pinyin.cpp:264-277` at 074a2219), so this is oxpinyin's own
-/// availability case (policy row 103).
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct StoreWriteFailed;
 
 /// Whether the pin writes its `mmap %s failed!` line for a row that names no
 /// chunk. `g_build_filename(dir, NULL, NULL)` is `dir`, so `MemoryChunk::mmap`
@@ -254,16 +244,6 @@ fn null_chunk_refused(dir: &Path) {
     if writes_null_chunk_line(dir, directory_reads_as_a_chunk) {
         c_stderr::mmap_failed(dir);
     }
-}
-
-/// Runs a library transition store-first: `write` replaces the library in
-/// the user store, and `commit` changes the runtime only when it succeeded.
-fn store_first(
-    write: impl FnOnce() -> Result<(), UserStoreError>,
-    commit: impl FnOnce() -> bool,
-) -> Result<bool, StoreWriteFailed> {
-    write().map_err(|_| StoreWriteFailed)?;
-    Ok(commit())
 }
 
 /// Bit 30 of [`LiveOptions::double_scheme`]: when set, the live
@@ -612,10 +592,8 @@ impl ContextCore {
         // remap leaves out. The separate phrase table is retained.
         if let Some(runtime) = self.runtime.as_ref() {
             let originals = runtime.reload_system_libraries();
-            match store.reload_system_libraries(originals, mask, value) {
-                Ok(()) => {}
-                Err(UserStoreError::Journal(fault)) => return MaskOutOutcome::Journal(fault),
-                Err(_) => return MaskOutOutcome::Done(false),
+            if let Err(fault) = store.reload_system_libraries(originals, mask, value) {
+                return MaskOutOutcome::Journal(fault);
             }
             // The mask ends with a compact (`pinyin.cpp:1294`,
             // `zhuyin.cpp:829`); the failed empty sub-index's local
@@ -637,18 +615,27 @@ impl ContextCore {
             .is_some_and(UserStore::has_non_token_bigram_key)
     }
 
-    /// `load_phrase_library`'s read side: the runtime's library-load
-    /// (mask-clear) rule; `false` without a runtime.
+    /// `pinyin_load_phrase_library`'s body (074a2219 `pinyin.cpp:446-459`,
+    /// `_load_phrase_library` `:234-322`; `zhuyin.cpp:361-375`, `:178-266`):
+    /// an in-memory transition of the session, as the pin's. A library that
+    /// is loaded answers `false` (`get_range` found its sub-index,
+    /// `:242-244`). An unloaded system library is mapped again and only its
+    /// saved `.dbin` is merged, an unreadable one being an empty log; an
+    /// unloaded `USER_FILE` library comes back from its saved chunk, or empty
+    /// (`:303-321`). The runtime's visibility mask then clears and the call
+    /// answers `true`. Nothing is written to disk, and nothing that can fail
+    /// is: the pin has no failing site here (policy row 103). `false`
+    /// without a runtime.
     ///
     /// # Errors
     ///
-    /// [`LibraryRowAssert::NotLoadable`] where the pin `assert`s: the
-    /// index is in range and its default row is neither `SYSTEM_FILE` nor
-    /// `USER_FILE` (`pinyin.cpp:457`, `zhuyin.cpp:372`); or
-    /// [`LibraryRowAssert::ChunkHeaderRead`] when the library being loaded
-    /// again is a directory (`memory_chunk.h:493`), both under
-    /// [`LibraryLoadFault::Row`]; or [`LibraryLoadFault::StoreWrite`] when
-    /// the user store cannot take the replacement, with the library still
+    /// The pin's asserts, nothing else: [`LibraryRowAssert::NotLoadable`]
+    /// when the index is in range and its default row is neither
+    /// `SYSTEM_FILE` nor `USER_FILE` (`pinyin.cpp:457`, `zhuyin.cpp:372`),
+    /// or [`LibraryRowAssert::ChunkHeaderRead`] when the library being
+    /// loaded again is a directory (`memory_chunk.h:493`), both under
+    /// [`LibraryLoadFault::Row`]; or [`LibraryLoadFault::Journal`] when the
+    /// saved `.dbin`'s merge reaches an assert, with the library still
     /// unloaded.
     pub fn load_phrase_library(&self, index: u32) -> Result<bool, LibraryLoadFault> {
         let Some(runtime) = self.runtime.as_ref() else {
@@ -676,43 +663,32 @@ impl ContextCore {
         }
         // The sub-index `unload` freed comes back as the system chunk plus
         // the saved log, so the session's unsaved changes to the library
-        // are gone (`pinyin.cpp:264-277`, `phrase_index.cpp:261-268`;
-        // `zhuyin.cpp:298-312`). The user index tables keep their entries.
-        // The store takes the replacement first and the mask clears only
-        // after it did, so no reader sees the freed state again and a store
-        // that refuses leaves the library unloaded. The system chunk mapped
-        // below sits behind the mask and is mapped again by the next load.
+        // are gone (`pinyin.cpp:264-277`, `phrase_index.cpp:237-248`;
+        // `zhuyin.cpp:208-221`). The user index tables keep their entries.
+        // The session takes the replacement before the mask clears, so no
+        // reader sees the freed state again. The system chunk mapped below
+        // sits behind the mask and is mapped again by the next load.
         //
         // A `USER_FILE` library comes back from its saved chunk, or empty
         // when there is none (`pinyin.cpp:303-321`, `zhuyin.cpp:247-265`);
         // a token the dropped session had allocated dangles as in policy
-        // row 102, and a refused store write is row 103.
+        // row 102.
         //
         // The saved `.dbin`'s merge can reach a pin assertion (rows 91 and
         // 108, `pinyin.cpp:276`, `zhuyin.cpp:219`): that is returned with
         // nothing replaced and the library still unloaded.
         let user_file = matches!(row.file_type, FileType::UserFile);
         let originals = runtime.reload_system_library(row_index);
-        let mut store = self.user.clone();
-        let mut journal = None;
-        let loaded = store_first(
-            || match store.as_mut() {
-                Some(store) if user_file => store.load_user_library(row_index),
-                Some(store) if !originals.is_empty() => {
-                    store.load_system_libraries(originals).inspect_err(|error| {
-                        if let UserStoreError::Journal(fault) = error {
-                            journal = Some(*fault);
-                        }
-                    })
-                }
-                _ => Ok(()),
-            },
-            || runtime.load_library(index),
-        );
-        if let Some(fault) = journal {
-            return Err(LibraryLoadFault::Journal(fault));
+        if let Some(mut store) = self.user.clone() {
+            if user_file {
+                store.load_user_library(row_index);
+            } else if !originals.is_empty() {
+                store
+                    .load_system_libraries(originals)
+                    .map_err(LibraryLoadFault::Journal)?;
+            }
         }
-        loaded.map_err(LibraryLoadFault::StoreWrite)
+        Ok(runtime.load_library(index))
     }
 
     /// `load_addon_phrase_library`'s body: the runtime's addon load, with
@@ -749,37 +725,41 @@ impl ContextCore {
         }
     }
 
-    /// `unload_phrase_library`'s read side; `false` without a runtime.
-    ///
-    /// # Errors
-    ///
-    /// [`StoreWriteFailed`] when the user store cannot take the library's
-    /// removal; the library stays loaded.
-    pub fn unload_phrase_library(&self, index: u8) -> Result<bool, StoreWriteFailed> {
+    /// `FacadePhraseIndex::unload` behind `pinyin_unload_phrase_library`
+    /// and `zhuyin_unload_phrase_library` (074a2219 `pinyin.cpp:464-475`,
+    /// `zhuyin.cpp:379-390`, `phrase_index.cpp:261-268`): an in-memory
+    /// transition of the session, as the pin's. The library's sub-index goes
+    /// with everything the session changed in it and its share of the
+    /// facade total, the runtime's visibility mask sets, and the call
+    /// answers the runtime's `true`. Nothing is written to disk: a save
+    /// skips the library while it is unloaded (`pinyin.cpp:928-933`), and
+    /// the pin has no failing site here (policy row 103). `false` without a
+    /// runtime. Which indices a facade lets through is the C adapters'
+    /// rule.
+    #[must_use]
+    pub fn unload_phrase_library(&self, index: u8) -> bool {
         let Some(runtime) = self.runtime.as_ref() else {
-            return Ok(false);
+            return false;
         };
         // `unload` deletes the sub-index and takes its total out of the
         // facade (`phrase_index.cpp:261-268`): the session's changes to the
         // library and its saved log's share go now, not at the next load.
-        // The store is written first; the mask flips only after it took.
-        // A `USER_FILE` library is dropped whole, saved chunk included, and
-        // comes back from the saved chunk (`pinyin.cpp:303-321`).
+        // A `USER_FILE` library is dropped whole and comes back from the
+        // saved chunk (`pinyin.cpp:303-321`).
         let user_file = runtime
             .table_conf()
             .default_row(index)
             .is_some_and(|row| matches!(row.file_type, FileType::UserFile))
             && runtime.dict().library_visible(u32::from(index));
         let originals = runtime.current_system_library(index);
-        let mut store = self.user.clone();
-        store_first(
-            || match store.as_mut() {
-                Some(store) if user_file => store.unload_user_library(index),
-                Some(store) if !originals.is_empty() => store.unload_system_libraries(originals),
-                _ => Ok(()),
-            },
-            || runtime.unload_library(u32::from(index)),
-        )
+        if let Some(mut store) = self.user.clone() {
+            if user_file {
+                store.unload_user_library(index);
+            } else if !originals.is_empty() {
+                store.unload_system_libraries(originals);
+            }
+        }
+        runtime.unload_library(u32::from(index))
     }
 
     /// Clone of the context's user store, if this context has one.
@@ -852,46 +832,144 @@ mod open_failure_tests {
     }
 }
 
+/// Policy row 103: `FacadePhraseIndex::unload` and `_load_phrase_library`
+/// are in-memory transitions that cannot fail (074a2219
+/// `phrase_index.cpp:261-268`, `pinyin.cpp:234-322`), and a save skips an
+/// unloaded library (`pinyin.cpp:928-933`).
 #[cfg(test)]
-mod store_first_tests {
-    use super::{StoreWriteFailed, store_first};
-    use oxpinyin_user::UserStoreError;
-    use std::cell::Cell;
+mod library_transition_tests {
+    use super::{ContextCore, SaveOutcome};
+    use crate::PINYIN_DEFAULT_OPTION_WORD as WORD;
+    use oxpinyin_core::{PhraseText, SyllableKey};
+    use oxpinyin_user::{UserConfLaw, toned_key};
+    use std::path::Path;
 
-    /// `ContextCore` holds the concrete `UserStore`, so a store whose write
-    /// fails cannot be injected into it; the ordering law lives in
-    /// `store_first`, which both transitions use, and is held here with a
-    /// write that fails.
-    #[test]
-    fn a_failed_store_write_leaves_the_runtime_alone() {
-        let committed = Cell::new(false);
-        let result = store_first(
-            || Err(UserStoreError::Decode),
-            || {
-                committed.set(true);
-                true
-            },
-        );
-        assert_eq!(result, Err(StoreWriteFailed));
-        assert!(
-            !committed.get(),
-            "the runtime changed before the store took"
-        );
+    const GB: u8 = 1;
+    const GBK: u8 = 2;
+
+    /// A context over the committed mini tables of this build's backend,
+    /// with a user directory of its own.
+    fn open(user: &Path) -> ContextCore {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/w3");
+        ["db", "kct", "tkt"]
+            .into_iter()
+            .find_map(|ext| {
+                ContextCore::open(&root.join(ext), Some(user), WORD, UserConfLaw::Pinyin)
+            })
+            .expect("committed backend fixtures")
+    }
+
+    /// The first token of `library` and its text.
+    fn first_item(ctx: &ContextCore, library: u8) -> (u32, PhraseText) {
+        let token = (u32::from(library) << 24) | 1;
+        let dict = ctx.runtime.as_ref().expect("runtime").dict();
+        let text = dict.system().phrase_text(token).expect("text");
+        (token, PhraseText::from(text.as_str().expect("scalar text")))
+    }
+
+    /// Imports `token`'s text under a reading of `tone` the chunk does not
+    /// hold, and arms `m_modified` as `pinyin_end_add_phrases` does
+    /// (`pinyin.cpp:658`).
+    fn import(ctx: &mut ContextCore, library: u8, token: u32, text: &PhraseText, tone: u8) {
+        let syllable = SyllableKey::from_text("a").expect("syllable").index();
+        let length = text.char_count().expect("character count");
+        let keys = vec![toned_key(syllable, tone).expect("key"); length];
+        ctx.user
+            .as_mut()
+            .expect("store")
+            .add_system_phrase_in(library, Some(token), text, &keys, Some(7))
+            .expect("import");
+        ctx.user.as_mut().expect("store").mark_modified();
+    }
+
+    /// The readings the session holds for `token` beyond the chunk's own.
+    fn readings(ctx: &ContextCore, token: u32) -> usize {
+        ctx.user
+            .as_ref()
+            .expect("store")
+            .system_item_override(token)
+            .expect("item")
+            .map_or(0, |item| item.prons.len())
     }
 
     #[test]
-    fn a_written_store_commits_and_answers_the_runtimes_result() {
-        let wrote = Cell::new(false);
-        let result = store_first(
-            || {
-                wrote.set(true);
-                Ok(())
-            },
-            || {
-                assert!(wrote.get(), "the runtime changed before the store took");
-                false
-            },
+    fn unload_then_save_leaves_the_unloaded_librarys_log_alone() {
+        let user = tempfile::tempdir().expect("user dir");
+        let mut ctx = open(user.path());
+        let (gb, gb_text) = first_item(&ctx, GB);
+        let (gbk, gbk_text) = first_item(&ctx, GBK);
+        import(&mut ctx, GB, gb, &gb_text, 1);
+        import(&mut ctx, GBK, gbk, &gbk_text, 1);
+        assert_eq!(ctx.save_user(), SaveOutcome::Saved);
+        let gb_log = user.path().join("gb_char.dbin");
+        let gbk_log = user.path().join("gbk_char.dbin");
+        let saved_gb = std::fs::read(&gb_log).expect("gb log");
+        let saved_gbk = std::fs::read(&gbk_log).expect("gbk log");
+        // Unsaved changes to both libraries, then GBK goes.
+        import(&mut ctx, GB, gb, &gb_text, 2);
+        import(&mut ctx, GBK, gbk, &gbk_text, 2);
+        let with_unsaved = readings(&ctx, gbk);
+        assert!(ctx.unload_phrase_library(GBK));
+        assert_eq!(readings(&ctx, gbk), 0, "unload drops the sub-index");
+        assert_eq!(ctx.save_user(), SaveOutcome::Saved);
+        assert_eq!(
+            std::fs::read(&gbk_log).expect("gbk log"),
+            saved_gbk,
+            "the save skips the unloaded library (`pinyin.cpp:928-933`)"
         );
-        assert_eq!(result, Ok(false));
+        assert_ne!(
+            std::fs::read(&gb_log).expect("gb log"),
+            saved_gb,
+            "the loaded library is saved"
+        );
+        // The reload merges the saved log: the unsaved reading is gone.
+        assert_eq!(ctx.load_phrase_library(u32::from(GBK)), Ok(true));
+        assert_eq!(readings(&ctx, gbk), with_unsaved - 1);
+        assert_eq!(ctx.load_phrase_library(u32::from(GBK)), Ok(false));
+    }
+
+    #[test]
+    fn unload_then_reload_restores_the_saved_library() {
+        let user = tempfile::tempdir().expect("user dir");
+        let mut ctx = open(user.path());
+        let (gbk, text) = first_item(&ctx, GBK);
+        import(&mut ctx, GBK, gbk, &text, 1);
+        assert_eq!(ctx.save_user(), SaveOutcome::Saved);
+        let saved = readings(&ctx, gbk);
+        assert!(saved > 0);
+        for _ in 0..2 {
+            assert!(ctx.unload_phrase_library(GBK));
+            assert!(
+                !ctx.runtime
+                    .as_ref()
+                    .expect("runtime")
+                    .dict()
+                    .library_visible(u32::from(GBK))
+            );
+            assert_eq!(ctx.load_phrase_library(u32::from(GBK)), Ok(true));
+            assert_eq!(readings(&ctx, gbk), saved);
+        }
+    }
+
+    #[test]
+    fn reload_after_an_unreadable_log_loads_the_system_chunk_alone() {
+        let user = tempfile::tempdir().expect("user dir");
+        let mut ctx = open(user.path());
+        let (gbk, text) = first_item(&ctx, GBK);
+        import(&mut ctx, GBK, gbk, &text, 1);
+        assert_eq!(ctx.save_user(), SaveOutcome::Saved);
+        assert!(readings(&ctx, gbk) > 0);
+        let log = user.path().join("gbk_char.dbin");
+        for unreadable in [None, Some(&b"abc"[..])] {
+            assert!(ctx.unload_phrase_library(GBK));
+            // `MemoryChunk::load` fails on a missing file and on one shorter
+            // than its header (`memory_chunk.h:416-429`): an empty log.
+            match unreadable {
+                None => std::fs::remove_file(&log).expect("remove log"),
+                Some(bytes) => std::fs::write(&log, bytes).expect("short log"),
+            }
+            assert_eq!(ctx.load_phrase_library(u32::from(GBK)), Ok(true));
+            assert_eq!(readings(&ctx, gbk), 0, "the system chunk alone");
+        }
     }
 }

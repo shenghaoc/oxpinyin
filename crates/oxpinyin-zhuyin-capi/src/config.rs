@@ -209,14 +209,6 @@ pub extern "C" fn zhuyin_load_phrase_library(context: *mut ZhuyinContext, index:
             );
             false
         }
-        // Class (c), policy row 103 (see `pinyin_load_phrase_library`).
-        Err(oxpinyin_facade::LibraryLoadFault::StoreWrite(_)) => {
-            crate::ffi::log_warning(
-                "zhuyin_load_phrase_library: the user store could not be written; \
-                 the library stays unloaded",
-            );
-            false
-        }
         // Register rows 91 and 108: the reloaded library's saved `.dbin`
         // merge reached a pin assertion (`zhuyin.cpp:219`, then
         // `phrase_index_logger.h:202` or `memory_chunk.h:390`).
@@ -251,12 +243,8 @@ pub extern "C" fn zhuyin_unload_phrase_library(context: *mut ZhuyinContext, inde
     if index == TSI_DICTIONARY {
         return false;
     }
-    // Class (c), policy row 103 (see `pinyin_unload_phrase_library`).
-    ctx.unload_phrase_library(index).unwrap_or_else(|_| {
-        crate::ffi::log_warning(
-            "zhuyin_unload_phrase_library: the user store could not be written; \
-             the library stays loaded",
-        );
-        false
-    })
+    // `FacadePhraseIndex::unload` is in memory (policy row 103): the
+    // session drops the library and its visibility mask sets, with nothing
+    // written and nothing that can fail.
+    ctx.unload_phrase_library(index)
 }

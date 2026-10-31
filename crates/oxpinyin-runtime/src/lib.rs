@@ -2322,19 +2322,24 @@ impl Runtime {
     /// chunk falls back to the pre-existing init-snapshot behavior: the
     /// registered row 76 answer at the save site (the caller writes
     /// `mmap %s failed!` and the save continues; the pin's empty-chunk
-    /// SIGSEGV is not reproduced).
+    /// SIGSEGV is not reproduced). An unloaded default library, system or
+    /// `USER_FILE`, is `Unloaded`: the save leaves its file alone.
     ///
     /// # Errors
     ///
     /// Returns the [`LayoutFault`] when the current chunk passed the header
     /// and checksum but its sub-index layout is refused.
     pub fn save_disk_baseline(&self, nibble: u8) -> Result<SaveBaseline, LayoutFault> {
-        // `_write_files` skips a default library whose sub-index is gone
-        // (`pinyin.cpp:928-933`, `zhuyin.cpp:563-568`): an unloaded library
-        // is never remapped at save, and nibble 0 is the USER_FILE row the
-        // system loop never visits.
-        if nibble == 0 || !self.dict.library_visible(u32::from(nibble)) {
+        // Nibble 0 is the reserved row the loop never visits.
+        if nibble == 0 {
             return Ok(SaveBaseline::Keep);
+        }
+        // `_write_files` skips a default library whose sub-index is gone
+        // (`pinyin.cpp:928-933`, `zhuyin.cpp:563-568`), a `USER_FILE`
+        // library included: an unloaded library is neither remapped nor
+        // written, and its file on disk stays.
+        if !self.dict.library_visible(u32::from(nibble)) {
+            return Ok(SaveBaseline::Unloaded);
         }
         let Some((path, original)) = self.dict.system.libraries().loaded_path_library(nibble)
         else {

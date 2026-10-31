@@ -45,15 +45,16 @@ fn library_total(
 }
 
 impl<S: WriteStore> GenericUserStore<S> {
-    pub(super) fn replace_user_arena(
-        &mut self,
-        nibble: u8,
-        library: Option<UserLibrary>,
-    ) -> Result<(), UserStoreError> {
-        self.flush_system_unigrams()?;
+    /// The session side of a `USER_FILE` library transition: `library` takes
+    /// the arena's place, with its share of the facade total; `None` is an
+    /// unload, which leaves the library without a sub-index until a load. A libpinyin session's values are process memory (see
+    /// [`in_session`]), so this cannot fail, as `FacadePhraseIndex::load`
+    /// and `unload` cannot.
+    pub(super) fn replace_user_arena(&mut self, nibble: u8, library: Option<UserLibrary>) {
         let Some(target) = &self.inner.libpinyin else {
-            return Ok(());
+            return;
         };
+        in_session(self.flush_system_unigrams());
         let db = self.database();
         let mut phrases = target.phrases();
         let sum = |library: &UserLibrary| {
@@ -67,7 +68,7 @@ impl<S: WriteStore> GenericUserStore<S> {
             .as_ref()
             .map_or(0, |library| library.total().wrapping_sub(after as u32));
         self.inner.has_library_offsets.store(true, Ordering::SeqCst);
-        let (moved, offsets_left, tables_live) = db.write(|txn| {
+        let written = db.write(|txn| {
             let key = [nibble];
             let old_offset = txn_get_u64_or(txn, LIBRARY_OFFSET, &key, 0)? as u32;
             if offset == 0 {
@@ -81,19 +82,21 @@ impl<S: WriteStore> GenericUserStore<S> {
                 &[UNIGRAM_TOTAL_KEY],
                 &codec::encode_u64(total.wrapping_sub(before).wrapping_add(after)),
             )?;
-            #[cfg(test)]
-            if self.inner.fail_replace.swap(false, Ordering::SeqCst) {
-                return Err(StoreError::Backend("injected write failure".into()));
-            }
             Ok((
                 offset.wrapping_sub(old_offset),
                 !txn.is_empty(LIBRARY_OFFSET)?,
                 has_user_data_in_write_txn(txn)?,
             ))
-        })?;
+        });
+        // Unreachable `None`: keep the offsets flag set and the user-data
+        // gate open, the answers that read every row there is.
+        let (moved, offsets_left, tables_live) = in_session(written).unwrap_or((0, true, true));
         phrases.libraries.remove(&nibble);
         if let Some(library) = library {
             phrases.libraries.insert(nibble, library);
+            phrases.unloaded.remove(&nibble);
+        } else {
+            phrases.unloaded.insert(nibble);
         }
         let arena_live = phrases
             .libraries
@@ -108,7 +111,6 @@ impl<S: WriteStore> GenericUserStore<S> {
             .container()
             .is_some_and(|container| container.keys().is_ok_and(|keys| !keys.is_empty()));
         self.mark_committed_phrase_write(db, arena_live || tables_live || grams_live);
-        Ok(())
     }
 
     pub(super) fn arena_has_system_items(&self) -> bool {
@@ -492,18 +494,29 @@ impl<S: WriteStore> GenericUserStore<S> {
         Ok(())
     }
 
+    /// The arenas a system library transition installs: `state`'s items,
+    /// and its overrides of slots the mapped chunk does not hold. An item
+    /// the arena cannot hold, a phrase of no characters `encode_phrase_item`
+    /// refuses or an arena past `u32` offsets, is left out; the session open
+    /// refuses the same log outright (`open_session`), and the pin keeps it.
     pub(super) fn arena_replacement(
         &self,
         originals: &crate::SystemOriginals,
         state: &crate::persistence::UserState,
-    ) -> Result<std::collections::BTreeMap<u8, UserLibrary>, UserStoreError> {
+    ) -> std::collections::BTreeMap<u8, UserLibrary> {
         let mut libraries = std::collections::BTreeMap::<u8, UserLibrary>::new();
+        let hold = |libraries: &mut std::collections::BTreeMap<u8, UserLibrary>,
+                    nibble: u8,
+                    slot: u32,
+                    item: &ChunkItem| {
+            if let Ok(bytes) = encoded(item) {
+                let _held = libraries.entry(nibble).or_default().replace(slot, &bytes);
+            }
+        };
         for (&nibble, items) in &state.libraries {
-            let library = libraries.entry(nibble).or_default();
+            libraries.entry(nibble).or_default();
             for (&slot, item) in items {
-                library
-                    .replace(slot, &encoded(item)?)
-                    .map_err(UserStoreError::Persistence)?;
+                hold(&mut libraries, nibble, slot, item);
             }
         }
         for (&nibble, items) in &state.system_overrides {
@@ -513,14 +526,10 @@ impl<S: WriteStore> GenericUserStore<S> {
                     .is_some_and(|library| library.contains_item(slot))
                     && let Some(item) = item
                 {
-                    libraries
-                        .entry(nibble)
-                        .or_default()
-                        .replace(slot, &encoded(item)?)
-                        .map_err(UserStoreError::Persistence)?;
+                    hold(&mut libraries, nibble, slot, item);
                 }
             }
         }
-        Ok(libraries)
+        libraries
     }
 }
