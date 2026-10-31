@@ -441,6 +441,24 @@ impl WriteStore for BdbStore {
         })
     }
 
+    /// `ChewingLargeTable2::save_db` / `PhraseLargeTable3::save_db`
+    /// (`chewing_large_table2_bdb.cpp:135-162`,
+    /// `phrase_large_table3_bdb.cpp:150-177` at 074a2219): unlink, create a
+    /// `DB_BTREE` file (`DB_CREATE, 0600`), `copy_bdb`'s one `put` per
+    /// record in key order (`bdb_utils.h:43-74`), then `close`. The pin's
+    /// `tmp_db->sync(m_db, 0)` syncs its in-memory source table, which
+    /// oxpinyin does not hold, so the new file is not synced before close.
+    fn write_user_index(
+        path: &Path,
+        records: impl FnOnce(&mut crate::RecordSink<'_>) -> Result<(), StoreError>,
+    ) -> Result<(), StoreError> {
+        crate::remove_if_present(path)?;
+        let file = Db::open(path, ffi::DB_BTREE, false, true, ffi::USER_FILE_MODE)?;
+        records(&mut |key, value| file.put(key, value))?;
+        file.close_unsynced();
+        Ok(())
+    }
+
     fn write<R>(
         &self,
         f: impl FnOnce(&mut Self::Txn<'_>) -> Result<R, StoreError>,
@@ -787,13 +805,21 @@ impl crate::UserBigramDb for BdbUserBigramDb {
         Ok(keys)
     }
 
+    fn is_empty(&self) -> Result<bool, StoreError> {
+        Ok(self.db.cursor()?.key(ffi::Seek::First)?.is_none())
+    }
+
     fn save_db(&self, path: &Path) -> Result<(), StoreError> {
-        // `Bigram::save_db` (`ngram_bdb.cpp:81-107`): unlink, create a
+        // `Bigram::save_db` (`ngram_bdb.cpp:81-108`): unlink, create a
         // `DB_HASH` file (`DB_CREATE, 0600`), copy this container into it
-        // in cursor order, sync, close.
+        // in cursor order, `tmp_db->sync(m_db, 0)` — a sync of this
+        // in-memory container, not of the file — then close the file.
         crate::remove_if_present(path)?;
         let file = Db::open(path, ffi::DB_HASH, false, true, ffi::USER_FILE_MODE)?;
         visit_db(&self.db, |key, value| file.put(key, value))?;
-        file.sync()
+        // The pin discards this call's return code, and so does this.
+        let _sync = self.db.sync();
+        file.close_unsynced();
+        Ok(())
     }
 }

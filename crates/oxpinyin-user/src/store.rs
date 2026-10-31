@@ -1158,8 +1158,20 @@ fn has_partial_tail(gram: &[u8]) -> bool {
 /// Answers whether a key remains. The faults the pin dies on are the
 /// caller's to refuse first ([`gram_mask_fault`]).
 fn mask_grams(grams: &mut impl GramOps, mask: Token, value: Token) -> Result<bool, StoreError> {
+    let keys = grams.keys()?;
+    mask_grams_over(grams, keys, mask, value)
+}
+
+/// [`mask_grams`] over keys `get_all_items` already collected, so that a
+/// mask and its fault check share the pin's one container walk.
+fn mask_grams_over(
+    grams: &mut impl GramOps,
+    keys: Vec<Option<Token>>,
+    mask: Token,
+    value: Token,
+) -> Result<bool, StoreError> {
     let mut remaining = false;
-    for key in grams.keys()? {
+    for key in keys {
         let Some(prev) = key else {
             remaining = true;
             continue;
@@ -1200,10 +1212,22 @@ fn gram_mask_fault(
     value: Token,
 ) -> Result<Option<UserStoreError>, StoreError> {
     let keys = grams.keys()?;
+    gram_mask_fault_over(grams, &keys, mask, value)
+}
+
+/// [`gram_mask_fault`] over keys `get_all_items` already collected: the
+/// faults are met in the same key order, after the same one walk, that
+/// the pin's `Bigram::mask_out` meets them.
+fn gram_mask_fault_over(
+    grams: &mut impl GramOps,
+    keys: &[Option<Token>],
+    mask: Token,
+    value: Token,
+) -> Result<Option<UserStoreError>, StoreError> {
     if keys.iter().any(Option::is_none) {
         return Ok(Some(UserStoreError::NonTokenUserBigramKey));
     }
-    for prev in keys.into_iter().flatten() {
+    for &prev in keys.iter().flatten() {
         if prev & mask == value {
             continue;
         }
@@ -1534,6 +1558,14 @@ impl<S: WriteStore> fmt::Debug for GenericUserStore<S> {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Runs once on this thread right after the next mask's container key
+    /// walk: a test's window between that walk and the mask.
+    pub(crate) static AFTER_CONTAINER_KEYS: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 impl<S: WriteStore> GenericUserStore<S> {
     /// Locks the shared store handle, recovering from a poisoned lock
     /// (constitution §4: nothing here panics, so a poisoned mutex must not
@@ -1711,10 +1743,47 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// `pinyin.cpp:1230`, `zhuyin.cpp:765`, `pinyin.cpp:3766`) all reach
     /// the same walk.
     fn bigram_mask_fault(&self, mask: Token, value: Token) -> Option<UserStoreError> {
-        let fault = if let Some(container) = self.container() {
-            gram_mask_fault(&mut ContainerGrams(&container), mask, value)
+        let db = self.database();
+        let keys = self.container_keys();
+        self.bigram_mask_fault_over(&db, keys.as_ref(), mask, value)
+    }
+
+    /// The session container's `Bigram::get_all_items` walk
+    /// (`ngram_tkrzwdb.cpp:161-172` and its Kyoto Cabinet and Berkeley DB
+    /// twins at 074a2219), or `None` without a container. A mask takes it
+    /// once and hands it to both its fault check and its walk. The caller
+    /// holds the database guard from before this walk until the mask has
+    /// run, so no other handle's `set_bigram_count` adds a gram the walk
+    /// missed.
+    fn container_keys(&self) -> Option<Result<Vec<Option<Token>>, StoreError>> {
+        let keys = self
+            .container()
+            .map(|container| ContainerGrams(&container).keys());
+        #[cfg(test)]
+        AFTER_CONTAINER_KEYS.with(|hook| {
+            if let Some(hook) = hook.borrow_mut().take() {
+                hook();
+            }
+        });
+        keys
+    }
+
+    /// [`Self::bigram_mask_fault`] over the container keys
+    /// [`Self::container_keys`] collected, with the database guard `db`
+    /// held.
+    fn bigram_mask_fault_over(
+        &self,
+        db: &SessionValues<S>,
+        keys: Option<&Result<Vec<Option<Token>>, StoreError>>,
+        mask: Token,
+        value: Token,
+    ) -> Option<UserStoreError> {
+        let fault = if let Some(keys) = keys {
+            let (Ok(keys), Some(container)) = (keys, self.container()) else {
+                return None;
+            };
+            gram_mask_fault_over(&mut ContainerGrams(&container), keys, mask, value)
         } else {
-            let db = self.database();
             let mut keys = Vec::new();
             let _ = db.for_each(BIGRAM_GRAM, |key, gram| {
                 keys.push((key.to_vec(), gram.to_vec()));
@@ -3689,6 +3758,25 @@ impl<S: WriteStore> GenericUserStore<S> {
         Ok(mask_grams(&mut ContainerGrams(&container), mask, value)?)
     }
 
+    /// [`Self::mask_container`] over the keys [`Self::container_keys`]
+    /// collected before the mask's fault check.
+    fn mask_container_over(
+        &self,
+        keys: Option<Result<Vec<Option<Token>>, StoreError>>,
+        mask: Token,
+        value: Token,
+    ) -> Result<bool, UserStoreError> {
+        let (Some(keys), Some(container)) = (keys, self.container()) else {
+            return Ok(false);
+        };
+        Ok(mask_grams_over(
+            &mut ContainerGrams(&container),
+            keys?,
+            mask,
+            value,
+        )?)
+    }
+
     /// `mask_out`'s reload: each loaded system library in `originals`,
     /// freshly mapped, takes its user `.dbin` read now and filtered by the
     /// mask (`merge_with_mask`), library by library in the pin's order. Live
@@ -3929,7 +4017,7 @@ impl<S: WriteStore> GenericUserStore<S> {
         // transaction probed: they are user data too.
         let has_grams = self
             .container()
-            .is_some_and(|container| container.keys().is_ok_and(|keys| !keys.is_empty()));
+            .is_some_and(|container| container.is_empty().is_ok_and(|empty| !empty));
         self.mark_committed_phrase_write(db, has_user_data || has_grams || arena_live);
     }
 
@@ -3977,11 +4065,14 @@ impl<S: WriteStore> GenericUserStore<S> {
         }
         // The bigram walk's faults, in the pin's order: a non-token key
         // (`get_all_items`), then a short value (`get_total_freq`), then a
-        // mask residual (`get_length`).
-        if let Some(error) = self.bigram_mask_fault(mask, value) {
+        // mask residual (`get_length`). The one `get_all_items` walk serves
+        // the check and the mask below, under one database guard.
+        let db = self.database();
+        let container_keys = self.container_keys();
+        if let Some(error) = self.bigram_mask_fault_over(&db, container_keys.as_ref(), mask, value)
+        {
             return Err(error);
         }
-        let db = self.database();
         let container = self.inner.bigram_db.is_some();
         let has_user_data = db.write(|txn| {
             // `m_user_bigram->mask_out(mask, value)` (`pinyin.cpp:1230`,
@@ -4047,7 +4138,7 @@ impl<S: WriteStore> GenericUserStore<S> {
         // item removes its only payload. Do this before publishing the epoch.
         self.mask_arena(mask, value)?;
         self.clear_masked_system_items(mask, value);
-        let grams_left = self.mask_container(mask, value)?;
+        let grams_left = self.mask_container_over(container_keys, mask, value)?;
         self.mark_committed_phrase_write(db, has_user_data || grams_left || self.arena_has_items());
         Ok(())
     }

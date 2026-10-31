@@ -432,17 +432,15 @@ impl<S: WriteStore> GenericUserStore<S> {
 
     pub(super) fn arena_remove(&mut self, token: Token) -> Result<bool, UserStoreError> {
         let mask = PHRASE_INDEX_LIBRARY_MASK | PHRASE_MASK;
-        // The pin's three removal asserts come before its `mask_out`
-        // (`pinyin.cpp:3743`, `:3750`, `:3759`, then `:3766`): the bigram
-        // fault is read now and answered only once they pass, before any
-        // table is changed.
-        let bigram_fault = self.bigram_mask_fault(mask, token);
+        // Hold the database guard from the snapshot through the mask.
+        let db = self.database();
+        let container_keys = self.container_keys();
+        let bigram_fault = self.bigram_mask_fault_over(&db, container_keys.as_ref(), mask, token);
         let target = self
             .inner
             .libpinyin
             .as_ref()
             .ok_or(UserStoreError::InvalidPhrase)?;
-        let db = self.database();
         let mut phrases = target.phrases();
         let Some(view) = phrases.item(token) else {
             return Ok(false);
@@ -505,7 +503,7 @@ impl<S: WriteStore> GenericUserStore<S> {
             library.remove(token & PHRASE_MASK);
         }
         drop(phrases);
-        let grams_left = self.mask_container(mask, token)?;
+        let grams_left = self.mask_container_over(container_keys, mask, token)?;
         let has = db.write(|txn| has_user_data_in_write_txn(txn))?
             || !target
                 .phrases()

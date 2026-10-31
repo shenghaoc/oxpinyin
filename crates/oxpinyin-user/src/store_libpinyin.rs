@@ -763,12 +763,18 @@ fn export_session_state<S: WriteStore>(
 
     let system_items = store.stored_system_items();
     let removed_items = store.stored_removed_system_items();
+    let session = store.session_target().is_some();
     let mut state = UserState::default();
-    state.indexed.extend(store.index_entries());
-    db.for_each(crate::phrase_table::TABLE, |key, value| {
-        state.phrase_table.insert(key.to_vec(), value.to_vec());
-        Ok(())
-    })?;
+    // A session save writes the index and phrase-table arenas directly; the
+    // value model's sets are only needed by the standalone row path and by
+    // the test-facing export.
+    if user_items || !session {
+        state.indexed.extend(store.index_entries());
+        db.for_each(crate::phrase_table::TABLE, |key, value| {
+            state.phrase_table.insert(key.to_vec(), value.to_vec());
+            Ok(())
+        })?;
+    }
     drop(db);
     for (token, delta) in &unigrams {
         let nibble = phrase_index_library_index(*token);
@@ -969,6 +975,56 @@ mod tests {
             "{masked:?}"
         );
         assert_eq!(snapshot(&store), before);
+    }
+
+    /// A mask walks the container's keys once and masks over that walk.
+    /// Another handle's `set_bigram_count` must not land between the two,
+    /// or the mask misses its gram and can clear `has_user_data` while the
+    /// gram exists. The second handle writes from another thread in that
+    /// window; it waits for the mask's database guard, so its gram is
+    /// written after the mask and the gate stays true.
+    #[test]
+    fn a_gram_written_by_another_handle_during_a_mask_is_not_missed() {
+        let keys = |text: &str| {
+            packed_to_pinyin_keys(&[ChewingKey::from_pinyin(text).unwrap().to_packed()]).unwrap()
+        };
+        for remove in [false, true] {
+            let dir = tempdir("mask-key-walk-race");
+            let mut store =
+                UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+                    .unwrap();
+            let token = store
+                .add_phrase_in(crate::USER_DICTIONARY, &"你".into(), &keys("ni"), Some(5))
+                .unwrap();
+            let mut other = store.clone();
+            let (sent, written) = std::sync::mpsc::channel();
+            let (starting, started) = std::sync::mpsc::channel();
+            let writer = std::sync::Arc::new(std::sync::Mutex::new(None));
+            let slot = std::sync::Arc::clone(&writer);
+            crate::store::AFTER_CONTAINER_KEYS.with(|hook| {
+                *hook.borrow_mut() = Some(Box::new(move || {
+                    let thread = std::thread::spawn(move || {
+                        starting.send(()).unwrap();
+                        other.set_bigram_count(token, 9, 3).unwrap();
+                        let _ = sent.send(());
+                    });
+                    started.recv().unwrap();
+                    assert!(matches!(
+                        written.recv_timeout(std::time::Duration::from_millis(500)),
+                        Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+                    ));
+                    *slot.lock().unwrap() = Some(thread);
+                }));
+            });
+            if remove {
+                assert!(store.remove_user_phrase(token).unwrap());
+            } else {
+                store.mask_out(0xffff_ffff, token).unwrap();
+            }
+            writer.lock().unwrap().take().unwrap().join().unwrap();
+            assert_eq!(store.bigram_count(token, 9).unwrap(), 3, "remove={remove}");
+            assert!(store.gate_for_test(), "remove={remove}");
+        }
     }
 
     #[test]

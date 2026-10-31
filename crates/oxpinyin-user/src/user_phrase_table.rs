@@ -211,6 +211,7 @@ impl UserPhraseTable {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(crate) fn rows(&self) -> Vec<(Vec<u8>, Vec<u8>)> {
         let mut rows: Vec<(Vec<u8>, Vec<u8>)> = self
             .offsets
