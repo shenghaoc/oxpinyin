@@ -40,6 +40,7 @@ pub(crate) enum Slot {
     /// The record stored under this key, as the table holds it now.
     Record(Vec<u8>),
     /// The chunk a mask walk left.
+    #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
     Bytes(Vec<u8>),
 }
 
@@ -182,6 +183,7 @@ fn index_keys(keys: &[ChewingKey]) -> [Vec<u8>; 2] {
 }
 
 /// The key `ChewingLargeTable2::search` / `search_suggestion` probe.
+#[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
 fn query_key(keys: &[ChewingKey]) -> Vec<u8> {
     // `contains_incomplete_pinyin` (`pinyin_phrase3.h:146`).
     if keys.iter().any(|key| key.middle == 0 && key.final_ == 0) {
@@ -355,6 +357,7 @@ impl UserIndex {
 
     /// `ChewingLargeTable2::search`'s entry side: a hit on a non-empty
     /// record loads it into the length's slot.
+    #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
     pub(crate) fn note_search(&mut self, keys: &[ChewingKey], natural: impl FnOnce() -> bool) {
         let len = keys.len();
         if len == 0 || len > MAX_PHRASE_LENGTH {
@@ -373,6 +376,7 @@ impl UserIndex {
     }
 
     /// `search_suggestion` empties every longer length it visits.
+    #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
     pub(crate) fn note_suggestion(&mut self, keys: &[ChewingKey]) {
         let prefix_len = keys.len();
         if prefix_len == 0 || prefix_len > MAX_PHRASE_LENGTH {
@@ -549,6 +553,7 @@ impl UserIndex {
     }
 
     /// The keys extending `prefix`, arena and overlay merged in order.
+    #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
     pub(crate) fn keys_starting_with(&self, prefix: &[u8]) -> Vec<Vec<u8>> {
         let mut keys: Vec<Vec<u8>> = Vec::new();
         let start = self
