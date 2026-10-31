@@ -10,7 +10,7 @@ Anything observable outside the established exceptions is a defect to revert.
 Follow the policy's decision order:
 
 1. Preserve the C-facing contract.
-2. Apply class (a)–(c).
+2. Apply class (a)–(b).
 3. Apply the external-I/O call rule or record an internal language/runtime quirk.
 4. Obtain a ruling for a product change or use Stage 3.
 5. Revert any other difference as a defect.
@@ -24,12 +24,11 @@ Do not admit one by analogy.
   Record resulting last-bit differences as class (a).
   Do not chase them.
 - **(b) MEMORY SAFETY:** the pin has undefined behaviour that Rust structurally prevents reproducing.
-- **(c) AVAILABILITY:** the pin asserts or aborts on input supplied by a caller or file.
-  Return `false`/`Err` and emit exactly one `g_warning`-level log line per occurrence (#525, #549).
-  This class covers aborts, not wrong-but-defined answers.
-  It applies uniformly to every verified abort or segfault site.
-  Reproduce an unverified site first.
-  There is no fourth "tolerate and warn" class.
+- **(c) AVAILABILITY:** retired 2026-10-31 UTC.
+  Where the pin asserts or aborts, oxpinyin aborts with `std::process::abort()` after the pin's preceding work.
+  The missing `assert` message is `POLICY-ACCEPTED`.
+  See the [class (c) retirement](findings/compatibility-policy.md#amendment--class-c-retired-pin-aborts-reproduced-2026-10-31-utc).
+  There is no "tolerate and warn" class.
 - **(d) CONSUMER SCOPE:** retired 2026-09-06.
 
 The language/runtime-quirk exception is outside the classes.
@@ -43,7 +42,7 @@ No approval is needed for its record.
 
 Use the pin's external I/O call unless source proves a Rust equivalent for every input.
 The call rule does not reproduce undefined reads or aborts.
-Class (b)/(c) records stand.
+Class (b) records stand.
 Stop for a product-level change or an unruled reversal of a prior ruling.
 See the [native Rust policy](findings/compatibility-policy.md#native-rust-implementation).
 
@@ -54,9 +53,8 @@ Report their notes upstream after the rewrite.
 
 ## Internal improvements
 
-Follow the [constitution](constitution.md) for pin-matched failures, class (b)/(c) refusals, unsafe code and determinism.
-Keep class (c)'s `false`/`Err` and exactly one warning per occurrence.
-No existing ruling is reversed.
+Follow the [constitution](constitution.md) for pin-matched failures, class (b), unsafe code and determinism.
+Reproduce a pin abort with `std::process::abort()`; class (c)'s refusals are retired (2026-10-31 UTC).
 Internal Rust APIs do not all need to return `Result`.
 The [Rust conventions](rust-conventions.md) define lint denials and narrow justified expectations.
 Those lints do not prove behavioural correspondence.
