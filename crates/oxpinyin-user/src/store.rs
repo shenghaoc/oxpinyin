@@ -3189,6 +3189,41 @@ impl<S: WriteStore> GenericUserStore<S> {
         Ok(keys)
     }
 
+    /// One reading's stored key words, as `get_nth_pronunciation` copies them
+    /// (074a2219 phrase_index.cpp:33-50): a session item hands out its packed
+    /// words verbatim, whether or not they name a syllable. Missing readings
+    /// answer `None`.
+    ///
+    /// # Errors
+    /// As [`Self::nth_pronunciation`]; a row-store key that packs to no
+    /// `ChewingKey` is [`UserStoreError::DecodePronunciation`].
+    pub fn nth_pronunciation_words(
+        &self,
+        token: Token,
+        nth: usize,
+    ) -> Result<Option<Vec<u16>>, UserStoreError> {
+        if self.inner.libpinyin.is_some() {
+            return Ok(self
+                .with_user_item(token, |item| {
+                    let reading = item.pronunciation(nth)?;
+                    Some(
+                        reading
+                            .keys
+                            .chunks_exact(2)
+                            .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]))
+                            .collect(),
+                    )
+                })
+                .flatten());
+        }
+        self.nth_pronunciation(token, nth)?
+            .map(|keys| {
+                crate::store_libpinyin::pinyin_keys_to_packed(&keys)
+                    .ok_or(UserStoreError::DecodePronunciation)
+            })
+            .transpose()
+    }
+
     /// Phrase text and pronunciations for `token`, if this store owns it.
     ///
     /// # Errors

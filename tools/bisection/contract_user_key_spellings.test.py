@@ -17,6 +17,10 @@ EXPECTED = [
     ('user-key-spelling/zhuyin-den', (), {'issues': ('1418',), 'mode': 'zhuyin'}),
     ('user-key-spelling/zhuyin-den-tone4', (), {'issues': ('1418',), 'mode': 'zhuyin'}),
     ('user-key-spelling/zhuyin-eng', (), {'issues': ('1418',), 'mode': 'zhuyin'}),
+    ('user-stored-key/pinyin-tone6', (), {'issues': ('1418',), 'mode': 'pinyin'}),
+    ('user-stored-key/pinyin-no-syllable', (), {'issues': ('1418',), 'mode': 'pinyin'}),
+    ('user-stored-key/zhuyin-tone6', (), {'issues': ('1418',), 'mode': 'zhuyin'}),
+    ('user-stored-key/zhuyin-no-syllable', (), {'issues': ('1418',), 'mode': 'zhuyin'}),
 ]
 
 

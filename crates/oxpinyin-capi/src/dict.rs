@@ -243,7 +243,7 @@ pub extern "C" fn pinyin_token_get_nth_pronunciation(
     let Some(reading) = inst.core.dict.token_nth_pronunciation(token, nth as usize) else {
         return false;
     };
-    let Some(keys_list) = reading.keys.as_ref() else {
+    let Some(packed) = reading.keys.as_deref() else {
         // Past the last reading: `phrase_length` keys of indeterminate
         // content at the pin; zeroed here.
         let zeroed = vec![0_u16; reading.phrase_length];
@@ -259,30 +259,8 @@ pub extern "C" fn pinyin_token_get_nth_pronunciation(
         }
         return true;
     };
-    // A system item hands out the stored words directly; a USER_FILE item
-    // carries structured keys and packs them the same way.
-    let packed: std::borrow::Cow<'_, [u16]> = match keys_list {
-        oxpinyin_runtime::TokenPronunciationKeys::Stored(keys) => {
-            std::borrow::Cow::Borrowed(keys.as_slice())
-        }
-        oxpinyin_runtime::TokenPronunciationKeys::Structured(keys) => {
-            let mut packed: Vec<u16> = Vec::with_capacity(keys.len());
-            for &key in keys {
-                let Some(syllable) =
-                    oxpinyin_core::SyllableKey::from_index(oxpinyin_user::key_syllable(key))
-                else {
-                    return false;
-                };
-                let Some(chewing) = oxpinyin_core::ChewingKey::from_pinyin(syllable.text()) else {
-                    return false;
-                };
-                // The stored key's tone rides along (`get_nth_pronunciation`
-                // copies the item's `ChewingKey`s verbatim).
-                packed.push(chewing.with_tone(oxpinyin_user::key_tone(key)).to_packed());
-            }
-            std::borrow::Cow::Owned(packed)
-        }
-    };
+    // System and USER_FILE items alike hand out their stored words
+    // (`get_nth_pronunciation` copies the item's `ChewingKey`s verbatim).
     if packed.is_empty() {
         return false;
     }
