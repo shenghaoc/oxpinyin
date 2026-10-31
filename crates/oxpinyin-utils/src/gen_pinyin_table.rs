@@ -286,7 +286,7 @@ impl Sorted<'_> {
 fn feed_file(table: &mut Table, filename: &CString) {
     let Some(mut input) = TableInput::open(filename) else {
         edge::report_open_failed(filename);
-        tool::exit(tool::enoent());
+        tool::exit(tool::ENOENT);
     };
     while !input.eof() {
         if input.scan() != 3 {
@@ -303,7 +303,7 @@ fn feed_file(table: &mut Table, filename: &CString) {
 /// `main` (`:97-131`).
 pub fn main(args: impl IntoIterator<Item = OsString>) {
     let Ok(parsed) = tool::parse_options(c"- generate pinyin table", &entries(), args) else {
-        tool::exit(tool::einval());
+        tool::exit(tool::EINVAL);
     };
     let phrase_index = match parsed.values[0] {
         OptionValue::Int(value) => value,
@@ -321,7 +321,7 @@ pub fn main(args: impl IntoIterator<Item = OsString>) {
     let sorted = table.sorted();
     let Some(output) = OutputStream::open_write(&outputfile) else {
         edge::report_write_failed(&outputfile);
-        tool::exit(tool::enoent());
+        tool::exit(tool::ENOENT);
     };
     sorted.write(&output, phrase_index);
     output.close();
