@@ -3,8 +3,6 @@
 use std::os::raw::c_char;
 use std::ptr;
 
-use oxpinyin_data::phrase_library::SUB_PHRASE_LOAD_SIGNATURE;
-
 use crate::state::{CapiContext, box_context, context_mut};
 use crate::types::ZhuyinContext;
 
@@ -57,7 +55,6 @@ pub extern "C" fn zhuyin_init(
         oxpinyin_capi_marshal::input::filename(oxpinyin_capi_marshal::borrow_c_string!(userdir));
     match CapiContext::try_open(&system_path, user_path.as_deref()) {
         Ok(ctx) => {
-            log_layout_faults(&ctx);
             for warning in ctx.core.load_warnings() {
                 crate::ffi::log_warning(warning);
             }
@@ -107,14 +104,6 @@ pub extern "C" fn zhuyin_init(
     }
 }
 
-/// Logs the pin's `SubPhraseIndex::load` criticals the preceding operation
-/// recorded, in the order the pin emits them.
-pub(crate) fn log_layout_faults(ctx: &CapiContext) {
-    for fault in ctx.take_layout_faults() {
-        crate::ffi::return_if_fail_warning(SUB_PHRASE_LOAD_SIGNATURE, fault.expression);
-    }
-}
-
 /// Finalize and free a zhuyin context.
 ///
 /// # C signature
@@ -145,9 +134,6 @@ pub extern "C" fn zhuyin_fini(context: *mut ZhuyinContext) {
     // ownership back.
     unsafe {
         let ctx = Box::from_raw(context.cast::<CapiContext>());
-        // The pin logs at the load, not at fini; drop a fault no entry
-        // logged rather than repeat it here.
-        let _ = ctx.take_layout_faults();
         drop(ctx);
     };
 }
@@ -174,9 +160,7 @@ pub extern "C" fn zhuyin_save(context: *mut ZhuyinContext) -> bool {
     // `UserTableInfo::save`, which resets LC_NUMERIC to "C"
     // (`table_info.cpp:378`; register row 39); the two early returns do
     // not reach it.
-    let outcome = ctx.save_user(&mut |fault| {
-        crate::ffi::return_if_fail_warning(SUB_PHRASE_LOAD_SIGNATURE, fault.expression)
-    });
+    let outcome = ctx.save_user();
     match outcome {
         // Class (c), `memory_chunk.h:543`/`:547`: a chunk file's header
         // write failed and the pin `assert`s there. The save fails and

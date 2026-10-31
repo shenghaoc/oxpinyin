@@ -32,9 +32,10 @@ def register(registry, name, fn, *args, **kwargs):
 
     Reject duplicate IDs with ValueError and assert the required option
     combinations before modifying the registry. A policy record may retain
-    an existing pin abort, whose exact observation its record must hold.
-    Other signal, host-dependent and profile-comparison exceptions cannot
-    be combined with policy records."""
+    an existing pin abort, or a pin that a `fatal=True` log mask aborts,
+    whose exact observation its record must hold, and may bind a
+    user-directory listing. Other signal and host-dependent exceptions
+    cannot be combined with policy records."""
     if name in registry:
         raise ValueError('duplicate case name: %s' % name)
     spec = case_spec(*args, fn=fn, case_id=name, **kwargs)
@@ -48,6 +49,6 @@ def register(registry, name, fn, *args, **kwargs):
     if spec['policy_record'] is not None:
         assert not (spec['crash'] is not None
                     or spec['both_abort'] or spec['strjoinv_over_read']
-                    or spec['host_scanf'] or spec['dir_chunk'] or spec['userdir']), name
+                    or spec['host_scanf'] or spec['dir_chunk']), name
     registry[name] = spec
     return fn

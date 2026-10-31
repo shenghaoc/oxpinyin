@@ -58,23 +58,16 @@ use crate::chunk_format::{
 
 use oxpinyin_core::PhraseText;
 
-/// The pin's `G_STRFUNC` for `SubPhraseIndex::load`: the C++
-/// `__PRETTY_FUNCTION__` its `g_return_val_if_fail` passes to
-/// `g_return_if_fail_warning`, in domain NULL (the oracle object's `.rodata`
-/// string).
-pub const SUB_PHRASE_LOAD_SIGNATURE: &str =
-    "bool pinyin::SubPhraseIndex::load(pinyin::MemoryChunk*, table_offset_t, table_offset_t)";
-
 /// A `SubPhraseIndex::load` check the pin reaches through a read inside the
-/// chunk and reports by `g_return_val_if_fail` (`phrase_index.cpp:354-356`),
-/// which every caller ignores. The load then answers success with an empty
-/// sub-index. Only checks whose bytes are inside the chunk are represented
-/// here; a layout the pin reaches through an out-of-bounds read stays a
+/// chunk (`phrase_index.cpp:354-356`): the load answers `false`, which every
+/// caller ignores, and goes on with an empty sub-index. The pin's
+/// `g_return_val_if_fail` critical there is not reproduced (maintainer
+/// decision 2026-10-31 UTC, `docs/findings/1297-layout-criticals.md`). Only
+/// checks whose bytes are inside the chunk are represented here; a layout
+/// the pin reaches through an out-of-bounds read stays a
 /// [`LibraryError::Format`] refusal.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LayoutFault {
-    /// The failed assertion's expression, as the pin's `#expr` spells it.
-    pub expression: &'static str,
     /// `m_total_freq` as the pin read it before the failing check — 0 when
     /// the four-word header itself is short.
     pub total_freq: u32,
@@ -89,8 +82,7 @@ pub enum LibraryError {
     /// upstream reader would accept.
     Format(String),
     /// The chunk header and checksum verified, but `SubPhraseIndex::load`
-    /// refused the layout through a check the pin reports with a critical
-    /// and ignores. The caller loads an empty sub-index and reports the
+    /// refused the layout through a check whose `false` the pin ignores. The caller loads an empty sub-index and reports the
     /// success the pin reports.
     Layout(LayoutFault),
     /// Upstream's `MemoryChunk::mmap` answers `false` for `path`: the file
@@ -152,7 +144,7 @@ impl fmt::Display for LibraryError {
         match self {
             Self::Io(e) => write!(f, "phrase library I/O error: {e}"),
             Self::Format(message) => write!(f, "phrase library format error: {message}"),
-            Self::Layout(fault) => write!(f, "phrase library layout error: {}", fault.expression),
+            Self::Layout(_) => f.write_str("phrase library layout error: separator check failed"),
             Self::Unmappable { cause, .. } => cause.fmt(f),
             Self::Row(RowFault::NotDictionary) => {
                 f.write_str("addon table.conf row is not a DICTIONARY")
@@ -716,19 +708,14 @@ impl PhraseLibrary {
         // The pin's `get_content` leaves a failed read's destination at 0;
         // `m_total_freq` is read before the layout checks.
         let total_freq = u32_at(payload_bytes, 0).unwrap_or(0);
-        let layout = |expression: &'static str| {
-            LibraryError::Layout(LayoutFault {
-                expression,
-                total_freq,
-            })
-        };
+        let layout = || LibraryError::Layout(LayoutFault { total_freq });
 
         // `SubPhraseIndex::load`: the four words, then the separator at
         // payload[16], then `index_two - 1`, then `index_three - 1`.
         // A payload of 16 bytes or fewer makes the first read leave the
         // chunk; the failure is the same one, reproduced without the read.
         if payload_bytes.len() < 17 || payload_bytes[16] != SEPARATOR {
-            return Err(layout("*(buf_begin + offset) == c_separate"));
+            return Err(layout());
         }
         let index_one = u32_at(payload_bytes, 4).ok_or_else(|| bad("payload too short"))? as usize;
         let index_two = u32_at(payload_bytes, 8).ok_or_else(|| bad("payload too short"))? as usize;
@@ -743,14 +730,14 @@ impl PhraseLibrary {
             .filter(|&at| at < payload_bytes.len())
             .ok_or_else(|| bad("sub-index offset-array separator out of bounds"))?;
         if payload_bytes[second] != SEPARATOR {
-            return Err(layout("*(buf_begin + index_two - 1) == c_separate"));
+            return Err(layout());
         }
         let third = index_three
             .checked_sub(1)
             .filter(|&at| at < payload_bytes.len())
             .ok_or_else(|| bad("sub-index entry-area separator out of bounds"))?;
         if payload_bytes[third] != SEPARATOR {
-            return Err(layout("*(buf_begin + index_three - 1) == c_separate"));
+            return Err(layout());
         }
         // The pin's fourth check (`index_three <= end`) is then true.
         // These guards cover the state the pin would expose as a

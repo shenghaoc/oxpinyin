@@ -3,8 +3,6 @@
 use std::os::raw::c_char;
 use std::ptr;
 
-use oxpinyin_data::phrase_library::SUB_PHRASE_LOAD_SIGNATURE;
-
 use crate::state::{CapiContext, box_context, context_mut};
 // Only the harness-gated fixture hooks below take a shared context ref; the
 // shipped build (--features shipped) does not compile them.
@@ -34,7 +32,6 @@ fn init_context(systemdir: *const c_char, userdir: *const c_char) -> *mut Pinyin
         oxpinyin_capi_marshal::input::filename(oxpinyin_capi_marshal::borrow_c_string!(userdir));
     match CapiContext::try_new(&system_path, user_path.as_deref()) {
         Ok(context) => {
-            log_layout_faults(&context);
             for warning in context.core.load_warnings() {
                 crate::ffi::log_warning(warning);
             }
@@ -81,14 +78,6 @@ fn init_context(systemdir: *const c_char, userdir: *const c_char) -> *mut Pinyin
             }
             ptr::null_mut()
         }
-    }
-}
-
-/// Logs the pin's `SubPhraseIndex::load` criticals the preceding operation
-/// recorded, in the order the pin emits them.
-pub(crate) fn log_layout_faults(ctx: &CapiContext) {
-    for fault in ctx.take_layout_faults() {
-        crate::ffi::return_if_fail_warning(SUB_PHRASE_LOAD_SIGNATURE, fault.expression);
     }
 }
 
@@ -213,9 +202,6 @@ pub extern "C" fn pinyin_fini(context: *mut PinyinContext) {
     // ownership back.
     unsafe {
         let ctx = Box::from_raw(context.cast::<CapiContext>());
-        // The pin logs its layout criticals at the load, not at fini; a
-        // fault an entry did not log is dropped rather than repeated here.
-        let _ = ctx.take_layout_faults();
         drop(ctx);
     };
 }
@@ -245,9 +231,7 @@ pub fn save_context(context: *mut PinyinContext) -> bool {
     // `UserTableInfo::save`, which resets LC_NUMERIC to "C"
     // (`table_info.cpp:378`; register row 39); the two early returns do
     // not reach it.
-    let outcome = ctx.save_user(&mut |fault| {
-        crate::ffi::return_if_fail_warning(SUB_PHRASE_LOAD_SIGNATURE, fault.expression)
-    });
+    let outcome = ctx.save_user();
     match outcome {
         // Class (c), `memory_chunk.h:543`/`:547`: a chunk file's header
         // write failed and the pin `assert`s there. The save fails and

@@ -106,6 +106,31 @@ class PolicyAcceptedTests(unittest.TestCase):
         self.spec['abort'] = driver.NO_ABORT
         self.assertEqual(self.verdict(), ('INVALID', False, False))
 
+    def test_a_fatal_pin_abort_is_accepted_in_both_modes(self):
+        self.spec['fatal'] = True
+        self.pin.update(exit=-signal.SIGABRT, result=None,
+                        stderr='** (process:12): CRITICAL **: 00:00:01.000: boom\n')
+        self.record['cases'][self.name] = contract_policy.entry(
+            driver.policy_side(self.spec, self.pin), driver.policy_side(self.spec, self.subject))
+        self.write_record()
+        other_run = {**self.pin, 'stderr': '** (process:34): CRITICAL **: 00:00:02.500: boom\n'}
+        moved = copy.deepcopy(self.subject)
+        moved['result']['ret'] = False
+        for parent in (False, True):
+            with self.subTest(parent=parent):
+                self.assertEqual(self.verdict(parent=parent), ('POLICY-ACCEPTED', True, False))
+                self.assertEqual(self.verdict(pin=other_run, parent=parent), ('POLICY-ACCEPTED', True, False))
+                self.assertEqual(self.verdict(subject=moved, parent=parent), ('DIFFER', False, False))
+        # A parent build aborts with the pin: a valid pair whose subject has
+        # moved from the record, not an invalid one.
+        aborted = observation(exit=-signal.SIGABRT, stderr=self.pin['stderr'])
+        self.assertEqual(self.verdict(subject=aborted, parent=True), ('DIFFER', False, False))
+        self.assertEqual(self.verdict(subject=aborted, parent=False), ('INVALID', False, False))
+        self.spec['fatal'] = False
+        for parent in (False, True):
+            with self.subTest(ordinary=True, parent=parent):
+                self.assertEqual(self.verdict(parent=parent), ('INVALID', False, False))
+
     def test_cell_record_keeps_complete_user_directory_observations(self):
         self.spec['userdir'] = True
         self.pin['userfiles'] = {}
@@ -743,7 +768,9 @@ class ProfileRowsTests(DriverFixtureCase):
 
 class FatalLogTests(DriverFixtureCase):
     def setUp(self):
-        self.spec = contract['CASES']['save-fatal-valid-to-invalid']
+        # A save that both sides abort under the fatal log mask.
+        self.spec = driver.case_spec(case_id='fatal-log', fatal=True, both_abort=True,
+                                     stderr=True, userdir=True)
         self.pin = {
             'exit': -signal.SIGTRAP,
             'result': None,
@@ -954,7 +981,7 @@ class VerdictTests(DriverFixtureCase):
                          'MATCH')
 
     def test_both_abort_semantics_unchanged(self):
-        spec = contract['CASES']['save-fatal-valid-to-invalid']
+        spec = driver.case_spec(case_id='fatal-log', fatal=True, both_abort=True, stderr=True, userdir=True)
         stderr = 'open SCRATCH/user-X/user.conf failed.\n** (process:1): CRITICAL **: 00:00:00.000: boom\n'
         pin = observation(exit=-signal.SIGTRAP, stderr=stderr, userfiles={'a': [1, 'd']})
         subject = observation(exit=-signal.SIGTRAP, stderr=stderr.replace(':1)', ':2)'), userfiles={'a': [1, 'd']})

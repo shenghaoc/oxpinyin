@@ -65,17 +65,10 @@ pub extern "C" fn pinyin_phrase_segment(
     let Some(text) = oxpinyin_capi_marshal::input::utf8_to_ucs4(
         oxpinyin_capi_marshal::borrow_c_string!(sentence),
     ) else {
-        // 074a2219 pinyin.cpp:1454: the GLib precondition uses the default
-        // domain, critical level and C++ G_STRFUNC spelling, exactly once.
-        // SAFETY: the function and expression are NUL-terminated constants;
-        // GLib accepts NULL for its default log domain.
-        unsafe {
-            glib_sys::g_return_if_fail_warning(
-                std::ptr::null(),
-                c"bool pinyin_phrase_segment(pinyin_instance_t*, const char*)".as_ptr(),
-                c"num_of_chars == ucs4_len".as_ptr(),
-            );
-        }
+        // 074a2219 pinyin.cpp:1454: `g_return_val_if_fail(num_of_chars ==
+        // ucs4_len, FALSE)` answers false and leaves the result as it was. Its
+        // critical is not reproduced (2026-10-31 UTC ruling,
+        // docs/findings/1297-segment-critical.md).
         return false;
     };
     let outcome = match text.as_str() {
@@ -254,27 +247,6 @@ mod tests {
     }
 
     #[test]
-    fn a_layout_critical_is_the_pins_return_if_fail_warning() {
-        let _logs = LogHandler::new();
-        crate::ffi::return_if_fail_warning(
-            oxpinyin_data::phrase_library::SUB_PHRASE_LOAD_SIGNATURE,
-            "index_three <= end",
-        );
-        LOGS.with(|logs| {
-            let logs = logs.borrow();
-            let logs = logs.as_ref().expect("capture active");
-            assert_eq!(logs.len(), 1);
-            assert_eq!(logs[0].0, None);
-            assert_eq!(logs[0].1, glib_sys::G_LOG_LEVEL_CRITICAL);
-            assert_eq!(
-                logs[0].2,
-                "bool pinyin::SubPhraseIndex::load(pinyin::MemoryChunk*, table_offset_t, \
-                 table_offset_t): assertion 'index_three <= end' failed"
-            );
-        });
-    }
-
-    #[test]
     fn read_after_check_emits_one_class_c_warning() {
         let _logs = LogHandler::new();
         let error = oxpinyin_engine::EngineError::ReadAfterCheck { token: 0x0100_0001 };
@@ -293,7 +265,7 @@ mod tests {
     }
 
     #[test]
-    fn surrogate_segment_matches_pin_length_and_diagnostics() {
+    fn surrogate_segment_matches_pin_length_and_no_critical() {
         let user = crate::test_support::TempUserDir::new("surrogate-segment");
         let (context, instance) =
             crate::test_support::open(user.path.to_str().expect("UTF-8 path"));
@@ -318,17 +290,13 @@ mod tests {
             assert_eq!(token, 0);
             LOGS.with(|logs| assert!(logs.borrow().as_ref().expect("active capture").is_empty()));
 
-            // Recover through normal lookup, then verify #739's exact
-            // invalid-byte critical and preservation of the prior result.
+            // Recover through normal lookup, then verify the invalid-byte
+            // refusal keeps the prior result and logs nothing (#1297).
             assert!(pinyin_phrase_segment(instance, c"你好".as_ptr()));
             assert!(!pinyin_phrase_segment(instance, c"\xff\xfe".as_ptr()));
             assert!(pinyin_get_n_phrase(instance, &raw mut count));
             assert_eq!(count, 2);
-            LOGS.with(|logs| assert_eq!(
-                std::mem::take(logs.borrow_mut().as_mut().expect("active capture")),
-                vec![(None, glib_sys::G_LOG_LEVEL_CRITICAL,
-                    "bool pinyin_phrase_segment(pinyin_instance_t*, const char*): assertion 'num_of_chars == ucs4_len' failed".to_owned())],
-            ));
+            LOGS.with(|logs| assert!(logs.borrow().as_ref().expect("active capture").is_empty()));
         }
         crate::instance::pinyin_free_instance(instance);
         crate::context::pinyin_fini(context);

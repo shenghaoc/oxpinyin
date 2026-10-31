@@ -42,7 +42,8 @@ def train_no_choose_save(k):
 
 
 for _mode in ('pinyin', 'zhuyin'):
-    case('issue542-phrase-segment-invalid-utf8-' + _mode, mode=_mode, issues=('542',))(phrase_segment_invalid_utf8)
+    case('issue542-phrase-segment-invalid-utf8-' + _mode, mode=_mode, issues=('542', '1297'),
+         policy_record='1297-segment-critical.md')(phrase_segment_invalid_utf8)
     case('issue542-train-no-choose-save-' + _mode, mode=_mode, control=True, issues=('542',))(train_no_choose_save)
     case('issue542-parse-full-one-values-' + _mode, mode=_mode, control=True, issues=('542',))(
         lambda k: {t.decode(): key_out(k, t) for t in (b'n', b'ni3')})

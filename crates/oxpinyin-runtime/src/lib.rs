@@ -275,10 +275,6 @@ impl AddonSet {
         self.dict.is_empty()
     }
 
-    fn take_layout_faults(&self) -> Vec<LayoutFault> {
-        self.dict.take_layout_faults()
-    }
-
     /// The addon phrase item behind `token`: its text, its pronunciations as
     /// `(key sequence, count)` pairs, and its copied unigram frequency — the
     /// `get_phrase_item` half of the promotion (`pinyin.cpp:2534-2549`).
@@ -808,35 +804,12 @@ impl RuntimeDict {
         addons.load_reporting(index, system_dir)
     }
 
-    /// Takes the layout faults recorded by the system and addon libraries
-    /// since the last take, in load order.
-    #[must_use]
-    pub fn take_layout_faults(&self) -> Vec<LayoutFault> {
-        let mut faults = self.system.libraries().take_layout_faults();
-        faults.extend(
-            self.addons
-                .read()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .take_layout_faults(),
-        );
-        faults
-    }
-
     /// `FacadePhraseIndex::compact` over the system layout-failed empty
     /// sub-indices: their local total becomes zero and the facade aggregate
     /// already excludes it. Returns the compacted nibbles.
     #[must_use]
     pub fn compact_layout_failed(&self) -> Vec<u8> {
         self.system.libraries().compact_layout_failed()
-    }
-
-    /// Records layout faults collected by a pure-Rust save so the facade's
-    /// `take_layout_faults` surface can carry them; the C ABI's synchronous
-    /// hook logs them instead and does not call this.
-    pub fn record_layout_faults(&self, faults: impl IntoIterator<Item = LayoutFault>) {
-        for fault in faults {
-            self.system.libraries().record_layout_fault(fault);
-        }
     }
 
     /// The system library files absent when the runtime opened, in the
@@ -2323,7 +2296,6 @@ impl Runtime {
     pub fn check_system_libraries(
         &self,
         only: Option<u8>,
-        record_layout: bool,
     ) -> oxpinyin_data::phrase_libraries::LibraryCheck {
         self.dict.system.libraries().check_now(
             |nibble| {
@@ -2339,15 +2311,7 @@ impl Runtime {
                         }))
             },
             only,
-            record_layout,
         )
-    }
-
-    /// Takes the pin's `SubPhraseIndex::load` criticals recorded by the
-    /// system and addon libraries since the last take.
-    #[must_use]
-    pub fn take_layout_faults(&self) -> Vec<LayoutFault> {
-        self.dict.take_layout_faults()
     }
 
     /// `FacadePhraseIndex::compact` over the system layout-failed empty
@@ -2355,11 +2319,6 @@ impl Runtime {
     #[must_use]
     pub fn compact_layout_failed(&self) -> Vec<u8> {
         self.dict.compact_layout_failed()
-    }
-
-    /// Records layout faults collected by the pure-Rust facade's save.
-    pub fn record_layout_faults(&self, faults: impl IntoIterator<Item = LayoutFault>) {
-        self.dict.record_layout_faults(faults);
     }
 
     /// The save's current on-disk baseline for one selected system library.

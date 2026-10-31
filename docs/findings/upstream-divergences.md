@@ -4340,3 +4340,16 @@ plain Rust: on the pin's condition oxpinyin answers the pin's value or
 aborts where the pin aborts, without glibc's assertion line or GLib's
 critical. Stdout and the SIGABRT exit are the pin's. Recorded and bound in
 [eio-tool-check-messages.md](eio-tool-check-messages.md).
+
+### Library `g_return_val_if_fail` criticals are not reproduced (2026-10-31 UTC)
+
+**Maintainer decision D1 of #1297**, a narrow exception to the library
+stderr ruling (#545) under the 2026-10-31 UTC no-shims ruling. Both
+facades' `phrase_segment` on invalid UTF-8 (`pinyin.cpp:1454`,
+`zhuyin.cpp:973`) and `SubPhraseIndex::load`'s layout checks
+(`phrase_index.cpp:354-356`, `:361`) keep the pin's return values, state
+and continuation and log no critical. Lost: the critical a caller's log
+handler or stderr receives, and the pin's abort under GLib fatal-critical
+settings. Recorded and bound in
+[1297-segment-critical.md](1297-segment-critical.md) and
+[1297-layout-criticals.md](1297-layout-criticals.md).

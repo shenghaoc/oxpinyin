@@ -67,17 +67,28 @@ def side_entry(observation):
     return {'sha256': digest(observation), 'fields': field_digests(observation)}
 
 
+def listing_entry(value):
+    """Whether `value` is one entry of the driver's user-directory listing."""
+    if value is None or isinstance(value, str):
+        return True
+    return (isinstance(value, list) and len(value) in (1, 2) and type(value[0]) is int
+            and all(isinstance(item, str) for item in value[1:]))
+
+
 def observation_problem(side, *, pin_abort=False):
     """Why `side` cannot be recorded or accepted, or None.
 
     A side terminates normally with a result document that carries `logs`
     and no `~` field, or it is the pin of a registered abort site: SIGABRT
-    and no document. userfiles, when present, lists text by text."""
+    and no document. userfiles, when present, is the driver's user-directory
+    listing (`contract_execution.user_dir_listing`): per file name, the
+    text of `user.conf`, `[size, sha256]` of a chunk file, `[size]` of a
+    DBM container, or None for a non-file."""
     if not isinstance(side, dict) or not isinstance(side.get('stderr'), str):
         return 'needs an observation with text stderr'
     files = side.get('userfiles')
     if files is not None and (not isinstance(files, dict) or any(
-            not isinstance(key, str) or not isinstance(value, str) for key, value in files.items())):
+            not isinstance(key, str) or not listing_entry(value) for key, value in files.items())):
         return 'user-directory listing must be complete'
     exit_code, result = side.get('exit'), side.get('result')
     if type(exit_code) is not int:

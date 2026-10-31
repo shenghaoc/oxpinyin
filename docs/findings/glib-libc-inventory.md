@@ -88,7 +88,7 @@ for libpinyin and libzhuyin, `pinyin` for the prediction-only surfaces;
 | G5 | n-best tail sort: `phonetic_lookup.h:337` `g_ptr_array_sort(tails, trellis_value_compare)` | both; all | `engine/src/nbest.rs` `glib_merge_sort`, `tail_compare`, `c_float_to_gint` | valid: the `gint` truncation ties scores under one unit apart, so the comparator is not transitive on finite scores. malformed: NaN and ±∞ from λ outside `[0, 1]`. | contract; merge kept, [record](921-927-glib-sorts.md); superseded 2026-10-26 UTC: language artefact, #1297 classification | #921 |
 | G6 | candidate and predicted list sorts: `pinyin.cpp:2286,2443` `g_array_sort_with_data(compare_item_with_sort_option)`; `zhuyin.cpp:1529,1610` `g_array_sort`; phrase-string dedup `pinyin.cpp:2067`, `zhuyin.cpp:1375` | both; all | `engine/src/nbest.rs` `glib_merge_sort` under `engine/src/session/mod.rs` `glib_rank_sort`, `RankKey::pin_compare` and `capi/src/predict.rs` `sort_predicted` | valid: a total order (frequencies below 2²⁴); stable order and dedup winner. malformed: λ outside `[0, 1]` wraps the `gint` frequency key into cycles. | contract; merge kept, [record](921-927-glib-sorts.md), superseded 2026-10-26 UTC (#1297 classification); dedup #913/#914 | #927, #928 |
 | G7 | hash tables: `g_hash_table_new` 2, `insert` 4, `lookup_extended` 4, `destroy` 2; `g_direct_hash`/`equal` | both; all | `engine/src/nbest.rs` `Step`, `engine/src/session/*` vectors; no exposed iteration order | valid: lookup only; no order reaches the ABI. malformed: none. | contract (internal; no observable order) | — |
-| G8 | diagnostics: `g_return_val_if_fail`, 6 sites (`pinyin.cpp:1454`, `zhuyin.cpp:973`, `phrase_index.cpp:354-356,361`); `g_warning` only in the tool-only tag utility | both; all | `capi/src/ffi.rs` `log_warning` / `log_critical`; `capi/src/phrase.rs` `g_return_if_fail_warning`; zhuyin twin | valid: class (c) sites keep one warning at warning level and the pin's domain. malformed: a GLib conversion failure logs the critical. | (c) where the pin aborts; #924 for the channel; #918 for the segment gate | #918, #924 |
+| G8 | diagnostics: `g_return_val_if_fail`, 6 sites (`pinyin.cpp:1454`, `zhuyin.cpp:973`, `phrase_index.cpp:354-356,361`); `g_warning` only in the tool-only tag utility | both; all | `capi/src/ffi.rs` `log_warning`; zhuyin twin | valid: class (c) sites keep one warning at warning level and the pin's domain. malformed: the six sites are early returns of the pin's value with no critical ([1297-segment-critical](1297-segment-critical.md), [1297-layout-criticals](1297-layout-criticals.md)). | (c) where the pin aborts; #924 for the channel; #918 for the segment gate | #918, #924 |
 | G9 | allocation/free and real GArray ABI: `g_free` 155, `g_strdup` 39, `g_strdup_printf` 14; C `malloc`/`free`/`realloc` 6; `g_array_set_size`/`g_array_append_vals` into caller arrays in `pinyin.cpp:2805,2817` and `zhuyin.cpp:1797,1809` | both; all | `capi/src/ffi.rs` `owned_cstr` / `owned_cstr_list` (C `malloc`/`g_free` contract); `capi/src/dict.rs` and zhuyin twin on `glib_sys`; `libpinyin.alloc` / `libzhuyin.alloc` | valid: caller may `g_free` / `g_strfreev`; the real `GArray` keeps GLib's private metadata. malformed: NULL or OOM paths. | contract; MUST RETAIN | #924 |
 | G10 | rename and sync: `g_rename` 10 (`pinyin.cpp:1059,1078,1094,1108,1121`; `zhuyin.cpp:609,635,655,672,687`); `g_fsync` 1 (`memory_chunk.h:555`) | both; all | `user/src/persistence.rs` `save_with_bigram_reporting`, `pin_rename_order`; `data/src/phrase_library.rs` chunk save | valid: same file order and bytes. failure: per-file write/rename failures and the save's return. | contract on valid profiles; #929 for failure ordering | #929 |
 | G11 | numeric parsing and locale: `fscanf` 10 (`table_info.cpp:208,214,220,228,232,255,338,344,352,357`); `atoi` 1 (`:160`); `setlocale` 6 (`:197,291,328,372,378,394`) | both; all | since external-I/O stage 1 (2026-10-28 UTC) the pin's own calls in `oxpinyin-input/native/config.c` (since 2026-10-31 UTC `oxpinyin-input/src/native.rs` through the `libc` crate, same formats), decoded by `data/src/table_info.rs` `TableConf::load` and `data/src/user_files.rs` `UserTableInfo::load`/`save` | valid: same table values, versions, λ bits and library mapping. malformed/host: glibc 2.43-3 `%d`/`%f`/`%255s` grammar, saturation, signed user.conf versions, hex/NaN/Inf, incomplete exponents, NUL/width and row grouping; class (b): missing source buffer and merged-row SIGSEGV. | valid: contract. malformed: contract except the class (b) refusals; host scanner (#919/#920); process side effect ruling (#923) | #919, #920, #923 |
@@ -577,7 +577,7 @@ child column is the audit that must decide it.
 | Counterpart | Emulates | Pin cite | Child |
 | --- | --- | --- | --- |
 | `capi-marshal/src/input.rs` `utf8_to_ucs4`, `scalar_text`, `parser_prefix`, `direct_zhuyin_reading`, `filename` (since #1279, PR #1296; formerly `capi/src/ffi.rs` `cstr_to_*`) | `g_utf8_to_ucs4` / `g_utf8_strlen` gates; raw C path bytes | `pinyin.cpp:1450-1454`; `zhuyin.cpp:969-973`; `pinyin.cpp:1498-1509` | #918 |
-| `capi/src/phrase.rs` `pinyin_phrase_segment` (formerly `segment_text`; `utf8_to_ucs4` plus two `g_return_if_fail_warning` calls since #1279) | `g_utf8_strlen` + `g_utf8_to_ucs4` gate and `g_return_val_if_fail` | `pinyin.cpp:1450-1454`; `zhuyin.cpp:969-973` | #918 |
+| `capi/src/phrase.rs` `pinyin_phrase_segment` (formerly `segment_text`; `utf8_to_ucs4` since #1279; the length check is an early return since #1297) | `g_utf8_strlen` + `g_utf8_to_ucs4` gate and `g_return_val_if_fail` | `pinyin.cpp:1450-1454`; `zhuyin.cpp:969-973` | #918 |
 | `data/src/phrase_library.rs` `phrase_chars` | `g_ucs4_to_utf8` on stored phrase text | `pinyin.cpp:1627-1645`; `lookup.cpp:27-60`; `pinyin.cpp:698-716` | #894 |
 | `data/src/row_format.rs` `decode_puncts`; `capi-marshal/src/phrase_text.rs` `phrase_text_bytes` | `PunctTableEntry::unescape` / `get_all_punctuations`; `g_string_append_unichar` | `punct_table.cpp:56-94` | #1144 (closed: pin rows reproduced; over-read class (b)) |
 | `capi/src/aux_matrix.rs` `AuxMatrix::chewing`, `split_zhuyin` (the former `join` is a `format!`) | `g_utf8_substring`, `g_strconcat` with a NULL middle | `pinyin.cpp:3518-3576` | #925 |
@@ -595,7 +595,7 @@ child column is the audit that must decide it.
 | `data/src/interp_grammar.rs` `is_graph`, `interp.rs` | `taglib_read` + `g_unichar_isgraph` | `tag_utility.cpp:171-264` | #926: kept as [recorded](interpolation2-grammar.md) |
 | `dictool/src/format.rs` `split_classic`; `training/src/counter/parse.rs` `parse_segmented_line`, `kmm/src/cnum.rs` `atoi`; `datagen/src/table.rs`, `system.rs` numeric fields | `g_strsplit_set` / C `atoi`, `atol` / `g_ascii_strtoull` in tool input | `utils_helper.h`, `table_text_parser.h:34-121`; `import_interpolation.cpp:135-182` | #926: training reproduces `atoi`; dictool and datagen strict, [record](926-tool-tokenizers.md) |
 | `capi/src/dict.rs`, `zhuyin-capi/src/dict.rs` direct `g_array_*` | real GLib `GArray` mutation | `pinyin.cpp:2805,2817`; `zhuyin.cpp:1797,1809` | #924 |
-| `capi/src/ffi.rs` `owned_cstr`, `owned_cstr_list`, `log_warning`, `log_critical`; `phrase.rs` `g_return_if_fail_warning` (the `g_free` of a GLib buffer is gone since #1279) | `g_strdup` / `g_strfreev` / `g_log` / `g_return_val_if_fail` | `pinyin.cpp` diagnostics; `phrase_index.cpp:354-356` | #924 |
+| `capi/src/ffi.rs` `owned_cstr`, `owned_cstr_list`, `log_warning` (the `g_free` of a GLib buffer is gone since #1279; the `g_return_val_if_fail` sites are early returns since #1297) | `g_strdup` / `g_strfreev` / `g_log` / `g_return_val_if_fail` | `pinyin.cpp` diagnostics; `phrase_index.cpp:354-356` | #924 |
 
 ## Classification of the remaining GLib- and libc-shaped code (#1297, Phase 1)
 
@@ -1247,16 +1247,17 @@ Buckets:
 - **Behaviour**: product behaviour, kept in plain Rust and named for it.
 - **Imitation**: Rust that reproduces a GLib, libc or libstdc++
   implementation detail, or a macro the 2026-10-31 ruling names.
-- **Unclear**: stopped and reported; see "Stopped rows" below.
+- **Owned elsewhere**: imitation whose replacement is assigned to a named
+  later change.
 
 | # | oxpinyin item (`crates/`) | Pin cite (`074a2219`) | Bucket | Reason and action |
 | --- | --- | --- | --- | --- |
 | 1 | `oxpinyin-capi/src/dict.rs`, `oxpinyin-zhuyin-capi/src/dict.rs`: `glib_sys::g_array_set_size` / `g_array_append_vals` on the caller's array | `pinyin.cpp:2805,2817`; `zhuyin.cpp:1797,1809` | Boundary | The caller owns a real `GArray` (#924). |
 | 2 | `ffi.rs` (both facades) `owned_cstr`, `owned_cstr_list`, `malloc_cstr_with`, `malloc_cstr_with_warning`, `take_owned_cstr`; the hand-declared `malloc` / `free` | `g_free` / `g_strfreev` ownership of returned strings (`pinyin.cpp:715-716,733`) | Boundary | Ownership and lifetime of returned C strings; `extern "C"` declarations are what the 2026-10-31 ruling permits. |
 | 3 | `ffi.rs` (both facades) `log_warning` (`g_log` at warning level in the facade's domain) and the class (c) lines it carries, for example `pinyin_choose_candidate: assertion '…' failed` in `candidates.rs`, `keys.rs`, `iterators.rs`, `sentence.rs`, `predict.rs`, `state.rs`, `config.rs` | the pin's `assert` / `abort()` sites, for example `pinyin.cpp:2507` (`pinyin_choose_candidate`) and `:3738` (`pinyin_remove_user_candidate`) | Behaviour | The single warning a class (c) refusal owes. The pin aborts at these sites and writes no such line, so the text is oxpinyin's own and is not compared with the pin. Kept. |
-| 4 | `phrase.rs` (both facades), NULL `sentence`: GLib's `g_utf8_strlen` critical | `pinyin.cpp:1450`; `zhuyin.cpp:969`; GLib 2.84.4 `gutf8.c:240` | Imitation → Boundary | It hand-spelled GLib's internal `g_return_val_if_fail` (domain `GLib`, `g_utf8_strlen`, `p != NULL \|\| max == 0`). **Replaced in this change** by the pin's call, `glib_sys::g_utf8_strlen(sentence, -1)`, so GLib logs its own critical and applies the caller's fatal mask itself. The ruled no-input outcome after it is unchanged. Same bytes, level and domain as before, so no case tells the two forms apart and no mutation applies. |
-| 5 | `phrase.rs` (both facades), invalid UTF-8: `g_return_if_fail_warning(NULL, "bool pinyin_phrase_segment(pinyin_instance_t*, const char*)", "num_of_chars == ucs4_len")` and the zhuyin twin | `pinyin.cpp:1454`; `zhuyin.cpp:973` | Unclear | Stopped: S1. |
-| 6 | `ffi.rs` (both facades) `return_if_fail_warning`; `oxpinyin-data` `phrase_library::SUB_PHRASE_LOAD_SIGNATURE`, `LayoutFault::expression`; the `take_layout_faults` / `record_layout_faults` / `save_user_with_layout_faults` path through `phrase_libraries.rs`, `oxpinyin-runtime`, `oxpinyin-facade` and both facades' `context.rs` / `config.rs` | `phrase_index.cpp:354-356,361` | Unclear | Stopped: S1. |
+| 4 | `phrase.rs` (both facades), NULL `sentence`: GLib's `g_utf8_strlen` critical | `pinyin.cpp:1450`; `zhuyin.cpp:969`; GLib 2.84.4 `gutf8.c:240` | Imitation → Boundary | It hand-spelled GLib's internal `g_return_val_if_fail` (domain `GLib`, `g_utf8_strlen`, `p != NULL \|\| max == 0`). **Replaced** (#1466) by the pin's call, `glib_sys::g_utf8_strlen(sentence, -1)`, so GLib logs its own critical and applies the caller's fatal mask itself. The ruled no-input outcome after it is unchanged. Same bytes, level and domain as before, so no case tells the two forms apart and no mutation applies. |
+| 5 | `phrase.rs` (both facades), invalid UTF-8: `g_return_if_fail_warning(NULL, "bool pinyin_phrase_segment(pinyin_instance_t*, const char*)", "num_of_chars == ucs4_len")` and the zhuyin twin | `pinyin.cpp:1454`; `zhuyin.cpp:973` | Imitation → removed | The pin's own `g_return_val_if_fail` expansion with a copied `G_STRFUNC`. **Removed** (#1466) under decision D1: the call answers `false` and keeps the earlier result, with no log call. [1297-segment-critical](1297-segment-critical.md). |
+| 6 | `ffi.rs` (both facades) `return_if_fail_warning`; `oxpinyin-data` `phrase_library::SUB_PHRASE_LOAD_SIGNATURE`, `LayoutFault::expression`; the `take_layout_faults` / `record_layout_faults` / `save_user_with_layout_faults` path through `phrase_libraries.rs`, `oxpinyin-runtime`, `oxpinyin-facade` and both facades' `context.rs` / `config.rs` | `phrase_index.cpp:354-356,361` | Imitation → removed | The same macro expansion, carried from the load to the facades only to be logged. **Removed** (#1466) under D1, with the queue, the hooks, the copied expression text and the signature string. `LayoutFault` keeps only `total_freq`, which the load, reload and save still use for the pin's empty sub-index and totals. [1297-layout-criticals](1297-layout-criticals.md). |
 | 7 | `oxpinyin-input` `config.rs`, `native.rs` (`setlocale`, `fopen`, `fscanf`, `feof`, `atoi`, `fprintf`, `fclose` through `libc`); the facades' locale calls | `table_info.cpp:197,208-291,328,338-359,372-394` | Boundary | External-I/O stage 1; `LC_NUMERIC` row 39 stands. |
 | 8 | `oxpinyin-capi/src/types.rs` `GArray`, `GUint`, `GInt`, `GChar`; `oxpinyin-chewing` packed `ChewingKey`; the casts at exported parameters (`cursor.rs`, `iterators.rs`, `user_data.rs`) | `pinyin.h`, `zhuyin.h`; `chewing_key.h:111-113` | Boundary | The exported signatures prescribe the widths. |
 | 9 | `oxpinyin-capi-marshal` `input.rs` `utf8_to_ucs4`, `scalar_text`, `parser_prefix`, `direct_zhuyin_reading`, `filename`; `ucs4.rs` `decode`, `prefix_text`; `phrase_text.rs` `phrase_text_bytes`, `encode_words`, `encode_word`, `stored_words_match` | `g_utf8_to_ucs4` / `g_ucs4_to_utf8` at the C string entries (`pinyin.cpp:568-571,1450-1454`) | Boundary | ABI-prescribed encodings, which the 2026-10-29 ruling's scope keeps as boundary code; #1279 settled them. |
@@ -1268,7 +1269,7 @@ Buckets:
 | 15 | `oxpinyin-capi` `predict.rs` `prepend_punctuations` | `pinyin.cpp:2468-2494` | Behaviour | Distinct punctuation strings before the predictions (#928). |
 | 16 | `oxpinyin-core` `single_gram.rs` `lower_bound`, `find` | `ngram.cpp:161,185,215,239,259` | Behaviour | `partition_point` (item C, `67323c83`); unpartitioned grams are recorded under #1405. |
 | 17 | `oxpinyin-user` `pinyin_chain.rs` `Entry::equal_range` | `chewing_large_table2.h:208-255` | Behaviour | Two `partition_point`s (item D, `f0906b22`). |
-| 18 | `oxpinyin-data` `table_info.rs` `pin_join`, `join_bytes`, `FileName::under`; `c_stderr.rs` `build_filename`; `oxpinyin-user` `persistence.rs` `user_file`, `user_conf_path` | `g_build_filename` at `pinyin.cpp:150-165,250-259,331-338,395-400,952-1121`; `zhuyin.cpp:104-119,196-203,276-282,337-342,585-687` | Imitation | Rust re-expression of `g_build_filename`. Not replaced: stopped, S2. |
+| 18 | `oxpinyin-data` `table_info.rs` `pin_join`, `join_bytes`, `FileName::under`; `c_stderr.rs` `build_filename`; `oxpinyin-user` `persistence.rs` `user_file`, `user_conf_path` | `g_build_filename` at `pinyin.cpp:150-165,250-259,331-338,395-400,952-1121`; `zhuyin.cpp:104-119,196-203,276-282,337-342,585-687` | Owned elsewhere | Rust re-expression of `g_build_filename`. Assigned to [external-I/O stage 3](external-io-boundary.md#proposed-crate-and-staged-implementation) under decision D2; no code change in #1297. |
 | 19 | `oxpinyin-data` `c_stderr.rs` `path_bytes`, `table_conf_load_failed`, `mmap_failed`, `rename_failed` through `oxpinyin_input::diagnostic` (`libc::fprintf` on the C library's `stderr`) | `table_info.cpp:201,332`; `pinyin.cpp:256,290,338,956,1059-1121,1265`; `zhuyin.cpp:200,282,589,609-687,800` | Boundary | External-I/O stage 4 (#1437). |
 | 20 | `oxpinyin-user` `persistence.rs` `save_session`, `save_reporting`, the rename order, `tolerate`, `write_marker`, `clean_user_files`, `.tmp` staging, `write_header_word` | `pinyin.cpp:149-170,922-1130`; `zhuyin.cpp:547-700`; `memory_chunk.h:536-549` | Boundary | Files on disk, their order and the save's answers (#929). The rename and unlink calls move to the pin's at external-I/O stage 3. |
 | 21 | `persistence.rs` `write_chunk` payload `write_all` | `memory_chunk.h:550-557` | Boundary, pending | Rust std, not an imitation; external-I/O stage 2 restores the pin's single `write`. |
@@ -1286,41 +1287,30 @@ Out of scope: `oxpinyin-store`'s DBM calls (the Kyoto Cabinet `shim.cc`
 moves in its own change, PR #1465), `pinyin-oracle`, and test-only
 transcriptions.
 
-### Stopped rows
+### Maintainer decisions (2026-10-31 UTC)
 
-**S1 — the pin's own `g_return_val_if_fail` criticals (rows 5 and 6).**
-The 2026-10-31 ruling says these macros are not reproduced, their checks
-answer the pin's value "or abort where the pin aborts", and the lost
-message is a `POLICY-ACCEPTED` stderr difference. Rows 5 and 6 rebuild
-the macro's expansion by hand: `g_return_if_fail_warning` with a
-`G_STRFUNC` spelling copied from the oracle object, so they are
-imitation by that ruling. Removing them is not a stderr-only change,
-though. The pin emits these lines through `g_log` at critical level,
-which a caller's log handler receives, and under a fatal mask
-(`G_DEBUG=fatal-criticals`, `g_log_set_always_fatal`) the pin aborts
-there. `glib-924-segment-fatal-critical-{pinyin,zhuyin}` hold that abort
-on both sides, and `glib-924-segment-critical-*` hold the exact domain,
-level and text (#924 classified the channel as boundary). Plain Rust that
-answers the pin's value cannot abort where the pin aborts under a fatal
-mask without consulting GLib's mask, which is the imitation again. The
-ruling's own instruction for "no equivalent with the same documented
-result" is to stop and report. A maintainer decision is needed on
-whether the fatal-mask abort and the log-handler line may go
-(`POLICY-ACCEPTED`, and the `LayoutFault` plumbing and
-`SUB_PHRASE_LOAD_SIGNATURE` removed), or whether rows 5 and 6 stay as a
-recorded exception.
+**D1 — the pin's own `g_return_val_if_fail` criticals (rows 5 and 6).**
+Approved as a narrow exception to the library stderr ruling (#545). For
+both facades' `phrase_segment` and for `SubPhraseIndex::load`, oxpinyin
+keeps the pin's return values, state changes and continuation exactly,
+emits no critical and substitutes no other log call. Two observable
+differences are POLICY-ACCEPTED: the missing critical (the caller's log
+handler, and stderr under GLib's default handler) and the missing abort
+under GLib fatal-critical settings (`G_DEBUG=fatal-criticals`,
+`g_log_set_always_fatal`), where the pin aborts and oxpinyin continues.
+The second is an intentional observable difference, not exact
+compatibility. This is not a general exception for copying GLib macros,
+and it changes no other native GLib call and no class (c) ruling.
 
-**S2 — `g_build_filename` (row 18).** The join is a Rust re-expression
-of GLib's. `std::path::Path::join` cannot replace it: it replaces the
-directory when the name is absolute, where `g_build_filename` keeps the
-name beneath it, and `table.conf` names reach that case (policy row 78).
-The [external-I/O inventory](external-io-boundary.md) marks the
-equivalence UNSETTLED and says to call `g_build_filename`, at stage 3.
-That needs `glib-sys` on `oxpinyin-input`'s library path, where today it
-is optional behind the `tools` feature, and a decision for Windows and
-macOS, where GLib is not yet provisioned for these crates and the
-platform-scope ruling allows a portable Rust join. Both are outside this
-audit's authority: a dependency-edge change and stage 3's own gating.
+**D2 — `g_build_filename` (row 18).** Owned by external-I/O stage 3, not
+an open #1297 decision. Stage 3 must keep the pin's path behaviour,
+including a file name that begins with a separator, which stays beneath
+its directory (policy row 78); `std::path::Path::join` is not a drop-in
+replacement, because an absolute name replaces the directory there.
+Stage 3 also settles the platform question (Windows and macOS, where the
+platform-scope ruling allows a portable join and GLib is not yet
+provisioned for these crates) and the `glib-sys` dependency on
+`oxpinyin-input`'s library path.
 
 ### Result
 
@@ -1328,10 +1318,11 @@ audit's authority: a dependency-edge change and stage 3's own gating.
   rows 21 and 26.
 - Behaviour: rows 3, 10–17, 23, 25, 28 and 30. Each is already named for
   its behaviour; no rename is needed.
-- Imitation replaced: row 4.
-- Imitation not replaced: row 18 (S2). Unclear: rows 5 and 6 (S1).
+- Imitation replaced: row 4 (the pin's call). Imitation removed: rows 5
+  and 6 (D1).
+- Owned by external-I/O stage 3: row 18 (D2).
 
-#1297 stays open for S1 and S2.
+No row of #1297 remains open.
 
 ## C-maths imitation — record only
 
