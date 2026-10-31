@@ -153,9 +153,9 @@ their checks are plain Rust, which answers the pin's value or aborts
 where the pin aborts (constitution §4), and their message text is not
 imitated; such a stderr difference is a POLICY-ACCEPTED language
 artefact. Where no call or behaviour has the same documented result,
-stop and report it. The tools follow the ruling; `oxpinyin-input`'s
-`native/config.c` and `native/diagnostic.c` and the Kyoto Cabinet
-`shim.cc` are moved by their own changes.
+stop and report it. The tools and `oxpinyin-input`'s library calls
+follow the ruling (`native/config.c` and `native/diagnostic.c` are
+gone); the Kyoto Cabinet `shim.cc` is moved by its own change.
 
 **Platform scope of pinned behaviour (maintainer ruling 2026-10-31
 UTC).** The drop-in and pin-call rules (external I/O uses the pin's

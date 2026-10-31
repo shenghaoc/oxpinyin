@@ -42,9 +42,10 @@ Maintainer ruling, 2026-10-28 UTC:
    reproduced: their checks are plain Rust and their text is not imitated,
    recorded as a POLICY-ACCEPTED language artefact
    ([eio-tool-check-messages](eio-tool-check-messages.md)). The tools
-   follow it. **Remaining:** `oxpinyin-input/native/config.c` and
-   `native/diagnostic.c` (stages 1 and 4) and
-   `oxpinyin-store/src/kyotocabinet/shim.cc`, each in its own change.
+   follow it, and so do the library's stage 1 and 4 calls:
+   `oxpinyin-input/native/config.c` and `native/diagnostic.c` are gone,
+   their calls made through `libc` in `native.rs`. **Remaining:**
+   `oxpinyin-store/src/kyotocabinet/shim.cc`, in its own change.
 6. A new bidirectional `oxpinyin-input` crate owns these calls in scoped
    unsafe modules with `// SAFETY:` comments and safe typed functions.
    `oxpinyin-data` becomes `forbid(unsafe_code)` after extraction. The C
@@ -112,12 +113,14 @@ clone and verified against that commit.
 
 The host C runtime therefore writes LF on Linux/macOS and CRLF on
 Windows, where text-mode input translates CRLF back to LF. A Windows
-build of the pin follows the same text-mode round trip. The shim keeps
-the pin's `"w"` and `"r"` calls under the 2026-10-28 external-I/O
-ruling; it does not force binary mode or normalize the written bytes.
+build of the pin follows the same text-mode round trip. The boundary
+keeps the pin's `"w"` and `"r"` calls under the 2026-10-28 external-I/O
+ruling, now as `libc::fopen` with the same mode strings; it does not
+force binary mode or normalize the written bytes.
 `user_files::tests::user_conf_round_trips_and_conforms` and
 `config::tests::the_writer_prints_the_four_lines` assert the exact
-host-native bytes and read the saved file through the shim's scanner.
+host-native bytes and read the saved file through the boundary's
+`fscanf`.
 The former also checks that the reloaded marker conforms. The LF text
 returned by `UserTableInfo::to_text` remains a fixture composer.
 
@@ -203,7 +206,7 @@ associated tool entry points.
 | Mapping release: `MemoryChunk::freemem` calls `munmap(m_data_begin - header, header + capacity())`; `memory_chunk.h:72-78`. A failed checksum instead calls `munmap(data - header, file_size)` at `:516`. | `oxpinyin-data/src/phrase_library.rs` `MappedFile` owns a `memmap2::Mmap` whose drop releases its mapping. | **UNSETTLED as a complete lifecycle.** The original whole-file mapping call is required by row 109; whether to retain the pin's post-fini residual mapping is separately open. |
 | Profile cleanup: `_clean_user_files` and `check_format` call plain `unlink(filename)` for selected user files and fixed DBM names; `pinyin.cpp:150-215`, `zhuyin.cpp:104-159`. | `oxpinyin-user/src/persistence.rs` `clean_user_files`, `std::fs::remove_file`. | **UNSETTLED across platforms and full path handling.** On Unix, for an already formed NUL-free C path, the pin and [Rust Unix `unlink`](https://github.com/rust-lang/rust/blob/1.97.1/library/std/src/sys/fs/unix.rs) call the same libc function once: **EQUIVALENT for that primitive only**. The path construction and Windows behavior are not proved. |
 | Save staging/rename: pinyin unlinks the three DBM staging names, writes chunks/DBMs, then calls `g_rename(tmppathname, chunkpathname)` or `g_rename(tmpfilename, filename)` for each; `pinyin.cpp:940-1128`. Zhuyin interleaves write and rename; `zhuyin.cpp:554-689`. Each failed rename calls `fprintf(stderr, "rename %s to %s failed.\n", ...)`. | `oxpinyin-user/src/persistence.rs` `stage_chunk`, `stage_dbm`, `save_reporting`, `Staged::finish`, `finish_save`; Rust remove/rename; facade diagnostics. | **NOT EQUIVALENT on Windows.** GLib calls `MoveFileExW` once; Rust can retry with `FileRenameInfoEx` after access denied, including the read-only-attribute path. [GLib `g_rename`](https://github.com/GNOME/glib/blob/2.84.4/glib/gstdio.c#L1158-L1197), [Rust Windows rename](https://github.com/rust-lang/rust/blob/1.97.1/library/std/src/sys/fs/windows.rs). On ordinary Unix the header expands `g_rename` to libc `rename`, and Rust's Unix primitive calls that function once for the same NUL-free C paths: **EQUIVALENT only for that primitive**, not the complete sequence. |
-| Library diagnostics: `fprintf(stderr, "open %s failed.\n", ...)` for system config, `"open %s failed."` for user config, `"write %s failed.\n"` for marker open, `"load %s failed!\n"`, `"mmap %s failed!\n"`, `"open %s failed!\n"` for loads, and the rename format above. `table_info.cpp:199-202,330-333,380-383`; `pinyin.cpp:255-259,289-293,338,955-959,1061,1080,1096,1110,1123,1264-1268`; `zhuyin.cpp:199-203,233-237,282,588-592,611,637,657,674,689,799-803`. | `oxpinyin-data/src/pin_stderr.rs` `emit`, `mmap_failed`. Rust assembles bytes and uses `stderr().write_all`. **Stage 1:** a line that shares a failure sequence with a shim line is the shim's `fprintf` (`oxpinyin-data` `c_stderr`, `oxpinyin-input` `report_*`): `table_info.cpp`'s three lines (D2); in init, `load %s failed!` (`pinyin.cpp:338`, `zhuyin.cpp:282`) and the library loop's `mmap %s failed!` (`pinyin.cpp:256`, `:290`; `zhuyin.cpp:200`, `:234`), after `check_format`'s `user.conf` lines; in save, `mmap %s failed!` (`pinyin.cpp:956`, `zhuyin.cpp:589`) and `rename %s to %s failed.`, before `mark_version`'s line. Fini writes only `mark_version`'s line. Left to stage 4 on `pin_stderr`: `mmap %s failed!` in `mask_out` (`pinyin.cpp:1265`, `zhuyin.cpp:800`) and in the library load calls (`pinyin.cpp:256`, `:290` through `:446` and `:477`; zhuyin's twins), whose calls write no shim line. oxpinyin never writes `open %s failed!`, the non-mmap build's line. **Stage 4:** those remaining lines are the shim's `fprintf` too (`oxpinyin-input` `diagnostic::report_mmap_failed`, through `oxpinyin-data` `c_stderr::mmap_failed`), so every library line goes to the host C library's `stderr`; `pin_stderr` and its Rust-stderr writer are gone. The `SubPhraseIndex::load` criticals (`phrase_index.cpp:354-356`, `:361`) are made with the call the pin's `g_return_val_if_fail` expands to, `g_return_if_fail_warning(NULL, G_STRFUNC, #expr)` (oracle `SubPhraseIndex::load+492`, `+552`, `+576`, `+608` in both objects), not a preformatted `g_log`. | **UNSETTLED for all sinks.** Byte assembly on ordinary stderr does not prove C `FILE *` buffering, retries and error behavior equivalent. The `/dev/full` marker example above is a confirmed surrounding difference. |
+| Library diagnostics: `fprintf(stderr, "open %s failed.\n", ...)` for system config, `"open %s failed."` for user config, `"write %s failed.\n"` for marker open, `"load %s failed!\n"`, `"mmap %s failed!\n"`, `"open %s failed!\n"` for loads, and the rename format above. `table_info.cpp:199-202,330-333,380-383`; `pinyin.cpp:255-259,289-293,338,955-959,1061,1080,1096,1110,1123,1264-1268`; `zhuyin.cpp:199-203,233-237,282,588-592,611,637,657,674,689,799-803`. | `oxpinyin-data/src/pin_stderr.rs` `emit`, `mmap_failed`. Rust assembles bytes and uses `stderr().write_all`. **Stage 1:** a line that shares a failure sequence with a boundary line is the boundary's `fprintf` (`oxpinyin-data` `c_stderr`, `oxpinyin-input` `report_*`): `table_info.cpp`'s three lines (D2); in init, `load %s failed!` (`pinyin.cpp:338`, `zhuyin.cpp:282`) and the library loop's `mmap %s failed!` (`pinyin.cpp:256`, `:290`; `zhuyin.cpp:200`, `:234`), after `check_format`'s `user.conf` lines; in save, `mmap %s failed!` (`pinyin.cpp:956`, `zhuyin.cpp:589`) and `rename %s to %s failed.`, before `mark_version`'s line. Fini writes only `mark_version`'s line. Left to stage 4 on `pin_stderr`: `mmap %s failed!` in `mask_out` (`pinyin.cpp:1265`, `zhuyin.cpp:800`) and in the library load calls (`pinyin.cpp:256`, `:290` through `:446` and `:477`; zhuyin's twins), whose calls write no boundary line. oxpinyin never writes `open %s failed!`, the non-mmap build's line. **Stage 4:** those remaining lines are the boundary's `fprintf` too (`oxpinyin-input` `diagnostic::report_mmap_failed`, through `oxpinyin-data` `c_stderr::mmap_failed`), so every library line goes to the host C library's `stderr`; since 2026-10-31 UTC each is `libc::fprintf` on the C library's own `stderr` object, declared per platform in `oxpinyin-input` `native.rs` (glibc and musl `stderr`, Apple and FreeBSD `__stderrp`, UCRT `__acrt_iob_func(2)`), not a new stream on descriptor 2; `pin_stderr` and its Rust-stderr writer are gone. The `SubPhraseIndex::load` criticals (`phrase_index.cpp:354-356`, `:361`) are made with the call the pin's `g_return_val_if_fail` expands to, `g_return_if_fail_warning(NULL, G_STRFUNC, #expr)` (oracle `SubPhraseIndex::load+492`, `+552`, `+576`, `+608` in both objects), not a preformatted `g_log`. | **UNSETTLED for all sinks.** Byte assembly on ordinary stderr does not prove C `FILE *` buffering, retries and error behavior equivalent. The `/dev/full` marker example above is a confirmed surrounding difference. |
 | Backend DBM saves: BDB `unlink`, `db_create`, `tmp_db->open(..., DB_CREATE, 0600)`, copy, `tmp_db->sync(m_db, 0)`, `tmp_db->close(tmp_db, 0)` (`chewing_large_table2_bdb.cpp:135-159`, `phrase_large_table3_bdb.cpp:150-174`, `ngram_bdb.cpp:81-105`, `punct_table_bdb.cpp:111-135`). KC `unlink`, `dump_snapshot` (`chewing_large_table2_kyotodb.cpp:124-130`, `phrase_large_table3_kyotodb.cpp:139-145`, `ngram_kyotodb.cpp:82-91`, `punct_table_kyotodb.cpp:99-105`). Tkrzw `RemoveFile`, `Open(..., true, File::OPEN_DEFAULT)`, copy, `Synchronize(false)`, `Close` (`chewing_large_table2_tkrzwdb.cpp:111-127`, `phrase_large_table3_tkrzwdb.cpp:102-118`, `ngram_tkrzwdb.cpp:65-81`, `punct_table_tkrzwdb.cpp:96-109`). | `oxpinyin-store/src/bdb/mod.rs` `BdbUserBigramDb::save_db`; `kyotocabinet/mod.rs` `KcUserBigramDb::save_db`, `KcStore::write_user_index`/`write_user_bigram`; `tkrzw/mod.rs` `TkrzwUserBigramDb::save_db`; user persistence stages DBMs. | **UNSETTLED independently.** The ruling keeps DBM backends in store. BDB source passes `m_db` to the method selected from `tmp_db`, while `BdbUserBigramDb::save_db` calls `file.sync()` on the new handle. The external consequence remains an open confirmation question. KC `write_user_bigram` also documents a sibling-temp/rename sequence; do not infer its reachability in a facade save from its name alone. |
 | Backend reset and maintenance: BDB invokes `m_db->sync(m_db, 0)` and `m_db->close(m_db, 0)` on its handles, including `chewing_large_table2_bdb.cpp:68,544`, `phrase_large_table3_bdb.cpp:80,412`, `ngram_bdb.cpp:41`, `punct_table_bdb.cpp:43`, `flexible_ngram_bdb.h:53`. Tkrzw uses `m_db->Synchronize(false)` and `Close()`, e.g. `chewing_large_table2_tkrzwdb.cpp:65,489`, `phrase_large_table3_tkrzwdb.cpp:52,312`, `punct_table_tkrzwdb.cpp:45`, `flexible_ngram_tkrzwdb.h:86`. KC closes its handles, e.g. `phrase_large_table3_kyotodb.cpp:79,132`. | Backend-specific `WriteStore`/`UserBigramDb` methods in `oxpinyin-store/src/{bdb,kyotocabinet,tkrzw}/mod.rs` and their FFI adapters. | **UNSETTLED as an independent all-input proof.** Backend calls remain in store; their exact source-side arguments, ordering and failure handling must be retained under the ruling. |
 | Datagen chunk files: `save_phrase_index` and `save_dictionary` call `MemoryChunk::save`; `utils/utils_helper.h:97-145`. | `oxpinyin-datagen/src/bin/oxpinyin-datagen.rs` `write_chunk_file` uses `std::fs::write`. | **NOT EQUIVALENT.** With umask `000`, a new pin chunk is requested at mode `0644`, Rust's ordinary create at `0666`. Datagen also omits the pin's chunk sync. |
@@ -319,7 +322,7 @@ oxpinyin-input/
   src/diagnostic.rs   pin stderr/stdout formatted writes
   src/locale.rs       locale calls at the pin's reader/writer sites
   src/tool.rs         tool streams, numeric and GLib text adapters
-  native/             config.c and diagnostic.c until their own changes
+  src/native.rs       libc calls; the C library's stdout/stderr per platform
 ```
 
 `scan_system_config` uses the actual ordered `fopen`/`fscanf` stream and
@@ -334,10 +337,11 @@ path and diagnostic helpers own their corresponding pin calls.
 
 The native modules use scoped unsafe with `// SAFETY:` on every block.
 Under the 2026-10-31 UTC ruling they call the `libc` crate and
-`glib-sys`, and declare by hand only what neither binds (the tools
-declare the C library's `stdout`/`stderr` and GLib's `g_utf8_skip`). The
-library side's `config.c` and `diagnostic.c` still compile with `cc`
-until their own changes.
+`glib-sys`, and declare by hand only what neither binds: the C library's
+`stdout` and `stderr` objects, once per platform in `native.rs` for the
+library and the tools (Linux, Apple/FreeBSD/DragonFly and Windows; any
+other target is a `compile_error!`), and GLib's `g_utf8_skip` for the
+tools. The crate has no build script.
 No borrowed raw pointer escapes the safe facade. `oxpinyin-data` becomes
 `forbid(unsafe_code)` after its mmap implementation moves; user,
 runtime, core and engine retain their existing forbids. C facades retain
@@ -355,7 +359,11 @@ specifications in advance of the stage that owns them.
    UTC, with the rulings above). Create the minimal boundary
    and C shim; move system/user config scans, marker writing and locale
    calls together, including the shared lambda scanner. Gate both facade
-   paths and the touched crates; preserve class (b)/(c) handling.
+   paths and the touched crates; preserve class (b)/(c) handling. Since
+   2026-10-31 UTC `config.c` is gone: `oxpinyin-input` `native.rs` makes
+   the same `setlocale`, `fopen`, `fscanf`, `feof`, `atoi`, `fprintf`
+   and `fclose` calls through the `libc` crate, with the same format
+   strings, call order and result checks.
 2. **Chunks.** Move chunk load/map/save calls, single payload write,
    native sync and mapping ownership. Gate chunk readers/writers and
    both facades independently; make data `forbid(unsafe_code)` when its
@@ -369,6 +377,8 @@ specifications in advance of the stage that owns them.
    native calls; gate exact bytes, channels, ordering and existing
    class-(b)/(c) warnings. oxpinyin's own class-(c) warnings stay the
    facades' `g_log` in the pin's domain; the pin has no call there.
+   Since 2026-10-31 UTC `diagnostic.c` is gone: each line is
+   `libc::fprintf` on the C library's own `stderr` object.
 5. **Tools, in small independently gated slices.** First add the
    tool-only stream and GLib option/text boundary. Then port each
    utility family with the pin names and interface, including the two
