@@ -13,7 +13,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 from tools.dev import policy, pool, tool_diff
-from tools.bisection import contract_policy
+from tools.bisection import contract_policy, contract_verdict
 
 
 class ToolDiffTests(unittest.TestCase):
@@ -53,7 +53,7 @@ class ToolDiffTests(unittest.TestCase):
         subject = dict(exit=1, stdout='nodes\n', stderr='refused\n', files={'out': 'hex:'})
         capture = self.root / 'capture.jsonl'
         row = dict(runner='tool-diff', case='invalid', cell='bdb', userdir=False, abort=False,
-                   pin_signal=-11, pin=pin, subject=subject)
+                   pin_signal=-11, database_free=False, pin=pin, subject=subject)
         capture.write_text(json.dumps(row)+'\n')
         record = self.root / 'record.md'
         record.write_text('# Class (b)\n')
@@ -83,7 +83,7 @@ class ToolDiffTests(unittest.TestCase):
         pin = dict(exit=-6, stdout='lines\n', stderr='assertion\n', files={})
         subject = dict(pin, stderr='')
         row = dict(runner='tool-diff', case='abort', cell='bdb', userdir=False, abort=False,
-                   pin_signal=-6, reproduces_signal=True, pin=pin, subject=subject)
+                   pin_signal=-6, reproduces_signal=True, database_free=False, pin=pin, subject=subject)
         capture = self.root / 'capture.jsonl'
         capture.write_text(json.dumps(row)+'\n')
         record = self.root / 'record.md'
@@ -94,6 +94,64 @@ class ToolDiffTests(unittest.TestCase):
         self.assertEqual(tool_diff.verdict(case, pin, dict(subject, stdout=''), self.root, 'bdb')[0], 'DIFFER')
         with self.assertRaises(policy.RecordError):
             policy.entry_of('bad', dict(row, reproduces_signal=False))
+
+    def database_free_record(self, *rows):
+        capture = self.root / 'capture.jsonl'
+        capture.write_text(''.join(json.dumps(row) + '\n' for row in rows))
+        record = self.root / 'record.md'
+        if not record.exists():
+            record.write_text('# Class (b)\n')
+        (self.root / 'upstream-divergences.md').write_text('[record](record.md)\n')
+        lines = []
+        policy.record(record, [capture], out=lines.append)
+        return record, lines
+
+    def test_a_database_free_case_is_recorded_once_and_accepted_on_every_cell(self):
+        case = dict(id='invalid', utility='gen_pinyin_table', policy_record='record.md', pin_signal=-11)
+        pin = dict(exit=-11, stdout='', stderr='', files={'in.txt': 'hex:ff'})
+        subject = dict(exit=1, stdout='', stderr='refused\n', files={'in.txt': 'hex:ff'})
+        row = dict(runner='tool-diff', case='invalid', userdir=False, abort=False, pin_signal=-11,
+                   reproduces_signal=False, database_free=True, pin=pin, subject=subject)
+        record, lines = self.database_free_record(*(dict(row, cell=cell) for cell in ('bdb', 'kc', 'tkrzw')))
+        self.assertIn('recorded invalid [every cell, from kc]: pin', '\n'.join(lines))
+        block = json.loads(record.read_text().split('```contract-diff-policy\n')[1].split('\n```')[0])
+        self.assertEqual(block['cases'], {'invalid': {'database_free': contract_policy.entry(pin, subject)}})
+        for cell in ('bdb', 'kc', 'tkrzw'):
+            self.assertEqual(tool_diff.verdict(case, pin, subject, self.root, cell)[0], 'POLICY-ACCEPTED')
+        self.assertEqual(tool_diff.verdict(case, pin, dict(subject, stderr=''), self.root, 'kc')[0], 'DIFFER')
+        # A case that opens a database refuses the entry, whichever runner reads it.
+        for refused in (dict(case, utility='estimate_k_mixture_model'), dict(case, utility=None)):
+            result, detail = tool_diff.verdict(refused, pin, subject, self.root, 'bdb')
+            self.assertEqual(result, 'INVALID')
+            self.assertIn('cannot stand for a case that opens a database', detail)
+        with self.assertRaisesRegex(ValueError, 'opens a database'):
+            contract_verdict.policy_expectations(dict(policy_record='record.md', case_id='invalid'),
+                                                 policy_root=self.root, cell='bdb')
+
+    def test_database_free_rows_must_agree_and_replace_per_cell_entries(self):
+        pin = dict(exit=-11, stdout='', stderr='', files={})
+        subject = dict(exit=1, stdout='', stderr='refused\n', files={})
+        row = dict(runner='tool-diff', case='invalid', userdir=False, abort=False, pin_signal=-11,
+                   reproduces_signal=False, pin=pin, subject=subject)
+        record, _ = self.database_free_record(dict(row, cell='bdb', database_free=False),
+                                              dict(row, cell='kc', database_free=False))
+        before = record.read_text()
+        self.assertIn('"cells"', before)
+        with self.assertRaisesRegex(policy.RecordError, r'invalid \[kc\] digests differently from its \[bdb\] row'):
+            self.database_free_record(dict(row, cell='bdb', database_free=True),
+                                      dict(row, cell='kc', database_free=True, subject=dict(subject, stderr='')))
+        self.assertEqual(record.read_text(), before)
+        _, lines = self.database_free_record(dict(row, cell='bdb', database_free=True))
+        self.assertIn('notice: invalid had per-cell or bare entries; one database-free entry replaces them', lines)
+        self.assertNotIn('"cells"', record.read_text())
+        for bad in (dict(row, cell='bdb'), dict(row, cell='bdb', database_free='yes')):
+            with self.assertRaisesRegex(policy.RecordError, 'needs a boolean database_free'):
+                policy.entry_of('bad', bad)
+        with self.assertRaisesRegex(policy.RecordError, 'only a tool-diff row can be database-free'):
+            policy.entry_of('bad', dict({k: v for k, v in row.items() if k != 'runner'}, cell='bdb', database_free=True))
+
+    def test_database_free_names_registered_utilities(self):
+        self.assertLessEqual(tool_diff.DATABASE_FREE, set(tool_diff.PIN_UTILITIES))
 
     def test_case_file_names_registered_utilities_and_reproducible_signals(self):
         path = self.root / 'cases.json'

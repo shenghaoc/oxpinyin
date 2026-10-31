@@ -54,6 +54,23 @@ just policy-record docs/findings/eio-table-generator-invalid-utf8.md /path/to/ob
 
 Every accepted pair binds both complete observations with the existing
 schema-2 record digests. A changed exit, stream or file fails the record.
+
+None of the three registered utilities opens a DBM: `DATABASE_FREE` in
+`tools/dev/tool_diff.py` names them, and each capture row carries
+`database_free` from it. The writer records such a case once, for every
+cell:
+
+```json
+"pinyin-invalid-utf8": {"database_free": {"pin": {...}, "subject": {...}, "divergence": [...]}}
+```
+
+One cell's capture is enough. When several cells are passed, every row of
+the case must digest the same, or nothing is written; an existing per-cell
+entry for the case is replaced, with a notice. The reader accepts a
+`database_free` entry on every cell only for a case whose utility is in
+`DATABASE_FREE`; a contract-diff case, or a utility that opens a database,
+reads it as INVALID and keeps per-cell `cells` entries. A capture taken
+before the `database_free` field is refused and must be taken again.
 `--expect-differ --cases ID` supports a named mutation or reverted subject;
 INVALID is never an expected difference. Captures remain disposable local
 working data and are not committed.
@@ -108,3 +125,14 @@ The named mutation `kti-freq-positive` changes only the unigram test in
 `freq != 0` to `freq > 0`. The bdb run detects it in `kti-numeric-fields`
 (1 DIFFER, 27 MATCH, 12 POLICY-ACCEPTED). The source was restored byte
 for byte before the completion run.
+
+## Database-free evidence (2026-10-31 UTC)
+
+The four tool records (eio-table-generator-invalid-utf8,
+eio-zhuyin-missing-frequency, eio-tool-check-messages and
+eio-kmm-to-interpolation-undefined-lines) were re-rendered from one bdb
+capture into `database_free` entries. Each new entry is byte-identical to
+every per-cell entry it replaced. Re-scored against them, the bdb and kc
+captures stay 28 MATCH and 12 POLICY-ACCEPTED. The tkrzw capture is now
+28 MATCH and 12 POLICY-ACCEPTED as well: the five #1436/#1450 cases that
+lacked tkrzw evidence are covered by the entry for every cell.

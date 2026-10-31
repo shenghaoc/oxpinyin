@@ -7,7 +7,10 @@ block, in the compact form tools/bisection/contract_policy.py defines (the
 SHA-256 of each side's complete stable observation, a digest per field and
 the divergence as text), and adds the block when the record has none. A
 record that still holds complete observations (schema 1) is converted with
-`--migrate`. Nothing is spliced by hand.
+`--migrate`. A tool-diff row marked `database_free` (its utility opens no
+DBM, tools/dev/tool_diff.py) is recorded once as the case's `database_free`
+entry, which the verdict reads on every cell; every captured cell of such a
+case must digest the same. Nothing is spliced by hand.
 """
 import argparse
 import json
@@ -52,6 +55,9 @@ def entry_of(where, row):
     if type(row['userdir']) is not bool or type(row['abort']) is not bool:
         raise RecordError(f'{where}: userdir and abort must be booleans')
     if row.get('runner') == 'tool-diff':
+        if type(row.get('database_free')) is not bool:
+            raise RecordError(f'{where}: a tool-diff row needs a boolean database_free; '
+                              'a capture from before that field must be taken again')
         for side in contract_policy.SIDES:
             # A SIGABRT both sides reproduce (constitution section 4) may be
             # bound with the pin's, for a record of what else differs.
@@ -64,6 +70,8 @@ def entry_of(where, row):
             return contract_policy.entry(row['pin'], row['subject'])
         except ValueError as error:
             raise RecordError(f'{where}: {error}') from None
+    if 'database_free' in row:
+        raise RecordError(f'{where}: only a tool-diff row can be database-free')
     sides = {}
     for side in contract_policy.SIDES:
         try:
@@ -152,17 +160,32 @@ def record(path, captures, cases=None, *, migrate_schema_1=False, out=print):
         out(f'converted {name}')
     wanted = None if cases is None else list(dict.fromkeys(cases))
     recorded = []
+    database_free = {}
     for where, row in observations(captures, wanted):
         entry = entry_of(where, row)
         case, cell = row['case'], row['cell']
         current = kept['cases'].get(case)
-        if not (isinstance(current, dict) and set(current) == {'cells'}):
-            if current is not None:
-                out(f'notice: {case} had one entry for every cell; only the cells recorded now remain')
-            kept['cases'][case] = {'cells': {}}
-        kept['cases'][case]['cells'][cell] = entry
+        if row.get('database_free'):
+            if case in database_free:
+                first, earlier = database_free[case]
+                if earlier != entry:
+                    raise RecordError(f'{where}: {case} [{cell}] digests differently from its [{first}] row; '
+                                      'a database-free case must observe the same in every cell')
+            else:
+                database_free[case] = cell, entry
+                if current is not None and not (isinstance(current, dict) and set(current) == {'database_free'}):
+                    out(f'notice: {case} had per-cell or bare entries; one database-free entry replaces them')
+            kept['cases'][case] = {'database_free': entry}
+            label = f'every cell, from {cell}'
+        else:
+            if not (isinstance(current, dict) and set(current) == {'cells'}):
+                if current is not None:
+                    out(f'notice: {case} had one entry for every cell; only the cells recorded now remain')
+                kept['cases'][case] = {'cells': {}}
+            kept['cases'][case]['cells'][cell] = entry
+            label = cell
         recorded.append(f'{case} [{cell}]')
-        out(f'recorded {case} [{cell}]: pin {entry["pin"]["sha256"][:8]} subject {entry["subject"]["sha256"][:8]}, '
+        out(f'recorded {case} [{label}]: pin {entry["pin"]["sha256"][:8]} subject {entry["subject"]["sha256"][:8]}, '
             f'{len(entry["divergence"])} divergence line(s)')
     if wanted is not None:
         missing = [name for name in wanted if not any(label.startswith(name + ' [') for label in recorded)]

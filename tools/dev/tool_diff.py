@@ -18,6 +18,11 @@ from . import pool
 # Each utility's directory in the pin's build tree (utils/*/Makefile.am).
 PIN_UTILITIES = {'gen_pinyin_table': 'utils/storage', 'gen_zhuyin_table': 'utils/storage',
                  'k_mixture_model_to_interpolation': 'utils/training'}
+# Utilities whose pin source opens no DBM: the generators read and write text
+# tables, and k_mixture_model_to_interpolation converts stdin to stdout with
+# taglib (no Bigram attach, no phrase-index load). Their observations are the
+# same in every cell, so policy evidence is recorded once for every cell.
+DATABASE_FREE = frozenset({'gen_pinyin_table', 'gen_zhuyin_table', 'k_mixture_model_to_interpolation'})
 GLIB_PREFIX = re.compile(r'(?m)^((?:\*\* )?\([^():\n]+:)\d+(\): (?:[A-Za-z0-9_.-]+-)?(?:CRITICAL|WARNING|MESSAGE|ERROR|DEBUG|INFO) \*\*: )'
                          r'\d\d:\d\d:\d\d\.\d+: ')
 
@@ -143,7 +148,8 @@ def verdict(case, pin, subject, policy_root, cell):
     if case.get('policy_record'):
         try:
             kept = contract_verdict.policy_expectations(
-                dict(policy_record=case['policy_record'], case_id=case['id']),
+                dict(policy_record=case['policy_record'], case_id=case['id'],
+                     database_free=case.get('utility') in DATABASE_FREE),
                 policy_root=policy_root, cell=cell)
         except (ValueError, OSError, KeyError, TypeError) as error:
             return 'INVALID', str(error)
@@ -204,7 +210,7 @@ def run(ctx, argv):
         result, detail = verdict(case, pin, subject, child.settings.root / 'docs/findings', child.settings.cell)
         row = dict(runner='tool-diff', cell=child.settings.cell, case=case['id'], userdir=False, abort=False,
                    pin_signal=case.get('pin_signal'), reproduces_signal=bool(case.get('reproduces_signal')),
-                   pin=pin, subject=subject)
+                   database_free=case['utility'] in DATABASE_FREE, pin=pin, subject=subject)
         return case, result, detail, row
     results = ctx.campaign(cases, compare)
     counts = Counter()
