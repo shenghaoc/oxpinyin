@@ -198,6 +198,13 @@ runner's byte inventory cannot mask those fields without an unsound
 utility-specific rule, so those cases stay DIFFER and this paragraph is
 their record.
 
+A full-model20 `gen_binary_files` run also reproduces every chunk file
+byte for byte and every decoded pinyin-index record (201,658 system and
+32,890 addon keys) in both key spaces; the raw pinyin-index **value**
+bytes differ only in the tail padding the pin's C++ struct leaves
+uninitialised and the Rust writer zeroes (the same recorded
+`datagen-compat` artefact, not a record difference).
+
 One bdb `exp-missing-bigram` case also differs in stderr: the pin calls
 `Bigram::get_all_items` on the handle a failed `attach` left unopened,
 and libdb itself writes `BDB1565 DB->cursor: method not permitted before
