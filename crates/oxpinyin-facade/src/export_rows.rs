@@ -43,8 +43,9 @@ const INITIAL_SEED: u64 = 23 * 3;
 /// `USER_FILE` library's item from the session store. The probes skip a
 /// token only where the pin's do, an absent item or one with no
 /// pronunciation; a present item that is malformed is read and refused at
-/// the pin's assert site ([`ExportAssert`]), and a store that cannot be
-/// read is the call's error, which the pin's in-memory sub-index never has.
+/// the pin's assert site ([`ExportAssert`]). Every read is infallible, as
+/// the pin's in-memory sub-index read is: a libpinyin session keeps its
+/// phrases in memory, in per-library arenas (policy row 62).
 ///
 /// What the store answers is held while its write generation stands still
 /// and re-read as soon as it moves: the end of the appended system tokens,
@@ -135,9 +136,8 @@ impl ExportAssert {
 }
 
 /// What one [`PhraseExportCursor::get_next_with`] call produced: a row, or
-/// the assert site the pin dies at. A store that cannot be read is the
-/// call's `Err`, not a step: the pin's sub-index is in memory and has no
-/// such outcome, so it propagates instead of becoming a gap.
+/// the assert site the pin dies at. There is no third outcome: the pin's
+/// sub-index read cannot fail, and neither can the session's.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ExportStep<R> {
     /// A row.
@@ -149,8 +149,9 @@ pub enum ExportStep<R> {
 
 /// Which assert site, if any, a `UserStore::phrase` failure stands for: a
 /// present item whose text or pronunciation row does not decode is read at
-/// the pin and dies at `:714` or `:724`; every other failure is the store's,
-/// with no pin counterpart.
+/// the pin and dies at `:714` or `:724`. Only a standalone row store, which
+/// no C context holds, answers `phrase` from a database; a libpinyin
+/// session answers it from its arenas and never fails.
 fn assert_for(error: &UserStoreError) -> Option<ExportAssert> {
     match error {
         UserStoreError::Decode => Some(ExportAssert::PhraseString),
@@ -459,20 +460,11 @@ impl PhraseExportCursor {
     /// re-reads the range and probes the next token with a pronunciation
     /// (`:742-767`). The call meets the pin's assert sites in the pin's
     /// order ([`ExportAssert`]) and answers the first one it hits with the
-    /// cursor unmoved.
-    ///
-    /// # Errors
-    ///
-    /// The store could not be read: the item under the cursor, or the range
-    /// the re-probe needs. The pin has no such outcome, so the error is
-    /// handed up rather than read as a gap.
-    pub fn get_next_with<R>(
-        &mut self,
-        read: impl FnOnce(&ExportRow<'_>) -> R,
-    ) -> Result<ExportStep<R>, UserStoreError> {
+    /// cursor unmoved. The reads cannot fail, as the pin's cannot.
+    pub fn get_next_with<R>(&mut self, read: impl FnOnce(&ExportRow<'_>) -> R) -> ExportStep<R> {
         let token = self.next_token;
         if token == NULL_TOKEN {
-            return Ok(ExportStep::Assert(ExportAssert::Item));
+            return ExportStep::Assert(ExportAssert::Item);
         }
         let nth = self.next_pronunciation;
         let step = self.with_item(token, |item| {
@@ -486,24 +478,18 @@ impl PhraseExportCursor {
             Ok((read(&row), item.next_pronunciation(nth + 1)))
         });
         let (out, following) = match step {
-            Err(error) => {
-                return match assert_for(&error) {
-                    Some(site) => Ok(ExportStep::Assert(site)),
-                    None => Err(error),
-                };
-            }
-            Ok(None) => return Ok(ExportStep::Assert(ExportAssert::Item)),
-            Ok(Some(Err(site))) => return Ok(ExportStep::Assert(site)),
+            Err(site) | Ok(Some(Err(site))) => return ExportStep::Assert(site),
+            Ok(None) => return ExportStep::Assert(ExportAssert::Item),
             Ok(Some(Ok(pair))) => pair,
         };
         match following {
             Some(next) => self.next_pronunciation = next,
             None => {
                 self.next_pronunciation = 0;
-                self.probe_from(token + 1)?;
+                self.probe_from(token + 1);
             }
         }
-        Ok(ExportStep::Row(out))
+        ExportStep::Row(out)
     }
 
     /// Whether a journal REMOVE took the system item behind `token` out of
@@ -515,18 +501,20 @@ impl PhraseExportCursor {
     }
 
     /// Re-reads the store-derived answers when the store's write generation
-    /// moved since they were taken. A range end the store cannot read leaves
-    /// the memo as it was, so the next call asks again.
-    fn refresh(&mut self) -> Result<(), UserStoreError> {
+    /// moved since they were taken. A libpinyin session answers the range
+    /// end from its arena; a standalone row store whose cursor cannot be
+    /// read ends the range at the library's first token.
+    fn refresh(&mut self) {
         let Some(user) = self.user.as_ref() else {
-            return Ok(());
+            return;
         };
         let generation = user.generation();
         if self.memo.generation == Some(generation) {
-            return Ok(());
+            return;
         }
         let user_end = if self.user_library_present {
-            user.user_library_token_end(self.index)?
+            user.user_library_token_end(self.index)
+                .unwrap_or((u32::from(self.index) << 24) | 1)
         } else {
             NULL_TOKEN
         };
@@ -536,22 +524,20 @@ impl PhraseExportCursor {
             user_end,
             plain_token: NULL_TOKEN,
         };
-        Ok(())
     }
 
     /// The probe `pinyin_begin_get_phrases` (`pinyin.cpp:676-687`) and the
     /// re-probe in `get_next_phrase` (`:748-767`) share: a fresh
     /// `get_range`, then the first token from `start` whose item has a
     /// pronunciation. A sub-index that is not loaded ends the iteration.
-    fn probe_from(&mut self, start: u32) -> Result<(), UserStoreError> {
+    fn probe_from(&mut self, start: u32) {
         self.next_token = NULL_TOKEN;
-        self.refresh()?;
+        self.refresh();
         match self.index {
             GB_DICTIONARY..=MERGED_DICTIONARY => self.probe_system(start),
-            ADDON_DICTIONARY | NETWORK_DICTIONARY | USER_DICTIONARY => self.probe_user(start)?,
+            ADDON_DICTIONARY | NETWORK_DICTIONARY | USER_DICTIONARY => self.probe_user(start),
             _ => {}
         }
-        Ok(())
     }
 
     /// `FacadePhraseIndex::get_range` for a system sub-index
@@ -616,37 +602,36 @@ impl PhraseExportCursor {
     /// The pin's probe reads `n_prons` from the item's header (`:682`,
     /// `:763`), so a present item the store cannot decode is selected, not
     /// skipped; the read that follows is the assert.
-    fn probe_user(&mut self, start: u32) -> Result<(), UserStoreError> {
+    fn probe_user(&mut self, start: u32) {
         if !self.user_library_present {
-            return Ok(());
+            return;
         }
         let end = self.memo.user_end;
         let mut token = start;
         while token < end {
             let found = match self.with_user_item(token, |item| item.first_pronunciation()) {
                 Ok(found) => found.flatten(),
-                Err(error) if assert_for(&error).is_some() => Some(0),
-                Err(error) => return Err(error),
+                Err(_) => Some(0),
             };
             if let Some(nth) = found {
                 self.next_token = token;
                 self.next_pronunciation = nth;
-                return Ok(());
+                return;
             }
             token += 1;
         }
-        Ok(())
     }
 
     /// `get_phrase_item` for `token` (`phrase_index.cpp:180-206`): the
     /// session's replacement first, then the mapped chunk; a `USER_FILE`
-    /// token reads the session store. `Ok(None)` is `ERROR_NO_ITEM`.
+    /// token reads the session store. `Ok(None)` is `ERROR_NO_ITEM`; `Err` is
+    /// the assert site of a present item that does not decode.
     fn with_item<R>(
         &mut self,
         token: u32,
         read: impl FnOnce(ItemRef<'_>) -> R,
-    ) -> Result<Option<R>, UserStoreError> {
-        self.refresh()?;
+    ) -> Result<Option<R>, ExportAssert> {
+        self.refresh();
         match self.index {
             GB_DICTIONARY..=MERGED_DICTIONARY => {
                 let Some(dict) = self.system.as_ref() else {
@@ -701,14 +686,16 @@ impl PhraseExportCursor {
         }
     }
 
-    /// The `USER_FILE` item under `token`, read from the session store once
-    /// per token and generation. `Ok(None)` is no item; a present item the
-    /// store cannot decode, or a store it cannot read, is the `Err`.
+    /// The `USER_FILE` item under `token`, read from the session's arena,
+    /// or from a standalone row store once per token and generation.
+    /// `Ok(None)` is no item; `Err` is the assert site of a present item the
+    /// row store cannot decode. A row store that cannot be read at all has
+    /// no item there; a libpinyin session's arena read cannot fail.
     fn with_user_item<R>(
         &mut self,
         token: u32,
         read: impl FnOnce(ItemRef<'_>) -> R,
-    ) -> Result<Option<R>, UserStoreError> {
+    ) -> Result<Option<R>, ExportAssert> {
         let Some(user) = self.user.as_ref() else {
             return Ok(None);
         };
@@ -732,8 +719,10 @@ impl PhraseExportCursor {
             .as_ref()
             .is_some_and(|current| current.token == token && current.generation == generation);
         if !held {
-            let Some(phrase) = user.phrase(token)? else {
-                return Ok(None);
+            let phrase = match user.phrase(token) {
+                Ok(Some(phrase)) => phrase,
+                Ok(None) => return Ok(None),
+                Err(error) => return assert_for(&error).map_or(Ok(None), Err),
             };
             self.current = Some(CurrentUserItem {
                 token,
@@ -751,11 +740,9 @@ impl PhraseExportCursor {
 impl ContextCore {
     /// `pinyin_begin_get_phrases` (`pinyin.cpp:662-688`): the iterator over
     /// sub-index `index`, probed to its first token with a pronunciation.
-    ///
-    /// # Errors
-    ///
-    /// The store could not be read during the probe.
-    pub fn phrase_export_cursor(&self, index: u32) -> Result<PhraseExportCursor, UserStoreError> {
+    /// The probe cannot fail, as the pin's in-memory one cannot.
+    #[must_use]
+    pub fn phrase_export_cursor(&self, index: u32) -> PhraseExportCursor {
         let [index, ..] = index.to_le_bytes();
         let user_library_present = matches!(
             index,
@@ -775,8 +762,8 @@ impl ContextCore {
             current: None,
         };
         // `range.m_range_begin`: tokens start at 1 (`phrase_index.cpp:642`).
-        cursor.probe_from((u32::from(index) << 24) | 1)?;
-        Ok(cursor)
+        cursor.probe_from((u32::from(index) << 24) | 1);
+        cursor
     }
 
     /// §9 bigram-export materialization with upstream's filters and
@@ -1268,8 +1255,8 @@ mod phrase_cursor_tests {
     /// One `get_next`.
     fn next_row(cursor: &mut PhraseExportCursor) -> Option<Row> {
         match cursor.get_next_with(render) {
-            Ok(ExportStep::Row(row)) => row,
-            Ok(ExportStep::Assert(_)) | Err(_) => None,
+            ExportStep::Row(row) => row,
+            ExportStep::Assert(_) => None,
         }
     }
 
@@ -1286,13 +1273,13 @@ mod phrase_cursor_tests {
     #[test]
     fn begin_probes_one_token_and_the_guint8_alias_drains_like_library_1() {
         let ctx = open();
-        let mut cursor = ctx.phrase_export_cursor(257).expect("begin");
+        let mut cursor = ctx.phrase_export_cursor(257);
         assert!(cursor.has_next());
         assert_eq!(cursor.next_token >> 24, 1, "the guint8 alias of library 1");
         assert_eq!(cursor.next_pronunciation, 0);
         let all = drain(&mut cursor).expect("every row");
         assert!(!all.is_empty());
-        let mut library = ctx.phrase_export_cursor(1).expect("begin");
+        let mut library = ctx.phrase_export_cursor(1);
         assert_eq!(all, drain(&mut library).expect("every row"));
     }
 
@@ -1300,11 +1287,11 @@ mod phrase_cursor_tests {
     fn an_unused_nibble_and_the_pins_asserts_are_reported() {
         let ctx = open();
         for index in [0, 8, 15, 16, 255] {
-            let mut cursor = ctx.phrase_export_cursor(index).expect("begin");
+            let mut cursor = ctx.phrase_export_cursor(index);
             assert!(!cursor.has_next(), "nibble {index}");
             assert!(matches!(
                 cursor.get_next_with(|_| ()),
-                Ok(ExportStep::Assert(ExportAssert::Item))
+                ExportStep::Assert(ExportAssert::Item)
             ));
         }
         assert!(!PhraseExportCursor::default().has_next());
@@ -1345,9 +1332,7 @@ mod phrase_cursor_tests {
             store
                 .add_phrase_in(USER_DICTIONARY, &"甲".into(), &[key], Some(2))
                 .expect("representable session key or standalone row");
-            let mut cursor = ctx
-                .phrase_export_cursor(u32::from(USER_DICTIONARY))
-                .expect("begin");
+            let mut cursor = ctx.phrase_export_cursor(u32::from(USER_DICTIONARY));
             assert_eq!(
                 next_row(&mut cursor),
                 Some(row("你好", "ni'hao", 5)),
@@ -1356,7 +1341,7 @@ mod phrase_cursor_tests {
             assert!(cursor.has_next(), "{tag}: the probe selects the item");
             for _ in 0..2 {
                 assert!(
-                    matches!(cursor.get_next_with(|_| ()), Ok(ExportStep::Assert(at)) if at == site),
+                    matches!(cursor.get_next_with(|_| ()), ExportStep::Assert(at) if at == site),
                     "{tag}"
                 );
             }
@@ -1375,10 +1360,11 @@ mod phrase_cursor_tests {
     }
 
     /// A present item the store cannot decode is read at the pin and dies
-    /// at `:714` (its text) or `:724` (a pronunciation row); a store that
-    /// cannot be read is the error itself, which the pin never has.
+    /// at `:714` (its text) or `:724` (a pronunciation row); any other
+    /// failure of a standalone row store is no assert site, and the cursor
+    /// reads it as no item (a libpinyin session's read cannot fail).
     #[test]
-    fn an_undecodable_item_is_an_assert_site_and_a_store_failure_an_error() {
+    fn an_undecodable_item_is_an_assert_site_and_a_store_failure_is_not() {
         assert_eq!(
             assert_for(&UserStoreError::Decode),
             Some(ExportAssert::PhraseString)
@@ -1400,7 +1386,7 @@ mod phrase_cursor_tests {
     #[test]
     fn the_re_probe_reads_a_reading_imported_under_the_next_system_token() {
         let mut ctx = open();
-        let mut cursor = ctx.phrase_export_cursor(1).expect("begin");
+        let mut cursor = ctx.phrase_export_cursor(1);
         let first = next_row(&mut cursor);
         assert!(first.is_some());
         let next = cursor.next_token;
@@ -1468,9 +1454,7 @@ mod phrase_cursor_tests {
                 Some(5),
             )
             .expect("first");
-        let mut cursor = ctx
-            .phrase_export_cursor(u32::from(USER_DICTIONARY))
-            .expect("begin");
+        let mut cursor = ctx.phrase_export_cursor(u32::from(USER_DICTIONARY));
         assert!(cursor.has_next());
         let store = ctx.user.as_mut().unwrap();
         store

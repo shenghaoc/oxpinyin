@@ -72,7 +72,28 @@ EXPECTED = [('reload-drops-session-pinyin-train', (), {'issues': ('805',), 'mode
               'mode': 'zhuyin'}),
             ('reload-total-while-unloaded', (), {'issues': ('805',)}),
             ('mask-out-replaces-reload-offset', (), {'control': True, 'issues': ('805',)}),
-            ('mask-out-after-compact-keeps-reload-offset', (), {'issues': ('805',)})]
+            ('mask-out-after-compact-keeps-reload-offset', (), {'issues': ('805',)}),
+            ('unload-save-skips-library-pinyin',
+             (),
+             {'issues': ('805', 'row:103'), 'mode': 'pinyin', 'stderr': True, 'userdir': True}),
+            ('unload-save-skips-library-zhuyin',
+             (),
+             {'issues': ('805', 'row:103'), 'mode': 'zhuyin', 'stderr': True, 'userdir': True}),
+            ('unload-save-skips-user-library-zhuyin',
+             (),
+             {'issues': ('805', 'row:103'), 'mode': 'zhuyin', 'stderr': True, 'userdir': True}),
+            ('reload-unreadable-log-missing-pinyin',
+             (),
+             {'control': True, 'issues': ('805', 'row:103'), 'mode': 'pinyin', 'stderr': True}),
+            ('reload-unreadable-log-short-pinyin',
+             (),
+             {'control': True, 'issues': ('805', 'row:103'), 'mode': 'pinyin', 'stderr': True}),
+            ('reload-unreadable-log-missing-zhuyin',
+             (),
+             {'control': True, 'issues': ('805', 'row:103'), 'mode': 'zhuyin', 'stderr': True}),
+            ('reload-unreadable-log-short-zhuyin',
+             (),
+             {'control': True, 'issues': ('805', 'row:103'), 'mode': 'zhuyin', 'stderr': True})]
 
 
 def declarations():

@@ -3905,6 +3905,10 @@ previous token's gram).
   cannot do.
 - **Held by:** `store_first_tests`
   (`crates/oxpinyin-facade/src/context.rs`).
+- **Status (2026-10-31 UTC):** closed by member 5b. The transitions are
+  in memory and cannot fail; the refusal and `store_first_tests` are
+  deleted. See
+  [library-transitions-in-memory.md](library-transitions-in-memory.md).
 
 ### A second `pinyin_fini` / `zhuyin_fini` on one context (#573; policy row 105, class (b), 2026-10-17 UTC)
 
@@ -4398,3 +4402,15 @@ both C facades call `std::process::abort()`. The up-front log validation
 and its refusals are deleted. All sites are `assert`s: POLICY-ACCEPTED for
 the missing assertion line only. Recorded, with the pin sites, items and
 cases, in [pin-aborts-journal-replay.md](pin-aborts-journal-replay.md).
+
+### Library transitions in memory (2026-10-31 UTC)
+
+**Pin behaviour reproduced.** Member 5b of the class (c) retirement: a
+library unload or reload changes only the session's in-memory state and
+the runtime's visibility mask, as `FacadePhraseIndex::unload` and
+`_load_phrase_library` do (row 103), and the phrase export iterator's
+read of the session phrases cannot fail (row 62's store-read sub-shape).
+Neither row has a pin abort; the refusals and their warnings are deleted.
+A save now skips an unloaded library, as `_write_files` and
+`_rename_files` do. Recorded, with the pin lines, items and cases, in
+[library-transitions-in-memory.md](library-transitions-in-memory.md).

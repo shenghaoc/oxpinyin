@@ -152,6 +152,11 @@ pub enum SaveBaseline {
     /// The current chunk differs and is the old side of the full union
     /// diff against the live sub-index.
     Changed(SystemLibrary),
+    /// The library is unloaded: `get_range` answers
+    /// `ERROR_NO_SUB_PHRASE_INDEX`, so `_write_files` and `_rename_files`
+    /// skip it and its file on disk stays as it is (074a2219
+    /// `pinyin.cpp:928-933`, `:1032-1035`; `zhuyin.cpp:563-568`).
+    Unloaded,
 }
 
 impl SystemLibrary {
@@ -1754,7 +1759,9 @@ pub fn save_with_bigram(
 #[derive(Clone, Copy)]
 pub(crate) struct SaveSource<'a> {
     pub(crate) state: &'a UserState,
-    pub(crate) libraries: Option<&'a BTreeMap<u8, UserLibrary>>,
+    /// A libpinyin session's arenas, with the `USER_FILE` libraries it has
+    /// unloaded; `None` builds the chunks from `state`.
+    pub(crate) libraries: Option<&'a crate::user_library::SessionPhrases>,
     pub(crate) kept: &'a IndexKeys,
     /// The nibbles whose live empty sub-index the pin's `compact` rebuilt
     /// from no items; their log header's new total is zero.
@@ -1815,9 +1822,10 @@ pub(crate) fn save_session(
 /// The files of a save in the pin's rename order (`_rename_files`,
 /// `pinyin.cpp:1025-1130`): the libraries by index, then the two indices
 /// and the bigram.
-fn pin_rename_order(layout: &UserFileLayout) -> Vec<FileName> {
+fn pin_rename_order(layout: &UserFileLayout, unloaded: &[u8]) -> Vec<FileName> {
     let mut order: Vec<FileName> = libraries_in_pin_order(layout)
         .into_iter()
+        .filter(|(nibble, _, _)| !unloaded.contains(nibble))
         .map(|(_, name, _)| name.clone())
         .collect();
     for dbm in [UserDbm::PinyinIndex, UserDbm::PhraseIndex, UserDbm::Bigram] {
@@ -1915,7 +1923,7 @@ pub(crate) fn save_reporting<B: FnMut(u8) -> SaveBaseline>(
         // `zhuyin_save` renames each file as soon as it has written it.
         outcome.renames_failed = staged.failed;
     } else {
-        for name in pin_rename_order(originals.layout()) {
+        for name in pin_rename_order(originals.layout(), &staged.unloaded) {
             let tmp = name.with_suffix(".tmp").under(dir);
             let final_path = name.under(dir);
             if std::fs::rename(&tmp, &final_path).is_err() {
@@ -1952,6 +1960,9 @@ struct Staged {
     immediate: bool,
     /// The immediate renames that failed.
     failed: Vec<(PathBuf, PathBuf)>,
+    /// The unloaded libraries the write pass skipped, which the rename pass
+    /// skips too (`pinyin.cpp:1032-1035`).
+    unloaded: Vec<u8>,
 }
 
 impl Staged {
@@ -2043,6 +2054,29 @@ fn stage_rest<B: FnMut(u8) -> SaveBaseline>(
         // ---- the library files, by sub-index -----------------------------
         let empty_library = SystemLibrary::default();
         for (nibble, name, kind) in libraries_in_pin_order(originals.layout()) {
+            // `_write_files` and `_rename_files` skip a library whose
+            // sub-index is gone (`pinyin.cpp:929-932`, `:1032-1035`;
+            // `zhuyin.cpp:562-565`): its file on disk stays as it is. The
+            // session knows its unloaded `USER_FILE` libraries; the hook
+            // answers for a system library.
+            if matches!(kind, LibraryFile::User)
+                && libraries.is_some_and(|phrases| phrases.unloaded.contains(&nibble))
+            {
+                staged.unloaded.push(nibble);
+                continue;
+            }
+            // The pin maps the current chunk at this point in the loop
+            // (`pinyin.cpp:956`), after the earlier libraries' files are
+            // written. The hook maps it and, for a layout fault, emits the
+            // critical here.
+            let baseline = match kind {
+                LibraryFile::Log => reporting.baseline.as_mut().map(|hook| hook(nibble)),
+                LibraryFile::User => None,
+            };
+            if matches!(baseline, Some(SaveBaseline::Unloaded)) {
+                staged.unloaded.push(nibble);
+                continue;
+            }
             let bytes = match kind {
                 LibraryFile::User => {
                     let pairs: Vec<(u32, ChunkItem)> =
@@ -2052,8 +2086,9 @@ fn stage_rest<B: FnMut(u8) -> SaveBaseline>(
                                 .map(|(&slot, item)| (slot, item.clone()))
                                 .collect()
                         });
-                    if let Some(libraries) = libraries {
-                        libraries
+                    if let Some(phrases) = libraries {
+                        phrases
+                            .libraries
                             .get(&nibble)
                             .unwrap_or(&UserLibrary::default())
                             .store()
@@ -2069,11 +2104,6 @@ fn stage_rest<B: FnMut(u8) -> SaveBaseline>(
                         .get(&nibble)
                         .cloned()
                         .unwrap_or_default();
-                    // The pin maps the current chunk at this point in the
-                    // loop (`pinyin.cpp:956`), after the earlier libraries'
-                    // files are written. The hook maps it and, for a
-                    // layout fault, emits the critical here.
-                    let baseline = reporting.baseline.as_mut().map(|hook| hook(nibble));
                     let records = match baseline {
                         Some(SaveBaseline::Changed(disk)) => diff_records_against(
                             nibble,

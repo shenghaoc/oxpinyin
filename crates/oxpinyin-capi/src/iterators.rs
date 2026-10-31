@@ -399,14 +399,9 @@ pub extern "C" fn pinyin_begin_get_phrases(
 
     // SAFETY: `context` is non-null and was produced by `pinyin_init`.
     let ctx = unsafe { context_ref(context) };
-    // The pin's begin cannot fail: its sub-index is in memory. A store the
-    // probe cannot read answers the export's own failure shape, one
-    // `libpinyin` warning and a NULL iterator, rather than an empty walk a
-    // consumer would write out as its snapshot.
-    let Ok(cursor) = ctx.core.phrase_export_cursor(index) else {
-        crate::ffi::log_warning("pinyin_begin_get_phrases: user store read failed");
-        return ptr::null_mut();
-    };
+    // The pin's begin cannot fail: its sub-index is in memory, and so are
+    // the session's phrases (policy row 62).
+    let cursor = ctx.core.phrase_export_cursor(index);
     Box::into_raw(Box::new(ExportHandle { cursor })).cast()
 }
 
@@ -445,10 +440,9 @@ pub extern "C" fn pinyin_iterator_has_next_phrase(iter: *mut ExportIterator) -> 
 /// each), one allocation apiece as the pin's `g_ucs4_to_utf8` and
 /// `g_strjoinv` results are; `phrase` is NULL where the pin's
 /// `g_ucs4_to_utf8` hands one out (`:715-716`, a stored code point that is
-/// no scalar value). Returns `false` when the store cannot be read (one
-/// warning, no pin counterpart). At one of the pin's assert sites, an
-/// exhausted iterator included (`:709`), the process aborts (register row
-/// 62).
+/// no scalar value). At one of the pin's assert sites, an exhausted
+/// iterator included (`:709`), the process aborts (register row 62). The
+/// read itself cannot fail, as the pin's in-memory one cannot.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_iterator_get_next_phrase(
     iter: *mut ExportIterator,
@@ -473,16 +467,6 @@ pub extern "C" fn pinyin_iterator_get_next_phrase(
             .then(|| malloc_cstr_with_warning(row.pinyin_len(), |out| row.write_pinyin(out)));
         (text, reading, export_count(row.count()))
     });
-    let step = match step {
-        Ok(step) => step,
-        // No pin counterpart (its sub-index is in memory): one warning,
-        // `false`, the out-params untouched — the shape of the add
-        // iterator's lookup that fails outright.
-        Err(_) => {
-            crate::ffi::log_warning("pinyin_iterator_get_next_phrase: user store read failed");
-            return false;
-        }
-    };
     let (text, reading, frequency) = match step {
         ExportStep::Row(row) => row,
         // Register row 62: the pin `assert`s at the site (`pinyin.cpp:709`,
