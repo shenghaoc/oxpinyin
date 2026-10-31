@@ -12,9 +12,7 @@ import contract_training_constraints as family
 
 
 # (case ID, positional options, keyword options) in registration order.
-EXPECTED = [('abort-zhuyin-train-stale-forcing',
-             (),
-             {'abort': False, 'issues': ('525', 'row:6'), 'mode': 'zhuyin'}),
+EXPECTED = [('abort-zhuyin-train-stale-forcing', (), {'mode': 'zhuyin', 'abort': False, 'sigabrt': True, 'issues': ('525', 'row:6')}),
             ('abort-train-stale-forcing', (), {'sigabrt': True, 'abort': False, 'issues': ('525', 'row:6')}),
             ('abort-train-index-past-results',
              (),
@@ -37,7 +35,12 @@ EXPECTED = [('abort-zhuyin-train-stale-forcing',
             ('train-after-reparse-internal-zero-key', (), {'control': True, 'issues': ('525', 'row:82')}),
             ('abort-train-after-reparse-empty-end-column', (), {'sigabrt': True, 'abort': False, 'issues': ('525', 'row:82')}),
             ('train-after-choose-lookup-control', (), {'control': True, 'issues': ('525', 'row:82')}),
-            ('train-after-reparse-and-choose-control', (), {'control': True, 'issues': ('525', 'row:82')})]
+            ('train-after-reparse-and-choose-control', (), {'control': True, 'issues': ('525', 'row:82')}),
+            ('abort-zhuyin-train-after-reparse-past-matrix-end', (), {'mode': 'zhuyin', 'abort': False, 'sigabrt': True, 'issues': ('525', 'row:82')}),
+            ('abort-zhuyin-train-after-reparse-empty-start-column', (), {'mode': 'zhuyin', 'abort': False, 'sigabrt': True, 'issues': ('525', 'row:82')}),
+            ('abort-zhuyin-train-after-reparse-empty-end-column', (), {'mode': 'zhuyin', 'abort': False, 'sigabrt': True, 'issues': ('525', 'row:82')}),
+            ('zhuyin-train-after-reparse-internal-zero-key', (), {'mode': 'zhuyin', 'control': True, 'issues': ('525', 'row:82')}),
+            ('zhuyin-train-after-reparse-and-choose-control', (), {'mode': 'zhuyin', 'control': True, 'issues': ('525', 'row:82')})]
 
 
 def declarations():

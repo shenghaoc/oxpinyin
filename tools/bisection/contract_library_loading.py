@@ -711,11 +711,9 @@ def nonzero_total_save_probe():
 
 for _mode in ('pinyin', 'zhuyin'):
     _suffix = '-zhuyin' if _mode == 'zhuyin' else ''
-    # The pinyin facade reproduces the `0 < total_freq` abort (row 61); the
-    # zhuyin twin still refuses after the init critical.
-    case(f'nonzero-total-candidates{_suffix}', mode=_mode, abort=False, userdir=True,
-         **(dict(sigabrt=True) if _mode == 'pinyin'
-            else dict(abort_logs=[[None, 8], [WARNING_DOMAIN[_mode], 16]])))(
+    # Both facades reproduce the `0 < total_freq` abort (row 61), after the
+    # init's layout critical.
+    case(f'nonzero-total-candidates{_suffix}', mode=_mode, abort=False, userdir=True, sigabrt=True)(
              nonzero_total_candidates_probe())
     case(f'nonzero-total-save{_suffix}', mode=_mode, stderr=True)(nonzero_total_save_probe())
 
@@ -940,7 +938,6 @@ LAYOUT_CRITICAL_CASES = frozenset((
     'header-only-library-load',
     'header-only-library-load-zhuyin',
     'header-only-library-save',
-    'nonzero-total-candidates-zhuyin',
     'nonzero-total-save',
     'nonzero-total-save-zhuyin',
     'save-fatal-valid-to-invalid',
