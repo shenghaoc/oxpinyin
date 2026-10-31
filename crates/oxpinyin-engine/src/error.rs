@@ -425,6 +425,22 @@ impl EngineError {
             oxpinyin_core::GramFault::OverRead => Self::UnsafeLookupPredecessor { token },
         }
     }
+
+    /// A model failure while reading `token`'s bigram row:
+    /// [`Self::ReadAfterCheck`] where the model reports the read that failed
+    /// after its size check (Kyoto Cabinet's `Bigram::load` assert,
+    /// `ngram_kyotodb.cpp:136-137` at 074a2219), a scoring error otherwise.
+    pub(crate) fn row_read<L>(model: &L, token: u32, error: &L::Error) -> Self
+    where
+        L: oxpinyin_core::LanguageModel + ?Sized,
+        L::Error: fmt::Display,
+    {
+        if model.is_read_after_check(error) {
+            Self::ReadAfterCheck { token }
+        } else {
+            Self::Scoring(ScoringError::LanguageModel(error.to_string()))
+        }
+    }
 }
 
 #[cfg(test)]

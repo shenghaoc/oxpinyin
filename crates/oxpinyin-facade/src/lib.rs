@@ -51,7 +51,7 @@ pub use context::{
 pub use cursor::{KeyAt, SpanSource};
 pub use export_rows::{
     BigramExportWalk, BigramStep, ExportAssert, ExportRow, ExportStep, ExportedBigramRow,
-    PhraseExportCursor,
+    GramLoadFault, PhraseExportCursor,
 };
 pub use instance::{BEFORE_CURSOR_ANCHOR, InstanceCore};
 pub use offsets::{

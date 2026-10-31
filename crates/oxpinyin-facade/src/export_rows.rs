@@ -828,14 +828,24 @@ struct ExportSource {
 
 impl ExportSource {
     /// `load(token, gram, true)` then `retrieve_all` (`pinyin.cpp:889-890`):
-    /// the gram's whole items in stored order, duplicates included.
-    fn gram(&self, token: u32) -> Vec<(u32, u32)> {
-        self.user
+    /// the gram's whole items in stored order, duplicates included, or the
+    /// fault where `retrieve_all`'s `get_total_freq` asserts on a value too
+    /// short for its total (`ngram.cpp:141`, `memory_chunk.h:390`; register
+    /// row 85).
+    fn gram(&self, token: u32) -> Result<Vec<(u32, u32)>, GramLoadFault> {
+        if self.user.has_short_bigram_value_for(token) {
+            return Err(GramLoadFault::ShortTotal { token });
+        }
+        if self.user.has_oob_bigram_value_for(token) {
+            return Err(GramLoadFault::PartialTail { token });
+        }
+        Ok(self
+            .user
             .bigram_successors(token)
             .unwrap_or_default()
             .into_iter()
             .map(|(cur, count)| (cur, u32::try_from(count).unwrap_or(u32::MAX)))
-            .collect()
+            .collect())
     }
 
     /// `(text, pinyin spellings)` for a token: user tokens render from the
@@ -900,6 +910,26 @@ impl ExportedBigramRow {
 /// `null_token` (`novel_types.h:131`).
 const NULL_TOKEN: u32 = 0;
 
+/// A predecessor's stored user-bigram value the pin's `retrieve_all`
+/// cannot read, met where the bigram export walk loads it
+/// (`pinyin.cpp:888-889`, `ngram.cpp:133-143`), after the rows of the
+/// predecessors before it were handed out.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GramLoadFault {
+    /// Shorter than its `guint32` total: `get_total_freq`'s assert
+    /// (`memory_chunk.h:390`; register row 85). The C adapter aborts.
+    ShortTotal {
+        /// The predecessor whose gram the walk loaded.
+        token: u32,
+    },
+    /// A partial item tail, which `retrieve_all`'s `cur != end` walk reads
+    /// past (register row 98, class (b)). The walk ends there.
+    PartialTail {
+        /// The predecessor whose gram the walk loaded.
+        token: u32,
+    },
+}
+
 /// The first-seed threshold the export filters on: a pair is exported
 /// when its count is above `initial_seed - 1` (`pinyin.cpp:792-793`).
 const EXPORT_THRESHOLD: u32 = 23 * 3 - 1;
@@ -927,8 +957,9 @@ pub struct BigramExportWalk {
     /// The live store the grams load from and the tokens render from;
     /// `None` for a walk the tests plant through `grams` and `rendered`.
     source: Option<ExportSource>,
-    /// Planted grams, read when there is no `source`.
-    grams: HashMap<u32, Vec<(u32, u32)>>,
+    /// Planted grams, read when there is no `source`; `None` plants a value
+    /// too short for its total.
+    grams: HashMap<u32, Option<Vec<(u32, u32)>>>,
     /// Every token rendered so far: `render` is an O(pinyin-index) scan
     /// and a token recurs across many grams.
     rendered: HashMap<u32, Option<(PhraseText, Vec<String>)>>,
@@ -948,9 +979,11 @@ impl std::fmt::Debug for BigramExportWalk {
 /// What one [`BigramExportWalk::get_next`] produced.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BigramStep {
-    /// A row, and the `has_next` the pin's `get_next` returns after it
-    /// (`pinyin.cpp:910`).
-    Row(ExportedBigramRow, bool),
+    /// A row, and the `has_next` the pin's `get_next` runs after it
+    /// (`pinyin.cpp:910`): its answer, or the [`GramLoadFault`] of a predecessor
+    /// it loaded and could not read. The
+    /// pin has written the row's out-params by then (`:904-906`).
+    Row(ExportedBigramRow, Result<bool, GramLoadFault>),
     /// No current predecessor, or `sentence_start` — the pin's
     /// `assert(iter->m_index_token != null_token && iter->m_index_token
     /// != sentence_start)` (`pinyin.cpp:902`), which aborts.
@@ -962,9 +995,15 @@ pub enum BigramStep {
 
 impl BigramExportWalk {
     /// `pinyin_bigram_iterator_has_next_phrase` (`pinyin.cpp:790-893`).
-    pub fn has_next(&mut self) -> bool {
+    ///
+    /// # Errors
+    ///
+    /// The [`GramLoadFault`] of the predecessor it loaded and could not read
+    /// (`pinyin.cpp:888-889`, `ngram.cpp:133-143`), after the rows before it
+    /// were handed out; the walk ends there.
+    pub fn has_next(&mut self) -> Result<bool, GramLoadFault> {
         if self.phrase.is_some() && self.pinyin_index < self.pinyins.len() {
-            return true;
+            return Ok(true);
         }
         // Clean up old values.
         self.pinyin_index = 0;
@@ -991,9 +1030,22 @@ impl BigramExportWalk {
             };
             self.index_token = index_token;
             // `load(…, user_gram, true)` then `retrieve_all`, which appends.
-            let gram = match &self.source {
+            let loaded = match &self.source {
                 Some(source) => source.gram(index_token),
-                None => self.grams.get(&index_token).cloned().unwrap_or_default(),
+                None => match self.grams.get(&index_token) {
+                    Some(Some(gram)) => Ok(gram.clone()),
+                    Some(None) => Err(GramLoadFault::ShortTotal { token: index_token }),
+                    None => Ok(Vec::new()),
+                },
+            };
+            let gram = match loaded {
+                Ok(gram) => gram,
+                Err(fault) => {
+                    // The walk ends here: no later predecessor is read.
+                    self.items.clear();
+                    self.phrase_tokens.clear();
+                    return Err(fault);
+                }
             };
             self.phrase_tokens.extend(gram);
             // `} while (iter->m_items->len);`
@@ -1001,7 +1053,7 @@ impl BigramExportWalk {
                 break;
             }
         }
-        retval
+        Ok(retval)
     }
 
     /// `pinyin_bigram_iterator_get_next_phrase` (`pinyin.cpp:896-911`):
@@ -1071,7 +1123,7 @@ impl BigramExportWalk {
 
 #[cfg(test)]
 mod tests {
-    use super::{BigramExportWalk, BigramStep, ExportedBigramRow, SENTENCE_START};
+    use super::{BigramExportWalk, BigramStep, ExportedBigramRow, GramLoadFault, SENTENCE_START};
     use oxpinyin_core::PhraseText;
 
     fn walk(items: &[u32], grams: &[(u32, &[(u32, u32)])]) -> BigramExportWalk {
@@ -1080,7 +1132,7 @@ mod tests {
             ..BigramExportWalk::default()
         };
         for (prev, gram) in grams {
-            walk.grams.insert(*prev, gram.to_vec());
+            walk.grams.insert(*prev, Some(gram.to_vec()));
         }
         for (token, text, pinyin) in [
             (0x0100_0001, "你", "ni"),
@@ -1099,11 +1151,12 @@ mod tests {
     /// A caller that trusts `get_next`'s return: stops on the first `false`.
     fn drain_by_return(walk: &mut BigramExportWalk) -> Vec<(PhraseText, bool)> {
         let mut rows = Vec::new();
-        let mut more = walk.has_next();
+        let mut more = walk.has_next().expect("no short gram");
         while more {
             let BigramStep::Row(ExportedBigramRow { phrase, .. }, next) = walk.get_next() else {
                 break;
             };
+            let next = next.expect("no short gram");
             rows.push((phrase, next));
             more = next;
         }
@@ -1114,11 +1167,11 @@ mod tests {
     /// get_next`.
     fn drain_by_has_next(walk: &mut BigramExportWalk) -> Vec<(PhraseText, bool)> {
         let mut rows = Vec::new();
-        while walk.has_next() {
+        while walk.has_next().expect("no short gram") {
             let BigramStep::Row(ExportedBigramRow { phrase, .. }, next) = walk.get_next() else {
                 break;
             };
-            rows.push((phrase, next));
+            rows.push((phrase, next.expect("no short gram")));
         }
         rows
     }
@@ -1150,7 +1203,7 @@ mod tests {
             ]
         );
         // A further has_next scans the gram loaded but never scanned.
-        assert!(walk.has_next());
+        assert_eq!(walk.has_next(), Ok(true));
         assert_eq!(
             walk.get_next(),
             BigramStep::Row(
@@ -1159,10 +1212,10 @@ mod tests {
                     pinyin: "wo'ai".to_owned(),
                     count: 138,
                 },
-                false,
+                Ok(false),
             )
         );
-        assert!(!walk.has_next());
+        assert_eq!(walk.has_next(), Ok(false));
         assert_eq!(walk.get_next(), BigramStep::Undefined);
     }
 
@@ -1183,8 +1236,43 @@ mod tests {
     #[test]
     fn get_next_without_a_predecessor_is_the_pins_abort() {
         let mut walk = walk(&[], &[]);
-        assert!(!walk.has_next());
+        assert_eq!(walk.has_next(), Ok(false));
         assert_eq!(walk.get_next(), BigramStep::Aborts);
+    }
+
+    /// Register row 85 (`pinyin.cpp:889`, `ngram.cpp:133-141`): the walk
+    /// faults where it loads a predecessor too short for its total, in
+    /// `get_all_items` order, after handing out the rows of the
+    /// predecessors before it; a `has_next` that loads it faults too, also
+    /// inside `get_next`.
+    #[test]
+    fn a_short_predecessor_faults_where_the_walk_loads_it() {
+        let short = 0x0100_0003;
+        let mut planted = walk(
+            &[0x0100_0001, short, 0x0100_0004],
+            &[(0x0100_0001, &[(0x0100_0002, 138), (0x0100_0004, 69)])],
+        );
+        planted.grams.insert(short, None);
+        assert_eq!(planted.has_next(), Ok(true));
+        let BigramStep::Row(ExportedBigramRow { phrase, .. }, Ok(true)) = planted.get_next() else {
+            panic!("the first predecessor's first row");
+        };
+        assert_eq!(phrase, PhraseText::from("你好"));
+        // The second row is handed out, then the `has_next` inside
+        // `get_next` loads the short predecessor; the row comes back with
+        // the fault, for the C adapter to write before it aborts.
+        let BigramStep::Row(row, more) = planted.get_next() else {
+            panic!("the first predecessor's second row");
+        };
+        assert_eq!(row.count, 138);
+        assert_eq!(more, Err(GramLoadFault::ShortTotal { token: short }));
+        // A walk that reaches it from `has_next` faults the same way.
+        let mut direct = walk(&[short], &[]);
+        direct.grams.insert(short, None);
+        assert_eq!(
+            direct.has_next(),
+            Err(GramLoadFault::ShortTotal { token: short })
+        );
     }
 }
 

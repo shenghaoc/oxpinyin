@@ -27,8 +27,6 @@
 
 use std::collections::HashMap;
 
-use oxpinyin_core::scoring::ScoringError;
-
 use crate::error::EngineError;
 use crate::nbest::SENTENCE_START;
 use oxpinyin_core::{
@@ -116,15 +114,7 @@ where
     L: LanguageModel<Token = PhraseToken>,
     L::Error: core::fmt::Display,
 {
-    let lm = |error: L::Error| {
-        if model.is_read_after_check(&error) {
-            EngineError::ReadAfterCheck {
-                token: prev.value(),
-            }
-        } else {
-            EngineError::Scoring(ScoringError::LanguageModel(error.to_string()))
-        }
-    };
+    let lm = |error: L::Error| EngineError::row_read(model, prev.value(), &error);
     let item = match model.nbest_successors_in_row(&prev, row).map_err(lm)? {
         None => return model.nbest_step_costs(&prev, &token).map_err(lm),
         Some(NbestSuccessors::Miss) => None,
@@ -533,7 +523,37 @@ mod tests {
     }
 
     #[test]
-    fn a_checked_read_failure_is_a_class_c_refusal() {
+    fn row_read_names_only_the_checked_read_failure() {
+        use crate::error::EngineError;
+        // Every row read that maps a model error goes through this: phrase
+        // segmentation, the n-best predecessor rows and the guess's
+        // `DYNAMIC_ADJUST` row.
+        assert_eq!(
+            EngineError::row_read(&CheckedModel, 7, &"read after check"),
+            EngineError::ReadAfterCheck { token: 7 }
+        );
+        struct Unchecked;
+        impl LanguageModel for Unchecked {
+            type Token = PhraseToken;
+            type Error = &'static str;
+
+            fn score(
+                &self,
+                _: &[PhraseToken],
+                _: &PhraseToken,
+                _: i64,
+            ) -> Result<i64, Self::Error> {
+                Ok(0)
+            }
+        }
+        assert!(matches!(
+            EngineError::row_read(&Unchecked, 7, &"closed"),
+            EngineError::Scoring(_)
+        ));
+    }
+
+    #[test]
+    fn a_checked_read_failure_is_the_predecessors_read_after_check_fault() {
         use crate::error::EngineError;
         use crate::nbest::SENTENCE_START;
         let dictionary = Dict::parse(&[("你", 3)]);

@@ -231,6 +231,7 @@ impl From<PersistenceError> for UserStoreError {
             PersistenceError::ChunkHeaderWrite { field, .. } => {
                 UserStoreError::ChunkHeaderWrite(field)
             }
+            PersistenceError::LibraryChunkHeaderRead => UserStoreError::LibraryChunkHeaderRead,
             other => UserStoreError::Persistence(other.to_string()),
         }
     }
@@ -359,6 +360,13 @@ impl GenericUserStore<DefaultStore> {
         // before it, with the open counter left raised as the pin leaves it.
         if let Some(fault) = profile.loaded.journal_fault {
             return Err(UserStoreError::Journal(fault));
+        }
+        // The library loop then mapped a library that is a directory and
+        // asserted (`memory_chunk.h:493`, register row 96): the replay
+        // stopped before it, and the open returns here too, before the fini
+        // guard is armed, so the raised counter stays on disk.
+        if originals.stop().is_some() {
+            return Err(UserStoreError::LibraryChunkHeaderRead);
         }
         let persistence::LoadedProfile {
             mut loaded,
@@ -1397,7 +1405,7 @@ mod tests {
         assert!(!store.has_empty_bigram_gram_for(1));
         assert!(matches!(
             store.mask_out(u32::MAX, 0),
-            Err(UserStoreError::ShortUserBigramValue)
+            Err(UserStoreError::PartialUserBigramTail)
         ));
         assert_eq!(store.bigram_total(1).expect("unchanged total"), 7);
         assert_eq!(store.bigram_count(1, 9).expect("unchanged item"), 7);
@@ -1474,7 +1482,10 @@ mod tests {
             store.observe_selection(1, 0x0100_0001),
             store.observe_predicted(1, 0x0100_0001),
         ] {
-            assert!(matches!(refused, Err(UserStoreError::ShortUserBigramValue)));
+            assert!(matches!(
+                refused,
+                Err(UserStoreError::PartialUserBigramTail)
+            ));
         }
         // Nothing moved: the decoded counts are as loaded.
         assert_eq!(store.bigram_total(1).expect("total"), 7);
@@ -1501,15 +1512,15 @@ mod tests {
         std::fs::remove_dir_all(&dir).expect("cleanup");
     }
 
-    /// N2: both training paths read the predecessor's total first
+    /// N2: both training paths read the predecessor's total
     /// (`phonetic_lookup.h:884`, `pinyin.cpp:2630` at the pin `074a2219`),
     /// and a value too short for one is the pin's assert
-    /// (`memory_chunk.h:390`). Both refuse before anything changes: the
-    /// predicted path's unigram add, which the pin makes first
-    /// (`pinyin.cpp:2609`), dies with the process there, so it is not
-    /// made either.
+    /// (`memory_chunk.h:390`, register row 85), which the C adapters
+    /// reproduce by aborting on the fault. Training reads it before it
+    /// changes anything; the predicted path makes its unigram add first
+    /// (`pinyin.cpp:2609-2612`), in memory, and returns the fault after it.
     #[test]
-    fn a_short_predecessor_value_refuses_both_training_paths() {
+    fn a_short_predecessor_value_is_the_fault_of_both_training_paths() {
         let dir = tempdir("short-gram-train");
         let short = vec![0xa5, 0x5a, 0x01];
         DefaultStore::write_user_bigram(
@@ -1526,18 +1537,22 @@ mod tests {
             UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
                 .expect("open");
         let generation = store.generation();
-        let total = store.unigram_total().expect("unigram total");
-        for refused in [
+        assert!(matches!(
             store.observe_selection(1, 0x0100_0001),
-            store.observe_predicted(1, 0x0100_0001),
-        ] {
-            assert!(matches!(refused, Err(UserStoreError::ShortUserBigramValue)));
-        }
-        assert_eq!(store.generation(), generation, "nothing was written");
-        assert_eq!(store.unigram_total().expect("unigram total"), total);
+            Err(UserStoreError::ShortUserBigramValue)
+        ));
+        assert_eq!(store.generation(), generation, "training wrote nothing");
         assert_eq!(store.unigram_delta(0x0100_0001).expect("delta"), 0);
+        assert!(matches!(
+            store.observe_predicted(1, 0x0100_0001),
+            Err(UserStoreError::ShortUserBigramValue)
+        ));
+        assert_eq!(
+            store.unigram_delta(0x0100_0001).expect("delta"),
+            483,
+            "the predicted unigram add precedes the bigram load"
+        );
         assert_eq!(store.bigram_row(1).expect("row"), Some(short));
-        assert!(!store.is_modified());
         drop(store);
         std::fs::remove_dir_all(&dir).expect("cleanup");
     }
@@ -1699,11 +1714,11 @@ mod tests {
         assert!(store.has_oob_bigram_value_for(1));
         assert!(matches!(
             store.observe_selection(1, 0x0100_0002),
-            Err(UserStoreError::ShortUserBigramValue)
+            Err(UserStoreError::PartialUserBigramTail)
         ));
         assert!(matches!(
             store.observe_predicted(1, 0x0100_0002),
-            Err(UserStoreError::ShortUserBigramValue)
+            Err(UserStoreError::PartialUserBigramTail)
         ));
         assert_eq!(store.bigram_total(1).expect("unchanged"), total);
         assert_eq!(store.bigram_count(1, 0x0100_0002).expect("cur"), 0);

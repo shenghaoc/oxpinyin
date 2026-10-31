@@ -69,6 +69,10 @@ pub struct PhraseLibraries {
     by_nibble: [RwLock<Option<Loaded>>; 16],
     /// Files `open` found absent.
     unmapped: Vec<(u8, PathBuf)>,
+    /// The library [`PhraseLibraries::open_to_header_fault`] stopped at: a
+    /// directory whose header read `MemoryChunk::mmap` asserts on
+    /// (`memory_chunk.h:493`). No later library was loaded.
+    chunk_header_fault: Option<u8>,
     /// `FacadePhraseIndex::m_total_freq` (074a2219 `phrase_index.h:440`)
     /// over every loaded library: each library's stored `total_freq` is
     /// added when it loads and subtracted when it unloads or is replaced,
@@ -98,6 +102,7 @@ impl PhraseLibraries {
         Self {
             by_nibble: Default::default(),
             unmapped: Vec::new(),
+            chunk_header_fault: None,
             total: AtomicU32::new(0),
             stocked: AtomicU32::new(0),
         }
@@ -114,6 +119,38 @@ impl PhraseLibraries {
     pub fn open<S: AsRef<std::ffi::OsStr>>(
         dir: &Path,
         stems: &[(u8, S)],
+    ) -> Result<Self, LibraryError> {
+        Self::open_impl(dir, stems, false)
+    }
+
+    /// [`Self::open`] the way `pinyin_init`'s library loop maps the default
+    /// libraries in order (`pinyin.cpp:377-392`, `zhuyin.cpp:318-334`): at a
+    /// library that is a directory `MemoryChunk::mmap` asserts on
+    /// (`memory_chunk.h:493`, register row 96) the open stops, keeps the
+    /// libraries before it and records the nibble
+    /// ([`Self::chunk_header_fault`]), so the caller can merge the earlier
+    /// libraries' logs before it returns the fault at the pin's point.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::open`], for every other failure.
+    pub fn open_to_header_fault<S: AsRef<std::ffi::OsStr>>(
+        dir: &Path,
+        stems: &[(u8, S)],
+    ) -> Result<Self, LibraryError> {
+        Self::open_impl(dir, stems, true)
+    }
+
+    /// The library [`Self::open_to_header_fault`] stopped at, if any.
+    #[must_use]
+    pub const fn chunk_header_fault(&self) -> Option<u8> {
+        self.chunk_header_fault
+    }
+
+    fn open_impl<S: AsRef<std::ffi::OsStr>>(
+        dir: &Path,
+        stems: &[(u8, S)],
+        stop_at_header_fault: bool,
     ) -> Result<Self, LibraryError> {
         let mut this = Self::empty();
         let mut seen = [false; 16];
@@ -149,7 +186,15 @@ impl PhraseLibraries {
                     continue;
                 }
             }
-            this.load(nibble, &path)?;
+            match this.load(nibble, &path) {
+                Err(LibraryError::Row(RowFault::ChunkHeaderRead)) if stop_at_header_fault => {
+                    this.chunk_header_fault = Some(nibble);
+                    break;
+                }
+                loaded => {
+                    loaded?;
+                }
+            }
         }
         Ok(this)
     }

@@ -289,9 +289,16 @@ pub extern "C" fn zhuyin_train(instance: *mut ZhuyinInstance) -> bool {
         // leaves the current matrix). `zhuyin_train` reaches them through
         // the same `train_result3` (`zhuyin.cpp:1712-1713`); what the walk
         // changed before is in memory.
+        //
+        // Register row 85: `phonetic_lookup.h:884` through
+        // `memory_chunk.h:390` (a predecessor's gram too short for its
+        // total) and `phonetic_lookup.h:903` (on an unsorted gram the step's
+        // `set_freq` misses the item its `insert_freq` added).
         Err(
             oxpinyin_engine::EngineError::StaleTrainingConstraint { .. }
-            | oxpinyin_engine::EngineError::StaleTrainingSpan { .. },
+            | oxpinyin_engine::EngineError::StaleTrainingSpan { .. }
+            | oxpinyin_engine::EngineError::ShortTrainingPredecessor { .. }
+            | oxpinyin_engine::EngineError::TrainingSetFreqMiss { .. },
         ) => std::process::abort(),
         // Class (b), `ngram.cpp:190`, `:241`, `:261`: training would
         // load a predecessor whose value has a partial item tail, which the
@@ -300,25 +307,6 @@ pub extern "C" fn zhuyin_train(instance: *mut ZhuyinInstance) -> bool {
             crate::ffi::log_warning(
                 "zhuyin_train: a user bigram value has a partial item tail \
                  (upstream reads past it, ngram.cpp:190)",
-            );
-            false
-        }
-        // Class (c), `phonetic_lookup.h:884` through `memory_chunk.h:390`
-        // (register row 85): training would read the total of a
-        // predecessor's gram too short to hold one. Nothing changed.
-        Err(oxpinyin_engine::EngineError::ShortTrainingPredecessor { .. }) => {
-            crate::ffi::log_warning(
-                "zhuyin_train: a user bigram value is shorter than a guint32 total_freq \
-                 (upstream aborts, memory_chunk.h:390)",
-            );
-            false
-        }
-        // Class (c), `phonetic_lookup.h:903` (register row 85): on an
-        // unsorted user gram the step's `set_freq` misses the item its
-        // `insert_freq` added. Nothing changed.
-        Err(oxpinyin_engine::EngineError::TrainingSetFreqMiss { .. }) => {
-            crate::ffi::log_warning(
-                "zhuyin_train: assertion 'user->set_freq(token, freq + seed)' failed",
             );
             false
         }

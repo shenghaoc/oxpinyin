@@ -266,17 +266,12 @@ pub extern "C" fn pinyin_load_phrase_library(context: *mut PinyinContext, index:
     }
     match outcome {
         Ok(loaded) => loaded,
-        // Class (c), `memory_chunk.h:493`: the library being loaded again is
-        // a directory the pin maps and asserts on.
+        // Register row 96, `memory_chunk.h:493`: the library being loaded
+        // again is a directory the pin maps and asserts on, before anything
+        // changes.
         Err(oxpinyin_facade::LibraryLoadFault::Row(
             oxpinyin_facade::LibraryRowAssert::ChunkHeaderRead,
-        )) => {
-            crate::ffi::log_warning(
-                "pinyin_load_phrase_library: assertion 'ret_len == sizeof(length)' failed \
-                 (memory_chunk.h:493)",
-            );
-            false
-        }
+        )) => std::process::abort(),
         // Register rows 91 and 108: the reloaded library's saved `.dbin`
         // merge reached a pin assertion (`pinyin.cpp:276`, then
         // `phrase_index_logger.h:202` or `memory_chunk.h:390`).
@@ -346,9 +341,11 @@ pub extern "C" fn pinyin_unload_phrase_library(context: *mut PinyinContext, inde
 /// and dies of SIGABRT at the `switch` whose `default` is `abort()` when a
 /// key is past `MAX_PHRASE_LENGTH` syllables
 /// (`chewing_large_table2_bdb.cpp:529`), and the user bigram's mask asserts
-/// on a key that is not a token (`ngram_bdb.cpp:199`) and on a gram it
-/// leaves with a residual total (`ngram.cpp:70`); the process aborts at
-/// each (register rows 84, 86, 87 and 94).
+/// on a key that is not a token (`ngram_bdb.cpp:199`), on a gram too short
+/// for its total (`memory_chunk.h:390`) and on a gram it leaves with a
+/// residual total (`ngram.cpp:70`); the reload of each loaded system
+/// library then asserts on one that is a directory (`memory_chunk.h:493`).
+/// The process aborts at each (register rows 84, 85, 86, 87, 94 and 96).
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_mask_out(context: *mut PinyinContext, mask: u32, value: u32) -> bool {
     if context.is_null() {
@@ -370,10 +367,14 @@ pub extern "C" fn pinyin_mask_out(context: *mut PinyinContext, mask: u32, value:
         // the user bigram carries a key that is not a phrase_token_t and
         // the pin's `get_all_items` assert dies.
         oxpinyin_facade::MaskOutOutcome::NonTokenUserBigramKey => std::process::abort(),
-        oxpinyin_facade::MaskOutOutcome::ShortUserBigramValue => {
-            // A missing total asserts (class c, `memory_chunk.h:390`);
-            // a partial item tail makes `mask_out` over-read (class b,
-            // `ngram.cpp:76-86`). Both refuse with one warning.
+        // Register row 85, `memory_chunk.h:390` through `ngram.cpp:80`:
+        // the user bigram's mask loads a gram too short for its total and
+        // the pin's `get_total_freq` assert dies.
+        oxpinyin_facade::MaskOutOutcome::ShortUserBigramValue => std::process::abort(),
+        oxpinyin_facade::MaskOutOutcome::PartialUserBigramTail => {
+            // Class (b), register row 98: a partial item tail makes
+            // `SingleGram::mask_out` over-read (`ngram.cpp:76-86`). One
+            // warning, as before.
             crate::ffi::log_warning(
                 "pinyin_mask_out: malformed user bigram value \
                  (upstream asserts on a missing total or reads past a partial item; \
@@ -392,15 +393,9 @@ pub extern "C" fn pinyin_mask_out(context: *mut PinyinContext, mask: u32, value:
         // `phrase_index_logger.h:245`/`:257`, `memory_chunk.h:390`), after
         // the user tables were masked; the pin dies there.
         oxpinyin_facade::MaskOutOutcome::Journal(_) => std::process::abort(),
-        oxpinyin_facade::MaskOutOutcome::ChunkHeaderRead => {
-            // Class (c), `memory_chunk.h:493`: the mask maps every loaded
-            // system library again and one is a directory.
-            crate::ffi::log_warning(
-                "pinyin_mask_out: assertion 'ret_len == sizeof(length)' failed \
-                 (memory_chunk.h:493)",
-            );
-            false
-        }
+        // Register row 96, `memory_chunk.h:493`: after the user tables, the
+        // mask maps each loaded system library again and one is a directory.
+        oxpinyin_facade::MaskOutOutcome::ChunkHeaderRead => std::process::abort(),
     }
 }
 

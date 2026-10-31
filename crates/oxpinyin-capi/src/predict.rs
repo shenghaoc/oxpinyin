@@ -48,14 +48,14 @@ pub fn guess_predicted(inst: &mut CapiInstance, prefix: Option<&PhraseText>) -> 
 /// of it, or, when the prefix has no gram, the previous copy kept — and
 /// stop at the first whose `get_length` is not zero; then `retrieve_all`.
 /// Answers the items in stored order, duplicates included, or the one
-/// warning a call refuses with where the pin dies: a value too short for
-/// its total (`get_length` reads it, `memory_chunk.h:390`, register row
-/// 85), or a partial item tail after a whole item, which `retrieve_all`
-/// reads past (`ngram.cpp:143`, row 98). A gram with no whole item and a
-/// total left over is the pin's `assert` (`ngram.cpp:70` via
-/// `pinyin.cpp:2332`, row 88), and the process aborts there. Only the
-/// prefixes the walk loads are read; a fault under any other token is never
-/// reached.
+/// warning a call refuses with where the pin reads past a partial item
+/// tail after a whole item (`retrieve_all`, `ngram.cpp:143`, register row
+/// 98, class (b)). Where the pin asserts, the process aborts at the same
+/// point of the walk: a value too short for its total (`get_length` reads
+/// it, `memory_chunk.h:390`, register row 85) and a gram with no whole item
+/// and a total left over (`ngram.cpp:70` via `pinyin.cpp:2332`, row 88).
+/// Only the prefixes the walk loads are read; a fault under any other token
+/// is never reached.
 fn predicted_bigram_items(
     user: Option<&UserStore>,
     prefixes: &[u32],
@@ -72,14 +72,8 @@ fn predicted_bigram_items(
             break;
         }
         match single_gram::get_total_freq(&merged) {
-            None => {
-                return Err(
-                    "pinyin_guess_predicted_candidates: a user bigram value is shorter than a \
-                     guint32 total_freq (upstream aborts, memory_chunk.h:390)",
-                );
-            }
             Some(0) => {}
-            Some(_) => std::process::abort(),
+            None | Some(_) => std::process::abort(),
         }
     }
     if single_gram::get_length(&merged) == 0 {
@@ -94,7 +88,7 @@ fn predicted_bigram_items(
     Ok(single_gram::retrieve_all(&merged).collect())
 }
 
-// Err marks a refused gram walk (rows 85 and 98), distinct from a missing
+// Err marks a refused gram walk (row 98), distinct from a missing
 // prefix. The punctuation wrapper ignores a missing prefix but must refuse
 // the walk.
 fn guess_predicted_result(
@@ -118,9 +112,9 @@ fn guess_predicted_result(
     };
 
     // `_compute_predicted_bigram_candidates` (`pinyin.cpp:2310-2341`). A
-    // gram the pin dies on or reads past in its walk is refused here: one
-    // warning and `false`, with the candidate list left empty in both APIs
-    // (the residual-total gram aborts inside the walk).
+    // gram the pin reads past in its walk is refused here: one warning and
+    // `false`, with the candidate list left empty in both APIs (the short
+    // and the residual-total grams abort inside the walk).
     let successors = match predicted_bigram_items(inst.core.user.as_ref(), &prefixes) {
         Ok(successors) => successors,
         Err(message) => {
@@ -267,8 +261,8 @@ pub extern "C" fn pinyin_guess_predicted_candidates(
 
 ///
 /// Upstream returns `true` after the prepend, even when the prefix matched
-/// no phrase-table suffix. The scorer's zero-total assert is refused before
-/// prepending, with a warning and `false` under policy class (c).
+/// no phrase-table suffix. The scorer's zero-total assert aborts before
+/// prepending, as the pin's does (register row 61).
 pub fn guess_predicted_with_punctuations(
     inst: &mut CapiInstance,
     prefix: Option<&PhraseText>,

@@ -246,10 +246,16 @@ impl SystemDictionary {
             phrase_index,
             library_dir,
             SYSTEM_LIBRARY_FILES,
+            false,
         )
     }
 
-    /// [`Self::open`] with the libraries `conf`'s `SYSTEM_FILE` rows name.
+    /// [`Self::open`] with the libraries `conf`'s `SYSTEM_FILE` rows name,
+    /// mapped as `pinyin_init`'s library loop maps them: a library that is a
+    /// directory the pin's `MemoryChunk::mmap` asserts on stops the open
+    /// there (`memory_chunk.h:493`), keeping the libraries before it
+    /// ([`PhraseLibraries::chunk_header_fault`]); the caller returns the
+    /// fault after it merged their logs.
     ///
     /// # Errors
     ///
@@ -264,6 +270,7 @@ impl SystemDictionary {
             &system_dir.join(SystemDbm::PhraseIndex.file_name()),
             system_dir,
             &stems,
+            true,
         )?;
         dict.user_nibbles = conf
             .user_libraries()
@@ -276,10 +283,15 @@ impl SystemDictionary {
         phrase_index: &Path,
         library_dir: &Path,
         stems: &[(u8, impl AsRef<std::ffi::OsStr>)],
+        stop_at_header_fault: bool,
     ) -> Result<Self, DictError> {
         let pinyin = open_tree(pinyin_index)?;
         let phrase = open_phrase_table(phrase_index)?;
-        let libraries = PhraseLibraries::open(library_dir, stems)?;
+        let libraries = if stop_at_header_fault {
+            PhraseLibraries::open_to_header_fault(library_dir, stems)?
+        } else {
+            PhraseLibraries::open(library_dir, stems)?
+        };
         Ok(Self {
             pinyin,
             phrase,

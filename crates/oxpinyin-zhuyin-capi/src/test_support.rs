@@ -230,6 +230,55 @@ pub fn plant_log(user_dir: &std::path::Path, file: &str, payload: &[u8]) {
     .expect("write the log");
 }
 
+/// Writes a conforming profile for the fixture data set whose user bigram
+/// holds `rows`, `(key, value)` verbatim — values the library never writes,
+/// such as one too short for its `guint32` total (register row 85).
+pub fn plant_bigram(user_dir: &std::path::Path, rows: Vec<(Vec<u8>, Vec<u8>)>) {
+    let conf = oxpinyin_data::table_info::TableConf::load_from_dir(&system_dir())
+        .expect("fixture table.conf");
+    let state = oxpinyin_user::persistence::UserState {
+        bigram: rows,
+        ..oxpinyin_user::persistence::UserState::default()
+    };
+    oxpinyin_user::persistence::save(
+        user_dir,
+        &state,
+        &std::collections::BTreeMap::new().into(),
+        &oxpinyin_data::user_files::SystemVersions::from_conf(&conf),
+        1,
+    )
+    .expect("write the profile");
+}
+
+/// A private system directory under `parent`: every fixture file linked in,
+/// so a test can replace one library (register row 96).
+#[cfg(unix)]
+pub fn private_system(parent: &std::path::Path) -> PathBuf {
+    let dir = parent.join("system");
+    std::fs::create_dir_all(&dir).expect("private system dir");
+    for entry in std::fs::read_dir(system_dir()).expect("fixture dir") {
+        let entry = entry.expect("fixture entry");
+        std::os::unix::fs::symlink(entry.path(), dir.join(entry.file_name()))
+            .expect("link a fixture file");
+    }
+    dir
+}
+
+/// Replaces the system library `file` with a non-empty directory whose entry
+/// name is 25 bytes long. Where a directory reads as a chunk
+/// ([`oxpinyin_data::phrase_library::directory_reads_as_a_chunk`]) the
+/// pin's `MemoryChunk::mmap` asserts on its header read
+/// (`memory_chunk.h:493`, register row 96); elsewhere it is row 76's
+/// unmappable library. Answers which.
+#[cfg(unix)]
+pub fn directory_library(system: &std::path::Path, file: &str) -> bool {
+    let path = system.join(file);
+    std::fs::remove_file(&path).expect("unlink the library");
+    std::fs::create_dir(&path).expect("directory library");
+    std::fs::write(path.join("e".repeat(25)), b"x").expect("fill the directory");
+    oxpinyin_data::phrase_library::directory_reads_as_a_chunk(&path)
+}
+
 /// Hand-built `PhraseIndexLogger` records for the journal-replay tests
 /// (`phrase_index_logger.h:158-215` layout, little-endian).
 pub mod logs {

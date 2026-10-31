@@ -58,15 +58,14 @@ fn init_context(systemdir: *const c_char, userdir: *const c_char) -> *mut Pinyin
             if error.journal_fault().is_some() {
                 std::process::abort();
             }
+            // Register row 96, `memory_chunk.h:493`: a default library is a
+            // directory whose reported size passes the header check and the
+            // pin's `MemoryChunk::mmap` asserts on reading it. The open stopped
+            // there, after `check_format`'s writes and the libraries before it.
             if error.chunk_header_read() {
-                // Class (c), `memory_chunk.h:493`: a system library is a
-                // directory whose reported size passes the header check and
-                // the pin's `MemoryChunk::mmap` asserts on reading it.
-                crate::ffi::log_warning(
-                    "pinyin_init: a system library is a directory the chunk header cannot be \
-                     read from (upstream asserts, memory_chunk.h:493)",
-                );
-            } else if let Some(conf_error) = error.table_conf_error() {
+                std::process::abort();
+            }
+            if let Some(conf_error) = error.table_conf_error() {
                 // A `table.conf` the pin refuses is `false` and one raw
                 // line (after the load's own `open %s failed.` when it
                 // could not be opened, #545); one it dies on without an
@@ -271,14 +270,11 @@ pub fn save_context(context: *mut PinyinContext) -> bool {
         // `user.conf`. The abort skips every destructor, so nothing else is
         // written either.
         oxpinyin_facade::SaveOutcome::ChunkWriteFailed(_) => std::process::abort(),
-        // Class (c), `memory_chunk.h:493`: the save maps every loaded system
-        // library again and one is a directory.
-        oxpinyin_facade::SaveOutcome::ChunkHeaderRead => {
-            crate::ffi::log_warning(
-                "pinyin_save: assertion 'ret_len == sizeof(length)' failed (memory_chunk.h:493)",
-            );
-            false
-        }
+        // Register row 96, `memory_chunk.h:493`: the save's library loop
+        // maps a loaded system library again and it is a directory. The
+        // save stopped there with the earlier libraries' `.tmp` files
+        // written and none renamed (`pinyin.cpp:940-1020`).
+        oxpinyin_facade::SaveOutcome::ChunkHeaderRead => std::process::abort(),
         outcome => outcome.is_saved(),
     }
 }

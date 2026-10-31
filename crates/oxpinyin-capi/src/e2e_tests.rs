@@ -2888,3 +2888,427 @@ fn mask_out_aborts_on_a_surviving_add() {
         let _ = pinyin_mask_out(context, 0xffff_ffff, 0x0100_0001);
     });
 }
+
+/// Register row 85: `pinyin_mask_out` loads token 1's gram, which the mask
+/// leaves alone, and `SingleGram::mask_out` reads its total from three bytes
+/// (`ngram.cpp:80`, `memory_chunk.h:390`).
+#[cfg(unix)]
+#[test]
+fn mask_out_aborts_on_a_short_bigram_value() {
+    crate::test_support::assert_aborts(
+        "e2e_tests::mask_out_aborts_on_a_short_bigram_value",
+        || {
+            let user_dir = TempUserDir::new("mask-short-gram");
+            crate::test_support::plant_bigram(
+                &user_dir.path,
+                vec![(1_u32.to_le_bytes().to_vec(), vec![7, 0, 0])],
+            );
+            let context = init_at(&user_dir.path);
+            assert!(!context.is_null());
+            let _ = pinyin_mask_out(context, 0xffff_ffff, 0);
+        },
+    );
+}
+
+/// Row 85's control: a key the mask selects is removed without loading its
+/// value (`ngram_bdb.cpp:231-238`), and the mask completes.
+#[test]
+fn mask_out_of_a_selected_short_key_completes() {
+    let user_dir = TempUserDir::new("mask-short-gram-selected");
+    crate::test_support::plant_bigram(
+        &user_dir.path,
+        vec![(1_u32.to_le_bytes().to_vec(), vec![7, 0, 0])],
+    );
+    let context = init_at(&user_dir.path);
+    assert!(!context.is_null());
+    assert!(pinyin_mask_out(context, 0xffff_ffff, 1));
+    crate::context::pinyin_fini(context);
+}
+
+/// Row 98 (class (b)) keeps its refusal: a partial item tail under a key the
+/// mask leaves alone answers `false` (`ngram.cpp:76-86`).
+#[test]
+fn mask_out_refuses_a_partial_bigram_tail() {
+    let user_dir = TempUserDir::new("mask-partial-tail");
+    let mut value = 7_u32.to_le_bytes().to_vec();
+    value.extend_from_slice(&[9, 0, 0, 0, 7, 0, 0, 0, 1]);
+    crate::test_support::plant_bigram(&user_dir.path, vec![(1_u32.to_le_bytes().to_vec(), value)]);
+    let context = init_at(&user_dir.path);
+    assert!(!context.is_null());
+    assert!(!pinyin_mask_out(context, 0xffff_ffff, 0));
+    crate::context::pinyin_fini(context);
+}
+
+/// Register row 85 on the export walk: the pin's begin reads no gram
+/// (`pinyin.cpp:775-787`), and `has_next` loads each predecessor and
+/// `retrieve_all` reads its total (`:889`, `ngram.cpp:133-141`), so begin
+/// answers an iterator and the walk aborts where it loads the short gram.
+#[cfg(unix)]
+#[test]
+fn bigram_export_aborts_where_the_walk_loads_a_short_predecessor() {
+    crate::test_support::assert_aborts(
+        "e2e_tests::bigram_export_aborts_where_the_walk_loads_a_short_predecessor",
+        || {
+            let user_dir = TempUserDir::new("export-short-gram");
+            crate::test_support::plant_bigram(
+                &user_dir.path,
+                vec![(1_u32.to_le_bytes().to_vec(), vec![7, 0, 0])],
+            );
+            let context = init_at(&user_dir.path);
+            assert!(!context.is_null());
+            let iter = crate::iterators::pinyin_begin_get_bigram_phrases(context);
+            assert!(!iter.is_null(), "begin reads no gram");
+            let _ = crate::iterators::pinyin_bigram_iterator_has_next_phrase(iter);
+        },
+    );
+}
+
+/// Whether a directory reads as a chunk on this host's temporary file
+/// system (register row 96); where it does not, a directory library is row
+/// 76's unmappable one (class (b)).
+#[cfg(unix)]
+fn directory_reads_as_a_chunk_here() -> bool {
+    let probe = tempfile::tempdir().expect("probe dir");
+    std::fs::write(probe.path().join("e".repeat(25)), b"x").expect("fill the probe");
+    oxpinyin_data::phrase_library::directory_reads_as_a_chunk(probe.path())
+}
+
+/// A context over a private system directory, with its user dir.
+#[cfg(unix)]
+fn init_private(
+    scratch: &std::path::Path,
+) -> (std::path::PathBuf, *mut crate::types::PinyinContext) {
+    let system = crate::test_support::private_system(scratch);
+    let user = scratch.join("user");
+    std::fs::create_dir_all(&user).expect("user dir");
+    let system_c = cstr(system.to_str().expect("UTF-8 path"));
+    let user_c = cstr(user.to_str().expect("UTF-8 path"));
+    (
+        system,
+        oxpinyin_init_for_fixtures(system_c.as_ptr(), user_c.as_ptr()),
+    )
+}
+
+/// Register row 96 at init: the library loop maps `merged.bin`
+/// (`pinyin.cpp:255`) and `MemoryChunk::mmap` asserts on the directory
+/// (`memory_chunk.h:493`); where a directory does not read as a chunk the
+/// init answers NULL (row 76).
+#[cfg(unix)]
+#[test]
+fn init_aborts_on_a_directory_library() {
+    let body = || {
+        let scratch = tempfile::tempdir().expect("scratch");
+        let system = crate::test_support::private_system(scratch.path());
+        crate::test_support::directory_library(&system, "merged.bin");
+        let user = TempUserDir::new("init-directory-library");
+        let system_c = cstr(system.to_str().expect("UTF-8 path"));
+        let user_c = cstr(user.path.to_str().expect("UTF-8 path"));
+        oxpinyin_init_for_fixtures(system_c.as_ptr(), user_c.as_ptr())
+    };
+    if directory_reads_as_a_chunk_here() {
+        crate::test_support::assert_aborts("e2e_tests::init_aborts_on_a_directory_library", || {
+            let _ = body();
+        });
+    } else {
+        assert!(body().is_null());
+    }
+}
+
+/// One call that maps a system library again over a private system
+/// directory whose library is a directory (register row 96): the save and
+/// the mask-out map `merged.bin` (`pinyin.cpp:955`, `:1264`), the reload of
+/// the unloaded GBK library maps `gbk_char.bin` (`:256`).
+#[cfg(unix)]
+fn remap_a_directory_library(site: &str) -> bool {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let (system, context) = init_private(scratch.path());
+    assert!(!context.is_null());
+    match site {
+        "save" => {
+            // SAFETY: `context` is a live `pinyin_init` handle, borrowed
+            // uniquely for this statement.
+            let ctx = unsafe { crate::state::context_mut(context) };
+            ctx.core.user.as_mut().expect("store").mark_modified();
+            crate::test_support::directory_library(&system, "merged.bin");
+            pinyin_save(context)
+        }
+        "mask" => {
+            crate::test_support::directory_library(&system, "merged.bin");
+            pinyin_mask_out(context, 0xff00_0000, 0x0400_0000)
+        }
+        "addon" => {
+            crate::test_support::directory_library(&system, "art.bin");
+            crate::config::pinyin_load_addon_phrase_library(context, 4)
+        }
+        _ => {
+            assert!(crate::config::pinyin_unload_phrase_library(context, 2));
+            crate::test_support::directory_library(&system, "gbk_char.bin");
+            crate::config::pinyin_load_phrase_library(context, 2)
+        }
+    }
+}
+
+/// Register row 96 at save; row 76's completed save where a directory does
+/// not read as a chunk.
+#[cfg(unix)]
+#[test]
+fn save_aborts_on_a_directory_library() {
+    if directory_reads_as_a_chunk_here() {
+        crate::test_support::assert_aborts("e2e_tests::save_aborts_on_a_directory_library", || {
+            let _ = remap_a_directory_library("save");
+        });
+    } else {
+        assert!(remap_a_directory_library("save"));
+    }
+}
+
+/// Register row 96 at mask-out, after the user tables are masked.
+#[cfg(unix)]
+#[test]
+fn mask_out_aborts_on_a_directory_library() {
+    if directory_reads_as_a_chunk_here() {
+        crate::test_support::assert_aborts(
+            "e2e_tests::mask_out_aborts_on_a_directory_library",
+            || {
+                let _ = remap_a_directory_library("mask");
+            },
+        );
+    } else {
+        assert!(remap_a_directory_library("mask"));
+    }
+}
+
+/// Register row 96 at the reload of an unloaded library.
+#[cfg(unix)]
+#[test]
+fn reload_aborts_on_a_directory_library() {
+    if directory_reads_as_a_chunk_here() {
+        crate::test_support::assert_aborts(
+            "e2e_tests::reload_aborts_on_a_directory_library",
+            || {
+                let _ = remap_a_directory_library("reload");
+            },
+        );
+    } else {
+        assert!(remap_a_directory_library("reload"));
+    }
+}
+
+/// Register row 96 at the addon load, which maps `art.bin` through the same
+/// `MemoryChunk::mmap` (`pinyin.cpp:290`); row 76's `false` elsewhere.
+#[cfg(unix)]
+#[test]
+fn addon_load_aborts_on_a_directory_library() {
+    if directory_reads_as_a_chunk_here() {
+        crate::test_support::assert_aborts(
+            "e2e_tests::addon_load_aborts_on_a_directory_library",
+            || {
+                let _ = remap_a_directory_library("addon");
+            },
+        );
+    } else {
+        assert!(!remap_a_directory_library("addon"));
+    }
+}
+
+/// The predecessor tokens of the bigram export fixture, in the order the
+/// walk loads them (the backend's key order), and the successor both name.
+#[cfg(unix)]
+fn export_order_fixture() -> (u32, u32, u32) {
+    let scratch = TempUserDir::new("export-order-probe");
+    let (context, instance) = open(scratch.path.to_str().expect("UTF-8 path"));
+    // The first three characters the fixture's dictionary holds.
+    let found: Vec<(&str, u32)> = {
+        // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
+        let inst = unsafe { instance_ref(instance) };
+        ["你", "好", "我", "的", "是", "中", "国", "人"]
+            .into_iter()
+            .filter_map(|text| {
+                inst.core
+                    .dict
+                    .tokens_for_text(text)
+                    .first()
+                    .map(|token| (text, token.value()))
+            })
+            .take(3)
+            .collect()
+    };
+    assert_eq!(found.len(), 3, "the fixture holds three of the characters");
+    let ((ni_text, ni), (hao_text, hao), (_, wo)) = (found[0], found[1], found[2]);
+    crate::context::pinyin_fini(context);
+    let probe = TempUserDir::new("export-order");
+    crate::test_support::plant_bigram(
+        &probe.path,
+        vec![
+            (ni.to_le_bytes().to_vec(), whole_gram(hao)),
+            (wo.to_le_bytes().to_vec(), whole_gram(hao)),
+        ],
+    );
+    let context = init_at(&probe.path);
+    let iter = crate::iterators::pinyin_begin_get_bigram_phrases(context);
+    let mut rows = Vec::new();
+    while crate::iterators::pinyin_bigram_iterator_has_next_phrase(iter) {
+        let mut phrase: *mut crate::types::GChar = ptr::null_mut();
+        let mut pinyin: *mut crate::types::GChar = ptr::null_mut();
+        let mut count: std::os::raw::c_int = 0;
+        crate::iterators::pinyin_bigram_iterator_get_next_phrase(
+            iter,
+            &raw mut phrase,
+            &raw mut pinyin,
+            &raw mut count,
+        );
+        rows.push((take_exported(phrase), take_exported(pinyin), count));
+    }
+    crate::iterators::pinyin_end_get_bigram_phrases(iter);
+    crate::context::pinyin_fini(context);
+    assert_eq!(rows.len(), 2, "{rows:?}");
+    if rows[0].0 == format!("{ni_text}{hao_text}") {
+        (ni, wo, hao)
+    } else {
+        (wo, ni, hao)
+    }
+}
+
+/// A gram with one item to `successor` at count 100: above the export
+/// threshold, so the walk hands out its row at count 200.
+#[cfg(unix)]
+fn whole_gram(successor: u32) -> Vec<u8> {
+    [
+        100_u32.to_le_bytes(),
+        successor.to_le_bytes(),
+        100_u32.to_le_bytes(),
+    ]
+    .concat()
+}
+
+/// Register row 85 inside `get_next`: the pin writes the row's phrase,
+/// pinyin and count (`pinyin.cpp:904-906`), advances, and only then runs the
+/// `has_next` that loads the next predecessor and asserts on its short
+/// total (`:910`, `:889`). The out-params live in a page shared with the
+/// child, so the writes are read back after the abort.
+#[cfg(unix)]
+#[test]
+fn bigram_get_next_writes_its_row_before_the_short_predecessor_aborts() {
+    let (first, second, successor) = export_order_fixture();
+    let slot = std::mem::size_of::<usize>();
+    let sentinel = vec![0xAB; 2 * slot + 4];
+    let page = crate::test_support::assert_aborts_sharing(
+        "e2e_tests::bigram_get_next_writes_its_row_before_the_short_predecessor_aborts",
+        &sentinel,
+        |page| {
+            let user_dir = TempUserDir::new("export-row-then-short");
+            crate::test_support::plant_bigram(
+                &user_dir.path,
+                vec![
+                    (first.to_le_bytes().to_vec(), whole_gram(successor)),
+                    (second.to_le_bytes().to_vec(), vec![7, 0, 0]),
+                ],
+            );
+            let context = init_at(&user_dir.path);
+            let iter = crate::iterators::pinyin_begin_get_bigram_phrases(context);
+            assert!(crate::iterators::pinyin_bigram_iterator_has_next_phrase(
+                iter
+            ));
+            // SAFETY: two pointer slots then a `c_int`, aligned in the page.
+            let (phrase, pinyin, count) = unsafe {
+                (
+                    page.cast::<*mut crate::types::GChar>(),
+                    page.add(slot).cast::<*mut crate::types::GChar>(),
+                    page.add(2 * slot).cast::<std::os::raw::c_int>(),
+                )
+            };
+            crate::iterators::pinyin_bigram_iterator_get_next_phrase(iter, phrase, pinyin, count);
+        },
+    );
+    let pointer = |at: usize| &page[at..at + slot];
+    assert!(
+        pointer(0) != &sentinel[..slot] && pointer(0).iter().any(|&b| b != 0),
+        "phrase written"
+    );
+    assert!(
+        pointer(slot) != &sentinel[..slot] && pointer(slot).iter().any(|&b| b != 0),
+        "pinyin written"
+    );
+    assert_eq!(
+        std::os::raw::c_int::from_ne_bytes(
+            page[2 * slot..2 * slot + 4].try_into().expect("4 bytes")
+        ),
+        200
+    );
+}
+
+/// A partial item tail (`4 + 8k + 1` bytes): row 98's value, which the pin's
+/// `retrieve_all` reads past (class (b)).
+#[cfg(unix)]
+fn partial_gram(successor: u32) -> Vec<u8> {
+    let mut gram = whole_gram(successor);
+    gram.push(1);
+    gram
+}
+
+/// Register rows 85 and 98 in walk order: the pin's begin reads no gram
+/// (`pinyin.cpp:775-787`), so a short predecessor the walk loads before a
+/// partial one aborts at `has_next` (`:889`) and the partial one is never
+/// read.
+#[cfg(unix)]
+#[test]
+fn bigram_export_aborts_at_a_short_predecessor_before_a_partial_one() {
+    let (first, second, successor) = export_order_fixture();
+    crate::test_support::assert_aborts(
+        "e2e_tests::bigram_export_aborts_at_a_short_predecessor_before_a_partial_one",
+        || {
+            let user_dir = TempUserDir::new("export-short-then-partial");
+            crate::test_support::plant_bigram(
+                &user_dir.path,
+                vec![
+                    (first.to_le_bytes().to_vec(), vec![7, 0, 0]),
+                    (second.to_le_bytes().to_vec(), partial_gram(successor)),
+                ],
+            );
+            let context = init_at(&user_dir.path);
+            let iter = crate::iterators::pinyin_begin_get_bigram_phrases(context);
+            assert!(!iter.is_null(), "begin reads no gram");
+            let _ = crate::iterators::pinyin_bigram_iterator_has_next_phrase(iter);
+        },
+    );
+}
+
+/// Row 98 (class (b)) on the export walk: the walk ends with one warning
+/// where it loads the partial value, after the rows before it.
+#[cfg(unix)]
+#[test]
+fn bigram_export_ends_at_a_partial_predecessor() {
+    let (first, second, successor) = export_order_fixture();
+    let user_dir = TempUserDir::new("export-whole-then-partial");
+    crate::test_support::plant_bigram(
+        &user_dir.path,
+        vec![
+            (first.to_le_bytes().to_vec(), whole_gram(successor)),
+            (second.to_le_bytes().to_vec(), partial_gram(successor)),
+        ],
+    );
+    let context = init_at(&user_dir.path);
+    let iter = crate::iterators::pinyin_begin_get_bigram_phrases(context);
+    assert!(!iter.is_null(), "begin reads no gram");
+    assert!(crate::iterators::pinyin_bigram_iterator_has_next_phrase(
+        iter
+    ));
+    let mut phrase: *mut crate::types::GChar = ptr::null_mut();
+    let mut pinyin: *mut crate::types::GChar = ptr::null_mut();
+    let mut count: std::os::raw::c_int = 0;
+    // The row is written, then the walk meets the partial value.
+    assert!(!crate::iterators::pinyin_bigram_iterator_get_next_phrase(
+        iter,
+        &raw mut phrase,
+        &raw mut pinyin,
+        &raw mut count,
+    ));
+    assert_eq!(count, 200);
+    take_exported(phrase);
+    take_exported(pinyin);
+    assert!(!crate::iterators::pinyin_bigram_iterator_has_next_phrase(
+        iter
+    ));
+    crate::iterators::pinyin_end_get_bigram_phrases(iter);
+    crate::context::pinyin_fini(context);
+}

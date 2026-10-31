@@ -143,6 +143,36 @@ pub enum OpenError {
     Journal(oxpinyin_user::JournalFault),
 }
 
+/// [`Runtime::reload_system_libraries`]'s result.
+#[derive(Debug)]
+pub struct SystemRemap {
+    /// The libraries mapped again, in the mask loop's order.
+    pub originals: oxpinyin_user::SystemOriginals,
+    /// The files `MemoryChunk::mmap` refused, with their sub-index, in the
+    /// loop's order: each a `mmap %s failed!` line the pin writes when its
+    /// loop reaches that library.
+    pub unmappable: Vec<(u8, PathBuf)>,
+    /// The library that is a directory the pin asserts on, where the walk
+    /// ended (`memory_chunk.h:493`).
+    pub header_fault: Option<u8>,
+}
+
+/// Why [`Runtime::save_disk_baseline`] could not give a baseline for a
+/// system library the save maps again at its `_write_files` position
+/// (`pinyin.cpp:955`, `zhuyin.cpp:588`).
+#[derive(Debug)]
+pub enum SaveRemapFault {
+    /// The chunk passed the header and checksum, but `SubPhraseIndex::load`
+    /// refuses its layout: the pin diffs against the empty sub-index.
+    Layout(LayoutFault),
+    /// `MemoryChunk::mmap` refuses the file: the pin writes
+    /// `mmap %s failed!` (row 76, class (b)).
+    Unmappable(PathBuf),
+    /// The file is a directory whose header read `MemoryChunk::mmap`
+    /// asserts on (`memory_chunk.h:493`, register row 96).
+    ChunkHeaderRead,
+}
+
 impl OpenError {
     /// The system library file the pin's `MemoryChunk::mmap` refuses, when
     /// that is why the open failed: the pin writes `mmap %s failed!` for it
@@ -175,8 +205,9 @@ impl OpenError {
     }
 
     /// Whether the open failed on a system library that is a directory the
-    /// pin's `MemoryChunk::mmap` asserts on (`memory_chunk.h:493`): class
-    /// (c), answered with NULL and one warning.
+    /// pin's `MemoryChunk::mmap` asserts on (`memory_chunk.h:493`, register
+    /// row 96), after the libraries before it were mapped and merged. The C
+    /// adapters abort.
     #[must_use]
     pub fn chunk_header_read(&self) -> bool {
         matches!(
@@ -2018,6 +2049,9 @@ fn open_user_store(
             Err(OpenError::UnknownDatabaseFormat(user_dir.to_path_buf()))
         }
         Err(UserStoreError::Journal(fault)) => Err(OpenError::Journal(fault)),
+        Err(UserStoreError::LibraryChunkHeaderRead) => Err(OpenError::Dict(DictError::Library(
+            LibraryError::Row(RowFault::ChunkHeaderRead),
+        ))),
         Err(error) => {
             let user_dir = user_dir.display();
             eprintln!(
@@ -2120,6 +2154,32 @@ impl Runtime {
         require_file(&bigram)?;
 
         let dict = SystemDictionary::open_with(system_dir, &conf).map_err(OpenError::Dict)?;
+        // Register row 96: the library loop maps each default library and
+        // merges its `.dbin` in order (`pinyin.cpp:377-392`,
+        // `zhuyin.cpp:318-334`); `MemoryChunk::mmap` asserts on a library
+        // that is a directory (`memory_chunk.h:493`). The open stopped there;
+        // the earlier libraries' logs are merged (a merge can assert first,
+        // rows 91 and 108) and the fault is returned at that point, after
+        // `check_format`'s writes.
+        if let Some(stop) = dict.libraries().chunk_header_fault() {
+            if let (Some(dir), Some(check)) = (user_dir, early)
+                && let Err(error) = open_user_store(&conf, dir, &dict, law, check)
+            {
+                if let OpenError::Journal(fault) = &error {
+                    for path in dict.libraries().unmapped_before(fault.library(), true) {
+                        unmapped(path);
+                    }
+                }
+                return Err(error);
+            }
+            // The libraries before it were mapped and their lines written.
+            for path in dict.libraries().unmapped_before(stop, false) {
+                unmapped(path);
+            }
+            return Err(OpenError::Dict(DictError::Library(LibraryError::Row(
+                RowFault::ChunkHeaderRead,
+            ))));
+        }
         // The loaded-library mask is shared with the language model: an
         // unloaded library's items leave both the lookups and the unigram
         // denominator, as freeing the sub-index does upstream.
@@ -2363,15 +2423,20 @@ impl Runtime {
     /// turn into the pin's empty old sub-index. A missing or unmappable
     /// chunk falls back to the pre-existing init-snapshot behavior: the
     /// registered row 76 answer at the save site (the caller writes
-    /// `mmap %s failed!` and the save continues; the pin's empty-chunk
-    /// SIGSEGV is not reproduced). An unloaded default library, system or
-    /// `USER_FILE`, is `Unloaded`: the save leaves its file alone.
+    /// `mmap %s failed!` for [`SaveRemapFault::Unmappable`] and the save
+    /// continues; the pin's empty-chunk SIGSEGV is not reproduced). An
+    /// unloaded default library, system or `USER_FILE`, is `Unloaded`: the
+    /// save leaves its file alone.
     ///
     /// # Errors
     ///
-    /// Returns the [`LayoutFault`] when the current chunk passed the header
-    /// and checksum but its sub-index layout is refused.
-    pub fn save_disk_baseline(&self, nibble: u8) -> Result<SaveBaseline, LayoutFault> {
+    /// Returns [`SaveRemapFault::Layout`] when the current chunk passed the
+    /// header and checksum but its sub-index layout is refused,
+    /// [`SaveRemapFault::Unmappable`] when `MemoryChunk::mmap` refuses it,
+    /// and [`SaveRemapFault::ChunkHeaderRead`] when it is a directory whose
+    /// header read the pin asserts on (`memory_chunk.h:493`, register row
+    /// 96): the save stops there.
+    pub fn save_disk_baseline(&self, nibble: u8) -> Result<SaveBaseline, SaveRemapFault> {
         // Nibble 0 is the reserved row the loop never visits.
         if nibble == 0 {
             return Ok(SaveBaseline::Keep);
@@ -2390,19 +2455,31 @@ impl Runtime {
         match oxpinyin_data::phrase_library::PhraseLibrary::open(&path) {
             Ok(current) if current.byte_identical(&original) => Ok(SaveBaseline::Unchanged),
             Ok(current) => Ok(SaveBaseline::Changed(SystemLibrary::from_library(current))),
-            Err(LibraryError::Layout(fault)) => Err(fault),
-            Err(_) => Ok(SaveBaseline::Keep),
+            Err(LibraryError::Layout(fault)) => Err(SaveRemapFault::Layout(fault)),
+            Err(LibraryError::Row(RowFault::ChunkHeaderRead)) => {
+                Err(SaveRemapFault::ChunkHeaderRead)
+            }
+            Err(error) => match error.unmappable_path() {
+                Some(path) => Err(SaveRemapFault::Unmappable(path.to_path_buf())),
+                None => Ok(SaveBaseline::Keep),
+            },
         }
     }
 
     /// Maps every loaded SYSTEM_FILE/DICTIONARY default library again for
-    /// mask_out, replacing the shared sub-index, never the phrase DBM.
-    /// Read from the 074a2219 tree: pinyin.cpp:1253-1273,
+    /// mask_out, in the mask loop's order, replacing the shared sub-index,
+    /// never the phrase DBM. Read from the 074a2219 tree: pinyin.cpp:1253-1273,
     /// zhuyin.cpp:788-808. Unloaded libraries and rows without a user file
-    /// are skipped. Failed mappings keep the existing safe fallback;
-    /// the facade reports their mmap diagnostic before calling this.
+    /// are skipped. A file `MemoryChunk::mmap` refuses keeps the existing
+    /// safe fallback and is listed in [`SystemRemap::unmappable`] with its
+    /// sub-index: the pin writes its `mmap %s failed!` line (row 76) at that
+    /// library's place in the loop, so the caller writes it only if the loop
+    /// reached it. A library that is a directory whose header read the pin
+    /// asserts on (`memory_chunk.h:493`, register row 96) ends the walk
+    /// ([`SystemRemap::header_fault`]), and the originals hold the libraries
+    /// mapped before it, whose logs the pin merged before it died.
     #[must_use]
-    pub fn reload_system_libraries(&self) -> oxpinyin_user::SystemOriginals {
+    pub fn reload_system_libraries(&self) -> SystemRemap {
         self.remap_system_libraries(1..16, false)
     }
 
@@ -2416,6 +2493,7 @@ impl Runtime {
     #[must_use]
     pub fn reload_system_library(&self, index: u8) -> oxpinyin_user::SystemOriginals {
         self.remap_system_libraries(index..index.saturating_add(1), true)
+            .originals
     }
 
     /// The loaded SYSTEM_FILE/DICTIONARY default library `index` as it is
@@ -2454,11 +2532,15 @@ impl Runtime {
         &self,
         indices: std::ops::Range<u8>,
         include_unloaded: bool,
-    ) -> oxpinyin_user::SystemOriginals {
+    ) -> SystemRemap {
         let layout = UserFileLayout::from_conf(&self.conf);
-        let mut originals = oxpinyin_user::SystemOriginals::new(Default::default(), layout);
+        let mut remap = SystemRemap {
+            originals: oxpinyin_user::SystemOriginals::new(Default::default(), layout),
+            unmappable: Vec::new(),
+            header_fault: None,
+        };
         let Some(dir) = self.paths.system_data_dirs().first() else {
-            return originals;
+            return remap;
         };
         let libraries = self.dict.system.libraries();
         for index in indices.filter(|&index| (1..16).contains(&index)) {
@@ -2475,11 +2557,22 @@ impl Runtime {
                 continue;
             };
             let path = oxpinyin_data::table_info::pin_join(dir, name.as_ref());
-            if !libraries.reload(index, &path).unwrap_or(false) {
-                continue;
+            match libraries.reload(index, &path) {
+                Ok(true) => {}
+                Ok(false) => continue,
+                Err(LibraryError::Row(RowFault::ChunkHeaderRead)) => {
+                    remap.header_fault = Some(index);
+                    break;
+                }
+                Err(error) => {
+                    if let Some(path) = error.unmappable_path() {
+                        remap.unmappable.push((index, path.to_path_buf()));
+                    }
+                    continue;
+                }
             }
             if let Some(library) = libraries.library(u32::from(index) << 24) {
-                originals.insert(
+                remap.originals.insert(
                     index,
                     oxpinyin_user::SystemLibrary {
                         total: library.total_freq(),
@@ -2494,8 +2587,8 @@ impl Runtime {
         // sub-index too. Keep overlays for every library we did not reload.
         self.dict
             .bumps
-            .drop_libraries(|nibble| originals.contains_key(&(nibble as u8)));
-        originals
+            .drop_libraries(|nibble| remap.originals.contains_key(&(nibble as u8)));
+        remap
     }
 
     /// Unloads addon library `index` from this runtime's dictionary.

@@ -105,8 +105,8 @@ impl CapiContext {
     /// [`MaskOutOutcome::Done(false)`](oxpinyin_facade::MaskOutOutcome::Done)
     /// without a user store. An over-long user pinyin index key comes back
     /// as [`MaskOutOutcome::OverlongIndexKey`](oxpinyin_facade::MaskOutOutcome::OverlongIndexKey)
-    /// so the C entry can log it (class (c),
-    /// `chewing_large_table2_bdb.cpp:529`).
+    /// so the C entry can abort where the pin does
+    /// (`chewing_large_table2_bdb.cpp:529`).
     pub(crate) fn mask_out(&mut self, mask: u32, value: u32) -> oxpinyin_facade::MaskOutOutcome {
         self.core.mask_out(mask, value)
     }

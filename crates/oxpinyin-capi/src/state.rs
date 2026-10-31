@@ -117,7 +117,7 @@ impl CapiContext {
     /// `pinyin_mask_out`'s body: the store-level deletion, or `false`
     /// without a user store. An over-long user pinyin index key comes back
     /// as [`oxpinyin_facade::MaskOutOutcome::OverlongIndexKey`] so the C
-    /// entry can log it (class (c), `chewing_large_table2_bdb.cpp:529`).
+    /// entry can abort where the pin does (`chewing_large_table2_bdb.cpp:529`).
     pub(crate) fn mask_out(&mut self, mask: u32, value: u32) -> oxpinyin_facade::MaskOutOutcome {
         self.core.mask_out(mask, value)
     }
@@ -161,16 +161,10 @@ impl CapiContext {
                 );
                 false
             }
-            // `pinyin.cpp:290` maps the addon through the same
-            // `MemoryChunk::mmap`: a directory of header size or more fails
+            // Register row 96: `pinyin.cpp:290` maps the addon through the same
+            // `MemoryChunk::mmap`, and a directory of header size or more fails
             // the read at `memory_chunk.h:493`.
-            Err(oxpinyin_facade::LibraryRowAssert::ChunkHeaderRead) => {
-                crate::ffi::log_warning(
-                    "pinyin_load_addon_phrase_library: assertion \
-                     'ret_len == sizeof(length)' failed (memory_chunk.h:493)",
-                );
-                false
-            }
+            Err(oxpinyin_facade::LibraryRowAssert::ChunkHeaderRead) => std::process::abort(),
             // The addon load answers no `NotLoadable`.
             Err(oxpinyin_facade::LibraryRowAssert::NotLoadable) => false,
         }
