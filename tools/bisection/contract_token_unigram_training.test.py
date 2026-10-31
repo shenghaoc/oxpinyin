@@ -27,7 +27,8 @@ EXPECTED = [('system-zhuyin-only-readings', (), {'issues': ('809',), 'mode': 'pi
              (),
              {'control': True, 'issues': ('808',), 'mode': 'zhuyin'}),
             ('train-unigram-total', (), {'issues': ('540',)}),
-            ('predicted-unigram-overflow', (), {'issues': ('540',)})]
+            ('predicted-unigram-overflow', (), {'issues': ('540',)}),
+            ('predicted-prefix-user-phrase-unigram', (), {'issues': ('1418',)})]
 
 
 def declarations():
