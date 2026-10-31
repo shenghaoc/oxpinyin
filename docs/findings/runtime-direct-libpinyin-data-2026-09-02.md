@@ -178,8 +178,9 @@ interpolation table plus the reconstructed reverse/initial maps) is gone.
 * `oxpinyin-engine` — the candidate law reads the item field directly.
 * `oxpinyin-capi` / `oxpinyin-zhuyin-capi` — fixture mode removed; the
   token unigram surface reports the item field.
-* `oxpinyin-segment` and the W9 tools — the lexicon reads the chunk files,
-  the bigram is the lazy `BigramTable`.
+* `oxpinyin-utils`' segmentation utilities and the W9 tools — the phrase
+  table is `PhraseIndexTable`, the lexicon reads the chunk files, the
+  bigram is the lazy `BigramTable`.
 
 ## 6. Remaining blockers to a true drop-in replacement
 

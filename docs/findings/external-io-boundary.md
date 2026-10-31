@@ -1,7 +1,7 @@
 # External I/O boundary
 
 Date: 2026-10-28 UTC · Status: **maintainer ruling and implementation
-plan; stage 1 implemented (2026-10-28 UTC), stage 4 implemented (2026-10-30 UTC, #1437), stage 5 in progress (#1436), stages 2 and 3 not implemented**. The pin is libpinyin
+plan; stage 1 implemented (2026-10-28 UTC), stage 4 implemented (2026-10-30 UTC, #1437), stage 5 in progress (the segmentation trio added 2026-10-31 UTC), stages 2 and 3 not implemented**. The pin is libpinyin
 `074a2219c90feaf962d0d24f034514033ece5f99`; oxpinyin source is main
 `a52461cc297a4e67b07406167e6581e0e9f211fa`. The pin source read was the
 clean `/tmp/libpinyin-src` checkout at that commit. Pin citations below
@@ -224,9 +224,9 @@ verdict above; no matching call has been newly proved equivalent.
 
 | Pin function/sites and `printf`/`fprintf`/GLib format | Current oxpinyin item |
 | --- | --- |
-| `ngseg.cpp:36,81-100,119-260`: `"Usage: ngseg [--generate-extra-enter]  [-o outputfile] [inputfile]\n"`, `"%s\n"`, `"%d %s\n"`, `"%d \n"`, `"Un-segmentable sentence encountered:%s\n"`, `"non-ucs4 characters encountered:%s.\n"`, `"too many arguments.\n"`, `"load table.conf failed.\n"`, `perror("open file failed")`; `fopen(outputfile, "w")`, `fclose(output)`. | `oxpinyin-training` `Segmenter::segment_bytes`, `tool_cli`, `oxpinyin-segment` binary. |
-| `spseg.cpp:37,183-195,214-343`: `"Usage: spseg [--generate-extra-enter] [-o outputfile] [inputfile]\n"`, `"%d %s\n"`, `"%d \n"`, the non-UCS4/argument/config errors and `perror("open file failed")`; `fopen("w")`/`fclose`. | `oxpinyin-training` `segment::spseg::segment_bytes`, `oxpinyin-spseg`. |
-| `mergeseq.cpp:37,141-170,213-280`: `"Usage: mergeseq [-o outputfile] [inputfile]\n"`, `"%d %s\n"`, `"%s\n"`, argument/config errors and `perror("open file failed")`; `fopen("w")`/`fclose`. | `oxpinyin-training` `segment::mergeseq::merge_bytes`, `oxpinyin-mergeseq`. |
+| `ngseg.cpp:36,81-100,119-260`: `"Usage: ngseg [--generate-extra-enter]  [-o outputfile] [inputfile]\n"`, `"%s\n"`, `"%d %s\n"`, `"%d \n"`, `"Un-segmentable sentence encountered:%s\n"`, `"non-ucs4 characters encountered:%s.\n"`, `"too many arguments.\n"`, `"load table.conf failed.\n"`, `perror("open file failed")`; `fopen(outputfile, "w")`, `fclose(output)`. | `oxpinyin-utils` `segment::ngseg` (drop-in at stage 5; `print_help` is dead code and GLib prints `--help`). |
+| `spseg.cpp:37,183-195,214-343`: `"Usage: spseg [--generate-extra-enter] [-o outputfile] [inputfile]\n"`, `"%d %s\n"`, `"%d \n"`, the non-UCS4/argument/config errors and `perror("open file failed")`; `fopen("w")`/`fclose`. | `oxpinyin-utils` `segment::spseg` (drop-in at stage 5). |
+| `mergeseq.cpp:37,141-170,213-280`: `"Usage: mergeseq [-o outputfile] [inputfile]\n"`, `"%d %s\n"`, `"%s\n"`, argument/config errors and `perror("open file failed")`; `fopen("w")`/`fclose`. | `oxpinyin-utils` `segment::mergeseq` (drop-in at stage 5). |
 | `export_interpolation.cpp:34-39,76-132`: `"\\data model interpolation\n"`, `"\\1-gram\n"`, `"\\2-gram\n"`, `"\\end\n"`, `"\\item %d %s count %ld\n"`, `"\\item %d %s %d %s count %d\n"`. | `oxpinyin-training/src/emitter/emit.rs` `emit_interpolation2`, `write_interpolation2`. |
 | `export_k_mixture_model.cpp:39-108`: `"no magic header in k mixture model.\n"`, `"\\data model \"k mixture model\" count %d N %d total_freq %d\n"`, section/end literals, `"\\item %d %s count %d freq %d\n"`, `"\\item %d %s %d %s count %d T %d N_n_0 %d n_1 %d Mr %d\n"`; `k_mixture_model_to_interpolation.cpp:62-170` uses interpolation section literals, `"\\item %d %s count %ld\n"`, `"\\item %d %s %d %s count %ld\n"`. | `oxpinyin-kmm/src/text.rs` `export`; CLI `write_output`. `k_mixture_model_to_interpolation`'s lines are the pin's calls in `oxpinyin-utils`. |
 | `estimate_interpolation.cpp:129,139` and `estimate_k_mixture_model.cpp:141,152`: `"token:%d lambda:%f\n"`, `"average lambda:%f\n"`; `eval_correction_rate.cpp:119-121,168,203`: `"test sentence:%s\n"`, `"guessed sentence:%s\n"`, `"the result mis-matches.\n"`, `"Can't open file:%s\n"`, `"correction rate:%f\n"`. | Training `oxpinyin-lambda`, `eval::EvalReport::correction_rate_line`; KMM `run_estimate`, `numeric::format_six_decimals`. |
@@ -253,9 +253,9 @@ The scope includes both installed and `noinst_PROGRAMS` utilities.
 | `export_interpolation` | `oxpinyin-emitter` | **GAP** — different name/interface. |
 | `gen_pinyin_table` | `oxpinyin-utils` `gen_pinyin_table` | **Ported** at stage 5 (2026-10-30 UTC, #1436): the pin's name, options, messages, input scanner and output. |
 | `gen_zhuyin_table` | `oxpinyin-utils` `gen_zhuyin_table` | **Ported** at stage 5 (2026-10-30 UTC): direct zhuyin rows, native calls, and registered `tool-diff` cases. |
-| `ngseg` | `oxpinyin-segment` | **GAP** — different name/interface. |
-| `spseg` | `oxpinyin-spseg` | **GAP** — different name/interface. |
-| `mergeseq` | `oxpinyin-mergeseq` | **GAP** — different name/interface. |
+| `ngseg` | `oxpinyin-utils` `ngseg` | **Ported** at stage 5 (2026-10-31 UTC): the pin's name, options, messages, `table.conf`/phrase-index/bigram inputs and output; `PhraseLookup::get_best_match` over `phrase_index.bin` and `bigram.db`; registered `tool-diff` cases. |
+| `spseg` | `oxpinyin-utils` `spseg` | **Ported** at stage 5 (2026-10-31 UTC): the pin's name, options, messages and fewest-words dynamic program over `phrase_index.bin`; registered `tool-diff` cases. |
+| `mergeseq` | `oxpinyin-utils` `mergeseq` | **Ported** at stage 5 (2026-10-31 UTC): the pin's name, options, messages, `TAGLIB_PARSE_SEGMENTED_LINE`, token validation and queue merge over `phrase_index.bin`; registered `tool-diff` cases. |
 | `gen_unigram` | datagen `addon::compile` and training floor logic | **GAP** — no same-name standalone tool. |
 | `gen_ngram` | `oxpinyin-counter` | **GAP** — output representation and interface differ. |
 | `gen_deleted_ngram` | counter/lambda held-out logic | **GAP** — no same-name drop-in. |

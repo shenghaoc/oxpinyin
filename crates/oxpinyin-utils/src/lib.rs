@@ -15,4 +15,6 @@ pub mod gen_zhuyin_table;
 
 pub mod k_mixture_model_to_interpolation;
 
+pub mod segment;
+
 pub mod taglib;

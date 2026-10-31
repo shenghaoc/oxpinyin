@@ -1,5 +1,10 @@
 # W9-T1 segmenter port — `ngseg` → Rust
 
+
+> **Historical (2026-10-31 UTC).** The segmentation binaries moved to
+> `oxpinyin-utils` under the pin's names (`ngseg`, `spseg`, `mergeseq`);
+> the old `oxpinyin-segment` crate and binary no longer exist. This record
+> keeps the port's derivation and rationale.
 Date: 2026-08-15 · Status: **SHOWN-verified against libpinyin 2.11.91 `ngseg`
 and `PhraseLookup::get_best_match`** · Crate: `oxpinyin-segment` (never ships).
 

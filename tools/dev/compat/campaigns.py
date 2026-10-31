@@ -119,8 +119,7 @@ def differentials(argv):
         ('runtime: unmodified tkrzw libpinyin data directory', 'oxpinyin-runtime', 'libpinyin_data_dir'),
         ('KMM differentials (gen+export, merge, prune, validate)', 'oxpinyin-kmm', 'differential'),
         ('KMM to interpolation: k_mixture_model_to_interpolation', 'oxpinyin-utils', 'k_mixture_model_to_interpolation'),
-        ('segment: spseg / mergeseq', 'oxpinyin-training', 'segment-spseg-mergeseq'),
-        ('segment: ngseg (needs the system bigram)', 'oxpinyin-training', 'segment-differential'),
+        ('segment: ngseg / spseg / mergeseq', 'oxpinyin-utils', 'segmentation'),
         ('lambda: estimate_interpolation', 'oxpinyin-training', 'lambda-differential'),
         ('counter: gen_ngram', 'oxpinyin-training', 'counter-differential')]
     if evaluator:
@@ -188,7 +187,7 @@ def nightly(argv, *, root=ROOT):
     env.update(PINYIN_NGSEG=str(src / TOOLS['PINYIN_NGSEG']), PINYIN_NGSEG_DATA=str(data),
                PINYIN_EXPORT_DIR=str(exported), PINYIN_MODEL_DIR=str(model))
     status = int(run_suite('segment ngseg live parity (toned tables)',
-                           cargo_test('oxpinyin-training', 'segment-differential', ['rust_matches_live_ngseg'], locked=True, quiet=True), env=env))
+                           cargo_test('oxpinyin-utils', 'segmentation', ['rust_ngseg_matches_live'], locked=True, quiet=True), env=env))
     env.update(PINYIN_GEN_NGRAM_DATA=str(w3 / 'tkt'), PINYIN_EXPORT_DIR=str(w3 / 'tkt'),
                PINYIN_SPSEG=str(src / TOOLS['PINYIN_SPSEG']), PINYIN_NGSEG_DATA=str(w3 / 'tkt'))
     for key in ('GEN_KMM', 'EXPORT_KMM', 'MERGE_KMM', 'VALIDATE_KMM', 'KMM_TO_INTERP'):
@@ -200,7 +199,7 @@ def nightly(argv, *, root=ROOT):
                         cargo_test('oxpinyin-utils', 'k_mixture_model_to_interpolation', ['rust_kmm_matches_pin_to_interpolation'],
                                    locked=True, quiet=True), env=env)
     status |= run_suite('segment spseg live parity (w3 tables)',
-                        cargo_test('oxpinyin-training', 'segment-spseg-mergeseq', ['rust_matches_live_spseg'], locked=True, quiet=True), env=env)
+                        cargo_test('oxpinyin-utils', 'segmentation', ['rust_spseg_matches_live'], locked=True, quiet=True), env=env)
     for key in ('PINYIN_EXPORT_DIR', 'PINYIN_NGSEG_DATA', 'PINYIN_GEN_NGRAM_DATA'):
         env.pop(key, None)
     status |= run_suite('drop-in differential (tkrzw, toned model)',

@@ -255,8 +255,8 @@ This is deliberately integer/rational: the decode score stays in exact `u128`
 arithmetic (no float in the hot path), and the constant is documented as
 "authored and deliberately neutral". T3's output is the *derivation* of that
 constant — `estimate_interpolation`'s λ is exactly what libpinyin wrote into
-`table.conf` as `lambda parameter:0.312699` (the value `oxpinyin-segment` reads
-as `PINNED_LAMBDA`). **T3 does not touch the decode path**; it makes λ
+`table.conf` as `lambda parameter:0.312699` (the value the `ngseg`
+utility reads as `PINNED_LAMBDA`). **T3 does not touch the decode path**; it makes λ
 derivable.
 
 **A future integration PR** would need to:
@@ -273,7 +273,7 @@ derivable.
    sweep (`scoring-constant-sweep.md`) must be re-run and the pins re-frozen
    or accepted to shift.
 3. Note the two λ are distinct today: the **segmenter** already reads
-   `table.conf`'s 0.312699 (`oxpinyin-segment` `PINNED_LAMBDA`), while the
+   `table.conf`'s 0.312699 (`oxpinyin-utils` `ngseg` `PINNED_LAMBDA`), while the
    **decode LM** uses 1/2. A derived-λ integration should reconcile which
    consumers move.
 

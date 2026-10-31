@@ -17,12 +17,16 @@ from . import pool
 
 # Each utility's directory in the pin's build tree (utils/*/Makefile.am).
 PIN_UTILITIES = {'gen_pinyin_table': 'utils/storage', 'gen_zhuyin_table': 'utils/storage',
-                 'k_mixture_model_to_interpolation': 'utils/training'}
+                 'k_mixture_model_to_interpolation': 'utils/training',
+                 'ngseg': 'utils/segment', 'spseg': 'utils/segment', 'mergeseq': 'utils/segment'}
 # Utilities whose pin source opens no DBM: the generators read and write text
 # tables, and k_mixture_model_to_interpolation converts stdin to stdout with
 # taglib (no Bigram attach, no phrase-index load). Their observations are the
 # same in every cell, so policy evidence is recorded once for every cell.
 DATABASE_FREE = frozenset({'gen_pinyin_table', 'gen_zhuyin_table', 'k_mixture_model_to_interpolation'})
+# The committed W3 data directories, one per storage backend, and the cell
+# each belongs to (`fixtures/w3/README.md`).
+FIXTURE_DIRS = {'bdb': 'db', 'kc': 'kct', 'tkrzw': 'tkt'}
 GLIB_PREFIX = re.compile(r'(?m)^((?:\*\* )?\([^():\n]+:)\d+(\): (?:[A-Za-z0-9_.-]+-)?(?:CRITICAL|WARNING|MESSAGE|ERROR|DEBUG|INFO) \*\*: )'
                          r'\d\d:\d\d:\d\d\.\d+: ')
 
@@ -72,6 +76,22 @@ def payload(value, root, model):
     raise ValueError('input must specify exactly text, hex, file, or model_table/format')
 
 
+def fixture_inputs(root, cell, value):
+    """Every file of the cell's committed W3 data directory, by relative name."""
+    if not isinstance(value, str):
+        raise ValueError('fixture_dir must be a string')
+    base = root / relative(value) / FIXTURE_DIRS[cell]
+    if not base.is_dir():
+        raise ValueError(f'fixture_dir has no {FIXTURE_DIRS[cell]} directory: {value}')
+    inputs = {}
+    for path in sorted(base.rglob('*')):
+        if path.is_symlink():
+            raise ValueError(f'fixture_dir holds a symlink: {path}')
+        if path.is_file():
+            inputs[str(path.relative_to(base))] = path.read_bytes()
+    return inputs
+
+
 def load_cases(paths):
     cases = []
     for path in paths:
@@ -99,6 +119,10 @@ def load_cases(paths):
                 raise ValueError(f'{path}: a pin signal requires a named policy record')
             for name in case.get('files', {}):
                 relative(name)
+            if case.get('fixture_dir') is not None:
+                if not isinstance(case['fixture_dir'], str):
+                    raise ValueError(f'{path}: fixture_dir must be a string')
+                relative(case['fixture_dir'])
             cases.append(case)
     if not cases or len({case['id'] for case in cases}) != len(cases):
         raise ValueError('case selection must be nonempty with unique IDs')
@@ -200,6 +224,8 @@ def run(ctx, argv):
     def compare(child, case):
         scratch = child.scratch()
         inputs = {name: payload(value, child.settings.root, model) for name, value in case.get('files', {}).items()}
+        if case.get('fixture_dir') is not None:
+            inputs = {**fixture_inputs(child.settings.root, child.settings.cell, case['fixture_dir']), **inputs}
         stdin = payload(case.get('stdin', {'text': ''}), child.settings.root, model)
         deadline = time.monotonic() + args.case_timeout
         try:

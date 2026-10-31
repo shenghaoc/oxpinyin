@@ -186,9 +186,9 @@ line-by-line in `docs/findings/kmm-arithmetic-audit.md`.
 
 | Capability | Trainer entry | libpinyin source | Status | Home (implementation) |
 |---|---|---|---|---|
-| ngseg (bigram Viterbi) | `segment.py` | `utils/segment/ngseg.cpp` | **done** | `oxpinyin-segment::segment_bytes` |
-| spseg (fewest-words DP) | `segment.py --fast` | `utils/segment/spseg.cpp` | **done** | `oxpinyin-segment::spseg` |
-| mergeseq (phrase merge) | `mergeseq.py` | `utils/segment/mergeseq.cpp` | **done** | `oxpinyin-segment::mergeseq` |
+| ngseg (bigram Viterbi) | `segment.py` | `utils/segment/ngseg.cpp` | **done** | `oxpinyin-utils::segment::ngseg` |
+| spseg (fewest-words DP) | `segment.py --fast` | `utils/segment/spseg.cpp` | **done** | `oxpinyin-utils::segment::spseg` |
+| mergeseq (phrase merge) | `mergeseq.py` | `utils/segment/mergeseq.cpp` | **done** | `oxpinyin-utils::segment::mergeseq` |
 | KMM data model | — | `utils/training/k_mixture_model.h` | **done** | `oxpinyin-kmm::model` |
 | KMM generate (per-doc count) | `generate.py` | `gen_k_mixture_model.cpp` | **done** | `oxpinyin-kmm::generate` |
 | KMM estimate (λ score) | `estimate.py` | `estimate_k_mixture_model.cpp` | **done** | `oxpinyin-kmm::estimate` |
@@ -734,7 +734,8 @@ oxpinyin-train \
 #   writes finals/try<NAME>/interpolation2.text (the final model).
 ```
 
-The individual CLIs remain for stage-wise use (`oxpinyin-spseg`,
+The individual CLIs remain for stage-wise use (`ngseg`, `spseg`,
+`mergeseq` in `oxpinyin-utils`,
 `oxpinyin-kmm <subcommand>`, `oxpinyin-eval`, `oxpinyin-word recognize`,
 `oxpinyin-punct`); `oxpinyin-train` orchestrates the whole main workflow.
 

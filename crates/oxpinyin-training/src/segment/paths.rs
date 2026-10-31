@@ -36,7 +36,7 @@ pub const EXPORT_DBMS: &[SystemDbm] = &[SystemDbm::PhraseIndex, SystemDbm::Bigra
 /// Files the segmenter needs from the fetched model20 cache.
 pub const MODEL_FILES: &[&str] = &["interpolation2.text"];
 
-/// Locations `Segmenter::open` reads.
+/// Locations the system-data readers take.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SegmenterPaths {
     /// The system data directory (the chunk files the lexicon reads).
