@@ -56,9 +56,9 @@ just policy-record docs/findings/eio-table-generator-invalid-utf8.md /path/to/ob
 Every accepted pair binds both complete observations with the existing
 schema-2 record digests. A changed exit, stream or file fails the record.
 
-The registered table generators and `k_mixture_model_to_interpolation`
-open no DBM: `DATABASE_FREE` in `tools/dev/tool_diff.py` names them, and
-each capture row carries `database_free` from it. The three segmentation
+The registered table generators, `k_mixture_model_to_interpolation` and
+`gen_unigram` open no DBM: `DATABASE_FREE` in `tools/dev/tool_diff.py`
+names them, and each capture row carries `database_free` from it. The three segmentation
 utilities do open one, so their rows stay per-cell. The writer records such a case once, for every
 cell:
 
@@ -220,3 +220,52 @@ The named mutation `storage-native-order` replaces
 `export_interpolation`. The tkrzw run detects it in `exp-mini-fixture`
 (the `\2-gram` group order changes): 1 DIFFER. The source was restored
 byte for byte (sha256 checked) before the completion run.
+
+## N-gram and interpolation utilities (2026-10-31 UTC)
+
+`tool-cases/{gen_unigram,gen_ngram,gen_deleted_ngram,estimate_interpolation,eval_correction_rate}.json`
+hold seven, nine, nine, six and nine source-derived cases (40 in all).
+`gen_unigram` is registered `DATABASE_FREE`: its cases write a literal
+`table.conf` and copy the backend-independent chunk files from
+`fixtures/w3/db`, so its observations are identical in every cell. The
+other four open a DBM and stay per-cell.
+
+The cases cover GLib `--help`, an unknown option, extra arguments (the
+pin never reads `argc`), a missing `table.conf`, a missing chunk (the
+`ENOENT`/`ENODATA` split between `gen_ngram` and `gen_deleted_ngram`), a
+missing/unopenable bigram input, empty stdin, a segmented line that does
+not split (`abort()`, registered SIGABRT with `reproduces_signal`), a
+token whose phrase differs (unit tests; the glibc assertion text is
+policy-accepted), ordinary runs, `--skip-pi-gram-training`, estimate's
+EM over the committed `deleted_bigram.db` (`fixtures/w3/<ext>/README.md`),
+and eval's pass, mismatch, empty-corpus (`-nan`), missing-corpus and
+missing-bigram runs.
+
+The bigram container bytes are not observable through the runner: the pin
+and the subject each open/modify a private copy, and the container carries
+the writing library's own header (a random file id on Berkeley DB, a
+timestamp on tkrzw), so even two pin runs differ. `gen_ngram` and
+`gen_deleted_ngram` cases therefore direct the bigram at an absent
+directory (the pin ignores a failed `attach`) and compare the chunk
+files, stdout/stderr and exit; the row-level writes are covered by
+`crates/oxpinyin-utils/tests/training.rs`, including its ignored live
+differential, which compares the decoded rows with the pin's.
+
+On the tkrzw reference cell all 40 cases report MATCH with the sound
+`libtkrzw` (`PATH=/home/sheng/.cache/oxpinyin/tkrzw/bin:$PATH
+LD_LIBRARY_PATH=/home/sheng/.cache/oxpinyin/tkrzw/lib`); the kc cell's 40
+are MATCH as well, and the existing 45 non-generator cases stay 78
+MATCH plus 7 POLICY-ACCEPTED there with the new ones included (85 cases).
+On the bdb cell the failed-`attach` cases and the empty-file cases differ
+only in Berkeley DB's own error log (`BDB1565`/`BDB0004`): the pin leaves
+an unopened handle whose destructor calls `sync`/`close`, while
+`oxpinyin-store` reports the failed open and stops; those lines are
+library diagnostics, not the utilities' output. No policy record was
+created for them, and the reference cell carries no such lines.
+
+The named mutation `ngram-unigram-two` changes only
+`gen_ngram::train`'s `libraries.add_unigram(cur_token, 1)` to `2`. The
+tkrzw run detects it in `gen_ngram-missing-bigram-file`,
+`gen_ngram-ordinary` and `gen_ngram-skip-pi-gram` (3 DIFFER, 37 MATCH).
+The source was restored byte for byte (sha256 checked) before the
+completion run, which returned the 40 MATCH above.

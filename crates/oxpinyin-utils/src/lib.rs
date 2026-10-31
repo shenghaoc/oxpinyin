@@ -20,3 +20,5 @@ pub mod segment;
 pub mod storage;
 
 pub mod taglib;
+
+pub mod training;

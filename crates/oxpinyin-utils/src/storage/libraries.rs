@@ -63,14 +63,39 @@ pub(crate) struct Libraries {
 
 impl Libraries {
     /// `load_phrase_index(phrase_files, phrase_index)`: every `SYSTEM_FILE`
-    /// default row, in sub-index order.
+    /// default row, in sub-index order, with a failed load ending the
+    /// program at `ENOENT`.
     pub(crate) fn load(conf: &TableConf) -> Self {
+        Self::load_rows(conf, false, &[FileType::SystemFile], tool::ENOENT)
+    }
+
+    /// The pin's library loop over one `pinyin_table_info_t` array
+    /// (default or addon), keeping the rows whose type is in `types`.
+    ///
+    /// `gen_unigram`'s `generate_unigram` loads both `SYSTEM_FILE` and
+    /// `DICTIONARY` rows of the array it is handed
+    /// (`utils/training/gen_unigram.cpp:41-70`), and `gen_deleted_ngram`
+    /// ends a failed load at `ENODATA` (`gen_deleted_ngram.cpp:72-73`)
+    /// where `gen_ngram` uses `ENOENT` (`gen_ngram.cpp:71-72`). Every
+    /// other site is `load_phrase_index` over the default `SYSTEM_FILE`
+    /// rows (`utils/utils_helper.h:73-95`).
+    pub(crate) fn load_rows(
+        conf: &TableConf,
+        addon: bool,
+        types: &[FileType],
+        failure_status: c_int,
+    ) -> Self {
         let mut by_index: [Option<Library>; 16] = Default::default();
         for index in 0..16_u8 {
-            let Some(row) = conf.default_row(index) else {
+            let row = if addon {
+                conf.addon_row(index)
+            } else {
+                conf.default_row(index)
+            };
+            let Some(row) = row else {
                 continue;
             };
-            if row.file_type != FileType::SystemFile {
+            if !types.contains(&row.file_type) {
                 continue;
             }
             let Some(name) = row.system.as_ref() else {
@@ -83,7 +108,7 @@ impl Libraries {
                 Err(LibraryError::Row(_)) => tool::abort(),
                 Err(_) => {
                     tool::storage::report_load_failed(c_name.as_deref());
-                    tool::exit(tool::ENOENT);
+                    tool::exit(failure_status);
                 }
             };
             let Some(items) = items_of(&library) else {
@@ -96,6 +121,16 @@ impl Libraries {
             });
         }
         Self { by_index }
+    }
+
+    /// `FacadePhraseIndex::get_phrase_index_total_freq`
+    /// (`src/storage/phrase_index.cpp:237-248`): the loaded libraries'
+    /// stored totals added as each one loads, a `guint32` that wraps.
+    pub(crate) fn total_freq(&self) -> u32 {
+        self.by_index
+            .iter()
+            .flatten()
+            .fold(0_u32, |total, library| total.wrapping_add(library.total))
     }
 
     /// `FacadePhraseIndex::add_unigram_frequency`
@@ -117,6 +152,25 @@ impl Libraries {
         library.total = library.total.wrapping_add(delta);
     }
 
+    /// `generate_unigram`'s range walk (`utils/training/gen_unigram.cpp:62-69`):
+    /// `SubPhraseIndex::add_unigram_frequency(token, 1)` for every token of
+    /// `get_range`'s `[range_begin, range_end)`, which is `1` up to the
+    /// last resident slot — exactly the resident items.
+    pub(crate) fn add_unigram_to_every_item(&mut self) {
+        for library in self.by_index.iter_mut().flatten() {
+            // `protect total_freq overflow`: once the stored total cannot
+            // take another unit every remaining call returns the same
+            // overflow without changing anything.
+            for item in library.items.values_mut() {
+                if library.total > library.total.wrapping_add(1) {
+                    break;
+                }
+                item.unigram = item.unigram.wrapping_add(1);
+                library.total = library.total.wrapping_add(1);
+            }
+        }
+    }
+
     /// The library loaded in sub-index slot `index`.
     pub(crate) fn by_library(&self, index: u8) -> Option<&Library> {
         self.by_index.get(usize::from(index))?.as_ref()
@@ -135,11 +189,23 @@ impl Libraries {
     /// row's chunk, overwritten with `MemoryChunk::save`. A save failure is
     /// the pin's `save %s failed.` and `exit(ENOENT)`.
     pub(crate) fn save(&self, conf: &TableConf) {
+        self.save_rows(conf, false, FileType::SystemFile);
+    }
+
+    /// The store loop of `save_phrase_index` (`utils/utils_helper.h:97-120`)
+    /// or `save_dictionary` (`:122-145`) over one table array: every row of
+    /// `file_type`, in sub-index order.
+    pub(crate) fn save_rows(&self, conf: &TableConf, addon: bool, file_type: FileType) {
         for index in 0..16_u8 {
-            let Some(row) = conf.default_row(index) else {
+            let row = if addon {
+                conf.addon_row(index)
+            } else {
+                conf.default_row(index)
+            };
+            let Some(row) = row else {
                 continue;
             };
-            if row.file_type != FileType::SystemFile {
+            if row.file_type != file_type {
                 continue;
             }
             let Some(library) = &self.by_index[usize::from(index)] else {

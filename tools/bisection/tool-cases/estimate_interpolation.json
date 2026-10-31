@@ -1,0 +1,58 @@
+{
+  "schema": 1,
+  "cases": [
+    {
+      "id": "estimate_interpolation-help",
+      "utility": "estimate_interpolation",
+      "source": "utils/training/estimate_interpolation.cpp at 074a2219: 90-142 (no g_option_context: an option is an ignored argument)",
+      "args": ["--help"],
+      "fixture_dir": "fixtures/w3",
+      "stdin": {"text": ""}
+    },
+    {
+      "id": "estimate_interpolation-too-many-arguments",
+      "utility": "estimate_interpolation",
+      "source": "utils/training/estimate_interpolation.cpp at 074a2219: 90-142 (main has no argument parsing)",
+      "args": ["first", "second"],
+      "fixture_dir": "fixtures/w3",
+      "stdin": {"text": ""}
+    },
+    {
+      "id": "estimate_interpolation-missing-table-conf",
+      "utility": "estimate_interpolation",
+      "source": "utils/training/estimate_interpolation.cpp at 074a2219: 93-97",
+      "args": [],
+      "stdin": {"text": ""}
+    },
+    {
+      "id": "estimate_interpolation-missing-bigram-file",
+      "utility": "estimate_interpolation",
+      "source": "utils/training/estimate_interpolation.cpp at 074a2219: 107-111 (both attaches are ignored) and 56-63 (a missing system row leaves the numerator zero)",
+      "args": [],
+      "fixture_dir": "fixtures/w3",
+      "files": {
+        "bigram.db": {"text": ""}
+      },
+      "stdin": {"text": ""}
+    },
+    {
+      "id": "estimate_interpolation-missing-deleted-bigram",
+      "utility": "estimate_interpolation",
+      "source": "utils/training/estimate_interpolation.cpp at 074a2219: 113-114 (get_all_items on a failed attach answers empty) and 139 (0.0/0 prints the host NaN)",
+      "args": [],
+      "fixture_dir": "fixtures/w3",
+      "files": {
+        "deleted_bigram.db": {"text": ""}
+      },
+      "stdin": {"text": ""}
+    },
+    {
+      "id": "estimate_interpolation-ordinary",
+      "utility": "estimate_interpolation",
+      "source": "utils/training/estimate_interpolation.cpp at 074a2219: 30-88 and 119-139 over the committed deleted_bigram.db rows",
+      "args": [],
+      "fixture_dir": "fixtures/w3",
+      "stdin": {"text": ""}
+    }
+  ]
+}
