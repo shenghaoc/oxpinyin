@@ -503,7 +503,10 @@ fn libraries_record_absent_files_and_recheck_the_loaded_ones() {
     let libraries =
         PhraseLibraries::open(&dir, &[(1, "a.bin"), (2, "b.bin")]).expect("b.bin is absent");
     assert!(libraries.is_loaded(1) && !libraries.is_loaded(2));
-    assert_eq!(libraries.unmapped(), [dir.join("b.bin")]);
+    assert_eq!(
+        libraries.unmapped().collect::<Vec<_>>(),
+        [dir.join("b.bin")]
+    );
     assert!(libraries.unmappable_now(|_| true, None).is_empty());
 
     // The file goes bad after the open: the pin maps it again on a save.

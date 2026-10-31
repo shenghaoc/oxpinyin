@@ -136,13 +136,11 @@ pub enum OpenError {
     /// every other kind a class-(b)/(c) site the C ABI answers with NULL and
     /// one warning.
     TableConf(TableConfError),
-    /// A `SYSTEM_FILE`/`DICTIONARY` library's user `.dbin` carries a
-    /// non-null-token `MODIFY_HEADER` record. `PhraseIndexLogger::next_record`
-    /// asserts `token == null_token` there (`phrase_index_logger.h:202`),
-    /// reached while the library loads at init. The class-(c) availability
-    /// answer: the open fails and the C ABI answers NULL, where upstream
-    /// takes the process down.
-    CorruptLogHeader(PathBuf),
+    /// A `SYSTEM_FILE` library's user `.dbin` replay reached a pin
+    /// assertion while the library loop merged it
+    /// ([`oxpinyin_user::JournalFault`], rows 91 and 108): the open stops at
+    /// that library, after `check_format`'s writes, and the C adapters abort.
+    Journal(oxpinyin_user::JournalFault),
 }
 
 impl OpenError {
@@ -161,7 +159,7 @@ impl OpenError {
             | Self::Lm(_)
             | Self::UnknownDatabaseFormat(_)
             | Self::TableConf(_)
-            | Self::CorruptLogHeader(_) => None,
+            | Self::Journal(_) => None,
         }
     }
 
@@ -206,12 +204,7 @@ impl core::fmt::Display for OpenError {
                 path.join("user.conf").display()
             ),
             Self::TableConf(error) => write!(f, "table.conf: {error}"),
-            Self::CorruptLogHeader(path) => write!(
-                f,
-                "a system library's user .dbin under {} carries a non-null-token \
-                 MODIFY_HEADER (upstream asserts, phrase_index_logger.h:202)",
-                path.display()
-            ),
+            Self::Journal(fault) => write!(f, "journal replay: {fault}"),
         }
     }
 }
@@ -814,8 +807,7 @@ impl RuntimeDict {
 
     /// The system library files absent when the runtime opened, in the
     /// pin's load order.
-    #[must_use]
-    pub fn unmapped_system_libraries(&self) -> &[PathBuf] {
+    pub fn unmapped_system_libraries(&self) -> impl Iterator<Item = &Path> {
         self.system.libraries().unmapped()
     }
 
@@ -2025,9 +2017,7 @@ fn open_user_store(
         Err(UserStoreError::UnknownDatabaseFormat) => {
             Err(OpenError::UnknownDatabaseFormat(user_dir.to_path_buf()))
         }
-        Err(UserStoreError::SystemLogHeaderToken) => {
-            Err(OpenError::CorruptLogHeader(user_dir.to_path_buf()))
-        }
+        Err(UserStoreError::Journal(fault)) => Err(OpenError::Journal(fault)),
         Err(error) => {
             let user_dir = user_dir.display();
             eprintln!(
@@ -2130,11 +2120,6 @@ impl Runtime {
         require_file(&bigram)?;
 
         let dict = SystemDictionary::open_with(system_dir, &conf).map_err(OpenError::Dict)?;
-        // The init loop wrote each absent library's line as it mapped it,
-        // before anything after the loop (`pinyin.cpp:377-392`).
-        for path in dict.libraries().unmapped() {
-            unmapped(path);
-        }
         // The loaded-library mask is shared with the language model: an
         // unloaded library's items leave both the lookups and the unigram
         // denominator, as freeing the sub-index does upstream.
@@ -2163,7 +2148,18 @@ impl Runtime {
         // writes the pin's files — a same-backend libpinyin picks them
         // up seamlessly.
         let user = match (user_dir, early) {
-            (Some(dir), Some(check)) => open_user_store(&conf, dir, &dict, law, check)?,
+            (Some(dir), Some(check)) => match open_user_store(&conf, dir, &dict, law, check) {
+                Ok(user) => user,
+                // Rows 91 and 108: the loop died merging library `library`'s
+                // log, after mapping it and every library before it.
+                Err(error @ OpenError::Journal(fault)) => {
+                    for path in dict.libraries().unmapped_before(fault.library(), true) {
+                        unmapped(path);
+                    }
+                    return Err(error);
+                }
+                Err(error) => return Err(error),
+            },
             _ => Some(
                 UserStore::open_transient(
                     oxpinyin_user::system_originals(
@@ -2176,6 +2172,12 @@ impl Runtime {
                 .map_err(|error| OpenError::Dict(DictError::Parse(error.to_string())))?,
             ),
         };
+
+        // The init loop wrote each absent library's line as it mapped it
+        // (`pinyin.cpp:253-256` within `:377-392`); none of them stopped it.
+        for path in dict.libraries().unmapped() {
+            unmapped(path);
+        }
 
         let addons = Arc::new(RwLock::new(AddonSet {
             dict: match law {
@@ -2308,8 +2310,7 @@ impl Runtime {
     }
 
     /// The system library files absent when this runtime opened.
-    #[must_use]
-    pub fn unmapped_system_libraries(&self) -> &[PathBuf] {
+    pub fn unmapped_system_libraries(&self) -> impl Iterator<Item = &Path> {
         self.dict.unmapped_system_libraries()
     }
 

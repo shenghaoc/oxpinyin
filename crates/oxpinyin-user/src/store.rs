@@ -26,7 +26,6 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use oxpinyin_core::{ChewingKey, Completeness, SyllableKey, UserCountDelta, single_gram};
-use oxpinyin_data::user_files::{LogRecord, decode_log_records_partial, read_chunk_payload};
 use oxpinyin_store::{
     DefaultStore, DefaultUserBigramDb, ReadStore, StoreError, UserBigramDb, WriteStore, WriteTxn,
 };
@@ -200,24 +199,11 @@ pub enum UserStoreError {
     /// dies (`ngram.cpp:70`, `ngram_bdb.cpp:243`). The class-(c) answer:
     /// the mask fails.
     ResidualUserBigramGram,
-    /// A `SYSTEM_FILE`/`DICTIONARY` library's user `.dbin` holds a
-    /// `MODIFY_HEADER` record whose token is not `null_token`:
-    /// `PhraseIndexLogger::next_record` asserts `token == null_token`
-    /// (`phrase_index_logger.h:202`). Reached at init (the library load's
-    /// `merge`) and at `mask_out` (`merge_with_mask`). The class-(c)
-    /// answer: the load/mask fails, and the facade logs one warning in its
-    /// own domain.
-    SystemLogHeaderToken,
-    /// A `SYSTEM_FILE`/`DICTIONARY` library's user `.dbin` holds more than
-    /// one `MODIFY_HEADER` record: `_peek_header` asserts
-    /// `1 >= header_count` (`phrase_index.cpp:745`), reached only by
-    /// `mask_out`'s `merge_with_mask` (init's `merge` never peeks). The
-    /// class-(c) answer: the mask fails.
-    SystemLogMultipleHeaders,
-    /// A surviving ADD record in a masked system log is re-appended with
-    /// a non-null oldchunk pointer, violating `NULL == oldone`
-    /// (074a2219 phrase_index_logger.h:245, phrase_index.cpp:839).
-    SystemLogSurvivingAdd,
+    /// A system library's user `.dbin` replay reached a pin assertion
+    /// ([`crate::JournalFault`]): at init's and a reload's `merge`, or at
+    /// `mask_out`'s `merge_with_mask`. The pin dies there; the C adapters
+    /// abort on it.
+    Journal(crate::JournalFault),
     /// A training step's `set_freq` misses the item its `insert_freq` just
     /// added: on an unsorted gram the second `lower_bound` can land past
     /// it, and the pin's `check_result(user->set_freq(token, freq + seed))`
@@ -282,21 +268,7 @@ impl fmt::Display for UserStoreError {
                 f,
                 "masking a user bigram leaves a residual total_freq (upstream aborts, ngram.cpp:70)"
             ),
-            Self::SystemLogHeaderToken => write!(
-                f,
-                "a system library's user .dbin carries a non-null-token MODIFY_HEADER \
-                 (upstream asserts, phrase_index_logger.h:202)"
-            ),
-            Self::SystemLogMultipleHeaders => write!(
-                f,
-                "a system library's user .dbin carries more than one MODIFY_HEADER \
-                 (upstream asserts, phrase_index.cpp:745)"
-            ),
-            Self::SystemLogSurvivingAdd => write!(
-                f,
-                "a surviving system log ADD violates NULL == oldone \
-                 (upstream asserts, phrase_index_logger.h:245)"
-            ),
+            Self::Journal(fault) => write!(f, "journal replay: {fault}"),
             Self::TrainingSetFreqMiss => write!(
                 f,
                 "a training step's set_freq misses the item insert_freq added \
@@ -325,10 +297,8 @@ impl std::error::Error for UserStoreError {
             | Self::ShortUserBigramValue
             | Self::EmptyUserBigramGram
             | Self::ResidualUserBigramGram
-            | Self::SystemLogHeaderToken
-            | Self::SystemLogMultipleHeaders
-            | Self::SystemLogSurvivingAdd
             | Self::TrainingSetFreqMiss => None,
+            Self::Journal(fault) => Some(fault),
         }
     }
 }
@@ -1485,16 +1455,6 @@ struct TrainingCheck {
 pub type UserStore = GenericUserStore<DefaultStore>;
 
 impl<S: WriteStore> GenericUserStore<S> {
-    /// Whether a system journal's ADD payload was shorter than its
-    /// unigram, which stops that library's replay there (register row 108).
-    #[must_use]
-    pub fn short_add_payload(&self) -> bool {
-        self.inner
-            .libpinyin
-            .as_ref()
-            .is_some_and(|target| target.short_add_payload)
-    }
-
     /// Crate-visible handle assembly for the libpinyin constructor
     /// ([`crate::store_libpinyin`]), which runs in memory and arms
     /// the fini guard of the open that raised the counter.
@@ -3669,116 +3629,31 @@ impl<S: WriteStore> GenericUserStore<S> {
         Ok(mask_grams(&mut ContainerGrams(&container), mask, value)?)
     }
 
-    /// Reads and validates every loaded `SYSTEM_FILE`/`DICTIONARY`
-    /// library's user `.dbin` from the user directory, before a mask
-    /// touches any state. Returns the decoded snapshot replay consumes,
-    /// without a second file read. `visible` names the libraries the runtime still
-    /// holds: the pin's `mask_out` walks `index` 1..`PHRASE_INDEX_LIBRARY_
-    /// COUNT` and `continue`s when `get_range` answers
-    /// `ERROR_NO_SUB_PHRASE_INDEX` (`pinyin.cpp:1235-1241`,
-    /// `zhuyin.cpp:770-776`), so an unloaded library's `.dbin` is never
-    /// merged and must not refuse the mask.
-    /// A library that fails `merge_with_mask`'s library-bit check
-    /// (`phrase_index.cpp:309-313`) also never reads its log.
-    ///
-    /// The pin's `merge_with_mask` (`pinyin.cpp:1273-1285`,
-    /// `zhuyin.cpp:808-820`) `_peek_header`s each merged log, whose
-    /// `assert(1 >= header_count)` (`phrase_index.cpp:745`) and
-    /// `assert(token == null_token)` (`phrase_index_logger.h:202`) are the
-    /// pin's abort sites. Reading the file here, rather than a load-time
-    /// snapshot, also covers a `.dbin` corrupted after a successful init.
-    ///
-    /// # Errors
-    ///
-    /// [`UserStoreError::SystemLogHeaderToken`] for a non-null-token
-    /// `MODIFY_HEADER` and [`UserStoreError::SystemLogMultipleHeaders`] for
-    /// more than one `MODIFY_HEADER` record, or
-    /// [`UserStoreError::SystemLogSurvivingAdd`] for an ADD record that
-    /// survives a header-bearing masked log (`NULL == oldone`,
-    /// `phrase_index_logger.h:245`). A missing, unreadable, or
-    /// otherwise malformed `.dbin` is the pin's graceful empty-log path and
-    /// is not an error.
-    pub fn validate_system_logs(
-        &self,
-        visible: impl Fn(u8) -> bool,
-        mask: Token,
-        value: Token,
-    ) -> Result<crate::persistence::SystemLogSnapshot, UserStoreError> {
-        let mut snapshot = crate::persistence::SystemLogSnapshot::default();
-        let Some(target) = self.inner.libpinyin.as_ref() else {
-            return Ok(snapshot);
-        };
-        let Some(dir) = target.dir.as_deref() else {
-            return Ok(snapshot);
-        };
-        let originals = target.originals();
-        for (nibble, file) in originals.layout().system_logs() {
-            if !visible(*nibble)
-                || (*nibble & phrase_index_library_index(mask)) != phrase_index_library_index(value)
-            {
-                continue;
-            }
-            let path = file.under(dir);
-            let Ok(bytes) = std::fs::read(&path) else {
-                continue;
-            };
-            let Ok(payload) = read_chunk_payload(&bytes) else {
-                continue;
-            };
-            // Count the headers decoded before any malformed tail: the
-            // pin's `_peek_header` accumulates them until `next_record`
-            // answers false and then asserts on the total
-            // (`phrase_index.cpp:721-746`), so two valid headers followed
-            // by a bad record still abort there.
-            let (records, error) = decode_log_records_partial(payload);
-            let headers = records
-                .iter()
-                .filter(|record| matches!(record, LogRecord::ModifyHeader { .. }))
-                .count();
-            // The non-null-token assert fires while parsing the record,
-            // before the post-loop header-count assert.
-            if error.is_some_and(|error| error.non_null_header_token().is_some()) {
-                return Err(UserStoreError::SystemLogHeaderToken);
-            }
-            if headers > 1 {
-                return Err(UserStoreError::SystemLogMultipleHeaders);
-            }
-            // Without a header, _peek_header returns an empty logger.
-            // Otherwise _mask_out_records passes &oldchunk even for ADD,
-            // whose writer asserts NULL == oldone (074a2219 :245).
-            if headers == 1
-                && records.iter().any(|record| {
-                    matches!(record, LogRecord::Add { token, .. }
-                    if (token & (mask & PHRASE_MASK)) != (value & PHRASE_MASK))
-                })
-            {
-                return Err(UserStoreError::SystemLogSurvivingAdd);
-            }
-            snapshot.records.insert(*nibble, records);
-        }
-        Ok(snapshot)
-    }
-
-    /// Replaces the loaded system sub-index overlays with the validated
-    /// disk-log snapshot over the freshly mapped originals. Live item and
-    /// pronunciation rows are rebuilt; independent phrase-table membership
-    /// remains in place, separate from the sub-index
+    /// `mask_out`'s reload: each loaded system library in `originals`,
+    /// freshly mapped, takes its user `.dbin` read now and filtered by the
+    /// mask (`merge_with_mask`), library by library in the pin's order. Live
+    /// item and pronunciation rows are rebuilt; independent phrase-table
+    /// membership remains in place, separate from the sub-index
     /// (`pinyin.cpp:1253-1285`, `zhuyin.cpp:788-820` at 074a2219).
     ///
     /// # Errors
-    /// Returns [`UserStoreError`] when the session values cannot be written.
+    /// [`UserStoreError::Journal`] at the first library whose log reaches a
+    /// pin assertion, with nothing replaced; another [`UserStoreError`] when
+    /// the session values cannot be written.
     pub fn reload_system_libraries(
         &mut self,
         originals: crate::persistence::SystemOriginals,
         mask: Token,
         value: Token,
-        logs: crate::persistence::SystemLogSnapshot,
     ) -> Result<(), UserStoreError> {
-        if self.inner.libpinyin.is_none() {
+        let Some(target) = self.inner.libpinyin.as_ref() else {
             return Ok(());
-        }
-        let (state, library_totals) =
-            crate::persistence::load_masked_logs(&originals, mask, value, logs);
+        };
+        let (state, library_totals) = match target.dir.clone() {
+            Some(dir) => crate::persistence::load_masked_logs(&dir, &originals, mask, value)
+                .map_err(UserStoreError::Journal)?,
+            None => Default::default(),
+        };
         self.replace_system_libraries(originals, &state, &library_totals)
     }
 
@@ -3792,7 +3667,9 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// sub-index.
     ///
     /// # Errors
-    /// Returns [`UserStoreError`] when the session values cannot be written.
+    /// [`UserStoreError::Journal`] where the merge reaches a pin assertion
+    /// (rows 91 and 108), with nothing replaced; another [`UserStoreError`]
+    /// when the session values cannot be written.
     pub fn load_system_libraries(
         &mut self,
         originals: crate::persistence::SystemOriginals,
@@ -3805,7 +3682,8 @@ impl<S: WriteStore> GenericUserStore<S> {
         else {
             return Ok(());
         };
-        let (state, library_totals) = crate::persistence::load_library_logs(&dir, &originals);
+        let (state, library_totals) = crate::persistence::load_library_logs(&dir, &originals)
+            .map_err(UserStoreError::Journal)?;
         self.replace_system_libraries(originals, &state, &library_totals)
     }
 

@@ -858,3 +858,47 @@ fn a_default_dictionary_row_reports_only_the_libraries_before_it() {
         [dir.join("gb_char.bin"), dir.join("gbk_char.bin")]
     );
 }
+
+/// Rows 91 and 108: the init loop maps library `i`, then merges its log and
+/// dies there (`pinyin.cpp:253-256`, `:276`), so the open reports the absent
+/// libraries through `i` and none after it.
+#[test]
+fn a_journal_fault_reports_only_the_libraries_through_its_own() {
+    let system_tmp = scratch_dir("oxpinyin-runtime-journal-system-");
+    let system = system_tmp.path().to_path_buf();
+    for entry in std::fs::read_dir(w3_dir()).expect("fixture") {
+        let entry = entry.expect("entry");
+        let name = entry.file_name();
+        if name != "gbk_char.bin" && name != "merged.bin" {
+            std::fs::copy(entry.path(), system.join(&name)).expect("copy");
+        }
+    }
+    let user_tmp = scratch_dir("oxpinyin-runtime-journal-user-");
+    let user = user_tmp.path().to_path_buf();
+    let conf = oxpinyin_data::table_info::TableConf::load_from_dir(&system).expect("conf");
+    let versions = oxpinyin_data::user_files::SystemVersions::from_conf(&conf);
+    std::fs::write(
+        user.join("user.conf"),
+        oxpinyin_data::user_files::UserTableInfo::conform_to(&versions).to_text(),
+    )
+    .expect("user.conf");
+    // A MODIFY_HEADER whose token is not `null_token` (`phrase_index_logger.h:202`).
+    let mut header = 4_u32.to_le_bytes().to_vec();
+    header.extend_from_slice(&0x0300_0001_u32.to_le_bytes());
+    header.extend_from_slice(&4_u16.to_le_bytes());
+    header.extend_from_slice(&[0; 8]);
+    std::fs::write(
+        user.join("opengram.dbin"),
+        oxpinyin_data::chunk_format::build_memory_chunk(&header).expect("frame"),
+    )
+    .expect("opengram.dbin");
+    let mut reported = Vec::new();
+    let opened = Runtime::open_with_law_reporting(
+        &system,
+        Some(&user),
+        oxpinyin_user::UserConfLaw::Pinyin,
+        &mut |path| reported.push(path.to_path_buf()),
+    );
+    assert!(matches!(opened, Err(OpenError::Journal(fault)) if fault.library() == 3));
+    assert_eq!(reported, [system.join("gbk_char.bin")]);
+}
