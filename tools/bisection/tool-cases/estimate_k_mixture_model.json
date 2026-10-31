@@ -1,0 +1,69 @@
+{
+  "schema": 1,
+  "cases": [
+    {
+      "id": "kmm-estimate-help",
+      "utility": "estimate_k_mixture_model",
+      "source": "utils/training/estimate_k_mixture_model.cpp at 074a2219: 98-155, 36-96",
+      "args": [
+        "--help"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      }
+    },
+    {
+      "id": "kmm-estimate-bad-option",
+      "utility": "estimate_k_mixture_model",
+      "source": "utils/training/estimate_k_mixture_model.cpp at 074a2219: 98-155, 36-96",
+      "args": [
+        "--bogus"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      }
+    },
+    {
+      "id": "kmm-estimate-no-models",
+      "utility": "estimate_k_mixture_model",
+      "source": "utils/training/estimate_k_mixture_model.cpp at 074a2219: 98-155, 36-96",
+      "args": [],
+      "env": {
+        "LC_ALL": "C"
+      }
+    },
+    {
+      "id": "kmm-estimate-good",
+      "utility": "estimate_k_mixture_model",
+      "source": "utils/training/estimate_k_mixture_model.cpp at 074a2219: 98-155, 36-96",
+      "args": [
+        "--bigram-file",
+        "k_mixture_model.db",
+        "--deleted-bigram-file",
+        "k_mixture_model.db"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      },
+      "fixture_dir": "fixtures/w3"
+    },
+    {
+      "id": "kmm-estimate-zero-total",
+      "utility": "estimate_k_mixture_model",
+      "source": "utils/training/estimate_k_mixture_model.cpp at 074a2219: 98-155, 36-96",
+      "args": [
+        "--bigram-file",
+        "k_mixture_model_zero.db",
+        "--deleted-bigram-file",
+        "k_mixture_model.db"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      },
+      "fixture_dir": "fixtures/w3",
+      "pin_signal": -6,
+      "reproduces_signal": true,
+      "policy_record": "eio-kmm-tools.md"
+    }
+  ]
+}

@@ -24,7 +24,14 @@ PIN_UTILITIES = {'gen_pinyin_table': 'utils/storage', 'gen_zhuyin_table': 'utils
                  'gen_unigram': 'utils/training', 'gen_ngram': 'utils/training',
                  'gen_deleted_ngram': 'utils/training',
                  'estimate_interpolation': 'utils/training',
-                 'eval_correction_rate': 'utils/training'}
+                 'eval_correction_rate': 'utils/training',
+                 'validate_k_mixture_model': 'utils/training',
+                 'merge_k_mixture_model': 'utils/training',
+                 'prune_k_mixture_model': 'utils/training',
+                 'estimate_k_mixture_model': 'utils/training',
+                 'import_k_mixture_model': 'utils/training',
+                 'export_k_mixture_model': 'utils/training',
+                 'gen_k_mixture_model': 'utils/training'}
 # Utilities whose pin source opens no DBM: the generators read and write text
 # tables, k_mixture_model_to_interpolation converts stdin to stdout with
 # taglib (no Bigram attach, no phrase-index load), and gen_unigram reads and

@@ -189,13 +189,13 @@ line-by-line in `docs/findings/kmm-arithmetic-audit.md`.
 | ngseg (bigram Viterbi) | `segment.py` | `utils/segment/ngseg.cpp` | **done** | `oxpinyin-utils::segment::ngseg` |
 | spseg (fewest-words DP) | `segment.py --fast` | `utils/segment/spseg.cpp` | **done** | `oxpinyin-utils::segment::spseg` |
 | mergeseq (phrase merge) | `mergeseq.py` | `utils/segment/mergeseq.cpp` | **done** | `oxpinyin-utils::segment::mergeseq` |
-| KMM data model | — | `utils/training/k_mixture_model.h` | **done** | `oxpinyin-kmm::model` |
-| KMM generate (per-doc count) | `generate.py` | `gen_k_mixture_model.cpp` | **done** | `oxpinyin-kmm::generate` |
-| KMM estimate (λ score) | `estimate.py` | `estimate_k_mixture_model.cpp` | **done** | `oxpinyin-kmm::estimate` |
-| KMM merge | `tryprune.py` | `merge_k_mixture_model.cpp` | **done** | `oxpinyin-kmm::merge` |
-| KMM validate | `tryprune.py` | `validate_k_mixture_model.cpp` | **done** | `oxpinyin-kmm::validate` |
-| KMM prune | `tryprune.py` | `prune_k_mixture_model.cpp` | **done** | `oxpinyin-kmm::prune` |
-| KMM export/import (text) | `tryprune.py` | `export_/import_k_mixture_model.cpp` | **done** | `oxpinyin-kmm::text` |
+| KMM data model | — | `utils/training/k_mixture_model.h` | **done** | `oxpinyin-kmm::records` on `oxpinyin-store`'s `FlexibleBigram` |
+| KMM generate (per-doc count) | `generate.py` | `gen_k_mixture_model.cpp` | **done** | `oxpinyin-utils` `gen_k_mixture_model`; `oxpinyin-kmm::generate` |
+| KMM estimate (λ score) | `estimate.py` | `estimate_k_mixture_model.cpp` | **done** | `oxpinyin-utils` `estimate_k_mixture_model`; `oxpinyin-kmm::estimate` |
+| KMM merge | `tryprune.py` | `merge_k_mixture_model.cpp` | **done** | `oxpinyin-utils` `merge_k_mixture_model`; `oxpinyin-kmm::merge` |
+| KMM validate | `tryprune.py` | `validate_k_mixture_model.cpp` | **done** | `oxpinyin-utils` `validate_k_mixture_model`; `oxpinyin-kmm::validate` |
+| KMM prune | `tryprune.py` | `prune_k_mixture_model.cpp` | **done** | `oxpinyin-utils` `prune_k_mixture_model`; `oxpinyin-kmm::prune` |
+| KMM export/import (text) | `tryprune.py` | `export_/import_k_mixture_model.cpp` | **done** | `oxpinyin-utils` `export_`/`import_k_mixture_model`; `oxpinyin-kmm::{export,import}` |
 | KMM → interpolation | `tryprune.py` | `k_mixture_model_to_interpolation.cpp` | **done** | `oxpinyin-utils` `k_mixture_model_to_interpolation` (was `oxpinyin-kmm::text::kmm_text_to_interpolation` until 2026-10-31 UTC) |
 | candidate gather/sort/top-N | `estimate.py`, `tryprune.py` | *(Python)* | **done** | `oxpinyin-train::candidate` |
 | λ estimate (deleted-interp EM) | `evaluate.py` | `estimate_interpolation.cpp` | **done** | `oxpinyin-lambda` (reused by `oxpinyin-eval`) |
@@ -227,7 +227,7 @@ should be **kept** — they are legitimate manual libpinyin tools and their
 counting/EM logic is shared machinery — but they are re-labelled from
 "the W9 training path" to "the legacy interpolation utilities". The
 load-bearing corpus counter for the shipped model is `gen_k_mixture_model`
-(`oxpinyin-kmm`, §6.2). `oxpinyin-lambda`'s `interpolation` EM module *is*
+(`oxpinyin-kmm`/`oxpinyin-utils`, §6.2). `oxpinyin-lambda`'s `interpolation` EM module *is*
 on the real path (`evaluate.py`) and is reused by the evaluator (§7).
 
 ---
@@ -702,12 +702,12 @@ implemented natively in Rust. Each part is an independently-reviewable commit:
 | Part | Deliverable | Crate / home | Tests |
 |---|---|---|---|
 | B | `spseg` (fewest-words DP), `mergeseq` (phrase merge) | `oxpinyin-segment` (`spseg`, `mergeseq`, two CLIs) | toy unit + committed-golden differential (W3 table, CI-always) + env-gated live cross-check |
-| C+D | full KMM pipeline — data model, generate, estimate, merge, validate, prune, export/import, →interpolation | `oxpinyin-kmm` (self-contained, one CLI, 8 subcommands) | per-op unit + hand-verified golden + merge-equals-combined + end-to-end from the real segmented corpus + **semantic-parity golden + env-gated oracle differential** (`tests/differential.rs`) |
+| C+D | full KMM pipeline — data model, generate, estimate, merge, validate, prune, export/import, →interpolation | `oxpinyin-kmm` (operations on the pin's `FlexibleBigram`) and the seven pin-named `oxpinyin-utils` binaries | per-op unit + hand-verified golden + merge-equals-combined + end-to-end from the real segmented corpus + **source-derived fixture tests + env-gated oracle differential** (`crates/oxpinyin-kmm/tests/flexible_records.rs`, `crates/oxpinyin-utils/tests/kmm_tools.rs`) |
 | C+D audit | line-by-line arithmetic verification vs the six KMM sources | `docs/findings/kmm-arithmetic-audit.md` | term-for-term tables + divergence register (four-class) |
 | E | evaluator — `estimate_interpolation` λ over KMM-derived counts + `eval_correction_rate` decode round-trip, native runtime model, no `make`/libpinyin | `oxpinyin-eval` (`oxpinyin-eval` CLI) | hand-computable homophone fixture + full-flow integration + **live `eval_correction_rate` differential (`0.880000` == pin, 25 sentences)** |
 | G | punctuation table (`genpunct.py`) | `oxpinyin-punct` (count/merge CLI) | per-stage unit + two-stage golden (segmented → puncts.table) |
 | F | word recognition — populate, partial-word discovery + cross-order merge, new-word entropy filtering, pinyin marking | `oxpinyin-word` (`recognize` CLI) | per-stage unit (incl. the `partition` merge walk) + hand-traced end-to-end golden (→ recognized word + pinyin) |
-| H (core) | end-to-end main pipeline on real committed data (segment → KMM → interpolation2.text) | `oxpinyin-kmm` integration test over the committed `spseg` fixture | passes on CI |
+| H (core) | end-to-end main pipeline on real committed data (segment → KMM → interpolation2.text) | `oxpinyin-utils/tests/kmm_tools.rs` over the committed `spseg` fixture | passes on CI |
 | **H (full)** | **native trainer orchestrator + `oxpinyin-train`** — typed config/status/epoch/corpus-index/candidate structures, segment → generate (rollover + min-file-size filter) → estimate + gather + sort → merge top N → prune → convert → evaluate, with the on-disk `try<name>` workspace, status files, cleanup, and stage-level resumability | `oxpinyin-train` (`oxpinyin-train` CLI) | typed-structure units + **raw-corpus acceptance test** (raw Han corpus → final interpolation model + λ + correction rate, verifying every stage's on-disk product + resumability) |
 
 **Reclassified** (kept, retitled): `oxpinyin-counter` (`gen_ngram`) and

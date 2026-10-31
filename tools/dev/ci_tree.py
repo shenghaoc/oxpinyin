@@ -274,9 +274,8 @@ class CompileCommand:
 
 CACHE_LANES = ("lint", "test", "test-macos", "store-features", "backend-matrix")
 BACKENDS = ("bdb", "kyotocabinet", "tkrzw")
-BACKEND_EXCLUDES = ("--exclude", "oxpinyin-kmm")
-PORTABLE_EXCLUDES = ("--exclude", "oxpinyin-capi", "--exclude", "oxpinyin-zhuyin-capi",
-                     *BACKEND_EXCLUDES)
+BACKEND_EXCLUDES = ()
+PORTABLE_EXCLUDES = ("--exclude", "oxpinyin-capi", "--exclude", "oxpinyin-zhuyin-capi")
 
 
 def refresh_commands(lane: str, backend: str | None = None) -> tuple[CompileCommand, ...]:

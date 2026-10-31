@@ -1,190 +1,112 @@
-//! `estimate_k_mixture_model` — the deleted-interpolation EM that scores a
-//! candidate against a held-out model
-//! (`utils/training/estimate_k_mixture_model.cpp:36-155`).
+//! `estimate_k_mixture_model` (`utils/training/estimate_k_mixture_model.cpp`
+//! at `074a2219`): the deleted-interpolation EM that scores a candidate
+//! against a held-out model.
 //!
-//! For each `W1` present in the deleted model with non-zero header WC, run
-//! the per-context EM (`compute_interpolation`, seed λ = 0.6, ε = 0.001):
-//! the bigram term is `item.m_WC / header.m_WC` of the candidate, the
-//! unigram term is `header.m_freq / magic.m_total_freq`, and the score is
-//! the arithmetic mean of the per-context λ. `estimate.py` reads the
-//! `average lambda:` line and sorts candidates by it, descending.
+//! For each W1 present in the deleted model with a nonzero header `m_WC`,
+//! `compute_interpolation` (`:36-96`) runs the per-context EM: seed
+//! λ = 0.6, ε = 0.001, one pass per iteration over the deleted single gram,
+//! with the bigram term `array_item.m_WC / header.m_WC` of the candidate and
+//! the unigram term `header.m_freq / magic.m_total_freq` of the candidate.
+//! The average is `lambda_sum / lambda_count` with no zero guard: an empty
+//! deleted model divides zero by zero and prints the C library's `-nan`.
+//!
+//! The pin's `assert(0 != magic.m_total_freq)`, `assert(0 != header.m_WC)`
+//! and `check_result(get_magic_header(…))` abort; they are reached only when
+//! the candidate's own header is inconsistent with the deleted model.
 
-use crate::error::KmmError;
-use crate::model::{KMixtureModel, Parameter, SingleGram};
+use std::ffi::CStr;
+
+use oxpinyin_input::tool::k_mixture_model as edge;
+
+use crate::database::Database;
+use crate::records::KmmGram;
 
 /// Seed `next_lambda` (`estimate_k_mixture_model.cpp:40`).
-pub const SEED_LAMBDA: Parameter = 0.6;
+pub const SEED_LAMBDA: f64 = 0.6;
 /// EM convergence threshold (`:41`).
-pub const EPSILON: Parameter = 0.001;
+pub const EPSILON: f64 = 0.001;
+/// Default `--bigram-file` (`:25`).
+pub const DEFAULT_BIGRAM_FILE: &str = "k_mixture_model_ngram.db";
+/// Default `--deleted-bigram-file` (`:26`).
+pub const DEFAULT_DELETED_BIGRAM_FILE: &str = "k_mixture_model_deleted_ngram.db";
 
-/// Safety cap on EM iterations. The EM is a contraction and converges in a
-/// few dozen steps for real data; the cap only prevents a pathological
-/// hang and is never reached on well-formed models.
-const MAX_ITERATIONS: usize = 100_000;
+/// `main`'s body (`:98-155`).
+pub fn run(bigram_filename: Option<&CStr>, deleted_bigram_filename: Option<&CStr>) {
+    let bigram = Database::open_read_only(bigram_filename);
+    let deleted_bigram = Database::open_read_only(deleted_bigram_filename);
 
-/// The estimation result: the score and the per-context λ values.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Estimate {
-    /// `average lambda` — the candidate's score.
-    pub average: Parameter,
-    /// `(W1, λ)` for each scored context, in token order.
-    pub per_token: Vec<(u32, Parameter)>,
-}
+    let mut lambda_sum = 0.0_f64;
+    let mut lambda_count = 0_i32;
 
-/// Scores `candidate` against the held-out `deleted` model.
-///
-/// # Errors
-///
-/// Returns [`KmmError::Invalid`] when the candidate's magic total freq is
-/// zero, reproducing upstream's `assert(0 != magic_header.m_total_freq)`
-/// (`:45`) as a class-(c) availability `Err` rather than an abort.
-pub fn estimate(candidate: &KMixtureModel, deleted: &KMixtureModel) -> Result<Estimate, KmmError> {
-    if candidate.total_freq == 0 {
-        return Err(KmmError::Invalid {
-            detail: "candidate magic total freq is zero".to_owned(),
-        });
-    }
+    for &token in &deleted_bigram.get_all_items() {
+        let single_gram = bigram.load(token);
+        let deleted_single_gram = deleted_bigram.load_checked(token);
+        let deleted_array_header = *deleted_single_gram.header();
 
-    let mut lambda_sum: Parameter = 0.0;
-    let mut per_token = Vec::new();
-    for (&token1, deleted_gram) in &deleted.grams {
-        if deleted_gram.header_wc == 0 {
-            continue;
+        if deleted_array_header.m_wc != 0 {
+            let lambda = compute_interpolation(&deleted_single_gram, &bigram, single_gram.as_ref());
+            edge::print_token_lambda(token as i32, lambda);
+            lambda_sum += lambda;
+            lambda_count += 1;
         }
-        let candidate_gram = candidate.grams.get(&token1);
-        let lambda = compute_interpolation(deleted_gram, candidate, candidate_gram);
-        per_token.push((token1, lambda));
-        lambda_sum += lambda;
     }
 
-    // Upstream computes `lambda_sum / lambda_count` with no zero guard: an
-    // empty deleted model (no scorable context) yields `0.0 / 0 = NaN`,
-    // printed as `average lambda:nan`. Reproduce that exactly — `0.0 / 0.0`
-    // is NaN in IEEE-754 here too — rather than erroring, which would be a
-    // divergence outside the compatibility policy's four classes. The case
-    // never arises in the real pipeline (the deleted model always carries
-    // scorable contexts); NaN is not a panic, so the `Result` contract holds.
-    let average = lambda_sum / per_token.len() as Parameter;
-    Ok(Estimate { average, per_token })
+    edge::print_average_lambda(lambda_sum / f64::from(lambda_count));
 }
 
-/// Per-context deleted-interpolation EM (`compute_interpolation`, `:36-96`).
+/// `compute_interpolation` (`:36-96`).
 fn compute_interpolation(
-    deleted_gram: &SingleGram,
-    candidate: &KMixtureModel,
-    candidate_gram: Option<&SingleGram>,
-) -> Parameter {
-    let total_freq = Parameter::from(candidate.total_freq);
-    let mut lambda: Parameter = 0.0;
-    let mut next_lambda: Parameter = SEED_LAMBDA;
+    deleted_bigram: &KmmGram,
+    unigram: &Database,
+    bigram: Option<&KmmGram>,
+) -> f64 {
+    let magic_header = unigram.magic_header_checked();
+    if magic_header.m_total_freq == 0 {
+        std::process::abort();
+    }
 
-    let mut iterations = 0;
-    while (lambda - next_lambda).abs() > EPSILON && iterations < MAX_ITERATIONS {
-        iterations += 1;
+    let mut lambda = 0.0_f64;
+    let mut next_lambda = SEED_LAMBDA;
+    while (lambda - next_lambda).abs() > EPSILON {
         lambda = next_lambda;
         next_lambda = 0.0;
+        for item in deleted_bigram.items() {
+            let token = item.token;
+            let deleted_count = f64::from(item.item.m_wc);
 
-        for (&token2, item) in &deleted_gram.items {
-            let deleted_count = Parameter::from(item.wc);
+            let numerator = {
+                let mut elem_poss = 0.0_f64;
+                if let Some(gram) = bigram
+                    && let Some(array_item) = gram.get_array_item(token)
+                {
+                    let array_header = *gram.header();
+                    if array_header.m_wc == 0 {
+                        std::process::abort();
+                    }
+                    elem_poss = f64::from(array_item.m_wc) / f64::from(array_header.m_wc);
+                }
+                lambda * elem_poss
+            };
 
-            // Bigram term: candidate item WC / candidate row header WC.
-            let mut elem_poss = 0.0;
-            if let Some(gram) = candidate_gram
-                && let Some(candidate_item) = gram.items.get(&token2)
-                && gram.header_wc != 0
-            {
-                elem_poss = Parameter::from(candidate_item.wc) / Parameter::from(gram.header_wc);
-            }
-            let numerator = lambda * elem_poss;
+            let part_of_denominator = {
+                let mut elem_poss = 0.0_f64;
+                if let Some(array_header) = unigram.get_array_header(token) {
+                    elem_poss =
+                        f64::from(array_header.m_freq) / f64::from(magic_header.m_total_freq);
+                }
+                (1.0 - lambda) * elem_poss
+            };
 
-            // Unigram term: candidate row freq / candidate total freq.
-            let mut unigram_poss = 0.0;
-            if let Some(gram) = candidate.grams.get(&token2) {
-                unigram_poss = Parameter::from(gram.header_freq) / total_freq;
-            }
-            let part_of_denominator = (1.0 - lambda) * unigram_poss;
-
-            let denominator = numerator + part_of_denominator;
-            if denominator == 0.0 {
+            if numerator + part_of_denominator == 0.0 {
                 continue;
             }
-            next_lambda += deleted_count * (numerator / denominator);
+            next_lambda += deleted_count * (numerator / (numerator + part_of_denominator));
         }
 
-        // header.m_WC != 0 is guaranteed by the caller's guard.
-        next_lambda /= Parameter::from(deleted_gram.header_wc);
+        if deleted_bigram.header().m_wc == 0 {
+            std::process::abort();
+        }
+        next_lambda /= f64::from(deleted_bigram.header().m_wc);
     }
-
     next_lambda
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{SEED_LAMBDA, estimate};
-    use crate::generate::GenerateParams;
-    use crate::model::KMixtureModel;
-
-    fn model_from(doc: &str) -> KMixtureModel {
-        let mut model = KMixtureModel::new();
-        model
-            .add_document(doc, GenerateParams::default())
-            .expect("count");
-        model
-    }
-
-    #[test]
-    fn average_lambda_is_in_the_unit_interval() {
-        let candidate = model_from("10 甲\n20 乙\n10 甲\n20 乙\n");
-        let deleted = model_from("10 甲\n20 乙\n");
-        let result = estimate(&candidate, &deleted).expect("estimate");
-        assert!(
-            (0.0..=1.0).contains(&result.average),
-            "average lambda {} out of range",
-            result.average
-        );
-        assert!(!result.per_token.is_empty());
-    }
-
-    #[test]
-    fn deterministic_across_runs() {
-        let candidate = model_from("10 甲\n20 乙\n30 丙\n10 甲\n20 乙\n");
-        let deleted = model_from("10 甲\n20 乙\n30 丙\n");
-        let a = estimate(&candidate, &deleted).expect("a");
-        let b = estimate(&candidate, &deleted).expect("b");
-        assert_eq!(a, b, "the EM must be deterministic");
-    }
-
-    #[test]
-    fn a_candidate_that_predicts_the_context_scores_high_bigram_weight() {
-        // The candidate and the held-out share the bigram, so the bigram
-        // term dominates and λ climbs above the seed toward 1.
-        let candidate = model_from("10 甲\n20 乙\n10 甲\n20 乙\n10 甲\n20 乙\n");
-        let deleted = model_from("10 甲\n20 乙\n");
-        let result = estimate(&candidate, &deleted).expect("estimate");
-        assert!(
-            result.average > SEED_LAMBDA,
-            "shared bigram should push λ above the seed, got {}",
-            result.average
-        );
-    }
-
-    #[test]
-    fn zero_total_freq_is_an_error() {
-        let candidate = KMixtureModel::new();
-        let deleted = model_from("10 甲\n20 乙\n");
-        assert!(estimate(&candidate, &deleted).is_err());
-    }
-
-    #[test]
-    fn empty_deleted_model_scores_nan_like_upstream() {
-        // A candidate with content but a deleted model with no scorable
-        // context: upstream computes lambda_sum(0)/lambda_count(0) = NaN and
-        // prints "average lambda:nan". Reproduce that (Ok with NaN), not an
-        // error — the compatibility policy forbids diverging to Err here.
-        let candidate = model_from("10 甲\n20 乙\n");
-        let deleted = KMixtureModel::new(); // no rows → no scorable context
-        let result = estimate(&candidate, &deleted).expect("Ok, not Err");
-        assert!(result.average.is_nan(), "average {}", result.average);
-        assert!(result.per_token.is_empty());
-    }
 }

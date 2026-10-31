@@ -718,6 +718,9 @@ dependencies = [
 name = "oxpinyin-kmm"
 version = "0.1.0"
 dependencies = [
+ "oxpinyin-input",
+ "oxpinyin-store",
+ "oxpinyin-testsupport",
  "tempfile",
 ]
 
@@ -756,7 +759,6 @@ version = "0.1.0"
 dependencies = [
  "oxpinyin-core",
  "oxpinyin-data",
- "oxpinyin-kmm",
  "oxpinyin-testsupport",
  "pkg-config",
  "tempfile",

@@ -280,14 +280,16 @@ jobs:
       # indirection — ${{ }} inside a run: body is a template-injection
       # surface — and never spliced into a command.
       #
-      # KMM remains backend-independent and runs once per PR in ci.yml's
-      # full test job. The consolidated training package stays in this
-      # matrix: its segment and eval stages use the selected store backend,
-      # and the other stage modules compile against that same selection.
+      # The KMM crate is backend-dependent since 2026-10-31 UTC: its
+      # operations run on the selected store backend and its integration
+      # tests spawn the seven utilities against `fixtures/w3/<backend>`.
+      # It therefore runs in this matrix. The consolidated training package
+      # stays too: its segment and eval stages use the selected store
+      # backend, and the other stage modules compile against that selection.
       # What stays is everything a backend choice can change: the store
       # itself, the user store, data readers, datagen writers, runtime,
-      # engine, facade, both C ABIs, dictool, the oracle harness, and the
-      # training package (segment and eval modules).
+      # engine, facade, both C ABIs, dictool, the oracle harness, the
+      # training package (segment and eval modules) and KMM.
       - name: Test the workspace under this backend
         if: needs.changes.outputs.reuse != 'true'
         id: backend-test
@@ -296,9 +298,6 @@ jobs:
         run: |
           set -euo pipefail
           start=$EPOCHSECONDS
-          excludes=(
-            --exclude oxpinyin-kmm
-          )
           case "$BACKEND" in
           # `--features <peer>` at `--workspace` scope enables that
           # feature on every workspace member that declares it, so the
@@ -317,15 +316,15 @@ jobs:
           # `backend-matrix` job proves it separately.
           bdb)
             echo "--- bdb (explicit) ---"
-            cargo test --locked --workspace --no-default-features --features bdb "${excludes[@]}"
+            cargo test --locked --workspace --no-default-features --features bdb
             ;;
           kyotocabinet)
             echo "--- kyotocabinet (explicit) ---"
-            cargo test --locked --workspace --no-default-features --features kyotocabinet "${excludes[@]}"
+            cargo test --locked --workspace --no-default-features --features kyotocabinet
             ;;
           tkrzw)
             echo "--- tkrzw (explicit) ---"
-            cargo test --locked --workspace --no-default-features --features tkrzw "${excludes[@]}"
+            cargo test --locked --workspace --no-default-features --features tkrzw
             ;;
           *)
             echo "FAIL: unknown matrix.backend value '$BACKEND'" >&2

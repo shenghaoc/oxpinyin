@@ -14,4 +14,5 @@ pub mod counter;
 pub mod emitter;
 pub mod eval;
 pub mod lambda;
+pub mod numeric;
 pub mod segment;

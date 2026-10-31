@@ -11,7 +11,15 @@
 
 pub mod gen_pinyin_table;
 
+pub mod estimate_k_mixture_model;
+
+pub mod export_k_mixture_model;
+
+pub mod gen_k_mixture_model;
+
 pub mod gen_zhuyin_table;
+
+pub mod import_k_mixture_model;
 
 pub mod k_mixture_model_to_interpolation;
 
@@ -19,6 +27,15 @@ pub mod segment;
 
 pub mod storage;
 
-pub mod taglib;
-
+pub mod merge_k_mixture_model;
 pub mod training;
+
+pub mod phrase_index;
+
+pub mod prune_k_mixture_model;
+
+pub mod validate_k_mixture_model;
+
+/// The pin's line tagger, shared with the KMM operations that read its text
+/// models. Its edge calls are `oxpinyin-input`'s.
+pub use oxpinyin_kmm::taglib;

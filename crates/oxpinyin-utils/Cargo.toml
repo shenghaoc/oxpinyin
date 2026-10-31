@@ -16,12 +16,19 @@ kyotocabinet = [
     "oxpinyin-data/kyotocabinet",
     "oxpinyin-store/kyotocabinet",
     "oxpinyin-training/kyotocabinet",
+    "oxpinyin-kmm/kyotocabinet",
 ]
-bdb = ["oxpinyin-data/bdb", "oxpinyin-store/bdb", "oxpinyin-training/bdb"]
+bdb = [
+    "oxpinyin-data/bdb",
+    "oxpinyin-store/bdb",
+    "oxpinyin-training/bdb",
+    "oxpinyin-kmm/bdb",
+]
 tkrzw = [
     "oxpinyin-data/tkrzw",
     "oxpinyin-store/tkrzw",
     "oxpinyin-training/tkrzw",
+    "oxpinyin-kmm/tkrzw",
 ]
 
 [lints]
@@ -39,10 +46,12 @@ oxpinyin-input = { workspace = true, features = ["tools"] }
 # `eval_correction_rate`'s decode: the training crate's term-for-term port
 # of `PhoneticLookup<1, 1>`.
 oxpinyin-training = { path = "../oxpinyin-training", default-features = false }
+# The seven k-mixture-model operations on the pin's flexible-bigram
+# container; the utilities under the pin's names parse options and load the
+# system tables before calling them.
+oxpinyin-kmm = { path = "../oxpinyin-kmm", default-features = false }
 
 [dev-dependencies]
-# The KMM text the pipeline and differential tests convert.
-oxpinyin-kmm = { path = "../oxpinyin-kmm" }
 tempfile.workspace = true
 
 [[bin]]
@@ -100,3 +109,31 @@ path = "src/bin/estimate_interpolation.rs"
 [[bin]]
 name = "eval_correction_rate"
 path = "src/bin/eval_correction_rate.rs"
+
+[[bin]]
+name = "validate_k_mixture_model"
+path = "src/bin/validate_k_mixture_model.rs"
+
+[[bin]]
+name = "merge_k_mixture_model"
+path = "src/bin/merge_k_mixture_model.rs"
+
+[[bin]]
+name = "prune_k_mixture_model"
+path = "src/bin/prune_k_mixture_model.rs"
+
+[[bin]]
+name = "estimate_k_mixture_model"
+path = "src/bin/estimate_k_mixture_model.rs"
+
+[[bin]]
+name = "import_k_mixture_model"
+path = "src/bin/import_k_mixture_model.rs"
+
+[[bin]]
+name = "export_k_mixture_model"
+path = "src/bin/export_k_mixture_model.rs"
+
+[[bin]]
+name = "gen_k_mixture_model"
+path = "src/bin/gen_k_mixture_model.rs"

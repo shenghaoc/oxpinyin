@@ -39,6 +39,31 @@ files at this level:
   copies of the oracle's custom-content tables for the custom-content
   loader tests, regenerated with `python3 tools/generate_w3_fixtures.py`.
 
+### KMM tool fixtures (2026-10-31 UTC)
+
+`kmm/` holds the three text models the k-mixture-model `tool-diff` cases
+import: `k_mixture_model.text` (a small valid model over the fixture's
+`<start>`, `中国` and `你好` tokens), `k_mixture_model_zero.text` (all
+counts and frequencies zero) and `k_mixture_model_edom.text` (a model
+whose prune probability is `NaN`). Each cell carries the three imported
+containers as `k_mixture_model{,_zero,_edom}.db`, used as read-only
+inputs by the `validate`, `merge`, `prune`, `estimate`, `import`, `export`
+and `gen` cases:
+
+- `db/`: the pin's Berkeley DB `import_k_mixture_model` output, unchanged.
+- `tkt/`: the same, rebuilt with
+  `tkrzw_dbm_util rebuild --dbm hash` (the committed HashDBM file's
+  minimum size; records and order are preserved).
+- `kct/`: a fresh Kyoto Cabinet HashDB with
+  `kchashmgr create -apow 3 -bnum 64` and one `kchashmgr set -sx` per
+  record, writing the same host-native record bytes the pin's import
+  writes (the pin's default bucket count preallocates 6 MiB per file).
+
+The record bytes are the pin's: the eight-byte magic key with `KMMP` and
+the 12-byte magic header, then one four-byte-token-keyed single gram
+(`KMMP`-less: the 8-byte array header followed by 20-byte token/item
+records in token order). `fixtures.sha256` covers all of them.
+
 `pin-ref.txt` names the oracle pin the fixtures are deterministic
 against. `fixtures.sha256` lists the checksums of every fixture file;
 regenerate it with:

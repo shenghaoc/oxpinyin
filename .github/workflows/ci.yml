@@ -617,7 +617,6 @@ jobs:
         run: >
           cargo clippy --locked --workspace --all-targets --no-default-features --features tkrzw
           --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi
-          --exclude oxpinyin-kmm
           -- -D warnings
       - name: Install pinned cargo-nextest
         if: needs.changes.outputs.reuse != 'true'
@@ -635,13 +634,11 @@ jobs:
         run: >
           cargo nextest run --locked --profile ci --status-level skip --workspace --no-default-features --features tkrzw
           --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi
-          --exclude oxpinyin-kmm
       # nextest does not run doctests; keep the same features and exclusions.
       - if: needs.changes.outputs.reuse != 'true'
         run: >
           cargo test --locked --doc --workspace --no-default-features --features tkrzw
           --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi
-          --exclude oxpinyin-kmm
 
       - name: Refresh the main Rust cache using the lane's compile mode
         if: github.event_name == 'push' && needs.changes.outputs.reuse == 'true'

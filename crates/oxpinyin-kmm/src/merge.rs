@@ -1,164 +1,189 @@
-//! `merge_k_mixture_model` — fold one model into another
-//! (`utils/training/merge_k_mixture_model.cpp:38-238`).
+//! `merge_k_mixture_model` (`utils/training/merge_k_mixture_model.cpp` at
+//! `074a2219`): fold each source container into a result container.
 //!
-//! Per matching `(W1, W2)`: `m_WC`, `m_N_n_0`, `m_n_1` sum and `m_Mr` takes
-//! the max (`merge_two_phrase_array`, `:59-74`); array and magic headers sum
-//! field-wise, `m_N` included (`:96-129`). The token-ordered maps make the
-//! merge-join trivial. Merging into a fresh model then folding the sorted
-//! candidates reproduces `merge_k_mixture_model --result-file`.
+//! Per matching `(W1, W2)`, `merge_two_phrase_array` (`:38-94`) sums
+//! `m_WC`, `m_N_n_0` and `m_n_1` and takes the larger `m_Mr`; the array
+//! header and then the magic header sum field-wise. A token new to the
+//! target is stored as the source's whole single gram, in the source
+//! file's native token order (`merge_array_items`, `:131-200`). The magic
+//! header's `m_WC` and `m_total_freq` sums are checked against the pin's
+//! `sum < max(a, b)` overflow test; `EOVERFLOW` exits after the rows have
+//! already been merged (`:96-129`, `:232-233`).
 
-use crate::error::KmmError;
-use crate::model::{KMixtureModel, SingleGram};
-use crate::text::merge_texts;
+use std::ffi::CStr;
 
-/// Merges `new_one` into `target` (`merge_two_k_mixture_model`, `:202-208`:
-/// array items first, then the magic header).
+use oxpinyin_input::tool::{self, k_mixture_model as edge};
+
+use crate::database::Database;
+use crate::records::{
+    ArrayItemWithToken, KMixtureModelArrayHeader, KMixtureModelArrayItem, KMixtureModelMagicHeader,
+    KmmGram,
+};
+
+/// `main`'s body: attach the result container, then fold each source in
+/// `argv` order (`:210-237`).
 ///
 /// # Errors
 ///
-/// Returns [`KmmError::Invalid`] when the magic-header word count or total
-/// freq would overflow `u32` (upstream `EOVERFLOW`).
-pub fn merge_into(target: &mut KMixtureModel, new_one: &KMixtureModel) -> Result<(), KmmError> {
-    // merge_magic_header (`:96-129`): overflow-guarded sums, computed before
-    // any row is touched so an overflow leaves `target` unmodified (upstream
-    // has already written the rows when it reports EOVERFLOW; a caller that
-    // keeps the model after the error would otherwise hold a half-merge).
-    let merged_wc = checked_sum(target.wc, new_one.wc, "magic word count")?;
-    let merged_total_freq = checked_sum(target.total_freq, new_one.total_freq, "magic total freq")?;
-
-    // merge_array_items (`:131-200`).
-    for (&token1, new_gram) in &new_one.grams {
-        match target.grams.get_mut(&token1) {
-            Some(target_gram) => merge_single_gram(target_gram, new_gram),
-            None => {
-                target.grams.insert(token1, new_gram.clone());
-            }
-        }
-    }
-
-    target.wc = merged_wc;
-    target.total_freq = merged_total_freq;
-    target.n = target.n.wrapping_add(new_one.n);
-
-    merge_texts(&mut target.texts, &new_one.texts);
-    Ok(())
-}
-
-/// Merge one `W1` row: headers sum, items merge-join by `token2`.
-fn merge_single_gram(target: &mut SingleGram, new: &SingleGram) {
-    target.header_wc = target.header_wc.wrapping_add(new.header_wc);
-    target.header_freq = target.header_freq.wrapping_add(new.header_freq);
-    for (&token2, new_item) in &new.items {
-        match target.items.get_mut(&token2) {
-            Some(item) => {
-                item.wc = item.wc.wrapping_add(new_item.wc);
-                item.n_n_0 = item.n_n_0.wrapping_add(new_item.n_n_0);
-                item.n_1 = item.n_1.wrapping_add(new_item.n_1);
-                item.mr = item.mr.max(new_item.mr);
-            }
-            None => {
-                target.items.insert(token2, *new_item);
-            }
+/// The pin's ordinary exit: `EOVERFLOW` when a magic-header sum is refused.
+/// The function calls [`tool::exit`] and does not return in that case.
+pub fn run(result_filename: Option<&CStr>, sources: &[&CStr]) {
+    let target = Database::open_read_write(result_filename);
+    for source in sources {
+        let new_one = Database::open_read_only(Some(source));
+        if !merge_two_k_mixture_model(&target, &new_one) {
+            tool::exit(tool::EOVERFLOW);
         }
     }
 }
 
-/// `a + b` with the `a + b < max(a, b)` overflow guard (`:108-118`).
-fn checked_sum(a: u32, b: u32, what: &str) -> Result<u32, KmmError> {
-    a.checked_add(b).ok_or_else(|| KmmError::Invalid {
-        detail: format!("the {what} integer overflows"),
-    })
+/// `merge_two_k_mixture_model` (`:202-208`): array items first, then the
+/// magic header.
+fn merge_two_k_mixture_model(target: &Database, new_one: &Database) -> bool {
+    merge_array_items(target, new_one) && merge_magic_header(target, new_one)
+}
+
+/// `merge_array_items` (`:131-200`):
+fn merge_array_items(target: &Database, new_one: &Database) -> bool {
+    for token in new_one.get_all_items() {
+        let new_single_gram = new_one.load_checked(token);
+        let Some(target_single_gram) = target.load(token) else {
+            target.store(token, &new_single_gram);
+            continue;
+        };
+
+        let new_array_header = *new_single_gram.header();
+        let target_array_header = *target_single_gram.header();
+        let merged_array_header = KMixtureModelArrayHeader {
+            m_wc: target_array_header.m_wc.wrapping_add(new_array_header.m_wc),
+            m_freq: target_array_header
+                .m_freq
+                .wrapping_add(new_array_header.m_freq),
+        };
+
+        let merged_array =
+            merge_two_phrase_array(target_single_gram.items(), new_single_gram.items());
+
+        let mut merged_single_gram = KmmGram::new();
+        for item in &merged_array {
+            let inserted = merged_single_gram.insert_array_item(item.token, item.item);
+            if !inserted {
+                std::process::abort();
+            }
+        }
+        merged_single_gram.set_header(merged_array_header);
+        target.store(token, &merged_single_gram);
+    }
+    true
+}
+
+/// `merge_two_phrase_array` (`:38-94`): a merge-join of two token-ascending
+/// arrays, copying the token and item of every record.
+#[must_use]
+pub fn merge_two_phrase_array(
+    first: &[ArrayItemWithToken<KMixtureModelArrayItem>],
+    second: &[ArrayItemWithToken<KMixtureModelArrayItem>],
+) -> Vec<ArrayItemWithToken<KMixtureModelArrayItem>> {
+    let mut merged = Vec::with_capacity(first.len() + second.len());
+    let (mut first_index, mut second_index) = (0_usize, 0_usize);
+    while first_index < first.len() && second_index < second.len() {
+        let first_item = &first[first_index];
+        let second_item = &second[second_index];
+        if first_item.token > second_item.token {
+            merged.push(second_item.clone());
+            second_index += 1;
+        } else if first_item.token < second_item.token {
+            merged.push(first_item.clone());
+            first_index += 1;
+        } else {
+            merged.push(ArrayItemWithToken {
+                token: first_item.token,
+                item: KMixtureModelArrayItem {
+                    m_wc: first_item.item.m_wc.wrapping_add(second_item.item.m_wc),
+                    m_n_n_0: first_item
+                        .item
+                        .m_n_n_0
+                        .wrapping_add(second_item.item.m_n_n_0),
+                    m_n_1: first_item.item.m_n_1.wrapping_add(second_item.item.m_n_1),
+                    m_mr: first_item.item.m_mr.max(second_item.item.m_mr),
+                },
+            });
+            first_index += 1;
+            second_index += 1;
+        }
+    }
+    while first_index < first.len() {
+        merged.push(first[first_index].clone());
+        first_index += 1;
+    }
+    while second_index < second.len() {
+        merged.push(second[second_index].clone());
+        second_index += 1;
+    }
+    merged
+}
+
+/// `merge_magic_header` (`:96-129`).
+fn merge_magic_header(target: &Database, new_one: &Database) -> bool {
+    let target_magic_header = target.get_magic_header().unwrap_or_default();
+    let new_magic_header = new_one.magic_header_checked();
+
+    if target_magic_header.m_wc.wrapping_add(new_magic_header.m_wc)
+        < target_magic_header.m_wc.max(new_magic_header.m_wc)
+    {
+        edge::report_magic_wc_overflow();
+        return false;
+    }
+    if target_magic_header
+        .m_total_freq
+        .wrapping_add(new_magic_header.m_total_freq)
+        < target_magic_header
+            .m_total_freq
+            .max(new_magic_header.m_total_freq)
+    {
+        edge::report_magic_total_freq_overflow();
+        return false;
+    }
+
+    let merged_magic_header = KMixtureModelMagicHeader {
+        m_wc: target_magic_header.m_wc.wrapping_add(new_magic_header.m_wc),
+        m_n: target_magic_header.m_n.wrapping_add(new_magic_header.m_n),
+        m_total_freq: target_magic_header
+            .m_total_freq
+            .wrapping_add(new_magic_header.m_total_freq),
+    };
+    target.set_magic_header_checked(&merged_magic_header);
+    true
 }
 
 #[cfg(test)]
 mod tests {
-    use super::merge_into;
-    use crate::generate::GenerateParams;
-    use crate::model::{ArrayItem, KMixtureModel};
-    use crate::validate::validate;
+    use super::merge_two_phrase_array;
+    use crate::records::{ArrayItemWithToken, KMixtureModelArrayItem};
 
-    fn model_from(doc: &str) -> KMixtureModel {
-        let mut model = KMixtureModel::new();
-        model
-            .add_document(doc, GenerateParams::default())
-            .expect("count");
-        model
+    fn entry(token: u32, wc: u32, mr: u32) -> ArrayItemWithToken<KMixtureModelArrayItem> {
+        ArrayItemWithToken {
+            token,
+            item: KMixtureModelArrayItem {
+                m_wc: wc,
+                m_n_n_0: wc,
+                m_n_1: 0,
+                m_mr: mr,
+            },
+        }
     }
 
     #[test]
-    fn merging_two_single_document_models_sums_and_maxes() {
-        // Same document in two candidate models: merging equals training it
-        // twice (two documents), so document frequency doubles and Mr maxes.
-        // The document cycles 甲→乙→甲 so both tokens appear as a W1 with a
-        // pair-bearing row (a W2-only token would get a header-only row; see
-        // `generate::tests::a_token2_only_token_gets_a_header_only_row`).
-        let a = model_from("10 甲\n20 乙\n10 甲\n");
-        let b = model_from("10 甲\n20 乙\n10 甲\n");
-        let mut merged = a.clone();
-        merge_into(&mut merged, &b).expect("merge");
-
-        assert_eq!(merged.n, 2);
-        assert_eq!(
-            merged.grams[&10].items[&20],
-            ArrayItem {
-                wc: 2,
-                n_n_0: 2,
-                n_1: 2,
-                mr: 1
-            }
-        );
-        // Magic invariants hold after merge (a complete model validates).
-        validate(&merged).expect("merged model validates");
-    }
-
-    #[test]
-    fn merge_equals_single_run_over_both_documents() {
-        // Merging per-document candidates must equal counting both docs in one
-        // model (the crux of the candidate-merge stage). Since the 074a221 pin
-        // every unigram gets an array header (a W2-only token a header-only
-        // row), so headers sum the same way in both runs and the invariant
-        // holds for any documents; the cyclic ones below also keep every
-        // token a W1.
-        let da = "10 甲\n20 乙\n30 丙\n10 甲\n";
-        let db = "20 乙\n30 丙\n10 甲\n20 乙\n";
-        let a = model_from(da);
-        let b = model_from(db);
-        let mut merged = a.clone();
-        merge_into(&mut merged, &b).expect("merge");
-
-        let mut combined = KMixtureModel::new();
-        combined
-            .add_document(da, GenerateParams::default())
-            .expect("d1");
-        combined
-            .add_document(db, GenerateParams::default())
-            .expect("d2");
-
-        assert_eq!(merged.grams, combined.grams);
-        assert_eq!(merged.wc, combined.wc);
-        assert_eq!(merged.n, combined.n);
-        assert_eq!(merged.total_freq, combined.total_freq);
-    }
-
-    #[test]
-    fn a_header_overflow_leaves_the_target_untouched() {
-        let mut target = model_from("10 甲\n20 乙\n10 甲\n");
-        target.wc = u32::MAX;
-        let before = target.clone();
-        let new_one = model_from("30 丙\n40 丁\n");
-        let error = merge_into(&mut target, &new_one).expect_err("overflow");
-        assert!(matches!(error, crate::error::KmmError::Invalid { .. }));
-        assert_eq!(target, before, "no row is merged when the header overflows");
-    }
-
-    #[test]
-    fn distinct_rows_are_unioned() {
-        let a = model_from("10 甲\n20 乙\n");
-        let b = model_from("30 丙\n40 丁\n");
-        let mut merged = a.clone();
-        merge_into(&mut merged, &b).expect("merge");
-        assert!(merged.grams.contains_key(&10));
-        assert!(merged.grams.contains_key(&30));
-        assert_eq!(merged.text(40), Some("丁"));
+    fn matching_tokens_sum_and_max_and_others_keep_their_order() {
+        let first = vec![entry(1, 1, 1), entry(3, 2, 2), entry(7, 4, 4)];
+        let second = vec![entry(2, 5, 5), entry(3, 6, 9), entry(8, 1, 1)];
+        let merged = merge_two_phrase_array(&first, &second);
+        let tokens: Vec<u32> = merged.iter().map(|entry| entry.token).collect();
+        assert_eq!(tokens, [1, 2, 3, 7, 8]);
+        let three = &merged[2].item;
+        assert_eq!(three.m_wc, 8);
+        assert_eq!(three.m_n_n_0, 8);
+        assert_eq!(three.m_n_1, 0);
+        assert_eq!(three.m_mr, 9);
     }
 }
