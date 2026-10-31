@@ -1,0 +1,71 @@
+{
+  "schema": 1,
+  "cases": [
+    {
+      "id": "exp-help-is-ordinary",
+      "utility": "export_interpolation",
+      "source": "utils/storage/export_interpolation.cpp at 074a2219: 30-73, 75-143; src/storage/tag_utility.cpp: 362-417",
+      "args": [
+        "--help"
+      ],
+      "fixture_dir": "fixtures/w3"
+    },
+    {
+      "id": "exp-bad-option-is-ordinary",
+      "utility": "export_interpolation",
+      "source": "utils/storage/export_interpolation.cpp at 074a2219: 30-73, 75-143; src/storage/tag_utility.cpp: 362-417",
+      "args": [
+        "--no-such-option"
+      ],
+      "fixture_dir": "fixtures/w3"
+    },
+    {
+      "id": "exp-too-many-arguments-is-ordinary",
+      "utility": "export_interpolation",
+      "source": "utils/storage/export_interpolation.cpp at 074a2219: 30-73, 75-143; src/storage/tag_utility.cpp: 362-417",
+      "args": [
+        "a",
+        "b"
+      ],
+      "fixture_dir": "fixtures/w3"
+    },
+    {
+      "id": "exp-mini-fixture",
+      "utility": "export_interpolation",
+      "source": "utils/storage/export_interpolation.cpp at 074a2219: 30-73, 75-143; src/storage/tag_utility.cpp: 362-417",
+      "args": [],
+      "fixture_dir": "fixtures/w3"
+    },
+    {
+      "id": "exp-missing-table-conf",
+      "utility": "export_interpolation",
+      "source": "utils/storage/export_interpolation.cpp at 074a2219: 30-73, 75-143; src/storage/tag_utility.cpp: 362-417",
+      "args": []
+    },
+    {
+      "id": "exp-missing-chunk",
+      "utility": "export_interpolation",
+      "source": "utils/storage/export_interpolation.cpp at 074a2219: 30-73, 75-143; src/storage/tag_utility.cpp: 362-417",
+      "args": [],
+      "files": {
+        "table.conf": {
+          "text": "binary format version:7\nmodel data version:14\nlambda parameter:0.312699\n\nsource table format:pinyin\ndatabase format:Tkrzw\n\ndefault RESERVED NULL NULL NULL NOT_USED\ndefault GB_DICTIONARY gb_char.table gb_char.bin gb_char.dbin SYSTEM_FILE\ndefault GBK_DICTIONARY NULL NULL gbk_char.dbin USER_FILE\ndefault OPENGRAM_DICTIONARY NULL NULL opengram.dbin USER_FILE\ndefault MERGED_DICTIONARY NULL NULL merged.dbin USER_FILE\n"
+        }
+      }
+    },
+    {
+      "id": "exp-missing-bigram",
+      "utility": "export_interpolation",
+      "source": "utils/storage/export_interpolation.cpp at 074a2219: 30-73, 75-143; src/storage/tag_utility.cpp: 362-417",
+      "args": [],
+      "files": {
+        "table.conf": {
+          "text": "binary format version:7\nmodel data version:14\nlambda parameter:0.312699\n\nsource table format:pinyin\ndatabase format:Tkrzw\n\ndefault RESERVED NULL NULL NULL NOT_USED\ndefault GB_DICTIONARY gb_char.table gb_char.bin gb_char.dbin SYSTEM_FILE\ndefault GBK_DICTIONARY NULL NULL gbk_char.dbin USER_FILE\ndefault OPENGRAM_DICTIONARY NULL NULL opengram.dbin USER_FILE\ndefault MERGED_DICTIONARY NULL NULL merged.dbin USER_FILE\n"
+        },
+        "gb_char.bin": {
+          "file": "fixtures/w3/tkt/gb_char.bin"
+        }
+      }
+    }
+  ]
+}

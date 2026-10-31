@@ -234,10 +234,10 @@ impl Converter<'_> {
                     let count = tool::atol(self.tag_value(b"count"));
 
                     if last_token != token1 {
-                        if last_token != 0 {
-                            if let Some(gram) = last_gram.take() {
-                                store_gram(&self.bigram, last_token, &gram);
-                            }
+                        if last_token != 0
+                            && let Some(gram) = last_gram.take()
+                        {
+                            store_gram(&self.bigram, last_token, &gram);
                         }
                         let gram = match self.bigram.get(&token1.to_le_bytes()) {
                             Some(value) => match decode_single_gram(&value) {
@@ -280,10 +280,10 @@ impl Converter<'_> {
                 break;
             }
         }
-        if last_token != 0 {
-            if let Some(gram) = last_gram.take() {
-                store_gram(&self.bigram, last_token, &gram);
-            }
+        if last_token != 0
+            && let Some(gram) = last_gram.take()
+        {
+            store_gram(&self.bigram, last_token, &gram);
         }
         self.taglib.pop_state();
     }

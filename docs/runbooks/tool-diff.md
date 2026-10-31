@@ -169,3 +169,30 @@ cases (`ngseg-mini-fixture`, `spseg-mini-fixture`,
 `mergeseq-mini-fixture`): 3 DIFFER, 0 MATCH. The source was restored byte
 for byte (sha256 checked) before the completion run, which returned the
 29 MATCH above.
+
+## Storage utilities (2026-10-31 UTC)
+
+`tool-cases/{gen_binary_files,import_interpolation,export_interpolation}.json`
+hold eight, nine and seven source-derived cases. They cover GLib `--help`
+and an unknown option; positional arguments the pin ignores; a missing
+`table.conf`, `.table`, `punct.table`, `phrase_index.bin` and chunk; empty
+stdin and a wrong model header; and ordinary runs over the committed
+`fixtures/w3` data (with the `.table` inputs the case writes).
+
+On the tkrzw reference cell with the sound `libtkrzw` on
+`LD_LIBRARY_PATH`, 17 cases reported MATCH. The other seven report
+DIFFER, and every difference is the writing DBM library's own metadata:
+tkrzw stores a `cyclic_magic` counter and a wall-clock `timestamp` in
+each container it opens for writing, so two runs of the *same* binary
+never produce equal container bytes. The pin and subject produce the same
+logical rows in all seven: `tkrzw_dbm_util list` output is identical for
+every index and bigram file, and the chunk files are byte-identical. The
+runner's byte inventory cannot mask those fields without an unsound
+utility-specific rule, so the cases stay DIFFER and this paragraph is
+their record.
+
+The named mutation `storage-native-order` replaces
+`Hash::native_keys` with the store's ascending `range_raw` walk in
+`export_interpolation`. The tkrzw run detects it in `exp-mini-fixture`
+(the `\2-gram` group order changes): 1 DIFFER. The source was restored
+byte for byte (sha256 checked) before the completion run.

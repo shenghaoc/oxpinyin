@@ -1,0 +1,140 @@
+{
+  "schema": 1,
+  "cases": [
+    {
+      "id": "gbf-help",
+      "utility": "gen_binary_files",
+      "source": "utils/storage/gen_binary_files.cpp at 074a2219: 26-34, 36-109, 111-152; utils/utils_helper.h: 73-145; src/storage/table_text_parser.h: 34-121",
+      "args": [
+        "--help"
+      ]
+    },
+    {
+      "id": "gbf-bad-option",
+      "utility": "gen_binary_files",
+      "source": "utils/storage/gen_binary_files.cpp at 074a2219: 26-34, 36-109, 111-152; utils/utils_helper.h: 73-145; src/storage/table_text_parser.h: 34-121",
+      "args": [
+        "--no-such-option"
+      ]
+    },
+    {
+      "id": "gbf-too-many-arguments",
+      "utility": "gen_binary_files",
+      "source": "utils/storage/gen_binary_files.cpp at 074a2219: 26-34, 36-109, 111-152; utils/utils_helper.h: 73-145; src/storage/table_text_parser.h: 34-121",
+      "args": [
+        "extra"
+      ],
+      "files": {
+        "table.conf": {
+          "text": "binary format version:7\nmodel data version:14\nlambda parameter:0.312699\n\nsource table format:pinyin\ndatabase format:Tkrzw\n\ndefault RESERVED NULL NULL NULL NOT_USED\ndefault GB_DICTIONARY gb_char.table gb_char.bin gb_char.dbin SYSTEM_FILE\ndefault GBK_DICTIONARY NULL NULL gbk_char.dbin USER_FILE\ndefault OPENGRAM_DICTIONARY NULL NULL opengram.dbin USER_FILE\ndefault MERGED_DICTIONARY NULL NULL merged.dbin USER_FILE\n"
+        },
+        "gb_char.table": {
+          "text": "a\t吖\t16777217\t104\na\t啊\t16777218\t5\nni\t你\t16777219\t7\nni'hao\t你好\t16777220\t9\nzhong'guo\t中国\t16777221\t3\n"
+        }
+      }
+    },
+    {
+      "id": "gbf-missing-table-conf",
+      "utility": "gen_binary_files",
+      "source": "utils/storage/gen_binary_files.cpp at 074a2219: 26-34, 36-109, 111-152; utils/utils_helper.h: 73-145; src/storage/table_text_parser.h: 34-121",
+      "args": []
+    },
+    {
+      "id": "gbf-missing-table-file",
+      "utility": "gen_binary_files",
+      "source": "utils/storage/gen_binary_files.cpp at 074a2219: 26-34, 36-109, 111-152; utils/utils_helper.h: 73-145; src/storage/table_text_parser.h: 34-121",
+      "args": [],
+      "files": {
+        "table.conf": {
+          "text": "binary format version:7\nmodel data version:14\nlambda parameter:0.312699\n\nsource table format:pinyin\ndatabase format:Tkrzw\n\ndefault RESERVED NULL NULL NULL NOT_USED\ndefault GB_DICTIONARY gb_char.table gb_char.bin gb_char.dbin SYSTEM_FILE\ndefault GBK_DICTIONARY NULL NULL gbk_char.dbin USER_FILE\ndefault OPENGRAM_DICTIONARY NULL NULL opengram.dbin USER_FILE\ndefault MERGED_DICTIONARY NULL NULL merged.dbin USER_FILE\n"
+        }
+      }
+    },
+    {
+      "id": "gbf-missing-punct-table",
+      "utility": "gen_binary_files",
+      "source": "utils/storage/gen_binary_files.cpp at 074a2219: 26-34, 36-109, 111-152; utils/utils_helper.h: 73-145; src/storage/table_text_parser.h: 34-121",
+      "args": [
+        "--gen-punct-table"
+      ],
+      "files": {
+        "table.conf": {
+          "text": "binary format version:7\nmodel data version:14\nlambda parameter:0.312699\n\nsource table format:pinyin\ndatabase format:Tkrzw\n\ndefault RESERVED NULL NULL NULL NOT_USED\ndefault GB_DICTIONARY gb_char.table gb_char.bin gb_char.dbin SYSTEM_FILE\ndefault GBK_DICTIONARY NULL NULL gbk_char.dbin USER_FILE\ndefault OPENGRAM_DICTIONARY NULL NULL opengram.dbin USER_FILE\ndefault MERGED_DICTIONARY NULL NULL merged.dbin USER_FILE\n"
+        }
+      }
+    },
+    {
+      "id": "gbf-punct",
+      "utility": "gen_binary_files",
+      "source": "utils/storage/gen_binary_files.cpp at 074a2219: 26-34, 36-109, 111-152; utils/utils_helper.h: 73-145; src/storage/table_text_parser.h: 34-121",
+      "args": [
+        "--gen-punct-table"
+      ],
+      "files": {
+        "table.conf": {
+          "text": "binary format version:7\nmodel data version:14\nlambda parameter:0.312699\n\nsource table format:pinyin\ndatabase format:Tkrzw\n\ndefault RESERVED NULL NULL NULL NOT_USED\ndefault GB_DICTIONARY gb_char.table gb_char.bin gb_char.dbin SYSTEM_FILE\ndefault GBK_DICTIONARY NULL NULL gbk_char.dbin USER_FILE\ndefault OPENGRAM_DICTIONARY NULL NULL opengram.dbin USER_FILE\ndefault MERGED_DICTIONARY NULL NULL merged.dbin USER_FILE\n"
+        },
+        "punct.table": {
+          "text": "16777217 锕 ， 10\n16777217 锕 。 9\n"
+        }
+      }
+    },
+    {
+      "id": "gbf-mini-fixture",
+      "utility": "gen_binary_files",
+      "source": "utils/storage/gen_binary_files.cpp at 074a2219: 26-34, 36-109, 111-152; utils/utils_helper.h: 73-145; src/storage/table_text_parser.h: 34-121",
+      "args": [],
+      "fixture_dir": "fixtures/w3",
+      "files": {
+        "gb_char.table": {
+          "text": "a\t吖\t16777217\t104\na\t啊\t16777218\t5\nni\t你\t16777219\t7\nni'hao\t你好\t16777220\t9\nzhong'guo\t中国\t16777221\t3\n"
+        },
+        "gbk_char.table": {
+          "text": ""
+        },
+        "opengram.table": {
+          "text": ""
+        },
+        "merged.table": {
+          "text": ""
+        },
+        "art.table": {
+          "text": ""
+        },
+        "culture.table": {
+          "text": ""
+        },
+        "economy.table": {
+          "text": ""
+        },
+        "geology.table": {
+          "text": ""
+        },
+        "history.table": {
+          "text": ""
+        },
+        "life.table": {
+          "text": ""
+        },
+        "nature.table": {
+          "text": ""
+        },
+        "people.table": {
+          "text": ""
+        },
+        "science.table": {
+          "text": ""
+        },
+        "society.table": {
+          "text": ""
+        },
+        "sport.table": {
+          "text": ""
+        },
+        "technology.table": {
+          "text": ""
+        }
+      }
+    }
+  ]
+}

@@ -1303,6 +1303,7 @@ pub mod storage {
     /// the length and checksum words, the payload write, `g_fsync` and
     /// `close`. The pin's answers are kept: a short header write aborts (its
     /// `assert`), a short payload write returns `false` after the close.
+    #[must_use]
     pub fn save_chunk(filename: &CStr, length: u32, checksum: u32, payload: &[u8]) -> bool {
         // SAFETY: `filename` is NUL-terminated and outlives the call.
         let fd = unsafe {

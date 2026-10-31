@@ -1,0 +1,92 @@
+{
+  "schema": 1,
+  "cases": [
+    {
+      "id": "imp-help",
+      "utility": "import_interpolation",
+      "source": "utils/storage/import_interpolation.cpp at 074a2219: 34-40, 43-232, 234-307; utils/utils_helper.h: 27-49; src/storage/tag_utility.cpp: 118-264",
+      "args": [
+        "--help"
+      ]
+    },
+    {
+      "id": "imp-bad-option",
+      "utility": "import_interpolation",
+      "source": "utils/storage/import_interpolation.cpp at 074a2219: 34-40, 43-232, 234-307; utils/utils_helper.h: 27-49; src/storage/tag_utility.cpp: 118-264",
+      "args": [
+        "--no-such-option"
+      ]
+    },
+    {
+      "id": "imp-missing-table-conf",
+      "utility": "import_interpolation",
+      "source": "utils/storage/import_interpolation.cpp at 074a2219: 34-40, 43-232, 234-307; utils/utils_helper.h: 27-49; src/storage/tag_utility.cpp: 118-264",
+      "args": []
+    },
+    {
+      "id": "imp-missing-phrase-index",
+      "utility": "import_interpolation",
+      "source": "utils/storage/import_interpolation.cpp at 074a2219: 34-40, 43-232, 234-307; utils/utils_helper.h: 27-49; src/storage/tag_utility.cpp: 118-264",
+      "args": [],
+      "files": {
+        "table.conf": {
+          "text": "binary format version:7\nmodel data version:14\nlambda parameter:0.312699\n\nsource table format:pinyin\ndatabase format:Tkrzw\n\ndefault RESERVED NULL NULL NULL NOT_USED\ndefault GB_DICTIONARY gb_char.table gb_char.bin gb_char.dbin SYSTEM_FILE\ndefault GBK_DICTIONARY NULL NULL gbk_char.dbin USER_FILE\ndefault OPENGRAM_DICTIONARY NULL NULL opengram.dbin USER_FILE\ndefault MERGED_DICTIONARY NULL NULL merged.dbin USER_FILE\n"
+        }
+      }
+    },
+    {
+      "id": "imp-missing-chunk",
+      "utility": "import_interpolation",
+      "source": "utils/storage/import_interpolation.cpp at 074a2219: 34-40, 43-232, 234-307; utils/utils_helper.h: 27-49; src/storage/tag_utility.cpp: 118-264",
+      "args": [],
+      "files": {
+        "table.conf": {
+          "text": "binary format version:7\nmodel data version:14\nlambda parameter:0.312699\n\nsource table format:pinyin\ndatabase format:Tkrzw\n\ndefault RESERVED NULL NULL NULL NOT_USED\ndefault GB_DICTIONARY gb_char.table gb_char.bin gb_char.dbin SYSTEM_FILE\ndefault GBK_DICTIONARY NULL NULL gbk_char.dbin USER_FILE\ndefault OPENGRAM_DICTIONARY NULL NULL opengram.dbin USER_FILE\ndefault MERGED_DICTIONARY NULL NULL merged.dbin USER_FILE\n"
+        },
+        "phrase_index.bin": {
+          "file": "fixtures/w3/tkt/phrase_index.bin"
+        }
+      }
+    },
+    {
+      "id": "imp-empty-stdin",
+      "utility": "import_interpolation",
+      "source": "utils/storage/import_interpolation.cpp at 074a2219: 34-40, 43-232, 234-307; utils/utils_helper.h: 27-49; src/storage/tag_utility.cpp: 118-264",
+      "args": [],
+      "fixture_dir": "fixtures/w3",
+      "stdin": {
+        "text": ""
+      }
+    },
+    {
+      "id": "imp-bad-header",
+      "utility": "import_interpolation",
+      "source": "utils/storage/import_interpolation.cpp at 074a2219: 34-40, 43-232, 234-307; utils/utils_helper.h: 27-49; src/storage/tag_utility.cpp: 118-264",
+      "args": [],
+      "fixture_dir": "fixtures/w3",
+      "stdin": {
+        "text": "garbage\n"
+      }
+    },
+    {
+      "id": "imp-unigram",
+      "utility": "import_interpolation",
+      "source": "utils/storage/import_interpolation.cpp at 074a2219: 34-40, 43-232, 234-307; utils/utils_helper.h: 27-49; src/storage/tag_utility.cpp: 118-264",
+      "args": [],
+      "fixture_dir": "fixtures/w3",
+      "stdin": {
+        "text": "\\data model interpolation\n\\1-gram\n\\item 16777217 锕 count 5\n\\item 1 <start> count 2\n\\end\n"
+      }
+    },
+    {
+      "id": "imp-ordinary",
+      "utility": "import_interpolation",
+      "source": "utils/storage/import_interpolation.cpp at 074a2219: 34-40, 43-232, 234-307; utils/utils_helper.h: 27-49; src/storage/tag_utility.cpp: 118-264",
+      "args": [],
+      "fixture_dir": "fixtures/w3",
+      "stdin": {
+        "text": "\\data model interpolation\n\\1-gram\n\\item 16777217 锕 count 5\n\\2-gram\n\\item 16777217 锕 16777218 吖 count 4\n\\end\n"
+      }
+    }
+  ]
+}

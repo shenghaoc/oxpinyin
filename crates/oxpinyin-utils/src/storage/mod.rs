@@ -15,8 +15,11 @@
 //! - [`export_interpolation`] writes the model that
 //!   [`import_interpolation`] reads.
 //!
-//! The datagen crate no longer owns a compile subcommand: the same work is
-//! the pin's three programs here.
+//! `oxpinyin-datagen compile` remains the model20 producer until the
+//! pin's `gen_unigram` is ported: its output is the three-program chain
+//! (`gen_binary_files`, `import_interpolation`, `gen_unigram`); this
+//! member supplies the first two and `export_interpolation`, which writes
+//! the model text the second one reads.
 
 #![forbid(unsafe_code)]
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]

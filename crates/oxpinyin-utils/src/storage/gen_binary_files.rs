@@ -79,7 +79,7 @@ fn path_of(name: &CStr) -> PathBuf {
 }
 
 /// The rows one `generate_binary_files` call walks (default or addon).
-fn rows<'a>(conf: &'a TableConf, addon: bool) -> Vec<&'a TableRow> {
+fn rows(conf: &TableConf, addon: bool) -> Vec<&TableRow> {
     (0..16_u8)
         .filter_map(|index| {
             if addon {
@@ -428,7 +428,7 @@ fn append_punctuation(table: &Tree, token: u32, punctuation: &CStr) {
             current.push(word);
         }
     }
-    if runs.iter().any(|run| *run == ucs4) {
+    if runs.contains(&ucs4) {
         tool::storage::report_duplicated_punctuation(punctuation);
         return;
     }
