@@ -678,11 +678,8 @@ jobs:
   # job excludes the two C-ABI crates (their facade tests are Linux-first;
   # GLib and cargo-c themselves are available from Homebrew) and the
   # backend-independent KMM tool. The combined training package remains
-  # in the lane because its segment/eval modules use the backend.
-  # oxpinyin-dictool stays
-  # in the set: its C-ABI dependency was cut, and it drives the facade's
-  # import/export machinery directly. It also runs the tools Python
-  # harness tests on macOS.
+  # in the lane because its segment/eval modules use the backend. It also
+  # runs the tools Python harness tests on macOS.
   #
   # Moved here from ci.yml on 2026-10-31: platforms other than Linux are
   # unstable but not unusable (maintainer decision), so the job runs every

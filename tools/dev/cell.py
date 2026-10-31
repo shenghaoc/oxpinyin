@@ -73,7 +73,7 @@ def main(argv: Sequence[str], *, root: Path = ROOT,
         if len(argv) == 3 and argv[0] == '--describe-oracle':
             print(json.dumps(settings.oracle(argv[1], argv[2]).describe()))
             return 0
-        wanted = ['pinyin-capi', 'zhuyin-capi', 'dictool']
+        wanted = ['pinyin-capi', 'zhuyin-capi']
         if environment.get('OXPINYIN_BUILD_USER_RT') == '1':
             wanted.append('user-rt-test')
         if len(argv) == 2 and argv[0] == '--artifacts':
@@ -221,11 +221,11 @@ class Settings:
 
     def build(self, wanted: Sequence[str]) -> int:
         packages = {'pinyin-capi': 'oxpinyin-capi', 'zhuyin-capi': 'oxpinyin-zhuyin-capi',
-                    'dictool': 'oxpinyin-dictool', 'gen-pinyin-table': 'oxpinyin-utils',
+                    'gen-pinyin-table': 'oxpinyin-utils',
                     'gen-zhuyin-table': 'oxpinyin-utils', 'k-mixture-model-to-interpolation': 'oxpinyin-utils'}
         for item in wanted:
             if item and item not in (*packages, 'user-rt-test'):
-                raise CellError(f"fatal: unknown artifact '{item}' (pinyin-capi, zhuyin-capi, dictool, user-rt-test)", 2)
+                raise CellError(f"fatal: unknown artifact '{item}' (pinyin-capi, zhuyin-capi, user-rt-test)", 2)
         if not any(wanted):
             return 0
         self.claim()
@@ -277,7 +277,7 @@ class Settings:
                           tracked_diff_sha256=hashlib.sha256(output('git', 'diff', 'HEAD', '--', '.').encode()).hexdigest())
         artifacts = {}
         for name, filename in (('pinyin-capi', 'libpinyin_capi.so'), ('zhuyin-capi', 'libzhuyin_capi.so'),
-                               ('dictool', 'oxpinyin-dictool'), ('user-rt-test', 'user-dir-round-trip-test'),
+                               ('user-rt-test', 'user-dir-round-trip-test'),
                                ('gen-pinyin-table', 'gen_pinyin_table'), ('gen-zhuyin-table', 'gen_zhuyin_table'),
                                ('k-mixture-model-to-interpolation', 'k_mixture_model_to_interpolation')):
             file = self.target / 'debug' / filename

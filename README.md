@@ -69,7 +69,6 @@ storage backend and gives each platform's packages and settings for it.
 |---|---|
 | Engine / data / runtime / bindings | `oxpinyin-core`, `oxpinyin-chewing`, `oxpinyin-store`, `oxpinyin-data`, `oxpinyin-user`, `oxpinyin-engine`, `oxpinyin-facade`, `oxpinyin-runtime`, `oxpinyin-capi`, `oxpinyin-zhuyin-capi`, `oxpinyin-capi-marshal` |
 | Training toolchain (never ships) | `oxpinyin-training` (modules: `segment`, `counter`, `lambda`, `emitter`, `eval`; binaries: `oxpinyin-segment`, `oxpinyin-spseg`, `oxpinyin-mergeseq`, `oxpinyin-counter`, `oxpinyin-lambda`, `oxpinyin-emitter`), `oxpinyin-kmm`, `oxpinyin-utils`, `oxpinyin-datagen` |
-| Tools | `oxpinyin-dictool` |
 | Oracle / testing | `pinyin-oracle`, `oxpinyin-testsupport` |
 
 The remaining stage binaries keep their names and arguments. Select the

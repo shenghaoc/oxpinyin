@@ -503,18 +503,14 @@
       "tkrzw"
     ],
     "artifacts": [
-      "pinyin-capi",
-      "dictool"
+      "pinyin-capi"
     ],
     "required_inputs": [
       "pin-built oracle at the selected cell",
       "native compiler and runner prerequisites",
       "prebuilt dev libpinyin for the cell",
       "matching PREFIX/oracle-pin.txt, lib/libpinyin.so and lib/libpinyin/data",
-      "committed fixtures/w3 native cell tables",
-      "tools/bisection/classic-import.txt",
-      "prebuilt oxpinyin-dictool",
-      "PINYIN_IBUS_BUILD_DIR and PINYIN_IBUS_PREFIX (matching frontend build)"
+      "committed fixtures/w3 native cell tables"
     ],
     "timeout": 900,
     "exclusive_resources": [

@@ -14,7 +14,7 @@ description = "C ABI of libpinyin (libpinyin.so.15): all 79 pinyin_* exports of 
 # checked-in header stays `pinyin.h` with exported `pinyin_*` symbols).
 [lib]
 name = "pinyin_capi"
-# cdylib is the ABI; rlib lets oxpinyin-dictool call the same symbols
+# cdylib is the ABI; rlib lets the fuzz targets and Rust tests call the same symbols
 # in-process; staticlib is required by cargo-c and shipped alongside the .so.
 crate-type = ["cdylib", "staticlib", "rlib"]
 

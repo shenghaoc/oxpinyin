@@ -10,7 +10,6 @@ import sys
 
 from . import slot
 from .cell import CellError, Settings, patch_digest
-from .frontend import frontend_source
 from .runners import Context, Finished, emit, python_script, status, write
 from .system_data import NAMES, data_extension
 
@@ -1406,90 +1405,7 @@ def import_diff(ctx: Context, args: Sequence[str]) -> int:
         ctx.emit('DIVERGENCE: import logs differ')
         ctx.write(diff)
         return 2
-    ctx.emit('import-diff: IDENTICAL\n\n--- classic-format frontend interop ---')
-    fixture = ctx.path(ctx.env.get('IMPORT_FIXTURE') or str(ctx.here / 'classic-import.txt'))
-
-    build_value = ctx.env.get('PINYIN_IBUS_BUILD_DIR')
-    build = ctx.path(build_value) if build_value else next((candidate for candidate in (
-        ctx.settings.root / 'target/oracle-pin-build', ctx.settings.root / 'target/oracle-tkrzw-build',
-        ctx.settings.root / 'target/oracle-w2') if frontend_source(candidate) is not None), None)
-    source = frontend_source(build) if build is not None else None
-    schema = source / 'data/com.github.libpinyin.ibus-libpinyin.gschema.xml' if source is not None else None
-    if build is None or source is None or schema is None or not schema.is_file():
-        ctx.emit('SKIP: ibus-libpinyin build tree not found (set PINYIN_IBUS_BUILD_DIR)')
-        return 77
-    ibus_prefix = ctx.path(ctx.env.get('PINYIN_IBUS_PREFIX') or str(build / 'prefix'))
-    if not (ibus_prefix / 'oracle-pin.txt').is_file():
-        ibus_prefix = prefix
-    if not any(line.startswith(ctx.settings.expected_pin.split('+model20-')[0]) for line in (ibus_prefix / 'oracle-pin.txt').read_text().splitlines()):
-        ctx.emit(f'SKIP: ibus-libpinyin build at {build} is off-pin')
-        return 77
-    for command in ('g++', 'pkg-config', 'glib-compile-schemas'):
-        if not shutil.which(command, path=ctx.env.get('PATH')):
-            ctx.emit(f'SKIP: {command} not found for frontend interop harness')
-            return 77
-    import shlex
-    cflags = ctx.checked(['pkg-config', '--cflags', 'ibus-1.0', 'glib-2.0', 'gio-2.0', 'sqlite3'], capture=True).stdout
-    libraries = ctx.checked(['pkg-config', '--libs', 'ibus-1.0', 'glib-2.0', 'gio-2.0', 'sqlite3'], capture=True).stdout
-    objects = sorted(file for file in (source / 'src').glob('*.o') if not file.name.endswith('PYMain.o'))
-    frontend = ctx.here / 'frontend-import'
-    ctx.checked(['g++', '-std=gnu++17', '-O2', '-I' + str(source / 'src'),
-                 '-I' + str(ibus_prefix / 'include/libpinyin-2.11.92'), *shlex.split(cflags.decode()),
-                 'frontend-import.cc', *objects, *shlex.split(libraries.decode()),
-                 '-L' + str(ibus_prefix / 'lib'), '-lpinyin', '-o', frontend])
-    schemas = ctx.scratch()
-    shutil.copyfile(schema, schemas / schema.name)
-    ctx.checked(['glib-compile-schemas', schemas])
-    work = ctx.scratch()
-    inherited = ctx.env.get('LD_LIBRARY_PATH', '')
-    from .cell import library_path
-    inherited = library_path(inherited, ctx.caller)
-
-    def run_frontend(input_file: Path, output_file: Path, cache: Path):
-        shutil.rmtree(cache, ignore_errors=True)
-        cache.mkdir()
-        result = ctx.run(frontend, frontend, [input_file, output_file], side='pin', env={
-            'LD_LIBRARY_PATH': str(ibus_prefix / 'lib') + (':' + inherited if inherited else ''),
-            'XDG_CACHE_HOME': str(cache), 'GSETTINGS_SCHEMA_DIR': str(schemas)})
-        (cache / 'stderr').write_bytes(result.stderr)
-        if result.returncode:
-            ctx.emit(f'FAIL: pinned frontend import/export failed for {input_file}')
-            ctx.write(result.stderr)
-            raise Finished(1)
-
-    dictool = ctx.settings.artifact('OXPINYIN_DICTOOL', 'oxpinyin-dictool', 'oxpinyin-dictool')
-    frontend_a, dictool_b, frontend_c = work / 'frontend-a.txt', work / 'dictool-b.txt', work / 'frontend-c.txt'
-    run_frontend(fixture, frontend_a, work / 'frontend-cache-a')
-    for command in ([dictool, 'import', '--user-dir', work / 'dictool-user', fixture],
-                    [dictool, 'export', '--user-dir', work / 'dictool-user', dictool_b]):
-        result = ctx.run(dictool, dictool, command[1:], side='subject')
-        ctx.write(result.stdout)
-        ctx.write(result.stderr, error=True)
-        if result.returncode:
-            return status(result.returncode)
-    def ordered(file: Path) -> bytes:
-        return ctx.checked(['sort', file], capture=True).stdout
-    ctx.emit('frontend(fixture):')
-    left = ordered(frontend_a)
-    ctx.write(left)
-    ctx.emit('dictool(fixture):')
-    right = ordered(dictool_b)
-    ctx.write(right)
-    rc, diff = ctx.compare(left, right)
-    if rc:
-        ctx.emit('DIVERGENCE: classic fixture export differs between frontend and dictool')
-        ctx.write(diff)
-        return 2
-    run_frontend(dictool_b, frontend_c, work / 'frontend-cache-c')
-    ctx.emit('frontend(dictool-written file):')
-    third = ordered(frontend_c)
-    ctx.write(third)
-    rc, diff = ctx.compare(right, third)
-    if rc:
-        ctx.emit('DIVERGENCE: dictool-written file did not round-trip through the frontend')
-        ctx.write(diff)
-        return 2
-    ctx.emit('classic frontend interop: IDENTICAL (both directions)')
+    ctx.emit('import-diff: IDENTICAL')
     return 0
 
 

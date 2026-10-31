@@ -84,7 +84,7 @@ landed 2026-09-09 as the backend's native user files (maintainer ruling
 | W4 | SegmentGraph, k-best, engine session | oxpinyin-core, oxpinyin-engine |
 | W5 | C ABI (began as the consumer subset; the full 79-symbol surface closed under W8) | oxpinyin-capi |
 | W6 | User store (ACID store over the compiled-in `DefaultStore`; began on redb) | oxpinyin-user, oxpinyin-store |
-| W7 | Classic text-format interop via oxpinyin-dictool (import + export) | oxpinyin-dictool, oxpinyin-capi |
+| W7 | Classic text-format interop (import + export); the tool was deleted by maintainer ruling 2026-10-31 UTC | oxpinyin-capi |
 | W8 | libpinyin drop-in: full 79-symbol `.so` ABI under `libpinyin.so.15` (see `docs/specs/drop-in/`) | oxpinyin-capi |
 | W9 | Rust counterparts for libpinyin's 21 `utils/` programs (see `docs/findings/trainer-parity-audit.md`); the trainer's own Python scripts are not ported | oxpinyin-training (`segment`, `counter`, `lambda`, `emitter`, `eval` modules), oxpinyin-kmm, oxpinyin-utils, oxpinyin-datagen |
 | W10 | Option bits: correction, fuzzy/ambiguity, dynamic-adjust gating | oxpinyin-core, oxpinyin-engine |
@@ -208,7 +208,8 @@ parked.
   (`docs/perf/perf-baseline-kc-2026-09.md`).
 
 - **W7 is flat, not a task stack.** One deliverable: classic text-format
-  interop via oxpinyin-dictool (import + export). The line-oriented
+  interop (import + export), through a standalone tool that the
+  maintainer ruling of 2026-10-31 UTC deleted. The line-oriented
   `phrase (SP|TAB) pinyin [count]` format has been libpinyin's public
   interchange since 1.1.0; ibus-libpinyin's Import/Export buttons drive
   `LibPinyinBackEnd::importPinyinDictionary` /
