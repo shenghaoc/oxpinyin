@@ -1271,6 +1271,13 @@ impl WriteTxn for TkrzwTxn<'_> {
     }
 
     #[inline(never)]
+    fn remove_raw(&mut self, key: &[u8]) -> Result<(), StoreError> {
+        // The removal half of `put_raw`, on the same bare keyspace.
+        self.buffer.insert(key.to_vec(), None);
+        Ok(())
+    }
+
+    #[inline(never)]
     fn remove(&mut self, table: &str, key: &[u8]) -> Result<(), StoreError> {
         let prefix = table_prefix(table)?;
         self.buffer.insert(framed(&prefix, key), None);
