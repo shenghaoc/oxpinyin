@@ -85,10 +85,7 @@ impl CapiContext {
         self.core.load_phrase_library(index)
     }
 
-    pub(crate) fn unload_phrase_library(
-        &self,
-        index: u8,
-    ) -> Result<bool, oxpinyin_facade::StoreWriteFailed> {
+    pub(crate) fn unload_phrase_library(&self, index: u8) -> bool {
         self.core.unload_phrase_library(index)
     }
 

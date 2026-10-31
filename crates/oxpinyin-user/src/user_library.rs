@@ -45,6 +45,10 @@ impl PreparedReplacement {
 pub(crate) struct SessionPhrases {
     pub(crate) libraries: BTreeMap<u8, UserLibrary>,
     pub(crate) indexed: BTreeSet<(u32, Vec<u16>)>,
+    /// The `USER_FILE` libraries `FacadePhraseIndex::unload` freed: their
+    /// sub-index is gone until a load, so a save skips them
+    /// (074a2219 `pinyin.cpp:929-932`, `zhuyin.cpp:562-565`).
+    pub(crate) unloaded: BTreeSet<u8>,
 }
 
 impl SessionPhrases {
