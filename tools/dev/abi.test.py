@@ -49,7 +49,7 @@ class SymbolTests(unittest.TestCase):
 
 
 class AllocationFailureGateTests(unittest.TestCase):
-    """The probe finds its own injection sites; the gate gives it no symbol data (#1308)."""
+    """The probe fails GLib's allocations by caller; the gate gives it no symbol data (#1227, #1308)."""
 
     def gate(self, probe_status=0, control_status=1):
         calls = []

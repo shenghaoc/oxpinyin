@@ -127,8 +127,8 @@ def check_alloc_failure(settings: Settings, argv: Sequence[str]) -> int:
             user = work / ('user-' + mode)
             user.mkdir()
             data = str(Path(prefix) / 'lib/libpinyin/data')
-            # The probe finds the subject's allocation sites itself, from where the
-            # library's own allocations go, so no symbol or build detail is read here.
+            # Both sides allocate returned strings through GLib, so the probe fails
+            # them by their GLib or libc caller; no symbol or build detail is read here.
             subject_args = [subject, data, mode, 'subject', str(user)]
             for args in (subject_args, [str(Path(prefix) / f'lib/lib{mode}.so'), data, mode, 'pin', '']):
                 if services.command([str(work / 'probe'), *args]).returncode:
