@@ -11,6 +11,7 @@ they stop with. Nothing needs taskset, binutils, cargo or /proc, so the file run
 import contextlib
 import io
 import json
+import subprocess
 import os
 from pathlib import Path
 import sys
@@ -54,7 +55,7 @@ class SteadyComparisonTests(unittest.TestCase):
         self.assertEqual(result['allocations_per_cycle']['pall'], dict(count=[9, 9], bytes=[80, 80]))
 
     def campaign(self, *, checksum_change=False, missing_alloc=False, profile=False,
-                 mutate_source=False, inherited_user_dir=None):
+                 mutate_source=False, inherited_user_dir=None, arms=()):
         from tools.dev.measure import identity
         from tools.bisection import startup_profile, teardown
         from tools.dev.measure import native
@@ -90,6 +91,9 @@ class SteadyComparisonTests(unittest.TestCase):
             argv = ['--cell', 'bdb', '--system-dir', str(root), '--out', str(root / 'out')]
             for name, path in paths.items():
                 argv += ['--' + name, str(path)]
+            for name in arms:
+                (root / (name + '.so')).write_bytes(b'object')
+                argv += ['--arm', name + '=' + str(root / (name + '.so'))]
             if profile:
                 user = root / 'user'
                 user.mkdir()
@@ -125,6 +129,116 @@ class SteadyComparisonTests(unittest.TestCase):
         self.assertEqual(result['wall_ns_per_cycle']['base']['median'], 10)
         self.assertEqual(result['ir_per_cycle']['base'], [100, 100])
         self.assertEqual(result['allocations_per_cycle']['ball']['count'], [10, 10])
+
+    def test_campaign_rotates_extra_arms_and_reports_them_against_base_and_pin(self):
+        status, events, result = self.campaign(arms=('m3a_', 'm3b_'))
+        self.assertEqual(status, 0)
+        self.assertEqual([name for name, _ in events[:7]],
+                         ['base', 'pr__', 'pin_', 'bctl', 'pctl', 'm3a_', 'm3b_'])
+        self.assertEqual(result['wall_ns_per_cycle']['m3a_']['ratio_to_base'], 1)
+        self.assertEqual(result['wall_ns_per_cycle']['m3b_']['ratio_to_pin'], 1)
+        self.assertEqual(result['ir_per_cycle']['m3b_'], [100, 100])
+        with self.assertRaises(SystemExit):
+            self.campaign(arms=('pr__',))
+
+    def test_campaign_refuses_arms_named_like_the_allocation_fixtures(self):
+        for name in campaigns.STEADY_FIXTURES:
+            with self.subTest(name=name), self.assertRaises(SystemExit), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                self.campaign(arms=(name,))
+
+    def test_stack_comparison_refuses_arms_the_steady_stage_refuses_before_any_stage(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            argv = ['--cell', 'tkrzw', '--pin-prefix', str(root / 'pin'), '--base-prefix', str(root / 'main'),
+                    '--pr-prefix', str(root / 'pr'), '--base-alloc', str(root / 'ba.so'),
+                    '--pr-alloc', str(root / 'pa.so'), '--work', str(root / 'work')]
+            for name in ('pr', 'pin', 'base', 'bctl', 'pctl', 'ball', 'pall'):
+                with self.subTest(name=name), \
+                        mock.patch.object(campaigns.subprocess, 'run') as run, \
+                        mock.patch.object(campaigns, 'steady_comparison_inner') as steady, \
+                        self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+                    campaigns.stack_comparison_inner(argv + ['--arm', f'{name}={root / "a"}'], {})
+                run.assert_not_called()
+                steady.assert_not_called()
+            self.assertFalse((root / 'work').exists())
+
+    def test_stack_comparison_runs_every_workload_with_every_arm_in_order(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            argv = ['--cell', 'tkrzw', '--pin-prefix', str(root / 'pin'), '--base-prefix', str(root / 'main'),
+                    '--pr-prefix', str(root / 'pr'), '--base-alloc', str(root / 'ba.so'),
+                    '--pr-alloc', str(root / 'pa.so'), '--work', str(root / 'work'),
+                    '--arm', 'm3a=' + str(root / 'a'), '--arm', 'm3b=' + str(root / 'b')]
+            for path in [root / 'ba.so', root / 'pa.so',
+                         *(root / name / 'lib/libpinyin.so' for name in ('pin', 'main', 'pr', 'a', 'b'))]:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b'object')
+            runs = []
+
+            def run(command, env, stdout, stderr, check):
+                runs.append((command, env['CONTRACT_DIFF_CELL']))
+                stdout.write(b'records\n')
+                return subprocess.CompletedProcess(command, 0)
+            with mock.patch.object(campaigns.subprocess, 'run', side_effect=run), \
+                    mock.patch.object(campaigns, 'steady_comparison_inner', return_value=0) as steady, \
+                    mock.patch.object(campaigns, 'emit'):
+                self.assertEqual(campaigns.stack_comparison_inner(argv, {}), 0)
+            stages = [command[command.index('--teardown-stage') + 1] for command, _ in runs]
+            self.assertEqual(stages, ['user-phrase', 'confirm', 'init-attribute'])
+            for command, cell in runs:
+                self.assertEqual(cell, 'tkrzw')
+                arms = [command[i + 1] for i, value in enumerate(command) if value == '--teardown-arm']
+                self.assertEqual(arms, ['m3a=%s/a/lib/libpinyin.so:%s/a/lib/libzhuyin.so' % (root, root),
+                                        'm3b=%s/b/lib/libpinyin.so:%s/b/lib/libzhuyin.so' % (root, root)])
+                self.assertIn(str(root / 'main/lib/libpinyin.so'), command)
+            confirm = runs[1][0]
+            self.assertIn('--teardown-startup-heap', confirm)
+            self.assertEqual(confirm[confirm.index('--teardown-cases') + 1], campaigns.STACK_PROFILES)
+            self.assertEqual((root / 'work/write.log').read_bytes(), b'records\n')
+            steady_argv = steady.call_args.args[0]
+            self.assertEqual([steady_argv[i + 1] for i, value in enumerate(steady_argv) if value == '--arm'],
+                             ['m3a_=%s/a/lib/libpinyin.so' % root, 'm3b_=%s/b/lib/libpinyin.so' % root])
+            self.assertEqual(steady_argv[steady_argv.index('--user-dir') + 1],
+                             str(root / 'work/user/profiles/user8/user'))
+
+            runs.clear()
+            def failing(command, env, stdout, stderr, check):
+                runs.append(command)
+                return subprocess.CompletedProcess(command, 3)
+            with mock.patch.object(campaigns.subprocess, 'run', side_effect=failing), \
+                    mock.patch.object(campaigns, 'steady_comparison_inner') as steady, \
+                    mock.patch.object(campaigns, 'emit'):
+                self.assertEqual(campaigns.stack_comparison_inner(argv, {}), 3)
+            self.assertEqual(len(runs), 1)
+            steady.assert_not_called()
+            for bad in (['--arm', 'TOO_LONG=/x'], ['--workloads', 'write,bogus'],
+                        ['--workloads', 'steady', '--work', str(root / 'fresh')]):
+                with self.subTest(bad=bad), self.assertRaises(SystemExit), \
+                        contextlib.redirect_stderr(io.StringIO()):
+                    campaigns.stack_comparison_inner(argv + bad, {})
+
+    def test_stack_comparison_checks_steady_libraries_before_any_stage(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            libraries = [root / 'ba.so', root / 'pa.so',
+                         *(root / name / 'lib/libpinyin.so' for name in ('pin', 'main', 'pr', 'a'))]
+            argv = ['--cell', 'tkrzw', '--pin-prefix', str(root / 'pin'), '--base-prefix', str(root / 'main'),
+                    '--pr-prefix', str(root / 'pr'), '--base-alloc', str(libraries[0]),
+                    '--pr-alloc', str(libraries[1]), '--work', str(root / 'work'), '--arm', f'm3a={root / "a"}']
+            for missing in libraries:
+                with self.subTest(missing=missing):
+                    for path in libraries:
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        path.write_bytes(b'object')
+                    missing.unlink()
+                    with mock.patch.object(campaigns.subprocess, 'run') as run, \
+                            mock.patch.object(campaigns, 'steady_comparison_inner') as steady, \
+                            self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+                        campaigns.stack_comparison_inner(argv, {})
+                    run.assert_not_called()
+                    steady.assert_not_called()
+                    self.assertFalse((root / 'work').exists())
 
     def test_campaign_refuses_changed_answers_and_missing_counters(self):
         with self.assertRaisesRegex(ValueError, 'checksums differ'):

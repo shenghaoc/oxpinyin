@@ -792,6 +792,41 @@ selecting init does not qualify a failed first-candidate or steady scope.
 `--instructions-from` can reuse already qualified windows from a retained
 segment after checking its input, worker and shipping-library hashes.
 
+To measure a stack in one run, add one `--teardown-arm NAME=PINYIN_SO[:ZHUYIN_SO]`
+per further revision (NAME: one to four lowercase letters or digits) to the
+`confirm`, `init-attribute`, `user-verify` or `user-phrase` stage. It needs
+`--base-pinyin-so`. Each arm rotates with base, PR, control and pin, passes the
+same equivalence preflight, and its timing records carry `arm_ratios` against
+base and pin under the PR's same-bytes control. Its profiler rows are printed
+beside the others. `steady-comparison` takes the same arms as `--arm NAME=SO`
+(NAME: four of `[a-z0-9_]`); every arm reports `ratio_to_base` and
+`ratio_to_pin`, and its checksum must equal the base's.
+
+`just measure stack-comparison` runs a whole stack's gate in one job under one
+heavy admission: the `user-phrase` write window on `user8`, `confirm` init with
+`--teardown-startup-heap` and `init-attribute` instructions on all seven
+profiles and both facades, then `steady-comparison` on the `user8` profile the
+first stage provisioned. Every workload runs base, PR, the pin and each
+`--arm`; each workload's records go to `WORK/<workload>.log`, and steady's
+result to `WORK/steady/result.json`. Supply installed shipping prefixes
+(`just packaging install`) and the two `alloc-count` fixtures:
+
+```bash
+just measure stack-comparison --cell tkrzw --pin-prefix "$PINYIN_ORACLE_PREFIX" \
+  --base-prefix "$BASE_PREFIX" --pr-prefix "$PR_PREFIX" \
+  --arm "m3a=$A_PREFIX" --arm "m3b=$B_PREFIX" \
+  --base-alloc "$BASE_ALLOC_SO" --pr-alloc "$PR_ALLOC_SO" --work "$WORK"
+```
+
+`--workloads write,init,init-ir,steady` selects a subset; steady then needs a
+`WORK` the write workload already provisioned.
+
+With `--teardown-summary-dir`, `user-phrase` also keeps each arm's first
+write-window Callgrind profile (`pinyin-CASE-SIDE-user-write.callgrind`) and
+its Massif profile (`pinyin-CASE-SIDE-user-heap.massif`) for local diagnosis:
+`callgrind_annotate` gives instructions by function and `ms_print` the heap
+peak by allocation site.
+
 For the steady cycle, pass `--user-dir "$WORK/profiles/user/user"` (and then
 `user8/user`) to `just measure steady-comparison`. The controller snapshots
 the source once into `profile-input` before sampling and records its manifest

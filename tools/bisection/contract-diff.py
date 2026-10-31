@@ -1188,6 +1188,9 @@ def run_main():
     parser.add_argument('--per-call-attribution-limit', type=int, default=25, help='top functions and edges; 0 emits all')
     parser.add_argument('--base-pinyin-so', type=Path)
     parser.add_argument('--base-zhuyin-so', type=Path)
+    parser.add_argument('--teardown-arm', action='append', default=[], metavar='NAME=PINYIN_SO[:ZHUYIN_SO]',
+                        help='an additional measured arm for confirm, init-attribute and user stages; '
+                             'reported against the base and pin arms (repeatable)')
     parser.add_argument('--cases')
     parser.add_argument('--cases-prefix', metavar='P[,P...]',
                         help='union of ID prefixes from the full registry, including untagged cases; '

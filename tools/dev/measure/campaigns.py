@@ -794,7 +794,9 @@ def steady_summary(times, ir, allocations):
     base = medians['base']
     return dict(
         wall_ns_per_cycle={name: dict(median=value, minimum=min(times[name]), maximum=max(times[name]),
-                                     ratio_to_base=value / base) for name, value in medians.items()},
+                                     ratio_to_base=value / base,
+                                     ratio_to_pin=value / medians['pin_'] if 'pin_' in medians else None)
+                           for name, value in medians.items()},
         ir_per_cycle={name: [min(values), max(values)] for name, values in ir.items()},
         base_minus_pr_ir_bounds=[min(ir['base']) - max(ir['pr__']), max(ir['base']) - min(ir['pr__'])],
         same_bytes_wall_delta_ns={name: medians[control] - medians[name]
@@ -802,6 +804,12 @@ def steady_summary(times, ir, allocations):
         allocations_per_cycle={name: {metric: [min(row[metric] for row in rows),
                                                max(row[metric] for row in rows)]
                                      for metric in ('count', 'bytes')} for name, rows in allocations.items()})
+
+
+# The steady comparison's built-in library names: its measured sides and
+# controls, then its allocation fixtures. No --arm may take one.
+STEADY_SOURCES = ('base', 'pr__', 'pin_', 'bctl', 'pctl')
+STEADY_FIXTURES = ('ball', 'pall')
 
 
 def steady_comparison_inner(argv: Sequence[str], env: Mapping[str, str]) -> int:
@@ -820,6 +828,8 @@ def steady_comparison_inner(argv: Sequence[str], env: Mapping[str, str]) -> int:
     for name in ('base', 'pr', 'pin', 'base-alloc', 'pr-alloc', 'system-dir', 'out'):
         parser.add_argument('--' + name, required=True, type=Path)
     parser.add_argument('--user-dir', type=Path, help='starting profile, copied privately for every launch')
+    parser.add_argument('--arm', action='append', default=[], metavar='NAME=SO',
+                        help='an additional measured library, NAME four of [a-z0-9_], reported against base and pin')
     parser.add_argument('--rounds', type=int, default=20)
     parser.add_argument('--ir-rounds', type=int, default=2)
     parser.add_argument('--cycles', type=int, default=8)
@@ -831,7 +841,15 @@ def steady_comparison_inner(argv: Sequence[str], env: Mapping[str, str]) -> int:
         parser.error('--cpu is outside this process affinity')
     if args.user_dir and args.out.resolve().is_relative_to(args.user_dir.resolve()):
         parser.error('--out must be outside --user-dir (including the profile directory itself)')
-    sources = dict(base=args.base, pr__=args.pr, pin_=args.pin, bctl=args.base, pctl=args.pr)
+    sources = dict(zip(STEADY_SOURCES, (args.base, args.pr, args.pin, args.base, args.pr)))
+    extra = {}
+    for value in args.arm:
+        name, _, path = value.partition('=')
+        if (not re.fullmatch('[a-z0-9_]{4}', name) or name in sources or name in STEADY_FIXTURES
+                or name in extra or not path):
+            parser.error('invalid or repeated --arm: ' + value)
+        extra[name] = Path(path)
+    sources.update(extra)
     fixtures = dict(ball=args.base_alloc, pall=args.pr_alloc)
     for name, path in {**sources, **fixtures}.items():
         if identity.library_backend(path) != args.cell:
@@ -913,8 +931,8 @@ def steady_comparison_inner(argv: Sequence[str], env: Mapping[str, str]) -> int:
             if set(parsed['totals']) != {'Ir'} or parsed['totals']['Ir'] <= 0:
                 raise ValueError(name + ': invalid Callgrind instruction total')
             counts[name].append(parsed['totals']['Ir'] / (args.cycles - 1))
-    if len({checksums[name] for name in ('base', 'pr__', 'bctl', 'pctl', 'ball', 'pall')}) != 1:
-        raise ValueError('base/PR/control/allocation-fixture checksums differ')
+    if len({checksums[name] for name in ('base', 'pr__', 'bctl', 'pctl', 'ball', 'pall', *extra)}) != 1:
+        raise ValueError('base/PR/control/arm/allocation-fixture checksums differ')
     result = dict(steady_summary(times, counts, allocations), checksums=checksums,
                   pin_checksum_equal=checksums['pin_'] == checksums['base'],
                   user_profile_identity=profile_identity)
@@ -930,6 +948,118 @@ def steady_comparison(argv: Sequence[str], env: Mapping[str, str]) -> int:
             return steady_comparison_inner(argv, admission.env)
 
 
+STACK_WORKLOADS = ('write', 'init', 'init-ir', 'steady')
+STACK_PROFILES = 'empty,modest,phrases,journals,user,user8,usersparse'
+
+
+def stack_arm(value: str, parser) -> tuple[str, Path]:
+    """Parse one NAME=PREFIX arm; NAME is one to four of [a-z0-9].
+
+    The steady stage pads NAME to four characters with `_`; a padded name
+    that is one of its built-in names is refused here, before the teardown
+    stages run.
+    """
+    name, _, prefix = value.partition('=')
+    if (not re.fullmatch('[a-z0-9]{1,4}', name) or not prefix
+            or name.ljust(4, '_') in STEADY_SOURCES + STEADY_FIXTURES):
+        parser.error('invalid --arm: ' + value)
+    return name, Path(prefix)
+
+
+def stack_commands(args) -> list[tuple[str, list[str]]]:
+    """The teardown controller's argv for each selected teardown workload, every arm in each.
+
+    The same subject, base, pin and arms run in every stage; each stage has
+    its own work directory under --work.
+    """
+    def lib(prefix, facade):
+        return str(prefix / 'lib' / f'lib{facade}.so')
+    common = [str(bench.BISECT / 'contract-diff.py'), args.cell, str(args.pin_prefix),
+              lib(args.pr_prefix, 'pinyin'), '--zhuyin-so', lib(args.pr_prefix, 'zhuyin'),
+              '--base-pinyin-so', lib(args.base_prefix, 'pinyin'),
+              '--base-zhuyin-so', lib(args.base_prefix, 'zhuyin')]
+    for name, prefix in args.arm:
+        common += ['--teardown-arm', f'{name}={lib(prefix, "pinyin")}:{lib(prefix, "zhuyin")}']
+    common.append('--teardown')
+    stages = dict(
+        write=['--teardown-stage', 'user-phrase', '--teardown-facades', 'pinyin', '--teardown-cases', 'user8',
+               '--teardown-work-dir', str(args.work / 'user'),
+               '--teardown-summary-dir', str(args.work / 'user-profiles')],
+        init=['--teardown-stage', 'confirm', '--teardown-facades', 'both', '--teardown-cases', STACK_PROFILES,
+              '--teardown-startup-heap', '--teardown-work-dir', str(args.work / 'init')],
+        **{'init-ir': ['--teardown-stage', 'init-attribute', '--teardown-init-probes', 'none',
+                       '--teardown-facades', 'both', '--teardown-cases', STACK_PROFILES,
+                       '--teardown-work-dir', str(args.work / 'init')]})
+    return [(name, common + stages[name]) for name in args.workloads if name in stages]
+
+
+def stack_comparison_inner(argv: Sequence[str], env: Mapping[str, str]) -> int:
+    """Measure a stack in one job: base, PR, further arms and the pin, in every workload.
+
+    Runs the teardown user-phrase write window (user8), confirm init with
+    startup heap and init-attribute instructions on the seven profiles and
+    both facades, then steady-comparison on the user8 profile the write stage
+    provisioned. Each workload's records go to WORK/<workload>.log.
+    """
+    parser = argparse.ArgumentParser(description=stack_comparison_inner.__doc__)
+    parser.add_argument('--cell', required=True, choices=('bdb', 'kc', 'tkrzw'))
+    for name in ('pin-prefix', 'base-prefix', 'pr-prefix', 'base-alloc', 'pr-alloc', 'work'):
+        parser.add_argument('--' + name, required=True, type=Path)
+    parser.add_argument('--arm', action='append', default=[], metavar='NAME=PREFIX',
+                        help='a further installed prefix, rotated with base, PR and pin (repeatable)')
+    parser.add_argument('--workloads', default=','.join(STACK_WORKLOADS),
+                        help='comma-separated subset of ' + ','.join(STACK_WORKLOADS))
+    args = parser.parse_args(argv)
+    args.arm = [stack_arm(value, parser) for value in args.arm]
+    if len({name for name, _ in args.arm}) != len(args.arm):
+        parser.error('repeated --arm name')
+    args.workloads = args.workloads.split(',')
+    if not args.workloads or any(name not in STACK_WORKLOADS for name in args.workloads) \
+            or len(set(args.workloads)) != len(args.workloads):
+        parser.error('unknown or repeated --workloads')
+    if 'steady' in args.workloads and 'write' not in args.workloads \
+            and not (args.work / 'user/profiles/user8/user').is_dir():
+        parser.error('steady needs the user8 profile the write workload provisions')
+    if 'steady' in args.workloads:
+        libraries = [args.base_alloc, args.pr_alloc] + [
+            prefix / 'lib/libpinyin.so'
+            for prefix in (args.base_prefix, args.pr_prefix, args.pin_prefix, *(prefix for _, prefix in args.arm))
+        ]
+        for library in libraries:
+            if not library.is_file():
+                parser.error(f'steady library not found: {library}')
+    for directory in ('user', 'init'):
+        (args.work / directory).mkdir(parents=True, exist_ok=True)
+    child = dict(env, CONTRACT_DIFF_CELL=args.cell)
+    for name, command in stack_commands(args):
+        emit(f'stack comparison: {name}')
+        with (args.work / f'{name}.log').open('wb') as log:
+            status = subprocess.run([sys.executable, '-B', '-X', 'lazy_imports=normal', *command],
+                                    env=child, stdout=log, stderr=subprocess.STDOUT, check=False).returncode
+        if status:
+            emit(f'stack comparison: {name} exited {status}; see {args.work / (name + ".log")}', error=True)
+            return status
+    if 'steady' in args.workloads:
+        emit('stack comparison: steady')
+        steady = ['--cell', args.cell, '--base', str(args.base_prefix / 'lib/libpinyin.so'),
+                  '--pr', str(args.pr_prefix / 'lib/libpinyin.so'),
+                  '--pin', str(args.pin_prefix / 'lib/libpinyin.so'),
+                  '--base-alloc', str(args.base_alloc), '--pr-alloc', str(args.pr_alloc),
+                  '--system-dir', str(args.pin_prefix / 'lib/libpinyin/data'),
+                  '--user-dir', str(args.work / 'user/profiles/user8/user'), '--out', str(args.work / 'steady')]
+        for name, prefix in args.arm:
+            steady += ['--arm', f'{name.ljust(4, "_")}={prefix / "lib/libpinyin.so"}']
+        return steady_comparison_inner(steady, child)
+    return 0
+
+
+def stack_comparison(argv: Sequence[str], env: Mapping[str, str]) -> int:
+    """Hold heavy admission for the whole serial stack comparison."""
+    with slot.cancellation_handlers():
+        with slot.HeavyAdmission('stack comparison', dict(env), runner=True) as admission:
+            return stack_comparison_inner(argv, admission.env)
+
+
 RECIPES = {'perf-baseline': perf_baseline, 'perf-matrix': perf_matrix, 'perf-same-data': perf_same_data,
            'shipped-check': shipped_check, 'tree-recipe-control': tree_recipe_control, 'rss-diag': rss_diag,
-           'steady-comparison': steady_comparison}
+           'steady-comparison': steady_comparison, 'stack-comparison': stack_comparison}
