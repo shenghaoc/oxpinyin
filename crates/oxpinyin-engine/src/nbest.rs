@@ -1034,6 +1034,9 @@ impl GenerationView<'_> {
                 *continued = true;
                 return Ok(());
             }
+            // `search_matrix_recur`'s leaf searches the table, which asserts
+            // on a toned first initial-only key (`pinyin_phrase3.h:152`).
+            EngineError::check_toned_incomplete(&path.keys, &path.tones)?;
             *continued |= dictionary
                 .trellis_ranges_continued(
                     &path.keys,

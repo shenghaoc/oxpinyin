@@ -2085,6 +2085,25 @@ impl Runtime {
         user_dir: Option<&Path>,
         law: UserConfLaw,
     ) -> Result<Self, OpenError> {
+        Self::open_with_law_reporting(system_dir, user_dir, law, &mut |_| {})
+    }
+
+    /// [`Runtime::open_with_law`], calling `unmapped` with each default
+    /// library whose system chunk is absent, in index order, as the pin's
+    /// init loop reaches it and writes `mmap %s failed!`
+    /// (`pinyin.cpp:253-256`, `zhuyin.cpp:197-200`). Where the open stops
+    /// at a default row the pin dies on, only the libraries the loop
+    /// passed before that row are reported.
+    ///
+    /// # Errors
+    ///
+    /// As [`Runtime::open`].
+    pub fn open_with_law_reporting(
+        system_dir: &Path,
+        user_dir: Option<&Path>,
+        law: UserConfLaw,
+        unmapped: &mut dyn FnMut(&Path),
+    ) -> Result<Self, OpenError> {
         // `SystemTableInfo2::load`, the pin's first step: every refusal,
         // a missing file included, fails the init (`pinyin.cpp:335-340`,
         // `zhuyin.cpp:279-284`).
@@ -2093,8 +2112,16 @@ impl Runtime {
         // The init loop over the default rows runs after `check_format`
         // (`pinyin.cpp:344`, `:377-392`), so a profile judgement has been
         // written when it dies.
-        conf.check_default_rows(user_dir)
-            .map_err(|site| OpenError::TableConf(TableConfError::Abort(site)))?;
+        if let Err((index, site)) = conf.check_default_rows(user_dir) {
+            // The rows before it were mapped and their lines written; a
+            // row without a user file maps its own chunk first (the log
+            // `load` that asserts comes after, `pinyin.cpp:268-271`).
+            let through = site == oxpinyin_data::table_info::TableConfSite::NullUserFile;
+            for path in conf.absent_default_libraries(system_dir, index, through) {
+                unmapped(&path);
+            }
+            return Err(OpenError::TableConf(TableConfError::Abort(site)));
+        }
         let pinyin_index = system_dir.join(SystemDbm::PinyinIndex.file_name());
         let phrase_index = system_dir.join(SystemDbm::PhraseIndex.file_name());
         let bigram = system_dir.join(SystemDbm::Bigram.file_name());
@@ -2103,6 +2130,11 @@ impl Runtime {
         require_file(&bigram)?;
 
         let dict = SystemDictionary::open_with(system_dir, &conf).map_err(OpenError::Dict)?;
+        // The init loop wrote each absent library's line as it mapped it,
+        // before anything after the loop (`pinyin.cpp:377-392`).
+        for path in dict.libraries().unmapped() {
+            unmapped(path);
+        }
         // The loaded-library mask is shared with the language model: an
         // unloaded library's items leave both the lookups and the unigram
         // denominator, as freeing the sub-index does upstream.

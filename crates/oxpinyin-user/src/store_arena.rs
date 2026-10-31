@@ -411,9 +411,11 @@ impl<S: WriteStore> GenericUserStore<S> {
 
     pub(super) fn arena_remove(&mut self, token: Token) -> Result<bool, UserStoreError> {
         let mask = PHRASE_INDEX_LIBRARY_MASK | PHRASE_MASK;
-        if let Some(error) = self.bigram_mask_fault(mask, token) {
-            return Err(error);
-        }
+        // The pin's three removal asserts come before its `mask_out`
+        // (`pinyin.cpp:3743`, `:3750`, `:3759`, then `:3766`): the bigram
+        // fault is read now and answered only once they pass, before any
+        // table is changed.
+        let bigram_fault = self.bigram_mask_fault(mask, token);
         let target = self
             .inner
             .libpinyin
@@ -434,9 +436,15 @@ impl<S: WriteStore> GenericUserStore<S> {
             return Ok(false);
         }
         let removed = db.write(|txn| {
+            if !phrase_table::index_removable_ucs4(txn, &item.phrase, token)? {
+                return Ok(Some(false));
+            }
+            if bigram_fault.is_some() {
+                return Ok(None);
+            }
             if phrase_table::remove_index_ucs4(txn, &item.phrase, token)? != phrase_table::ERROR_OK
             {
-                return Ok(false);
+                return Ok(Some(false));
             }
             let total = txn_get_u64_or(txn, UNIGRAM_TOTAL, &[UNIGRAM_TOTAL_KEY], 0)?;
             txn.put(
@@ -444,10 +452,12 @@ impl<S: WriteStore> GenericUserStore<S> {
                 &[UNIGRAM_TOTAL_KEY],
                 &codec::encode_u64(total.saturating_sub(u64::from(item.unigram))),
             )?;
-            Ok(true)
+            Ok(Some(true))
         })?;
-        if !removed {
-            return Ok(false);
+        match removed {
+            Some(true) => {}
+            Some(false) => return Ok(false),
+            None => return Err(bigram_fault.unwrap_or(UserStoreError::InvalidPhrase)),
         }
         let rows = IndexRows::from_index(
             item.prons

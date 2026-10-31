@@ -825,3 +825,36 @@ fn a_path_memo_prices_as_trellis_item_does() {
         "vacuity guard: some token prices"
     );
 }
+
+/// Register row 79: the init loop maps the default libraries in index order
+/// and writes `mmap %s failed!` for each absent one (`pinyin.cpp:253-256`)
+/// before it reaches a `DICTIONARY` row and asserts (`:388`), so the open
+/// reports the libraries before that row, and only those.
+#[test]
+fn a_default_dictionary_row_reports_only_the_libraries_before_it() {
+    let tmp = scratch_dir("oxpinyin-runtime-row-79-");
+    let dir = tmp.path().to_path_buf();
+    let conf = std::fs::read_to_string(w3_dir().join("table.conf")).expect("table.conf");
+    let conf = conf.replace(
+        "default OPENGRAM_DICTIONARY opengram.table opengram.bin opengram.dbin SYSTEM_FILE",
+        "default OPENGRAM_DICTIONARY opengram.table opengram.bin NULL DICTIONARY",
+    );
+    std::fs::write(dir.join("table.conf"), conf).expect("write table.conf");
+    let mut reported = Vec::new();
+    let opened = Runtime::open_with_law_reporting(
+        &dir,
+        None,
+        oxpinyin_user::UserConfLaw::Pinyin,
+        &mut |path| reported.push(path.to_path_buf()),
+    );
+    assert!(matches!(
+        opened,
+        Err(OpenError::TableConf(TableConfError::Abort(
+            oxpinyin_runtime::TableConfSite::DefaultDictionary
+        )))
+    ));
+    assert_eq!(
+        reported,
+        [dir.join("gb_char.bin"), dir.join("gbk_char.bin")]
+    );
+}

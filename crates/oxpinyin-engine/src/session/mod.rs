@@ -575,6 +575,11 @@ struct ScanScratch<'a> {
     path: &'a mut SmallVec<[SyllableKey; 16]>,
     entries: &'a mut Vec<PhraseEntry>,
     window_addon: &'a mut Vec<Candidate>,
+    /// An explicit guess: the scan is the pin's `pinyin_guess_candidates`
+    /// search, so its table searches assert where the pin's do
+    /// ([`EngineError::TonedIncompleteKey`]); an eager refresh, which the
+    /// pin never runs, does not.
+    explicit: bool,
 }
 
 struct ScanBuf<'a> {
@@ -588,6 +593,8 @@ struct ScanBuf<'a> {
     /// As [`ScanScratch::unreadable`].
     unreadable: &'a mut bool,
     entries: &'a mut Vec<PhraseEntry>,
+    /// As [`ScanScratch::explicit`].
+    explicit: bool,
 }
 
 /// One key of the scan matrix at its byte position, with the byte position

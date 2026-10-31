@@ -198,6 +198,21 @@ pub enum EngineError {
         /// The prefix path length the walk was on when it reached the key.
         syllables: usize,
     },
+    /// A phrase-table search over a key path whose first initial-only key
+    /// carries a tone: `contains_incomplete_pinyin` asserts
+    /// `CHEWING_ZERO_TONE == key.m_tone` on the first initial-only key
+    /// (`storage/pinyin_phrase3.h:146-156` at 074a2219), at the top of every
+    /// table search and suggestion search that holds it.
+    TonedIncompleteKey,
+    /// A character's one-character phrase-table search held more than four
+    /// tokens. `_pre_compute_tokens` reduces it through `get_first_token`
+    /// (`pinyin.cpp:3117`, `zhuyin.cpp:2080`), whose validating
+    /// `reduce_tokens` asserts `0 <= num && num <= 4`
+    /// (`phrase_large_table3.h:95`, `:106`).
+    ReduceTokensCount {
+        /// The tokens the search held.
+        count: usize,
+    },
     /// The user-model backend failed (the learning/observation seam).
     UserModel(String),
     /// The input could not be represented as a segment graph.
@@ -313,6 +328,15 @@ impl fmt::Display for EngineError {
                      {syllables}-syllable prefix"
                 )
             }
+            Self::TonedIncompleteKey => {
+                formatter.write_str("a searched key path's first initial-only key carries a tone")
+            }
+            Self::ReduceTokensCount { count } => {
+                write!(
+                    formatter,
+                    "a phrase-table search held {count} tokens, more than four"
+                )
+            }
             Self::UserModel(message) => write!(formatter, "user model error: {message}"),
             Self::Graph(error) => write!(formatter, "graph error: {error}"),
             Self::Decode(error) => write!(formatter, "decode error: {error}"),
@@ -343,6 +367,8 @@ impl std::error::Error for EngineError {
             | Self::UnsafeLookupPredecessor { .. }
             | Self::ReadAfterCheck { .. }
             | Self::OverlongUserIndexKey { .. }
+            | Self::TonedIncompleteKey
+            | Self::ReduceTokensCount { .. }
             | Self::UserModel(_) => None,
         }
     }
@@ -367,6 +393,29 @@ impl From<ScoringError> for EngineError {
 }
 
 impl EngineError {
+    /// [`Self::TonedIncompleteKey`] where the pin's table search over
+    /// `keys` (with their typed `tones`) asserts: the first initial-only
+    /// key, if any, carries a tone (`contains_incomplete_pinyin` returns at
+    /// the first one, `pinyin_phrase3.h:148-154`).
+    ///
+    /// # Errors
+    ///
+    /// [`Self::TonedIncompleteKey`] on that path.
+    pub(crate) fn check_toned_incomplete(
+        keys: &[oxpinyin_core::SyllableKey],
+        tones: &[u8],
+    ) -> Result<(), Self> {
+        let first = keys
+            .iter()
+            .position(|key| key.completeness() == oxpinyin_core::Completeness::Partial);
+        match first {
+            Some(index) if tones.get(index).is_some_and(|tone| *tone != 0) => {
+                Err(Self::TonedIncompleteKey)
+            }
+            _ => Ok(()),
+        }
+    }
+
     /// The lookup refusal for a [`oxpinyin_core::GramFault`] met on
     /// `token`'s merged row.
     #[must_use]
@@ -381,6 +430,28 @@ impl EngineError {
 #[cfg(test)]
 mod tests {
     use super::EngineError;
+
+    #[test]
+    fn only_a_toned_first_initial_only_key_is_the_table_assert() {
+        let key = |text| oxpinyin_core::SyllableKey::from_text(text).expect("key");
+        let (n, ni, h) = (key("n"), key("ni"), key("h"));
+        assert_eq!(
+            EngineError::check_toned_incomplete(&[n], &[4]),
+            Err(EngineError::TonedIncompleteKey)
+        );
+        assert_eq!(
+            EngineError::check_toned_incomplete(&[ni, n], &[3, 4]),
+            Err(EngineError::TonedIncompleteKey)
+        );
+        // `contains_incomplete_pinyin` returns at the first initial-only key
+        // (`pinyin_phrase3.h:148-154`): a later toned one is never checked.
+        assert_eq!(
+            EngineError::check_toned_incomplete(&[h, n], &[0, 4]),
+            Ok(())
+        );
+        assert_eq!(EngineError::check_toned_incomplete(&[n], &[0]), Ok(()));
+        assert_eq!(EngineError::check_toned_incomplete(&[ni], &[4]), Ok(()));
+    }
 
     #[test]
     fn errors_render_the_offending_values() {

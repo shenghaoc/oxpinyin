@@ -4128,17 +4128,17 @@ impl<S: WriteStore> GenericUserStore<S> {
             return self.arena_remove(token);
         }
         // `pinyin_remove_user_candidate` reaches `user_bigram->mask_out`
-        // (`pinyin.cpp:3766`) after its phrase-index removals. Those are
-        // in-memory and die with the pin's abort, so a failed call must
-        // leave the store unchanged: refuse the recorded bigram faults
-        // before any removal.
-        if let Some(error) = self.bigram_mask_fault(PHRASE_INDEX_LIBRARY_MASK | PHRASE_MASK, token)
-        {
-            return Err(error);
-        }
+        // (`pinyin.cpp:3766`) after its phrase-index removals and their
+        // asserts (`:3743`, `:3750`, `:3759`). Those are in-memory and die
+        // with the pin's abort, so a failed call must leave the store
+        // unchanged: the recorded bigram fault is read now and answered
+        // once the removal asserts pass, before any removal.
+        let bigram_fault = self.bigram_mask_fault(PHRASE_INDEX_LIBRARY_MASK | PHRASE_MASK, token);
         let db = self.database();
         let container = self.inner.bigram_db.is_some();
-        let result: Result<Option<(bool, IndexRows)>, UserStoreError> = db
+        // `None`: a removal assert; `Some(None)`: the bigram fault, with
+        // nothing changed; `Some(Some(_))`: removed.
+        let result: Result<Option<Option<(bool, IndexRows)>>, UserStoreError> = db
             .write(|txn| {
                 let token_key = codec::encode_token(token);
                 // `phrase_index->remove_phrase_item` (`pinyin.cpp:3743`):
@@ -4162,6 +4162,12 @@ impl<S: WriteStore> GenericUserStore<S> {
                 // Validate the known abort case before publishing any table
                 // mutation, preserving this API's failed-call behavior.
                 // pinyin.cpp:3750 removes only the first matching stored token.
+                if !phrase_table::index_removable_ucs4(txn, &text, token)? {
+                    return Ok(None);
+                }
+                if bigram_fault.is_some() {
+                    return Ok(Some(None));
+                }
                 if phrase_table::remove_index_ucs4(txn, &text, token)? != phrase_table::ERROR_OK {
                     return Ok(None);
                 }
@@ -4215,10 +4221,15 @@ impl<S: WriteStore> GenericUserStore<S> {
 
                 rederive_alloc_cursors(txn, &[])?;
                 let has = has_user_data_in_write_txn(txn)?;
-                Ok(Some((has, index_rows)))
+                Ok(Some(Some((has, index_rows))))
             })
             .map_err(UserStoreError::from);
-        result?.map_or_else(
+        let removed = match result? {
+            None => None,
+            Some(None) => return Err(bigram_fault.unwrap_or(UserStoreError::InvalidPhrase)),
+            Some(Some(removed)) => Some(removed),
+        };
+        removed.map_or_else(
             || Ok(false),
             |(has_user_data, index_rows)| {
                 self.keep_index_rows(&index_rows);

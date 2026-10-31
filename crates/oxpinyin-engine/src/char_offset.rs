@@ -230,10 +230,16 @@ where
     }
 
     // `_pre_compute_tokens`: the first token of each character's
-    // one-character phrase-table search; none → `false`.
+    // one-character phrase-table search, in order (`pinyin.cpp:3109-3123`).
+    // `get_first_token`'s validating `reduce_tokens` asserts on more than
+    // four tokens before the empty search's `false` is tested.
     let mut tokens = Vec::with_capacity(phrase.phrase_length());
     for word in phrase.outward_words() {
-        let Some(token) = dictionary.tokens_for_ucs4(&[word]).into_iter().next() else {
+        let found = dictionary.tokens_for_ucs4(&[word]);
+        if found.len() > 4 {
+            return Err(EngineError::ReduceTokensCount { count: found.len() });
+        }
+        let Some(&token) = found.first() else {
             return Ok(None);
         };
         tokens.push(token);

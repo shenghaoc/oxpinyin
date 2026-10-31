@@ -47,7 +47,7 @@ mod snapshot;
 pub use context::{
     ContextCore, FALLBACK_CLEARED_BIT, LibraryLoadFault, LibraryRowAssert, LiveOptions,
     MaskOutOutcome, OpenFailure, SHORT_ADD_WARNING, SaveOutcome, StoreWriteFailed,
-    UNKNOWN_DATABASE_FORMAT_WARNING,
+    UNKNOWN_DATABASE_FORMAT_WARNING, null_chunk_asserts,
 };
 pub use cursor::{KeyAt, SpanSource};
 pub use export_rows::{

@@ -259,8 +259,18 @@ fn writes_null_chunk_line(dir: &Path, reads_as_a_chunk: impl FnOnce(&Path) -> bo
     cfg!(unix) && !reads_as_a_chunk(dir)
 }
 
+/// Whether the pin's `MemoryChunk::mmap` asserts (`memory_chunk.h:493`) on
+/// `dir` read as the chunk of a row that names none — the complement of
+/// `writes_null_chunk_line`: where it does not assert, it writes
+/// `mmap %s failed!` and dies of SIGSEGV on the empty chunk instead (class
+/// (b)). The C facades abort the process on the assert shape.
+#[must_use]
+pub fn null_chunk_asserts(dir: &Path) -> bool {
+    !writes_null_chunk_line(dir, directory_reads_as_a_chunk)
+}
+
 /// Writes the pin's `mmap %s failed!` line for `dir` with
-/// [`c_stderr::mmap_failed`], if [`writes_null_chunk_line`] says the pin
+/// [`c_stderr::mmap_failed`], if `writes_null_chunk_line` says the pin
 /// writes it on this file system.
 fn null_chunk_refused(dir: &Path) {
     if writes_null_chunk_line(dir, directory_reads_as_a_chunk) {
@@ -417,7 +427,14 @@ impl ContextCore {
         option_word: u32,
         law: UserConfLaw,
     ) -> Result<Self, OpenFailure> {
-        let runtime = Runtime::open_with_law(system_dir, user_dir, law).map_err(|error| {
+        // The libraries whose file is absent load as unloaded and the open
+        // goes on; the pin's lines for them follow the user profile's
+        // (`check_format` runs before the library loop), on its stream, and
+        // stop where the loop dies.
+        let runtime = Runtime::open_with_law_reporting(system_dir, user_dir, law, &mut |path| {
+            c_stderr::mmap_failed(path)
+        })
+        .map_err(|error| {
             // A system library the pin cannot map: its line, then the
             // pin dies on the empty chunk (`pinyin.cpp:256`,
             // `zhuyin.cpp:200`); this open answers NULL as it did. The
@@ -429,12 +446,6 @@ impl ContextCore {
             }
             OpenFailure::Runtime(error)
         })?;
-        // The libraries whose file is absent load as unloaded and the open
-        // goes on; the pin's lines for them follow the user profile's
-        // (`check_format` runs before the library loop), on its stream.
-        for path in runtime.unmapped_system_libraries() {
-            c_stderr::mmap_failed(path);
-        }
         let user = runtime.user_store();
         let mut load_warnings = Vec::new();
         if user.as_ref().is_some_and(|store| store.short_add_payload()) {
