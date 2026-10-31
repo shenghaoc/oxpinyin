@@ -591,6 +591,7 @@ pub struct LineReader<R> {
     eof: bool,
     fail: bool,
     line: Vec<u8>,
+    open_errno: Option<c_int>,
 }
 
 impl LineReader<std::io::StdinLock<'static>> {
@@ -610,8 +611,16 @@ impl LineReader<BufReader<std::fs::File>> {
     /// ([`Self::is_open`]) tests.
     #[must_use]
     pub fn open(filename: &CStr) -> Self {
-        let file = path_of(filename).and_then(|path| std::fs::File::open(path).ok());
-        Self::over(file.map(BufReader::new), false)
+        let (file, open_errno) = match path_of(filename) {
+            Some(path) => match std::fs::File::open(path) {
+                Ok(file) => (Some(file), None),
+                Err(error) => (None, error.raw_os_error()),
+            },
+            None => (None, None),
+        };
+        let mut reader = Self::over(file.map(BufReader::new), false);
+        reader.open_errno = open_errno;
+        reader
     }
 }
 
@@ -631,7 +640,12 @@ impl<R: BufRead> LineReader<R> {
             tied,
             eof: false,
             line: vec![0],
+            open_errno: None,
         }
+    }
+
+    pub fn open_error(&self) -> Option<c_int> {
+        self.open_errno
     }
 
     /// `static_cast<bool>(stream)`: `!fail()`.
@@ -1573,6 +1587,399 @@ pub mod training {
     /// (`eval_correction_rate.cpp:168`).
     pub fn report_cant_open_file(filename: &CStr) {
         print_text(c_stderr(), c"Can't open file:%s\n", filename);
+    }
+}
+
+/// `G_OPTION_FLAG_REVERSE`, the flag `gen_k_mixture_model`'s
+/// `--skip-pi-gram-training` carries (`gen_k_mixture_model.cpp:57`).
+pub const OPTION_FLAG_REVERSE: c_int = glib_sys::G_OPTION_FLAG_REVERSE as c_int;
+
+/// `strerror(errnum)`, copied out of the C library's static buffer.
+#[must_use]
+pub fn strerror(errnum: c_int) -> CString {
+    // SAFETY: `strerror` answers a NUL-terminated string for every error
+    // number; the copy happens before any other call in a single-threaded
+    // utility can replace it.
+    unsafe { CStr::from_ptr(libc::strerror(errnum)) }.to_owned()
+}
+
+/// `printf("%f", value)` into a buffer: the C library's spelling of a finite
+/// value, `inf`, `-inf`, `nan` or `-nan`, with its decimal point for the
+/// active locale.
+#[must_use]
+pub fn format_f64(value: f64) -> Vec<u8> {
+    let mut buffer = [0_u8; 512];
+    // SAFETY: the format takes one `double` and the buffer is large enough
+    // for `%f`'s output at any finite magnitude.
+    let written = unsafe {
+        libc::snprintf(
+            buffer.as_mut_ptr().cast(),
+            buffer.len(),
+            c"%f".as_ptr(),
+            value,
+        )
+    };
+    let length = usize::try_from(written).unwrap_or(0).min(buffer.len() - 1);
+    buffer[..length].to_vec()
+}
+
+/// The k-mixture-model utilities' own `fprintf`, `printf` and `abort` calls
+/// (`utils/training/*_k_mixture_model.cpp` at 074a2219). A `%d` prints a
+/// `guint32` as the signed `int` the pin's format reads; `%f` is the
+/// [`format_f64`] spelling.
+pub mod k_mixture_model {
+    use super::{
+        OutputStream, c_int, c_stderr, print_literal, print_text,
+    };
+    use std::ffi::CStr;
+
+    /// `no magic header in k mixture model.\\n` (`validate:31`,
+    /// `prune:133`, `export:39`).
+    pub fn report_no_magic() {
+        print_literal(c_stderr(), c"no magic header in k mixture model.\n");
+    }
+
+    /// `word count in magic header is unexpected zero.\\n` (`validate:37`).
+    pub fn report_zero_word_count() {
+        print_literal(
+            c_stderr(),
+            c"word count in magic header is unexpected zero.\n",
+        );
+    }
+
+    /// `total freq in magic header is unexpected zero.\\n` (`validate:42`).
+    pub fn report_zero_total_freq() {
+        print_literal(
+            c_stderr(),
+            c"total freq in magic header is unexpected zero.\n",
+        );
+    }
+
+    /// `the word count doesn't match the total freq.\\n` (`validate:47`).
+    pub fn report_word_count_mismatch() {
+        print_literal(
+            c_stderr(),
+            c"the word count doesn't match the total freq.\n",
+        );
+    }
+
+    /// `word count in magic header:%d\\n` (`validate:64`).
+    pub fn print_expected_word_count(value: c_int) {
+        // SAFETY: the format takes one `int`.
+        unsafe { libc::fprintf(c_stderr(), c"word count in magic header:%d\n".as_ptr(), value) };
+    }
+
+    /// `sum of word count in array headers:%d\\n` (`validate:66`).
+    pub fn print_header_word_count_sum(value: c_int) {
+        // SAFETY: the format takes one `int`.
+        unsafe {
+            libc::fprintf(
+                c_stderr(),
+                c"sum of word count in array headers:%d\n".as_ptr(),
+                value,
+            )
+        };
+    }
+
+    /// `the sum differs from word count.\\n` (`validate:67`, `:130`).
+    pub fn report_word_count_sum_differs() {
+        print_literal(c_stderr(), c"the sum differs from word count.\n");
+    }
+
+    /// `total freq in magic header:%d\\n` (`validate:71`).
+    pub fn print_expected_total_freq(value: c_int) {
+        // SAFETY: the format takes one `int`.
+        unsafe { libc::fprintf(c_stderr(), c"total freq in magic header:%d\n".as_ptr(), value) };
+    }
+
+    /// `sum of freqs in array headers:%d\\n` (`validate:73`).
+    pub fn print_header_freq_sum(value: c_int) {
+        // SAFETY: the format takes one `int`.
+        unsafe {
+            libc::fprintf(
+                c_stderr(),
+                c"sum of freqs in array headers:%d\n".as_ptr(),
+                value,
+            )
+        };
+    }
+
+    /// `the total freq differs from sum of freqs.\\n` (`validate:74`).
+    pub fn report_total_freq_sum_differs() {
+        print_literal(
+            c_stderr(),
+            c"the total freq differs from sum of freqs.\n",
+        );
+    }
+
+    /// `in the array header of token %d:\\n` (`validate:104`, `:112`).
+    pub fn print_array_header_token(token: c_int) {
+        // SAFETY: the format takes one `int`.
+        unsafe {
+            libc::fprintf(
+                c_stderr(),
+                c"in the array header of token %d:\n".as_ptr(),
+                token,
+            )
+        };
+    }
+
+    /// `word count is zero but has array items.\\n` (`validate:105`).
+    pub fn report_zero_count_with_items() {
+        print_literal(c_stderr(), c"word count is zero but has array items.\n");
+    }
+
+    /// `both word count and freq are unexpected zero.\\n` (`validate:113-114`).
+    pub fn report_zero_count_and_freq() {
+        print_literal(
+            c_stderr(),
+            c"both word count and freq are unexpected zero.\n",
+        );
+    }
+
+    /// `word count in array header:%d\\n` (`validate:127`).
+    pub fn print_array_header_count(value: c_int) {
+        // SAFETY: the format takes one `int`.
+        unsafe {
+            libc::fprintf(
+                c_stderr(),
+                c"word count in array header:%d\n".as_ptr(),
+                value,
+            )
+        };
+    }
+
+    /// `sum of word count in array items:%d\\n` (`validate:128`).
+    pub fn print_item_count_sum(value: c_int) {
+        // SAFETY: the format takes one `int`.
+        unsafe {
+            libc::fprintf(
+                c_stderr(),
+                c"sum of word count in array items:%d\n".as_ptr(),
+                value,
+            )
+        };
+    }
+
+    /// `wrong arguments.\\n` (`validate:153`, `prune:121`).
+    pub fn report_wrong_arguments() {
+        print_literal(c_stderr(), c"wrong arguments.\n");
+    }
+
+    /// `k mixture model validation failed.\\n` (`validate:163`, `:168`).
+    pub fn report_validation_failed() {
+        print_literal(c_stderr(), c"k mixture model validation failed.\n");
+    }
+
+    /// `the m_WC integer in magic header overflows.\\n` (`merge:110`,
+    /// `gen:274`).
+    pub fn report_magic_wc_overflow() {
+        print_literal(
+            c_stderr(),
+            c"the m_WC integer in magic header overflows.\n",
+        );
+    }
+
+    /// `the m_total_freq in magic header overflows.\\n` (`merge:116`,
+    /// `gen:304`).
+    pub fn report_magic_total_freq_overflow() {
+        print_literal(
+            c_stderr(),
+            c"the m_total_freq in magic header overflows.\n",
+        );
+    }
+
+    /// `fprintf(stderr, "*")` (`prune:144`).
+    pub fn print_progress_star() {
+        print_literal(c_stderr(), c"*");
+    }
+
+    /// `fprintf(stderr, "\n")` (`prune:175`).
+    pub fn print_progress_newline() {
+        print_literal(c_stderr(), c"\n");
+    }
+
+    /// `some wrong possibility is encountered:%f.\\n` (`prune:73-74`).
+    pub fn report_wrong_possibility(remained: f64) {
+        // SAFETY: the format takes one `double`.
+        unsafe {
+            libc::fprintf(
+                c_stderr(),
+                c"some wrong possibility is encountered:%f.\n".as_ptr(),
+                remained,
+            )
+        };
+    }
+
+    /// `k:%d N:%d WC:%d n_0:%d n_1:%d\\n` (`prune:75-78`).
+    pub fn print_prune_counts(k: c_int, n: c_int, wc: c_int, n_0: c_int, n_1: c_int) {
+        // SAFETY: the format takes five `int`s.
+        unsafe {
+            libc::fprintf(
+                c_stderr(),
+                c"k:%d N:%d WC:%d n_0:%d n_1:%d\n".as_ptr(),
+                k,
+                n,
+                wc,
+                n_0,
+                n_1,
+            )
+        };
+    }
+
+    /// `token:%d lambda:%f\\n` (`estimate:141`).
+    pub fn print_token_lambda(token: c_int, lambda: f64) {
+        // SAFETY: the format takes one `int` and one `double`.
+        unsafe {
+            libc::printf(
+                c"token:%d lambda:%f\n".as_ptr(),
+                token,
+                lambda,
+            )
+        };
+    }
+
+    /// `average lambda:%f\\n` (`estimate:152`).
+    pub fn print_average_lambda(lambda: f64) {
+        // SAFETY: the format takes one `double`.
+        unsafe { libc::printf(c"average lambda:%f\n".as_ptr(), lambda) };
+    }
+
+    /// `error: k mixture model expected.\\n` (`import:78`, `:86`).
+    pub fn report_model_expected() {
+        print_literal(c_stderr(), c"error: k mixture model expected.\n");
+    }
+
+    /// `empty file input.\\n` (`import:303`).
+    pub fn report_empty_input() {
+        print_literal(c_stderr(), c"empty file input.\n");
+    }
+
+    /// `load table.conf failed.\\n` (`import:277`, `export:130`, `gen:332`).
+    pub fn report_table_conf_load_failed() {
+        print_literal(c_stderr(), c"load table.conf failed.\n");
+    }
+
+    /// `load %s failed!\\n` (`utils/utils_helper.h:87`).
+    pub fn report_chunk_load_failed(filename: &CStr) {
+        print_text(c_stderr(), c"load %s failed!\n", filename);
+    }
+
+    /// `open %s failed.\\n` (`export:144`); a NULL name is the C library's
+    /// `(null)`.
+    pub fn report_open_failed(filename: Option<&CStr>) {
+        // SAFETY: `stderr` is open; the format takes one string, or the NULL
+        // the pin passes for an unset filename.
+        unsafe {
+            libc::fprintf(
+                c_stderr(),
+                c"open %s failed.\n".as_ptr(),
+                filename.map_or(core::ptr::null(), CStr::as_ptr),
+            )
+        };
+    }
+
+    /// `error: unknown token:%d.\\n` (`tag_utility.cpp:398`, `:376`).
+    pub fn report_unknown_token(token: c_int) {
+        // SAFETY: the format takes one `int`.
+        unsafe {
+            libc::fprintf(c_stderr(), c"error: unknown token:%d.\n".as_ptr(), token)
+        };
+    }
+
+    /// `can't open file: %s.\\n` (`gen:355`).
+    pub fn report_cant_open_file(filename: &CStr) {
+        print_text(c_stderr(), c"can't open file: %s.\n", filename);
+    }
+
+    /// `error:%s.\\n` (`gen:356`).
+    pub fn report_error(message: &CStr) {
+        print_text(c_stderr(), c"error:%s.\n", message);
+    }
+
+    /// `\data model "k mixture model" count %d N %d total_freq %d\n`
+    /// (`export:42-44`).
+    pub fn print_data_header(output: &OutputStream, wc: c_int, n: c_int, total_freq: c_int) {
+        // SAFETY: the stream is open; the format takes three `int`s.
+        unsafe {
+            libc::fprintf(
+                output.as_ptr(),
+                c"\\data model \"k mixture model\" count %d N %d total_freq %d\n".as_ptr(),
+                wc,
+                n,
+                total_freq,
+            )
+        };
+    }
+
+    /// `\1-gram\\n` (`export:51`).
+    pub fn print_gram_1(output: &OutputStream) {
+        print_literal(output.as_ptr(), c"\\1-gram\n");
+    }
+
+    /// `\2-gram\\n` (`export:73`).
+    pub fn print_gram_2(output: &OutputStream) {
+        print_literal(output.as_ptr(), c"\\2-gram\n");
+    }
+
+    /// `\end\\n` (`export:108`).
+    pub fn print_end(output: &OutputStream) {
+        print_literal(output.as_ptr(), c"\\end\n");
+    }
+
+    /// `\item %d %s count %d freq %d\\n` (`export:61-62`).
+    pub fn print_unigram_item(
+        output: &OutputStream,
+        token: c_int,
+        phrase: &CStr,
+        wc: c_int,
+        freq: c_int,
+    ) {
+        // SAFETY: the stream is open; the format takes an `int`, a string and
+        // two `int`s.
+        unsafe {
+            libc::fprintf(
+                output.as_ptr(),
+                c"\\item %d %s count %d freq %d\n".as_ptr(),
+                token,
+                phrase.as_ptr(),
+                wc,
+                freq,
+            )
+        };
+    }
+
+    /// `\item %d %s %d %s count %d T %d N_n_0 %d n_1 %d Mr %d\n`
+    /// (`export:90-94`).
+    pub fn print_bigram_item(
+        output: &OutputStream,
+        token1: c_int,
+        word1: &CStr,
+        token2: c_int,
+        word2: &CStr,
+        wc: c_int,
+        n_n_0: c_int,
+        n_1: c_int,
+        mr: c_int,
+    ) {
+        // SAFETY: the stream is open; the strings are NUL-terminated and
+        // outlive the call; the format takes two `int`s, two strings and four
+        // `int`s.
+        unsafe {
+            libc::fprintf(
+                output.as_ptr(),
+                c"\\item %d %s %d %s count %d T %d N_n_0 %d n_1 %d Mr %d\n".as_ptr(),
+                token1,
+                word1.as_ptr(),
+                token2,
+                word2.as_ptr(),
+                wc,
+                wc,
+                n_n_0,
+                n_1,
+                mr,
+            )
+        };
     }
 }
 

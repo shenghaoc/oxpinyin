@@ -1,163 +1,152 @@
-//! `prune_k_mixture_model` — drop pairs whose `P(occurrences ≥ K) < CDF`
-//! (`utils/training/prune_k_mixture_model.cpp:45-191`).
+//! `prune_k_mixture_model` (`utils/training/prune_k_mixture_model.cpp` at
+//! `074a2219`): drop the pairs whose survival probability is below the CDF.
 //!
-//! For each `(W1, W2)` pair, `remained = 1 − Σ_{k=0}^{K−1} Pr_G_3(k)`
-//! (the survival `P(occurrences ≥ K)`); a pair with `remained < CDF` is
-//! removed and its `m_WC` is subtracted from the row header, the magic word
-//! count and total freq, and — as a post-pass — from `W2`'s unigram freq.
-//! Rows whose header ends fully zero are dropped.
+//! For each `(W1, W2)`, `remained = 1 − Σ_{k=0}^{K−1} Pr_G_3(k)`. A value
+//! outside `[0, 1]` (NaN included) prints the pin's two diagnostics and
+//! `exit(EDOM)`; a `remained < CDF` removes the pair and subtracts its
+//! `m_WC` from the row header, the magic header's `m_WC` and
+//! `m_total_freq`, and — in the pin's second pass — from W2's unigram
+//! `m_freq`. Rows whose header ends fully zero are removed.
 //!
-//! Upstream interleaves the decisions and the mutations; the model math
-//! reads only `magic.m_N` (constant during a prune) and each pair's own
-//! counts (never modified by pruning another pair), so a decide-then-apply
-//! two-pass is equivalent and keeps the borrows clean.
+//! The pin's progress line is `items->len / 20` per asterisk (`:141-146`);
+//! with fewer than twenty rows that quotient is zero, so every row prints
+//! one, and with no rows nothing does.
 
-use crate::error::KmmError;
-use crate::model::{KMixtureModel, compute_pr_g_3_with_count};
+use std::ffi::CStr;
+
+use oxpinyin_input::tool::{self, k_mixture_model as edge};
+
+use crate::database::Database;
+use crate::math::compute_pr_g_3_with_count;
+use crate::records::{
+    ArrayItemWithToken, KMixtureModelArrayItem, KMixtureModelMagicHeader,
+};
 
 /// Default `-k` (`prune_k_mixture_model.cpp:34`).
-pub const DEFAULT_PRUNE_K: u32 = 3;
+pub const DEFAULT_PRUNE_K: i32 = 3;
 /// Default `--CDF` (`:35`).
 pub const DEFAULT_CDF: f64 = 0.99;
 
-/// Prunes the model in place.
+/// `main`'s body (`:107-191`).
 ///
 /// # Errors
 ///
-/// Returns [`KmmError::Domain`] when `cdf` is not a probability (non-finite
-/// or outside `[0, 1]` — a `cdf > 1` would remove every pair, a NaN none)
-/// or when a survival probability falls outside `[0, 1]` (upstream `EDOM`).
-pub fn prune(model: &mut KMixtureModel, prune_k: u32, cdf: f64) -> Result<(), KmmError> {
-    if !cdf.is_finite() || !(0.0..=1.0).contains(&cdf) {
-        return Err(KmmError::Domain {
-            detail: format!("CDF must be finite and in [0, 1], got {cdf}"),
-        });
-    }
-    let n = model.n;
+/// The pin's ordinary exits: `ENODATA` for a missing magic header and
+/// `EDOM` for an out-of-range probability. The function calls
+/// [`tool::exit`] and does not return in those cases.
+pub fn run(filename: Option<&CStr>, prune_k: i32, cdf: f64) {
+    let db = Database::open_read_write(filename);
+    let Some(mut magic_header) = db.get_magic_header() else {
+        edge::report_no_magic();
+        tool::exit(tool::ENODATA);
+    };
 
-    // Pass 1 — decide (read-only). Collect (token1, token2, wc) to remove.
-    let mut to_remove: Vec<(u32, u32, u32)> = Vec::new();
-    for (&token1, gram) in &model.grams {
-        for (&token2, item) in &gram.items {
-            let remained = survival(prune_k, n, item)?;
-            if remained < cdf {
-                to_remove.push((token1, token2, item.wc));
-            }
+    let items = db.get_all_items();
+
+    let mut progress: usize = 0;
+    let onestep = items.len() / 20;
+    for &token in &items {
+        if progress >= onestep {
+            progress = 0;
+            edge::print_progress_star();
+        }
+        progress += 1;
+
+        let mut single_gram = db
+            .load(token)
+            .unwrap_or_else(|| std::process::abort());
+        let mut removed_array = Vec::new();
+        prune_k_mixture_model(
+            &mut magic_header,
+            &mut single_gram,
+            &mut removed_array,
+            prune_k,
+            cdf,
+        );
+        db.store(token, &single_gram);
+
+        for item in &removed_array {
+            let mut array_header = db.array_header_checked(item.token);
+            array_header.m_freq = array_header.m_freq.wrapping_sub(item.item.m_wc);
+            // The pin's `assert(array_header.m_freq >= 0)` is vacuous for a
+            // `guint32`; the wrapping subtraction above is what it observes.
+            db.set_array_header_checked(item.token, &array_header);
         }
     }
 
-    // Pass 2 — apply.
-    for &(token1, token2, wc) in &to_remove {
-        if let Some(gram) = model.grams.get_mut(&token1) {
-            gram.items.remove(&token2);
-            gram.header_wc = gram.header_wc.wrapping_sub(wc);
-        }
-        model.wc = model.wc.wrapping_sub(wc);
-        model.total_freq = model.total_freq.wrapping_sub(wc);
-    }
-    // Unigram reduce: subtract the removed pair WC from W2's freq (`:159-169`).
-    for &(_token1, token2, wc) in &to_remove {
-        if let Some(gram) = model.grams.get_mut(&token2) {
-            gram.header_freq = gram.header_freq.wrapping_sub(wc);
-        }
-    }
+    // The pin's trailing newline on stderr after the progress line.
+    edge::print_progress_newline();
 
-    // Clean up rows whose header is fully zero (`:179-186`).
-    model
-        .grams
-        .retain(|_, gram| !(gram.header_wc == 0 && gram.header_freq == 0));
-    Ok(())
+    db.set_magic_header(&magic_header);
+
+    for &token in &items {
+        let array_header = db.array_header_checked(token);
+        if array_header.m_wc == 0 && array_header.m_freq == 0 {
+            db.remove_checked(token);
+        }
+    }
 }
 
-/// `remained_poss = 1 − Σ_{k<K} Pr_G_3(k)`, with the `EDOM` range checks
-/// (`:56-80`). `n_0 = N − m_N_n_0` is `guint32` (`wrapping_sub`).
-fn survival(prune_k: u32, n: u32, item: &crate::model::ArrayItem) -> Result<f64, KmmError> {
-    let n_0 = n.wrapping_sub(item.n_n_0);
-    let mut remained = 1.0_f64;
-    let mut errors = false;
-    for k in 0..prune_k {
-        let one = compute_pr_g_3_with_count(k, n, item.wc, n_0, item.n_1);
-        if !(0.0..=1.0).contains(&one) {
-            errors = true;
-        }
-        remained -= one;
-    }
-    if remained.abs() < f64::EPSILON {
-        remained = 0.0;
-    }
-    if errors || !(0.0..=1.0).contains(&remained) {
-        return Err(KmmError::Domain {
-            detail: format!(
-                "remained={remained} k={prune_k} N={n} WC={} n_0={n_0} n_1={}",
-                item.wc, item.n_1
-            ),
-        });
-    }
-    Ok(remained)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{DEFAULT_CDF, DEFAULT_PRUNE_K, prune};
-    use crate::error::KmmError;
-    use crate::generate::GenerateParams;
-    use crate::model::KMixtureModel;
-    use crate::validate::validate;
-
-    fn model_from(docs: &[&str]) -> KMixtureModel {
-        let mut model = KMixtureModel::new();
-        for doc in docs {
-            model
-                .add_document(doc, GenerateParams::default())
-                .expect("count");
-        }
-        model
-    }
-
-    #[test]
-    fn default_cdf_prunes_all_rare_pairs() {
-        // Every pair occurs once across a few documents: P(≥3 per doc) is
-        // ~0, far below 0.99, so the default prune empties the model.
-        let mut model = model_from(&["10 甲\n20 乙\n", "10 甲\n20 乙\n", "30 丙\n40 丁\n"]);
-        prune(&mut model, DEFAULT_PRUNE_K, DEFAULT_CDF).expect("prune");
-        // All bigram pairs pruned; only freq-only headers may remain.
-        let bigram_pairs: usize = model.grams.values().map(|g| g.items.len()).sum();
-        assert_eq!(bigram_pairs, 0, "default CDF prunes every rare pair");
-    }
-
-    #[test]
-    fn a_cdf_outside_the_unit_interval_is_rejected_before_pruning() {
-        for cdf in [2.0, -0.5, f64::NAN, f64::INFINITY] {
-            let mut model = model_from(&["10 甲\n20 乙\n10 甲\n"]);
-            let before = model.clone();
-            let error = prune(&mut model, DEFAULT_PRUNE_K, cdf).expect_err("rejected");
-            assert!(
-                matches!(error, KmmError::Domain { .. }),
-                "cdf {cdf}: {error}"
+/// `prune_k_mixture_model` over one single gram (`:45-105`).
+fn prune_k_mixture_model(
+    magic_header: &mut KMixtureModelMagicHeader,
+    single_gram: &mut crate::records::KmmGram,
+    removed_array: &mut Vec<ArrayItemWithToken<KMixtureModelArrayItem>>,
+    prune_k: i32,
+    cdf: f64,
+) {
+    let array = single_gram.items().to_vec();
+    for item in &array {
+        let token = item.token;
+        let mut remained_poss = 1.0_f64;
+        let mut errors = false;
+        for k in 0..prune_k.max(0) {
+            let one_poss = compute_pr_g_3_with_count(
+                k as u32,
+                magic_header.m_n,
+                item.item.m_wc,
+                magic_header.m_n.wrapping_sub(item.item.m_n_n_0),
+                item.item.m_n_1,
             );
-            assert_eq!(model, before, "cdf {cdf}: model untouched");
+            if !(0.0..=1.0).contains(&one_poss) {
+                errors = true;
+            }
+            remained_poss -= one_poss;
         }
-    }
 
-    #[test]
-    fn cdf_zero_keeps_everything() {
-        // remained is always ≥ 0, so remained < 0 never holds: nothing is
-        // pruned and the model is unchanged.
-        let original = model_from(&["10 甲\n20 乙\n10 甲\n20 乙\n"]);
-        let mut model = original.clone();
-        prune(&mut model, DEFAULT_PRUNE_K, 0.0).expect("prune");
-        assert_eq!(model, original);
-    }
+        if remained_poss.abs() < f64::EPSILON {
+            remained_poss = 0.0;
+        }
 
-    #[test]
-    fn pruned_model_still_validates() {
-        // After pruning, the magic/header/item invariants must still hold
-        // (the WC and freq bookkeeping stays consistent), unless the model
-        // is emptied (validate rejects an all-zero magic header, which the
-        // trainer treats as a degenerate model).
-        let mut model = model_from(&["10 甲\n20 乙\n10 甲\n20 乙\n", "10 甲\n20 乙\n"]);
-        // Prune with CDF 0 keeps everything and must validate.
-        prune(&mut model, DEFAULT_PRUNE_K, 0.0).expect("prune");
-        validate(&model).expect("kept model validates");
+        if errors || !(0.0..=1.0).contains(&remained_poss) {
+            edge::report_wrong_possibility(remained_poss);
+            edge::print_prune_counts(
+                prune_k,
+                magic_header.m_n as i32,
+                item.item.m_wc as i32,
+                magic_header.m_n.wrapping_sub(item.item.m_n_n_0) as i32,
+                item.item.m_n_1 as i32,
+            );
+            tool::exit(tool::EDOM);
+        }
+
+        if remained_poss < cdf {
+            let Some(removed_item) = single_gram.remove_array_item(token) else {
+                std::process::abort();
+            };
+            removed_array.push(ArrayItemWithToken {
+                token,
+                item: removed_item,
+            });
+
+            let mut array_header = *single_gram.header();
+            let removed_count = removed_item.m_wc;
+            array_header.m_wc = array_header.m_wc.wrapping_sub(removed_count);
+            single_gram.set_header(array_header);
+            magic_header.m_wc = magic_header.m_wc.wrapping_sub(removed_count);
+            magic_header.m_total_freq = magic_header
+                .m_total_freq
+                .wrapping_sub(removed_count);
+        }
     }
 }

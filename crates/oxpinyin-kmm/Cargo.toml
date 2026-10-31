@@ -6,24 +6,27 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 publish = false
-description = "Training-only K-mixture-model pipeline reproducing libpinyin's gen/estimate/merge/validate/prune/export/import. Never ships."
+description = "Training-only K-mixture-model operations on the pin's flexible-bigram container: validate, merge, prune, estimate, generate, import and export. Never ships."
 
 [lints]
 workspace = true
 
-# Self-contained: the segmented-corpus stream carries each token's phrase
-# text (`{token} {phrase}` lines), and the KMM text format carries it too,
-# so the model resolves the export phrase-text column from the data it was
-# built from — no phrase-index table, no store backend, no dependencies.
-# This is an intentional architectural divergence from upstream (which
-# re-derives text from the phrase index at export time); the emitted text
-# is identical because the stream's phrase field is the phrase-index text.
-
-[[bin]]
-name = "oxpinyin-kmm"
-path = "src/bin/oxpinyin-kmm.rs"
+[features]
+# The flexible-bigram container selects exactly one store backend. The seven
+# utilities forward their selection here; the default is the reference
+# backend, as in the workspace.
+default = ["tkrzw"]
+kyotocabinet = ["oxpinyin-store/kyotocabinet"]
+bdb = ["oxpinyin-store/bdb"]
+tkrzw = ["oxpinyin-store/tkrzw"]
 
 [dependencies]
+# The pin's FlexibleBigram container: hash DBM class, raw records and the
+# backend-native walk member 4 ported.
+oxpinyin-store = { workspace = true }
+# The pin's edge calls: GLib options and text, C stdio, C++ getline.
+oxpinyin-input = { workspace = true, features = ["tools"] }
 
 [dev-dependencies]
+oxpinyin-testsupport = { path = "../oxpinyin-testsupport" }
 tempfile.workspace = true
