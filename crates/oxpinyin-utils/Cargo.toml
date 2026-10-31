@@ -12,9 +12,9 @@ description = "libpinyin's utilities under their own names and interfaces (exter
 # The data layer's backend selection, forwarded as oxpinyin-datagen does;
 # none of the ported utilities reads or writes a DBM yet.
 default = ["tkrzw"]
-kyotocabinet = ["oxpinyin-data/kyotocabinet"]
-bdb = ["oxpinyin-data/bdb"]
-tkrzw = ["oxpinyin-data/tkrzw"]
+kyotocabinet = ["oxpinyin-data/kyotocabinet", "oxpinyin-store/kyotocabinet"]
+bdb = ["oxpinyin-data/bdb", "oxpinyin-store/bdb"]
+tkrzw = ["oxpinyin-data/tkrzw", "oxpinyin-store/tkrzw"]
 
 [lints]
 workspace = true
@@ -23,6 +23,9 @@ workspace = true
 oxpinyin-core = { workspace = true }
 # pinyin_exact_compare2, shared with the table writers.
 oxpinyin-data = { workspace = true }
+# The pin's DBM files, written and read through the backend seam the data
+# layer and datagen share.
+oxpinyin-store = { workspace = true }
 # The utilities' edge calls: GLib options and text, input streams, C stdio.
 oxpinyin-input = { workspace = true, features = ["tools"] }
 
@@ -42,6 +45,18 @@ path = "src/bin/gen_zhuyin_table.rs"
 [[bin]]
 name = "k_mixture_model_to_interpolation"
 path = "src/bin/k_mixture_model_to_interpolation.rs"
+
+[[bin]]
+name = "gen_binary_files"
+path = "src/bin/gen_binary_files.rs"
+
+[[bin]]
+name = "import_interpolation"
+path = "src/bin/import_interpolation.rs"
+
+[[bin]]
+name = "export_interpolation"
+path = "src/bin/export_interpolation.rs"
 
 [[bin]]
 name = "ngseg"
