@@ -341,8 +341,10 @@ Under the 2026-10-31 UTC ruling they call the `libc` crate and
 `glib-sys`, and declare by hand only what neither binds: the C library's
 `stdout` and `stderr` objects, once per platform in `native.rs` for the
 library and the tools (Linux, Apple/FreeBSD/DragonFly and Windows; any
-other target is a `compile_error!`), and GLib's `g_utf8_skip` for the
-tools. The crate has no build script.
+other target is a `compile_error!`). `g_utf8_next_char`'s step is the
+lead byte's sequence length in plain Rust, not GLib's `g_utf8_skip` table
+([eio-utf8-next-char-invalid-lead](eio-utf8-next-char-invalid-lead.md)).
+The crate has no build script.
 No borrowed raw pointer escapes the safe facade. `oxpinyin-data` becomes
 `forbid(unsafe_code)` after its mmap implementation moves; user,
 runtime, core and engine retain their existing forbids. C facades retain

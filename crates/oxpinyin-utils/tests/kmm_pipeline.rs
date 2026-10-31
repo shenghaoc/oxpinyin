@@ -52,6 +52,10 @@ fn generated(docs: &[&str]) -> KMixtureModel {
 /// path with a byte golden.
 #[test]
 fn full_pipeline_golden() {
+    // The utility prints through the C runtime's text-mode stdout: CRLF on
+    // Windows, LF elsewhere (docs/findings/external-io-boundary.md, "Native
+    // text-mode line endings").
+    let newline = if cfg!(windows) { "\r\n" } else { "\n" };
     // The document cycles 甲→乙→甲 so both tokens appear as a W1 and every row
     // carries a pair (a W2-only token would get a header-only row at the
     // 074a221 pin — see `tests/differential.rs`).
@@ -100,6 +104,7 @@ fn full_pipeline_golden() {
          \\item 10 甲 20 乙 count 2\n\
          \\item 20 乙 10 甲 count 2\n\
          \\end\n"
+            .replace('\n', newline)
     );
 }
 
@@ -130,6 +135,8 @@ fn merge_equals_combined_run() {
 /// criteria §9, §14).
 #[test]
 fn end_to_end_from_real_segmented_corpus() {
+    // The utility's text-mode stdout ends lines with CRLF on Windows.
+    let newline = if cfg!(windows) { "\r\n" } else { "\n" };
     let segmented = std::fs::read_to_string(repo_root().join("fixtures/w9/segmenter-spseg-w3.txt"))
         .expect("committed spseg segmented corpus");
 
@@ -172,9 +179,9 @@ fn end_to_end_from_real_segmented_corpus() {
 
     // The result is well-formed interpolation2.text: header, both sections,
     // no <start> unigram, and every unigram/bigram line is `\item …`.
-    assert!(interp.starts_with("\\data model interpolation\n"));
-    assert!(interp.contains("\\1-gram\n"));
-    assert!(interp.contains("\\2-gram\n"));
+    assert!(interp.starts_with(&format!("\\data model interpolation{newline}")));
+    assert!(interp.contains(&format!("\\1-gram{newline}")));
+    assert!(interp.contains(&format!("\\2-gram{newline}")));
     assert!(interp.trim_end().ends_with("\\end"));
     for line in interp.lines() {
         if line.starts_with("\\item ") {

@@ -326,6 +326,33 @@ mod tests {
         );
     }
 
+    /// POLICY-ACCEPTED (`docs/findings/eio-utf8-next-char-invalid-lead.md`):
+    /// a byte that leads no UTF-8 sequence steps one byte. The pin steps
+    /// GLib's table, 5 at `0xF8..=0xFB` and 6 at `0xFC..=0xFD`, so it
+    /// answers `["", "e"]`, `["", "f"]`, and reads past the NUL of
+    /// `"\xf8ab"`.
+    #[test]
+    fn split_line_steps_one_byte_from_a_byte_that_leads_no_sequence() {
+        assert_eq!(
+            split(c"\xf8abcd e").unwrap(),
+            Some(vec![String::new(), "abcd".into(), "e".into()])
+        );
+        assert_eq!(
+            split(c"\xfcabcde f").unwrap(),
+            Some(vec![String::new(), "abcde".into(), "f".into()])
+        );
+        assert_eq!(
+            split(c"\xf8ab").unwrap(),
+            Some(vec![String::new(), "ab".into()])
+        );
+        // Control: 0xF5 leads a four-byte form on both sides, and its step
+        // of four lands on the space.
+        assert_eq!(
+            split(c"\xf5abc d").unwrap(),
+            Some(vec![String::new(), "d".into()])
+        );
+    }
+
     fn tags() -> TagLib {
         let mut taglib = TagLib::init();
         assert!(taglib.add_tag(1, c"\\item", 2, c"freq", c"count"));

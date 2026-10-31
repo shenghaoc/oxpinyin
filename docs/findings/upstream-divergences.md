@@ -4332,6 +4332,15 @@ reproducible outcome there to bind, and
 The utility's `abort()` calls are not divergences: both sides abort, and
 `tool-diff` compares them as ordinary cases.
 
+### g_utf8_next_char from a byte that leads no sequence (2026-10-31 UTC)
+
+**POLICY-ACCEPTED.** `split_line` steps with `g_utf8_next_char`, which
+GLib documents for valid UTF-8 and implements with its internal
+`g_utf8_skip` table. oxpinyin steps the length the lead byte gives, and 1
+for a byte that leads no sequence. Only `0xF8..=0xFD`, which the table
+steps 5 or 6, differ. Recorded with its cases in
+[eio-utf8-next-char-invalid-lead.md](eio-utf8-next-char-invalid-lead.md).
+
 ### Utility check macros write no message (2026-10-31 UTC)
 
 **Language artefact.** Under the maintainer ruling of 2026-10-31 UTC the
