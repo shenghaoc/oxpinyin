@@ -2,9 +2,11 @@
 //!
 //! Native Rust reproduction of libpinyin's KMM tools — the load-bearing
 //! path of the trainer's main pipeline (segment → **generate → estimate →
-//! merge → validate → prune → export → KMM→interpolation** → evaluate). See
+//! merge → validate → prune → export** → KMM→interpolation → evaluate). See
 //! `docs/findings/trainer-parity-audit.md` §6 and
-//! `utils/training/*k_mixture_model*.cpp`.
+//! `utils/training/*k_mixture_model*.cpp`. The KMM→interpolation step is
+//! `oxpinyin-utils`'s `k_mixture_model_to_interpolation`, under the pin's
+//! name and interface.
 //!
 //! The model ([`KMixtureModel`]) is ordered maps keyed by token, so every
 //! operation is deterministic and token-ascending. It carries the phrase
@@ -43,5 +45,5 @@ pub use model::{
 };
 pub use numeric::{decimal_field, format_six_decimals};
 pub use prune::{DEFAULT_CDF, DEFAULT_PRUNE_K, prune};
-pub use text::{canonicalize, export, import, kmm_text_to_interpolation};
+pub use text::{canonicalize, export, import};
 pub use validate::validate;

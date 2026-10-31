@@ -117,7 +117,8 @@ def differentials(argv):
     suites = [
         ('datagen: compiled tkrzw backend reads model20 back', 'oxpinyin-datagen', 'cross_backend'),
         ('runtime: unmodified tkrzw libpinyin data directory', 'oxpinyin-runtime', 'libpinyin_data_dir'),
-        ('KMM differentials (gen+export, to-interpolation, merge, prune, validate)', 'oxpinyin-kmm', 'differential'),
+        ('KMM differentials (gen+export, merge, prune, validate)', 'oxpinyin-kmm', 'differential'),
+        ('KMM to interpolation: k_mixture_model_to_interpolation', 'oxpinyin-utils', 'k_mixture_model_to_interpolation'),
         ('segment: spseg / mergeseq', 'oxpinyin-training', 'segment-spseg-mergeseq'),
         ('segment: ngseg (needs the system bigram)', 'oxpinyin-training', 'segment-differential'),
         ('lambda: estimate_interpolation', 'oxpinyin-training', 'lambda-differential'),
@@ -192,9 +193,12 @@ def nightly(argv, *, root=ROOT):
                PINYIN_SPSEG=str(src / TOOLS['PINYIN_SPSEG']), PINYIN_NGSEG_DATA=str(w3 / 'tkt'))
     for key in ('GEN_KMM', 'EXPORT_KMM', 'MERGE_KMM', 'VALIDATE_KMM', 'KMM_TO_INTERP'):
         env['PINYIN_' + key] = str(src / TOOLS['PINYIN_' + key])
-    for gate in ('gen_and_export', 'to_interpolation', 'merge', 'validate'):
+    for gate in ('gen_and_export', 'merge', 'validate'):
         status |= run_suite(f'KMM live: {gate} (w3 tables)',
                             cargo_test('oxpinyin-kmm', 'differential', ['rust_kmm_matches_pin_' + gate], locked=True, quiet=True, features=False), env=env)
+    status |= run_suite('KMM live: to_interpolation (k_mixture_model_to_interpolation)',
+                        cargo_test('oxpinyin-utils', 'k_mixture_model_to_interpolation', ['rust_kmm_matches_pin_to_interpolation'],
+                                   locked=True, quiet=True), env=env)
     status |= run_suite('segment spseg live parity (w3 tables)',
                         cargo_test('oxpinyin-training', 'segment-spseg-mergeseq', ['rust_matches_live_spseg'], locked=True, quiet=True), env=env)
     for key in ('PINYIN_EXPORT_DIR', 'PINYIN_NGSEG_DATA', 'PINYIN_GEN_NGRAM_DATA'):

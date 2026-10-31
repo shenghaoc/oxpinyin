@@ -21,9 +21,9 @@ default = ["tkrzw"]
 # The shared segment/data path opens phrase-index and related system files
 # using the selected on-disk backend. Every backend-sensitive stage and
 # command therefore shares this single selection.
-kyotocabinet = ["oxpinyin-data/kyotocabinet", "dep:pkg-config"]
-bdb = ["oxpinyin-data/bdb"]
-tkrzw = ["oxpinyin-data/tkrzw"]
+kyotocabinet = ["oxpinyin-data/kyotocabinet", "oxpinyin-utils/kyotocabinet", "dep:pkg-config"]
+bdb = ["oxpinyin-data/bdb", "oxpinyin-utils/bdb"]
+tkrzw = ["oxpinyin-data/tkrzw", "oxpinyin-utils/tkrzw"]
 
 [[bin]]
 name = "oxpinyin-segment"
@@ -61,6 +61,9 @@ path = "src/bin/oxpinyin-train.rs"
 oxpinyin-core.workspace = true
 oxpinyin-data.workspace = true
 oxpinyin-kmm = { path = "../oxpinyin-kmm" }
+# KMM text becomes interpolation text through the pin-named utility's
+# conversion, run in memory.
+oxpinyin-utils = { path = "../oxpinyin-utils", default-features = false }
 
 [dev-dependencies]
 oxpinyin-testsupport = { path = "../oxpinyin-testsupport" }

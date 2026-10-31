@@ -6,7 +6,7 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 publish = false
-description = "Training-only K-mixture-model pipeline reproducing libpinyin's gen/estimate/merge/validate/prune/export/import/to-interpolation. Never ships."
+description = "Training-only K-mixture-model pipeline reproducing libpinyin's gen/estimate/merge/validate/prune/export/import. Never ships."
 
 [lints]
 workspace = true

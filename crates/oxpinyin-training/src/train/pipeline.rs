@@ -13,9 +13,7 @@ use crate::lambda::DeletedCounts;
 use crate::segment::Segmenter;
 use oxpinyin_core::{Dictionary, PhraseEntry, SyllableKey};
 use oxpinyin_data::Lambda;
-use oxpinyin_kmm::{
-    KMixtureModel, estimate, export, kmm_text_to_interpolation, merge_into, prune, validate,
-};
+use oxpinyin_kmm::{KMixtureModel, estimate, export, merge_into, prune, validate};
 
 use crate::train::candidate::{Candidate, CandidateIndex};
 use crate::train::config::{TrainConfig, candidate_model_name};
@@ -316,11 +314,10 @@ pub fn merge_prune_convert(
     let kmm_pruned_text = export(&pruned);
 
     // Convert the pruned KMM text to the final interpolation model.
-    let interpolation2 =
-        kmm_text_to_interpolation(&kmm_pruned_text).map_err(|error| TrainError::Kmm {
-            stage: "to-interpolation",
-            detail: error.to_string(),
-        })?;
+    let interpolation2 = to_interpolation(&kmm_pruned_text).map_err(|detail| TrainError::Kmm {
+        stage: "to-interpolation",
+        detail,
+    })?;
     let model_size = interpolation2.len() as u64;
 
     Ok(FinalModel {
@@ -330,6 +327,14 @@ pub fn merge_prune_convert(
         merge_number: config.merge_number,
         model_size,
     })
+}
+
+/// `k_mixture_model_to_interpolation < kmm > interpolation2`
+/// (`tryprune.py`), through the utility's conversion in memory.
+fn to_interpolation(kmm: &str) -> Result<String, String> {
+    let text = oxpinyin_utils::k_mixture_model_to_interpolation::convert_text(kmm.as_bytes())
+        .map_err(|failure| failure.to_string())?;
+    String::from_utf8(text).map_err(|error| error.to_string())
 }
 
 /// The evaluation outcome: the applied λ and the correction-rate report

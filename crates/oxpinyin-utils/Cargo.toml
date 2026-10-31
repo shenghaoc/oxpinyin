@@ -10,7 +10,7 @@ description = "libpinyin's utilities under their own names and interfaces (exter
 
 [features]
 # The data layer's backend selection, forwarded as oxpinyin-datagen does;
-# gen_pinyin_table itself reads and writes no DBM.
+# none of the ported utilities reads or writes a DBM yet.
 default = ["tkrzw"]
 kyotocabinet = ["oxpinyin-data/kyotocabinet"]
 bdb = ["oxpinyin-data/bdb"]
@@ -23,10 +23,12 @@ workspace = true
 oxpinyin-core = { workspace = true }
 # pinyin_exact_compare2, shared with the table writers.
 oxpinyin-data = { workspace = true }
-# The utilities' edge calls: GLib options and text, C++ streams, C stdio.
+# The utilities' edge calls: GLib options and text, input streams, C stdio.
 oxpinyin-input = { workspace = true, features = ["tools"] }
 
 [dev-dependencies]
+# The KMM text the pipeline and differential tests convert.
+oxpinyin-kmm = { path = "../oxpinyin-kmm" }
 tempfile.workspace = true
 
 [[bin]]
@@ -36,3 +38,7 @@ path = "src/bin/gen_pinyin_table.rs"
 [[bin]]
 name = "gen_zhuyin_table"
 path = "src/bin/gen_zhuyin_table.rs"
+
+[[bin]]
+name = "k_mixture_model_to_interpolation"
+path = "src/bin/k_mixture_model_to_interpolation.rs"

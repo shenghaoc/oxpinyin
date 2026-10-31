@@ -1,6 +1,7 @@
 //! `oxpinyin-kmm` — the K-mixture-model toolchain, one binary with the
 //! subcommands the trainer pipeline drives (generate → estimate → merge →
-//! validate → prune → export/import → to-interpolation).
+//! validate → prune → export/import). KMM text becomes interpolation text
+//! through `oxpinyin-utils`'s `k_mixture_model_to_interpolation`.
 //!
 //! In this Rust re-expression the on-disk model file is the KMM text format
 //! (upstream's `export_k_mixture_model` output), so the `.db` files of the
@@ -17,7 +18,7 @@ use std::process::ExitCode;
 
 use oxpinyin_kmm::{
     DEFAULT_CDF, DEFAULT_PRUNE_K, GenerateParams, KMixtureModel, canonicalize, estimate, export,
-    format_six_decimals, import, kmm_text_to_interpolation, merge_into, prune, validate,
+    format_six_decimals, import, merge_into, prune, validate,
 };
 
 fn main() -> ExitCode {
@@ -39,7 +40,6 @@ fn main() -> ExitCode {
         "prune" => run_prune(rest),
         "export" => run_export(rest),
         "import" => run_import(rest),
-        "to-interpolation" => run_to_interpolation(rest),
         other => Err(format!("unknown subcommand: {other}\n\n{USAGE}").into()),
     };
     match result {
@@ -63,7 +63,6 @@ Subcommands (model files are the KMM text format):
   prune    [-k N] [--CDF F] FILE
   export   --k-mixture-model-file FILE          (canonicalize to stdout)
   import   [--k-mixture-model-file FILE] [INPUT] (canonicalize; stdout if no file)
-  to-interpolation [INPUT]                       (KMM text -> interpolation, stdout)
 ";
 
 /// The CLI error monad: `Cli` is the unit form, `Cli<T>` returns a value.
@@ -274,15 +273,6 @@ fn run_import(args: &[String]) -> Cli {
         None => read_stdin()?,
     };
     write_output(model_file.as_deref(), &canonicalize(&text)?)
-}
-
-fn run_to_interpolation(args: &[String]) -> Cli {
-    let text = match args {
-        [] => read_stdin()?,
-        [path] => read_text(Path::new(path))?,
-        [_, extra, ..] => return Err(format!("unexpected extra argument: {extra}").into()),
-    };
-    write_output(None, &kmm_text_to_interpolation(&text)?)
 }
 
 fn next<'a>(iter: &mut std::slice::Iter<'a, String>, flag: &str) -> Cli<&'a str> {
