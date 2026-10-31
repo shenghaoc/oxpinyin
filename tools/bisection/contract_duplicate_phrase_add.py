@@ -90,7 +90,7 @@ def register(case, *, _craft_db, _ucs4_key):
         return {'ret': k.fn('iterator_add_phrase', B, P, S, S, I)(it, '你好'.encode(), b"ni'hao", 1)}
 
 
-    @case('abort-add-phrase-duplicate-library-token', abort=False, userdir=True, issues=('525',))
+    @case('abort-add-phrase-duplicate-library-token', abort=False, sigabrt=True, userdir=True, issues=('525',))
     def _(k):
         """Initialize/finalize, plant two library-seven tokens for 你好 and attempt importing it."""
         ctx = k.init()
@@ -100,14 +100,14 @@ def register(case, *, _craft_db, _ucs4_key):
         return _add_pinyin_phrase_after_index(k, value)
 
 
-    @case('abort-add-phrase-index-length-mismatch', abort=False, userdir=True, issues=('525',))
+    @case('abort-add-phrase-index-length-mismatch', abort=False, sigabrt=True, userdir=True, issues=('525',))
     def _(k):
         """Persist 你好嗷, redirect 你好 to its token and attempt an import with a shorter phrase."""
         token = _persist_pinyin_phrase(k, '你好嗷', "ni'hao'ao")
         return _add_pinyin_phrase_after_index(k, token.to_bytes(4, 'little'))
 
 
-    @case('abort-add-phrase-index-item-missing', abort=False, userdir=True, issues=('525',))
+    @case('abort-add-phrase-index-item-missing', abort=False, sigabrt=True, userdir=True, issues=('525',))
     def _(k):
         """Plant a phrase-table token without a library item and attempt importing 你好 after reopening."""
         # The phrase table names library 7's token, but user.bin has no item:
@@ -118,7 +118,7 @@ def register(case, *, _craft_db, _ucs4_key):
         return _add_pinyin_phrase_after_index(k, (0x07000001).to_bytes(4, 'little'))
 
 
-    @case('abort-add-phrase-index-text-mismatch', abort=False, userdir=True, issues=('525',))
+    @case('abort-add-phrase-index-text-mismatch', abort=False, sigabrt=True, userdir=True, issues=('525',))
     def _(k):
         """Persist 你們, redirect 你好 to its token and attempt an equal-length mismatched-text import."""
         token = _persist_pinyin_phrase(k, '你們', "ni'men")

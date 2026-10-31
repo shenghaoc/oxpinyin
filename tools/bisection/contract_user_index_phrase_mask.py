@@ -270,7 +270,7 @@ def register(case, *, predicted_bigram_context, token_reuse_files):
         return {'ret': k.fn('guess_predicted_candidates', B, P, S)(inst, '我'.encode())}
 
 
-    @case('abort-guess-predicted-empty-bigram-gram', abort=False)
+    @case('abort-guess-predicted-empty-bigram-gram', abort=False, sigabrt=True)
     def _(k):
         """Predict after 我 with a total-seven gram containing no items under its prefix tokens."""
         # An item-less gram with a residual total merges to `total_freq != 0`

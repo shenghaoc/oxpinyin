@@ -42,7 +42,7 @@ class FacadeTotalTests(unittest.TestCase):
         kit, wrap = Mock(), Mock(return_value=False)
         kit.fn.return_value = Mock(return_value=True)
         metadata, run = declarations(wrap)['facade-total-zero']
-        self.assertEqual(metadata, {'abort': False, 'issues': ('540',)})
+        self.assertEqual(metadata, {'abort': False, 'sigabrt': True, 'issues': ('540',)})
         self.assertEqual(run(kit), {'add': False, 'ret': True})
         wrap.assert_called_once_with(kit, kit.inst)
 

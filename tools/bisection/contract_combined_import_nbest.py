@@ -1,11 +1,13 @@
 """Combined import and n-best ordering cases."""
+import ctypes as C
+
 from contract_abi import B, I, P, S, U, Z, sentence_out, tokens_of, unigram_of, zhuyin_sentence_out
 
 
 def register(case, *, remember_export, transient_files):
     """Register these cases at their original driver position."""
     # #525: reduce_tokens asserts on the sixth add, with five existing tokens.
-    def combined_import_bound(k, guard=True):
+    def combined_import_bound(k, guard=True, sixth=None):
         """Import the same phrase into five libraries, optionally attempting a sixth with state checks.
 
         Assert the first five adds. With guard false, return their flags immediately.
@@ -28,9 +30,10 @@ def register(case, *, remember_export, transient_files):
         frequencies = [unigram_of(k, token) for token in tokens]
         exports = [remember_export(k, library, phrase) for library in range(1, 8)]
         it = k.fn('begin_add_phrases', P, P, U)(k.ctx, 6)
-        ret = k.fn('iterator_add_phrase', B, P, S, S, I)(it, phrase.encode(), reading, 100000)
-        # The pin aborts above. These fields are checked by the existing class(c)
-        # driver and prove the subject refused before changing prior state.
+        ret = k.fn('iterator_add_phrase', B, P, S, S, I)(it, phrase.encode(), sixth or reading, 100000)
+        # The pin aborts on the sixth add (row 74) or, when the add refuses
+        # at the parse bound, in the token read below; these fields prove a
+        # surviving refusal left the earlier libraries untouched.
         out = {'ret': ret,
                'untouched-tokens': tokens_of(k, phrase) == tokens,
                'untouched-frequencies': [unigram_of(k, token) for token in tokens] == frequencies,
@@ -43,10 +46,104 @@ def register(case, *, remember_export, transient_files):
         return out
 
     for _mode in ('pinyin', 'zhuyin'):
-        case('combined-library-sixth-add-' + _mode, mode=_mode, abort=False, issues=('525',))(combined_import_bound)
+        case('combined-library-sixth-add-' + _mode, mode=_mode, abort=False, **({'sigabrt': True} if _mode == 'pinyin' else {}),
+             issues=('525',))(combined_import_bound)
         case('combined-library-fifth-add-' + _mode, mode=_mode, control=True, issues=('525',))(
             lambda k: combined_import_bound(k, guard=False))
 
+    # Policy row 59's bound: the pin's full-pinyin parse keeps its steps in
+    # `gint16`s (`pinyin_parser2.cpp:67-70`, `:248`, `:292`), so an import's
+    # keys are those of its first 32767 bytes, whatever follows (#1501
+    # removes the bound).
+    case('combined-library-sixth-add-long-reading-pinyin', abort=False, sigabrt=True,
+         issues=('525', 'row:74'))(
+        lambda k: combined_import_bound(k, sixth=b"ni3'hao3" + b"'" * 70000))
+    # Row 74 through the read, settled 2026-11-01 UTC (#1501): the 40007-byte
+    # reading parses to one key (the gint16 bound, `pinyin_parser2.cpp:67-70`,
+    # `:353-357`), so the sixth add refuses at `pinyin.cpp:640` and leaks its
+    # keys. The case's first read, `tokens_of` below, then calls
+    # `pinyin_lookup_tokens` (`pinyin.cpp:2664`), and `reduce_tokens`'
+    # `assert(0 <= num && num <= 4)` (`phrase_large_table3.h:95`) sees the five
+    # libraries that already hold 你好. The pin dies there, not in the
+    # `pinyin_save`/`pinyin_fini` tail; the facade aborts at the same bound.
+    case('combined-library-sixth-add-key-past-parse-bound-pinyin',
+         abort=False, sigabrt=True,
+         issues=('525', 'row:74'))(
+        lambda k: combined_import_bound(k, sixth=b'ni3' + b"'" * 40000 + b'hao3'))
+
+
+    # The other validating `reduce_tokens` callers (`phrase_large_table3.h:95`):
+    # `_compute_prefixes` (`pinyin.cpp:1415`, reached from the prefix guess
+    # at `:1434` and the prediction at `:2424`) and `_pre_compute_tokens`'
+    # `get_first_token` (`:3117`, reached from the character offset at
+    # `:3221` and from `pinyin_remember_user_input` at `:3688`). Each dies
+    # on a search that holds more than four tokens, before anything it
+    # would observe. Five libraries holding the phrase reach it; four do not.
+    def hold_in_libraries(k, phrase, pinyin, zhuyin, libraries):
+        """Import phrase with its facade's reading into libraries 1..libraries, asserting each add."""
+        reading = (pinyin if k.mode == 'pinyin' else zhuyin).encode()
+        added = []
+        for library in range(1, libraries + 1):
+            it = k.fn('begin_add_phrases', P, P, U)(k.ctx, library)
+            added.append(k.fn('iterator_add_phrase', B, P, S, S, I)(it, phrase.encode(), reading, 100000))
+            k.fn('end_add_phrases', None, P)(it)
+        assert added == [True] * libraries, added
+
+    def prefix_guess(libraries):
+        """Guess a sentence after the prefix 你好 held in the given number of libraries."""
+        def run(k):
+            """Hold 你好, then answer the prefix guess's flag on a new instance."""
+            hold_in_libraries(k, '你好', "ni3'hao3", 'ㄋㄧˇ ㄏㄠˇ', libraries)
+            return {'ret': k.fn('guess_sentence_with_prefix', B, P, S)(k.alloc(), '你好'.encode())}
+        return run
+
+    def character_offset(libraries):
+        """Ask the character offset of 你 over the parse ni, with 你 held in the given number of libraries."""
+        def run(k):
+            """Hold 你, parse ni and answer the offset call's flag and length."""
+            hold_in_libraries(k, '你', 'ni3', 'ㄋㄧˇ', libraries)
+            if k.mode == 'zhuyin':
+                k.fn('set_options', B, P, U)(k.ctx, 0x18a)
+            inst = k.alloc()
+            k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'ni')
+            length = Z(0)
+            ret = k.fn('get_character_offset', B, P, S, Z, C.POINTER(Z))(inst, '你'.encode(), 0, C.byref(length))
+            return {'ret': ret, 'length': length.value}
+        return run
+
+    case('prefix-guess-five-libraries-pinyin', abort=False, sigabrt=True, issues=('525', 'row:74'))(
+        prefix_guess(5))
+    case('prefix-guess-four-libraries-pinyin', control=True, issues=('525', 'row:74'))(prefix_guess(4))
+
+    def predicted_candidates(k):
+        """Predict after the prefix 你好 held in five libraries."""
+        hold_in_libraries(k, '你好', "ni3'hao3", 'ㄋㄧˇ ㄏㄠˇ', 5)
+        return {'ret': k.fn('guess_predicted_candidates', B, P, S)(k.alloc(), '你好'.encode())}
+
+    case('predicted-candidates-five-libraries-pinyin', abort=False, sigabrt=True,
+         issues=('525', 'row:74'))(predicted_candidates)
+    case('character-offset-five-libraries-pinyin', abort=False, sigabrt=True,
+         issues=('525', 'row:74'))(character_offset(5))
+    case('character-offset-four-libraries-pinyin', control=True, issues=('525', 'row:74'))(
+        character_offset(4))
+
+    def remember_input(parse):
+        """Remember 你 held in five libraries, after the parse ni or with no parse."""
+        def run(k):
+            """Hold 你, optionally parse ni, and answer the remember call's flag."""
+            hold_in_libraries(k, '你', 'ni3', 'ㄋㄧˇ', 5)
+            inst = k.alloc()
+            if parse:
+                k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'ni')
+            return {'ret': k.fn('remember_user_input', B, P, S, I)(inst, '你'.encode(), 1)}
+        return run
+
+    # `_pre_compute_tokens` runs before anything reads the matrix
+    # (`pinyin.cpp:3685-3700`), so the abort needs no parse.
+    case('remember-user-input-five-libraries-pinyin', abort=False, sigabrt=True,
+         issues=('525', 'row:74'))(remember_input(True))
+    case('remember-user-input-five-libraries-unparsed-pinyin', abort=False, sigabrt=True,
+         issues=('525', 'row:74'))(remember_input(False))
 
     def import_review(k, invalid=False):
         """Attempt an invalid-reading or unused-library import after populating five libraries.
@@ -67,7 +164,8 @@ def register(case, *, remember_export, transient_files):
 
     for _mode in ('pinyin', 'zhuyin'):
         case('combined-library-invalid-reading-' + _mode, mode=_mode, control=True, issues=('525',))(lambda k: import_review(k, True))
-        case('combined-library-unused-index-' + _mode, mode=_mode, abort=False, issues=('525',))(import_review)
+        case('combined-library-unused-index-' + _mode, mode=_mode, abort=False, **({'sigabrt': True} if _mode == 'pinyin' else {}),
+             issues=('525',))(import_review)
 
 
     # #757 PR 0: two user phrases with equal counts whose user-table order

@@ -268,7 +268,7 @@ def row58_zero_total(dynamic, punct=False):
 for _dynamic in (False, True):
     for _punct in (False, True):
         name = 'row58-total-zero-' + ('punct-' if _punct else '') + ('on' if _dynamic else 'off')
-        case(name, abort=False, issues=('697', 'row:58'))(row58_zero_total(_dynamic, _punct))
+        case(name, abort=False, sigabrt=True, issues=('697', 'row:58'))(row58_zero_total(_dynamic, _punct))
 
 
 def row58_prefix_zero_total(dynamic):

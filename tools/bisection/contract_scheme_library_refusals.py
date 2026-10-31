@@ -27,10 +27,10 @@ def register_pinyin(case):
             ('load-phrase-library-8', ctx_call('load_phrase_library', B, (C.c_ubyte, 8))),
             ('unload-phrase-library-16', ctx_call('unload_phrase_library', B, (C.c_ubyte, 16))),
             ('unload-addon-phrase-library-16', ctx_call('unload_addon_phrase_library', B, (C.c_ubyte, 16)))):
-        case('abort-' + _name, abort=False, issues=('525',))(_call)
+        case('abort-' + _name, abort=False, sigabrt=True, issues=('525',))(_call)
 
 
-    @case('abort-iterator-get-next-phrase', abort=False, issues=('525',))
+    @case('abort-iterator-get-next-phrase', abort=False, sigabrt=True, issues=('525',))
     def _(k):
         """Request a phrase from an empty library-7 iterator and record both iterator flags.
 
@@ -48,7 +48,7 @@ def register_pinyin(case):
     # so the iterator's predecessor is still null_token and the pin asserts
     # (`pinyin.cpp:902`) before it writes anything. A control: the parent build
     # already answers this way; the case registers behaviour, it changes none.
-    @case('abort-bigram-iterator-get-next-phrase', control=True, abort=False, issues=('681', 'row:62'))
+    @case('abort-bigram-iterator-get-next-phrase', abort=False, sigabrt=True, issues=('681', 'row:62'))
     def _(k):
         """Request a row from a fresh bigram iterator and check that all outputs stay untouched.
 

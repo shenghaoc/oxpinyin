@@ -25,7 +25,7 @@ class CursorSentenceRefusalsTests(unittest.TestCase):
                 patch.object(family, 'sentence_out', return_value=(False, 'untouched')) as sentence:
             metadata, run = declarations()['abort-get-sentence-past-rows']
             self.assertEqual(run(kit), {'ret': False})
-        self.assertEqual(metadata, {'abort': False, 'issues': ('525',)})
+        self.assertEqual(metadata, {'abort': False, 'sigabrt': True, 'issues': ('525',)})
         parse.assert_called_once_with(kit, b'nihao')
         guess.assert_called_once_with('parsed')
         sentence.assert_called_once_with(kit, 'parsed', 5)

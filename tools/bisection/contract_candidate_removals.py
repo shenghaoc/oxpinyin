@@ -19,7 +19,7 @@ def register(case, *, _craft_hash):
         return inst
 
 
-    @case('abort-get-candidate-nbest-index-normal-row', abort=False, issues=('525',))
+    @case('abort-get-candidate-nbest-index-normal-row', abort=False, sigabrt=True, issues=('525',))
     def _(k):
         """Request an n-best index from a normal candidate and record whether 0xAB survives."""
         inst = guessed(k)
@@ -30,14 +30,14 @@ def register(case, *, _craft_hash):
         return {'ret': ret, 'untouched index': out.value == 0xAB}
 
 
-    @case('abort-remove-user-candidate-normal-system-token', abort=False, issues=('525',))
+    @case('abort-remove-user-candidate-normal-system-token', abort=False, sigabrt=True, issues=('525',))
     def _(k):
         """Attempt user-candidate removal on the first normal row from a system nihao guess."""
         inst = guessed(k)
         return {'ret': k.fn('remove_user_candidate', B, P, P)(inst, row_of(k, inst, 2))}
 
 
-    @case('abort-remove-user-candidate-sentence-row', abort=False, issues=('525',))
+    @case('abort-remove-user-candidate-sentence-row', abort=False, sigabrt=True, issues=('525',))
     def _(k):
         """Attempt user-candidate removal on the sentence row from a nihao guess."""
         inst = guessed(k)
@@ -63,7 +63,7 @@ def register(case, *, _craft_hash):
         return inst, rows
 
 
-    @case('abort-remove-user-candidate-twice', abort=False, issues=('525',))
+    @case('abort-remove-user-candidate-twice', abort=False, sigabrt=True, issues=('525',))
     def _(k):
         """Remove one imported candidate twice, asserting the first removal succeeds.
 
@@ -78,7 +78,7 @@ def register(case, *, _craft_hash):
         return {'first': first, 'ret': k.fn('remove_user_candidate', B, P, P)(inst, rows[0])}
 
 
-    @case('abort-remove-user-candidate-missing-phrase-table', abort=False, issues=('525',))
+    @case('abort-remove-user-candidate-missing-phrase-table', abort=False, sigabrt=True, issues=('525',))
     def _(k):
         """Remove a user candidate after saving and renaming its phrase-table file away.
 
@@ -102,7 +102,7 @@ def register(case, *, _craft_hash):
         return {'ret': k.fn('remove_user_candidate', B, P, P)(inst, rows[0])}
 
 
-    @case('abort-remove-user-candidate-multi-pron', abort=False, issues=('525',))
+    @case('abort-remove-user-candidate-multi-pron', abort=False, sigabrt=True, issues=('525',))
     def _(k):
         """Import two readings for one phrase and attempt to remove its first normal user row."""
         # Two readings for one phrase: the second is merged without a pinyin
@@ -159,7 +159,7 @@ def register(case, *, _craft_hash):
         return {'ret': k.fn('remove_user_candidate', B, P, P)(inst, cand)}
 
 
-    @case('abort-remove-user-candidate-non-token-bigram-key', abort=False, issues=('525',))
+    @case('abort-remove-user-candidate-non-token-bigram-key', abort=False, sigabrt=True, issues=('525',))
     def _(k):
         """Remove a persisted user phrase with a two-byte key planted in its bigram store."""
         inst, cand = _removable_user_bigram_context(
@@ -167,7 +167,7 @@ def register(case, *, _craft_hash):
         return {'ret': k.fn('remove_user_candidate', B, P, P)(inst, cand)}
 
 
-    @case('abort-remove-user-candidate-residual-bigram-gram', abort=False, issues=('525',))
+    @case('abort-remove-user-candidate-residual-bigram-gram', abort=False, sigabrt=True, issues=('525',))
     def _(k):
         """Remove a user phrase whose planted bigram total exceeds its sole item's count.
 
@@ -187,21 +187,21 @@ def register(case, *, _craft_hash):
         return {'ret': k.fn('remove_user_candidate', B, P, P)(inst, cand)}
 
 
-    @case('abort-choose-candidate-predicted-prefix-row', abort=0, issues=('525',))
+    @case('abort-choose-candidate-predicted-prefix-row', abort=0, sigabrt=True, issues=('525',))
     def _(k):
         """Pass a predicted-prefix row to ordinary candidate selection at byte zero."""
         inst = predicted(k)
         return {'ret': k.fn('choose_candidate', I, P, Z, P)(inst, 0, row_of(k, inst, 5))}
 
 
-    @case('abort-choose-predicted-candidate-normal-row', abort=False, issues=('525',))
+    @case('abort-choose-predicted-candidate-normal-row', abort=False, sigabrt=True, issues=('525',))
     def _(k):
         """Pass a normal nihao candidate to the predicted-candidate selection API."""
         inst = guessed(k)
         return {'ret': k.fn('choose_predicted_candidate', B, P, P)(inst, row_of(k, inst, 2))}
 
 
-    @case('abort-choose-predicted-candidate-sentence-row', abort=False, issues=('525',))
+    @case('abort-choose-predicted-candidate-sentence-row', abort=False, sigabrt=True, issues=('525',))
     def _(k):
         """Pass a nihao sentence row to the predicted-candidate selection API."""
         inst = guessed(k)
@@ -222,7 +222,7 @@ def register(case, *, _craft_hash):
         return {'ret': k.fn('choose_candidate', I, P, Z, P)(inst, offset, row)}
 
 
-    @case('abort-choose-candidate-without-sentence-offset-1', abort=0, issues=('525',))
+    @case('abort-choose-candidate-without-sentence-offset-1', abort=0, sigabrt=True, issues=('525',))
     def _(k):
         """Select at byte one from a list generated at zero with sentence rows disabled."""
         return choose_without_sentence(k, 1)

@@ -22,7 +22,7 @@ from tools.dev import host, test_support
 from tools.dev.cell import CellError, Settings, library_path, patch_digest
 from tools.dev.drivers import DriverServices
 from tools.dev.pool import UnitContext
-from tools.dev.runner_protocols import candidate_sequences, conf_body, text_order
+from tools.dev.runner_protocols import candidate_sequences, conf_body, died_of_sigabrt, returncode_text, text_order
 from tools.dev.runner_recipes import (SURFACES, active_rows, candidate_blocks, explicit_compare, pinyin_needed,
                                       pinyin_resolved, residue, return_law, same_data,
                                       nbest_witness_cases, nbest_witness_results, ordinary)
@@ -299,6 +299,14 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(text_order(pin, shorter)[0], 'stop')
         self.assertEqual(text_order(pin.replace(b'input=ni', b'input=cang'), b'input=cang\n')[0], 'w12-residual')
         self.assertEqual(candidate_sequences(pin), {'ni': '你好|世界'})
+
+    def test_only_a_sigabrt_death_counts_as_an_abort_not_a_normal_exit_134(self):
+        self.assertTrue(died_of_sigabrt(-signal.SIGABRT))
+        self.assertEqual(runners.status(-signal.SIGABRT), 134)
+        for code in (134, 0, 1, -signal.SIGSEGV):
+            with self.subTest(code=code):
+                self.assertFalse(died_of_sigabrt(code))
+        self.assertEqual((returncode_text(134), returncode_text(-signal.SIGSEGV)), ('exit 134', 'signal 11'))
 
     def test_conf_mutations_keep_raw_bytes_and_decimal_tokens(self):
         identity = [b'binary format version:7', b'model data version:14', b'database format:BerkeleyDB']

@@ -32,7 +32,7 @@ def toned_initial(k, text=b'n4'):
     return inst, k.fn('parse_more_full_pinyins', Z, P, S)(inst, text)
 
 
-@case('abort-is-incomplete-toned-initial', abort=False, issues=('525', 'row:4'))
+@case('abort-is-incomplete-toned-initial', abort=False, sigabrt=True, issues=('525', 'row:4'))
 def _(k):
     """Parse n4 as one key and query its incomplete status with tone/incomplete options set.
 
@@ -44,31 +44,73 @@ def _(k):
     return {'ret': k.fn('get_pinyin_is_incomplete', B, P, C.POINTER(C.c_uint16))(inst, C.byref(key))}
 
 
-@case('abort-guess-candidates-toned-initial-before-offset', abort=False, issues=('525', 'row:4', '662'))
+@case('abort-guess-candidates-toned-initial-before-offset', abort=False, sigabrt=True, issues=('525', 'row:4', '662'))
 def _(k):
     """Guess candidates at byte two of n4ni with a toned initial before the lookup offset."""
     # The toned key sits before the lookup offset, outside the window the
     # search walks: the pin dies all the same (review of #662 expected it not
-    # to), so the guard looks at the whole matrix.
+    # to), because sort word 0 runs `_prepend_longer_candidates`
+    # (`pinyin.cpp:2292-2293`), whose suggestion walk searches every key path
+    # from column 0 (`search_suggestion_with_matrix`).
     inst, _ = toned_initial(k, b'n4ni')
     return {'ret': k.fn('guess_candidates', B, P, Z, U)(inst, 2, 0)}
 
 
-@case('abort-guess-candidates-toned-initial', abort=False, issues=('525', 'row:4'))
+@case('abort-guess-candidates-toned-initial', abort=False, sigabrt=True, issues=('525', 'row:4'))
 def _(k):
     """Guess candidates at byte zero after parsing n4 with tone/incomplete options enabled."""
     inst, _ = toned_initial(k)
     return {'ret': k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0)}
 
 
-@case('abort-guess-sentence-toned-initial', abort=False, issues=('525', 'row:4'))
+# The sort word the controls use: SORT_WITHOUT_SENTENCE_CANDIDATE |
+# SORT_WITHOUT_LONGER_CANDIDATE (`pinyin.h:56-57`), so neither prepend runs
+# and only the span loop from the offset searches (`pinyin.cpp:2228-2262`).
+NO_PREPENDS = 0x1 | 0x2
+
+
+def toned_initial_guess(k, text, offset, sort_option):
+    """Guess candidates at `offset` over `text` and return the flag and count."""
+    inst, _ = toned_initial(k, text)
+    ret = k.fn('guess_candidates', B, P, Z, U)(inst, offset, sort_option)
+    count = U(0)
+    k.fn('get_n_candidate', B, P, C.POINTER(U))(inst, C.byref(count))
+    return {'ret': ret, 'count': count.value}
+
+
+@case('abort-guess-candidates-toned-initial-no-prepends', abort=False, sigabrt=True,
+      issues=('525', 'row:4'))
+def _(k):
+    """Guess at byte zero of n4 without the prepends: the span loop searches n4."""
+    return toned_initial_guess(k, b'n4', 0, NO_PREPENDS)
+
+
+# The span loop from offset 2 of n4 runs no search (`end < matrix.size()`
+# fails at once, `pinyin.cpp:2229`) and both prepends are off, so the pin's
+# table search never meets the toned key and the guess answers `true` with
+# no candidates.
+@case('guess-candidates-toned-initial-past-key-no-prepends', control=True, issues=('525', 'row:4'))
+def _(k):
+    """Guess at byte two of n4 without the prepends: nothing is searched."""
+    return toned_initial_guess(k, b'n4', 2, NO_PREPENDS)
+
+
+# From offset 2 of n4ni the span loop searches only ni; without the LONGER
+# prepend no search reaches the toned key before the offset.
+@case('guess-candidates-toned-initial-before-offset-no-prepends', control=True, issues=('525', 'row:4'))
+def _(k):
+    """Guess at byte two of n4ni without the prepends: only ni is searched."""
+    return toned_initial_guess(k, b'n4ni', 2, NO_PREPENDS)
+
+
+@case('abort-guess-sentence-toned-initial', abort=False, sigabrt=True, issues=('525', 'row:4'))
 def _(k):
     """Guess a sentence from n4 with tone/incomplete options enabled and record its flag."""
     inst, _ = toned_initial(k)
     return {'ret': k.fn('guess_sentence', B, P)(inst)}
 
 
-@case('abort-guess-sentence-toned-initial-after-key', abort=False, issues=('525', 'row:4'))
+@case('abort-guess-sentence-toned-initial-after-key', abort=False, sigabrt=True, issues=('525', 'row:4'))
 def _(k):
     """Guess a sentence from nihaon4 with a toned initial following the complete keys."""
     inst, _ = toned_initial(k, b'nihaon4')
@@ -254,14 +296,14 @@ def _(k):
 
 
 # The pinyin sites the offset probes of this group found still silent.
-@case('abort-get-right-pinyin-offset-empty-matrix', abort=False, issues=('525',))
+@case('abort-get-right-pinyin-offset-empty-matrix', abort=False, sigabrt=True, issues=('525',))
 def _(k):
     """Query the right pinyin offset at zero on an unparsed instance, recording only the flag."""
     out = Z(UNTOUCHED)
     return {'ret': k.fn('get_right_pinyin_offset', B, P, Z, C.POINTER(Z))(k.alloc(), 0, C.byref(out))}
 
 
-@case('abort-guess-candidates-past-matrix', abort=False, issues=('525',))
+@case('abort-guess-candidates-past-matrix', abort=False, sigabrt=True, issues=('525',))
 def _(k):
     """Guess nihao candidates at byte 99 with sort zero and record the native flag."""
     return {'ret': k.fn('guess_candidates', B, P, Z, U)(full_inst(k, b'nihao'), 99, 0)}

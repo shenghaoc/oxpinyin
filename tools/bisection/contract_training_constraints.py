@@ -58,7 +58,7 @@ def _(k):
     return {'ret': k.fn('train', B, P)(inst)}
 
 
-@case('abort-train-stale-forcing', abort=False, issues=('525', 'row:6'))
+@case('abort-train-stale-forcing', abort=False, sigabrt=True, issues=('525', 'row:6'))
 def _(k):
     """Train result zero immediately after forcing 泥 onto a previously guessed nihao."""
     inst, _chosen = forced_sentence(k, False)
@@ -69,7 +69,7 @@ def _(k):
 # gate passes and `assert(index < results.size())` fails (`pinyin.cpp:2684`).
 # `null-user-session-pinyin` trains with a NULL user directory and so stops
 # at the earlier gate.
-@case('abort-train-index-past-results', abort=False, userdir=True, issues=('525', 'row:6'))
+@case('abort-train-index-past-results', abort=False, sigabrt=True, userdir=True, issues=('525', 'row:6'))
 def _(k):
     """Assert a sentence guess exists, then attempt to train result index 255."""
     inst = full_inst(k, b'nihao')
@@ -286,7 +286,7 @@ def reparse_after_choose(k, shrink):
     return inst
 
 
-@case('abort-train-after-reparse-past-matrix-end', abort=False, issues=('525', 'row:82'))
+@case('abort-train-after-reparse-past-matrix-end', abort=False, sigabrt=True, issues=('525', 'row:82'))
 def _(k):
     """Train the retained result after replacing the chosen nihao parse with ni."""
     inst = reparse_after_choose(k, b'ni')
@@ -296,7 +296,7 @@ def _(k):
 # The `'ni` twin walks the same clamp into a matrix whose column 0 the
 # leading apostrophe left empty (`:663`): reproduced, SIGABRT at
 # `phonetic_key_matrix.cpp:663` under the `__assert_fail` wrapper.
-@case('abort-train-after-reparse-empty-start-column', abort=False, issues=('525', 'row:82'))
+@case('abort-train-after-reparse-empty-start-column', abort=False, sigabrt=True, issues=('525', 'row:82'))
 def _(k):
     """Train the retained result after reparsing a leading apostrophe followed by ni."""
     inst = reparse_after_choose(k, b"'ni")
@@ -320,7 +320,7 @@ def _(k):
 # `ni'hao`, the pin passes `:663` (the apostrophe column holds a zero key)
 # and aborts at `:664` (`get_column_size(end) > 0`). The engine refuses with
 # the same fault.
-@case('abort-train-after-reparse-empty-end-column', abort=False, issues=('525', 'row:82'))
+@case('abort-train-after-reparse-empty-end-column', abort=False, sigabrt=True, issues=('525', 'row:82'))
 def _(k):
     """Train the retained result after reparsing ni'hao with its shifted key boundaries."""
     inst = reparse_after_choose(k, b"ni'hao")
@@ -354,6 +354,45 @@ def _(k):
     choose_and_relook(inst)
     k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'nihao')
     out['same-length-reparse'] = k.fn('train', B, P, C.c_ubyte)(inst, 0)
+    return out
+
+
+# Row 82 after a choose: the walk visits result positions below
+# `constraints->length()` (`phonetic_lookup.h:858`), and a NORMAL choose
+# validates the store to the current matrix first (`pinyin.cpp:2579`,
+# `phonetic_lookup.cpp:120-160`), clearing a forcing whose end reaches the
+# new length. `nihaoma` is decoded with 好 forced at 2..5 (the row is 你, 好,
+# 吗 at 0, 2, 5), re-parsed to `niha` and 你 chosen at 0: the store holds five
+# cells and 好's forcing is gone. The pin trains 你 (forced) and 好 (the
+# step after it) with 好's tail clamped to column 4, and its loop ends before
+# 吗 at 5. A walk that went on past the store would carry `train_next` from
+# 好 to 吗 and meet `:663` on a column past the matrix.
+def choose_normal(k, inst, offset, wanted):
+    """Choose the first NORMAL row whose UTF-8 text is wanted at offset; None if none."""
+    k.fn('guess_candidates', B, P, Z, U)(inst, offset, 0)
+    count = U()
+    k.fn('get_n_candidate', B, P, C.POINTER(U))(inst, C.byref(count))
+    for index in range(count.value):
+        cand, text, kind = P(), S(), I()
+        k.fn('get_candidate', B, P, U, C.POINTER(P))(inst, index, C.byref(cand))
+        k.fn('get_candidate_string', B, P, P, C.POINTER(S))(inst, cand, C.byref(text))
+        k.fn('get_candidate_type', B, P, P, C.POINTER(I))(inst, cand, C.byref(kind))
+        if kind.value == 2 and text.value == wanted.encode():
+            return k.fn('choose_candidate', I, P, Z, P)(inst, offset, cand)
+    return None
+
+
+@case('train-after-reparse-and-choose-control', control=True, issues=('525', 'row:82'))
+def _(k):
+    """Train the row decoded for nihaoma with 好 forced after re-parsing niha and choosing 你."""
+    parse = k.fn('parse_more_full_pinyins', Z, P, S)
+    inst = k.alloc()
+    out = {'parse': parse(inst, b'nihaoma'), 'first choose': choose_normal(k, inst, 2, '好'),
+           'guess': k.fn('guess_sentence', B, P)(inst)}
+    out['row 0'] = sentence_out(k, inst, 0)
+    out['reparse'] = parse(inst, b'niha')
+    out['second choose'] = choose_normal(k, inst, 0, '你')
+    out['train'] = k.fn('train', B, P, C.c_ubyte)(inst, 0)
     return out
 
 

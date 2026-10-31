@@ -4,6 +4,7 @@ from pathlib import Path
 import hashlib
 import re
 import shutil
+import signal
 
 from .runners import Context, Finished, emit, status, write
 from .runner_state import state_inputs
@@ -23,6 +24,16 @@ CONF_CASES = ('binver-plus', 'binver-wrap', 'binver-neg', 'binver-junk', 'binver
               'token-junk-tail', 'no-newline', 'empty')
 ABORT_CASES = ('unknown-token', 'long-token', 'trunc-counter', 'modelver-junk', 'no-dbformat')
 CLASS_C = b'check_format: unknown database format in user.conf'
+
+
+def died_of_sigabrt(returncode: int) -> bool:
+    """A child killed by SIGABRT, from the raw return code; a normal exit
+    with code 134 is not one, though `status` shows both as 134."""
+    return returncode == -signal.SIGABRT
+
+
+def returncode_text(returncode: int) -> str:
+    return f'signal {-returncode}' if returncode < 0 else f'exit {returncode}'
 
 
 def conf_body(case: str, identity: Sequence[bytes]) -> bytes:
@@ -185,10 +196,23 @@ def open_counter(ctx: Context, args: Sequence[str]) -> int:
                 log.with_name(log.name + '.stderr').write_bytes(result.stderr)
                 rc = status(result.returncode)
                 if side == 'oracle':
-                    if rc == 134:
-                        ctx.emit('  oracle: exit 134 (SIGABRT)')
+                    if died_of_sigabrt(result.returncode):
+                        ctx.emit(f'  oracle: exit {rc} (SIGABRT)')
                     else:
-                        ctx.emit(f'  oracle: FAIL - expected exit 134, got {rc}', error=True)
+                        ctx.emit(f'  oracle: FAIL - expected SIGABRT, got {returncode_text(result.returncode)}', error=True)
+                        failed = True
+                elif library == 'pinyin':
+                    # The pinyin facade reproduces the pin's `abort()`
+                    # (register row 44, 2026-10-31 UTC): SIGABRT, no
+                    # warning line. The zhuyin facade still refuses below.
+                    if died_of_sigabrt(result.returncode):
+                        ctx.emit(f'  oxpinyin: exit {rc} (SIGABRT)')
+                    else:
+                        ctx.emit(f'  oxpinyin: FAIL - expected SIGABRT, got {returncode_text(result.returncode)}', error=True)
+                        failed = True
+                    count = sum(CLASS_C in line for line in result.stderr.splitlines())
+                    if count:
+                        ctx.emit(f'  oxpinyin: FAIL - expected no refusal line, got {count}', error=True)
                         failed = True
                 else:
                     if b'init: NULL' in result.stdout.splitlines():

@@ -1166,9 +1166,12 @@ class DirChunkTests(DriverFixtureCase):
                     self.assertIs(driver.directory_reads_as_a_chunk(), reads)
 
     def test_condition_absent_keeps_the_abort_matcher(self):
+        # The pinyin facade reproduces these aborts (`sigabrt`, 2026-10-31
+        # UTC): both sides die of SIGABRT where the host predicts the assert.
         for name in (self.USER, self.SYSTEM):
             with self.subTest(name=name):
-                self.assertEqual(self.decide(name, self.aborted(), self.answered(), True), 'MATCH')
+                self.assertEqual(self.decide(name, self.aborted(), self.aborted(), True), 'MATCH')
+                self.assertEqual(self.decide(name, self.aborted(), self.answered(), True), 'DIFFER')
         # Survivals and the tmpfs SIGSEGV are not the abort the host predicts.
         self.assertEqual(self.decide(self.USER, self.answered(True, ()), self.answered(True, ()), True), 'DIFFER')
         line = self.answered(stderr=self.FRESH + self.UNMAPPABLE)
@@ -1214,7 +1217,7 @@ class DirChunkTests(DriverFixtureCase):
     def test_other_cases_ignore_the_probe(self):
         spec = driver.CASES['table-conf-abort-default-dictionary']
         with patch.object(driver, 'directory_reads_as_a_chunk', side_effect=AssertionError('probed')):
-            self.assertEqual(driver.verdict_for(spec, self.aborted(), self.answered(), False)[0], 'MATCH')
+            self.assertEqual(driver.verdict_for(spec, self.aborted(), self.aborted(), False)[0], 'MATCH')
 
 
 class StrjoinvOverReadTests(DriverFixtureCase):
