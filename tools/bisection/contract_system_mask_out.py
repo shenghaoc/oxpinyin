@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from contract_abi import B, I, P, S, U, Z, sentence_out, tokens_of, unigram_of, zhuyin_sentence_out
-from contract_case_helpers import _chunk, _modify_header, _write_log, token_phrase_of, transient_files
+from contract_case_helpers import _chunk, _modify_header, _write_log, token_phrase_of
 from contract_fixtures import private_system
 
 
@@ -18,15 +18,12 @@ def case(name, *args, **kwargs):
     return collect
 
 
-def mask_out_system_reload(k, saved, mask=0xFFFFFFFF, selected=False, atomic=False,
-                           headerless=False, dropped=False):
+def mask_out_system_reload(k, saved, mask=0xFFFFFFFF, selected=False, headerless=False, dropped=False):
     """Observe an imported system item across save/log rewriting and mask-out.
 
     Import 龘龘 into library one and assert its unique token. saved writes a
     baseline; headerless strips its leading 18-byte MODIFY_HEADER. selected
-    uses the token's low bits as mask value. atomic also imports an unsaved
-    library-two item and checks files, tokens and a bumped frequency afterward.
-    dropped additionally observes a unigram add and sentence lookup. Return
+    uses the token's low bits as mask value. dropped additionally observes a unigram add and sentence lookup. Return
     native flags and before/after observations without closing cached objects."""
     phrase = '龘龘'
     assert not tokens_of(k, phrase), 'the setup phrase already exists'
@@ -49,19 +46,6 @@ def mask_out_system_reload(k, saved, mask=0xFFFFFFFF, selected=False, atomic=Fal
         payload = Path(k.user, 'gb_char.dbin').read_bytes()[8:]
         assert int.from_bytes(payload[:4], 'little') == 4
         _write_log(k, payload[18:])
-    if atomic:
-        # A second library has an unsaved item, so reloading it before the
-        # guard would observably change the refused call's state.
-        it = k.fn('begin_add_phrases', P, P, U)(k.ctx, 2)
-        other_phrase = '龘龘龘'
-        other_reading = b"da2'da2'da2" if k.mode == 'pinyin' else 'ㄉㄚˊ ㄉㄚˊ ㄉㄚˊ'.encode()
-        assert k.fn('iterator_add_phrase', B, P, S, S, I)(it, other_phrase.encode(), other_reading, 1)
-        k.fn('end_add_phrases', None, P)(it)
-        other_token = tokens_of(k, other_phrase)[0]
-        other_item = token_phrase_of(k, other_token)
-        files = transient_files(k.user)
-        assert k.fn('token_add_unigram_frequency', B, P, U, U)(k.inst, 0x01001225, 7)
-        frequency = unigram_of(k, 0x01001225)
     value = tokens[0] & 0x00FFFFFF if selected else 0
     out['ret'] = k.fn('mask_out', B, P, U, U)(k.ctx, mask, value)
     out['after'] = token_phrase_of(k, tokens[0])
@@ -82,12 +66,6 @@ def mask_out_system_reload(k, saved, mask=0xFFFFFFFF, selected=False, atomic=Fal
         ret, sentence = (sentence_out(k, k.inst, 0) if k.mode == 'pinyin' else
                          zhuyin_sentence_out(k, k.inst))
         out['lookup'] = [ret, phrase in (sentence or '')]
-    if atomic:
-        out.update({'untouched-item': out['before'] == out['after'],
-                    'untouched-other-library': token_phrase_of(k, other_token) == other_item,
-                    'untouched-phrase-table': tokens == out['phrase-table-after'],
-                    'untouched-files': transient_files(k.user) == files,
-                    'untouched-frequency': unigram_of(k, 0x01001225) == frequency})
     return out
 
 
@@ -96,8 +74,11 @@ for _mode in ('pinyin', 'zhuyin'):
         lambda k: mask_out_system_reload(k, False))
     case('mask-out-system-saved-' + _mode, mode=_mode, issues=('728',))(
         lambda k: mask_out_system_reload(k, True))
-    case('abort-mask-out-surviving-add-' + _mode, mode=_mode, abort=False, issues=('728',))(
-        lambda k: mask_out_system_reload(k, True, 0x00FFFFFF, atomic=True))
+    # Row 97: the kept ADD reaches `append_record`'s `assert(NULL == oldone)`
+    # (`phrase_index_logger.h:245`) after the save wrote the profile.
+    case('abort-mask-out-surviving-add-' + _mode, mode=_mode, abort=False, sigabrt=True, userdir=True,
+         issues=('728', 'row:97'))(
+        lambda k: mask_out_system_reload(k, True, 0x00FFFFFF))
     case('mask-out-system-selected-add-' + _mode, mode=_mode, control=True, issues=('728',))(
         lambda k: mask_out_system_reload(k, True, 0x00FFFFFF, selected=True))
     case('mask-out-system-headerless-add-' + _mode, mode=_mode, issues=('728',))(
