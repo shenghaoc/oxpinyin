@@ -698,10 +698,49 @@ where it changes shipping code.
    `PHRASE_BY_LIB_TEXT` and `PRONUNCIATION` rows, the user tokens' `UNIGRAM`
    rows, and `pronunciation_counts`, `kept_index`, `backed_readings` and
    `ImportReadings` are retired. `indexed()` becomes set membership.
-3. **Consumers.** The user lookup rebuild and the trellis index share one
-   pass over views per phrase generation, and the export cursor probes
-   headers without building `UserPhrase`. Performance only; no behaviour
-   moves. Unification with `replay::Content` is deferred to #1090.
+3. **Consumers**, in four PRs, each its own PR with the §4.7 measurements
+   and the items listed under it. Maintainer decision, **2026-10-31 UTC**:
+   this replaces the earlier phase 3, in which the user lookup rebuild and
+   the trellis index shared one pass over views per phrase generation. That
+   pass would have left both structures, the `indexed` set and the
+   phrase-table copies in place, and it runs after `pinyin_init`, so it
+   moved no init time. Unification with `replay::Content` stays deferred to
+   #1090. Phase 3 starts from libpinyin's own data structures (the user
+   pinyin index as its sorted records, lookups answered from that index, the
+   phrase table as one record set) implemented in idiomatic Rust; a design
+   that departs from the pin's structure needs a measurement showing it is
+   better in time or memory without being worse in the other.
+   - **3a. Token getters from the item view.** `token_get_nth_pronunciation`
+     copies the reading's stored key words through `nth_pronunciation_words`,
+     as the pin's `get_nth_pronunciation` does (`phrase_index.cpp:33-50`),
+     instead of converting them to syllable keys and back; an optional
+     borrowed path hands an arena item's words to the caller's array without
+     an intermediate copy. A stored word that names no syllable is returned
+     verbatim, as the pin returns it, where phase 2 answered the zeroed
+     past-the-end keys; the pin's import never writes such a word, so the
+     contract cases craft it in `user.bin` (`user-stored-key/*`), including
+     the padding bit alone (`0x8000`). The export cursor's header probe,
+     which already reads the arena view, is measured with it. Shows: `user8`
+     read, enumerate and export instructions and wall against phase 1,
+     phase 2 and the pin; peak heap unchanged against phase 2.
+   - **3b. The user pinyin index as the pin's records.** One walk of the
+     DBM appends its keys and values, in the walk's key order, to one owned
+     arena with a sorted offset vector; session edits stay in an overlay
+     until save. This replaces `indexed`, the index key sets and the
+     Kyoto Cabinet and tkrzw record copies. Shows: init wall, instructions
+     and peak heap on `user`, `user8` and `usersparse`;
+     `user_pinyin_index` bytes identical to the pin's on every backend,
+     with the mask-out cases.
+   - **3c. Lookups from that index.** The exact, incomplete and prefix
+     probes read the stored records, as the pin's
+     `ChewingLargeTable2::search` does, and `UserLookup`'s pinyin maps and
+     `TrellisIndex` are retired. Shows: first-candidate instructions and
+     peak heap, `steady-comparison`, and the candidate-assembly and
+     live-typing differentials, including the stored-key order of #536.
+   - **3d. The user phrase table as one arena.** Its records are held once,
+     verbatim, for `token_for_phrase`, the lookups' text tokens and the save.
+     Shows: the phrase-table save identity and the `token_for_phrase`
+     cases.
 
 The standalone store (`UserStore::open`, `create_standalone`; tests and
 benches only, no shipping caller) keeps its current persistence in the
