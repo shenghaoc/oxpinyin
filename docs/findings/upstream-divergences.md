@@ -4386,3 +4386,15 @@ zhuyin arm of rows 5c, 5d, 6, 19, 21, 44, 61, 66, 74, 77, 79, 82, 84, 86,
 87 and 94. `abort()` sites are MATCH; `assert` sites are POLICY-ACCEPTED
 for the missing assertion line only. Recorded, with the pin sites, items
 and cases, in [pin-aborts-zhuyin-facade.md](pin-aborts-zhuyin-facade.md).
+
+### Pin aborts reproduced in the journal replay (2026-10-31 UTC)
+
+**Pin behaviour reproduced.** Member 5a of the class (c) retirement: a
+system library's user `.dbin` is replayed in the pin's order at init, at a
+library reload and at `mask_out`, and the assertions the pin's walk reaches
+(rows 91, 92, 97 and 108: `phrase_index_logger.h:202`, `:245`, `:257`,
+`phrase_index.cpp:745`, `memory_chunk.h:390`) return a typed fault on which
+both C facades call `std::process::abort()`. The up-front log validation
+and its refusals are deleted. All sites are `assert`s: POLICY-ACCEPTED for
+the missing assertion line only. Recorded, with the pin sites, items and
+cases, in [pin-aborts-journal-replay.md](pin-aborts-journal-replay.md).
