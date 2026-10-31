@@ -276,7 +276,8 @@ def plan_lines(cell, jobs, contract_cases, reasons, index):
             if len(names) > 50:
                 lines.append('    ... %d more (contract-diff.py --list-tags lists them)' % (len(names) - 3))
     return lines
-ARTIFACTS = ('pinyin-capi', 'zhuyin-capi', 'dictool', 'user-rt-test', 'gen-pinyin-table', 'gen-zhuyin-table')
+ARTIFACTS = ('pinyin-capi', 'zhuyin-capi', 'dictool', 'user-rt-test', 'gen-pinyin-table', 'gen-zhuyin-table',
+             'k-mixture-model-to-interpolation')
 
 
 def artifact_union(rows):
@@ -295,7 +296,8 @@ def artifact_union(rows):
     return [artifact for artifact in ARTIFACTS if artifact in needed]
 ARTIFACT_ENV = {'pinyin-capi': 'OXPINYIN_CAPI_SO', 'zhuyin-capi': 'OXPINYIN_ZHUYIN_SO',
                 'dictool': 'OXPINYIN_DICTOOL', 'user-rt-test': 'OXPINYIN_USER_RT_TEST',
-                'gen-pinyin-table': 'OXPINYIN_GEN_PINYIN_TABLE', 'gen-zhuyin-table': 'OXPINYIN_GEN_ZHUYIN_TABLE'}
+                'gen-pinyin-table': 'OXPINYIN_GEN_PINYIN_TABLE', 'gen-zhuyin-table': 'OXPINYIN_GEN_ZHUYIN_TABLE',
+                'k-mixture-model-to-interpolation': 'OXPINYIN_K_MIXTURE_MODEL_TO_INTERPOLATION'}
 
 
 def needed_artifacts(rows, env):
@@ -647,7 +649,7 @@ def run_main():
                        OXPINYIN_CAPI_SO=str(Path(cfg['CARGO_TARGET_DIR']) / 'debug/libpinyin_capi.so'),
                        OXPINYIN_ZHUYIN_SO=str(Path(cfg['CARGO_TARGET_DIR']) / 'debug/libzhuyin_capi.so'),
                        OXPINYIN_DICTOOL=str(Path(cfg['CARGO_TARGET_DIR']) / 'debug/oxpinyin-dictool'))
-            for utility in ('gen_pinyin_table', 'gen_zhuyin_table'):
+            for utility in ('gen_pinyin_table', 'gen_zhuyin_table', 'k_mixture_model_to_interpolation'):
                 env['OXPINYIN_' + utility.upper()] = str(Path(cfg['CARGO_TARGET_DIR']) / 'debug' / utility)
             env.update(extra_env[cell])
             env['OXPINYIN_USER_RT_TEST'] = str(Path(cfg['CARGO_TARGET_DIR']) / 'debug/user-dir-round-trip-test')

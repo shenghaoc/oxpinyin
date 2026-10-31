@@ -52,6 +52,30 @@ No shipping library, C API or backend format changes.
             "stderr: pin \"\"; subject \"gen_zhuyin_table: missing frequency: 你好\\n\""
           ]
         },
+        "kc": {
+          "pin": {
+            "sha256": "3ee58f2cbc49c4f3f44c75e898d271debcd6a35f17d857e99d084f938f0f6424",
+            "fields": {
+              "exit": "2e42a91d2375f9a3",
+              "files": "f52b969b8af026c8",
+              "stderr": "12ae32cb1ec02d01",
+              "stdout": "12ae32cb1ec02d01"
+            }
+          },
+          "subject": {
+            "sha256": "79c3f50e8f5db863a87ae76f0560895c12b83f90e3089dad842afb45b248551f",
+            "fields": {
+              "exit": "6b86b273ff34fce1",
+              "files": "f52b969b8af026c8",
+              "stderr": "3392713bb47f3ae7",
+              "stdout": "12ae32cb1ec02d01"
+            }
+          },
+          "divergence": [
+            "exit: pin -11; subject 1",
+            "stderr: pin \"\"; subject \"gen_zhuyin_table: missing frequency: 你好\\n\""
+          ]
+        },
         "tkrzw": {
           "pin": {
             "sha256": "3ee58f2cbc49c4f3f44c75e898d271debcd6a35f17d857e99d084f938f0f6424",

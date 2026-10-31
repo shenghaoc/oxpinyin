@@ -57,9 +57,10 @@ implementation". The 2026-10-24 wording above is history.
 **Amended 2026-10-28 UTC (maintainer):** external I/O for the library
 and tools follows the pin's call. The #1304 language-artefact treatment
 no longer admits an external-I/O difference. Tool binaries are drop-in
-replacements for the pin's utilities. The current implementation and
-historical case markers still need the staged work in
-[external-io-boundary.md](external-io-boundary.md).
+replacements for the pin's utilities. Both rules bind Linux only since
+the 2026-10-31 UTC [platform scope](#native-rust-implementation) ruling.
+The current implementation and historical case markers still need the
+staged work in [external-io-boundary.md](external-io-boundary.md).
 **Amended 2026-10-28 UTC (maintainer):** the algorithm-precondition rule
 below registers S1 beam selection, S2 final-tail selection, and S3 tail
 sorting on captured witnesses. It specifies their repairs, retains the
@@ -127,20 +128,49 @@ oxpinyin is a native Rust implementation of libpinyin and libzhuyin, not
 an emulator of the pin; it reproduces the pin's outward behaviour, at the
 C API and in persistent data, in idiomatic Rust.
 
-**External I/O (2026-10-28 UTC).** Every call across the program's
-edge, in library and tools and in both directions, is the pin's call:
-ISO C/POSIX through the host C library; GLib when the pin calls GLib;
-and C++ streams through a C++ shim for tools. A Rust equivalent is
-allowed only when source for both implementations proves identical
-observable results for every input. If equivalence is unsettled, use the
-pin's call. The inventory's NOT EQUIVALENT and UNSETTLED verdicts stand.
-The calls are placed in the `oxpinyin-input` boundary (stage 1, the
-`table.conf`/`user.conf` calls and their locale calls, is in place; the
-later stages are planned); DBM backends remain in `oxpinyin-store` and C
-ABI marshalling in the C adapters. Use narrow hand-written `extern "C"` declarations, a small C
-shim built with the existing `cc` build dependency for `FILE *`, macros,
-`off_t` and locale constants, and a tool-only C++ shim. Do not add a
-direct `libc` crate dependency.
+**External I/O (2026-10-28 UTC).** On Linux ([platform
+scope](#native-rust-implementation), below), every call across the
+program's edge, in library and tools and in both directions, is the
+pin's call: ISO C/POSIX through the host C library; GLib when the pin
+calls GLib; and C++ streams under the C++ contract (amended below,
+2026-10-31 UTC). A Rust equivalent is allowed only when source for both
+implementations proves identical observable results for every input. If
+equivalence is unsettled, use the pin's call. The inventory's NOT
+EQUIVALENT and UNSETTLED verdicts stand. The calls are placed in the
+`oxpinyin-input` boundary (stage 1, the `table.conf`/`user.conf` calls
+and their locale calls, is in place; the later stages are planned); DBM
+backends remain in `oxpinyin-store` and C ABI marshalling in the C
+adapters.
+
+**No hand-written C or C++ shims (maintainer ruling 2026-10-31 UTC).** External C library calls are made from
+Rust through the `libc` crate, approved as a dependency of
+`oxpinyin-input`, or through `extern "C"` declarations; GLib functions
+through the workspace's `glib-sys`. A function neither crate binds is
+declared by hand. C++ streams are Rust `std::io` under the C++
+contract (`std::getline` is `BufRead::read_until(b'\n')`). Macros such as
+`assert`, `g_return_val_if_fail` and `G_STRFUNC` are not reproduced:
+their checks are plain Rust, which answers the pin's value or aborts
+where the pin aborts (constitution §4), and their message text is not
+imitated; such a stderr difference is a POLICY-ACCEPTED language
+artefact. Where no call or behaviour has the same documented result,
+stop and report it. The tools follow the ruling; `oxpinyin-input`'s
+`native/config.c` and `native/diagnostic.c` and the Kyoto Cabinet
+`shim.cc` are moved by their own changes.
+
+**Platform scope of pinned behaviour (maintainer ruling 2026-10-31
+UTC).** The drop-in and pin-call rules (external I/O uses the pin's
+calls; observable behaviour matches the pin) bind Linux only. libpinyin
+is developed and used on Linux; its Windows and macOS support is an
+afterthought. On Windows and macOS, oxpinyin builds and is tested, and
+may use portable Rust abstractions (for example `memmap2` and `std::fs`)
+instead of the pin's calls. Differences that come from a platform's
+native facilities (file and mapping APIs, text mode, C runtime streams)
+are platform-dependent behaviour, recorded where known and tested where
+practical. This does not cover platform-independent product behaviour
+(ranking, parsing, training, data handling), safety, determinism, the C
+API/ABI, its symbol names and its ownership and lifetime rules, or
+persistent file formats, which must be the same on every platform. The
+prohibition on hand-written C/C++ shims applies on every platform.
 
 The call rule does not reproduce an undefined read or an abort in the
 pin's surrounding code. Existing class (b)/(c) records, including
@@ -150,10 +180,11 @@ residual mapping is a separate open question. The prior ruling on
 incidental `errno` after a successful exported call remains; it does not
 excuse using a different external I/O call.
 
-The tools are drop-in replacements for the pin's utilities, with the
-same binary names, options, help, messages, inputs and outputs. K-mixture
-working models use the pin's backend DBM through `oxpinyin-store`.
-`scripts2/` Python build generators are outside this tool scope.
+On Linux ([platform scope](#native-rust-implementation)), the tools are
+drop-in replacements for the pin's utilities, with the same binary
+names, options, help, messages, inputs and outputs. K-mixture working
+models use the pin's backend DBM through `oxpinyin-store`. `scripts2/`
+Python build generators are outside this tool scope.
 
 **Internal language artefacts.** Outside external I/O, the programming
 language is an implementation detail: what a user or a developer calling
@@ -236,7 +267,10 @@ oxpinyin is a **drop-in replacement**: rename the built shared object to
 work against the data already on the system. Not a compatible
 reimplementation a consumer is ported to — the same binary interface,
 the same file formats, the same observable behaviour, with the consumer
-unchanged and unaware.
+unchanged and unaware. The drop-in claim is made on Linux; on Windows
+and macOS the C ABI, product behaviour and file formats are the same,
+and native-facility differences are platform-dependent ([platform
+scope](#native-rust-implementation)).
 
 > **Amended 2026-10-14 UTC — the default oxpinyin build is a bug-for-bug
 > libpinyin binary (maintainer ruling).** A Stage 3 departure is opt-in
@@ -518,8 +552,9 @@ internal-behaviour rulings do not override the external-I/O call rule:
    against Rust.
 2. That behaviour is reproduced in natural, efficient Rust. Never write
    inefficient code to imitate internal GLib, libc or C++ behaviour or
-   internals. External I/O instead uses the pin's call where equivalence
-   is not proved.
+   internals. On Linux, external I/O instead uses the pin's call where
+   equivalence is not proved ([platform
+   scope](#native-rust-implementation)).
 3. Use Rust’s `std` maths at full speed. This is already recorded under
    class (a) above; cross-reference it, don’t duplicate it.
 4. No specialised maths dependencies (SIMD crates and the like).
@@ -559,7 +594,8 @@ the first matching limb wins:
 2. **Class (a), (b) or (c).** If it is math, memory safety or
    availability, classify it in that class and follow the class's
    obligations.
-3. **External I/O and internal language artefacts.** External I/O uses
+3. **External I/O and internal language artefacts.** On Linux
+   ([platform scope](#native-rust-implementation)), external I/O uses
    the pin's call unless source for both sides proves a Rust equivalent
    for every input. The following language-artefact rule applies only
    outside that boundary. The programming language is an implementation

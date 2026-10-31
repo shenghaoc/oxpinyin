@@ -222,7 +222,7 @@ class Settings:
     def build(self, wanted: Sequence[str]) -> int:
         packages = {'pinyin-capi': 'oxpinyin-capi', 'zhuyin-capi': 'oxpinyin-zhuyin-capi',
                     'dictool': 'oxpinyin-dictool', 'gen-pinyin-table': 'oxpinyin-utils',
-                    'gen-zhuyin-table': 'oxpinyin-utils'}
+                    'gen-zhuyin-table': 'oxpinyin-utils', 'k-mixture-model-to-interpolation': 'oxpinyin-utils'}
         for item in wanted:
             if item and item not in (*packages, 'user-rt-test'):
                 raise CellError(f"fatal: unknown artifact '{item}' (pinyin-capi, zhuyin-capi, dictool, user-rt-test)", 2)
@@ -278,7 +278,8 @@ class Settings:
         artifacts = {}
         for name, filename in (('pinyin-capi', 'libpinyin_capi.so'), ('zhuyin-capi', 'libzhuyin_capi.so'),
                                ('dictool', 'oxpinyin-dictool'), ('user-rt-test', 'user-dir-round-trip-test'),
-                               ('gen-pinyin-table', 'gen_pinyin_table'), ('gen-zhuyin-table', 'gen_zhuyin_table')):
+                               ('gen-pinyin-table', 'gen_pinyin_table'), ('gen-zhuyin-table', 'gen_zhuyin_table'),
+                               ('k-mixture-model-to-interpolation', 'k_mixture_model_to_interpolation')):
             file = self.target / 'debug' / filename
             if file.exists():
                 stat = file.stat()

@@ -13,4 +13,6 @@
 
 **Conclusion:** accepted under the merged policy. Valid product grammar, ABI and persistent contracts remain. Runtime is linear in the input; parsing keeps borrowed header/row slices and removes the hex conversion/word-copy machinery.
 
+**Stage 5 revert (2026-10-31 UTC):** `k_mixture_model_to_interpolation` is now `oxpinyin-utils`' pin-named utility, which reads its token and count fields with the host `atoi` and `atol`. Its numeric differential compares the pin's output byte for byte instead of checking a refusal; the other callers above keep `decimal_field` until their own stage 5 ports.
+
 **Named mutation (2026-10-26 UTC):** `M1297-invalid-field-zero` — default invalid decimal fields to zero; the existing live `rust_matches_live_gen_ngram` differential detects it (canonical counts still MATCH, then the malformed-field refusal assertion fails, exit 101). Every mutated source was restored byte-for-byte. Rebuild with `just cell-artifacts --artifacts pinyin-capi,zhuyin-capi` for C-facing witnesses, then run the existing contract driver with the named `--cases`; tool and sink witnesses use `just heavy -- cargo test` with their existing test target. The restored touched-crate gate passes, and the three C-facing mutation witnesses return to their declared MATCH/POLICY-ACCEPTED outcomes.
