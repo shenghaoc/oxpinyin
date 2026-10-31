@@ -13,8 +13,9 @@ bash tools/oracle/compat.sh --cell tkrzw --runners tool-diff
 ```
 
 Compatibility preparation builds the unmodified pin's libraries with
-`tools/oracle/build-oracle.sh --libs-only`, then its two utility targets in
-that build tree. Cell artifact selection builds `oxpinyin-utils` once and
+`tools/oracle/build-oracle.sh --libs-only`, then every registered utility
+target in that build tree (`PIN_UTILITIES` groups them by `utils/`
+directory). Cell artifact selection builds `oxpinyin-utils` once and
 records both binaries. The runner checks the pin source revision and diff
 before executing either utility. The normal heavy slot governs preparation,
 subject builds and the differential. No release builds are needed.

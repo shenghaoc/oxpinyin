@@ -67,7 +67,7 @@ class PreparedTests(unittest.TestCase):
             if command[0] == 'bash':
                 self.assertIn('--libs-only', command)
                 work = Path(command[command.index('--work-dir') + 1])
-                for directory in ('storage', 'training'):
+                for directory in ('storage', 'training', 'segment'):
                     (work / 'src/libpinyin-pin/utils' / directory).mkdir(parents=True, exist_ok=True)
             else:
                 self.assertEqual(command[0], 'make')
@@ -77,15 +77,16 @@ class PreparedTests(unittest.TestCase):
         made = []
         with patch.object(prepared, 'run', side_effect=build) as run:
             self.assertEqual(self.prepare('tool-diff'), [])
-            self.assertEqual(run.call_count, 3)
+            self.assertEqual(run.call_count, 4)
             source = Path(self.env['OXPINYIN_TOOL_PIN_BUILD'])
             self.assertEqual(made, [[source / 'utils/storage', 'gen_pinyin_table', 'gen_zhuyin_table'],
-                                    [source / 'utils/training', 'k_mixture_model_to_interpolation']])
+                                    [source / 'utils/training', 'k_mixture_model_to_interpolation'],
+                                    [source / 'utils/segment', 'ngseg', 'spseg', 'mergeseq']])
             self.assertEqual(self.prepare('tool-diff'), [])
-            self.assertEqual(run.call_count, 3)
+            self.assertEqual(run.call_count, 4)
             (source / 'utils/training/k_mixture_model_to_interpolation').unlink()
             self.prepare('tool-diff')
-            self.assertEqual(run.call_count, 6)
+            self.assertEqual(run.call_count, 8)
 
     def test_frontend_full_recipe_and_cell_assignment_are_cached(self):
         with patch.object(prepared, 'run', side_effect=self.fake_build) as run:
