@@ -18,8 +18,10 @@
 # unverified | unexecuted | n/a — how <notes> was established. The gate checks its form
 # only; libpinyin.alloc defines each value.
 #
-# The zhuyin facade allocates through its own `ffi.rs` — `owned_cstr` and
-# `owned_cstr_list` are duplicated from the pinyin one by design, because
+# The zhuyin facade allocates through its own `ffi.rs` — the GLib-call
+# helpers (`strdup`, `key_text`, `symbol_vector`, `sentence_text`; before
+# 2026-10-31 UTC `owned_cstr` and `owned_cstr_list`) and the fallible
+# `malloc_cstr_with` are duplicated from the pinyin one by design, because
 # each is itself the unsafe edge and the constitution's unsafe allowlist
 # reaches only the two C-ABI crates. (The doc-light boilerplate above the
 # allocator — the handle casts and the `char **`-out sentence writer — is

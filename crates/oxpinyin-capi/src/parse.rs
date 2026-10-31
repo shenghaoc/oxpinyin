@@ -173,32 +173,19 @@ pub extern "C" fn pinyin_in_chewing_keyboard(
         reason = "c_char is u8 on aarch64 Linux and i8 elsewhere, so a                   TryFrom conversion would fail to compile on one of them;                   the i8-to-u8 wrap is byte identity, and wrapped negatives                   (>= 0x80) match no keyboard table entry"
     )]
     let mapped = inst.core.in_keyboard(key as u8);
-    if mapped.is_empty() {
-        if !symbols.is_null() {
-            // SAFETY: Null-checked above.
-            unsafe {
-                *symbols = std::ptr::null_mut();
-            }
-        }
-        return false;
+    if symbols.is_null() {
+        return !mapped.is_empty();
     }
-
-    if !symbols.is_null() {
-        let ptr = crate::ffi::owned_cstr_list(&mapped);
-        if ptr.is_null() {
-            // SAFETY: Null-checked above.
-            unsafe {
-                *symbols = std::ptr::null_mut();
-            }
-            return false;
-        }
-        // SAFETY: `owned_cstr_list` is a malloc array of malloc
-        // strings; the caller releases both with g_strfreev.
-        unsafe {
-            *symbols = ptr;
-        }
+    // `in_chewing_scheme` (`zhuyin_parser2.cpp:301-332`, `:496-544`,
+    // `:798-851`): the symbols NULL, then the `GPtrArray` built with the
+    // pin's GLib calls, handed out for `g_strfreev`; NULL with `false`
+    // where no symbol matched.
+    let vector = crate::ffi::symbol_vector(&mapped);
+    // SAFETY: Null-checked above.
+    unsafe {
+        *symbols = vector;
     }
-    true
+    !mapped.is_empty()
 }
 
 #[cfg(test)]

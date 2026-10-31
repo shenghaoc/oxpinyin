@@ -11,7 +11,7 @@ use std::os::raw::c_char;
 use std::ptr;
 use std::sync::atomic::Ordering;
 
-use crate::ffi::owned_cstr;
+use crate::ffi::key_text;
 use crate::state::instance_ref;
 use crate::types::{ChewingKey, GChar, ZhuyinInstance};
 
@@ -124,7 +124,7 @@ pub extern "C" fn zhuyin_get_zhuyin_string(
     key: *mut ChewingKey,
     utf8_str: *mut *mut GChar,
 ) -> bool {
-    display_string_getter(key, utf8_str, oxpinyin_core::ChewingKey::zhuyin_string)
+    display_string_getter(key, utf8_str, oxpinyin_core::ChewingKey::zhuyin_text)
 }
 
 /// `zhuyin_get_pinyin_string` — render the key's pinyin spelling, dispatching
@@ -159,22 +159,22 @@ pub extern "C" fn zhuyin_get_pinyin_string(
             .full_scheme
             .load(Ordering::Relaxed);
         match oxpinyin_facade::full_scheme(scheme) {
-            Some(oxpinyin_core::FullPinyinScheme::Luoma) => core.luoma_pinyin_string(),
-            Some(oxpinyin_core::FullPinyinScheme::SecondaryZhuyin) => {
-                core.secondary_zhuyin_string()
-            }
-            _ => core.pinyin_string(),
+            Some(oxpinyin_core::FullPinyinScheme::Luoma) => core.luoma_pinyin_text(),
+            Some(oxpinyin_core::FullPinyinScheme::SecondaryZhuyin) => core.secondary_zhuyin_text(),
+            _ => core.pinyin_text(),
         }
     })
 }
 
 /// The shared body of the two string getters: NULL the out-param, refuse the
-/// zero key on `get_table_index() == 0`, render. The instance is not read
-/// here; `zhuyin_get_pinyin_string` guards it before the call.
+/// zero key on `get_table_index() == 0`, then hand out the rendering made
+/// with the pin's `g_strdup`/`g_strdup_printf` call
+/// (`chewing_key.cpp:47-121`). The instance is not read here;
+/// `zhuyin_get_pinyin_string` guards it before the call.
 fn display_string_getter(
     key: *mut ChewingKey,
     utf8_str: *mut *mut GChar,
-    render: impl FnOnce(oxpinyin_core::ChewingKey) -> String,
+    render: impl FnOnce(oxpinyin_core::ChewingKey) -> oxpinyin_chewing::KeyText,
 ) -> bool {
     if key.is_null() || utf8_str.is_null() {
         return false;
@@ -189,13 +189,9 @@ fn display_string_getter(
     if core.table_index() == 0 {
         return false;
     }
-    let rendered = render(core);
-    // Return success only when the allocation succeeded; `owned_cstr`
-    // returns null on an interior NUL or OOM.
-    let owned = owned_cstr(&rendered);
     // SAFETY: Null-checked above.
     unsafe {
-        *utf8_str = owned;
+        *utf8_str = key_text(render(core));
     }
-    !owned.is_null()
+    true
 }
