@@ -457,3 +457,66 @@ fn a_choose_at_the_cursor_survives_the_next_guess_after_a_phrase() {
     );
     close(context, instance);
 }
+
+/// The `ZHUYIN_STANDARD_DVORAK` slot aborts the process, as the pin's
+/// `set_scheme` falls through to `abort()` (`zhuyin_parser2.cpp:295`,
+/// register row 5c).
+#[cfg(unix)]
+#[test]
+fn the_dvorak_chewing_scheme_aborts() {
+    crate::test_support::assert_aborts("e2e_tests::the_dvorak_chewing_scheme_aborts", || {
+        let (context, _instance) = open();
+        crate::config::zhuyin_set_chewing_scheme(context, 7);
+    });
+}
+
+/// An out-of-enum keyboard (`zhuyin.cpp:736`) and a full-pinyin scheme
+/// outside 1-3 (`pinyin_parser2.cpp:398`) abort the process (register row
+/// 5d).
+#[cfg(unix)]
+#[test]
+fn an_out_of_enum_chewing_scheme_aborts() {
+    crate::test_support::assert_aborts("e2e_tests::an_out_of_enum_chewing_scheme_aborts", || {
+        let (context, _instance) = open();
+        crate::config::zhuyin_set_chewing_scheme(context, 10);
+    });
+}
+
+#[cfg(unix)]
+#[test]
+fn an_out_of_range_full_pinyin_scheme_aborts() {
+    crate::test_support::assert_aborts(
+        "e2e_tests::an_out_of_range_full_pinyin_scheme_aborts",
+        || {
+            let (context, _instance) = open();
+            crate::config::zhuyin_set_full_pinyin_scheme(context, 4);
+        },
+    );
+}
+
+/// An apostrophe in the single-key parser's input is the shared
+/// `parse_one_key` assert (`pinyin_parser2.cpp:170`, register row 21).
+#[cfg(unix)]
+#[test]
+fn a_single_key_apostrophe_aborts() {
+    crate::test_support::assert_aborts("e2e_tests::a_single_key_apostrophe_aborts", || {
+        let (_context, instance) = open();
+        let text = cstr("n'i");
+        let mut key = crate::types::ChewingKey::ZERO;
+        crate::keys::zhuyin_parse_full_pinyin(instance, text.as_ptr(), &raw mut key);
+    });
+}
+
+/// An unload index of 16 or more is the unload's assert (`zhuyin.cpp:381`,
+/// register row 66).
+#[cfg(unix)]
+#[test]
+fn an_unload_index_past_the_sub_indices_aborts() {
+    crate::test_support::assert_aborts(
+        "e2e_tests::an_unload_index_past_the_sub_indices_aborts",
+        || {
+            let (context, _instance) = open();
+            crate::config::zhuyin_unload_phrase_library(context, 16);
+        },
+    );
+}

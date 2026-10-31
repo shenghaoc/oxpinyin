@@ -71,7 +71,11 @@ pub extern "C" fn zhuyin_begin_add_phrases(
 /// 5, any other count its `guint32` bit pattern; the `USER_FILE`
 /// libraries and loaded system libraries take the phrase; every other nibble answers
 /// `false` — 16..=255 without reproducing the pin's out-of-bounds read of
-/// its 16-slot array (library 16 SIGSEGVs the pin).
+/// its 16-slot array (library 16 SIGSEGVs the pin). Where the pin asserts —
+/// more than four phrase-table tokens (`phrase_large_table3.h:95`), two of
+/// them in the target library (`zhuyin.cpp:440`), or the target library's
+/// item with another length (`:454`) or other text (`:457`) — the process
+/// aborts (register rows 74, 89, 104 and 90).
 #[unsafe(no_mangle)]
 pub extern "C" fn zhuyin_iterator_add_phrase(
     iter: *mut ImportIterator,
@@ -83,52 +87,106 @@ pub extern "C" fn zhuyin_iterator_add_phrase(
         return false;
     }
 
+    // `if (-1 == count) count = default_count;` (`zhuyin.cpp:409-410`).
+    let count = (count != -1).then(|| u64::from(count.cast_unsigned()));
+    // SAFETY: `iter` is non-null and was produced by
+    // `zhuyin_begin_add_phrases`; the unique borrow lasts for this call.
+    let handle = unsafe { &mut *(iter.cast::<ImportHandle>()) };
+    let (phrase, keys, original) = match plan_import(handle, phrase, pinyin) {
+        ImportPlan::Refuse => return false,
+        ImportPlan::LookupFailed => {
+            crate::ffi::log_warning("zhuyin_iterator_add_phrase: phrase-table lookup failed");
+            return false;
+        }
+        // Register rows 74, 89, 90 and 104: the pin's `reduce_tokens` count
+        // assert (`phrase_large_table3.h:95`) and `_add_phrase`'s asserts
+        // (`zhuyin.cpp:440`, `:454`, `:457`), before either add call.
+        ImportPlan::Abort => std::process::abort(),
+        ImportPlan::Add {
+            phrase,
+            keys,
+            original,
+        } => (phrase, keys, original),
+    };
+    let Some(user) = handle.user.as_mut() else {
+        return false;
+    };
+    if (1..=4).contains(&handle.index) {
+        let Some(dict) = handle.dict.as_ref() else {
+            return false;
+        };
+        if !dict.library_visible(u32::from(handle.index)) {
+            return false;
+        }
+        // The selected token comes from the combined phrase-table search,
+        // including prior imported system-library items.
+        user.add_system_phrase_in(handle.index, original, &phrase, &keys, count)
+            .is_ok()
+    } else {
+        user.add_phrase_in(handle.index, &phrase, &keys, count)
+            .is_ok()
+    }
+}
+
+/// What [`zhuyin_iterator_add_phrase`] does with one pair before it writes.
+enum ImportPlan {
+    /// The pin's ordinary `false`.
+    Refuse,
+    /// A phrase-table lookup failed outright: no pin counterpart, one
+    /// warning and `false`.
+    LookupFailed,
+    /// One of the pin's asserts: `reduce_tokens`' count
+    /// (`phrase_large_table3.h:95`, register row 74) or `_add_phrase`'s
+    /// same-library (`zhuyin.cpp:440`, row 89), length (`:454`, row 104)
+    /// and text (`:457`, row 90) checks.
+    Abort,
+    /// The add goes ahead, with the same-library token the phrase table
+    /// already holds for the phrase, if any.
+    Add {
+        phrase: oxpinyin_core::PhraseText,
+        keys: Vec<PinyinKey>,
+        original: Option<u32>,
+    },
+}
+
+/// `zhuyin.cpp:500-534` and `_add_phrase` (`:400-458`) up to the add calls:
+/// the parse, the length gates and the phrase-table checks, in the pin's
+/// order. Reads only.
+fn plan_import(handle: &ImportHandle, phrase: *const c_char, pinyin: *const c_char) -> ImportPlan {
     let phrase =
         oxpinyin_capi_marshal::input::utf8_to_ucs4(oxpinyin_capi_marshal::borrow_c_string!(phrase))
             .unwrap_or_default();
     let pinyin = oxpinyin_capi_marshal::input::direct_zhuyin_reading(
         oxpinyin_capi_marshal::borrow_c_string!(pinyin),
     );
-    // `if (-1 == count) count = default_count;` (`zhuyin.cpp:409-410`).
-    let count = (count != -1).then(|| u64::from(count.cast_unsigned()));
-    // SAFETY: `iter` is non-null and was produced by
-    // `zhuyin_begin_add_phrases`.
-    let handle = unsafe { &mut *(iter.cast::<ImportHandle>()) };
-    let Some(user) = handle.user.as_mut() else {
-        return false;
+    let Some(user) = handle.user.as_ref() else {
+        return ImportPlan::Refuse;
     };
     let Some(keys) = parse_zhuyin_direct(&pinyin, USE_TONE | FORCE_TONE)
         .into_iter()
         .map(|(key, tone)| toned_key(key.index(), tone))
         .collect::<Option<Vec<PinyinKey>>>()
     else {
-        return false;
+        return ImportPlan::Refuse;
     };
     // The iterator validates the phrase/key lengths before _add_phrase:
-    // 074a2219 pinyin.cpp:639-646 / zhuyin.cpp:525-532.
+    // 074a2219 zhuyin.cpp:525-529.
     let length = phrase.phrase_length();
     if length == 0 || length >= MAX_PHRASE_LENGTH || length != keys.len() {
-        return false;
+        return ImportPlan::Refuse;
     }
     // Search once and preserve both tables' token multiplicity before
     // reduce_tokens validates the combined count (074a2219
     // phrase_large_table3.h:77-95).
-    let tokens = match phrase_table_tokens(user, handle.dict.as_ref(), &phrase) {
-        Ok(tokens) => tokens,
-        Err(()) => {
-            crate::ffi::log_warning("zhuyin_iterator_add_phrase: phrase-table lookup failed");
-            return false;
-        }
+    let Ok(tokens) = phrase_table_tokens(user, handle.dict.as_ref(), &phrase) else {
+        return ImportPlan::LookupFailed;
     };
     if tokens.len() > 4 {
-        crate::ffi::log_warning(
-            "zhuyin_iterator_add_phrase: assertion '0 <= num && num <= 4' failed",
-        );
-        return false;
+        return ImportPlan::Abort;
     }
     // The pin reduces tokens before get_range rejects an unused library.
     if !is_user_file_library(handle.index) && !(1..=4).contains(&handle.index) {
-        return false;
+        return ImportPlan::Refuse;
     }
     // 074a2219 zhuyin.cpp:431-458: the pin then walks the phrase table's
     // tokens for the phrase. Two tokens in the same sub-index library trip
@@ -137,26 +195,26 @@ pub extern "C" fn zhuyin_iterator_add_phrase(
     // `assert(phrase_length == item.get_phrase_length())` (`:454`), and one
     // of the same length with other text the `memcmp` assert (`:457`). The
     // phrase table is the `user_phrase_index` membership plus the system
-    // phrase index; the item text is read without its pronunciation view. Each refusal is
-    // one `libzhuyin` warning; a lookup that fails outright refuses before
-    // either add call rather than reading an empty token list.
+    // phrase index; the item text is read without its pronunciation view.
     let same_library: Vec<u32> = tokens
         .into_iter()
         .filter(|token| token >> 24 == u32::from(handle.index))
         .collect();
     if same_library.len() > 1 {
-        crate::ffi::log_warning(
-            "zhuyin_iterator_add_phrase: assertion \
-             'PHRASE_INDEX_LIBRARY_INDEX(token) != index' failed",
-        );
-        return false;
+        return ImportPlan::Abort;
     }
-    if let (Some(&token), Some(dict)) = (same_library.first(), handle.dict.as_ref()) {
+    if let Some(&token) = same_library.first() {
+        let item_text = if let Some(dict) = handle.dict.as_ref() {
+            dict.token_text(token)
+        } else {
+            user.phrase_text(token).ok().flatten().and_then(|words| {
+                oxpinyin_core::PhraseText::from_stored_words(words.into_iter().map(Some))
+            })
+        };
         // A missing item (a token a library reload left in the phrase
-        // table) leaves the pin's `PhraseItem` at length zero: `:454` asserts
-        // before any import mutation.
-        let item_text = dict.token_text(token);
-        // The stored length first, then every stored word (`zhuyin.cpp:454-457`).
+        // table) leaves the pin's `PhraseItem` at length zero: `:454`
+        // asserts before any import mutation. The stored length first, then
+        // every stored word (`zhuyin.cpp:454-457`).
         let same_length = item_text
             .as_ref()
             .is_some_and(|text| text.phrase_length() == length);
@@ -167,31 +225,13 @@ pub extern "C" fn zhuyin_iterator_add_phrase(
             )
         });
         if !(same_length && same_words) {
-            crate::ffi::log_warning(if same_length {
-                "zhuyin_iterator_add_phrase: assertion \
-                     '0 == memcmp(phrase, tmp_phrase, sizeof(ucs4_t) * phrase_length)' failed"
-            } else {
-                "zhuyin_iterator_add_phrase: assertion \
-                     'phrase_length == item.get_phrase_length()' failed"
-            });
-            return false;
+            return ImportPlan::Abort;
         }
     }
-    if (1..=4).contains(&handle.index) {
-        let Some(dict) = handle.dict.as_ref() else {
-            return false;
-        };
-        if !dict.library_visible(u32::from(handle.index)) {
-            return false;
-        }
-        // The selected token comes from the combined phrase-table search,
-        // including prior imported system-library items.
-        let original = same_library.first().copied();
-        user.add_system_phrase_in(handle.index, original, &phrase, &keys, count)
-            .is_ok()
-    } else {
-        user.add_phrase_in(handle.index, &phrase, &keys, count)
-            .is_ok()
+    ImportPlan::Add {
+        phrase,
+        keys,
+        original: same_library.first().copied(),
     }
 }
 

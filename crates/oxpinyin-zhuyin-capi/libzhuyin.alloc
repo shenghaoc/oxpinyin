@@ -14,7 +14,7 @@
 # Notes: false-allocates | false-nulls | false-untouched | false-unreachable
 # | n/a — each EXECUTABLE, probed by alloc-pairing-zhuyin.cc against a
 # failure path a conforming consumer can reach.
-# Verified: pin-probe:<case> | pin-aborts:row<N> | source:<file>:<lines> |
+# Verified: pin-probe:<case> | source:<file>:<lines> |
 # unverified | unexecuted | n/a — how <notes> was established. The gate checks its form
 # only; libpinyin.alloc defines each value.
 #
@@ -31,6 +31,12 @@
 # here, six in libpinyin.alloc) said `false-unreachable`. The relabel to
 # `false-nulls` / `false-untouched` (both here are `false-nulls`) landed
 # 2026-10-09 (#708), and a pin probe on bdb confirms each line's <notes>.
+#
+# Corrected 2026-10-31 UTC (class (c) retired): oxpinyin now aborts where
+# the pin aborts, so no `pin-aborts` path is probed here any more. The key
+# getters' reachable `false` is an offset past the last column of a matrix
+# that holds keys, where the pin NULLs the out-param first
+# (zhuyin.cpp:1890-1893, :1912-1915); an empty matrix is row 66's abort.
 
 # ── Handles: allocated by Box::into_raw, released by their destructor ──
 zhuyin_init                              return      handle:zhuyin_fini            n/a                n/a
@@ -47,8 +53,8 @@ zhuyin_get_candidate                     candidate   borrowed                   
 # The candidate string has no `false` at the pin: it stores the pointer and
 # answers `true` (zhuyin.cpp:1865-1870).
 zhuyin_get_candidate_string              utf8_str    borrowed                      false-unreachable  source:zhuyin.cpp:1865-1870
-zhuyin_get_zhuyin_key                    key         borrowed                      false-nulls        pin-aborts:row66
-zhuyin_get_zhuyin_key_rest               key_rest    borrowed                      false-nulls        pin-aborts:row66
+zhuyin_get_zhuyin_key                    key         borrowed                      false-nulls        source:zhuyin.cpp:1890-1893
+zhuyin_get_zhuyin_key_rest               key_rest    borrowed                      false-nulls        source:zhuyin.cpp:1912-1915
 
 # ── Caller-owned strings (g_free) ─────────────────────────────────────
 zhuyin_get_sentence                      sentence    g_free                        false-untouched    pin-probe:zhuyin-sentence-before-guess

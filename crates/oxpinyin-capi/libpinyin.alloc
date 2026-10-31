@@ -61,9 +61,6 @@
 #                            on the reference cell (tkrzw; bdb to 2026-10-30) by <case>: a
 #                            `tools/bisection/contract-diff.py` case, or a
 #                            runner in `tools/bisection/`.
-#     pin-aborts:row<N>      the path the gate probes aborts the pin; <notes>
-#                            is oxpinyin's answer there, registered as row
-#                            <N> of `docs/findings/compatibility-policy.md`.
 #     source:<file>:<lines>  argued from the pin's `src/<file>` at 074a2219.
 #     unverified             executed against oxpinyin only, never compared
 #                            with the pin.

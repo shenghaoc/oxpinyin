@@ -2,8 +2,9 @@
 //!
 //! The cursor → lookup-offset normalization and the word-level left/right
 //! moves port the pin's matrix laws over the engine's positional data, using
-//! the zhuyin parse's key spans. Where the pin's `_check_offset` aborts, these
-//! answer `false` per the no-abort policy (divergence class (c)).
+//! the zhuyin parse's key spans. Where the pin asserts — `_check_offset`
+//! (`zhuyin.cpp:1453`) or the matrix's own index check
+//! (`phonetic_key_matrix.h:103`) — the process aborts (register row 66).
 
 use std::ptr;
 use std::sync::atomic::{AtomicU16, Ordering};
@@ -47,15 +48,32 @@ pub(crate) fn matrix_has_keys(inst: &CapiInstance) -> bool {
     !(input.is_empty() || keys.is_empty())
 }
 
-/// Class (c), `phonetic_key_matrix.h:103`: on an empty matrix the pin's
-/// `matrix.size() - 1` wraps, the offset test passes, and `get_column_size`
-/// asserts. A matrix with keys is the graceful `false`, silent.
-fn warn_on_empty_matrix(inst: &CapiInstance, name: &str) {
+/// Register row 66, `phonetic_key_matrix.h:103`: on an empty matrix (a
+/// fresh or keyless instance: `fill_matrix` leaves it at size 0 when the
+/// parse placed no key, `phonetic_key_matrix.cpp:37`) the pin's first
+/// `get_column_size` asserts — the key accessors' after `matrix.size() - 1`
+/// wraps (`zhuyin.cpp:1892-1895`, `:1914-1917`), the right move's in its
+/// loop (`:2037-2038`) — and the process aborts.
+fn abort_on_empty_matrix(inst: &CapiInstance) {
     if !matrix_has_keys(inst) {
-        crate::ffi::log_warning(&format!(
-            "{name}: assertion 'index < m_table_content->len' failed"
-        ));
+        std::process::abort();
     }
+}
+
+/// The key accessors' answer for an `abi_key_at` error:
+/// `_check_offset`'s assert on a lone zero key before the offset
+/// (`zhuyin.cpp:1453` via `:1898`, `:1920`) aborts the process (register row
+/// 66); a parse the facade cannot read, which the pin has no counterpart
+/// for, answers `false` with one warning.
+fn key_lookup_failed(error: &oxpinyin_engine::EngineError, name: &str) -> bool {
+    if matches!(
+        error,
+        oxpinyin_engine::EngineError::ZeroKeyOffsetCheck { .. }
+    ) {
+        std::process::abort();
+    }
+    crate::ffi::log_warning(&format!("{name}: the lookup failed"));
+    false
 }
 
 /// Get the zhuyin key rest at an offset.
@@ -84,16 +102,11 @@ pub extern "C" fn zhuyin_get_zhuyin_key_rest(
     // SAFETY: `instance` is non-null and was produced by
     // `zhuyin_alloc_instance`.
     let inst = unsafe { instance_mut(instance) };
+    abort_on_empty_matrix(inst);
     let found = match inst.core.abi_key_at(offset, true) {
         Ok(Some(found)) => found,
-        Ok(None) => {
-            warn_on_empty_matrix(inst, "zhuyin_get_zhuyin_key_rest");
-            return false;
-        }
-        Err(_) => {
-            crate::ffi::log_warning("zhuyin_get_zhuyin_key_rest: zero-column assertion");
-            return false;
-        }
+        Ok(None) => return false,
+        Err(error) => return key_lookup_failed(&error, "zhuyin_get_zhuyin_key_rest"),
     };
     KEY_REST_SLOT.begin.store(
         u16::try_from(found.1).unwrap_or(u16::MAX),
@@ -218,16 +231,11 @@ pub extern "C" fn zhuyin_get_zhuyin_key(
     // SAFETY: `instance` is non-null and was produced by
     // `zhuyin_alloc_instance`.
     let inst = unsafe { instance_mut(instance) };
+    abort_on_empty_matrix(inst);
     let found = match inst.core.abi_key_at(offset, true) {
         Ok(Some(found)) => found,
-        Ok(None) => {
-            warn_on_empty_matrix(inst, "zhuyin_get_zhuyin_key");
-            return false;
-        }
-        Err(_) => {
-            crate::ffi::log_warning("zhuyin_get_zhuyin_key: zero-column assertion");
-            return false;
-        }
+        Ok(None) => return false,
+        Err(error) => return key_lookup_failed(&error, "zhuyin_get_zhuyin_key"),
     };
     let packed = found.0;
     KEY_SLOT.store(packed, Ordering::Relaxed);
@@ -294,12 +302,26 @@ pub extern "C" fn zhuyin_get_left_zhuyin_offset(
     // SAFETY: `instance` is non-null and was produced by
     // `zhuyin_alloc_instance`.
     let inst = unsafe { instance_ref(instance) };
-    let Ok(result) = inst.core.abi_left_offset(offset, true) else {
-        // Class (c): the pin's `get_column_size` asserts past the matrix.
-        crate::ffi::log_warning(
-            "zhuyin_get_left_zhuyin_offset: assertion 'index < m_table_content->len' failed",
-        );
-        return false;
+    // `_check_offset` reads column `offset - 1` (`zhuyin.cpp:1449`), which
+    // an empty matrix does not have; offset 0 reads no column and answers 0.
+    if offset > 0 {
+        abort_on_empty_matrix(inst);
+    }
+    let result = match inst.core.abi_left_offset(offset, true) {
+        Ok(result) => result,
+        // Register row 66: `_check_offset`'s assert (`zhuyin.cpp:1453`, via
+        // `:1998` and `:2020`), and its `get_column_size` past the matrix
+        // (`phonetic_key_matrix.h:103`).
+        Err(
+            oxpinyin_engine::EngineError::ZeroKeyOffsetCheck { .. }
+            | oxpinyin_engine::EngineError::LookupOffsetOutOfRange { .. },
+        ) => std::process::abort(),
+        // A parse the facade cannot read, which the pin has no counterpart
+        // for.
+        Err(_) => {
+            crate::ffi::log_warning("zhuyin_get_left_zhuyin_offset: the lookup failed");
+            return false;
+        }
     };
     if !left.is_null() {
         // SAFETY: Null-checked above.
@@ -330,18 +352,22 @@ pub extern "C" fn zhuyin_get_right_zhuyin_offset(
     // SAFETY: `instance` is non-null and was produced by
     // `zhuyin_alloc_instance`.
     let inst = unsafe { instance_ref(instance) };
+    abort_on_empty_matrix(inst);
     let result = match inst.core.right_offset(offset) {
         Ok(Some(result)) => result,
-        // The pin's own graceful `false` (`zhuyin.cpp:2049`), except on an
-        // empty matrix, where the loop's `get_column_size` asserts first.
-        Ok(None) => {
-            warn_on_empty_matrix(inst, "zhuyin_get_right_zhuyin_offset");
-            return false;
-        }
+        // The pin's own graceful `false` (`zhuyin.cpp:2050-2051`).
+        Ok(None) => return false,
+        // Register row 66: `_check_offset`'s assert (`zhuyin.cpp:1453`, via
+        // `:2030` and `:2055`), and its `get_column_size` past the matrix
+        // (`phonetic_key_matrix.h:103`).
+        Err(
+            oxpinyin_engine::EngineError::ZeroKeyOffsetCheck { .. }
+            | oxpinyin_engine::EngineError::LookupOffsetOutOfRange { .. },
+        ) => std::process::abort(),
+        // A parse the facade cannot read, which the pin has no counterpart
+        // for.
         Err(_) => {
-            crate::ffi::log_warning(
-                "zhuyin_get_right_zhuyin_offset: assertion 'index < m_table_content->len' failed",
-            );
+            crate::ffi::log_warning("zhuyin_get_right_zhuyin_offset: the lookup failed");
             return false;
         }
     };

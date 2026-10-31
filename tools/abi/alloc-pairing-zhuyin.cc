@@ -313,13 +313,20 @@ void probe_false_contracts(zhuyin_instance_t *instance) {
     ok = zhuyin_get_candidate(instance, 0, &candidate);
     expect_declared("zhuyin_get_candidate", "candidate", ok, candidate);
 
+    // The key accessors answer false past the last column of a matrix that
+    // holds keys (zhuyin.cpp:1892-1893, :1914-1915). On an empty matrix
+    // `offset >= matrix.size() - 1` wraps and the pin asserts in
+    // `get_column_size` (phonetic_key_matrix.h:103, policy row 66), as
+    // oxpinyin now does, so they are probed after a parse.
+    zhuyin_parse_more_chewings(instance, "su3cl3");
     ChewingKey *key = reinterpret_cast<ChewingKey *>(kSentinel);
-    ok = zhuyin_get_zhuyin_key(instance, 0, &key);
+    ok = zhuyin_get_zhuyin_key(instance, 6, &key);
     expect_declared("zhuyin_get_zhuyin_key", "key", ok, key);
 
     ChewingKeyRest *key_rest = reinterpret_cast<ChewingKeyRest *>(kSentinel);
-    ok = zhuyin_get_zhuyin_key_rest(instance, 0, &key_rest);
+    ok = zhuyin_get_zhuyin_key_rest(instance, 6, &key_rest);
     expect_declared("zhuyin_get_zhuyin_key_rest", "key_rest", ok, key_rest);
+    zhuyin_reset(instance);
 
     guint len = 0;
     gchar *utf8 = kSentinel;
@@ -405,6 +412,10 @@ int main(int argc, char **argv) {
     }
 
     if (coverage) {
+        // `UserTableInfo::load` writes `open %s failed.` with no newline
+        // (`table_info.cpp:332`, reproduced), and stderr shares the gate's pipe:
+        // start the table on its own line.
+        std::printf("\n");
         for (size_t i = 0; i < kSlotCount; ++i) {
             const char *probed = "n-a";
             if (std::strcmp(kSlots[i].on_false, "false-unreachable") == 0) {
