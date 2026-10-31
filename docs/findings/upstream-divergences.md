@@ -3418,6 +3418,10 @@ on it while the un-scoped `predicted_bigram_fault` answered `false` with one
 warning, and the case now holds the prefix-scoped check. The fixture is a
 Berkeley DB hash, so the six cases declare
 `cells=('bdb',)`. No interface, ABI or dependency change.
+- **Status (2026-10-31 UTC):** closed by member 5c. The short value is the
+  pin's abort at each of these paths, and at training, the lookups and the
+  bigram export walk; the partial item tail is split out and keeps its class
+  (b) refusals. See [pin-aborts-remaining.md](pin-aborts-remaining.md).
 
 ### A non-`phrase_token_t` user-bigram key aborts `mask_out`, the removal and the export iterator (#525; row 86, class (c), 2026-10-10 UTC)
 
@@ -4423,3 +4427,21 @@ Neither row has a pin abort; the refusals and their warnings are deleted.
 A save now skips an unloaded library, as `_write_files` and
 `_rename_files` do. Recorded, with the pin lines, items and cases, in
 [library-transitions-in-memory.md](library-transitions-in-memory.md).
+
+### Pin aborts reproduced: the short user-bigram total and the directory library (2026-10-31 UTC)
+
+**Pin behaviour reproduced.** Member 5c of the class (c) retirement, the
+last two rows. Row 85: a user-bigram value shorter than its `guint32`
+total (`memory_chunk.h:390`) is a typed fault at mask-out, candidate
+removal, predicted guessing and training, `*_train`, the lookups and the
+bigram export walk, on which both C facades abort; the export now aborts
+where `has_next` loads that predecessor, after the earlier rows, instead of
+refusing at begin. The partial item tail of rows 98 and 100 is split from it
+and keeps its class (b) refusals. Row 96: a system library that is a
+directory (`memory_chunk.h:493`) is the fault where init's, the save's and
+the mask's library loops map it, after the earlier libraries' work (the
+save's earlier `.tmp` files, renamed by libzhuyin), and at the reload and
+the addon load. All sites are `assert`s: POLICY-ACCEPTED for the missing
+assertion line only. Every former class (c) row is now reproduced.
+Recorded, with the pin sites, items and cases, in
+[pin-aborts-remaining.md](pin-aborts-remaining.md).
