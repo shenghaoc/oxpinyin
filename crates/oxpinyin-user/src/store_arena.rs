@@ -167,11 +167,12 @@ impl<S: WriteStore> GenericUserStore<S> {
         let replacement = library
             .prepare_replace(slot, bytes)
             .map_err(UserStoreError::Persistence)?;
-        db.write(|txn| {
-            phrase_table::add_index(txn, phrase, token)?;
-            bump_unigram_total(txn, u64::from(unigram))
-        })?;
+        db.write(|txn| bump_unigram_total(txn, u64::from(unigram)))?;
         replacement.apply(phrases.libraries.entry(ADDON_DICTIONARY).or_default());
+        phrases
+            .phrase_table
+            .add(&item.phrase, token)
+            .map_err(|error| UserStoreError::Persistence(error.to_string()))?;
         for (packed, _) in &item.prons {
             let keys: Vec<oxpinyin_core::ChewingKey> = packed
                 .iter()
@@ -287,18 +288,16 @@ impl<S: WriteStore> GenericUserStore<S> {
             let existing = match selected {
                 Some(token) => token,
                 None => {
-                    let mut tokens = Vec::new();
-                    if let Some(found) = txn.read_with(
-                        phrase_table::TABLE,
-                        &phrase_table::key_ucs4(words),
-                        |bytes| {
-                            phrase_table::search_bytes(bytes, &mut tokens, |token| {
-                                phrase_index_library_index(token) == library
-                            })
-                        },
-                    )? {
-                        found?;
-                    }
+                    let tokens = match phrases.phrase_table.tokens(&phrase_table::key_ucs4(words)) {
+                        Ok(tokens) => tokens,
+                        Err(error) => {
+                            return Ok(Err(UserStoreError::Persistence(error.to_string())));
+                        }
+                    };
+                    let tokens: Vec<_> = tokens
+                        .into_iter()
+                        .filter(|token| phrase_index_library_index(*token) == library)
+                        .collect();
                     if tokens.len() > 1 {
                         return Ok(Err(UserStoreError::InvalidPhrase));
                     }
@@ -355,12 +354,15 @@ impl<S: WriteStore> GenericUserStore<S> {
                 Ok(replacement) => replacement,
                 Err(error) => return Ok(Err(UserStoreError::Persistence(error))),
             };
-            phrase_table::add_index_words(txn, words, token)?;
             bump_unigram_total(txn, u64::from(increment))?;
             Ok(Ok((token, true, Some(replacement))))
         })??;
         if let Some(replacement) = replacement {
             replacement.apply(phrases.libraries.entry(library).or_default());
+            phrases
+                .phrase_table
+                .add(words, token)
+                .map_err(|error| UserStoreError::Persistence(error.to_string()))?;
             let chewing: Vec<oxpinyin_core::ChewingKey> = packed
                 .iter()
                 .copied()
@@ -428,6 +430,15 @@ impl<S: WriteStore> GenericUserStore<S> {
         };
         let item = decode_phrase_item(view.as_bytes())
             .map_err(|e| UserStoreError::Persistence(e.to_string()))?;
+        // `pinyin_remove_user_candidate` removes the phrase-table entry
+        // before the item and asserts that it existed.
+        let phrase_tokens = phrases
+            .phrase_table
+            .tokens(&phrase_table::key_ucs4(&item.phrase))
+            .map_err(|error| UserStoreError::Persistence(error.to_string()))?;
+        if !phrase_tokens.contains(&token) {
+            return Ok(false);
+        }
         if item
             .prons
             .iter()
@@ -436,10 +447,6 @@ impl<S: WriteStore> GenericUserStore<S> {
             return Ok(false);
         }
         let removed = db.write(|txn| {
-            if phrase_table::remove_index_ucs4(txn, &item.phrase, token)? != phrase_table::ERROR_OK
-            {
-                return Ok(false);
-            }
             let total = txn_get_u64_or(txn, UNIGRAM_TOTAL, &[UNIGRAM_TOTAL_KEY], 0)?;
             txn.put(
                 UNIGRAM_TOTAL,
@@ -451,6 +458,10 @@ impl<S: WriteStore> GenericUserStore<S> {
         if !removed {
             return Ok(false);
         }
+        phrases
+            .phrase_table
+            .remove(&item.phrase, token)
+            .map_err(|error| UserStoreError::Persistence(error.to_string()))?;
         for (packed, _) in &item.prons {
             let keys: Vec<oxpinyin_core::ChewingKey> = packed
                 .iter()

@@ -292,6 +292,7 @@ impl GenericUserStore<DefaultStore> {
             user_libraries,
             overlong_index_keys,
             index,
+            phrase_table,
         } = profile;
         // Armed as soon as the load has raised the counter: an open that
         // fails from here on drops it and lowers the counter again, so a
@@ -322,6 +323,7 @@ impl GenericUserStore<DefaultStore> {
             let mut phrases = target.phrases();
             phrases.libraries = user_libraries;
             phrases.index = index;
+            phrases.phrase_table = phrase_table;
             for (&nibble, items) in &loaded.state.libraries {
                 for (&slot, item) in items {
                     let bytes = oxpinyin_data::chunk_write::encode_phrase_item(item)

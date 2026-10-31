@@ -2707,6 +2707,20 @@ impl<S: WriteStore> GenericUserStore<S> {
         Some(self.inner.libpinyin.as_ref()?.phrases().index.clone())
     }
 
+    /// A snapshot of the session's user phrase table.
+    pub(crate) fn user_phrase_table_snapshot(
+        &self,
+    ) -> Option<crate::user_phrase_table::UserPhraseTable> {
+        Some(
+            self.inner
+                .libpinyin
+                .as_ref()?
+                .phrases()
+                .phrase_table
+                .clone(),
+        )
+    }
+
     pub(crate) fn index_entries(&self) -> Vec<(Token, Vec<u16>)> {
         let Some(target) = self.inner.libpinyin.as_ref() else {
             return Vec::new();
@@ -3245,6 +3259,13 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// # Errors
     /// Returns an error when the record cannot be read.
     pub fn phrase_table_tokens_for_text(&self, text: &str) -> Result<Vec<Token>, UserStoreError> {
+        if let Some(target) = self.inner.libpinyin.as_ref() {
+            return target
+                .phrases()
+                .phrase_table
+                .tokens(&phrase_table::key(text))
+                .map_err(|error| UserStoreError::Persistence(error.to_string()));
+        }
         Ok(phrase_table::search(&*self.database(), text)?.tokens)
     }
 
@@ -3258,12 +3279,22 @@ impl<S: WriteStore> GenericUserStore<S> {
         &self,
         words: &[u32],
     ) -> Result<Vec<Token>, UserStoreError> {
+        if let Some(target) = self.inner.libpinyin.as_ref() {
+            return target
+                .phrases()
+                .phrase_table
+                .tokens(&phrase_table::key_ucs4(words))
+                .map_err(|error| UserStoreError::Persistence(error.to_string()));
+        }
         Ok(phrase_table::search_ucs4(&*self.database(), words)?.tokens)
     }
 
     pub(crate) fn phrase_table_records(
         &self,
     ) -> Result<std::collections::BTreeMap<Vec<u8>, Vec<u8>>, UserStoreError> {
+        if let Some(target) = self.inner.libpinyin.as_ref() {
+            return Ok(target.phrases().phrase_table.rows().into_iter().collect());
+        }
         let mut records = std::collections::BTreeMap::new();
         self.database()
             .for_each(phrase_table::TABLE, |key, value| {
@@ -3509,6 +3540,7 @@ impl<S: WriteStore> GenericUserStore<S> {
                     state: &state,
                     libraries: Some(&phrases.libraries),
                     index: &phrases.index,
+                    phrase_table: Some(&phrases.phrase_table),
                     compacted: &[],
                 },
                 &originals,
@@ -3610,6 +3642,7 @@ impl<S: WriteStore> GenericUserStore<S> {
                         state: &state,
                         libraries: Some(&phrases.libraries),
                         index: &phrases.index,
+                        phrase_table: Some(&phrases.phrase_table),
                         compacted,
                     },
                     &originals,
@@ -4062,9 +4095,7 @@ impl<S: WriteStore> GenericUserStore<S> {
                 &codec::encode_u64(kept_sum),
             )?;
 
-            if self.inner.libpinyin.is_some() {
-                phrase_table::mask_out(txn, mask, value)?;
-            } else {
+            if self.inner.libpinyin.is_none() {
                 mask_phrase_rows(txn, mask, value)?;
                 rederive_alloc_cursors(txn, &[])?;
             }
@@ -4073,7 +4104,12 @@ impl<S: WriteStore> GenericUserStore<S> {
         // The pin's mask walk edits every record of the user pinyin index,
         // arena or overlay; the next save writes the table as it stands.
         if let Some(target) = self.inner.libpinyin.as_ref() {
-            target.phrases().index.mask(mask, value);
+            let mut phrases = target.phrases();
+            phrases.index.mask(mask, value);
+            phrases
+                .phrase_table
+                .mask(mask, value)
+                .map_err(UserStoreError::from)?;
         }
         // Commit succeeded: discard matched in-memory system payloads too.
         // Dropping an original's override restores it; dropping an appended
