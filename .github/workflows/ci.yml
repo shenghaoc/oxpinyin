@@ -40,8 +40,8 @@
 #     then a fixture-only PR ran no CI at all)
 #   - tests/parity/** — the parity corpus pinyin-oracle's tests replay
 #   - clippy.toml — the lint job's Clippy configuration (msrv)
-#   - .config/nextest.toml — the `ci` nextest profile the Linux and macOS
-#     test jobs run under
+#   - .config/nextest.toml — the `ci` nextest profile the Linux test job
+#     runs under
 #   - .github/actions/** — the bootstrap composite action every job runs
 #   - .cargo/** — Cargo configuration (none today) reaches every build
 #   - *.sh — the lint job runs ShellCheck over every tracked shell script,
@@ -103,15 +103,12 @@ concurrency:
   group: ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# Four job groups (plus path gate and aggregate):
+# Three job groups (plus path gate and aggregate):
 #   lint — rustfmt + clippy + the Lizard CCN ratchet
 #   test — cargo test for the whole workspace (the ONE full sweep per
-#          PR), and the portable workspace (all but capi, zhuyin-capi, and
-#          the backend-independent KMM tool) on macOS, with clippy over
-#          that set. The combined training package stays in that lane
-#          because its segment/eval modules use the selected backend.
-# The full Windows workspace job runs in verify-nightly.yml (nightly and on
-# manual dispatch), not on every PR.
+#          PR) on Linux
+# The macOS and Windows workspace jobs run in verify-nightly.yml (nightly
+# and on manual dispatch), not on every PR.
 #   deny — supply-chain gate: RustSec advisories, licenses, sources,
 #          duplicate-version drift (docs/safety/oxpinyin-safety-profile.md
 #          layer 6)
@@ -120,7 +117,7 @@ concurrency:
 # build-and-smoke of every target cost more than it caught).
 
 jobs:
-  # The path gate computes one `run` flag for the four code lanes.
+  # The path gate computes one `run` flag for the three code lanes.
   # It runs first on every push and PR; each lane
   # carries an `if` on its flag so it reports `skipped` — a conclusion,
   # which unlike a workflow-level path filter still reaches
@@ -135,7 +132,10 @@ jobs:
   # the event; that over-triggers too. The pathspec list is the one the
   # header documents; keep the two in lockstep.
   changes:
-    runs-on: ubuntu-latest
+    # The one Linux runner label in this workflow; the other Linux jobs
+    # alias it (*ubuntu). Pinned, not ubuntu-latest, so a runner-image
+    # move (26.04: actions/runner-images#14748) happens here under review.
+    runs-on: &ubuntu ubuntu-26.04
     outputs:
       run: ${{ steps.gate.outputs.run }}
       ship: ${{ steps.ship.outputs.ship }}
@@ -191,7 +191,7 @@ jobs:
   lint:
     needs: changes
     if: needs.changes.outputs.run == 'true' && (needs.changes.outputs.reuse != 'true' || github.event_name == 'push')
-    runs-on: ubuntu-latest
+    runs-on: *ubuntu
     container:
       image: debian:testing # deliberately unpinned; see store-backends.yml header
     timeout-minutes: 30
@@ -244,7 +244,7 @@ jobs:
       # one placed above a `//!` block takes the docs with it and
       # `missing_docs` fires — on the excluded platform only, which no job
       # here can see: this container makes every `target_os = "linux"`
-      # gate true, and test-macos and the nightly Windows job build the
+      # gate true, and the nightly macOS and Windows jobs build the
       # portable crates only, so the breakage surfaced on a contributor's macOS checkout
       # instead. The checker reads placement, not cfg outcomes, so it holds
       # for every host from here. The harness runs first: a regression in
@@ -333,7 +333,7 @@ jobs:
   test:
     needs: changes
     if: needs.changes.outputs.run == 'true' && (needs.changes.outputs.reuse != 'true' || github.event_name == 'push')
-    runs-on: ubuntu-latest
+    runs-on: *ubuntu
     container:
       image: debian:testing # deliberately unpinned; see store-backends.yml header
     timeout-minutes: 30
@@ -488,165 +488,9 @@ jobs:
         if: needs.changes.outputs.reuse != 'true'
         run: just heavy -- just abi exports --shipped
 
-  # macOS links the default store backend, tkrzw, from the tkrzw action,
-  # selected explicitly so pinyin-oracle's oracle-ffi stays off. The
-  # job excludes the two C-ABI crates (their facade tests are Linux-first;
-  # GLib and cargo-c themselves are available from Homebrew) and the
-  # backend-independent KMM tool. The combined training package remains
-  # in the lane because its segment/eval modules use the backend.
-  # oxpinyin-dictool stays
-  # in the set: its C-ABI dependency was cut, and it drives the facade's
-  # import/export machinery directly.
-  #
-  # The Windows job with the same exclude set runs in verify-nightly.yml.
-  # Containers run on Linux runners only, so these operating systems get
-  # their own jobs rather than a containerized matrix.
       - name: Refresh the main Rust cache using the lane's compile mode
         if: github.event_name == 'push' && needs.changes.outputs.reuse == 'true'
         run: python3 tools/dev/ci_tree.py refresh test
-
-  test-macos:
-    needs: changes
-    if: needs.changes.outputs.run == 'true' && (needs.changes.outputs.reuse != 'true' || github.event_name == 'push')
-    runs-on: macos-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/bootstrap
-        with:
-          rustup-components: clippy
-          rust-cache: 'true'
-      - run: rustup show active-toolchain
-      - name: Set up pinned repository Python
-        if: needs.changes.outputs.reuse != 'true'
-        run: |
-          set -euo pipefail
-          uv_install_dir="$HOME/.local/bin"
-          case "$(uname -m)" in
-            arm64)
-              uv_target=aarch64-apple-darwin
-              # Published in https://github.com/astral-sh/uv/releases/download/0.13.1/sha256.sum.
-              # Exact on purpose (#1074): a checksum is only known for a known version.
-              uv_sha256=cfe454573412ff7380d15fc7dae5997ab53ffce72fce0a78e91ddbc84001acd2
-              ;;
-            x86_64)
-              uv_target=x86_64-apple-darwin
-              # Published in https://github.com/astral-sh/uv/releases/download/0.13.1/sha256.sum.
-              # Exact on purpose (#1074): a checksum is only known for a known version.
-              uv_sha256=bb7b805bdcf3d0bc8c74ceb94569e6b3e8aa35bd492acdbb9d46bf46d9d4ff6b
-              ;;
-            *)
-              printf 'unsupported macOS architecture: %s\n' "$(uname -m)" >&2
-              exit 1
-              ;;
-          esac
-          uv_tmp=$(mktemp -d)
-          trap 'rm -rf "$uv_tmp"' EXIT
-          trap 'exit 1' HUP INT TERM
-          curl --fail --location --retry 3 -o "$uv_tmp/uv.tar.gz" \
-            "https://github.com/astral-sh/uv/releases/download/0.13.1/uv-$uv_target.tar.gz"
-          uv_actual=$(shasum -a 256 "$uv_tmp/uv.tar.gz")
-          [[ ${uv_actual%% *} == "$uv_sha256" ]] || { printf 'uv archive checksum mismatch\n' >&2; exit 1; }
-          tar -xzf "$uv_tmp/uv.tar.gz" -C "$uv_tmp" "uv-$uv_target/uv" "uv-$uv_target/uvx"
-          mkdir -p "$uv_install_dir"
-          install -m755 "$uv_tmp/uv-$uv_target/uv" "$uv_tmp/uv-$uv_target/uvx" "$uv_install_dir/"
-          printf 'uv archive SHA-256 verified: %s\n' "$uv_sha256"
-          export PATH="$HOME/.local/bin:$PATH"
-          hash -r
-          printf '%s\n' "$HOME/.local/bin" >> "$GITHUB_PATH"
-          uv --version | grep -q '^uv 0\.13\.1 '
-          tools/install-python.sh
-          uv run --no-project --managed-python python -X lazy_imports=normal - <<'PYTHON'
-          from pathlib import Path
-          import subprocess
-          import sys
-          import sysconfig
-          assert sys.implementation.name == "cpython"
-          assert sys.version_info.releaselevel == "final" and (3, 15, 0) <= sys.version_info[:3] < (3, 16, 0)
-          assert sysconfig.get_config_var("Py_GIL_DISABLED") == 0
-          assert sys._is_gil_enabled()
-          managed = subprocess.check_output(
-              ["uv", "python", "find", "--managed-python"],
-              text=True).strip()
-          assert Path(sys.executable).resolve() == Path(managed).resolve()
-          PYTHON
-      - name: Install pinned just
-        if: needs.changes.outputs.reuse != 'true'
-        run: |
-          # Exact on purpose (#1074): a checksum is only known for a known version.
-          ver=1.59.0
-          # Published in https://github.com/casey/just/releases/download/1.59.0/SHA256SUMS.
-          arch=$(uname -m)
-          case "$arch" in
-            arm64)
-              target=aarch64-apple-darwin
-              sum=6574cea774ed4cae12e24b6aa11857de33e80dab4667cf628fd5840df96a2a9d
-              ;;
-            x86_64)
-              target=x86_64-apple-darwin
-              sum=036ead9df9bc31dbae9934ae3b4236ed124d0bafcffd33439460ae084d5c9cb7
-              ;;
-            *) echo "unsupported macOS architecture: $arch" >&2; exit 1 ;;
-          esac
-          printf 'just runner architecture: %s; archive target: %s\n' "$arch" "$target"
-          curl -sSfL -o just.tar.gz "https://github.com/casey/just/releases/download/${ver}/just-${ver}-${target}.tar.gz"
-          echo "${sum}  just.tar.gz" | shasum -a 256 -c -
-          tar xzf just.tar.gz just
-          mkdir -p ~/.local/bin
-          install -m755 just ~/.local/bin
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          ~/.local/bin/just --version
-          test "$(~/.local/bin/just --version)" = "just ${ver}"
-      - name: Run tools Python harness tests
-        if: needs.changes.outputs.reuse != 'true'
-        shell: bash
-        run: just test-tools
-      # GLib and pkg-config from Homebrew; tkrzw from the tkrzw action, which
-      # puts its build first on PKG_CONFIG_PATH. `--no-default-features
-      # --features tkrzw` keeps pinyin-oracle's Linux-only `oracle-ffi` off.
-      - name: Install GLib and pkg-config (Homebrew)
-        run: brew install glib pkgconf
-      - name: Provision tkrzw (built at the setup.sh revision and cached)
-        uses: ./.github/actions/tkrzw
-      # Clippy over the lane's own feature set and exclusions, so a lint in
-      # macOS-only code fails here rather than nowhere.
-      - name: Clippy (macOS)
-        if: needs.changes.outputs.reuse != 'true'
-        run: >
-          cargo clippy --locked --workspace --all-targets --no-default-features --features tkrzw
-          --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi
-          --exclude oxpinyin-kmm
-          -- -D warnings
-      - name: Install pinned cargo-nextest
-        if: needs.changes.outputs.reuse != 'true'
-        run: |
-          # Exact on purpose (#1074): a checksum is only known for a known version.
-          ver=0.9.143
-          sum=4830d430411148d17602a75cc880bfb4dc8dac153dea59a48a2ef4cc93577f07
-          curl -sSfL -o cargo-nextest.tar.gz "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-${ver}/cargo-nextest-${ver}-universal-apple-darwin.tar.gz"
-          echo "${sum}  cargo-nextest.tar.gz" | shasum -a 256 -c -
-          tar xzf cargo-nextest.tar.gz
-          mkdir -p ~/.local/bin
-          install -m755 cargo-nextest ~/.local/bin
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-      - if: needs.changes.outputs.reuse != 'true'
-        run: >
-          cargo nextest run --locked --profile ci --status-level skip --workspace --no-default-features --features tkrzw
-          --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi
-          --exclude oxpinyin-kmm
-      # nextest does not run doctests; keep the same features and exclusions.
-      - if: needs.changes.outputs.reuse != 'true'
-        run: >
-          cargo test --locked --doc --workspace --no-default-features --features tkrzw
-          --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi
-          --exclude oxpinyin-kmm
-
-      - name: Refresh the main Rust cache using the lane's compile mode
-        if: github.event_name == 'push' && needs.changes.outputs.reuse == 'true'
-        run: python3 tools/dev/ci_tree.py refresh test-macos
-
 
   # Supply-chain gate. cargo-deny's advisories check consumes the same
   # RustSec DB cargo-audit uses, so this one job replaces both tools; the
@@ -661,7 +505,7 @@ jobs:
   deny:
     needs: changes
     if: needs.changes.outputs.run == 'true' && needs.changes.outputs.reuse != 'true'
-    runs-on: ubuntu-latest
+    runs-on: *ubuntu
     container:
       image: debian:testing # deliberately unpinned; see store-backends.yml
     defaults:
@@ -732,7 +576,7 @@ jobs:
   shipping-sizes:
     needs: changes
     if: needs.changes.outputs.ship == 'true'
-    runs-on: ubuntu-latest
+    runs-on: *ubuntu
     container:
       image: debian:testing # deliberately unpinned; see store-backends.yml header
     timeout-minutes: 60
@@ -859,16 +703,16 @@ jobs:
           path: .ship-sizes
           key: ${{ steps.key.outputs.key }}
 
-  # The required aggregate checks lint, test, test-macos and deny against
+  # The required aggregate checks lint, test and deny against
   # run/reuse, and shipping-sizes against its own `ship` flag. Every
   # applicable lane must succeed; an inapplicable lane must be skipped. It runs after failures and remains cancellable.
   # store-backends.yml and verify-nightly.yml keep their own triggers
   # and remain non-required lanes beside this one.
   ci-aggregate:
     needs:
-      [changes, lint, test, test-macos, deny, shipping-sizes]
+      [changes, lint, test, deny, shipping-sizes]
     if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
+    runs-on: *ubuntu
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -882,9 +726,9 @@ jobs:
 
   tree-evidence:
     name: tested tree ${{ needs.changes.outputs.tree }}
-    needs: [changes, ci-aggregate, lint, test, test-macos, deny]
-    if: ${{ needs.changes.outputs.run == 'true' && needs.changes.outputs.reuse == 'false' && needs.changes.result == 'success' && needs.ci-aggregate.result == 'success' && needs.lint.result == 'success' && needs.test.result == 'success' && needs.test-macos.result == 'success' && needs.deny.result == 'success' }}
-    runs-on: ubuntu-latest
+    needs: [changes, ci-aggregate, lint, test, deny]
+    if: ${{ needs.changes.outputs.run == 'true' && needs.changes.outputs.reuse == 'false' && needs.changes.result == 'success' && needs.ci-aggregate.result == 'success' && needs.lint.result == 'success' && needs.test.result == 'success' && needs.deny.result == 'success' }}
+    runs-on: *ubuntu
     steps:
       - run: echo 'All concrete verification lanes passed for this checkout tree.'
 
@@ -892,6 +736,6 @@ jobs:
     name: reused tree ${{ needs.changes.outputs.tree }} from run ${{ needs.changes.outputs.source_run }}
     needs: [changes, ci-aggregate]
     if: ${{ !cancelled() && needs.changes.outputs.reuse == 'true' && needs.ci-aggregate.result == 'success' }}
-    runs-on: ubuntu-latest
+    runs-on: *ubuntu
     steps:
       - run: echo 'The original full PR run was revalidated for this exact tree.'

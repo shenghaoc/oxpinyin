@@ -71,7 +71,10 @@ env:
 jobs:
   package:
     name: ${{ matrix.distro }} (${{ matrix.backend }} store)
-    runs-on: ubuntu-latest
+    # The one Linux runner label in this workflow; the other Linux jobs
+    # alias it (*ubuntu). Pinned, not ubuntu-latest, so a runner-image
+    # move (26.04: actions/runner-images#14748) happens here under review.
+    runs-on: &ubuntu ubuntu-26.04
     container:
       image: ${{ matrix.image }}
     timeout-minutes: 90
@@ -320,7 +323,7 @@ jobs:
   attach:
     name: Attach packages to the release
     needs: package
-    runs-on: ubuntu-latest
+    runs-on: *ubuntu
     permissions:
       contents: write
     steps:

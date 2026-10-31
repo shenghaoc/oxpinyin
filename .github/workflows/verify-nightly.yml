@@ -12,17 +12,20 @@ name: verify-nightly
 # No trial lanes remain: the Miri, cargo-mutants and cargo-geiger jobs
 # were retired on 2026-09-01 (docs/findings/verify-nightly.md). There are
 # no continue-on-error lanes; every job in this workflow must be green.
-# Surviving lanes: fuzz-soak, differentials, overflow-lane, coverage (via
+# Surviving lanes: fuzz-soak, oracle and differentials, overflow-lane, coverage (via
 # coverage.yml, also an advisory path-filtered PR check), perf-snapshot,
 # test-windows (moved from ci.yml
-# on 2026-10-22).
+# on 2026-10-22), test-macos (moved from ci.yml on 2026-10-31).
 # A separate nextest lane over the Kyoto Cabinet workspace was removed on
 # 2026-10-22: overflow-lane runs the same workspace test inventory under
-# Kyoto Cabinet, and ci.yml's Linux and macOS test jobs already run nextest.
-# test-windows has run nextest too since 2026-10-30.
+# Kyoto Cabinet, and ci.yml's Linux test job already runs nextest.
+# test-windows has run nextest too since 2026-10-30, and test-macos since
+# before it moved here.
 #
 # Every Linux job runs in a debian:testing container in the
-# store-backends.yml style (test-windows runs on windows-latest): the nightly lanes exist to surface drift early, and the rolling
+# store-backends.yml style (test-windows runs on windows-latest,
+# test-macos on macos-latest, and the oracle job on the runner, where its
+# trixie build container runs): the nightly lanes exist to surface drift early, and the rolling
 # distro toolchain is part of what they exercise. The image is
 # deliberately unpinned — do not "stabilise" it.
 
@@ -33,6 +36,10 @@ on:
     inputs:
       windows_only:
         description: Run only the full Windows workspace job
+        type: boolean
+        default: false
+      macos_only:
+        description: Run only the macOS workspace job
         type: boolean
         default: false
 
@@ -61,9 +68,12 @@ jobs:
   # added on 2026-09-08. The dict-loader corpus is seeded from the
   # committed w3 tables so the decoder starts from valid headers.
   fuzz-soak:
-    # Skipped by a windows_only dispatch; runs on the schedule.
-    if: ${{ !inputs.windows_only }}
-    runs-on: ubuntu-latest
+    # Skipped by a windows_only or macos_only dispatch; runs on the schedule.
+    if: ${{ !inputs.windows_only && !inputs.macos_only }}
+    # The one Linux runner label in this workflow; the other Linux jobs
+    # alias it (*ubuntu). Pinned, not ubuntu-latest, so a runner-image
+    # move (26.04: actions/runner-images#14748) happens here under review.
+    runs-on: &ubuntu ubuntu-26.04
       # Same ASan leeway as the tkrzw sanitizer job in store-backends.yml:
       # Docker's default seccomp profile blocks personality(2), which the
       # setarch ASLR-off wrapper below needs.
@@ -161,25 +171,79 @@ jobs:
           name: fuzz-crash-artifacts
           path: fuzz/artifacts/
 
-  # The fixture tier of the oracle differentials: build the pinned
-  # libpinyin (public source, SHA read from tools/oracle/build-oracle.sh
-  # and verified) and run, nightly, every differential gate COMMITTED
-  # fixtures can carry — the tkrzw drop-in (byte-exact datagen parity
-  # over the toned mini-model), ngseg live parity (toned tables), and
-  # the KMM gen/export/merge/validate + spseg live gates (committed w3
-  # tables, whose token space matches those gates' corpora). This
-  # honors the no-model20-in-CI policy (store-backends.yml header)
-  # while turning part of the manual evidence into a drift alarm. What
-  # committed data cannot carry stays on developer machines, each
-  # exclusion recorded by mechanism in the script header: the
+  # The fixture tier of the oracle differentials, in two jobs: the oracle
+  # on stable, the subject on testing. Both halves are one recipe,
+  # `just compat nightly-fixtures` (tools/dev/compat/campaigns.py,
+  # nightly), split into `build` and `run`.
+  #
+  # oracle: the pinned libpinyin (public source, SHA read from
+  # tools/oracle/build-oracle.sh and verified) built over the committed
+  # toned mini-model inside the trixie deps image setup uses (the
+  # published <tag>-deps of tools/oracle/Dockerfile.oracle, or its deps
+  # stage built here): configure --with-dbm=Tkrzw finds the distro
+  # libtkrzw-dev there, as in every oracle build. It runs on the runner,
+  # which has the container runtime, and uploads the build tree (with the
+  # uninstalled pin tools) and the install prefix. This is not the frozen
+  # model20 oracle tools/cloud/setup.sh provisions, and neither job runs
+  # setup; build-oracle.sh is untouched.
+  #
+  # differentials: in the unpinned debian:testing container, the drift
+  # alarm. It restores the artifact at the absolute paths it was built at
+  # (configure's --prefix and the run part name them), provisions the sound tkrzw with
+  # the tkrzw action, checks with ldd that the pin libraries, the pin
+  # tools and the subject all load libtkrzw.so.1 from that build
+  # (docs/runbooks/verification.md rule 9), then runs every differential
+  # gate COMMITTED fixtures can carry — the tkrzw drop-in (byte-exact
+  # datagen parity over the toned mini-model), ngseg live parity (toned
+  # tables), and the KMM gen/export/merge/validate + to_interpolation and
+  # spseg live gates (committed w3 tables, whose token space matches
+  # those gates' corpora). This honors the no-model20-in-CI policy
+  # (store-backends.yml header) while turning part of the manual evidence
+  # into a drift alarm. What committed data cannot carry stays on
+  # developer machines, each exclusion recorded by mechanism: the
   # model20-token-space goldens and corpora (lambda, counter, ngseg
-  # goldens), mergeseq live (the pin emits a token outside the w3
-  # phrase table), KMM prune (the pin SIGSEGVs on that gate's fixture
-  # input), and eval (no interpolation2.text consistent with w3).
+  # goldens), mergeseq live (the pin emits a token outside the w3 phrase
+  # table), KMM prune (the pin SIGSEGVs on that gate's fixture input), and
+  # eval (no interpolation2.text consistent with w3).
+  oracle:
+    # Skipped by a windows_only or macos_only dispatch; runs on the schedule.
+    if: ${{ !inputs.windows_only && !inputs.macos_only }}
+    runs-on: *ubuntu
+    timeout-minutes: 60
+    env:
+      # The runner's rootful daemon; the build keeps the runner user's
+      # ownership through --user (campaigns.py, deps_container).
+      OXPINYIN_CONTAINER: docker
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Provision managed Python
+        run: |
+          bash tools/cloud/setup.sh --python-only
+          # setup.sh's PATH export is local to its child shell.
+          printf '%s\n' "${UV_INSTALL_DIR:-$HOME/.local/bin}" >> "$GITHUB_PATH"
+      # The install prefix is fixed (campaigns.py, NIGHTLY_PREFIX) and is
+      # mounted into the deps container at the same path.
+      - name: Create the install prefix
+        run: sudo install -d -o "$(id -u)" -g "$(id -g)" /opt/libpinyin-tkrzw
+      - name: Build the pin in the trixie deps image
+        run: uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev compat nightly-fixtures build --deps-image
+      # tar keeps the modes and symlinks the artifact store does not; -C /
+      # keeps the absolute paths the differentials job restores.
+      - name: Pack the build tree and prefix
+        run: tar -C / -cf - tmp/oxpinyin-fixture-differentials opt/libpinyin-tkrzw | zstd -T0 -q -o "$RUNNER_TEMP/pin-oracle.tar.zst"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pin-oracle
+          path: ${{ runner.temp }}/pin-oracle.tar.zst
+          compression-level: 0
+          retention-days: 3
+          if-no-files-found: error
+
   differentials:
-    # Skipped by a windows_only dispatch; runs on the schedule.
-    if: ${{ !inputs.windows_only }}
-    runs-on: ubuntu-latest
+    needs: oracle
+    runs-on: *ubuntu
     container:
       image: debian:testing # deliberately unpinned; see the header comment
     timeout-minutes: 60
@@ -187,10 +251,12 @@ jobs:
       run:
         shell: bash
     steps:
-      - name: Bootstrap the runner essentials and oracle build deps (apt)
+      # No autotools: this job builds none of the pin. The pin's programs
+      # need GLib and libstdc++ at run time, and libtkrzw from the action.
+      - name: Bootstrap the runner essentials (apt)
         run: |
           apt-get update -qq
-          apt-get install -y --no-install-recommends bash python3 tar gzip zstd git ca-certificates curl gcc g++ make pkg-config autoconf automake autopoint libtool gettext libglib2.0-dev libclang-dev
+          apt-get install -y --no-install-recommends bash python3 tar gzip zstd git ca-certificates curl gcc g++ make pkg-config libglib2.0-dev libclang-dev
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -199,8 +265,8 @@ jobs:
           safe-directory: 'true'
           rustup: 'true'
           rust-cache: 'true'
-      # The pin's configure (PKG_CHECK_MODULES) and the subject both find
-      # this tkrzw through PKG_CONFIG_PATH.
+      # The subject builds against this tkrzw, and the oracle loads it at
+      # run time (LD_LIBRARY_PATH, OXPINYIN_TKRZW_PREFIX).
       - name: Provision tkrzw (built at the setup.sh revision and cached)
         uses: ./.github/actions/tkrzw
       - name: Provision managed Python
@@ -208,17 +274,23 @@ jobs:
           bash tools/cloud/setup.sh --python-only
           # setup.sh's PATH export is local to its child shell.
           printf '%s\n' "${UV_INSTALL_DIR:-$HOME/.local/bin}" >> "$GITHUB_PATH"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: pin-oracle
+          path: ${{ runner.temp }}/pin-oracle
+      - name: Restore the pin build at its own paths
+        run: zstd -dc "$RUNNER_TEMP/pin-oracle/pin-oracle.tar.zst" | tar -C / -xf -
       - name: Run the fixture-tier differentials
-        run: uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev compat nightly-fixtures
+        run: uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev compat nightly-fixtures run
 
   # Latent-overflow lane: the releaseoptimized codepath with overflow
   # checks and debug assertions forced on (docs/safety/
   # tooling-evaluation.md §8) — the "NDEBUG question" as CI, not as
   # shipped configuration.
   overflow-lane:
-    # Skipped by a windows_only dispatch; runs on the schedule.
-    if: ${{ !inputs.windows_only }}
-    runs-on: ubuntu-latest
+    # Skipped by a windows_only or macos_only dispatch; runs on the schedule.
+    if: ${{ !inputs.windows_only && !inputs.macos_only }}
+    runs-on: *ubuntu
     container:
       image: debian:testing # deliberately unpinned; see the header comment
     defaults:
@@ -246,8 +318,8 @@ jobs:
   # number is measured nightly whatever a PR touched. The floor and its
   # history live in that file.
   coverage:
-    # Skipped by a windows_only dispatch; runs on the schedule.
-    if: ${{ !inputs.windows_only }}
+    # Skipped by a windows_only or macos_only dispatch; runs on the schedule.
+    if: ${{ !inputs.windows_only && !inputs.macos_only }}
     uses: ./.github/workflows/coverage.yml
 
   # Perf-and-size snapshot series. NOT a gate: it measures the tree once a
@@ -273,9 +345,9 @@ jobs:
   # other lane here: a size series that steps when the toolchain moves is
   # reporting something true, and that is what this workflow is for.
   perf-snapshot:
-    # Skipped by a windows_only dispatch; runs on the schedule.
-    if: ${{ !inputs.windows_only }}
-    runs-on: ubuntu-latest
+    # Skipped by a windows_only or macos_only dispatch; runs on the schedule.
+    if: ${{ !inputs.windows_only && !inputs.macos_only }}
+    runs-on: *ubuntu
     container:
       image: debian:testing # deliberately unpinned; see the header comment
     timeout-minutes: 60
@@ -429,16 +501,18 @@ jobs:
           # got; when it got nothing, say so quietly instead of warning.
           if-no-files-found: ignore
 
-  # The full Windows workspace: clippy and the tests over the portable
-  # workspace (all but capi, zhuyin-capi, and the backend-independent
-  # KMM tool) on the default backend,
-  # tkrzw, built with MSVC by the tkrzw action. Moved here from
+  # The full Windows workspace: clippy and the tests over the workspace
+  # less WINDOWS_EXCLUDES on the default backend, tkrzw, built with MSVC
+  # by the tkrzw action, and GLib from vcpkg. Moved here from
   # ci.yml on 2026-10-22: it runs every night and on manual dispatch, not on
   # every PR. Dispatch it on the branch (windows_only: true) before merging
   # changes to Windows-sensitive storage, filesystem or native-build code,
   # toolchain or relevant dependency updates, and releases
-  # (docs/runbooks/setup.md, "Native Windows"). Not skipped by windows_only.
+  # (docs/runbooks/setup.md, "Native Windows"). Not skipped by windows_only;
+  # skipped by macos_only.
   test-windows:
+    # Skipped by a macos_only dispatch; runs on the schedule.
+    if: ${{ !inputs.macos_only }}
     runs-on: windows-latest
     timeout-minutes: 45
     # windows-latest defaults every `run:` to pwsh; every step here is bash
@@ -452,6 +526,32 @@ jobs:
       RUSTFLAGS: -D warnings
       # bindgen reads tkrzw_langc.h through the runner's preinstalled LLVM.
       LIBCLANG_PATH: C:\Program Files\LLVM\bin
+      # The package specs (port[features]:triplet) passed to `vcpkg install`,
+      # space-separated. The binary cache key hashes this value, so adding a
+      # port or feature here gives the cache a new key. The tkrzw action
+      # installs pkgconf:x64-windows itself; it is listed so its build is
+      # cached under the same key.
+      VCPKG_PACKAGES: glib:x64-windows pkgconf:x64-windows
+      # The workspace crates this lane leaves out, each for a reason other
+      # than GLib, which the job provisions:
+      # - oxpinyin-kmm: the backend-independent KMM tool. It does not touch
+      #   the store chain, so the result is the same on every backend and
+      #   OS; it runs once per PR in ci.yml's Linux test job (0c2f0ff6,
+      #   2026-09-08).
+      # - oxpinyin-capi and oxpinyin-zhuyin-capi: excluded since 2026-09-08
+      #   for GLib, which no longer applies; with GLib they build and link,
+      #   but three of their tests fail on Windows for other reasons (nightly
+      #   run 41182461287): both `locale` tests need the C.UTF-8 locale,
+      #   which Windows lacks, and zhuyin's e2e
+      #   zhuyin_launches_never_move_the_open_counter fails after opening
+      #   user.conf under %TEMP% fails. Windows-only; #1475.
+      # oxpinyin-utils and oxpinyin-training, once excluded for GLib alone,
+      # are in the lane: they link it through oxpinyin-input's `tools`
+      # boundary (glib-sys and libc, with no hand-declared GLib data
+      # symbol).
+      WINDOWS_EXCLUDES: >-
+        --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi
+        --exclude oxpinyin-kmm
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -461,23 +561,93 @@ jobs:
           rustup-components: clippy
           rust-cache: 'true'
       - run: rustup show active-toolchain
+      # vcpkg's binary cache, persisted across runs. vcpkg writes one zip per
+      # built package, named by the package's ABI hash, to the files provider
+      # below, and `vcpkg install` still runs every time: it computes each
+      # ABI hash itself (port files, triplet, compiler, dependencies) and
+      # restores only an archive whose hash matches, so a stale entry is
+      # never used, only rebuilt. The installed tree is not cached.
+      #
+      # The vcpkg revision is the runner image's own checkout, read once in
+      # the key step below. The cache key changes whenever an input to the
+      # ABI hashes can: that revision (ports and baseline), the triplet, the
+      # runner image (compiler and SDK), the requested package specs
+      # (VCPKG_PACKAGES), and any vcpkg manifest, configuration, overlay or
+      # triplet file in this repository (none today). The restore-keys fall
+      # back to the newest entry for the same revision and image, then for
+      # the same image OS and triplet; vcpkg's own hash check decides what in
+      # it is reusable.
+      #
+      # Restore and save are separate steps. The save runs right after
+      # `vcpkg install`, before the build and tests, so a red test run still
+      # keeps the archives it built; it is skipped when the restore matched
+      # the primary key exactly, because that entry already exists. The
+      # restore comes before the tkrzw action, so its pkgconf install reads
+      # the cache too.
+      - name: Compute the vcpkg binary cache key
+        id: vcpkg-cache-key
+        run: |
+          set -euo pipefail
+          if vcpkg_rev=$(git -C "$VCPKG_INSTALLATION_ROOT" rev-parse HEAD 2>/dev/null); then
+            echo "vcpkg revision: $vcpkg_rev"
+          else
+            vcpkg_rev=baseline-$(sha256sum "$VCPKG_INSTALLATION_ROOT/versions/baseline.json" | cut -c1-40)
+            echo "vcpkg checkout has no git metadata; keyed on $vcpkg_rev"
+          fi
+          image="${ImageOS:?runner image OS unknown}-${ImageVersion:?runner image version unknown}"
+          cache_dir="${RUNNER_TEMP//\\//}/vcpkg-binary-cache"
+          mkdir -p "$cache_dir"
+          echo "VCPKG_BINARY_SOURCES=clear;files,$cache_dir,readwrite" >> "$GITHUB_ENV"
+          packages=$(printf '%s' "$VCPKG_PACKAGES" | sha256sum | cut -c1-16)
+          echo "vcpkg packages: $VCPKG_PACKAGES (key component $packages)"
+          {
+            echo "dir=$cache_dir"
+            echo "prefix=vcpkg-bin-$ImageOS-x64-windows-"
+            echo "key=vcpkg-bin-$ImageOS-x64-windows-$vcpkg_rev-$image"
+            echo "packages=$packages"
+          } >> "$GITHUB_OUTPUT"
+      - name: Restore the vcpkg binary cache
+        id: vcpkg-cache-restore
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.vcpkg-cache-key.outputs.dir }}
+          key: ${{ steps.vcpkg-cache-key.outputs.key }}-pkgs-${{ steps.vcpkg-cache-key.outputs.packages }}-manifest-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-overlays/**', 'triplets/**') || 'none' }}
+          restore-keys: |
+            ${{ steps.vcpkg-cache-key.outputs.key }}-
+            ${{ steps.vcpkg-cache-key.outputs.prefix }}
       # nmake in the Visual Studio developer environment, a static tkrzw.lib
       # with the DLL C runtime, and a tkrzw.pc the store build script finds
-      # through PKG_CONFIG_PATH (tools/tkrzw/build.py).
+      # through PKG_CONFIG_PATH (tools/tkrzw/build.py). It also installs
+      # vcpkg's pkgconf and sets PKG_CONFIG to it.
       - name: Provision tkrzw (built at the setup.sh revision and cached)
         uses: ./.github/actions/tkrzw
-      # The default backend. The macOS job's exclusions, plus
-      # oxpinyin-utils: like the C facades it links GLib (through
-      # oxpinyin-input's `tools` boundary), which this lane does not
-      # provision; macOS installs GLib and tests it.
+      # GLib for glib-sys (the C-ABI crates and the `tools` boundary).
+      # glib-sys finds it through PKG_CONFIG, set by the tkrzw action, and
+      # the installed tree's lib/pkgconfig, added here after the tkrzw build
+      # on PKG_CONFIG_PATH; the DLL directory joins PATH for the test
+      # binaries.
+      - name: Install GLib (vcpkg)
+        run: |
+          set -euo pipefail
+          read -ra specs <<< "$VCPKG_PACKAGES"
+          vcpkg install "${specs[@]}"
+          installed="${VCPKG_INSTALLATION_ROOT//\\//}/installed/x64-windows"
+          echo "PKG_CONFIG_PATH=$PKG_CONFIG_PATH;$installed/lib/pkgconfig" | tee -a "$GITHUB_ENV"
+          echo "$installed/bin" >> "$GITHUB_PATH"
+          PKG_CONFIG_PATH="$PKG_CONFIG_PATH;$installed/lib/pkgconfig" "$PKG_CONFIG" --modversion --cflags --libs glib-2.0
+      - name: Save the vcpkg binary cache
+        if: steps.vcpkg-cache-restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.vcpkg-cache-key.outputs.dir }}
+          key: ${{ steps.vcpkg-cache-restore.outputs.cache-primary-key }}
+      # The default backend, over the workspace less WINDOWS_EXCLUDES.
       # Clippy runs first, over the same set, so a lint in Windows-only
       # code fails here rather than nowhere.
       - name: Clippy (Windows)
-        run: >
-          cargo clippy --locked --workspace --all-targets
-          --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi
-          --exclude oxpinyin-kmm --exclude oxpinyin-utils
-          -- -D warnings
+        run: |
+          read -ra excludes <<< "$WINDOWS_EXCLUDES"
+          cargo clippy --locked --workspace --all-targets "${excludes[@]}" -- -D warnings
       # The same pinned cargo-nextest as ci.yml's Linux and macOS jobs, in
       # its Windows build; the checksum is the release's published
       # cargo-nextest-<ver>-x86_64-pc-windows-msvc.sha256. The binary goes
@@ -495,12 +665,162 @@ jobs:
           install -m755 cargo-nextest.exe ~/.cargo/bin
           rm cargo-nextest.tar.gz cargo-nextest.exe
           cargo nextest --version
-      - run: >
-          cargo nextest run --locked --profile ci --status-level skip --workspace
-          --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi
-          --exclude oxpinyin-kmm --exclude oxpinyin-utils
+      - run: |
+          read -ra excludes <<< "$WINDOWS_EXCLUDES"
+          cargo nextest run --locked --profile ci --status-level skip --workspace "${excludes[@]}"
       # nextest does not run doctests; keep the same exclusions.
-      - run: >
-          cargo test --locked --doc --workspace
+      - run: |
+          read -ra excludes <<< "$WINDOWS_EXCLUDES"
+          cargo test --locked --doc --workspace "${excludes[@]}"
+
+  # macOS links the default store backend, tkrzw, from the tkrzw action,
+  # selected explicitly so pinyin-oracle's oracle-ffi stays off. The
+  # job excludes the two C-ABI crates (their facade tests are Linux-first;
+  # GLib and cargo-c themselves are available from Homebrew) and the
+  # backend-independent KMM tool. The combined training package remains
+  # in the lane because its segment/eval modules use the backend.
+  # oxpinyin-dictool stays
+  # in the set: its C-ABI dependency was cut, and it drives the facade's
+  # import/export machinery directly. It also runs the tools Python
+  # harness tests on macOS.
+  #
+  # Moved here from ci.yml on 2026-10-31: platforms other than Linux are
+  # unstable but not unusable (maintainer decision), so the job runs every
+  # night and on manual dispatch, not on every PR. Dispatch it on the branch
+  # (macos_only: true) before merging macOS-sensitive changes
+  # (docs/runbooks/setup.md, "When the macOS job runs"). Not skipped by
+  # macos_only.
+  test-macos:
+    # Skipped by a windows_only dispatch; runs on the schedule.
+    if: ${{ !inputs.windows_only }}
+    runs-on: macos-latest
+    timeout-minutes: 45
+    # ci.yml set these at workflow level; this workflow sets none.
+    env:
+      CARGO_TERM_COLOR: always
+      RUSTFLAGS: -D warnings
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/bootstrap
+        with:
+          rustup-components: clippy
+          rust-cache: 'true'
+      - run: rustup show active-toolchain
+      - name: Set up pinned repository Python
+        run: |
+          set -euo pipefail
+          uv_install_dir="$HOME/.local/bin"
+          case "$(uname -m)" in
+            arm64)
+              uv_target=aarch64-apple-darwin
+              # Published in https://github.com/astral-sh/uv/releases/download/0.13.1/sha256.sum.
+              # Exact on purpose (#1074): a checksum is only known for a known version.
+              uv_sha256=cfe454573412ff7380d15fc7dae5997ab53ffce72fce0a78e91ddbc84001acd2
+              ;;
+            x86_64)
+              uv_target=x86_64-apple-darwin
+              # Published in https://github.com/astral-sh/uv/releases/download/0.13.1/sha256.sum.
+              # Exact on purpose (#1074): a checksum is only known for a known version.
+              uv_sha256=bb7b805bdcf3d0bc8c74ceb94569e6b3e8aa35bd492acdbb9d46bf46d9d4ff6b
+              ;;
+            *)
+              printf 'unsupported macOS architecture: %s\n' "$(uname -m)" >&2
+              exit 1
+              ;;
+          esac
+          uv_tmp=$(mktemp -d)
+          trap 'rm -rf "$uv_tmp"' EXIT
+          trap 'exit 1' HUP INT TERM
+          curl --fail --location --retry 3 -o "$uv_tmp/uv.tar.gz" \
+            "https://github.com/astral-sh/uv/releases/download/0.13.1/uv-$uv_target.tar.gz"
+          uv_actual=$(shasum -a 256 "$uv_tmp/uv.tar.gz")
+          [[ ${uv_actual%% *} == "$uv_sha256" ]] || { printf 'uv archive checksum mismatch\n' >&2; exit 1; }
+          tar -xzf "$uv_tmp/uv.tar.gz" -C "$uv_tmp" "uv-$uv_target/uv" "uv-$uv_target/uvx"
+          mkdir -p "$uv_install_dir"
+          install -m755 "$uv_tmp/uv-$uv_target/uv" "$uv_tmp/uv-$uv_target/uvx" "$uv_install_dir/"
+          printf 'uv archive SHA-256 verified: %s\n' "$uv_sha256"
+          export PATH="$HOME/.local/bin:$PATH"
+          hash -r
+          printf '%s\n' "$HOME/.local/bin" >> "$GITHUB_PATH"
+          uv --version | grep -q '^uv 0\.13\.1 '
+          tools/install-python.sh
+          uv run --no-project --managed-python python -X lazy_imports=normal - <<'PYTHON'
+          from pathlib import Path
+          import subprocess
+          import sys
+          import sysconfig
+          assert sys.implementation.name == "cpython"
+          assert sys.version_info.releaselevel == "final" and (3, 15, 0) <= sys.version_info[:3] < (3, 16, 0)
+          assert sysconfig.get_config_var("Py_GIL_DISABLED") == 0
+          assert sys._is_gil_enabled()
+          managed = subprocess.check_output(
+              ["uv", "python", "find", "--managed-python"],
+              text=True).strip()
+          assert Path(sys.executable).resolve() == Path(managed).resolve()
+          PYTHON
+      - name: Install pinned just
+        run: |
+          # Exact on purpose (#1074): a checksum is only known for a known version.
+          ver=1.59.0
+          # Published in https://github.com/casey/just/releases/download/1.59.0/SHA256SUMS.
+          arch=$(uname -m)
+          case "$arch" in
+            arm64)
+              target=aarch64-apple-darwin
+              sum=6574cea774ed4cae12e24b6aa11857de33e80dab4667cf628fd5840df96a2a9d
+              ;;
+            x86_64)
+              target=x86_64-apple-darwin
+              sum=036ead9df9bc31dbae9934ae3b4236ed124d0bafcffd33439460ae084d5c9cb7
+              ;;
+            *) echo "unsupported macOS architecture: $arch" >&2; exit 1 ;;
+          esac
+          printf 'just runner architecture: %s; archive target: %s\n' "$arch" "$target"
+          curl -sSfL -o just.tar.gz "https://github.com/casey/just/releases/download/${ver}/just-${ver}-${target}.tar.gz"
+          echo "${sum}  just.tar.gz" | shasum -a 256 -c -
+          tar xzf just.tar.gz just
+          mkdir -p ~/.local/bin
+          install -m755 just ~/.local/bin
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          ~/.local/bin/just --version
+          test "$(~/.local/bin/just --version)" = "just ${ver}"
+      - name: Run tools Python harness tests
+        shell: bash
+        run: just test-tools
+      # GLib and pkg-config from Homebrew; tkrzw from the tkrzw action, which
+      # puts its build first on PKG_CONFIG_PATH. `--no-default-features
+      # --features tkrzw` keeps pinyin-oracle's Linux-only `oracle-ffi` off.
+      - name: Install GLib and pkg-config (Homebrew)
+        run: brew install glib pkgconf
+      - name: Provision tkrzw (built at the setup.sh revision and cached)
+        uses: ./.github/actions/tkrzw
+      # Clippy over the lane's own feature set and exclusions, so a lint in
+      # macOS-only code fails here rather than nowhere.
+      - name: Clippy (macOS)
+        run: >
+          cargo clippy --locked --workspace --all-targets --no-default-features --features tkrzw
           --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi
-          --exclude oxpinyin-kmm --exclude oxpinyin-utils
+          --exclude oxpinyin-kmm
+          -- -D warnings
+      - name: Install pinned cargo-nextest
+        run: |
+          # Exact on purpose (#1074): a checksum is only known for a known version.
+          ver=0.9.143
+          sum=4830d430411148d17602a75cc880bfb4dc8dac153dea59a48a2ef4cc93577f07
+          curl -sSfL -o cargo-nextest.tar.gz "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-${ver}/cargo-nextest-${ver}-universal-apple-darwin.tar.gz"
+          echo "${sum}  cargo-nextest.tar.gz" | shasum -a 256 -c -
+          tar xzf cargo-nextest.tar.gz
+          mkdir -p ~/.local/bin
+          install -m755 cargo-nextest ~/.local/bin
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - run: >
+          cargo nextest run --locked --profile ci --status-level skip --workspace --no-default-features --features tkrzw
+          --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi
+          --exclude oxpinyin-kmm
+      # nextest does not run doctests; keep the same features and exclusions.
+      - run: >
+          cargo test --locked --doc --workspace --no-default-features --features tkrzw
+          --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi
+          --exclude oxpinyin-kmm

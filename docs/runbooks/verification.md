@@ -51,6 +51,7 @@ Never mutate the pin.
 CI is the routine clippy and Rust-test gate (maintainer ruling 2026-10-30 UTC).
 Each stack member must pass its required verification independently.
 Successful CI on that member's final source tree satisfies the required clippy and Rust-test checks for the required package, feature and platform scope.
+PR CI tests Linux; the macOS and Windows jobs run in `verify-nightly.yml` every night and on dispatch ([setup](setup.md#when-the-macos-job-runs)).
 Do not repeat an equivalent passing CI check locally.
 A check that is missing, cancelled or skipped when it applies does not count as a pass.
 A check skipped because it does not apply to the change is not a failure.

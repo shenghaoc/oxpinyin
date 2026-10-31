@@ -1,10 +1,13 @@
 """Existing oracle differential campaigns and their shared suite/environment wiring."""
+import json
 import os
 from pathlib import Path
+import platform
 import re
 import shutil
 import sys
 
+from tools.tkrzw import runtime
 from . import images
 from .process import ROOT, PYTHON, fail, run, text
 
@@ -134,48 +137,194 @@ def differentials(argv):
     return int(status)
 
 
+NIGHTLY_WORK = Path('/tmp/oxpinyin-fixture-differentials')
+# Fixed: the drop-in runner (fixtures.drop_in) reads its tkrzw oracle here.
+NIGHTLY_PREFIX = Path('/opt/libpinyin-tkrzw')
+# The uninstalled (noinst) pin programs the run part executes from the build
+# tree, and the installed ones the drop-in runner executes from the prefix.
+NIGHTLY_TOOLS = ('PINYIN_NGSEG', 'PINYIN_SPSEG', 'PINYIN_GEN_KMM', 'PINYIN_EXPORT_KMM',
+                 'PINYIN_MERGE_KMM', 'PINYIN_VALIDATE_KMM', 'PINYIN_KMM_TO_INTERP')
+NIGHTLY_INSTALLED = ('gen_binary_files', 'import_interpolation', 'gen_unigram')
+
+
 def nightly(argv, *, root=ROOT):
-    """Build the pin over the committed toned model and run the existing three tiers."""
-    work = Path(argv[0] if argv else '/tmp/oxpinyin-fixture-differentials')
-    prefix = Path('/opt/libpinyin-tkrzw')
+    """`[build|run] [--deps-image] [WORK]`: the pin build, the suites, or both in turn.
+
+    build fetches the pin, copies the committed toned model in and installs it
+    into NIGHTLY_PREFIX; --deps-image runs each of its commands in the trixie
+    deps image setup uses, at the same absolute paths. run builds nothing of
+    the pin: it runs the suites against a build restored at the paths it was
+    built at (configure's --prefix and these paths name them; the pin's
+    uninstalled tools are ordinary executables). verify-nightly.yml runs the two
+    halves in separate jobs; with neither word both run here.
+    """
+    args = list(argv)
+    mode = args.pop(0) if args[:1] in (['build'], ['run']) else ''
+    in_image = '--deps-image' in args
+    if in_image:
+        if mode != 'build':
+            fail('--deps-image applies only to nightly-fixtures build', 2)
+        args.remove('--deps-image')
+    work = Path(args[0] if args else NIGHTLY_WORK)
+    if mode != 'run':
+        build_pin(work, root=root, in_image=in_image)
+    if mode == 'build':
+        return 0
+    return run_fixtures(work, root=root)
+
+
+def nightly_pin(root):
+    """The libpinyin version, commit and URL build-oracle.sh pins."""
     recipe = Path(root) / 'tools/oracle/build-oracle.sh'
     pin = images.fields(recipe)
     version, sha, url = (pin.get(key) for key in ('LIBPINYIN_VERSION', 'LIBPINYIN_SHA', 'LIBPINYIN_GIT_URL'))
     if not all((version, sha, url)):
         fail(f'could not read the libpinyin pin from {recipe}', 2)
-    print(f'pin: libpinyin {version} @ {sha}')
+    return version, sha, url
+
+
+def toned_model(root):
     model = Path(root) / 'fixtures/datagen-toned'
     if not (model / 'interpolation2.text').is_file():
         fail(f'missing {model}/interpolation2.text', 2)
+    return model
+
+
+def deps_container(root, work):
+    """Wrap a command to run in the trixie deps image, mounting WORK and the prefix at their own paths.
+
+    The image is the published <tag>-deps setup pulls, or the deps stage of
+    Dockerfile.oracle built here. Files keep the caller's owner, so the host
+    side of the build can write into the tree.
+    """
+    ctr = images.select_runtime()
+    tag = images.image_tag(root)
+    image, published = f'oxpinyin-oracle-deps:{tag}', f'ghcr.io/shenghaoc/oxpinyin-oracle:{tag}-deps'
+    with open(os.devnull, 'wb') as null:
+        pulled = platform.machine() == 'x86_64' and not run([ctr, 'pull', '--quiet', published], stdout=null, check=False)
+    if pulled:
+        run([ctr, 'tag', published, image])
+    else:
+        print(f'{published} unavailable; building the deps stage of tools/oracle/Dockerfile.oracle', flush=True)
+        run([ctr, 'build', '--target', 'deps', '-f', Path(root) / 'tools/oracle/Dockerfile.oracle', '-t', image, root],
+            env=dict(os.environ, DOCKER_BUILDKIT='1'), heavy=True)
+    owner = ['--userns=keep-id'] if Path(ctr).name == 'podman' else ['--user', f'{os.getuid()}:{os.getgid()}']
+    mounts = [word for path in (work, NIGHTLY_PREFIX) for word in ('-v', f'{path}:{path}')]
+    def wrap(command, cwd=None):
+        return [ctr, 'run', '--rm', '--network', 'host', *owner, '-e', 'HOME=/tmp', *mounts,
+                *(['-w', str(cwd)] if cwd else []), image, *map(str, command)], None
+    return wrap
+
+
+def build_pin(work, *, root=ROOT, in_image=False):
+    """Build the pin over the committed toned model and install it into NIGHTLY_PREFIX."""
+    version, sha, url = nightly_pin(root)
+    print(f'pin: libpinyin {version} @ {sha}')
+    model = toned_model(root)
     work.mkdir(parents=True, exist_ok=True)
+    wrap = deps_container(root, work) if in_image else (lambda command, cwd=None: (command, cwd))
+    def step(command, cwd=None, **kwargs):
+        command, cwd = wrap(command, cwd)
+        return run(command, cwd=cwd, **kwargs)
     src = work / 'libpinyin'
+    prefix = NIGHTLY_PREFIX
     marker = src / '.pin-ok'
     if not marker.is_file() or marker.read_text().rstrip('\n') != sha:
         shutil.rmtree(src, ignore_errors=True)
-        run(['git', 'init', '-q', src])
-        run(['git', '-C', src, 'fetch', '--quiet', '--depth=1', url, sha])
-        got = text(['git', '-C', src, 'rev-parse', 'FETCH_HEAD'])
+        step(['git', 'init', '-q', src])
+        step(['git', '-C', src, 'fetch', '--quiet', '--depth=1', url, sha])
+        command, cwd = wrap(['git', '-C', src, 'rev-parse', 'FETCH_HEAD'])
+        got = text(command, cwd=cwd)
         if got != sha:
             fail(f'pin mismatch: fetched {got}, wanted {sha}', 2)
-        run(['git', '-C', src, 'checkout', '--quiet', '--detach', 'FETCH_HEAD'])
+        step(['git', '-C', src, 'checkout', '--quiet', '--detach', 'FETCH_HEAD'])
         marker.write_text(sha + '\n')
     for path in [*model.glob('*.table'), model / 'interpolation2.text']:
         shutil.copyfile(path, src / 'data' / path.name)
     if not os.access(src / 'configure', os.X_OK):
-        run(['autoreconf', '--force', '--install'], cwd=src)
+        step(['autoreconf', '--force', '--install'], cwd=src)
     if not (src / 'Makefile').is_file():
-        run(['./configure', '--prefix=' + str(prefix), '--disable-static', '--with-dbm=Tkrzw'], cwd=src)
+        step(['./configure', '--prefix=' + str(prefix), '--disable-static', '--with-dbm=Tkrzw'], cwd=src)
     jobs = text(['nproc'])
-    if run(['make', '-j' + jobs], cwd=src, heavy=True, check=False) or run(['make', 'install'], cwd=src, heavy=True, check=False):
+    if step(['make', '-j' + jobs], cwd=src, heavy=True, check=False) or step(['make', 'install'], cwd=src, heavy=True, check=False):
         print('::warning::build or install failed once; retrying on a fresh bigram.db')
         (src / 'data/bigram.db').unlink(missing_ok=True)
-        run(['make', 'install'], cwd=src, heavy=True)
+        step(['make', 'install'], cwd=src, heavy=True)
+    data = prefix / 'lib/libpinyin/data'
+    for name in ('table.conf', 'phrase_index.bin', 'pinyin_index.bin', 'bigram.db'):
+        if not (data / name).is_file():
+            fail(f'installed data dir is missing {name}', 2)
+
+
+def subject_executables(commands, *, root, env):
+    """Build each cargo command's binaries without running them; return their paths."""
+    import tempfile
+    found = []
+    for command in commands:
+        built = command[:command.index('--')] if '--' in command else list(command)
+        # Heavy admission, as run_suite; the JSON stream goes through a file.
+        with tempfile.TemporaryFile() as stream:
+            run([*built, *(['--no-run'] if built[1] == 'test' else []), '--message-format=json'],
+                cwd=root, env=env, heavy=True, stdout=stream)
+            stream.seek(0)
+            for line in stream.read().decode(errors='replace').splitlines():
+                record = json.loads(line) if line.startswith('{') else {}
+                if record.get('reason') == 'compiler-artifact' and record.get('executable'):
+                    found.append(Path(record['executable']))
+    return list(dict.fromkeys(found))
+
+
+def certify_tkrzw(src, prefix, env, subjects):
+    """Rule 9: every pin library, pin tool and subject that loads libtkrzw.so.1 loads the verified runtime.
+
+    runtime.check reads ldd against OXPINYIN_TKRZW_PREFIX (the tkrzw action's
+    build in CI) and refuses an unresolved or other libtkrzw. The pin's tools
+    link libpinyin_internal.a and are ordinary executables; those that never
+    touch the DBM (gen_unigram, k_mixture_model_to_interpolation) load no
+    libtkrzw at all, which is reported, not refused.
+    """
+    objects = [('pin', prefix / 'lib/libpinyin.so'),
+               *(('pin', prefix / 'bin' / name) for name in NIGHTLY_INSTALLED),
+               *(('pin', src / TOOLS[key]) for key in NIGHTLY_TOOLS),
+               *(('subject', path) for path in subjects)]
+    refused = False
+    for side, obj in objects:
+        try:
+            found = runtime.check('tkrzw', 'nightly-fixtures', side, obj, env=env)
+        except runtime.RuntimeRefused as error:
+            print(f'REFUSED: {error}', flush=True)
+            refused = True
+            continue
+        print(f'ldd: {side} {obj}: libtkrzw.so.1 => {found or "not loaded"}', flush=True)
+    if refused:
+        fail('the libtkrzw loader check failed (docs/runbooks/verification.md rule 9)', 1)
+
+
+def run_fixtures(work, *, root=ROOT):
+    """Run the suites against build_pin's tree and prefix; build none of the pin."""
+    _, sha, _ = nightly_pin(root)
+    model = toned_model(root)
+    src = work / 'libpinyin'
+    prefix = NIGHTLY_PREFIX
+    marker = src / '.pin-ok'
+    if not marker.is_file() or marker.read_text().rstrip('\n') != sha:
+        fail(f'{src} is not a build of the pin {sha}; run nightly-fixtures build first', 2)
     data = prefix / 'lib/libpinyin/data'
     for name in ('table.conf', 'phrase_index.bin', 'pinyin_index.bin', 'bigram.db'):
         if not (data / name).is_file():
             fail(f'installed data dir is missing {name}', 2)
     from ..measure.bench import loader_path
     env = dict(os.environ, LD_LIBRARY_PATH=loader_path(prefix / 'lib', os.environ.get('LD_LIBRARY_PATH')))
+    ngseg = cargo_test('oxpinyin-training', 'segment-differential', ['rust_matches_live_ngseg'], locked=True, quiet=True)
+    kmm = {gate: cargo_test('oxpinyin-kmm', 'differential', ['rust_kmm_matches_pin_' + gate], locked=True, quiet=True, features=False)
+           for gate in ('gen_and_export', 'merge', 'validate')}
+    interpolation = cargo_test('oxpinyin-utils', 'k_mixture_model_to_interpolation', ['rust_kmm_matches_pin_to_interpolation'],
+                               locked=True, quiet=True)
+    spseg = cargo_test('oxpinyin-training', 'segment-spseg-mergeseq', ['rust_matches_live_spseg'], locked=True, quiet=True)
+    datagen = ['cargo', 'build', '--locked', '-q', '-p', 'oxpinyin-datagen', *FEATURES]
+    # The drop-in runner's parity test (fixtures.drop_in), built here only to be checked.
+    parity = ['cargo', 'test', '--locked', '-p', 'oxpinyin-datagen', *FEATURES, '--test', 'libpinyin_parity']
+    certify_tkrzw(src, prefix, env, subject_executables([datagen, ngseg, *kmm.values(), interpolation, spseg, parity], root=root, env=env))
     exported = work / 'export-tkrzw'
     if not (exported / 'datagen-manifest.txt').is_file():
         run(['cargo', 'run', '--locked', '-q', '-p', 'oxpinyin-datagen', *FEATURES, '--', 'compile',
@@ -187,20 +336,15 @@ def nightly(argv, *, root=ROOT):
             fail(f'fatal: {directory} is not a tkrzw data set (manifest says {record.get("backend", "")}); this runner\'s oracle and tests are tkrzw', 2)
     env.update(PINYIN_NGSEG=str(src / TOOLS['PINYIN_NGSEG']), PINYIN_NGSEG_DATA=str(data),
                PINYIN_EXPORT_DIR=str(exported), PINYIN_MODEL_DIR=str(model))
-    status = int(run_suite('segment ngseg live parity (toned tables)',
-                           cargo_test('oxpinyin-training', 'segment-differential', ['rust_matches_live_ngseg'], locked=True, quiet=True), env=env))
+    status = int(run_suite('segment ngseg live parity (toned tables)', ngseg, env=env))
     env.update(PINYIN_GEN_NGRAM_DATA=str(w3 / 'tkt'), PINYIN_EXPORT_DIR=str(w3 / 'tkt'),
                PINYIN_SPSEG=str(src / TOOLS['PINYIN_SPSEG']), PINYIN_NGSEG_DATA=str(w3 / 'tkt'))
     for key in ('GEN_KMM', 'EXPORT_KMM', 'MERGE_KMM', 'VALIDATE_KMM', 'KMM_TO_INTERP'):
         env['PINYIN_' + key] = str(src / TOOLS['PINYIN_' + key])
-    for gate in ('gen_and_export', 'merge', 'validate'):
-        status |= run_suite(f'KMM live: {gate} (w3 tables)',
-                            cargo_test('oxpinyin-kmm', 'differential', ['rust_kmm_matches_pin_' + gate], locked=True, quiet=True, features=False), env=env)
-    status |= run_suite('KMM live: to_interpolation (k_mixture_model_to_interpolation)',
-                        cargo_test('oxpinyin-utils', 'k_mixture_model_to_interpolation', ['rust_kmm_matches_pin_to_interpolation'],
-                                   locked=True, quiet=True), env=env)
-    status |= run_suite('segment spseg live parity (w3 tables)',
-                        cargo_test('oxpinyin-training', 'segment-spseg-mergeseq', ['rust_matches_live_spseg'], locked=True, quiet=True), env=env)
+    for gate, command in kmm.items():
+        status |= run_suite(f'KMM live: {gate} (w3 tables)', command, env=env)
+    status |= run_suite('KMM live: to_interpolation (k_mixture_model_to_interpolation)', interpolation, env=env)
+    status |= run_suite('segment spseg live parity (w3 tables)', spseg, env=env)
     for key in ('PINYIN_EXPORT_DIR', 'PINYIN_NGSEG_DATA', 'PINYIN_GEN_NGRAM_DATA'):
         env.pop(key, None)
     status |= run_suite('drop-in differential (tkrzw, toned model)',

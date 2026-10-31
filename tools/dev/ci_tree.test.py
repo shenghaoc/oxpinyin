@@ -391,9 +391,8 @@ class RefreshTests(unittest.TestCase):
     def test_other_cache_lanes_keep_their_test_compile_selections(self):
         self.assertEqual(ci_tree.refresh_commands('test')[0].argv,
                          ('cargo', 'build', '--locked', '--workspace', '--tests'))
-        portable = ci_tree.refresh_commands('test-macos')[0].argv
-        self.assertIn('oxpinyin-capi', portable)
-        self.assertEqual(portable[portable.index('--features') + 1], 'tkrzw')
+        with self.assertRaises(ValueError):
+            ci_tree.refresh_commands('test-macos')
         for backend in ('bdb', 'kyotocabinet', 'tkrzw'):
             alternate = ci_tree.refresh_commands('store-features', backend)[0].argv
             self.assertNotIn('oxpinyin-capi', alternate)
@@ -492,7 +491,7 @@ class AggregateTests(unittest.TestCase):
         job = workflow.split('\n  shipping-sizes:\n', 1)[1].split('\n  ci-aggregate:', 1)[0]
         condition = re.search(r'^    if: (.*)$', job, re.M)[1]
         self.assertEqual(condition, "needs.changes.outputs.ship == 'true'")
-        self.assertRegex(workflow, r'needs:\n\s+\[changes, lint, test, test-macos, deny, shipping-sizes\]')
+        self.assertRegex(workflow, r'needs:\n\s+\[changes, lint, test, deny, shipping-sizes\]')
 
     def test_invalid_gate_never_passes(self):
         results = dict.fromkeys(PROFILE.lanes, 'skipped')

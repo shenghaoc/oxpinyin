@@ -48,7 +48,9 @@ concurrency:
 
 jobs:
   coverage:
-    runs-on: ubuntu-latest
+    # Pinned, not ubuntu-latest, so a runner-image move (26.04:
+    # actions/runner-images#14748) happens here under review.
+    runs-on: ubuntu-26.04
     container:
       image: debian:testing # deliberately unpinned; see the header comment
     defaults:
