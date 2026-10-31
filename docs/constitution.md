@@ -21,7 +21,9 @@ The [roadmap](../ROADMAP.md) records the stages and their status.
    Use idiomatic Rust error handling.
    Internal Rust APIs do not all need to return `Result`.
    Use ordinary operations and assertions only when their possible failure paths satisfy this rule.
-   Existing class (b)/(c) rulings remain authoritative.
+   Existing class (b) rulings remain authoritative.
+   Class (c) is retired (maintainer ruling 2026-10-31 UTC).
+   Reproduce each pin `assert` or `abort()` with `std::process::abort()`, not a panic.
 5. **Unsafe code.** Use the following target allowlist:
    - Forbid `unsafe` in oxpinyin-core/data/user/engine/runtime.
    - Permit scoped unsafe modules in the bidirectional `oxpinyin-input` boundary.
@@ -48,7 +50,12 @@ The [roadmap](../ROADMAP.md) records the stages and their status.
 Constitution §4 amended by maintainer decision 2026-10-29 UTC; pin:
 libpinyin `074a2219c90feaf962d0d24f034514033ece5f99`.
 
-Existing class (c) refusals still return `false`/`Err` and emit exactly one warning per occurrence.
+Constitution §4 amended by maintainer ruling 2026-10-31 UTC: class (c) is retired.
+Class (b) stays authoritative.
+The pin's aborts are reproduced with `std::process::abort()`: abnormal termination, no destructors, SIGABRT on Unix.
+The shared Rust facade returns the error at the pin's point, after the pin's preceding work; the C adapters and the pin's drop-in tools abort.
+The pin's `assert` message is not rebuilt; its absence is `POLICY-ACCEPTED`.
+See the [class (c) retirement](findings/compatibility-policy.md#amendment--class-c-retired-pin-aborts-reproduced-2026-10-31-utc).
 The [panic amendment](findings/compatibility-policy.md#amendment--pin-matched-panics-and-error-handling) states the scoped lint expectations and their limits.
 See also [safety-profile Layer 3](safety/oxpinyin-safety-profile.md).
 

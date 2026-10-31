@@ -56,9 +56,9 @@ libpinyin `074a2219c90feaf962d0d24f034514033ece5f99`.
    introduce a panic. Use idiomatic error handling; internal Rust APIs are
    not universally required to return `Result`. Ordinary operations and
    assertions must respect this rule, including their potential failure
-   paths. Existing class (b)/(c) rulings remain authoritative: class (c)
-   refusals keep returning `false`/`Err` and emitting exactly one warning
-   per occurrence. This amendment reverses none of those rulings.
+   paths. Existing class (b) rulings remain authoritative. Class (c) is
+   retired (maintainer ruling 2026-10-31 UTC): a pin `assert` or
+   `abort()` is reproduced with `std::process::abort()`, not a panic.
    **Integer arithmetic.** Where the pin's unsigned arithmetic wraps and the
    result is observable, use the matching standard method (`wrapping_add`,
    `wrapping_sub`, `wrapping_mul`). Never use a plain operator where overflow
