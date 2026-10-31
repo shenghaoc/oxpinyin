@@ -74,6 +74,10 @@ fn merged() -> KMixtureModel {
 
 #[test]
 fn the_pruned_differential_fixture_projects_to_the_golden() {
+    // The utility prints through the C runtime's text-mode stdout: CRLF on
+    // Windows, LF elsewhere (docs/findings/external-io-boundary.md, "Native
+    // text-mode line endings").
+    let newline = if cfg!(windows) { "\r\n" } else { "\n" };
     // <start> and zero-freq unigrams drop; the 1-gram count is the KMM
     // freq, the 2-gram count the pair WC. 乙 is W2-only but its header-only
     // row carries freq 8, so it projects.
@@ -86,11 +90,13 @@ fn the_pruned_differential_fixture_projects_to_the_golden() {
         String::from_utf8(out.stdout).unwrap(),
         "\\data model interpolation\n\\1-gram\n\\item 10 甲 count 8\n\\item 20 乙 count 8\n\
          \\2-gram\n\\item 1 <start> 10 甲 count 8\n\\item 10 甲 20 乙 count 8\n\\end\n"
+            .replace('\n', newline)
     );
 }
 
 #[test]
 fn an_empty_input_or_a_foreign_header_exits_with_enodata() {
+    let newline = if cfg!(windows) { "\r\n" } else { "\n" };
     for (input, message) in [
         ("", "empty file input.\n"),
         (
@@ -101,7 +107,10 @@ fn an_empty_input_or_a_foreign_header_exits_with_enodata() {
         let out = run(input.as_bytes());
         assert_ne!(out.status.code(), Some(0), "{input:?}");
         assert_ne!(out.status.code(), None, "{input:?}");
-        assert!(stderr(&out).ends_with(message), "{input:?}: {out:?}");
+        assert!(
+            stderr(&out).ends_with(&message.replace('\n', newline)),
+            "{input:?}: {out:?}"
+        );
         assert_eq!(out.stdout, b"", "{input:?}");
     }
 }
@@ -126,6 +135,7 @@ fn the_pins_assertions_and_abort_abort() {
 
 #[test]
 fn undefined_lines_are_refused_normally() {
+    let newline = if cfg!(windows) { "\r\n" } else { "\n" };
     for (input, reason, line) in [
         (
             format!("{HEADER}\\1-gram\n  \t\n\\end\n"),
@@ -142,7 +152,7 @@ fn undefined_lines_are_refused_normally() {
         assert_eq!(out.status.code(), Some(1), "{input:?}: {out:?}");
         assert!(
             stderr(&out).ends_with(&format!(
-                "k_mixture_model_to_interpolation: {reason}: {line}\n"
+                "k_mixture_model_to_interpolation: {reason}: {line}{newline}"
             )),
             "{input:?}: {out:?}"
         );
@@ -153,7 +163,11 @@ fn undefined_lines_are_refused_normally() {
     assert_eq!(out.status.code(), Some(1), "{out:?}");
     assert!(
         out.stderr.ends_with(
-            b"k_mixture_model_to_interpolation: truncated UTF-8 sequence at the end of the line: \\item 10 \xe7\x94\xb2 freq 1 x \xe4\n"
+            &[
+                &b"k_mixture_model_to_interpolation: truncated UTF-8 sequence at the end of the line: \\item 10 \xe7\x94\xb2 freq 1 x \xe4"[..],
+                newline.as_bytes()
+            ]
+            .concat()
         ),
         "{out:?}"
     );

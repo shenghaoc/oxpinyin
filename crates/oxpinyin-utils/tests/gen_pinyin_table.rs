@@ -5,6 +5,11 @@
 use std::path::Path;
 use std::process::{Command, Output};
 
+// Each test builds its expected output with the host's newline: the
+// utility writes stdout, stderr and its table through the C runtime's
+// text-mode streams, which end lines with CRLF on Windows and LF elsewhere
+// (docs/findings/external-io-boundary.md, "Native text-mode line endings").
+
 fn run(dir: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_gen_pinyin_table"))
         .args(args)
@@ -15,6 +20,7 @@ fn run(dir: &Path, args: &[&str]) -> Output {
 
 #[test]
 fn rows_follow_length_then_first_reading_then_phrase_bytes() {
+    let newline = if cfg!(windows) { "\r\n" } else { "\n" };
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(
         dir.path().join("in.txt"),
@@ -24,12 +30,16 @@ fn rows_follow_length_then_first_reading_then_phrase_bytes() {
     .unwrap();
     let out = run(dir.path(), &["-t", "3", "-o", "out.table", "in.txt"]);
     assert_eq!(out.status.code(), Some(0));
-    assert_eq!(String::from_utf8_lossy(&out.stdout), "nnodes: 5\n");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        format!("nnodes: 5{newline}")
+    );
     assert_eq!(
         String::from_utf8_lossy(&out.stderr),
         "Duplicate item: phrase:你好\tpinyin:nihao\tfreq:4\n\
          Invalid pinyin:你们\tni\t3\n\
          Too long phrase:一二三四五六七八九十一二三四五六\tyi\t1\n"
+            .replace('\n', newline)
     );
     // gen_phrase_file writes a frequency under 3 as 3: `/* avoid zero
     // freq. */ if (freq < 3) freq = 3;` (`gen_pinyin_table.cpp:311-312` at
@@ -45,7 +55,8 @@ fn rows_follow_length_then_first_reading_then_phrase_bytes() {
     let expected = format!(
         "hao3\t好\t50331649\t7\nhao4\t好\t50331649\t3\nne\t呢\t50331650\t3\n\
          {first}{second}ni'hao\t你好\t50331653\t14\n"
-    );
+    )
+    .replace('\n', newline);
     assert_eq!(
         std::fs::read_to_string(dir.path().join("out.table")).unwrap(),
         expected
@@ -54,25 +65,30 @@ fn rows_follow_length_then_first_reading_then_phrase_bytes() {
 
 #[test]
 fn the_default_output_is_temp_out_and_a_last_row_without_newline_is_dropped() {
+    let newline = if cfg!(windows) { "\r\n" } else { "\n" };
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("in.txt"), "你 ni 5\n好 hao 3").unwrap();
     let out = run(dir.path(), &["in.txt"]);
     assert_eq!(out.status.code(), Some(0));
-    assert_eq!(String::from_utf8_lossy(&out.stdout), "nnodes: 1\n");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        format!("nnodes: 1{newline}")
+    );
     assert_eq!(
         std::fs::read_to_string(dir.path().join("temp.out")).unwrap(),
-        "ni\t你\t1\t5\n"
+        format!("ni\t你\t1\t5{newline}")
     );
 }
 
 #[test]
 fn a_missing_input_exits_enoent_before_writing() {
+    let newline = if cfg!(windows) { "\r\n" } else { "\n" };
     let dir = tempfile::tempdir().unwrap();
     let out = run(dir.path(), &["absent.txt"]);
     assert_eq!(out.status.code(), Some(2));
     assert_eq!(
         String::from_utf8_lossy(&out.stderr),
-        "Can't open file absent.txt.\n"
+        format!("Can't open file absent.txt.{newline}")
     );
     assert!(!dir.path().join("temp.out").exists());
 }
@@ -90,11 +106,15 @@ fn an_unknown_option_exits_einval_with_the_glib_message() {
 
 #[test]
 fn an_empty_phrase_counts_as_a_node_and_meets_glibs_null_array_check() {
+    let newline = if cfg!(windows) { "\r\n" } else { "\n" };
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("in.txt"), b"\0 - 1\n\xe4\xbd\xa0 ni 5\n").unwrap();
     let out = run(dir.path(), &["in.txt"]);
     assert_eq!(out.status.code(), Some(0));
-    assert_eq!(String::from_utf8_lossy(&out.stdout), "nnodes: 2\n");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        format!("nnodes: 2{newline}")
+    );
     assert!(
         String::from_utf8_lossy(&out.stderr)
             .contains("g_array_append_vals: assertion 'array' failed"),
@@ -102,7 +122,7 @@ fn an_empty_phrase_counts_as_a_node_and_meets_glibs_null_array_check() {
     );
     assert_eq!(
         std::fs::read_to_string(dir.path().join("temp.out")).unwrap(),
-        "ni\t你\t1\t5\n"
+        format!("ni\t你\t1\t5{newline}")
     );
 }
 
@@ -113,6 +133,7 @@ fn an_empty_phrase_counts_as_a_node_and_meets_glibs_null_array_check() {
 /// the phrase and exits 1, flushing what it wrote (class (b)).
 #[test]
 fn an_unconvertible_phrase_is_refused_at_the_pins_row_after_the_output_opens() {
+    let newline = if cfg!(windows) { "\r\n" } else { "\n" };
     for (input, nnodes, phrase, rows) in [
         (&b"\xff a 1\n"[..], "nnodes: 1\n", &b"\xff"[..], ""),
         (
@@ -126,19 +147,22 @@ fn an_unconvertible_phrase_is_refused_at_the_pins_row_after_the_output_opens() {
         std::fs::write(dir.path().join("in.txt"), input).unwrap();
         let out = run(dir.path(), &["in.txt"]);
         assert_eq!(out.status.code(), Some(1), "{out:?}");
-        assert_eq!(String::from_utf8_lossy(&out.stdout), nnodes);
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            nnodes.replace('\n', newline)
+        );
         assert_eq!(
             out.stderr,
             [
                 &b"gen_pinyin_table: invalid UTF-8 phrase: "[..],
                 phrase,
-                b"\n"
+                newline.as_bytes()
             ]
             .concat()
         );
         assert_eq!(
             std::fs::read_to_string(dir.path().join("temp.out")).unwrap(),
-            rows
+            rows.replace('\n', newline)
         );
     }
 }

@@ -7,10 +7,9 @@
 //! getline's contract. Only with the `tools` feature: the shipping libraries
 //! never link GLib's option parser through this crate.
 //!
-//! One symbol neither crate binds is declared here, GLib's `g_utf8_skip`
-//! table; the C runtime's `stdout` and `stderr` are declared per platform
-//! once for the library and the tools, in the crate's native module. What a
-//! field or a line means stays with the utility that reads it.
+//! The C runtime's `stdout` and `stderr` are declared per platform once for
+//! the library and the tools, in the crate's native module. What a field or
+//! a line means stays with the utility that reads it.
 
 use core::ffi::{c_char, c_int, c_long, c_void};
 use core::ptr::NonNull;
@@ -20,12 +19,6 @@ use std::io::{BufRead, BufReader};
 use libc::FILE;
 
 use crate::native::{c_stderr, c_stdout};
-
-unsafe extern "C" {
-    /// `GLIB_VAR const gchar * const g_utf8_skip` (`glib/gunicode.h`), the
-    /// table `g_utf8_next_char` steps by.
-    static g_utf8_skip: *const c_char;
-}
 
 /// The target's `EINVAL`, the pin's exit status for a refused option or
 /// argument (`ngseg.cpp:119`).
@@ -439,12 +432,21 @@ pub fn utf8_get_char_at(line: &CStr, offset: usize) -> Option<u32> {
     Some(unsafe { glib_sys::g_utf8_get_char(bytes.as_ptr().add(offset).cast()) })
 }
 
-/// The step `g_utf8_next_char` takes from the byte `c` (`g_utf8_skip[c]`).
+/// `g_utf8_next_char`'s step from the byte `c`: the length of the UTF-8
+/// sequence `c` leads. GLib documents the macro for a valid UTF-8 string,
+/// with no error checking (maintainer ruling 2026-10-31 UTC: a macro that
+/// does work is implemented from its contract). A byte that leads no
+/// sequence of one to four bytes steps one; GLib's table steps 5 at
+/// `0xF8..=0xFB` and 6 at `0xFC..=0xFD`, a POLICY-ACCEPTED difference
+/// (`docs/findings/eio-utf8-next-char-invalid-lead.md`).
 #[must_use]
-pub fn utf8_next_char_step(c: u8) -> usize {
-    // SAFETY: GLib's table has an entry for every byte value.
-    let step = unsafe { *g_utf8_skip.add(usize::from(c)) };
-    usize::try_from(step).unwrap_or(1)
+pub const fn utf8_next_char_step(c: u8) -> usize {
+    match c.leading_ones() {
+        2 => 2,
+        3 => 3,
+        4 => 4,
+        _ => 1,
+    }
 }
 
 /// `g_warning(format, text)` for a format with one `%s`: `g_log` with
@@ -1141,7 +1143,23 @@ mod tests {
         assert!(unichar_isspace(0x3000));
         assert!(!unichar_isgraph(0x200B));
         assert!(unichar_isgraph(u32::from('a')));
-        assert_eq!(utf8_next_char_step(0xE4), 3);
+        // A lead byte steps its sequence's length; every other byte steps
+        // one, including 0xF8..=0xFD, where GLib's table steps 5 or 6.
+        for (lead, step) in [
+            (b'a', 1),
+            (0x80, 1),
+            (0xBF, 1),
+            (0xC0, 2),
+            (0xDF, 2),
+            (0xE4, 3),
+            (0xF0, 4),
+            (0xF7, 4),
+            (0xF8, 1),
+            (0xFD, 1),
+            (0xFF, 1),
+        ] {
+            assert_eq!(utf8_next_char_step(lead), step, "{lead:#04x}");
+        }
         assert_eq!(utf8_get_char_at(c"a\xe4\xbd\xa0", 1), Some(0x4F60));
         assert_eq!(utf8_get_char_at(c"a", 2), None);
     }

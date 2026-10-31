@@ -152,7 +152,11 @@ contract (`std::getline` is `BufRead::read_until(b'\n')`). Macros such as
 their checks are plain Rust, which answers the pin's value or aborts
 where the pin aborts (constitution §4), and their message text is not
 imitated; such a stderr difference is a POLICY-ACCEPTED language
-artefact. Where no call or behaviour has the same documented result,
+artefact. A macro that does work rather than check, such as
+`g_utf8_next_char`, is implemented from its documented contract
+(maintainer ruling 2026-10-31 UTC;
+[eio-utf8-next-char-invalid-lead](eio-utf8-next-char-invalid-lead.md)).
+Where no call or behaviour has the same documented result,
 stop and report it. The tools and `oxpinyin-input`'s library calls
 follow the ruling (`native/config.c` and `native/diagnostic.c` are
 gone); the Kyoto Cabinet adapter is retained under the
