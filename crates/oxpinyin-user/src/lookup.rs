@@ -10,9 +10,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use oxpinyin_core::{
-    Completeness, PhraseEntry, PhraseText, PhraseToken, SyllableKey, syllable_initial,
-};
+use oxpinyin_core::{PhraseEntry, PhraseText, PhraseToken, SyllableKey};
 
 use crate::store::{UserStore, UserStoreError};
 
@@ -35,10 +33,7 @@ use crate::store::{UserStore, UserStoreError};
 #[derive(Clone, Debug, Default)]
 pub struct UserLookup {
     generation: u64,
-    exact: BTreeMap<String, Vec<PhraseEntry>>,
-    by_initial: BTreeMap<String, Vec<(String, PhraseEntry)>>,
-    pinyin_keys: Box<[String]>,
-    initial_keys: Box<[String]>,
+    index: crate::user_index::UserIndex,
     text_tokens: BTreeMap<Vec<u8>, Vec<u32>>,
     token_text: BTreeMap<u32, PhraseText>,
 }
@@ -57,91 +52,56 @@ impl UserLookup {
     /// Returns [`UserStoreError`] when the store cannot be read.
     pub fn from_store(store: &UserStore) -> Result<Self, UserStoreError> {
         let generation = store.phrase_generation();
-        let mut exact: BTreeMap<String, Vec<PhraseEntry>> = BTreeMap::new();
-        let mut by_initial: BTreeMap<String, Vec<(String, PhraseEntry)>> = BTreeMap::new();
-        let mut text_tokens: BTreeMap<Vec<u8>, Vec<u32>> = BTreeMap::new();
-        let mut token_text: BTreeMap<u32, PhraseText> = BTreeMap::new();
-        let mut pinyin_keys: Vec<String> = Vec::new();
-        let mut initial_keys: Vec<String> = Vec::new();
-
-        for phrase in store.index_phrases()? {
-            let token = phrase.token();
-            let Some(text) = phrase.phrase_text() else {
-                continue;
-            };
-            token_text.insert(token, text.clone());
-            for pronunciation in phrase.pronunciations() {
-                // Only readings the user pinyin index carries are found
-                // (`_add_phrase` never indexes a reading merged into an
-                // existing phrase, `pinyin.cpp:569-582`). The index is
-                // keyed on the tone-zeroed projection
-                // (`encode_complete_key`), which the toneless queries meet.
-                if !pronunciation.indexed() {
-                    continue;
+        // A session owns the loaded DBM table; the standalone store derives
+        // the same records from its indexed readings.
+        let index = match store.user_index_snapshot() {
+            Some(index) => index,
+            None => {
+                let mut index = crate::user_index::UserIndex::new();
+                for phrase in store.phrases()? {
+                    for pronunciation in phrase
+                        .pronunciations()
+                        .iter()
+                        .filter(|reading| reading.indexed())
+                    {
+                        let keys: Vec<_> = pronunciation
+                            .keys()
+                            .iter()
+                            .filter_map(|&key| {
+                                let syllable = oxpinyin_core::SyllableKey::from_index(
+                                    crate::key_syllable(key),
+                                )?;
+                                let chewing =
+                                    oxpinyin_core::ChewingKey::from_pinyin(syllable.text())?;
+                                Some(chewing.with_tone(crate::key_tone(key)))
+                            })
+                            .collect();
+                        if keys.is_empty() || keys.len() > crate::phrase::MAX_PHRASE_LENGTH {
+                            continue;
+                        }
+                        index.add(&keys, phrase.token());
+                    }
                 }
-                let Some(pinyin) = pronunciation.render_pinyin_toneless() else {
-                    continue;
-                };
-                let entry = PhraseEntry::new(PhraseToken::new(token), text.clone());
-                exact.entry(pinyin.clone()).or_default().push(entry.clone());
-                by_initial
-                    .entry(initial_of(&pinyin))
-                    .or_default()
-                    .push((pinyin.clone(), entry));
-                pinyin_keys.push(pinyin.clone());
-                initial_keys.push(initial_of(&pinyin));
+                index
             }
-        }
-
-        for entries in exact.values_mut() {
-            entries.sort_by_key(|entry| entry.token().value());
-            // Two readings differing only in tone project onto one key.
-            entries.dedup_by_key(|entry| entry.token().value());
-        }
-        for bucket in by_initial.values_mut() {
-            // The pin's user index chunk is ordered by the stored key —
-            // `phrase_exact_less_than2`, initials first, then middle and
-            // final per syllable, then tones — and only then by token
-            // (`add_index`, `chewing_large_table2.h:208-230`); an
-            // incomplete query's bucket spans several stored keys, and
-            // `_append_items` lays the hits down in that chunk order, so
-            // comparator ties keep it (issue #536: the network
-            // dictionary's `𬪩 nong` listed before its `ni` entries on the
-            // pin, after them here). A same-key tie is token-ascending, and
-            // two pronunciations of one phrase keep the stored-pinyin order.
-            // The key is parsed once per entry, not once per comparison.
-            bucket.sort_by_cached_key(|(pinyin, entry)| {
-                (
-                    stored_key_order(pinyin),
-                    entry.token().value(),
-                    pinyin.clone(),
-                )
-            });
-            bucket.dedup_by(|left, right| {
-                left.0 == right.0 && left.1.token().value() == right.1.token().value()
-            });
-        }
+        };
+        let mut text_tokens: BTreeMap<Vec<u8>, Vec<u32>> = BTreeMap::new();
         for (key, value) in store.phrase_table_records()? {
-            // A malformed record must not disable unrelated phrase/reading
-            // lookups. Retain its prefix key but expose no unsafe token tail.
             let entry =
                 crate::phrase_table::PhraseTableEntry::from_bytes(value).unwrap_or_default();
             let mut tokens = Vec::new();
             entry.search(&mut tokens, |_| true);
             text_tokens.insert(key, tokens);
         }
-
-        pinyin_keys.sort_unstable();
-        pinyin_keys.dedup();
-        initial_keys.sort_unstable();
-        initial_keys.dedup();
-
+        let mut token_text = BTreeMap::new();
+        for phrase in store.phrases()? {
+            if let Some(text) = phrase.phrase_text() {
+                token_text.insert(phrase.token(), text.clone());
+            }
+        }
         Ok(Self {
             generation,
-            exact,
-            by_initial,
-            pinyin_keys: pinyin_keys.into_boxed_slice(),
-            initial_keys: initial_keys.into_boxed_slice(),
+            index,
             text_tokens,
             token_text,
         })
@@ -188,27 +148,30 @@ impl UserLookup {
     /// key's completions to find matching user entries.
     #[must_use]
     pub fn lookup(&self, syllables: &[SyllableKey]) -> Vec<PhraseEntry> {
-        if syllables.is_empty() {
-            return Vec::new();
-        }
-        let has_incomplete = syllables
-            .iter()
-            .any(|key| key.completeness() == Completeness::Partial);
-        if !has_incomplete {
-            return self
-                .exact
-                .get(&index_key(syllables))
-                .cloned()
-                .unwrap_or_default();
-        }
-        let initial = initial_key(syllables);
-        let Some(bucket) = self.by_initial.get(&initial) else {
+        let Some(keys) = query_keys(syllables) else {
             return Vec::new();
         };
-        bucket
-            .iter()
-            .filter(|(pinyin, _)| stored_matches_query(pinyin, syllables))
-            .map(|(_, entry)| entry.clone())
+        self.entries_for(&keys)
+    }
+
+    /// The trellis's with-tones query over the same stored records.
+    #[must_use]
+    pub fn search_toned(&self, keys: &[oxpinyin_core::ChewingKey]) -> Vec<u32> {
+        self.index
+            .search(keys)
+            .into_iter()
+            .map(|(token, _)| token)
+            .collect()
+    }
+
+    fn entries_for(&self, keys: &[oxpinyin_core::ChewingKey]) -> Vec<PhraseEntry> {
+        self.index
+            .search(keys)
+            .into_iter()
+            .filter_map(|(token, _)| {
+                let text = self.token_text.get(&token)?;
+                Some(PhraseEntry::new(PhraseToken::new(token), text.clone()))
+            })
             .collect()
     }
 
@@ -217,33 +180,13 @@ impl UserLookup {
     /// when any syllable is incomplete.
     #[must_use]
     pub fn has_record(&self, syllables: &[SyllableKey]) -> bool {
-        if syllables.is_empty() {
-            return false;
-        }
-        if syllables
-            .iter()
-            .any(|key| key.completeness() == Completeness::Partial)
-        {
-            self.by_initial.contains_key(&initial_key(syllables))
-        } else {
-            self.exact.contains_key(&index_key(syllables))
-        }
+        query_keys(syllables).is_some_and(|keys| self.index.has_record(&keys))
     }
 
     /// `SEARCH_CONTINUED` probe over user-file pinyin keys.
     #[must_use]
     pub fn phrase_prefix_exists(&self, syllables: &[SyllableKey]) -> bool {
-        if syllables.is_empty() {
-            return true;
-        }
-        if syllables
-            .iter()
-            .any(|key| key.completeness() == Completeness::Partial)
-        {
-            prefix_probe(&self.initial_keys, &initial_key(syllables))
-        } else {
-            prefix_probe(&self.pinyin_keys, &index_key(syllables))
-        }
+        query_keys(syllables).is_some_and(|keys| self.index.has_prefix(&keys))
     }
 
     /// Phrase text for `token`, if this snapshot holds it.
@@ -285,48 +228,10 @@ impl UserLookup {
     /// nibble the way `reduce_tokens` does.
     #[must_use]
     pub fn suggest_extensions(&self, syllables: &[SyllableKey]) -> Vec<u32> {
-        if syllables.is_empty() || !self.phrase_prefix_exists(syllables) {
+        let Some(keys) = query_keys(syllables) else {
             return Vec::new();
-        }
-        let has_incomplete = syllables
-            .iter()
-            .any(|key| key.completeness() == Completeness::Partial);
-        let mut tokens: Vec<u32> = Vec::new();
-        if !has_incomplete {
-            let prefix = index_key(syllables);
-            for (pinyin, entries) in self.exact.range(prefix.clone()..) {
-                if pinyin.as_str() == prefix {
-                    // The query's own row — the pin's cursor starts one
-                    // past it (`Jump` + `Next`).
-                    continue;
-                }
-                if !stored_extends_query(pinyin, syllables) {
-                    break;
-                }
-                tokens.extend(entries.iter().map(|entry| entry.token().value()));
-            }
-        } else {
-            // The incomplete space: stored pronunciations whose syllables
-            // share the query's initials. The initial bucket is keyed by
-            // the FULL initial string of the stored pronunciation, so a
-            // text-prefix scan of the query's initial key finds exactly
-            // the buckets whose pronunciations begin with those initials
-            // — then the with-tones prefix filter keeps the rows.
-            let initial = initial_key(syllables);
-            for (bucket_initial, bucket) in self.by_initial.range(initial.clone()..) {
-                if !bucket_initial.starts_with(initial.as_str()) {
-                    break;
-                }
-                for (pinyin, entry) in bucket {
-                    if stored_extends_query(pinyin, syllables) {
-                        tokens.push(entry.token().value());
-                    }
-                }
-            }
-            tokens.sort_unstable();
-            tokens.dedup();
-        }
-        tokens
+        };
+        self.index.suggest(&keys)
     }
 
     /// Tokens and raw UCS-4 keys extending the stored `prefix` key.
@@ -360,127 +265,11 @@ impl UserLookup {
     }
 }
 
-fn index_key(syllables: &[SyllableKey]) -> String {
-    join_with_apostrophe(syllables.iter().map(|syllable| syllable.text()))
-}
-
-/// `pinyin_compare_with_tones` (`pinyin_phrase3.h:68-115`) syllable-by-syllable
-/// against a stored apostrophe-joined pinyin: same length; every complete
-/// query syllable equals the stored syllable text; every incomplete query
-/// syllable's initial equals the stored syllable's `syllable_initial`.
-///
-/// This is the filter the incomplete-space bucket needs, mirroring the
-/// `keys_match` post-filter that `crates/oxpinyin-data/src/chewing_table.rs:202-216`
-/// applies to `ChewingTable::search`'s returned records.
-fn stored_matches_query(stored_pinyin: &str, query: &[SyllableKey]) -> bool {
-    let mut parts = stored_pinyin.split('\'');
-    for query_key in query {
-        let Some(stored) = parts.next() else {
-            return false;
-        };
-        let matches = if query_key.completeness() == Completeness::Complete {
-            stored == query_key.text()
-        } else {
-            syllable_initial(stored) == Some(query_key.text())
-        };
-        if !matches {
-            return false;
-        }
-    }
-    parts.next().is_none()
-}
-
-/// `stored_matches_query`'s suggestion variant: the stored pronunciation
-/// has **more** syllables than the query and its first
-/// `query.len()` syllables match under `pinyin_compare_with_tones` —
-/// `PrefixLessThanWithTones`'s filter over longer records
-/// (`chewing_large_table2.h:158-178` at the pin). Used as a `BTreeMap`
-/// range-walk predicate over the pinyin-ascending key space, where the
-/// first non-extending key ends the walk (the `break` sites) — that
-/// early exit is only valid in the complete-key space, where a stored
-/// pinyin that shares the query's first syllables prefixes the query's
-/// own key text; callers in the initial-bucket space filter without
-/// breaking.
-fn stored_extends_query(stored_pinyin: &str, query: &[SyllableKey]) -> bool {
-    let mut parts = stored_pinyin.split('\'');
-    for query_key in query {
-        let Some(stored) = parts.next() else {
-            return false;
-        };
-        let matches = if query_key.completeness() == Completeness::Complete {
-            stored == query_key.text()
-        } else {
-            syllable_initial(stored) == Some(query_key.text())
-        };
-        if !matches {
-            return false;
-        }
-    }
-    // Strictly longer: at least one more syllable follows.
-    parts.next().is_some()
-}
-
-fn initial_key(syllables: &[SyllableKey]) -> String {
-    join_with_apostrophe(
-        syllables
-            .iter()
-            .map(|syllable| syllable_initial(syllable.text()).unwrap_or("0")),
-    )
-}
-
-/// The pin's `pinyin_exact_compare2` order of a stored `'`-joined pinyin
-/// (`pinyin_phrase3.h:33-65` at 074a2219): every syllable's initial, then
-/// every syllable's `(middle, final)`, then every tone — the user store's
-/// readings carry no tone here, so that run is all zero. A syllable the
-/// table does not know sorts after every known one.
-fn stored_key_order(pinyin: &str) -> (Vec<u8>, Vec<(u8, u8)>, Vec<u8>) {
-    let keys: Vec<oxpinyin_core::ChewingKey> = pinyin
-        .split('\'')
-        .map(|syllable| {
-            oxpinyin_core::ChewingKey::from_pinyin(syllable).unwrap_or(
-                oxpinyin_core::ChewingKey::new(u8::MAX, u8::MAX, u8::MAX, u8::MAX),
-            )
-        })
-        .collect();
-    (
-        keys.iter().map(|key| key.initial).collect(),
-        keys.iter().map(|key| (key.middle, key.final_)).collect(),
-        keys.iter().map(|key| key.tone).collect(),
-    )
-}
-
-fn initial_of(pinyin: &str) -> String {
-    join_with_apostrophe(
-        pinyin
-            .split('\'')
-            .map(|syllable| syllable_initial(syllable).unwrap_or("0")),
-    )
-}
-
-fn join_with_apostrophe<I, S>(parts: I) -> String
-where
-    I: IntoIterator<Item = S>,
-    S: AsRef<str>,
-{
-    let mut parts = parts.into_iter();
-    let Some(first) = parts.next() else {
-        return String::new();
-    };
-    let mut joined = String::from(first.as_ref());
-    for part in parts {
-        joined.push('\'');
-        joined.push_str(part.as_ref());
-    }
-    joined
-}
-
-fn prefix_probe(sorted: &[String], joined: &str) -> bool {
-    match sorted.binary_search_by(|candidate| candidate.as_str().cmp(joined)) {
-        Ok(_) => true,
-        Err(index) => sorted.get(index).is_some_and(|candidate| {
-            candidate.starts_with(joined) && candidate.as_bytes().get(joined.len()) == Some(&b'\'')
-        }),
-    }
+fn query_keys(syllables: &[SyllableKey]) -> Option<Vec<oxpinyin_core::ChewingKey>> {
+    syllables
+        .iter()
+        .map(|syllable| oxpinyin_core::ChewingKey::from_pinyin(syllable.text()))
+        .collect()
 }
 
 #[cfg(test)]
@@ -488,6 +277,7 @@ mod tests {
     use super::*;
     use crate::phrase::{NETWORK_DICTIONARY, USER_DICTIONARY};
     use crate::store::UserStore;
+    use oxpinyin_core::Completeness;
 
     /// A store path inside a fresh, uniquely named dir. Bind the dir before
     /// the store so it drops (and is removed) after the store's handle.

@@ -2702,6 +2702,11 @@ impl<S: WriteStore> GenericUserStore<S> {
     }
 
     /// The complete independent user pinyin index, for the save to write.
+    /// A snapshot of the session's user pinyin index for a lookup cache.
+    pub(crate) fn user_index_snapshot(&self) -> Option<crate::user_index::UserIndex> {
+        Some(self.inner.libpinyin.as_ref()?.phrases().index.clone())
+    }
+
     pub(crate) fn index_entries(&self) -> Vec<(Token, Vec<u16>)> {
         let Some(target) = self.inner.libpinyin.as_ref() else {
             return Vec::new();
