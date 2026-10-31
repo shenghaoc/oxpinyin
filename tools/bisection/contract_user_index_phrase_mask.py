@@ -300,3 +300,19 @@ def register(case, *, predicted_bigram_context, token_reuse_files):
         ctx = predicted_bigram_context(k, '你', b'\x07\x00\x00\x00')
         inst = k.fn('alloc_instance', P, P)(ctx)
         return {'ret': k.fn('guess_predicted_candidates', B, P, S)(inst, '我'.encode())}
+
+
+    # #1418 phase 3c: one phrase imported under two readings that differ only
+    # in tone is one token with two items in the same user index record. The
+    # pin's ChewingTableEntry::convert appends a range per matching item
+    # (chewing_large_table2.h:91-133 at 074a2219), so a toneless query puts
+    # the token in its ranges twice; candidate assembly then removes the
+    # duplicate by phrase string (pinyin.cpp:2290-2300).
+    TONE_PHRASES = (('龘龘', "da2'da2", 'ㄉㄚˊ ㄉㄚˊ'), ('龘龘', "da4'da4", 'ㄉㄚˋ ㄉㄚˋ'))
+    TONE_READINGS = {'pinyin': ("da2'da2", "da4'da4")}
+    case('issue1418-tone-variant-readings-pinyin', mode='pinyin', issues=('1418',))(
+        lambda k: index_key_sequence(
+            k, [('add', 0), ('add', 1), ('guess', 'dada', None), ('guess', "da2'da", None),
+                ('guess', "da4'da4", None), ('lookup', 0), ('save',), ('reopen',),
+                ('guess', 'dada', None), ('lookup', 1)],
+            TONE_PHRASES, TONE_READINGS))

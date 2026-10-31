@@ -168,7 +168,8 @@ EXPECTED = [('issue784-index-keys-no-mask-pinyin',
             ('abort-guess-predicted-short-bigram-value', (), {'abort': False, 'sigabrt': True}),
             ('abort-guess-predicted-empty-bigram-gram', (), {'sigabrt': True, 'abort': False}),
             ('guess-predicted-unrelated-short-bigram-value', (), {'control': True}),
-            ('guess-predicted-unrelated-empty-bigram-gram', (), {'control': True})]
+            ('guess-predicted-unrelated-empty-bigram-gram', (), {'control': True}),
+            ('issue1418-tone-variant-readings-pinyin', (), {'issues': ('1418',), 'mode': 'pinyin'})]
 INJECTED = ('predicted_bigram_context', 'token_reuse_files')
 
 
