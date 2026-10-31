@@ -91,7 +91,7 @@ None is on the main, word-recognition, or punctuation path.
    with a four-class divergence register. The audit corrected one behaviour to
    stay policy-compliant (the empty-deleted-model candidate score now
    reproduces upstream's `NaN` instead of erroring).
-2. **Semantic-parity golden** (`oxpinyin-kmm/tests/differential.rs`): a
+2. **Semantic-parity golden** (`crates/oxpinyin-kmm/tests/flexible_records.rs`, `crates/oxpinyin-utils/tests/kmm_tools.rs`): a
    non-trivial five-token, two-document fixture with hand-derived canonical
    exports pinning headers, document count, word count, per-token freqs, and
    per-pair `count`/`T`/`N_n_0`/`n_1`/`Mr`, plus candidate scores + ordering,
