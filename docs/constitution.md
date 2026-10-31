@@ -55,9 +55,6 @@ Class (b) stays authoritative.
 The pin's aborts are reproduced with `std::process::abort()`: abnormal termination, no destructors, SIGABRT on Unix.
 The shared Rust facade returns the error at the pin's point, after the pin's preceding work; the C adapters and the pin's drop-in tools abort.
 The pin's `assert` message is not rebuilt; its absence is `POLICY-ACCEPTED`.
-**Pending:** the class (c) stack that starts at #1467 implements this amendment.
-Until each of its members lands, oxpinyin keeps the class (c) refusal (`false` or `Err` and one warning) at every row the compatibility policy marks "pending, member N".
-The member that reproduces the last pending row removes this note in the same change.
 See the [class (c) retirement](findings/compatibility-policy.md#amendment--class-c-retired-pin-aborts-reproduced-2026-10-31-utc).
 The [panic amendment](findings/compatibility-policy.md#amendment--pin-matched-panics-and-error-handling) states the scoped lint expectations and their limits.
 See also [safety-profile Layer 3](safety/oxpinyin-safety-profile.md).
