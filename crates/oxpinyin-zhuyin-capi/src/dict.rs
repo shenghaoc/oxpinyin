@@ -41,6 +41,13 @@ pub extern "C" fn zhuyin_lookup_tokens(
         .iter()
         .map(|token| token.value())
         .collect();
+    // `reduce_tokens` clears the caller's array and appends every library's
+    // hits, and only then validates the combined count
+    // (`zhuyin.cpp:1690`, `phrase_large_table3.h:79-95`): five or more
+    // tokens reach `assert(0 <= num && num <= 4)` and the pin dies before
+    // answering. The abort below follows the clear and the appends, so a
+    // NULL array's GLib criticals come first, as at the pin.
+    let reduce_asserts = tokens.len() > 4;
     // SAFETY: A non-null array is a caller-owned GLib GArray. GLib
     // 2.84.4 garray.c:595,762 checks NULL, logs a critical, and returns
     // before accessing the array or data (including a zero-length append).
@@ -56,6 +63,9 @@ pub extern "C" fn zhuyin_lookup_tokens(
                     g_array_append_vals(tokenarray, std::ptr::null(), 0);
                 }
             }
+            if reduce_asserts {
+                std::process::abort();
+            }
             return !tokens.is_empty();
         }
     }
@@ -69,6 +79,9 @@ pub extern "C" fn zhuyin_lookup_tokens(
             tokens.as_ptr().cast::<c_void>(),
             c_uint::try_from(tokens.len()).unwrap_or(0),
         );
+    }
+    if reduce_asserts {
+        std::process::abort();
     }
     true
 }
