@@ -21,9 +21,11 @@ Crate roles: `docs/architecture.md`.
 
 Stage 1 uses the backend's native tables (no redistribution required:
 `docs/findings/model-provenance.md` — build-time fetch of the pinned model20
-archive, compiled by `oxpinyin-datagen`; on each backend, oxpinyin
-handles the same data directory a libpinyin build on that backend uses,
-natively).
+archive, built by libpinyin's own `gen_binary_files` +
+`import_interpolation` + `gen_unigram` sequence — the pinned binaries now
+live in `oxpinyin-utils`; `oxpinyin-datagen` keeps only the test-only
+`fixtures/w3` `--mini` producer library. On each backend, oxpinyin handles
+the same data directory a libpinyin build on that backend uses, natively).
 
 **Older records (before 2026-10-14 UTC).** "Stage 2" meant performance
 work, for example the `stage2` bench and the `docs/perf/` records. That
@@ -86,13 +88,13 @@ landed 2026-09-09 as the backend's native user files (maintainer ruling
 | W6 | User store (ACID store over the compiled-in `DefaultStore`; began on redb) | oxpinyin-user, oxpinyin-store |
 | W7 | Classic text-format interop via oxpinyin-dictool (import + export) | oxpinyin-dictool, oxpinyin-capi |
 | W8 | libpinyin drop-in: full 79-symbol `.so` ABI under `libpinyin.so.15` (see `docs/specs/drop-in/`) | oxpinyin-capi |
-| W9 | Rust counterparts for libpinyin's 21 `utils/` programs (see `docs/findings/trainer-parity-audit.md`); the trainer's own Python scripts are not ported | oxpinyin-training (`segment`, `counter`, `lambda`, `emitter`, `eval` modules), oxpinyin-kmm, oxpinyin-utils, oxpinyin-datagen |
+| W9 | Rust counterparts for libpinyin's 21 `utils/` programs (see `docs/findings/trainer-parity-audit.md`); the trainer's own Python scripts are not ported. The utilities carry the pin's names and interfaces in `oxpinyin-utils`; the training crate keeps the stage modules behind them and has no command line of its own | oxpinyin-utils, oxpinyin-training (`segment`, `counter`, `lambda`, `emitter`, `eval` modules), oxpinyin-kmm |
 | W10 | Option bits: correction, fuzzy/ambiguity, dynamic-adjust gating | oxpinyin-core, oxpinyin-engine |
 | W11 | Phrase-index union at lookup (user, network, addon) | oxpinyin-engine, oxpinyin-data, oxpinyin-user |
 | W12 | Corpus tail (parity gaps; candidate residual closed 2026-08-22) | oxpinyin-core, oxpinyin-engine, oxpinyin-capi |
 | W13 | Double-pinyin and bopomofo input schemes (feature implementation) | oxpinyin-core, oxpinyin-engine |
 | W14 | Sentence surface (n-best emission, NBEST_MATCH typing, get_sentence) | oxpinyin-capi, oxpinyin-engine |
-| W15 | model20-native runtime-data production, every backend — since P5/P6 in each backend's native file formats, opened directly by the runtime | oxpinyin-datagen, oxpinyin-store, oxpinyin-data, oxpinyin-runtime |
+| W15 | model20-native runtime-data production, every backend — since P5/P6 in each backend's native file formats, opened directly by the runtime; the production path is the pin's own three-utility sequence | oxpinyin-utils, oxpinyin-datagen (the `--mini` producer library), oxpinyin-store, oxpinyin-data, oxpinyin-runtime |
 
 Crates outside the Stage 1 table (roles in `docs/architecture.md`):
 `oxpinyin-facade` and `oxpinyin-runtime` (the shared orchestration and
@@ -170,16 +172,18 @@ parked.
   are compiled natively from the canonical pinned `model20` archive for every
   storage backend (tkrzw, Kyoto Cabinet, Berkeley DB) — no
   producer consumes libpinyin-generated runtime data. Implemented in
-  `crates/oxpinyin-datagen`; all the backend producers are feature-gated
-  in its `Cargo.toml`. The retired `oxpinyin-migrate` route (oracle ABI
+  `crates/oxpinyin-datagen` as a library, and the system data directory is
+  now built by libpinyin's own sequence (`gen_binary_files` →
+  `import_interpolation` → `gen_unigram`) under its pin names in
+  `oxpinyin-utils`; the backend producers stay feature-gated in datagen's
+  `Cargo.toml` for the `fixtures/w3` reproduction only. The retired `oxpinyin-migrate` route (oracle ABI
   export + verbatim Tkrzw conversion) was proven unnecessary by the
   native compilation.
   Architecture and the canonical-source invariant:
   `docs/findings/datagen-model20.md`.
 
   **P1–P6 (2026-09-01 → 2026-09-02) changed what those tables are.**
-  `oxpinyin-datagen compile` now writes the data directory libpinyin's
-  own build produces — the sixteen per-library chunk files (byte-exact
+  the data directory is the one libpinyin's own build produces — the sixteen per-library chunk files (byte-exact
   against the pin), `pinyin_index.bin`, `phrase_index.bin`, `bigram.db`,
   `punct.bin`, the `addon_*` pair and `table.conf` — through the selected
   backend; on Kyoto Cabinet, tkrzw and Berkeley DB under libpinyin's
@@ -275,13 +279,16 @@ parked.
   builds under `utils/` at pin `074a2219` — `segment/` (3), `storage/` (5)
   and `training/` (13) — in whichever crate each lives now:
   `oxpinyin-training` (`segment`, `counter`, `lambda`, `emitter`, `eval`),
-  `oxpinyin-kmm`, `oxpinyin-utils` and `oxpinyin-datagen`. The trainer's
+  `oxpinyin-kmm` and `oxpinyin-utils`. The trainer's
   own Python scripts are **not** ported: the 2026-08-30 full-workflow
   scope below and its Python ports (`oxpinyin-corpus`, `oxpinyin-punct`,
   `oxpinyin-word`, the `train` orchestrator and the `evaluate.py` driver)
   were removed. The `eval` module keeps the `eval_correction_rate`
-  decode; `oxpinyin-utils` keeps `gen_pinyin_table`, `gen_zhuyin_table`,
-  `k_mixture_model_to_interpolation`, `ngseg`, `spseg` and `mergeseq`.
+  decode; `oxpinyin-utils` carries the pin-named binaries, including
+  `gen_unigram`, `gen_ngram`, `gen_deleted_ngram`,
+  `estimate_interpolation` and `eval_correction_rate`, while the training
+  crate's own `oxpinyin-counter`/`oxpinyin-lambda`/`oxpinyin-emitter`
+  command line was retired.
   Converting the counterparts into drop-ins is external-I/O stage 5: the
   segmentation trio and two table generators are ported, the others
   follow.

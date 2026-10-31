@@ -2,7 +2,7 @@
 //! `eval_correction_rate` (`utils/training/eval_correction_rate.cpp`).
 //!
 //! This isolates the **decode + correction-rate** path, which is separate
-//! from the λ estimator (`oxpinyin-lambda`, which has its own bit-exact
+//! from the λ estimator (`estimate_interpolation`, which has its own bit-exact
 //! differential). The native side is fed the
 //! *same* λ the pin reads — `system_table_info.get_lambda()`, i.e. the value
 //! `table.conf` carries (`eval_correction_rate.cpp:157`) — rather than
@@ -32,7 +32,8 @@
 //!   runtime `SYSTEM_BIGRAM` was compiled from (the native model counts).
 //! - `PINYIN_EVAL_TABLE_CONF` — the `table.conf` whose λ the pin reads.
 //! - `PINYIN_EVAL_PINYIN_INDEX`, `PINYIN_EVAL_PHRASE_INDEX` — the oxpinyin
-//!   export (`oxpinyin-datagen compile`) of the same model the pin loads,
+//!   export (the `oxpinyin-utils` gen_binary_files / import_interpolation /
+//!   gen_unigram sequence) of the same model the pin loads,
 //!   for the native `SystemDictionary` (which reads oxpinyin-format tables
 //!   in the compiled-in backend, not the pin's `.bin` files).
 //!

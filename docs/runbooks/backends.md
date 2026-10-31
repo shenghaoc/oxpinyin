@@ -98,8 +98,12 @@ on every store-affecting change (`store-backends.yml`, `backend-matrix`).
 
 `fixtures/w3/<kct|tkt>/` is the committed mini data set, one
 directory per backend, with each backend's native file names.
-Regenerate with `oxpinyin-datagen compile --mini` from the model20 cache
-(`goldens-and-pins.md`).
+The `--mini` producer library remains in `oxpinyin-datagen`; the ignored
+`fixtures_identity` test reproduces each committed tree from the model20
+cache and compares records and chunk bytes. The command that *wrote* the
+directory (`oxpinyin-datagen compile --mini`) was retired with the
+`compile` subcommand in the external-I/O stage 5 n-gram work; fixtures are
+frozen, so verification is the current path (`goldens-and-pins.md`).
 
 ## Switching is a format transition
 

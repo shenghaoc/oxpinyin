@@ -783,6 +783,7 @@ dependencies = [
  "oxpinyin-input",
  "oxpinyin-kmm",
  "oxpinyin-store",
+ "oxpinyin-training",
  "tempfile",
 ]
 

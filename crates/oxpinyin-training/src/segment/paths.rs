@@ -82,8 +82,9 @@ impl SegmenterPaths {
     }
 }
 
-/// Locates a complete system data directory (`oxpinyin-datagen compile`
-/// output, or a libpinyin install's `data/` on the drop-in backends)
+/// Locates a complete system data directory (the pin's
+/// `gen_binary_files` / `import_interpolation` / `gen_unigram` output, or a
+/// libpinyin install's `data/` on the drop-in backends)
 /// holding the DBMs in the compiled-in backend's format.
 #[must_use]
 pub fn locate_export_dir() -> Option<PathBuf> {

@@ -248,6 +248,54 @@ impl PhraseIndexTable {
     }
 }
 
+// ── the pinyin DBM alone ─────────────────────────────────────────
+
+/// The pinyin DBM alone (`pinyin_index.bin`): the `ChewingLargeTable2`
+/// a caller needs when it has no phrase table. `eval_correction_rate`
+/// opens `FacadeChewingTable2` and resolves every surviving token through
+/// the loaded phrase libraries alone
+/// (`utils/training/eval_correction_rate.cpp:143-163`).
+///
+/// [`Self::search`] answers the tokens whose stored pronunciation matches
+/// the query, in stored order; [`Self::key_exists`] answers
+/// `SEARCH_CONTINUED`.
+pub struct PinyinIndexTable {
+    pinyin: ChewingTable,
+}
+
+impl PinyinIndexTable {
+    /// Opens `pinyin_index.bin` read-only.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DictError`] when the backend cannot open the file.
+    pub fn open(pinyin_index: &Path) -> Result<Self, DictError> {
+        Ok(Self {
+            pinyin: open_tree(pinyin_index)?,
+        })
+    }
+
+    /// `ChewingLargeTable2::search` without the caller's library filter:
+    /// the matching records' tokens, empty when the index key is absent or
+    /// no record matches.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DictError`] when the DBM read or a record decode fails.
+    pub fn search(&self, keys: &[ChewingKey]) -> Result<Vec<u32>, DictError> {
+        self.pinyin.search(keys)
+    }
+
+    /// `SEARCH_CONTINUED`: whether the query's index key exists.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DictError`] when the DBM read fails.
+    pub fn key_exists(&self, keys: &[ChewingKey]) -> Result<bool, DictError> {
+        self.pinyin.key_exists(keys)
+    }
+}
+
 // ── the default facade ───────────────────────────────────────────
 
 /// The system dictionary: the default facade's pinyin DBM, phrase DBM,

@@ -41,7 +41,7 @@ fn manifest_path() -> PathBuf {
 /// The Rust side, or the reason it could not run: a missing input names
 /// the input, a processing failure carries the underlying error.
 fn rust_counts_and_text() -> Result<(Counts, PhraseLexicon, String), String> {
-    let export = locate_export_dir().ok_or_else(|| format!("missing input: system-table export not found (${EXPORT_DIR_ENV} | {DEFAULT_EXPORT_DIR}; produce with oxpinyin-datagen compile)"))?;
+    let export = locate_export_dir().ok_or_else(|| format!("missing input: system-table export not found (${EXPORT_DIR_ENV} | {DEFAULT_EXPORT_DIR}; produce with the oxpinyin-utils data-dir sequence)"))?;
     let lexicon = PhraseLexicon::from_system_dir(&export)
         .map_err(|e| format!("PhraseLexicon::from_system_dir: {e}"))?;
     let fixture = fixture_ngseg();

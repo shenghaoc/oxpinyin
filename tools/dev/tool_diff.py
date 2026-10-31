@@ -20,12 +20,18 @@ PIN_UTILITIES = {'gen_pinyin_table': 'utils/storage', 'gen_zhuyin_table': 'utils
                  'k_mixture_model_to_interpolation': 'utils/training',
                  'ngseg': 'utils/segment', 'spseg': 'utils/segment', 'mergeseq': 'utils/segment',
                  'gen_binary_files': 'utils/storage', 'import_interpolation': 'utils/storage',
-                 'export_interpolation': 'utils/storage'}
+                 'export_interpolation': 'utils/storage',
+                 'gen_unigram': 'utils/training', 'gen_ngram': 'utils/training',
+                 'gen_deleted_ngram': 'utils/training',
+                 'estimate_interpolation': 'utils/training',
+                 'eval_correction_rate': 'utils/training'}
 # Utilities whose pin source opens no DBM: the generators read and write text
-# tables, and k_mixture_model_to_interpolation converts stdin to stdout with
-# taglib (no Bigram attach, no phrase-index load). Their observations are the
-# same in every cell, so policy evidence is recorded once for every cell.
-DATABASE_FREE = frozenset({'gen_pinyin_table', 'gen_zhuyin_table', 'k_mixture_model_to_interpolation'})
+# tables, k_mixture_model_to_interpolation converts stdin to stdout with
+# taglib (no Bigram attach, no phrase-index load), and gen_unigram reads and
+# writes only the per-library chunk files. Their observations are the same in
+# every cell, so policy evidence is recorded once for every cell.
+DATABASE_FREE = frozenset({'gen_pinyin_table', 'gen_zhuyin_table', 'k_mixture_model_to_interpolation',
+                           'gen_unigram'})
 # The committed W3 data directories, one per storage backend, and the cell
 # each belongs to (`fixtures/w3/README.md`).
 FIXTURE_DIRS = {'bdb': 'db', 'kc': 'kct', 'tkrzw': 'tkt'}

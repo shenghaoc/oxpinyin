@@ -9,12 +9,20 @@ publish = false
 description = "libpinyin's utilities under their own names and interfaces (external-I/O boundary stage 5). Never ships."
 
 [features]
-# The data layer's backend selection, forwarded as oxpinyin-datagen does;
-# none of the ported utilities reads or writes a DBM yet.
+# The data layer's backend selection, forwarded to every backend-sensitive
+# edge the utilities use.
 default = ["tkrzw"]
-kyotocabinet = ["oxpinyin-data/kyotocabinet", "oxpinyin-store/kyotocabinet"]
-bdb = ["oxpinyin-data/bdb", "oxpinyin-store/bdb"]
-tkrzw = ["oxpinyin-data/tkrzw", "oxpinyin-store/tkrzw"]
+kyotocabinet = [
+    "oxpinyin-data/kyotocabinet",
+    "oxpinyin-store/kyotocabinet",
+    "oxpinyin-training/kyotocabinet",
+]
+bdb = ["oxpinyin-data/bdb", "oxpinyin-store/bdb", "oxpinyin-training/bdb"]
+tkrzw = [
+    "oxpinyin-data/tkrzw",
+    "oxpinyin-store/tkrzw",
+    "oxpinyin-training/tkrzw",
+]
 
 [lints]
 workspace = true
@@ -28,6 +36,9 @@ oxpinyin-data = { workspace = true }
 oxpinyin-store = { workspace = true }
 # The utilities' edge calls: GLib options and text, input streams, C stdio.
 oxpinyin-input = { workspace = true, features = ["tools"] }
+# `eval_correction_rate`'s decode: the training crate's term-for-term port
+# of `PhoneticLookup<1, 1>`.
+oxpinyin-training = { path = "../oxpinyin-training", default-features = false }
 
 [dev-dependencies]
 # The KMM text the pipeline and differential tests convert.
@@ -69,3 +80,23 @@ path = "src/bin/spseg.rs"
 [[bin]]
 name = "mergeseq"
 path = "src/bin/mergeseq.rs"
+
+[[bin]]
+name = "gen_unigram"
+path = "src/bin/gen_unigram.rs"
+
+[[bin]]
+name = "gen_ngram"
+path = "src/bin/gen_ngram.rs"
+
+[[bin]]
+name = "gen_deleted_ngram"
+path = "src/bin/gen_deleted_ngram.rs"
+
+[[bin]]
+name = "estimate_interpolation"
+path = "src/bin/estimate_interpolation.rs"
+
+[[bin]]
+name = "eval_correction_rate"
+path = "src/bin/eval_correction_rate.rs"

@@ -91,7 +91,7 @@ fn assert_counts_equal(rust: &Counts, live: &Counts) {
 fn rust_matches_committed_manifest() {
     let Some(counts) = rust_counts() else {
         panic!(
-            "missing input: system tables not found (${EXPORT_DIR_ENV} | {DEFAULT_EXPORT_DIR}; produce with oxpinyin-datagen compile)"
+            "missing input: system tables not found (${EXPORT_DIR_ENV} | {DEFAULT_EXPORT_DIR}; produce with the oxpinyin-utils data-dir sequence)"
         )
     };
     let manifest_path = manifest_path();
@@ -209,7 +209,7 @@ fn rust_matches_live_gen_ngram() {
     };
     let Some(rust) = rust_counts() else {
         panic!(
-            "missing input for the live gen_ngram: system tables not found (oxpinyin-datagen compile)"
+            "missing input for the live gen_ngram: system tables not found (the oxpinyin-utils data-dir sequence)"
         )
     };
     let fixture = std::fs::read(fixture_ngseg()).expect("fixture");
@@ -317,109 +317,4 @@ fn rust_matches_live_gen_ngram() {
         );
     }
     eprintln!("known-token phrase mismatches and NUL before delimiter: both refuse");
-}
-
-#[test]
-fn counter_and_emitter_accept_ignored_bytes_and_refuse_wrong_phrases() {
-    let work = tempfile::tempdir().expect("temp dir");
-    let input = work.path().join("input.ngseg");
-    let output = work.path().join("output.txt");
-    for binary in [
-        env!("CARGO_BIN_EXE_oxpinyin-counter"),
-        env!("CARGO_BIN_EXE_oxpinyin-emitter"),
-    ] {
-        let mut baseline = None;
-        for bytes in [
-            b"1 <start>\n0 \n".as_slice(),
-            b"1 <start>\0\xff\n0 \xff\n",
-            b"1\xff <start>\n\0ignored \xff\n",
-            b"1 wrong\n",
-            b"99 unknown\n",
-            b"1 \xff\n",
-        ] {
-            std::fs::write(&input, bytes).unwrap();
-            std::fs::write(&output, "unchanged").unwrap();
-            let result = std::process::Command::new(binary)
-                .arg("--export-dir")
-                .arg(work.path())
-                .arg("-o")
-                .arg(&output)
-                .arg(&input)
-                .output()
-                .unwrap();
-            let malformed_token = bytes == b"1\xff <start>\n\0ignored \xff\n";
-            let invalid = malformed_token
-                || bytes == b"1 wrong\n"
-                || bytes == b"99 unknown\n"
-                || bytes == b"1 \xff\n";
-            assert_eq!(
-                result.status.code(),
-                Some(i32::from(invalid)),
-                "{:?}",
-                result.stderr
-            );
-            assert!(result.stdout.is_empty());
-            let written = std::fs::read(&output).unwrap();
-            if invalid {
-                assert!(
-                    String::from_utf8_lossy(&result.stderr).contains(if malformed_token {
-                        "not `token phrase`"
-                    } else {
-                        "unknown or mismatched phrase"
-                    })
-                );
-                assert_eq!(written, b"unchanged");
-            } else if let Some(expected) = &baseline {
-                assert_eq!(&written, expected);
-            } else {
-                baseline = Some(written);
-            }
-        }
-    }
-}
-
-#[test]
-fn lambda_validates_both_byte_streams_before_output() {
-    let work = tempfile::tempdir().unwrap();
-    let system = work.path().join("system.ngseg");
-    let deleted = work.path().join("deleted.ngseg");
-    let valid = b"1 <start>\n1 <start>\n";
-    let mut baseline = None;
-    for change_system in [true, false] {
-        for changed in [
-            valid.as_slice(),
-            b"1 <start>\0\xff\n1 <start>\n0 \xff\n",
-            b"1 wrong\n",
-            b"99 unknown\n",
-        ] {
-            std::fs::write(&system, if change_system { changed } else { valid }).unwrap();
-            std::fs::write(&deleted, if change_system { valid } else { changed }).unwrap();
-            let result = std::process::Command::new(env!("CARGO_BIN_EXE_oxpinyin-lambda"))
-                .arg("--export-dir")
-                .arg(work.path())
-                .arg("--deleted")
-                .arg(&deleted)
-                .arg(&system)
-                .output()
-                .unwrap();
-            let invalid = changed == b"1 wrong\n" || changed == b"99 unknown\n";
-            assert_eq!(
-                result.status.code(),
-                Some(i32::from(invalid)),
-                "{:?}",
-                result.stderr
-            );
-            if invalid {
-                assert!(result.stdout.is_empty());
-                assert!(
-                    String::from_utf8_lossy(&result.stderr)
-                        .contains("unknown or mismatched phrase")
-                );
-            } else if let Some(expected) = &baseline {
-                assert_eq!(&result.stdout, expected);
-            } else {
-                baseline = Some(result.stdout);
-            }
-        }
-    }
 }

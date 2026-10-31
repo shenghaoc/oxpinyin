@@ -25,18 +25,6 @@ kyotocabinet = ["oxpinyin-data/kyotocabinet", "dep:pkg-config"]
 bdb = ["oxpinyin-data/bdb"]
 tkrzw = ["oxpinyin-data/tkrzw"]
 
-[[bin]]
-name = "oxpinyin-counter"
-path = "src/bin/oxpinyin-counter.rs"
-
-[[bin]]
-name = "oxpinyin-lambda"
-path = "src/bin/oxpinyin-lambda.rs"
-
-[[bin]]
-name = "oxpinyin-emitter"
-path = "src/bin/oxpinyin-emitter.rs"
-
 [dependencies]
 oxpinyin-core.workspace = true
 oxpinyin-data.workspace = true

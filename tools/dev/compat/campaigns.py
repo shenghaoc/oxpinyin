@@ -22,6 +22,25 @@ TOOLS = {
     'PINYIN_EXPORT_INTERPOLATION': 'utils/storage/export_interpolation',
 }
 FEATURES = ['--no-default-features', '--features', 'tkrzw']
+
+
+def run_pin_sequence(root, model, out, table_conf):
+    """Build a data directory with the pin's data/Makefile.am:60-62 sequence.
+
+    table.conf is not written by any of the three utilities: the pin's
+    configure renders data/table.conf from data/table.conf.in, so the caller
+    passes the pin's own configured file (an installed data/table.conf or
+    the committed fixtures/w3 rendering for the same backend).
+    """
+    out = Path(out)
+    out.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(table_conf, out / 'table.conf')
+    base = ['cargo', 'run', '--locked', '-q', '--manifest-path', str(Path(root) / 'Cargo.toml'),
+            '-p', 'oxpinyin-utils', *FEATURES, '--bin']
+    run([*base, 'gen_binary_files', '--', '--gen-punct-table', '--table-dir', str(model)], cwd=out, heavy=True)
+    with (Path(model) / 'interpolation2.text').open('rb') as source:
+        run([*base, 'import_interpolation', '--', '--table-dir', str(model)], cwd=out, stdin=source)
+    run([*base, 'gen_unigram', '--', '--table-dir', str(model)], cwd=out, heavy=True)
 REPORT = re.compile(r'live parity|parity:|value-identical|skipping|test result|diverges|stale|panicked|assertion|left:|right:')
 
 
@@ -89,11 +108,11 @@ def differentials(argv):
     library, data, exported, model = (Path(value).resolve() for value in values.values())
     for path, reason in ((library / 'src/.libs/libpinyin.so.15', 'the built shared object (make)'),
                           (data / 'table.conf', 'system table.conf'), (data / 'phrase_index.bin', 'gen_binary_files output'),
-                          (data / 'pinyin_index.bin', 'gen_binary_files output'), (exported / 'datagen-manifest.txt', 'oxpinyin-datagen compile')):
+                          (data / 'pinyin_index.bin', 'gen_binary_files output'), (exported / 'table.conf', 'the pin sequence output')):
         need(path, 'file', reason)
-    manifest = images.fields(exported / 'datagen-manifest.txt') if (exported / 'datagen-manifest.txt').is_file() else {}
-    if manifest.get('backend') != 'tkt':
-        fail(f'fatal: --export holds a {manifest.get("backend", "")} export; this runner\'s oracle is tkrzw. Rebuild the export with --features tkrzw (see the header recipe).', 2)
+    from ..system_data import data_extension
+    if data_extension(exported) != 'tkt':
+        fail(f'fatal: --export holds a {data_extension(exported) or "unknown"} export; this runner\'s oracle is tkrzw. Rebuild the export through gen_binary_files / import_interpolation / gen_unigram with --features tkrzw (see the header recipe).', 2)
     need(model / 'interpolation2.text', 'file', 'model20 export')
     env = dict(os.environ, **{key: str(library / value) for key, value in TOOLS.items()})
     for key in TOOLS:
@@ -107,7 +126,7 @@ def differentials(argv):
     evaluator = (data / 'bigram.db').is_file() and (data / 'evals2.text').is_file()
     if evaluator:
         for path, reason in ((data / 'interpolation2.text', 'the interpolation2.text bigram.db was imported from'),
-                              (exported / 'pinyin_index.bin', 'oxpinyin-datagen output'), (exported / 'phrase_index.bin', 'oxpinyin-datagen output')):
+                              (exported / 'pinyin_index.bin', 'the pin sequence output'), (exported / 'phrase_index.bin', 'the pin sequence output')):
             need(path, 'file', reason)
         if missing:
             return 2
@@ -176,14 +195,13 @@ def nightly(argv, *, root=ROOT):
     from ..measure.bench import loader_path
     env = dict(os.environ, LD_LIBRARY_PATH=loader_path(prefix / 'lib', os.environ.get('LD_LIBRARY_PATH')))
     exported = work / 'export-tkrzw'
-    if not (exported / 'datagen-manifest.txt').is_file():
-        run(['cargo', 'run', '--locked', '-q', '-p', 'oxpinyin-datagen', *FEATURES, '--', 'compile',
-             '--backend', 'tkrzw', '--model-dir', model, '--out-dir', exported], cwd=root, env=env, heavy=True)
+    if not (exported / 'table.conf').is_file():
+        run_pin_sequence(root, model, exported, data / 'table.conf')
     w3 = Path(root) / 'fixtures/w3'
+    from ..system_data import data_extension
     for directory in (exported, w3 / 'tkt'):
-        record = images.fields(directory / 'datagen-manifest.txt')
-        if record.get('backend') != 'tkt':
-            fail(f'fatal: {directory} is not a tkrzw data set (manifest says {record.get("backend", "")}); this runner\'s oracle and tests are tkrzw', 2)
+        if data_extension(directory) != 'tkt':
+            fail(f'fatal: {directory} is not a tkrzw data set (table.conf says {data_extension(directory) or "unknown"}); this runner\'s oracle and tests are tkrzw', 2)
     env.update(PINYIN_NGSEG=str(src / TOOLS['PINYIN_NGSEG']), PINYIN_NGSEG_DATA=str(data),
                PINYIN_EXPORT_DIR=str(exported), PINYIN_MODEL_DIR=str(model))
     status = int(run_suite('segment ngseg live parity (toned tables)',

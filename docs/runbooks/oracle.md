@@ -200,11 +200,20 @@ of the contract.
 
 ## 3. Produce the export
 
-The Rust side reads a system data directory it compiled itself:
+The Rust side reads a system data directory built by libpinyin's own
+sequence; `oxpinyin-utils` provides the three programs under their pin
+names. `table.conf` comes from the pin's configure (`data/table.conf.in`),
+so start from an installed `data/table.conf` for the same backend:
 
 ```sh
-cargo run -p oxpinyin-datagen -- compile \
-    --model-dir "$PINYIN_MODEL_DIR" --out-dir /tmp/oxpinyin-export
+mkdir -p /tmp/oxpinyin-export && cd /tmp/oxpinyin-export
+cp "$PINYIN_DATA_DIR/table.conf" .
+cargo run -p oxpinyin-utils --no-default-features --features tkrzw \
+    --bin gen_binary_files -- --gen-punct-table --table-dir "$PINYIN_MODEL_DIR"
+cargo run -p oxpinyin-utils --no-default-features --features tkrzw \
+    --bin import_interpolation -- --table-dir "$PINYIN_MODEL_DIR" < "$PINYIN_MODEL_DIR/interpolation2.text"
+cargo run -p oxpinyin-utils --no-default-features --features tkrzw \
+    --bin gen_unigram -- --table-dir "$PINYIN_MODEL_DIR"
 export PINYIN_EXPORT_DIR=/tmp/oxpinyin-export
 ```
 

@@ -18,9 +18,9 @@
 | pinyin-oracle | Differential harness against pinned libpinyin. | allow | Linux | never |
 | oxpinyin-dictool | Conversions and standalone vocabulary export through facade §9 import/export. Pure Rust, with no C-ABI dependency. | forbid | yes | yes |
 | oxpinyin-store | Ordered byte-KV interface with one compile-time Berkeley DB, Kyoto Cabinet or tkrzw backend. See backend dependencies below. | deny | yes | via engine |
-| oxpinyin-datagen | model20 compiler for each backend's native runtime files. Shares layouts with data readers. | forbid | yes | never |
-| oxpinyin-utils | libpinyin's utilities under their own names and interfaces, through `oxpinyin-input`'s `tools` boundary (stage 5 of `docs/findings/external-io-boundary.md`): `gen_pinyin_table`, `gen_zhuyin_table` and `k_mixture_model_to_interpolation`, with the pin's taglib. | forbid | Linux, macOS (needs GLib) | never |
-| oxpinyin-training | Backend-sensitive training modules: segment, counter, lambda, emitter and eval. Existing stage binary names remain. One backend selection covers all modules. | forbid | yes | never |
+| oxpinyin-datagen | The test-only `fixtures/w3` `--mini` producer library for each backend's native runtime files; the system data directory itself is built by the pin's own three-utility sequence in `oxpinyin-utils`. Shares layouts with data readers. | forbid | yes | never |
+| oxpinyin-utils | libpinyin's utilities under their own names and interfaces, through `oxpinyin-input`'s `tools` boundary (stage 5 of `docs/findings/external-io-boundary.md`): the table generators, `k_mixture_model_to_interpolation`, the segmentation trio, the storage trio and the five n-gram/interpolation utilities (`gen_unigram`, `gen_ngram`, `gen_deleted_ngram`, `estimate_interpolation`, `eval_correction_rate`). | forbid | Linux, macOS (needs GLib) | never |
+| oxpinyin-training | Backend-sensitive training modules: segment, counter, lambda, emitter and eval. The stage command line was retired; `oxpinyin-utils` carries the pin-named utilities, and the eval module is the decode behind `eval_correction_rate`. One backend selection covers all modules. | forbid | yes | never |
 | oxpinyin-testsupport | Shared fixture Dictionary/LanguageModel doubles, model20 cache locator and scorer suites. See test-support dependencies below. | forbid | yes | never |
 | oxpinyin-kmm | K-mixture pipeline: generate, estimate, merge, validate, prune, export and import. | forbid | yes | never |
 
@@ -136,7 +136,7 @@ Read `table.conf` once through data's `table_info`, the input scanner and `Syste
 Its rows determine which libraries exist, their filenames and which calls accept them.
 Its header supplies λ and the versions used to check the user profile.
 Runtime opens the same system directory as `pinyin_init` for that backend.
-Either libpinyin tools or `oxpinyin-datagen compile` can produce it.
+libpinyin's own `gen_binary_files` → `import_interpolation` → `gen_unigram` sequence, which `oxpinyin-utils` provides under those names, can produce it; `oxpinyin-datagen` retains only the test-only `--mini` producer library.
 The caller supplies directories to `Runtime`, which retains `StoragePaths`.
 Do not auto-detect a distribution layout.
 

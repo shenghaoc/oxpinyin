@@ -41,8 +41,8 @@ Stage 3 构建需显式启用。只改变可观察输出的 Stage 3 构建保留
 | 分组 | crate |
 |---|---|
 | 引擎 / 数据 / 运行时 / 绑定 | `oxpinyin-core`、`oxpinyin-chewing`、`oxpinyin-store`、`oxpinyin-data`、`oxpinyin-user`、`oxpinyin-engine`、`oxpinyin-facade`、`oxpinyin-runtime`、`oxpinyin-capi`、`oxpinyin-zhuyin-capi`、`oxpinyin-capi-marshal` |
-| 训练工具链（不随产品发布） | `oxpinyin-training`（模块：`segment`、`counter`、`lambda`、`emitter`、`eval`；二进制：`oxpinyin-counter`、`oxpinyin-lambda`、`oxpinyin-emitter`）、`oxpinyin-kmm`、`oxpinyin-datagen` |
-| pin 同名工具（不随产品发布） | `oxpinyin-utils`（`gen_pinyin_table`、`gen_zhuyin_table`、`k_mixture_model_to_interpolation`、`ngseg`、`spseg`、`mergeseq`） |
+| 训练工具链（不随产品发布） | `oxpinyin-training`（模块：`segment`、`counter`、`lambda`、`emitter`、`eval`；自身无命令行）、`oxpinyin-kmm`、`oxpinyin-datagen`（`fixtures/w3` 的 `--mini` 生成库；无 `compile` 命令） |
+| pin 同名工具（不随产品发布） | `oxpinyin-utils`（`gen_pinyin_table`、`gen_zhuyin_table`、`k_mixture_model_to_interpolation`、`ngseg`、`spseg`、`mergeseq`、`gen_binary_files`、`import_interpolation`、`export_interpolation`、`gen_unigram`、`gen_ngram`、`gen_deleted_ngram`、`estimate_interpolation`、`eval_correction_rate`） |
 | 工具 | `oxpinyin-dictool` |
 | Oracle / 测试 | `pinyin-oracle`、`oxpinyin-testsupport` |
 
