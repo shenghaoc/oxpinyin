@@ -1563,6 +1563,7 @@ Identify each timed subject by revision, backend and build recipe, including
 the profile and relevant flags. A maintained recipe and its arguments can
 provide the build command; do not duplicate it for every figure. Report
 shipping-library sizes when applicable under [constitution §2](../constitution.md).
+Take them from the `shipping-sizes` CI job summary; see [shipping-library sizes](../packaging.md#shipping-library-sizes).
 Hashes and loaded-library checks needed by the tools remain tool-internal
 checks; a report needs the results and reproduction recipe, not a checklist
 of their verdicts, checksum manifest or full `NEEDED` inventory. Include a

@@ -163,6 +163,18 @@ trade rule. No CI gate is reinstated; docs-only PRs record nothing.
 Rust's static `std`/`alloc` and monomorphised code versus C++'s shared
 `libstdc++` make a fixed cross-language file-size cap a poor rule.
 
+## Amended 2026-10-31 UTC: CI reports sizes
+
+The `shipping-sizes` job in `.github/workflows/ci.yml` reports the stripped sizes of both shipping libraries for the PR head and for its base.
+It runs on a PR when a file that can change a shipping library changes.
+It fails on a failed build, install or export check.
+It does not fail on a size increase.
+This is a report, not a gate: no limit is reinstated.
+Lanes copy the table from the job summary and do not build release libraries locally.
+The amendment of 2026-10-18 UTC still sets what the table counts.
+`just packaging sizes run` reproduces the table.
+See [shipping-library sizes](../packaging.md#shipping-library-sizes).
+
 ## As built
 
 The lane is `perf-snapshot` in `.github/workflows/verify-nightly.yml`: a

@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[2]
 LIBRARIES = {'libpinyin': 'oxpinyin-capi', 'libzhuyin': 'oxpinyin-zhuyin-capi'}
 HEADERS = ('novel_types.h', 'pinyin_custom2.h')
 NAMES = ('install', 'relink-versioned', 'pc-version', 'check-pc-version', 'check-pc-metadata',
-         'release-stage', 'release-deb', 'release-rpm', 'release-arch', 'compare-installs')
+         'release-stage', 'release-deb', 'release-rpm', 'release-arch', 'compare-installs', 'sizes')
 
 
 def fail(message='', code=1):
@@ -917,6 +917,12 @@ def compare_installs(argv, tools):
     return 0
 
 
+def sizes(argv, tools):
+    """Base and head stripped sizes; orchestration lives in ship_sizes."""
+    from . import ship_sizes
+    return ship_sizes.main(argv)
+
+
 def main(argv=None, *, tools=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     tools = tools or Tools()
@@ -928,7 +934,7 @@ def main(argv=None, *, tools=None):
                  'check-pc-version': check_version,
                  'check-pc-metadata': metadata,
                  'release-stage': release_stage, 'release-deb': release_deb, 'release-rpm': release_rpm,
-                 'release-arch': release_arch}
+                 'release-arch': release_arch, 'sizes': sizes}
     def call():
         if name == 'pc-version':
             emit(version(tools.root))

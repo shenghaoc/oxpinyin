@@ -10,6 +10,8 @@ The [roadmap](../ROADMAP.md) records the stages and their status.
    Minor decreases need no report.
    Documentation-only changes need no size build or report.
    There is no pin +10% cap.
+   CI reports the sizes for each pull request that can change them.
+   See [shipping-library sizes](packaging.md#shipping-library-sizes).
    See the [size policy](perf/ci-perf-size-gate-proposal-2026-09-09.md).
 3. **No local AI.** Do not add client neural inference or LLM inference.
 4. **Panics and error handling.** Follow the pin's observable failure behaviour.

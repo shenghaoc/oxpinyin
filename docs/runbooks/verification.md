@@ -52,8 +52,13 @@ Do not repeat an equivalent passing CI check locally.
 A check that is missing, cancelled or skipped when it applies does not count as a pass.
 A check skipped because it does not apply to the change is not a failure.
 Run fmt locally; it is cheap.
-Run locally the required checks that CI does not cover: the issue's differentials, revert-and-check, sizes and measurements.
+Run locally the required checks that CI does not cover: the issue's differentials, revert-and-check and measurements.
 These checks keep their current rules.
+Stripped shipping-library sizes ([constitution §2](../constitution.md)) are not a local check.
+The `shipping-sizes` CI job reports base and PR sizes in its job summary, for each PR that can change a shipping library.
+Copy the table into the PR body and report any increase over base.
+Do not build release libraries locally for sizes.
+[`just packaging sizes run`](../packaging.md#shipping-library-sizes) reproduces the table; use it to debug a failure of the job.
 All commands stay documented and runnable without CI.
 Run them locally to reproduce a CI failure.
 Apply the heavy-work admission procedure in rule 8 to commands that compile.

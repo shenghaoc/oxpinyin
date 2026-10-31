@@ -81,7 +81,8 @@ When an operation is measurably slower or larger than the pin:
 4. Keep a version that is never worse than the pin in both runtime time and space.
 5. Find or retain an idiomatic alternative if the pin's algorithm gives no improvement on those measures.
 6. Prefer the idiomatic version on a tie.
-7. Record binary file sizes and report increases over base under constitution §2.
+7. Report binary file sizes and increases over base under constitution §2.
+   Take the sizes from the `shipping-sizes` CI job summary.
 
 See the [measurement procedure](runbooks/benches.md).
 The pin's algorithm is the first candidate, not a mandatory choice.

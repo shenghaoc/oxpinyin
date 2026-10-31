@@ -43,6 +43,7 @@
 #   - .config/nextest.toml — the `ci` nextest profile the Linux and macOS
 #     test jobs run under
 #   - .github/actions/** — the bootstrap composite action every job runs
+#   - .cargo/** — Cargo configuration (none today) reaches every build
 #   - *.sh — the lint job runs ShellCheck over every tracked shell script,
 #     including scripts outside tools/ and the two named gate scripts
 #
@@ -53,6 +54,13 @@
 #   - *.md at the root — README, CHANGELOG: no code
 #   - .github/workflows/store-backends.yml — store-backends has its own
 #     trigger and its own path gate; ci.yml doesn't need to re-gate on it
+#
+# The shipping-sizes job has its own, narrower gate (`ship`): it runs when a
+# file that can change a shipping library changes (the crates in the two capi
+# crates' dependency graph, Cargo.toml, Cargo.lock, the toolchain file, the
+# packaging tooling) or when the job itself changes. Tree reuse never skips
+# it. tools/dev/ship_sizes.py owns the path list; docs/packaging.md#shipping-library-sizes
+# describes the job.
 #
 # Branch-protection interaction: skipped lanes still REPORT (conclusion
 # `skipped`), which required status checks treat as satisfied, and the
@@ -130,6 +138,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       run: ${{ steps.gate.outputs.run }}
+      ship: ${{ steps.ship.outputs.ship }}
       reuse: ${{ steps.evidence.outputs.reuse }}
       tree: ${{ steps.evidence.outputs.tree }}
       source_run: ${{ steps.evidence.outputs.source_run }}
@@ -160,12 +169,24 @@ jobs:
             echo 'run=true' >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          changed=$(git diff --name-only "$base" HEAD --             crates fuzz tools '*.sh'             Cargo.toml Cargo.lock rust-toolchain.toml deny.toml clippy.toml             justfile uv.toml .python-version             .github/workflows/ci.yml             tools/dev/check.py             tools/dev/lint-crate-cfg-placement.test.py             fixtures tests/parity .github/actions .config/nextest.toml)
+          changed=$(git diff --name-only "$base" HEAD --             crates fuzz tools '*.sh'             Cargo.toml Cargo.lock rust-toolchain.toml deny.toml clippy.toml             justfile uv.toml .python-version             .github/workflows/ci.yml             tools/dev/check.py             tools/dev/lint-crate-cfg-placement.test.py             fixtures tests/parity .github/actions .config/nextest.toml .cargo)
           if [ -n "$changed" ]; then
             echo 'run=true' >> "$GITHUB_OUTPUT"
           else
             echo 'run=false' >> "$GITHUB_OUTPUT"
           fi
+      # The shipping-sizes flag: the same base, a narrower path set. An
+      # unavailable base runs the job.
+      - name: Compute the shipping-sizes gate flag
+        id: ship
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            base='${{ github.event.pull_request.base.sha }}'
+          else
+            base='${{ github.event.before }}'
+          fi
+          python3 tools/dev/ship_sizes.py gate "$base"
 
   lint:
     needs: changes
@@ -701,14 +722,159 @@ jobs:
       # was in the tree; that backend now binds a system C library, so
       # heed, heed-types and bincode are all gone.
 
+  # Stripped shipping-library sizes (constitution section 2). Builds both
+  # facades with the release recipe (`just packaging install`) on the
+  # reference cell (bdb), strips them, checks their exports and writes the
+  # base / PR table to the job summary. A failed build, install or export
+  # check fails the job; a size increase does not.
+  #
+  # Base sizes come from a cache keyed by the shipping inputs' tree ids and
+  # the toolchain fingerprint (`just packaging sizes key`), written by this
+  # job on pushes to main. A hit costs one build, a miss two. A pull request
+  # that misses saves its own base result, so its later pushes hit.
+  # The pull request side builds the PR head, not the merge ref: the table
+  # compares the PR's own change with its base.
+  #
+  # The job runs whenever `ship` is true, reuse or not: a reused tree proves
+  # the tests, not the sizes of this PR against this base.
+  shipping-sizes:
+    needs: changes
+    if: needs.changes.outputs.ship == 'true'
+    runs-on: ubuntu-latest
+    container:
+      image: debian:testing # deliberately unpinned; see store-backends.yml header
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      # Warnings change no byte. The size build adds its own path remapping.
+      RUSTFLAGS: ''
+      BASE_SHA: ${{ github.event.pull_request.base.sha }}
+    steps:
+      - name: Bootstrap the bare runner essentials (apt)
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends bash python3 tar gzip zstd git ca-certificates curl
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      # Only main saves the dependency cache; pull requests restore it.
+      - uses: ./.github/actions/bootstrap
+        with:
+          safe-directory: 'true'
+          rustup: 'true'
+          rust-cache: 'true'
+          rust-cache-key: shipping-sizes-job
+          rust-cache-save-if: ${{ github.event_name == 'push' }}
+      - run: rustup show active-toolchain
+      - name: Set up pinned repository Python
+        run: |
+          set -euo pipefail
+          uv_install_dir="$HOME/.local/bin"
+          (
+            [[ $(uname -s)-$(uname -m) == Linux-x86_64 ]]
+            uv_target=x86_64-unknown-linux-gnu
+            # Published in https://github.com/astral-sh/uv/releases/download/0.13.1/sha256.sum.
+            # Exact on purpose (#1074): a checksum is only known for a known version.
+            uv_sha256=eadd9d27c134ab5ac1ffd4473b97a741407f3ea238288f03121fc4deddf90220
+            # Keep the archive in memory. Write only its verified executables.
+            uv_payload=$(curl --fail --location --retry 3 "https://github.com/astral-sh/uv/releases/download/0.13.1/uv-$uv_target.tar.gz" | base64)
+            uv_actual=$(printf '%s' "$uv_payload" | base64 -d | sha256sum)
+            [[ ${uv_actual%% *} == "$uv_sha256" ]] || { printf 'uv archive checksum mismatch\n' >&2; exit 1; }
+            uv_tmp=$(mktemp -d)
+            trap 'rm -rf "$uv_tmp"' EXIT
+            trap 'exit 1' HUP INT TERM
+            printf '%s' "$uv_payload" | base64 -d | tar -xz -C "$uv_tmp" "uv-$uv_target/uv" "uv-$uv_target/uvx"
+            mkdir -p "$uv_install_dir"
+            install -m755 "$uv_tmp/uv-$uv_target/uv" "$uv_tmp/uv-$uv_target/uvx" "$uv_install_dir/"
+            printf 'uv archive SHA-256 verified: %s\n' "$uv_sha256"
+          )
+          export PATH="$HOME/.local/bin:$PATH"
+          hash -r
+          printf '%s\n' "$HOME/.local/bin" >> "$GITHUB_PATH"
+          uv --version | grep -q '^uv 0\.13\.1 '
+          tools/install-python.sh
+          uv run --no-project --managed-python python -X lazy_imports=normal - <<'PYTHON'
+          from pathlib import Path
+          import subprocess
+          import sys
+          import sysconfig
+          assert sys.implementation.name == "cpython"
+          assert sys.version_info.releaselevel == "final" and (3, 15, 0) <= sys.version_info[:3] < (3, 16, 0)
+          assert sysconfig.get_config_var("Py_GIL_DISABLED") == 0
+          assert sys._is_gil_enabled()
+          managed = subprocess.check_output(
+              ["uv", "python", "find", "--managed-python"],
+              text=True).strip()
+          assert Path(sys.executable).resolve() == Path(managed).resolve()
+          PYTHON
+      - name: Install pinned just
+        run: |
+          # Exact on purpose (#1074): a checksum is only known for a known version.
+          ver=1.59.0
+          # Published in https://github.com/casey/just/releases/download/1.59.0/SHA256SUMS.
+          target=x86_64-unknown-linux-musl
+          sum=409044617b6f06517c1035e55ca38c8c856ff8b650e41bc2aa1ef82d5903a23e
+          curl -sSfL -o just.tar.gz "https://github.com/casey/just/releases/download/${ver}/just-${ver}-${target}.tar.gz"
+          echo "${sum}  just.tar.gz" | sha256sum -c -
+          tar xzf just.tar.gz just
+          mkdir -p ~/.local/bin
+          install -m755 just ~/.local/bin
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          ~/.local/bin/just --version
+          test "$(~/.local/bin/just --version)" = "just ${ver}"
+      # cargo-c is the distribution's own package, as in release-packages.yml.
+      # The backend packages follow the reference cell (tools/dev/cell.py).
+      - name: Install build dependencies (apt)
+        run: |
+          set -euo pipefail
+          backend=$(just packaging sizes apt)
+          read -r -a backend_pkgs <<< "$backend"
+          apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libglib2.0-dev cargo-c "${backend_pkgs[@]}"
+      - name: Compute the base recipe key
+        id: key
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            just packaging sizes key --commit "$BASE_SHA"
+          else
+            just packaging sizes key --commit HEAD
+          fi
+      - name: Restore the cached sizes
+        id: cached
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .ship-sizes
+          key: ${{ steps.key.outputs.key }}
+      - name: Build base and head, report the table
+        if: github.event_name == 'pull_request'
+        run: >
+          just packaging sizes run --base "$BASE_SHA" --base-cache .ship-sizes/sizes.json
+          --work "$RUNNER_TEMP/ship-sizes" --target target
+      - name: Build main and cache its sizes
+        if: github.event_name == 'push' && steps.cached.outputs.cache-hit != 'true'
+        run: >
+          just packaging sizes build --commit HEAD --out .ship-sizes/sizes.json
+          --work "$RUNNER_TEMP/ship-sizes" --target target
+      - name: Save the sizes under the recipe key
+        if: success() && steps.cached.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .ship-sizes
+          key: ${{ steps.key.outputs.key }}
+
   # The required aggregate checks lint, test, test-macos and deny against
-  # run/reuse. Every applicable lane must succeed; an inapplicable lane
-  # must be skipped. It runs after failures and remains cancellable.
+  # run/reuse, and shipping-sizes against its own `ship` flag. Every
+  # applicable lane must succeed; an inapplicable lane must be skipped. It runs after failures and remains cancellable.
   # store-backends.yml and verify-nightly.yml keep their own triggers
   # and remain non-required lanes beside this one.
   ci-aggregate:
     needs:
-      [changes, lint, test, test-macos, deny]
+      [changes, lint, test, test-macos, deny, shipping-sizes]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:

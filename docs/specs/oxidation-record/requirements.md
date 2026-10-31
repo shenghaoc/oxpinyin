@@ -100,7 +100,8 @@ Try the pin's algorithm idiomatically before other responses to a measured perfo
 1. First measure the pin's structure or algorithm in idiomatic Rust when an operation is measurably slower or larger.
    Compare it with base and pin in one run.
 2. Measure each candidate's time and peak resident memory, with repetitions in that run.
-   Record stripped shipping-library sizes under constitution §2.
+   Report stripped shipping-library sizes under constitution §2.
+   Take them from the `shipping-sizes` CI job summary.
    Report increases over base in the PR.
    Insignificant decreases need no mention.
 3. Keep a version that is not worse than the pin in both runtime time and space (Requirement 3.2).
