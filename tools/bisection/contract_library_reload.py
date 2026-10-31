@@ -1,6 +1,8 @@
 """Library reload cases (inventory row 55, #1175).
 """
 import ctypes as C
+import hashlib
+import os
 
 from contract_abi import B, I, P, S, U, Z, sentence_out, tokens_of, unigram_of
 from contract_case_helpers import (
@@ -433,6 +435,97 @@ def mask_out_reload(compact):
 
 case('mask-out-replaces-reload-offset', control=True, issues=('805',))(mask_out_reload(False))
 case('mask-out-after-compact-keeps-reload-offset', issues=('805',))(mask_out_reload(True))
+
+
+# Policy row 103: `FacadePhraseIndex::unload` deletes the sub-index in memory
+# (phrase_index.cpp:261-268) and `_write_files`/`_rename_files` skip a library
+# whose sub-index is gone (074a2219 pinyin.cpp:929-932, :1032-1035;
+# zhuyin.cpp:562-565): a save while the library is unloaded leaves its saved
+# file as it was, and the next load merges that file. A change to library 1
+# keeps the save dirty and gives it a file to write.
+def _digest(k, name):
+    """The SHA-256 of a user-directory file, or None when it is absent."""
+    path = os.path.join(k.user, name)
+    if not os.path.exists(path):
+        return None
+    with open(path, 'rb') as handle:
+        return hashlib.sha256(handle.read()).hexdigest()
+
+
+def _unload_save(library, file, saved_rows, unsaved_rows, other_rows, phrases, inputs):
+    """Build a probe: import and save, change both libraries, unload, save, load.
+
+    Records the unloaded library's file digest after each save and a snapshot
+    of the watched phrases after the reload."""
+    def probe(k):
+        """Save `saved_rows`, import `unsaved_rows` and `other_rows`, unload
+        `library`, save again and load it back."""
+        out = {'saved import': import_rows(k, library, saved_rows)}
+        out['save'] = bool(k.fn('save', B, P)(k.ctx))
+        saved = _digest(k, file)
+        out['file saved'] = saved is not None
+        out['unsaved import'] = import_rows(k, library, unsaved_rows)
+        out['other import'] = import_rows(k, 1, other_rows)
+        out['unload'] = k.fn('unload_phrase_library', B, P, U)(k.ctx, library)
+        k._inst = None
+        out['save unloaded'] = bool(k.fn('save', B, P)(k.ctx))
+        out['file unchanged'] = _digest(k, file) == saved
+        out['load'] = k.fn('load_phrase_library', B, P, U)(k.ctx, library)
+        k._inst = None
+        out['reloaded'] = _reload_snapshot(k, phrases, inputs)
+        return out
+    return probe
+
+
+_UNLOAD_SAVE = {
+    'pinyin': ([('礙', 'ai1', 50)], [('龘龘', "da3'da3", 50)], [('癫痫', "dian3'xian4", 50)], [b'ai1']),
+    'zhuyin': ([('礙', 'ㄞ', 50)], [('龘龘', 'ㄉㄚˇ ㄉㄚˇ', 50)], [('癫痫', 'ㄉㄧㄢˇ ㄒㄧㄢˋ', 50)], [b'9']),
+}
+for _mode, (_saved, _unsaved, _other, _inputs) in _UNLOAD_SAVE.items():
+    case('unload-save-skips-library-%s' % _mode, mode=_mode, userdir=True, stderr=True,
+         issues=('805', 'row:103'))(
+        _unload_save(2, 'gbk_char.dbin', _saved, _unsaved, _other, ['礙', '龘龘'], _inputs))
+# The zhuyin facade also unloads the USER_FILE library 7, whose saved
+# `user.bin` the save skips in the same way (zhuyin.cpp:562-565, :619-640).
+case('unload-save-skips-user-library-zhuyin', mode='zhuyin', userdir=True, stderr=True,
+     issues=('805', 'row:103'))(
+    _unload_save(7, 'user.bin', [('好你', 'ㄏㄠˇ ㄋㄧˇ', 50)], [('好你', 'ㄏㄠˋ ㄋㄧˇ', 50)],
+                 [('癫痫', 'ㄉㄧㄢˇ ㄒㄧㄢˋ', 50)], ['好你'], [b'cl3su3']))
+
+
+# `MemoryChunk::load` answers false for a log it cannot open or that is
+# shorter than its header (memory_chunk.h:416-429), so the reload merges an
+# empty log: the library comes back as its system chunk alone
+# (pinyin.cpp:264-277, zhuyin.cpp:208-221). Neither is a failure of the load.
+# Controls: the parent build already merged an unreadable log as empty.
+def _reload_unreadable(how, rows, phrases, inputs):
+    """Build a probe that saves an import into library 2, unloads it, makes
+    its `.dbin` unreadable (`missing` or `short`) and loads it again."""
+    def probe(k):
+        """Import and save, unload library 2, break its log, then reload and snapshot."""
+        out = {'import': import_rows(k, 2, rows)}
+        out['save'] = bool(k.fn('save', B, P)(k.ctx))
+        k._inst = None
+        out['saved'] = _reload_snapshot(k, phrases, inputs)
+        out['unload'] = k.fn('unload_phrase_library', B, P, U)(k.ctx, 2)
+        log = os.path.join(k.user, 'gbk_char.dbin')
+        if how == 'missing':
+            os.remove(log)
+        else:
+            with open(log, 'wb') as handle:
+                handle.write(b'abc')
+        out['load'] = k.fn('load_phrase_library', B, P, U)(k.ctx, 2)
+        k._inst = None
+        out['reloaded'] = _reload_snapshot(k, phrases, inputs)
+        return out
+    return probe
+
+
+for _mode, (_rows, _inputs) in (('pinyin', ([('礙', 'ai1', 50)], [b'ai1'])),
+                                ('zhuyin', ([('礙', 'ㄞ', 50)], [b'9']))):
+    for _how in ('missing', 'short'):
+        case('reload-unreadable-log-%s-%s' % (_how, _mode), mode=_mode, stderr=True, control=True,
+             issues=('805', 'row:103'))(_reload_unreadable(_how, _rows, ['礙'], _inputs))
 
 
 def register(driver_case):
