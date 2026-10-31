@@ -245,11 +245,9 @@ impl InstanceCore {
     /// # Errors
     ///
     /// Returns the engine's invalid-index, stale-constraint, stale-span,
-    /// short- or unsafe-predecessor or user-model error. The C facade maps
-    /// the first three and the short predecessor (a value too short for its
-    /// total, register row 85) to the pin's class (c) warning and false,
-    /// and the unsafe predecessor (a partial item tail, register row 100)
-    /// to a class (b) warning and false, each with nothing observed.
+    /// short- or unsafe-predecessor or user-model error, each with nothing
+    /// observed. The C facades abort the process on the first three, as the
+    /// pin does; the predecessor faults keep their warning and `false`.
     pub fn train(&mut self, index: u8) -> Result<bool, EngineError> {
         let Some(user) = self.user.as_mut() else {
             return Ok(false);
@@ -298,5 +296,27 @@ impl InstanceCore {
             user.mark_modified();
         }
         result
+    }
+
+    /// Whether [`Self::train`] of row `index` reaches one of the pin's own
+    /// training aborts — the index past nonempty results, a stale forced
+    /// phrase or a span outside the matrix
+    /// ([`oxpinyin_engine::Session::train_nbest_preflight`]) — after the
+    /// same directory gate. Reads only.
+    #[must_use]
+    pub fn train_aborts(&self, index: u8) -> bool {
+        if !self
+            .user
+            .as_ref()
+            .is_some_and(UserStore::has_user_directory)
+        {
+            return false;
+        }
+        matches!(
+            self.session.train_nbest_preflight(index),
+            Err(EngineError::CandidateIndexOutOfRange { .. }
+                | EngineError::StaleTrainingConstraint { .. }
+                | EngineError::StaleTrainingSpan { .. })
+        )
     }
 }
