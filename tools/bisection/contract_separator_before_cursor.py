@@ -251,6 +251,10 @@ for mode in ('pinyin','zhuyin'):
                 kwargs={'mode':mode,'control':offset in SEPARATOR_CONTROLS.get(f'{mode}/{index}/{op}', ())}
                 if offset in SEPARATOR_ABORTS.get(f"{mode}/{index}/{op}", ()):
                     kwargs['abort']=False
+                    # The pinyin facade reproduces these aborts (2026-10-31
+                    # UTC, pin-aborts-pinyin-facade.md); zhuyin's are pending.
+                    if mode=='pinyin':
+                        kwargs.update(sigabrt=True, control=False)
                 case('separator/'+identity,**kwargs, issues=('640',))(separator_case(text,op,offset))
 BEFORE_CURSOR_INPUTS=('ni','hao','wo','shi','zhong','guo','xian','tian',
     'nihao','zhongguo','beijing','shanghai','renmin','nihaoshijie',

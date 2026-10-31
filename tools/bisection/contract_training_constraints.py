@@ -58,7 +58,7 @@ def _(k):
     return {'ret': k.fn('train', B, P)(inst)}
 
 
-@case('abort-train-stale-forcing', abort=False, issues=('525', 'row:6'))
+@case('abort-train-stale-forcing', abort=False, sigabrt=True, issues=('525', 'row:6'))
 def _(k):
     """Train result zero immediately after forcing 泥 onto a previously guessed nihao."""
     inst, _chosen = forced_sentence(k, False)
@@ -69,7 +69,7 @@ def _(k):
 # gate passes and `assert(index < results.size())` fails (`pinyin.cpp:2684`).
 # `null-user-session-pinyin` trains with a NULL user directory and so stops
 # at the earlier gate.
-@case('abort-train-index-past-results', abort=False, userdir=True, issues=('525', 'row:6'))
+@case('abort-train-index-past-results', abort=False, sigabrt=True, userdir=True, issues=('525', 'row:6'))
 def _(k):
     """Assert a sentence guess exists, then attempt to train result index 255."""
     inst = full_inst(k, b'nihao')
@@ -286,7 +286,7 @@ def reparse_after_choose(k, shrink):
     return inst
 
 
-@case('abort-train-after-reparse-past-matrix-end', abort=False, issues=('525', 'row:82'))
+@case('abort-train-after-reparse-past-matrix-end', abort=False, sigabrt=True, issues=('525', 'row:82'))
 def _(k):
     """Train the retained result after replacing the chosen nihao parse with ni."""
     inst = reparse_after_choose(k, b'ni')
@@ -296,7 +296,7 @@ def _(k):
 # The `'ni` twin walks the same clamp into a matrix whose column 0 the
 # leading apostrophe left empty (`:663`): reproduced, SIGABRT at
 # `phonetic_key_matrix.cpp:663` under the `__assert_fail` wrapper.
-@case('abort-train-after-reparse-empty-start-column', abort=False, issues=('525', 'row:82'))
+@case('abort-train-after-reparse-empty-start-column', abort=False, sigabrt=True, issues=('525', 'row:82'))
 def _(k):
     """Train the retained result after reparsing a leading apostrophe followed by ni."""
     inst = reparse_after_choose(k, b"'ni")
@@ -320,7 +320,7 @@ def _(k):
 # `ni'hao`, the pin passes `:663` (the apostrophe column holds a zero key)
 # and aborts at `:664` (`get_column_size(end) > 0`). The engine refuses with
 # the same fault.
-@case('abort-train-after-reparse-empty-end-column', abort=False, issues=('525', 'row:82'))
+@case('abort-train-after-reparse-empty-end-column', abort=False, sigabrt=True, issues=('525', 'row:82'))
 def _(k):
     """Train the retained result after reparsing ni'hao with its shifted key boundaries."""
     inst = reparse_after_choose(k, b"ni'hao")

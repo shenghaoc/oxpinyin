@@ -43,7 +43,8 @@ def register(case, *, remember_export, transient_files):
         return out
 
     for _mode in ('pinyin', 'zhuyin'):
-        case('combined-library-sixth-add-' + _mode, mode=_mode, abort=False, issues=('525',))(combined_import_bound)
+        case('combined-library-sixth-add-' + _mode, mode=_mode, abort=False, **({'sigabrt': True} if _mode == 'pinyin' else {}),
+             issues=('525',))(combined_import_bound)
         case('combined-library-fifth-add-' + _mode, mode=_mode, control=True, issues=('525',))(
             lambda k: combined_import_bound(k, guard=False))
 
@@ -67,7 +68,8 @@ def register(case, *, remember_export, transient_files):
 
     for _mode in ('pinyin', 'zhuyin'):
         case('combined-library-invalid-reading-' + _mode, mode=_mode, control=True, issues=('525',))(lambda k: import_review(k, True))
-        case('combined-library-unused-index-' + _mode, mode=_mode, abort=False, issues=('525',))(import_review)
+        case('combined-library-unused-index-' + _mode, mode=_mode, abort=False, **({'sigabrt': True} if _mode == 'pinyin' else {}),
+             issues=('525',))(import_review)
 
 
     # #757 PR 0: two user phrases with equal counts whose user-table order
