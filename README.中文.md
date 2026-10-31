@@ -41,11 +41,12 @@ Stage 3 构建需显式启用。只改变可观察输出的 Stage 3 构建保留
 | 分组 | crate |
 |---|---|
 | 引擎 / 数据 / 运行时 / 绑定 | `oxpinyin-core`、`oxpinyin-chewing`、`oxpinyin-store`、`oxpinyin-data`、`oxpinyin-user`、`oxpinyin-engine`、`oxpinyin-facade`、`oxpinyin-runtime`、`oxpinyin-capi`、`oxpinyin-zhuyin-capi`、`oxpinyin-capi-marshal` |
-| 训练工具链（不随产品发布） | `oxpinyin-training`（模块：`segment`、`counter`、`lambda`、`emitter`、`eval`；二进制：`oxpinyin-segment`、`oxpinyin-spseg`、`oxpinyin-mergeseq`、`oxpinyin-counter`、`oxpinyin-lambda`、`oxpinyin-emitter`）、`oxpinyin-kmm`、`oxpinyin-utils`、`oxpinyin-datagen` |
+| 训练工具链（不随产品发布） | `oxpinyin-training`（模块：`segment`、`counter`、`lambda`、`emitter`、`eval`；二进制：`oxpinyin-counter`、`oxpinyin-lambda`、`oxpinyin-emitter`）、`oxpinyin-kmm`、`oxpinyin-datagen` |
+| pin 同名工具（不随产品发布） | `oxpinyin-utils`（`gen_pinyin_table`、`gen_zhuyin_table`、`k_mixture_model_to_interpolation`、`ngseg`、`spseg`、`mergeseq`） |
 | 工具 | `oxpinyin-dictool` |
 | Oracle / 测试 | `pinyin-oracle`、`oxpinyin-testsupport` |
 
-保留下来的各阶段二进制保持其名称和参数。运行或测试这些命令时，请选择整合后的 Cargo 包，例如：`cargo run --locked -p oxpinyin-training --bin oxpinyin-segment -- --help`。
+保留下来的各阶段二进制保持其名称和参数。运行或测试这些命令时，请选择整合后的 Cargo 包，例如：`cargo run --locked -p oxpinyin-utils --bin ngseg -- --help`。
 
 ## 上游
 

@@ -280,9 +280,11 @@ parked.
   scope below and its Python ports (`oxpinyin-corpus`, `oxpinyin-punct`,
   `oxpinyin-word`, the `train` orchestrator and the `evaluate.py` driver)
   were removed. The `eval` module keeps the `eval_correction_rate`
-  decode; `oxpinyin-utils` keeps `gen_pinyin_table`, `gen_zhuyin_table`
-  and `k_mixture_model_to_interpolation`. Converting the counterparts
-  into drop-ins is external-I/O stage 5.
+  decode; `oxpinyin-utils` keeps `gen_pinyin_table`, `gen_zhuyin_table`,
+  `k_mixture_model_to_interpolation`, `ngseg`, `spseg` and `mergeseq`.
+  Converting the counterparts into drop-ins is external-I/O stage 5: the
+  segmentation trio and two table generators are ported, the others
+  follow.
 
 - **W9 full-workflow scope (2026-08-30; superseded 2026-10-31 UTC).**
   W9 now targets **complete native-Rust parity with the currently-used
@@ -316,7 +318,7 @@ parked.
   (kept, correct, retitled); `estimate_interpolation`'s λ EM stays on the
   real path inside `evaluate.py`. The scope was
   decomposed as Parts B–H in the audit: `spseg`/`mergeseq`
-  (`oxpinyin-training::segment`); the KMM pipeline (`oxpinyin-kmm`); the
+  (`oxpinyin-utils::segment`); the KMM pipeline (`oxpinyin-kmm`); the
   evaluator (`oxpinyin-training::eval`, reusing the engine decoder); word recognition
   (`oxpinyin-word`); punctuation (`oxpinyin-punct`); native end-to-end
   orchestration.

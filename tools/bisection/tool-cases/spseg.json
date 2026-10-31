@@ -1,0 +1,79 @@
+{
+  "schema": 1,
+  "cases": [
+    {
+      "id": "spseg-help",
+      "utility": "spseg",
+      "source": "utils/segment/spseg.cpp at 074a2219: 208-215 (GLib --help)",
+      "args": ["--help"]
+    },
+    {
+      "id": "spseg-bogus-option",
+      "utility": "spseg",
+      "source": "utils/segment/spseg.cpp at 074a2219: 211-215",
+      "args": ["--bogus"]
+    },
+    {
+      "id": "spseg-too-many-arguments",
+      "utility": "spseg",
+      "source": "utils/segment/spseg.cpp at 074a2219: 218-229 (output opened first)",
+      "args": ["-o", "out.txt", "first.txt", "second.txt"],
+      "fixture_dir": "fixtures/w3",
+      "stdin": {"text": ""}
+    },
+    {
+      "id": "spseg-missing-input",
+      "utility": "spseg",
+      "source": "utils/segment/spseg.cpp at 074a2219: 231-238",
+      "args": ["absent.txt"],
+      "fixture_dir": "fixtures/w3"
+    },
+    {
+      "id": "spseg-missing-table-conf",
+      "utility": "spseg",
+      "source": "utils/segment/spseg.cpp at 074a2219: 240-246",
+      "args": [],
+      "stdin": {"text": ""}
+    },
+    {
+      "id": "spseg-empty-input",
+      "utility": "spseg",
+      "source": "utils/segment/spseg.cpp at 074a2219: 339-343",
+      "args": [],
+      "fixture_dir": "fixtures/w3",
+      "stdin": {"text": ""}
+    },
+    {
+      "id": "spseg-empty-line",
+      "utility": "spseg",
+      "source": "utils/segment/spseg.cpp at 074a2219: 281-285",
+      "args": [],
+      "fixture_dir": "fixtures/w3",
+      "stdin": {"text": "\n"}
+    },
+    {
+      "id": "spseg-extra-enter",
+      "utility": "spseg",
+      "source": "utils/segment/spseg.cpp at 074a2219: 332-334",
+      "args": ["--generate-extra-enter"],
+      "fixture_dir": "fixtures/w3",
+      "stdin": {"text": "中\n"}
+    },
+    {
+      "id": "spseg-invalid-utf8",
+      "utility": "spseg",
+      "source": "utils/segment/spseg.cpp at 074a2219: 270-279",
+      "args": [],
+      "fixture_dir": "fixtures/w3",
+      "stdin": {"hex": "ff0a"}
+    },
+    {
+      "id": "spseg-mini-fixture",
+      "utility": "spseg",
+      "source": "utils/segment/spseg.cpp at 074a2219: 201-345; fixtures/w9/segmenter-han.txt",
+      "args": ["han.txt"],
+      "fixture_dir": "fixtures/w3",
+      "files": {"han.txt": {"file": "fixtures/w9/segmenter-han.txt"}}
+    }
+  ]
+}

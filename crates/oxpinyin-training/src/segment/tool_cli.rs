@@ -1,7 +1,7 @@
 //! Shared CLI scaffold for the training-tool binaries.
 //!
-//! `oxpinyin-segment`, `oxpinyin-counter`, `oxpinyin-emitter`, and
-//! `oxpinyin-lambda` each ship one `gen_*`-compatible binary built from the
+//! `oxpinyin-counter`, `oxpinyin-emitter`, and `oxpinyin-lambda` each
+//! ship one `gen_*`-compatible binary built from the
 //! same mechanical skeleton: an argument loop over a shared flag vocabulary,
 //! export-dir resolution for the phrase-index table, a stdin-or-file input
 //! read, an output-or-stdout write, and the exit-code runner. This module

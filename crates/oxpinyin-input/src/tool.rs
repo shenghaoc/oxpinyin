@@ -539,6 +539,21 @@ impl OutputStream {
     pub fn close(self) {
         drop(self);
     }
+
+    /// `fclose(output)` (`ngseg.cpp:260`), including when the pin's
+    /// `output` is the C runtime's `stdout` (`ngseg.cpp:106`, `:260`): the
+    /// stream is closed exactly once, and a later exit has no buffered
+    /// line left to flush.
+    pub fn close_including_stdout(self) {
+        let stream = self.stream;
+        // The owned case would otherwise be closed again by `Drop`.
+        core::mem::forget(self);
+        // SAFETY: the stream is open, was never closed, and is not used
+        // again; for `stdout` the C runtime keeps the object itself alive.
+        unsafe {
+            libc::fclose(stream.as_ptr());
+        }
+    }
 }
 
 impl Drop for OutputStream {
@@ -1004,6 +1019,112 @@ pub mod k_mixture_model_to_interpolation {
             reason,
             line,
         );
+    }
+}
+
+/// `ngseg`, `spseg` and `mergeseq`'s calls
+/// (`utils/segment/ngseg.cpp`, `spseg.cpp` and `mergeseq.cpp` at
+/// 074a2219).
+///
+/// `%s` receives a NULL where the pin passes one: the C library prints its
+/// own spelling for that argument (glibc's `(null)`), so the call, not a
+/// Rust substitution, decides it.
+pub mod segmentation {
+    use super::{OutputStream, c_char, c_int, c_stderr, print_literal, print_text};
+    use std::ffi::CStr;
+
+    fn text_pointer(text: Option<&CStr>) -> *const c_char {
+        text.map_or(core::ptr::null(), CStr::as_ptr)
+    }
+
+    /// `fprintf(output, "%d %s\n", token, text)` (`spseg.cpp:183`,
+    /// `mergeseq.cpp:141`).
+    pub fn print_token_line(output: &OutputStream, token: c_int, text: Option<&CStr>) {
+        // SAFETY: the stream is open; the format takes an `int` and one
+        // string, present or NULL.
+        unsafe {
+            libc::fprintf(
+                output.as_ptr(),
+                c"%d %s\n".as_ptr(),
+                token,
+                text_pointer(text),
+            );
+        }
+    }
+
+    /// `fprintf(output, "%s\n", text)` (`mergeseq.cpp:170`).
+    pub fn print_text_line(output: &OutputStream, text: Option<&CStr>) {
+        // SAFETY: the stream is open; the format takes one string, present
+        // or NULL.
+        unsafe {
+            libc::fprintf(output.as_ptr(), c"%s\n".as_ptr(), text_pointer(text));
+        }
+    }
+
+    /// `fprintf(output, "%d \n", null_token)` (`ngseg.cpp:196`, `:202`,
+    /// `:251`, `:258`; `spseg.cpp:277`, `:283`, `:334`, `:341`).
+    pub fn print_null_line(output: &OutputStream) {
+        // SAFETY: the stream is open; the format takes one `int`.
+        unsafe {
+            libc::fprintf(output.as_ptr(), c"%d \n".as_ptr(), 0 as c_int);
+        }
+    }
+
+    /// `fprintf(stderr, "non-ucs4 characters encountered:%s.\n", linebuf)`
+    /// (`ngseg.cpp:194`, `spseg.cpp:275`).
+    pub fn report_non_ucs4(line: &CStr) {
+        print_text(c_stderr(), c"non-ucs4 characters encountered:%s.\n", line);
+    }
+
+    /// `fprintf(stderr, "Un-segmentable sentence encountered:%s\n",
+    /// tmp_string)` (`ngseg.cpp:86`); `tmp_string` is NULL when GLib could
+    /// not convert the run.
+    pub fn report_unsegmentable(text: Option<&CStr>) {
+        // SAFETY: `stderr` is open; the format takes one string, present or
+        // NULL.
+        unsafe {
+            libc::fprintf(
+                c_stderr(),
+                c"Un-segmentable sentence encountered:%s\n".as_ptr(),
+                text_pointer(text),
+            );
+        }
+    }
+
+    /// `fprintf(stderr, "too many arguments.\n")` (`ngseg.cpp:132`,
+    /// `spseg.cpp:227`, `mergeseq.cpp:226`).
+    pub fn report_too_many_arguments() {
+        print_literal(c_stderr(), c"too many arguments.\n");
+    }
+
+    /// `fprintf(stderr, "load table.conf failed.\n")` (`ngseg.cpp:149`,
+    /// `spseg.cpp:244`, `mergeseq.cpp:243`).
+    pub fn report_table_conf_failed() {
+        print_literal(c_stderr(), c"load table.conf failed.\n");
+    }
+
+    /// `fprintf(stderr, "load %s failed!\n", binfile)`
+    /// (`utils/utils_helper.h:87`); `binfile` is NULL when the row has no
+    /// system filename.
+    pub fn report_load_failed(filename: Option<&CStr>) {
+        // SAFETY: `stderr` is open; the format takes one string, present or
+        // NULL.
+        unsafe {
+            libc::fprintf(
+                c_stderr(),
+                c"load %s failed!\n".as_ptr(),
+                text_pointer(filename),
+            );
+        }
+    }
+
+    /// `fprintf(stderr, "error: unknown token:%d.\n", token)`
+    /// (`src/storage/tag_utility.cpp:397`, `:380`).
+    pub fn report_unknown_token(token: c_int) {
+        // SAFETY: `stderr` is open; the format takes one `int`.
+        unsafe {
+            libc::fprintf(c_stderr(), c"error: unknown token:%d.\n".as_ptr(), token);
+        }
     }
 }
 

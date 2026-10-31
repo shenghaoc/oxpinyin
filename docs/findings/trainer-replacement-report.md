@@ -26,7 +26,7 @@ correction rate** out, every intermediate stage's on-disk product verified.
 | Command | Replaces | Role |
 |---|---|---|
 | `oxpinyin-train` | the whole main workflow (`segment`→`generate`→`estimate`→`tryprune`→`evaluate`.py) | **the one orchestrator** |
-| `oxpinyin-spseg` / `oxpinyin-mergeseq` | `spseg` / `mergeseq` | segmentation (stage-wise) |
+| `ngseg` / `spseg` / `mergeseq` (`oxpinyin-utils`) | `ngseg` / `spseg` / `mergeseq` | segmentation (drop-in stage-wise) |
 | `oxpinyin-kmm <sub>` | `gen_/estimate_/merge_/validate_/prune_/export_/import_k_mixture_model`, `k_mixture_model_to_interpolation` | KMM toolchain (8 subcommands, stage-wise) |
 | `oxpinyin-eval` | `estimate_interpolation` + `make modify` + `eval_correction_rate` (`evaluate.py`) | native evaluator (stage-wise) |
 | `oxpinyin-word recognize` | `populate`/`partialword`/`newword`/`markpinyin`.py | word recognition |
@@ -53,7 +53,7 @@ per-stage candidate models, estimate indexes, `kmm_merged.text`,
 
 ## Every utility accounted for
 
-**Main pipeline (all ported).** `segment.py`→`oxpinyin-segment`;
+**Main pipeline (all ported).** `segment.py`→`ngseg` (`oxpinyin-utils`);
 `generate.py`→`oxpinyin-kmm generate` + `oxpinyin-train` rollover;
 `estimate.py`→`oxpinyin-kmm estimate` + `oxpinyin-train` gather/sort;
 `tryprune.py`→`oxpinyin-kmm merge/validate/prune/export` and (since 2026-10-31 UTC) `oxpinyin-utils` `k_mixture_model_to_interpolation` +
@@ -104,7 +104,7 @@ None is on the main, word-recognition, or punctuation path.
 4. **Env-gated oracle differentials**: against pin `eval_correction_rate`
    (`oxpinyin-eval`), pin `gen_/export_k_mixture_model` and
    `k_mixture_model_to_interpolation` (`oxpinyin-kmm`), pin `ngseg`/`spseg`
-   (`oxpinyin-segment`), and pin `estimate_interpolation` (`oxpinyin-lambda`).
+   (`ngseg`), and pin `estimate_interpolation` (`oxpinyin-lambda`).
 
 ### Evidence levels
 
@@ -203,6 +203,9 @@ wires it when `$data/evals2.text` exists (here: 20 hand-written sentences
 segmented by the pin's `ngseg`) and reports it as skipped otherwise.
 
 ## Test counts
+
+The counts are from the 2026-08-15 W9 crate layout; the segmentation
+binaries now live in `oxpinyin-utils` (`ngseg`, `spseg`, `mergeseq`).
 
 | Crate | Tests | Coverage |
 |---|---|---|
