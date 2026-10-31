@@ -31,7 +31,14 @@ fn parse_one_key(syllable: &[u8]) -> Option<ChewingKey> {
         parsed_len -= 1;
     }
     let text = std::str::from_utf8(&syllable[..parsed_len]).ok()?;
-    Some(ChewingKey::from_pinyin(text)?.with_tone(tone))
+    let key = ChewingKey::from_pinyin(text)?;
+    // `check_pinyin_options`: an initial-only row needs
+    // `PINYIN_INCOMPLETE`, which the storage utilities never pass. The
+    // content table stores those rows as initial + zero middle/final.
+    if key.middle == 0 && key.final_ == 0 {
+        return None;
+    }
+    Some(key.with_tone(tone))
 }
 
 /// `PinyinDirectParser2::parse`: the keys it appended before the first
@@ -103,7 +110,10 @@ mod tests {
 
     #[test]
     fn tone_digits_and_refusals() {
-        assert_eq!(spellings("ni3hao3"), ["ni3", "hao3"]);
+        assert_eq!(spellings("ni3'hao3"), ["ni3", "hao3"]);
+        // No separator: one syllable, whose text keeps the first tone digit
+        // and does not resolve.
+        assert_eq!(spellings("ni3hao3"), Vec::<String>::new());
         // A trailing separator is skipped; an empty leading syllable stops
         // the parse.
         assert_eq!(spellings("'ni"), Vec::<String>::new());

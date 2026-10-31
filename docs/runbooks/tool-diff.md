@@ -179,17 +179,31 @@ and an unknown option; positional arguments the pin ignores; a missing
 stdin and a wrong model header; and ordinary runs over the committed
 `fixtures/w3` data (with the `.table` inputs the case writes).
 
-On the tkrzw reference cell with the sound `libtkrzw` on
-`LD_LIBRARY_PATH`, 17 cases reported MATCH. The other seven report
-DIFFER, and every difference is the writing DBM library's own metadata:
+Results, one run per cell against that cell's pin build:
+
+| cell | MATCH | DIFFER |
+|---|---|---|
+| tkrzw (reference) | 17 | 7 |
+| bdb | 18 | 6 |
+| kc | 24 | 0 |
+
+Every tkrzw and bdb DIFFER is the writing DBM library's own metadata:
 tkrzw stores a `cyclic_magic` counter and a wall-clock `timestamp` in
-each container it opens for writing, so two runs of the *same* binary
-never produce equal container bytes. The pin and subject produce the same
-logical rows in all seven: `tkrzw_dbm_util list` output is identical for
-every index and bigram file, and the chunk files are byte-identical. The
+each container it opens for writing; Berkeley DB stores its own header
+fields. Two runs of the *same* binary never produce equal container
+bytes. The pin and subject produce the same logical rows in every one:
+`tkrzw_dbm_util list` and `db5.3_dump` output are identical for every
+index and bigram file, and the chunk files are byte-identical. The
 runner's byte inventory cannot mask those fields without an unsound
-utility-specific rule, so the cases stay DIFFER and this paragraph is
+utility-specific rule, so those cases stay DIFFER and this paragraph is
 their record.
+
+One bdb `exp-missing-bigram` case also differs in stderr: the pin calls
+`Bigram::get_all_items` on the handle a failed `attach` left unopened,
+and libdb itself writes `BDB1565 DB->cursor: method not permitted before
+handle's open method`; the subject's store answers the failed open
+without a library diagnostic. The record is a backend library
+diagnostic, not a pin format.
 
 The named mutation `storage-native-order` replaces
 `Hash::native_keys` with the store's ascending `range_raw` walk in
