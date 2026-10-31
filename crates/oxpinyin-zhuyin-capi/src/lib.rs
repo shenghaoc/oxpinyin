@@ -236,9 +236,9 @@ mod tests {
             .to_str()
             .expect("UTF-8")
             .to_owned();
-        // SAFETY: `sentence` came from `malloc` in `owned_cstr` and is not
-        // used after this call.
-        unsafe { super::ffi::free(sentence.cast()) };
+        // SAFETY: `sentence` is the returned GLib string, which `g_free`
+        // releases, and is not used after this call.
+        unsafe { glib_sys::g_free(sentence.cast()) };
         assert_eq!(decoded, "你好", "the re-decode keeps 你 and forces 好");
         assert!(
             zhuyin_clear_constraint(instance, 3),
