@@ -194,7 +194,7 @@ def register(case, *, _craft_hash, crafted_bigram_context, index_file_rows):
         return {'ret': k.fn('mask_out', B, P, U, U)(ctx, 0xFFFFFFFF, 0)}
 
 
-    @case('abort-zhuyin-mask-out-non-token-bigram-key', mode='zhuyin', abort=False)
+    @case('abort-zhuyin-mask-out-non-token-bigram-key', mode='zhuyin', abort=False, sigabrt=True)
     def _(k):
         """Run zhuyin mask_out against a two-byte bigram key with a four-byte value."""
         ctx = crafted_bigram_context(k, [(b'\x00\x01', b'\x07\x00\x00\x00')])
@@ -214,7 +214,7 @@ def register(case, *, _craft_hash, crafted_bigram_context, index_file_rows):
         return {'ret': k.fn('mask_out', B, P, U, U)(ctx, 0xFFFFFFFF, 0)}
 
 
-    @case('abort-zhuyin-mask-out-residual-bigram-gram', mode='zhuyin', abort=False)
+    @case('abort-zhuyin-mask-out-residual-bigram-gram', mode='zhuyin', abort=False, sigabrt=True)
     def _(k):
         """Run the residual-total gram mask through zhuyin and record its return flag."""
         ctx = crafted_bigram_context(

@@ -145,24 +145,24 @@ def char_offset_call(offset):
     return run
 
 
-case('abort-zhuyin-get-left-zhuyin-offset-past-matrix', mode='zhuyin', abort=False, issues=('525',))(
+case('abort-zhuyin-get-left-zhuyin-offset-past-matrix', mode='zhuyin', abort=False, sigabrt=True, issues=('525',))(
     offset_call('get_left_zhuyin_offset', False, 99))
-case('abort-zhuyin-get-right-zhuyin-offset-past-matrix', mode='zhuyin', abort=False, issues=('525',))(
+case('abort-zhuyin-get-right-zhuyin-offset-past-matrix', mode='zhuyin', abort=False, sigabrt=True, issues=('525',))(
     offset_call('get_right_zhuyin_offset', False, 99))
-case('abort-zhuyin-get-right-zhuyin-offset-empty-matrix', mode='zhuyin', abort=False, issues=('525',))(
+case('abort-zhuyin-get-right-zhuyin-offset-empty-matrix', mode='zhuyin', abort=False, sigabrt=True, issues=('525',))(
     offset_call('get_right_zhuyin_offset', True, 0))
-case('abort-zhuyin-guess-candidates-after-cursor-past-matrix', mode='zhuyin', abort=False, issues=('525',))(
+case('abort-zhuyin-guess-candidates-after-cursor-past-matrix', mode='zhuyin', abort=False, sigabrt=True, issues=('525',))(
     guess_call('guess_candidates_after_cursor', 99))
-case('abort-zhuyin-guess-candidates-before-cursor-past-matrix', mode='zhuyin', abort=False, issues=('525',))(
+case('abort-zhuyin-guess-candidates-before-cursor-past-matrix', mode='zhuyin', abort=False, sigabrt=True, issues=('525',))(
     guess_call('guess_candidates_before_cursor', 99))
-case('abort-zhuyin-guess-candidates-after-cursor-reserved-slot-plus-one', mode='zhuyin', abort=False, issues=('525',))(
+case('abort-zhuyin-guess-candidates-after-cursor-reserved-slot-plus-one', mode='zhuyin', abort=False, sigabrt=True, issues=('525',))(
     guess_call('guess_candidates_after_cursor', 7))
-case('abort-zhuyin-guess-candidates-before-cursor-reserved-slot-plus-one', mode='zhuyin', abort=False, issues=('525',))(
+case('abort-zhuyin-guess-candidates-before-cursor-reserved-slot-plus-one', mode='zhuyin', abort=False, sigabrt=True, issues=('525',))(
     guess_call('guess_candidates_before_cursor', 7))
-case('abort-zhuyin-get-character-offset-past-matrix', mode='zhuyin', abort=False, issues=('525',))(char_offset_call(99))
-case('abort-zhuyin-get-zhuyin-key-empty-matrix', mode='zhuyin', abort=False, issues=('525',))(
+case('abort-zhuyin-get-character-offset-past-matrix', mode='zhuyin', abort=False, sigabrt=True, issues=('525',))(char_offset_call(99))
+case('abort-zhuyin-get-zhuyin-key-empty-matrix', mode='zhuyin', abort=False, sigabrt=True, issues=('525',))(
     key_call('get_zhuyin_key', True, 0))
-case('abort-zhuyin-get-zhuyin-key-rest-empty-matrix', mode='zhuyin', abort=False, issues=('525',))(
+case('abort-zhuyin-get-zhuyin-key-rest-empty-matrix', mode='zhuyin', abort=False, sigabrt=True, issues=('525',))(
     key_call('get_zhuyin_key_rest', True, 0))
 
 
@@ -189,7 +189,7 @@ for _name, _offset in (('after_cursor', 6), ('before_cursor', 0)):
         _no_rank_z(_name, _offset))
 
 
-@case('abort-zhuyin-parse-full-pinyin-apostrophe', mode='zhuyin', abort=False, issues=('525',))
+@case('abort-zhuyin-parse-full-pinyin-apostrophe', mode='zhuyin', abort=False, sigabrt=True, issues=('525',))
 def _(k):
     """Pass n'i to zhuyin's full-pinyin parser and test whether its 16-bit key stays untouched."""
     key = C.c_uint16(UNTOUCHED & 0xFFFF)
@@ -197,7 +197,7 @@ def _(k):
     return {'ret': ret, 'untouched key': key.value == UNTOUCHED & 0xFFFF}
 
 
-@case('abort-zhuyin-guess-candidates-total-zero', mode='zhuyin', abort=False, issues=('525',))
+@case('abort-zhuyin-guess-candidates-total-zero', mode='zhuyin', abort=False, sigabrt=True, issues=('525',))
 def _(k):
     """Guess zhuyin candidates at zero after applying the fixture-derived total-wrap delta.
 

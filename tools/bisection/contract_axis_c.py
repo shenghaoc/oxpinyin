@@ -2,14 +2,13 @@
 
 Load the committed replacement definition, run the battery and the instance
 snapshot check through the driver's worker, and compare the repeated pin and
-subject observations row by row, with the register-covered class (c) layout
-rows licensed at the nested-observation level. The axis C cases themselves (the
+subject observations row by row; on the register-covered scheme-setter rows
+(5c/5d) both sides abort alike, matched at the nested-observation level. The axis C cases themselves (the
 probe builders, their observation helpers and the registration loops) are the
 contract_axis_c_cases family. The registry, the worker callback and the
 definition and covered-row tables the registration builds are keyword-only
 parameters, passed by the driver's same-signature adapters.
 """
-import copy
 import hashlib
 import json
 import os
@@ -19,7 +18,6 @@ import signal
 import tempfile
 import time
 
-from contract_verdict import WARNING_DOMAIN
 
 
 def axis_c_definition(*, verify_sources=False):
@@ -105,32 +103,9 @@ def axis_c_reproduced_abort(pin_row, subject_row):
             and set(pin_row) == set(AXIS_C_ABORT_ROW_FIELDS))
 
 
-def axis_c_covered_abort(pin_row, subject_row, mode):
-    """Register-covered class (c) site at the nested-observation level.
-
-    Mirrors the classic ``abort=`` expectation: the pin child dies of SIGABRT
-    before returning, and the subject returns normally with the scheme setter
-    refused (``set_scheme`` false, no observation) and exactly one warning in
-    the facade's GLib domain at level 16. Rows 5c/5d of the register, on the
-    zhuyin facade only: the pinyin facade reproduces the abort
-    (`axis_c_reproduced_abort`).
-    """
-    if mode != 'zhuyin' or not isinstance(pin_row, dict) or not isinstance(subject_row, dict):
-        return False
-    result = subject_row.get('result')
-    return (pin_row.get('exit') == -signal.SIGABRT and pin_row.get('result') is None
-            and set(pin_row) == set(AXIS_C_ABORT_ROW_FIELDS)
-            and subject_row.get('exit') == 0 and isinstance(result, dict)
-            and set(result) == set(AXIS_C_REFUSAL_RESULT_FIELDS)
-            and result.get('set_scheme') is False and result.get('observation') is None
-            and result.get('logs') == [[WARNING_DOMAIN[mode], 16]])
-
-
-# The exact registered shape of a scheme-setter observation. The abort row
-# carries only the worker envelope; the refusal row's result carries exactly
-# these four keys, so an extra unregistered field is never licensed.
+# The exact registered shape of an aborted scheme-setter observation: the
+# worker envelope alone, so an extra unregistered field is never licensed.
 AXIS_C_ABORT_ROW_FIELDS = ('exit', 'result', 'stderr')
-AXIS_C_REFUSAL_RESULT_FIELDS = ('set_scheme', 'observation', 'logs', 'log_messages')
 
 
 def axis_c_live(row):
@@ -138,37 +113,11 @@ def axis_c_live(row):
 
     A row that died, was signalled, or printed no result observed nothing, so
     two identical failures must never read as an exact match. This mirrors the
-    normal runner's rejection (`run_worker` verdicts); a pin abort is an
-    explicit class (c) expectation and is matched by `axis_c_covered_abort`,
-    never by equality.
+    normal runner's rejection (`run_worker` verdicts); an abort both sides
+    reproduce on a register-covered row is matched by
+    `axis_c_reproduced_abort`, never by this.
     """
     return isinstance(row, dict) and row.get('exit') == 0 and row.get('result') is not None
-
-
-def axis_c_licensed_remnant(row):
-    """A covered row with only its licensed abort/refusal fields removed.
-
-    Anything the row carries beyond those three fields stays and is compared,
-    so an unregistered extra field still fails the case.
-    """
-    return {key: value for key, value in row.items() if key not in AXIS_C_ABORT_ROW_FIELDS}
-
-
-def axis_c_covered_residual(pin, subject, covered_keys):
-    """Both envelopes with only the licensed fields of the covered rows removed.
-
-    Root exit/result/stderr, root `log_messages` and the parent-side call
-    results, plus every non-covered observation in full, are retained and
-    compared; a covered verdict therefore never hides an unrelated difference.
-    """
-    pin_residual = copy.deepcopy(pin)
-    subject_residual = copy.deepcopy(subject)
-    pin_rows = (pin_residual.get('result') or {}).get('observations')
-    subject_rows = (subject_residual.get('result') or {}).get('observations')
-    for key in covered_keys:
-        pin_rows[key] = axis_c_licensed_remnant(pin_rows[key])
-        subject_rows[key] = axis_c_licensed_remnant(subject_rows[key])
-    return pin_residual, subject_residual
 
 
 def axis_c_first_difference(left, right, path=''):
@@ -256,8 +205,7 @@ def run_axis_c(args, names, *, CASES, run_worker, AXIS_C_LAYOUT_COVERED, AXIS_C_
             totals['cases'] += 1
             totals['diagnostics_match' if pin['stderr'] == subject['stderr'] else 'diagnostics_differ'] += 1
             covered_row = AXIS_C_LAYOUT_COVERED.get(name)
-            covered_rows, differ_rows = [], 0
-            residual_first = None
+            differ_rows = 0
             pin_rows = (pin['result'] or {}).get('observations')
             subject_rows = (subject['result'] or {}).get('observations')
             if pin_rows is not None and subject_rows is not None:
@@ -268,9 +216,6 @@ def run_axis_c(args, names, *, CASES, run_worker, AXIS_C_LAYOUT_COVERED, AXIS_C_
                         totals['payload_match'] += 1
                     elif covered_row and axis_c_reproduced_abort(left, right):
                         totals['payload_reproduced_abort'] += 1
-                    elif covered_row and axis_c_covered_abort(left, right, mode):
-                        totals['payload_covered'] += 1
-                        covered_rows.append(key)
                     else:
                         totals['payload_differ'] += 1
                         differ_rows += 1
@@ -279,23 +224,6 @@ def run_axis_c(args, names, *, CASES, run_worker, AXIS_C_LAYOUT_COVERED, AXIS_C_
                 if differ_rows == 0 and axis_c_live(pin) and axis_c_live(subject) and pin == subject:
                     totals['case_match'] += 1
                     verdict = 'MATCH'
-                elif (covered_row and differ_rows == 0 and covered_rows
-                      and axis_c_live(pin) and axis_c_live(subject)):
-                    # Don't just trust the covered rows: remove only their
-                    # licensed fields and require the rest of the envelope to
-                    # agree, so a new parent-side warning, root log message or
-                    # outer stderr still makes the case DIFFER.
-                    residual_pin, residual_subject = axis_c_covered_residual(pin, subject, covered_rows)
-                    if residual_pin == residual_subject:
-                        totals['covered'] += 1
-                        covered_by_row = totals.setdefault('covered_by_row', {})
-                        covered_by_row[covered_row] = covered_by_row.get(covered_row, 0) + 1
-                        verdict = 'COVERED'
-                    else:
-                        totals['case_differ'] += 1
-                        record_difference(name, 'covered-residual', residual_pin, residual_subject)
-                        residual_first = axis_c_first_difference(residual_pin, residual_subject)
-                        verdict = 'DIFFER'
                 else:
                     totals['case_differ'] += 1
                     if differ_rows == 0:
@@ -315,11 +243,8 @@ def run_axis_c(args, names, *, CASES, run_worker, AXIS_C_LAYOUT_COVERED, AXIS_C_
             case_verdicts[name] = verdict
             if verdict == 'DIFFER':
                 print(json.dumps(dict(case=name, verdict='DIFFER',
-                                      first=residual_first or axis_c_first_difference(pin, subject)),
+                                      first=axis_c_first_difference(pin, subject)),
                                  ensure_ascii=True), flush=True)
-            elif verdict == 'COVERED':
-                print(json.dumps(dict(case=name, verdict='COVERED', row=covered_row,
-                                      covered_observations=len(covered_rows)), ensure_ascii=True), flush=True)
             if ordinal % 25 == 0:
                 print(f'axis C progress: {ordinal}/{len(names)} cases', flush=True)
     elapsed_suspend = (time.clock_gettime(time.CLOCK_BOOTTIME) -

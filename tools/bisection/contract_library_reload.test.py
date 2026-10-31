@@ -54,7 +54,7 @@ EXPECTED = [('reload-drops-session-pinyin-train', (), {'issues': ('805',), 'mode
             ('reload-user-zhuyin-reuse-other', (), {'issues': ('805',), 'mode': 'zhuyin'}),
             ('reload-user-zhuyin-reuse-other-save-reopen', (), {'issues': ('805',), 'mode': 'zhuyin'}),
             ('reload-user-zhuyin-reuse-other-mask', (), {'issues': ('805',), 'mode': 'zhuyin'}),
-            ('reload-user-zhuyin-reuse-same', (), {'abort': False, 'issues': ('805',), 'mode': 'zhuyin'}),
+            ('reload-user-zhuyin-reuse-same', (), {'abort': False, 'issues': ('805',), 'mode': 'zhuyin', 'sigabrt': True}),
             ('reload-dangling-token-candidates',
              (),
              {'crash': {'candidates': [88, [['大大', 2], ['鞑靼', 2], ['达达', 2]], {}],

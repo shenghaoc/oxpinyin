@@ -25,7 +25,7 @@ class DuplicatePhraseAddTests(unittest.TestCase):
         with patch.object(family, '_write_user_conf') as conf:
             metadata, run = declarations(craft, key)['abort-zhuyin-add-phrase-duplicate-library-token']
             self.assertEqual(run(kit), {'ret': True})
-        self.assertEqual(metadata, {'mode': 'zhuyin', 'abort': False, 'issues': ('525',)})
+        self.assertEqual(metadata, {'mode': 'zhuyin', 'abort': False, 'sigabrt': True, 'issues': ('525',)})
         key.assert_called_once_with('你好')
         craft.assert_called_once_with(os.path.join('/user', 'user_phrase_index.bin'),
                                       [(b'key', b'\x01\x00\x00\x07\x02\x00\x00\x07')], 1)
