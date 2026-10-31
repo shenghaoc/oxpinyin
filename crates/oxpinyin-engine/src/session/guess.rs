@@ -313,6 +313,7 @@ where
             .map_or_else(Vec::new, |row| row.spans.clone());
 
         if !self.record.selected().is_empty() {
+            self.sentence.prefix = self.record.parts().to_vec();
             for row in &mut self.sentence.rows {
                 let mut full = PhraseTextConcat::new();
                 full.push(self.record.selected());

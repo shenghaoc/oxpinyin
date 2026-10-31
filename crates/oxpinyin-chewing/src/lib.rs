@@ -41,5 +41,5 @@ mod chewing_key;
 mod chewing_key_data;
 mod static_strings;
 
-pub use chewing_key::{CHEWING_ZERO_TONE, ChewingKey};
+pub use chewing_key::{CHEWING_ZERO_TONE, ChewingKey, KeyText};
 pub use static_strings::{StringSpan, StringTable};
