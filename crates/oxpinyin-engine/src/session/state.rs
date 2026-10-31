@@ -116,6 +116,7 @@ where
             sentence: SentenceState::default(),
             scratch: Scratch::default(),
             scan_unreadable: false,
+            scan_ranked_phrase: false,
         }
     }
 

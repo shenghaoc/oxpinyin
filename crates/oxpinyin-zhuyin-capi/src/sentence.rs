@@ -44,6 +44,9 @@ pub extern "C" fn zhuyin_guess_sentence(instance: *mut ZhuyinInstance) -> bool {
 /// warning and answers `true` when `error` is one of them.
 pub(crate) fn refuse_lookup_gram(name: &str, error: &oxpinyin_engine::EngineError) -> bool {
     let message = match error {
+        // Register row 4, `pinyin_phrase3.h:152`: a table search of the
+        // guess met a key path whose first initial-only key carries a tone.
+        oxpinyin_engine::EngineError::TonedIncompleteKey => std::process::abort(),
         oxpinyin_engine::EngineError::ShortLookupPredecessor { .. } => {
             "a user bigram value is shorter than a guint32 total_freq \
              (upstream aborts, memory_chunk.h:390)"
@@ -68,7 +71,7 @@ pub(crate) fn refuse_lookup_gram(name: &str, error: &oxpinyin_engine::EngineErro
         | oxpinyin_engine::EngineError::TrainingSetFreqMiss { .. }
         | oxpinyin_engine::EngineError::StaleTrainingSpan { .. }
         | oxpinyin_engine::EngineError::OverlongUserIndexKey { .. }
-        | oxpinyin_engine::EngineError::TonedIncompleteKey
+        | oxpinyin_engine::EngineError::ReduceTokensCount { .. }
         | oxpinyin_engine::EngineError::UserModel(_)
         | oxpinyin_engine::EngineError::Graph(_)
         | oxpinyin_engine::EngineError::Decode(_)
@@ -141,11 +144,16 @@ pub extern "C" fn zhuyin_guess_sentence_with_prefix(
     if refuse_empty_matrix(inst) {
         return false;
     }
-    let prefixes = oxpinyin_facade::compute_prefixes(
+    // `_compute_prefixes`' validating `reduce_tokens` (`zhuyin.cpp:933`,
+    // `phrase_large_table3.h:95`) asserts on a tail substring with more than
+    // four tokens.
+    let Ok(prefixes) = oxpinyin_facade::compute_prefixes(
         &inst.core.dict,
         inst.core.user.as_ref(),
         prefix.as_ref(),
-    );
+    ) else {
+        std::process::abort();
+    };
     let prefix_tokens: Vec<oxpinyin_core::PhraseToken> = prefixes
         .iter()
         .map(|&token| oxpinyin_core::PhraseToken::new(token))

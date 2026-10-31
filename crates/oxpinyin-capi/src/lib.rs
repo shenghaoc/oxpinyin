@@ -79,13 +79,18 @@ static OXPINYIN_ALLOC_COUNTER: alloc_count::CountingAlloc = alloc_count::Countin
 #[cfg(feature = "fuzz-api")]
 #[allow(missing_docs)]
 pub mod fuzz_api {
+    #[cfg(not(feature = "shipped"))]
+    pub use crate::candidates::oxpinyin_train_aborts;
     pub use crate::candidates::{
         pinyin_choose_candidate, pinyin_clear_constraint, pinyin_get_candidate,
-        pinyin_get_candidate_string, pinyin_get_n_candidate, pinyin_train,
+        pinyin_get_candidate_string, pinyin_get_candidate_type, pinyin_get_n_candidate,
+        pinyin_train,
     };
     pub use crate::config::pinyin_set_double_pinyin_scheme;
     pub use crate::context::{oxpinyin_init_for_fixtures, pinyin_fini};
     pub use crate::instance::{pinyin_alloc_instance, pinyin_free_instance, pinyin_reset};
+    #[cfg(not(feature = "shipped"))]
+    pub use crate::iterators::oxpinyin_import_aborts;
     pub use crate::iterators::{
         pinyin_begin_add_phrases, pinyin_begin_get_phrases, pinyin_end_add_phrases,
         pinyin_end_get_phrases, pinyin_iterator_add_phrase, pinyin_iterator_get_next_phrase,
@@ -95,6 +100,7 @@ pub mod fuzz_api {
     pub use crate::sentence::{pinyin_get_sentence, pinyin_guess_sentence};
     pub use crate::types::{
         ExportIterator, GChar, ImportIterator, LookupCandidate, PinyinContext, PinyinInstance,
+        lookup_candidate_type_t,
     };
 }
 mod dict;

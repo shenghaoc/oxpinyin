@@ -80,8 +80,8 @@ const Slot kSlots[] = {
     {"pinyin_get_pinyin_strings",               "shengmu",   "g_free",                              "false-untouched"},
     {"pinyin_get_pinyin_strings",               "yunmu",     "g_free",                              "false-untouched"},
     {"pinyin_token_get_phrase",                 "utf8_str",  "g_free",                              "false-untouched"},
-    {"pinyin_iterator_get_next_phrase",         "phrase",    "g_free",                              "false-untouched"},
-    {"pinyin_iterator_get_next_phrase",         "pinyin",    "g_free",                              "false-untouched"},
+    {"pinyin_iterator_get_next_phrase",         "phrase",    "g_free",                              "false-unreachable"},
+    {"pinyin_iterator_get_next_phrase",         "pinyin",    "g_free",                              "false-unreachable"},
     {"pinyin_bigram_iterator_get_next_phrase",  "phrase",    "g_free",                              "false-allocates"},
     {"pinyin_bigram_iterator_get_next_phrase",  "pinyin",    "g_free",                              "false-allocates"},
     {"pinyin_in_chewing_keyboard",              "symbols",   "g_strfreev",                          "false-nulls"},
@@ -437,16 +437,9 @@ void exercise_iterators(pinyin_context_t *context) {
             release_g_free("pinyin_iterator_get_next_phrase", "phrase", phrase);
             release_g_free("pinyin_iterator_get_next_phrase", "pinyin", pinyin);
         }
-        // Exhaustion is the reachable failure path: one more call must
-        // answer false without writing either out-param, so the consumer
-        // loop does not free what it never received.
-        gchar *phrase = kSentinel;
-        gchar *pinyin = kSentinel;
-        gint count = 0;
-        const bool more =
-            pinyin_iterator_get_next_phrase(export_iter, &phrase, &pinyin, &count);
-        expect_declared("pinyin_iterator_get_next_phrase", "phrase", more, phrase);
-        expect_declared("pinyin_iterator_get_next_phrase", "pinyin", more, pinyin);
+        // No call past exhaustion: the pin asserts there (`pinyin.cpp:709`,
+        // policy row 62) and so does oxpinyin; the register calls the
+        // function's `false` unreachable.
         pinyin_end_get_phrases(export_iter);
     }
 
@@ -570,13 +563,19 @@ void probe_false_contracts(pinyin_instance_t *instance) {
     ok = pinyin_get_candidate(instance, 0, &candidate);
     expect_declared("pinyin_get_candidate", "candidate", ok, candidate);
 
+    // The key accessors answer false past the last column of a matrix that
+    // holds keys. On an empty matrix `offset >= matrix.size() - 1` wraps and
+    // the pin asserts in `get_column_size` (phonetic_key_matrix.h:103,
+    // policy row 63), as oxpinyin now does, so they are probed after a parse.
+    pinyin_parse_more_full_pinyins(instance, "ni");
     ChewingKey *key = reinterpret_cast<ChewingKey *>(kSentinel);
-    ok = pinyin_get_pinyin_key(instance, 0, &key);
+    ok = pinyin_get_pinyin_key(instance, 2, &key);
     expect_declared("pinyin_get_pinyin_key", "key", ok, key);
 
     ChewingKeyRest *key_rest = reinterpret_cast<ChewingKeyRest *>(kSentinel);
-    ok = pinyin_get_pinyin_key_rest(instance, 0, &key_rest);
+    ok = pinyin_get_pinyin_key_rest(instance, 2, &key_rest);
     expect_declared("pinyin_get_pinyin_key_rest", "key_rest", ok, key_rest);
+    pinyin_reset(instance);
 
     guint len = 0;
     gchar *utf8 = kSentinel;
@@ -682,6 +681,10 @@ int main(int argc, char **argv) {
     }
 
     if (coverage) {
+        // `UserTableInfo::load` writes `open %s failed.` with no newline
+        // (`table_info.cpp:332`, reproduced), and stderr shares the gate's pipe:
+        // start the table on its own line.
+        std::printf("\n");
         for (size_t i = 0; i < kSlotCount; ++i) {
             const char *probed = "n-a";
             if (std::strcmp(kSlots[i].on_false, "false-unreachable") == 0) {

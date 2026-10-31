@@ -187,6 +187,11 @@ pub struct Session<D, L> {
     /// loaded library whose item cannot be read; set by the lookups of that
     /// scan alone and read back into the [`CandidateList`] it built.
     scan_unreadable: bool,
+    /// Whether the scan in progress (or the last one) searched a phrase row
+    /// the pin's `_compute_frequency_of_items` scores against the facade
+    /// total, before any prepend or dedup; read back into the
+    /// [`CandidateList`] it built.
+    scan_ranked_phrase: bool,
 }
 
 /// The candidate list and the parse length behind it — the output of one

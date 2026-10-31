@@ -47,9 +47,9 @@ pub extern "C" fn pinyin_set_options(context: *mut PinyinContext, options: Pinyi
 /// the oxpinyin surface post-bootstrap. The Rust parameter is `c_int`:
 /// callers may pass any `int`. HANYU (1) is the default and keeps the
 /// frozen full-pinyin parser surface; LUOMA (2) and `SECONDARY_ZHUYIN`
-/// (3) switch the parse onto their pinned indexes. Other values report
-/// `false` and keep the previous scheme instead of aborting (the
-/// out-of-enum contract-lock is a separate workstream).
+/// (3) switch the parse onto their pinned indexes. Any other value aborts
+/// the process, as `set_scheme`'s `default: abort()` does
+/// (`pinyin_parser2.cpp:398`, register row 5d).
 ///
 /// Exported in every build: it is in the pin's `libpinyin.ver`. It was
 /// compiled out of the shipped artifact while the subset scoping
@@ -68,10 +68,9 @@ pub extern "C" fn pinyin_set_full_pinyin_scheme(
     // SAFETY: `context` is non-null and was produced by `pinyin_init`.
     let ctx = unsafe { context_mut(context) };
     if !matches!(scheme, 1..=3) {
-        // Class (c), `pinyin_parser2.cpp:398`: `set_scheme`'s `default:` is
-        // an **`abort()`**.
-        crate::ffi::log_warning("pinyin_set_full_pinyin_scheme: scheme is not a FullPinyinScheme");
-        return false;
+        // Register row 5d, `pinyin_parser2.cpp:398`: `set_scheme`'s
+        // `default:` is an `abort()`.
+        std::process::abort();
     }
     ctx.core.live.full_scheme.store(scheme, Ordering::Relaxed);
     true
@@ -89,9 +88,9 @@ pub extern "C" fn pinyin_set_full_pinyin_scheme(
 /// `#[repr(C)]` enum would be UB for an unknown discriminant.
 ///
 /// The scheme value is the `DoublePinyinScheme` header discriminant
-/// (`pinyin_custom2.h:108-117`). `DOUBLE_PINYIN_CUSTOMIZED` (30) has no
-/// compiled table; oxpinyin reports `false` and keeps the previous scheme
-/// rather than aborting like upstream.
+/// (`pinyin_custom2.h:108-117`). `DOUBLE_PINYIN_CUSTOMIZED` (30) aborts the
+/// process, as upstream's `set_scheme` does (`pinyin_parser2.cpp:611`,
+/// register row 5a).
 ///
 /// **Out-of-enum values** (negatives, 0, 7–29, 31+) reproduce
 /// upstream's half-mutation (`pinyin_parser2.cpp:580,614`;
@@ -117,15 +116,10 @@ pub extern "C" fn pinyin_set_double_pinyin_scheme(
         4 => oxpinyin_core::DoublePinyinScheme::Abc,
         5 => oxpinyin_core::DoublePinyinScheme::Pyjj,
         6 => oxpinyin_core::DoublePinyinScheme::Xhe,
-        // CUSTOMIZED (30): no compiled table, upstream aborts;
-        // oxpinyin reports `false` and leaves the live scheme intact.
-        30 => {
-            // Class (c), `pinyin_parser2.cpp:611`: **`abort()`**.
-            crate::ffi::log_warning(
-                "pinyin_set_double_pinyin_scheme: CUSTOMIZED has no compiled table",
-            );
-            return false;
-        }
+        // CUSTOMIZED (30): register row 5a, `pinyin_parser2.cpp:611`
+        // `abort()`. The `m_fallback_table = NULL` before it (`:580`) is
+        // in memory only.
+        30 => std::process::abort(),
         // Out-of-enum: upstream's unconditional `m_fallback_table = NULL`
         // (`:580`) fires before the switch falls through to `return false`
         // (`:614`), and the wrapper ignores that `false` and answers `true`
@@ -162,8 +156,9 @@ pub extern "C" fn pinyin_set_double_pinyin_scheme(
 /// keyboards (STANDARD 1, IBM 3, GINYIEH 4, ETEN 5), the Discrete
 /// keyboards (HSU 2, ETEN26 6, `HSU_DVORAK` 8), and `DACHEN_CP26` 9. The
 /// remaining `ZhuyinScheme` header discriminant — the `STANDARD_DVORAK`
-/// abort slot — reports `false` and keeps the previous scheme instead
-/// of aborting.
+/// slot (`zhuyin_parser2.cpp:295`) — and every out-of-enum value
+/// (`pinyin.cpp:1189`) abort the process, as upstream does (register rows
+/// 5c and 5d).
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_set_zhuyin_scheme(context: *mut PinyinContext, scheme: c_int) -> bool {
     if context.is_null() {
@@ -173,11 +168,10 @@ pub extern "C" fn pinyin_set_zhuyin_scheme(context: *mut PinyinContext, scheme: 
     // SAFETY: `context` is non-null and was produced by `pinyin_init`.
     let ctx = unsafe { context_mut(context) };
     if !matches!(scheme, 1 | 2 | 3 | 4 | 5 | 6 | 8 | 9) {
-        // Class (c): `pinyin.cpp:1189` (`default:`) and, for the
-        // `STANDARD_DVORAK` slot, `zhuyin_parser2.cpp:295`; both are
-        // **`abort()`**, with the old parser already deleted.
-        crate::ffi::log_warning("pinyin_set_zhuyin_scheme: scheme is not a ZhuyinScheme");
-        return false;
+        // Register rows 5c and 5d: `pinyin.cpp:1189` (`default:`) and, for
+        // the `STANDARD_DVORAK` slot, `zhuyin_parser2.cpp:295`; both are
+        // `abort()`, with the old parser already deleted in memory.
+        std::process::abort();
     }
     ctx.core.live.zhuyin_scheme.store(scheme, Ordering::Relaxed);
     true
@@ -217,8 +211,8 @@ pub extern "C" fn pinyin_load_addon_phrase_library(context: *mut PinyinContext, 
 /// The pin (`pinyin.cpp:124-131`) asserts `index <
 /// PHRASE_INDEX_LIBRARY_COUNT`, calls `m_addon_phrase_index->unload(index)`
 /// and answers `true` unconditionally — including for a library that was
-/// never loaded. This mirrors that, except that the assert becomes `false`
-/// per the availability class of `docs/findings/compatibility-policy.md`.
+/// never loaded. This mirrors that, the assert included: an index of 16 or
+/// more aborts the process (register row 21, `pinyin.cpp:499`).
 ///
 /// Live call site: fcitx-libpinyin (`eim.cpp`).
 #[unsafe(no_mangle)]
@@ -243,10 +237,11 @@ pub extern "C" fn pinyin_unload_addon_phrase_library(
 ///                                 guint8 index);
 /// ```
 ///
-/// Upstream answers `false` for an out-of-range index, `false` when the
-/// library is already loaded (the system tables load at init), and
-/// asserts on non-dictionary file types — all `false` here under the
-/// no-abort policy. The only `true` on a healthy context is GBK (2)
+/// Upstream answers `false` for an out-of-range index and `false` when the
+/// library is already loaded (the system tables load at init), and asserts
+/// on a row that is neither `SYSTEM_FILE` nor `USER_FILE`; that assert
+/// aborts the process here too (register rows 62 and 79,
+/// `pinyin.cpp:457`). The only `true` on a healthy context is GBK (2)
 /// after an unload, re-attaching from disk upstream and clearing the
 /// visibility mask here.
 #[unsafe(no_mangle)]
@@ -257,11 +252,18 @@ pub extern "C" fn pinyin_load_phrase_library(context: *mut PinyinContext, index:
 
     // SAFETY: `context` is non-null and was produced by `pinyin_init`.
     let ctx = unsafe { context_ref(context) };
-    // Class (c), `pinyin.cpp:457`: the pin **`assert`**s that the row of a
-    // loaded library is a `SYSTEM_FILE` or `USER_FILE` (an index of 16 or
-    // more answers `false` first, `:448`); which rows are is the
-    // context's `table.conf`.
+    // `pinyin.cpp:457`: the pin `assert`s that the row of a loaded library
+    // is a `SYSTEM_FILE` or `USER_FILE` (an index of 16 or more answers
+    // `false` first, `:448`); which rows are is the context's `table.conf`.
+    // The facade answers that before it maps or logs anything.
     let outcome = ctx.core.load_phrase_library(u32::from(index));
+    if outcome
+        == Err(oxpinyin_facade::LibraryLoadFault::Row(
+            oxpinyin_facade::LibraryRowAssert::NotLoadable,
+        ))
+    {
+        std::process::abort();
+    }
     match outcome {
         Ok(loaded) => loaded,
         // Class (c), `memory_chunk.h:493`: the library being loaded again is
@@ -285,13 +287,9 @@ pub extern "C" fn pinyin_load_phrase_library(context: *mut PinyinContext, index:
             );
             false
         }
-        Err(_) => {
-            crate::ffi::log_warning(
-                "pinyin_load_phrase_library: assertion 'SYSTEM_FILE == table_info->m_file_type \
-                 || USER_FILE == table_info->m_file_type' failed",
-            );
-            false
-        }
+        // `NotLoadable` aborted above; the facade answers no other row
+        // fault here.
+        Err(oxpinyin_facade::LibraryLoadFault::Row(_)) => false,
     }
 }
 
@@ -305,8 +303,9 @@ pub extern "C" fn pinyin_load_phrase_library(context: *mut PinyinContext, index:
 ///
 /// The GBK-only gate, verbatim: upstream asserts the index in range and
 /// refuses every non-GBK library before unloading
-/// (`pinyin.cpp:464-472`) — `false` here for both shapes (no-abort) —
-/// and for GBK calls `unload` and answers `true` whatever it returned
+/// (`pinyin.cpp:464-472`) — an index of 16 or more aborts the process
+/// (register row 21), any other non-GBK library answers `false` — and
+/// for GBK calls `unload` and answers `true` whatever it returned
 /// (`:473-474`), so a repeat unload answers `true` as well.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_unload_phrase_library(context: *mut PinyinContext, index: u8) -> bool {
@@ -317,11 +316,8 @@ pub extern "C" fn pinyin_unload_phrase_library(context: *mut PinyinContext, inde
     // SAFETY: `context` is non-null and was produced by `pinyin_init`.
     let ctx = unsafe { context_ref(context) };
     if index >= PHRASE_INDEX_LIBRARY_COUNT {
-        // Class (c), `pinyin.cpp:466`: **`assert`**.
-        crate::ffi::log_warning(
-            "pinyin_unload_phrase_library: assertion 'index < PHRASE_INDEX_LIBRARY_COUNT' failed",
-        );
-        return false;
+        // Register row 21, `pinyin.cpp:466`: `assert`.
+        std::process::abort();
     }
     // Only the GBK table can be unloaded (`pinyin.cpp:468-470`).
     if index != GBK_DICTIONARY {
@@ -360,8 +356,10 @@ pub extern "C" fn pinyin_unload_phrase_library(context: *mut PinyinContext, inde
 /// The user table's `mask_out` walks every `user_pinyin_index.bin` record
 /// and dies of SIGABRT at the `switch` whose `default` is `abort()` when a
 /// key is past `MAX_PHRASE_LENGTH` syllables
-/// (`chewing_large_table2_bdb.cpp:529`); the facade answers `false` and one
-/// `libpinyin` warning for that shape (class (c)).
+/// (`chewing_large_table2_bdb.cpp:529`), and the user bigram's mask asserts
+/// on a key that is not a token (`ngram_bdb.cpp:199`) and on a gram it
+/// leaves with a residual total (`ngram.cpp:70`); the process aborts at
+/// each (register rows 84, 86, 87 and 94).
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_mask_out(context: *mut PinyinContext, mask: u32, value: u32) -> bool {
     if context.is_null() {
@@ -374,27 +372,15 @@ pub extern "C" fn pinyin_mask_out(context: *mut PinyinContext, mask: u32, value:
     let outcome = ctx.mask_out(mask, value);
     match outcome {
         oxpinyin_facade::MaskOutOutcome::Done(answer) => answer,
-        oxpinyin_facade::MaskOutOutcome::OverlongIndexKey => {
-            // Class (c), `chewing_large_table2_bdb.cpp:529`: the user
-            // pinyin index carries a key past MAX_PHRASE_LENGTH syllables,
-            // or one with no whole syllable, and the pin's `mask_out`
-            // switch falls to `default: abort()`.
-            crate::ffi::log_warning(
-                "pinyin_mask_out: a user pinyin index key is longer than MAX_PHRASE_LENGTH \
-                 syllables or has no whole syllable (upstream aborts, chewing_large_table2_bdb.cpp:529)",
-            );
-            false
-        }
-        oxpinyin_facade::MaskOutOutcome::NonTokenUserBigramKey => {
-            // Class (c), `ngram_bdb.cpp:199`: the user bigram carries a key
-            // that is not a phrase_token_t and the pin's `get_all_items`
-            // assert dies.
-            crate::ffi::log_warning(
-                "pinyin_mask_out: a user bigram key is not a phrase_token_t \
-                 (upstream aborts, ngram_bdb.cpp:199)",
-            );
-            false
-        }
+        // Register rows 84 and 94, `chewing_large_table2_bdb.cpp:529` (kc
+        // `:499`, tkrzw `:466`): the user pinyin index carries a key past
+        // MAX_PHRASE_LENGTH syllables, or one with no whole syllable, and
+        // the pin's `mask_out` switch falls to `default: abort()`.
+        oxpinyin_facade::MaskOutOutcome::OverlongIndexKey => std::process::abort(),
+        // Register row 86, `ngram_bdb.cpp:199` (kc `:173`, tkrzw `:150`):
+        // the user bigram carries a key that is not a phrase_token_t and
+        // the pin's `get_all_items` assert dies.
+        oxpinyin_facade::MaskOutOutcome::NonTokenUserBigramKey => std::process::abort(),
         oxpinyin_facade::MaskOutOutcome::ShortUserBigramValue => {
             // A missing total asserts (class c, `memory_chunk.h:390`);
             // a partial item tail makes `mask_out` over-read (class b,
@@ -406,17 +392,11 @@ pub extern "C" fn pinyin_mask_out(context: *mut PinyinContext, mask: u32, value:
             );
             false
         }
-        oxpinyin_facade::MaskOutOutcome::ResidualUserBigramGram => {
-            // Class (c), `ngram.cpp:70`: masking a user bigram removed
-            // every item of a gram whose total its items did not cover,
-            // and the pin's `get_length` assert dies
-            // (`Bigram::mask_out`, `ngram_bdb.cpp:243`).
-            crate::ffi::log_warning(
-                "pinyin_mask_out: masking a user bigram leaves a residual total_freq \
-                 (upstream aborts, ngram.cpp:70)",
-            );
-            false
-        }
+        // Register row 87, `ngram.cpp:70`: masking a user bigram removed
+        // every item of a gram whose total its items did not cover, and the
+        // pin's `get_length` assert dies (`Bigram::mask_out`,
+        // `ngram_bdb.cpp:243`).
+        oxpinyin_facade::MaskOutOutcome::ResidualUserBigramGram => std::process::abort(),
         oxpinyin_facade::MaskOutOutcome::SystemLogHeaderToken => {
             // Class (c), `phrase_index_logger.h:202`: a system library's
             // user .dbin carries a non-null-token MODIFY_HEADER and the

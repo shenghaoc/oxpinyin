@@ -156,8 +156,7 @@ pub extern "C" fn pinyin_get_candidate_string(
 ///
 /// W14: the stored tail rank of an `NBEST_MATCH_CANDIDATE` row
 /// (`m_nbest_index`, `pinyin.cpp:2878-2884`). Any other row type is the
-/// pin's `assert`, answered `false` with the out-param untouched and one
-/// warning — class (c).
+/// pin's `assert`, and the process aborts (register row 64).
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_get_candidate_nbest_index(
     instance: *mut PinyinInstance,
@@ -171,13 +170,10 @@ pub extern "C" fn pinyin_get_candidate_nbest_index(
     // SAFETY: `candidate` is non-null and was produced by
     // `pinyin_get_candidate`.
     let cand = unsafe { candidate_ref(candidate) };
-    // Class (c), `pinyin.cpp:2883`: `assert(NBEST_MATCH_CANDIDATE == type)`.
-    // The pin dies before it writes `*index`.
+    // Register row 64, `pinyin.cpp:2883`:
+    // `assert(NBEST_MATCH_CANDIDATE == type)`, before `*index` is written.
     if cand.candidate_type() != lookup_candidate_type_t::NBEST_MATCH_CANDIDATE {
-        crate::ffi::log_warning(
-            "pinyin_get_candidate_nbest_index: assertion 'NBEST_MATCH_CANDIDATE == type' failed",
-        );
-        return false;
+        std::process::abort();
     }
     if !index.is_null() {
         // SAFETY: Null-checked above.
@@ -232,9 +228,9 @@ pub extern "C" fn pinyin_is_user_candidate(
 ///                                   lookup_candidate_t * candidate);
 /// ```
 ///
-/// The §3.4 removal: the candidate's token must live in the user
-/// dictionary (upstream asserts it; oxpinyin reports `false` instead of
-/// panicking), then the phrase, its pronunciations, its bigram rows and
+/// The §3.4 removal: the row must be a `NORMAL_CANDIDATE` whose token
+/// lives in the user dictionary (upstream asserts both, and so the process
+/// aborts here, register row 64), then the phrase, its pronunciations, its bigram rows and
 /// its unigram delta are deleted. Does **not** arm `m_modified`, matching
 /// upstream's set-sites. Note: on the current ABI no user token ever
 /// surfaces in a candidate list (candidate collection reads the system
@@ -260,22 +256,16 @@ pub extern "C" fn pinyin_remove_user_candidate(
     else {
         return false;
     };
-    // Class (c): `assert(NORMAL_CANDIDATE == type)` (`pinyin.cpp:3734`) and
-    // `assert(USER_DICTIONARY == index)` (`:3738`).
+    // Register row 64: `assert(NORMAL_CANDIDATE == type)` (`pinyin.cpp:3734`)
+    // and `assert(USER_DICTIONARY == index)` (`:3738`).
     if inst.candidates[index].candidate_type() != lookup_candidate_type_t::NORMAL_CANDIDATE {
-        crate::ffi::log_warning(
-            "pinyin_remove_user_candidate: assertion 'NORMAL_CANDIDATE == type' failed",
-        );
-        return false;
+        std::process::abort();
     }
     let Some(token) = inst.candidates[index].token else {
         return false;
     };
     if !is_user_token(token.value()) {
-        crate::ffi::log_warning(
-            "pinyin_remove_user_candidate: assertion 'USER_DICTIONARY == index' failed",
-        );
-        return false;
+        std::process::abort();
     }
     let Some(user) = inst.core.user.as_mut() else {
         return false;
@@ -290,19 +280,23 @@ pub extern "C" fn pinyin_remove_user_candidate(
             );
             false
         }
-        // Class (c). Either the phrase item, its phrase-table row
+        // Register row 81: the phrase item, its phrase-table row
         // (`user_phrase_index.bin`) or one of its indexed readings
-        // (`user_pinyin_index.bin`) is missing — the pin aborts on the
+        // (`user_pinyin_index.bin`) is missing, and the pin aborts on the
         // matching `assert(ERROR_OK == retval)` (`pinyin.cpp:3743`,
-        // `:3750`, `:3759`) — or the store carried a corrupt
-        // `user_bigram.db` row and the pin aborted in
-        // `Bigram::get_all_items` / `SingleGram::get_total_freq` /
-        // `get_length` when the call reached `user_bigram->mask_out`
-        // (`pinyin.cpp:3766`). One warning either way.
-        Ok(false) | Err(_) => {
-            crate::ffi::log_warning(
-                "pinyin_remove_user_candidate: assertion 'ERROR_OK == retval' failed",
-            );
+        // `:3750`, `:3759`).
+        Ok(false) => std::process::abort(),
+        // Register rows 86 and 87: the call reached `user_bigram->mask_out`
+        // (`pinyin.cpp:3766`) over a key that is not a token
+        // (`ngram_bdb.cpp:199`) or a gram the mask leaves with a residual
+        // total (`ngram.cpp:70`), and the pin's assert dies.
+        Err(
+            oxpinyin_user::UserStoreError::NonTokenUserBigramKey
+            | oxpinyin_user::UserStoreError::ResidualUserBigramGram,
+        ) => std::process::abort(),
+        // A store failure the pin has no counterpart for.
+        Err(_) => {
+            crate::ffi::log_warning("pinyin_remove_user_candidate: the user store failed");
             false
         }
     }
@@ -357,7 +351,8 @@ pub extern "C" fn pinyin_remove_user_candidate(
 /// promotion (`:2534-2563`) the row's token trains `+483` unigram, no
 /// constraint is written and the call answers `true` (cursor `1`). The
 /// pin `assert`s `0 == offset` there (`:2566`) and aborts on any other
-/// offset; oxpinyin answers `false` (`0`) and logs one warning — class (c).
+/// offset, and so does this (register row 45). A predicted row is the
+/// pin's `assert` at `:2507`, and the process aborts (register row 64).
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_choose_candidate(
     instance: *mut PinyinInstance,
@@ -381,7 +376,7 @@ pub extern "C" fn pinyin_choose_candidate(
     else {
         return -1;
     };
-    // Class (c), `pinyin.cpp:2507`: the pin asserts the row is not a
+    // Register row 64, `pinyin.cpp:2507`: the pin asserts the row is not a
     // predicted bigram or prefix row (those go to
     // `pinyin_choose_predicted_candidate`).
     if matches!(
@@ -389,10 +384,7 @@ pub extern "C" fn pinyin_choose_candidate(
         lookup_candidate_type_t::PREDICTED_BIGRAM_CANDIDATE
             | lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE
     ) {
-        crate::ffi::log_warning(
-            "pinyin_choose_candidate: assertion 'PREDICTED_BIGRAM_CANDIDATE != type' failed",
-        );
-        return 0;
+        std::process::abort();
     }
     // `index` is the candidate's position in the SNAPSHOT, which
     // `try_promote_addon` reads (it indexes `inst.candidates`); the
@@ -428,12 +420,9 @@ pub extern "C" fn pinyin_choose_candidate(
     if inst.core.session.sort_options() & sort_option_t::SORT_WITHOUT_SENTENCE_CANDIDATE as u32 != 0
     {
         if offset != 0 {
-            // Class (c): the pin's `assert(0 == offset)` (`:2566`).
-            crate::ffi::log_warning(
-                "pinyin_choose_candidate: offset must be 0 under \
-                 SORT_WITHOUT_SENTENCE_CANDIDATE",
-            );
-            return 0;
+            // Register row 45: the pin's `assert(0 == offset)` (`:2566`),
+            // after the addon promotion above, which is in memory.
+            std::process::abort();
         }
         let Some(token) = addon_token.or(inst.candidates[index].token) else {
             return -1;
@@ -641,18 +630,15 @@ pub extern "C" fn pinyin_choose_predicted_candidate(
     else {
         return false;
     };
-    // Class (c), `pinyin.cpp:2593`: only the three predicted row types are
-    // chosen here.
+    // Register row 64, `pinyin.cpp:2593`: only the three predicted row
+    // types are chosen here; the pin asserts on any other.
     if !matches!(
         inst.candidates[index].candidate_type(),
         lookup_candidate_type_t::PREDICTED_BIGRAM_CANDIDATE
             | lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE
             | lookup_candidate_type_t::PREDICTED_PUNCTUATION_CANDIDATE
     ) {
-        crate::ffi::log_warning(
-            "pinyin_choose_predicted_candidate: assertion on the candidate type failed",
-        );
-        return false;
+        std::process::abort();
     }
     // "The punctuation candidate does not have the frequency."
     if inst.candidates[index].candidate_type()
@@ -749,9 +735,12 @@ fn previous_token(inst: &CapiInstance) -> u32 {
 /// ```
 ///
 /// Train the requested decoded n-best row, with the pin's constraint gate.
-/// Empty results refuse quietly. An index beyond nonempty results returns
-/// false and emits one `libpinyin` warning (availability class (c)), as does
-/// a forced phrase that no longer matches the decoded result.
+/// Empty results refuse quietly. An index beyond nonempty results
+/// (`pinyin.cpp:2684`), a forced phrase that no longer matches the decoded
+/// result (`phonetic_lookup.h:868`) and a span outside the current matrix
+/// (`storage/phonetic_key_matrix.cpp:661`, `:663`, `:664`) are the pin's
+/// asserts, and the process aborts there before anything is observed
+/// (register rows 6, 38 and 82).
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_train(instance: *mut PinyinInstance, index: u8) -> bool {
     if instance.is_null() {
@@ -763,34 +752,17 @@ pub extern "C" fn pinyin_train(instance: *mut PinyinInstance, index: u8) -> bool
     let inst = unsafe { instance_mut(instance) };
     match inst.core.train(index) {
         Ok(trained) => trained,
-        Err(oxpinyin_engine::EngineError::CandidateIndexOutOfRange { .. }) => {
-            crate::ffi::log_warning("pinyin_train: n-best index is out of range");
-            false
-        }
-        // Class (c), `phonetic_lookup.h:868`: a forcing added after the last
-        // sentence lookup no longer matches the decoded result.
-        Err(oxpinyin_engine::EngineError::StaleTrainingConstraint { .. }) => {
-            crate::ffi::log_warning(
-                "pinyin_train: assertion 'token == constraint->m_token' failed",
-            );
-            false
-        }
-        // Class (c), `storage/phonetic_key_matrix.cpp:661`/`:663`/`:664`: a
-        // re-parse shortened the input under the last sentence lookup's
-        // result, so the training walk leaves the current matrix.
-        Err(oxpinyin_engine::EngineError::StaleTrainingSpan { fault, .. }) => {
-            let assertion = match fault {
-                oxpinyin_engine::TrainingSpanFault::PastMatrixEnd => "end < matrix->size()",
-                oxpinyin_engine::TrainingSpanFault::EmptyStartColumn => {
-                    "matrix->get_column_size(start) > 0"
-                }
-                oxpinyin_engine::TrainingSpanFault::EndEmptyColumn => {
-                    "matrix->get_column_size(end) > 0"
-                }
-            };
-            crate::ffi::log_warning(&format!("pinyin_train: assertion '{assertion}' failed"));
-            false
-        }
+        // Register rows 38, 6 and 82: `pinyin.cpp:2684`,
+        // `phonetic_lookup.h:868` (a forcing added after the last sentence
+        // lookup no longer matches the decoded result) and
+        // `storage/phonetic_key_matrix.cpp:661`/`:663`/`:664` (a re-parse
+        // shortened the input under that result, so the walk leaves the
+        // current matrix).
+        Err(
+            oxpinyin_engine::EngineError::CandidateIndexOutOfRange { .. }
+            | oxpinyin_engine::EngineError::StaleTrainingConstraint { .. }
+            | oxpinyin_engine::EngineError::StaleTrainingSpan { .. },
+        ) => std::process::abort(),
         // Class (b), `ngram.cpp:190`, `:241`, `:261`: training would
         // load a predecessor whose value has a partial item tail, which the
         // pin's `insert_freq`/`set_freq` walks read past. Nothing changed.
@@ -822,6 +794,24 @@ pub extern "C" fn pinyin_train(instance: *mut PinyinInstance, index: u8) -> bool
         }
         Err(_) => false,
     }
+}
+
+/// Whether [`pinyin_train`] of row `index` reaches one of the pin's own
+/// training asserts (register rows 6, 38 and 82): the facade's
+/// [`oxpinyin_facade::InstanceCore::train_aborts`], the same row lookup and
+/// span walk `pinyin_train` runs. Reads only. For the in-tree fuzz harness,
+/// which skips such a call: not in `pinyin.h`, a Rust function compiled
+/// only with `fuzz-api` and never into the shipped artifact.
+#[cfg(all(feature = "fuzz-api", not(feature = "shipped")))]
+#[must_use]
+pub fn oxpinyin_train_aborts(instance: *mut PinyinInstance, index: u8) -> bool {
+    if instance.is_null() {
+        return false;
+    }
+    // SAFETY: `instance` is non-null and was produced by
+    // `pinyin_alloc_instance`.
+    let inst = unsafe { crate::state::instance_ref(instance) };
+    inst.core.train_aborts(index)
 }
 
 #[cfg(test)]
