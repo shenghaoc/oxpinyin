@@ -558,6 +558,89 @@ impl UserIndex {
         rows
     }
 
+    /// `ChewingLargeTable2::search` over the stored records: the query's
+    /// complete or incomplete key is looked up, and its records are filtered
+    /// by the pin's `pinyin_compare_with_tones`. Tokens keep the record
+    /// order (exact key, then token).
+    pub(crate) fn search(&self, keys: &[ChewingKey]) -> Vec<(u32, Vec<ChewingKey>)> {
+        let len = keys.len();
+        if len == 0 || len > MAX_PHRASE_LENGTH {
+            return Vec::new();
+        }
+        let Some(value) = self.record(&query_key(keys)) else {
+            return Vec::new();
+        };
+        if value.is_empty() || !value.len().is_multiple_of(item2_stride(len)) {
+            return Vec::new();
+        }
+        let stride = item2_stride(len);
+        value
+            .chunks_exact(stride)
+            .filter_map(|record| {
+                let stored: Vec<ChewingKey> = record[4..4 + 2 * len]
+                    .chunks_exact(2)
+                    .map(|word| ChewingKey::from_packed(u16::from_le_bytes([word[0], word[1]])))
+                    .collect();
+                matches_with_tones(keys, &stored, len).then(|| {
+                    (
+                        u32::from_le_bytes([record[0], record[1], record[2], record[3]]),
+                        stored,
+                    )
+                })
+            })
+            .collect()
+    }
+
+    /// Whether the exact query record exists: `search`'s `m_db->Get` gate.
+    pub(crate) fn has_record(&self, keys: &[ChewingKey]) -> bool {
+        !keys.is_empty() && keys.len() <= MAX_PHRASE_LENGTH && self.contains_key(&query_key(keys))
+    }
+
+    /// Whether any record key extends `keys`' query key, including the key
+    /// itself: `search_suggestion`'s `m_db->Get` gate.
+    pub(crate) fn has_prefix(&self, keys: &[ChewingKey]) -> bool {
+        if keys.is_empty() || keys.len() > MAX_PHRASE_LENGTH {
+            return false;
+        }
+        !self.keys_starting_with(&query_key(keys)).is_empty()
+    }
+
+    /// `ChewingTableEntry::search_suggestion` over the stored records:
+    /// longer keys extending the prefix, filtered with-tones.
+    pub(crate) fn suggest(&self, prefix: &[ChewingKey]) -> Vec<u32> {
+        let prefix_len = prefix.len();
+        if prefix_len == 0 || prefix_len > MAX_PHRASE_LENGTH {
+            return Vec::new();
+        }
+        let prefix_key = query_key(prefix);
+        let mut tokens = Vec::new();
+        for key in self.keys_starting_with(&prefix_key) {
+            if key.len() <= prefix_key.len() || !key.len().is_multiple_of(2) {
+                continue;
+            }
+            let len = key.len() / 2;
+            let Some(value) = self.record(&key) else {
+                continue;
+            };
+            let stride = item2_stride(len);
+            if !value.len().is_multiple_of(stride) {
+                continue;
+            }
+            for record in value.chunks_exact(stride) {
+                let stored: Vec<ChewingKey> = record[4..4 + 2 * len]
+                    .chunks_exact(2)
+                    .map(|word| ChewingKey::from_packed(u16::from_le_bytes([word[0], word[1]])))
+                    .collect();
+                if matches_with_tones(prefix, &stored, prefix_len) {
+                    tokens.push(u32::from_le_bytes([
+                        record[0], record[1], record[2], record[3],
+                    ]));
+                }
+            }
+        }
+        tokens
+    }
+
     /// Adds records from `other` that this index does not hold. Used by a
     /// value-only save: the derived table is authoritative and the caller's
     /// index carries the retained empty keys.
@@ -589,6 +672,32 @@ impl UserIndex {
         }
         overlong
     }
+}
+
+/// `pinyin_compare_with_tones` (`pinyin_phrase3.h:68-147` at 074a2219):
+/// same length up to `len`; a zero middle/final on either side is a
+/// wildcard, and so is a zero tone.
+fn matches_with_tones(query: &[ChewingKey], stored: &[ChewingKey], len: usize) -> bool {
+    if query.len() < len || stored.len() < len {
+        return false;
+    }
+    for index in 0..len {
+        let query = query[index];
+        let stored = stored[index];
+        if query.initial != stored.initial {
+            return false;
+        }
+        if !((query.middle == stored.middle && query.final_ == stored.final_)
+            || (query.middle == 0 && query.final_ == 0)
+            || (stored.middle == 0 && stored.final_ == 0))
+        {
+            return false;
+        }
+        if !(query.tone == stored.tone || query.tone == 0 || stored.tone == 0) {
+            return false;
+        }
+    }
+    true
 }
 
 fn key_at(arena: &[u8], offset: u32) -> &[u8] {
