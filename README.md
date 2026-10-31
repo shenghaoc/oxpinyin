@@ -68,12 +68,12 @@ storage backend and gives each platform's packages and settings for it.
 | Group | Crates |
 |---|---|
 | Engine / data / runtime / bindings | `oxpinyin-core`, `oxpinyin-chewing`, `oxpinyin-store`, `oxpinyin-data`, `oxpinyin-user`, `oxpinyin-engine`, `oxpinyin-facade`, `oxpinyin-runtime`, `oxpinyin-capi`, `oxpinyin-zhuyin-capi`, `oxpinyin-capi-marshal` |
-| Training toolchain (never ships) | `oxpinyin-training` (modules: `segment`, `counter`, `lambda`, `emitter`, `eval`, `train`; existing stage binary names remain), `oxpinyin-corpus`, `oxpinyin-kmm`, `oxpinyin-word`, `oxpinyin-punct`, `oxpinyin-datagen` |
+| Training toolchain (never ships) | `oxpinyin-training` (modules: `segment`, `counter`, `lambda`, `emitter`, `eval`; binaries: `oxpinyin-segment`, `oxpinyin-spseg`, `oxpinyin-mergeseq`, `oxpinyin-counter`, `oxpinyin-lambda`, `oxpinyin-emitter`), `oxpinyin-kmm`, `oxpinyin-utils`, `oxpinyin-datagen` |
 | Tools | `oxpinyin-dictool` |
 | Oracle / testing | `pinyin-oracle`, `oxpinyin-testsupport` |
 
-Training commands keep their existing executable names and arguments. Select
-the consolidated Cargo package when running or testing them, for example:
+The remaining stage binaries keep their names and arguments. Select the
+consolidated Cargo package when running or testing them, for example:
 `cargo run --locked -p oxpinyin-training --bin oxpinyin-segment -- --help`.
 
 ## Upstream

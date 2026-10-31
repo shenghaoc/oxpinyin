@@ -18,9 +18,6 @@ members = [
   "crates/oxpinyin-training",
   "crates/oxpinyin-datagen",
   "crates/oxpinyin-kmm",
-  "crates/oxpinyin-punct",
-  "crates/oxpinyin-word",
-  "crates/oxpinyin-corpus",
   "crates/oxpinyin-testsupport",
   "crates/oxpinyin-zhuyin-capi",
 ]

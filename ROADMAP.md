@@ -86,7 +86,7 @@ landed 2026-09-09 as the backend's native user files (maintainer ruling
 | W6 | User store (ACID store over the compiled-in `DefaultStore`; began on redb) | oxpinyin-user, oxpinyin-store |
 | W7 | Classic text-format interop via oxpinyin-dictool (import + export) | oxpinyin-dictool, oxpinyin-capi |
 | W8 | libpinyin drop-in: full 79-symbol `.so` ABI under `libpinyin.so.15` (see `docs/specs/drop-in/`) | oxpinyin-capi |
-| W9 | Training toolchain — full trainer-workflow parity (KMM in scope; see `docs/findings/trainer-parity-audit.md`) | oxpinyin-training (`segment`, `counter`, `lambda`, `emitter`, `eval`, `train` modules), oxpinyin-kmm, oxpinyin-corpus, oxpinyin-word, oxpinyin-punct |
+| W9 | Rust counterparts for libpinyin's 21 `utils/` programs (see `docs/findings/trainer-parity-audit.md`); the trainer's own Python scripts are not ported | oxpinyin-training (`segment`, `counter`, `lambda`, `emitter`, `eval` modules), oxpinyin-kmm, oxpinyin-utils, oxpinyin-datagen |
 | W10 | Option bits: correction, fuzzy/ambiguity, dynamic-adjust gating | oxpinyin-core, oxpinyin-engine |
 | W11 | Phrase-index union at lookup (user, network, addon) | oxpinyin-engine, oxpinyin-data, oxpinyin-user |
 | W12 | Corpus tail (parity gaps; candidate residual closed 2026-08-22) | oxpinyin-core, oxpinyin-engine, oxpinyin-capi |
@@ -270,7 +270,21 @@ parked.
   those numbers are prerequisites for improving against them. Parity
   work was never W8 — it was W10–W14 below, all now landed.
 
-- **W9 is the training toolchain — full-scope re-audit (2026-08-30).**
+- **W9 is re-scoped to the `utils/` counterparts (2026-10-31 UTC).**
+  W9 targets a Rust counterpart for each of the 21 programs libpinyin
+  builds under `utils/` at pin `074a2219` — `segment/` (3), `storage/` (5)
+  and `training/` (13) — in whichever crate each lives now:
+  `oxpinyin-training` (`segment`, `counter`, `lambda`, `emitter`, `eval`),
+  `oxpinyin-kmm`, `oxpinyin-utils` and `oxpinyin-datagen`. The trainer's
+  own Python scripts are **not** ported: the 2026-08-30 full-workflow
+  scope below and its Python ports (`oxpinyin-corpus`, `oxpinyin-punct`,
+  `oxpinyin-word`, the `train` orchestrator and the `evaluate.py` driver)
+  were removed. The `eval` module keeps the `eval_correction_rate`
+  decode; `oxpinyin-utils` keeps `gen_pinyin_table`, `gen_zhuyin_table`
+  and `k_mixture_model_to_interpolation`. Converting the counterparts
+  into drop-ins is external-I/O stage 5.
+
+- **W9 full-workflow scope (2026-08-30; superseded 2026-10-31 UTC).**
   W9 now targets **complete native-Rust parity with the currently-used
   libpinyin/trainer workflow**: segmentation (`ngseg`, `spseg`,
   `mergeseq`), K-mixture-model generation and optimisation (generate →
@@ -307,8 +321,9 @@ parked.
   (`oxpinyin-word`); punctuation (`oxpinyin-punct`); native end-to-end
   orchestration.
 
-  **W9 LANDED (2026-08-31).** Parts B–H are all implemented and tested,
-  including the `oxpinyin-training::train` orchestrator (raw corpus → segment →
+  **W9 LANDED (2026-08-31; the Python-port parts were removed 2026-10-31
+  UTC).** Parts B–H are all implemented and tested, including the
+  `oxpinyin-training::train` orchestrator (raw corpus → segment →
   KMM → interpolation model → λ → correction rate, no Python/make/SQLite/
   libpinyin at runtime). The audit's §15 status table records each part
   and states that nothing remains for trainer-workflow parity; the

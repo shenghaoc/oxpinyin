@@ -20,12 +20,9 @@
 | oxpinyin-store | Ordered byte-KV interface with one compile-time Berkeley DB, Kyoto Cabinet or tkrzw backend. See backend dependencies below. | deny | yes | via engine |
 | oxpinyin-datagen | model20 compiler for each backend's native runtime files. Shares layouts with data readers. | forbid | yes | never |
 | oxpinyin-utils | libpinyin's utilities under their own names and interfaces, through `oxpinyin-input`'s `tools` boundary (stage 5 of `docs/findings/external-io-boundary.md`): `gen_pinyin_table`, `gen_zhuyin_table` and `k_mixture_model_to_interpolation`, with the pin's taglib. | forbid | Linux, macOS (needs GLib) | never |
-| oxpinyin-corpus | Training corpus frontend: zhwiki dump to ngseg raw text. | forbid | yes | never |
-| oxpinyin-training | Backend-sensitive training modules: segment, counter, lambda, emitter, eval and train. Existing stage binary names remain. One backend selection covers all modules. | forbid | yes | never |
+| oxpinyin-training | Backend-sensitive training modules: segment, counter, lambda, emitter and eval. Existing stage binary names remain. One backend selection covers all modules. | forbid | yes | never |
 | oxpinyin-testsupport | Shared fixture Dictionary/LanguageModel doubles, model20 cache locator and scorer suites. See test-support dependencies below. | forbid | yes | never |
-| oxpinyin-kmm | W9 K-mixture pipeline: generate, estimate, merge, validate, prune, export, import and interpolation conversion. | forbid | yes | never |
-| oxpinyin-punct | W9 punctuation-table generator reproducing `genpunct.py`. | forbid | yes | never |
-| oxpinyin-word | W9 word-recognition pipeline: populate, partialword, newword and markpinyin. | forbid | yes | never |
+| oxpinyin-kmm | K-mixture pipeline: generate, estimate, merge, validate, prune, export and import. | forbid | yes | never |
 
 Both C-ABI facades consume `oxpinyin-facade`.
 It depends on core, engine, runtime and user.

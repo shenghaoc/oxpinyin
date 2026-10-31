@@ -107,9 +107,9 @@ concurrency:
 #   lint — rustfmt + clippy + the Lizard CCN ratchet
 #   test — cargo test for the whole workspace (the ONE full sweep per
 #          PR), and the portable workspace (all but capi, zhuyin-capi, and
-#          the backend-independent corpus, KMM, punctuation, and word
-#          tools) on macOS, with clippy over that set. The combined training package stays
-#          in that lane because segment/eval/train use the selected backend.
+#          the backend-independent KMM tool) on macOS, with clippy over
+#          that set. The combined training package stays in that lane
+#          because its segment/eval modules use the selected backend.
 # The full Windows workspace job runs in verify-nightly.yml (nightly and on
 # manual dispatch), not on every PR.
 #   deny — supply-chain gate: RustSec advisories, licenses, sources,
@@ -492,9 +492,9 @@ jobs:
   # selected explicitly so pinyin-oracle's oracle-ffi stays off. The
   # job excludes the two C-ABI crates (their facade tests are Linux-first;
   # GLib and cargo-c themselves are available from Homebrew) and the
-  # backend-independent corpus, KMM, punctuation, and word tools. The
-  # combined training package remains in the lane because its
-  # segment/eval/train modules use the backend. oxpinyin-dictool stays
+  # backend-independent KMM tool. The combined training package remains
+  # in the lane because its segment/eval modules use the backend.
+  # oxpinyin-dictool stays
   # in the set: its C-ABI dependency was cut, and it drives the facade's
   # import/export machinery directly.
   #
@@ -617,8 +617,7 @@ jobs:
         run: >
           cargo clippy --locked --workspace --all-targets --no-default-features --features tkrzw
           --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi
-          --exclude oxpinyin-corpus --exclude oxpinyin-kmm --exclude oxpinyin-punct
-          --exclude oxpinyin-word
+          --exclude oxpinyin-kmm
           -- -D warnings
       - name: Install pinned cargo-nextest
         if: needs.changes.outputs.reuse != 'true'
@@ -636,15 +635,13 @@ jobs:
         run: >
           cargo nextest run --locked --profile ci --status-level skip --workspace --no-default-features --features tkrzw
           --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi
-          --exclude oxpinyin-corpus --exclude oxpinyin-kmm --exclude oxpinyin-punct
-          --exclude oxpinyin-word
+          --exclude oxpinyin-kmm
       # nextest does not run doctests; keep the same features and exclusions.
       - if: needs.changes.outputs.reuse != 'true'
         run: >
           cargo test --locked --doc --workspace --no-default-features --features tkrzw
           --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi
-          --exclude oxpinyin-corpus --exclude oxpinyin-kmm --exclude oxpinyin-punct
-          --exclude oxpinyin-word
+          --exclude oxpinyin-kmm
 
       - name: Refresh the main Rust cache using the lane's compile mode
         if: github.event_name == 'push' && needs.changes.outputs.reuse == 'true'

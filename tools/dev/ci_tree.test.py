@@ -398,7 +398,7 @@ class RefreshTests(unittest.TestCase):
             alternate = ci_tree.refresh_commands('store-features', backend)[0].argv
             self.assertNotIn('oxpinyin-capi', alternate)
             self.assertEqual(alternate[alternate.index('--features') + 1], backend)
-            self.assertIn('oxpinyin-word', alternate)
+            self.assertIn('oxpinyin-kmm', alternate)
         for lane, backend in [('unknown', None), ('store-features', None),
                               ('store-features', 'bad; command'), ('lint', 'tkrzw')]:
             with self.assertRaises(ValueError):

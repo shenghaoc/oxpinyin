@@ -1,8 +1,8 @@
 # Testing infrastructure
 
-The corpus pipeline, the oracle environment, the differential fixtures
-(F-series) and the capture-fixture format. How to build and run the
-oracle is `../runbooks/oracle.md`; how goldens and pins are refreshed
+The oracle environment, the differential fixtures (F-series) and the
+capture-fixture format. How to build and run the oracle is
+`../runbooks/oracle.md`; how goldens and pins are refreshed
 is `../runbooks/goldens-and-pins.md`.
 
 For the live ABI gate registry, cell selection, prebuilt artifacts and aggregate
@@ -36,7 +36,6 @@ add a new self-skipping test (contributor guidance points here).
 | Document | Subject |
 | --- | --- |
 | [`capture-fixtures`](capture-fixtures.md) | F-A and F-C capture fixture freeze |
-| [`corpus-pipeline`](corpus-pipeline.md) | Corpus pipeline — zhwiki dump → ngseg raw text (W9-T4b) |
 | [`corpus-tail`](corpus-tail.md) | Corpus tail (W12) |
 | [`f1-junk-aware-parse`](f1-junk-aware-parse.md) | F1: split `process_key` / `type_pinyin` accept sets for oracle parity |
 | [`f2-unigram-tiebreak-sweep`](f2-unigram-tiebreak-sweep.md) | F2: UNIGRAM_TIEBREAK_SCALE sweep — measured |

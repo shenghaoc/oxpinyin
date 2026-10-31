@@ -24,8 +24,7 @@ name: Store backends
 #     false they report `skipped`, which still reaches the aggregate.
 #   - store-features is a matrix over all three peer backends. Each child
 #     runs the workspace's backend-relevant crates (everything but the
-#     backend-independent corpus, KMM, punctuation, and word packages)
-#     under exactly ONE peer, on its
+#     backend-independent KMM package) under exactly ONE peer, on its
 #     own runner, so the sweeps run in PARALLEL (fail-fast: false,
 #     max-parallel: 4) instead of sequentially inside one job. The tkrzw
 #     child repeats the default that ci.yml's Linux test job also runs; the
@@ -281,15 +280,14 @@ jobs:
       # indirection — ${{ }} inside a run: body is a template-injection
       # surface — and never spliced into a command.
       #
-      # Corpus, KMM, punctuation, and word remain backend-independent and
-      # run once per PR in ci.yml's full test job. The consolidated training
-      # package stays in this matrix: its segment, eval, and trainer stages
-      # use the selected store backend, and the other stage modules compile
-      # against that same selection.
+      # KMM remains backend-independent and runs once per PR in ci.yml's
+      # full test job. The consolidated training package stays in this
+      # matrix: its segment and eval stages use the selected store backend,
+      # and the other stage modules compile against that same selection.
       # What stays is everything a backend choice can change: the store
       # itself, the user store, data readers, datagen writers, runtime,
       # engine, facade, both C ABIs, dictool, the oracle harness, and the
-      # training package (segment, eval, train modules).
+      # training package (segment and eval modules).
       - name: Test the workspace under this backend
         if: needs.changes.outputs.reuse != 'true'
         id: backend-test
@@ -299,10 +297,7 @@ jobs:
           set -euo pipefail
           start=$EPOCHSECONDS
           excludes=(
-            --exclude oxpinyin-corpus
             --exclude oxpinyin-kmm
-            --exclude oxpinyin-punct
-            --exclude oxpinyin-word
           )
           case "$BACKEND" in
           # `--features <peer>` at `--workspace` scope enables that
