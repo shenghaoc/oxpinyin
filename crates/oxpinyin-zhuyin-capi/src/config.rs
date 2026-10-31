@@ -150,35 +150,12 @@ pub extern "C" fn zhuyin_mask_out(context: *mut ZhuyinContext, mask: u32, value:
         // pin's `get_length` assert dies (`Bigram::mask_out`,
         // `ngram_bdb.cpp:243`).
         oxpinyin_facade::MaskOutOutcome::ResidualUserBigramGram => std::process::abort(),
-        oxpinyin_facade::MaskOutOutcome::SystemLogHeaderToken => {
-            // Class (c), `phrase_index_logger.h:202`: a system library's
-            // user .dbin carries a non-null-token MODIFY_HEADER and the
-            // pin's `next_record` assert dies.
-            crate::ffi::log_warning(
-                "zhuyin_mask_out: a system library's user .dbin carries a non-null-token \
-                 MODIFY_HEADER (upstream asserts, phrase_index_logger.h:202)",
-            );
-            false
-        }
-        oxpinyin_facade::MaskOutOutcome::SystemLogSurvivingAdd => {
-            // Class (c), row 97: _mask_out_records supplies &oldchunk for
-            // ADD, whose writer requires NULL == oldone (074a2219 :245).
-            crate::ffi::log_warning(
-                "zhuyin_mask_out: assertion 'NULL == oldone' failed \
-                 (upstream asserts, phrase_index_logger.h:245)",
-            );
-            false
-        }
-        oxpinyin_facade::MaskOutOutcome::SystemLogMultipleHeaders => {
-            // Class (c), `phrase_index.cpp:745`: a system library's user
-            // .dbin carries more than one MODIFY_HEADER and the pin's
-            // `_peek_header` assert dies.
-            crate::ffi::log_warning(
-                "zhuyin_mask_out: a system library's user .dbin carries more than one \
-                 MODIFY_HEADER (upstream asserts, phrase_index.cpp:745)",
-            );
-            false
-        }
+        // Register rows 91, 92, 97 and 108: a reloaded system library's
+        // `.dbin` reached an assertion in `merge_with_mask`
+        // (`phrase_index_logger.h:202`, `phrase_index.cpp:745`,
+        // `phrase_index_logger.h:245`/`:257`, `memory_chunk.h:390`), after
+        // the user tables were masked; the pin dies there.
+        oxpinyin_facade::MaskOutOutcome::Journal(_) => std::process::abort(),
         oxpinyin_facade::MaskOutOutcome::ChunkHeaderRead => {
             // Class (c), `memory_chunk.h:493`: the mask maps every loaded
             // system library again and one is a directory.
@@ -240,6 +217,10 @@ pub extern "C" fn zhuyin_load_phrase_library(context: *mut ZhuyinContext, index:
             );
             false
         }
+        // Register rows 91 and 108: the reloaded library's saved `.dbin`
+        // merge reached a pin assertion (`zhuyin.cpp:219`, then
+        // `phrase_index_logger.h:202` or `memory_chunk.h:390`).
+        Err(oxpinyin_facade::LibraryLoadFault::Journal(_)) => std::process::abort(),
         // `NotLoadable` aborted above; the facade answers no other row
         // fault here.
         Err(oxpinyin_facade::LibraryLoadFault::Row(_)) => false,

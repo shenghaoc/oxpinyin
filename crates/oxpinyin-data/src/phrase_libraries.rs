@@ -68,7 +68,7 @@ pub struct PhraseLibraries {
     /// nibble → library, `None` = not loaded.
     by_nibble: [RwLock<Option<Loaded>>; 16],
     /// Files `open` found absent.
-    unmapped: Vec<PathBuf>,
+    unmapped: Vec<(u8, PathBuf)>,
     /// `FacadePhraseIndex::m_total_freq` (074a2219 `phrase_index.h:440`)
     /// over every loaded library: each library's stored `total_freq` is
     /// added when it loads and subtracted when it unloads or is replaced,
@@ -145,7 +145,7 @@ impl PhraseLibraries {
                 // The pin's `open` fails and `MemoryChunk::mmap` answers
                 // `false`; the library stays unloaded here.
                 Err(_) => {
-                    this.unmapped.push(path);
+                    this.unmapped.push((nibble, path));
                     continue;
                 }
             }
@@ -157,9 +157,18 @@ impl PhraseLibraries {
     /// The files [`PhraseLibraries::open`] found absent, in the order it
     /// met them: where the pin writes `mmap %s failed!` at init and goes on
     /// with an empty chunk (`pinyin.cpp:256`).
-    #[must_use]
-    pub fn unmapped(&self) -> &[PathBuf] {
-        &self.unmapped
+    pub fn unmapped(&self) -> impl Iterator<Item = &Path> {
+        self.unmapped.iter().map(|(_, path)| path.as_path())
+    }
+
+    /// The [`Self::unmapped`] files of the libraries before sub-index
+    /// `stop`, and of `stop` itself when `through`: the lines the pin's init
+    /// loop has written when it dies at that library.
+    pub fn unmapped_before(&self, stop: u8, through: bool) -> impl Iterator<Item = &Path> {
+        self.unmapped
+            .iter()
+            .filter(move |&&(nibble, _)| nibble < stop || (through && nibble == stop))
+            .map(|(_, path)| path.as_path())
     }
 
     /// The files of the loaded libraries that `MemoryChunk::mmap` would
