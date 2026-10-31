@@ -62,9 +62,8 @@ pub fn begin_add_phrases_impl(context: *mut PinyinContext, index: u8) -> *mut Im
         return ptr::null_mut();
     }
 
-    // SAFETY: `context` is non-null and was produced by `pinyin_init` or
-    // `CapiContext::new_user_only`; the borrow lasts only for this
-    // constructor.
+    // SAFETY: `context` is non-null and was produced by `pinyin_init`; the
+    // borrow lasts only for this constructor.
     let ctx = unsafe { context_ref(context) };
     // `begin_add_phrases` starts with a compact (`pinyin.cpp:657`,
     // `zhuyin.cpp:542`); a layout-failed empty sub-index's local total
@@ -338,7 +337,7 @@ pub extern "C" fn pinyin_end_add_phrases(iter: *mut ImportIterator) {
 /// count)`, token order (`pinyin.cpp:662-768`): the system libraries 1..=4
 /// from their chunk files, the `USER_FILE` libraries from the user store.
 /// A nibble without a sub-index exports nothing
-/// ([`oxpinyin_facade::ContextCore::export_phrases`]).
+/// ([`oxpinyin_facade::ContextCore::phrase_export_cursor`]).
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_begin_get_phrases(
     context: *mut PinyinContext,
@@ -529,8 +528,7 @@ pub extern "C" fn pinyin_begin_get_bigram_phrases(
         return ptr::null_mut();
     }
 
-    // SAFETY: `context` is non-null and was produced by `pinyin_init`
-    // or `CapiContext::new_user_only`.
+    // SAFETY: `context` is non-null and was produced by `pinyin_init`.
     let ctx = unsafe { context_ref(context) };
     if !ctx.can_render_export_bigrams() {
         return ptr::null_mut();
