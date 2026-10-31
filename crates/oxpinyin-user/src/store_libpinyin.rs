@@ -296,6 +296,7 @@ impl GenericUserStore<DefaultStore> {
             user_libraries,
             overlong_index_keys,
             index,
+            phrase_table,
         } = profile;
         // Armed as soon as the load has raised the counter: an open that
         // fails from here on drops it and lowers the counter again, so a
@@ -325,6 +326,7 @@ impl GenericUserStore<DefaultStore> {
             let mut phrases = target.phrases();
             phrases.libraries = user_libraries;
             phrases.index = index;
+            phrases.phrase_table = phrase_table;
             for (&nibble, items) in &loaded.state.libraries {
                 for (&slot, item) in items {
                     let bytes = oxpinyin_data::chunk_write::encode_phrase_item(item)
@@ -905,6 +907,69 @@ mod tests {
     }
     use crate::store::UserStore;
     use oxpinyin_core::ChewingKey;
+
+    /// Register row 101: a phrase-table record with a partial token tail is
+    /// one the pin's entry walk reads past, in `_add_phrase`'s search, the
+    /// promote's `add_index` and the mask's `ProcessEach`
+    /// (`phrase_large_table3.cpp:32-39`, `:57-65`, `:103-117` at 074a2219).
+    /// Each operation refuses it before changing anything.
+    #[test]
+    fn a_partial_phrase_table_record_is_refused_before_any_change() {
+        let keys = |text: &str| {
+            packed_to_pinyin_keys(&[ChewingKey::from_pinyin(text).unwrap().to_packed()]).unwrap()
+        };
+        let dir = tempdir("partial-phrase-record");
+        let mut store =
+            UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin).unwrap();
+        store
+            .add_phrase_in(crate::USER_DICTIONARY, &"你".into(), &keys("ni"), Some(5))
+            .unwrap();
+        {
+            let target = store.session_target().unwrap();
+            let mut phrases = target.phrases();
+            let words: Vec<u32> = "他".chars().map(u32::from).collect();
+            phrases
+                .phrase_table
+                .push_record(&crate::phrase_table::key_ucs4(&words), &[1, 0, 0, 7, 9]);
+            phrases.phrase_table.finish_load();
+        }
+        let snapshot = |store: &UserStore| {
+            let db = store.database();
+            let rows = [crate::phrase_table::TABLE, UNIGRAM_TOTAL].map(|table| {
+                let mut rows = Vec::new();
+                db.for_each(table, |key, value| {
+                    rows.push((key.to_vec(), value.to_vec()));
+                    Ok(())
+                })
+                .unwrap();
+                rows
+            });
+            drop(db);
+            (
+                rows,
+                format!("{:?}", store.session_target().unwrap().phrases()),
+            )
+        };
+        let before = snapshot(&store);
+        let added = store.add_phrase_in(crate::USER_DICTIONARY, &"他".into(), &keys("ta"), Some(5));
+        assert!(
+            matches!(added, Err(UserStoreError::Persistence(_))),
+            "{added:?}"
+        );
+        assert_eq!(snapshot(&store), before);
+        let promoted = store.promote_addon_phrase("他", &[(keys("ta"), 5)], 5);
+        assert!(
+            matches!(promoted, Err(UserStoreError::Persistence(_))),
+            "{promoted:?}"
+        );
+        assert_eq!(snapshot(&store), before);
+        let masked = store.mask_out(0xffff_ffff, 0x0700_0001);
+        assert!(
+            matches!(masked, Err(UserStoreError::Persistence(_))),
+            "{masked:?}"
+        );
+        assert_eq!(snapshot(&store), before);
+    }
 
     #[test]
     fn arena_insert_size_failure_keeps_metadata_and_items_unchanged() {

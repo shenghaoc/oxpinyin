@@ -132,7 +132,7 @@ impl PhraseTableEntry {
     }
 
     #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
-    fn set_content(&mut self, bytes: &[u8]) -> Result<(), StoreError> {
+    pub(crate) fn set_content(&mut self, bytes: &[u8]) -> Result<(), StoreError> {
         validate(bytes)?;
         if bytes.len() > self.bytes.len() {
             self.bytes.resize(bytes.len(), 0);
@@ -167,7 +167,7 @@ fn search_tokens(bytes: &[u8], tokens: &mut Vec<u32>, mut enabled: impl FnMut(u3
     result
 }
 
-fn validate(bytes: &[u8]) -> Result<(), StoreError> {
+pub(crate) fn validate(bytes: &[u8]) -> Result<(), StoreError> {
     if !bytes.len().is_multiple_of(4) {
         return Err(StoreError::InvalidInput(
             "phrase table value contains an incomplete token",
