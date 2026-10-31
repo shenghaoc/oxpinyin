@@ -446,6 +446,40 @@ last five lines, and says which case it is before building the libraries:
 (network, auth or proxy, not "not found")` for anything else. Both fall
 back to the build.
 
+### The nightly fixture differentials
+
+The `oracle` and `differentials` jobs of `verify-nightly.yml` do not run this
+setup, and setup does not change for them. Their oracle is not the frozen
+model20 cells but the pin built over the committed toned mini-model, by the
+one recipe `just compat nightly-fixtures`
+(`tools/dev/compat/campaigns.py`), whose `build` and `run` halves the two
+jobs share:
+
+- **Oracle, on stable.** `nightly-fixtures build --deps-image` runs each
+  build command inside the same trixie `deps` image setup uses (the
+  published `<oracle-tag>-deps` for amd64, otherwise the `deps` stage of
+  `tools/oracle/Dockerfile.oracle` built locally). It fetches and verifies
+  the pin commit, copies the toned model in, and runs configure
+  `--with-dbm=Tkrzw` against the distro `libtkrzw-dev`, then `make` and
+  `make install`. `build-oracle.sh` is not involved. The work directory
+  (`/tmp/oxpinyin-fixture-differentials`) and the prefix
+  (`/opt/libpinyin-tkrzw`) are mounted at their own paths, and the job
+  uploads both as one artifact.
+- **Subject, on testing.** In the unpinned `debian:testing` container, the
+  job restores the artifact at the same absolute paths, which configure's
+  `--prefix` and the `run` half name. The pin's uninstalled tools are
+  ordinary executables that link libpinyin statically. The job provisions
+  tkrzw with `.github/actions/tkrzw`, then runs `nightly-fixtures run`.
+  That builds the subject, checks with `ldd` that the pin library, the pin
+  tools and the subject all load `libtkrzw.so.1` from the action's build
+  ([rule 9](#runtime-enforcement-verification-rule-9)), and runs the
+  suites. It builds none of the pin.
+
+Without `build` or `run`, `nightly-fixtures` runs both halves on the
+current host, as before; the `run` half's loader check needs
+`OXPINYIN_TKRZW_PREFIX` or `OXPINYIN_TKRZW_LIBRARY`, which the environment
+file sets.
+
 ## Gates on a remote host
 
 On a host meeting the requirements above, the

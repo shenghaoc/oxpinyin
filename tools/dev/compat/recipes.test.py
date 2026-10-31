@@ -219,6 +219,57 @@ if sys.argv[1]=='cp': sys.exit(19)
         self.assertIn('FAILED: first', output.getvalue())
         self.assertNotIn('FAILED: second', output.getvalue())
 
+    def test_nightly_build_and_run_halves_are_separable(self):
+        work = self.directory / 'work'
+        with mock.patch.object(campaigns, 'build_pin') as build, mock.patch.object(campaigns, 'run_fixtures', return_value=5) as suites:
+            self.assertEqual(campaigns.nightly(['build', '--deps-image', str(work)]), 0)
+            build.assert_called_once_with(work, root=process.ROOT, in_image=True)
+            suites.assert_not_called()
+            build.reset_mock()
+            self.assertEqual(campaigns.nightly(['run', str(work)]), 5)
+            build.assert_not_called()
+            suites.assert_called_once_with(work, root=process.ROOT)
+            suites.reset_mock()
+            self.assertEqual(campaigns.nightly([str(work)]), 5)
+            build.assert_called_once_with(work, root=process.ROOT, in_image=False)
+            suites.assert_called_once_with(work, root=process.ROOT)
+            with self.assertRaises(Finished) as refused, contextlib.redirect_stderr(io.StringIO()):
+                campaigns.nightly(['run', '--deps-image', str(work)])
+            self.assertEqual(refused.exception.status, 2)
+
+    def test_nightly_run_refuses_a_tree_that_is_not_the_pin(self):
+        (self.directory / 'libpinyin').mkdir()
+        (self.directory / 'libpinyin/.pin-ok').write_text('0' * 40 + '\n')
+        with mock.patch.object(campaigns, 'run') as child, self.assertRaises(Finished) as refused, \
+                contextlib.redirect_stderr(io.StringIO()) as error:
+            campaigns.run_fixtures(self.directory)
+        self.assertEqual(refused.exception.status, 2)
+        self.assertIn('run nightly-fixtures build first', error.getvalue())
+        child.assert_not_called()
+
+    def test_nightly_loader_check_refuses_a_pin_tool_on_another_libtkrzw(self):
+        def check(cell, runner, side, obj, *, env):
+            if Path(obj).name == 'ngseg':
+                raise campaigns.runtime.RuntimeRefused(f'{runner}: {side}: libtkrzw resolved to /usr/lib/libtkrzw.so.1')
+            return None if Path(obj).name == 'gen_unigram' or side == 'subject' else Path('/verified/lib/libtkrzw.so.1')
+        with mock.patch.object(campaigns.runtime, 'check', side_effect=check) as checked, \
+                contextlib.redirect_stdout(io.StringIO()) as output, contextlib.redirect_stderr(io.StringIO()), \
+                self.assertRaises(Finished):
+            campaigns.certify_tkrzw(self.directory / 'src', self.directory / 'prefix', {}, [self.directory / 'subject'])
+        self.assertEqual(checked.call_count, 1 + len(campaigns.NIGHTLY_INSTALLED) + len(campaigns.NIGHTLY_TOOLS) + 1)
+        self.assertIn(self.directory / 'src/utils/segment/ngseg', [call.args[3] for call in checked.call_args_list])
+        self.assertIn('pin: libtkrzw resolved to /usr/lib/libtkrzw.so.1', output.getvalue())
+        self.assertIn('gen_unigram: libtkrzw.so.1 => not loaded', output.getvalue())
+        self.assertIn('ldd: subject', output.getvalue())
+
+    def test_nightly_loader_check_passes_when_every_loaded_libtkrzw_is_verified(self):
+        verified = Path('/verified/lib/libtkrzw.so.1')
+        with mock.patch.object(campaigns.runtime, 'check', return_value=verified), \
+                contextlib.redirect_stdout(io.StringIO()) as output:
+            campaigns.certify_tkrzw(self.directory / 'src', self.directory / 'prefix', {}, [])
+        self.assertNotIn('REFUSED', output.getvalue())
+        self.assertIn(f'libpinyin.so: libtkrzw.so.1 => {verified}', output.getvalue())
+
 
 class InterchangeTests(unittest.TestCase):
     """Complete capture and interchange paths with fake host adapters."""

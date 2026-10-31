@@ -557,7 +557,7 @@ In a fresh Bash terminal, return to the checkout, source Cargo's environment,
 repeat both exports and the check. Linux C-ABI packaging and Linux reference
 differentials are separate evidence, not permanent restrictions on portability.
 
-The existing macOS CI uses this broader portable scope:
+The nightly macOS CI job uses this broader portable scope:
 
 ```bash
 cargo test --locked --workspace --no-default-features --features tkrzw \
@@ -598,6 +598,23 @@ tkrzw, and the fuzz recipe adds Homebrew's lib to `LIBRARY_PATH`. AddressSanitiz
 Darwin. Standalone LeakSanitizer is refused on macOS arm64, and
 MemorySanitizer has no Darwin target; both refusals name the host. Linux
 keeps its existing sanitizer commands and paths.
+
+### When the macOS job runs
+
+The macOS workspace job is the `test-macos` job in `verify-nightly.yml`. It
+runs every night and on manual dispatch, not on every pull request: platforms
+other than Linux are unstable but not unusable (maintainer decision
+2026-10-31). Pull-request CI tests Linux only. Before merging a change that
+can behave differently on macOS (the cases listed for Windows below apply),
+dispatch the job on the branch with `macos_only` set:
+
+```bash
+gh workflow run verify-nightly.yml --ref <branch> -f macos_only=true
+```
+
+With `macos_only` set, every other nightly job is skipped, the Windows job
+included. A dispatch without it or `windows_only` runs the whole nightly
+workflow, including the macOS job.
 
 ## Native Windows
 
@@ -651,10 +668,15 @@ set `PKG_CONFIG` to a `pkgconf.exe` (for example from `vcpkg install
 pkgconf:x64-windows`). No local Windows storage run has been
 executed; CI is the evidence.
 
-The existing CI exclusion set is the same six packages shown in the macOS
-command, on the default backend. The oracle's Linux
-FFI feature is not selected. Native Windows C-ABI/oracle behavior is not
-established by those tests. Physical Windows hardware is not needed to use
+The job also installs vcpkg's `glib` port, found through the same
+`PKG_CONFIG` and `PKG_CONFIG_PATH`, so it builds and tests
+`oxpinyin-utils` and `oxpinyin-training`. It excludes the
+backend-independent KMM tool, whose results do not depend on the OS, and
+the two C-ABI crates, whose locale and zhuyin open-counter tests do not
+yet pass on Windows (#1475). `WINDOWS_EXCLUDES` in `verify-nightly.yml`
+gives each reason. The oracle's Linux FFI feature is
+not selected. Native Windows oracle behavior is not established by those
+tests. Physical Windows hardware is not needed to use
 this CI coverage.
 
 **When the Windows job runs:** the full Windows workspace job is the
@@ -675,8 +697,9 @@ following, dispatch the job on the branch with `windows_only` set:
 gh workflow run verify-nightly.yml --ref <branch> -f windows_only=true
 ```
 
-With `windows_only` set, every other nightly job is skipped. A dispatch
-without it runs the whole nightly workflow, including the Windows job.
+With `windows_only` set, every other nightly job is skipped, the macOS job
+included. A dispatch without it runs the whole nightly workflow, including
+the Windows job.
 
 Recent upstream MinGW portability changes were checked separately from
 oxpinyin's MSVC support; see the [validation status](#validated-on--not-validated).

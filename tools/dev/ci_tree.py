@@ -40,10 +40,10 @@ class Workflow:
 WORKFLOWS: dict[str, Workflow] = {
     "ci": Workflow(
         ".github/workflows/ci.yml", "ci-aggregate",
-        ("lint", "test", "test-macos", "deny"),
-        frozenset({"lint", "test", "test-macos"}),
-        ("lint", "test", "test-macos", "deny"),
-        ("lint", "test", "test-macos", "deny"),
+        ("lint", "test", "deny"),
+        frozenset({"lint", "test"}),
+        ("lint", "test", "deny"),
+        ("lint", "test", "deny"),
         (("shipping-sizes", "shipping-sizes", "ship"),)),
     "store": Workflow(
         ".github/workflows/store-backends.yml",
@@ -272,11 +272,9 @@ class CompileCommand:
     environment: tuple[tuple[str, str], ...] = ()
 
 
-CACHE_LANES = ("lint", "test", "test-macos", "store-features", "backend-matrix")
+CACHE_LANES = ("lint", "test", "store-features", "backend-matrix")
 BACKENDS = ("bdb", "kyotocabinet", "tkrzw")
 BACKEND_EXCLUDES = ("--exclude", "oxpinyin-kmm")
-PORTABLE_EXCLUDES = ("--exclude", "oxpinyin-capi", "--exclude", "oxpinyin-zhuyin-capi",
-                     *BACKEND_EXCLUDES)
 
 
 def refresh_commands(lane: str, backend: str | None = None) -> tuple[CompileCommand, ...]:
@@ -287,9 +285,6 @@ def refresh_commands(lane: str, backend: str | None = None) -> tuple[CompileComm
         return (CompileCommand(("cargo", "clippy", "--locked", "--workspace", "--all-targets", "--", "-D", "warnings")),)
     if lane == "test":
         return (CompileCommand(("cargo", "build", "--locked", "--workspace", "--tests")),)
-    if lane == "test-macos":
-        return (CompileCommand(("cargo", "build", "--locked", "--workspace", "--tests",
-                                "--no-default-features", "--features", "tkrzw", *PORTABLE_EXCLUDES)),)
     if lane == "store-features":
         if backend not in BACKENDS:
             raise ValueError("cache refresh requires a store backend")

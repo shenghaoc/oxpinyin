@@ -10,6 +10,8 @@ target builds and soaks nightly (`verify-nightly.yml` fuzz-soak). Main's
 required check is `ci-aggregate`. `test-windows` left the PR path on
 2026-10-22: the full Windows workspace job runs in `verify-nightly.yml`,
 nightly and on manual dispatch (`docs/runbooks/setup.md`, "Native Windows").
+`test-macos` followed on 2026-10-31 (`docs/runbooks/setup.md`, "When the
+macOS job runs").
 Estimated costs below are rough additive deltas on a cached runner.
 
 ## Tier 1 — FAST PR GATE (every push/PR, ~+2 min over today)

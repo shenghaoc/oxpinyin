@@ -137,7 +137,10 @@ jobs:
   # consume.
   changes:
     name: store-backends changes
-    runs-on: ubuntu-latest
+    # The one Linux runner label in this workflow; the other Linux jobs
+    # alias it (*ubuntu). Pinned, not ubuntu-latest, so a runner-image
+    # move (26.04: actions/runner-images#14748) happens here under review.
+    runs-on: &ubuntu ubuntu-26.04
     outputs:
       run: ${{ steps.gate.outputs.run }}
       reuse: ${{ steps.evidence.outputs.reuse }}
@@ -212,7 +215,7 @@ jobs:
     # children run in parallel; the historical single-job serialisation of
     # these sweeps is gone.
     name: store backend (${{ matrix.backend }})
-    runs-on: ubuntu-latest
+    runs-on: *ubuntu
     container:
       image: debian:testing # deliberately unpinned; see the header comment
     timeout-minutes: 45
@@ -372,7 +375,7 @@ jobs:
     # Independent job: no needs edge to store-features, so it runs
     # concurrently with the backend children.
     name: backend-matrix (exactly-one-backend gate)
-    runs-on: ubuntu-latest
+    runs-on: *ubuntu
     container:
       image: debian:testing # deliberately unpinned; see the header comment
     timeout-minutes: 30
@@ -519,7 +522,7 @@ jobs:
     # sanitizer job fails the gate. The display name is the ruleset context;
     # change it only together with the ruleset.
     name: store backends (kyotocabinet / tkrzw / bdb)
-    runs-on: ubuntu-latest
+    runs-on: *ubuntu
     if: ${{ !cancelled() }}
     needs:
       - changes
@@ -555,7 +558,7 @@ jobs:
     # no C targets and no rustc `undefined` sanitizer it instrumented
     # nothing, and it was removed.
     name: tkrzw FFI under address
-    runs-on: ubuntu-latest
+    runs-on: *ubuntu
     container:
       image: debian:testing # deliberately unpinned; see the header comment
       # ASan requires syscall leeway no other job here needs: Docker's
@@ -705,7 +708,7 @@ jobs:
     # harness half needs libdb-dev (the system libdb the backend links
     # and the -ldb it compiles against) and gcc for the C probes.
     name: bdb backend sanitizers
-    runs-on: ubuntu-latest
+    runs-on: *ubuntu
     container:
       image: debian:testing # deliberately unpinned; see the header comment
       # ASan requires the same seccomp leeway as the tkrzw lane above.
@@ -820,7 +823,7 @@ jobs:
     # wrong allocator is what ASan and LSan see. Fedora and Arch ship this
     # backend. Feeds store-backends-gate.
     name: kc backend sanitizers
-    runs-on: ubuntu-latest
+    runs-on: *ubuntu
     container:
       image: debian:testing # deliberately unpinned; see the header comment
       # ASan requires the same seccomp leeway as the tkrzw lane above.
@@ -929,7 +932,7 @@ jobs:
     name: tested tree ${{ needs.changes.outputs.tree }}
     needs: [changes, store-backends-gate, store-features, backend-matrix, tkrzw-sanitizers, bdb-sanitizers, kc-sanitizers]
     if: ${{ needs.changes.outputs.run == 'true' && needs.changes.outputs.reuse == 'false' && needs.changes.result == 'success' && needs.store-backends-gate.result == 'success' && needs.store-features.result == 'success' && needs.backend-matrix.result == 'success' && needs.tkrzw-sanitizers.result == 'success' && needs.bdb-sanitizers.result == 'success' && needs.kc-sanitizers.result == 'success' }}
-    runs-on: ubuntu-latest
+    runs-on: *ubuntu
     steps:
       - run: echo 'All concrete verification lanes passed for this checkout tree.'
 
@@ -937,6 +940,6 @@ jobs:
     name: reused tree ${{ needs.changes.outputs.tree }} from run ${{ needs.changes.outputs.source_run }}
     needs: [changes, store-backends-gate]
     if: ${{ !cancelled() && needs.changes.outputs.reuse == 'true' && needs.store-backends-gate.result == 'success' }}
-    runs-on: ubuntu-latest
+    runs-on: *ubuntu
     steps:
       - run: echo 'The original full PR run was revalidated for this exact tree.'

@@ -78,7 +78,10 @@ concurrency:
 
 jobs:
   changes:
-    runs-on: ubuntu-latest
+    # The one Linux runner label in this workflow; the other Linux jobs
+    # alias it (*ubuntu). Pinned, not ubuntu-latest, so a runner-image
+    # move (26.04: actions/runner-images#14748) happens here under review.
+    runs-on: &ubuntu ubuntu-26.04
     outputs:
       oracle: ${{ steps.scope.outputs.oracle }}
     steps:
@@ -108,7 +111,7 @@ jobs:
   oracle-image:
     needs: changes
     if: needs.changes.outputs.oracle == 'true'
-    runs-on: ubuntu-latest
+    runs-on: *ubuntu
     timeout-minutes: 90
     permissions:
       contents: read
@@ -321,7 +324,7 @@ jobs:
   oracle-image-arm64:
     needs: changes
     if: needs.changes.outputs.oracle == 'true'
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 120
     permissions:
       contents: read
@@ -505,7 +508,7 @@ jobs:
   compatibility-environment:
     needs: changes
     if: needs.changes.outputs.oracle != 'true'
-    runs-on: ubuntu-latest
+    runs-on: *ubuntu
     timeout-minutes: 90
     permissions:
       contents: read
