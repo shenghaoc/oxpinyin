@@ -228,14 +228,7 @@ impl UserIndex {
     /// Appends one DBM record. The walk is ascending, so offsets stay
     /// sorted; `finish_load` repairs a walk that is not.
     pub(crate) fn push_record(&mut self, key: &[u8], value: &[u8]) {
-        let offset = u32::try_from(self.arena.len()).unwrap_or(u32::MAX);
-        self.arena
-            .extend_from_slice(&u32::try_from(key.len()).unwrap_or(u32::MAX).to_le_bytes());
-        self.arena
-            .extend_from_slice(&u32::try_from(value.len()).unwrap_or(u32::MAX).to_le_bytes());
-        self.arena.extend_from_slice(key);
-        self.arena.extend_from_slice(value);
-        self.offsets.push(offset);
+        append_record(&mut self.arena, &mut self.offsets, key, value);
     }
 
     /// Sorts the offset vector after a walk that did not arrive in key
@@ -402,52 +395,96 @@ impl UserIndex {
         }
     }
 
-    /// The pin's mask walk. Berkeley DB gives each record a fresh chunk;
-    /// Kyoto Cabinet and tkrzw reuse one entry per length, so a shorter
-    /// record written back can keep the previous one's tail (#785). The
-    /// overlay ends holding exactly the bytes the pin stores for every key.
+    /// The pin's mask walk: one pass over every record in key order, as
+    /// `ChewingLargeTable2::mask_out`'s `ProcessEach` makes it
+    /// (`chewing_large_table2_tkrzwdb.cpp:419-491` and its Kyoto Cabinet
+    /// and Berkeley DB twins at 074a2219). Berkeley DB gives each record a
+    /// fresh chunk; Kyoto Cabinet and tkrzw reuse one entry per length, so a
+    /// shorter record written back can keep the previous one's tail (#785).
+    /// The records are rewritten into a new arena in the same pass and the
+    /// overlay is emptied, so no record is held twice.
     pub(crate) fn mask(&mut self, mask: u32, value: u32) {
-        let rows = self.rows();
         #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
-        {
-            let mut chunks: Vec<Vec<u8>> = (0..=MAX_PHRASE_LENGTH)
-                .map(|len| {
-                    if len == 0 {
-                        Vec::new()
-                    } else {
-                        self.slot_bytes(len)
-                    }
-                })
-                .collect();
-            for len in 1..=MAX_PHRASE_LENGTH {
-                let chunk = &mut chunks[len];
-                for (key, record) in rows.iter().filter(|(key, _)| key.len() / 2 == len) {
-                    if chunk.len() < record.len() {
-                        chunk.resize(record.len(), 0);
-                    }
-                    chunk[..record.len()].copy_from_slice(record);
-                    Entry::new(chunk, len).mask_out(mask, value);
-                    self.overlay.insert(key.clone(), chunk.clone());
-                }
-                *self.slot_mut(len) = if chunk.is_empty() {
-                    Slot::Empty
-                } else {
-                    Slot::Bytes(chunk.clone())
-                };
+        let mut chunks: [Vec<u8>; MAX_PHRASE_LENGTH + 1] = std::array::from_fn(|len| {
+            if len == 0 {
+                Vec::new()
+            } else {
+                self.slot_bytes(len)
             }
-        }
+        });
         #[cfg(not(any(feature = "kyotocabinet", feature = "tkrzw")))]
-        {
-            for (key, record) in rows {
-                let mut bytes = record;
-                if let Some(len) = std::num::NonZeroUsize::new(key.len() / 2)
-                    && len.get() <= MAX_PHRASE_LENGTH
-                {
-                    Entry::new(&mut bytes, len.get()).mask_out(mask, value);
+        let mut scratch = Vec::new();
+        let mut arena = Vec::with_capacity(self.arena.len());
+        let mut offsets = Vec::with_capacity(self.offsets.len() + self.overlay.len());
+        let Ok(()) = self.for_each_record::<std::convert::Infallible>(|key, record| {
+            let len = key.len() / 2;
+            if len == 0 || len > MAX_PHRASE_LENGTH {
+                append_record(&mut arena, &mut offsets, key, record);
+                return Ok(());
+            }
+            #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+            let masked = {
+                let chunk = &mut chunks[len];
+                if chunk.len() < record.len() {
+                    chunk.resize(record.len(), 0);
                 }
-                self.overlay.insert(key, bytes);
+                chunk[..record.len()].copy_from_slice(record);
+                Entry::new(chunk, len).mask_out(mask, value);
+                chunk.as_slice()
+            };
+            #[cfg(not(any(feature = "kyotocabinet", feature = "tkrzw")))]
+            let masked = {
+                scratch.clear();
+                scratch.extend_from_slice(record);
+                Entry::new(&mut scratch, len).mask_out(mask, value);
+                scratch.as_slice()
+            };
+            append_record(&mut arena, &mut offsets, key, masked);
+            Ok(())
+        });
+        self.arena = arena;
+        self.offsets = offsets;
+        self.overlay.clear();
+        #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+        for (len, chunk) in chunks.into_iter().enumerate().skip(1) {
+            *self.slot_mut(len) = if chunk.is_empty() {
+                Slot::Empty
+            } else {
+                Slot::Bytes(chunk)
+            };
+        }
+    }
+
+    /// Visits every record in ascending key order, arena and overlay
+    /// merged, without materialising a row vector.
+    pub(crate) fn for_each_record<E>(
+        &self,
+        mut visit: impl FnMut(&[u8], &[u8]) -> Result<(), E>,
+    ) -> Result<(), E> {
+        let mut overlay = self.overlay.iter().peekable();
+        for offset in &self.offsets {
+            let key = key_at(&self.arena, *offset);
+            while let Some((overlay_key, overlay_value)) = overlay.peek() {
+                if overlay_key.as_slice() < key {
+                    visit(overlay_key, overlay_value)?;
+                    overlay.next();
+                } else {
+                    break;
+                }
+            }
+            if let Some((overlay_key, overlay_value)) = overlay.peek()
+                && overlay_key.as_slice() == key
+            {
+                visit(overlay_key, overlay_value)?;
+                overlay.next();
+            } else {
+                visit(key, value_at(&self.arena, *offset))?;
             }
         }
+        for (key, value) in overlay {
+            visit(key, value)?;
+        }
+        Ok(())
     }
 
     fn slot_mut(&mut self, len: usize) -> &mut Slot {
@@ -592,6 +629,17 @@ impl UserIndex {
         }
         overlong
     }
+}
+
+/// Appends one `[u32 key_len][u32 value_len][key][value]` record and its
+/// offset.
+fn append_record(arena: &mut Vec<u8>, offsets: &mut Vec<u32>, key: &[u8], value: &[u8]) {
+    let offset = u32::try_from(arena.len()).unwrap_or(u32::MAX);
+    arena.extend_from_slice(&u32::try_from(key.len()).unwrap_or(u32::MAX).to_le_bytes());
+    arena.extend_from_slice(&u32::try_from(value.len()).unwrap_or(u32::MAX).to_le_bytes());
+    arena.extend_from_slice(key);
+    arena.extend_from_slice(value);
+    offsets.push(offset);
 }
 
 fn key_at(arena: &[u8], offset: u32) -> &[u8] {
