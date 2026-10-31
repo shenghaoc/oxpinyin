@@ -930,7 +930,7 @@
       "schemes": [
         7
       ],
-      "note": "zhuyin STANDARD_DVORAK (7), both facades: the pin aborts, the subject refuses"
+      "note": "zhuyin STANDARD_DVORAK (7), both facades: the pin aborts; the pinyin subject aborts too (class (c) retired 2026-10-31 UTC), the zhuyin subject refuses"
     },
     {
       "row": "5d",
@@ -942,7 +942,7 @@
         -2147483648,
         2147483647
       ],
-      "note": "out-of-enum zhuyin scheme, both facades: the pin aborts, the subject refuses"
+      "note": "out-of-enum zhuyin scheme, both facades: the pin aborts; the pinyin subject aborts too (class (c) retired 2026-10-31 UTC), the zhuyin subject refuses"
     }
   ],
   "mutations": {

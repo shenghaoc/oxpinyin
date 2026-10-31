@@ -30,7 +30,7 @@ def register(case, *, wrap_total_to_zero):
         case('facade-total-zero-ranks-nothing-' + _label, control=True, issues=('540',))(_no_rank(_offset, _sort))
 
 
-    @case('facade-total-zero', abort=False, issues=('540',))
+    @case('facade-total-zero', abort=False, sigabrt=True, issues=('540',))
     def _(k):
         """Apply the total-wrap delta and record candidate guessing at byte offset zero.
 

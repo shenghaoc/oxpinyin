@@ -141,7 +141,7 @@ def register(case, *, _craft_hash, crafted_bigram_context, index_file_rows):
                 'is-user': k.fn('is_user_candidate', B, P, P)(inst, row)}
 
 
-    @case('abort-choose-candidate-predicted-bigram-row', abort=0, cells=('bdb',))
+    @case('abort-choose-candidate-predicted-bigram-row', abort=0, sigabrt=True, cells=('bdb',))
     def _(k):
         """Plant 我-to-你好 predictions and pass a kind-4 row to ordinary candidate selection.
 
@@ -184,7 +184,7 @@ def register(case, *, _craft_hash, crafted_bigram_context, index_file_rows):
         return {'ret': k.fn('mask_out', B, P, U, U)(ctx, 0xFFFFFFFF, 1)}
 
 
-    @case('abort-mask-out-non-token-bigram-key', abort=False)
+    @case('abort-mask-out-non-token-bigram-key', abort=False, sigabrt=True)
     def _(k):
         """Mask a profile with a two-byte bigram key and a four-byte total value."""
         # The pin's `mask_out` walks the container with `get_all_items`, whose
@@ -206,7 +206,7 @@ def register(case, *, _craft_hash, crafted_bigram_context, index_file_rows):
     # left alone, so `SingleGram::mask_out` leaves a residual total and
     # `Bigram::mask_out`'s `get_length` assert dies (`ngram.cpp:70`,
     # `ngram_bdb.cpp:243`).
-    @case('abort-mask-out-residual-bigram-gram', abort=False)
+    @case('abort-mask-out-residual-bigram-gram', abort=False, sigabrt=True)
     def _(k):
         """Mask successor zero from a planted gram with total seven and a zero-count item."""
         ctx = crafted_bigram_context(
@@ -222,7 +222,7 @@ def register(case, *, _craft_hash, crafted_bigram_context, index_file_rows):
         return {'ret': k.fn('mask_out', B, P, U, U)(ctx, 0xFFFFFFFF, 0)}
 
 
-    @case('abort-begin-bigram-phrases-non-token-key', abort=False)
+    @case('abort-begin-bigram-phrases-non-token-key', abort=False, sigabrt=True)
     def _(k):
         """Begin bigram export after planting a two-byte key, returning iterator-pointer truthiness.
 

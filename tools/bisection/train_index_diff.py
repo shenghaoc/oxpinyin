@@ -2,6 +2,10 @@
 """Requested-row training differential; isolated libraries and aborting calls.
 
 Usage: train-index-diff.py CELL PREFIX PINYIN_SO ZHUYIN_SO [--expect-parent]
+An index past nonempty results (`len`, `255`) is the pin's assert
+(`pinyin.cpp:2684`); both sides die of SIGABRT before writing. Under
+--expect-parent the subject is the refusing build before the 2026-10-31 UTC
+ruling: `false`, no write and one `libpinyin` warning.
 Needs native backend dump tools. Missing inputs and zero cases fail.
 Captures live only in a temporary directory, removed even on failure.
 """
@@ -196,20 +200,23 @@ def main():
                     assert results[0][0].returncode == -6, results[0][0].stderr
                 else:
                     assert results[0][0].returncode == 0, results[0][0].stderr
-                assert results[1][0].returncode == 0, results[1][0].stderr
+                subject_aborts = bounds and not args.expect_parent
+                assert results[1][0].returncode == (-6 if subject_aborts else 0), results[1][0].stderr
                 if not bounds:
                     assert all(not result[0].stderr for result in results), [result[0].stderr for result in results]
                 actual = results[1][1][-1]
-                if bounds and not args.expect_parent:
+                if subject_aborts:
+                    # The worker printed its rows, then died in `pinyin_train`
+                    # with nothing written (no assertion line, a warning-free
+                    # stderr).
+                    assert len(results[1][1]) == 1 and not results[1][0].stderr, results[1][0].stderr
+                    actual = dict(trained='SIGABRT', saved=False, warnings=[])
+                elif bounds:
                     assert actual['trained'] is False and actual['saved'] is False
                     assert len(actual['warnings']) == 1
                     assert actual['warnings'][0]['domain'] == 'libpinyin'
                     assert actual['warnings'][0]['level'] == 16
                     assert len(results[1][0].stderr.splitlines()) == 1
-                elif bounds:
-                    assert actual['trained'] and actual['saved'] and not actual['warnings']
-                elif args.expect_parent and case == 'choose-only':
-                    assert actual['trained'] and not results[0][1][-1]['trained']
                 else:
                     assert actual['trained'] == results[0][1][-1]['trained']
                     assert actual['saved'] == results[0][1][-1]['saved']
@@ -242,8 +249,7 @@ def main():
                 subject_state = records(profiles[1])
                 reference_state = records(seed if bounds else profiles[0])
                 equal = subject_state == reference_state
-                expected_equal = not (args.expect_parent and (bounds or case in ['1', '2', 'choose-only']))
-                assert equal == expected_equal, (mode, case, equal, expected_equal)
+                assert equal, (mode, case)
                 print(json.dumps(dict(cell=args.cell, mode=mode, case=case, rows=rows, pin_return='SIGABRT' if bounds else results[0][1][-1]['trained'], subject_return=actual['trained'], records_and_dbin_equal=equal, stderr_lines=[len(r[0].stderr.splitlines()) for r in results], warnings=actual['warnings'], exported_bigram_records=[(key.hex(), value.hex()) for key, value in subject_state.get('bigram', [])], dbin_sha256={name: hashlib.sha256(value).hexdigest() for name, value in subject_state.items() if name.endswith('.dbin')}, raw_index_equal={name: (profiles[0] / name).read_bytes() == (profiles[1] / name).read_bytes() for name in ['user_pinyin_index.bin', 'user_phrase_index.bin'] if not bounds and (profiles[0] / name).exists()})), flush=True)
                 count += 1
     assert count == 10
