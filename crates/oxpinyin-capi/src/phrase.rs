@@ -40,17 +40,16 @@ pub extern "C" fn pinyin_phrase_segment(
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
     let inst = unsafe { instance_mut(instance) };
-    // GLib 2.84.4 gutf8.c:240 logs before the following UCS-4 NULL
-    // dereference. Preserve that defined diagnostic, then take the ruled
-    // no-input outcome (074a2219 phrase_lookup.cpp:119-157,382-428).
+    // The pin's first call, `g_utf8_strlen(sentence, -1)` (074a2219
+    // pinyin.cpp:1450), made through GLib: on NULL, GLib's own precondition
+    // logs its critical (GLib 2.84.4 gutf8.c:240). The pin then dereferences
+    // NULL in `g_utf8_to_ucs4`; take the ruled no-input outcome instead
+    // (074a2219 phrase_lookup.cpp:119-157,382-428).
     if sentence.is_null() {
-        // SAFETY: All three arguments are static NUL-terminated strings.
+        // SAFETY: GLib checks `p != NULL || max == 0` itself, logs and
+        // returns 0 without reading `p`.
         unsafe {
-            glib_sys::g_return_if_fail_warning(
-                c"GLib".as_ptr(),
-                c"g_utf8_strlen".as_ptr(),
-                c"p != NULL || max == 0".as_ptr(),
-            );
+            glib_sys::g_utf8_strlen(sentence, -1);
         }
         return match inst.core.session.phrase_segment("") {
             Ok((matched, tokens)) => {
