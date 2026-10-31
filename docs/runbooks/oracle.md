@@ -511,6 +511,7 @@ and bench authors call it rather than `pinyin_train` directly
 
 Classify it against `docs/findings/compatibility-policy.md` before
 touching code: reproducing the pin is the default, and only classes
-(a)–(c) may be recorded in `docs/findings/upstream-divergences.md`.
+(a)–(b) may be recorded (class (c) was retired 2026-10-31 UTC; a pin
+abort is reproduced, not recorded) in `docs/findings/upstream-divergences.md`.
 Anything else is a defect to fix. A frozen pin that moves is a STOP
 (`goldens-and-pins.md`).
