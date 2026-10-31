@@ -257,6 +257,16 @@ where
                 self.collect_window_scan(remaining.as_bytes(), collected, &mut scratch)?;
                 self.scan_unreadable = unreadable;
             }
+            // The rows the pin's `_compute_frequency_of_items` runs on: the
+            // freshly searched list, before its sort, the LONGER and
+            // sentence prepends and `_remove_duplicated_items_by_phrase_string`
+            // (`pinyin.cpp:2283` against `:2300`, `zhuyin.cpp:1526` against
+            // `:1537`). Its `0 < total_freq` assert (`pinyin.cpp:1859`,
+            // `zhuyin.cpp:1261`) runs for every row but an addon or predicted
+            // prefix row (`pinyin.cpp:1812-1840`); libzhuyin skips none.
+            self.scan_ranked_phrase = collected
+                .iter()
+                .any(|candidate| candidate.kind() == CandidateKind::Phrase);
 
             // The scan's result stands even when it found nothing. Tokens the
             // table lacks rank as zero rather than falling back.
@@ -661,6 +671,7 @@ where
             });
         }
         self.scan_unreadable = false;
+        self.scan_ranked_phrase = false;
         let mut items = Vec::new();
         if offset < self.input.len() && !self.spans_a_matrix_key(offset)? {
             items.push(Candidate::new(
@@ -682,7 +693,9 @@ where
             return Ok(CandidateList::from_vec(items));
         }
         self.scan_window(offset, &mut items, true)?;
-        Ok(CandidateList::from_vec(items).with_unreadable_item(self.scan_unreadable))
+        Ok(CandidateList::from_vec(items)
+            .with_unreadable_item(self.scan_unreadable)
+            .with_ranked_phrase_row(self.scan_ranked_phrase))
     }
 
     /// Builds the candidate window over spans ENDING at byte `offset` in the
@@ -731,6 +744,7 @@ where
             });
         }
         self.scan_unreadable = false;
+        self.scan_ranked_phrase = false;
         let mut items = Vec::new();
         // A span cannot end at the composition start, and an end on an
         // apostrophe separator byte is upstream's empty end column: the
@@ -740,7 +754,9 @@ where
             return Ok(CandidateList::from_vec(items));
         }
         self.scan_window_ending(offset, &mut items)?;
-        Ok(CandidateList::from_vec(items).with_unreadable_item(self.scan_unreadable))
+        Ok(CandidateList::from_vec(items)
+            .with_unreadable_item(self.scan_unreadable)
+            .with_ranked_phrase_row(self.scan_ranked_phrase))
     }
 
     /// The backward-anchored scan proper: the complete retained parse, every
@@ -780,6 +796,7 @@ where
         let mut keys: Vec<RankKey> = Vec::new();
         let mut slice_keys: Vec<(RankKey, u32)> = Vec::new();
         let mut unreadable = false;
+        let mut ranked_phrase = false;
 
         for start in 0..bound {
             // The pin ranks each `len` slice on its own, with the previous
@@ -818,6 +835,11 @@ where
             if group.is_empty() {
                 continue;
             }
+            // Each `len` slice's rows are scored before the final dedup
+            // (`zhuyin.cpp:1607` against `:1630`).
+            ranked_phrase |= group
+                .iter()
+                .any(|candidate| candidate.kind() == CandidateKind::Phrase);
             // Every row of this slice spans `[start, offset)` — the pin's
             // `template_item.m_begin = start; m_end = offset`
             // (`zhuyin.cpp:1595`). The retained matrix's coordinates are
@@ -859,6 +881,7 @@ where
         };
 
         self.scan_unreadable = unreadable;
+        self.scan_ranked_phrase = ranked_phrase;
         self.prepend_nbest_rows(out);
         Ok(bound)
     }

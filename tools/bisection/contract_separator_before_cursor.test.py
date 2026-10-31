@@ -17,7 +17,7 @@ import contract_separator_before_cursor as family
 EXPECTED_COUNT = 1360
 EXPECTED_FIRST = ('separator/pinyin/0/parse/0', (), {'mode': 'pinyin', 'control': True, 'issues': ('640',)})
 EXPECTED_LAST = ("allocator-zero/zhuyin/xi1'an1/key/4", (), {'mode': 'zhuyin', 'abort': False, 'issues': ('681',)})
-EXPECTED_SHA256 = '7c54dcf8bd614532e8f65e86e0e45bf170c6133ff5f06fd319a68feacff691ff'
+EXPECTED_SHA256 = 'ff4529525e916d5ebf4cdd4846f79790f0229f7fe5e4105f85abf386a23cded2'
 
 
 def declarations():

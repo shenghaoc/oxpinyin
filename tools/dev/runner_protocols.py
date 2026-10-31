@@ -190,6 +190,19 @@ def open_counter(ctx: Context, args: Sequence[str]) -> int:
                     else:
                         ctx.emit(f'  oracle: FAIL - expected exit 134, got {rc}', error=True)
                         failed = True
+                elif library == 'pinyin':
+                    # The pinyin facade reproduces the pin's `abort()`
+                    # (register row 44, 2026-10-31 UTC): SIGABRT, no
+                    # warning line. The zhuyin facade still refuses below.
+                    if rc == 134:
+                        ctx.emit('  oxpinyin: exit 134 (SIGABRT)')
+                    else:
+                        ctx.emit(f'  oxpinyin: FAIL - expected exit 134, got {rc}', error=True)
+                        failed = True
+                    count = sum(CLASS_C in line for line in result.stderr.splitlines())
+                    if count:
+                        ctx.emit(f'  oxpinyin: FAIL - expected no refusal line, got {count}', error=True)
+                        failed = True
                 else:
                     if b'init: NULL' in result.stdout.splitlines():
                         ctx.emit('  oxpinyin: init answered NULL')

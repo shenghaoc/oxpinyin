@@ -259,6 +259,16 @@ fn writes_null_chunk_line(dir: &Path, reads_as_a_chunk: impl FnOnce(&Path) -> bo
     cfg!(unix) && !reads_as_a_chunk(dir)
 }
 
+/// Whether the pin's `MemoryChunk::mmap` asserts (`memory_chunk.h:493`) on
+/// `dir` read as the chunk of a row that names none — the complement of
+/// [`writes_null_chunk_line`]: where it does not assert, it writes
+/// `mmap %s failed!` and dies of SIGSEGV on the empty chunk instead (class
+/// (b)). The C facades abort the process on the assert shape.
+#[must_use]
+pub fn null_chunk_asserts(dir: &Path) -> bool {
+    !writes_null_chunk_line(dir, directory_reads_as_a_chunk)
+}
+
 /// Writes the pin's `mmap %s failed!` line for `dir` with
 /// [`c_stderr::mmap_failed`], if [`writes_null_chunk_line`] says the pin
 /// writes it on this file system.

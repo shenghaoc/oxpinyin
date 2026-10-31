@@ -409,13 +409,13 @@ def register(case, *, CASES, crafted_bigram_context, index_file_rows, token_reus
         return {'ret': k.fn('save', B, P)(ctx)}
 
 
-    @case('abort-save-chunk-header-length', abort=False, issues=('525',))
+    @case('abort-save-chunk-header-length', abort=False, sigabrt=True, userdir=True, issues=('525',))
     def _(k):
         """Attempt a pinyin save whose first chunk-header write targets /dev/full."""
         return save_header_dev_full(k)
 
 
-    @case('abort-save-chunk-header-checksum', abort=False, issues=('525',))
+    @case('abort-save-chunk-header-checksum', abort=False, sigabrt=True, userdir=True, issues=('525',))
     def _(k):
         """Attempt a pinyin save with a four-byte process file-size limit."""
         return save_header_rlimit(k)

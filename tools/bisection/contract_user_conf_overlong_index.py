@@ -233,7 +233,7 @@ def register(case, *, _craft_db):
         return ctx
 
 
-    @case('abort-mask-out-overlong-index-key', abort=False, issues=('525', 'row:84'))
+    @case('abort-mask-out-overlong-index-key', abort=False, sigabrt=True, issues=('525', 'row:84'))
     def _(k):
         """Mask a reopened profile containing a 17-word user index key and record the flag."""
         ctx = overlong_index_context(k)
@@ -249,7 +249,7 @@ def register(case, *, _craft_db):
         return {'ret': k.fn('mask_out', B, P, U, U)(ctx, 0xFFFFFFFF, 0)}
 
 
-    @case('abort-guess-candidates-overlong-index-key', abort=False, issues=('525', 'row:84'))
+    @case('abort-guess-candidates-overlong-index-key', abort=False, sigabrt=True, issues=('525', 'row:84'))
     def _(k):
         """Guess ni candidates against a user index containing its key and a 17-word extension.
 
@@ -262,7 +262,7 @@ def register(case, *, _craft_db):
         return {'ret': k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0)}
 
 
-    @case('abort-guess-candidates-overlong-odd-index-key', abort=False, issues=('525', 'row:84'))
+    @case('abort-guess-candidates-overlong-odd-index-key', abort=False, sigabrt=True, issues=('525', 'row:84'))
     def _(k):
         """Guess ni candidates with a 35-byte user index key extending its parsed syllable.
 
@@ -279,7 +279,7 @@ def register(case, *, _craft_db):
         return {'ret': k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0)}
 
 
-    @case('abort-mask-out-overlong-odd-index-key', abort=False, issues=('525', 'row:84'))
+    @case('abort-mask-out-overlong-odd-index-key', abort=False, sigabrt=True, issues=('525', 'row:84'))
     def _(k):
         """Mask a user index containing a normal key and a 17-word key with one trailing byte."""
         ctx = overlong_index_context(
@@ -290,14 +290,14 @@ def register(case, *, _craft_db):
     # A key of no whole word (empty, or one byte) reads as `size / 2 == 0` words
     # and `mask_out`'s `switch` has no such case: `default: abort()`
     # (`chewing_large_table2_bdb.cpp:529`, the KC twin :499, tkrzw :466).
-    @case('abort-mask-out-empty-index-key', abort=False, userdir=True, issues=('525', 'row:84'))
+    @case('abort-mask-out-empty-index-key', abort=False, sigabrt=True, userdir=True, issues=('525', 'row:84'))
     def _(k):
         """Mask a reopened user index containing an empty key and one normal key."""
         ctx = overlong_index_context(k, rows=lambda first: [b'', first])
         return {'ret': k.fn('mask_out', B, P, U, U)(ctx, 0xFFFFFFFF, 0)}
 
 
-    @case('abort-mask-out-one-byte-index-key', abort=False, userdir=True, issues=('525', 'row:84'))
+    @case('abort-mask-out-one-byte-index-key', abort=False, sigabrt=True, userdir=True, issues=('525', 'row:84'))
     def _(k):
         """Mask a reopened user index containing a normal key and a one-byte key."""
         ctx = overlong_index_context(k, rows=lambda first: [first, b'\x07'])
@@ -343,7 +343,7 @@ def register(case, *, _craft_db):
         return ctx
 
 
-    @case('abort-guess-candidates-overlong-system-index-key', abort=False, userdir=True, issues=('525', 'row:84'))
+    @case('abort-guess-candidates-overlong-system-index-key', abort=False, sigabrt=True, userdir=True, issues=('525', 'row:84'))
     def _(k):
         """Guess ni candidates after appending a 17-word key to a copied system index."""
         ctx = system_overlong_index_context(k)
@@ -352,7 +352,7 @@ def register(case, *, _craft_db):
         return {'ret': k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0)}
 
 
-    @case('abort-guess-candidates-overlong-odd-system-index-key', abort=False, userdir=True, issues=('525', 'row:84'))
+    @case('abort-guess-candidates-overlong-odd-system-index-key', abort=False, sigabrt=True, userdir=True, issues=('525', 'row:84'))
     def _(k):
         """Guess ni candidates after appending a 35-byte key to a copied system index."""
         ctx = system_overlong_index_context(k, trailing=b'\x07')
@@ -393,7 +393,7 @@ def register(case, *, _craft_db):
         return {'guess_hao': guessed, 'reparse_ni': reparsed}
 
 
-    @case('abort-guess-candidates-overlong-incomplete-index-key', abort=False, issues=('525', 'row:84'))
+    @case('abort-guess-candidates-overlong-incomplete-index-key', abort=False, sigabrt=True, issues=('525', 'row:84'))
     def _(k):
         """Guess n'an against crafted incomplete-key prefixes with PINYIN_INCOMPLETE enabled.
 

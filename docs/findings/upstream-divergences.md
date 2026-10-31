@@ -4357,3 +4357,22 @@ handler or stderr receives, and the pin's abort under GLib fatal-critical
 settings. Recorded and bound in
 [1297-segment-critical.md](1297-segment-critical.md) and
 [1297-layout-criticals.md](1297-layout-criticals.md).
+
+### Reproduced library aborts write no assertion line (2026-10-31 UTC)
+
+**POLICY-ACCEPTED, stderr only.** Since class (c) was retired, oxpinyin
+reproduces each pin `assert` site with `std::process::abort()` and does
+not rebuild glibc's `Assertion '…' failed.` line; the SIGABRT status, the
+earlier stderr bytes and the files left are MATCH. Recorded in
+[pin-abort-assert-line.md](pin-abort-assert-line.md).
+
+### Pin aborts reproduced in the pinyin C facade (2026-10-31 UTC)
+
+**Pin behaviour reproduced.** Member 3 of the class (c) retirement: the
+pinyin C facade aborts the process with `std::process::abort()` at the
+pin's `assert` and `abort()` sites of rows 4, 5a, 10, 14, 38, 45, 63, 64,
+81, 88, 93 and 95, and on the pinyin arm of rows 5c, 5d, 6, 19, 21, 44,
+61, 62, 66, 74, 77, 79, 82, 84, 86, 87 and 94. `abort()` sites are MATCH;
+`assert` sites are POLICY-ACCEPTED for the missing assertion line only.
+Recorded, with the pin sites, items and cases, in
+[pin-aborts-pinyin-facade.md](pin-aborts-pinyin-facade.md).

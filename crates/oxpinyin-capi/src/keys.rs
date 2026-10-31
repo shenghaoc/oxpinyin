@@ -57,15 +57,12 @@ pub extern "C" fn pinyin_parse_full_pinyin(
         onepinyin
     ))
     .unwrap_or_default();
-    // Class (c), `pinyin_parser2.cpp:170`: `parse_one_key` asserts the text
-    // holds no `'`, before it touches `*onekey`.
+    // Register row 21, `pinyin_parser2.cpp:170`: `parse_one_key` asserts
+    // the text holds no `'`, and the process aborts.
     if oxpinyin_capi_marshal::borrow_c_string!(onepinyin)
         .is_some_and(|input| input.to_bytes().contains(&b'\''))
     {
-        crate::ffi::log_warning(
-            "pinyin_parse_full_pinyin: assertion 'NULL == strchr(input, ''')' failed",
-        );
-        return false;
+        std::process::abort();
     }
     // SAFETY: Null-checked above; written through the caller's
     // storage exactly once per branch.
@@ -261,8 +258,8 @@ fn display_string_getter(
 ///
 /// `CHEWING_ZERO_MIDDLE == m_middle && CHEWING_ZERO_FINAL == m_final`
 /// (`pinyin.cpp:2758-2766`). Upstream asserts the tone is zero in the
-/// true branch — a toned initial-only key aborts the pin; oxpinyin answers
-/// `false` and emits one warning (class (c), register row 4).
+/// true branch — a toned initial-only key aborts the pin, and the process
+/// aborts here too (register row 4).
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_get_pinyin_is_incomplete(
     instance: *mut PinyinInstance,
@@ -275,13 +272,10 @@ pub extern "C" fn pinyin_get_pinyin_is_incomplete(
     // SAFETY: Null-checked above.
     let core = unsafe { *key }.to_core();
     let incomplete = core.middle == 0 && core.final_ == 0;
-    // Class (c), `pinyin.cpp:2769`: `assert(CHEWING_ZERO_TONE == key->m_tone)`
-    // on an initial-only key.
+    // Register row 4, `pinyin.cpp:2769`:
+    // `assert(CHEWING_ZERO_TONE == key->m_tone)` on an initial-only key.
     if incomplete && core.tone != 0 {
-        crate::ffi::log_warning(
-            "pinyin_get_pinyin_is_incomplete: assertion 'CHEWING_ZERO_TONE == key->m_tone' failed",
-        );
-        return false;
+        std::process::abort();
     }
     incomplete
 }

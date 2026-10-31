@@ -12,13 +12,13 @@ import contract_toned_keys_zhuyin_refusals as family
 
 
 # (case ID, positional options, keyword options) in registration order.
-EXPECTED = [('abort-is-incomplete-toned-initial', (), {'abort': False, 'issues': ('525', 'row:4')}),
+EXPECTED = [('abort-is-incomplete-toned-initial', (), {'sigabrt': True, 'abort': False, 'issues': ('525', 'row:4')}),
             ('abort-guess-candidates-toned-initial-before-offset',
              (),
-             {'abort': False, 'issues': ('525', 'row:4', '662')}),
-            ('abort-guess-candidates-toned-initial', (), {'abort': False, 'issues': ('525', 'row:4')}),
-            ('abort-guess-sentence-toned-initial', (), {'abort': False, 'issues': ('525', 'row:4')}),
-            ('abort-guess-sentence-toned-initial-after-key', (), {'abort': False, 'issues': ('525', 'row:4')}),
+             {'sigabrt': True, 'abort': False, 'issues': ('525', 'row:4', '662')}),
+            ('abort-guess-candidates-toned-initial', (), {'sigabrt': True, 'abort': False, 'issues': ('525', 'row:4')}),
+            ('abort-guess-sentence-toned-initial', (), {'sigabrt': True, 'abort': False, 'issues': ('525', 'row:4')}),
+            ('abort-guess-sentence-toned-initial-after-key', (), {'sigabrt': True, 'abort': False, 'issues': ('525', 'row:4')}),
             ('toned-initial-neighbours', (), {'control': True, 'issues': ('525', 'row:4')}),
             ('abort-zhuyin-get-left-zhuyin-offset-past-matrix',
              (),
@@ -66,8 +66,8 @@ EXPECTED = [('abort-is-incomplete-toned-initial', (), {'abort': False, 'issues':
             ('zhuyin-scheme-and-library-neighbours',
              (),
              {'control': True, 'issues': ('525',), 'mode': 'zhuyin'}),
-            ('abort-get-right-pinyin-offset-empty-matrix', (), {'abort': False, 'issues': ('525',)}),
-            ('abort-guess-candidates-past-matrix', (), {'abort': False, 'issues': ('525',)})]
+            ('abort-get-right-pinyin-offset-empty-matrix', (), {'sigabrt': True, 'abort': False, 'issues': ('525',)}),
+            ('abort-guess-candidates-past-matrix', (), {'sigabrt': True, 'abort': False, 'issues': ('525',)})]
 
 
 def declarations():

@@ -13,19 +13,19 @@ import contract_candidate_removals as family
 
 
 # (case ID, positional options, keyword options) in registration order.
-EXPECTED = [('abort-get-candidate-nbest-index-normal-row', (), {'abort': False, 'issues': ('525',)}),
-            ('abort-remove-user-candidate-normal-system-token', (), {'abort': False, 'issues': ('525',)}),
-            ('abort-remove-user-candidate-sentence-row', (), {'abort': False, 'issues': ('525',)}),
-            ('abort-remove-user-candidate-twice', (), {'abort': False, 'issues': ('525',)}),
-            ('abort-remove-user-candidate-missing-phrase-table', (), {'abort': False, 'issues': ('525',)}),
-            ('abort-remove-user-candidate-multi-pron', (), {'abort': False, 'issues': ('525',)}),
+EXPECTED = [('abort-get-candidate-nbest-index-normal-row', (), {'sigabrt': True, 'abort': False, 'issues': ('525',)}),
+            ('abort-remove-user-candidate-normal-system-token', (), {'sigabrt': True, 'abort': False, 'issues': ('525',)}),
+            ('abort-remove-user-candidate-sentence-row', (), {'sigabrt': True, 'abort': False, 'issues': ('525',)}),
+            ('abort-remove-user-candidate-twice', (), {'sigabrt': True, 'abort': False, 'issues': ('525',)}),
+            ('abort-remove-user-candidate-missing-phrase-table', (), {'sigabrt': True, 'abort': False, 'issues': ('525',)}),
+            ('abort-remove-user-candidate-multi-pron', (), {'sigabrt': True, 'abort': False, 'issues': ('525',)}),
             ('abort-remove-user-candidate-short-bigram-value', (), {'abort': False, 'issues': ('525',)}),
-            ('abort-remove-user-candidate-non-token-bigram-key', (), {'abort': False, 'issues': ('525',)}),
-            ('abort-remove-user-candidate-residual-bigram-gram', (), {'abort': False, 'issues': ('525',)}),
-            ('abort-choose-candidate-predicted-prefix-row', (), {'abort': 0, 'issues': ('525',)}),
-            ('abort-choose-predicted-candidate-normal-row', (), {'abort': False, 'issues': ('525',)}),
-            ('abort-choose-predicted-candidate-sentence-row', (), {'abort': False, 'issues': ('525',)}),
-            ('abort-choose-candidate-without-sentence-offset-1', (), {'abort': 0, 'issues': ('525',)}),
+            ('abort-remove-user-candidate-non-token-bigram-key', (), {'sigabrt': True, 'abort': False, 'issues': ('525',)}),
+            ('abort-remove-user-candidate-residual-bigram-gram', (), {'sigabrt': True, 'abort': False, 'issues': ('525',)}),
+            ('abort-choose-candidate-predicted-prefix-row', (), {'sigabrt': True, 'abort': 0, 'issues': ('525',)}),
+            ('abort-choose-predicted-candidate-normal-row', (), {'sigabrt': True, 'abort': False, 'issues': ('525',)}),
+            ('abort-choose-predicted-candidate-sentence-row', (), {'sigabrt': True, 'abort': False, 'issues': ('525',)}),
+            ('abort-choose-candidate-without-sentence-offset-1', (), {'sigabrt': True, 'abort': 0, 'issues': ('525',)}),
             ('choose-candidate-without-sentence-offset-0', (), {'control': True, 'issues': ('525',)}),
             ('candidate-type-neighbours', (), {'control': True, 'issues': ('525',)})]
 INJECTED = ('_craft_hash',)
