@@ -821,7 +821,7 @@ fn the_gate_never_hides_a_count_or_a_gram_after_a_mask_removal_reload_or_import(
     assert_the_gate_suppresses_nothing(&store, &tokens, "a mask of the replayed library");
     store.load_system_libraries(base.clone()).expect("reload");
     assert_the_gate_suppresses_nothing(&store, &tokens, "a reload");
-    store.unload_system_libraries(base.clone()).expect("unload");
+    store.unload_system_libraries(base.clone());
     store.load_system_libraries(base.clone()).expect("load");
     assert_the_gate_suppresses_nothing(&store, &tokens, "an unload and load");
     drop(store);

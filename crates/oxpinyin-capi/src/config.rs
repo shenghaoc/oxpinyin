@@ -277,16 +277,6 @@ pub extern "C" fn pinyin_load_phrase_library(context: *mut PinyinContext, index:
             );
             false
         }
-        // Class (c), policy row 103: the pin cannot fail here (`unload` is
-        // in memory, an unreadable `.dbin` an empty log, `:264-277`); the
-        // user store refused the replacement, so the library stays unloaded.
-        Err(oxpinyin_facade::LibraryLoadFault::StoreWrite(_)) => {
-            crate::ffi::log_warning(
-                "pinyin_load_phrase_library: the user store could not be written; \
-                 the library stays unloaded",
-            );
-            false
-        }
         // Register rows 91 and 108: the reloaded library's saved `.dbin`
         // merge reached a pin assertion (`pinyin.cpp:276`, then
         // `phrase_index_logger.h:202` or `memory_chunk.h:390`).
@@ -327,15 +317,10 @@ pub extern "C" fn pinyin_unload_phrase_library(context: *mut PinyinContext, inde
     if index != GBK_DICTIONARY {
         return false;
     }
-    // Class (c), policy row 103: the pin's unload is in memory and answers
-    // `true`; a user store that refuses the removal leaves the library loaded.
-    ctx.unload_phrase_library(index).unwrap_or_else(|_| {
-        crate::ffi::log_warning(
-            "pinyin_unload_phrase_library: the user store could not be written; \
-             the library stays loaded",
-        );
-        false
-    })
+    // `FacadePhraseIndex::unload` is in memory and the pin answers `true`
+    // (policy row 103): the session drops the library and its visibility
+    // mask sets, with nothing written and nothing that can fail.
+    ctx.unload_phrase_library(index)
 }
 
 ///
