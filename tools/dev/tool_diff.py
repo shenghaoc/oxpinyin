@@ -18,7 +18,9 @@ from . import pool
 # Each utility's directory in the pin's build tree (utils/*/Makefile.am).
 PIN_UTILITIES = {'gen_pinyin_table': 'utils/storage', 'gen_zhuyin_table': 'utils/storage',
                  'k_mixture_model_to_interpolation': 'utils/training',
-                 'ngseg': 'utils/segment', 'spseg': 'utils/segment', 'mergeseq': 'utils/segment'}
+                 'ngseg': 'utils/segment', 'spseg': 'utils/segment', 'mergeseq': 'utils/segment',
+                 'gen_binary_files': 'utils/storage', 'import_interpolation': 'utils/storage',
+                 'export_interpolation': 'utils/storage'}
 # Utilities whose pin source opens no DBM: the generators read and write text
 # tables, and k_mixture_model_to_interpolation converts stdin to stdout with
 # taglib (no Bigram attach, no phrase-index load). Their observations are the

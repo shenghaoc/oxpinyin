@@ -169,3 +169,54 @@ cases (`ngseg-mini-fixture`, `spseg-mini-fixture`,
 `mergeseq-mini-fixture`): 3 DIFFER, 0 MATCH. The source was restored byte
 for byte (sha256 checked) before the completion run, which returned the
 29 MATCH above.
+
+## Storage utilities (2026-10-31 UTC)
+
+`tool-cases/{gen_binary_files,import_interpolation,export_interpolation}.json`
+hold eight, nine and seven source-derived cases. They cover GLib `--help`
+and an unknown option; positional arguments the pin ignores; a missing
+`table.conf`, `.table`, `punct.table`, `phrase_index.bin` and chunk; empty
+stdin and a wrong model header; and ordinary runs over the committed
+`fixtures/w3` data (with the `.table` inputs the case writes).
+
+Results, one run per cell against that cell's pin build:
+
+| cell | MATCH | DIFFER |
+|---|---|---|
+| tkrzw (reference) | 17 | 7 |
+| bdb | 18 | 6 |
+| kc | 24 | 0 |
+
+Every tkrzw and bdb DIFFER is the writing DBM library's own metadata:
+tkrzw stores a `cyclic_magic` counter and a wall-clock `timestamp` in
+each container it opens for writing; Berkeley DB stores its own header
+fields. Two runs of the *same* binary never produce equal container
+bytes. The pin and subject produce the same logical rows in every one:
+`tkrzw_dbm_util list` and `db5.3_dump` output are identical for every
+index and bigram file, and the chunk files are byte-identical. The
+runner's byte inventory cannot mask those fields without an unsound
+utility-specific rule, so those cases stay DIFFER and this paragraph is
+their record.
+
+A full-model20 run also reproduces every chunk file byte for byte and
+every decoded pinyin-index record (201,658 system and 32,890 addon keys)
+in both key spaces; the raw pinyin-index **value** bytes differ only in
+the tail padding the pin's C++ struct leaves uninitialised and the Rust
+writer zeroes (the same recorded `datagen-compat` artefact, not a record
+difference). Running `import_interpolation` over
+`model20/interpolation2.text` after both `gen_binary_files` runs leaves
+the same chunks and bigram rows, and `export_interpolation` then writes
+byte-identical stdout: 83,457,181 bytes in 1,913,520 lines.
+
+One bdb `exp-missing-bigram` case also differs in stderr: the pin calls
+`Bigram::get_all_items` on the handle a failed `attach` left unopened,
+and libdb itself writes `BDB1565 DB->cursor: method not permitted before
+handle's open method`; the subject's store answers the failed open
+without a library diagnostic. The record is a backend library
+diagnostic, not a pin format.
+
+The named mutation `storage-native-order` replaces
+`Hash::native_keys` with the store's ascending `range_raw` walk in
+`export_interpolation`. The tkrzw run detects it in `exp-mini-fixture`
+(the `\2-gram` group order changes): 1 DIFFER. The source was restored
+byte for byte (sha256 checked) before the completion run.

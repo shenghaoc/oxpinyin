@@ -207,6 +207,7 @@ mod tkrzw {
             .allowlist_function("tkrzw_dbm_check")
             .allowlist_function("tkrzw_dbm_process")
             .allowlist_function("tkrzw_dbm_process_multi")
+            .allowlist_function("tkrzw_dbm_process_each")
             .allowlist_function("tkrzw_dbm_set")
             .allowlist_function("tkrzw_dbm_count")
             .allowlist_function("tkrzw_dbm_is_healthy")

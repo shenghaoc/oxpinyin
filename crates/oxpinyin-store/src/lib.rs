@@ -789,6 +789,31 @@ pub trait RawReadStore: ReadStore {
         })
     }
 
+    /// Every raw key in the container's **own walk order** — the order
+    /// libpinyin's `Bigram::get_all_items` collects
+    /// (`ngram_tkrzwdb.cpp:143-172`, `ngram_bdb.cpp`,
+    /// `ngram_kyotodb.cpp`): Berkeley DB and Kyoto Cabinet advance a
+    /// cursor, tkrzw calls `ProcessEach`, and a hash container's order is
+    /// the library's bucket order, not ascending byte order. Tree
+    /// containers fall back to [`RawReadStore::range_raw`]'s ascending
+    /// walk.
+    ///
+    /// The default is the ascending walk, which is a tree container's own
+    /// order. The hash peers override it so a caller that must reproduce
+    /// the pin's collection order does not substitute a sorted one.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the backend walk fails.
+    fn native_keys(&self) -> Result<Vec<Vec<u8>>, StoreError> {
+        let mut keys = Vec::new();
+        self.range_raw(Bound::Unbounded, Bound::Unbounded, |key, _value| {
+            keys.push(key.to_vec());
+            Ok(())
+        })?;
+        Ok(keys)
+    }
+
     /// The number of raw (unframed) rows — the count half of the raw
     /// keyspace [`RawReadStore::range_raw`] walks. The hash containers
     /// (`bigram.db`) are unordered on some backends, so a completeness

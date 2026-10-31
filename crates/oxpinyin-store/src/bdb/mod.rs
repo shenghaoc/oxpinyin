@@ -390,6 +390,19 @@ impl RawReadStore for BdbStore {
         }
     }
 
+    /// `Bigram::get_all_items`' `DB_NEXT` cursor walk (`ngram_bdb.cpp:143-172`):
+    /// libdb's own record order, which for `DB_HASH` is bucket order.
+    fn native_keys(&self) -> Result<Vec<Vec<u8>>, StoreError> {
+        let mut keys = Vec::new();
+        let mut cursor = self.db.cursor()?;
+        let mut seek = ffi::Seek::First;
+        while let Some(key) = cursor.key(seek)? {
+            keys.push(key.to_vec());
+            seek = ffi::Seek::Next;
+        }
+        Ok(keys)
+    }
+
     fn open_hash_read_only(path: &Path) -> Result<Self, StoreError> {
         Ok(Self {
             db: Db::open(path, ffi::DB_HASH, true, false, ffi::SYSTEM_FILE_MODE)?,

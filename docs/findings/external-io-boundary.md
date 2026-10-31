@@ -248,9 +248,9 @@ The scope includes both installed and `noinst_PROGRAMS` utilities.
 
 | Pin utility | Current oxpinyin analogue | Status |
 | --- | --- | --- |
-| `gen_binary_files` | `oxpinyin-datagen compile` | **GAP** — combined compiler, different name/interface. |
-| `import_interpolation` | datagen `system::read_interpolation` | **GAP** — no same-name standalone tool. |
-| `export_interpolation` | `oxpinyin-emitter` | **GAP** — different name/interface. |
+| `gen_binary_files` | `oxpinyin-utils` `gen_binary_files` | **Ported** at stage 5 (2026-10-31 UTC): the pin's name, options, messages, `.table` scanner, index DBMs and per-library chunks; registered `tool-diff` cases. `oxpinyin-datagen compile` remains the model20 producer until `gen_unigram` is ported. |
+| `import_interpolation` | `oxpinyin-utils` `import_interpolation` | **Ported** at stage 5 (2026-10-31 UTC): the pin's name, option, messages, stdin taglib grammar, unigram delta and bigram `SingleGram` store. |
+| `export_interpolation` | `oxpinyin-utils` `export_interpolation` | **Ported** at stage 5 (2026-10-31 UTC): no options or argument check, the pin's model text, `get_all_items`' native key order and `taglib_token_to_string`. |
 | `gen_pinyin_table` | `oxpinyin-utils` `gen_pinyin_table` | **Ported** at stage 5 (2026-10-30 UTC, #1436): the pin's name, options, messages, input scanner and output. |
 | `gen_zhuyin_table` | `oxpinyin-utils` `gen_zhuyin_table` | **Ported** at stage 5 (2026-10-30 UTC): direct zhuyin rows, native calls, and registered `tool-diff` cases. |
 | `ngseg` | `oxpinyin-utils` `ngseg` | **Ported** at stage 5 (2026-10-31 UTC): the pin's name, options, messages, `table.conf`/phrase-index/bigram inputs and output; `PhraseLookup::get_best_match` over `phrase_index.bin` and `bigram.db`; registered `tool-diff` cases. |

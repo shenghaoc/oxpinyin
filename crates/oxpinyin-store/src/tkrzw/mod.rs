@@ -938,12 +938,74 @@ fn db_rebuild(db: &Db) -> Result<(), StoreError> {
     check(unsafe { ffi::tkrzw_dbm_rebuild(db.0.as_ptr(), c"".as_ptr()) })
 }
 
+/// The key collector [`process_each_keys`] hands to tkrzw. tkrzw calls the
+/// callback once before and once after the walk with a null key; those
+/// calls carry no record.
+struct KeySink<'a> {
+    keys: &'a mut Vec<Vec<u8>>,
+}
+
+/// The `tkrzw_dbm_process_each` callback: copies the record's key.
+///
+/// # Safety
+///
+/// Called only by tkrzw through the one `tkrzw_dbm_process_each` call in
+/// [`process_each_keys`], with `arg` the exclusive `*mut KeySink` that call
+/// passed, and key bytes valid for the callback.
+unsafe extern "C" fn collect_key(
+    arg: *mut c_void,
+    key_ptr: *const c_char,
+    key_len: i32,
+    _value_ptr: *const c_char,
+    _value_len: i32,
+    _new_value_size: *mut i32,
+) -> *const c_char {
+    if !key_ptr.is_null() {
+        // SAFETY: a non-null key pointer from tkrzw's callback contract
+        // points at `key_len` readable bytes for this call.
+        let key = unsafe {
+            std::slice::from_raw_parts(key_ptr.cast::<u8>(), usize::try_from(key_len).unwrap_or(0))
+        };
+        // SAFETY: `arg` is the address of the `KeySink` local in
+        // `process_each_keys`, passed only to this callback and outliving
+        // the call; no other reference to it exists during the walk.
+        let sink = unsafe { &mut *(arg.cast::<KeySink<'_>>()) };
+        sink.keys.push(key.to_vec());
+    }
+    // NOOP keeps the record untouched.
+    rec_proc_noop()
+}
+
+/// Every raw key in `DBM::ProcessEach` order — tkrzw's
+/// `tkrzw_dbm_process_each`, which visits hash buckets in an order of its
+/// own that is not the iterator's.
+fn process_each_keys(db: &Db) -> Result<Vec<Vec<u8>>, StoreError> {
+    let mut keys = Vec::new();
+    {
+        let mut sink = KeySink { keys: &mut keys };
+        // SAFETY: the database is open; `collect_key` and `sink` are the
+        // pair that call takes, the argument outliving the call; the walk
+        // is read-only (`writable=false`), so the callback's NOOP answer
+        // is never applied.
+        let ok = unsafe {
+            ffi::tkrzw_dbm_process_each(
+                db.0.as_ptr(),
+                Some(collect_key),
+                (&raw mut sink).cast::<c_void>(),
+                false,
+            )
+        };
+        check(ok)?;
+    }
+    Ok(keys)
+}
+
 impl crate::RawReadStore for TkrzwStore {
-    fn get_raw(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, crate::StoreError> {
+    fn get_raw(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError> {
         db_get(&self.db, key, value)
     }
 
-    fn contains_raw(&self, key: &[u8]) -> Result<bool, crate::StoreError> {
+    fn contains_raw(&self, key: &[u8]) -> Result<bool, StoreError> {
         db_check(&self.db, key)
     }
 
@@ -957,6 +1019,13 @@ impl crate::RawReadStore for TkrzwStore {
         // leaves every stored key verbatim, the raw counterpart of the
         // framed `scan` walk.
         scan_rows(&self.db, &[], lo, hi, visit)
+    }
+
+    /// `Bigram::get_all_items`' `ProcessEach` (`ngram_tkrzwdb.cpp:143-172`):
+    /// the hash container's bucket order, which is **not** the iterator
+    /// order [`RawReadStore::range_raw`] gives.
+    fn native_keys(&self) -> Result<Vec<Vec<u8>>, StoreError> {
+        process_each_keys(&self.db)
     }
 
     /// The library's own record count — over the whole file, which on
