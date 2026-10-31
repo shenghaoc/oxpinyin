@@ -183,7 +183,6 @@ fn index_keys(keys: &[ChewingKey]) -> [Vec<u8>; 2] {
 }
 
 /// The key `ChewingLargeTable2::search` / `search_suggestion` probe.
-#[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
 fn query_key(keys: &[ChewingKey]) -> Vec<u8> {
     // `contains_incomplete_pinyin` (`pinyin_phrase3.h:146`).
     if keys.iter().any(|key| key.middle == 0 && key.final_ == 0) {
@@ -553,7 +552,6 @@ impl UserIndex {
     }
 
     /// The keys extending `prefix`, arena and overlay merged in order.
-    #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
     pub(crate) fn keys_starting_with(&self, prefix: &[u8]) -> Vec<Vec<u8>> {
         let mut keys: Vec<Vec<u8>> = Vec::new();
         let start = self
