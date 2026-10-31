@@ -142,15 +142,6 @@ impl std::error::Error for OpenFailure {
     }
 }
 
-/// The fixed diagnostic the C facades log at the user marker's class-(c)
-/// refusal: the step that fails and the condition, in the shape the
-/// register row for the site records. Upstream's own `check_format` never
-/// gets to report it — `to_table_database_format_type` `abort()`s first
-/// (`table_info.cpp:132`) — so this line is what a consumer's log shows
-/// where the pin's process would have died. Exactly one line per attempt.
-pub const UNKNOWN_DATABASE_FORMAT_WARNING: &str =
-    "check_format: unknown database format in user.conf";
-
 /// A system journal's ADD payload is shorter than the unigram
 /// `add_phrase_item` reads from it (`phrase_index.h:124-126`); the pin's
 /// `get_content` asserts (`memory_chunk.h:388-392`) and dies at init
@@ -160,14 +151,14 @@ pub const SHORT_ADD_WARNING: &str =
     "journal replay: an ADD payload shorter than six bytes (upstream asserts, memory_chunk.h:390)";
 
 impl OpenFailure {
-    /// Whether this failure is the user marker's class-(c) refusal: a
+    /// Whether this failure is the user marker's unknown format: a
     /// `user.conf` whose `database format:` field upstream's
     /// `to_table_database_format_type` does not know, and therefore
-    /// `abort()`s on (`table_info.cpp:122-133`, reached from `:353-354`).
+    /// `abort()`s on (`table_info.cpp:122-133`, reached from `:353-354`,
+    /// register row 44).
     ///
-    /// The C facades log [`UNKNOWN_DATABASE_FORMAT_WARNING`] for it and
-    /// answer NULL; nothing was cleaned and no marker was written, which
-    /// is also where upstream stops.
+    /// The C facades abort the process for it; nothing was cleaned and no
+    /// marker was written, which is also where upstream stops.
     #[must_use]
     pub fn unknown_database_format(&self) -> bool {
         matches!(

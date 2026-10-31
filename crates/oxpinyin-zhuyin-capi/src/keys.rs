@@ -27,7 +27,9 @@ use crate::types::{ChewingKey, GChar, ZhuyinInstance};
 /// Upstream zeroes `*onekey` before its probe (`zhuyin.cpp:1001-1014`), so a
 /// failed parse leaves the zero key; the probe is `FullPinyinParser2::
 /// parse_one_key` over the live option word, with `PINYIN_CORRECT_ALL`
-/// masked first (`zhuyin.cpp:1013`).
+/// masked first (`zhuyin.cpp:1013`). A string holding `'` aborts the
+/// process, as that probe's assert does (`pinyin_parser2.cpp:170`, register
+/// row 21).
 #[unsafe(no_mangle)]
 pub extern "C" fn zhuyin_parse_full_pinyin(
     instance: *mut ZhuyinInstance,
@@ -46,15 +48,13 @@ pub extern "C" fn zhuyin_parse_full_pinyin(
         onepinyin
     ))
     .unwrap_or_default();
-    // Class (c), `pinyin_parser2.cpp:170`: the shared `parse_one_key` asserts
-    // the text holds no `'`, before it touches `*onekey`.
+    // Register row 21, `pinyin_parser2.cpp:170` via `zhuyin.cpp:1012`: the
+    // shared `parse_one_key` asserts the text holds no `'`, before it
+    // touches `*onekey`, and the process aborts.
     if oxpinyin_capi_marshal::borrow_c_string!(onepinyin)
         .is_some_and(|input| input.to_bytes().contains(&b'\''))
     {
-        crate::ffi::log_warning(
-            "zhuyin_parse_full_pinyin: assertion 'NULL == strchr(input, ''')' failed",
-        );
-        return false;
+        std::process::abort();
     }
     // SAFETY: Null-checked above; written through the caller's storage.
     unsafe {

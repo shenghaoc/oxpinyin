@@ -282,30 +282,17 @@ pub extern "C" fn zhuyin_train(instance: *mut ZhuyinInstance) -> bool {
     let inst = unsafe { instance_mut(instance) };
     match inst.core.train(0) {
         Ok(trained) => trained,
-        // Class (c), `phonetic_lookup.h:868`: a forcing added after the last
-        // sentence lookup no longer matches the decoded result.
-        Err(oxpinyin_engine::EngineError::StaleTrainingConstraint { .. }) => {
-            crate::ffi::log_warning(
-                "zhuyin_train: assertion 'token == constraint->m_token' failed",
-            );
-            false
-        }
-        // Class (c), `storage/phonetic_key_matrix.cpp:661`/`:663`/`:664`: a
-        // re-parse shortened the input under the last sentence lookup's
-        // result, so the training walk leaves the current matrix.
-        Err(oxpinyin_engine::EngineError::StaleTrainingSpan { fault, .. }) => {
-            let assertion = match fault {
-                oxpinyin_engine::TrainingSpanFault::PastMatrixEnd => "end < matrix->size()",
-                oxpinyin_engine::TrainingSpanFault::EmptyStartColumn => {
-                    "matrix->get_column_size(start) > 0"
-                }
-                oxpinyin_engine::TrainingSpanFault::EndEmptyColumn => {
-                    "matrix->get_column_size(end) > 0"
-                }
-            };
-            crate::ffi::log_warning(&format!("zhuyin_train: assertion '{assertion}' failed"));
-            false
-        }
+        // Register rows 6 and 82: `phonetic_lookup.h:868` (a forcing added
+        // after the last sentence lookup no longer matches the decoded
+        // result) and `storage/phonetic_key_matrix.cpp:661`/`:663`/`:664` (a
+        // re-parse shortened the input under that result, so the walk
+        // leaves the current matrix). `zhuyin_train` reaches them through
+        // the same `train_result3` (`zhuyin.cpp:1712-1713`); what the walk
+        // changed before is in memory.
+        Err(
+            oxpinyin_engine::EngineError::StaleTrainingConstraint { .. }
+            | oxpinyin_engine::EngineError::StaleTrainingSpan { .. },
+        ) => std::process::abort(),
         // Class (b), `ngram.cpp:190`, `:241`, `:261`: training would
         // load a predecessor whose value has a partial item tail, which the
         // pin's `insert_freq`/`set_freq` walks read past. Nothing changed.

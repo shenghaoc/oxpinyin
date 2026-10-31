@@ -161,7 +161,7 @@ def dispatch(argv: Sequence[str]) -> int:
         return error.returncode
 
 
-VERIFIED = re.compile(r'(pin-probe:[A-Za-z0-9_.-]+|pin-aborts:row[0-9]+[a-d]?|source:[A-Za-z0-9_./-]+:[0-9]+(-[0-9]+)?|unverified|unexecuted|n/a)')
+VERIFIED = re.compile(r'(pin-probe:[A-Za-z0-9_.-]+|source:[A-Za-z0-9_./-]+:[0-9]+(-[0-9]+)?|unverified|unexecuted|n/a)')
 
 
 def header_slots(text: str) -> list[tuple[str, str, str]]:

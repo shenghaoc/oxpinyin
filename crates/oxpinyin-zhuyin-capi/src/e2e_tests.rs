@@ -457,3 +457,169 @@ fn a_choose_at_the_cursor_survives_the_next_guess_after_a_phrase() {
     );
     close(context, instance);
 }
+
+/// The `ZHUYIN_STANDARD_DVORAK` slot aborts the process, as the pin's
+/// `set_scheme` falls through to `abort()` (`zhuyin_parser2.cpp:295`,
+/// register row 5c).
+#[cfg(unix)]
+#[test]
+fn the_dvorak_chewing_scheme_aborts() {
+    crate::test_support::assert_aborts("e2e_tests::the_dvorak_chewing_scheme_aborts", || {
+        let (context, _instance) = open();
+        crate::config::zhuyin_set_chewing_scheme(context, 7);
+    });
+}
+
+/// An out-of-enum keyboard (`zhuyin.cpp:736`) and a full-pinyin scheme
+/// outside 1-3 (`pinyin_parser2.cpp:398`) abort the process (register row
+/// 5d).
+#[cfg(unix)]
+#[test]
+fn an_out_of_enum_chewing_scheme_aborts() {
+    crate::test_support::assert_aborts("e2e_tests::an_out_of_enum_chewing_scheme_aborts", || {
+        let (context, _instance) = open();
+        crate::config::zhuyin_set_chewing_scheme(context, 10);
+    });
+}
+
+#[cfg(unix)]
+#[test]
+fn an_out_of_range_full_pinyin_scheme_aborts() {
+    crate::test_support::assert_aborts(
+        "e2e_tests::an_out_of_range_full_pinyin_scheme_aborts",
+        || {
+            let (context, _instance) = open();
+            crate::config::zhuyin_set_full_pinyin_scheme(context, 4);
+        },
+    );
+}
+
+/// An apostrophe in the single-key parser's input is the shared
+/// `parse_one_key` assert (`pinyin_parser2.cpp:170`, register row 21).
+#[cfg(unix)]
+#[test]
+fn a_single_key_apostrophe_aborts() {
+    crate::test_support::assert_aborts("e2e_tests::a_single_key_apostrophe_aborts", || {
+        let (_context, instance) = open();
+        let text = cstr("n'i");
+        let mut key = crate::types::ChewingKey::ZERO;
+        crate::keys::zhuyin_parse_full_pinyin(instance, text.as_ptr(), &raw mut key);
+    });
+}
+
+/// An unload index of 16 or more is the unload's assert (`zhuyin.cpp:381`,
+/// register row 66).
+#[cfg(unix)]
+#[test]
+fn an_unload_index_past_the_sub_indices_aborts() {
+    crate::test_support::assert_aborts(
+        "e2e_tests::an_unload_index_past_the_sub_indices_aborts",
+        || {
+            let (context, _instance) = open();
+            crate::config::zhuyin_unload_phrase_library(context, 16);
+        },
+    );
+}
+
+/// Register row 66: on a fresh instance `offset >= matrix.size() - 1` is
+/// `offset >= SIZE_MAX` (`zhuyin.cpp:1892-1893`, `:1914-1915`), so
+/// `SIZE_MAX` answers `false` with the out-param NULLed.
+#[test]
+fn the_key_accessors_answer_false_at_size_max_on_an_empty_matrix() {
+    let (context, instance) = open();
+    let mut key = std::ptr::NonNull::<crate::types::ChewingKey>::dangling().as_ptr();
+    assert!(!crate::cursor::zhuyin_get_zhuyin_key(
+        instance,
+        usize::MAX,
+        &raw mut key
+    ));
+    assert!(key.is_null());
+    let mut rest = std::ptr::NonNull::<crate::types::ChewingKeyRest>::dangling().as_ptr();
+    assert!(!crate::cursor::zhuyin_get_zhuyin_key_rest(
+        instance,
+        usize::MAX,
+        &raw mut rest
+    ));
+    assert!(rest.is_null());
+    close(context, instance);
+}
+
+/// Imports 你好 into libraries `1..=libraries` of the fixture, which loads
+/// libraries 1 to 7, so the phrase-table search holds `libraries` tokens.
+fn hold_nihao_in_libraries(context: *mut crate::types::ZhuyinContext, libraries: u8) {
+    for library in 1..=libraries {
+        let iter = zhuyin_begin_add_phrases(context, library);
+        assert!(zhuyin_iterator_add_phrase(
+            iter,
+            cstr("你好").as_ptr(),
+            cstr("ㄋㄧˇ ㄏㄠˇ").as_ptr(),
+            1,
+        ));
+        zhuyin_end_add_phrases(iter);
+    }
+}
+
+/// `reduce_tokens` clears and fills the caller's array before it validates
+/// the count (`phrase_large_table3.h:79-95`). On a NULL array each GLib
+/// call logs a critical: one for `g_array_set_size`, one
+/// `g_array_append_vals` per loaded library (`phrase_index.h:762-772`).
+/// The pin then dies of the assert on five tokens (`zhuyin.cpp:1690`), so
+/// the criticals come first. GLib's default handler writes them to stderr.
+#[cfg(unix)]
+#[test]
+fn lookup_tokens_into_a_null_array_logs_the_criticals_before_it_aborts() {
+    let user_dir = TempUserDir::new("lookup-null-five");
+    let path = user_dir.path.clone();
+    let stderr = crate::test_support::assert_aborts(
+        "e2e_tests::lookup_tokens_into_a_null_array_logs_the_criticals_before_it_aborts",
+        || {
+            // SAFETY: GLib's own default handler, installed for every domain.
+            unsafe {
+                glib_sys::g_log_set_default_handler(
+                    Some(glib_sys::g_log_default_handler),
+                    ptr::null_mut(),
+                );
+            }
+            let (context, instance) = open_with_user(&path);
+            hold_nihao_in_libraries(context, 5);
+            crate::dict::zhuyin_lookup_tokens(instance, cstr("你好").as_ptr(), ptr::null_mut());
+        },
+    );
+    let (context, instance) = open_with_user(&path);
+    // SAFETY: `instance` is live until `close` below, and the reference is
+    // not used after that.
+    let inst = unsafe { crate::state::instance_ref(instance) };
+    let loaded = (0..16_u32)
+        .filter(|library| inst.core.dict.phrase_table_token_enabled(library << 24))
+        .count();
+    close(context, instance);
+    let stderr = String::from_utf8_lossy(&stderr);
+    let criticals: Vec<&str> = stderr
+        .lines()
+        .filter(|line| line.contains("CRITICAL"))
+        .collect();
+    assert!(loaded > 0);
+    assert_eq!(criticals.len(), 1 + loaded, "{stderr}");
+    assert!(criticals[0].contains("g_array_set_size"), "{stderr}");
+    assert!(
+        criticals[1..]
+            .iter()
+            .all(|line| line.contains("g_array_append_vals")),
+        "{stderr}"
+    );
+}
+
+/// Four tokens pass `reduce_tokens`' count, so the NULL-array lookup
+/// answers instead of aborting.
+#[test]
+fn lookup_tokens_into_a_null_array_answers_with_four_tokens() {
+    let user_dir = TempUserDir::new("lookup-null-four");
+    let (context, instance) = open_with_user(&user_dir.path);
+    hold_nihao_in_libraries(context, 4);
+    assert!(crate::dict::zhuyin_lookup_tokens(
+        instance,
+        cstr("你好").as_ptr(),
+        ptr::null_mut()
+    ));
+    close(context, instance);
+}
