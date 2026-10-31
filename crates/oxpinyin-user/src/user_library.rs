@@ -5,6 +5,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use oxpinyin_data::chunk_write::{sub_phrase_index_sections, validate_phrase_item};
 use oxpinyin_data::phrase_library::PhraseItemView;
 
+use crate::user_index::UserIndex;
+
 /// The pin's SubPhraseIndex (phrase_index.h:257-430 at 074a2219), owned.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct UserLibrary {
@@ -44,10 +46,8 @@ impl PreparedReplacement {
 #[derive(Debug, Default)]
 pub(crate) struct SessionPhrases {
     pub(crate) libraries: BTreeMap<u8, UserLibrary>,
-    pub(crate) indexed: BTreeSet<(u32, Vec<u16>)>,
-    /// The `USER_FILE` libraries `FacadePhraseIndex::unload` freed: their
-    /// sub-index is gone until a load, so a save skips them
-    /// (074a2219 `pinyin.cpp:929-932`, `zhuyin.cpp:562-565`).
+    pub(crate) index: UserIndex,
+    /// Libraries whose sub-index has been unloaded.
     pub(crate) unloaded: BTreeSet<u8>,
 }
 
@@ -80,7 +80,7 @@ impl SessionPhrases {
                 Some(crate::UserPronunciation::new(
                     keys,
                     u64::from(reading.freq),
-                    self.indexed.contains(&(token, packed)),
+                    self.index.contains_reading(token, &packed),
                 ))
             })
             .collect();
