@@ -68,8 +68,8 @@ mod kyotocabinet {
         // lib and its own test artifacts — never to another package's
         // binaries. The rpath below therefore covers `cargo test -p
         // oxpinyin-store` and nothing else; every workspace package that
-        // links a final binary against Kyoto Cabinet (oxpinyin-datagen,
-        // oxpinyin-dictool, and the four training tools) mirrors this
+        // links a final binary against Kyoto Cabinet (oxpinyin-datagen and
+        // the four training tools) mirrors this
         // rpath from its own build script. That rpath is a convenience,
         // not the contract: any other artifact built without it must still
         // find the library via LD_LIBRARY_PATH or its own rpath setting.

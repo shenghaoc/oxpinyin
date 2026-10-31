@@ -42,7 +42,6 @@ Stage 3 构建需显式启用。只改变可观察输出的 Stage 3 构建保留
 |---|---|
 | 引擎 / 数据 / 运行时 / 绑定 | `oxpinyin-core`、`oxpinyin-chewing`、`oxpinyin-store`、`oxpinyin-data`、`oxpinyin-user`、`oxpinyin-engine`、`oxpinyin-facade`、`oxpinyin-runtime`、`oxpinyin-capi`、`oxpinyin-zhuyin-capi`、`oxpinyin-capi-marshal` |
 | 训练工具链（不随产品发布） | `oxpinyin-training`（模块：`segment`、`counter`、`lambda`、`emitter`、`eval`、`train`；现有各阶段的二进制名称保持不变）、`oxpinyin-corpus`、`oxpinyin-kmm`、`oxpinyin-word`、`oxpinyin-punct`、`oxpinyin-datagen` |
-| 工具 | `oxpinyin-dictool` |
 | Oracle / 测试 | `pinyin-oracle`、`oxpinyin-testsupport` |
 
 训练命令保留现有的可执行文件名称和参数。运行或测试这些命令时，请选择整合后的 Cargo 包，例如：`cargo run --locked -p oxpinyin-training --bin oxpinyin-segment -- --help`。

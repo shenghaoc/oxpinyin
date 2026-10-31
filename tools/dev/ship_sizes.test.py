@@ -54,7 +54,7 @@ class GateTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.repo = Repo(self.directory.name)
-        self.base = self.repo.commit({'README': 'r\n', 'crates/oxpinyin-core/lib': 'a\n', 'crates/oxpinyin-dictool/lib': 'a\n', 'Cargo.lock': 'l\n'})
+        self.base = self.repo.commit({'README': 'r\n', 'crates/oxpinyin-core/lib': 'a\n', 'crates/oxpinyin-corpus/lib': 'a\n', 'Cargo.lock': 'l\n'})
 
     def tearDown(self):
         self.directory.cleanup()
@@ -67,7 +67,7 @@ class GateTests(unittest.TestCase):
         self.assertTrue(ship_sizes.gate('0' * 40, self.repo.root))
 
     def test_docs_and_non_shipping_crates_skip(self):
-        self.repo.commit({'docs/note': 'x\n', 'crates/oxpinyin-dictool/lib': 'b\n'})
+        self.repo.commit({'docs/note': 'x\n', 'crates/oxpinyin-corpus/lib': 'b\n'})
         self.assertFalse(self.gate())
 
     def test_each_input_class_runs_the_job(self):
@@ -111,7 +111,7 @@ class KeyTests(unittest.TestCase):
     def test_key_follows_inputs_not_commits(self):
         first = self.repo.commit({'crates/oxpinyin-core/lib': 'a\n'})
         key = self.key()
-        self.repo.commit({'docs/note': 'x\n', 'crates/oxpinyin-dictool/lib': 'z\n'})
+        self.repo.commit({'docs/note': 'x\n', 'crates/oxpinyin-corpus/lib': 'z\n'})
         self.assertEqual(self.key(), key)
         self.assertEqual(self.key(first), key)
         self.assertRegex(key, r'^ship-sizes-v1-[0-9a-f]{32}$')

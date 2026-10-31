@@ -11,7 +11,6 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 from tools.dev import doctor, registry
 from tools.dev.cell import Settings
-from tools.dev.frontend import FRONTEND_OBJECTS
 from tools.dev.compat import prepared
 
 
@@ -41,22 +40,14 @@ class PreparedTests(unittest.TestCase):
 
     def fake_build(self, command, **options):
         self.assertTrue(options['heavy'])
-        work = Path(command[command.index('--work-dir') + 1])
+        self.assertIn('--libs-only', command)
         prefix = Path(command[command.index('--prefix') + 1])
-        if '--libs-only' in command:
-            (prefix / 'lib').mkdir(parents=True)
-            (prefix / 'lib/libpinyin.so').write_bytes(b'patched')
-            expected = self.settings.oracle(str(self.prefix), 'bigram-export-strjoinv').environment['EXPECTED_ORACLE_PIN_REF']
-            (prefix / 'oracle-pin.txt').write_text(expected + '\n')
-        else:
-            source = work / 'src/ibus-libpinyin-pin'
-            (source / 'src').mkdir(parents=True)
-            for name in FRONTEND_OBJECTS:
-                (source / 'src' / name).touch()
-            (source / 'data').mkdir()
-            (source / 'data/com.github.libpinyin.ibus-libpinyin.gschema.xml').touch()
+        (prefix / 'lib').mkdir(parents=True)
+        (prefix / 'lib/libpinyin.so').write_bytes(b'patched')
+        expected = self.settings.oracle(str(self.prefix), 'bigram-export-strjoinv').environment['EXPECTED_ORACLE_PIN_REF']
+        (prefix / 'oracle-pin.txt').write_text(expected + '\n')
 
-    def test_ordinary_selection_does_not_build_frontend_or_variants(self):
+    def test_ordinary_selection_does_not_build_variants(self):
         with patch.object(prepared, 'run') as run:
             self.assertEqual(self.prepare('same-data-dir-diff'), [])
             run.assert_not_called()
@@ -86,43 +77,6 @@ class PreparedTests(unittest.TestCase):
             (source / 'utils/training/k_mixture_model_to_interpolation').unlink()
             self.prepare('tool-diff')
             self.assertEqual(run.call_count, 6)
-
-    def test_frontend_full_recipe_and_cell_assignment_are_cached(self):
-        with patch.object(prepared, 'run', side_effect=self.fake_build) as run:
-            options = self.prepare('import-diff')
-            self.assertEqual(options[0], '--ibus-build')
-            self.assertTrue(options[1].startswith('bdb='))
-            command = run.call_args.args[0]
-            self.assertEqual(command[:2], ['bash', str(ROOT / 'tools/oracle/build-oracle.sh')])
-            self.assertIn('--model-dir', command)
-            self.assertNotIn('--libs-only', command)
-            self.assertEqual(self.prepare('import-diff'), options)
-            self.assertEqual(run.call_count, 1)
-
-    def test_frontend_rebuilds_when_a_required_object_is_missing_but_other_objects_remain(self):
-        with patch.object(prepared, 'run', side_effect=self.fake_build) as run:
-            options = self.prepare('import-diff')
-            work = Path(options[1].split('=', 1)[1])
-            for missing in ('ibus_engine_libpinyin-PYLibPinyin.o', 'ibus_engine_libpinyin-PYPConfig.o'):
-                with self.subTest(missing=missing):
-                    source = prepared.frontend_source(work)
-                    self.assertIsNotNone(source)
-                    (source / 'src' / missing).unlink()
-                    self.assertGreater(len(list((source / 'src').glob('*.o'))), 0)
-                    self.assertIsNone(prepared.frontend_source(work))
-                    builds = run.call_count
-                    self.assertEqual(self.prepare('import-diff'), options)
-                    self.assertEqual(run.call_count, builds + 1)
-                    self.assertIsNotNone(prepared.frontend_source(work))
-
-    def test_failed_frontend_is_retried_and_never_marked_complete(self):
-        with patch.object(prepared, 'run', side_effect=subprocess.CalledProcessError(5, 'build')):
-            with self.assertRaises(subprocess.CalledProcessError):
-                self.prepare('import-diff')
-        self.assertFalse(list(self.work.rglob('.complete')))
-        with patch.object(prepared, 'run', side_effect=self.fake_build) as run:
-            self.prepare('import-diff')
-            self.assertEqual(run.call_count, 1)
 
     def test_data_adds_model_text_without_changing_pin_tables_or_manifests(self):
         for name in ('dict-surface-diff', 'key-surface-diff', 'phrase-surface-diff', 'zhuyin-diff'):

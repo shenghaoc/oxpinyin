@@ -16,7 +16,6 @@
 | oxpinyin-capi-marshal | Shared declarative C-ABI marshalling macros, including opaque-handle casts and the `char **` sentence writer. No compiled unsafe code of its own. | forbid | yes | via capi, zhuyin-capi |
 | oxpinyin-runtime | Shared concrete assembly of tables, model and user wiring into Session. | forbid | yes | via capi |
 | pinyin-oracle | Differential harness against pinned libpinyin. | allow | Linux | never |
-| oxpinyin-dictool | Conversions and standalone vocabulary export through facade §9 import/export. Pure Rust, with no C-ABI dependency. | forbid | yes | yes |
 | oxpinyin-store | Ordered byte-KV interface with one compile-time Berkeley DB, Kyoto Cabinet or tkrzw backend. See backend dependencies below. | deny | yes | via engine |
 | oxpinyin-datagen | model20 compiler for each backend's native runtime files. Shares layouts with data readers. | forbid | yes | never |
 | oxpinyin-utils | libpinyin's utilities under their own names and interfaces, through `oxpinyin-input`'s `tools` boundary (stage 5 of `docs/findings/external-io-boundary.md`): `gen_pinyin_table`, `gen_zhuyin_table` and `k_mixture_model_to_interpolation`, with the pin's taglib. | forbid | Linux, macOS (needs GLib) | never |
@@ -66,7 +65,7 @@ The tree has no pure-Rust database replacement.
 Link Kyoto Cabinet, tkrzw and Berkeley DB to the distribution's libraries.
 Use tkrzw and Berkeley DB through their maintainer-provided C ABIs, `tkrzw_langc.h` and `db.h`.
 Generate bindings with bindgen over system headers.
-Find tkrzw, Kyoto Cabinet, Berkeley DB where it ships a `.pc` file, and GLib with the `pkg-config` crate, a build-dependency of `oxpinyin-store`, `oxpinyin-input`, `oxpinyin-datagen`, `oxpinyin-dictool` and `oxpinyin-training` (maintainer approval 2026-10-30 UTC).
+Find tkrzw, Kyoto Cabinet, Berkeley DB where it ships a `.pc` file, and GLib with the `pkg-config` crate, a build-dependency of `oxpinyin-store`, `oxpinyin-input`, `oxpinyin-datagen` and `oxpinyin-training` (maintainer approval 2026-10-30 UTC).
 Berkeley DB falls back to fixed header directories and the `OXPINYIN_BDB_*` overrides, because the distributions and Homebrew install no `.pc` file for it.
 Do not use tkrzw's C++ interface.
 It has no ABI stability across compilers, standard libraries or library versions.

@@ -682,17 +682,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "oxpinyin-dictool"
-version = "0.1.0"
-dependencies = [
- "oxpinyin-core",
- "oxpinyin-facade",
- "oxpinyin-user",
- "pkg-config",
- "tempfile",
-]
-
-[[package]]
 name = "oxpinyin-engine"
 version = "0.1.0"
 dependencies = [

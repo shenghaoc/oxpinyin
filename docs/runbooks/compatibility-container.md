@@ -224,7 +224,7 @@ container's memory (`docs/runbooks/oracle.md`).
 Apple builds use its `--cpus` setting. The
 existing registry's `--timeout` and `--runner-timeout NAME=SECONDS` options
 are accepted; no skip-as-pass override or arbitrary host artifact paths are
-forwarded. Selected compatibility gates prepare their registered frontend,
+forwarded. Selected compatibility gates prepare their registered pin-utility,
 patched reference and model-text inputs automatically. Entries marked
 `not-a-gate` remain native or measurement recipes with caller-selected inputs;
 the compatibility launcher rejects them.
@@ -252,14 +252,8 @@ No nested container runtime is required. A clean container environment prevents
 host library/artifact/backend overrides from contaminating the comparison.
 
 `tools.dev.compat.prepared` reads the selected registry rows after oracle
-provisioning. For `import-diff`, it calls the existing full
-`tools/oracle/build-oracle.sh` recipe once per cell and passes its work directory
-through run-all's existing `--ibus-build CELL=DIR`. That recipe owns the only
-frontend version/commit pin and verifies the fetched commit. Its full mode
-builds a private libpinyin prefix, model data and frontend objects; the interop
-harness links those objects against the canonical cell prefix. No frontend
-build runs for other selections. Successful builds are cached by image, build
-recipe and cell; an incomplete object/schema build is rebuilt on resumption.
+provisioning. Successful builds are cached by image, build recipe and cell;
+an incomplete build is rebuilt on resumption.
 
 Rows declaring an `oracle_variant` build that separately identified prefix
 with `--libs-only --apply-patches`, reusing the verified unpatched system
@@ -327,7 +321,7 @@ toolchain/runtime, even when its driver is Python. No runners other than
 | dict-surface-diff | B | P, S, full tables + `interpolation2.text` | Model fetched but not passed with tables → added |
 | dynamic-adjust-diff | B | P, S, full system tables | Provided |
 | export-diff | B | P, S | Provided |
-| import-diff | B, F | P, S including dictool, W3, classic-import fixture, pinned frontend objects/schema | IBus dev/CLI and frontend absent → added |
+| import-diff | B | P, S, W3 | Provided; the frontend interop step and its F inputs were removed with `oxpinyin-dictool` (2026-10-31 UTC) |
 | import-semantics-diff | B | P, S | Provided |
 | key-surface-diff | B | P, S, full tables + `interpolation2.text` | Model/table directory gap → added |
 | live-typing-diff | B | P, S, full system tables | Provided |

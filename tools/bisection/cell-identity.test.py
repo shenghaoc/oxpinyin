@@ -64,12 +64,12 @@ class IdentityCheckTests(unittest.TestCase):
 
     def test_needed_artifacts_follow_the_declarations(self):
         env = dict(OXPINYIN_CAPI_SO='/t/libpinyin_capi.so', OXPINYIN_ZHUYIN_SO='/t/libzhuyin_capi.so',
-                   OXPINYIN_DICTOOL='/t/oxpinyin-dictool', OXPINYIN_USER_RT_TEST='/t/user-dir-round-trip-test')
-        rows = [dict(name='import-diff', artifacts=['pinyin-capi', 'dictool'], command=['{capi}']),
+                   OXPINYIN_GEN_PINYIN_TABLE='/t/gen_pinyin_table', OXPINYIN_USER_RT_TEST='/t/user-dir-round-trip-test')
+        rows = [dict(name='tool-diff', artifacts=['pinyin-capi', 'gen-pinyin-table'], command=['{capi}']),
                 dict(name='pc-version', artifacts=[], command=['{capi}', '{zhuyin}']),
                 dict(name='user-dir-round-trip', artifacts=['pinyin-capi', 'user-rt-test'], command=[])]
         self.assertEqual(run_all['needed_artifacts'](rows, env),
-                         {'pinyin-capi': '/t/libpinyin_capi.so', 'dictool': '/t/oxpinyin-dictool',
+                         {'pinyin-capi': '/t/libpinyin_capi.so', 'gen-pinyin-table': '/t/gen_pinyin_table',
                           'user-rt-test': '/t/user-dir-round-trip-test'})
         self.assertEqual(run_all['needed_artifacts']([dict(name='pc-version', artifacts=[])], env), {})
 

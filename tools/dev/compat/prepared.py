@@ -5,7 +5,6 @@ import shutil
 
 from ..cell import Settings
 from .. import doctor
-from ..frontend import frontend_source
 from ..tool_diff import PIN_UTILITIES
 from .process import ROOT, PYTHON, run
 
@@ -23,7 +22,7 @@ def prepare(cell, rows, prefix, cache, environment, *, root=ROOT):
 
     The caller owns the volume lock. All builds use heavy admission; completion
     markers are published only after success, so interrupted builds are retried.
-    The image namespace and recipe content separate cached frontend builds.
+    The image namespace and recipe content separate cached builds.
     No upstream version is repeated here: build-oracle.sh owns both pins.
     """
     root, prefix, cache = Path(root), Path(prefix), Path(cache)
@@ -65,18 +64,6 @@ def prepare(cell, rows, prefix, cache, environment, *, root=ROOT):
                     env=environment, cwd=root, heavy=True)
             marker.touch()
         environment['OXPINYIN_TOOL_PIN_BUILD'] = str(sources[0])
-
-    if 'import-diff' in names:
-        work = cache / 'frontend'
-        marker = work / '.complete'
-        if not marker.is_file() or frontend_source(work) is None:
-            shutil.rmtree(work, ignore_errors=True)
-            run([*common, '--work-dir', work, '--prefix', work / 'prefix', '--model-dir', model],
-                env=environment, cwd=root, heavy=True)
-            if frontend_source(work) is None:
-                raise ValueError(f'frontend build did not produce objects and schema: {work}')
-            marker.touch()
-        options += ['--ibus-build', f'{cell}={work}']
 
     variants = {row.get('oracle_variant', 'unpatched') for row in rows} - {'unpatched'}
     for variant in sorted(variants):

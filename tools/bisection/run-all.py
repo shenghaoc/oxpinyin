@@ -276,7 +276,7 @@ def plan_lines(cell, jobs, contract_cases, reasons, index):
             if len(names) > 50:
                 lines.append('    ... %d more (contract-diff.py --list-tags lists them)' % (len(names) - 3))
     return lines
-ARTIFACTS = ('pinyin-capi', 'zhuyin-capi', 'dictool', 'user-rt-test', 'gen-pinyin-table', 'gen-zhuyin-table',
+ARTIFACTS = ('pinyin-capi', 'zhuyin-capi', 'user-rt-test', 'gen-pinyin-table', 'gen-zhuyin-table',
              'k-mixture-model-to-interpolation')
 
 
@@ -295,7 +295,7 @@ def artifact_union(rows):
         needed.update(declared)
     return [artifact for artifact in ARTIFACTS if artifact in needed]
 ARTIFACT_ENV = {'pinyin-capi': 'OXPINYIN_CAPI_SO', 'zhuyin-capi': 'OXPINYIN_ZHUYIN_SO',
-                'dictool': 'OXPINYIN_DICTOOL', 'user-rt-test': 'OXPINYIN_USER_RT_TEST',
+                'user-rt-test': 'OXPINYIN_USER_RT_TEST',
                 'gen-pinyin-table': 'OXPINYIN_GEN_PINYIN_TABLE', 'gen-zhuyin-table': 'OXPINYIN_GEN_ZHUYIN_TABLE',
                 'k-mixture-model-to-interpolation': 'OXPINYIN_K_MIXTURE_MODEL_TO_INTERPOLATION'}
 
@@ -303,8 +303,8 @@ ARTIFACT_ENV = {'pinyin-capi': 'OXPINYIN_CAPI_SO', 'zhuyin-capi': 'OXPINYIN_ZHUY
 def needed_artifacts(rows, env):
     """The artifacts the selected rows execute, name -> path, from each row's
     declared `artifacts` list: the same declarations that chose what the cell
-    built, so the identity check covers exactly what the runners load or run
-    (dictool for import-diff included, not only the {capi}/{zhuyin} paths)."""
+    built, so the identity check covers exactly what the runners load or run,
+    not only the {capi}/{zhuyin} paths."""
     needed = {}
     for row in rows:
         for name in row.get('artifacts', []):
@@ -472,8 +472,6 @@ def run_main():
     parser.add_argument('--oracle', action='append', default=[], metavar='CELL=PREFIX')
     parser.add_argument('--cell-env', action='append', default=[], metavar='CELL:NAME=VALUE',
                         help='additional per-cell runner inputs, e.g. staged packaging roots')
-    parser.add_argument('--ibus-build', action='append', default=[], metavar='CELL=DIR',
-                        help='pin-built IBus frontend work directory for import interop')
     parser.add_argument('--data', action='append', default=[], metavar='CELL=DIR',
                         help='subject full tables plus interpolation2.text, matching that cell')
     parser.add_argument('--target-root', type=Path,
@@ -589,7 +587,6 @@ def run_main():
         parser.error('selection contains no gates')
     oracle_overrides = assignments(args.oracle, CELLS, parser)
     data_overrides = assignments(args.data, CELLS, parser)
-    ibus_builds = assignments(args.ibus_build, CELLS, parser)
     timeouts = assignments(args.runner_timeout, names, parser)
     try:
         timeouts = {name: positive(value) for name, value in timeouts.items()}
@@ -601,7 +598,7 @@ def run_main():
             parser.error(f'invalid skip allowance: {allowance}')
     extra_env = {cell: {} for cell in CELLS}
     protected = {'CARGO_TARGET_DIR', 'PINYIN_ORACLE_DBM', 'PINYIN_ORACLE_PREFIX',
-                 'OXPINYIN_CAPI_SO', 'OXPINYIN_ZHUYIN_SO', 'OXPINYIN_DICTOOL',
+                 'OXPINYIN_CAPI_SO', 'OXPINYIN_ZHUYIN_SO',
                  'OXPINYIN_SYSTEM_DIR', 'CARGO_PROFILE_DEV_OPT_LEVEL'}
     for value in args.cell_env:
         cell, sep, assignment = value.partition(':')
@@ -647,17 +644,11 @@ def run_main():
             env.update({key: str(value) for key, value in cfg.items()})
             env.update(PINYIN_ORACLE_PREFIX=str(prefix), OXPINYIN_SYSTEM_DIR=str(data),
                        OXPINYIN_CAPI_SO=str(Path(cfg['CARGO_TARGET_DIR']) / 'debug/libpinyin_capi.so'),
-                       OXPINYIN_ZHUYIN_SO=str(Path(cfg['CARGO_TARGET_DIR']) / 'debug/libzhuyin_capi.so'),
-                       OXPINYIN_DICTOOL=str(Path(cfg['CARGO_TARGET_DIR']) / 'debug/oxpinyin-dictool'))
+                       OXPINYIN_ZHUYIN_SO=str(Path(cfg['CARGO_TARGET_DIR']) / 'debug/libzhuyin_capi.so'))
             for utility in ('gen_pinyin_table', 'gen_zhuyin_table', 'k_mixture_model_to_interpolation'):
                 env['OXPINYIN_' + utility.upper()] = str(Path(cfg['CARGO_TARGET_DIR']) / 'debug' / utility)
             env.update(extra_env[cell])
             env['OXPINYIN_USER_RT_TEST'] = str(Path(cfg['CARGO_TARGET_DIR']) / 'debug/user-dir-round-trip-test')
-            env['PINYIN_IBUS_PREFIX'] = str(prefix)
-            if cell in ibus_builds:
-                env['PINYIN_IBUS_BUILD_DIR'] = str(Path(ibus_builds[cell]).resolve())
-            elif len(cells) > 1:
-                env.pop('PINYIN_IBUS_BUILD_DIR', None)
             substitutions = dict(root=str(ROOT), prefix=str(prefix), data=str(data), cell=cell,
                                  capi=env['OXPINYIN_CAPI_SO'], zhuyin=env['OXPINYIN_ZHUYIN_SO'])
             build_candidates = []
