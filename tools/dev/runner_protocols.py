@@ -22,7 +22,9 @@ CONF_CASES = ('binver-plus', 'binver-wrap', 'binver-neg', 'binver-junk', 'binver
               'modelver-plus', 'modelver-wrap', 'modelver-neg', 'foreign-line', 'reordered',
               'token-junk-tail', 'no-newline', 'empty')
 ABORT_CASES = ('unknown-token', 'long-token', 'trunc-counter', 'modelver-junk', 'no-dbformat')
-CLASS_C = b'check_format: unknown database format in user.conf'
+# The refusal line both facades wrote before class (c) was retired
+# (2026-10-31 UTC); neither may write it now.
+RETIRED_REFUSAL = b'check_format: unknown database format in user.conf'
 
 
 def conf_body(case: str, identity: Sequence[bytes]) -> bytes:
@@ -190,41 +192,22 @@ def open_counter(ctx: Context, args: Sequence[str]) -> int:
                     else:
                         ctx.emit(f'  oracle: FAIL - expected exit 134, got {rc}', error=True)
                         failed = True
-                elif library == 'pinyin':
-                    # The pinyin facade reproduces the pin's `abort()`
-                    # (register row 44, 2026-10-31 UTC): SIGABRT, no
-                    # warning line. The zhuyin facade still refuses below.
+                else:
+                    # Both facades reproduce the pin's `abort()` (register
+                    # row 44, 2026-10-31 UTC): SIGABRT, no warning line.
                     if rc == 134:
                         ctx.emit('  oxpinyin: exit 134 (SIGABRT)')
                     else:
                         ctx.emit(f'  oxpinyin: FAIL - expected exit 134, got {rc}', error=True)
                         failed = True
-                    count = sum(CLASS_C in line for line in result.stderr.splitlines())
+                    count = sum(RETIRED_REFUSAL in line for line in result.stderr.splitlines())
                     if count:
                         ctx.emit(f'  oxpinyin: FAIL - expected no refusal line, got {count}', error=True)
-                        failed = True
-                else:
-                    if b'init: NULL' in result.stdout.splitlines():
-                        ctx.emit('  oxpinyin: init answered NULL')
-                    else:
-                        ctx.emit('  oxpinyin: FAIL - expected \'init: NULL\', got:               ' + result.stdout.replace(b'\n', b' ')[:200].decode(errors='replace'), error=True)
-                        failed = True
-                    if rc == 1:
-                        ctx.emit('  oxpinyin: exit 1 (the open failed, as the C ABI says)')
-                    else:
-                        ctx.emit(f'  oxpinyin: FAIL - expected exit 1, got {rc}', error=True)
-                        failed = True
-                    count = sum(CLASS_C in line for line in result.stderr.splitlines())
-                    if count == 1:
-                        ctx.emit('  oxpinyin: one class-(c) line (' + CLASS_C.decode() + ')')
-                    else:
-                        ctx.emit(f'  oxpinyin: FAIL - expected exactly one class-(c) line, got {count}', error=True)
-                        ctx.write(b''.join(b'    ' + line for line in result.stderr.splitlines(keepends=True)), error=True)
                         failed = True
                 if directory_digest(user) == wanted:
                     ctx.emit(f'  {side}: user dir byte-identical to the seeded dir')
                 else:
-                    ctx.emit(f'  {side}: FAIL - the user dir moved' + (' (a wipe is not this class)' if side == 'oxpinyin' else ''), error=True)
+                    ctx.emit(f'  {side}: FAIL - the user dir moved' + (' (the pin aborts before any wipe)' if side == 'oxpinyin' else ''), error=True)
                     failed = True
             if failed:
                 ctx.emit(f'FAIL: abort-{case} did not hold its expectation', error=True)

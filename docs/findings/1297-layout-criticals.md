@@ -53,12 +53,13 @@ existing class (b) refusal (policy row 76); it is not affected.
 Cases, bound below with `just policy-record` from a tkrzw capture (each
 differs from the pin only in the missing critical, or for
 `save-fatal-valid-to-invalid*` in the pin's SIGABRT under the fatal mask):
-`header-only-library-init`, `header-only-library-init-zhuyin`, `header-only-library-load`, `header-only-library-load-zhuyin`, `header-only-library-save`, `nonzero-total-candidates-zhuyin`, `nonzero-total-save`, `nonzero-total-save-zhuyin`, `save-fatal-valid-to-invalid`, `save-fatal-valid-to-invalid-zhuyin`, `save-replacement-invalid-to-valid`, `save-replacement-invalid-to-valid-zhuyin`, `save-replacement-valid-to-invalid`, `save-replacement-valid-to-invalid-zhuyin`, `save-unchanged-layout-failed`, `save-unchanged-layout-failed-zhuyin`, `second-separator-library-init`, `second-separator-library-init-zhuyin`, `short-chunk-layout`, `short-chunk-layout-zhuyin`, `sparse-library-addon`, `sparse-library-addon-reload`, `sparse-library-candidates`, `sparse-library-candidates-zhuyin`, `sparse-library-init`, `sparse-library-init-settled`, `sparse-library-init-settled-zhuyin`, `sparse-library-init-zhuyin`, `sparse-library-load`, `sparse-library-load-zhuyin`, `sparse-library-mask-out`, `sparse-library-mask-out-zhuyin`, `sparse-library-reinit`, `sparse-library-reinit-zhuyin`, `sparse-library-save`, `sparse-library-save-zhuyin`, `sparse-library-tokens`, `sparse-library-tokens-zhuyin`, `third-separator-library-init`, `third-separator-library-init-zhuyin`.
+`header-only-library-init`, `header-only-library-init-zhuyin`, `header-only-library-load`, `header-only-library-load-zhuyin`, `header-only-library-save`, `nonzero-total-save`, `nonzero-total-save-zhuyin`, `save-fatal-valid-to-invalid`, `save-fatal-valid-to-invalid-zhuyin`, `save-replacement-invalid-to-valid`, `save-replacement-invalid-to-valid-zhuyin`, `save-replacement-valid-to-invalid`, `save-replacement-valid-to-invalid-zhuyin`, `save-unchanged-layout-failed`, `save-unchanged-layout-failed-zhuyin`, `second-separator-library-init`, `second-separator-library-init-zhuyin`, `short-chunk-layout`, `short-chunk-layout-zhuyin`, `sparse-library-addon`, `sparse-library-addon-reload`, `sparse-library-candidates`, `sparse-library-candidates-zhuyin`, `sparse-library-init`, `sparse-library-init-settled`, `sparse-library-init-settled-zhuyin`, `sparse-library-init-zhuyin`, `sparse-library-load`, `sparse-library-load-zhuyin`, `sparse-library-mask-out`, `sparse-library-mask-out-zhuyin`, `sparse-library-reinit`, `sparse-library-reinit-zhuyin`, `sparse-library-save`, `sparse-library-save-zhuyin`, `sparse-library-tokens`, `sparse-library-tokens-zhuyin`, `third-separator-library-init`, `third-separator-library-init-zhuyin`.
 The list is `LAYOUT_CRITICAL_CASES` in `tools/bisection/contract_library_loading.py`.
-Since class (c) was retired (2026-10-31 UTC), the pinyin
-`nonzero-total-candidates` case aborts on both sides at `pinyin.cpp:1859`:
+Since class (c) was retired (2026-10-31 UTC), the
+`nonzero-total-candidates` case and its zhuyin twin abort on both sides at
+`pinyin.cpp:1859` and `zhuyin.cpp:1261`:
 the pin's critical is in the result document the abort discards, so the
-case is compared by the `sigabrt` matcher ([pin-abort-assert-line.md](pin-abort-assert-line.md)),
+cases are compared by the `sigabrt` matcher ([pin-abort-assert-line.md](pin-abort-assert-line.md)),
 not this record.
 Controls that still MATCH include `crash-oob-layout*`, `save-unchanged-valid*`
 and `save-replacement-valid-to-different-valid*`.
@@ -223,40 +224,6 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:2]: subject drops [[null, 8], [null, 8]]"
-          ]
-        }
-      }
-    },
-    "nonzero-total-candidates-zhuyin": {
-      "cells": {
-        "tkrzw": {
-          "pin": {
-            "sha256": "bc87b6652078bc7be9349dd816622edb5cd2137363d55b4696111b8e8a72f309",
-            "fields": {
-              "exit": "03b26944890929ff",
-              "result": "74234e98afe7498f",
-              "stderr": "67f4c14e64f2ddf7",
-              "userfiles": "44136fa355b3678a"
-            }
-          },
-          "subject": {
-            "sha256": "dc0e4ebcb7aed7cf5a03f233f9138a3f09bcfc2a7143d9ebeaf4c6ca1a9e9679",
-            "fields": {
-              "exit": "5feceb66ffc86f38",
-              "result.add": "fcbcf165908dd18a",
-              "result.guess_sentence": "b5bea41b6c623f7c",
-              "result.logs": "60f3675ebcb31138",
-              "result.parse": "e7f6c011776e8db7",
-              "result.ret": "fcbcf165908dd18a",
-              "stderr": "c48a0964ed0c5485",
-              "userfiles": "44136fa355b3678a"
-            }
-          },
-          "divergence": [
-            "exit: pin -6; subject 0",
-            "result: pin null; subject {\"a\" … (length 3): false, \"g\" … (length 14): true, \"l\" … (length 4): <list length 1>} … (length 5)",
-            "stderr: pin \"open SCRATCH/user-X/user.conf failed.pytho\" … (length 208); subject \"open SCRATCH/user-X/user.conf failed.\"",
-            "… further divergence omitted (4096-byte budget)"
           ]
         }
       }

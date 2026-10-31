@@ -32,7 +32,7 @@ def forced_sentence(k, relook):
     return inst, chosen
 
 
-@case('abort-zhuyin-train-stale-forcing', mode='zhuyin', abort=False, issues=('525', 'row:6'))
+@case('abort-zhuyin-train-stale-forcing', mode='zhuyin', abort=False, sigabrt=True, issues=('525', 'row:6'))
 def _(k):
     """Choose 泥 after a zhuyin sentence guess and train without guessing again.
 
@@ -355,6 +355,79 @@ def _(k):
     k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'nihao')
     out['same-length-reparse'] = k.fn('train', B, P, C.c_ubyte)(inst, 0)
     return out
+
+
+# Row 82 through libzhuyin: `zhuyin_train` runs the same `train_result3`
+# (`zhuyin.cpp:1712-1713`), `zhuyin_parse_more_full_pinyins` refills the
+# matrix and leaves the forcings alone (`:1016-1043`), and
+# `zhuyin_choose_candidate` validates them against the matrix of the time
+# only (`:1647`, `:1664`). With 你 forced over `ni` and `nihao` looked up
+# again, the walk trains 你 over columns 0-2 and then 好 from column 2 to
+# `constraints->length() - 1`, which is 5 (`phonetic_lookup.h:921`).
+# `FORCE_TONE`, set by `zhuyin_init`, would refuse the toneless syllables,
+# so the context takes the separator cases' option word first.
+ZHUYIN_REPARSE_OPTIONS = 0x18a
+
+
+def zhuyin_reparse_after_choose(k, shrink):
+    """nihao decoded through libzhuyin, 你 chosen at 0, looked up again, re-parsed.
+
+    Set the full-pinyin option word on the context, choose the first row whose
+    text is 你 and return the new instance, without validating call flags or
+    guessing again after the reparse of shrink."""
+    k.fn('set_options', B, P, U)(k.ctx, ZHUYIN_REPARSE_OPTIONS)
+    inst = k.alloc()
+    k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'nihao')
+    k.fn('guess_sentence', B, P)(inst)
+    k.fn('guess_candidates_after_cursor', B, P, Z)(inst, 0)
+    count = U()
+    k.fn('get_n_candidate', B, P, C.POINTER(U))(inst, C.byref(count))
+    chosen = None
+    for i in range(count.value):
+        cand, text = P(), S()
+        k.fn('get_candidate', B, P, U, C.POINTER(P))(inst, i, C.byref(cand))
+        k.fn('get_candidate_string', B, P, P, C.POINTER(S))(inst, cand, C.byref(text))
+        if text.value == '你'.encode():
+            chosen = cand
+            break
+    assert chosen is not None, 'no 你 row after nihao'
+    k.fn('choose_candidate', I, P, Z, P)(inst, 0, chosen)
+    k.fn('guess_sentence', B, P)(inst)
+    k.fn('parse_more_full_pinyins', Z, P, S)(inst, shrink)
+    return inst
+
+
+# `ni` leaves a three-column matrix: 好's span ends at 5 (`:661`).
+@case('abort-zhuyin-train-after-reparse-past-matrix-end', mode='zhuyin', abort=False, sigabrt=True,
+      issues=('525', 'row:82'))
+def _(k):
+    """Train the retained zhuyin result after replacing the nihao parse with ni."""
+    return {'ret': k.fn('train', B, P)(zhuyin_reparse_after_choose(k, b'ni'))}
+
+
+# `'ni`: the leading apostrophe leaves column 0 empty (`:663`).
+@case('abort-zhuyin-train-after-reparse-empty-start-column', mode='zhuyin', abort=False, sigabrt=True,
+      issues=('525', 'row:82'))
+def _(k):
+    """Train the retained zhuyin result after reparsing a leading apostrophe followed by ni."""
+    return {'ret': k.fn('train', B, P)(zhuyin_reparse_after_choose(k, b"'ni"))}
+
+
+# `ni'hao`: 好's stale span runs from the apostrophe's zero-key column 2 to
+# column 5, inside hao and empty (`:664`).
+@case('abort-zhuyin-train-after-reparse-empty-end-column', mode='zhuyin', abort=False, sigabrt=True,
+      issues=('525', 'row:82'))
+def _(k):
+    """Train the retained zhuyin result after reparsing ni'hao with its shifted key boundaries."""
+    return {'ret': k.fn('train', B, P)(zhuyin_reparse_after_choose(k, b"ni'hao"))}
+
+
+# `ni'ha`: the stale span ends on the reserved slot's zero key, and the pin
+# trains (`train-after-reparse-internal-zero-key`'s twin).
+@case('zhuyin-train-after-reparse-internal-zero-key', mode='zhuyin', control=True, issues=('525', 'row:82'))
+def _(k):
+    """Train the retained zhuyin result after reparsing ni'ha with an internal separator."""
+    return {'ret': k.fn('train', B, P)(zhuyin_reparse_after_choose(k, b"ni'ha"))}
 
 
 def register(driver_case):

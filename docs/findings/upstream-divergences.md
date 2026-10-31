@@ -4376,3 +4376,13 @@ pin's `assert` and `abort()` sites of rows 4, 5a, 10, 14, 38, 45, 63, 64,
 `assert` sites are POLICY-ACCEPTED for the missing assertion line only.
 Recorded, with the pin sites, items and cases, in
 [pin-aborts-pinyin-facade.md](pin-aborts-pinyin-facade.md).
+
+### Pin aborts reproduced in the zhuyin C facade (2026-10-31 UTC)
+
+**Pin behaviour reproduced.** Member 4 of the class (c) retirement: the
+zhuyin C facade aborts the process with `std::process::abort()` at the
+pin's `assert` and `abort()` sites of rows 89, 90 and 104, and on the
+zhuyin arm of rows 5c, 5d, 6, 19, 21, 44, 61, 66, 74, 77, 79, 82, 84, 86,
+87 and 94. `abort()` sites are MATCH; `assert` sites are POLICY-ACCEPTED
+for the missing assertion line only. Recorded, with the pin sites, items
+and cases, in [pin-aborts-zhuyin-facade.md](pin-aborts-zhuyin-facade.md).

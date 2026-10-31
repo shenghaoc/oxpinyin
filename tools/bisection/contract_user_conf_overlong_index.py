@@ -240,13 +240,39 @@ def register(case, *, _craft_db):
         return {'ret': k.fn('mask_out', B, P, U, U)(ctx, 0xFFFFFFFF, 0)}
 
 
-    @case('abort-zhuyin-mask-out-overlong-index-key', mode='zhuyin', abort=False, issues=('525', 'row:84'))
+    @case('abort-zhuyin-mask-out-overlong-index-key', mode='zhuyin', abort=False, sigabrt=True, issues=('525', 'row:84'))
     def _(k):
         """Run zhuyin mask_out against a reopened profile with a 17-word user index key."""
         # libzhuyin masks `m_pinyin_table` too (`zhuyin.cpp:763`), the same user
         # chewing table, so the same :529 walk aborts there.
         ctx = overlong_index_context(k)
         return {'ret': k.fn('mask_out', B, P, U, U)(ctx, 0xFFFFFFFF, 0)}
+
+
+    # libzhuyin has no longer-candidate walk: `zhuyin_guess_candidates_*`
+    # search the user chewing table only at the matrix's own key lengths
+    # (`zhuyin.cpp:1502-1503`, `:1587-1588`), so a 17-word key is never read
+    # and the pin answers with its ordinary candidates.
+    @case('zhuyin-guess-candidates-overlong-index-key', mode='zhuyin', control=True, issues=('525', 'row:84'))
+    def _(k):
+        """Guess zhuyin candidates after and before the cursor over a user index with a 17-word key.
+
+        Parse su3cl3 on the reopened profile and record both flags and the row texts."""
+        ctx = overlong_index_context(k)
+        inst = k.fn('alloc_instance', P, P)(ctx)
+        out = {'parse': k.fn('parse_more_chewings', Z, P, S)(inst, b'su3cl3')}
+        for name, offset in (('guess_candidates_after_cursor', 0), ('guess_candidates_before_cursor', 6)):
+            ret = k.fn(name, B, P, Z)(inst, offset)
+            count = U()
+            k.fn('get_n_candidate', B, P, C.POINTER(U))(inst, C.byref(count))
+            rows = []
+            for i in range(count.value):
+                cand, text = P(), S()
+                k.fn('get_candidate', B, P, U, C.POINTER(P))(inst, i, C.byref(cand))
+                k.fn('get_candidate_string', B, P, P, C.POINTER(S))(inst, cand, C.byref(text))
+                rows.append(text.value.decode() if text.value is not None else None)
+            out[name] = {'ret': ret, 'rows': rows}
+        return out
 
 
     @case('abort-guess-candidates-overlong-index-key', abort=False, sigabrt=True, issues=('525', 'row:84'))
@@ -304,7 +330,7 @@ def register(case, *, _craft_db):
         return {'ret': k.fn('mask_out', B, P, U, U)(ctx, 0xFFFFFFFF, 0)}
 
 
-    @case('abort-zhuyin-mask-out-empty-index-key', mode='zhuyin', abort=False, userdir=True, issues=('525', 'row:84'))
+    @case('abort-zhuyin-mask-out-empty-index-key', mode='zhuyin', abort=False, sigabrt=True, userdir=True, issues=('525', 'row:84'))
     def _(k):
         """Run zhuyin mask_out against an empty-key user index after reopening the profile."""
         ctx = overlong_index_context(k, rows=lambda first: [b'', first])

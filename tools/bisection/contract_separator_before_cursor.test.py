@@ -16,8 +16,8 @@ import contract_separator_before_cursor as family
 # first and last entries, and the SHA-256 of the repr of the whole ordered list.
 EXPECTED_COUNT = 1360
 EXPECTED_FIRST = ('separator/pinyin/0/parse/0', (), {'mode': 'pinyin', 'control': True, 'issues': ('640',)})
-EXPECTED_LAST = ("allocator-zero/zhuyin/xi1'an1/key/4", (), {'mode': 'zhuyin', 'abort': False, 'issues': ('681',)})
-EXPECTED_SHA256 = 'ff4529525e916d5ebf4cdd4846f79790f0229f7fe5e4105f85abf386a23cded2'
+EXPECTED_LAST = ("allocator-zero/zhuyin/xi1'an1/key/4", (), {'mode': 'zhuyin', 'abort': False, 'sigabrt': True, 'issues': ('681',)})
+EXPECTED_SHA256 = '5ebe7d51002cd8c07d766454c48b978a4053fe3ea6dd4fa65ac9d962af77a7e3'
 
 
 def declarations():

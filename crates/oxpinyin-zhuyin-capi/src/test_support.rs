@@ -171,3 +171,34 @@ pub fn take_sentence(sentence: *mut std::os::raw::c_char) -> String {
     unsafe { crate::ffi::free(sentence.cast()) };
     decoded
 }
+
+/// The environment variable that names the death test a re-executed test
+/// binary runs.
+const DEATH_TEST: &str = "OXPINYIN_ZHUYIN_CAPI_DEATH_TEST";
+
+/// Runs `body` in a child process and asserts it dies of SIGABRT, the way
+/// the facade reproduces a pin `assert`/`abort()` (the class (c) rows
+/// retired 2026-10-31 UTC). `name` is the calling test's full path as
+/// libtest prints it (`module::test`): the test binary is re-executed with
+/// `--exact name`, and in that child `body` runs and must not return.
+#[cfg(unix)]
+pub fn assert_aborts(name: &str, body: impl FnOnce()) {
+    use std::os::unix::process::ExitStatusExt;
+    if std::env::var_os(DEATH_TEST).is_some_and(|value| value == name) {
+        body();
+        // Reached only when `body` did not abort.
+        std::process::exit(0);
+    }
+    // The child's scratch directories outlive its abort; keep them under
+    // one this process removes.
+    let scratch = tempfile::tempdir().expect("death-test scratch");
+    let status = std::process::Command::new(std::env::current_exe().expect("test binary"))
+        .args(["--exact", name, "--test-threads=1"])
+        .env(DEATH_TEST, name)
+        .env("TMPDIR", scratch.path())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .expect("re-run the test binary");
+    assert_eq!(status.signal(), Some(6), "{name} must die of SIGABRT");
+}

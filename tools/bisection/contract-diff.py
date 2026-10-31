@@ -1020,12 +1020,9 @@ contract_axis_c_cases.register(
 # the worker and the tables the registration above built, as they are when called.
 axis_c_canonical = contract_axis_c.axis_c_canonical
 axis_c_normalize_diagnostics = contract_axis_c.axis_c_normalize_diagnostics
-axis_c_covered_abort = contract_axis_c.axis_c_covered_abort
 AXIS_C_ABORT_ROW_FIELDS = contract_axis_c.AXIS_C_ABORT_ROW_FIELDS
-AXIS_C_REFUSAL_RESULT_FIELDS = contract_axis_c.AXIS_C_REFUSAL_RESULT_FIELDS
 axis_c_live = contract_axis_c.axis_c_live
-axis_c_licensed_remnant = contract_axis_c.axis_c_licensed_remnant
-axis_c_covered_residual = contract_axis_c.axis_c_covered_residual
+axis_c_reproduced_abort = contract_axis_c.axis_c_reproduced_abort
 axis_c_first_difference = contract_axis_c.axis_c_first_difference
 
 

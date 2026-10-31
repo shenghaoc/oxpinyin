@@ -250,11 +250,9 @@ for mode in ('pinyin','zhuyin'):
                 identity=f'{mode}/{index}/{op}/{offset}'
                 kwargs={'mode':mode,'control':offset in SEPARATOR_CONTROLS.get(f'{mode}/{index}/{op}', ())}
                 if offset in SEPARATOR_ABORTS.get(f"{mode}/{index}/{op}", ()):
-                    kwargs['abort']=False
-                    # The pinyin facade reproduces these aborts (2026-10-31
-                    # UTC, pin-aborts-pinyin-facade.md); zhuyin's are pending.
-                    if mode=='pinyin':
-                        kwargs.update(sigabrt=True, control=False)
+                    # Both facades reproduce these aborts (2026-10-31 UTC,
+                    # pin-aborts-pinyin-facade.md, pin-aborts-zhuyin-facade.md).
+                    kwargs.update(abort=False, sigabrt=True, control=False)
                 case('separator/'+identity,**kwargs, issues=('640',))(separator_case(text,op,offset))
 BEFORE_CURSOR_INPUTS=('ni','hao','wo','shi','zhong','guo','xian','tian',
     'nihao','zhongguo','beijing','shanghai','renmin','nihaoshijie',
@@ -280,7 +278,7 @@ for mode in ('pinyin','zhuyin'):
                 tail_zero=is_zero and all(char=="'" for char in text[offset:])
                 kwargs={'mode':mode,'control':not (tail_zero if mode=='pinyin' else is_zero) and not (mode=='zhuyin' and previous_zero and offset<len(text))}
                 if mode=='zhuyin' and previous_zero and offset<len(text):
-                    kwargs['abort']=False
+                    kwargs.update(abort=False, sigabrt=True)
                 case(f'zero-key/{mode}/{text}/{op}/{offset}',**kwargs, issues=('681',))(separator_case(text,op,offset))
 for mode,text,offset in (('pinyin',"xi'",2),('pinyin',"xi''",2),
                          ('pinyin',"xi''",3),('zhuyin',"xi1'an1",3),
@@ -288,7 +286,7 @@ for mode,text,offset in (('pinyin',"xi'",2),('pinyin',"xi''",2),
     for op in ('key','rest','render'):
         case(f'allocator-zero/{mode}/{text}/{op}/{offset}',mode=mode, issues=('681',))(
             separator_case(text,op,offset,0x1aa))
-case("allocator-zero/zhuyin/xi1'an1/key/4",mode='zhuyin',abort=False, issues=('681',))(
+case("allocator-zero/zhuyin/xi1'an1/key/4",mode='zhuyin',abort=False,sigabrt=True, issues=('681',))(
     separator_case("xi1'an1",'key',4,0x1aa))
 
 

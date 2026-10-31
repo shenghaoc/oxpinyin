@@ -216,8 +216,9 @@ oxpinyin_capi_marshal::write_owned_sentence_bytes!(crate::ffi::malloc_cstr_with_
 /// it — for an empty matrix, a NULL, empty or non-UTF-8 phrase, a
 /// character with no dictionary token (issue #356: the pinyin string
 /// passed as the phrase — both pinned oracles answer `false`), or a walk
-/// no key path satisfies; also `false` where the pin asserts (the
-/// range and `_check_offset` shapes — the no-abort policy).
+/// no key path satisfies. Where the pin asserts (`zhuyin.cpp:2110`,
+/// `:2158`, and `:1453` through `:2159`) the process aborts (register row
+/// 19).
 #[unsafe(no_mangle)]
 pub extern "C" fn zhuyin_get_character_offset(
     instance: *mut ZhuyinInstance,
@@ -261,9 +262,17 @@ pub extern "C" fn zhuyin_get_character_offset(
             }
             return false;
         }
+        // Register row 19: the recursion's `assert(size > 0)`
+        // (`zhuyin.cpp:2110`), the entry's `assert(offset < matrix.size())`
+        // (`:2158`) and `_check_offset` (`:1453` via `:2159`).
+        Err(
+            oxpinyin_engine::EngineError::MatrixColumnAssert { .. }
+            | oxpinyin_engine::EngineError::LookupOffsetOutOfRange { .. }
+            | oxpinyin_engine::EngineError::ZeroKeyOffsetCheck { .. },
+        ) => std::process::abort(),
+        // A graph or dictionary failure the pin has no counterpart for.
         Err(_) => {
-            // Class (c): `zhuyin.cpp:2110` and `:2158`.
-            crate::ffi::log_warning("zhuyin_get_character_offset: assertion failed");
+            crate::ffi::log_warning("zhuyin_get_character_offset: the lookup failed");
             return false;
         }
     };
@@ -333,17 +342,22 @@ pub extern "C" fn zhuyin_guess_candidates_before_cursor(
 ///
 /// The pin's matrix holds `parsed_len + 1` columns, the last a reserved slot
 /// holding a lone zero key, and `zhuyin.cpp`'s `_check_offset` asserts
-/// `zero_key != key` on the column before the offset (`:1441-1456`): an
-/// offset past the reserved slot aborts. Class (c), `false` and one warning.
+/// `zero_key != key` on the column before the offset (`:1441-1456`, via
+/// `:1495` and `:1558`): an offset just past a separator or one past the
+/// reserved slot aborts there, and any further out aborts in that read's
+/// `get_column_size` (`phonetic_key_matrix.h:103`). So does this facade
+/// (register row 66).
 fn validated_lookup_offset(inst: &crate::state::CapiInstance, offset: usize) -> Option<usize> {
     match inst.core.validate_abi_lookup_offset(offset, true) {
         Ok(normalized) => Some(normalized),
-        Err(oxpinyin_engine::EngineError::LookupOffsetOutOfRange { .. }) => {
-            crate::ffi::log_warning("zhuyin_guess_candidates: offset lies past the matrix");
-            None
-        }
+        Err(
+            oxpinyin_engine::EngineError::LookupOffsetOutOfRange { .. }
+            | oxpinyin_engine::EngineError::ZeroKeyOffsetCheck { .. },
+        ) => std::process::abort(),
+        // A parse the facade cannot read, which the pin has no counterpart
+        // for.
         Err(_) => {
-            crate::ffi::log_warning("zhuyin_guess_candidates: zero-column assertion");
+            crate::ffi::log_warning("zhuyin_guess_candidates: the lookup failed");
             None
         }
     }
@@ -450,6 +464,28 @@ fn guess_candidates(instance: *mut ZhuyinInstance, offset: usize, before_cursor:
     } else {
         session_offset
     };
+    // Register rows 61 and 66, `zhuyin.cpp:1261`: `assert (0 < total_freq)`
+    // while ranking a searched row, with the facade total wrapped to zero by
+    // `zhuyin_token_add_unigram_frequency`. libzhuyin's
+    // `_compute_frequency_of_items` skips no row type and runs on the freshly
+    // searched rows (`:1526`; per `len` slice before the cursor, `:1607`),
+    // before the sentence prepend and the phrase-string dedup (`:1533-1537`,
+    // `:1626-1630`): the engine reports whether that list held a row, so a
+    // row the dedup removes still counts. A lookup strictly inside a key
+    // searches nothing at the pin, and so does a before-cursor lookup at an
+    // offset no key ends at (the composition start, inside a key): the pin's
+    // spans end on that offset's empty column, while the session window,
+    // whose rows all end at `session_offset`, answers the spans ending
+    // elsewhere. The process aborts there, before the phrase strings are
+    // read (`:1535`, `:1628`).
+    let searched_here = !sentence_rows_only
+        && (!before_cursor
+            || inst.core.zhuyin_parse.as_ref().is_none_or(|parse| {
+                oxpinyin_facade::zhuyin_original_offset(parse, session_offset) == normalized
+            }));
+    if facade_total_is_zero(inst) && searched_here && window_owned.ranked_phrase_row() {
+        std::process::abort();
+    }
     // Class (b), `zhuyin.cpp:1096`: a token of a loaded library whose item
     // cannot be read leaves `m_phrase_string` unset, and the pin's duplicate
     // removal compares it (SIGSEGV). Only a `table.conf` that points a
@@ -476,20 +512,6 @@ fn guess_candidates(instance: *mut ZhuyinInstance, offset: usize, before_cursor:
         sentence_rows_only,
     );
     inst.core.anchored_window = Some((window_anchor, window_owned));
-    // Class (c), `zhuyin.cpp:1261`: `assert (0 < total_freq)` while ranking a
-    // candidate, with the facade total wrapped to zero by
-    // `zhuyin_token_add_unigram_frequency`. The assertion sits in the loop
-    // over the searched rows (before the sentence rows are prepended), so a
-    // window with no phrase row never reaches it and the pin answers true.
-    if facade_total_is_zero(inst)
-        && inst.candidates.iter().any(|c| {
-            c.candidate_type != crate::types::lookup_candidate_type_t::BEST_MATCH_CANDIDATE
-        })
-    {
-        crate::ffi::log_warning("zhuyin_guess_candidates: assertion '0 < total_freq' failed");
-        inst.candidates.clear();
-        return false;
-    }
     // The pin answers `true` for a valid lookup into a non-empty matrix
     // even when no candidate spans the offset (074a2219,
     // zhuyin.cpp:1460-1551). The empty matrix was refused above.
