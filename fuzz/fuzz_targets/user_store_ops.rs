@@ -29,7 +29,9 @@ use std::sync::Mutex;
 
 use libfuzzer_sys::fuzz_target;
 use oxpinyin_core::SyllableKey;
-use oxpinyin_user::{PinyinKey, UserStore, UserStoreError};
+use oxpinyin_user::{
+    phrase_index_library_index, PinyinKey, UserStore, UserStoreError, USER_DICTIONARY,
+};
 
 /// Real frozen syllables (a slice of the inventory the w4 fixtures
 /// exercise); fuzz bytes index into this list to build valid keys.
@@ -163,6 +165,38 @@ fn check_phrase_index(store: &UserStore, freshest: Option<u32>) {
     }
 }
 
+/// Whether the user phrase table's entry for `text` holds user tokens that
+/// are not exactly one token whose phrase is `text`. On tkrzw and Kyoto
+/// Cabinet a `mask_out` walk leaves the previous record's tokens in an
+/// entry it empties, as the pin's `MaskOutProcessor::ProcessFull` does
+/// (`phrase_large_table3_tkrzwdb.cpp:288-289`, #785), and a later removal
+/// can drop the row such a token names. `_add_phrase` then asserts at
+/// `pinyin.cpp:554` (two tokens in the library), `:568` (another length,
+/// or an absent row, which leaves a zero-length item) or `:571` (the same
+/// length, other characters); oxpinyin answers those sites' refusal,
+/// `InvalidPhrase`, so the add is refused, not crashed. Under the class (c)
+/// ruling (#1467) the Rust store keeps returning that error at the pin's
+/// point and only the C adapters abort, so this acceptance stays when class
+/// (c) retires those sites: this target drives `UserStore` directly. Only a
+/// harness that calls the C API must avoid these sequences once they abort.
+fn holds_foreign_token(store: &UserStore, text: &str) -> bool {
+    let words: Vec<u32> = text.chars().map(u32::from).collect();
+    let tokens: Vec<u32> = store
+        .phrase_table_tokens_for_text(text)
+        .expect("phrase table search")
+        .into_iter()
+        .filter(|&token| phrase_index_library_index(token) == USER_DICTIONARY)
+        .collect();
+    match tokens.as_slice() {
+        [] => false,
+        [token] => !store
+            .phrase(*token)
+            .expect("phrase lookup")
+            .is_some_and(|row| row.words() == words.as_slice()),
+        _ => true,
+    }
+}
+
 fuzz_target!(|data: &[u8]| {
     let path = fresh_path();
     let mut store = UserStore::create_standalone(&path).expect("a fresh store opens");
@@ -192,20 +226,24 @@ fuzz_target!(|data: &[u8]| {
                     .map(|index| key_for(index as u8))
                     .collect();
                 if text.chars().count() == keys.len() && !text.is_empty() {
-                    let token = store
-                        .add_phrase(&oxpinyin_core::PhraseText::from(&text), &keys, None)
-                        .expect("valid add");
-                    added.push(token);
+                    let refusable = holds_foreign_token(&store, &text);
+                    match store.add_phrase(&oxpinyin_core::PhraseText::from(&text), &keys, None) {
+                        Ok(token) => added.push(token),
+                        Err(UserStoreError::InvalidPhrase) if refusable => {}
+                        Err(err) => panic!("valid add: {err:?}"),
+                    }
                 }
             }
             // add with an explicit count derived from the payload
             2 => {
                 let count = u64::from(payload.first().copied().unwrap_or(0)) % 1000;
                 let keys = vec![key_for(payload.first().copied().unwrap_or(0))];
-                let token = store
-                    .add_phrase(&"词".into(), &keys, Some(count))
-                    .expect("valid add with count");
-                added.push(token);
+                let refusable = holds_foreign_token(&store, "词");
+                match store.add_phrase(&"词".into(), &keys, Some(count)) {
+                    Ok(token) => added.push(token),
+                    Err(UserStoreError::InvalidPhrase) if refusable => {}
+                    Err(err) => panic!("valid add with count: {err:?}"),
+                }
             }
             // the typed invalid-phrase refusal: length ceiling violated
             // (exactly 16 chars with 16 keys), and length/key mismatch
