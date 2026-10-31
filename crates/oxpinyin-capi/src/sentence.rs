@@ -40,9 +40,7 @@ pub extern "C" fn pinyin_guess_sentence(instance: *mut PinyinInstance) -> bool {
         inst.core.session.discard_composition();
         return false;
     }
-    if refuse_toned_initial(inst, "pinyin_guess_sentence") {
-        return false;
-    }
+    abort_on_toned_initial(inst);
     match inst.core.session.guess_sentence() {
         Ok(found) => found,
         Err(error) => {
@@ -99,35 +97,31 @@ fn facade_total_is_zero(inst: &crate::state::CapiInstance) -> bool {
     inst.core.lm.has_real_unigrams() && inst.core.lm.amplified_total() == 0
 }
 
-/// Class (c), `pinyin_phrase3.h:152`: the pin's phrase-table search asserts
-/// `CHEWING_ZERO_TONE == key.m_tone` on an initial-only key
+/// Register row 4, `pinyin_phrase3.h:152`: the pin's phrase-table search
+/// asserts `CHEWING_ZERO_TONE == key.m_tone` on an initial-only key
 /// (`contains_incomplete_pinyin`), so a lookup over a matrix holding a toned
-/// initial (`n4` under `USE_TONE | PINYIN_INCOMPLETE`) aborts. The lookup is
-/// refused with `false` and one warning.
-fn refuse_toned_initial(inst: &crate::state::CapiInstance, name: &str) -> bool {
-    refuse_toned_matrix(crate::aux_matrix::SharedMatrix::of(inst), name)
+/// initial (`n4` under `USE_TONE | PINYIN_INCOMPLETE`) aborts. So does this
+/// facade, before the lookup.
+fn abort_on_toned_initial(inst: &crate::state::CapiInstance) {
+    abort_on_toned_matrix(crate::aux_matrix::SharedMatrix::of(inst));
 }
 
-/// [`refuse_toned_initial`] over a matrix the caller already built.
-fn refuse_toned_matrix(matrix: Option<crate::aux_matrix::SharedMatrix>, name: &str) -> bool {
-    let toned = matrix.is_some_and(|m| m.has_toned_initial());
-    if toned {
-        crate::ffi::log_warning(&format!(
-            "{name}: assertion 'CHEWING_ZERO_TONE == key.m_tone' failed"
-        ));
+/// [`abort_on_toned_initial`] over a matrix the caller already built.
+fn abort_on_toned_matrix(matrix: Option<crate::aux_matrix::SharedMatrix>) {
+    if matrix.is_some_and(|m| m.has_toned_initial()) {
+        std::process::abort();
     }
-    toned
 }
 
 /// The normalized lookup offset, or `None` where the lookup is refused.
 ///
 /// The pin's matrix holds `parsed_len + 1` columns. `_check_offset` reads
 /// the column before the offset (`pinyin.cpp:2226`, unasserted, and
-/// `get_column_size` asserts its index), so an offset one past the reserved
-/// slot (`len + 1`) is an ordinary lookup that finds nothing — answered as
-/// the end-of-input lookup — and anything further out aborts: class (c),
-/// `false` and one warning. The leading-separator refusal keeps its silent
-/// `false`.
+/// `get_column_size` asserts its index, `phonetic_key_matrix.h:103`), so an
+/// offset one past the reserved slot (`len + 1`) is an ordinary lookup that
+/// finds nothing — answered as the end-of-input lookup — and anything
+/// further out aborts the process, as the pin does (register row 66). The
+/// leading-separator refusal keeps its silent `false`.
 ///
 /// `keys` is the active mode's key list when the caller holds one for the
 /// current input and option word; `None` reads it again.
@@ -149,10 +143,7 @@ fn validated_lookup_offset(
         {
             inst.core.validate_lookup_offset(len).ok()
         }
-        Err(oxpinyin_engine::EngineError::LookupOffsetOutOfRange { .. }) => {
-            crate::ffi::log_warning("pinyin_guess_candidates: offset lies past the matrix");
-            None
-        }
+        Err(oxpinyin_engine::EngineError::LookupOffsetOutOfRange { .. }) => std::process::abort(),
         Err(_) => None,
     }
 }
@@ -213,9 +204,7 @@ pub extern "C" fn pinyin_guess_sentence_with_prefix(
         inst.core.session.discard_composition();
         return false;
     }
-    if refuse_toned_initial(inst, "pinyin_guess_sentence_with_prefix") {
-        return false;
-    }
+    abort_on_toned_initial(inst);
     let prefix_tokens: Vec<oxpinyin_core::PhraseToken> = prefixes
         .iter()
         .map(|&token| oxpinyin_core::PhraseToken::new(token))
@@ -305,13 +294,12 @@ pub extern "C" fn pinyin_get_sentence(
     match inst.core.session.sentence_text(index) {
         Some(decoded) => write_owned_sentence_bytes(&phrase_text_bytes(decoded), sentence),
         None => {
-            // Class (c), `pinyin.cpp:1474`: with rows present, an index past
-            // them is `assert(index < results.size())`. No rows at all is the
-            // pin's own graceful `false` (`:1470-1471`), silent.
+            // Register row 10, `pinyin.cpp:1474`: with rows present, an
+            // index past them is `assert(index < results.size())`, and the
+            // process aborts. No rows at all is the pin's own graceful
+            // `false` (`:1470-1471`).
             if index > 0 && inst.core.session.sentence_text(0).is_some() {
-                crate::ffi::log_warning(
-                    "pinyin_get_sentence: assertion 'index < results.size()' failed",
-                );
+                std::process::abort();
             }
             false
         }
@@ -341,8 +329,8 @@ oxpinyin_capi_marshal::write_owned_sentence_bytes!(crate::ffi::malloc_cstr_with_
 /// it — for an empty matrix, a NULL, empty or non-UTF-8 phrase, a
 /// character with no dictionary token (issue #356: the pinyin string
 /// passed as the phrase — both pinned oracles answer `false`), or a walk
-/// no key path satisfies; also `false` where the pin asserts (the
-/// range and `_check_offset` shapes — the no-abort policy).
+/// no key path satisfies. Where the pin asserts (`pinyin.cpp:3147`,
+/// `:3161`, `:3203`, `:3204`) the process aborts (register row 19).
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_get_character_offset(
     instance: *mut PinyinInstance,
@@ -377,10 +365,16 @@ pub extern "C" fn pinyin_get_character_offset(
             }
             return false;
         }
+        // Register row 19: the pin's recursion and entry asserts
+        // (`pinyin.cpp:3147`, `:3161`, `:3203`, `:3204`).
+        Err(
+            oxpinyin_engine::EngineError::MatrixColumnAssert { .. }
+            | oxpinyin_engine::EngineError::LookupOffsetOutOfRange { .. }
+            | oxpinyin_engine::EngineError::ZeroKeyOffsetCheck { .. },
+        ) => std::process::abort(),
+        // A graph or dictionary failure the pin has no counterpart for.
         Err(_) => {
-            // Class (c): the pin's recursion and entry asserts
-            // (`pinyin.cpp:3147`, `:3161`, `:3203`, `:3204`).
-            crate::ffi::log_warning("pinyin_get_character_offset: assertion failed");
+            crate::ffi::log_warning("pinyin_get_character_offset: the lookup failed");
             return false;
         }
     };
@@ -408,13 +402,6 @@ fn character_walk_ran(inst: &crate::state::CapiInstance, text: &oxpinyin_core::P
         .all(|word| !inst.core.dict.tokens_for_ucs4(&[word]).is_empty())
 }
 
-/// The one log line both overlong-index surfaces of
-/// [`pinyin_guess_candidates`] answer: the eager sort-word refresh's
-/// LONGER-row build and the re-anchored lookup both reach the same pin
-/// abort (`chewing_large_table2_bdb.cpp:282`).
-const OVERLONG_INDEX_WARNING: &str = "pinyin_guess_candidates: a pinyin index key (user or system) is \
-     longer than MAX_PHRASE_LENGTH syllables (upstream aborts, chewing_large_table2_bdb.cpp:282)";
-
 /// Guess candidates at the given offset with sort option.
 ///
 /// # C signature
@@ -433,9 +420,9 @@ const OVERLONG_INDEX_WARNING: &str = "pinyin_guess_candidates: a pinyin index ke
 /// zero-key separator (plain full pinyin, Luoma/secondary-zhuyin), the
 /// range refusal alone where a composition cannot hold one (double pinyin,
 /// the zhuyin keyboards — there `'` is out of scheme or a content symbol).
-/// A refusal — the leading-run shape, or an offset beyond one-past-end —
-/// empties the snapshot and answers `false` where upstream's
-/// `_check_offset` aborts (or reads its matrix out of bounds). The lookup
+/// The leading-run shape empties the snapshot and answers `false`; an
+/// offset two or more past the reserved slot aborts the process, as
+/// upstream's `_check_offset` does (register row 66). The lookup
 /// itself stays anchored at the session's composition offset, so
 /// `pinyin_choose_candidate(offset, cand)` keeps round-tripping for such
 /// candidates; the scan anchor is otherwise still positionless — the
@@ -485,10 +472,7 @@ pub extern "C" fn pinyin_guess_candidates(
         .as_ref()
         .ok()
         .and_then(|keys| crate::aux_matrix::SharedMatrix::of_keys(inst, keys));
-    if refuse_toned_matrix(matrix, "pinyin_guess_candidates") {
-        inst.candidates.clear();
-        return false;
-    }
+    abort_on_toned_matrix(matrix);
     let options = inst.core.options();
     let keys = keys.ok().filter(|_| inst.core.session.options() == options);
     if inst.core.session.set_options(options).is_err() {
@@ -546,15 +530,11 @@ pub extern "C" fn pinyin_guess_candidates(
     // `pinyin_choose_candidate` resolves its index against it.
     inst.core.anchored_window = match inst.core.session.candidates_at(session_offset) {
         Ok(window) => Some((session_offset, window)),
-        Err(oxpinyin_engine::EngineError::OverlongUserIndexKey { .. }) => {
-            // Class (c), `chewing_large_table2_bdb.cpp:282`: the suggestion
-            // walk reached a user index key past MAX_PHRASE_LENGTH syllables
-            // that extends this path and the pin's `search_suggestion` switch
-            // falls to `default: abort()`.
-            crate::ffi::log_warning(OVERLONG_INDEX_WARNING);
-            inst.candidates.clear();
-            return false;
-        }
+        // Register rows 84 and 95, `chewing_large_table2_bdb.cpp:282` (kc
+        // `:269`, tkrzw `:252`): the suggestion walk reached an index key
+        // past MAX_PHRASE_LENGTH syllables that extends this path, and the
+        // pin's `search_suggestion` switch falls to `default: abort()`.
+        Err(oxpinyin_engine::EngineError::OverlongUserIndexKey { .. }) => std::process::abort(),
         // Class (c) or (b), register rows 85 and 98: the DYNAMIC_ADJUST
         // merge or read of the previous token's grams asserts on a short
         // user value or reads past a partial one (`pinyin.cpp:2214`,
@@ -686,13 +666,13 @@ pub extern "C" fn pinyin_guess_candidates(
             source_index: u32::try_from(window_index).unwrap_or(u32::MAX),
         });
     }
-    // Class (c), `pinyin.cpp:1859`: `assert(0 < total_freq)` while ranking a
-    // candidate, with the facade total wrapped to zero by
+    // Register row 61, `pinyin.cpp:1859`: `assert(0 < total_freq)` while
+    // ranking a candidate, with the facade total wrapped to zero by
     // `pinyin_token_add_unigram_frequency`. The assertion sits in the loop
     // over the searched rows (`_compute_frequency_of_items`, before the
     // sentence and longer rows are prepended), so a window with no phrase
     // row — the reserved slot, a mid-key offset — never reaches it. The
-    // answer is `false` and one log line; the list is emptied.
+    // process aborts there.
     if facade_total_is_zero(inst)
         && inst.candidates.iter().any(|c| {
             matches!(
@@ -702,9 +682,7 @@ pub extern "C" fn pinyin_guess_candidates(
             )
         })
     {
-        crate::ffi::log_warning("pinyin_guess_candidates: assertion '0 < total_freq' failed");
-        inst.candidates.clear();
-        return false;
+        std::process::abort();
     }
     // The pin's empty-matrix early return (`pinyin.cpp:2193`): a
     // parse that produced no keys answers false, not an empty list.
@@ -753,16 +731,17 @@ mod character_offset_tests {
     /// Issue #356's reproducer: the pinyin string itself as the phrase.
     /// Both pinned oracles answer `false` at offsets 0-2 (the
     /// one-character phrase-table search finds no token for `n`, `i` or
-    /// `'`) and abort at 3 and 4 (`_check_offset` on the separator's
-    /// zero key, then the range assert) — answered `false` under the
-    /// no-abort policy. The out-param is left untouched throughout.
+    /// `'`), with the out-param untouched. At 3 and 4 they abort
+    /// (`_check_offset` on the separator's zero key, then the range
+    /// assert), and so does the facade: `abort-get-character-offset-*` of
+    /// `contract-diff.py` hold those shapes.
     #[test]
-    fn a_non_hanzi_phrase_answers_false_at_every_offset() {
+    fn a_non_hanzi_phrase_answers_false_before_the_separator() {
         let (context, instance, _user_dir) = parity_instance("char-offset-non-hanzi");
         let input = cstr("ni'");
         assert_eq!(pinyin_parse_more_full_pinyins(instance, input.as_ptr()), 3);
 
-        for offset in 0..=4 {
+        for offset in 0..=2 {
             assert_eq!(
                 character_offset(instance, "ni'", offset),
                 (false, usize::MAX),

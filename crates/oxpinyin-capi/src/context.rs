@@ -40,12 +40,19 @@ fn init_context(systemdir: *const c_char, userdir: *const c_char) -> *mut Pinyin
             handle
         }
         Err(error) => {
-            // The user marker's class-(c) refusal has its own fixed line
-            // (`OpenFailure::unknown_database_format`); every other
-            // failure keeps the descriptive one.
+            // Register row 44, `table_info.cpp:132` via `:353-354`: the
+            // pin's `check_format` loads `user.conf` first and aborts on a
+            // `database format:` token it does not know, before it writes
+            // anything; the open stopped at the same point.
             if error.unknown_database_format() {
-                crate::ffi::log_warning(oxpinyin_facade::UNKNOWN_DATABASE_FORMAT_WARNING);
-            } else if error.chunk_header_read() {
+                std::process::abort();
+            }
+            if let Some(conf_error) = error.table_conf_error()
+                && table_conf_aborts(conf_error, &system_path)
+            {
+                std::process::abort();
+            }
+            if error.chunk_header_read() {
                 // Class (c), `memory_chunk.h:493`: a system library is a
                 // directory whose reported size passes the header check and
                 // the pin's `MemoryChunk::mmap` asserts on reading it.
@@ -65,8 +72,10 @@ fn init_context(systemdir: *const c_char, userdir: *const c_char) -> *mut Pinyin
             } else if let Some(conf_error) = error.table_conf_error() {
                 // A `table.conf` the pin refuses is `false` and one raw
                 // line (after the load's own `open %s failed.` when it
-                // could not be opened, #545); one it dies on is one warning
-                // (#694, #525).
+                // could not be opened, #545); one it dies on without an
+                // assert or `abort()` (class (b): the missing source format
+                // line, a row without a chunk where the directory does not
+                // read as one) is one warning (#694, #525).
                 match conf_error.warning() {
                     Some(text) => crate::ffi::log_warning(text),
                     None => oxpinyin_data::c_stderr::table_conf_load_failed(Some(&system_path)),
@@ -78,6 +87,31 @@ fn init_context(systemdir: *const c_char, userdir: *const c_char) -> *mut Pinyin
             }
             ptr::null_mut()
         }
+    }
+}
+
+/// Whether the pin dies of an `abort()` or `assert` on this `table.conf`
+/// refusal (register row 79): `table_info.cpp:119`, `:132`, `:142`, `:156`
+/// and `:175` (`abort()`) and `:276` inside `SystemTableInfo2::load`, with
+/// nothing written; `pinyin.cpp:388` and `memory_chunk.h:434` after
+/// `check_format` wrote `user.conf`, which the open has written too; and
+/// `memory_chunk.h:493` for a row without a system chunk where the system
+/// directory reads as one. The missing source-format line (row 80) and the
+/// chunkless row on a directory that does not read as a chunk are class
+/// (b) and keep their warning.
+fn table_conf_aborts(
+    error: oxpinyin_data::table_info::TableConfError,
+    system_path: &std::path::Path,
+) -> bool {
+    use oxpinyin_data::table_info::{TableConfError, TableConfSite};
+    match error {
+        TableConfError::Abort(TableConfSite::NullSystemFile) => {
+            oxpinyin_facade::null_chunk_asserts(system_path)
+        }
+        TableConfError::Abort(_) => true,
+        TableConfError::Unopenable
+        | TableConfError::Header
+        | TableConfError::UninitialisedSourceFormat => false,
     }
 }
 
@@ -233,16 +267,13 @@ pub fn save_context(context: *mut PinyinContext) -> bool {
     // not reach it.
     let outcome = ctx.save_user();
     match outcome {
-        // Class (c), `memory_chunk.h:543`/`:547`: a chunk file's header
-        // write failed and the pin `assert`s there. The save fails and
-        // logs one line, as every class-(c) site does.
-        oxpinyin_facade::SaveOutcome::ChunkWriteFailed(field) => {
-            crate::ffi::log_warning(&format!(
-                "pinyin_save: assertion '{}' failed",
-                field.assert_expression()
-            ));
-            false
-        }
+        // Register row 77, `memory_chunk.h:543`/`:547`: a chunk file's
+        // header write failed and the pin `assert`s there. The save stopped
+        // at the same point: every earlier library's `.tmp` written, this
+        // one's created with the words that were written, no rename and no
+        // `user.conf`. The abort skips every destructor, so nothing else is
+        // written either.
+        oxpinyin_facade::SaveOutcome::ChunkWriteFailed(_) => std::process::abort(),
         // Class (c), `memory_chunk.h:493`: the save maps every loaded system
         // library again and one is a directory.
         oxpinyin_facade::SaveOutcome::ChunkHeaderRead => {

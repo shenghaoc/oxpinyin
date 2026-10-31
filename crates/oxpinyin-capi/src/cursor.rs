@@ -84,7 +84,7 @@ pub extern "C" fn pinyin_get_pinyin_key_rest(
     let found = match inst.core.abi_key_at(offset, false) {
         Ok(Some(found)) => found,
         Ok(None) => {
-            warn_on_empty_matrix(inst, "pinyin_get_pinyin_key_rest");
+            abort_on_empty_matrix(inst);
             return false;
         }
         Err(_) => {
@@ -113,15 +113,15 @@ pub extern "C" fn pinyin_get_pinyin_key_rest(
     true
 }
 
-/// Class (c), `phonetic_key_matrix.h:103`: with no matrix at all (a fresh or
-/// keyless instance) the pin's `matrix.size() - 1` wraps, the offset test
-/// passes, and `get_column_size` asserts. A matrix with keys is the
-/// graceful `false`, silent.
-fn warn_on_empty_matrix(inst: &crate::state::CapiInstance, name: &str) {
+/// Register rows 63 and 66, `phonetic_key_matrix.h:103`: with no matrix at
+/// all (a fresh or keyless instance: `fill_matrix` leaves it at size 0 when
+/// the parse placed no key, `phonetic_key_matrix.cpp:37`) the pin's
+/// `matrix.size() - 1` wraps, the offset test passes, and `get_column_size`
+/// asserts, so the process aborts. A matrix with keys is the graceful
+/// `false`.
+fn abort_on_empty_matrix(inst: &crate::state::CapiInstance) {
     if !crate::sentence::matrix_has_keys(inst) {
-        crate::ffi::log_warning(&format!(
-            "{name}: assertion 'index < m_table_content->len' failed"
-        ));
+        std::process::abort();
     }
 }
 
@@ -387,8 +387,9 @@ pub extern "C" fn pinyin_get_pinyin_offset(
 ///
 /// Steps syllable-to-syllable: the start of the key ending at `offset`
 /// (0 when no key ends there), zero-run-normalized and validated
-/// (`pinyin.cpp:3029-3059`). The pin's validation aborts are answered
-/// as `false` (the no-abort policy).
+/// (`pinyin.cpp:3029-3059`). Where the pin's validation asserts
+/// (`pinyin.cpp:3035`, `:3057`, or `phonetic_key_matrix.h:103` past the
+/// matrix) the process aborts (register row 14).
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_get_left_pinyin_offset(
     instance: *mut PinyinInstance,
@@ -402,10 +403,20 @@ pub extern "C" fn pinyin_get_left_pinyin_offset(
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
     let inst = unsafe { instance_ref(instance) };
-    let Ok(result) = inst.core.left_offset(offset) else {
-        // Class (c): `assert(_check_offset(...))`, `pinyin.cpp:3035`, `:3057`.
-        crate::ffi::log_warning("pinyin_get_left_pinyin_offset: assertion '_check_offset' failed");
-        return false;
+    let result = match inst.core.left_offset(offset) {
+        Ok(result) => result,
+        // Register row 14: `assert(_check_offset(...))`, `pinyin.cpp:3035`,
+        // `:3057`; an offset past the matrix asserts in its
+        // `get_column_size` (`phonetic_key_matrix.h:103`).
+        Err(
+            oxpinyin_engine::EngineError::ZeroKeyOffsetCheck { .. }
+            | oxpinyin_engine::EngineError::LookupOffsetOutOfRange { .. },
+        ) => std::process::abort(),
+        // A graph failure the pin has no counterpart for.
+        Err(_) => {
+            crate::ffi::log_warning("pinyin_get_left_pinyin_offset: the lookup failed");
+            return false;
+        }
     };
     if !left.is_null() {
         // SAFETY: Null-checked above.
@@ -428,8 +439,10 @@ pub extern "C" fn pinyin_get_left_pinyin_offset(
 /// Steps syllable-to-syllable: the raw end of the first key starting at
 /// `offset`, skipping a leading lone-zero-key run first
 /// (`pinyin.cpp:3061-3094`). Answers `false` when no key starts there
-/// (the pin's own graceful false, `pinyin.cpp:3085-3086`), and where
-/// the pin's validation aborts (the no-abort policy).
+/// (the pin's own graceful false, `pinyin.cpp:3085-3086`). Where the pin
+/// asserts — its validation (`pinyin.cpp:3067`, `:3092`), a column past the
+/// matrix, or any offset on an empty matrix (`phonetic_key_matrix.h:103`)
+/// — the process aborts (register rows 14 and 66).
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_get_right_pinyin_offset(
     instance: *mut PinyinInstance,
@@ -445,18 +458,22 @@ pub extern "C" fn pinyin_get_right_pinyin_offset(
     let inst = unsafe { instance_ref(instance) };
     let result = match inst.core.right_offset(offset) {
         Ok(Some(result)) => result,
-        // The pin's own graceful `false`, `pinyin.cpp:3085-3086`: silent,
-        // except on an empty matrix, where the loop's `get_column_size`
-        // asserts first (class (c)).
+        // The pin's own graceful `false`, `pinyin.cpp:3085-3086`, except
+        // on an empty matrix, where the loop's `get_column_size` asserts
+        // first.
         Ok(None) => {
-            warn_on_empty_matrix(inst, "pinyin_get_right_pinyin_offset");
+            abort_on_empty_matrix(inst);
             return false;
         }
+        // Register row 14: `assert(_check_offset(...))`, `pinyin.cpp:3067`,
+        // `:3092`, and the matrix's own index assert past its end.
+        Err(
+            oxpinyin_engine::EngineError::ZeroKeyOffsetCheck { .. }
+            | oxpinyin_engine::EngineError::LookupOffsetOutOfRange { .. },
+        ) => std::process::abort(),
+        // A graph failure the pin has no counterpart for.
         Err(_) => {
-            // Class (c): `assert(_check_offset(...))`, `pinyin.cpp:3067`, `:3092`.
-            crate::ffi::log_warning(
-                "pinyin_get_right_pinyin_offset: assertion '_check_offset' failed",
-            );
+            crate::ffi::log_warning("pinyin_get_right_pinyin_offset: the lookup failed");
             return false;
         }
     };
@@ -558,20 +575,18 @@ mod tests {
     }
 
     #[test]
-    fn word_moves_answer_false_where_the_pin_aborts_or_has_no_key() {
-        // The pin aborts at offset 11 of nihaoshijie (the second
-        // _check_offset on the trailing zero key, pinyin.cpp:3090) and
-        // answers false at mid-syllable offsets (no key starts there);
-        // the no-abort policy answers false for both shapes.
+    fn word_moves_answer_false_where_the_pin_has_no_key() {
+        // The pin answers false at mid-syllable offsets (no key starts
+        // there). Offset 11 of nihaoshijie (the second _check_offset on the
+        // trailing zero key, pinyin.cpp:3092) and a left move past
+        // one-past-end are its asserts, and the process aborts:
+        // `abort-get-right-pinyin-offset-nihao-5` and the
+        // `separator/pinyin/*/left|right/*` cases of `contract-diff.py`
+        // hold those shapes.
         let (context, instance, _user_dir) = parity_instance("cursor-aborts");
         assert_eq!(parse(instance, "nihaoshijie"), 11);
 
         let mut right = usize::MAX;
-        assert!(!super::pinyin_get_right_pinyin_offset(
-            instance,
-            11,
-            &raw mut right
-        ));
         for offset in [1, 3, 4, 6, 7, 9] {
             assert!(!super::pinyin_get_right_pinyin_offset(
                 instance,
@@ -588,12 +603,6 @@ mod tests {
             &raw mut left
         ));
         assert_eq!(left, 10);
-        // Offsets past one-past-end: the range refusal.
-        assert!(!super::pinyin_get_left_pinyin_offset(
-            instance,
-            12,
-            &raw mut left
-        ));
 
         crate::instance::pinyin_free_instance(instance);
         crate::context::pinyin_fini(context);
@@ -602,9 +611,9 @@ mod tests {
     #[test]
     fn separator_inputs_match_the_pinned_oracle() {
         // ni'hao: cursor 3 normalizes back over the apostrophe-run zero
-        // key to 2; the left move at offset 3 sits one past that zero
-        // (the abort shape — answered false); the right move at offset 2
-        // skips the zero run to the end of hao.
+        // key to 2; the right move at offset 2 skips the zero run to the
+        // end of hao. The left move at offset 3 sits one past that zero,
+        // the pin's assert (`abort-get-left-pinyin-offset-after-separator`).
         let (context, instance, _user_dir) = parity_instance("cursor-separator");
         assert_eq!(parse(instance, "ni'hao"), 6);
 
@@ -615,12 +624,6 @@ mod tests {
             &raw mut offset
         ));
         assert_eq!(offset, 2);
-        let mut left = usize::MAX;
-        assert!(!super::pinyin_get_left_pinyin_offset(
-            instance,
-            3,
-            &raw mut left
-        ));
         let mut right = usize::MAX;
         assert!(super::pinyin_get_right_pinyin_offset(
             instance,
@@ -682,7 +685,7 @@ pub extern "C" fn pinyin_get_pinyin_key(
     let found = match inst.core.abi_key_at(offset, false) {
         Ok(Some(found)) => found,
         Ok(None) => {
-            warn_on_empty_matrix(inst, "pinyin_get_pinyin_key");
+            abort_on_empty_matrix(inst);
             return false;
         }
         Err(_) => {
