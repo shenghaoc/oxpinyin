@@ -7,7 +7,7 @@ The original restriction avoided verbatim copying.
 Clean-room reverse engineering adds time and effort without benefit when the source is legally available.
 
 This page owns how contributors work against the pin: reading and citing its source, the method for each subsystem, the decision order for language and runtime differences, and the stages.
-The [compatibility policy](findings/compatibility-policy.md) owns what may diverge from the pin: the exception classes (a)–(c), the standing divergences, the classification of every register entry and the `POLICY-ACCEPTED` disposition.
+The [compatibility policy](findings/compatibility-policy.md) owns what may diverge from the pin: the exception classes (a)–(b) (class (c) retired 2026-10-31 UTC), the standing divergences, the classification of every register entry and the `POLICY-ACCEPTED` disposition.
 Where this page sends a difference to a class or a discrepancy record, the compatibility policy decides it.
 
 ## Source citations
@@ -90,7 +90,7 @@ The pin's algorithm is the first candidate, not a mandatory choice.
 ## Compatibility decision order
 
 Read the [compatibility policy](findings/compatibility-policy.md) before recording a divergence.
-It defines class (a)–(c), the language/runtime-quirk exception, citations and register classifications.
+It defines class (a)–(b) and records retired class (c), the language/runtime-quirk exception, citations and register classifications.
 Class (d), consumer scope, was retired 2026-09-06.
 
 Maintainer rulings, 2026-10-24 UTC, as amended 2026-10-28 UTC: internal
@@ -103,8 +103,9 @@ Do not add specialised maths dependencies, such as SIMD crates.
 1. **Preserve the C-facing contract.** Preserve the C ABI, layout, ownership and lifetime exactly.
    This includes real `GArray`, `g_free`, and every other GLib-owned structure and allocation.
    Preserve every exported symbol, system and user file format, and data ownership.
-   Preserve observable product behaviour except for class (a)–(c) or the internal language-artefact exception.
-2. **Apply class (a)–(c).** Classify each applicable difference in its class.
+   Preserve observable product behaviour except for class (a)–(b) or the internal language-artefact exception.
+2. **Apply class (a)–(b).** Classify each applicable difference in its class.
+   Class (c) is retired (2026-10-31 UTC): reproduce a pin `assert` or `abort()` with `std::process::abort()`.
    Follow that class's rules.
 3. **Apply the external-I/O and internal-language rules below.**
 4. **Escalate product-level changes.** Reproduce product behaviour bug for bug.
@@ -178,7 +179,8 @@ Removing or replacing this adapter requires a separate maintainer-approved chang
 This exception does not authorize other hand-written shims or copying external-library internals.
 
 The call rule does not require an undefined read or abort.
-Existing class (b)/(c) records stand, including punctuation and assertion refusals.
+Existing class (b) records stand, including punctuation refusals.
+The class (c) assertion refusals are retired (2026-10-31 UTC); the pin's aborts are reproduced.
 `LC_NUMERIC` row 39 stands.
 Row 109's mapping call follows the pin.
 Its post-fini residual mapping remains open.
@@ -360,11 +362,11 @@ Classify every requirement, SPEC line and finding on exactly one side:
 
 - **Pinned behaviour:** the pin's SONAME, header, pkg-config, exported I/O, file formats, stderr bytes, process-wide side effects and defects.
   This is the Stage 2 target.
-- **oxpinyin improvements:** class (a)–(c), class (c)'s required warning, standing divergences, recorded language artefacts and constitution rules.
+- **oxpinyin improvements:** class (a)–(b), standing divergences, recorded language artefacts and constitution rules.
   This side also includes internal architecture, crate decoupling, performance and Stage 3 departures.
 
 An improvement with no observable change is internal and permitted in Stage 2, including performance work.
-An observable change requires class (a)–(c), a recorded internal language artefact, or a Stage 3 opt-in feature.
+An observable change requires class (a)–(b), a recorded internal language artefact, or a Stage 3 opt-in feature.
 An internal language artefact cannot change external I/O, the ABI or files on disk.
 The default build remains bug-for-bug compatible under the recorded exceptions.
 

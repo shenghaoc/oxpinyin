@@ -73,7 +73,8 @@ Existing examples include:
 
 Only the classes and recorded internal language artefacts permit departures.
 External I/O still uses the pin's call.
-An undefined read or abort follows its class (b)/(c) record.
+An undefined read follows its class (b) record.
+An abort is reproduced with `std::process::abort()` (class (c) retired 2026-10-31 UTC).
 Preserve the C ABI, ownership, on-disk formats and data ownership exactly.
 See the [native Rust policy](findings/compatibility-policy.md#native-rust-implementation).
 

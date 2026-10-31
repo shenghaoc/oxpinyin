@@ -8,8 +8,12 @@ is complete, these notes are collected to report back to libpinyin.
 
 A new language/runtime-quirk entry also needs the full record from
 `docs/findings/language-runtime-discrepancy-template.md`; this register
-keeps the short entry and links the record. Class (a)–(c) entries keep
-their existing shape. No existing entry is rewritten by a later policy
+keeps the short entry and links the record. Class (a)–(b) entries keep
+their existing shape. Class (c) was retired on 2026-10-31 UTC
+(`compatibility-policy.md`, "Amendment — class (c) retired; pin aborts
+reproduced"): its entries stay as history, and each former (c) row
+registers its pin-behaviour record by name below when its stacked
+change lands. No existing entry is rewritten by a later policy
 change. An entry whose own issue reproduces the behaviour is closed in
 place with a dated status; the historical finding stays as the record of
 what used to differ.
