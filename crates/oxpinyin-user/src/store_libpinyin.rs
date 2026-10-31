@@ -41,7 +41,7 @@
 //!   opening and training write no `PRONUNCIATION` rows. Training updates
 //!   the live item's counts, which lookup, export and save all observe.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -55,11 +55,8 @@ use oxpinyin_store::{
 use crate::store::{PHRASE, PHRASE_BY_LIB_TEXT, PHRASE_BY_TEXT, PRONUNCIATION};
 
 use crate::codec;
-use oxpinyin_data::row_format::pinyin_index::PinyinIndexItem;
 
-use crate::persistence::{
-    self, IndexKeys, PersistenceError, SystemOriginals, UserConfLaw, UserState,
-};
+use crate::persistence::{self, PersistenceError, SystemOriginals, UserConfLaw, UserState};
 use crate::phrase::{self, phrase_index_library_index};
 use crate::registry::StoreInner;
 use crate::store::{
@@ -93,16 +90,6 @@ pub struct Target {
     /// cannot carry them, so the two abort sites read them here
     /// ([`persistence::LoadedProfile::overlong_index_keys`]).
     pub(crate) overlong_index_keys: Vec<Vec<u16>>,
-    /// Every raw key `user_pinyin_index.bin` carried, as packed
-    /// `ChewingKey` words — the exact query key the pin's `m_db->Get` /
-    /// `DB_SET` probe tests before it walks extensions
-    /// ([`persistence::LoadedProfile::index_keys`]).
-    pub(crate) index_keys: BTreeSet<Vec<u16>>,
-    /// Every retained key the session's user pinyin index holds
-    /// ([`persistence::IndexKeys`]): the loaded files' keys, plus the keys
-    /// of every row a mask or a removal took out of the store since. The
-    /// save writes back the ones no remaining row writes, empty.
-    pub(crate) index_file_keys: std::sync::Mutex<IndexKeys>,
     /// A system journal's ADD payload was shorter than its unigram; the
     /// replay stopped at that record and the facade logs one warning
     /// (class (c), register row 108).
@@ -120,71 +107,6 @@ impl Target {
         self.originals
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-
-    pub(crate) fn index_file_keys(&self) -> std::sync::MutexGuard<'_, IndexKeys> {
-        self.index_file_keys
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-}
-
-/// The pinyin index rows the save would write for some stored phrases,
-/// read before a mask or
-/// a removal drops them, so their keys stay in the session's tables
-/// ([`Target::index_file_keys`]).
-#[derive(Debug, Default)]
-pub(crate) struct IndexRows {
-    pinyin: Vec<PinyinIndexItem>,
-}
-
-impl IndexRows {
-    pub(crate) fn from_index<'a>(entries: impl Iterator<Item = &'a (u32, Vec<u16>)>) -> Self {
-        Self {
-            pinyin: entries
-                .map(|(token, keys)| PinyinIndexItem {
-                    token: *token,
-                    keys: keys
-                        .iter()
-                        .copied()
-                        .map(oxpinyin_core::ChewingKey::from_packed)
-                        .collect(),
-                })
-                .collect(),
-        }
-    }
-    /// The rows of the one phrase `token`, given its text and readings.
-    pub(crate) fn of_phrase(token: Token, readings: &[crate::store::PronRow]) -> Self {
-        let mut rows = Self::default();
-        for reading in readings.iter().filter(|reading| reading.value.indexed) {
-            rows.push_reading(token, &reading.key_bytes);
-        }
-        rows
-    }
-
-    /// A stored reading's dense syllable ids as the save's packed row; a
-    /// reading [`export_state`] cannot convert writes no row and is skipped.
-    fn push_reading(&mut self, token: Token, key_bytes: &[u8]) {
-        if let Some(packed) = pinyin_keys_to_packed(&phrase::decode_keys(key_bytes)) {
-            self.pinyin.push(PinyinIndexItem {
-                token,
-                keys: packed
-                    .iter()
-                    .map(|&bits| oxpinyin_core::ChewingKey::from_packed(bits))
-                    .collect(),
-            });
-        }
-    }
-
-    /// The rows' readings, in the order the pin removes them (#785).
-    #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
-    pub(crate) fn readings(&self) -> impl Iterator<Item = &[oxpinyin_core::ChewingKey]> {
-        self.pinyin.iter().map(|item| item.keys.as_slice())
-    }
-
-    /// Adds the rows' keys to `keys`.
-    pub(crate) fn keep_in(&self, keys: &mut IndexKeys) {
-        keys.keep_rows(&self.pinyin);
     }
 }
 
@@ -369,8 +291,7 @@ impl GenericUserStore<DefaultStore> {
             replayed,
             user_libraries,
             overlong_index_keys,
-            index_keys,
-            index_file_keys,
+            index,
         } = profile;
         // Armed as soon as the load has raised the counter: an open that
         // fails from here on drops it and lowers the counter again, so a
@@ -384,8 +305,6 @@ impl GenericUserStore<DefaultStore> {
             open_counter: loaded.open_counter,
             short_add_payload: loaded.short_add_payload,
             overlong_index_keys,
-            index_keys,
-            index_file_keys: std::sync::Mutex::new(index_file_keys),
         });
         let fini = FiniGuard(Some(Arc::clone(&target)));
         let (has_user_data, library_offsets) = db.write(|txn| {
@@ -402,7 +321,7 @@ impl GenericUserStore<DefaultStore> {
         {
             let mut phrases = target.phrases();
             phrases.libraries = user_libraries;
-            phrases.indexed = std::mem::take(&mut loaded.state.indexed);
+            phrases.index = index;
             for (&nibble, items) in &loaded.state.libraries {
                 for (&slot, item) in items {
                     let bytes = oxpinyin_data::chunk_write::encode_phrase_item(item)
@@ -807,6 +726,7 @@ fn seed_txn_with_replay(
 /// export half of the value mapping, [`GenericUserStore::save`]'s
 /// libpinyin branch.
 #[cfg(any(test, feature = "kyotocabinet", feature = "tkrzw"))]
+#[cfg(test)]
 pub fn export_state<S: WriteStore>(
     store: &GenericUserStore<S>,
     originals: &SystemOriginals,
@@ -3124,8 +3044,8 @@ mod tests {
         let pinyin_keys =
             persistence::load_profile(&dir, &originals(), &versions(), UserConfLaw::Pinyin)
                 .expect("load")
-                .index_file_keys
-                .pinyin;
+                .index
+                .keys();
         // Both key spaces of both two-syllable readings and their prefixes,
         // and 他's one-syllable reading in each space.
         assert_eq!(pinyin_keys.len(), 2 * 2 * 2 + 2, "{pinyin_keys:?}");

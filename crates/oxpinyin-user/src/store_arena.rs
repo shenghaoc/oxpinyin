@@ -172,14 +172,15 @@ impl<S: WriteStore> GenericUserStore<S> {
             bump_unigram_total(txn, u64::from(unigram))
         })?;
         replacement.apply(phrases.libraries.entry(ADDON_DICTIONARY).or_default());
-        for (keys, _) in item.prons {
-            phrases.indexed.insert((token, keys));
+        for (packed, _) in &item.prons {
+            let keys: Vec<oxpinyin_core::ChewingKey> = packed
+                .iter()
+                .copied()
+                .map(oxpinyin_core::ChewingKey::from_packed)
+                .collect();
+            phrases.index.add(&keys, token);
         }
         drop(phrases);
-        #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
-        for (keys, _) in readings {
-            self.note_index_add(keys, token, false);
-        }
         self.mark_committed_phrase_write(db, true);
         Ok(token)
     }
@@ -360,13 +361,14 @@ impl<S: WriteStore> GenericUserStore<S> {
         })??;
         if let Some(replacement) = replacement {
             replacement.apply(phrases.libraries.entry(library).or_default());
-            phrases.indexed.insert((token, packed));
+            let chewing: Vec<oxpinyin_core::ChewingKey> = packed
+                .iter()
+                .copied()
+                .map(oxpinyin_core::ChewingKey::from_packed)
+                .collect();
+            phrases.index.add(&chewing, token);
         }
         drop(phrases);
-        #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
-        if new {
-            self.note_index_add(keys, token, false);
-        }
         if (1..=4).contains(&library) {
             self.revive_system_item(token);
             self.inner.has_system_items.store(true, Ordering::Relaxed);
@@ -429,7 +431,7 @@ impl<S: WriteStore> GenericUserStore<S> {
         if item
             .prons
             .iter()
-            .any(|(keys, _)| !phrases.indexed.contains(&(token, keys.clone())))
+            .any(|(keys, _)| !phrases.index.contains_reading(token, keys))
         {
             return Ok(false);
         }
@@ -449,25 +451,18 @@ impl<S: WriteStore> GenericUserStore<S> {
         if !removed {
             return Ok(false);
         }
-        let rows = IndexRows::from_index(
-            item.prons
+        for (packed, _) in &item.prons {
+            let keys: Vec<oxpinyin_core::ChewingKey> = packed
                 .iter()
-                .map(|(keys, _)| (token, keys.clone()))
-                .collect::<Vec<_>>()
-                .iter(),
-        );
-        for (keys, _) in &item.prons {
-            phrases.indexed.remove(&(token, keys.clone()));
+                .copied()
+                .map(oxpinyin_core::ChewingKey::from_packed)
+                .collect();
+            phrases.index.remove(&keys, token);
         }
         if let Some(library) = phrases.item_mut(token) {
             library.remove(token & PHRASE_MASK);
         }
         drop(phrases);
-        self.keep_index_rows(&rows);
-        #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
-        for keys in rows.readings() {
-            self.note_index_remove(keys, token);
-        }
         let grams_left = self.mask_container(mask, token)?;
         let has = db.write(|txn| has_user_data_in_write_txn(txn))?
             || !target
