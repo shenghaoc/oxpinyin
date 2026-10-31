@@ -32,7 +32,8 @@
 //!   runtime `SYSTEM_BIGRAM` was compiled from (the native model counts).
 //! - `PINYIN_EVAL_TABLE_CONF` — the `table.conf` whose λ the pin reads.
 //! - `PINYIN_EVAL_PINYIN_INDEX`, `PINYIN_EVAL_PHRASE_INDEX` — the oxpinyin
-//!   export (`oxpinyin-datagen compile`) of the same model the pin loads,
+//!   export (the `oxpinyin-utils` gen_binary_files / import_interpolation /
+//!   gen_unigram sequence) of the same model the pin loads,
 //!   for the native `SystemDictionary` (which reads oxpinyin-format tables
 //!   in the compiled-in backend, not the pin's `.bin` files).
 //!

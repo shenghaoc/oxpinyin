@@ -91,7 +91,7 @@ fn assert_counts_equal(rust: &Counts, live: &Counts) {
 fn rust_matches_committed_manifest() {
     let Some(counts) = rust_counts() else {
         panic!(
-            "missing input: system tables not found (${EXPORT_DIR_ENV} | {DEFAULT_EXPORT_DIR}; produce with oxpinyin-datagen compile)"
+            "missing input: system tables not found (${EXPORT_DIR_ENV} | {DEFAULT_EXPORT_DIR}; produce with the oxpinyin-utils data-dir sequence)"
         )
     };
     let manifest_path = manifest_path();
@@ -209,7 +209,7 @@ fn rust_matches_live_gen_ngram() {
     };
     let Some(rust) = rust_counts() else {
         panic!(
-            "missing input for the live gen_ngram: system tables not found (oxpinyin-datagen compile)"
+            "missing input for the live gen_ngram: system tables not found (the oxpinyin-utils data-dir sequence)"
         )
     };
     let fixture = std::fs::read(fixture_ngseg()).expect("fixture");
