@@ -59,19 +59,23 @@ pub extern "C" fn pinyin_remember_user_input(
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
     let inst = unsafe { instance_mut(instance) };
+    // 074a2219 pinyin.cpp:3098-3130, 3685-3695: _pre_compute_tokens runs
+    // next, before anything reads the matrix. Each character's search, in
+    // order, goes through `get_first_token`, whose validating
+    // `reduce_tokens` asserts on more than four tokens
+    // (`phrase_large_table3.h:95`); a search with no token refuses. Search
+    // the loaded system and user tables, as lookup_tokens does.
+    for word in phrase.outward_words() {
+        match inst.core.dict.tokens_for_ucs4(&[word]).len() {
+            0 => return false,
+            count if count > 4 => std::process::abort(),
+            _ => {}
+        }
+    }
     let Ok(syllables) = inst.core.session.composition_keys() else {
         return false;
     };
     if syllables.is_empty() || syllables.len() >= oxpinyin_user::MAX_PHRASE_LENGTH {
-        return false;
-    }
-    // 074a2219 pinyin.cpp:3098-3130, 3685-3695: _pre_compute_tokens
-    // refuses before remembering when any single-character search has no
-    // token. Search the loaded system and user tables, as lookup_tokens does.
-    if phrase
-        .outward_words()
-        .any(|word| inst.core.dict.tokens_for_ucs4(&[word]).is_empty())
-    {
         return false;
     }
     // Keep the existing selected syllable sequence, adding its parsed tones.

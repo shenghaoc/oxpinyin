@@ -14,33 +14,27 @@ use crate::types::{GChar, PinyinInstance};
 
 /// Renders the instance's shared matrix. A matrix the renderer then refuses
 /// is the pin's abort — `pinyin.cpp:3311` (`assert(get_column_size(offset)
-/// >= 1)`) or `:3488` (`abort()` for a cut past two bytes) — answered with
-/// `None` and one warning; no matrix is the silent `None`.
+/// >= 1)`) or `:3488` (`abort()` for a cut past two bytes) — and the process
+/// aborts there (register row 63); no matrix is the silent `None`.
 fn render_shared(
     inst: &crate::state::CapiInstance,
-    name: &str,
     render: impl FnOnce(&SharedMatrix) -> Option<String>,
 ) -> Option<String> {
     let matrix = SharedMatrix::of(inst)?;
-    let text = render(&matrix);
-    if text.is_none() {
-        crate::ffi::log_warning(&format!("{name}: aborted on the matrix walk"));
-    }
-    text
+    let Some(text) = render(&matrix) else {
+        std::process::abort();
+    };
+    Some(text)
 }
 
 /// The plain full-pinyin renderers walk the session's own keys, not the pin's
 /// matrix, so the matrix walk's aborts (`pinyin.cpp:3311`: a leading `'`
-/// leaves column 0 empty) are looked for on the shared matrix first. Warns
-/// once and answers `true` where the pin aborts.
-fn full_walk_aborts(inst: &crate::state::CapiInstance, cursor: usize) -> bool {
-    let aborts = SharedMatrix::of(inst).is_some_and(|matrix| matrix.full(cursor).is_none());
-    if aborts {
-        crate::ffi::log_warning(
-            "pinyin_get_full_pinyin_auxiliary_text: aborted on the matrix walk",
-        );
+/// leaves column 0 empty) are looked for on the shared matrix first, and
+/// the process aborts where the pin does (register row 63).
+fn abort_on_full_walk(inst: &crate::state::CapiInstance, cursor: usize) {
+    if SharedMatrix::of(inst).is_some_and(|matrix| matrix.full(cursor).is_none()) {
+        std::process::abort();
     }
-    aborts
 }
 
 /// Formats the parsed prefix of `raw` the way the pinned C++ backend does:
@@ -267,12 +261,9 @@ pub extern "C" fn pinyin_get_full_pinyin_auxiliary_text(
     let text = if inst.core.double_parse.is_some() || inst.core.zhuyin_parse.is_some() {
         // A double or chewing parse filled the matrix; the pin renders it
         // all the same (register row 55).
-        render_shared(inst, "pinyin_get_full_pinyin_auxiliary_text", |m| {
-            m.full(cursor)
-        })
-    } else if full_walk_aborts(inst, cursor) {
-        None
+        render_shared(inst, |m| m.full(cursor))
     } else {
+        abort_on_full_walk(inst, cursor);
         Some(inst.core.full_parse.as_ref().map_or_else(
             || {
                 full_aux_text(
@@ -324,9 +315,7 @@ pub extern "C" fn pinyin_get_double_pinyin_auxiliary_text(
     // The pin renders the shared matrix whichever parser filled it
     // (register row 55): the keys of a double-pinyin parse carry their
     // tone, which the renderer appends after a cut key.
-    let text = render_shared(inst, "pinyin_get_double_pinyin_auxiliary_text", |m| {
-        m.double(cursor)
-    });
+    let text = render_shared(inst, |m| m.double(cursor));
     write_aux(aux_text, text)
 }
 
@@ -366,9 +355,7 @@ pub extern "C" fn pinyin_get_chewing_auxiliary_text(
         )),
         // Another parser filled the matrix; the pin renders it all the
         // same (register row 55).
-        None => render_shared(inst, "pinyin_get_chewing_auxiliary_text", |m| {
-            m.chewing(cursor)
-        }),
+        None => render_shared(inst, |m| m.chewing(cursor)),
     };
     write_aux(aux_text, text)
 }

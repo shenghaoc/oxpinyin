@@ -69,6 +69,16 @@ pub extern "C" fn pinyin_lookup_tokens(
         .iter()
         .map(|token| token.value())
         .collect();
+    // `reduce_tokens` clears the caller's array and appends every library's
+    // hits, and only then validates the combined count
+    // (`phrase_large_table3.h:79-95`): five or more tokens reach
+    // `assert(0 <= num && num <= 4)` and the pin dies before answering.
+    // `pinyin_lookup_tokens` calls it with the validating default
+    // (`pinyin.cpp:2664`); the import path reproduces the same assert
+    // through `plan_import` (register row 74). The abort below follows the
+    // clear and the appends, so a NULL array's GLib criticals come first,
+    // as at the pin.
+    let reduce_asserts = tokens.len() > 4;
     // `reduce_tokens` clears the caller's array before appending
     // (`phrase_large_table3.h:81`) — an empty result clears too.
     // SAFETY: A non-null array is a caller-owned GLib GArray. GLib
@@ -85,6 +95,9 @@ pub extern "C" fn pinyin_lookup_tokens(
                 if inst.core.dict.phrase_table_token_enabled(library << 24) {
                     g_array_append_vals(tokenarray, std::ptr::null(), 0);
                 }
+            }
+            if reduce_asserts {
+                std::process::abort();
             }
             return !tokens.is_empty();
         }
@@ -104,6 +117,9 @@ pub extern "C" fn pinyin_lookup_tokens(
             tokens.as_ptr().cast::<c_void>(),
             c_uint::try_from(tokens.len()).unwrap_or(0),
         );
+    }
+    if reduce_asserts {
+        std::process::abort();
     }
     true
 }

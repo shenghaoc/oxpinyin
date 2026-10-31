@@ -279,6 +279,7 @@ impl Candidate {
 pub struct CandidateList {
     items: Vec<Candidate>,
     unreadable_item: bool,
+    ranked_phrase_row: bool,
 }
 
 impl CandidateList {
@@ -286,12 +287,32 @@ impl CandidateList {
         Self {
             items,
             unreadable_item: false,
+            ranked_phrase_row: false,
         }
     }
 
     pub(crate) const fn with_unreadable_item(mut self, unreadable_item: bool) -> Self {
         self.unreadable_item = unreadable_item;
         self
+    }
+
+    pub(crate) const fn with_ranked_phrase_row(mut self, ranked_phrase_row: bool) -> Self {
+        self.ranked_phrase_row = ranked_phrase_row;
+        self
+    }
+
+    /// Whether the scan that built this list searched a row the pin scores
+    /// against the facade's unigram total, before its prepends and its
+    /// phrase-string dedup: the rows `_compute_frequency_of_items` runs on
+    /// (`pinyin.cpp:2283`, `zhuyin.cpp:1526`, `:1607`), less the addon rows
+    /// it scores against the addon total (`pinyin.cpp:1828-1840`). With that
+    /// total at zero, the pin's `assert (0 < total_freq)` dies on such a row
+    /// (`pinyin.cpp:1859`, `zhuyin.cpp:1261`, register row 61), even when the
+    /// dedup later removes it from the list. A window of prepended or
+    /// fallback rows alone has none.
+    #[must_use]
+    pub const fn ranked_phrase_row(&self) -> bool {
+        self.ranked_phrase_row
     }
 
     /// Whether the lookups that built this list met a token of a loaded

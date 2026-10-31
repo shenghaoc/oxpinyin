@@ -128,6 +128,74 @@ pub extern "C" fn pinyin_iterator_add_phrase(
         return false;
     }
 
+    // `if (-1 == count) count = default_count;` (`pinyin.cpp:523-524`);
+    // otherwise the `gint` is used as the `guint32` it becomes.
+    let count = (count != -1).then(|| u64::from(count.cast_unsigned()));
+
+    // SAFETY: `iter` is non-null and was produced by
+    // `pinyin_begin_add_phrases`; the unique borrow lasts for this call.
+    let handle = unsafe { &mut *(iter.cast::<ImportHandle>()) };
+    let (phrase, keys, original) = match plan_import(handle, phrase, pinyin) {
+        ImportPlan::Refuse => return false,
+        ImportPlan::LookupFailed => {
+            crate::ffi::log_warning("pinyin_iterator_add_phrase: phrase-table lookup failed");
+            return false;
+        }
+        // Register rows 74 and 93: the pin's `reduce_tokens` count assert
+        // (`phrase_large_table3.h:95`) and `_add_phrase`'s asserts
+        // (`pinyin.cpp:554`, `:568`, `:571`), before either add call.
+        ImportPlan::Abort => std::process::abort(),
+        ImportPlan::Add {
+            phrase,
+            keys,
+            original,
+        } => (phrase, keys, original),
+    };
+    let Some(user) = handle.user.as_mut() else {
+        return false;
+    };
+    if (1..=4).contains(&handle.index) {
+        let Some(dict) = handle.dict.as_ref() else {
+            return false;
+        };
+        if !dict.library_visible(u32::from(handle.index)) {
+            return false;
+        }
+        // The selected token comes from the combined phrase-table search,
+        // including prior imported system-library items.
+        user.add_system_phrase_in(handle.index, original, &phrase, &keys, count)
+            .is_ok()
+    } else {
+        user.add_phrase_in(handle.index, &phrase, &keys, count)
+            .is_ok()
+    }
+}
+
+/// What [`pinyin_iterator_add_phrase`] does with one pair before it writes.
+enum ImportPlan {
+    /// The pin's ordinary `false`.
+    Refuse,
+    /// A phrase-table lookup failed outright: no pin counterpart, one
+    /// warning and `false`.
+    LookupFailed,
+    /// One of the pin's asserts: `reduce_tokens`' count
+    /// (`phrase_large_table3.h:95`, register row 74) or `_add_phrase`'s
+    /// same-library, length and text checks (`pinyin.cpp:554`, `:568`,
+    /// `:571`, row 93).
+    Abort,
+    /// The add goes ahead, with the same-library token the phrase table
+    /// already holds for the phrase, if any.
+    Add {
+        phrase: oxpinyin_core::PhraseText,
+        keys: Vec<PinyinKey>,
+        original: Option<u32>,
+    },
+}
+
+/// `pinyin.cpp:614-652` and `_add_phrase` (`:514-611`) up to the add calls:
+/// the parse, the length gates and the phrase-table checks, in the pin's
+/// order. Reads only.
+fn plan_import(handle: &ImportHandle, phrase: *const c_char, pinyin: *const c_char) -> ImportPlan {
     // Scalar input conversion; raw-word import is tracked by #1279.
     let phrase =
         oxpinyin_capi_marshal::input::utf8_to_ucs4(oxpinyin_capi_marshal::borrow_c_string!(phrase))
@@ -137,44 +205,26 @@ pub extern "C" fn pinyin_iterator_add_phrase(
     let pinyin = oxpinyin_capi_marshal::input::parser_prefix(
         oxpinyin_capi_marshal::borrow_c_string!(pinyin),
     );
-    // `if (-1 == count) count = default_count;` (`pinyin.cpp:523-524`);
-    // otherwise the `gint` is used as the `guint32` it becomes.
-    let count = (count != -1).then(|| u64::from(count.cast_unsigned()));
-
-    // SAFETY: `iter` is non-null and was produced by
-    // `pinyin_begin_add_phrases`; the unique borrow lasts for this call.
-    let handle = unsafe { &mut *(iter.cast::<ImportHandle>()) };
-    let Some(user) = handle.user.as_mut() else {
-        return false;
+    let Some(user) = handle.user.as_ref() else {
+        return ImportPlan::Refuse;
     };
     let Some(keys) = parse_import_pinyin(&pinyin) else {
-        return false;
+        return ImportPlan::Refuse;
     };
     // The iterator validates the phrase/key lengths before _add_phrase:
     // 074a2219 pinyin.cpp:639-646 / zhuyin.cpp:525-532.
     let length = phrase.phrase_length();
     if length == 0 || length >= MAX_PHRASE_LENGTH || length != keys.len() {
-        return false;
+        return ImportPlan::Refuse;
     }
     // Search once and preserve both tables' token multiplicity before
     // reduce_tokens validates the combined count (074a2219
     // phrase_large_table3.h:77-95).
-    let tokens = match phrase_table_tokens(user, handle.dict.as_ref(), &phrase) {
-        Ok(tokens) => tokens,
-        Err(()) => {
-            crate::ffi::log_warning("pinyin_iterator_add_phrase: phrase-table lookup failed");
-            return false;
-        }
+    let Ok(tokens) = phrase_table_tokens(user, handle.dict.as_ref(), &phrase) else {
+        return ImportPlan::LookupFailed;
     };
     if tokens.len() > 4 {
-        crate::ffi::log_warning(
-            "pinyin_iterator_add_phrase: assertion '0 <= num && num <= 4' failed",
-        );
-        return false;
-    }
-    // The pin reduces tokens before get_range rejects an unused library.
-    if !is_user_file_library(handle.index) && !(1..=4).contains(&handle.index) {
-        return false;
+        return ImportPlan::Abort;
     }
     // 074a2219 pinyin.cpp:533-571: the pin then walks the phrase table's
     // tokens for the phrase. Two tokens in the same sub-index library trip
@@ -183,19 +233,13 @@ pub extern "C" fn pinyin_iterator_add_phrase(
     // `assert(phrase_length == item.get_phrase_length())` (`:568`), and one
     // of the same length with other text the `memcmp` assert (`:571`). The
     // phrase table is the `user_phrase_index` membership plus the system
-    // phrase index; the item text is read without its pronunciation view. Each refusal
-    // is one `libpinyin` warning; a lookup that fails outright refuses before
-    // either add call rather than reading an empty token list.
+    // phrase index; the item text is read without its pronunciation view.
     let same_library: Vec<u32> = tokens
         .into_iter()
         .filter(|token| token >> 24 == u32::from(handle.index))
         .collect();
     if same_library.len() > 1 {
-        crate::ffi::log_warning(
-            "pinyin_iterator_add_phrase: assertion \
-             'PHRASE_INDEX_LIBRARY_INDEX(token) != index' failed",
-        );
-        return false;
+        return ImportPlan::Abort;
     }
     if let Some(&token) = same_library.first() {
         let item_text = if let Some(dict) = handle.dict.as_ref() {
@@ -218,32 +262,40 @@ pub extern "C" fn pinyin_iterator_add_phrase(
             )
         });
         if !(same_length && same_words) {
-            crate::ffi::log_warning(if same_length {
-                "pinyin_iterator_add_phrase: assertion \
-             '0 == memcmp(phrase, tmp_phrase, sizeof(ucs4_t) * phrase_length)' failed"
-            } else {
-                "pinyin_iterator_add_phrase: assertion \
-             'phrase_length == item.get_phrase_length()' failed"
-            });
-            return false;
+            return ImportPlan::Abort;
         }
     }
-    if (1..=4).contains(&handle.index) {
-        let Some(dict) = handle.dict.as_ref() else {
-            return false;
-        };
-        if !dict.library_visible(u32::from(handle.index)) {
-            return false;
-        }
-        // The selected token comes from the combined phrase-table search,
-        // including prior imported system-library items.
-        let original = same_library.first().copied();
-        user.add_system_phrase_in(handle.index, original, &phrase, &keys, count)
-            .is_ok()
-    } else {
-        user.add_phrase_in(handle.index, &phrase, &keys, count)
-            .is_ok()
+    // The pin walks the tokens and asserts for any library index
+    // (`pinyin.cpp:544-571`); only then does `get_range` reject a library
+    // that is not loaded (`:586-588`).
+    if !is_user_file_library(handle.index) && !(1..=4).contains(&handle.index) {
+        return ImportPlan::Refuse;
     }
+    ImportPlan::Add {
+        phrase,
+        keys,
+        original: same_library.first().copied(),
+    }
+}
+
+/// Whether [`pinyin_iterator_add_phrase`] of this pair reaches one of the
+/// pin's asserts ([`ImportPlan::Abort`]). Reads only. For the in-tree fuzz
+/// harness, which skips such a call: not in `pinyin.h`, a Rust function
+/// compiled only with `fuzz-api` and never into the shipped artifact.
+#[cfg(all(feature = "fuzz-api", not(feature = "shipped")))]
+#[must_use]
+pub fn oxpinyin_import_aborts(
+    iter: *mut ImportIterator,
+    phrase: *const c_char,
+    pinyin: *const c_char,
+) -> bool {
+    if iter.is_null() || phrase.is_null() || pinyin.is_null() {
+        return false;
+    }
+    // SAFETY: `iter` is non-null and was produced by
+    // `pinyin_begin_add_phrases`; the shared borrow lasts for this call.
+    let handle = unsafe { &*(iter.cast::<ImportHandle>()) };
+    matches!(plan_import(handle, phrase, pinyin), ImportPlan::Abort)
 }
 
 /// Search the system table followed by the user table, then concatenate
@@ -274,12 +326,19 @@ fn phrase_table_tokens(
 
 /// `FullPinyinParser2::parse` under `PINYIN_CORRECT_ALL | USE_TONE`
 /// (`pinyin.cpp:629-637`, `pinyin_parser2.cpp:217-381`): the longest
-/// parsable prefix, fewest keys, as toned store keys. `None` when the
-/// input is past the graph limit or a key does not fit the store's key
-/// layout.
+/// parsable prefix of the first 32767 bytes, fewest keys, as toned store
+/// keys. `None` when a key does not fit the store's key layout.
 fn parse_import_pinyin(pinyin: &str) -> Option<Vec<PinyinKey>> {
     let options = OptionBits::from_bits(PINYIN_CORRECT_ALL | USE_TONE);
-    let graph = SegmentGraph::build_with_options(pinyin.as_bytes(), options).ok()?;
+    // Policy row 59's bound, as the session parse applies it: the pin's
+    // `parse_value_t` keeps `m_num_keys`, `m_parsed_len`, `m_distance` and
+    // `m_last_step` in `gint16`s (`pinyin_parser2.cpp:67-70`), and no step
+    // past byte 32767 holds its `m_last_step = i` (`:248`, `:292`). Only the
+    // first 32767 bytes are parsed, so the graph's 65535-byte limit is never
+    // reached here. #1501 removes the bound from both entry points.
+    let bytes = pinyin.as_bytes();
+    let bytes = &bytes[..bytes.len().min(oxpinyin_engine::MAX_INPUT_BYTES)];
+    let graph = SegmentGraph::build_with_options(bytes, options).ok()?;
     graph
         .fewest_keys(false)
         .iter()
@@ -395,9 +454,10 @@ pub extern "C" fn pinyin_iterator_has_next_phrase(iter: *mut ExportIterator) -> 
 /// each), one allocation apiece as the pin's `g_ucs4_to_utf8` and
 /// `g_strjoinv` results are; `phrase` is NULL where the pin's
 /// `g_ucs4_to_utf8` hands one out (`:715-716`, a stored code point that is
-/// no scalar value). Returns `false` once the iterator is exhausted, at
-/// one of the pin's assert sites (one warning naming the expression), or
-/// when the store cannot be read (one warning, no pin counterpart).
+/// no scalar value). Returns `false` when the store cannot be read (one
+/// warning, no pin counterpart). At one of the pin's assert sites, an
+/// exhausted iterator included (`:709`), the process aborts (register row
+/// 62).
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_iterator_get_next_phrase(
     iter: *mut ExportIterator,
@@ -434,17 +494,24 @@ pub extern "C" fn pinyin_iterator_get_next_phrase(
     };
     let (text, reading, frequency) = match step {
         ExportStep::Row(row) => row,
-        // Class (c), compatibility-policy row 62: the pin **`assert`**s at
-        // the site (`pinyin.cpp:709`, `:714`, `:721`, `:724`, or
-        // `chewing_key.cpp:48`/`:50` from `:728`). One warning naming the
-        // asserted expression, `false`, the out-params untouched; the
-        // cursor is unmoved, so a repeated call repeats the line.
-        ExportStep::Assert(site) => {
-            crate::ffi::log_warning(&format!(
-                "pinyin_iterator_get_next_phrase: assertion '{}' failed",
-                site.expression()
-            ));
-            return false;
+        // Register row 62: the pin `assert`s at the site (`pinyin.cpp:709`,
+        // `:714`, `:721`, `:724`, or `chewing_key.cpp:48`/`:50` from
+        // `:728`), and the process aborts, after its first line wrote
+        // `*phrase = NULL; *pinyin = NULL; *count = -1;` (`:703`).
+        ExportStep::Assert(_) => {
+            // SAFETY: each out-param is null-checked before its write.
+            unsafe {
+                if !phrase.is_null() {
+                    *phrase = ptr::null_mut();
+                }
+                if !pinyin.is_null() {
+                    *pinyin = ptr::null_mut();
+                }
+                if !count.is_null() {
+                    *count = -1;
+                }
+            }
+            std::process::abort()
         }
     };
     if reading.is_some_and(|value| value.is_null()) {
@@ -533,15 +600,11 @@ pub extern "C" fn pinyin_begin_get_bigram_phrases(
     if !ctx.can_render_export_bigrams() {
         return ptr::null_mut();
     }
-    // Class (c), `ngram_bdb.cpp:199`: the user bigram carries a key that is
-    // not a phrase_token_t and the pin's `get_all_items` assert dies. One
-    // warning and a NULL iterator, the export's own failure shape.
+    // Register row 86, `ngram_bdb.cpp:199` (kc `:173`, tkrzw `:150`): the
+    // user bigram carries a key that is not a phrase_token_t and the pin's
+    // `get_all_items` assert dies.
     if ctx.has_non_token_bigram_key() {
-        crate::ffi::log_warning(
-            "pinyin_begin_get_bigram_phrases: a user bigram key is not a phrase_token_t \
-             (upstream aborts, ngram_bdb.cpp:199)",
-        );
-        return ptr::null_mut();
+        std::process::abort();
     }
     // Class (c), `memory_chunk.h:390`: `retrieve_all` reads the four-byte
     // total before its item walk. A short row under any predecessor makes
@@ -630,15 +693,8 @@ pub extern "C" fn pinyin_bigram_iterator_get_next_phrase(
     let handle = unsafe { &mut *(iter.cast::<BigramHandle>()) };
     let (row, more) = match handle.walk.get_next() {
         BigramStep::Row(row, more) => (row, more),
-        BigramStep::Aborts => {
-            // Class (c): the pin asserts and aborts here.
-            crate::ffi::log_warning(
-                "pinyin_bigram_iterator_get_next_phrase: assertion \
-                 'iter->m_index_token != null_token && \
-                 iter->m_index_token != sentence_start' failed",
-            );
-            return false;
-        }
+        // Register row 62, `pinyin.cpp:902`: the pin asserts and aborts.
+        BigramStep::Aborts => std::process::abort(),
         // Class (b): the pin reads past its pinyin array.
         BigramStep::Undefined => return false,
     };

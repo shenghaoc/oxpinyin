@@ -114,3 +114,101 @@ pub fn open(user_dir: &str) -> (*mut PinyinContext, *mut PinyinInstance) {
     assert!(!instance.is_null());
     (context, instance)
 }
+
+/// The environment variable that names the death test a re-executed test
+/// binary runs.
+#[cfg(unix)]
+const DEATH_TEST: &str = "OXPINYIN_CAPI_DEATH_TEST";
+
+/// Runs `body` in a child process and asserts it dies of SIGABRT, the way
+/// the facade reproduces a pin `assert`/`abort()` (the class (c) rows
+/// retired 2026-10-31 UTC). `name` is the calling test's full path as
+/// libtest prints it (`module::test`): the test binary is re-executed with
+/// `--exact name`, and in that child `body` runs and must not return.
+/// Answers the child's stderr.
+#[cfg(unix)]
+pub fn assert_aborts(name: &str, body: impl FnOnce()) -> Vec<u8> {
+    use std::os::unix::process::ExitStatusExt;
+    if std::env::var_os(DEATH_TEST).is_some_and(|value| value == name) {
+        body();
+        // Reached only when `body` did not abort.
+        std::process::exit(0);
+    }
+    // The child's scratch directories outlive its abort; keep them under
+    // one this process removes.
+    let scratch = tempfile::tempdir().expect("death-test scratch");
+    let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
+        .args(["--exact", name, "--test-threads=1"])
+        .env(DEATH_TEST, name)
+        .env("TMPDIR", scratch.path())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .expect("re-run the test binary");
+    assert_eq!(
+        output.status.signal(),
+        Some(6),
+        "{name} must die of SIGABRT"
+    );
+    output.stderr
+}
+
+/// The environment variable that names the file [`assert_aborts_sharing`]
+/// maps in the child.
+#[cfg(unix)]
+const DEATH_TEST_PAGE: &str = "OXPINYIN_CAPI_DEATH_TEST_PAGE";
+
+/// The bytes [`assert_aborts_sharing`] shares with the child.
+#[cfg(unix)]
+pub const SHARED_PAGE: usize = 4096;
+
+/// [`assert_aborts`], with one page the child writes through and this
+/// process reads after the abort: a file holding `init` (zero-padded to
+/// [`SHARED_PAGE`] bytes) that the child maps `MAP_SHARED`, so what the
+/// facade wrote through pointers into the page before it aborted reaches
+/// the file. `body` gets the page's address. Answers the page as the child
+/// left it.
+#[cfg(unix)]
+pub fn assert_aborts_sharing(name: &str, init: &[u8], body: impl FnOnce(*mut u8)) -> Vec<u8> {
+    use std::os::unix::ffi::OsStrExt as _;
+    use std::os::unix::process::ExitStatusExt;
+    if std::env::var_os(DEATH_TEST).is_some_and(|value| value == name) {
+        let path = std::env::var_os(DEATH_TEST_PAGE).expect("the shared page's file");
+        let path = CString::new(path.as_bytes()).expect("a path without NUL");
+        // SAFETY: `path` is NUL-terminated; the descriptor stays open for
+        // the mapping's life (the process aborts in `body`).
+        let fd = unsafe { libc::open(path.as_ptr(), libc::O_RDWR) };
+        assert!(fd >= 0, "open the shared page");
+        // SAFETY: a fresh shared mapping of the whole page-sized file.
+        let page = unsafe {
+            libc::mmap(
+                std::ptr::null_mut(),
+                SHARED_PAGE,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_SHARED,
+                fd,
+                0,
+            )
+        };
+        assert!(page != libc::MAP_FAILED, "map the shared page");
+        body(page.cast());
+        // Reached only when `body` did not abort.
+        std::process::exit(0);
+    }
+    let scratch = tempfile::tempdir().expect("death-test scratch");
+    let page = scratch.path().join("shared-page");
+    let mut bytes = init.to_vec();
+    bytes.resize(SHARED_PAGE, 0);
+    std::fs::write(&page, &bytes).expect("write the shared page");
+    let status = std::process::Command::new(std::env::current_exe().expect("test binary"))
+        .args(["--exact", name, "--test-threads=1"])
+        .env(DEATH_TEST, name)
+        .env(DEATH_TEST_PAGE, &page)
+        .env("TMPDIR", scratch.path())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .expect("re-run the test binary");
+    assert_eq!(status.signal(), Some(6), "{name} must die of SIGABRT");
+    std::fs::read(&page).expect("read the shared page")
+}

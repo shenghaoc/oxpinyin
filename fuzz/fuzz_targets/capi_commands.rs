@@ -11,6 +11,16 @@
 //! contract (audit F-6), so every begin reaches its end within the same
 //! command: the bug classes hunted are caller-visible mispairings, not
 //! contract violations.
+//!
+//! Where the pin asserts or aborts, the facade aborts the process too
+//! (`docs/findings/pin-aborts-pinyin-facade.md`), so the harness keeps
+//! every call off those preconditions: argument conditions are checked
+//! here (scheme 30, a predicted row passed to choose), and conditions
+//! that depend on library state ask the library (`oxpinyin_train_aborts`,
+//! `oxpinyin_import_aborts`). The other converted sites are not reachable
+//! from this alphabet: no options are set (a toned initial needs
+//! `PINYIN_INCOMPLETE`), candidates are never guessed, the sentence is read
+//! at index 0 only, and the export walk is gated by `has_next`.
 
 #![no_main]
 // Scoped exception to this workspace's unsafe_code deny: an FFI-driven
@@ -24,14 +34,16 @@ use std::sync::OnceLock;
 
 use libfuzzer_sys::fuzz_target;
 use pinyin_capi::fuzz_api::{
-    oxpinyin_init_for_fixtures, pinyin_alloc_instance, pinyin_begin_add_phrases,
+    lookup_candidate_type_t, oxpinyin_import_aborts, oxpinyin_init_for_fixtures,
+    oxpinyin_train_aborts, pinyin_alloc_instance, pinyin_begin_add_phrases,
     pinyin_begin_get_phrases, pinyin_choose_candidate, pinyin_clear_constraint,
     pinyin_end_add_phrases, pinyin_end_get_phrases, pinyin_fini, pinyin_free_instance,
-    pinyin_get_candidate, pinyin_get_candidate_string, pinyin_get_n_candidate,
-    pinyin_get_parsed_input_length, pinyin_get_sentence, pinyin_guess_sentence,
-    pinyin_iterator_add_phrase, pinyin_iterator_get_next_phrase, pinyin_iterator_has_next_phrase,
-    pinyin_parse_more_full_pinyins, pinyin_reset, pinyin_set_double_pinyin_scheme, pinyin_train,
-    ExportIterator, GChar, ImportIterator, LookupCandidate, PinyinContext, PinyinInstance,
+    pinyin_get_candidate, pinyin_get_candidate_string, pinyin_get_candidate_type,
+    pinyin_get_n_candidate, pinyin_get_parsed_input_length, pinyin_get_sentence,
+    pinyin_guess_sentence, pinyin_iterator_add_phrase, pinyin_iterator_get_next_phrase,
+    pinyin_iterator_has_next_phrase, pinyin_parse_more_full_pinyins, pinyin_reset,
+    pinyin_set_double_pinyin_scheme, pinyin_train, ExportIterator, GChar, ImportIterator,
+    LookupCandidate, PinyinContext, PinyinInstance,
 };
 
 use std::os::raw::c_void;
@@ -210,9 +222,21 @@ fuzz_target!(|data: &[u8]| {
                                 // instance snapshot; read-only, never freed.
                                 let _ = unsafe { CStr::from_ptr(text) }.to_bytes().len();
                             }
-                            // choose exercises the selection path
-                            // SAFETY: live instance; `candidate` from the ABI.
-                            pinyin_choose_candidate(instance, 0, candidate);
+                            // choose exercises the selection path; a
+                            // predicted row is the pin's assert
+                            // (`pinyin.cpp:2507`), so it is not passed.
+                            let mut kind = lookup_candidate_type_t::NORMAL_CANDIDATE;
+                            // SAFETY: `candidate` from the ABI; `kind` is an
+                            // out-param.
+                            pinyin_get_candidate_type(instance, candidate, &mut kind);
+                            if !matches!(
+                                kind,
+                                lookup_candidate_type_t::PREDICTED_BIGRAM_CANDIDATE
+                                    | lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE
+                            ) {
+                                // SAFETY: live instance; `candidate` from the ABI.
+                                pinyin_choose_candidate(instance, 0, candidate);
+                            }
                         }
                     }
                 }
@@ -222,16 +246,23 @@ fuzz_target!(|data: &[u8]| {
                 // SAFETY: live instance.
                 let _ = pinyin_get_parsed_input_length(instance);
             }
-            // train the current selection
+            // train the current selection, unless the library reports the
+            // pin's training assert for it (stale forcing or span)
             5 => {
                 // SAFETY: live instance.
-                pinyin_train(instance, 0);
+                if !oxpinyin_train_aborts(instance, 0) {
+                    // SAFETY: live instance.
+                    pinyin_train(instance, 0);
+                }
             }
-            // config setter incl. invalid discriminants (validated in the ABI)
+            // config setter incl. out-of-enum discriminants (the pin's
+            // half-mutation); CUSTOMIZED (30) is the pin's `abort()`
             6 => {
                 let scheme = rest.first().copied().unwrap_or(0) as c_int;
-                // SAFETY: live context from the static session.
-                pinyin_set_double_pinyin_scheme(context, scheme);
+                if scheme != 30 {
+                    // SAFETY: live context from the static session.
+                    pinyin_set_double_pinyin_scheme(context, scheme);
+                }
             }
             // import iterator trio — begin/add/end paired within the command
             7 => {
@@ -242,8 +273,11 @@ fuzz_target!(|data: &[u8]| {
                 // SAFETY: live context.
                 let iter: *mut ImportIterator = pinyin_begin_add_phrases(context, 0);
                 if !iter.is_null() {
-                    // SAFETY: `iter` was just returned by its begin call.
-                    pinyin_iterator_add_phrase(iter, phrase.as_ptr(), pinyin.as_ptr(), 1);
+                    // The library reports the pin's import asserts.
+                    if !oxpinyin_import_aborts(iter, phrase.as_ptr(), pinyin.as_ptr()) {
+                        // SAFETY: `iter` was just returned by its begin call.
+                        pinyin_iterator_add_phrase(iter, phrase.as_ptr(), pinyin.as_ptr(), 1);
+                    }
                     // SAFETY: transfers ownership back exactly once.
                     pinyin_end_add_phrases(iter);
                 }

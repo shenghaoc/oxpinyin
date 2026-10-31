@@ -4450,3 +4450,80 @@ fn candidate_collection_uses_unpriced_system_and_addon_operations() {
     assert_eq!(system[0].token(), Some(PhraseToken::new(0x0100_0001)));
     assert_eq!(addon[0].token(), Some(PhraseToken::new(0x0400_0001)));
 }
+
+/// One phrase for one key: its searched row and the decoded sentence share
+/// a text.
+const ONE_PHRASE_VOCAB: &str = "token=1\tkeys=ni\ttext=你\tunigram=1000\n";
+
+#[test]
+fn a_searched_row_the_dedup_removes_is_still_a_ranked_row() {
+    // Register row 61: the pin's `_compute_frequency_of_items` runs on the
+    // freshly searched rows before the sentence prepend and the
+    // phrase-string dedup (`pinyin.cpp:2283` against `:2300`,
+    // `zhuyin.cpp:1526`/`:1607` against `:1537`/`:1630`), so its
+    // `0 < total_freq` assert sees a row the dedup later removes. Here the
+    // only searched row, 你, duplicates the sentence row: the window keeps
+    // the sentence row alone, and still reports the ranked row.
+    let mut session = Session::new(
+        &EmptyConfigSource,
+        FixtureDictionary::parse(ONE_PHRASE_VOCAB).expect("authored fixture"),
+        FrequencyFixtureModel::parse(ONE_PHRASE_VOCAB, "").expect("authored fixture"),
+    )
+    .expect("the fixtures open");
+    for character in "ni".chars() {
+        session
+            .type_pinyin(character.encode_utf8(&mut [0; 4]))
+            .expect("typing cannot fail");
+    }
+    // The decoded sentence, planted as `candidates_ending_at_walks_the_spans_that_end_there`
+    // does: one row whose text is the phrase's.
+    session.sentence.rows = vec![crate::nbest::NbestRow {
+        poss: None,
+        text: "你".into(),
+        tokens: vec![PhraseToken::new(1)],
+        spans: Vec::new(),
+        keys: 1,
+        span: 2,
+        cost: 10,
+    }];
+
+    let after = session.candidates_at(0).expect("offset 0 is in range");
+    assert!(
+        after
+            .iter()
+            .all(|candidate| candidate.kind() == crate::CandidateKind::Sentence),
+        "the dedup leaves the sentence row alone: {:?}",
+        after
+            .iter()
+            .map(|c| (c.text().to_string(), c.kind()))
+            .collect::<Vec<_>>()
+    );
+    assert!(after.ranked_phrase_row(), "the searched 你 row was ranked");
+
+    let before = session
+        .candidates_ending_at(2)
+        .expect("offset 2 is in range");
+    assert!(
+        before
+            .iter()
+            .all(|candidate| candidate.kind() == crate::CandidateKind::Sentence)
+    );
+    assert!(
+        before.ranked_phrase_row(),
+        "the before-cursor slice was ranked"
+    );
+
+    // The reserved slot and the composition start search nothing.
+    assert!(
+        !session
+            .candidates_at(2)
+            .expect("in range")
+            .ranked_phrase_row()
+    );
+    assert!(
+        !session
+            .candidates_ending_at(0)
+            .expect("in range")
+            .ranked_phrase_row()
+    );
+}

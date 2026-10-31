@@ -653,14 +653,9 @@ fn training_through_the_abi_records_the_pinned_counts() {
     crate::context::pinyin_fini(context);
 }
 
-/// `train_result3`'s `assert(token == constraint->m_token)`
-/// (`phonetic_lookup.h:868`): a phrase forced after the last sentence lookup
-/// no longer matches the decoded result, so training answers `false`, and
-/// writes nothing; looking the sentence up again brings them back in step.
-#[test]
-fn training_a_stale_forcing_refuses_and_writes_nothing() {
-    let user_dir = TempUserDir::new("train-stale");
-    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+/// Forces a phrase after the last sentence lookup that the decoded result
+/// does not hold: the stale-forcing shape of `pinyin_train`.
+fn force_a_stale_phrase(instance: *mut PinyinInstance) -> u32 {
     let input = cstr("zhongguo");
     assert_eq!(
         pinyin_parse_more_full_pinyins(instance, input.as_ptr()),
@@ -691,10 +686,32 @@ fn training_a_stale_forcing_refuses_and_writes_nothing() {
     ));
     let forced = token_of(instance, other);
     assert!(pinyin_choose_candidate(instance, 0, other) > 0);
+    forced
+}
 
-    assert!(!pinyin_train(instance, 0), "the forcing is stale");
+/// `train_result3`'s `assert(token == constraint->m_token)`
+/// (`phonetic_lookup.h:868`): a phrase forced after the last sentence lookup
+/// no longer matches the decoded result, and the process aborts as the
+/// pin's does (register row 6).
+#[cfg(unix)]
+#[test]
+fn training_a_stale_forcing_aborts() {
+    crate::test_support::assert_aborts("e2e_tests::training_a_stale_forcing_aborts", || {
+        let user_dir = TempUserDir::new("train-stale");
+        let (_context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+        force_a_stale_phrase(instance);
+        pinyin_train(instance, 0);
+    });
+}
+
+/// Looking the sentence up again after a stale forcing brings the two back
+/// in step, and training goes ahead.
+#[test]
+fn a_new_sentence_lookup_trains_a_forcing() {
+    let user_dir = TempUserDir::new("train-restep");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+    let forced = force_a_stale_phrase(instance);
     assert_eq!(store_of(instance).unigram_delta(forced).unwrap(), 0);
-
     assert!(pinyin_guess_sentence(instance));
     assert!(pinyin_train(instance, 0), "the lookup is back in step");
 
@@ -762,8 +779,9 @@ fn null_user_directory_refuses_training_but_keeps_mutable_state() {
     // pinyin_save refuses without a user dir too (pinyin.cpp:1133).
     assert!(!pinyin_save(context));
 
+    // (`pinyin_choose_predicted_candidate` takes a predicted row only; a
+    // normal row is the pin's assert, `pinyin.cpp:2593`.)
     let cand = candidate(instance, "nihao", 0);
-    assert!(!pinyin_choose_predicted_candidate(instance, cand));
     assert!(pinyin_remember_user_input(
         instance,
         cstr("你好").as_ptr(),
@@ -832,12 +850,11 @@ fn mask_out_clears_user_entries_and_leaves_the_flag_alone() {
         assert!(!store.is_modified());
     }
 
-    // remove_user_candidate: null and system-token candidates report false
-    // (user tokens never surface in candidate lists on the current ABI —
-    // collection reads the system dictionary only).
+    // remove_user_candidate: a null candidate reports false. A system-token
+    // candidate is the pin's `assert(USER_DICTIONARY == index)`
+    // (`pinyin.cpp:3738`) and aborts the process;
+    // `abort-remove-user-candidate-normal-system-token` holds it.
     assert!(!pinyin_remove_user_candidate(instance, ptr::null_mut()));
-    let cand = candidate(instance, "nihao", 0);
-    assert!(!pinyin_remove_user_candidate(instance, cand));
 
     crate::instance::pinyin_free_instance(instance);
     crate::context::pinyin_fini(context);
@@ -1345,14 +1362,11 @@ fn exported_phrase_rows_are_token_ordered(context: *mut crate::types::PinyinCont
             ("好你".to_owned(), "hao'ni".to_owned(), 3),
         ]
     );
-    // Exhaustion: has_next false, get_next false.
+    // Exhaustion: has_next false. A get_next past it is the pin's
+    // `assert(ERROR_OK == retval)` (`pinyin.cpp:709`) and aborts the
+    // process; `abort-iterator-get-next-phrase` of `contract-diff.py`
+    // holds it.
     assert!(!crate::iterators::pinyin_iterator_has_next_phrase(iter));
-    assert!(!crate::iterators::pinyin_iterator_get_next_phrase(
-        iter,
-        ptr::null_mut(),
-        ptr::null_mut(),
-        ptr::null_mut(),
-    ));
     crate::iterators::pinyin_end_get_phrases(iter);
 
     // A system sub-index exports its rows (`pinyin.cpp:662-768`), and so
@@ -1531,15 +1545,41 @@ fn export_iterator_reads_imports_that_land_while_it_is_open() {
     crate::context::pinyin_fini(context);
 }
 
-/// Class (c), compatibility-policy row 62: a `USER_FILE` reading the probe
-/// counts (`pinyin.cpp:682`) but `get_pinyin_string` cannot spell
-/// (`:728` → `chewing_key.cpp:48`) is read, not skipped. `get_next` answers
-/// `false` with the out-params untouched and, the cursor unmoved, answers
-/// the same on the next call; the parent build skipped the reading.
+/// Register row 62: a `USER_FILE` reading the probe counts
+/// (`pinyin.cpp:682`) but `get_pinyin_string` cannot spell (`:728` →
+/// `chewing_key.cpp:48`) is read, not skipped, and the pin's assert aborts
+/// the process. No `contract-diff.py` fixture can plant the reading in the
+/// pin's sub-index, so this death test holds the site.
+#[cfg(unix)]
 #[test]
-fn export_iterator_refuses_a_reading_it_cannot_spell() {
+fn export_iterator_aborts_on_a_reading_it_cannot_spell() {
+    // The out-params live in a page shared with the child: `pinyin.cpp:703`
+    // writes NULL, NULL and -1 before the assert, over these sentinels.
+    let slot = std::mem::size_of::<usize>();
+    let page = crate::test_support::assert_aborts_sharing(
+        "e2e_tests::export_iterator_aborts_on_a_reading_it_cannot_spell",
+        &vec![0xAB; 2 * slot + 4],
+        export_an_unspellable_reading,
+    );
+    assert!(
+        page[..2 * slot].iter().all(|&byte| byte == 0),
+        "NULL phrase and pinyin"
+    );
+    assert_eq!(
+        std::os::raw::c_int::from_ne_bytes(
+            page[2 * slot..2 * slot + 4].try_into().expect("4 bytes")
+        ),
+        -1
+    );
+}
+
+/// Exports the user dictionary after planting a reading one tone past
+/// `MAX_KEY_TONE` behind a spellable one; the aborting read writes its
+/// out-params into `page` (phrase, pinyin, then count).
+#[cfg(unix)]
+fn export_an_unspellable_reading(page: *mut u8) {
     let user_dir = TempUserDir::new("export-unspellable");
-    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+    let (context, _instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
     {
         // SAFETY: `context` is a live `pinyin_init` handle, borrowed
         // uniquely for this block.
@@ -1579,23 +1619,18 @@ fn export_iterator_refuses_a_reading_it_cannot_spell() {
     );
     // The probe selected the second item: it has a pronunciation.
     assert!(crate::iterators::pinyin_iterator_has_next_phrase(iter));
-    for _ in 0..2 {
-        let mut phrase: *mut crate::types::GChar = ptr::null_mut();
-        let mut pinyin: *mut crate::types::GChar = ptr::null_mut();
-        let mut count: std::os::raw::c_int = -7;
-        assert!(!crate::iterators::pinyin_iterator_get_next_phrase(
-            iter,
-            &raw mut phrase,
-            &raw mut pinyin,
-            &raw mut count,
-        ));
-        assert!(phrase.is_null() && pinyin.is_null());
-        assert_eq!(count, -7);
-        assert!(crate::iterators::pinyin_iterator_has_next_phrase(iter));
-    }
-    crate::iterators::pinyin_end_get_phrases(iter);
-    crate::instance::pinyin_free_instance(instance);
-    crate::context::pinyin_fini(context);
+    // The read of the second item aborts.
+    let slot = std::mem::size_of::<usize>();
+    // SAFETY: the page holds two pointer slots then a `c_int`, each aligned
+    // (the mapping is page-aligned).
+    let (phrase_out, pinyin_out, count_out) = unsafe {
+        (
+            page.cast::<*mut crate::types::GChar>(),
+            page.add(slot).cast::<*mut crate::types::GChar>(),
+            page.add(2 * slot).cast::<std::os::raw::c_int>(),
+        )
+    };
+    crate::iterators::pinyin_iterator_get_next_phrase(iter, phrase_out, pinyin_out, count_out);
 }
 
 #[test]
@@ -2649,6 +2684,113 @@ fn masking_system_imports_restores_originals_and_removes_appended_items() {
     let export = pinyin_begin_get_phrases(context, 1);
     assert_eq!(drain_phrases(export), original);
     pinyin_end_get_phrases(export);
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}
+
+/// Register rows 63 and 66: on a fresh instance the pin's
+/// `offset >= matrix.size() - 1` is `offset >= SIZE_MAX`
+/// (`pinyin.cpp:2927-2928`, `:2950-2951`), so `SIZE_MAX` answers `false`
+/// with the out-param NULLed before `get_column_size` could assert.
+#[test]
+fn the_key_getters_answer_false_at_size_max_on_an_empty_matrix() {
+    let _slots = crate::test_support::key_slot_guard();
+    let user_dir = TempUserDir::new("key-size-max");
+    let (_context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+    let mut key = ptr::NonNull::<crate::types::ChewingKey>::dangling().as_ptr();
+    assert!(!crate::cursor::pinyin_get_pinyin_key(
+        instance,
+        usize::MAX,
+        &raw mut key
+    ));
+    assert!(key.is_null());
+    let mut rest = ptr::NonNull::<crate::types::ChewingKeyRest>::dangling().as_ptr();
+    assert!(!crate::cursor::pinyin_get_pinyin_key_rest(
+        instance,
+        usize::MAX,
+        &raw mut rest
+    ));
+    assert!(rest.is_null());
+}
+
+/// Imports 你好 into libraries `1..=libraries` of the fixture, which loads
+/// libraries 1 to 7, so the phrase-table search holds `libraries` tokens.
+fn hold_nihao_in_libraries(context: *mut crate::types::PinyinContext, libraries: u8) {
+    for library in 1..=libraries {
+        let iter = pinyin_begin_add_phrases(context, library);
+        assert!(pinyin_iterator_add_phrase(
+            iter,
+            cstr("你好").as_ptr(),
+            cstr("ni3'hao3").as_ptr(),
+            1,
+        ));
+        pinyin_end_add_phrases(iter);
+    }
+}
+
+/// `reduce_tokens` clears and fills the caller's array before it validates
+/// the count (`phrase_large_table3.h:79-95`). On a NULL array each GLib
+/// call logs a critical: one for `g_array_set_size`, one
+/// `g_array_append_vals` per loaded library (`phrase_index.h:762-772`).
+/// The pin then dies of the assert on five tokens (`pinyin.cpp:2664`), so
+/// the criticals come first. GLib's default handler writes them to stderr.
+#[cfg(unix)]
+#[test]
+fn lookup_tokens_into_a_null_array_logs_the_criticals_before_it_aborts() {
+    let user_dir = TempUserDir::new("lookup-null-five");
+    let path = user_dir.path.to_str().expect("UTF-8 path").to_owned();
+    let stderr = crate::test_support::assert_aborts(
+        "e2e_tests::lookup_tokens_into_a_null_array_logs_the_criticals_before_it_aborts",
+        || {
+            // SAFETY: GLib's own default handler, installed for every domain.
+            unsafe {
+                glib_sys::g_log_set_default_handler(
+                    Some(glib_sys::g_log_default_handler),
+                    ptr::null_mut(),
+                );
+            }
+            let (context, instance) = open(&path);
+            hold_nihao_in_libraries(context, 5);
+            crate::dict::pinyin_lookup_tokens(instance, cstr("你好").as_ptr(), ptr::null_mut());
+        },
+    );
+    let (context, instance) = open(&path);
+    // SAFETY: `instance` is live until it is freed below, and the
+    // reference is not used after that.
+    let inst = unsafe { instance_ref(instance) };
+    let loaded = (0..16_u32)
+        .filter(|library| inst.core.dict.phrase_table_token_enabled(library << 24))
+        .count();
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+    let stderr = String::from_utf8_lossy(&stderr);
+    let criticals: Vec<&str> = stderr
+        .lines()
+        .filter(|line| line.contains("CRITICAL"))
+        .collect();
+    assert!(loaded > 0);
+    assert_eq!(criticals.len(), 1 + loaded, "{stderr}");
+    assert!(criticals[0].contains("g_array_set_size"), "{stderr}");
+    assert!(
+        criticals[1..]
+            .iter()
+            .all(|line| line.contains("g_array_append_vals")),
+        "{stderr}"
+    );
+}
+
+/// Four tokens pass `reduce_tokens`' count, so the NULL-array lookup
+/// answers instead of aborting.
+#[test]
+fn lookup_tokens_into_a_null_array_answers_with_four_tokens() {
+    let user_dir = TempUserDir::new("lookup-null-four");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+    hold_nihao_in_libraries(context, 4);
+    assert!(crate::dict::pinyin_lookup_tokens(
+        instance,
+        cstr("你好").as_ptr(),
+        ptr::null_mut()
+    ));
     crate::instance::pinyin_free_instance(instance);
     crate::context::pinyin_fini(context);
 }

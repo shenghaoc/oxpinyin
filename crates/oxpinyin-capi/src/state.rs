@@ -127,11 +127,9 @@ impl CapiContext {
 
     /// Load addon library `index` from the runtime's first system data dir.
     ///
-    /// The pin's addon phrase index asserts `index < PHRASE_INDEX_LIBRARY_COUNT`
-    /// (`novel_types.h:43`, 1<<4) on the load path as it does on unload; per
-    /// the availability class of `docs/findings/compatibility-policy.md` this
-    /// answers `false` instead — the same bound [`CapiContext::unload_addon`]
-    /// applies. Without it an out-of-range index would silently load a
+    /// The pin answers `false` for `index >= PHRASE_INDEX_LIBRARY_COUNT`
+    /// (`novel_types.h:43`, 1<<4) on the load path (`pinyin.cpp:479-480`),
+    /// and so does this. Without it an out-of-range index would silently load a
     /// stray `addon_{index}_*` table on disk (whichever backend's
     /// extension `default_store_file` names) rather than being refused. A
     /// user-store-only context has no runtime, so it loads nothing.
@@ -139,47 +137,57 @@ impl CapiContext {
         if index >= PHRASE_INDEX_LIBRARY_COUNT {
             return false;
         }
-        // Class (c): `pinyin.cpp:491` asserts a loaded addon row is a
-        // `DICTIONARY`; a row naming no chunk asserts inside `MemoryChunk`
-        // (`memory_chunk.h:493`).
         match self.core.load_addon_phrase_library(index) {
             Ok(loaded) => loaded,
-            Err(assert) => {
-                crate::ffi::log_warning(match assert {
-                    oxpinyin_facade::LibraryRowAssert::NullChunkName => {
-                        oxpinyin_data::table_info::TableConfSite::NullSystemFile.warning()
-                    }
-                    // `pinyin.cpp:290` maps the addon through the same
-                    // `MemoryChunk::mmap`: a directory of header size or
-                    // more fails the read at `memory_chunk.h:493`.
-                    oxpinyin_facade::LibraryRowAssert::ChunkHeaderRead => {
-                        "pinyin_load_addon_phrase_library: assertion \
-                         'ret_len == sizeof(length)' failed (memory_chunk.h:493)"
-                    }
-                    _ => {
-                        "pinyin_load_addon_phrase_library: assertion \
-                         'DICTIONARY == table_info->m_file_type' failed"
-                    }
-                });
+            // Register row 79, `pinyin.cpp:491`: the pin asserts a loaded
+            // addon row is a `DICTIONARY`, and the process aborts.
+            Err(oxpinyin_facade::LibraryRowAssert::NotDictionary) => std::process::abort(),
+            // Register row 79, `memory_chunk.h:493`: a row naming no chunk
+            // maps the system directory, and where that directory reads as
+            // a chunk the pin asserts on its length word. Where it does not,
+            // the facade has written the pin's `mmap %s failed!` line and
+            // the pin dies of SIGSEGV on the empty chunk (class (b)), so
+            // the call fails with one warning.
+            Err(oxpinyin_facade::LibraryRowAssert::NullChunkName)
+                if self
+                    .core
+                    .runtime
+                    .as_ref()
+                    .and_then(oxpinyin_runtime::Runtime::system_dir)
+                    .is_none_or(oxpinyin_facade::null_chunk_asserts) =>
+            {
+                std::process::abort()
+            }
+            Err(oxpinyin_facade::LibraryRowAssert::NullChunkName) => {
+                crate::ffi::log_warning(
+                    oxpinyin_data::table_info::TableConfSite::NullSystemFile.warning(),
+                );
                 false
             }
+            // `pinyin.cpp:290` maps the addon through the same
+            // `MemoryChunk::mmap`: a directory of header size or more fails
+            // the read at `memory_chunk.h:493`.
+            Err(oxpinyin_facade::LibraryRowAssert::ChunkHeaderRead) => {
+                crate::ffi::log_warning(
+                    "pinyin_load_addon_phrase_library: assertion \
+                     'ret_len == sizeof(length)' failed (memory_chunk.h:493)",
+                );
+                false
+            }
+            // The addon load answers no `NotLoadable`.
+            Err(oxpinyin_facade::LibraryRowAssert::NotLoadable) => false,
         }
     }
 
     /// Unload addon library `index`.
     ///
     /// The pin asserts `index < PHRASE_INDEX_LIBRARY_COUNT`
-    /// (`novel_types.h:43`, 1<<4) and aborts otherwise; per the
-    /// compatibility policy's availability class this answers `false`
-    /// instead. In range, it mirrors the pin's unconditional `true`.
+    /// (`novel_types.h:43`, 1<<4), and the process aborts here too
+    /// (register row 21, `pinyin.cpp:499`). In range, it mirrors the pin's
+    /// unconditional `true`.
     pub(crate) fn unload_addon(&self, index: u8) -> bool {
         if index >= PHRASE_INDEX_LIBRARY_COUNT {
-            // Class (c), `pinyin.cpp:499`: **`assert`**.
-            crate::ffi::log_warning(
-                "pinyin_unload_addon_phrase_library: assertion \
-                 'index < PHRASE_INDEX_LIBRARY_COUNT' failed",
-            );
-            return false;
+            std::process::abort();
         }
         self.core
             .runtime
