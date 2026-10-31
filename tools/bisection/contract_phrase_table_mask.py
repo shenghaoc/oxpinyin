@@ -2,11 +2,28 @@
 """
 import ctypes as C
 from pathlib import Path
+import subprocess
 
 from contract_abi import Arr, B, I, P, S, U, Z, tokens_of
 from contract_case_helpers import (
     TOKEN_REUSE_PHRASES, _add_user_phrase, _user_candidate_rows, d18_export_phrases, phrase_table_reopen, row58_rows)
 from contract_fixtures import _write_user_conf
+
+
+def saved_index_rows(read, path):
+    """`read(path)`'s rows, or ['unreadable', reason] when the reader fails.
+
+    The reader raises ValueError for a container it cannot read; its Berkeley
+    DB branch lets a db5.3_dump rejection propagate as CalledProcessError,
+    which is converted here to the same ValueError. The reason is the error
+    text before its first colon, so no path enters the record."""
+    try:
+        try:
+            return read(path)
+        except subprocess.CalledProcessError as error:
+            raise ValueError(f'BDB dump failed: exit {error.returncode}') from error
+    except ValueError as error:
+        return ['unreadable', str(error).split(':')[0]]
 
 
 def register(case, *, _craft_db, index_file_rows):
@@ -178,3 +195,26 @@ def register(case, *, _craft_db, index_file_rows):
         phrase_table_raw_key_prediction(True))
     case('phrase-table-predict-mismatched-live-prefix', control=True)(
         phrase_table_raw_key_prediction(False))
+
+
+    # #1418 phase 3e: pinyin_save writes both user index trees in the
+    # backend's save_db form (chewing_large_table2_*.cpp and
+    # phrase_large_table3_*.cpp save_db at 074a2219). Read each saved file
+    # with the cell's pin-format reader: Kyoto Cabinet loads it with
+    # kcdbloadsnap into an in-memory ProtoTreeDB, as the pin's load_db does,
+    # so a file in another container format reads as unreadable and DIFFERs.
+    @case('phrase-table-saved-index-pin-format', issues=('1418',))
+    def _(k):
+        """Import two phrases, save, and read both saved index files and a reopen.
+
+        A reader failure is recorded as a value, not raised, so a saved file the
+        pin cannot read is a DIFFER rather than a harness error."""
+        phrases = [('龘龘', [b"da2'da2", b"da4'da4"]), ('靐靐', [b"bing4'bing4"])]
+        out = {'added': [_add_user_phrase(k, text, readings, 100) for text, readings in phrases]}
+        out['saved'] = k.fn('save', B, P)(k.ctx)
+        for name in ('user_pinyin_index.bin', 'user_phrase_index.bin'):
+            out[name] = saved_index_rows(index_file_rows, Path(k.user, name))
+        phrase_table_reopen(k)
+        out['reopened'] = [phrase_table_lookup(k, text) for text, _ in phrases]
+        out['export'] = d18_export_phrases(k)
+        return out

@@ -1,6 +1,7 @@
 #!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
 """Tests for the phrase table mask cases (#1175)."""
 from pathlib import Path
+import subprocess
 import sys
 
 import unittest
@@ -19,7 +20,8 @@ EXPECTED = [('phrase-table-mask-long-short', (), {'issues': ('759', '785')}),
             ('phrase-table-add-search-remove-roundtrip', (), {'control': True, 'issues': ('759', '785')}),
             ('phrase-table-never-loaded-library-filter', (), {'issues': ('799',)}),
             ('phrase-table-predict-nonunicode-raw-key', (), {}),
-            ('phrase-table-predict-mismatched-live-prefix', (), {'control': True})]
+            ('phrase-table-predict-mismatched-live-prefix', (), {'control': True}),
+            ('phrase-table-saved-index-pin-format', (), {'issues': ('1418',)})]
 INJECTED = ('_craft_db', 'index_file_rows')
 
 
@@ -35,6 +37,17 @@ class PhraseTableMaskTests(unittest.TestCase):
     def test_case_ids_order_and_metadata(self):
         cases = declarations({n: stub(n) for n in INJECTED})
         self.assertEqual([(name, args, kwargs) for name, args, kwargs, _ in cases], EXPECTED)
+
+    def test_saved_index_reader_failures_record_unreadable(self):
+        path = Path('/profile/user_pinyin_index.bin')
+        rejected = Mock(side_effect=subprocess.CalledProcessError(1, ['db5.3_dump', str(path)]))
+        self.assertEqual(family.saved_index_rows(rejected, path), ['unreadable', 'BDB dump failed'])
+        refused = Mock(side_effect=ValueError('KC profile snapshot load failed: ' + str(path)))
+        self.assertEqual(family.saved_index_rows(refused, path),
+                         ['unreadable', 'KC profile snapshot load failed'])
+        read = Mock(return_value=[['00', '01']])
+        self.assertEqual(family.saved_index_rows(read, path), [['00', '01']])
+        read.assert_called_once_with(path)
 
 
 if __name__ == '__main__':

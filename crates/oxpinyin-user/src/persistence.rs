@@ -50,7 +50,8 @@ use oxpinyin_data::user_files::{
     UserTableInfo, encode_log_records, get_open_counter, log_records, read_chunk_payload,
 };
 use oxpinyin_store::{
-    DefaultStore, DefaultUserBigramDb, RawReadStore, StoreError, UserBigramDb, WriteStore,
+    DefaultStore, DefaultUserBigramDb, RawReadStore, RecordSink, StoreError, UserBigramDb,
+    WriteStore,
 };
 
 use crate::replay::{JournalFault, Merge, ReplayedLibrary, Stop, raw_unigram};
@@ -1965,7 +1966,10 @@ fn stage_all<B: FnMut(u8) -> SaveBaseline>(
     if let Some(db) = reporting.bigram_db {
         let final_path = user_file(dir, &UserDbm::Bigram.file_name());
         let tmp = user_file(dir, &format!("{}.tmp", UserDbm::Bigram.file_name()));
-        let written = db.save_db(&tmp).map_err(PersistenceError::from);
+        // `unlink(tmpfilename)` before `save_db` (`pinyin.cpp:1017`); the
+        // backend's `save_db` then unlinks again, as the pin's does.
+        let written =
+            unlink_if_present(&tmp).and_then(|()| db.save_db(&tmp).map_err(PersistenceError::from));
         tolerate(reporting.lenient, staged.finish((tmp, final_path), written))?;
         return Ok(());
     }
@@ -2099,23 +2103,33 @@ fn stage_rest<B: FnMut(u8) -> SaveBaseline>(
             tolerate(reporting.lenient, stage_chunk(dir, name, &bytes, staged))?;
         }
 
+        // `_write_files` saves the user pinyin index, then the user phrase
+        // index (`pinyin.cpp:996-1012`). Both stream from the session's
+        // arenas in key order; a value-only save streams the derived index
+        // and the held phrase-table map.
         tolerate(
             reporting.lenient,
-            stage_dbm(dir, UserDbm::PinyinIndex, &index.rows(), staged),
+            stage_dbm(
+                dir,
+                UserDbm::PinyinIndex,
+                |sink| index.for_each_record(|key, value| sink(key, value)),
+                staged,
+            ),
         )?;
-        let phrase_rows = phrase_table.map_or_else(
-            || {
-                state
-                    .phrase_table
-                    .iter()
-                    .map(|(k, v)| (k.clone(), v.clone()))
-                    .collect::<Vec<_>>()
-            },
-            UserPhraseTable::rows,
-        );
         tolerate(
             reporting.lenient,
-            stage_dbm(dir, UserDbm::PhraseIndex, &phrase_rows, staged),
+            stage_dbm(
+                dir,
+                UserDbm::PhraseIndex,
+                |sink| match phrase_table {
+                    Some(table) => table.for_each_record(|key, value| sink(key, value)),
+                    None => state
+                        .phrase_table
+                        .iter()
+                        .try_for_each(|(key, value)| sink(key, value)),
+                },
+                staged,
+            ),
         )?;
 
         Ok(())
@@ -2305,34 +2319,34 @@ fn stage_user_bigram(dir: &Path, rows: &[(Vec<u8>, Vec<u8>)]) -> Result<(), Pers
     Ok(())
 }
 
-/// Writes one of the two index DBMs' rows to its `.tmp` sibling (a tree
-/// container on every backend) and registers the rename. The user bigram
-/// takes the separate [`stage_user_bigram`] route, since its container is
-/// backend-specific.
+/// Writes one of the two index DBMs to its `.tmp` sibling and registers
+/// the rename. The user bigram takes the separate [`stage_user_bigram`]
+/// route, since its container is backend-specific. `_write_files` unlinks
+/// the `.tmp` path first (`pinyin.cpp:999`, `:1008`); the backend's
+/// `save_db` sequence then writes the records `fill` streams, in key
+/// order, with nothing buffered ([`WriteStore::write_user_index`]).
 fn stage_dbm(
     dir: &Path,
     dbm: UserDbm,
-    rows: &[(Vec<u8>, Vec<u8>)],
+    fill: impl FnOnce(&mut RecordSink<'_>) -> Result<(), StoreError>,
     staged: &mut Staged,
 ) -> Result<(), PersistenceError> {
     debug_assert!(!dbm.is_hash(), "stage_dbm serves the two index trees");
     let final_path = user_file(dir, &dbm.file_name());
     let tmp = user_file(dir, &format!("{}.tmp", dbm.file_name()));
-    // A crashed save can leave this `.tmp` behind with rows the coming
-    // write would not overwrite — `create` opens-or-creates, so stale
-    // index rows would survive into the renamed file.
-    let written = (|| {
-        match std::fs::remove_file(&tmp) {
-            Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => return Err(e.into()),
-        }
-        // A user table, created with the mode the backend's own `save_db`
-        // uses for one (Berkeley DB's 0600, not `attach`'s 0644).
-        DefaultStore::write_user_index(&tmp, rows)?;
-        Ok(())
-    })();
+    let written = unlink_if_present(&tmp)
+        .and_then(|()| DefaultStore::write_user_index(&tmp, fill).map_err(PersistenceError::from));
     staged.finish((tmp, final_path), written)
+}
+
+/// `unlink(tmpfilename)` with a missing file tolerated, as `_write_files`
+/// unlinks each `.tmp` before its `save_db` (`pinyin.cpp:999-1017`).
+fn unlink_if_present(path: &Path) -> Result<(), PersistenceError> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e.into()),
+    }
 }
 
 /// Writes one chunk file to its `.tmp` sibling and registers the rename.

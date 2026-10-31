@@ -246,6 +246,14 @@ impl SharedDb {
         Db::open(path, db_type, read_only, create, mode).map(Self::new)
     }
 
+    /// [`Db::close_unsynced`] on the owned handle.
+    pub(crate) fn close_unsynced(self) {
+        self.inner
+            .into_inner()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .close_unsynced();
+    }
+
     /// Opens the user bigram's unnamed hash database.
     pub(crate) fn open_in_memory_hash() -> Result<Self, StoreError> {
         Db::open_in_memory_hash().map(Self::new)
@@ -313,6 +321,10 @@ pub(crate) struct Db {
     /// that was never opened and says so on stderr (`BDB1565`), so a handle
     /// whose open failed is closed without the flush.
     opened: bool,
+    /// Whether dropping a writable handle syncs it before `DB->close`.
+    /// [`Db::close_unsynced`] clears it for a `save_db` copy, which the pin
+    /// closes with no sync of its own handle.
+    sync_on_drop: bool,
     /// One initialized pair lent to a cursor at a time. Active cursors own
     /// their buffers, so a visitor can open another cursor without aliasing.
     /// Retain only page-sized buffers; a large record must not permanently
@@ -402,6 +414,7 @@ impl Db {
             read_only,
             hash: db_type == DB_HASH,
             opened: false,
+            sync_on_drop: true,
             cursor_buffers: None,
         };
 
@@ -577,6 +590,18 @@ impl Db {
         check(unsafe { sync(self.handle, 0) }, "DB->sync")
     }
 
+    /// Closes the handle with `DB->close(db, 0)` alone, as the pin's
+    /// `save_db` closes the file it copied into
+    /// (`chewing_large_table2_bdb.cpp:135-162`,
+    /// `phrase_large_table3_bdb.cpp:150-177`, `ngram_bdb.cpp:81-108` at
+    /// 074a2219): its `tmp_db->sync(m_db, 0)` syncs the in-memory source
+    /// handle, not the new file, so the file's only flush is the one
+    /// `DB->close` makes. Close's return code is discarded, as the pin
+    /// discards it.
+    pub(crate) fn close_unsynced(mut self) {
+        self.sync_on_drop = false;
+    }
+
     /// Opens a native cursor while the shareable owner's lock is held.
     fn cursor_handle(&self) -> Result<*mut sys::DBC, StoreError> {
         let cursor = method!(self.handle, cursor, "DB->cursor")?;
@@ -649,6 +674,7 @@ impl Drop for Db {
         // call `sync` first, which does report.
         if self.opened
             && !self.read_only
+            && self.sync_on_drop
             && let Ok(sync) = method!(self.handle, sync, "DB->sync")
         {
             // SAFETY: the handle is live and owned.

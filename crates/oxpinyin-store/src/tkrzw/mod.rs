@@ -1023,6 +1023,24 @@ impl WriteStore for TkrzwStore {
         open_in_memory()
     }
 
+    /// `ChewingLargeTable2::save_db` / `PhraseLargeTable3::save_db`
+    /// (`chewing_large_table2_tkrzwdb.cpp:111-130`,
+    /// `phrase_large_table3_tkrzwdb.cpp:102-121` at 074a2219): `RemoveFile`
+    /// (an `unlink`, missing file tolerated), a `TreeDBM` opened writable
+    /// with `OPEN_DEFAULT` and default tuning, `copy_tkrzwdb`'s one `Set`
+    /// per record in key order (`tkrzwdb_utils.h:48-74`),
+    /// `Synchronize(false)`, then close. Inserting record by record lets
+    /// the tree divide its leaves as the pin's does, so the pages match.
+    fn write_user_index(
+        path: &Path,
+        records: impl FnOnce(&mut crate::RecordSink<'_>) -> Result<(), StoreError>,
+    ) -> Result<(), StoreError> {
+        crate::remove_if_present(path)?;
+        let file = open(path, true)?;
+        records(&mut |key, value| db_set_record(&file.db, key, value))?;
+        db_synchronize(&file.db, false)
+    }
+
     fn write<R>(
         &self,
         f: impl FnOnce(&mut Self::Txn<'_>) -> Result<R, StoreError>,
@@ -1311,6 +1329,40 @@ fn visit_db(
     })
 }
 
+/// The `tkrzw_dbm_process_each` record callback of
+/// [`TkrzwUserBigramDb::keys`], the pin's `KeyCollectProcessor`
+/// (`ngram_tkrzwdb.cpp:143-159`): appends each key as a four-byte token, or
+/// `None` for a key of another length, and leaves the record untouched.
+/// `ProcessEach`'s opening and closing `ProcessEmpty` calls reach it with a
+/// null key, and are skipped.
+///
+/// The pointer contract is libtkrzw's, as in [`walk_row`].
+unsafe extern "C" fn collect_key(
+    arg: *mut c_void,
+    key_ptr: *const c_char,
+    key_len: i32,
+    _value_ptr: *const c_char,
+    _value_len: i32,
+    _new_value_size: *mut i32,
+) -> *const c_char {
+    if key_ptr.is_null() {
+        return rec_proc_noop();
+    }
+    // SAFETY: `key_ptr` is tkrzw's memory for the record being processed:
+    // pinned for this call, non-null, with `key_len` its true size.
+    let key = unsafe {
+        std::slice::from_raw_parts(key_ptr.cast::<u8>(), usize::try_from(key_len).unwrap_or(0))
+    };
+    // SAFETY: `arg` is the address of the `keys` vector in the calling
+    // `keys`, passed with this callback to the one
+    // `tkrzw_dbm_process_each` call, which returns before the vector is
+    // read or dropped. The walk is single-threaded and nothing else
+    // reaches the vector meanwhile.
+    let keys = unsafe { &mut *arg.cast::<Vec<Option<[u8; 4]>>>() };
+    keys.push(<[u8; 4]>::try_from(key).ok());
+    rec_proc_noop()
+}
+
 impl crate::UserBigramDb for TkrzwUserBigramDb {
     fn empty() -> Result<Self, StoreError> {
         // `m_db = new TinyDBM;` — an in-memory database at the default
@@ -1362,16 +1414,29 @@ impl crate::UserBigramDb for TkrzwUserBigramDb {
     }
 
     fn keys(&self) -> Result<Vec<Option<[u8; 4]>>, StoreError> {
-        // One vector of four-byte tokens reserved for the record count, as
-        // `get_all_items` appends them to one `GArray`
-        // (`ngram_tkrzwdb.cpp:143-172` at 074a2219).
+        // `get_all_items`: one read-only `ProcessEach` whose processor
+        // appends each key to one `GArray` (`ngram_tkrzwdb.cpp:143-172` at
+        // 074a2219), here a vector reserved for the record count.
         let mut keys = Vec::new();
         keys.reserve_exact(usize::try_from(db_count(&self.db)?).unwrap_or(0));
-        visit_db(&self.db, |key, _| {
-            keys.push(<[u8; 4]>::try_from(key).ok());
-            Ok(())
-        })?;
+        // SAFETY: the handle is open; `collect_key` is the processor made
+        // for exactly this argument type, and `keys` outlives the call,
+        // which returns before `keys` is read or moved. writable=false is
+        // the pin's read-only walk.
+        let ok = unsafe {
+            ffi::tkrzw_dbm_process_each(
+                self.db.0.as_ptr(),
+                Some(collect_key),
+                (&raw mut keys).cast::<c_void>(),
+                false,
+            )
+        };
+        check(ok)?;
         Ok(keys)
+    }
+
+    fn is_empty(&self) -> Result<bool, StoreError> {
+        Ok(db_count(&self.db)? == 0)
     }
 
     fn save_db(&self, path: &Path) -> Result<(), StoreError> {
@@ -1380,9 +1445,8 @@ impl crate::UserBigramDb for TkrzwUserBigramDb {
         // container into it in iterator order, synchronize, close.
         crate::remove_if_present(path)?;
         let file = open_hash_create(path)?;
-        visit_db(&self.db, |key, value| {
-            db_set_one(&file.db, key, Some(value))
-        })?;
+        // `copy_tkrzwdb`: one `Set` per record (`tkrzwdb_utils.h:48-74`).
+        visit_db(&self.db, |key, value| db_set_record(&file.db, key, value))?;
         db_synchronize(&file.db, false)
     }
 }

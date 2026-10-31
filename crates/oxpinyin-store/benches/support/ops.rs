@@ -535,7 +535,12 @@ where
                 db.store(key, value).expect("fill user bigram");
             }
             db.save_db(&bigram).expect("save user bigram");
-            S::write_user_index(&index, &index_rows).expect("write user index");
+            S::write_user_index(&index, |sink| {
+                index_rows
+                    .iter()
+                    .try_for_each(|(key, value)| sink(key, value))
+            })
+            .expect("write user index");
             if op == "lifecycle.user_load" {
                 drop(db);
                 let mut value = Vec::new();
@@ -552,7 +557,12 @@ where
             } else {
                 run(&mut |_| {
                     db.save_db(&bigram).expect("save user bigram");
-                    S::write_user_index(&index, &index_rows).expect("write user index");
+                    S::write_user_index(&index, |sink| {
+                        index_rows
+                            .iter()
+                            .try_for_each(|(key, value)| sink(key, value))
+                    })
+                    .expect("write user index");
                     // The saved lengths, not the bytes: Berkeley DB writes
                     // a file ID drawn from the clock and the process into
                     // each file's meta page, so two saves of the same rows

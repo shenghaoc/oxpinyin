@@ -505,16 +505,19 @@ impl WriteStore for KcStore {
         Self::create(path)
     }
 
-    fn write_user_index(path: &Path, rows: &[(Vec<u8>, Vec<u8>)]) -> Result<(), StoreError> {
+    fn write_user_index(
+        path: &Path,
+        records: impl FnOnce(&mut crate::RecordSink<'_>) -> Result<(), StoreError>,
+    ) -> Result<(), StoreError> {
         // The pin unlinks then dump_snapshot's the in-memory tree
         // (chewing_large_table2_kyotodb.cpp:124-130,
         // phrase_large_table3_kyotodb.cpp:139-145). Persistence passes
         // the staged .tmp path, so the previous profile remains intact.
+        // The records are set into a `ProtoTreeDB`, the pin's container,
+        // as they stream in; the file is the snapshot, never a `TreeDB`.
         crate::remove_if_present(path)?;
         let db = Db::open_proto_tree()?;
-        for (key, value) in rows {
-            db.set(key, value)?;
-        }
+        records(&mut |key, value| db.set(key, value))?;
         db.dump_snapshot(path)
     }
 
@@ -695,6 +698,10 @@ impl crate::UserBigramDb for KcUserBigramDb {
         // `get_all_items`' own call: `iterate` with a key-collecting
         // visitor (`ngram_kyotodb.cpp:163-196`), the stash's bucket order.
         self.db.keys()
+    }
+
+    fn is_empty(&self) -> Result<bool, StoreError> {
+        Ok(self.db.count()? == 0)
     }
 
     fn save_db(&self, path: &Path) -> Result<(), StoreError> {
@@ -897,7 +904,10 @@ mod tests {
 
         let rows: Vec<(Vec<u8>, Vec<u8>)> = model.clone().into_iter().collect();
         let index = Temp::new("scan-index", "bin");
-        KcStore::write_user_index(&index.0, &rows).unwrap();
+        KcStore::write_user_index(&index.0, |sink| {
+            rows.iter().try_for_each(|(key, value)| sink(key, value))
+        })
+        .unwrap();
         assert_scans_match(&KcStore::open_user_index(&index.0).unwrap(), &model);
 
         let bigram = Temp::new("scan-bigram", "db");

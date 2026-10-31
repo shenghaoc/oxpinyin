@@ -205,6 +205,10 @@ impl std::error::Error for StoreError {
 /// visitor `Err`, which aborts the scan and propagates.
 pub type Flow = ControlFlow<()>;
 
+/// Where [`WriteStore::write_user_index`] sends each record: one call per
+/// record, in ascending key order.
+pub type RecordSink<'a> = dyn FnMut(&[u8], &[u8]) -> Result<(), StoreError> + 'a;
+
 // ── traits ─────────────────────────────────────────────────────────
 
 /// A write transaction over one or more tables.
@@ -545,23 +549,28 @@ pub trait WriteStore: ReadStore {
         Self::create_hash(path)
     }
 
-    /// Writes one user phrase/pinyin index in the backend's pin format.
-    /// KC overrides this with a ProtoTreeDB snapshot; other peers write
-    /// their ordinary index container. The caller owns staging/rename.
+    /// Writes one user phrase/pinyin index in the backend's pin format,
+    /// with the calls the pin's `save_db` makes. `records` hands each
+    /// record, in ascending key order, to the sink it is given; nothing
+    /// is buffered between it and the backend. Each shipping backend
+    /// overrides this with its `save_db` sequence: tkrzw's `RemoveFile`,
+    /// `TreeDBM` open, one `Set` per record, `Synchronize(false)` and close;
+    /// Berkeley DB's unlink, `DB_BTREE` open, one `put` per record and
+    /// close; Kyoto Cabinet's unlink and `ProtoTreeDB` `dump_snapshot`.
+    /// The default writes through [`WriteStore::write`]. The caller owns
+    /// staging and the rename.
     ///
     /// # Errors
-    /// Returns an error when creation or a row write fails.
-    fn write_user_index(path: &Path, rows: &[(Vec<u8>, Vec<u8>)]) -> Result<(), StoreError>
+    /// Returns an error when creation or a record write fails.
+    fn write_user_index(
+        path: &Path,
+        records: impl FnOnce(&mut RecordSink<'_>) -> Result<(), StoreError>,
+    ) -> Result<(), StoreError>
     where
         Self: Sized,
     {
         let store = Self::create_user(path)?;
-        store.write(|txn| {
-            for (key, value) in rows {
-                txn.put_raw(key, value)?;
-            }
-            Ok(())
-        })
+        store.write(|txn| records(&mut |key, value| txn.put_raw(key, value)))
     }
 
     /// Writes `rows` to `path` as the **user** bigram container.
@@ -936,6 +945,17 @@ pub trait UserBigramDb: Sized {
     ///
     /// Returns [`StoreError`] when the walk fails.
     fn keys(&self) -> Result<Vec<Option<[u8; 4]>>, StoreError>;
+
+    /// Whether the container holds no record. Not a pin call: oxpinyin's
+    /// own check of whether a session holds grams, answered without the
+    /// full [`Self::keys`] walk where the backend keeps a record count.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the container cannot be read.
+    fn is_empty(&self) -> Result<bool, StoreError> {
+        Ok(self.keys()?.is_empty())
+    }
 
     /// `Bigram::save_db`: remove `path`, then write the container to it
     /// the pin's way (a fresh file of the backend's user-bigram form,
