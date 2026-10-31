@@ -17,6 +17,9 @@ use crate::phrase_table::{PhraseTableEntry, key_ucs4, search_bytes};
 
 const HEADER: usize = 8;
 
+/// One suggestion row: the raw key and its stored tokens.
+type SuggestionRows = Vec<(Vec<u8>, Vec<u32>)>;
+
 #[derive(Clone, Debug, Default)]
 pub(crate) struct UserPhraseTable {
     arena: Vec<u8>,
@@ -248,10 +251,7 @@ impl UserPhraseTable {
     }
 
     /// Strictly longer keys after an existing prefix, with their tokens.
-    pub(crate) fn suggest_after(
-        &self,
-        prefix: &[u8],
-    ) -> Result<Vec<(Vec<u8>, Vec<u32>)>, StoreError> {
+    pub(crate) fn suggest_after(&self, prefix: &[u8]) -> Result<SuggestionRows, StoreError> {
         if !self.contains_key(prefix) {
             return Ok(Vec::new());
         }
