@@ -326,6 +326,23 @@ pub fn remove_index_ucs4(
     remove_index_key(txn, &key_ucs4(words), token)
 }
 
+/// Whether [`remove_index_ucs4`] would answer `ERROR_OK`, without writing:
+/// the test `pinyin_remove_user_candidate` asserts on (`pinyin.cpp:3750`).
+///
+/// # Errors
+/// Returns store errors.
+pub fn index_removable_ucs4(
+    txn: &mut impl WriteTxn,
+    words: &[u32],
+    token: u32,
+) -> Result<bool, StoreError> {
+    let Ok(Some(bytes)) = txn_get_bytes(txn, TABLE, &key_ucs4(words)) else {
+        return Ok(false);
+    };
+    let mut entry = PhraseTableEntry::from_bytes(bytes)?;
+    Ok(entry.remove_index(token) == ERROR_OK)
+}
+
 fn remove_index_key(txn: &mut impl WriteTxn, key: &[u8], token: u32) -> Result<i32, StoreError> {
     let Ok(Some(bytes)) = txn_get_bytes(txn, TABLE, key) else {
         return Ok(ERROR_REMOVE_ITEM_DONOT_EXISTS);

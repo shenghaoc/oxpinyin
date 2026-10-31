@@ -82,6 +82,7 @@ pub(crate) fn refuse_lookup_gram(name: &str, error: &oxpinyin_engine::EngineErro
         | oxpinyin_engine::EngineError::TrainingSetFreqMiss { .. }
         | oxpinyin_engine::EngineError::StaleTrainingSpan { .. }
         | oxpinyin_engine::EngineError::OverlongUserIndexKey { .. }
+        | oxpinyin_engine::EngineError::TonedIncompleteKey
         | oxpinyin_engine::EngineError::UserModel(_)
         | oxpinyin_engine::EngineError::Graph(_)
         | oxpinyin_engine::EngineError::Decode(_)

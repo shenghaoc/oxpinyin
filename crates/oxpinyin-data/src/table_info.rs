@@ -618,29 +618,47 @@ impl TableConf {
     ///
     /// # Errors
     ///
-    /// The [`TableConfSite`] of the first fatal row.
-    pub fn check_default_rows(&self, user_dir: Option<&Path>) -> Result<(), TableConfSite> {
+    /// The sub-index and [`TableConfSite`] of the first fatal row.
+    pub fn check_default_rows(&self, user_dir: Option<&Path>) -> Result<(), (u8, TableConfSite)> {
         let has_user_dir = user_dir.is_some_and(directory_reads_as_a_chunk);
-        for row in &self.default {
-            match row.file_type {
-                FileType::NotUsed => {}
-                FileType::Dictionary => return Err(TableConfSite::DefaultDictionary),
-                FileType::SystemFile => {
-                    if row.system.is_none() {
-                        return Err(TableConfSite::NullSystemFile);
-                    }
-                    if row.user.is_none() && has_user_dir {
-                        return Err(TableConfSite::NullUserFile);
-                    }
+        for (index, row) in (0_u8..).zip(&self.default) {
+            let site = match row.file_type {
+                FileType::NotUsed => None,
+                FileType::Dictionary => Some(TableConfSite::DefaultDictionary),
+                FileType::SystemFile if row.system.is_none() => Some(TableConfSite::NullSystemFile),
+                FileType::SystemFile | FileType::UserFile if row.user.is_none() && has_user_dir => {
+                    Some(TableConfSite::NullUserFile)
                 }
-                FileType::UserFile => {
-                    if row.user.is_none() && has_user_dir {
-                        return Err(TableConfSite::NullUserFile);
-                    }
-                }
+                FileType::SystemFile | FileType::UserFile => None,
+            };
+            if let Some(site) = site {
+                return Err((index, site));
             }
         }
         Ok(())
+    }
+
+    /// The system chunks of the default `SYSTEM_FILE` rows before sub-index
+    /// `stop` (through it when `through`) whose file is absent, in index
+    /// order: the libraries whose `MemoryChunk::mmap` fails, so the pin's
+    /// init loop writes `mmap %s failed!` for each (`pinyin.cpp:253-256`,
+    /// `zhuyin.cpp:197-200`) before it reaches `stop`. The same test as
+    /// [`crate::phrase_libraries::PhraseLibraries::open`]'s unloaded files.
+    #[must_use]
+    pub fn absent_default_libraries(
+        &self,
+        system_dir: &Path,
+        stop: u8,
+        through: bool,
+    ) -> Vec<PathBuf> {
+        (0_u8..)
+            .zip(&self.default)
+            .take_while(|&(index, _)| index < stop || (through && index == stop))
+            .filter(|(_, row)| row.file_type == FileType::SystemFile)
+            .filter_map(|(_, row)| row.system.as_ref())
+            .map(|file| file.under(system_dir))
+            .filter(|path| std::fs::metadata(path).is_err())
+            .collect()
     }
 
     fn rows_of(&self, file_type: FileType) -> impl Iterator<Item = (u8, &TableRow)> {

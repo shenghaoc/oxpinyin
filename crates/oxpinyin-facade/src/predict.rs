@@ -17,14 +17,22 @@ use oxpinyin_user::{UserLookup, UserStore};
 /// refuses them at the item lookup; filtering here is the closest we get
 /// to that gate on the prefix path). User tokens come from the user
 /// store's raw phrase table.
-#[must_use]
+///
+/// # Errors
+///
+/// [`oxpinyin_engine::EngineError::ReduceTokensCount`] at the first suffix
+/// whose search holds more than four tokens: `_compute_prefixes` reduces
+/// each search with the validating `reduce_tokens` (`pinyin.cpp:1415`,
+/// `zhuyin.cpp:933`), whose `assert(0 <= num && num <= 4)`
+/// (`phrase_large_table3.h:95`) the pin dies on before its prefix guess or
+/// prediction uses any token. The C adapters abort on it.
 pub fn compute_prefixes(
     dict: &RuntimeDict,
     user: Option<&UserStore>,
     prefix: Option<&PhraseText>,
-) -> Vec<u32> {
+) -> Result<Vec<u32>, oxpinyin_engine::EngineError> {
     let Some(prefix) = prefix else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
     let prefix: Vec<u32> = prefix.outward_words().collect();
     let user_lookup = user.and_then(|store| UserLookup::from_store(store).ok());
@@ -38,10 +46,15 @@ pub fn compute_prefixes(
         }
         matches.retain(|token| dict.phrase_table_token_enabled(*token));
         // 074a2219 pinyin.cpp:1414-1420 reduces each suffix separately.
+        if matches.len() > 4 {
+            return Err(oxpinyin_engine::EngineError::ReduceTokensCount {
+                count: matches.len(),
+            });
+        }
         matches.sort_by_key(|token| token >> 24);
         tokens.extend(matches);
     }
-    tokens
+    Ok(tokens)
 }
 
 /// The system and user phrase-table suggestion tokens for `prefix`,

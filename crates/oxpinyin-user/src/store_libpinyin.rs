@@ -1730,6 +1730,22 @@ mod tests {
     }
 
     #[test]
+    fn a_removal_assert_comes_before_the_bigram_fault() {
+        // `pinyin_remove_user_candidate` asserts on a missing item
+        // (`pinyin.cpp:3743`) before its `mask_out` (`:3766`) reads any
+        // gram, so a malformed gram does not answer for an absent token.
+        let dir = tempdir("remove-assert-before-bigram");
+        let mut store =
+            UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+                .expect("open");
+        store.plant_raw_bigram(1, &[1, 0, 0]);
+        let absent = (u32::from(crate::USER_DICTIONARY) << 24) | 0x0000_0042;
+        assert!(matches!(store.remove_user_phrase(absent), Ok(false)));
+        drop(store);
+        std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    #[test]
     fn partial_tail_guard_tracks_an_in_session_mask_result() {
         let dir = tempdir("partial-gram-live-mask");
         let key = 1_u32.to_le_bytes();

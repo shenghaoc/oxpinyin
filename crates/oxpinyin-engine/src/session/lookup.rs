@@ -253,6 +253,7 @@ where
                     path: &mut path,
                     entries: &mut entries,
                     window_addon: &mut window_addon,
+                    explicit: gate,
                 };
                 self.collect_window_scan(remaining.as_bytes(), collected, &mut scratch)?;
                 self.scan_unreadable = unreadable;
@@ -495,12 +496,19 @@ where
         // recursion over every column entry (all parses plus the
         // resplit/divided/fuzzy additions), zero-key separator columns
         // stepped over without pushing.
-        let mut paths: Vec<SmallVec<[SyllableKey; 16]>> = Vec::new();
-        let mut path: SmallVec<[SyllableKey; 16]> = SmallVec::new();
+        let mut paths: Vec<SuggestionPath> = Vec::new();
+        let mut path = SuggestionPath::default();
         self.collect_suggestion_paths(&matrix, 0, end, max_keys, &mut path, &mut paths);
 
         let mut winner: Option<(PhraseToken, u64, PhraseText)> = None;
-        for keys in &paths {
+        for SuggestionPath { keys, tones } in &paths {
+            // `search_suggestion` asserts on a toned first initial-only key
+            // before its walk (`chewing_large_table2_bdb.cpp:560`, kc `:534`,
+            // tkrzw `:504`; `pinyin_phrase3.h:152`). Only the explicit guess
+            // runs the pin's prepend; a refresh keeps searching the path.
+            if gate_overlong {
+                EngineError::check_toned_incomplete(keys, tones)?;
+            }
             // The pin's `search_suggestion` gate: the walk reaches a user
             // index key past `MAX_PHRASE_LENGTH` syllables that extends this
             // path and `switch`'s `default: abort()` dies
@@ -589,8 +597,8 @@ where
         node: usize,
         end: usize,
         max_keys: usize,
-        path: &mut SmallVec<[SyllableKey; 16]>,
-        paths: &mut Vec<SmallVec<[SyllableKey; 16]>>,
+        path: &mut SuggestionPath,
+        paths: &mut Vec<SuggestionPath>,
     ) {
         let Some(column) = matrix.get(node) else {
             return;
@@ -599,19 +607,21 @@ where
             // The pin's leaf gate: an empty path (apostrophes only)
             // searches nothing; the length caps were applied on the way
             // down (`max_keys`).
-            if !path.is_empty() {
+            if !path.keys.is_empty() {
                 paths.push(path.clone());
             }
             return;
         }
         for scan_key in column.iter().copied() {
             let to = scan_key.to;
-            if to > end || path.len() >= max_keys {
+            if to > end || path.keys.len() >= max_keys {
                 continue;
             }
-            path.push(scan_key.key);
+            path.keys.push(scan_key.key);
+            path.tones.push(scan_key.tone);
             self.collect_suggestion_paths(matrix, to, end, max_keys, path, paths);
-            path.pop();
+            path.keys.pop();
+            path.tones.pop();
         }
     }
 
@@ -810,6 +820,9 @@ where
                     continued: &mut continued,
                     unreadable: &mut unreadable,
                     entries: &mut entries,
+                    // `scan_window_ending` serves only the explicit
+                    // before-cursor guess (`zhuyin.cpp:1542-1607`).
+                    explicit: true,
                 };
                 self.scan_parsed_paths(matrix, start, offset, &mut buf)?;
             }
@@ -1340,6 +1353,7 @@ where
                     continued: &mut continued,
                     unreadable: &mut *scratch.unreadable,
                     entries: scratch.entries,
+                    explicit: scratch.explicit,
                 };
                 self.scan_parsed_paths(retained, anchor, anchor + end, &mut buf)?;
             }
@@ -1444,8 +1458,15 @@ where
             continued,
             unreadable,
             entries,
+            explicit,
         } = buf;
         let end = end.saturating_sub(*span_base);
+        // The table search asserts on a toned first initial-only key before
+        // it reads anything (`chewing_large_table2.cpp:166-167`,
+        // `pinyin_phrase3.h:152`); only the explicit guess is the pin's.
+        if *explicit {
+            EngineError::check_toned_incomplete(path, tones)?;
+        }
         let has_incomplete = path
             .iter()
             .any(|key| key.completeness() == Completeness::Partial);
@@ -1530,4 +1551,13 @@ where
         );
         Ok(unreadable)
     }
+}
+
+/// One key path of the LONGER suggestion walk, with the tone typed on each
+/// key: the table's suggestion search reads both
+/// (`contains_incomplete_pinyin`, `pinyin_phrase3.h:146-156`).
+#[derive(Clone, Default)]
+struct SuggestionPath {
+    keys: SmallVec<[SyllableKey; 16]>,
+    tones: SmallVec<[u8; 16]>,
 }
