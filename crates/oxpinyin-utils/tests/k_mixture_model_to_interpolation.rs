@@ -9,8 +9,6 @@ use std::io::Write as _;
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
 
-use oxpinyin_kmm::{DEFAULT_PRUNE_K, GenerateParams, KMixtureModel, export, merge_into, prune};
-
 fn run_binary(binary: &Path, stdin: &[u8]) -> Output {
     let mut child = Command::new(binary)
         .stdin(Stdio::piped())
@@ -45,41 +43,43 @@ fn signal(output: &Output) -> Option<i32> {
 
 const HEADER: &str = "\\data model \"k mixture model\" count 1 N 1 total_freq 1\n";
 
-// The `oxpinyin-kmm` differential fixture (tests/differential.rs there):
-// candidate A, five `甲 乙` sentences then one `丙 丁`; candidate B, three.
-const JIAYI: &str = "10 甲\n20 乙\n0 \n";
+/// The merged candidate model of the old KMM differential fixture: one
+/// document with five `甲 乙` sentences then `丙 丁`, and one with three.
+/// Source-derived from `gen_k_mixture_model.cpp:65-311` and
+/// `merge_k_mixture_model.cpp:38-129`; also the `kti-merged` tool case.
+const MERGED_KMM: &str = "\\data model \"k mixture model\" count 20 N 2 total_freq 20\n\
+\\1-gram\n\
+\\item 1 <start> count 10 freq 0\n\
+\\item 10 甲 count 8 freq 8\n\
+\\item 20 乙 count 0 freq 8\n\
+\\item 30 丙 count 2 freq 2\n\
+\\item 40 丁 count 0 freq 2\n\
+\\2-gram\n\
+\\item 1 <start> 10 甲 count 8 T 8 N_n_0 2 n_1 0 Mr 5\n\
+\\item 1 <start> 30 丙 count 2 T 2 N_n_0 2 n_1 2 Mr 1\n\
+\\item 10 甲 20 乙 count 8 T 8 N_n_0 2 n_1 0 Mr 5\n\
+\\item 30 丙 40 丁 count 2 T 2 N_n_0 2 n_1 2 Mr 1\n\
+\\end\n";
 
-fn built(doc: &str) -> KMixtureModel {
-    let mut model = KMixtureModel::new();
-    model.add_document(doc, GenerateParams::default()).unwrap();
-    model
-}
-
-fn merged() -> KMixtureModel {
-    let mut merged = KMixtureModel::new();
-    merge_into(
-        &mut merged,
-        &built(&format!(
-            "{JIAYI}{JIAYI}{JIAYI}{JIAYI}{JIAYI}30 丙\n40 丁\n"
-        )),
-    )
-    .unwrap();
-    merge_into(
-        &mut merged,
-        &built(&format!("{JIAYI}{JIAYI}{JIAYI}30 丙\n40 丁\n")),
-    )
-    .unwrap();
-    merged
-}
+/// The same model after `prune_k_mixture_model -k 3 --CDF 0.5`
+/// (`prune_k_mixture_model.cpp:45-186`): the rare `丙` pairs go, their
+/// header frequencies are reduced to zero, and the fully-zero rows vanish.
+const PRUNED_KMM: &str = "\\data model \"k mixture model\" count 16 N 2 total_freq 16\n\
+\\1-gram\n\
+\\item 1 <start> count 8 freq 0\n\
+\\item 10 甲 count 8 freq 8\n\
+\\item 20 乙 count 0 freq 8\n\
+\\2-gram\n\
+\\item 1 <start> 10 甲 count 8 T 8 N_n_0 2 n_1 0 Mr 5\n\
+\\item 10 甲 20 乙 count 8 T 8 N_n_0 2 n_1 0 Mr 5\n\
+\\end\n";
 
 #[test]
 fn the_pruned_differential_fixture_projects_to_the_golden() {
     // <start> and zero-freq unigrams drop; the 1-gram count is the KMM
     // freq, the 2-gram count the pair WC. 乙 is W2-only but its header-only
     // row carries freq 8, so it projects.
-    let mut pruned = merged();
-    prune(&mut pruned, DEFAULT_PRUNE_K, 0.5).unwrap();
-    let out = run(export(&pruned).as_bytes());
+    let out = run(PRUNED_KMM.as_bytes());
     assert_eq!(out.status.code(), Some(0));
     assert_eq!(stderr(&out), "");
     assert_eq!(
@@ -168,9 +168,9 @@ fn rust_kmm_matches_pin_to_interpolation() {
     else {
         panic!("missing input for the live to-interpolation differential: set PINYIN_KMM_TO_INTERP")
     };
-    let input = export(&merged());
-    let theirs = run_binary(&pin, input.as_bytes());
-    let ours = run(input.as_bytes());
+    let input = MERGED_KMM.as_bytes().to_vec();
+    let theirs = run_binary(&pin, &input);
+    let ours = run(&input);
     assert_eq!(theirs.status.code(), Some(0), "pin to-interpolation failed");
     assert_eq!(ours.status, theirs.status);
     assert_eq!(ours.stdout, theirs.stdout);

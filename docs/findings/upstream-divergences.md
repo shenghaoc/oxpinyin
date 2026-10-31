@@ -4341,6 +4341,12 @@ aborts where the pin aborts, without glibc's assertion line or GLib's
 critical. Stdout and the SIGABRT exit are the pin's. Recorded and bound in
 [eio-tool-check-messages.md](eio-tool-check-messages.md).
 
+The same ruling covers the seven KMM utilities' asserts:
+`merge`'s missing result attach, `estimate`'s zero magic total and `gen`'s
+missing container header abort with SIGABRT on both sides and no
+subject assertion line. Bound per cell in
+[eio-kmm-tools.md](eio-kmm-tools.md).
+
 ### Library `g_return_val_if_fail` criticals are not reproduced (2026-10-31 UTC)
 
 **Maintainer decision D1 of #1297**, a narrow exception to the library

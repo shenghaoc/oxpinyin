@@ -1,0 +1,42 @@
+{
+  "schema": 1,
+  "cases": [
+    {
+      "id": "kmm-merge-help",
+      "utility": "merge_k_mixture_model",
+      "source": "utils/training/merge_k_mixture_model.cpp at 074a2219: 210-237, 96-129; src/include/pinyin_utils.h:26-31",
+      "args": [
+        "--help"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      }
+    },
+    {
+      "id": "kmm-merge-bad-option",
+      "utility": "merge_k_mixture_model",
+      "source": "utils/training/merge_k_mixture_model.cpp at 074a2219: 210-237, 96-129; src/include/pinyin_utils.h:26-31",
+      "args": [
+        "--bogus"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      }
+    },
+    {
+      "id": "kmm-merge-no-result-file",
+      "utility": "merge_k_mixture_model",
+      "source": "utils/training/merge_k_mixture_model.cpp at 074a2219: 210-237, 96-129; src/include/pinyin_utils.h:26-31",
+      "args": [
+        "k_mixture_model.db"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      },
+      "fixture_dir": "fixtures/w3",
+      "pin_signal": -6,
+      "reproduces_signal": true,
+      "policy_record": "eio-kmm-tools.md"
+    }
+  ]
+}

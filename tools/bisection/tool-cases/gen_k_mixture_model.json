@@ -1,0 +1,70 @@
+{
+  "schema": 1,
+  "cases": [
+    {
+      "id": "kmm-gen-help",
+      "utility": "gen_k_mixture_model",
+      "source": "utils/training/gen_k_mixture_model.cpp at 074a2219: 313-403, 65-311; utils/utils_helper.h:51-95",
+      "args": [
+        "--help"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      }
+    },
+    {
+      "id": "kmm-gen-bad-option",
+      "utility": "gen_k_mixture_model",
+      "source": "utils/training/gen_k_mixture_model.cpp at 074a2219: 313-403, 65-311; utils/utils_helper.h:51-95",
+      "args": [
+        "--bogus"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      }
+    },
+    {
+      "id": "kmm-gen-missing-table-conf",
+      "utility": "gen_k_mixture_model",
+      "source": "utils/training/gen_k_mixture_model.cpp at 074a2219: 313-403, 65-311; utils/utils_helper.h:51-95",
+      "args": [
+        "absent.txt"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      }
+    },
+    {
+      "id": "kmm-gen-missing-document",
+      "utility": "gen_k_mixture_model",
+      "source": "utils/training/gen_k_mixture_model.cpp at 074a2219: 313-403, 65-311; utils/utils_helper.h:51-95",
+      "args": [
+        "absent.txt"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      },
+      "fixture_dir": "fixtures/w3"
+    },
+    {
+      "id": "kmm-gen-good-document",
+      "utility": "gen_k_mixture_model",
+      "source": "utils/training/gen_k_mixture_model.cpp at 074a2219: 313-403, 65-311; utils/utils_helper.h:51-95",
+      "args": [
+        "doc.txt"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      },
+      "fixture_dir": "fixtures/w3",
+      "files": {
+        "doc.txt": {
+          "text": "1 <start>\n16817937 中国\n16802309 你好\n"
+        }
+      },
+      "pin_signal": -6,
+      "reproduces_signal": true,
+      "policy_record": "eio-kmm-tools.md"
+    }
+  ]
+}

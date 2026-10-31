@@ -128,6 +128,35 @@ The named mutation `kti-freq-positive` changes only the unigram test in
 (1 DIFFER, 27 MATCH, 12 POLICY-ACCEPTED). The source was restored byte
 for byte before the completion run.
 
+## KMM utilities (2026-10-31 UTC)
+
+`tool-cases/{validate,merge,prune,estimate,import,export,gen}_k_mixture_model.json`
+hold 35 source-derived cases for the seven k-mixture-model utilities. They
+use the per-cell `{"fixture_dir": "fixtures/w3"}` input, which copies
+`fixtures/w3/<cell>` into each side's working directory: the cwd-relative
+`table.conf` and SYSTEM_FILE chunks, and the three committed KMM
+containers `k_mixture_model{,_zero,_edom}.db` (see
+`fixtures/w3/README.md`). Cases that write a container are absent
+deliberately: a tkrzw HashDBM file's header timestamp and Kyoto Cabinet's
+bucket metadata are not reproducible bytes, so only read-only programs,
+non-writing imports and the three source-derived aborts compare a complete
+inventory. Merge/prune/estimate/gen writes are covered by the crate tests
+instead.
+
+On the tkrzw reference cell the result is **32 MATCH and 3
+POLICY-ACCEPTED, 0 DIFFER**: the three aborts (`kmm-merge-no-result-file`,
+`kmm-estimate-zero-total`, `kmm-gen-good-document`) bind in
+[eio-kmm-tools](../findings/eio-kmm-tools.md); both sides raise SIGABRT,
+and the pin's assertion line is the only difference
+([eio-tool-check-messages](../findings/eio-tool-check-messages.md)).
+
+The named mutation `kmm-prune-star-threshold` changes only
+`oxpinyin-kmm/src/prune.rs`'s `progress >= onestep` to `progress >
+onestep`, which drops the per-row progress asterisk. The tkrzw run detects
+it in `kmm-prune-edom` (1 DIFFER when that case is selected; the completion
+run is 32 MATCH and 3 POLICY-ACCEPTED). The source is restored byte for
+byte before the completion run.
+
 ## Database-free evidence (2026-10-31 UTC)
 
 The four tool records (eio-table-generator-invalid-utf8,
