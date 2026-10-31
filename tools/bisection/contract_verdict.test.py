@@ -26,7 +26,7 @@ def spec(**overrides):
     return dict(dict(mode='pinyin', control=False, abort=verdict.NO_ABORT, stderr=False, crash=None, userdir=False,
                      cells=('bdb', 'kc', 'tkrzw'), either=False, host_scanf=(), dir_chunk=None, stderr_varies=False,
                      abort_logs=None, fatal=False, both_abort=False, strjoinv_over_read=False, issues=(),
-                     policy_record=None, case_id='probe', pin_not_run=None), **overrides)
+                     policy_record=None, case_id='probe', pin_not_run=None, sigabrt=False), **overrides)
 
 
 def observation(exit=0, result=None, stderr='', userfiles=None):
@@ -95,6 +95,30 @@ class MatchTests(unittest.TestCase):
                                      observation(result={'ret': False, 'logs': [['libzhuyin', 16]]})))
         self.assertTrue(self.matches(spec(abort=False, abort_logs=[]), pin, observation(result={'ret': False, 'logs': []})))
         self.assertFalse(self.matches(case, observation(exit=-signal.SIGSEGV), answered))
+
+    def test_a_reproduced_abort_needs_sigabrt_on_both_sides_and_the_pins_stderr_less_its_assert_line(self):
+        line = "python3: src/pinyin.cpp:1474: bool f(): Assertion `index < results.size()' failed.\n"
+        pin = observation(exit=-signal.SIGABRT, stderr='mmap a failed!\n' + line)
+        case = spec(abort=False, sigabrt=True)
+        self.assertTrue(self.matches(case, pin, observation(exit=-signal.SIGABRT, stderr='mmap a failed!\n')))
+        self.assertFalse(self.matches(case, pin, observation(exit=-signal.SIGABRT)), 'earlier stderr is compared')
+        self.assertFalse(self.matches(case, pin, observation(result={'ret': False, 'logs': [['libpinyin', 16]]})),
+                         'the refusal no longer holds the site')
+        self.assertFalse(self.matches(case, pin, observation(exit=-signal.SIGSEGV, stderr='mmap a failed!\n')))
+        self.assertFalse(self.matches(case, observation(exit=-signal.SIGSEGV), observation(exit=-signal.SIGABRT)))
+        silent = observation(exit=-signal.SIGABRT)
+        self.assertTrue(self.matches(case, silent, silent), 'an abort() site writes nothing on either side')
+        profile = spec(abort=False, sigabrt=True, userdir=True)
+        self.assertFalse(self.matches(profile, observation(exit=-signal.SIGABRT, userfiles={'user.conf': 'a'}), silent))
+        self.assertTrue(verdict.stderr_less_assert_line('x\n', 'x\n'))
+        self.assertFalse(verdict.stderr_less_assert_line('x\ny\n', 'x\n'), 'only an assertion line may trail')
+        # `open %s failed.` ends without a newline, and glibc's line follows
+        # it on the same line.
+        joined = 'open u/user.conf failed.' + line
+        self.assertTrue(self.matches(case, observation(exit=-signal.SIGABRT, stderr=joined),
+                                     observation(exit=-signal.SIGABRT, stderr='open u/user.conf failed.')))
+        self.assertFalse(self.matches(case, observation(exit=-signal.SIGABRT, stderr=joined),
+                                      observation(exit=-signal.SIGABRT)), 'the joined text is compared')
 
     def test_a_crash_site_needs_sigsegv_the_same_stderr_and_the_declared_fields(self):
         case = spec(crash={'ret': False}, stderr=True)
@@ -190,6 +214,16 @@ class VerdictTests(unittest.TestCase):
         self.assertEqual(decide(spec(control=True), good, good, True), ('MATCH', True, True))
         self.assertEqual(decide(spec(), good, other, True), ('DIFFER', True, False))
         self.assertEqual(decide(spec(control=True), good, other, True), ('DIFFER', False, False))
+
+    def test_a_reproduced_assert_is_policy_accepted_and_a_reproduced_abort_call_matches(self):
+        line = "python3: a.cpp:1: f: Assertion `x' failed.\n"
+        case, dead = spec(abort=False, sigabrt=True), observation(exit=-signal.SIGABRT)
+        self.assertEqual(decide(case, observation(exit=-signal.SIGABRT, stderr=line), dead),
+                         ('POLICY-ACCEPTED', True, True))
+        self.assertEqual(decide(case, dead, dead), ('MATCH', True, True))
+        refused = observation(result={'ret': False, 'logs': [['libpinyin', 16]]})
+        self.assertEqual(decide(case, dead, refused), ('DIFFER', False, False))
+        self.assertEqual(decide(case, dead, refused, True), ('DIFFER', True, False), 'the parent refused')
 
     def test_parent_rejects_unrelated_subject_failures_at_registered_terminations(self):
         for case, pin in ((spec(abort=False), observation(exit=-signal.SIGABRT)),
