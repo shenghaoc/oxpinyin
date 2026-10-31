@@ -6,6 +6,7 @@ use oxpinyin_data::chunk_write::{sub_phrase_index_sections, validate_phrase_item
 use oxpinyin_data::phrase_library::PhraseItemView;
 
 use crate::user_index::UserIndex;
+use crate::user_phrase_table::UserPhraseTable;
 
 /// The pin's SubPhraseIndex (phrase_index.h:257-430 at 074a2219), owned.
 #[derive(Clone, Debug, Default)]
@@ -47,8 +48,8 @@ impl PreparedReplacement {
 pub(crate) struct SessionPhrases {
     pub(crate) libraries: BTreeMap<u8, UserLibrary>,
     pub(crate) index: UserIndex,
-    /// Libraries whose sub-index has been unloaded.
     pub(crate) unloaded: BTreeSet<u8>,
+    pub(crate) phrase_table: UserPhraseTable,
 }
 
 impl SessionPhrases {
