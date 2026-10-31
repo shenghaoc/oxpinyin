@@ -719,7 +719,6 @@ dependencies = [
 name = "oxpinyin-input"
 version = "0.1.0"
 dependencies = [
- "cc",
  "glib-sys",
  "libc",
  "tempfile",

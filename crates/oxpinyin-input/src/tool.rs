@@ -7,8 +7,9 @@
 //! getline's contract. Only with the `tools` feature: the shipping libraries
 //! never link GLib's option parser through this crate.
 //!
-//! Three symbols neither crate binds are declared here: the C runtime's
-//! `stdout` and `stderr` (per platform) and GLib's `g_utf8_skip` table. What a
+//! One symbol neither crate binds is declared here, GLib's `g_utf8_skip`
+//! table; the C runtime's `stdout` and `stderr` are declared per platform
+//! once for the library and the tools, in the crate's native module. What a
 //! field or a line means stays with the utility that reads it.
 
 use core::ffi::{c_char, c_int, c_long, c_void};
@@ -18,53 +19,12 @@ use std::io::{BufRead, BufReader};
 
 use libc::FILE;
 
-#[cfg(target_vendor = "apple")]
-unsafe extern "C" {
-    #[link_name = "__stdoutp"]
-    static mut c_stdout_stream: *mut FILE;
-    #[link_name = "__stderrp"]
-    static mut c_stderr_stream: *mut FILE;
-}
-
-#[cfg(windows)]
-unsafe extern "C" {
-    /// The UCRT's `stdin`/`stdout`/`stderr` accessor (`<corecrt_wstdio.h>`).
-    fn __acrt_iob_func(index: core::ffi::c_uint) -> *mut FILE;
-}
-
-#[cfg(not(any(target_vendor = "apple", windows)))]
-unsafe extern "C" {
-    #[link_name = "stdout"]
-    static mut c_stdout_stream: *mut FILE;
-    #[link_name = "stderr"]
-    static mut c_stderr_stream: *mut FILE;
-}
+use crate::native::{c_stderr, c_stdout};
 
 unsafe extern "C" {
     /// `GLIB_VAR const gchar * const g_utf8_skip` (`glib/gunicode.h`), the
     /// table `g_utf8_next_char` steps by.
     static g_utf8_skip: *const c_char;
-}
-
-/// The C runtime's `stdout`.
-fn c_stdout() -> *mut FILE {
-    #[cfg(windows)]
-    // SAFETY: index 1 is the UCRT's `stdout`; the call has no precondition.
-    return unsafe { __acrt_iob_func(1) };
-    #[cfg(not(windows))]
-    // SAFETY: the C library initialises `stdout` before `main` and nothing
-    // here assigns it; the read copies the pointer.
-    return unsafe { c_stdout_stream };
-}
-
-/// The C runtime's `stderr`.
-fn c_stderr() -> *mut FILE {
-    #[cfg(windows)]
-    // SAFETY: index 2 is the UCRT's `stderr`; the call has no precondition.
-    return unsafe { __acrt_iob_func(2) };
-    #[cfg(not(windows))]
-    // SAFETY: as `c_stdout`.
-    return unsafe { c_stderr_stream };
 }
 
 /// The target's `EINVAL`, the pin's exit status for a refused option or

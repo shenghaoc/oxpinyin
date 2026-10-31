@@ -156,7 +156,7 @@ Do not reproduce macros such as `assert`, `g_return_val_if_fail` or `G_STRFUNC`.
 Make their checks plain Rust: answer the pin's value, or abort where the pin aborts.
 Do not imitate their message text; record the stderr difference as a POLICY-ACCEPTED language artefact.
 Stop and report a call or behaviour that has no equivalent with the same documented result.
-`oxpinyin-input`'s `config.c` and `diagnostic.c` and the Kyoto Cabinet `shim.cc` move in their own changes.
+The Kyoto Cabinet `shim.cc` moves in its own change; `oxpinyin-input` has no C shim left.
 
 #### Platform scope of pinned behaviour
 

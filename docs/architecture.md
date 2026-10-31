@@ -7,7 +7,7 @@
 | oxpinyin-core | Parser, SegmentGraph, k-best and scoring traits | forbid | yes | via engine |
 | oxpinyin-chewing | Dependency-free chewing/zhuyin leaf below core. Packed keys, renderers and frozen content tables. Core depends on chewing. | forbid | yes | via capi, engine |
 | oxpinyin-data | Native readers for the formats used by a same-backend libpinyin build (D3 route). | deny (+mmap), target forbid | yes | via engine |
-| oxpinyin-input | External-I/O boundary through a small C shim built with `cc` and a safe API. Stage 1 covers configuration and locale. The `tools` feature adds the utilities' GLib option and text, C++ stream and C stdio calls; the shipping libraries never enable it. | deny, scoped allows | yes (`tools`: where GLib is installed) | via data |
+| oxpinyin-input | External-I/O boundary through the `libc` crate and a safe API. Stage 1 covers configuration and locale. The `tools` feature adds the utilities' GLib option and text, C++ stream and C stdio calls; the shipping libraries never enable it. | deny, scoped allows | yes (`tools`: where GLib is installed) | via data |
 | oxpinyin-user | ACID store over DefaultStore. No format-version row, matching unversioned user files (ruling 2026-09-08, `docs/findings/user-store.md` §4). | forbid | yes | via engine |
 | oxpinyin-engine | Internal session API for in-tree C facades, tools and tests. No supported external Rust interface. | forbid | yes | yes |
 | oxpinyin-facade | Shared context/instance state machines, parse seams, cursor laws and §9 user-data export materialization. See facade dependencies below. | forbid | yes | via capi |
@@ -79,9 +79,9 @@ Its `noexcept` C entry points in `shim.h` always turn C++ exceptions into failur
 Like libpinyin, it depends on the system library's C++ ABI.
 The facades import 68 `kyotocabinet::` names, 67 among the pin's 77.
 This describes the current tree.
-The `oxpinyin-input` boundary has a small C shim, `native/config.c`, in stage 1.
-Its `tools` feature calls the C library through the `libc` crate and GLib through `glib-sys`, and reads the C++ streams' lines with `std::io` (maintainer ruling 2026-10-31 UTC: no hand-written C or C++ shims).
-`native/config.c` and `native/diagnostic.c` follow in their own changes.
+The `oxpinyin-input` boundary calls the C library through the `libc` crate, with no build step (maintainer ruling 2026-10-31 UTC: no hand-written C or C++ shims).
+It declares in Rust, per platform and in one place, the C library's `stdout` and `stderr` objects, which `libc` does not name.
+Its `tools` feature adds GLib through `glib-sys` and reads the C++ streams' lines with `std::io`.
 
 Kyoto Cabinet left `kclangc.h` after measurement in #1118.
 See the [shim results](findings/kc-shim-1118.md).

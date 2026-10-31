@@ -1,6 +1,7 @@
 //! oxpinyin's external-I/O boundary (`docs/findings/external-io-boundary.md`):
 //! the library and tool calls that cross the program's edge, made with the
-//! pin's own calls through a small C shim (maintainer ruling 2026-10-28 UTC).
+//! pin's own calls (maintainer ruling 2026-10-28 UTC), through the `libc`
+//! crate and no C shim (ruling 2026-10-31 UTC).
 //!
 //! Stage 1 holds the `table.conf` and `user.conf` readers and writer and their
 //! `LC_NUMERIC` calls ([`config`]); stage 4 the library's other `stderr` lines

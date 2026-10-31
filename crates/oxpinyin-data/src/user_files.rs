@@ -1068,7 +1068,7 @@ mod tests {
             "binary format version:7{newline}model data version:14{newline}database format:{DEFAULT_STORE_DB_FORMAT}{newline}open counter:0{newline}"
         );
         assert_eq!(std::fs::read(&path).expect("read"), expected.as_bytes());
-        // Read the file the shim actually wrote through its `fopen("r")`
+        // Read the file the boundary actually wrote through its `fopen("r")`
         // and scanner, including native text-mode translation.
         let reloaded = UserTableInfo::load(&filename).expect("reload saved marker");
         assert_eq!(reloaded, conform);

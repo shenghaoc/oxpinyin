@@ -1,9 +1,9 @@
 //! The pin's library `fprintf(stderr, …)` lines, made with the pin's own call
-//! through the `oxpinyin-input` shim (`docs/findings/external-io-boundary.md`,
+//! through the `oxpinyin-input` boundary (`docs/findings/external-io-boundary.md`,
 //! stages 1 and 4).
 //!
 //! `table_info.cpp`'s `open %s failed.` and `write %s failed.` lines are the
-//! shim's `config` readers' and writer's own (ruling D2). The library's other
+//! boundary's `config` readers' and writer's own (ruling D2). The library's other
 //! lines are written here: `load %s failed!`, `mmap %s failed!` and `rename %s
 //! to %s failed.`. Every line therefore goes to the host C library's `stderr`
 //! stream in the order the callers make them. The maintainer ruling of

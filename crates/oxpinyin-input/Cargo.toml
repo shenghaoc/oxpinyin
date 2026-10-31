@@ -28,17 +28,14 @@ must_use_candidate = "warn"
 # The pin utilities' boundary (stage 5): their C library calls through
 # libc, GLib's option and text calls through glib-sys, and the C++ streams'
 # getline through std::io. Tools only; it links GLib.
-tools = ["dep:libc", "dep:glib-sys"]
+tools = ["dep:glib-sys"]
 
 [dependencies]
-# Approved for this crate by the 2026-10-31 UTC maintainer ruling.
-libc = { workspace = true, optional = true }
+# Approved for this crate by the 2026-10-31 UTC maintainer ruling: the
+# library's table.conf/user.conf and stderr calls, and with `tools` the
+# utilities' C library calls.
+libc.workspace = true
 glib-sys = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile.workspace = true
-
-[build-dependencies]
-# Compiles native/config.c against the target's own <stdio.h> and
-# <locale.h> (the same requirement oxpinyin-store's shim build uses).
-cc = "1.4.3"
