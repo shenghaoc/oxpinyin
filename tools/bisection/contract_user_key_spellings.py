@@ -4,7 +4,7 @@ import ctypes as C
 from pathlib import Path
 
 from contract_abi import B, I, P, S, U, UNTOUCHED, Z, tokens_of, unigram_of
-from contract_case_helpers import _reload_pron_keys, phrase_text_bytes
+from contract_case_helpers import _chunk, _reload_pron_keys, _ucs4_key, phrase_text_bytes
 from contract_fixtures import import_rows
 
 LIBRARY = 7
@@ -93,3 +93,53 @@ def register(case):
     for tag, mode, phrase, reading, typed, _spelling in READINGS:
         case(f'user-key-spelling/{mode}-{tag}', mode=mode, issues=('1418',))(
             user_key_spelling(mode, phrase, reading, typed))
+
+    def user_stored_key(mode, variant):
+        """Replace one stored key word in user.bin, reopen and read it back.
+
+        The pin's import writes only parser keys, so these words come from a
+        crafted file. SubPhraseIndex::load checks no key (074a2219
+        phrase_index.cpp:335-362) and get_nth_pronunciation copies the item's
+        words verbatim (phrase_index.cpp:33-50, pinyin.cpp:2801-2818,
+        zhuyin.cpp:1793-1810). Only the token getters are observed: export and
+        lookup would render or price the word."""
+        def probe(k):
+            reading = 'ni3' if mode == 'pinyin' else 'ㄋㄧˇ'
+            assert import_rows(k, LIBRARY, [('你', reading, 5)]) == [True]
+            token = next(token for token in tokens_of(k, '你') if token >> 24 == LIBRARY)
+            out = {'imported': _reload_pron_keys(k, token)}
+            assert k.fn('save', B, P)(k.ctx)
+            k.fn('free_instance', None, P)(k.inst)
+            k.fn('fini', None, P)(k.ctx)
+            k._ctx = k._inst = None
+            path = Path(k.user, 'user.bin')
+            payload = bytearray(path.read_bytes()[8:])
+            text = _ucs4_key('你')
+            assert payload.count(text) == 1, 'one imported item to patch'
+            # The item's first reading follows its text (phrase_index.h:56,139-144).
+            at = payload.index(text) + len(text)
+            word = int.from_bytes(payload[at:at + 2], 'little')
+            assert out['imported'][2] == payload[at:at + 2].hex()
+            # ChewingKey bits: initial 0..5, middle 5..7, final 7..12, tone 12..15.
+            if variant == 'tone6':
+                word = (word & ~0x7000) | (6 << 12)
+            elif variant == '0x8000':
+                # The padding bit alone: no syllable and no tone field.
+                word = 0x8000
+            else:
+                word = (word & 0x7000) | 0x1f
+            payload[at:at + 2] = word.to_bytes(2, 'little')
+            path.write_bytes(_chunk(bytes(payload)))
+            out['stored'] = word.to_bytes(2, 'little').hex()
+            length, phrase = U(UNTOUCHED), P(UNTOUCHED)
+            ok = k.fn('token_get_phrase', B, P, U, C.POINTER(U), C.POINTER(P))(
+                k.inst, token, C.byref(length), C.byref(phrase))
+            out['phrase'] = [ok, length.value, phrase_text_bytes(k, phrase.value)]
+            out['reopened'] = _reload_pron_keys(k, token)
+            return out
+        return probe
+
+    for _mode in ('pinyin', 'zhuyin'):
+        for _variant in ('tone6', 'no-syllable', '0x8000'):
+            case(f'user-stored-key/{_mode}-{_variant}', mode=_mode, issues=('1418',))(
+                user_stored_key(_mode, _variant))

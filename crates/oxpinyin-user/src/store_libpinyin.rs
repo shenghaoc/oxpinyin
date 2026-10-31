@@ -1126,6 +1126,17 @@ mod tests {
         let library = store.unigram_library_total(crate::USER_DICTIONARY).unwrap();
         let total = store.unigram_total().unwrap();
         assert_eq!(store.observe_predicted_prefix(token).unwrap(), 69);
+        // 3a's token read reaches the same arena item the predicted-prefix
+        // write trained (`with_nth_pronunciation_words`), so the unigram
+        // update and the getter cannot disagree about which item is live.
+        let mut words = None;
+        store.with_nth_pronunciation_words(token, 0, |length, reading| {
+            words = Some((length, reading.map(<[u8]>::to_vec)));
+        });
+        assert_eq!(
+            words,
+            Some((1, Some(ni.to_packed().to_le_bytes().to_vec())))
+        );
         // `add_unigram_frequency(token, 69 * 7)` reaches the live item
         // (`pinyin.cpp:2609`), and the item's library and the facade total
         // take the same 483.
@@ -1142,6 +1153,46 @@ mod tests {
                 .is_none()
         );
         drop(db);
+        drop(store);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A stored word no parser writes is handed out verbatim by both arena
+    /// readers, including the padding bit alone (`0x8000`). The pin copies
+    /// the item's words (074a2219 phrase_index.cpp:33-50), while
+    /// `packed_to_pinyin_keys` has no key for this one.
+    #[test]
+    fn foreign_stored_word_is_verbatim_through_the_arena_reader() {
+        use crate::user_library::UserLibrary;
+        use oxpinyin_data::chunk_write::build_chunk;
+
+        let dir = tempdir("arena-foreign-word");
+        let store =
+            UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin).unwrap();
+        let item = ChunkItem {
+            phrase: vec![0x4f60],
+            unigram: 5,
+            prons: vec![(vec![0x8000], 7)],
+        };
+        let library = UserLibrary::load(&build_chunk(&[(1, item)]).unwrap()).unwrap();
+        let target = store.session_target().unwrap();
+        let mut phrases = target.phrases();
+        phrases.libraries.insert(crate::USER_DICTIONARY, library);
+        drop(phrases);
+        let token = (u32::from(crate::USER_DICTIONARY) << 24) | 1;
+        let mut borrowed = None;
+        assert!(
+            store
+                .with_nth_pronunciation_words(token, 0, |length, words| {
+                    borrowed = Some((length, words.map(<[u8]>::to_vec)));
+                })
+                .is_some()
+        );
+        assert_eq!(borrowed, Some((1, Some(vec![0x00, 0x80]))));
+        assert_eq!(
+            store.nth_pronunciation_words(token, 0).unwrap(),
+            Some(vec![0x8000])
+        );
         drop(store);
         std::fs::remove_dir_all(dir).unwrap();
     }

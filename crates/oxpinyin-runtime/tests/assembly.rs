@@ -11,9 +11,7 @@ use std::path::PathBuf;
 
 use oxpinyin_core::{Dictionary, LanguageModel, PhraseToken, SyllableKey};
 use oxpinyin_engine::{EmptyConfigSource, KeyOutcome, Selection};
-use oxpinyin_runtime::{
-    OpenError, Runtime, RuntimeSession, TableConfError, TokenPronunciationKeys,
-};
+use oxpinyin_runtime::{OpenError, Runtime, RuntimeSession, TableConfError};
 use oxpinyin_user::{FIRST_USER_TOKEN, PinyinKey, SENTENCE_START};
 
 /// A fresh, uniquely named scratch dir, removed on drop (including unwind).
@@ -90,20 +88,7 @@ fn narrow_token_reads_preserve_item_order_and_visibility() {
     let packed = |token, nth| {
         let reading = dict.token_nth_pronunciation(token, nth).expect("item");
         assert_eq!(reading.phrase_length, 1);
-        reading.keys.map(|keys| match keys {
-            TokenPronunciationKeys::Stored(keys) => keys,
-            TokenPronunciationKeys::Structured(keys) => keys
-                .into_iter()
-                .map(|key| {
-                    let syllable =
-                        SyllableKey::from_index(oxpinyin_user::key_syllable(key)).unwrap();
-                    oxpinyin_core::ChewingKey::from_pinyin(syllable.text())
-                        .unwrap()
-                        .with_tone(oxpinyin_user::key_tone(key))
-                        .to_packed()
-                })
-                .collect(),
-        })
+        reading.keys
     };
     let original = packed(system, 0).expect("system reading");
     assert!(dict.token_exists(system));

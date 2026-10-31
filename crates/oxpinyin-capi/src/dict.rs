@@ -202,6 +202,52 @@ pub extern "C" fn pinyin_token_get_n_pronunciation(
     true
 }
 
+/// Append one reading's stored packed words to the caller's array, or the
+/// pin's zeroed past-the-end words when the item has no such reading.
+///
+/// Returns the token getter's result: `false` only for a present reading
+/// whose stored word list is empty.
+///
+/// # Safety
+/// `keys` must be a non-NULL `GArray` whose element size is two bytes, as
+/// the caller of `pinyin_token_get_nth_pronunciation` creates it.
+unsafe fn append_stored_words(
+    keys: *mut crate::types::GArray,
+    length: usize,
+    words: Option<&[u8]>,
+) -> bool {
+    match words {
+        None => {
+            // SAFETY: the caller guarantees a real GArray; `zeroed` outlives
+            // the append call, which copies from it.
+            let zeroed = vec![0_u16; length];
+            // SAFETY: as above; element size is two bytes.
+            unsafe {
+                g_array_append_vals(
+                    keys,
+                    zeroed.as_ptr().cast::<c_void>(),
+                    c_uint::try_from(zeroed.len()).unwrap_or(0),
+                );
+            }
+            true
+        }
+        Some([]) => false,
+        Some(words) => {
+            // SAFETY: the caller guarantees a real GArray with element size
+            // two bytes; `words` holds `2 * phrase_length` stored bytes and
+            // outlives the append call, which copies from it.
+            unsafe {
+                g_array_append_vals(
+                    keys,
+                    words.as_ptr().cast::<c_void>(),
+                    c_uint::try_from(words.len() / 2).unwrap_or(0),
+                );
+            }
+            true
+        }
+    }
+}
+
 /// Get the nth pronunciation of a token as a vector of chewing keys.
 ///
 /// # C signature
@@ -240,10 +286,25 @@ pub extern "C" fn pinyin_token_get_nth_pronunciation(
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
     let inst = unsafe { instance_ref(instance) };
+    // A `USER_FILE` reading lives in the session arena, so hand its stored
+    // words straight to the caller's array instead of copying them through
+    // an intermediate `Vec`.
+    if let Some(result) =
+        inst.core
+            .dict
+            .with_user_nth_pronunciation_words(token, nth as usize, |length, words| {
+                // SAFETY: `keys` is the caller's non-NULL GArray with element
+                // size two bytes; `with_user_nth_pronunciation_words` keeps the
+                // borrowed words live for this call.
+                unsafe { append_stored_words(keys, length, words) }
+            })
+    {
+        return result;
+    }
     let Some(reading) = inst.core.dict.token_nth_pronunciation(token, nth as usize) else {
         return false;
     };
-    let Some(keys_list) = reading.keys.as_ref() else {
+    let Some(packed) = reading.keys.as_deref() else {
         // Past the last reading: `phrase_length` keys of indeterminate
         // content at the pin; zeroed here.
         let zeroed = vec![0_u16; reading.phrase_length];
@@ -259,30 +320,8 @@ pub extern "C" fn pinyin_token_get_nth_pronunciation(
         }
         return true;
     };
-    // A system item hands out the stored words directly; a USER_FILE item
-    // carries structured keys and packs them the same way.
-    let packed: std::borrow::Cow<'_, [u16]> = match keys_list {
-        oxpinyin_runtime::TokenPronunciationKeys::Stored(keys) => {
-            std::borrow::Cow::Borrowed(keys.as_slice())
-        }
-        oxpinyin_runtime::TokenPronunciationKeys::Structured(keys) => {
-            let mut packed: Vec<u16> = Vec::with_capacity(keys.len());
-            for &key in keys {
-                let Some(syllable) =
-                    oxpinyin_core::SyllableKey::from_index(oxpinyin_user::key_syllable(key))
-                else {
-                    return false;
-                };
-                let Some(chewing) = oxpinyin_core::ChewingKey::from_pinyin(syllable.text()) else {
-                    return false;
-                };
-                // The stored key's tone rides along (`get_nth_pronunciation`
-                // copies the item's `ChewingKey`s verbatim).
-                packed.push(chewing.with_tone(oxpinyin_user::key_tone(key)).to_packed());
-            }
-            std::borrow::Cow::Owned(packed)
-        }
-    };
+    // System and USER_FILE items alike hand out their stored words
+    // (`get_nth_pronunciation` copies the item's `ChewingKey`s verbatim).
     if packed.is_empty() {
         return false;
     }

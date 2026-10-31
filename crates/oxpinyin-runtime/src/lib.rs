@@ -325,23 +325,15 @@ fn pinyin_to_keys(pinyin: &str) -> Option<Vec<PinyinKey>> {
         .collect()
 }
 
-/// One pronunciation's keys in the representation the item carries.
-/// System items are stored as packed 16-bit `ChewingKey` words, and the
-/// pin's `get_nth_pronunciation` copies those words verbatim
-/// (`phrase_index.cpp:33-50`); USER_FILE items carry structured keys.
-pub enum TokenPronunciationKeys {
-    /// The item's stored words, copied as the pin hands them out.
-    Stored(Vec<u16>),
-    /// A USER_FILE reading's structured (syllable-id + tone) keys.
-    Structured(Vec<PinyinKey>),
-}
-
 /// One token reading, without the text or any other reading's keys.
 pub struct TokenPronunciation {
     /// Stored character count, also used for the out-of-range C result.
     pub phrase_length: usize,
-    /// `None` when the item exists but the requested reading does not.
-    pub keys: Option<TokenPronunciationKeys>,
+    /// The reading's stored packed `ChewingKey` words, which the pin's
+    /// `get_nth_pronunciation` copies verbatim (`phrase_index.cpp:33-50`)
+    /// for system and USER_FILE items alike. `None` when the item exists but
+    /// the requested reading does not.
+    pub keys: Option<Vec<u16>>,
 }
 
 /// The pin's query keys for `syllables`.
@@ -1229,10 +1221,7 @@ impl RuntimeDict {
                 if let Some(reading) = self.user.as_ref().and_then(|store| {
                     store.with_effective_system_item(token, |item| TokenPronunciation {
                         phrase_length: item.phrase.len(),
-                        keys: item
-                            .prons
-                            .get(nth)
-                            .map(|(keys, _)| TokenPronunciationKeys::Stored(keys.clone())),
+                        keys: item.prons.get(nth).map(|(keys, _)| keys.clone()),
                     })
                 }) {
                     return Some(reading);
@@ -1242,13 +1231,11 @@ impl RuntimeDict {
                 Some(TokenPronunciation {
                     phrase_length: item.phrase_length(),
                     keys: item.pronunciation(nth).map(|reading| {
-                        TokenPronunciationKeys::Stored(
-                            reading
-                                .keys
-                                .chunks_exact(2)
-                                .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
-                                .collect(),
-                        )
+                        reading
+                            .keys
+                            .chunks_exact(2)
+                            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+                            .collect()
                     }),
                 })
             }
@@ -1259,14 +1246,33 @@ impl RuntimeDict {
                 let store = self.user.as_ref()?;
                 Some(TokenPronunciation {
                     phrase_length: store.phrase_length(token).ok()??,
-                    keys: store
-                        .nth_pronunciation(token, nth)
-                        .ok()?
-                        .map(TokenPronunciationKeys::Structured),
+                    keys: store.nth_pronunciation_words(token, nth).ok()?,
                 })
             }
             _ => None,
         }
+    }
+
+    /// Read one `USER_FILE` reading's stored key words without copying them
+    /// out of the session arena.
+    ///
+    /// The callback receives the stored phrase length and the reading's
+    /// packed little-endian words, or `None` when the item has no such
+    /// reading (the pin's zeroed past-the-end result). `None` is returned
+    /// when no visible `USER_FILE` item backs the token, so a caller falls
+    /// back to [`Self::token_nth_pronunciation`], which serves a row store.
+    pub fn with_user_nth_pronunciation_words<R>(
+        &self,
+        token: u32,
+        nth: usize,
+        read: impl FnOnce(usize, Option<&[u8]>) -> R,
+    ) -> Option<R> {
+        if !(5..=7).contains(&(token >> 24)) || !self.library_visible(token >> 24) {
+            return None;
+        }
+        self.user
+            .as_ref()?
+            .with_nth_pronunciation_words(token, nth, read)
     }
 
     /// The addon phrase item behind `token`, for the choose-promotion path.
