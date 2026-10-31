@@ -19,7 +19,7 @@
 | oxpinyin-dictool | Conversions and standalone vocabulary export through facade §9 import/export. Pure Rust, with no C-ABI dependency. | forbid | yes | yes |
 | oxpinyin-store | Ordered byte-KV interface with one compile-time Berkeley DB, Kyoto Cabinet or tkrzw backend. See backend dependencies below. | deny | yes | via engine |
 | oxpinyin-datagen | model20 compiler for each backend's native runtime files. Shares layouts with data readers. | forbid | yes | never |
-| oxpinyin-utils | libpinyin's utilities under their own names and interfaces, through `oxpinyin-input`'s `tools` boundary (stage 5 of `docs/findings/external-io-boundary.md`): `gen_pinyin_table` and `gen_zhuyin_table`. | forbid | Linux, macOS (needs GLib) | never |
+| oxpinyin-utils | libpinyin's utilities under their own names and interfaces, through `oxpinyin-input`'s `tools` boundary (stage 5 of `docs/findings/external-io-boundary.md`): `gen_pinyin_table`, `gen_zhuyin_table` and `k_mixture_model_to_interpolation`, with the pin's taglib. | forbid | Linux, macOS (needs GLib) | never |
 | oxpinyin-corpus | Training corpus frontend: zhwiki dump to ngseg raw text. | forbid | yes | never |
 | oxpinyin-training | Backend-sensitive training modules: segment, counter, lambda, emitter, eval and train. Existing stage binary names remain. One backend selection covers all modules. | forbid | yes | never |
 | oxpinyin-testsupport | Shared fixture Dictionary/LanguageModel doubles, model20 cache locator and scorer suites. See test-support dependencies below. | forbid | yes | never |
@@ -80,8 +80,8 @@ Like libpinyin, it depends on the system library's C++ ABI.
 The facades import 68 `kyotocabinet::` names, 67 among the pin's 77.
 This describes the current tree.
 The `oxpinyin-input` boundary has a small C shim, `native/config.c`, in stage 1.
-Its `tools` feature adds `native/tool.c`, compiled against GLib's headers found with the `pkg-config` crate, and the tool-only C++ stream shim `native/tool_stream.cc`, both through the existing `cc` build dependency.
-Use narrow hand-written extern declarations and no direct `libc` crate dependency.
+Its `tools` feature calls the C library through the `libc` crate and GLib through `glib-sys`, and reads the C++ streams' lines with `std::io` (maintainer ruling 2026-10-31 UTC: no hand-written C or C++ shims).
+`native/config.c` and `native/diagnostic.c` follow in their own changes.
 
 Kyoto Cabinet left `kclangc.h` after measurement in #1118.
 See the [shim results](findings/kc-shim-1118.md).

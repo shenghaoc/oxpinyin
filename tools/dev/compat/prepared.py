@@ -6,6 +6,7 @@ import shutil
 from ..cell import Settings
 from .. import doctor
 from ..frontend import frontend_source
+from ..tool_diff import PIN_UTILITIES
 from .process import ROOT, PYTHON, run
 
 
@@ -51,15 +52,17 @@ def prepare(cell, rows, prefix, cache, environment, *, root=ROOT):
         sources = list((work / 'src').glob('libpinyin-*'))
         marker = work / '.complete'
         if (not marker.is_file() or len(sources) != 1 or any(
-                not (sources[0] / 'utils/storage' / name).is_file()
-                for name in ('gen_pinyin_table', 'gen_zhuyin_table'))):
+                not (sources[0] / directory / name).is_file()
+                for name, directory in PIN_UTILITIES.items())):
             run([*common, '--libs-only', '--work-dir', work, '--prefix', work / 'prefix'],
                 env=environment, cwd=root, heavy=True)
             sources = list((work / 'src').glob('libpinyin-*'))
             if len(sources) != 1:
                 raise ValueError(f'expected one pin source tree in {work}')
-            run(['make', '-C', sources[0] / 'utils/storage', 'gen_pinyin_table', 'gen_zhuyin_table'],
-                env=environment, cwd=root, heavy=True)
+            for directory in dict.fromkeys(PIN_UTILITIES.values()):
+                run(['make', '-C', sources[0] / directory,
+                     *(name for name, owner in PIN_UTILITIES.items() if owner == directory)],
+                    env=environment, cwd=root, heavy=True)
             marker.touch()
         environment['OXPINYIN_TOOL_PIN_BUILD'] = str(sources[0])
 

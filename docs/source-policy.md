@@ -71,7 +71,7 @@ Do not reproduce the pin's code shape.
 Mutable byte buffers, GLib containers, raw back-pointers and integer status codes can obstruct idiomatic Rust.
 They can add copies or unsafe code and reduce compiler and standard-library benefits.
 Record internal language-artefact differences instead of imitating them.
-Use the pin's external I/O call unless source proves a Rust equivalent for every input.
+On Linux, use the pin's external I/O call unless source proves a Rust equivalent for every input ([platform scope](#platform-scope-of-pinned-behaviour)).
 
 When an operation is measurably slower or larger than the pin:
 
@@ -96,7 +96,7 @@ Class (d), consumer scope, was retired 2026-09-06.
 Maintainer rulings, 2026-10-24 UTC, as amended 2026-10-28 UTC: internal
 behaviour follows the language-artefact decision order below.
 
-External I/O follows the pin's call.
+External I/O follows the pin's call on Linux ([platform scope](#platform-scope-of-pinned-behaviour)).
 Use Rust's `std` maths at full speed under class (a).
 Do not add specialised maths dependencies, such as SIMD crates.
 
@@ -141,13 +141,32 @@ The broader user-library audit stays in #1198.
 **External I/O uses the pin's calls (maintainer ruling 2026-10-28
 UTC).**
 
-Use the pin's call for every library and tool call across the program's edge.
-Use the host C library for ISO C and POSIX calls.
-Use GLib for GLib calls.
-Use a tool-only C++ shim for C++ streams.
+On Linux, use the pin's call for every library and tool call across the program's edge ([platform scope](#platform-scope-of-pinned-behaviour)).
+Use the host C library for ISO C and POSIX calls, through the `libc` crate or `extern "C"` declarations.
+Use GLib for GLib calls, through the workspace's `glib-sys`.
+Declare by hand only a function neither crate binds.
+Use Rust `std::io` under the C++ contract for C++ streams.
+
 Permit a Rust equivalent only after reading both implementations' sources proves identical observable results for every input.
 Use the pin's call when the comparison is unsettled.
 This replaces #1304's external-I/O language-artefact treatment.
+
+**No hand-written C or C++ shims (maintainer ruling 2026-10-31 UTC).**
+Do not reproduce macros such as `assert`, `g_return_val_if_fail` or `G_STRFUNC`.
+Make their checks plain Rust: answer the pin's value, or abort where the pin aborts.
+Do not imitate their message text; record the stderr difference as a POLICY-ACCEPTED language artefact.
+Stop and report a call or behaviour that has no equivalent with the same documented result.
+`oxpinyin-input`'s `config.c` and `diagnostic.c` and the Kyoto Cabinet `shim.cc` move in their own changes.
+
+#### Platform scope of pinned behaviour
+
+**Maintainer ruling 2026-10-31 UTC.**
+The drop-in and pin-call rules (external I/O uses the pin's calls; observable behaviour matches the pin) bind Linux only.
+libpinyin is developed and used on Linux; its Windows and macOS support is an afterthought.
+On Windows and macOS, oxpinyin builds and is tested, and may use portable Rust abstractions (for example `memmap2` and `std::fs`) instead of the pin's calls.
+Differences that come from a platform's native facilities (file and mapping APIs, text mode, C runtime streams) are platform-dependent behaviour, recorded where known and tested where practical.
+This does not cover platform-independent product behaviour (ranking, parsing, training, data handling), safety, determinism, the C API/ABI, its symbol names and its ownership and lifetime rules, or persistent file formats, which must be the same on every platform.
+The prohibition on hand-written C/C++ shims applies on every platform.
 
 The call rule does not require an undefined read or abort.
 Existing class (b)/(c) records stand, including punctuation and assertion refusals.
@@ -183,7 +202,7 @@ If valid or malformed input differs only through an internal language artefact:
 No approval is needed for this recorded difference.
 Do not write Rust to imitate the artefact.
 When classification is uncertain, prefer idiomatic Rust and record the difference.
-This rule never permits a different external I/O call or result.
+This rule never permits a different external I/O call or result on Linux ([platform scope](#platform-scope-of-pinned-behaviour)).
 
 **Contract, not implementation.** (Maintainer decision 2026-10-29 UTC.)
 
@@ -251,7 +270,7 @@ These include basic arithmetic, `sqrt`, `abs`, rounding and comparisons.
 Record differences caused only by internal C/C++ semantics or compiler transformations as language artefacts.
 Examples include implicit promotions, conversions, storing a float in an integer, and multiply-add contraction.
 Do not imitate them.
-Use the pin's external I/O call, including for formatted output.
+On Linux, use the pin's external I/O call, including for formatted output ([platform scope](#platform-scope-of-pinned-behaviour)).
 
 ## Stages
 
@@ -265,7 +284,7 @@ Performance does not define that boundary.
 | Goal | Bug-for-bug compatibility with internal improvements | Intentional departures from libpinyin |
 | Performance work | Allowed, with no limit on improvement over the pin | Allowed when it requires a compatibility-breaking change |
 | Internal refactoring | Allowed | Allowed |
-| Observable behaviour | Match product behaviour under existing exceptions; use the pin's external I/O calls | Explicit differences permitted |
+| Observable behaviour | Match product behaviour under existing exceptions; use the pin's external I/O calls on Linux ([platform scope](#platform-scope-of-pinned-behaviour)) | Explicit differences permitted |
 | Data formats and ABI | Keep drop-in compatibility | Require explicit opt-in and a suitable binary identity for an incompatible change |
 
 Stage 1, exact-output parity with the pin-built oracle on the corpus surfaces, is complete.
@@ -285,7 +304,7 @@ Give new benchmarks names that do not include a stage.
 Reproduce libpinyin's observable behaviour, including its logic defects.
 Record an observable pin defect as an upstream defect instead of fixing it.
 Apply the existing classes and internal language-artefact exception to departures.
-Use the pin's calls for external I/O.
+Use the pin's calls for external I/O on Linux ([platform scope](#platform-scope-of-pinned-behaviour)).
 Improve performance, memory use, safety and internal architecture when compatibility remains intact.
 Verify observable behaviour and persistent-data compatibility.
 The target is what the pin does, not what it should do.
@@ -340,7 +359,7 @@ An observable change requires class (a)–(c), a recorded internal language arte
 An internal language artefact cannot change external I/O, the ABI or files on disk.
 The default build remains bug-for-bug compatible under the recorded exceptions.
 
-The drop-in goal is `libpinyin.so.15` on the library path with unmodified consumers and existing system data.
+The drop-in goal is `libpinyin.so.15` on the library path with unmodified consumers and existing system data, on Linux ([platform scope](#platform-scope-of-pinned-behaviour)).
 Build with exactly one of Berkeley DB, Kyoto Cabinet or tkrzw.
 Handle that backend's system and user files natively, as a same-backend libpinyin build does.
 tkrzw is the default backend and the reference cell.

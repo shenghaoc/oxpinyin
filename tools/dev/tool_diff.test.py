@@ -69,6 +69,44 @@ class ToolDiffTests(unittest.TestCase):
             policy.entry_of('bad', dict(row, subject=dict(subject, exit=-11)))
         self.assertIsNotNone(contract_policy.tool_observation_problem(dict(pin, exit='TIMEOUT'), pin_signal=-11))
 
+    def test_a_reproduced_abort_compares_without_a_policy_record(self):
+        case = dict(id='abort', pin_signal=-6, reproduces_signal=True)
+        side = dict(exit=-6, stdout='', stderr='assertion\n', files={})
+        self.assertEqual(tool_diff.verdict(case, side, side, self.root, 'bdb')[0], 'MATCH')
+        self.assertEqual(tool_diff.verdict(case, side, dict(side, stderr=''), self.root, 'bdb')[0], 'DIFFER')
+        self.assertEqual(tool_diff.verdict(case, side, dict(side, exit=-11), self.root, 'bdb')[0], 'INVALID')
+        self.assertEqual(tool_diff.verdict(dict(case, reproduces_signal=None), side, side, self.root, 'bdb')[0],
+                         'INVALID')
+
+    def test_a_reproduced_abort_binds_its_stderr_difference(self):
+        case = dict(id='abort', policy_record='record.md', pin_signal=-6, reproduces_signal=True)
+        pin = dict(exit=-6, stdout='lines\n', stderr='assertion\n', files={})
+        subject = dict(pin, stderr='')
+        row = dict(runner='tool-diff', case='abort', cell='bdb', userdir=False, abort=False,
+                   pin_signal=-6, reproduces_signal=True, pin=pin, subject=subject)
+        capture = self.root / 'capture.jsonl'
+        capture.write_text(json.dumps(row)+'\n')
+        record = self.root / 'record.md'
+        record.write_text('# Language artefact\n')
+        (self.root / 'upstream-divergences.md').write_text('[record](record.md)\n')
+        policy.record(record, [capture], out=lambda _: None)
+        self.assertEqual(tool_diff.verdict(case, pin, subject, self.root, 'bdb')[0], 'POLICY-ACCEPTED')
+        self.assertEqual(tool_diff.verdict(case, pin, dict(subject, stdout=''), self.root, 'bdb')[0], 'DIFFER')
+        with self.assertRaises(policy.RecordError):
+            policy.entry_of('bad', dict(row, reproduces_signal=False))
+
+    def test_case_file_names_registered_utilities_and_reproducible_signals(self):
+        path = self.root / 'cases.json'
+        case = dict(id='one', utility='k_mixture_model_to_interpolation', source='pin.cpp:1')
+        for bad, message in ((dict(utility='ngseg'), 'no registered pin build directory'),
+                             (dict(pin_signal=-11, reproduces_signal=True), 'only a registered SIGABRT'),
+                             (dict(pin_signal=-6), 'requires a named policy record')):
+            path.write_text(json.dumps(dict(schema=1, cases=[dict(case, **bad)])))
+            with self.assertRaisesRegex(ValueError, message):
+                tool_diff.load_cases([path])
+        path.write_text(json.dumps(dict(schema=1, cases=[dict(case, pin_signal=-6, reproduces_signal=True)])))
+        self.assertEqual(len(tool_diff.load_cases([path])), 1)
+
     def test_deadline_reaps_the_child_and_cannot_match(self):
         ctx = SimpleNamespace(env={}, services=SimpleNamespace(context=pool.UnitContext('timeout', threading.Event())))
         with self.assertRaises(pool.UnitStopped):

@@ -15,6 +15,9 @@ from dataclasses import replace
 from tools.bisection import contract_policy, contract_verdict
 from . import pool
 
+# Each utility's directory in the pin's build tree (utils/*/Makefile.am).
+PIN_UTILITIES = {'gen_pinyin_table': 'utils/storage', 'gen_zhuyin_table': 'utils/storage',
+                 'k_mixture_model_to_interpolation': 'utils/training'}
 GLIB_PREFIX = re.compile(r'(?m)^((?:\*\* )?\([^():\n]+:)\d+(\): (?:[A-Za-z0-9_.-]+-)?(?:CRITICAL|WARNING|MESSAGE|ERROR|DEBUG|INFO) \*\*: )'
                          r'\d\d:\d\d:\d\d\.\d+: ')
 
@@ -77,9 +80,17 @@ def load_cases(paths):
                     not isinstance(case.get('args', []), list) or
                     not all(isinstance(arg, str) for arg in case.get('args', []))):
                 raise ValueError(f'{path}: case needs id, utility, arguments and source citation')
+            if case['utility'] not in PIN_UTILITIES:
+                raise ValueError(f'{path}: {case["utility"]} has no registered pin build directory')
             if case.get('pin_signal') not in (None, -11, -6):
                 raise ValueError(f'{path}: unsupported registered pin signal')
-            if case.get('pin_signal') and not case.get('policy_record'):
+            # A source-cited abort() or assert both sides reproduce (constitution
+            # section 4) compares as an ordinary case; any other pin signal is a
+            # policy exception.
+            if case.get('reproduces_signal') not in (None, True) or (
+                    case.get('reproduces_signal') and case.get('pin_signal') != -6):
+                raise ValueError(f'{path}: only a registered SIGABRT can be reproduced')
+            if case.get('pin_signal') and not (case.get('policy_record') or case.get('reproduces_signal')):
                 raise ValueError(f'{path}: a pin signal requires a named policy record')
             for name in case.get('files', {}):
                 relative(name)
@@ -126,7 +137,7 @@ def observation(ctx, binary, case, directory, inputs, stdin, deadline):
 def verdict(case, pin, subject, policy_root, cell):
     for side, value in (('pin', pin), ('subject', subject)):
         problem = contract_policy.tool_observation_problem(
-            value, pin_signal=case.get('pin_signal') if side == 'pin' else None)
+            value, pin_signal=case.get('pin_signal') if side == 'pin' or case.get('reproduces_signal') else None)
         if problem:
             return 'INVALID', f'{side}: {problem}'
     if case.get('policy_record'):
@@ -175,7 +186,7 @@ def run(ctx, argv):
     binaries = {}
     for case in cases:
         name = case['utility']
-        pair = (pin_build / 'utils/storage' / name, args.subject_dir.resolve() / name)
+        pair = (pin_build / PIN_UTILITIES[name] / name, args.subject_dir.resolve() / name)
         if any(not binary.is_file() for binary in pair):
             raise ValueError(f'missing built utility: {pair}')
         binaries[name] = pair
@@ -192,7 +203,8 @@ def run(ctx, argv):
             return case, 'INVALID', str(error), None
         result, detail = verdict(case, pin, subject, child.settings.root / 'docs/findings', child.settings.cell)
         row = dict(runner='tool-diff', cell=child.settings.cell, case=case['id'], userdir=False, abort=False,
-                   pin_signal=case.get('pin_signal'), pin=pin, subject=subject)
+                   pin_signal=case.get('pin_signal'), reproduces_signal=bool(case.get('reproduces_signal')),
+                   pin=pin, subject=subject)
         return case, result, detail, row
     results = ctx.campaign(cases, compare)
     counts = Counter()

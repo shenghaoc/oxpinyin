@@ -4315,3 +4315,28 @@ The shared `tool-diff` runner binds the pinyin and zhuyin invalid-UTF-8
 cases to [eio-table-generator-invalid-utf8.md](eio-table-generator-invalid-utf8.md).
 The zhuyin utility's earlier missing-frequency null read is separately
 recorded in [eio-zhuyin-missing-frequency.md](eio-zhuyin-missing-frequency.md).
+
+### k_mixture_model_to_interpolation undefined lines (2026-10-31 UTC)
+
+**Class (b).** The pin's `taglib_read` hands `strcmp` the NULL `tokens[0]`
+of a line without a token, and reads through the NULL `split_line`
+answers for an escape ending the line (`src/storage/tag_utility.cpp:137`,
+`:181-190`); the reference pin dies with SIGSEGV. oxpinyin's utility makes
+the pin's calls up to that read, GLib's criticals included, then refuses
+with exit 1. Recorded and bound in
+[eio-kmm-to-interpolation-undefined-lines.md](eio-kmm-to-interpolation-undefined-lines.md).
+A truncated UTF-8 sequence at the line's end, whose next `*cur` reads
+whatever follows the string, is refused the same way; the pin has no
+reproducible outcome there to bind, and
+`undefined_lines_are_refused_normally` holds the refusal.
+The utility's `abort()` calls are not divergences: both sides abort, and
+`tool-diff` compares them as ordinary cases.
+
+### Utility check macros write no message (2026-10-31 UTC)
+
+**Language artefact.** Under the maintainer ruling of 2026-10-31 UTC the
+utilities' `assert` (`check_result`) and `g_return_val_if_fail` checks are
+plain Rust: on the pin's condition oxpinyin answers the pin's value or
+aborts where the pin aborts, without glibc's assertion line or GLib's
+critical. Stdout and the SIGABRT exit are the pin's. Recorded and bound in
+[eio-tool-check-messages.md](eio-tool-check-messages.md).

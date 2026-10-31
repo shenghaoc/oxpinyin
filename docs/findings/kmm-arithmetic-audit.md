@@ -186,6 +186,10 @@ streaming transform: header → `\data model interpolation`; `\1-gram` emits
 because it streams the token-ascending export it preserves the output
 ordering. Pinned by `export_grammar_matches_upstream` and
 `to_interpolation_drops_start_and_zero_freq` byte goldens.
+*Superseded 2026-10-31 UTC:* `kmm_text_to_interpolation` and its golden
+were removed; `oxpinyin-utils`' `k_mixture_model_to_interpolation` is the
+pin's utility under its own name, with its taglib and C calls
+(`docs/findings/external-io-boundary.md`, stage 5).
 
 ## 7. Intentional divergences (compatibility-policy classes)
 

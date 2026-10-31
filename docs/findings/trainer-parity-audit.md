@@ -196,7 +196,7 @@ line-by-line in `docs/findings/kmm-arithmetic-audit.md`.
 | KMM validate | `tryprune.py` | `validate_k_mixture_model.cpp` | **done** | `oxpinyin-kmm::validate` |
 | KMM prune | `tryprune.py` | `prune_k_mixture_model.cpp` | **done** | `oxpinyin-kmm::prune` |
 | KMM export/import (text) | `tryprune.py` | `export_/import_k_mixture_model.cpp` | **done** | `oxpinyin-kmm::text` |
-| KMM → interpolation | `tryprune.py` | `k_mixture_model_to_interpolation.cpp` | **done** | `oxpinyin-kmm::text::kmm_text_to_interpolation` |
+| KMM → interpolation | `tryprune.py` | `k_mixture_model_to_interpolation.cpp` | **done** | `oxpinyin-utils` `k_mixture_model_to_interpolation` (was `oxpinyin-kmm::text::kmm_text_to_interpolation` until 2026-10-31 UTC) |
 | candidate gather/sort/top-N | `estimate.py`, `tryprune.py` | *(Python)* | **done** | `oxpinyin-train::candidate` |
 | λ estimate (deleted-interp EM) | `evaluate.py` | `estimate_interpolation.cpp` | **done** | `oxpinyin-lambda` (reused by `oxpinyin-eval`) |
 | correction rate | `evaluate.py` | `eval_correction_rate.cpp` | **done** | `oxpinyin-eval::decode` |

@@ -173,7 +173,8 @@ class HeavyLaunchTests(unittest.TestCase):
     def test_table_utilities_share_one_package_build(self):
         settings = Settings.read(self.env)
         with self.recording(), mock.patch.object(Settings, 'record'):
-            self.assertEqual(settings.build(['gen-pinyin-table', 'gen-zhuyin-table']), 0)
+            self.assertEqual(settings.build(['gen-pinyin-table', 'gen-zhuyin-table',
+                                             'k-mixture-model-to-interpolation']), 0)
         self.assertEqual(len(self.calls), 1)
         self.assertEqual(self.calls[0]['argv'].count('oxpinyin-utils'), 1)
         self.assert_admitted_here(self.calls[0])

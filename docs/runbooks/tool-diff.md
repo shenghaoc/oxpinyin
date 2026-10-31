@@ -77,3 +77,34 @@ The named mutation `table-frequency-floor-4` changes only
 cases (both normal cases, zhuyin's unterminated final row, and the three
 model20 tables): 6 DIFFER, 13 MATCH, 5 POLICY-ACCEPTED. Restoring the source
 byte-for-byte is required before the completion run. The pin is unchanged.
+
+## k_mixture_model_to_interpolation (2026-10-31 UTC)
+
+`tool-cases/k_mixture_model_to_interpolation.json` holds sixteen
+source-derived cases. The pin utility is built in `utils/training`;
+preparation makes it with the two table generators. Five cases end in the
+pin's SIGABRT: four failed `check_result(taglib_read(...))` assertions
+and one `abort()` on a line type outside its `switch`. Each registers
+`pin_signal: -6` with `reproduces_signal: true`, so the subject must
+abort too. The `abort()` case compares as an ordinary case. The four
+assertion cases bind to
+[eio-tool-check-messages](../findings/eio-tool-check-messages.md): under
+the 2026-10-31 UTC ruling oxpinyin does not imitate the macros' stderr
+text, while stdout and the exit match. Three class (b) cases bind to
+[eio-kmm-to-interpolation-undefined-lines](../findings/eio-kmm-to-interpolation-undefined-lines.md).
+Both records hold bdb, kc and tkrzw evidence, since `cells-for-diff.py`
+selected all three cells.
+
+After the tools moved to `libc`, `glib-sys` and `std::io`, every
+`gen_pinyin_table` and `gen_zhuyin_table` case kept its observation. On
+bdb the full set was 28 MATCH and 12 POLICY-ACCEPTED. Re-scored against
+the committed records, the kc observations were the same, and tkrzw was
+28 MATCH, 7 POLICY-ACCEPTED and 5 INVALID: the five #1436/#1450 policy
+cases have bdb and kc evidence here, and #1434 binds their tkrzw
+evidence.
+
+The named mutation `kti-freq-positive` changes only the unigram test in
+`k_mixture_model_to_interpolation::Converter::parse_unigram` from
+`freq != 0` to `freq > 0`. The bdb run detects it in `kti-numeric-fields`
+(1 DIFFER, 27 MATCH, 12 POLICY-ACCEPTED). The source was restored byte
+for byte before the completion run.

@@ -53,8 +53,11 @@ def entry_of(where, row):
         raise RecordError(f'{where}: userdir and abort must be booleans')
     if row.get('runner') == 'tool-diff':
         for side in contract_policy.SIDES:
+            # A SIGABRT both sides reproduce (constitution section 4) may be
+            # bound with the pin's, for a record of what else differs.
             problem = contract_policy.tool_observation_problem(
-                row[side], pin_signal=row.get('pin_signal') if side == 'pin' else None)
+                row[side], pin_signal=row.get('pin_signal')
+                if side == 'pin' or row.get('reproduces_signal') else None)
             if problem:
                 raise RecordError(f'{where}: {side} {problem}')
         try:

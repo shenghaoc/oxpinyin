@@ -56,7 +56,7 @@ per-stage candidate models, estimate indexes, `kmm_merged.text`,
 **Main pipeline (all ported).** `segment.py`→`oxpinyin-segment`;
 `generate.py`→`oxpinyin-kmm generate` + `oxpinyin-train` rollover;
 `estimate.py`→`oxpinyin-kmm estimate` + `oxpinyin-train` gather/sort;
-`tryprune.py`→`oxpinyin-kmm merge/validate/prune/export/to-interpolation` +
+`tryprune.py`→`oxpinyin-kmm merge/validate/prune/export` and (since 2026-10-31 UTC) `oxpinyin-utils` `k_mixture_model_to_interpolation` +
 `oxpinyin-train` top-N; `evaluate.py`→`oxpinyin-eval`. The six KMM C++ tools
 and `k_mixture_model.h` are reproduced in `oxpinyin-kmm` and verified
 line-by-line (`kmm-arithmetic-audit.md`).
