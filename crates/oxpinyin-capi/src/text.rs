@@ -7,8 +7,8 @@ use oxpinyin_core::OptionBits;
 use oxpinyin_core::ZhuyinParse;
 use oxpinyin_core::graph::SegmentGraph;
 
-use crate::aux_matrix::{SharedMatrix, split_zhuyin};
-use crate::ffi::owned_cstr;
+use crate::aux_matrix::{AuxText, SharedMatrix, split_zhuyin};
+use crate::ffi::{strconcat_aux, strdup};
 use crate::state::instance_ref;
 use crate::types::{GChar, PinyinInstance};
 
@@ -18,8 +18,8 @@ use crate::types::{GChar, PinyinInstance};
 /// aborts there (register row 63); no matrix is the silent `None`.
 fn render_shared(
     inst: &crate::state::CapiInstance,
-    render: impl FnOnce(&SharedMatrix) -> Option<String>,
-) -> Option<String> {
+    render: impl FnOnce(&SharedMatrix) -> Option<AuxText>,
+) -> Option<AuxText> {
     let matrix = SharedMatrix::of(inst)?;
     let Some(text) = render(&matrix) else {
         std::process::abort();
@@ -53,10 +53,10 @@ fn full_index_aux_text(
     input: &str,
     parse: &oxpinyin_core::FullPinyinIndexParse,
     cursor: usize,
-) -> String {
+) -> AuxText {
     let parsed_len = parse.consumed().min(input.len());
     let cursor = cursor.min(parsed_len);
-    let mut out = String::new();
+    let mut aux = AuxText::default();
     let mut inserted = false;
 
     for key in parse.keys() {
@@ -69,43 +69,48 @@ fn full_index_aux_text(
         let end = key.end();
 
         if !inserted && cursor <= start {
-            out.push('|');
+            aux.middle.push('|');
             inserted = true;
-            out.push_str(&display);
-            out.push(' ');
+            aux.postfix.push_str(&display);
+            aux.postfix.push(' ');
         } else if !inserted && cursor < end {
             let split = (cursor - start).min(display.len());
             let chars: Vec<char> = display.chars().collect();
             let left: String = chars[..split.min(chars.len())].iter().collect();
             let right: String = chars[split.min(chars.len())..].iter().collect();
-            out.push_str(&left);
-            out.push('|');
-            out.push_str(&right);
-            out.push(' ');
+            aux.middle.push_str(&left);
+            aux.middle.push('|');
+            aux.middle.push_str(&right);
+            aux.middle.push(' ');
             inserted = true;
         } else {
-            out.push_str(&display);
-            out.push(' ');
+            let part = if inserted {
+                &mut aux.postfix
+            } else {
+                &mut aux.prefix
+            };
+            part.push_str(&display);
+            part.push(' ');
         }
     }
 
     if !inserted {
-        out.push('|');
+        aux.middle.push('|');
     }
-    out
+    aux
 }
 
-fn full_aux_text(raw: &str, parsed_len: usize, cursor: usize, options: OptionBits) -> String {
+fn full_aux_text(raw: &str, parsed_len: usize, cursor: usize, options: OptionBits) -> AuxText {
     let parsed = &raw[..parsed_len.min(raw.len())];
     if parsed.is_empty() {
-        return String::new();
+        return AuxText::default();
     }
     let cursor = cursor.min(parsed.len());
     let Ok(graph) = SegmentGraph::build_with_options(parsed.as_bytes(), options) else {
-        return String::new();
+        return AuxText::default();
     };
 
-    let mut out = String::new();
+    let mut aux = AuxText::default();
     let mut inserted = false;
 
     for edge in graph.fewest_keys(true) {
@@ -124,30 +129,35 @@ fn full_aux_text(raw: &str, parsed_len: usize, cursor: usize, options: OptionBit
         };
 
         if !inserted && cursor <= start {
-            out.push('|');
+            aux.middle.push('|');
             inserted = true;
-            out.push_str(&display);
-            out.push(' ');
+            aux.postfix.push_str(&display);
+            aux.postfix.push(' ');
         } else if !inserted && cursor < end {
             let split = (cursor - start).min(display.len());
-            out.push_str(&display[..split]);
-            out.push('|');
-            out.push_str(&display[split..]);
-            out.push(' ');
+            aux.middle.push_str(&display[..split]);
+            aux.middle.push('|');
+            aux.middle.push_str(&display[split..]);
+            aux.middle.push(' ');
             inserted = true;
         } else {
-            out.push_str(&display);
-            out.push(' ');
+            let part = if inserted {
+                &mut aux.postfix
+            } else {
+                &mut aux.prefix
+            };
+            part.push_str(&display);
+            part.push(' ');
         }
     }
 
     if !inserted {
-        out.push('|');
+        aux.middle.push('|');
     }
-    out
+    aux
 }
 
-fn chewing_aux_text(input: &str, parse: &ZhuyinParse, parsed_len: usize, cursor: usize) -> String {
+fn chewing_aux_text(input: &str, parse: &ZhuyinParse, parsed_len: usize, cursor: usize) -> AuxText {
     let parsed_len = parsed_len.min(input.len());
     let cursor = cursor.min(parsed_len);
     let keys = parse.keys();
@@ -195,25 +205,29 @@ fn chewing_aux_text(input: &str, parse: &ZhuyinParse, parsed_len: usize, cursor:
         middle.push('|');
     }
 
-    format!("{prefix}{middle}{postfix}")
+    AuxText {
+        prefix,
+        middle,
+        postfix,
+    }
 }
 
-/// Writes `text` through the caller's out-param, or the empty string the
-/// pin writes with its `false` for an empty matrix (`pinyin.cpp:3382-3388`).
-/// Returns the pin's boolean.
-fn write_aux(aux_text: *mut *mut GChar, text: Option<String>) -> bool {
+/// Writes the auxiliary text through the caller's out-param with the pin's
+/// final `g_strconcat(prefix, middle, postfix, NULL)` (`pinyin.cpp:3431`,
+/// `:3509`, `:3569`), or, for an empty matrix, the `g_strdup("")` the pin
+/// writes with its `false` (`:3386`, `:3445`, `:3523`). GLib allocates, so
+/// a failed allocation aborts as the pin's does. Returns the pin's boolean.
+fn write_aux(aux_text: *mut *mut GChar, text: Option<AuxText>) -> bool {
     let answered = text.is_some();
     if !aux_text.is_null() {
-        // SAFETY: Null-checked above. `owned_cstr` returns null on an
-        // interior NUL or allocation failure; otherwise ownership
-        // transfers to the caller, which frees it with `g_free`.
-        let owned = owned_cstr(&text.unwrap_or_default());
-        // SAFETY: Null-checked above.
+        let owned = text.map_or_else(
+            || strdup(""),
+            |text| strconcat_aux(&text.prefix, &text.middle, &text.postfix),
+        );
+        // SAFETY: Null-checked above; ownership transfers to the caller,
+        // which frees it with `g_free`.
         unsafe {
             *aux_text = owned;
-        }
-        if owned.is_null() {
-            return false;
         }
     }
     answered
@@ -237,8 +251,7 @@ fn matrix_has_keys(inst: &crate::state::CapiInstance) -> bool {
 ///                                            gchar ** aux_text);
 /// ```
 ///
-/// Out-param `aux_text` is caller-owned (`g_free`). The returned buffer is
-/// allocated with libc `malloc`, which `g_free` releases on every platform.
+/// Out-param `aux_text` is caller-owned (`g_free`).
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_get_full_pinyin_auxiliary_text(
     instance: *mut PinyinInstance,
@@ -362,8 +375,28 @@ pub extern "C" fn pinyin_get_chewing_auxiliary_text(
 
 #[cfg(test)]
 mod tests {
-    use super::full_aux_text;
     use oxpinyin_core::{OptionBits, USE_TONE};
+
+    /// The rendered text, as the final `g_strconcat` joins its parts.
+    fn full_aux_text(raw: &str, parsed_len: usize, cursor: usize, options: OptionBits) -> String {
+        super::full_aux_text(raw, parsed_len, cursor, options).to_string()
+    }
+
+    /// The parts are the pin's `g_strconcat` arguments: the keys ending at
+    /// or before the cursor, the mark or the split key, the keys beginning
+    /// at or after it (`pinyin.cpp:3391-3431`).
+    #[test]
+    fn full_aux_text_splits_as_the_pins_concatenation() {
+        let parts = |cursor| {
+            let aux = super::full_aux_text("nihao", 5, cursor, OptionBits::default());
+            (aux.prefix, aux.middle, aux.postfix)
+        };
+        let owned = |a: &str, b: &str, c: &str| (a.to_owned(), b.to_owned(), c.to_owned());
+        assert_eq!(parts(0), owned("", "|", "ni hao "));
+        assert_eq!(parts(2), owned("ni ", "|", "hao "));
+        assert_eq!(parts(3), owned("ni ", "h|ao ", ""));
+        assert_eq!(parts(5), owned("ni hao ", "|", ""));
+    }
 
     #[test]
     fn full_aux_text_matches_the_oracle_for_simple_keys() {

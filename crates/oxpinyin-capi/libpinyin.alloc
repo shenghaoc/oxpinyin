@@ -24,14 +24,18 @@
 #     handle:<fn>  an opaque handle; <fn> is the ONLY function that may
 #                  release it, and must itself be an exported symbol.
 #     g_free       a `gchar *` / `char *` the caller owns and releases
-#                  with `g_free`. Allocated by `ffi::owned_cstr`, i.e.
-#                  libc `malloc`: g_free has been a thin `free` wrapper
+#                  with `g_free`. Allocated, since 2026-10-31 UTC (#1227),
+#                  by the GLib call the pin makes (`g_strdup`,
+#                  `g_strdup_printf`, `g_strconcat`, `g_strjoinv`), or at
+#                  the `g_ucs4_to_utf8` sites by `ffi::malloc_cstr_with`
+#                  (libc `malloc`): g_free has been a thin `free` wrapper
 #                  since GLib 2.46 removed the memory vtable, so the two
 #                  allocators are the same one. This is the pairing
 #                  assumption the dynamic half of the gate exercises.
-#     g_strfreev   a NULL-terminated `gchar **` the caller owns; both the
-#                  array and every string come from `ffi::owned_cstr_list`
-#                  (libc `malloc`), and `g_strfreev` g_free's each.
+#     g_strfreev   a NULL-terminated `gchar **` the caller owns, built by
+#                  `ffi::symbol_vector` with the pin's `g_ptr_array_*` and
+#                  `g_strdup` calls; `g_strfreev` g_free's each string and
+#                  the array.
 #     borrowed     owned by the context or instance and released with it.
 #                  The caller must never free it.
 #   <notes>  What the slot holds when the call answers `false` — the part

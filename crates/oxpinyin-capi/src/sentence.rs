@@ -261,8 +261,9 @@ pub extern "C" fn pinyin_guess_predicted_candidates_with_punctuations(
 ///                          char ** sentence);
 /// ```
 ///
-/// Out-param `sentence` is caller-owned (`g_free`). The returned buffer is
-/// allocated with libc `malloc`, which `g_free` releases on every platform.
+/// Out-param `sentence` is caller-owned (`g_free`): the pin's `g_strdup` of
+/// the converted text, NULL with `true` where the conversion's allocation
+/// failed (`lookup.cpp:27-69`).
 ///
 /// Answers decoded-or-nothing, as the pin does: once a sentence lookup is
 /// active ([`pinyin_guess_sentence`] ran since the last reset), the text of
@@ -291,8 +292,8 @@ pub extern "C" fn pinyin_get_sentence(
     if !inst.core.session.sentence_lookup_active() {
         return false;
     }
-    match inst.core.session.sentence_text(index) {
-        Some(decoded) => write_owned_sentence_bytes(&phrase_text_bytes(decoded), sentence),
+    match inst.core.session.sentence_phrases(index) {
+        Some(phrases) => write_owned_sentence(&phrases, sentence),
         None => {
             // Register row 10, `pinyin.cpp:1474`: with rows present, an
             // index past them is `assert(index < results.size())`, and the
@@ -307,9 +308,9 @@ pub extern "C" fn pinyin_get_sentence(
 }
 
 // The `char **`-out sentence writer, stamped from the shared marshalling
-// macro (byte-identical to the zhuyin facade's). `crate::ffi::owned_cstr` is
-// this facade's libc-`malloc` duplicator — the per-facade allocator edge.
-oxpinyin_capi_marshal::write_owned_sentence_bytes!(crate::ffi::malloc_cstr_with_warning);
+// macro (byte-identical to the zhuyin facade's). `crate::ffi::sentence_text`
+// makes the pin's `convert_to_utf8` calls — the per-facade allocator edge.
+oxpinyin_capi_marshal::write_owned_sentence!(crate::ffi::sentence_text);
 
 /// Get the character offset within `phrase` for a lookup byte offset.
 ///
@@ -794,6 +795,56 @@ mod character_offset_tests {
     fn an_empty_matrix_answers_false() {
         let (context, instance, _user_dir) = parity_instance("char-offset-empty");
         assert_eq!(character_offset(instance, "你", 0), (false, usize::MAX));
+        crate::instance::pinyin_free_instance(instance);
+        crate::context::pinyin_fini(context);
+    }
+}
+
+#[cfg(test)]
+mod sentence_chain_tests {
+    use oxpinyin_core::PhraseText;
+
+    use crate::parse::pinyin_parse_more_full_pinyins;
+    use crate::test_support::{TempUserDir, cstr, open};
+
+    /// `convert_to_utf8`'s chain (`lookup.cpp:37-67`): `g_strdup` of the
+    /// first phrase, `g_strconcat(prev, "", phrase, NULL)` for each later
+    /// one; no phrase leaves the pin's NULL.
+    #[test]
+    fn the_chain_joins_each_phrase_and_no_phrase_is_null() {
+        let phrases = [
+            PhraseText::from("你好"),
+            PhraseText::from(""),
+            PhraseText::from("世界"),
+        ];
+        assert_eq!(
+            crate::ffi::take_owned_cstr(crate::ffi::sentence_text(&phrases)),
+            "你好世界"
+        );
+        assert!(crate::ffi::sentence_text(&[]).is_null());
+    }
+
+    /// The row's phrases are the decoded path's phrases, which join to the
+    /// row's text.
+    #[test]
+    fn a_sentence_is_handed_out_phrase_by_phrase() {
+        let user_dir = TempUserDir::new("sentence-phrases");
+        let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+        let input = cstr("nihaonihao");
+        assert!(pinyin_parse_more_full_pinyins(instance, input.as_ptr()) > 0);
+        assert!(super::pinyin_guess_sentence(instance));
+        {
+            // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
+            let inst = unsafe { crate::state::instance_ref(instance) };
+            let phrases = inst.core.session.sentence_phrases(0).expect("a row");
+            let text = inst.core.session.sentence_text(0).expect("a row");
+            assert!(phrases.len() > 1, "{phrases:?}");
+            let joined: String = phrases.iter().filter_map(PhraseText::as_str).collect();
+            assert_eq!(Some(joined.as_str()), text.as_str());
+        }
+        let mut sentence = std::ptr::null_mut();
+        assert!(super::pinyin_get_sentence(instance, 0, &raw mut sentence));
+        assert!(!crate::ffi::take_owned_cstr(sentence).is_empty());
         crate::instance::pinyin_free_instance(instance);
         crate::context::pinyin_fini(context);
     }

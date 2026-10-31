@@ -18,7 +18,7 @@
 use std::ptr;
 use std::sync::atomic::{AtomicU16, Ordering};
 
-use crate::ffi::owned_cstr;
+use crate::ffi::{key_text, strdup};
 use crate::state::{instance_mut, instance_ref};
 use crate::types::{ChewingKey, ChewingKeyRest, GChar, PinyinInstance};
 
@@ -221,7 +221,12 @@ pub extern "C" fn pinyin_get_pinyin_string(
 ) -> bool {
     // `_ChewingKey::get_pinyin_string` (chewing_key.cpp:47-58): the
     // canonical spelling, tone digit appended for a non-zero tone.
-    render_key(instance, key, utf8_str, |key| Some(key.pinyin_string()))
+    render_key(
+        instance,
+        key,
+        utf8_str,
+        oxpinyin_chewing::ChewingKey::pinyin_text,
+    )
 }
 
 /// Render a pinyin key as its Zhuyin spelling.
@@ -242,7 +247,12 @@ pub extern "C" fn pinyin_get_zhuyin_string(
     key: *mut ChewingKey,
     utf8_str: *mut *mut GChar,
 ) -> bool {
-    render_key(instance, key, utf8_str, |key| Some(key.zhuyin_string()))
+    render_key(
+        instance,
+        key,
+        utf8_str,
+        oxpinyin_chewing::ChewingKey::zhuyin_text,
+    )
 }
 
 /// Render a pinyin key as its shengmu / yunmu pair.
@@ -275,35 +285,25 @@ pub extern "C" fn pinyin_get_pinyin_strings(
     if decoded.table_index() == 0 {
         return false;
     }
-    let initial = (!shengmu.is_null()).then(|| owned_cstr(decoded.shengmu_string()));
-    if initial.is_some_and(|value| value.is_null()) {
-        return false;
+    // `chewing_key.cpp:60-72`: one `g_strdup` per requested half.
+    if !shengmu.is_null() {
+        // SAFETY: Null-checked above.
+        unsafe { *shengmu = strdup(decoded.shengmu_string()) };
     }
-    let final_part = (!yunmu.is_null()).then(|| owned_cstr(decoded.yunmu_string()));
-    if final_part.is_some_and(|value| value.is_null()) {
-        if let Some(initial) = initial {
-            // SAFETY: This call still owns initial, allocated with libc malloc.
-            unsafe { crate::ffi::free(initial.cast()) };
-        }
-        return false;
-    }
-    if let Some(initial) = initial {
-        // SAFETY: `shengmu` was null-checked before allocation.
-        unsafe { *shengmu = initial };
-    }
-    if let Some(final_part) = final_part {
-        // SAFETY: `yunmu` was null-checked before allocation.
-        unsafe { *yunmu = final_part };
+    if !yunmu.is_null() {
+        // SAFETY: Null-checked above.
+        unsafe { *yunmu = strdup(decoded.yunmu_string()) };
     }
     true
 }
 
-/// The shared body of the single-string renderers.
+/// The shared body of the single-string renderers: the rendering made with
+/// the pin's `g_strdup`/`g_strdup_printf` call (`chewing_key.cpp:47-88`).
 fn render_key(
     instance: *mut PinyinInstance,
     key: *mut ChewingKey,
     utf8_str: *mut *mut GChar,
-    render: impl Fn(&oxpinyin_chewing::ChewingKey) -> Option<String>,
+    render: impl Fn(oxpinyin_chewing::ChewingKey) -> oxpinyin_chewing::KeyText,
 ) -> bool {
     if instance.is_null() || key.is_null() {
         return false;
@@ -321,17 +321,10 @@ fn render_key(
     if decoded.table_index() == 0 {
         return false;
     }
-    let Some(rendered) = render(&decoded) else {
-        return false;
-    };
     if !utf8_str.is_null() {
-        let owned = owned_cstr(&rendered);
         // SAFETY: Null-checked above.
         unsafe {
-            *utf8_str = owned;
-        }
-        if owned.is_null() {
-            return false;
+            *utf8_str = key_text(render(decoded));
         }
     }
     true
@@ -717,9 +710,9 @@ mod preedit_key_tests {
 
     const PARITY: u32 = 0x18a;
 
-    /// The renderers allocate with `owned_cstr`; `take_owned_cstr` is the
-    /// matching deallocator, so a leak or a mismatched free would surface
-    /// here rather than in a consumer.
+    /// The renderers allocate through GLib; `take_owned_cstr` frees with
+    /// `g_free`, so a leak or a mismatched free would surface here rather
+    /// than in a consumer.
     fn take(p: *mut crate::types::GChar) -> String {
         assert!(!p.is_null(), "renderer answered true with a NULL out-param");
         crate::ffi::take_owned_cstr(p)

@@ -33,7 +33,8 @@ fn take(rendered: *mut pinyin_capi::GChar) -> Option<String> {
             .expect("UTF-8 render")
             .to_owned(),
     );
-    // SAFETY: The buffer came from the capi's libc-malloc `owned_cstr`.
+    // SAFETY: The buffer is a returned string this test owns; GLib
+    // allocates with malloc, which libc `free` releases.
     unsafe {
         libc_free(rendered.cast());
     }
@@ -257,7 +258,8 @@ fn take_sentence(sentence: *mut c_char) -> String {
         .to_str()
         .expect("UTF-8 sentence")
         .to_owned();
-    // SAFETY: The buffer came from the capi's libc-malloc `owned_cstr`.
+    // SAFETY: The buffer is a returned string this test owns; GLib
+    // allocates with malloc, which libc `free` releases.
     unsafe {
         libc_free(sentence.cast());
     }

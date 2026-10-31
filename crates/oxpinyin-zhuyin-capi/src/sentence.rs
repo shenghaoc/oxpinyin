@@ -5,7 +5,6 @@
 //! offset-mapping helpers translate between the original zhuyin input
 //! coordinates and the session's `'`-joined full-pinyin buffer.
 
-use oxpinyin_capi_marshal::phrase_text::phrase_text_bytes;
 use std::os::raw::c_char;
 
 use crate::state::{instance_mut, instance_ref};
@@ -188,16 +187,16 @@ pub extern "C" fn zhuyin_get_sentence(
     if !inst.core.session.sentence_lookup_active() {
         return false;
     }
-    match inst.core.session.sentence_text(0) {
-        Some(decoded) => write_owned_sentence_bytes(&phrase_text_bytes(decoded), sentence),
+    match inst.core.session.sentence_phrases(0) {
+        Some(phrases) => write_owned_sentence(&phrases, sentence),
         None => false,
     }
 }
 
 // The `char **`-out sentence writer, stamped from the shared marshalling
-// macro (byte-identical to the pinyin facade's). `crate::ffi::owned_cstr` is
-// this facade's libc-`malloc` duplicator — the per-facade allocator edge.
-oxpinyin_capi_marshal::write_owned_sentence_bytes!(crate::ffi::malloc_cstr_with_warning);
+// macro (byte-identical to the pinyin facade's). `crate::ffi::sentence_text`
+// makes the pin's `convert_to_utf8` calls — the per-facade allocator edge.
+oxpinyin_capi_marshal::write_owned_sentence!(crate::ffi::sentence_text);
 
 /// Get the character offset within `phrase` for a lookup byte offset.
 ///

@@ -253,45 +253,6 @@ fn user_key_assert(key: PinyinKey) -> Option<ExportAssert> {
     None
 }
 
-/// The length of `syllables` joined with `'`.
-fn joined_len(syllables: Syllables<'_>) -> usize {
-    let mut len = 0;
-    let mut count = 0_usize;
-    for (spelling, digit) in syllables {
-        len += spelling.len() + usize::from(digit.is_some());
-        count += 1;
-    }
-    len + count.saturating_sub(1)
-}
-
-/// Writes `syllables` joined with `'` to the front of `out`, stopping
-/// before a piece that would not fit; returns the bytes written.
-fn write_joined(syllables: Syllables<'_>, out: &mut [u8]) -> usize {
-    let mut at = 0;
-    for (index, (spelling, digit)) in syllables.enumerate() {
-        if index > 0 {
-            let Some(slot) = out.get_mut(at) else {
-                return at;
-            };
-            *slot = b'\'';
-            at += 1;
-        }
-        let Some(slot) = out.get_mut(at..at + spelling.len()) else {
-            return at;
-        };
-        slot.copy_from_slice(spelling.as_bytes());
-        at += spelling.len();
-        if let Some(digit) = digit {
-            let Some(slot) = out.get_mut(at) else {
-                return at;
-            };
-            *slot = digit;
-            at += 1;
-        }
-    }
-    at
-}
-
 impl ExportRow<'_> {
     /// The row's stored phrase text. The C encoding is applied only in
     /// [`Self::text_len`] and [`Self::write_text`].
@@ -344,16 +305,12 @@ impl ExportRow<'_> {
         width
     }
 
-    /// The `'`-joined pinyin's length in bytes.
-    #[must_use]
-    pub fn pinyin_len(&self) -> usize {
-        joined_len(self.syllables())
-    }
-
-    /// Writes the `'`-joined pinyin to the front of `out`, which holds at
-    /// least [`Self::pinyin_len`] bytes, and returns how many it wrote.
-    pub fn write_pinyin(&self, out: &mut [u8]) -> usize {
-        write_joined(self.syllables(), out)
+    /// The pronunciation's key strings, each the bytes of
+    /// `_ChewingKey::get_pinyin_string` (`pinyin.cpp:726-728`) as its
+    /// spelling and the digit of a non-zero tone: the elements of the pin's
+    /// `g_strjoinv("'", …)` (`:733`).
+    pub fn pinyin_strings(&self) -> impl Iterator<Item = (&'static str, Option<u8>)> + '_ {
+        self.syllables()
     }
 
     /// The pronunciation's stored count (`item.get_nth_pronunciation`'s
@@ -892,9 +849,10 @@ impl ExportSource {
 pub struct ExportedBigramRow {
     /// Concatenated predecessor + successor phrase text, each cut at its
     /// own first zero as the pin's two `g_ucs4_to_utf8` calls cut them
-    /// (`pinyin.cpp:821-829`); the C writer encodes it with
-    /// `phrase_text_bytes`.
-    pub phrase: PhraseText,
+    /// (`pinyin.cpp:821-829`); `None` after [`BigramExportWalk::drop_phrase`],
+    /// the pin's NULL `m_phrase`. The C adapter hands out its own
+    /// conversion of [`BigramExportWalk::pair`] instead.
+    pub phrase: Option<PhraseText>,
     /// The `'`-joined pronunciation of the pair.
     pub pinyin: String,
     /// The rendered bigram count (`stored × 2`).
@@ -905,8 +863,8 @@ impl ExportedBigramRow {
     /// The pair's outward bytes: what `pinyin_bigram_iterator_get_next_phrase`
     /// hands a C caller, through `phrase_text_bytes`.
     #[must_use]
-    pub fn phrase_bytes(&self) -> std::borrow::Cow<'_, [u8]> {
-        phrase_text_bytes(&self.phrase)
+    pub fn phrase_bytes(&self) -> Option<std::borrow::Cow<'_, [u8]>> {
+        self.phrase.as_ref().map(phrase_text_bytes)
     }
 }
 
@@ -933,7 +891,12 @@ pub struct BigramExportWalk {
     items: VecDeque<u32>,
     index_token: u32,
     phrase_tokens: VecDeque<(u32, u32)>,
-    phrase: Option<PhraseText>,
+    /// The pair `has_next` loaded last, predecessor then successor: what
+    /// the pin converts into `m_phrase` (`pinyin.cpp:810-832`). `None`
+    /// before the first load and after [`Self::drop_phrase`].
+    pair: Option<(PhraseText, PhraseText)>,
+    /// How many pairs `has_next` has loaded.
+    loads: u64,
     pinyins: Vec<String>,
     pinyin_index: usize,
     count: u32,
@@ -976,7 +939,7 @@ pub enum BigramStep {
 impl BigramExportWalk {
     /// `pinyin_bigram_iterator_has_next_phrase` (`pinyin.cpp:790-893`).
     pub fn has_next(&mut self) -> bool {
-        if self.phrase.is_some() && self.pinyin_index < self.pinyins.len() {
+        if self.pair.is_some() && self.pinyin_index < self.pinyins.len() {
             return true;
         }
         // Clean up old values.
@@ -1023,12 +986,15 @@ impl BigramExportWalk {
         if self.index_token == NULL_TOKEN || self.index_token == SENTENCE_START {
             return BigramStep::Aborts;
         }
-        let (Some(phrase), Some(pinyin)) = (
-            self.phrase.clone(),
-            self.pinyins.get(self.pinyin_index).cloned(),
-        ) else {
+        let Some(pinyin) = self.pinyins.get(self.pinyin_index).cloned() else {
             return BigramStep::Undefined;
         };
+        let phrase = self.pair.as_ref().map(|(first, second)| {
+            let mut phrase = PhraseTextConcat::new();
+            phrase.push(first);
+            phrase.push(second);
+            phrase.finish()
+        });
         let row = ExportedBigramRow {
             phrase,
             pinyin,
@@ -1037,6 +1003,28 @@ impl BigramExportWalk {
         self.pinyin_index += 1;
         let more = self.has_next();
         BigramStep::Row(row, more)
+    }
+
+    /// The pair the last load read, predecessor then successor, for the C
+    /// adapter's conversion into the pin's `m_phrase`.
+    #[must_use]
+    pub fn pair(&self) -> Option<(&PhraseText, &PhraseText)> {
+        self.pair.as_ref().map(|(first, second)| (first, second))
+    }
+
+    /// How many pairs have been loaded; a change after `has_next` or
+    /// `get_next` means [`Self::pair`] is a new pair.
+    #[must_use]
+    pub const fn loads(&self) -> u64 {
+        self.loads
+    }
+
+    /// The pin's `m_phrase` NULL after a failed `g_ucs4_to_utf8` of the
+    /// predecessor (`pinyin.cpp:822`, `:830`): the next `has_next` no longer
+    /// answers from the loaded pair, and rows taken before then carry no
+    /// phrase.
+    pub fn drop_phrase(&mut self) {
+        self.pair = None;
     }
 
     /// `token`'s rendering, memoised.
@@ -1066,10 +1054,8 @@ impl BigramExportWalk {
             .get(&token)
             .and_then(Option::as_ref)
             .unwrap_or(&empty);
-        let mut phrase = PhraseTextConcat::new();
-        phrase.push(first_text);
-        phrase.push(second_text);
-        self.phrase = Some(phrase.finish());
+        self.pair = Some((first_text.clone(), second_text.clone()));
+        self.loads = self.loads.wrapping_add(1);
         self.count = count;
         self.pinyins = first_pinyins
             .iter()
@@ -1117,7 +1103,7 @@ mod tests {
             let BigramStep::Row(ExportedBigramRow { phrase, .. }, next) = walk.get_next() else {
                 break;
             };
-            rows.push((phrase, next));
+            rows.push((phrase.expect("a loaded pair"), next));
             more = next;
         }
         rows
@@ -1131,7 +1117,7 @@ mod tests {
             let BigramStep::Row(ExportedBigramRow { phrase, .. }, next) = walk.get_next() else {
                 break;
             };
-            rows.push((phrase, next));
+            rows.push((phrase.expect("a loaded pair"), next));
         }
         rows
     }
@@ -1168,7 +1154,7 @@ mod tests {
             walk.get_next(),
             BigramStep::Row(
                 ExportedBigramRow {
-                    phrase: "我爱".into(),
+                    phrase: Some("我爱".into()),
                     pinyin: "wo'ai".to_owned(),
                     count: 138,
                 },
@@ -1190,6 +1176,32 @@ mod tests {
                 (PhraseText::from("你好"), false),
                 (PhraseText::from("我爱"), false),
             ]
+        );
+    }
+
+    /// The pin's NULL `m_phrase` (`pinyin.cpp:822`, `:830`): the rows
+    /// taken carry no phrase, and the next `has_next` loads the next pair
+    /// instead of answering from the dropped one.
+    #[test]
+    fn a_dropped_phrase_is_the_pins_null_m_phrase() {
+        let mut walk = scenario();
+        assert!(walk.has_next());
+        assert_eq!(walk.loads(), 1);
+        assert_eq!(
+            walk.pair(),
+            Some((&PhraseText::from("你"), &PhraseText::from("我")))
+        );
+        walk.drop_phrase();
+        let BigramStep::Row(row, more) = walk.get_next() else {
+            panic!("a row");
+        };
+        assert_eq!(row.phrase, None);
+        assert_eq!(row.pinyin, "ni'wo");
+        assert!(more);
+        assert_eq!(walk.loads(), 2);
+        assert_eq!(
+            walk.pair(),
+            Some((&PhraseText::from("你"), &PhraseText::from("好")))
         );
     }
 
@@ -1255,12 +1267,17 @@ mod phrase_cursor_tests {
         let mut text = vec![0; row.text_len()?];
         let written = row.write_text(&mut text);
         assert_eq!(written, text.len());
-        let mut pinyin = vec![0; row.pinyin_len()];
-        let written = row.write_pinyin(&mut pinyin);
-        assert_eq!(written, pinyin.len());
+        let pinyin: Vec<String> = row
+            .pinyin_strings()
+            .map(|(spelling, digit)| {
+                let mut key = spelling.to_owned();
+                key.extend(digit.map(char::from));
+                key
+            })
+            .collect();
         Some((
             String::from_utf8(text).expect("scalar fixture text"),
-            String::from_utf8(pinyin).expect("ASCII pinyin"),
+            pinyin.join("'"),
             row.count(),
         ))
     }

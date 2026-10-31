@@ -12,7 +12,7 @@ use oxpinyin_core::{OptionBits, PINYIN_CORRECT_ALL, USE_TONE};
 use oxpinyin_facade::{BigramExportWalk, BigramStep, ExportStep};
 use oxpinyin_user::{MAX_PHRASE_LENGTH, PinyinKey, UserStore, is_user_file_library, toned_key};
 
-use crate::ffi::{malloc_cstr_with, malloc_cstr_with_warning, owned_cstr};
+use crate::ffi::{malloc_cstr_with, strconcat_pair, strdup, strdup_raw, strjoinv};
 use crate::state::context_ref;
 use crate::types::{
     BigramExportIterator, ExportIterator, GChar, GUint, ImportIterator, PinyinContext,
@@ -28,6 +28,60 @@ struct ExportHandle {
 /// State behind `bigram_export_iterator_t *`.
 struct BigramHandle {
     walk: BigramExportWalk,
+    /// The pin's `m_phrase` (`pinyin.cpp:830-832`): the loaded pair's
+    /// conversion, which every row of the pair duplicates; NULL before the
+    /// first load and where the predecessor's conversion failed.
+    phrase: *mut c_char,
+    /// The walk's load count `phrase` was converted at.
+    loads: u64,
+}
+
+impl BigramHandle {
+    /// Converts a pair the walk has just loaded as the pin's `has_next` does
+    /// (`pinyin.cpp:821-835`): each phrase through the fallible
+    /// `g_ucs4_to_utf8` encoder, `g_strconcat(first, second, NULL)` (NULL
+    /// for a NULL first, the first alone for a NULL second; GLib aborts if
+    /// its own allocation fails), the old `m_phrase` freed, then both
+    /// conversions. A NULL result is the pin's NULL `m_phrase`, which the
+    /// walk then drops.
+    fn convert_loaded_pair(&mut self) {
+        if self.walk.loads() == self.loads {
+            return;
+        }
+        self.loads = self.walk.loads();
+        let Some((first, second)) = self.walk.pair() else {
+            return;
+        };
+        let encode = |text: &oxpinyin_core::PhraseText| {
+            let bytes = phrase_text_bytes(text);
+            malloc_cstr_with(bytes.len(), |out| {
+                out.copy_from_slice(&bytes);
+                bytes.len()
+            })
+        };
+        let (first, second) = (encode(first), encode(second));
+        // SAFETY: Both are NULL or this call's NUL-terminated buffers.
+        let phrase = unsafe { strconcat_pair(first, second) };
+        // SAFETY: `self.phrase` is NULL or the previous pair's GLib string,
+        // which this handle alone owns; `second` and `first` are NULL or
+        // this call's encoder buffers. `g_free` releases each.
+        unsafe {
+            glib_sys::g_free(self.phrase.cast());
+            glib_sys::g_free(second.cast());
+            glib_sys::g_free(first.cast());
+        }
+        self.phrase = phrase;
+        if phrase.is_null() {
+            self.walk.drop_phrase();
+        }
+    }
+}
+
+impl Drop for BigramHandle {
+    fn drop(&mut self) {
+        // SAFETY: `phrase` is NULL or the GLib string this handle owns.
+        unsafe { glib_sys::g_free(self.phrase.cast()) };
+    }
 }
 
 // ── Import iterator ──────────────────────────────────────────────────
@@ -442,10 +496,10 @@ pub extern "C" fn pinyin_iterator_has_next_phrase(iter: *mut ExportIterator) -> 
 /// rendered, and the next token probed through a fresh `get_range` before
 /// the call returns, so an import that reached the next item in between is
 /// exported. Out-params `phrase` and `pinyin` are caller-owned (`g_free`
-/// each), one allocation apiece as the pin's `g_ucs4_to_utf8` and
-/// `g_strjoinv` results are; `phrase` is NULL where the pin's
-/// `g_ucs4_to_utf8` hands one out (`:715-716`, a stored code point that is
-/// no scalar value). Returns `false` when the store cannot be read (one
+/// each): `phrase` from the fallible encoder that stands for the pin's
+/// `g_ucs4_to_utf8` (`:715-716`), NULL where its allocation fails, and
+/// `pinyin` from `g_strjoinv` (`:733`), whose failed allocation aborts as
+/// the pin's does. Returns `false` when the store cannot be read (one
 /// warning, no pin counterpart). At one of the pin's assert sites, an
 /// exhausted iterator included (`:709`), the process aborts (register row
 /// 62).
@@ -464,13 +518,24 @@ pub extern "C" fn pinyin_iterator_get_next_phrase(
     // `pinyin_begin_get_phrases`; the unique borrow lasts for this call.
     let handle = unsafe { &mut *(iter.cast::<ExportHandle>()) };
     let step = handle.cursor.get_next_with(|row| {
+        // `pinyin.cpp:715-716`: the fallible `g_ucs4_to_utf8` conversion,
+        // NULL on failure, unchecked.
         let text = (!phrase.is_null()).then(|| {
             row.text_len().map_or(ptr::null_mut(), |len| {
                 malloc_cstr_with(len, |out| row.write_text(out))
             })
         });
-        let reading = (!pinyin.is_null())
-            .then(|| malloc_cstr_with_warning(row.pinyin_len(), |out| row.write_pinyin(out)));
+        // `:726-733`: the key strings joined by `g_strjoinv("'", …)`, which
+        // GLib allocates.
+        let reading = (!pinyin.is_null()).then(|| {
+            let keys = row.pinyin_strings().map(|(spelling, digit)| {
+                let mut key = Vec::with_capacity(spelling.len() + 1);
+                key.extend_from_slice(spelling.as_bytes());
+                key.extend(digit);
+                key
+            });
+            strjoinv(c"'", keys)
+        });
         (text, reading, export_count(row.count()))
     });
     let step = match step {
@@ -490,14 +555,6 @@ pub extern "C" fn pinyin_iterator_get_next_phrase(
         // `:728`), and the process aborts.
         ExportStep::Assert(_) => std::process::abort(),
     };
-    if reading.is_some_and(|value| value.is_null()) {
-        if let Some(text) = text {
-            // SAFETY: This call owns the malloc buffer (or null); no
-            // out-param has received it. libc free matches its allocator.
-            unsafe { crate::ffi::free(text.cast()) };
-        }
-        return false;
-    }
     if let Some(text) = text {
         // SAFETY: `phrase` was null-checked when `text` was produced.
         unsafe {
@@ -615,7 +672,12 @@ pub extern "C" fn pinyin_begin_get_bigram_phrases(
         return ptr::null_mut();
     }
     let walk = ctx.bigram_export_walk().unwrap_or_default();
-    Box::into_raw(Box::new(BigramHandle { walk })).cast()
+    Box::into_raw(Box::new(BigramHandle {
+        walk,
+        phrase: ptr::null_mut(),
+        loads: 0,
+    }))
+    .cast()
 }
 
 /// Check whether the bigram export iterator has a next phrase.
@@ -635,7 +697,9 @@ pub extern "C" fn pinyin_bigram_iterator_has_next_phrase(iter: *mut BigramExport
     // `pinyin_begin_get_bigram_phrases`; the unique borrow lasts for this
     // call (the pin's `has_next` advances the iterator).
     let handle = unsafe { &mut *(iter.cast::<BigramHandle>()) };
-    handle.walk.has_next()
+    let more = handle.walk.has_next();
+    handle.convert_loaded_pair();
+    more
 }
 
 /// Get the next phrase from the bigram export iterator.
@@ -674,31 +738,17 @@ pub extern "C" fn pinyin_bigram_iterator_get_next_phrase(
         // Class (b): the pin reads past its pinyin array.
         BigramStep::Undefined => return false,
     };
-    let text = (!phrase.is_null()).then(|| {
-        let bytes = phrase_text_bytes(&row.phrase);
-        malloc_cstr_with_warning(bytes.len(), |out| {
-            out[..bytes.len()].copy_from_slice(&bytes);
-            bytes.len()
-        })
-    });
-    if text.is_some_and(|value| value.is_null()) {
-        return false;
+    // `pinyin.cpp:904-905`: `g_strdup` of the pair's `m_phrase` (NULL for
+    // NULL) and of the row's pinyin, both allocated by GLib, before the
+    // `has_next` that may load and convert the next pair (`:910`).
+    if !phrase.is_null() {
+        // SAFETY: `handle.phrase` is NULL or the handle's NUL-terminated
+        // GLib string; `phrase` is null-checked.
+        unsafe { *phrase = strdup_raw(handle.phrase) };
     }
-    let reading = (!pinyin.is_null()).then(|| owned_cstr(&row.pinyin));
-    if reading.is_some_and(|value| value.is_null()) {
-        if let Some(text) = text {
-            // SAFETY: This call still owns text, allocated with libc malloc.
-            unsafe { crate::ffi::free(text.cast()) };
-        }
-        return false;
-    }
-    if let Some(text) = text {
-        // SAFETY: `phrase` was null-checked before allocation.
-        unsafe { *phrase = text };
-    }
-    if let Some(reading) = reading {
-        // SAFETY: `pinyin` was null-checked before allocation.
-        unsafe { *pinyin = reading };
+    if !pinyin.is_null() {
+        // SAFETY: Null-checked above.
+        unsafe { *pinyin = strdup(&row.pinyin) };
     }
     if !count.is_null() {
         // SAFETY: Null-checked above.
@@ -706,6 +756,7 @@ pub extern "C" fn pinyin_bigram_iterator_get_next_phrase(
             *count = c_int::try_from(row.count).unwrap_or(c_int::MAX);
         }
     }
+    handle.convert_loaded_pair();
     more
 }
 

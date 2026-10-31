@@ -174,46 +174,34 @@ pub mod input;
 pub mod phrase_text;
 pub mod ucs4;
 
-/// Stamps a facade's byte-oriented `write_owned_sentence_bytes` helper: the
-/// `char **`-out sentence writer for UTF-8 and the pin's historical encoding
-/// of non-scalar phrase words. The facade passes its `malloc_cstr_with`
-/// allocator, which rejects interior NUL bytes.
+/// Stamps a facade's `write_owned_sentence` helper: the `char **`-out
+/// sentence writer. The facade passes its sentence allocator,
+/// `fn(&[PhraseText]) -> *mut c_char`, which makes the pin's
+/// `convert_to_utf8` calls over the row's phrases (`lookup.cpp:27-69` at
+/// 074a2219): a fallible conversion per phrase, `g_strdup` of the first
+/// result, `g_strconcat` for each later one. As in the pin, the answer is
+/// `true` whether or not the result is NULL.
 ///
 /// # Example
 ///
 /// ```ignore
-/// oxpinyin_capi_marshal::write_owned_sentence_bytes!(crate::ffi::malloc_cstr_with);
+/// oxpinyin_capi_marshal::write_owned_sentence!(crate::ffi::sentence_text);
 /// ```
 #[macro_export]
-macro_rules! write_owned_sentence_bytes {
-    ($malloc_cstr_with:path) => {
-        /// Writes `text` through the caller-owned out-param: `false` on an
-        /// empty text, interior NUL or allocation failure, with the out-param
-        /// nulled on every failure path.
-        fn write_owned_sentence_bytes(
-            text: &[u8],
+macro_rules! write_owned_sentence {
+    ($sentence_text:path) => {
+        /// Writes the allocator's result for `phrases` through the
+        /// caller-owned out-param, NULL where the pin's would be, and
+        /// answers `true` (`lookup.cpp:69`).
+        fn write_owned_sentence(
+            phrases: &[::oxpinyin_core::PhraseText],
             sentence: *mut *mut ::std::os::raw::c_char,
         ) -> bool {
-            if text.is_empty() {
-                if !sentence.is_null() {
-                    // SAFETY: Caller null-checks the out-param.
-                    unsafe {
-                        *sentence = ::std::ptr::null_mut();
-                    }
-                }
-                return false;
-            }
             if !sentence.is_null() {
-                let owned = $malloc_cstr_with(text.len(), |out| {
-                    out.copy_from_slice(text);
-                    text.len()
-                });
+                let owned = $sentence_text(phrases);
                 // SAFETY: Null-checked above.
                 unsafe {
                     *sentence = owned;
-                }
-                if owned.is_null() {
-                    return false;
                 }
             }
             true

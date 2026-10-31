@@ -20,7 +20,7 @@
 use std::os::raw::c_char;
 use std::ptr;
 
-use crate::ffi::owned_cstr;
+use crate::ffi::key_text;
 use crate::state::instance_ref;
 use crate::types::{ChewingKey, GChar, PinyinInstance};
 
@@ -158,24 +158,6 @@ pub extern "C" fn pinyin_parse_chewing(
 
 // ── Display getters ──────────────────────────────────────────────────
 
-/// Renders `text` into a freshly allocated, caller-owned string at `out`
-/// (`owned_cstr`'s libc-`malloc` buffer, releasable with `g_free`).
-///
-/// # Safety
-///
-/// `out` must be non-null and writable.
-///
-/// Returns `false` with NULL at `out` and one warning on allocation failure
-/// (class (c): the pin aborts through GLib allocation).
-unsafe fn write_string(out: *mut *mut GChar, text: &str) -> bool {
-    let rendered = owned_cstr(text);
-    // SAFETY: The caller guarantees `out` is writable.
-    unsafe {
-        *out = rendered;
-    }
-    !rendered.is_null()
-}
-
 /// Get the luoma pinyin string of a chewing key.
 ///
 /// # C signature
@@ -197,7 +179,7 @@ pub extern "C" fn pinyin_get_luoma_pinyin_string(
         instance,
         key,
         utf8_str,
-        oxpinyin_core::ChewingKey::luoma_pinyin_string,
+        oxpinyin_core::ChewingKey::luoma_pinyin_text,
     )
 }
 
@@ -218,18 +200,23 @@ pub extern "C" fn pinyin_get_secondary_zhuyin_string(
     key: *mut ChewingKey,
     utf8_str: *mut *mut GChar,
 ) -> bool {
-    display_string_getter(instance, key, utf8_str, |core| {
-        core.secondary_zhuyin_string()
-    })
+    display_string_getter(
+        instance,
+        key,
+        utf8_str,
+        oxpinyin_core::ChewingKey::secondary_zhuyin_text,
+    )
 }
 
-/// The shared body of the four single-string display getters: NULL the
-/// out-param, refuse the zero key on `get_table_index() == 0`, render.
+/// The shared body of the two index-spelling display getters: NULL the
+/// out-param, refuse the zero key on `get_table_index() == 0`, then hand
+/// out the rendering made with the pin's `g_strdup`/`g_strdup_printf`
+/// call (`chewing_key.cpp:97-114`), caller-owned (`g_free`).
 fn display_string_getter(
     instance: *mut PinyinInstance,
     key: *mut ChewingKey,
     utf8_str: *mut *mut GChar,
-    render: impl FnOnce(oxpinyin_core::ChewingKey) -> String,
+    render: impl FnOnce(oxpinyin_core::ChewingKey) -> oxpinyin_chewing::KeyText,
 ) -> bool {
     if instance.is_null() || key.is_null() || utf8_str.is_null() {
         return false;
@@ -245,7 +232,10 @@ fn display_string_getter(
         return false;
     }
     // SAFETY: Null-checked above.
-    unsafe { write_string(utf8_str, &render(core)) }
+    unsafe {
+        *utf8_str = key_text(render(core));
+    }
+    true
 }
 
 /// Whether a chewing key carries no middle and no final.

@@ -169,51 +169,50 @@ fn candidate_ptr_into_vec() {
     }
 }
 
-// ── Fixture for `write_owned_sentence_bytes!` ──────────────────────────
+// ── Fixture for `write_owned_sentence!` ────────────────────────────────
 
-/// Mirrors the facade's `malloc_cstr_with` fill and NUL-rejection contract,
-/// using CString ownership so the test can reclaim the returned pointer.
-fn test_malloc_cstr_with(len: usize, fill: impl FnOnce(&mut [u8]) -> usize) -> *mut c_char {
-    let mut bytes = vec![0; len];
-    if fill(&mut bytes) != len {
+use oxpinyin_core::PhraseText;
+
+/// Stands for a facade's sentence allocator: the phrases joined into a
+/// copy the test can reclaim, or NULL for no phrase, as a sentence whose
+/// every conversion failed answers.
+fn test_sentence_text(phrases: &[PhraseText]) -> *mut c_char {
+    if phrases.is_empty() {
         return ptr::null_mut();
     }
-    match std::ffi::CString::new(bytes) {
-        Ok(cstr) => cstr.into_raw(),
-        Err(_) => ptr::null_mut(),
-    }
+    let joined: String = phrases.iter().filter_map(PhraseText::as_str).collect();
+    std::ffi::CString::new(joined).map_or(ptr::null_mut(), std::ffi::CString::into_raw)
 }
 
-oxpinyin_capi_marshal::write_owned_sentence_bytes!(test_malloc_cstr_with);
+oxpinyin_capi_marshal::write_owned_sentence!(test_sentence_text);
 
 #[test]
-fn sentence_empty_text_returns_false_and_nulls_out() {
+fn sentence_null_out_param_answers_true() {
+    assert!(write_owned_sentence(
+        &[PhraseText::from("你")],
+        ptr::null_mut()
+    ));
+}
+
+#[test]
+fn sentence_null_allocation_still_answers_true() {
+    // The pin's `convert_to_utf8` returns true even when its result is NULL.
     let mut out = std::ptr::dangling_mut::<c_char>();
-    assert!(!write_owned_sentence_bytes(b"", &mut out));
+    assert!(write_owned_sentence(&[], &mut out));
     assert!(out.is_null());
 }
 
 #[test]
-fn sentence_null_out_param() {
-    assert!(!write_owned_sentence_bytes(b"", ptr::null_mut()));
-    assert!(write_owned_sentence_bytes(b"hello", ptr::null_mut()));
-}
-
-#[test]
-fn sentence_interior_nul_returns_false_and_nulls_out() {
-    let mut out = std::ptr::dangling_mut::<c_char>();
-    assert!(!write_owned_sentence_bytes(b"hel\0lo", &mut out));
-    assert!(out.is_null());
-}
-
-#[test]
-fn sentence_ascii_and_cjk_write_through() {
-    for text in ["x", "hello", "你好"] {
-        let mut out = ptr::null_mut();
-        assert!(write_owned_sentence_bytes(text.as_bytes(), &mut out));
-        assert!(!out.is_null());
-        // SAFETY: the fixture returned CString::into_raw ownership to `out`.
-        let cstr = unsafe { std::ffi::CString::from_raw(out) };
-        assert_eq!(cstr.to_bytes(), text.as_bytes());
-    }
+fn sentence_phrases_write_through() {
+    let phrases = [
+        PhraseText::from("你"),
+        PhraseText::from("好"),
+        PhraseText::from("x"),
+    ];
+    let mut out = ptr::null_mut();
+    assert!(write_owned_sentence(&phrases, &mut out));
+    assert!(!out.is_null());
+    // SAFETY: the fixture returned CString::into_raw ownership to `out`.
+    let cstr = unsafe { std::ffi::CString::from_raw(out) };
+    assert_eq!(cstr.to_bytes(), "你好x".as_bytes());
 }

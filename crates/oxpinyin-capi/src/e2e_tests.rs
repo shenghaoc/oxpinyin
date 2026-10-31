@@ -1057,9 +1057,9 @@ fn save_gates_on_dirty_and_roundtrips_through_the_abi() {
     crate::context::pinyin_fini(context2);
 }
 
-// The matching deallocator for buffers the export iterators hand out
-// (`ffi::owned_cstr` allocates with libc `malloc`, which `g_free` and
-// `free` both release on Linux).
+// The deallocator for buffers the export iterators hand out (GLib and the
+// conversion encoder allocate with libc `malloc`, which `g_free` and `free`
+// both release on Linux).
 unsafe extern "C" {
     fn free(ptr: *mut std::ffi::c_void);
 }
@@ -1067,8 +1067,8 @@ unsafe extern "C" {
 /// Frees a caller-owned buffer the export iterators hand out.
 fn free_exported(ptr: *mut std::ffi::c_char) {
     if !ptr.is_null() {
-        // SAFETY: the iterator allocates with libc `malloc` (see
-        // `owned_cstr`); `free` is the matching deallocator for the test.
+        // SAFETY: the iterator's buffers come from libc `malloc`, directly
+        // or through GLib; `free` releases them.
         unsafe {
             free(ptr.cast());
         }

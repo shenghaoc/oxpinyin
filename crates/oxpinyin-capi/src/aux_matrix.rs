@@ -36,6 +36,24 @@ pub(crate) enum Spelling {
     Zhuyin,
 }
 
+/// An auxiliary text as the pin's final `g_strconcat(prefix, middle,
+/// postfix, NULL)` receives it (`pinyin.cpp:3431`, `:3509`, `:3569`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct AuxText {
+    /// The keys before the cursor, each followed by a space.
+    pub(crate) prefix: String,
+    /// The cursor mark, or the key it splits.
+    pub(crate) middle: String,
+    /// The keys after the cursor, each followed by a space.
+    pub(crate) postfix: String,
+}
+
+impl std::fmt::Display for AuxText {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}{}{}", self.prefix, self.middle, self.postfix)
+    }
+}
+
 /// One key of the matrix: the key itself and its byte span in the input.
 struct MatrixKey {
     key: ChewingKey,
@@ -222,7 +240,7 @@ impl SharedMatrix {
 
     /// `pinyin_get_full_pinyin_auxiliary_text`'s body
     /// (`pinyin.cpp:3381-3438`).
-    pub(crate) fn full(&self, cursor: usize) -> Option<String> {
+    pub(crate) fn full(&self, cursor: usize) -> Option<AuxText> {
         let cursor = cursor.min(self.parsed_len);
         let prefix = self.prefix(cursor, Spelling::Pinyin)?;
         let postfix = self.postfix(cursor, Spelling::Pinyin)?;
@@ -257,13 +275,17 @@ impl SharedMatrix {
         // that breaks that invariant is the pin's
         // `assert(get_column_size(offset) >= 1)`, not a NULL concat.
         let middle = middle?;
-        Some(format!("{prefix}{middle}{postfix}"))
+        Some(AuxText {
+            prefix,
+            middle,
+            postfix,
+        })
     }
 
     /// `pinyin_get_double_pinyin_auxiliary_text`'s body
     /// (`pinyin.cpp:3440-3516`): a key the cursor splits is cut into its
     /// shengmu and yunmu, one or two bytes in; further in, the pin aborts.
-    pub(crate) fn double(&self, cursor: usize) -> Option<String> {
+    pub(crate) fn double(&self, cursor: usize) -> Option<AuxText> {
         let cursor = cursor.min(self.parsed_len);
         let prefix = self.prefix(cursor, Spelling::Pinyin)?;
         let postfix = self.postfix(cursor, Spelling::Pinyin)?;
@@ -297,14 +319,18 @@ impl SharedMatrix {
         // `middle` is reached exactly as in `full`; the pin's NULL-stop is
         // the same unreachable concat, not a rendering branch.
         let middle = middle?;
-        Some(format!("{prefix}{middle}{postfix}"))
+        Some(AuxText {
+            prefix,
+            middle,
+            postfix,
+        })
     }
 
     /// `pinyin_get_chewing_auxiliary_text`'s body (`pinyin.cpp:3518-3576`):
     /// the zhuyin spelling cut by scalar, `g_utf8_substring(zhuyin, len,
     /// end)` for the right half. The cut point is the raw byte delta used
     /// as a scalar index; see [`split_zhuyin`].
-    pub(crate) fn chewing(&self, cursor: usize) -> Option<String> {
+    pub(crate) fn chewing(&self, cursor: usize) -> Option<AuxText> {
         let cursor = cursor.min(self.parsed_len);
         let prefix = self.prefix(cursor, Spelling::Zhuyin)?;
         let postfix = self.postfix(cursor, Spelling::Zhuyin)?;
@@ -326,7 +352,11 @@ impl SharedMatrix {
             break;
         }
         let middle = middle?;
-        Some(format!("{prefix}{middle}{postfix}"))
+        Some(AuxText {
+            prefix,
+            middle,
+            postfix,
+        })
     }
 
     /// The span a column starts, with its key; a zero key spans one byte.

@@ -166,8 +166,8 @@ pub fn take_sentence(sentence: *mut std::os::raw::c_char) -> String {
         .to_str()
         .expect("UTF-8")
         .to_owned();
-    // SAFETY: `sentence` came from `malloc` in `owned_cstr` and is not
-    // used after this call.
-    unsafe { crate::ffi::free(sentence.cast()) };
+    // SAFETY: `sentence` is the returned GLib string, which `g_free`
+    // releases, and is not used after this call.
+    unsafe { glib_sys::g_free(sentence.cast()) };
     decoded
 }
