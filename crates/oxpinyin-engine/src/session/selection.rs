@@ -203,7 +203,11 @@ where
             // row's sentence text, pinyin_choose_candidate's NBEST branch
             // returning matrix.size() - 1). The composition-anchored path
             // has an empty gap either way.
-            self.record.set_selected(&text);
+            let parts = candidate
+                .nbest_row()
+                .and_then(|rank| self.sentence.rows.get(usize::from(rank)))
+                .map_or_else(|| vec![text.clone()], |row| self.sentence.phrases(row));
+            self.record.set_selected(&text, parts);
         } else {
             self.record.append_selected(gap, &text);
         }

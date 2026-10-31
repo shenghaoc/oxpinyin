@@ -16,7 +16,7 @@
 //! is set once per surface and survives every reset, a different lifetime
 //! from this transient decode output, so it stays on the session.
 
-use oxpinyin_core::PhraseToken;
+use oxpinyin_core::{PhraseText, PhraseToken};
 
 use crate::constraint::PhraseSpan;
 use crate::nbest::NbestRow;
@@ -44,12 +44,36 @@ pub(super) struct SentenceState {
     /// upstream's `m_nbest_results[0]`, the result `pinyin_train` walks
     /// against the constraint store.
     pub(super) last_result: Vec<PhraseSpan>,
+    /// The selection record's pieces the remaining-input walk prepended to
+    /// every row's text, empty when it prepended none: the leading phrases
+    /// of each row's per-phrase texts ([`SentenceState::phrases`]).
+    pub(super) prefix: Vec<PhraseText>,
 }
 
 impl SentenceState {
     /// Whether a sentence lookup has run since the last reset.
     pub(super) const fn active(&self) -> bool {
         self.active
+    }
+
+    /// `row`'s text phrase by phrase, as the pin's result vector holds it
+    /// for `convert_to_utf8` (`src/lookup/lookup.cpp:37-66` at 074a2219):
+    /// one entry per token of the decoded path in position order, the
+    /// trellis having written a token only at each phrase's start column
+    /// and `null_token` elsewhere (`extract_result`,
+    /// `lookup/phonetic_lookup.h:370-396`). A row the trellis decoded
+    /// carries those phrases as its spans, after any prepended selection
+    /// pieces; a pre-frequency fallback row, which has no pin counterpart,
+    /// is one piece.
+    pub(super) fn phrases(&self, row: &NbestRow) -> Vec<PhraseText> {
+        if row.spans.is_empty() {
+            return vec![row.text.clone()];
+        }
+        self.prefix
+            .iter()
+            .cloned()
+            .chain(row.spans.iter().map(|span| span.text.clone()))
+            .collect()
     }
 
     /// Clears the decoded state and marks a lookup active — the head of
@@ -59,6 +83,7 @@ impl SentenceState {
         self.rows.clear();
         self.history.clear();
         self.last_result.clear();
+        self.prefix.clear();
         self.active = true;
     }
 
@@ -70,6 +95,7 @@ impl SentenceState {
         self.rows.clear();
         self.history.clear();
         self.last_result.clear();
+        self.prefix.clear();
         self.active = false;
     }
 }

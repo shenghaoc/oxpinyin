@@ -584,8 +584,19 @@ where
         self.sentence.active()
     }
 
-    /// The decoded text of n-best row `index`, best-first
-    /// (`pinyin_get_sentence`'s payload). `None` when fewer rows exist.
+    /// The decoded text of n-best row `index`, best-first, one text per
+    /// phrase as the pin's result vector holds them for `convert_to_utf8`
+    /// (`pinyin_get_sentence`'s payload, `pinyin.cpp:1464-1482`,
+    /// `lookup/lookup.cpp:27-69`). `None` when fewer rows exist or the
+    /// row's text is empty, as [`Self::sentence_text`].
+    #[must_use]
+    pub fn sentence_phrases(&self, index: u8) -> Option<Vec<PhraseText>> {
+        let row = self.sentence.rows.get(usize::from(index))?;
+        (!row.text.is_empty()).then(|| self.sentence.phrases(row))
+    }
+
+    /// The decoded text of n-best row `index`, best-first. `None` when
+    /// fewer rows exist or the text is empty.
     #[must_use]
     pub fn sentence_text(&self, index: u8) -> Option<&PhraseText> {
         self.sentence

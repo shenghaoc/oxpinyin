@@ -146,11 +146,15 @@ impl ChewingKey {
     /// canonical spelling, tone digit appended for a non-zero tone.
     #[must_use]
     pub fn pinyin_string(self) -> String {
-        let base = self.content_string(0);
-        match (self.tone, digit(self.tone)) {
-            (CHEWING_ZERO_TONE, _) | (_, None) => base.to_owned(),
-            (_, Some(d)) => format!("{base}{d}"),
-        }
+        self.pinyin_text().to_string()
+    }
+
+    /// How `_ChewingKey::get_pinyin_string` builds its result
+    /// (`chewing_key.cpp:53-57`): `g_strdup` of the spelling for the zero
+    /// tone, `g_strdup_printf("%s%d", …)` otherwise.
+    #[must_use]
+    pub fn pinyin_text(self) -> KeyText {
+        digit_text(self.content_string(0), self.tone)
     }
 
     /// `_ChewingKey::get_shengmu_string` (`chewing_key.cpp:60-65`): the
@@ -172,11 +176,19 @@ impl ChewingKey {
     /// tone mark.
     #[must_use]
     pub fn zhuyin_string(self) -> String {
+        self.zhuyin_text().to_string()
+    }
+
+    /// How `_ChewingKey::get_zhuyin_string` builds its result
+    /// (`chewing_key.cpp:80-88`): `g_strdup` of the spelling for the zero
+    /// and first tones, `g_strdup_printf("%s%s", …)` with the tone mark
+    /// otherwise.
+    #[must_use]
+    pub fn zhuyin_text(self) -> KeyText {
         let base = self.content_string(3);
         match self.tone {
-            CHEWING_ZERO_TONE | 1 => base.to_owned(),
-            2..=5 => format!("{base}{}", tone_symbol(self.tone)),
-            _ => base.to_owned(),
+            2..=5 => KeyText::Mark(base, tone_symbol(self.tone)),
+            _ => KeyText::Plain(base),
         }
     }
 
@@ -185,11 +197,14 @@ impl ChewingKey {
     /// including the first tone, unlike zhuyin.
     #[must_use]
     pub fn luoma_pinyin_string(self) -> String {
-        let base = self.content_string(4);
-        match (self.tone, digit(self.tone)) {
-            (CHEWING_ZERO_TONE, _) | (_, None) => base.to_owned(),
-            (_, Some(d)) => format!("{base}{d}"),
-        }
+        self.luoma_pinyin_text().to_string()
+    }
+
+    /// How `_ChewingKey::get_luoma_pinyin_string` builds its result
+    /// (`chewing_key.cpp:97-101`).
+    #[must_use]
+    pub fn luoma_pinyin_text(self) -> KeyText {
+        digit_text(self.content_string(4), self.tone)
     }
 
     /// `_ChewingKey::get_secondary_zhuyin_string`
@@ -197,11 +212,48 @@ impl ChewingKey {
     /// digit appended for a non-zero tone — including the first tone.
     #[must_use]
     pub fn secondary_zhuyin_string(self) -> String {
-        let base = self.content_string(5);
-        match (self.tone, digit(self.tone)) {
-            (CHEWING_ZERO_TONE, _) | (_, None) => base.to_owned(),
-            (_, Some(d)) => format!("{base}{d}"),
+        self.secondary_zhuyin_text().to_string()
+    }
+
+    /// How `_ChewingKey::get_secondary_zhuyin_string` builds its result
+    /// (`chewing_key.cpp:110-114`).
+    #[must_use]
+    pub fn secondary_zhuyin_text(self) -> KeyText {
+        digit_text(self.content_string(5), self.tone)
+    }
+}
+
+/// A key rendering as `_ChewingKey::get_*_string` builds it
+/// (`chewing_key.cpp:47-121`): which GLib call the pin makes and with what
+/// arguments. The C adapters make that call; [`std::fmt::Display`] writes
+/// the same bytes for Rust callers.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum KeyText {
+    /// `g_strdup(spelling)`.
+    Plain(&'static str),
+    /// `g_strdup_printf("%s%d", spelling, tone)`.
+    Digit(&'static str, u8),
+    /// `g_strdup_printf("%s%s", spelling, chewing_tone_table[tone])`.
+    Mark(&'static str, &'static str),
+}
+
+impl std::fmt::Display for KeyText {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Plain(base) => f.write_str(base),
+            Self::Digit(base, tone) => write!(f, "{base}{tone}"),
+            Self::Mark(base, mark) => write!(f, "{base}{mark}"),
         }
+    }
+}
+
+/// The pinyin-family branch: bare for the zero tone, `%s%d` otherwise. A
+/// hand-crafted key with a two-digit tone renders without a suffix (see
+/// [`digit`]).
+const fn digit_text(base: &'static str, tone: u8) -> KeyText {
+    match (tone, digit(tone)) {
+        (CHEWING_ZERO_TONE, _) | (_, None) => KeyText::Plain(base),
+        (_, Some(_)) => KeyText::Digit(base, tone),
     }
 }
 
