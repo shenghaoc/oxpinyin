@@ -2664,3 +2664,93 @@ fn masking_system_imports_restores_originals_and_removes_appended_items() {
     crate::instance::pinyin_free_instance(instance);
     crate::context::pinyin_fini(context);
 }
+
+/// Opens `user_dir` over the fixture, answering the raw handle.
+fn init_at(user_dir: &std::path::Path) -> *mut crate::types::PinyinContext {
+    let system = cstr(system_dir().to_str().expect("UTF-8 path"));
+    let user = cstr(user_dir.to_str().expect("UTF-8 path"));
+    oxpinyin_init_for_fixtures(system.as_ptr(), user.as_ptr())
+}
+
+/// Register row 91: init's library loop merges `gb_char.dbin` and
+/// `next_record` asserts on its non-null `MODIFY_HEADER` token
+/// (`phrase_index_logger.h:202`).
+#[test]
+fn init_aborts_on_a_log_header_token() {
+    crate::test_support::assert_aborts("e2e_tests::init_aborts_on_a_log_header_token", || {
+        let user_dir = TempUserDir::new("init-header-token");
+        crate::test_support::plant_log(
+            &user_dir.path,
+            "gb_char.dbin",
+            &crate::test_support::logs::header_token(),
+        );
+        let _ = init_at(&user_dir.path);
+    });
+}
+
+/// Register row 108: init's merge stores a one-byte ADD payload and
+/// `add_phrase_item` reads its unigram (`memory_chunk.h:390`).
+#[test]
+fn init_aborts_on_a_short_add_payload() {
+    crate::test_support::assert_aborts("e2e_tests::init_aborts_on_a_short_add_payload", || {
+        let user_dir = TempUserDir::new("init-short-add");
+        crate::test_support::plant_log(
+            &user_dir.path,
+            "gb_char.dbin",
+            &crate::test_support::logs::short_add(),
+        );
+        let _ = init_at(&user_dir.path);
+    });
+}
+
+/// Register row 91's control: `merge` returns at a mismatched MODIFY before
+/// `next_record` reads the bad header, and init completes.
+#[test]
+fn init_completes_when_the_merge_stops_before_a_bad_header() {
+    let user_dir = TempUserDir::new("init-stop-before-header");
+    let payload = [
+        crate::test_support::logs::mismatched_modify(),
+        crate::test_support::logs::header_token(),
+    ]
+    .concat();
+    crate::test_support::plant_log(&user_dir.path, "gb_char.dbin", &payload);
+    let context = init_at(&user_dir.path);
+    assert!(!context.is_null());
+    crate::context::pinyin_fini(context);
+}
+
+/// Register row 91 on the reload path: `pinyin_load_phrase_library` of the
+/// unloaded GBK library merges its saved `.dbin` (`pinyin.cpp:276`).
+#[test]
+fn reload_aborts_on_a_log_header_token() {
+    crate::test_support::assert_aborts("e2e_tests::reload_aborts_on_a_log_header_token", || {
+        let user_dir = TempUserDir::new("reload-header-token");
+        let context = init_at(&user_dir.path);
+        assert!(!context.is_null());
+        assert!(crate::config::pinyin_unload_phrase_library(context, 2));
+        crate::test_support::plant_log(
+            &user_dir.path,
+            "gbk_char.dbin",
+            &crate::test_support::logs::header_token(),
+        );
+        let _ = crate::config::pinyin_load_phrase_library(context, 2);
+    });
+}
+
+/// Register row 97: `mask_out` reloads library 1 and `_mask_out_records`
+/// appends a kept ADD with both chunk pointers (`phrase_index_logger.h:245`).
+#[test]
+fn mask_out_aborts_on_a_surviving_add() {
+    crate::test_support::assert_aborts("e2e_tests::mask_out_aborts_on_a_surviving_add", || {
+        let user_dir = TempUserDir::new("mask-surviving-add");
+        let context = init_at(&user_dir.path);
+        assert!(!context.is_null());
+        let payload = [
+            crate::test_support::logs::header(),
+            crate::test_support::logs::add(),
+        ]
+        .concat();
+        crate::test_support::plant_log(&user_dir.path, "gb_char.dbin", &payload);
+        let _ = pinyin_mask_out(context, 0xffff_ffff, 0x0100_0001);
+    });
+}

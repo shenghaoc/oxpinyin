@@ -202,3 +202,66 @@ pub fn assert_aborts(name: &str, body: impl FnOnce()) {
         .expect("re-run the test binary");
     assert_eq!(status.signal(), Some(6), "{name} must die of SIGABRT");
 }
+
+/// Writes a conforming `user.conf` for the fixture data set and `payload`,
+/// framed as a `MemoryChunk`, as the user `.dbin` named `file`: the shape a
+/// journal-replay test needs, since a non-conforming profile is wiped
+/// before any library loads.
+pub fn plant_log(user_dir: &std::path::Path, file: &str, payload: &[u8]) {
+    let conf = oxpinyin_data::table_info::TableConf::load_from_dir(&system_dir())
+        .expect("fixture table.conf");
+    let versions = oxpinyin_data::user_files::SystemVersions::from_conf(&conf);
+    std::fs::write(
+        user_dir.join("user.conf"),
+        oxpinyin_data::user_files::UserTableInfo::conform_to(&versions).to_text(),
+    )
+    .expect("write user.conf");
+    std::fs::write(
+        user_dir.join(file),
+        oxpinyin_data::chunk_format::build_memory_chunk(payload).expect("frame"),
+    )
+    .expect("write the log");
+}
+
+/// Hand-built `PhraseIndexLogger` records for the journal-replay tests
+/// (`phrase_index_logger.h:158-215` layout, little-endian).
+pub mod logs {
+    fn record(kind: u32, token: u32, tail: &[u8]) -> Vec<u8> {
+        [&kind.to_le_bytes()[..], &token.to_le_bytes(), tail].concat()
+    }
+
+    /// A `MODIFY_HEADER` carrying token `0x01000001` (row 91).
+    #[must_use]
+    pub fn header_token() -> Vec<u8> {
+        record(4, 0x0100_0001, &[4, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+    }
+
+    /// A null-token `MODIFY_HEADER`.
+    #[must_use]
+    pub fn header() -> Vec<u8> {
+        record(4, 0, &[4, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+    }
+
+    /// An ADD of a one-byte payload (row 108).
+    #[must_use]
+    pub fn short_add() -> Vec<u8> {
+        record(1, 0x0100_0005, &[1, 0, 1])
+    }
+
+    /// An ADD of a six-byte item at slot `0x99`.
+    #[must_use]
+    pub fn add() -> Vec<u8> {
+        record(1, 0x0100_0099, &[6, 0, 0, 0, 1, 0, 0, 0])
+    }
+
+    /// A MODIFY of slot 1 whose old chunk no item matches: `merge` returns
+    /// there (`phrase_index.cpp:483-484`).
+    #[must_use]
+    pub fn mismatched_modify() -> Vec<u8> {
+        record(
+            3,
+            0x0100_0001,
+            &[6, 0, 6, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+        )
+    }
+}
