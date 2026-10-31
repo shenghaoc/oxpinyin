@@ -12,6 +12,7 @@ from contract_case_helpers import (
     guess_rows, log_walk, phrase_table_reopen, remember_export, token_phrase_of, token_unigram_trained,
     train_selected_top, zhuyin_guess_rows)
 from contract_fixtures import _write_user_conf, import_rows, private_system
+from contract_phrase_index_logger import logger_reload_probe
 
 
 _REGISTRATIONS = []
@@ -888,9 +889,8 @@ for _mode in ('pinyin', 'zhuyin'):
 # unigram from: `PhraseItem::get_unigram_frequency` (`phrase_index.h:124-126`)
 # reads four bytes at offset 2 through `MemoryChunk::get_content<guint32>`
 # (`memory_chunk.h:388-392`), whose `check_result` is an `assert` in the oracle
-# build, so `pinyin_init`/`zhuyin_init` dies of SIGABRT (class (c), row 108).
-# oxpinyin stops that library's replay at the record, keeps the earlier
-# records and logs one warning; init succeeds.
+# build, so `pinyin_init`/`zhuyin_init` dies of SIGABRT (row 108). oxpinyin's
+# open stops at the record and the C adapters abort (member 5a).
 def _short_add(payload):
     """Build a replay case with a supplied ADD payload between a valid MODIFY and ADD."""
     def build(p):
@@ -913,7 +913,80 @@ for _name, _payload in (('one-byte', b'\x01'), ('five-bytes', bytes((1, 1, 7, 0,
     for _mode in ('pinyin', 'zhuyin'):
         _suffix = '-zhuyin' if _mode == 'zhuyin' else '-pinyin'
         case('replay-short-add-' + _name + _suffix,
-             mode=_mode, abort=True, stderr=True, issues=('850', '870'))(_short_add(_payload))
+             mode=_mode, abort=True, sigabrt=True, userdir=True, stderr=True,
+             issues=('850', '870', 'row:108'))(_short_add(_payload))
+
+
+# Row 108 before an over-read: the pin's `merge` reads each record as it
+# applies it (`phrase_index.cpp:445-450`), so the short ADD's unigram read
+# (`memory_chunk.h:390`) asserts before `next_record` reaches the ADD whose
+# payload runs past the log (class (b), `phrase_index_logger.h:172-176`).
+# The over-read outcome applies only where the walk reaches it.
+def _over_read_add(token):
+    """An ADD whose declared six-byte payload runs past the log's end."""
+    return ((_LOG_ADD).to_bytes(4, 'little') + token.to_bytes(4, 'little') +
+            (6).to_bytes(2, 'little') + b'\x01\x01\x07')
+
+
+def _short_add_before_over_read(p):
+    """A valid MODIFY of one, a one-byte ADD, then an over-reading ADD."""
+    return ([
+        _log_record(_LOG_MODIFY, p['one'][0], old=p['one'][1],
+                    new=_item_with(p['one'][1], freq=77)),
+        _log_record(_LOG_ADD, p['fresh'][0], new=b'\x01'),
+        _over_read_add(p['absent'][0])], _watch(p))
+
+
+def _short_add_before_over_read_init(k):
+    """Replay the short ADD before the over-read at init; alias init truth as ret."""
+    out = system_replay(k, _short_add_before_over_read, unigram_add=False)
+    out['ret'] = out['ctx']
+    return out
+
+
+for _mode in ('pinyin', 'zhuyin'):
+    case('replay-short-add-before-over-read-' + _mode,
+         mode=_mode, abort=True, sigabrt=True, userdir=True, stderr=True,
+         issues=('row:108',))(_short_add_before_over_read_init)
+    # The reload path: library 2's saved log merged by
+    # `*_load_phrase_library` (`pinyin.cpp:276`, `zhuyin.cpp:219`).
+    case('replay-reload-short-add-before-over-read-' + _mode,
+         mode=_mode, abort=False, sigabrt=True, userdir=True, issues=('row:108',))(
+        lambda k: logger_reload_probe(
+            k, _log_record(_LOG_ADD, 0x02000005, new=b'\x01') + _over_read_add(0x02000006)))
+
+
+# Row 91's replay order: `merge` returns at a mismatched REMOVE or MODIFY
+# (`phrase_index.cpp:468-471`, `:483-484`) before `next_record` reads the
+# non-null-token `MODIFY_HEADER` behind it, so init completes with the
+# records before the stop applied (a REMOVE's removal included) and the
+# assert is never reached.
+_HEADER_TOKEN_RECORD = _modify_header(0x01000001, 1, 1)
+
+
+def _stop_before_header_token(stop):
+    """Build a replay: a valid MODIFY of `one`, the stopping record `stop(p)`,
+    the bad header, then a fresh ADD the merge never reaches."""
+    def build(p):
+        """Encode frequency 77 on one, the stop, the bad header and an ADD."""
+        return ([
+            _log_record(_LOG_MODIFY, p['one'][0], old=p['one'][1],
+                        new=_item_with(p['one'][1], freq=77)),
+            stop(p),
+            _HEADER_TOKEN_RECORD,
+            _add_fresh(p)], dict(_watch(p), two=p['two'][0]))
+    return lambda k: system_replay(k, build, unigram_add=False)
+
+
+for _mode in ('pinyin', 'zhuyin'):
+    _suffix = '-zhuyin' if _mode == 'zhuyin' else '-pinyin'
+    case('replay-stop-before-header-token-remove' + _suffix, mode=_mode, issues=('row:91',))(
+        _stop_before_header_token(
+            lambda p: _log_record(_LOG_REMOVE, p['two'][0], old=_flip(p['two'][1]))))
+    case('replay-stop-before-header-token-modify' + _suffix, mode=_mode, issues=('row:91',))(
+        _stop_before_header_token(
+            lambda p: _log_record(_LOG_MODIFY, p['two'][0], old=_flip(p['two'][1]),
+                                  new=p['two'][1])))
 
 
 # #871: the pronunciation counts of a replayed system item. A MODIFY record
