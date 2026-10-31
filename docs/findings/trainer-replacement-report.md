@@ -27,7 +27,7 @@ correction rate** out, every intermediate stage's on-disk product verified.
 |---|---|---|
 | `oxpinyin-train` | the whole main workflow (`segment`→`generate`→`estimate`→`tryprune`→`evaluate`.py) | **the one orchestrator** |
 | `ngseg` / `spseg` / `mergeseq` (`oxpinyin-utils`) | `ngseg` / `spseg` / `mergeseq` | segmentation (drop-in stage-wise) |
-| `oxpinyin-kmm <sub>` | `gen_/estimate_/merge_/validate_/prune_/export_/import_k_mixture_model`, `k_mixture_model_to_interpolation` | KMM toolchain (8 subcommands, stage-wise) |
+| KMM utilities (`oxpinyin-utils`) | `gen_/estimate_/merge_/validate_/prune_/export_/import_k_mixture_model`, `k_mixture_model_to_interpolation` | KMM toolchain under the pin's names (seven `oxpinyin-kmm` operations, one `oxpinyin-utils` utility) |
 | `oxpinyin-eval` | `estimate_interpolation` + `make modify` + `eval_correction_rate` (`evaluate.py`) | native evaluator (stage-wise) |
 | `oxpinyin-word recognize` | `populate`/`partialword`/`newword`/`markpinyin`.py | word recognition |
 | `oxpinyin-punct` | `genpunct.py` | punctuation table |
@@ -54,9 +54,9 @@ per-stage candidate models, estimate indexes, `kmm_merged.text`,
 ## Every utility accounted for
 
 **Main pipeline (all ported).** `segment.py`→`ngseg` (`oxpinyin-utils`);
-`generate.py`→`oxpinyin-kmm generate` + `oxpinyin-train` rollover;
-`estimate.py`→`oxpinyin-kmm estimate` + `oxpinyin-train` gather/sort;
-`tryprune.py`→`oxpinyin-kmm merge/validate/prune/export` and (since 2026-10-31 UTC) `oxpinyin-utils` `k_mixture_model_to_interpolation` +
+`generate.py`→`oxpinyin-utils gen_k_mixture_model` + `oxpinyin-train` rollover;
+`estimate.py`→`oxpinyin-utils estimate_k_mixture_model` + `oxpinyin-train` gather/sort;
+`tryprune.py`→`oxpinyin-utils merge/validate/prune/export_k_mixture_model` and (since 2026-10-31 UTC) `oxpinyin-utils` `k_mixture_model_to_interpolation` +
 `oxpinyin-train` top-N; `evaluate.py`→`oxpinyin-eval`. The six KMM C++ tools
 and `k_mixture_model.h` are reproduced in `oxpinyin-kmm` and verified
 line-by-line (`kmm-arithmetic-audit.md`).
@@ -103,8 +103,8 @@ None is on the main, word-recognition, or punctuation path.
    and the status-codec round-trip.
 4. **Env-gated oracle differentials**: against pin `eval_correction_rate`
    (`oxpinyin-eval`), pin `gen_/export_k_mixture_model` and
-   `k_mixture_model_to_interpolation` (`oxpinyin-kmm`), pin `ngseg`/`spseg`
-   (`ngseg`), and pin `estimate_interpolation` (`oxpinyin-lambda`).
+   `k_mixture_model_to_interpolation` (`oxpinyin-utils`), pin `ngseg`/`spseg`
+   (`oxpinyin-utils`), and pin `estimate_interpolation` (`oxpinyin-lambda`).
 
 ### Evidence levels
 
@@ -232,7 +232,7 @@ clean throughput/RAM benchmark still needs a *valid* large corpus. A quick
 smoke run over a 57 600-line synthetic corpus (the real fixture repeated) is
 not that: the pin's `gen_k_mixture_model` aborts on it (the repeated fixture
 concatenates into one document with W2-only tokens), while native
-`oxpinyin-kmm generate` completes in ~6 ms — a robustness data point (native
+`oxpinyin-utils gen_k_mixture_model` (then `oxpinyin-kmm generate`) completes in ~6 ms — a robustness data point (native
 does not abort on caller input), not a like-for-like throughput number. So no
 throughput/RAM claim is made here; proper profiling on a real corpus is Stage-2
 work (`ROADMAP.md`). The source policy's constraint ("time and space complexity

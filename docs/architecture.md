@@ -22,7 +22,7 @@
 | oxpinyin-utils | libpinyin's utilities under their own names and interfaces, through `oxpinyin-input`'s `tools` boundary (stage 5 of `docs/findings/external-io-boundary.md`): the table generators, `k_mixture_model_to_interpolation`, the segmentation trio, the storage trio and the five n-gram/interpolation utilities (`gen_unigram`, `gen_ngram`, `gen_deleted_ngram`, `estimate_interpolation`, `eval_correction_rate`). | forbid | Linux, macOS (needs GLib) | never |
 | oxpinyin-training | Backend-sensitive training modules: segment, counter, lambda, emitter and eval. The stage command line was retired; `oxpinyin-utils` carries the pin-named utilities, and the eval module is the decode behind `eval_correction_rate`. One backend selection covers all modules. | forbid | yes | never |
 | oxpinyin-testsupport | Shared fixture Dictionary/LanguageModel doubles, model20 cache locator and scorer suites. See test-support dependencies below. | forbid | yes | never |
-| oxpinyin-kmm | K-mixture pipeline: generate, estimate, merge, validate, prune, export and import. | forbid | yes | never |
+| oxpinyin-kmm | K-mixture-model operations on the pin's `FlexibleBigram` container: generate, estimate, merge, validate, prune, export and import; `oxpinyin-utils` carries the seven pin-named binaries. | forbid | yes | never |
 
 Both C-ABI facades consume `oxpinyin-facade`.
 It depends on core, engine, runtime and user.

@@ -68,8 +68,8 @@ storage backend and gives each platform's packages and settings for it.
 | Group | Crates |
 |---|---|
 | Engine / data / runtime / bindings | `oxpinyin-core`, `oxpinyin-chewing`, `oxpinyin-store`, `oxpinyin-data`, `oxpinyin-user`, `oxpinyin-engine`, `oxpinyin-facade`, `oxpinyin-runtime`, `oxpinyin-capi`, `oxpinyin-zhuyin-capi`, `oxpinyin-capi-marshal` |
-| Training toolchain (never ships) | `oxpinyin-training` (modules: `segment`, `counter`, `lambda`, `emitter`, `eval`; no command line of its own), `oxpinyin-kmm`, `oxpinyin-datagen` (the `fixtures/w3` `--mini` producer library; no `compile` command) |
-| Pin-named utilities (never ship) | `oxpinyin-utils` (`gen_pinyin_table`, `gen_zhuyin_table`, `k_mixture_model_to_interpolation`, `ngseg`, `spseg`, `mergeseq`, `gen_binary_files`, `import_interpolation`, `export_interpolation`, `gen_unigram`, `gen_ngram`, `gen_deleted_ngram`, `estimate_interpolation`, `eval_correction_rate`) |
+| Training toolchain (never ships) | `oxpinyin-training` (modules: `segment`, `counter`, `lambda`, `emitter`, `eval`; no command line of its own), `oxpinyin-kmm` (the KMM operations on the pin's flexible-bigram container), `oxpinyin-datagen` (the `fixtures/w3` `--mini` producer library; no `compile` command) |
+| Pin-named utilities (never ship) | `oxpinyin-utils` (`gen_pinyin_table`, `gen_zhuyin_table`, `k_mixture_model_to_interpolation`, `ngseg`, `spseg`, `mergeseq`, `gen_binary_files`, `import_interpolation`, `export_interpolation`, `gen_unigram`, `gen_ngram`, `gen_deleted_ngram`, `estimate_interpolation`, `eval_correction_rate`, `validate_k_mixture_model`, `merge_k_mixture_model`, `prune_k_mixture_model`, `estimate_k_mixture_model`, `import_k_mixture_model`, `export_k_mixture_model`, `gen_k_mixture_model`) |
 | Tools | `oxpinyin-dictool` |
 | Oracle / testing | `pinyin-oracle`, `oxpinyin-testsupport` |
 

@@ -467,9 +467,9 @@ jobs:
       - name: Provision tkrzw (built at the setup.sh revision and cached)
         uses: ./.github/actions/tkrzw
       # The default backend. The macOS job's exclusions, plus
-      # oxpinyin-utils: like the C facades it links GLib (through
-      # oxpinyin-input's `tools` boundary), which this lane does not
-      # provision; macOS installs GLib and tests it.
+      # oxpinyin-utils and oxpinyin-kmm: like the C facades they link GLib
+      # (through oxpinyin-input's `tools` boundary), which this lane does
+      # not provision; macOS installs GLib and tests them.
       # Clippy runs first, over the same set, so a lint in Windows-only
       # code fails here rather than nowhere.
       - name: Clippy (Windows)

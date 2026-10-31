@@ -279,7 +279,10 @@ parked.
   builds under `utils/` at pin `074a2219` — `segment/` (3), `storage/` (5)
   and `training/` (13) — in whichever crate each lives now:
   `oxpinyin-training` (`segment`, `counter`, `lambda`, `emitter`, `eval`),
-  `oxpinyin-kmm` and `oxpinyin-utils`. The trainer's
+  `oxpinyin-kmm` and `oxpinyin-utils`. The seven k-mixture-model
+  utilities are `oxpinyin-utils` binaries under the pin's names since
+  2026-10-31 UTC; `oxpinyin-kmm` is their operation layer on
+  `oxpinyin-store`'s `FlexibleBigram` container. The trainer's
   own Python scripts are **not** ported: the 2026-08-30 full-workflow
   scope below and its Python ports (`oxpinyin-corpus`, `oxpinyin-punct`,
   `oxpinyin-word`, the `train` orchestrator and the `evaluate.py` driver)
@@ -325,7 +328,8 @@ parked.
   (kept, correct, retitled); `estimate_interpolation`'s λ EM stays on the
   real path inside `evaluate.py`. The scope was
   decomposed as Parts B–H in the audit: `spseg`/`mergeseq`
-  (`oxpinyin-utils::segment`); the KMM pipeline (`oxpinyin-kmm`); the
+  (`oxpinyin-utils::segment`); the KMM pipeline (`oxpinyin-kmm`
+  operations and `oxpinyin-utils`' seven pin-named binaries); the
   evaluator (`oxpinyin-training::eval`, reusing the engine decoder); word recognition
   (`oxpinyin-word`); punctuation (`oxpinyin-punct`); native end-to-end
   orchestration.
