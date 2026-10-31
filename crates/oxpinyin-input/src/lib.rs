@@ -11,11 +11,13 @@
 //! C call answered.
 //!
 //! Stage 5's tool boundary ([`tool`], the `tools` feature) holds the pin
-//! utilities' locale, GLib option, C++ stream and text calls; the shipping
-//! libraries never enable it.
+//! utilities' locale, GLib option, input-stream and text calls, through the
+//! `libc` crate, `glib-sys` and `std::io` without a C or C++ shim
+//! (maintainer ruling 2026-10-31 UTC); the shipping libraries never enable
+//! it.
 //!
-//! Unsafe code is confined to the native modules; every block carries a
-//! `// SAFETY:` comment and no raw pointer leaves them.
+//! Unsafe code is confined to the native module and [`tool`]; every block
+//! carries a `// SAFETY:` comment and no raw pointer leaves them.
 
 #![deny(unsafe_code)]
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
@@ -28,8 +30,6 @@ pub mod diagnostic;
 mod native;
 #[cfg(feature = "tools")]
 #[allow(unsafe_code)]
-mod native_tool;
-#[cfg(feature = "tools")]
 pub mod tool;
 
 use std::ffi::CString;

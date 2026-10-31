@@ -25,19 +25,20 @@ missing_safety_doc = "deny"
 must_use_candidate = "warn"
 
 [features]
-# The pin utilities' boundary (stage 5): GLib option, text and C++ stream
-# calls. Tools only; it links GLib and the C++ runtime.
-tools = ["dep:pkg-config"]
+# The pin utilities' boundary (stage 5): their C library calls through
+# libc, GLib's option and text calls through glib-sys, and the C++ streams'
+# getline through std::io. Tools only; it links GLib.
+tools = ["dep:libc", "dep:glib-sys"]
 
 [dependencies]
+# Approved for this crate by the 2026-10-31 UTC maintainer ruling.
+libc = { workspace = true, optional = true }
+glib-sys = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile.workspace = true
 
 [build-dependencies]
 # Compiles native/config.c against the target's own <stdio.h> and
-# <locale.h> (the same requirement oxpinyin-store's shim build uses), and
-# with `tools` native/tool.c against GLib's headers and the C++ stream shim.
+# <locale.h> (the same requirement oxpinyin-store's shim build uses).
 cc = "1.4.3"
-# Finds GLib for the `tools` shim, as oxpinyin-store finds its backends.
-pkg-config = { version = "0.3.34", optional = true }

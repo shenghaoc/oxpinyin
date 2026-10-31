@@ -6,7 +6,7 @@ use oxpinyin_core::parse_zhuyin_direct;
 use oxpinyin_core::{ChewingKey, FORCE_TONE, USE_TONE};
 use oxpinyin_input::tool::gen_pinyin_table as common;
 use oxpinyin_input::tool::gen_zhuyin_table as edge;
-use oxpinyin_input::tool::{self, InputStream, OptionValue, OutputStream};
+use oxpinyin_input::tool::{self, LineReader, OptionValue, OutputStream};
 use std::ffi::{CString, OsString};
 
 /// `ZhuyinDirectParser2::parse` (:187-188; zhuyin_parser2.cpp:858-958).
@@ -34,20 +34,22 @@ fn parse_keys(bytes: &[u8]) -> Vec<ChewingKey> {
 /// `std::ifstream`, `getline`, `g_strsplit_set(..., " ", 3)`, then `atoi`
 /// before the field-count check (:140-164). No locale call in this main.
 fn feed_file(table: &mut Table, filename: &CString) {
-    let Some(mut input) = InputStream::open(filename).filter(InputStream::is_open) else {
+    let mut input = LineReader::open(filename);
+    if !input.is_open() {
         common::report_open_failed(filename);
-        tool::exit(tool::enoent());
-    };
-    while let Some(line) = input.getline() {
-        let fields = tool::strsplit_set(line.c_str(), c" ", 3);
+        tool::exit(tool::ENOENT);
+    }
+    while input.getline() {
+        let line = input.c_str();
+        let fields = tool::strsplit_set(line, c" ", 3);
         let Some(frequency) = fields.get(1) else {
-            edge::missing_frequency(line.c_str());
+            edge::missing_frequency(line);
             tool::exit(1);
         };
         let frequency =
             tool::atoi(&CString::new(frequency.clone()).unwrap_or_default()).cast_unsigned();
         let [phrase, _, pinyin] = fields.as_slice() else {
-            edge::wrong_line(line.c_str());
+            edge::wrong_line(line);
             continue;
         };
         let phrase = CString::new(phrase.clone()).unwrap_or_default();
@@ -65,7 +67,7 @@ fn feed_file(table: &mut Table, filename: &CString) {
 /// `main` (:101-138), with the pin's option strings (including "pinyin").
 pub fn main(args: impl IntoIterator<Item = OsString>) {
     let Ok(parsed) = tool::parse_options(c"- generate pinyin table", &entries(), args) else {
-        tool::exit(tool::einval());
+        tool::exit(tool::EINVAL);
     };
     let phrase_index = if let OptionValue::Int(value) = parsed.values[0] {
         value
@@ -85,7 +87,7 @@ pub fn main(args: impl IntoIterator<Item = OsString>) {
     let sorted = table.sorted();
     let Some(output) = OutputStream::open_write(&outputfile) else {
         common::report_write_failed(&outputfile);
-        tool::exit(tool::enoent());
+        tool::exit(tool::ENOENT);
     };
     sorted.write_with(
         &output,
