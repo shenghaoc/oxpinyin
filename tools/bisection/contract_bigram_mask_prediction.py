@@ -5,8 +5,8 @@ import hashlib
 import os
 from pathlib import Path
 
-from contract_abi import Arr, B, I, P, S, U, Z, row_of
-from contract_case_helpers import d18_bigram_db, d18_gram
+from contract_abi import Arr, B, I, P, S, U, Z, row_of, tokens_of
+from contract_case_helpers import _gram_bytes, _plant_user_grams, d18_bigram_db, d18_gram
 from contract_fixtures import _write_user_conf
 from contract_verdict import tkrzw_saved_bigram_bytes
 
@@ -154,7 +154,7 @@ def register(case, *, _craft_hash, crafted_bigram_context, index_file_rows):
         return {'ret': k.fn('choose_candidate', I, P, Z, P)(inst, 0, row)}
 
 
-    @case('abort-mask-out-short-bigram-value', abort=False)
+    @case('abort-mask-out-short-bigram-value', abort=False, sigabrt=True)
     def _(k):
         """Mask a profile whose token-one bigram value is three bytes long."""
         # The pin's `mask_out` loads the gram and `get_total_freq` asserts on
@@ -163,7 +163,7 @@ def register(case, *, _craft_hash, crafted_bigram_context, index_file_rows):
         return {'ret': k.fn('mask_out', B, P, U, U)(ctx, 0xFFFFFFFF, 0)}
 
 
-    @case('abort-zhuyin-mask-out-short-bigram-value', mode='zhuyin', abort=False)
+    @case('abort-zhuyin-mask-out-short-bigram-value', mode='zhuyin', abort=False, sigabrt=True)
     def _(k):
         """Run zhuyin mask_out with a three-byte bigram value under token one."""
         ctx = crafted_bigram_context(k, [(b'\x01\x00\x00\x00', b'\x07\x00\x00')])
@@ -232,6 +232,39 @@ def register(case, *, _craft_hash, crafted_bigram_context, index_file_rows):
         # `ngram_bdb.cpp:199` before any row is exported.
         ctx = crafted_bigram_context(k, [(b'\x00\x01', b'\x07\x00\x00\x00')])
         return {'ret': bool(k.fn('begin_get_bigram_phrases', P, P)(ctx))}
+
+
+    # Register row 85 on the export walk: the pin's begin reads no gram
+    # (`pinyin.cpp:775-787`); `has_next` loads each predecessor in
+    # `get_all_items` order and `retrieve_all` reads its total first
+    # (`:889`, `ngram.cpp:133-141`), so the walk dies at the short value
+    # (`memory_chunk.h:390`). Every row the pin builds before that goes
+    # through row 1's `g_strjoinv` over an unterminated `GPtrArray`
+    # (`pinyin.cpp:844-863`, class (b)), whose outcome is undefined, so no
+    # predecessor here is rendered: twelve whole grams whose one count (1)
+    # is under the export threshold (68, `pinyin.cpp:792-793`) are loaded
+    # and skipped in whatever order the backend walks them, and the short
+    # value aborts the walk with no row handed out. The probe asserts that
+    # begin answers an iterator, so a begin-time refusal differs; the rows
+    # handed out before the abort are held by the facade's walk test.
+    @case('abort-bigram-export-short-predecessor', abort=False, sigabrt=True, issues=('525',))
+    def _(k):
+        """Export bigrams over twelve sub-threshold whole predecessors and one three-byte value."""
+        texts = ('你', '好', '号', '我', '他', '是', '的', '在', '有', '人', '中', '大')
+        tokens = [tokens_of(k, text)[0] for text in texts]
+
+        def grams(_system, _users):
+            rows = [(prev, _gram_bytes(1, [(tokens[(n + 1) % len(tokens)], 1)]))
+                    for n, prev in enumerate(tokens)]
+            return rows + [(0x02001234, b'\x07\x00\x00')]
+
+        _plant_user_grams(k, [], grams)
+        it = k.fn('begin_get_bigram_phrases', P, P)(k.ctx)
+        assert it, 'begin reads no gram'
+        has = k.fn('bigram_iterator_has_next_phrase', B, P)
+        steps = [bool(has(it)) for _ in range(2)]
+        k.fn('end_get_bigram_phrases', None, P)(it)
+        return {'steps': steps}
 
 
     def issue677_sequence(k):

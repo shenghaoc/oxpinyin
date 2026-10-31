@@ -260,7 +260,7 @@ def register(case, *, predicted_bigram_context, token_reuse_files):
             TAIL_PHRASES, TAIL_READINGS))
 
 
-    @case('abort-guess-predicted-short-bigram-value', abort=False)
+    @case('abort-guess-predicted-short-bigram-value', abort=False, sigabrt=True)
     def _(k):
         """Predict after 我 with a three-byte value planted under each of its prefix tokens."""
         # `_compute_predicted_bigram_candidates` merges the three-byte gram and
