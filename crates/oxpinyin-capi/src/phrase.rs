@@ -246,22 +246,20 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[test]
-    fn read_after_check_emits_one_class_c_warning() {
-        let _logs = LogHandler::new();
-        let error = oxpinyin_engine::EngineError::ReadAfterCheck { token: 0x0100_0001 };
-        assert!(crate::sentence::refuse_lookup_gram(
-            "pinyin_phrase_segment",
-            &error
-        ));
-        LOGS.with(|logs| {
-            let logs = logs.borrow();
-            let logs = logs.as_ref().expect("capture active");
-            assert_eq!(logs.len(), 1);
-            assert_eq!(logs[0].0.as_deref(), Some("libpinyin"));
-            assert_eq!(logs[0].1, glib_sys::G_LOG_LEVEL_WARNING);
-            assert!(logs[0].2.contains("ngram_kyotodb.cpp:138-139"));
-        });
+    fn a_read_failure_after_the_size_check_aborts() {
+        // Kyoto Cabinet's `Bigram::load` asserts where the body read fails
+        // after `check` found the record (`ngram_kyotodb.cpp:136-137`). No
+        // differential can make a read fail after a successful check, so
+        // this death test holds the abort.
+        crate::test_support::assert_aborts(
+            "phrase::tests::a_read_failure_after_the_size_check_aborts",
+            || {
+                let error = oxpinyin_engine::EngineError::ReadAfterCheck { token: 0x0100_0001 };
+                crate::sentence::refuse_lookup_gram("pinyin_phrase_segment", &error);
+            },
+        );
     }
 
     #[test]

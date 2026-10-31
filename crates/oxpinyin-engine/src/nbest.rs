@@ -1398,7 +1398,7 @@ where
         let row = costs.rows.entry(prev).or_default();
         let traversal = match model
             .nbest_successors_in_row(&PhraseToken::new(prev), row)
-            .map_err(|error| EngineError::Scoring(ScoringError::LanguageModel(error.to_string())))?
+            .map_err(|error| EngineError::row_read(model, prev, &error))?
         {
             None => false,
             Some(NbestSuccessors::Miss) => true,
@@ -1556,7 +1556,7 @@ where
             },
             row,
         )
-        .map_err(|error| EngineError::Scoring(ScoringError::LanguageModel(error.to_string())))?;
+        .map_err(|error| EngineError::row_read(model, prev, &error))?;
     let pronunciation = entry.pronunciation.map_or(1.0, |(matched, total)| {
         if total == 0 {
             0.0

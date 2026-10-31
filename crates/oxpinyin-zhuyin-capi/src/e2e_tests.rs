@@ -720,3 +720,147 @@ fn mask_out_aborts_on_a_surviving_add() {
         let _ = crate::config::zhuyin_mask_out(context, 0xffff_ffff, 0x0100_0001);
     });
 }
+
+/// Register row 85: `zhuyin_mask_out` loads token 1's gram, which the mask
+/// leaves alone, and `SingleGram::mask_out` reads its total from three bytes
+/// (`ngram.cpp:80`, `memory_chunk.h:390`).
+#[cfg(unix)]
+#[test]
+fn mask_out_aborts_on_a_short_bigram_value() {
+    crate::test_support::assert_aborts(
+        "e2e_tests::mask_out_aborts_on_a_short_bigram_value",
+        || {
+            let user_dir = TempUserDir::new("mask-short-gram");
+            crate::test_support::plant_bigram(
+                &user_dir.path,
+                vec![(1_u32.to_le_bytes().to_vec(), vec![7, 0, 0])],
+            );
+            let context = init_at(&user_dir.path);
+            assert!(!context.is_null());
+            let _ = crate::config::zhuyin_mask_out(context, 0xffff_ffff, 0);
+        },
+    );
+}
+
+/// Row 85's control: a key the mask selects is removed without loading its
+/// value (`ngram_bdb.cpp:231-238`), and the mask completes.
+#[test]
+fn mask_out_of_a_selected_short_key_completes() {
+    let user_dir = TempUserDir::new("mask-short-gram-selected");
+    crate::test_support::plant_bigram(
+        &user_dir.path,
+        vec![(1_u32.to_le_bytes().to_vec(), vec![7, 0, 0])],
+    );
+    let context = init_at(&user_dir.path);
+    assert!(!context.is_null());
+    assert!(crate::config::zhuyin_mask_out(context, 0xffff_ffff, 1));
+    zhuyin_fini(context);
+}
+
+/// Whether a directory reads as a chunk on this host's temporary file
+/// system (register row 96); where it does not, a directory library is row
+/// 76's unmappable one (class (b)).
+#[cfg(unix)]
+fn directory_reads_as_a_chunk_here() -> bool {
+    let probe = tempfile::tempdir().expect("probe dir");
+    std::fs::write(probe.path().join("e".repeat(25)), b"x").expect("fill the probe");
+    oxpinyin_data::phrase_library::directory_reads_as_a_chunk(probe.path())
+}
+
+/// One call over a private system directory whose library is a directory
+/// (register row 96): init maps `merged.bin` (`zhuyin.cpp:199`), the save and
+/// the mask-out map it again (`:589`, `:800`), and the reload of the
+/// unloaded library 2 maps `gbk_char.bin` (`:200`).
+#[cfg(unix)]
+fn map_a_directory_library(site: &str) -> bool {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let system = crate::test_support::private_system(scratch.path());
+    let user = scratch.path().join("user");
+    std::fs::create_dir_all(&user).expect("user dir");
+    let system_c = cstr(system.to_str().expect("UTF-8 path"));
+    let user_c = cstr(user.to_str().expect("UTF-8 path"));
+    if site == "init" {
+        crate::test_support::directory_library(&system, "merged.bin");
+        return !zhuyin_init(system_c.as_ptr(), user_c.as_ptr()).is_null();
+    }
+    let context = zhuyin_init(system_c.as_ptr(), user_c.as_ptr());
+    assert!(!context.is_null());
+    match site {
+        "save" => {
+            // SAFETY: `context` is a live `zhuyin_init` handle, borrowed
+            // uniquely for this statement.
+            let ctx = unsafe { crate::state::context_mut(context) };
+            ctx.core.user.as_mut().expect("store").mark_modified();
+            crate::test_support::directory_library(&system, "merged.bin");
+            zhuyin_save(context)
+        }
+        "mask" => {
+            crate::test_support::directory_library(&system, "merged.bin");
+            crate::config::zhuyin_mask_out(context, 0xff00_0000, 0x0400_0000)
+        }
+        _ => {
+            assert!(crate::config::zhuyin_unload_phrase_library(context, 2));
+            crate::test_support::directory_library(&system, "gbk_char.bin");
+            crate::config::zhuyin_load_phrase_library(context, 2)
+        }
+    }
+}
+
+/// Register row 96 at init; row 76's NULL where a directory does not read
+/// as a chunk.
+#[cfg(unix)]
+#[test]
+fn init_aborts_on_a_directory_library() {
+    if directory_reads_as_a_chunk_here() {
+        crate::test_support::assert_aborts("e2e_tests::init_aborts_on_a_directory_library", || {
+            let _ = map_a_directory_library("init");
+        });
+    } else {
+        assert!(!map_a_directory_library("init"));
+    }
+}
+
+/// Register row 96 at save; row 76's completed save elsewhere.
+#[cfg(unix)]
+#[test]
+fn save_aborts_on_a_directory_library() {
+    if directory_reads_as_a_chunk_here() {
+        crate::test_support::assert_aborts("e2e_tests::save_aborts_on_a_directory_library", || {
+            let _ = map_a_directory_library("save");
+        });
+    } else {
+        assert!(map_a_directory_library("save"));
+    }
+}
+
+/// Register row 96 at mask-out, after the user tables are masked.
+#[cfg(unix)]
+#[test]
+fn mask_out_aborts_on_a_directory_library() {
+    if directory_reads_as_a_chunk_here() {
+        crate::test_support::assert_aborts(
+            "e2e_tests::mask_out_aborts_on_a_directory_library",
+            || {
+                let _ = map_a_directory_library("mask");
+            },
+        );
+    } else {
+        assert!(map_a_directory_library("mask"));
+    }
+}
+
+/// Register row 96 at the reload of an unloaded library.
+#[cfg(unix)]
+#[test]
+fn reload_aborts_on_a_directory_library() {
+    if directory_reads_as_a_chunk_here() {
+        crate::test_support::assert_aborts(
+            "e2e_tests::reload_aborts_on_a_directory_library",
+            || {
+                let _ = map_a_directory_library("reload");
+            },
+        );
+    } else {
+        assert!(map_a_directory_library("reload"));
+    }
+}

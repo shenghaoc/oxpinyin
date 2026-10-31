@@ -38,25 +38,25 @@ pub extern "C" fn zhuyin_guess_sentence(instance: *mut ZhuyinInstance) -> bool {
     }
 }
 
-/// The lookup refusals of register rows 85 and 98: a predecessor's user
-/// bigram that the pin's merge or read asserts on (`memory_chunk.h:390`)
-/// or reads past (`ngram.cpp:241`, `:167`, `:318-349`). Logs the one
-/// warning and answers `true` when `error` is one of them.
+/// The lookup faults of a predecessor's user bigram. A value too short for
+/// its total is the pin's assert in `get_total_freq` (`memory_chunk.h:390`,
+/// read by `merge_single_gram`, `ngram.cpp:303-304`, by `SingleGram::search`,
+/// `:165`, and by the `DYNAMIC_ADJUST` term, `pinyin.cpp:1848`,
+/// `zhuyin.cpp:1250`; register row 85): the process aborts. So does a Kyoto
+/// Cabinet read that fails after its size check, the pin's
+/// `check_result(vsiz == m_db->get(...))` in `Bigram::load`
+/// (`ngram_kyotodb.cpp:136-137`). A read past the value (`ngram.cpp:241`,
+/// `:167`, `:318-349`; register row 98, class (b)) logs the one warning, and
+/// the call answers `true` when `error` is that read.
 pub(crate) fn refuse_lookup_gram(name: &str, error: &oxpinyin_engine::EngineError) -> bool {
     let message = match error {
         // Register row 4, `pinyin_phrase3.h:152`: a table search of the
         // guess met a key path whose first initial-only key carries a tone.
         oxpinyin_engine::EngineError::TonedIncompleteKey => std::process::abort(),
-        oxpinyin_engine::EngineError::ShortLookupPredecessor { .. } => {
-            "a user bigram value is shorter than a guint32 total_freq \
-             (upstream aborts, memory_chunk.h:390)"
-        }
+        oxpinyin_engine::EngineError::ShortLookupPredecessor { .. }
+        | oxpinyin_engine::EngineError::ReadAfterCheck { .. } => std::process::abort(),
         oxpinyin_engine::EngineError::UnsafeLookupPredecessor { .. } => {
             "a user bigram value would be read past its end (upstream reads past it)"
-        }
-        oxpinyin_engine::EngineError::ReadAfterCheck { .. } => {
-            "a user bigram check found a value, then its read failed \
-             (upstream aborts, ngram_kyotodb.cpp:138-139)"
         }
         oxpinyin_engine::EngineError::CandidateIndexOutOfRange { .. }
         | oxpinyin_engine::EngineError::LookupOffsetPastSeparator { .. }

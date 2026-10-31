@@ -157,6 +157,12 @@ pub enum SaveBaseline {
     /// skip it and its file on disk stays as it is (074a2219
     /// `pinyin.cpp:928-933`, `:1032-1035`; `zhuyin.cpp:563-568`).
     Unloaded,
+    /// The library's system file is a directory whose header read
+    /// `MemoryChunk::mmap` asserts on at this point of the loop
+    /// (`pinyin.cpp:955`, `zhuyin.cpp:588`, `memory_chunk.h:493`; register
+    /// row 96): the save stops here, with the earlier libraries' `.tmp`
+    /// files written (and, for libzhuyin, renamed) and nothing else done.
+    ChunkHeaderRead,
 }
 
 impl SystemLibrary {
@@ -282,13 +288,27 @@ impl SystemLibrary {
 pub struct SystemOriginals {
     libraries: BTreeMap<u8, SystemLibrary>,
     layout: UserFileLayout,
+    /// The library init's loop stopped at (`memory_chunk.h:493`, register
+    /// row 96): the replay merges only the logs of the libraries before it.
+    stop: Option<u8>,
 }
 
 impl SystemOriginals {
     /// `libraries` under `layout`.
     #[must_use]
     pub const fn new(libraries: BTreeMap<u8, SystemLibrary>, layout: UserFileLayout) -> Self {
-        Self { libraries, layout }
+        Self {
+            libraries,
+            layout,
+            stop: None,
+        }
+    }
+
+    /// The library init's library loop asserted on while it mapped it
+    /// (`memory_chunk.h:493`), if any: no log at or after it is merged.
+    #[must_use]
+    pub const fn stop(&self) -> Option<u8> {
+        self.stop
     }
 
     /// The user dir's file layout.
@@ -345,7 +365,11 @@ pub fn system_originals(libraries: &PhraseLibraries, layout: UserFileLayout) -> 
             },
         );
     }
-    SystemOriginals::new(out, layout)
+    let mut originals = SystemOriginals::new(out, layout);
+    // The pin's loop asserted while it mapped this library
+    // (`memory_chunk.h:493`): the libraries after it were never reached.
+    originals.stop = libraries.chunk_header_fault();
+    originals
 }
 
 /// The user state, in the value shapes the file set carries.
@@ -451,6 +475,11 @@ pub enum PersistenceError {
         /// The underlying write error.
         source: std::io::Error,
     },
+    /// A system library's file, mapped again at the save's `_write_files`
+    /// position, is a directory whose header read `MemoryChunk::mmap`
+    /// asserts on (`memory_chunk.h:493`, register row 96): the save stops
+    /// there, as the pin dies there.
+    LibraryChunkHeaderRead,
     /// `user.conf` names a database format upstream's
     /// `to_table_database_format_type` does not know, where that function
     /// `abort()`s (`table_info.cpp:122-133`). The class-(c) answer: the
@@ -469,6 +498,11 @@ impl std::fmt::Display for PersistenceError {
                 f,
                 "user chunk header ({}): {source}",
                 field.assert_expression()
+            ),
+            Self::LibraryChunkHeaderRead => write!(
+                f,
+                "a system library is a directory whose chunk header cannot be read \
+                 (upstream asserts, memory_chunk.h:493)"
             ),
             Self::UnknownDatabaseFormat => write!(
                 f,
@@ -1406,6 +1440,12 @@ fn replay_logs(
 ) -> Result<(), JournalFault> {
     for (nibble, file) in originals.layout().system_logs() {
         let nibble = *nibble;
+        // Init's loop maps each library before it merges its log
+        // (`pinyin.cpp:255`, `:276`); at the library whose mapping asserts
+        // (`memory_chunk.h:493`) the pin dies, so no later log is merged.
+        if originals.stop.is_some_and(|stop| nibble >= stop) {
+            break;
+        }
         if only_originals && !originals.contains_key(&nibble) {
             continue;
         }
@@ -2105,6 +2145,12 @@ fn stage_rest<B: FnMut(u8) -> SaveBaseline>(
             if matches!(baseline, Some(SaveBaseline::Unloaded)) {
                 staged.unloaded.push(nibble);
                 continue;
+            }
+            // Register row 96: the pin's `MemoryChunk::mmap` asserts here,
+            // after the earlier libraries' files were written (libzhuyin
+            // renamed each as it went).
+            if matches!(baseline, Some(SaveBaseline::ChunkHeaderRead)) {
+                return Err(PersistenceError::LibraryChunkHeaderRead);
             }
             let bytes = match kind {
                 LibraryFile::User => {

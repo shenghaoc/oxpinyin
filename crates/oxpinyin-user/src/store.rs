@@ -162,6 +162,12 @@ pub enum UserStoreError {
     /// SIGABRT. The class-(c) answer: the save fails, and the facade logs
     /// the point in its own domain.
     ChunkHeaderWrite(ChunkHeaderField),
+    /// A loaded system library's file, mapped again where the save's
+    /// library loop reaches it, is a directory whose header read the pin's
+    /// `MemoryChunk::mmap` asserts on (`pinyin.cpp:955`, `zhuyin.cpp:588`,
+    /// `memory_chunk.h:493`; register row 96). The save stopped there with
+    /// the earlier libraries' files written; the C adapters abort.
+    LibraryChunkHeaderRead,
     /// The unigram add of an accepted predicted candidate overflowed its
     /// library's `guint32` total: `FacadePhraseIndex::add_unigram_frequency`
     /// answers `ERROR_INTEGER_OVERFLOW` and `pinyin_choose_predicted_candidate`
@@ -181,12 +187,17 @@ pub enum UserStoreError {
     /// `pinyin_begin_get_bigram_phrases` both drive that walk. The
     /// class-(c) answer: the walk fails.
     NonTokenUserBigramKey,
-    /// A `user_bigram.db` value is shorter than a `guint32`, or has an
-    /// incomplete eight-byte item after that total. The pin asserts on
-    /// the missing total (`memory_chunk.h:390`) and reads past a partial
-    /// item in `mask_out` (`ngram.cpp:76-86`). The mask and removal
-    /// facades report either cause through one malformed-value warning.
+    /// A `user_bigram.db` value is shorter than a `guint32` `total_freq`:
+    /// the pin's `get_total_freq` asserts on it (`memory_chunk.h:390`,
+    /// through `ngram.cpp:49`; register row 85). Returned where the pin's
+    /// walk reads that total; the C adapters abort on it.
     ShortUserBigramValue,
+    /// A `user_bigram.db` value has an incomplete eight-byte item after
+    /// its total: the pin's `cur != end` walks read past it
+    /// (`ngram.cpp:76-86`, `:190`, `:241`, `:261`; register rows 98 and
+    /// 100, class (b)). The mask, removal and predicted-training facades
+    /// refuse it with one warning.
+    PartialUserBigramTail,
     /// A `user_bigram.db` row decodes to a gram with no items and a
     /// nonzero `total_freq`: `SingleGram::get_length` asserts
     /// `0 == total_freq` (`ngram.cpp:70`), reached by
@@ -207,8 +218,8 @@ pub enum UserStoreError {
     /// A training step's `set_freq` misses the item its `insert_freq` just
     /// added: on an unsorted gram the second `lower_bound` can land past
     /// it, and the pin's `check_result(user->set_freq(token, freq + seed))`
-    /// dies (`phonetic_lookup.h:903`, `ngram.cpp:252-271`). The class-(c)
-    /// answer: the training refuses before anything is stored.
+    /// dies (`phonetic_lookup.h:903`, `ngram.cpp:252-271`; register row
+    /// 85). Returned before anything is stored; the C adapters abort.
     TrainingSetFreqMiss,
 }
 
@@ -241,6 +252,11 @@ impl fmt::Display for UserStoreError {
                  memory_chunk.h:543/547)",
                 field.assert_expression()
             ),
+            Self::LibraryChunkHeaderRead => write!(
+                f,
+                "a system library is a directory whose chunk header cannot be read \
+                 (upstream asserts, memory_chunk.h:493)"
+            ),
             Self::UnigramTotalOverflow => write!(
                 f,
                 "unigram total overflow (upstream ERROR_INTEGER_OVERFLOW, pinyin.cpp:2609-2612)"
@@ -256,8 +272,13 @@ impl fmt::Display for UserStoreError {
             ),
             Self::ShortUserBigramValue => write!(
                 f,
-                "malformed user bigram value (upstream asserts on a missing total or reads \
-                 past a partial item; memory_chunk.h:390, ngram.cpp:76-86)"
+                "user bigram value shorter than a guint32 total_freq (upstream asserts, \
+                 memory_chunk.h:390)"
+            ),
+            Self::PartialUserBigramTail => write!(
+                f,
+                "user bigram value with a partial item tail (upstream reads past it, \
+                 ngram.cpp:76-86)"
             ),
             Self::EmptyUserBigramGram => write!(
                 f,
@@ -291,10 +312,12 @@ impl std::error::Error for UserStoreError {
             | Self::Persistence(_)
             | Self::UnknownDatabaseFormat
             | Self::ChunkHeaderWrite(_)
+            | Self::LibraryChunkHeaderRead
             | Self::UnigramTotalOverflow
             | Self::OverlongIndexKey
             | Self::NonTokenUserBigramKey
             | Self::ShortUserBigramValue
+            | Self::PartialUserBigramTail
             | Self::EmptyUserBigramGram
             | Self::ResidualUserBigramGram
             | Self::TrainingSetFreqMiss => None,
@@ -1186,8 +1209,11 @@ fn gram_mask_fault(
         let Some(mut gram) = grams.get(prev)? else {
             continue;
         };
-        if gram.len() < single_gram::TOTAL_LEN || has_partial_tail(&gram) {
+        if gram.len() < single_gram::TOTAL_LEN {
             return Ok(Some(UserStoreError::ShortUserBigramValue));
+        }
+        if has_partial_tail(&gram) {
+            return Ok(Some(UserStoreError::PartialUserBigramTail));
         }
         if single_gram::mask_out(&mut gram, mask, value) > 0
             && single_gram::get_length(&gram) == 0
@@ -1720,8 +1746,9 @@ impl<S: WriteStore> GenericUserStore<S> {
     ///
     /// # Errors
     ///
-    /// [`UserStoreError::ShortUserBigramValue`] for a short value or a
-    /// partial tail, [`UserStoreError::TrainingSetFreqMiss`] for the miss,
+    /// [`UserStoreError::ShortUserBigramValue`] for a short value,
+    /// [`UserStoreError::PartialUserBigramTail`] for a partial tail,
+    /// [`UserStoreError::TrainingSetFreqMiss`] for the miss,
     /// or the store's read error.
     pub fn check_training_step(&mut self, prev: Token, cur: Token) -> Result<(), UserStoreError> {
         let row = match self.training.grams.get(&prev) {
@@ -1735,7 +1762,7 @@ impl<S: WriteStore> GenericUserStore<S> {
             }
             if has_partial_tail(gram) {
                 self.training.fault = Some(TrainingFault::PartialTail(prev));
-                return Err(UserStoreError::ShortUserBigramValue);
+                return Err(UserStoreError::PartialUserBigramTail);
             }
         }
         match trained_gram(row.clone(), cur) {
@@ -2452,8 +2479,9 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// # Errors
     ///
     /// Returns [`UserStoreError`] when the observation cannot be committed,
-    /// or [`UserStoreError::ShortUserBigramValue`] when `last`'s stored
-    /// value is too short for its total (register row 85) or has a partial
+    /// [`UserStoreError::ShortUserBigramValue`] when `last`'s stored
+    /// value is too short for its total (register row 85, the pin's abort),
+    /// or [`UserStoreError::PartialUserBigramTail`] when it has a partial
     /// item tail (register row 100); nothing changes then.
     pub fn observe_selection(&mut self, last: Token, cur: Token) -> Result<u64, UserStoreError> {
         let seed = self.update(last, cur, SeedPolicy::Training)?;
@@ -2637,14 +2665,31 @@ impl<S: WriteStore> GenericUserStore<S> {
         self.flush_system_unigrams()?;
         let db = self.database();
         let row = self.gram_in(&db, last)?;
-        // Refuse before anything changes: the pin asserts on a total it
-        // cannot read (`memory_chunk.h:390`, register row 85) and its
-        // `get_freq`/`insert_freq`/`set_freq` walks read past a partial
-        // item (`ngram.cpp:190`, `:241`, `:261`, register row 100).
+        // Class (b), register row 100: the pin's `get_freq`/`insert_freq`/
+        // `set_freq` walks read past a partial item (`ngram.cpp:190`,
+        // `:241`, `:261`); refused before anything changes.
+        if row.as_deref().is_some_and(has_partial_tail) {
+            return Err(UserStoreError::PartialUserBigramTail);
+        }
+        // Register row 85: the pin asserts on a total it cannot read
+        // (`memory_chunk.h:390`). Training reads it first
+        // (`phonetic_lookup.h:884`); an accepted predicted candidate reads it
+        // after its unigram add, whose overflow returns `false` before the
+        // bigram is loaded (`pinyin.cpp:2609-2630`). The add is in memory
+        // and dies with the pin.
         if row
             .as_deref()
-            .is_some_and(|gram| gram.len() < single_gram::TOTAL_LEN || has_partial_tail(gram))
+            .is_some_and(|gram| gram.len() < single_gram::TOTAL_LEN)
         {
+            if matches!(policy, SeedPolicy::Predicted) {
+                let delta =
+                    u32::try_from(seed::unigram_delta(seed::predicted_seed())).unwrap_or(u32::MAX);
+                let accepted = db.write(|txn| self.arena_add_unigram(txn, cur, delta))?;
+                self.mark_committed_write(db, true);
+                if !accepted {
+                    return Err(UserStoreError::UnigramTotalOverflow);
+                }
+            }
             return Err(UserStoreError::ShortUserBigramValue);
         }
         let (seed, gram) = match policy {

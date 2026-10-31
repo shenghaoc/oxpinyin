@@ -34,9 +34,10 @@ pub enum SaveOutcome {
     ChunkWriteFailed(ChunkHeaderField),
     /// A loaded system library's file is a directory the pin maps again and
     /// asserts on (`memory_chunk.h:493`, `_write_files`' diff of each system
-    /// library, `pinyin.cpp:956`, `zhuyin.cpp:589`); the pin dies of SIGABRT
-    /// before it writes anything. The C ABI answers `false` and the facade
-    /// logs exactly one warning in its own domain.
+    /// library, `pinyin.cpp:955`, `zhuyin.cpp:588`; register row 96). The
+    /// save stopped at that library, with the earlier libraries' `.tmp`
+    /// files written and, for libzhuyin, renamed, as the pin leaves them.
+    /// The C adapters abort.
     ChunkHeaderRead,
 }
 
@@ -73,11 +74,16 @@ pub enum MaskOutOutcome {
     /// warning.
     NonTokenUserBigramKey,
     /// The user bigram carried a value shorter than a `guint32`
-    /// `total_freq`, or a partial eight-byte item tail. The pin's
-    /// `get_total_freq` asserts on the former (`memory_chunk.h:390`);
-    /// `SingleGram::mask_out` reads past the latter (`ngram.cpp:76-86`).
-    /// The C ABI answers `false` and logs one warning.
+    /// `total_freq` under a key the mask leaves to be loaded: the pin's
+    /// `SingleGram::mask_out` asserts in `get_total_freq`
+    /// (`memory_chunk.h:390`, `ngram.cpp:80`; register row 85). The C
+    /// adapters abort.
     ShortUserBigramValue,
+    /// The user bigram carried a partial eight-byte item tail under a key
+    /// the mask leaves to be loaded: `SingleGram::mask_out` reads past it
+    /// (`ngram.cpp:76-86`, register row 98, class (b)). The C ABI answers
+    /// `false` and logs one warning.
+    PartialUserBigramTail,
     /// Masking the user bigram removed every item of a gram whose total
     /// its items did not cover, leaving a residual `total_freq`; the pin's
     /// `get_length` asserts (`ngram.cpp:70`, from `Bigram::mask_out`,
@@ -86,7 +92,8 @@ pub enum MaskOutOutcome {
     ResidualUserBigramGram,
     /// A loaded system library's file is a directory the pin reloads and
     /// asserts on (`memory_chunk.h:493`, `pinyin.cpp:1265`,
-    /// `zhuyin.cpp:800`). The C ABI answers `false` and logs one warning.
+    /// `zhuyin.cpp:799`; register row 96), after the user tables were masked
+    /// and the libraries before it reloaded. The C adapters abort.
     ChunkHeaderRead,
     /// A loaded system library's user `.dbin`, reloaded through
     /// `merge_with_mask` after the user tables were masked, reached a pin
@@ -478,27 +485,35 @@ impl ContextCore {
         // `zhuyin.cpp:554`); the failed empty sub-index's local total
         // becomes zero, while the facade aggregate already excludes it.
         let compacted = self.compact_layout_failed();
-        // `_write_files` maps every loaded system library again to diff it
-        // against the live one (`pinyin.cpp:956`, `zhuyin.cpp:589`), before
-        // it writes anything. A library that is a directory the pin asserts
-        // on kills it there (`memory_chunk.h:493`). The lines go on the
-        // stream the save's rename and marker lines use.
-        if self.check_system_libraries(None) {
-            return SaveOutcome::ChunkHeaderRead;
-        }
         let runtime = self.runtime.as_ref();
         let Some(store) = self.user.as_mut() else {
             return SaveOutcome::NotSaved;
         };
+        // `_write_files` maps each loaded system library again, in the
+        // library loop, to diff it against the live one (`pinyin.cpp:955`,
+        // `zhuyin.cpp:588`), after the earlier libraries' files are written.
+        // A file `MemoryChunk::mmap` refuses gets its `mmap %s failed!` line
+        // there (row 76), on the stream the save's rename and marker lines
+        // use. A library that is a directory the pin asserts on
+        // (`memory_chunk.h:493`, register row 96) stops the save there.
         let baseline = |nibble: u8| -> oxpinyin_user::SaveBaseline {
             let Some(runtime) = runtime else {
                 return oxpinyin_user::SaveBaseline::Keep;
             };
             match runtime.save_disk_baseline(nibble) {
                 Ok(baseline) => baseline,
-                Err(fault) => oxpinyin_user::SaveBaseline::Changed(
-                    oxpinyin_user::SystemLibrary::failed(fault.total_freq),
-                ),
+                Err(oxpinyin_runtime::SaveRemapFault::Layout(fault)) => {
+                    oxpinyin_user::SaveBaseline::Changed(oxpinyin_user::SystemLibrary::failed(
+                        fault.total_freq,
+                    ))
+                }
+                Err(oxpinyin_runtime::SaveRemapFault::Unmappable(path)) => {
+                    c_stderr::mmap_failed(&path);
+                    oxpinyin_user::SaveBaseline::Keep
+                }
+                Err(oxpinyin_runtime::SaveRemapFault::ChunkHeaderRead) => {
+                    oxpinyin_user::SaveBaseline::ChunkHeaderRead
+                }
             }
         };
         let report = match store.save_reporting_with_baseline(&compacted, baseline) {
@@ -506,6 +521,7 @@ impl ContextCore {
             Err(UserStoreError::ChunkHeaderWrite(field)) => {
                 return SaveOutcome::ChunkWriteFailed(field);
             }
+            Err(UserStoreError::LibraryChunkHeaderRead) => return SaveOutcome::ChunkHeaderRead,
             Err(_) => return SaveOutcome::NotSaved,
         };
         // Each failed rename's `rename %s to %s failed.` line and a failed
@@ -564,8 +580,11 @@ impl ContextCore {
     /// pin assertion a log reaches answers [`MaskOutOutcome::Journal`], after
     /// the user tables were masked and the libraries before it reloaded.
     pub fn mask_out(&mut self, mask: u32, value: u32) -> MaskOutOutcome {
-        if self.check_system_libraries(None) {
-            return MaskOutOutcome::ChunkHeaderRead;
+        if self.user.is_none() {
+            if self.check_system_libraries(None) {
+                return MaskOutOutcome::ChunkHeaderRead;
+            }
+            return MaskOutOutcome::Done(false);
         }
         let Some(store) = self.user.as_mut() else {
             return MaskOutOutcome::Done(false);
@@ -581,6 +600,9 @@ impl ContextCore {
             Err(UserStoreError::ShortUserBigramValue) => {
                 return MaskOutOutcome::ShortUserBigramValue;
             }
+            Err(UserStoreError::PartialUserBigramTail) => {
+                return MaskOutOutcome::PartialUserBigramTail;
+            }
             Err(UserStoreError::ResidualUserBigramGram) => {
                 return MaskOutOutcome::ResidualUserBigramGram;
             }
@@ -591,10 +613,32 @@ impl ContextCore {
         // skips a sub-index `get_range` reports missing (074a2219
         // pinyin.cpp:1234-1291, zhuyin.cpp:769-826), which the runtime's
         // remap leaves out. The separate phrase table is retained.
+        //
+        // Each library is mapped (`pinyin.cpp:1264`, its `mmap %s failed!`
+        // line written there) before its log is merged; a library that is a
+        // directory the pin asserts on (`memory_chunk.h:493`, register row
+        // 96) ends the loop after the libraries before it were mapped and
+        // merged, and a merge of theirs that asserts comes first.
         if let Some(runtime) = self.runtime.as_ref() {
-            let originals = runtime.reload_system_libraries();
-            if let Err(fault) = store.reload_system_libraries(originals, mask, value) {
+            let remap = runtime.reload_system_libraries();
+            let replay = store.reload_system_libraries(remap.originals, mask, value);
+            // The loop writes each unmappable library's line when it reaches
+            // it, and dies at the first library whose merge asserts (through
+            // it) or that is a directory (before it).
+            let stop = match &replay {
+                Err(fault) => Some((fault.library(), true)),
+                Ok(()) => remap.header_fault.map(|index| (index, false)),
+            };
+            for (index, path) in &remap.unmappable {
+                if stop.is_none_or(|(at, through)| *index < at || (through && *index == at)) {
+                    c_stderr::mmap_failed(path);
+                }
+            }
+            if let Err(fault) = replay {
                 return MaskOutOutcome::Journal(fault);
+            }
+            if remap.header_fault.is_some() {
+                return MaskOutOutcome::ChunkHeaderRead;
             }
             // The mask ends with a compact (`pinyin.cpp:1294`,
             // `zhuyin.cpp:829`); the failed empty sub-index's local

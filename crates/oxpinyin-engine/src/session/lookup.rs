@@ -1060,9 +1060,10 @@ where
         let Some(prev) = self.previous_token(offset) else {
             return Ok(None);
         };
-        let gram = self.model.merged_successors(&prev).map_err(|error| {
-            EngineError::Scoring(ScoringError::LanguageModel(error.to_string()))
-        })?;
+        let gram = self
+            .model
+            .merged_successors(&prev)
+            .map_err(|error| EngineError::row_read(&self.model, prev.value(), &error))?;
         if let Some(fault) = gram.as_ref().and_then(MergedGram::fault) {
             if !gate {
                 return Ok(None);

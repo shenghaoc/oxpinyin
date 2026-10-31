@@ -12,9 +12,9 @@
 //!
 //! ## Panic discipline
 //!
-//! Panics follow constitution §4's pin-matched failure policy; existing
-//! class (b)/(c) rulings remain authoritative, including class (c)'s
-//! `false`/`Err` plus exactly one warning. The library crates on this
+//! Panics follow constitution §4's pin-matched failure policy; class (b)
+//! rulings remain authoritative, and where the pin asserts or aborts this
+//! crate calls `std::process::abort()` (class (c) retired 2026-10-31 UTC). The library crates on this
 //! facade's path (`oxpinyin-core`, `-data`, `-store`, `-engine`, `-facade`,
 //! `-runtime`, `-user` and this crate) deny `clippy::unwrap_used`/
 //! `expect_used`/`panic`/`panic_in_result_fn` outside tests —

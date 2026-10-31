@@ -272,7 +272,10 @@ pub extern "C" fn pinyin_remove_user_candidate(
     };
     match user.remove_user_phrase(token.value()) {
         Ok(true) => true,
-        Err(oxpinyin_user::UserStoreError::ShortUserBigramValue) => {
+        // Class (b), register row 98: the call's `user_bigram->mask_out`
+        // (`pinyin.cpp:3766`) would read past a partial item tail
+        // (`ngram.cpp:76-86`). One warning, as before.
+        Err(oxpinyin_user::UserStoreError::PartialUserBigramTail) => {
             crate::ffi::log_warning(
                 "pinyin_remove_user_candidate: malformed user bigram value \
                  (upstream asserts on a missing total or reads past a partial item; \
@@ -286,12 +289,14 @@ pub extern "C" fn pinyin_remove_user_candidate(
         // matching `assert(ERROR_OK == retval)` (`pinyin.cpp:3743`,
         // `:3750`, `:3759`).
         Ok(false) => std::process::abort(),
-        // Register rows 86 and 87: the call reached `user_bigram->mask_out`
-        // (`pinyin.cpp:3766`) over a key that is not a token
-        // (`ngram_bdb.cpp:199`) or a gram the mask leaves with a residual
+        // Register rows 85, 86 and 87: the call reached
+        // `user_bigram->mask_out` (`pinyin.cpp:3766`) over a key that is not
+        // a token (`ngram_bdb.cpp:199`), a gram too short for its total
+        // (`memory_chunk.h:390`) or a gram the mask leaves with a residual
         // total (`ngram.cpp:70`), and the pin's assert dies.
         Err(
             oxpinyin_user::UserStoreError::NonTokenUserBigramKey
+            | oxpinyin_user::UserStoreError::ShortUserBigramValue
             | oxpinyin_user::UserStoreError::ResidualUserBigramGram,
         ) => std::process::abort(),
         // A store failure the pin has no counterpart for.
@@ -677,19 +682,19 @@ pub extern "C" fn pinyin_choose_predicted_candidate(
     } else {
         match user.observe_predicted(last, token.value()) {
             Ok(_) => true,
-            // `pinyin.cpp:2630-2633` loads the predecessor's gram. One too
-            // short for its total is the pin's assert in `get_total_freq`
-            // (`memory_chunk.h:390`, class (c), register row 85); a partial
-            // item tail is read past by `get_freq`/`insert_freq`
-            // (`ngram.cpp:241`, `:190`, class (b), row 100). Nothing changed.
-            Err(oxpinyin_user::UserStoreError::ShortUserBigramValue) => {
-                crate::ffi::log_warning(if user.has_short_bigram_value_for(last) {
-                    "pinyin_choose_predicted_candidate: a user bigram value is shorter than \
-                     a guint32 total_freq (upstream aborts, memory_chunk.h:390)"
-                } else {
+            // Register row 85, `pinyin.cpp:2630` through `memory_chunk.h:390`:
+            // after the in-memory unigram add (`:2609-2612`) the pin loads
+            // the predecessor's gram, one too short for its total, and
+            // `get_total_freq`'s assert dies.
+            Err(oxpinyin_user::UserStoreError::ShortUserBigramValue) => std::process::abort(),
+            // Class (b), register row 100: a partial item tail is read past
+            // by `get_freq`/`insert_freq` (`ngram.cpp:241`, `:190`). Nothing
+            // changed; one warning, as before.
+            Err(oxpinyin_user::UserStoreError::PartialUserBigramTail) => {
+                crate::ffi::log_warning(
                     "pinyin_choose_predicted_candidate: a user bigram value has a partial \
-                     item tail (upstream reads past it, ngram.cpp:190)"
-                });
+                     item tail (upstream reads past it, ngram.cpp:190)",
+                );
                 false
             }
             Err(_) => false,
@@ -739,8 +744,10 @@ fn previous_token(inst: &CapiInstance) -> u32 {
 /// (`pinyin.cpp:2684`), a forced phrase that no longer matches the decoded
 /// result (`phonetic_lookup.h:868`) and a span outside the current matrix
 /// (`storage/phonetic_key_matrix.cpp:661`, `:663`, `:664`) are the pin's
-/// asserts, and the process aborts there before anything is observed
-/// (register rows 6, 38 and 82).
+/// asserts, and so are a predecessor's gram too short for its total
+/// (`phonetic_lookup.h:884`) and a `set_freq` that misses the item its
+/// `insert_freq` added (`:903`): the process aborts there before anything is
+/// observed (register rows 6, 38, 82 and 85).
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_train(instance: *mut PinyinInstance, index: u8) -> bool {
     if instance.is_null() {
@@ -758,10 +765,18 @@ pub extern "C" fn pinyin_train(instance: *mut PinyinInstance, index: u8) -> bool
         // `storage/phonetic_key_matrix.cpp:661`/`:663`/`:664` (a re-parse
         // shortened the input under that result, so the walk leaves the
         // current matrix).
+        //
+        // Register row 85: `phonetic_lookup.h:884` through
+        // `memory_chunk.h:390` (a predecessor's gram too short for its
+        // total) and `phonetic_lookup.h:903` (on an unsorted gram the step's
+        // `set_freq` misses the item its `insert_freq` added). What the
+        // earlier steps changed is in memory.
         Err(
             oxpinyin_engine::EngineError::CandidateIndexOutOfRange { .. }
             | oxpinyin_engine::EngineError::StaleTrainingConstraint { .. }
-            | oxpinyin_engine::EngineError::StaleTrainingSpan { .. },
+            | oxpinyin_engine::EngineError::StaleTrainingSpan { .. }
+            | oxpinyin_engine::EngineError::ShortTrainingPredecessor { .. }
+            | oxpinyin_engine::EngineError::TrainingSetFreqMiss { .. },
         ) => std::process::abort(),
         // Class (b), `ngram.cpp:190`, `:241`, `:261`: training would
         // load a predecessor whose value has a partial item tail, which the
@@ -770,25 +785,6 @@ pub extern "C" fn pinyin_train(instance: *mut PinyinInstance, index: u8) -> bool
             crate::ffi::log_warning(
                 "pinyin_train: a user bigram value has a partial item tail \
                  (upstream reads past it, ngram.cpp:190)",
-            );
-            false
-        }
-        // Class (c), `phonetic_lookup.h:884` through `memory_chunk.h:390`
-        // (register row 85): training would read the total of a
-        // predecessor's gram too short to hold one. Nothing changed.
-        Err(oxpinyin_engine::EngineError::ShortTrainingPredecessor { .. }) => {
-            crate::ffi::log_warning(
-                "pinyin_train: a user bigram value is shorter than a guint32 total_freq \
-                 (upstream aborts, memory_chunk.h:390)",
-            );
-            false
-        }
-        // Class (c), `phonetic_lookup.h:903` (register row 85): on an
-        // unsorted user gram the step's `set_freq` misses the item its
-        // `insert_freq` added. Nothing changed.
-        Err(oxpinyin_engine::EngineError::TrainingSetFreqMiss { .. }) => {
-            crate::ffi::log_warning(
-                "pinyin_train: assertion 'user->set_freq(token, freq + seed)' failed",
             );
             false
         }

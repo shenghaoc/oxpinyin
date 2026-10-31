@@ -18,9 +18,8 @@
 //! Where the pin asserts (`pinyin.cpp:3311`, `:3353`, `:3410`, `:3467`,
 //! `:3545`: a column without a key at an offset the loop reads) or aborts
 //! (`:3488`: a double-pinyin cursor three or more bytes into a key) the
-//! renderers return `None` and the entry points answer `false` with an
-//! empty string, the no-abort policy. Those sites are logged by the later
-//! class (c) change, not here.
+//! renderers return `None`, and the entry points abort the process before
+//! rendering where the pin does (register row 63, `text.rs`).
 
 use oxpinyin_core::ChewingKey;
 use oxpinyin_facade::KeyAt;
