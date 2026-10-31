@@ -147,7 +147,9 @@ tests to discover its behavior.
 Pin: `pinyin.cpp:698-768,822-865,3295-3379,3381-3576`;
 `storage/punct_table.cpp:74-94`; full `g_strdup`, `g_free`, `g_string_*`
 and vector membership in the inventory TSV.
-Rust: `capi/src/ffi.rs`, `owned_cstr`/`owned_cstr_list`;
+Rust: `capi/src/ffi.rs`, the pin's `g_strdup`/`g_strdup_printf`/`g_strconcat`/
+`g_strjoinv`/`g_ptr_array_*` calls since 2026-10-31 UTC (#1227,
+[record](returned-string-allocation.md); before, `owned_cstr`/`owned_cstr_list`);
 `capi/src/aux_matrix.rs`, `SharedMatrix::{prefix,postfix,full,double,chewing}`
 and `split_zhuyin`; `capi/src/text.rs`, `chewing_aux_text`;
 `capi/src/iterators.rs` export getters; `capi/src/predict.rs`,
@@ -416,7 +418,9 @@ Rust: both facades' `ffi.rs::log_warning`/`log_critical` and
 
 Pin: `pinyin.cpp:2805,2817`; `zhuyin.cpp:1797,1809`;
 `pinyin.cpp:1452,1459,1644`; `lookup/lookup.cpp:54-65`; complete allocation
-sites in TSV. Rust: both `ffi.rs::owned_cstr`/`owned_cstr_list`, `dict.rs`
+sites in TSV. Rust: both `ffi.rs` returned-string helpers (the pin's GLib
+calls since 2026-10-31 UTC, #1227, [record](returned-string-allocation.md);
+the fallible `malloc_cstr_with` for the `g_ucs4_to_utf8` sites), `dict.rs`
 GLib array writers, `phrase.rs::segment_text`; ownership slots in
 `libpinyin.alloc`/`libzhuyin.alloc` (under their C facade crates).
 
