@@ -25,7 +25,7 @@ class CaseSpecTests(unittest.TestCase):
             fn=None, mode='pinyin', control=False, abort=NO_ABORT, stderr=False, crash=None, userdir=False,
             cells=('bdb', 'kc', 'tkrzw'), either=False, host_scanf=(), dir_chunk=None, stderr_varies=False,
             abort_logs=None, fatal=False, both_abort=False, strjoinv_over_read=False, issues=(),
-            policy_record=None, case_id=None, pin_not_run=None))
+            policy_record=None, case_id=None, pin_not_run=None, sigabrt=False))
 
     def test_crash_enables_stderr_and_sequences_become_tuples(self):
         spec = registry.case_spec(crash={'ret': 0}, host_scanf=['1e'], issues=['#532', ' Row 54', 'W11'])
@@ -60,7 +60,8 @@ class RegisterTests(unittest.TestCase):
                    dict(dir_chunk='other', abort=0), dict(dir_chunk='user'),
                    dict(pin_not_run={}, stderr=True), dict(pin_not_run={}, policy_record='r.md'),
                    dict(policy_record='r.md', host_scanf=('1e',)), dict(policy_record='r.md', crash={}),
-                   dict(policy_record='r.md', fatal=True, both_abort=True))
+                   dict(policy_record='r.md', fatal=True, both_abort=True), dict(sigabrt=True),
+                   dict(sigabrt=True, abort=0, abort_logs=[]), dict(sigabrt=True, abort=0, policy_record='r.md'))
         for options in invalid:
             with self.subTest(options=options):
                 cases = {}
@@ -74,7 +75,8 @@ class RegisterTests(unittest.TestCase):
                  dict(dir_chunk='system', abort=0), dict(pin_not_run={'ret': 0}),
                  dict(policy_record='r.md', stderr=True, control=True),
                  dict(policy_record='r.md', abort=False), dict(policy_record='r.md', userdir=True),
-                 dict(policy_record='r.md', fatal=True, stderr=True))
+                 dict(policy_record='r.md', fatal=True, stderr=True), dict(sigabrt=True, abort=False, userdir=True),
+                 dict(sigabrt=True, abort=0, crash={}, either=True))
         for options in valid:
             with self.subTest(options=options):
                 cases = {}

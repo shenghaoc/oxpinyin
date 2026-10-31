@@ -13,7 +13,7 @@ from contract_verdict import NO_ABORT
 def case_spec(mode='pinyin', control=False, abort=NO_ABORT, stderr=False, crash=None, userdir=False,
               cells=('bdb', 'kc', 'tkrzw'), either=False, host_scanf=(), dir_chunk=None, stderr_varies=False,
               abort_logs=None, fatal=False, both_abort=False, strjoinv_over_read=False, issues=(), *, fn=None,
-              policy_record=None, case_id=None, pin_not_run=None):
+              policy_record=None, case_id=None, pin_not_run=None, sigabrt=False):
     """Build the registration metadata with shared defaults, without validating it.
 
     Store host scanner spellings and normalized issue tags as tuples. A
@@ -24,7 +24,7 @@ def case_spec(mode='pinyin', control=False, abort=NO_ABORT, stderr=False, crash=
                 dir_chunk=dir_chunk, stderr_varies=stderr_varies, abort_logs=abort_logs, fatal=fatal,
                 both_abort=both_abort, strjoinv_over_read=strjoinv_over_read,
                 issues=tuple(normal_tag(tag) for tag in issues),
-                policy_record=policy_record, case_id=case_id, pin_not_run=pin_not_run)
+                policy_record=policy_record, case_id=case_id, pin_not_run=pin_not_run, sigabrt=sigabrt)
 
 
 def register(registry, name, fn, *args, **kwargs):
@@ -41,6 +41,8 @@ def register(registry, name, fn, *args, **kwargs):
     spec = case_spec(*args, fn=fn, case_id=name, **kwargs)
     assert not spec['either'] or (spec['abort'] is not NO_ABORT and spec['crash'] is not None), name
     assert not spec['both_abort'] or spec['fatal'], name
+    assert not spec['sigabrt'] or (spec['abort'] is not NO_ABORT and spec['abort_logs'] is None
+                                   and spec['policy_record'] is None), name
     assert spec['dir_chunk'] in (None, 'user', 'system') and (spec['dir_chunk'] is None or spec['abort'] is not NO_ABORT), name
     assert spec['pin_not_run'] is None or not (
         spec['abort'] is not NO_ABORT or spec['crash'] is not None or spec['both_abort'] or spec['either']
