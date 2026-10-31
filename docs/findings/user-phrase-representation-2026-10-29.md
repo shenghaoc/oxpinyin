@@ -720,38 +720,63 @@ tests). No phase adds to the C surface.
 
 ### 4.7 What an implementation PR must show
 
-Measured in one run on one host, base / PR / pin, with the commands in
-`docs/runbooks/benches.md`:
+Maintainer decision, **2026-10-31 UTC** (date recorded with `date -u`):
+the gate is the observable time and peak heap of the supported profile and
+operation workloads below. The existing controller stays unchanged. Rust
+arena length and Rust compaction counts are not gate items; the sampled
+peak heap of the write/compaction workload stands in for the arena bounds.
+It is not a measurement or proof of the numerical arena-length bounds in
+§4.4. Those remain source-level design bounds.
 
-1. **Init on the four existing profiles** (`just measure startup`, both
-   facades, warm): wall and instructions for `init`, with `empty` and
-   `phrases`/`journals` shown as unchanged within the control's interval,
-   so a change to the user path is proven not to regress the shipped
-   profiles.
-2. **Init and export on a user-library profile**: 10,000 rows imported
-   into library 7 through the same worker (`td_populate` extended to accept
-   `7`, which is the only tooling change the lane needs), one reading per
-   phrase and a second variant with eight readings per phrase; report init
-   wall, init instructions, peak heap (Massif), the open's allocation count
-   (§4.2: three, two retained, against the pin's one) and the export's wall
-   and allocation count for base, PR and pin, with the PR at or below the
-   pin on every axis.
-3. **Steady state**: the keystroke cycle with that profile loaded
-   (`just measure steady-comparison`), to show the lookup rebuild and the
-   per-token reads did not regress.
-4. **Memory**: the session's resident set after init on the user-library
-   profile, base / PR / pin, with the per-item figure of §4.4 confirmed or
-   corrected. Add a write-heavy session on the same profile, with repeated
-   reading appends and removals on the same items and the mid-session
-   compactions counted, and report the arena's peak length and the
-   session's wall against the `2·live + 8,736` and `3·live + 8,736` bounds
-   of §4.4 and the amortised cost of §4.2.
-5. **Bytes**: the saved `user.bin` of the PR byte-identical to the pin's on
-   the import, train, remove and mask-out sequences the contract cases
-   already run, and the stripped shipping-library sizes (Constitution §2).
-6. **Crate benches**: `export_phrases` and `phrase_read`
-   (`crates/oxpinyin-user/benches`) before and after, as supporting numbers
-   only; the profile measurements above are the gate.
+Measure base / PR / pin and the existing same-bytes controls in one campaign
+on one host, with the commands in `docs/runbooks/benches.md`. Preserve frozen
+production revisions even if a later documentation-only commit advances a
+PR. Do not retry or tune the campaign. Report inconclusive controls as such;
+an interval containing one does not establish exact equality.
+
+1. **Init on the named profiles**, both facades, warm: the four existing
+   profiles (`empty`, `modest`, `phrases`, `journals`) and the populated
+   `USER_FILE` profiles from #1435 (`user`, `user8`, `usersparse`). Report
+   init wall time with the controller's paired intervals, init instructions
+   with their actual control qualification, and one sampled startup peak
+   per arm and input through M1, including candidate enumeration. A single
+   Massif run is not an exact transient maximum and has no statistical
+   peak-heap interval. Report any differing peak when the same artifact and
+   input reappear in the controller's rounds.
+2. **User-library operations**: `user` imports 10,000 items into library 7
+   with one reading each; `user8` uses eight readings each; `usersparse`
+   retains 625 items across nearly 10,000 slots. Use the existing pinyin
+   operation workload for open, repeated token reads, slot enumeration,
+   export, and the write/compaction sequence. It repeats removals and
+   eight-reading reimports, mask-out and import-end, then saves. Report
+   wall time, instruction ranges, allocation events and retained bytes,
+   sampled window peaks, and M0/I1 Pss per mapping as the controller emits
+   them. The empty open is a separate control. These are whole public-call
+   windows, not isolated user-library constructors: do not identify their
+   allocation totals with the three allocations derived in §4.2.
+   Before sampling, trace both C facades to the reached user-store code.
+   Pinyin results cover shared arena operations only where the source
+   confirms that routing; name any facade-specific path that is not timed.
+3. **Time and space verdict**: for each profile, compare time and sampled
+   peak heap against the PR's base and against the pin. State whether the
+   #1435 floor violation (both time and heap worse than the pin) is removed.
+   Each sampled-heap row uses its own observed absolute PR/control peak
+   difference as its noise floor. A PR/base heap difference within that
+   floor is "no measurable change", with raw values retained; do not turn
+   the floor into an interval or use another row's floor. Judge the Pin gap
+   on its actual scale relative to that noise. Stop and report if a profile
+   is worse than its base in both time and heap beyond its row noise floor.
+   Distinguish demonstrated differences from inconclusive controls
+   or intervals. Judge whether the measured user-visible benefit justifies
+   shipping-library size increases; do not infer that from the design alone.
+4. **Bytes and sizes**: saved `user.bin` remains byte-identical to the pin
+   on the import, train, remove and mask-out contract sequences. Report the
+   stripped shipping-library sizes (Constitution §2).
+
+The loaded-profile steady keystroke cycle and the `export_phrases` and
+`phrase_read` crate benches remain supporting measurements where available;
+they do not replace the profile gate. No additional controller or Rust
+arena instrumentation is required for this gate.
 
 ## 5. Settled questions
 
