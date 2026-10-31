@@ -80,8 +80,7 @@ runner today. A developer recipe does not set it: Linux `libdb-dev` and
 Homebrew `berkeley-db@5` are the surveyed 5.3.
 
 The two C-ABI crates additionally need `libglib2.0-dev` and `g++`; they
-are Linux-first. `oxpinyin-dictool` depends on `oxpinyin-capi` and so
-inherits that.
+are Linux-first.
 
 ## The exactly-one-backend gate
 

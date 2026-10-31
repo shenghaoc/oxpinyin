@@ -7,9 +7,8 @@ use std::sync::Arc;
 use oxpinyin_core::{DoublePinyinScheme, FullPinyinScheme, OptionBits, ZhuyinScheme};
 use oxpinyin_engine::{Config, ConfigValue};
 use oxpinyin_runtime::{
-    FileType, OpenError, RowFault, Runtime, TableConf, TableConfError, directory_reads_as_a_chunk,
+    FileType, OpenError, RowFault, Runtime, TableConfError, directory_reads_as_a_chunk,
 };
-use oxpinyin_user::SystemVersions;
 use oxpinyin_user::c_stderr;
 use oxpinyin_user::{ChunkHeaderField, UserConfLaw, UserStore, UserStoreError};
 
@@ -445,39 +444,6 @@ impl ContextCore {
             config: Config::default(),
             runtime: Some(runtime),
             user,
-            live: LiveOptions::new(option_word),
-            load_warnings,
-        })
-    }
-
-    /// User-store-only context for standalone tools (the §9 import/export
-    /// machinery): a decoder context this is not, so
-    /// [`ContextCore::alloc_instance`] answers `None` for it. `law` is the
-    /// user dir's `user.conf` lifecycle, as for [`Self::open`].
-    #[must_use]
-    pub fn new_user_only(user_dir: &str, option_word: u32, law: UserConfLaw) -> Option<Self> {
-        if user_dir.is_empty() {
-            return None;
-        }
-        // The standalone user context persists in the pin's user-dir
-        // file set too: no system dir is opened, so the diff base is
-        // empty (system-token deltas do not persist from a user-only
-        // context) and the conformance triple is the pin's.
-        let user = UserStore::open_libpinyin(
-            Path::new(user_dir),
-            std::collections::BTreeMap::new(),
-            SystemVersions::from_conf(&TableConf::stock()),
-            law,
-        )
-        .ok()?;
-        let mut load_warnings = Vec::new();
-        if user.short_add_payload() {
-            load_warnings.push(SHORT_ADD_WARNING);
-        }
-        Some(Self {
-            config: Config::default(),
-            runtime: None,
-            user: Some(user),
             live: LiveOptions::new(option_word),
             load_warnings,
         })
