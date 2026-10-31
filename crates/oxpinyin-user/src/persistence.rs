@@ -56,6 +56,7 @@ use oxpinyin_store::{
 
 use crate::replay::{Merge, ReplayedLibrary, Stop, raw_unigram};
 use crate::store::SaveReport;
+use crate::user_index::UserIndex;
 use crate::user_library::UserLibrary;
 
 /// `USER_TABLE_INFO` (`pinyin_internal.h:56`).
@@ -573,49 +574,9 @@ pub(crate) struct LoadedProfile {
     /// reading: the same `switch` has no case for a word count of 0, so
     /// `mask_out` aborts on it (`:529`).
     pub(crate) overlong_index_keys: Vec<Vec<u16>>,
-    /// Every raw key `user_pinyin_index.bin` carries, as packed
-    /// `ChewingKey` words — the pin's user `ChewingLargeTable2` btree rows
-    /// (readings and `add_index`'s prefix markers alike). The
-    /// longer-candidate gate consults the exact query key's existence
-    /// (the pin's `DB_SET` probe, `chewing_large_table2_bdb.cpp:576`)
-    /// before it walks extensions, and a crafted index can hold an
-    /// over-long key whose prefix row is absent — the pin then never
-    /// starts the walk.
-    pub(crate) index_keys: BTreeSet<Vec<u16>>,
-    /// The user pinyin index's retained keys ([`IndexKeys`]).
-    pub(crate) index_file_keys: IndexKeys,
-}
-
-/// Every retained key of the user pinyin index. The chewing table's
-/// `mask_out` and `remove_index` retain empty records, so saves write these
-/// keys even when no remaining reading reconstructs them. Phrase-table
-/// records, including empty values, live directly in [`UserState::phrase_table`].
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct IndexKeys {
-    /// `user_pinyin_index.bin` keys.
-    pub(crate) pinyin: BTreeSet<Vec<u8>>,
-    /// The records of `user_pinyin_index.bin` whose bytes differ from what
-    /// the held readings derive (#785): the tails a Kyoto Cabinet or tkrzw
-    /// mask walk leaves in them.
-    #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
-    pub(crate) tails: BTreeMap<Vec<u8>, Vec<u8>>,
-    /// The keys the session's adds wrote, each standing for itself and its
-    /// prefixes; with [`Self::pinyin`], every key the table holds (#785).
-    #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
-    pub(crate) added: BTreeSet<crate::pinyin_chain::ChainKey>,
-    /// What each key length's table entry holds (#785).
-    #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
-    pub(crate) slots: [crate::pinyin_chain::Slot; crate::phrase::MAX_PHRASE_LENGTH + 1],
-}
-
-impl IndexKeys {
-    /// Keeps every key `add_index` wrote for these rows — each row's key
-    /// and its prefix markers, in both pinyin key spaces — before the rows
-    /// leave the store.
-    pub(crate) fn keep_rows(&mut self, pinyin: &[PinyinIndexItem]) {
-        self.pinyin
-            .extend(pinyin_index_entries(pinyin).into_iter().map(|(key, _)| key));
-    }
+    /// The user pinyin index's stored records, loaded once from the DBM
+    /// and edited in the session's overlay.
+    pub(crate) index: UserIndex,
 }
 
 /// The readings `add_index` saw, as the pinyin index's rows: those the
@@ -739,34 +700,6 @@ fn chewing_rows_with_views(
         });
     }
     chewing_rows
-}
-
-/// `rows` with the records a mask walk left tails in (#785).
-#[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
-fn with_tails(kept: &IndexKeys, rows: Vec<(Vec<u8>, Vec<u8>)>) -> Vec<(Vec<u8>, Vec<u8>)> {
-    kept.with_tails(rows)
-}
-
-/// Berkeley DB keeps no tails.
-#[cfg(not(any(feature = "kyotocabinet", feature = "tkrzw")))]
-const fn with_tails(_kept: &IndexKeys, rows: Vec<(Vec<u8>, Vec<u8>)>) -> Vec<(Vec<u8>, Vec<u8>)> {
-    rows
-}
-
-/// `rows` with every kept key that no row writes added as an empty value,
-/// in ascending key order.
-pub(crate) fn with_kept_keys(
-    rows: Vec<(Vec<u8>, Vec<u8>)>,
-    kept: &BTreeSet<Vec<u8>>,
-) -> Vec<(Vec<u8>, Vec<u8>)> {
-    if kept.is_empty() {
-        return rows;
-    }
-    let mut merged: BTreeMap<Vec<u8>, Vec<u8>> = rows.into_iter().collect();
-    for key in kept {
-        merged.entry(key.clone()).or_default();
-    }
-    merged.into_iter().collect()
 }
 
 /// The full token of a system-library item.
@@ -921,8 +854,7 @@ fn load_checked_impl(
         replayed: BTreeMap::new(),
         user_libraries: BTreeMap::new(),
         overlong_index_keys: Vec::new(),
-        index_keys: BTreeSet::new(),
-        index_file_keys: IndexKeys::default(),
+        index: UserIndex::default(),
     };
     if check.conform {
         load_libraries(
@@ -932,16 +864,12 @@ fn load_checked_impl(
             None,
             lazy.then_some(&mut profile.user_libraries),
         );
-        #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
-        let mut records = Vec::new();
         load_user_pinyin_index(
             dir,
             &mut profile.loaded,
             &mut profile.overlong_index_keys,
-            &mut profile.index_keys,
-            &mut profile.index_file_keys.pinyin,
-            #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
-            &mut records,
+            &mut profile.index,
+            lazy,
         );
         load_user_phrase_index(
             dir,
@@ -959,19 +887,6 @@ fn load_checked_impl(
             );
         } else {
             load_logs(dir, originals, &mut profile.loaded);
-        }
-        // The file's records are the table's: one that the readings do not
-        // derive keeps its bytes (#785).
-        #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
-        {
-            let rows = chewing_rows_with_views(
-                &profile.loaded.state,
-                originals,
-                &profile.user_libraries,
-                &profile.replayed,
-            );
-            profile.index_file_keys.tails =
-                crate::pinyin_chain::file_tails(&rows, &profile.index_file_keys.pinyin, records);
         }
     }
     profile
@@ -1098,18 +1013,16 @@ fn load_bigram_rows(dir: &Path, loaded: &mut Loaded) {
     }
 }
 
-/// The user pinyin index's `(token, keys)` records — which `USER_FILE`
-/// readings lookup finds — plus the raw key set, the over-long readings
-/// and the keys a save writes back ([`IndexKeys::pinyin`]). Both keyspaces
-/// carry every record, so the set absorbs the duplicate. An absent or
-/// unreadable file indexes nothing, as an empty `ChewingLargeTable2` does.
+/// One walk of `user_pinyin_index.bin` into the session's owned record
+/// arena, plus the over-long readings the pin's mask `switch` refuses. An
+/// absent or unreadable file leaves the table empty, as an empty
+/// `ChewingLargeTable2` does.
 fn load_user_pinyin_index(
     dir: &Path,
     loaded: &mut Loaded,
     overlong: &mut Vec<Vec<u16>>,
-    index_keys: &mut BTreeSet<Vec<u16>>,
-    file_keys: &mut BTreeSet<Vec<u8>>,
-    #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))] records: &mut Vec<(Vec<u8>, Vec<u8>)>,
+    index: &mut UserIndex,
+    lazy: bool,
 ) {
     let path = user_file(dir, &UserDbm::PinyinIndex.file_name());
     if !path.exists() {
@@ -1124,72 +1037,8 @@ fn load_user_pinyin_index(
             return;
         }
     };
-    let indexed = &mut loaded.state.indexed;
-    // The over-long readings arrive from directly crafted or corrupt DBMs
-    // and their count is unbounded, so deduplicate through a set rather
-    // than rescanning the accumulated vector (which would be quadratic in
-    // the number of rows). The ordered set preserves the walk's order in
-    // `overlong` for the callers that read it as a slice.
-    let mut seen: BTreeSet<Vec<u16>> = BTreeSet::new();
     let mut visit = |key: &[u8], value: &[u8]| -> Result<(), StoreError> {
-        if key.len() < 2 {
-            // No whole word: the pin's word count `key.size /
-            // sizeof(ChewingKey)` is 0, which `mask_out`'s `switch` has no
-            // case for (`chewing_large_table2_bdb.cpp:529`; kc `:499`,
-            // tkrzw `:466`). Record the empty reading beside the over-long
-            // ones so the same mask refusal covers it. Nothing else reads
-            // it: it extends no query and is not an exact key.
-            if seen.insert(Vec::new()) {
-                overlong.push(Vec::new());
-            }
-            return Ok(()); // not a key upstream writes
-        }
-        let words: Vec<u16> = key
-            .chunks_exact(2)
-            .map(|word| u16::from_le_bytes([word[0], word[1]]))
-            .collect();
-        // The pin's `m_db->Get`/`DB_SET` probe (`chewing_large_table2_bdb.cpp:576`)
-        // consults an exact query key, so record every even-length row —
-        // reading or prefix marker — for [`GenericUserStore::overlong_extension_gate`]
-        // to test. A malformed odd-length row is not an exact key and is
-        // left out.
-        if key.len().is_multiple_of(2) {
-            index_keys.insert(words.clone());
-        }
-        // The pin's user `ChewingLargeTable2` instantiates its entries only
-        // for lengths 1..=16, and both the longer-candidate walk
-        // (`chewing_large_table2_bdb.cpp:282`) and `mask_out` (`:529`)
-        // compute the word count by integer division (`key.size /
-        // sizeof(ChewingKey)`). A 35-byte key therefore reads as 17 words
-        // and reaches `switch`'s `default: abort()` even though the key is
-        // not one upstream writes, so classify it before rejecting the
-        // malformed trailing byte. Record the complete-word prefix as
-        // packed `ChewingKey` words; the pin aborts on the key, before
-        // touching the value.
-        if key.len() / 2 > crate::phrase::MAX_PHRASE_LENGTH && seen.insert(words.clone()) {
-            overlong.push(words);
-        }
-        if !key.len().is_multiple_of(2) {
-            return Ok(()); // not a key upstream writes
-        }
-        if key.len() / 2 <= crate::phrase::MAX_PHRASE_LENGTH {
-            file_keys.insert(key.to_vec());
-            #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
-            records.push((key.to_vec(), value.to_vec()));
-        }
-        if value.is_empty() {
-            return Ok(()); // a prefix marker names no reading
-        }
-        let Ok(items) = oxpinyin_data::row_format::pinyin_index::decode_items(value, key.len() / 2)
-        else {
-            return Ok(());
-        };
-        for item in items {
-            indexed.insert((
-                item.token,
-                item.keys.iter().map(|key| key.to_packed()).collect(),
-            ));
-        }
+        index.push_record(key, value);
         Ok(())
     };
     if let Err(error) = store.range_raw(
@@ -1201,6 +1050,27 @@ fn load_user_pinyin_index(
             .skipped
             .push(format!("{}: {error}", UserDbm::PinyinIndex.file_name()));
     }
+    index.finish_load();
+    if !lazy {
+        for (key, value) in index.rows() {
+            if value.is_empty() || !key.len().is_multiple_of(2) {
+                continue;
+            }
+            let len = key.len() / 2;
+            if len == 0 || len > crate::phrase::MAX_PHRASE_LENGTH {
+                continue;
+            }
+            if let Ok(items) = oxpinyin_data::row_format::pinyin_index::decode_items(&value, len) {
+                for item in items {
+                    loaded.state.indexed.insert((
+                        item.token,
+                        item.keys.iter().map(|key| key.to_packed()).collect(),
+                    ));
+                }
+            }
+        }
+    }
+    *overlong = index.overlong_keys();
 }
 
 /// Copy `user_phrase_index.bin` records without interpreting either key or value,
@@ -1698,13 +1568,13 @@ pub fn save_with_bigram(
     open_counter: i32,
     bigram_db: Option<&DefaultUserBigramDb>,
 ) -> Result<(), PersistenceError> {
-    let kept = IndexKeys::default();
+    let index = UserIndex::from_entries(pinyin_index_entries(&chewing_rows(state, originals)));
     save_session(
         dir,
         SaveSource {
             libraries: None,
             state,
-            kept: &kept,
+            index: &index,
             compacted: &[],
         },
         originals,
@@ -1714,14 +1584,13 @@ pub fn save_with_bigram(
     )
 }
 
-/// What a save writes: the session's values, and the keys its user index
-/// tables hold ([`IndexKeys`]), written empty where no row of `state`
-/// writes them.
+/// What a save writes: the session's values and its user pinyin index
+/// records, arena and overlay merged in key order.
 #[derive(Clone, Copy)]
 pub(crate) struct SaveSource<'a> {
     pub(crate) state: &'a UserState,
     pub(crate) libraries: Option<&'a BTreeMap<u8, UserLibrary>>,
-    pub(crate) kept: &'a IndexKeys,
+    pub(crate) index: &'a UserIndex,
     /// The nibbles whose live empty sub-index the pin's `compact` rebuilt
     /// from no items; their log header's new total is zero.
     pub(crate) compacted: &'a [u8],
@@ -2001,10 +1870,23 @@ fn stage_rest<B: FnMut(u8) -> SaveBaseline>(
 ) -> Result<(), PersistenceError> {
     let SaveSource {
         state,
-        kept,
+        index,
         compacted,
         libraries,
     } = source;
+    // A session's index arena is authoritative. A value-only save derives
+    // the table from the held state, as before, and keeps the caller's
+    // retained empty keys.
+    let derived;
+    let index = if libraries.is_some() {
+        index
+    } else {
+        let mut table =
+            UserIndex::from_entries(pinyin_index_entries(&chewing_rows(state, originals)));
+        table.merge_missing(index);
+        derived = table;
+        &derived
+    };
     {
         // ---- the library files, by sub-index -----------------------------
         let empty_library = SystemLibrary::default();
@@ -2063,18 +1945,9 @@ fn stage_rest<B: FnMut(u8) -> SaveBaseline>(
             tolerate(reporting.lenient, stage_chunk(dir, name, &bytes, staged))?;
         }
 
-        let chewing_rows = chewing_rows(state, originals);
         tolerate(
             reporting.lenient,
-            stage_dbm(
-                dir,
-                UserDbm::PinyinIndex,
-                &with_tails(
-                    kept,
-                    with_kept_keys(pinyin_index_entries(&chewing_rows), &kept.pinyin),
-                ),
-                staged,
-            ),
+            stage_dbm(dir, UserDbm::PinyinIndex, &index.rows(), staged),
         )?;
         tolerate(
             reporting.lenient,
@@ -2628,14 +2501,15 @@ mod tests {
             .flat_map(|c| c.to_le_bytes())
             .collect();
         let gone_reading = vec![0x12, 0x00, 0x12, 0x00];
-        let mut kept = IndexKeys::default();
-        kept.pinyin.insert(gone_reading.clone());
+        let mut index = UserIndex::new();
+        index.push_record(&gone_reading, &[]);
+        index.finish_load();
         let mut saved = state();
         saved.phrase_table.insert(gone.clone(), Vec::new());
         let source = SaveSource {
             libraries: None,
             state: &saved,
-            kept: &kept,
+            index: &index,
             compacted: &[],
         };
         save_session(&dir, source, &originals, &versions(), 1, None).expect("save");
@@ -2667,7 +2541,7 @@ mod tests {
         let loaded =
             load_profile(&dir, &originals, &versions(), UserConfLaw::Pinyin).expect("load");
         assert!(loaded.loaded.state.phrase_table.contains_key(&gone));
-        assert!(loaded.index_file_keys.pinyin.contains(&gone_reading));
+        assert!(loaded.index.contains_key(&gone_reading));
         // The session's profile read leaves the user bigram to its
         // container (`load_user_bigram_db`).
         let saved = UserState {
@@ -2675,6 +2549,7 @@ mod tests {
             ..saved
         };
         let mut actual = loaded.loaded.state;
+        actual.indexed = loaded.index.indexed_set();
         for (nibble, library) in loaded.user_libraries {
             actual.libraries.insert(
                 nibble,
@@ -3571,7 +3446,7 @@ mod tests {
         let source = SaveSource {
             libraries: None,
             state: &state,
-            kept: &IndexKeys::default(),
+            index: &UserIndex::default(),
             compacted: &[],
         };
         let error =
