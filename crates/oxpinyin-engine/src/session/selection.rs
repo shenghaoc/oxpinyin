@@ -381,21 +381,58 @@ where
         U: UserModel<Token = PhraseToken>,
         U::Error: Display,
     {
-        if self.sentence.rows.is_empty() {
+        let Some(row) = self.nbest_training_row(index)? else {
             return Ok(false);
-        }
-        let row = self.sentence.rows.get(usize::from(index)).ok_or(
-            EngineError::CandidateIndexOutOfRange {
-                index: usize::from(index),
-                len: self.sentence.rows.len(),
-            },
-        )?;
+        };
         if row.spans.is_empty() {
             self.train_history(user)?;
         } else {
             self.train_spans(&row.spans, user)?;
         }
         Ok(true)
+    }
+
+    /// The pin's own aborts of [`Session::train_nbest`] for row `index`,
+    /// without the user model: the index past nonempty results
+    /// (`pinyin.cpp:2684`), a stale forced phrase (`phonetic_lookup.h:868`)
+    /// and a span outside the current matrix
+    /// (`storage/phonetic_key_matrix.cpp:661`, `:663`, `:664`), in the
+    /// order `train_nbest` meets them. It runs the same row lookup and span
+    /// walk as `train_nbest`, with the user model's per-step store checks
+    /// left out, and observes nothing. `Ok(())` where `train_nbest` would
+    /// reach none of them (it may still meet a store fault).
+    ///
+    /// # Errors
+    ///
+    /// [`EngineError::CandidateIndexOutOfRange`],
+    /// [`EngineError::StaleTrainingConstraint`] or
+    /// [`EngineError::StaleTrainingSpan`]; [`EngineError::Graph`] when the
+    /// raw buffer cannot be built into a segment graph.
+    pub fn train_nbest_preflight(&self, index: u8) -> Result<(), EngineError> {
+        if let Some(row) = self.nbest_training_row(index)?
+            && !row.spans.is_empty()
+        {
+            self.plan_spans(&row.spans, &mut |_, _| Ok(()))?;
+        }
+        Ok(())
+    }
+
+    /// The decoded row [`Session::train_nbest`] trains: `None` for no
+    /// results (the pin's quiet `false`), the bounds error past nonempty
+    /// results.
+    fn nbest_training_row(
+        &self,
+        index: u8,
+    ) -> Result<Option<&crate::nbest::NbestRow>, EngineError> {
+        if self.sentence.rows.is_empty() {
+            return Ok(None);
+        }
+        self.sentence.rows.get(usize::from(index)).map(Some).ok_or(
+            EngineError::CandidateIndexOutOfRange {
+                index: usize::from(index),
+                len: self.sentence.rows.len(),
+            },
+        )
     }
 
     pub(super) fn train_spans<U>(
@@ -407,6 +444,52 @@ where
         U: UserModel<Token = PhraseToken>,
         U::Error: Display,
     {
+        let Some((parsed, ends)) = self.plan_spans(spans, &mut |prefix, token| {
+            user.check_step(prefix, token)
+                .map_err(|error| EngineError::UserModel(error.to_string()))
+        })?
+        else {
+            return Ok(());
+        };
+        let matrix = &parsed.columns;
+        let mut context: Vec<PhraseToken> = Vec::with_capacity(spans.len());
+        for (index, span) in spans.iter().enumerate() {
+            if let Some(end) = ends[index] {
+                // :923-927 trains every matching path of this span, as long
+                // as the item's stored length: `get_phrase_item` then
+                // `increase_pronunciation_possibility` (074a2219
+                // phonetic_lookup.h:924-927), which keeps only paths of
+                // `item.get_phrase_length()` keys
+                // (storage/phonetic_key_matrix.cpp:610-620). A stored
+                // phrase's outward text is shorter than that after a zero.
+                let mut readings = training_readings(
+                    matrix,
+                    self.input.as_bytes(),
+                    span.start,
+                    end,
+                    span.text.phrase_length(),
+                );
+                user.observe_with_keys(&context, &span.token, &mut readings)
+                    .map_err(|error| EngineError::UserModel(error.to_string()))?;
+            }
+            context.push(span.token);
+        }
+        Ok(())
+    }
+
+    /// The training walk's checks over `spans`, in the pin's step order,
+    /// before anything is observed: each step's forced-phrase assert, then
+    /// `check` (the user model's store checks for the step), then the span
+    /// asserts. Answers the matrix and each observed span's end, or `None`
+    /// when no span is forced (nothing trains).
+    fn plan_spans<F>(
+        &self,
+        spans: &[PhraseSpan],
+        check: &mut F,
+    ) -> Result<Option<SpanPlan>, EngineError>
+    where
+        F: FnMut(&[PhraseToken], &PhraseToken) -> Result<(), EngineError>,
+    {
         // 074a2219 phonetic_lookup.h:854-866,932: only OneStep or
         // train_next observes a phrase; every phrase advances its predecessor.
         // A no-op needs no matrix rebuild: train_next starts false
@@ -415,7 +498,7 @@ where
             .iter()
             .any(|span| self.constraints.is_one_step_at(span.start))
         {
-            return Ok(());
+            return Ok(None);
         }
         // `assert(token == constraint->m_token)` at a forced position
         // (`phonetic_lookup.h:868`): checked in the walk below, in span
@@ -444,9 +527,9 @@ where
         // pin's `increase_pronunciation_possibility` then asserts the
         // walk stays inside and starts on a filled column
         // (`storage/phonetic_key_matrix.cpp:661`, `:663`), which the
-        // engine answers as an error before observing anything — the
-        // no-abort policy. The endpoints are pre-computed in one pass so
-        // the refusal precedes every observation, as the pin's abort
+        // engine answers as an error before observing anything; the C
+        // facades abort there. The endpoints are pre-computed in one pass
+        // so the error precedes every observation, as the pin's abort
         // leaves the process dead.
         let constraint_len = self.constraints.cell_count();
         let tail = constraint_len.saturating_sub(1);
@@ -478,8 +561,7 @@ where
             // The step's bigram half comes next (`phonetic_lookup.h:876-909`:
             // `get_total_freq` :884, the `get_freq` walk :888, `set_freq`
             // :903), before its pronunciation update's span asserts (:925).
-            user.check_step(&tokens[..index], &span.token)
-                .map_err(|error| EngineError::UserModel(error.to_string()))?;
+            check(&tokens[..index], &span.token)?;
             train_next = forced;
             // 074a2219 phonetic_lookup.h:911-920 scans to the next
             // non-null result token, not the forced constraint end.
@@ -506,29 +588,7 @@ where
             }
             ends[index] = Some(end);
         }
-        let mut context: Vec<PhraseToken> = Vec::with_capacity(spans.len());
-        for (index, span) in spans.iter().enumerate() {
-            if let Some(end) = ends[index] {
-                // :923-927 trains every matching path of this span, as long
-                // as the item's stored length: `get_phrase_item` then
-                // `increase_pronunciation_possibility` (074a2219
-                // phonetic_lookup.h:924-927), which keeps only paths of
-                // `item.get_phrase_length()` keys
-                // (storage/phonetic_key_matrix.cpp:610-620). A stored
-                // phrase's outward text is shorter than that after a zero.
-                let mut readings = training_readings(
-                    matrix,
-                    self.input.as_bytes(),
-                    span.start,
-                    end,
-                    span.text.phrase_length(),
-                );
-                user.observe_with_keys(&context, &span.token, &mut readings)
-                    .map_err(|error| EngineError::UserModel(error.to_string()))?;
-            }
-            context.push(span.token);
-        }
-        Ok(())
+        Ok(Some((parsed, ends)))
     }
 
     /// Clears the constraint run at `offset` — `pinyin_clear_constraint`
@@ -613,6 +673,10 @@ where
 /// a column is occupied by either a real key or a zero key. `from_scan`
 /// records real keys in `matrix` and internal separator zero keys (and the
 /// reserved end slot) in `zeros`.
+/// A training walk's plan ([`Session::plan_spans`]): the matrix it indexes
+/// and the end of each span it observes (`None` for one it only passes).
+type SpanPlan = (super::matrix::ParsedMatrix, Vec<Option<usize>>);
+
 pub(crate) fn column_is_empty(matrix: &[Vec<ScanKey>], zeros: &[bool], offset: usize) -> bool {
     matrix.get(offset).is_none_or(Vec::is_empty) && !zeros.get(offset).copied().unwrap_or(false)
 }
