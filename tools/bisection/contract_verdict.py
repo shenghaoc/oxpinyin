@@ -82,7 +82,10 @@ def policy_expectations(spec, *, policy_root, cell):
 
     Each case keeps, per cell or once for every cell, the SHA-256 of each
     side's complete stable observation, a short digest per top-level field
-    and the pin-to-subject divergence as text (contract_policy). The record
+    and the pin-to-subject divergence as text (contract_policy). A
+    `database_free` entry, which tools/dev/policy.py writes for a tool-diff
+    case whose utility opens no DBM, is read only when the spec says the
+    case is database-free; any other case refuses it. The record
     holds no observation and allows no wildcard, ignored result field or
     partial-dict match: the digests decide. Rejected metadata is INVALID,
     including under --expect-parent. A schema-1 record, which held the
@@ -113,7 +116,11 @@ def policy_expectations(spec, *, policy_root, cell):
             or record.get('disposition') != 'POLICY-ACCEPTED'):
         raise ValueError('policy record is not current or has incompatible metadata')
     kept = record['cases'][spec['case_id']]
-    if isinstance(kept, dict) and set(kept) == {'cells'}:
+    if isinstance(kept, dict) and set(kept) == {'database_free'}:
+        if spec.get('database_free') is not True:
+            raise ValueError(f'{spec["case_id"]}: a database-free entry cannot stand for a case that opens a database')
+        kept = kept['database_free']
+    elif isinstance(kept, dict) and set(kept) == {'cells'}:
         kept = kept['cells'][os.environ.get('CONTRACT_DIFF_CELL', cell)]
     return contract_policy.check_entry(kept)
 
