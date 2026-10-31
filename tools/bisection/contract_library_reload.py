@@ -301,9 +301,9 @@ def _(k):
 
 # The same phrase meets its own token in the phrase table, `get_phrase_item`
 # finds no item, and `assert(phrase_length == item.get_phrase_length())`
-# (zhuyin.cpp:454) aborts the pin: class (c), the site the import iterator's
-# other two asserts (`:440`, `:457`) already answer.
-@case('reload-user-zhuyin-reuse-same', mode='zhuyin', abort=False, issues=('805',))
+# (zhuyin.cpp:454) aborts the pin, and oxpinyin aborts there too (row 104;
+# class (c) retired 2026-10-31 UTC), as at the iterator's `:440` and `:457`.
+@case('reload-user-zhuyin-reuse-same', mode='zhuyin', abort=False, sigabrt=True, issues=('805',))
 def _(k):
     """Re-import the same phrase after dropping its unsaved user-library item.
 

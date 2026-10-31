@@ -46,7 +46,7 @@ def register(case, *, remember_export, transient_files):
         return out
 
     for _mode in ('pinyin', 'zhuyin'):
-        case('combined-library-sixth-add-' + _mode, mode=_mode, abort=False, **({'sigabrt': True} if _mode == 'pinyin' else {}),
+        case('combined-library-sixth-add-' + _mode, mode=_mode, abort=False, sigabrt=True,
              issues=('525',))(combined_import_bound)
         case('combined-library-fifth-add-' + _mode, mode=_mode, control=True, issues=('525',))(
             lambda k: combined_import_bound(k, guard=False))
@@ -70,6 +70,12 @@ def register(case, *, remember_export, transient_files):
          abort=False, sigabrt=True,
          issues=('525', 'row:74'))(
         lambda k: combined_import_bound(k, sixth=b'ni3' + b"'" * 40000 + b'hao3'))
+    # `ZhuyinDirectParser2::parse` has `int` indices and no bound
+    # (`zhuyin_parser2.cpp:914-961`) and skips each run of separators: the
+    # long reading keeps its two keys and reaches the same assert.
+    case('combined-library-sixth-add-long-reading-zhuyin', mode='zhuyin', abort=False, sigabrt=True,
+         issues=('525', 'row:74'))(
+        lambda k: combined_import_bound(k, sixth='ㄋㄧˇ ㄏㄠˇ'.encode() + b' ' * 70000))
 
 
     # The other validating `reduce_tokens` callers (`phrase_large_table3.h:95`):
@@ -145,6 +151,24 @@ def register(case, *, remember_export, transient_files):
     case('remember-user-input-five-libraries-unparsed-pinyin', abort=False, sigabrt=True,
          issues=('525', 'row:74'))(remember_input(False))
 
+    # The zhuyin twins: `zhuyin_lookup_tokens` (`zhuyin.cpp:1690`),
+    # `_compute_prefixes` (`:933`, before the prefix guess's matrix is read,
+    # `:953`) and `_pre_compute_tokens` (`:2080`, from the character offset
+    # at `:2176`). The sixth add's one-key reading refuses at the length gate
+    # (`zhuyin.cpp:525`), and the case's first read, `tokens_of`, then
+    # meets the five libraries that hold 你好.
+    case('combined-library-sixth-add-one-key-zhuyin', mode='zhuyin', abort=False, sigabrt=True,
+         issues=('525', 'row:74'))(
+        lambda k: combined_import_bound(k, sixth='ㄋㄧˇ'.encode()))
+    case('prefix-guess-five-libraries-zhuyin', mode='zhuyin', abort=False, sigabrt=True,
+         issues=('525', 'row:74'))(prefix_guess(5))
+    case('prefix-guess-four-libraries-zhuyin', mode='zhuyin', control=True, issues=('525', 'row:74'))(
+        prefix_guess(4))
+    case('character-offset-five-libraries-zhuyin', mode='zhuyin', abort=False, sigabrt=True,
+         issues=('525', 'row:74'))(character_offset(5))
+    case('character-offset-four-libraries-zhuyin', mode='zhuyin', control=True,
+         issues=('525', 'row:74'))(character_offset(4))
+
     def import_review(k, invalid=False):
         """Attempt an invalid-reading or unused-library import after populating five libraries.
 
@@ -164,7 +188,7 @@ def register(case, *, remember_export, transient_files):
 
     for _mode in ('pinyin', 'zhuyin'):
         case('combined-library-invalid-reading-' + _mode, mode=_mode, control=True, issues=('525',))(lambda k: import_review(k, True))
-        case('combined-library-unused-index-' + _mode, mode=_mode, abort=False, **({'sigabrt': True} if _mode == 'pinyin' else {}),
+        case('combined-library-unused-index-' + _mode, mode=_mode, abort=False, sigabrt=True,
              issues=('525',))(import_review)
 
 

@@ -312,8 +312,7 @@ def register(case, *, CASES, WORKER):
               modes=('pinyin',), session=addon_session)
 
 
-    # The rows the pin dies on. The pinyin facade dies there too (`sigabrt`);
-    # the zhuyin facade's triggering call still fails with one warning.
+    # The rows the pin dies on. Both facades die there too (`sigabrt`).
     # `userdir` holds the profile the pin has written by then.
     def conf_abort(name, *edits, call='init', userdir=True, modes=('pinyin', 'zhuyin'), ret=False,
                    dir_chunk=None, control=False, issues=('694', '525'), reproduced=True):
@@ -322,9 +321,8 @@ def register(case, *, CASES, WORKER):
         call='init' tests initialization; otherwise unpack (kind, index), using
         'load' for a normal library and any other kind for an addon. Forward expected
         ret, userdir, directory-chunk and control metadata to case registration.
-        The pinyin facade reproduces the pin's abort (`sigabrt`) unless
-        `reproduced` is false (a class (b) site); the zhuyin cases still
-        expect the refusal."""
+        Both facades reproduce the pin's abort (`sigabrt`) unless
+        `reproduced` is false (a class (b) site)."""
         for mode in modes:
             def probe(k, edits=edits):
                 """Initialize with the captured config edits and perform the selected load if requested.
@@ -340,7 +338,7 @@ def register(case, *, CASES, WORKER):
                 if kind == 'load':
                     return {'ret': k.fn('load_phrase_library', B, P, C.c_ubyte)(ctx, index)}
                 return {'ret': k.fn('load_addon_phrase_library', B, P, C.c_ubyte)(ctx, index)}
-            sigabrt = reproduced and mode == 'pinyin'
+            sigabrt = reproduced
             case('table-conf-abort-' + name + ('-zhuyin' if mode == 'zhuyin' else ''), mode=mode,
                  abort=ret, **({'sigabrt': True} if sigabrt else {}), userdir=userdir, dir_chunk=dir_chunk,
                  control=control and not sigabrt, issues=issues)(probe)
@@ -360,8 +358,7 @@ def register(case, *, CASES, WORKER):
     # `user.conf` and aborts on one it does not know (`table_info.cpp:132`,
     # reached from `check_format`); the system `table.conf` reaches the same
     # converter above.
-    @case('user-conf-abort-database-format-unknown', abort=False, sigabrt=True, userdir=True, issues=('694', '525'))
-    def _(k):
+    def user_conf_unknown_format(k):
         """Write an LMDB database-format marker into user.conf and record initialization truth.
 
         Assert the replacement matched before overwriting the profile marker."""
@@ -374,6 +371,13 @@ def register(case, *, CASES, WORKER):
         with open(path, 'w') as user_conf:
             user_conf.write(text)
         return {'ret': bool(k.init())}
+
+    # `zhuyin_init`'s `check_format` loads the same marker first
+    # (`zhuyin.cpp:126-132`) and dies at the same converter, before it
+    # unlinks anything.
+    for mode in ('pinyin', 'zhuyin'):
+        case('user-conf-abort-database-format-unknown' + ('-zhuyin' if mode == 'zhuyin' else ''), mode=mode,
+             abort=False, sigabrt=True, userdir=True, issues=('694', '525'))(user_conf_unknown_format)
 
 
     # The init loop (`pinyin.cpp:377-392`) runs after `check_format`: the profile

@@ -30,7 +30,7 @@ class SchemeLibraryRefusalsTests(unittest.TestCase):
                       [call.args for call in builder.call_args_list])
         self.assertEqual(pinyin['abort-load-phrase-library-8'][1](None)['export'], 'load_phrase_library')
         self.assertEqual(zhuyin['abort-zhuyin-chewing-scheme-minus-1'][0],
-                         {'mode': 'zhuyin', 'abort': False, 'issues': ('525',)})
+                         {'mode': 'zhuyin', 'abort': False, 'sigabrt': True, 'issues': ('525',)})
 
     def test_bigram_iterator_case_reports_each_untouched_output(self):
         kit, calls = Mock(), {}

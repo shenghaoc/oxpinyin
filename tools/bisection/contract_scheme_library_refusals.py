@@ -99,4 +99,4 @@ def register_zhuyin(case):
             ('load-phrase-library-8', ctx_call('load_phrase_library', B, (C.c_ubyte, 8))),
             ('unload-phrase-library-16', ctx_call('unload_phrase_library', B, (C.c_ubyte, 16))),
             ('unload-phrase-library-255', ctx_call('unload_phrase_library', B, (C.c_ubyte, 255)))):
-        case('abort-zhuyin-' + _name, mode='zhuyin', abort=False, issues=('525',))(_call)
+        case('abort-zhuyin-' + _name, mode='zhuyin', abort=False, sigabrt=True, issues=('525',))(_call)
