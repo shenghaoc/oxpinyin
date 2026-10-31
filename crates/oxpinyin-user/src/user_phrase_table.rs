@@ -11,7 +11,9 @@ use std::collections::BTreeMap;
 
 use oxpinyin_store::StoreError;
 
-use crate::phrase_table::{ERROR_OK, PhraseTableEntry, key_ucs4, search_bytes};
+#[cfg(test)]
+use crate::phrase_table::ERROR_OK;
+use crate::phrase_table::{PhraseTableEntry, key_ucs4, search_bytes};
 
 const HEADER: usize = 8;
 
@@ -23,21 +25,13 @@ pub(crate) struct UserPhraseTable {
 }
 
 impl UserPhraseTable {
+    #[cfg(test)]
     pub(crate) const fn new() -> Self {
         Self {
             arena: Vec::new(),
             offsets: Vec::new(),
             overlay: BTreeMap::new(),
         }
-    }
-
-    pub(crate) fn from_entries(entries: Vec<(Vec<u8>, Vec<u8>)>) -> Self {
-        let mut table = Self::new();
-        for (key, value) in &entries {
-            table.push_record(key, value);
-        }
-        table.finish_load();
-        table
     }
 
     pub(crate) fn push_record(&mut self, key: &[u8], value: &[u8]) {
