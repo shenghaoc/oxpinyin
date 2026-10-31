@@ -1,14 +1,35 @@
 //! End-to-end KMM pipeline over a small, hand-verifiable fixture, exercising
 //! every transformation the trainer's main pipeline chains:
-//! generate → estimate → merge → validate → prune → export → import →
-//! `k_mixture_model_to_interpolation`.
+//! generate → estimate → merge → validate → prune → export → import (in
+//! `oxpinyin-kmm`) → this crate's `k_mixture_model_to_interpolation`.
 
+use std::io::Write as _;
 use std::path::PathBuf;
+use std::process::{Command, Stdio};
 
 use oxpinyin_kmm::{
     DEFAULT_CDF, DEFAULT_PRUNE_K, GenerateParams, KMixtureModel, estimate, export, import,
-    kmm_text_to_interpolation, merge_into, prune, validate,
+    merge_into, prune, validate,
 };
+
+/// The utility over `kmm` on its stdin: its stdout, after a clean exit.
+fn to_interpolation(kmm: &str) -> String {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_k_mixture_model_to_interpolation"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn k_mixture_model_to_interpolation");
+    let mut stdin = child.stdin.take().expect("stdin");
+    let text = kmm.to_owned();
+    // Written beside the read, so a large model cannot fill both pipes.
+    let writer = std::thread::spawn(move || stdin.write_all(text.as_bytes()));
+    let output = child.wait_with_output().expect("wait");
+    writer.join().expect("writer").expect("write KMM text");
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert!(output.stderr.is_empty(), "{output:?}");
+    String::from_utf8(output.stdout).expect("UTF-8 interpolation text")
+}
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -67,7 +88,7 @@ fn full_pipeline_golden() {
     validate(&pruned).expect("pruned validates");
 
     // convert to interpolation.
-    let interp = kmm_text_to_interpolation(&export(&pruned)).expect("to interpolation");
+    let interp = to_interpolation(&export(&pruned));
     assert_eq!(
         interp,
         "\\data model interpolation\n\
@@ -147,7 +168,7 @@ fn end_to_end_from_real_segmented_corpus() {
     // convert to interpolation2.text.
     let mut pruned = merged.clone();
     prune(&mut pruned, DEFAULT_PRUNE_K, 0.0).expect("prune");
-    let interp = kmm_text_to_interpolation(&export(&pruned)).expect("to interpolation");
+    let interp = to_interpolation(&export(&pruned));
 
     // The result is well-formed interpolation2.text: header, both sections,
     // no <start> unigram, and every unigram/bigram line is `\item …`.

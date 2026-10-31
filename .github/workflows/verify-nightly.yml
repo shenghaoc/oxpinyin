@@ -469,7 +469,9 @@ jobs:
       # The default backend. The macOS job's exclusions, plus
       # oxpinyin-utils: like the C facades it links GLib (through
       # oxpinyin-input's `tools` boundary), which this lane does not
-      # provision; macOS installs GLib and tests it.
+      # provision; macOS installs GLib and tests it. oxpinyin-training
+      # links it too since its KMM conversion became the pin-named
+      # k_mixture_model_to_interpolation (2026-10-31 UTC).
       # Clippy runs first, over the same set, so a lint in Windows-only
       # code fails here rather than nowhere.
       - name: Clippy (Windows)
@@ -477,7 +479,7 @@ jobs:
           cargo clippy --locked --workspace --all-targets
           --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi
           --exclude oxpinyin-corpus --exclude oxpinyin-kmm --exclude oxpinyin-punct
-          --exclude oxpinyin-word --exclude oxpinyin-utils
+          --exclude oxpinyin-word --exclude oxpinyin-utils --exclude oxpinyin-training
           -- -D warnings
       # The same pinned cargo-nextest as ci.yml's Linux and macOS jobs, in
       # its Windows build; the checksum is the release's published
@@ -500,10 +502,10 @@ jobs:
           cargo nextest run --locked --profile ci --status-level skip --workspace
           --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi
           --exclude oxpinyin-corpus --exclude oxpinyin-kmm --exclude oxpinyin-punct
-          --exclude oxpinyin-word --exclude oxpinyin-utils
+          --exclude oxpinyin-word --exclude oxpinyin-utils --exclude oxpinyin-training
       # nextest does not run doctests; keep the same exclusions.
       - run: >
           cargo test --locked --doc --workspace
           --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi
           --exclude oxpinyin-corpus --exclude oxpinyin-kmm --exclude oxpinyin-punct
-          --exclude oxpinyin-word --exclude oxpinyin-utils
+          --exclude oxpinyin-word --exclude oxpinyin-utils --exclude oxpinyin-training

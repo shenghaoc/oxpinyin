@@ -6,10 +6,10 @@
 //! per-pair `count`/`T`/`N_n_0`/`n_1`/`Mr`). The committed goldens are the
 //! native output over a five-token, two-document fixture that exercises:
 //! multi-occurrence pairs (`Mr`), rare pairs (`n_1`), cross-document
-//! accumulation (`N_n_0`, `N`), candidate scoring, a selective prune, the
-//! interpolation projection, and the **token2-only rule** (a token that never
-//! begins a pair gets a header-only `\1-gram` row, count 0 with its unigram
-//! freq, under the 074a221 pin's `set_array_header` — 乙 and 丁 below).
+//! accumulation (`N_n_0`, `N`), candidate scoring, a selective prune, and the
+//! **token2-only rule** (a token that never begins a pair gets a header-only
+//! `\1-gram` row, count 0 with its unigram freq, under the 074a221 pin's
+//! `set_array_header` — 乙 and 丁 below).
 //!
 //! Two behaviours are pinned against the live oracle (libpinyin 2.11.92 at
 //! 074a221, Tkrzw backend, model20 data), and the native side matches both:
@@ -42,8 +42,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use oxpinyin_kmm::{
-    DEFAULT_PRUNE_K, GenerateParams, KMixtureModel, estimate, export, import,
-    kmm_text_to_interpolation, merge_into, prune, validate,
+    DEFAULT_PRUNE_K, GenerateParams, KMixtureModel, estimate, export, import, merge_into, prune,
+    validate,
 };
 
 // ---- the fixture ----------------------------------------------------------
@@ -150,20 +150,6 @@ const PRUNED_EXPORT: &str = "\
 \\end
 ";
 
-// Interpolation from the pruned model: <start> and zero-freq unigrams drop;
-// the 1-gram count is the KMM freq, the 2-gram count is the pair WC. 乙 is
-// W2-only but its header-only row carries freq 8, so it projects.
-const INTERPOLATION: &str = "\
-\\data model interpolation
-\\1-gram
-\\item 10 甲 count 8
-\\item 20 乙 count 8
-\\2-gram
-\\item 1 <start> 10 甲 count 8
-\\item 10 甲 20 乙 count 8
-\\end
-";
-
 #[test]
 fn canonical_export_headers_and_per_pair_fields_match_the_golden() {
     // Byte parity of the export == field parity of headers, document count,
@@ -196,8 +182,10 @@ fn candidate_scores_are_deterministic() {
     assert_eq!(estimate(&a, &b).expect("re-score").average, score_a);
 }
 
+// `oxpinyin-utils`' k_mixture_model_to_interpolation tests convert this
+// fixture's merged and pruned exports.
 #[test]
-fn merge_prune_interpolation_match_the_golden() {
+fn merge_and_prune_match_the_golden() {
     let mut merged = KMixtureModel::new();
     merge_into(&mut merged, &candidate_a()).expect("merge A");
     merge_into(&mut merged, &candidate_b()).expect("merge B");
@@ -206,9 +194,6 @@ fn merge_prune_interpolation_match_the_golden() {
     let mut pruned = merged.clone();
     prune(&mut pruned, DEFAULT_PRUNE_K, 0.5).expect("prune");
     assert_eq!(export(&pruned), PRUNED_EXPORT, "prune result");
-
-    let interp = kmm_text_to_interpolation(&export(&pruned)).expect("to interpolation");
-    assert_eq!(interp, INTERPOLATION, "interpolation output");
 }
 
 #[test]
@@ -524,81 +509,6 @@ fn rust_kmm_matches_pin_gen_and_export() {
         sorted_items(&strip_text(&byte_export))
     );
     eprintln!("live parity: native text/token gen+export and pin byte variants agree");
-}
-
-#[test]
-#[ignore = "needs the pin-built KMM tools and data (PINYIN_KMM_TO_INTERP, ...); run with --include-ignored"]
-fn rust_kmm_matches_pin_to_interpolation() {
-    let (Some(to_interp), Some(data)) = (locate_bin("PINYIN_KMM_TO_INTERP"), locate_data()) else {
-        panic!(
-            "missing input for the live to-interpolation differential: set PINYIN_KMM_TO_INTERP, \
-             PINYIN_GEN_NGRAM_DATA"
-        )
-    };
-
-    // The pin `k_mixture_model_to_interpolation` reads KMM text on stdin. Feed
-    // it our canonical merged golden and compare to the native transform.
-    let pin = PinDir::fresh(&data, "interp").expect("temp data dir");
-    let input = pin.path("kmm.text");
-    std::fs::write(&input, MERGED_EXPORT).expect("write kmm");
-
-    let output = Command::new(&to_interp)
-        .current_dir(&pin.dir)
-        .stdin(std::fs::File::open(&input).expect("open"))
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .expect("run to-interpolation");
-    assert!(output.status.success(), "pin to-interpolation failed");
-    let pin_interp = String::from_utf8(output.stdout).expect("utf8");
-
-    let native = kmm_text_to_interpolation(MERGED_EXPORT).expect("native");
-    assert_eq!(
-        native, pin_interp,
-        "native to-interpolation matches the pin"
-    );
-
-    // `TAGLIB_GET_TOKEN` is `atoi` into a `phrase_token_t` printed with `%d`,
-    // and `TAGLIB_GET_TAGVALUE(glong, .., atol)` is printed with `%ld`
-    // (`k_mixture_model_to_interpolation.cpp:123-133,163-172`): a sign, leading
-    // zeros and trailing bytes are read, a count keeps its 64 bits, a token
-    // keeps its low 32 bits and prints as a signed int, and a field with no
-    // digits is zero, which drops a unigram. The text is on one line per
-    // record because the tool splits fields on white space.
-    let numeric = "\\data model \"k mixture model\" count 1 N 1 total_freq 1\n\
-                   \\1-gram\n\
-                   \\item 16817937 中国 count 1 freq +5\n\
-                   \\item 16802309 你好 count 1 freq 4294967301\n\
-                   \\item 16808451 世界 count 1 freq -7\n\
-                   \\item 16782711 人 count 1 freq abc\n\
-                   \\item 2147483649 甲 count 1 freq 00012x\n\
-                   \\item 1 <start> count 1 freq 9\n\
-                   \\2-gram\n\
-                   \\item +16817937 中国 -4278149359 中国 count +3 T 3 N_n_0 1 n_1 1 Mr 3\n\
-                   \\item 4311785233 中国 16802309 你好 count 4294967299 T 3 N_n_0 1 n_1 1 Mr 3\n\
-                   \\item 2147483649 甲 16802309 你好 count -3 T 3 N_n_0 1 n_1 1 Mr 3\n\
-                   \\item 16802309 你好 16808451 世界 count 99999999999999999999 T 3 N_n_0 1 n_1 1 Mr 3\n\
-                   \\item 16808451 世界 16817937 中国 count - T 3 N_n_0 1 n_1 1 Mr 3\n\
-                   \\end\n";
-    std::fs::write(&input, numeric).expect("write numeric kmm");
-    let output = Command::new(&to_interp)
-        .current_dir(&pin.dir)
-        .stdin(std::fs::File::open(&input).expect("open"))
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .expect("run to-interpolation");
-    assert!(output.status.success(), "pin to-interpolation failed");
-    let pin_numeric = String::from_utf8(output.stdout).expect("utf8");
-    assert_eq!(
-        pin_numeric,
-        "\\data model interpolation\n\\1-gram\n\\item 16817937 中国 count 5\n\\item 16802309 你好 count 4294967301\n\\item 16808451 世界 count -7\n\\item -2147483647 甲 count 12\n\\2-gram\n\\item 16817937 中国 16817937 中国 count 3\n\\item 16817937 中国 16802309 你好 count 4294967299\n\\item -2147483647 甲 16802309 你好 count -3\n\\item 16802309 你好 16808451 世界 count 9223372036854775807\n\\item 16808451 世界 16817937 中国 count 0\n\\end\n"
-    );
-    assert!(kmm_text_to_interpolation(numeric).is_err());
-    eprintln!(
-        "POLICY-ACCEPTED #1297: malformed numeric text is refused; pin prefix/saturation result verified"
-    );
-    eprintln!("live parity: native to-interpolation matches the pin");
 }
 
 /// A *complete* segmented corpus for the prune differential. Every real

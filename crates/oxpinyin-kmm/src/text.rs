@@ -1,4 +1,4 @@
-//! KMM text format: `export`/`import` and `k_mixture_model_to_interpolation`.
+//! KMM text format: `export`/`import`.
 //!
 //! In this Rust re-expression the persistent model *is* the textual export
 //! format (upstream's `export_k_mixture_model` output), replacing the
@@ -6,18 +6,14 @@
 //! canonicalisers, and the pipeline's `.db` files are these text files. The
 //! format is byte-identical to upstream (`export_k_mixture_model.cpp:35-110`
 //! / `import_k_mixture_model.cpp`), so the differential compares bytes.
-//!
-//! [`kmm_text_to_interpolation`] is the streaming
-//! `k_mixture_model_to_interpolation` transform
-//! (`k_mixture_model_to_interpolation.cpp:59-217`): KMM text in,
-//! `interpolation2.text` out, dropping `sentence_start` and zero-freq
-//! unigrams.
+//! `k_mixture_model_to_interpolation` reads this text as the
+//! `oxpinyin-utils` utility of the pin's name.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
 use crate::error::KmmError;
-use crate::model::{ArrayItem, KMixtureModel, SENTENCE_START};
+use crate::model::{ArrayItem, KMixtureModel};
 use crate::numeric::decimal_field;
 
 const KMM_MODEL_NAME: &str = "k mixture model";
@@ -185,87 +181,6 @@ fn parse_bigram_item(model: &mut KMixtureModel, line: &str) -> Result<(), KmmErr
     Ok(())
 }
 
-/// Streaming `k_mixture_model_to_interpolation`: KMM text → interpolation
-/// text.
-///
-/// The `\1-gram` `count` becomes the KMM `freq` field (the unigram
-/// frequency), dropping `sentence_start` and zero-freq rows; the `\2-gram`
-/// `count` is the KMM pair `count` (`m_WC`).
-///
-/// # Errors
-///
-/// Returns [`KmmError::Malformed`] when the input is not KMM text.
-pub fn kmm_text_to_interpolation(text: &str) -> Result<String, KmmError> {
-    let mut lines = text.lines();
-    let header = lines.next().ok_or_else(|| KmmError::Malformed {
-        detail: "empty file input".to_owned(),
-    })?;
-    // Validate the KMM header (parse_header rejects a non-KMM file).
-    parse_header(header)?;
-
-    let mut out = String::new();
-    out.push_str("\\data model interpolation\n");
-    let mut section = Section::None;
-    for line in lines {
-        match line {
-            "\\1-gram" => {
-                out.push_str("\\1-gram\n");
-                section = Section::Unigram;
-            }
-            "\\2-gram" => {
-                out.push_str("\\2-gram\n");
-                section = Section::Bigram;
-            }
-            "\\end" => break,
-            _ if line.starts_with("\\item") => match section {
-                Section::Unigram => {
-                    let fields: Vec<&str> = line.split_whitespace().collect();
-                    if fields.len() != 7 || fields[3] != "count" || fields[5] != "freq" {
-                        return Err(malformed(line, "malformed \\1-gram \\item"));
-                    }
-                    let token = field_token(fields[1])?;
-                    let word = fields[2];
-                    let freq = decimal_field::<i64>(fields[6].as_bytes())?;
-                    // Drop <start> and zero-freq unigrams. The tool prints
-                    // the token with `%d` and the count with `%ld`
-                    // (`k_mixture_model_to_interpolation.cpp:131-133`).
-                    if token != SENTENCE_START && freq != 0 {
-                        let _ = writeln!(out, "\\item {} {word} count {freq}", token as i32);
-                    }
-                }
-                Section::Bigram => {
-                    let fields: Vec<&str> = line.split_whitespace().collect();
-                    if fields.len() != 15
-                        || fields[5] != "count"
-                        || fields[7] != "T"
-                        || fields[9] != "N_n_0"
-                        || fields[11] != "n_1"
-                        || fields[13] != "Mr"
-                    {
-                        return Err(malformed(line, "malformed \\2-gram \\item"));
-                    }
-                    let token1 = field_token(fields[1])? as i32;
-                    let word1 = fields[2];
-                    let token2 = field_token(fields[3])? as i32;
-                    let word2 = fields[4];
-                    let count = decimal_field::<i64>(fields[6].as_bytes())?;
-                    let _ = writeln!(
-                        out,
-                        "\\item {token1} {word1} {token2} {word2} count {count}"
-                    );
-                }
-                Section::None => {
-                    return Err(malformed(line, "\\item before a section header"));
-                }
-            },
-            "" => {}
-            _ => return Err(malformed(line, "unexpected line")),
-        }
-    }
-    out.push_str("\\end\n");
-    Ok(out)
-}
-
 /// A complete decimal token in the persistent model's token range.
 fn field_token(field: &str) -> Result<u32, KmmError> {
     decimal_field(field.as_bytes())
@@ -304,7 +219,7 @@ pub fn merge_texts(into: &mut BTreeMap<u32, String>, from: &BTreeMap<u32, String
 
 #[cfg(test)]
 mod tests {
-    use super::{export, import, kmm_text_to_interpolation};
+    use super::{export, import};
     use crate::generate::GenerateParams;
     use crate::model::KMixtureModel;
 
@@ -314,7 +229,6 @@ mod tests {
             let text =
                 format!("\\data model \"k mixture model\" count {field} N 1 total_freq 1\n\\end\n");
             assert!(import(&text).is_err(), "{field}");
-            assert!(kmm_text_to_interpolation(&text).is_err(), "{field}");
         }
     }
 
@@ -353,25 +267,6 @@ mod tests {
         let reparsed = import(&text).expect("import");
         assert_eq!(reparsed, model);
         assert_eq!(export(&reparsed), text);
-    }
-
-    #[test]
-    fn to_interpolation_drops_start_and_zero_freq() {
-        let model = sample_model();
-        let kmm = export(&model);
-        let interp = kmm_text_to_interpolation(&kmm).expect("convert");
-        assert_eq!(
-            interp,
-            "\\data model interpolation\n\
-             \\1-gram\n\
-             \\item 10 甲 count 2\n\
-             \\item 20 乙 count 2\n\
-             \\2-gram\n\
-             \\item 1 <start> 10 甲 count 1\n\
-             \\item 10 甲 20 乙 count 2\n\
-             \\item 20 乙 10 甲 count 1\n\
-             \\end\n"
-        );
     }
 
     #[test]
