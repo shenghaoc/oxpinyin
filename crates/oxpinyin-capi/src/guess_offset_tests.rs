@@ -157,12 +157,11 @@ fn a_leading_or_trailing_run_never_walks_off_the_input() {
 }
 
 #[test]
-fn an_offset_past_the_parsed_input_is_refused() {
-    // Upstream reads its matrix out of bounds for such an offset — no
-    // pinned behaviour exists — so the ABI refuses instead of answering
-    // candidates anchored at a position that does not exist. The
-    // one-past-end offset itself is the matrix's reserved extra slot and
-    // stays valid.
+fn an_offset_one_past_the_reserved_slot_finds_nothing() {
+    // The one-past-end offset is the matrix's reserved extra slot and
+    // stays valid. Two or more past it, `get_column_size` asserts in the
+    // pin's `_check_offset` and the process aborts (register row 66,
+    // `abort-guess-candidates-past-matrix` of `contract-diff.py`).
     let user_dir = TempUserDir::new("guess-zero-range");
     let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
 
@@ -180,15 +179,8 @@ fn an_offset_past_the_parsed_input_is_refused() {
         "one past the reserved slot finds nothing, as at the pin"
     );
     assert!(
-        !pinyin_guess_candidates(instance, parsed + 2, DEFAULT_SORT),
-        "an offset past the matrix is refused"
-    );
-    let mut num: c_uint = 77;
-    assert!(pinyin_get_n_candidate(instance, &raw mut num));
-    assert_eq!(num, 0, "the refusal leaves no candidates behind");
-    assert!(
         pinyin_guess_candidates(instance, 0, DEFAULT_SORT),
-        "the refusal leaves the instance usable"
+        "the instance stays usable"
     );
 
     crate::instance::pinyin_free_instance(instance);
@@ -342,10 +334,7 @@ fn double_pinyin_admits_no_zero_key_and_keeps_the_range_law() {
         pinyin_guess_candidates(instance, 5, DEFAULT_SORT),
         "one past the reserved slot finds nothing, as at the pin"
     );
-    assert!(!pinyin_guess_candidates(instance, 6, DEFAULT_SORT));
-    let mut num: c_uint = 77;
-    assert!(pinyin_get_n_candidate(instance, &raw mut num));
-    assert_eq!(num, 0, "the refusal leaves no candidates behind");
+    // Offset 6 and beyond abort the process, as at the pin (row 66).
 
     // The choose cursor is the absolute end in original coordinates: the
     // transformed separator the session inserts between the keys never
@@ -383,7 +372,6 @@ fn zhuyin_keyboards_admit_no_zero_key_and_keep_the_range_law() {
     assert_eq!(pinyin_parse_more_chewings(instance, both.as_ptr()), 4);
     assert!(pinyin_guess_candidates(instance, 4, DEFAULT_SORT));
     assert!(pinyin_guess_candidates(instance, 5, DEFAULT_SORT));
-    assert!(!pinyin_guess_candidates(instance, 6, DEFAULT_SORT));
 
     // The choose cursor is the absolute end in original coordinates.
     assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
@@ -411,7 +399,6 @@ fn zhuyin_keyboards_admit_no_zero_key_and_keep_the_range_law() {
     );
     assert!(pinyin_guess_candidates(instance, 2, DEFAULT_SORT));
     assert!(pinyin_guess_candidates(instance, 3, DEFAULT_SORT));
-    assert!(!pinyin_guess_candidates(instance, 4, DEFAULT_SORT));
 
     crate::instance::pinyin_free_instance(instance);
     crate::context::pinyin_fini(context);
@@ -453,10 +440,10 @@ fn luoma_input_carries_the_full_offset_law() {
         pinyin_get_parsed_input_length(instance)
     );
 
-    // Out of range refused; the leading gap does not erase its real key.
+    // One past the reserved slot finds nothing (offset 8 and beyond abort,
+    // as at the pin); the leading gap does not erase its real key.
     assert_eq!(parse(instance, "ni'hao"), 6);
     assert!(pinyin_guess_candidates(instance, 7, DEFAULT_SORT));
-    assert!(!pinyin_guess_candidates(instance, 8, DEFAULT_SORT));
     // The re-send of the same buffer CONTINUES the committed composition
     // (the R5 revert, register #8: upstream's parse path never touches
     // the store, `pinyin.cpp:1497-1517`), so both forcings survive —
@@ -487,10 +474,8 @@ fn luoma_input_carries_the_full_offset_law() {
         pinyin_guess_candidates(instance, 7, DEFAULT_SORT),
         "one past the reserved slot finds nothing, as at the pin"
     );
-    assert!(
-        !pinyin_guess_candidates(instance, 8, DEFAULT_SORT),
-        "an offset past the matrix is refused"
-    );
+    // Offset 8 is past the pin's matrix, whose `get_column_size` asserts:
+    // the process aborts (register row 66).
 
     crate::instance::pinyin_free_instance(instance);
     crate::context::pinyin_fini(context);

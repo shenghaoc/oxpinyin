@@ -13,7 +13,7 @@ use pinyin_capi::{
     pinyin_set_zhuyin_scheme, pinyin_unload_addon_phrase_library,
 };
 
-use crate::common::{TempUserDir, cstr, open};
+use crate::common::{TempUserDir, assert_aborts, cstr, open};
 
 /// `PINYIN_INCOMPLETE` (`pinyin_custom2.h:34`) — the fixture word: `Fixture::new`
 /// sets it explicitly, because `pinyin_init` itself seeds `USE_TONE`.
@@ -86,8 +86,10 @@ fn open_with_dir(tag: &str) -> (*mut PinyinContext, *mut PinyinInstance, TempUse
 }
 
 /// The full-pinyin one-key surface: `ni` parses and renders, the
-/// whole-input probe refuses `nihao` and apostrophes, and a failed parse
-/// leaves the ZEROED key (upstream zeroes `*onekey` before the probe).
+/// whole-input probe refuses `nihao`, and a failed parse leaves the ZEROED
+/// key (upstream zeroes `*onekey` before the probe). An apostrophe is the
+/// pin's assert (`pinyin_parser2.cpp:170`), held by the contract-diff case
+/// `abort-parse-full-pinyin-apostrophe`.
 #[test]
 fn full_pinyin_one_key_surface() {
     let fixture = Fixture::new("keys-full");
@@ -138,13 +140,6 @@ fn full_pinyin_one_key_surface() {
         &raw mut key
     ));
     assert_eq!(key.packed, 0, "failed full-pinyin parse zeroes the key");
-
-    // Apostrophes are refused (the pin asserts on them).
-    assert!(!pinyin_parse_full_pinyin(
-        fixture.instance,
-        cstr("ni'hao").as_ptr(),
-        &raw mut key
-    ));
 
     // Initial-only keys parse and render; is_incomplete answers true.
     assert!(pinyin_parse_full_pinyin(
@@ -431,19 +426,23 @@ fn pinyin_strings_contract() {
     assert!(rendered.is_null());
 }
 
-/// A hand-crafted toned initial-only key: the pin asserts (abort) in
-/// `pinyin_get_pinyin_is_incomplete`'s true branch (`pinyin.cpp:2769`);
-/// oxpinyin answers `false` and emits one warning (class (c), register row 4).
+/// A hand-crafted toned initial-only key: the pin asserts in
+/// `pinyin_get_pinyin_is_incomplete`'s true branch (`pinyin.cpp:2769`),
+/// and the facade aborts the process too (register row 4).
+#[test]
+fn toned_initial_only_key_aborts() {
+    assert_aborts("keys::toned_initial_only_key_aborts", || {
+        let fixture = Fixture::new("keys-toned-incomplete");
+        // middle 0, final 0, tone 3.
+        let mut key = ChewingKey { packed: 3 << 12 };
+        pinyin_get_pinyin_is_incomplete(fixture.instance, &raw mut key);
+    });
+}
+
 /// The untoned initial and the zero key keep the pin's `true`.
 #[test]
-fn toned_initial_only_key_refuses_instead_of_aborting() {
-    let fixture = Fixture::new("keys-toned-incomplete");
-    // middle 0, final 0, tone 3.
-    let mut key = ChewingKey { packed: 3 << 12 };
-    assert!(!pinyin_get_pinyin_is_incomplete(
-        fixture.instance,
-        &raw mut key
-    ));
+fn untoned_initial_only_key_is_incomplete() {
+    let fixture = Fixture::new("keys-untoned-incomplete");
     let mut untoned = ChewingKey { packed: 0 };
     assert!(pinyin_get_pinyin_is_incomplete(
         fixture.instance,
@@ -462,16 +461,12 @@ fn get_context_returns_the_handle() {
     pinyin_fini(context);
 }
 
-/// The addon unload contract: out-of-range answers `false` (the pin's
-/// assert), any in-range index answers `true` loaded or not.
+/// The addon unload contract: any in-range index answers `true` loaded or
+/// not. An index of 16 or more is the pin's assert (`pinyin.cpp:499`), held
+/// by the contract-diff case `abort-unload-addon-phrase-library-16`.
 #[test]
 fn unload_addon_contract() {
     let fixture = Fixture::new("keys-unload");
-    assert!(!pinyin_unload_addon_phrase_library(fixture.context, 16));
-    assert!(!pinyin_unload_addon_phrase_library(
-        fixture.context,
-        u8::MAX
-    ));
     // Never-loaded in-range indexes still unload "successfully".
     assert!(pinyin_unload_addon_phrase_library(fixture.context, 5));
     assert!(pinyin_unload_addon_phrase_library(fixture.context, 5));

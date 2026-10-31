@@ -87,6 +87,14 @@
 # here, two in libzhuyin.alloc) said `false-unreachable`. The relabel to
 # `false-nulls` / `false-untouched` landed 2026-10-09 (#708), and a pin
 # probe on bdb confirms each line's <notes>.
+#
+# Corrected 2026-10-31 UTC (class (c) retired): oxpinyin now aborts where
+# the pin aborts, so no `pin-aborts` path is probed here any more. The key
+# getters' reachable `false` is an offset past the last column of a matrix
+# that holds keys, where the pin NULLs the out-param first (an empty matrix
+# is row 63's abort). `pinyin_iterator_get_next_phrase` never answers
+# `false` at the pin: exhaustion is row 62's `pinyin.cpp:709` assert, so its
+# two slots are `false-unreachable`.
 
 # ── Handles: allocated by Box::into_raw, released by their destructor ──
 pinyin_init                              return      handle:pinyin_fini            n/a                n/a
@@ -103,8 +111,8 @@ pinyin_get_candidate                     candidate   borrowed                   
 # The candidate string has no `false` at the pin: it stores the pointer and
 # answers `true` (pinyin.cpp:2873-2878).
 pinyin_get_candidate_string              utf8_str    borrowed                      false-unreachable  source:pinyin.cpp:2873-2878
-pinyin_get_pinyin_key                    key         borrowed                      false-nulls        pin-aborts:row63
-pinyin_get_pinyin_key_rest               key_rest    borrowed                      false-nulls        pin-aborts:row63
+pinyin_get_pinyin_key                    key         borrowed                      false-nulls        source:pinyin.cpp:2921-2928
+pinyin_get_pinyin_key_rest               key_rest    borrowed                      false-nulls        source:pinyin.cpp:2944-2951
 
 # ── Caller-owned strings (g_free) ─────────────────────────────────────
 pinyin_get_sentence                      sentence    g_free                        false-untouched    pin-probe:sentence-before-guess
@@ -128,8 +136,8 @@ pinyin_token_get_phrase                  utf8_str    g_free                     
 # The unigram iterator answers `true` on every row it hands out
 # (pinyin.cpp:698-769); its `false` is the call with no next row, where the
 # pin asserts (:709) and oxpinyin answers without writing.
-pinyin_iterator_get_next_phrase          phrase      g_free                        false-untouched    pin-aborts:row62
-pinyin_iterator_get_next_phrase          pinyin      g_free                        false-untouched    pin-aborts:row62
+pinyin_iterator_get_next_phrase          phrase      g_free                        false-unreachable  source:pinyin.cpp:698-769
+pinyin_iterator_get_next_phrase          pinyin      g_free                        false-unreachable  source:pinyin.cpp:698-769
 # The bigram iterator answers has_next after taking a row
 # (pinyin.cpp:904-910), so the row after which has_next is false comes back
 # `false` having written both strings, and a loop that frees only on `true`
