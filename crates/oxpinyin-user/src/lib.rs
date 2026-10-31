@@ -45,14 +45,13 @@ pub mod seed;
 mod lookup;
 mod model;
 pub mod persistence;
-#[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
-mod pinyin_chain;
 mod registry;
 mod replay;
 mod session_values;
 mod store;
 pub(crate) mod store_libpinyin;
 mod system_items;
+mod user_index;
 mod user_library;
 
 pub use lookup::UserLookup;
