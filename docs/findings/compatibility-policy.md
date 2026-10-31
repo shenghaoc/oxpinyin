@@ -155,7 +155,8 @@ imitated; such a stderr difference is a POLICY-ACCEPTED language
 artefact. Where no call or behaviour has the same documented result,
 stop and report it. The tools and `oxpinyin-input`'s library calls
 follow the ruling (`native/config.c` and `native/diagnostic.c` are
-gone); the Kyoto Cabinet `shim.cc` is moved by its own change.
+gone); the Kyoto Cabinet adapter is retained under the
+[Kyoto Cabinet exception](#kyoto-cabinet-exception).
 
 **Platform scope of pinned behaviour (maintainer ruling 2026-10-31
 UTC).** The drop-in and pin-call rules (external I/O uses the pin's
@@ -171,6 +172,22 @@ practical. This does not cover platform-independent product behaviour
 API/ABI, its symbol names and its ownership and lifetime rules, or
 persistent file formats, which must be the same on every platform. The
 prohibition on hand-written C/C++ shims applies on every platform.
+
+<a id="kyoto-cabinet-exception"></a>**Kyoto Cabinet exception (maintainer
+ruling 2026-10-31 UTC).** Retain the existing Kyoto Cabinet adapter in
+`crates/oxpinyin-store/src/kyotocabinet/shim.cc` and its header. It
+constructs the concrete database classes the pin uses, opens literal
+paths, and contains C++ exceptions before they can cross the Rust FFI
+boundary. Kyoto Cabinet's upstream C API (`kclangc.h`) does not provide
+an equivalent for these requirements. The adapter's compatibility and
+performance evidence is in [kc-shim-1118.md](kc-shim-1118.md). The CXX
+implementation evaluated in
+[kc-c-vs-cxx-adapter-2026-10-22.md](kc-c-vs-cxx-adapter-2026-10-22.md)
+was not adopted; those measurements apply to that implementation and its
+baselines, not to every CXX-based binding. Removing or replacing this
+adapter requires a separate maintainer-approved change. This exception
+does not authorize other hand-written shims or copying external-library
+internals.
 
 The call rule does not reproduce an undefined read or an abort in the
 pin's surrounding code. Existing class (b)/(c) records, including

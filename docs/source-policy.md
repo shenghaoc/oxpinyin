@@ -156,7 +156,7 @@ Do not reproduce macros such as `assert`, `g_return_val_if_fail` or `G_STRFUNC`.
 Make their checks plain Rust: answer the pin's value, or abort where the pin aborts.
 Do not imitate their message text; record the stderr difference as a POLICY-ACCEPTED language artefact.
 Stop and report a call or behaviour that has no equivalent with the same documented result.
-The Kyoto Cabinet `shim.cc` moves in its own change; `oxpinyin-input` has no C shim left.
+`oxpinyin-input` has no C shim left; the Kyoto Cabinet adapter is retained under the [Kyoto Cabinet exception](#kyoto-cabinet-exception).
 
 #### Platform scope of pinned behaviour
 
@@ -167,6 +167,15 @@ On Windows and macOS, oxpinyin builds and is tested, and may use portable Rust a
 Differences that come from a platform's native facilities (file and mapping APIs, text mode, C runtime streams) are platform-dependent behaviour, recorded where known and tested where practical.
 This does not cover platform-independent product behaviour (ranking, parsing, training, data handling), safety, determinism, the C API/ABI, its symbol names and its ownership and lifetime rules, or persistent file formats, which must be the same on every platform.
 The prohibition on hand-written C/C++ shims applies on every platform.
+
+<a id="kyoto-cabinet-exception"></a>**Kyoto Cabinet exception (maintainer ruling 2026-10-31 UTC).**
+Retain the existing Kyoto Cabinet adapter in `crates/oxpinyin-store/src/kyotocabinet/shim.cc` and its header.
+It constructs the concrete database classes the pin uses, opens literal paths, and contains C++ exceptions before they can cross the Rust FFI boundary.
+Kyoto Cabinet's upstream C API (`kclangc.h`) does not provide an equivalent for these requirements.
+The adapter's compatibility and performance evidence is in [kc-shim-1118.md](findings/kc-shim-1118.md).
+The CXX implementation evaluated in [kc-c-vs-cxx-adapter-2026-10-22.md](findings/kc-c-vs-cxx-adapter-2026-10-22.md) was not adopted; those measurements apply to that implementation and its baselines, not to every CXX-based binding.
+Removing or replacing this adapter requires a separate maintainer-approved change.
+This exception does not authorize other hand-written shims or copying external-library internals.
 
 The call rule does not require an undefined read or abort.
 Existing class (b)/(c) records stand, including punctuation and assertion refusals.

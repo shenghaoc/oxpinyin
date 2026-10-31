@@ -44,8 +44,9 @@ Maintainer ruling, 2026-10-28 UTC:
    ([eio-tool-check-messages](eio-tool-check-messages.md)). The tools
    follow it, and so do the library's stage 1 and 4 calls:
    `oxpinyin-input/native/config.c` and `native/diagnostic.c` are gone,
-   their calls made through `libc` in `native.rs`. **Remaining:**
-   `oxpinyin-store/src/kyotocabinet/shim.cc`, in its own change.
+   their calls made through `libc` in `native.rs`. The Kyoto Cabinet
+   adapter, `oxpinyin-store/src/kyotocabinet/shim.cc`, is retained under
+   the [Kyoto Cabinet exception](compatibility-policy.md#kyoto-cabinet-exception).
 6. A new bidirectional `oxpinyin-input` crate owns these calls in scoped
    unsafe modules with `// SAFETY:` comments and safe typed functions.
    `oxpinyin-data` becomes `forbid(unsafe_code)` after extraction. The C
