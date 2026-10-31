@@ -213,6 +213,8 @@ def verdict_for(spec, pin, subject, expect_parent, *, policy_root, cell, directo
     if not held_fault and not valid:
         return 'INVALID', False, same
     expected = same if (not expect_parent or spec['control']) else not same
+    if same and assert_line_only(spec, pin, subject):
+        return 'POLICY-ACCEPTED', expected, same
     return ('MATCH' if same else 'DIFFER'), expected, same
 
 
@@ -227,6 +229,41 @@ def abort_answered(spec, pin, subject):
         shown.get('ret') == spec['abort'] and shown.get('logs') == expected_logs and \
         all(v for key, v in shown.items() if key.startswith('untouched')) and \
         (not spec['userdir'] or pin['userfiles'] == subject['userfiles'])
+
+
+# glibc's `__assert_fail` (assert/assert.c, `__assert_fail_base`) writes
+# `<progname>: <file>:<line>: <function>: Assertion `<expr>' failed.` and a
+# newline before it aborts; newer releases quote the expression with `'`.
+# The pin's `assert` sites write it, oxpinyin's `std::process::abort()` does
+# not: compiler-generated text that the class (c) retirement does not
+# rebuild (compatibility-policy.md, 2026-10-31 UTC; pin-abort-assert-line.md).
+# glibc's `__assert_fail` message, `<progname>: <file>:<line>: <function>:
+# Assertion `<expr>' failed.` and a newline. The program name follows
+# whatever the pin wrote before it, which need not end in a newline (`open
+# %s failed.` does not), so the line is found as the pin's stderr past the
+# subject's, not by its own start.
+_ASSERT_TAIL = re.compile(r"[^\s:]*: [^\s:]+:\d+: [^\n]*Assertion [`'][^\n]*['`] failed\.\n?\Z")
+
+
+def stderr_less_assert_line(pin, subject):
+    """Whether `subject` is the stderr `pin` wrote, less glibc's trailing
+    assertion line (or all of it, at an `abort()` site)."""
+    return pin == subject or (pin.startswith(subject) and _ASSERT_TAIL.match(pin, len(subject)) is not None)
+
+
+def sigabrt_reproduced(spec, pin, subject):
+    """A reproduced pin abort (`sigabrt=True`): both sides die of SIGABRT,
+    the subject wrote the pin's stderr less the pin's glibc assertion line,
+    and with `userdir` both leave the same profile."""
+    return pin['exit'] == -signal.SIGABRT and subject['exit'] == -signal.SIGABRT and \
+        stderr_less_assert_line(pin['stderr'], subject['stderr']) and \
+        (not spec['userdir'] or pin['userfiles'] == subject['userfiles'])
+
+
+def assert_line_only(spec, pin, subject):
+    """A matching `sigabrt` case whose only stderr difference is the pin's
+    assertion line: POLICY-ACCEPTED (pin-abort-assert-line.md), not MATCH."""
+    return spec.get('sigabrt', False) and pin['stderr'] != subject['stderr']
 
 
 def short_dir_chunk(spec, *, directory_probe):
@@ -292,6 +329,8 @@ def matches(spec, pin, subject, *, directory_probe):
         same = pin['exit'] == -signal.SIGSEGV and subject['exit'] == 0 and \
             (spec['stderr_varies'] or pin['stderr'] == subject['stderr']) and \
             all(shown.get(key) == value for key, value in spec['crash'].items())
+    elif as_abort and spec.get('sigabrt', False):
+        same = sigabrt_reproduced(spec, pin, subject)
     elif as_abort:
         same = pin['exit'] == -6 and abort_answered(spec, pin, subject)
     elif spec['strjoinv_over_read'] and pin['exit'] == -signal.SIGSEGV:

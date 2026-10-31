@@ -379,6 +379,16 @@ def case(name, *args, **kwargs):
     subject writes the same line and gives the abort site's answer, so the
     pin must die of SIGSEGV after the stderr the subject wrote, byte for
     byte, and the subject must answer as `abort=` registers.
+    `sigabrt=True` (with `abort=`) marks a pin `assert` or `abort()` site
+    that oxpinyin reproduces since class (c) was retired (2026-10-31 UTC):
+    both sides must die of SIGABRT, the subject must have written the pin's
+    stderr less glibc's trailing `Assertion ... failed.` line, and with
+    `userdir=True` both must leave the same profile. The status comparison
+    is MATCH; when the pin's assertion line is the only stderr difference
+    the case reports POLICY-ACCEPTED (`pin-abort-assert-line.md`). `abort=`
+    keeps the pin's registered termination, so `either=` and `dir_chunk=`
+    choose the matcher as before; under --expect-parent the parent's
+    refusal is the expected difference.
     `strjoinv_over_read=True` is for the bigram export iterator's join of
     an unterminated `GPtrArray` (register row 1, class (b);
     `strjoinv_fault`): whether the pin faults depends on heap layout. A pin
