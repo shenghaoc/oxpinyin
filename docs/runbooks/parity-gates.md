@@ -31,9 +31,7 @@ just runner run-all --cells bdb --issue row:35 \
 just runner run-all --cells bdb,kc,tkrzw --jobs 2 \
   --oracle-root /path/to/oracle --target-root /path/to/retained/targets \
   --data bdb=/path/to/bdb-data --data kc=/path/to/kc-data \
-  --data tkrzw=/path/to/tkrzw-data \
-  --ibus-build bdb=/path/to/work-bdb --ibus-build kc=/path/to/work-kc \
-  --ibus-build tkrzw=/path/to/work-tkrzw
+  --data tkrzw=/path/to/tkrzw-data
 ```
 
 The three oracle prefixes must carry their own exact `oracle-pin.txt` reference
@@ -41,9 +39,8 @@ and matching native data. The subject data directories must use that cell's
 backend. The key/dictionary/phrase and zhuyin batteries also need the pinned
 `interpolation2.text`; an oracle install that omits it needs a separate data copy
 containing it. Do not modify the reference installation to satisfy a runner.
-The import gate additionally requires the pin-built IBus frontend objects;
-`--ibus-build CELL=DIR` supplies those per cell. A generated UTF-8 locale and
-native backend dump utilities are among the stateful gates' other prerequisites.
+A generated UTF-8 locale and native backend dump utilities are among the
+stateful gates' other prerequisites.
 The requested-row training gates use `db5.3_dump` for bdb, `kchashmgr` for kc,
 and `tkrzw_dbm_util` for tkrzw; installing a backend development library alone
 does not provide those command-line tools. `tools/cloud/setup.sh` provides
@@ -81,12 +78,12 @@ identity. An absent patched prefix is FAIL, never an allowable skip.
 
 `tools.dev.cell.Settings` owns backend selection and target resolution. Its child environment sets
 `CARGO_PROFILE_DEV_OPT_LEVEL=1`; no Cargo manifest or shipped source is changed.
-The aggregate builds the requested cells' capi, zhuyin-capi and dictool dev
+The aggregate builds the requested cells' capi and zhuyin-capi dev
 artifacts once before scheduling execution. Each cell has a separate retained
 Cargo target under `--target-root` (default `target/cells`). An explicit
 `CARGO_TARGET_DIR` is accepted for one cell; using it with multiple cells is an
 error. Keep these targets between issues. No runner should rebuild a supplied
-library: `OXPINYIN_CAPI_SO`, `OXPINYIN_ZHUYIN_SO` and `OXPINYIN_DICTOOL` name the
+library: `OXPINYIN_CAPI_SO` and `OXPINYIN_ZHUYIN_SO` name the
 prebuilt artifacts. Existing positional and runner-specific aliases remain
 available. `--no-build` uses the existing artifacts at the selected cell targets.
 A supplied artifact must match the selected backend and source revision; a path

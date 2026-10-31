@@ -1,11 +1,8 @@
 //! The §9 export materialization: user-store rows rendered the way the
 //! C ABI's export iterators yield them.
 //!
-//! Moved from `oxpinyin-capi`'s state layer so the standalone migration
-//! tool (`oxpinyin-dictool`) drives the exact code the C iterators drive,
-//! instead of a Rust-only re-implementation growing beside it. Pure Rust
-//! over the context's user store and optional runtime — no C types cross
-//! this boundary.
+//! Pure Rust over the context's user store and optional runtime — no C
+//! types cross this boundary.
 
 use oxpinyin_capi_marshal::phrase_text::phrase_text_bytes;
 use oxpinyin_core::{ChewingKey, PhraseText, PhraseTextConcat, SyllableKey};
@@ -931,22 +928,6 @@ impl ContextCore {
             }),
             ..BigramExportWalk::default()
         })
-    }
-
-    /// Every §9 bigram-export row the pin's iterator yields, in its order:
-    /// [`BigramExportWalk`] driven the way a caller drives the C iterator
-    /// (`while has_next { get_next }`).
-    #[must_use]
-    pub fn export_bigram_rows(&self) -> Option<Vec<ExportedBigramRow>> {
-        let mut walk = self.bigram_export_walk()?;
-        let mut rows = Vec::new();
-        while walk.has_next() {
-            let BigramStep::Row(row, _) = walk.get_next() else {
-                break;
-            };
-            rows.push(row);
-        }
-        Some(rows)
     }
 }
 

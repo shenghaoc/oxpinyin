@@ -19,9 +19,8 @@
  *      and leave no row behind.
  *   save once, then export once.
  *
- * The CLI's idempotency layer (desired-state deltas) lives in
- * oxpinyin-dictool; this driver deliberately exercises the raw ABI so the
- * two libraries' per-phrase semantics are what is compared.
+ * This driver exercises the raw ABI so the two libraries' per-phrase
+ * semantics are what is compared.
  *
  * Usage:
  *   ./import-diff <path-to-so> <systemdir>

@@ -494,9 +494,6 @@ jobs:
   # GLib and cargo-c themselves are available from Homebrew) and the
   # backend-independent KMM tool. The combined training package remains
   # in the lane because its segment/eval modules use the backend.
-  # oxpinyin-dictool stays
-  # in the set: its C-ABI dependency was cut, and it drives the facade's
-  # import/export machinery directly.
   #
   # The Windows job with the same exclude set runs in verify-nightly.yml.
   # Containers run on Linux runners only, so these operating systems get

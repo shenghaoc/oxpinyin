@@ -286,7 +286,7 @@ jobs:
       # and the other stage modules compile against that same selection.
       # What stays is everything a backend choice can change: the store
       # itself, the user store, data readers, datagen writers, runtime,
-      # engine, facade, both C ABIs, dictool, the oracle harness, and the
+      # engine, facade, both C ABIs, the oracle harness, and the
       # training package (segment and eval modules).
       - name: Test the workspace under this backend
         if: needs.changes.outputs.reuse != 'true'
