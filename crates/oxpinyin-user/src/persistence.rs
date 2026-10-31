@@ -553,7 +553,7 @@ pub struct Loaded {
 /// the user pinyin index's key metadata needed by session wiring.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct LoadedProfile {
-    /// USER_FILE arenas used only while seeding the existing session rows.
+    /// USER_FILE arenas moved into the session after profile parsing.
     pub(crate) user_libraries: BTreeMap<u8, UserLibrary>,
     /// Completed private views retained by session opens.
     pub(crate) replayed: BTreeMap<u8, ReplayedLibrary>,
@@ -1305,7 +1305,14 @@ fn load_libraries(
                     }
                 }
             }
-            Err(error) => loaded.skipped.push(format!("{name}: {error}")),
+            Err(error) => {
+                loaded.skipped.push(format!("{name}: {error}"));
+                if let Some(libraries) = libraries.as_deref_mut()
+                    && let Ok(headers) = UserLibrary::load_headers(&bytes)
+                {
+                    libraries.insert(nibble, headers);
+                }
+            }
         }
     }
 }
@@ -1356,10 +1363,16 @@ pub(crate) fn load_user_library(
     dir: &Path,
     layout: &UserFileLayout,
     nibble: u8,
-) -> (UserState, BTreeMap<u8, u32>) {
+) -> Option<UserLibrary> {
     let mut loaded = Loaded::default();
-    load_libraries(dir, layout, &mut loaded, Some(nibble), None);
-    (loaded.state, loaded.library_totals)
+    let mut libraries = BTreeMap::new();
+    load_libraries(dir, layout, &mut loaded, Some(nibble), Some(&mut libraries));
+    libraries.remove(&nibble).or_else(|| {
+        loaded
+            .library_totals
+            .get(&nibble)
+            .map(|&total| UserLibrary::empty_with_total(total))
+    })
 }
 
 /// Decoded system logs read and validated before mask_out mutates state.
@@ -1689,6 +1702,7 @@ pub fn save_with_bigram(
     save_session(
         dir,
         SaveSource {
+            libraries: None,
             state,
             kept: &kept,
             compacted: &[],
@@ -1706,6 +1720,7 @@ pub fn save_with_bigram(
 #[derive(Clone, Copy)]
 pub(crate) struct SaveSource<'a> {
     pub(crate) state: &'a UserState,
+    pub(crate) libraries: Option<&'a BTreeMap<u8, UserLibrary>>,
     pub(crate) kept: &'a IndexKeys,
     /// The nibbles whose live empty sub-index the pin's `compact` rebuilt
     /// from no items; their log header's new total is zero.
@@ -1988,6 +2003,7 @@ fn stage_rest<B: FnMut(u8) -> SaveBaseline>(
         state,
         kept,
         compacted,
+        libraries,
     } = source;
     {
         // ---- the library files, by sub-index -----------------------------
@@ -2002,7 +2018,15 @@ fn stage_rest<B: FnMut(u8) -> SaveBaseline>(
                                 .map(|(&slot, item)| (slot, item.clone()))
                                 .collect()
                         });
-                    build_chunk(&pairs)?
+                    if let Some(libraries) = libraries {
+                        libraries
+                            .get(&nibble)
+                            .unwrap_or(&UserLibrary::default())
+                            .store()
+                            .map_err(PersistenceError::Codec)?
+                    } else {
+                        build_chunk(&pairs)?
+                    }
                 }
                 LibraryFile::Log => {
                     let original = originals.get(&nibble).unwrap_or(&empty_library);
@@ -2609,6 +2633,7 @@ mod tests {
         let mut saved = state();
         saved.phrase_table.insert(gone.clone(), Vec::new());
         let source = SaveSource {
+            libraries: None,
             state: &saved,
             kept: &kept,
             compacted: &[],
@@ -3544,6 +3569,7 @@ mod tests {
         std::os::unix::fs::symlink("/dev/full", dir.join("user.bin.tmp")).expect("symlink");
         let state = state();
         let source = SaveSource {
+            libraries: None,
             state: &state,
             kept: &IndexKeys::default(),
             compacted: &[],

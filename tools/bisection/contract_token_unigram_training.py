@@ -3,7 +3,8 @@
 import ctypes as C
 
 from contract_abi import Arr, B, I, P, S, U, UNTOUCHED, Z, choose_text, tokens_of, unigram_of
-from contract_case_helpers import token_unigram_trained, token_unigram_user
+from contract_case_helpers import FACADE_TOTAL, _guess_out, token_unigram_trained, token_unigram_user
+from contract_fixtures import import_rows
 
 
 _REGISTRATIONS = []
@@ -215,6 +216,51 @@ def _(k):
     while accepted < 1000 and choose(inst, pick):
         accepted += 1
     out['accepted before the first refusal'] = accepted
+    return out
+
+
+# #1418: a predicted prefix row trains only its unigram, by 69 * 7 through
+# FacadePhraseIndex::add_unigram_frequency (074a2219 pinyin.cpp:2607-2616),
+# which adds to the facade total before the sub-index adds to the item
+# (phrase_index.h:628-635). Here the row is a library-7 user phrase, whose
+# session item lives in oxpinyin's user arena.
+@case('predicted-prefix-user-phrase-unigram', issues=('1418',))
+def _(k):
+    """Choose a user phrase's predicted prefix row; read its unigram and the facade total.
+
+    Import 龘龘鱻 into library 7 with count five and assert exactly one
+    library-7 token. Predict from 龘龘, find the kind-5 row rendering 鱻 and
+    record the choose flag with the token's unigram before and after. The
+    facade total has no C getter: add the delta that puts the expected total
+    (FACADE_TOTAL, the import's 3 * 5 and the choice's 483) at 2**32 - 1 to a
+    library-1 token and guess ni3'hao3, as the #798 below-wrap control does.
+    A total that took more than expected wraps and changes the sentences."""
+    phrase = '龘龘鱻'
+    assert import_rows(k, 7, [(phrase, "da2'da2'xian1", 5)]) == [True]
+    tokens = [token for token in tokens_of(k, phrase) if token >> 24 == 7]
+    assert len(tokens) == 1, tokens
+    token = tokens[0]
+    inst = k.inst
+    k.fn('guess_predicted_candidates', B, P, S)(inst, '龘龘'.encode())
+    count = U()
+    k.fn('get_n_candidate', B, P, C.POINTER(U))(inst, C.byref(count))
+    pick = None
+    for i in range(count.value):
+        cand, kind, text = P(), I(), S()
+        k.fn('get_candidate', B, P, U, C.POINTER(P))(inst, i, C.byref(cand))
+        k.fn('get_candidate_type', B, P, P, C.POINTER(I))(inst, cand, C.byref(kind))
+        k.fn('get_candidate_string', B, P, P, C.POINTER(S))(inst, cand, C.byref(text))
+        if kind.value == 5 and text.value == '鱻'.encode():
+            pick = cand
+            break
+    assert pick is not None, 'no predicted prefix row for the user phrase'
+    out = {'token': hex(token), 'before': unigram_of(k, token)}
+    out['choose'] = k.fn('choose_predicted_candidate', B, P, P)(inst, pick)
+    out['after'] = unigram_of(k, token)
+    expected = FACADE_TOTAL + 3 * 5 + 69 * 7
+    out['below-wrap-add'] = k.fn('token_add_unigram_frequency', B, P, U, U)(
+        inst, (1 << 24) | 1, 2 ** 32 - 1 - expected)
+    out['below-wrap'] = _guess_out(k, b"ni3'hao3")
     return out
 
 

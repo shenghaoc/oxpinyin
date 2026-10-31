@@ -31,20 +31,15 @@
 //!   by `load_db` and written back by `save_db`, and every bigram
 //!   operation runs the pin's `SingleGram` code over its raw grams
 //!   ([`crate::store::BIGRAM_GRAM`] is the plain stores' equivalent).
-//! * user phrases — a `user.bin`/`addon.bin` item is the `PHRASE` text,
-//!   the `PRONUNCIATION` rows (packed keys — one wire form in both
-//!   schemas) and the `UNIGRAM` row: upstream's item `unigram` field is
-//!   exactly this store's full accumulation for the token (`count·3` at
-//!   `_add_phrase`, `seed·7` per training, the promotion unigram).
+//! * user phrases and appended system items — each body lives once in an
+//!   owned `UserLibrary` arena, in the pin's packed item format. The user
+//!   pinyin index is an independent set; it never supplies item counts.
 //! * system tokens — a `.dbin` MODIFY record is the original item with
 //!   `unigram + UNIGRAM[token]`; a replayed REMOVE enters the live removal
 //!   set. The session retains replayed originals in a private mapped view,
 //!   decoding an item on its first use. That item holds its reading counts:
-//!   opening writes no `PRONUNCIATION` row for it. Training writes the
-//!   exact-reading delta over the original for the readings it moves (a row
-//!   is that delta, kept for the tables that probe it), and the live view
-//!   takes the new count when training commits, so lookup and export observe
-//!   it before save.
+//!   opening and training write no `PRONUNCIATION` rows. Training updates
+//!   the live item's counts, which lookup, export and save all observe.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -56,6 +51,9 @@ use oxpinyin_store::{
     DefaultStore, DefaultUserBigramDb, ReadStore, StoreError, UserBigramDb, WriteStore, WriteTxn,
 };
 
+#[cfg(test)]
+use crate::store::{PHRASE, PHRASE_BY_LIB_TEXT, PHRASE_BY_TEXT, PRONUNCIATION};
+
 use crate::codec;
 use oxpinyin_data::row_format::pinyin_index::PinyinIndexItem;
 
@@ -65,56 +63,9 @@ use crate::persistence::{
 use crate::phrase::{self, phrase_index_library_index};
 use crate::registry::StoreInner;
 use crate::store::{
-    ALLOC, ALLOC_CURSOR, GenericUserStore, LIBRARY_OFFSET, PHRASE, PHRASE_BY_LIB_TEXT,
-    PHRASE_BY_TEXT, PRONUNCIATION, PronValue, SYSTEM_BASE, Token, UNIGRAM, UNIGRAM_TOTAL,
-    UNIGRAM_TOTAL_KEY, UserStoreError,
+    ALLOC, ALLOC_CURSOR, GenericUserStore, LIBRARY_OFFSET, SYSTEM_BASE, Token, UNIGRAM,
+    UNIGRAM_TOTAL, UNIGRAM_TOTAL_KEY, UserStoreError,
 };
-
-/// The user pinyin index's `(token, packed keys)` entries that no item
-/// reading backs, by the token's library nibble ([`Target::kept_index`]).
-pub(crate) type KeptIndex = std::collections::BTreeMap<u8, BTreeSet<(u32, Vec<u16>)>>;
-
-/// Keep the stored count even when an item body cannot be decoded. The pin's
-/// count getter checks only the two header bytes, not the text or keys.
-pub(crate) fn loaded_pronunciation_counts(
-    state: &UserState,
-    libraries: &BTreeMap<u8, crate::user_library::UserLibrary>,
-    dir: Option<&Path>,
-    layout: &oxpinyin_data::user_files::UserFileLayout,
-    only: Option<u8>,
-) -> BTreeMap<Token, u32> {
-    let mut counts = BTreeMap::new();
-    for (library, file) in layout.user_libraries() {
-        let library = *library;
-        if only.is_some_and(|only| only != library) {
-            continue;
-        }
-        if let Some(items) = libraries.get(&library) {
-            counts.extend(items.items().map(|(slot, item)| {
-                (
-                    (u32::from(library) << 24) | slot,
-                    item.n_pronunciations() as u32,
-                )
-            }));
-        } else if let Some(items) = state.libraries.get(&library) {
-            counts.extend(
-                items.iter().map(|(&slot, item)| {
-                    ((u32::from(library) << 24) | slot, item.prons.len() as u32)
-                }),
-            );
-        } else if let Some(chunk) = dir.and_then(|dir| {
-            oxpinyin_data::phrase_library::PhraseLibrary::open(&file.under(dir)).ok()
-        }) {
-            // The value loader can reject a body the pin never reads here.
-            for slot in 0..chunk.token_range().end {
-                if let Some(count) = chunk.pronunciation_count(slot) {
-                    counts.insert((u32::from(library) << 24) | slot, count);
-                }
-            }
-        }
-    }
-    counts
-}
 
 /// The persistence target a session store carries: the user dir, the
 /// original system chunks (the `.dbin` diff base), the conformance
@@ -126,8 +77,8 @@ pub struct Target {
     pub(crate) dir: Option<PathBuf>,
     /// The system libraries by nibble, refreshed when mask_out reloads them.
     pub(crate) originals: std::sync::RwLock<SystemOriginals>,
-    /// The live USER_FILE items' stored counts. Writers publish after commit.
-    pub(crate) pronunciation_counts: std::sync::Mutex<BTreeMap<Token, u32>>,
+    /// Live item arenas and independent pinyin-index membership.
+    pub(crate) phrases: std::sync::Mutex<crate::user_library::SessionPhrases>,
     /// This build's identity triple.
     pub(crate) versions: SystemVersions,
     /// Whose `user.conf` lifecycle the profile follows.
@@ -156,16 +107,15 @@ pub struct Target {
     /// replay stopped at that record and the facade logs one warning
     /// (class (c), register row 108).
     pub(crate) short_add_payload: bool,
-    /// The entries the user pinyin index holds without an item reading
-    /// behind them: those of a dropped item (the pin's index tables keep
-    /// them when `unload` frees the sub-index, `phrase_index.cpp:261-268`)
-    /// and those a profile's `user_pinyin_index.bin` carries for a token
-    /// whose item lacks the reading. They are found on whatever item holds
-    /// the token, written by a save, and removed by a `mask_out`.
-    pub(crate) kept_index: std::sync::Mutex<KeptIndex>,
 }
 
 impl Target {
+    pub(crate) fn phrases(&self) -> std::sync::MutexGuard<'_, crate::user_library::SessionPhrases> {
+        self.phrases
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     pub(crate) fn originals(&self) -> std::sync::RwLockReadGuard<'_, SystemOriginals> {
         self.originals
             .read()
@@ -189,37 +139,20 @@ pub(crate) struct IndexRows {
 }
 
 impl IndexRows {
-    /// The rows of every phrase `select` picks, as [`export_state`] turns
-    /// them into the save's rows: each reading
-    /// whose `indexed` flag is set, in packed `ChewingKey` words.
-    pub(crate) fn read(
-        txn: &impl WriteTxn,
-        select: impl Fn(Token) -> bool,
-    ) -> Result<Self, StoreError> {
-        let mut rows = Self::default();
-        let mut phrases: BTreeSet<Token> = BTreeSet::new();
-        txn.for_each(PHRASE, |key, _value| {
-            let token = codec::decode_token(key)
-                .map_err(|_| StoreError::Backend("corrupt phrase token".into()))?;
-            if select(token) {
-                phrases.insert(token);
-            }
-            Ok(())
-        })?;
-        if phrases.is_empty() {
-            return Ok(rows);
+    pub(crate) fn from_index<'a>(entries: impl Iterator<Item = &'a (u32, Vec<u16>)>) -> Self {
+        Self {
+            pinyin: entries
+                .map(|(token, keys)| PinyinIndexItem {
+                    token: *token,
+                    keys: keys
+                        .iter()
+                        .copied()
+                        .map(oxpinyin_core::ChewingKey::from_packed)
+                        .collect(),
+                })
+                .collect(),
         }
-        txn.for_each(PRONUNCIATION, |key, value| {
-            let (token, key_bytes) = codec::decode_token_bytes(key)
-                .map_err(|_| StoreError::Backend("corrupt pronunciation key".into()))?;
-            if phrases.contains(&token) && PronValue::decode(value)?.indexed {
-                rows.push_reading(token, key_bytes);
-            }
-            Ok(())
-        })?;
-        Ok(rows)
     }
-
     /// The rows of the one phrase `token`, given its text and readings.
     pub(crate) fn of_phrase(token: Token, readings: &[crate::store::PronRow]) -> Self {
         let mut rows = Self::default();
@@ -442,51 +375,10 @@ impl GenericUserStore<DefaultStore> {
         // Armed as soon as the load has raised the counter: an open that
         // fails from here on drops it and lowers the counter again, so a
         // failed open reads as a finished session, not a crash.
-        let mut backed = backed_readings(&loaded.state, &originals);
-        for (&nibble, library) in &user_libraries {
-            for (slot, item) in library.items() {
-                backed.extend(
-                    item.pronunciations()
-                        .map(|pron| ((u32::from(nibble) << 24) | slot, packed_words(pron.keys))),
-                );
-            }
-        }
-        for (&nibble, library) in &replayed {
-            for slot in library.add_candidates().filter(|slot| {
-                !originals
-                    .get(&nibble)
-                    .is_some_and(|original| original.contains_item(*slot))
-            }) {
-                if let Some(bytes) = library.bytes(slot)
-                    && let Some(item) =
-                        oxpinyin_data::phrase_library::PhraseItemView::from_bytes(&bytes)
-                {
-                    backed.extend(
-                        item.pronunciations().map(|pron| {
-                            ((u32::from(nibble) << 24) | slot, packed_words(pron.keys))
-                        }),
-                    );
-                }
-            }
-        }
-        let mut kept_index = KeptIndex::new();
-        for entry in loaded.state.indexed.difference(&backed) {
-            kept_index
-                .entry(phrase_index_library_index(entry.0))
-                .or_default()
-                .insert(entry.clone());
-        }
-        let pronunciation_counts = loaded_pronunciation_counts(
-            &loaded.state,
-            &user_libraries,
-            user_dir,
-            originals.layout(),
-            None,
-        );
         let target = Arc::new(Target {
             dir: user_dir.map(Path::to_path_buf),
             originals: std::sync::RwLock::new(originals),
-            pronunciation_counts: std::sync::Mutex::new(pronunciation_counts),
+            phrases: std::sync::Mutex::new(Default::default()),
             versions,
             law,
             open_counter: loaded.open_counter,
@@ -494,7 +386,6 @@ impl GenericUserStore<DefaultStore> {
             overlong_index_keys,
             index_keys,
             index_file_keys: std::sync::Mutex::new(index_file_keys),
-            kept_index: std::sync::Mutex::new(kept_index),
         });
         let fini = FiniGuard(Some(Arc::clone(&target)));
         let (has_user_data, library_offsets) = db.write(|txn| {
@@ -508,6 +399,59 @@ impl GenericUserStore<DefaultStore> {
             )?;
             Ok((count_tables(txn)?, offset))
         })?;
+        {
+            let mut phrases = target.phrases();
+            phrases.libraries = user_libraries;
+            phrases.indexed = std::mem::take(&mut loaded.state.indexed);
+            for (&nibble, items) in &loaded.state.libraries {
+                for (&slot, item) in items {
+                    let bytes = oxpinyin_data::chunk_write::encode_phrase_item(item)
+                        .map_err(|e| UserStoreError::Persistence(e.to_string()))?;
+                    phrases
+                        .libraries
+                        .entry(nibble)
+                        .or_default()
+                        .replace(slot, &bytes)
+                        .map_err(UserStoreError::Persistence)?;
+                }
+            }
+            for (&nibble, items) in &loaded.state.system_overrides {
+                for (&slot, item) in items {
+                    if !target
+                        .originals()
+                        .get(&nibble)
+                        .is_some_and(|library| library.contains_item(slot))
+                        && let Some(item) = item
+                    {
+                        let bytes = oxpinyin_data::chunk_write::encode_phrase_item(item)
+                            .map_err(|e| UserStoreError::Persistence(e.to_string()))?;
+                        phrases
+                            .libraries
+                            .entry(nibble)
+                            .or_default()
+                            .replace(slot, &bytes)
+                            .map_err(UserStoreError::Persistence)?;
+                    }
+                }
+            }
+            for (&nibble, library) in &replayed {
+                for slot in library.add_candidates() {
+                    if !target
+                        .originals()
+                        .get(&nibble)
+                        .is_some_and(|original| original.contains_item(slot))
+                        && let Some(bytes) = library.bytes(slot)
+                    {
+                        phrases
+                            .libraries
+                            .entry(nibble)
+                            .or_default()
+                            .replace(slot, &bytes)
+                            .map_err(UserStoreError::Persistence)?;
+                    }
+                }
+            }
+        }
         // `m_user_bigram->load_db(user_bigram.db)` (`pinyin.cpp:399-401`):
         // the user bigram's one read, after the profile check, so a wiped
         // profile loads empty. Any key counts as user data, an item-less
@@ -522,7 +466,13 @@ impl GenericUserStore<DefaultStore> {
             ),
             None => (DefaultUserBigramDb::empty()?, false),
         };
-        let has_user_data = has_user_data || has_bigram_file;
+        let has_user_data = has_user_data
+            || has_bigram_file
+            || target
+                .phrases()
+                .libraries
+                .values()
+                .any(|library| !library.is_empty());
 
         // The seed and the kept index are done with the loaded overrides, which
         // the session now owns: move them into the live map rather than
@@ -580,36 +530,7 @@ impl GenericUserStore<DefaultStore> {
 /// `init_and_wrap`'s `has_user_data` probe, against a seeded session
 /// store; the user bigram lives in the container, which the caller asks.
 fn count_tables(txn: &mut impl WriteTxn) -> Result<bool, StoreError> {
-    Ok(!txn.is_empty(UNIGRAM)? || !txn.is_empty(PHRASE)?)
-}
-
-/// The `(token, packed keys)` readings the items of `state` carry: the
-/// user libraries' items and the items added to a system library.
-pub(crate) fn backed_readings(
-    state: &UserState,
-    originals: &SystemOriginals,
-) -> BTreeSet<(u32, Vec<u16>)> {
-    let mut backed = BTreeSet::new();
-    let mut add = |nibble: u8, slot: u32, item: &ChunkItem| {
-        let token = (u32::from(nibble) << 24) | slot;
-        backed.extend(item.prons.iter().map(|(packed, _)| (token, packed.clone())));
-    };
-    for (&nibble, items) in &state.libraries {
-        for (&slot, item) in items {
-            add(nibble, slot, item);
-        }
-    }
-    for (&nibble, overrides) in &state.system_overrides {
-        for (&slot, item) in overrides {
-            let appended = !originals
-                .get(&nibble)
-                .is_some_and(|original| original.contains_item(slot));
-            if let (true, Some(item)) = (appended, item) {
-                add(nibble, slot, item);
-            }
-        }
-    }
-    backed
+    Ok(!txn.is_empty(UNIGRAM)?)
 }
 
 /// Writes the loaded profile's values into a fresh session store — the
@@ -656,40 +577,12 @@ enum SeedItem<'a> {
     View(oxpinyin_data::phrase_library::PhraseItemView<'a>),
 }
 
-fn packed_words(bytes: &[u8]) -> Vec<u16> {
-    bytes
-        .chunks_exact(2)
-        .map(|b| u16::from_le_bytes([b[0], b[1]]))
-        .collect()
-}
-
 impl SeedItem<'_> {
     fn unigram(&self) -> u32 {
         match self {
             Self::Owned(item) => item.unigram,
             Self::View(item) => item.unigram(),
         }
-    }
-    fn text(&self) -> std::borrow::Cow<'_, [u8]> {
-        match self {
-            Self::Owned(item) => crate::phrase_table::key_ucs4(&item.phrase).into(),
-            Self::View(item) => (&item.as_bytes()[6..6 + 4 * item.phrase_length()]).into(),
-        }
-    }
-    fn readings(&self) -> impl Iterator<Item = (std::borrow::Cow<'_, [u16]>, u32)> {
-        let count = match self {
-            Self::Owned(item) => item.prons.len(),
-            Self::View(item) => item.n_pronunciations(),
-        };
-        (0..count).filter_map(|i| match self {
-            Self::Owned(item) => item
-                .prons
-                .get(i)
-                .map(|(keys, freq)| (keys.as_slice().into(), *freq)),
-            Self::View(item) => item
-                .pronunciation(i)
-                .map(|pron| (packed_words(pron.keys).into(), pron.freq)),
-        })
     }
 }
 
@@ -717,9 +610,8 @@ fn seed_system_unigram_deltas(
                 continue;
             }
             // The replayed readings write no row: the session's live item
-            // ([`StoreInner::system_items`]) holds their counts. Training
-            // writes the row for the readings it moves, as the delta over the
-            // original.
+            // ([`StoreInner::system_items`]) holds their counts through
+            // training, import and save.
             let token = (u32::from(nibble) << 24) | slot;
             // `is_readable` held, so the item exists and this is its unigram.
             let base = original.unigram(slot).unwrap_or(0);
@@ -826,47 +718,6 @@ fn seed_txn_with_replay(
     }
     let mut seed = |nibble: u8, slot: u32, item: SeedItem<'_>| -> Result<(), StoreError> {
         let token = (u32::from(nibble) << 24) | slot;
-        let text = item.text();
-        txn.put(PHRASE, &codec::encode_token(token), &text)?;
-        let mut library_text = vec![nibble];
-        library_text.extend_from_slice(&text);
-        txn.put(
-            PHRASE_BY_LIB_TEXT,
-            &library_text,
-            &codec::encode_token(token),
-        )?;
-        if nibble == crate::phrase::USER_DICTIONARY {
-            txn.put(PHRASE_BY_TEXT, &text, &codec::encode_token(token))?;
-        }
-        for (seq, (keys, freq)) in (0_u32..).zip(item.readings()) {
-            // The store's pronunciation table keys on the dense
-            // syllable id (`PinyinKey`), while the pin's file format
-            // carries packed `ChewingKey` words — the conversion
-            // belongs here, at the seam between the two models. A
-            // key that names no syllable in this engine's frozen
-            // inventory cannot be represented, so the reading is
-            // dropped rather than stored as a wrong id. The item's
-            // reading order is the insertion order; the user pinyin
-            // index says which readings lookup finds.
-            let Some(ids) = packed_to_pinyin_keys(&keys) else {
-                continue;
-            };
-            let value = PronValue {
-                count: u64::from(freq),
-                seq,
-                indexed: state.indexed.contains(&(token, keys.into_owned())),
-            };
-            txn.put(
-                PRONUNCIATION,
-                &codec::encode_token_bytes(token, &phrase::encode_keys(&ids)),
-                &value.encode(),
-            )?;
-        }
-        txn.put(
-            UNIGRAM,
-            &codec::encode_token(token),
-            &codec::encode_u64(u64::from(item.unigram())),
-        )?;
         unigram_total = unigram_total.saturating_add(u64::from(item.unigram()));
         let sum = seeded.entry(nibble).or_insert(0);
         *sum = sum.wrapping_add(item.unigram());
@@ -955,58 +806,28 @@ fn seed_txn_with_replay(
 /// Reads the session values back into the persistence shape — the
 /// export half of the value mapping, [`GenericUserStore::save`]'s
 /// libpinyin branch.
+#[cfg(any(test, feature = "kyotocabinet", feature = "tkrzw"))]
 pub fn export_state<S: WriteStore>(
     store: &GenericUserStore<S>,
     originals: &SystemOriginals,
 ) -> Result<UserState, UserStoreError> {
+    export_session_state(store, originals, true)
+}
+
+pub(crate) fn export_for_save<S: WriteStore>(
+    store: &GenericUserStore<S>,
+    originals: &SystemOriginals,
+) -> Result<UserState, UserStoreError> {
+    export_session_state(store, originals, false)
+}
+
+fn export_session_state<S: WriteStore>(
+    store: &GenericUserStore<S>,
+    originals: &SystemOriginals,
+    user_items: bool,
+) -> Result<UserState, UserStoreError> {
     store.flush_system_unigrams()?;
     let db = store.database();
-
-    let mut phrase_text: BTreeMap<Token, Vec<u32>> = BTreeMap::new();
-    db.for_each(PHRASE, |key, value| {
-        let token = codec::decode_token(key)
-            .map_err(|_| StoreError::Backend("corrupt phrase token".into()))?;
-        let text = codec::decode_words(value)
-            .map_err(|_| StoreError::Backend("corrupt phrase text".into()))?;
-        phrase_text.insert(token, text);
-        Ok(())
-    })?;
-
-    let mut pronunciations: BTreeMap<Token, Vec<StoredReading>> = BTreeMap::new();
-    db.for_each(PRONUNCIATION, |key, value| {
-        let (token, key_bytes) = codec::decode_token_bytes(key)
-            .map_err(|_| StoreError::Backend("corrupt pronunciation key".into()))?;
-        let value = PronValue::decode(value)?;
-        // The reverse of the seed conversion: the store holds dense
-        // syllable ids, the file format wants packed `ChewingKey`
-        // words. A stored id outside the engine's inventory is skipped
-        // (a corrupt row, never a panic).
-        let keys = phrase::decode_keys(key_bytes);
-        let packed = if !phrase_text.contains_key(&token)
-            && originals.contains_key(&phrase_index_library_index(token))
-        {
-            // A system item's rows retain exact packed keys and their values
-            // are deltas; a phrase added to a system library (it has a phrase
-            // row) keeps the user store's dense syllable ids.
-            keys
-        } else {
-            let Some(packed) = pinyin_keys_to_packed(&keys) else {
-                return Ok(());
-            };
-            packed
-        };
-        pronunciations.entry(token).or_default().push((
-            value.seq,
-            packed,
-            value.count,
-            value.indexed,
-        ));
-        Ok(())
-    })?;
-    for rows in pronunciations.values_mut() {
-        // Insertion order: the item's reading order in the file.
-        rows.sort_by_key(|row| row.0);
-    }
 
     let mut unigrams: BTreeMap<Token, u64> = BTreeMap::new();
     db.for_each(UNIGRAM, |key, value| {
@@ -1021,40 +842,15 @@ pub fn export_state<S: WriteStore>(
     let system_items = store.stored_system_items();
     let removed_items = store.stored_removed_system_items();
     let mut state = UserState::default();
-    state.indexed.extend(store.kept_index_entries());
+    state.indexed.extend(store.index_entries());
     db.for_each(crate::phrase_table::TABLE, |key, value| {
         state.phrase_table.insert(key.to_vec(), value.to_vec());
         Ok(())
     })?;
     drop(db);
-    for (token, text) in &phrase_text {
-        // An item whose unigram add the sub-index refused keeps 0
-        // (`SubPhraseIndex::add_unigram_frequency`'s overflow guard).
-        let delta = unigrams.get(token).copied().unwrap_or(0);
-        let prons = pronunciations.get(token).map_or(Vec::new(), |rows| {
-            rows.iter()
-                .map(|(_, packed, count, indexed)| {
-                    if *indexed {
-                        state.indexed.insert((*token, packed.clone()));
-                    }
-                    (packed.clone(), u32::try_from(*count).unwrap_or(u32::MAX))
-                })
-                .collect()
-        });
-        let nibble = phrase_index_library_index(*token);
-        state.libraries.entry(nibble).or_default().insert(
-            token & crate::phrase::PHRASE_MASK,
-            ChunkItem {
-                phrase: text.clone(),
-                unigram: u32::try_from(delta).unwrap_or(u32::MAX),
-                prons,
-            },
-        );
-    }
-
     for (token, delta) in &unigrams {
         let nibble = phrase_index_library_index(*token);
-        if phrase_text.contains_key(token) || !originals.contains_key(&nibble) {
+        if !originals.contains_key(&nibble) {
             continue; // user tokens landed above; unknown libraries skip
         }
         let Some(original) = originals.get(&nibble) else {
@@ -1065,15 +861,6 @@ pub fn export_state<S: WriteStore>(
             continue;
         };
         let mut new_item = old.clone();
-        for (keys, frequency) in &mut new_item.prons {
-            if let Some(delta) = pronunciations
-                .get(token)
-                .and_then(|rows| rows.iter().find(|row| &row.1 == keys))
-                .map(|row| row.2)
-            {
-                *frequency = frequency.wrapping_add(delta as u32);
-            }
-        }
         new_item.unigram = old.unigram.wrapping_add(*delta as u32);
         state
             .system_overrides
@@ -1092,14 +879,38 @@ pub fn export_state<S: WriteStore>(
         item.unigram = base.wrapping_add(unigrams.get(&token).copied().unwrap_or(0) as u32);
         // The live item is the authority for its readings' counts, as it is
         // for pricing: replay, an import and training each leave it holding
-        // the count the save writes. The rows training writes are the delta
-        // over the original, kept for the tables that probe them; the entries
-        // are a list, so a count is never rebuilt from a row found by keys.
+        // the count the save writes. Entries remain an ordered list, so a
+        // count is never rebuilt from a row found by keys.
         state
             .system_overrides
             .entry(nibble)
             .or_default()
             .insert(slot, Some(item));
+    }
+    if let Some(target) = store.session_target() {
+        let phrases = target.phrases();
+        for (&nibble, library) in &phrases.libraries {
+            for (slot, view) in library.items() {
+                if !(1..=4).contains(&nibble) && !user_items {
+                    continue;
+                }
+                let item = oxpinyin_data::chunk_write::decode_phrase_item(view.as_bytes())
+                    .map_err(|e| UserStoreError::Persistence(e.to_string()))?;
+                if (1..=4).contains(&nibble) {
+                    state
+                        .system_overrides
+                        .entry(nibble)
+                        .or_default()
+                        .insert(slot, Some(item));
+                } else {
+                    state
+                        .libraries
+                        .entry(nibble)
+                        .or_default()
+                        .insert(slot, item);
+                }
+            }
+        }
     }
     // A removal is recorded last: it wins over any override a slot gathered
     // from the rows, as the sub-index no longer holds the item to modify.
@@ -1115,10 +926,6 @@ pub fn export_state<S: WriteStore>(
         .retain(|nibble, _| !(1..=4).contains(nibble));
     Ok(state)
 }
-
-/// One stored reading on its way to the file: insertion sequence, packed
-/// `ChewingKey` words, count, and whether the user pinyin index carries it.
-type StoredReading = (u32, Vec<u16>, u64, bool);
 
 /// The store's dense syllable ids for a reading's packed `ChewingKey`
 /// words, decoded from the words' fields; `None` when any word is one no
@@ -1139,10 +946,13 @@ pub(crate) fn packed_to_pinyin_keys(packed: &[u16]) -> Option<Vec<crate::phrase:
 
 /// 074a2219 storage/pinyin_phrase3.h:68-147: initial equality,
 /// incomplete middle/final wildcard, and zero-tone wildcard on either side.
-pub(crate) fn pronunciation_matches(reading: &[oxpinyin_core::ChewingKey], packed: &[u16]) -> bool {
+pub(crate) fn pronunciation_matches(
+    reading: &[oxpinyin_core::ChewingKey],
+    packed: impl ExactSizeIterator<Item = u16>,
+) -> bool {
     reading.len() == packed.len()
         && reading.iter().zip(packed).all(|(query, bits)| {
-            let stored = oxpinyin_core::ChewingKey::from_packed(*bits);
+            let stored = oxpinyin_core::ChewingKey::from_packed(bits);
             query.initial == stored.initial
                 && ((query.middle == stored.middle && query.final_ == stored.final_)
                     || (query.middle == 0 && query.final_ == 0)
@@ -1175,6 +985,166 @@ mod tests {
     }
     use crate::store::UserStore;
     use oxpinyin_core::ChewingKey;
+
+    #[test]
+    fn arena_insert_size_failure_keeps_metadata_and_items_unchanged() {
+        let keys = |text: &str| {
+            packed_to_pinyin_keys(&[ChewingKey::from_pinyin(text).unwrap().to_packed()]).unwrap()
+        };
+        let mut outcomes = Vec::new();
+        for library in [crate::USER_DICTIONARY, crate::ADDON_DICTIONARY] {
+            let dir = tempdir("arena-insert-failure");
+            let mut store =
+                UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+                    .unwrap();
+            if library == crate::USER_DICTIONARY {
+                store
+                    .add_phrase_in(library, &"你".into(), &keys("ni"), Some(5))
+                    .unwrap();
+            } else {
+                store
+                    .promote_addon_phrase("你", &[(keys("ni"), 5)], 5)
+                    .unwrap();
+            }
+            // Force the real arena-size refusal without allocating four GiB.
+            store
+                .session_target()
+                .unwrap()
+                .phrases()
+                .libraries
+                .get_mut(&library)
+                .unwrap()
+                .max_content_len = Some(1);
+            let metadata = || {
+                let db = store.database();
+                [crate::phrase_table::TABLE, UNIGRAM_TOTAL].map(|table| {
+                    let mut rows = Vec::new();
+                    db.for_each(table, |key, value| {
+                        rows.push((key.to_vec(), value.to_vec()));
+                        Ok(())
+                    })
+                    .unwrap();
+                    rows
+                })
+            };
+            let before_metadata = metadata();
+            let before_items = format!("{:?}", store.session_target().unwrap().phrases());
+            let result = if library == crate::USER_DICTIONARY {
+                store.add_phrase_in(library, &"他".into(), &keys("ta"), Some(5))
+            } else {
+                store.promote_addon_phrase("他", &[(keys("ta"), 5)], 5)
+            };
+            let db = store.database();
+            let after_metadata = [crate::phrase_table::TABLE, UNIGRAM_TOTAL].map(|table| {
+                let mut rows = Vec::new();
+                db.for_each(table, |key, value| {
+                    rows.push((key.to_vec(), value.to_vec()));
+                    Ok(())
+                })
+                .unwrap();
+                rows
+            });
+            drop(db);
+            outcomes.push((
+                library,
+                matches!(result, Err(UserStoreError::Persistence(_))),
+                before_metadata == after_metadata,
+                before_items == format!("{:?}", store.session_target().unwrap().phrases()),
+            ));
+            drop(store);
+            std::fs::remove_dir_all(dir).unwrap();
+        }
+        assert_eq!(
+            outcomes,
+            vec![
+                (crate::USER_DICTIONARY, true, true, true),
+                (crate::ADDON_DICTIONARY, true, true, true),
+            ]
+        );
+    }
+
+    #[test]
+    fn session_phrases_have_one_arena_owner_through_writes_and_reload() {
+        let dir = tempdir("arena-owner");
+        let mut store =
+            UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin).unwrap();
+        let ni = ChewingKey::from_pinyin("ni").unwrap();
+        let keys = packed_to_pinyin_keys(&[ni.to_packed()]).unwrap();
+        let token = store
+            .add_phrase_in(crate::USER_DICTIONARY, &"你".into(), &keys, Some(5))
+            .unwrap();
+        store
+            .train_pronunciations(token, std::iter::once(vec![ni]), 7)
+            .unwrap();
+        assert_eq!(
+            store.phrase(token).unwrap().unwrap().pronunciations()[0].count(),
+            12
+        );
+        store.mark_modified();
+        store.save().unwrap();
+        store.unload_user_library(crate::USER_DICTIONARY).unwrap();
+        assert!(store.phrase(token).unwrap().is_none());
+        store.load_user_library(crate::USER_DICTIONARY).unwrap();
+        assert_eq!(store.user_pronunciation_count(token), Some(1));
+        assert_eq!(
+            store.phrase(token).unwrap().unwrap().pronunciations()[0].count(),
+            12
+        );
+        let db = store.database();
+        for table in [PHRASE, PHRASE_BY_TEXT, PHRASE_BY_LIB_TEXT, PRONUNCIATION] {
+            assert!(db.is_empty(table).unwrap(), "retired session table {table}");
+        }
+        assert!(
+            db.read_with(UNIGRAM, &codec::encode_token(token), |_| ())
+                .unwrap()
+                .is_none()
+        );
+        drop(db);
+        assert!(store.phrase_exists(token).unwrap());
+        assert_eq!(store.phrase_length(token).unwrap(), Some(1));
+        assert_eq!(store.nth_pronunciation(token, 0).unwrap(), Some(keys));
+        assert_eq!(store.nth_pronunciation(token, usize::MAX).unwrap(), None);
+        assert!(store.remove_user_phrase(token).unwrap());
+        assert!(store.phrase(token).unwrap().is_none());
+        assert!(!store.phrase_exists(token).unwrap());
+        drop(store);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn predicted_prefix_trains_an_arena_resident_user_item() {
+        let dir = tempdir("arena-predicted-prefix");
+        let mut store =
+            UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin).unwrap();
+        let ni = ChewingKey::from_pinyin("ni").unwrap();
+        let keys = packed_to_pinyin_keys(&[ni.to_packed()]).unwrap();
+        let token = store
+            .add_phrase_in(crate::USER_DICTIONARY, &"你".into(), &keys, Some(5))
+            .unwrap();
+        assert!(store.with_user_item(token, |_| ()).is_some());
+        let delta = store.unigram_delta(token).unwrap();
+        let library = store.unigram_library_total(crate::USER_DICTIONARY).unwrap();
+        let total = store.unigram_total().unwrap();
+        assert_eq!(store.observe_predicted_prefix(token).unwrap(), 69);
+        // `add_unigram_frequency(token, 69 * 7)` reaches the live item
+        // (`pinyin.cpp:2609`), and the item's library and the facade total
+        // take the same 483.
+        assert_eq!(store.unigram_delta(token).unwrap(), delta + 483);
+        assert_eq!(
+            store.unigram_library_total(crate::USER_DICTIONARY).unwrap(),
+            library + 483
+        );
+        assert_eq!(store.unigram_total().unwrap(), total + 483);
+        let db = store.database();
+        assert!(
+            db.read_with(UNIGRAM, &codec::encode_token(token), |_| ())
+                .unwrap()
+                .is_none()
+        );
+        drop(db);
+        drop(store);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     fn originals() -> SystemOriginals {
         let mut items = BTreeMap::new();
@@ -2361,12 +2331,12 @@ mod tests {
     }
 
     #[test]
-    fn a_refused_library_write_leaves_the_kept_index_and_the_rows_alone() {
+    fn a_refused_library_write_leaves_the_index_and_arena_alone() {
         let dir = tempdir("refused-library-write");
         let ni = ChewingKey::from_pinyin("ni").expect("ni");
         let dense = |tone| packed_to_pinyin_keys(&[ni.with_tone(tone).to_packed()]).expect("dense");
         let kept = |store: &UserStore| {
-            let mut entries = store.kept_index_entries();
+            let mut entries = store.index_entries();
             entries.sort();
             entries
         };
@@ -2390,15 +2360,15 @@ mod tests {
         store
             .add_phrase_in(crate::USER_DICTIONARY, &"龘".into(), &dense(2), Some(20))
             .expect("item");
-        assert!(kept(&store).is_empty());
-        // A refused unload keeps the index entries where they were: none
-        // set aside, the item and its indexed reading still there.
+        let indexed = kept(&store);
+        assert_eq!(indexed.len(), 1);
+        // A refused unload keeps the independent index and arena intact.
         store.fail_next_replace();
         assert!(store.unload_user_library(crate::USER_DICTIONARY).is_err());
-        assert!(kept(&store).is_empty());
+        assert_eq!(kept(&store), indexed);
         assert_eq!(readings(&store), [vec![true]]);
-        // The unload that is not refused sets the entry aside; a refused
-        // load leaves it there and the library empty.
+        // Unload drops only the item; a refused load leaves the index intact
+        // and the library empty.
         store
             .unload_user_library(crate::USER_DICTIONARY)
             .expect("unload");
@@ -2586,7 +2556,8 @@ mod tests {
                     .add_system_phrase_in(1, Some(token), &"拟".into(), &dense(packed), Some(5))
                     .expect("reading within the 255 limit");
             }
-            assert_eq!(pronunciation_rows(&store), 255);
+            assert_eq!(pronunciation_rows(&store), 0);
+            assert_eq!(store.user_pronunciation_count(token), Some(255));
             unigram = store.unigram_delta(token).expect("unigram");
             assert_eq!(unigram, 15);
             store

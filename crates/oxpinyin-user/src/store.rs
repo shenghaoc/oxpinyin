@@ -45,6 +45,9 @@ use crate::seed;
 use crate::session_values::SessionValues;
 use crate::store_libpinyin::{FiniGuard, IndexRows};
 
+#[path = "store_arena.rs"]
+mod arena;
+
 /// Token type — libpinyin's 32-bit `phrase_token_t`.
 pub type Token = u32;
 
@@ -493,32 +496,6 @@ pub(crate) struct PronRow {
     pub(crate) value: PronValue,
 }
 
-/// One import handle's last item, in the pin's stored reading order. The
-/// database remains authoritative: every write still commits there, and any
-/// write through another handle invalidates this bounded, one-item memo.
-struct ImportReadings {
-    token: Token,
-    generation: u64,
-    rows: Vec<PronRow>,
-}
-
-#[inline]
-fn discard_stale_import_readings(cache: &mut Option<ImportReadings>, generation: u64) {
-    if cache
-        .as_ref()
-        .is_some_and(|cached| cached.generation != generation)
-    {
-        *cache = None;
-    }
-}
-
-#[inline]
-fn note_import_commit(cache: &mut Option<ImportReadings>, generation: u64) {
-    if let Some(cached) = cache.as_mut() {
-        cached.generation = generation.wrapping_add(1);
-    }
-}
-
 /// Puts `rows` into insertion order: ascending sequence, the table's key
 /// order among equal sequences (the stable sort keeps it).
 fn sort_by_insertion<T>(rows: &mut [T], seq: impl Fn(&T) -> u32) {
@@ -533,61 +510,8 @@ const _: () = assert!(ADD_PHRASE_UNIGRAM_FACTOR_U32 as u64 == ADD_PHRASE_UNIGRAM
 /// One imported reading: its dense keys, the same as packed `ChewingKey`
 /// words, and the count it adds.
 struct SystemReading<'a> {
-    keys: &'a [PinyinKey],
     packed: &'a [u16],
     delta: u32,
-}
-
-/// The token `_add_phrase` allocates for a phrase new to a system library
-/// (`get_range`'s end, pinyin.cpp:587-595; seeded from the shipped range and
-/// replayed ADD records, never from another library), with its text rows, its
-/// first reading and its unigram.
-fn append_system_token<S: WriteStore>(
-    db: &S,
-    library: u8,
-    range_end: u32,
-    text: &[u32],
-    reading: &SystemReading<'_>,
-) -> Result<Token, StoreError> {
-    let lib_key = phrase_library_key(library, &phrase_table::key_ucs4(text));
-    db.write(|txn| {
-        let token = match txn.read_with(ALLOC, &codec::encode_u8(library), codec::decode_token)? {
-            Some(token) => {
-                token.map_err(|_| StoreError::Backend("corrupt system cursor".into()))?
-            }
-            None => (u32::from(library) << 24) | range_end.max(1),
-        };
-        let next = phrase::next_library_token_after(library, token)
-            .ok_or_else(|| StoreError::Backend("system token space exhausted".into()))?;
-        txn.put(
-            ALLOC,
-            &codec::encode_u8(library),
-            &codec::encode_token(next),
-        )?;
-        txn.put(
-            PHRASE,
-            &codec::encode_token(token),
-            &phrase_table::key_ucs4(text),
-        )?;
-        txn.put(PHRASE_BY_LIB_TEXT, &lib_key, &codec::encode_token(token))?;
-        phrase_table::add_index_words(txn, text, token)?;
-        add_pronunciation(
-            txn,
-            token,
-            &phrase::encode_keys(reading.keys),
-            reading.delta,
-            true,
-        )?;
-        // The two facade add_index calls write the user tables. Only
-        // this first reading gets an index row (pinyin.cpp:598-607).
-        add_unigram_frequency(
-            txn,
-            library,
-            token,
-            reading.delta.wrapping_mul(ADD_PHRASE_UNIGRAM_FACTOR_U32),
-        )?;
-        Ok(token)
-    })
 }
 
 /// `PhraseItem::add_pronunciation` (phrase_index.cpp:56-91) on a live system
@@ -674,90 +598,6 @@ fn validate_system_merge(
     Ok(())
 }
 
-/// Keeps a system token's persistence rows in step with its live `item`. An
-/// original with no delta row still uses its imported payload; an existing
-/// row must include this import or the next train/save would erase it. A
-/// wrapped item drops every row.
-fn sync_system_rows<S: WriteStore>(
-    db: &S,
-    original: &crate::persistence::SystemLibrary,
-    token: Token,
-    current: u32,
-    reading: &SystemReading<'_>,
-    (untouched, wrapped): (bool, bool),
-    (generation, cache): (u64, &mut Option<ImportReadings>),
-) -> Result<(), StoreError> {
-    if wrapped {
-        return db.write(|txn| {
-            let mut rows = match cache.take() {
-                Some(cached) if cached.token == token && cached.generation == generation => {
-                    cached.rows
-                }
-                _ => collect_pronunciations_from_txn(txn, token)?,
-            };
-            clear_pronunciations(txn, &rows, token)?;
-            rows.clear();
-            *cache = Some(ImportReadings {
-                token,
-                generation,
-                rows,
-            });
-            Ok(())
-        });
-    }
-    if untouched {
-        return Ok(());
-    }
-    let has_original = original.contains_item(token & PHRASE_MASK);
-    let row_keys = if has_original {
-        reading.packed
-    } else {
-        reading.keys
-    };
-    let key_bytes = phrase::encode_keys(row_keys);
-    let row_key = codec::encode_token_bytes(token, &key_bytes);
-    if let Some(value) = db.read_with(PRONUNCIATION, &row_key, PronValue::decode)? {
-        let mut value = value?;
-        let base = original
-            .item(token & PHRASE_MASK)
-            .and_then(|item| {
-                item.prons
-                    .into_iter()
-                    .find(|(stored, _)| stored.as_slice() == reading.packed)
-            })
-            .map_or(0, |(_, count)| count);
-        let count = u64::from(current.wrapping_sub(base));
-        if value.count != count {
-            value.count = count;
-            db.write(|txn| txn.put(PRONUNCIATION, &row_key, &value.encode()))?;
-        }
-        if let Some(cached) = cache.as_mut() {
-            if let Some(row) = cached
-                .rows
-                .iter_mut()
-                .find(|row| row.key_bytes == key_bytes)
-            {
-                row.value = value;
-            } else {
-                *cache = None;
-            }
-        }
-    } else if !has_original {
-        db.write(|txn| {
-            add_import_pronunciation(
-                txn,
-                token,
-                &phrase::encode_keys(reading.keys),
-                reading.delta,
-                generation,
-                cache,
-            )
-            .map(|_| ())
-        })?;
-    }
-    Ok(())
-}
-
 /// Drops every stored reading of `token`: the item a wrapped count leaves.
 fn clear_pronunciations(
     txn: &mut impl WriteTxn,
@@ -803,27 +643,6 @@ fn add_pronunciation(
 ) -> Result<usize, StoreError> {
     let mut rows = collect_pronunciations_from_txn(txn, token)?;
     add_pronunciation_to_rows(txn, token, key_bytes, delta, indexed, &mut rows)
-}
-
-fn add_import_pronunciation(
-    txn: &mut impl WriteTxn,
-    token: Token,
-    key_bytes: &[u8],
-    delta: u32,
-    generation: u64,
-    cache: &mut Option<ImportReadings>,
-) -> Result<usize, StoreError> {
-    let mut rows = match cache.take() {
-        Some(cached) if cached.token == token && cached.generation == generation => cached.rows,
-        _ => collect_pronunciations_from_txn(txn, token)?,
-    };
-    let count = add_pronunciation_to_rows(txn, token, key_bytes, delta, false, &mut rows)?;
-    *cache = Some(ImportReadings {
-        token,
-        generation,
-        rows,
-    });
-    Ok(count)
 }
 
 fn add_pronunciation_to_rows(
@@ -1563,32 +1382,11 @@ fn rederive_alloc_cursors(txn: &mut impl WriteTxn, only: &[u8]) -> Result<(), St
     Ok(())
 }
 
-/// What a library replacement does: the system libraries a mask or reload
-/// maps again, or one `USER_FILE` library's unload or load.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum LibraryChange {
-    System,
-    UserUnload(u8),
-    UserLoad(u8),
-}
-
-impl LibraryChange {
-    const fn user_library(self) -> Option<u8> {
-        match self {
-            Self::System => None,
-            Self::UserUnload(library) | Self::UserLoad(library) => Some(library),
-        }
-    }
-}
-
-/// Removes the unigram, phrase and pronunciation rows of the reloaded
-/// libraries. Returns the readings of `user_library` that the user pinyin
-/// index carried, as `(token, packed keys)`.
-fn remove_reloaded_rows(
+/// Discard system unigram deltas before replaying the selected libraries.
+fn remove_system_unigrams(
     txn: &mut impl WriteTxn,
     reloaded: impl Fn(Token) -> bool,
-    user_library: Option<u8>,
-) -> Result<std::collections::BTreeSet<(Token, Vec<u16>)>, StoreError> {
+) -> Result<(), StoreError> {
     let mut unigrams = Vec::new();
     txn.for_each(UNIGRAM, |key, _| {
         let token = codec::decode_token(key)
@@ -1601,98 +1399,7 @@ fn remove_reloaded_rows(
     for key in unigrams {
         txn.remove(UNIGRAM, &key)?;
     }
-    // PHRASE represents a live sub-index item, unlike the raw phrase table.
-    // Discard the old library's items before seeding the filtered log.
-    let mut phrases = Vec::new();
-    txn.for_each(PHRASE, |key, value| {
-        let token = codec::decode_token(key)
-            .map_err(|_| StoreError::Backend("corrupt phrase token".into()))?;
-        if reloaded(token) {
-            let text = codec::decode_words(value)
-                .map_err(|_| StoreError::Backend("corrupt phrase text".into()))?;
-            phrases.push((token, text.to_owned()));
-        }
-        Ok(())
-    })?;
-    for (token, text) in phrases {
-        txn.remove(PHRASE, &codec::encode_token(token))?;
-        txn.remove(
-            PHRASE_BY_LIB_TEXT,
-            &phrase_library_key(
-                phrase_index_library_index(token),
-                &phrase_table::key_ucs4(&text),
-            ),
-        )?;
-        if phrase_index_library_index(token) == USER_DICTIONARY {
-            txn.remove(PHRASE_BY_TEXT, &phrase_table::key_ucs4(&text))?;
-        }
-    }
-    let mut deltas = Vec::new();
-    let mut indexed = std::collections::BTreeSet::new();
-    txn.for_each(PRONUNCIATION, |key, value| {
-        let (token, key_bytes) = codec::decode_token_bytes(key)
-            .map_err(|_| StoreError::Backend("corrupt pronunciation key".into()))?;
-        // These are item readings/deltas, not phrase-table membership.
-        if !reloaded(token) {
-            return Ok(());
-        }
-        deltas.push(key.to_vec());
-        if user_library == Some(phrase_index_library_index(token))
-            && PronValue::decode(value)?.indexed
-            && let Some(packed) =
-                crate::store_libpinyin::pinyin_keys_to_packed(&phrase::decode_keys(key_bytes))
-        {
-            indexed.insert((token, packed));
-        }
-        Ok(())
-    })?;
-    for key in deltas {
-        txn.remove(PRONUNCIATION, &key)?;
-    }
-    Ok(indexed)
-}
-
-/// What a replacement installs in [`Target::kept_index`] once its
-/// transaction has committed: the library and its entries.
-type PendingKept = Option<(u8, std::collections::BTreeSet<(Token, Vec<u16>)>)>;
-
-/// The user pinyin index outlives a `USER_FILE` library's sub-index: its
-/// entries stay in it, found on the items the chunk brings back
-/// (`state.indexed` for the seed) and on whatever item is later given a
-/// dropped token again ([`Target::kept_index`] keeps what no reading backs).
-/// `indexed` is what the removed rows carried. Nothing is changed here: the
-/// entries to keep come back for the caller to install after the store
-/// write took (policy row 103), so a refused write leaves `kept_index` as it
-/// was.
-fn kept_index_state<'a>(
-    target: &crate::store_libpinyin::Target,
-    originals: &crate::persistence::SystemOriginals,
-    change: LibraryChange,
-    indexed: std::collections::BTreeSet<(Token, Vec<u16>)>,
-    state: &'a crate::persistence::UserState,
-) -> (
-    std::borrow::Cow<'a, crate::persistence::UserState>,
-    PendingKept,
-) {
-    let Some(library) = change.user_library() else {
-        return (std::borrow::Cow::Borrowed(state), None);
-    };
-    let mut entries = target
-        .kept_index
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .get(&library)
-        .cloned()
-        .unwrap_or_default();
-    entries.extend(indexed);
-    if change != LibraryChange::UserLoad(library) {
-        return (std::borrow::Cow::Borrowed(state), Some((library, entries)));
-    }
-    let mut state = state.clone();
-    state.indexed.extend(entries.iter().cloned());
-    let backed = crate::store_libpinyin::backed_readings(&state, originals);
-    entries.retain(|entry| !backed.contains(entry));
-    (std::borrow::Cow::Owned(state), Some((library, entries)))
+    Ok(())
 }
 
 /// The facade total's unigram sum, stored after a replacement.
@@ -1744,8 +1451,6 @@ pub struct GenericUserStore<S: WriteStore> {
     _standalone_lease: Option<Arc<StandaloneLease>>,
     /// This handle's current training call's step checks.
     training: TrainingCheck,
-    /// Reused only by libpinyin sessions, whose raw rows have no outside writer.
-    import_readings: Option<ImportReadings>,
     /// Last field so [`RegistryLease`] drains after this handle's `Arc` dies.
     _lease: RegistryLease,
 }
@@ -1803,7 +1508,6 @@ impl<S: WriteStore> GenericUserStore<S> {
             inner,
             _standalone_lease: lease,
             training: TrainingCheck::default(),
-            import_readings: None,
             _lease: RegistryLease,
         }
     }
@@ -1818,7 +1522,6 @@ impl<S: WriteStore> Clone for GenericUserStore<S> {
             inner: Arc::clone(&self.inner),
             _standalone_lease: self._standalone_lease.clone(),
             training: TrainingCheck::default(),
-            import_readings: None,
             _lease: RegistryLease,
         }
     }
@@ -2380,7 +2083,6 @@ impl<S: WriteStore> GenericUserStore<S> {
             inner,
             _standalone_lease: Some(standalone_lease),
             training: TrainingCheck::default(),
-            import_readings: None,
             _lease: RegistryLease,
         })
     }
@@ -2474,11 +2176,14 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// Returns [`UserStoreError`] when the store cannot be read.
     pub fn unigram_delta(&self, token: Token) -> Result<u64, UserStoreError> {
         let bumps = self.system_unigrams_for_read();
-        let stored = if self.has_user_data() {
-            self.with_count_cache(|cached, db| cached.unigram_delta(db, token))?
-        } else {
-            0
-        };
+        let stored =
+            if let Some(count) = self.with_user_item(token, |item| u64::from(item.unigram())) {
+                count
+            } else if self.has_user_data() {
+                self.with_count_cache(|cached, db| cached.unigram_delta(db, token))?
+            } else {
+                0
+            };
         Ok(stored.wrapping_add(
             bumps
                 .as_ref()
@@ -2570,6 +2275,15 @@ impl<S: WriteStore> GenericUserStore<S> {
         let db = self.database();
         db.write(|txn| {
             for (&token, &delta) in &bumps.tokens {
+                if let Some(target) = &self.inner.libpinyin {
+                    let mut phrases = target.phrases();
+                    if phrases.item(token).is_some() {
+                        if let Some(library) = phrases.item_mut(token) {
+                            library.increment_unigram(token & PHRASE_MASK, delta as u32);
+                        }
+                        continue;
+                    }
+                }
                 let key = codec::encode_token(token);
                 let old = txn_get_u64_or(txn, UNIGRAM, &key, 0)?;
                 txn.put(UNIGRAM, &key, &codec::encode_u64(old.wrapping_add(delta)))?;
@@ -2627,7 +2341,13 @@ impl<S: WriteStore> GenericUserStore<S> {
             .checked_add(1)
             .and_then(|next| next.checked_mul(1 << 24))
             .map(codec::encode_token);
-        let mut total = 0_u32;
+        let mut total = self.inner.libpinyin.as_ref().map_or(0, |target| {
+            target
+                .phrases()
+                .libraries
+                .get(&library)
+                .map_or(0, crate::user_library::UserLibrary::item_sum)
+        });
         db.range(
             UNIGRAM,
             Bound::Included(lo.as_slice()),
@@ -2709,6 +2429,11 @@ impl<S: WriteStore> GenericUserStore<S> {
             Ok(())
         });
         if cleared.is_ok() {
+            if let Some(target) = &self.inner.libpinyin {
+                for library in target.phrases().libraries.values_mut() {
+                    let _ = library.compact();
+                }
+            }
             self.inner
                 .has_library_offsets
                 .store(false, Ordering::SeqCst);
@@ -2729,7 +2454,11 @@ impl<S: WriteStore> GenericUserStore<S> {
         let mut delta = if self.has_user_data() {
             self.with_count_cache(|cached, db| {
                 let prev = prev.map(|prev| (prev, move || self.gram_in(db, prev)));
-                cached.count_delta(db, prev, token)
+                let mut delta = cached.count_delta(db, prev, token)?;
+                if let Some(count) = self.with_user_item(token, |item| u64::from(item.unigram())) {
+                    delta.unigram_delta = count;
+                }
+                Ok(delta)
             })?
         } else {
             UserCountDelta::ZERO
@@ -2767,6 +2496,9 @@ impl<S: WriteStore> GenericUserStore<S> {
         readings: impl Iterator<Item = Vec<oxpinyin_core::ChewingKey>>,
         seed: u64,
     ) -> Result<(), UserStoreError> {
+        if self.inner.libpinyin.is_some() {
+            return self.arena_train(token, readings, seed as u32);
+        }
         self.flush_system_unigrams()?;
         use crate::store_libpinyin::{pinyin_keys_to_packed, pronunciation_matches};
         if self.system_item_removed(token) {
@@ -2844,7 +2576,7 @@ impl<S: WriteStore> GenericUserStore<S> {
                     // current count before matching; retain partial updates
                     // if the running total would overflow on this addition.
                     total = total.wrapping_add(*frequency);
-                    if !pronunciation_matches(&reading, packed) {
+                    if !pronunciation_matches(&reading, packed.iter().copied()) {
                         continue;
                     }
                     let delta = seed as u32;
@@ -2911,8 +2643,9 @@ impl<S: WriteStore> GenericUserStore<S> {
         let seed = seed::predicted_seed();
         let delta = seed::unigram_delta(seed) as u32;
         let db = self.database();
-        let accepted = db
-            .write(|txn| add_unigram_frequency(txn, phrase_index_library_index(cur), cur, delta))?;
+        // An arena-resident item holds its own unigram; a row would be
+        // missed by `unigram_delta` while the total still took the delta.
+        let accepted = db.write(|txn| self.arena_add_unigram(txn, cur, delta))?;
         self.mark_committed_write(db, true);
         if !accepted {
             return Err(UserStoreError::UnigramTotalOverflow);
@@ -2950,9 +2683,8 @@ impl<S: WriteStore> GenericUserStore<S> {
         let accepted = db.write(|txn| {
             // `seed * unigram_factor` in `guint32`; the seeds are small.
             let delta = u32::try_from(seed::unigram_delta(seed)).unwrap_or(u32::MAX);
-            let library = phrase_index_library_index(cur);
             if matches!(policy, SeedPolicy::Predicted)
-                && !add_unigram_frequency(txn, library, cur, delta)?
+                && !self.arena_add_unigram(txn, cur, delta)?
             {
                 // The unigram add comes first and its overflow ends the
                 // call before any bigram is trained (`pinyin.cpp:2609-2612`);
@@ -2966,7 +2698,7 @@ impl<S: WriteStore> GenericUserStore<S> {
                 // `train_result3` ignores the sub-index's refusal
                 // (`phonetic_lookup.h:928-929`): the item stops growing
                 // once its library's `guint32` total would overflow.
-                add_unigram_frequency(txn, library, cur, delta)?;
+                self.arena_add_unigram(txn, cur, delta)?;
             }
             Ok(true)
         })?;
@@ -3027,19 +2759,13 @@ impl<S: WriteStore> GenericUserStore<S> {
         let Some(target) = self.inner.libpinyin.as_ref() else {
             return Ok(phrases);
         };
-        let unloaded = target
-            .kept_index
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if unloaded.values().all(std::collections::BTreeSet::is_empty) {
-            return Ok(phrases);
-        }
+        let arena = target.phrases();
         let by_token: std::collections::HashMap<Token, usize> = phrases
             .iter()
             .enumerate()
             .map(|(at, phrase)| (phrase.token(), at))
             .collect();
-        for (token, packed) in unloaded.values().flatten() {
+        for (token, packed) in &arena.indexed {
             let (Some(&at), Some(keys)) = (
                 by_token.get(token),
                 crate::store_libpinyin::packed_to_pinyin_keys(packed),
@@ -3057,32 +2783,24 @@ impl<S: WriteStore> GenericUserStore<S> {
         self.inner.fail_replace.store(true, Ordering::SeqCst);
     }
 
-    /// The user pinyin index entries no item reading backs
-    /// ([`Target::kept_index`]), for the save to write.
-    pub(crate) fn kept_index_entries(&self) -> Vec<(Token, Vec<u16>)> {
+    /// The complete independent user pinyin index, for the save to write.
+    pub(crate) fn index_entries(&self) -> Vec<(Token, Vec<u16>)> {
         let Some(target) = self.inner.libpinyin.as_ref() else {
             return Vec::new();
         };
-        let kept = target
-            .kept_index
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        kept.values().flatten().cloned().collect()
+        target.phrases().indexed.iter().cloned().collect()
     }
 
     /// The pin's `mask_out` takes the entries whose token is in the mask's
     /// range out of the user pinyin index, backed or not.
-    fn clear_masked_kept_index(&self, mask: Token, value: Token) {
+    fn clear_masked_index(&self, mask: Token, value: Token) {
         let Some(target) = self.inner.libpinyin.as_ref() else {
             return;
         };
-        let mut kept = target
-            .kept_index
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        for entries in kept.values_mut() {
-            entries.retain(|(token, _)| (token & mask) != value);
-        }
+        target
+            .phrases()
+            .indexed
+            .retain(|(token, _)| (token & mask) != value);
     }
 
     /// Add a phrase under `library` (`USER_DICTIONARY` or `NETWORK_DICTIONARY`).
@@ -3110,15 +2828,14 @@ impl<S: WriteStore> GenericUserStore<S> {
         // C ABI hands its `gint`'s bit pattern over; a wider caller value
         // saturates.
         let delta = u32::try_from(count.unwrap_or(DEFAULT_PHRASE_COUNT)).unwrap_or(u32::MAX);
+        if self.inner.libpinyin.is_some() {
+            return self.arena_add_phrase(library, &words, keys, delta, None, 1);
+        }
         let key_bytes = phrase::encode_keys(keys);
 
-        let cache_enabled = self.inner.libpinyin.is_some();
-        let mut import_readings = self.import_readings.take();
         let db = self.database();
-        let generation = self.write_generation();
-        discard_stale_import_readings(&mut import_readings, generation);
         let indexed_new = std::cell::Cell::new(false);
-        let (token, count) = db.write(|txn| {
+        let (token, _count) = db.write(|txn| {
             let lib_key = phrase_library_key(library, &phrase_table::key_ucs4(&words));
             // _add_phrase selects existing items from the phrase table,
             // not the live item's reverse index (074a2219 pinyin.cpp:533-562).
@@ -3151,18 +2868,7 @@ impl<S: WriteStore> GenericUserStore<S> {
                 // reading is merged into the item — no unigram, and no
                 // `add_index`, so a reading this adds stays out of the
                 // user pinyin index.
-                let count = if cache_enabled {
-                    add_import_pronunciation(
-                        txn,
-                        token,
-                        &key_bytes,
-                        delta,
-                        generation,
-                        &mut import_readings,
-                    )?
-                } else {
-                    add_pronunciation(txn, token, &key_bytes, delta, false)?
-                };
+                let count = add_pronunciation(txn, token, &key_bytes, delta, false)?;
                 Ok(Ok((token, count)))
             } else {
                 let alloc_key = codec::encode_u8(ALLOC_CURSOR);
@@ -3224,15 +2930,6 @@ impl<S: WriteStore> GenericUserStore<S> {
                 };
                 txn.put(PRONUNCIATION, &pron_key, &value.encode())?;
                 indexed_new.set(true);
-                import_readings = cache_enabled.then(|| ImportReadings {
-                    token,
-                    generation,
-                    rows: vec![PronRow {
-                        key_bytes: key_bytes.clone(),
-                        value,
-                    }],
-                });
-
                 let unigram = delta.wrapping_mul(ADD_PHRASE_UNIGRAM_FACTOR_U32);
                 add_unigram_frequency(txn, library, token, unigram)?;
                 Ok(Ok((token, 1)))
@@ -3242,10 +2939,7 @@ impl<S: WriteStore> GenericUserStore<S> {
         if indexed_new.get() {
             self.note_index_add(keys, token, false);
         }
-        self.set_user_pronunciation_count(token, count);
-        note_import_commit(&mut import_readings, generation);
         self.mark_committed_import_write(db, indexed_new.get());
-        self.import_readings = import_readings;
         Ok(token)
     }
 
@@ -3269,10 +2963,13 @@ impl<S: WriteStore> GenericUserStore<S> {
             return Err(UserStoreError::InvalidPhrase);
         }
 
+        if self.inner.libpinyin.is_some() {
+            return self.arena_promote(phrase, &valid, unigram as u32);
+        }
         let db = self.database();
         let indexed = std::cell::RefCell::new(Vec::new());
         let inserted = std::cell::Cell::new(false);
-        let (token, count) = db.write(|txn| {
+        let (token, _count) = db.write(|txn| {
             let lib_key = phrase_library_key(ADDON_DICTIONARY, &phrase_table::key(phrase));
             let existing = match txn.read_with(PHRASE_BY_LIB_TEXT, &lib_key, codec::decode_token)? {
                 Some(token) => {
@@ -3353,7 +3050,6 @@ impl<S: WriteStore> GenericUserStore<S> {
         for (keys, exists) in indexed.into_inner() {
             self.note_index_add(keys, token, exists);
         }
-        self.set_user_pronunciation_count(token, count);
         if inserted.get() {
             self.mark_committed_phrase_write(db, true);
         } else {
@@ -3362,28 +3058,16 @@ impl<S: WriteStore> GenericUserStore<S> {
         Ok(token)
     }
 
-    fn set_user_pronunciation_count(&self, token: Token, count: usize) {
-        if let Some(target) = self.inner.libpinyin.as_ref() {
-            target
-                .pronunciation_counts
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .insert(token, u32::try_from(count).unwrap_or(u32::MAX));
-        }
-    }
-
-    /// Read the stored count of a live USER_FILE item in this session.
-    /// This path skips phrase text and pronunciation records.
+    /// Read the stored count without decoding text or keys.
     #[must_use]
     pub fn user_pronunciation_count(&self, token: Token) -> Option<u32> {
         self.inner
             .libpinyin
             .as_ref()?
-            .pronunciation_counts
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .get(&token)
-            .copied()
+            .phrases()
+            .libraries
+            .get(&phrase_index_library_index(token))?
+            .pronunciation_count(token & PHRASE_MASK)
     }
 
     /// The item's text, without decoding or collecting its readings.
@@ -3391,6 +3075,14 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// # Errors
     /// Returns a backend error or [`UserStoreError::Decode`] for non-UTF-8 text.
     pub fn phrase_text(&self, token: Token) -> Result<Option<Vec<u32>>, UserStoreError> {
+        if self.inner.libpinyin.is_some() {
+            return Ok(self.with_user_item(token, |item| {
+                item.as_bytes()[6..6 + 4 * item.phrase_length()]
+                    .chunks_exact(4)
+                    .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+                    .collect()
+            }));
+        }
         get_bytes(&*self.database(), PHRASE, &codec::encode_token(token))?
             .map(|bytes| codec::decode_words(&bytes).map_err(|_| UserStoreError::Decode))
             .transpose()
@@ -3401,6 +3093,9 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// # Errors
     /// Returns an error when the store cannot be read.
     pub fn phrase_exists(&self, token: Token) -> Result<bool, UserStoreError> {
+        if self.inner.libpinyin.is_some() {
+            return Ok(self.with_user_item(token, |_| ()).is_some());
+        }
         Ok(self
             .database()
             .read_with(PHRASE, &codec::encode_token(token), |_| ())?
@@ -3412,6 +3107,9 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// # Errors
     /// Returns a backend error or [`UserStoreError::Decode`] for a partial word.
     pub fn phrase_length(&self, token: Token) -> Result<Option<usize>, UserStoreError> {
+        if self.inner.libpinyin.is_some() {
+            return Ok(self.with_user_item(token, |item| item.phrase_length()));
+        }
         self.database()
             .read_with(PHRASE, &codec::encode_token(token), |bytes| {
                 if bytes.len().is_multiple_of(4) {
@@ -3439,6 +3137,23 @@ impl<S: WriteStore> GenericUserStore<S> {
         token: Token,
         nth: usize,
     ) -> Result<Option<Vec<PinyinKey>>, UserStoreError> {
+        if self.inner.libpinyin.is_some() {
+            return Ok(self
+                .with_user_item(token, |item| {
+                    let reading = item.pronunciation(nth)?;
+                    reading
+                        .keys
+                        .chunks_exact(2)
+                        .map(|bytes| {
+                            let key =
+                                ChewingKey::from_packed(u16::from_le_bytes([bytes[0], bytes[1]]));
+                            let syllable = oxpinyin_core::SyllableKey::from_chewing_key(key)?;
+                            crate::toned_key(syllable.index(), key.tone)
+                        })
+                        .collect::<Option<Vec<_>>>()
+                })
+                .flatten());
+        }
         let db = self.database();
         let (lo, hi) = pronunciation_range(token);
         let lo = lo.as_ref().map(<[u8; 4]>::as_slice);
@@ -3485,6 +3200,10 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// decode failures name a present item that is malformed, the rest a
     /// store that cannot be read.
     pub fn phrase(&self, token: Token) -> Result<Option<UserPhrase>, UserStoreError> {
+        if let Some(target) = &self.inner.libpinyin {
+            let phrases = target.phrases();
+            return Ok(phrases.item(token).map(|item| phrases.phrase(token, item)));
+        }
         let db = self.database();
         let token_key = codec::encode_token(token);
         let Some(text_bytes) = get_bytes(&*db, PHRASE, &token_key)? else {
@@ -3516,6 +3235,12 @@ impl<S: WriteStore> GenericUserStore<S> {
         library: u8,
         phrase: &str,
     ) -> Result<Option<Token>, UserStoreError> {
+        if self.inner.libpinyin.is_some() {
+            return Ok(self
+                .phrase_table_tokens_for_text(phrase)?
+                .into_iter()
+                .find(|&token| phrase_index_library_index(token) == library));
+        }
         let db = self.database();
         let lib_key = phrase_library_key(library, &phrase_table::key(phrase));
         if let Some(token) = db.read_with(PHRASE_BY_LIB_TEXT, &lib_key, codec::decode_token)? {
@@ -3592,6 +3317,9 @@ impl<S: WriteStore> GenericUserStore<S> {
     ///
     /// Returns [`UserStoreError`] when the store cannot be read.
     pub fn next_user_token(&self) -> Result<Token, UserStoreError> {
+        if self.inner.libpinyin.is_some() {
+            return self.user_library_token_end(USER_DICTIONARY);
+        }
         let db = self.database();
         let alloc_key = codec::encode_u8(ALLOC_CURSOR);
         db.read_with(ALLOC, &alloc_key, codec::decode_token)?
@@ -3626,6 +3354,46 @@ impl<S: WriteStore> GenericUserStore<S> {
     ///
     /// Returns [`UserStoreError`] when the store cannot be read.
     pub fn export_phrases_in(&self, library: u8) -> Result<Vec<ExportedPhrase>, UserStoreError> {
+        if let Some(target) = &self.inner.libpinyin {
+            let phrases = target.phrases();
+            let mut out = Vec::new();
+            if let Some(items) = phrases.libraries.get(&library) {
+                for (_, item) in items.items() {
+                    for reading in item.pronunciations() {
+                        let pinyin = reading.keys.chunks_exact(2).enumerate().try_fold(
+                            String::new(),
+                            |mut text, (position, bytes)| {
+                                let key = ChewingKey::from_packed(u16::from_le_bytes([
+                                    bytes[0], bytes[1],
+                                ]));
+                                let syllable = oxpinyin_core::SyllableKey::from_chewing_key(key)?;
+                                crate::toned_key(syllable.index(), key.tone)?;
+                                if position != 0 {
+                                    text.push('\'');
+                                }
+                                text.push_str(syllable.text());
+                                if key.tone != 0 {
+                                    text.push(char::from(b'0' + key.tone));
+                                }
+                                Some(text)
+                            },
+                        );
+                        if let Some(pinyin) = pinyin {
+                            let text = item.as_bytes()[6..6 + 4 * item.phrase_length()]
+                                .chunks_exact(4)
+                                .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+                                .collect();
+                            out.push(ExportedPhrase {
+                                text,
+                                pinyin,
+                                count: u64::from(reading.freq),
+                            });
+                        }
+                    }
+                }
+            }
+            return Ok(out);
+        }
         let db = self.database();
         let rows = collect_phrase_rows(&*db, Some(library))?;
         let mut out = Vec::new();
@@ -3650,6 +3418,19 @@ impl<S: WriteStore> GenericUserStore<S> {
     ///
     /// Returns [`UserStoreError`] when the store cannot be read.
     pub fn phrases(&self) -> Result<Vec<UserPhrase>, UserStoreError> {
+        if let Some(target) = &self.inner.libpinyin {
+            let phrases = target.phrases();
+            return Ok(phrases
+                .libraries
+                .iter()
+                .flat_map(|(&nibble, library)| {
+                    let phrases = &*phrases;
+                    library.items().map(move |(slot, item)| {
+                        phrases.phrase((u32::from(nibble) << 24) | slot, item)
+                    })
+                })
+                .collect());
+        }
         let db = self.database();
         Ok(collect_phrase_rows(&*db, None)?
             .into_iter()
@@ -3730,17 +3511,19 @@ impl<S: WriteStore> GenericUserStore<S> {
             // ChunkItems) and a dirty save must not copy them — both
             // halves take the Arc by reference.
             let originals = target.originals();
-            let state = crate::store_libpinyin::export_state(self, &originals)?;
+            let state = crate::store_libpinyin::export_for_save(self, &originals)?;
             let bigram_db = self
                 .inner
                 .bigram_db
                 .as_ref()
                 .map(|db| db.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
             let kept = target.index_file_keys();
+            let phrases = target.phrases();
             crate::persistence::save_session(
                 dir,
                 crate::persistence::SaveSource {
                     state: &state,
+                    libraries: Some(&phrases.libraries),
                     kept: &kept,
                     compacted: &[],
                 },
@@ -3821,13 +3604,14 @@ impl<S: WriteStore> GenericUserStore<S> {
             };
             self.compact_libraries();
             let originals = target.originals();
-            let state = crate::store_libpinyin::export_state(self, &originals)?;
+            let state = crate::store_libpinyin::export_for_save(self, &originals)?;
             let bigram_db = self
                 .inner
                 .bigram_db
                 .as_ref()
                 .map(|db| db.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
             let kept = target.index_file_keys();
+            let phrases = target.phrases();
             {
                 let mut reporting = crate::persistence::SaveReporting {
                     versions: &target.versions,
@@ -3841,6 +3625,7 @@ impl<S: WriteStore> GenericUserStore<S> {
                     dir,
                     crate::persistence::SaveSource {
                         state: &state,
+                        libraries: Some(&phrases.libraries),
                         kept: &kept,
                         compacted,
                     },
@@ -3994,7 +3779,7 @@ impl<S: WriteStore> GenericUserStore<S> {
         }
         let (state, library_totals) =
             crate::persistence::load_masked_logs(&originals, mask, value, logs);
-        self.replace_system_libraries(originals, LibraryChange::System, &state, &library_totals)
+        self.replace_system_libraries(originals, &state, &library_totals)
     }
 
     /// `_load_phrase_library`'s system branch for the libraries in
@@ -4021,7 +3806,7 @@ impl<S: WriteStore> GenericUserStore<S> {
             return Ok(());
         };
         let (state, library_totals) = crate::persistence::load_library_logs(&dir, &originals);
-        self.replace_system_libraries(originals, LibraryChange::System, &state, &library_totals)
+        self.replace_system_libraries(originals, &state, &library_totals)
     }
 
     /// `FacadePhraseIndex::unload` for the libraries in `originals`: the
@@ -4038,7 +3823,6 @@ impl<S: WriteStore> GenericUserStore<S> {
     ) -> Result<(), UserStoreError> {
         self.replace_system_libraries(
             originals,
-            LibraryChange::System,
             &crate::persistence::UserState::default(),
             &std::collections::BTreeMap::new(),
         )
@@ -4066,13 +3850,8 @@ impl<S: WriteStore> GenericUserStore<S> {
         if !layout.has_user_library(library) {
             return Ok(());
         }
-        let (state, library_totals) = crate::persistence::load_user_library(&dir, &layout, library);
-        self.replace_system_libraries(
-            crate::persistence::SystemOriginals::new(Default::default(), layout),
-            LibraryChange::UserLoad(library),
-            &state,
-            &library_totals,
-        )
+        let loaded = crate::persistence::load_user_library(&dir, &layout, library);
+        self.replace_user_arena(library, loaded)
     }
 
     /// `FacadePhraseIndex::unload` for the `USER_FILE` `library`: the
@@ -4094,18 +3873,12 @@ impl<S: WriteStore> GenericUserStore<S> {
         if !layout.has_user_library(library) {
             return Ok(());
         }
-        self.replace_system_libraries(
-            crate::persistence::SystemOriginals::new(Default::default(), layout),
-            LibraryChange::UserUnload(library),
-            &crate::persistence::UserState::default(),
-            &std::collections::BTreeMap::new(),
-        )
+        self.replace_user_arena(library, None)
     }
 
     fn replace_system_libraries(
         &mut self,
         originals: crate::persistence::SystemOriginals,
-        change: LibraryChange,
         state: &crate::persistence::UserState,
         library_totals: &std::collections::BTreeMap<u8, u32>,
     ) -> Result<(), UserStoreError> {
@@ -4113,10 +3886,25 @@ impl<S: WriteStore> GenericUserStore<S> {
         let Some(target) = self.inner.libpinyin.clone() else {
             return Ok(());
         };
-        let user_library = change.user_library();
+        let replacement = self.arena_replacement(&originals, state)?;
+        let surviving = target.phrases();
+        let arena_libraries = || {
+            replacement
+                .values()
+                .chain(surviving.libraries.iter().filter_map(|(nibble, library)| {
+                    (!originals.contains_key(nibble)).then_some(library)
+                }))
+        };
+        let arena_total = arena_libraries()
+            .flat_map(crate::user_library::UserLibrary::items)
+            .fold(0_u64, |sum, (_, item)| {
+                sum.wrapping_add(u64::from(item.unigram()))
+            });
+        let arena_live = arena_libraries().any(|library| !library.is_empty());
+        drop(surviving);
         let reloaded = |token| {
             let library = phrase_index_library_index(token);
-            originals.contains_key(&library) || user_library == Some(library)
+            originals.contains_key(&library)
         };
         let mut target_originals = target
             .originals
@@ -4127,67 +3915,40 @@ impl<S: WriteStore> GenericUserStore<S> {
         // exist, and cleared below only once the transaction leaves none,
         // still under the database lock.
         self.inner.has_library_offsets.store(true, Ordering::SeqCst);
-        let (has_user_data, moved, offsets_left, pending) = db.write(|txn| {
+        let (has_user_data, moved, offsets_left) = db.write(|txn| {
             // `FacadePhraseIndex::load` and `merge_with_mask` take the old
             // sub-index's total out of the facade and put the new one's in
             // (`phrase_index.cpp:237-248`, `:301-332`): each reloaded
             // library's difference leaves with it, and the one its masked
             // replay leaves comes in.
             let mut moved = 0_u32;
-            for nibble in originals.keys().chain(user_library.as_ref()) {
+            for nibble in originals.keys() {
                 let key = codec::encode_u8(*nibble);
                 let old = txn_get_u64_or(txn, LIBRARY_OFFSET, &key, 0)?;
                 moved = moved.wrapping_sub(old as u32);
                 txn.remove(LIBRARY_OFFSET, &key)?;
             }
-            let indexed = remove_reloaded_rows(txn, reloaded, user_library)?;
-            let (state, pending) = kept_index_state(&target, &originals, change, indexed, state);
+            remove_system_unigrams(txn, reloaded)?;
             let reseeded =
-                crate::store_libpinyin::seed_txn(txn, &state, &originals, library_totals)?;
+                crate::store_libpinyin::seed_txn(txn, state, &originals, library_totals)?;
             #[cfg(test)]
             if self.inner.fail_replace.swap(false, Ordering::SeqCst) {
                 return Err(StoreError::Backend("injected write failure".into()));
-            }
-            // The sub-index starts again from its items: the next token is
-            // one past the highest the chunk brought back, or the first.
-            if let Some(library) = user_library {
-                rederive_alloc_cursors(txn, &[library])?;
             }
             moved = reseeded
                 .values()
                 .fold(moved, |moved, &offset| moved.wrapping_add(offset));
             let offsets_left = !txn.is_empty(LIBRARY_OFFSET)?;
             store_unigram_total(txn)?;
-            Ok((
-                has_user_data_in_write_txn(txn)?,
-                moved,
-                offsets_left,
-                pending,
-            ))
+            bump_unigram_total(txn, arena_total)?;
+            Ok((has_user_data_in_write_txn(txn)?, moved, offsets_left))
         })?;
-        if let Some(library) = user_library {
-            let mut counts = target
-                .pronunciation_counts
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            counts.retain(|&token, _| phrase_index_library_index(token) != library);
-            if matches!(change, LibraryChange::UserLoad(_)) {
-                counts.extend(crate::store_libpinyin::loaded_pronunciation_counts(
-                    state,
-                    &Default::default(),
-                    target.dir.as_deref(),
-                    originals.layout(),
-                    Some(library),
-                ));
-            }
-        }
-        // The write took: now the index entries it set aside are kept.
-        if let Some((library, entries)) = pending {
-            target
-                .kept_index
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .insert(library, entries);
+        {
+            let mut phrases = target.phrases();
+            phrases
+                .libraries
+                .retain(|nibble, _| !originals.contains_key(nibble));
+            phrases.libraries.extend(replacement);
         }
         self.inner.facade_offset.fetch_add(moved, Ordering::SeqCst);
         self.inner
@@ -4212,9 +3973,10 @@ impl<S: WriteStore> GenericUserStore<S> {
                     }
                 }
             }
-            self.inner
-                .has_system_items
-                .store(!items.is_empty() || !removed.is_empty(), Ordering::Relaxed);
+            self.inner.has_system_items.store(
+                !items.is_empty() || !removed.is_empty() || self.arena_has_system_items(),
+                Ordering::Relaxed,
+            );
             self.inner
                 .has_removed_system_items
                 .store(!removed.is_empty(), Ordering::Relaxed);
@@ -4230,7 +3992,7 @@ impl<S: WriteStore> GenericUserStore<S> {
         let has_grams = self
             .container()
             .is_some_and(|container| container.keys().is_ok_and(|keys| !keys.is_empty()));
-        self.mark_committed_phrase_write(db, has_user_data || has_grams);
+        self.mark_committed_phrase_write(db, has_user_data || has_grams || arena_live);
         Ok(())
     }
 
@@ -4243,9 +4005,10 @@ impl<S: WriteStore> GenericUserStore<S> {
         items.retain(|&token, _| (token & mask) != value);
         let mut removed = self.removed_system_items_guard();
         removed.retain(|&token| (token & mask) != value);
-        self.inner
-            .has_system_items
-            .store(!items.is_empty() || !removed.is_empty(), Ordering::Relaxed);
+        self.inner.has_system_items.store(
+            !items.is_empty() || !removed.is_empty() || self.arena_has_system_items(),
+            Ordering::Relaxed,
+        );
         self.inner
             .has_removed_system_items
             .store(!removed.is_empty(), Ordering::Relaxed);
@@ -4274,18 +4037,19 @@ impl<S: WriteStore> GenericUserStore<S> {
         #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
         let walk = self.pinyin_mask_records(mask, value)?;
         let db = self.database();
-        let session = self.inner.libpinyin.is_some();
         let container = self.inner.bigram_db.is_some();
         let (has_user_data, index_rows) = db.write(|txn| {
             // The pin's user index tables keep every key the mask empties
             // (`IndexKeys`). Every row the store holds now is one the
             // tables hold, and the mask and the system reload after it
             // only take rows away, so keep the keys of all of them.
-            let index_rows = if session {
-                IndexRows::read(txn, |_| true)?
-            } else {
-                IndexRows::default()
-            };
+            let index_rows = self
+                .inner
+                .libpinyin
+                .as_ref()
+                .map_or_else(IndexRows::default, |target| {
+                    IndexRows::from_index(target.phrases().indexed.iter())
+                });
             // `m_user_bigram->mask_out(mask, value)` (`pinyin.cpp:1230`,
             // `zhuyin.cpp:765`); a session's grams are masked below.
             if !container {
@@ -4302,7 +4066,19 @@ impl<S: WriteStore> GenericUserStore<S> {
                 unigram_rows.push((token, delta));
                 Ok(())
             })?;
-            let mut kept_sum = 0_u64;
+            let mut kept_sum = self.inner.libpinyin.as_ref().map_or(0, |target| {
+                target
+                    .phrases()
+                    .libraries
+                    .iter()
+                    .flat_map(|(&library, items)| {
+                        items.items().filter_map(move |(slot, item)| {
+                            ((((u32::from(library) << 24) | slot) & mask) != value)
+                                .then_some(u64::from(item.unigram()))
+                        })
+                    })
+                    .sum::<u64>()
+            });
             for (token, delta) in &unigram_rows {
                 if (token & mask) == value {
                     txn.remove(UNIGRAM, &codec::encode_token(*token))?;
@@ -4316,8 +4092,12 @@ impl<S: WriteStore> GenericUserStore<S> {
                 &codec::encode_u64(kept_sum),
             )?;
 
-            mask_phrase_rows(txn, mask, value)?;
-            rederive_alloc_cursors(txn, &[])?;
+            if self.inner.libpinyin.is_some() {
+                phrase_table::mask_out(txn, mask, value)?;
+            } else {
+                mask_phrase_rows(txn, mask, value)?;
+                rederive_alloc_cursors(txn, &[])?;
+            }
             Ok((has_user_data_in_write_txn(txn)?, index_rows))
         })?;
         self.keep_index_rows(&index_rows);
@@ -4330,17 +4110,11 @@ impl<S: WriteStore> GenericUserStore<S> {
         // Commit succeeded: discard matched in-memory system payloads too.
         // Dropping an original's override restores it; dropping an appended
         // item removes its only payload. Do this before publishing the epoch.
-        if let Some(target) = self.inner.libpinyin.as_ref() {
-            target
-                .pronunciation_counts
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .retain(|&token, _| (token & mask) != value);
-        }
+        self.mask_arena(mask, value)?;
         self.clear_masked_system_items(mask, value);
-        self.clear_masked_kept_index(mask, value);
+        self.clear_masked_index(mask, value);
         let grams_left = self.mask_container(mask, value)?;
-        self.mark_committed_phrase_write(db, has_user_data || grams_left);
+        self.mark_committed_phrase_write(db, has_user_data || grams_left || self.arena_has_items());
         Ok(())
     }
 
@@ -4350,6 +4124,9 @@ impl<S: WriteStore> GenericUserStore<S> {
     ///
     /// Returns [`UserStoreError`] when the phrase cannot be removed.
     pub fn remove_user_phrase(&mut self, token: Token) -> Result<bool, UserStoreError> {
+        if self.inner.libpinyin.is_some() {
+            return self.arena_remove(token);
+        }
         // `pinyin_remove_user_candidate` reaches `user_bigram->mask_out`
         // (`pinyin.cpp:3766`) after its phrase-index removals. Those are
         // in-memory and die with the pin's abort, so a failed call must
@@ -4449,13 +4226,6 @@ impl<S: WriteStore> GenericUserStore<S> {
                 for keys in index_rows.readings() {
                     self.note_index_remove(keys, token);
                 }
-                if let Some(target) = self.inner.libpinyin.as_ref() {
-                    target
-                        .pronunciation_counts
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .remove(&token);
-                }
                 let grams_left =
                     self.mask_container(PHRASE_INDEX_LIBRARY_MASK | PHRASE_MASK, token)?;
                 self.mark_committed_phrase_write(db, has_user_data || grams_left);
@@ -4490,7 +4260,6 @@ impl GenericUserStore<DefaultStore> {
                 inner,
                 _standalone_lease: None,
                 training: TrainingCheck::default(),
-                import_readings: None,
                 _lease: RegistryLease,
             });
         }
@@ -4503,7 +4272,6 @@ impl GenericUserStore<DefaultStore> {
             inner,
             _standalone_lease: None,
             training: TrainingCheck::default(),
-            import_readings: None,
             _lease: RegistryLease,
         })
     }
@@ -4617,11 +4385,27 @@ impl<S: WriteStore> GenericUserStore<S> {
     pub(crate) fn stored_system_items(
         &self,
     ) -> std::collections::BTreeMap<Token, oxpinyin_data::chunk_write::ChunkItem> {
-        self.inner
+        let mut items = self
+            .inner
             .system_items
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .snapshot()
+            .snapshot();
+        if let Some(target) = &self.inner.libpinyin {
+            for (&library, arena) in &target.phrases().libraries {
+                if !(1..=4).contains(&library) {
+                    continue;
+                }
+                for (slot, view) in arena.items() {
+                    if let Ok(item) =
+                        oxpinyin_data::chunk_write::decode_phrase_item(view.as_bytes())
+                    {
+                        items.insert((u32::from(library) << 24) | slot, item);
+                    }
+                }
+            }
+        }
+        items
     }
 
     /// Whether this session carries system-item payloads from imports or logs.
@@ -4680,7 +4464,7 @@ impl<S: WriteStore> GenericUserStore<S> {
         &self,
         token: Token,
     ) -> Result<Option<oxpinyin_data::chunk_write::ChunkItem>, UserStoreError> {
-        if !self.has_system_items() || !(1..=4).contains(&(token >> 24)) {
+        if !(1..=4).contains(&(token >> 24)) {
             return Ok(None);
         }
         let Some(mut item) = self.with_effective_system_item(token, Clone::clone) else {
@@ -4715,6 +4499,22 @@ impl<S: WriteStore> GenericUserStore<S> {
         token: Token,
     ) -> Result<Option<oxpinyin_core::PronunciationRows>, UserStoreError> {
         use crate::store_libpinyin::pinyin_keys_to_packed;
+        if let Some(readings) = self.with_user_item(token, |item| {
+            item.pronunciations()
+                .map(|reading| {
+                    (
+                        reading
+                            .keys
+                            .chunks_exact(2)
+                            .map(|b| ChewingKey::from_packed(u16::from_le_bytes([b[0], b[1]])))
+                            .collect(),
+                        reading.freq,
+                    )
+                })
+                .collect()
+        }) {
+            return Ok(Some(readings));
+        }
         match token >> 24 {
             1..=4 => Ok(self.with_effective_system_item(token, |item| {
                 item.prons
@@ -4750,14 +4550,22 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// cloning payloads for the streaming export's range probe.
     #[must_use]
     pub fn system_item_end(&self, library: u8) -> Option<Token> {
-        if !(1..=4).contains(&library) || !self.has_system_items() {
+        if !(1..=4).contains(&library) {
             return None;
         }
+        let arena_end = self.inner.libpinyin.as_ref().and_then(|target| {
+            let phrases = target.phrases();
+            let items = phrases.libraries.get(&library)?;
+            (!items.is_empty()).then_some((u32::from(library) << 24) | items.token_end())
+        });
         self.inner
             .system_items
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .end(library)
+            .into_iter()
+            .chain(arena_end)
+            .max()
     }
 
     /// The effective live system item shared by export, n-best and token
@@ -4775,6 +4583,17 @@ impl<S: WriteStore> GenericUserStore<S> {
         token: Token,
         read: impl FnOnce(&oxpinyin_data::chunk_write::ChunkItem) -> R,
     ) -> Option<R> {
+        if !(1..=4).contains(&(token >> 24)) {
+            return None;
+        }
+        if let Some(item) = self
+            .with_user_item(token, |view| {
+                oxpinyin_data::chunk_write::decode_phrase_item(view.as_bytes()).ok()
+            })
+            .flatten()
+        {
+            return Some(read(&item));
+        }
         if !self.has_system_items() || !(1..=4).contains(&(token >> 24)) {
             return None;
         }
@@ -4800,6 +4619,14 @@ impl<S: WriteStore> GenericUserStore<S> {
     pub fn user_library_token_end(&self, library: u8) -> Result<Token, UserStoreError> {
         if !is_user_file_library(library) {
             return Err(UserStoreError::InvalidPhrase);
+        }
+        if let Some(target) = &self.inner.libpinyin {
+            return Ok((u32::from(library) << 24)
+                | target
+                    .phrases()
+                    .libraries
+                    .get(&library)
+                    .map_or(1, crate::user_library::UserLibrary::token_end));
         }
         let db = self.database();
         let keys = if library == USER_DICTIONARY {
@@ -4832,7 +4659,7 @@ impl<S: WriteStore> GenericUserStore<S> {
         if !self.has_system_items() {
             return Ok(items);
         }
-        let tokens: Vec<_> = self
+        let mut tokens: std::collections::BTreeSet<_> = self
             .inner
             .system_items
             .lock()
@@ -4841,6 +4668,15 @@ impl<S: WriteStore> GenericUserStore<S> {
             .copied()
             .filter(|&token| phrase_index_library_index(token) == library)
             .collect();
+        if let Some(target) = &self.inner.libpinyin
+            && let Some(arena) = target.phrases().libraries.get(&library)
+        {
+            tokens.extend(
+                arena
+                    .items()
+                    .map(|(slot, _)| (u32::from(library) << 24) | slot),
+            );
+        }
         for token in tokens {
             if let Some(item) = self.system_item_override(token)? {
                 items.insert(token, item);
@@ -4866,11 +4702,9 @@ impl<S: WriteStore> GenericUserStore<S> {
     ) -> Result<Token, UserStoreError> {
         let words = phrase_words(text);
         self.flush_system_unigrams()?;
-        use oxpinyin_data::chunk_write::ChunkItem;
         if !(1..=4).contains(&library) || !phrase_fits_keys(&words, keys) {
             return Err(UserStoreError::InvalidPhrase);
         }
-        let mut import_readings = self.import_readings.take();
         let target = self
             .inner
             .libpinyin
@@ -4880,98 +4714,47 @@ impl<S: WriteStore> GenericUserStore<S> {
         let original = originals
             .get(&library)
             .ok_or(UserStoreError::InvalidPhrase)?;
+        let range_end = original.range_end;
+        let delta = u32::try_from(count.unwrap_or(DEFAULT_PHRASE_COUNT)).unwrap_or(u32::MAX);
+        if original_token.is_none()
+            || original_token.is_some_and(|token| target.phrases().item(token).is_some())
+        {
+            drop(originals);
+            return self.arena_add_phrase(
+                library,
+                &words,
+                keys,
+                delta,
+                Some(original_token),
+                range_end,
+            );
+        }
+        let token = original_token.ok_or(UserStoreError::InvalidPhrase)?;
         let packed = crate::store_libpinyin::pinyin_keys_to_packed(keys)
             .ok_or(UserStoreError::InvalidPhrase)?;
-        let delta = u32::try_from(count.unwrap_or(DEFAULT_PHRASE_COUNT)).unwrap_or(u32::MAX);
+        let reading = SystemReading {
+            packed: &packed,
+            delta,
+        };
         let db = self.database();
-        let generation = self.write_generation();
-        if import_readings.as_ref().is_some_and(|cached| {
-            cached.generation != generation || Some(cached.token) != original_token
-        }) {
-            import_readings = None;
-        }
-        let mut system_items = self
+        let mut items = self
             .inner
             .system_items
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let reading = SystemReading {
-            keys,
-            packed: &packed,
-            delta,
-        };
-        // The facade already selected this token from both raw phrase
-        // tables; a live reverse-index row is not phrase-table membership.
-        let existing = original_token;
-        // A delta row for an original token exists only if training or an
-        // earlier import moved one of its readings: a replayed item carries
-        // its counts in its live item and writes no row at open. An untouched
-        // original therefore has no row to reconcile, and the lookup below
-        // can be skipped.
-        let (token, pending_item, was_live) = if let Some(token) = existing {
-            let was_live = system_items.contains_key(&token);
-            let pending = if was_live {
-                None
-            } else {
-                Some(
-                    original
-                        .item(token & PHRASE_MASK)
-                        .ok_or(UserStoreError::InvalidPhrase)?,
-                )
-            };
-            (token, pending, was_live)
-        } else {
-            let token = append_system_token(&*db, library, original.range_end, &words, &reading)?;
-            #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
-            self.note_index_add(keys, token, false);
-            (
-                token,
-                Some(ChunkItem {
-                    phrase: words.clone(),
-                    unigram: 0,
-                    prons: Vec::new(),
-                }),
-                false,
-            )
-        };
-        let (change, current) = {
-            let item = system_items
-                .get(&token)
-                .or(pending_item.as_ref())
-                .ok_or(UserStoreError::InvalidPhrase)?;
-            let change = plan_system_reading(item, &reading);
-            validate_system_merge(item, &reading, change)?;
-            let current = match change {
-                SystemMerge::Matched { frequency, .. } => frequency,
-                SystemMerge::Append => reading.delta,
-                SystemMerge::Wrap => 0,
-            };
-            (change, current)
-        };
-        let wrapped = matches!(change, SystemMerge::Wrap);
-        let untouched = !was_live && existing.is_some();
-        sync_system_rows(
-            &*db,
-            original,
-            token,
-            current,
-            &reading,
-            (untouched, wrapped),
-            (generation, &mut import_readings),
-        )?;
-        // No fallible work remains: publish only after the rows committed.
-        if let Some(mut item) = pending_item {
-            apply_system_reading(&mut item, &reading, change);
-            system_items.insert(token, item);
-        } else if let Some(item) = system_items.get_mut(&token) {
-            apply_system_reading(item, &reading, change);
-        }
-        drop(system_items);
+        let mut item = items
+            .get(&token)
+            .cloned()
+            .or_else(|| original.item(token & PHRASE_MASK))
+            .ok_or(UserStoreError::InvalidPhrase)?;
+        let change = plan_system_reading(&item, &reading);
+        validate_system_merge(&item, &reading, change)?;
+        apply_system_reading(&mut item, &reading, change);
+        items.insert(token, item);
+        drop(items);
         self.revive_system_item(token);
         self.inner.has_system_items.store(true, Ordering::Relaxed);
-        note_import_commit(&mut import_readings, generation);
-        self.mark_committed_import_write(db, existing.is_none());
-        self.import_readings = import_readings;
+        self.mark_committed_import_write(db, false);
         Ok(token)
     }
 }
@@ -4989,7 +4772,6 @@ mod tests {
             prons: vec![(vec![1], u32::MAX - 10), (vec![2], 3), (vec![2], 5)],
         };
         let mut reading = SystemReading {
-            keys: &[2],
             packed: &[2],
             delta: 7,
         };
