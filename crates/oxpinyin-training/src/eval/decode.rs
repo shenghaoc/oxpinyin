@@ -81,7 +81,7 @@ impl EvalReport {
         let rate = self.passed as f64 / self.tested as f64;
         format!(
             "correction rate:{}",
-            oxpinyin_kmm::format_six_decimals(rate)
+            crate::numeric::format_six_decimals(rate)
         )
     }
 }
@@ -123,7 +123,7 @@ fn parse_token(line: &str) -> Result<u32, EvalError> {
         .ok_or_else(|| EvalError::Malformed {
             detail: format!("no separator in {line:?}"),
         })?;
-    oxpinyin_kmm::decimal_field::<u32>(head.as_bytes()).map_err(|error| EvalError::Malformed {
+    crate::numeric::decimal_field::<u32>(head.as_bytes()).map_err(|error| EvalError::Malformed {
         detail: error.to_string(),
     })
 }

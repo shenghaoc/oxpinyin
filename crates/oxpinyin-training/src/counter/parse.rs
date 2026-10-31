@@ -58,7 +58,7 @@ fn parse_segmented_line(
     let Some(separator) = line.iter().position(|byte| matches!(byte, b' ' | b'\t')) else {
         return Err(CounterError::MalformedLine { line: number });
     };
-    let token: u32 = oxpinyin_kmm::decimal_field(&line[..separator])
+    let token: u32 = crate::numeric::decimal_field(&line[..separator])
         .map_err(|_| CounterError::MalformedLine { line: number })?;
     if token != NULL_TOKEN {
         let expected = if token == 1 {
