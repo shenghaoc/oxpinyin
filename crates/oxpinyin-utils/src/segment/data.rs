@@ -14,6 +14,7 @@
 use std::ffi::CString;
 use std::path::Path;
 
+use oxpinyin_data::phrase_library::{LibraryError, RowFault};
 use oxpinyin_data::table_info::{TableConf, TableConfError};
 use oxpinyin_data::{BigramTable, PhraseIndexTable, PhraseLibraries};
 use oxpinyin_input::tool;
@@ -62,6 +63,9 @@ pub(crate) fn load(with_bigram: bool) -> Result<Tables, TablesError> {
             // A second row for one nibble is the pin's
             // `ERROR_ALREADY_EXISTS`, whose answer the loop ignores.
             Ok(_) => {}
+            // `MemoryChunk::load`'s `assert(ret_len == sizeof(length))` on a
+            // directory named as a system chunk (`memory_chunk.h:429`).
+            Err(LibraryError::Row(RowFault::ChunkHeaderRead)) => tool::abort(),
             Err(_) => return Err(TablesError::Chunk(c_name)),
         }
     }
