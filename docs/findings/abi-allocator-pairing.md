@@ -22,8 +22,8 @@ Three allocation families, and one non-family that matters as much:
 | Family | Producer | Allocator | Released by |
 |---|---|---|---|
 | Opaque handle | `pinyin_init`, `pinyin_alloc_instance`, the three `*_begin_*` iterators, and the zhuyin equivalents | Rust `Box::into_raw` | its own destructor (`pinyin_fini`, `pinyin_free_instance`, `pinyin_end_*`), which `Box::from_raw`s |
-| Caller-owned string | 12 `gchar **` / `char **` out-params in pinyin, 4 in zhuyin | libc `malloc`, via `ffi::owned_cstr` | `g_free` |
-| Caller-owned string vector | `pinyin_in_chewing_keyboard`, `zhuyin_in_chewing_keyboard` (`gchar ***`) | libc `malloc` for both the array and every string, via `ffi::owned_cstr_list` | `g_strfreev` |
+| Caller-owned string | 12 `gchar **` / `char **` out-params in pinyin, 4 in zhuyin | GLib (`g_strdup`, `g_strdup_printf`, `g_strconcat`, `g_strjoinv`: the pin's call per site, since 2026-10-31 UTC, #1227), or libc `malloc` via `ffi::malloc_cstr_with` at the `g_ucs4_to_utf8` sites; until then libc `malloc` via `ffi::owned_cstr` | `g_free` |
+| Caller-owned string vector | `pinyin_in_chewing_keyboard`, `zhuyin_in_chewing_keyboard` (`gchar ***`) | GLib: `g_ptr_array_new`/`g_strdup`/`g_ptr_array_add`/`g_ptr_array_free(…, FALSE)` via `ffi::symbol_vector`, since 2026-10-31 UTC (#1227); until then libc `malloc` via `ffi::owned_cstr_list` | `g_strfreev` |
 | **Borrowed** (not an allocation) | the candidate, its string, the key and key-rest out-params, and `pinyin_get_context` | — | never freed by the caller; released with the instance or context |
 
 The `malloc`/`g_free` crossing in the middle two rows is deliberate and is the
