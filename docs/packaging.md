@@ -39,7 +39,7 @@ keeps ours; the full rationale and the measured gates live in
 
 - `[lib] crate-type = ["cdylib", "staticlib", "rlib"]`. `staticlib` is
   required by cargo-c (it builds the `.a` alongside the `.so`); `rlib` is
-  retained so `oxpinyin-dictool` can use the crate in-process.
+  retained so the fuzz targets and Rust tests can use the crate in-process.
 - `[features] capi = []`. cargo-c identifies the crate to package by the
   presence of a `capi` feature; without it the crate is skipped.
   `[features] shipped = []` compiles out the fixture hooks no real consumer

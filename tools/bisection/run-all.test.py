@@ -253,9 +253,9 @@ class TimingTests(unittest.TestCase):
         self.assertIsNone(run_all['timing_of']('{"timing": nonsense\n'))
 class ArtifactUnionTests(unittest.TestCase):
     def test_union_is_ordered_and_deduplicated(self):
-        rows = [dict(name='a', artifacts=['zhuyin-capi', 'pinyin-capi']), dict(name='b', artifacts=['pinyin-capi', 'dictool']),
+        rows = [dict(name='a', artifacts=['zhuyin-capi', 'pinyin-capi']), dict(name='b', artifacts=['pinyin-capi', 'user-rt-test']),
                 dict(name='c', artifacts=[])]
-        self.assertEqual(run_all['artifact_union'](rows), ['pinyin-capi', 'zhuyin-capi', 'dictool'])
+        self.assertEqual(run_all['artifact_union'](rows), ['pinyin-capi', 'zhuyin-capi', 'user-rt-test'])
 
     def test_a_subjectless_selection_needs_no_build(self):
         self.assertEqual(run_all['artifact_union']([dict(name='pc-version', artifacts=[])]), [])
@@ -280,7 +280,7 @@ class ArtifactUnionTests(unittest.TestCase):
         self.assertEqual(next(r for r in rows if r['name'] == 'pc-version')['artifacts'], [])
         self.assertEqual(next(r for r in rows if r['name'] == 'user-dir-round-trip')['artifacts'],
                          ['pinyin-capi', 'user-rt-test'])
-        self.assertEqual(next(r for r in rows if r['name'] == 'import-diff')['artifacts'], ['pinyin-capi', 'dictool'])
+        self.assertEqual(next(r for r in rows if r['name'] == 'import-diff')['artifacts'], ['pinyin-capi'])
 
 
 class TimingColumnsTests(unittest.TestCase):

@@ -62,7 +62,6 @@ series lives in `../perf/`.
 | [`datagen-compat-2026-09-01`](datagen-compat-2026-09-01.md) | P5 datagen — libpinyin-schema producers for the drop-in backends | record (P5) |
 | [`datagen-model20`](datagen-model20.md) | Native model20 data production — the canonical-source invariant | implemented (canonical-source invariant) |
 | [`decode-differential`](decode-differential.md) | Decode-level differential SPEC | frozen |
-| [`dictool-format`](dictool-format.md) | oxpinyin-dictool and the classic libpinyin user-dictionary interchange (W7-T1) | pinned |
 | [`differential-log`](differential-log.md) | Findings — W2-T3 differential runner and log schema | historical (retired W2 schema) |
 | [`divergence-taxonomy`](divergence-taxonomy.md) | Findings — W2-T5 divergence taxonomy | historical (retired W2 classifier) |
 | [`double-pinyin-spec`](double-pinyin-spec.md) | Double-pinyin scheme SPEC | frozen |
