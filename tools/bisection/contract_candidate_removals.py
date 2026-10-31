@@ -151,7 +151,7 @@ def register(case, *, _craft_hash):
         return inst, candidates[0]
 
 
-    @case('abort-remove-user-candidate-short-bigram-value', abort=False, issues=('525',))
+    @case('abort-remove-user-candidate-short-bigram-value', abort=False, sigabrt=True, issues=('525',))
     def _(k):
         """Remove a persisted user phrase with a three-byte value planted in its bigram store."""
         inst, cand = _removable_user_bigram_context(

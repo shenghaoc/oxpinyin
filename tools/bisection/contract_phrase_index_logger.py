@@ -1,10 +1,11 @@
 """Phrase-index logger cases (inventory row 37, #1175).
 """
 import ctypes as C
+import os
 
 from contract_abi import B, I, P, S, U
 from contract_case_helpers import _modify_header, _write_log
-from contract_fixtures import _write_user_conf
+from contract_fixtures import _write_user_conf, private_system
 
 
 _REGISTRATIONS = []
@@ -36,6 +37,54 @@ def logger_mask_out_probe(k, payload, mask=0, value=0):
     assert ctx, 'init failed'
     _write_log(k, payload)
     return {'ret': k.fn('mask_out', B, P, U, U)(ctx, mask, value)}
+
+
+def logger_mask_out_later_unmappable(k, payload, later='merged.bin'):
+    """`gb_char.dbin` (library 1) holds `payload`; library 4's system chunk
+    is gone after the init. The pin's mask loop maps, loads and merges one
+    library at a time (`pinyin.cpp:1234-1285`), so library 1's merge asserts
+    before the loop reaches library 4, and no `mmap %s failed!` line for it
+    is written."""
+    system = private_system(k)
+    _write_user_conf(k)
+    ctx = k.init(system=system)
+    assert ctx, 'init failed'
+    _write_log(k, payload)
+    os.unlink(os.path.join(system, later))
+    return {'ret': k.fn('mask_out', B, P, U, U)(ctx, 0, 0)}
+
+
+def logger_later_directory(k, payload, site):
+    """`gb_char.dbin` (library 1) holds `payload`, library 2's system chunk
+    is gone, and library 4's is a directory with a long entry, which
+    `MemoryChunk::mmap` asserts on (row 96, `memory_chunk.h:493`, on ext4 and
+    btrfs alike). Init's library loop (`pinyin.cpp:376-391` into
+    `_load_phrase_library` `:246-276`, `zhuyin.cpp:318-334`) and the mask
+    loop (`pinyin.cpp:1234-1285`, `zhuyin.cpp:769-826`) map, load and merge
+    one library at a time, so library 1's merge asserts (row 91) before
+    either loop maps library 2: its `mmap %s failed!` line, which a loop
+    that reached library 4 would have written, is never written. `site` is
+    'init' (the files are in place before the only init) or 'mask-out' (they
+    change after it)."""
+    system = private_system(k)
+    _write_user_conf(k)
+
+    def break_library():
+        os.unlink(os.path.join(system, 'gbk_char.bin'))
+        os.unlink(os.path.join(system, 'merged.bin'))
+        os.makedirs(os.path.join(system, 'merged.bin'))
+        with open(os.path.join(system, 'merged.bin', 'e' * 25), 'wb') as entry:
+            entry.write(b'x')
+
+    if site == 'init':
+        _write_log(k, payload)
+        break_library()
+        return {'ret': bool(k.init(system=system))}
+    ctx = k.init(system=system)
+    assert ctx, 'init failed'
+    _write_log(k, payload)
+    break_library()
+    return {'ret': k.fn('mask_out', B, P, U, U)(ctx, 0, 0)}
 
 
 def logger_mask_out_unloaded_probe(k, payload):
@@ -151,6 +200,19 @@ for _mode in ('pinyin', 'zhuyin'):
     # mask-out time), so a two-header `.dbin` loads cleanly: a control.
     case('init-multiple-log-headers-' + _mode, mode=_mode, control=True, issues=('525',))(
         lambda k: logger_init_probe(k, _TWO_HEADERS))
+    if _mode == 'pinyin':
+        case('abort-mask-out-log-header-token-later-unmappable-' + _mode, mode=_mode, abort=False,
+             sigabrt=True, stderr=True, issues=('row:91',))(
+            lambda k: logger_mask_out_later_unmappable(k, _HEADER_TOKEN))
+    # Row 91 in library 1 before row 96 in library 4: the earlier journal
+    # fault is the one reached, at init and at `mask_out`, with no line for
+    # the missing library 2 between them.
+    case('abort-init-log-header-token-later-directory-' + _mode, mode=_mode, abort=False,
+         sigabrt=True, stderr=True, userdir=True, issues=('row:91', 'row:96'))(
+        lambda k: logger_later_directory(k, _HEADER_TOKEN, 'init'))
+    case('abort-mask-out-log-header-token-later-directory-' + _mode, mode=_mode, abort=False,
+         sigabrt=True, stderr=True, issues=('row:91', 'row:96'))(
+        lambda k: logger_later_directory(k, _HEADER_TOKEN, 'mask-out'))
     case('mask-out-log-kept-add-bad-tail-' + _mode, mode=_mode, control=True, issues=('row:97',))(
         lambda k: logger_mask_out_probe(k, _HEADER_KEPT_ADD_BAD_TAIL, *_MASK_SLOT_9))
     # One header before the same tail passes `1 >= header_count`, so the

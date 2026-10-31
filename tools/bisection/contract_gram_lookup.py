@@ -198,11 +198,12 @@ def register(case, *, _craft_db):
 
 
     for _mode in ('pinyin', 'zhuyin'):
-        case(f'abort-guess-sentence-short-user-gram-system-row-{_mode}', mode=_mode, abort=False, issues=('757',))(
+        case(f'abort-guess-sentence-short-user-gram-system-row-{_mode}', mode=_mode, abort=False, sigabrt=True,
+             issues=('757',))(
             short_start_guess)
 
 
-    @case('abort-guess-sentence-short-user-gram-no-system-row', abort=False, issues=('757',))
+    @case('abort-guess-sentence-short-user-gram-no-system-row', abort=False, sigabrt=True, issues=('757',))
     def _(k):
         """Guess with an imported phrase prefix whose user gram lacks a complete total.
 
@@ -226,7 +227,7 @@ def register(case, *, _craft_db):
 
     for _mode in ('pinyin', 'zhuyin'):
         case(f'abort-guess-candidates-dynamic-adjust-short-user-gram-{_mode}', mode=_mode,
-             abort=False, issues=('757',))(short_start_dynamic_adjust)
+             abort=False, sigabrt=True, issues=('757',))(short_start_dynamic_adjust)
 
 
     # The same gram under DYNAMIC_ADJUST, parsed and never guessed: the pin's
@@ -249,7 +250,7 @@ def register(case, *, _craft_db):
             short_start_dynamic_adjust_parse)
 
 
-    @case('abort-phrase-segment-short-user-gram', abort=False, issues=('757',))
+    @case('abort-phrase-segment-short-user-gram', abort=False, sigabrt=True, issues=('757',))
     def _(k):
         """Segment a fixed phrase after replacing the user start gram with three bytes."""
         _replace_user_bigram(k, [(1, _SHORT)])
@@ -320,7 +321,7 @@ def register(case, *, _craft_db):
 
     for _mode in ('pinyin', 'zhuyin'):
         case(f'abort-phrase-segment-prefix-short-user-gram-{_mode}', mode=_mode,
-             abort=False, issues=('918',))(phrase_prefix_gram(True))
+             abort=False, sigabrt=True, issues=('918',))(phrase_prefix_gram(True))
         case(f'phrase-segment-prefix-sound-user-gram-{_mode}', mode=_mode,
              control=True, stderr=True, issues=('918',))(phrase_prefix_gram(False))
         case(f'phrase-segment-nonscalar-before-short-user-gram-{_mode}', mode=_mode,

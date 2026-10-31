@@ -254,7 +254,7 @@ for _mode in ('pinyin', 'zhuyin'):
 # A directory where a system library should be (register row 96). A size of
 # 8 or more reads as a header-sized file, `read` then fails with EISDIR and
 # `assert(ret_len == sizeof(length))` kills the pin (`memory_chunk.h:493`,
-# class (c)); a smaller size is `MemoryChunk::mmap`'s ordinary `false` and
+# reproduced since member 5c); a smaller size is `MemoryChunk::mmap`'s ordinary `false` and
 # the empty chunk the pin dies on later (row 76, class (b)). The long entry
 # name reaches `:493` on ext4 and on btrfs; the one-character entry reaches
 # it on ext4 and row 76 on btrfs, so both shapes match whichever site the
@@ -278,10 +278,18 @@ for _mode in ('pinyin', 'zhuyin'):
     _suffix = '-zhuyin' if _mode == 'zhuyin' else ''
     # The zhuyin facade has no addon entry point.
     for _site in (s for s in LIBRARY_FINAL if s != 'addon' or _mode == 'pinyin'):
+        # Row 96 is reproduced (member 5c): where the pin dies of SIGABRT the
+        # subject must too, with the pin's user directory where the pin left
+        # files (init after `check_format`; save after the earlier
+        # libraries' `.tmp` files, renamed by libzhuyin). A pin SIGSEGV keeps
+        # row 76's class (b) matcher.
+        _userdir = {'userdir': True} if _site in ('init', 'save') else {}
         case(f'abort-library-directory-long-entry-{_site}' + _suffix, mode=_mode,
-             abort=False, crash=library_expected(_site, 'short', _mode), either=True, issues=('545',))(library_directory_probe(_site, 'dir-long'))
+             abort=False, crash=library_expected(_site, 'short', _mode), either=True, sigabrt=True,
+             issues=('545',), **_userdir)(library_directory_probe(_site, 'dir-long'))
         case(f'library-directory-one-entry-{_site}' + _suffix, mode=_mode, abort=False,
-             crash=library_expected(_site, 'short', _mode), either=True, issues=('545',))(library_directory_probe(_site, 'dir-short'))
+             crash=library_expected(_site, 'short', _mode), either=True, sigabrt=True,
+             issues=('545',), **_userdir)(library_directory_probe(_site, 'dir-short'))
 
 
 def library_directory_guard(site, guard):
