@@ -1516,6 +1516,66 @@ pub mod storage {
     }
 }
 
+/// The n-gram and interpolation utilities' calls (`utils/training/*.cpp` at
+/// 074a2219).
+///
+/// `estimate_interpolation` and `eval_correction_rate` print their model
+/// values and diagnostics with the C library's formatted output, so the
+/// `%f` spelling — `-nan` included — and `%d`'s reading of the token word
+/// are the pin's.
+pub mod training {
+    use super::{c_int, c_stderr, print_literal, print_text};
+    use std::ffi::CStr;
+
+    /// `printf("token:%d lambda:%f\n", *token, lambda)`
+    /// (`estimate_interpolation.cpp:129`): `%d` reads the `guint32` token's
+    /// four bytes as the `int` it is passed as.
+    pub fn print_token_lambda(token: u32, lambda: f64) {
+        // SAFETY: the format takes an int and a double, which are the
+        // argument types passed.
+        unsafe { libc::printf(c"token:%d lambda:%f\n".as_ptr(), token as c_int, lambda) };
+    }
+
+    /// `printf("average lambda:%f\n", lambda_sum/lambda_count)`
+    /// (`estimate_interpolation.cpp:139`). The caller divides: a zero
+    /// `lambda_count` reaches this call with the C `0.0/0` NaN.
+    pub fn print_average_lambda(lambda: f64) {
+        // SAFETY: the format takes one double.
+        unsafe { libc::printf(c"average lambda:%f\n".as_ptr(), lambda) };
+    }
+
+    /// `printf("correction rate:%f\n", rate)`
+    /// (`eval_correction_rate.cpp:203`).
+    pub fn print_correction_rate(rate: f64) {
+        // SAFETY: the format takes one double.
+        unsafe { libc::printf(c"correction rate:%f\n".as_ptr(), rate) };
+    }
+
+    /// `fprintf(stderr, "test sentence:%s\n", sentence)`
+    /// (`eval_correction_rate.cpp:119`).
+    pub fn report_test_sentence(sentence: &CStr) {
+        print_text(c_stderr(), c"test sentence:%s\n", sentence);
+    }
+
+    /// `fprintf(stderr, "guessed sentence:%s\n", guessed_sentence)`
+    /// (`eval_correction_rate.cpp:120`).
+    pub fn report_guessed_sentence(sentence: &CStr) {
+        print_text(c_stderr(), c"guessed sentence:%s\n", sentence);
+    }
+
+    /// `fprintf(stderr, "the result mis-matches.\n")`
+    /// (`eval_correction_rate.cpp:121`).
+    pub fn report_mismatch() {
+        print_literal(c_stderr(), c"the result mis-matches.\n");
+    }
+
+    /// `fprintf(stderr, "Can't open file:%s\n", evals_text)`
+    /// (`eval_correction_rate.cpp:168`).
+    pub fn report_cant_open_file(filename: &CStr) {
+        print_text(c_stderr(), c"Can't open file:%s\n", filename);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
