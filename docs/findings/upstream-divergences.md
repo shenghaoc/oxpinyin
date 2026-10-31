@@ -4093,6 +4093,16 @@ texts are in
 
 ### Final C string/vector allocation refusal (#1227; class (c))
 
+**Status 2026-10-31 UTC: pin behaviour reproduced.** Class (c) is retired
+(compatibility policy, "Returned strings (#1227)"). The returned strings and
+the keyboard vector are allocated with the pin's GLib calls and arguments,
+so allocation failure aborts as the pin's does; the `g_ucs4_to_utf8` sites
+keep the fallible encoder (NULL, the pin's return value, no warning). The
+warnings, the false returns and the deferred out-param cleanup below are
+gone. Per-site record: [returned-string-allocation.md](returned-string-allocation.md).
+The `abi-alloc-failure` gate now expects GLib's fatal failure on both sides.
+The text below is the 2026-10-25 UTC record.
+
 Recorded 2026-10-25 UTC. At `074a2219`, renderer duplication and formatting
 (`src/storage/chewing_key.cpp:47-115`, callers `src/pinyin.cpp:2707-2764`
 and `src/zhuyin.cpp:1732-1765`), keyboard vector elements

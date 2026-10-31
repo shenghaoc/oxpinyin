@@ -20,41 +20,37 @@ just heavy -- just abi alloc-failure "$PINYIN_ORACLE_PREFIX" \
   "$CARGO_TARGET_DIR/debug/libzhuyin_capi.so"
 ```
 
-The test-only Linux/glibc malloc/free/realloc interposer fails the one libc
-allocation whose pointer the call hands to C: the string, the keyboard
-vector or one of its strings, or one of the two iterator buffers. It does not
-fail a random allocation count in the entire process, and it does not fail
-the earlier Rust allocations. A calibration child first runs the call once
-without failure and records the caller of every malloc. The call sites that
-returned the pointers the call wrote to its outputs are the injection
-sites, and the mallocs made at those sites must be exactly those pointers,
-in that order, or the audit stops. The injection child then fails the nth
-of them. Nothing is read from the library's symbols or line tables, so the
-sites are found whether or not the optimizer inlined `ffi::owned_cstr`,
-`ffi::owned_cstr_list` or `ffi::malloc_cstr_with*` into their callers. The
-registry builds at dev opt-level 1, where that depends on the build: an
-incremental build keeps the bigram iterator's `malloc_cstr_with_warning`
-instance as a function of its own, a non-incremental one inlines it into
-`pinyin_bigram_iterator_get_next_phrase`. The symbol interval that used to
-stand for the allocation then held no `malloc`, the injection never fired
-and allocation 7 failed on its missing marker (#1308).
+2026-10-31 UTC (#1227, class (c) retired). Both sides now allocate the
+returned strings and the keyboard vector with the pin's GLib calls
+([record](../../docs/findings/returned-string-allocation.md)), so the subject
+is judged by the pin's rule and the earlier calibration, warning, tracked
+and outputs-unchanged checks of the retired refusal are gone. The
+test-only Linux/glibc malloc/realloc interposer, armed only around one
+public API call in a forked child, fails:
 
-Pin malloc and array realloc are identified by their GLib caller symbol.
-Injection is armed only around one public API call in a child, and
-disabled immediately after the targeted failure. A pipe proves that
-injection fired, then either the expected GLib error preceded signal
-termination or the expected return/output was observed. No process-wide
-memory limit is used. Parent initialization, backend loading, and normal
-successful controls precede arming.
+| Operation | Call | Failed allocation |
+| --- | --- | --- |
+| 1 | `*_get_zhuyin_string`, tone 1 | 1st `malloc` from `g_malloc` (`g_strdup`) |
+| 2, 3, 4 | `*_in_chewing_keyboard`, HSU `c` | 1st, 2nd, 3rd `malloc` from `g_malloc`: the array, `ㄒ`, `ㄕ` |
+| 5 | `*_token_get_nth_pronunciation` | 1st `realloc` from `g_realloc` (GArray growth) |
+| 6 | `pinyin_iterator_get_next_phrase` | 1st `malloc` from `g_malloc` (`g_strjoinv`) |
+| 7 | `pinyin_bigram_iterator_get_next_phrase` (subject only: the seeded user bigram) | 1st `malloc` from `g_malloc` (`g_strdup`) |
+| 8 | `pinyin_get_pinyin_strings` | 1st `malloc` from `g_malloc` (`g_strdup`) |
+| 9 | `*_get_zhuyin_string`, tone 3 | 1st `malloc` made inside libc (`vasprintf` under `g_strdup_printf`) |
 
-The harness requires both normal controls (real nonempty string, exact HSU
-`c` mapping to `ㄒ`, `ㄕ`, and successful token lookup) and two builds with
-injection disabled that must fail the audit. The fixed bookkeeping array
-tracks only final foreign allocations. At the second keyboard-string
-failure, it requires both the first string and the vector to have been
-freed before the public call returns. This is bounded cleanup evidence,
-not a whole-process leak detector; the existing pairing gate still owns
-ASan/LeakSanitizer coverage.
+A failed allocation sets `ENOMEM`, as glibc's does. Operations 1-8 must log
+GLib's `g_error` and die of SIGTRAP or SIGABRT. Operation 9 must write
+`gprintf.c:<line>: failed to allocate memory` to stderr and die of SIGABRT
+with no `g_log`: `g_vasprintf` tests `errno == ENOMEM` after
+`__vasprintf_chk`, writes `G_STRLOC` and the message with `fwrite` and calls
+`abort()` (read from the host `libglib-2.0.so.0` 2.90.0 disassembly; its
+`.rodata` holds `../../../glib/gprintf.c:351`). The g_ucs4_to_utf8
+conversions allocate through `g_try_malloc_n` (pin) or the subject's
+fallible encoder (libc `malloc` from Rust), neither of which is counted, so
+they are not injected. A pipe proves that injection fired. Parent
+initialization, backend loading and the normal controls (`ㄏㄠˇ`, `ㄋㄧ`,
+the HSU `c` mapping, a token lookup) precede arming. A build with injection
+disabled must fail the audit on both facades.
 
 ## Source matrix and results
 
