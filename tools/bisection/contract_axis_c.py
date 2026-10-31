@@ -92,15 +92,30 @@ def check_axis_c_snapshots(args, *, run_worker):
     return 0
 
 
+def axis_c_reproduced_abort(pin_row, subject_row):
+    """A register-covered scheme-setter row where both sides abort alike.
+
+    Class (c) is retired (2026-10-31 UTC): the facade's setter reproduces the
+    pin's `abort()` (rows 5c/5d), so both children die of SIGABRT before
+    returning, with the worker envelope alone and the same stderr (an
+    `abort()` writes nothing).
+    """
+    return (isinstance(pin_row, dict) and pin_row == subject_row
+            and pin_row.get('exit') == -signal.SIGABRT and pin_row.get('result') is None
+            and set(pin_row) == set(AXIS_C_ABORT_ROW_FIELDS))
+
+
 def axis_c_covered_abort(pin_row, subject_row, mode):
     """Register-covered class (c) site at the nested-observation level.
 
     Mirrors the classic ``abort=`` expectation: the pin child dies of SIGABRT
     before returning, and the subject returns normally with the scheme setter
     refused (``set_scheme`` false, no observation) and exactly one warning in
-    the facade's GLib domain at level 16. Rows 5c/5d of the register.
+    the facade's GLib domain at level 16. Rows 5c/5d of the register, on the
+    zhuyin facade only: the pinyin facade reproduces the abort
+    (`axis_c_reproduced_abort`).
     """
-    if not isinstance(pin_row, dict) or not isinstance(subject_row, dict):
+    if mode != 'zhuyin' or not isinstance(pin_row, dict) or not isinstance(subject_row, dict):
         return False
     result = subject_row.get('result')
     return (pin_row.get('exit') == -signal.SIGABRT and pin_row.get('result') is None
@@ -251,6 +266,8 @@ def run_axis_c(args, names, *, CASES, run_worker, AXIS_C_LAYOUT_COVERED, AXIS_C_
                     totals['observations'] += 1
                     if axis_c_live(left) and axis_c_live(right) and left == right:
                         totals['payload_match'] += 1
+                    elif covered_row and axis_c_reproduced_abort(left, right):
+                        totals['payload_reproduced_abort'] += 1
                     elif covered_row and axis_c_covered_abort(left, right, mode):
                         totals['payload_covered'] += 1
                         covered_rows.append(key)

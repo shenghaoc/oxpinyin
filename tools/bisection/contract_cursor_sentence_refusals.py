@@ -18,7 +18,7 @@ def case(name, *args, **kwargs):
 # batch2 group 12b: cursor, offset, sentence-index and aux-text refusals (PR 12b, #525)
 
 
-@case('abort-get-sentence-past-rows', abort=False, issues=('525',))
+@case('abort-get-sentence-past-rows', abort=False, sigabrt=True, issues=('525',))
 def _(k):
     """Guess nihao, then record only the sentence-accessor flag for index five."""
     inst = full_inst(k, b'nihao')
@@ -26,7 +26,7 @@ def _(k):
     return {'ret': sentence_out(k, inst, 5)[0]}
 
 
-@case('abort-get-left-pinyin-offset-after-separator', abort=False, issues=('525',))
+@case('abort-get-left-pinyin-offset-after-separator', abort=False, sigabrt=True, issues=('525',))
 def _(k):
     """Query the left offset at byte three after parsing ni'hao, recording only the flag."""
     inst = full_inst(k, b"ni'hao")
@@ -34,7 +34,7 @@ def _(k):
     return {'ret': k.fn('get_left_pinyin_offset', B, P, Z, C.POINTER(Z))(inst, 3, C.byref(out))}
 
 
-@case('abort-get-right-pinyin-offset-after-separator', abort=False, issues=('525',))
+@case('abort-get-right-pinyin-offset-after-separator', abort=False, sigabrt=True, issues=('525',))
 def _(k):
     """Query the right offset at byte three after parsing ni'hao, recording only the flag."""
     inst = full_inst(k, b"ni'hao")
@@ -42,7 +42,7 @@ def _(k):
     return {'ret': k.fn('get_right_pinyin_offset', B, P, Z, C.POINTER(Z))(inst, 3, C.byref(out))}
 
 
-@case('abort-get-right-pinyin-offset-nihao-5', abort=False, issues=('525',))
+@case('abort-get-right-pinyin-offset-nihao-5', abort=False, sigabrt=True, issues=('525',))
 def _(k):
     """Query the right offset at byte five of nihao, discarding the seeded output offset."""
     inst = full_inst(k, b'nihao')
@@ -50,7 +50,7 @@ def _(k):
     return {'ret': k.fn('get_right_pinyin_offset', B, P, Z, C.POINTER(Z))(inst, 5, C.byref(out))}
 
 
-@case('abort-get-character-offset-past-matrix', abort=False, issues=('525',))
+@case('abort-get-character-offset-past-matrix', abort=False, sigabrt=True, issues=('525',))
 def _(k):
     """Query 你好's character offset at byte 99 of nihao and return only the native flag."""
     inst = full_inst(k, b'nihao')
@@ -59,7 +59,7 @@ def _(k):
         inst, '你好'.encode(), 99, C.byref(out))}
 
 
-@case('abort-get-character-offset-after-separator', abort=False, issues=('525',))
+@case('abort-get-character-offset-after-separator', abort=False, sigabrt=True, issues=('525',))
 def _(k):
     """Query 你好's character offset at byte three of ni'hao and return only the flag."""
     inst = full_inst(k, b"ni'hao")
@@ -68,7 +68,7 @@ def _(k):
         inst, '你好'.encode(), 3, C.byref(out))}
 
 
-@case('abort-parse-full-pinyin-apostrophe', abort=False, issues=('525',))
+@case('abort-parse-full-pinyin-apostrophe', abort=False, sigabrt=True, issues=('525',))
 def _(k):
     """Pass n'i to the single-key parser and record its flag without reading the output key."""
     key = C.c_uint16(UNTOUCHED & 0xFFFF)
@@ -76,21 +76,21 @@ def _(k):
         k.inst, b"n'i", C.byref(key))}
 
 
-@case('abort-get-pinyin-key-empty-matrix', abort=False, issues=('525',))
+@case('abort-get-pinyin-key-empty-matrix', abort=False, sigabrt=True, issues=('525',))
 def _(k):
     """Request key zero on an unparsed instance and record only the native flag."""
     out = P(UNTOUCHED)
     return {'ret': k.fn('get_pinyin_key', B, P, Z, C.POINTER(P))(k.alloc(), 0, C.byref(out))}
 
 
-@case('abort-get-pinyin-key-rest-empty-matrix', abort=False, issues=('525',))
+@case('abort-get-pinyin-key-rest-empty-matrix', abort=False, sigabrt=True, issues=('525',))
 def _(k):
     """Request key-rest zero on an unparsed instance and record only the native flag."""
     out = P(UNTOUCHED)
     return {'ret': k.fn('get_pinyin_key_rest', B, P, Z, C.POINTER(P))(k.alloc(), 0, C.byref(out))}
 
 
-@case('abort-double-auxiliary-text-cut-three-bytes-in', abort=False, issues=('525',))
+@case('abort-double-auxiliary-text-cut-three-bytes-in', abort=False, sigabrt=True, issues=('525',))
 def _(k):
     """Render double-pinyin auxiliary text three bytes into zhong and retain only the flag.
 
@@ -116,9 +116,9 @@ def leading_apostrophe_aux(fname, text=b"'nihao"):
 
 
 for _fname in ('full_pinyin', 'double_pinyin', 'chewing'):
-    case('abort-%s-auxiliary-text-leading-apostrophe' % _fname.replace('_', '-'), abort=False, issues=('525',))(
+    case('abort-%s-auxiliary-text-leading-apostrophe' % _fname.replace('_', '-'), abort=False, sigabrt=True, issues=('525',))(
         leading_apostrophe_aux(_fname))
-case('abort-full-pinyin-auxiliary-text-doubled-leading-apostrophe', abort=False, issues=('525',))(
+case('abort-full-pinyin-auxiliary-text-doubled-leading-apostrophe', abort=False, sigabrt=True, issues=('525',))(
     leading_apostrophe_aux('full_pinyin', b"''ni"))
 
 

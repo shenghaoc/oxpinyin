@@ -60,8 +60,19 @@ class ComparisonTests(unittest.TestCase):
             stderr='SCRATCH/user-X failed', reopen_stderr='sys-\udcffX', log_messages=['SCRATCH/x user-X'],
             result=dict(payload='/s/user-ab1', logs=['/s'])))
 
+    def test_a_reproduced_abort_needs_two_identical_bare_aborts(self):
+        self.assertTrue(axis_c.axis_c_reproduced_abort(ABORTED, dict(ABORTED)))
+        rejected = ((ABORTED, dict(ABORTED, stderr='other')), (ABORTED, refused()),
+                    (dict(ABORTED, exit=-signal.SIGSEGV), dict(ABORTED, exit=-signal.SIGSEGV)),
+                    (dict(ABORTED, extra=1), dict(ABORTED, extra=1)), (None, None))
+        for pin, subject in rejected:
+            with self.subTest(pin=pin, subject=subject):
+                self.assertFalse(axis_c.axis_c_reproduced_abort(pin, subject))
+
     def test_covered_abort_accepts_only_the_registered_shapes(self):
         self.assertTrue(axis_c.axis_c_covered_abort(ABORTED, refused('zhuyin'), 'zhuyin'))
+        # The pinyin facade reproduces the abort; its refusal is no longer licensed.
+        self.assertFalse(axis_c.axis_c_covered_abort(ABORTED, refused('pinyin'), 'pinyin'))
         rejected = ((dict(ABORTED, exit=-signal.SIGSEGV), refused()), (dict(ABORTED, extra=1), refused()),
                     (dict(ABORTED, result={}), refused()), (ABORTED, refused(extra=1)),
                     (ABORTED, refused('zhuyin')), (ABORTED, dict(refused(), exit=1)), (None, refused()))
@@ -130,7 +141,7 @@ class SnapshotTests(unittest.TestCase):
 
 class BatteryTests(unittest.TestCase):
     CASES = {'plain': dict(mode='pinyin'), 'rows': dict(mode='pinyin'), 'covered': dict(mode='zhuyin'),
-             'gone': dict(mode='pinyin')}
+             'gone': dict(mode='pinyin'), 'reproduced': dict(mode='pinyin')}
 
     def battery(self, answers, names, mutation=None, controls=()):
         """Run the battery with each (side, name) answered from `answers`; return status and output rows."""
@@ -157,7 +168,7 @@ class BatteryTests(unittest.TestCase):
             with patch.object(axis_c, 'time', CLOCK), contextlib.redirect_stdout(output):
                 status = axis_c.run_axis_c(
                     args, names, CASES=self.CASES, run_worker=worker,
-                    AXIS_C_LAYOUT_COVERED={'covered': '5c'},
+                    AXIS_C_LAYOUT_COVERED={'covered': '5c', 'reproduced': '5c'},
                     AXIS_C_DEFINITION={'mutations': {'C-m1-r': {'controls': list(controls)}}})
         rows = [json.loads(line) for line in output.getvalue().splitlines() if line.startswith('{')]
         return status, rows, calls
@@ -183,6 +194,20 @@ class BatteryTests(unittest.TestCase):
                                                  case_differ=1, covered_by_row={'5c': 1}))
         self.assertEqual((summary['battery'], summary['mutation'], summary['repeats']), ('all', None, 'identical'))
         self.assertEqual(rows[-2]['count'], 1)
+
+    def test_a_covered_row_both_sides_abort_alike_matches(self):
+        # Rows 5c/5d on the pinyin facade: the setter reproduces the pin's
+        # abort(), and the refusal it used to answer is a difference.
+        observed = live(dict(observations={'a': live(1), 'b': ABORTED}))
+        status, rows, _ = self.battery({('pin', 'reproduced'): observed, ('subject', 'reproduced'): observed},
+                                       ['reproduced'])
+        self.assertEqual(status, 0)
+        self.assertEqual(rows[-1]['counts'], dict(cases=1, diagnostics_match=1, observations=2, payload_match=1,
+                                                  payload_reproduced_abort=1, case_match=1))
+        refusing = live(dict(observations={'a': live(1), 'b': refused('pinyin')}))
+        status, rows, _ = self.battery({('pin', 'reproduced'): observed, ('subject', 'reproduced'): refusing},
+                                       ['reproduced'])
+        self.assertEqual((status, rows[0]['verdict']), (1, 'DIFFER'))
 
     def test_identical_failed_rows_never_match(self):
         dead = dict(exit=1, result=None, stderr='same')

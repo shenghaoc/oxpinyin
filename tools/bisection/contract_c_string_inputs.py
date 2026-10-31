@@ -42,7 +42,8 @@ def register(case, *, items_system):
     for _mode in ('pinyin', 'zhuyin'):
         for _variant, _spelling in (('valid', b"n'i"), ('invalid', b"ni\xff'")):
             case('c-string-input/%s-full-key-apostrophe-%s' % (_mode, _variant),
-                 mode=_mode, control=_variant == 'valid', abort=False, issues=('1279',))(
+                 mode=_mode, control=_variant == 'valid' and _mode != 'pinyin', abort=False,
+                 **({'sigabrt': True} if _mode == 'pinyin' else {}), issues=('1279',))(
                      c_string_full_key_apostrophe(_spelling))
 
 
@@ -221,4 +222,5 @@ def register(case, *, items_system):
         for _variant in ('null-past-matrix', 'invalid-past-matrix'):
             # pinyin.cpp:3200-3214 / zhuyin.cpp:2155-2167: assert(offset < size).
             case('c-string-input/%s-character-offset-%s' % (_mode, _variant), mode=_mode,
-                 abort=False, issues=('1279',))(c_string_character_offset(_variant))
+                 abort=False, **({'sigabrt': True} if _mode == 'pinyin' else {}),
+                 issues=('1279',))(c_string_character_offset(_variant))
