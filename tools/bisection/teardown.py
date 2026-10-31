@@ -43,6 +43,41 @@ FIELDS = ('Rss', 'Pss', 'Anonymous', 'Private_Clean', 'Private_Dirty', 'Shared_C
 # library keep path strings). `subject`, `control` and `pinlibs` are 7 bytes
 # each, so neither control-ox nor pin-ox figures carry a path-length difference.
 LIBRARY_DIRECTORIES = dict(ox='subject', control='control', pin='pinlibs', base='baselib')
+# Extra arms (--teardown-arm) are named by at most four lowercase letters or
+# digits; their library directories keep the seven-character length.
+ARM_NAME = re.compile(r'[a-z0-9]{1,4}')
+FIXED_SIDES = ('base', 'ox', 'control', 'pin')
+
+
+def library_directory(subject):
+    """Return a side's library directory name, seven characters on every arm."""
+    return LIBRARY_DIRECTORIES.get(subject) or 'arm' + subject.ljust(4, '_')
+
+
+def extra_arms(sides):
+    """Return the --teardown-arm sides, in the order they were given."""
+    return [side for side in sides if side not in FIXED_SIDES]
+
+
+def parse_arms(values, facades, stage, parser):
+    """Parse repeated NAME=PINYIN_SO[:ZHUYIN_SO] arms into subject paths."""
+    arms = {}
+    for value in values:
+        name, _, paths = value.partition('=')
+        pinyin, _, zhuyin = paths.partition(':')
+        if not ARM_NAME.fullmatch(name) or name in arms or name in FIXED_SIDES or not pinyin:
+            parser.error('invalid or repeated --teardown-arm: ' + value)
+        arms[name] = dict(pinyin=Path(pinyin), zhuyin=Path(zhuyin) if zhuyin else None)
+    if arms and stage not in ('confirm', 'init-attribute', 'user-verify', 'user-phrase'):
+        parser.error('--teardown-arm supports confirm, init-attribute, user-verify and user-phrase')
+    return arms
+
+
+def arm_ratios(values, stable):
+    """Each extra arm's paired ratios against the base and pin arms, when the control is stable."""
+    return {arm: dict(base=paired_ratio(values[arm], values['base']) if stable and 'base' in values else None,
+                      pin=paired_ratio(values[arm], values['pin']) if stable else None)
+            for arm in extra_arms(values)} or None
 TIMING_ROUNDS, TIMING_WARMUPS = 60, 3
 MEMORY_ROUNDS, MEMORY_WARMUPS = 30, 2
 # The worker's per-phase getrusage/clock fields (teardown.h, td_print_time).
@@ -989,9 +1024,9 @@ def retain_profiler_summary(directory, name, document):
     return path
 
 
-def retain_profiler_profile(directory, name, profile):
+def retain_profiler_profile(directory, name, profile, suffix='.callgrind'):
     """Retain the raw local profile before parsing, without replacing a file."""
-    path = directory / (name + '.callgrind')
+    path = directory / (name + suffix)
     with path.open('x', encoding='utf-8', errors='surrogateescape') as output:
         output.write(profile)
         output.flush()
@@ -1524,6 +1559,10 @@ def run(args, driver, parser):
         if args.teardown_stage not in ('verify', 'confirm', 'init-attribute', 'user-verify', 'user-phrase'):
             parser.error('a teardown base arm supports verify, confirm and init-attribute')
         subjects['base'] = dict(pinyin=args.base_pinyin_so, zhuyin=args.base_zhuyin_so)
+    arms = parse_arms(getattr(args, 'teardown_arm', None) or [], facades, args.teardown_stage, parser)
+    if arms and 'base' not in subjects:
+        parser.error('--teardown-arm requires a base arm')
+    subjects.update(arms)
     for paths in subjects.values():
         for facade in facades:
             if paths.get(facade) is None or not paths[facade].is_file():
@@ -1534,7 +1573,7 @@ def run(args, driver, parser):
     subjects['control'] = {}
     provenance = {}
     for subject in subjects:
-        directory = libraries / LIBRARY_DIRECTORIES[subject]
+        directory = libraries / library_directory(subject)
         directory.mkdir(exist_ok=True)
         provenance[subject] = {}
         for facade in facades:
@@ -1673,7 +1712,7 @@ def execute(campaign, args, subjects, profiles, cases, facades, driver):
                             if workload_observation(row) != references[facade, case][side]:
                                 raise ValueError(f'timed workload observation changed: {facade} {case} {side}')
                             if index >= warmups:
-                                samples[side].append(row)
+                                samples[side].append(retained_measures(row))
                     if mode == 'time':
                         report_times(facade, case, samples, pilot)
                     else:
@@ -1771,6 +1810,8 @@ def rotation(index, subjects=None):
     order = ['ox', 'control', 'pin']
     if subjects is not None and 'base' in subjects:
         order.insert(0, 'base')
+    if subjects is not None:
+        order[1 if 'base' in subjects else 0:0] = extra_arms(subjects)
     return order[index % len(order):] + order[:index % len(order)]
 
 
@@ -2273,7 +2314,7 @@ def user_phrase_measure(campaign, subjects, profiles, cases, *, verify=False, st
                 row, answer, times = run(side, case)
                 references.setdefault(case, answer)
                 if index >= TIMING_WARMUPS:
-                    rows[side].append(row)
+                    rows[side].append(dict(times=times))
         print_record('user-equivalence', case=case, verdict='COMPARABLE', diagnostics=native_diagnostics[case], **references[case])
         if verify:
             continue
@@ -2281,7 +2322,7 @@ def user_phrase_measure(campaign, subjects, profiles, cases, *, verify=False, st
             for operation, _, _ in USER_WINDOWS:
                 if operation == 'write' and case == 'empty':
                     continue
-                values = {side: [observe(row)[1][operation]['wall_ns'] for row in samples]
+                values = {side: [row['times'][operation]['wall_ns'] for row in samples]
                           for side, samples in rows.items()}
                 control = stable_control(values['ox'], values['control'])
                 print_record('user-time', case=case, operation=operation, control=control,
@@ -2289,14 +2330,15 @@ def user_phrase_measure(campaign, subjects, profiles, cases, *, verify=False, st
                              summaries={side: summary(value) for side, value in values.items()},
                              ox_pin_ratio=paired_ratio(values['ox'], values['pin']) if control['stable'] else None,
                              ox_base_ratio=paired_ratio(values['ox'], values['base'])
-                             if control['stable'] and 'base' in values else None)
+                             if control['stable'] and 'base' in values else None,
+                             arm_ratios=arm_ratios(values, control['stable']))
         if 'memory' in stages:
             memory_rows = {side: [] for side in subjects}
             for index in range(MEMORY_ROUNDS + MEMORY_WARMUPS):
                 for side in rotation(index, subjects):
                     row, _, _ = run(side, case, memory=True)
                     if index >= MEMORY_WARMUPS:
-                        memory_rows[side].append(row)
+                        memory_rows[side].append(retained_measures(row))
             report_checkpoint_pss(memory_rows, 'user', case=case)
         for profiler in builds:
             campaign.worker = builds[profiler]
@@ -2304,6 +2346,10 @@ def user_phrase_measure(campaign, subjects, profiles, cases, *, verify=False, st
             for side in rotation(0, subjects):
                 row, _, _ = run(side, case, profiler)
                 text = row['observation']['stderr']
+                if profiler == 'massif' and getattr(campaign, 'summary_dir', None) is not None:
+                    # Peak heap by allocation site, for local diagnosis.
+                    retain_profiler_profile(campaign.summary_dir, 'pinyin-%s-%s-user-heap' % (case, side),
+                                            text, suffix='.massif')
                 if profiler == 'xtree':
                     costs[side] = allocation_windows(text)
                 else:
@@ -2323,6 +2369,10 @@ def user_phrase_measure(campaign, subjects, profiles, cases, *, verify=False, st
                 for index in range(INIT_IR_ROUNDS):
                     for side in rotation(index, subjects):
                         row, _, _ = run(side, case, 'callgrind-user-' + operation)
+                        if operation == 'write' and index == 0 and getattr(campaign, 'summary_dir', None) is not None:
+                            # Instructions by function in the write window, for local diagnosis.
+                            retain_profiler_profile(campaign.summary_dir, 'pinyin-%s-%s-user-write' % (case, side),
+                                                    row['observation']['stderr'])
                         counts[side].append(callgrind_costs(row['observation']['stderr'], subjects[side]['pinyin'])['totals']['Ir'])
                         if operation == 'write':
                             compactions[side].append(compaction_calls(row['observation']['stderr']))
@@ -2558,6 +2608,15 @@ def prepare_witnesses(campaign, pin, profiles):
     return result
 
 
+def retained_measures(row):
+    """Keep only what the timing and memory reports read from a sample.
+
+    A sample's observation carries its complete final user profile; keeping it
+    for every round of every arm grows the controller with the arm count.
+    """
+    return {key: row[key] for key in ('samples', 'checkpoints') if key in row}
+
+
 def report_times(facade, case, samples, pilot):
     """Print nanosecond timing summaries and ratios only when same-bytes controls are stable.
 
@@ -2581,7 +2640,8 @@ def report_times(facade, case, samples, pilot):
                          verdict='STABLE' if control['stable'] else 'INCONCLUSIVE',
                          ox_base_ratio=paired_ratio(values['ox'], values['base']) if control['stable'] and 'base' in values else None,
                          ox_pin_ratio=paired_ratio(values['ox'], values['pin']) if control['stable'] else None,
-                         control_pin_ratio=paired_ratio(values['control'], values['pin']) if control['stable'] else None)
+                         control_pin_ratio=paired_ratio(values['control'], values['pin']) if control['stable'] else None,
+                         arm_ratios=arm_ratios(values, control['stable']))
         # Major faults are event counts, not durations: no control rule and
         # no ratio, which a zero count could not carry. Reported as observed.
         counts = {side: [row['samples'][0]['times'][metric]['majflt'] for row in rows]

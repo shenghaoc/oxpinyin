@@ -425,6 +425,67 @@ class PureTests(unittest.TestCase):
             native = [call for call in calls if call.get('profiler') is None]
             self.assertEqual([call.get('user_memory', False) for call in native[:8]], [False] * 4 + [True] * 4)
 
+    def test_user_phrase_retains_write_profiles_in_the_summary_dir(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / 'user8').mkdir()
+            (root / 'user8/rows.tsv').write_text("7\t测试\tce4'shi4\t5\n" * 8)
+            (root / 'summaries').mkdir()
+            def run(facade, library, profile, **options):
+                profiler = options.get('profiler')
+                stderr = '%s %s\n' % (library, profiler) if profiler else ''
+                return dict(observation=dict(stderr=stderr, userfiles={},
+                                             documents=[dict(user_phrase=True, times={})]),
+                            user_bin_sha256='same')
+            campaign = SimpleNamespace(worker=Path('worker'), work=root, run=run, summary_dir=root / 'summaries')
+            subjects = {side: dict(pinyin=Path(side)) for side in ('base', 'ox', 'pin', 'control')}
+            with patch.object(td, 'user_library_shape', return_value=dict(readings={8: 10000})), \
+                    patch.object(td, 'build_worker', return_value=(Path('massif-worker'), {})), \
+                    patch.object(td, 'user_massif', return_value={}), \
+                    patch.object(td, 'callgrind_costs', return_value=dict(totals=dict(Ir=1))), \
+                    patch.object(td, 'print_record'):
+                self.assertEqual(td.user_phrase_measure(campaign, subjects, {'user8': root / 'user8/user'},
+                                 ['user8'], stages=('heap', 'instructions')), 0)
+            names = sorted(path.name for path in (root / 'summaries').iterdir())
+            self.assertEqual(names, sorted(['pinyin-user8-%s-user-%s' % (side, kind)
+                                            for side in subjects for kind in ('heap.massif', 'write.callgrind')]))
+            self.assertEqual((root / 'summaries/pinyin-user8-pin-user-write.callgrind').read_text(),
+                             'pin callgrind-user-write\n')
+            self.assertEqual((root / 'summaries/pinyin-user8-ox-user-heap.massif').read_text(), 'ox massif\n')
+
+    def test_extra_arms_parse_rotate_and_report_against_base_and_pin(self):
+        def error(message):
+            raise ValueError(message)
+        parser = SimpleNamespace(error=error)
+        arms = td.parse_arms(['m3a=/a/libpinyin.so:/a/libzhuyin.so', 'm3b=/b/libpinyin.so'],
+                             ('pinyin',), 'user-phrase', parser)
+        self.assertEqual(arms, {'m3a': dict(pinyin=Path('/a/libpinyin.so'), zhuyin=Path('/a/libzhuyin.so')),
+                                'm3b': dict(pinyin=Path('/b/libpinyin.so'), zhuyin=None)})
+        for values, stage in [(['m3a=/a', 'm3a=/b'], 'confirm'), (['ox=/a'], 'confirm'),
+                              (['Bad=/a'], 'confirm'), (['m3a='], 'confirm'), (['m3a=/a'], 'verify')]:
+            with self.subTest(values=values, stage=stage), self.assertRaises(ValueError):
+                td.parse_arms(values, ('pinyin',), stage, parser)
+        self.assertEqual({len(td.library_directory(side)) for side in ('base', 'ox', 'control', 'pin', 'm3a', 'x')},
+                         {7})
+        subjects = dict.fromkeys(['ox', 'pin', 'base', 'm3a', 'm3b', 'control'])
+        self.assertEqual(td.rotation(0, subjects), ['base', 'm3a', 'm3b', 'ox', 'control', 'pin'])
+        self.assertEqual(sorted(td.rotation(4, subjects)), sorted(subjects))
+        self.assertEqual(td.rotation(1, dict.fromkeys(['ox', 'control', 'pin', 'base'])),
+                         ['ox', 'control', 'pin', 'base'])
+        values = dict(base=[2.0] * 4, ox=[1.0] * 4, control=[1.0] * 4, pin=[4.0] * 4, m3a=[1.0] * 4)
+        ratios = td.arm_ratios(values, True)
+        self.assertEqual(set(ratios), {'m3a'})
+        self.assertEqual(ratios['m3a']['base'], td.paired_ratio(values['m3a'], values['base']))
+        self.assertEqual(ratios['m3a']['pin'], td.paired_ratio(values['m3a'], values['pin']))
+        self.assertEqual(td.arm_ratios(values, False), dict(m3a=dict(base=None, pin=None)))
+        self.assertIsNone(td.arm_ratios(dict(ox=[1.0], control=[1.0], pin=[1.0]), True))
+
+    def test_retained_measures_drop_the_observation(self):
+        row = dict(samples=[dict(times={})], checkpoints={0: {}}, observation=dict(userfiles={'big': 'rows'}),
+                   user_bin_sha256='x')
+        self.assertEqual(td.retained_measures(row), dict(samples=[dict(times={})], checkpoints={0: {}}))
+        self.assertEqual(td.retained_measures(dict(samples=[])), dict(samples=[]))
+
     def test_user_selection_defaults_and_invalid_combinations(self):
         def error(message):
             raise ValueError(message)
