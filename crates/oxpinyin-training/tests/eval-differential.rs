@@ -1,9 +1,9 @@
 //! Differential parity: the native correction-rate evaluator vs pin-built
 //! `eval_correction_rate` (`utils/training/eval_correction_rate.cpp`).
 //!
-//! This isolates exactly what `oxpinyin-eval` adds over the λ estimator
-//! (`oxpinyin-lambda`, which already has its own bit-exact differential):
-//! the **decode + correction-rate** path. So the native side is fed the
+//! This isolates the **decode + correction-rate** path, which is separate
+//! from the λ estimator (`oxpinyin-lambda`, which has its own bit-exact
+//! differential). The native side is fed the
 //! *same* λ the pin reads — `system_table_info.get_lambda()`, i.e. the value
 //! `table.conf` carries (`eval_correction_rate.cpp:157`) — rather than
 //! re-estimating it, and the *same* interpolation model the pin's runtime

@@ -1,4 +1,5 @@
-//! Hand-computable correction-rate fixture and the full evaluate.py flow.
+//! Hand-computable correction-rate fixture for the `eval_correction_rate`
+//! decode.
 //!
 //! A three-token vocabulary with one homophone pair pins the decode exactly:
 //! `中`(10) and `钟`(20) both spell `zhong`, `国`(30) spells `guo`. `中` is
@@ -9,18 +10,13 @@
 //! * `中国` (中→国, bigram 40) decodes back to `中国` — passes;
 //! * `钟` decodes to `中`, not `钟` — fails.
 //!
-//! Correction rate = 1 passed / 2 tested = 0.5, independent of the estimated
-//! λ, which the test also exercises end to end (estimate → apply → decode).
+//! Correction rate = 1 passed / 2 tested = 0.5, independent of λ.
 
 use std::collections::BTreeMap;
 
 use oxpinyin_core::{PhraseToken, SyllableKey};
 use oxpinyin_testsupport::FixtureDictionary;
-use oxpinyin_training::eval::{
-    EvalLanguageModel, PhraseSource, build_model, correction_rate, estimate_lambda,
-    parse_interpolation2,
-};
-use oxpinyin_training::lambda::count_deleted;
+use oxpinyin_training::eval::{PhraseSource, build_model, correction_rate, parse_interpolation2};
 
 const VOCAB: &str = "\
 token=10\tkeys=zhong\ttext=中\tunigram=100
@@ -99,34 +95,6 @@ fn interpolation2_parses_to_the_expected_counts() {
 }
 
 #[test]
-fn full_flow_estimate_apply_decode_correction_rate() {
-    // interpolation2.text → counts.
-    let counts = parse_interpolation2(INTERPOLATION2);
-
-    // estimate λ over a held-out slice (中 国), then apply it.
-    let lexicon = oxpinyin_training::segment::PhraseLexicon::from_pairs(vec![
-        (10, "中".into()),
-        (30, "国".into()),
-    ]);
-    let deleted = count_deleted(&lexicon, "10 中\n30 国\n", true).expect("held-out counts");
-    let lambda = estimate_lambda(&counts, &deleted).expect("lambda estimates");
-
-    // decode the evaluation corpus.
-    let dictionary = FixtureDictionary::parse(VOCAB).expect("vocab");
-    let source = FixtureSource::new();
-    let model = build_model(&counts, lambda, source.lexicon_tokens());
-    let report = correction_rate(&dictionary, &model, &source, &sentences()).expect("evaluate");
-
-    assert_eq!(report.tested, 2);
-    assert_eq!(report.passed, 1, "中国 passes, 钟 fails");
-    assert!((report.rate - 0.5).abs() < 1e-12, "rate {}", report.rate);
-    assert_eq!(report.correction_rate_line(), "correction rate:0.500000");
-
-    // The one failure is 钟 decoded as the more frequent homophone 中.
-    assert_eq!(report.mismatches, vec![("钟".to_owned(), "中".to_owned())]);
-}
-
-#[test]
 fn correction_rate_is_lambda_independent_here() {
     // The homophone ranking holds for every λ, so the rate is 0.5 whether λ
     // is 0 (pure unigram), 1 (pure bigram), or anything between.
@@ -135,13 +103,25 @@ fn correction_rate_is_lambda_independent_here() {
     let source = FixtureSource::new();
     for value in ["0.000000", "0.312699", "1.000000"] {
         let lambda = oxpinyin_data::Lambda::from_decimal(value).expect("lambda");
-        let model = EvalLanguageModel::from_counts(&counts, lambda);
+        let model = build_model(&counts, lambda, source.lexicon_tokens());
+        // The gen_unigram floor: every lexicon token carries count + 1
+        // (101, 11, 51) and the total is their sum, 163. Without the floor
+        // this would be 100 / 160.
+        let floored = model.unigram_poss(10);
+        assert!(
+            (floored - 101.0 / 163.0).abs() < 1e-12,
+            "λ={value} floored P_uni(中) {floored}"
+        );
         let report = correction_rate(&dictionary, &model, &source, &sentences()).expect("evaluate");
-        assert_eq!(report.passed, 1, "λ={value}");
+        assert_eq!(report.tested, 2, "λ={value}");
+        assert_eq!(report.passed, 1, "λ={value}: 中国 passes, 钟 fails");
         assert!(
             (report.rate - 0.5).abs() < 1e-12,
             "λ={value} rate {}",
             report.rate
         );
+        assert_eq!(report.correction_rate_line(), "correction rate:0.500000");
+        // The one failure is 钟 decoded as the more frequent homophone 中.
+        assert_eq!(report.mismatches, vec![("钟".to_owned(), "中".to_owned())]);
     }
 }

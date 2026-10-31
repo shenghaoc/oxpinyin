@@ -15,4 +15,3 @@ pub mod emitter;
 pub mod eval;
 pub mod lambda;
 pub mod segment;
-pub mod train;

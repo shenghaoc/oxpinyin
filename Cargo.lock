@@ -649,16 +649,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "oxpinyin-corpus"
-version = "0.1.0"
-dependencies = [
- "memchr",
- "oxpinyin-testsupport",
- "oxpinyin-training",
- "proptest",
-]
-
-[[package]]
 name = "oxpinyin-data"
 version = "0.1.0"
 dependencies = [
@@ -732,10 +722,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "oxpinyin-punct"
-version = "0.1.0"
-
-[[package]]
 name = "oxpinyin-runtime"
 version = "0.1.0"
 dependencies = [
@@ -772,7 +758,6 @@ dependencies = [
  "oxpinyin-data",
  "oxpinyin-kmm",
  "oxpinyin-testsupport",
- "oxpinyin-utils",
  "pkg-config",
  "tempfile",
 ]
@@ -799,10 +784,6 @@ dependencies = [
  "oxpinyin-kmm",
  "tempfile",
 ]
-
-[[package]]
-name = "oxpinyin-word"
-version = "0.1.0"
 
 [[package]]
 name = "oxpinyin-zhuyin-capi"

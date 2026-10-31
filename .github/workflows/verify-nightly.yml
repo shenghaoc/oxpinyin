@@ -431,7 +431,7 @@ jobs:
 
   # The full Windows workspace: clippy and the tests over the portable
   # workspace (all but capi, zhuyin-capi, and the backend-independent
-  # corpus, KMM, punctuation, and word tools) on the default backend,
+  # KMM tool) on the default backend,
   # tkrzw, built with MSVC by the tkrzw action. Moved here from
   # ci.yml on 2026-10-22: it runs every night and on manual dispatch, not on
   # every PR. Dispatch it on the branch (windows_only: true) before merging
@@ -469,17 +469,14 @@ jobs:
       # The default backend. The macOS job's exclusions, plus
       # oxpinyin-utils: like the C facades it links GLib (through
       # oxpinyin-input's `tools` boundary), which this lane does not
-      # provision; macOS installs GLib and tests it. oxpinyin-training
-      # links it too since its KMM conversion became the pin-named
-      # k_mixture_model_to_interpolation (2026-10-31 UTC).
+      # provision; macOS installs GLib and tests it.
       # Clippy runs first, over the same set, so a lint in Windows-only
       # code fails here rather than nowhere.
       - name: Clippy (Windows)
         run: >
           cargo clippy --locked --workspace --all-targets
           --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi
-          --exclude oxpinyin-corpus --exclude oxpinyin-kmm --exclude oxpinyin-punct
-          --exclude oxpinyin-word --exclude oxpinyin-utils --exclude oxpinyin-training
+          --exclude oxpinyin-kmm --exclude oxpinyin-utils
           -- -D warnings
       # The same pinned cargo-nextest as ci.yml's Linux and macOS jobs, in
       # its Windows build; the checksum is the release's published
@@ -501,11 +498,9 @@ jobs:
       - run: >
           cargo nextest run --locked --profile ci --status-level skip --workspace
           --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi
-          --exclude oxpinyin-corpus --exclude oxpinyin-kmm --exclude oxpinyin-punct
-          --exclude oxpinyin-word --exclude oxpinyin-utils --exclude oxpinyin-training
+          --exclude oxpinyin-kmm --exclude oxpinyin-utils
       # nextest does not run doctests; keep the same exclusions.
       - run: >
           cargo test --locked --doc --workspace
           --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi
-          --exclude oxpinyin-corpus --exclude oxpinyin-kmm --exclude oxpinyin-punct
-          --exclude oxpinyin-word --exclude oxpinyin-utils --exclude oxpinyin-training
+          --exclude oxpinyin-kmm --exclude oxpinyin-utils

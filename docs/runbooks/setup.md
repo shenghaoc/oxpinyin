@@ -562,8 +562,7 @@ The existing macOS CI uses this broader portable scope:
 ```bash
 cargo test --locked --workspace --no-default-features --features tkrzw \
   --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi \
-  --exclude oxpinyin-corpus --exclude oxpinyin-kmm \
-  --exclude oxpinyin-punct --exclude oxpinyin-word
+  --exclude oxpinyin-kmm
 ```
 
 The [validation status](#validated-on--not-validated) distinguishes native macOS CI

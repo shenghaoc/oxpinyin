@@ -19,11 +19,6 @@ pub enum EvalError {
         /// What was wrong.
         detail: String,
     },
-    /// λ could not be estimated (no scorable held-out context).
-    Lambda {
-        /// Diagnostic context.
-        detail: String,
-    },
     /// A token in an evaluation sentence has no pronunciation, so it cannot
     /// be spelled into keys (`eval_correction_rate` would `abort`).
     NoPronunciation {
@@ -57,7 +52,6 @@ impl fmt::Display for EvalError {
                 write!(formatter, "cannot access {}: {source}", path.display())
             }
             Self::Malformed { detail } => write!(formatter, "malformed input: {detail}"),
-            Self::Lambda { detail } => write!(formatter, "lambda estimation: {detail}"),
             Self::NoPronunciation { token } => {
                 write!(formatter, "token {token} has no pronunciation")
             }
@@ -75,7 +69,6 @@ impl std::error::Error for EvalError {
         match self {
             Self::Io { source, .. } => Some(source),
             Self::Malformed { .. }
-            | Self::Lambda { .. }
             | Self::NoPronunciation { .. }
             | Self::NoText { .. }
             | Self::Undecodable { .. }

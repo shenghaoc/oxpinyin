@@ -274,8 +274,7 @@ class CompileCommand:
 
 CACHE_LANES = ("lint", "test", "test-macos", "store-features", "backend-matrix")
 BACKENDS = ("bdb", "kyotocabinet", "tkrzw")
-BACKEND_EXCLUDES = ("--exclude", "oxpinyin-corpus", "--exclude", "oxpinyin-kmm",
-                    "--exclude", "oxpinyin-punct", "--exclude", "oxpinyin-word")
+BACKEND_EXCLUDES = ("--exclude", "oxpinyin-kmm")
 PORTABLE_EXCLUDES = ("--exclude", "oxpinyin-capi", "--exclude", "oxpinyin-zhuyin-capi",
                      *BACKEND_EXCLUDES)
 
