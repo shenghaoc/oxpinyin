@@ -406,15 +406,25 @@ class RefreshTests(unittest.TestCase):
 
 
 class AggregateTests(unittest.TestCase):
-    def invoke_main(self, workflow, event, outputs, results):
+    def invoke_main(self, workflow, event, outputs, results, gated_results=None):
         profile = ci_tree.WORKFLOWS[workflow]
         needs = {job: {'result': results[name]} for name, job in zip(profile.lanes, profile.needs)}
+        outputs = {'ship': 'false', **outputs}
+        for name, job, flag in profile.gated:
+            needs[job] = {'result': (gated_results or {}).get(
+                name, 'success' if outputs[flag] == 'true' else 'skipped')}
         needs['changes'] = {'result': 'success', 'outputs': outputs}
         with mock.patch.object(sys, 'argv', ['ci_tree.py', 'aggregate', workflow]), \
                 mock.patch.dict(ci_tree.os.environ, {'NEEDS': json.dumps(needs), 'EVENT_NAME': event}, clear=True), \
                 contextlib.redirect_stdout(io.StringIO()):
             return ci_tree.main()
 
+
+    def test_main_fails_on_a_failed_own_gate_job(self):
+        results = {name: 'success' for name in ci_tree.WORKFLOWS['ci'].lanes}
+        self.assertEqual(self.invoke_main('ci', 'pull_request', {'run': 'true', 'reuse': 'false', 'ship': 'true'}, results,
+                                          {'shipping-sizes': 'failure'}), 1)
+        self.assertEqual(self.invoke_main('ci', 'pull_request', {'run': 'true', 'reuse': 'false', 'ship': 'true'}, results), 0)
 
     def test_each_workflow_aggregate_uses_its_code_lanes(self):
         for workflow, profile in ci_tree.WORKFLOWS.items():
@@ -453,6 +463,36 @@ class AggregateTests(unittest.TestCase):
         results = dict.fromkeys(PROFILE.lanes, 'skipped')
         self.assertTrue(ci_tree.aggregate('success', 'true', 'true', results, PROFILE.cached, 'pull_request'))
         self.assertFalse(ci_tree.aggregate('failure', 'true', 'true', results, PROFILE.cached, 'pull_request'))
+
+    def test_own_gate_lane_runs_when_its_flag_is_true_even_on_a_reused_tree(self):
+        results = dict.fromkeys(PROFILE.lanes, 'skipped')
+        for reuse in ('true', 'false'):
+            lanes = results if reuse == 'true' else dict.fromkeys(PROFILE.lanes, 'success')
+            with self.subTest(reuse=reuse):
+                self.assertTrue(ci_tree.aggregate('success', 'true', reuse, lanes, PROFILE.cached, 'pull_request',
+                                                  {'shipping-sizes': ('success', 'true')}))
+                for bad in ('skipped', 'failure', 'cancelled', ''):
+                    self.assertFalse(ci_tree.aggregate('success', 'true', reuse, lanes, PROFILE.cached, 'pull_request',
+                                                       {'shipping-sizes': (bad, 'true')}))
+
+    def test_own_gate_lane_must_skip_when_its_flag_is_false(self):
+        results = dict.fromkeys(PROFILE.lanes, 'skipped')
+        self.assertTrue(ci_tree.aggregate('success', 'false', 'false', results, PROFILE.cached, 'pull_request',
+                                          {'shipping-sizes': ('skipped', 'false')}))
+        for bad in ('success', 'failure', 'cancelled', ''):
+            self.assertFalse(ci_tree.aggregate('success', 'false', 'false', results, PROFILE.cached, 'pull_request',
+                                               {'shipping-sizes': (bad, 'false')}))
+        self.assertFalse(ci_tree.aggregate('success', 'false', 'false', results, PROFILE.cached, 'pull_request',
+                                           {'shipping-sizes': ('skipped', '')}))
+
+    def test_shipping_sizes_is_a_separate_lane_that_never_blocks_reuse(self):
+        self.assertNotIn('shipping-sizes', PROFILE.lanes)
+        self.assertEqual(PROFILE.gated, (('shipping-sizes', 'shipping-sizes', 'ship'),))
+        workflow = (ROOT / PROFILE.path).read_text()
+        job = workflow.split('\n  shipping-sizes:\n', 1)[1].split('\n  ci-aggregate:', 1)[0]
+        condition = re.search(r'^    if: (.*)$', job, re.M)[1]
+        self.assertEqual(condition, "needs.changes.outputs.ship == 'true'")
+        self.assertRegex(workflow, r'needs:\n\s+\[changes, lint, test, test-macos, deny, shipping-sizes\]')
 
     def test_invalid_gate_never_passes(self):
         results = dict.fromkeys(PROFILE.lanes, 'skipped')

@@ -31,6 +31,10 @@ class Workflow:
     cached: frozenset[str]
     needs: tuple[str, ...]
     skipped_lanes: tuple[str, ...]
+    # (display name, needs job id, `changes` output flag): lanes with their own
+    # path gate. They are not in `lanes`, so a skipped one never blocks tree
+    # reuse, and `reuse` never skips one that applies.
+    gated: tuple[tuple[str, str, str], ...] = ()
 
 
 WORKFLOWS: dict[str, Workflow] = {
@@ -39,7 +43,8 @@ WORKFLOWS: dict[str, Workflow] = {
         ("lint", "test", "test-macos", "deny"),
         frozenset({"lint", "test", "test-macos"}),
         ("lint", "test", "test-macos", "deny"),
-        ("lint", "test", "test-macos", "deny")),
+        ("lint", "test", "test-macos", "deny"),
+        (("shipping-sizes", "shipping-sizes", "ship"),)),
     "store": Workflow(
         ".github/workflows/store-backends.yml",
         "store backends (kyotocabinet / tkrzw / bdb)",
@@ -242,10 +247,18 @@ def find_evidence(api: GitHub, workflow: Workflow, event: dict[str, Any],
 
 
 def aggregate(changes: str, gated: str, reuse: str,
-              results: dict[str, str], cached: frozenset[str], event_name: str = "push") -> bool:
-    """Failures and unjustified skips fail; cancellation is handled by job if."""
+              results: dict[str, str], cached: frozenset[str], event_name: str = "push",
+              own_gate: dict[str, tuple[str, str]] | None = None) -> bool:
+    """Failures and unjustified skips fail; cancellation is handled by job if.
+
+    own_gate maps a lane to (result, flag). Such a lane must succeed when its
+    flag is true, whatever `reuse` says, and be skipped when it is false.
+    """
     if changes != "success" or gated not in {"true", "false"} or reuse not in {"true", "false"}:
         return False
+    for result, flag in (own_gate or {}).values():
+        if flag not in {"true", "false"} or result != ("success" if flag == "true" else "skipped"):
+            return False
     for name, result in results.items():
         expected = "success" if gated == "true" and (reuse != "true" or (event_name == "push" and name in cached)) else "skipped"
         if result != expected:
@@ -319,9 +332,11 @@ def main() -> int:
     if args.command == "aggregate":
         needs = json.loads(os.environ["NEEDS"])
         results = {name: needs[job]["result"] for name, job in zip(workflow.lanes, workflow.needs)}
-        passed = aggregate(needs["changes"]["result"], needs["changes"]["outputs"].get("run", ""),
-                           needs["changes"]["outputs"].get("reuse", ""), results, workflow.cached, os.environ["EVENT_NAME"])
-        print(json.dumps({"changes": needs["changes"], "lanes": results, "passed": passed}))
+        outputs = needs["changes"]["outputs"]
+        own_gate = {name: (needs[job]["result"], outputs.get(flag, "")) for name, job, flag in workflow.gated}
+        passed = aggregate(needs["changes"]["result"], outputs.get("run", ""),
+                           outputs.get("reuse", ""), results, workflow.cached, os.environ["EVENT_NAME"], own_gate)
+        print(json.dumps({"changes": needs["changes"], "lanes": results, "own_gate": own_gate, "passed": passed}))
         return 0 if passed else 1
     tree = git_tree("HEAD")
     evidence = None

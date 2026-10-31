@@ -47,6 +47,13 @@ inputs:
     description: 'Additional key input for Swatinem/rust-cache.'
     required: false
     default: ''
+  rust-cache-save-if:
+    description: >-
+      Whether Swatinem/rust-cache saves at the end of the job. A job that
+      restores a cache but must not write one (a pull request) passes 'false'.
+      String 'true'/'false' (composite-action inputs are strings).
+    required: false
+    default: 'true'
 
 runs:
   using: composite
@@ -98,3 +105,4 @@ runs:
       if: inputs.rust-cache == 'true'
       with:
         key: ${{ inputs.rust-cache-key }}
+        save-if: ${{ inputs.rust-cache-save-if }}
