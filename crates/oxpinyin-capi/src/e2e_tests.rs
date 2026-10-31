@@ -1599,36 +1599,6 @@ fn export_iterator_refuses_a_reading_it_cannot_spell() {
 }
 
 #[test]
-fn user_only_bigram_export_fails_when_rows_need_system_tables() {
-    let user_dir = TempUserDir::new("user-only-bigram");
-    // The user-only context is a facade concept now (the Rust-only capi
-    // constructor served the migration tool and moved with it): a core
-    // with no runtime must refuse to snapshot bigrams whose rendering
-    // needs system tables rather than skip them into an incomplete file.
-    let mut core = oxpinyin_facade::ContextCore::new_user_only(
-        user_dir.path.to_str().expect("UTF-8 path"),
-        oxpinyin_facade::PINYIN_DEFAULT_OPTION_WORD,
-        oxpinyin_user::UserConfLaw::Pinyin,
-    )
-    .expect("user-only context core");
-    // System tokens (library nibble != 7). One training seed (69) is at
-    // the §9 first-seed threshold, so a real export would emit a row.
-    // Trained through the context's own session handle: a second open of
-    // the dir would be a session of its own, which this context never
-    // sees (#538).
-    core.user
-        .as_mut()
-        .expect("user-only core owns a store")
-        .observe_selection(2, 3)
-        .expect("train system tokens");
-    let phrases = core
-        .export_phrases(u32::from(USER_DICTIONARY))
-        .expect("phrase snapshot");
-    assert!(phrases.is_empty());
-    assert!(!core.can_render_export_bigrams());
-}
-
-#[test]
 fn network_index_accepts_the_same_add_path() {
     let user_dir = TempUserDir::new("network-add");
     let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));

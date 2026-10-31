@@ -1,4 +1,4 @@
-//! The §9 export materialization: user-store rows rendered the way the
+//! The §9 export cursors: user-store rows rendered the way the
 //! C ABI's export iterators yield them.
 //!
 //! Pure Rust over the context's user store and optional runtime — no C
@@ -16,18 +16,6 @@ use oxpinyin_user::{
 use std::collections::{HashMap, VecDeque};
 
 use crate::ContextCore;
-
-/// A materialized scalar export row for Rust text consumers.
-/// Non-scalar C exports use [`PhraseExportCursor`] and [`ExportRow::write_text`].
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ExportedPhrase {
-    /// Outward scalar text.
-    pub text: String,
-    /// Apostrophe-joined pronunciation.
-    pub pinyin: String,
-    /// Stored pronunciation count.
-    pub count: u64,
-}
 
 /// The first `SYSTEM_FILE` library (`novel_types.h:154`).
 const GB_DICTIONARY: u8 = 1;
@@ -306,7 +294,7 @@ fn write_joined(syllables: Syllables<'_>, out: &mut [u8]) -> usize {
 
 impl ExportRow<'_> {
     /// The row's stored phrase text. The C encoding is applied only in
-    /// [`Self::text_len`], [`Self::write_text`] and [`Self::text_string`].
+    /// [`Self::text_len`] and [`Self::write_text`].
     fn phrase_text(&self) -> Option<PhraseText> {
         match &self.0 {
             RowSource::Mapped { item, .. } => item.phrase_text(),
@@ -378,31 +366,6 @@ impl ExportRow<'_> {
             }
             RowSource::User { count, .. } => *count,
         }
-    }
-
-    /// The phrase as an owned string, allocated once; `None` where the pin
-    /// hands out a NULL phrase ([`Self::text_len`]) or where a non-scalar
-    /// word makes the text unrepresentable in a Rust `String`.
-    #[must_use]
-    pub fn text_string(&self) -> Option<String> {
-        let text = self.phrase_text()?;
-        String::from_utf8(phrase_text_bytes(&text).into_owned()).ok()
-    }
-
-    /// The `'`-joined pinyin as an owned string, allocated once.
-    #[must_use]
-    pub fn pinyin_string(&self) -> String {
-        let mut out = String::with_capacity(self.pinyin_len());
-        for (index, (spelling, digit)) in self.syllables().enumerate() {
-            if index > 0 {
-                out.push('\'');
-            }
-            out.push_str(spelling);
-            if let Some(digit) = digit {
-                out.push(char::from(digit));
-            }
-        }
-        out
     }
 
     fn syllables(&self) -> Syllables<'_> {
@@ -541,30 +504,6 @@ impl PhraseExportCursor {
             }
         }
         Ok(ExportStep::Row(out))
-    }
-
-    /// Every row the cursor still yields, driven as a consumer drives the C
-    /// iterator (`while has_next { get_next }`). `None` when the store
-    /// cannot be read, when the pin would die at an assert site, or when it
-    /// would hand out a NULL phrase: its export of this sub-index does not
-    /// complete, so neither does this one.
-    #[must_use]
-    pub fn collect_rows(&mut self) -> Option<Vec<ExportedPhrase>> {
-        let mut rows = Vec::new();
-        while self.has_next() {
-            let step = self.get_next_with(|row| {
-                row.text_string().map(|text| ExportedPhrase {
-                    text,
-                    pinyin: row.pinyin_string(),
-                    count: row.count(),
-                })
-            });
-            match step {
-                Ok(ExportStep::Row(Some(row))) => rows.push(row),
-                Ok(ExportStep::Row(None) | ExportStep::Assert(_)) | Err(_) => return None,
-            }
-        }
-        Some(rows)
     }
 
     /// Whether a journal REMOVE took the system item behind `token` out of
@@ -810,45 +749,6 @@ impl PhraseExportCursor {
 }
 
 impl ContextCore {
-    /// §9 phrase-export materialization: every row the pin's iterator
-    /// yields for sub-index `index`, in its order (`pinyin.cpp:662-768`).
-    ///
-    /// The index is narrowed the way the pin stores it —
-    /// `export_iterator_t::m_phrase_index` is a `guint8`
-    /// (`pinyin.cpp:126`), so `257` addresses library 1. The system
-    /// libraries (`GB_DICTIONARY` … `MERGED_DICTIONARY`) walk their chunk
-    /// file; the `USER_FILE` libraries (`ADDON_DICTIONARY`,
-    /// [`NETWORK_DICTIONARY`], [`USER_DICTIONARY`]) walk the session store,
-    /// and answer `None` without one. Every other nibble, and a system
-    /// library that is unloaded, has no sub-index
-    /// (`FacadePhraseIndex::get_range` → `ERROR_NO_SUB_PHRASE_INDEX`,
-    /// `phrase_index.cpp:610-613`) and exports an empty list. Nibbles
-    /// 16..=255 read past the pin's 16-slot array (`phrase_index.cpp:611`),
-    /// undefined behaviour this port does not reproduce: they are empty too.
-    ///
-    /// `None` without a user store for a `USER_FILE` library, when the store
-    /// cannot be read (at the begin probe or at any later read), or when the
-    /// pin's iterator would not complete the walk: an item it dies at
-    /// ([`ExportAssert`]) or a NULL phrase ([`ExportRow::text_len`]). A
-    /// failed snapshot is never a partial one.
-    #[must_use]
-    pub fn export_phrases(&self, index: u32) -> Option<Vec<ExportedPhrase>> {
-        let [index, ..] = index.to_le_bytes();
-        match index {
-            GB_DICTIONARY..=MERGED_DICTIONARY => self
-                .phrase_export_cursor(u32::from(index))
-                .ok()?
-                .collect_rows(),
-            ADDON_DICTIONARY | NETWORK_DICTIONARY | USER_DICTIONARY => {
-                self.user.as_ref()?;
-                self.phrase_export_cursor(u32::from(index))
-                    .ok()?
-                    .collect_rows()
-            }
-            _ => Some(Vec::new()),
-        }
-    }
-
     /// `pinyin_begin_get_phrases` (`pinyin.cpp:662-688`): the iterator over
     /// sub-index `index`, probed to its first token with a pronunciation.
     ///
@@ -958,8 +858,7 @@ impl ExportSource {
         if is_user_file_token(token) {
             let phrase = self.user.phrase(token).ok().flatten()?;
             // Render each reading through the shared `render_pinyin` helper,
-            // skipping any unrenderable one — the same rule `export_phrases`
-            // applies, so the phrase and bigram exports stay consistent.
+            // skipping any unrenderable one.
             let pinyins: Vec<String> = phrase
                 .pronunciations()
                 .iter()
@@ -1304,9 +1203,7 @@ mod tests {
 
 #[cfg(test)]
 mod phrase_cursor_tests {
-    use super::{
-        ContextCore, ExportAssert, ExportStep, ExportedPhrase, PhraseExportCursor, assert_for,
-    };
+    use super::{ContextCore, ExportAssert, ExportRow, ExportStep, PhraseExportCursor, assert_for};
     use oxpinyin_core::{ChewingKey, SyllableKey};
     use oxpinyin_user::{
         KEY_SYLLABLE_MASK, KEY_TONE_SHIFT, MAX_KEY_TONE, USER_DICTIONARY, UserConfLaw,
@@ -1344,38 +1241,59 @@ mod phrase_cursor_tests {
             .collect()
     }
 
-    fn row(text: &str, pinyin: &str, count: u64) -> ExportedPhrase {
-        ExportedPhrase {
-            text: text.to_owned(),
-            pinyin: pinyin.to_owned(),
-            count,
-        }
+    /// A row as the C iterator writes it: phrase bytes, `'`-joined
+    /// pinyin and count.
+    type Row = (String, String, u64);
+
+    fn row(text: &str, pinyin: &str, count: u64) -> Row {
+        (text.to_owned(), pinyin.to_owned(), count)
     }
 
-    /// One `get_next`, read as the materialization reads it.
-    fn next_row(cursor: &mut PhraseExportCursor) -> Option<ExportedPhrase> {
-        match cursor.get_next_with(|row| {
-            row.text_string().map(|text| ExportedPhrase {
-                text,
-                pinyin: row.pinyin_string(),
-                count: row.count(),
-            })
-        }) {
+    /// The row through the writers `pinyin_iterator_get_next_phrase`
+    /// uses; `None` for a NULL phrase.
+    fn render(row: &ExportRow<'_>) -> Option<Row> {
+        let mut text = vec![0; row.text_len()?];
+        let written = row.write_text(&mut text);
+        assert_eq!(written, text.len());
+        let mut pinyin = vec![0; row.pinyin_len()];
+        let written = row.write_pinyin(&mut pinyin);
+        assert_eq!(written, pinyin.len());
+        Some((
+            String::from_utf8(text).expect("scalar fixture text"),
+            String::from_utf8(pinyin).expect("ASCII pinyin"),
+            row.count(),
+        ))
+    }
+
+    /// One `get_next`.
+    fn next_row(cursor: &mut PhraseExportCursor) -> Option<Row> {
+        match cursor.get_next_with(render) {
             Ok(ExportStep::Row(row)) => row,
             Ok(ExportStep::Assert(_)) | Err(_) => None,
         }
     }
 
+    /// Every row the cursor still yields, driven as a C caller drives the
+    /// iterator (`while has_next { get_next }`); `None` once a call fails.
+    fn drain(cursor: &mut PhraseExportCursor) -> Option<Vec<Row>> {
+        let mut rows = Vec::new();
+        while cursor.has_next() {
+            rows.push(next_row(cursor)?);
+        }
+        Some(rows)
+    }
+
     #[test]
-    fn begin_probes_one_token_and_draining_matches_the_materialization() {
+    fn begin_probes_one_token_and_the_guint8_alias_drains_like_library_1() {
         let ctx = open();
         let mut cursor = ctx.phrase_export_cursor(257).expect("begin");
         assert!(cursor.has_next());
         assert_eq!(cursor.next_token >> 24, 1, "the guint8 alias of library 1");
         assert_eq!(cursor.next_pronunciation, 0);
-        let all = cursor.collect_rows().expect("every row");
+        let all = drain(&mut cursor).expect("every row");
         assert!(!all.is_empty());
-        assert_eq!(all, ctx.export_phrases(1).unwrap());
+        let mut library = ctx.phrase_export_cursor(1).expect("begin");
+        assert_eq!(all, drain(&mut library).expect("every row"));
     }
 
     #[test]
@@ -1394,9 +1312,8 @@ mod phrase_cursor_tests {
 
     /// `pinyin.cpp:728` → `chewing_key.cpp:48` and `:50`: a reading the
     /// probe counts (`:682`) but `get_pinyin_string` cannot spell is read
-    /// and refused with the cursor unmoved, so the next call refuses again;
-    /// the materialization fails rather than skipping it (the parent build
-    /// skipped the reading).
+    /// and refused with the cursor unmoved, so the next call refuses again
+    /// (the parent build skipped the reading).
     #[test]
     fn a_reading_the_engine_cannot_spell_is_the_pins_pinyin_string_assert() {
         let jia = SyllableKey::from_text("jia").expect("syllable").index();
@@ -1443,10 +1360,6 @@ mod phrase_cursor_tests {
                     "{tag}"
                 );
             }
-            assert!(
-                ctx.export_phrases(u32::from(USER_DICTIONARY)).is_none(),
-                "{tag}: no partial snapshot"
-            );
         }
     }
 
@@ -1576,7 +1489,7 @@ mod phrase_cursor_tests {
                 Some(3),
             )
             .expect("merged reading");
-        let rows = cursor.collect_rows().expect("every row");
+        let rows = drain(&mut cursor).expect("every row");
         assert_eq!(
             rows,
             vec![
