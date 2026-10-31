@@ -16,8 +16,8 @@ use oxpinyin_input::tool::{self, k_mixture_model as edge};
 
 use crate::database::Database;
 use crate::records::{
-    ArrayItemWithToken, KMixtureModelArrayHeader, KMixtureModelArrayItem,
-    KMixtureModelMagicHeader, KmmGram,
+    ArrayItemWithToken, KMixtureModelArrayHeader, KMixtureModelArrayItem, KMixtureModelMagicHeader,
+    KmmGram,
 };
 
 /// `main`'s body: attach the result container, then fold each source in
@@ -61,10 +61,8 @@ fn merge_array_items(target: &Database, new_one: &Database) -> bool {
                 .wrapping_add(new_array_header.m_freq),
         };
 
-        let merged_array = merge_two_phrase_array(
-            target_single_gram.items(),
-            new_single_gram.items(),
-        );
+        let merged_array =
+            merge_two_phrase_array(target_single_gram.items(), new_single_gram.items());
 
         let mut merged_single_gram = KmmGram::new();
         for item in &merged_array {

@@ -759,7 +759,6 @@ version = "0.1.0"
 dependencies = [
  "oxpinyin-core",
  "oxpinyin-data",
- "oxpinyin-kmm",
  "oxpinyin-testsupport",
  "pkg-config",
  "tempfile",

@@ -27,9 +27,7 @@ pub fn main(args: impl IntoIterator<Item = OsString>) {
     };
 
     let result_filename = match &parsed.values[0] {
-        OptionValue::Filename(value) => value
-            .clone()
-            .and_then(|bytes| CString::new(bytes).ok()),
+        OptionValue::Filename(value) => value.clone().and_then(|bytes| CString::new(bytes).ok()),
         _ => None,
     };
 

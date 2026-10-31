@@ -215,16 +215,13 @@ fn train_second_word(
     };
     for token2 in hash_of_second_word.keys() {
         let count = hash_of_second_word.lookup(token2).unwrap_or(0);
-        train_word_pair(
-            hash_of_unigram,
-            &mut single_gram,
-            token2,
-            count,
-            params,
-        );
+        train_word_pair(hash_of_unigram, &mut single_gram, token2, count, params);
     }
 
-    let delta = single_gram.header().m_wc.wrapping_sub(saved_array_header_wc);
+    let delta = single_gram
+        .header()
+        .m_wc
+        .wrapping_sub(saved_array_header_wc);
     if delta == 0 {
         return false;
     }
@@ -251,8 +248,8 @@ fn train_word_pair(
     params: GenerateParams,
 ) {
     if let Some(mut array_item) = single_gram.get_array_item(token2) {
-        let maximum_occurs_allowed = (params.max_occurs as u32)
-            .max(ceil_mul(array_item.m_mr, params.max_increase_rate));
+        let maximum_occurs_allowed =
+            (params.max_occurs as u32).max(ceil_mul(array_item.m_mr, params.max_increase_rate));
         if count > maximum_occurs_allowed {
             subtract_from_unigram(hash_of_unigram, token2, count);
             return;

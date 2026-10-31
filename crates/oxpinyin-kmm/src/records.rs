@@ -91,7 +91,11 @@ impl FixedRecord for KMixtureModelMagicHeader {
 
     fn decode(bytes: &[u8]) -> Result<Self, StoreError> {
         if bytes.len() != Self::LEN {
-            return Err(record_error("k mixture magic header", bytes.len(), Self::LEN));
+            return Err(record_error(
+                "k mixture magic header",
+                bytes.len(),
+                Self::LEN,
+            ));
         }
         let [m_wc, m_n, m_total_freq] = words::<3>(bytes);
         Ok(Self {
@@ -119,7 +123,11 @@ impl FixedRecord for KMixtureModelArrayHeader {
 
     fn decode(bytes: &[u8]) -> Result<Self, StoreError> {
         if bytes.len() != Self::LEN {
-            return Err(record_error("k mixture array header", bytes.len(), Self::LEN));
+            return Err(record_error(
+                "k mixture array header",
+                bytes.len(),
+                Self::LEN,
+            ));
         }
         let [m_wc, m_freq] = words::<2>(bytes);
         Ok(Self { m_wc, m_freq })
@@ -204,12 +212,12 @@ mod tests {
         assert_eq!(magic.encode(), expected);
         assert_eq!(KMixtureModelMagicHeader::decode(&expected).unwrap(), magic);
 
-        let header = KMixtureModelArrayHeader {
-            m_wc: 7,
-            m_freq: 8,
-        };
+        let header = KMixtureModelArrayHeader { m_wc: 7, m_freq: 8 };
         assert_eq!(header.encode().len(), 8);
-        assert_eq!(KMixtureModelArrayHeader::decode(&header.encode()).unwrap(), header);
+        assert_eq!(
+            KMixtureModelArrayHeader::decode(&header.encode()).unwrap(),
+            header
+        );
 
         let item = KMixtureModelArrayItem {
             m_wc: 1,

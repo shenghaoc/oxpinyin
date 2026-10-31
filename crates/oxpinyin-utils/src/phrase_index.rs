@@ -15,8 +15,8 @@
 use std::ffi::{CString, OsStr};
 use std::path::Path;
 
-use oxpinyin_data::table_info::{FileName, TableConf};
 use oxpinyin_data::PhraseLibraries;
+use oxpinyin_data::table_info::{FileName, TableConf};
 use oxpinyin_input::tool::{self, k_mixture_model as edge};
 use oxpinyin_kmm::phrase::PhraseIndex;
 
@@ -50,6 +50,7 @@ impl PhraseIndex for SystemPhraseIndex {
 /// `SystemTableInfo2::load(SYSTEM_TABLE_INFO)` (`import:275`,
 /// `export:128`, `gen:330`): the cwd-relative `table.conf`, or the pin's
 /// `load table.conf failed.` and `ENOENT`.
+#[must_use]
 pub fn load_table_conf() -> TableConf {
     match TableConf::load(c"table.conf") {
         Ok(conf) => conf,
@@ -61,6 +62,7 @@ pub fn load_table_conf() -> TableConf {
 }
 
 /// `load_phrase_index` (`utils_helper.h:73-95`).
+#[must_use]
 pub fn load_phrase_index(conf: &TableConf) -> SystemPhraseIndex {
     let mut libraries = PhraseLibraries::empty();
     for (nibble, row) in conf.system_libraries() {
@@ -80,6 +82,7 @@ pub fn load_phrase_index(conf: &TableConf) -> SystemPhraseIndex {
 }
 
 /// Load both, in the pin's order.
+#[must_use]
 pub fn load_system_phrases() -> SystemPhraseIndex {
     let conf = load_table_conf();
     load_phrase_index(&conf)

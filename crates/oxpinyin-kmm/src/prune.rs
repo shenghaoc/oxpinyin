@@ -18,9 +18,7 @@ use oxpinyin_input::tool::{self, k_mixture_model as edge};
 
 use crate::database::Database;
 use crate::math::compute_pr_g_3_with_count;
-use crate::records::{
-    ArrayItemWithToken, KMixtureModelArrayItem, KMixtureModelMagicHeader,
-};
+use crate::records::{ArrayItemWithToken, KMixtureModelArrayItem, KMixtureModelMagicHeader};
 
 /// Default `-k` (`prune_k_mixture_model.cpp:34`).
 pub const DEFAULT_PRUNE_K: i32 = 3;
@@ -52,9 +50,7 @@ pub fn run(filename: Option<&CStr>, prune_k: i32, cdf: f64) {
         }
         progress += 1;
 
-        let mut single_gram = db
-            .load(token)
-            .unwrap_or_else(|| std::process::abort());
+        let mut single_gram = db.load(token).unwrap_or_else(|| std::process::abort());
         let mut removed_array = Vec::new();
         prune_k_mixture_model(
             &mut magic_header,
@@ -144,9 +140,7 @@ fn prune_k_mixture_model(
             array_header.m_wc = array_header.m_wc.wrapping_sub(removed_count);
             single_gram.set_header(array_header);
             magic_header.m_wc = magic_header.m_wc.wrapping_sub(removed_count);
-            magic_header.m_total_freq = magic_header
-                .m_total_freq
-                .wrapping_sub(removed_count);
+            magic_header.m_total_freq = magic_header.m_total_freq.wrapping_sub(removed_count);
         }
     }
 }

@@ -133,11 +133,12 @@ impl<R: BufRead> Converter<'_, R> {
         let n = tool::atol(self.tag_value(b"N"));
         let total_freq = tool::atol(self.tag_value(b"total_freq"));
 
-        self.bigram.set_magic_header(&crate::records::KMixtureModelMagicHeader {
-            m_wc: count as u32,
-            m_n: n as u32,
-            m_total_freq: total_freq as u32,
-        });
+        self.bigram
+            .set_magic_header(&crate::records::KMixtureModelMagicHeader {
+                m_wc: count as u32,
+                m_n: n as u32,
+                m_total_freq: total_freq as u32,
+            });
         true
     }
 
@@ -187,11 +188,13 @@ impl<R: BufRead> Converter<'_, R> {
                     let count = tool::atol(self.tag_value(b"count"));
                     let freq = tool::atol(self.tag_value(b"freq"));
 
-                    self.bigram
-                        .set_array_header(token, &KMixtureModelArrayHeader {
+                    self.bigram.set_array_header(
+                        token,
+                        &KMixtureModelArrayHeader {
                             m_wc: count as u32,
                             m_freq: freq as u32,
-                        });
+                        },
+                    );
                 }
                 END_LINE | GRAM_1_LINE | GRAM_2_LINE => break,
                 _ => std::process::abort(),
@@ -206,13 +209,8 @@ impl<R: BufRead> Converter<'_, R> {
     /// `parse_bigram` (`:176-256`).
     fn parse_bigram(&mut self) {
         self.taglib.push_state();
-        self.taglib.add_tag(
-            GRAM_2_ITEM_LINE,
-            c"\\item",
-            4,
-            c"count:T:N_n_0:n_1:Mr",
-            c"",
-        );
+        self.taglib
+            .add_tag(GRAM_2_ITEM_LINE, c"\\item", 4, c"count:T:N_n_0:n_1:Mr", c"");
 
         let mut last_token = NULL_TOKEN;
         let mut last_single_gram: Option<crate::records::KmmGram> = None;

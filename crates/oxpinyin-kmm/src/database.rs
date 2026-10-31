@@ -13,9 +13,7 @@
 use std::ffi::CStr;
 use std::path::PathBuf;
 
-use crate::records::{
-    KMixtureModelArrayHeader, KMixtureModelMagicHeader, KmmBigram, KmmGram,
-};
+use crate::records::{KMixtureModelArrayHeader, KMixtureModelMagicHeader, KmmBigram, KmmGram};
 
 /// `filename` as a Rust path: on Unix the C string's bytes are the path,
 /// elsewhere the narrow name is UTF-8.
@@ -66,11 +64,7 @@ impl Database {
     /// `get_magic_header`; `None` on a missing or short record.
     #[must_use]
     pub fn get_magic_header(&self) -> Option<KMixtureModelMagicHeader> {
-        let inner = self.inner.as_ref()?;
-        match inner.get_magic_header() {
-            Ok(header) => header,
-            Err(_) => abort(),
-        }
+        self.inner.as_ref()?.get_magic_header().ok().flatten()
     }
 
     /// `check_result(get_magic_header(…))`.
@@ -113,10 +107,7 @@ impl Database {
     /// `load`; `None` when the token has no row.
     #[must_use]
     pub fn load(&self, token: u32) -> Option<KmmGram> {
-        match self.inner.as_ref()?.load(token) {
-            Ok(gram) => gram,
-            Err(_) => abort(),
-        }
+        self.inner.as_ref()?.load(token).ok().flatten()
     }
 
     /// `check_result(load(…))`: the caller knows the row exists.
@@ -150,11 +141,7 @@ impl Database {
     /// record aborts through the layer's assert.
     #[must_use]
     pub fn get_array_header(&self, token: u32) -> Option<KMixtureModelArrayHeader> {
-        let inner = self.inner.as_ref()?;
-        match inner.get_array_header(token) {
-            Ok(header) => header,
-            Err(_) => abort(),
-        }
+        self.inner.as_ref()?.get_array_header(token).ok().flatten()
     }
 
     /// `check_result(get_array_header(…))`.

@@ -8,7 +8,7 @@
 
 use std::ffi::{CString, OsString};
 
-use oxpinyin_input::tool::{self, OptionArg, OptionEntry, OptionValue, OPTION_FLAG_REVERSE};
+use oxpinyin_input::tool::{self, OPTION_FLAG_REVERSE, OptionArg, OptionEntry, OptionValue};
 
 /// `main` (`:313-403`).
 pub fn main(args: impl IntoIterator<Item = OsString>) {
@@ -66,9 +66,7 @@ pub fn main(args: impl IntoIterator<Item = OsString>) {
         },
     };
     let filename = match &parsed.values[3] {
-        OptionValue::Filename(value) => value
-            .clone()
-            .and_then(|bytes| CString::new(bytes).ok()),
+        OptionValue::Filename(value) => value.clone().and_then(|bytes| CString::new(bytes).ok()),
         _ => None,
     };
     let documents: Vec<CString> = parsed.args[1..]

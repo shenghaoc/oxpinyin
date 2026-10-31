@@ -44,8 +44,7 @@ pub fn run(bigram_filename: Option<&CStr>, deleted_bigram_filename: Option<&CStr
         let deleted_array_header = *deleted_single_gram.header();
 
         if deleted_array_header.m_wc != 0 {
-            let lambda =
-                compute_interpolation(&deleted_single_gram, &bigram, single_gram.as_ref());
+            let lambda = compute_interpolation(&deleted_single_gram, &bigram, single_gram.as_ref());
             edge::print_token_lambda(token as i32, lambda);
             lambda_sum += lambda;
             lambda_count += 1;
