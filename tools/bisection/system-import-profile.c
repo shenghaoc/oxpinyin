@@ -8,7 +8,13 @@
  * #554 modes: --sentence-fixture <frozen-fixture> (500 comparable rows),
  * --train-fixture <frozen-fixture> (first 200; train_top-equivalent),
  * --phrase-file <lib\tphrase\tpinyin\tcount rows> (10k imports, save, export
- * touched libraries), --export-system (selection only, unmeasured).
+ * touched libraries), --export-system (selection only, unmeasured),
+ * --train-export-bigrams <frozen-fixture> (the first 200 rows, each
+ * guessed, its first normal phrase candidate at offset 0 chosen, guessed
+ * again and trained, so training writes that phrase's bigram with the next
+ * one (`phonetic_lookup.h:854-868` trains only from a constraint, and an
+ * N-best choice of the best row adds none), then one full user-bigram
+ * export walk, every row printed).
  * These modes emit no Callgrind client-request dumps. */
 #include <dlfcn.h>
 #include <dirent.h>
@@ -148,6 +154,77 @@ static int sentence_fixture(void *so, void *ctx, const char *path, bool training
     printf("operations\t%u\t%u\n", count, trained);
     free_instance(inst);
     return 0;
+}
+/* The --train-export-bigrams training: choose the first normal candidate
+ * of each guessed row, guess again, then train. */
+static int choose_and_train(void *so, void *ctx, const char *path) {
+    FILE *f = fopen(path, "r");
+    if (!f) return 1;
+    bool (*options)(void *, uint32_t) = symbol(so, "pinyin_set_options");
+    void *(*alloc)(void *) = symbol(so, "pinyin_alloc_instance");
+    void (*free_instance)(void *) = symbol(so, "pinyin_free_instance");
+    bool (*reset)(void *) = symbol(so, "pinyin_reset");
+    size_t (*parse)(void *, const char *) = symbol(so, "pinyin_parse_more_full_pinyins");
+    bool (*sentence)(void *) = symbol(so, "pinyin_guess_sentence");
+    bool (*guess)(void *, size_t, uint32_t) = symbol(so, "pinyin_guess_candidates");
+    bool (*getn)(void *, uint32_t *) = symbol(so, "pinyin_get_n_candidate");
+    bool (*getc)(void *, uint32_t, void **) = symbol(so, "pinyin_get_candidate");
+    bool (*type)(void *, void *, int *) = symbol(so, "pinyin_get_candidate_type");
+    int (*choose)(void *, size_t, void *) = symbol(so, "pinyin_choose_candidate");
+    bool (*train)(void *, uint8_t) = symbol(so, "pinyin_train");
+    if (!options(ctx, 0x18a)) return 1;
+    void *inst = alloc(ctx);
+    if (!inst) return 1;
+    char *line = NULL; size_t capacity = 0; unsigned count = 0, trained = 0;
+    while (count < 200 && getline(&line, &capacity, f) >= 0) {
+        if (line[0] == '#' || line[0] == '\n') continue;
+        char *cursor = line;
+        char *input = strsep(&cursor, "\t");
+        char *expected = strsep(&cursor, "\t");
+        char *surface = strsep(&cursor, "\t");
+        if (!expected || !surface || !surface[0]) continue;
+        ++count;
+        if (!reset(inst) || !parse(inst, input) || !sentence(inst) || !guess(inst, 0, 0x1e)) continue;
+        uint32_t n = 0;
+        if (!getn(inst, &n)) return 1;
+        for (uint32_t i = 0; i < n; ++i) {
+            void *cand = NULL; int kind = 0;
+            if (!getc(inst, i, &cand) || !type(inst, cand, &kind)) return 1;
+            if (kind == 2) {
+                (void)choose(inst, 0, cand);
+                /* `pinyin_train` trains the guessed result under the new
+                 * constraints, so guess again first, as a frontend does. */
+                if (sentence(inst) && train(inst, 0)) ++trained;
+                break;
+            }
+        }
+    }
+    free(line); fclose(f);
+    printf("chosen-and-trained\t%u\t%u\n", count, trained);
+    free_instance(inst);
+    return trained ? 0 : 1;
+}
+/* The user-bigram export walk ibus-libpinyin runs (`while (has_next)
+ * get_next`), each row printed and released. */
+static int bigram_export(void *so, void *ctx) {
+    void *(*begin)(void *) = symbol(so, "pinyin_begin_get_bigram_phrases");
+    bool (*has_next)(void *) = symbol(so, "pinyin_bigram_iterator_has_next_phrase");
+    bool (*get_next)(void *, char **, char **, int *) = symbol(so, "pinyin_bigram_iterator_get_next_phrase");
+    void (*end)(void *) = symbol(so, "pinyin_end_get_bigram_phrases");
+    void (*release)(void *) = symbol(so, "g_free");
+    void *it = begin(ctx);
+    if (!it) return 1;
+    unsigned rows = 0;
+    while (has_next(it)) {
+        char *phrase = NULL, *pinyin = NULL; int count = 0;
+        (void)get_next(it, &phrase, &pinyin, &count);
+        printf("bigram\t%s\t%s\t%d\n", phrase ? phrase : "-", pinyin ? pinyin : "-", count);
+        release(phrase); release(pinyin);
+        ++rows;
+    }
+    end(it);
+    printf("bigram-rows\t%u\n", rows);
+    return rows ? 0 : 1;
 }
 static int phrase_file(void *so, void *ctx, const char *path) {
     FILE *f = fopen(path, "r");
@@ -291,6 +368,9 @@ int main(int argc, char **argv) {
             result = sentence_fixture(so, ctx, argv[5], !strcmp(argv[4], "--train-fixture"));
         } else if (!strcmp(argv[4], "--phrase-file")) {
             result = phrase_file(so, ctx, argv[5]);
+        } else if (!strcmp(argv[4], "--train-export-bigrams")) {
+            result = choose_and_train(so, ctx, argv[5]);
+            if (result == 0) result = bigram_export(so, ctx);
         }
         fini(ctx); dlclose(so); return result;
     }
