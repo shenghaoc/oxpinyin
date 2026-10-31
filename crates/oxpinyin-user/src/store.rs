@@ -3308,21 +3308,6 @@ impl<S: WriteStore> GenericUserStore<S> {
         Ok(phrase_table::search_ucs4(&*self.database(), words)?.tokens)
     }
 
-    pub(crate) fn phrase_table_records(
-        &self,
-    ) -> Result<std::collections::BTreeMap<Vec<u8>, Vec<u8>>, UserStoreError> {
-        if let Some(target) = self.inner.libpinyin.as_ref() {
-            return Ok(target.phrases().phrase_table.rows().into_iter().collect());
-        }
-        let mut records = std::collections::BTreeMap::new();
-        self.database()
-            .for_each(phrase_table::TABLE, |key, value| {
-                records.insert(key.to_vec(), value.to_vec());
-                Ok(())
-            })?;
-        Ok(records)
-    }
-
     /// Current write generation: moves on every committed write, counts
     /// included.
     #[must_use]
