@@ -53,17 +53,10 @@ pub extern "C" fn zhuyin_phrase_segment(
     let Some(text) = oxpinyin_capi_marshal::input::utf8_to_ucs4(
         oxpinyin_capi_marshal::borrow_c_string!(sentence),
     ) else {
-        // 074a2219 zhuyin.cpp:973: same default-domain GLib critical as the
-        // pinyin twin, with this facade's C++ G_STRFUNC spelling.
-        // SAFETY: the function and expression are NUL-terminated constants;
-        // GLib accepts NULL for its default log domain.
-        unsafe {
-            glib_sys::g_return_if_fail_warning(
-                std::ptr::null(),
-                c"bool zhuyin_phrase_segment(zhuyin_instance_t*, const char*)".as_ptr(),
-                c"num_of_chars == ucs4_len".as_ptr(),
-            );
-        }
+        // 074a2219 zhuyin.cpp:973: `g_return_val_if_fail(num_of_chars ==
+        // ucs4_len, FALSE)` answers false and leaves the result as it was. Its
+        // critical is not reproduced (2026-10-31 UTC ruling,
+        // docs/findings/1297-segment-critical.md).
         return false;
     };
     let outcome = match text.as_str() {
@@ -252,7 +245,7 @@ mod tests {
     }
 
     #[test]
-    fn surrogate_segment_matches_pin_length_and_diagnostics() {
+    fn surrogate_segment_matches_pin_length_and_no_critical() {
         let (context, instance) = crate::test_support::open();
         let _logs = LogHandler::new();
         for bytes in [
@@ -275,17 +268,13 @@ mod tests {
             assert_eq!(token, 0);
             LOGS.with(|logs| assert!(logs.borrow().as_ref().expect("active capture").is_empty()));
 
-            // Recover through normal lookup, then verify #739's exact
-            // invalid-byte critical and preservation of the prior result.
+            // Recover through normal lookup, then verify the invalid-byte
+            // refusal keeps the prior result and logs nothing (#1297).
             assert!(zhuyin_phrase_segment(instance, c"你好".as_ptr()));
             assert!(!zhuyin_phrase_segment(instance, c"\xff\xfe".as_ptr()));
             assert!(zhuyin_get_n_phrase(instance, &raw mut count));
             assert_eq!(count, 2);
-            LOGS.with(|logs| assert_eq!(
-                std::mem::take(logs.borrow_mut().as_mut().expect("active capture")),
-                vec![(None, glib_sys::G_LOG_LEVEL_CRITICAL,
-                    "bool zhuyin_phrase_segment(zhuyin_instance_t*, const char*): assertion 'num_of_chars == ucs4_len' failed".to_owned())],
-            ));
+            LOGS.with(|logs| assert!(logs.borrow().as_ref().expect("active capture").is_empty()));
         }
         crate::test_support::close(context, instance);
     }

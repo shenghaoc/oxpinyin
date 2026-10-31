@@ -159,8 +159,9 @@ import contract_verdict
 from contract_verdict import (  # comparison and verdict rules
     META_OFFSET_TIMESTAMP, NO_ABORT, TKRZW_HASH_METADATA_SIZE, TKRZW_TIMESTAMP_WIDTH, WARNING_DOMAIN,
     _FATAL_GLIB_PREFIX, abort_answered, directory_reads_as_a_chunk, fatal_stderr, host_scanf_accepts, observed,
-    pin_loaded_subject_refused_table_conf, policy_observation, registered_termination, strjoinv_fault,
-    tkrzw_saved_bigram_bytes, tkrzw_saved_bigram_equal, valid_observation)
+    pin_loaded_subject_refused_table_conf, policy_observation, policy_pin_abort, policy_side,
+    registered_termination, strjoinv_fault, tkrzw_saved_bigram_bytes, tkrzw_saved_bigram_equal,
+    valid_observation)
 import contract_selection
 from contract_selection import SelectionError, case_names, family_of, normal_tag  # case selection
 import contract_registry
@@ -1331,8 +1332,9 @@ def run_main():
                 if args.observations:
                     with args.observations.open('a') as capture:
                         capture.write(json.dumps(dict(cell=args.cell, case=n, userdir=spec['userdir'],
-                                                      abort=spec['abort'] is not NO_ABORT,
-                                                      policy_record=spec['policy_record'], pin=pin, subject=subject),
+                                                      abort=policy_pin_abort(spec),
+                                                      policy_record=spec['policy_record'], pin=policy_side(spec, pin),
+                                                      subject=policy_side(spec, subject)),
                                                  ensure_ascii=True) + '\n')
                 compared = time.monotonic()
                 if (any(side['exit'] == 'TIMEOUT' for side in (pin, subject))

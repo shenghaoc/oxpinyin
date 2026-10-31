@@ -85,7 +85,11 @@ def register_array(case):
 
 
     def glib_924_segment_critical(k):
-        """Require exact critical domain/level/text and unchanged prior token outputs."""
+        """Require unchanged prior token outputs; return the logs the refusal wrote.
+
+        The pin logs `g_return_val_if_fail`'s critical (074a2219
+        pinyin.cpp:1454, zhuyin.cpp:973); the subject writes none
+        (docs/findings/1297-segment-critical.md)."""
         inst = k.inst
         segment = k.fn('phrase_segment', B, P, S)
 
@@ -107,20 +111,18 @@ def register_array(case):
         k.log_messages.clear()
         ret = segment(inst, b'\xff\xfe')
         assert ret is False and result() == old
-        assert k.logs == [[None, 8]]  # G_LOG_LEVEL_CRITICAL
-        assert k.log_messages == [
-            f"bool {k.mode}_phrase_segment({k.mode}_instance_t*, const char*): "
-            "assertion 'num_of_chars == ucs4_len' failed"
-        ]
         return dict(ret=ret, retained=old, messages=k.log_messages)
 
 
     for _mode in ('pinyin', 'zhuyin'):
         case(f'glib-924-array-lifecycle-{_mode}', mode=_mode, issues=('924',))(glib_924_array_lifecycle)
-        case(f'glib-924-segment-critical-{_mode}', mode=_mode, issues=('924',))(glib_924_segment_critical)
-        # GLib 2.89.4 gmessages.c:1274-1313 applies the caller's fatal mask.
+        case(f'glib-924-segment-critical-{_mode}', mode=_mode, issues=('924', '1297'),
+             policy_record='1297-segment-critical.md')(glib_924_segment_critical)
+        # GLib 2.89.4 gmessages.c:1274-1313 applies the caller's fatal mask:
+        # the pin aborts at its critical; the subject logs none and returns.
         case(f'glib-924-segment-fatal-critical-{_mode}', mode=_mode, fatal=True,
-             both_abort=True, stderr=True, issues=('924',))(glib_924_segment_critical)
+             stderr=True, issues=('924', '1297'),
+             policy_record='1297-segment-critical.md')(glib_924_segment_critical)
 
 
 def glib_924_oom_array(k):

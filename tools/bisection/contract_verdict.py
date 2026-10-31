@@ -44,6 +44,12 @@ def registered_termination(spec):
         or spec.get('pin_not_run') is not None
 
 
+def policy_pin_abort(spec):
+    """Whether a policy record may hold a SIGABRT of the pin: a registered
+    class (c) abort, or a `fatal=True` case whose pin a fatal GLib log ends."""
+    return spec['abort'] is not NO_ABORT or spec['fatal']
+
+
 def valid_observation(spec, side):
     """Default-mode validity: an ordinary case needs a normal worker exit
     and a result document; a signal, a non-zero exit, a timeout or an empty
@@ -125,9 +131,17 @@ def policy_expectations(spec, *, policy_root, cell):
     return contract_policy.check_entry(kept)
 
 
+def policy_side(spec, side):
+    """A side as a policy record binds it: a `fatal=True` run's stderr
+    without GLib's process id and timestamp (`fatal_stderr`)."""
+    if spec['fatal'] and isinstance(side.get('stderr'), str):
+        return dict(side, stderr=fatal_stderr(side['stderr']))
+    return side
+
+
 def policy_observation(spec, side):
     """The complete stable observation, excluding worker timings only."""
-    return contract_policy.stable_observation(side, spec['userdir'])
+    return contract_policy.stable_observation(policy_side(spec, side), spec['userdir'])
 
 
 def policy_diagnosis(spec, pin, subject, *, policy_root, cell):
@@ -170,13 +184,22 @@ def verdict_for(spec, pin, subject, expect_parent, *, policy_root, cell, directo
             actual = dict(pin=policy_observation(spec, pin), subject=policy_observation(spec, subject))
         except (OSError, ValueError, KeyError, TypeError):
             return 'INVALID', False, False
-        valid = (valid_parent_observations(spec, pin, subject, directory_probe=directory_probe) if expect_parent
-                 else all(valid_observation(spec, side) for side in (pin, subject)))
+        # A fatal log mask's pin SIGABRT is a valid pin observation in both
+        # modes. The subject must complete with a result; under
+        # --expect-parent it may instead end as registered for the pin
+        # (valid_parent_observations), since a parent build still aborts.
+        fatal_pin = spec['fatal'] and pin['exit'] == -signal.SIGABRT
+        if fatal_pin:
+            valid = valid_observation(spec, subject) or (expect_parent and subject['exit'] == pin['exit'])
+        elif expect_parent:
+            valid = valid_parent_observations(spec, pin, subject, directory_probe=directory_probe)
+        else:
+            valid = all(valid_observation(spec, side) for side in (pin, subject))
         if not valid:
             return 'INVALID', False, False
         if contract_policy.accepted(kept, actual):
             if any(contract_policy.observation_problem(
-                    actual[side], pin_abort=side == 'pin' and spec['abort'] is not NO_ABORT)
+                    actual[side], pin_abort=side == 'pin' and policy_pin_abort(spec))
                    for side in contract_policy.SIDES):
                 return 'INVALID', False, False
             # An existing accepted quirk is a control on its parent too.

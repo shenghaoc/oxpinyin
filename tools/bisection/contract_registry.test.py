@@ -59,8 +59,8 @@ class RegisterTests(unittest.TestCase):
         invalid = (dict(either=True), dict(either=True, abort=0), dict(both_abort=True),
                    dict(dir_chunk='other', abort=0), dict(dir_chunk='user'),
                    dict(pin_not_run={}, stderr=True), dict(pin_not_run={}, policy_record='r.md'),
-                   dict(policy_record='r.md', host_scanf=('1e',)), dict(policy_record='r.md', userdir=True),
-                   dict(policy_record='r.md', crash={}))
+                   dict(policy_record='r.md', host_scanf=('1e',)), dict(policy_record='r.md', crash={}),
+                   dict(policy_record='r.md', fatal=True, both_abort=True))
         for options in invalid:
             with self.subTest(options=options):
                 cases = {}
@@ -73,7 +73,8 @@ class RegisterTests(unittest.TestCase):
         valid = (dict(either=True, abort=0, crash={}), dict(fatal=True, both_abort=True),
                  dict(dir_chunk='system', abort=0), dict(pin_not_run={'ret': 0}),
                  dict(policy_record='r.md', stderr=True, control=True),
-                 dict(policy_record='r.md', abort=False))
+                 dict(policy_record='r.md', abort=False), dict(policy_record='r.md', userdir=True),
+                 dict(policy_record='r.md', fatal=True, stderr=True))
         for options in valid:
             with self.subTest(options=options):
                 cases = {}

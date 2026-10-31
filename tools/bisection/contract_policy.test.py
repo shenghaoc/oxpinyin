@@ -46,6 +46,8 @@ class ObservationProblemTests(unittest.TestCase):
     def test_a_normal_termination_with_a_complete_document_is_recordable(self):
         self.assertIsNone(policy.observation_problem(PIN))
         self.assertIsNone(policy.observation_problem(dict(PIN, userfiles={'a': 'b'})))
+        listing = {'user.conf': 'x|', 'a.dbin': [26, 'f' * 64], 'user_bigram.db': [4096], 'dir': None}
+        self.assertIsNone(policy.observation_problem(dict(PIN, userfiles=listing)))
 
     def test_a_registered_pin_abort_is_recordable_only_without_a_document(self):
         aborted = dict(PIN, exit=-signal.SIGABRT, result=None)
@@ -57,7 +59,8 @@ class ObservationProblemTests(unittest.TestCase):
         for bad, reason in ((dict(PIN, exit=1), 'normally terminate'), (dict(PIN, result=None), 'normally terminate'),
                             (dict(PIN, result={'ret': True}), 'logs'), (dict(PIN, result={'logs': [], '~x': 1}), '~'),
                             (dict(PIN, stderr=None), 'stderr'), (dict(PIN, exit='TIMEOUT'), 'integer'),
-                            (dict(PIN, userfiles={'a': 1}), 'listing'), ('text', 'observation')):
+                            (dict(PIN, userfiles={'a': 1}), 'listing'), (dict(PIN, userfiles={'a': ['1']}), 'listing'),
+                            ('text', 'observation')):
             with self.subTest(bad=bad):
                 self.assertIn(reason, policy.observation_problem(bad))
 

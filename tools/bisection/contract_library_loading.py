@@ -847,11 +847,12 @@ for _mode in ('pinyin', 'zhuyin'):
             ('save-unchanged-layout-failed', 'invalid', 'same')):
         case(_name + _suffix, mode=_mode, stderr=True, userdir=True)(
             save_replacement_probe(_initial, _replacement))
-    # `_write_files` emits the critical synchronously; under fatal mode both
-    # sides die before the failing library's log and after the earlier
+    # `_write_files` emits the critical synchronously; under fatal mode the
+    # pin dies before the failing library's log and after the earlier
     # libraries' writes (pinyin `.tmp`s; zhuyin already-renamed `.dbin`s).
+    # The subject writes no critical and completes the save (#1297, D1).
     case('save-fatal-valid-to-invalid' + _suffix, mode=_mode, fatal=True,
-         both_abort=True, stderr=True, userdir=True)(
+         stderr=True, userdir=True)(
         save_replacement_probe('valid', 'invalid'))
 
 
@@ -926,7 +927,60 @@ for _mode in ('pinyin', 'zhuyin'):
              stderr=True)(chunk_init_probe('init', _how))
 
 
+# The cases whose fixture reaches a `SubPhraseIndex::load` layout check: the
+# pin logs its `g_return_val_if_fail` critical (and aborts there under a
+# fatal mask); the subject logs nothing. Bound by the #1297 D1 record.
+LAYOUT_CRITICAL_RECORD = '1297-layout-criticals.md'
+LAYOUT_CRITICAL_CASES = frozenset((
+    'header-only-library-init',
+    'header-only-library-init-zhuyin',
+    'header-only-library-load',
+    'header-only-library-load-zhuyin',
+    'header-only-library-save',
+    'nonzero-total-candidates',
+    'nonzero-total-candidates-zhuyin',
+    'nonzero-total-save',
+    'nonzero-total-save-zhuyin',
+    'save-fatal-valid-to-invalid',
+    'save-fatal-valid-to-invalid-zhuyin',
+    'save-replacement-invalid-to-valid',
+    'save-replacement-invalid-to-valid-zhuyin',
+    'save-replacement-valid-to-invalid',
+    'save-replacement-valid-to-invalid-zhuyin',
+    'save-unchanged-layout-failed',
+    'save-unchanged-layout-failed-zhuyin',
+    'second-separator-library-init',
+    'second-separator-library-init-zhuyin',
+    'short-chunk-layout',
+    'short-chunk-layout-zhuyin',
+    'sparse-library-addon',
+    'sparse-library-addon-reload',
+    'sparse-library-candidates',
+    'sparse-library-candidates-zhuyin',
+    'sparse-library-init',
+    'sparse-library-init-settled',
+    'sparse-library-init-settled-zhuyin',
+    'sparse-library-init-zhuyin',
+    'sparse-library-load',
+    'sparse-library-load-zhuyin',
+    'sparse-library-mask-out',
+    'sparse-library-mask-out-zhuyin',
+    'sparse-library-reinit',
+    'sparse-library-reinit-zhuyin',
+    'sparse-library-save',
+    'sparse-library-save-zhuyin',
+    'sparse-library-tokens',
+    'sparse-library-tokens-zhuyin',
+    'third-separator-library-init',
+    'third-separator-library-init-zhuyin',
+))
+
+
 def register(driver_case):
-    """Register the declarations with the driver's current decorator, in their original order."""
+    """Register the declarations with the driver's current decorator, in their original order.
+
+    A case in LAYOUT_CRITICAL_CASES is bound to LAYOUT_CRITICAL_RECORD."""
     for name, args, kwargs, fn in _REGISTRATIONS:
+        if name in LAYOUT_CRITICAL_CASES:
+            kwargs = dict(kwargs, policy_record=LAYOUT_CRITICAL_RECORD)
         driver_case(name, *args, **kwargs)(fn)

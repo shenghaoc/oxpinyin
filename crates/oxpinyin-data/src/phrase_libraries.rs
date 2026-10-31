@@ -14,14 +14,12 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Mutex, OnceLock, RwLock};
+use std::sync::{OnceLock, RwLock};
 
 use oxpinyin_core::{ChewingKey, PhraseText, TrellisItem};
 
 use crate::chewing_table::key_matches;
-use crate::phrase_library::{
-    LayoutFault, LibraryError, PhraseItemView, PhraseLibrary, RowFault, verify_chunk,
-};
+use crate::phrase_library::{LibraryError, PhraseItemView, PhraseLibrary, RowFault, verify_chunk};
 
 pub use crate::system_files::SYSTEM_LIBRARY_FILES as SYSTEM_LIBRARY_STEMS;
 
@@ -81,10 +79,6 @@ pub struct PhraseLibraries {
     /// item: whether a frequency table is there to price with, which the
     /// wrapping [`Self::total`] cannot tell when it lands on zero.
     stocked: AtomicU32,
-    /// The pin's `g_return_val_if_fail` criticals from `SubPhraseIndex::load`
-    /// that the caller must emit where the pin emits them. Drained by the C
-    /// ABI after the operation that loaded or re-mapped the library.
-    layout_faults: Mutex<Vec<LayoutFault>>,
 }
 
 /// The fault and diagnostic paths from one validation of each selected
@@ -106,29 +100,7 @@ impl PhraseLibraries {
             unmapped: Vec::new(),
             total: AtomicU32::new(0),
             stocked: AtomicU32::new(0),
-            layout_faults: Mutex::new(Vec::new()),
         }
-    }
-
-    /// Takes the layout faults recorded since the last take, in the order
-    /// the libraries loaded or re-mapped. The C ABI logs each as the pin's
-    /// `g_return_val_if_fail` critical (`phrase_index.cpp:354-356`).
-    #[must_use]
-    pub fn take_layout_faults(&self) -> Vec<LayoutFault> {
-        std::mem::take(
-            &mut *self
-                .layout_faults
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner),
-        )
-    }
-
-    /// Records one layout fault as if a load had just emitted it, for a
-    /// caller that collected it through a save hook and wants the facade's
-    /// `take_layout_faults` surface to carry it. The C ABI logs through its
-    /// hook; the pure-Rust save keeps the fault available here.
-    pub fn record_layout_fault(&self, fault: LayoutFault) {
-        record_layout_fault(&self.layout_faults, fault);
     }
 
     /// Opens the libraries named by `(nibble, file)` pairs from `dir`;
@@ -218,12 +190,7 @@ impl PhraseLibraries {
     /// first fault's classification and the reportable paths. The caller
     /// applies its operation's table-row and visibility guards.
     #[must_use]
-    pub fn check_now(
-        &self,
-        selected: impl Fn(u8) -> bool,
-        only: Option<u8>,
-        record_layout: bool,
-    ) -> LibraryCheck {
+    pub fn check_now(&self, selected: impl Fn(u8) -> bool, only: Option<u8>) -> LibraryCheck {
         let mut checked = LibraryCheck::default();
         let mut first_fault = false;
         for (_, slot) in (0u8..)
@@ -244,15 +211,6 @@ impl PhraseLibraries {
                 }
                 if error.unmappable_path().is_some() {
                     checked.unmappable.push(loaded.path.clone());
-                }
-            } else if record_layout && loaded.library.is_layout_failed() {
-                // The pin's save diffs every loaded system library by
-                // mapping its file again (`pinyin.cpp:956`) and the mask
-                // reloads each one (`:1265`): a header-accepted chunk whose
-                // layout still fails emits the critical again. The reload
-                // path records its own fault; this branch is the save diff's.
-                if let Err(LibraryError::Layout(fault)) = PhraseLibrary::open(&loaded.path) {
-                    self.record_layout_fault(fault);
                 }
             }
         }
@@ -287,11 +245,7 @@ impl PhraseLibraries {
             // read one (`phrase_index.cpp:237-248`), so the local total is
             // kept on the empty sub-index but stays out of the facade
             // aggregate.
-            Err(LibraryError::Layout(fault)) => {
-                let total = fault.total_freq;
-                self.record_layout_fault(fault);
-                (PhraseLibrary::empty(total), false)
-            }
+            Err(LibraryError::Layout(fault)) => (PhraseLibrary::empty(fault.total_freq), false),
             Err(error) => return Err(error),
         };
         let slot = self.by_nibble[slot]
@@ -336,7 +290,6 @@ impl PhraseLibraries {
                 // one; the caller ignores the false and the slot holds the
                 // empty sub-index the failed load left.
                 let total = fault.total_freq;
-                record_layout_fault(&self.layout_faults, fault);
                 self.total.fetch_sub(old, Ordering::SeqCst);
                 self.stocked.fetch_and(!(1 << nibble), Ordering::SeqCst);
                 *slot = Some(Loaded {
@@ -660,15 +613,6 @@ impl PhraseLibraries {
     }
 }
 
-/// Records one layout fault on `faults`; a free function so a caller that
-/// holds a borrow of another `PhraseLibraries` field can still record.
-fn record_layout_fault(faults: &Mutex<Vec<LayoutFault>>, fault: LayoutFault) {
-    faults
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .push(fault);
-}
-
 /// [`PhraseLibraries::pronunciation_possibility`] over a resolved item,
 /// comparing each stored pronunciation's packed keys in place.
 fn item_possibility(item: &PhraseItemView<'_>, query: &[ChewingKey]) -> (u64, u64) {
@@ -775,11 +719,7 @@ mod tests {
         assert!(library.is_layout_failed());
         assert_eq!(library.token_range(), 1..1);
         assert!(!library.has_items());
-        let faults = libs.take_layout_faults();
-        assert_eq!(faults.len(), 1);
-        assert_eq!(faults[0].expression, "*(buf_begin + offset) == c_separate");
-        assert_eq!(faults[0].total_freq, 0);
-        assert!(libs.take_layout_faults().is_empty());
+        assert_eq!(library.total_freq(), 0);
     }
 
     #[test]
@@ -789,7 +729,6 @@ mod tests {
         let library = libs.library(0x0400_0000).expect("loaded");
         assert!(!library.is_layout_failed());
         assert_eq!(library.token_range(), 1..1);
-        assert!(libs.take_layout_faults().is_empty());
     }
 
     #[test]
@@ -852,7 +791,6 @@ mod tests {
         assert_eq!(library.total_freq(), 123, "the local total is preserved");
         assert!(library.is_layout_failed());
         assert_eq!(libs.unigram_total(), 0, "the facade does not add it");
-        assert_eq!(libs.take_layout_faults()[0].total_freq, 123);
         // The pin's `FacadePhraseIndex::unload` subtracts the local total
         // whether or not the failed load added it.
         assert!(libs.unload(4));
@@ -871,11 +809,6 @@ mod tests {
         let libs = PhraseLibraries::open(dir.path(), &[(4_u8, "merged.bin")]).unwrap();
         let library = libs.library(0x0400_0000).expect("loaded");
         assert!(library.is_layout_failed());
-        let faults = libs.take_layout_faults();
-        assert_eq!(faults.len(), 1);
-        assert_eq!(
-            faults[0].expression,
-            "*(buf_begin + index_two - 1) == c_separate"
-        );
+        assert_eq!(library.token_range(), 1..1);
     }
 }

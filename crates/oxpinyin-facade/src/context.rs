@@ -540,30 +540,12 @@ impl ContextCore {
     /// `assert`s (`memory_chunk.h:543`, `:547`) kill the process there, so
     /// the store's `save_reporting` stops instead of reporting, and this
     /// surface must fail the call. The caller logs the point.
-    /// The pure-Rust facade's save: the synchronous layout hook is used to
-    /// collect the faults into the runtime's `take_layout_faults` surface
-    /// rather than discarding them. The C ABI calls
-    /// [`Self::save_user_with_layout_faults`] and logs each fault at the
-    /// save's operation boundary.
+    ///
+    /// A system library whose layout `SubPhraseIndex::load` refuses again at
+    /// the save's remap is diffed against the pin's empty sub-index; the
+    /// pin's `g_return_val_if_fail` critical there is not reproduced
+    /// (2026-10-31 UTC ruling, `docs/findings/1297-layout-criticals.md`).
     pub fn save_user(&mut self) -> SaveOutcome {
-        let mut faults = Vec::new();
-        let outcome = self.save_user_with_layout_faults(&mut |fault| faults.push(fault.clone()));
-        if !faults.is_empty()
-            && let Some(runtime) = &self.runtime
-        {
-            runtime.record_layout_faults(faults);
-        }
-        outcome
-    }
-
-    /// The C ABI's save entry: the same save body, with the synchronous
-    /// layout-fault hook invoked at the pin's per-library save position.
-    /// The pure-Rust convenience is [`Self::save_user`], which collects the
-    /// faults for [`Self::take_layout_faults`] instead of logging them.
-    pub fn save_user_with_layout_faults(
-        &mut self,
-        on_layout_fault: &mut dyn FnMut(&oxpinyin_runtime::LayoutFault),
-    ) -> SaveOutcome {
         let Some(store) = self.user.as_ref() else {
             return SaveOutcome::NotSaved;
         };
@@ -578,12 +560,9 @@ impl ContextCore {
         // `_write_files` maps every loaded system library again to diff it
         // against the live one (`pinyin.cpp:956`, `zhuyin.cpp:589`), before
         // it writes anything. A library that is a directory the pin asserts
-        // on kills it there (`memory_chunk.h:493`). The layout refusal is
-        // handled per library by the save hook below, at the pin's loop
-        // position, so a fatal critical stops before the library's own
-        // write and after the earlier ones. The lines go on the stream the
-        // save's rename and marker lines use.
-        if self.check_system_libraries(None, false) {
+        // on kills it there (`memory_chunk.h:493`). The lines go on the
+        // stream the save's rename and marker lines use.
+        if self.check_system_libraries(None) {
             return SaveOutcome::ChunkHeaderRead;
         }
         let runtime = self.runtime.as_ref();
@@ -596,12 +575,9 @@ impl ContextCore {
             };
             match runtime.save_disk_baseline(nibble) {
                 Ok(baseline) => baseline,
-                Err(fault) => {
-                    on_layout_fault(&fault);
-                    oxpinyin_user::SaveBaseline::Changed(oxpinyin_user::SystemLibrary::failed(
-                        fault.total_freq,
-                    ))
-                }
+                Err(fault) => oxpinyin_user::SaveBaseline::Changed(
+                    oxpinyin_user::SystemLibrary::failed(fault.total_freq),
+                ),
             }
         };
         let report = match store.save_reporting_with_baseline(&compacted, baseline) {
@@ -622,11 +598,11 @@ impl ContextCore {
     /// map again at this call and cannot: one `mmap %s failed!` each, in
     /// library order ([`c_stderr::mmap_failed`]). The pin dies on the first;
     /// nothing here does, and the call answers what it answered before.
-    fn check_system_libraries(&self, only: Option<u8>, record_layout: bool) -> bool {
+    fn check_system_libraries(&self, only: Option<u8>) -> bool {
         let Some(runtime) = &self.runtime else {
             return false;
         };
-        let checked = runtime.check_system_libraries(only, record_layout);
+        let checked = runtime.check_system_libraries(only);
         if checked.chunk_header_fault {
             return true;
         }
@@ -634,16 +610,6 @@ impl ContextCore {
             c_stderr::mmap_failed(&path);
         }
         false
-    }
-
-    /// Takes the pin's `SubPhraseIndex::load` criticals recorded by the
-    /// operation just performed: the C ABI logs each where the pin logs it.
-    #[must_use]
-    pub fn take_layout_faults(&self) -> Vec<oxpinyin_runtime::LayoutFault> {
-        self.runtime
-            .as_ref()
-            .map(oxpinyin_runtime::Runtime::take_layout_faults)
-            .unwrap_or_default()
     }
 
     /// `FacadePhraseIndex::compact` over the system layout-failed empty
@@ -681,7 +647,7 @@ impl ContextCore {
     /// whose library bits match are merged. A refused mask leaves the store untouched,
     /// where the pin's partial reloads die with its abort.
     pub fn mask_out(&mut self, mask: u32, value: u32) -> MaskOutOutcome {
-        if self.check_system_libraries(None, false) {
+        if self.check_system_libraries(None) {
             return MaskOutOutcome::ChunkHeaderRead;
         }
         // The pin's mask loop walks `index` 1..`PHRASE_INDEX_LIBRARY_COUNT`
@@ -788,7 +754,7 @@ impl ContextCore {
         if runtime.dict().library_visible(index) {
             return Ok(false);
         }
-        if self.check_system_libraries(Some(row_index), false) {
+        if self.check_system_libraries(Some(row_index)) {
             return Err(LibraryLoadFault::Row(LibraryRowAssert::ChunkHeaderRead));
         }
         // The sub-index `unload` freed comes back as the system chunk plus

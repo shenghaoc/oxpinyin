@@ -183,27 +183,3 @@ pub fn log_warning(message: &str) {
         );
     }
 }
-
-/// The pin's `g_return_val_if_fail` in `SubPhraseIndex::load`
-/// (074a2219 `phrase_index.cpp:354-356`, `:361`), made with the call the macro
-/// expands to: `g_return_if_fail_warning(G_LOG_DOMAIN, G_STRFUNC, #expr)`,
-/// with the domain NULL (the pin leaves `G_LOG_DOMAIN` undefined there; the
-/// oracle object passes zero at `SubPhraseIndex::load+492`, `+552`, `+576`
-/// and `+608`). GLib formats and logs the critical. An argument with an
-/// interior NUL is dropped rather than truncated; neither caller's has one.
-pub fn return_if_fail_warning(pretty_function: &str, expression: &str) {
-    let (Ok(pretty_function), Ok(expression)) =
-        (CString::new(pretty_function), CString::new(expression))
-    else {
-        return;
-    };
-    // SAFETY: both strings are NUL-terminated buffers that outlive the call,
-    // and GLib accepts NULL for its default log domain.
-    unsafe {
-        glib_sys::g_return_if_fail_warning(
-            std::ptr::null(),
-            pretty_function.as_ptr(),
-            expression.as_ptr(),
-        );
-    }
-}

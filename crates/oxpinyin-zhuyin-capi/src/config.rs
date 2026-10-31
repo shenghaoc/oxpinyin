@@ -121,9 +121,6 @@ pub extern "C" fn zhuyin_mask_out(context: *mut ZhuyinContext, mask: u32, value:
     // the unique borrow lasts only for the mask call.
     let ctx = unsafe { context_mut(context) };
     let outcome = ctx.mask_out(mask, value);
-    // The mask reloads every loaded system library (`:800`); a layout the
-    // pin refuses there logs its critical and is ignored.
-    crate::context::log_layout_faults(ctx);
     match outcome {
         oxpinyin_facade::MaskOutOutcome::Done(answer) => answer,
         oxpinyin_facade::MaskOutOutcome::OverlongIndexKey => {
@@ -230,9 +227,6 @@ pub extern "C" fn zhuyin_load_phrase_library(context: *mut ZhuyinContext, index:
     // more answers `false` first, `:362`); which rows are is the
     // context's `table.conf`.
     let outcome = ctx.load_phrase_library(u32::from(index));
-    // The reload maps the chunk again (`:298`) and logs the critical of a
-    // layout the pin then ignores.
-    crate::context::log_layout_faults(ctx);
     match outcome {
         Ok(loaded) => loaded,
         // Class (c), `memory_chunk.h:493`: the library being loaded again is

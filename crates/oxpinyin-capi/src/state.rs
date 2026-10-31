@@ -79,12 +79,6 @@ impl CapiContext {
         })
     }
 
-    /// Takes the pin's `SubPhraseIndex::load` criticals the operation just
-    /// recorded, for `pinyin_init`/`pinyin_save`/the load entries to log.
-    pub(crate) fn take_layout_faults(&self) -> Vec<oxpinyin_runtime::LayoutFault> {
-        self.core.take_layout_faults()
-    }
-
     pub(crate) fn alloc_instance(&self, context: *mut PinyinContext) -> Option<CapiInstance> {
         Some(CapiInstance {
             context,
@@ -119,11 +113,8 @@ impl CapiContext {
     /// unmodified (`:1136`), `true` after a dirty save. A chunk header
     /// write the pin dies on comes back as [`SaveOutcome::ChunkWriteFailed`]
     /// so the caller can log it.
-    pub(crate) fn save_user(
-        &mut self,
-        on_layout_fault: &mut dyn FnMut(&oxpinyin_runtime::LayoutFault),
-    ) -> oxpinyin_facade::SaveOutcome {
-        self.core.save_user_with_layout_faults(on_layout_fault)
+    pub(crate) fn save_user(&mut self) -> oxpinyin_facade::SaveOutcome {
+        self.core.save_user()
     }
 
     /// `pinyin_mask_out`'s body: the store-level deletion, or `false`

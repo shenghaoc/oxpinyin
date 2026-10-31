@@ -55,12 +55,6 @@ impl CapiContext {
         })
     }
 
-    /// Takes the pin's `SubPhraseIndex::load` criticals the operation just
-    /// recorded, for the init/save/load entries to log.
-    pub(crate) fn take_layout_faults(&self) -> Vec<oxpinyin_runtime::LayoutFault> {
-        self.core.take_layout_faults()
-    }
-
     pub(crate) fn alloc_instance(&self, context: *mut ZhuyinContext) -> Option<CapiInstance> {
         let mut core = self.core.alloc_instance()?;
         // The zhuyin surface's sentence-row display law: upstream fills every
@@ -106,11 +100,8 @@ impl CapiContext {
     /// `zhuyin_save`'s body: `false` without a user dir, otherwise the
     /// store's gated save. A chunk header write the pin dies on comes back
     /// as [`SaveOutcome::ChunkWriteFailed`] so the caller can log it.
-    pub(crate) fn save_user(
-        &mut self,
-        on_layout_fault: &mut dyn FnMut(&oxpinyin_runtime::LayoutFault),
-    ) -> oxpinyin_facade::SaveOutcome {
-        self.core.save_user_with_layout_faults(on_layout_fault)
+    pub(crate) fn save_user(&mut self) -> oxpinyin_facade::SaveOutcome {
+        self.core.save_user()
     }
 
     /// `zhuyin_mask_out`'s body: the store-level deletion, or
