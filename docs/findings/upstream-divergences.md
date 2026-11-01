@@ -4378,6 +4378,19 @@ missing container header abort with SIGABRT on both sides and no
 subject assertion line. Bound per cell in
 [eio-kmm-tools.md](eio-kmm-tools.md).
 
+### Pinyin-index item padding is indeterminate in the pin (class (b), 2026-11-01 UTC)
+
+`ChewingTableEntry<N>::add_index` (`src/storage/chewing_large_table2.h:
+208-232`) copies a stack `PinyinIndexItem2<N>` (`src/storage/pinyin_phrase3.h:
+181-196`) into the DBM value whole, and for an odd `N` the object's last two
+bytes are tail padding no constructor sets. The subject's
+`row_format::pinyin_index::encode_item` writes zeros there. Tokens and keys
+are identical and no reader interprets the padding. Recorded and bound for
+the `gbf-toned-model` tool-diff case in
+[eio-pinyin-index-padding.md](eio-pinyin-index-padding.md); the case stays
+DIFFER on a cell whose DBM library also writes its own container header
+until the comparator ignores that metadata.
+
 ### Library `g_return_val_if_fail` criticals are not reproduced (2026-10-31 UTC)
 
 **Maintainer decision D1 of #1297**, a narrow exception to the library

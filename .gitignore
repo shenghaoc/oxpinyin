@@ -68,12 +68,6 @@ tools/bisection/fullpin-diff
 __pycache__/
 *.py[cod]
 
-# oxpinyin-datagen (since the 1-gram-only emission) writes an
-# interpolation2.text into every --out-dir; the committed w3 fixture sets
-# predate that and deliberately do not carry it — nothing at runtime reads
-# it from a data dir.
-/fixtures/w3/*/interpolation2.text
-
 # Container drop-in gates write their cargo targets here (run-dropin-*.sh).
 /target-fedora/
 /target-debian/

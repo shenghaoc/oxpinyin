@@ -17,7 +17,6 @@
 | oxpinyin-runtime | Shared concrete assembly of tables, model and user wiring into Session. | forbid | yes | via capi |
 | pinyin-oracle | Differential harness against pinned libpinyin. | allow | Linux | never |
 | oxpinyin-store | Ordered byte-KV interface with one compile-time Berkeley DB, Kyoto Cabinet or tkrzw backend. See backend dependencies below. | deny | yes | via engine |
-| oxpinyin-datagen | The test-only `fixtures/w3` `--mini` producer library for each backend's native runtime files; the system data directory itself is built by the pin's own three-utility sequence in `oxpinyin-utils`. Shares layouts with data readers. | forbid | yes | never |
 | oxpinyin-utils | libpinyin's utilities under their own names and interfaces, through `oxpinyin-input`'s `tools` boundary (stage 5 of `docs/findings/external-io-boundary.md`): the table generators, `k_mixture_model_to_interpolation`, the segmentation trio, the storage trio and the five n-gram/interpolation utilities (`gen_unigram`, `gen_ngram`, `gen_deleted_ngram`, `estimate_interpolation`, `eval_correction_rate`). | forbid | Linux, macOS (needs GLib) | never |
 | oxpinyin-training | Backend-sensitive training modules: segment, counter, lambda, emitter and eval. The stage command line was retired; `oxpinyin-utils` carries the pin-named utilities, and the eval module is the decode behind `eval_correction_rate`. One backend selection covers all modules. | forbid | yes | never |
 | oxpinyin-testsupport | Shared fixture Dictionary/LanguageModel doubles, model20 cache locator and scorer suites. See test-support dependencies below. | forbid | yes | never |
@@ -39,7 +38,7 @@ Readers and writers therefore share one layout definition.
 
 The scorer suites `tests/scoring.rs` and `tests/scoring_fixture.rs` reside in testsupport.
 This prevents core from having a development dependency on testsupport.
-Testsupport is for development except for its datagen consumer, which never ships.
+Testsupport is for development only.
 
 ## Backend selection
 
@@ -62,7 +61,7 @@ The tree has no pure-Rust database replacement.
 Link Kyoto Cabinet, tkrzw and Berkeley DB to the distribution's libraries.
 Use tkrzw and Berkeley DB through their maintainer-provided C ABIs, `tkrzw_langc.h` and `db.h`.
 Generate bindings with bindgen over system headers.
-Find tkrzw, Kyoto Cabinet, Berkeley DB where it ships a `.pc` file, and GLib with the `pkg-config` crate, a build-dependency of `oxpinyin-store`, `oxpinyin-input`, `oxpinyin-datagen` and `oxpinyin-training` (maintainer approval 2026-10-30 UTC).
+Find tkrzw, Kyoto Cabinet, Berkeley DB where it ships a `.pc` file, and GLib with the `pkg-config` crate, a build-dependency of `oxpinyin-store`, `oxpinyin-input` and `oxpinyin-training` (maintainer approval 2026-10-30 UTC).
 Berkeley DB falls back to fixed header directories and the `OXPINYIN_BDB_*` overrides, because the distributions and Homebrew install no `.pc` file for it.
 Do not use tkrzw's C++ interface.
 It has no ABI stability across compilers, standard libraries or library versions.
@@ -135,7 +134,7 @@ Read `table.conf` once through data's `table_info`, the input scanner and `Syste
 Its rows determine which libraries exist, their filenames and which calls accept them.
 Its header supplies λ and the versions used to check the user profile.
 Runtime opens the same system directory as `pinyin_init` for that backend.
-libpinyin's own `gen_binary_files` → `import_interpolation` → `gen_unigram` sequence, which `oxpinyin-utils` provides under those names, can produce it; `oxpinyin-datagen` retains only the test-only `--mini` producer library.
+libpinyin's own `gen_binary_files` → `import_interpolation` → `gen_unigram` sequence, which `oxpinyin-utils` provides under those names, produces it; `just w3-fixtures` (`tools/dev/w3_fixtures.py`) runs that sequence over the mini subset of the model to regenerate and check `fixtures/w3`.
 The caller supplies directories to `Runtime`, which retains `StoragePaths`.
 Do not auto-detect a distribution layout.
 

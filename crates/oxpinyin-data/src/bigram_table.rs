@@ -22,7 +22,7 @@ use oxpinyin_store::{DefaultStore, RawReadStore};
 use crate::chewing_table::{ChewingDbm, DefaultDbm, RawChewingDbm};
 use crate::dict::DictError;
 use crate::lm::BigramRow;
-// The key and value layout this reader shares with `oxpinyin-datagen`'s
+// The key and value layout this reader shares with `import_interpolation`'s
 // writer: one written copy (`crate::row_format`).
 #[cfg(test)]
 use crate::row_format::bigram::encode_value as encode_bigram_value;

@@ -22,7 +22,7 @@
 use crate::chewing_table::{ChewingDbm, DefaultDbm, prefix_upper_bound};
 use crate::dict::DictError;
 // The key and value layouts this reader shares with
-// `oxpinyin-datagen`'s writer: one written copy (`crate::row_format`).
+// `gen_binary_files`'s writer: one written copy (`crate::row_format`).
 #[cfg(test)]
 use crate::row_format::phrase_index::encode_tokens;
 use crate::row_format::phrase_index::{decode_tokens, encode_ucs4_key, encode_ucs4_key_scalars};

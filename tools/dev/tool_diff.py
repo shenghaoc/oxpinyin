@@ -136,6 +136,16 @@ def load_cases(paths):
                 raise ValueError(f'{path}: a pin signal requires a named policy record')
             for name in case.get('files', {}):
                 relative(name)
+            if case.get('policy_cells') is not None:
+                if not isinstance(case['policy_cells'], list) or not all(
+                        isinstance(name, str) and name in FIXTURE_DIRS for name in case['policy_cells']):
+                    raise ValueError(f'{path}: policy_cells must name bdb, kc or tkrzw')
+            if case.get('dbm_rows_pinyin_index') is not None:
+                if not isinstance(case['dbm_rows_pinyin_index'], list) or not all(
+                        isinstance(name, str) and name for name in case['dbm_rows_pinyin_index']):
+                    raise ValueError(f'{path}: dbm_rows_pinyin_index must be a list of relative names')
+                for name in case['dbm_rows_pinyin_index']:
+                    relative(name)
             if case.get('dbm_rows') is not None:
                 if not isinstance(case['dbm_rows'], list) or not all(
                         isinstance(name, str) and name for name in case['dbm_rows']):
@@ -168,7 +178,32 @@ def snapshot(directory):
     return files
 
 
-def logical_dbm_rows(ctx, helper, directory, names, rows):
+def pinyin_index_rows(output):
+    """Mask only PinyinIndexItem2<N>'s two tail bytes for odd N.
+
+    Pin: pinyin_phrase3.h:181-195, chewing_large_table2.h:208-230 at
+    074a2219. A row key has N two-byte ChewingKeys; values concatenate
+    four-byte-aligned items, each containing a four-byte token and N keys.
+    Empty values are continuation rows. Reject malformed lengths instead
+    of accidentally discarding bytes outside the documented padding.
+    """
+    normalized = []
+    for row in output.splitlines():
+        key_hex, value_hex = row.split(b' ', 1)
+        key, value = bytes.fromhex(key_hex.decode()), bytearray.fromhex(value_hex.decode())
+        if not key or len(key) % 2 or len(key) > 32:
+            raise ValueError('invalid pinyin-index key length')
+        fields = 4 + len(key)
+        stride = (fields + 3) & ~3
+        if len(value) % stride:
+            raise ValueError('invalid pinyin-index item length')
+        for start in range(0, len(value), stride):
+            value[start + fields:start + stride] = bytes(stride - fields)
+        normalized.append(key_hex + b' ' + value.hex().encode() + b'\n')
+    return b''.join(normalized)
+
+
+def logical_dbm_rows(ctx, helper, directory, names, rows, pinyin_index=False):
     """Replace a DBM file's container bytes with a digest of its logical rows.
 
     Container metadata (tkrzw's cyclic-magic counter and modification time,
@@ -181,11 +216,13 @@ def logical_dbm_rows(ctx, helper, directory, names, rows):
         path = directory / relative(name)
         if not path.is_file():
             continue
-        result = subprocess.run([str(helper), str(path)], capture_output=True,
-                                env=ctx.env, check=False)
+        command = [str(helper)]
+        command.append(str(path))
+        result = subprocess.run(command, capture_output=True, env=ctx.env, check=False)
         if result.returncode != 0:
             raise ValueError(f'dbm_rows could not read {name}: {result.stderr.decode("utf-8", "replace")}')
-        rows[name] = 'rows:' + hashlib.sha256(result.stdout).hexdigest()
+        output = pinyin_index_rows(result.stdout) if pinyin_index else result.stdout
+        rows[name] = 'rows:' + hashlib.sha256(output).hexdigest()
 
 
 def observation(ctx, binary, case, directory, inputs, stdin, deadline, helper=None):
@@ -204,6 +241,8 @@ def observation(ctx, binary, case, directory, inputs, stdin, deadline, helper=No
     files = snapshot(directory)
     if case.get('dbm_rows'):
         logical_dbm_rows(ctx, helper, directory, case['dbm_rows'], files)
+    if case.get('dbm_rows_pinyin_index'):
+        logical_dbm_rows(ctx, helper, directory, case['dbm_rows_pinyin_index'], files, pinyin_index=True)
     return dict(exit=result.status, stdout=result.stdout.decode('utf-8', 'surrogateescape'),
                 stderr=GLIB_PREFIX.sub(r'\1PID\2TIME: ', result.stderr.decode('utf-8', 'surrogateescape')),
                 files=files)
@@ -227,6 +266,8 @@ def verdict(case, pin, subject, policy_root, cell):
         if contract_policy.accepted(kept, actual):
             return 'POLICY-ACCEPTED', case['policy_record']
         return 'DIFFER', contract_policy.describe(contract_policy.diagnose(kept, actual))
+    if pin == subject and case.get('dbm_rows_pinyin_index'):
+        return 'POLICY-ACCEPTED', 'eio-pinyin-index-padding.md (only item tail padding masked)'
     return ('MATCH', '') if pin == subject else ('DIFFER', '\n'.join(contract_policy.divergence(pin, subject)))
 
 

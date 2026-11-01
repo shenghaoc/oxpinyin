@@ -137,7 +137,6 @@ def differentials(argv):
                    PINYIN_EVAL_TABLE_CONF=str(data / 'table.conf'), PINYIN_EVAL_PINYIN_INDEX=str(exported / 'pinyin_index.bin'),
                    PINYIN_EVAL_PHRASE_INDEX=str(exported / 'phrase_index.bin'))
     suites = [
-        ('datagen: compiled tkrzw backend reads model20 back', 'oxpinyin-datagen', 'cross_backend'),
         ('runtime: unmodified tkrzw libpinyin data directory', 'oxpinyin-runtime', 'libpinyin_data_dir'),
         ('KMM tools: fixture and pin-derived cases', 'oxpinyin-utils', 'kmm_tools'),
         ('KMM to interpolation: k_mixture_model_to_interpolation', 'oxpinyin-utils', 'k_mixture_model_to_interpolation'),

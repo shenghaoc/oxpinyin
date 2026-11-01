@@ -45,6 +45,14 @@ time, and Berkeley DB writes page metadata, that differ between two runs
 of the pin on the same input. Every other byte of every other file is
 compared exactly. The helper is tooling only and is not a pin utility.
 
+`dbm_rows_pinyin_index` compares the same complete rows after masking only
+`PinyinIndexItem2<N>` tail padding: two bytes per odd-N item, none for even
+N. Tokens, packed keys, item order, lengths and continuation rows remain
+compared. Malformed row lengths fail. `gbf-toned-model` uses this for
+`pinyin_index.bin` under [eio-pinyin-index-padding](../findings/eio-pinyin-index-padding.md).
+Equal normalized observations report POLICY-ACCEPTED, not raw-byte MATCH;
+any other exit, stream or file difference fails.
+
 Each side gets identical inputs in a private working directory. The runner
 compares exit status, byte-preserving stdout/stderr and the complete file
 inventory (including empty files, modified inputs and directory entries).
@@ -306,3 +314,37 @@ tkrzw run detects it in `gen_ngram-missing-bigram-file`,
 `gen_ngram-ordinary` and `gen_ngram-skip-pi-gram` (3 DIFFER, 37 MATCH).
 The source was restored byte for byte (sha256 checked) before the
 completion run, which returned the 40 MATCH above.
+
+## Toned model (2026-11-01 UTC)
+
+`gen_binary_files.json` gained `gbf-toned-model`: `gen_binary_files
+--gen-punct-table` over the seventeen `fixtures/datagen-toned/*.table`
+files, on top of the cell's `fixtures/w3` directory. It replaces the
+tone-bit half of the deleted `oxpinyin-datagen` parity test: the toned
+pinyin-index rows (`ba`, `ba1`, `ba3`, `ba4` under one tone-zeroed key;
+`ni3'hao3` and `ni'hao` on one item) and the toned chunk bytes are in
+the complete output inventory the runner compares. The chain's chunk
+bytes over the same model stay with `just compat drop-in`, which runs
+the pin's three programs and `oxpinyin-utils`' ports side by side
+nightly; the import rows are `imp-unigram` and `imp-ordinary`.
+
+On the bdb cell the case is DIFFER for the reasons the storage write
+cases above record: Berkeley DB's own header fields in every written
+container, and the tail padding of three of the 190 pinyin-index records
+(the pin's uninitialised struct bytes against the writer's zeros). Read
+record by record with `oxpinyin-store`'s `raw_records` example, every
+field of every pinyin-index record is identical, and `phrase_index.bin`
+(747 records), `addon_pinyin_index.bin` (11), `addon_phrase_index.bin`
+(7) and `punct.bin` (274) are identical records; the seventeen chunk
+files are byte-identical. The whole bdb set was 132 MATCH, 12
+POLICY-ACCEPTED, 22 DIFFER (the recorded library diagnostics and
+container metadata) and 3 INVALID (the three KMM aborts, whose bdb
+evidence #1487 records). The tkrzw and kc cells were not observed for
+this case: on the recording host the tool-diff runner left no log and
+died (exit 137, or a silent 900 s timeout) on both cells, on this branch
+and on its base `wip/eio5-kmm` alike, while the bdb cell ran. The padding is the pin's indeterminate read,
+recorded in
+[eio-pinyin-index-padding](../findings/eio-pinyin-index-padding.md);
+the case carries that record and is POLICY-ACCEPTED on a cell where the
+padding is its only divergence, DIFFER where the container header also
+differs.

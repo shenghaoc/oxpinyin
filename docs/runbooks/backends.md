@@ -95,14 +95,14 @@ on every store-affecting change (`store-backends.yml`, `backend-matrix`).
 
 ## Fixtures per backend
 
-`fixtures/w3/<kct|tkt>/` is the committed mini data set, one
+`fixtures/w3/<db|kct|tkt>/` is the committed mini data set, one
 directory per backend, with each backend's native file names.
-The `--mini` producer library remains in `oxpinyin-datagen`; the ignored
-`fixtures_identity` test reproduces each committed tree from the model20
-cache and compares records and chunk bytes. The command that *wrote* the
-directory (`oxpinyin-datagen compile --mini`) was retired with the
-`compile` subcommand in the external-I/O stage 5 n-gram work; fixtures are
-frozen, so verification is the current path (`goldens-and-pins.md`).
+`just w3-fixtures generate` writes it: a Python subset of the model20
+text, then the pin's own program sequence from `oxpinyin-utils`, built
+for each backend (`fixtures/w3/README.md`). `just w3-fixtures check
+--cells bdb,kc,tkrzw` regenerates every directory into a temporary
+location and compares it with the committed tree, chunk files byte for
+byte and DBM files record by record (`goldens-and-pins.md`).
 
 ## Switching is a format transition
 

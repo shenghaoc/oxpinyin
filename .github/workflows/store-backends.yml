@@ -290,9 +290,9 @@ jobs:
       # stays too: its segment and eval stages use the selected store
       # backend, and the other stage modules compile against that selection.
       # What stays is everything a backend choice can change: the store
-      # itself, the user store, data readers, datagen writers, runtime,
-      # engine, facade, both C ABIs, the oracle harness, the training
-      # package (segment and eval modules) and KMM.
+      # itself, the user store, data readers, runtime, engine, facade, both
+      # C ABIs, the oracle harness, the training package (segment and eval
+      # modules) and KMM.
       - name: Test the workspace under this backend
         if: needs.changes.outputs.reuse != 'true'
         id: backend-test
@@ -310,8 +310,7 @@ jobs:
           # NOT — cargo features do not back-propagate — and would
           # leave each consumer's own `#[cfg(feature = "<peer>")]`
           # code (e.g. `user_store_tests!(<peer>, ...)` in
-          # oxpinyin-user, the `Backend::<Peer>::write()` arm in
-          # oxpinyin-datagen) skipped even while `DefaultStore`
+          # oxpinyin-user) skipped even while `DefaultStore`
           # resolves to the peer. The bare-name form here is the
           # documented public interface — see
           # `docs/findings/backend-selection-audit.md`. The

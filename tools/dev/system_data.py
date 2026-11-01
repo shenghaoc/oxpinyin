@@ -14,12 +14,10 @@ NATIVE = ('pinyin_index.bin', 'phrase_index.bin', 'bigram.db')
 
 
 def data_extension(directory: Path) -> str | None:
-    manifest, config = directory / 'datagen-manifest.txt', directory / 'table.conf'
+    """The backend `table.conf`'s `database format:` names, as libpinyin's configure writes it."""
+    config = directory / 'table.conf'
     value = ''
-    if manifest.is_file():
-        match = re.search(r'^backend=(.*)$', manifest.read_text(), re.M)
-        value = match[1] if match else ''
-    if not value and config.is_file():
+    if config.is_file():
         match = re.search(r'^database format:\s*([^\n]*)', config.read_text(), re.M)
         value = {'BerkeleyDB': 'db', 'KyotoCabinet': 'kct', 'Tkrzw': 'tkt'}.get(
             ''.join(match[1].split()) if match else '', '')
@@ -35,8 +33,7 @@ class SystemData:
         have, want = data_extension(directory), self.settings.extension
         if have is None:
             raise CellError(f'fatal: {label}: cannot tell which backend wrote\n  {directory}\n'
-                            '  (no datagen-manifest.txt backend= line and no known\n'
-                            '  table.conf "database format:" token)', 3)
+                            '  (no known table.conf "database format:" token)', 3)
         if have != want:
             raise CellError(f'fatal: {label}: BACKEND MISMATCH\n  data directory {directory}\n'
                             f'  was written for {NAMES[have]}, but the library under test is {NAMES[want]}.\n'

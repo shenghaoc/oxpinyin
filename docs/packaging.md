@@ -241,8 +241,8 @@ data (next section).
 
 **The library install ships no data of its own** apart from the Arch
 release package: the distros' `libpinyin-data` (Debian, Fedora) stays in
-place and is read as-is. Generating data with `oxpinyin-datagen` is a
-separate deliverable, not part of `cargo cinstall`.
+place and is read as-is. Generating data with the pin's program sequence
+from `oxpinyin-utils` is a separate deliverable, not part of `cargo cinstall`.
 
 ## Relocation
 

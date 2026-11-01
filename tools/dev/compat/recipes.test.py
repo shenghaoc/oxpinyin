@@ -47,6 +47,7 @@ class RecipeTests(unittest.TestCase):
             self.assertEqual(fixtures.drop_in(['tkrzw', str(model), str(work)]), 0)
         producers = [call for call in run.call_args_list if call.args[0][:2] == ['cargo', 'run']]
         self.assertEqual(len(producers), 3)
+        self.assertFalse(any('oxpinyin-datagen' in call.args[0] for call in run.call_args_list))
         for call in producers:
             command = call.args[0]
             manifest = Path(command[command.index('--manifest-path') + 1])

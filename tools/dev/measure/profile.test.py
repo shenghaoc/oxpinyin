@@ -166,9 +166,9 @@ class Scenario:
         self.cache = self.root / 'cache'
         self.model = self.cache / 'extracted'
         self.export.mkdir()
-        (self.export / 'datagen-manifest.txt').write_text('format=1\nbackend=tkt\n')
-        for name in ('pinyin_index.bin', 'phrase_index.bin', 'bigram.db', 'table.conf', 'extra.bin', 'notes.txt'):
+        for name in ('pinyin_index.bin', 'phrase_index.bin', 'bigram.db', 'extra.bin', 'notes.txt'):
             (self.export / name).write_text(name)
+        (self.export / 'table.conf').write_text('database format:Tkrzw\n')
         self.model.mkdir(parents=True)
         for name in profile.EXPECTED_MODEL_FILES:
             (self.model / name).write_text(name)
@@ -316,7 +316,7 @@ class CheckTests(ScenarioTest):
         self.assertEqual(self.commands.calls[0].command, ['samply', 'record', '--help'])
 
     def test_only_the_first_argument_asks_for_a_check(self):
-        (self.scenario.export / 'datagen-manifest.txt').write_text('backend=bdb\n')
+        (self.scenario.export / 'table.conf').write_text('database format:BerkeleyDB\n')
         result = self.invoke(['--other', '--check'])
         self.assertStatus(result, 2)
         self.assertIn('is not a tkrzw export', result.stderr)
@@ -486,9 +486,12 @@ class DarwinTests(ScenarioTest):
                          ['bigram.db', 'extra.bin', 'interpolation2.text', 'phrase_index.bin',
                           'pinyin_index.bin', 'table.conf'])
 
-    def test_a_missing_table_conf_is_not_an_error(self):
+    def test_a_missing_table_conf_is_refused(self):
+        # table.conf is the one record of the export's backend.
         (self.scenario.export / 'table.conf').unlink()
-        self.assertStatus(self.invoke(), 0)
+        result = self.invoke()
+        self.assertStatus(result, 2)
+        self.assertIn('is not a tkrzw export', result.stderr)
         self.assertFalse((self.scenario.stage / 'usr/share/oxpinyin/table.conf').exists())
 
     def test_the_harness_builds_with_cc_and_without_libdl(self):
@@ -694,32 +697,24 @@ class InputTests(ScenarioTest):
                       self.invoke().stdout)
 
     def test_a_non_tkrzw_export_is_refused_with_status_2(self):
-        (self.scenario.export / 'datagen-manifest.txt').write_text('backend=bdb\n')
-        result = self.invoke()
-        self.assertStatus(result, 2)
-        self.assertEqual(result.stderr,
-                         f'fatal: {self.scenario.export} is not a tkrzw export; rebuild it with --features tkrzw\n')
+        for token in ('BerkeleyDB', 'KyotoCabinet'):
+            with self.subTest(token=token):
+                (self.scenario.export / 'table.conf').write_text(f'database format:{token}\n')
+                result = self.invoke()
+                self.assertStatus(result, 2)
+                self.assertEqual(result.stderr,
+                                 f'fatal: {self.scenario.export} is not a tkrzw export; rebuild it with --features tkrzw\n')
 
-    def test_the_backend_line_must_stand_alone(self):
-        for text in ('backend=tkt2\n', ' backend=tkt\n', 'backend=tkt\r\n', 'xbackend=tkt\n'):
+    def test_the_backend_token_must_head_its_own_line(self):
+        for text in (' database format:Tkrzw\n', 'xdatabase format:Tkrzw\n', 'database format:Tkrzw2\n'):
             with self.subTest(text=text):
-                (self.scenario.export / 'datagen-manifest.txt').write_text(text, newline='')
+                (self.scenario.export / 'table.conf').write_text(text, newline='')
                 self.assertStatus(self.invoke(), 2)
-        (self.scenario.export / 'datagen-manifest.txt').write_text('a=1\nbackend=tkt')
+        (self.scenario.export / 'table.conf').write_text('lambda parameter:0.3\ndatabase format:Tkrzw')
         self.assertStatus(self.invoke(), 0)
-
-    def test_the_table_conf_backend_token_stands_in_for_the_manifest(self):
-        (self.scenario.export / 'datagen-manifest.txt').unlink()
-        (self.scenario.export / 'table.conf').write_text('database format:Tkrzw\n')
-        self.assertStatus(self.invoke(), 0)
-        (self.scenario.export / 'table.conf').write_text('database format:KyotoCabinet\n')
-        result = self.invoke()
-        self.assertStatus(result, 2)
-        self.assertEqual(result.stderr,
-                         f'fatal: {self.scenario.export} is not a tkrzw export; rebuild it with --features tkrzw\n')
 
     def test_an_export_without_a_backend_token_is_refused(self):
-        (self.scenario.export / 'datagen-manifest.txt').unlink()
+        (self.scenario.export / 'table.conf').write_text('table.conf')
         result = self.invoke()
         self.assertStatus(result, 2)
         self.assertIn('is not a tkrzw export', self.lines(result.stderr)[0])

@@ -274,7 +274,7 @@ pub trait WriteTxn {
     /// well-known [`RAW_TABLE`], the same delegation the raw reads use,
     /// so the round trip holds on every backend. KC, Tkrzw and BDB
     /// override this to write the file's bare keyspace — what libpinyin's own
-    /// DBMs store and what datagen's libpinyin-format writers emit.
+    /// DBMs store and what `oxpinyin-utils`' storage utilities write.
     ///
     /// # Errors
     ///
@@ -498,9 +498,9 @@ pub trait WriteStore: ReadStore {
     /// write half of [`RawReadStore::open_hash_read_only`].
     ///
     /// libpinyin's `bigram.db` is a KC **`HashDB`** / Tkrzw **`HashDBM`**
-    /// while its other DBMs are tree containers; datagen writes the
-    /// bigram through this constructor so the reader's hash open finds a
-    /// hash file. The default implementation delegates to
+    /// while its other DBMs are tree containers; `import_interpolation`
+    /// writes the bigram through this constructor so the reader's hash
+    /// open finds a hash file. The default implementation delegates to
     /// [`WriteStore::create`] (correct for a backend with no
     /// hash/tree distinction). KC and Tkrzw override this to select the
     /// hash container class.
@@ -1166,7 +1166,8 @@ pub const DEFAULT_STORE_EXT: &str = "tkt";
 /// File extension for [`DefaultStore`]'s native tables (Berkeley DB).
 /// The DBM files libpinyin itself uses carry its own names
 /// (`bigram.db`, `pinyin_index.bin`, …); this extension names this
-/// backend's session-scratch and datagen-native containers.
+/// backend's session-scratch containers and the `fixtures/w3`
+/// directory of this backend.
 #[cfg(feature = "bdb")]
 pub const DEFAULT_STORE_EXT: &str = "db";
 

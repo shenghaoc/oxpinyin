@@ -236,11 +236,11 @@ discovers nothing, and with `PINYIN_EXPORT_DIR` unset `--export` is empty
 and the run fails.
 
 Wires the `PINYIN_*` variables and runs the `#[ignore]`d differential
-tests with `--include-ignored` (datagen `cross_backend` with model20,
-`libpinyin_data_dir` on tkrzw, KMM, segment, lambda, counter, and eval
-when its inputs exist). `--data` is also exported as
-`OXPINYIN_LIBPINYIN_DATA_DIR`; the runtime test opens that directory
-unchanged. `--model` supplies `PINYIN_MODEL_DIR` for the datagen test.
+tests with `--include-ignored` (`libpinyin_data_dir` on tkrzw, KMM,
+segment, lambda, counter, and eval when its inputs exist). `--data` is
+also exported as `OXPINYIN_LIBPINYIN_DATA_DIR`; the runtime test opens
+that directory unchanged. `--model` supplies `PINYIN_MODEL_DIR` for the
+segment suites.
 Each suite's status is accumulated; the script exits
 non-zero if any suite failed. A test that panics with `missing input:
 …` names the input it lacked — that is a provisioning gap, not a
@@ -262,11 +262,14 @@ each; their headers say what they prove.
 
 ### Pre-release real-installation checks
 
-Before each release, run the three-cell sweep required by [verification rule 3](verification.md#3-sweep-and-release-coverage). The tkrzw suites above own `cross_backend` with
-model20 and `libpinyin_data_dir` on tkrzw. This pre-release procedure owns
-`cross_backend` with model20 on BDB and KC, `bdb_libpinyin_files` (BDB),
+Before each release, run the three-cell sweep required by [verification rule 3](verification.md#3-sweep-and-release-coverage). The tkrzw suites above own
+`libpinyin_data_dir` on tkrzw. This pre-release procedure owns
+`bdb_libpinyin_files` (BDB),
 `reads_a_real_libpinyin_installation` (the BDB reference installation),
-and `libpinyin_data_dir` on KC. They need model20 or real installation
+`libpinyin_data_dir` on KC, and `just w3-fixtures check --cells
+bdb,kc,tkrzw` with model20, which regenerates `fixtures/w3` through the
+pin's program sequence built for each backend and compares records and
+chunk bytes with the committed tree. They need model20 or real installation
 files; the committed synthetic fixtures do not replace these inputs. Ordinary `cargo test` leaves them ignored. Explicitly selecting
 one fails when a required input is missing (`docs/testing/README.md`).
 Report each result or outstanding input limitation before release.
@@ -300,8 +303,8 @@ and `pinyin_index.bin`. The real-installation phrase-library test reads
 `gb_char.bin`, `gbk_char.bin`, `opengram.bin`, `merged.bin` and the
 installation's optional `art.bin`; these chunk files are backend-neutral,
 so the BDB reference installation carries this check. The runtime test
-opens the KC or tkrzw installation's complete data directory. The datagen
-read-back test consumes model20 and produces its own backend files; it
+opens the KC or tkrzw installation's complete data directory. The
+fixture check consumes model20 and produces its own backend files; it
 does not read the oracle's data directory or link libpinyin.
 
 From the repository root, choose the setup-verified prefixes below and
@@ -315,15 +318,9 @@ prefix_bdb="$HOME/.cache/oxpinyin/oracle/bdb"
 prefix_kc="$HOME/.cache/oxpinyin/oracle/kc"
 export PINYIN_MODEL_DIR="$HOME/.cache/oxpinyin/model20/extracted"
 
-# BDB: compile the verified model20 extraction and read back BDB files.
-CARGO_TARGET_DIR="$PWD/target/real-installation/bdb" \
-just heavy -- cargo test -p oxpinyin-datagen --no-default-features --features bdb \
-    --test cross_backend -- --include-ignored --nocapture
-
-# KC: the same model20 input, compiled and read back as Kyoto Cabinet.
-CARGO_TARGET_DIR="$PWD/target/real-installation/kc" \
-just heavy -- cargo test -p oxpinyin-datagen --no-default-features --features kyotocabinet \
-    --test cross_backend -- --include-ignored --nocapture
+# Every backend: the pin's program sequence over the verified model20
+# extraction reproduces the committed fixtures (records and chunk bytes).
+just w3-fixtures check --cells bdb,kc,tkrzw
 
 # BDB: four real-file storage tests.
 OXPINYIN_LIBPINYIN_DATA_DIR="$prefix_bdb/lib/libpinyin/data" \
@@ -344,15 +341,13 @@ just heavy -- cargo test -p oxpinyin-runtime --no-default-features --features ky
     --test libpinyin_data_dir -- --include-ignored --nocapture
 ```
 
-The two tkrzw suite commands in `run-differentials.sh` can also be run
-individually with the same inputs, after loading setup's tkrzw environment:
+The tkrzw runtime suite of `just compat differentials` can also be run
+on its own with the same inputs, after loading setup's tkrzw environment:
 
 ```sh
 export PINYIN_MODEL_DIR="$HOME/.cache/oxpinyin/model20/extracted"
 export OXPINYIN_LIBPINYIN_DATA_DIR="$PINYIN_ORACLE_PREFIX/lib/libpinyin/data"
 export CARGO_TARGET_DIR="$PWD/target/real-installation/tkrzw"
-just heavy -- cargo test -p oxpinyin-datagen --no-default-features --features tkrzw \
-    --test cross_backend -- --include-ignored --nocapture
 just heavy -- cargo test -p oxpinyin-runtime --no-default-features --features tkrzw \
     --test libpinyin_data_dir -- --include-ignored --nocapture
 ```

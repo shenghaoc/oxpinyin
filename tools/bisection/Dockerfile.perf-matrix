@@ -182,19 +182,31 @@ RUN cp -a /tmp/libpinyin-src /tmp/build-B-src \
 # Pinned to Kyoto Cabinet (2026-09-27 UTC, #552): this cell pairs with
 # cell B and was written when Kyoto Cabinet was the workspace default
 # (2026-08-29 → 2026-09-05). The default was Berkeley DB from
-# 2026-09-20 to 2026-10-30 and is tkrzw since, so both commands name the
-# backend explicitly rather than taking default features.
+# 2026-09-20 to 2026-10-30 and is tkrzw since, so both cells name the
+# backend explicitly rather than taking default features. The data
+# directory is the pin's own three-program sequence (data/Makefile.am:60-62)
+# under oxpinyin-utils' names, over the same model20 extraction cells A and
+# B compile; table.conf is the pin's configured rendering for the backend,
+# committed as fixtures/w3/<ext>/table.conf.
 
 RUN cargo cinstall --locked --release -p oxpinyin-capi \
     --no-default-features --features kyotocabinet \
     --destdir=/opt/oxpinyin-kc/stage --prefix=/usr \
     --manifest-path /repo/Cargo.toml
 
-RUN cargo run --locked --release -p oxpinyin-datagen \
-    --no-default-features --features kyotocabinet -- compile \
-    --model-dir target/model20/extracted \
-    --backend kyotocabinet \
-    --out-dir /opt/oxpinyin-kc/data
+RUN cargo build --locked --release -p oxpinyin-utils \
+    --no-default-features --features kyotocabinet \
+    --bin gen_binary_files --bin import_interpolation --bin gen_unigram \
+    --manifest-path /repo/Cargo.toml \
+    && mkdir -p /opt/oxpinyin-kc/data \
+    && cp /repo/fixtures/w3/kct/table.conf /opt/oxpinyin-kc/data/ \
+    && cd /opt/oxpinyin-kc/data \
+    && /repo/target/release/gen_binary_files --gen-punct-table \
+       --table-dir /repo/target/model20/extracted \
+    && /repo/target/release/import_interpolation \
+       --table-dir /repo/target/model20/extracted \
+       < /repo/target/model20/extracted/interpolation2.text \
+    && /repo/target/release/gen_unigram --table-dir /repo/target/model20/extracted
 
 # ── Cell C: oxpinyin + Tkrzw ────────────────────────────────────────
 
@@ -203,11 +215,19 @@ RUN cargo cinstall --locked --release -p oxpinyin-capi \
     --destdir=/opt/oxpinyin-tkrzw/stage --prefix=/usr \
     --manifest-path /repo/Cargo.toml
 
-RUN cargo run --locked --release -p oxpinyin-datagen \
-    --no-default-features --features tkrzw -- compile \
-    --model-dir target/model20/extracted \
-    --backend tkrzw \
-    --out-dir /opt/oxpinyin-tkrzw/data
+RUN cargo build --locked --release -p oxpinyin-utils \
+    --no-default-features --features tkrzw \
+    --bin gen_binary_files --bin import_interpolation --bin gen_unigram \
+    --manifest-path /repo/Cargo.toml \
+    && mkdir -p /opt/oxpinyin-tkrzw/data \
+    && cp /repo/fixtures/w3/tkt/table.conf /opt/oxpinyin-tkrzw/data/ \
+    && cd /opt/oxpinyin-tkrzw/data \
+    && /repo/target/release/gen_binary_files --gen-punct-table \
+       --table-dir /repo/target/model20/extracted \
+    && /repo/target/release/import_interpolation \
+       --table-dir /repo/target/model20/extracted \
+       < /repo/target/model20/extracted/interpolation2.text \
+    && /repo/target/release/gen_unigram --table-dir /repo/target/model20/extracted
 
 # ── Strip all .so files for apples-to-apples size comparison ────────
 
