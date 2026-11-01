@@ -207,6 +207,39 @@ compiled profiles and may fail. Changing Cargo's debug profile changes crate
 metadata, which can affect fat-LTO specialization as well as layout (#1337).
 That diagnostic does not create the campaign's control artifact.
 
+### Session-parse scaling
+
+`just measure parse-scaling` checks that one full-pinyin parse costs time,
+instructions and heap in proportion to the input length (#1501). It extends
+the `bisect` driver with `--perf-parse SO DATA SHAPE LENGTH`
+(`tools/bisection/parse_perf.h`): one `pinyin_parse_more_full_pinyins` call,
+options `0x18a`, on a fresh instance with an empty temporary user directory,
+over an input generated in memory. Shape `ni` repeats `ni` to the length;
+shape `apostrophe` is `ni`, one run of apostrophes, then `ni`. The clock and
+the Callgrind anchor `bisect_parse_unit` cover that call only.
+
+Each arm (`--arm NAME=LIBRARY`, repeatable) runs `--rounds` (default 7) fresh
+processes per shape and length (`--lengths`, default 4096, 32767, 65536 and
+262144), pinned to `--cpu`, the arm order rotating each round. Each arm then
+runs once under Callgrind and once under a harness built with
+`-DBISECT_HEAP_COUNTER -rdynamic`. That build interposes glibc's allocator,
+and it reports the peak of live heap bytes during the call, relative to the
+start of the call. The default `bisect` build does not include it. Every
+process of an arm must give the same parsed and stored length.
+The report divides by the input length and gives paired time ratios, later
+arm over earlier arm, with 95% intervals.
+It writes `result.json` and `table.md` under `--out`.
+Use release builds and the pin of the same cell:
+
+```bash
+just measure parse-scaling --cell tkrzw --system-dir "$DATA" --cpu 2 \
+  --arm pin="$PINYIN_ORACLE_PREFIX/lib/libpinyin.so" \
+  --arm base="$BASE_RELEASE_SO" --arm branch="$BRANCH_RELEASE_SO" --out "$WORK/parse"
+```
+
+The pin's parse stops at byte 32767 (`1501-gint16-input-cap.md`), so for
+longer inputs it does not parse the same input as oxpinyin.
+
 ## Native startup measurement
 
 The 2026-10-22 UTC ruling (§7.8 in the tooling consolidation findings) places

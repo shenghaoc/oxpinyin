@@ -1573,8 +1573,11 @@ static void probe_remaining(const struct symbols *s, pinyin_context_t *ctx,
 
 #include "teardown.h"
 #include "sentence_perf.h"
+#include "parse_perf.h"
 
 int main(int argc, char **argv) {
+    if (argc > 1 && strcmp(argv[1], "--perf-parse") == 0)
+        return run_parse_perf_mode(argc, argv);
     if (argc > 1 && (strcmp(argv[1], "--perf-sentence") == 0 ||
                      strcmp(argv[1], "--perf-typing-sequence") == 0))
         return run_sentence_perf_mode(argc, argv);

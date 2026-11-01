@@ -191,7 +191,7 @@ DRIVERS = {
                Case('usage', ('none',), ('{empty}/absent.so',)))),
     'bisect': Driver(
         glib_log=True,
-        templates=('{tmp}/bisect-user-', '{tmp}/bisect-perf-', '{tmp}/bisect-sentence-'),
+        templates=('{tmp}/bisect-user-', '{tmp}/bisect-perf-', '{tmp}/bisect-sentence-', '{tmp}/bisect-parse-'),
         cases=(Case('w3', ('subject',), ('{so}', '{w3}')),
                Case('full', ('pin', 'subject')),
                Case('right-tail', ('pin', 'subject'), ('{so}', '{data}', '--right-tail-case')),

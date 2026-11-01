@@ -16,16 +16,16 @@ from .. import runners
 # The names `measure` accepts besides its own startup and cold-qualify. A fixed
 # tuple keeps every `tools.dev` command from importing the recipe modules;
 # recipes.test.py checks it against what the modules contribute.
-NAMES = ('callgrind-control', 'callgrind-differential', 'perf-baseline', 'perf-matrix', 'perf-same-data',
-         'probe-debuginfo-neutrality', 'probe-egress', 'profile-w8', 'rss-diag',
+NAMES = ('callgrind-control', 'callgrind-differential', 'parse-scaling', 'perf-baseline', 'perf-matrix',
+         'perf-same-data', 'probe-debuginfo-neutrality', 'probe-egress', 'profile-w8', 'rss-diag',
          'shipped-check', 'snapshot', 'steady-comparison', 'system-import-profile', 'tree-recipe-control')
 
 
 def table() -> dict:
     """Every recipe by name; the modules load on first use."""
-    from . import campaigns, probes, profile, snapshot, valgrind
+    from . import campaigns, parse_scaling, probes, profile, snapshot, valgrind
     recipes = {}
-    for module in (campaigns, probes, profile, snapshot, valgrind):
+    for module in (campaigns, parse_scaling, probes, profile, snapshot, valgrind):
         recipes.update(module.RECIPES)
     return recipes
 
