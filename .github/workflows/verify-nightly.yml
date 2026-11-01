@@ -534,10 +534,9 @@ jobs:
       VCPKG_PACKAGES: glib:x64-windows pkgconf:x64-windows
       # The workspace crates this lane leaves out, each for a reason other
       # than GLib, which the job provisions:
-      # - oxpinyin-kmm: the backend-independent KMM tool. It does not touch
-      #   the store chain, so the result is the same on every backend and
-      #   OS; it runs once per PR in ci.yml's Linux test job (0c2f0ff6,
-      #   2026-09-08).
+      # - oxpinyin-kmm: like oxpinyin-utils it links GLib through
+      #   oxpinyin-input's `tools` boundary, which this lane does not
+      #   provision; macOS installs GLib and tests it.
       # - oxpinyin-capi and oxpinyin-zhuyin-capi: excluded since 2026-09-08
       #   for GLib, which no longer applies; with GLib they build and link,
       #   but three of their tests fail on Windows for other reasons (nightly

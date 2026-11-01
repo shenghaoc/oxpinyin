@@ -28,7 +28,6 @@ tkrzw = ["oxpinyin-data/tkrzw"]
 [dependencies]
 oxpinyin-core.workspace = true
 oxpinyin-data.workspace = true
-oxpinyin-kmm = { path = "../oxpinyin-kmm" }
 
 [dev-dependencies]
 oxpinyin-testsupport = { path = "../oxpinyin-testsupport" }

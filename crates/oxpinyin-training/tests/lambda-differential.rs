@@ -369,7 +369,9 @@ fn empty_inputs_record_native_nan_spelling() {
     .expect("utf8");
     let expected = format!(
         "average lambda:{}\n",
-        oxpinyin_kmm::format_six_decimals(oxpinyin_training::lambda::mean_of_no_contexts())
+        oxpinyin_training::numeric::format_six_decimals(
+            oxpinyin_training::lambda::mean_of_no_contexts()
+        )
     );
     assert_eq!(
         estimate

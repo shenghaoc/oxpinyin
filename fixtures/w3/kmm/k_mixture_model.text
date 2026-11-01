@@ -1,0 +1,10 @@
+\data model "k mixture model" count 3 N 1 total_freq 3
+\1-gram
+\item 1 <start> count 2 freq 0
+\item 16817937 中国 count 1 freq 1
+\item 16802309 你好 count 0 freq 2
+\2-gram
+\item 1 <start> 16817937 中国 count 1 T 1 N_n_0 1 n_1 1 Mr 1
+\item 1 <start> 16802309 你好 count 1 T 1 N_n_0 1 n_1 1 Mr 1
+\item 16817937 中国 16802309 你好 count 1 T 1 N_n_0 1 n_1 1 Mr 1
+\end
