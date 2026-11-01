@@ -449,6 +449,74 @@ impl Db {
         Ok(this)
     }
 
+    /// Opens `path` exactly as the pin's `attach` does and, if the open
+    /// fails, makes the calls the pin then makes on its still-open handle:
+    /// a cursor walk and the destructor's sync. libdb prints the same
+    /// `BDB1565` lines the pin prints, then the handle is closed.
+    pub(crate) fn report_failed_open(path: &Path, db_type: DBTYPE, mode: c_int) {
+        let Ok(path) = c_path(path) else {
+            return;
+        };
+        let Ok(this) = Self::open_keep_unopened(Some(path.as_c_str()), db_type, true, false, mode)
+        else {
+            return;
+        };
+        if this.opened {
+            return;
+        }
+        let _ = this.cursor_handle();
+        let _ = this.sync();
+    }
+
+    fn open_keep_unopened(
+        path: Option<&std::ffi::CStr>,
+        db_type: DBTYPE,
+        read_only: bool,
+        create: bool,
+        mode: c_int,
+    ) -> Result<Self, StoreError> {
+        let mut handle = ptr::null_mut();
+        // SAFETY: as in `open_at`.
+        let code = unsafe { sys::db_create(&raw mut handle, ptr::null_mut(), 0) };
+        check(code, "db_create")?;
+        if handle.is_null() {
+            return Err(StoreError::Backend(
+                "db_create returned success with a null handle (allocation failure)".into(),
+            ));
+        }
+        let mut this = Self {
+            handle,
+            read_only,
+            hash: db_type == DB_HASH,
+            opened: false,
+            sync_on_drop: true,
+            cursor_buffers: None,
+        };
+        let mut flags = 0;
+        if read_only {
+            flags |= sys::DB_RDONLY;
+        } else if create {
+            flags |= sys::DB_CREATE;
+        }
+        let open = method!(this.handle, open, "DB->open")?;
+        // SAFETY: as in `open_at`.
+        let code = unsafe {
+            open(
+                this.handle,
+                ptr::null_mut(),
+                path.map_or(ptr::null(), std::ffi::CStr::as_ptr),
+                ptr::null(),
+                db_type,
+                flags,
+                mode,
+            )
+        };
+        if code == 0 {
+            this.opened = true;
+        }
+        Ok(this)
+    }
+
     /// Whether this handle was opened read-only.
     pub(crate) const fn is_read_only(&self) -> bool {
         self.read_only
@@ -581,7 +649,7 @@ impl Db {
     /// with and the device-visible sync `compact` owes. There is no
     /// softer tier to select.
     pub(crate) fn sync(&self) -> Result<(), StoreError> {
-        if self.read_only {
+        if self.read_only && self.opened {
             return Ok(());
         }
         let sync = method!(self.handle, sync, "DB->sync")?;
