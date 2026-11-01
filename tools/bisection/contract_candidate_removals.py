@@ -8,7 +8,7 @@ from contract_case_helpers import _add_user_phrase, _user_candidate_rows
 from contract_fixtures import _write_user_conf
 
 
-def register(case, *, _craft_hash):
+def register(case, *, _craft_hash, _craft_db, index_file_rows):
     """Register these cases at their original driver position."""
     def predicted(k, prefix='我'):
         """Return a new instance with predictions and punctuation for the UTF-8 prefix.
@@ -108,6 +108,28 @@ def register(case, *, _craft_hash):
         # Two readings for one phrase: the second is merged without a pinyin
         # index entry, so :3759 fires when the phrase is removed.
         inst, rows = _guessed_user_phrase(k, '龘龘', [b"da2'da2", b"da1'da1"])
+        return {'ret': k.fn('remove_user_candidate', B, P, P)(inst, rows[0])}
+
+    @case('abort-remove-user-candidate-one-projection', abort=False, sigabrt=True, issues=('525',))
+    def _(k):
+        """A readable index has the complete reading but not its incomplete projection."""
+        _add_user_phrase(k, '龘龘', [b"da2'da2"])
+        assert k.fn('save', B, P)(k.ctx)
+        k.fn('fini', None, P)(k.ctx)
+        path = os.path.join(k.user, 'user_pinyin_index.bin')
+        rows = [(bytes.fromhex(key), bytes.fromhex(value)) for key, value in index_file_rows(path)]
+        def incomplete(key, value):
+            return bool(value) and len(key) == 4 and all(
+                int.from_bytes(key[i:i + 2], 'little') <= 31 for i in (0, 2))
+        assert sum(incomplete(key, value) for key, value in rows) == 1
+        _craft_db(path, [(key, value) for key, value in rows if not incomplete(key, value)], 1)
+        ctx = k.init()
+        assert ctx
+        inst = k.fn('alloc_instance', P, P)(ctx)
+        k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'dada')
+        k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0)
+        rows = _user_candidate_rows(k, inst)
+        assert rows
         return {'ret': k.fn('remove_user_candidate', B, P, P)(inst, rows[0])}
 
 

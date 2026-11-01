@@ -221,6 +221,9 @@ pub enum UserStoreError {
     /// dies (`phonetic_lookup.h:903`, `ngram.cpp:252-271`; register row
     /// 85). Returned before anything is stored; the C adapters abort.
     TrainingSetFreqMiss,
+    /// A user reading cannot be removed from both pinyin index projections;
+    /// the pin asserts on the failed removal (`pinyin.cpp:3759`).
+    UserReadingRemoval,
 }
 
 impl fmt::Display for UserStoreError {
@@ -295,6 +298,10 @@ impl fmt::Display for UserStoreError {
                 "a training step's set_freq misses the item insert_freq added \
                  (upstream asserts, phonetic_lookup.h:903)"
             ),
+            Self::UserReadingRemoval => write!(
+                f,
+                "user reading removal failed (upstream asserts, pinyin.cpp:3759)"
+            ),
         }
     }
 }
@@ -320,7 +327,8 @@ impl std::error::Error for UserStoreError {
             | Self::PartialUserBigramTail
             | Self::EmptyUserBigramGram
             | Self::ResidualUserBigramGram
-            | Self::TrainingSetFreqMiss => None,
+            | Self::TrainingSetFreqMiss
+            | Self::UserReadingRemoval => None,
             Self::Journal(fault) => Some(fault),
         }
     }

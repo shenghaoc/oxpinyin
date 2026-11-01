@@ -623,7 +623,8 @@ contract_cursor_sentence_refusals.register(case)
 # batch2 group 12c: candidate-type refusals (PR 12c, #525)
 
 
-contract_candidate_removals.register(case, _craft_hash=_craft_hash)
+contract_candidate_removals.register(case, _craft_hash=_craft_hash, _craft_db=_craft_db,
+                                     index_file_rows=index_file_rows)
 
 
 # batch2 group 12d: training a stale forcing (PR 12d, #525, row 6)

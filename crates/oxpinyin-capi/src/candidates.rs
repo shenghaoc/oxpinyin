@@ -297,7 +297,8 @@ pub extern "C" fn pinyin_remove_user_candidate(
         Err(
             oxpinyin_user::UserStoreError::NonTokenUserBigramKey
             | oxpinyin_user::UserStoreError::ShortUserBigramValue
-            | oxpinyin_user::UserStoreError::ResidualUserBigramGram,
+            | oxpinyin_user::UserStoreError::ResidualUserBigramGram
+            | oxpinyin_user::UserStoreError::UserReadingRemoval,
         ) => std::process::abort(),
         // A store failure the pin has no counterpart for.
         Err(_) => {

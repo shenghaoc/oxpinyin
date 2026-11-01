@@ -19,6 +19,7 @@ EXPECTED = [('abort-get-candidate-nbest-index-normal-row', (), {'sigabrt': True,
             ('abort-remove-user-candidate-twice', (), {'sigabrt': True, 'abort': False, 'issues': ('525',)}),
             ('abort-remove-user-candidate-missing-phrase-table', (), {'sigabrt': True, 'abort': False, 'issues': ('525',)}),
             ('abort-remove-user-candidate-multi-pron', (), {'sigabrt': True, 'abort': False, 'issues': ('525',)}),
+            ('abort-remove-user-candidate-one-projection', (), {'sigabrt': True, 'abort': False, 'issues': ('525',)}),
             ('abort-remove-user-candidate-short-bigram-value', (), {'abort': False, 'sigabrt': True, 'issues': ('525',)}),
             ('abort-remove-user-candidate-non-token-bigram-key', (), {'sigabrt': True, 'abort': False, 'issues': ('525',)}),
             ('abort-remove-user-candidate-residual-bigram-gram', (), {'sigabrt': True, 'abort': False, 'issues': ('525',)}),
@@ -28,7 +29,7 @@ EXPECTED = [('abort-get-candidate-nbest-index-normal-row', (), {'sigabrt': True,
             ('abort-choose-candidate-without-sentence-offset-1', (), {'sigabrt': True, 'abort': 0, 'issues': ('525',)}),
             ('choose-candidate-without-sentence-offset-0', (), {'control': True, 'issues': ('525',)}),
             ('candidate-type-neighbours', (), {'control': True, 'issues': ('525',)})]
-INJECTED = ('_craft_hash',)
+INJECTED = ('_craft_hash', '_craft_db', 'index_file_rows')
 
 
 def stub(name):
@@ -36,7 +37,7 @@ def stub(name):
 
 
 def declarations(state):
-    return collect_declarations(family.register, _craft_hash=state['_craft_hash'])
+    return collect_declarations(family.register, **state)
 
 
 class CandidateRemovalsTests(unittest.TestCase):
