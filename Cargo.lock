@@ -690,6 +690,7 @@ version = "0.1.0"
 dependencies = [
  "glib-sys",
  "libc",
+ "memmap2",
  "tempfile",
 ]
 

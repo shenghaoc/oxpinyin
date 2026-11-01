@@ -36,6 +36,8 @@ tools = []
 # stderr, save and utility calls beside it.
 libc.workspace = true
 glib-sys.workspace = true
+# The existing whole-file private mapping owner, on every platform.
+memmap2.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

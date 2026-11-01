@@ -7,7 +7,7 @@
 | oxpinyin-core | Parser, SegmentGraph, k-best and scoring traits | forbid | yes | via engine |
 | oxpinyin-chewing | Dependency-free chewing/zhuyin leaf below core. Packed keys, renderers and frozen content tables. Core depends on chewing. | forbid | yes | via capi, engine |
 | oxpinyin-data | Native readers for the formats used by a same-backend libpinyin build (D3 route). | deny (+mmap), target forbid | yes | via engine |
-| oxpinyin-input | External-I/O boundary through the `libc` crate and a safe API. Stage 1 covers configuration and locale. The `tools` feature adds the utilities' GLib option and text, C++ stream and C stdio calls; the shipping libraries never enable it. | deny, scoped allows | yes (`tools`: where GLib is installed) | via data |
+| oxpinyin-input | External-I/O boundary through the `libc` crate and a safe API. Stage 1 covers configuration and locale. Stage 2 prepares a single-owner memmap2 API; production activation waits for the live-library ownership transition. The `tools` feature adds the utilities' GLib option and text, C++ stream and C stdio calls; the shipping libraries never enable it. | deny, scoped allows | yes (`tools`: where GLib is installed) | via data |
 | oxpinyin-user | ACID store over DefaultStore. No format-version row, matching unversioned user files (ruling 2026-09-08, `docs/findings/user-store.md` §4). | forbid | yes | via engine |
 | oxpinyin-engine | Internal session API for in-tree C facades, tools and tests. No supported external Rust interface. | forbid | yes | yes |
 | oxpinyin-facade | Shared context/instance state machines, parse seams, cursor laws and §9 user-data export materialization. See facade dependencies below. | forbid | yes | via capi |

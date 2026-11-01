@@ -5,12 +5,100 @@
 //! `g_rename`, `unlink` and `MemoryChunk::save` calls, made through the
 //! `libc` and `glib-sys` crates with the pin's own arguments and format
 //! strings, and the owned handles over what they return. Every function
-//! here makes the pin's calls and no others; Rust chooses which to run and
-//! in what order.
+//! here makes the pin's calls; Rust chooses which to run and in what order.
 
 use core::ffi::{c_char, c_float, c_int};
 use core::ptr::NonNull;
 use std::ffi::CStr;
+
+/// The descriptor of a system/addon chunk, closed before its mapping
+/// leave the loader. No `File` or borrowed raw handle escapes this module.
+pub(crate) struct ReadChunk(c_int);
+
+impl ReadChunk {
+    pub(crate) fn open(path: &CStr) -> std::io::Result<Self> {
+        #[cfg(unix)]
+        let flags = libc::O_RDONLY;
+        #[cfg(windows)]
+        let flags = libc::O_RDONLY | libc::O_BINARY;
+        // SAFETY: `path` is NUL-terminated and lives through open. Without
+        // O_CREAT the variadic mode argument is not read. This owner alone
+        // closes the returned descriptor.
+        let fd = unsafe { libc::open(path.as_ptr(), flags) };
+        if fd < 0 {
+            Err(std::io::Error::last_os_error())
+        } else {
+            Ok(Self(fd))
+        }
+    }
+
+    pub(crate) fn size_and_rewind(&self) -> std::io::Result<u64> {
+        #[cfg(unix)]
+        use libc::lseek;
+        #[cfg(windows)]
+        use libc::lseek64 as lseek;
+        // SAFETY: the descriptor is open and owned. Both seeks use zero
+        // offsets and the pin's whence values; the rewind result is ignored
+        // just as at memory_chunk.h:484. Windows uses the CRT's 64-bit seek.
+        let size = unsafe {
+            let size = lseek(self.0, 0, libc::SEEK_END);
+            lseek(self.0, 0, libc::SEEK_SET);
+            size
+        };
+        u64::try_from(size).map_err(|_| std::io::Error::last_os_error())
+    }
+
+    pub(crate) fn read_word(&mut self) -> std::io::Result<[u8; 4]> {
+        let mut word = [0_u8; 4];
+        // SAFETY: the descriptor is open and owned; `word` is a writable
+        // four-byte buffer that outlives the single read.
+        let read = unsafe { libc::read(self.0, word.as_mut_ptr().cast(), 4) };
+        if read == 4 {
+            Ok(word)
+        } else if read < 0 {
+            Err(std::io::Error::last_os_error())
+        } else {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "short chunk header read",
+            ))
+        }
+    }
+
+    pub(crate) fn map_copy(&self, file_size: usize) -> std::io::Result<memmap2::MmapMut> {
+        #[cfg(unix)]
+        let descriptor = self.0;
+        #[cfg(windows)]
+        // SAFETY: the CRT descriptor is open and owned. The OS handle is
+        // borrowed only until map_copy finishes; memmap2 owns the resulting
+        // view and its own Windows mapping handles.
+        let descriptor = unsafe { libc::get_osfhandle(self.0) } as std::os::windows::io::RawHandle;
+        let options = {
+            let mut options = memmap2::MmapOptions::new();
+            options.len(file_size);
+            options
+        };
+        // SAFETY: the descriptor remains open through the call. The
+        // explicit size is the file's end-seek result, and offset is zero.
+        // memmap2 0.9.11 (and the unchanged 0.9.12 lockfile)
+        // unix.rs::MmapInner::map_copy uses PROT_READ |
+        // PROT_WRITE and MAP_PRIVATE; its owner unmaps the whole range.
+        // Mutable slices borrow the sole owner exclusively. System/addon files
+        // are never written by the runtime: callers must not modify or truncate them
+        // while mapped. Rename replacement keeps the mapped inode alive.
+        // Windows uses memmap2's copy-on-write view by maintainer ruling,
+        // instead of the pin's non-mmap heap path.
+        unsafe { options.map_copy(descriptor) }
+    }
+}
+
+impl Drop for ReadChunk {
+    fn drop(&mut self) {
+        // SAFETY: this is the descriptor this owner opened. It is closed
+        // once; mappings own their ranges independently of the descriptor.
+        unsafe { libc::close(self.0) };
+    }
+}
 
 /// The C library's `FILE`, never dereferenced on this side.
 pub(crate) type File = libc::FILE;

@@ -20,6 +20,12 @@ and the 2026-09-05 profile decision below remain unchanged.
 
 ## A. Language & memory safety
 
+**Stage 2 member 1, 2026-11-01 UTC:** input prepares a single-owner memmap2
+mapping API, with libc calls scoped in `native.rs` and borrowed slice
+access. Production data retains its mmap exception until activation;
+this preparation changes no crate's `forbid` status. The historical counts
+below are not a claim that extraction has landed.
+
 | Rule | Today | Proposed | Mechanism |
 |---|---|---|---|
 | No UB in shipped library code | HG (safe Rust) | HG | rustc borrow/type checker; safe crates contain zero unsafe (verified) |
