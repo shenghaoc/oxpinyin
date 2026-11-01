@@ -17,4 +17,6 @@ pub mod k_mixture_model_to_interpolation;
 
 pub mod segment;
 
+pub mod storage;
+
 pub mod taglib;

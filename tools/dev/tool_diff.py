@@ -6,9 +6,11 @@ contracts; policy observations bind through the existing policy-record machinery
 """
 import argparse
 from collections import Counter
+import hashlib
 import json
 from pathlib import Path
 import re
+import subprocess
 import time
 from dataclasses import replace
 
@@ -18,7 +20,9 @@ from . import pool
 # Each utility's directory in the pin's build tree (utils/*/Makefile.am).
 PIN_UTILITIES = {'gen_pinyin_table': 'utils/storage', 'gen_zhuyin_table': 'utils/storage',
                  'k_mixture_model_to_interpolation': 'utils/training',
-                 'ngseg': 'utils/segment', 'spseg': 'utils/segment', 'mergeseq': 'utils/segment'}
+                 'ngseg': 'utils/segment', 'spseg': 'utils/segment', 'mergeseq': 'utils/segment',
+                 'gen_binary_files': 'utils/storage', 'import_interpolation': 'utils/storage',
+                 'export_interpolation': 'utils/storage'}
 # Utilities whose pin source opens no DBM: the generators read and write text
 # tables, and k_mixture_model_to_interpolation converts stdin to stdout with
 # taglib (no Bigram attach, no phrase-index load). Their observations are the
@@ -119,6 +123,12 @@ def load_cases(paths):
                 raise ValueError(f'{path}: a pin signal requires a named policy record')
             for name in case.get('files', {}):
                 relative(name)
+            if case.get('dbm_rows') is not None:
+                if not isinstance(case['dbm_rows'], list) or not all(
+                        isinstance(name, str) and name for name in case['dbm_rows']):
+                    raise ValueError(f'{path}: dbm_rows must be a list of relative names')
+                for name in case['dbm_rows']:
+                    relative(name)
             if case.get('fixture_dir') is not None:
                 if not isinstance(case['fixture_dir'], str):
                     raise ValueError(f'{path}: fixture_dir must be a string')
@@ -145,7 +155,27 @@ def snapshot(directory):
     return files
 
 
-def observation(ctx, binary, case, directory, inputs, stdin, deadline):
+def logical_dbm_rows(ctx, helper, directory, names, rows):
+    """Replace a DBM file's container bytes with a digest of its logical rows.
+
+    Container metadata (tkrzw's cyclic-magic counter and modification time,
+    Berkeley DB's page metadata) is not utility output: the pin itself writes
+    different metadata bytes on two runs of the same input. A case names such
+    files in `dbm_rows`; both sides are then compared by sorted key/value rows
+    through the subject build's `dbm_rows` helper.
+    """
+    for name in names:
+        path = directory / relative(name)
+        if not path.is_file():
+            continue
+        result = subprocess.run([str(helper), str(path)], capture_output=True,
+                                env=ctx.env, check=False)
+        if result.returncode != 0:
+            raise ValueError(f'dbm_rows could not read {name}: {result.stderr.decode("utf-8", "replace")}')
+        rows[name] = 'rows:' + hashlib.sha256(result.stdout).hexdigest()
+
+
+def observation(ctx, binary, case, directory, inputs, stdin, deadline, helper=None):
     directory.mkdir()
     for name, content in inputs.items():
         destination = directory / relative(name)
@@ -158,9 +188,12 @@ def observation(ctx, binary, case, directory, inputs, stdin, deadline):
     context = replace(parent, cancelled=lambda: (parent.check() or time.monotonic() >= deadline))
     result = context.launch([str(binary), *case.get('args', [])], cwd=directory,
                             env=environment, input=stdin)
+    files = snapshot(directory)
+    if case.get('dbm_rows'):
+        logical_dbm_rows(ctx, helper, directory, case['dbm_rows'], files)
     return dict(exit=result.status, stdout=result.stdout.decode('utf-8', 'surrogateescape'),
                 stderr=GLIB_PREFIX.sub(r'\1PID\2TIME: ', result.stderr.decode('utf-8', 'surrogateescape')),
-                files=snapshot(directory))
+                files=files)
 
 
 def verdict(case, pin, subject, policy_root, cell):
@@ -229,7 +262,8 @@ def run(ctx, argv):
         stdin = payload(case.get('stdin', {'text': ''}), child.settings.root, model)
         deadline = time.monotonic() + args.case_timeout
         try:
-            pin, subject = [observation(child, binary, case, scratch / side, inputs, stdin, deadline)
+            helper = binaries[case['utility']][1].parent / 'dbm_rows'
+            pin, subject = [observation(child, binary, case, scratch / side, inputs, stdin, deadline, helper)
                             for side, binary in zip(('pin', 'subject'), binaries[case['utility']])]
         except pool.UnitStopped as error:
             return case, 'INVALID', str(error), None

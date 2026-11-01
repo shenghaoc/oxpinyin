@@ -107,6 +107,17 @@ pub struct BdbStore {
     db: Db,
 }
 
+/// Reproduces the pin's failed read-only attach: the handle stays open,
+/// a cursor and the destructor's sync run, libdb prints its own
+/// `BDB1565` lines, and the handle closes.
+pub fn report_failed_read_only_open(path: &Path, hash: bool) {
+    ffi::Db::report_failed_open(
+        path,
+        if hash { ffi::DB_HASH } else { ffi::DB_BTREE },
+        ffi::SYSTEM_FILE_MODE,
+    );
+}
+
 impl BdbStore {
     /// Applies a finished transaction's buffer and syncs. Not generic, so
     /// the many `write` closures share one copy of it.
@@ -388,6 +399,19 @@ impl RawReadStore for BdbStore {
         } else {
             self.range_raw_ordered(lo, hi, visit)
         }
+    }
+
+    /// `Bigram::get_all_items`' `DB_NEXT` cursor walk (`ngram_bdb.cpp:143-172`):
+    /// libdb's own record order, which for `DB_HASH` is bucket order.
+    fn native_keys(&self) -> Result<Vec<Vec<u8>>, StoreError> {
+        let mut keys = Vec::new();
+        let mut cursor = self.db.cursor()?;
+        let mut seek = ffi::Seek::First;
+        while let Some(key) = cursor.key(seek)? {
+            keys.push(key.to_vec());
+            seek = ffi::Seek::Next;
+        }
+        Ok(keys)
     }
 
     fn open_hash_read_only(path: &Path) -> Result<Self, StoreError> {

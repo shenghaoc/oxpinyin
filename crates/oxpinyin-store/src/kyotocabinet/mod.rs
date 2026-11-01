@@ -435,6 +435,17 @@ impl crate::RawReadStore for KcStore {
         self.db.count()
     }
 
+    /// `Bigram::get_all_items`' `iterate` walk (`ngram_kyotodb.cpp:186-196`):
+    /// Kyoto Cabinet's own order, which for `HashDB` is bucket order.
+    fn native_keys(&self) -> Result<Vec<Vec<u8>>, crate::StoreError> {
+        Ok(self
+            .db
+            .records()?
+            .iter()
+            .map(|record| record.key().to_vec())
+            .collect())
+    }
+
     fn open_hash_read_only(path: &Path) -> Result<Self, crate::StoreError> {
         Ok(Self {
             db: Db::open(path, DbType::Hash, true, false)?,
