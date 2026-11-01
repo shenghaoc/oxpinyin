@@ -329,7 +329,7 @@ impl GenericUserStore<DefaultStore> {
             phrases.phrase_table = phrase_table;
             for (&nibble, items) in &loaded.state.libraries {
                 for (&slot, item) in items {
-                    let bytes = oxpinyin_data::chunk_write::encode_phrase_item(item)
+                    let bytes = persistence::encode_persisted_item(item)
                         .map_err(|e| UserStoreError::Persistence(e.to_string()))?;
                     phrases
                         .libraries
@@ -347,7 +347,7 @@ impl GenericUserStore<DefaultStore> {
                         .is_some_and(|library| library.contains_item(slot))
                         && let Some(item) = item
                     {
-                        let bytes = oxpinyin_data::chunk_write::encode_phrase_item(item)
+                        let bytes = persistence::encode_persisted_item(item)
                             .map_err(|e| UserStoreError::Persistence(e.to_string()))?;
                         phrases
                             .libraries
@@ -2262,6 +2262,82 @@ mod tests {
         assert_eq!(counts(&store).len(), 2);
         drop(store);
         std::fs::remove_dir_all(dir).expect("cleanup");
+    }
+
+    /// ADD copies an empty body and adds its unigram after the log header
+    /// (074a2219 phrase_index.cpp:453-459, :503-514). Reload must retain
+    /// the same item, including empty-key readings, as initial raw replay.
+    #[test]
+    fn persisted_empty_add_survives_reload_save_and_reopen() {
+        use oxpinyin_data::user_files::LogRecord;
+        for prons in [vec![], vec![(vec![], 13), (vec![], 5)]] {
+            let item = ChunkItem {
+                phrase: vec![],
+                unigram: 37,
+                prons,
+            };
+            let records = [
+                LogRecord::ModifyHeader {
+                    old_total: 100,
+                    new_total: 137,
+                },
+                LogRecord::Add {
+                    token: 9,
+                    new_item: persistence::journal_item_bytes(&item),
+                },
+            ];
+            let (dir, mut store) = open_with_log("persisted-empty-add", &records);
+            let token = 0x0100_0009;
+            let observe = |store: &UserStore| {
+                assert_eq!(store.phrase_text(token).unwrap(), Some(vec![]));
+                assert_eq!(store.unigram_delta(token).unwrap(), 37);
+                assert_eq!(
+                    store.system_item_override(token).unwrap(),
+                    Some(item.clone())
+                );
+                assert_eq!(
+                    store.user_pronunciation_count(token),
+                    Some(item.prons.len() as u32)
+                );
+                for (nth, _) in item.prons.iter().enumerate() {
+                    assert_eq!(
+                        store.nth_pronunciation_words(token, nth).unwrap(),
+                        Some(vec![])
+                    );
+                }
+                assert_eq!(store.unigram_library_total(1).unwrap(), 37);
+                assert_eq!(
+                    store.unigram_total().unwrap(),
+                    74,
+                    "facade keeps replay's second count"
+                );
+            };
+            observe(&store);
+            assert_eq!(store.library_offset(1).unwrap(), 37);
+            store.unload_system_libraries(originals());
+            assert!(store.with_user_item(token, |_| ()).is_none());
+            assert!(store.system_item_override(token).unwrap().is_none());
+            store.load_system_libraries(originals()).unwrap();
+            observe(&store);
+            assert_eq!(store.library_offset(1).unwrap(), 37);
+            store.mark_modified();
+            assert!(store.save().unwrap());
+            observe(&store);
+            assert_eq!(
+                store.library_offset(1).unwrap(),
+                0,
+                "save compacts the sub-index only"
+            );
+            let exported = export_session_state(&store, &originals(), true).unwrap();
+            assert_eq!(exported.system_overrides[&1][&9], Some(item.clone()));
+            drop(store);
+            let reopened =
+                UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+                    .unwrap();
+            observe(&reopened);
+            drop(reopened);
+            std::fs::remove_dir_all(dir).unwrap();
+        }
     }
 
     #[test]

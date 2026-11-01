@@ -41,7 +41,9 @@ use std::path::{Path, PathBuf};
 
 use oxpinyin_core::ChewingKey;
 use oxpinyin_data::chunk_format::build_memory_chunk;
-use oxpinyin_data::chunk_write::{ChunkItem, PHRASE_MASK, build_chunk, encode_phrase_item};
+use oxpinyin_data::chunk_write::{
+    ChunkItem, ChunkWriteError, PHRASE_MASK, build_chunk, encode_phrase_item,
+};
 use oxpinyin_data::phrase_libraries::PhraseLibraries;
 use oxpinyin_data::row_format::pinyin_index::PinyinIndexItem;
 use oxpinyin_data::table_entries::pinyin_index_entries;
@@ -1569,18 +1571,23 @@ pub(crate) fn journal_item_bytes(item: &ChunkItem) -> Vec<u8> {
     bytes
 }
 
-/// [`encode_phrase_item`] for a journal record: the same refusals, except that
-/// an empty phrase is an item. `PhraseItem` keeps one of `6 + 4n` bytes
-/// (`get_phrase_item`, 074a2219 `phrase_index.cpp:180-206`) and the pin's `diff`
-/// writes it (`:392-436`); a journal can leave one there.
-fn journal_record_item(item: &ChunkItem) -> Result<Vec<u8>, PersistenceError> {
+/// Encode a typed persisted item, independently of phrase-import validation.
+/// An empty phrase occupies `6 + 4 * n_prons` bytes at a nonzero offset
+/// (074a2219 `phrase_index.cpp:180-217`); each pronunciation still needs
+/// exactly one key per phrase word. The pin's `diff` writes these items
+/// (`:392-436`). Public imports keep the strict [`encode_phrase_item`].
+pub(crate) fn encode_persisted_item(item: &ChunkItem) -> Result<Vec<u8>, ChunkWriteError> {
     if item.phrase.is_empty()
         && item.prons.len() <= usize::from(u8::MAX)
         && item.prons.iter().all(|(keys, _)| keys.is_empty())
     {
         return Ok(journal_item_bytes(item));
     }
-    encode_phrase_item(item).map_err(PersistenceError::from)
+    encode_phrase_item(item)
+}
+
+fn journal_record_item(item: &ChunkItem) -> Result<Vec<u8>, PersistenceError> {
+    encode_persisted_item(item).map_err(PersistenceError::from)
 }
 
 /// The compacted library's wrapping item sum, with live overrides applied

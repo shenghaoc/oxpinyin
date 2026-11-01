@@ -528,10 +528,12 @@ impl<S: WriteStore> GenericUserStore<S> {
     }
 
     /// The arenas a system library transition installs: `state`'s items,
-    /// and its overrides of slots the mapped chunk does not hold. An item
-    /// the arena cannot hold, a phrase of no characters `encode_phrase_item`
-    /// refuses or an arena past `u32` offsets, is left out; the session open
-    /// refuses the same log outright (`open_session`), and the pin keeps it.
+    /// and its overrides of slots the mapped chunk does not hold. Persisted
+    /// empty phrases are retained within the current arena limits. An item
+    /// the arena cannot hold is still left out: the arena-limit skip is an
+    /// interim KNOWN DIVERGENCE from the pin's wrapped writes (#1514;
+    /// 074a2219 novel_types.h:128, phrase_index.cpp:208-217,
+    /// memory_chunk.h:290-296).
     pub(super) fn arena_replacement(
         &self,
         originals: &crate::SystemOriginals,
@@ -542,7 +544,7 @@ impl<S: WriteStore> GenericUserStore<S> {
                     nibble: u8,
                     slot: u32,
                     item: &ChunkItem| {
-            if let Ok(bytes) = encoded(item) {
+            if let Ok(bytes) = crate::persistence::encode_persisted_item(item) {
                 let _held = libraries.entry(nibble).or_default().replace(slot, &bytes);
             }
         };
