@@ -432,12 +432,18 @@ impl<S: WriteStore> GenericUserStore<S> {
         };
         let item = decode_phrase_item(view.as_bytes())
             .map_err(|e| UserStoreError::Persistence(e.to_string()))?;
-        if item
-            .prons
-            .iter()
-            .any(|(keys, _)| !phrases.index.contains_reading(token, keys))
-        {
-            return Ok(false);
+        // Simulate the pin's ordered removals, including repeated projections
+        // and readings, before changing any live table.
+        let mut index = phrases.index.clone();
+        for (packed, _) in &item.prons {
+            let keys: Vec<_> = packed
+                .iter()
+                .copied()
+                .map(oxpinyin_core::ChewingKey::from_packed)
+                .collect();
+            if !index.remove(&keys, token) {
+                return Err(UserStoreError::UserReadingRemoval);
+            }
         }
         let removed = db.write(|txn| {
             if !phrase_table::index_removable_ucs4(txn, &item.phrase, token)? {
@@ -469,7 +475,9 @@ impl<S: WriteStore> GenericUserStore<S> {
                 .copied()
                 .map(oxpinyin_core::ChewingKey::from_packed)
                 .collect();
-            phrases.index.remove(&keys, token);
+            if !phrases.index.remove(&keys, token) {
+                return Err(UserStoreError::UserReadingRemoval);
+            }
         }
         if let Some(library) = phrases.item_mut(token) {
             library.remove(token & PHRASE_MASK);
