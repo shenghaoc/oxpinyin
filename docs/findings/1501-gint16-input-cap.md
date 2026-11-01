@@ -195,12 +195,126 @@
             "result.32768[0:2]: pin [32767, 32767]; subject [32768, 32768]",
             "result.65537[0:2]: pin [32767, 32767]; subject [65537, 65537]"
           ]
+        },
+        "bdb": {
+          "pin": {
+            "sha256": "d733a634d66af233b8676dd79529ae177c35e63192cc4e6f397627ce3d27f08a",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.32766": "597ec2e9f7bd750a",
+              "result.32767": "8a70afe339e4959c",
+              "result.32768": "8a70afe339e4959c",
+              "result.4096": "40de82aeec23ab9d",
+              "result.4097": "0d7646b439c10138",
+              "result.65537": "8a70afe339e4959c",
+              "result.logs": "4f53cda18c2baa0c",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "62bad3f45c8a40eb426be3df558a0e045fbd75734090481991017ec94137688b",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.32766": "597ec2e9f7bd750a",
+              "result.32767": "8a70afe339e4959c",
+              "result.32768": "f53395eaa5f662f0",
+              "result.4096": "40de82aeec23ab9d",
+              "result.4097": "0d7646b439c10138",
+              "result.65537": "03f6d86936d6bfe8",
+              "result.logs": "4f53cda18c2baa0c",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.32768[0:2]: pin [32767, 32767]; subject [32768, 32768]",
+            "result.65537[0:2]: pin [32767, 32767]; subject [65537, 65537]"
+          ]
+        },
+        "kc": {
+          "pin": {
+            "sha256": "d733a634d66af233b8676dd79529ae177c35e63192cc4e6f397627ce3d27f08a",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.32766": "597ec2e9f7bd750a",
+              "result.32767": "8a70afe339e4959c",
+              "result.32768": "8a70afe339e4959c",
+              "result.4096": "40de82aeec23ab9d",
+              "result.4097": "0d7646b439c10138",
+              "result.65537": "8a70afe339e4959c",
+              "result.logs": "4f53cda18c2baa0c",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "62bad3f45c8a40eb426be3df558a0e045fbd75734090481991017ec94137688b",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.32766": "597ec2e9f7bd750a",
+              "result.32767": "8a70afe339e4959c",
+              "result.32768": "f53395eaa5f662f0",
+              "result.4096": "40de82aeec23ab9d",
+              "result.4097": "0d7646b439c10138",
+              "result.65537": "03f6d86936d6bfe8",
+              "result.logs": "4f53cda18c2baa0c",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.32768[0:2]: pin [32767, 32767]; subject [32768, 32768]",
+            "result.65537[0:2]: pin [32767, 32767]; subject [65537, 65537]"
+          ]
         }
       }
     },
     "input-length-boundary-32768": {
       "cells": {
         "tkrzw": {
+          "pin": {
+            "sha256": "36ff900318f3be39f1d64fc33115665b7afe94dde321c60cbd7a3e8634a1a4ab",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.32768": "8a70afe339e4959c",
+              "result.logs": "4f53cda18c2baa0c",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "ccc5f61101ca1b2a763eae46b3e2d368ecc46854d73a9e924704dd0e55080b12",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.32768": "f53395eaa5f662f0",
+              "result.logs": "4f53cda18c2baa0c",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.32768[0:2]: pin [32767, 32767]; subject [32768, 32768]"
+          ]
+        },
+        "bdb": {
+          "pin": {
+            "sha256": "36ff900318f3be39f1d64fc33115665b7afe94dde321c60cbd7a3e8634a1a4ab",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.32768": "8a70afe339e4959c",
+              "result.logs": "4f53cda18c2baa0c",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "ccc5f61101ca1b2a763eae46b3e2d368ecc46854d73a9e924704dd0e55080b12",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.32768": "f53395eaa5f662f0",
+              "result.logs": "4f53cda18c2baa0c",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.32768[0:2]: pin [32767, 32767]; subject [32768, 32768]"
+          ]
+        },
+        "kc": {
           "pin": {
             "sha256": "36ff900318f3be39f1d64fc33115665b7afe94dde321c60cbd7a3e8634a1a4ab",
             "fields": {
@@ -249,12 +363,104 @@
           "divergence": [
             "result.65535[0:2]: pin [32767, 32767]; subject [65535, 65535]"
           ]
+        },
+        "bdb": {
+          "pin": {
+            "sha256": "ed7ffd3d88688b189316bb2b348673b6a753190452554c58fce4d02dea50d18b",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.65535": "8a70afe339e4959c",
+              "result.logs": "4f53cda18c2baa0c",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "ccd5c68f30ebe08a1c7086ece4adb0654e6925214eac6a50d1ee26e9ad4f959a",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.65535": "135258fd4c6afe1f",
+              "result.logs": "4f53cda18c2baa0c",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.65535[0:2]: pin [32767, 32767]; subject [65535, 65535]"
+          ]
+        },
+        "kc": {
+          "pin": {
+            "sha256": "ed7ffd3d88688b189316bb2b348673b6a753190452554c58fce4d02dea50d18b",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.65535": "8a70afe339e4959c",
+              "result.logs": "4f53cda18c2baa0c",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "ccd5c68f30ebe08a1c7086ece4adb0654e6925214eac6a50d1ee26e9ad4f959a",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.65535": "135258fd4c6afe1f",
+              "result.logs": "4f53cda18c2baa0c",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.65535[0:2]: pin [32767, 32767]; subject [65535, 65535]"
+          ]
         }
       }
     },
     "input-length-boundary-65536": {
       "cells": {
         "tkrzw": {
+          "pin": {
+            "sha256": "2af300dc068e9b0d35cd3a2b266899bef09576f24f69863fa4a99ee53a631c47",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.65536": "8a70afe339e4959c",
+              "result.logs": "4f53cda18c2baa0c",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "0f2d99140518d44739cdc206ae6f823038273df2895d7b03ef7b2c09e445b437",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.65536": "250c49096a48b336",
+              "result.logs": "4f53cda18c2baa0c",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.65536[0:2]: pin [32767, 32767]; subject [65536, 65536]"
+          ]
+        },
+        "bdb": {
+          "pin": {
+            "sha256": "2af300dc068e9b0d35cd3a2b266899bef09576f24f69863fa4a99ee53a631c47",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.65536": "8a70afe339e4959c",
+              "result.logs": "4f53cda18c2baa0c",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "0f2d99140518d44739cdc206ae6f823038273df2895d7b03ef7b2c09e445b437",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.65536": "250c49096a48b336",
+              "result.logs": "4f53cda18c2baa0c",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.65536[0:2]: pin [32767, 32767]; subject [65536, 65536]"
+          ]
+        },
+        "kc": {
           "pin": {
             "sha256": "2af300dc068e9b0d35cd3a2b266899bef09576f24f69863fa4a99ee53a631c47",
             "fields": {
@@ -330,12 +536,212 @@
             "result.separator-tail[0:2]: pin [32767, 32767]; subject [32770, 32770]",
             "result.split-tail[0:2]: pin [32766, 32766]; subject [32769, 32769]"
           ]
+        },
+        "bdb": {
+          "pin": {
+            "sha256": "f5f56dd549e559da4b17bda7f30558eab0bcf07b49a6db36054a6cb6a227b880",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.32766": "9b507a12a9842935",
+              "result.32767": "d2893dfa35110678",
+              "result.32768": "d2893dfa35110678",
+              "result.4096": "c1bd42c7de5aa04b",
+              "result.4097": "39af5aeeaf2f5fe5",
+              "result.65535": "d2893dfa35110678",
+              "result.65536": "d2893dfa35110678",
+              "result.65537": "d2893dfa35110678",
+              "result.invalid-tail": "597ec2e9f7bd750a",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.separator-tail": "8a70afe339e4959c",
+              "result.split-tail": "597ec2e9f7bd750a",
+              "result.whole-tail": "8a70afe339e4959c",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "fc2e2fefbe0cb146b12ae5535e372f5370cdf12002a12dfa05ad4026d62eec85",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.32766": "9b507a12a9842935",
+              "result.32767": "d2893dfa35110678",
+              "result.32768": "94c2b527ce7d6061",
+              "result.4096": "c1bd42c7de5aa04b",
+              "result.4097": "39af5aeeaf2f5fe5",
+              "result.65535": "034c34464a5fb3a7",
+              "result.65536": "1229a03ac65fd940",
+              "result.65537": "771057d8478e5098",
+              "result.invalid-tail": "597ec2e9f7bd750a",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.separator-tail": "0654e147f516ec56",
+              "result.split-tail": "905c5f9244fbad1f",
+              "result.whole-tail": "8a70afe339e4959c",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.32768[0:2]: pin [32767, 32767]; subject [32768, 32768]",
+            "result.65535[0:2]: pin [32767, 32767]; subject [65535, 65535]",
+            "result.65536[0:2]: pin [32767, 32767]; subject [65536, 65536]",
+            "result.65537[0:2]: pin [32767, 32767]; subject [65537, 65537]",
+            "result.separator-tail[0:2]: pin [32767, 32767]; subject [32770, 32770]",
+            "result.split-tail[0:2]: pin [32766, 32766]; subject [32769, 32769]"
+          ]
+        },
+        "kc": {
+          "pin": {
+            "sha256": "f5f56dd549e559da4b17bda7f30558eab0bcf07b49a6db36054a6cb6a227b880",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.32766": "9b507a12a9842935",
+              "result.32767": "d2893dfa35110678",
+              "result.32768": "d2893dfa35110678",
+              "result.4096": "c1bd42c7de5aa04b",
+              "result.4097": "39af5aeeaf2f5fe5",
+              "result.65535": "d2893dfa35110678",
+              "result.65536": "d2893dfa35110678",
+              "result.65537": "d2893dfa35110678",
+              "result.invalid-tail": "597ec2e9f7bd750a",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.separator-tail": "8a70afe339e4959c",
+              "result.split-tail": "597ec2e9f7bd750a",
+              "result.whole-tail": "8a70afe339e4959c",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "fc2e2fefbe0cb146b12ae5535e372f5370cdf12002a12dfa05ad4026d62eec85",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.32766": "9b507a12a9842935",
+              "result.32767": "d2893dfa35110678",
+              "result.32768": "94c2b527ce7d6061",
+              "result.4096": "c1bd42c7de5aa04b",
+              "result.4097": "39af5aeeaf2f5fe5",
+              "result.65535": "034c34464a5fb3a7",
+              "result.65536": "1229a03ac65fd940",
+              "result.65537": "771057d8478e5098",
+              "result.invalid-tail": "597ec2e9f7bd750a",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.separator-tail": "0654e147f516ec56",
+              "result.split-tail": "905c5f9244fbad1f",
+              "result.whole-tail": "8a70afe339e4959c",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.32768[0:2]: pin [32767, 32767]; subject [32768, 32768]",
+            "result.65535[0:2]: pin [32767, 32767]; subject [65535, 65535]",
+            "result.65536[0:2]: pin [32767, 32767]; subject [65536, 65536]",
+            "result.65537[0:2]: pin [32767, 32767]; subject [65537, 65537]",
+            "result.separator-tail[0:2]: pin [32767, 32767]; subject [32770, 32770]",
+            "result.split-tail[0:2]: pin [32766, 32766]; subject [32769, 32769]"
+          ]
         }
       }
     },
     "d18-input-boundaries-zhuyin": {
       "cells": {
         "tkrzw": {
+          "pin": {
+            "sha256": "f5f56dd549e559da4b17bda7f30558eab0bcf07b49a6db36054a6cb6a227b880",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.32766": "9b507a12a9842935",
+              "result.32767": "d2893dfa35110678",
+              "result.32768": "d2893dfa35110678",
+              "result.4096": "c1bd42c7de5aa04b",
+              "result.4097": "39af5aeeaf2f5fe5",
+              "result.65535": "d2893dfa35110678",
+              "result.65536": "d2893dfa35110678",
+              "result.65537": "d2893dfa35110678",
+              "result.invalid-tail": "597ec2e9f7bd750a",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.separator-tail": "8a70afe339e4959c",
+              "result.split-tail": "597ec2e9f7bd750a",
+              "result.whole-tail": "8a70afe339e4959c",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "fc2e2fefbe0cb146b12ae5535e372f5370cdf12002a12dfa05ad4026d62eec85",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.32766": "9b507a12a9842935",
+              "result.32767": "d2893dfa35110678",
+              "result.32768": "94c2b527ce7d6061",
+              "result.4096": "c1bd42c7de5aa04b",
+              "result.4097": "39af5aeeaf2f5fe5",
+              "result.65535": "034c34464a5fb3a7",
+              "result.65536": "1229a03ac65fd940",
+              "result.65537": "771057d8478e5098",
+              "result.invalid-tail": "597ec2e9f7bd750a",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.separator-tail": "0654e147f516ec56",
+              "result.split-tail": "905c5f9244fbad1f",
+              "result.whole-tail": "8a70afe339e4959c",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.32768[0:2]: pin [32767, 32767]; subject [32768, 32768]",
+            "result.65535[0:2]: pin [32767, 32767]; subject [65535, 65535]",
+            "result.65536[0:2]: pin [32767, 32767]; subject [65536, 65536]",
+            "result.65537[0:2]: pin [32767, 32767]; subject [65537, 65537]",
+            "result.separator-tail[0:2]: pin [32767, 32767]; subject [32770, 32770]",
+            "result.split-tail[0:2]: pin [32766, 32766]; subject [32769, 32769]"
+          ]
+        },
+        "bdb": {
+          "pin": {
+            "sha256": "f5f56dd549e559da4b17bda7f30558eab0bcf07b49a6db36054a6cb6a227b880",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.32766": "9b507a12a9842935",
+              "result.32767": "d2893dfa35110678",
+              "result.32768": "d2893dfa35110678",
+              "result.4096": "c1bd42c7de5aa04b",
+              "result.4097": "39af5aeeaf2f5fe5",
+              "result.65535": "d2893dfa35110678",
+              "result.65536": "d2893dfa35110678",
+              "result.65537": "d2893dfa35110678",
+              "result.invalid-tail": "597ec2e9f7bd750a",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.separator-tail": "8a70afe339e4959c",
+              "result.split-tail": "597ec2e9f7bd750a",
+              "result.whole-tail": "8a70afe339e4959c",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "fc2e2fefbe0cb146b12ae5535e372f5370cdf12002a12dfa05ad4026d62eec85",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.32766": "9b507a12a9842935",
+              "result.32767": "d2893dfa35110678",
+              "result.32768": "94c2b527ce7d6061",
+              "result.4096": "c1bd42c7de5aa04b",
+              "result.4097": "39af5aeeaf2f5fe5",
+              "result.65535": "034c34464a5fb3a7",
+              "result.65536": "1229a03ac65fd940",
+              "result.65537": "771057d8478e5098",
+              "result.invalid-tail": "597ec2e9f7bd750a",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.separator-tail": "0654e147f516ec56",
+              "result.split-tail": "905c5f9244fbad1f",
+              "result.whole-tail": "8a70afe339e4959c",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.32768[0:2]: pin [32767, 32767]; subject [32768, 32768]",
+            "result.65535[0:2]: pin [32767, 32767]; subject [65535, 65535]",
+            "result.65536[0:2]: pin [32767, 32767]; subject [65536, 65536]",
+            "result.65537[0:2]: pin [32767, 32767]; subject [65537, 65537]",
+            "result.separator-tail[0:2]: pin [32767, 32767]; subject [32770, 32770]",
+            "result.split-tail[0:2]: pin [32766, 32766]; subject [32769, 32769]"
+          ]
+        },
+        "kc": {
           "pin": {
             "sha256": "f5f56dd549e559da4b17bda7f30558eab0bcf07b49a6db36054a6cb6a227b880",
             "fields": {
