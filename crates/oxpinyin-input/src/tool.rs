@@ -2465,3 +2465,67 @@ pub mod parser {
         unsafe { libc::printf(c"\n".as_ptr()) };
     }
 }
+
+/// `tests/storage/test_table_info.cpp:26-80` output at 074a2219.
+pub mod table_info {
+    use super::*;
+
+    fn pointer(name: Option<&CStr>) -> *const c_char {
+        name.map_or(core::ptr::null(), CStr::as_ptr)
+    }
+
+    /// The stored `gfloat` promoted to double for `%f`.
+    pub fn lambda(value: f32) {
+        // SAFETY: the format receives its promoted double.
+        unsafe { libc::printf(c"lambda:%f\n".as_ptr(), f64::from(value)) };
+    }
+
+    /// One default/addon slot's `m_dict_index`.
+    pub fn index(addon: bool, index: u8) {
+        let format = if addon {
+            c"addon table index:%d\n"
+        } else {
+            c"default table index:%d\n"
+        };
+        // SAFETY: both formats take one promoted int.
+        unsafe { libc::printf(format.as_ptr(), c_int::from(index)) };
+    }
+
+    /// `NOT_USED`.
+    pub fn not_used() {
+        // SAFETY: constant format, no arguments.
+        unsafe { libc::printf(c"not used.\n".as_ptr()) };
+    }
+
+    /// `SYSTEM_FILE`: NULL filename fields remain NULL at the host call.
+    pub fn system_file(table: Option<&CStr>, system: Option<&CStr>, user: Option<&CStr>) {
+        // SAFETY: each non-NULL pointer is a live C string. As at the pin,
+        // the host printf handles a NULL %s; no Rust dereference occurs.
+        unsafe {
+            libc::printf(
+                c"system file:%s %s %s.\n".as_ptr(),
+                pointer(table),
+                pointer(system),
+                pointer(user),
+            )
+        };
+    }
+
+    /// `DICTIONARY`.
+    pub fn dictionary(table: Option<&CStr>, system: Option<&CStr>) {
+        // SAFETY: as system_file, with two string arguments.
+        unsafe {
+            libc::printf(
+                c"dictionary:%s %s.\n".as_ptr(),
+                pointer(table),
+                pointer(system),
+            )
+        };
+    }
+
+    /// `USER_FILE`.
+    pub fn user_file(user: Option<&CStr>) {
+        // SAFETY: as system_file, with one string argument.
+        unsafe { libc::printf(c"user file:%s.\n".as_ptr(), pointer(user)) };
+    }
+}

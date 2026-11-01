@@ -320,6 +320,74 @@ class ToolDiffTests(unittest.TestCase):
         # On a named cell the record decides; this one is not registered.
         self.assertEqual(tool_diff.verdict(case, side, side, self.root, 'bdb')[0], 'INVALID')
 
+    def class_b_record(self, case):
+        record = dict(schema=contract_policy.SCHEMA, record='compatibility-policy',
+                      status='current', disposition='POLICY-ACCEPTED', cases={case['id']:
+                          dict(classification='b', pin_not_run=contract_policy.side_entry(case['pin_not_run']))})
+        path = self.root / 'compatibility-policy.md'
+        path.write_text('# Registered class (b)\n\n```contract-diff-policy\n'
+                        + json.dumps(record) + '\n```\n')
+        return path, record
+
+    def test_registered_pin_not_run_binds_every_subject_byte_and_never_launches_pin(self):
+        expected = dict(exit=0, stdout='source-defined\n', stderr='', files={'out': 'hex:00'})
+        case = dict(id='safe', utility='test_table_info', policy_record='compatibility-policy.md',
+                    pin_not_run=expected)
+        self.class_b_record(case)
+        self.assertEqual(tool_diff.not_run_expected(case, self.root), expected)
+        with patch.object(tool_diff, 'observation', return_value=expected) as observe:
+            pin, subject = tool_diff.observe_sides(None, (Path('PIN-MUST-NOT-RUN'), Path('subject')),
+                case, self.root, {}, b'', 0, None)
+        observe.assert_called_once()
+        self.assertEqual(observe.call_args.args[1], Path('subject'))
+        self.assertIsNone(pin)
+        self.assertEqual(tool_diff.verdict(case, pin, subject, self.root, 'tkrzw')[0], 'POLICY-ACCEPTED')
+        for changed in (dict(expected, exit=2), dict(expected, stdout=''),
+                        dict(expected, stderr='unexpected'), dict(expected, files={'out': 'hex:01'})):
+            self.assertEqual(tool_diff.verdict(case, None, changed, self.root, 'tkrzw')[0], 'DIFFER')
+        self.assertEqual(tool_diff.verdict(case, expected, expected, self.root, 'tkrzw')[0], 'INVALID')
+        self.assertEqual(tool_diff.verdict(case, None, dict(expected, exit=-6), self.root, 'tkrzw')[0], 'INVALID')
+
+    def test_unregistered_pin_not_run_and_changed_declarations_are_refused(self):
+        expected = dict(exit=0, stdout='', stderr='', files={})
+        case = dict(id='safe', utility='test_table_info', policy_record='compatibility-policy.md',
+                    pin_not_run=expected)
+        self.class_b_record(case)
+        for changed in (dict(case, id='unregistered'), dict(case, policy_record='elsewhere.md'),
+                        dict(case, pin_not_run=dict(expected, stdout='invented'))):
+            self.assertEqual(tool_diff.verdict(changed, None, expected, self.root, 'tkrzw')[0], 'INVALID')
+        path, record = self.class_b_record(case)
+        record['cases']['safe']['classification'] = 'a'
+        path.write_text('```contract-diff-policy\n' + json.dumps(record) + '\n```\n')
+        self.assertEqual(tool_diff.verdict(case, None, expected, self.root, 'tkrzw')[0], 'INVALID')
+
+    def test_pin_not_run_does_not_admit_parity_records_or_pin_captures(self):
+        expected = dict(exit=0, stdout='', stderr='', files={})
+        with self.assertRaisesRegex(ValueError, 'difference, not parity'):
+            contract_policy.entry(expected, expected)
+        pair = dict(pin=contract_policy.side_entry(expected), subject=contract_policy.side_entry(expected),
+                    divergence=['claimed exception'])
+        with self.assertRaisesRegex(ValueError, 'difference, not parity'):
+            contract_policy.check_entry(pair)
+        case = dict(id='safe', policy_record='compatibility-policy.md', pin_not_run=expected)
+        path, record = self.class_b_record(case)
+        record['cases']['safe'] = pair
+        path.write_text('```contract-diff-policy\n' + json.dumps(record) + '\n```\n')
+        self.assertEqual(tool_diff.verdict(case, None, expected, self.root, 'tkrzw')[0], 'INVALID')
+
+    def test_pin_not_run_rejects_incomplete_or_masked_declarations(self):
+        expected = dict(exit=0, stdout='', stderr='', files={})
+        case = dict(id='safe', utility='test_table_info', source='table_info.cpp:406',
+                    policy_record='compatibility-policy.md', pin_not_run=expected)
+        path = self.root / 'case.json'
+        for changed in (dict(case, pin_not_run=True), dict(case, pin_not_run={}),
+                        dict(case, pin_signal=-6), dict(case, dbm_rows=['out']),
+                        dict(case, expected_failure={'exit': 2, 'stderr': 'failed'}),
+                        dict(case, policy_record='elsewhere.md')):
+            path.write_text(json.dumps(dict(schema=1, cases=[changed])))
+            with self.assertRaises(ValueError):
+                tool_diff.load_cases([path])
+
     def test_a_reproduced_abort_compares_without_a_policy_record(self):
         case = dict(id='abort', pin_signal=-6, reproduces_signal=True)
         side = dict(exit=-6, stdout='', stderr='assertion\n', files={})

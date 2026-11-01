@@ -1,0 +1,241 @@
+{
+  "schema": 1,
+  "cases": [
+    {
+      "id": "table-info-empty-tables",
+      "utility": "test_table_info",
+      "source": "tests/storage/test_table_info.cpp:26-99; src/storage/table_info.cpp:194-419 at 074a2219",
+      "cwd": "tests/storage",
+      "env": {
+        "LC_ALL": "C"
+      },
+      "files": {
+        "data/table.conf": {
+          "text": "binary format version:7\nmodel data version:14\nlambda parameter:0.5\nsource table format:pinyin\ndatabase format:Tkrzw\n"
+        }
+      }
+    },
+    {
+      "id": "table-info-all-row-types",
+      "utility": "test_table_info",
+      "source": "tests/storage/test_table_info.cpp:26-99; src/storage/table_info.cpp:194-419 at 074a2219",
+      "cwd": "tests/storage",
+      "env": {
+        "LC_ALL": "C"
+      },
+      "files": {
+        "data/table.conf": {
+          "text": "binary format version:7\nmodel data version:14\nlambda parameter:0.5\nsource table format:pinyin\ndatabase format:Tkrzw\ndefault GB_DICTIONARY gb.table gb.bin gb.dbin SYSTEM_FILE\ndefault USER_DICTIONARY NULL NULL user.bin USER_FILE\naddon 3 addon.table addon.bin NULL DICTIONARY\naddon 4 ignored.table ignored.bin ignored.user NOT_USED\n"
+        }
+      },
+      "args": [
+        "--help",
+        "ignored-file"
+      ],
+      "stdin": {
+        "text": "ignored\n"
+      }
+    },
+    {
+      "id": "table-info-null-names",
+      "utility": "test_table_info",
+      "source": "tests/storage/test_table_info.cpp:26-99; src/storage/table_info.cpp:194-419 at 074a2219",
+      "cwd": "tests/storage",
+      "env": {
+        "LC_ALL": "C"
+      },
+      "files": {
+        "data/table.conf": {
+          "text": "binary format version:7\nmodel data version:14\nlambda parameter:0.5\nsource table format:pinyin\ndatabase format:Tkrzw\ndefault GB_DICTIONARY NULL NULL NULL SYSTEM_FILE\naddon 2 NULL NULL NULL DICTIONARY\naddon 3 NULL NULL NULL USER_FILE\n"
+        }
+      }
+    },
+    {
+      "id": "table-info-overwritten-row",
+      "utility": "test_table_info",
+      "source": "tests/storage/test_table_info.cpp:26-99; src/storage/table_info.cpp:194-419 at 074a2219",
+      "cwd": "tests/storage",
+      "env": {
+        "LC_ALL": "C"
+      },
+      "files": {
+        "data/table.conf": {
+          "text": "binary format version:7\nmodel data version:14\nlambda parameter:0.37\nsource table format:zhuyin\ndatabase format:KyotoCabinet\naddon 15 old.table old.bin old.user SYSTEM_FILE\naddon 1 a.table a.bin NULL DICTIONARY\naddon 15 new.table new.bin NULL DICTIONARY\n"
+        }
+      }
+    },
+    {
+      "id": "table-info-missing-config",
+      "utility": "test_table_info",
+      "source": "tests/storage/test_table_info.cpp:26-99; src/storage/table_info.cpp:194-419 at 074a2219",
+      "cwd": "tests/storage",
+      "env": {
+        "LC_ALL": "C"
+      }
+    },
+    {
+      "id": "table-info-malformed-header",
+      "utility": "test_table_info",
+      "source": "tests/storage/test_table_info.cpp:26-99; src/storage/table_info.cpp:194-419 at 074a2219",
+      "cwd": "tests/storage",
+      "env": {
+        "LC_ALL": "C"
+      },
+      "files": {
+        "data/table.conf": {
+          "text": "binary format version:nope\n"
+        }
+      }
+    },
+    {
+      "id": "table-info-unknown-source",
+      "utility": "test_table_info",
+      "source": "tests/storage/test_table_info.cpp:26-99; src/storage/table_info.cpp:194-419 at 074a2219",
+      "cwd": "tests/storage",
+      "env": {
+        "LC_ALL": "C"
+      },
+      "files": {
+        "data/table.conf": {
+          "text": "binary format version:7\nmodel data version:14\nlambda parameter:0.5\nsource table format:unknown\ndatabase format:Tkrzw\n"
+        }
+      },
+      "pin_signal": -6,
+      "reproduces_signal": true
+    },
+    {
+      "id": "table-info-unknown-database",
+      "utility": "test_table_info",
+      "source": "tests/storage/test_table_info.cpp:26-99; src/storage/table_info.cpp:194-419 at 074a2219",
+      "cwd": "tests/storage",
+      "env": {
+        "LC_ALL": "C"
+      },
+      "files": {
+        "data/table.conf": {
+          "text": "binary format version:7\nmodel data version:14\nlambda parameter:0.5\nsource table format:pinyin\ndatabase format:unknown\n"
+        }
+      },
+      "pin_signal": -6,
+      "reproduces_signal": true
+    },
+    {
+      "id": "table-info-binary-zero",
+      "utility": "test_table_info",
+      "source": "tests/storage/test_table_info.cpp:26-99; src/storage/table_info.cpp:194-419 at 074a2219",
+      "cwd": "tests/storage",
+      "env": {
+        "LC_ALL": "C"
+      },
+      "files": {
+        "data/table.conf": {
+          "text": "binary format version:0\nmodel data version:14\nlambda parameter:0.5\nsource table format:pinyin\ndatabase format:Tkrzw\n"
+        }
+      }
+    },
+    {
+      "id": "table-info-model-zero",
+      "utility": "test_table_info",
+      "source": "tests/storage/test_table_info.cpp:26-99; src/storage/table_info.cpp:194-419 at 074a2219",
+      "cwd": "tests/storage",
+      "env": {
+        "LC_ALL": "C"
+      },
+      "files": {
+        "data/table.conf": {
+          "text": "binary format version:7\nmodel data version:0\nlambda parameter:0.5\nsource table format:pinyin\ndatabase format:BerkeleyDB\n"
+        }
+      }
+    },
+    {
+      "id": "table-info-negative-versions",
+      "utility": "test_table_info",
+      "source": "tests/storage/test_table_info.cpp:26-99; src/storage/table_info.cpp:194-419 at 074a2219",
+      "cwd": "tests/storage",
+      "env": {
+        "LC_ALL": "C"
+      },
+      "files": {
+        "data/table.conf": {
+          "text": "binary format version:-1\nmodel data version:-2\nlambda parameter:0.5\nsource table format:pinyin\ndatabase format:Tkrzw\n"
+        }
+      }
+    },
+    {
+      "id": "table-info-save-fails",
+      "utility": "test_table_info",
+      "source": "tests/storage/test_table_info.cpp:26-99; src/storage/table_info.cpp:194-419 at 074a2219",
+      "cwd": "tests/storage",
+      "env": {
+        "LC_ALL": "C"
+      },
+      "files": {
+        "data/table.conf": {
+          "text": "binary format version:7\nmodel data version:14\nlambda parameter:0.5\nsource table format:pinyin\ndatabase format:Tkrzw\n"
+        },
+        "tmp/user.conf/child": {
+          "text": "occupied"
+        }
+      },
+      "pin_signal": -6,
+      "reproduces_signal": true,
+      "policy_record": "eio-tool-check-messages.md"
+    },
+    {
+      "id": "table-info-zero-versions-pinyin",
+      "utility": "test_table_info",
+      "source": "tests/storage/test_table_info.cpp:26-99; src/storage/table_info.cpp:194-419 at 074a2219",
+      "cwd": "tests/storage",
+      "env": {
+        "LC_ALL": "C"
+      },
+      "files": {
+        "data/table.conf": {
+          "text": "binary format version:0\nmodel data version:0\nlambda parameter:0.5\nsource table format:pinyin\ndatabase format:Tkrzw\n"
+        }
+      },
+      "policy_record": "compatibility-policy.md",
+      "pin_not_run": {
+        "exit": 0,
+        "stdout": "lambda:0.500000\ndefault table index:0\nnot used.\ndefault table index:1\nnot used.\ndefault table index:2\nnot used.\ndefault table index:3\nnot used.\ndefault table index:4\nnot used.\ndefault table index:5\nnot used.\ndefault table index:6\nnot used.\ndefault table index:7\nnot used.\ndefault table index:8\nnot used.\ndefault table index:9\nnot used.\ndefault table index:10\nnot used.\ndefault table index:11\nnot used.\ndefault table index:12\nnot used.\ndefault table index:13\nnot used.\ndefault table index:14\nnot used.\ndefault table index:15\nnot used.\naddon table index:0\nnot used.\naddon table index:1\nnot used.\naddon table index:2\nnot used.\naddon table index:3\nnot used.\naddon table index:4\nnot used.\naddon table index:5\nnot used.\naddon table index:6\nnot used.\naddon table index:7\nnot used.\naddon table index:8\nnot used.\naddon table index:9\nnot used.\naddon table index:10\nnot used.\naddon table index:11\nnot used.\naddon table index:12\nnot used.\naddon table index:13\nnot used.\naddon table index:14\nnot used.\naddon table index:15\nnot used.\n",
+        "stderr": "",
+        "files": {
+          "data/": "directory",
+          "data/table.conf": "hex:62696e61727920666f726d61742076657273696f6e3a300a6d6f64656c20646174612076657273696f6e3a300a6c616d62646120706172616d657465723a302e350a736f75726365207461626c6520666f726d61743a70696e79696e0a646174616261736520666f726d61743a546b727a770a",
+          "tests/": "directory",
+          "tests/storage/": "directory",
+          "tmp/": "directory",
+          "tmp/user.conf": "hex:62696e61727920666f726d61742076657273696f6e3a300a6d6f64656c20646174612076657273696f6e3a300a646174616261736520666f726d61743a546b727a770a6f70656e20636f756e7465723a300a"
+        }
+      }
+    },
+    {
+      "id": "table-info-zero-versions-zhuyin",
+      "utility": "test_table_info",
+      "source": "tests/storage/test_table_info.cpp:26-99; src/storage/table_info.cpp:194-419 at 074a2219",
+      "cwd": "tests/storage",
+      "env": {
+        "LC_ALL": "C"
+      },
+      "files": {
+        "data/table.conf": {
+          "text": "binary format version:0\nmodel data version:0\nlambda parameter:0.5\nsource table format:zhuyin\ndatabase format:KyotoCabinet\n"
+        }
+      },
+      "policy_record": "compatibility-policy.md",
+      "pin_not_run": {
+        "exit": 0,
+        "stdout": "lambda:0.500000\ndefault table index:0\nnot used.\ndefault table index:1\nnot used.\ndefault table index:2\nnot used.\ndefault table index:3\nnot used.\ndefault table index:4\nnot used.\ndefault table index:5\nnot used.\ndefault table index:6\nnot used.\ndefault table index:7\nnot used.\ndefault table index:8\nnot used.\ndefault table index:9\nnot used.\ndefault table index:10\nnot used.\ndefault table index:11\nnot used.\ndefault table index:12\nnot used.\ndefault table index:13\nnot used.\ndefault table index:14\nnot used.\ndefault table index:15\nnot used.\naddon table index:0\nnot used.\naddon table index:1\nnot used.\naddon table index:2\nnot used.\naddon table index:3\nnot used.\naddon table index:4\nnot used.\naddon table index:5\nnot used.\naddon table index:6\nnot used.\naddon table index:7\nnot used.\naddon table index:8\nnot used.\naddon table index:9\nnot used.\naddon table index:10\nnot used.\naddon table index:11\nnot used.\naddon table index:12\nnot used.\naddon table index:13\nnot used.\naddon table index:14\nnot used.\naddon table index:15\nnot used.\n",
+        "stderr": "",
+        "files": {
+          "data/": "directory",
+          "data/table.conf": "hex:62696e61727920666f726d61742076657273696f6e3a300a6d6f64656c20646174612076657273696f6e3a300a6c616d62646120706172616d657465723a302e350a736f75726365207461626c6520666f726d61743a7a687579696e0a646174616261736520666f726d61743a4b796f746f436162696e65740a",
+          "tests/": "directory",
+          "tests/storage/": "directory",
+          "tmp/": "directory",
+          "tmp/user.conf": "hex:62696e61727920666f726d61742076657273696f6e3a300a6d6f64656c20646174612076657273696f6e3a300a646174616261736520666f726d61743a4b796f746f436162696e65740a6f70656e20636f756e7465723a300a"
+        }
+      }
+    }
+  ]
+}
