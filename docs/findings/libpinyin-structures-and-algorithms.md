@@ -167,12 +167,56 @@ pin's coupling while preserving its behaviour.
 | Phrase index edits | in place on the private mapping: `PhraseItem::add_pronunciation` (`storage/phrase_index.cpp:56`), `SubPhraseIndex::add_unigram_frequency` (`:150`) | journal MODIFY writes into a separate `PhraseContent` private mapping; `SystemItems` retains completed replay views and caches `ChunkItem`s on first use; later imports/training use those decoded items and saves rebuild the pin's chunk format | different / argued (journal replay, below) |
 | Facade phrase index | `FacadePhraseIndex` (`storage/phrase_index.h:438`): 16 `SubPhraseIndex*` and a running `m_total_freq` | `PhraseLibraries` (`oxpinyin-data/src/phrase_libraries.rs`): 16 lock-guarded slots; system total read from the chunk header, user total a separate row | different / unverified |
 | Pinyin key → tokens | `ChewingLargeTable2` per backend (`storage/chewing_large_table2_bdb.h:34` and peers): DBM keyed by packed `ChewingKey[len]`, values `PinyinIndexItem2` arrays (`storage/pinyin_phrase3.h:181`), per-length `ChewingTableEntry` objects with a reused buffer (`storage/chewing_large_table2.h:74`); results compressed to token ranges by `convert` (`:90`) | `ChewingTable` (`oxpinyin-data/src/chewing_table.rs`) over the same file and keys; each lookup decodes rows into a fresh `Vec`; range compression ported as `PhraseIndexRanges::convert` (`oxpinyin-core/src/lib.rs`) | different / unverified; one heap allocation per record per lookup where the pin reuses a buffer |
-| User pinyin table | the user DBM loaded into an in-memory DB (`storage/facade_chewing_table2.h:87`, `load_db`) and searched like the system table | `UserLookup` (`oxpinyin-user/src/lookup.rs`): text-keyed ordered maps plus an initials map, rebuilt in full when the phrase generation changes; the pin's file format is written back at save | different / unverified |
-| Phrase string → tokens | `PhraseLargeTable3` per backend; system `attach`, user `load_db` (`storage/facade_phrase_table3.h:81`, `:86`) | system: `PhraseTable` (`oxpinyin-data/src/phrase_table.rs`); exact user lookup: `UserStore::phrase_table_tokens_for_text` (`oxpinyin-user/src/store.rs`), with one queried row cached by `RuntimeDict::tokens_for_text` | different / argued (exact lookup, below); suggestions retain the user snapshot |
+| User pinyin table | the user DBM loaded into an in-memory DB (`storage/facade_chewing_table2.h:87`, `load_db`) and searched like the system table | `UserLookup` (`oxpinyin-user/src/lookup.rs`) borrows the session's canonical `UserIndex`; packed records and independent prefix markers remain in their arena/overlay, written back at save | different / argued (lookup ownership, below) |
+| Phrase string → tokens | `PhraseLargeTable3` per backend; system `attach`, user `load_db` (`storage/facade_phrase_table3.h:81`, `:86`) | system: `PhraseTable` (`oxpinyin-data/src/phrase_table.rs`); exact user lookup: `UserStore::phrase_table_tokens_for_text` (`oxpinyin-user/src/store.rs`), with one queried row cached by `RuntimeDict::tokens_for_text` | different / argued (exact lookup and lookup ownership, below) |
 | Bigram row | `SingleGram` (`storage/ngram.h:59`): `MemoryChunk` of `{u32 total}` then sorted `SingleGramItem {token, freq}` (`storage/ngram.cpp:31`) | free functions over the same bytes in `oxpinyin-core/src/single_gram.rs` (`lower_bound`, `insert_freq`, `mask_out`, `merge_single_gram`) | same / follows |
 | System bigram | `Bigram::attach` read-only on the DBM (`storage/ngram_bdb.h:88`), one `load` per row | `BigramTable::load_raw_successors` (`oxpinyin-data/src/bigram_table.rs`) | same / follows |
 | User bigram | `Bigram::load_db` into the backend's in-memory container (`storage/ngram_bdb.h:67`) | `UserBigramDb` (`oxpinyin-store/src/lib.rs`): the pin's container per backend through the real library | same / follows |
 | Training-only n-grams | `FlexibleSingleGram` / `FlexibleBigram` on a DBM, used by `utils/training` only | in-memory ordered maps in `oxpinyin-kmm/src/model.rs` | different / off path — training tools only; their outputs are rows in §8 |
+
+### User lookup ownership (#1515)
+
+`UserStore::lookup` borrows `Target::phrases` for a session. Each query locks
+that owner, uses the existing `UserIndex` or `UserPhraseTable` search, and
+releases the guard before returning. Matched text comes from the library arena
+through `PhraseItemView::phrase_text`; it is not cached for every token.
+`RuntimeDict` no longer holds a second set of tables. Both facade prediction
+paths acquire this borrowed view. Plain stores, which have no session tables,
+retain one generation-stamped derived index on the shared store; their
+previously empty prediction-table seam stays empty.
+
+The pin likewise searches its live user tables
+(`storage/facade_chewing_table2.h:109-129`,
+`storage/facade_phrase_table3.h:120-126,141-153` at 074a2219).
+`pinyin.cpp:1389-1422` searches each prefix suffix; `:2373-2405` walks
+suggestions and resolves their live items. The existing search methods keep
+record order, duplicates, empty markers and malformed-row refusals. Search
+side effects read the same canonical record under its guard; there is no
+callback that locks it again. Full token identity is preserved when resolving
+text, including rejection of high-bit aliases absent from the former text map.
+The in-tree callers do not consume an old snapshot's results after a write.
+
+Let N be live items, A the combined index/table bytes, R the stored readings,
+and Q the query's existing table-search cost. Previously a session rebuild
+cloned A, visited every item and reading (including membership checks), and
+constructed an N-entry text map. It needed at least Ω(A + N + R) time and
+O(A + N) additional storage, including text and decoded reading scratch.
+Acquisition/refresh is now O(1) time and space with no rebuild. Query loops
+and result allocations are unchanged. Resolving M matched texts costs
+O(M log N + output words) in the worst case: at most 16 libraries, then a
+dense slot read or sparse O(log N) slot lookup, constant-time item validation,
+and text decoding. The old text map cost O(M log N + copied text) instead.
+Stored text length is bounded by its u8 header (255 words); query length is
+bounded by MAX_PHRASE_LENGTH (16). Thus lookup time/space bounds do not worsen.
+
+Prediction removes the whole-table rebuild and retains Q and its output
+storage; suffix search runs at most 16 times and suggestion walks use the same
+raw-key merge and stable downstream ordering. Standalone refresh retains the
+previous derived-index algorithm, traverses phrase rows once instead of twice,
+and shares the result between store clones. Its bounds do not grow. The trade
+is on-demand text decoding plus a short phrase mutex guard instead of cached
+text clones; standalone derived data now stays on the store until refresh or
+its last handle drops. No performance question requires a measurement.
 
 Journal replay follows `SubPhraseIndex::merge` at 074a2219
 `storage/phrase_index.cpp:439-517`, called by `pinyin.cpp:250-276` and

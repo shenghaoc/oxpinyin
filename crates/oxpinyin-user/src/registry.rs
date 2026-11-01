@@ -76,6 +76,10 @@ pub struct StoreInner<S: WriteStore> {
     /// Decode-time count memo. Declared before `db` so it is dropped
     /// first (struct fields drop in declaration order).
     pub(crate) count_cache: Mutex<Option<CountCache>>,
+    /// Only plain stores derive a lookup. Session queries borrow their tables.
+    pub(crate) standalone_lookup:
+        Mutex<Option<(u64, std::sync::Arc<crate::lookup::StandaloneLookup>)>>,
+
     pub(crate) db: Mutex<crate::session_values::SessionValues<S>>,
     pub(crate) dirty: AtomicBool,
     /// Bumped after every committed user-data write transaction, which

@@ -372,9 +372,6 @@ fn chewing_query(syllables: &[SyllableKey]) -> Option<Vec<oxpinyin_core::Chewing
 
 // ── Merged backends ─────────────────────────────────────────────────────
 
-/// The generation-stamped user-phrase lookup cache shared by clones.
-type LookupCache = Arc<Mutex<Option<(u64, Arc<UserLookup>)>>>;
-
 /// One exact-text row. Its size follows the query and its matches.
 struct TextTokens {
     generation: u64,
@@ -452,7 +449,6 @@ impl FacadeBumps {
 pub struct RuntimeDict {
     system: Arc<SystemDictionary>,
     user: Option<UserStore>,
-    user_lookup_cache: LookupCache,
     text_lookup_cache: TextLookupCache,
     addons: Arc<RwLock<AddonSet>>,
     punct: Arc<PunctTable>,
@@ -485,7 +481,7 @@ impl RuntimeDict {
         };
         let user = self.user_lookup()?;
         #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
-        self.note_user_search(syllables, &user);
+        self.note_user_search(syllables);
         out.extend(user.lookup(syllables));
         // 074a2219 phrase_index.h:136-163 uses wrapping guint32 sums;
         // pinyin_lookup2.cpp:437-466 reads pronunciation possibility from
@@ -514,9 +510,9 @@ impl RuntimeDict {
     /// `ChewingLargeTable2::search` runs it: the table entry it leaves
     /// behind is what a later `mask_out` walk starts from (#785).
     #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
-    fn note_user_search(&self, syllables: &[SyllableKey], lookup: &UserLookup) {
+    fn note_user_search(&self, syllables: &[SyllableKey]) {
         if let Some(store) = self.user.as_ref() {
-            store.note_pinyin_search(|| chewing_query(syllables), || lookup.has_record(syllables));
+            store.note_pinyin_search(|| chewing_query(syllables));
         }
     }
 
@@ -679,20 +675,15 @@ impl RuntimeDict {
         Ok(Some(priced))
     }
 
-    fn user_lookup(&self) -> Result<Arc<UserLookup>, DictError> {
-        let Some(store) = self.user.as_ref() else {
-            return Ok(Arc::new(UserLookup::empty()));
-        };
-        let mut cache = self
-            .user_lookup_cache
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        UserLookup::refresh_in(&mut cache, store)
-            .map_err(|error| DictError::Parse(error.to_string()))?;
-        Ok(cache.as_ref().map_or_else(
-            || Arc::new(UserLookup::empty()),
-            |(_, lookup)| Arc::clone(lookup),
-        ))
+    fn user_lookup(&self) -> Result<UserLookup<'_>, DictError> {
+        self.user.as_ref().map_or_else(
+            || Ok(UserLookup::empty()),
+            |store| {
+                store
+                    .lookup()
+                    .map_err(|error| DictError::Parse(error.to_string()))
+            },
+        )
     }
 
     /// The underlying system table set, without the user overlay.
@@ -1288,10 +1279,7 @@ impl Dictionary for RuntimeDict {
         // The user table's search of this path (#785); the pin makes one
         // per `FacadeChewingTable2::search`, and a repeat is idempotent.
         #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
-        {
-            let user = self.user_lookup()?;
-            self.note_user_search(syllables, &user);
-        }
+        self.note_user_search(syllables);
         let loaded = |token: u32| self.token_ranged(token);
         self.system
             .trellis_ranges_with(syllables, tones, ranges, loaded)?;
@@ -1320,7 +1308,7 @@ impl Dictionary for RuntimeDict {
         self.user_trellis_ranges(&query, ranges)?;
         let user = self.user_lookup()?;
         #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
-        self.note_user_search(syllables, &user);
+        self.note_user_search(syllables);
         if system_extends {
             return Ok(true);
         }
@@ -1414,7 +1402,7 @@ impl Dictionary for RuntimeDict {
         #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
         {
             let user = self.user_lookup()?;
-            self.note_user_search(syllables, &user);
+            self.note_user_search(syllables);
             if system_extends {
                 return Ok(true);
             }
@@ -2188,7 +2176,6 @@ impl Runtime {
         let dict = RuntimeDict {
             system: Arc::new(dict),
             user: user.clone(),
-            user_lookup_cache: LookupCache::default(),
             text_lookup_cache: TextLookupCache::default(),
             addons: Arc::clone(&addons),
             punct: Arc::new(punct),
@@ -2722,11 +2709,10 @@ mod tests {
         let dict = runtime.dict();
         let phrase = "你鎄";
         assert!(dict.tokens_for_text(phrase).is_empty());
-        assert!(dict.user_lookup_cache.lock().unwrap().is_none());
 
-        // Keep an old snapshot alive. Exact-text queries must read current
-        // rows without refreshing this unrelated pronunciation index.
-        let snapshot = dict.user_lookup().unwrap();
+        // Keep a borrowed query handle alive across writes through another
+        // store handle. Exact-text queries still read their own live rows.
+        let lookup = dict.user_lookup().unwrap();
         let keys: Vec<_> = ["ni", "hao"]
             .into_iter()
             .map(|text| PinyinKey::try_from(SyllableKey::from_text(text).unwrap().index()).unwrap())
@@ -2736,6 +2722,17 @@ mod tests {
             .add_phrase(&oxpinyin_core::PhraseText::from(phrase), &keys, None)
             .unwrap();
         assert_eq!(dict.tokens_for_text(phrase), [PhraseToken::new(token)]);
+        let syllables = [
+            SyllableKey::from_text("ni").unwrap(),
+            SyllableKey::from_text("hao").unwrap(),
+        ];
+        assert!(
+            lookup
+                .lookup(&syllables)
+                .iter()
+                .any(|entry| entry.token().value() == token && entry.text() == phrase)
+        );
+        assert_eq!(lookup.phrase_text(token).unwrap(), phrase);
         let row_generation = store.phrase_table_generation();
         let row_tokens = dict
             .text_lookup_cache
@@ -2776,7 +2773,7 @@ mod tests {
         assert!(dict.tokens_for_text(phrase).is_empty());
 
         // Another session's store handle can write without touching this
-        // dictionary or its old lookup snapshot.
+        // dictionary or its query handle.
         let mut other = runtime.user_store().unwrap();
         let imported = other
             .add_phrase_in(7, &oxpinyin_core::PhraseText::from(phrase), &keys, Some(5))
@@ -2784,8 +2781,11 @@ mod tests {
         assert_eq!(dict.tokens_for_text(phrase), [PhraseToken::new(imported)]);
         other.mask_out(u32::MAX, imported).unwrap();
         assert!(dict.tokens_for_text(phrase).is_empty());
-        let cache = dict.user_lookup_cache.lock().unwrap();
-        assert!(Arc::ptr_eq(&snapshot, &cache.as_ref().unwrap().1));
+        assert!(
+            lookup
+                .tokens_for_ucs4(&phrase.chars().map(u32::from).collect::<Vec<_>>())
+                .is_empty()
+        );
     }
 
     #[test]
