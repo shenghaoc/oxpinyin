@@ -15,8 +15,7 @@ where
     /// character (`0x21..=0x7E`). Non-`a-z`/`'` bytes stay in the raw buffer so
     /// the decoder sees the same junk-bearing strings the oracle fixture
     /// carries; the segment graph stops at those bytes as hard boundaries.
-    /// Space and non-ASCII are skipped. Typing past [`MAX_INPUT_BYTES`] stops
-    /// accepting further characters.
+    /// Space and non-ASCII are skipped.
     ///
     /// # Errors
     ///
@@ -28,12 +27,10 @@ where
             if !is_batch_input_character(character) {
                 continue;
             }
-            // `try_push` exits exact mode on each accepted character and
-            // stops at the cap; ignored input never reaches it, so a batch
-            // that changes nothing leaves an exact composition alone.
-            if !self.input.try_push(character) {
-                break;
-            }
+            // `push` exits exact mode on each accepted character; ignored
+            // input never reaches it, so a batch that changes nothing leaves
+            // an exact composition alone.
+            self.input.push(character);
         }
         if self.input.len() == before {
             return Ok(KeyOutcome::Ignored);

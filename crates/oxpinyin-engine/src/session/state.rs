@@ -259,9 +259,8 @@ where
     /// graph is one [`EdgeKind::Exact`] chain, so the pinyin inventory
     /// never re-segments the joined spelling (upstream's decoder receives
     /// the scheme parser's `ChewingKey`s the same way). Segments are
-    /// absolute over `text`; spans outside the accepted prefix of
-    /// `text` (the [`MAX_INPUT_BYTES`] clamp) are dropped, keeping
-    /// `end <= raw.len()` an invariant of the stored segments.
+    /// absolute over `text`; spans reaching past its end are dropped,
+    /// keeping `end <= raw.len()` an invariant of the stored segments.
     ///
     /// Constraints survive every replacement; a discontinuous one
     /// reconciles only the selection record, as in [`Session::replace_raw`].
@@ -288,7 +287,8 @@ where
     /// canonical spelling. Unlike the double/zhuyin exact seam, full-pinyin
     /// resplit and divided matrix processing remains enabled (pin 074a2219,
     /// `pinyin.cpp:1497-1525`). Inserted apostrophes are formatting separators.
-    /// Segments use byte offsets in `text` and are clamped to the input cap.
+    /// Segments use byte offsets in `text`; a segment reaching past its end
+    /// is dropped.
     ///
     /// # Errors
     /// Returns [`EngineError`] if refreshing the new input fails.

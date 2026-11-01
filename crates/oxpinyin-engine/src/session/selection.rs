@@ -665,8 +665,8 @@ where
     /// # Errors
     ///
     /// Returns [`EngineError::Graph`] when the raw buffer cannot be built
-    /// into a segment graph (an over-long input; the buffer is capped by
-    /// [`MAX_INPUT_BYTES`]).
+    /// into a segment graph (an input past
+    /// [`MAX_GRAPH_POSITION`](oxpinyin_core::graph::MAX_GRAPH_POSITION)).
     pub fn composition_keys(&self) -> Result<Vec<SyllableKey>, EngineError> {
         let graph = self.build_graph_at(0, self.input.as_bytes())?;
         Ok(graph

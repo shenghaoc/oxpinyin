@@ -21,18 +21,6 @@ use crate::candidate::{Candidate, CandidateKind, CandidateList};
 use crate::config::ConfigSource;
 use crate::error::EngineError;
 
-/// Largest raw input a session accepts, in bytes.
-///
-/// The pin's parser keeps its progress in `gint16`s (`parsed_len`,
-/// `m_last_step`, `pinyin_parser2.cpp:333`), so no parse consumes more than
-/// `i16::MAX` bytes: `ni` repeated 65537 times consumes 32767. The session
-/// accepts exactly that much. Typing past it is reported as
-/// [`KeyOutcome::Ignored`]: refusing more input is a state, not a failure.
-///
-/// The fuzz targets keep their own, shorter input length; the cap is not what
-/// they exercise.
-pub const MAX_INPUT_BYTES: usize = 32_767;
-
 /// Configuration key for whether initial-only keys are admitted.
 const KEY_INCOMPLETE: &str = "incomplete-pinyin";
 
@@ -161,8 +149,10 @@ pub struct Session<D, L> {
     // Each groups the fields that move together, so an operation cannot
     // reach state that is not meaningful for it — the input buffer without
     // the cursor, the scan scratch without the selection record.
-    /// The raw input and its pre-parsed scheme chain — the [`MAX_INPUT_BYTES`]
-    /// cap and the exact-mode invariants.
+    /// The raw input and its pre-parsed scheme chain — the exact-mode
+    /// invariants. The input has no length limit: the pin's 32767-byte
+    /// `gint16` parse bound is a language artefact
+    /// (`docs/findings/1501-gint16-input-cap.md`).
     input: InputBuffer,
     /// What the user has chosen so far: text, cursor, token history, and
     /// the commit-branch flag, kept mutually consistent.

@@ -104,7 +104,7 @@ use oxpinyin_testsupport::{
     FixtureDictionary, FixtureError, FixtureLanguageModel, FrequencyFixtureModel,
 };
 
-use super::{KeyOutcome, MAX_INPUT_BYTES, Selection, Session};
+use super::{KeyOutcome, Selection, Session};
 use crate::config::EmptyConfigSource;
 use crate::error::{EngineError, TrainingSpanFault};
 
@@ -289,21 +289,50 @@ fn backspace_undoes_a_selection_before_reporting_nothing_to_do() {
 }
 
 #[test]
-fn a_full_buffer_ignores_further_input() {
-    // Apostrophes on purpose: they fill the buffer without building a
-    // decodable graph, so this measures the bound and not the decoder. The
-    // buffer is filled in one replace: typing 32767 keys one at a time
-    // re-reads the buffer after each.
+fn input_past_the_pins_gint16_bound_is_kept_and_parsed_whole() {
+    // The pin's full-pinyin parse stops at byte 32767 (`gint16` steps), a
+    // language artefact the session does not reproduce
+    // (`docs/findings/1501-gint16-input-cap.md`). Apostrophes on purpose:
+    // they are consumed without building a decodable graph, so this
+    // measures the buffer and the parse length, not the decoder.
     let mut session = session();
-    session
-        .replace_raw(&"'".repeat(MAX_INPUT_BYTES + 1))
-        .expect("no failure");
-    assert_eq!(session.raw_input().len(), MAX_INPUT_BYTES, "clamped");
+    let long = "'".repeat(65_537);
+    session.replace_raw(&long).expect("no failure");
+    assert_eq!(session.raw_input(), long);
+    assert_eq!(session.full_parsed_len(), 65_537);
     assert_eq!(
         session.type_pinyin("'").expect("no failure"),
-        KeyOutcome::Ignored
+        KeyOutcome::Consumed
     );
-    assert_eq!(session.raw_input().len(), MAX_INPUT_BYTES);
+    assert_eq!(session.raw_input().len(), 65_538);
+    assert_eq!(session.full_parsed_len(), 65_538);
+}
+
+#[test]
+fn candidates_come_from_keys_past_the_pins_gint16_bound() {
+    use super::CandidateKind;
+
+    // End to end past byte 32767: `ni` repeated to 33000 bytes parses
+    // whole, and the window at a syllable start past the pin's `gint16`
+    // bound (32768, and the last key at 32998) offers the vocabulary's
+    // `ni` row (`docs/findings/1501-gint16-input-cap.md`).
+    let mut session = train_session();
+    session
+        .replace_raw(&"ni".repeat(16_500))
+        .expect("no failure");
+    assert_eq!(session.full_parsed_len(), 33_000);
+    for offset in [32_768, 32_998] {
+        let window = session
+            .candidates_at(offset)
+            .expect("a syllable start is in range");
+        assert!(
+            window.iter().any(|candidate| {
+                candidate.kind() != CandidateKind::Fallback
+                    && candidate.token() == Some(PhraseToken::new(1))
+            }),
+            "offset {offset}: the ni row"
+        );
+    }
 }
 
 /// §9's authored vocabulary: a one-key phrase with a two-key extension,
@@ -4131,7 +4160,7 @@ fn parser_graph_is_invalidated_by_input_exact_chain_and_options() {
     ));
     session.replace_raw("ni").expect("raw replacement");
     assert_eq!(session.full_parsed_len(), 2);
-    assert!(session.input.try_push('h'));
+    session.input.push('h');
     assert!(session.input.graph.get().is_none());
     session.refresh().expect("push refresh");
     session.input.pop();

@@ -681,8 +681,11 @@ then names each part.
 ### Checked and excluded
 
 - The input caps `oxpinyin_engine::session::MAX_INPUT_BYTES` (the pin's
-  32,767-byte parse) and `oxpinyin_core::graph::MAX_GRAPH_INPUT`: a limit
-  is product behaviour (limb 4) and the second is oxpinyin's own refusal.
+  32,767-byte parse) and `oxpinyin_core::graph::MAX_GRAPH_INPUT`: removed
+  2026-11-01 UTC (#1501). The 32,767-byte stop is the width of the pin's
+  `gint16` parse steps, a language artefact
+  ([1501-gint16-input-cap](1501-gint16-input-cap.md)), and the 65,535-byte
+  refusal was oxpinyin's own.
 - Byte-order key comparison in `oxpinyin-store` and `PhraseItem` byte
   equality in `oxpinyin-user/src/replay.rs`: the backend's and the chunk
   format's own orders.
