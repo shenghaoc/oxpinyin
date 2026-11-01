@@ -163,6 +163,11 @@ impl BdbUnopenedHandle {
         let _ = self.db.put(key, value);
     }
 
+    /// `m_db->del(...)`: libdb prints `BDB1565`.
+    pub fn del(&self, key: &[u8]) -> bool {
+        self.db.del(key).is_ok()
+    }
+
     /// `m_db->cursor(...)`: libdb prints `BDB1565`.
     pub fn cursor(&self) {
         let _ = self.db.cursor_handle();
@@ -197,6 +202,14 @@ impl BdbStore {
     /// the many `write` closures share one copy of it.
     #[inline(never)]
     fn commit(&self, buffer: BTreeMap<Vec<u8>, Option<Vec<u8>>>) -> Result<(), StoreError> {
+        self.commit_with(buffer, true)
+    }
+
+    fn commit_with(
+        &self,
+        buffer: BTreeMap<Vec<u8>, Option<Vec<u8>>>,
+        sync: bool,
+    ) -> Result<(), StoreError> {
         for (key, value) in buffer {
             match value {
                 Some(value) => self.db.put(&key, &value)?,
@@ -212,7 +225,10 @@ impl BdbStore {
         // them. `DB->sync` is the only flush available here and it goes
         // all the way to the device, so this commit exceeds the seam's
         // floor; see `WriteStore::write`'s durability note.
-        self.db.sync()
+        if sync {
+            self.db.sync()?;
+        }
+        Ok(())
     }
 
     /// Walks `table`'s rows in ascending key order, within `[lo, hi]`,
@@ -458,6 +474,16 @@ impl RawReadStore for BdbStore {
         self.db.get(key, value)
     }
 
+    fn get_raw_partial(
+        &self,
+        key: &[u8],
+        offset: u32,
+        length: u32,
+        value: &mut Vec<u8>,
+    ) -> Result<bool, StoreError> {
+        self.db.get_partial(key, offset, length, value)
+    }
+
     fn contains_raw(&self, key: &[u8]) -> Result<bool, StoreError> {
         self.db.exists(key)
     }
@@ -577,6 +603,26 @@ impl WriteStore for BdbStore {
         Ok(out)
     }
 
+    fn write_deferred<R>(
+        &self,
+        f: impl FnOnce(&mut Self::Txn<'_>) -> Result<R, StoreError>,
+    ) -> Result<R, StoreError> {
+        if self.db.is_read_only() {
+            return Err(StoreError::ReadOnly);
+        }
+        let mut txn = BdbTxn {
+            store: self,
+            buffer: BTreeMap::new(),
+        };
+        let out = f(&mut txn)?;
+        self.commit_with(txn.buffer, false)?;
+        Ok(out)
+    }
+
+    fn flush(&self) -> Result<(), StoreError> {
+        self.db.sync()
+    }
+
     fn compact(&mut self) -> Result<(), StoreError> {
         if self.db.is_read_only() {
             return Err(StoreError::ReadOnly);
@@ -629,6 +675,13 @@ impl WriteTxn for BdbTxn<'_> {
     #[inline(never)]
     fn put_raw(&mut self, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
         self.buffer.insert(key.to_vec(), Some(value.to_vec()));
+        Ok(())
+    }
+
+    /// The removal half of [`WriteTxn::put_raw`]: a bare key, no framing.
+    #[inline(never)]
+    fn remove_raw(&mut self, key: &[u8]) -> Result<(), StoreError> {
+        self.buffer.insert(key.to_vec(), None);
         Ok(())
     }
 

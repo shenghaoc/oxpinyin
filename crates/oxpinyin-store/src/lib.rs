@@ -283,6 +283,21 @@ pub trait WriteTxn {
         self.put(RAW_TABLE, key, value)
     }
 
+    /// Remove a raw (unframed) `key` — the write half of
+    /// [`RawReadStore::get_raw`] and the removal counterpart of
+    /// [`WriteTxn::put_raw`]. No-op when the key is absent.
+    ///
+    /// Backends with a flat keyspace override this to delete the file's
+    /// bare key; a backend without one delegates to the well-known
+    /// [`RAW_TABLE`], the same delegation the raw reads and writes use.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the backend write fails.
+    fn remove_raw(&mut self, key: &[u8]) -> Result<(), StoreError> {
+        self.remove(RAW_TABLE, key)
+    }
+
     /// Remove `key` from `table` (no-op if absent).
     ///
     /// # Errors
@@ -684,6 +699,30 @@ pub trait WriteStore: ReadStore {
         f: impl FnOnce(&mut Self::Txn<'_>) -> Result<R, StoreError>,
     ) -> Result<R, StoreError>;
 
+    /// [`WriteStore::write`] without the backend's end-of-commit flush.
+    /// The default is `write` itself; Berkeley DB uses it for the KMM
+    /// training container, whose pin writes every record and syncs once
+    /// on close (`flexible_ngram_bdb.h:51-57`, `:198-214`).
+    ///
+    /// # Errors
+    ///
+    /// As [`WriteStore::write`].
+    fn write_deferred<R>(
+        &self,
+        f: impl FnOnce(&mut Self::Txn<'_>) -> Result<R, StoreError>,
+    ) -> Result<R, StoreError> {
+        self.write(f)
+    }
+
+    /// Flushes a store written through [`WriteStore::write_deferred`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the flush fails.
+    fn flush(&self) -> Result<(), StoreError> {
+        Ok(())
+    }
+
     /// Perform backend-dependent compaction work, and put the store on
     /// **stable storage**.
     ///
@@ -728,6 +767,36 @@ pub trait RawReadStore: ReadStore {
     ///
     /// Returns [`StoreError`] when the backend read fails.
     fn get_raw(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError>;
+
+    /// Reads at most `length` value bytes at `offset`. The default copies
+    /// the whole value and slices it; Berkeley DB overrides it with the
+    /// pin's `DB_DBT_PARTIAL` read, which never copies the rest of a
+    /// record.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the backend read fails.
+    fn get_raw_partial(
+        &self,
+        key: &[u8],
+        offset: u32,
+        length: u32,
+        value: &mut Vec<u8>,
+    ) -> Result<bool, StoreError> {
+        let mut whole = Vec::new();
+        if !self.get_raw(key, &mut whole)? {
+            return Ok(false);
+        }
+        let start = usize::try_from(offset)
+            .unwrap_or(usize::MAX)
+            .min(whole.len());
+        let end = start
+            .saturating_add(usize::try_from(length).unwrap_or(usize::MAX))
+            .min(whole.len());
+        value.clear();
+        value.extend_from_slice(&whole[start..end]);
+        Ok(true)
+    }
 
     /// Read a raw bigram row the way libpinyin's `Bigram::load` does: a
     /// size check followed by the body read. The default is one
@@ -1145,6 +1214,12 @@ pub use bdb::{
 pub mod kyotocabinet;
 #[cfg(feature = "kyotocabinet")]
 pub use kyotocabinet::{KcStore, KcTxn, KcUserBigramDb};
+
+mod flexible_ngram;
+pub use flexible_ngram::{
+    ArrayItemWithToken, DefaultFlexibleBigram, FixedRecord, FlexibleBigram, FlexibleGramSpec,
+    MAGIC_KEY, SingleGram, SpecGram,
+};
 
 // ── tests ──────────────────────────────────────────────────────────
 

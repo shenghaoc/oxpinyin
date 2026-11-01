@@ -276,6 +276,16 @@ impl SharedDb {
         self.lock().get(key, value)
     }
 
+    pub(crate) fn get_partial(
+        &self,
+        key: &[u8],
+        offset: u32,
+        length: u32,
+        value: &mut Vec<u8>,
+    ) -> Result<bool, StoreError> {
+        self.lock().get_partial(key, offset, length, value)
+    }
+
     pub(crate) fn exists(&self, key: &[u8]) -> Result<bool, StoreError> {
         self.lock().exists(key)
     }
@@ -622,6 +632,45 @@ impl Db {
             return Ok(false);
         }
         check(code, "DB->exists")?;
+        Ok(true)
+    }
+
+    /// `DB->get` with `DB_DBT_PARTIAL`: copy at most `length` bytes at
+    /// `offset` into `buf`, the pin's header read
+    /// (`flexible_ngram_bdb.h:309-326`, `:379-389`).
+    pub(crate) fn get_partial(
+        &self,
+        key: &[u8],
+        offset: u32,
+        length: u32,
+        buf: &mut Vec<u8>,
+    ) -> Result<bool, StoreError> {
+        let get = method!(self.handle, get, "DB->get")?;
+        let mut key_dbt = dbt_from(key)?;
+        let mut value_dbt = empty_dbt();
+        value_dbt.flags = sys::DB_DBT_PARTIAL | sys::DB_DBT_USERMEM;
+        value_dbt.doff = offset;
+        value_dbt.dlen = length;
+        buf.clear();
+        buf.resize(length as usize, 0);
+        value_dbt.data = buf.as_mut_ptr().cast();
+        value_dbt.ulen = length;
+        // SAFETY: both `DBT`s are live locals, `key` and `buf` outlive the
+        // call; libdb writes at most `length` bytes into `buf`.
+        let code = unsafe {
+            get(
+                self.handle,
+                ptr::null_mut(),
+                &raw mut key_dbt,
+                &raw mut value_dbt,
+                0,
+            )
+        };
+        if code == sys::DB_NOTFOUND {
+            return Ok(false);
+        }
+        check(code, "DB->get")?;
+        buf.truncate(value_dbt.size as usize);
         Ok(true)
     }
 
