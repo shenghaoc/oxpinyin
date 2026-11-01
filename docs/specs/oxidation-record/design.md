@@ -40,7 +40,7 @@ Move a structurally different row from "unverified" to "argued" with a short arg
 State the pin's output-reaching guarantees, such as orders, tie rules and product quirks.
 Record language artefacts instead of reproducing them.
 Explain how oxpinyin preserves the guarantees.
-Compare both implementations' time and space complexity.
+Compare both implementations' source-derived time and space complexity ([controlling rule](../../source-policy.md#controlling-rule)).
 Put arguments longer than a paragraph in a separate finding linked from the row.
 
 ## The distance tie-break

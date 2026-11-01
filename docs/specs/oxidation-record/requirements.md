@@ -3,6 +3,9 @@
 Amended 2026-10-18 UTC: Requirement 6 uses Constitution §2's binary-size
 recording rule separately from runtime time/space comparisons.
 
+Amended 2026-11-01 UTC: Requirement 6 makes source-derived complexity the
+default performance evidence and measurement the exception.
+
 ## Introduction
 
 The [source policy](../../source-policy.md) states the method ruled on 2026-10-16 UTC.
@@ -91,23 +94,29 @@ Keep C-shaped code only where behaviour depends on it.
 2. Write new code idiomatically when behaviour does not depend on the shape.
    Rewrite existing such code as internal work without observable changes.
 
-### Requirement 6: Performance gaps try the pin's algorithm first
+### Requirement 6: Complexity evidence, with measurement as the exception
 
-Try the pin's algorithm idiomatically before other responses to a measured performance gap.
+A change that alters an algorithm, a data structure, allocation behaviour or an input bound gives a short complexity argument derived from the source ([controlling rule](../../source-policy.md#controlling-rule)).
+Measurement is the exception.
 
 #### Acceptance Criteria
 
-1. First measure the pin's structure or algorithm in idiomatic Rust when an operation is measurably slower or larger.
-   Compare it with base and pin in one run.
-2. Measure each candidate's time and peak resident memory, with repetitions in that run.
-   Report stripped shipping-library sizes under constitution §2.
-   Take them from the `shipping-sizes` CI job summary.
-   Report increases over base in the PR.
-   Insignificant decreases need no mention.
-3. Keep a version that is not worse than the pin in both runtime time and space (Requirement 3.2).
+1. Derive time and peak auxiliary-space bounds from the source.
+   Name the input dimensions and constant bounds, and bound the loops, recursion, collection operations, allocations and relevant callees.
+   Distinguish worst-case, amortised and expected bounds, and state assumptions about external libraries.
+   Compare with the previous code, and with the pin where the two do comparable work.
+   Say so when the source does not establish a bound; do not present an estimate as a proof.
+2. Measure only for a concrete unresolved question that affects a decision.
+   Name the question, the arms and inputs relevant to it, and the decision rule before measuring.
+   Follow the [controlling rule](../../source-policy.md#controlling-rule).
+   New measurement tooling, drivers or instrumentation need the maintainer's approval.
+3. When a measurement compares arms, run the arms relevant to the question in one run on one host.
+4. Shipping-library size reporting follows constitution §2, independently of performance measurements.
+5. Keep a version that is not worse than the pin in both runtime time and space (Requirement 3.2).
    Binary size per PR is outside that complexity trade.
    Justify the choice on runtime time and memory, not speed alone.
    Prefer idiomatic Rust on a tie.
+6. For a source-derived or measured performance gap, try the pin's structure or algorithm in idiomatic Rust first.
 
 ### Requirement 7: The library's operations are the Rust surface
 

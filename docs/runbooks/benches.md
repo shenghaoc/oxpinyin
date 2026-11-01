@@ -1,11 +1,19 @@
 # Benches — criterion, the perf baseline, the RSS diagnosis, and profiles
 
-Four tiers, none run by CI (`verify-nightly` has no perf lane): the
-criterion benches for a component, the C-ABI perf baseline against the
-oracle, the RSS diagnosis that decomposes a resident set rather than
-sizing it, and a sampled profile of the keystroke cycle. Numbers are only
-comparable within one container on one host; every published snapshot
-(`docs/perf/`, `docs/findings/perf-*.md`) names both.
+Four tiers, none a per-change gate: the criterion benches for a component,
+the C-ABI perf baseline against the oracle, the RSS diagnosis that
+decomposes a resident set rather than sizing it, and a sampled profile of
+the keystroke cycle. The separate nightly `perf-snapshot` series records one
+tree sample and does not gate merges. Numbers are only comparable within one
+container on one host; every published snapshot (`docs/perf/`,
+`docs/findings/perf-*.md`) names both.
+
+Performance evidence follows the [controlling rule](../source-policy.md#controlling-rule).
+The recipes below are existing tools, not required counts: a number they state
+for samples, rounds, repetitions, arms or passes is that recipe's default.
+Callgrind and Massif are attribution tools: a section that uses them is an
+attribution procedure, used only after a cheaper measurement shows a gap,
+once, on the operation that shows it.
 
 ## Shipping measurement inputs
 
@@ -40,7 +48,7 @@ because a timed or resident-set sample belongs to its arm only if nothing runs
 beside it. The builds are not samples: `shipped-check` and `tree-recipe-control`
 build their independent artifacts as units of one admitted pool.
 
-### Base, PR and pin steady lookup comparison
+### Steady lookup comparison
 
 `steady-comparison` uses the existing `bisect --perf` workload and worker.
 It compares supplied shipping libraries in one job on one Linux host,
@@ -1258,8 +1266,9 @@ PY
 
 The phrase workload imports all 10,000 rows, saves once, then exports the
 touched library (library 1: 95,698 rows). Use a fresh empty `USER_DIR` for
-**every** command and repeat each pin/subject command three times. Take the
-median of whole-process Callgrind `Ir` and of Massif's maximum
+**every** command. Repeat each pin/subject command as often as the decision
+requires. For an instruction or heap attribution, take the median of
+whole-process Callgrind `Ir` and of Massif's maximum
 `mem_heap_B`; report spread as `(max − min) / median`. The Massif value
 excludes stacks, allocator overhead, and file mappings. Check output
 equivalence and operation counts before comparing costs. Keep profiler
@@ -1545,25 +1554,30 @@ state the conclusion, final measurements and reproduction commands. Include
 the revisions, workload, backend, build recipe, host/container and controls
 needed to interpret the comparison. One invocation may reproduce a whole
 table. Link existing setup procedures; a separate findings file is optional.
+A change that alters an algorithm, a data structure, allocation behaviour or
+an input bound states its source-derived complexity argument
+([source policy](../source-policy.md#complexity-evidence)).
 A change that trades time for space or the reverse must say so and justify
-it ([source policy](../source-policy.md)). Historical reports are examples of results,
+it ([source policy](../source-policy.md#performance-standard)).
+Historical reports are examples of results,
 not templates requiring their full provenance sections to be copied.
 
-### Measure base, PR and pin in one run
+### Measure compared arms in one run
 
 **A measurement is the ratio of artifacts timed in the same job on the same
-machine, never a number carried over from another run.** A measuring PR
-builds the base tree, the PR tree and the pin-built oracle, runs all three
-in one job on one machine (same CPU, same data), **interleaving** the base,
-PR and pin artifacts run by run, and reports only those figures and the
-ratios between them. Interleaving all three is a requirement of the
-measurement, not a property of `just measure perf-same-data`,
+machine, never a number carried over from another run.** It answers the
+[controlling rule](../source-policy.md#controlling-rule)'s concrete question
+with the arms and inputs relevant to it. When the question compares arms,
+build and run them in one job on one machine (same CPU, same data),
+**interleaving** them run by run, and report only those figures and the
+ratios between them. Interleaving the arms is the existing method when the
+question compares them, not a property of `just measure perf-same-data`,
 which interleaves two pin-built backends and two artifacts of the current
-tree and does not run a base artifact. If the needed base/PR/pin selection is
-missing, extend the maintained in-tree tooling and its `just` entry point;
-do not supply an out-of-tree measurement controller.
+tree and does not run a base artifact.
+New measurement tooling needs the maintainer's approval.
+Do not supply an out-of-tree measurement controller.
 No absolute figure from an earlier run, another host or another CPU is a
-baseline: callgrind `Ir` and wall time both move with the CPU (glibc picks
+baseline: Callgrind `Ir` and wall time both move with the CPU (glibc picks
 `memcpy` and friends at run time), so a baseline taken elsewhere cannot be
 compared with a PR measured here. Earlier snapshots in this repository
 remain records of what was measured where; they are not baselines to
@@ -1571,9 +1585,9 @@ subtract from. The pin comes from the reproducible oracle
 (`docs/runbooks/oracle.md`, section 2a), so the pin's hash is the same on
 every machine.
 
-### State the Valgrind version
+### State the Valgrind version when used
 
-Every measurement report states the Valgrind version it used, as printed by
+A report that uses Callgrind or Massif states the Valgrind version it used, as printed by
 `valgrind --version`, next to the figures. Callgrind `Ir` and Massif heap
 peaks move with the Valgrind release as well as the CPU, so a report
 without the version cannot be compared with another run. Normal cloud
@@ -1596,9 +1610,11 @@ contributions.
 
 Identify each timed subject by revision, backend and build recipe, including
 the profile and relevant flags. A maintained recipe and its arguments can
-provide the build command; do not duplicate it for every figure. Report
-shipping-library sizes when applicable under [constitution §2](../constitution.md).
-Take them from the `shipping-sizes` CI job summary; see [shipping-library sizes](../packaging.md#shipping-library-sizes).
+provide the build command; do not duplicate it for every figure.
+
+Shipping-library size reporting follows [constitution §2](../constitution.md),
+independently of any measurement.
+
 Hashes and loaded-library checks needed by the tools remain tool-internal
 checks; a report needs the results and reproduction recipe, not a checklist
 of their verdicts, checksum manifest or full `NEEDED` inventory. Include a
@@ -1691,7 +1707,7 @@ The fixture, frequencies and observation fields stay the same. Every
 sample must pass the existing strict verdict predicate. Attempt counts
 must agree. A crash, missing result or changed observation fails the run.
 
-Wall time is the median of three interleaved rounds per side and facade.
+The recipe's default is three interleaved rounds per side and facade.
 Each round has a fresh process and user directory. The side order rotates.
 Native timestamps bracket the function-pointer call. Python work, fixture
 setup and teardown are outside that interval. Results use ns/call and

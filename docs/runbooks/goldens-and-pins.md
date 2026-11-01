@@ -57,6 +57,6 @@ model SHA-256, DBM) are one identity; change every field together. The
    rebuilt pin (issue #537).
 
 Re-run the pins after any rebase that touches engine, capi or data
-([rebase procedure](../../CONTRIBUTING.md#checkpoints-and-rebases)); whoever merges later re-measures.
+([rebase procedure](../../CONTRIBUTING.md#checkpoints-and-rebases)); whoever merges later re-runs them.
 
 2026-09-27: #612 corrects oxpinyin-generated `RECORDS_GOLDEN`’s `.dbin` MODIFY token from `0x01000001` to local slot `0x00000001`; pin `074a2219` (`phrase_index.cpp:394–442`) reproduces all 62 payload bytes with only offset 25 changing `01` → `00` (maintainer-approved).

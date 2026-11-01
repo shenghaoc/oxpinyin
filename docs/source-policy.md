@@ -56,10 +56,20 @@ Never sweep, tune or fit a coefficient to make outputs match.
 
 ### Internal implementation and performance
 
+**Maintainer decision 2026-11-01 UTC.** Source-derived complexity is the default performance evidence.
+Routine performance-measurement campaigns are not required.
+
+#### Controlling rule
+
+**Performance evidence:** read the source and argue the complexity first.
+Measure only for a concrete unresolved question that affects a decision.
+Before measuring, name the question, the arms and inputs relevant to it, and the decision rule.
+Use the cheapest sufficient measurement: wall time and peak RSS at full speed.
+Use Callgrind or Massif only to attribute a gap a cheaper measurement has already shown, once, on the operation that shows it.
+Stop as soon as the answer cannot change the decision.
+No fixed number of arms, samples, repetitions, profiles or instrumentation passes is required.
+
 Preserve external interface behaviour.
-Do not worsen time and space complexity together.
-A regression in one requires a gain in the other.
-Minimize the regression and justify the trade in the change's report.
 Binary size per PR is not complexity: a change can be split into arbitrarily small PRs.
 Apply [constitution §2](constitution.md) to binary size separately.
 The target is a smaller binary, faster execution and much lower RAM than libpinyin.
@@ -73,19 +83,52 @@ They can add copies or unsafe code and reduce compiler and standard-library bene
 Record internal language-artefact differences instead of imitating them.
 On Linux, use the pin's external I/O call unless source proves a Rust equivalent for every input ([platform scope](#platform-scope-of-pinned-behaviour)).
 
-When an operation is measurably slower or larger than the pin:
+#### Complexity evidence
 
-1. Try the pin's structure or algorithm in idiomatic Rust first.
-2. Measure base, PR and pin together on one host, with repetitions within that run.
-3. Assess both time and peak memory.
-4. Keep a version that is never worse than the pin in both runtime time and space.
-5. Find or retain an idiomatic alternative if the pin's algorithm gives no improvement on those measures.
-6. Prefer the idiomatic version on a tie.
-7. Report binary file sizes and increases over base under constitution §2.
-   Take the sizes from the `shipping-sizes` CI job summary.
+A change that alters an algorithm, a data structure, allocation behaviour or an input bound gives a short complexity argument derived from the source.
+Name the input dimensions and constant bounds.
+Bound the loops, recursion, collection operations, allocations and relevant callees.
+Distinguish worst-case, amortised and expected bounds.
+State assumptions about external libraries.
+Compare with the previous code, and with the pin where the two do comparable work.
+If the source does not establish a bound, say so.
+Do not present an estimate as a proof.
 
-See the [measurement procedure](runbooks/benches.md).
+#### Measurement is the exception
+
+Do not require timing, instruction counts, heap profiles or base/PR/pin campaigns because code changed or might affect performance.
+Measure only for a concrete unresolved question that affects a decision, such as:
+
+- a question the source cannot settle, including a constant-factor or memory concern;
+- an observed regression;
+- a numerical performance claim in the PR;
+- a maintainer request.
+
+Follow the [controlling rule](#controlling-rule).
+Name the question, the arms and inputs relevant to it, and the decision rule before measuring.
+Use the cheapest sufficient measurement and stop when the answer cannot change the decision.
+Reuse the existing recipes.
+New measurement tooling, drivers or instrumentation need the maintainer's approval.
+When a measurement compares arms, measure the arms relevant to the question in one run on one host.
+See the [measurement procedure](runbooks/benches.md#measure-compared-arms-in-one-run).
+
+#### Performance standard
+
+Time and space complexity must never both worsen compared with the pin.
+A regression on one axis must be traded for a gain on the other, kept as small as possible, and justified in the PR.
+Equal asymptotic bounds do not prove equal cost.
+Catch obvious allocation waste, large constants and hot-path work by reading the code, and by a targeted test or assertion where that suffices.
+Do not compare against the pin where the two intentionally do different amounts of work.
 The pin's algorithm is the first candidate, not a mandatory choice.
+
+#### Unchanged verification
+
+Correctness, C ABI compatibility and persistent-data compatibility stay as they are.
+Unit tests, contract differentials, revert-and-check, sanitizers, CI gates and bounded parallel test execution stay as they are.
+Serialise a test only for a stated shared-state or resource reason.
+Report stripped shipping-library sizes and increases over base under constitution §2 ([shipping-library sizes](packaging.md#shipping-library-sizes)).
+Take the sizes from the `shipping-sizes` CI job summary.
+The nightly performance snapshot workflow stays.
 
 ## Compatibility decision order
 
@@ -343,7 +386,8 @@ Stop if surrounding pin behaviour remains unsettled.
 Report what you read and where reading stopped resolving the question.
 Keep the confirmation questions open in the boundary finding.
 
-Measure time, instructions and peak heap on named workloads against the pin (round-2 audit axis L; #757).
+Give a short complexity argument derived from the source for a change that alters an algorithm, a data structure, allocation behaviour or an input bound ([complexity evidence](#complexity-evidence)).
+Measurement is the exception ([controlling rule](#controlling-rule)).
 Fix an implementation that is worse on both time and space.
 There is no performance ceiling when output, files and ABI remain compatible.
 Examples include `memchr` substring search (#858), dictionary cursor walks and per-session arenas.

@@ -5,7 +5,7 @@ It ships as a drop-in replacement at the `libpinyin.so.15` ABI.
 The Zhuyin facade uses `libzhuyin.so.15`.
 Use "re-expression" in project claims.
 Do not claim to replace, succeed or outperform libpinyin.
-Limit performance claims to scoped measurements.
+Limit numerical performance claims to scoped measurements ([controlling rule](source-policy.md#controlling-rule)).
 See the [roadmap](../ROADMAP.md) and [constitution](constitution.md).
 
 **Goal (maintainer, 2026-09-12).**

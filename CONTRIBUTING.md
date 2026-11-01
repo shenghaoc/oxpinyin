@@ -89,7 +89,6 @@ Timing results need not be bit-identical.
 
 Run the checks required by the [verification procedure](docs/runbooks/verification.md).
 Stop when they pass and concrete failures are addressed.
-Keep repetitions prescribed by the measurement method.
 Do not add reruns or broader sweeps merely to collect more evidence.
 Report failed or unrun required checks as limitations.
 Include a brief relevant diagnostic when useful.
@@ -98,8 +97,12 @@ This policy supersedes older reporting requirements in runbooks and findings.
 
 ### Measurements
 
-Run base, PR and pin in one job on one machine for a measuring PR.
-Report only that run's numbers and ratios.
+Performance evidence follows the [controlling rule](docs/source-policy.md#controlling-rule).
+Read the source and argue the complexity first.
+For a change that alters an algorithm, a data structure, allocation behaviour or an input bound, give the complexity argument described in the [source policy](docs/source-policy.md#complexity-evidence).
+Measure only for a concrete unresolved question that affects a decision.
+Name the question, the arms and inputs relevant to it, and the decision rule before measuring.
+When a measurement compares arms, run them in one job on one machine and report only that run's numbers and ratios.
 Do not use an absolute figure from another run, host or CPU as a baseline.
 Follow the [measurement procedure](docs/runbooks/benches.md).
 
@@ -144,8 +147,8 @@ After rebasing:
 3. Re-run pins if the rebase changes engine, capi or data crates.
 
 See PR #363 against #358 for the oracle-data manifest split example.
-The contributor who merges later re-measures the affected pins.
-Do not assume pre-rebase measurements remain valid.
+The contributor who merges later re-runs the affected pin checks.
+Do not assume pre-rebase results remain valid.
 Fmt failures block merging.
 A reviewed, formatting-only commit is safe when its diff contains only formatting.
 
