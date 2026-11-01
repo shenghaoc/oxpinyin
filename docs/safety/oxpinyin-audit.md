@@ -95,7 +95,7 @@ Decode path: systematically saturating/checked (~100 sites audited; λ in
 exact u128 rationals; `Cost = i64` fixed-point). Trust boundaries:
 `try_from().unwrap_or(clamp)` at capi widening seams. Residual raw
 arithmetic is loop-bounded by construction (graph arenas capped at
-`MAX_GRAPH_INPUT = 65_535`, `MAX_PHRASE_LENGTH = 16`). Division/remainder:
+`MAX_GRAPH_POSITION = u32::MAX - 1` since #1501, `MAX_PHRASE_LENGTH = 16`). Division/remainder:
 constant or gcd≥1-proven divisors; float division guarded by
 `total == 0` early-returns. Recursion: 4 sites, all depth-bounded
 (nesting ≤ 2, phrase length ≤ 16). `as`-casts: ~150 numeric casts in src,

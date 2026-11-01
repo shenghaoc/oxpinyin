@@ -35,7 +35,7 @@ use std::collections::hash_map::Entry;
 use std::hash::{BuildHasherDefault, Hasher};
 
 use oxpinyin_core::PhraseText;
-use oxpinyin_core::graph::{GraphError, MAX_GRAPH_INPUT};
+use oxpinyin_core::graph::{GraphError, MAX_GRAPH_POSITION};
 use oxpinyin_core::scoring::{ScoringError, expand_keys};
 use oxpinyin_core::{
     ChewingKey, Completeness, Cost, Dictionary, LanguageModel, NbestSuccessors, PhraseEntry,
@@ -146,7 +146,7 @@ struct Value {
     prev_token: u32,
     /// Position the covering phrase starts at (`m_last_step`, a `gint32`
     /// step); [`SEED_STEP`] marks the seed. A step is a byte position of a
-    /// graph's input, at most `MAX_GRAPH_INPUT`.
+    /// graph's input, at most `MAX_GRAPH_POSITION`.
     from: u32,
     /// Slot of the predecessor value in node `(from, prev_token)`
     /// (`m_sub_index`, a `gint32` below `nstore`).
@@ -1592,7 +1592,7 @@ where
         .filter(|&from| from != SEED_STEP)
         .ok_or(EngineError::Graph(GraphError::InputTooLong {
             len: span.start,
-            limit: MAX_GRAPH_INPUT,
+            limit: MAX_GRAPH_POSITION,
         }))?;
     let chars = entry.chars;
     trellis.insert(

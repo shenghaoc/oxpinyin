@@ -110,8 +110,10 @@ answer to `pinyin_get_parsed_input_length`, and it agrees with the pin on
 An input builds a graph whatever its bytes are. Junk, malformed UTF-8, an
 empty input and a 4,096-byte run of `!` all produce a graph, possibly with no
 edges. The only refusal is `GraphError::InputTooLong` beyond
-`MAX_GRAPH_INPUT` (65,535 bytes), which is where the oracle's `guint16`
-positions stop being able to describe an answer at all.
+`MAX_GRAPH_POSITION` (`u32::MAX - 1` bytes), where an edge's `u32`
+positions end. Until #1501 it was `MAX_GRAPH_INPUT` (65,535 bytes); no pin
+rule or product rule had that refusal
+([1501-gint16-input-cap](1501-gint16-input-cap.md)).
 
 ## Apostrophes, and the two cases left open
 

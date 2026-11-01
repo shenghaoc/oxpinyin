@@ -4455,3 +4455,7 @@ the addon load. All sites are `assert`s: POLICY-ACCEPTED for the missing
 assertion line only. Every former class (c) row is now reproduced.
 Recorded, with the pin sites, items and cases, in
 [pin-aborts-remaining.md](pin-aborts-remaining.md).
+
+### The full-pinyin parse's 16-bit steps (2026-11-01 UTC, #1501)
+
+**Language artefact, POLICY-ACCEPTED.** The pin's full-pinyin parse stops at byte 32767 because its steps are `gint16`s (`pinyin_parser2.cpp:67-70`); oxpinyin parses the whole input, and policy row 59 is reopened: [1501-gint16-input-cap.md](1501-gint16-input-cap.md).

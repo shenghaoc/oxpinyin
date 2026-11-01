@@ -85,9 +85,10 @@ pub enum CandidateKind {
 
 /// One offered conversion.
 ///
-/// Sized to need (48 bytes): the three span counts are `u16` because an
-/// input is at most [`MAX_INPUT_BYTES`](crate::MAX_INPUT_BYTES) bytes
-/// long and a key is at least one byte, and the n-best rank is a byte
+/// Sized to need (56 bytes): the three span counts are `u32`, the width of
+/// the segment graph's positions
+/// ([`MAX_GRAPH_POSITION`](oxpinyin_core::graph::MAX_GRAPH_POSITION)), since
+/// a key is at least one byte; and the n-best rank is a byte
 /// with `NO_ROW` for "not a row", the pin's own `gint8 m_nbest_index`
 /// width (`pinyin.cpp:102` at 074a2219). A window of a hundred-odd rows
 /// is retained per instance, so each byte here is a hundred-odd bytes of
@@ -97,8 +98,8 @@ pub struct Candidate {
     text: PhraseText,
     cost: Cost,
     token: Option<PhraseToken>,
-    consumed_keys: u16,
-    consumed_bytes: u16,
+    consumed_keys: u32,
+    consumed_bytes: u32,
     /// Tail rank of the n-best sentence row this candidate is (W14);
     /// `None` for every non-row candidate — including fallback sentence
     /// candidates, which share the row `CandidateKind::Sentence` but are
@@ -115,7 +116,7 @@ pub struct Candidate {
     /// (`Session::candidates_ending_at`) runs on the absolute prefix graph,
     /// so its rows carry each span's absolute start. Sentence rows and
     /// fallbacks carry 0.
-    span_start: u16,
+    span_start: u32,
     kind: CandidateKind,
 }
 
@@ -124,16 +125,17 @@ const NO_ROW: u8 = u8::MAX;
 
 // The row width the doc above claims; a field that grows it shows up here.
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::size_of::<Candidate>() == 48);
+const _: () = assert!(core::mem::size_of::<Candidate>() == 56);
 
 /// Narrows a byte or key count to the row's width. Every count the
-/// session produces is below [`MAX_INPUT_BYTES`](crate::MAX_INPUT_BYTES)
-/// (32,767), so the saturation never fires; it stands in for a panic.
-const fn narrow(count: usize) -> u16 {
-    if count > u16::MAX as usize {
-        u16::MAX
+/// session produces is a position of its segment graph, at most
+/// [`MAX_GRAPH_POSITION`](oxpinyin_core::graph::MAX_GRAPH_POSITION), so the
+/// saturation never fires; it stands in for a panic.
+const fn narrow(count: usize) -> u32 {
+    if count > u32::MAX as usize {
+        u32::MAX
     } else {
-        count as u16
+        count as u32
     }
 }
 
@@ -147,7 +149,7 @@ impl Candidate {
         token: Option<PhraseToken>,
         nbest_index: Option<u8>,
     ) -> Self {
-        debug_assert!(consumed_keys <= u16::MAX as usize && consumed_bytes <= u16::MAX as usize);
+        debug_assert!(consumed_keys <= u32::MAX as usize && consumed_bytes <= u32::MAX as usize);
         debug_assert!(nbest_index.is_none_or(|rank| rank != NO_ROW));
         Self {
             text: text.into(),
@@ -166,7 +168,7 @@ impl Candidate {
 
     /// Records where this candidate's span starts (see [`Self::span_start`]).
     pub(crate) const fn set_span_start(&mut self, start: usize) {
-        debug_assert!(start <= u16::MAX as usize);
+        debug_assert!(start <= u32::MAX as usize);
         self.span_start = narrow(start);
     }
 

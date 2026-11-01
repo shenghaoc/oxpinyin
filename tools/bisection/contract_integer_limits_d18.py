@@ -120,33 +120,6 @@ def d18_unigram(boundary, text='你'):
     return probe
 
 
-def d18_input(k):
-    """Compare consumed and retained byte lengths for long pinyin inputs and a subsequent short parse.
-
-    Set tone options, use the listed 4096..65537-byte lengths and four tail shapes,
-    and free each temporary instance after reading its outputs."""
-    assert k.fn('set_options', B, P, U)(k.ctx, 1 << 5)
-    out = {}
-    parse = k.fn('parse_more_full_pinyins', Z, P, S)
-    for length in (4096, 4097, 32766, 32767, 32768, 65535, 65536, 65537):
-        inst = k.alloc()
-        text = (b'ni' * ((length + 1) // 2))[:length]
-        ret = parse(inst, text)
-        stored = k.fn('get_parsed_input_length', Z, P)(inst)
-        # A later short parse must replace the retained long matrix/length.
-        short = parse(inst, b'hao')
-        out[str(length)] = [ret, stored, short, k.fn('get_parsed_input_length', Z, P)(inst)]
-        k.fn('free_instance', None, P)(inst)
-    for label, text in (('whole-tail', b'ni' * 16382 + b'hao'),
-                        ('split-tail', b'ni' * 16383 + b'hao'),
-                        ('separator-tail', b'ni' * 16383 + b"'hao"),
-                        ('invalid-tail', b'ni' * 16383 + b'!ni')):
-        inst = k.alloc()
-        out[label] = [parse(inst, text), k.fn('get_parsed_input_length', Z, P)(inst)]
-        k.fn('free_instance', None, P)(inst)
-    return out
-
-
 def d18_bigram_fixture(k, system, user, current='号', empty_system=False, extra_successor=False):
     """Replace bigram fixtures and return predecessor/current tokens after closing cached objects.
 
@@ -301,7 +274,6 @@ def d18_bigram_update(count, predicted=False, user_only=False):
 for _mode in ('pinyin', 'zhuyin'):
     case('d18-unigram-max-' + _mode, mode=_mode, control=True, issues=('540',))(d18_unigram(False))
     case('d18-unigram-total-boundary-' + _mode, mode=_mode, control=True, issues=('540',))(d18_unigram(True))
-    case('d18-input-boundaries-' + _mode, mode=_mode, control=True, issues=('540',))(d18_input)
     for _label, _system, _user, _control in (
             ('total-before', (1, 1), (0xfffffffe, 1), True),
             ('total-zero', (1, 1), (0xffffffff, 1), False),

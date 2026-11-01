@@ -267,7 +267,7 @@ sites) — upstream-libpinyin semantics are preserved by design.
 Classification of the remaining raw arithmetic (from the audit):
 
 1. **Overflow impossible by construction** — the overwhelming majority
-   (loop-bounded indices, `MAX_GRAPH_INPUT = 65_535` arenas,
+   (loop-bounded indices, `u32`-positioned graph arenas,
    prefix-sum invariants). No action.
 2. **Overflow indicates a bug** — the two `assert_eq!`s in parser.rs;
    keep, documented.
