@@ -102,9 +102,11 @@ visibility mask.
   session's in-memory values these writes cannot fail: the transaction
   refuses only an empty or NUL table name or a re-entrant borrow, and the
   rows are the store's own encodings.
-- `arena_replacement` leaves out an item the arena cannot hold: a
-  zero-length phrase that `encode_phrase_item` refuses, or an arena past
-  `u32` offsets. See the open items.
+- `arena_replacement` retains structurally valid empty persisted items
+  within the current arena limits. It still leaves out an item the arena
+  cannot hold. The arena-past-`u32` omission is an interim **KNOWN
+  DIVERGENCE** from the pin's wrap/overwrite behavior, tracked in
+  [#1514](https://github.com/shenghaoc/oxpinyin/issues/1514).
 - The save skips an unloaded library. `Runtime::save_disk_baseline`
   answers `SaveBaseline::Unloaded` for an unloaded system library, and the
   session records an unloaded `USER_FILE` library in
@@ -163,9 +165,22 @@ The export iterator cases are those whose names contain `iterator`.
   declares the class (c) `abort=False` matcher. Member 4 reproduced the
   pin's abort at `zhuyin.cpp:454` (row 104); the case needs `sigabrt=True`
   on that member.
-- `arena_replacement` leaves out an item the arena cannot hold, while
-  `open_session` refuses the same log and the pin keeps the item. Only a
-  `.dbin` written outside the library can hold such an item.
+- Arena-limit behavior remains an interim **KNOWN DIVERGENCE** pending
+  [#1514](https://github.com/shenghaoc/oxpinyin/issues/1514).
+  `table_offset_t` is `guint32` (`src/include/novel_types.h:128` at
+  `074a2219`). `SubPhraseIndex::add_phrase_item` narrows the content size
+  to that type, using 8 for a zero result (`src/storage/phrase_index.cpp:208-217`).
+  `MemoryChunk::set_content` then writes at that wrapped offset and can
+  overwrite existing content (`src/include/memory_chunk.h:290-296`).
+  The retained reconstruction skip and the existing session-open refusal
+  do not reproduce those writes. Empty-item persistence does not settle
+  the arena-limit behavior.
+
+The pin's `pinyin_mask_out` is sequential: it masks the tables and bigrams,
+then loads and merges each library before compacting
+(`src/pinyin.cpp:1224-1295` at `074a2219`). The empty-item cases establish
+preservation within the current arena limits; they provide no evidence
+about failure ordering.
 
 ## Verification
 

@@ -635,11 +635,6 @@ impl UserLibrary {
                     "chunk write error: chunk slot {slot:#010x} exceeds PHRASE_MASK"
                 ));
             }
-            if view.phrase_length() == 0 {
-                return Err(format!(
-                    "chunk write error: chunk slot {slot:#010x} phrase length 0 out of range"
-                ));
-            }
             let offset =
                 u32::try_from(payload.len() - index_two as usize).map_err(|e| e.to_string())?;
             let at = 17 + slot as usize * 4;
@@ -681,6 +676,51 @@ mod tests {
                 },
             ),
         ]
+    }
+
+    /// Hand-built USER_FILE: slot 3 is present even with no phrase words;
+    /// the two empty-key readings retain their order and frequencies.
+    #[test]
+    fn persisted_empty_user_item_survives_load_compact_and_store() {
+        let body = [0, 2, 37, 0, 0, 0, 13, 0, 0, 0, 5, 0, 0, 0];
+        let file = |body: &[u8]| {
+            let mut payload = Vec::new();
+            for word in [91_u32, 17, 34, 34 + 8 + body.len() as u32 + 1] {
+                payload.extend_from_slice(&word.to_le_bytes());
+            }
+            payload.push(b'#');
+            for offset in [0_u32, 0, 0, 8] {
+                payload.extend_from_slice(&offset.to_le_bytes());
+            }
+            payload.push(b'#');
+            payload.extend_from_slice(&[0; 8]);
+            payload.extend_from_slice(body);
+            payload.push(b'#');
+            build_memory_chunk(&payload).unwrap()
+        };
+        let mut library = UserLibrary::load(&file(&body)).unwrap();
+        assert_eq!(library.total(), 91, "load retains the header total");
+        assert_eq!(library.item_sum(), 37);
+        assert!(!library.is_empty());
+        assert!(library.item(1).is_none());
+        assert_eq!(library.item(3).unwrap().as_bytes(), body);
+        library.compact().unwrap();
+        assert_eq!(library.total(), 37, "compact rebuilds the item sum");
+        let saved = library.store().unwrap();
+        let loaded = UserLibrary::load(&saved).unwrap();
+        assert_eq!(loaded.total(), 37);
+        assert_eq!(
+            loaded.items().map(|(slot, _)| slot).collect::<Vec<_>>(),
+            [3]
+        );
+        assert_eq!(loaded.item(3).unwrap().as_bytes(), body);
+        assert_eq!(saved, loaded.store().unwrap());
+
+        // A missing final pronunciation-frequency byte remains a structural
+        // refusal; an empty phrase does not relax the declared body extent.
+        assert!(UserLibrary::load(&file(&body[..body.len() - 1])).is_err());
+        assert!(library.replace(4, &body[..body.len() - 1]).is_err());
+        assert_eq!(library.store().unwrap(), saved);
     }
 
     /// 074a2219 phrase_index.cpp:56-93, :150-178, :219-235,
@@ -764,10 +804,26 @@ mod tests {
                     })
                     .collect();
                 assert_eq!(decoded, items);
-                assert_eq!(
-                    library.store(),
-                    build_chunk(&items).map_err(|e| e.to_string())
-                );
+                if items.iter().any(|(_, item)| item.phrase.is_empty()) {
+                    // The import builder still refuses empty phrases. For
+                    // persisted items compare the saved decoder result,
+                    // including slots, readings and the rebuilt total.
+                    let total = items
+                        .iter()
+                        .try_fold(0_u32, |sum, (_, item)| sum.checked_add(item.unigram));
+                    if let Some(total) = total {
+                        let saved = library.store().unwrap();
+                        let payload = read_chunk_payload(&saved).unwrap();
+                        assert_eq!(decode_sub_phrase_index(payload).unwrap(), (total, items));
+                    } else {
+                        assert!(library.store().is_err());
+                    }
+                } else {
+                    assert_eq!(
+                        library.store(),
+                        build_chunk(&items).map_err(|e| e.to_string())
+                    );
+                }
                 assert_eq!(
                     library.live,
                     library

@@ -93,7 +93,13 @@ EXPECTED = [('reload-drops-session-pinyin-train', (), {'issues': ('805',), 'mode
              {'control': True, 'issues': ('805', 'row:103'), 'mode': 'zhuyin', 'stderr': True}),
             ('reload-unreadable-log-short-zhuyin',
              (),
-             {'control': True, 'issues': ('805', 'row:103'), 'mode': 'zhuyin', 'stderr': True})]
+             {'control': True, 'issues': ('805', 'row:103'), 'mode': 'zhuyin', 'stderr': True}),
+            ('reload-persisted-empty-add-plain-pinyin', (), {'mode': 'pinyin'}),
+            ('reload-persisted-empty-add-pronunciations-pinyin', (), {'mode': 'pinyin'}),
+            ('reload-persisted-empty-user-file-pinyin', (), {'mode': 'pinyin'}),
+            ('reload-persisted-empty-add-plain-zhuyin', (), {'mode': 'zhuyin'}),
+            ('reload-persisted-empty-add-pronunciations-zhuyin', (), {'mode': 'zhuyin'}),
+            ('reload-persisted-empty-user-file-zhuyin', (), {'mode': 'zhuyin'})]
 
 
 def declarations():

@@ -742,6 +742,55 @@ The immutable mapped sum costs O(n) once per mapping, then O(1) per compact
 apart from inline fixture overrides. Save retains the existing sparse diff.
 No startup scan, reading-row seeding, or candidate-path allocation is added.
 
+### Persisted empty items through arena reconstruction
+
+Source tree read: `/home/sheng/Documents/Codex/2026-11-01/task/pin074a2219`,
+at `074a2219c90feaf962d0d24f034514033ece5f99`.
+`src/storage/phrase_index.cpp:180-217` uses offset zero for absence and keeps
+an empty phrase as a six-byte header plus four bytes per pronunciation.
+ADD appends the bytes and adds the unigram after the journal's header update
+(`:453-459`, `:503-514`). Compact copies each present item in slot order,
+rebuilds sub-index totals, and retains the facade total (`:648-675`).
+Store copies the packed bodies (`:365-390`). Truncated bodies whose declared
+extent reaches outside the content buffer retain policy row 107's safety
+refusal; the pin checks the two header reads but then constructs the declared
+extent without a body bound check (`:195-205`).
+
+`oxpinyin-user`'s `persistence::encode_persisted_item` shares the journal's
+typed-item shape validation with arena reconstruction. `UserLibrary::store`
+copies each validated `view.as_bytes()` directly, including empty items.
+Public phrase-import validation stays separate. Within the current arena
+limits, empty items retain slot identity, ordered pronunciation frequencies,
+and the separate item sum, sub-index total and facade total through reload
+and save. `load_system_libraries` and `reload_system_libraries` retain their
+`JournalFault`-only results and existing journal handling.
+
+The arena-limit skip remains an interim **KNOWN DIVERGENCE**, tracked in
+[#1514](https://github.com/shenghaoc/oxpinyin/issues/1514).
+`table_offset_t` is `guint32` (`src/include/novel_types.h:128`), and
+`add_phrase_item` narrows the content size to it, using 8 for a zero result
+(`src/storage/phrase_index.cpp:208-217`). `set_content` writes at that
+wrapped offset and can overwrite existing content
+(`src/include/memory_chunk.h:290-296`). Neither the skip nor a refusal
+matches the pin. The pin's mask operation mutates tables and bigrams before
+its per-library load/merge loop (`src/pinyin.cpp:1224-1295`); the empty-item
+cases provide no evidence about that failure ordering.
+
+Both C nth-pronunciation getters append zero words and return true for an
+empty-key pronunciation, like `src/pinyin.cpp:2815-2818` and
+`src/zhuyin.cpp:1807-1810`.
+`reload-persisted-empty-user-file-pinyin` is a refused-reload control for
+library 5: pinyin unloads only GBK (`src/pinyin.cpp:464-475`), so it checks
+compaction, save and reopen without a successful unload. The zhuyin case
+does unload and reload USER_FILE: only TSI is refused (`src/zhuyin.cpp:378-390`).
+
+For n live items occupying B bytes, encoding still visits each word/key once,
+O(B) time and output space, with at most one item's temporary encoded body.
+The format bounds phrase length and pronunciation count at 255 each. Existing
+dense/sparse slot lookup and insertion costs are unchanged; a sparse slot
+insertion costs O(log n). Saving validated views copies B bytes directly, as
+the pin does, with no additional per-item allocation. No measurement is needed.
+
 ### Compact Zhuyin experiment (2026-10-18 UTC; rejected)
 
 The pinned global `zhuyin_index` uses spelling pointers, flags and canonical

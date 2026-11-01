@@ -221,9 +221,6 @@ pub extern "C" fn pinyin_token_get_n_pronunciation(
 /// Append one reading's stored packed words to the caller's array, or the
 /// pin's zeroed past-the-end words when the item has no such reading.
 ///
-/// Returns the token getter's result: `false` only for a present reading
-/// whose stored word list is empty.
-///
 /// # Safety
 /// `keys` must be a non-NULL `GArray` whose element size is two bytes, as
 /// the caller of `pinyin_token_get_nth_pronunciation` creates it.
@@ -231,7 +228,7 @@ unsafe fn append_stored_words(
     keys: *mut crate::types::GArray,
     length: usize,
     words: Option<&[u8]>,
-) -> bool {
+) {
     match words {
         None => {
             // SAFETY: the caller guarantees a real GArray; `zeroed` outlives
@@ -245,9 +242,7 @@ unsafe fn append_stored_words(
                     c_uint::try_from(zeroed.len()).unwrap_or(0),
                 );
             }
-            true
         }
-        Some([]) => false,
         Some(words) => {
             // SAFETY: the caller guarantees a real GArray with element size
             // two bytes; `words` holds `2 * phrase_length` stored bytes and
@@ -259,7 +254,6 @@ unsafe fn append_stored_words(
                     c_uint::try_from(words.len() / 2).unwrap_or(0),
                 );
             }
-            true
         }
     }
 }
@@ -305,17 +299,18 @@ pub extern "C" fn pinyin_token_get_nth_pronunciation(
     // A `USER_FILE` reading lives in the session arena, so hand its stored
     // words straight to the caller's array instead of copying them through
     // an intermediate `Vec`.
-    if let Some(result) =
-        inst.core
-            .dict
-            .with_user_nth_pronunciation_words(token, nth as usize, |length, words| {
-                // SAFETY: `keys` is the caller's non-NULL GArray with element
-                // size two bytes; `with_user_nth_pronunciation_words` keeps the
-                // borrowed words live for this call.
-                unsafe { append_stored_words(keys, length, words) }
-            })
+    if inst
+        .core
+        .dict
+        .with_user_nth_pronunciation_words(token, nth as usize, |length, words| {
+            // SAFETY: `keys` is the caller's non-NULL GArray with element
+            // size two bytes; `with_user_nth_pronunciation_words` keeps the
+            // borrowed words live for this call.
+            unsafe { append_stored_words(keys, length, words) }
+        })
+        .is_some()
     {
-        return result;
+        return true;
     }
     let Some(reading) = inst.core.dict.token_nth_pronunciation(token, nth as usize) else {
         return false;
@@ -338,9 +333,8 @@ pub extern "C" fn pinyin_token_get_nth_pronunciation(
     };
     // System and USER_FILE items alike hand out their stored words
     // (`get_nth_pronunciation` copies the item's `ChewingKey`s verbatim).
-    if packed.is_empty() {
-        return false;
-    }
+    // An empty persisted phrase still owns its empty-key pronunciation;
+    // the pin appends zero words and answers true (074a2219 pinyin.cpp:2815-2818).
     // SAFETY: GLib checks NULL and logs a critical before any access.
     // the caller creates the keys
     // array with element_size = sizeof(u16) (chewing-key vector,

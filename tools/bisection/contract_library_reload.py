@@ -3,11 +3,14 @@
 import ctypes as C
 import hashlib
 import os
+from pathlib import Path
 
-from contract_abi import B, I, P, S, U, Z, sentence_out, tokens_of, unigram_of
+from contract_abi import Arr, B, I, P, S, U, Z, sentence_out, tokens_of, unigram_of
 from contract_case_helpers import (
-    FACADE_TOTAL, _facade_total_out, _reload_pron_keys, _stored_library_total, guess_rows, train_selected_top)
-from contract_fixtures import import_rows
+    FACADE_TOTAL, _chunk, _facade_total_out, _modify_header, _reload_pron_keys,
+    _stored_library_total, _write_log, guess_rows, token_phrase_of, train_selected_top)
+from contract_fixtures import _write_user_conf, import_rows
+from contract_journal_replay import _log_record, _system_items
 
 
 _REGISTRATIONS = []
@@ -526,6 +529,94 @@ for _mode, (_rows, _inputs) in (('pinyin', ([('礙', 'ai1', 50)], [b'ai1'])),
     for _how in ('missing', 'short'):
         case('reload-unreadable-log-%s-%s' % (_how, _mode), mode=_mode, stderr=True, control=True,
              issues=('805', 'row:103'))(_reload_unreadable(_how, _rows, ['礙'], _inputs))
+
+
+def _persisted_item_getters(k, token):
+    """Read text, unigram, count and each nth reading, freeing owned outputs."""
+    count = U()
+    ok = k.fn('token_get_n_pronunciation', B, P, U, C.POINTER(U))(
+        k.inst, token, C.byref(count))
+    new, free = k.glib.g_array_new, k.glib.g_array_free
+    new.restype, new.argtypes = P, [I, I, U]
+    free.restype, free.argtypes = P, [P, I]
+    readings = []
+    for nth in range(count.value if ok else 0):
+        keys = new(0, 0, 2)
+        try:
+            got = k.fn('token_get_nth_pronunciation', B, P, U, U, P)(
+                k.inst, token, nth, keys)
+            view = C.cast(keys, C.POINTER(Arr)).contents
+            readings.append([got, view.len,
+                             C.string_at(view.data, view.len * 2).hex() if view.len else ''])
+        finally:
+            free(keys, True)
+    return {'phrase': token_phrase_of(k, token), 'unigram': unigram_of(k, token),
+            'count': [ok, count.value], 'readings': readings}
+
+
+def _persisted_empty_reload(user_file, frequencies):
+    """Persist an empty item, then observe initial load, unload/reload and save/reopen.
+
+    074a2219 phrase_index.cpp:180-217 keeps empty bodies at nonzero offsets;
+    :453-459 adds their unigram after the journal header, :648-675 compacts
+    the sub-index total without adjusting the facade. The C getters are
+    pinyin.cpp:2776-2833 and zhuyin.cpp:1768-1825. No phrase-table or pinyin
+    index row is invented for the stored item.
+
+    The library-5 pinyin USER_FILE case is a refused-reload control:
+    pinyin.cpp:464-475 unloads only GBK. It still checks compaction, save
+    and reopen. The zhuyin USER_FILE case really unloads and reloads;
+    zhuyin.cpp:378-390 refuses only TSI.
+    """
+    def probe(k):
+        """Plant one item before init and return getters plus the saved native bytes."""
+        _write_user_conf(k)
+        body = bytes([0, len(frequencies)]) + (37).to_bytes(4, 'little')
+        body += b''.join(value.to_bytes(4, 'little') for value in frequencies)
+        if user_file:
+            library, slot, name = 5, 3, 'addon.bin'
+            content = b'\0' * 8 + body
+            payload = b''.join(value.to_bytes(4, 'little') for value in
+                               (91, 17, 34, 34 + len(content) + 1))
+            payload += b'#' + b'\0' * 12 + (8).to_bytes(4, 'little') + b'#' + content + b'#'
+            Path(k.user, name).write_bytes(_chunk(payload))
+        else:
+            library, name = 2, 'gbk_char.dbin'
+            total, items, _ = _system_items(k, 'gbk_char.bin')
+            slot = max(items) + 3
+            _write_log(k, _modify_header(0, total, total + 37)
+                       + _log_record(1, slot, new=body), name)
+        token = (library << 24) | slot
+        out = {'initial': _persisted_item_getters(k, token)}
+        k.fn('free_instance', None, P)(k.inst)
+        k._inst = None
+        out['unload'] = k.fn('unload_phrase_library', B, P, U)(k.ctx, library)
+        out['unloaded'] = _persisted_item_getters(k, token)
+        k.fn('free_instance', None, P)(k.inst)
+        k._inst = None
+        out['load'] = k.fn('load_phrase_library', B, P, U)(k.ctx, library)
+        out['reloaded'] = _persisted_item_getters(k, token)
+        # End an empty import batch: compact and mark modified, without
+        # changing the stored item (pinyin.cpp:655-660, zhuyin.cpp:540-545).
+        assert import_rows(k, 7, []) == []
+        out['compacted'] = _persisted_item_getters(k, token)
+        out['save'] = k.fn('save', B, P)(k.ctx)
+        out['saved'] = Path(k.user, name).read_bytes().hex()
+        out['after-save'] = _persisted_item_getters(k, token)
+        k.fn('free_instance', None, P)(k.inst)
+        k.fn('fini', None, P)(k.ctx)
+        k._ctx = k._inst = None
+        out['reopened'] = _persisted_item_getters(k, token)
+        return out
+    return probe
+
+
+for _mode in ('pinyin', 'zhuyin'):
+    for _tag, _frequencies in (('plain', ()), ('pronunciations', (13, 5))):
+        case(f'reload-persisted-empty-add-{_tag}-{_mode}', mode=_mode)(
+            _persisted_empty_reload(False, _frequencies))
+    case(f'reload-persisted-empty-user-file-{_mode}', mode=_mode)(
+        _persisted_empty_reload(True, (13, 5)))
 
 
 def register(driver_case):
