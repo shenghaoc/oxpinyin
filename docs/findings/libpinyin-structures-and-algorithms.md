@@ -840,6 +840,17 @@ assembly use these narrow reads. No caller needs the old whole-item
 `token_introspection`, so it is removed. C allocation, array operations and
 structured-key packing remain at the existing boundaries.
 
+For session USER_FILE text, `RuntimeDict::token_text` borrows the item's words
+through `with_user_item` and `PhraseItemView::phrase_text`. It removes the
+intermediate `Vec<u32>` allocation and word copy while retaining the same
+stored length, first-zero cut and non-scalar conversion. Standalone stores keep
+their row fallback. `UserStore::user_unigram_frequency` returns existence and
+frequency in one guarded arena read, including pending increments; both C
+facades still apply visibility and their overlays. `Some(0)` remains distinct
+from an absent item. One of the two guarded probes is removed. Text remains
+O(L) time and O(L) result space; frequency lookup's time and space bounds are
+unchanged. These are source-derived costs, not measurements.
+
 The current user row store has pronunciation keys in table order and insertion
 sequences in their values. `UserStore::nth_pronunciation` selects the nth
 `(sequence, scan position)` metadata pair, then copies and decodes only that

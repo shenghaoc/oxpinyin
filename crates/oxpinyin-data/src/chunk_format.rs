@@ -5,7 +5,7 @@
 //! libraries) are one `MemoryChunk` each (`src/include/memory_chunk.h`):
 //! an 8-byte header `{length: u32, checksum: u32}` then the payload,
 //! with the payload's inner `SubPhraseIndex` layout owned by
-//! [`crate::phrase_library`] (reader) and `oxpinyin-datagen::chunks`
+//! [`crate::phrase_library`] (reader) and [`crate::chunk_write`]
 //! (writer). This module holds the constants and the checksum both
 //! halves share, so the reader's validation and the writer's emission
 //! cannot drift apart — a wrong byte here makes a file the other half

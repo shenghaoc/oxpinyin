@@ -14,8 +14,8 @@
 //!
 //! oxpinyin has two halves that must agree on every one of those bytes:
 //! [`crate`]'s lazy readers, which a runtime opens against an unmodified
-//! libpinyin install, and `oxpinyin-datagen`'s producers, which compile
-//! the same files from model20 text. This module holds the encoders,
+//! libpinyin install, and `oxpinyin-utils`' storage utilities, which
+//! compile the same files from model20 text. This module holds the encoders,
 //! decoders, and strides both halves use, so a layout change is made
 //! once — the same reason [`crate::chunk_format`] exists for the
 //! `MemoryChunk` half, and the same consequence if it drifted: a wrong

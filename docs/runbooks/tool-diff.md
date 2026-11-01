@@ -13,8 +13,9 @@ bash tools/oracle/compat.sh --cell tkrzw --runners tool-diff
 ```
 
 Compatibility preparation builds the unmodified pin's libraries with
-`tools/oracle/build-oracle.sh --libs-only`, then its two utility targets in
-that build tree. Cell artifact selection builds `oxpinyin-utils` once and
+`tools/oracle/build-oracle.sh --libs-only`, then every registered utility
+target in that build tree (`PIN_UTILITIES` groups them by `utils/`
+directory). Cell artifact selection builds `oxpinyin-utils` once and
 records both binaries. The runner checks the pin source revision and diff
 before executing either utility. The normal heavy slot governs preparation,
 subject builds and the differential. No release builds are needed.
@@ -36,6 +37,22 @@ zhuyin spelling map, never an oracle query. Model20 supplies pinyin tables,
 not tsi.src: the zhuyin cases convert `gb_char`, `gbk_char` and `merged`.
 No model data is committed.
 
+A case whose utility writes a DBM container names it in `dbm_rows`.
+Those files are compared by their logical key/value rows, printed in
+sorted order by the subject build's `dbm_rows` helper, not by their
+container bytes: libtkrzw writes a cyclic-magic counter and modification
+time, and Berkeley DB writes page metadata, that differ between two runs
+of the pin on the same input. Every other byte of every other file is
+compared exactly. The helper is tooling only and is not a pin utility.
+
+`dbm_rows_pinyin_index` compares the same complete rows after masking only
+`PinyinIndexItem2<N>` tail padding: two bytes per odd-N item, none for even
+N. Tokens, packed keys, item order, lengths and continuation rows remain
+compared. Malformed row lengths fail. `gbf-toned-model` uses this for
+`pinyin_index.bin` under [eio-pinyin-index-padding](../findings/eio-pinyin-index-padding.md).
+Equal normalized observations report POLICY-ACCEPTED, not raw-byte MATCH;
+any other exit, stream or file difference fails.
+
 Each side gets identical inputs in a private working directory. The runner
 compares exit status, byte-preserving stdout/stderr and the complete file
 inventory (including empty files, modified inputs and directory entries).
@@ -55,9 +72,10 @@ just policy-record docs/findings/eio-table-generator-invalid-utf8.md /path/to/ob
 Every accepted pair binds both complete observations with the existing
 schema-2 record digests. A changed exit, stream or file fails the record.
 
-None of the three registered utilities opens a DBM: `DATABASE_FREE` in
-`tools/dev/tool_diff.py` names them, and each capture row carries
-`database_free` from it. The writer records such a case once, for every
+The registered table generators, `k_mixture_model_to_interpolation` and
+`gen_unigram` open no DBM: `DATABASE_FREE` in `tools/dev/tool_diff.py`
+names them, and each capture row carries `database_free` from it. The three segmentation
+utilities do open one, so their rows stay per-cell. The writer records such a case once, for every
 cell:
 
 ```json
@@ -126,6 +144,35 @@ The named mutation `kti-freq-positive` changes only the unigram test in
 (1 DIFFER, 27 MATCH, 12 POLICY-ACCEPTED). The source was restored byte
 for byte before the completion run.
 
+## KMM utilities (2026-10-31 UTC)
+
+`tool-cases/{validate,merge,prune,estimate,import,export,gen}_k_mixture_model.json`
+hold 35 source-derived cases for the seven k-mixture-model utilities. They
+use the per-cell `{"fixture_dir": "fixtures/w3"}` input, which copies
+`fixtures/w3/<cell>` into each side's working directory: the cwd-relative
+`table.conf` and SYSTEM_FILE chunks, and the three committed KMM
+containers `k_mixture_model{,_zero,_edom}.db` (see
+`fixtures/w3/README.md`). Cases that write a container are absent
+deliberately: a tkrzw HashDBM file's header timestamp and Kyoto Cabinet's
+bucket metadata are not reproducible bytes, so only read-only programs,
+non-writing imports and the three source-derived aborts compare a complete
+inventory. Merge/prune/estimate/gen writes are covered by the crate tests
+instead.
+
+On the tkrzw reference cell the result is **32 MATCH and 3
+POLICY-ACCEPTED, 0 DIFFER**: the three aborts (`kmm-merge-no-result-file`,
+`kmm-estimate-zero-total`, `kmm-gen-good-document`) bind in
+[eio-kmm-tools](../findings/eio-kmm-tools.md); both sides raise SIGABRT,
+and the pin's assertion line is the only difference
+([eio-tool-check-messages](../findings/eio-tool-check-messages.md)).
+
+The named mutation `kmm-prune-star-threshold` changes only
+`oxpinyin-kmm/src/prune.rs`'s `progress >= onestep` to `progress >
+onestep`, which drops the per-row progress asterisk. The tkrzw run detects
+it in `kmm-prune-edom` (1 DIFFER when that case is selected; the completion
+run is 32 MATCH and 3 POLICY-ACCEPTED). The source is restored byte for
+byte before the completion run.
+
 ## Database-free evidence (2026-10-31 UTC)
 
 The four tool records (eio-table-generator-invalid-utf8,
@@ -136,3 +183,168 @@ every per-cell entry it replaced. Re-scored against them, the bdb and kc
 captures stay 28 MATCH and 12 POLICY-ACCEPTED. The tkrzw capture is now
 28 MATCH and 12 POLICY-ACCEPTED as well: the five #1436/#1450 cases that
 lacked tkrzw evidence are covered by the entry for every cell.
+
+## Segmentation utilities (2026-10-31 UTC)
+
+`tool-cases/{ngseg,spseg,mergeseq}.json` hold ten, ten and nine
+source-derived cases. They cover GLib `--help`, an unknown option, too
+many arguments (the output file is opened first), a missing input file,
+a missing `table.conf`, empty input and an empty line, the
+`--generate-extra-enter` flag for the two segmenters, invalid UTF-8, and
+ordinary segmentation/merge over the committed `fixtures/w9` inputs.
+
+The case file gained one payload kind for them: `"fixture_dir":
+"fixtures/w3"` copies the cell's committed data directory (`db` for bdb,
+`kct` for kc, `tkt` for tkrzw — `fixtures/w3/README.md`) into the
+private working directory before the case's own `files` are written, so
+`table.conf`, `phrase_index.bin`, the chunk files and `bigram.db` are the
+relative names the pin opens. The complete file inventory still compares.
+
+On the BDB cell (pin build at the BDB configuration, subject built with
+`--features bdb`) and on the tkrzw reference cell (pin build at the
+tkrzw configuration, subject built with the default tkrzw features, the
+sound `libtkrzw` on `LD_LIBRARY_PATH`), all 29 cases reported MATCH.
+`ngseg` exercises the real `PhraseLookup::get_best_match` path over the
+committed bigram; `spseg`/`mergeseq` exercise the phrase table alone.
+
+The named mutation `seg-phrase-index-name` changes only the phrase-table
+path in `oxpinyin-utils::segment::data::load` from `phrase_index.bin` to
+`phrase_index.absent.bin`. The tkrzw run detects it in the three ordinary
+cases (`ngseg-mini-fixture`, `spseg-mini-fixture`,
+`mergeseq-mini-fixture`): 3 DIFFER, 0 MATCH. The source was restored byte
+for byte (sha256 checked) before the completion run, which returned the
+29 MATCH above.
+
+## Storage utilities (2026-10-31 UTC)
+
+`tool-cases/{gen_binary_files,import_interpolation,export_interpolation}.json`
+hold eight, nine and seven source-derived cases. They cover GLib `--help`
+and an unknown option; positional arguments the pin ignores; a missing
+`table.conf`, `.table`, `punct.table`, `phrase_index.bin` and chunk; empty
+stdin and a wrong model header; and ordinary runs over the committed
+`fixtures/w3` data (with the `.table` inputs the case writes).
+
+Results, one run per cell against that cell's pin build:
+
+| cell | MATCH | DIFFER |
+|---|---|---|
+| tkrzw (reference) | 17 | 7 |
+| bdb | 18 | 6 |
+| kc | 24 | 0 |
+
+Every tkrzw and bdb DIFFER is the writing DBM library's own metadata:
+tkrzw stores a `cyclic_magic` counter and a wall-clock `timestamp` in
+each container it opens for writing; Berkeley DB stores its own header
+fields. Two runs of the *same* binary never produce equal container
+bytes. The pin and subject produce the same logical rows in every one:
+`tkrzw_dbm_util list` and `db5.3_dump` output are identical for every
+index and bigram file, and the chunk files are byte-identical. The
+runner's byte inventory cannot mask those fields without an unsound
+utility-specific rule, so those cases stay DIFFER and this paragraph is
+their record.
+
+A full-model20 run also reproduces every chunk file byte for byte and
+every decoded pinyin-index record (201,658 system and 32,890 addon keys)
+in both key spaces; the raw pinyin-index **value** bytes differ only in
+the tail padding the pin's C++ struct leaves uninitialised and the Rust
+writer zeroes (the same recorded `datagen-compat` artefact, not a record
+difference). Running `import_interpolation` over
+`model20/interpolation2.text` after both `gen_binary_files` runs leaves
+the same chunks and bigram rows, and `export_interpolation` then writes
+byte-identical stdout: 83,457,181 bytes in 1,913,520 lines.
+
+One bdb `exp-missing-bigram` case also differs in stderr: the pin calls
+`Bigram::get_all_items` on the handle a failed `attach` left unopened,
+and libdb itself writes `BDB1565 DB->cursor: method not permitted before
+handle's open method`; the subject's store answers the failed open
+without a library diagnostic. The record is a backend library
+diagnostic, not a pin format.
+
+The named mutation `storage-native-order` replaces
+`Hash::native_keys` with the store's ascending `range_raw` walk in
+`export_interpolation`. The tkrzw run detects it in `exp-mini-fixture`
+(the `\2-gram` group order changes): 1 DIFFER. The source was restored
+byte for byte (sha256 checked) before the completion run.
+
+## N-gram and interpolation utilities (2026-10-31 UTC)
+
+`tool-cases/{gen_unigram,gen_ngram,gen_deleted_ngram,estimate_interpolation,eval_correction_rate}.json`
+hold seven, nine, nine, six and nine source-derived cases (40 in all).
+`gen_unigram` is registered `DATABASE_FREE`: its cases write a literal
+`table.conf` and copy the backend-independent chunk files from
+`fixtures/w3/db`, so its observations are identical in every cell. The
+other four open a DBM and stay per-cell.
+
+The cases cover GLib `--help`, an unknown option, extra arguments (the
+pin never reads `argc`), a missing `table.conf`, a missing chunk (the
+`ENOENT`/`ENODATA` split between `gen_ngram` and `gen_deleted_ngram`), a
+missing/unopenable bigram input, empty stdin, a segmented line that does
+not split (`abort()`, registered SIGABRT with `reproduces_signal`), a
+token whose phrase differs (unit tests; the glibc assertion text is
+policy-accepted), ordinary runs, `--skip-pi-gram-training`, estimate's
+EM over the committed `deleted_bigram.db` (`fixtures/w3/<ext>/README.md`),
+and eval's pass, mismatch, empty-corpus (`-nan`), missing-corpus and
+missing-bigram runs.
+
+The bigram container bytes are not observable through the runner: the pin
+and the subject each open/modify a private copy, and the container carries
+the writing library's own header (a random file id on Berkeley DB, a
+timestamp on tkrzw), so even two pin runs differ. `gen_ngram` and
+`gen_deleted_ngram` cases therefore direct the bigram at an absent
+directory (the pin ignores a failed `attach`) and compare the chunk
+files, stdout/stderr and exit; the row-level writes are covered by
+`crates/oxpinyin-utils/tests/training.rs`, including its ignored live
+differential, which compares the decoded rows with the pin's.
+
+On the tkrzw reference cell all 40 cases report MATCH with the sound
+`libtkrzw` (`PATH=/home/sheng/.cache/oxpinyin/tkrzw/bin:$PATH
+LD_LIBRARY_PATH=/home/sheng/.cache/oxpinyin/tkrzw/lib`); the kc cell's 40
+are MATCH as well, and the existing 45 non-generator cases stay 78
+MATCH plus 7 POLICY-ACCEPTED there with the new ones included (85 cases).
+On the bdb cell the failed-`attach` cases and the empty-file cases differ
+only in Berkeley DB's own error log (`BDB1565`/`BDB0004`): the pin leaves
+an unopened handle whose destructor calls `sync`/`close`, while
+`oxpinyin-store` reports the failed open and stops; those lines are
+library diagnostics, not the utilities' output. No policy record was
+created for them, and the reference cell carries no such lines.
+
+The named mutation `ngram-unigram-two` changes only
+`gen_ngram::train`'s `libraries.add_unigram(cur_token, 1)` to `2`. The
+tkrzw run detects it in `gen_ngram-missing-bigram-file`,
+`gen_ngram-ordinary` and `gen_ngram-skip-pi-gram` (3 DIFFER, 37 MATCH).
+The source was restored byte for byte (sha256 checked) before the
+completion run, which returned the 40 MATCH above.
+
+## Toned model (2026-11-01 UTC)
+
+`gen_binary_files.json` gained `gbf-toned-model`: `gen_binary_files
+--gen-punct-table` over the seventeen `fixtures/datagen-toned/*.table`
+files, on top of the cell's `fixtures/w3` directory. It replaces the
+tone-bit half of the deleted `oxpinyin-datagen` parity test: the toned
+pinyin-index rows (`ba`, `ba1`, `ba3`, `ba4` under one tone-zeroed key;
+`ni3'hao3` and `ni'hao` on one item) and the toned chunk bytes are in
+the complete output inventory the runner compares. The chain's chunk
+bytes over the same model stay with `just compat drop-in`, which runs
+the pin's three programs and `oxpinyin-utils`' ports side by side
+nightly; the import rows are `imp-unigram` and `imp-ordinary`.
+
+On the bdb cell the case is DIFFER for the reasons the storage write
+cases above record: Berkeley DB's own header fields in every written
+container, and the tail padding of three of the 190 pinyin-index records
+(the pin's uninitialised struct bytes against the writer's zeros). Read
+record by record with `oxpinyin-store`'s `raw_records` example, every
+field of every pinyin-index record is identical, and `phrase_index.bin`
+(747 records), `addon_pinyin_index.bin` (11), `addon_phrase_index.bin`
+(7) and `punct.bin` (274) are identical records; the seventeen chunk
+files are byte-identical. The whole bdb set was 132 MATCH, 12
+POLICY-ACCEPTED, 22 DIFFER (the recorded library diagnostics and
+container metadata) and 3 INVALID (the three KMM aborts, whose bdb
+evidence #1487 records). The tkrzw and kc cells were not observed for
+this case: on the recording host the tool-diff runner left no log and
+died (exit 137, or a silent 900 s timeout) on both cells, on this branch
+and on its base `wip/eio5-kmm` alike, while the bdb cell ran. The padding is the pin's indeterminate read,
+recorded in
+[eio-pinyin-index-padding](../findings/eio-pinyin-index-padding.md);
+the case carries that record and is POLICY-ACCEPTED on a cell where the
+padding is its only divergence, DIFFER where the container header also
+differs.

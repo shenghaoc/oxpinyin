@@ -662,18 +662,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "oxpinyin-datagen"
-version = "0.1.0"
-dependencies = [
- "oxpinyin-core",
- "oxpinyin-data",
- "oxpinyin-store",
- "oxpinyin-testsupport",
- "pkg-config",
- "tempfile",
-]
-
-[[package]]
 name = "oxpinyin-engine"
 version = "0.1.0"
 dependencies = [
@@ -709,6 +697,9 @@ dependencies = [
 name = "oxpinyin-kmm"
 version = "0.1.0"
 dependencies = [
+ "oxpinyin-input",
+ "oxpinyin-store",
+ "oxpinyin-testsupport",
  "tempfile",
 ]
 
@@ -748,7 +739,6 @@ version = "0.1.0"
 dependencies = [
  "oxpinyin-core",
  "oxpinyin-data",
- "oxpinyin-kmm",
  "oxpinyin-testsupport",
  "pkg-config",
  "tempfile",
@@ -775,6 +765,9 @@ dependencies = [
  "oxpinyin-data",
  "oxpinyin-input",
  "oxpinyin-kmm",
+ "oxpinyin-store",
+ "oxpinyin-training",
+ "oxpinyin-user",
  "tempfile",
 ]
 

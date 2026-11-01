@@ -95,10 +95,14 @@ on every store-affecting change (`store-backends.yml`, `backend-matrix`).
 
 ## Fixtures per backend
 
-`fixtures/w3/<kct|tkt>/` is the committed mini data set, one
+`fixtures/w3/<db|kct|tkt>/` is the committed mini data set, one
 directory per backend, with each backend's native file names.
-Regenerate with `oxpinyin-datagen compile --mini` from the model20 cache
-(`goldens-and-pins.md`).
+`just w3-fixtures generate` writes it: a Python subset of the model20
+text, then the pin's own program sequence from `oxpinyin-utils`, built
+for each backend (`fixtures/w3/README.md`). `just w3-fixtures check
+--cells bdb,kc,tkrzw` regenerates every directory into a temporary
+location and compares it with the committed tree, chunk files byte for
+byte and DBM files record by record (`goldens-and-pins.md`).
 
 ## Switching is a format transition
 

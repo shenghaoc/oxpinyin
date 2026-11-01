@@ -568,6 +568,22 @@ fn plan_system_reading(
     }
 }
 
+/// Applies one `PhraseItem::add_pronunciation` reading to a stored item,
+/// with the pin's `guint8` pronunciation-count wrap. The storage tools'
+/// text importer uses the same planning and application as the system
+/// import path; `true` means the count wrapped and the stored rows are the
+/// empty view.
+pub fn add_system_reading(
+    item: &mut oxpinyin_data::chunk_write::ChunkItem,
+    packed: &[u16],
+    delta: u32,
+) -> bool {
+    let reading = SystemReading { packed, delta };
+    let change = plan_system_reading(item, &reading);
+    apply_system_reading(item, &reading, change);
+    matches!(change, SystemMerge::Wrap)
+}
+
 fn apply_system_reading(
     item: &mut oxpinyin_data::chunk_write::ChunkItem,
     reading: &SystemReading<'_>,
@@ -2186,6 +2202,35 @@ impl<S: WriteStore> GenericUserStore<S> {
                 .copied()
                 .unwrap_or(0),
         ))
+    }
+
+    /// A user item's unigram frequency, including pending increments, or
+    /// `None` when the item is absent. A present zero count stays `Some(0)`.
+    /// Session reads check existence and read the count under one arena guard,
+    /// as the pin reads one item (074a2219 `pinyin.cpp:2821-2833`,
+    /// `zhuyin.cpp:1813-1825`). The caller applies library visibility and any
+    /// facade overlay.
+    ///
+    /// # Errors
+    /// Returns an error when a standalone store cannot be read.
+    pub fn user_unigram_frequency(&self, token: Token) -> Result<Option<u64>, UserStoreError> {
+        if self.inner.libpinyin.is_none() {
+            return self
+                .phrase_exists(token)?
+                .then(|| self.unigram_delta(token))
+                .transpose();
+        }
+        // Keep the same bumps-before-arena lock order as `unigram_delta`.
+        let bumps = self.system_unigrams_for_read();
+        Ok(self.with_user_item(token, |item| {
+            u64::from(item.unigram()).wrapping_add(
+                bumps
+                    .as_ref()
+                    .and_then(|b| b.tokens.get(&token))
+                    .copied()
+                    .unwrap_or(0),
+            )
+        }))
     }
 
     /// Apply the exported unigram increment to a loaded system library.

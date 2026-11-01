@@ -90,7 +90,7 @@ struct Estimate {
 /// The Rust side, or the reason it could not run: a missing input names
 /// the input, a processing failure carries the underlying error.
 fn rust_estimate() -> Result<Estimate, String> {
-    let export = locate_export_dir().ok_or_else(|| format!("missing input: system-table export not found (${EXPORT_DIR_ENV} | {DEFAULT_EXPORT_DIR}; produce with oxpinyin-datagen compile)"))?;
+    let export = locate_export_dir().ok_or_else(|| format!("missing input: system-table export not found (${EXPORT_DIR_ENV} | {DEFAULT_EXPORT_DIR}; produce with the oxpinyin-utils data-dir sequence)"))?;
     let lexicon = PhraseLexicon::from_system_dir(&export)
         .map_err(|e| format!("PhraseLexicon::from_system_dir: {e}"))?;
     let fixture = fixture_ngseg();
@@ -369,7 +369,9 @@ fn empty_inputs_record_native_nan_spelling() {
     .expect("utf8");
     let expected = format!(
         "average lambda:{}\n",
-        oxpinyin_kmm::format_six_decimals(oxpinyin_training::lambda::mean_of_no_contexts())
+        oxpinyin_training::numeric::format_six_decimals(
+            oxpinyin_training::lambda::mean_of_no_contexts()
+        )
     );
     assert_eq!(
         estimate

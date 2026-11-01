@@ -1,0 +1,79 @@
+{
+  "schema": 1,
+  "cases": [
+    {
+      "id": "gen_unigram-help",
+      "utility": "gen_unigram",
+      "source": "utils/training/gen_unigram.cpp at 074a2219: 81-92 (GLib --help; the static table_dir is never read)",
+      "args": ["--help"]
+    },
+    {
+      "id": "gen_unigram-bogus-option",
+      "utility": "gen_unigram",
+      "source": "utils/training/gen_unigram.cpp at 074a2219: 89-92",
+      "args": ["--bogus"]
+    },
+    {
+      "id": "gen_unigram-too-many-arguments",
+      "utility": "gen_unigram",
+      "source": "utils/training/gen_unigram.cpp at 074a2219: 89-112 (g_option_context_parse leaves extra arguments; main never reads argc)",
+      "args": ["first", "second"],
+      "files": {
+        "table.conf": {"text": "binary format version:7\nmodel data version:14\nlambda parameter:0.312699\n\nsource table format:pinyin\ndatabase format:Tkrzw\n\ndefault RESERVED NULL NULL NULL NOT_USED\ndefault GB_DICTIONARY gb_char.table gb_char.bin gb_char.dbin SYSTEM_FILE\ndefault GBK_DICTIONARY gbk_char.table gbk_char.bin gbk_char.dbin SYSTEM_FILE\ndefault OPENGRAM_DICTIONARY opengram.table opengram.bin opengram.dbin SYSTEM_FILE\ndefault MERGED_DICTIONARY merged.table merged.bin merged.dbin SYSTEM_FILE\ndefault ADDON_DICTIONARY NULL NULL addon.bin USER_FILE\ndefault NETWORK_DICTIONARY NULL NULL network.bin USER_FILE\ndefault USER_DICTIONARY NULL NULL user.bin USER_FILE\n\naddon 4 art.table art.bin NULL DICTIONARY\n"},
+        "gb_char.bin": {"file": "fixtures/w3/db/gb_char.bin"},
+        "gbk_char.bin": {"file": "fixtures/w3/db/gbk_char.bin"},
+        "opengram.bin": {"file": "fixtures/w3/db/opengram.bin"},
+        "merged.bin": {"file": "fixtures/w3/db/merged.bin"},
+        "art.bin": {"file": "fixtures/w3/db/art.bin"}
+      },
+      "stdin": {"text": ""}
+    },
+    {
+      "id": "gen_unigram-missing-table-conf",
+      "utility": "gen_unigram",
+      "source": "utils/training/gen_unigram.cpp at 074a2219: 94-101",
+      "args": [],
+      "stdin": {"text": ""}
+    },
+    {
+      "id": "gen_unigram-missing-chunk",
+      "utility": "gen_unigram",
+      "source": "utils/training/gen_unigram.cpp at 074a2219: 51-58 (load failed! then exit(ENOENT)); the file type test at 45-47 loads SYSTEM_FILE and DICTIONARY rows",
+      "args": [],
+      "files": {
+        "table.conf": {"text": "binary format version:7\nmodel data version:14\nlambda parameter:0.312699\n\nsource table format:pinyin\ndatabase format:Tkrzw\n\ndefault RESERVED NULL NULL NULL NOT_USED\ndefault GB_DICTIONARY gb_char.table absent.bin gb_char.dbin SYSTEM_FILE\ndefault GBK_DICTIONARY gbk_char.table gbk_char.bin gbk_char.dbin SYSTEM_FILE\n"}
+      },
+      "stdin": {"text": ""}
+    },
+    {
+      "id": "gen_unigram-empty-stdin",
+      "utility": "gen_unigram",
+      "source": "utils/training/gen_unigram.cpp at 074a2219: 35-79 (gen_unigram reads no stdin; this is the successful sweep)",
+      "args": [],
+      "files": {
+        "table.conf": {"text": "binary format version:7\nmodel data version:14\nlambda parameter:0.312699\n\nsource table format:pinyin\ndatabase format:Tkrzw\n\ndefault RESERVED NULL NULL NULL NOT_USED\ndefault GB_DICTIONARY gb_char.table gb_char.bin gb_char.dbin SYSTEM_FILE\ndefault GBK_DICTIONARY gbk_char.table gbk_char.bin gbk_char.dbin SYSTEM_FILE\ndefault OPENGRAM_DICTIONARY opengram.table opengram.bin opengram.dbin SYSTEM_FILE\ndefault MERGED_DICTIONARY merged.table merged.bin merged.dbin SYSTEM_FILE\ndefault ADDON_DICTIONARY NULL NULL addon.bin USER_FILE\ndefault NETWORK_DICTIONARY NULL NULL network.bin USER_FILE\ndefault USER_DICTIONARY NULL NULL user.bin USER_FILE\n\naddon 4 art.table art.bin NULL DICTIONARY\n"},
+        "gb_char.bin": {"file": "fixtures/w3/db/gb_char.bin"},
+        "gbk_char.bin": {"file": "fixtures/w3/db/gbk_char.bin"},
+        "opengram.bin": {"file": "fixtures/w3/db/opengram.bin"},
+        "merged.bin": {"file": "fixtures/w3/db/merged.bin"},
+        "art.bin": {"file": "fixtures/w3/db/art.bin"}
+      },
+      "stdin": {"text": ""}
+    },
+    {
+      "id": "gen_unigram-default-chunks-then-missing-addon",
+      "utility": "gen_unigram",
+      "source": "utils/training/gen_unigram.cpp at 074a2219: 103-110 (the default sweep saves its chunks before the addon sweep fails at the first absent addon chunk)",
+      "args": [],
+      "files": {
+        "table.conf": {"file": "fixtures/w3/db/table.conf"},
+        "gb_char.bin": {"file": "fixtures/w3/db/gb_char.bin"},
+        "gbk_char.bin": {"file": "fixtures/w3/db/gbk_char.bin"},
+        "opengram.bin": {"file": "fixtures/w3/db/opengram.bin"},
+        "merged.bin": {"file": "fixtures/w3/db/merged.bin"},
+        "art.bin": {"file": "fixtures/w3/db/art.bin"}
+      },
+      "stdin": {"text": ""}
+    }
+  ]
+}

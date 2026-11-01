@@ -1,9 +1,8 @@
 //! Training-only n-gram counter reproducing libpinyin `gen_ngram`.
 //!
 //! Consumes the `ngseg` segmented-token stream (`{token} {phrase}` lines,
-//! `0 {raw}` unknowns, `0 ` sentence separators — T1's
-//! [`Emitted::to_ngseg_line`](crate::segment::Emitted::to_ngseg_line)) and
-//! produces integer unigram (`token → count`) and bigram
+//! `0 {raw}` unknowns, `0 ` sentence separators) and produces integer
+//! unigram (`token → count`) and bigram
 //! (`(prev, cur) → count`) counts. Never ships with the engine. See
 //! `docs/findings/counter-port.md`.
 #![forbid(unsafe_code)]

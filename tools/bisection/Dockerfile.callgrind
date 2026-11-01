@@ -35,7 +35,7 @@
 #    callgrind-control verifies DWARF and neutrality at build time; stage 2
 #    checks neutrality again before collection. libpinyin's autotools default
 #    CFLAGS already include -g -O2.
-# 4. The datagen step is dropped. This is the drop-in configuration
+# 4. The data-directory step is dropped. This is the drop-in configuration
 #    the perf-same-data recipe measures: both cells open libpinyin's own
 #    installed data directory, so there is no oxpinyin-generated data to
 #    compile.

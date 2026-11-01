@@ -1,0 +1,48 @@
+{
+  "schema": 1,
+  "cases": [
+    {
+      "id": "kmm-prune-help",
+      "utility": "prune_k_mixture_model",
+      "source": "utils/training/prune_k_mixture_model.cpp at 074a2219: 107-191; k_mixture_model.h:40-95",
+      "args": [
+        "--help"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      }
+    },
+    {
+      "id": "kmm-prune-bad-option",
+      "utility": "prune_k_mixture_model",
+      "source": "utils/training/prune_k_mixture_model.cpp at 074a2219: 107-191; k_mixture_model.h:40-95",
+      "args": [
+        "--bogus"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      }
+    },
+    {
+      "id": "kmm-prune-wrong-args",
+      "utility": "prune_k_mixture_model",
+      "source": "utils/training/prune_k_mixture_model.cpp at 074a2219: 107-191; k_mixture_model.h:40-95",
+      "args": [],
+      "env": {
+        "LC_ALL": "C"
+      }
+    },
+    {
+      "id": "kmm-prune-edom",
+      "utility": "prune_k_mixture_model",
+      "source": "utils/training/prune_k_mixture_model.cpp at 074a2219: 107-191; k_mixture_model.h:40-95",
+      "args": [
+        "k_mixture_model_edom.db"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      },
+      "fixture_dir": "fixtures/w3"
+    }
+  ]
+}

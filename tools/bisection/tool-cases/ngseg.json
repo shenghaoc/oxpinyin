@@ -1,0 +1,79 @@
+{
+  "schema": 1,
+  "cases": [
+    {
+      "id": "ngseg-help",
+      "utility": "ngseg",
+      "source": "utils/segment/ngseg.cpp at 074a2219: 113-121 (GLib --help)",
+      "args": ["--help"]
+    },
+    {
+      "id": "ngseg-bogus-option",
+      "utility": "ngseg",
+      "source": "utils/segment/ngseg.cpp at 074a2219: 116-121",
+      "args": ["--bogus"]
+    },
+    {
+      "id": "ngseg-too-many-arguments",
+      "utility": "ngseg",
+      "source": "utils/segment/ngseg.cpp at 074a2219: 123-134 (output opened first)",
+      "args": ["-o", "out.txt", "first.txt", "second.txt"],
+      "fixture_dir": "fixtures/w3",
+      "stdin": {"text": ""}
+    },
+    {
+      "id": "ngseg-missing-input",
+      "utility": "ngseg",
+      "source": "utils/segment/ngseg.cpp at 074a2219: 136-143",
+      "args": ["absent.txt"],
+      "fixture_dir": "fixtures/w3"
+    },
+    {
+      "id": "ngseg-missing-table-conf",
+      "utility": "ngseg",
+      "source": "utils/segment/ngseg.cpp at 074a2219: 145-151",
+      "args": [],
+      "stdin": {"text": ""}
+    },
+    {
+      "id": "ngseg-empty-input",
+      "utility": "ngseg",
+      "source": "utils/segment/ngseg.cpp at 074a2219: 256-260",
+      "args": [],
+      "fixture_dir": "fixtures/w3",
+      "stdin": {"text": ""}
+    },
+    {
+      "id": "ngseg-empty-line",
+      "utility": "ngseg",
+      "source": "utils/segment/ngseg.cpp at 074a2219: 199-204",
+      "args": [],
+      "fixture_dir": "fixtures/w3",
+      "stdin": {"text": "\n"}
+    },
+    {
+      "id": "ngseg-extra-enter",
+      "utility": "ngseg",
+      "source": "utils/segment/ngseg.cpp at 074a2219: 248-251",
+      "args": ["--generate-extra-enter"],
+      "fixture_dir": "fixtures/w3",
+      "stdin": {"text": "中\n"}
+    },
+    {
+      "id": "ngseg-invalid-utf8",
+      "utility": "ngseg",
+      "source": "utils/segment/ngseg.cpp at 074a2219: 189-198",
+      "args": [],
+      "fixture_dir": "fixtures/w3",
+      "stdin": {"hex": "ff0a"}
+    },
+    {
+      "id": "ngseg-mini-fixture",
+      "utility": "ngseg",
+      "source": "utils/segment/ngseg.cpp at 074a2219: 106-262; fixtures/w9/segmenter-han.txt",
+      "args": ["han.txt"],
+      "fixture_dir": "fixtures/w3",
+      "files": {"han.txt": {"file": "fixtures/w9/segmenter-han.txt"}}
+    }
+  ]
+}

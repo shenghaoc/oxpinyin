@@ -1,0 +1,72 @@
+{
+  "schema": 1,
+  "cases": [
+    {
+      "id": "kmm-export-help",
+      "utility": "export_k_mixture_model",
+      "source": "utils/training/export_k_mixture_model.cpp at 074a2219: 112-155, 35-110; src/storage/tag_utility.cpp:360-417",
+      "args": [
+        "--help"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      }
+    },
+    {
+      "id": "kmm-export-bad-option",
+      "utility": "export_k_mixture_model",
+      "source": "utils/training/export_k_mixture_model.cpp at 074a2219: 112-155, 35-110; src/storage/tag_utility.cpp:360-417",
+      "args": [
+        "--bogus"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      }
+    },
+    {
+      "id": "kmm-export-missing-table-conf",
+      "utility": "export_k_mixture_model",
+      "source": "utils/training/export_k_mixture_model.cpp at 074a2219: 112-155, 35-110; src/storage/tag_utility.cpp:360-417",
+      "args": [],
+      "env": {
+        "LC_ALL": "C"
+      }
+    },
+    {
+      "id": "kmm-export-null-name",
+      "utility": "export_k_mixture_model",
+      "source": "utils/training/export_k_mixture_model.cpp at 074a2219: 112-155, 35-110; src/storage/tag_utility.cpp:360-417",
+      "args": [],
+      "env": {
+        "LC_ALL": "C"
+      },
+      "fixture_dir": "fixtures/w3"
+    },
+    {
+      "id": "kmm-export-absent-file",
+      "utility": "export_k_mixture_model",
+      "source": "utils/training/export_k_mixture_model.cpp at 074a2219: 112-155, 35-110; src/storage/tag_utility.cpp:360-417",
+      "args": [
+        "--k-mixture-model-file",
+        "absent.db"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      },
+      "fixture_dir": "fixtures/w3"
+    },
+    {
+      "id": "kmm-export-good",
+      "utility": "export_k_mixture_model",
+      "source": "utils/training/export_k_mixture_model.cpp at 074a2219: 112-155, 35-110; src/storage/tag_utility.cpp:360-417",
+      "args": [
+        "--k-mixture-model-file",
+        "k_mixture_model.db"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      },
+      "fixture_dir": "fixtures/w3"
+    }
+  ]
+}

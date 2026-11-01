@@ -22,6 +22,31 @@ class ToolDiffTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
 
+    def test_pinyin_index_mask_keeps_tokens_keys_order_and_even_items(self):
+        # N=1: token + key + two padding bytes, with two items in stored order.
+        original = b'0100 010000000100abcd0200000001001234\n'
+        expected = b'0100 01000000010000000200000001000000\n'
+        self.assertEqual(tool_diff.pinyin_index_rows(original), expected)
+        for changed in (original.replace(b'01000000', b'03000000', 1),
+                        original.replace(b'0100abcd', b'0200abcd'),
+                        b'0100 0200000001001234010000000100abcd\n'):
+            self.assertNotEqual(tool_diff.pinyin_index_rows(changed), expected)
+        for untouched in (b'01000200 0100000001000200\n', b'0100 \n'):
+            self.assertEqual(tool_diff.pinyin_index_rows(untouched), untouched)
+        # N=3: ten field bytes in a twelve-byte item.
+        self.assertEqual(tool_diff.pinyin_index_rows(b'010002000300 01000000010002000300abcd\n'),
+                         b'010002000300 010000000100020003000000\n')
+        for malformed in (b'01 010000000100abcd\n', b'0100 010000000100ab\n'):
+            with self.assertRaises(ValueError):
+                tool_diff.pinyin_index_rows(malformed)
+        case = dict(dbm_rows_pinyin_index=['pinyin_index.bin'])
+        observation = dict(exit=0, stdout='', stderr='', files={'pinyin_index.bin': 'rows:digest'})
+        self.assertEqual(tool_diff.verdict(case, observation, observation, self.root, 'tkrzw')[0],
+                         'POLICY-ACCEPTED')
+        for changed in (dict(observation, stdout='changed'),
+                        dict(observation, files={'pinyin_index.bin': 'rows:changed'})):
+            self.assertEqual(tool_diff.verdict(case, observation, changed, self.root, 'tkrzw')[0], 'DIFFER')
+
     def test_stream_bytes_environment_stdin_and_all_files(self):
         context = pool.UnitContext('tool test', threading.Event())
         ctx = SimpleNamespace(env={}, services=SimpleNamespace(context=context))
@@ -156,7 +181,7 @@ class ToolDiffTests(unittest.TestCase):
     def test_case_file_names_registered_utilities_and_reproducible_signals(self):
         path = self.root / 'cases.json'
         case = dict(id='one', utility='k_mixture_model_to_interpolation', source='pin.cpp:1')
-        for bad, message in ((dict(utility='ngseg'), 'no registered pin build directory'),
+        for bad, message in ((dict(utility='gen_k_mixture_model_unregistered'), 'no registered pin build directory'),
                              (dict(pin_signal=-11, reproduces_signal=True), 'only a registered SIGABRT'),
                              (dict(pin_signal=-6), 'requires a named policy record')):
             path.write_text(json.dumps(dict(schema=1, cases=[dict(case, **bad)])))
@@ -180,6 +205,30 @@ class ToolDiffTests(unittest.TestCase):
         path.write_text(json.dumps(dict(schema=1, cases=[dict(case, files={'../escape': {'text': ''}})])))
         with self.assertRaisesRegex(ValueError, 'working directory'):
             tool_diff.load_cases([path])
+
+    def test_fixture_directory_is_the_cells_committed_data_set(self):
+        files = tool_diff.fixture_inputs(ROOT, 'tkrzw', 'fixtures/w3')
+        self.assertIn('table.conf', files)
+        self.assertIn('phrase_index.bin', files)
+        self.assertIn('bigram.db', files)
+        self.assertTrue(files['table.conf'].startswith(b'binary format version:'))
+        bdb = tool_diff.fixture_inputs(ROOT, 'bdb', 'fixtures/w3')
+        kc = tool_diff.fixture_inputs(ROOT, 'kc', 'fixtures/w3')
+        self.assertEqual(set(files), set(bdb))
+        self.assertEqual(set(files), set(kc))
+        self.assertNotEqual(files['phrase_index.bin'], bdb['phrase_index.bin'])
+        with self.assertRaisesRegex(ValueError, 'no tkt directory'):
+            tool_diff.fixture_inputs(self.root, 'tkrzw', 'fixtures/w3')
+
+    def test_case_file_validates_fixture_directory(self):
+        path = self.root / 'cases.json'
+        case = dict(id='one', utility='ngseg', source='pin.cpp:1', fixture_dir='fixtures/w3')
+        path.write_text(json.dumps(dict(schema=1, cases=[case])))
+        self.assertEqual(len(tool_diff.load_cases([path])), 1)
+        for bad in ('../fixtures/w3', '/fixtures/w3', 7):
+            path.write_text(json.dumps(dict(schema=1, cases=[dict(case, fixture_dir=bad)])))
+            with self.assertRaises((ValueError, TypeError)):
+                tool_diff.load_cases([path])
 
     def test_model_fixture_reorders_fields_and_uses_committed_zhuyin_spelling(self):
         model = self.root / 'model'

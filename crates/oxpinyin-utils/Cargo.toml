@@ -9,12 +9,30 @@ publish = false
 description = "libpinyin's utilities under their own names and interfaces (external-I/O boundary stage 5). Never ships."
 
 [features]
-# The data layer's backend selection, forwarded as oxpinyin-datagen does;
-# none of the ported utilities reads or writes a DBM yet.
+# The data layer's backend selection, forwarded to every backend-sensitive
+# edge the utilities use.
 default = ["tkrzw"]
-kyotocabinet = ["oxpinyin-data/kyotocabinet"]
-bdb = ["oxpinyin-data/bdb"]
-tkrzw = ["oxpinyin-data/tkrzw"]
+kyotocabinet = [
+    "oxpinyin-data/kyotocabinet",
+    "oxpinyin-store/kyotocabinet",
+    "oxpinyin-user/kyotocabinet",
+    "oxpinyin-training/kyotocabinet",
+    "oxpinyin-kmm/kyotocabinet",
+]
+bdb = [
+    "oxpinyin-data/bdb",
+    "oxpinyin-store/bdb",
+    "oxpinyin-user/bdb",
+    "oxpinyin-training/bdb",
+    "oxpinyin-kmm/bdb",
+]
+tkrzw = [
+    "oxpinyin-data/tkrzw",
+    "oxpinyin-store/tkrzw",
+    "oxpinyin-user/tkrzw",
+    "oxpinyin-training/tkrzw",
+    "oxpinyin-kmm/tkrzw",
+]
 
 [lints]
 workspace = true
@@ -23,13 +41,28 @@ workspace = true
 oxpinyin-core = { workspace = true }
 # pinyin_exact_compare2, shared with the table writers.
 oxpinyin-data = { workspace = true }
+# The pin's DBM files, written and read through the backend seam the data
+# layer and datagen share.
+oxpinyin-store = { workspace = true }
+# The storage text importer reuses the user store's pin-exact pronunciation
+# count handling.
+oxpinyin-user = { workspace = true }
 # The utilities' edge calls: GLib options and text, input streams, C stdio.
 oxpinyin-input = { workspace = true, features = ["tools"] }
+# `eval_correction_rate`'s decode: the training crate's term-for-term port
+# of `PhoneticLookup<1, 1>`.
+oxpinyin-training = { path = "../oxpinyin-training", default-features = false }
+# The seven k-mixture-model operations on the pin's flexible-bigram
+# container; the utilities under the pin's names parse options and load the
+# system tables before calling them.
+oxpinyin-kmm = { path = "../oxpinyin-kmm", default-features = false }
 
 [dev-dependencies]
-# The KMM text the pipeline and differential tests convert.
-oxpinyin-kmm = { path = "../oxpinyin-kmm" }
 tempfile.workspace = true
+
+[[bin]]
+name = "dbm_rows"
+path = "src/bin/dbm_rows.rs"
 
 [[bin]]
 name = "gen_pinyin_table"
@@ -42,3 +75,75 @@ path = "src/bin/gen_zhuyin_table.rs"
 [[bin]]
 name = "k_mixture_model_to_interpolation"
 path = "src/bin/k_mixture_model_to_interpolation.rs"
+
+[[bin]]
+name = "gen_binary_files"
+path = "src/bin/gen_binary_files.rs"
+
+[[bin]]
+name = "import_interpolation"
+path = "src/bin/import_interpolation.rs"
+
+[[bin]]
+name = "export_interpolation"
+path = "src/bin/export_interpolation.rs"
+
+[[bin]]
+name = "ngseg"
+path = "src/bin/ngseg.rs"
+
+[[bin]]
+name = "spseg"
+path = "src/bin/spseg.rs"
+
+[[bin]]
+name = "mergeseq"
+path = "src/bin/mergeseq.rs"
+
+[[bin]]
+name = "gen_unigram"
+path = "src/bin/gen_unigram.rs"
+
+[[bin]]
+name = "gen_ngram"
+path = "src/bin/gen_ngram.rs"
+
+[[bin]]
+name = "gen_deleted_ngram"
+path = "src/bin/gen_deleted_ngram.rs"
+
+[[bin]]
+name = "estimate_interpolation"
+path = "src/bin/estimate_interpolation.rs"
+
+[[bin]]
+name = "eval_correction_rate"
+path = "src/bin/eval_correction_rate.rs"
+
+[[bin]]
+name = "validate_k_mixture_model"
+path = "src/bin/validate_k_mixture_model.rs"
+
+[[bin]]
+name = "merge_k_mixture_model"
+path = "src/bin/merge_k_mixture_model.rs"
+
+[[bin]]
+name = "prune_k_mixture_model"
+path = "src/bin/prune_k_mixture_model.rs"
+
+[[bin]]
+name = "estimate_k_mixture_model"
+path = "src/bin/estimate_k_mixture_model.rs"
+
+[[bin]]
+name = "import_k_mixture_model"
+path = "src/bin/import_k_mixture_model.rs"
+
+[[bin]]
+name = "export_k_mixture_model"
+path = "src/bin/export_k_mixture_model.rs"
+
+[[bin]]
+name = "gen_k_mixture_model"
+path = "src/bin/gen_k_mixture_model.rs"

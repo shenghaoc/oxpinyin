@@ -220,7 +220,7 @@ pub(crate) struct SharedDb {
 }
 
 impl SharedDb {
-    fn new(db: Db) -> Self {
+    pub(crate) fn new(db: Db) -> Self {
         Self {
             read_only: db.is_read_only(),
             hash: db.is_hash(),
@@ -274,6 +274,16 @@ impl SharedDb {
 
     pub(crate) fn get(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError> {
         self.lock().get(key, value)
+    }
+
+    pub(crate) fn get_partial(
+        &self,
+        key: &[u8],
+        offset: u32,
+        length: u32,
+        value: &mut Vec<u8>,
+    ) -> Result<bool, StoreError> {
+        self.lock().get_partial(key, offset, length, value)
     }
 
     pub(crate) fn exists(&self, key: &[u8]) -> Result<bool, StoreError> {
@@ -449,6 +459,95 @@ impl Db {
         Ok(this)
     }
 
+    /// Opens `path` exactly as the pin's `attach` does and, if the open
+    /// fails, makes the calls the pin then makes on its still-open handle:
+    /// a cursor walk and the destructor's sync. libdb prints the same
+    /// `BDB1565` lines the pin prints, then the handle is closed.
+    pub(crate) fn report_failed_open(path: &Path, db_type: DBTYPE, mode: c_int) {
+        let Ok(path) = c_path(path) else {
+            return;
+        };
+        let Ok(this) = Self::open_keep_unopened(Some(path.as_c_str()), db_type, true, false, mode)
+        else {
+            return;
+        };
+        if this.opened {
+            return;
+        }
+        let _ = this.cursor_handle();
+        let _ = this.sync();
+    }
+
+    pub(crate) fn open_unopened(
+        path: &Path,
+        hash: bool,
+        read_only: bool,
+        create: bool,
+    ) -> Option<Self> {
+        let path = c_path(path).ok()?;
+        Self::open_keep_unopened(
+            Some(path.as_c_str()),
+            if hash { DB_HASH } else { DB_BTREE },
+            read_only,
+            create,
+            SYSTEM_FILE_MODE,
+        )
+        .ok()
+    }
+
+    pub(crate) const fn is_opened(&self) -> bool {
+        self.opened
+    }
+
+    fn open_keep_unopened(
+        path: Option<&std::ffi::CStr>,
+        db_type: DBTYPE,
+        read_only: bool,
+        create: bool,
+        mode: c_int,
+    ) -> Result<Self, StoreError> {
+        let mut handle = ptr::null_mut();
+        // SAFETY: as in `open_at`.
+        let code = unsafe { sys::db_create(&raw mut handle, ptr::null_mut(), 0) };
+        check(code, "db_create")?;
+        if handle.is_null() {
+            return Err(StoreError::Backend(
+                "db_create returned success with a null handle (allocation failure)".into(),
+            ));
+        }
+        let mut this = Self {
+            handle,
+            read_only,
+            hash: db_type == DB_HASH,
+            opened: false,
+            sync_on_drop: true,
+            cursor_buffers: None,
+        };
+        let mut flags = 0;
+        if read_only {
+            flags |= sys::DB_RDONLY;
+        } else if create {
+            flags |= sys::DB_CREATE;
+        }
+        let open = method!(this.handle, open, "DB->open")?;
+        // SAFETY: as in `open_at`.
+        let code = unsafe {
+            open(
+                this.handle,
+                ptr::null_mut(),
+                path.map_or(ptr::null(), std::ffi::CStr::as_ptr),
+                ptr::null(),
+                db_type,
+                flags,
+                mode,
+            )
+        };
+        if code == 0 {
+            this.opened = true;
+        }
+        Ok(this)
+    }
+
     /// Whether this handle was opened read-only.
     pub(crate) const fn is_read_only(&self) -> bool {
         self.read_only
@@ -536,6 +635,45 @@ impl Db {
         Ok(true)
     }
 
+    /// `DB->get` with `DB_DBT_PARTIAL`: copy at most `length` bytes at
+    /// `offset` into `buf`, the pin's header read
+    /// (`flexible_ngram_bdb.h:309-326`, `:379-389`).
+    pub(crate) fn get_partial(
+        &self,
+        key: &[u8],
+        offset: u32,
+        length: u32,
+        buf: &mut Vec<u8>,
+    ) -> Result<bool, StoreError> {
+        let get = method!(self.handle, get, "DB->get")?;
+        let mut key_dbt = dbt_from(key)?;
+        let mut value_dbt = empty_dbt();
+        value_dbt.flags = sys::DB_DBT_PARTIAL | sys::DB_DBT_USERMEM;
+        value_dbt.doff = offset;
+        value_dbt.dlen = length;
+        buf.clear();
+        buf.resize(length as usize, 0);
+        value_dbt.data = buf.as_mut_ptr().cast();
+        value_dbt.ulen = length;
+        // SAFETY: both `DBT`s are live locals, `key` and `buf` outlive the
+        // call; libdb writes at most `length` bytes into `buf`.
+        let code = unsafe {
+            get(
+                self.handle,
+                ptr::null_mut(),
+                &raw mut key_dbt,
+                &raw mut value_dbt,
+                0,
+            )
+        };
+        if code == sys::DB_NOTFOUND {
+            return Ok(false);
+        }
+        check(code, "DB->get")?;
+        buf.truncate(value_dbt.size as usize);
+        Ok(true)
+    }
+
     /// Insert or overwrite.
     pub(crate) fn put(&self, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
         if self.read_only {
@@ -581,7 +719,7 @@ impl Db {
     /// with and the device-visible sync `compact` owes. There is no
     /// softer tier to select.
     pub(crate) fn sync(&self) -> Result<(), StoreError> {
-        if self.read_only {
+        if self.read_only && self.opened {
             return Ok(());
         }
         let sync = method!(self.handle, sync, "DB->sync")?;
@@ -603,7 +741,7 @@ impl Db {
     }
 
     /// Opens a native cursor while the shareable owner's lock is held.
-    fn cursor_handle(&self) -> Result<*mut sys::DBC, StoreError> {
+    pub(crate) fn cursor_handle(&self) -> Result<*mut sys::DBC, StoreError> {
         let cursor = method!(self.handle, cursor, "DB->cursor")?;
         let mut handle: *mut sys::DBC = ptr::null_mut();
         // SAFETY: the database handle is live; the transaction is null;

@@ -1,0 +1,6 @@
+\data model "k mixture model" count 10 N 1 total_freq 10
+\1-gram
+\item 1 <start> count 10 freq 10
+\2-gram
+\item 1 <start> 1 <start> count 10 T 10 N_n_0 0 n_1 0 Mr 10
+\end
