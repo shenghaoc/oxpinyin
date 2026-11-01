@@ -639,37 +639,16 @@ impl UserIndex {
         !keys.is_empty() && keys.len() <= MAX_PHRASE_LENGTH && self.contains_key(&query_key(keys))
     }
 
-    /// Whether any record key extends `keys`' query key, including the key
-    /// itself: `search_suggestion`'s `m_db->Get` gate.
+    /// Whether the exact query key exists, including an empty marker.
     pub(crate) fn has_prefix(&self, keys: &[ChewingKey]) -> bool {
-        if keys.is_empty() || keys.len() > MAX_PHRASE_LENGTH {
-            return false;
-        }
-        let prefix = query_key(keys);
-        // The first arena key at or past the prefix, and the first overlay
-        // key at or past it, are the only candidates: both are sorted. An
-        // overlay key with an empty value is still a stored key.
-        let start = self
-            .offsets
-            .partition_point(|offset| key_at(&self.arena, *offset) < prefix.as_slice());
-        self.offsets
-            .get(start)
-            .is_some_and(|offset| key_at(&self.arena, *offset).starts_with(&prefix))
-            || self
-                .overlay
-                .range::<[u8], _>((
-                    std::ops::Bound::Included(prefix.as_slice()),
-                    std::ops::Bound::Unbounded,
-                ))
-                .next()
-                .is_some_and(|(key, _)| key.starts_with(&prefix))
+        self.has_record(keys)
     }
 
     /// `ChewingTableEntry::search_suggestion` over the stored records:
     /// longer keys extending the prefix, filtered with-tones.
     pub(crate) fn suggest(&self, prefix: &[ChewingKey]) -> Vec<u32> {
         let prefix_len = prefix.len();
-        if prefix_len == 0 || prefix_len > MAX_PHRASE_LENGTH {
+        if !self.has_record(prefix) {
             return Vec::new();
         }
         let prefix_key = query_key(prefix);
@@ -894,7 +873,8 @@ mod tests {
     fn has_prefix_probes_the_arena_and_the_overlay_markers() {
         let full = pair(1, 2);
         let mut index = index(&[(encode_complete_key(&full), record(&[(7, &full)]))]);
-        assert!(index.has_prefix(&full[..1]));
+        assert!(!index.has_prefix(&full[..1]));
+        assert!(index.suggest(&full[..1]).is_empty());
         assert!(index.has_prefix(&full));
         assert!(!index.has_prefix(&pair(3, 4)[..1]));
         // An empty overlay marker is a stored key.
