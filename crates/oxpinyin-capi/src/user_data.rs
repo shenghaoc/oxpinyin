@@ -95,7 +95,7 @@ pub extern "C" fn pinyin_remember_user_input(
             return false;
         };
         let Some(tones) = selected_tones(
-            &matrix,
+            matrix,
             inst.core.session.raw_input().as_bytes(),
             &syllables,
             0,

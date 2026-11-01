@@ -535,17 +535,20 @@ fn span_law_without_separators_steps_keys_only() {
     // columns, so nothing aborts and gaps answer the graceful false.
     let input = b"abcd";
     let spans = [(0usize, 2usize), (2, 4)];
-    assert_eq!(lookup_offset_over_spans(input, 4, &spans, false, 3), Ok(2));
     assert_eq!(
-        left_word_offset_over_spans(input, 4, &spans, false, 4),
+        lookup_offset_over_spans(input, 4, &spans[..], false, 3),
         Ok(2)
     );
     assert_eq!(
-        right_word_offset_over_spans(input, 4, &spans, false, 0),
+        left_word_offset_over_spans(input, 4, &spans[..], false, 4),
+        Ok(2)
+    );
+    assert_eq!(
+        right_word_offset_over_spans(input, 4, &spans[..], false, 0),
         Ok(Some(2))
     );
     assert_eq!(
-        right_word_offset_over_spans(input, 4, &spans, false, 1),
+        right_word_offset_over_spans(input, 4, &spans[..], false, 1),
         Ok(None)
     );
 }

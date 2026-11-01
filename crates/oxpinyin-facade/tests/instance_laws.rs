@@ -124,7 +124,12 @@ fn cursor_laws_step_by_key_in_both_modes() {
         6
     );
     let source = zhuyin.span_source().expect("a zhuyin parse is active");
-    assert_eq!(source.spans, [(0, 3), (3, 6)]);
+    let spans: Vec<_> = source
+        .spans
+        .iter()
+        .map(|key| (key.begin, key.end))
+        .collect();
+    assert_eq!(spans, [(0, 3), (3, 6)]);
     assert!(!source.separators, "zhuyin holds no zero-key columns");
     assert_eq!(zhuyin.left_offset(3).expect("left of the second key"), 0);
     assert_eq!(

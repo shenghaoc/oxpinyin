@@ -142,10 +142,7 @@ fn validated_lookup_offset(
 /// `"!"` consume a byte or none and place nothing. An unreadable parse is
 /// left to the session.
 pub(crate) fn matrix_has_keys(inst: &crate::state::CapiInstance) -> bool {
-    let Ok((keys, input, _)) = inst.core.mode_keys() else {
-        return true;
-    };
-    !(input.is_empty() || keys.is_empty())
+    inst.core.mode_has_keys().unwrap_or(true)
 }
 
 /// Guess a sentence seeded with prefix tokens.
@@ -387,10 +384,7 @@ pub extern "C" fn pinyin_get_character_offset(
 /// phrase and a dictionary token for every character. The engine answers
 /// all of them, and the walk's own failure, with `Ok(None)`.
 fn character_walk_ran(inst: &crate::state::CapiInstance, text: &oxpinyin_core::PhraseText) -> bool {
-    let Ok((keys, input, _)) = inst.core.mode_keys() else {
-        return false;
-    };
-    if input.is_empty() || keys.is_empty() || text.is_empty() {
+    if !inst.core.mode_has_keys().unwrap_or(false) || text.is_empty() {
         return false;
     }
     text.outward_words()

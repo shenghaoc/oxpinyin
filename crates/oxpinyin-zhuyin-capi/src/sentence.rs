@@ -304,10 +304,7 @@ pub extern "C" fn zhuyin_get_character_offset(
 fn character_walk_ran(inst: &crate::state::CapiInstance, text: &oxpinyin_core::PhraseText) -> bool {
     use oxpinyin_core::Dictionary as _;
 
-    let Ok((keys, input, _)) = inst.core.mode_keys() else {
-        return false;
-    };
-    if input.is_empty() || keys.is_empty() || text.is_empty() {
+    if !inst.core.mode_has_keys().unwrap_or(false) || text.is_empty() {
         return false;
     }
     text.outward_words()

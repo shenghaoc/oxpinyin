@@ -22,6 +22,12 @@ use crate::{Completeness, MAX_SYLLABLE_LEN, OptionBits, SyllableKey, USE_TONE};
 /// differential runner agreeing about what is representable.
 pub const MAX_GRAPH_INPUT: usize = 65_535;
 
+/// The edge vector's starting capacity: one edge per node, at most this
+/// many. It bounds the reservation made before any edge exists, not the
+/// input; past it the vector doubles as edges are emitted, so the peak
+/// stays within about twice the edges the input actually produces.
+const INITIAL_EDGE_CAPACITY: usize = 4_096;
+
 /// Why a graph could not be built.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum GraphError {
@@ -277,13 +283,21 @@ impl SegmentGraph {
         }
 
         let node_count = input.len() + 1;
-        let mut edges: Vec<Edge> =
-            Vec::with_capacity(input.len().saturating_mul(MAX_SYLLABLE_LEN).max(8));
+        // One edge per node up to `INITIAL_EDGE_CAPACITY`, and the vector
+        // grows past it. Growing from empty cost short inputs up to a third
+        // more time in `core_graph_build`; a long apostrophe or junk input,
+        // which emits few or no edges, reserves no more than the constant.
+        let mut edges: Vec<Edge> = Vec::with_capacity(node_count.clamp(8, INITIAL_EDGE_CAPACITY));
         let mut starts = Vec::with_capacity(node_count + 1);
 
+        // One forward pass over each apostrophe run keeps the build linear:
+        // every node inside a run shares the run's end.
+        let mut run_end = 0;
         for node in 0..node_count {
             starts.push(u32::try_from(edges.len()).unwrap_or(u32::MAX));
-            emit_edges(input, node, options, &mut edges);
+            if let Some(syllable_start) = key_start(input, node, &mut run_end) {
+                emit_edges(input, node, syllable_start, options, &mut edges);
+            }
         }
         starts.push(u32::try_from(edges.len()).unwrap_or(u32::MAX));
 
@@ -631,11 +645,13 @@ impl FewestKeys {
 /// At a fixed position a given length matches at most one key: the canonical,
 /// initial-only, and option-gated alias spellings are disjoint exact strings.
 /// So one edge per length, and the emission order is total.
-fn emit_edges(input: &[u8], node: usize, options: OptionBits, edges: &mut Vec<Edge>) {
-    let Some(syllable_start) = key_start(input, node) else {
-        return;
-    };
-
+fn emit_edges(
+    input: &[u8],
+    node: usize,
+    syllable_start: usize,
+    options: OptionBits,
+    edges: &mut Vec<Edge>,
+) {
     let available = input.len() - syllable_start;
     // The pin's window is `max_full_pinyin_length = 7`, whose own comment
     // says "include tone" (`pinyin_parser2.cpp:82`): one byte beyond the
@@ -742,14 +758,19 @@ fn tone_split(text: &[u8], use_tone: bool, force_tone: bool) -> Option<(&[u8], u
 /// A *run* of consecutive apostrophes collapses to a single hop, so
 /// `'ni` and `ni''hao` both consume their full input on the pin side.
 /// Skip the whole run and let the key begin at the next byte.
-fn key_start(input: &[u8], node: usize) -> Option<usize> {
+///
+/// `run_end` caches the end of the run last scanned, so the nodes of one
+/// run share a single scan and a build stays linear in the input length.
+fn key_start(input: &[u8], node: usize, run_end: &mut usize) -> Option<usize> {
     let byte = *input.get(node)?;
     if byte == b'\'' {
-        let mut cursor = node + 1;
-        while *input.get(cursor)? == b'\'' {
-            cursor += 1;
+        if *run_end <= node {
+            *run_end = input[node..]
+                .iter()
+                .position(|byte| *byte != b'\'')
+                .map_or(input.len(), |offset| node + offset);
         }
-        return Some(cursor);
+        return (*run_end < input.len()).then_some(*run_end);
     }
     Some(node)
 }
@@ -1310,6 +1331,66 @@ mod tests {
             })
         );
         assert!(SegmentGraph::build(&long[..MAX_GRAPH_INPUT]).is_ok());
+    }
+
+    #[test]
+    fn an_input_without_keys_reserves_only_the_initial_edge_capacity() {
+        // The longest inputs that emit no edge: the starting reservation is
+        // capped, so capacity does not follow the input length.
+        for input in [vec![b'\''; MAX_GRAPH_INPUT], vec![b'!'; MAX_GRAPH_INPUT]] {
+            let graph = SegmentGraph::build(&input).expect("within the limit");
+            assert!(graph.edges.is_empty());
+            assert!(
+                graph.edges.capacity() <= super::INITIAL_EDGE_CAPACITY,
+                "capacity {} for {} bytes",
+                graph.edges.capacity(),
+                input.len()
+            );
+        }
+    }
+
+    #[test]
+    fn a_cached_apostrophe_run_emits_the_edges_of_a_per_node_scan() {
+        // The scan `key_start` replaced: every node rescans the rest of its
+        // apostrophe run, and a run that reaches the end starts no key.
+        fn per_node_key_start(input: &[u8], node: usize) -> Option<usize> {
+            let byte = *input.get(node)?;
+            if byte == b'\'' {
+                let mut cursor = node + 1;
+                while *input.get(cursor)? == b'\'' {
+                    cursor += 1;
+                }
+                return Some(cursor);
+            }
+            Some(node)
+        }
+
+        let inputs: [&[u8]; 9] = [
+            b"",
+            b"'",
+            b"'''",
+            b"'ni",
+            b"ni'",
+            b"ni''hao'''",
+            b"'''xi'an''''zhong'guo'",
+            b"n'''g''''ang'e''r",
+            b"zhuang''''''shuang'''''chuang",
+        ];
+        for input in inputs {
+            let mut per_node = Vec::new();
+            for node in 0..=input.len() {
+                if let Some(start) = per_node_key_start(input, node) {
+                    super::emit_edges(input, node, start, OptionBits::default(), &mut per_node);
+                }
+            }
+            let graph = SegmentGraph::build(input).expect("short input");
+            assert_eq!(
+                graph.edges(),
+                per_node.as_slice(),
+                "{}",
+                String::from_utf8_lossy(input)
+            );
+        }
     }
 
     #[test]

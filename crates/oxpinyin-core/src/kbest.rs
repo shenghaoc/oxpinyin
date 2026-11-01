@@ -33,12 +33,39 @@ pub enum DecodeError {
         /// Largest `k` accepted.
         limit: usize,
     },
+    /// The graph holds more edges than the sweep's `u32` edge indexes
+    /// address. Edges number at most `(MAX_SYLLABLE_LEN + 1) * (n + 1)` for
+    /// an `n`-byte input, so this needs an input of 613,566,756 bytes or
+    /// more.
+    TooManyEdges {
+        /// The graph's edge count.
+        edges: usize,
+    },
+    /// The sweep generated more partial paths than its `u32` arena indexes
+    /// address. Entries number at most `1 + k * (MAX_SYLLABLE_LEN + 1) *
+    /// edges`.
+    TooManyEntries {
+        /// The `k` the sweep ran with.
+        k: usize,
+    },
 }
 
 impl fmt::Display for DecodeError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::KTooLarge { k, limit } => write!(formatter, "k of {k} exceeds the limit {limit}"),
+            Self::TooManyEdges { edges } => {
+                write!(
+                    formatter,
+                    "{edges} edges exceed the search's u32 edge indexes"
+                )
+            }
+            Self::TooManyEntries { k } => {
+                write!(
+                    formatter,
+                    "the {k}-best search outgrew its u32 entry indexes"
+                )
+            }
         }
     }
 }
@@ -112,7 +139,9 @@ struct Entry {
 ///
 /// # Errors
 ///
-/// Returns [`DecodeError::KTooLarge`] for a `k` beyond [`MAX_K`].
+/// Returns [`DecodeError::KTooLarge`] for a `k` beyond [`MAX_K`], and
+/// [`DecodeError::TooManyEdges`] or [`DecodeError::TooManyEntries`] when the
+/// graph or the search outgrows the sweep's `u32` indexes.
 pub fn k_best(
     graph: &SegmentGraph,
     scorer: &impl EdgeCost,
@@ -128,7 +157,9 @@ pub fn k_best(
 ///
 /// # Errors
 ///
-/// Returns [`DecodeError::KTooLarge`] for a `k` beyond [`MAX_K`].
+/// Returns [`DecodeError::KTooLarge`] for a `k` beyond [`MAX_K`], and
+/// [`DecodeError::TooManyEdges`] or [`DecodeError::TooManyEntries`] when the
+/// graph or the search outgrows the sweep's `u32` indexes.
 pub fn k_best_to(
     graph: &SegmentGraph,
     scorer: &impl EdgeCost,
@@ -142,7 +173,7 @@ pub fn k_best_to(
         return Ok(Vec::new());
     }
 
-    let incoming = incoming_index(graph);
+    let incoming = incoming_index(graph)?;
     let mut arena: Vec<Entry> = vec![Entry {
         cost: 0,
         last: None,
@@ -188,9 +219,8 @@ pub fn k_best_to(
                         continue;
                     }
 
-                    let Ok(index) = u32::try_from(arena.len()) else {
-                        continue;
-                    };
+                    let index = u32::try_from(arena.len())
+                        .map_err(|_| DecodeError::TooManyEntries { k })?;
                     arena.push(Entry {
                         cost: entry
                             .cost
@@ -226,7 +256,17 @@ struct Incoming {
     ids: Vec<u32>,
 }
 
-fn incoming_index(graph: &SegmentGraph) -> Incoming {
+/// # Errors
+///
+/// [`DecodeError::TooManyEdges`] when an edge id or an edge count does not
+/// fit the index's `u32`s.
+fn incoming_index(graph: &SegmentGraph) -> Result<Incoming, DecodeError> {
+    let edges = graph.edges().len();
+    // Every count and id below is at most the edge count, so one check
+    // covers them all.
+    if u32::try_from(edges).is_err() {
+        return Err(DecodeError::TooManyEdges { edges });
+    }
     let mut starts = vec![0_u32; graph.node_count() + 1];
     for edge in graph.edges() {
         starts[edge.to() + 1] += 1;
@@ -239,11 +279,12 @@ fn incoming_index(graph: &SegmentGraph) -> Incoming {
     let mut ids = vec![0_u32; graph.edges().len()];
     for (index, edge) in graph.edges().iter().enumerate() {
         let slot = &mut cursor[edge.to()];
-        ids[*slot as usize] = u32::try_from(index).unwrap_or(u32::MAX);
+        ids[*slot as usize] =
+            u32::try_from(index).map_err(|_| DecodeError::TooManyEdges { edges })?;
         *slot += 1;
     }
 
-    Incoming { starts, ids }
+    Ok(Incoming { starts, ids })
 }
 
 /// Bucket indices for every state that can be current at `node`.

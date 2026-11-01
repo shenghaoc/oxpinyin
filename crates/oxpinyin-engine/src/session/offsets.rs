@@ -69,11 +69,7 @@ where
     /// there is no out-of-range shape here.
     pub fn lookup_offset_for_cursor(&self, cursor: usize) -> Result<usize, EngineError> {
         let (keys, parsed) = self.matrix_keys()?;
-        let spans: Vec<_> = keys
-            .iter()
-            .map(|key| (key.syllable_start(), key.end()))
-            .collect();
-        crate::cursor::lookup_offset_over_spans(self.input.as_bytes(), parsed, &spans, true, cursor)
+        crate::cursor::lookup_offset_over_spans(self.input.as_bytes(), parsed, keys, true, cursor)
     }
 
     /// The word-level left move over the session's own buffer and options
@@ -91,14 +87,10 @@ where
     /// bounds there).
     pub fn left_word_offset(&self, offset: usize) -> Result<usize, EngineError> {
         let (keys, parsed) = self.matrix_keys()?;
-        let spans: Vec<_> = keys
-            .iter()
-            .map(|key| (key.syllable_start(), key.end()))
-            .collect();
         crate::cursor::left_word_offset_over_spans(
             self.input.as_bytes(),
             parsed,
-            &spans,
+            keys,
             true,
             offset,
         )
@@ -120,14 +112,10 @@ where
     /// bounds there).
     pub fn right_word_offset(&self, offset: usize) -> Result<Option<usize>, EngineError> {
         let (keys, parsed) = self.matrix_keys()?;
-        let spans: Vec<_> = keys
-            .iter()
-            .map(|key| (key.syllable_start(), key.end()))
-            .collect();
         crate::cursor::right_word_offset_over_spans(
             self.input.as_bytes(),
             parsed,
-            &spans,
+            keys,
             true,
             offset,
         )
@@ -140,14 +128,34 @@ where
     /// by [`Session::right_word_offset`] agree by construction. The C ABI's
     /// `pinyin_get_pinyin_key` family reads this.
     ///
+    /// The keys are in the pin's column order ([`crate::cursor::KeySpans`])
+    /// and are built once per input: every input mutation and option change
+    /// drops them with the parser graph, so each getter after a parse costs
+    /// a lookup rather than a rebuild.
+    ///
     /// # Errors
     ///
     /// [`EngineError::Graph`] when the raw buffer cannot be built into a
     /// segment graph.
-    pub fn matrix_keys(&self) -> Result<(Vec<crate::cursor::MatrixKey>, usize), EngineError> {
-        if self.input.full_pinyin() && !self.input.exact().is_empty() {
+    pub fn matrix_keys(&self) -> Result<(&[crate::cursor::MatrixKey], usize), EngineError> {
+        let (keys, parsed) = match self.input.keys.get() {
+            Some(cached) => cached,
+            None => {
+                let built = self.build_matrix_keys()?;
+                self.input.keys.get_or_init(|| built)
+            }
+        };
+        Ok((keys, *parsed))
+    }
+
+    /// [`Session::matrix_keys`] without the cache.
+    fn build_matrix_keys(&self) -> Result<(Vec<crate::cursor::MatrixKey>, usize), EngineError> {
+        if self.input.full_pinyin() {
             // pinyin.cpp:1497-1525 fills the matrix from the indexed parser's
             // keys, including initial-only keys accepted without INCOMPLETE.
+            // With no pre-parsed keys this is the parse's own graph, the one
+            // `SegmentGraph::build_with_options` gives for the raw input, so
+            // the cached graph serves it.
             let graph = self.build_graph_at(0, self.input.as_bytes())?;
             let matrix = build_scan_matrix(&graph, self.settings.options, true);
             let keys = matrix
@@ -157,7 +165,7 @@ where
                     crate::cursor::MatrixKey::new(key.key, key.tone, key.syllable_start, key.to)
                 })
                 .collect();
-            return Ok((keys, graph.consumed()));
+            return Ok((crate::cursor::in_column_order(keys), graph.consumed()));
         }
         crate::cursor::matrix_keys(self.input.as_bytes(), self.settings.options)
     }
