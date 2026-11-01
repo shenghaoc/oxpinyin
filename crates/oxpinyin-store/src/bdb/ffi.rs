@@ -220,7 +220,7 @@ pub(crate) struct SharedDb {
 }
 
 impl SharedDb {
-    fn new(db: Db) -> Self {
+    pub(crate) fn new(db: Db) -> Self {
         Self {
             read_only: db.is_read_only(),
             hash: db.is_hash(),
@@ -468,6 +468,27 @@ impl Db {
         let _ = this.sync();
     }
 
+    pub(crate) fn open_unopened(
+        path: &Path,
+        hash: bool,
+        read_only: bool,
+        create: bool,
+    ) -> Option<Self> {
+        let path = c_path(path).ok()?;
+        Self::open_keep_unopened(
+            Some(path.as_c_str()),
+            if hash { DB_HASH } else { DB_BTREE },
+            read_only,
+            create,
+            SYSTEM_FILE_MODE,
+        )
+        .ok()
+    }
+
+    pub(crate) const fn is_opened(&self) -> bool {
+        self.opened
+    }
+
     fn open_keep_unopened(
         path: Option<&std::ffi::CStr>,
         db_type: DBTYPE,
@@ -671,7 +692,7 @@ impl Db {
     }
 
     /// Opens a native cursor while the shareable owner's lock is held.
-    fn cursor_handle(&self) -> Result<*mut sys::DBC, StoreError> {
+    pub(crate) fn cursor_handle(&self) -> Result<*mut sys::DBC, StoreError> {
         let cursor = method!(self.handle, cursor, "DB->cursor")?;
         let mut handle: *mut sys::DBC = ptr::null_mut();
         // SAFETY: the database handle is live; the transaction is null;

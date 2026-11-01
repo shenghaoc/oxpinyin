@@ -110,6 +110,80 @@ pub struct BdbStore {
 /// Reproduces the pin's failed read-only attach: the handle stays open,
 /// a cursor and the destructor's sync run, libdb prints its own
 /// `BDB1565` lines, and the handle closes.
+/// The pin's still-open handle after a failed `attach`: every member call
+/// libdb then receives prints its own `BDB1565` line, and the destructor
+/// sync prints one more.
+pub struct BdbUnopenedHandle {
+    db: ffi::Db,
+}
+
+/// The pin's `attach` answer: an opened store, or the still-open handle a
+/// failed open leaves behind.
+pub enum BdbOpen {
+    /// `DB->open` succeeded.
+    Open(BdbStore),
+    /// `DB->open` failed; every later member call prints `BDB1565`.
+    Unopened(BdbUnopenedHandle),
+}
+
+/// Opens one hash file exactly as the pin's `attach` does, keeping the
+/// handle when the open fails.
+///
+/// # Errors
+///
+/// `db_create` or an internal allocation failure.
+pub fn open_hash_pin(path: &Path, read_only: bool) -> Result<BdbOpen, crate::StoreError> {
+    let db = ffi::Db::open_unopened(path, true, read_only, !read_only)
+        .ok_or_else(|| crate::StoreError::Backend("db_create failed".into()))?;
+    if db.is_opened() {
+        Ok(BdbOpen::Open(BdbStore {
+            db: ffi::SharedDb::new(db),
+        }))
+    } else {
+        Ok(BdbOpen::Unopened(BdbUnopenedHandle { db }))
+    }
+}
+
+impl BdbUnopenedHandle {
+    /// The failed open's handle, or `None` if `db_create` itself failed.
+    #[must_use]
+    pub fn open_failed(path: &Path, hash: bool, read_only: bool) -> Option<Self> {
+        ffi::Db::open_unopened(path, hash, read_only, !read_only)
+            .filter(|db| !db.is_opened())
+            .map(|db| Self { db })
+    }
+
+    /// `m_db->get(...)`: libdb prints `BDB1565`.
+    pub fn get(&self, key: &[u8]) -> bool {
+        self.db.get(key, &mut Vec::new()).unwrap_or(false)
+    }
+
+    /// `m_db->put(...)`: libdb prints `BDB1565`.
+    pub fn put(&self, key: &[u8], value: &[u8]) {
+        let _ = self.db.put(key, value);
+    }
+
+    /// `m_db->cursor(...)`: libdb prints `BDB1565`.
+    pub fn cursor(&self) {
+        let _ = self.db.cursor_handle();
+    }
+
+    /// `m_db->sync(...)`: libdb prints `BDB1565`.
+    pub fn sync(&self) {
+        let _ = self.db.sync();
+    }
+}
+
+impl Drop for BdbUnopenedHandle {
+    fn drop(&mut self) {
+        // The pin's `reset()` syncs before closing, and this handle was
+        // never opened, so libdb prints `BDB1565` once more.
+        self.sync();
+    }
+}
+
+/// Reproduces the pin's failed read-only attach for the storage
+/// utilities: a cursor walk, then the destructor's sync.
 pub fn report_failed_read_only_open(path: &Path, hash: bool) {
     ffi::Db::report_failed_open(
         path,

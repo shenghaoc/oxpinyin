@@ -39,8 +39,8 @@
 //!   decoder's loader, and no conforming producer of this format can emit
 //!   either record — `export_interpolation` walks tokens ascending and
 //!   skips zero frequencies (`:85-95`), `k_mixture_model_to_interpolation`
-//!   skips them too (`:132`), and `oxpinyin-emitter` reproduces both
-//!   filters. A file carrying one is corrupt, and summing a corrupt model
+//!   skips them too (`:132`); the emitter module
+//!   (`oxpinyin-training::emitter`) reproduces both filters. A file carrying one is corrupt, and summing a corrupt model
 //!   into the decoder loses the evidence that it was corrupt.
 //!
 //! `docs/findings/interpolation2-grammar.md` carries the measurements and

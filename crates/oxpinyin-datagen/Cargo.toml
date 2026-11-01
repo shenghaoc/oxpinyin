@@ -6,7 +6,7 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 publish = false
-description = "model20 → oxpinyin runtime tables compiler for every storage backend. Never ships."
+description = "model20 → oxpinyin runtime table producers and the fixtures/w3 mini reproduction (library only). Never ships."
 
 [build-dependencies]
 # Reads Kyoto Cabinet's library directories for the rpath, as oxpinyin-store
@@ -15,21 +15,20 @@ pkg-config = { version = "0.3.34", optional = true }
 
 [features]
 # tkrzw is the default selected backend (matching oxpinyin-store's
-# workspace-default feature set) so a plain
-# `cargo run -p oxpinyin-datagen -- compile ...` produces a tkrzw data dir.
-# The other producers (kyotocabinet, bdb) are peer
-# implementations behind the same `WriteStore` trait; each is chosen
-# explicitly with `--no-default-features --features
-# {kyotocabinet|bdb}` on the build and `--backend
-# {kyotocabinet|bdb}` on the run. Only the producers whose
-# cargo features are enabled are available at runtime.
+# workspace-default feature set). The other producers (kyotocabinet, bdb)
+# are peer implementations behind the same `WriteStore` trait; each is
+# chosen explicitly with `--no-default-features --features
+# {kyotocabinet|bdb}`. The producers have no command line any more: the
+# system data directory is built by libpinyin's own three utilities, which
+# `oxpinyin-utils` now provides under their pin names. What remains here is
+# the producer library — the `fixtures/w3` `--mini` reproduction and the
+# drop-in parity tests — whose tests select the backend by feature.
 default = ["tkrzw"]
-# Enable the Kyoto Cabinet producer (`--backend kyotocabinet`); mirrors
-# oxpinyin-store.
+# Enable the Kyoto Cabinet producer; mirrors oxpinyin-store.
 kyotocabinet = ["oxpinyin-store/kyotocabinet", "dep:pkg-config"]
-# Enable the Berkeley DB producer (`--backend bdb`); mirrors oxpinyin-store.
+# Enable the Berkeley DB producer; mirrors oxpinyin-store.
 bdb = ["oxpinyin-store/bdb"]
-# Enable the Tkrzw producer (`--backend tkrzw`); mirrors oxpinyin-store.
+# Enable the Tkrzw producer; mirrors oxpinyin-store.
 tkrzw = ["oxpinyin-store/tkrzw"]
 
 [lints]
@@ -41,11 +40,6 @@ oxpinyin-core = { workspace = true }
 # default-features = false: the producer set is selected by this crate's own
 # features above, never dragged in by the store's default.
 oxpinyin-store = { path = "../oxpinyin-store", default-features = false }
-# Model-cache location and the pinned model20 constants for the compile
-# defaults and the manifest. The locator's canonical home is testsupport
-# (pinyin-oracle re-exports it for its own bins); datagen is its one
-# non-dev consumer — a dev-lane edge, since this crate never ships.
-oxpinyin-testsupport = { path = "../oxpinyin-testsupport" }
 # The shared MemoryChunk chunk-format module (checksum, header, mask) the
 # chunk writer shares with the runtime reader; tests additionally verify
 # produced tables through the real loader. default-features = false so
@@ -54,8 +48,6 @@ oxpinyin-testsupport = { path = "../oxpinyin-testsupport" }
 oxpinyin-data = { path = "../oxpinyin-data", default-features = false }
 
 [dev-dependencies]
+# The model20 cache locator the ignored producer tests use (`just fetch-model`).
+oxpinyin-testsupport = { path = "../oxpinyin-testsupport" }
 tempfile.workspace = true
-
-[[bin]]
-name = "oxpinyin-datagen"
-path = "src/bin/oxpinyin-datagen.rs"

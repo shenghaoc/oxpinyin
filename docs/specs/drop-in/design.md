@@ -56,7 +56,9 @@ The caller supplies `StoragePaths`.
 Do not auto-detect a distribution layout.
 
 Use native names and layouts, including `pinyin_index.bin` and `bigram.db`.
-Libpinyin on that backend and `oxpinyin-datagen compile` use the same set.
+Libpinyin on that backend and the pin's own `gen_binary_files` →
+`import_interpolation` → `gen_unigram` sequence (the `oxpinyin-utils`
+binaries) use the same set.
 Do not convert or scan data at open.
 Use a handle and point read per file, with mapped and checksummed chunks.
 

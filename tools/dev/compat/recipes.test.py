@@ -37,6 +37,23 @@ class RecipeTests(unittest.TestCase):
         uv.chmod(0o755)
         self.env['PATH'] = str(self.directory) + os.pathsep + self.env['PATH']
 
+    def test_drop_in_producers_use_repository_manifest_from_scratch_cwd(self):
+        model = self.directory / 'model'
+        model.mkdir()
+        (model / 'interpolation2.text').touch()
+        work = self.directory / 'outside-repository'
+        with mock.patch.object(fixtures, 'run', return_value=0) as run, \
+                mock.patch.object(fixtures.shutil, 'copyfile'):
+            self.assertEqual(fixtures.drop_in(['tkrzw', str(model), str(work)]), 0)
+        producers = [call for call in run.call_args_list if call.args[0][:2] == ['cargo', 'run']]
+        self.assertEqual(len(producers), 3)
+        for call in producers:
+            command = call.args[0]
+            manifest = Path(command[command.index('--manifest-path') + 1])
+            self.assertEqual(manifest, ROOT / 'Cargo.toml')
+            self.assertTrue(manifest.is_file())
+            self.assertEqual(call.kwargs['cwd'], work / 'oxpinyin')
+
     def invoke(self, recipe, args):
         program = "import os,sys,threading\nfrom tools.dev.compat import commands,fixtures,images\nfrom tools.dev import pool\nif os.environ.get('FAKE_CAMPAIGN'):\n    import subprocess\n    from tools.dev.compat import process\n    process.slot.run_command=lambda command,env=None,cwd=None,stdout=None,**options: subprocess.run(command,env=env,cwd=cwd,stdout=stdout).returncode\nif os.environ.get('FAKE_INTERCHANGE'):\n    original=fixtures.run\n    def intercepted(command,**options):\n        if 'system-import-round-trip' in command:\n            print('system-import: OK'); return int(os.environ.get('FAKE_INTERCHANGE_STATUS','0'))\n        return original(command,**options)\n    fixtures.run=intercepted\nif sys.argv[1:2]==['reproducible']:\n    def admitted(units,*args,**kwargs):\n        return [function(pool.UnitContext(name,threading.Event(),environment=dict(os.environ))) for name,function in units]\n    images.pool.run_admitted=admitted\nraise SystemExit(commands.main(sys.argv[1:]))\n"
         current = subprocess.run([sys.executable, '-X', 'lazy_imports=normal', '-c', program, *recipe, *args],
@@ -375,7 +392,7 @@ if 'OX_PIN_DIR' in os.environ: assert (pathlib.Path(os.environ['OX_PIN_DIR'])/'t
             path.parent.mkdir(parents=True,exist_ok=True)
             path.touch()
         exported.mkdir()
-        (exported / 'datagen-manifest.txt').write_text('backend=tkt\n')
+        (exported / 'table.conf').write_text('database format:Tkrzw\n')
         for relative in campaigns.TOOLS.values():
             path=library / relative
             path.parent.mkdir(parents=True,exist_ok=True)
@@ -387,10 +404,10 @@ if 'OX_PIN_DIR' in os.environ: assert (pathlib.Path(os.environ['OX_PIN_DIR'])/'t
         self.env['FAKE_CAMPAIGN']='1'
         args=['--libpinyin',str(library),'--data',str(data),'--export',str(exported),'--model',str(model)]
         self.assertEqual(self.invoke(['differentials'],args).returncode,0)
-        self.env['FAKE_SUITE_FAILURE']='cross_backend'
+        self.env['FAKE_SUITE_FAILURE']='libpinyin_data_dir'
         result=self.invoke(['differentials'],args)
         self.assertEqual(result.returncode,1)
-        self.assertIn(b'FAILED: datagen:',result.stdout)
+        self.assertIn(b'FAILED: runtime:',result.stdout)
         self.assertIn(b'counter: gen_ngram',result.stdout)
         self.assertNotIn(b'not in the report',result.stdout)
 
