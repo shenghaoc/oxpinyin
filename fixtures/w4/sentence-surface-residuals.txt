@@ -1,0 +1,14 @@
+# Exact subject residuals for the 500-input sentence-surface gate.
+# Rulings and complete pin/subject mapping: docs/findings/sentence-surface.md, 500-input reconciliation.
+# Format: input<TAB>guessed<TAB>indexed sentences<TAB>first-six candidate rows; vectors use U+0001.
+# Pin expectations remain unchanged in oracle-sentence-surface.txt.
+# Seven surfaces retain the #1378 supplementary bindings; fupie and liangmudianse apply existing S1/S2/S3.
+fupie	true	副撇副瞥副氕	n/0/副撇n/1/副瞥n/2/副氕N/-/副N/-/佛N/-/夫
+liangmudianse	true	两亩点色两目的安瑟两亩电色	n/0/两亩点色n/1/两目的安瑟n/2/两亩电色N/-/梁木N/-/里昂N/-/两
+xinzuiliuzuan	true	新最刘钻新最刘纂新最六祖庵	n/0/新最刘钻n/1/新最刘纂n/2/新最六祖庵N/-/心醉N/-/新N/-/心
+zashuanpaqing	true	杂树安帕清杂树安帕请杂树安帕情	n/0/杂树安帕清n/1/杂树安帕请n/2/杂树安帕情N/-/扎N/-/杂N/-/砸
+tunshicehongshuanxiangxingmeng	true	吞噬册红薯安详星梦吞噬册红薯安详星盟吞噬册红薯安详幸蒙	n/0/吞噬册红薯安详星梦n/1/吞噬册红薯安详星盟n/2/吞噬册红薯安详幸蒙N/-/吞噬N/-/吞食N/-/屯
+dupanggentuanming	true	度旁根团名度旁根团明度旁根湍鸣	n/0/度旁根团名n/1/度旁根团明n/2/度旁根湍鸣N/-/都N/-/度N/-/读
+junsantuoliaolan	true	军三托里奥兰军三托里奥蓝军三托里奥栏	n/0/军三托里奥兰n/1/军三托里奥蓝n/2/军三托里奥栏N/-/军N/-/均N/-/君
+qinglei'rengning'bu'shuan'li'maohuai'diaozou'er	true	清泪仍宁部署案例毛淮调走而清泪仍宁部署案例毛淮调走二	n/0/清泪仍宁部署案例毛淮调走而n/1/清泪仍宁部署案例毛淮调走二N/-/清N/-/请N/-/情N/-/青
+rongkan'mu'nenlin'duo'zen'xiucou'pian'chuan	true	容看亩嫩林多怎修凑片传容看亩嫩林多怎修凑篇串	n/0/容看亩嫩林多怎修凑片传n/1/容看亩嫩林多怎修凑篇串N/-/荣N/-/容N/-/融N/-/溶

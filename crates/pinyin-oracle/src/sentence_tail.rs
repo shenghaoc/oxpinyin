@@ -9,6 +9,7 @@
 //! model20 tables. `docs/findings/sentence-surface.md` §12 is the write-up;
 //! this module is its reproduction and its gate.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use oxpinyin_data::{BigramLanguageModel, SystemDbm, SystemDictionary};
@@ -19,6 +20,10 @@ pub type PortSession = Session<SystemDictionary, BigramLanguageModel>;
 
 /// Fixture path, relative to the repository root.
 pub const SENTENCE_FIXTURE: &str = "fixtures/w4/oracle-sentence-surface.txt";
+
+/// Exact subject surfaces admitted by sentence-surface.md §12, in the same
+/// four-column format as the unchanged pin fixture.
+const RESIDUAL_FIXTURE: &str = "fixtures/w4/sentence-surface-residuals.txt";
 
 /// `max_index` the fixture generator read to (`observe_sentence_surface`'s
 /// caller passes 2 — the n-best cap minus one).
@@ -87,6 +92,7 @@ pub fn open_session_from_env() -> Result<Option<PortSession>, String> {
 }
 
 /// One frozen oracle line: the ibus surface for one sampled input.
+#[derive(Debug, PartialEq, Eq)]
 struct OracleLine {
     input: String,
     guessed: bool,
@@ -104,11 +110,18 @@ fn load_fixture(path: &Path) -> Result<Vec<OracleLine>, String> {
         if line.starts_with('#') || line.is_empty() {
             continue;
         }
-        let mut parts = line.split('\t');
-        let input = parts.next().unwrap_or("").to_owned();
-        let guessed = parts.next().unwrap_or("") == "true";
-        let sentences = split_field(parts.next().unwrap_or(""));
-        let rows = split_field(parts.next().unwrap_or(""));
+        let parts: Vec<_> = line.split('\t').collect();
+        let [input, guessed, sentences, rows] = parts.as_slice() else {
+            return Err(format!("expected four fixture columns: {line:?}"));
+        };
+        let input = (*input).to_owned();
+        let guessed = match *guessed {
+            "true" => true,
+            "false" => false,
+            _ => return Err(format!("invalid fixture guess status: {line:?}")),
+        };
+        let sentences = split_field(sentences);
+        let rows = split_field(rows);
         lines.push(OracleLine {
             input,
             guessed,
@@ -117,6 +130,29 @@ fn load_fixture(path: &Path) -> Result<Vec<OracleLine>, String> {
         });
     }
     Ok(lines)
+}
+
+fn load_residuals(root: &Path, pin: &[OracleLine]) -> Result<BTreeMap<String, OracleLine>, String> {
+    let mut residuals = BTreeMap::new();
+    for residual in load_fixture(&root.join(RESIDUAL_FIXTURE))? {
+        let Some(original) = pin.iter().find(|line| line.input == residual.input) else {
+            return Err(format!(
+                "residual input absent from pin: {:?}",
+                residual.input
+            ));
+        };
+        if original.sentences.is_empty() || original == &residual {
+            return Err(format!(
+                "residual must differ on a comparable input: {:?}",
+                residual.input
+            ));
+        }
+        let input = residual.input.clone();
+        if residuals.insert(input.clone(), residual).is_some() {
+            return Err(format!("duplicate sentence residual: {input:?}"));
+        }
+    }
+    Ok(residuals)
 }
 
 /// A `\x01`-joined fixture field; empty string means an empty list.
@@ -247,6 +283,11 @@ fn phrase_rows(rows: &[String]) -> Vec<String> {
 /// breakdown. Every count is over [`Self::comparable`] inputs.
 #[derive(Clone, Debug, Default)]
 pub struct SentenceTailReport {
+    /// Exact residual surfaces in the fixture; every other input must match pin.
+    pub declared_residuals: usize,
+    /// Complete surfaces that moved from their pin or recorded residual.
+    /// Independent of aggregate counts, so a closure cannot cancel a regression.
+    pub unexpected_surfaces: Vec<String>,
     /// Inputs with a sentence surface on both sides (junk-leading excluded).
     pub comparable: usize,
     /// `guess_sentence` retval disagreements (expected 0).
@@ -303,7 +344,11 @@ impl SentenceTailReport {
 /// Returns a message when the fixture is unreadable or a port call fails.
 pub fn measure(session: &mut PortSession, root: &Path) -> Result<SentenceTailReport, String> {
     let fixture = load_fixture(&root.join(SENTENCE_FIXTURE))?;
-    let mut report = SentenceTailReport::default();
+    let residuals = load_residuals(root, &fixture)?;
+    let mut report = SentenceTailReport {
+        declared_residuals: residuals.len(),
+        ..SentenceTailReport::default()
+    };
 
     for line in &fixture {
         // The junk-leading inputs the oracle cannot parse have no sentence
@@ -314,6 +359,16 @@ pub fn measure(session: &mut PortSession, root: &Path) -> Result<SentenceTailRep
         report.comparable += 1;
 
         let port = observe_port(session, &line.input)?;
+        let expected = residuals.get(&line.input).unwrap_or(line);
+        if port.guessed != expected.guessed
+            || port.sentences != expected.sentences
+            || port.rows != expected.rows
+        {
+            report.unexpected_surfaces.push(format!(
+                "input={:?}\tguessed={}\tsentences={:?}\trows={:?}\texpected={expected:?}",
+                line.input, port.guessed, port.sentences, port.rows,
+            ));
+        }
         if port.guessed != line.guessed {
             report.guessed_disagree += 1;
         }
@@ -390,4 +445,20 @@ pub fn measure(session: &mut PortSession, root: &Path) -> Result<SentenceTailRep
     }
 
     Ok(report)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn sentence_residual_fixture_binds_complete_pin_cases() {
+        let root = super::repo_root();
+        let pin = super::load_fixture(&root.join(super::SENTENCE_FIXTURE)).expect("pin fixture");
+        let residuals = super::load_residuals(&root, &pin).expect("valid residual fixture");
+        assert_eq!(residuals.len(), 9);
+        for residual in residuals.values() {
+            assert!(residual.guessed);
+            assert!((1..=3).contains(&residual.sentences.len()));
+            assert_eq!(residual.rows.len(), 6);
+        }
+    }
 }

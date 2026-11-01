@@ -37,6 +37,12 @@ fn sentence_surface_matches_the_declared_residual() {
         .expect("the sentence-surface measurement runs");
     eprintln!("sentence-surface measurement: {report:#?}");
 
+    assert!(
+        report.unexpected_surfaces.is_empty(),
+        "sentence surfaces moved from their exact fixture bindings: {:?}",
+        report.unexpected_surfaces
+    );
+    assert_eq!(report.declared_residuals, 9, "residual membership moved");
     assert_eq!(report.comparable, 500, "comparable-input count drifted");
     assert_eq!(
         report.guessed_disagree, 0,

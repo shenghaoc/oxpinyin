@@ -1097,3 +1097,139 @@ is accepted by this table.
 | `tingshuanduanhuo` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
 | `seng)` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
 | `shenzuanjiao%` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
+
+
+### 500-input reconciliation (2026-11-01 UTC)
+
+Recorded 2026-11-01T12:11:06Z (`date -u`), against main `bf41d2c0`.
+The existing #1378 `sentence-tail` report supplies these nine complete
+ordered-list differences; no new pin execution was used to discover them.
+The first-best / distinct-set / ordered-list counts remain **496 / 492 / 491**.
+Four first differ at rank 0, three at rank 1 and two at rank 2. None is a
+permutation; `rongkan…` changes duplicate multiplicity while keeping the
+distinct set.
+
+Every row below is POLICY-ACCEPTED under an existing selection ruling,
+not class (a). The seven named #1378 entries above bind the same complete
+outputs in `oracle-sentence-tie-order.txt`. That fixture reads all three
+indexed tails. The 500-input fixture reads only through the last surviving
+NBEST candidate's index: the final repeated row of `qinglei…` on both
+sides and of `rongkan…` on the subject is therefore not read here.
+
+| Input | Pin ordered sentences | Subject ordered sentences | Covering record |
+| --- | --- | --- | --- |
+| `fupie` | 副撇 → 副瞥 → 副暼 | 副撇 → 副瞥 → 副氕 | S2 earlier batch tie; derivation below |
+| `liangmudianse` | 两亩点色 → 两亩电色 → 两亩点瑟 | 两亩点色 → 两目的安瑟 → 两亩电色 | S1/S2 node admission and S3; derivation below |
+| `xinzuiliuzuan` | 新最刘钻 → 新最刘纂 → 新最刘赚 | 新最刘钻 → 新最刘纂 → 新最六祖庵 | #1378 exact S1/S2/S3 entry |
+| `zashuanpaqing` | 杂拴帕清 → 杂拴帕请 → 杂拴帕情 | 杂树安帕清 → 杂树安帕请 → 杂树安帕情 | #1378 exact S1/S2/S3 entry |
+| `tunshicehongshuanxiangxingmeng` | 吞噬册红拴象形梦 → 吞噬册红拴向星盟 → 吞噬册红拴象形蒙 | 吞噬册红薯安详星梦 → 吞噬册红薯安详星盟 → 吞噬册红薯安详幸蒙 | #1378 exact S1/S2/S3 entry |
+| `dupanggentuanming` | 度旁根团名 → 度旁根团名 → 度旁根团明 | 度旁根团名 → 度旁根团明 → 度旁根湍鸣 | #1378 exact S1/S2/S3 entry |
+| `junsantuoliaolan` | 军三托蓼兰 → 军三托蓼蓝 → 军三脱了兰 | 军三托里奥兰 → 军三托里奥蓝 → 军三托里奥栏 | #1378 exact S1/S2/S3 entry |
+| `qinglei'rengning'bu'shuan'li'maohuai'diaozou'er` | 清泪仍宁不拴礼貌淮调走而 → 清泪仍宁不拴礼貌淮调走二 | 清泪仍宁部署案例毛淮调走而 → 清泪仍宁部署案例毛淮调走二 | #1378 exact S1/S2/S3 entry |
+| `rongkan'mu'nenlin'duo'zen'xiucou'pian'chuan` | 容看亩嫩林多怎修凑片传 → 容看亩嫩林多怎修凑片传 → 容看亩嫩林多怎修凑篇串 | 容看亩嫩林多怎修凑片传 → 容看亩嫩林多怎修凑篇串 | #1378 exact S1/S2/S3 entry |
+
+The unchanged `fixtures/w4/oracle-sentence-surface.txt` holds each complete
+pin observation, including the six candidate rows.
+`fixtures/w4/sentence-surface-residuals.txt` uses the same four-column TSV
+format to bind all nine complete subject observations. `sentence_tail::measure`
+compares every comparable input to that binding, or to the pin where no
+residual is declared. The gate checks guessed status, the entire indexed
+list and all six candidate rows before checking aggregate counts. A fixed
+residual and a new regression therefore cannot cancel. No pin vector,
+supplementary selection metadata, or aggregate expectation changes.
+
+#### Source disposition of the two previously unbound cases
+
+Read the `074a2219c90feaf962d0d24f034514033ece5f99` Git blobs from the
+libpinyin clone at `/home/sheng/repos/libpinyin`; the clone's working-tree
+revision was not used. Read oxpinyin at `bf41d2c0`. Model inputs are the
+pinned model20 text tables and the provisioned tkrzw chunk headers.
+
+**`fupie`: S2's earlier batch-position tie.** The first differing candidate
+is rank 2, `副暼` versus `副氕`. `氕` is token 16783062 in `gb_char.table`;
+`暼` is token 33563818 in `gbk_char.table`. Each has only the `pie` reading
+(count 3), no interpolation unigram entry, and no incoming bigram entry.
+Their compiled unigram is therefore 1: the pin's
+`utils/training/gen_unigram.cpp:49–67` adds one to every phrase. Both extend
+the same unigram predecessor `副`, with identical length, pronunciation
+probability 1 and pre-log expression; there is no numerical difference to
+classify. The other single-reading unigram-1 GBK alternatives tie too.
+The earlier GB alternatives `潎` and `苤` have pronunciation fractions
+33/69 and 3/6; `丿` has 3/201, so its unigram 13 does not beat count 1
+with pronunciation 1.
+
+The pin's unigram expansion walks library/range/token order
+(`src/lookup/phonetic_lookup.h:540–572`); the candidate batch walks node
+creation order and physical slots (`:278–296`). `氕` precedes `暼`.
+`get_top_results<2>` supplies no tie key (`:81–90,143–167,331–335`).
+Oxpinyin's `nbest::expand_entries`, `Trellis::candidates` and
+`selection_compare` preserve that batch and apply the already approved
+earlier-position tie, selecting `氕`. S3 cannot change the selected set.
+The captured pin choice is retained as evidence; its incidental heap tie
+order is not reconstructed.
+
+**`liangmudianse`: S1/S2 node admission, then S3 raw-score ordering.**
+The first differing output is rank 1: `两亩电色` versus `两目的安瑟`.
+The distinguishing candidate paths are `两/目的/安/瑟` (length 5) and
+`两/亩/点/瑟` (length 4), which reach the same final `瑟` node.
+The long path takes the `安 → 瑟` bigram, count 22 over row total 12967;
+the short path has no `点 → 瑟` bigram and takes the later unigram pass.
+The pin and oxpinyin both expand all bigram predecessors before that
+unigram pass (`phonetic_lookup.h:578–639,787–788`; `nbest::expand_entries`).
+
+With facade total 51051831 and the stored f32 lambda 0.312699, the source
+expressions in `phonetic_lookup.h:649–663,677–693` and
+`BigramLanguageModel::nbest_step_costs_using` / `nbest::expand_one` give
+the following approximate f32 scores. These are source/data calculations,
+not an execution trace of the pin. `色` includes its 51000/51040
+pronunciation fraction.
+
+| Path | Length | Raw possibility | Adjusted S |
+| --- | ---: | ---: | ---: |
+| `两/亩/点/色` | 4 | -30.591896 | -31.321182 |
+| `两/亩/电/色` | 4 | -31.676743 | -32.406029 |
+| `两/目的/安/瑟` | 5 | -31.497780 | -32.409389 |
+| `两/亩/点/瑟` | 4 | -33.428593 | -34.157879 |
+
+For the two `瑟` paths the pin predicate reports both directions less:
+long < short by length (`phonetic_lookup.h:86–88`), short < long by the
+adjacent-length margin (`:71–73`). The node calls that same predicate on
+its resident front and the later newcomer
+(`phonetic_lookup_heap.h:61–76`). In particular, the shorter unigram can
+eject a stronger longer front on the pin. The approved adjusted score
+rejects that worse newcomer (`nbest::node_loses_to` / `Node::keep`), while
+retaining the pin's front eviction and physical-slot rule. This is the
+existing S1/S2 repair's expressly recorded node application, not a new
+exception or a pruning fix.
+
+The retained longer path ranks just after `两亩电色` by adjusted S but
+ahead of it by raw possibility. The pin's truncated tail comparator
+would treat that raw difference (about 0.179) as zero
+(`phonetic_lookup.h:174–178,337`). S3's `nbest::tail_merge` orders raw
+possibility stably without truncation, giving the recorded rank 1.
+No epsilon, extra tie-break, math exception or heap reconstruction is
+needed for either case.
+
+#### Verification
+
+`cells-for-diff.py origin/main` selected tkrzw alone. The focused gate
+passed with nine exact residual bindings, zero unexpected surfaces and
+496 / 492 / 491 agreement. Fmt and `git diff --check` passed. The named
+`FUPIE_SAME_COUNTS_SURFACE` harness mutation replaced observed rank 2
+`副氕` with `副鐅` in both indexed sentences and candidate rows: all
+aggregate counts stayed unchanged, but the exact binding rejected it.
+The mutation was removed, restoring the tested source exactly.
+
+After the [oracle environment setup](../runbooks/cloud.md#the-environment-file), with a sound
+tkrzw library and matching model20 tables:
+
+```sh
+export PINYIN_ORACLE_DBM=tkrzw
+. "$HOME/.oxpinyin-oracle.env"
+export PINYIN_EXPORT_DIR="$OXPINYIN_ORACLE_DATA_TKRZW"
+just heavy -- cargo test --locked -p pinyin-oracle --test sentence_surface_parity \
+  sentence_surface_matches_the_declared_residual -- --exact --include-ignored --nocapture
+```
+
+CI supplies the Rust tests, Clippy and rustdoc gate. No shipping scoring,
+pruning, admission or tie rule changes, and no performance measurement.
