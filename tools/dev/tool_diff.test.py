@@ -1,7 +1,10 @@
 #!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
 """Utility observations, cancellation and complete policy binding."""
 import json
+import os
 from pathlib import Path
+import shutil
+import subprocess
 import sys
 import tempfile
 import threading
@@ -87,6 +90,200 @@ class ToolDiffTests(unittest.TestCase):
         value = "\n** (process:123): CRITICAL **: 12:34:56.789: message 123\nfile:456 time 12:34:56.789\n"
         self.assertEqual(tool_diff.GLIB_PREFIX.sub(r'\1PID\2TIME: ', value),
             "\n** (process:PID): CRITICAL **: TIME: message 123\nfile:456 time 12:34:56.789\n")
+
+    def test_print_time_masks_only_clock_fields_and_preserves_other_bytes(self):
+        context = pool.UnitContext('timer', threading.Event())
+        ctx = SimpleNamespace(env={}, services=SimpleNamespace(context=context))
+        lines = [b'Spent 10 us for 1000 operations, 0.010000 us/op, 100000000.000000 times/s.\n\n',
+                 b'Spent 0 us for 1000 operations, 0.000000 us/op, inf times/s.\n\n']
+        observations = []
+        for index, line in enumerate(lines):
+            case = dict(utility='test_parser2', mask_print_time=True, args=['-c',
+                'import sys; sys.stdout.buffer.write(' + repr(b'before\xff\n' + line + b'after\n') + '); '
+                'sys.stderr.write("Spent 99 us")'])
+            observations.append(tool_diff.observation(ctx, Path(sys.executable), case,
+                self.root / str(index), {}, b'', time.monotonic() + 5))
+        self.assertEqual(observations[0], observations[1])
+        self.assertEqual(observations[0]['stdout'],
+            'before\udcff\nSpent <TIME> us for 1000 operations, <TIME> us/op, <TIME> times/s.\n\nafter\n')
+        self.assertEqual(observations[0]['stderr'], 'Spent 99 us')
+        mask = lambda text: tool_diff.PRINT_TIME.sub('TIME for \\1\n', text.decode())
+        original = mask(lines[0])
+        for changed in (lines[0].replace(b'1000 operations', b'999 operations'),
+                        lines[0][:-1], lines[0] + lines[0], b'prefix ' + lines[0]):
+            self.assertNotEqual(mask(changed), original)
+
+    def test_timer_mask_rejects_unrelated_programs_and_nonbooleans(self):
+        path = self.root / 'case.json'
+        for utility, enabled in (('test_pinyin', True), ('test_parser2', 1)):
+            path.write_text(json.dumps(dict(schema=1, cases=[dict(id='time', utility=utility,
+                source='tests/timer.h:36-44', mask_print_time=enabled)])))
+            with self.assertRaisesRegex(ValueError, 'mask_print_time'):
+                tool_diff.load_cases([path])
+
+    def test_nested_cwd_observes_parent_inputs_and_writes(self):
+        context = pool.UnitContext('nested tool', threading.Event())
+        ctx = SimpleNamespace(env={}, services=SimpleNamespace(context=context))
+        case = dict(cwd='tests', args=['-c',
+            'from pathlib import Path; import sys; '
+            'sys.stdout.buffer.write(Path("../data/input").read_bytes()); '
+            'Path("../data/output").write_bytes(b"saved")'])
+        result = tool_diff.observation(ctx, Path(sys.executable), case, self.root / 'run',
+            {'data/input': b'fixed path'}, b'', time.monotonic() + 5)
+        self.assertEqual(result, dict(exit=0, stdout='fixed path', stderr='', files={
+            'data/': 'directory', 'data/input': 'hex:' + b'fixed path'.hex(),
+            'data/output': 'hex:' + b'saved'.hex(), 'tests/': 'directory'}))
+
+    def test_two_level_cwd_keeps_each_sides_data_separate(self):
+        context = pool.UnitContext('two levels', threading.Event())
+        ctx = SimpleNamespace(env={}, services=SimpleNamespace(context=context))
+        case = dict(cwd='tests/storage', args=['-c',
+            'from pathlib import Path; import sys; '
+            'sys.stdout.buffer.write(Path("../../data/input").read_bytes()); '
+            'Path("../../data/saved").write_bytes(b"saved")'])
+        for side in ('pin', 'subject'):
+            result = tool_diff.observation(ctx, Path(sys.executable), case, self.root / side,
+                {'data/input': side.encode()}, b'', time.monotonic() + 5)
+            self.assertEqual(result['stdout'], side)
+            self.assertEqual(result['files']['data/saved'], 'hex:' + b'saved'.hex())
+        self.assertEqual((self.root / 'pin/data/input').read_bytes(), b'pin')
+        self.assertEqual((self.root / 'subject/data/input').read_bytes(), b'subject')
+
+    def require_namespaces(self):
+        wrapper = shutil.which('bwrap')
+        if wrapper is None:
+            self.fail('bubblewrap is not installed')
+        probe = subprocess.run([wrapper, '--unshare-user', '--unshare-pid', '--ro-bind', '/', '/',
+                                '--tmpfs', '/tmp', '--', '/usr/bin/true'], capture_output=True)
+        if probe.returncode:
+            self.fail('user namespaces unavailable: ' + probe.stderr.decode())
+
+    @unittest.skipUnless(os.environ.get('OXPINYIN_TEST_NAMESPACES') == '1',
+                         'needs bubblewrap and user namespaces (set OXPINYIN_TEST_NAMESPACES=1)')
+    def test_private_tmp_retains_exact_exit_status_streams_and_files(self):
+        self.require_namespaces()
+        context = pool.UnitContext('private tmp', threading.Event())
+        ctx = SimpleNamespace(env=dict(os.environ), services=SimpleNamespace(context=context))
+        for index, (code, status) in enumerate((('raise SystemExit(134)', 134), ('os.abort()', -6))):
+            case = dict(utility='test_ngram', cwd='tests/storage', args=['-c',
+                'import os,sys; from pathlib import Path; '
+                'Path("/tmp/test.db").write_bytes(b"saved"); '
+                'sys.stdout.buffer.write(sys.stdin.buffer.read()); sys.stdout.flush(); '
+                'sys.stderr.write("diagnostic"); sys.stderr.flush(); ' + code])
+            result = tool_diff.observation(ctx, Path(sys.executable), case, self.root / str(index),
+                {}, b'input\xff', time.monotonic() + 10)
+            self.assertEqual((result['exit'], result['stdout'], result['stderr']),
+                             (status, 'input\udcff', 'diagnostic'))
+            self.assertEqual(result['files']['tmp/test.db'], 'hex:' + b'saved'.hex())
+
+    def test_private_tmp_with_sealed_input_fails_explicitly(self):
+        context = pool.UnitContext('private sealed input', threading.Event())
+        ctx = SimpleNamespace(env=dict(os.environ), services=SimpleNamespace(context=context))
+        case = dict(utility='test_ngram', sealed_inputs=['chunk'])
+        with self.assertRaisesRegex(ValueError, 'sealed inputs cannot be combined'):
+            tool_diff.observation(ctx, Path(sys.executable), case, self.root / 'sealed-private',
+                                  {'chunk': b'data'}, b'', time.monotonic() + 10)
+
+    def test_private_tmp_failure_never_becomes_a_matching_observation(self):
+        context = pool.UnitContext('refused namespace', threading.Event())
+        ctx = SimpleNamespace(env={}, services=SimpleNamespace(context=context))
+        with patch.object(tool_diff.shutil, 'which', return_value='/usr/bin/bwrap'), \
+                patch.object(pool.UnitContext, 'launch', return_value=pool.Completed(1, b'', b'refused')):
+            with self.assertRaisesRegex(ValueError, 'private /tmp launcher failed: refused'):
+                tool_diff.observation(ctx, Path(sys.executable), dict(utility='test_ngram'),
+                                      self.root / 'run', {}, b'', time.monotonic() + 5)
+
+    @unittest.skipUnless(os.environ.get('OXPINYIN_TEST_NAMESPACES') == '1',
+                         'needs bubblewrap and user namespaces (set OXPINYIN_TEST_NAMESPACES=1)')
+    def test_separate_runner_processes_cannot_share_fixed_tmp_files(self):
+        self.require_namespaces()
+        # Each subprocess is an independent runner invocation, not a worker
+        # sharing this process's locks. Both tools write before either reads.
+        program = ('from pathlib import Path; import sys,time; '
+                   'Path("/tmp/test.db").write_text(sys.argv[1]); Path("ready").touch(); '
+                   '\nwhile not Path(sys.argv[2]).exists(): time.sleep(.01)\n'
+                   'sys.stdout.write(Path("/tmp/test.db").read_text())')
+        runner = ('import json,os,sys,threading,time; from pathlib import Path; '
+                  'from types import SimpleNamespace; from tools.dev import pool,tool_diff; '
+                  'config=json.loads(sys.argv[1]); '
+                  'ctx=SimpleNamespace(env=dict(os.environ),services=SimpleNamespace('
+                  'context=pool.UnitContext("independent",threading.Event()))); '
+                  'print(json.dumps(tool_diff.observation(ctx,Path(sys.executable),'
+                  'config["case"],Path(config["root"]),{},b"",time.monotonic()+10)))')
+        # The barrier must stay outside the private /tmp mount as well.
+        with tempfile.TemporaryDirectory(dir=ROOT) as scratch:
+            root = Path(scratch)
+            barrier = root / 'go'
+            processes = []
+            try:
+                for side in ('pin', 'subject'):
+                    config = dict(root=str(root / side), case=dict(utility='test_ngram',
+                        args=['-c', program, side, str(barrier)]))
+                    processes.append(subprocess.Popen([sys.executable, '-c', runner, json.dumps(config)],
+                        cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE))
+                deadline = time.monotonic() + 10
+                while not all((root / side / 'ready').exists() for side in ('pin', 'subject')):
+                    if time.monotonic() >= deadline or any(p.poll() is not None for p in processes):
+                        self.fail('both isolated tools did not reach the shared read barrier')
+                    time.sleep(.01)
+                barrier.touch()
+                for side, process in zip(('pin', 'subject'), processes):
+                    stdout, stderr = process.communicate(timeout=10)
+                    self.assertEqual((process.returncode, stderr), (0, b''))
+                    result = json.loads(stdout)
+                    self.assertEqual(result['stdout'], side)
+                    self.assertEqual(result['files']['tmp/test.db'], 'hex:' + side.encode().hex())
+            finally:
+                for process in processes:
+                    if process.poll() is None:
+                        process.kill()
+                    process.communicate()
+
+    def test_fixed_name_overlap_batches_only_colliding_cases(self):
+        utilities = ['test_ngram', 'test_pinyin', 'test_punct_table', 'test_table_info',
+                     'test_ngram', 'test_phrase']
+        cases = [dict(id=str(index), utility=name) for index, name in enumerate(utilities)]
+        batches = tool_diff.case_batches(cases)
+        self.assertEqual(sorted([case['id'] for case in batch] for batch in batches),
+                         [['0', '2', '4'], ['1'], ['3'], ['5']])
+
+    def test_nested_paths_cannot_escape_case_root(self):
+        for field in ('cwd', 'fixture_prefix'):
+            for value in ('../data', '/tmp/data', 1):
+                path = self.root / 'case.json'
+                path.write_text(json.dumps(dict(schema=1, cases=[dict(
+                    id='nested', utility='test_pinyin', source='tests/test_pinyin.cpp:36',
+                    **{field: value})])))
+                with self.assertRaises(ValueError):
+                    tool_diff.load_cases([path])
+
+    def test_user_snapshot_bytes_remain_observed_outside_dbm_row_cells(self):
+        context = pool.UnitContext('snapshot tool', threading.Event())
+        ctx = SimpleNamespace(env={}, services=SimpleNamespace(context=context),
+                              settings=SimpleNamespace(cell='kc'))
+        case = dict(args=['-c', 'pass'], dbm_rows=['user.db'], dbm_rows_cells=['bdb', 'tkrzw'])
+        snapshot = b'KCSS\n\x00\xff'
+        with patch.object(tool_diff, 'logical_dbm_rows') as logical:
+            result = tool_diff.observation(ctx, Path(sys.executable), case, self.root / 'run',
+                {'user.db': snapshot}, b'', time.monotonic() + 5)
+            logical.assert_not_called()
+        self.assertEqual(result['files']['user.db'], 'hex:' + snapshot.hex())
+        changed = dict(result, files={'user.db': 'hex:' + snapshot[:-1].hex()})
+        self.assertEqual(tool_diff.verdict(case, result, changed, self.root, 'kc')[0], 'DIFFER')
+        ctx.settings.cell = 'bdb'
+        with patch.object(tool_diff, 'logical_dbm_rows') as logical:
+            tool_diff.observation(ctx, Path(sys.executable), case, self.root / 'bdb',
+                {'user.db': b'container'}, b'', time.monotonic() + 5)
+            logical.assert_called_once()
+
+    def test_dbm_row_cells_reject_unknown_cells(self):
+        path = self.root / 'case.json'
+        for value in ('kc', ['other'], [1]):
+            path.write_text(json.dumps(dict(schema=1, cases=[dict(
+                id='snapshot', utility='test_pinyin', source='ngram_kyotodb.cpp:82-101',
+                dbm_rows=['user.db'], dbm_rows_cells=value)])))
+            with self.assertRaisesRegex(ValueError, 'dbm_rows_cells'):
+                tool_diff.load_cases([path])
 
     def test_glib_domain_prefix_keeps_domain_and_utility(self):
         value = "\n(gen_zhuyin_table:123): GLib-CRITICAL **: 12:34:56.789: assertion failed\n"

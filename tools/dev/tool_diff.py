@@ -12,14 +12,17 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import shutil
 import subprocess
+import sys
+import tempfile
 import time
 from dataclasses import replace
 
 from tools.bisection import contract_policy, contract_verdict
 from . import pool
 
-# Each utility's directory in the pin's build tree (utils/*/Makefile.am).
+# Each program's directory in the pin's build tree (utils/ and tests/ Makefile.am).
 PIN_UTILITIES = {'gen_pinyin_table': 'utils/storage', 'gen_zhuyin_table': 'utils/storage',
                  'k_mixture_model_to_interpolation': 'utils/training',
                  'ngseg': 'utils/segment', 'spseg': 'utils/segment', 'mergeseq': 'utils/segment',
@@ -35,7 +38,39 @@ PIN_UTILITIES = {'gen_pinyin_table': 'utils/storage', 'gen_zhuyin_table': 'utils
                  'estimate_k_mixture_model': 'utils/training',
                  'import_k_mixture_model': 'utils/training',
                  'export_k_mixture_model': 'utils/training',
-                 'gen_k_mixture_model': 'utils/training'}
+                 'gen_k_mixture_model': 'utils/training',
+                 'test_pinyin': 'tests', 'test_phrase': 'tests',
+                 'test_chewing': 'tests', 'test_zhuyin': 'tests',
+                 'test_parser2': 'tests/storage', 'test_ngram': 'tests/storage',
+                 'test_flexible_ngram': 'tests/storage', 'test_punct_table': 'tests/storage',
+                 'test_table_info': 'tests/storage', 'test_phrase_index': 'tests/storage',
+                 'test_phrase_index_logger': 'tests/storage', 'test_phrase_table': 'tests/storage',
+                 'test_chewing_table': 'tests/storage', 'test_matrix': 'tests/storage',
+                 'test_pinyin_lookup': 'tests/lookup', 'test_phrase_lookup': 'tests/lookup',
+                 'test_memory_chunk': 'tests/include'}
+# Source-defined absolute inputs at 074a2219; no case can opt out of isolation.
+# tests/storage/test_{ngram,flexible_ngram,punct_table,table_info,
+# phrase_index_logger}.cpp and tests/include/test_memory_chunk.cpp.
+FIXED_TMP_PATHS = {
+    'test_ngram': {'/tmp/test.db', '/tmp/snapshot.db'},
+    'test_flexible_ngram': {'/tmp/training.db'},
+    'test_punct_table': {'/tmp/punct.bin', '/tmp/snapshot.db'},
+    'test_table_info': {'/tmp/user.conf'},
+    'test_phrase_index_logger': {'/tmp/gb_char.bin', '/tmp/gb_char.dbin', '/tmp/gb_char2.bin'},
+    'test_memory_chunk': {'/tmp/test.bin'},
+}
+# Bubblewrap returns shell-encoded statuses, which cannot distinguish exit(134)
+# from SIGABRT. This launcher records subprocess's exact status separately;
+# the tool retains its own stdin/stdout/stderr and argv[0]. No shell is involved.
+ISOLATED_STATUS = ('import pathlib,subprocess,sys; '
+                   'result=subprocess.run(sys.argv[2:],check=False); '
+                   'pathlib.Path(sys.argv[1]).write_text(str(result.returncode))')
+TIMED_PROGRAMS = frozenset({'test_parser2', 'test_phrase_index', 'test_phrase_table',
+                            'test_chewing_table', 'test_matrix', 'test_pinyin_lookup'})
+# tests/timer.h:36-44. Keep the operation count, line count and blank lines.
+_TIME_FLOAT = r'[+-]?(?:[0-9]+\.[0-9]{6}|inf|nan)'
+PRINT_TIME = re.compile(r'^Spent -?[0-9]+ us for (-?[0-9]+) operations, '
+                        + _TIME_FLOAT + r' us/op, ' + _TIME_FLOAT + r' times/s\.\n', re.M)
 # Utilities whose pin source opens no DBM: the generators read and write text
 # tables, k_mixture_model_to_interpolation converts stdin to stdout with
 # taglib (no Bigram attach, no phrase-index load), and gen_unigram reads and
@@ -126,6 +161,9 @@ def load_cases(paths):
                 raise ValueError(f'{path}: case needs id, utility, arguments and source citation')
             if case['utility'] not in PIN_UTILITIES:
                 raise ValueError(f'{path}: {case["utility"]} has no registered pin build directory')
+            if 'mask_print_time' in case and (
+                    type(case['mask_print_time']) is not bool or case['utility'] not in TIMED_PROGRAMS):
+                raise ValueError(f'{path}: mask_print_time requires a boolean and a timer.h program')
             if case.get('pin_signal') not in (None, -11, -6):
                 raise ValueError(f'{path}: unsupported registered pin signal')
             # A source-cited abort() or assert both sides reproduce (constitution
@@ -147,10 +185,16 @@ def load_cases(paths):
                 expected = case['expected_failure']
                 if not isinstance(expected, dict) or set(expected) != {'exit', 'stderr'} or not isinstance(expected['exit'], int) or not isinstance(expected['stderr'], str):
                     raise ValueError(f'{path}: expected_failure needs exit and stderr')
-            if case.get('policy_cells') is not None:
-                if not isinstance(case['policy_cells'], list) or not all(
-                        isinstance(name, str) and name in FIXTURE_DIRS for name in case['policy_cells']):
-                    raise ValueError(f'{path}: policy_cells must name bdb, kc or tkrzw')
+            for field in ('cwd', 'fixture_prefix'):
+                if case.get(field) is not None:
+                    if not isinstance(case[field], str):
+                        raise ValueError(f'{path}: {field} must be a relative path string')
+                    relative(case[field])
+            for field in ('policy_cells', 'dbm_rows_cells'):
+                if case.get(field) is not None:
+                    if not isinstance(case[field], list) or not all(
+                            isinstance(name, str) and name in FIXTURE_DIRS for name in case[field]):
+                        raise ValueError(f'{path}: {field} must name bdb, kc or tkrzw')
             if case.get('dbm_rows_pinyin_index') is not None:
                 if not isinstance(case['dbm_rows_pinyin_index'], list) or not all(
                         isinstance(name, str) and name for name in case['dbm_rows_pinyin_index']):
@@ -236,6 +280,40 @@ def logical_dbm_rows(ctx, helper, directory, names, rows, pinyin_index=False):
         rows[name] = 'rows:' + hashlib.sha256(output).hexdigest()
 
 
+def isolated_launch(context, binary, args, directory, cwd, environment, stdin):
+    """Give one side its own /tmp, preserving exact child status and streams.
+
+    The original program path and its libraries remain readable in the host
+    tree. Only the complete fixture tree and the private status file are
+    writable. Bubblewrap failure is a runner failure, never a tool observation.
+    """
+    wrapper = shutil.which('bwrap', path=environment.get('PATH'))
+    if wrapper is None:
+        raise ValueError('fixed /tmp cases require bubblewrap and enabled user namespaces')
+    for path in (binary.resolve(), Path(sys.executable).resolve()):
+        if path.is_relative_to('/tmp') or path.is_relative_to('/run'):
+            raise ValueError(f'fixed /tmp cases need executables outside /tmp and /run: {path}')
+    temporary = directory / 'tmp'
+    temporary.mkdir(exist_ok=True)
+    guest = Path('/run/oxpinyin-tool-case')
+    with tempfile.NamedTemporaryFile(dir=directory.parent) as control:
+        command = [wrapper, '--unshare-user', '--unshare-pid', '--die-with-parent',
+                   '--ro-bind', '/', '/', '--proc', '/proc', '--tmpfs', '/run',
+                   '--bind', str(directory), str(guest), '--bind', str(temporary), '/tmp',
+                   '--bind', control.name, '/run/oxpinyin-tool-status',
+                   '--chdir', str(guest / cwd.relative_to(directory)), '--',
+                   sys.executable, '-I', '-S', '-B', '-c', ISOLATED_STATUS,
+                   '/run/oxpinyin-tool-status', str(binary), *args]
+        result = context.launch(command, cwd=directory, env=environment, input=stdin)
+        if result.status != 0:
+            raise ValueError('private /tmp launcher failed: ' + result.stderr.decode('utf-8', 'replace'))
+        try:
+            status = int(Path(control.name).read_text())
+        except ValueError as error:
+            raise ValueError('private /tmp launcher did not record the child status') from error
+    return pool.Completed(status, result.stdout, result.stderr)
+
+
 def observation(ctx, binary, case, directory, inputs, stdin, deadline, helper=None):
     directory.mkdir()
     for name, content in inputs.items():
@@ -247,6 +325,8 @@ def observation(ctx, binary, case, directory, inputs, stdin, deadline, helper=No
     # utility, rather than libtool's lt-* executable in .libs.
     parent = ctx.services.context
     context = replace(parent, cancelled=lambda: (parent.check() or time.monotonic() >= deadline))
+    cwd = directory / relative(case.get('cwd', '.'))
+    cwd.mkdir(parents=True, exist_ok=True)
     with contextlib.ExitStack() as stack:
         sealed = {}
         for name in case.get('sealed_inputs', []):
@@ -263,20 +343,29 @@ def observation(ctx, binary, case, directory, inputs, stdin, deadline, helper=No
             path.unlink()
             path.symlink_to(target)
             sealed[name] = (fd, target)
-        result = context.launch([str(binary), *case.get('args', [])], cwd=directory,
-                                env=environment, input=stdin,
-                                pass_fds=(*context.fds, *(fd for fd, _ in sealed.values())))
+        if case.get('utility') in FIXED_TMP_PATHS:
+            if sealed:
+                raise ValueError('sealed inputs cannot be combined with private /tmp isolation')
+            result = isolated_launch(context, binary, case.get('args', []), directory, cwd, environment, stdin)
+        else:
+            result = context.launch([str(binary), *case.get('args', [])], cwd=cwd,
+                                    env=environment, input=stdin,
+                                    pass_fds=(*context.fds, *(fd for fd, _ in sealed.values())))
         files = snapshot(directory)
         for name, (fd, target) in sealed.items():
             # Compare the input bytes while still detecting a replaced link.
             if files.get(name) == 'symlink:' + target:
                 size = os.fstat(fd).st_size
                 files[name] = 'hex:' + os.pread(fd, size, 0).hex()
-    if case.get('dbm_rows'):
+    if case.get('dbm_rows') and (case.get('dbm_rows_cells') is None
+                               or ctx.settings.cell in case['dbm_rows_cells']):
         logical_dbm_rows(ctx, helper, directory, case['dbm_rows'], files)
     if case.get('dbm_rows_pinyin_index'):
         logical_dbm_rows(ctx, helper, directory, case['dbm_rows_pinyin_index'], files, pinyin_index=True)
-    return dict(exit=result.status, stdout=result.stdout.decode('utf-8', 'surrogateescape'),
+    stdout = result.stdout.decode('utf-8', 'surrogateescape')
+    if case.get('mask_print_time'):
+        stdout = PRINT_TIME.sub(r'Spent <TIME> us for \1 operations, <TIME> us/op, <TIME> times/s.\n', stdout)
+    return dict(exit=result.status, stdout=stdout,
                 stderr=GLIB_PREFIX.sub(r'\1PID\2TIME: ', result.stderr.decode('utf-8', 'surrogateescape')),
                 files=files)
 
@@ -311,6 +400,24 @@ def verdict(case, pin, subject, policy_root, cell):
     return ('MATCH', '') if pin == subject else ('DIFFER', '\n'.join(contract_policy.divergence(pin, subject)))
 
 
+def case_batches(cases):
+    """Serialize overlapping fixed names; keep every independent group parallel."""
+    groups = []
+    for case in cases:
+        paths = set(FIXED_TMP_PATHS.get(case['utility'], ()))
+        members = []
+        kept = []
+        for prior_paths, prior_members in groups:
+            if paths & prior_paths:
+                paths.update(prior_paths)
+                members.extend(prior_members)
+            else:
+                kept.append((prior_paths, prior_members))
+        groups = [*kept, (paths, [*members, case])]
+    order = {case['id']: index for index, case in enumerate(cases)}
+    return [sorted(members, key=lambda case: order[case['id']]) for _, members in groups]
+
+
 def run(ctx, argv):
     parser = argparse.ArgumentParser(prog='just runner tool-diff', description=__doc__)
     parser.add_argument('--case-file', action='append', type=Path)
@@ -336,7 +443,7 @@ def run(ctx, argv):
     expected = dict(re.findall(r'^(LIBPINYIN_SHA)=(.+)$',
                    (ctx.settings.root / 'tools/oracle/build-oracle.sh').read_text(), re.M))['LIBPINYIN_SHA']
     head = ctx.checked(['git', 'rev-parse', 'HEAD'], cwd=pin_build, capture=True).stdout.decode().strip()
-    if head != expected or ctx.checked(['git', 'diff', 'HEAD', '--', 'utils', 'src'],
+    if head != expected or ctx.checked(['git', 'diff', 'HEAD', '--', 'utils', 'src', 'tests'],
                                        cwd=pin_build, capture=True).stdout:
         raise ValueError('pin tool build must use the unmodified oracle source at ' + expected)
     model = Path(ctx.env['PINYIN_MODEL_DIR']) if ctx.env.get('PINYIN_MODEL_DIR') else None
@@ -352,7 +459,10 @@ def run(ctx, argv):
         scratch = child.scratch()
         inputs = {name: payload(value, child.settings.root, model) for name, value in case.get('files', {}).items()}
         if case.get('fixture_dir') is not None:
-            inputs = {**fixture_inputs(child.settings.root, child.settings.cell, case['fixture_dir']), **inputs}
+            prefix = relative(case.get('fixture_prefix', '.'))
+            fixture = {str(prefix / name): data for name, data in
+                       fixture_inputs(child.settings.root, child.settings.cell, case['fixture_dir']).items()}
+            inputs = {**fixture, **inputs}
         stdin = payload(case.get('stdin', {'text': ''}), child.settings.root, model)
         deadline = time.monotonic() + args.case_timeout
         try:
@@ -366,7 +476,10 @@ def run(ctx, argv):
                    pin_signal=case.get('pin_signal'), reproduces_signal=bool(case.get('reproduces_signal')),
                    database_free=case['utility'] in DATABASE_FREE, pin=pin, subject=subject)
         return case, result, detail, row
-    results = ctx.campaign(cases, compare)
+    results = [result for group in ctx.campaign(case_batches(cases),
+               lambda child, batch: [compare(child, case) for case in batch]) for result in group]
+    order = {case['id']: index for index, case in enumerate(cases)}
+    results.sort(key=lambda result: order[result[0]['id']])
     counts = Counter()
     success = True
     for case, result, detail, row in results:

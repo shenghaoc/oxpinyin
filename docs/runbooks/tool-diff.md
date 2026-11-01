@@ -58,13 +58,68 @@ any other exit, stream or file difference fails.
 A case may list inputs in `sealed_inputs`. On Linux the runner exposes their
 bytes through sealed memory files: reads succeed and writes fail even as root.
 `expected_failure` asserts the exact exit and stderr for both observations.
+Sealed inputs cannot be combined with programs requiring private `/tmp`; the
+runner reports that combination as an error.
 
 Each side gets identical inputs in a private working directory. The runner
 compares exit status, byte-preserving stdout/stderr and the complete file
 inventory (including empty files, modified inputs and directory entries).
-Only GLib diagnostic process IDs and timestamps are masked. Signals are
+GLib diagnostic process IDs and timestamps are masked. Signals are
 invalid unless a source-derived case registers the pin signal and a named
 policy record; subject signals and incomplete/timed-out observations fail.
+
+The C-API test programs use `cwd: "tests"` and `fixture_prefix: "data"`
+with `fixture_dir: "fixtures/w3"`. They therefore open the pin's literal
+`../data` paths inside each private case root. `cwd` and `fixture_prefix`
+must stay beneath that root. The complete root is captured, including
+the data directory and every user file written there. Pin preparation
+also builds all 17 `tests/` programs with `--enable-libzhuyin`; source
+validation includes the pin's `tests/` directory.
+
+Storage/lookup programs use `cwd: "tests/storage"` or `"tests/lookup"`
+with the same `fixture_prefix: "data"`; their literal `../../data` paths
+therefore reach separate complete fixture trees. The runner never permits
+a case-file path to escape its root by adding arbitrary `..` components.
+
+Programs with source-defined `/tmp` paths automatically run in a private
+Linux mount namespace using `bwrap` (bubblewrap). Each side binds its
+own `tmp/` directory to `/tmp`; inputs under `tmp/` populate it, and all
+its output is included in the complete-root snapshot. The namespace
+prevents collisions with other runner processes and unrelated host
+processes. Within one runner, cases whose declared fixed names overlap
+also execute serially; independent groups keep the existing parallel
+execution. `test_phrase_index_logger`'s three `/tmp/gb_char*` files are
+included alongside the DBM/config/chunk paths.
+
+The CI container lacks bubblewrap. Run the explicitly ignored namespace tests on
+a host with bubblewrap and unprivileged user namespaces enabled:
+
+```sh
+OXPINYIN_TEST_NAMESPACES=1 just test-tools tools/dev/tool_diff.test.py
+```
+
+When selected, the tests fail if either prerequisite is missing. Install
+bubblewrap and use a host where unprivileged user namespaces are already enabled. The runner does not change security settings or fall
+back to shared `/tmp` when isolation fails. The pin build, subject binaries
+and Python executable must be outside `/tmp` and `/run`, which the private
+mounts replace. A small launcher within this same runner records the
+actual child status separately, preserving `SIGABRT` versus `exit(134)`;
+stdin and stdout/stderr remain the tool's own streams. No tool source is
+rewritten to substitute paths.
+
+The six programs that call `tests/timer.h:36-44` may set
+`mask_print_time: true`. It masks only the clock-derived fields in the
+exact `Spent ... us for ... operations, ... us/op, ... times/s.` stdout
+line. Operation counts, line counts, trailing blank lines, stderr and all
+other bytes remain compared. The flag is rejected for other programs.
+
+`dbm_rows_cells` restricts logical-row comparison to the listed cells;
+the other cells retain complete file-byte comparison. Family A uses it
+for user files: Kyoto Cabinet writes snapshot streams, not DBM files
+(`ngram_kyotodb.cpp:54-101`, `chewing_large_table2_kyotodb.cpp:94-105`
+and `phrase_large_table3_kyotodb.cpp:109-121`). Its snapshot writer emits
+the magic, record lengths/keys/values and terminator, without timestamps
+(`kcdb.h`, `BasicDB::dump_snapshot`), so these bytes are compared in full.
 
 `--observations PATH` writes local JSON lines. Registry runs keep this
 capture as `tool-diff-tkrzw/observations.log` alongside local comparison logs.

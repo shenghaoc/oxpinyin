@@ -12,10 +12,10 @@ snapshots; re-audit the delta when either moves):
 
 | Project | Revision | Snapshot date |
 |---|---|---|
-| libpinyin (`main`) | `55e9051189db5d2f07723edebc5611eb63e52d3c` | 2026-08-19 |
+| libpinyin (pin) | `074a2219c90feaf962d0d24f034514033ece5f99` | 2026-09-03 |
 | libchewing (`master`) | `179a02f0629c1137050c736acddc17c9424bf1d2` | 2026-07-17 |
 
-The classification vocabulary:
+The libchewing behavior-coverage vocabulary (the libpinyin drop-in statuses are defined below):
 
 - **PORT** — the invariant is reproduced with its assertion strength
   intact against the oxpinyin equivalent.
@@ -34,29 +34,65 @@ states why.
 
 ## libpinyin tests
 
-Upstream shape: most top-level programs are interactive stdin *drivers*
-with no assertions (they print results for eyeballing); the hard
-assertions live in the `storage/` programs. Test data is the installed
-`../data` table set; oxpinyin's equivalents run against the committed
-`fixtures/w3` mini tables and the w4 portable fixtures.
+Maintainer ruling, 2026-11-01 UTC (`date -u`): **every program under the
+pin's `tests/` is ported as a drop-in tool, without exception**. Its binary
+name, arguments, stdin protocol, stdout/stderr bytes, exit status and
+fixed file paths are part of the contract. The tools live in nonshipping
+`oxpinyin-utils` and are not installed. This is the single coverage ledger
+linked by [the external-I/O ruling](../findings/external-io-boundary.md#ruling-and-scope).
 
-| Source | Behavior protected | Status | oxpinyin home |
-|---|---|---|---|
-| `test_pinyin.cpp` | full-pinyin pipeline: parse → prefix guess → candidates (`SORT_BY_PHRASE_LENGTH \| SORT_BY_FREQUENCY`) → auxiliary text at **every** offset `0..=len` → train → reset → save; closes with `mask_out(0,0)` → save | ADAPT | `crates/oxpinyin-capi/tests/abi/pipeline.rs` (aux text at every offset, sentence 你好, candidates, the train/reset/save/mask-out cycle). Candidate ordering under the pinned sort option: `crates/oxpinyin-capi/src/e2e_tests.rs` (`predicted_tie_groups…`), `crates/oxpinyin-capi/tests/abi/exact_scheme.rs` |
-| `test_phrase.cpp` | `pinyin_phrase_segment`: raw Chinese text → phrase tokens | N/A | no oxpinyin surface segments raw Chinese text; the reachable slice of the same risk (text ↔ token reverse lookup) is `crates/oxpinyin-data/tests/system_dictionary.rs` (`token_surface_resolves_through_the_chunk_file`, `tokens_for_text_reads_the_phrase_dbm`). Phrase-level segmentation parity is held by the oracle differentials, not a unit surface |
-| `test_zhuyin.cpp` | zhuyin pipeline: `parse_more_chewings` → `guess_sentence` → `get_sentence` → train/reset/save/mask-out | ADAPT | `crates/oxpinyin-capi/tests/abi/pipeline.rs` (`the_zhuyin_pipeline…`): oxpinyin unifies the separate `zhuyin_*` C API onto the same instance surface, so the port drives the chewing parser and asserts a sentence answers |
-| `test_chewing.cpp` | the pinyin-context variant of the same pipeline, with chewing auxiliary texts | ADAPT | `crates/oxpinyin-capi/tests/abi/pipeline.rs` (`the_chewing_pipeline…`) |
-| `lookup/test_pinyin_lookup.cpp` | `PhoneticLookup::get_nbest_match` over the parsed key matrix (n-best sentence paths) | REPLACE | `crates/pinyin-oracle/tests/graph_paths.rs` + `decode_differential.rs` against the frozen `fixtures/w4/oracle-paths.txt` / `oracle-sentence-surface.txt` — the same path enumeration checked against the pin instead of eyeballed |
-| `lookup/test_phrase_lookup.cpp` | `PhraseLookup::get_best_match` over raw Chinese text | N/A | same as `test_phrase.cpp`: no raw-text phrase-lookup surface in oxpinyin |
-| `storage/test_parser2.cpp` | every parser variant (`fullpinyin`, `doublepinyin`, `zhuyin` × standard/hsu/dachen26, `pinyindirect`, `zhuyindirect`) with the one hard assert: aligned key/key-rest streams | PORT | `crates/oxpinyin-core/tests/scheme_parsers.rs`: aligned spans across all 6 double-pinyin layouts, all 8 zhuyin keyboards (StandardDvorak is the abort slot, covered as a rejection contract), and both romanization indexes; the parse itself is exhaustively covered by `crates/oxpinyin-core/tests/parser_acceptance.rs` + the F-A frozen captures |
-| `storage/test_matrix.cpp` | `PhoneticKeyMatrix` fill + resplit/inner-split/fuzzy steps; `search_matrix` over all spans | REPLACE | the matrix steps are oxpinyin's `SegmentGraph` edge construction (`crates/oxpinyin-core/src/graph.rs` unit tests) and its span search is exercised end-to-end by the oracle `graph_paths` differentials above |
-| `storage/test_phrase_index.cpp` | `PhraseItem` pronunciation/frequency invariants; phrase-index store/load roundtrip; `add_unigram_frequency`; `compact` | ADAPT | `crates/oxpinyin-data/tests/phrase_library.rs` (`reads_items_texts_and_pronunciations`, damage refused rather than misread) and `crates/oxpinyin-data/tests/system_dictionary.rs` (`empty_and_unknown_lookups_answer_empty`, `lookup_carries_the_pronunciation_possibility`). The pronunciation-possibility ratio arithmetic lives at the scoring seam, covered by `crates/oxpinyin-testsupport/tests/scoring.rs` with the fixture doubles. `compact()` is storage-mechanics (the store backend) — N/A |
-| `storage/test_ngram.cpp` | `SingleGram` insert-or-set semantics, totals, bigram store roundtrip, snapshot save/load, `mask_out(0,0)` | PORT | `crates/oxpinyin-user/tests/user_store_semantics.rs` (§ bigram). Divergence: `set_bigram_count` unifies insert/set into one overwrite and the store maintains totals (upstream makes the caller do it) |
-| `storage/test_flexible_ngram.cpp` | the training-side flexible single-gram/bigram machinery | ADAPT | the training gram layer is exercised against the pin by the w9 differentials: `crates/oxpinyin-training/tests/counter-differential.rs`, `crates/oxpinyin-training/tests/lambda-differential.rs`, `crates/oxpinyin-training/tests/{emitter-differential,emitter-roundtrip}.rs` — behavior proven against `gen_ngram`/`estimate_interpolation`/`export_interpolation` rather than against C++ internals |
-| `storage/test_punct_table.cpp` | `PunctTable` append/remove/save/load | ADAPT | read side: `crates/oxpinyin-data/src/punct.rs` (`lookup_finds_punctuation`; `PunctTable::open_optional` carries the missing-file tolerance mirroring `pinyin_init`; `crates/oxpinyin-runtime/tests/libpinyin_data_dir.rs` reads punctuation through a real `punct.bin`). Mutation side: N/A — oxpinyin punctuation tables are compiled system data (`oxpinyin-datagen`), there is no user punct-edit API (upstream divergence to report back) |
-| `storage/test_table_info.cpp` | `SystemTableInfo2` load, λ, per-index table infos; `UserTableInfo` conform | ADAPT | λ pinned by `crates/oxpinyin-data/src/table_conf.rs` (`Lambda::PINNED`, `pinned_rational_agrees_with_pinned_lambda_f32`) and applied in `lm/mod.rs`; table manifests by `oxpinyin-datagen` (`crates/oxpinyin-datagen/tests/fixtures_identity.rs`). `UserTableInfo` conform: `crates/oxpinyin-data/src/user_files.rs` (`user_conf_round_trips_and_conforms`) and `crates/oxpinyin-user/src/persistence.rs` (`non_conform_profile_wipes_and_resets`, `the_tired_counter_wipes_on_the_next_open`) — the pin's `check_format` over `user.conf`, since drop-in task 9 (2026-09-09, `docs/findings/user-store.md` §11); the store itself still carries no format-version row (ruling 2026-09-08, §4), and hostile files are a typed error (`crates/oxpinyin-user/tests/user_store_acid.rs`) |
-| `storage/test_phrase_index_logger.cpp` | training logger diff/merge of phrase indexes | N/A | no phrase-index logger surface in oxpinyin. The model chain is covered by the record-layer tests (`crates/oxpinyin-kmm/tests/flexible_records.rs`) and the seven utilities' tests (`crates/oxpinyin-utils/tests/kmm_tools.rs`); the user-side count overlay (`unigram_delta`, `mask_out`) is covered in `user_store_semantics.rs` |
-| `include/`, `tests_helper.h`, `timer.h` | harness infrastructure (memory-chunk loaders, timing) | N/A | cargo test is the harness; timing moved to the criterion benches (`crates/oxpinyin-capi/benches`, `crates/pinyin-oracle/benches`) |
+All **17** programs are `noinst_PROGRAMS`; only **six** also appear in
+Automake `TESTS`. The inventory is `tests/Makefile.am:37-59`,
+`tests/storage/Makefile.am:31-46`, `tests/include/Makefile.am:25-27` and
+`tests/lookup/Makefile.am:31-32` at the audited pin. `test_zhuyin` is
+conditional on `--enable-libzhuyin`. Interactive drivers and manual test
+programs have the same porting requirement as the six automated tests.
+
+**GAP** means the complete drop-in executable is pending. **Ported** means
+its source-defined interface is implemented and its registered `tool-diff`
+cases pass the required cells. Existing unit tests, adapted APIs and
+algorithm differentials do not by themselves make a program Ported.
+The previous PORT/ADAPT/REPLACE/N/A entries described internal behavior
+coverage and are superseded for these programs; no program is exempt.
+
+| Family | Pin source / binary | Automated `TESTS` | Program behavior and fixed inputs | Drop-in status |
+| --- | --- | --- | --- | --- |
+| A | `tests/test_pinyin.cpp` / `test_pinyin` | No | `../data`: full-pinyin parse, prefix guess, sorted candidates, auxiliary text at every offset, train/reset/save, then mask-out/save/fini | **GAP** |
+| A | `tests/test_phrase.cpp` / `test_phrase` | No | `../data`: raw Chinese phrase segmentation, token text, save and mask-out/save/fini | **GAP** |
+| A | `tests/test_chewing.cpp` / `test_chewing` | No | `../data`: Pinyin C API's chewing parse, sentence and auxiliary text, train/reset/save and teardown | **GAP** |
+| A | `tests/test_zhuyin.cpp` / `test_zhuyin` | No | `../data`: the separate `zhuyin_*` C API, chewing parse and sentence, train/reset/save and teardown | **GAP** |
+| B | `tests/storage/test_parser2.cpp` / `test_parser2` | No | GLib `--parser`, `--incomplete`, `--scheme`; stdin; every parser variant, consumed length and raw key spans; `timer.h` output | **GAP** |
+| C | `tests/storage/test_ngram.cpp` / `test_ngram` | Yes | `SingleGram`/`Bigram` operations; `/tmp/test.db`, `/tmp/snapshot.db` | **GAP** |
+| C | `tests/storage/test_flexible_ngram.cpp` / `test_flexible_ngram` | Yes | Flexible single-gram range search and mutation, bigram storage; `/tmp/training.db` | **GAP** |
+| C | `tests/storage/test_punct_table.cpp` / `test_punct_table` | Yes | Punctuation append/remove and snapshot save/load; `/tmp/punct.bin`, `/tmp/snapshot.db` | **GAP** |
+| D | `tests/storage/test_table_info.cpp` / `test_table_info` | Yes | System/user table configuration and conformance; `../../data/table.conf`, `/tmp/user.conf` | **GAP** |
+| E | `tests/include/test_memory_chunk.cpp` / `test_memory_chunk` | Yes | Chunk content, capacity, insert/remove, save/load/map; `/tmp/test.bin` | **GAP** |
+| E | `tests/storage/test_phrase_index.cpp` / `test_phrase_index` | No | Phrase-item/index mutation, frequency, compact and chunk round trips; `../../data/*` through `tests_helper.h` | **GAP** |
+| E | `tests/storage/test_phrase_index_logger.cpp` / `test_phrase_index_logger` | Yes | Phrase-index logger diff/merge; `../../data/*`; `/tmp/gb_char.bin`, `/tmp/gb_char.dbin`, `/tmp/gb_char2.bin` | **GAP** |
+| E | `tests/storage/test_phrase_table.cpp` / `test_phrase_table` | No | Phrase-table lookup and mutation over `../../data/*` | **GAP** |
+| E | `tests/storage/test_chewing_table.cpp` / `test_chewing_table` | No | Chewing-table lookup and mutation over `../../data/*` | **GAP** |
+| E | `tests/storage/test_matrix.cpp` / `test_matrix` | No | Phonetic-key matrix construction and search over `../../data/*` | **GAP** |
+| E | `tests/lookup/test_pinyin_lookup.cpp` / `test_pinyin_lookup` | No | Phonetic n-best lookup over parsed matrices, phrase chunks and `../../data/bigram.db` | **GAP** |
+| E | `tests/lookup/test_phrase_lookup.cpp` / `test_phrase_lookup` | No | Raw-text phrase lookup with phrase chunks and `../../data/bigram.db` | **GAP** |
+
+The existing Rust Pinyin and Zhuyin C facades are separate implementations;
+raw-text phrase segmentation and phrase lookup exist. Those earlier N/A
+claims and the claim that Zhuyin is unified onto the Pinyin C API are stale.
+The direct parsers' complete key-rest and consumed-length interfaces must
+be checked separately from full/keyboard parser tests. Likewise, internal
+punctuation mutation and flexible n-gram operations are not replaced by
+training-utility coverage. The complete binaries remain GAP until ported.
+
+`tests/tests_helper.h` and `tests/timer.h` are shared source dependencies,
+not additional executables. Helper-loaded `../../data` trees and every
+user file written back into `../data` are compared per side. Fixed `/tmp`
+paths are isolated across processes by the runner. Timing lines are the
+only clock-dependent test-program output; all other bytes remain compared
+under the existing external-I/O/check-message policies.
+
+Delivery order is A, B, D, C. Family E remains blocked until both external
+I/O stage 2 chunk mapping and `MemoryChunk::load` have merged; the current
+sequence stops before E.
 
 ## libchewing tests
 
@@ -85,26 +121,19 @@ ABI behaviors are N/A by design rather than artificially reconstructed.
 
 ## Totals
 
-Counts below are `cargo test --workspace` executed totals on this
-repository's default feature set (the same numbers CI produces), not
-static `#[test]` greps — the two differ because the oracle-ffi tier, the
-lmdb/tkrzw store-backend copies, and the live-oracle `#[ignore]`d tests
-are feature-gated out of the default build.
-
-- **libpinyin**: 14 source programs → 2 PORT, 6 ADAPT, 2 REPLACE, 4 N/A.
-- **libchewing**: 15 test programs + 6 tools → 1 PORT, 6 ADAPT, 2 REPLACE,
-  and the remainder N/A (chewing-specific symbol/full-shape/ABI/Logger/UI
-  surfaces oxpinyin does not implement — each listed above with its
-  reason).
-- New behavioral tests written for this ledger: 37 today
-  (`user_store_semantics` 12, `scheme_parsers` 12, `session_lifecycle` 8,
-  `pipeline` 5; the 8 `search_continuation` tests were folded into the
-  data crate's `system_dictionary`/`phrase_library` suites by P6), all green under
-  `cargo test --workspace`.
+- **libpinyin**: 17 `noinst_PROGRAMS`, six also in automated `TESTS`;
+  **0 Ported, 17 GAP** at the runner prerequisite. Family PRs update their
+  rows and this total when their drop-in verification passes.
+- The libchewing rows retain their separately audited behavior-coverage
+  classifications. They do not count toward the libpinyin drop-in total.
 
 ## Maintenance rule
 
-When a test here says N/A because a surface does not exist, and that
-surface later ships, move the entry to ADAPT/PORT and add the test in the
-same change. The ledger travels with the test architecture; it is the
-answer to "how much of the upstream suites have we actually ported?"
+Each libpinyin family PR updates its rows from GAP to Ported, names its
+source-derived case files and records the selected-cell results. Keep the
+17-program inventory tied to the pin's four Makefiles; do not replace a
+missing executable with an internal-test claim or silently omit it.
+
+For libchewing, when a row says N/A because a surface does not exist and
+that surface later ships, update its behavior-coverage classification and
+add the test in the same change.
