@@ -618,7 +618,7 @@ impl UserLibrary {
             .checked_add(u32::try_from(content_len).map_err(|e| e.to_string())?)
             .and_then(|end| end.checked_add(1))
             .ok_or("arena too large")?;
-        let mut payload = Vec::with_capacity(index_three as usize);
+        let mut payload = Vec::with_capacity(index_three as usize + 8);
         payload.resize(index_two as usize, 0);
         payload[4..8].copy_from_slice(&17_u32.to_le_bytes());
         payload[8..12].copy_from_slice(&index_two.to_le_bytes());
@@ -651,7 +651,7 @@ impl UserLibrary {
             .map_err(|_| "chunk write error: chunk total_freq overflows u32".to_owned())?;
         payload[..4].copy_from_slice(&total.to_le_bytes());
         payload.push(b'#');
-        oxpinyin_data::chunk_format::build_memory_chunk(&payload).map_err(|e| e.to_string())
+        oxpinyin_data::chunk_format::build_memory_chunk_owned(payload).map_err(|e| e.to_string())
     }
 }
 

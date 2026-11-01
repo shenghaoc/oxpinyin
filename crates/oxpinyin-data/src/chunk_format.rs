@@ -104,8 +104,8 @@ impl std::error::Error for ChunkFrameError {}
 /// output.
 ///
 /// The inverse of the header check every reader performs, and
-/// the **only** framing implementation: every chunk writer goes through
-/// here, so the overflow policy is one policy.
+/// shared framing policy for borrowed payloads. The owned variant below
+/// applies the same header and overflow policy without a second buffer.
 ///
 /// # Errors
 ///
@@ -117,6 +117,23 @@ pub fn build_memory_chunk(payload: &[u8]) -> Result<Vec<u8>, ChunkFrameError> {
     file.extend_from_slice(&chunk_checksum(payload).to_le_bytes());
     file.extend_from_slice(payload);
     Ok(file)
+}
+
+/// Frames an owned payload in place. Reserve eight additional bytes when
+/// constructing the payload to avoid a second allocation for the header.
+///
+/// # Errors
+///
+/// Fails when the payload exceeds the header's `u32` length field.
+pub fn build_memory_chunk_owned(mut payload: Vec<u8>) -> Result<Vec<u8>, ChunkFrameError> {
+    let length = u32::try_from(payload.len()).map_err(|_| ChunkFrameError(payload.len()))?;
+    let checksum = chunk_checksum(&payload);
+    let end = payload.len();
+    payload.resize(end + CHUNK_HEADER_SIZE, 0);
+    payload.copy_within(..end, CHUNK_HEADER_SIZE);
+    payload[..4].copy_from_slice(&length.to_le_bytes());
+    payload[4..CHUNK_HEADER_SIZE].copy_from_slice(&checksum.to_le_bytes());
+    Ok(payload)
 }
 
 #[cfg(test)]
@@ -172,5 +189,11 @@ mod tests {
         assert_eq!(&file[..4], &3_u32.to_le_bytes());
         assert_eq!(&file[4..8], &0x0003_0201_u32.to_le_bytes());
         assert_eq!(&file[8..], &payload);
+        let mut owned = Vec::with_capacity(payload.len() + CHUNK_HEADER_SIZE);
+        owned.extend_from_slice(&payload);
+        let address = owned.as_ptr();
+        let framed = build_memory_chunk_owned(owned).expect("frame owned");
+        assert_eq!(framed, file);
+        assert_eq!(framed.as_ptr(), address);
     }
 }
