@@ -75,7 +75,11 @@ class PreparedTests(unittest.TestCase):
                                      'export_interpolation'],
                                     [source / 'utils/training', 'k_mixture_model_to_interpolation',
                                      'gen_unigram', 'gen_ngram', 'gen_deleted_ngram',
-                                     'estimate_interpolation', 'eval_correction_rate'],
+                                     'estimate_interpolation', 'eval_correction_rate',
+                                     'validate_k_mixture_model', 'merge_k_mixture_model',
+                                     'prune_k_mixture_model', 'estimate_k_mixture_model',
+                                     'import_k_mixture_model', 'export_k_mixture_model',
+                                     'gen_k_mixture_model'],
                                     [source / 'utils/segment', 'ngseg', 'spseg', 'mergeseq']])
             self.assertEqual(self.prepare('tool-diff'), [])
             self.assertEqual(run.call_count, 4)

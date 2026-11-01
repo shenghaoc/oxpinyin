@@ -118,6 +118,7 @@ native SystemDictionary reads the oxpinyin export of the same model, so
 the index paths point at the tkrzw export, not the pin's .bin files.
 ---- the suites -------------------------------------------------------------
 The backend-forwarding crates run tkrzw explicitly, matching the pin;
-oxpinyin-kmm is backend-agnostic (no features).
+oxpinyin-kmm follows the selected store backend, as its seven utilities do.
+
 ''',
 }

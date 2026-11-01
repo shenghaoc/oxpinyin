@@ -139,7 +139,7 @@ def differentials(argv):
     suites = [
         ('datagen: compiled tkrzw backend reads model20 back', 'oxpinyin-datagen', 'cross_backend'),
         ('runtime: unmodified tkrzw libpinyin data directory', 'oxpinyin-runtime', 'libpinyin_data_dir'),
-        ('KMM differentials (gen+export, merge, prune, validate)', 'oxpinyin-kmm', 'differential'),
+        ('KMM tools: fixture and pin-derived cases', 'oxpinyin-utils', 'kmm_tools'),
         ('KMM to interpolation: k_mixture_model_to_interpolation', 'oxpinyin-utils', 'k_mixture_model_to_interpolation'),
         ('segment: ngseg / spseg / mergeseq', 'oxpinyin-utils', 'segmentation'),
         ('lambda: estimate_interpolation', 'oxpinyin-training', 'lambda-differential'),
@@ -148,7 +148,7 @@ def differentials(argv):
         suites.append(('eval: eval_correction_rate', 'oxpinyin-training', 'eval-differential'))
     status = 0
     for title, package, target in suites:
-        status |= run_suite(title, cargo_test(package, target, features=package != 'oxpinyin-kmm', nocapture=True), env=env, report=True)
+        status |= run_suite(title, cargo_test(package, target, nocapture=True), env=env, report=True)
     if not evaluator:
         print(f'== eval: eval_correction_rate ==\nskipping: needs {data}/bigram.db (import_interpolation) and {data}/evals2.text')
     print('RESULT: at least one differential suite FAILED' if status else 'RESULT: every differential suite passed')
@@ -357,11 +357,13 @@ def run_fixtures(work, *, root=ROOT):
                            cargo_test('oxpinyin-utils', 'segmentation', ['rust_ngseg_matches_live'], locked=True, quiet=True), env=env))
     env.update(PINYIN_GEN_NGRAM_DATA=str(w3 / 'tkt'), PINYIN_EXPORT_DIR=str(w3 / 'tkt'),
                PINYIN_SPSEG=str(src / TOOLS['PINYIN_SPSEG']), PINYIN_NGSEG_DATA=str(w3 / 'tkt'))
-    for key in ('GEN_KMM', 'EXPORT_KMM', 'MERGE_KMM', 'VALIDATE_KMM', 'KMM_TO_INTERP'):
-        env['PINYIN_' + key] = str(src / TOOLS['PINYIN_' + key])
-    for gate, command in kmm.items():
-        status |= run_suite(f'KMM live: {gate} (w3 tables)', command, env=env)
-    status |= run_suite('KMM live: to_interpolation (k_mixture_model_to_interpolation)', interpolation, env=env)
+    env['PINYIN_KMM_TOOLS'] = str(src / TOOLS['PINYIN_GEN_KMM']).rsplit('/', 1)[0]
+    env['PINYIN_KMM_TO_INTERP'] = str(src / TOOLS['PINYIN_KMM_TO_INTERP'])
+    status |= run_suite('KMM live: seven tools (w3 tables)',
+                        cargo_test('oxpinyin-utils', 'kmm_tools', ['rust_kmm_tools_match_the_pin_built_ones'], locked=True, quiet=True), env=env)
+    status |= run_suite('KMM live: to_interpolation (k_mixture_model_to_interpolation)',
+                        cargo_test('oxpinyin-utils', 'k_mixture_model_to_interpolation', ['rust_kmm_matches_pin_to_interpolation'],
+                                   locked=True, quiet=True), env=env)
     status |= run_suite('segment spseg live parity (w3 tables)',
                         cargo_test('oxpinyin-utils', 'segmentation', ['rust_spseg_matches_live'], locked=True, quiet=True), env=env)
     for key in ('PINYIN_EXPORT_DIR', 'PINYIN_NGSEG_DATA', 'PINYIN_GEN_NGRAM_DATA'):

@@ -309,7 +309,7 @@ mod tests {
     #[test]
     fn an_empty_mean_uses_native_nan_spelling() {
         assert_eq!(
-            oxpinyin_kmm::format_six_decimals(super::mean_of_no_contexts()),
+            crate::numeric::format_six_decimals(super::mean_of_no_contexts()),
             "NaN"
         );
     }
