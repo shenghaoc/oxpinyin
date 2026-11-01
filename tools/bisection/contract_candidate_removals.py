@@ -132,6 +132,32 @@ def register(case, *, _craft_hash, _craft_db, index_file_rows):
         assert rows
         return {'ret': k.fn('remove_user_candidate', B, P, P)(inst, rows[0])}
 
+    @case('user-index-suggestion-without-prefix-marker')
+    def _(k):
+        """A longer user reading alone does not make its missing prefix searchable."""
+        _add_user_phrase(k, '龘龘', [b"da2'da2"], count=1000000000)
+        assert k.fn('save', B, P)(k.ctx)
+        k.fn('fini', None, P)(k.ctx)
+        path = os.path.join(k.user, 'user_pinyin_index.bin')
+        rows = [(bytes.fromhex(key), bytes.fromhex(value)) for key, value in index_file_rows(path)]
+        assert any(len(key) == 2 for key, _ in rows)
+        assert any(len(key) == 4 and value for key, value in rows)
+        _craft_db(path, [(key, value) for key, value in rows if len(key) != 2], 1)
+        ctx = k.init()
+        assert ctx
+        inst = k.fn('alloc_instance', P, P)(ctx)
+        assert k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'da')
+        k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0)
+        count = U()
+        k.fn('get_n_candidate', B, P, C.POINTER(U))(inst, C.byref(count))
+        found = 0
+        for i in range(count.value):
+            candidate, text = P(), S()
+            k.fn('get_candidate', B, P, U, C.POINTER(P))(inst, i, C.byref(candidate))
+            if k.fn('get_candidate_string', B, P, P, C.POINTER(S))(inst, candidate, C.byref(text)):
+                found += text.value == '龘龘'.encode()
+        return {'user_candidates': found}
+
 
     # batch 525-D: `pinyin_remove_user_candidate` also drives `Bigram::mask_out`
     # (`pinyin.cpp:3766`, mask `PHRASE_INDEX_LIBRARY_MASK|PHRASE_MASK`), so all

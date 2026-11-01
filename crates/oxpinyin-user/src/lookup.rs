@@ -221,8 +221,8 @@ impl UserLookup {
     /// The existence gate (`m_db->Get(query_key)`): `add_index` plants a
     /// marker row for every proper prefix of a stored pronunciation
     /// (`chewing_large_table2_kyotodb.cpp:311-327`), so "the query key
-    /// exists" is exactly "some stored pronunciation equals or extends
-    /// it" — this lookup's own `phrase_prefix_exists`. The rows after it:
+    /// exists" is checked even for foreign files missing a prefix marker,
+    /// via this lookup's own `phrase_prefix_exists`. The rows after it:
     /// stored pinyins with **more syllables** whose first
     /// `syllables.len()` syllables match under
     /// `pinyin_compare_with_tones` (a complete query syllable equals the
