@@ -197,6 +197,57 @@ fn visible_extension_exists(
     })
 }
 
+// ── the phrase DBM alone ─────────────────────────────────────────
+
+/// The phrase DBM alone (`phrase_index.bin`), as
+/// `FacadePhraseTable3::load` opens it for the segmentation utilities:
+/// no pinyin DBM and no phrase libraries.
+///
+/// [`Self::search_ucs4`] answers `FacadePhraseTable3::search`'s presence
+/// bit — `None` is "no key" (no `SEARCH_CONTINUED`), `Some` is "key
+/// present" — and the stored token bytes as the pin iterates them
+/// (`floor(len / 4)` tokens; a trailing partial word is not a token).
+/// `SEARCH_OK` and the library filter stay with the caller: it owns the
+/// loaded-library set.
+pub struct PhraseIndexTable {
+    phrase: PhraseTable,
+}
+
+impl PhraseIndexTable {
+    /// Opens `phrase_index.bin` read-only.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DictError`] when the backend cannot open the file.
+    pub fn open(phrase_index: &Path) -> Result<Self, DictError> {
+        Ok(Self {
+            phrase: open_phrase_table(phrase_index)?,
+        })
+    }
+
+    /// `PhraseLargeTable3::search`: `None` when the key is absent,
+    /// `Some(tokens)` when it is present, empty for a continuation marker.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DictError`] when the DBM read fails.
+    pub fn search_ucs4(&self, words: &[u32]) -> Result<Option<Vec<u32>>, DictError> {
+        if words.is_empty() {
+            return Ok(None);
+        }
+        let key = crate::row_format::phrase_index::encode_ucs4_key_scalars(words);
+        let Some(value) = self.phrase.present_key(&key)? else {
+            return Ok(None);
+        };
+        Ok(Some(
+            value
+                .chunks_exact(4)
+                .map(|word| u32::from_le_bytes([word[0], word[1], word[2], word[3]]))
+                .collect(),
+        ))
+    }
+}
+
 // ── the default facade ───────────────────────────────────────────
 
 /// The system dictionary: the default facade's pinyin DBM, phrase DBM,

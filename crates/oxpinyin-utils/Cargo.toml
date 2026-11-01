@@ -42,3 +42,15 @@ path = "src/bin/gen_zhuyin_table.rs"
 [[bin]]
 name = "k_mixture_model_to_interpolation"
 path = "src/bin/k_mixture_model_to_interpolation.rs"
+
+[[bin]]
+name = "ngseg"
+path = "src/bin/ngseg.rs"
+
+[[bin]]
+name = "spseg"
+path = "src/bin/spseg.rs"
+
+[[bin]]
+name = "mergeseq"
+path = "src/bin/mergeseq.rs"
