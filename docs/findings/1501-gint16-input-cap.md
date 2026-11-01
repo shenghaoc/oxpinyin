@@ -97,9 +97,12 @@
   `ChewingKeyRest`'s `guint16` positions (`chewing_key.h:102-103`): a key
   position past 65535 reaches the caller through
   `pinyin_get_pinyin_key_rest` and `pinyin_get_pinyin_key_rest_positions`
-  narrowed to that field as before (saturating at 65535,
-  `crates/oxpinyin-capi/src/cursor.rs`); the pin's full-pinyin parse never
-  produces such a position. Ownership and lifetime unchanged. Every export
+  narrowed to that field mod 2^16, as the pin's are
+  (`crates/oxpinyin-capi/src/cursor.rs`; the C adapters saturated at 65535
+  until the maintainer's 2026-11-01 UTC ruling recorded in
+  [1501-guint16-key-positions](1501-guint16-key-positions.md)). The pin's
+  full-pinyin parse never produces such a position; its double-pinyin and
+  chewing parses do, and that record holds what follows. Ownership and lifetime unchanged. Every export
   unchanged; the affected ones answer for the whole input. On-disk system
   and user files: unchanged format; an over-long import reading now stores
   its full key list where the pin refused or stored the 32767-byte prefix's
@@ -111,7 +114,11 @@
   facades and every scheme, and pinyin import readings and
   `gen_pinyin_table` lines of that length. Double-pinyin and chewing
   sessions longer than 32767 joined bytes now keep every key, as their pin
-  parsers do. Products of the change: every product rule applies to the
+  parsers do. Up to 65535 bytes they then match the pin. Past 65535 bytes
+  they do not: the pin's matrix places each key at its wrapped `guint16`
+  begin, so its offsets, its key lookups at offsets 65536 and above, its
+  candidates and its sentence differ from oxpinyin's, POLICY-ACCEPTED in
+  [1501-guint16-key-positions](1501-guint16-key-positions.md). Products of the change: every product rule applies to the
   whole input on oxpinyin's own path. The validating `reduce_tokens`
   asserts (`phrase_large_table3.h:95`, policy rows 74 and 93) abort
   wherever that path meets them. In

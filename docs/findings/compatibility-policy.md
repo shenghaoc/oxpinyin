@@ -82,6 +82,45 @@ The rule is under "Amendment — class (c) retired; pin aborts reproduced"
 below. The 2026-10-29 UTC text above and the class (c) section are
 history.
 
+**Amended 2026-11-01 UTC (maintainer):** key positions past byte 65535.
+The C getters hand out `ChewingKeyRest` positions wrapped mod 2^16, as
+the pin's are. oxpinyin keeps real positions inside, and the pin's ring
+matrix is waived by an explicit ruling. The rule is under "Amendment — key
+positions past byte 65535" below.
+
+## Amendment — key positions past byte 65535 (2026-11-01 UTC)
+
+Maintainer ruling 2026-11-01 UTC, dated with `date -u`, on the #1501
+audit. Pin: libpinyin `074a2219c90feaf962d0d24f034514033ece5f99`.
+
+**The wrap at the C boundary is contract.** `ChewingKeyRest`'s begin and
+end are `guint16` (`src/storage/chewing_key.h:102-103`), and the C
+getters hand out `guint16` positions. C++ defines the conversion of an
+`int` position to `guint16` as reduction mod 2^16, so it is part of what
+the ABI prescribes (decision-order limb 1). It is not a language artefact.
+Every getter that hands out a key-rest begin, end or length wraps:
+`pinyin_get_pinyin_key_rest` and `zhuyin_get_zhuyin_key_rest` store the
+real position `as u16`. The length is then the pin's `guint16`
+difference, including for the key that crosses byte 65536.
+
+**The ring matrix is waived.** The pin's `fill_matrix` places each key at
+its wrapped begin (`src/storage/phonetic_key_matrix.cpp:51-55`), a ring of
+65536 columns. For double-pinyin and chewing input longer than 65535
+bytes, its offsets, its key and key-rest lookups at offsets 65536 to N−1,
+its candidates and its sentence follow from that ring. oxpinyin keeps real
+positions and does not reproduce them. This is an explicit
+maintainer-ruling exception, not a language artefact: the wrap is
+contract, and only its use for matrix placement is waived, for input no
+IME produces. It admits no other difference by analogy.
+
+**Unchanged.** The parsed length (`*_get_parsed_input_length` and the
+parse return) is the real N on both sides and stays MATCH. The
+full-pinyin parse's 32767-byte stop stays a language artefact (#1501,
+[1501-gint16-input-cap](1501-gint16-input-cap.md)).
+
+**Record:** [1501-guint16-key-positions](1501-guint16-key-positions.md),
+registered in `upstream-divergences.md`.
+
 ## Amendment — class (c) retired; pin aborts reproduced (2026-10-31 UTC)
 
 Maintainer ruling 2026-10-31 UTC, dated with `date -u`. Pin: libpinyin

@@ -4477,3 +4477,31 @@ Recorded, with the pin sites, items and cases, in
   `input-length-cap`, `d18-input-boundaries-{pinyin,zhuyin}` and
   `input-length-boundary-{32768,65535,65536}`, disposition
   `POLICY-ACCEPTED`. Policy row 59 is reopened under it.
+
+### Key positions past byte 65535 (2026-11-01 UTC, #1501)
+
+- **Upstream source cite:** `src/storage/chewing_key.h:102-103`,
+  `src/storage/pinyin_parser2.cpp:565`,
+  `src/storage/zhuyin_parser2.cpp:259`, `:451`, `:760`,
+  `src/storage/phonetic_key_matrix.cpp:47-62`, `src/pinyin.cpp:2921-3093`
+  and `src/zhuyin.cpp:1886-2060` at 074a2219.
+- **Mechanism:** the double-pinyin and keyboard chewing parsers store
+  each key's `int` begin and end in `ChewingKeyRest`'s `guint16`s, so past
+  byte 65535 the positions wrap mod 2^16. `fill_matrix` places each key at
+  its wrapped begin, a ring of 65536 columns: columns 65536 to N−1 stay
+  empty, and the key that crosses byte 65536 ends before it begins.
+- **What oxpinyin does instead:** the C getters hand out the wrapped
+  positions, and their length is the `guint16` difference, as the pin's
+  are (contract). Inside, oxpinyin keeps real positions, so offsets, key
+  lookups at offsets 65536 to N−1, candidates and sentences follow the
+  input rather than the ring. The maintainer's ruling of 2026-11-01 UTC
+  waives the ring as an explicit exception, not a language artefact.
+- **Externally observable:** yes, for double-pinyin and chewing
+  compositions longer than 65535 bytes on both facades. The parsed length
+  and the key-rest positions and length match.
+- **Record and disposition:**
+  [1501-guint16-key-positions.md](1501-guint16-key-positions.md);
+  contract-diff cases `key-position-past-65535/<parser>-crossing-key`
+  MATCH, and `key-position-past-65535/<parser>-past-key` and
+  `key-position-past-65535/<parser>-cursor` are `POLICY-ACCEPTED`, for
+  `double-pinyin`, `chewing-pinyin` and `chewing-zhuyin`.
