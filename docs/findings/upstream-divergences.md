@@ -4455,3 +4455,25 @@ the addon load. All sites are `assert`s: POLICY-ACCEPTED for the missing
 assertion line only. Every former class (c) row is now reproduced.
 Recorded, with the pin sites, items and cases, in
 [pin-aborts-remaining.md](pin-aborts-remaining.md).
+
+### The full-pinyin parse's 16-bit steps (2026-11-01 UTC, #1501)
+
+- **Upstream source cite:** `src/storage/pinyin_parser2.cpp:67-70`,
+  `:246-248`, `:290-292`, `:333`, `:353-357` at 074a2219.
+- **Mechanism:** `FullPinyinParser2` keeps each step's key count, parsed
+  length, distance and back-pointer in `gint16`s, and `final_step` keeps
+  the last step whose sign-extended parsed length equals its index, so no
+  full-pinyin parse (the session on both facades, the pinyin import,
+  `gen_pinyin_table`) consumes more than 32767 bytes.
+- **What oxpinyin does instead:** parses the whole input. The session's
+  32767-byte clamp, the import's 32767-byte cut and the segment graph's
+  65535-byte refusal are removed; graph positions and candidate spans are
+  `u32`.
+- **Externally observable:** yes. For a full-pinyin input or reading
+  longer than 32767 bytes, the parse return, the parsed length and
+  everything computed from the keys cover the whole input.
+- **Record and disposition:**
+  [1501-gint16-input-cap.md](1501-gint16-input-cap.md); contract-diff cases
+  `input-length-cap`, `d18-input-boundaries-{pinyin,zhuyin}` and
+  `input-length-boundary-{32768,65535,65536}`, disposition
+  `POLICY-ACCEPTED`. Policy row 59 is reopened under it.

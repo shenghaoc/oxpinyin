@@ -159,16 +159,18 @@ Each of these carried the old refusal's predicate or order into the abort:
   the index gate, the pin's `get_range` in its `else` branch (`:586-588`),
   now comes after. Fixed 2026-11-01 UTC: the import parsed the whole
   reading, and the segment graph (`MAX_GRAPH_INPUT`) refused one longer than
-  65535 bytes before the token walk. `parse_import_pinyin` now applies policy
-  row 59's bound, as the session parse does (`oxpinyin_engine::MAX_INPUT_BYTES`):
-  `parse_value_t` keeps `m_num_keys`, `m_parsed_len`, `m_distance` and
-  `m_last_step` in `gint16`s (`pinyin_parser2.cpp:67-70`), and no step past
-  byte 32767 holds its `m_last_step = i` (`:248`, `:292`). Only the first
-  32767 bytes are parsed, so the import never reaches the graph's 65535-byte
-  limit, and `SegmentGraph` is unchanged. `pinyin.cpp:614-650` does no
-  observable work before `_add_phrase`, so the asserts follow on those keys.
-  Held by `combined-library-sixth-add-long-reading-pinyin` (a 70008-byte
-  reading reaches the abort on both sides). In
+  65535 bytes before the token walk. The parse then took policy row 59's
+  32767-byte bound for a day; since #1501 (2026-11-01 UTC) it parses the
+  whole reading again, with no graph refusal: the pin's `parse_value_t`
+  keeps `m_num_keys`, `m_parsed_len`, `m_distance` and `m_last_step` in
+  `gint16`s (`pinyin_parser2.cpp:67-70`), so no step past byte 32767 holds
+  its `m_last_step = i` (`:248`, `:292`), and that width is a language
+  artefact ([1501-gint16-input-cap](1501-gint16-input-cap.md); row 59
+  reopened). `pinyin.cpp:614-650` does no observable work before
+  `_add_phrase`, so the asserts follow on the parsed keys. Held by
+  `combined-library-sixth-add-long-reading-pinyin`: the 70008-byte reading
+  gives the two keys on both sides (the pin from its first 32767 bytes) and
+  reaches the abort in the add. At the pin, in
   `combined-library-sixth-add-key-past-parse-bound-pinyin`, the 40007-byte
   reading `ni3` + 40000 apostrophes + `hao3` parses to one key: the backward
   scan in `final_step` starts at step 40007 and stops at the first step whose
@@ -192,12 +194,13 @@ Each of these carried the old refusal's predicate or order into the abort:
   `m_num_keys - 1` with the array sized to `m_num_keys` (`0x5caed`,
   `0x5cb0a`), and the refusing import writes nothing; the leak is the only
   imbalance. `pinyin_save`, `pinyin_end_add_phrases`, the instance alloc and
-  free and `pinyin_fini` have no other abort. The read now aborts as the pin
-  does. Removing the parse bound does not remove this abort: the reading
-  would yield two keys, the add would run, and `_add_phrase`'s own
-  `reduce_tokens` would assert at `pinyin.cpp:541` first. The maintainer has
-  ruled the bound itself a language artefact; #1501 removes it from both
-  entry points, with the 65535-byte refusal and row 59. The zhuyin import is
+  free and `pinyin_fini` have no other abort. The read aborts as the pin
+  does. oxpinyin parses the whole reading (#1501), so it gets two keys, the
+  add runs, and `_add_phrase`'s own `reduce_tokens` aborts at
+  `pinyin.cpp:541`, one call earlier than the pin. Both sides die of SIGABRT
+  after the same earlier work and the same stderr, so the case's comparison
+  is unchanged; it no longer reproduces the one-key truncation or the leak.
+  The zhuyin import is
   unbounded at both, as `ZhuyinDirectParser2::parse` is
   (`zhuyin_parser2.cpp:914-961`); `zhuyin_lookup_tokens` (`zhuyin.cpp:1690`)
   carries the same assert and is not changed here.

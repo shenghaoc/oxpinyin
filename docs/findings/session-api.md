@@ -211,10 +211,12 @@ and nothing else.
 - A key the session does not use is `KeyOutcome::Ignored`, and the session is
   unchanged. Any key held with Control, Alt or Super is ignored: the shell is
   invoking a command. Shift is not such a modifier — `Shift`+letter is ordinary
-  typing. A full input buffer also reports `Ignored` — refusing further input
-  is not an error condition.
-- `MAX_INPUT_BYTES` is 4,096, matching the largest input the frozen F-A and
-  parity-corpus fixtures carry.
+  typing. (A full input buffer also reported `Ignored` until #1501 removed
+  the buffer's limit.)
+- `MAX_INPUT_BYTES` was 4,096, matching the largest input the frozen F-A and
+  parity-corpus fixtures carry; 32,767 after #540, and removed by #1501: the
+  session has no input length limit
+  ([1501-gint16-input-cap](1501-gint16-input-cap.md)).
 - `select` appends the chosen candidate to the selected prefix and advances
   over the bytes it consumed, returning `Completed` once nothing is left.
 - `commit` returns the committed text and resets the session. It never fails on

@@ -238,7 +238,7 @@ prose: `clippy::undocumented_unsafe_blocks`, `clippy::missing_safety_doc`,
 | R.9.7 | aggregates not partially initialized | `MaybeUninit` misuse — absent from workspace. | Review (the geiger and Miri lanes were retired 2026-09-01; no active tool control). |
 | R.10.5, R.10.8, R.11.1, R.11.2, R.11.5, R.11.6, R.11.8, R.12.2 | pointer/integral conversion and cast discipline | The heart of FFI cast rules (`as`/`transmute`). | `transmute`: zero in workspace. `as`: ~150 numeric casts, concentrated in capi/data. Proposal: `cast_possible_truncation`/`cast_sign_loss`/`cast_precision_loss` at **warn** (58/14/35 hits) with `#[allow]`+justification at FFI seams; `clippy::transmute_*` family already denied via `all`. |
 | R.12.4 | enum/bitfield evaluation | C semantics; "either well-defined or will not occur" (ADD6). | N/A-in-practice. |
-| R.14.1 | `while` controlling-expression termination | Loop termination — general concern, review. | Review; engine loops are input-bounded (`MAX_GRAPH_INPUT = 65_535`). |
+| R.14.1 | `while` controlling-expression termination | Loop termination — general concern, review. | Review; engine loops are input-bounded (graph positions are `u32`, `MAX_GRAPH_POSITION = u32::MAX - 1`). |
 | R.17.9 | non-returning functions passed as callbacks | `!` type enforces (ADD6). | Guaranteed. |
 | R.18.1–R.18.6 | pointer/array arithmetic and bounds | FFI pointer arithmetic. | Audited clean; `ptr::copy_nonoverlapping` with computed sizes only. |
 | R.19.1 | objects not treated as overlapping storage | union/aliasing — Miri's home turf. | Zero unions; review (the Miri lane that would have proven the store paths was retired 2026-09-01). |
