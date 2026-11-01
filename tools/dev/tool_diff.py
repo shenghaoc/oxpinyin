@@ -20,7 +20,7 @@ import time
 from dataclasses import replace
 
 from tools.bisection import contract_policy, contract_verdict
-from . import pool
+from . import policy, pool
 
 # Each program's directory in the pin's build tree (utils/ and tests/ Makefile.am).
 PIN_UTILITIES = {'gen_pinyin_table': 'utils/storage', 'gen_zhuyin_table': 'utils/storage',
@@ -174,6 +174,16 @@ def load_cases(paths):
                 raise ValueError(f'{path}: only a registered SIGABRT can be reproduced')
             if case.get('pin_signal') and not (case.get('policy_record') or case.get('reproduces_signal')):
                 raise ValueError(f'{path}: a pin signal requires a named policy record')
+            if 'pin_not_run' in case:
+                problem = contract_policy.tool_observation_problem(case['pin_not_run'])
+                if problem:
+                    raise ValueError(f'{path}: pin_not_run {problem}')
+                if case.get('policy_record') != 'compatibility-policy.md':
+                    raise ValueError(f'{path}: pin_not_run requires a registered class (b) policy entry')
+                if any(field in case for field in ('pin_signal', 'reproduces_signal',
+                        'mask_print_time', 'dbm_rows', 'dbm_rows_pinyin_index',
+                        'policy_cells', 'dbm_rows_cells', 'expected_failure')):
+                    raise ValueError(f'{path}: pin_not_run cannot mask or reinterpret observations')
             for name in case.get('files', {}):
                 relative(name)
             if case.get('sealed_inputs') is not None:
@@ -370,7 +380,53 @@ def observation(ctx, binary, case, directory, inputs, stdin, deadline, helper=No
                 files=files)
 
 
+def not_run_expected(case, policy_root):
+    """Only the class (b) register may bind a source-defined tool result.
+
+    Reuse schema 2's current-record metadata and side digests. The new entry
+    binds the declaration, not an observed/replayed pin side. Ordinary pair
+    records still pass through check_entry unchanged, including its parity
+    refusal. Like contract-diff's pin_not_run, execution is subject-only.
+    """
+    if case.get('policy_record') != 'compatibility-policy.md':
+        raise ValueError('pin_not_run requires a registered class (b) policy entry')
+    path = policy_root / 'compatibility-policy.md'
+    if path.resolve().parent != policy_root.resolve():
+        raise ValueError('class (b) register escapes findings directory')
+    expected = case['pin_not_run']
+    problem = contract_policy.tool_observation_problem(expected)
+    if problem:
+        raise ValueError(f'pin_not_run {problem}')
+    _, record, _ = policy.load_record(path)
+    if record['schema'] != contract_policy.SCHEMA:
+        raise ValueError('pin_not_run needs the current record schema')
+    kept = record['cases'].get(case['id'])
+    if kept != dict(classification='b', pin_not_run=contract_policy.side_entry(expected)):
+        raise ValueError('pin_not_run is not bound by a registered class (b) entry')
+    return expected
+
+
+def observe_sides(ctx, pair, case, scratch, inputs, stdin, deadline, helper):
+    """Never launch a pin for a source-defined class (b) case."""
+    pin = None if 'pin_not_run' in case else observation(
+        ctx, pair[0], case, scratch / 'pin', inputs, stdin, deadline, helper)
+    subject = observation(ctx, pair[1], case, scratch / 'subject', inputs, stdin, deadline, helper)
+    return pin, subject
+
+
 def verdict(case, pin, subject, policy_root, cell):
+    if 'pin_not_run' in case:
+        try:
+            expected = not_run_expected(case, policy_root)
+        except (ValueError, OSError, KeyError, TypeError) as error:
+            return 'INVALID', str(error)
+        if pin is not None:
+            return 'INVALID', 'pin_not_run must not contain a pin observation'
+        problem = contract_policy.tool_observation_problem(subject)
+        if problem:
+            return 'INVALID', f'subject: {problem}'
+        return (('POLICY-ACCEPTED', case['policy_record']) if subject == expected
+                else ('DIFFER', '\n'.join(contract_policy.divergence(expected, subject))))
     for side, value in (('pin', pin), ('subject', subject)):
         problem = contract_policy.tool_observation_problem(
             value, pin_signal=case.get('pin_signal') if side == 'pin' or case.get('reproduces_signal') else None)
@@ -437,6 +493,9 @@ def run(ctx, argv):
         if any(name not in catalog for name in names):
             parser.error('unknown case in --cases')
         cases = [catalog[name] for name in dict.fromkeys(names)]
+    for case in cases:
+        if 'pin_not_run' in case:
+            not_run_expected(case, ctx.settings.root / 'docs/findings')
     if args.pin_build is None:
         parser.error('requires --pin-build or OXPINYIN_TOOL_PIN_BUILD (oracle libpinyin source/build tree)')
     pin_build = args.pin_build.resolve()
@@ -451,7 +510,8 @@ def run(ctx, argv):
     for case in cases:
         name = case['utility']
         pair = (pin_build / PIN_UTILITIES[name] / name, args.subject_dir.resolve() / name)
-        if any(not binary.is_file() for binary in pair):
+        required = pair[1:] if 'pin_not_run' in case else pair
+        if any(not binary.is_file() for binary in required):
             raise ValueError(f'missing built utility: {pair}')
         binaries[name] = pair
     capture = ctx.stack.enter_context(args.observations.open('w', encoding='utf-8')) if args.observations else None
@@ -467,14 +527,18 @@ def run(ctx, argv):
         deadline = time.monotonic() + args.case_timeout
         try:
             helper = binaries[case['utility']][1].parent / 'dbm_rows'
-            pin, subject = [observation(child, binary, case, scratch / side, inputs, stdin, deadline, helper)
-                            for side, binary in zip(('pin', 'subject'), binaries[case['utility']])]
+            pin, subject = observe_sides(child, binaries[case['utility']], case, scratch,
+                                         inputs, stdin, deadline, helper)
         except pool.UnitStopped as error:
             return case, 'INVALID', str(error), None
         result, detail = verdict(case, pin, subject, child.settings.root / 'docs/findings', child.settings.cell)
         row = dict(runner='tool-diff', cell=child.settings.cell, case=case['id'], userdir=False, abort=False,
                    pin_signal=case.get('pin_signal'), reproduces_signal=bool(case.get('reproduces_signal')),
-                   database_free=case['utility'] in DATABASE_FREE, pin=pin, subject=subject)
+                   database_free=case['utility'] in DATABASE_FREE, subject=subject)
+        if 'pin_not_run' in case:
+            row['pin_not_run'] = case['pin_not_run']
+        else:
+            row['pin'] = pin
         return case, result, detail, row
     results = [result for group in ctx.campaign(case_batches(cases),
                lambda child, batch: [compare(child, case) for case in batch]) for result in group]

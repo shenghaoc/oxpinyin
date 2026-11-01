@@ -134,7 +134,45 @@ warnings from the pin's own code stay. Stdout, files and SIGABRT match
           "… further divergence omitted (4096-byte budget)"
         ]
       }
+    },
+    "table-info-save-fails": {
+      "cells": {
+        "tkrzw": {
+          "pin": {
+            "sha256": "2c2ecb2976b1308e06fd0777bb35303cec7670deba1803e08acb31c4a95ba16e",
+            "fields": {
+              "exit": "03b26944890929ff",
+              "files": "ab786b23734061c6",
+              "stderr": "1b9fe7bdd5e9d0e0",
+              "stdout": "12ae32cb1ec02d01"
+            }
+          },
+          "subject": {
+            "sha256": "c9729ee057b8b0d87a667031d8deec93c11c7abc45d920cf52f551cfa0b6425f",
+            "fields": {
+              "exit": "03b26944890929ff",
+              "files": "ab786b23734061c6",
+              "stderr": "f15cf91b4786a459",
+              "stdout": "12ae32cb1ec02d01"
+            }
+          },
+          "divergence": [
+            "stderr: pin \"write /tmp/user.conf failed.\\ntest_table_in\" … (length 152); subject \"write /tmp/user.conf failed.\\n\"",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        }
+      }
     }
   }
 }
 ```
+
+## Config test driver (2026-11-01 UTC)
+
+`table-info-save-fails` makes `/tmp/user.conf` a directory. The pin's
+`UserTableInfo::save` writes `write /tmp/user.conf failed.\n` and returns
+false (`src/storage/table_info.cpp:377-385` at `074a2219`);
+`check_result` in `tests/storage/test_table_info.cpp:93` then aborts.
+oxpinyin preserves that diagnostic and SIGABRT without imitating the
+assertion text. The complete streams and files are bound in this
+record's schema-2 entry.

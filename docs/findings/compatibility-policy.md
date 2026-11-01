@@ -1751,3 +1751,67 @@ under class (a). The two #894 records are dated superseded notes: their
 former POLICY-ACCEPTED cases are ordinary MATCH cases, and the register
 and the GLib/libc ledger carry the closure. `LC_NUMERIC` (row 39) remains
 ruled bug-for-bug; #923 is unchanged.
+
+## Amendment — fresh UserTableInfo with zero versions (2026-11-01 UTC)
+
+Maintainer ruling, recorded at 2026-11-01T17:43:32Z (`date -u`).
+The pin's `test_table_info` loads `../../data/table.conf`, prints its
+tables, constructs a fresh `UserTableInfo`, then calls `is_conform`
+before `make_conform` (`tests/storage/test_table_info.cpp:56-90` at
+`074a2219`). The constructor initializes both versions and the open
+counter, but leaves `m_table_database_format_type` uninitialized
+(`src/storage/table_info.cpp:313-317`; layout `table_info.h:97-102`).
+When both system versions are zero, the comparisons at `:399-404`
+reach the first undefined read at `:406`. The tkrzw constructor
+disassembly writes zero at offsets 0 and 12, leaving offset 8 unwritten;
+`is_conform+0x18` reads that offset. A nonzero version short-circuits
+before that read.
+
+This is **class (b)**. oxpinyin's fresh format is `None`, and its
+existing `UserTableInfo::is_conform` answers `false`. The driver then
+continues through make-conform, save to `/tmp/user.conf`, and load
+(`test_table_info.cpp:89-96`; `table_info.cpp:325-419`). Shipping class
+behavior is unchanged. Cases `table-info-zero-versions-pinyin` and
+`table-info-zero-versions-zhuyin` are **POLICY-ACCEPTED**, never MATCH.
+
+Their `pin_not_run` declarations in `test_table_info.json` bind the
+complete source-derived stdout, stderr, exit and directory inventory,
+including the exact saved user file. The existing tool-diff runner runs
+only oxpinyin for these cases. The schema-2 entries below bind those
+declarations with the existing side-digest format; there is no recorded
+or replayed pin result. Ordinary discrepancy pairs still reject parity.
+
+```contract-diff-policy
+{
+  "schema": 2,
+  "record": "compatibility-policy",
+  "status": "current",
+  "disposition": "POLICY-ACCEPTED",
+  "cases": {
+    "table-info-zero-versions-pinyin": {
+      "classification": "b",
+      "pin_not_run": {
+        "sha256": "23371a0fe33212dc708805cc737d53e2fb5d242cc6aa64687c526f9744edd156",
+        "fields": {
+          "exit": "5feceb66ffc86f38",
+          "files": "57dc0f9e66c025b2",
+          "stderr": "12ae32cb1ec02d01",
+          "stdout": "883be77e6465ec63"
+        }
+      }
+    },
+    "table-info-zero-versions-zhuyin": {
+      "classification": "b",
+      "pin_not_run": {
+        "sha256": "14feae538442ded3d8b890420959f48a488b0ba67ec969d9d909c7f68e2a9989",
+        "fields": {
+          "exit": "5feceb66ffc86f38",
+          "files": "54f6b6518815c8eb",
+          "stderr": "12ae32cb1ec02d01",
+          "stdout": "883be77e6465ec63"
+        }
+      }
+    }
+  }
+}
+```

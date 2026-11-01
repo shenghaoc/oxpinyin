@@ -43,3 +43,5 @@ pub mod validate_k_mixture_model;
 pub use oxpinyin_kmm::taglib;
 
 pub mod test_parser2;
+
+pub mod test_table_info;

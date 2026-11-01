@@ -434,3 +434,34 @@ just heavy -- just runner tool-diff --pin-build "$PIN_BUILD" \
 The named mutation `pin-tests-b-direct-span-start` increments only the raw
 begin offset returned by the tools accessor. `parser2-pinyindirect` reports
 1 DIFFER. Restoring the source returns all 26 cases to MATCH.
+
+## Config test program (2026-11-01 UTC)
+
+`tool-cases/test_table_info.json` has 14 cases: empty tables, all four
+row types, NULL filenames, overwritten rows, ignored argv/stdin, missing
+and malformed configuration, unknown enum values, signed versions,
+save failure, and zero versions. It preserves `../../data/table.conf`
+and `/tmp/user.conf` with the private directory and mount namespace
+layout above. The complete configuration and saved file bytes compare.
+
+The two zero-version cases are source-defined class (b) records in
+[compatibility-policy](../findings/compatibility-policy.md). Their
+`pin_not_run` object is the complete expected tool observation. The
+runner validates its schema-2 digest against the named class (b) entry
+before starting work, runs only the subject, and accepts only an exact
+match as POLICY-ACCEPTED. Such captures contain `pin_not_run` and
+`subject`, never `pin`; they cannot become observed pin records.
+No masks or signal exceptions may be combined with this form.
+Unregistered entries, incomplete outputs and ordinary parity records
+remain invalid. To bind an ordinary discrepancy with `just policy-record`,
+capture only its cases with `--cases`; source-defined captures are
+deliberately refused by the observation writer.
+
+Reproduce with `just heavy -- just runner tool-diff --pin-build
+"$PIN_BUILD" --subject-dir "$SUBJECT_DIR" --case-file
+tools/bisection/tool-cases/test_table_info.json`. On reference tkrzw
+the result is 11 MATCH and 3 POLICY-ACCEPTED: the two class (b) cases
+and the save assertion's text exception. The named mutation
+`pin-tests-d-index-plus-one` increments the printed slot index;
+`table-info-all-row-types` reports 1 DIFFER. Restoration returns the
+complete 14-case result above.
