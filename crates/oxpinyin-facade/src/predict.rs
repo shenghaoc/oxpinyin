@@ -4,7 +4,7 @@
 
 use oxpinyin_core::PhraseText;
 use oxpinyin_runtime::RuntimeDict;
-use oxpinyin_user::{UserLookup, UserStore};
+use oxpinyin_user::UserStore;
 
 /// Resolves a prefix to the phrase tokens its tail substrings name, in the
 /// order `guess_sentence_with_prefix` consumes them (upstream's
@@ -35,7 +35,7 @@ pub fn compute_prefixes(
         return Ok(Vec::new());
     };
     let prefix: Vec<u32> = prefix.outward_words().collect();
-    let user_lookup = user.and_then(|store| UserLookup::from_store(store).ok());
+    let user_lookup = user.and_then(|store| store.lookup().ok());
     let max = prefix.len().min(oxpinyin_user::MAX_PHRASE_LENGTH);
     let mut tokens = Vec::new();
     for length in 1..=max {
@@ -87,7 +87,7 @@ pub fn merged_suggestions(
         .filter(|token| dict.phrase_table_token_enabled(*token))
         .collect();
     let mut user_rows = if let Some(store) = user
-        && let Ok(lookup) = UserLookup::from_store(store)
+        && let Ok(lookup) = store.lookup()
     {
         lookup.suggest_after(&prefix)
     } else {

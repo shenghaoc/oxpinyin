@@ -357,18 +357,13 @@ impl UserIndex {
     /// `ChewingLargeTable2::search`'s entry side: a hit on a non-empty
     /// record loads it into the length's slot.
     #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
-    pub(crate) fn note_search(&mut self, keys: &[ChewingKey], natural: impl FnOnce() -> bool) {
+    pub(crate) fn note_search(&mut self, keys: &[ChewingKey]) {
         let len = keys.len();
         if len == 0 || len > MAX_PHRASE_LENGTH {
             return;
         }
         let key = query_key(keys);
-        if !self.contains_key(&key) {
-            return;
-        }
-        let nonempty = self
-            .record(&key)
-            .map_or_else(natural, |value| !value.is_empty());
+        let nonempty = self.record(&key).is_some_and(|value| !value.is_empty());
         if nonempty {
             *self.slot_mut(len) = Slot::Record(key);
         }

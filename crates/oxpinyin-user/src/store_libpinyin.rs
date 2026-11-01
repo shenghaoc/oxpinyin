@@ -433,6 +433,7 @@ impl GenericUserStore<DefaultStore> {
             ),
             removed_system_items: std::sync::Mutex::new(removed_system_items),
             count_cache: std::sync::Mutex::new(None),
+            standalone_lookup: std::sync::Mutex::new(None),
             db: std::sync::Mutex::new(db),
             dirty: std::sync::atomic::AtomicBool::new(false),
             write_generation: std::sync::atomic::AtomicU64::new(0),
@@ -2529,9 +2530,7 @@ mod tests {
         let reused = store
             .add_phrase_in(crate::USER_DICTIONARY, &"鱺".into(), &dense(3), Some(20))
             .expect("another phrase takes the dropped token");
-        let found = crate::UserLookup::from_store(&store)
-            .expect("lookup")
-            .lookup(&[ni_key()]);
+        let found = store.lookup().expect("lookup").lookup(&[ni_key()]);
         assert!(found.iter().any(|entry| entry.token().value() == reused));
         drop(store);
         std::fs::remove_dir_all(dir).expect("cleanup");

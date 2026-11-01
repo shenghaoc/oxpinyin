@@ -2006,18 +2006,13 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// A search of the user pinyin table for the query `keys` makes
     /// (`ChewingLargeTable2::search`): a hit on a non-empty record loads it
     /// into the length's table entry, which the next `mask_out` walk starts
-    /// from (#785). `natural` answers whether the readings put an item
-    /// under the probed key; neither closure runs while the table is empty.
+    /// from (#785). Read that record under the canonical table's guard.
     #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
-    pub fn note_pinyin_search(
-        &self,
-        keys: impl FnOnce() -> Option<Vec<ChewingKey>>,
-        natural: impl FnOnce() -> bool,
-    ) {
+    pub fn note_pinyin_search(&self, keys: impl FnOnce() -> Option<Vec<ChewingKey>>) {
         if let Some(target) = self.inner.libpinyin.as_ref()
             && let Some(keys) = keys()
         {
-            target.phrases().index.note_search(&keys, natural);
+            target.phrases().index.note_search(&keys);
         }
     }
 
@@ -2062,6 +2057,7 @@ impl<S: WriteStore> GenericUserStore<S> {
             has_removed_system_items: AtomicBool::new(false),
             removed_system_items: std::sync::Mutex::new(std::collections::BTreeSet::new()),
             count_cache: Mutex::new(None),
+            standalone_lookup: Mutex::new(None),
             db: Mutex::new(SessionValues::Native(db)),
             dirty: AtomicBool::new(false),
             write_generation: AtomicU64::new(0),
@@ -2834,24 +2830,30 @@ impl<S: WriteStore> GenericUserStore<S> {
         Ok(phrases)
     }
 
-    /// The complete independent user pinyin index, for the save to write.
-    /// A snapshot of the session's user pinyin index for a lookup cache.
-    pub(crate) fn user_index_snapshot(&self) -> Option<crate::user_index::UserIndex> {
-        Some(self.inner.libpinyin.as_ref()?.phrases().index.clone())
-    }
-
-    /// A snapshot of the session's user phrase table.
-    pub(crate) fn user_phrase_table_snapshot(
-        &self,
-    ) -> Option<crate::user_phrase_table::UserPhraseTable> {
-        Some(
-            self.inner
-                .libpinyin
-                .as_ref()?
-                .phrases()
-                .phrase_table
-                .clone(),
-        )
+    /// Borrows the session's canonical tables, or reuses the standalone
+    /// store's derived lookup until a phrase write invalidates it.
+    ///
+    /// # Errors
+    /// Returns an error when standalone phrase rows cannot be read.
+    pub fn lookup(&self) -> Result<crate::UserLookup<'_>, UserStoreError> {
+        if let Some(target) = self.inner.libpinyin.as_ref() {
+            return Ok(crate::UserLookup::session(&target.phrases));
+        }
+        let mut cache = self
+            .inner
+            .standalone_lookup
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let generation = self.phrase_generation();
+        if cache.as_ref().is_none_or(|(seen, _)| *seen != generation) {
+            let lookup = crate::lookup::StandaloneLookup::from_phrases(self.phrases()?);
+            *cache = Some((generation, Arc::new(lookup)));
+        }
+        Ok(cache
+            .as_ref()
+            .map_or_else(crate::UserLookup::empty, |(_, lookup)| {
+                crate::UserLookup::standalone(Arc::clone(lookup))
+            }))
     }
 
     pub(crate) fn index_entries(&self) -> Vec<(Token, Vec<u16>)> {
@@ -3431,8 +3433,8 @@ impl<S: WriteStore> GenericUserStore<S> {
 
     /// Current phrase generation: moves only when a phrase or
     /// pronunciation row was added, imported, or removed.
-    /// [`UserLookup`](crate::UserLookup) rebuilds when this changes and on
-    /// nothing else.
+    /// Standalone derived lookups rebuild on this stamp. Session lookups
+    /// read their canonical tables directly.
     #[must_use]
     pub fn phrase_generation(&self) -> u64 {
         self.inner.phrase_generation.load(Ordering::Acquire)
