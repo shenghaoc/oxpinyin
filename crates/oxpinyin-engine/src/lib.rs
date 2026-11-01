@@ -31,7 +31,7 @@ pub use candidate::{Candidate, CandidateKind, CandidateList, rank_by_frequency};
 pub use char_offset::character_offset_over_keys;
 pub use config::{Config, ConfigSource, ConfigValue, EmptyConfigSource, UPSTREAM_DEFAULT_COUNT};
 pub use cursor::{
-    MatrixKey, left_word_offset, left_word_offset_over_spans, lookup_offset_for_cursor,
+    KeySpans, MatrixKey, left_word_offset, left_word_offset_over_spans, lookup_offset_for_cursor,
     lookup_offset_over_spans, right_word_offset, right_word_offset_over_spans,
 };
 pub use error::{EngineError, TrainingSpanFault};

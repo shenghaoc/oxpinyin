@@ -42,10 +42,7 @@ static KEY_REST_SLOT: KeyRestSlot = KeyRestSlot {
 /// fresh instance or a keyless parse (`phonetic_key_matrix.cpp:34-38`); an
 /// unreadable parse is left to the callers' own refusals.
 pub(crate) fn matrix_has_keys(inst: &CapiInstance) -> bool {
-    let Ok((keys, input, _)) = inst.core.mode_keys() else {
-        return true;
-    };
-    !(input.is_empty() || keys.is_empty())
+    inst.core.mode_has_keys().unwrap_or(true)
 }
 
 /// Register row 66, `phonetic_key_matrix.h:103`: on an empty matrix (a

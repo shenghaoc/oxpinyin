@@ -1,0 +1,11 @@
+diff --git a/crates/oxpinyin-engine/src/session/buffer.rs b/crates/oxpinyin-engine/src/session/buffer.rs
+--- a/crates/oxpinyin-engine/src/session/buffer.rs
++++ b/crates/oxpinyin-engine/src/session/buffer.rs
+@@ -54,7 +54,6 @@
+     /// the option word: each input mutation and option change calls this.
+     pub(super) fn invalidate(&mut self) {
+         self.graph.take();
+-        self.keys.take();
+         self.matrix = None;
+         self.ending_matrix = None;
+     }

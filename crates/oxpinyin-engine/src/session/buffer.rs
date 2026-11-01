@@ -21,6 +21,7 @@ use std::sync::{Arc, OnceLock};
 use oxpinyin_core::graph::{ExactSegment, SegmentGraph};
 
 use super::MAX_INPUT_BYTES;
+use crate::cursor::MatrixKey;
 
 /// The typed input and the scheme-parse chain over it.
 #[derive(Clone, Debug, Default)]
@@ -31,6 +32,10 @@ pub(super) struct InputBuffer {
     /// Whole-input parser graph, shared by the matrix, window and length queries.
     /// Input/provenance mutations and option changes invalidate it.
     pub(super) graph: OnceLock<Arc<SegmentGraph>>,
+    /// The scan-matrix keys and parsed length the cursor and key getters
+    /// read ([`super::Session::matrix_keys`]), built once per input so that
+    /// enumerating every offset stays linear. Invalidated with the graph.
+    pub(super) keys: OnceLock<(Vec<MatrixKey>, usize)>,
     /// Derived topology only; every input/provenance mutation invalidates it.
     pub(super) matrix: Option<super::matrix::ParsedMatrix>,
     pub(super) ending_matrix: Option<super::matrix::ParsedMatrix>,
@@ -48,6 +53,15 @@ pub(super) struct InputBuffer {
 }
 
 impl InputBuffer {
+    /// Drops every structure derived from the input, its provenance or
+    /// the option word: each input mutation and option change calls this.
+    pub(super) fn invalidate(&mut self) {
+        self.graph.take();
+        self.keys.take();
+        self.matrix = None;
+        self.ending_matrix = None;
+    }
+
     /// The raw input as a string slice.
     pub(super) fn as_str(&self) -> &str {
         &self.raw
@@ -84,9 +98,7 @@ impl InputBuffer {
     }
 
     pub(super) fn set_full_pinyin(&mut self, segments: &[ExactSegment]) {
-        self.graph.take();
-        self.matrix = None;
-        self.ending_matrix = None;
+        self.invalidate();
         self.set_exact(segments);
         self.parsed_full_pinyin = true;
         self.formatting_separators = true;
@@ -98,9 +110,7 @@ impl InputBuffer {
     /// batch). The exact chain is cleared only on an accepted push, so a
     /// character refused at the cap leaves a scheme composition intact.
     pub(super) fn try_push(&mut self, character: char) -> bool {
-        self.graph.take();
-        self.matrix = None;
-        self.ending_matrix = None;
+        self.invalidate();
         if self.raw.len() + character.len_utf8() > MAX_INPUT_BYTES {
             return false;
         }
@@ -114,9 +124,7 @@ impl InputBuffer {
     /// Drops the last character and exits exact mode — the erase path,
     /// which shrinks the buffer under a live composition.
     pub(super) fn pop(&mut self) {
-        self.graph.take();
-        self.matrix = None;
-        self.ending_matrix = None;
+        self.invalidate();
         self.exact.clear();
         self.parsed_full_pinyin = false;
         self.formatting_separators = false;
@@ -126,9 +134,7 @@ impl InputBuffer {
     /// Empties the buffer and the exact chain — `pinyin_reset`'s input
     /// half.
     pub(super) fn clear(&mut self) {
-        self.graph.take();
-        self.matrix = None;
-        self.ending_matrix = None;
+        self.invalidate();
         self.raw.clear();
         self.exact.clear();
         self.parsed_full_pinyin = false;
@@ -138,9 +144,7 @@ impl InputBuffer {
     /// Exits exact mode without touching `raw` — the plain replace seam,
     /// which clears the chain before refilling.
     pub(super) fn clear_exact(&mut self) {
-        self.graph.take();
-        self.matrix = None;
-        self.ending_matrix = None;
+        self.invalidate();
         self.exact.clear();
         self.parsed_full_pinyin = false;
         self.formatting_separators = false;
@@ -153,9 +157,7 @@ impl InputBuffer {
 
     /// Stores separator provenance for the private trellis generation view.
     pub(super) fn set_physical_separators(&mut self, physical: bool) {
-        self.graph.take();
-        self.matrix = None;
-        self.ending_matrix = None;
+        self.invalidate();
         self.formatting_separators = !physical;
     }
 
@@ -165,9 +167,7 @@ impl InputBuffer {
     /// already cleared it and the scheme seam sets it afterwards through
     /// [`InputBuffer::set_exact`].
     pub(super) fn refill(&mut self, text: &str) {
-        self.graph.take();
-        self.matrix = None;
-        self.ending_matrix = None;
+        self.invalidate();
         self.raw.clear();
         for character in text.chars() {
             if self.raw.len() + character.len_utf8() > MAX_INPUT_BYTES {
@@ -181,9 +181,7 @@ impl InputBuffer {
     /// the (already clamped) buffer end so `end() <= raw.len()` stays an
     /// invariant of the stored segments.
     pub(super) fn set_exact(&mut self, segments: &[ExactSegment]) {
-        self.graph.take();
-        self.matrix = None;
-        self.ending_matrix = None;
+        self.invalidate();
         self.formatting_separators = false;
         self.parsed_full_pinyin = false;
         let raw_len = self.raw.len();

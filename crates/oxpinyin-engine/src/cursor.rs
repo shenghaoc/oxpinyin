@@ -47,6 +47,8 @@
 //! - An empty input is a truly empty matrix (no parse ever ran): every
 //!   column is empty and no zero keys exist.
 
+use std::ops::Range;
+
 use oxpinyin_core::OptionBits;
 use oxpinyin_core::SyllableKey;
 use oxpinyin_core::graph::SegmentGraph;
@@ -54,91 +56,196 @@ use oxpinyin_core::graph::SegmentGraph;
 use crate::error::EngineError;
 use crate::session::build_scan_matrix;
 
-/// One matrix column: the raw ends of the real keys placed there, plus the
+/// A parse's keys as `(syllable start, raw end)` spans, in input order:
+/// the starts never decrease, and keys sharing a start keep the order the
+/// parse placed them in — the pin's column order, whose first item is
+/// `matrix.get_item(column, 0, ...)`.
+///
+/// The cursor laws read a span list through this trait so a caller can
+/// lend its stored keys without first copying them into a span vector.
+pub trait KeySpans {
+    /// The number of keys.
+    fn span_count(&self) -> usize;
+
+    /// Key `index`'s `(syllable start, raw end)`; `index < span_count()`.
+    fn span(&self, index: usize) -> (usize, usize);
+
+    /// The first index whose start is not below `position` — the
+    /// partition point of the ordered starts.
+    fn first_at_or_after(&self, position: usize) -> usize {
+        let (mut low, mut high) = (0, self.span_count());
+        while low < high {
+            let middle = low + (high - low) / 2;
+            if self.span(middle).0 < position {
+                low = middle + 1;
+            } else {
+                high = middle;
+            }
+        }
+        low
+    }
+}
+
+impl KeySpans for [(usize, usize)] {
+    fn span_count(&self) -> usize {
+        self.len()
+    }
+
+    fn span(&self, index: usize) -> (usize, usize) {
+        self[index]
+    }
+}
+
+impl KeySpans for [MatrixKey] {
+    fn span_count(&self) -> usize {
+        self.len()
+    }
+
+    fn span(&self, index: usize) -> (usize, usize) {
+        let key = self[index];
+        (key.syllable_start, key.end)
+    }
+}
+
+/// One matrix column: the range of real keys placed there, plus the
 /// zero-key entry when the position holds one.
-#[derive(Default)]
-struct Column {
-    /// Raw ends of the real keys starting at this position, in placement
+struct Column<'a, S: KeySpans + ?Sized> {
+    spans: &'a S,
+    /// Indexes of the real keys starting at this position, in placement
     /// order — the pin places parse keys before resplit/divided additions,
     /// and `get_right_pinyin_offset` reads the FIRST one.
-    real: Vec<usize>,
+    real: Range<usize>,
     /// The zero key's raw end (position + 1), when this column holds one.
     zero_end: Option<usize>,
 }
 
-impl Column {
+impl<S: KeySpans + ?Sized> Column<'_, S> {
     /// The pin's `get_column_size`.
     fn size(&self) -> usize {
         self.real.len() + usize::from(self.zero_end.is_some())
     }
 
-    const fn is_empty(&self) -> bool {
+    fn is_empty(&self) -> bool {
         self.real.is_empty() && self.zero_end.is_none()
     }
 
     /// The `_check_offset` shape: exactly one entry, and it is the zero key.
-    const fn lone_zero(&self) -> bool {
+    fn lone_zero(&self) -> bool {
         self.real.is_empty() && self.zero_end.is_some()
     }
 
     /// The pin's `get_item(column, 0).m_raw_end` — real keys first.
     fn first_end(&self) -> Option<usize> {
-        self.real.first().copied().or(self.zero_end)
+        if self.real.is_empty() {
+            self.zero_end
+        } else {
+            Some(self.spans.span(self.real.start).1)
+        }
     }
 
     /// Whether any key at this position ends at `end` — the
     /// `get_left_pinyin_offset` scan, which visits every item.
     fn ends_with(&self, end: usize) -> bool {
-        self.real.contains(&end) || self.zero_end == Some(end)
+        self.real
+            .clone()
+            .any(|index| self.spans.span(index).1 == end)
+            || self.zero_end == Some(end)
     }
 }
 
-/// Builds the column model for one raw buffer and its parse.
+/// The column model for one raw buffer and its parse, read column by
+/// column: a column is found by binary search over the ordered spans, so
+/// one law costs the pin's own walk times a logarithm, not a pass over the
+/// whole buffer.
 ///
-/// `spans` are the parse's keys as (syllable start, raw end) pairs;
-/// `separators` controls the `'` zero-key fill — plain and index-parsed
-/// full pinyin consume `'` as the separator, while double pinyin and the
-/// zhuyin keyboards never hold a zero-key column
+/// `spans` are the parse's keys as (syllable start, raw end) pairs in input
+/// order ([`KeySpans`]); `separators` controls the `'` zero-key fill —
+/// plain and index-parsed full pinyin consume `'` as the separator, while
+/// double pinyin and the zhuyin keyboards never hold a zero-key column
 /// ([`crate::session::Session::validate_lookup_offset`]'s taxonomy).
-fn build_columns(
-    input: &[u8],
-    parsed_len: usize,
-    spans: &[(usize, usize)],
+struct Columns<'a, S: KeySpans + ?Sized> {
+    input: &'a [u8],
+    /// The parsed length, at most the buffer length.
+    parsed: usize,
+    spans: &'a S,
     separators: bool,
-) -> Vec<Column> {
-    let bound = input.len();
-    let mut columns: Vec<Column> = (0..=bound).map(|_| Column::default()).collect();
-    for &(start, end) in spans {
-        if let Some(column) = columns.get_mut(start) {
-            column.real.push(end);
+    /// The buffer's leading apostrophe run.
+    leading_run: usize,
+}
+
+impl<'a, S: KeySpans + ?Sized> Columns<'a, S> {
+    fn new(input: &'a [u8], parsed_len: usize, spans: &'a S, separators: bool) -> Self {
+        let leading_run = if separators {
+            input.iter().take_while(|byte| **byte == b'\'').count()
+        } else {
+            0
+        };
+        Self {
+            input,
+            parsed: parsed_len.min(input.len()),
+            spans,
+            separators,
+            leading_run,
         }
     }
-    if input.is_empty() {
-        return columns;
-    }
-    let parsed = parsed_len.min(bound);
-    if separators {
-        let leading_run = input.iter().take_while(|byte| **byte == b'\'').count();
-        for position in 0..parsed {
-            // The leading apostrophe run holds zero keys only when the
-            // parse contains no real keys at all (the all-apostrophe
-            // shape); otherwise the pin's DP propagates over it.
-            if input[position] == b'\'' && (position >= leading_run || spans.is_empty()) {
-                columns[position].zero_end = Some(position + 1);
-            }
+
+    /// The column at `position`, or `None` past the reserved slot at the
+    /// buffer end.
+    fn get(&self, position: usize) -> Option<Column<'a, S>> {
+        if position > self.input.len() {
+            return None;
         }
+        let low = self.spans.first_at_or_after(position);
+        let high = position
+            .checked_add(1)
+            .map_or(self.spans.span_count(), |next| {
+                self.spans.first_at_or_after(next)
+            });
+        Some(Column {
+            spans: self.spans,
+            real: low..high,
+            zero_end: self.zero_end(position),
+        })
     }
-    // The zero-key tail run: the unconsumed tail plus the reserved slot.
-    for (position, column) in columns.iter_mut().enumerate().skip(parsed) {
-        column.zero_end = Some(position + 1);
+
+    /// The column at `position`; the laws only ask within the buffer, and
+    /// past it every column is empty.
+    fn at(&self, position: usize) -> Column<'a, S> {
+        self.get(position).unwrap_or(Column {
+            spans: self.spans,
+            real: 0..0,
+            zero_end: None,
+        })
     }
-    columns
+
+    /// The zero key's raw end at `position`, if the column holds one.
+    fn zero_end(&self, position: usize) -> Option<usize> {
+        // An empty input is a truly empty matrix: no parse ever ran.
+        if self.input.is_empty() {
+            return None;
+        }
+        // The zero-key tail run: the unconsumed tail plus the reserved slot.
+        if position >= self.parsed {
+            return Some(position + 1);
+        }
+        // The leading apostrophe run holds zero keys only when the parse
+        // contains no real keys at all (the all-apostrophe shape);
+        // otherwise the pin's DP propagates over it.
+        (self.separators
+            && self.input[position] == b'\''
+            && (position >= self.leading_run || self.spans.span_count() == 0))
+            .then_some(position + 1)
+    }
 }
 
 /// The pin's `_check_offset` (`pinyin.cpp:2163-2180`), its abort answered
 /// as an error.
-fn check(columns: &[Column], offset: usize) -> Result<(), EngineError> {
-    if offset > 0 && columns.get(offset - 1).is_some_and(Column::lone_zero) {
+fn check<S: KeySpans + ?Sized>(columns: &Columns<'_, S>, offset: usize) -> Result<(), EngineError> {
+    if offset > 0
+        && columns
+            .get(offset - 1)
+            .is_some_and(|column| column.lone_zero())
+    {
         return Err(EngineError::ZeroKeyOffsetCheck { offset });
     }
     Ok(())
@@ -146,10 +253,10 @@ fn check(columns: &[Column], offset: usize) -> Result<(), EngineError> {
 
 /// The pin's `_compute_zero_start` (`pinyin.cpp:2985-3004`): walk back
 /// over consecutive lone zero-key columns, stopping before column 0.
-fn zero_start_walk(columns: &[Column], mut offset: usize) -> usize {
+fn zero_start_walk<S: KeySpans + ?Sized>(columns: &Columns<'_, S>, mut offset: usize) -> usize {
     let mut index = offset.saturating_sub(1);
     while index > 0 {
-        if columns[index].lone_zero() {
+        if columns.at(index).lone_zero() {
             offset = index;
             index -= 1;
         } else {
@@ -186,13 +293,13 @@ const fn range_check(input_len: usize, offset: usize) -> Result<(), EngineError>
 pub fn lookup_offset_over_spans(
     input: &[u8],
     parsed_len: usize,
-    spans: &[(usize, usize)],
+    spans: &(impl KeySpans + ?Sized),
     separators: bool,
     cursor: usize,
 ) -> Result<usize, EngineError> {
-    let columns = build_columns(input, parsed_len, spans, separators);
+    let columns = Columns::new(input, parsed_len, spans, separators);
     let mut offset = cursor.min(parsed_len.min(input.len()));
-    while offset > 0 && columns[offset].is_empty() {
+    while offset > 0 && columns.at(offset).is_empty() {
         offset -= 1;
     }
     let offset = zero_start_walk(&columns, offset);
@@ -213,16 +320,16 @@ pub fn lookup_offset_over_spans(
 pub fn left_word_offset_over_spans(
     input: &[u8],
     parsed_len: usize,
-    spans: &[(usize, usize)],
+    spans: &(impl KeySpans + ?Sized),
     separators: bool,
     offset: usize,
 ) -> Result<usize, EngineError> {
-    let columns = build_columns(input, parsed_len, spans, separators);
+    let columns = Columns::new(input, parsed_len, spans, separators);
     range_check(input.len(), offset)?;
     check(&columns, offset)?;
     let mut left = offset.saturating_sub(1);
     while left > 0 {
-        if columns[left].ends_with(offset) {
+        if columns.at(left).ends_with(offset) {
             break;
         }
         left -= 1;
@@ -244,11 +351,11 @@ pub fn left_word_offset_over_spans(
 pub fn right_word_offset_over_spans(
     input: &[u8],
     parsed_len: usize,
-    spans: &[(usize, usize)],
+    spans: &(impl KeySpans + ?Sized),
     separators: bool,
     offset: usize,
 ) -> Result<Option<usize>, EngineError> {
-    let columns = build_columns(input, parsed_len, spans, separators);
+    let columns = Columns::new(input, parsed_len, spans, separators);
     range_check(input.len(), offset)?;
     check(&columns, offset)?;
     let mut right = offset;
@@ -257,7 +364,7 @@ pub fn right_word_offset_over_spans(
     let matrix_size = input.len() + 1;
     let mut index = right;
     while index + 1 < matrix_size {
-        let column = &columns[index];
+        let column = columns.at(index);
         if column.size() != 1 {
             break;
         }
@@ -268,7 +375,7 @@ pub fn right_word_offset_over_spans(
             break;
         }
     }
-    let Some(end) = columns[right].first_end() else {
+    let Some(end) = columns.at(right).first_end() else {
         return Ok(None);
     };
     check(&columns, end)?;
@@ -286,7 +393,7 @@ pub fn lookup_offset_for_cursor(
     cursor: usize,
 ) -> Result<usize, EngineError> {
     let (spans, parsed) = matrix_spans(input, options)?;
-    lookup_offset_over_spans(input, parsed, &spans, true, cursor)
+    lookup_offset_over_spans(input, parsed, spans.as_slice(), true, cursor)
 }
 
 /// [`left_word_offset_over_spans`] over the plain full-pinyin scan matrix.
@@ -300,7 +407,7 @@ pub fn left_word_offset(
     offset: usize,
 ) -> Result<usize, EngineError> {
     let (spans, parsed) = matrix_spans(input, options)?;
-    left_word_offset_over_spans(input, parsed, &spans, true, offset)
+    left_word_offset_over_spans(input, parsed, spans.as_slice(), true, offset)
 }
 
 /// [`right_word_offset_over_spans`] over the plain full-pinyin scan matrix.
@@ -314,7 +421,7 @@ pub fn right_word_offset(
     offset: usize,
 ) -> Result<Option<usize>, EngineError> {
     let (spans, parsed) = matrix_spans(input, options)?;
-    right_word_offset_over_spans(input, parsed, &spans, true, offset)
+    right_word_offset_over_spans(input, parsed, spans.as_slice(), true, offset)
 }
 
 /// The scan matrix's keys as (syllable start, raw end) spans plus the
@@ -415,9 +522,10 @@ impl MatrixKey {
 /// The scan matrix's keys with their spans, plus the graph's consumed
 /// length.
 ///
-/// The same walk [`matrix_spans`] projects: keys appear in column order,
-/// and within a column in the matrix's own order, so the first key of a
-/// column is the pin's `matrix.get_item(column, 0, ...)`.
+/// The same walk [`matrix_spans`] projects: keys appear in column order
+/// (by syllable start, [`in_column_order`]), and within a column in the
+/// matrix's own order, so the first key of a column is the pin's
+/// `matrix.get_item(column, 0, ...)`.
 ///
 /// # Errors
 ///
@@ -430,18 +538,25 @@ pub fn matrix_keys(
     let graph = SegmentGraph::build_with_options(input, options)?;
     let parsed = graph.consumed();
     let matrix = build_scan_matrix(&graph, options, true);
-    let mut keys = Vec::new();
-    for column in &matrix {
-        for key in column {
-            keys.push(MatrixKey {
-                key: key.key,
-                tone: key.tone,
-                syllable_start: key.syllable_start,
-                end: key.to,
-            });
-        }
+    let keys = matrix
+        .iter()
+        .flatten()
+        .map(|key| MatrixKey::new(key.key, key.tone, key.syllable_start, key.to))
+        .collect();
+    Ok((in_column_order(keys), parsed))
+}
+
+/// Orders scan-matrix keys as the pin's matrix holds them: by syllable
+/// start, the column the pin places each key in, keeping the scan's order
+/// within a column (a stable sort). The scan matrix files keys by the
+/// graph node they leave, and a node's syllable start never decreases
+/// with the node, so this only confirms the order [`KeySpans`] relies on.
+#[must_use]
+pub(crate) fn in_column_order(mut keys: Vec<MatrixKey>) -> Vec<MatrixKey> {
+    if !keys.is_sorted_by_key(|key| key.syllable_start) {
+        keys.sort_by_key(|key| key.syllable_start);
     }
-    Ok((keys, parsed))
+    keys
 }
 
 #[cfg(test)]

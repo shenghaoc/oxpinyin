@@ -4143,6 +4143,42 @@ fn parser_graph_is_invalidated_by_input_exact_chain_and_options() {
 }
 
 #[test]
+fn cached_matrix_keys_follow_every_input_and_option_change() {
+    // The key getters read `matrix_keys` once per input; every mutation
+    // must drop the cached list, or a getter answers the previous parse.
+    fn spans(session: &Session<Silent, Silent>) -> (Vec<(usize, usize)>, usize) {
+        let (keys, parsed) = session.matrix_keys().expect("matrix");
+        let spans = keys
+            .iter()
+            .map(|key| (key.syllable_start(), key.end()))
+            .collect();
+        (spans, parsed)
+    }
+
+    let mut session = session();
+    session.replace_raw("nihao").expect("parse");
+    assert_eq!(spans(&session), (vec![(0, 2), (2, 5)], 5));
+    assert!(session.input.keys.get().is_some(), "the list is cached");
+    session.replace_raw("ni'hao").expect("replace");
+    assert_eq!(spans(&session), (vec![(0, 2), (3, 6)], 6));
+    session.type_pinyin("s").expect("push");
+    assert_eq!(spans(&session).1, 7);
+    session.erase().expect("pop");
+    assert_eq!(spans(&session), (vec![(0, 2), (3, 6)], 6));
+    session.replace_raw("sh").expect("initial only");
+    let with_incomplete = spans(&session);
+    let options = session
+        .settings
+        .options
+        .with(oxpinyin_core::PINYIN_INCOMPLETE, false);
+    session.set_options(options).expect("options");
+    assert_ne!(spans(&session), with_incomplete, "options drop the list");
+    session.reset();
+    assert!(session.input.keys.get().is_none());
+    assert_eq!(spans(&session), (Vec::new(), 0));
+}
+
+#[test]
 fn shared_graph_window_lengths_match_independent_suffix_parses() {
     use oxpinyin_core::graph::ExactSegment;
     use oxpinyin_core::{FORCE_TONE, OptionBits, PINYIN_INCOMPLETE, USE_TONE};
