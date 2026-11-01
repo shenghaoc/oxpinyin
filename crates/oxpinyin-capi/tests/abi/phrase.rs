@@ -556,6 +556,57 @@ fn token_unigram_read_and_overlay_write() {
     ));
 }
 
+#[test]
+fn token_unigram_distinguishes_zero_user_item_from_absent() {
+    use pinyin_capi::{
+        pinyin_begin_add_phrases, pinyin_end_add_phrases, pinyin_iterator_add_phrase,
+    };
+
+    let fixture = Fixture::new("dict-unigram-zero");
+    let iter = pinyin_begin_add_phrases(fixture.context, 7);
+    assert!(!iter.is_null());
+    assert!(pinyin_iterator_add_phrase(
+        iter,
+        cstr("网词").as_ptr(),
+        cstr("wang3'ci2").as_ptr(),
+        0,
+    ));
+    pinyin_end_add_phrases(iter);
+    let mut tokens = TokenArray::new();
+    assert!(pinyin_lookup_tokens(
+        fixture.instance,
+        cstr("网词").as_ptr(),
+        tokens.array_ptr(),
+    ));
+    let token = tokens.elements()[0];
+    assert_eq!(token >> 24, 7);
+    let mut freq = u32::MAX;
+    assert!(pinyin_token_get_unigram_frequency(
+        fixture.instance,
+        token,
+        &raw mut freq
+    ));
+    assert_eq!(freq, 0);
+    freq = u32::MAX;
+    assert!(!pinyin_token_get_unigram_frequency(
+        fixture.instance,
+        token + 1,
+        &raw mut freq
+    ));
+    assert_eq!(freq, 0);
+    assert!(pinyin_token_add_unigram_frequency(
+        fixture.instance,
+        token,
+        7
+    ));
+    assert!(pinyin_token_get_unigram_frequency(
+        fixture.instance,
+        token,
+        &raw mut freq
+    ));
+    assert_eq!(freq, 7);
+}
+
 /// The load/unload contract: fresh GBK is already loaded (`load` false),
 /// the first unload answers true, the second false (the sub-index is
 /// gone), and the reload answers true. Non-GBK indexes are refused.

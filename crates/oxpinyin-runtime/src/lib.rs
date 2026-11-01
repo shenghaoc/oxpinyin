@@ -1103,12 +1103,14 @@ impl RuntimeDict {
                 if !self.library_visible(token >> 24) {
                     return None;
                 }
-                self.user
-                    .as_ref()?
-                    .phrase_text(token)
-                    .ok()
-                    .flatten()
-                    .and_then(|words| PhraseText::from_stored_words(words.into_iter().map(Some)))
+                let store = self.user.as_ref()?;
+                store
+                    .with_user_item(token, |item| item.phrase_text())
+                    .unwrap_or_else(|| {
+                        store.phrase_text(token).ok().flatten().and_then(|words| {
+                            PhraseText::from_stored_words(words.into_iter().map(Some))
+                        })
+                    })
             }
             _ => None,
         }

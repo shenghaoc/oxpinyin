@@ -420,8 +420,8 @@ pub extern "C" fn pinyin_token_get_unigram_frequency(
             .core
             .user
             .as_ref()
-            .filter(|_| inst.core.dict.token_exists(token))
-            .and_then(|store| store.unigram_delta(token).ok()),
+            .filter(|_| inst.core.dict.library_visible(nibble))
+            .and_then(|store| store.user_unigram_frequency(token).ok().flatten()),
         _ => None,
     };
     let Some(base) = base else {

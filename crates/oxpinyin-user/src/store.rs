@@ -2188,6 +2188,35 @@ impl<S: WriteStore> GenericUserStore<S> {
         ))
     }
 
+    /// A user item's unigram frequency, including pending increments, or
+    /// `None` when the item is absent. A present zero count stays `Some(0)`.
+    /// Session reads check existence and read the count under one arena guard,
+    /// as the pin reads one item (074a2219 `pinyin.cpp:2821-2833`,
+    /// `zhuyin.cpp:1813-1825`). The caller applies library visibility and any
+    /// facade overlay.
+    ///
+    /// # Errors
+    /// Returns an error when a standalone store cannot be read.
+    pub fn user_unigram_frequency(&self, token: Token) -> Result<Option<u64>, UserStoreError> {
+        if self.inner.libpinyin.is_none() {
+            return self
+                .phrase_exists(token)?
+                .then(|| self.unigram_delta(token))
+                .transpose();
+        }
+        // Keep the same bumps-before-arena lock order as `unigram_delta`.
+        let bumps = self.system_unigrams_for_read();
+        Ok(self.with_user_item(token, |item| {
+            u64::from(item.unigram()).wrapping_add(
+                bumps
+                    .as_ref()
+                    .and_then(|b| b.tokens.get(&token))
+                    .copied()
+                    .unwrap_or(0),
+            )
+        }))
+    }
+
     /// Apply the exported unigram increment to a loaded system library.
     /// The caller checks library visibility. The facade total changes even
     /// for a missing item or overflowing sub-index; accepted increments stay
