@@ -8,6 +8,8 @@ The programming language is an implementation detail.
 Do not reproduce behaviour caused only by another language's semantics or libraries (Requirement 6).
 Stage 2 also permits compatible internal improvement.
 
+Amended 2026-11-01 UTC: Requirements 4 and 5 make source-derived complexity the default performance evidence and measurement the exception.
+
 Requirements 1–3 describe [pinned behaviour](../../pinned-behaviour.md).
 Requirements 4–6 describe [oxpinyin improvements](../../oxpinyin-improvements.md): the performance floor, measurement method, language artefacts and maths.
 Follow the [compatibility decision order](../../findings/compatibility-policy.md).
@@ -82,13 +84,15 @@ Compatible improvements have no ceiling.
 
 #### Acceptance Criteria
 
-1. Measure axis L on named workloads against the pin.
-   Measure executed instructions or time, plus peak heap.
-   State workload, build and repetitions; #757 is the example.
-2. Fix a workload regression on both axes in Stage 2.
+1. Give a short complexity argument derived from the source for a change that alters an algorithm, a data structure, allocation behaviour or an input bound.
+   Name the input dimensions and constant bounds, and bound the loops, recursion, collection operations, allocations and relevant callees.
+   Distinguish worst-case, amortised and expected bounds, and state assumptions about external libraries.
+   Compare with the previous code, and with the pin where the two do comparable work.
+   If the source does not establish a bound, say so; do not present an estimate as a proof.
+2. Fix an observed regression on both axes in Stage 2.
    A written justification does not replace the fix.
 3. Trade a regression on one axis for improvement on the other.
-   Minimize the regression and justify it under the [source policy](../../source-policy.md).
+   Minimize the regression and justify it under the [source policy](../../source-policy.md#performance-standard).
 4. Faster or smaller implementations qualify for Stage 2 when output, files and ABI remain unchanged.
    Recorded language artefacts remain exceptions.
    Keep differentials identical, or `POLICY-ACCEPTED` for a recorded artefact.
@@ -98,14 +102,17 @@ Compatible improvements have no ceiling.
    A registered class (a)–(c) or recorded language artefact can permit it.
    Otherwise it belongs to Stage 3.
 
-### Requirement 5: Performance measured the same way on both sides
+### Requirement 5: Measurement is the exception
 
-Performance claims must be reproducible and comparable.
+Complexity evidence is the default; measurement serves a concrete question.
 
 #### Acceptance Criteria
 
-1. Capture a baseline before changing code.
-2. Build and time base, PR and pin in one run on one machine.
+1. Measure only for a concrete unresolved question that affects a decision.
+   Name the question, the arms and inputs relevant to it, and the decision rule before measuring.
+   Follow the [controlling rule](../../source-policy.md#controlling-rule).
+   New measurement tooling, drivers or instrumentation need the maintainer's approval.
+2. When a measurement compares arms, run the arms relevant to the question in one run on one machine.
    State each artifact's build recipe.
    Only `cargo cinstall --release` is the product; see [benches](../../runbooks/benches.md).
 3. Register decision rules and falsifiers before the run.

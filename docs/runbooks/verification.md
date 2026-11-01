@@ -56,7 +56,7 @@ Do not repeat an equivalent passing CI check locally.
 A check that is missing, cancelled or skipped when it applies does not count as a pass.
 A check skipped because it does not apply to the change is not a failure.
 Run fmt locally; it is cheap.
-Run locally the required checks that CI does not cover: the issue's differentials, revert-and-check and measurements.
+Run locally the required checks that CI does not cover: the issue's differentials, revert-and-check and any measurement that a concrete unresolved question affecting a decision requires ([controlling rule](../source-policy.md#controlling-rule)).
 These checks keep their current rules.
 Stripped shipping-library sizes ([constitution §2](../constitution.md)) are not a local check.
 The `shipping-sizes` CI job reports base and PR sizes in its job summary, for each PR that can change a shipping library.
@@ -108,7 +108,6 @@ Choose checks from the changes since the last green gate:
 Stop when applicable checks pass and concrete failures are addressed.
 Additional runs require a relevant input change, a specific unresolved failure or an explicit maintainer request.
 Do not repeat runs merely to collect more evidence.
-Keep repetitions required by the measurement method.
 
 Rules 5 and 7 describe the **completion gate** (maintainer rulings
 2026-10-19 UTC and 2026-10-30 UTC).

@@ -73,15 +73,16 @@ Tools remain drop-in pin-utility replacements.
 Change Rust signatures freely while updating every in-tree caller in the same change.
 Follow the [interface ruling](constitution.md#external-interfaces).
 
-Do not worsen time and space complexity together.
+Do not worsen time and space complexity together compared with the pin.
 Trade any regression in one for a gain in the other.
-Minimize and justify the regression.
+Minimize and justify the regression in the PR.
 
 ## Performance
 
 Stage 2 permits internal performance, memory and safety work with no observable change.
 An implementation can be faster or smaller than the pin by any amount.
-The floor is the complexity rule, measured against the pin (axis L, #757).
+The floor is the complexity rule, derived from the source and compared with the pin ([source policy](source-policy.md#performance-standard)).
+Measurement is the exception ([controlling rule](source-policy.md#controlling-rule)).
 The [roadmap](../ROADMAP.md) records landed work.
 
 ## Stage 3

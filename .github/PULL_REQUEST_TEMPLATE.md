@@ -30,9 +30,13 @@ evidence archives, upload requests or separate findings document by default.
 <!--
 State the effects on the C ABI, pinned behaviour, persistent data,
 performance, and memory.
-For a measuring PR, report base / PR / pin from one run on one host,
-with ratios and the command needed to reproduce the comparison. One command
-may cover the whole table; include inputs/build/environment details that matter.
+For a change that alters an algorithm, a data structure, allocation behaviour
+or an input bound, state the source-derived complexity argument
+(Source policy, controlling rule).
+When a measurement is required, report the question, the arms and inputs
+relevant to it, the decision rule and the result, with the command needed to
+reproduce the comparison. One command may cover the whole table; include
+inputs/build/environment details that matter.
 For changes affecting shipping libraries, copy the base and PR sizes from the
 `shipping-sizes` job summary and note increases over base (Constitution 2). Do not
 build release libraries locally for them. Docs-only work needs no size build.

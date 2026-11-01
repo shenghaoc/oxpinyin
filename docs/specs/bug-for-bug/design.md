@@ -54,10 +54,13 @@ Do not chase them.
 
 ## Complexity (axis L)
 
-Measure complexity; reading alone cannot establish runtime cost.
-Run both implementations on a named workload in the same container.
-Measure whole-process instructions with callgrind and peak heap with massif.
-Use three repetitions and state the spread.
+Source-derived complexity is the default evidence; measurement is the exception.
+For a change that alters an algorithm, a data structure, allocation behaviour or an input bound, derive time and peak auxiliary-space bounds from the source.
+Name the input dimensions and constant bounds, and bound the loops, recursion, collection operations, allocations and relevant callees.
+Distinguish worst-case, amortised and expected bounds, and state assumptions about external libraries.
+Compare with the previous code, and with the pin where the two do comparable work.
+Say so when the source does not establish a bound.
+When measurement is required, follow the [controlling rule](../../source-policy.md#controlling-rule).
 Attribute regressions to source components on both sides, as in #757.
 Fix regressions on both axes.
 Written justification does not replace a fix.

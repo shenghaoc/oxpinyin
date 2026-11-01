@@ -19,7 +19,7 @@ and attaches them with a `SHA256SUMS` to the release.
 3. The allocator-pairing gate passed on the tip
    (`just abi alloc-pairing`; CI runs it on every change).
    Linux only — `--static-only` is the portable half.
-4. Frozen pins unchanged since the last measured run, or re-measured
+4. Frozen pins unchanged since the last verified run, or re-verified
    (`goldens-and-pins.md`).
 5. Version streams agree (`docs/packaging.md`, "The four version
    streams"): the drop-in identity is the pin's libpinyin version
