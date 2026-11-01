@@ -18,8 +18,8 @@
 //! `UNKNOWN_COST` floors — so a decode against it ranks exactly as the real
 //! engine would against the same counts and λ. The counts come from
 //! `interpolation2.text` (`\1-gram` unigrams, `\2-gram` pair counts, bigram
-//! total per prev = Σ its successor counts, as `import_interpolation` /
-//! `oxpinyin-datagen` store them); λ is applied as the exact
+//! total per prev = Σ its successor counts, as `import_interpolation`
+//! stores them); λ is applied as the exact
 //! [`oxpinyin_data::Lambda`] rational, matching `make modify
 //! LAMBDA_PARAMETER=λ` writing `{:.6}` into `table.conf` and the decoder
 //! reading it back.

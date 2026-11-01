@@ -6,8 +6,8 @@
 //! (`OXPINYIN_KC_LIB_DIR`, or a pkg-config `-L` from a custom prefix)
 //! would link here and then fail to start. This script repeats the same
 //! rpath for the binaries this package links, mirroring oxpinyin-store's
-//! and oxpinyin-datagen's discovery exactly; with the `kyotocabinet`
-//! feature off it emits nothing. As in the store, the rpath
+//! discovery exactly; with the `kyotocabinet` feature off it emits
+//! nothing. As in the store, the rpath
 //! is a convenience, not the contract: an artifact built without it must
 //! still find the library via `LD_LIBRARY_PATH` or its own rpath setting.
 

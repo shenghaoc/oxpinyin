@@ -1647,7 +1647,7 @@ impl Dictionary for RuntimeDict {
     }
 
     /// Both seams under this facade handle partial-key queries with one
-    /// probe: the system dictionary's DBM is double-indexed at datagen time
+    /// probe: the system dictionary's DBM is double-indexed when it is built
     /// (see [`SystemDictionary`]), and `UserLookup` mirrors that with a
     /// `by_initial` index (`crates/oxpinyin-user/src/lookup.rs`). Addon
     /// facades share the DBM shape.

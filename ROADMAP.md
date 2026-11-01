@@ -22,10 +22,11 @@ Crate roles: `docs/architecture.md`.
 Stage 1 uses the backend's native tables (no redistribution required:
 `docs/findings/model-provenance.md` — build-time fetch of the pinned model20
 archive, built by libpinyin's own `gen_binary_files` +
-`import_interpolation` + `gen_unigram` sequence — the pinned binaries now
-live in `oxpinyin-utils`; `oxpinyin-datagen` keeps only the test-only
-`fixtures/w3` `--mini` producer library. On each backend, oxpinyin handles
-the same data directory a libpinyin build on that backend uses, natively).
+`import_interpolation` + `gen_unigram` sequence — the pinned binaries
+live in `oxpinyin-utils`, and `just w3-fixtures` runs them over the mini
+subset of the model to regenerate `fixtures/w3`. On each backend, oxpinyin
+handles the same data directory a libpinyin build on that backend uses,
+natively).
 
 **Older records (before 2026-10-14 UTC).** "Stage 2" meant performance
 work, for example the `stage2` bench and the `docs/perf/` records. That
@@ -94,7 +95,7 @@ landed 2026-09-09 as the backend's native user files (maintainer ruling
 | W12 | Corpus tail (parity gaps; candidate residual closed 2026-08-22) | oxpinyin-core, oxpinyin-engine, oxpinyin-capi |
 | W13 | Double-pinyin and bopomofo input schemes (feature implementation) | oxpinyin-core, oxpinyin-engine |
 | W14 | Sentence surface (n-best emission, NBEST_MATCH typing, get_sentence) | oxpinyin-capi, oxpinyin-engine |
-| W15 | model20-native runtime-data production, every backend — since P5/P6 in each backend's native file formats, opened directly by the runtime; the production path is the pin's own three-utility sequence | oxpinyin-utils, oxpinyin-datagen (the `--mini` producer library), oxpinyin-store, oxpinyin-data, oxpinyin-runtime |
+| W15 | model20-native runtime-data production, every backend — since P5/P6 in each backend's native file formats, opened directly by the runtime; the production path is the pin's own three-utility sequence | oxpinyin-utils, oxpinyin-store, oxpinyin-data, oxpinyin-runtime |
 
 Crates outside the Stage 1 table (roles in `docs/architecture.md`):
 `oxpinyin-facade` and `oxpinyin-runtime` (the shared orchestration and
@@ -171,14 +172,15 @@ parked.
 - **W15 LANDED.** The data pipeline inversion is complete: runtime tables
   are compiled natively from the canonical pinned `model20` archive for every
   storage backend (tkrzw, Kyoto Cabinet, Berkeley DB) — no
-  producer consumes libpinyin-generated runtime data. Implemented in
-  `crates/oxpinyin-datagen` as a library, and the system data directory is
-  now built by libpinyin's own sequence (`gen_binary_files` →
-  `import_interpolation` → `gen_unigram`) under its pin names in
-  `oxpinyin-utils`; the backend producers stay feature-gated in datagen's
-  `Cargo.toml` for the `fixtures/w3` reproduction only. The retired `oxpinyin-migrate` route (oracle ABI
-  export + verbatim Tkrzw conversion) was proven unnecessary by the
-  native compilation.
+  producer consumes libpinyin-generated runtime data. First implemented in
+  `crates/oxpinyin-datagen` (a library, deleted on 2026-11-01 UTC); the
+  system data directory is built by libpinyin's own sequence
+  (`gen_binary_files` → `import_interpolation` → `gen_unigram`) under its
+  pin names in `oxpinyin-utils`, and `just w3-fixtures` runs that sequence
+  over a Python-selected subset of the model for the `fixtures/w3`
+  reproduction (`tools/dev/w3_fixtures.py`). The retired `oxpinyin-migrate`
+  route (oracle ABI export + verbatim Tkrzw conversion) was proven
+  unnecessary by the native compilation.
   Architecture and the canonical-source invariant:
   `docs/findings/datagen-model20.md`.
 
@@ -194,8 +196,8 @@ parked.
   table, nothing scanned at open — so `Runtime::open` and `pinyin_init`
   open a system directory the way libpinyin does
   (`docs/findings/runtime-direct-libpinyin-data-2026-09-02.md`).
-  `interpolation2.text` is consumed by datagen only and is no longer
-  emitted or read at runtime (3f0f0f36). The drop-in invariant is gated
+  `interpolation2.text` is consumed by `import_interpolation` only and
+  is no longer emitted or read at runtime (3f0f0f36). The drop-in invariant is gated
   end to end by `tools/bisection/run-same-data-dir-diff.sh`: the
   pin-built `libpinyin.so` and oxpinyin's C ABI open one unchanged
   libpinyin `data/` and are byte-identical on every surface but the two

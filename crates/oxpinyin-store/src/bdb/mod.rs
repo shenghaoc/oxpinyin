@@ -7,7 +7,7 @@
 //! * the framed **container** (`DB_BTREE`, one file, `table || 0x00 ||
 //!   key` like the Kyoto Cabinet and tkrzw backends) behind
 //!   [`crate::ReadStore`] / [`crate::WriteStore`] — the session scratch
-//!   store, the datagen output, the benches;
+//!   store, the benches;
 //! * the **raw** keyspace of libpinyin's own files behind
 //!   [`crate::RawReadStore`]: `create_hash`/`open_hash_read_only` are
 //!   the `DB_HASH` form of `bigram.db`/`user_bigram.db`, and the

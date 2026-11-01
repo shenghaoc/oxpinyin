@@ -20,7 +20,7 @@ use oxpinyin_core::ChewingKey;
 
 use crate::dict::DictError;
 // The key and record layouts this reader shares with
-// `oxpinyin-datagen`'s writer: one written copy, so a probe here and an
+// `gen_binary_files`'s writer: one written copy, so a probe here and an
 // emission there cannot drift (`crate::row_format`).
 #[cfg(test)]
 use crate::row_format::pinyin_index::encode_items;

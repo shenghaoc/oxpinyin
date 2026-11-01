@@ -15,7 +15,6 @@ members = [
   "crates/oxpinyin-runtime",
   "crates/pinyin-oracle",
   "crates/oxpinyin-training",
-  "crates/oxpinyin-datagen",
   "crates/oxpinyin-kmm",
   "crates/oxpinyin-testsupport",
   "crates/oxpinyin-zhuyin-capi",

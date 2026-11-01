@@ -15,8 +15,7 @@
 //!
 //! Rows come out sorted by ascending key bytes; KC `TreeDB` and tkrzw
 //! `TreeDBM` both order byte-lexically, so the sorted writer order is also
-//! the container's physical order. `oxpinyin-datagen` writes the system
-//! tables with this and `oxpinyin-user`'s persistence writes the user
+//! the container's physical order. `oxpinyin-user`'s persistence writes the user
 //! `user_pinyin_index.bin` / `user_phrase_index.bin` — a user table entry
 //! passes through the same `add_index` upstream, so the record shapes
 //! are identical.

@@ -246,6 +246,77 @@
         "addon_pinyin_index.bin",
         "addon_phrase_index.bin"
       ]
+    },
+    {
+      "id": "gbf-toned-model",
+      "utility": "gen_binary_files",
+      "source": "utils/storage/gen_binary_files.cpp at 074a2219: 36-109 and 111-152; src/storage/chewing_large_table2.cpp: 112-158 (USE_TONE parse, the tone bits of every index item); src/storage/phrase_index.cpp (SubPhraseIndex::store); utils/utils_helper.h: 73-145",
+      "args": [
+        "--gen-punct-table"
+      ],
+      "fixture_dir": "fixtures/w3",
+      "files": {
+        "gb_char.table": {
+          "file": "fixtures/datagen-toned/gb_char.table"
+        },
+        "gbk_char.table": {
+          "file": "fixtures/datagen-toned/gbk_char.table"
+        },
+        "opengram.table": {
+          "file": "fixtures/datagen-toned/opengram.table"
+        },
+        "merged.table": {
+          "file": "fixtures/datagen-toned/merged.table"
+        },
+        "art.table": {
+          "file": "fixtures/datagen-toned/art.table"
+        },
+        "culture.table": {
+          "file": "fixtures/datagen-toned/culture.table"
+        },
+        "economy.table": {
+          "file": "fixtures/datagen-toned/economy.table"
+        },
+        "geology.table": {
+          "file": "fixtures/datagen-toned/geology.table"
+        },
+        "history.table": {
+          "file": "fixtures/datagen-toned/history.table"
+        },
+        "life.table": {
+          "file": "fixtures/datagen-toned/life.table"
+        },
+        "nature.table": {
+          "file": "fixtures/datagen-toned/nature.table"
+        },
+        "people.table": {
+          "file": "fixtures/datagen-toned/people.table"
+        },
+        "science.table": {
+          "file": "fixtures/datagen-toned/science.table"
+        },
+        "society.table": {
+          "file": "fixtures/datagen-toned/society.table"
+        },
+        "sport.table": {
+          "file": "fixtures/datagen-toned/sport.table"
+        },
+        "technology.table": {
+          "file": "fixtures/datagen-toned/technology.table"
+        },
+        "punct.table": {
+          "file": "fixtures/datagen-toned/punct.table"
+        }
+      },
+      "dbm_rows": [
+        "phrase_index.bin",
+        "addon_pinyin_index.bin",
+        "addon_phrase_index.bin",
+        "punct.bin"
+      ],
+      "dbm_rows_pinyin_index": [
+        "pinyin_index.bin"
+      ]
     }
   ]
 }

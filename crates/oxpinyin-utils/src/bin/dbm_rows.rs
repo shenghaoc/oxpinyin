@@ -7,10 +7,20 @@ use std::ops::Bound;
 use oxpinyin_store::{DefaultStore, RawReadStore as _, ReadStore as _};
 
 fn main() {
-    let path = std::env::args_os().nth(1).expect("dbm file");
+    let mut args = std::env::args_os().skip(1);
+    let first = args.next().expect("dbm file");
+    let (keys_only, path) = if first == std::ffi::OsStr::new("--keys") {
+        (true, args.next().expect("dbm file"))
+    } else {
+        (false, first)
+    };
     let rows = rows(&path);
     for (key, value) in rows {
-        println!("{} {}", hex(&key), hex(&value));
+        if keys_only {
+            println!("{}", hex(&key));
+        } else {
+            println!("{} {}", hex(&key), hex(&value));
+        }
     }
 }
 

@@ -312,8 +312,8 @@ pub struct SystemDictionary {
 
 impl SystemDictionary {
     /// Opens the default facade from the backend's native system data
-    /// directory — whether a libpinyin build or `oxpinyin-datagen`
-    /// wrote it
+    /// directory — whether a libpinyin build or `oxpinyin-utils`' ports
+    /// of its programs wrote it
     /// ([`SystemDbm::file_name`] names the DBMs, [`SYSTEM_LIBRARY_FILES`]
     /// the chunk files).
     ///

@@ -338,7 +338,7 @@ def surface(ctx: Context, args: Sequence[str]) -> int:
     have = data_extension(directory)
     if have is None:
         ctx.emit(f'FAIL: cannot tell which backend wrote {spec.variable}={value}')
-        ctx.emit('  (no datagen-manifest.txt backend= and no known table.conf database format:)')
+        ctx.emit('  (no known table.conf database format: token)')
         return 1
     if have != ctx.settings.extension:
         ctx.emit(f"FAIL: BACKEND MISMATCH — the {ctx.settings.cell} cell's capi is {NAMES[ctx.settings.extension]},")

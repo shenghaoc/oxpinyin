@@ -19,7 +19,8 @@
 //! (`gen_binary_files`, `import_interpolation`, `gen_unigram`); this module
 //! supplies the first two and `export_interpolation`, which writes the
 //! model text the second one reads, and `training::gen_unigram` completes
-//! the chain. `oxpinyin-datagen` has no `compile` command.
+//! the chain. `just w3-fixtures` runs the same sequence over the mini
+//! subset of model20 to regenerate `fixtures/w3`.
 
 #![forbid(unsafe_code)]
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]

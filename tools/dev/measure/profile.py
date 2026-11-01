@@ -314,29 +314,17 @@ class W8:
         """Require a tkrzw export, its tables and the pinned model before anything is built."""
         # All three backend flavours name their tables identically, so only
         # the backend token distinguishes them; the cycle's oracle is tkrzw.
-        # A datagen-manifest.txt written by the retired command is still
-        # honoured; otherwise table.conf's `database format:` names the
-        # backend, as libpinyin's own configure writes it.
-        since = ''
-        manifest = f'{self.export_dir}/datagen-manifest.txt'
-        if Path(manifest).is_file():
-            try:
-                tokens = Path(manifest).read_bytes().split(b'\n')
-            except OSError as error:
-                warn(f'{manifest}: {error.strerror}')
-                tokens = []
-            if b'backend=tkt' in tokens:
-                since = 'tkt'
-        if not since:
-            config = f'{self.export_dir}/table.conf'
-            try:
-                text = Path(config).read_text(errors='replace')
-            except OSError as error:
-                warn(f'{config}: {error.strerror}')
-                text = ''
-            match = re.search(r'^database format:\s*(\S+)', text, re.M)
-            since = {'Tkrzw': 'tkt', 'KyotoCabinet': 'kc', 'BerkeleyDB': 'db'}.get(
-                match.group(1) if match else '', '')
+        # table.conf's `database format:` names the backend, as libpinyin's
+        # own configure writes it.
+        config = f'{self.export_dir}/table.conf'
+        try:
+            text = Path(config).read_text(errors='replace')
+        except OSError as error:
+            warn(f'{config}: {error.strerror}')
+            text = ''
+        match = re.search(r'^database format:\s*(\S+)', text, re.M)
+        since = {'Tkrzw': 'tkt', 'KyotoCabinet': 'kc', 'BerkeleyDB': 'db'}.get(
+            match.group(1) if match else '', '')
         if since != 'tkt':
             die(f'fatal: {self.export_dir} is not a tkrzw export; rebuild it with --features tkrzw', code=2)
         for name in ('pinyin_index.bin', 'phrase_index.bin', 'bigram.db'):

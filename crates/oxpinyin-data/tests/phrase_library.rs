@@ -209,7 +209,7 @@ fn empty_library_answers_the_one_to_one_range() {
     // `gen_binary_files` output for an empty `.table`: header, three
     // section offsets one byte apart, three separators, and *no* entry
     // area — `add_phrase_item` never ran, so nothing was reserved. The
-    // same vector `oxpinyin-datagen`'s `build_chunk_of_no_items_matches_the_pin`
+    // same vector `chunk_write`'s `build_chunk_of_no_items_matches_the_pin`
     // pins on the writer side.
     assert_eq!(
         bytes,

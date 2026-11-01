@@ -220,7 +220,7 @@ def round_trip(argv, *, root=ROOT):
 
 
 def drop_in(argv):
-    """Compile identical source inputs through both producers and compare the existing parity test."""
+    """Compile one model through the pin's three programs and oxpinyin-utils' ports; compare the chunk files."""
     if not argv or not argv[0]:
         fail('backend: kc or tkrzw', 1)
     if len(argv) < 2 or not argv[1]:
@@ -256,9 +256,6 @@ def drop_in(argv):
     run([*base, 'gen_unigram', '--', '--table-dir', model], cwd=ours, heavy=True)
     print(f'oxpinyin ({backend}) wrote:')
     run(['ls', ours])
-    run(['cargo', 'test', '--locked', '-p', 'oxpinyin-datagen', *features, '--test', 'libpinyin_parity', '--',
-         '--include-ignored', '--nocapture'], heavy=True,
-        env=dict(os.environ, OXPINYIN_LIBPINYIN_DATA_DIR=str(theirs), PINYIN_MODEL_DIR=str(model)))
     for chunk in sorted(theirs.glob('*.bin')):
         if chunk.name in ('pinyin_index.bin', 'phrase_index.bin', 'addon_pinyin_index.bin', 'addon_phrase_index.bin', 'punct.bin'):
             continue
