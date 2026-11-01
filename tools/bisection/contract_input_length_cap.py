@@ -59,12 +59,12 @@ def _(k):
 
 def boundary(length):
     """Parse `length` bytes of repeated ni on a fresh instance; return the
-    parse's answer and the stored parsed length."""
+    parse's answer and the stored parsed length under its decimal label."""
     def run(k):
         inst = k.alloc()
         text = (b'ni' * ((length + 1) // 2))[:length]
-        return [k.fn('parse_more_full_pinyins', Z, P, S)(inst, text),
-                k.fn('get_parsed_input_length', Z, P)(inst)]
+        return {str(length): [k.fn('parse_more_full_pinyins', Z, P, S)(inst, text),
+                              k.fn('get_parsed_input_length', Z, P)(inst)]}
     return run
 
 

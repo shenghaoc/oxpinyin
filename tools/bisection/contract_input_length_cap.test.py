@@ -43,7 +43,7 @@ class InputLengthCapTests(unittest.TestCase):
                 kit.fn.side_effect = lambda name, *types: {'parse_more_full_pinyins': parse,
                                                            'get_parsed_input_length': stored}[name]
                 result = declarations()['input-length-boundary-%d' % length][2](kit)
-                self.assertEqual(result, [length, 7])
+                self.assertEqual(result, {str(length): [length, 7]})
                 text = parse.call_args.args[1]
                 self.assertEqual(text, (b'ni' * 32768)[:length])
                 self.assertIs(parse.call_args.args[0], kit.alloc.return_value)
