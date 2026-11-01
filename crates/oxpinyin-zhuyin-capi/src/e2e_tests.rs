@@ -545,6 +545,44 @@ fn the_key_accessors_answer_false_at_size_max_on_an_empty_matrix() {
     close(context, instance);
 }
 
+/// Past byte 65535 the key-rest positions narrow into the pin's `guint16`
+/// fields mod 2^16 (maintainer ruling 2026-11-01 UTC,
+/// `docs/findings/1501-guint16-key-positions.md`). `su3` then `su`
+/// repeated puts a key at 65535..65537, which crosses byte 65536, and one
+/// at 65537..65539, wholly past it; both lengths stay 2.
+#[test]
+fn key_rest_positions_past_byte_65535_wrap() {
+    let (context, instance) = open();
+    assert!(crate::config::zhuyin_set_options(context, 1 << 5));
+    assert!(crate::config::zhuyin_set_chewing_scheme(context, 1));
+    let input = format!("su3{}", "su".repeat(32_769));
+    assert_eq!(
+        zhuyin_parse_more_chewings(instance, cstr(&input).as_ptr()),
+        65_541
+    );
+    for (offset, begin, end) in [(65_535_usize, 65_535_u16, 1_u16), (65_537, 1, 3)] {
+        let mut rest: *mut crate::types::ChewingKeyRest = ptr::null_mut();
+        assert!(crate::cursor::zhuyin_get_zhuyin_key_rest(
+            instance,
+            offset,
+            &raw mut rest
+        ));
+        let (mut b, mut e) = (0_u16, 0_u16);
+        assert!(crate::cursor::zhuyin_get_zhuyin_key_rest_positions(
+            instance, rest, &raw mut b, &raw mut e
+        ));
+        assert_eq!((b, e), (begin, end), "offset {offset}");
+        let mut length = 0_u16;
+        assert!(crate::cursor::zhuyin_get_zhuyin_key_rest_length(
+            instance,
+            rest,
+            &raw mut length
+        ));
+        assert_eq!(length, 2, "offset {offset}");
+    }
+    close(context, instance);
+}
+
 /// Imports 你好 into libraries `1..=libraries` of the fixture, which loads
 /// libraries 1 to 7, so the phrase-table search holds `libraries` tokens.
 fn hold_nihao_in_libraries(context: *mut crate::types::ZhuyinContext, libraries: u8) {

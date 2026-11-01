@@ -92,14 +92,12 @@ pub extern "C" fn pinyin_get_pinyin_key_rest(
             return false;
         }
     };
-    KEY_REST_SLOT.begin.store(
-        u16::try_from(found.1).unwrap_or(u16::MAX),
-        Ordering::Relaxed,
-    );
-    KEY_REST_SLOT.end.store(
-        u16::try_from(found.2).unwrap_or(u16::MAX),
-        Ordering::Relaxed,
-    );
+    // `m_raw_begin`/`m_raw_end` are `guint16` (`chewing_key.h:102-103`),
+    // and the pin's `int` positions narrow into them mod 2^16: past byte
+    // 65535 the positions wrap, as the pin's do (maintainer ruling
+    // 2026-11-01 UTC, `docs/findings/1501-guint16-key-positions.md`).
+    KEY_REST_SLOT.begin.store(found.1 as u16, Ordering::Relaxed);
+    KEY_REST_SLOT.end.store(found.2 as u16, Ordering::Relaxed);
     if !key_rest.is_null() {
         // SAFETY: Null-checked above; the slot is a `static`, so the
         // pointer never dangles. `KeyRestSlot` is `repr(C)` over two
@@ -863,5 +861,57 @@ mod preedit_key_tests {
         // SAFETY: the slot is a `static`: the pointer outlives the instances.
         assert_ne!(unsafe { *a }, ni);
         crate::context::pinyin_fini(context);
+    }
+
+    /// Past byte 65535 the key-rest positions narrow into the pin's
+    /// `guint16` fields mod 2^16 (maintainer ruling 2026-11-01 UTC,
+    /// `docs/findings/1501-guint16-key-positions.md`). `ni3` then `ni`
+    /// repeated puts a key at 65535..65537, which crosses byte 65536, and
+    /// one at 65537..65539, wholly past it; both lengths stay 2.
+    #[test]
+    fn key_rest_positions_past_byte_65535_wrap() {
+        use crate::config::{pinyin_set_double_pinyin_scheme, pinyin_set_zhuyin_scheme};
+        use crate::parse::{pinyin_parse_more_chewings, pinyin_parse_more_double_pinyins};
+
+        type Parse =
+            extern "C" fn(*mut crate::types::PinyinInstance, *const std::ffi::c_char) -> usize;
+        let modes: [(&str, Parse, &str, &str); 2] = [
+            ("double", pinyin_parse_more_double_pinyins, "ni3", "ni"),
+            ("chewing", pinyin_parse_more_chewings, "su3", "su"),
+        ];
+        let _slots = key_slot_guard();
+        for (mode, parse, head, unit) in modes {
+            let user_dir = TempUserDir::new(&format!("key-rest-wrap-{mode}"));
+            let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+            assert!(pinyin_set_options(context, 1 << 5));
+            assert!(pinyin_set_double_pinyin_scheme(context, 2));
+            assert!(pinyin_set_zhuyin_scheme(context, 1));
+            let input = format!("{head}{}", unit.repeat(32_769));
+            assert_eq!(parse(instance, cstr(&input).as_ptr()), 65_541, "{mode}");
+
+            for (offset, begin, end) in [(65_535_usize, 65_535_u16, 1_u16), (65_537, 1, 3)] {
+                let mut rest: *mut ChewingKeyRest = ptr::null_mut();
+                assert!(super::pinyin_get_pinyin_key_rest(
+                    instance,
+                    offset,
+                    &raw mut rest
+                ));
+                let (mut b, mut e) = (0_u16, 0_u16);
+                assert!(super::pinyin_get_pinyin_key_rest_positions(
+                    instance, rest, &raw mut b, &raw mut e
+                ));
+                assert_eq!((b, e), (begin, end), "{mode} offset {offset}");
+                let mut length = 0_u16;
+                assert!(super::pinyin_get_pinyin_key_rest_length(
+                    instance,
+                    rest,
+                    &raw mut length
+                ));
+                assert_eq!(length, 2, "{mode} offset {offset}");
+            }
+
+            crate::instance::pinyin_free_instance(instance);
+            crate::context::pinyin_fini(context);
+        }
     }
 }

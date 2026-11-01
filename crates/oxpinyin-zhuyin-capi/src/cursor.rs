@@ -115,14 +115,12 @@ pub extern "C" fn zhuyin_get_zhuyin_key_rest(
         Ok(None) => return false,
         Err(error) => return key_lookup_failed(&error, "zhuyin_get_zhuyin_key_rest"),
     };
-    KEY_REST_SLOT.begin.store(
-        u16::try_from(found.1).unwrap_or(u16::MAX),
-        Ordering::Relaxed,
-    );
-    KEY_REST_SLOT.end.store(
-        u16::try_from(found.2).unwrap_or(u16::MAX),
-        Ordering::Relaxed,
-    );
+    // `m_raw_begin`/`m_raw_end` are `guint16` (`chewing_key.h:102-103`),
+    // and the pin's `int` positions narrow into them mod 2^16: past byte
+    // 65535 the positions wrap, as the pin's do (maintainer ruling
+    // 2026-11-01 UTC, `docs/findings/1501-guint16-key-positions.md`).
+    KEY_REST_SLOT.begin.store(found.1 as u16, Ordering::Relaxed);
+    KEY_REST_SLOT.end.store(found.2 as u16, Ordering::Relaxed);
     if !key_rest.is_null() {
         // SAFETY: Null-checked above; the slot is a `static`, so the
         // pointer never dangles. `KeyRestSlot` is `repr(C)` over two
