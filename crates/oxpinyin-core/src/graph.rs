@@ -284,9 +284,14 @@ impl SegmentGraph {
             Vec::with_capacity(input.len().saturating_mul(MAX_SYLLABLE_LEN).max(8));
         let mut starts = Vec::with_capacity(node_count + 1);
 
+        // One forward pass over each apostrophe run keeps the build linear:
+        // every node inside a run shares the run's end.
+        let mut run_end = 0;
         for node in 0..node_count {
             starts.push(edges.len());
-            emit_edges(input, node, options, &mut edges);
+            if let Some(syllable_start) = key_start(input, node, &mut run_end) {
+                emit_edges(input, node, syllable_start, options, &mut edges);
+            }
         }
         starts.push(edges.len());
 
@@ -634,11 +639,13 @@ impl FewestKeys {
 /// At a fixed position a given length matches at most one key: the canonical,
 /// initial-only, and option-gated alias spellings are disjoint exact strings.
 /// So one edge per length, and the emission order is total.
-fn emit_edges(input: &[u8], node: usize, options: OptionBits, edges: &mut Vec<Edge>) {
-    let Some(syllable_start) = key_start(input, node) else {
-        return;
-    };
-
+fn emit_edges(
+    input: &[u8],
+    node: usize,
+    syllable_start: usize,
+    options: OptionBits,
+    edges: &mut Vec<Edge>,
+) {
     let available = input.len() - syllable_start;
     // The pin's window is `max_full_pinyin_length = 7`, whose own comment
     // says "include tone" (`pinyin_parser2.cpp:82`): one byte beyond the
@@ -745,14 +752,19 @@ fn tone_split(text: &[u8], use_tone: bool, force_tone: bool) -> Option<(&[u8], u
 /// A *run* of consecutive apostrophes collapses to a single hop, so
 /// `'ni` and `ni''hao` both consume their full input on the pin side.
 /// Skip the whole run and let the key begin at the next byte.
-fn key_start(input: &[u8], node: usize) -> Option<usize> {
+///
+/// `run_end` caches the end of the run last scanned, so the nodes of one
+/// run share a single scan and a build stays linear in the input length.
+fn key_start(input: &[u8], node: usize, run_end: &mut usize) -> Option<usize> {
     let byte = *input.get(node)?;
     if byte == b'\'' {
-        let mut cursor = node + 1;
-        while *input.get(cursor)? == b'\'' {
-            cursor += 1;
+        if *run_end <= node {
+            *run_end = input[node..]
+                .iter()
+                .position(|byte| *byte != b'\'')
+                .map_or(input.len(), |offset| node + offset);
         }
-        return Some(cursor);
+        return (*run_end < input.len()).then_some(*run_end);
     }
     Some(node)
 }
