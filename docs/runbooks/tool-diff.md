@@ -13,8 +13,9 @@ bash tools/oracle/compat.sh --cell tkrzw --runners tool-diff
 ```
 
 Compatibility preparation builds the unmodified pin's libraries with
-`tools/oracle/build-oracle.sh --libs-only`, then its two utility targets in
-that build tree. Cell artifact selection builds `oxpinyin-utils` once and
+`tools/oracle/build-oracle.sh --libs-only`, then every registered utility
+target in that build tree (`PIN_UTILITIES` groups them by `utils/`
+directory). Cell artifact selection builds `oxpinyin-utils` once and
 records both binaries. The runner checks the pin source revision and diff
 before executing either utility. The normal heavy slot governs preparation,
 subject builds and the differential. No release builds are needed.
@@ -55,9 +56,10 @@ just policy-record docs/findings/eio-table-generator-invalid-utf8.md /path/to/ob
 Every accepted pair binds both complete observations with the existing
 schema-2 record digests. A changed exit, stream or file fails the record.
 
-None of the three registered utilities opens a DBM: `DATABASE_FREE` in
-`tools/dev/tool_diff.py` names them, and each capture row carries
-`database_free` from it. The writer records such a case once, for every
+The registered table generators and `k_mixture_model_to_interpolation`
+open no DBM: `DATABASE_FREE` in `tools/dev/tool_diff.py` names them, and
+each capture row carries `database_free` from it. The three segmentation
+utilities do open one, so their rows stay per-cell. The writer records such a case once, for every
 cell:
 
 ```json
@@ -136,3 +138,34 @@ every per-cell entry it replaced. Re-scored against them, the bdb and kc
 captures stay 28 MATCH and 12 POLICY-ACCEPTED. The tkrzw capture is now
 28 MATCH and 12 POLICY-ACCEPTED as well: the five #1436/#1450 cases that
 lacked tkrzw evidence are covered by the entry for every cell.
+
+## Segmentation utilities (2026-10-31 UTC)
+
+`tool-cases/{ngseg,spseg,mergeseq}.json` hold ten, ten and nine
+source-derived cases. They cover GLib `--help`, an unknown option, too
+many arguments (the output file is opened first), a missing input file,
+a missing `table.conf`, empty input and an empty line, the
+`--generate-extra-enter` flag for the two segmenters, invalid UTF-8, and
+ordinary segmentation/merge over the committed `fixtures/w9` inputs.
+
+The case file gained one payload kind for them: `"fixture_dir":
+"fixtures/w3"` copies the cell's committed data directory (`db` for bdb,
+`kct` for kc, `tkt` for tkrzw — `fixtures/w3/README.md`) into the
+private working directory before the case's own `files` are written, so
+`table.conf`, `phrase_index.bin`, the chunk files and `bigram.db` are the
+relative names the pin opens. The complete file inventory still compares.
+
+On the BDB cell (pin build at the BDB configuration, subject built with
+`--features bdb`) and on the tkrzw reference cell (pin build at the
+tkrzw configuration, subject built with the default tkrzw features, the
+sound `libtkrzw` on `LD_LIBRARY_PATH`), all 29 cases reported MATCH.
+`ngseg` exercises the real `PhraseLookup::get_best_match` path over the
+committed bigram; `spseg`/`mergeseq` exercise the phrase table alone.
+
+The named mutation `seg-phrase-index-name` changes only the phrase-table
+path in `oxpinyin-utils::segment::data::load` from `phrase_index.bin` to
+`phrase_index.absent.bin`. The tkrzw run detects it in the three ordinary
+cases (`ngseg-mini-fixture`, `spseg-mini-fixture`,
+`mergeseq-mini-fixture`): 3 DIFFER, 0 MATCH. The source was restored byte
+for byte (sha256 checked) before the completion run, which returned the
+29 MATCH above.

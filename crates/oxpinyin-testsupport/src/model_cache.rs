@@ -200,7 +200,7 @@ pub const EXPORT_DIR_ENV: &str = "PINYIN_EXPORT_DIR";
 /// Default export directory when [`EXPORT_DIR_ENV`] is unset.
 ///
 /// The one
-/// definition for the harness, benches and oracle bins; `oxpinyin-segment`
+/// definition for the harness, benches and oracle bins; the training crate
 /// carries its own equal copy because it must not depend on this crate.
 pub const DEFAULT_EXPORT_DIR: &str = "/tmp/oxpinyin-export";
 

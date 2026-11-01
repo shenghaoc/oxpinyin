@@ -1,8 +1,8 @@
-//! Training-only Han segmenter reproducing libpinyin `ngseg`.
-//!
-//! Takes raw UTF-8 (line-oriented) and the pinned system model, and emits
-//! the `token phrase` / `null_token` stream `gen_ngram` consumes. Never
-//! ships with the engine. See `docs/findings/segmenter-port.md`.
+//! Training-only Han phrase data shared by the counter, emitter and λ
+//! tools: the phrase lexicon over the system chunk files, the model
+//! constants and `table.conf` λ. The `ngseg`, `spseg` and `mergeseq`
+//! binaries own their pin interfaces in `oxpinyin-utils`; this module keeps
+//! the loaders those training stages reuse. Never ships with the engine.
 #![forbid(unsafe_code)]
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 #![cfg_attr(not(test), deny(clippy::expect_used))]
@@ -10,123 +10,19 @@
 #![cfg_attr(not(test), deny(clippy::panic_in_result_fn))]
 #![warn(missing_docs)]
 
-mod driver;
 mod error;
 mod lexicon;
-pub mod mergeseq;
 mod model;
 mod paths;
-pub mod spseg;
 pub mod tool_cli;
-mod trellis;
 
-pub use driver::{Emitted, segment_bytes, segment_line};
 pub use error::SegmentError;
 // Re-exported so the training-tool binaries name export tables in the
 // compiled-in backend's format without a direct oxpinyin-data edge.
 pub use lexicon::{MAX_PHRASE_LENGTH, PhraseLexicon};
-pub use model::{NULL_TOKEN, PINNED_LAMBDA, SENTENCE_START, SegmentModel, load_table_conf_lambda};
+pub use model::{NULL_TOKEN, PINNED_LAMBDA, SENTENCE_START, load_table_conf_lambda};
 pub use oxpinyin_data::SystemDbm;
 pub use paths::{
     DEFAULT_EXPORT_DIR, EXPORT_DBMS, EXPORT_DIR_ENV, MODEL_CACHE_ENV, MODEL_DIR_ENV, MODEL_FILES,
     SegmenterPaths, load_lambda, locate_export_dir, locate_model_dir,
 };
-
-use std::path::Path;
-
-/// A loaded segmenter: phrase table + pinned bigram/unigram + λ.
-pub struct Segmenter {
-    lexicon: PhraseLexicon,
-    model: SegmentModel,
-    lambda: f32,
-}
-
-impl Segmenter {
-    /// Opens the phrase index, system bigram, and interpolation2 unigrams.
-    ///
-    /// `lambda` is the pin's `table.conf` value ([`PINNED_LAMBDA`]) unless
-    /// the caller parsed a different file.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`SegmentError`] when a table cannot be read.
-    pub fn open(paths: &SegmenterPaths, lambda: f32) -> Result<Self, SegmentError> {
-        let lexicon = PhraseLexicon::from_system_dir(&paths.system_dir)?;
-        let model = SegmentModel::open(&paths.bigram, &paths.interpolation2, &lexicon)?;
-        Ok(Self {
-            lexicon,
-            model,
-            lambda,
-        })
-    }
-
-    /// Discovers the system-table export and the model20 cache, then opens them
-    /// with [`PINNED_LAMBDA`] (or `table.conf` when `table_conf` is set).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`SegmentError`] when a path is missing or a table fails.
-    pub fn discover(table_conf: Option<&Path>) -> Result<Self, SegmentError> {
-        let paths = SegmenterPaths::discover()?;
-        let lambda = load_lambda(table_conf).unwrap_or(PINNED_LAMBDA);
-        Self::open(&paths, lambda)
-    }
-
-    /// In-memory constructor for tests.
-    #[must_use]
-    pub const fn from_parts(lexicon: PhraseLexicon, model: SegmentModel, lambda: f32) -> Self {
-        Self {
-            lexicon,
-            model,
-            lambda,
-        }
-    }
-
-    /// The interpolation weight in force.
-    #[must_use]
-    pub const fn lambda(&self) -> f32 {
-        self.lambda
-    }
-
-    /// The phrase table.
-    #[must_use]
-    pub const fn lexicon(&self) -> &PhraseLexicon {
-        &self.lexicon
-    }
-
-    /// Segments one UTF-8 line (no trailing newline).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`SegmentError`] when a bigram table read fails.
-    pub fn segment_line(&self, line: &str) -> Result<Vec<Emitted>, SegmentError> {
-        segment_line(&self.lexicon, &self.model, self.lambda, line)
-    }
-
-    /// Segments a whole file, including the trailing file-tail `null_token`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`SegmentError`] when a bigram table read fails.
-    pub fn segment_bytes(&self, input: &[u8], extra_enter: bool) -> Result<String, SegmentError> {
-        segment_bytes(&self.lexicon, &self.model, self.lambda, input, extra_enter)
-    }
-
-    /// Segments a whole file the `spseg` way (fewest-words shortest path).
-    /// Consults only the phrase table; the bigram/λ are ignored.
-    #[must_use]
-    pub fn spseg_bytes(&self, input: &[u8], extra_enter: bool) -> String {
-        spseg::segment_bytes(&self.lexicon, input, extra_enter)
-    }
-
-    /// Merges a segmented token stream into longer dictionary phrases
-    /// (`mergeseq`). Consults only the phrase table.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`SegmentError::MalformedLine`] when an input line is not a
-    /// `token phrase` record or names an unknown token.
-    pub fn mergeseq_bytes(&self, input: &[u8]) -> Result<String, SegmentError> {
-        mergeseq::merge_bytes(&self.lexicon, input)
-    }
-}

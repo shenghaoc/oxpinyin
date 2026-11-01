@@ -76,6 +76,17 @@ impl<D: ChewingDbm> PhraseTable<D> {
         decode_tokens(&value)
     }
 
+    /// `PhraseLargeTable3::search`'s answer without decoding: `None` when
+    /// the key is absent, `Some(value)` when it is present, a prefix marker
+    /// with an empty value included.
+    pub(crate) fn present_key(&self, key: &[u8]) -> Result<Option<Vec<u8>>, DictError> {
+        let mut value = Vec::new();
+        if !self.dbm.get(key, &mut value)? {
+            return Ok(None);
+        }
+        Ok(Some(value))
+    }
+
     /// Tokens of every stored phrase that starts with `prefix` and is
     /// longer — `PhraseLargeTable3::search_suggestion`
     /// (`phrase_large_table3_kyotodb.cpp` / `_tkrzwdb.cpp`), the
