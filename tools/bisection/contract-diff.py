@@ -173,6 +173,7 @@ import contract_default_options
 import contract_invalid_input_bytes
 import contract_negative_remember
 import contract_input_length_cap
+import contract_key_positions_past_65535
 import contract_double_fini
 import contract_non_utf8_directories
 import contract_axis_j
@@ -597,6 +598,10 @@ contract_negative_remember.register(case)
 
 # The #540 input-length cases stay at their original point in the registration sequence.
 contract_input_length_cap.register(case)
+
+
+# The #1501 key-position cases past byte 65535 follow the input-length cases.
+contract_key_positions_past_65535.register(case)
 
 
 # The #528 case stays at its original point in the registration sequence.

@@ -4459,3 +4459,7 @@ Recorded, with the pin sites, items and cases, in
 ### The full-pinyin parse's 16-bit steps (2026-11-01 UTC, #1501)
 
 **Language artefact, POLICY-ACCEPTED.** The pin's full-pinyin parse stops at byte 32767 because its steps are `gint16`s (`pinyin_parser2.cpp:67-70`); oxpinyin parses the whole input, and policy row 59 is reopened: [1501-gint16-input-cap.md](1501-gint16-input-cap.md).
+
+### Key positions past byte 65535 (2026-11-01 UTC, #1501)
+
+**Contract for the getters, POLICY-ACCEPTED for the matrix.** The C getters wrap key-rest positions past 65535 mod 2^16 as the pin's `guint16` fields do; oxpinyin keeps real positions where the pin's `fill_matrix` places keys at the wrapped begin (`phonetic_key_matrix.cpp:51-55`): [1501-guint16-key-positions.md](1501-guint16-key-positions.md).

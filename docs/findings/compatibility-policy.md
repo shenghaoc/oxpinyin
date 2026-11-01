@@ -82,6 +82,8 @@ The rule is under "Amendment — class (c) retired; pin aborts reproduced"
 below. The 2026-10-29 UTC text above and the class (c) section are
 history.
 
+**Amended 2026-11-01 UTC (maintainer):** key positions past byte 65535 reach the C getters wrapped mod 2^16, as `ChewingKeyRest`'s `guint16` fields hold them at the pin (contract, limb 1); the pin's placement of keys at the wrapped begin (a 65536-column ring matrix) is waived by explicit ruling, and admits no other difference by analogy: [1501-guint16-key-positions](1501-guint16-key-positions.md).
+
 ## Amendment — class (c) retired; pin aborts reproduced (2026-10-31 UTC)
 
 Maintainer ruling 2026-10-31 UTC, dated with `date -u`. Pin: libpinyin
