@@ -167,7 +167,7 @@
   steps stands. This record corrects that record's claim that
   double-pinyin and chewing past 65535 bytes match the pin.
 - **Evidence:** the digests below come from `just policy-record` over an
-  `--observations` capture of the cases above on the cells
+  `--observations` capture of the cases above on tkrzw, the only cell
   `cells-for-diff.py` selects:
 
   ```sh
@@ -182,6 +182,199 @@
   "record": "1501-guint16-key-positions",
   "status": "current",
   "disposition": "POLICY-ACCEPTED",
-  "cases": {}
+  "cases": {
+    "key-position-past-65535/chewing-pinyin-cursor": {
+      "cells": {
+        "tkrzw": {
+          "pin": {
+            "sha256": "f82ba4bda9b417dee0b41d34f6a416362512dde2bf377f4d4840bb4b155422b1",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.left 65537": "2705bd6ffb3d9453",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.offset 65538": "475ad3c42b626ab9",
+              "result.right 65535": "2bf55f259687bc08",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "e92737eea14cea9cc70453c690890b36b0aef6efc691d9ab8f18e01e6192573d",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.left 65537": "475ad3c42b626ab9",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.offset 65538": "2a50ec2c37ec307e",
+              "result.right 65535": "2a50ec2c37ec307e",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.left 65537[1:2]: pin [0]; subject [65535]",
+            "result.offset 65538[1:2]: pin [65535]; subject [65537]",
+            "result.right 65535[1:2]: pin [1]; subject [65537]"
+          ]
+        }
+      }
+    },
+    "key-position-past-65535/chewing-pinyin-past-key": {
+      "cells": {
+        "tkrzw": {
+          "pin": {
+            "sha256": "27666531445ac8b8cb76d8e4a90aada85956d48cde515ee7351ec9d1eab7172d",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.rest 65537": "456e2e3fa05ee1e2",
+              "result.rest 65539": "456e2e3fa05ee1e2",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "78be0e2a2c01c7683b6f53d7d322e2d227fbad748e7d907c27e854479111ad87",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.rest 65537": "5c53850023b08bdc",
+              "result.rest 65539": "9c44033e4d8b71e3",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.rest 65537[0:1]: pin [false]; subject [true, \"2b00\", true] … (length 7)",
+            "result.rest 65539[0:1]: pin [false]; subject [true, \"2b00\", true] … (length 7)",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        }
+      }
+    },
+    "key-position-past-65535/chewing-zhuyin-cursor": {
+      "cells": {
+        "tkrzw": {
+          "pin": {
+            "sha256": "f82ba4bda9b417dee0b41d34f6a416362512dde2bf377f4d4840bb4b155422b1",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.left 65537": "2705bd6ffb3d9453",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.offset 65538": "475ad3c42b626ab9",
+              "result.right 65535": "2bf55f259687bc08",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "e92737eea14cea9cc70453c690890b36b0aef6efc691d9ab8f18e01e6192573d",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.left 65537": "475ad3c42b626ab9",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.offset 65538": "2a50ec2c37ec307e",
+              "result.right 65535": "2a50ec2c37ec307e",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.left 65537[1:2]: pin [0]; subject [65535]",
+            "result.offset 65538[1:2]: pin [65535]; subject [65537]",
+            "result.right 65535[1:2]: pin [1]; subject [65537]"
+          ]
+        }
+      }
+    },
+    "key-position-past-65535/chewing-zhuyin-past-key": {
+      "cells": {
+        "tkrzw": {
+          "pin": {
+            "sha256": "27666531445ac8b8cb76d8e4a90aada85956d48cde515ee7351ec9d1eab7172d",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.rest 65537": "456e2e3fa05ee1e2",
+              "result.rest 65539": "456e2e3fa05ee1e2",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "78be0e2a2c01c7683b6f53d7d322e2d227fbad748e7d907c27e854479111ad87",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.rest 65537": "5c53850023b08bdc",
+              "result.rest 65539": "9c44033e4d8b71e3",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.rest 65537[0:1]: pin [false]; subject [true, \"2b00\", true] … (length 7)",
+            "result.rest 65539[0:1]: pin [false]; subject [true, \"2b00\", true] … (length 7)",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        }
+      }
+    },
+    "key-position-past-65535/double-pinyin-cursor": {
+      "cells": {
+        "tkrzw": {
+          "pin": {
+            "sha256": "f82ba4bda9b417dee0b41d34f6a416362512dde2bf377f4d4840bb4b155422b1",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.left 65537": "2705bd6ffb3d9453",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.offset 65538": "475ad3c42b626ab9",
+              "result.right 65535": "2bf55f259687bc08",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "e92737eea14cea9cc70453c690890b36b0aef6efc691d9ab8f18e01e6192573d",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.left 65537": "475ad3c42b626ab9",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.offset 65538": "2a50ec2c37ec307e",
+              "result.right 65535": "2a50ec2c37ec307e",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.left 65537[1:2]: pin [0]; subject [65535]",
+            "result.offset 65538[1:2]: pin [65535]; subject [65537]",
+            "result.right 65535[1:2]: pin [1]; subject [65537]"
+          ]
+        }
+      }
+    },
+    "key-position-past-65535/double-pinyin-past-key": {
+      "cells": {
+        "tkrzw": {
+          "pin": {
+            "sha256": "27666531445ac8b8cb76d8e4a90aada85956d48cde515ee7351ec9d1eab7172d",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.rest 65537": "456e2e3fa05ee1e2",
+              "result.rest 65539": "456e2e3fa05ee1e2",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "78be0e2a2c01c7683b6f53d7d322e2d227fbad748e7d907c27e854479111ad87",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.rest 65537": "5c53850023b08bdc",
+              "result.rest 65539": "9c44033e4d8b71e3",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.rest 65537[0:1]: pin [false]; subject [true, \"2b00\", true] … (length 7)",
+            "result.rest 65539[0:1]: pin [false]; subject [true, \"2b00\", true] … (length 7)",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        }
+      }
+    }
+  }
 }
 ```
