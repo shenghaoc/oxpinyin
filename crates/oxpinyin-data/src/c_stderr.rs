@@ -21,20 +21,12 @@ pub fn path_bytes(path: &Path) -> &[u8] {
     path.as_os_str().as_encoded_bytes()
 }
 
-/// `g_build_filename(dir, name, NULL)` as bytes, which is what `%s` writes
-/// for the path the pin opened: the same join
-/// [`pin_join`](crate::table_info::pin_join) opens.
-#[must_use]
-pub fn build_filename(dir: &Path, name: &str) -> Vec<u8> {
-    crate::table_info::join_bytes(path_bytes(dir), name.as_bytes())
-}
-
 /// The init's `load %s failed!` for a `table.conf` that
 /// `SystemTableInfo2::load` refused (074a2219 `pinyin.cpp:338`,
 /// `zhuyin.cpp:282`), naming `system_dir/table.conf` as `g_build_filename`
 /// spells it; `None` for a NULL system dir, whose name is `""`.
 pub fn table_conf_load_failed(system_dir: Option<&Path>) {
-    let name = system_dir.map_or_else(Vec::new, |dir| build_filename(dir, "table.conf"));
+    let name = oxpinyin_input::path::build_bytes(system_dir, Some("table.conf"));
     oxpinyin_input::diagnostic::report_load_failed(&c_prefix(&name));
 }
 
@@ -71,29 +63,12 @@ fn c_prefix(bytes: &[u8]) -> CString {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::MAIN_SEPARATOR_STR as SEP;
 
     #[test]
     fn a_name_is_written_up_to_its_first_nul() {
         assert_eq!(c_prefix(b"/a/b"), CString::new("/a/b").unwrap());
         assert_eq!(c_prefix(b"/a\0b"), CString::new("/a").unwrap());
         assert_eq!(c_prefix(b""), CString::default());
-    }
-
-    #[test]
-    fn build_filename_joins_as_glib_does() {
-        // Written with `/` and spelled with the platform's separator, so
-        // Unix checks the pin's bytes and Windows its own.
-        let join = |dir: &str| build_filename(Path::new(&dir.replace('/', SEP)), "x.bin");
-        let want = |text: &str| text.replace('/', SEP).into_bytes();
-        assert_eq!(join("/a/b"), want("/a/b/x.bin"));
-        assert_eq!(join("/a/b//"), want("/a/b/x.bin"));
-        assert_eq!(join(""), b"x.bin");
-        assert_eq!(join("/"), want("/x.bin"));
-        assert_eq!(join("/a/b///"), want("/a/b/x.bin"));
-        // Leading separators are the directory's own: `//` is kept whole.
-        assert_eq!(join("//"), want("//x.bin"));
-        assert_eq!(join("//a"), want("//a/x.bin"));
     }
 
     #[test]

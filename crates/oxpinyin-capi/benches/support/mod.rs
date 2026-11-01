@@ -218,7 +218,10 @@ pub fn staged_system_dir() -> &'static Path {
                         "invalid system chunk path {}",
                         relative.display()
                     );
-                    link_or_copy(&name.under(&export), &name.under(&staged));
+                    link_or_copy(
+                        &oxpinyin_input::path::build_path(&export, name.as_ref()),
+                        &oxpinyin_input::path::build_path(&staged, name.as_ref()),
+                    );
                 }
             }
             link_or_copy(

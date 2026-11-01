@@ -18,6 +18,7 @@ oxpinyin-core.workspace = true
 # selection.
 oxpinyin-data.workspace = true
 oxpinyin-engine.workspace = true
+oxpinyin-input.workspace = true
 oxpinyin-user.workspace = true
 
 [dev-dependencies]

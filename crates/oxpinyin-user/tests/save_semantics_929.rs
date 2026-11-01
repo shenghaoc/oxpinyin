@@ -64,7 +64,7 @@ fn failed_renames_report_exact_order_and_preserve_destinations() {
         libraries.sort_by_key(|(index, _)| *index);
         let mut names: Vec<_> = libraries
             .into_iter()
-            .map(|(_, name)| name.under(dir.path()))
+            .map(|(_, name)| oxpinyin_input::path::build_path(dir.path(), name.as_ref()))
             .collect();
         names.extend(
             [

@@ -654,6 +654,26 @@ def register(case, *, CASES, WORKER):
     for _mode in ('pinyin', 'zhuyin'):
         case('table-conf-user-file-absolute' + ('-zhuyin' if _mode == 'zhuyin' else ''), mode=_mode, issues=('694', '525'))(absolute_user_file)
 
+    # _clean_user_files also walks libpinyin's addon rows (pinyin.cpp:199-200);
+    # libzhuyin stops after the default rows (zhuyin.cpp:144). A fresh profile
+    # is non-conforming, so check_format wipes before the libraries load.
+    def addon_cleanup(k):
+        """Place an addon-named user file before init and report whether init removed it."""
+        system = conf_system(k, ('addon 4 art.table art.bin NULL DICTIONARY',
+                                 'addon 4 art.table art.bin addon-user.bin DICTIONARY'))
+        path = os.path.join(k.user, 'addon-user.bin')
+        Path(path).write_bytes(b'stale')
+        ctx = k.init(system=system)
+        out = {'ctx': bool(ctx), 'addon': os.path.exists(path)}
+        if ctx:
+            k.fn('fini', None, P)(ctx)
+        return out
+
+
+    for _mode in ('pinyin', 'zhuyin'):
+        case('table-conf-addon-cleanup' + ('-zhuyin' if _mode == 'zhuyin' else ''),
+             mode=_mode, stderr=True)(addon_cleanup)
+
     # The `strtol` behind `%d` and `atoi` saturates at LONG_MIN on a negative
     # overflow, which the stores into an `int` and a `guint8` cut to 0.
     conf_case('versions-negative-overflow', ('binary format version:7', 'binary format version:-9223372036854775808'),

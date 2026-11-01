@@ -27,15 +27,15 @@ must_use_candidate = "warn"
 [features]
 # The pin utilities' boundary (stage 5): their C library calls through
 # libc, GLib's option and text calls through glib-sys, and the C++ streams'
-# getline through std::io. Tools only; it links GLib.
-tools = ["dep:glib-sys"]
+# getline through std::io. Tools only.
+tools = []
 
 [dependencies]
-# Approved for this crate by the 2026-10-31 UTC maintainer ruling: the
-# library's table.conf/user.conf and stderr calls, and with `tools` the
-# utilities' C library calls.
+# Approved for this crate by the 2026-10-31 UTC maintainer rulings: the
+# library's path construction through GLib, and the table.conf/user.conf,
+# stderr, save and utility calls beside it.
 libc.workspace = true
-glib-sys = { workspace = true, optional = true }
+glib-sys.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

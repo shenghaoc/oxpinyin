@@ -16,6 +16,8 @@ oxpinyin-core = { workspace = true }
 # (chunk builder, tree record builders, SingleGram, the logger and
 # user.conf codecs) live in oxpinyin-data beside their readers.
 oxpinyin-data = { workspace = true }
+# The pin's path, chunk-save, rename and unlink calls (external-I/O stage 3).
+oxpinyin-input = { workspace = true }
 # The workspace table carries default-features = false for this edge; the
 # [features] block below forwards the backend selection.
 oxpinyin-store = { workspace = true }

@@ -148,8 +148,10 @@ path: it serves only the strict save (`persistence::save_session`, reached
 from `persistence::save` / `save_with_bigram` and `UserStore::save`), whose
 callers are the store's Rust API, tests and tools, never the C adapters,
 and it is given no baseline hook, so it never meets a row 96 stop. Row 96
-therefore needs no change to it. Its clean-up against the pin's
-leave-them-in-place behaviour is external-I/O stage 3's.
+therefore needs no change to it. External-I/O stage 3 (2026-11-01 UTC)
+removed its clean-up: a strict-save failure now leaves every staged `.tmp`
+in place as the pin does. The strict API still answers its first failure;
+the C facades' reporting save carries on.
 
 ## A Kyoto Cabinet bigram read after its size check
 

@@ -169,7 +169,7 @@ impl PhraseLibraries {
             }
             seen[slot] = true;
             // `g_build_filename`: a name never leaves the directory.
-            let path = crate::table_info::pin_join(dir, file.as_ref());
+            let path = oxpinyin_input::path::build_path(dir, file.as_ref());
             match std::fs::metadata(&path) {
                 // A directory is `MemoryChunk::mmap`'s to judge by its
                 // reported size (`phrase_library::directory_chunk_fault`);

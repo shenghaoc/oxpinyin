@@ -1,10 +1,12 @@
 //! The only unsafe code in the crate outside the tool boundary: the C
 //! library calls of the `table.conf` and `user.conf` readers and writer
-//! (074a2219 `src/storage/table_info.cpp:194-397`) and of the library's
-//! `stderr` lines, made through the `libc` crate with the pin's own format
-//! strings, and the two owned handles over what they return, a `FILE *` and
-//! the name `setlocale` answered. Every function here makes the pin's calls
-//! and no others; Rust chooses which to run and in what order.
+//! (074a2219 `src/storage/table_info.cpp:194-397`), of the library's
+//! `stderr` lines, and of the save path's `g_build_filename`,
+//! `g_rename`, `unlink` and `MemoryChunk::save` calls, made through the
+//! `libc` and `glib-sys` crates with the pin's own arguments and format
+//! strings, and the owned handles over what they return. Every function
+//! here makes the pin's calls and no others; Rust chooses which to run and
+//! in what order.
 
 use core::ffi::{c_char, c_float, c_int};
 use core::ptr::NonNull;
@@ -343,4 +345,204 @@ pub(crate) fn report_mmap_failed(filename: &CStr) {
     unsafe {
         libc::fprintf(c_stderr(), c"mmap %s failed!\n".as_ptr(), filename.as_ptr());
     }
+}
+
+/// Which header word of `MemoryChunk::save` a failed write targeted.
+#[derive(Clone, Copy)]
+pub(crate) enum HeaderField {
+    Length,
+    Checksum,
+}
+
+/// The result of `MemoryChunk::save`'s native calls.
+pub(crate) enum ChunkWrite {
+    Saved,
+    Open(std::io::Error),
+    Header(HeaderField, std::io::Error),
+    Payload(std::io::Error),
+}
+
+/// `g_build_filename(dir, name, NULL)` with the pin's C arguments.
+pub(crate) fn build_filename(dir: Option<&CStr>, name: Option<&CStr>) -> std::ffi::CString {
+    let dir = dir.map_or(core::ptr::null(), CStr::as_ptr);
+    let name = name.map_or(core::ptr::null(), CStr::as_ptr);
+    // SAFETY: both arguments are NULL or NUL-terminated strings that outlive
+    // the call, and the trailing NULL is the pin's own terminator. GLib
+    // reads them and answers a newly allocated NUL-terminated string, or
+    // NULL from its guard. `g_free` releases exactly that allocation.
+    let joined = unsafe { glib_sys::g_build_filename(dir, name, core::ptr::null::<c_char>()) };
+    if joined.is_null() {
+        return std::ffi::CString::default();
+    }
+    // SAFETY: GLib answered a NUL-terminated allocation; the copy ends
+    // before `g_free` releases it.
+    let bytes = unsafe { CStr::from_ptr(joined) }.to_bytes().to_vec();
+    // SAFETY: `joined` is the pointer GLib allocated for this call and no
+    // one else owns it.
+    unsafe { glib_sys::g_free(joined.cast()) };
+    std::ffi::CString::new(bytes).unwrap_or_default()
+}
+
+/// `g_rename(from, to)`; `rename(2)` is what the Unix macro expands to.
+#[cfg(not(windows))]
+pub(crate) fn rename(from: &CStr, to: &CStr) -> bool {
+    // SAFETY: both pointers are NUL-terminated strings that outlive the
+    // call; `rename` only reads them.
+    unsafe { libc::rename(from.as_ptr(), to.as_ptr()) == 0 }
+}
+
+/// `g_rename(from, to)` on Windows, where GLib converts the UTF-8 names
+/// and calls `MoveFileExW`.
+#[cfg(windows)]
+pub(crate) fn rename(from: &CStr, to: &CStr) -> bool {
+    // SAFETY: both pointers are NUL-terminated strings that outlive the
+    // call; GLib's `g_rename` only reads them.
+    unsafe { g_rename(from.as_ptr(), to.as_ptr()) == 0 }
+}
+
+#[cfg(windows)]
+unsafe extern "C" {
+    fn g_rename(oldfilename: *const c_char, newfilename: *const c_char) -> c_int;
+}
+
+/// `unlink(path)`; the pin ignores the result.
+pub(crate) fn unlink(path: &CStr) {
+    // SAFETY: the pointer is a NUL-terminated string that outlives the call;
+    // `unlink` only reads it.
+    unsafe {
+        let _ = libc::unlink(path.as_ptr());
+    }
+}
+
+/// `MemoryChunk::save`'s calls on Unix.
+#[cfg(unix)]
+pub(crate) fn save_chunk(path: &CStr, bytes: &[u8]) -> ChunkWrite {
+    // SAFETY: the path is NUL-terminated and outlives the call; the flags and
+    // mode are the pin's (`memory_chunk.h:536-537`); `O_BINARY` is absent
+    // on Unix and the pin's header defines it as zero there.
+    let fd = unsafe {
+        libc::open(
+            path.as_ptr(),
+            libc::O_CREAT | libc::O_WRONLY | libc::O_TRUNC,
+            // Variadic integers need int width even where mode_t is u16.
+            0o644 as libc::c_uint,
+        )
+    };
+    if fd < 0 {
+        return ChunkWrite::Open(std::io::Error::last_os_error());
+    }
+    let split = bytes.len().min(8);
+    let (header, payload) = bytes.split_at(split);
+    let (length, checksum) = header.split_at(header.len().min(4));
+    if let Err(source) = write_chunk_word(fd, length) {
+        close(fd);
+        return ChunkWrite::Header(HeaderField::Length, source);
+    }
+    if let Err(source) = write_chunk_word(fd, checksum) {
+        close(fd);
+        return ChunkWrite::Header(HeaderField::Checksum, source);
+    }
+    if let Err(source) = write_chunk_payload(fd, payload) {
+        close(fd);
+        return ChunkWrite::Payload(source);
+    }
+    // GLib 2.84.4 glib/gstdio.h:60,82 makes g_fsync a macro for fsync on
+    // ordinary Unix builds. The 074a2219 tkrzw linux/amd64 objects from
+    // tools/oracle/build-oracle.sh confirm fsync@plt in
+    // pinyin::MemoryChunk::save(char const*) [clone .isra.0]: +0x108 in
+    // libpinyin.so.15.0.0 and +0x118 in libzhuyin.so.15.0.0.
+    // SAFETY: `fd` is the open descriptor and `fsync` only reads it; the
+    // pin ignores the answer (`memory_chunk.h:555`).
+    unsafe {
+        let _ = libc::fsync(fd);
+    }
+    close(fd);
+    ChunkWrite::Saved
+}
+
+/// `write(fd, word, sizeof(word))` for one header word.
+#[cfg(unix)]
+fn write_chunk_word(fd: c_int, word: &[u8]) -> Result<(), std::io::Error> {
+    // SAFETY: `word` is a live slice for the length passed, and `fd` is the
+    // open descriptor from `save_chunk`.
+    let written = unsafe { libc::write(fd, word.as_ptr().cast(), word.len()) };
+    if written == word.len() as isize {
+        Ok(())
+    } else {
+        Err(short_write(word.len(), written, "header"))
+    }
+}
+
+/// `write(fd, begin(), size())` for the payload.
+#[cfg(unix)]
+fn write_chunk_payload(fd: c_int, payload: &[u8]) -> Result<(), std::io::Error> {
+    // SAFETY: as `write_chunk_word`, with the payload slice.
+    let written = unsafe { libc::write(fd, payload.as_ptr().cast(), payload.len()) };
+    if written == payload.len() as isize {
+        Ok(())
+    } else {
+        Err(short_write(payload.len(), written, "payload"))
+    }
+}
+
+#[cfg(unix)]
+fn close(fd: c_int) {
+    // SAFETY: `fd` is the descriptor `save_chunk` opened and has not closed.
+    unsafe {
+        let _ = libc::close(fd);
+    }
+}
+
+fn short_write(expected: usize, written: isize, part: &str) -> std::io::Error {
+    if written < 0 {
+        std::io::Error::last_os_error()
+    } else {
+        std::io::Error::new(
+            std::io::ErrorKind::WriteZero,
+            format!("short write: {written} of {expected} {part} bytes"),
+        )
+    }
+}
+
+/// `MemoryChunk::save`'s calls on Windows, where the pin's plain
+/// `open`/`write` are the CRT's and its `g_fsync` is `_commit`. The
+/// deferred Windows work is #1475; this keeps the same observable result.
+#[cfg(windows)]
+pub(crate) fn save_chunk(path: &CStr, bytes: &[u8]) -> ChunkWrite {
+    use std::io::Write as _;
+
+    let text = String::from_utf8_lossy(path.to_bytes()).into_owned();
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    let mut file = match options.open(text) {
+        Ok(file) => file,
+        Err(error) => return ChunkWrite::Open(error),
+    };
+    let split = bytes.len().min(8);
+    let (header, payload) = bytes.split_at(split);
+    let (length, checksum) = header.split_at(header.len().min(4));
+    for (word, field) in [
+        (length, HeaderField::Length),
+        (checksum, HeaderField::Checksum),
+    ] {
+        match file.write(word) {
+            Ok(written) if written == word.len() => {}
+            Ok(written) => {
+                return ChunkWrite::Header(
+                    field,
+                    short_write(word.len(), written as isize, "header"),
+                );
+            }
+            Err(source) => return ChunkWrite::Header(field, source),
+        }
+    }
+    match file.write(payload) {
+        Ok(written) if written == payload.len() => {}
+        Ok(written) => {
+            return ChunkWrite::Payload(short_write(payload.len(), written as isize, "payload"));
+        }
+        Err(source) => return ChunkWrite::Payload(source),
+    }
+    let _ = file.sync_all();
+    ChunkWrite::Saved
 }

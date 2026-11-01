@@ -36,10 +36,11 @@
 //! `save_db` writes a fresh file).
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use oxpinyin_core::ChewingKey;
-use oxpinyin_data::chunk_format::{CHUNK_HEADER_SIZE, build_memory_chunk};
+use oxpinyin_data::chunk_format::build_memory_chunk;
 use oxpinyin_data::chunk_write::{ChunkItem, PHRASE_MASK, build_chunk, encode_phrase_item};
 use oxpinyin_data::phrase_libraries::PhraseLibraries;
 use oxpinyin_data::row_format::pinyin_index::PinyinIndexItem;
@@ -49,6 +50,7 @@ use oxpinyin_data::user_files::{
     LogEnd, LogFault, LogRecord, SystemVersions, UserConfError, UserDbm, UserFileLayout,
     UserTableInfo, encode_log_records, get_open_counter, log_records, read_chunk_payload,
 };
+use oxpinyin_input::path::{build_path, rename, unlink};
 use oxpinyin_store::{
     DefaultStore, DefaultUserBigramDb, RawReadStore, RecordSink, StoreError, UserBigramDb,
     WriteStore,
@@ -62,20 +64,6 @@ use crate::user_phrase_table::UserPhraseTable;
 
 /// `USER_TABLE_INFO` (`pinyin_internal.h:56`).
 const USER_CONF: &str = "user.conf";
-
-/// `g_build_filename(user_dir, name, NULL)` (`pinyin.cpp:164-226`,
-/// `zhuyin.cpp:118-170` at 074a2219): the file the pin opens, writes or
-/// renames and names in `open`/`rename`/`write` lines. `Path::join` reaches
-/// the same file but keeps a directory's repeated trailing separators in the
-/// message.
-fn user_file(dir: &Path, name: &str) -> PathBuf {
-    oxpinyin_data::table_info::pin_join(dir, std::ffi::OsStr::new(name))
-}
-
-/// [`user_file`] for `user.conf`.
-fn user_conf_path(dir: &Path) -> PathBuf {
-    user_file(dir, USER_CONF)
-}
 
 /// `UserTableInfo::load` of `filename` (`pinyin.cpp:178`, `zhuyin.cpp:132`),
 /// splitting upstream's two failure kinds the way `check_format` meets them.
@@ -428,34 +416,12 @@ impl UserState {
 }
 
 /// Which of `MemoryChunk::save`'s two header writes the filesystem
-/// refused (`src/include/memory_chunk.h`): the `length` word (`:543`,
-/// `assert(ret_len == sizeof(length))`) or the `checksum` word (`:547`,
-/// `assert(ret_len == sizeof(checksum))`).
-///
-/// Both sit under `pinyin_save` / `zhuyin_save`, which write every
-/// library chunk (`pinyin.cpp:988`, `zhuyin.cpp:645`), and the pin is
-/// built with asserts live, so a full filesystem or an `RLIMIT_FSIZE`
-/// that cuts the header kills the process. The class-(c) answer keeps
-/// only the failure; the save stops there, as the abort would have.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ChunkHeaderField {
-    /// `write(fd, &length, sizeof(guint32))` — `memory_chunk.h:543`.
-    Length,
-    /// `write(fd, &checksum, sizeof(guint32))` — `memory_chunk.h:547`.
-    Checksum,
-}
-
-impl ChunkHeaderField {
-    /// The pin's assert expression at this write, for the facade's
-    /// class-(c) warning.
-    #[must_use]
-    pub const fn assert_expression(self) -> &'static str {
-        match self {
-            Self::Length => "ret_len == sizeof(length)",
-            Self::Checksum => "ret_len == sizeof(checksum)",
-        }
-    }
-}
+/// refused, from the boundary's own chunk save: the `length` word
+/// (`memory_chunk.h:543`) or the `checksum` word (`:547`). Both sit under
+/// `pinyin_save` / `zhuyin_save`, and the pin is built with asserts live,
+/// so a full filesystem or an `RLIMIT_FSIZE` that cuts the header kills the
+/// process. The class-(c) answer keeps only the failure.
+pub use oxpinyin_input::chunk::ChunkHeaderField;
 
 /// A persistence failure: I/O, a container, or a byte stream that does
 /// not parse.
@@ -819,7 +785,7 @@ pub(crate) fn check_format(
     layout: &UserFileLayout,
     law: UserConfLaw,
 ) -> Result<ProfileCheck, PersistenceError> {
-    let existing = load_user_conf(&user_conf_path(dir))?;
+    let existing = load_user_conf(&build_path(dir, OsStr::new(USER_CONF)))?;
 
     let conform = existing
         .as_ref()
@@ -845,7 +811,7 @@ pub(crate) fn check_format(
         let _ = write_marker(dir, versions, open_counter);
     }
     if !conform {
-        clean_user_files(dir, layout);
+        clean_user_files(dir, layout, law);
     }
     Ok(ProfileCheck {
         open_counter,
@@ -982,7 +948,7 @@ pub fn check_format_unnamed(versions: &SystemVersions, law: UserConfLaw) {
 fn write_marker(dir: &Path, versions: &SystemVersions, open_counter: i32) -> bool {
     let mut marker = UserTableInfo::conform_to(versions);
     marker.open_counter = open_counter;
-    marker.save_path(&user_conf_path(dir))
+    marker.save_path(&build_path(dir, OsStr::new(USER_CONF)))
 }
 
 /// [`write_marker`] for a context without a user dir: `UserTableInfo::save("")`.
@@ -992,24 +958,25 @@ fn write_unnamed_marker(versions: &SystemVersions, open_counter: i32) -> bool {
     marker.save(c"")
 }
 
-/// `_clean_user_files` + the fixed names: every data file of the profile
-/// is removed; absence is not an error. `user.conf` is not among them —
-/// neither pin's `check_format` unlinks it (`pinyin.cpp:194-215`,
-/// `zhuyin.cpp:141-159`): libpinyin has already rewritten it by then, and
-/// libzhuyin leaves the non-conform marker in place until a save.
-fn clean_user_files(dir: &Path, layout: &UserFileLayout) {
-    let mut names: Vec<FileName> = [
-        UserDbm::Bigram.file_name(),
-        UserDbm::PinyinIndex.file_name(),
-        UserDbm::PhraseIndex.file_name(),
-    ]
-    .into_iter()
-    .map(|name| FileName::from_bytes(name.as_bytes()))
-    .collect();
-    names.extend(layout.user_libraries().iter().map(|(_, name)| name.clone()));
-    names.extend(layout.system_logs().iter().map(|(_, name)| name.clone()));
-    for name in names {
-        let _ = std::fs::remove_file(name.under(dir));
+/// `_clean_user_files` + the fixed names, in the pin's order: the default
+/// rows' user files by sub-index, libpinyin's addon rows too
+/// (`pinyin.cpp:194-215`; libzhuyin stops after the default rows,
+/// `zhuyin.cpp:141-159`), then `USER_PINYIN_INDEX`, `USER_PHRASE_INDEX`
+/// and `USER_BIGRAM`. Every result is ignored, as the pin ignores
+/// `unlink`'s. `user.conf` is not among them: libpinyin has already
+/// rewritten it by then, and libzhuyin leaves the non-conform marker in
+/// place until a save.
+fn clean_user_files(dir: &Path, layout: &UserFileLayout, law: UserConfLaw) {
+    for (_, name) in layout.default_cleanup() {
+        unlink(&build_path(dir, name.as_ref()));
+    }
+    if law == UserConfLaw::Pinyin {
+        for (_, name) in layout.addon_cleanup() {
+            unlink(&build_path(dir, name.as_ref()));
+        }
+    }
+    for dbm in [UserDbm::PinyinIndex, UserDbm::PhraseIndex, UserDbm::Bigram] {
+        unlink(&build_path(dir, OsStr::new(&dbm.file_name())));
     }
 }
 
@@ -1023,7 +990,7 @@ fn clean_user_files(dir: &Path, layout: &UserFileLayout) {
 /// the pin's own operations wherever they are used. A session reads the
 /// file once, into its container ([`load_user_bigram_db`]), not here.
 fn load_bigram_rows(dir: &Path, loaded: &mut Loaded) {
-    let path = user_file(dir, &UserDbm::Bigram.file_name());
+    let path = build_path(dir, OsStr::new(&UserDbm::Bigram.file_name()));
     if !path.exists() {
         return;
     }
@@ -1063,7 +1030,7 @@ fn load_user_pinyin_index(
     index: &mut UserIndex,
     lazy: bool,
 ) {
-    let path = user_file(dir, &UserDbm::PinyinIndex.file_name());
+    let path = build_path(dir, OsStr::new(&UserDbm::PinyinIndex.file_name()));
     if !path.exists() {
         return;
     }
@@ -1122,7 +1089,7 @@ fn load_user_phrase_index(
     arena: &mut UserPhraseTable,
     lazy: bool,
 ) {
-    let path = user_file(dir, &UserDbm::PhraseIndex.file_name());
+    let path = build_path(dir, OsStr::new(&UserDbm::PhraseIndex.file_name()));
     if !path.exists() {
         return;
     }
@@ -1160,9 +1127,9 @@ fn load_user_phrase_index(
 /// Returns [`PersistenceError`] when the in-memory container cannot be
 /// created.
 pub(crate) fn load_user_bigram_db(dir: &Path) -> Result<DefaultUserBigramDb, PersistenceError> {
-    Ok(DefaultUserBigramDb::load_db(&user_file(
+    Ok(DefaultUserBigramDb::load_db(&build_path(
         dir,
-        &UserDbm::Bigram.file_name(),
+        OsStr::new(&UserDbm::Bigram.file_name()),
     ))?)
 }
 
@@ -1180,7 +1147,7 @@ fn load_libraries(
             continue;
         }
         let name = file.display();
-        let path = file.under(dir);
+        let path = build_path(dir, file.as_ref());
         let bytes = match std::fs::read(&path) {
             Ok(bytes) => bytes,
             // Absent is the normal fresh-profile case. Any other error
@@ -1346,7 +1313,7 @@ fn replay_logs(
         let name = file.display();
         // An absent or unreadable `.dbin` is an empty log: `MemoryChunk::load`
         // fails and leaves the chunk empty, and the merge reads nothing.
-        let bytes = match std::fs::read(file.under(dir)) {
+        let bytes = match std::fs::read(build_path(dir, file.as_ref())) {
             Ok(bytes) => bytes,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
             Err(e) => {
@@ -1877,9 +1844,9 @@ pub(crate) fn save_reporting<B: FnMut(u8) -> SaveBaseline>(
         outcome.renames_failed = staged.failed;
     } else {
         for name in pin_rename_order(originals.layout(), &staged.unloaded) {
-            let tmp = name.with_suffix(".tmp").under(dir);
-            let final_path = name.under(dir);
-            if std::fs::rename(&tmp, &final_path).is_err() {
+            let tmp = build_path(dir, name.with_suffix(".tmp").as_ref());
+            let final_path = build_path(dir, name.as_ref());
+            if rename(&tmp, &final_path).is_err() {
                 report_rename_failed(&tmp, &final_path);
                 outcome.renames_failed.push((tmp, final_path));
             }
@@ -1888,7 +1855,7 @@ pub(crate) fn save_reporting<B: FnMut(u8) -> SaveBaseline>(
     // `mark_version` (`pinyin.cpp:1143`, `zhuyin.cpp:695`): a failed save
     // has written the pin's `write %s failed.` line itself.
     if !write_marker(dir, reporting.versions, reporting.open_counter) {
-        outcome.user_conf_write_failed = Some(user_conf_path(dir));
+        outcome.user_conf_write_failed = Some(build_path(dir, OsStr::new(USER_CONF)));
     }
     Ok(outcome)
 }
@@ -1942,7 +1909,7 @@ impl Staged {
     fn push(&mut self, (tmp, final_path): (PathBuf, PathBuf)) {
         if !self.immediate {
             self.pending.push((tmp, final_path));
-        } else if std::fs::rename(&tmp, &final_path).is_err() {
+        } else if rename(&tmp, &final_path).is_err() {
             report_rename_failed(&tmp, &final_path);
             self.failed.push((tmp, final_path));
         }
@@ -1964,16 +1931,23 @@ fn stage_all<B: FnMut(u8) -> SaveBaseline>(
     stage_rest(dir, source, originals, reporting, staged)?;
     let state = source.state;
     if let Some(db) = reporting.bigram_db {
-        let final_path = user_file(dir, &UserDbm::Bigram.file_name());
-        let tmp = user_file(dir, &format!("{}.tmp", UserDbm::Bigram.file_name()));
+        let final_path = build_path(dir, OsStr::new(&UserDbm::Bigram.file_name()));
+        let tmp = build_path(
+            dir,
+            OsStr::new(&format!("{}.tmp", UserDbm::Bigram.file_name())),
+        );
         // `unlink(tmpfilename)` before `save_db` (`pinyin.cpp:1017`); the
-        // backend's `save_db` then unlinks again, as the pin's does.
-        let written =
-            unlink_if_present(&tmp).and_then(|()| db.save_db(&tmp).map_err(PersistenceError::from));
+        // pin ignores its result, and the backend's `save_db` then unlinks
+        // again as the pin's does.
+        unlink(&tmp);
+        let written = db.save_db(&tmp).map_err(PersistenceError::from);
         tolerate(reporting.lenient, staged.finish((tmp, final_path), written))?;
         return Ok(());
     }
-    tolerate(reporting.lenient, stage_user_bigram(dir, &state.bigram))?;
+    tolerate(
+        reporting.lenient,
+        stage_user_bigram(dir, &state.bigram, staged),
+    )?;
     Ok(())
 }
 
@@ -2136,10 +2110,12 @@ fn stage_rest<B: FnMut(u8) -> SaveBaseline>(
     }
 }
 
-/// The save's commit: rename each staged `.tmp` over its final in the
-/// pin's order, then write `user.conf`. After a write or rename failure,
-/// cleanup attempts to remove the remaining staged `.tmp` files;
-/// completed renames are not undone.
+/// The strict save's commit: rename each staged `.tmp` over its final in
+/// the pin's order, then write `user.conf`. A failure leaves every staged
+/// `.tmp` in place, as the pin's `_write_files` and `_rename_files` do;
+/// completed renames are not undone. The strict Rust API still answers the
+/// first failure, which the C facades' reporting save does not (they carry
+/// on and print the pin's line).
 fn finish_save(
     dir: &Path,
     versions: &SystemVersions,
@@ -2149,18 +2125,8 @@ fn finish_save(
 ) -> Result<(), PersistenceError> {
     match result {
         Ok(()) => {
-            for (index, (tmp, final_path)) in staged.iter().enumerate() {
-                if let Err(error) = std::fs::rename(tmp, final_path) {
-                    // The rename pass is half-done: this `.tmp` and every
-                    // one still staged behind it are orphans the profile
-                    // does not own. Remove them so the user dir keeps
-                    // exactly the pin's inventory — the already-renamed
-                    // files are complete files and stay.
-                    for (tmp, _) in &staged[index..] {
-                        let _ = std::fs::remove_file(tmp);
-                    }
-                    return Err(error.into());
-                }
+            for (tmp, final_path) in staged {
+                rename(tmp, final_path).map_err(PersistenceError::from)?;
             }
             // `user.conf` last, and in place: `mark_version` runs after
             // the renames and `fopen`s the marker over the existing file
@@ -2170,12 +2136,7 @@ fn finish_save(
             let _ = write_marker(dir, versions, open_counter);
             Ok(())
         }
-        Err(error) => {
-            for (tmp, _) in staged {
-                let _ = std::fs::remove_file(tmp);
-            }
-            Err(error)
-        }
+        Err(error) => Err(error),
     }
 }
 
@@ -2311,12 +2272,21 @@ fn diff_records_against(
 /// hash file on every backend: Kyoto Cabinet writes a snapshot stream of
 /// an in-memory stash (`ngram_kyotodb.cpp:82-101`) where tkrzw
 /// write a container at the path.
-fn stage_user_bigram(dir: &Path, rows: &[(Vec<u8>, Vec<u8>)]) -> Result<(), PersistenceError> {
-    // The seam stages its own sibling temporary and renames atomically
-    // (S2's review fix), so this is a direct call on the final path, with
-    // no outer `.tmp`.
-    DefaultStore::write_user_bigram(&user_file(dir, &UserDbm::Bigram.file_name()), rows)?;
-    Ok(())
+fn stage_user_bigram(
+    dir: &Path,
+    rows: &[(Vec<u8>, Vec<u8>)],
+    staged: &mut Staged,
+) -> Result<(), PersistenceError> {
+    let final_path = build_path(dir, OsStr::new(&UserDbm::Bigram.file_name()));
+    let tmp = build_path(
+        dir,
+        OsStr::new(&format!("{}.tmp", UserDbm::Bigram.file_name())),
+    );
+    // `unlink(USER_BIGRAM ".tmp")` before `save_db` (`pinyin.cpp:1017`,
+    // `zhuyin.cpp:683`); the result is ignored, as the pin ignores it.
+    unlink(&tmp);
+    let written = DefaultStore::write_user_bigram(&tmp, rows).map_err(PersistenceError::from);
+    staged.finish((tmp, final_path), written)
 }
 
 /// Writes one of the two index DBMs to its `.tmp` sibling and registers
@@ -2332,21 +2302,11 @@ fn stage_dbm(
     staged: &mut Staged,
 ) -> Result<(), PersistenceError> {
     debug_assert!(!dbm.is_hash(), "stage_dbm serves the two index trees");
-    let final_path = user_file(dir, &dbm.file_name());
-    let tmp = user_file(dir, &format!("{}.tmp", dbm.file_name()));
-    let written = unlink_if_present(&tmp)
-        .and_then(|()| DefaultStore::write_user_index(&tmp, fill).map_err(PersistenceError::from));
+    let final_path = build_path(dir, OsStr::new(&dbm.file_name()));
+    let tmp = build_path(dir, OsStr::new(&format!("{}.tmp", dbm.file_name())));
+    unlink(&tmp);
+    let written = DefaultStore::write_user_index(&tmp, fill).map_err(PersistenceError::from);
     staged.finish((tmp, final_path), written)
-}
-
-/// `unlink(tmpfilename)` with a missing file tolerated, as `_write_files`
-/// unlinks each `.tmp` before its `save_db` (`pinyin.cpp:999-1017`).
-fn unlink_if_present(path: &Path) -> Result<(), PersistenceError> {
-    match std::fs::remove_file(path) {
-        Ok(()) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(e.into()),
-    }
 }
 
 /// Writes one chunk file to its `.tmp` sibling and registers the rename.
@@ -2356,196 +2316,24 @@ fn stage_chunk(
     bytes: &[u8],
     staged: &mut Staged,
 ) -> Result<(), PersistenceError> {
-    let final_path = name.under(dir);
-    let tmp = name.with_suffix(".tmp").under(dir);
+    let final_path = build_path(dir, name.as_ref());
+    let tmp = build_path(dir, name.with_suffix(".tmp").as_ref());
     let written = write_chunk_file(&tmp, bytes);
     staged.finish((tmp, final_path), written)
 }
 
-/// `MemoryChunk::save` (`memory_chunk.h:536-537`): `open(O_CREAT |
-/// O_WRONLY | O_TRUNC, 0644)` over `path`, then the bytes. The process
-/// umask applies to 0644, and a file that already exists keeps its own
-/// mode, as upstream's does — `std::fs::write` would ask for 0666.
-///
-/// The header is two `guint32` writes in the pin (`memory_chunk.h:542`
-/// and `:546`), each a single `write` whose own return value is `assert`ed;
-/// here they are two single writes too ([`write_header_word`]), so a
-/// filesystem that refuses the header names the word it refused and a
-/// partial word is a failure, not a retry. The payload is completed with
-/// `write_all`; a final I/O failure is the pin's soft failure (`MemoryChunk::save` answers `false` and every caller
-/// ignores it) and stays an ordinary [`PersistenceError::Io`].
+/// `MemoryChunk::save` (`memory_chunk.h:536-557`), made by the boundary's
+/// chunk save: the pin's `open`, two header `write`s, one payload `write`,
+/// `g_fsync` and `close`. A short header write is the class-(c) refusal
+/// the pin `assert`s on; the open and a short payload write are the pin's
+/// soft `false`, carried as `Io`.
 fn write_chunk_file(path: &Path, bytes: &[u8]) -> Result<(), PersistenceError> {
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o644);
-    let mut file = options.open(path).map_err(PersistenceError::Io)?;
-    write_chunk(&mut file, bytes)
-}
-
-/// The file `MemoryChunk::save` writes: the bytes go out through
-/// [`std::io::Write`], and `g_fsync` is [`ChunkSink::sync`].
-trait ChunkSink: std::io::Write {
-    fn sync(&mut self) -> std::io::Result<()>;
-}
-
-impl ChunkSink for std::fs::File {
-    fn sync(&mut self) -> std::io::Result<()> {
-        // On macOS std uses the stronger F_FULLFSYNC; see the G10 finding.
-        self.sync_all()
-    }
-}
-
-/// `MemoryChunk::save`'s writes after the open: the two header words, the
-/// payload, then the sync (`memory_chunk.h:542-557`).
-fn write_chunk(sink: &mut impl ChunkSink, bytes: &[u8]) -> Result<(), PersistenceError> {
-    let split = bytes.len().min(CHUNK_HEADER_SIZE);
-    let (header, payload) = bytes.split_at(split);
-    let (length, checksum) = header.split_at(header.len().min(4));
-    write_header_word(sink, length, ChunkHeaderField::Length)?;
-    write_header_word(sink, checksum, ChunkHeaderField::Checksum)?;
-    // Complete the payload with Rust's retrying writer. A final I/O failure
-    // stays soft for the reporting save and prevents sync.
-    std::io::Write::write_all(sink, payload).map_err(PersistenceError::Io)?;
-    // MemoryChunk::save ignores g_fsync before close (memory_chunk.h:555-557).
-    // The file closes after this.
-    let _ = sink.sync();
-    Ok(())
-}
-
-/// One of `MemoryChunk::save`'s two header words (`memory_chunk.h:542-549`).
-///
-/// The pin makes a single `write` per word and `assert`s that call's own
-/// return value is the word's size; a short write is a failure there too.
-/// So this is one write, not `write_all`: a retry would finish the word and
-/// hide the short write the pin's `assert` would have caught.
-fn write_header_word(
-    writer: &mut impl std::io::Write,
-    word: &[u8],
-    field: ChunkHeaderField,
-) -> Result<(), PersistenceError> {
-    let written = writer
-        .write(word)
-        .map_err(|source| PersistenceError::ChunkHeaderWrite { field, source })?;
-    if written == word.len() {
-        return Ok(());
-    }
-    Err(PersistenceError::ChunkHeaderWrite {
-        field,
-        source: std::io::Error::new(
-            std::io::ErrorKind::WriteZero,
-            format!("short write: {written} of {} header bytes", word.len()),
-        ),
-    })
-}
-
-#[cfg(test)]
-mod chunk_sink_tests {
-    use super::*;
-
-    #[derive(Default)]
-    struct Recorder {
-        events: Vec<String>,
-        payload: Payload,
-        fail_sync: bool,
-    }
-
-    #[derive(Default)]
-    enum Payload {
-        #[default]
-        Full,
-        Short(usize),
-        Interrupted,
-    }
-
-    impl std::io::Write for Recorder {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            self.events.push(format!("write {}", buf.len()));
-            if buf.len() <= 4 {
-                return Ok(buf.len());
-            }
-            match self.payload {
-                Payload::Full => Ok(buf.len()),
-                Payload::Short(n) => Ok(n),
-                Payload::Interrupted => {
-                    self.payload = Payload::Full;
-                    Err(std::io::ErrorKind::Interrupted.into())
-                }
-            }
+    match oxpinyin_input::chunk::save(path, bytes) {
+        Ok(()) => Ok(()),
+        Err(oxpinyin_input::chunk::ChunkSaveError::Io(error)) => Err(PersistenceError::Io(error)),
+        Err(oxpinyin_input::chunk::ChunkSaveError::Header { field, source }) => {
+            Err(PersistenceError::ChunkHeaderWrite { field, source })
         }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-
-    impl ChunkSink for Recorder {
-        fn sync(&mut self) -> std::io::Result<()> {
-            self.events.push("sync".to_owned());
-            if self.fail_sync {
-                return Err(std::io::Error::other("sync refused"));
-            }
-            Ok(())
-        }
-    }
-
-    const BYTES: [u8; 14] = [1, 0, 0, 0, 2, 0, 0, 0, 9, 9, 9, 9, 9, 9];
-
-    #[test]
-    fn chunk_writes_header_words_then_payload_then_syncs_once() {
-        let mut sink = Recorder::default();
-        write_chunk(&mut sink, &BYTES).expect("write");
-        assert_eq!(sink.events, ["write 4", "write 4", "write 6", "sync"]);
-    }
-
-    #[test]
-    fn chunk_sync_error_is_ignored() {
-        let mut sink = Recorder {
-            fail_sync: true,
-            ..Recorder::default()
-        };
-        write_chunk(&mut sink, &BYTES).expect("sync failure is not the save's");
-        assert_eq!(sink.events.last().map(String::as_str), Some("sync"));
-    }
-
-    #[test]
-    fn chunk_short_payload_write_is_completed_before_sync() {
-        let mut sink = Recorder {
-            payload: Payload::Short(3),
-            ..Recorder::default()
-        };
-        write_chunk(&mut sink, &BYTES).expect("retry short payload");
-        assert_eq!(
-            sink.events,
-            ["write 4", "write 4", "write 6", "write 3", "sync"]
-        );
-    }
-
-    #[test]
-    fn chunk_interrupted_payload_write_is_retried() {
-        let mut sink = Recorder {
-            payload: Payload::Interrupted,
-            ..Recorder::default()
-        };
-        write_chunk(&mut sink, &BYTES).expect("retry interrupted payload");
-        assert_eq!(
-            sink.events,
-            ["write 4", "write 4", "write 6", "write 6", "sync"]
-        );
-    }
-
-    #[test]
-    fn chunk_zero_payload_write_fails_without_sync() {
-        let mut sink = Recorder {
-            payload: Payload::Short(0),
-            ..Recorder::default()
-        };
-        let PersistenceError::Io(error) = write_chunk(&mut sink, &BYTES).expect_err("zero write")
-        else {
-            panic!("payload failure is Io");
-        };
-        assert_eq!(error.kind(), std::io::ErrorKind::WriteZero);
-        assert_eq!(sink.events, ["write 4", "write 4", "write 6"]);
     }
 }
 
@@ -2873,8 +2661,8 @@ mod tests {
             save(&mapped_dir, &state, &mapped, &versions(), 1).expect("mapped save");
             for (_, file) in inline.layout().system_logs() {
                 assert_eq!(
-                    std::fs::read(file.under(&mapped_dir)).expect("mapped log"),
-                    std::fs::read(file.under(&inline_dir)).expect("inline log"),
+                    std::fs::read(build_path(&mapped_dir, file.as_ref())).expect("mapped log"),
+                    std::fs::read(build_path(&inline_dir, file.as_ref())).expect("inline log"),
                     "{name}: {}",
                     file.display()
                 );
@@ -3080,7 +2868,7 @@ mod tests {
             ("a/./", "a/./user.conf"),
         ] {
             assert_eq!(
-                user_conf_path(Path::new(dir)),
+                build_path(Path::new(dir), OsStr::new(USER_CONF)),
                 Path::new(expected),
                 "{dir:?}"
             );
@@ -3124,6 +2912,94 @@ mod tests {
         let marker = UserTableInfo::load_path(&dir.join(USER_CONF)).expect("parse");
         assert!(marker.is_conform(&versions()));
 
+        std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    #[test]
+    fn cleanup_walks_default_rows_then_libpinyins_addons_then_the_fixed_names() {
+        let dir = tempdir("cleanup");
+        let conf_dir = tempfile::tempdir().expect("conf dir");
+        let conf_path = conf_dir.path().join("table.conf");
+        std::fs::write(
+            &conf_path,
+            "binary format version:7\nmodel data version:14\n\
+             lambda parameter:0.312699\n\nsource table format:pinyin\n\
+             database format:BerkeleyDB\n\n\
+             default RESERVED NULL NULL NULL NOT_USED\n\
+             default USER_DICTIONARY NULL NULL default-user.bin USER_FILE\n\n\
+             addon 4 art.table art.bin addon-user.bin DICTIONARY\n",
+        )
+        .expect("table.conf");
+        let conf = oxpinyin_data::table_info::TableConf::load_path(&conf_path).expect("parse");
+        let layout = UserFileLayout::from_conf(&conf);
+
+        let names = [
+            "default-user.bin",
+            "addon-user.bin",
+            "user_pinyin_index.bin",
+            "user_phrase_index.bin",
+            "user_bigram.db",
+        ];
+        for name in names {
+            std::fs::write(build_path(&dir, OsStr::new(name)), b"x").expect("file");
+        }
+        clean_user_files(&dir, &layout, UserConfLaw::Pinyin);
+        for name in names {
+            assert!(
+                !build_path(&dir, OsStr::new(name)).exists(),
+                "{name} survived the pinyin wipe"
+            );
+        }
+
+        std::fs::write(build_path(&dir, OsStr::new("addon-user.bin")), b"x").expect("file");
+        std::fs::write(build_path(&dir, OsStr::new("default-user.bin")), b"x").expect("file");
+        clean_user_files(&dir, &layout, UserConfLaw::Zhuyin);
+        assert!(!build_path(&dir, OsStr::new("default-user.bin")).exists());
+        assert!(
+            build_path(&dir, OsStr::new("addon-user.bin")).exists(),
+            "libzhuyin does not clean addon rows (zhuyin.cpp:141-159)"
+        );
+
+        std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    #[test]
+    fn a_failed_strict_save_leaves_the_staged_tmp_files() {
+        let dir = tempdir("leave-tmp");
+        let tmp = build_path(&dir, OsStr::new("user.bin.tmp"));
+        let final_path = build_path(&dir, OsStr::new("user.bin"));
+        std::fs::write(&tmp, b"staged").expect("tmp");
+        std::fs::create_dir(&final_path).expect("block the rename");
+        let staged = [(tmp.clone(), final_path)];
+        assert!(
+            finish_save(&dir, &versions(), 1, &staged, Ok(())).is_err(),
+            "the blocking directory fails the rename"
+        );
+        assert!(tmp.is_file(), "the pin leaves the staged .tmp in place");
+        assert!(
+            finish_save(
+                &dir,
+                &versions(),
+                1,
+                &staged,
+                Err(PersistenceError::Codec("failed write".to_owned())),
+            )
+            .is_err()
+        );
+        assert!(tmp.is_file(), "a failed write leaves the staged .tmp too");
+        std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    #[test]
+    fn the_user_bigram_is_staged_as_a_tmp_sibling() {
+        let dir = tempdir("bigram-tmp");
+        let mut staged = Staged::default();
+        stage_user_bigram(&dir, &[(b"k".to_vec(), b"v".to_vec())], &mut staged).expect("stage");
+        let (tmp, final_path) = &staged.pending[0];
+        assert_eq!(tmp, &build_path(&dir, OsStr::new("user_bigram.db.tmp")));
+        assert_eq!(final_path, &build_path(&dir, OsStr::new("user_bigram.db")));
+        assert!(tmp.exists(), "save_db wrote the staged name");
+        assert!(!final_path.exists(), "the rename has not run yet");
         std::fs::remove_dir_all(&dir).expect("cleanup");
     }
 
@@ -3633,42 +3509,6 @@ mod tests {
             other => panic!("expected the length write to fail: {other:?}"),
         }
         std::fs::remove_dir_all(&dir).expect("cleanup");
-    }
-
-    /// `memory_chunk.h:543`/`:547`: the pin reads the `write` call's own
-    /// return value, so a *short* header write — a partial word the
-    /// filesystem accepted without error — must fail here too, where
-    /// `write_all` would retry the tail and report success. A real short
-    /// write to a regular file is not portable to trigger, so a writer that
-    /// returns a short count from its first `write` stands in for it.
-    #[test]
-    fn a_short_header_write_is_not_retried() {
-        struct ShortWriter {
-            count: usize,
-        }
-        impl std::io::Write for ShortWriter {
-            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-                Ok(self.count.min(buf.len()))
-            }
-            fn flush(&mut self) -> std::io::Result<()> {
-                Ok(())
-            }
-        }
-
-        let mut short = ShortWriter { count: 2 };
-        let error = write_header_word(&mut short, &[0_u8; 4], ChunkHeaderField::Length)
-            .expect_err("a short header write must fail");
-        match error {
-            PersistenceError::ChunkHeaderWrite { field, source } => {
-                assert_eq!(field, ChunkHeaderField::Length);
-                assert_eq!(source.kind(), std::io::ErrorKind::WriteZero);
-            }
-            other => panic!("expected the length write to fail: {other:?}"),
-        }
-
-        let mut whole = ShortWriter { count: 4 };
-        write_header_word(&mut whole, &[0_u8; 4], ChunkHeaderField::Checksum)
-            .expect("a whole header write must succeed");
     }
 
     /// The process umask, read without `unsafe`: a file created asking

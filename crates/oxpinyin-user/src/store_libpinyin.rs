@@ -385,8 +385,11 @@ impl GenericUserStore<DefaultStore> {
         let (bigram_db, has_bigram_file) = match target.dir.as_deref() {
             Some(dir) => (
                 persistence::load_user_bigram_db(dir)?,
-                dir.join(oxpinyin_data::user_files::UserDbm::Bigram.file_name())
-                    .exists(),
+                oxpinyin_input::path::build_path(
+                    dir,
+                    std::ffi::OsStr::new(&oxpinyin_data::user_files::UserDbm::Bigram.file_name()),
+                )
+                .exists(),
             ),
             None => (DefaultUserBigramDb::empty()?, false),
         };

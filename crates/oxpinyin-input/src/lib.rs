@@ -11,6 +11,10 @@
 //! with the crates that own those records; this crate answers only what each
 //! C call answered.
 //!
+//! Stage 3 holds the save path's file-system calls: the pin's
+//! `g_build_filename` ([`path`]), the chunk open/write/sync/close
+//! ([`chunk`]), and `g_rename` and plain `unlink` (also [`path`]).
+//!
 //! Stage 5's tool boundary ([`tool`], the `tools` feature) holds the pin
 //! utilities' locale, GLib option, input-stream and text calls, through the
 //! `libc` crate, `glib-sys` and `std::io` without a C or C++ shim
@@ -25,10 +29,12 @@
 #![cfg_attr(not(test), deny(clippy::expect_used))]
 #![cfg_attr(not(test), deny(clippy::panic))]
 
+pub mod chunk;
 pub mod config;
 pub mod diagnostic;
 #[allow(unsafe_code)]
 mod native;
+pub mod path;
 #[cfg(feature = "tools")]
 #[allow(unsafe_code)]
 pub mod tool;

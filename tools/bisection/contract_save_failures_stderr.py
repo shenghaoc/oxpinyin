@@ -149,6 +149,62 @@ def register(case, *, CASES, crafted_bigram_context, index_file_rows, token_reus
         return blocked_save(k, 'user_pinyin_index.bin.tmp', 'parse_more_chewings', b'su3cl3', ())
 
 
+    # The pin unlinks USER_BIGRAM ".tmp" before save_db (pinyin.cpp:1017,
+    # zhuyin.cpp:683); a directory in its place makes the unlink fail, the
+    # DBM write fail and the final rename fail, leaving the old bigram.
+    def save_bigram_tmp_blocked(k, mode):
+        """Block user_bigram.db.tmp and report the staged and final names."""
+        if mode == 'zhuyin':
+            out = blocked_save(k, 'user_bigram.db.tmp', 'parse_more_chewings', b'su3cl3', ())
+        else:
+            out = blocked_save(k, 'user_bigram.db.tmp')
+        out['tmp_is_dir'] = os.path.isdir(os.path.join(k.user, 'user_bigram.db.tmp'))
+        out['final_is_file'] = os.path.isfile(os.path.join(k.user, 'user_bigram.db'))
+        return out
+
+
+    for _mode in ('pinyin', 'zhuyin'):
+        case('save-929-rename-user_bigram.db.tmp-' + _mode,
+             mode=_mode, stderr=True, issues=('929',))(
+                 functools.partial(save_bigram_tmp_blocked, mode=_mode))
+
+
+    def save_bigram_stale_tmp(k, mode):
+        """Write a stale user_bigram.db.tmp, save again, and read the final rows.
+
+        The pin unlinks the stale staging name, writes a fresh container to
+        it and renames it over the final (pinyin.cpp:1015-1018,
+        zhuyin.cpp:681-685). A save that wrote the final name directly would
+        rename the stale bytes over the good container instead.
+        """
+        if mode == 'zhuyin':
+            ctx = _dirty_for_save(k, 'parse_more_chewings', b'su3cl3', ())
+            first = k.fn('save', B, P)(ctx)
+            Path(k.user, 'user_bigram.db.tmp').write_bytes(b'stale staging bytes')
+            inst = k.alloc()
+            k.fn('parse_more_chewings', Z, P, S)(inst, b'su3cl3')
+            k.fn('guess_sentence', B, P)(inst)
+            k.fn('train', B, P)(inst)
+        else:
+            ctx = _dirty_for_save(k)
+            first = k.fn('save', B, P)(ctx)
+            Path(k.user, 'user_bigram.db.tmp').write_bytes(b'stale staging bytes')
+            inst = k.alloc()
+            k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'nihao')
+            k.fn('guess_sentence', B, P)(inst)
+            k.fn('train', B, P, C.c_ubyte)(inst, 0)
+        second = k.fn('save', B, P)(ctx)
+        return {'first': first, 'second': second,
+                'tmp_exists': Path(k.user, 'user_bigram.db.tmp').exists(),
+                'rows': index_file_rows(Path(k.user, 'user_bigram.db'),
+                                        kind='hash', allow_empty=True)}
+
+
+    for _mode in ('pinyin', 'zhuyin'):
+        case('save-929-stale-bigram-tmp-' + _mode, mode=_mode,
+             issues=('929',))(functools.partial(save_bigram_stale_tmp, mode=_mode))
+
+
     # #929: expectations read at 074a2219 pinyin.cpp:922-1146 and
     # zhuyin.cpp:547-698 before differential execution. Ordinary rename failures
     # continue, retain the failed .tmp and clear dirty; successful saves survive fini.
