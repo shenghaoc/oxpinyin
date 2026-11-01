@@ -770,7 +770,10 @@ mod tests {
                 );
                 assert_eq!(
                     library.live,
-                    library.items().map(|(_, item)| item.as_bytes().len()).sum()
+                    library
+                        .items()
+                        .map(|(_, item)| item.as_bytes().len())
+                        .sum::<usize>()
                 );
             }
             (Err(expected), Err(actual)) => assert_eq!(actual, expected),

@@ -103,6 +103,7 @@ oxpinyin-engine.workspace = true
 # The shared facade-orchestration layer (instance/context state machines,
 # parse seams, cursor laws) this crate's C wrappers translate.
 oxpinyin-facade = { path = "../oxpinyin-facade", default-features = false }
+oxpinyin-input.workspace = true
 oxpinyin-runtime.workspace = true
 oxpinyin-user.workspace = true
 glib-sys.workspace = true

@@ -291,6 +291,7 @@ dependencies = [
  "oxpinyin-data",
  "oxpinyin-engine",
  "oxpinyin-facade",
+ "oxpinyin-input",
  "oxpinyin-runtime",
  "oxpinyin-user",
 ]
@@ -364,6 +365,7 @@ dependencies = [
 name = "oxpinyin-input"
 version = "0.1.0"
 dependencies = [
+ "glib-sys",
  "libc",
 ]
 
@@ -374,6 +376,7 @@ dependencies = [
  "oxpinyin-core",
  "oxpinyin-data",
  "oxpinyin-engine",
+ "oxpinyin-input",
  "oxpinyin-user",
 ]
 
@@ -399,6 +402,7 @@ version = "0.1.0"
 dependencies = [
  "oxpinyin-core",
  "oxpinyin-data",
+ "oxpinyin-input",
  "oxpinyin-store",
 ]
 

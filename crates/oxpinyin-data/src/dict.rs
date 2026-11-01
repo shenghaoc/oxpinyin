@@ -225,8 +225,14 @@ impl SystemDictionary {
     /// library unloaded, as `FacadePhraseIndex::load` failing does.
     pub fn open(system_dir: &Path) -> Result<Self, DictError> {
         Self::open_files(
-            &system_dir.join(SystemDbm::PinyinIndex.file_name()),
-            &system_dir.join(SystemDbm::PhraseIndex.file_name()),
+            &oxpinyin_input::path::build_path(
+                system_dir,
+                std::ffi::OsStr::new(&SystemDbm::PinyinIndex.file_name()),
+            ),
+            &oxpinyin_input::path::build_path(
+                system_dir,
+                std::ffi::OsStr::new(&SystemDbm::PhraseIndex.file_name()),
+            ),
             system_dir,
         )
     }
@@ -266,8 +272,14 @@ impl SystemDictionary {
             .filter_map(|(index, row)| row.system.as_ref().map(|file| (index, file)))
             .collect();
         let mut dict = Self::open_files_with(
-            &system_dir.join(SystemDbm::PinyinIndex.file_name()),
-            &system_dir.join(SystemDbm::PhraseIndex.file_name()),
+            &oxpinyin_input::path::build_path(
+                system_dir,
+                std::ffi::OsStr::new(&SystemDbm::PinyinIndex.file_name()),
+            ),
+            &oxpinyin_input::path::build_path(
+                system_dir,
+                std::ffi::OsStr::new(&SystemDbm::PhraseIndex.file_name()),
+            ),
             system_dir,
             &stems,
             true,
@@ -856,8 +868,14 @@ impl AddonDictionary {
     ///
     /// As [`Self::open`].
     pub fn open_with(system_dir: &Path, conf: &TableConf) -> Result<Self, DictError> {
-        let pinyin_path = system_dir.join(SystemDbm::AddonPinyinIndex.file_name());
-        let phrase_path = system_dir.join(SystemDbm::AddonPhraseIndex.file_name());
+        let pinyin_path = oxpinyin_input::path::build_path(
+            system_dir,
+            std::ffi::OsStr::new(&SystemDbm::AddonPinyinIndex.file_name()),
+        );
+        let phrase_path = oxpinyin_input::path::build_path(
+            system_dir,
+            std::ffi::OsStr::new(&SystemDbm::AddonPhraseIndex.file_name()),
+        );
         let pinyin = pinyin_path
             .is_file()
             .then(|| open_tree(&pinyin_path))
@@ -950,7 +968,7 @@ impl AddonDictionary {
         let Some(file) = file else {
             return Err(LibraryError::Row(RowFault::NullChunkName));
         };
-        let path = file.under(dir);
+        let path = oxpinyin_input::path::build_path(dir, file.as_ref());
         match std::fs::metadata(&path) {
             // A directory is `MemoryChunk::mmap`'s to judge by its reported
             // size (`phrase_library::directory_chunk_fault`, Unix only).

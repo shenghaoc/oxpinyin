@@ -2064,9 +2064,18 @@ impl Runtime {
             }
             return Err(OpenError::TableConf(TableConfError::Abort(site)));
         }
-        let pinyin_index = system_dir.join(SystemDbm::PinyinIndex.file_name());
-        let phrase_index = system_dir.join(SystemDbm::PhraseIndex.file_name());
-        let bigram = system_dir.join(SystemDbm::Bigram.file_name());
+        let pinyin_index = oxpinyin_input::path::build_path(
+            system_dir,
+            std::ffi::OsStr::new(&SystemDbm::PinyinIndex.file_name()),
+        );
+        let phrase_index = oxpinyin_input::path::build_path(
+            system_dir,
+            std::ffi::OsStr::new(&SystemDbm::PhraseIndex.file_name()),
+        );
+        let bigram = oxpinyin_input::path::build_path(
+            system_dir,
+            std::ffi::OsStr::new(&SystemDbm::Bigram.file_name()),
+        );
         require_file(&pinyin_index)?;
         require_file(&phrase_index)?;
         require_file(&bigram)?;
@@ -2473,7 +2482,7 @@ impl Runtime {
             let Some(name) = row.system.as_ref() else {
                 continue;
             };
-            let path = oxpinyin_data::table_info::pin_join(dir, name.as_ref());
+            let path = oxpinyin_input::path::build_path(dir, name.as_ref());
             match libraries.reload(index, &path) {
                 Ok(true) => {}
                 Ok(false) => continue,

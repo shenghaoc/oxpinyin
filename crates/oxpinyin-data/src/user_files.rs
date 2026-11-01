@@ -145,6 +145,12 @@ impl UserDbm {
 pub struct UserFileLayout {
     user: Vec<(u8, FileName)>,
     logs: Vec<(u8, FileName)>,
+    /// Every default row's user file name in sub-index order, which is the
+    /// order `_clean_user_files` unlinks them (`pinyin.cpp:152-167`).
+    clean: Vec<(u8, FileName)>,
+    /// Every `addon` row's user file name in sub-index order; libpinyin
+    /// cleans these too and libzhuyin does not (`pinyin.cpp:199-200`).
+    addon_clean: Vec<(u8, FileName)>,
 }
 
 impl UserFileLayout {
@@ -162,14 +168,16 @@ impl UserFileLayout {
         // `_clean_user_files`, `_write_files` and `_rename_files` all start at
         // sub-index 1: "skip the reserved zero phrase library".
         let named = |(index, row): (u8, &crate::table_info::TableRow)| {
-            row.user
-                .clone()
-                .filter(|_| index != 0)
+            (index != 0 && row.file_type != crate::table_info::FileType::NotUsed)
+                .then(|| row.user.clone())
+                .flatten()
                 .map(|name| (index, name))
         };
         Self {
             user: conf.user_libraries().filter_map(named).collect(),
             logs: conf.system_libraries().filter_map(named).collect(),
+            clean: conf.default_rows().filter_map(named).collect(),
+            addon_clean: conf.addon_rows().filter_map(named).collect(),
         }
     }
 
@@ -183,6 +191,18 @@ impl UserFileLayout {
     #[must_use]
     pub fn system_logs(&self) -> &[(u8, FileName)] {
         &self.logs
+    }
+
+    /// The default rows' user file names in the pin's cleanup order.
+    #[must_use]
+    pub fn default_cleanup(&self) -> &[(u8, FileName)] {
+        &self.clean
+    }
+
+    /// The addon rows' user file names in the pin's cleanup order.
+    #[must_use]
+    pub fn addon_cleanup(&self) -> &[(u8, FileName)] {
+        &self.addon_clean
     }
 
     /// Whether sub-index `index` is a `USER_FILE` library with a file.

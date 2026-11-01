@@ -653,6 +653,8 @@ EXPECTED = [('hash-path/system-directory-pinyin', (), {'issues': ('1119',), 'mod
             ('table-conf-missing-with-dbms-zhuyin', (), {'issues': ('545',), 'mode': 'zhuyin', 'stderr': True}),
             ('table-conf-user-file-absolute', (), {'issues': ('694', '525'), 'mode': 'pinyin'}),
             ('table-conf-user-file-absolute-zhuyin', (), {'issues': ('694', '525'), 'mode': 'zhuyin'}),
+            ('table-conf-addon-cleanup', (), {'mode': 'pinyin', 'stderr': True}),
+            ('table-conf-addon-cleanup-zhuyin', (), {'mode': 'zhuyin', 'stderr': True}),
             ('table-conf-versions-negative-overflow',
              (),
              {'control': False, 'issues': ('694', '525'), 'mode': 'pinyin'}),
