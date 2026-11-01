@@ -1,0 +1,78 @@
+{
+  "schema": 1,
+  "cases": [
+    {
+      "id": "kmm-import-help",
+      "utility": "import_k_mixture_model",
+      "source": "utils/training/import_k_mixture_model.cpp at 074a2219: 258-317, 72-256; src/storage/tag_utility.cpp:118-264",
+      "args": [
+        "--help"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      }
+    },
+    {
+      "id": "kmm-import-bad-option",
+      "utility": "import_k_mixture_model",
+      "source": "utils/training/import_k_mixture_model.cpp at 074a2219: 258-317, 72-256; src/storage/tag_utility.cpp:118-264",
+      "args": [
+        "--bogus"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      }
+    },
+    {
+      "id": "kmm-import-missing-table-conf",
+      "utility": "import_k_mixture_model",
+      "source": "utils/training/import_k_mixture_model.cpp at 074a2219: 258-317, 72-256; src/storage/tag_utility.cpp:118-264",
+      "args": [],
+      "env": {
+        "LC_ALL": "C"
+      },
+      "stdin": {
+        "text": ""
+      }
+    },
+    {
+      "id": "kmm-import-empty-input",
+      "utility": "import_k_mixture_model",
+      "source": "utils/training/import_k_mixture_model.cpp at 074a2219: 258-317, 72-256; src/storage/tag_utility.cpp:118-264",
+      "args": [],
+      "env": {
+        "LC_ALL": "C"
+      },
+      "fixture_dir": "fixtures/w3",
+      "stdin": {
+        "text": ""
+      }
+    },
+    {
+      "id": "kmm-import-foreign-header",
+      "utility": "import_k_mixture_model",
+      "source": "utils/training/import_k_mixture_model.cpp at 074a2219: 258-317, 72-256; src/storage/tag_utility.cpp:118-264",
+      "args": [],
+      "env": {
+        "LC_ALL": "C"
+      },
+      "fixture_dir": "fixtures/w3",
+      "stdin": {
+        "text": "\\data model interpolation\n\\end\n"
+      }
+    },
+    {
+      "id": "kmm-import-good",
+      "utility": "import_k_mixture_model",
+      "source": "utils/training/import_k_mixture_model.cpp at 074a2219: 258-317, 72-256; src/storage/tag_utility.cpp:118-264",
+      "args": [],
+      "env": {
+        "LC_ALL": "C"
+      },
+      "fixture_dir": "fixtures/w3",
+      "stdin": {
+        "text": "\\data model \"k mixture model\" count 3 N 1 total_freq 3\n\\1-gram\n\\item 1 <start> count 2 freq 0\n\\item 16817937 中国 count 1 freq 1\n\\item 16802309 你好 count 0 freq 2\n\\2-gram\n\\item 1 <start> 16817937 中国 count 1 T 1 N_n_0 1 n_1 1 Mr 1\n\\item 1 <start> 16802309 你好 count 1 T 1 N_n_0 1 n_1 1 Mr 1\n\\item 16817937 中国 16802309 你好 count 1 T 1 N_n_0 1 n_1 1 Mr 1\n\\end\n"
+      }
+    }
+  ]
+}

@@ -73,5 +73,5 @@ pub use phrase::{
 pub use replay::JournalFault;
 pub use store::{
     ExportedPhrase, GenericUserStore, SENTENCE_START, SaveReport, Token, TrainingFault, UserStore,
-    UserStoreError,
+    UserStoreError, add_system_reading,
 };

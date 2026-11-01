@@ -1,0 +1,74 @@
+{
+  "schema": 1,
+  "cases": [
+    {
+      "id": "gen_ngram-help",
+      "utility": "gen_ngram",
+      "source": "utils/training/gen_ngram.cpp at 074a2219: 45-56 (GLib --help)",
+      "args": ["--help"]
+    },
+    {
+      "id": "gen_ngram-bogus-option",
+      "utility": "gen_ngram",
+      "source": "utils/training/gen_ngram.cpp at 074a2219: 53-56",
+      "args": ["--bogus"]
+    },
+    {
+      "id": "gen_ngram-too-many-arguments",
+      "utility": "gen_ngram",
+      "source": "utils/training/gen_ngram.cpp at 074a2219: 53-123 (g_option_context_parse leaves extra arguments; main never reads argc)",
+      "args": ["--bigram-file", "absent/bigram.db", "first", "second"],
+      "fixture_dir": "fixtures/w3",
+      "stdin": {"text": ""}
+    },
+    {
+      "id": "gen_ngram-missing-table-conf",
+      "utility": "gen_ngram",
+      "source": "utils/training/gen_ngram.cpp at 074a2219: 58-64",
+      "args": [],
+      "stdin": {"text": ""}
+    },
+    {
+      "id": "gen_ngram-missing-bigram-file",
+      "utility": "gen_ngram",
+      "source": "utils/training/gen_ngram.cpp at 074a2219: 74-75 (attach's answer is ignored; a failed attach leaves every load and store a no-op) and 120-121 (the chunks are still saved)",
+      "args": ["--bigram-file", "absent/bigram.db"],
+      "fixture_dir": "fixtures/w3",
+      "stdin": {"text": "16777219 阿\n"}
+    },
+    {
+      "id": "gen_ngram-empty-stdin",
+      "utility": "gen_ngram",
+      "source": "utils/training/gen_ngram.cpp at 074a2219: 79-121 (no line, then save_phrase_index)",
+      "args": ["--bigram-file", "absent/bigram.db"],
+      "fixture_dir": "fixtures/w3",
+      "stdin": {"text": ""}
+    },
+    {
+      "id": "gen_ngram-bad-segmented-line",
+      "utility": "gen_ngram",
+      "source": "utils/training/gen_ngram.cpp at 074a2219: 80 and utils/utils_helper.h:57-59 (g_strv_length != 2 aborts)",
+      "args": ["--bigram-file", "absent/bigram.db"],
+      "fixture_dir": "fixtures/w3",
+      "stdin": {"text": "abc\n"},
+      "pin_signal": -6,
+      "reproduces_signal": true
+    },
+    {
+      "id": "gen_ngram-ordinary",
+      "utility": "gen_ngram",
+      "source": "utils/training/gen_ngram.cpp at 074a2219: 79-121 (uni-gram +1, sentence_start after a null token, bi-gram rows, chunk save)",
+      "args": ["--bigram-file", "absent/bigram.db"],
+      "fixture_dir": "fixtures/w3",
+      "stdin": {"text": "16777219 阿\n16777220 啊\n\n16777219 阿\n"}
+    },
+    {
+      "id": "gen_ngram-skip-pi-gram",
+      "utility": "gen_ngram",
+      "source": "utils/training/gen_ngram.cpp at 074a2219: 40 (G_OPTION_FLAG_REVERSE) and 93-98",
+      "args": ["--skip-pi-gram-training", "--bigram-file", "absent/bigram.db"],
+      "fixture_dir": "fixtures/w3",
+      "stdin": {"text": "16777219 阿\n16777220 啊\n"}
+    }
+  ]
+}

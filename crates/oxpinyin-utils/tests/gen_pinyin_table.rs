@@ -2,6 +2,7 @@
 //! (libpinyin 074a2219 `utils/storage/gen_pinyin_table.cpp`), run as the
 //! built binary so the C streams, exit statuses and GLib lines are real.
 
+use oxpinyin_input::tool;
 use std::path::Path;
 use std::process::{Command, Output};
 
@@ -85,7 +86,7 @@ fn a_missing_input_exits_enoent_before_writing() {
     let newline = if cfg!(windows) { "\r\n" } else { "\n" };
     let dir = tempfile::tempdir().unwrap();
     let out = run(dir.path(), &["absent.txt"]);
-    assert_eq!(out.status.code(), Some(2));
+    assert_eq!(out.status.code(), Some(tool::ENOENT));
     assert_eq!(
         String::from_utf8_lossy(&out.stderr),
         format!("Can't open file absent.txt.{newline}")
@@ -97,7 +98,7 @@ fn a_missing_input_exits_enoent_before_writing() {
 fn an_unknown_option_exits_einval_with_the_glib_message() {
     let dir = tempfile::tempdir().unwrap();
     let out = run(dir.path(), &["--bogus"]);
-    assert_eq!(out.status.code(), Some(22));
+    assert_eq!(out.status.code(), Some(tool::EINVAL));
     assert!(
         String::from_utf8_lossy(&out.stdout).starts_with("option parsing failed:"),
         "{out:?}"

@@ -435,6 +435,17 @@ impl crate::RawReadStore for KcStore {
         self.db.count()
     }
 
+    /// `Bigram::get_all_items`' `iterate` walk (`ngram_kyotodb.cpp:186-196`):
+    /// Kyoto Cabinet's own order, which for `HashDB` is bucket order.
+    fn native_keys(&self) -> Result<Vec<Vec<u8>>, crate::StoreError> {
+        Ok(self
+            .db
+            .records()?
+            .iter()
+            .map(|record| record.key().to_vec())
+            .collect())
+    }
+
     fn open_hash_read_only(path: &Path) -> Result<Self, crate::StoreError> {
         Ok(Self {
             db: Db::open(path, DbType::Hash, true, false)?,
@@ -621,6 +632,12 @@ impl WriteTxn for KcTxn<'_> {
         // The file's bare keyspace, no table-name framing — what
         // `get_raw`/`range_raw` read back on this backend.
         self.store.db.set(key, value)
+    }
+
+    #[inline(never)]
+    fn remove_raw(&mut self, key: &[u8]) -> Result<(), StoreError> {
+        // The removal half of `put_raw`, on the same bare keyspace.
+        self.store.db.remove(key)
     }
 
     #[inline(never)]

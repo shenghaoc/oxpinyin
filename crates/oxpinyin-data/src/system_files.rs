@@ -76,8 +76,8 @@ impl SystemDbm {
 ///
 /// The base name is the library's identity
 /// across the whole pipeline: `<name>.table` is its model20 source,
-/// `<name>.bin` its chunk file ([`SYSTEM_LIBRARY_FILES`]). Shared with
-/// `oxpinyin-datagen`, which compiles the first into the second.
+/// `<name>.bin` its chunk file ([`SYSTEM_LIBRARY_FILES`]); `gen_binary_files`
+/// compiles the first into the second.
 pub const SYSTEM_LIBRARY_NAMES: &[(u8, &str)] = &[
     (1, "gb_char"),
     (2, "gbk_char"),
@@ -164,7 +164,7 @@ mod tests {
     }
 
     /// The chunk-file tables are the name tables with `.bin` appended.
-    /// `oxpinyin-datagen` compiles `<name>.table` into the chunk file this
+    /// `gen_binary_files` compiles `<name>.table` into the chunk file this
     /// crate opens, so a library added to one table and not the other
     /// would give the two halves different library sets.
     #[test]

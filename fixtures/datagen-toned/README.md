@@ -14,9 +14,11 @@ library (`er4'huang2` / `er'huang`). `interpolation2.text` carries
 `\1-gram` counts for some tokens only (the others take `gen_unigram`'s
 bare `+1`), a `<start>` bigram, and a two-token row.
 
-It is the input of `just compat drop-in`:
-libpinyin's own `gen_binary_files` / `import_interpolation` /
-`gen_unigram` compile it on one side, `oxpinyin-datagen` on the other,
-and `crates/oxpinyin-datagen/tests/libpinyin_parity.rs` compares the
-results field by field — every chunk file byte-exact (tone bits included)
-and every DBM row. Neither side reads the other's output.
+It is the input of `just compat drop-in`: libpinyin's own
+`gen_binary_files` / `import_interpolation` / `gen_unigram` compile it on
+one side, `oxpinyin-utils`' ports under the same names on the other, and
+the recipe compares every chunk file byte for byte (tone bits included).
+Neither side reads the other's output. The `gbf-toned-model` case in
+`tools/bisection/tool-cases/gen_binary_files.json` runs `gen_binary_files`
+over the same tables on both sides and compares the complete output
+inventory, the toned pinyin-index rows included.

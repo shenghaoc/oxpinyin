@@ -1,0 +1,97 @@
+{
+  "schema": 1,
+  "cases": [
+    {
+      "id": "eval_correction_rate-help",
+      "utility": "eval_correction_rate",
+      "source": "utils/training/eval_correction_rate.cpp at 074a2219: 132-170 (no g_option_context; print_help is dead and an option is an ignored argument, then the missing evals2.text ends the run)",
+      "args": ["--help"],
+      "fixture_dir": "fixtures/w3",
+      "stdin": {"text": ""}
+    },
+    {
+      "id": "eval_correction_rate-too-many-arguments",
+      "utility": "eval_correction_rate",
+      "source": "utils/training/eval_correction_rate.cpp at 074a2219: 132-207 (main has no argument parsing)",
+      "args": ["first", "second"],
+      "fixture_dir": "fixtures/w3",
+      "files": {
+        "evals2.text": {"text": ""}
+      },
+      "stdin": {"text": ""}
+    },
+    {
+      "id": "eval_correction_rate-missing-table-conf",
+      "utility": "eval_correction_rate",
+      "source": "utils/training/eval_correction_rate.cpp at 074a2219: 135-141",
+      "args": [],
+      "stdin": {"text": ""}
+    },
+    {
+      "id": "eval_correction_rate-missing-corpus",
+      "utility": "eval_correction_rate",
+      "source": "utils/training/eval_correction_rate.cpp at 074a2219: 166-170",
+      "args": [],
+      "fixture_dir": "fixtures/w3",
+      "stdin": {"text": ""}
+    },
+    {
+      "id": "eval_correction_rate-empty-corpus",
+      "utility": "eval_correction_rate",
+      "source": "utils/training/eval_correction_rate.cpp at 074a2219: 202-203 (0/0 prints the host NaN)",
+      "args": [],
+      "fixture_dir": "fixtures/w3",
+      "files": {
+        "evals2.text": {"text": ""}
+      },
+      "stdin": {"text": ""}
+    },
+    {
+      "id": "eval_correction_rate-pass",
+      "utility": "eval_correction_rate",
+      "source": "utils/training/eval_correction_rate.cpp at 074a2219: 36-130 and 177-203 (one token decodes back to itself)",
+      "args": [],
+      "fixture_dir": "fixtures/w3",
+      "files": {
+        "evals2.text": {"text": "16777219 阿\n"}
+      },
+      "stdin": {"text": ""}
+    },
+    {
+      "id": "eval_correction_rate-mismatch",
+      "utility": "eval_correction_rate",
+      "source": "utils/training/eval_correction_rate.cpp at 074a2219: 112-125 (two tokens; the decode answers 阿阿)",
+      "args": [],
+      "fixture_dir": "fixtures/w3",
+      "files": {
+        "evals2.text": {"text": "16777219 阿\n16777220 啊\n\n"}
+      },
+      "stdin": {"text": ""}
+    },
+    {
+      "id": "eval_correction_rate-bad-segmented-line",
+      "utility": "eval_correction_rate",
+      "source": "utils/training/eval_correction_rate.cpp at 074a2219: 178 and utils/utils_helper.h:57-59 (g_strv_length != 2 aborts)",
+      "args": [],
+      "fixture_dir": "fixtures/w3",
+      "files": {
+        "evals2.text": {"text": "abc\n"}
+      },
+      "stdin": {"text": ""},
+      "pin_signal": -6,
+      "reproduces_signal": true
+    },
+    {
+      "id": "eval_correction_rate-missing-bigram-file",
+      "utility": "eval_correction_rate",
+      "source": "utils/training/eval_correction_rate.cpp at 074a2219: 154-155 (attach's answer is ignored; the decode falls back to the unigram term)",
+      "args": [],
+      "fixture_dir": "fixtures/w3",
+      "files": {
+        "bigram.db": {"text": ""},
+        "evals2.text": {"text": "16777219 阿\n"}
+      },
+      "stdin": {"text": ""}
+    }
+  ]
+}

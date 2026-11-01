@@ -7,7 +7,7 @@
 //! * the framed **container** (`DB_BTREE`, one file, `table || 0x00 ||
 //!   key` like the Kyoto Cabinet and tkrzw backends) behind
 //!   [`crate::ReadStore`] / [`crate::WriteStore`] — the session scratch
-//!   store, the datagen output, the benches;
+//!   store, the benches;
 //! * the **raw** keyspace of libpinyin's own files behind
 //!   [`crate::RawReadStore`]: `create_hash`/`open_hash_read_only` are
 //!   the `DB_HASH` form of `bigram.db`/`user_bigram.db`, and the
@@ -107,11 +107,109 @@ pub struct BdbStore {
     db: Db,
 }
 
+/// Reproduces the pin's failed read-only attach: the handle stays open,
+/// a cursor and the destructor's sync run, libdb prints its own
+/// `BDB1565` lines, and the handle closes.
+/// The pin's still-open handle after a failed `attach`: every member call
+/// libdb then receives prints its own `BDB1565` line, and the destructor
+/// sync prints one more.
+pub struct BdbUnopenedHandle {
+    db: ffi::Db,
+}
+
+/// The pin's `attach` answer: an opened store, or the still-open handle a
+/// failed open leaves behind.
+pub enum BdbOpen {
+    /// `DB->open` succeeded.
+    Open(BdbStore),
+    /// `DB->open` failed; every later member call prints `BDB1565`.
+    Unopened(BdbUnopenedHandle),
+}
+
+/// Opens one hash file exactly as the pin's `attach` does, keeping the
+/// handle when the open fails.
+///
+/// # Errors
+///
+/// `db_create` or an internal allocation failure.
+pub fn open_hash_pin(path: &Path, read_only: bool) -> Result<BdbOpen, crate::StoreError> {
+    let db = ffi::Db::open_unopened(path, true, read_only, !read_only)
+        .ok_or_else(|| crate::StoreError::Backend("db_create failed".into()))?;
+    if db.is_opened() {
+        Ok(BdbOpen::Open(BdbStore {
+            db: ffi::SharedDb::new(db),
+        }))
+    } else {
+        Ok(BdbOpen::Unopened(BdbUnopenedHandle { db }))
+    }
+}
+
+impl BdbUnopenedHandle {
+    /// The failed open's handle, or `None` if `db_create` itself failed.
+    #[must_use]
+    pub fn open_failed(path: &Path, hash: bool, read_only: bool) -> Option<Self> {
+        ffi::Db::open_unopened(path, hash, read_only, !read_only)
+            .filter(|db| !db.is_opened())
+            .map(|db| Self { db })
+    }
+
+    /// `m_db->get(...)`: libdb prints `BDB1565`.
+    pub fn get(&self, key: &[u8]) -> bool {
+        self.db.get(key, &mut Vec::new()).unwrap_or(false)
+    }
+
+    /// `m_db->put(...)`: libdb prints `BDB1565`.
+    pub fn put(&self, key: &[u8], value: &[u8]) {
+        let _ = self.db.put(key, value);
+    }
+
+    /// `m_db->del(...)`: libdb prints `BDB1565`.
+    pub fn del(&self, key: &[u8]) -> bool {
+        self.db.del(key).is_ok()
+    }
+
+    /// `m_db->cursor(...)`: libdb prints `BDB1565`.
+    pub fn cursor(&self) {
+        let _ = self.db.cursor_handle();
+    }
+
+    /// `m_db->sync(...)`: libdb prints `BDB1565`.
+    pub fn sync(&self) {
+        let _ = self.db.sync();
+    }
+}
+
+impl Drop for BdbUnopenedHandle {
+    fn drop(&mut self) {
+        // The pin's `reset()` syncs before closing, and this handle was
+        // never opened, so libdb prints `BDB1565` once more.
+        self.sync();
+    }
+}
+
+/// Reproduces the pin's failed read-only attach for the storage
+/// utilities: a cursor walk, then the destructor's sync.
+pub fn report_failed_read_only_open(path: &Path, hash: bool) {
+    ffi::Db::report_failed_open(
+        path,
+        if hash { ffi::DB_HASH } else { ffi::DB_BTREE },
+        ffi::SYSTEM_FILE_MODE,
+    );
+}
+
 impl BdbStore {
     /// Applies a finished transaction's buffer and syncs. Not generic, so
     /// the many `write` closures share one copy of it.
     #[inline(never)]
     fn commit(&self, buffer: BTreeMap<Vec<u8>, Option<Vec<u8>>>) -> Result<(), StoreError> {
+        self.commit_with(buffer, true)
+    }
+
+    fn commit_with(
+        &self,
+        buffer: BTreeMap<Vec<u8>, Option<Vec<u8>>>,
+        sync: bool,
+    ) -> Result<(), StoreError> {
         for (key, value) in buffer {
             match value {
                 Some(value) => self.db.put(&key, &value)?,
@@ -127,7 +225,10 @@ impl BdbStore {
         // them. `DB->sync` is the only flush available here and it goes
         // all the way to the device, so this commit exceeds the seam's
         // floor; see `WriteStore::write`'s durability note.
-        self.db.sync()
+        if sync {
+            self.db.sync()?;
+        }
+        Ok(())
     }
 
     /// Walks `table`'s rows in ascending key order, within `[lo, hi]`,
@@ -373,6 +474,16 @@ impl RawReadStore for BdbStore {
         self.db.get(key, value)
     }
 
+    fn get_raw_partial(
+        &self,
+        key: &[u8],
+        offset: u32,
+        length: u32,
+        value: &mut Vec<u8>,
+    ) -> Result<bool, StoreError> {
+        self.db.get_partial(key, offset, length, value)
+    }
+
     fn contains_raw(&self, key: &[u8]) -> Result<bool, StoreError> {
         self.db.exists(key)
     }
@@ -388,6 +499,19 @@ impl RawReadStore for BdbStore {
         } else {
             self.range_raw_ordered(lo, hi, visit)
         }
+    }
+
+    /// `Bigram::get_all_items`' `DB_NEXT` cursor walk (`ngram_bdb.cpp:143-172`):
+    /// libdb's own record order, which for `DB_HASH` is bucket order.
+    fn native_keys(&self) -> Result<Vec<Vec<u8>>, StoreError> {
+        let mut keys = Vec::new();
+        let mut cursor = self.db.cursor()?;
+        let mut seek = ffi::Seek::First;
+        while let Some(key) = cursor.key(seek)? {
+            keys.push(key.to_vec());
+            seek = ffi::Seek::Next;
+        }
+        Ok(keys)
     }
 
     fn open_hash_read_only(path: &Path) -> Result<Self, StoreError> {
@@ -479,6 +603,26 @@ impl WriteStore for BdbStore {
         Ok(out)
     }
 
+    fn write_deferred<R>(
+        &self,
+        f: impl FnOnce(&mut Self::Txn<'_>) -> Result<R, StoreError>,
+    ) -> Result<R, StoreError> {
+        if self.db.is_read_only() {
+            return Err(StoreError::ReadOnly);
+        }
+        let mut txn = BdbTxn {
+            store: self,
+            buffer: BTreeMap::new(),
+        };
+        let out = f(&mut txn)?;
+        self.commit_with(txn.buffer, false)?;
+        Ok(out)
+    }
+
+    fn flush(&self) -> Result<(), StoreError> {
+        self.db.sync()
+    }
+
     fn compact(&mut self) -> Result<(), StoreError> {
         if self.db.is_read_only() {
             return Err(StoreError::ReadOnly);
@@ -531,6 +675,13 @@ impl WriteTxn for BdbTxn<'_> {
     #[inline(never)]
     fn put_raw(&mut self, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
         self.buffer.insert(key.to_vec(), Some(value.to_vec()));
+        Ok(())
+    }
+
+    /// The removal half of [`WriteTxn::put_raw`]: a bare key, no framing.
+    #[inline(never)]
+    fn remove_raw(&mut self, key: &[u8]) -> Result<(), StoreError> {
+        self.buffer.insert(key.to_vec(), None);
         Ok(())
     }
 

@@ -25,6 +25,25 @@ TOOLS = {
     'PINYIN_EXPORT_INTERPOLATION': 'utils/storage/export_interpolation',
 }
 FEATURES = ['--no-default-features', '--features', 'tkrzw']
+
+
+def run_pin_sequence(root, model, out, table_conf):
+    """Build a data directory with the pin's data/Makefile.am:60-62 sequence.
+
+    table.conf is not written by any of the three utilities: the pin's
+    configure renders data/table.conf from data/table.conf.in, so the caller
+    passes the pin's own configured file (an installed data/table.conf or
+    the committed fixtures/w3 rendering for the same backend).
+    """
+    out = Path(out)
+    out.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(table_conf, out / 'table.conf')
+    base = ['cargo', 'run', '--locked', '-q', '--manifest-path', str(Path(root) / 'Cargo.toml'),
+            '-p', 'oxpinyin-utils', *FEATURES, '--bin']
+    run([*base, 'gen_binary_files', '--', '--gen-punct-table', '--table-dir', str(model)], cwd=out, heavy=True)
+    with (Path(model) / 'interpolation2.text').open('rb') as source:
+        run([*base, 'import_interpolation', '--', '--table-dir', str(model)], cwd=out, stdin=source)
+    run([*base, 'gen_unigram', '--', '--table-dir', str(model)], cwd=out, heavy=True)
 REPORT = re.compile(r'live parity|parity:|value-identical|skipping|test result|diverges|stale|panicked|assertion|left:|right:')
 
 
@@ -92,11 +111,11 @@ def differentials(argv):
     library, data, exported, model = (Path(value).resolve() for value in values.values())
     for path, reason in ((library / 'src/.libs/libpinyin.so.15', 'the built shared object (make)'),
                           (data / 'table.conf', 'system table.conf'), (data / 'phrase_index.bin', 'gen_binary_files output'),
-                          (data / 'pinyin_index.bin', 'gen_binary_files output'), (exported / 'datagen-manifest.txt', 'oxpinyin-datagen compile')):
+                          (data / 'pinyin_index.bin', 'gen_binary_files output'), (exported / 'table.conf', 'the pin sequence output')):
         need(path, 'file', reason)
-    manifest = images.fields(exported / 'datagen-manifest.txt') if (exported / 'datagen-manifest.txt').is_file() else {}
-    if manifest.get('backend') != 'tkt':
-        fail(f'fatal: --export holds a {manifest.get("backend", "")} export; this runner\'s oracle is tkrzw. Rebuild the export with --features tkrzw (see the header recipe).', 2)
+    from ..system_data import data_extension
+    if data_extension(exported) != 'tkt':
+        fail(f'fatal: --export holds a {data_extension(exported) or "unknown"} export; this runner\'s oracle is tkrzw. Rebuild the export through gen_binary_files / import_interpolation / gen_unigram with --features tkrzw (see the header recipe).', 2)
     need(model / 'interpolation2.text', 'file', 'model20 export')
     env = dict(os.environ, **{key: str(library / value) for key, value in TOOLS.items()})
     for key in TOOLS:
@@ -110,7 +129,7 @@ def differentials(argv):
     evaluator = (data / 'bigram.db').is_file() and (data / 'evals2.text').is_file()
     if evaluator:
         for path, reason in ((data / 'interpolation2.text', 'the interpolation2.text bigram.db was imported from'),
-                              (exported / 'pinyin_index.bin', 'oxpinyin-datagen output'), (exported / 'phrase_index.bin', 'oxpinyin-datagen output')):
+                              (exported / 'pinyin_index.bin', 'the pin sequence output'), (exported / 'phrase_index.bin', 'the pin sequence output')):
             need(path, 'file', reason)
         if missing:
             return 2
@@ -118,19 +137,17 @@ def differentials(argv):
                    PINYIN_EVAL_TABLE_CONF=str(data / 'table.conf'), PINYIN_EVAL_PINYIN_INDEX=str(exported / 'pinyin_index.bin'),
                    PINYIN_EVAL_PHRASE_INDEX=str(exported / 'phrase_index.bin'))
     suites = [
-        ('datagen: compiled tkrzw backend reads model20 back', 'oxpinyin-datagen', 'cross_backend'),
         ('runtime: unmodified tkrzw libpinyin data directory', 'oxpinyin-runtime', 'libpinyin_data_dir'),
-        ('KMM differentials (gen+export, merge, prune, validate)', 'oxpinyin-kmm', 'differential'),
+        ('KMM tools: fixture and pin-derived cases', 'oxpinyin-utils', 'kmm_tools'),
         ('KMM to interpolation: k_mixture_model_to_interpolation', 'oxpinyin-utils', 'k_mixture_model_to_interpolation'),
-        ('segment: spseg / mergeseq', 'oxpinyin-training', 'segment-spseg-mergeseq'),
-        ('segment: ngseg (needs the system bigram)', 'oxpinyin-training', 'segment-differential'),
+        ('segment: ngseg / spseg / mergeseq', 'oxpinyin-utils', 'segmentation'),
         ('lambda: estimate_interpolation', 'oxpinyin-training', 'lambda-differential'),
         ('counter: gen_ngram', 'oxpinyin-training', 'counter-differential')]
     if evaluator:
         suites.append(('eval: eval_correction_rate', 'oxpinyin-training', 'eval-differential'))
     status = 0
     for title, package, target in suites:
-        status |= run_suite(title, cargo_test(package, target, features=package != 'oxpinyin-kmm', nocapture=True), env=env, report=True)
+        status |= run_suite(title, cargo_test(package, target, nocapture=True), env=env, report=True)
     if not evaluator:
         print(f'== eval: eval_correction_rate ==\nskipping: needs {data}/bigram.db (import_interpolation) and {data}/evals2.text')
     print('RESULT: at least one differential suite FAILED' if status else 'RESULT: every differential suite passed')
@@ -326,25 +343,28 @@ def run_fixtures(work, *, root=ROOT):
     parity = ['cargo', 'test', '--locked', '-p', 'oxpinyin-datagen', *FEATURES, '--test', 'libpinyin_parity']
     certify_tkrzw(src, prefix, env, subject_executables([datagen, ngseg, *kmm.values(), interpolation, spseg, parity], root=root, env=env))
     exported = work / 'export-tkrzw'
-    if not (exported / 'datagen-manifest.txt').is_file():
-        run(['cargo', 'run', '--locked', '-q', '-p', 'oxpinyin-datagen', *FEATURES, '--', 'compile',
-             '--backend', 'tkrzw', '--model-dir', model, '--out-dir', exported], cwd=root, env=env, heavy=True)
+    if not (exported / 'table.conf').is_file():
+        run_pin_sequence(root, model, exported, data / 'table.conf')
     w3 = Path(root) / 'fixtures/w3'
+    from ..system_data import data_extension
     for directory in (exported, w3 / 'tkt'):
-        record = images.fields(directory / 'datagen-manifest.txt')
-        if record.get('backend') != 'tkt':
-            fail(f'fatal: {directory} is not a tkrzw data set (manifest says {record.get("backend", "")}); this runner\'s oracle and tests are tkrzw', 2)
+        if data_extension(directory) != 'tkt':
+            fail(f'fatal: {directory} is not a tkrzw data set (table.conf says {data_extension(directory) or "unknown"}); this runner\'s oracle and tests are tkrzw', 2)
     env.update(PINYIN_NGSEG=str(src / TOOLS['PINYIN_NGSEG']), PINYIN_NGSEG_DATA=str(data),
                PINYIN_EXPORT_DIR=str(exported), PINYIN_MODEL_DIR=str(model))
-    status = int(run_suite('segment ngseg live parity (toned tables)', ngseg, env=env))
+    status = int(run_suite('segment ngseg live parity (toned tables)',
+                           cargo_test('oxpinyin-utils', 'segmentation', ['rust_ngseg_matches_live'], locked=True, quiet=True), env=env))
     env.update(PINYIN_GEN_NGRAM_DATA=str(w3 / 'tkt'), PINYIN_EXPORT_DIR=str(w3 / 'tkt'),
                PINYIN_SPSEG=str(src / TOOLS['PINYIN_SPSEG']), PINYIN_NGSEG_DATA=str(w3 / 'tkt'))
-    for key in ('GEN_KMM', 'EXPORT_KMM', 'MERGE_KMM', 'VALIDATE_KMM', 'KMM_TO_INTERP'):
-        env['PINYIN_' + key] = str(src / TOOLS['PINYIN_' + key])
-    for gate, command in kmm.items():
-        status |= run_suite(f'KMM live: {gate} (w3 tables)', command, env=env)
-    status |= run_suite('KMM live: to_interpolation (k_mixture_model_to_interpolation)', interpolation, env=env)
-    status |= run_suite('segment spseg live parity (w3 tables)', spseg, env=env)
+    env['PINYIN_KMM_TOOLS'] = str(src / TOOLS['PINYIN_GEN_KMM']).rsplit('/', 1)[0]
+    env['PINYIN_KMM_TO_INTERP'] = str(src / TOOLS['PINYIN_KMM_TO_INTERP'])
+    status |= run_suite('KMM live: seven tools (w3 tables)',
+                        cargo_test('oxpinyin-utils', 'kmm_tools', ['rust_kmm_tools_match_the_pin_built_ones'], locked=True, quiet=True), env=env)
+    status |= run_suite('KMM live: to_interpolation (k_mixture_model_to_interpolation)',
+                        cargo_test('oxpinyin-utils', 'k_mixture_model_to_interpolation', ['rust_kmm_matches_pin_to_interpolation'],
+                                   locked=True, quiet=True), env=env)
+    status |= run_suite('segment spseg live parity (w3 tables)',
+                        cargo_test('oxpinyin-utils', 'segmentation', ['rust_spseg_matches_live'], locked=True, quiet=True), env=env)
     for key in ('PINYIN_EXPORT_DIR', 'PINYIN_NGSEG_DATA', 'PINYIN_GEN_NGRAM_DATA'):
         env.pop(key, None)
     status |= run_suite('drop-in differential (tkrzw, toned model)',

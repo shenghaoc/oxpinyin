@@ -216,12 +216,14 @@ real pipeline (the deleted model always carries scorable contexts).
 
 ## 8. Determinism (constitution item 6)
 
-Every KMM stage is a pure function of its inputs: the counting fold is
-order-independent within a document (each `(t1,t2)` occurs once; the
-over-cap unigram subtraction is commutative), the merge and prune
-aggregations are order-independent across inputs (§4, §5), and every walk is
-token-ascending via the ordered maps. So the whole `oxpinyin-kmm` chain
-—generate → estimate → merge → prune → export → convert— is deterministic
-and independent of the DBM/hash iteration order upstream happens to use,
-which is the property that makes the byte-level differential (§6) and the
-semantic-parity harness (`crates/oxpinyin-kmm/tests/`) reproducible.
+Every KMM stage's *arithmetic* is a pure function of its inputs: the
+counting fold is order-independent within a document (each `(t1,t2)`
+occurs once; the over-cap unigram subtraction is commutative), and the
+merge and prune aggregations are order-independent across inputs (§4, §5).
+The *record order* is not: 074a221's `gen` walks GLib's per-document
+`GHashTable`s to choose its stores, `post_processing_unigram` walks the
+unigram table, and every exported section walks the backend's native
+cursor. The Rust port therefore uses GLib's own hash tables through
+`oxpinyin-input` and the layer's native walk; a Rust map would change the
+container's record order and the exported bytes. See
+`crates/oxpinyin-kmm/src/generate.rs` and the fixture cases.

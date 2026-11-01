@@ -568,6 +568,22 @@ fn plan_system_reading(
     }
 }
 
+/// Applies one `PhraseItem::add_pronunciation` reading to a stored item,
+/// with the pin's `guint8` pronunciation-count wrap. The storage tools'
+/// text importer uses the same planning and application as the system
+/// import path; `true` means the count wrapped and the stored rows are the
+/// empty view.
+pub fn add_system_reading(
+    item: &mut oxpinyin_data::chunk_write::ChunkItem,
+    packed: &[u16],
+    delta: u32,
+) -> bool {
+    let reading = SystemReading { packed, delta };
+    let change = plan_system_reading(item, &reading);
+    apply_system_reading(item, &reading, change);
+    matches!(change, SystemMerge::Wrap)
+}
+
 fn apply_system_reading(
     item: &mut oxpinyin_data::chunk_write::ChunkItem,
     reading: &SystemReading<'_>,

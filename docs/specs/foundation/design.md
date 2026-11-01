@@ -41,7 +41,7 @@ Use `compile_error!` to reject zero or multiple selections.
 No fallback precedence remains.
 This mirrors libpinyin's `--with-dbm`.
 
-Compile native runtime tables from pinned model20 for every backend with oxpinyin-datagen.
+Build native runtime tables from pinned model20 for every backend with the pin's own data utilities (`gen_binary_files`, `import_interpolation`, `gen_unigram`, now in `oxpinyin-utils`).
 Keep parity verification local.
 The model20 archive is non-redistributable and never enters CI.
 Dictionary loading, language models, decoding and IBus are outside foundation scope.

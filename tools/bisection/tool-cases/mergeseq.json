@@ -1,0 +1,71 @@
+{
+  "schema": 1,
+  "cases": [
+    {
+      "id": "mergeseq-help",
+      "utility": "mergeseq",
+      "source": "utils/segment/mergeseq.cpp at 074a2219: 207-215 (GLib --help)",
+      "args": ["--help"]
+    },
+    {
+      "id": "mergeseq-bogus-option",
+      "utility": "mergeseq",
+      "source": "utils/segment/mergeseq.cpp at 074a2219: 210-215",
+      "args": ["--bogus"]
+    },
+    {
+      "id": "mergeseq-too-many-arguments",
+      "utility": "mergeseq",
+      "source": "utils/segment/mergeseq.cpp at 074a2219: 217-228 (output opened first)",
+      "args": ["-o", "out.txt", "first.txt", "second.txt"],
+      "fixture_dir": "fixtures/w3",
+      "stdin": {"text": ""}
+    },
+    {
+      "id": "mergeseq-missing-input",
+      "utility": "mergeseq",
+      "source": "utils/segment/mergeseq.cpp at 074a2219: 230-237",
+      "args": ["absent.txt"],
+      "fixture_dir": "fixtures/w3"
+    },
+    {
+      "id": "mergeseq-missing-table-conf",
+      "utility": "mergeseq",
+      "source": "utils/segment/mergeseq.cpp at 074a2219: 239-245",
+      "args": [],
+      "stdin": {"text": ""}
+    },
+    {
+      "id": "mergeseq-empty-input",
+      "utility": "mergeseq",
+      "source": "utils/segment/mergeseq.cpp at 074a2219: 273-276 (the synthetic \"0 \" line)",
+      "args": [],
+      "fixture_dir": "fixtures/w3",
+      "stdin": {"text": ""}
+    },
+    {
+      "id": "mergeseq-empty-line",
+      "utility": "mergeseq",
+      "source": "utils/segment/mergeseq.cpp at 074a2219: 264-266 (empty lines skipped) and 273-276",
+      "args": [],
+      "fixture_dir": "fixtures/w3",
+      "stdin": {"text": "\n"}
+    },
+    {
+      "id": "mergeseq-invalid-utf8-null-line",
+      "utility": "mergeseq",
+      "source": "utils/segment/mergeseq.cpp at 074a2219: 159-172 (a null-token line is echoed)",
+      "args": [],
+      "fixture_dir": "fixtures/w3",
+      "stdin": {"hex": "3020ff0a"}
+    },
+    {
+      "id": "mergeseq-mini-fixture",
+      "utility": "mergeseq",
+      "source": "utils/segment/mergeseq.cpp at 074a2219: 200-281; fixtures/w9/mergeseq-input.txt",
+      "args": ["seq.txt"],
+      "fixture_dir": "fixtures/w3",
+      "files": {"seq.txt": {"file": "fixtures/w9/mergeseq-input.txt"}}
+    }
+  ]
+}

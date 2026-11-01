@@ -288,6 +288,10 @@ def build_parser():
     p.add_argument('args', nargs=argparse.REMAINDER)
     p.set_defaults(func=lambda args: __import__('tools.dev.compat.commands', fromlist=['main']).main(args.args))
 
+    p = sub.add_parser('w3-fixtures', help='regenerate or check the committed fixtures/w3 data sets')
+    p.add_argument('args', nargs=argparse.REMAINDER)
+    p.set_defaults(func=lambda args: __import__('tools.dev.w3_fixtures', fromlist=['main']).main(args.args))
+
     p = sub.add_parser('fetch-model', help='fetch and verify the pinned model20 archive into a build cache')
     p.add_argument('args', nargs=argparse.REMAINDER)
     p.set_defaults(func=lambda args: __import__('tools.dev.model', fromlist=['main']).main(args.args))

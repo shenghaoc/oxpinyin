@@ -29,6 +29,12 @@ pub const ENOENT: c_int = libc::ENOENT;
 /// The target's `ENODATA`, the pin's exit status for an empty or wrong
 /// model (`k_mixture_model_to_interpolation.cpp:200`, `:204`).
 pub const ENODATA: c_int = libc::ENODATA;
+/// The target's `EOVERFLOW`, `merge_k_mixture_model`'s exit status for a
+/// magic header that would overflow (`merge_k_mixture_model.cpp:233`).
+pub const EOVERFLOW: c_int = libc::EOVERFLOW;
+/// The target's `EDOM`, `prune_k_mixture_model`'s exit status for a
+/// probability outside `[0, 1]` (`prune_k_mixture_model.cpp:79`).
+pub const EDOM: c_int = libc::EDOM;
 
 /// `setlocale(LC_ALL, "")`, the first call of every utility's `main`
 /// (074a2219 `utils/segment/ngseg.cpp:111`); whether it answered a name.
@@ -541,6 +547,21 @@ impl OutputStream {
     pub fn close(self) {
         drop(self);
     }
+
+    /// `fclose(output)` (`ngseg.cpp:260`), including when the pin's
+    /// `output` is the C runtime's `stdout` (`ngseg.cpp:106`, `:260`): the
+    /// stream is closed exactly once, and a later exit has no buffered
+    /// line left to flush.
+    pub fn close_including_stdout(self) {
+        let stream = self.stream;
+        // The owned case would otherwise be closed again by `Drop`.
+        core::mem::forget(self);
+        // SAFETY: the stream is open, was never closed, and is not used
+        // again; for `stdout` the C runtime keeps the object itself alive.
+        unsafe {
+            libc::fclose(stream.as_ptr());
+        }
+    }
 }
 
 impl Drop for OutputStream {
@@ -578,6 +599,7 @@ pub struct LineReader<R> {
     eof: bool,
     fail: bool,
     line: Vec<u8>,
+    open_errno: Option<c_int>,
 }
 
 impl LineReader<std::io::StdinLock<'static>> {
@@ -597,8 +619,16 @@ impl LineReader<BufReader<std::fs::File>> {
     /// ([`Self::is_open`]) tests.
     #[must_use]
     pub fn open(filename: &CStr) -> Self {
-        let file = path_of(filename).and_then(|path| std::fs::File::open(path).ok());
-        Self::over(file.map(BufReader::new), false)
+        let (file, open_errno) = match path_of(filename) {
+            Some(path) => match std::fs::File::open(path) {
+                Ok(file) => (Some(file), None),
+                Err(error) => (None, error.raw_os_error()),
+            },
+            None => (None, None),
+        };
+        let mut reader = Self::over(file.map(BufReader::new), false);
+        reader.open_errno = open_errno;
+        reader
     }
 }
 
@@ -618,7 +648,15 @@ impl<R: BufRead> LineReader<R> {
             tied,
             eof: false,
             line: vec![0],
+            open_errno: None,
         }
+    }
+
+    /// The failing `open`'s `errno`, where `std::ifstream` would leave one
+    /// (`gen_k_mixture_model.cpp:353-357`).
+    #[must_use]
+    pub fn open_error(&self) -> Option<c_int> {
+        self.open_errno
     }
 
     /// `static_cast<bool>(stream)`: `!fail()`.
@@ -1006,6 +1044,1067 @@ pub mod k_mixture_model_to_interpolation {
             reason,
             line,
         );
+    }
+}
+
+/// `ngseg`, `spseg` and `mergeseq`'s calls
+/// (`utils/segment/ngseg.cpp`, `spseg.cpp` and `mergeseq.cpp` at
+/// 074a2219).
+///
+/// `%s` receives a NULL where the pin passes one: the C library prints its
+/// own spelling for that argument (glibc's `(null)`), so the call, not a
+/// Rust substitution, decides it.
+pub mod segmentation {
+    use super::{OutputStream, c_char, c_int, c_stderr, print_literal, print_text};
+    use std::ffi::CStr;
+
+    fn text_pointer(text: Option<&CStr>) -> *const c_char {
+        text.map_or(core::ptr::null(), CStr::as_ptr)
+    }
+
+    /// `fprintf(output, "%d %s\n", token, text)` (`spseg.cpp:183`,
+    /// `mergeseq.cpp:141`).
+    pub fn print_token_line(output: &OutputStream, token: c_int, text: Option<&CStr>) {
+        // SAFETY: the stream is open; the format takes an `int` and one
+        // string, present or NULL.
+        unsafe {
+            libc::fprintf(
+                output.as_ptr(),
+                c"%d %s\n".as_ptr(),
+                token,
+                text_pointer(text),
+            );
+        }
+    }
+
+    /// `fprintf(output, "%s\n", text)` (`mergeseq.cpp:170`).
+    pub fn print_text_line(output: &OutputStream, text: Option<&CStr>) {
+        // SAFETY: the stream is open; the format takes one string, present
+        // or NULL.
+        unsafe {
+            libc::fprintf(output.as_ptr(), c"%s\n".as_ptr(), text_pointer(text));
+        }
+    }
+
+    /// `fprintf(output, "%d \n", null_token)` (`ngseg.cpp:196`, `:202`,
+    /// `:251`, `:258`; `spseg.cpp:277`, `:283`, `:334`, `:341`).
+    pub fn print_null_line(output: &OutputStream) {
+        // SAFETY: the stream is open; the format takes one `int`.
+        unsafe {
+            libc::fprintf(output.as_ptr(), c"%d \n".as_ptr(), 0 as c_int);
+        }
+    }
+
+    /// `fprintf(stderr, "non-ucs4 characters encountered:%s.\n", linebuf)`
+    /// (`ngseg.cpp:194`, `spseg.cpp:275`).
+    pub fn report_non_ucs4(line: &CStr) {
+        print_text(c_stderr(), c"non-ucs4 characters encountered:%s.\n", line);
+    }
+
+    /// `fprintf(stderr, "Un-segmentable sentence encountered:%s\n",
+    /// tmp_string)` (`ngseg.cpp:86`); `tmp_string` is NULL when GLib could
+    /// not convert the run.
+    pub fn report_unsegmentable(text: Option<&CStr>) {
+        // SAFETY: `stderr` is open; the format takes one string, present or
+        // NULL.
+        unsafe {
+            libc::fprintf(
+                c_stderr(),
+                c"Un-segmentable sentence encountered:%s\n".as_ptr(),
+                text_pointer(text),
+            );
+        }
+    }
+
+    /// `fprintf(stderr, "too many arguments.\n")` (`ngseg.cpp:132`,
+    /// `spseg.cpp:227`, `mergeseq.cpp:226`).
+    pub fn report_too_many_arguments() {
+        print_literal(c_stderr(), c"too many arguments.\n");
+    }
+
+    /// `fprintf(stderr, "load table.conf failed.\n")` (`ngseg.cpp:149`,
+    /// `spseg.cpp:244`, `mergeseq.cpp:243`).
+    pub fn report_table_conf_failed() {
+        print_literal(c_stderr(), c"load table.conf failed.\n");
+    }
+
+    /// `fprintf(stderr, "load %s failed!\n", binfile)`
+    /// (`utils/utils_helper.h:87`); `binfile` is NULL when the row has no
+    /// system filename.
+    pub fn report_load_failed(filename: Option<&CStr>) {
+        // SAFETY: `stderr` is open; the format takes one string, present or
+        // NULL.
+        unsafe {
+            libc::fprintf(
+                c_stderr(),
+                c"load %s failed!\n".as_ptr(),
+                text_pointer(filename),
+            );
+        }
+    }
+
+    /// `fprintf(stderr, "error: unknown token:%d.\n", token)`
+    /// (`src/storage/tag_utility.cpp:397`, `:380`).
+    pub fn report_unknown_token(token: c_int) {
+        // SAFETY: `stderr` is open; the format takes one `int`.
+        unsafe {
+            libc::fprintf(c_stderr(), c"error: unknown token:%d.\n".as_ptr(), token);
+        }
+    }
+}
+
+/// The storage utilities' calls (`utils/storage/*.cpp` at 074a2219).
+///
+/// `gen_binary_files`, `import_interpolation` and `export_interpolation`
+/// read the `.table` text with `fopen`/`fgets`/`fseek`/`fclose`, build
+/// cwd-relative paths with `g_build_filename`, scan the four fields with
+/// `g_ascii_strtoull` and `g_strlcpy`, save the per-library chunks with
+/// `MemoryChunk::save`'s `open`/`write`/`fsync`/`close` sequence, and print
+/// the pin's diagnostics and interpolation model to the C runtime's
+/// streams. What a field or a line means stays with the utility.
+pub mod storage {
+    use super::{OutputStream, c_int, c_stderr, print_literal, print_text};
+    use core::ffi::{c_char, c_void};
+    use core::ptr::NonNull;
+    use std::ffi::{CStr, CString};
+
+    use libc::FILE;
+
+    /// One input `.table` stream (`fopen(filename, "r")`), closed exactly
+    /// once.
+    pub struct TableFile {
+        stream: NonNull<FILE>,
+    }
+
+    impl TableFile {
+        /// `fopen(filename, "r")` (`gen_binary_files.cpp:61`, `:97`).
+        #[must_use]
+        pub fn open(filename: &CStr) -> Option<Self> {
+            // SAFETY: `filename` and the mode literal are NUL-terminated and
+            // outlive the call.
+            NonNull::new(unsafe { libc::fopen(filename.as_ptr(), c"r".as_ptr()) })
+                .map(|stream| Self { stream })
+        }
+
+        /// `fseek(tablefile, 0L, SEEK_SET)` (`gen_binary_files.cpp:69`,
+        /// `:71`).
+        pub fn rewind(&mut self) {
+            // SAFETY: the stream is open and owned by this handle.
+            unsafe { libc::fseek(self.stream.as_ptr(), 0, libc::SEEK_SET) };
+        }
+
+        /// One `fgets(line, sizeof(line), infile)` with the pin's
+        /// `char line[4096]` array, as the C string it leaves (the bytes up
+        /// to the first NUL).
+        #[must_use]
+        pub fn read_line(&mut self) -> Option<Vec<u8>> {
+            let mut line = [0_u8; 4096];
+            // SAFETY: the array holds `line.len()` bytes and the stream is
+            // open; `fgets` stores at most that many including the NUL.
+            let answer = unsafe {
+                libc::fgets(
+                    line.as_mut_ptr().cast::<c_char>(),
+                    c_int::try_from(line.len()).unwrap_or(c_int::MAX),
+                    self.stream.as_ptr(),
+                )
+            };
+            if answer.is_null() {
+                return None;
+            }
+            let end = line.iter().position(|byte| *byte == 0).unwrap_or(0);
+            Some(line[..end].to_vec())
+        }
+    }
+
+    impl Drop for TableFile {
+        fn drop(&mut self) {
+            // SAFETY: the stream is open and never used again.
+            unsafe { libc::fclose(self.stream.as_ptr()) };
+        }
+    }
+
+    /// `g_build_filename(dir, name, NULL)`, freed with `g_free`.
+    #[must_use]
+    pub fn build_filename(dir: Option<&CStr>, name: &CStr) -> Option<CString> {
+        // SAFETY: the parts are NUL-terminated and outlive the call; the
+        // answer is GLib's allocation, copied and freed here.
+        let answer = unsafe {
+            glib_sys::g_build_filename(
+                dir.map_or(core::ptr::null(), CStr::as_ptr),
+                name.as_ptr(),
+                core::ptr::null::<c_char>(),
+            )
+        };
+        let answer = NonNull::new(answer)?;
+        // SAFETY: a non-NULL GLib string is NUL-terminated and only this
+        // call reads and frees it.
+        let bytes = unsafe { CStr::from_ptr(answer.as_ptr()) }
+            .to_bytes()
+            .to_vec();
+        // SAFETY: as above; it is not used again.
+        unsafe { glib_sys::g_free(answer.as_ptr().cast::<c_void>()) };
+        CString::new(bytes).ok()
+    }
+
+    /// `g_ascii_strtoull(field, &end, 10)` with the pin's errno reset and
+    /// the answers `table_text_parse_integer` tests: `None` when `errno`
+    /// was set, nothing converted, or trailing bytes remained.
+    #[must_use]
+    pub fn ascii_strtoull(field: &CStr) -> Option<u64> {
+        // SAFETY: the errno cell is this thread's; the call below sets it.
+        unsafe { *errno_location() = 0 };
+        let mut end: *mut c_char = core::ptr::null_mut();
+        // SAFETY: `field` is NUL-terminated and outlives the call; `end`
+        // receives a pointer into it.
+        let parsed = unsafe { glib_sys::g_ascii_strtoull(field.as_ptr(), &raw mut end, 10) };
+        // SAFETY: the errno cell is this thread's.
+        let failed = unsafe { *errno_location() } != 0;
+        if failed || end.is_null() || end == field.as_ptr().cast_mut() {
+            return None;
+        }
+        // SAFETY: `end` points into `field`'s NUL-terminated bytes.
+        if unsafe { *end } != 0 {
+            return None;
+        }
+        Some(parsed)
+    }
+
+    /// `g_strlcpy(dest, field, 256) < 256`: the 255-byte field the pin
+    /// keeps, `None` when the source does not fit.
+    #[must_use]
+    pub fn strlcpy_256(field: &CStr) -> Option<CString> {
+        let mut buffer = [0_u8; 256];
+        // SAFETY: the destination holds 256 bytes and the source is
+        // NUL-terminated; GLib writes at most the destination size.
+        let length = unsafe {
+            glib_sys::g_strlcpy(
+                buffer.as_mut_ptr().cast::<c_char>(),
+                field.as_ptr(),
+                buffer.len(),
+            )
+        };
+        if length >= buffer.len() {
+            return None;
+        }
+        CString::new(&buffer[..length]).ok()
+    }
+
+    /// The errno cell `g_ascii_strtoull` sets.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    unsafe fn errno_location() -> *mut c_int {
+        // SAFETY: the caller makes the access; the function is the C
+        // library's thread-local cell accessor.
+        unsafe { libc::__errno_location() }
+    }
+
+    /// The errno cell `g_ascii_strtoull` sets.
+    #[cfg(any(
+        target_vendor = "apple",
+        target_os = "freebsd",
+        target_os = "dragonfly"
+    ))]
+    unsafe fn errno_location() -> *mut c_int {
+        // SAFETY: as the Linux definition.
+        unsafe { libc::__error() }
+    }
+
+    /// The errno cell `g_ascii_strtoull` sets.
+    #[cfg(windows)]
+    unsafe fn errno_location() -> *mut c_int {
+        // SAFETY: as the Linux definition.
+        unsafe { libc::_errno() }
+    }
+
+    /// `O_BINARY`, defined as zero where the target has no text/binary
+    /// distinction (`src/include/memory_chunk.h:39-40`).
+    #[cfg(windows)]
+    const O_BINARY: c_int = libc::O_BINARY;
+    /// See the Windows definition.
+    #[cfg(not(windows))]
+    const O_BINARY: c_int = 0;
+
+    /// `MemoryChunk::save` (`src/include/memory_chunk.h:536-557`): the
+    /// `open(filename, O_CREAT|O_WRONLY|O_TRUNC|O_BINARY, 0644)` sequence,
+    /// the length and checksum words, the payload write, `g_fsync` and
+    /// `close`. The pin's answers are kept: a short header write aborts (its
+    /// `assert`), a short payload write returns `false` after the close.
+    #[must_use]
+    pub fn save_chunk(filename: &CStr, length: u32, checksum: u32, payload: &[u8]) -> bool {
+        // SAFETY: `filename` is NUL-terminated and outlives the call.
+        let fd = unsafe {
+            libc::open(
+                filename.as_ptr(),
+                libc::O_CREAT | libc::O_WRONLY | libc::O_TRUNC | O_BINARY,
+                0o644,
+            )
+        };
+        if fd < 0 {
+            return false;
+        }
+        for word in [length.to_ne_bytes(), checksum.to_ne_bytes()] {
+            // SAFETY: `fd` is open and `word` holds four bytes for a
+            // four-byte `write`.
+            let written = unsafe { libc::write(fd, word.as_ptr().cast::<c_void>(), word.len()) };
+            if usize::try_from(written).ok() != Some(word.len()) {
+                // `assert(ret_len == sizeof(guint32))`.
+                // SAFETY: `abort` never returns.
+                unsafe { libc::abort() };
+            }
+        }
+        // SAFETY: `fd` is open and `payload` holds its length for the one
+        // payload `write`.
+        let written = unsafe { libc::write(fd, payload.as_ptr().cast::<c_void>(), payload.len()) };
+        if usize::try_from(written).ok() != Some(payload.len()) {
+            // SAFETY: `fd` is open and is closed once.
+            unsafe { libc::close(fd) };
+            return false;
+        }
+        // SAFETY: `fd` is open; the sync and close are the pin's.
+        unsafe {
+            sync_fd(fd);
+            libc::close(fd);
+        }
+        true
+    }
+
+    /// `g_fsync(fd)` on this target: ordinary Unix GLib headers expand it
+    /// to `fsync`; Windows GLib calls `_commit`.
+    #[cfg(unix)]
+    unsafe fn sync_fd(fd: c_int) {
+        // SAFETY: the caller owns the open descriptor.
+        unsafe { libc::fsync(fd) };
+    }
+
+    /// See the Unix definition.
+    #[cfg(windows)]
+    unsafe fn sync_fd(fd: c_int) {
+        // SAFETY: the caller owns the open descriptor.
+        unsafe { libc::_commit(fd) };
+    }
+
+    /// `fprintf(stderr, "open %s failed!\n", tablename)`
+    /// (`gen_binary_files.cpp:64`, `:92`, `:99`).
+    pub fn report_open_failed(filename: &CStr) {
+        print_text(c_stderr(), c"open %s failed!\n", filename);
+    }
+
+    /// `fprintf(stderr, "save %s failed.", binfile)`
+    /// (`utils/utils_helper.h:112`, `:137`), without a newline.
+    pub fn report_save_failed(filename: &CStr) {
+        print_text(c_stderr(), c"save %s failed.", filename);
+    }
+
+    /// `fprintf(stderr, "load %s failed!\n", binfile)`
+    /// (`utils/utils_helper.h:87`); `None` is the pin's NULL name.
+    pub fn report_load_failed(filename: Option<&CStr>) {
+        // SAFETY: `stderr` is open; the format takes one string, present or
+        // NULL.
+        unsafe {
+            libc::fprintf(
+                c_stderr(),
+                c"load %s failed!\n".as_ptr(),
+                filename.map_or(core::ptr::null::<c_char>(), CStr::as_ptr),
+            );
+        }
+    }
+
+    /// `fprintf(stderr, "load table.conf failed.\n")`
+    /// (`gen_binary_files.cpp:130`, `import_interpolation.cpp:255`,
+    /// `export_interpolation.cpp:51`).
+    pub fn report_table_conf_failed() {
+        print_literal(c_stderr(), c"load table.conf failed.\n");
+    }
+
+    /// `fprintf(stderr, "error: interpolation model expected.\n")`
+    /// (`import_interpolation.cpp:77`, `:85`).
+    pub fn report_interpolation_expected() {
+        print_literal(c_stderr(), c"error: interpolation model expected.\n");
+    }
+
+    /// `fprintf(stderr, "empty file input.\n")`
+    /// (`import_interpolation.cpp:290`).
+    pub fn report_empty_input() {
+        print_literal(c_stderr(), c"empty file input.\n");
+    }
+
+    /// `fprintf(stderr, "error: unknown token:%d.\n", token)`
+    /// (`src/storage/tag_utility.cpp:397`, `:380`).
+    pub fn report_unknown_token(token: c_int) {
+        // SAFETY: `stderr` is open; the format takes one `int`.
+        unsafe {
+            libc::fprintf(c_stderr(), c"error: unknown token:%d.\n".as_ptr(), token);
+        }
+    }
+
+    /// `fprintf(stderr, "duplicated punctuations: %s\n", punct)`
+    /// (`src/storage/punct_table.cpp:102`).
+    pub fn report_duplicated_punctuation(punctuation: &CStr) {
+        print_text(c_stderr(), c"duplicated punctuations: %s\n", punctuation);
+    }
+
+    /// `fprintf(stderr, "ChewingLargeTable2::load_text:%s\t%s\t%u\t%zu\n",
+    /// ...)` (`src/storage/chewing_large_table2.cpp:145-147`).
+    pub fn report_chewing_skip(pinyin: &CStr, phrase: &CStr, token: u32, freq: usize) {
+        // SAFETY: `stderr` is open; the format takes two strings, an
+        // unsigned int and a size_t.
+        unsafe {
+            libc::fprintf(
+                c_stderr(),
+                c"ChewingLargeTable2::load_text:%s\t%s\t%u\t%zu\n".as_ptr(),
+                pinyin.as_ptr(),
+                phrase.as_ptr(),
+                token,
+                freq,
+            );
+        }
+    }
+
+    /// `fprintf(stderr, "FacadePhraseIndex::load_text:%s\t%s\n", ...)`
+    /// (`src/storage/phrase_index.cpp:581-582`).
+    pub fn report_phrase_index_skip(pinyin: &CStr, phrase: &CStr) {
+        // SAFETY: `stderr` is open; the format takes two strings.
+        unsafe {
+            libc::fprintf(
+                c_stderr(),
+                c"FacadePhraseIndex::load_text:%s\t%s\n".as_ptr(),
+                pinyin.as_ptr(),
+                phrase.as_ptr(),
+            );
+        }
+    }
+
+    /// `fprintf(output, "\\data model interpolation\n")`
+    /// (`export_interpolation.cpp:34`).
+    pub fn print_header(output: &OutputStream) {
+        print_literal(output.as_ptr(), c"\\data model interpolation\n");
+    }
+
+    /// `fprintf(output, "\\end\n")` (`export_interpolation.cpp:39`).
+    pub fn print_end(output: &OutputStream) {
+        print_literal(output.as_ptr(), c"\\end\n");
+    }
+
+    /// `fprintf(output, "\\1-gram\n")` (`export_interpolation.cpp:76`).
+    pub fn print_gram_1(output: &OutputStream) {
+        print_literal(output.as_ptr(), c"\\1-gram\n");
+    }
+
+    /// `fprintf(output, "\\2-gram\n")` (`export_interpolation.cpp:107`).
+    pub fn print_gram_2(output: &OutputStream) {
+        print_literal(output.as_ptr(), c"\\2-gram\n");
+    }
+
+    /// `fprintf(output, "\\item %d %s count %ld\n", token, phrase, freq)`
+    /// (`export_interpolation.cpp:98`).
+    pub fn print_unigram(
+        output: &OutputStream,
+        token: c_int,
+        word: &CStr,
+        freq: core::ffi::c_long,
+    ) {
+        // SAFETY: the stream is open; the format takes an int, a string and
+        // a long.
+        unsafe {
+            libc::fprintf(
+                output.as_ptr(),
+                c"\\item %d %s count %ld\n".as_ptr(),
+                token,
+                word.as_ptr(),
+                freq,
+            );
+        }
+    }
+
+    /// `fprintf(output, "\\item %d %s %d %s count %d\n", ...)`
+    /// (`export_interpolation.cpp:131-132`).
+    pub fn print_bigram(
+        output: &OutputStream,
+        token1: c_int,
+        word1: &CStr,
+        token2: c_int,
+        word2: &CStr,
+        count: c_int,
+    ) {
+        // SAFETY: the stream is open; the format takes two ints, two
+        // strings and an int.
+        unsafe {
+            libc::fprintf(
+                output.as_ptr(),
+                c"\\item %d %s %d %s count %d\n".as_ptr(),
+                token1,
+                word1.as_ptr(),
+                token2,
+                word2.as_ptr(),
+                count,
+            );
+        }
+    }
+}
+
+/// The n-gram and interpolation utilities' calls (`utils/training/*.cpp` at
+/// 074a2219).
+///
+/// `estimate_interpolation` and `eval_correction_rate` print their model
+/// values and diagnostics with the C library's formatted output, so the
+/// `%f` spelling — `-nan` included — and `%d`'s reading of the token word
+/// are the pin's.
+pub mod training {
+    use super::{c_int, c_stderr, print_literal, print_text};
+    use std::ffi::CStr;
+
+    /// `printf("token:%d lambda:%f\n", *token, lambda)`
+    /// (`estimate_interpolation.cpp:129`): `%d` reads the `guint32` token's
+    /// four bytes as the `int` it is passed as.
+    pub fn print_token_lambda(token: u32, lambda: f64) {
+        // SAFETY: the format takes an int and a double, which are the
+        // argument types passed.
+        unsafe { libc::printf(c"token:%d lambda:%f\n".as_ptr(), token as c_int, lambda) };
+    }
+
+    /// `printf("average lambda:%f\n", lambda_sum/lambda_count)`
+    /// (`estimate_interpolation.cpp:139`). The caller divides: a zero
+    /// `lambda_count` reaches this call with the C `0.0/0` NaN.
+    pub fn print_average_lambda(lambda: f64) {
+        // SAFETY: the format takes one double.
+        unsafe { libc::printf(c"average lambda:%f\n".as_ptr(), lambda) };
+    }
+
+    /// `printf("correction rate:%f\n", rate)`
+    /// (`eval_correction_rate.cpp:203`).
+    pub fn print_correction_rate(rate: f64) {
+        // SAFETY: the format takes one double.
+        unsafe { libc::printf(c"correction rate:%f\n".as_ptr(), rate) };
+    }
+
+    /// `fprintf(stderr, "test sentence:%s\n", sentence)`
+    /// (`eval_correction_rate.cpp:119`).
+    pub fn report_test_sentence(sentence: &CStr) {
+        print_text(c_stderr(), c"test sentence:%s\n", sentence);
+    }
+
+    /// `fprintf(stderr, "guessed sentence:%s\n", guessed_sentence)`
+    /// (`eval_correction_rate.cpp:120`).
+    pub fn report_guessed_sentence(sentence: &CStr) {
+        print_text(c_stderr(), c"guessed sentence:%s\n", sentence);
+    }
+
+    /// `fprintf(stderr, "the result mis-matches.\n")`
+    /// (`eval_correction_rate.cpp:121`).
+    pub fn report_mismatch() {
+        print_literal(c_stderr(), c"the result mis-matches.\n");
+    }
+
+    /// `fprintf(stderr, "Can't open file:%s\n", evals_text)`
+    /// (`eval_correction_rate.cpp:168`).
+    pub fn report_cant_open_file(filename: &CStr) {
+        print_text(c_stderr(), c"Can't open file:%s\n", filename);
+    }
+}
+
+/// `GHashTable` over `g_direct_hash`/`g_direct_equal` keys and pointer
+/// values — the pin's per-document tables (`gen_k_mixture_model.cpp:106-131`,
+/// `:290-299`). Iteration is GLib's own order, which the pin's DBM writes
+/// and exports preserve; a hand-written hash table would change it.
+pub struct DirectHashTable {
+    raw: NonNull<glib_sys::GHashTable>,
+}
+
+impl DirectHashTable {
+    /// `g_hash_table_new(g_direct_hash, g_direct_equal)`.
+    #[must_use]
+    pub fn new() -> Self {
+        // SAFETY: the hash and equality functions are GLib's own; the table
+        // owns no key or value destructor.
+        let raw = unsafe {
+            glib_sys::g_hash_table_new(
+                Some(glib_sys::g_direct_hash),
+                Some(glib_sys::g_direct_equal),
+            )
+        };
+        Self {
+            raw: NonNull::new(raw).unwrap_or_else(|| {
+                // GLib's `g_hash_table_new` aborts on allocation failure.
+                std::process::abort()
+            }),
+        }
+    }
+
+    fn key(token: u32) -> glib_sys::gpointer {
+        token as usize as glib_sys::gpointer
+    }
+
+    fn value(token: u32) -> glib_sys::gpointer {
+        token as usize as glib_sys::gpointer
+    }
+
+    /// `g_hash_table_insert(table, GUINT_TO_POINTER(key),
+    /// GUINT_TO_POINTER(value))`.
+    pub fn insert(&mut self, token: u32, value: u32) {
+        // SAFETY: the table is live; the key and value are the pointers GLib
+        // stores, and a NULL pointer for zero is a permitted value.
+        unsafe {
+            glib_sys::g_hash_table_insert(self.raw.as_ptr(), Self::key(token), Self::value(value));
+        }
+    }
+
+    /// `g_hash_table_lookup_extended`, which distinguishes an absent key from
+    /// a NULL value.
+    #[must_use]
+    pub fn lookup(&self, token: u32) -> Option<u32> {
+        let mut value: glib_sys::gpointer = core::ptr::null_mut();
+        // SAFETY: the table is live and `value` is a writable pointer slot;
+        // the original-key out-parameter is NULL, which GLib permits.
+        let found = unsafe {
+            glib_sys::g_hash_table_lookup_extended(
+                self.raw.as_ptr(),
+                Self::key(token),
+                core::ptr::null_mut(),
+                &raw mut value,
+            )
+        };
+        (found != 0).then_some(value as usize as u32)
+    }
+
+    /// `g_hash_table_steal` (`gen_k_mixture_model.cpp:161`, `:188`).
+    pub fn steal(&mut self, token: u32) {
+        // SAFETY: the table is live; no destroy function is installed, so
+        // stealing the entry leaks nothing.
+        unsafe {
+            glib_sys::g_hash_table_steal(self.raw.as_ptr(), Self::key(token));
+        }
+    }
+
+    /// `g_hash_table_iter_next` over every key: GLib's order, which the
+    /// pin's DBM insertion order follows.
+    #[must_use]
+    pub fn keys(&self) -> Vec<u32> {
+        let mut iter = glib_sys::GHashTableIter {
+            dummy1: core::ptr::null_mut(),
+            dummy2: core::ptr::null_mut(),
+            dummy3: core::ptr::null_mut(),
+            dummy4: 0,
+            dummy5: 0,
+            dummy6: core::ptr::null_mut(),
+        };
+        // SAFETY: the table is live and `iter` is a writable iterator; the
+        // iteration outlives no mutation.
+        unsafe { glib_sys::g_hash_table_iter_init(&raw mut iter, self.raw.as_ptr()) };
+        let mut keys = Vec::new();
+        loop {
+            let mut key: glib_sys::gpointer = core::ptr::null_mut();
+            let mut value: glib_sys::gpointer = core::ptr::null_mut();
+            // SAFETY: the iterator is initialised over the live table; the
+            // two out-parameters are writable pointer slots.
+            let more = unsafe {
+                glib_sys::g_hash_table_iter_next(&raw mut iter, &raw mut key, &raw mut value)
+            };
+            if more == 0 {
+                break;
+            }
+            keys.push(key as usize as u32);
+        }
+        keys
+    }
+}
+
+impl Default for DirectHashTable {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Drop for DirectHashTable {
+    fn drop(&mut self) {
+        // SAFETY: this wrapper owns one reference and does not use the table
+        // after the unref.
+        unsafe { glib_sys::g_hash_table_unref(self.raw.as_ptr()) };
+    }
+}
+
+/// `G_OPTION_FLAG_REVERSE`, the flag `gen_k_mixture_model`'s
+/// `--skip-pi-gram-training` carries (`gen_k_mixture_model.cpp:57`).
+pub const OPTION_FLAG_REVERSE: c_int = glib_sys::G_OPTION_FLAG_REVERSE as c_int;
+
+/// `strerror(errnum)`, copied out of the C library's static buffer.
+#[must_use]
+pub fn strerror(errnum: c_int) -> CString {
+    // SAFETY: `strerror` answers a NUL-terminated string for every error
+    // number; the copy happens before any other call in a single-threaded
+    // utility can replace it.
+    unsafe { CStr::from_ptr(libc::strerror(errnum)) }.to_owned()
+}
+
+/// `printf("%f", value)` into a buffer: the C library's spelling of a finite
+/// value, `inf`, `-inf`, `nan` or `-nan`, with its decimal point for the
+/// active locale.
+#[must_use]
+pub fn format_f64(value: f64) -> Vec<u8> {
+    let mut buffer = [0_u8; 512];
+    // SAFETY: the format takes one `double` and the buffer is large enough
+    // for `%f`'s output at any finite magnitude.
+    let written = unsafe {
+        libc::snprintf(
+            buffer.as_mut_ptr().cast(),
+            buffer.len(),
+            c"%f".as_ptr(),
+            value,
+        )
+    };
+    let length = usize::try_from(written).unwrap_or(0).min(buffer.len() - 1);
+    buffer[..length].to_vec()
+}
+
+/// The k-mixture-model utilities' own `fprintf`, `printf` and `abort` calls
+/// (`utils/training/*_k_mixture_model.cpp` at 074a2219). A `%d` prints a
+/// `guint32` as the signed `int` the pin's format reads; `%f` is the
+/// [`format_f64`] spelling.
+pub mod k_mixture_model {
+    use super::{OutputStream, c_int, c_stderr, print_literal, print_text};
+    use std::ffi::CStr;
+
+    /// `no magic header in k mixture model.\\n` (`validate:31`,
+    /// `prune:133`, `export:39`).
+    pub fn report_no_magic() {
+        print_literal(c_stderr(), c"no magic header in k mixture model.\n");
+    }
+
+    /// `word count in magic header is unexpected zero.\\n` (`validate:37`).
+    pub fn report_zero_word_count() {
+        print_literal(
+            c_stderr(),
+            c"word count in magic header is unexpected zero.\n",
+        );
+    }
+
+    /// `total freq in magic header is unexpected zero.\\n` (`validate:42`).
+    pub fn report_zero_total_freq() {
+        print_literal(
+            c_stderr(),
+            c"total freq in magic header is unexpected zero.\n",
+        );
+    }
+
+    /// `the word count doesn't match the total freq.\\n` (`validate:47`).
+    pub fn report_word_count_mismatch() {
+        print_literal(
+            c_stderr(),
+            c"the word count doesn't match the total freq.\n",
+        );
+    }
+
+    /// `word count in magic header:%d\\n` (`validate:64`).
+    pub fn print_expected_word_count(value: c_int) {
+        // SAFETY: the format takes one `int`.
+        unsafe {
+            libc::fprintf(
+                c_stderr(),
+                c"word count in magic header:%d\n".as_ptr(),
+                value,
+            )
+        };
+    }
+
+    /// `sum of word count in array headers:%d\\n` (`validate:66`).
+    pub fn print_header_word_count_sum(value: c_int) {
+        // SAFETY: the format takes one `int`.
+        unsafe {
+            libc::fprintf(
+                c_stderr(),
+                c"sum of word count in array headers:%d\n".as_ptr(),
+                value,
+            )
+        };
+    }
+
+    /// `the sum differs from word count.\\n` (`validate:67`, `:130`).
+    pub fn report_word_count_sum_differs() {
+        print_literal(c_stderr(), c"the sum differs from word count.\n");
+    }
+
+    /// `total freq in magic header:%d\\n` (`validate:71`).
+    pub fn print_expected_total_freq(value: c_int) {
+        // SAFETY: the format takes one `int`.
+        unsafe {
+            libc::fprintf(
+                c_stderr(),
+                c"total freq in magic header:%d\n".as_ptr(),
+                value,
+            )
+        };
+    }
+
+    /// `sum of freqs in array headers:%d\\n` (`validate:73`).
+    pub fn print_header_freq_sum(value: c_int) {
+        // SAFETY: the format takes one `int`.
+        unsafe {
+            libc::fprintf(
+                c_stderr(),
+                c"sum of freqs in array headers:%d\n".as_ptr(),
+                value,
+            )
+        };
+    }
+
+    /// `the total freq differs from sum of freqs.\\n` (`validate:74`).
+    pub fn report_total_freq_sum_differs() {
+        print_literal(c_stderr(), c"the total freq differs from sum of freqs.\n");
+    }
+
+    /// `in the array header of token %d:\\n` (`validate:104`, `:112`).
+    pub fn print_array_header_token(token: c_int) {
+        // SAFETY: the format takes one `int`.
+        unsafe {
+            libc::fprintf(
+                c_stderr(),
+                c"in the array header of token %d:\n".as_ptr(),
+                token,
+            )
+        };
+    }
+
+    /// `word count is zero but has array items.\\n` (`validate:105`).
+    pub fn report_zero_count_with_items() {
+        print_literal(c_stderr(), c"word count is zero but has array items.\n");
+    }
+
+    /// `both word count and freq are unexpected zero.\\n` (`validate:113-114`).
+    pub fn report_zero_count_and_freq() {
+        print_literal(
+            c_stderr(),
+            c"both word count and freq are unexpected zero.\n",
+        );
+    }
+
+    /// `word count in array header:%d\\n` (`validate:127`).
+    pub fn print_array_header_count(value: c_int) {
+        // SAFETY: the format takes one `int`.
+        unsafe {
+            libc::fprintf(
+                c_stderr(),
+                c"word count in array header:%d\n".as_ptr(),
+                value,
+            )
+        };
+    }
+
+    /// `sum of word count in array items:%d\\n` (`validate:128`).
+    pub fn print_item_count_sum(value: c_int) {
+        // SAFETY: the format takes one `int`.
+        unsafe {
+            libc::fprintf(
+                c_stderr(),
+                c"sum of word count in array items:%d\n".as_ptr(),
+                value,
+            )
+        };
+    }
+
+    /// `wrong arguments.\\n` (`validate:153`, `prune:121`).
+    pub fn report_wrong_arguments() {
+        print_literal(c_stderr(), c"wrong arguments.\n");
+    }
+
+    /// `k mixture model validation failed.\\n` (`validate:163`, `:168`).
+    pub fn report_validation_failed() {
+        print_literal(c_stderr(), c"k mixture model validation failed.\n");
+    }
+
+    /// `the m_WC integer in magic header overflows.\\n` (`merge:110`,
+    /// `gen:274`).
+    pub fn report_magic_wc_overflow() {
+        print_literal(c_stderr(), c"the m_WC integer in magic header overflows.\n");
+    }
+
+    /// `the m_total_freq in magic header overflows.\\n` (`merge:116`,
+    /// `gen:304`).
+    pub fn report_magic_total_freq_overflow() {
+        print_literal(c_stderr(), c"the m_total_freq in magic header overflows.\n");
+    }
+
+    /// `fprintf(stderr, "*")` (`prune:144`).
+    pub fn print_progress_star() {
+        print_literal(c_stderr(), c"*");
+    }
+
+    /// `fprintf(stderr, "\n")` (`prune:175`).
+    pub fn print_progress_newline() {
+        print_literal(c_stderr(), c"\n");
+    }
+
+    /// `some wrong possibility is encountered:%f.\\n` (`prune:73-74`).
+    pub fn report_wrong_possibility(remained: f64) {
+        // SAFETY: the format takes one `double`.
+        unsafe {
+            libc::fprintf(
+                c_stderr(),
+                c"some wrong possibility is encountered:%f.\n".as_ptr(),
+                remained,
+            )
+        };
+    }
+
+    /// `k:%d N:%d WC:%d n_0:%d n_1:%d\\n` (`prune:75-78`).
+    pub fn print_prune_counts(k: c_int, n: c_int, wc: c_int, n_0: c_int, n_1: c_int) {
+        // SAFETY: the format takes five `int`s.
+        unsafe {
+            libc::fprintf(
+                c_stderr(),
+                c"k:%d N:%d WC:%d n_0:%d n_1:%d\n".as_ptr(),
+                k,
+                n,
+                wc,
+                n_0,
+                n_1,
+            )
+        };
+    }
+
+    /// `token:%d lambda:%f\\n` (`estimate:141`).
+    pub fn print_token_lambda(token: c_int, lambda: f64) {
+        // SAFETY: the format takes one `int` and one `double`.
+        unsafe { libc::printf(c"token:%d lambda:%f\n".as_ptr(), token, lambda) };
+    }
+
+    /// `average lambda:%f\\n` (`estimate:152`).
+    pub fn print_average_lambda(lambda: f64) {
+        // SAFETY: the format takes one `double`.
+        unsafe { libc::printf(c"average lambda:%f\n".as_ptr(), lambda) };
+    }
+
+    /// `error: k mixture model expected.\\n` (`import:78`, `:86`).
+    pub fn report_model_expected() {
+        print_literal(c_stderr(), c"error: k mixture model expected.\n");
+    }
+
+    /// `empty file input.\\n` (`import:303`).
+    pub fn report_empty_input() {
+        print_literal(c_stderr(), c"empty file input.\n");
+    }
+
+    /// `load table.conf failed.\\n` (`import:277`, `export:130`, `gen:332`).
+    pub fn report_table_conf_load_failed() {
+        print_literal(c_stderr(), c"load table.conf failed.\n");
+    }
+
+    /// `load %s failed!\\n` (`utils/utils_helper.h:87`).
+    pub fn report_chunk_load_failed(filename: &CStr) {
+        print_text(c_stderr(), c"load %s failed!\n", filename);
+    }
+
+    /// `open %s failed.\\n` (`export:144`); a NULL name is the C library's
+    /// `(null)`.
+    pub fn report_open_failed(filename: Option<&CStr>) {
+        // SAFETY: `stderr` is open; the format takes one string, or the NULL
+        // the pin passes for an unset filename.
+        unsafe {
+            libc::fprintf(
+                c_stderr(),
+                c"open %s failed.\n".as_ptr(),
+                filename.map_or(core::ptr::null(), CStr::as_ptr),
+            )
+        };
+    }
+
+    /// `error: unknown token:%d.\\n` (`tag_utility.cpp:398`, `:376`).
+    pub fn report_unknown_token(token: c_int) {
+        // SAFETY: the format takes one `int`.
+        unsafe { libc::fprintf(c_stderr(), c"error: unknown token:%d.\n".as_ptr(), token) };
+    }
+
+    /// `can't open file: %s.\\n` (`gen:355`).
+    pub fn report_cant_open_file(filename: &CStr) {
+        print_text(c_stderr(), c"can't open file: %s.\n", filename);
+    }
+
+    /// `error:%s.\\n` (`gen:356`).
+    pub fn report_error(message: &CStr) {
+        print_text(c_stderr(), c"error:%s.\n", message);
+    }
+
+    /// `\data model "k mixture model" count %d N %d total_freq %d\n`
+    /// (`export:42-44`).
+    pub fn print_data_header(output: &OutputStream, wc: c_int, n: c_int, total_freq: c_int) {
+        // SAFETY: the stream is open; the format takes three `int`s.
+        unsafe {
+            libc::fprintf(
+                output.as_ptr(),
+                c"\\data model \"k mixture model\" count %d N %d total_freq %d\n".as_ptr(),
+                wc,
+                n,
+                total_freq,
+            )
+        };
+    }
+
+    /// `\1-gram\\n` (`export:51`).
+    pub fn print_gram_1(output: &OutputStream) {
+        print_literal(output.as_ptr(), c"\\1-gram\n");
+    }
+
+    /// `\2-gram\\n` (`export:73`).
+    pub fn print_gram_2(output: &OutputStream) {
+        print_literal(output.as_ptr(), c"\\2-gram\n");
+    }
+
+    /// `\end\\n` (`export:108`).
+    pub fn print_end(output: &OutputStream) {
+        print_literal(output.as_ptr(), c"\\end\n");
+    }
+
+    /// `\item %d %s count %d freq %d\\n` (`export:61-62`).
+    pub fn print_unigram_item(
+        output: &OutputStream,
+        token: c_int,
+        phrase: &CStr,
+        wc: c_int,
+        freq: c_int,
+    ) {
+        // SAFETY: the stream is open; the format takes an `int`, a string and
+        // two `int`s.
+        unsafe {
+            libc::fprintf(
+                output.as_ptr(),
+                c"\\item %d %s count %d freq %d\n".as_ptr(),
+                token,
+                phrase.as_ptr(),
+                wc,
+                freq,
+            )
+        };
+    }
+
+    /// `\item %d %s %d %s count %d T %d N_n_0 %d n_1 %d Mr %d\n`
+    /// (`export:90-94`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn print_bigram_item(
+        output: &OutputStream,
+        token1: c_int,
+        word1: &CStr,
+        token2: c_int,
+        word2: &CStr,
+        wc: c_int,
+        n_n_0: c_int,
+        n_1: c_int,
+        mr: c_int,
+    ) {
+        // SAFETY: the stream is open; the strings are NUL-terminated and
+        // outlive the call; the format takes two `int`s, two strings and four
+        // `int`s.
+        unsafe {
+            libc::fprintf(
+                output.as_ptr(),
+                c"\\item %d %s %d %s count %d T %d N_n_0 %d n_1 %d Mr %d\n".as_ptr(),
+                token1,
+                word1.as_ptr(),
+                token2,
+                word2.as_ptr(),
+                wc,
+                wc,
+                n_n_0,
+                n_1,
+                mr,
+            )
+        };
     }
 }
 

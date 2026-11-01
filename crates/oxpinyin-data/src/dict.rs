@@ -197,6 +197,105 @@ fn visible_extension_exists(
     })
 }
 
+// ── the phrase DBM alone ─────────────────────────────────────────
+
+/// The phrase DBM alone (`phrase_index.bin`), as
+/// `FacadePhraseTable3::load` opens it for the segmentation utilities:
+/// no pinyin DBM and no phrase libraries.
+///
+/// [`Self::search_ucs4`] answers `FacadePhraseTable3::search`'s presence
+/// bit — `None` is "no key" (no `SEARCH_CONTINUED`), `Some` is "key
+/// present" — and the stored token bytes as the pin iterates them
+/// (`floor(len / 4)` tokens; a trailing partial word is not a token).
+/// `SEARCH_OK` and the library filter stay with the caller: it owns the
+/// loaded-library set.
+pub struct PhraseIndexTable {
+    phrase: PhraseTable,
+}
+
+impl PhraseIndexTable {
+    /// Opens `phrase_index.bin` read-only.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DictError`] when the backend cannot open the file.
+    pub fn open(phrase_index: &Path) -> Result<Self, DictError> {
+        Ok(Self {
+            phrase: open_phrase_table(phrase_index)?,
+        })
+    }
+
+    /// `PhraseLargeTable3::search`: `None` when the key is absent,
+    /// `Some(tokens)` when it is present, empty for a continuation marker.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DictError`] when the DBM read fails.
+    pub fn search_ucs4(&self, words: &[u32]) -> Result<Option<Vec<u32>>, DictError> {
+        if words.is_empty() {
+            return Ok(None);
+        }
+        let key = crate::row_format::phrase_index::encode_ucs4_key_scalars(words);
+        let Some(value) = self.phrase.present_key(&key)? else {
+            return Ok(None);
+        };
+        Ok(Some(
+            value
+                .chunks_exact(4)
+                .map(|word| u32::from_le_bytes([word[0], word[1], word[2], word[3]]))
+                .collect(),
+        ))
+    }
+}
+
+// ── the pinyin DBM alone ─────────────────────────────────────────
+
+/// The pinyin DBM alone (`pinyin_index.bin`): the `ChewingLargeTable2`
+/// a caller needs when it has no phrase table. `eval_correction_rate`
+/// opens `FacadeChewingTable2` and resolves every surviving token through
+/// the loaded phrase libraries alone
+/// (`utils/training/eval_correction_rate.cpp:143-163`).
+///
+/// [`Self::search`] answers the tokens whose stored pronunciation matches
+/// the query, in stored order; [`Self::key_exists`] answers
+/// `SEARCH_CONTINUED`.
+pub struct PinyinIndexTable {
+    pinyin: ChewingTable,
+}
+
+impl PinyinIndexTable {
+    /// Opens `pinyin_index.bin` read-only.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DictError`] when the backend cannot open the file.
+    pub fn open(pinyin_index: &Path) -> Result<Self, DictError> {
+        Ok(Self {
+            pinyin: open_tree(pinyin_index)?,
+        })
+    }
+
+    /// `ChewingLargeTable2::search` without the caller's library filter:
+    /// the matching records' tokens, empty when the index key is absent or
+    /// no record matches.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DictError`] when the DBM read or a record decode fails.
+    pub fn search(&self, keys: &[ChewingKey]) -> Result<Vec<u32>, DictError> {
+        self.pinyin.search(keys)
+    }
+
+    /// `SEARCH_CONTINUED`: whether the query's index key exists.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DictError`] when the DBM read fails.
+    pub fn key_exists(&self, keys: &[ChewingKey]) -> Result<bool, DictError> {
+        self.pinyin.key_exists(keys)
+    }
+}
+
 // ── the default facade ───────────────────────────────────────────
 
 /// The system dictionary: the default facade's pinyin DBM, phrase DBM,
@@ -213,8 +312,8 @@ pub struct SystemDictionary {
 
 impl SystemDictionary {
     /// Opens the default facade from the backend's native system data
-    /// directory — whether a libpinyin build or `oxpinyin-datagen`
-    /// wrote it
+    /// directory — whether a libpinyin build or `oxpinyin-utils`' ports
+    /// of its programs wrote it
     /// ([`SystemDbm::file_name`] names the DBMs, [`SYSTEM_LIBRARY_FILES`]
     /// the chunk files).
     ///

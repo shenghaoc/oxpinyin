@@ -1,0 +1,76 @@
+{
+  "schema": 1,
+  "cases": [
+    {
+      "id": "gen_deleted_ngram-help",
+      "utility": "gen_deleted_ngram",
+      "source": "utils/training/gen_deleted_ngram.cpp at 074a2219: 46-57 (GLib --help)",
+      "args": ["--help"]
+    },
+    {
+      "id": "gen_deleted_ngram-bogus-option",
+      "utility": "gen_deleted_ngram",
+      "source": "utils/training/gen_deleted_ngram.cpp at 074a2219: 54-57",
+      "args": ["--bogus"]
+    },
+    {
+      "id": "gen_deleted_ngram-too-many-arguments",
+      "utility": "gen_deleted_ngram",
+      "source": "utils/training/gen_deleted_ngram.cpp at 074a2219: 54-118 (g_option_context_parse leaves extra arguments; main never reads argc)",
+      "args": ["--deleted-bigram-file", "absent/deleted.db", "first", "second"],
+      "fixture_dir": "fixtures/w3",
+      "stdin": {"text": ""}
+    },
+    {
+      "id": "gen_deleted_ngram-missing-table-conf",
+      "utility": "gen_deleted_ngram",
+      "source": "utils/training/gen_deleted_ngram.cpp at 074a2219: 59-65",
+      "args": [],
+      "stdin": {"text": ""}
+    },
+    {
+      "id": "gen_deleted_ngram-missing-chunk",
+      "utility": "gen_deleted_ngram",
+      "source": "utils/training/gen_deleted_ngram.cpp at 074a2219: 72-73 (exit(ENODATA) where gen_ngram uses ENOENT)",
+      "args": [],
+      "files": {
+        "table.conf": {"text": "binary format version:7\nmodel data version:14\nlambda parameter:0.312699\n\nsource table format:pinyin\ndatabase format:Tkrzw\n\ndefault RESERVED NULL NULL NULL NOT_USED\ndefault GB_DICTIONARY gb_char.table absent.bin gb_char.dbin SYSTEM_FILE\ndefault GBK_DICTIONARY gbk_char.table gbk_char.bin gbk_char.dbin SYSTEM_FILE\n"}
+      },
+      "stdin": {"text": ""}
+    },
+    {
+      "id": "gen_deleted_ngram-missing-bigram-file",
+      "utility": "gen_deleted_ngram",
+      "source": "utils/training/gen_deleted_ngram.cpp at 074a2219: 75-76 (attach's answer is ignored) and 118 (no chunk save)",
+      "args": ["--deleted-bigram-file", "absent/deleted.db"],
+      "fixture_dir": "fixtures/w3",
+      "stdin": {"text": "16777219 阿\n"}
+    },
+    {
+      "id": "gen_deleted_ngram-empty-stdin",
+      "utility": "gen_deleted_ngram",
+      "source": "utils/training/gen_deleted_ngram.cpp at 074a2219: 80-118 (no line, then return 0)",
+      "args": ["--deleted-bigram-file", "absent/deleted.db"],
+      "fixture_dir": "fixtures/w3",
+      "stdin": {"text": ""}
+    },
+    {
+      "id": "gen_deleted_ngram-bad-segmented-line",
+      "utility": "gen_deleted_ngram",
+      "source": "utils/training/gen_deleted_ngram.cpp at 074a2219: 81 and utils/utils_helper.h:57-59 (g_strv_length != 2 aborts)",
+      "args": ["--deleted-bigram-file", "absent/deleted.db"],
+      "fixture_dir": "fixtures/w3",
+      "stdin": {"text": "abc\n"},
+      "pin_signal": -6,
+      "reproduces_signal": true
+    },
+    {
+      "id": "gen_deleted_ngram-ordinary",
+      "utility": "gen_deleted_ngram",
+      "source": "utils/training/gen_deleted_ngram.cpp at 074a2219: 80-116 (sentence_start after a null token, deleted bi-gram rows; no chunk save)",
+      "args": ["--deleted-bigram-file", "absent/deleted.db"],
+      "fixture_dir": "fixtures/w3",
+      "stdin": {"text": "16777219 阿\n16777220 啊\n\n16777219 阿\n"}
+    }
+  ]
+}

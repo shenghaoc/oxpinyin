@@ -203,7 +203,7 @@ pub fn merge_bigram(
 
 /// One previous-token row of the system bigram — re-exported from
 /// [`crate::row_format::bigram`], where the row's on-disk layout lives so
-/// the reader and `oxpinyin-datagen`'s writer share one definition.
+/// the reader and `import_interpolation`'s writer share one definition.
 pub use crate::row_format::bigram::BigramRow;
 
 /// Whether library `nibble` is visible under `mask` (bit `n` set =
