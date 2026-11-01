@@ -202,6 +202,47 @@ fn add_phrase_batch_writes_the_user_index() {
     close(context, instance);
 }
 
+#[test]
+fn token_unigram_distinguishes_zero_user_item_from_absent() {
+    use crate::dict::{zhuyin_token_add_unigram_frequency, zhuyin_token_get_unigram_frequency};
+
+    let user_dir = TempUserDir::new("dict-unigram-zero");
+    let (context, instance) = open_with_user(&user_dir.path);
+    let iter = zhuyin_begin_add_phrases(context, USER_DICTIONARY);
+    assert!(!iter.is_null());
+    assert!(zhuyin_iterator_add_phrase(
+        iter,
+        cstr("网词").as_ptr(),
+        cstr("ㄨㄤˇ ㄘˊ").as_ptr(),
+        0,
+    ));
+    zhuyin_end_add_phrases(iter);
+    let token = with_store(instance, |store| store.phrases().unwrap()[0].token());
+    assert_eq!(token >> 24, u32::from(USER_DICTIONARY));
+    let mut freq = u32::MAX;
+    assert!(zhuyin_token_get_unigram_frequency(
+        instance,
+        token,
+        &raw mut freq
+    ));
+    assert_eq!(freq, 0);
+    freq = u32::MAX;
+    assert!(!zhuyin_token_get_unigram_frequency(
+        instance,
+        token + 1,
+        &raw mut freq
+    ));
+    assert_eq!(freq, 0);
+    assert!(zhuyin_token_add_unigram_frequency(instance, token, 7));
+    assert!(zhuyin_token_get_unigram_frequency(
+        instance,
+        token,
+        &raw mut freq
+    ));
+    assert_eq!(freq, 7);
+    close(context, instance);
+}
+
 /// The sentence surface: `zhuyin_guess_sentence` then `get_sentence`
 /// yields the decoded composition, and prefix seeding keeps it.
 #[test]
