@@ -13,6 +13,12 @@ No oracle, probe or differential was run for this record.
 
 ## Ruling and scope
 
+Maintainer ruling, 2026-11-01 UTC (`date -u`): every program under the
+pin's `tests/` is ported as a drop-in tool, without exception. Its binary
+name, arguments, stdin protocol, stdout/stderr bytes, exit status and fixed
+file paths are the interface. The binaries live in nonshipping
+`oxpinyin-utils` and are not installed.
+
 Maintainer ruling, 2026-10-28 UTC:
 
 1. Every call crossing the program's edge, in the library and utilities,
@@ -610,6 +616,13 @@ The scope includes both installed and `noinst_PROGRAMS` utilities.
 | `k_mixture_model_to_interpolation` | `oxpinyin-utils` `k_mixture_model_to_interpolation` | **Ported** at stage 5 (2026-10-31 UTC): no options or arguments, the pin's messages, `std::cin` and `stdout`, taglib's GLib calls, the pin's aborts with its check macros' text not imitated ([eio-tool-check-messages](eio-tool-check-messages.md)), and registered `tool-diff` cases. `oxpinyin-kmm to-interpolation` is removed. |
 | `validate_k_mixture_model` | `oxpinyin-utils` `validate_k_mixture_model` | **Ported** at stage 5 (2026-10-31 UTC): the pin's checks, lines and `ENODATA`. |
 | `eval_correction_rate` | `oxpinyin-utils` `eval_correction_rate` | **Ported** at stage 5 (2026-10-31 UTC): `evals2.text`, the pinyin index resolved through the phrase libraries, the `PhoneticLookup<1,1>` decode port (`oxpinyin-training::eval`) over the binary chunks and `bigram.db`, and the `correction rate:%f` line. `oxpinyin-eval` is removed. |
+
+## Test-program coverage
+
+The [upstream test coverage ledger](../testing/upstream-test-coverage.md#libpinyin-tests)
+is the single coverage table for every program in the pin's `tests/`.
+It records all 17 `noinst_PROGRAMS`, including the six automated `TESTS`,
+and tracks each complete drop-in tool as GAP or Ported.
 
 ## Records affected by the ruling
 

@@ -57,9 +57,12 @@ class PreparedTests(unittest.TestCase):
             self.assertTrue(options['heavy'])
             if command[0] == 'bash':
                 self.assertIn('--libs-only', command)
+                self.assertIn('--enable-libzhuyin', command)
                 work = Path(command[command.index('--work-dir') + 1])
                 for directory in ('storage', 'training', 'segment'):
                     (work / 'src/libpinyin-pin/utils' / directory).mkdir(parents=True, exist_ok=True)
+                for directory in ('', 'storage', 'lookup', 'include'):
+                    (work / 'src/libpinyin-pin/tests' / directory).mkdir(exist_ok=True)
             else:
                 self.assertEqual(command[0], 'make')
                 made.append(command[2:])
@@ -68,7 +71,7 @@ class PreparedTests(unittest.TestCase):
         made = []
         with patch.object(prepared, 'run', side_effect=build) as run:
             self.assertEqual(self.prepare('tool-diff'), [])
-            self.assertEqual(run.call_count, 4)
+            self.assertEqual(run.call_count, 8)
             source = Path(self.env['OXPINYIN_TOOL_PIN_BUILD'])
             self.assertEqual(made, [[source / 'utils/storage', 'gen_pinyin_table', 'gen_zhuyin_table',
                                      'gen_binary_files', 'import_interpolation',
@@ -80,12 +83,20 @@ class PreparedTests(unittest.TestCase):
                                      'prune_k_mixture_model', 'estimate_k_mixture_model',
                                      'import_k_mixture_model', 'export_k_mixture_model',
                                      'gen_k_mixture_model'],
-                                    [source / 'utils/segment', 'ngseg', 'spseg', 'mergeseq']])
+                                    [source / 'utils/segment', 'ngseg', 'spseg', 'mergeseq'],
+                                    [source / 'tests', 'test_pinyin', 'test_phrase',
+                                     'test_chewing', 'test_zhuyin'],
+                                    [source / 'tests/storage', 'test_parser2', 'test_ngram',
+                                     'test_flexible_ngram', 'test_punct_table', 'test_table_info',
+                                     'test_phrase_index', 'test_phrase_index_logger', 'test_phrase_table',
+                                     'test_chewing_table', 'test_matrix'],
+                                    [source / 'tests/lookup', 'test_pinyin_lookup', 'test_phrase_lookup'],
+                                    [source / 'tests/include', 'test_memory_chunk']])
             self.assertEqual(self.prepare('tool-diff'), [])
-            self.assertEqual(run.call_count, 4)
+            self.assertEqual(run.call_count, 8)
             (source / 'utils/training/k_mixture_model_to_interpolation').unlink()
             self.prepare('tool-diff')
-            self.assertEqual(run.call_count, 8)
+            self.assertEqual(run.call_count, 16)
 
     def test_data_adds_model_text_without_changing_pin_tables_or_manifests(self):
         for name in ('dict-surface-diff', 'key-surface-diff', 'phrase-surface-diff', 'zhuyin-diff'):
