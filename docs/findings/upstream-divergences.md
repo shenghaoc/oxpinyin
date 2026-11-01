@@ -4463,3 +4463,28 @@ Recorded, with the pin sites, items and cases, in
 ### Key positions past byte 65535 (2026-11-01 UTC, #1501)
 
 **Contract for the getters, POLICY-ACCEPTED for the matrix.** The C getters wrap key-rest positions past 65535 mod 2^16 as the pin's `guint16` fields do; oxpinyin keeps real positions where the pin's `fill_matrix` places keys at the wrapped begin (`phonetic_key_matrix.cpp:51-55`): [1501-guint16-key-positions.md](1501-guint16-key-positions.md).
+
+### FlexibleBigram malformed record lengths
+
+- **Upstream source cite:** `src/storage/flexible_ngram_bdb.h:165-187`
+  and its Kyoto Cabinet and tkrzw peers at 074a2219;
+  `src/storage/flexible_single_gram.h:88-105,151-181`.
+- **Mechanism:** the pin wraps the whole stored value in a
+  `FlexibleSingleGram` and reads the header and item tail without
+  checking that the value holds whole records.
+- **What oxpinyin does instead:** `SpecGram::decode` answers
+  `StoreError` for a value shorter than its header or with a partial
+  item tail.
+- **Externally observable:** only for a corrupted or hand-written
+  container; a pin-written file never takes this path.
+- **Record:** [eio-flexible-bigram-malformed-records](eio-flexible-bigram-malformed-records.md),
+  class (b), 2026-11-01 UTC.
+
+### FlexibleBigram unsorted-record search (2026-11-01 UTC)
+
+[eio-flexible-bigram-unsorted-records](eio-flexible-bigram-unsorted-records.md)
+records the standard-library search contract and the malformed KC KMM
+fixture's provenance. The implementation already uses Rust partitioning;
+there is no copied external probe sequence. Sorted results remain exact.
+Any distinguishing unsorted result is a language artefact under the
+2026-10-29 ruling, requiring concrete POLICY-ACCEPTED evidence.
