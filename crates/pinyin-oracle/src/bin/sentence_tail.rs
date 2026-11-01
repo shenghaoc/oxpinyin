@@ -95,6 +95,14 @@ fn print_report(report: &SentenceTailReport) {
     for row in &report.rows_diffs {
         println!("{row}");
     }
+
+    println!(
+        "\n== unexpected complete surfaces ({}) ==",
+        report.unexpected_surfaces.len()
+    );
+    for row in &report.unexpected_surfaces {
+        println!("{row}");
+    }
 }
 
 fn main() -> ExitCode {
