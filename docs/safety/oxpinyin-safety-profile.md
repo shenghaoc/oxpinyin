@@ -32,6 +32,12 @@ would be cargo-cult). The boundary is the `unsafe` policy (Layer 2) and the
 
 ## Layer 2 — unsafe policy (HARD CI GATE)
 
+**Stage 2 member 1, 2026-11-01 UTC:** input prepares a single-owner memmap2
+mapping API, with libc calls scoped in `native.rs` and borrowed slice
+access. Production data retains its mmap exception until activation;
+this preparation changes no crate's `forbid` status. The historical counts
+below are not a claim that extraction has landed.
+
 | Crate(s) | Rule | Mechanism |
 |---|---|---|
 | every crate except data, store, capi, zhuyin-capi and pinyin-oracle — 20 of 25 at the crate root (`#![forbid(unsafe_code)]`; facade/runtime also carry the manifest form); `oxpinyin-capi-marshal` included (its unsafe is macro text that expands inside the facades) | **no unsafe, ever, not even locally** | crate-root `#![forbid(unsafe_code)]` (the pattern `oxpinyin-core` already proves composes with the workspace `deny`); `forbid` cannot be re-allowed by any inner attribute |

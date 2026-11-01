@@ -1,7 +1,7 @@
 # External I/O boundary
 
 Date: 2026-10-28 UTC · Status: **maintainer ruling and implementation
-plan; stage 1 implemented (2026-10-28 UTC), stage 4 implemented (2026-10-30 UTC, #1437), stage 5 in progress (the segmentation trio and the training family added 2026-10-31 UTC; the storage trio by the preceding stack member), stages 2 and 3 not implemented**. The pin is libpinyin
+plan; stage 1 implemented (2026-10-28 UTC), stage 4 implemented (2026-10-30 UTC, #1437), stage 5 in progress (the segmentation trio and the training family added 2026-10-31 UTC; the storage trio by the preceding stack member), stage 2 mapping API prepared but not activated; its save calls moved in stage 3 (2026-11-01 UTC)**. The pin is libpinyin
 `074a2219c90feaf962d0d24f034514033ece5f99`; oxpinyin source is main
 `a52461cc297a4e67b07406167e6581e0e9f211fa`. The pin source read was the
 clean `/tmp/libpinyin-src` checkout at that commit. Pin citations below
@@ -31,8 +31,8 @@ Maintainer ruling, 2026-10-28 UTC:
 4. Same call is not same defect. The existing class (b)/(c) records for
    undefined reads and aborts stand, including `1297-punct-words` and
    assertion refusals. Policy row 39 (`LC_NUMERIC`) stands. Row 109's
-   mapping call is a revert target; its post-fini residual mapping is a
-   separate question, not a decision made here.
+   mapping call remains a revert target until activation; its release now
+   follows the later external API misuse ruling below.
 5. **Amended 2026-11-02 UTC:** library bindings and permitted semantic
    adapters follow the [Rust/C++ interoperability ruling](compatibility-policy.md#rust-cpp-interoperability).
    The 2026-10-31 UTC C-library and macro rules remain: C library calls go through the `libc` crate (approved for
@@ -64,6 +64,58 @@ landed.** That prerequisite was met when #1374 merged (main `410c9ca5`).
 Stage 1 then created the crate and changed the case markers its records
 own; the inventory below keeps the source comparison as it was made and
 notes where stage 1 now makes the pin's call.
+
+## Stage 2 mapping preparation
+
+Member 1 prepares `MappingSource`, `PendingMapping` and `Mapping` in
+`oxpinyin-input/src/chunk.rs`. The source opens with libc, seeks end then
+start, and exposes individual four-byte reads. Consuming it makes exactly
+one whole-file writable private mapping. Data's future caller interprets
+and validates the header and checksum while the pending owner keeps the
+descriptor open. Rejecting it drops the mapping before the descriptor;
+`finish` closes the descriptor and returns the sole mapping owner.
+Reads borrow that owner; writes require its exclusive borrow.
+
+The pin sites are `src/include/memory_chunk.h:475-524`; callers are
+`src/pinyin.cpp:250-260,284-294,952-959,1260-1268` and
+`src/zhuyin.cpp:196-203,230-237,585-592,795-803` at `074a2219`.
+The existing memmap2 dependency/version/features are used on every OS:
+0.9.11 `src/unix.rs::MmapInner::map_copy` calls `MmapInner::new` with
+`PROT_READ | PROT_WRITE`, `MAP_PRIVATE`, offset zero; its `Drop` releases
+the entire mapping. The unchanged lockfile resolves 0.9.12, whose same
+items retain that sequence. The maintainer chose memmap2 on Windows too;
+this boundary does not reproduce the pin's non-mmap Windows heap path.
+
+**Not activated.** Production still uses data's mapper and its original/
+replay ownership. This member neither changes data's unsafe level nor
+claims the one-mapping C-API model is verified. memmap2 is temporarily a
+dependency of both crates; data's dependency and mmap exception go only
+with activation. The published two-mapping design at #1517 `df672789`
+is replaced by this preparation; its results do not validate one live map.
+
+The later coherent transition must remove retained originals, use one
+borrowed live owner for replay/training/reads, copy the whole current
+content to a contiguous Vec on first growth (`memory_chunk.h:102-123`),
+and remap at the pin's save/mask/load points only. Direct replay uses
+failure-only reconstruction from checked journal old-payload bytes for
+the existing reached-payload-over-read rollback. The new class (b) safe
+outcomes for rows 107 and 76 are recorded in
+[compatibility policy](compatibility-policy.md); their production changes
+and real-journal / failed-save-and-retry regressions belong to that
+transition. They are not parity claims or member-1 gate results.
+
+No extra replay mapping is approved. Trailing-byte interpretation stays
+unchanged. Mapping setup is O(1) apart from the OS mapping; the caller's
+checksum remains linear in interpreted payload bytes. There is no
+production runtime-cost change in this preparation.
+
+### Mapping lifetime ruling
+
+Maintainer ruling recorded 2026-11-01 UTC (`date -u`).
+
+**Maintainer ruling: external API misuse.** Where the pin calls an external library or system API incorrectly, by passing an argument that contradicts the pin's own state or the API's documented use, oxpinyin uses the API correctly and does not reproduce the consequence of the misuse. Each such case is recorded with its pin citation and its affected cases marked POLICY-ACCEPTED. This covers external calls only. Defects in the pin's own logic are still reproduced bug for bug unless separately ruled.
+
+**First application, mapping lifetime (row 109).** `MemoryChunk::mmap` maps `file_size` bytes but does not keep that length. `freemem` (`src/include/memory_chunk.h:72-78` at `074a2219`) passes `munmap` a length recomputed from the chunk, `header + capacity()`, which is short of the mapping when `guint32 data_len = file_size - header` wraps. A partial `munmap` is a valid call. The misuse is the pin's: it passes a length that contradicts the mapping it made, so the rest of that mapping is never released, which is a lifetime defect. oxpinyin uses the memmap2 crate, whose `Drop` releases exactly what was mapped. For every file whose size passes the pin's length check without wrapping, this is the pin's own `munmap(base, file_size)`. No `ManuallyDrop`, hand-written `libc::munmap`, or other means of leaving part of a mapping behind.
 
 ## Stage 1 rulings
 
@@ -174,7 +226,7 @@ signal interruption, locale and native library versions affect the calls.
 | Lambda in that same stream: `fscanf(input, "lambda parameter:%f\n", &lambda)`, under `setlocale(LC_NUMERIC, "C")`; `table_info.cpp:197-224`. | `TableConf::parse` uses Rust `f32` parsing. `oxpinyin-training/src/segment/model.rs` `parse_table_conf_lambda` delegates to it. `oxpinyin-data/src/table_conf.rs` has a separate line-only rational `read_table_conf_lambda`/`parse_table_conf_lambda`; `lm::set_lambda_from_table_conf` uses it. **Stage 1:** both facades, `lm::set_lambda_from_table_conf` and the training loader share `TableConf::load`'s `fscanf("%f")`; the line-only reader is gone. | **NOT EQUIVALENT.** `0x1p-1` and `nan` are accepted by the pin scanner and refused by the Rust scanner; the line-only reader also omits preceding directives and scanner consumption. Use the host `fscanf` stream, not an isolated `strtof`. [Finding](1297-table-floats.md); [glibc 2.41 scanner](https://github.com/bminor/glibc/blob/glibc-2.41/stdio-common/vfscanf-internal.c). |
 | Addon slot: `to_index_of_addon_tables` calls `atoi`, returns `guint8`; `SystemTableInfo2::load` checks the resulting slot. `table_info.cpp:159-161,270-280`. | `table_info.rs` `TableConf::parse` uses Rust `usize` parsing and a range check. **Stage 1:** host `atoi`, then the pin's `guint8` cut and check. | **NOT EQUIVALENT.** `abc` and `256` reach slot zero at the pin but Rust refuses them. Use host `atoi` and the pin's subsequent conversion. [Finding](1297-addon-index.md); [glibc 2.41 `atoi`](https://github.com/bminor/glibc/blob/glibc-2.41/stdlib/atoi.c). |
 | `user.conf`: `UserTableInfo::load` calls `fopen("r")`, `fscanf` with `"binary format version:%d\n"`, `"model data version:%d\n"`, `"database format:%255s\n"`, `"open counter:%d\n"`, token `strcmp`, and `fclose`; `table_info.cpp:325-373`. | `oxpinyin-user/src/persistence.rs` `check_format`, `parse_user_conf`; `oxpinyin-data/src/user_files.rs` `UserTableInfo::parse`. Rust whole-file read and complete-field parsing. **Stage 1:** `config::UserTableInfoReader` makes these calls; `UserTableInfo::load` keeps the pin's `EOF`/`0`/`1` rules. | **NOT EQUIVALENT.** On the documented glibc reference, a version plus `2^32` can narrow back to a conforming value while Rust rejects it. `BerkeleyDB\0junk` matches the pin's C string and not Rust's full token. [Decimals](1297-user-decimals.md), [token](1297-user-token.md). |
-| System/addon chunk: `MemoryChunk::mmap` calls `open(filename, O_RDONLY\|O_BINARY)`, `lseek(fd, 0, SEEK_END)`, `lseek(fd, 0, SEEK_SET)`, two 4-byte `read`s, `mmap(NULL, file_size, PROT_READ\|PROT_WRITE, MAP_PRIVATE, fd, 0)`, and `close`; it calls `munmap` on checksum failure. `src/include/memory_chunk.h:475-524`; `pinyin.cpp:250-260,284-294,952-959,1260-1268`; `zhuyin.cpp:196-203,230-237,585-592,795-803`. | `oxpinyin-data/src/phrase_library.rs` `map_chunk`, `MappedFile::from_file`, using Rust `File`, metadata, and `memmap2::map_copy_read_only`. | **NOT EQUIVALENT.** Rust Unix `File::open` adds `O_CLOEXEC` and retries `EINTR`; an `exec` while the descriptor is open can observe inheritance. The pin maps writable/private and closes the descriptor; Rust initially maps read-only/private and retains its file. [Rust Unix `open_c`](https://github.com/rust-lang/rust/blob/1.97.1/library/std/src/sys/fs/unix.rs), [memmap2 0.9.11 Unix mapping](https://github.com/RazrFalcon/memmap2-rs/blob/v0.9.11/src/unix.rs). The separate trailing-byte question stays open. |
+| System/addon chunk: `MemoryChunk::mmap` calls `open(filename, O_RDONLY\|O_BINARY)`, `lseek(fd, 0, SEEK_END)`, `lseek(fd, 0, SEEK_SET)`, two 4-byte `read`s, `mmap(NULL, file_size, PROT_READ\|PROT_WRITE, MAP_PRIVATE, fd, 0)`, and `close`; it calls `munmap` on checksum failure. `src/include/memory_chunk.h:475-524`; `pinyin.cpp:250-260,284-294,952-959,1260-1268`; `zhuyin.cpp:196-203,230-237,585-592,795-803`. | `oxpinyin-data/src/phrase_library.rs` `map_chunk`, `MappedFile::from_file`, using Rust `File`, metadata, and `memmap2::map_copy_read_only`. | **NOT EQUIVALENT.** Rust Unix `File::open` adds `O_CLOEXEC` and retries `EINTR`; an `exec` while the descriptor is open can observe inheritance. The pin maps writable/private and closes the descriptor; Rust initially maps read-only/private and retains its file. [Rust Unix `open_c`](https://github.com/rust-lang/rust/blob/1.97.1/library/std/src/sys/fs/unix.rs), [memmap2 0.9.11 Unix mapping](https://github.com/RazrFalcon/memmap2-rs/blob/v0.9.11/src/unix.rs). The separate trailing-byte question stays open. **Member 1:** the single-map input API is prepared and tested directly; production still uses the data mapper above. Activation and C-API differentials remain pending. |
 | User chunks and journals, and system chunk fallback: `MemoryChunk::load` calls `open`, both `lseek`s, two 4-byte `read`s, one payload `read`, and `close`; `memory_chunk.h:416-463`. | `oxpinyin-user/src/persistence.rs` `load_libraries`, `load_logs_with_mask` use `std::fs::read`; `oxpinyin-data/src/user_files.rs` `read_chunk_payload` decodes bytes. | **NOT EQUIVALENT.** A short or interrupted payload read is one call at the pin; Rust reads to completion and retries interruptions. Use the pin sequence. Do not settle trailing-byte behavior here. |
 | System, addon, punctuation and user DBMs: backend `attach`, `load_db`, open, cursor/get and close calls; e.g. `src/storage/chewing_large_table2_bdb.cpp:77-132`, `chewing_large_table2_kyotodb.cpp:77-122`, `chewing_large_table2_tkrzwdb.cpp:75-108`. Paths include `pinyin_index.bin`, `phrase_index.bin`, `bigram.db`, `punct.bin`, the addon pair and user indexes/bigram. | `oxpinyin-data/src/dict.rs` `SystemDictionary::open_with`, `AddonDictionary::open_with`; `punct.rs` `PunctTable::open_optional`; user persistence loaders; `oxpinyin-store` backend adapters. | **UNSETTLED as an independent all-input proof.** The ruling states DBM backends already follow the native backend through store; this inventory does not independently prove every backend's operations. Missing-system-DBM behavior stays open. |
 | `.table` and `punct.table`: `gen_binary_files` uses `fopen("r")`, loaders, `fseek(tablefile, 0L, SEEK_SET)` between three table passes and `fclose`; `utils/storage/gen_binary_files.cpp:36-105`. `table_text_read_pinyin_record`/`table_text_read_punct_record` use `fgets(line, sizeof(line), infile)` with a 4096-byte array, `strspn`, `strcspn`, `g_strlcpy`, and `g_ascii_strtoull(field, &end, 10)`; `src/storage/table_text_parser.h:34-121`. | `oxpinyin-datagen/src/table.rs` `read_table_file`/`parse_table_line`; `punct.rs` `read_punct_file`/`parse_punct_line`; Rust UTF-8 `read_to_string`, whitespace split and integer parses. | **NOT EQUIVALENT.** A fifth field is ignored by the pin but rejected by datagen; a count `-0` is rejected by the pin's helper but accepted by the table parser. The pin splits long lines at `fgets`'s buffer and retains bytes Rust's UTF-8 read rejects. [#926](926-tool-tokenizers.md). |
@@ -204,7 +256,7 @@ associated tool entry points.
 | `user.conf`: `UserTableInfo::save` calls `fopen(filename, "w")`, `fprintf` with `"binary format version:%d\n"`, `"model data version:%d\n"`, `"database format:%s\n"`, `"open counter:%d\n"`, then `fclose`. It checks the open, not subsequent write/close results. `table_info.cpp:377-395`. | `oxpinyin-user/src/persistence.rs` `write_marker`; `oxpinyin-data/src/user_files.rs` `UserTableInfo::to_text`; `oxpinyin-facade/src/context.rs` `ContextCore::save_user_with_layout_faults`. Rust `std::fs::write`. **Stage 1:** `config::save_user_table_info` makes the pin's `fopen`/`fprintf`/`fclose` calls and checks only the open. | **NOT EQUIVALENT.** If `user.conf` points at `/dev/full` after initialization, opening can succeed while the subsequent output fails: the pin ignores that failure, while Rust reports the `std::fs::write` failure and emits the marker-write diagnostic. Use the exact sequence and check only the pin's results. |
 | Chunk creation/truncation/save: `MemoryChunk::save` calls `open(filename, O_CREAT\|O_WRONLY\|O_TRUNC\|O_BINARY, 0644)`, `write(fd, &length, sizeof(guint32))`, `write(fd, &checksum, sizeof(guint32))`, one `write(fd, begin(), size())`, `g_fsync(fd)`, and `close(fd)`. A short/failed payload closes and returns before sync. `memory_chunk.h:536-557`. | `oxpinyin-input/src/chunk.rs` `save`; `oxpinyin-data/src/chunk_format.rs` `build_memory_chunk` supplies the bytes. | **DONE (stage 3, 2026-11-01 UTC).** `chunk::save` makes the pin's `libc::open`, one `write` per header word, one payload `write`, `libc::fsync` and `libc::close`; the header's assert is the existing class-(c) refusal and a short payload is the pin's soft `false`. Cases `abort-save-chunk-header-*`, `abort-zhuyin-save-chunk-header-*`: POLICY-ACCEPTED on tkrzw. Windows keeps a std fallback with the same results (#1475). |
 | Chunk sync: `g_fsync(fd)` at `memory_chunk.h:555`. Ordinary Unix GLib headers macro-expand it to `fsync`; Windows GLib's function calls `_commit`. [GLib header](https://github.com/GNOME/glib/blob/2.84.4/glib/gstdio.h#L60-L84), [wrapper](https://github.com/GNOME/glib/blob/2.84.4/glib/gstdio.c#L1666-L1702). | `oxpinyin-input/src/chunk.rs` `save` calls `libc::fsync` once and ignores its answer. | **DONE on Unix (stage 3, 2026-11-01 UTC).** The ordinary Unix macro is `fsync`, with no Rust retry and no macOS `F_FULLFSYNC`. Windows uses `File::sync_all` and remains #1475. |
-| Mapping release: `MemoryChunk::freemem` calls `munmap(m_data_begin - header, header + capacity())`; `memory_chunk.h:72-78`. A failed checksum instead calls `munmap(data - header, file_size)` at `:516`. | `oxpinyin-data/src/phrase_library.rs` `MappedFile` owns a `memmap2::Mmap` whose drop releases its mapping. | **UNSETTLED as a complete lifecycle.** The original whole-file mapping call is required by row 109; whether to retain the pin's post-fini residual mapping is separately open. |
+| Mapping release: `MemoryChunk::freemem` calls `munmap(m_data_begin - header, header + capacity())`; `memory_chunk.h:72-78`. A failed checksum instead calls `munmap(data - header, file_size)` at `:516`. | Production data still owns its extent-only memmap2 view. The prepared input `Mapping` owns the whole-file writable private view; `PendingMapping` releases it before closing on validation failure. | **Release ruled:** the exact [mapping lifetime ruling](#mapping-lifetime-ruling) requires whole-range memmap2 drop; the wrapped-size residual difference is POLICY-ACCEPTED. Production mapping activation remains pending. |
 | Profile cleanup: `_clean_user_files` and `check_format` call plain `unlink(filename)` for selected user files and fixed DBM names; `pinyin.cpp:150-215`, `zhuyin.cpp:104-159`. | `oxpinyin-user/src/persistence.rs` `clean_user_files` calls `oxpinyin-input` `path::unlink` (`libc::unlink`). | **DONE (stage 3, 2026-11-01 UTC).** The order is the pin's: the default rows' user files by sub-index, libpinyin's addon rows (`pinyin.cpp:199-200`), then `USER_PINYIN_INDEX`, `USER_PHRASE_INDEX` and `USER_BIGRAM`; libzhuyin stops after the default rows. Every result is ignored. Cases `table-conf-addon-cleanup{,-zhuyin}`, `table-conf-user-library-named-user-conf{,-zhuyin}`: MATCH on tkrzw. |
 | Save staging/rename: pinyin unlinks the three DBM staging names, writes chunks/DBMs, then calls `g_rename(tmppathname, chunkpathname)` or `g_rename(tmpfilename, filename)` for each; `pinyin.cpp:940-1128`. Zhuyin interleaves write and rename; `zhuyin.cpp:554-689`. Each failed rename calls `fprintf(stderr, "rename %s to %s failed.\n", ...)`. | `oxpinyin-user/src/persistence.rs` `stage_chunk`, `stage_dbm`, `stage_user_bigram`, `save_reporting`, `Staged::finish`, `finish_save`; `oxpinyin-input` `chunk::save`, `path::rename`, `path::unlink`; facade diagnostics. | **DONE on Unix (stage 3, 2026-11-01 UTC).** Pinyin keeps its two passes and zhuyin its interleaved write/rename; the three DBM staging names are unlinked before the write (the bigram too), and a failed save leaves every staged `.tmp` where the pin leaves it. `g_rename` is `libc::rename` on Unix; Windows calls GLib's `g_rename` and remains #1475. Cases `save-929-*`, `stderr-save-*`: MATCH or POLICY-ACCEPTED on tkrzw. The strict Rust API (`persistence::save`, not a C facade) still answers its first rename failure, while the C reporting save carries on as the pin does. |
 | Library diagnostics: `fprintf(stderr, "open %s failed.\n", ...)` for system config, `"open %s failed."` for user config, `"write %s failed.\n"` for marker open, `"load %s failed!\n"`, `"mmap %s failed!\n"`, `"open %s failed!\n"` for loads, and the rename format above. `table_info.cpp:199-202,330-333,380-383`; `pinyin.cpp:255-259,289-293,338,955-959,1061,1080,1096,1110,1123,1264-1268`; `zhuyin.cpp:199-203,233-237,282,588-592,611,637,657,674,689,799-803`. | `oxpinyin-data/src/pin_stderr.rs` `emit`, `mmap_failed`. Rust assembles bytes and uses `stderr().write_all`. **Stage 1:** a line that shares a failure sequence with a boundary line is the boundary's `fprintf` (`oxpinyin-data` `c_stderr`, `oxpinyin-input` `report_*`): `table_info.cpp`'s three lines (D2); in init, `load %s failed!` (`pinyin.cpp:338`, `zhuyin.cpp:282`) and the library loop's `mmap %s failed!` (`pinyin.cpp:256`, `:290`; `zhuyin.cpp:200`, `:234`), after `check_format`'s `user.conf` lines; in save, `mmap %s failed!` (`pinyin.cpp:956`, `zhuyin.cpp:589`) and `rename %s to %s failed.`, before `mark_version`'s line. Fini writes only `mark_version`'s line. Left to stage 4 on `pin_stderr`: `mmap %s failed!` in `mask_out` (`pinyin.cpp:1265`, `zhuyin.cpp:800`) and in the library load calls (`pinyin.cpp:256`, `:290` through `:446` and `:477`; zhuyin's twins), whose calls write no boundary line. oxpinyin never writes `open %s failed!`, the non-mmap build's line. **Stage 4:** those remaining lines are the boundary's `fprintf` too (`oxpinyin-input` `diagnostic::report_mmap_failed`, through `oxpinyin-data` `c_stderr::mmap_failed`), so every library line goes to the host C library's `stderr`; since 2026-10-31 UTC each is `libc::fprintf` on the C library's own `stderr` object, declared per platform in `oxpinyin-input` `native.rs` (glibc and musl `stderr`, Apple and FreeBSD `__stderrp`, UCRT `__acrt_iob_func(2)`), not a new stream on descriptor 2; `pin_stderr` and its Rust-stderr writer are gone. The `SubPhraseIndex::load` criticals (`phrase_index.cpp:354-356`, `:361`) are made with the call the pin's `g_return_val_if_fail` expands to, `g_return_if_fail_warning(NULL, G_STRFUNC, #expr)` (oracle `SubPhraseIndex::load+492`, `+552`, `+576`, `+608` in both objects), not a preformatted `g_log`. Since 2026-10-31 UTC (#1297 decision D1) they are not made at all ([1297-layout-criticals](1297-layout-criticals.md)). | **UNSETTLED for all sinks.** Byte assembly on ordinary stderr does not prove C `FILE *` buffering, retries and error behavior equivalent. The `/dev/full` marker example above is a confirmed surrounding difference. |
@@ -367,7 +419,9 @@ specifications in advance of the stage that owns them.
    the same `setlocale`, `fopen`, `fscanf`, `feof`, `atoi`, `fprintf`
    and `fclose` calls through the `libc` crate, with the same format
    strings, call order and result checks.
-2. **Chunks.** Move chunk load/map/save calls, single payload write,
+2. **Chunks.** Mapping API preparation is member 1; activation waits for
+   the coherent live-library ownership/replay/save transition described
+   above. Move chunk load/map/save calls, single payload write,
    native sync and mapping ownership. Gate chunk readers/writers and
    both facades independently; make data `forbid(unsafe_code)` when its
    last unsafe mapping moves. Row 109's call is in this stage.
@@ -430,8 +484,8 @@ resolution, and no confirmation was run for this document:
 3. Missing system DBMs.
 4. The external consequence of BDB `tmp_db->sync(m_db, 0)` in save.
 
-The row-109 post-fini residual mapping is separately open, as ruled
-above; this document does not decide whether to retain the residual.
+Row 109's post-fini release is settled by the [mapping lifetime ruling](#mapping-lifetime-ruling);
+production activation is pending. This does not settle trailing-byte interpretation.
 
 Stage 5 follow-up: `gen_zhuyin_table` now uses the same tool boundary and
 shared phrase tree as `gen_pinyin_table`. The registered

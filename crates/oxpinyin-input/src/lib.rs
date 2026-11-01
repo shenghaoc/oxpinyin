@@ -11,6 +11,11 @@
 //! with the crates that own those records; this crate answers only what each
 //! C call answered.
 //!
+//! Stage 2 prepares the chunk open/seek/header-read calls and a single
+//! whole-file private mapping owner ([`chunk`]). Production still uses the
+//! data mapper until the live-library ownership transition; interpretation
+//! and checksums stay in data. Chunk loading into the heap remains pending.
+//!
 //! Stage 3 holds the save path's file-system calls: the pin's
 //! `g_build_filename` ([`path`]), the chunk open/write/sync/close
 //! ([`chunk`]), and `g_rename` and plain `unlink` (also [`path`]).

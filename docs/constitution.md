@@ -32,6 +32,7 @@ The [roadmap](../ROADMAP.md) records the stages and their status.
    - Give every unsafe block a `// SAFETY:` comment.
 
    Until the boundary is implemented, data retains its existing `deny` and mmap exception.
+   Stage 2 member 1 prepares the input mapping API; activation and data's `forbid` conversion wait for the coherent live-library ownership transition.
    Crate-root `#![forbid]` attributes and scoped allows enforce the implemented allowlist.
    `undocumented_unsafe_blocks` requires a safety comment on every unsafe block.
    `missing_safety_doc` requires a `# Safety` section on every public unsafe function or method.
