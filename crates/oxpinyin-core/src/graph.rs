@@ -1327,6 +1327,50 @@ mod tests {
     }
 
     #[test]
+    fn a_cached_apostrophe_run_emits_the_edges_of_a_per_node_scan() {
+        // The scan `key_start` replaced: every node rescans the rest of its
+        // apostrophe run, and a run that reaches the end starts no key.
+        fn per_node_key_start(input: &[u8], node: usize) -> Option<usize> {
+            let byte = *input.get(node)?;
+            if byte == b'\'' {
+                let mut cursor = node + 1;
+                while *input.get(cursor)? == b'\'' {
+                    cursor += 1;
+                }
+                return Some(cursor);
+            }
+            Some(node)
+        }
+
+        let inputs: [&[u8]; 9] = [
+            b"",
+            b"'",
+            b"'''",
+            b"'ni",
+            b"ni'",
+            b"ni''hao'''",
+            b"'''xi'an''''zhong'guo'",
+            b"n'''g''''ang'e''r",
+            b"zhuang''''''shuang'''''chuang",
+        ];
+        for input in inputs {
+            let mut per_node = Vec::new();
+            for node in 0..=input.len() {
+                if let Some(start) = per_node_key_start(input, node) {
+                    super::emit_edges(input, node, start, OptionBits::default(), &mut per_node);
+                }
+            }
+            let graph = SegmentGraph::build(input).expect("short input");
+            assert_eq!(
+                graph.edges(),
+                per_node.as_slice(),
+                "{}",
+                String::from_utf8_lossy(input)
+            );
+        }
+    }
+
+    #[test]
     fn fewest_keys_picks_the_shortest_complete_path() {
         let graph = SegmentGraph::build(b"nihao").expect("valid");
         let path = graph.fewest_keys(false);
