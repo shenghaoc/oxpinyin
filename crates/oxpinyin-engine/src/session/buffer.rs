@@ -1,15 +1,14 @@
 //! The raw input buffer and its pre-parsed scheme chain.
 //!
-//! Owns the two coupled input-side invariants, so no caller can leave the
-//! session with an input the rest of the pipeline would slice out of
-//! bounds:
+//! Owns the input-side invariant, so no caller can leave the session with
+//! an input the rest of the pipeline would slice out of bounds: the
+//! exact-segment chain, whose spans are absolute over `raw` and never
+//! reach past its end (`end() <= raw.len()` for every segment).
 //!
-//! - the [`MAX_INPUT_BYTES`] cap — a push that would overrun it is
-//!   refused whole, never truncated mid-character (`raw` only ever holds
-//!   ASCII, but the byte check keeps a future multi-byte input class from
-//!   splitting a character);
-//! - the exact-segment chain, whose spans are absolute over `raw` and
-//!   never reach past its end (`end() <= raw.len()` for every segment).
+//! The buffer has no length limit. The pin's full-pinyin parser stops at
+//! byte 32767 only because it keeps its steps in `gint16`s, a language
+//! artefact oxpinyin does not reproduce
+//! (`docs/findings/1501-gint16-input-cap.md`).
 //!
 //! Interactive typing exits exact mode — every accepted character
 //! mutation clears the chain — while the two replace seams manage it
@@ -20,13 +19,10 @@ use std::sync::{Arc, OnceLock};
 
 use oxpinyin_core::graph::{ExactSegment, SegmentGraph};
 
-use super::MAX_INPUT_BYTES;
-
 /// The typed input and the scheme-parse chain over it.
 #[derive(Clone, Debug, Default)]
 pub(super) struct InputBuffer {
-    /// The raw characters typed so far, never longer than
-    /// [`MAX_INPUT_BYTES`].
+    /// The raw characters typed so far.
     raw: String,
     /// Whole-input parser graph, shared by the matrix, window and length queries.
     /// Input/provenance mutations and option changes invalidate it.
@@ -92,23 +88,15 @@ impl InputBuffer {
         self.formatting_separators = true;
     }
 
-    /// Appends `character` and exits exact mode, unless it would push the
-    /// buffer past [`MAX_INPUT_BYTES`] — then nothing changes and `false`
-    /// is returned (the caller reports the key as ignored, or stops the
-    /// batch). The exact chain is cleared only on an accepted push, so a
-    /// character refused at the cap leaves a scheme composition intact.
-    pub(super) fn try_push(&mut self, character: char) -> bool {
+    /// Appends `character` and exits exact mode.
+    pub(super) fn push(&mut self, character: char) {
         self.graph.take();
         self.matrix = None;
         self.ending_matrix = None;
-        if self.raw.len() + character.len_utf8() > MAX_INPUT_BYTES {
-            return false;
-        }
         self.exact.clear();
         self.parsed_full_pinyin = false;
         self.formatting_separators = false;
         self.raw.push(character);
-        true
     }
 
     /// Drops the last character and exits exact mode — the erase path,
@@ -159,26 +147,18 @@ impl InputBuffer {
         self.formatting_separators = !physical;
     }
 
-    /// Replaces `raw` with `text` clamped to [`MAX_INPUT_BYTES`], keeping
-    /// every character that fits and stopping at the first that would
-    /// overflow. Does not touch the exact chain: the plain seam has
-    /// already cleared it and the scheme seam sets it afterwards through
-    /// [`InputBuffer::set_exact`].
+    /// Replaces `raw` with `text`. Does not touch the exact chain: the
+    /// plain seam has already cleared it and the scheme seam sets it
+    /// afterwards through [`InputBuffer::set_exact`].
     pub(super) fn refill(&mut self, text: &str) {
         self.graph.take();
         self.matrix = None;
         self.ending_matrix = None;
-        self.raw.clear();
-        for character in text.chars() {
-            if self.raw.len() + character.len_utf8() > MAX_INPUT_BYTES {
-                break;
-            }
-            self.raw.push(character);
-        }
+        text.clone_into(&mut self.raw);
     }
 
     /// Installs the scheme chain, dropping any segment that reaches past
-    /// the (already clamped) buffer end so `end() <= raw.len()` stays an
+    /// the buffer end so `end() <= raw.len()` stays an
     /// invariant of the stored segments.
     pub(super) fn set_exact(&mut self, segments: &[ExactSegment]) {
         self.graph.take();

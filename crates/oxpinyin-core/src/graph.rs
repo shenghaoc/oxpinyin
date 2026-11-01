@@ -15,17 +15,20 @@ use core::fmt;
 
 use crate::{Completeness, MAX_SYLLABLE_LEN, OptionBits, SyllableKey, USE_TONE};
 
-/// Largest input the graph accepts, in bytes.
+/// Largest input whose byte positions fit an [`Edge`].
 ///
-/// The pinned oracle reports positions as `guint16`, so an input beyond this
-/// cannot be compared against it at all. Refusing here keeps the graph and the
-/// differential runner agreeing about what is representable.
-pub const MAX_GRAPH_INPUT: usize = 65_535;
+/// This is the width of the graph's positions, not a product limit: an
+/// [`Edge`] keeps its positions in `u32`s, and `u32::MAX` stays free for
+/// the decoder's seed step. It is wider than the pin's own parser, whose
+/// lengths are `int`s (`pinyin_parser2.h:131` at 074a2219). No product
+/// rule bounds the input (`docs/findings/1501-gint16-input-cap.md`).
+pub const MAX_GRAPH_POSITION: usize = u32::MAX as usize - 1;
 
 /// Why a graph could not be built.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum GraphError {
-    /// The input is longer than [`MAX_GRAPH_INPUT`].
+    /// The input is longer than [`MAX_GRAPH_POSITION`], so its positions do
+    /// not fit an [`Edge`].
     InputTooLong {
         /// Length that was offered.
         len: usize,
@@ -148,13 +151,13 @@ impl EdgeKind {
 
 /// Index of an edge in a [`SegmentGraph`].
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct EdgeId(u32);
+pub struct EdgeId(usize);
 
 impl EdgeId {
     /// The index as a `usize`.
     #[must_use]
     pub const fn index(self) -> usize {
-        self.0 as usize
+        self.0
     }
 }
 
@@ -239,7 +242,7 @@ pub struct SegmentGraph {
     input_len: usize,
     edges: Vec<Edge>,
     /// `starts[node]..starts[node + 1]` indexes [`SegmentGraph::edges`].
-    starts: Vec<u32>,
+    starts: Vec<usize>,
     reachable: Vec<bool>,
     consumed: usize,
 }
@@ -250,7 +253,7 @@ impl SegmentGraph {
     /// # Errors
     ///
     /// Returns [`GraphError::InputTooLong`] for an input beyond
-    /// [`MAX_GRAPH_INPUT`]. Every other byte sequence — junk, malformed UTF-8,
+    /// [`MAX_GRAPH_POSITION`]. Every other byte sequence — junk, malformed UTF-8,
     /// stray apostrophes, the empty input — builds a graph, possibly one with
     /// no edges at all.
     pub fn build(input: &[u8]) -> Result<Self, GraphError> {
@@ -267,12 +270,12 @@ impl SegmentGraph {
     /// # Errors
     ///
     /// Returns [`GraphError::InputTooLong`] for an input beyond
-    /// [`MAX_GRAPH_INPUT`].
+    /// [`MAX_GRAPH_POSITION`].
     pub fn build_with_options(input: &[u8], options: OptionBits) -> Result<Self, GraphError> {
-        if input.len() > MAX_GRAPH_INPUT {
+        if input.len() > MAX_GRAPH_POSITION {
             return Err(GraphError::InputTooLong {
                 len: input.len(),
-                limit: MAX_GRAPH_INPUT,
+                limit: MAX_GRAPH_POSITION,
             });
         }
 
@@ -282,10 +285,10 @@ impl SegmentGraph {
         let mut starts = Vec::with_capacity(node_count + 1);
 
         for node in 0..node_count {
-            starts.push(u32::try_from(edges.len()).unwrap_or(u32::MAX));
+            starts.push(edges.len());
             emit_edges(input, node, options, &mut edges);
         }
-        starts.push(u32::try_from(edges.len()).unwrap_or(u32::MAX));
+        starts.push(edges.len());
 
         let mut reachable = vec![false; node_count];
         reachable[0] = true;
@@ -303,7 +306,7 @@ impl SegmentGraph {
             if node + 1 < node_count && input[node] == b'\'' {
                 reachable[node + 1] = true;
             }
-            let range = starts[node] as usize..starts[node + 1] as usize;
+            let range = starts[node]..starts[node + 1];
             for edge in &edges[range] {
                 reachable[edge.to()] = true;
             }
@@ -336,14 +339,14 @@ impl SegmentGraph {
     ///
     /// # Errors
     ///
-    /// Returns [`GraphError::InputTooLong`] beyond [`MAX_GRAPH_INPUT`] and
+    /// Returns [`GraphError::InputTooLong`] beyond [`MAX_GRAPH_POSITION`] and
     /// [`GraphError::ExactSegmentsInvalid`] for out-of-order, overlapping,
     /// out-of-bounds, or empty spans.
     pub fn build_exact(input: &[u8], segments: &[ExactSegment]) -> Result<Self, GraphError> {
-        if input.len() > MAX_GRAPH_INPUT {
+        if input.len() > MAX_GRAPH_POSITION {
             return Err(GraphError::InputTooLong {
                 len: input.len(),
-                limit: MAX_GRAPH_INPUT,
+                limit: MAX_GRAPH_POSITION,
             });
         }
 
@@ -386,7 +389,7 @@ impl SegmentGraph {
             while cursor < edges.len() && edges[cursor].from() < node {
                 cursor += 1;
             }
-            starts.push(u32::try_from(cursor).unwrap_or(u32::MAX));
+            starts.push(cursor);
         }
 
         let mut reachable = vec![false; node_count];
@@ -444,7 +447,7 @@ impl SegmentGraph {
         let Some(end) = self.starts.get(node + 1) else {
             return &[];
         };
-        &self.edges[*start as usize..*end as usize]
+        &self.edges[*start..*end]
     }
 
     /// Ids of the edges leaving `node`.
@@ -497,8 +500,8 @@ impl SegmentGraph {
         // A step's rank is (key count, total correction distance) packed into
         // one integer, the count above bit 32: one comparison orders them
         // lexicographically. Both are bounded by the input length, which
-        // `MAX_GRAPH_INPUT` keeps far below 2^32, so the distance never
-        // carries into the count.
+        // `MAX_GRAPH_POSITION` keeps below 2^32, so the distance never carries
+        // into the count.
         const ONE_KEY: u64 = 1 << 32;
         // steps[node] = (rank, incoming edge); the incoming edge's `from` is
         // the previous node. Node 0 is the root with rank zero.
@@ -594,7 +597,7 @@ pub struct FewestKeys {
 impl FewestKeys {
     /// Parse `pinyin`.
     ///
-    /// `None` when the input exceeds [`MAX_GRAPH_INPUT`] or no complete-key
+    /// `None` when the input exceeds [`MAX_GRAPH_POSITION`] or no complete-key
     /// path reaches the furthest reachable node.
     #[must_use]
     pub fn parse(pinyin: &str) -> Option<Self> {
@@ -762,7 +765,7 @@ fn key_for_spelling(text: &[u8], options: OptionBits) -> Option<(SyllableKey, u8
 
 #[cfg(test)]
 mod tests {
-    use super::{EdgeKind, FewestKeys, GraphError, MAX_GRAPH_INPUT, SegmentGraph};
+    use super::{Edge, EdgeKind, FewestKeys, GraphError, SegmentGraph};
     use crate::{
         OptionBits, PINYIN_CORRECT_GN_NG, PINYIN_CORRECT_IOU_IU, PINYIN_CORRECT_ON_ONG,
         SyllableKey, USE_TONE,
@@ -1300,16 +1303,15 @@ mod tests {
     }
 
     #[test]
-    fn an_over_long_input_is_refused_rather_than_truncated() {
-        let long = vec![b'a'; MAX_GRAPH_INPUT + 1];
-        assert_eq!(
-            SegmentGraph::build(&long),
-            Err(GraphError::InputTooLong {
-                len: MAX_GRAPH_INPUT + 1,
-                limit: MAX_GRAPH_INPUT,
-            })
-        );
-        assert!(SegmentGraph::build(&long[..MAX_GRAPH_INPUT]).is_ok());
+    fn an_input_past_the_pins_gint16_steps_is_parsed_whole() {
+        // 80000 bytes: past both the pin's 32767-byte `gint16` steps and the
+        // old 65535-byte refusal (`docs/findings/1501-gint16-input-cap.md`).
+        let long = b"ni".repeat(40_000);
+        let graph = SegmentGraph::build(&long).expect("no length limit below the position width");
+        assert_eq!(graph.consumed(), long.len());
+        let path = graph.fewest_keys(false);
+        assert_eq!(path.len(), 40_000);
+        assert_eq!(path.last().map(Edge::to), Some(long.len()));
     }
 
     #[test]

@@ -19,11 +19,35 @@ def declarations():
 class InputLengthCapTests(unittest.TestCase):
     def test_registration_order_metadata_and_replay(self):
         first, second = declarations(), declarations()
-        self.assertEqual(list(first), ['input-length-cap', 'long-input-sentence'])
+        record = '1501-gint16-input-cap.md'
+        self.assertEqual(first, {name: (args, kwargs, first[name][2]) for name, args, kwargs in (
+            ('input-length-cap', (), {'issues': ('540', '1501'), 'policy_record': record}),
+            ('long-input-sentence', (), {'issues': ('540',)}),
+            ('input-length-boundary-32767', (), {'issues': ('1501',), 'control': True}),
+            ('input-length-boundary-32768', (), {'issues': ('1501',), 'policy_record': record}),
+            ('input-length-boundary-65535', (), {'issues': ('1501',), 'policy_record': record}),
+            ('input-length-boundary-65536', (), {'issues': ('1501',), 'policy_record': record}))})
+        self.assertEqual(list(first), ['input-length-cap', 'long-input-sentence', 'input-length-boundary-32767',
+                                       'input-length-boundary-32768', 'input-length-boundary-65535',
+                                       'input-length-boundary-65536'])
         for name, (args, kwargs, fn) in first.items():
-            self.assertEqual((args, kwargs), ((), {'issues': ('540',)}))
             self.assertIs(fn, second[name][2])
             self.assertEqual(fn.__module__, family.__name__)
+
+    def test_each_boundary_parses_that_many_bytes_on_a_fresh_instance(self):
+        for length in (32767, 32768, 65535, 65536):
+            with self.subTest(length=length):
+                kit = Mock()
+                parse = Mock(side_effect=lambda inst, text: len(text))
+                stored = Mock(return_value=7)
+                kit.fn.side_effect = lambda name, *types: {'parse_more_full_pinyins': parse,
+                                                           'get_parsed_input_length': stored}[name]
+                result = declarations()['input-length-boundary-%d' % length][2](kit)
+                self.assertEqual(result, [length, 7])
+                text = parse.call_args.args[1]
+                self.assertEqual(text, (b'ni' * 32768)[:length])
+                self.assertIs(parse.call_args.args[0], kit.alloc.return_value)
+                stored.assert_called_once_with(kit.alloc.return_value)
 
     def test_each_length_is_parsed_on_a_fresh_instance_truncated_to_that_many_bytes(self):
         kit = Mock()

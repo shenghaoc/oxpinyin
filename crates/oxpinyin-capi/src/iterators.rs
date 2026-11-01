@@ -380,19 +380,16 @@ fn phrase_table_tokens(
 
 /// `FullPinyinParser2::parse` under `PINYIN_CORRECT_ALL | USE_TONE`
 /// (`pinyin.cpp:629-637`, `pinyin_parser2.cpp:217-381`): the longest
-/// parsable prefix of the first 32767 bytes, fewest keys, as toned store
-/// keys. `None` when a key does not fit the store's key layout.
+/// parsable prefix, fewest keys, as toned store keys. `None` when a key
+/// does not fit the store's key layout.
+///
+/// The whole reading is parsed. The pin's `parse_value_t` keeps its steps
+/// in `gint16`s (`pinyin_parser2.cpp:67-70`), so its parse stops at byte
+/// 32767; that width is a language artefact
+/// (`docs/findings/1501-gint16-input-cap.md`).
 fn parse_import_pinyin(pinyin: &str) -> Option<Vec<PinyinKey>> {
     let options = OptionBits::from_bits(PINYIN_CORRECT_ALL | USE_TONE);
-    // Policy row 59's bound, as the session parse applies it: the pin's
-    // `parse_value_t` keeps `m_num_keys`, `m_parsed_len`, `m_distance` and
-    // `m_last_step` in `gint16`s (`pinyin_parser2.cpp:67-70`), and no step
-    // past byte 32767 holds its `m_last_step = i` (`:248`, `:292`). Only the
-    // first 32767 bytes are parsed, so the graph's 65535-byte limit is never
-    // reached here. #1501 removes the bound from both entry points.
-    let bytes = pinyin.as_bytes();
-    let bytes = &bytes[..bytes.len().min(oxpinyin_engine::MAX_INPUT_BYTES)];
-    let graph = SegmentGraph::build_with_options(bytes, options).ok()?;
+    let graph = SegmentGraph::build_with_options(pinyin.as_bytes(), options).ok()?;
     graph
         .fewest_keys(false)
         .iter()

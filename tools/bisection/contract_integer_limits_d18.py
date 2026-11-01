@@ -301,7 +301,10 @@ def d18_bigram_update(count, predicted=False, user_only=False):
 for _mode in ('pinyin', 'zhuyin'):
     case('d18-unigram-max-' + _mode, mode=_mode, control=True, issues=('540',))(d18_unigram(False))
     case('d18-unigram-total-boundary-' + _mode, mode=_mode, control=True, issues=('540',))(d18_unigram(True))
-    case('d18-input-boundaries-' + _mode, mode=_mode, control=True, issues=('540',))(d18_input)
+    # Past byte 32767 the pin's `gint16` parse steps stop the parse; oxpinyin
+    # parses the whole input (#1501, `1501-gint16-input-cap.md`).
+    case('d18-input-boundaries-' + _mode, mode=_mode, control=True, issues=('540', '1501'),
+         policy_record='1501-gint16-input-cap.md')(d18_input)
     for _label, _system, _user, _control in (
             ('total-before', (1, 1), (0xfffffffe, 1), True),
             ('total-zero', (1, 1), (0xffffffff, 1), False),

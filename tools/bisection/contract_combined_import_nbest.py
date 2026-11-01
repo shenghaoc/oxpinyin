@@ -51,21 +51,26 @@ def register(case, *, remember_export, transient_files):
         case('combined-library-fifth-add-' + _mode, mode=_mode, control=True, issues=('525',))(
             lambda k: combined_import_bound(k, guard=False))
 
-    # Policy row 59's bound: the pin's full-pinyin parse keeps its steps in
-    # `gint16`s (`pinyin_parser2.cpp:67-70`, `:248`, `:292`), so an import's
-    # keys are those of its first 32767 bytes, whatever follows (#1501
-    # removes the bound).
+    # The pin's full-pinyin parse keeps its steps in `gint16`s
+    # (`pinyin_parser2.cpp:67-70`, `:248`, `:292`), so an import's keys are
+    # those of its first 32767 bytes; oxpinyin parses the whole reading
+    # (#1501, `1501-gint16-input-cap.md`). Here both readings give the two
+    # keys, and both sides die in the add (`pinyin.cpp:541`).
     case('combined-library-sixth-add-long-reading-pinyin', abort=False, sigabrt=True,
          issues=('525', 'row:74'))(
         lambda k: combined_import_bound(k, sixth=b"ni3'hao3" + b"'" * 70000))
-    # Row 74 through the read, settled 2026-11-01 UTC (#1501): the 40007-byte
-    # reading parses to one key (the gint16 bound, `pinyin_parser2.cpp:67-70`,
-    # `:353-357`), so the sixth add refuses at `pinyin.cpp:640` and leaks its
-    # keys. The case's first read, `tokens_of` below, then calls
-    # `pinyin_lookup_tokens` (`pinyin.cpp:2664`), and `reduce_tokens`'
-    # `assert(0 <= num && num <= 4)` (`phrase_large_table3.h:95`) sees the five
-    # libraries that already hold 你好. The pin dies there, not in the
-    # `pinyin_save`/`pinyin_fini` tail; the facade aborts at the same bound.
+    # Row 74 through the read, settled 2026-11-01 UTC: at the pin the
+    # 40007-byte reading parses to one key (the gint16 bound,
+    # `pinyin_parser2.cpp:67-70`, `:353-357`), so the sixth add refuses at
+    # `pinyin.cpp:640` and leaks its keys. The case's first read, `tokens_of`
+    # below, then calls `pinyin_lookup_tokens` (`pinyin.cpp:2664`), and
+    # `reduce_tokens`' `assert(0 <= num && num <= 4)`
+    # (`phrase_large_table3.h:95`) sees the five libraries that already hold
+    # 你好. oxpinyin parses the whole reading (#1501): two keys, so the add
+    # runs and `_add_phrase`'s own `reduce_tokens` aborts first
+    # (`pinyin.cpp:541`). Both sides die of SIGABRT before writing anything
+    # else, so the observations are the same; only the pin's assertion line
+    # differs (`pin-abort-assert-line.md`).
     case('combined-library-sixth-add-key-past-parse-bound-pinyin',
          abort=False, sigabrt=True,
          issues=('525', 'row:74'))(
