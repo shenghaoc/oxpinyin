@@ -244,8 +244,16 @@ def drop_in(argv):
     run([prefix / 'bin/gen_unigram', '--table-dir', model], cwd=theirs)
     print(f'libpinyin ({backend}) wrote:')
     run(['ls', theirs])
-    run(['cargo', 'run', '--locked', '-q', '-p', 'oxpinyin-datagen', *features, '--', 'compile',
-         '--backend', 'kyotocabinet' if backend == 'kc' else backend, '--model-dir', model, '--out-dir', ours], heavy=True)
+    # The same three programs under their pin names from oxpinyin-utils; the
+    # table.conf is the pin's own configured file, as configure writes it.
+    shutil.copyfile(prefix / 'lib/libpinyin/data/table.conf', ours / 'table.conf')
+    base = ['cargo', 'run', '--locked', '-q', '--manifest-path',
+            str(ROOT / 'Cargo.toml'),
+            '-p', 'oxpinyin-utils', *features, '--bin']
+    run([*base, 'gen_binary_files', '--', '--gen-punct-table', '--table-dir', model], cwd=ours, heavy=True)
+    with (model / 'interpolation2.text').open('rb') as source:
+        run([*base, 'import_interpolation', '--', '--table-dir', model], cwd=ours, stdin=source)
+    run([*base, 'gen_unigram', '--', '--table-dir', model], cwd=ours, heavy=True)
     print(f'oxpinyin ({backend}) wrote:')
     run(['ls', ours])
     run(['cargo', 'test', '--locked', '-p', 'oxpinyin-datagen', *features, '--test', 'libpinyin_parity', '--',

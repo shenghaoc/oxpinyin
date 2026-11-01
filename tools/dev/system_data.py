@@ -40,7 +40,7 @@ class SystemData:
         if have != want:
             raise CellError(f'fatal: {label}: BACKEND MISMATCH\n  data directory {directory}\n'
                             f'  was written for {NAMES[have]}, but the library under test is {NAMES[want]}.\n'
-                            f'  Point at a {NAMES[want]} data directory (datagen --backend {FEATURES[want]}).', 3)
+                            f'  Point at a {NAMES[want]} data directory built for that backend.', 3)
 
     def detect(self, directory: Path) -> str | None:
         ext = self.settings.extension
@@ -66,8 +66,10 @@ class SystemData:
         raise CellError(f'fatal: {label}: the system directory is incomplete.\n  {directory}\n'
                         f'  (from ${variable}, $OXPINYIN_SYSTEM_DIR, or a conventional location)\n'
                         '\nMissing:\n' + ''.join('  ' + name + '\n' for name in missing) +
-                        '\nA system data directory is an oxpinyin-datagen compile output, or\n'
-                        "a libpinyin install's data/ on Kyoto Cabinet, tkrzw or Berkeley DB:\n"
+                        '\nA system data directory is the output of libpinyin\'s own\n'
+                        'gen_binary_files / import_interpolation / gen_unigram sequence\n'
+                        "(oxpinyin-utils' pinned binaries), or a libpinyin install's data/\n"
+                        'on Kyoto Cabinet, tkrzw or Berkeley DB:\n'
                         "the chunk files, table.conf, and the DBMs under the backend's names.", 3)
 
     def resolve(self, variable: str, label: str) -> Path:
@@ -105,11 +107,22 @@ class SystemData:
                         '  /tmp/oxpinyin-export   (only if written by the same backend)\n\n'
                         "Another backend's directory is never used instead: the three\n"
                         'DBMs share file names, so it would load or score the wrong data.\n\n'
-                        'Build one from the pinned model:\n  just fetch-model\n'
-                        '  PINYIN_MODEL_DIR=$PWD/target/model20/extracted \\\n'
-                        '    cargo run --release -p oxpinyin-datagen --no-default-features \\\n'
-                        f'    --features {FEATURES[ext]} -- compile --backend {FEATURES[ext]}\n'
-                        f'  cp target/model20/extracted/interpolation2.text target/datagen/{ext}/\n\n'
+                        'Build one from the pinned model with libpinyin\'s own sequence\n'
+                        '(its data/Makefile.am:60-62); table.conf is the pin\'s configured\n'
+                        'data/table.conf, whose committed rendering is fixtures/w3/<ext>:\n'
+                        '  just fetch-model\n'
+                        f'  ROOT=$PWD; MODEL=$ROOT/target/model20/extracted; OUT=$ROOT/target/datagen/{ext}\n'
+                        '  mkdir -p "$OUT" && cd "$OUT"\n'
+                        f'  cp "$ROOT/fixtures/w3/{ext}/table.conf" .\n'
+                        f'  cargo run --release --manifest-path "$ROOT/Cargo.toml" \\\n'
+                        f'    -p oxpinyin-utils --no-default-features --features {FEATURES[ext]} \\\n'
+                        '    --bin gen_binary_files -- --gen-punct-table --table-dir "$MODEL"\n'
+                        f'  cargo run --release --manifest-path "$ROOT/Cargo.toml" \\\n'
+                        f'    -p oxpinyin-utils --no-default-features --features {FEATURES[ext]} \\\n'
+                        '    --bin import_interpolation -- --table-dir "$MODEL" < "$MODEL/interpolation2.text"\n'
+                        f'  cargo run --release --manifest-path "$ROOT/Cargo.toml" \\\n'
+                        f'    -p oxpinyin-utils --no-default-features --features {FEATURES[ext]} \\\n'
+                        '    --bin gen_unigram -- --table-dir "$MODEL"\n\n'
                         'Refusing rather than falling back to fixtures/w3: scoring a real\n'
                         'oracle against the mini tables reports DIVERGENCE that means\n'
                         'nothing. Set OXPINYIN_ALLOW_MINI_FIXTURE=1 if you deliberately\n'

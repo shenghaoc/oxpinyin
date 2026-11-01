@@ -1,7 +1,7 @@
 # External I/O boundary
 
 Date: 2026-10-28 UTC · Status: **maintainer ruling and implementation
-plan; stage 1 implemented (2026-10-28 UTC), stage 4 implemented (2026-10-30 UTC, #1437), stage 5 in progress (the segmentation trio added 2026-10-31 UTC), stages 2 and 3 not implemented**. The pin is libpinyin
+plan; stage 1 implemented (2026-10-28 UTC), stage 4 implemented (2026-10-30 UTC, #1437), stage 5 in progress (the segmentation trio and the training family added 2026-10-31 UTC; the storage trio by the preceding stack member), stages 2 and 3 not implemented**. The pin is libpinyin
 `074a2219c90feaf962d0d24f034514033ece5f99`; oxpinyin source is main
 `a52461cc297a4e67b07406167e6581e0e9f211fa`. The pin source read was the
 clean `/tmp/libpinyin-src` checkout at that commit. Pin citations below
@@ -248,19 +248,19 @@ The scope includes both installed and `noinst_PROGRAMS` utilities.
 
 | Pin utility | Current oxpinyin analogue | Status |
 | --- | --- | --- |
-| `gen_binary_files` | `oxpinyin-utils` `gen_binary_files` | **Ported** at stage 5 (2026-10-31 UTC): the pin's name, options, messages, `.table` scanner, index DBMs and per-library chunks; registered `tool-diff` cases. `oxpinyin-datagen compile` remains the model20 producer until `gen_unigram` is ported. |
+| `gen_binary_files` | `oxpinyin-utils` `gen_binary_files` | **Ported** at stage 5 (2026-10-31 UTC): the pin's name, options, messages, `.table` scanner, index DBMs, per-library chunks and `punct.bin`; registered `tool-diff` cases. `oxpinyin-datagen compile` is removed with the training family. |
 | `import_interpolation` | `oxpinyin-utils` `import_interpolation` | **Ported** at stage 5 (2026-10-31 UTC): the pin's name, option, messages, stdin taglib grammar, unigram delta and bigram `SingleGram` store. |
-| `export_interpolation` | `oxpinyin-utils` `export_interpolation` | **Ported** at stage 5 (2026-10-31 UTC): no options or argument check, the pin's model text, `get_all_items`' native key order and `taglib_token_to_string`. |
+| `export_interpolation` | `oxpinyin-utils` `export_interpolation` | **Ported** at stage 5 (2026-10-31 UTC): no options or argument check, the pin's model text, `get_all_items`' native key order and `taglib_token_to_string`. `oxpinyin-emitter` is removed. |
 | `gen_pinyin_table` | `oxpinyin-utils` `gen_pinyin_table` | **Ported** at stage 5 (2026-10-30 UTC, #1436): the pin's name, options, messages, input scanner and output. |
 | `gen_zhuyin_table` | `oxpinyin-utils` `gen_zhuyin_table` | **Ported** at stage 5 (2026-10-30 UTC): direct zhuyin rows, native calls, and registered `tool-diff` cases. |
 | `ngseg` | `oxpinyin-utils` `ngseg` | **Ported** at stage 5 (2026-10-31 UTC): the pin's name, options, messages, `table.conf`/phrase-index/bigram inputs and output; `PhraseLookup::get_best_match` over `phrase_index.bin` and `bigram.db`; registered `tool-diff` cases. |
 | `spseg` | `oxpinyin-utils` `spseg` | **Ported** at stage 5 (2026-10-31 UTC): the pin's name, options, messages and fewest-words dynamic program over `phrase_index.bin`; registered `tool-diff` cases. |
 | `mergeseq` | `oxpinyin-utils` `mergeseq` | **Ported** at stage 5 (2026-10-31 UTC): the pin's name, options, messages, `TAGLIB_PARSE_SEGMENTED_LINE`, token validation and queue merge over `phrase_index.bin`; registered `tool-diff` cases. |
-| `gen_unigram` | datagen `addon::compile` and training floor logic | **GAP** — no same-name standalone tool. |
-| `gen_ngram` | `oxpinyin-counter` | **GAP** — output representation and interface differ. |
-| `gen_deleted_ngram` | counter/lambda held-out logic | **GAP** — no same-name drop-in. |
+| `gen_unigram` | `oxpinyin-utils` `gen_unigram` | **Ported** at stage 5 (2026-10-31 UTC): the pin's name, `--table-dir` (accepted and unread, as its static is), `table.conf` load, the `SYSTEM_FILE`/`DICTIONARY` +1 sweep and both chunk saves. |
+| `gen_ngram` | `oxpinyin-utils` `gen_ngram` | **Ported** at stage 5 (2026-10-31 UTC): the pin's options (`--skip-pi-gram-training` with `G_OPTION_FLAG_REVERSE`, `--bigram-file`), `std::getline`, `TAGLIB_PARSE_SEGMENTED_LINE`, the uni/pi-gram writes into the backend hash DBM and the chunk save. `oxpinyin-counter` is removed. |
+| `gen_deleted_ngram` | `oxpinyin-utils` `gen_deleted_ngram` | **Ported** at stage 5 (2026-10-31 UTC): the same loop over `deleted_bigram.db`, no chunk save, and `ENODATA` where `gen_ngram` uses `ENOENT` on a refused chunk load. |
 | `gen_k_mixture_model` | `oxpinyin-kmm generate` | **GAP** — subcommand and text working model. |
-| `estimate_interpolation` | `oxpinyin-lambda` | **GAP** — different name/interface. |
+| `estimate_interpolation` | `oxpinyin-utils` `estimate_interpolation` | **Ported** at stage 5 (2026-10-31 UTC): the pin's C-double EM over `single_gram` rows and the facade unigram table, `token:%d lambda:%f` and `average lambda:%f` with the host's NaN spelling. `oxpinyin-lambda` is removed. |
 | `estimate_k_mixture_model` | `oxpinyin-kmm estimate` | **GAP** — subcommand and text working model. |
 | `merge_k_mixture_model` | `oxpinyin-kmm merge` | **GAP** — subcommand and text working model. Remaining with `estimate_`, `prune_` and `validate_k_mixture_model` as one family (2026-10-31 UTC): no chunk load, save or rename call, but each attaches `KMixtureModelBigram` to the backend DBM, so a store `FlexibleBigram` layer on all three backends comes first. |
 | `prune_k_mixture_model` | `oxpinyin-kmm prune` | **GAP** — subcommand and text working model. |
@@ -268,7 +268,7 @@ The scope includes both installed and `noinst_PROGRAMS` utilities.
 | `export_k_mixture_model` | `oxpinyin-kmm export` | **GAP** — subcommand and text working model. |
 | `k_mixture_model_to_interpolation` | `oxpinyin-utils` `k_mixture_model_to_interpolation` | **Ported** at stage 5 (2026-10-31 UTC): no options or arguments, the pin's messages, `std::cin` and `stdout`, taglib's GLib calls, the pin's aborts with its check macros' text not imitated ([eio-tool-check-messages](eio-tool-check-messages.md)), and registered `tool-diff` cases. `oxpinyin-kmm to-interpolation` is removed. |
 | `validate_k_mixture_model` | `oxpinyin-kmm validate` | **GAP** — subcommand and text working model. |
-| `eval_correction_rate` | `oxpinyin-eval` | **GAP** — different name/interface. |
+| `eval_correction_rate` | `oxpinyin-utils` `eval_correction_rate` | **Ported** at stage 5 (2026-10-31 UTC): `evals2.text`, the pinyin index resolved through the phrase libraries, the `PhoneticLookup<1,1>` decode port (`oxpinyin-training::eval`) over the binary chunks and `bigram.db`, and the `correction rate:%f` line. `oxpinyin-eval` is removed. |
 
 ## Records affected by the ruling
 

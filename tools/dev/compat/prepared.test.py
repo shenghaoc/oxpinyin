@@ -73,7 +73,9 @@ class PreparedTests(unittest.TestCase):
             self.assertEqual(made, [[source / 'utils/storage', 'gen_pinyin_table', 'gen_zhuyin_table',
                                      'gen_binary_files', 'import_interpolation',
                                      'export_interpolation'],
-                                    [source / 'utils/training', 'k_mixture_model_to_interpolation'],
+                                    [source / 'utils/training', 'k_mixture_model_to_interpolation',
+                                     'gen_unigram', 'gen_ngram', 'gen_deleted_ngram',
+                                     'estimate_interpolation', 'eval_correction_rate'],
                                     [source / 'utils/segment', 'ngseg', 'spseg', 'mergeseq']])
             self.assertEqual(self.prepare('tool-diff'), [])
             self.assertEqual(run.call_count, 4)

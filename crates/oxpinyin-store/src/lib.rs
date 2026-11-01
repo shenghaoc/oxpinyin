@@ -1136,7 +1136,10 @@ pub use tkrzw::{TkrzwStore, TkrzwTxn, TkrzwUserBigramDb};
 #[cfg(feature = "bdb")]
 mod bdb;
 #[cfg(feature = "bdb")]
-pub use bdb::{BdbStore, BdbTxn, BdbUserBigramDb, report_failed_read_only_open};
+pub use bdb::{
+    BdbOpen, BdbStore, BdbTxn, BdbUnopenedHandle, BdbUserBigramDb, open_hash_pin,
+    report_failed_read_only_open,
+};
 
 #[cfg(feature = "kyotocabinet")]
 pub mod kyotocabinet;

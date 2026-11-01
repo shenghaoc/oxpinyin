@@ -708,13 +708,21 @@ class InputTests(ScenarioTest):
         (self.scenario.export / 'datagen-manifest.txt').write_text('a=1\nbackend=tkt')
         self.assertStatus(self.invoke(), 0)
 
-    def test_a_missing_manifest_is_named_before_the_refusal(self):
+    def test_the_table_conf_backend_token_stands_in_for_the_manifest(self):
+        (self.scenario.export / 'datagen-manifest.txt').unlink()
+        (self.scenario.export / 'table.conf').write_text('database format:Tkrzw\n')
+        self.assertStatus(self.invoke(), 0)
+        (self.scenario.export / 'table.conf').write_text('database format:KyotoCabinet\n')
+        result = self.invoke()
+        self.assertStatus(result, 2)
+        self.assertEqual(result.stderr,
+                         f'fatal: {self.scenario.export} is not a tkrzw export; rebuild it with --features tkrzw\n')
+
+    def test_an_export_without_a_backend_token_is_refused(self):
         (self.scenario.export / 'datagen-manifest.txt').unlink()
         result = self.invoke()
         self.assertStatus(result, 2)
-        self.assertEqual(self.lines(result.stderr)[0],
-                         f'grep: {self.scenario.export}/datagen-manifest.txt: No such file or directory')
-        self.assertIn('is not a tkrzw export', self.lines(result.stderr)[1])
+        self.assertIn('is not a tkrzw export', self.lines(result.stderr)[0])
 
     def test_a_missing_table_is_named(self):
         (self.scenario.export / 'bigram.db').unlink()
@@ -1401,7 +1409,7 @@ class StatusTests(unittest.TestCase):
                                  OXPINYIN_PROFILE_DIR=str(self.directory / 'profile'))
         self.assertEqual(result.returncode, 2, result.stderr)
         self.assertEqual(result.stderr.splitlines()[0],
-                         f'grep: {self.directory}/absent/datagen-manifest.txt: No such file or directory')
+                         f'{self.directory}/absent/table.conf: No such file or directory')
         self.assertTrue((self.directory / 'profile').is_dir())
 
 

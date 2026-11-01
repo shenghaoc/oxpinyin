@@ -9,9 +9,7 @@
 //! Canonical home: `pinyin-oracle` re-exports this module (its bins and
 //! public API keep `pinyin_oracle::model_cache`), and the capi benches
 //! consume it directly — dev-dependency edges only, never a
-//! `oxpinyin-capi` → `pinyin-oracle` edge. The one non-dev consumer is
-//! `oxpinyin-datagen` (compile defaults and the manifest's provenance
-//! hash), which itself never ships; no shipping crate reaches this
+//! `oxpinyin-capi` → `pinyin-oracle` edge. No shipping crate reaches this
 //! module.
 
 use std::path::{Path, PathBuf};
@@ -216,7 +214,7 @@ pub fn resolve_export_dir() -> PathBuf {
 /// directory for the compiled-in backend.
 ///
 /// A libpinyin install's `data/` on Kyoto Cabinet, tkrzw and Berkeley
-/// DB, an `oxpinyin-datagen compile` output anywhere; asserts the three
+/// DB, or the pin's three-utility data-dir output anywhere; asserts the three
 /// required DBMs exist, so benches refuse to start on data-less hosts.
 ///
 /// # Panics
@@ -229,8 +227,9 @@ pub fn export_dir() -> PathBuf {
     for name in system_dbm_names() {
         assert!(
             dir.join(&name).is_file(),
-            "system data missing at {} ({name}); run oxpinyin-datagen compile, or point \
-             PINYIN_EXPORT_DIR at a libpinyin data dir of the same backend",
+            "system data missing at {} ({name}); build it with gen_binary_files / \
+             import_interpolation / gen_unigram, or point PINYIN_EXPORT_DIR at a \
+             libpinyin data dir of the same backend",
             dir.display()
         );
     }

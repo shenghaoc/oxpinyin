@@ -35,7 +35,8 @@ use oxpinyin_data::Lambda;
 /// `UNIGRAM_TIEBREAK_SCALE`).
 const UNIGRAM_TIEBREAK_SCALE: Cost = 16;
 
-/// An interpolated bigram model built from `interpolation2.text` counts.
+/// An interpolated bigram model built from `interpolation2.text` counts or
+/// from the binary tables a data directory holds.
 #[derive(Clone, Debug)]
 pub struct EvalLanguageModel {
     unigrams: BTreeMap<u32, u64>,
@@ -43,6 +44,7 @@ pub struct EvalLanguageModel {
     bigrams: BTreeMap<(u32, u32), u64>,
     bigram_totals: BTreeMap<u32, u64>,
     lambda: Lambda,
+    lambda_f32: f32,
 }
 
 impl EvalLanguageModel {
@@ -59,6 +61,7 @@ impl EvalLanguageModel {
             bigrams: counts.bigrams.clone(),
             bigram_totals: bigram_totals(counts),
             lambda,
+            lambda_f32: lambda.as_f64() as f32,
         }
     }
 
@@ -93,39 +96,67 @@ impl EvalLanguageModel {
             bigrams: counts.bigrams.clone(),
             bigram_totals: bigram_totals(counts),
             lambda,
+            lambda_f32: lambda.as_f64() as f32,
+        }
+    }
+
+    /// Builds the model from a data directory's own tables: the phrase
+    /// index's stored unigram counts and facade total
+    /// (`PhraseItem::get_unigram_frequency`,
+    /// `FacadePhraseIndex::get_phrase_index_total_freq`) and the
+    /// `bigram.db` rows' stored frequencies and totals
+    /// (`SingleGram::get_freq`, `SingleGram::get_total_freq`).
+    ///
+    /// `lambda` is the `gfloat` the pin's `PhoneticLookup` is constructed
+    /// with (`eval_correction_rate.cpp:159-163`); `bigram_totals` keeps
+    /// every present row, including a zero total, because
+    /// `merge_single_gram` succeeds for any stored row.
+    #[must_use]
+    pub fn from_binary(
+        unigrams: BTreeMap<u32, u64>,
+        unigram_total: u64,
+        bigrams: BTreeMap<(u32, u32), u64>,
+        bigram_totals: BTreeMap<u32, u64>,
+        lambda: f32,
+    ) -> Self {
+        Self {
+            unigrams,
+            unigram_total,
+            bigrams,
+            bigram_totals,
+            lambda: Lambda::from_f32(lambda).unwrap_or(Lambda::PINNED),
+            lambda_f32: lambda,
         }
     }
 
     /// The `table.conf` λ as the pin's `gfloat`.
     #[must_use]
     pub fn lambda_f32(&self) -> f32 {
-        self.lambda.as_f64() as f32
+        self.lambda_f32
     }
 
     /// `P_uni(token)`: `get_unigram_frequency() / (gdouble)
-    /// get_phrase_index_total_freq()` — 0 for an unknown token or an empty
-    /// table.
+    /// get_phrase_index_total_freq()`, the C division — an empty table
+    /// gives the host's NaN, as the pin's `0/0` does.
     #[must_use]
     pub fn unigram_poss(&self, token: u32) -> f64 {
-        if self.unigram_total == 0 {
-            return 0.0;
-        }
-        self.unigrams.get(&token).copied().unwrap_or(0) as f64 / self.unigram_total as f64
+        let freq = self.unigrams.get(&token).copied().unwrap_or(0);
+        freq as f64 / self.unigram_total as f64
     }
 
-    /// Whether `prev` has a bigram row (`Bigram::load` succeeds).
+    /// Whether `prev` has a bigram row (`Bigram::load` succeeds, so
+    /// `merge_single_gram` does too).
     #[must_use]
     pub fn has_bigram_row(&self, prev: u32) -> bool {
-        self.bigram_totals
-            .get(&prev)
-            .is_some_and(|&total| total != 0)
+        self.bigram_totals.contains_key(&prev)
     }
 
     /// `P_bi(token | prev)`: `freq / (gfloat) total_freq` of `prev`'s row,
-    /// or `None` when the row lacks `token` (`get_freq` miss).
+    /// or `None` when the row lacks `token` (`get_freq` miss). The stored
+    /// total is used as stored: a zero total is the C `freq/0` result.
     #[must_use]
     pub fn bigram_poss(&self, prev: u32, token: u32) -> Option<f32> {
-        let total = self.bigram_totals.get(&prev).copied().filter(|&t| t != 0)?;
+        let total = self.bigram_totals.get(&prev).copied()?;
         let freq = self.bigrams.get(&(prev, token)).copied()?;
         Some(freq as f32 / total as f32)
     }

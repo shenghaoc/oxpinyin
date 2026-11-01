@@ -156,7 +156,7 @@ class ToolDiffTests(unittest.TestCase):
     def test_case_file_names_registered_utilities_and_reproducible_signals(self):
         path = self.root / 'cases.json'
         case = dict(id='one', utility='k_mixture_model_to_interpolation', source='pin.cpp:1')
-        for bad, message in ((dict(utility='gen_ngram'), 'no registered pin build directory'),
+        for bad, message in ((dict(utility='gen_k_mixture_model'), 'no registered pin build directory'),
                              (dict(pin_signal=-11, reproduces_signal=True), 'only a registered SIGABRT'),
                              (dict(pin_signal=-6), 'requires a named policy record')):
             path.write_text(json.dumps(dict(schema=1, cases=[dict(case, **bad)])))

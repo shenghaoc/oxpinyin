@@ -27,16 +27,18 @@ it (again against the committed W3 phrase_index). The live cross-check
 against pin-built `mergeseq` (`PINYIN_MERGESEQ`) uses the full-dict
 `segmenter-ngseg.txt` as its shared input instead.
 
-`counter-ngram.manifest` pins the value-level result of the W9-T2
-`oxpinyin-counter` over `segmenter-ngseg.txt`: the unigram/bigram counts and
+`counter-ngram.manifest` pins the value-level result of the W9-T2 counter
+module (`oxpinyin_training::counter`; its command line was retired) over
+`segmenter-ngseg.txt`: the unigram/bigram counts and
 an FNV-1a 64-bit checksum of the full `Counts::dump()`. The full dump is
 ~1.5 MB of integer counts (the phrase index's token-id space), so only the
 checksum and shape are tracked; the live differential test reconstructs the
 full value map from pin-built `gen_binary_files` → `gen_unigram` →
 `gen_ngram` → `export_interpolation` when those binaries are available.
 
-`interpolation2.manifest` pins the value-level result of the W9-T4a
-`oxpinyin-emitter` over the same T1→T2 chain: the unigram/bigram record
+`interpolation2.manifest` pins the value-level result of the W9-T4a emitter
+module (`oxpinyin_training::emitter`; its command line was retired) over the
+same T1→T2 chain: the unigram/bigram record
 counts and an FNV-1a 64-bit checksum of the emitted `interpolation2.text`
 (header, `\item` lines with phrase text, both n-gram sections, no λ).
 The live differential reconstructs the pin-built

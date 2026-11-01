@@ -28,6 +28,13 @@ files at this level:
   `interpolation2.text` into the out-dir; the committed sets do not
   carry it (nothing at runtime reads it from a data dir — it is
   gitignored under `fixtures/w3/*/`).
+- **`*/deleted_bigram.db`** — a training input, not part of the compiled
+  set: the pin's `gen_deleted_ngram` (built for the directory's own
+  backend) run over the fixed corpus
+  `16777219 阿` / `16777220 啊`, giving the `sentence_start → 阿` and
+  `阿 → 啊` rows `estimate_interpolation` and `gen_deleted_ngram`'s
+  ordinary cases read. Container bytes follow the backend's DBM, as the
+  other containers do.
 - **Content `.bin` files** (art … technology, at this level) — truncated
   copies of the oracle's custom-content tables for the custom-content
   loader tests, regenerated with `python3 tools/generate_w3_fixtures.py`.
