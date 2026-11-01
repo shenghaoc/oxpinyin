@@ -7,8 +7,9 @@
 //! tables. It installs the optional user store and hands out
 //! [`Session`]s over the merged backends. On each backend that
 //! directory is the backend's native data directory — the one a
-//! libpinyin build on the same backend uses, or what
-//! `oxpinyin-datagen compile` writes. Nothing is scanned at open: every reader in `oxpinyin-data`
+//! libpinyin build on the same backend uses, or what the pin's
+//! `gen_binary_files` / `import_interpolation` / `gen_unigram` sequence
+//! writes (the `oxpinyin-utils` binaries). Nothing is scanned at open: every reader in `oxpinyin-data`
 //! is a handle plus a point read. The algorithms stay where they
 //! belong — decoding/composition in `oxpinyin-engine`, tables and model math
 //! in `oxpinyin-data`, user state in `oxpinyin-user` — and the user-count
@@ -1103,12 +1104,14 @@ impl RuntimeDict {
                 if !self.library_visible(token >> 24) {
                     return None;
                 }
-                self.user
-                    .as_ref()?
-                    .phrase_text(token)
-                    .ok()
-                    .flatten()
-                    .and_then(|words| PhraseText::from_stored_words(words.into_iter().map(Some)))
+                let store = self.user.as_ref()?;
+                store
+                    .with_user_item(token, |item| item.phrase_text())
+                    .unwrap_or_else(|| {
+                        store.phrase_text(token).ok().flatten().and_then(|words| {
+                            PhraseText::from_stored_words(words.into_iter().map(Some))
+                        })
+                    })
             }
             _ => None,
         }
@@ -1646,7 +1649,7 @@ impl Dictionary for RuntimeDict {
     }
 
     /// Both seams under this facade handle partial-key queries with one
-    /// probe: the system dictionary's DBM is double-indexed at datagen time
+    /// probe: the system dictionary's DBM is double-indexed when it is built
     /// (see [`SystemDictionary`]), and `UserLookup` mirrors that with a
     /// `by_initial` index (`crates/oxpinyin-user/src/lookup.rs`). Addon
     /// facades share the DBM shape.

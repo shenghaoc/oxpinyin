@@ -36,7 +36,7 @@ pub const EXPORT_DBMS: &[SystemDbm] = &[SystemDbm::PhraseIndex, SystemDbm::Bigra
 /// Files the segmenter needs from the fetched model20 cache.
 pub const MODEL_FILES: &[&str] = &["interpolation2.text"];
 
-/// Locations `Segmenter::open` reads.
+/// Locations the system-data readers take.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SegmenterPaths {
     /// The system data directory (the chunk files the lexicon reads).
@@ -82,8 +82,9 @@ impl SegmenterPaths {
     }
 }
 
-/// Locates a complete system data directory (`oxpinyin-datagen compile`
-/// output, or a libpinyin install's `data/` on the drop-in backends)
+/// Locates a complete system data directory (the pin's
+/// `gen_binary_files` / `import_interpolation` / `gen_unigram` output, or a
+/// libpinyin install's `data/` on the drop-in backends)
 /// holding the DBMs in the compiled-in backend's format.
 #[must_use]
 pub fn locate_export_dir() -> Option<PathBuf> {

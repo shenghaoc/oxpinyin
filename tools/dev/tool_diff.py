@@ -6,9 +6,11 @@ contracts; policy observations bind through the existing policy-record machinery
 """
 import argparse
 from collections import Counter
+import hashlib
 import json
 from pathlib import Path
 import re
+import subprocess
 import time
 from dataclasses import replace
 
@@ -17,12 +19,31 @@ from . import pool
 
 # Each utility's directory in the pin's build tree (utils/*/Makefile.am).
 PIN_UTILITIES = {'gen_pinyin_table': 'utils/storage', 'gen_zhuyin_table': 'utils/storage',
-                 'k_mixture_model_to_interpolation': 'utils/training'}
+                 'k_mixture_model_to_interpolation': 'utils/training',
+                 'ngseg': 'utils/segment', 'spseg': 'utils/segment', 'mergeseq': 'utils/segment',
+                 'gen_binary_files': 'utils/storage', 'import_interpolation': 'utils/storage',
+                 'export_interpolation': 'utils/storage',
+                 'gen_unigram': 'utils/training', 'gen_ngram': 'utils/training',
+                 'gen_deleted_ngram': 'utils/training',
+                 'estimate_interpolation': 'utils/training',
+                 'eval_correction_rate': 'utils/training',
+                 'validate_k_mixture_model': 'utils/training',
+                 'merge_k_mixture_model': 'utils/training',
+                 'prune_k_mixture_model': 'utils/training',
+                 'estimate_k_mixture_model': 'utils/training',
+                 'import_k_mixture_model': 'utils/training',
+                 'export_k_mixture_model': 'utils/training',
+                 'gen_k_mixture_model': 'utils/training'}
 # Utilities whose pin source opens no DBM: the generators read and write text
-# tables, and k_mixture_model_to_interpolation converts stdin to stdout with
-# taglib (no Bigram attach, no phrase-index load). Their observations are the
-# same in every cell, so policy evidence is recorded once for every cell.
-DATABASE_FREE = frozenset({'gen_pinyin_table', 'gen_zhuyin_table', 'k_mixture_model_to_interpolation'})
+# tables, k_mixture_model_to_interpolation converts stdin to stdout with
+# taglib (no Bigram attach, no phrase-index load), and gen_unigram reads and
+# writes only the per-library chunk files. Their observations are the same in
+# every cell, so policy evidence is recorded once for every cell.
+DATABASE_FREE = frozenset({'gen_pinyin_table', 'gen_zhuyin_table', 'k_mixture_model_to_interpolation',
+                           'gen_unigram'})
+# The committed W3 data directories, one per storage backend, and the cell
+# each belongs to (`fixtures/w3/README.md`).
+FIXTURE_DIRS = {'bdb': 'db', 'kc': 'kct', 'tkrzw': 'tkt'}
 GLIB_PREFIX = re.compile(r'(?m)^((?:\*\* )?\([^():\n]+:)\d+(\): (?:[A-Za-z0-9_.-]+-)?(?:CRITICAL|WARNING|MESSAGE|ERROR|DEBUG|INFO) \*\*: )'
                          r'\d\d:\d\d:\d\d\.\d+: ')
 
@@ -72,6 +93,22 @@ def payload(value, root, model):
     raise ValueError('input must specify exactly text, hex, file, or model_table/format')
 
 
+def fixture_inputs(root, cell, value):
+    """Every file of the cell's committed W3 data directory, by relative name."""
+    if not isinstance(value, str):
+        raise ValueError('fixture_dir must be a string')
+    base = root / relative(value) / FIXTURE_DIRS[cell]
+    if not base.is_dir():
+        raise ValueError(f'fixture_dir has no {FIXTURE_DIRS[cell]} directory: {value}')
+    inputs = {}
+    for path in sorted(base.rglob('*')):
+        if path.is_symlink():
+            raise ValueError(f'fixture_dir holds a symlink: {path}')
+        if path.is_file():
+            inputs[str(path.relative_to(base))] = path.read_bytes()
+    return inputs
+
+
 def load_cases(paths):
     cases = []
     for path in paths:
@@ -99,6 +136,26 @@ def load_cases(paths):
                 raise ValueError(f'{path}: a pin signal requires a named policy record')
             for name in case.get('files', {}):
                 relative(name)
+            if case.get('policy_cells') is not None:
+                if not isinstance(case['policy_cells'], list) or not all(
+                        isinstance(name, str) and name in FIXTURE_DIRS for name in case['policy_cells']):
+                    raise ValueError(f'{path}: policy_cells must name bdb, kc or tkrzw')
+            if case.get('dbm_rows_pinyin_index') is not None:
+                if not isinstance(case['dbm_rows_pinyin_index'], list) or not all(
+                        isinstance(name, str) and name for name in case['dbm_rows_pinyin_index']):
+                    raise ValueError(f'{path}: dbm_rows_pinyin_index must be a list of relative names')
+                for name in case['dbm_rows_pinyin_index']:
+                    relative(name)
+            if case.get('dbm_rows') is not None:
+                if not isinstance(case['dbm_rows'], list) or not all(
+                        isinstance(name, str) and name for name in case['dbm_rows']):
+                    raise ValueError(f'{path}: dbm_rows must be a list of relative names')
+                for name in case['dbm_rows']:
+                    relative(name)
+            if case.get('fixture_dir') is not None:
+                if not isinstance(case['fixture_dir'], str):
+                    raise ValueError(f'{path}: fixture_dir must be a string')
+                relative(case['fixture_dir'])
             cases.append(case)
     if not cases or len({case['id'] for case in cases}) != len(cases):
         raise ValueError('case selection must be nonempty with unique IDs')
@@ -121,7 +178,54 @@ def snapshot(directory):
     return files
 
 
-def observation(ctx, binary, case, directory, inputs, stdin, deadline):
+def pinyin_index_rows(output):
+    """Mask only PinyinIndexItem2<N>'s two tail bytes for odd N.
+
+    Pin: pinyin_phrase3.h:181-195, chewing_large_table2.h:208-230 at
+    074a2219. A row key has N two-byte ChewingKeys; values concatenate
+    four-byte-aligned items, each containing a four-byte token and N keys.
+    Empty values are continuation rows. Reject malformed lengths instead
+    of accidentally discarding bytes outside the documented padding.
+    """
+    normalized = []
+    for row in output.splitlines():
+        key_hex, value_hex = row.split(b' ', 1)
+        key, value = bytes.fromhex(key_hex.decode()), bytearray.fromhex(value_hex.decode())
+        if not key or len(key) % 2 or len(key) > 32:
+            raise ValueError('invalid pinyin-index key length')
+        fields = 4 + len(key)
+        stride = (fields + 3) & ~3
+        if len(value) % stride:
+            raise ValueError('invalid pinyin-index item length')
+        for start in range(0, len(value), stride):
+            value[start + fields:start + stride] = bytes(stride - fields)
+        normalized.append(key_hex + b' ' + value.hex().encode() + b'\n')
+    return b''.join(normalized)
+
+
+def logical_dbm_rows(ctx, helper, directory, names, rows, pinyin_index=False):
+    """Replace a DBM file's container bytes with a digest of its logical rows.
+
+    Container metadata (tkrzw's cyclic-magic counter and modification time,
+    Berkeley DB's page metadata) is not utility output: the pin itself writes
+    different metadata bytes on two runs of the same input. A case names such
+    files in `dbm_rows`; both sides are then compared by sorted key/value rows
+    through the subject build's `dbm_rows` helper.
+    """
+    for name in names:
+        path = directory / relative(name)
+        if not path.is_file():
+            continue
+        command = [str(helper)]
+        command.append(str(path))
+        result = subprocess.run(command, capture_output=True, env=ctx.env, check=False)
+        if result.returncode != 0:
+            raise ValueError(f'dbm_rows could not read {name}: {result.stderr.decode("utf-8", "replace")}')
+        output = pinyin_index_rows(result.stdout) if pinyin_index else result.stdout
+        rows[name] = 'rows:' + hashlib.sha256(output).hexdigest()
+
+
+def observation(ctx, binary, case, directory, inputs, stdin, deadline, helper=None):
     directory.mkdir()
     for name, content in inputs.items():
         destination = directory / relative(name)
@@ -134,9 +238,14 @@ def observation(ctx, binary, case, directory, inputs, stdin, deadline):
     context = replace(parent, cancelled=lambda: (parent.check() or time.monotonic() >= deadline))
     result = context.launch([str(binary), *case.get('args', [])], cwd=directory,
                             env=environment, input=stdin)
+    files = snapshot(directory)
+    if case.get('dbm_rows'):
+        logical_dbm_rows(ctx, helper, directory, case['dbm_rows'], files)
+    if case.get('dbm_rows_pinyin_index'):
+        logical_dbm_rows(ctx, helper, directory, case['dbm_rows_pinyin_index'], files, pinyin_index=True)
     return dict(exit=result.status, stdout=result.stdout.decode('utf-8', 'surrogateescape'),
                 stderr=GLIB_PREFIX.sub(r'\1PID\2TIME: ', result.stderr.decode('utf-8', 'surrogateescape')),
-                files=snapshot(directory))
+                files=files)
 
 
 def verdict(case, pin, subject, policy_root, cell):
@@ -157,6 +266,8 @@ def verdict(case, pin, subject, policy_root, cell):
         if contract_policy.accepted(kept, actual):
             return 'POLICY-ACCEPTED', case['policy_record']
         return 'DIFFER', contract_policy.describe(contract_policy.diagnose(kept, actual))
+    if pin == subject and case.get('dbm_rows_pinyin_index'):
+        return 'POLICY-ACCEPTED', 'eio-pinyin-index-padding.md (only item tail padding masked)'
     return ('MATCH', '') if pin == subject else ('DIFFER', '\n'.join(contract_policy.divergence(pin, subject)))
 
 
@@ -200,10 +311,13 @@ def run(ctx, argv):
     def compare(child, case):
         scratch = child.scratch()
         inputs = {name: payload(value, child.settings.root, model) for name, value in case.get('files', {}).items()}
+        if case.get('fixture_dir') is not None:
+            inputs = {**fixture_inputs(child.settings.root, child.settings.cell, case['fixture_dir']), **inputs}
         stdin = payload(case.get('stdin', {'text': ''}), child.settings.root, model)
         deadline = time.monotonic() + args.case_timeout
         try:
-            pin, subject = [observation(child, binary, case, scratch / side, inputs, stdin, deadline)
+            helper = binaries[case['utility']][1].parent / 'dbm_rows'
+            pin, subject = [observation(child, binary, case, scratch / side, inputs, stdin, deadline, helper)
                             for side, binary in zip(('pin', 'subject'), binaries[case['utility']])]
         except pool.UnitStopped as error:
             return case, 'INVALID', str(error), None

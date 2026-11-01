@@ -4,8 +4,8 @@
 //!
 //! This is the byte-level output of upstream's `SubPhraseIndex::store`
 //! (`src/storage/phrase_index.cpp`), reached after `compact()` rebuilds a
-//! sub-index in ascending token order. `oxpinyin-datagen` writes the
-//! system libraries' files with it; the user store writes `user.bin`,
+//! sub-index in ascending token order. `oxpinyin-utils`' storage and
+//! training utilities write the system libraries' files with it; the user store writes `user.bin`,
 //! `addon.bin` and `network.bin` with it — the `USER_FILE` sub-indexes,
 //! whose whole-store files the pin's `_write_files` produces through the
 //! same `store` path.

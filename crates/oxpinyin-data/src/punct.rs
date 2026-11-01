@@ -22,7 +22,7 @@ use oxpinyin_store::{DefaultStore, ReadStore};
 
 use crate::chewing_table::{ChewingDbm, DefaultDbm, RawChewingDbm};
 use crate::dict::DictError;
-// The key and value layout this reader shares with `oxpinyin-datagen`'s
+// The key and value layout this reader shares with `gen_binary_files`'s
 // writer: one written copy (`crate::row_format`).
 use crate::row_format::encode_token_key;
 use crate::row_format::punct::decode_puncts;

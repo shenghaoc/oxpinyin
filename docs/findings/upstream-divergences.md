@@ -4372,6 +4372,25 @@ aborts where the pin aborts, without glibc's assertion line or GLib's
 critical. Stdout and the SIGABRT exit are the pin's. Recorded and bound in
 [eio-tool-check-messages.md](eio-tool-check-messages.md).
 
+The same ruling covers the seven KMM utilities' asserts:
+`merge`'s missing result attach, `estimate`'s zero magic total and `gen`'s
+missing container header abort with SIGABRT on both sides and no
+subject assertion line. Bound per cell in
+[eio-kmm-tools.md](eio-kmm-tools.md).
+
+### Pinyin-index item padding is indeterminate in the pin (class (b), 2026-11-01 UTC)
+
+`ChewingTableEntry<N>::add_index` (`src/storage/chewing_large_table2.h:
+208-232`) copies a stack `PinyinIndexItem2<N>` (`src/storage/pinyin_phrase3.h:
+181-196`) into the DBM value whole, and for an odd `N` the object's last two
+bytes are tail padding no constructor sets. The subject's
+`row_format::pinyin_index::encode_item` writes zeros there. Tokens and keys
+are identical and no reader interprets the padding. Recorded and bound for
+the `gbf-toned-model` tool-diff case in
+[eio-pinyin-index-padding.md](eio-pinyin-index-padding.md); the case stays
+DIFFER on a cell whose DBM library also writes its own container header
+until the comparator ignores that metadata.
+
 ### Library `g_return_val_if_fail` criticals are not reproduced (2026-10-31 UTC)
 
 **Maintainer decision D1 of #1297**, a narrow exception to the library
@@ -4463,3 +4482,28 @@ Recorded, with the pin sites, items and cases, in
 ### Key positions past byte 65535 (2026-11-01 UTC, #1501)
 
 **Contract for the getters, POLICY-ACCEPTED for the matrix.** The C getters wrap key-rest positions past 65535 mod 2^16 as the pin's `guint16` fields do; oxpinyin keeps real positions where the pin's `fill_matrix` places keys at the wrapped begin (`phonetic_key_matrix.cpp:51-55`): [1501-guint16-key-positions.md](1501-guint16-key-positions.md).
+
+### FlexibleBigram malformed record lengths
+
+- **Upstream source cite:** `src/storage/flexible_ngram_bdb.h:165-187`
+  and its Kyoto Cabinet and tkrzw peers at 074a2219;
+  `src/storage/flexible_single_gram.h:88-105,151-181`.
+- **Mechanism:** the pin wraps the whole stored value in a
+  `FlexibleSingleGram` and reads the header and item tail without
+  checking that the value holds whole records.
+- **What oxpinyin does instead:** `SpecGram::decode` answers
+  `StoreError` for a value shorter than its header or with a partial
+  item tail.
+- **Externally observable:** only for a corrupted or hand-written
+  container; a pin-written file never takes this path.
+- **Record:** [eio-flexible-bigram-malformed-records](eio-flexible-bigram-malformed-records.md),
+  class (b), 2026-11-01 UTC.
+
+### FlexibleBigram unsorted-record search (2026-11-01 UTC)
+
+[eio-flexible-bigram-unsorted-records](eio-flexible-bigram-unsorted-records.md)
+records the standard-library search contract and the malformed KC KMM
+fixture's provenance. The implementation already uses Rust partitioning;
+there is no copied external probe sequence. Sorted results remain exact.
+Any distinguishing unsorted result is a language artefact under the
+2026-10-29 ruling, requiring concrete POLICY-ACCEPTED evidence.

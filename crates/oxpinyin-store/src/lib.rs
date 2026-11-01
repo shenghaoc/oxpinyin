@@ -274,13 +274,28 @@ pub trait WriteTxn {
     /// well-known [`RAW_TABLE`], the same delegation the raw reads use,
     /// so the round trip holds on every backend. KC, Tkrzw and BDB
     /// override this to write the file's bare keyspace — what libpinyin's own
-    /// DBMs store and what datagen's libpinyin-format writers emit.
+    /// DBMs store and what `oxpinyin-utils`' storage utilities write.
     ///
     /// # Errors
     ///
     /// Returns [`StoreError`] when the backend write fails.
     fn put_raw(&mut self, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
         self.put(RAW_TABLE, key, value)
+    }
+
+    /// Remove a raw (unframed) `key` — the write half of
+    /// [`RawReadStore::get_raw`] and the removal counterpart of
+    /// [`WriteTxn::put_raw`]. No-op when the key is absent.
+    ///
+    /// Backends with a flat keyspace override this to delete the file's
+    /// bare key; a backend without one delegates to the well-known
+    /// [`RAW_TABLE`], the same delegation the raw reads and writes use.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the backend write fails.
+    fn remove_raw(&mut self, key: &[u8]) -> Result<(), StoreError> {
+        self.remove(RAW_TABLE, key)
     }
 
     /// Remove `key` from `table` (no-op if absent).
@@ -483,9 +498,9 @@ pub trait WriteStore: ReadStore {
     /// write half of [`RawReadStore::open_hash_read_only`].
     ///
     /// libpinyin's `bigram.db` is a KC **`HashDB`** / Tkrzw **`HashDBM`**
-    /// while its other DBMs are tree containers; datagen writes the
-    /// bigram through this constructor so the reader's hash open finds a
-    /// hash file. The default implementation delegates to
+    /// while its other DBMs are tree containers; `import_interpolation`
+    /// writes the bigram through this constructor so the reader's hash
+    /// open finds a hash file. The default implementation delegates to
     /// [`WriteStore::create`] (correct for a backend with no
     /// hash/tree distinction). KC and Tkrzw override this to select the
     /// hash container class.
@@ -684,6 +699,30 @@ pub trait WriteStore: ReadStore {
         f: impl FnOnce(&mut Self::Txn<'_>) -> Result<R, StoreError>,
     ) -> Result<R, StoreError>;
 
+    /// [`WriteStore::write`] without the backend's end-of-commit flush.
+    /// The default is `write` itself; Berkeley DB uses it for the KMM
+    /// training container, whose pin writes every record and syncs once
+    /// on close (`flexible_ngram_bdb.h:51-57`, `:198-214`).
+    ///
+    /// # Errors
+    ///
+    /// As [`WriteStore::write`].
+    fn write_deferred<R>(
+        &self,
+        f: impl FnOnce(&mut Self::Txn<'_>) -> Result<R, StoreError>,
+    ) -> Result<R, StoreError> {
+        self.write(f)
+    }
+
+    /// Flushes a store written through [`WriteStore::write_deferred`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the flush fails.
+    fn flush(&self) -> Result<(), StoreError> {
+        Ok(())
+    }
+
     /// Perform backend-dependent compaction work, and put the store on
     /// **stable storage**.
     ///
@@ -728,6 +767,36 @@ pub trait RawReadStore: ReadStore {
     ///
     /// Returns [`StoreError`] when the backend read fails.
     fn get_raw(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError>;
+
+    /// Reads at most `length` value bytes at `offset`. The default copies
+    /// the whole value and slices it; Berkeley DB overrides it with the
+    /// pin's `DB_DBT_PARTIAL` read, which never copies the rest of a
+    /// record.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the backend read fails.
+    fn get_raw_partial(
+        &self,
+        key: &[u8],
+        offset: u32,
+        length: u32,
+        value: &mut Vec<u8>,
+    ) -> Result<bool, StoreError> {
+        let mut whole = Vec::new();
+        if !self.get_raw(key, &mut whole)? {
+            return Ok(false);
+        }
+        let start = usize::try_from(offset)
+            .unwrap_or(usize::MAX)
+            .min(whole.len());
+        let end = start
+            .saturating_add(usize::try_from(length).unwrap_or(usize::MAX))
+            .min(whole.len());
+        value.clear();
+        value.extend_from_slice(&whole[start..end]);
+        Ok(true)
+    }
 
     /// Read a raw bigram row the way libpinyin's `Bigram::load` does: a
     /// size check followed by the body read. The default is one
@@ -796,6 +865,31 @@ pub trait RawReadStore: ReadStore {
         self.scan_raw(lo, hi, |key, value| {
             visit(key, value).map(|()| ControlFlow::Continue(()))
         })
+    }
+
+    /// Every raw key in the container's **own walk order** — the order
+    /// libpinyin's `Bigram::get_all_items` collects
+    /// (`ngram_tkrzwdb.cpp:143-172`, `ngram_bdb.cpp`,
+    /// `ngram_kyotodb.cpp`): Berkeley DB and Kyoto Cabinet advance a
+    /// cursor, tkrzw calls `ProcessEach`, and a hash container's order is
+    /// the library's bucket order, not ascending byte order. Tree
+    /// containers fall back to [`RawReadStore::range_raw`]'s ascending
+    /// walk.
+    ///
+    /// The default is the ascending walk, which is a tree container's own
+    /// order. The hash peers override it so a caller that must reproduce
+    /// the pin's collection order does not substitute a sorted one.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the backend walk fails.
+    fn native_keys(&self) -> Result<Vec<Vec<u8>>, StoreError> {
+        let mut keys = Vec::new();
+        self.range_raw(Bound::Unbounded, Bound::Unbounded, |key, _value| {
+            keys.push(key.to_vec());
+            Ok(())
+        })?;
+        Ok(keys)
     }
 
     /// The number of raw (unframed) rows — the count half of the raw
@@ -1072,7 +1166,8 @@ pub const DEFAULT_STORE_EXT: &str = "tkt";
 /// File extension for [`DefaultStore`]'s native tables (Berkeley DB).
 /// The DBM files libpinyin itself uses carry its own names
 /// (`bigram.db`, `pinyin_index.bin`, …); this extension names this
-/// backend's session-scratch and datagen-native containers.
+/// backend's session-scratch containers and the `fixtures/w3`
+/// directory of this backend.
 #[cfg(feature = "bdb")]
 pub const DEFAULT_STORE_EXT: &str = "db";
 
@@ -1111,12 +1206,21 @@ pub use tkrzw::{TkrzwStore, TkrzwTxn, TkrzwUserBigramDb};
 #[cfg(feature = "bdb")]
 mod bdb;
 #[cfg(feature = "bdb")]
-pub use bdb::{BdbStore, BdbTxn, BdbUserBigramDb};
+pub use bdb::{
+    BdbOpen, BdbStore, BdbTxn, BdbUnopenedHandle, BdbUserBigramDb, open_hash_pin,
+    report_failed_read_only_open,
+};
 
 #[cfg(feature = "kyotocabinet")]
 pub mod kyotocabinet;
 #[cfg(feature = "kyotocabinet")]
 pub use kyotocabinet::{KcStore, KcTxn, KcUserBigramDb};
+
+mod flexible_ngram;
+pub use flexible_ngram::{
+    ArrayItemWithToken, DefaultFlexibleBigram, FixedRecord, FlexibleBigram, FlexibleGramSpec,
+    MAGIC_KEY, SingleGram, SpecGram,
+};
 
 // ── tests ──────────────────────────────────────────────────────────
 

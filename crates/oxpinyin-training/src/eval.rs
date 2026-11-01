@@ -8,8 +8,9 @@
 //!
 //! The former `evaluate.py` driver — λ estimation, applying it to the
 //! `interpolation2.text` model, and the end-to-end run — was removed with the
-//! Python ports. λ estimation itself is `oxpinyin-lambda`
-//! (`estimate_interpolation`).
+//! Python ports. λ estimation itself is the pin's `estimate_interpolation`,
+//! now `oxpinyin_utils::training::estimate_interpolation`, and this module
+//! is the decode behind `oxpinyin-utils`' `eval_correction_rate`.
 //!
 //! The model cost mirrors the shipping decoder's LM
 //! (`oxpinyin_data::lm`), so the decode ranks exactly as the real engine

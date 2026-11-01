@@ -49,6 +49,12 @@ provision *args: python
 fetch-model *args: python
     @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev fetch-model "$@"
 
+# Regenerate (`generate`) or check (`check`) the committed fixtures/w3 data
+# sets from the model20 cache; `content` truncates the oracle's content tables.
+[unix]
+w3-fixtures *args: python
+    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev w3-fixtures "$@"
+
 # Report native capabilities and the managed interpreter identity. Doctor
 # installs nothing: it names `just python` when the interpreter is missing.
 [unix]

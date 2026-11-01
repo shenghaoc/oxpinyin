@@ -58,7 +58,7 @@ class PreparedTests(unittest.TestCase):
             if command[0] == 'bash':
                 self.assertIn('--libs-only', command)
                 work = Path(command[command.index('--work-dir') + 1])
-                for directory in ('storage', 'training'):
+                for directory in ('storage', 'training', 'segment'):
                     (work / 'src/libpinyin-pin/utils' / directory).mkdir(parents=True, exist_ok=True)
             else:
                 self.assertEqual(command[0], 'make')
@@ -68,15 +68,24 @@ class PreparedTests(unittest.TestCase):
         made = []
         with patch.object(prepared, 'run', side_effect=build) as run:
             self.assertEqual(self.prepare('tool-diff'), [])
-            self.assertEqual(run.call_count, 3)
+            self.assertEqual(run.call_count, 4)
             source = Path(self.env['OXPINYIN_TOOL_PIN_BUILD'])
-            self.assertEqual(made, [[source / 'utils/storage', 'gen_pinyin_table', 'gen_zhuyin_table'],
-                                    [source / 'utils/training', 'k_mixture_model_to_interpolation']])
+            self.assertEqual(made, [[source / 'utils/storage', 'gen_pinyin_table', 'gen_zhuyin_table',
+                                     'gen_binary_files', 'import_interpolation',
+                                     'export_interpolation'],
+                                    [source / 'utils/training', 'k_mixture_model_to_interpolation',
+                                     'gen_unigram', 'gen_ngram', 'gen_deleted_ngram',
+                                     'estimate_interpolation', 'eval_correction_rate',
+                                     'validate_k_mixture_model', 'merge_k_mixture_model',
+                                     'prune_k_mixture_model', 'estimate_k_mixture_model',
+                                     'import_k_mixture_model', 'export_k_mixture_model',
+                                     'gen_k_mixture_model'],
+                                    [source / 'utils/segment', 'ngseg', 'spseg', 'mergeseq']])
             self.assertEqual(self.prepare('tool-diff'), [])
-            self.assertEqual(run.call_count, 3)
+            self.assertEqual(run.call_count, 4)
             (source / 'utils/training/k_mixture_model_to_interpolation').unlink()
             self.prepare('tool-diff')
-            self.assertEqual(run.call_count, 6)
+            self.assertEqual(run.call_count, 8)
 
     def test_data_adds_model_text_without_changing_pin_tables_or_manifests(self):
         for name in ('dict-surface-diff', 'key-surface-diff', 'phrase-surface-diff', 'zhuyin-diff'):

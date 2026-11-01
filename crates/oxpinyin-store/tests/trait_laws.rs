@@ -227,7 +227,7 @@ fn key_length_edges_follow_the_documented_contract() {
 
 /// Rows written through one handle read back identically through a
 /// fresh read-only handle over the same file — the drop-in consumer's
-/// exact shape (datagen writes, the runtime reads).
+/// exact shape (the storage utilities write, the runtime reads).
 #[test]
 fn rows_survive_reopen_through_a_read_only_handle() {
     let path = temp_path("reopen");

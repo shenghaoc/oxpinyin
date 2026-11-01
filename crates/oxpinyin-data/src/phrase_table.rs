@@ -22,7 +22,7 @@
 use crate::chewing_table::{ChewingDbm, DefaultDbm, prefix_upper_bound};
 use crate::dict::DictError;
 // The key and value layouts this reader shares with
-// `oxpinyin-datagen`'s writer: one written copy (`crate::row_format`).
+// `gen_binary_files`'s writer: one written copy (`crate::row_format`).
 #[cfg(test)]
 use crate::row_format::phrase_index::encode_tokens;
 use crate::row_format::phrase_index::{decode_tokens, encode_ucs4_key, encode_ucs4_key_scalars};
@@ -74,6 +74,17 @@ impl<D: ChewingDbm> PhraseTable<D> {
             return Ok(Vec::new());
         }
         decode_tokens(&value)
+    }
+
+    /// `PhraseLargeTable3::search`'s answer without decoding: `None` when
+    /// the key is absent, `Some(value)` when it is present, a prefix marker
+    /// with an empty value included.
+    pub(crate) fn present_key(&self, key: &[u8]) -> Result<Option<Vec<u8>>, DictError> {
+        let mut value = Vec::new();
+        if !self.dbm.get(key, &mut value)? {
+            return Ok(None);
+        }
+        Ok(Some(value))
     }
 
     /// Tokens of every stored phrase that starts with `prefix` and is

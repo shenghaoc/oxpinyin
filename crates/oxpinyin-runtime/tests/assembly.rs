@@ -77,6 +77,23 @@ fn token_text_reads_live_items_and_obeys_library_visibility() {
         );
     }
     assert_eq!(dict.token_text(0), None);
+    for words in [
+        vec![0x7532, 0, 0x8000_0000],
+        vec![0xd800, 0x110000],
+        vec![0x8000_0000],
+    ] {
+        let text = oxpinyin_core::PhraseText::from_stored_parts(words.clone(), words.len());
+        let token = store
+            .add_phrase(&text, &vec![keys[0]; words.len()], Some(0))
+            .expect("stored user words");
+        let actual = dict.token_text(token);
+        let expected = oxpinyin_core::PhraseText::from_words(words);
+        assert_eq!(actual, expected);
+        if let (Some(actual), Some(expected)) = (actual, expected) {
+            assert_eq!(actual.phrase_length(), expected.phrase_length());
+            assert_eq!(actual.stored_words(), expected.stored_words());
+        }
+    }
 }
 
 #[test]

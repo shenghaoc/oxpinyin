@@ -25,22 +25,20 @@
 //! # Grammar, and the one place this reader is stricter than upstream
 //!
 //! Lines are read through [`oxpinyin_data::interp_grammar`](crate::interp_grammar),
-//! the shared port of libpinyin's `taglib_read` — the same module
-//! `oxpinyin-datagen`'s model20 compile reads them through, so the two
-//! cannot drift on what a line *means*. What each does with a
+//! the shared port of libpinyin's `taglib_read`, so this reader and the
+//! tool's port cannot drift on what a line *means*. What each does with a
 //! well-formed-but-contradictory record is deliberately different, and the
 //! difference is the recorded one:
 //!
 //! * `import_interpolation` sums a repeated `\1-gram` token
 //!   (`add_unigram_frequency` is `freq += delta`) and accepts a zero
-//!   count. `oxpinyin-datagen`, which is that tool's port, reproduces
-//!   both.
+//!   count; `oxpinyin-utils`' port of the tool reproduces both.
 //! * This reader **refuses** both. It is not a port of the tool; it is the
 //!   decoder's loader, and no conforming producer of this format can emit
 //!   either record — `export_interpolation` walks tokens ascending and
 //!   skips zero frequencies (`:85-95`), `k_mixture_model_to_interpolation`
-//!   skips them too (`:132`), and `oxpinyin-emitter` reproduces both
-//!   filters. A file carrying one is corrupt, and summing a corrupt model
+//!   skips them too (`:132`); the emitter module
+//!   (`oxpinyin-training::emitter`) reproduces both filters. A file carrying one is corrupt, and summing a corrupt model
 //!   into the decoder loses the evidence that it was corrupt.
 //!
 //! `docs/findings/interpolation2-grammar.md` carries the measurements and
@@ -253,10 +251,9 @@ pub fn parse_interpolation2_from_reader<R: BufRead>(
 
         // The tag's positional-value count is the section's:
         // `import_interpolation.cpp:128` registers `\item` with 2 inside
-        // `\1-gram`, `:163` with 4 inside `\2-gram`. Same selection as
-        // `oxpinyin-datagen`'s reader — every line of every section goes
-        // through the grammar, so a file this reader accepts is one the
-        // pinned tool would also have read.
+        // `\1-gram`, `:163` with 4 inside `\2-gram`. Every line of every
+        // section goes through the grammar, so a file this reader accepts
+        // is one the pinned tool would also have read.
         let wanted = match section {
             Section::Bigram => BIGRAM_VALUES,
             Section::Header | Section::Unigram => UNIGRAM_VALUES,
@@ -327,7 +324,7 @@ pub fn parse_interpolation2_from_reader<R: BufRead>(
                         detail: format!("unigram count {count:?} is not a u64"),
                     })?;
                 // Policy, not grammar: `import_interpolation` accepts a
-                // zero count and `oxpinyin-datagen` reproduces that. See
+                // zero count and `oxpinyin-utils`' port reproduces that. See
                 // the module docs for why the decoder's loader does not.
                 if count == 0 {
                     return Err(InterpolationError::Parse {
@@ -529,7 +526,7 @@ mod tests {
         // Before this reader shared `interp_grammar`, it took the last
         // two fields as `count <value>` and accepted both of these. The
         // pin refuses both (measured; see the findings document), and so
-        // does `oxpinyin-datagen`.
+        // does `oxpinyin-utils`' port.
         for line in [
             "\\item 10 \u{7532} \u{4e59} count 5",
             "\\item 10 x y z w count 5",

@@ -178,6 +178,7 @@ HARNESS_DEPENDENCIES = {
     'tools/dev/measure/probes.py': ('tools/dev/measure/probes.test.py',),
     'tools/dev/measure/profile.py': ('tools/dev/measure/profile.test.py',),
     'tools/dev/measure/snapshot.py': ('tools/dev/measure/snapshot.test.py',),
+    'tools/dev/w3_fixtures.py': ('tools/dev/w3_fixtures.test.py', 'tools/dev/cli.test.py'),
     'tools/perf-gate/callgrind-ir.py': ('tools/perf-gate/callgrind-ir.test.py', 'tools/dev/measure/snapshot.test.py'),
     'tools/perf-gate/series.py': ('tools/perf-gate/series.test.py',),
 }
@@ -196,7 +197,6 @@ COMPAT_HARNESS = (
 HARNESS_DEPENDENCIES.update(dict.fromkeys((
     'tools/capture/run-capture.sh',
     'tools/container/runtime.sh',
-    'tools/datagen/libpinyin-drop-in-differential.sh',
     'tools/dev/compat/identity.py',
     'tools/oracle/check-reproducible.sh',
     'tools/oracle/compat-inside.sh',

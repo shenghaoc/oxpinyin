@@ -1456,7 +1456,7 @@ where
     /// [`expand_keys`] unconditionally, driving the fan-out
     /// [`docs/findings/scan-matrix-fanout-2026-09-10.md`](../../docs/findings/scan-matrix-fanout-2026-09-10.md)
     /// measured (~9× amplification from matrix path to probe); the
-    /// datagen side already writes both keyspaces at
+    /// `gen_binary_files` already writes both keyspaces at
     /// `crates/oxpinyin-data/src/table_entries.rs:95-98`, and the user store
     /// now mirrors that with its `by_initial` index, so the expansion is
     /// redundant against a dictionary that opts in.
