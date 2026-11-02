@@ -193,9 +193,32 @@ facades, `test_macos_relink_rejects_bad_exports_or_identity_before_replacement`
 checks failure atomicity, and `test_shipped_gate_rejects_dependency_data_exports`
 and `test_shipped_gate_rejects_exports_hidden_from_nm` check leak detection.
 
-Limitation: the full `just test-tools` run failed in the unchanged
-`IdentityTests.test_observe_normalises_fresh_directories_and_reports_leaks`
-native-executable probe (one execution returned SIGKILL). Its isolated
-9-test suite passed through `just test-tools tools/dev/runner_identity.test.py`
-on both the untouched base and this branch. The full-suite failure is not
-reported as a pass.
+## Runner-identity follow-up
+
+The same full `just test-tools` command passed with exit 0 on a clean
+checkout of `origin/main` at `dcc8a593`. A repeat on the unmodified PR
+head `9044b3fb` also passed; the earlier full-suite failures were
+intermittent, not a deterministic difference established by those runs.
+
+The native crash reports for the earlier failed probe executions identify
+`SIGKILL (Code Signature Invalid)` and `CODESIGNING / Taskgated Invalid
+Signature`. Source inspection found that `tools.dev.runner_identity.observe`
+copied each driver directly over the same previously executed staging
+file with `shutil.copy2`. That rewrites the existing inode. Apple describes
+this as an unsafe update pattern because the kernel can retain signature
+information for the old image: [Updating Mac Software](https://developer.apple.com/documentation/security/updating-mac-software).
+
+The probe now copies into a fresh file beside its staging path and renames
+that file into place. The visible executable path and observations stay
+the same; prior inode contents remain intact. Packaging's relink already
+uses atomic replacement, and its fixtures use private installation roots;
+inspection found no shared installed file between those fixtures and the
+runner-identity probe. No deterministic scheduling cause is claimed.
+
+`test_observe_replaces_the_image_without_rewriting_existing_links` keeps
+a hard link to the old image and checks that its bytes stay unchanged
+while the staging path receives the replacement and its executable mode.
+It fails with the old direct-copy code and passes with the fix. All ten
+runner-identity tests and the full `just test-tools` command pass with
+exit 0 after the fix. For an N-byte executable, staging still takes O(N)
+copy time; the temporary file adds O(N) disk space until replacement.
