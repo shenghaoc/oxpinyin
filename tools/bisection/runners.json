@@ -319,6 +319,7 @@
   },
   {
     "name": "cpp-smoke",
+    "compat_requirements": {"reference": false, "model20": false, "backend_utilities": false, "cargo_c": false},
     "kind": "gate",
     "implementation": "python:tools.dev",
     "issues": [

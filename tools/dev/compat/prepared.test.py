@@ -47,6 +47,20 @@ class PreparedTests(unittest.TestCase):
         expected = self.settings.oracle(str(self.prefix), 'bigram-export-strjoinv').environment['EXPECTED_ORACLE_PIN_REF']
         (prefix / 'oracle-pin.txt').write_text(expected + '\n')
 
+    def test_requirements_union_and_unknown_fall_back_to_all(self):
+        small = next(row for row in self.rows if row['name'] == 'cpp-smoke')
+        selected = prepared.requirements([small])
+        self.assertFalse(selected['reference'])
+        self.assertFalse(selected['model20'])
+        self.assertFalse(selected['backend_utilities'])
+        self.assertFalse(selected['cargo_c'])
+        self.assertTrue(all(prepared.requirements([small, {}]).values()))
+        malformed = dict(small, compat_requirements=dict(small['compat_requirements'], unexpected=False))
+        self.assertTrue(all(prepared.requirements([malformed]).values()))
+        inconsistent = dict(small, oracle=True)
+        self.assertTrue(all(prepared.requirements([inconsistent]).values()))
+        self.assertTrue(all(prepared.requirements([]).values()))
+
     def test_ordinary_selection_does_not_build_variants(self):
         with patch.object(prepared, 'run') as run:
             self.assertEqual(self.prepare('same-data-dir-diff'), [])

@@ -48,6 +48,25 @@ class ProvisionTests(unittest.TestCase):
         for cell in provision.CELLS:
             self.fixture(cell)
 
+    def test_oracle_free_selection_skips_reference_model_and_dump_tools(self):
+        service = self.service
+        service.pin.write_text(service.pin.read_text() + 'base_image=debian:trixie\n')
+        service.cells = ['bdb']
+        service.inside = service.libraries_only = service.without_reference = service.skip_backend_tools = True
+        with mock.patch.object(service, 'options'), mock.patch.object(service, 'prerequisites'), \
+             mock.patch.object(service, 'proxy_ca'), mock.patch.object(service, 'libraries') as libraries, \
+             mock.patch.object(service, 'backend_tools') as tools, \
+             mock.patch.object(service, 'sound_tkrzw'), mock.patch.object(service, 'report_ext4'), \
+             mock.patch.object(service, 'write_oracle_env'), \
+             mock.patch.object(provision.model, 'fetch') as fetch, \
+             mock.patch.object(provision.doctor, 'identity', return_value={'version': 'fixture', 'executable': 'fixture'}), \
+             mock.patch.object(provision, 'text', return_value='uv fixture'), \
+             mock.patch.object(Path, 'symlink_to'):
+            self.assertEqual(service.execute([]), 0)
+        libraries.assert_not_called()
+        tools.assert_not_called()
+        fetch.assert_not_called()
+
     def fixture(self, cell):
         prefix = self.service.oracle_root / cell
         data = prefix / 'lib/libpinyin/data'
@@ -408,7 +427,7 @@ elif name in ('curl','apt-get','sudo'):
         return current
 
     def test_usage_options_and_missing_argument_statuses(self):
-        for args in (['--unknown'], ['--cells', 'bad'], ['--cells', ''], ['--in-container']):
+        for args in (['--unknown'], ['--cells', 'bad'], ['--cells', ''], ['--in-container'], ['--libraries-only'], ['--without-reference'], ['--skip-backend-tools']):
             with self.subTest(args=args):
                 self.check_entry(args, 2)
         for option in ('--cells', '--jobs', '--cache-dir', '--no-pull', '--in-container'):

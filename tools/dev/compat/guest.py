@@ -161,15 +161,22 @@ def main(argv=None):
         Path(environment['OXPINYIN_ORACLE_ENV']).parent.mkdir(parents=True, exist_ok=True)
 
         def execute():
-            if Path('/input/model.tar.gz').stat().st_size:
+            rows = boundary.validate(['--cell', cell, *selection], environ={}).rows
+            needs = prepared.requirements(rows)
+            if needs['model20'] and Path('/input/model.tar.gz').stat().st_size:
                 print(model.fetch(environment['PINYIN_MODEL_CACHE'], archive='/input/model.tar.gz', env=environment))
+            options = ([] if needs['model20'] else ['--libraries-only']) + (
+                [] if needs['reference'] else ['--without-reference']) + (
+                [] if needs['backend_utilities'] else ['--skip-backend-tools'])
+            if needs['cargo_c']:
+                prepared.require_metadata_tool(environment)
             run(['bash', 'tools/cloud/setup.sh', '--in-container', '--cells', cell,
-                 '--cache-dir', f'/state/cache/{reference}', '--jobs', environment.get('CARGO_BUILD_JOBS', '2')], env=environment)
+                 '--cache-dir', f'/state/cache/{reference}', '--jobs', environment.get('CARGO_BUILD_JOBS', '2'),
+                 *options], env=environment)
             done = capture(['bash', '-e', '-u', '-c', 'source "$1"; env -0', '--', environment['OXPINYIN_ORACLE_ENV']], env=environment)
             environment.update(os.fsdecode(entry).split('=', 1) for entry in done.stdout.split(b'\0') if entry)
             print('Subject Rust toolchain: ', end='', flush=True)
             run(['rustup', 'show', 'active-toolchain'], env=environment)
-            rows = boundary.validate(['--cell', cell, *selection], environ={}).rows
             prepared_options = prepared.prepare(
                 cell, rows, Path(environment['PINYIN_ORACLE_PREFIX']),
                 Path(f'/state/container/{image}/prepared'), environment)

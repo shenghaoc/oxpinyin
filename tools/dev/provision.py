@@ -171,6 +171,7 @@ class Provision:
         except OSError:
             self.jobs = '2'
         self.pull, self.inside, self.python_only = True, False, False
+        self.libraries_only = self.skip_backend_tools = self.without_reference = False
         self.platform = ''
         self.started = time.monotonic() - int(self.env.get('OXPINYIN_CLOUD_BOOTSTRAP_SECONDS', '0'))
         self.tkrzw_local = False
@@ -223,12 +224,18 @@ class Provision:
                     self.cells = re.findall(r'[^ \t]+', value.partition('\n')[0])
                 else:
                     self.jobs = value
-            elif option in ('--in-container', '--no-pull'):
+            elif option in ('--in-container', '--no-pull', '--libraries-only', '--skip-backend-tools', '--without-reference'):
                 oracle_options = True
                 if option == '--in-container':
                     self.inside = True
-                else:
+                elif option == '--no-pull':
                     self.pull = False
+                elif option == '--libraries-only':
+                    self.libraries_only = True
+                elif option == '--skip-backend-tools':
+                    self.skip_backend_tools = True
+                else:
+                    self.without_reference = True
             else:
                 fail(f'unknown option: {option}', 2)
         if self.python_only and oracle_options:
@@ -241,6 +248,10 @@ class Provision:
             fail(f'No frozen oracle hashes for architecture {arch}; supported platforms are linux/amd64 and linux/arm64. See docs/runbooks/setup.md.', 2)
         if not self.field('libpinyin_sha256_bdb'):
             fail(f'No frozen oracle hashes for {self.platform} in {self.pin}. See docs/runbooks/setup.md.', 2)
+        if (self.libraries_only or self.skip_backend_tools or self.without_reference) and not self.inside:
+            fail('selective provisioning is available only in the controlled container', 2)
+        if self.without_reference and not self.libraries_only:
+            fail('--without-reference requires --libraries-only', 2)
         if self.inside and (self.env.get('OXPINYIN_COMPAT_CONTAINER') != '1' or not Path('/opt/reference').is_dir()):
             fail('--in-container requires the controlled compatibility image; no host provisioning attempted', 2)
         if not self.cells:
@@ -430,7 +441,7 @@ class Provision:
             lines.append(kept_paths)
         for cell in env_cells:
             lines += [f'export OXPINYIN_ORACLE_PREFIX_{cell.upper()}=' + quote(prefixes[cell]),
-                      f'export OXPINYIN_ORACLE_DATA_{cell.upper()}=' + quote(prefixes[cell] + '/lib/libpinyin/data')]
+                      f'export OXPINYIN_ORACLE_DATA_{cell.upper()}=' + quote('' if self.libraries_only and cell in self.cells else prefixes[cell] + '/lib/libpinyin/data')]
         lines += ['export PINYIN_ORACLE_DBM=${PINYIN_ORACLE_DBM:-' + default + '}', SELECT.rstrip('\n')]
         staging = Path(str(path) + '.new')
         try:
@@ -716,6 +727,8 @@ class Provision:
                 run(['sh', str(probe)], env=dict(child, LD_LIBRARY_PATH=str(prefix / 'lib')), stdout=sys.stderr, check=False)
                 self.die("the built tkrzw does not print 'RESULT : healthy' (refusing to use it)")
             revision.write_text(TKRZW_REV + '\n')
+        if self.without_reference:
+            return
         resolved = resolve_tkrzw(self.oracle_root / 'tkrzw/lib/libpinyin.so', dict(self.env, LD_LIBRARY_PATH=str(prefix / 'lib')), self.root)
         if resolved != str(prefix / 'lib/libtkrzw.so.1'):
             self.die(f"the tkrzw oracle libpinyin.so resolves libtkrzw.so.1 to '{resolved or 'nothing'}', not {prefix}/lib")
@@ -760,9 +773,10 @@ class Provision:
                     self.die('normal cloud provisioning requires a Linux cloud runtime; use compat.sh for the Apple adapter')
             else:
                 print('Runtime: supplied compatibility container (no nested runtime)')
-            self.backend_tools()
+            if not self.skip_backend_tools:
+                self.backend_tools()
             for cell in self.cells:
-                if not self.libs_ok(cell) or not self.data_ok(cell):
+                if not self.libraries_only and (not self.libs_ok(cell) or not self.data_ok(cell)):
                     try:
                         model.fetch(self.model_cache, root=self.root, env=self.env)
                     except Finished:
@@ -773,10 +787,11 @@ class Provision:
                 Path('/model-cache').symlink_to(self.model_cache)
             else:
                 self.runtime_ready()
-            self.libraries()
+            if not self.without_reference:
+                self.libraries()
             self.sound_tkrzw()
             need = []
-            for cell in self.cells:
+            for cell in (() if self.libraries_only else self.cells):
                 if self.data_ok(cell):
                     self.log(f'{cell}: data already matches the recorded manifest')
                 else:
@@ -799,7 +814,11 @@ class Provision:
                 prefix = self.oracle_root / cell
                 for pc in (prefix / 'lib/pkgconfig').glob('*.pc'):
                     pc.write_text(re.sub(r'^prefix=.*$', lambda _: 'prefix=' + str(prefix), pc.read_text(), flags=re.M))
-                print(f'{cell} prefix={prefix} libpinyin={digest_file(prefix / "lib/libpinyin.so")} libzhuyin={digest_file(prefix / "lib/libzhuyin.so")} data manifest OK', flush=True)
+                if self.without_reference:
+                    print(f'{cell}: reference and data not requested', flush=True)
+                else:
+                    data_status = 'data not requested' if self.libraries_only else 'data manifest OK'
+                    print(f'{cell} prefix={prefix} libpinyin={digest_file(prefix / "lib/libpinyin.so")} libzhuyin={digest_file(prefix / "lib/libzhuyin.so")} {data_status}', flush=True)
             self.write_oracle_env()
         return 0
 

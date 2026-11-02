@@ -77,6 +77,30 @@ def verify_created_image(record, expected):
             raise ValueError('created container image digest differs from inspected image')
     except (KeyError, TypeError, AttributeError) as error:
         raise ValueError('created container image identity unavailable') from error
+def volume_metadata(runtime, kind, name):
+    """Return validated volume labels, or None if the runtime reports no volume."""
+    done = capture([runtime, 'volume', 'inspect', name], check=False, stderr=False)
+    if done.status:
+        diagnostic = done.stderr.decode(errors='replace')
+        if re.search(r'not found|no such volume|does not exist', diagnostic, re.I):
+            return None
+        raise ValueError(f'cannot inspect volume {name}: {diagnostic.strip()}')
+    try:
+        rows = json.loads(done.stdout)
+        if not isinstance(rows, list) or len(rows) != 1:
+            raise ValueError('expected exactly one volume')
+        if not isinstance(rows[0], dict):
+            raise ValueError('expected an object')
+        row = rows[0].get('configuration', {}) if kind == 'container' else rows[0]
+        if not isinstance(row, dict):
+            raise ValueError('expected volume configuration')
+        found = row.get('name') if kind == 'container' else row.get('Name')
+        labels = (row.get('labels') if kind == 'container' else row.get('Labels')) or {}
+        if found != name or not isinstance(labels, dict):
+            raise ValueError('volume identity or labels mismatch')
+        return {'labels': labels}
+    except (TypeError, KeyError, ValueError) as error:
+        raise ValueError(f'invalid volume inspection for {name}: {error}') from error
 
 
 def select_runtime(override='', *, env=None, host=None, output=print):

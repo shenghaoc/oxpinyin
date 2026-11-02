@@ -189,6 +189,8 @@ COMPAT_HARNESS = (
     'tools/dev/compat/boundary.test.py',
     'tools/dev/compat/guest.test.py',
     'tools/dev/compat/cache_fixture.test.py',
+    'tools/dev/compat/prepared.test.py',
+    'tools/dev/compat/storage.test.py',
     'tools/dev/compat/memory.test.py',
     'tools/dev/compat/recipes.test.py',
     'tools/tkrzw/runtime.test.py',
@@ -222,6 +224,8 @@ HARNESS_DEPENDENCIES.update(dict.fromkeys((
     'tools/dev/compat/images.py',
     'tools/dev/compat/launcher.py',
     'tools/dev/compat/process.py',
+    'tools/dev/compat/prepared.py',
+    'tools/dev/compat/storage.py',
     'tools/oracle/round-trip-bootstrap.sh',
     'tools/dev/compat/boundary.py',
 ), COMPAT_HARNESS))

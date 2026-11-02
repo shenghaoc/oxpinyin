@@ -234,6 +234,14 @@ patched reference and model-text inputs automatically. Entries marked
 `not-a-gate` remain native or measurement recipes with caller-selected inputs;
 the compatibility launcher rejects them.
 
+## Storage
+
+Each checkout has a labelled compatibility volume. The label records the checkout identity and purpose; linked worktrees are discovered from Git to distinguish active and orphaned owners. "Orphaned" means "not a worktree of this checkout": the check compares the volume's recorded checkout with this checkout's worktree list, not with any process that uses the volume. A volume that belongs to an independent clone is therefore listed as orphaned even while that clone is using it, and `--orphan` would delete its caches. Checkout-local work and targets permit independent lanes, at the cost of duplicated reusable data. `just compat storage inspect` lists matching legacy unlabelled names and reports labelled volumes and their target sizes in KiB.
+
+`just compat storage clean --targets --work --results` cleans only the current checkout's labelled volume; select only the categories to remove. It shows sizes, takes the volume lock, and preserves verified model data, oracle data, and the Cargo registry. Apple container reclaims freed blocks while the maintenance container holds that lock. Podman and Docker release blocks to their backing filesystem. Cleanup is never automatic.
+
+A legacy unlabelled volume is not reused or removed automatically. `just compat storage clean --legacy VOLUME --orphan VOLUME` measures all explicitly named legacy and orphaned volumes before removing them. Repeat either option to select more volumes. Add `--runtime podman`, `--runtime docker`, or `--runtime container` to select the runtime.
+
 ## What happens and what success means
 
 The launcher obtains the existing immutable GHCR oracle artifact and its
