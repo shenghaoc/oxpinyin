@@ -214,7 +214,12 @@ and their locale calls, is in place; the later stages are planned); DBM
 backends remain in `oxpinyin-store` and C ABI marshalling in the C
 adapters.
 
-**No hand-written C or C++ shims (maintainer ruling 2026-10-31 UTC).** External C library calls are made from
+**External-library bindings (amended 2026-11-02 UTC).** The
+[Rust/C++ interoperability ruling](#rust-cpp-interoperability) supersedes
+the blanket prohibition on hand-written C++ shims and governs generated
+bindings and permitted semantic adapters.
+
+**C-library calls and macro checks (maintainer ruling 2026-10-31 UTC).** External C library calls are made from
 Rust through the `libc` crate, approved as a dependency of
 `oxpinyin-input`, or through `extern "C"` declarations; GLib functions
 through the workspace's `glib-sys`. A function neither crate binds is
@@ -232,7 +237,7 @@ Where no call or behaviour has the same documented result,
 stop and report it. The tools and `oxpinyin-input`'s library calls
 follow the ruling (`native/config.c` and `native/diagnostic.c` are
 gone); the Kyoto Cabinet adapter is retained under the
-[Kyoto Cabinet exception](#kyoto-cabinet-exception).
+[Rust/C++ interoperability ruling](#rust-cpp-interoperability)'s frozen contract.
 
 **Platform scope of pinned behaviour (maintainer ruling 2026-10-31
 UTC).** The drop-in and pin-call rules (external I/O uses the pin's
@@ -247,23 +252,7 @@ practical. This does not cover platform-independent product behaviour
 (ranking, parsing, training, data handling), safety, determinism, the C
 API/ABI, its symbol names and its ownership and lifetime rules, or
 persistent file formats, which must be the same on every platform. The
-prohibition on hand-written C/C++ shims applies on every platform.
-
-<a id="kyoto-cabinet-exception"></a>**Kyoto Cabinet exception (maintainer
-ruling 2026-10-31 UTC).** Retain the existing Kyoto Cabinet adapter in
-`crates/oxpinyin-store/src/kyotocabinet/shim.cc` and its header. It
-constructs the concrete database classes the pin uses, opens literal
-paths, and contains C++ exceptions before they can cross the Rust FFI
-boundary. Kyoto Cabinet's upstream C API (`kclangc.h`) does not provide
-an equivalent for these requirements. The adapter's compatibility and
-performance evidence is in [kc-shim-1118.md](kc-shim-1118.md). The CXX
-implementation evaluated in
-[kc-c-vs-cxx-adapter-2026-10-22.md](kc-c-vs-cxx-adapter-2026-10-22.md)
-was not adopted; those measurements apply to that implementation and its
-baselines, not to every CXX-based binding. Removing or replacing this
-adapter requires a separate maintainer-approved change. This exception
-does not authorize other hand-written shims or copying external-library
-internals.
+[interoperability ruling](#rust-cpp-interoperability) applies on every platform.
 
 The call rule does not reproduce an undefined read or an abort in the
 pin's surrounding code. Existing class (b)/(c) records, including
@@ -336,6 +325,78 @@ The cells ruling of 2026-10-04, the stages ruling of 2026-10-14 as
 amended here, the interfaces ruling of 2026-10-18 and the math ruling
 of 2026-10-19 stand.
 A registered class (b)/(c) case returning its prescribed result is MATCH.
+
+<a id="kyoto-cabinet-exception"></a>**Kyoto Cabinet exception.**
+Superseded by the [Rust/C++ interoperability ruling](#rust-cpp-interoperability)
+below, which owns the frozen contract and separate migration.
+The prior implementation's evidence remains in [kc-shim-1118.md](kc-shim-1118.md)
+and [kc-c-vs-cxx-adapter-2026-10-22.md](kc-c-vs-cxx-adapter-2026-10-22.md).
+
+Decision: 2026-11-02 UTC. Recorded at 2026-11-02T01:10:15Z (`date -u`).
+
+<a id="rust-cpp-interoperability"></a>
+
+## Rust/C++ interoperability (maintainer ruling, 2026-11-02)
+
+### Principle
+
+Agents write the code. One person reviews it. A boundary that the compiler checks does not depend on who wrote it. A boundary that a comment describes does. Prefer the checked boundary.
+
+This ruling rests on safety, maintainability and review load. It does not rest on performance or on modernisation.
+
+### Rule
+
+- A C library binds with bindgen over its official C API.
+- A C++ library binds with CXX over the concrete classes the pin uses.
+- Hand-written C++ is permitted only as a semantic adapter for a native construct that CXX cannot express: a virtual callback subclass (`Visitor`, `RecordProcessor`), a pointer sentinel, a status-vs-exception split. Such an adapter calls the library. It does not copy or emulate the library.
+- CXX checks signatures, `Pin`, `UniquePtr` ownership and `unsafe` on raw pointer parameters. It does not check the items below. Each PR that touches one of them names which one, states the contract and gives the proof from the library source:
+  1. the safety claim of each function declared safe inside `unsafe extern "C++"`;
+  2. `Send` and `Sync` for a native object;
+  3. a cursor's or iterator's lifetime dependence on its database (`PhantomData<&'db Db>`; CXX does not infer it);
+  4. validity and length of each pointer passed to or from a callback;
+  5. synchronise, close and destruction order, per concrete class;
+  6. any pointer value a library treats as a sentinel.
+
+### Backends
+
+| Backend | Binding | Status |
+| --- | --- | --- |
+| Berkeley DB | bindgen, C API | Settled. No change. |
+| tkrzw | CXX, concrete classes | Approved. Stage 2 compatibility change. |
+| Kyoto Cabinet | shim + bindgen | Frozen contract. Migration in its own PR. |
+
+**tkrzw.** The pin constructs `TreeDBM`, `HashDBM`, `BabyDBM` and `TinyDBM` directly. The C API (`tkrzw_langc.h`, `PolyDBM`) destroys the object on a failed open and collapses status classes. Both differ from the pin (#1516, divergence row 40). Order of work:
+1. Inventory from libpinyin `074a2219`: every concrete class, operation, iterator, `RecordProcessor` site, status and exception path, temporary database, failed-open policy, synchronise, close and destruction. Failed-open policy differs by caller: `FlexibleBigram` deletes after failed attachment; the other tables retain the object.
+2. One PR that rebinds the backend. `cxx` and `cxx-build` are feature-gated tkrzw dependencies.
+3. The tkrzw part of #1516 on top of that PR.
+Reassess row 40 against the new call path. Do not close it in advance.
+
+**Kyoto Cabinet.** The shim keeps the pin's concrete-class choice and is not shown unsafe. Its FFI contract is frozen: `shim.h`, `shim.cc`, `ffi.rs` and the build and link configuration. A change to any of items 1–6 above in these files states the contract it changes. A migration to CXX is a separate PR after the tkrzw rebinding lands, and reuses what that work settled. It need not show a compatibility or performance gain. It is never combined with a defect fix.
+
+### Exports
+
+The public symbol set and symbol versions are unchanged. The Linux relink already produces the correct set. The Cargo development `cdylib` gate stays. The macOS `cargo-c` library is checked for this change. Windows is checked to the extent the existing lane supports; #1475 stays deferred.
+
+### Performance
+
+The measurement policy in [the source policy](../source-policy.md#controlling-rule) applies. The 0.95–1.05 control band qualifies a comparison. It is not an acceptable regression threshold. A regression found by source reading is reviewed against the compatibility gain; it is not accepted by a percentage.
+
+### Supersedes
+
+- 2026-10-23: keep bindgen over the C API for all three backends.
+- 2026-10-31: no hand-written C++ shims, with the Kyoto Cabinet exception.
+- `docs/architecture.md`: do not use tkrzw's C++ interface.
+- `docs/source-policy.md`: amend to permit generated Rust–C++ interop and minimal semantic adapters.
+
+### Separate fix
+
+The Kyoto Cabinet sanitizer job passes Rust flags through `RUSTFLAGS`. `shim.cc` is built by `cc::Build` without them. Pass the matching flags to the native compiler and confirm the object is instrumented. Independent of everything above.
+
+**Clarification (maintainer):** a library with official or well-established Rust bindings is used through those bindings (for example the `libc` crate and `glib-sys`). Anything without them binds with bindgen if it is a C library, or with CXX if it is a C++ library.
+
+Recorded at 2026-11-02T03:05:17Z (`date -u`).
+
+**Correction (recorded 2026-11-02T01:29:14Z, `date -u`):** the premise is inaccurate. The cc crate (1.10, as locked) already forwards Cargo's sanitizer flags to the native compiler, so `shim.cc` was instrumented in the Linux sanitizer job. #1531 makes the flags explicit and adds frame pointers, so the instrumentation no longer depends on that cc behaviour; ordinary builds are byte-identical. Source: cc 1.10.0, `Build::add_sanitizer_flags`, [`src/lib.rs:3388–3395`](https://github.com/rust-lang/cc-rs/blob/8d06fcb73f6938c35c9bc59edbdcb9fb56f04d71/src/lib.rs#L3388-L3395).
 
 ## External interfaces: C only
 
