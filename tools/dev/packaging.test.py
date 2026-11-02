@@ -75,6 +75,11 @@ for suffix,target in [('.so.15',library+'.so.15.0.0'),('.so',library+'.so.15')]:
     path=lib/(library+suffix)
     if path.is_symlink():path.unlink()
     path.symlink_to(target)
+if triple.endswith('-apple-darwin'):
+    for suffix in ('.dylib','.15.dylib'):
+        path=lib/(library+suffix)
+        if path.is_symlink():path.unlink()
+        path.symlink_to(library+'.15.0.0.dylib')
 inc=Path(value('--destdir')+value('--includedir'))/'libpinyin-2.11.92'
 inc.mkdir(parents=True,exist_ok=True)
 for name in ['novel_types.h','pinyin_custom2.h', 'zhuyin_custom2.h' if library=='libzhuyin' else 'pinyin.h', 'zhuyin.h' if library=='libzhuyin' else 'pinyin.h']:
@@ -370,8 +375,46 @@ if lines:sys.stdout.buffer.write(separator.join(sorted(lines,key=key))+separator
                 self.assertIn(b'exec_prefix=${prefix}\nlibdir=${exec_prefix}/lib\nincludedir=${prefix}/include\n', pc)
                 shutil.rmtree(stage)
 
-    def test_macos_install_keeps_the_cargo_c_library(self):
+    def darwin_fakes(self):
         self.fake('uname', "print('Darwin')")
+        self.env['CHECKOUT'] = str(self.root)
+        self.env['LINK_CALLS'] = str(self.work / 'link-calls')
+        self.env['DARWIN_EXPORTS'] = json.dumps({library: packaging.version_exports(
+            self.root/'crates'/crate/(library+'.ver'))[1] for library, crate in packaging.LIBRARIES.items()})
+        self.fake('lipo', "import os; print('x86_64' if os.environ.get('CARGO_BUILD_TARGET','').startswith('x86_64') else 'arm64')")
+        self.fake('otool', r'''import os,sys
+from pathlib import Path
+library=Path(sys.argv[-1]).name.split('.15')[0]
+name='/usr/lib/'+library+'.15.dylib'
+if os.environ.get('BAD_IDENTITY') and '.relink.' in sys.argv[-1]:name='wrong'
+print('Load command 1\n cmd LC_ID_DYLIB\n name '+name+' (offset 24)\n current version 15.2.3\n compatibility version 15.0.0')
+print('Load command 2\n cmd LC_BUILD_VERSION\n platform 1\n minos 12.3\n sdk 27.2')
+''')
+        self.fake('cc', r'''import json,os,sys
+from pathlib import Path
+args=sys.argv[1:]
+exports=Path(args[args.index('-exported_symbols_list')+2]).read_text()
+Path(os.environ['LINK_CALLS']).write_text(json.dumps([args,exports]))
+Path(args[args.index('-o')+1]).write_bytes(b'linked dylib')
+sys.exit(int(os.environ.get('LINK_EXIT','0')))
+''')
+        for tool in ('nm', 'dyld_info'):
+            self.fake(tool, r'''import json,os,sys
+from pathlib import Path
+library=Path(sys.argv[-1]).name.split('.15')[0]
+names=set(json.loads(os.environ['DARWIN_EXPORTS'])[library])
+if os.environ.get('MISSING_EXPORT'):names.remove(library.removeprefix('lib')+'_init')
+if Path(sys.argv[0]).name=='nm':
+    for name in sorted(names):print('10 T _'+name)
+    if os.environ.get('NM_EXTRA'):print('20 D _dependency_data')
+else:
+    print('image [arm64]:\n -exports:\n offset symbol')
+    for name in sorted(names):print('0x10 _'+name)
+    if os.environ.get('TRIE_EXTRA'):print('0x20 _dependency_data')
+''')
+
+    def test_macos_relink_preserves_identity_exports_and_symlinks(self):
+        self.darwin_fakes()
         stage = self.work / 'stage'
         for library in packaging.LIBRARIES:
             with self.subTest(library=library):
@@ -380,15 +423,43 @@ if lines:sys.stdout.buffer.write(separator.join(sorted(lines,key=key))+separator
                                      env={'CARGO_BUILD_TARGET': 'aarch64-apple-darwin',
                                           'FIXTURE_HOST': 'aarch64-apple-darwin'})
                 self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertEqual((stage / 'usr/lib' / (library + '.15.0.0.dylib')).read_bytes(), b'installed dylib')
-                self.assertNotIn(b'relinked', result.stdout)
+                self.assertEqual((stage / 'usr/lib' / (library + '.15.0.0.dylib')).read_bytes(), b'linked dylib')
+                for suffix in ('.dylib', '.15.dylib'):
+                    self.assertEqual((stage/'usr/lib'/(library+suffix)).readlink(), Path(library+'.15.0.0.dylib'))
+                self.assertIn(b'relinked', result.stdout)
                 self.assertIn(b'loaded ', result.stdout)
-                calls = json.loads((self.work / 'calls').read_text())
-                self.assertFalse(any('strip' in word for word in calls))
+                calls, exports = json.loads((self.work / 'link-calls').read_text())
+                self.assertEqual(calls[calls.index('-install_name')+1], '/usr/lib/'+library+'.15.dylib')
+                self.assertEqual(calls[calls.index('-arch')+1], 'arm64')
+                self.assertIn('-mmacosx-version-min=12.3', calls)
+                self.assertIn('-Wl,-current_version,15.2.3', calls)
+                self.assertIn('-Wl,-compatibility_version,15.0.0', calls)
+                self.assertEqual(calls.count('-exported_symbols_list'), 1)
+                self.assertIn('-force_load', calls)
+                names = json.loads(self.env['DARWIN_EXPORTS'])[library]
+                self.assertEqual(exports.splitlines(), ['_'+name for name in names])
+                self.assertEqual(len(names), 79 if library == 'libpinyin' else 52)
+                self.assertIn('_'+library.removeprefix('lib')+'_init\n', exports)
+                self.assertNotIn('LIBPINYIN', exports)
+                self.assertNotIn('oxpinyin_', exports)
                 self.assertFalse((self.work / 'strip-calls').exists())
+                self.assertEqual(list((stage/'usr/lib').glob('*.relink.*')), [])
+
+    def test_macos_relink_rejects_bad_exports_or_identity_before_replacement(self):
+        self.darwin_fakes()
+        for environment, diagnostic in [({'LINK_EXIT':'7'}, ''), ({'NM_EXTRA':'1'}, 'extra:'),
+                                        ({'TRIE_EXTRA':'1'}, 'extra:'), ({'MISSING_EXPORT':'1'}, 'missing:'),
+                                        ({'BAD_IDENTITY':'1'}, 'identity differs')]:
+            with self.subTest(environment=environment):
+                result, stage = self.install(env={**environment, 'CARGO_BUILD_TARGET':'aarch64-apple-darwin',
+                                                 'FIXTURE_HOST':'aarch64-apple-darwin'})
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(diagnostic.encode(), result.stderr)
+                self.assertEqual((stage/'usr/lib/libpinyin.15.0.0.dylib').read_bytes(), b'installed dylib')
+                self.assertEqual(list((stage/'usr/lib').glob('*.relink.*')), [])
 
     def test_macos_install_fails_when_the_dylib_does_not_load(self):
-        self.fake('uname', "print('Darwin')")
+        self.darwin_fakes()
         result = self.invoke('install', ['libpinyin', '--prefix=/usr', '--destdir=' + str(self.work / 'stage')],
                              env={'CARGO_BUILD_TARGET': 'aarch64-apple-darwin',
                                   'FIXTURE_HOST': 'aarch64-apple-darwin', 'FIXTURE_LOAD': 'fixture load failure'})
@@ -397,7 +468,7 @@ if lines:sys.stdout.buffer.write(separator.join(sorted(lines,key=key))+separator
         self.assertIn(b'fixture load failure', result.stderr)
 
     def test_macos_install_skips_the_load_check_for_a_non_native_target(self):
-        self.fake('uname', "print('Darwin')")
+        self.darwin_fakes()
         stage = self.work / 'stage'
         result = self.invoke('install', ['libpinyin', '--prefix=/usr', '--destdir=' + str(stage)],
                              env={'CARGO_BUILD_TARGET': 'x86_64-apple-darwin',
@@ -409,7 +480,7 @@ if lines:sys.stdout.buffer.write(separator.join(sorted(lines,key=key))+separator
         self.assertFalse((self.work / 'strip-calls').exists())
 
     def test_macos_install_fails_when_another_image_answers(self):
-        self.fake('uname', "print('Darwin')")
+        self.darwin_fakes()
         result = self.invoke('install', ['libpinyin', '--prefix=/usr', '--destdir=' + str(self.work / 'stage')],
                              env={'CARGO_BUILD_TARGET': 'aarch64-apple-darwin',
                                   'FIXTURE_HOST': 'aarch64-apple-darwin',
@@ -419,7 +490,7 @@ if lines:sys.stdout.buffer.write(separator.join(sorted(lines,key=key))+separator
         self.assertIn(b'resolved in /elsewhere', result.stderr)
 
     def test_macos_step_runs_only_for_apple_darwin_targets(self):
-        self.fake('uname', "print('Darwin')")
+        self.darwin_fakes()
         result = self.invoke('install', ['libpinyin', '--prefix=/usr', '--destdir=' + str(self.work / 'stage')],
                              env={'CARGO_BUILD_TARGET': 'aarch64-unknown-linux-gnu',
                                   'FIXTURE_HOST': 'aarch64-apple-darwin',
