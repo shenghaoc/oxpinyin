@@ -610,10 +610,11 @@ pub fn verify_chunk(path: &Path) -> Result<(), LibraryError> {
     map_chunk(path).map(drop)
 }
 
-/// A writable private view of one library's phrase-content area.
-/// Changes never reach the system file or other library views.
+/// A writable private view of one library's offset array and phrase-content
+/// area. Changes never reach the system file or other library views.
 pub struct PhraseContent {
     mapping: memmap2::MmapMut,
+    offsets: Range<usize>,
     area: Range<usize>,
 }
 
@@ -627,6 +628,17 @@ impl PhraseContent {
     /// Borrow the content for an in-place journal write.
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
         &mut self.mapping[self.area.clone()]
+    }
+
+    /// Borrow the offset array: little-endian `u32` slots, in stored order.
+    #[must_use]
+    pub fn offsets(&self) -> &[u8] {
+        &self.mapping[self.offsets.clone()]
+    }
+
+    /// Borrow the offset array for an in-place journal write.
+    pub fn offsets_mut(&mut self) -> &mut [u8] {
+        &mut self.mapping[self.offsets.clone()]
     }
 }
 
@@ -886,6 +898,13 @@ impl PhraseLibrary {
         &self.payload()[self.content.clone()]
     }
 
+    /// The offset array: little-endian `u32` slots, `SubPhraseIndex`'s
+    /// `m_phrase_index` as loaded.
+    #[must_use]
+    pub fn offset_array(&self) -> &[u8] {
+        &self.payload()[self.offsets.clone()]
+    }
+
     /// Map a separate writable private view for journal replay.
     ///
     /// # Errors
@@ -893,6 +912,8 @@ impl PhraseLibrary {
     pub fn private_content(&self) -> Result<PhraseContent, LibraryError> {
         Ok(PhraseContent {
             mapping: self.file.private_copy()?,
+            offsets: (self.payload.start + self.offsets.start)
+                ..(self.payload.start + self.offsets.end),
             area: (self.payload.start + self.content.start)
                 ..(self.payload.start + self.content.end),
         })

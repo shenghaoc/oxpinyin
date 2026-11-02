@@ -830,7 +830,7 @@ _compare_case('modify-header-overlong', lambda p: ([
     _add_fresh(p)], _watch_last(p)),
     crash={'ctx': True, 'fresh': [[True, 1, '锕'], [True, 11]],
            'one': [[True, 1, '锕'], [True, 3]],
-           'last': [[True, 14, '中华人民共和国中央军事委员会'], [True, 62]]})
+           'last': _NO_ITEM})
 
 
 # Same row-107 refusal after a duplicate touch. The pin still over-reads the
@@ -843,12 +843,12 @@ _compare_case('touched-duplicate-invalid', lambda p: ([
     _add_fresh(p)], _watch_last(p)),
     crash={'ctx': True, 'fresh': [[True, 1, '锕'], [True, 11]],
            'one': [[True, 1, '锕'], [True, 3]],
-           'last': [[True, 14, '中华人民共和国中央军事委员会'], [True, 62]]})
+           'last': _NO_ITEM})
 
 
 # Many row-107 invalidations, in descending order and each after an earlier
 # valid touch. Finalization must emit each diagnostic once in ascending order;
-# membership and item reads fall back to the original for every rejected slot.
+# every rejected slot answers no item (row 107, option 1), and the rest stay.
 def touched_many_invalid(k):
     """Replay repeated invalidating writes to the last 256 system items in reverse offset order.
 
@@ -881,7 +881,7 @@ for _mode in ('pinyin', 'zhuyin'):
          issues=('850', '851', '870'),
          crash={'ctx': True, 'fresh': [[True, 1, '锕'], [True, 11]],
                 'one': [[True, 1, '锕'], [True, 3]],
-                'last': [[True, 14, '中华人民共和国中央军事委员会'], [True, 62]]})(
+                'last': _NO_ITEM})(
                     touched_many_invalid)
 
 
@@ -954,6 +954,36 @@ for _mode in ('pinyin', 'zhuyin'):
          mode=_mode, abort=False, sigabrt=True, userdir=True, issues=('row:108',))(
         lambda k: logger_reload_probe(
             k, _log_record(_LOG_ADD, 0x02000005, new=b'\x01') + _over_read_add(0x02000006)))
+
+
+# An over-read tail (class (b)): the walk reaches an ADD whose declared
+# payload runs past the log's end, so the pin's `next_record` would read past
+# its allocation and the pin is not run. The subject applies the records in
+# place, reaches the faulty one and reverses them: the library keeps its
+# pre-replay content, so the MODIFY that came first leaves no trace. The
+# pinyin export lists the item's reading and frequency (zhuyin has no export),
+# which is where an unreversed write shows.
+def _over_read_tail(p):
+    """A MODIFY of one's reading frequency, then an ADD whose payload runs past the log."""
+    return ([
+        _log_record(_LOG_MODIFY, p['one'][0], old=p['one'][1],
+                    new=_item_with(p['one'][1], freq=77)),
+        _over_read_add(p['absent'][0])], _watch(p))
+
+
+def _over_read_tail_probe(k):
+    """Replay the tail at init and report what the session shows of the item."""
+    out = system_replay(k, _over_read_tail, unigram_add=False)
+    return {'ctx': out['ctx'], 'one': out['one'], 'export': out['export']}
+
+
+_OVER_READ_TAIL = {
+    'pinyin': {'ctx': True, 'one': [[True, 1, '锕'], [True, 3]], 'export': [[True, '锕', 'a', 7]]},
+    'zhuyin': {'ctx': True, 'one': [[True, 1, '锕'], [True, 3]], 'export': 'NO EXPORT API'},
+}
+for _mode in ('pinyin', 'zhuyin'):
+    case('replay-over-read-tail-' + _mode, mode=_mode,
+         pin_not_run=_OVER_READ_TAIL[_mode], issues=('row:107',))(_over_read_tail_probe)
 
 
 # Row 91's replay order: `merge` returns at a mismatched REMOVE or MODIFY

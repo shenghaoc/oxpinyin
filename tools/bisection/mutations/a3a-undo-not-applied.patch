@@ -1,0 +1,16 @@
+diff --git a/crates/oxpinyin-user/src/replay.rs b/crates/oxpinyin-user/src/replay.rs
+index 40983eac..018c9d7a 100644
+--- a/crates/oxpinyin-user/src/replay.rs
++++ b/crates/oxpinyin-user/src/replay.rs
+@@ -1051,8 +1051,3 @@ impl<'a, 'l> Merge<'a, 'l> {
+-        while let Some(entry) = self.undo.pop() {
+-            match entry {
+-                Undo::Offset { slot, old } => self.content.restore_slot(slot, old),
+-                Undo::Content { offset, old } => {
+-                    self.content.write_shipped(offset, old);
+-                }
+-            }
+-        }
++        // Mutation: the entries are dropped without being applied, so the
++        // mapped bytes keep the writes of the records before the over-read.
++        self.undo.clear();

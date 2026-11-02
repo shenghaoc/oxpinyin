@@ -42,6 +42,29 @@ impl SystemItems {
         self.decoded.get(token)
     }
 
+    /// The decoded item held under `token`, without decoding a replayed one.
+    pub(crate) fn decoded(&self, token: &Token) -> Option<&ChunkItem> {
+        self.decoded.get(token)
+    }
+
+    /// Reads the item the live replay buffer of `token`'s library holds under
+    /// its slot, and whether the replay touched the slot.
+    pub(crate) fn with_live<R>(
+        &self,
+        token: Token,
+        read: impl FnOnce(&[u8], bool) -> R,
+    ) -> Option<R> {
+        let library = self.replayed.get(&((token >> 24) as u8))?;
+        let (bytes, touched) = library.live_item(token & 0x00ff_ffff)?;
+        Some(read(&bytes, touched))
+    }
+
+    pub(crate) fn live_item_past_buffer(&self, token: Token) -> bool {
+        self.replayed
+            .get(&((token >> 24) as u8))
+            .is_some_and(|library| library.item_past_buffer(token & 0x00ff_ffff))
+    }
+
     pub(crate) fn get_mut(&mut self, token: &Token) -> Option<&mut ChunkItem> {
         self.get(token)?;
         self.decoded.get_mut(token)
