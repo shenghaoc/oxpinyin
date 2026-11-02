@@ -117,6 +117,18 @@ mod kyotocabinet {
             .opt_level(2)
             .flag_if_supported("-fvisibility=hidden")
             .flag_if_supported("-fvisibility-inlines-hidden");
+        // Explicitly match the Linux address-sanitizer gate, even when cc's
+        // default flags are disabled. rustc links the sanitizer runtime.
+        // Without ASan, leave the native compiler and linker flags unchanged.
+        if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux")
+            && std::env::var("CARGO_CFG_SANITIZE")
+                .unwrap_or_default()
+                .split(',')
+                .any(|sanitizer| sanitizer == "address")
+        {
+            shim.flag("-fsanitize=address")
+                .flag("-fno-omit-frame-pointer");
+        }
         for dir in &include_paths {
             shim.include(dir);
         }
