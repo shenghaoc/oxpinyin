@@ -1169,6 +1169,85 @@ impl ReplayedLibrary {
         })
     }
 
+    /// The live buffer of a library no journal touched: the shipped chunk's
+    /// bytes in a private mapping, with no slot touched.
+    pub(crate) fn pristine(original: SystemLibraryRef<'_>) -> Self {
+        let (_, content) = origin_and_content(Some(original));
+        Self {
+            content,
+            slots: Vec::new(),
+            unigram_changes: Vec::new(),
+            has_added_items: false,
+        }
+    }
+
+    /// `PhraseItem::increase_pronunciation_possibility` over the buffer
+    /// (074a2219 `phrase_index.cpp:114-143`): every reading in turn walks the
+    /// item's entries in stored order, adds each entry's current count to a
+    /// running `guint32` total, and adds `delta` to each entry whose keys
+    /// match, stopping the walk at the first addition the total cannot take
+    /// and keeping the entries already updated. The counts are written in
+    /// place. Returns whether the buffer holds a readable item at `slot`;
+    /// `readings` is not consumed otherwise.
+    pub(crate) fn train(
+        &mut self,
+        slot: u32,
+        readings: impl Iterator<Item = Vec<oxpinyin_core::ChewingKey>>,
+        delta: u32,
+    ) -> bool {
+        let Some(offset) = self.content.slot_offset(slot).filter(|&offset| offset != 0) else {
+            return false;
+        };
+        let Found::Item { offset, len } = self.content.header(offset as usize) else {
+            return false;
+        };
+        let Some((length, entries)) = self
+            .content
+            .item(offset, len)
+            .and_then(|bytes| Some((usize::from(*bytes.first()?), usize::from(*bytes.get(1)?))))
+        else {
+            return false;
+        };
+        let row = 2 * length + 4;
+        let first = offset + PHRASE_ITEM_HEADER + 4 * length;
+        for reading in readings {
+            let mut total = 0_u32;
+            for place in 0..entries {
+                let keys_at = first + place * row;
+                let count_at = keys_at + 2 * length;
+                // The entry's last byte is in the buffer, so every byte before
+                // it is; the walk reads the keys and the count where they are.
+                if self.content.byte(count_at + 3).is_none() {
+                    break;
+                }
+                let byte = |at: usize| self.content.byte(at).unwrap_or(0);
+                let count = u32::from_le_bytes([
+                    byte(count_at),
+                    byte(count_at + 1),
+                    byte(count_at + 2),
+                    byte(count_at + 3),
+                ]);
+                total = total.wrapping_add(count);
+                let words = (0..length).map(|key| {
+                    u16::from_le_bytes([byte(keys_at + 2 * key), byte(keys_at + 2 * key + 1)])
+                });
+                if !crate::store_libpinyin::pronunciation_matches(&reading, words) {
+                    continue;
+                }
+                let Some(next) = total.checked_add(delta) else {
+                    break;
+                };
+                total = next;
+                self.content
+                    .write(count_at, &count.wrapping_add(delta).to_le_bytes());
+            }
+        }
+        if let Err(at) = self.slots.binary_search_by_key(&slot, |&(slot, _)| slot) {
+            self.slots.insert(at, (slot, offset as u32));
+        }
+        true
+    }
+
     /// The item under `slot` as the live buffer holds it, whether or not the
     /// replay touched the slot, and whether it did. `None` where the buffer
     /// holds no readable item there.
@@ -2142,15 +2221,17 @@ mod tests {
         assert_eq!(retained.item(2), eager_items[&2]);
 
         let token = (1 << 24) | 1;
-        let mut live =
+        let live =
             crate::system_items::SystemItems::new(BTreeMap::new(), BTreeMap::from([(1, retained)]));
-        assert!(!live.contains_key(&token));
         assert!(live.get(&token).is_none());
         let eager_visible = eager_items
             .get(&1)
             .cloned()
             .unwrap_or_else(|| original.item(1));
-        let lazy_visible = live.get(&token).cloned().or_else(|| original.item(1));
+        let lazy_visible = live
+            .get(&token)
+            .map(std::borrow::Cow::into_owned)
+            .or_else(|| original.item(1));
         assert_eq!(lazy_visible, eager_visible);
         assert_eq!(lazy_visible, original.item(1));
     }
@@ -2682,5 +2763,98 @@ mod tests {
         assert_eq!(overrides.get(&1), Some(&None));
         assert_eq!(overrides[&2].as_ref().expect("two").prons[1].1, 88);
         assert!(overrides[&6].is_some());
+    }
+
+    /// The decoded-item algorithm the buffer replaces (`arena_train`'s loop
+    /// before the readings moved into the buffer).
+    fn train_decoded(
+        item: &mut ChunkItem,
+        readings: &[Vec<oxpinyin_core::ChewingKey>],
+        delta: u32,
+    ) {
+        for reading in readings {
+            let mut total = 0_u32;
+            for (keys, frequency) in &mut item.prons {
+                total = total.wrapping_add(*frequency);
+                if !crate::store_libpinyin::pronunciation_matches(reading, keys.iter().copied()) {
+                    continue;
+                }
+                let Some(next) = total.checked_add(delta) else {
+                    break;
+                };
+                total = next;
+                *frequency = frequency.wrapping_add(delta);
+            }
+        }
+    }
+
+    #[test]
+    fn training_in_the_buffer_matches_training_the_decoded_item() {
+        use oxpinyin_core::ChewingKey;
+        let ni = ChewingKey::new(23, 0, 1, 0);
+        let hao = ChewingKey::new(11, 3, 2, 0);
+        let (ni_bits, hao_bits) = (ni.to_packed(), hao.to_packed());
+        let max = u32::MAX;
+        // Counts near the `guint32` limit, a repeated key, a key nothing
+        // matches, and a delta that overflows the running total at different
+        // places: the partial update must come out the same.
+        let shapes: Vec<Vec<(Vec<u16>, u32)>> = vec![
+            vec![(vec![ni_bits], 100)],
+            vec![(vec![ni_bits], 100), (vec![ni_bits], 7)],
+            vec![(vec![hao_bits], 5), (vec![ni_bits], 9)],
+            vec![(vec![ni_bits], max - 5), (vec![ni_bits], 3)],
+            vec![(vec![hao_bits], max - 5), (vec![ni_bits], 3)],
+            vec![(vec![ni_bits], 0), (vec![ni_bits], max), (vec![ni_bits], 1)],
+            vec![
+                (vec![ni_bits], max - 1),
+                (vec![hao_bits], 1),
+                (vec![ni_bits], 1),
+            ],
+        ];
+        let reading_sets: Vec<Vec<Vec<ChewingKey>>> = vec![
+            vec![vec![ni]],
+            vec![vec![ni], vec![ni]],
+            vec![vec![hao], vec![ni], vec![ni]],
+            vec![vec![ChewingKey::new(0, 0, 0, 0)]],
+            vec![],
+        ];
+        for prons in &shapes {
+            for readings in &reading_sets {
+                for delta in [0_u32, 1, 7, 483, max - 6, max] {
+                    let item = item(&[0x4f60], 9, prons);
+                    let library = SystemLibrary {
+                        total: 9,
+                        range_end: 2,
+                        items: BTreeMap::from([(1, item.clone())]),
+                        mapped: None,
+                    };
+                    let mut buffer = ReplayedLibrary::pristine(library.view());
+                    assert!(buffer.train(1, readings.clone().into_iter(), delta));
+                    let mut expected = item;
+                    train_decoded(&mut expected, readings, delta);
+                    assert_eq!(
+                        buffer.item(1),
+                        Some(expected),
+                        "prons {prons:?} readings {readings:?} delta {delta}"
+                    );
+                    assert!(buffer.contains(1), "a trained slot is a touched slot");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn training_leaves_an_absent_slot_alone_and_does_not_consume_the_readings() {
+        use oxpinyin_core::ChewingKey;
+        let library = library();
+        let mut buffer = ReplayedLibrary::pristine(library.view());
+        let mut consumed = false;
+        let readings = std::iter::from_fn(|| {
+            consumed = true;
+            None::<Vec<ChewingKey>>
+        });
+        assert!(!buffer.train(9, readings, 5));
+        assert!(!consumed);
+        assert!(!buffer.contains(9));
     }
 }

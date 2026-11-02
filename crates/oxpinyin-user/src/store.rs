@@ -2584,7 +2584,10 @@ impl<S: WriteStore> GenericUserStore<S> {
             .system_items
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let mut live = items.get(&token).cloned().or_else(|| original.clone());
+        let mut live = items
+            .get(&token)
+            .map(std::borrow::Cow::into_owned)
+            .or_else(|| original.clone());
         db.write(|txn| {
             // (row key, packed reading, running count, stored row value, and
             // for a live item the entry's place in it with its original count).
@@ -4782,12 +4785,12 @@ impl<S: WriteStore> GenericUserStore<S> {
         if !self.has_system_items() || !(1..=4).contains(&(token >> 24)) {
             return None;
         }
-        let mut items = self
+        let items = self
             .inner
             .system_items
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        items.get(&token).map(read)
+        items.get(&token).map(|item| read(&item))
     }
 
     #[cfg(test)]
@@ -4811,6 +4814,17 @@ impl<S: WriteStore> GenericUserStore<S> {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         items.decoded(&token).map(read)
+    }
+
+    /// Whether `token` holds a decoded item, for the tests that check a
+    /// change reached the live buffer and made no decoded copy.
+    #[cfg(test)]
+    pub(crate) fn has_decoded_system_item(&self, token: Token) -> bool {
+        self.inner
+            .system_items
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .has_decoded(&token)
     }
 
     /// Reads the item a replayed library's live buffer holds under `token`,
@@ -4935,7 +4949,7 @@ impl<S: WriteStore> GenericUserStore<S> {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut item = items
             .get(&token)
-            .cloned()
+            .map(std::borrow::Cow::into_owned)
             .or_else(|| original.item(token & PHRASE_MASK))
             .ok_or(UserStoreError::InvalidPhrase)?;
         let change = plan_system_reading(&item, &reading);

@@ -232,13 +232,21 @@ impl<S: WriteStore> GenericUserStore<S> {
             .system_items
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if !items.contains_key(&token)
-            && let Some(item) = originals
-                .get(&phrase_index_library_index(token))
-                .and_then(|library| library.item(token & PHRASE_MASK))
-        {
-            items.insert(token, item);
-            self.inner.has_system_items.store(true, Ordering::Relaxed);
+        // A decoded item (an import, or one a mask or reload materialized) is
+        // the authoritative value and is trained as it is. Any other system
+        // item is trained in place in its library's live buffer.
+        if !items.has_decoded(&token) {
+            if items.train_live(
+                originals.get(&phrase_index_library_index(token)),
+                token,
+                readings,
+                delta,
+            ) {
+                self.inner.has_system_items.store(true, Ordering::Relaxed);
+            }
+            drop(items);
+            self.mark_committed_write(db, true);
+            return Ok(());
         }
         if let Some(item) = items.get_mut(&token) {
             for reading in readings {
