@@ -1,7 +1,7 @@
 # User phrase content past 4 GiB (#1514, phase 1)
 
-Date: 2026-11-01 UTC, captured with `date -u`.
-Status: source finding; maintainer decision pending. No policy row is changed.
+Date: 2026-11-01 UTC, captured with `date -u`. Updated 2026-11-02 UTC against main `851a6304`; the update read `/private/tmp/oxpinyin-1514-pin` at `074a2219` and did not run the pin. The object inspection below is historical evidence, not a new disassembly.
+Status: maintainer ruling recorded 2026-11-02 UTC; implementation pending the mapping stack ([#1547](https://github.com/shenghaoc/oxpinyin/pull/1547) → [#1557](https://github.com/shenghaoc/oxpinyin/pull/1557)).
 
 The pin's first wrapped append is an **in-buffer overwrite, not inherently
 undefined behaviour**. It changes the bytes seen through other live slots without
@@ -57,8 +57,7 @@ below follow from the source. Under the
 [2026-10-29 contract ruling](../source-policy.md#internal-language-artefacts),
 observable unsigned wrap is reproduced unless a maintainer grants an exception.
 Calling the entire over-4-GiB state class (b) would discard defined behaviour.
-The classifications here identify operations; they do not choose safe answers
-or register a new exception.
+The classifications here identify operations. The maintainer ruling below specifies the safe answers; implementation is pending.
 
 ## Offset and arithmetic inventory
 
@@ -257,10 +256,25 @@ destination allocation in the helper already lacks a valid C++ pointer
 range. No defined saved bytes or return status can be asserted after this.
 This problem can happen **before** the content-offset wrap, at a 2-GiB bulk
 copy; it does not prevent small incremental growth through 4 GiB in memory.
+For content size C and fresh output chunk, `B = 18 + I` bytes (header,
+separators and index) have been written before the copy. The requested
+growth is C: for C < 2^31 the positive delta grows sufficiently; for
+2^31 ≤ C < 2^32 the signed delta is negative and growth is skipped. For
+C = k·2^32+r at or beyond 2^32, GCC reduces it modulo 2^32 to r if
+r < 2^31 and r−2^32 otherwise; this is never sufficient growth for C.
+The attempted destination ends at B+C. The separate `table_offset_t`
+addition wraps when B+C reaches 2^32, if execution gets that far. GCC's
+[documented signed conversion](https://gcc.gnu.org/onlinedocs/gcc/Integers-implementation.html)
+settles the narrowing without a new build or disassembly. Rust does not reproduce the pin’s internal capacity calculation; the unsafe bulk copy is class (b).
 
 `PhraseIndexLogger::store` performs the same kind of full-log copy into a new
 chunk (`src/storage/phrase_index_logger.h:115–117`), so a huge diff log has the
-same separate problem even though its cursor is `size_t`.
+same separate problem even though its cursor is `size_t`. For a fresh empty
+destination and a log of J bytes, the copy requests growth J; at J ≥ 2^31
+the narrowing is nonpositive or loses whole multiples of 2^32, so its own
+unsafe-copy threshold is 2^31 bytes. The logger is reached by the
+SYSTEM_FILE/DICTIONARY diff (`src/storage/phrase_index.cpp:271–283`,
+`src/pinyin.cpp:944–971`, `src/zhuyin.cpp:577–607`), not USER_FILE storage.
 
 For completeness, the unsigned file-format consequences can be derived
 conditionally, without pretending that the invalid copy successfully executed:
@@ -383,6 +397,8 @@ history or the compaction policy as well as arithmetic.
 
 ## Remaining Rust paths and error propagation
 
+The mapping stack changes the implementation after this baseline: [#1553](https://github.com/shenghaoc/oxpinyin/pull/1553) changes replay storage and mapping plumbing; [#1557](https://github.com/shenghaoc/oxpinyin/pull/1557) builds on it for training in the live buffer. Neither is a dependency of this finding; recheck their final form before implementation.
+
 The inconsistent mechanisms are not interchangeable safe answers:
 
 - `UserLibrary::replacement` / `compacted` in
@@ -438,25 +454,58 @@ The inconsistent mechanisms are not interchangeable safe answers:
   modulo `M` with the header. Valid full oversized frames can agree on the
   exposed prefix, while arbitrary trailing-length mismatches need not.
 
-None of these observations selects a new refusal, warning, abort, rollback
-or partial-apply answer. Existing compatibility rulings continue to govern
-their already-classified cases.
+These observations describe the baseline, before the ruling below is implemented. Existing compatibility rulings continue to govern their already-classified cases.
 
-## Maintainer options (not selected)
+## Maintainer ruling (2026-11-02 UTC)
 
-1. Reproduce the defined offset wrap, overwrite, aliasing and accounting with
-   `wrapping_*`, while assigning safe answers to the separately identified
-   class-(b) operations. Account for append history despite Rust's extra
-   compaction; changing only `Content::append`'s saturation is insufficient.
-2. Record an explicit exception covering this boundary and state one
-   consistent answer for add, transition reconstruction, open, replay,
-   compaction, serialization and reload. The defined overwrite is not itself
-   a memory-safety exception; a broader departure needs an explicit ruling.
-3. Separate the decisions: preserve defined in-memory and small-file
-   consequences, but give large bulk serialization its own safe boundary;
-   optionally maintain logical append positions independently of compacted
-   physical storage. Whether that representation and its cost are acceptable
-   remains implementation work after a maintainer decision.
+The maintainer, shenghaoc, selected option 1 in a human turn on 2026-11-02 UTC,
+after the 16:27 UTC #1514 comment and before the 16:44:02 UTC time observed
+while processing that turn. The exact receipt time was not captured. This review
+clarifies the read and save boundaries. Match the pin wherever its behavior is
+defined. For undefined behavior, use class (b) and the safe answers below.
+Implementation waits until the mapping stack ([#1547](https://github.com/shenghaoc/oxpinyin/pull/1547) → [#1557](https://github.com/shenghaoc/oxpinyin/pull/1557))
+has merged; it rewrites the same user-library replay and store files.
+
+- Reproduce the defined content offset narrowing modulo 2^32, including
+  zero → 8, the overwritten bytes, aliases and totals, with `wrapping_*`
+  for unsigned wrap. Apply this consistently to `UserLibrary::replacement`
+  and `compacted`, `GenericUserStore::arena_replacement`, `open_session`,
+  replay `Content::append`, and the dependent mask, diff, save and reload
+  paths. A saturated slot or silently omitted item is not the ruling.
+- Compact at the pin's points only: end-import, save and mask-out, in the
+  pin's slot order and with its totals (`src/storage/phrase_index.cpp:624–675`,
+  `src/pinyin.cpp:655–659`). Remove the dead-over-live automatic trigger so
+  both reach the wrap after the same history. The pin's explicit compaction
+  rebuilds the items; do not assume content grows across those operations.
+- A header-derived read that crosses the original item end but remains inside
+  content returns the following bytes as the pin does. A read that would pass
+  the content end answers **no item** and keeps other changes, as row 107
+  option 1. Passing the logical content end is the ruled safe boundary; it is
+  not necessarily C++ undefined if the owning allocation still contains the
+  bytes. Other independently unsafe operations remain class (b).
+- Preflight all planned serializations and refuse before writing or removing
+  any file if one reaches the unsafe copy. Both facades compact first
+  (`src/pinyin.cpp:1132–1146`, `src/zhuyin.cpp:547–554`). For a USER_FILE,
+  the copy uses compacted content C, with B = 18 + I bytes already in the
+  fresh chunk: its growth threshold is C ≥ 2^31, destination end B+C.
+  SYSTEM_FILE and DICTIONARY diff journals have their separate fresh-chunk
+  copy threshold J ≥ 2^31 for the complete log J. Refusal answers `false`,
+  retains the dirty session and permits retry; see policy rows 111 and 112.
+
+Between the pin's compaction points, content space grows with cumulative
+appended bytes, as at the pin; logical content space is the same for the same
+history, although allocation capacities need not be. This is worse than main's
+dead-over-live trigger, which keeps garbage proportional to live content. The
+cost preserves the pin's offset history; the implementation PR must restate
+this source-derived space trade-off. No measurement is needed.
+
+Use a small, test-only wrap modulus in the same offset computation as
+production; `max_content_len` alone only refuses growth. Exercise zero → 8,
+overwrites, aliases, totals and compaction at the pin's points, alongside
+REMOVE/MODIFY, replay, mask and diff. Target facade checks at preflight,
+false return, unchanged files, dirty state and retry/reload on both facades.
+A real-boundary contract differential is appropriate only if reachable in
+reasonable time. No oracle run is required for this documentation PR.
 
 [pi]: https://github.com/libpinyin/libpinyin/blob/074a2219c90feaf962d0d24f034514033ece5f99/src/storage/phrase_index.cpp
 [ph]: https://github.com/libpinyin/libpinyin/blob/074a2219c90feaf962d0d24f034514033ece5f99/src/storage/phrase_index.h

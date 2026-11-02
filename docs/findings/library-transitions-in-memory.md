@@ -165,16 +165,7 @@ The export iterator cases are those whose names contain `iterator`.
   declares the class (c) `abort=False` matcher. Member 4 reproduced the
   pin's abort at `zhuyin.cpp:454` (row 104); the case needs `sigabrt=True`
   on that member.
-- Arena-limit behavior remains an interim **KNOWN DIVERGENCE** pending
-  [#1514](https://github.com/shenghaoc/oxpinyin/issues/1514).
-  `table_offset_t` is `guint32` (`src/include/novel_types.h:128` at
-  `074a2219`). `SubPhraseIndex::add_phrase_item` narrows the content size
-  to that type, using 8 for a zero result (`src/storage/phrase_index.cpp:208-217`).
-  `MemoryChunk::set_content` then writes at that wrapped offset and can
-  overwrite existing content (`src/include/memory_chunk.h:290-296`).
-  The retained reconstruction skip and the existing session-open refusal
-  do not reproduce those writes. Empty-item persistence does not settle
-  the arena-limit behavior.
+- Arena-limit behavior: see [#1514 user content offset wrap](1514-user-content-offset-wrap.md).
 
 The pin's `pinyin_mask_out` is sequential: it masks the tables and bigrams,
 then loads and merges each library before compacting
