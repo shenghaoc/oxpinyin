@@ -153,11 +153,8 @@ where
     L: LanguageModel<Token = PhraseToken>,
     L::Error: core::fmt::Display,
 {
-    let chars: Vec<char> = sentence.chars().collect();
-    let n = chars.len();
-    segment(model, n, |start, end| {
-        dictionary.tokens_for_text(&chars[start..end].iter().collect::<String>())
-    })
+    let words: Vec<u32> = sentence.chars().map(u32::from).collect();
+    phrase_segment_ucs4(dictionary, model, &words)
 }
 
 /// [`phrase_segment`] over raw UCS-4 words, including surrogate or
@@ -178,20 +175,30 @@ where
     L: LanguageModel<Token = PhraseToken>,
     L::Error: core::fmt::Display,
 {
-    segment(model, sentence.len(), |start, end| {
-        dictionary.tokens_for_ucs4(&sentence[start..end])
-    })
+    segment(
+        model,
+        sentence.len(),
+        dictionary.phrase_span_searches_are_observable(),
+        |start, end| {
+            let words = &sentence[start..end];
+            (
+                dictionary.tokens_for_ucs4(words),
+                dictionary.phrase_span_continues(words),
+            )
+        },
+    )
 }
 
 fn segment<L, F>(
     model: &L,
     n: usize,
+    observable_searches: bool,
     mut tokens_for: F,
 ) -> Result<(bool, Vec<PhraseToken>), EngineError>
 where
     L: LanguageModel<Token = PhraseToken>,
     L::Error: core::fmt::Display,
-    F: FnMut(usize, usize) -> Vec<PhraseToken>,
+    F: FnMut(usize, usize) -> (Vec<PhraseToken>, bool),
 {
     let null = PhraseToken::new(0);
     let mut result = vec![null; n];
@@ -205,7 +212,7 @@ where
     });
 
     for i in 0..n {
-        if steps[i].content.is_empty() {
+        if steps[i].content.is_empty() && !observable_searches {
             continue;
         }
         // The unigram branch's from-node: the step's best, evaluated
@@ -219,8 +226,11 @@ where
         // 255-302`). A later span's bad gram must not hide an earlier
         // span's refusal.
         for (end, step) in steps.iter_mut().enumerate().take(upper + 1).skip(i + 1) {
-            let tokens = tokens_for(i, end);
+            let (tokens, continued) = tokens_for(i, end);
             if tokens.is_empty() {
+                if !continued {
+                    break;
+                }
                 continue;
             }
             let mut unigrams = Vec::new();
@@ -260,6 +270,9 @@ where
                         poss: (f64::from(from.poss) + probability.ln()) as f32,
                     });
                 }
+            }
+            if !continued {
+                break;
             }
         }
     }

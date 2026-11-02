@@ -99,11 +99,35 @@ fn build_columns(
 /// read as 1) or `Some` with a nonzero matched count; an incomplete key
 /// is expanded over its completions like the n-best span scan, since the
 /// pin's `pinyin_compare_with_tones` accepts every final for one.
-fn pronounces<D>(dictionary: &D, key: SyllableKey, token: PhraseToken) -> Result<bool, EngineError>
+fn pronounces<D>(dictionary: &D, key: MatrixKey, token: PhraseToken) -> Result<bool, EngineError>
 where
     D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
     D::Error: core::fmt::Display,
 {
+    match dictionary
+        .phrase_item_pronunciations(token)
+        .map_err(|error| EngineError::Scoring(ScoringError::Dictionary(error.to_string())))?
+    {
+        oxpinyin_core::PhraseItemRead::Item(rows) => {
+            let Some(query) = oxpinyin_core::ChewingKey::from_pinyin(key.key().text()) else {
+                return Ok(false);
+            };
+            let query = [query.with_tone(key.tone())];
+            let total = rows
+                .iter()
+                .fold(0_u32, |sum, (_, freq)| sum.wrapping_add(*freq));
+            let matched = rows
+                .iter()
+                .filter(|(stored, _)| crate::nbest::reading_matches(&query, stored))
+                .fold(0_u32, |sum, (_, freq)| sum.wrapping_add(*freq));
+            // phrase_index.h:141-162: wrapping guint32 sums, then gfloat
+            // division; the caller compares against FLT_EPSILON.
+            return Ok(total != 0 && matched as f32 / total as f32 >= f32::EPSILON);
+        }
+        oxpinyin_core::PhraseItemRead::NoItem => return Ok(false),
+        oxpinyin_core::PhraseItemRead::Unsupported => {}
+    }
+    let key = key.key();
     let keeps = |entries: Vec<PhraseEntry>| {
         entries.iter().any(|entry| {
             entry.token() == token && !matches!(entry.pronunciation_possibility(), Some((0, _)))
@@ -165,7 +189,7 @@ where
         let Some(&token) = tokens.get(length) else {
             continue;
         };
-        if !pronounces(dictionary, key.key(), token)? {
+        if !pronounces(dictionary, *key, token)? {
             continue;
         }
         if newstart > offset {
@@ -209,11 +233,36 @@ where
     D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
     D::Error: core::fmt::Display,
 {
+    character_offset_with_walk_over_keys(
+        input, parsed_len, keys, separators, dictionary, phrase, offset,
+    )
+    .map(|(count, _)| count)
+}
+
+/// The character offset together with whether the recursive walk ran.
+/// Facades use the second value to preserve the caller's output on an
+/// early refusal without re-reading the phrase DBM.
+///
+/// # Errors
+/// As [`character_offset_over_keys`].
+pub fn character_offset_with_walk_over_keys<D>(
+    input: &[u8],
+    parsed_len: usize,
+    keys: &[MatrixKey],
+    separators: bool,
+    dictionary: &D,
+    phrase: &oxpinyin_core::PhraseText,
+    offset: usize,
+) -> Result<(Option<usize>, bool), EngineError>
+where
+    D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
+    D::Error: core::fmt::Display,
+{
     // `0 == matrix.size()`: no parse ran, or the parse placed no key —
     // `fill_matrix` clears the matrix and returns before sizing it when
     // the key vector is empty (`phonetic_key_matrix.cpp:34-38`).
     if input.is_empty() || keys.is_empty() {
-        return Ok(None);
+        return Ok((None, false));
     }
     if offset > input.len() {
         return Err(EngineError::LookupOffsetOutOfRange {
@@ -226,7 +275,7 @@ where
         return Err(EngineError::ZeroKeyOffsetCheck { offset });
     }
     if phrase.is_empty() {
-        return Ok(None);
+        return Ok((None, false));
     }
 
     // `_pre_compute_tokens`: the first token of each character's
@@ -240,12 +289,12 @@ where
             return Err(EngineError::ReduceTokensCount { count: found.len() });
         }
         let Some(&token) = found.first() else {
-            return Ok(None);
+            return Ok((None, false));
         };
         tokens.push(token);
     }
 
-    walk(dictionary, &columns, &tokens, 0, offset, 0)
+    walk(dictionary, &columns, &tokens, 0, offset, 0).map(|count| (count, true))
 }
 
 #[cfg(test)]

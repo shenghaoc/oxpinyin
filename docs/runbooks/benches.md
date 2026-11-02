@@ -1129,7 +1129,7 @@ tar -cf - --exclude=target --exclude=.git . | docker run --rm -i \
         libpinyin libpinyin-data \
         curl ca-certificates
     # Exact on purpose (#1074): output depends on the Rust version. Keep it equal to the channel in rust-toolchain.toml.
-    curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.97.1 --profile minimal
+    curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.99.1 --profile minimal
     . "$HOME/.cargo/env"
     mkdir -p /src && tar -xf - -C /src && cd /src
     OXPINYIN_BNUM_DATA_DIR=/usr/lib64/libpinyin/data \

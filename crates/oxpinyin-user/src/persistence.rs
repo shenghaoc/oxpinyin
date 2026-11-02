@@ -241,7 +241,9 @@ impl SystemLibrary {
                 .map(|pron| {
                     let keys = pron
                         .keys
-                        .chunks_exact(2)
+                        .as_chunks::<2>()
+                        .0
+                        .iter()
                         .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]))
                         .collect();
                     (keys, pron.freq)
@@ -648,7 +650,9 @@ fn chewing_rows_with_views(
             for pron in item.pronunciations() {
                 let packed: Vec<_> = pron
                     .keys
-                    .chunks_exact(2)
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
                     .map(|b| u16::from_le_bytes([b[0], b[1]]))
                     .collect();
                 if state.indexed.contains(&(token, packed.clone())) {

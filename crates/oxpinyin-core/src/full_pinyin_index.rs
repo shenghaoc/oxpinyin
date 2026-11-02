@@ -49,7 +49,6 @@ impl FullPinyinIndex {
     }
 
     /// All spelling rows in pinned order.
-    #[must_use]
     pub fn entries(
         self,
     ) -> impl ExactSizeIterator<Item = (&'static str, &'static str)> + DoubleEndedIterator + Clone

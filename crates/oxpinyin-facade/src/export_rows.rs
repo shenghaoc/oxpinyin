@@ -194,7 +194,7 @@ enum RowSource<'a> {
 /// `ChewingKey::get_pinyin_string` appends to it (`chewing_key.cpp:47-57`
 /// at 074a2219: the content table's pinyin, then `%d` of a non-zero tone).
 enum Syllables<'a> {
-    Packed(std::slice::ChunksExact<'a, u8>),
+    Packed(std::slice::Iter<'a, [u8; 2]>),
     Chewing(std::slice::Iter<'a, u16>),
     User(std::slice::Iter<'a, PinyinKey>),
 }
@@ -286,7 +286,7 @@ impl ExportRow<'_> {
             RowSource::User { keys, .. } => keys.iter().find_map(|&key| user_key_assert(key)),
             RowSource::Mapped {
                 user: true, keys, ..
-            } => keys.chunks_exact(2).find_map(|bytes| {
+            } => keys.as_chunks::<2>().0.iter().find_map(|bytes| {
                 let key = ChewingKey::from_packed(u16::from_le_bytes([bytes[0], bytes[1]]));
                 (key.tone > MAX_KEY_TONE).then_some(ExportAssert::KeyTone)
             }),
@@ -328,7 +328,7 @@ impl ExportRow<'_> {
 
     fn syllables(&self) -> Syllables<'_> {
         match &self.0 {
-            RowSource::Mapped { keys, .. } => Syllables::Packed(keys.chunks_exact(2)),
+            RowSource::Mapped { keys, .. } => Syllables::Packed(keys.as_chunks::<2>().0.iter()),
             RowSource::Override { keys, .. } => Syllables::Chewing(keys.iter()),
             RowSource::User { keys, .. } => Syllables::User(keys.iter()),
         }
@@ -1295,17 +1295,20 @@ mod phrase_cursor_tests {
     /// store is in memory, #642).
     fn open() -> ContextCore {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/w3");
-        ["db", "kct", "tkt"]
-            .into_iter()
-            .find_map(|ext| {
-                ContextCore::open(
-                    &root.join(ext),
-                    None,
-                    crate::PINYIN_DEFAULT_OPTION_WORD,
-                    UserConfLaw::Pinyin,
-                )
-            })
-            .expect("committed backend fixtures")
+        let extension = if cfg!(feature = "bdb") {
+            "db"
+        } else if cfg!(feature = "kyotocabinet") {
+            "kct"
+        } else {
+            "tkt"
+        };
+        ContextCore::open(
+            &root.join(extension),
+            None,
+            crate::PINYIN_DEFAULT_OPTION_WORD,
+            UserConfLaw::Pinyin,
+        )
+        .expect("committed backend fixtures")
     }
 
     fn user_keys(spellings: &[&str], tone: u8) -> Vec<oxpinyin_user::PinyinKey> {
@@ -1500,7 +1503,9 @@ mod phrase_cursor_tests {
         let pronunciation = item.pronunciation(0).expect("reading");
         let spellings: Vec<&'static str> = pronunciation
             .keys
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|pair| {
                 ChewingKey::from_packed(u16::from_le_bytes([pair[0], pair[1]])).pinyin_spelling()
             })

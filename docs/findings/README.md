@@ -85,6 +85,7 @@ series lives in `../perf/`.
 | [`libpinyin-structures-and-algorithms`](libpinyin-structures-and-algorithms.md) | libpinyin's components, data structures, algorithms and coefficients beside oxpinyin's, with the open gaps | register |
 | [`libpinyin-system-data-formats-2026-09-01`](libpinyin-system-data-formats-2026-09-01.md) | libpinyin system-data formats vs the #269 sysimage — source-level comparison | record (P1 input) |
 | [`live-typing`](live-typing.md) | Findings — live-typing differential (post-choose surfaces no pin gates) | record (W12, parked behaviours) |
+| [`macos-export-baseline`](macos-export-baseline.md) | macOS export baseline — what the shipping libpinyin and libzhuyin dylibs export before the tkrzw cxx rebinding (#1529); also records that the release dylibs fail `dlopen` on macOS 27.2 | record (2026-11-02 UTC; 0 missing, 0 extra on both libraries) |
 | [`matrix-split-tables`](matrix-split-tables.md) | Matrix split tables SPEC | frozen |
 | [`model-provenance`](model-provenance.md) | Model and table provenance | policy (model20 not redistributable) |
 | [`option-bits`](option-bits.md) | Findings — option bits | record (W10 Phase 0) |
@@ -135,6 +136,7 @@ series lives in `../perf/`.
 | [`superseded-tooling-prs`](superseded-tooling-prs.md) | Retired tooling PRs #836, #837 and #842 — exact revisions, recovered requirements, test cases, measurement definitions and findings | historical (closed unmerged 2026-10-18 UTC; branches and PR refs preserved) |
 | [`tkrzw-distro-compat`](tkrzw-distro-compat.md) | Debian now ships libpinyin on tkrzw; Ubuntu's tkrzw silently corrupts records | record (distro matrix; amended 2026-10-05 — tkrzw 1.0.34 fixes the sentinel defect upstream; what a defect-1 library does to the backend before and after #621) |
 | [`tkrzw-langc-exception-classification`](tkrzw-langc-exception-classification.md) | Findings — tkrzw C-API exception classification divergence | ruled accepted |
+| [`tkrzw-native-call-inventory`](tkrzw-native-call-inventory.md) | Pin concrete classes, native calls, ownership, status/exception paths and Rust mapping before the CXX transition | source inventory and bridge proposal (#1529 / #1516; no implementation or policy closure) |
 | [`tooling-consolidation-phase1`](tooling-consolidation-phase1.md) | Developer-tooling consolidation — Phase 1 inventory, capability map, target architecture, migration roadmap and the maintainer's rulings D1–D11 (tree `e67f19d1`) | historical (Stage 0 landed 2026-10-16 UTC; architecture amended 2026-10-18 UTC; Rust plan and Stages 1–13 superseded) |
 | [`tooling-consolidation-phase1-inventory`](tooling-consolidation-phase1-inventory.md) | Appendix A — the 290 tooling inventory records (the migration ledger) | record (tree `e67f19d1`; destination language amended 2026-10-18 UTC) |
 | [`tooling-consolidation-phase1-summary-table`](tooling-consolidation-phase1-summary-table.md) | Appendix A1 — one row per inventory record with its proposed destination | record (tree `e67f19d1`; destination legend amended 2026-10-18 UTC) |

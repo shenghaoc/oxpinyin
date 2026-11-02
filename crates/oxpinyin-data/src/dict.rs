@@ -241,7 +241,9 @@ impl PhraseIndexTable {
         };
         Ok(Some(
             value
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .map(|word| u32::from_le_bytes([word[0], word[1], word[2], word[3]]))
                 .collect(),
         ))
@@ -311,6 +313,24 @@ pub struct SystemDictionary {
 }
 
 impl SystemDictionary {
+    /// Whether the main pinyin-table attach failed.
+    #[must_use]
+    pub fn pinyin_attachment_failed(&self) -> bool {
+        self.pinyin.attachment_failed()
+    }
+
+    /// Whether the main phrase-table attach failed.
+    #[must_use]
+    pub fn phrase_attachment_failed(&self) -> bool {
+        self.phrase.attachment_failed()
+    }
+
+    /// Finalizes failed main indexes in the pin's pinyin/phrase order.
+    pub fn finish_failed_attachments(&self) {
+        self.pinyin.finish_failed_attachment();
+        self.phrase.finish_failed_attachment();
+    }
+
     /// Opens the default facade from the backend's native system data
     /// directory — whether a libpinyin build or `oxpinyin-utils`' ports
     /// of its programs wrote it
@@ -352,6 +372,7 @@ impl SystemDictionary {
             library_dir,
             SYSTEM_LIBRARY_FILES,
             false,
+            false,
         )
     }
 
@@ -366,6 +387,23 @@ impl SystemDictionary {
     ///
     /// As [`Self::open`].
     pub fn open_with(system_dir: &Path, conf: &TableConf) -> Result<Self, DictError> {
+        Self::open_with_mode(system_dir, conf, false)
+    }
+
+    /// Opens the runtime's system tables, retaining failed BDB/KC attaches.
+    /// Tkrzw keeps its strict open until the concrete-class rebinding.
+    ///
+    /// # Errors
+    /// Returns configuration/chunk errors and failures before native attach.
+    pub fn attach_with(system_dir: &Path, conf: &TableConf) -> Result<Self, DictError> {
+        Self::open_with_mode(system_dir, conf, true)
+    }
+
+    fn open_with_mode(
+        system_dir: &Path,
+        conf: &TableConf,
+        retain_failed: bool,
+    ) -> Result<Self, DictError> {
         let stems: Vec<(u8, &FileName)> = conf
             .system_libraries()
             .filter_map(|(index, row)| row.system.as_ref().map(|file| (index, file)))
@@ -382,6 +420,7 @@ impl SystemDictionary {
             system_dir,
             &stems,
             true,
+            retain_failed,
         )?;
         dict.user_nibbles = conf
             .user_libraries()
@@ -395,9 +434,22 @@ impl SystemDictionary {
         library_dir: &Path,
         stems: &[(u8, impl AsRef<std::ffi::OsStr>)],
         stop_at_header_fault: bool,
+        retain_failed: bool,
     ) -> Result<Self, DictError> {
-        let pinyin = open_tree(pinyin_index)?;
-        let phrase = open_phrase_table(phrase_index)?;
+        let (pinyin, phrase) = if retain_failed {
+            (
+                ChewingTable::new(crate::chewing_table::DefaultDbm::attach(
+                    pinyin_index,
+                    false,
+                )?),
+                PhraseTable::new(crate::chewing_table::DefaultDbm::attach(
+                    phrase_index,
+                    false,
+                )?),
+            )
+        } else {
+            (open_tree(pinyin_index)?, open_phrase_table(phrase_index)?)
+        };
         let libraries = if stop_at_header_fault {
             PhraseLibraries::open_to_header_fault(library_dir, stems)?
         } else {
@@ -609,6 +661,11 @@ impl SystemDictionary {
     /// answers `false` and leaves the error to that walk.
     #[must_use]
     pub fn overlong_extension_gate(&self, syllables: &[SyllableKey]) -> bool {
+        if self.pinyin.attachment_failed() {
+            // This is an auxiliary Rust probe. The later suggestion makes
+            // the one native call the pin makes, including its diagnostic.
+            return false;
+        }
         let Some(keys) = syllables_to_chewing_keys(syllables) else {
             return false;
         };
@@ -951,6 +1008,49 @@ fn addon_rows(conf: &TableConf) -> Vec<TableRow> {
 }
 
 impl AddonDictionary {
+    /// Attaches both runtime addon indexes even when a file is absent.
+    /// Zhuyin must continue to use [`Self::without_indexes`].
+    ///
+    /// # Errors
+    /// Returns failures before native attach; tkrzw keeps its old opens.
+    pub fn attach_with(system_dir: &Path, conf: &TableConf) -> Result<Self, DictError> {
+        #[cfg(any(feature = "bdb", feature = "kyotocabinet"))]
+        {
+            let path = |kind: SystemDbm| {
+                oxpinyin_input::path::build_path(
+                    system_dir,
+                    std::ffi::OsStr::new(&kind.file_name()),
+                )
+            };
+            Ok(Self {
+                pinyin: Some(ChewingTable::new(crate::chewing_table::DefaultDbm::attach(
+                    &path(SystemDbm::AddonPinyinIndex),
+                    false,
+                )?)),
+                phrase: Some(PhraseTable::new(crate::chewing_table::DefaultDbm::attach(
+                    &path(SystemDbm::AddonPhraseIndex),
+                    false,
+                )?)),
+                libraries: PhraseLibraries::empty(),
+                rows: addon_rows(conf),
+            })
+        }
+        #[cfg(feature = "tkrzw")]
+        {
+            Self::open_with(system_dir, conf)
+        }
+    }
+
+    /// Finalizes failed addon pinyin then phrase attachments.
+    pub fn finish_failed_attachments(&self) {
+        if let Some(table) = &self.pinyin {
+            table.finish_failed_attachment();
+        }
+        if let Some(table) = &self.phrase {
+            table.finish_failed_attachment();
+        }
+    }
+
     /// Opens the addon DBM pair from `system_dir` when present; no
     /// library is loaded yet.
     ///
@@ -1194,7 +1294,9 @@ impl AddonDictionary {
         let Some(pinyin) = self.pinyin.as_ref() else {
             return Ok(());
         };
-        if self.libraries.is_empty() || syllables.is_empty() {
+        // pinyin.cpp:2237 searches the addon index even without a loaded
+        // addon library. A retained failed handle must receive that read.
+        if (self.libraries.is_empty() && !pinyin.attachment_failed()) || syllables.is_empty() {
             return Ok(());
         }
         let Some(keys) = syllables_to_chewing_keys(syllables) else {
@@ -1220,7 +1322,9 @@ impl AddonDictionary {
         let Some(pinyin) = self.pinyin.as_ref() else {
             return Ok(false);
         };
-        if self.libraries.is_empty() {
+        // This is the auxiliary continuation probe after the real search;
+        // an unopened object already answered SEARCH_NONE there.
+        if self.libraries.is_empty() || pinyin.attachment_failed() {
             return Ok(false);
         }
         if syllables.is_empty() {

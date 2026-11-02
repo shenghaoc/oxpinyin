@@ -14,8 +14,8 @@ name: Store backends
 # suite through separate builds, one per peer.
 #
 # Seven jobs:
-#   - changes is the path gate. It runs first on every push and PR to
-#     main and sets `run` when tools/bisection/cells-for-diff.py selects
+#   - changes is the path gate. It runs first when ci.yml calls this
+#     workflow and sets `run` when tools/bisection/cells-for-diff.py selects
 #     all three cells for the event's base...HEAD (docs/runbooks/verification.md,
 #     rule 2, the rule local verification uses) or the diff touches
 #     this workflow's own infrastructure, listed in the gate step. A missing
@@ -23,8 +23,7 @@ name: Store backends
 #     The other jobs need it and run only when `run` is true; when it is
 #     false they report `skipped`, which still reaches the aggregate.
 #   - store-features is a matrix over all three peer backends. Each child
-#     runs the workspace's backend-relevant crates (everything but the
-#     backend-independent KMM package) under exactly ONE peer, on its
+#     lints all workspace targets and tests the workspace under exactly ONE peer, on its
 #     own runner, so the sweeps run in PARALLEL (fail-fast: false,
 #     max-parallel: 4) instead of sequentially inside one job. The tkrzw
 #     child repeats the default that ci.yml's Linux test job also runs; the
@@ -45,15 +44,12 @@ name: Store backends
 #     architecturally impossible under exactly-one-backend. It then runs
 #     `cargo doc --no-deps --workspace` once per peer, rustdoc warnings
 #     denied.
-#   - store-backends-gate is this workflow's aggregate status check and the
-#     context the ruleset names once it is required. It runs no tests; it
+#   - store-backends-gate is this workflow's aggregate status check,
+#     required through ci-aggregate. It runs no tests; it
 #     fails when the changes job did not succeed, passes without running
 #     anything when the path gate says no relevant path changed, and
 #     otherwise fails unless every backend child, the backend-matrix job AND
-#     all three sanitizer jobs succeeded. Its display name tracks the peer
-#     set. Berkeley DB is the workspace default, and the pure-Rust peer left
-#     on 2026-09-20; the name is the ruleset context, so change both
-#     together.
+#     all three sanitizer jobs succeeded.
 #   - tkrzw-sanitizers, bdb-sanitizers and kc-sanitizers each run one
 #     backend's gate through `python -m tools.dev sanitize <backend>`, the command
 #     `just sanitize` runs locally, on the date-pinned nightly that
@@ -66,10 +62,9 @@ name: Store backends
 #     opens it through that FFI, so the instrumentation is load-bearing,
 #     not precautionary.
 #
-# store-backends-gate becomes a required status check once the maintainer
-# adds it to the repository ruleset; until then branch protection requires
-# only ci.yml's `ci-aggregate`. The backend, matrix and sanitizer jobs
-# still do the work; the gate only aggregates their results.
+# ci.yml calls this workflow once and requires its result in ci-aggregate.
+# The backend, matrix and sanitizer jobs still do the work; this workflow's
+# gate aggregates their results without a separate required-check setting.
 #
 # ROLLING TOOLCHAIN, deliberately unpinned: the jobs run inside
 # debian:testing because oxpinyin aims to be a viable libpinyin
@@ -91,13 +86,9 @@ name: Store backends
 # differentials and the model cache live on developer machines only.
 
 on:
-  # No paths filter here: the gate must report on every push and PR to
-  # main. The selection lives in the changes job, which decides whether
-  # the jobs that do the work run.
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+  # ci.yml owns push/PR triggers and cancellation; independent triggers here
+  # would run the same backend jobs twice. Selection stays in changes.
+  workflow_call:
 
 permissions:
   contents: read
@@ -112,14 +103,6 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
   DEBIAN_FRONTEND: noninteractive
-
-# Each push to main gets its own group and cancels nothing: a docs-only
-# push compares against github.event.before and must not cancel a running
-# code-push validation before passing on its own. PR runs can safely cancel
-# the PR's older run because they compare against the PR base.
-concurrency:
-  group: store-backends-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # The path gate as a job: one run flag for the whole workflow. Runs first
@@ -192,6 +175,9 @@ jobs:
           # gate's own script.
           python3 tools/bisection/cells-for-diff.py --run-flag \
             --also .github/workflows/store-backends.yml \
+            --also .github/workflows/ci.yml \
+            --also tools/dev/ci_tree.py \
+            --also tools/dev/ci_tree.test.py \
             --also tools/bisection/cells-for-diff.py \
             --also tools/bdb \
             --also tools/tkrzw \
@@ -205,10 +191,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.run == 'true' && (needs.changes.outputs.reuse != 'true' || github.event_name == 'push')
     # One matrix child per backend, each on its own runner:
-    # every such backend is
-    # exercised through the backend-relevant workspace (the seven
-    # backend-independent training crates are excluded — see the test
-    # step) — a backend that "passes" only in the store's own unit tests
+    # every such backend is exercised through the whole workspace — a
+    # backend that "passes" only in the store's own unit tests
     # and never reaches the decode path does not count. The
     # alternate-backend children name the store's feature with
     # member/feature syntax because the root manifest is virtual. The
@@ -276,6 +260,12 @@ jobs:
       - name: Provision tkrzw (built at the setup.sh revision and cached)
         if: matrix.backend == 'tkrzw'
         uses: ./.github/actions/tkrzw
+
+      - name: Clippy for this backend
+        if: needs.changes.outputs.reuse != 'true'
+        env:
+          BACKEND: ${{ matrix.backend }}
+        run: cargo clippy --locked --workspace --all-targets --no-default-features --features "$BACKEND" -- -D warnings
 
       # This child runs exactly one of the fixed cargo invocations, selected
       # by the matrix backend through a case over a closed set (fail-closed
@@ -510,15 +500,14 @@ jobs:
         run: python3 tools/dev/ci_tree.py refresh backend-matrix
 
   store-backends-gate:
-    # Aggregate status check and the context the ruleset names once it is
-    # required. It builds and tests nothing; it has three outcomes: red when
+    # Aggregate checked by the caller's required ci-aggregate. It builds and
+    # tests nothing; it has three outcomes: red when
     # the changes job did not succeed; green without running anything when
     # the path gate says no relevant path changed; and otherwise green only
     # when every upstream job succeeded. Via needs.<job>.result, a matrix
     # upstream is success only when EVERY matrix child succeeded, and a
     # skipped upstream is not success, so a skipped backend, matrix or
-    # sanitizer job fails the gate. The display name is the ruleset context;
-    # change it only together with the ruleset.
+    # sanitizer job fails the gate.
     name: store backends (kyotocabinet / tkrzw / bdb)
     runs-on: *ubuntu
     if: ${{ !cancelled() }}

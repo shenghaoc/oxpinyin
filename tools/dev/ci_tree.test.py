@@ -163,19 +163,39 @@ class EvidenceTests(unittest.TestCase):
         api = API()
         profile = ci_tree.WORKFLOWS['store']
         latest = run_fixture()
-        latest.update(id=101, path=profile.path)
-        jobs = [dict(name=name, status='completed', conclusion='skipped') for name in profile.skipped_lanes]
-        jobs += [dict(name=profile.aggregate, status='completed', conclusion='success'),
-                 dict(name='reused tree ' + TREE + ' from run 100', status='completed', conclusion='success')]
+        latest.update(id=101, path=profile.caller)
+        jobs = [dict(name=profile.job_prefix + name, status='completed', conclusion='skipped') for name in profile.skipped_lanes]
+        jobs += [dict(name=profile.job_prefix + profile.aggregate, status='completed', conclusion='success'),
+                 dict(name=profile.job_prefix + 'reused tree ' + TREE + ' from run 100', status='completed', conclusion='success')]
         source = run_fixture()
-        source['path'] = profile.path
+        source['path'] = profile.caller
         original_get = api.get
         api.get = lambda path: source if path == '/actions/runs/100' else original_get(path)
-        api.jobs = [successful_job(name)
+        api.jobs = [successful_job(profile.job_prefix + name)
                     for name in (*profile.lanes, profile.aggregate, 'tested tree ' + TREE)]
         self.assertEqual(ci_tree.full_source(api, latest, jobs, profile, TREE, 1, 2, 200, now=NOW), 100)
         jobs[0]['conclusion'] = 'failure'
         self.assertIsNone(ci_tree.full_source(api, latest, jobs, profile, TREE, 1, 2, 200, now=NOW))
+
+    def test_called_backend_evidence_uses_caller_run_and_only_its_own_jobs(self):
+        profile = ci_tree.WORKFLOWS['store']
+        api = API()
+        backend_jobs = [successful_job(profile.job_prefix + name)
+                        for name in (*profile.lanes, profile.aggregate, 'tested tree ' + TREE)]
+        api.jobs += backend_jobs
+        event = {'pull_request': pr_fixture()}
+        with mock.patch.object(api, 'pages', wraps=api.pages) as pages:
+            self.assertEqual(ci_tree.find_evidence(api, profile, event, 'pull_request',
+                                                   TREE, 1, 200, now=NOW), 100)
+            self.assertTrue(any(call.args[0].startswith('/actions/workflows/ci.yml/runs?')
+                                for call in pages.call_args_list))
+        for job in backend_jobs:
+            job['conclusion'] = 'failure'
+            self.assertFalse(ci_tree.complete_jobs(api.jobs, profile, TREE, NOW))
+            job['conclusion'] = 'success'
+        api.run['path'] = profile.path
+        self.assertIsNone(ci_tree.find_evidence(api, profile, event, 'pull_request',
+                                               TREE, 1, 200, now=NOW))
 
     def test_age_boundary_is_measured_from_each_original_job_start(self):
         for index in range(len(job_fixture())):
@@ -346,7 +366,8 @@ class MigratedWorkflowTests(unittest.TestCase):
         gate = gate.split('>> "$GITHUB_OUTPUT"', 1)[0]
         also = re.findall(r'--also (\S+)', gate)
         self.assertEqual(also, [
-            '.github/workflows/store-backends.yml', 'tools/bisection/cells-for-diff.py',
+            '.github/workflows/store-backends.yml', '.github/workflows/ci.yml',
+            'tools/dev/ci_tree.py', 'tools/dev/ci_tree.test.py', 'tools/bisection/cells-for-diff.py',
             'tools/bdb', 'tools/tkrzw', '.github/actions/tkrzw', 'tools/dev/check.py', 'tools/dev/test_runner.py',
             'rust-toolchain.toml'])
         for path in also:
@@ -405,7 +426,7 @@ class RefreshTests(unittest.TestCase):
 
 
 class AggregateTests(unittest.TestCase):
-    def invoke_main(self, workflow, event, outputs, results, gated_results=None):
+    def invoke_main(self, workflow, event, outputs, results, gated_results=None, required_results=None):
         profile = ci_tree.WORKFLOWS[workflow]
         needs = {job: {'result': results[name]} for name, job in zip(profile.lanes, profile.needs)}
         outputs = {'ship': 'false', **outputs}
@@ -413,10 +434,24 @@ class AggregateTests(unittest.TestCase):
             needs[job] = {'result': (gated_results or {}).get(
                 name, 'success' if outputs[flag] == 'true' else 'skipped')}
         needs['changes'] = {'result': 'success', 'outputs': outputs}
+        needs.update({job: {'result': (required_results or {}).get(job, 'success')}
+                      for job in profile.required})
         with mock.patch.object(sys, 'argv', ['ci_tree.py', 'aggregate', workflow]), \
                 mock.patch.dict(ci_tree.os.environ, {'NEEDS': json.dumps(needs), 'EVENT_NAME': event}, clear=True), \
                 contextlib.redirect_stdout(io.StringIO()):
             return ci_tree.main()
+
+    def test_ci_requires_called_backends_even_when_other_lanes_skip_or_reuse(self):
+        for gated, reuse in [('true', 'false'), ('false', 'false'), ('true', 'true')]:
+            results = {name: 'success' if gated == 'true' and reuse == 'false' else 'skipped'
+                       for name in PROFILE.lanes}
+            for backend_result in ('failure', 'cancelled', 'skipped', None):
+                with self.subTest(gated=gated, reuse=reuse, backend_result=backend_result):
+                    self.assertEqual(self.invoke_main('ci', 'pull_request',
+                        {'run': gated, 'reuse': reuse}, results,
+                        required_results={'store-backends': backend_result}), 1)
+            self.assertEqual(self.invoke_main('ci', 'pull_request',
+                {'run': gated, 'reuse': reuse}, results), 0)
 
 
     def test_main_fails_on_a_failed_own_gate_job(self):
@@ -491,7 +526,7 @@ class AggregateTests(unittest.TestCase):
         job = workflow.split('\n  shipping-sizes:\n', 1)[1].split('\n  ci-aggregate:', 1)[0]
         condition = re.search(r'^    if: (.*)$', job, re.M)[1]
         self.assertEqual(condition, "needs.changes.outputs.ship == 'true'")
-        self.assertRegex(workflow, r'needs:\n\s+\[changes, lint, test, deny, shipping-sizes\]')
+        self.assertRegex(workflow, r'needs:\n\s+\[changes, lint, test, deny, shipping-sizes, store-backends\]')
 
     def test_invalid_gate_never_passes(self):
         results = dict.fromkeys(PROFILE.lanes, 'skipped')

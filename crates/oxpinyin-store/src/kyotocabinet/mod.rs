@@ -91,6 +91,44 @@ pub struct KcStore {
     db: Db,
 }
 
+pub(crate) struct KcUnopenedHandle {
+    db: Db,
+}
+
+pub(crate) fn open_system(
+    path: &Path,
+    hash: bool,
+) -> Result<Result<KcStore, KcUnopenedHandle>, StoreError> {
+    let kind = if hash { DbType::Hash } else { DbType::Tree };
+    let (db, opened) = Db::open_retained(path, kind, true, false, "")?;
+    Ok(if opened {
+        Ok(KcStore { db })
+    } else {
+        Err(KcUnopenedHandle { db })
+    })
+}
+
+impl KcUnopenedHandle {
+    pub(crate) fn read(&self, key: &[u8]) {
+        // Every failed system read ends at check: no body get or cursor
+        // follows (ngram_kyotodb.cpp:131-134 at 074a2219).
+        let _ = self.db.check(key);
+    }
+}
+
+impl Drop for KcUnopenedHandle {
+    fn drop(&mut self) {
+        // The frozen FFI lifetime change for #1516: preserve the failed
+        // object until reset, synchronize once, then Db closes/deletes it.
+        // Audited separately at pin 074a2219: ngram_kyotodb.cpp:43-48,
+        // chewing_large_table2_kyotodb.cpp:65-73 (main/addon pinyin),
+        // phrase_large_table3_kyotodb.cpp:76-86 (main/addon phrase), and
+        // punct_table_kyotodb.cpp:37-47. Their following entry-cache cleanup
+        // differs, but each failed native DB has this same call order.
+        self.db.synchronize_failed_system_attachment();
+    }
+}
+
 /// Hidden bench entry points.
 ///
 /// Reserved for measurement work in this crate's `benches/` directory;
@@ -758,6 +796,61 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_file(&self.0);
         }
+    }
+
+    #[test]
+    fn retained_failed_system_attachments_synchronize_before_close_once() {
+        use super::ffi::{NativeTeardownCall, take_native_teardown_calls};
+        use crate::SystemAttachment;
+
+        // Audit each pin class, rather than inferring one from another:
+        // chewing_large_table2_kyotodb.cpp:65-73 (main/addon pinyin),
+        // phrase_large_table3_kyotodb.cpp:76-86 (main/addon phrase),
+        // ngram_kyotodb.cpp:43-48 (HashDB), punct_table_kyotodb.cpp:37-47.
+        for (table, hash) in [
+            ("system-pinyin", false),
+            ("system-phrase", false),
+            ("system-bigram", true),
+            ("addon-pinyin", false),
+            ("addon-phrase", false),
+            ("punctuation", false),
+        ] {
+            let missing = Temp::new(table, "missing");
+            take_native_teardown_calls();
+            let SystemAttachment::Unopened(db) = SystemAttachment::open(&missing.0, hash).unwrap()
+            else {
+                panic!("missing {table} unexpectedly opened");
+            };
+            assert!(take_native_teardown_calls().is_empty(), "{table}");
+            db.finish();
+            let calls = take_native_teardown_calls();
+            let handle = calls.first().expect("native teardown").0;
+            assert_eq!(
+                calls,
+                [
+                    (handle, NativeTeardownCall::Synchronize(false)),
+                    (handle, NativeTeardownCall::Close),
+                    (handle, NativeTeardownCall::Delete),
+                ],
+                "{table}: native calls on the same retained object"
+            );
+            db.finish();
+            drop(db);
+            assert!(take_native_teardown_calls().is_empty(), "{table}");
+        }
+    }
+
+    #[test]
+    fn ordinary_read_only_sync_does_not_call_native_synchronize() {
+        use super::ffi::take_native_teardown_calls;
+
+        let file = Temp::new("readonly-sync", "kct");
+        drop(KcStore::create(&file.0).unwrap());
+        let store = KcStore::open_read_only(&file.0).unwrap();
+        take_native_teardown_calls();
+        store.db.sync(false).unwrap();
+        store.db.sync(true).unwrap();
+        assert!(take_native_teardown_calls().is_empty());
     }
 
     #[test]

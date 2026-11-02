@@ -252,10 +252,20 @@ fn open_refuses_a_directory_without_table_conf() {
 }
 
 #[test]
-fn open_refuses_a_directory_without_the_dbms() {
+fn missing_pinyin_index_follows_backend_attach() {
     let tmp = scratch_dir("oxpinyin-runtime-empty-");
     let dir = tmp.path().to_path_buf();
-    std::fs::copy(w3_dir().join("table.conf"), dir.join("table.conf")).expect("table.conf");
+    // Keep the chunks valid: absent chunks reach an independent pin
+    // assertion after the ignored DBM attach (#764).
+    for entry in std::fs::read_dir(w3_dir()).expect("w3 fixture") {
+        let entry = entry.expect("w3 entry");
+        if entry.file_name().as_os_str()
+            != std::ffi::OsStr::new(&oxpinyin_data::SystemDbm::PinyinIndex.file_name())
+        {
+            std::fs::copy(entry.path(), dir.join(entry.file_name())).expect("copy");
+        }
+    }
+    #[cfg(feature = "tkrzw")]
     match Runtime::open(&dir, None) {
         Err(OpenError::Missing(path)) => {
             assert!(
@@ -264,8 +274,10 @@ fn open_refuses_a_directory_without_the_dbms() {
             );
         }
         Err(other) => panic!("expected Missing, got {other}"),
-        Ok(_) => panic!("an empty dir must not open"),
+        Ok(_) => panic!("tkrzw awaits the concrete-class binding"),
     }
+    #[cfg(any(feature = "bdb", feature = "kyotocabinet"))]
+    assert!(Runtime::open(&dir, None).is_ok());
 }
 
 #[test]

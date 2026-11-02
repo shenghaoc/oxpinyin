@@ -352,6 +352,23 @@ pub trait Dictionary {
         self.lookup_into_flagged(syllables, out)
     }
 
+    /// Optional single-search candidate path, including tones and the
+    /// continuation bit. `Some((unreadable, continued))` replaces the
+    /// separate lookup, tone filtering and prefix probe. Implementations
+    /// use this when repeating a native read would itself be observable.
+    /// `None` preserves the ordinary candidate path.
+    ///
+    /// # Errors
+    /// Returns a dictionary read or decoding error.
+    fn candidate_search_into(
+        &self,
+        _syllables: &[Self::Syllable],
+        _tones: &[u8],
+        _out: &mut Vec<Self::Entry>,
+    ) -> Result<Option<(bool, bool)>, Self::Error> {
+        Ok(None)
+    }
+
     /// Addon candidate-window lookup, with the same pricing distinction.
     ///
     /// # Errors
@@ -420,6 +437,18 @@ pub trait Dictionary {
             text.push(character);
         }
         self.tokens_for_text(&text)
+    }
+
+    /// Whether phrase segmentation must retain native search calls even
+    /// at unreachable steps. Failed native handles can emit diagnostics.
+    fn phrase_span_searches_are_observable(&self) -> bool {
+        false
+    }
+
+    /// Continuation after the preceding exact phrase-span search. This
+    /// auxiliary query must not repeat that search on a failed handle.
+    fn phrase_span_continues(&self, _ucs4: &[u32]) -> bool {
+        true
     }
 
     /// Addon-facade lookup pass, empty for every existing implementor.
@@ -725,6 +754,15 @@ impl<D: Dictionary + ?Sized> Dictionary for &D {
         (**self).lookup_candidates_into(syllables, out)
     }
 
+    fn candidate_search_into(
+        &self,
+        syllables: &[Self::Syllable],
+        tones: &[u8],
+        out: &mut Vec<Self::Entry>,
+    ) -> Result<Option<(bool, bool)>, Self::Error> {
+        (**self).candidate_search_into(syllables, tones, out)
+    }
+
     fn lookup_addon_candidates_into(
         &self,
         syllables: &[Self::Syllable],
@@ -743,6 +781,14 @@ impl<D: Dictionary + ?Sized> Dictionary for &D {
 
     fn tokens_for_ucs4(&self, ucs4: &[u32]) -> Vec<PhraseToken> {
         (**self).tokens_for_ucs4(ucs4)
+    }
+
+    fn phrase_span_searches_are_observable(&self) -> bool {
+        (**self).phrase_span_searches_are_observable()
+    }
+
+    fn phrase_span_continues(&self, ucs4: &[u32]) -> bool {
+        (**self).phrase_span_continues(ucs4)
     }
 
     fn lookup_addon(&self, syllables: &[Self::Syllable]) -> Result<Vec<Self::Entry>, Self::Error> {
@@ -1545,6 +1591,11 @@ pub trait LanguageModel {
         self.nbest_step_costs_in_row(prev, token, row)
     }
 
+    /// Starts a phonetic span's predecessor load. Ordinary stores may
+    /// reuse a row across spans; a retained failed native handle must be
+    /// called again for each span (phonetic_lookup.h:588-599 at 074a2219).
+    fn begin_successor_span(&self, _row: &mut NbestStepRow) {}
+
     /// The merged row of one n-best predecessor, owned by this step.
     /// [`NbestSuccessors::Miss`] is a loaded miss of both grams; `None`
     /// asks callers to retain the ordinary per-candidate scoring path for
@@ -1619,6 +1670,10 @@ impl NbestStepCosts {
 impl<L: LanguageModel + ?Sized> LanguageModel for &L {
     type Token = L::Token;
     type Error = L::Error;
+
+    fn begin_successor_span(&self, row: &mut NbestStepRow) {
+        (**self).begin_successor_span(row);
+    }
 
     fn score(
         &self,

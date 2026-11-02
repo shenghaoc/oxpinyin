@@ -401,8 +401,9 @@ impl InstanceCore {
     /// ([`oxpinyin_engine::character_offset_over_keys`]) over
     /// [`Self::mode_keys`]'s dispatch: plain full pinyin walks the
     /// session's own scan matrix; the other modes walk their parse's keys
-    /// over the stored original input. `Ok(Some(n))` is the pin's `true`
-    /// with the character count, `Ok(None)` its graceful `false`.
+    /// over the stored original input. The first result is the character
+    /// count on success, or `None` on refusal. The second says whether
+    /// the walk ran and the C facade must write its output parameter.
     ///
     /// # Errors
     ///
@@ -412,9 +413,9 @@ impl InstanceCore {
         &self,
         phrase: &oxpinyin_core::PhraseText,
         offset: usize,
-    ) -> Result<Option<usize>, EngineError> {
+    ) -> Result<(Option<usize>, bool), EngineError> {
         let Some(source) = self.span_source() else {
-            return self.session.character_offset(phrase, offset);
+            return self.session.character_offset_with_walk(phrase, offset);
         };
         let (keys, input, separators) = self.mode_keys()?;
         // A key whose canonical spelling is not a vocabulary syllable
@@ -430,7 +431,7 @@ impl InstanceCore {
                 ))
             })
             .collect();
-        oxpinyin_engine::character_offset_over_keys(
+        oxpinyin_engine::character_offset_with_walk_over_keys(
             input,
             source.parsed,
             &keys,
