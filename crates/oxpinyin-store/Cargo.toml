@@ -26,8 +26,9 @@ missing_safety_doc = "deny"
 must_use_candidate = "warn"
 
 [dependencies]
-# The tkrzw backend's Rust/C++ bridge (Rust/C++ interoperability ruling,
-# 2026-11-02): generated glue over the pin's concrete tkrzw classes.
+# The tkrzw and Kyoto Cabinet backends' Rust/C++ bridges (Rust/C++
+# interoperability ruling, 2026-11-02): generated glue over the pin's
+# concrete classes.
 cxx = { version = "1.0.205", optional = true }
 [dev-dependencies]
 # Backend micro-benches (benches/); workspace lock pins 0.8.
@@ -35,12 +36,12 @@ criterion = "0.8"
 
 [build-dependencies]
 bindgen = { workspace = true, optional = true }
-# Compiles the Kyoto Cabinet C++ shim (#1118).
+# The C++ compiler probe both bridges' include handling uses.
 cc = { version = "1.4.3", optional = true }
 # Declares and finds the native backends (#1434); see the metadata below.
 system-deps = { version = "9.0.0", optional = true }
-# Generates and compiles the tkrzw bridge's C++ side, with the semantic
-# adapter in src/tkrzw/adapter.cc.
+# Generates and compiles the bridges' C++ side, with the semantic adapters
+# in src/tkrzw/adapter.cc and src/kyotocabinet/adapter.cc.
 cxx-build = { version = "1.0.205", optional = true }
 
 # One entry per backend, each probed only with its feature. The version is
@@ -77,22 +78,15 @@ default = ["tkrzw"]
 # tkrzw binds the pin's concrete classes through cxx; it needs a C++17
 # compiler and tkrzw's headers, not libclang; `cc` is named for the compiler probe.
 tkrzw = ["dep:cc", "dep:cxx", "dep:cxx-build", "dep:system-deps"]
-# Kyoto Cabinet backend. bindgen is build-time only (it needs libclang);
-# the runtime dependency is the system libkyotocabinet the distro already
-# ships.
-kyotocabinet = ["dep:bindgen", "dep:cc", "dep:system-deps"]
+# Kyoto Cabinet binds the pin's concrete classes through cxx; it needs a
+# C++17 compiler and Kyoto Cabinet's headers, not libclang. The runtime
+# dependency is the system libkyotocabinet the distro already ships.
+kyotocabinet = ["dep:cc", "dep:cxx", "dep:cxx-build", "dep:system-deps"]
 # Berkeley DB backend — libpinyin's original DBM and the third drop-in
 # set. bindgen is build-time only; the runtime dependency is the system
 # libdb 5.3 the distro already ships (Debian libdb-dev, Fedora
 # libdb-devel), the same library that wrote the files it must read.
 bdb = ["dep:bindgen", "dep:system-deps"]
-# `bench-internal` — exposes hidden test/bench-only helpers that would
-# otherwise be `pub(crate)`. Off by default; not part of `default`, not
-# reached by any shipping build. Currently just widens the Kyoto Cabinet
-# open path so the `kyotocabinet_bnum` bench (shenghaoc/oxpinyin#402)
-# can characterise a KC default; nothing in the shipping open path
-# depends on this widening. Never enable this on an artifact that ships.
-bench-internal = []
 
 # backend_matrix: one target per backend (b8aff564 convention), all driving
 # the same benches/support/mod.rs over the store-tier traits. Exactly one is
@@ -112,13 +106,3 @@ required-features = ["kyotocabinet"]
 name = "backend_matrix_bdb"
 harness = false
 required-features = ["bdb"]
-
-# Kyoto Cabinet `#bnum` time-and-space measurement (issue #402). Runs
-# only under the `bench-internal` feature — the tuning knob it drives is
-# reserved for measurements this bench performs, and the shipping open
-# path never accepts a non-default value. Linux-only in practice: the
-# resident-heap column reads `/proc/self/status` VmHWM.
-[[bench]]
-name = "kyotocabinet_bnum"
-harness = false
-required-features = ["kyotocabinet", "bench-internal"]
