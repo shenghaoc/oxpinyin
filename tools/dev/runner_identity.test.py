@@ -166,12 +166,37 @@ class IdentityTests(unittest.TestCase):
                                  identity.Case('leak', ('none',), (template.removesuffix('-'), '{user}', status)),
                                  'none', (None, self.root), self.root, runs)
                 for status in ('0', '0', '4')]
+        self.assertEqual([item.status for item in seen], [0, 0, 4])
         self.assertEqual(seen[0], seen[1])
         self.assertEqual(seen[0].stdout, f'made {template}XXXXXX in {{tmp}}\n'.encode())
         self.assertEqual(seen[0].stderr, b'user={user}\n')
         self.assertEqual(seen[0].left, (template + 'XXXXXX',))
         self.assertEqual(identity.differing(seen[0], seen[2]), ['status'])
         self.assertEqual(list(self.root.glob('leak-*')), [])
+
+    def test_observe_replaces_the_image_without_rewriting_existing_links(self):
+        # A hard link retains the old inode just as a code-signature cache or
+        # an executing image can. Staging must not change that inode's bytes.
+        binary = self.root / 'new-image'
+        binary.write_bytes(b'new executable')
+        binary.chmod(0o751)
+        stage = self.root / 'stage' / 'probe'
+        stage.parent.mkdir()
+        stage.write_bytes(b'old executable')
+        previous = stage.parent / 'previous-image'
+        previous.hardlink_to(stage)
+        ctx = SimpleNamespace(env={}, name='driver-identity',
+                              services=SimpleNamespace(run=lambda argv, *args, **kwargs:
+                                  subprocess.CompletedProcess(argv, 0, b'new output', b'')),
+                              here=ROOT / 'tools/bisection', settings=SimpleNamespace(root=ROOT, extension='db'))
+        observed = identity.observe(ctx, identity.Driver(cases=()), binary, stage,
+                                    identity.Case('replacement', ('none',), ()), 'none',
+                                    (None, self.root), self.root, self.root)
+        self.assertEqual(observed, identity.Observation(0, b'new output', b'', ()))
+        self.assertEqual(stage.read_bytes(), b'new executable')
+        self.assertEqual(stage.stat().st_mode & 0o777, binary.stat().st_mode & 0o777)
+        self.assertEqual(previous.read_bytes(), b'old executable')
+        self.assertEqual({path.name for path in stage.parent.iterdir()}, {'probe', 'previous-image'})
 
 
 if __name__ == '__main__':
