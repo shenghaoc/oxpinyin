@@ -17,9 +17,18 @@
 
 use std::sync::{Arc, OnceLock};
 
-use oxpinyin_core::graph::{ExactSegment, SegmentGraph};
+use oxpinyin_core::graph::{Edge, ExactSegment, SegmentGraph};
 
 use crate::cursor::MatrixKey;
+
+/// The fewest-keys path of the whole-input graph and the filtered parse
+/// length it gives: the path's last byte extended over a trailing
+/// apostrophe run (`pinyin_parser2.cpp:237-251` at the pin).
+#[derive(Clone, Debug, Default)]
+pub(super) struct SelectedPath {
+    pub(super) edges: Vec<Edge>,
+    pub(super) parsed_len: usize,
+}
 
 /// The typed input and the scheme-parse chain over it.
 #[derive(Clone, Debug, Default)]
@@ -29,13 +38,18 @@ pub(super) struct InputBuffer {
     /// Whole-input parser graph, shared by the matrix, window and length queries.
     /// Input/provenance mutations and option changes invalidate it.
     pub(super) graph: OnceLock<Arc<SegmentGraph>>,
+    /// The selected key path of the whole-input graph and the parsed length
+    /// read from it, kept with the graph so one DP answers every query
+    /// ([`super::Session::selected_path`]). Invalidated with the graph.
+    pub(super) selected: OnceLock<SelectedPath>,
+    /// The retained scan matrix and its projections, built once per input,
+    /// option word and collapse mode ([`super::Session::retained_parse`]).
+    /// Invalidated with the graph; the collapse setter drops it alone.
+    pub(super) parse: OnceLock<super::matrix::RetainedParse>,
     /// The scan-matrix keys and parsed length the cursor and key getters
-    /// read ([`super::Session::matrix_keys`]), built once per input so that
-    /// enumerating every offset stays linear. Invalidated with the graph.
+    /// read ([`super::Session::matrix_keys`]), projected once per retained
+    /// parse so that enumerating every offset stays linear.
     pub(super) keys: OnceLock<(Vec<MatrixKey>, usize)>,
-    /// Derived topology only; every input/provenance mutation invalidates it.
-    pub(super) matrix: Option<super::matrix::ParsedMatrix>,
-    pub(super) ending_matrix: Option<super::matrix::ParsedMatrix>,
     /// Whether apostrophes came from canonical formatting rather than typing.
     /// Used only by trellis generation, never by the ordinary scan or graph.
     formatting_separators: bool,
@@ -54,9 +68,16 @@ impl InputBuffer {
     /// the option word: each input mutation and option change calls this.
     pub(super) fn invalidate(&mut self) {
         self.graph.take();
+        self.selected.take();
+        self.invalidate_topology();
+    }
+
+    /// Drops the retained scan matrix and every projection of it, keeping
+    /// the graph and its selected path: the collapse mode changes which
+    /// topology is retained, not the parse.
+    pub(super) fn invalidate_topology(&mut self) {
+        self.parse.take();
         self.keys.take();
-        self.matrix = None;
-        self.ending_matrix = None;
     }
 
     /// The raw input as a string slice.

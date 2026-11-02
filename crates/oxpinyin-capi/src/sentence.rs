@@ -110,20 +110,11 @@ fn facade_total_is_zero(inst: &crate::state::CapiInstanceRead<'_>) -> bool {
 /// further out aborts the process, as the pin does (register row 66). The
 /// leading-separator refusal keeps its silent `false`.
 ///
-/// `keys` is the active mode's key list when the caller holds one for the
-/// current input and option word; `None` reads it again.
 fn validated_lookup_offset(
     inst: &crate::state::CapiInstanceRead<'_>,
-    keys: Option<&[oxpinyin_facade::KeyAt]>,
     offset: usize,
 ) -> Option<usize> {
-    let validated = match keys {
-        Some(keys) => inst
-            .core
-            .validate_abi_lookup_offset_over(keys, offset, false),
-        None => inst.core.validate_abi_lookup_offset(offset, false),
-    };
-    match validated {
+    match inst.core.validate_abi_lookup_offset(offset, false) {
         Ok(normalized) => Some(normalized),
         Err(oxpinyin_engine::EngineError::LookupOffsetOutOfRange { offset, len })
             if offset == len + 1 =>
@@ -426,25 +417,20 @@ pub extern "C" fn pinyin_guess_candidates(
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
     let mut inst = unsafe { instance_mut(instance) };
-    // One key list serves the keyless check and the offset validation
-    // below. Plain full pinyin rebuilds the scan
-    // matrix for every read of it, and the list is a function of the input
-    // and the session's option word, so it is read again only when
-    // `set_options` changes that word.
-    let keys = inst.core.mode_key_list();
+    // The keyless check reads the session's retained key list in place;
+    // the borrow ends before the option and sort-word mutations below,
+    // and the validation reads the list again afterwards (a lookup in the
+    // cache, rebuilt only if `set_options` changed the option word).
+    //
     // The pin frees the candidates, then answers `false` for a matrix
     // without a step before it stores the sort word
     // (`pinyin.cpp:2193-2198`); a keyless parse is such a matrix. An
     // unreadable key list is left to the session.
-    if keys
-        .as_ref()
-        .is_ok_and(|keys| keys.is_empty() || inst.core.mode_input().0.is_empty())
-    {
+    if matches!(inst.core.mode_has_keys(), Ok(false)) {
         inst.state.candidates.clear();
         return false;
     }
     let options = inst.core.options();
-    let keys = keys.ok().filter(|_| inst.core.session.options() == options);
     if inst.core.session.set_options(options).is_err() {
         return false;
     }
@@ -466,7 +452,7 @@ pub extern "C" fn pinyin_guess_candidates(
     if !inst.core.session.is_composing() {
         return false;
     }
-    let Some(normalized) = validated_lookup_offset(&inst.read(), keys.as_deref(), offset) else {
+    let Some(normalized) = validated_lookup_offset(&inst.read(), offset) else {
         inst.state.candidates.clear();
         return false;
     };

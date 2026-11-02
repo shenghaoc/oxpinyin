@@ -313,7 +313,7 @@ pub(crate) mod matrix;
 mod record;
 mod sentence;
 
-use buffer::InputBuffer;
+use buffer::{InputBuffer, SelectedPath};
 use record::SelectionRecord;
 use sentence::SentenceState;
 
@@ -681,14 +681,24 @@ pub fn build_scan_matrix(
     options: OptionBits,
     divided: bool,
 ) -> Vec<Vec<ScanKey>> {
+    let selected_edges = graph.fewest_keys(options.has_incomplete());
+    build_scan_matrix_over(graph, &selected_edges, options, divided)
+}
+
+/// [`build_scan_matrix`] over the selected parse the caller already holds:
+/// `selected_edges` must be `graph.fewest_keys(options.has_incomplete())`.
+pub(crate) fn build_scan_matrix_over(
+    graph: &SegmentGraph,
+    selected_edges: &[Edge],
+    options: OptionBits,
+    divided: bool,
+) -> Vec<Vec<ScanKey>> {
     let bound = graph.consumed();
     let mut columns: Vec<Vec<ScanKey>> = vec![Vec::new(); bound + 1];
 
     // 1. The selected parse.
-    let selected_edges = graph.fewest_keys(options.has_incomplete());
-    let selected: Vec<ScanKey> = selected_edges.iter().map(ScanKey::from_edge).collect();
-    for scan_key in &selected {
-        columns[scan_key.from].push(*scan_key);
+    for scan_key in selected_edges.iter().map(ScanKey::from_edge) {
+        columns[scan_key.from].push(scan_key);
     }
 
     // The divided/resplit alternates are a full-pinyin-parse artifact:
