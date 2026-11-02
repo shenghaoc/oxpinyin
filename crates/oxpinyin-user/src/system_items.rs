@@ -80,11 +80,6 @@ impl SystemItems {
         self.decoded.retain(keep);
     }
 
-    pub(crate) fn keys(&mut self) -> std::collections::btree_map::Keys<'_, Token, ChunkItem> {
-        self.materialize();
-        self.decoded.keys()
-    }
-
     pub(crate) fn end(&self, library: u8) -> Option<Token> {
         let decoded = self
             .decoded

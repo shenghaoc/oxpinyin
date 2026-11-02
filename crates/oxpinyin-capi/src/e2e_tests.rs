@@ -600,7 +600,12 @@ fn choosing_a_sole_missing_prefix_row_advances_the_facade_total() {
         "the loaded facade total takes the fixed increment"
     );
     assert!(
-        inst.core.dict.system_unigram_count(token).is_none(),
+        inst.core
+            .dict
+            .live_items()
+            .read(token, |_| ())
+            .found()
+            .is_none(),
         "the missing item is not written"
     );
 
@@ -2187,7 +2192,8 @@ fn predicted_tie_groups_are_text_ascending_including_user_rows() {
             let baked = c.token.map_or(0, |token| {
                 inst.core
                     .dict
-                    .system_unigram_count(token.value())
+                    .live_items()
+                    .stored_unigram(token.value())
                     .unwrap_or(0)
                     + inst
                         .core

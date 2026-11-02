@@ -8,9 +8,9 @@ use oxpinyin_capi_marshal::phrase_text::phrase_text_bytes;
 use oxpinyin_core::{ChewingKey, PhraseText, SyllableKey};
 use oxpinyin_runtime::{PhraseItemView, RuntimeDict};
 use oxpinyin_user::{
-    ADDON_DICTIONARY, MAX_KEY_TONE, NETWORK_DICTIONARY, PinyinKey, SENTENCE_START, USER_DICTIONARY,
-    UserPhrase, UserPronunciation, UserStore, UserStoreError, is_user_file_token, key_syllable,
-    key_tone,
+    ADDON_DICTIONARY, MAX_KEY_TONE, NETWORK_DICTIONARY, PinyinKey, SENTENCE_START, SystemItem,
+    USER_DICTIONARY, UserPhrase, UserPronunciation, UserStore, UserStoreError, is_user_file_token,
+    key_syllable, key_tone,
 };
 
 use std::collections::{HashMap, VecDeque};
@@ -74,10 +74,6 @@ struct Memo {
     appended_end: u32,
     /// One past the highest token of the `USER_FILE` library (`5..=7`).
     user_end: u32,
-    /// The last system token the probe read from the mapped chunk because
-    /// the session holds no replacement for it, so the read that follows
-    /// skips the map.
-    plain_token: u32,
 }
 
 /// The `USER_FILE` item under the cursor's token, as of a phrase generation.
@@ -344,6 +340,18 @@ enum ItemRef<'a> {
     User(&'a UserPhrase),
 }
 
+impl<'a> From<SystemItem<'a>> for ItemRef<'a> {
+    fn from(item: SystemItem<'a>) -> Self {
+        match item {
+            SystemItem::Shipped(item) | SystemItem::Arena(item) => Self::Mapped(item),
+            SystemItem::Overlay(item) => Self::Override {
+                phrase: &item.phrase,
+                prons: &item.prons,
+            },
+        }
+    }
+}
+
 impl ItemRef<'_> {
     /// `item.get_n_pronunciation()`.
     fn n_pronunciations(&self) -> usize {
@@ -484,14 +492,6 @@ impl PhraseExportRead<'_> {
         ExportStep::Row(out)
     }
 
-    /// Whether a journal REMOVE took the system item behind `token` out of
-    /// its sub-index (`phrase_index.cpp:219-236`).
-    fn removed(&self, token: u32) -> bool {
-        self.user
-            .as_ref()
-            .is_some_and(|user| user.system_item_removed(token))
-    }
-
     /// Re-reads the store-derived answers when the store's write generation
     /// moved since they were taken. A libpinyin session answers the range
     /// end from its arena; a standalone row store whose cursor cannot be
@@ -512,9 +512,12 @@ impl PhraseExportRead<'_> {
         };
         self.memo = Memo {
             generation: Some(generation),
-            appended_end: user.system_item_end(self.index).unwrap_or(NULL_TOKEN),
+            appended_end: self
+                .system
+                .as_ref()
+                .and_then(|dict| dict.live_items_ignoring_mask().overlay_end(self.index))
+                .unwrap_or(NULL_TOKEN),
             user_end,
-            plain_token: NULL_TOKEN,
         };
     }
 
@@ -549,38 +552,15 @@ impl PhraseExportRead<'_> {
             return;
         };
         let end = (base | library.token_range().end).max(self.memo.appended_end);
+        let live = dict.live_items_ignoring_mask();
         let mut token = start;
         while token < end {
-            if self.removed(token) {
-                // `get_phrase_item` fails for a token a journal REMOVE took out.
-                token += 1;
-                continue;
-            }
-            let replaced = self.user.as_ref().and_then(|user| {
-                if let Some(found) =
-                    user.with_user_item(token, |item| ItemRef::Mapped(item).first_pronunciation())
-                {
-                    return Some(found);
-                }
-                user.with_effective_system_item(token, |item| {
-                    ItemRef::Override {
-                        phrase: &item.phrase,
-                        prons: &item.prons,
-                    }
-                    .first_pronunciation()
-                })
-            });
-            let found = match replaced {
-                Some(found) => found,
-                None => {
-                    // No replacement under this token at this generation.
-                    self.cursor.memo.plain_token = token;
-                    library
-                        .item(token)
-                        .and_then(|item| ItemRef::Mapped(item).first_pronunciation())
-                }
-            };
-            if let Some(nth) = found {
+            // `get_phrase_item` fails for a token a journal REMOVE took out,
+            // and finds nothing in a slot with no item: neither is selected.
+            if let Some(Some(nth)) = live
+                .read(token, |item| ItemRef::from(item).first_pronunciation())
+                .found()
+            {
                 self.next_token = token;
                 self.next_pronunciation = nth;
                 return;
@@ -629,47 +609,16 @@ impl PhraseExportRead<'_> {
                 let Some(dict) = self.system.as_ref() else {
                     return Ok(None);
                 };
-                if self.removed(token) {
-                    return Ok(None);
-                }
-                let mut read = Some(read);
-                if let Some(out) = self
-                    .user
-                    .as_ref()
-                    .and_then(|user| {
-                        user.with_user_item(token, |item| {
-                            read.take().map(|read| read(ItemRef::Mapped(item)))
-                        })
-                    })
-                    .flatten()
-                {
-                    return Ok(Some(out));
-                }
-                if self.memo.plain_token != token
-                    && let Some(user) = self.user.as_ref()
-                    && let Some(out) = user
-                        .with_effective_system_item(token, |item| {
-                            read.take().map(|read| {
-                                read(ItemRef::Override {
-                                    phrase: &item.phrase,
-                                    prons: &item.prons,
-                                })
-                            })
-                        })
-                        .flatten()
-                {
-                    return Ok(Some(out));
-                }
-                let Some(read) = read else {
-                    return Ok(None);
-                };
-                let Some(library) = dict.system().libraries().library(token) else {
-                    return Ok(None);
-                };
-                let Some(item) = library.item(token) else {
-                    return Ok(None);
-                };
-                Ok(Some(read(ItemRef::Mapped(item))))
+                // One call reads the arena, the session's decoded items and
+                // the chunk. The decoded-item lock (`StoreInner::system_items`,
+                // `registry.rs:68`) is taken per row while the session holds
+                // such items; the memo this replaces skipped it within one
+                // store generation. Stage B removes that map and the lock with
+                // it, so there is no overlay lookup left for a memo to skip.
+                Ok(dict
+                    .live_items_ignoring_mask()
+                    .read(token, |item| read(ItemRef::from(item)))
+                    .found())
             }
             ADDON_DICTIONARY | NETWORK_DICTIONARY | USER_DICTIONARY => {
                 self.with_user_item(token, read)

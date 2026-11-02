@@ -472,11 +472,13 @@ fn predicted_frequency(
             .unwrap_or(0)
     };
     // An imported system-library token missing from the immutable dictionary
-    // has a complete live count in system_item_override. Its UNIGRAM value
-    // must not be added twice. Existing immutable items need base + delta.
-    let item_count = match dict.system().unigram_count(token) {
+    // has a complete live count: the store's delta, added once. Existing
+    // immutable items need the chunk's stored count plus that delta. Runtime
+    // bumps are added below, once, for both.
+    let live = dict.live_items();
+    let item_count = match live.stored_unigram(token) {
         Some(base) => base.wrapping_add(store_count()),
-        None => dict.system_unigram_count(token).unwrap_or_else(store_count),
+        None => live.effective_unigram(token).unwrap_or_else(store_count),
     };
     let unigram =
         item_count.wrapping_add(dict.unigram_delta(token).unwrap_or(0)) & u64::from(u32::MAX);
