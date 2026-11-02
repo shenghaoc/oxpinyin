@@ -248,7 +248,7 @@ pub extern "C" fn zhuyin_get_character_offset(
         oxpinyin_capi_marshal::input::utf8_to_ucs4(oxpinyin_capi_marshal::borrow_c_string!(phrase))
             .unwrap_or_default();
     let char_count = match inst.core.character_offset(&text, offset) {
-        Ok(Some(_)) if offset == inst.core.parsed_len && character_walk_ran(inst, &text) => {
+        Ok((Some(_), true)) if offset == inst.core.parsed_len => {
             if !length.is_null() {
                 // SAFETY: Null-checked above; caller supplied the output.
                 unsafe {
@@ -257,13 +257,13 @@ pub extern "C" fn zhuyin_get_character_offset(
             }
             return false;
         }
-        Ok(Some(char_count)) => char_count,
-        Ok(None) => {
+        Ok((Some(char_count), _)) => char_count,
+        Ok((None, walked)) => {
             // The walk's own `false` still stores the length it reached
             // (`*plength = length`, `zhuyin.cpp:2192`); the earlier returns
             // (no keys, empty phrase, a character without a token) leave it
             // untouched.
-            if character_walk_ran(inst, &text) && !length.is_null() {
+            if walked && !length.is_null() {
                 // SAFETY: Null-checked above.
                 unsafe {
                     *length = 0;
@@ -295,20 +295,6 @@ pub extern "C" fn zhuyin_get_character_offset(
         }
     }
     true
-}
-
-/// Whether `zhuyin_get_character_offset` got past its early `false` returns
-/// (`zhuyin.cpp:2152-2182`): a non-empty matrix, a non-empty phrase and a
-/// dictionary token for every character. The engine answers all of them, and
-/// the walk's own failure, with `Ok(None)`.
-fn character_walk_ran(inst: &crate::state::CapiInstance, text: &oxpinyin_core::PhraseText) -> bool {
-    use oxpinyin_core::Dictionary as _;
-
-    if !inst.core.mode_has_keys().unwrap_or(false) || text.is_empty() {
-        return false;
-    }
-    text.outward_words()
-        .all(|word| !inst.core.dict.tokens_for_ucs4(&[word]).is_empty())
 }
 
 /// Guess candidates at the after-cursor offset.

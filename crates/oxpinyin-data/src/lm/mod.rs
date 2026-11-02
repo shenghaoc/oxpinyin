@@ -340,14 +340,47 @@ impl BigramLanguageModel {
         library_mask: Arc<AtomicU32>,
     ) -> Result<Self, LmError> {
         let bigram = BigramTable::open(bigram_path)?;
-        Ok(Self {
+        Ok(Self::with_table(bigram, libraries, library_mask))
+    }
+
+    /// Runtime system attachment, preserving the pin's failed BDB/KC
+    /// hash object instead of refusing initialization.
+    ///
+    /// # Errors
+    /// Returns failures before native attach; tkrzw remains strict.
+    pub fn attach_with_mask(
+        bigram_path: &Path,
+        libraries: Arc<PhraseLibraries>,
+        library_mask: Arc<AtomicU32>,
+    ) -> Result<Self, LmError> {
+        let bigram = BigramTable::attach(bigram_path)?;
+        Ok(Self::with_table(bigram, libraries, library_mask))
+    }
+
+    fn with_table(
+        bigram: BigramTable,
+        libraries: Arc<PhraseLibraries>,
+        library_mask: Arc<AtomicU32>,
+    ) -> Self {
+        Self {
             bigram,
             libraries,
             library_mask,
             lambda: Lambda::PINNED,
             lambda_raw: None,
             lambda_f32: crate::table_conf::PINNED_LAMBDA,
-        })
+        }
+    }
+
+    /// Whether the native system hash attach failed.
+    #[must_use]
+    pub fn attachment_failed(&self) -> bool {
+        self.bigram.attachment_failed()
+    }
+
+    /// Runs the failed system object's reset at facade fini.
+    pub fn finish_failed_attachment(&self) {
+        self.bigram.finish_failed_attachment();
     }
 
     /// The interpolation weight λ currently in effect.
@@ -868,6 +901,12 @@ impl LanguageModel for BigramLanguageModel {
         _row: &mut oxpinyin_core::NbestStepRow,
     ) -> Result<oxpinyin_core::NbestStepCosts, Self::Error> {
         self.nbest_item_costs(token, UserCountDelta::ZERO, false, item)
+    }
+
+    fn begin_successor_span(&self, row: &mut oxpinyin_core::NbestStepRow) {
+        if self.attachment_failed() {
+            *row = oxpinyin_core::NbestStepRow::default();
+        }
     }
 
     fn nbest_successors_in_row<'a>(

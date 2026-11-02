@@ -19,15 +19,14 @@ use oxpinyin_user::{SystemVersions, UserConfLaw, persistence};
 /// The committed fixture set the compiled backend opens.
 fn fixture_dir() -> PathBuf {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/w3");
-    ["db", "kct", "tkt"]
-        .into_iter()
-        .map(|ext| root.join(ext))
-        .find(|dir| {
-            dir.is_dir()
-                && ContextCore::open(dir, None, PINYIN_DEFAULT_OPTION_WORD, UserConfLaw::Pinyin)
-                    .is_some()
-        })
-        .expect("a fixtures/w3/<backend> set opens under the compiled backend")
+    let extension = if cfg!(feature = "bdb") {
+        "db"
+    } else if cfg!(feature = "kyotocabinet") {
+        "kct"
+    } else {
+        "tkt"
+    };
+    root.join(extension)
 }
 
 /// A fresh scratch directory for `name` under the temporary directory.

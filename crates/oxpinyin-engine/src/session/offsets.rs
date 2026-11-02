@@ -189,6 +189,20 @@ where
         phrase: &oxpinyin_core::PhraseText,
         offset: usize,
     ) -> Result<Option<usize>, EngineError> {
+        self.character_offset_with_walk(phrase, offset)
+            .map(|(count, _)| count)
+    }
+
+    /// The offset and whether its recursive walk ran, so a facade need
+    /// not repeat phrase-table reads to decide whether to write its output.
+    ///
+    /// # Errors
+    /// As [`Self::character_offset`].
+    pub fn character_offset_with_walk(
+        &self,
+        phrase: &oxpinyin_core::PhraseText,
+        offset: usize,
+    ) -> Result<(Option<usize>, bool), EngineError> {
         // The working graph, not the parsed-only one `matrix_keys`
         // builds: pre-parsed scheme segments keep their boundaries and
         // gain no divided/resplit alternates, as every other law over
@@ -201,7 +215,7 @@ where
             .flatten()
             .map(|key| crate::cursor::MatrixKey::new(key.key, key.tone, key.syllable_start, key.to))
             .collect();
-        crate::character_offset_over_keys(
+        crate::character_offset_with_walk_over_keys(
             self.input.as_bytes(),
             parsed,
             &keys,

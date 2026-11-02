@@ -1217,10 +1217,14 @@ pub mod kyotocabinet;
 pub use kyotocabinet::{KcStore, KcTxn, KcUserBigramDb};
 
 mod flexible_ngram;
+#[cfg(any(feature = "bdb", feature = "kyotocabinet"))]
+mod system_attach;
 pub use flexible_ngram::{
     ArrayItemWithToken, DefaultFlexibleBigram, FixedRecord, FlexibleBigram, FlexibleGramSpec,
     MAGIC_KEY, SingleGram, SpecGram,
 };
+#[cfg(any(feature = "bdb", feature = "kyotocabinet"))]
+pub use system_attach::{SystemAttachment, UnopenedSystemDbm};
 
 // ── tests ──────────────────────────────────────────────────────────
 

@@ -1295,17 +1295,20 @@ mod phrase_cursor_tests {
     /// store is in memory, #642).
     fn open() -> ContextCore {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/w3");
-        ["db", "kct", "tkt"]
-            .into_iter()
-            .find_map(|ext| {
-                ContextCore::open(
-                    &root.join(ext),
-                    None,
-                    crate::PINYIN_DEFAULT_OPTION_WORD,
-                    UserConfLaw::Pinyin,
-                )
-            })
-            .expect("committed backend fixtures")
+        let extension = if cfg!(feature = "bdb") {
+            "db"
+        } else if cfg!(feature = "kyotocabinet") {
+            "kct"
+        } else {
+            "tkt"
+        };
+        ContextCore::open(
+            &root.join(extension),
+            None,
+            crate::PINYIN_DEFAULT_OPTION_WORD,
+            UserConfLaw::Pinyin,
+        )
+        .expect("committed backend fixtures")
     }
 
     fn user_keys(spellings: &[&str], tone: u8) -> Vec<oxpinyin_user::PinyinKey> {
