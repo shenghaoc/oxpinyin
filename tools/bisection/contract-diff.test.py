@@ -106,9 +106,9 @@ class PolicyAcceptedTests(unittest.TestCase):
         self.spec['abort'] = driver.NO_ABORT
         self.assertEqual(self.verdict(), ('INVALID', False, False))
 
-    def test_a_fatal_pin_abort_is_accepted_in_both_modes(self):
+    def test_a_fatal_pin_trap_is_accepted_in_both_modes(self):
         self.spec['fatal'] = True
-        self.pin.update(exit=-signal.SIGABRT, result=None,
+        self.pin.update(exit=-signal.SIGTRAP, result=None,
                         stderr='** (process:12): CRITICAL **: 00:00:01.000: boom\n')
         self.record['cases'][self.name] = contract_policy.entry(
             driver.policy_side(self.spec, self.pin), driver.policy_side(self.spec, self.subject))
@@ -121,9 +121,9 @@ class PolicyAcceptedTests(unittest.TestCase):
                 self.assertEqual(self.verdict(parent=parent), ('POLICY-ACCEPTED', True, False))
                 self.assertEqual(self.verdict(pin=other_run, parent=parent), ('POLICY-ACCEPTED', True, False))
                 self.assertEqual(self.verdict(subject=moved, parent=parent), ('DIFFER', False, False))
-        # A parent build aborts with the pin: a valid pair whose subject has
+        # A parent build traps with the pin: a valid pair whose subject has
         # moved from the record, not an invalid one.
-        aborted = observation(exit=-signal.SIGABRT, stderr=self.pin['stderr'])
+        aborted = observation(exit=-signal.SIGTRAP, stderr=self.pin['stderr'])
         self.assertEqual(self.verdict(subject=aborted, parent=True), ('DIFFER', False, False))
         self.assertEqual(self.verdict(subject=aborted, parent=False), ('INVALID', False, False))
         self.spec['fatal'] = False

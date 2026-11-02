@@ -1350,7 +1350,7 @@ def run_main():
                 if args.observations:
                     with args.observations.open('a') as capture:
                         capture.write(json.dumps(dict(cell=args.cell, case=n, userdir=spec['userdir'],
-                                                      abort=policy_pin_abort(spec),
+                                                      abort=policy_pin_abort(spec), fatal=spec['fatal'],
                                                       policy_record=spec['policy_record'], pin=policy_side(spec, pin),
                                                       subject=policy_side(spec, subject)),
                                                  ensure_ascii=True) + '\n')

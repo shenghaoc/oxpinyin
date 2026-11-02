@@ -55,6 +55,16 @@ class ObservationProblemTests(unittest.TestCase):
         self.assertIn('registered pin abort', policy.observation_problem(aborted))
         self.assertIn('cannot have a result', policy.observation_problem(dict(aborted, result={'logs': []}), pin_abort=True))
 
+    def test_a_fatal_critical_accepts_sigtrap_instead_of_sigabrt(self):
+        trapped = dict(PIN, exit=-signal.SIGTRAP, result=None)
+        for pin_abort in (False, True):
+            self.assertIsNone(policy.observation_problem(trapped, pin_abort=pin_abort, pin_fatal=True))
+            for bad in (dict(trapped, exit=-signal.SIGABRT), dict(trapped, exit=-signal.SIGSEGV),
+                        dict(trapped, result={'logs': []})):
+                self.assertIsNotNone(policy.observation_problem(bad, pin_abort=pin_abort, pin_fatal=True))
+        self.assertIsNotNone(policy.observation_problem(trapped, pin_abort=True))
+        self.assertIsNotNone(policy.observation_problem(trapped))
+
     def test_other_failures_and_incomplete_documents_are_refused(self):
         for bad, reason in ((dict(PIN, exit=1), 'normally terminate'), (dict(PIN, result=None), 'normally terminate'),
                             (dict(PIN, result={'ret': True}), 'logs'), (dict(PIN, result={'logs': [], '~x': 1}), '~'),

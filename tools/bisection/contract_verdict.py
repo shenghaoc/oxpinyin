@@ -45,8 +45,8 @@ def registered_termination(spec):
 
 
 def policy_pin_abort(spec):
-    """Whether a policy record may hold a SIGABRT of the pin: a registered
-    class (c) abort, or a `fatal=True` case whose pin a fatal GLib log ends."""
+    """Whether a policy record may hold the pin's registered termination:
+    SIGABRT for an abort, SIGTRAP for a `fatal=True` GLib critical."""
     return spec['abort'] is not NO_ABORT or spec['fatal']
 
 
@@ -184,11 +184,12 @@ def verdict_for(spec, pin, subject, expect_parent, *, policy_root, cell, directo
             actual = dict(pin=policy_observation(spec, pin), subject=policy_observation(spec, subject))
         except (OSError, ValueError, KeyError, TypeError):
             return 'INVALID', False, False
-        # A fatal log mask's pin SIGABRT is a valid pin observation in both
-        # modes. The subject must complete with a result; under
+        # GLib 2.84.4 ends a non-recursive fatal critical with SIGTRAP.
+        # This is a valid pin observation in both modes. The subject must
+        # complete with a result; under
         # --expect-parent it may instead end as registered for the pin
         # (valid_parent_observations), since a parent build still aborts.
-        fatal_pin = spec['fatal'] and pin['exit'] == -signal.SIGABRT
+        fatal_pin = spec['fatal'] and pin['exit'] == -signal.SIGTRAP
         if fatal_pin:
             valid = valid_observation(spec, subject) or (expect_parent and subject['exit'] == pin['exit'])
         elif expect_parent:
@@ -199,7 +200,8 @@ def verdict_for(spec, pin, subject, expect_parent, *, policy_root, cell, directo
             return 'INVALID', False, False
         if contract_policy.accepted(kept, actual):
             if any(contract_policy.observation_problem(
-                    actual[side], pin_abort=side == 'pin' and policy_pin_abort(spec))
+                    actual[side], pin_abort=side == 'pin' and policy_pin_abort(spec),
+                    pin_fatal=side == 'pin' and spec['fatal'])
                    for side in contract_policy.SIDES):
                 return 'INVALID', False, False
             # An existing accepted quirk is a control on its parent too.

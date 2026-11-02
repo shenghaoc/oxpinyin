@@ -75,12 +75,14 @@ def listing_entry(value):
             and all(isinstance(item, str) for item in value[1:]))
 
 
-def observation_problem(side, *, pin_abort=False):
+def observation_problem(side, *, pin_abort=False, pin_fatal=False):
     """Why `side` cannot be recorded or accepted, or None.
 
     A side terminates normally with a result document that carries `logs`
-    and no `~` field, or it is the pin of a registered abort site: SIGABRT
-    and no document. userfiles, when present, is the driver's user-directory
+    and no `~` field, or it is the pin of a registered termination site:
+    SIGTRAP for a fatal critical in Debian 13's GLib 2.84.4, otherwise
+    SIGABRT for an abort, with no document. userfiles, when present, is
+    the driver's user-directory
     listing (`contract_execution.user_dir_listing`): per file name, the
     text of `user.conf`, `[size, sha256]` of a chunk file, `[size]` of a
     DBM container, or None for a non-file."""
@@ -93,7 +95,8 @@ def observation_problem(side, *, pin_abort=False):
     exit_code, result = side.get('exit'), side.get('result')
     if type(exit_code) is not int:
         return 'exit must be an integer'
-    if pin_abort and exit_code == -signal.SIGABRT:
+    expected_signal = signal.SIGTRAP if pin_fatal else signal.SIGABRT
+    if (pin_abort or pin_fatal) and exit_code == -expected_signal:
         return None if result is None else 'aborted pin cannot have a result document'
     if exit_code != 0 or not isinstance(result, dict):
         return 'must normally terminate with a result document, or hold a registered pin abort'
